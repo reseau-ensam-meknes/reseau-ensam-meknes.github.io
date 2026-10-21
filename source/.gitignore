@@ -1,0 +1,5 @@
+dist/
+artifact/
+tests/node_modules
+supabase/installation.sql
+supabase/comptes-test.sql

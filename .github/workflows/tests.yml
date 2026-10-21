@@ -1,0 +1,52 @@
+# Tests automatiques du Réseau ENSAM : à chaque changement du site ou de ses sources.
+# Le site est reconstruit depuis source/ et doit être identique aux fichiers publiés à la racine,
+# puis la base, les emails, les calculs et le site lui-même sont testés (aucun appel à la vraie base).
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    # Playwright 1.56 ne gère pas encore Ubuntu 26.04 (ubuntu-latest)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: source
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: source/tests/package-lock.json
+      - name: Construire le site depuis les sources
+        run: sh build.sh
+      - name: Le site publié correspond aux sources
+        run: |
+          diff -r -x source -x .github -x .git -x .nojekyll -x README.md dist ..
+          git diff --exit-code -- supabase/mise-a-jour.sql
+      - name: Installer les outils de test
+        working-directory: source/tests
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Calculs
+        working-directory: source/tests
+        run: npm run unit
+      - name: Base de données (règles d'accès, limites, mise à jour)
+        working-directory: source/tests
+        run: npm run sql
+      - name: Emails et notifications
+        working-directory: source/tests
+        run: npm run notifier
+      - name: Site (tous les écrans, parcours, hors ligne)
+        working-directory: source/tests
+        run: npm run site
