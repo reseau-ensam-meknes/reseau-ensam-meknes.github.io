@@ -3,7 +3,7 @@ import { getLang, setLang, chargerAR } from './i18n.js';
 import { html, render, useState, useEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore } from './store.js';
 import { Icon, Field, Empty, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, Num, useLocal, Celebration, celebrate, voirRangs } from './ui.js';
-import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch } from './logic.js';
+import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
 import { ParcoursPage, EspacePage, ConfirmRecruit, Journey, journeyStep } from './me.js';
 import { DashboardPage } from './dashboard.js';
@@ -83,6 +83,7 @@ function App({ store }) {
   const scores = useMemo(() => computeScores(data), [data.offers, data.applications, data.comments, data.placements, data.mentorships, data.answers, data.questions, data.votes]);
   const monthScores = useMemo(() => computeScores(data, new Date(Date.now() - 30 * 864e5)), [data]);
   const star = useMemo(() => starOfMonth(data, monthScores), [data, monthScores]);
+  const fondateurs = useMemo(() => fondateursOf(data.profiles), [data]);
 
   // Temps réel : une nouvelle notification venue d'un autre membre s'affiche aussi en bas de l'écran
   const latest = useRef(null);
@@ -123,7 +124,7 @@ function App({ store }) {
   };
   voirRangs(me.role !== 'etudiant');
   const ctx = {
-    store, data, me, saison, scores, go, act, sub: route.sub, sub2: route.sub2, star, starId: star?.p.id,
+    store, data, me, saison, scores, go, act, sub: route.sub, sub2: route.sub2, star, starId: star?.p.id, fondateurs,
     openProfile: p => p && setProfile(p),
     openOffer: (id, apply = false) => { setOfferId(id); setApplyNow(apply); setPop(null); },
     confirm: (text, onYes, yes) => setConfirmBox({ text, onYes, yes }),
@@ -444,6 +445,16 @@ function Home(ctx) {
   const helper = stu?.pl?.laureat_id ? store.byId('profiles', stu.pl.laureat_id) : null;
   const asking = data.mentorships.some(m => m.student_id === me.id && ['demande', 'acceptee'].includes(m.status));
   const h = new Date().getHours();
+  // Les 25 premiers lauréats : on leur dit une fois qu'ils sont membres fondateurs (pas par-dessus une autre fenêtre)
+  const fondateur = store.mode === 'live' && isLaureat && !!me.consent_at && !!ctx.fondateurs?.has(me.id);
+  useEffect(() => {
+    if (!fondateur) return;
+    const t = setTimeout(() => {
+      if (document.querySelector('.modal-back, .fete-back')) return;
+      celebrate({ cle: 'fondateur-' + me.id, icon: 'award', titre: 'Tu es Membre fondateur !', texte: 'Tu fais partie des 25 premiers lauréats du réseau. Ce badge restera sur ton profil.', action: { label: 'Voir mon badge', onClick: () => go('espace') } });
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [fondateur]);
 
   return html`<section class="page home">
     <header class="hello home-hero sky">
@@ -606,7 +617,7 @@ function AuthScreen({ store, relang }) {
       <div class="auth-hero-txt">
         <${BrandLogo} size=${64} draw/>
         <h1>Réseau ENSAM Meknès</h1>
-        <p>Les lauréats partagent leurs offres de stages, de PFE et d’emplois. Les étudiants trouvent plus vite, avec un suivi de chaque promo jusqu’au premier emploi.</p>
+        <p>Les lauréats y recrutent leurs stagiaires et donnent un coup de main à l’école. Les étudiants y trouvent stage, PFE et premier emploi plus vite, avec l’aide des anciens.</p>
       </div>
       <${SchoolScene} fit="slice"/>
     </section>
@@ -625,12 +636,18 @@ function AuthScreen({ store, relang }) {
         ${mode === 'connexion' ? html`<button type="button" class="linkish" onClick=${() => { setMode('oubli'); setMsg(null); }}>Mot de passe oublié ?</button>` : null}
       </div>
     </form>
-    <ul class="auth-points">
-      <li><span class="sc-ico"><${Icon} name="feed"/></span> Offres partagées par les anciens, avec cooptation</li>
-      <li><span class="sc-ico"><${Icon} name="check"/></span> Recrutements vérifiés : le lauréat déclare, l’étudiant confirme</li>
-      <li><span class="sc-ico"><${Icon} name="mentor"/></span> Mentorat et entraide entre générations</li>
-      <li><span class="sc-ico"><${Icon} name="chart"/></span> Suivi de chaque promo, de la 3A au premier emploi</li>
-    </ul>
+    <div class=${'auth-pour' + (invite && roleDePromo(invite) === 'etudiant' ? ' etu-avant' : '')}>
+      <section><h2 class="eyebrow">Pour les lauréats</h2><ul class="auth-points">
+        <li><span class="sc-ico"><${Icon} name="briefcase"/></span> Recrute tes stagiaires parmi les étudiants de ton école</li>
+        <li><span class="sc-ico"><${Icon} name="mentor"/></span> Aide un étudiant en 20 minutes de visio, quand tu as le temps</li>
+        <li><span class="sc-ico"><${Icon} name="award"/></span> Badges, mercis et « Membre fondateur » pour les 25 premiers lauréats</li>
+      </ul></section>
+      <section><h2 class="eyebrow">Pour les étudiants</h2><ul class="auth-points">
+        <li><span class="sc-ico"><${Icon} name="feed"/></span> Offres de stage, de PFE et d’emploi partagées par les anciens</li>
+        <li><span class="sc-ico"><${Icon} name="chat"/></span> Un lauréat te conseille : CV, entretien, départ à l’étranger</li>
+        <li><span class="sc-ico"><${Icon} name="check"/></span> Recrutements vérifiés : le lauréat déclare, tu confirmes</li>
+      </ul></section>
+    </div>
     <p class="small muted center"><a href="#confidentialite">Confidentialité</a></p>
     </div>
   </main>`;

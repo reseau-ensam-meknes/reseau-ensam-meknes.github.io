@@ -184,7 +184,7 @@ export function EspacePage(ctx) {
   const { data, me, store, scores, act, openProfile, openOffer } = ctx;
   const s = scores.get(me.id) || { points: 0, events: [], offres: 0, recrutes: 0, mentorats: 0, mercis: 0, reponses: 0 };
   const lvl = levelOf(s.points);
-  const mine = badgesOf(s, me, { star: ctx.starId });
+  const mine = badgesOf(s, me, { star: ctx.starId, fondateurs: ctx.fondateurs });
   const myOffers = data.offers.filter(o => o.author_id === me.id).sort((a, b) => (a.status === 'ouverte' ? 0 : 1) - (b.status === 'ouverte' ? 0 : 1) || new Date(b.created_at) - new Date(a.created_at));
   const myOfferIds = new Set(myOffers.map(o => o.id));
   const toTreat = data.applications.filter(a => myOfferIds.has(a.offer_id) && a.status === 'postule').sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
@@ -323,7 +323,9 @@ const VERS_BADGE = {
 function MesBadges({ s, mine }) {
   const has = new Set(mine.map(b => b.id));
   const next = Object.keys(VERS_BADGE).map(id => BADGES.find(b => b.id === id)).find(b => b && !has.has(b.id));
-  const autres = BADGES.filter(b => !has.has(b.id) && b !== next);
+  // « Membre fondateur » ne s'obtient plus après les 25 premiers : on ne le montre qu'à ceux qui l'ont
+  const possibles = BADGES.filter(b => b.id !== 'fondateur' || has.has(b.id));
+  const autres = possibles.filter(b => !has.has(b.id) && b !== next);
   const tuile = (b, on) => html`<div class=${'badge' + (on ? ' has' : '')} title=${b.desc} key=${b.id}><span class="badge-medal"><${Icon} name=${on ? 'star' : 'spark'} size=${20}/></span><strong>${b.nom}</strong><span class="small muted">${b.desc}</span></div>`;
   let prochain = null;
   if (next) {
@@ -335,7 +337,7 @@ function MesBadges({ s, mine }) {
         ${goal > 1 ? html`<div class="bn-prog"><${Bar} value=${Math.min(1, cur / goal)} label=${`${Math.min(cur, goal)} sur ${goal}`}/><span class="small mono">${Math.min(cur, goal)} sur ${goal}</span></div>` : null}</div>
     </div>`;
   }
-  return html`<div class="section-head"><h2>${mine.length ? 'Mes badges' : 'Ton premier badge'}</h2>${mine.length ? html`<span class="muted small">${mine.length} sur ${BADGES.length}</span>` : null}</div>
+  return html`<div class="section-head"><h2>${mine.length ? 'Mes badges' : 'Ton premier badge'}</h2>${mine.length ? html`<span class="muted small">${mine.length} sur ${possibles.length}</span>` : null}</div>
     ${mine.length ? html`<div class="badges">${mine.map(b => tuile(b, true))}</div>` : null}
     ${prochain}
     ${autres.length && mine.length ? html`<details class="badges-more"><summary>${autres.length > 1 ? `Voir les ${autres.length} autres badges` : 'Voir l’autre badge'}</summary><div class="badges">${autres.map(b => tuile(b, false))}</div></details>` : null}`;
