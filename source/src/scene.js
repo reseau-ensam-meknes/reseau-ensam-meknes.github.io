@@ -2,9 +2,21 @@
 // Dessin original en SVG. Les couleurs viennent du CSS (.sky, thème clair ou sombre) et le mouvement
 // aussi (nuages, oiseaux, arbres, étudiants qui marchent vers la porte), coupé si l'appareil le demande.
 
-import { glyph } from './logo.js';
-
 const r1 = n => Math.round(n * 10) / 10;
+
+// Logo de l'ENSAM tel qu'il est peint sur le fronton de l'école (deux A, losange, crémaillère et roue),
+// redessiné dans un repère de 200 de large.
+function ensamLogo() {
+  const dents = [35, 62, 88.5, 114.5, 138.5, 162.5].map(c => `M${c - 7} 143.5H${c + 7}L${c + 4.5} 161H${c - 4.5}Z`).join('');
+  const roue = [-14, 0, 14].map(a => {
+    const p = (R, d) => `${r1(100 + R * Math.sin((a + d) * Math.PI / 180))} ${r1(266 - R * Math.cos((a + d) * Math.PI / 180))}`;
+    return `M${p(102, -3.4)}L${p(114, -2.3)}L${p(114, 2.3)}L${p(102, 3.4)}Z`;
+  }).join('');
+  return `<path d="M62 33 94.2 101.5H41.3L27.5 127H11ZM62 57.5 44.4 90H77.3Z" fill-rule="evenodd" fill="#F58F20"/>`
+    + `<path d="M133 34 200 144H2.5L10 130H178.1L160.5 101.5H99.3ZM133 57 116.5 90H153.5Z${dents}" fill-rule="evenodd" fill="#1784A4"/>`
+    + `<path d="M46.4 178A103 103 0 0 1 153.6 178H138.4A96 96 0 0 0 61.6 178Z${roue}M95.8 22 105 42.2 96.8 61.8 87.5 42.5Z" fill="#4F4F51"/>`
+    + `<text x="96" y="123" direction="ltr" font-family="'Times New Roman',Times,'Liberation Serif',serif" font-size="25.7" fill="#4F4F51" text-anchor="middle" textLength="84" lengthAdjust="spacingAndGlyphs">ENSAM</text>`;
+}
 
 function building(x, y, w, h, rows = 2) {
   let s = `<rect class="b-body" x="${x}" y="${y}" width="${w}" height="${h}"/><rect class="b-shade" x="${x + w - 10}" y="${y}" width="10" height="${h}"/><rect class="b-top" x="${x - 3}" y="${y - 5}" width="${w + 6}" height="6" rx="1"/>`;
@@ -99,7 +111,7 @@ ${roundTree(150, 0.95)}${roundTree(710, 1)}${cypress(268, 74)}${cypress(532, 70)
 <g class="lamp"><circle class="lamp-glow" cx="566" cy="220" r="30" fill="url(#ss-lamp)"/><rect class="iron" x="564.5" y="222" width="3" height="78"/><path class="iron" d="M559 222h14l-3-7h-8z"/><rect class="lamp-bulb" x="563" y="216" width="6" height="5" rx="1.5"/></g>
 <g class="sc-gate">
   <polygon class="g-frame" points="400,34 274,206 526,206"/><polygon class="g-in" points="400,66 300,196 500,196"/>
-  <g class="g-logo" transform="translate(356.5 106.1) scale(.17)">${glyph()}</g>
+  <g class="g-logo" transform="translate(340 85.2) scale(.6)">${ensamLogo()}</g>
   <rect class="g-pillar" x="306" y="222" width="20" height="78"/><rect class="g-pillar" x="474" y="222" width="20" height="78"/>
   <rect class="g-band" x="288" y="203" width="224" height="21"/><text class="g-txt" x="400" y="218" text-anchor="middle">ENSAM · MEKNÈS</text>
   <g class="sc-leaf l"><rect class="iron" x="326" y="236" width="74" height="3"/><rect class="iron" x="326" y="291" width="74" height="3"/>${bars(326)}</g>
