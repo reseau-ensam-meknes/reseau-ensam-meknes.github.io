@@ -174,7 +174,7 @@ export function ProfileModal({ ctx, p: p0, onClose, onAskMentor }) {
   const masques = groupesMasques(store, p1);
   const p = masques.length ? { ...p1, ...Object.fromEntries(masques.flatMap(g => VIS_CHAMPS[g].map(c => [c, null]))) } : p1;
   const s = scores.get(p.id);
-  const badges = badgesOf(s, p, { star: ctx.starId });
+  const badges = badgesOf(s, p, { star: ctx.starId, fondateurs: ctx.fondateurs });
   const helped = data.placements.filter(x => x.laureat_id === p.id && x.status === 'confirme').length;
   const st = p.role === 'etudiant' ? statutOf(data, p, saison) : null;
   return html`<${Modal} title="Profil" onClose=${onClose}>

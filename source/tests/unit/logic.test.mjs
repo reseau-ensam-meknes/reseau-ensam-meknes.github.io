@@ -62,3 +62,19 @@ test('taux d’insertion : ceux qui poursuivent leurs études ne comptent pas', 
   assert.equal(r.taux_insertion, 0.5);
   assert.equal(r.taux_reponse, 0.75);
 });
+
+test('Membre fondateur : les 25 premiers lauréats inscrits, jamais un étudiant', async () => {
+  const { fondateursOf, badgesOf, NB_FONDATEURS } = await import('../../src/logic.js');
+  const jour = i => new Date(Date.UTC(2026, 9, 1) + i * 36e5).toISOString();
+  const profiles = [
+    { id: 'etu', role: 'etudiant', created_at: jour(0) },
+    ...Array.from({ length: 30 }, (_, i) => ({ id: 'l' + i, role: 'laureat', created_at: jour(30 - i) })),
+  ];
+  const f = fondateursOf(profiles);
+  assert.equal(f.size, NB_FONDATEURS);
+  assert.ok(!f.has('etu'));
+  assert.ok(f.has('l29') && f.has('l5') && !f.has('l4'));
+  const ids = p => badgesOf({}, p, { fondateurs: f }).map(b => b.id);
+  assert.ok(ids({ id: 'l29' }).includes('fondateur'));
+  assert.ok(!ids({ id: 'l0' }).includes('fondateur'));
+});

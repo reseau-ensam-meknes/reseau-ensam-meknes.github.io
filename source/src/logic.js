@@ -195,6 +195,7 @@ export function computeScores(data, since = null) {
 }
 
 export const BADGES = [
+  { id: 'fondateur', nom: 'Membre fondateur', desc: 'Parmi les 25 premiers lauréats du réseau', test: (s, p, x) => !!p.id && !!x.fondateurs?.has(p.id) },
   { id: 'verifie', nom: 'Lauréat vérifié', desc: 'Profil vérifié par l’école', test: (s, p) => p.role === 'laureat' && p.verified },
   { id: 'premier', nom: 'Premier coup de pouce', desc: 'A publié une première offre', test: s => s.offres >= 1 },
   { id: 'recruteur', nom: 'Recruteur', desc: '3 étudiants recrutés grâce à ses offres', test: s => s.recrutes >= 3 },
@@ -208,7 +209,15 @@ export const BADGES = [
   { id: 'mois', nom: 'Lauréat du mois', desc: 'Le plus d’impact sur les 30 derniers jours', test: (s, p, x) => !!p.id && x.star === p.id },
 ];
 
-// `extra.star` : id du lauréat du mois (voir starOfMonth)
+// Membres fondateurs : les 25 premiers lauréats arrivés sur la plateforme (ils ont lancé l'entraide)
+export const NB_FONDATEURS = 25;
+export function fondateursOf(profiles) {
+  return new Set((profiles || []).filter(p => p.role === 'laureat' && p.created_at)
+    .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.id).localeCompare(String(b.id)))
+    .slice(0, NB_FONDATEURS).map(p => p.id));
+}
+
+// `extra.star` : id du lauréat du mois (voir starOfMonth) ; `extra.fondateurs` : voir fondateursOf
 export function badgesOf(score, profile, extra = {}) {
   const s = score || { points: 0, offres: 0, recrutes: 0, etranger: 0, mentorats: 0, rapides: 0, meilleures: 0, mercis: 0 };
   return BADGES.filter(b => b.test(s, profile || {}, extra));
