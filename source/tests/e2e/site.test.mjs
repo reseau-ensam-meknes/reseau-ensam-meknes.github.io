@@ -256,6 +256,30 @@ test('lien d’invitation d’une promo : la promo est gardée, l’adresse nett
   await s.ctx.close();
 });
 
+test('partage WhatsApp : le lien direct rouvre l’offre et la question ; l’administration voit où l’inscription s’arrête', async () => {
+  const s = await ouvrir();
+  await s.comme('Salma'); await s.aller('offres');
+  await s.page.locator('.ocard-main').first().click(); await s.page.waitForSelector('.od h2');
+  const titre = await s.page.locator('.od h2').innerText();
+  const msg = decodeURIComponent((await s.page.getAttribute('#od-partage', 'href')).split('https://wa.me/?text=')[1]);
+  assert.ok(msg.includes(titre), msg);
+  const lien = msg.match(/https?:\/\/\S+#offre\/\S+/)[0];
+  await s.fermer(); await s.aller('accueil');
+  await s.page.goto(lien); await s.page.reload(); await s.page.waitForSelector('.od h2');
+  assert.equal(await s.page.locator('.od h2').innerText(), titre, 'le lien ouvre la même offre');
+  await s.fermer();
+  await s.aller('reseau/entraide'); await s.page.locator('.qrow').first().click(); await s.page.waitForSelector('#q-partage');
+  const q = decodeURIComponent((await s.page.getAttribute('#q-partage', 'href')).split('text=')[1]);
+  assert.match(q, /#reseau\/entraide\/\S+/);
+  await s.comme('Admin'); await s.aller('admin');
+  const parcours = await s.page.locator('#adm-parcours').innerText();
+  assert.match(parcours, /Compte créé[\s\S]*Profil rempli[\s\S]*Première action/);
+  assert.match(parcours, /Le plus grand arrêt|Personne ne s’arrête/);
+  assert.match(await s.page.locator('.kpis').innerText(), /Réponse en 48 h[\s\S]*Actifs cette semaine/i);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('profil : remplir depuis le texte LinkedIn collé', async () => {
   const s = await ouvrir();
   await s.comme('Amine'); await s.aller('profil');
@@ -304,6 +328,9 @@ test('inscription : « Tu es… » bien visible, puis tout se remplit depuis le 
   assert.equal(await s.page.inputValue('#pf-fil'), 'Génie Industriel');
   assert.equal(await s.page.inputValue('#pf-ent'), 'OCP Group');
   assert.equal(await s.page.inputValue('#pf-poste'), 'Ingénieur méthodes');
+  // Inscription courte : le reste (coordonnées comprises, déjà remplies depuis le CV) s'ouvre au besoin
+  assert.equal(await s.page.locator('#pf-tel').count(), 0);
+  await s.page.click('#pf-plus');
   assert.equal(await s.page.inputValue('#pf-tel'), '06 61 22 33 44');
   assert.ok(await s.page.isEnabled('form .row-end .btn.primary'));
   assert.ok((await s.debordement()) <= 0, 'pas de débordement à 390 px');

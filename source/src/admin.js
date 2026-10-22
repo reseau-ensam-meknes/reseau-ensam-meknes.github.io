@@ -4,7 +4,7 @@
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
 import { Icon, Field, Person, Num, Empty, Bar, toast, injectCSS } from './ui.js';
 import { addAR } from './i18n.js';
-import { NIVEAUX, niveauOf, timeAgo, mentorState, cleNom, norm, GUIDE_SECTIONS, pct } from './logic.js';
+import { NIVEAUX, niveauOf, timeAgo, cleNom, norm, GUIDE_SECTIONS, pct, reponses48h, parcoursInscription } from './logic.js';
 import { DefisAdmin } from './saison.js';
 import { AgendaAdmin } from './agenda.js';
 import { InvitationsAdmin } from './invitation.js';
@@ -106,13 +106,15 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
   const week = Date.now() - 7 * 864e5;
   const members = data.profiles.filter(p => p.role !== 'admin');
   const nouveaux = members.filter(p => new Date(p.created_at) > week);
-  const openReq = data.mentorships.filter(m => m.status === 'demande');
-  const rdv = data.mentorships.filter(m => mentorState(m) === 'rdv').length;
   const confirmes = data.placements.filter(p => p.saison === saison && p.status === 'confirme').length;
+  // Le chiffre à suivre : chaque demande d'étudiant a une réponse d'un lauréat en moins de 48 h
+  const r48 = reponses48h(data);
+  const attenteM = r48.attente.filter(d => d.type === 'mentorat'), attenteQ = r48.attente.filter(d => d.type === 'question');
+  const parcours = parcoursInscription(comptes, data);
   const kpis = [
+    ['Réponse en 48 h', r48.taux === null ? '–' : pct(r48.taux), r48.total ? `${r48.a48} demandes d’étudiants sur ${r48.total}, en 30 jours` : 'Pas encore de demande d’étudiant ce mois-ci'],
     ['Membres', members.length, `${members.filter(p => p.role === 'etudiant').length} étudiants · ${members.filter(p => p.role === 'laureat').length} lauréats`],
-    ['Nouveaux cette semaine', nouveaux.length, sansProfil.length ? `+ ${sansProfil.length} sans profil` : 'inscriptions des 7 derniers jours'],
-    ['Demandes d’aide', openReq.length, `en attente · ${rdv} rendez-vous à venir`],
+    ['Actifs cette semaine', parcours.actifs, `${nouveaux.length} nouveau${nouveaux.length > 1 ? 'x' : ''} inscrit${nouveaux.length > 1 ? 's' : ''}${sansProfil.length ? ` · ${sansProfil.length} sans profil` : ''}`],
     ['Recrutés et confirmés', confirmes, 'cette saison, via la plateforme'],
   ];
   const lecturesFausses = (data.retours_cv || []).filter(r => r.status === 'ouvert');
@@ -121,11 +123,15 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
   const todo = [
     ouverts.length ? ['flag', `${ouverts.length} signalement${ouverts.length > 1 ? 's' : ''} à traiter`, 'admin/moderation'] : null,
     toVerify.length ? ['shield', `${toVerify.length} lauréat${toVerify.length > 1 ? 's' : ''} à vérifier`, 'admin/membres'] : null,
+    attenteM.length ? ['clock', attenteM.length > 1 ? `${attenteM.length} demandes d’aide attendent depuis plus de 24 h` : '1 demande d’aide attend depuis plus de 24 h', 'mentorat'] : null,
+    attenteQ.length ? ['qa', attenteQ.length > 1 ? `${attenteQ.length} questions d’étudiants sans réponse depuis plus de 24 h` : '1 question d’étudiant sans réponse depuis plus de 24 h', 'reseau/entraide/' + attenteQ[0].id] : null,
     lecturesFausses.length ? ['file', lecturesFausses.length > 1 ? `${lecturesFausses.length} erreurs de lecture de CV signalées` : '1 erreur de lecture de CV signalée', 'admin/membres'] : null,
   ].filter(Boolean);
   return html`
-    <div class="kpis">${kpis.map(([l, v, sub]) => html`<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-val mono"><${Num} v=${v}/></span><span class="small muted">${sub}</span></div>`)}</div>
+    <div class="kpis">${kpis.map(([l, v, sub]) => html`<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-val mono">${typeof v === 'number' ? html`<${Num} v=${v}/>` : v}</span><span class="small muted">${sub}</span></div>`)}</div>
     ${todo.length ? html`<div class="callout today"><h2 class="h-ico"><${Icon} name="bell"/> À traiter</h2><ul class="todo">${todo.map(([i, t, r]) => html`<li><button class="notif act" onClick=${() => go(r)}><span class="n-ico accent"><${Icon} name=${i} size=${16}/></span><span>${t}</span><${Icon} name="arrow" size=${16}/></button></li>`)}</ul></div>` : null}
+
+    <${ParcoursInscription} p=${parcours}/>
 
     <${AnnonceBox} ctx=${ctx}/>
     <${DefisAdmin} ctx=${ctx}/>
@@ -141,6 +147,24 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
         ${o.status !== 'ouverte' ? html`<span class="tag done">${o.status === 'pourvue' ? 'Pourvue' : 'Fermée'}</span>` : null}
         <button class="btn tiny ghost" onClick=${() => act(() => store.update('offers', o.id, { status: o.status === 'ouverte' ? 'fermee' : 'ouverte' }))}>${o.status === 'ouverte' ? 'Masquer' : 'Rouvrir'}</button>
         <button class="btn tiny ghost danger-t" onClick=${() => ctx.confirm('Supprimer cette offre ?', () => act(() => store.remove('offers', o.id)))}>Supprimer</button></li>`)}</ul></div>`;
+}
+
+// Où les inscriptions s'arrêtent : compte créé → profil rempli → première action
+function ParcoursInscription({ p }) {
+  if (!p.comptes) return null;
+  const etapes = [
+    ['Compte créé', p.comptes, 1, null],
+    ['Profil rempli', p.profil, p.profil / p.comptes, `${pct(p.profil / p.comptes)} des comptes`],
+    ['Première action', p.action, p.action / p.comptes, p.profil ? `${pct(p.action / p.profil)} des profils` : null],
+  ];
+  const avant = p.comptes - p.profil, apres = p.profil - p.action;
+  const arret = !avant && !apres ? 'Personne ne s’arrête en route pour l’instant.'
+    : avant >= apres ? `Le plus grand arrêt : avant le profil (${avant} compte${avant > 1 ? 's' : ''}).`
+    : `Le plus grand arrêt : après le profil, avant la première action (${apres} membre${apres > 1 ? 's' : ''}).`;
+  return html`<div class="panel" id="adm-parcours"><div class="section-head"><h2 class="h-ico"><${Icon} name="people"/> Inscriptions : où les gens s’arrêtent</h2></div>
+    <ol class="parcours">${etapes.map(([l, n, v, sub]) => html`<li key=${l}><span class="parcours-l">${l}</span><${Bar} value=${v}/><span class="mono strong">${n}</span>${sub ? html`<span class="small muted">${sub}</span>` : html`<span></span>`}</li>`)}</ol>
+    <p class="small"><strong>${arret}</strong> <span class="muted">Première action : publier, répondre, demander ou donner de l’aide, postuler, réagir. Un rappel par email part tout seul aux comptes restés sans profil 24 h après l’inscription.</span></p>
+  </div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -684,6 +708,10 @@ injectCSS('admin', `
 .verif-facts { display: flex; flex-direction: column; gap: .15rem; min-width: 0; padding-inline-start: calc(36px + .6rem); }
 .verif-facts > span { display: inline-flex; align-items: center; gap: .3rem; flex-wrap: wrap; }
 .good-t { color: var(--good); } .warn-t { color: var(--warn); }
+.parcours { list-style: none; margin: 0 0 .6rem; padding: 0; display: grid; grid-template-columns: auto minmax(60px, 1fr) auto auto; gap: .5rem .8rem; align-items: center; }
+.parcours li { display: contents; }
+.parcours .parcours-l { font-weight: 600; font-size: .9rem; }
+@media (max-width: 520px) { .parcours { grid-template-columns: auto minmax(40px, 1fr) auto; } .parcours li > :last-child { display: none; } }
 .good-box { background: var(--good-soft); color: var(--good); }
 .file-btn { position: relative; overflow: hidden; align-self: flex-start; }
 .file-btn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }

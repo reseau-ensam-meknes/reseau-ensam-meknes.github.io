@@ -2165,6 +2165,7 @@ begin
   perform public.attribuer_parrains();
   perform public.appeler_notifier('resume');
   perform public.appeler_notifier('enquetes');
+  perform public.appeler_notifier('relances');
 end $$;
 revoke all on function public.taches_quotidiennes() from public, anon, authenticated;
 
@@ -3066,6 +3067,46 @@ do $$ begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime')
      and not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='retours_cv') then
     alter publication supabase_realtime add table public.retours_cv;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Rappel d'inscription : un seul email, aux comptes créés depuis plus de 24 h sans profil
+-- (envoyé par la tâche quotidienne ; on garde seulement la date d'envoi)
+-- ---------------------------------------------------------------------
+create table if not exists public.relances_inscription (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  envoye_at timestamptz not null default now()
+);
+alter table public.relances_inscription enable row level security;
+revoke all on public.relances_inscription from anon, authenticated;
+
+create or replace function public.comptes_a_relancer(p_max int default 100)
+returns table (id uuid, email text, langue text)
+language sql stable security definer set search_path = public as $$
+  select u.id, u.email::text, case when u.raw_user_meta_data->>'langue' = 'ar' then 'ar' else 'fr' end
+  from auth.users u
+  where u.email is not null
+    and u.created_at < now() - interval '24 hours' and u.created_at > now() - interval '30 days'
+    and not exists (select 1 from public.profiles p where p.id = u.id)
+    and not exists (select 1 from public.relances_inscription r where r.user_id = u.id)
+  order by u.created_at
+  limit greatest(0, least(p_max, 200));
+$$;
+revoke all on function public.comptes_a_relancer(int) from public, anon, authenticated;
+
+create or replace function public.relances_envoyees(p_ids uuid[]) returns void
+language sql security definer set search_path = public as $$
+  insert into public.relances_inscription (user_id)
+    select u.id from auth.users u where u.id = any(p_ids)
+  on conflict (user_id) do nothing;
+$$;
+revoke all on function public.relances_envoyees(uuid[]) from public, anon, authenticated;
+
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.comptes_a_relancer(int) to service_role;
+    grant execute on function public.relances_envoyees(uuid[]) to service_role;
   end if;
 end $$;
 

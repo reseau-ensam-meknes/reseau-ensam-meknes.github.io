@@ -456,6 +456,7 @@ function Home(ctx) {
   const pas = prochainPas({ ...ctx, openNotif }, notifs, prochaine);
   // « Quand tu as 5 minutes » : trois petites choses au plus, sans la prochaine étape déjà en haut
   const actions = notifs.filter(x => x.action && !x.rdv && !/^(md|eq|dc)/.test(x.key || '') && !(isStudent && x.icon === 'briefcase') && x.key !== pas.key).slice(0, 3);
+  const dernieres = data.offers.filter(o => o.status === 'ouverte').sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 2);
   const star = ctx.star;
   const starHelped = star ? data.placements.filter(p => p.laureat_id === star.p.id && p.status === 'confirme').length : 0;
   const merci = [
@@ -480,6 +481,8 @@ function Home(ctx) {
     return () => clearTimeout(t);
   }, [fondateur]);
 
+  // Trois blocs : ta prochaine action en haut, puis « Pour toi », puis une réussite ; le reste du réseau sous « Plus du réseau ».
+  // Un bloc vide (réseau encore petit) disparaît avec son titre.
   return html`<section class="page home">
     <header class="hello home-hero sky">
       <div class="hello-txt">
@@ -490,62 +493,67 @@ function Home(ctx) {
       <${SchoolScene} align=${getLang() === 'ar' ? 'xMinYMax' : 'xMaxYMax'}/>
     </header>
 
-    ${isStudent && stu.pl?.status === 'en_attente' ? html`<${ConfirmRecruit} ctx=${ctx} pl=${stu.pl} helper=${helper}/>` : html`<${Focus} ctx=${ctx} pas=${pas}/>`}
-    <${PoulsReseau} ctx=${ctx} onOpen=${() => go(isLaureat ? 'mentorat' : 'reseau')}/>
-
     <${AnnonceBanner} ctx=${ctx}/>
-    <${TonAnneeStrip} ctx=${ctx} onOpen=${ctx.openAnnee}/>
-    <${EnqueteCard} ctx=${ctx}/>
-    ${pas.type === 'rdv' ? null : html`<${NextRdv} ctx=${ctx}/>`}
-    ${pas.message ? null : html`<${MessagesHome} ctx=${ctx}/>`}
-    <${ConfianceHome} ctx=${ctx}/>
-
+    ${isStudent && stu.pl?.status === 'en_attente' ? html`<${ConfirmRecruit} ctx=${ctx} pl=${stu.pl} helper=${helper}/>` : html`<${Focus} ctx=${ctx} pas=${pas}/>`}
     ${actions.length ? html`<div class="petits"><h2 class="h-sec">${isLaureat ? 'Quand tu as 5 minutes' : 'Pour avancer'}</h2><ul class="todo">${actions.map(a => html`<li><button class="notif act" onClick=${() => openNotif(a)}><span class=${'n-ico ' + (a.tone || '')}><${Icon} name=${a.icon} size=${16}/></span><span>${a.text}</span><${Icon} name="arrow" size=${16}/></button></li>`)}</ul></div>` : null}
-
     <${Guide} ctx=${ctx} g=${guide}/>
+    <${EnqueteCard} ctx=${ctx}/>
 
     <div class="home-grid">
-      <div class="home-main">
+      <div class="home-main bloc">
         <h2 class="h-sec">Pour toi</h2>
+        <div class="bloc-corps">
+        ${pas.type === 'rdv' ? null : html`<${NextRdv} ctx=${ctx}/>`}
+        ${pas.message ? null : html`<${MessagesHome} ctx=${ctx}/>`}
+        <${ConfianceHome} ctx=${ctx}/>
         ${isStudent && obj ? html`<button class=${'objective compact clickable st-' + stu.key} onClick=${() => go('parcours')}>
           <div class="objective-top"><span class="obj-ico"><${Icon} name="route" size=${22}/></span>
             <div class="objective-main"><p class="eyebrow">Mon objectif de l’année</p><h2>${obj.titre}</h2></div>
             <span class=${'state-pill s-' + stu.key}>${stu.label}</span></div>
           <${Journey} step=${journeyStep(stu, myApps)}/>
         </button>` : null}
+        <${TonAnneeStrip} ctx=${ctx} onOpen=${ctx.openAnnee}/>
         <${ParrainCard} ctx=${ctx}/>
         <${HelpNeeded} ctx=${ctx} max=${1} compact/>
         <${RelecturesHome} ctx=${ctx}/>
         <${AlerteTalents} ctx=${ctx}/>
-        ${isStudent ? html`<${RecoOffers} ctx=${ctx} max=${2}/>` : html`<div class="section-head"><h3>Dernières offres</h3><button class="btn tiny ghost" onClick=${() => go('offres')}>Tout voir <${Icon} name="arrow" size=${14}/></button></div>
-          <div class="offer-grid one">${data.offers.filter(o => o.status === 'ouverte').sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 2).map(o => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} onOpen=${() => openOffer(o.id)}/>`)}</div>`}
+        ${isStudent ? html`<${RecoOffers} ctx=${ctx} max=${2}/>` : dernieres.length ? html`<div class="section-head"><h3>Dernières offres</h3><button class="btn tiny ghost" onClick=${() => go('offres')}>Tout voir <${Icon} name="arrow" size=${14}/></button></div>
+          <div class="offer-grid one">${dernieres.map(o => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} onOpen=${() => openOffer(o.id)}/>`)}</div>` : null}
         ${isStudent && !asking ? html`<div class="help-cta"><span class="obj-ico"><${Icon} name="mentor" size=${22}/></span>
           <div class="grow"><strong>Besoin d’un conseil ?</strong><span class="small muted">CV, stage, entretien, étranger : un lauréat te parle 20 minutes en visio.</span></div>
           <button class="btn small" onClick=${() => go('mentorat')}>Demander de l’aide</button></div>` : null}
         <${NudgeAvis} ctx=${ctx}/>
         <${DevenirParrain} ctx=${ctx}/>
-        ${isLaureat && s && s.points ? html`<button class="impact-strip clickable" onClick=${() => go('espace')}><span class="obj-ico brass"><${Icon} name="heart" size=${20}/></span><span>${s.recrutes + s.mentorats > 1 ? `Tu as aidé ${s.recrutes + s.mentorats} étudiants` : s.recrutes + s.mentorats === 1 ? 'Tu as aidé 1 étudiant' : 'Ton espace et tes mercis'}</span><span class="spacer"></span><${LevelChip} points=${s.points}/><${Icon} name="arrow" size=${18}/></button>` : null}
+        </div>
       </div>
       <div class="home-side">
-        <h2 class="h-sec">Dans le réseau</h2>
-        ${merci ? html`<div class="panel merci-une"><p class="eyebrow"><${Icon} name="heart" size=${13}/> Un merci récent</p>
-          <blockquote class="merci"><p translate="no" dir="auto">« ${merci.txt} »</p><footer><span class="small"><span translate="no">${store.byId('profiles', merci.from)?.full_name?.split(' ')[0] || 'Un étudiant'}</span> → <button class="linkish" translate="no" onClick=${() => openProfile(store.byId('profiles', merci.to))}>${store.byId('profiles', merci.to)?.full_name}</button></span></footer></blockquote></div>` : null}
-        <${NextEvent} ctx=${ctx}/>
-        <${SuccessFeed} ctx=${ctx} max=${3}/>
-        ${isStudent ? html`<${NextCafe} ctx=${ctx}/>` : html`<button type="button" class="btn ghost plus-reseau" aria-expanded=${plus} onClick=${() => setPlus(!plus)}>${plus ? 'Moins' : 'Plus du réseau'} <${Icon} name=${plus ? 'x' : 'plus'} size=${15}/></button>`}
-        <div class=${'en-plus' + (plus ? ' ouvert' : '')}>
-        ${!isStudent ? html`<${NextCafe} ctx=${ctx}/>` : null}
-        ${!isStudent ? html`<${DefisPanel} ctx=${ctx}/>` : null}
-        ${!isStudent && star && star.pts ? html`<div class="panel star">
-          <p class="eyebrow"><${Icon} name="trophy" size=${14}/> Lauréat du mois</p>
-          <${Person} p=${star.p} score=${scores.get(star.p.id)} onOpen=${openProfile} size=${48}/>
-          <p class="small">${starHelped > 1 ? `${starHelped} étudiants recrutés grâce à ses offres. Merci !` : starHelped === 1 ? '1 étudiant recruté grâce à ses offres. Merci !' : 'Merci pour son aide ce mois-ci.'}</p>
-        </div>` : null}
-        ${!isStudent ? html`<button class="panel pulse clickable" onClick=${() => go('suivi')}>
-          <div class="section-head"><h3>L’école en ce moment</h3><${Icon} name="arrow" size=${16}/></div>
-          ${st.rows.map(r => html`<div class="pulse-row"><span class="niv-badge">${NIVEAUX[r.n].short}</span><div class="pulse-bar"><div class="row small"><span>${r.objectif.court}</span><span class="spacer"></span><span class="mono">${pct(r.rate)}</span></div><${Bar} value=${r.rate}/></div></div>`)}
-          <p class="small muted">${st.viaTotal > 1 ? `${st.viaTotal} réussites vérifiées grâce aux lauréats cette saison.` : st.viaTotal === 1 ? '1 réussite vérifiée grâce aux lauréats cette saison.' : 'Les premières réussites de la saison arrivent.'}</p>
-        </button>` : null}
+        <div class="bloc">
+          <h2 class="h-sec">Une réussite</h2>
+          <div class="bloc-corps">
+          ${merci ? html`<div class="panel merci-une"><p class="eyebrow"><${Icon} name="heart" size=${13}/> Un merci récent</p>
+            <blockquote class="merci"><p translate="no" dir="auto">« ${merci.txt} »</p><footer><span class="small"><span translate="no">${store.byId('profiles', merci.from)?.full_name?.split(' ')[0] || 'Un étudiant'}</span> → <button class="linkish" translate="no" onClick=${() => openProfile(store.byId('profiles', merci.to))}>${store.byId('profiles', merci.to)?.full_name}</button></span></footer></blockquote></div>` : html`<${SuccessFeed} ctx=${ctx} max=${1}/>`}
+          <${PoulsReseau} ctx=${ctx} onOpen=${() => go(isLaureat ? 'mentorat' : 'reseau')}/>
+          ${isLaureat && s && s.recrutes + s.mentorats ? html`<button class="impact-strip clickable" onClick=${() => go('espace')}><span class="obj-ico brass"><${Icon} name="heart" size=${20}/></span><span>${s.recrutes + s.mentorats > 1 ? `Tu as aidé ${s.recrutes + s.mentorats} étudiants` : 'Tu as aidé 1 étudiant'}</span><span class="spacer"></span><${LevelChip} points=${s.points}/><${Icon} name="arrow" size=${18}/></button>` : null}
+          </div>
+        </div>
+        <div class=${'bloc plus' + (plus ? ' ouvert' : '')}>
+          <button type="button" class="btn ghost plus-reseau" aria-expanded=${plus} onClick=${() => setPlus(!plus)}>${plus ? 'Moins' : 'Plus du réseau'} <${Icon} name=${plus ? 'x' : 'plus'} size=${15}/></button>
+          <div class="en-plus bloc-corps">
+          <${NextEvent} ctx=${ctx}/>
+          <${NextCafe} ctx=${ctx}/>
+          ${merci ? html`<${SuccessFeed} ctx=${ctx} max=${2}/>` : null}
+          ${!isStudent ? html`<${DefisPanel} ctx=${ctx}/>` : null}
+          ${!isStudent && star && star.pts ? html`<div class="panel star">
+            <p class="eyebrow"><${Icon} name="trophy" size=${14}/> Lauréat du mois</p>
+            <${Person} p=${star.p} score=${scores.get(star.p.id)} onOpen=${openProfile} size=${48}/>
+            <p class="small">${starHelped > 1 ? `${starHelped} étudiants recrutés grâce à ses offres. Merci !` : starHelped === 1 ? '1 étudiant recruté grâce à ses offres. Merci !' : 'Merci pour son aide ce mois-ci.'}</p>
+          </div>` : null}
+          ${!isStudent && st.viaTotal ? html`<button class="panel pulse clickable" onClick=${() => go('suivi')}>
+            <div class="section-head"><h3>L’école en ce moment</h3><${Icon} name="arrow" size=${16}/></div>
+            ${st.rows.map(r => html`<div class="pulse-row"><span class="niv-badge">${NIVEAUX[r.n].short}</span><div class="pulse-bar"><div class="row small"><span>${r.objectif.court}</span><span class="spacer"></span><span class="mono">${pct(r.rate)}</span></div><${Bar} value=${r.rate}/></div></div>`)}
+            <p class="small muted">${st.viaTotal > 1 ? `${st.viaTotal} réussites vérifiées grâce aux lauréats cette saison.` : '1 réussite vérifiée grâce aux lauréats cette saison.'}</p>
+          </button>` : null}
+          </div>
         </div>
       </div>
     </div>

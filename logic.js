@@ -329,6 +329,46 @@ export function mentorState(m, now = new Date()) {
   if (m.status === 'acceptee') return m.rdv_at && new Date(m.rdv_at).getTime() + RDV_MIN * 6e4 < now.getTime() ? 'apres' : 'rdv';
   return m.status;
 }
+// Le chiffre des 30 premiers jours : les demandes d'étudiants (aide d'un lauréat, questions) qui ont une réponse en 48 h.
+// Sur 30 jours ; une demande de moins de 48 h encore sans réponse ne compte pas encore. « attente » : sans réponse depuis plus de 24 h.
+export function reponses48h(data, now = new Date()) {
+  const t = now.getTime(), H = 36e5, role = id => (data.profiles || []).find(p => p.id === id)?.role;
+  const demandes = [
+    ...(data.mentorships || []).filter(m => m.status !== 'annulee' && role(m.student_id) === 'etudiant')
+      .map(m => ({ type: 'mentorat', id: m.id, titre: m.sujet, at: new Date(m.created_at).getTime(), rep: m.accepted_at ? new Date(m.accepted_at).getTime() : null, close: m.status === 'refusee' })),
+    ...(data.questions || []).filter(q => role(q.author_id) === 'etudiant').map(q => {
+      const r = (data.answers || []).filter(a => a.question_id === q.id && a.author_id !== q.author_id).map(a => new Date(a.created_at).getTime());
+      return { type: 'question', id: q.id, titre: q.titre, at: new Date(q.created_at).getTime(), rep: r.length ? Math.min(...r) : null, close: false };
+    }),
+  ].filter(d => t - d.at <= 30 * 24 * H);
+  const comptees = demandes.filter(d => d.rep !== null || t - d.at >= 48 * H);
+  const a48 = comptees.filter(d => d.rep !== null && d.rep - d.at <= 48 * H).length;
+  const attente = demandes.filter(d => d.rep === null && !d.close && t - d.at > 24 * H).sort((a, b) => a.at - b.at);
+  return { total: comptees.length, a48, taux: comptees.length ? a48 / comptees.length : null, attente };
+}
+
+// Ce qui compte comme une action : publier, commenter, réagir, postuler, demander ou donner de l'aide, répondre…
+const ACTIONS = [['offers', 'author_id'], ['comments', 'author_id'], ['reactions', 'user_id'], ['applications', 'student_id'], ['mentorships', 'student_id'],
+  ['questions', 'author_id'], ['answers', 'author_id'], ['votes', 'user_id'], ['kudos', 'user_id'], ['placements', 'laureat_id'], ['groupe_messages', 'author_id'],
+  ['relectures_cv', 'student_id'], ['avis_stage', 'author_id'], ['entretiens', 'author_id'], ['cafes', 'organisateur_id']];
+// La dernière action de chaque membre (id → date en ms)
+export function dernieresActions(data) {
+  const m = new Map();
+  const noter = (id, at) => { const t = at ? new Date(at).getTime() : NaN; if (id && t > (m.get(id) || 0)) m.set(id, t); };
+  for (const [table, col] of ACTIONS) for (const r of data[table] || []) noter(r[col], r.created_at);
+  for (const r of data.mentorships || []) if (r.mentor_id && r.accepted_at) noter(r.mentor_id, r.accepted_at);
+  return m;
+}
+// Où les inscriptions s'arrêtent : compte créé → profil rempli → première action ; et qui a agi cette semaine
+export function parcoursInscription(comptes, data, now = new Date()) {
+  const admins = new Set((data.profiles || []).filter(p => p.role === 'admin').map(p => p.id));
+  const liste = (comptes?.length ? comptes : (data.profiles || []).map(p => ({ id: p.id, a_profil: true }))).filter(c => !admins.has(c.id));
+  const actions = dernieresActions(data);
+  const profil = liste.filter(c => c.a_profil).length, action = liste.filter(c => c.a_profil && actions.has(c.id)).length;
+  const semaine = now.getTime() - 7 * 864e5;
+  const actifs = [...actions].filter(([id, t]) => t > semaine && !admins.has(id)).length;
+  return { comptes: liste.length, profil, action, actifs };
+}
 export const futureSlots = (m, now = new Date()) => (m.creneaux || []).filter(c => new Date(c) > now).sort();
 
 export const norm = t => (t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
