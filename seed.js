@@ -194,7 +194,7 @@ export function buildSeed(now = new Date()) {
   const mentors = seniors.filter(s => s.mentor_dispo);
   const at = (days, hh, mm = 0) => { const d = new Date(now); d.setDate(d.getDate() + days); d.setHours(hh, mm, 0, 0); return d.toISOString(); };
   const later = (iso, h) => new Date(Date.parse(iso) + h * 36e5).toISOString();
-  const ms = o => { const m = { id: id('m'), besoin: 'stage', message: '', creneaux: [], rdv_at: null, accepted_at: null, reponse: null, merci: null, note: null, ...o }; mentorships.push(m); return m; };
+  const ms = o => { const m = { id: id('m'), besoin: 'stage', message: '', creneaux: [], rdv_at: null, accepted_at: null, confirme_at: null, reponse: null, merci: null, note: null, ...o }; mentorships.push(m); return m; };
   ms({ student_id: s5[11].id, mentor_id: youssef.id, besoin: 'entretien', sujet: 'Préparer un entretien technique en méthodes', message: 'Bonjour, j’ai un entretien chez un équipementier automobile la semaine prochaine. Pourriez-vous m’aider à me préparer ?', status: 'demande', creneaux: [at(1, 18, 30), at(2, 12, 30), at(3, 19, 0)], created_at: daysAgo(0, 3) });
   ms({ student_id: s4[3].id, mentor_id: youssef.id, besoin: 'stage', sujet: 'Choisir entre deux stages de 4A', message: 'J’hésite entre un stage en qualité et un stage en méthodes.', status: 'terminee', created_at: daysAgo(20), accepted_at: daysAgo(20, 6), rdv_at: daysAgo(18, -8), note: 5, merci: 'Merci pour l’appel, j’ai choisi les méthodes et je ne regrette pas !' });
   ms({ student_id: s5[7].id, mentor_id: youssef.id, besoin: 'cv', sujet: 'Relire mon CV pour l’automobile', status: 'acceptee', created_at: daysAgo(5), accepted_at: daysAgo(4), rdv_at: at(-1, 18, 30) });
@@ -203,7 +203,7 @@ export function buildSeed(now = new Date()) {
     const sujet = pick(['Procédure Campus France', 'Préparer un entretien', 'Choisir mon sujet de PFE', 'Négocier un premier salaire', 'Trouver un stage à l’étranger']);
     const besoin = /France|étranger/.test(sujet) ? 'etranger' : /entretien/.test(sujet) ? 'entretien' : /salaire/.test(sujet) ? 'carriere' : 'stage';
     const created_at = daysAgo(8 + i * 4);
-    ms({ student_id: st.id, mentor_id: m.id, besoin, sujet, status: i % 3 === 0 ? 'acceptee' : 'terminee', created_at, accepted_at: later(created_at, 5 + i % 4 * 9), rdv_at: i % 3 === 0 ? at(3 + i % 5, 18, 30) : later(created_at, 50), note: i % 3 ? 4 + i % 2 : null, merci: i % 3 ? 'Merci beaucoup pour vos conseils !' : null });
+    ms({ student_id: st.id, mentor_id: m.id, besoin, sujet, status: i % 3 === 0 ? 'acceptee' : 'terminee', created_at, accepted_at: later(created_at, 5 + i % 4 * 9), rdv_at: i % 3 === 0 ? at(3 + i % 5, 18, 30) : later(created_at, 50), note: i % 3 ? 4 + i % 2 : null, merci: i % 3 ? 'Merci beaucoup pour vos conseils !' : null, confirme_at: i % 3 === 0 && i % 2 === 0 ? later(created_at, 30) : null });
   });
 
   // Entraide

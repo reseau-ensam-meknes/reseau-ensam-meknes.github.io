@@ -352,6 +352,8 @@ alter table public.mentorships add column if not exists creneaux timestamptz[] n
 alter table public.mentorships add column if not exists rdv_at timestamptz;
 alter table public.mentorships add column if not exists note int check (note between 1 and 5);
 alter table public.mentorships add column if not exists accepted_at timestamptz;
+-- L'étudiant confirme sa présence au rendez-vous fixé (remis à zéro si l'horaire change)
+alter table public.mentorships add column if not exists confirme_at timestamptz;
 alter table public.mentorships drop constraint if exists mentorships_status_check;
 alter table public.mentorships add constraint mentorships_status_check check (status in ('demande','acceptee','terminee','refusee','annulee'));
 create index if not exists mentorships_ouvertes on public.mentorships (created_at) where mentor_id is null and status = 'demande';
@@ -374,7 +376,18 @@ create or replace function public.protect_mentorship() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare v public.mentorships%rowtype; v_role text;
 begin
-  if auth.uid() is null or public.is_admin() then return new; end if;
+  if auth.uid() is null then return new; end if;
+  if public.is_admin() then
+    -- L'administration corrige ce qu'elle veut. Quand elle fixe elle-même un rendez-vous, elle a aussi sa salle de visio.
+    if tg_op = 'UPDATE' and new.status = 'acceptee' and new.rdv_at is not null and new.mentor_id is not null then
+      if old.status = 'demande' then new.accepted_at := coalesce(new.accepted_at, now()); end if;
+      if new.rdv_at is distinct from old.rdv_at then new.confirme_at := null; end if;
+      insert into public.liens_rdv (id, lien)
+        values (old.id, 'https://meet.jit.si/ReseauENSAM-' || substr(md5(gen_random_uuid()::text), 1, 12))
+        on conflict (id) do nothing;
+    end if;
+    return new;
+  end if;
   select role into v_role from public.profiles where id = auth.uid();
   if tg_op = 'INSERT' then
     new.student_id := auth.uid();
@@ -388,7 +401,7 @@ begin
       raise exception 'Tu as déjà 3 demandes en attente. Attends une réponse avant d’en envoyer une autre.';
     end if;
     new.status := 'demande'; new.rdv_at := null; new.reponse := null; new.merci := null; new.note := null;
-    new.accepted_at := null; new.created_at := now();
+    new.accepted_at := null; new.confirme_at := null; new.created_at := now();
     return new;
   end if;
   v := new;
@@ -407,6 +420,7 @@ begin
       if v.rdv_at is null then raise exception 'Choisis l’horaire du rendez-vous.'; end if;
       if v.rdv_at is distinct from old.rdv_at and v.rdv_at < now() then raise exception 'Choisis un moment à venir.'; end if;
       new.status := 'acceptee'; new.rdv_at := v.rdv_at;
+      if v.rdv_at is distinct from old.rdv_at then new.confirme_at := null; end if;
       if old.status = 'demande' then new.accepted_at := now(); end if;
       insert into public.liens_rdv (id, lien)
         values (old.id, 'https://meet.jit.si/ReseauENSAM-' || substr(md5(gen_random_uuid()::text), 1, 12))
@@ -428,10 +442,17 @@ begin
       if v.status = 'annulee' then new.status := 'annulee'; end if;
     elsif old.status = 'acceptee' and v.status in ('terminee','annulee') then
       new.status := v.status;
+    elsif old.status = 'acceptee' and v.confirme_at is not null and old.confirme_at is null then
+      new.confirme_at := now();                              -- « Je serai là »
     end if;
   end if;
   return new;
 end $$;
+-- Rendez-vous fixés sans salle de visio (par l'administration, avant cette mise à jour) : on la crée
+insert into public.liens_rdv (id, lien)
+  select m.id, 'https://meet.jit.si/ReseauENSAM-' || substr(md5(gen_random_uuid()::text), 1, 12)
+  from public.mentorships m where m.status = 'acceptee' and m.rdv_at is not null and m.mentor_id is not null
+  on conflict (id) do nothing;
 drop trigger if exists trg_protect_mentorship on public.mentorships;
 create trigger trg_protect_mentorship before insert or update on public.mentorships
   for each row execute function public.protect_mentorship();
