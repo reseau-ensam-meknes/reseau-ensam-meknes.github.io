@@ -12,7 +12,7 @@ const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe
 
 const SITE = path.resolve(process.env.SITE_DIR || new URL('../../dist', import.meta.url).pathname);
 const TYPES = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
-const ECRANS = ['accueil', 'offres', 'mentorat', 'mentorat/cv', 'messages', 'parcours', 'espace', 'reseau/groupes', 'reseau/agenda', 'reseau/entraide',
+const ECRANS = ['accueil', 'offres', 'offres/demandes', 'mentorat', 'mentorat/cv', 'messages', 'parcours', 'espace', 'reseau/groupes', 'reseau/agenda', 'reseau/entraide',
   'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'reseau/classement', 'reseau/talents', 'suivi', 'profil', 'enquete',
   'confidentialite', 'admin', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda', 'admin/reglages'];
 
@@ -566,6 +566,67 @@ test('administration : son propre CV se dépose dans Mon profil (sans relecture 
   await s.page.waitForSelector('#photo-cv', { timeout: 15000 });
   await s.page.click('#photo-cv-oui');
   await s.page.waitForSelector('.photo-card .avatar img', { timeout: 10000 });
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('demande d’un étudiant : il publie (CV joint), un lauréat propose, match, démarrage confirmé des deux côtés et annoncé', async () => {
+  const s = await ouvrir();
+  const TITRE = 'PFE en lean manufacturing, idéalement à Tanger';
+  const carte = () => s.page.locator('.dm-card', { hasText: TITRE }).first();
+  const fete = () => s.page.locator('.fete-acts .btn').last().click({ timeout: 2000 }).catch(() => {});
+  // Salma (5A) publie ce qu'elle cherche : son CV est déjà dans son profil
+  await s.comme('Salma'); await s.aller('accueil');
+  assert.match(await s.page.locator('.dm-cta').innerText(), /Dis aux lauréats ce que tu cherches/);
+  await s.aller('offres/demandes');
+  await s.page.click('#dm-nouvelle'); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator('.dm-form [role="radio"]').count(), 3, '5A : PFE, étranger ou emploi');
+  await s.page.click('#dm-type-pfe');
+  assert.ok(await s.page.locator('#dm-publier').isDisabled(), 'pas de publication sans description');
+  await s.page.fill('#dm-titre', TITRE);
+  await s.page.fill('#dm-details', 'Je cherche un PFE de 6 mois en lean : VSM, SMED, chantiers 5S. Mobile à Tanger et Kénitra.');
+  await s.page.fill('#dm-lieu', 'Tanger');
+  await s.page.click('#dm-publier'); await s.page.waitForTimeout(400); await fete();
+  assert.match(await carte().innerText(), /Ouverte/);
+  assert.match(await carte().innerText(), /Les lauréats de ton parcours sont prévenus/);
+  // Youssef la trouve (autre parcours : « Toutes les filières »), voit le CV, propose d'encadrer
+  await s.comme('Youssef'); await s.aller('offres/demandes');
+  if (!(await carte().count())) await s.page.click('button:has-text("Toutes les filières")');
+  assert.equal(await carte().locator('button:has-text("Voir le CV")').count(), 1, 'le CV joint est visible');
+  await carte().locator('.dm-aider').click(); await s.page.waitForTimeout(200);
+  await s.page.click('.dm-aide-choix:has(#dm-aide-encadre)');
+  assert.equal(await s.page.inputValue('#dm-p-ent'), 'Renault Group Maroc');
+  await s.page.fill('#dm-p-msg', 'Bonjour Salma, j’ai un sujet de PFE lean dans mon équipe à Tanger. Je serai ton encadrant.');
+  await s.page.click('#dm-p-envoyer'); await s.page.waitForTimeout(400);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Proposition envoyée/);
+  assert.match(await carte().innerText(), /Ton aide est envoyée/);
+  // Salma : sa prochaine étape, le mot dans ses messages ; elle accepte : c'est un match
+  await s.comme('Salma'); await s.aller('accueil');
+  assert.match(await s.page.locator('.page').innerText(), /Youssef El Amrani te propose son aide : PFE en lean manufacturing/);
+  await s.aller('messages');
+  assert.match(await s.page.locator('main').first().innerText(), /j’ai un sujet de PFE lean dans mon équipe/);
+  await s.aller('offres/demandes');
+  assert.match(await carte().locator('.dm-prop').innerText(), /Encadre/);
+  await carte().locator('.dm-accepter').click(); await s.page.click('.modal .btn.danger'); await s.page.waitForTimeout(400); await fete();
+  assert.match(await carte().innerText(), /C’est un match/i);
+  // Youssef déclare le démarrage ; Salma confirme : demande réussie, annoncée « encadré(e) par »
+  await s.comme('Youssef'); await s.aller('offres/demandes');
+  assert.match(await s.page.locator('.m-section', { hasText: 'Mes aides en cours' }).innerText(), new RegExp(TITRE));
+  await carte().locator('.dm-demarre').click(); await s.page.waitForTimeout(200);
+  await s.page.click('#dm-pl-ok'); await s.page.waitForTimeout(400);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Salma doit maintenant confirmer/);
+  assert.match(await carte().innerText(), /En attente de la confirmation de Salma/);
+  await s.comme('Salma'); await s.aller('offres/demandes');
+  assert.match(await carte().innerText(), /Youssef indique que tu as commencé chez Renault Group Maroc/);
+  await carte().locator('.dm-confirmer').click(); await s.page.waitForTimeout(400); await fete();
+  await s.aller('offres/demandes');
+  assert.match(await carte().innerText(), /Réussie/);
+  await s.aller('suivi');
+  assert.match(await s.page.locator('.wins').first().innerText(), /Salma Bennani a décroché son PFE chez Renault Group Maroc encadré\(e\) par Youssef El Amrani/);
+  // L'administration voit les demandes en cours
+  await s.comme('Admin'); await s.aller('offres/demandes');
+  assert.match(await s.page.locator('.dm-page').innerText(), /ouvertes · \d+ en match · \d+ réussies/);
+  assert.ok((await s.debordement()) <= 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });

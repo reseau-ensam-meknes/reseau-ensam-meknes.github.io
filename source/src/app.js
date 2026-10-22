@@ -3,7 +3,7 @@ import { getLang, setLang, chargerAR } from './i18n.js';
 import { html, render, useState, useEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore } from './store.js';
 import { Icon, Field, Empty, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, Num, useLocal, Celebration, celebrate, voirRangs, brancherPhotos } from './ui.js';
-import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch } from './logic.js';
+import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
 import { ParcoursPage, EspacePage, ConfirmRecruit, Journey, journeyStep } from './me.js';
 import { DashboardPage } from './dashboard.js';
@@ -26,6 +26,7 @@ import { NextEvent } from './agenda.js';
 import { lireInvitation, promoInvitee, roleDePromo } from './invitation.js';
 import { MessagesPage, MessagesHome, useAlerteMessages } from './messages.js';
 import { PoulsReseau } from './pouls.js';
+import { DemandesHome } from './demandes.js';
 
 const ROUTES = ['accueil', 'offres', 'mentorat', 'messages', 'parcours', 'espace', 'reseau', 'suivi', 'profil', 'admin', 'verifier', 'confidentialite', 'desabo', 'enquete', 'offre'];
 const ALIASES = { impact: 'espace', tableau: 'suivi', communaute: 'reseau', entraide: 'reseau/entraide', groupes: 'reseau/groupes', sujets: 'offres/sujets', 'reseau/mentorat': 'mentorat', 'reseau/mentorat/rdv': 'mentorat', agenda: 'reseau/agenda', entreprises: 'reseau/entreprises', etranger: 'reseau/etranger', relecture: 'mentorat/cv', cv: 'mentorat/cv', moderation: 'admin/moderation', message: 'messages', chat: 'messages' };
@@ -271,7 +272,7 @@ function buildNotifs({ data, me, store, saison }) {
   // Étudiant : recrutement à confirmer, évolution des candidatures, nouvelles offres
   for (const p of data.placements) {
     if (p.student_id !== me.id) continue;
-    if (p.status === 'en_attente') out.push({ key: 'pa' + p.id, action: true, mine: true, tone: 'accent', icon: 'briefcase', to: 'parcours', at: p.created_at, text: `${name(p.laureat_id)} indique t’avoir recruté(e) chez ${p.entreprise}. Confirme-le.` });
+    if (p.status === 'en_attente') out.push({ key: 'pa' + p.id, action: true, mine: true, tone: 'accent', icon: 'briefcase', to: 'parcours', at: p.created_at, text: p.demande_id ? `${name(p.laureat_id)} indique que tu as commencé chez ${p.entreprise}. Confirme-le.` : `${name(p.laureat_id)} indique t’avoir recruté(e) chez ${p.entreprise}. Confirme-le.` });
     if (p.status === 'confirme' && p.laureat_id && !p.merci) out.push({ action: true, mine: true, tone: 'brass', icon: 'heart', to: 'parcours', at: p.confirmed_at || p.created_at, text: `Ta réussite chez ${p.entreprise} est confirmée. Laisse un merci à ${first(p.laureat_id)}.` });
   }
   for (const a of data.applications) if (a.student_id === me.id && a.offer_id && a.status !== 'postule' && recent(a.updated_at || a.created_at, 21)) {
@@ -283,7 +284,7 @@ function buildNotifs({ data, me, store, saison }) {
   // Lauréat : candidatures reçues, confirmations, commentaires
   const myOffers = new Map(data.offers.filter(o => o.author_id === me.id).map(o => [o.id, o]));
   for (const a of data.applications) if (myOffers.has(a.offer_id) && a.status === 'postule') out.push({ key: 'ap' + a.id, action: true, mine: true, tone: 'accent', icon: 'inbox', offer: a.offer_id, at: a.created_at, text: `Nouvelle candidature de ${name(a.student_id)} : ${myOffers.get(a.offer_id).titre}` });
-  for (const p of data.placements) if (p.laureat_id === me.id && p.status === 'confirme' && recent(p.confirmed_at || p.created_at, 30)) out.push({ key: 'pc' + p.id, icon: 'trophy', tone: 'brass', to: 'espace', at: p.confirmed_at || p.created_at, text: `${name(p.student_id)} a confirmé son recrutement chez ${p.entreprise}. +50 points${p.merci ? ' et un merci' : ''}.` });
+  for (const p of data.placements) if (p.laureat_id === me.id && p.status === 'confirme' && recent(p.confirmed_at || p.created_at, 30)) out.push({ key: 'pc' + p.id, icon: 'trophy', tone: 'brass', to: 'espace', at: p.confirmed_at || p.created_at, text: `${name(p.student_id)} a confirmé son ${p.demande_id ? 'démarrage' : 'recrutement'} chez ${p.entreprise}. +50 points${p.merci ? ' et un merci' : ''}.` });
   for (const c of data.comments) if (myOffers.has(c.offer_id) && c.author_id !== me.id && recent(c.created_at, 14)) out.push({ icon: 'comment', offer: c.offer_id, at: c.created_at, text: `${name(c.author_id)} a posé une question sur ton offre : « ${c.body.slice(0, 60)}${c.body.length > 60 ? '…' : ''} »` });
   // Mentorat : demande reçue, horaire choisi, rendez-vous proche, puis merci
   for (const m of data.mentorships) {
@@ -317,6 +318,20 @@ function buildNotifs({ data, me, store, saison }) {
   for (const i of data.invitations) if (i.student_id === me.id && i.status === 'envoyee' && !data.applications.some(a => a.offer_id === i.offer_id && a.student_id === me.id)) {
     const o = store.byId('offers', i.offer_id);
     if (o && o.status === 'ouverte') out.push({ key: 'in' + i.id, action: true, mine: true, tone: 'accent', icon: 'send', offer: o.id, at: i.created_at, text: `${name(i.laureat_id)} t’invite à postuler : ${o.titre}` });
+  }
+  // Demandes des étudiants : aides reçues, match à faire avancer, demande en pause, nouvelles demandes de son parcours
+  const dem = id => store.byId('demandes', id);
+  const demarre = d => data.placements.some(p => p.demande_id === d.id && p.status !== 'refuse');
+  for (const x of data.propositions || []) {
+    const d = dem(x.demande_id); if (!d) continue;
+    if (d.auteur_id === me.id && x.status === 'envoyee' && d.status === 'ouverte') out.push({ key: 'dp' + x.id, action: true, mine: true, tone: 'accent', icon: 'send', to: 'offres/demandes/' + d.id, at: x.created_at, text: `${name(x.laureat_id)} te propose son aide : ${d.titre}` });
+    if (d.auteur_id === me.id && x.status === 'retiree' && d.status === 'ouverte' && recent(x.repondu_at || x.created_at, 7)) out.push({ key: 'dw' + x.id, icon: 'send', to: 'offres/demandes/' + d.id, at: x.repondu_at || x.created_at, text: `${name(x.laureat_id)} s’est retiré(e). Ta demande est de nouveau ouverte aux lauréats.` });
+    if (x.laureat_id === me.id && x.status === 'acceptee' && d.status === 'match' && !demarre(d)) out.push({ key: 'dm' + x.id, action: true, tone: 'accent', icon: 'heart', to: 'offres/demandes/' + d.id, at: x.repondu_at || x.created_at, text: `C’est un match avec ${name(d.auteur_id)} : déclare son démarrage dès qu’il a lieu.` });
+    if (x.laureat_id === me.id && ['declinee', 'close'].includes(x.status) && recent(x.repondu_at || x.created_at, 7)) out.push({ key: 'dx' + x.id + x.status, icon: 'heart', to: 'offres/demandes/' + d.id, at: x.repondu_at || x.created_at, text: `${first(d.auteur_id)} a choisi une autre voie pour « ${d.titre} ». Merci d’avoir proposé ton aide !` });
+  }
+  for (const d of data.demandes || []) if (d.auteur_id === me.id && demandeEnPause(d)) out.push({ key: 'dr' + d.id, action: true, mine: true, icon: 'clock', to: 'offres/demandes/' + d.id, at: d.relancee_at || d.created_at, text: `Ta demande « ${d.titre} » est en pause. Relance-la si tu cherches toujours.` });
+  if (me.role === 'laureat') for (const { d } of demandesPour(data, me, id => store.byId('profiles', id)).filter(x => !x.mienne && x.prox >= 1 && recent(x.d.created_at, 4)).slice(0, 2)) {
+    out.push({ key: 'dn' + d.id, tone: 'accent', icon: 'send', to: 'offres/demandes/' + d.id, at: d.created_at, text: `${name(d.auteur_id)} cherche : ${d.titre}` });
   }
   // Bravos reçus sur sa réussite
   for (const p of data.placements) if (p.student_id === me.id && FOUND.has(p.status)) {
@@ -523,6 +538,7 @@ function Home(ctx) {
         <${HelpNeeded} ctx=${ctx} max=${1} compact/>
         <${RelecturesHome} ctx=${ctx}/>
         <${AlerteTalents} ctx=${ctx}/>
+        <${DemandesHome} ctx=${ctx}/>
         ${isStudent ? html`<${RecoOffers} ctx=${ctx} max=${2}/>` : dernieres.length ? html`<div class="section-head"><h3>${enRecherche ? 'Offres pour toi' : 'Dernières offres'}</h3><button class="btn tiny ghost" onClick=${() => go('offres')}>Tout voir <${Icon} name="arrow" size=${14}/></button></div>
           <div class="offer-grid one">${dernieres.map(o => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} onOpen=${() => openOffer(o.id)}/>`)}</div>` : null}
         ${isStudent && !asking ? html`<div class="help-cta"><span class="obj-ico"><${Icon} name="mentor" size=${22}/></span>
