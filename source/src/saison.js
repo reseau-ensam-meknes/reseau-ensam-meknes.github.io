@@ -3,7 +3,7 @@ import { html, useState, useMemo, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Bar, Num, toast, useLocal } from './ui.js';
 import { getLang, t as tr } from './i18n.js';
 import { MessageBtn } from './messages.js';
-import { MESURES, defiProgress, activeDefis, coupeDesPromos, computeScores, tonAnnee, niveauOf, seasonLabel, NIVEAUX } from './logic.js';
+import { MESURES, defiProgress, activeDefis, coupeDesPromos, computeScores, tonAnnee, niveauOf, seasonLabel, NIVEAUX, proximiteFiliere } from './logic.js';
 
 const NIV_OPTS = [['', 'Tous les niveaux'], [3, '3A'], [4, '4A'], [5, '5A'], [6, 'Jeunes diplômés']];
 const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -113,9 +113,9 @@ export function DevenirParrain({ ctx }) {
   const { me, store, act, data, saison } = ctx;
   const [off, setOff] = useLocal('parrain-off-' + me.id, false);
   if (me.role !== 'laureat' || me.parrain_dispo || off) return null;
-  const n3 = data.profiles.filter(p => p.role === 'etudiant' && p.filiere === me.filiere && niveauOf(p, saison) === 3).length;
+  const n3 = data.profiles.filter(p => p.role === 'etudiant' && proximiteFiliere(p.filiere, me.filiere) > 0 && niveauOf(p, saison) === 3).length;
   return html`<div class="help-cta parrain-cta"><span class="obj-ico brass"><${Icon} name="heart" size=${20}/></span>
-    <div class="grow"><strong>Deviens parrain d’un 3A de ta filière</strong><span class="small muted">${n3 ? `${n3} étudiant${n3 > 1 ? 's' : ''} de 3A en ${me.filiere} cette année. ` : ''}Un message de bienvenue, un conseil de temps en temps : trois filleuls au plus.</span></div>
+    <div class="grow"><strong>Deviens parrain d’un 3A de ta filière</strong><span class="small muted">${n3 ? `${n3} étudiant${n3 > 1 ? 's' : ''} de 3A dans ton parcours cette année. ` : ''}Un message de bienvenue, un conseil de temps en temps : trois filleuls au plus.</span></div>
     <button class="btn small primary" onClick=${() => act(async () => { await store.update('profiles', me.id, { parrain_dispo: true }); toast('Merci ! Tes filleuls te sont attribués automatiquement.'); })}>Je deviens parrain</button>
     <button class="icon-btn small" aria-label="Plus tard" onClick=${() => setOff(true)}><${Icon} name="x" size=${15}/></button></div>`;
 }
@@ -129,7 +129,7 @@ export function Filleuls({ ctx }) {
     ${me.parrain_dispo ? html`<button class="btn tiny ghost" onClick=${() => act(async () => { await store.update('profiles', me.id, { parrain_dispo: false }); toast('Tu ne recevras plus de nouveaux filleuls.'); })}>Plus de nouveaux filleuls</button>` : null}</div>
     ${list.length ? html`<ul class="people-list">${list.map(p => html`<li key=${p.id}><${Person} p=${p} onOpen=${openProfile} size=${34}/><span class="spacer"></span><${MessageBtn} ctx=${ctx} p=${p} cls="btn tiny"/></li>`)}</ul>
       <p class="small muted">Envoie-leur un mot de bienvenue : c’est souvent le seul lauréat qu’ils connaissent.</p>`
-      : html`<p class="small muted">Tu es parrain disponible. Dès qu’un 3A de ${me.filiere} s’inscrit, il te sera confié.</p>`}
+      : html`<p class="small muted">Tu es parrain disponible. Dès qu’un 3A de ton parcours s’inscrit, il te sera confié.</p>`}
   </div>`;
 }
 

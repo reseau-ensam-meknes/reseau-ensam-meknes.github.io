@@ -5,7 +5,7 @@ import { myGroups, groupMembers, groupLabel, groupKey, autoGroups, timeAgo } fro
 import { SlotDate } from './mentorat.js';
 import { SignalerBtn } from './confiance.js';
 
-const KIND = { filiere: ['cap', 'Filière'], ville: ['pin', 'Ville'], pays: ['globe', 'À l’étranger'] };
+const KIND = { filiere: ['cap', 'Parcours d’études'], ville: ['pin', 'Ville'], pays: ['globe', 'À l’étranger'] };
 const pad = n => String(n).padStart(2, '0');
 const toInput = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 const upcoming = c => !c.annule && new Date(c.date_at) > Date.now() - 2 * 3600e3;
@@ -38,7 +38,7 @@ function GroupList({ ctx }) {
   const near = cafes.filter(c => mine.all.includes(groupKey('ville', c.ville)) || mine.all.includes(groupKey('pays', c.pays)));
   const follow = k => act(async () => { await store.insert('groupe_membres', { groupe: k, user_id: me.id }); toast(`Tu suis maintenant le groupe ${groupLabel(data, k)}.`); });
   return html`<div class="sub-page">
-    <p class="muted small">Tu fais partie des groupes de ta filière et de ta ville. Suis aussi les groupes des lauréats à l’étranger pour poser tes questions.</p>
+    <p class="muted small">Tu fais partie des groupes de ton parcours et de ta ville. Suis aussi les groupes des lauréats à l’étranger pour poser tes questions.</p>
     <div class="group-grid">${mine.all.map(k => html`<${GroupCard} ctx=${ctx} gkey=${k} key=${k}/>`)}</div>
 
     <div class="section-head"><h2 class="h-ico"><${Icon} name="clap"/> Cafés ENSAM</h2><button class="btn small" onClick=${() => setCafe(true)}><${Icon} name="plus" size=${15}/> Organiser un café</button></div>
@@ -90,7 +90,7 @@ function GroupView({ ctx, gkey }) {
     <div class="group-head">
       <span class=${'g-badge big k-' + kind}><${Icon} name=${ico} size=${26}/></span>
       <div class="grow"><p class="eyebrow">${lbl}</p><h2>${label}</h2><p class="muted small">${members.length} membre${members.length > 1 ? 's' : ''} · ${members.filter(p => p.role === 'laureat').length} lauréat${members.filter(p => p.role === 'laureat').length > 1 ? 's' : ''}</p></div>
-      ${auto ? html`<span class="mini good"><${Icon} name="check" size=${12}/> ${kind === 'filiere' ? 'Ta filière' : kind === 'ville' ? 'Ta ville' : 'Ton pays'}</span>`
+      ${auto ? html`<span class="mini good"><${Icon} name="check" size=${12}/> ${kind === 'filiere' ? 'Ton parcours' : kind === 'ville' ? 'Ta ville' : 'Ton pays'}</span>`
         : follow ? html`<button class="btn small ghost" onClick=${() => act(() => store.remove('groupe_membres', follow.id))}>Ne plus suivre</button>`
         : html`<button class="btn small primary" onClick=${() => act(async () => { await store.insert('groupe_membres', { groupe: gkey, user_id: me.id }); toast('Tu suis ce groupe.'); })}>Suivre</button>`}
     </div>

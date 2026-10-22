@@ -639,7 +639,7 @@ export type Donnees = {
   invitations: Map<string, Invitation[]>; mentoratsEtudiant: Map<string, Mentorat[]>; mentoratsMentor: Map<string, Mentorat[]>;
   ouvertes: Mentorat[]; questions: Map<string, Question>; questionsRecentes: Question[]; reponses: Reponse[]; repondues: Set<string>;
   parrainages: Parrainage[]; cafes: Cafe[]; placementsEtudiant: Map<string, Placement[]>; placementsLaureat: Map<string, Placement[]>;
-  enAttente: number; talents: Map<string, Talent[]>;
+  enAttente: number; talents: Talent[];
   evenements: Evenement[]; enquetesFaites: Set<string>; relectures: Relecture[]; contactsEnAttente: Map<string, number>; signalements: number;
 };
 
@@ -654,18 +654,17 @@ export function indexer(b: Brut, date: Date): Donnees {
   }
   const placements = unique(b.placements);
   const placementsEtudiant = grouper(placements, x => x.student_id);
-  // Talents : étudiants visibles de 3A à 5A sans stage trouvé cette saison, par filière
-  const talents = new Map<string, Talent[]>();
+  // Talents : étudiants visibles de 3A à 5A sans stage trouvé cette saison (chaque lauréat reçoit ceux de son parcours)
+  const talents: Talent[] = [];
   for (const p of b.profils) {
     if (p.role !== 'etudiant' || p.vitrine === false || !p.filiere) continue;
     const niveau = niveauDe(p.promo, saison);
     if (niveau < 3 || niveau > 5) continue;
     if ((placementsEtudiant.get(p.id) || []).some(x => x.saison === saison && ACTIF.has(x.status))) continue;
     const t = { p, niveau, nouveau: temps(p.created_at) >= depuis7, cv: !!txt(p.cv_url) || !!txt(p.cv_path) };
-    const l = talents.get(p.filiere);
-    if (l) l.push(t); else talents.set(p.filiere, [t]);
+    talents.push(t);
   }
-  for (const l of talents.values()) l.sort((x, y) => (+y.nouveau - +x.nouveau) || (+y.cv - +x.cv) || (temps(y.p.created_at) - temps(x.p.created_at)));
+  talents.sort((x, y) => (+y.nouveau - +x.nouveau) || (+y.cv - +x.cv) || (temps(y.p.created_at) - temps(x.p.created_at)));
   const mentorats = unique(b.mentorats);
   const reponses = unique(b.reponses);
   return {
@@ -740,7 +739,29 @@ export function estVide(r: Resume): boolean {
     || r.evenements?.length || r.enquete || r.contacts || r.relectures);
 }
 
-const filiereOk = (o: Offre, filiere: string) => !o.filieres?.length || o.filieres.includes(filiere);
+// Filières officielles (choix en 3A) groupées par parcours, et anciennes appellations des promos précédentes (même règle que logic.js)
+const PARCOURS_FILIERE: Record<string, string[]> = {
+  'Génie Industriel et Productique': ['PEI'], 'Génie Industriel : Excellence Opérationnelle': ['PEI'],
+  'Génie Électromécanique : Digitalisation Industrielle': ['PEI'], 'Génie Électromécanique : Maintenance et Commande Industrielles': ['PEI'],
+  'Génie Mécanique : Conception et Industrialisation des Systèmes Mécaniques': ['PM'], 'Génie Mécanique : Ingénierie Mécanique et Structures': ['PM'],
+  'Génie Mécanique : Matériaux et Procédés de Fabrication': ['PM'], 'Génie Mécanique : Énergétique': ['PM'], 'Génie Civil': ['CIVIL'],
+  'Intelligence Artificielle et Technologies des Données : Systèmes Industriels': ['IA'], 'Génie Informatique : Ingénierie Logicielle et Systèmes Intelligents': ['INFO'],
+};
+const ANCIENNES_FILIERES: Record<string, string[]> = {
+  'Génie Mécanique': ['PM'], 'Génie Industriel': ['PEI'], 'Génie Électromécanique': ['PEI'], 'Génie Énergétique': ['PM'], 'Mécatronique': ['PEI'], 'Génie Informatique & IA': ['INFO', 'IA'],
+};
+const parcoursDe = (f?: string | null) => (f ? PARCOURS_FILIERE[f] || ANCIENNES_FILIERES[f] || [] : []);
+// Même filière, ou même parcours
+const procheFiliere = (a?: string | null, b?: string | null) => !!a && !!b && (a === b || parcoursDe(a).some(c => parcoursDe(b).includes(c)));
+// Deux filières actuelles doivent être identiques ; une ancienne appellation couvre son parcours
+export const filiereOk = (o: Pick<Offre, 'filieres'>, filiere: string) => {
+  const l = o.filieres || [];
+  if (!l.length) return true;
+  if (!filiere) return false;
+  if (l.includes(filiere)) return true;
+  const mine = parcoursDe(filiere), vieille = !PARCOURS_FILIERE[filiere];
+  return l.some(x => (vieille || !PARCOURS_FILIERE[x]) && parcoursDe(x).some(c => mine.includes(c)));
+};
 
 function offresPour(d: Donnees, p: Profil, niveau: number, audiences: string[]) {
   const l = d.nouvellesOffres.filter(o => o.author_id !== p.id && audiences.includes(o.audience || 'etudiants')
@@ -834,8 +855,8 @@ export function resumeDe(p: Profil, d: Donnees): Resume | null {
   }
   // Jeune diplômé de l'année : les offres pour les diplômés (niveau 6)
   if (p.promo === d.saison) r.offres = offresPour(d, p, 6, ['etudiants', 'laureats']);
-  // Alerte talents de sa filière
-  const t = d.talents.get(p.filiere) || [];
+  // Alerte talents de son parcours
+  const t = d.talents.filter(x => procheFiliere(x.p.filiere, p.filiere));
   r.talents = {
     total: t.length,
     liste: t.slice(0, 3).map(x => ({
@@ -844,7 +865,7 @@ export function resumeDe(p: Profil, d: Donnees): Resume | null {
     })),
   };
   // Demandes d'aide ouvertes à tous, venant d'étudiants de sa filière
-  const ouv = d.ouvertes.filter(m => m.student_id !== p.id && d.profils.get(m.student_id)?.filiere === p.filiere);
+  const ouv = d.ouvertes.filter(m => m.student_id !== p.id && procheFiliere(d.profils.get(m.student_id)?.filiere, p.filiere));
   r.ouvertes = { total: ouv.length, sujets: ouv.slice(0, 2).map(m => txt(m.sujet)) };
   // Impact de la semaine : mercis et recrutements confirmés
   let derniere = -Infinity;
@@ -866,7 +887,7 @@ export function resumeDe(p: Profil, d: Donnees): Resume | null {
   r.filleuls = d.parrainages.filter(x => x.parrain_id === p.id).map(x => nom(x.filleul_id)).filter(Boolean);
   // CV à relire : ceux qui me sont adressés, et les demandes ouvertes des étudiants de ma filière
   r.relectures = (d.relectures || []).filter(x => x.student_id !== p.id
-    && (x.reviewer_id === p.id || (!x.reviewer_id && d.profils.get(x.student_id)?.filiere === p.filiere))).length;
+    && (x.reviewer_id === p.id || (!x.reviewer_id && procheFiliere(d.profils.get(x.student_id)?.filiere, p.filiere)))).length;
   return estVide(r) ? null : r;
 }
 

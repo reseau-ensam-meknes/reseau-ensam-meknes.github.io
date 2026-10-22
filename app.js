@@ -9,7 +9,7 @@ import { ParcoursPage, EspacePage, ConfirmRecruit, Journey, journeyStep } from '
 import { DashboardPage } from './dashboard.js';
 import { ReseauPage, ProfileModal, ProfileForm, AskQuestion } from './community.js';
 import { AdminPage, AnnonceBanner } from './admin.js';
-import { MentoratPage, AskHelp, NextRdv, HelpNeeded, slotWhen } from './mentorat.js';
+import { MentoratPage, AskHelp, NextRdv, HelpNeeded, slotWhen, mentoratIgnorees } from './mentorat.js';
 import { SuccessFeed, VerifyPage } from './growth.js';
 import { PrivacyPage, ConsentModal, MesDonnees, DesaboPage } from './privacy.js';
 import { useInstall, IosInstallHelp } from './pwa.js';
@@ -36,6 +36,19 @@ function navFor(me) {
   items.push(['reseau', 'Réseau', 'network'], ['suivi', me.role === 'etudiant' ? 'Ma promo' : 'Suivi', 'chart']);
   if (me.role === 'admin') items.push(['admin', 'Admin', 'shield']);
   return items;
+}
+
+// Filet de sécurité : si un bouton ou un formulaire plante juste après un geste du membre, on le lui dit
+// au lieu de ne rien faire (il croirait que c'est enregistré). Les erreurs de fond (réseau, extensions) restent discrètes.
+if (typeof window !== 'undefined') {
+  let geste = 0, dit = 0;
+  for (const ev of ['pointerdown', 'keydown', 'submit']) window.addEventListener(ev, () => { geste = Date.now(); }, true);
+  const prevenir = () => {
+    if (Date.now() - geste > 3000 || Date.now() - dit < 4000) return;
+    dit = Date.now(); toast('Ça n’a pas marché. Réessaie, ou recharge la page.', 'err');
+  };
+  window.addEventListener('error', e => { if (e.error && !/ResizeObserver/.test(e.message || '')) prevenir(); });
+  window.addEventListener('unhandledrejection', prevenir);
 }
 
 const dec = x => { try { return decodeURIComponent(x || ''); } catch { return x || ''; } };
@@ -280,19 +293,23 @@ function buildNotifs({ data, me, store, saison }) {
     if (m.mentor_id === me.id) {
       if (st === 'demande') out.push({ key: 'md' + m.id, action: true, tone: 'accent', icon: 'mentor', to: 'mentorat', at: m.created_at, text: `${name(m.student_id)} te demande de l’aide : ${m.sujet}` });
       if (soon) out.push({ key: 'mr' + m.id, rdv: true, action: true, tone: 'accent', icon: 'video', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous avec ${name(m.student_id)} ${soon}` });
+      if (st === 'rdv' && m.confirme_at && recent(m.confirme_at, 7)) out.push({ key: 'mc' + m.id + m.rdv_at, tone: 'good', icon: 'checks', to: 'mentorat', at: m.confirme_at, text: `${first(m.student_id)} a confirmé sa présence : ${m.sujet}` });
       if (st === 'apres') out.push({ key: 'mf' + m.id, action: true, tone: 'brass', icon: 'check', to: 'mentorat', at: m.rdv_at, text: `Ton rendez-vous avec ${first(m.student_id)} a eu lieu ? Marque-le comme terminé.` });
       if (st === 'terminee' && m.merci && recent(m.rdv_at || m.created_at, 14)) out.push({ key: 'mm' + m.id, tone: 'brass', icon: 'heart', to: 'espace', at: m.rdv_at || m.created_at, text: `${first(m.student_id)} te remercie pour le mentorat : ${m.sujet}` });
       if (st === 'annulee' && upcoming) out.push({ key: 'mx' + m.id, icon: 'x', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous annulé : ${m.sujet}` });
     }
     if (m.student_id === me.id) {
-      if (st === 'rdv' && !soon && recent(m.accepted_at || m.created_at, 10)) out.push({ key: 'sa' + m.id + m.rdv_at, icon: 'mentor', tone: 'good', to: 'mentorat', at: m.accepted_at || m.created_at, text: `${name(m.mentor_id)} a accepté ta demande : ${m.sujet}` });
+      // Rendez-vous fixé : confirmer sa présence est la prochaine étape (base à jour), sinon une simple nouvelle
+      if (st === 'rdv' && 'confirme_at' in m && !m.confirme_at) out.push({ key: 'sc' + m.id + m.rdv_at, action: true, mine: true, tone: 'accent', icon: 'calendar', to: 'mentorat', at: m.accepted_at || m.created_at, text: `${first(m.mentor_id)} a fixé ton rendez-vous. Confirme ta présence : ${m.sujet}` });
+      else if (st === 'rdv' && !soon && recent(m.accepted_at || m.created_at, 10)) out.push({ key: 'sa' + m.id + m.rdv_at, icon: 'mentor', tone: 'good', to: 'mentorat', at: m.accepted_at || m.created_at, text: `${name(m.mentor_id)} a accepté ta demande : ${m.sujet}` });
       if (soon) out.push({ key: 'sr' + m.id + m.rdv_at, rdv: true, action: true, mine: true, tone: 'accent', icon: 'video', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous avec ${name(m.mentor_id)} ${soon}` });
       if (st === 'apres') out.push({ key: 'sf' + m.id, action: true, mine: true, tone: 'brass', icon: 'heart', to: 'mentorat', at: m.rdv_at, text: `Comment s’est passé ton échange avec ${first(m.mentor_id)} ? Dis-lui merci.` });
       if (st === 'annulee' && upcoming && m.mentor_id) out.push({ key: 'sx' + m.id, icon: 'x', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous annulé : ${m.sujet}` });
     }
   }
   // Lauréat : demandes ouvertes à tous qui lui correspondent bien (deux au plus)
-  if (me.role === 'laureat') for (const { m } of requestsFor(data, me, id => store.byId('profiles', id)).filter(x => !x.direct && x.score >= 3).slice(0, 2)) {
+  const ignorees = mentoratIgnorees();
+  if (me.role === 'laureat') for (const { m } of requestsFor(data, me, id => store.byId('profiles', id)).filter(x => !x.direct && x.score >= 3 && !ignorees.has(x.m.id)).slice(0, 2)) {
     out.push({ key: 'mo' + m.id, tone: 'accent', icon: 'heart', to: 'mentorat', at: m.created_at, text: `${name(m.student_id)} cherche de l’aide : ${m.sujet}` });
   }
   // Invitations à postuler (étudiant)
@@ -388,8 +405,13 @@ function prochainPas(ctx, notifs, guide) {
   const rdv = data.mentorships.filter(m => (m.student_id === me.id || m.mentor_id === me.id) && mentorState(m) === 'rdv' && m.rdv_at && new Date(m.rdv_at) - Date.now() < 48 * 36e5 && new Date(m.rdv_at) - Date.now() > -60 * 6e4)
     .sort((a, b) => new Date(a.rdv_at) - new Date(b.rdv_at))[0];
   if (rdv) return { type: 'rdv' };
+  // Rôle et promo qui ne vont pas ensemble (ex. lauréat de la promo 2027) : on propose de corriger le profil
+  if ((me.role === 'laureat' && me.promo > new Date().getFullYear()) || (me.role === 'etudiant' && me.promo <= saison))
+    return { icon: 'user', tone: 'accent', eyebrow: 'Ton profil', texte: me.role === 'laureat' ? `Promo ${me.promo} : tu es encore étudiant(e) ? Mets ton profil à jour.` : `Promo ${me.promo} : tu as ton diplôme ? Passe en lauréat(e).`, cta: 'Mettre à jour', go: () => go('profil') };
   const md = notifs.find(n => /^md/.test(n.key || ''));
   if (md) return { icon: 'mentor', tone: 'accent', eyebrow: 'Une demande pour toi', texte: md.text, cta: 'Choisir un horaire', go: () => go('mentorat'), key: md.key };
+  const sc = notifs.find(n => /^sc/.test(n.key || ''));
+  if (sc) return { icon: 'calendar', tone: 'accent', eyebrow: 'Ton rendez-vous est fixé', texte: sc.text, cta: 'Confirmer ma présence', go: () => go('mentorat'), key: sc.key };
   const conv = conversations(data, me.id).find(c => c.nonLus);
   if (conv) return { icon: 'chat', tone: 'accent', eyebrow: 'Un message t’attend', texte: conv.nonLus > 1 ? `${nom(conv.autre)} t’a écrit ${conv.nonLus} messages.` : `${nom(conv.autre)} t’a écrit.`, cta: store.byId('profiles', conv.autre)?.role === 'admin' ? 'Répondre' : `Répondre à ${prenom(conv.autre)}`, go: () => go('messages/' + conv.autre), message: true };
   const a = notifs.find(n => n.action && !n.rdv && !/^(eq|dc|md)/.test(n.key || '') && !(me.role === 'etudiant' && n.icon === 'briefcase'));

@@ -1,5 +1,5 @@
 // Données de démonstration (personnes et entreprises fictives) pour essayer la plateforme.
-import { FILIERES, seasonOf } from './logic.js';
+import { seasonOf, proximiteFiliere } from './logic.js';
 import { seedPhase3 } from './seed3.js';
 import { seedMessages } from './seed4.js';
 
@@ -7,6 +7,15 @@ function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let
 
 const PRENOMS = ['Salma', 'Youssef', 'Imane', 'Hamza', 'Khadija', 'Anas', 'Meryem', 'Othmane', 'Hiba', 'Ayoub', 'Zineb', 'Mehdi', 'Nour', 'Ilyas', 'Kawtar', 'Amine', 'Sara', 'Reda', 'Chaimae', 'Bilal', 'Ghita', 'Adam', 'Yasmine', 'Soufiane', 'Fatima Zahra', 'Hatim', 'Douae', 'Ismail', 'Rania', 'Zakaria', 'Oumaima', 'Achraf', 'Wiam', 'Taha', 'Asmae', 'Nabil', 'Lina', 'Marouane', 'Hajar', 'Karim'];
 const NOMS = ['Bennani', 'El Amrani', 'Alaoui', 'Tazi', 'Berrada', 'Idrissi', 'Chraibi', 'Lahlou', 'Fassi', 'Benjelloun', 'Ouazzani', 'Kettani', 'Sebti', 'Moussaoui', 'Bouzidi', 'Hajji', 'Naciri', 'Zerouali', 'Amrani', 'Belkadi', 'Skalli', 'Rahmouni', 'Lamrani', 'Cherkaoui', 'Bakkali', 'El Khattabi', 'Squalli', 'Mernissi', 'Tahiri', 'Ziani'];
+// Les lauréats gardent l'ancienne appellation de leur filière ; les étudiants de 3A à 5A suivent la maquette actuelle.
+const ANCIENNES = ['Génie Mécanique', 'Génie Industriel', 'Génie Électromécanique', 'Génie Civil', 'Génie Énergétique', 'Génie Informatique & IA', 'Mécatronique'];
+const GIP = 'Génie Industriel et Productique', GIEO = 'Génie Industriel : Excellence Opérationnelle';
+const GE_DI = 'Génie Électromécanique : Digitalisation Industrielle', GE_MCI = 'Génie Électromécanique : Maintenance et Commande Industrielles';
+const CISM = 'Génie Mécanique : Conception et Industrialisation des Systèmes Mécaniques', IMS = 'Génie Mécanique : Ingénierie Mécanique et Structures';
+const MPF = 'Génie Mécanique : Matériaux et Procédés de Fabrication', GME = 'Génie Mécanique : Énergétique', GC = 'Génie Civil';
+const IATD = 'Intelligence Artificielle et Technologies des Données : Systèmes Industriels', ILSI = 'Génie Informatique : Ingénierie Logicielle et Systèmes Intelligents';
+const ACTUELLES = { 'Génie Mécanique': [CISM, IMS, MPF], 'Génie Industriel': [GIEO, GIP], 'Génie Électromécanique': [GE_MCI], 'Génie Civil': [GC], 'Génie Énergétique': [GME], 'Génie Informatique & IA': [ILSI, IATD], 'Mécatronique': [GE_DI] };
+const ANCIENNE_DE = Object.fromEntries(Object.entries(ACTUELLES).flatMap(([a, l]) => l.map(f => [f, a])));
 const VILLES_MA = ['Casablanca', 'Tanger', 'Kénitra', 'Rabat', 'Meknès', 'Fès', 'Marrakech', 'Agadir', 'Jorf Lasfar', 'Mohammedia'];
 
 const ENTREPRISES = [
@@ -44,22 +53,23 @@ export function buildSeed(now = new Date()) {
   const mk = (o) => { const p = { id: id('u'), pays: 'Maroc', competences: [], vitrine: true, verified: false, mentor_dispo: false, created_at: daysAgo(40 + Math.floor(r() * 300)), ...o }; used.add(p.full_name); profiles.push(p); return p; };
 
   // Trois comptes « personas » pour essayer chaque rôle
-  const salma = mk({ full_name: 'Salma Bennani', role: 'etudiant', filiere: 'Génie Industriel', promo: S + 1, ville: 'Meknès', bio: 'Passionnée de lean manufacturing et de supply chain. Je cherche un PFE en excellence opérationnelle, idéalement à l’étranger.', competences: ['Lean', 'VSM', 'Python', 'Power BI', 'SolidWorks'], linkedin: 'linkedin.com/in/salma-bennani', _persona: 'Étudiante 5A · Salma' });
+  const salma = mk({ full_name: 'Salma Bennani', role: 'etudiant', filiere: GIEO, promo: S + 1, ville: 'Meknès', bio: 'Passionnée de lean manufacturing et de supply chain. Je cherche un PFE en excellence opérationnelle, idéalement à l’étranger.', competences: ['Lean', 'VSM', 'Python', 'Power BI', 'SolidWorks'], linkedin: 'linkedin.com/in/salma-bennani', _persona: 'Étudiante 5A · Salma' });
   const youssef = mk({ full_name: 'Youssef El Amrani', role: 'laureat', filiere: 'Génie Mécanique', promo: 2016, entreprise: 'Renault Group Maroc', poste: 'Responsable méthodes emboutissage', ville: 'Tanger', verified: true, mentor_dispo: true, mentor_sujets: 'Industrie automobile, méthodes, préparer un entretien technique', bio: 'Promo 2016. 10 ans dans l’automobile entre Tanger et Flins. Je réponds toujours aux étudiants de l’école.', competences: ['Emboutissage', 'Méthodes', 'Lean', 'Management'], linkedin: 'linkedin.com/in/youssef-elamrani', _persona: 'Lauréat actif · Youssef' });
   const admin = mk({ full_name: 'Bureau des relations entreprises', role: 'admin', filiere: 'Génie Industriel', promo: 2010, entreprise: 'ENSAM Meknès', poste: 'Administration', ville: 'Meknès', verified: true, _persona: 'Admin école' });
   // Deux comptes « neufs » pour tester la plateforme comme un nouvel inscrit
-  mk({ full_name: 'Amine Talbi', role: 'etudiant', filiere: 'Génie Mécanique', promo: S + 3, ville: 'Meknès', competences: [], _persona: 'Nouvel étudiant 3A · Amine' });
+  mk({ full_name: 'Amine Talbi', role: 'etudiant', filiere: CISM, promo: S + 3, ville: 'Meknès', competences: [], _persona: 'Nouvel étudiant 3A · Amine' });
   mk({ full_name: 'Nadia Ferhat', role: 'laureat', filiere: 'Génie Industriel', promo: 2019, ville: 'Casablanca', competences: [], _persona: 'Nouvelle lauréate · Nadia' });
 
   // Étudiants de la saison en cours
   const students = [salma];
   const counts = { [S + 1]: 21, [S + 2]: 18, [S + 3]: 17 };
+  let tour = 0; const actuelle = f => ACTUELLES[f][tour++ % ACTUELLES[f].length];
   for (const promo of Object.keys(counts).map(Number)) for (let i = 0; i < counts[promo]; i++) {
-    students.push(mk({ full_name: name(), role: 'etudiant', filiere: pick(FILIERES), promo, ville: pick(VILLES_MA), competences: [] }));
+    students.push(mk({ full_name: name(), role: 'etudiant', filiere: actuelle(pick(ANCIENNES)), promo, ville: pick(VILLES_MA), competences: [] }));
   }
   // Jeunes diplômés (promo S) et promo précédente
-  const jeunes = []; for (let i = 0; i < 16; i++) jeunes.push(mk({ full_name: name(), role: 'laureat', filiere: pick(FILIERES), promo: S, ville: pick(VILLES_MA), verified: r() > 0.3 }));
-  const precedents = []; for (let i = 0; i < 7; i++) precedents.push(mk({ full_name: name(), role: 'laureat', filiere: pick(FILIERES), promo: S - 1, verified: true }));
+  const jeunes = []; for (let i = 0; i < 16; i++) jeunes.push(mk({ full_name: name(), role: 'laureat', filiere: pick(ANCIENNES), promo: S, ville: pick(VILLES_MA), verified: r() > 0.3 }));
+  const precedents = []; for (let i = 0; i < 7; i++) precedents.push(mk({ full_name: name(), role: 'laureat', filiere: pick(ANCIENNES), promo: S - 1, verified: true }));
 
   // Lauréats expérimentés
   const postes = ['Ingénieur méthodes', 'Responsable qualité', 'Chef de projet', 'Ingénieur R&D', 'Responsable maintenance', 'Plant manager', 'Data engineer', 'Ingénieur structures', 'Consultant supply chain', 'Ingénieure procédés'];
@@ -73,23 +83,23 @@ export function buildSeed(now = new Date()) {
   // ---------------- Offres ----------------
   const offers = [];
   const OFFRES = [
-    ['pfe', 'PFE : réduction des rebuts sur ligne d’emboutissage', 'Renault Group Maroc', ['Génie Mécanique', 'Génie Industriel'], [5], 'Sujet de PFE de 6 mois en équipe méthodes. Analyse des causes (Ishikawa, AMDEC), plan d’action et suivi des indicateurs. Je coopte directement les profils motivés.', 9, youssef],
-    ['stage', 'Stage ingénieur adjoint : amélioration continue', 'Yazaki Morocco', ['Génie Industriel'], [4], 'Stage de 2 mois cet été. Chantiers 5S, SMED et suivi TRS sur les lignes de câblage.', 32],
-    ['etranger', 'Stage 6 mois : aérostructures (Toulouse)', 'Airbus Operations', ['Génie Mécanique'], [5], 'Stage en bureau d’études, calcul de structures composites. Niveau B2 en français et anglais exigé. Gratification + aide au logement.', 21],
-    ['emploi', 'Ingénieur maintenance (CDI) – jeune diplômé accepté', 'OCP Group', ['Génie Électromécanique', 'Génie Énergétique'], [6], 'Poste basé à Jorf Lasfar. Maintenance préventive et conditionnelle des unités de production. Je peux transmettre vos CV en interne.', 18],
-    ['stage', 'Stage ouvrier / technique sur chantier', 'TGCC', ['Génie Civil'], [3], 'Stage de 1 mois sur un chantier à Casablanca. Découverte de l’organisation de chantier et du suivi de gros œuvre.', 40],
-    ['pfe', 'PFE data : maintenance prédictive par machine learning', 'Capgemini Engineering', ['Génie Informatique & IA', 'Mécatronique', 'Génie Électromécanique'], [5], 'Modèles de prédiction de pannes à partir de données capteurs. Python, scikit-learn, notions de vibratoire appréciées.', 25],
-    ['etranger', 'Stage de recherche : stockage d’énergie', 'Hydro-Québec', ['Génie Énergétique', 'Génie Électromécanique'], [4, 5], 'Stage de 4 à 6 mois à Montréal au centre de recherche. Visa étudiant à prévoir, je peux vous guider sur la procédure.', 35],
-    ['emploi', 'VIE ingénieur qualité fournisseurs (Allemagne)', 'Bosch', ['Mécatronique', 'Génie Industriel'], [6], 'VIE de 18 mois à Stuttgart. Allemand apprécié, anglais courant indispensable.', 29],
-    ['stage', 'Stage d’été maintenance éolienne', 'Siemens Gamesa', ['Génie Énergétique', 'Génie Mécanique'], [3, 4], 'Stage de 6 à 8 semaines à l’usine de pales de Tanger. Sécurité, maintenance, contrôle qualité.', 12],
-    ['pfe', 'PFE : optimisation énergétique d’un four rotatif', 'LafargeHolcim Maroc', ['Génie Énergétique', 'Génie Industriel'], [5], 'Bilan énergétique, pistes de valorisation de la chaleur perdue, étude technico-économique. Usine de Meknès.', 15],
-    ['emploi', 'Ingénieur structures junior (CDI)', 'Vinci Construction', ['Génie Civil'], [6], 'Bureau d’études à Nanterre, dimensionnement béton armé et charpente. Ouvert aux jeunes diplômés avec un PFE en structures.', 44],
-    ['stage', 'Stage 4A : supply chain et planification', 'Lear Corporation', ['Génie Industriel'], [4], 'Stage de 2 mois, planification de production et gestion des flux. Excel avancé demandé.', 50],
-    ['etranger', 'Stage 4A en électrification (Grenoble)', 'Schneider Electric', ['Génie Électromécanique'], [4], 'Stage de 3 mois sur la qualification de tableaux électriques. Démarches Campus France à anticiper dès janvier.', 22],
-    ['pfe', 'PFE : jumeau numérique d’une cellule robotisée', 'Stellantis Kénitra', ['Mécatronique', 'Génie Informatique & IA'], [5], 'Modélisation d’une cellule de soudage robotisée et validation virtuelle des cadences.', 6],
-    ['emploi', 'Ingénieur méthodes (CDI)', 'Safran Nacelles', ['Génie Mécanique', 'Génie Industriel'], [6], 'Industrialisation de pièces composites. 0 à 3 ans d’expérience.', 4],
-    ['stage', 'Stage ouvrier en atelier d’usinage', 'Spirit AeroSystems', ['Génie Mécanique'], [3], 'Découverte de l’usinage aéronautique et du contrôle dimensionnel. 1 mois en juillet.', 2],
-    ['pfe', 'PFE : réseau de chaleur et autoconsommation solaire', 'ONEE', ['Génie Énergétique', 'Génie Électromécanique'], [5], 'Dimensionnement d’une installation photovoltaïque pour un site administratif et étude de rentabilité.', 1],
+    ['pfe', 'PFE : réduction des rebuts sur ligne d’emboutissage', 'Renault Group Maroc', [MPF, GIEO], [5], 'Sujet de PFE de 6 mois en équipe méthodes. Analyse des causes (Ishikawa, AMDEC), plan d’action et suivi des indicateurs. Je coopte directement les profils motivés.', 9, youssef],
+    ['stage', 'Stage ingénieur adjoint : amélioration continue', 'Yazaki Morocco', [GIEO, GIP], [4], 'Stage de 2 mois cet été. Chantiers 5S, SMED et suivi TRS sur les lignes de câblage.', 32],
+    ['etranger', 'Stage 6 mois : aérostructures (Toulouse)', 'Airbus Operations', [IMS], [5], 'Stage en bureau d’études, calcul de structures composites. Niveau B2 en français et anglais exigé. Gratification + aide au logement.', 21],
+    ['emploi', 'Ingénieur maintenance (CDI) – jeune diplômé accepté', 'OCP Group', [GE_MCI, GME], [6], 'Poste basé à Jorf Lasfar. Maintenance préventive et conditionnelle des unités de production. Je peux transmettre vos CV en interne.', 18],
+    ['stage', 'Stage ouvrier / technique sur chantier', 'TGCC', [GC], [3], 'Stage de 1 mois sur un chantier à Casablanca. Découverte de l’organisation de chantier et du suivi de gros œuvre.', 40],
+    ['pfe', 'PFE data : maintenance prédictive par machine learning', 'Capgemini Engineering', [IATD, GE_DI, GE_MCI], [5], 'Modèles de prédiction de pannes à partir de données capteurs. Python, scikit-learn, notions de vibratoire appréciées.', 25],
+    ['etranger', 'Stage de recherche : stockage d’énergie', 'Hydro-Québec', [GME, GE_MCI], [4, 5], 'Stage de 4 à 6 mois à Montréal au centre de recherche. Visa étudiant à prévoir, je peux vous guider sur la procédure.', 35],
+    ['emploi', 'VIE ingénieur qualité fournisseurs (Allemagne)', 'Bosch', [GE_DI, GIEO], [6], 'VIE de 18 mois à Stuttgart. Allemand apprécié, anglais courant indispensable.', 29],
+    ['stage', 'Stage d’été maintenance éolienne', 'Siemens Gamesa', [GME, CISM, IMS], [3, 4], 'Stage de 6 à 8 semaines à l’usine de pales de Tanger. Sécurité, maintenance, contrôle qualité.', 12],
+    ['pfe', 'PFE : optimisation énergétique d’un four rotatif', 'LafargeHolcim Maroc', [GME, GIEO, GIP], [5], 'Bilan énergétique, pistes de valorisation de la chaleur perdue, étude technico-économique. Usine de Meknès.', 15],
+    ['emploi', 'Ingénieur structures junior (CDI)', 'Vinci Construction', [GC], [6], 'Bureau d’études à Nanterre, dimensionnement béton armé et charpente. Ouvert aux jeunes diplômés avec un PFE en structures.', 44],
+    ['stage', 'Stage 4A : supply chain et planification', 'Lear Corporation', [GIP, GIEO], [4], 'Stage de 2 mois, planification de production et gestion des flux. Excel avancé demandé.', 50],
+    ['etranger', 'Stage 4A en électrification (Grenoble)', 'Schneider Electric', [GE_MCI], [4], 'Stage de 3 mois sur la qualification de tableaux électriques. Démarches Campus France à anticiper dès janvier.', 22],
+    ['pfe', 'PFE : jumeau numérique d’une cellule robotisée', 'Stellantis Kénitra', [GE_DI, ILSI], [5], 'Modélisation d’une cellule de soudage robotisée et validation virtuelle des cadences.', 6],
+    ['emploi', 'Ingénieur méthodes (CDI)', 'Safran Nacelles', [CISM, GIP, GIEO], [6], 'Industrialisation de pièces composites. 0 à 3 ans d’expérience.', 4],
+    ['stage', 'Stage ouvrier en atelier d’usinage', 'Spirit AeroSystems', [MPF, CISM], [3], 'Découverte de l’usinage aéronautique et du contrôle dimensionnel. 1 mois en juillet.', 2],
+    ['pfe', 'PFE : réseau de chaleur et autoconsommation solaire', 'ONEE', [GME, GE_MCI], [5], 'Dimensionnement d’une installation photovoltaïque pour un site administratif et étude de rentabilité.', 1],
   ];
   const offerAuthors = seniors.filter(s => s.entreprise);
   for (const [type, titre, ent, fil, an, desc, ago, author] of OFFRES) {
@@ -194,7 +204,7 @@ export function buildSeed(now = new Date()) {
   const mentors = seniors.filter(s => s.mentor_dispo);
   const at = (days, hh, mm = 0) => { const d = new Date(now); d.setDate(d.getDate() + days); d.setHours(hh, mm, 0, 0); return d.toISOString(); };
   const later = (iso, h) => new Date(Date.parse(iso) + h * 36e5).toISOString();
-  const ms = o => { const m = { id: id('m'), besoin: 'stage', message: '', creneaux: [], rdv_at: null, accepted_at: null, reponse: null, merci: null, note: null, ...o }; mentorships.push(m); return m; };
+  const ms = o => { const m = { id: id('m'), besoin: 'stage', message: '', creneaux: [], rdv_at: null, accepted_at: null, confirme_at: null, reponse: null, merci: null, note: null, ...o }; mentorships.push(m); return m; };
   ms({ student_id: s5[11].id, mentor_id: youssef.id, besoin: 'entretien', sujet: 'Préparer un entretien technique en méthodes', message: 'Bonjour, j’ai un entretien chez un équipementier automobile la semaine prochaine. Pourriez-vous m’aider à me préparer ?', status: 'demande', creneaux: [at(1, 18, 30), at(2, 12, 30), at(3, 19, 0)], created_at: daysAgo(0, 3) });
   ms({ student_id: s4[3].id, mentor_id: youssef.id, besoin: 'stage', sujet: 'Choisir entre deux stages de 4A', message: 'J’hésite entre un stage en qualité et un stage en méthodes.', status: 'terminee', created_at: daysAgo(20), accepted_at: daysAgo(20, 6), rdv_at: daysAgo(18, -8), note: 5, merci: 'Merci pour l’appel, j’ai choisi les méthodes et je ne regrette pas !' });
   ms({ student_id: s5[7].id, mentor_id: youssef.id, besoin: 'cv', sujet: 'Relire mon CV pour l’automobile', status: 'acceptee', created_at: daysAgo(5), accepted_at: daysAgo(4), rdv_at: at(-1, 18, 30) });
@@ -203,7 +213,7 @@ export function buildSeed(now = new Date()) {
     const sujet = pick(['Procédure Campus France', 'Préparer un entretien', 'Choisir mon sujet de PFE', 'Négocier un premier salaire', 'Trouver un stage à l’étranger']);
     const besoin = /France|étranger/.test(sujet) ? 'etranger' : /entretien/.test(sujet) ? 'entretien' : /salaire/.test(sujet) ? 'carriere' : 'stage';
     const created_at = daysAgo(8 + i * 4);
-    ms({ student_id: st.id, mentor_id: m.id, besoin, sujet, status: i % 3 === 0 ? 'acceptee' : 'terminee', created_at, accepted_at: later(created_at, 5 + i % 4 * 9), rdv_at: i % 3 === 0 ? at(3 + i % 5, 18, 30) : later(created_at, 50), note: i % 3 ? 4 + i % 2 : null, merci: i % 3 ? 'Merci beaucoup pour vos conseils !' : null });
+    ms({ student_id: st.id, mentor_id: m.id, besoin, sujet, status: i % 3 === 0 ? 'acceptee' : 'terminee', created_at, accepted_at: later(created_at, 5 + i % 4 * 9), rdv_at: i % 3 === 0 ? at(3 + i % 5, 18, 30) : later(created_at, 50), note: i % 3 ? 4 + i % 2 : null, merci: i % 3 ? 'Merci beaucoup pour vos conseils !' : null, confirme_at: i % 3 === 0 && i % 2 === 0 ? later(created_at, 30) : null });
   });
 
   // Entraide
@@ -252,7 +262,7 @@ export function buildSeed(now = new Date()) {
   const DISPO = { 3: ['Juillet à août', 'Tout le mois de juillet'], 4: ['Juillet à septembre', 'Dès juin'], 5: ['Dès février', 'Dès janvier, 6 mois'] };
   for (const st of students) {
     if (st === salma) { st.disponibilite = 'Dès février, 6 mois'; st.cv_url = 'https://example.com/cv/salma-bennani.pdf'; continue; }
-    const pool = COMP[st.filiere] || ['Python'];
+    const pool = COMP[ANCIENNE_DE[st.filiere]] || ['Python'];
     st.competences = [...new Set([pick2(pool), pick2(pool), pick2(pool)])];
     const niv = 5 - (st.promo - (S + 1));
     st.disponibilite = pick2(DISPO[niv] || ['À discuter']);
@@ -270,7 +280,7 @@ export function buildSeed(now = new Date()) {
     ms({ student_id: pick2(students.filter(x => x !== salma)).id, mentor_id: exp[1].id, besoin: 'stage', sujet: pick2(['Mon premier entretien', 'Choisir ma filière de PFE', 'Le VIE, comment ça marche ?']), status: 'terminee', created_at, accepted_at: later(created_at, 3), rdv_at: later(created_at, 30), note: 5, merci: i < 2 ? 'Merci pour ce moment, très clair !' : null });
   }
   // Demandes ouvertes : n'importe quel lauréat peut les prendre
-  const meca = students.filter(x => x.filiere === 'Génie Mécanique' && x !== salma && x.promo <= S + 2 && ![s5[11], s5[9], s5[7], s4[4]].includes(x));
+  const meca = students.filter(x => ANCIENNE_DE[x.filiere] === 'Génie Mécanique' && x !== salma && x.promo <= S + 2 && ![s5[11], s5[9], s5[7], s4[4]].includes(x));
   const OPEN = [
     [meca[0], 'stage', 'Trouver un PFE dans l’automobile', 'Je cherche un sujet en méthodes ou en industrialisation, idéalement à Tanger ou Kénitra.', 0, 6],
     [meca[1], 'entretien', 'Simuler un entretien en bureau d’études', 'Premier entretien technique bientôt, je ne sais pas quelles questions on pose.', 1, 2],
@@ -315,32 +325,32 @@ export function buildSeed(now = new Date()) {
   const lau = profiles.filter(p => p.role === 'laureat' && !p._persona);
   const inCity = v => lau.filter(p => p.ville === v);
 
-  // Deux étudiants inscrits cette semaine (alerte talents des lauréats de Génie Mécanique)
-  for (const [promo, comp, d] of [[S + 2, ['CATIA', 'RDM', 'Usinage'], 2], [S + 1, ['Ansys', 'SolidWorks', 'Python'], 4]]) {
-    const p = mk({ full_name: name(), role: 'etudiant', filiere: 'Génie Mécanique', promo, ville: pick3(['Meknès', 'Fès', 'Tanger']), competences: comp, disponibilite: promo === S + 1 ? 'Dès février, 6 mois' : 'Juillet à septembre', cv_url: 'https://example.com/cv/nouveau-' + d + '.pdf', created_at: daysAgo(d), langue: 'fr', emails_hebdo: true, consent_at: daysAgo(d), parrain_dispo: false });
+  // Deux étudiants inscrits cette semaine (alerte talents des lauréats du parcours Mécanique)
+  for (const [promo, comp, d, filiere] of [[S + 2, ['CATIA', 'RDM', 'Usinage'], 2, IMS], [S + 1, ['Ansys', 'SolidWorks', 'Python'], 4, CISM]]) {
+    const p = mk({ full_name: name(), role: 'etudiant', filiere, promo, ville: pick3(['Meknès', 'Fès', 'Tanger']), competences: comp, disponibilite: promo === S + 1 ? 'Dès février, 6 mois' : 'Juillet à septembre', cv_url: 'https://example.com/cv/nouveau-' + d + '.pdf', created_at: daysAgo(d), langue: 'fr', emails_hebdo: true, consent_at: daysAgo(d), parrain_dispo: false });
     students.push(p);
   }
   // Parrains des 3A (Amine, persona 3A, reçoit le sien à sa première visite)
   const parrainages = [];
   for (const st of s3) {
     const cap = x => (x === youssef ? 2 : 3);
-    const l = profiles.filter(x => x.role === 'laureat' && x.parrain_dispo && x.filiere === st.filiere && parrainages.filter(y => y.parrain_id === x.id).length < cap(x))
-      .sort((a, b) => b.verified - a.verified)[0];
+    const l = profiles.filter(x => x.role === 'laureat' && x.parrain_dispo && proximiteFiliere(x.filiere, st.filiere) > 0 && parrainages.filter(y => y.parrain_id === x.id).length < cap(x))
+      .sort((a, b) => proximiteFiliere(b.filiere, st.filiere) - proximiteFiliere(a.filiere, st.filiere) || b.verified - a.verified)[0];
     if (l) parrainages.push({ id: id('pa'), filleul_id: st.id, parrain_id: l.id, saison: S, created_at: daysAgo(30 + Math.floor(r3() * 10)) });
   }
 
   // Offres entre lauréats, et une offre de Youssef sans nouvelles depuis un mois (relance douce)
   const stell = lau.find(p => p.entreprise === 'Stellantis Kénitra') || pick3(lau);
   const ocp = lau.find(p => p.entreprise === 'OCP Group') || pick3(lau);
-  offers.push({ id: id('o'), author_id: stell.id, audience: 'laureats', type: 'emploi', titre: 'Responsable de production (5 ans d’expérience)', entreprise: 'Stellantis Kénitra', ville: 'Kénitra', pays: 'Maroc', filieres: ['Génie Industriel', 'Génie Mécanique'], annees: [], description: 'Pilotage d’un atelier de 120 personnes, objectifs sécurité, qualité, coûts. Je recommande directement les lauréats intéressés au directeur d’usine.', contact: 'Message via la plateforme', lien: '', deadline: null, cooptation: true, remunere: true, duree: 'CDI', status: 'ouverte', created_at: daysAgo(3) });
-  offers.push({ id: id('o'), author_id: ocp.id, audience: 'laureats', type: 'emploi', titre: 'Chef de projet maintenance (3 à 8 ans)', entreprise: 'OCP Group', ville: 'Jorf Lasfar', pays: 'Maroc', filieres: ['Génie Électromécanique', 'Génie Énergétique'], annees: [], description: 'Projet de fiabilisation des unités d’acide sulfurique. Expérience en maintenance industrielle demandée.', contact: 'Message via la plateforme', lien: '', deadline: null, cooptation: true, remunere: true, duree: 'CDI', status: 'ouverte', created_at: daysAgo(8) });
-  offers.push({ id: id('o'), author_id: youssef.id, audience: 'etudiants', type: 'stage', titre: 'Stage 4A : maintenance des presses', entreprise: 'Renault Group Maroc', ville: 'Tanger', pays: 'Maroc', filieres: ['Génie Mécanique', 'Génie Électromécanique'], annees: [4], description: 'Stage de 2 mois cet été sur la maintenance préventive des presses d’emboutissage.', contact: 'Message via la plateforme', lien: '', deadline: null, cooptation: true, remunere: true, duree: '2 mois', status: 'ouverte', created_at: daysAgo(26) });
+  offers.push({ id: id('o'), author_id: stell.id, audience: 'laureats', type: 'emploi', titre: 'Responsable de production (5 ans d’expérience)', entreprise: 'Stellantis Kénitra', ville: 'Kénitra', pays: 'Maroc', filieres: [GIP, GIEO, MPF], annees: [], description: 'Pilotage d’un atelier de 120 personnes, objectifs sécurité, qualité, coûts. Je recommande directement les lauréats intéressés au directeur d’usine.', contact: 'Message via la plateforme', lien: '', deadline: null, cooptation: true, remunere: true, duree: 'CDI', status: 'ouverte', created_at: daysAgo(3) });
+  offers.push({ id: id('o'), author_id: ocp.id, audience: 'laureats', type: 'emploi', titre: 'Chef de projet maintenance (3 à 8 ans)', entreprise: 'OCP Group', ville: 'Jorf Lasfar', pays: 'Maroc', filieres: [GE_MCI, GME], annees: [], description: 'Projet de fiabilisation des unités d’acide sulfurique. Expérience en maintenance industrielle demandée.', contact: 'Message via la plateforme', lien: '', deadline: null, cooptation: true, remunere: true, duree: 'CDI', status: 'ouverte', created_at: daysAgo(8) });
+  offers.push({ id: id('o'), author_id: youssef.id, audience: 'etudiants', type: 'stage', titre: 'Stage 4A : maintenance des presses', entreprise: 'Renault Group Maroc', ville: 'Tanger', pays: 'Maroc', filieres: [MPF, GE_MCI], annees: [4], description: 'Stage de 2 mois cet été sur la maintenance préventive des presses d’emboutissage.', contact: 'Message via la plateforme', lien: '', deadline: null, cooptation: true, remunere: true, duree: '2 mois', status: 'ouverte', created_at: daysAgo(26) });
   // Banque de sujets PFE : de vrais problèmes déposés par des lauréats qui encadrent
   const giEnc = lau.find(p => p.filiere === 'Génie Industriel' && p !== youssef && p !== stell) || pick3(lau);
   const sujet = (author, titre, ent, ville, fil, desc, ago) => offers.push({ id: id('o'), author_id: author.id, audience: 'etudiants', type: 'pfe', titre, entreprise: ent, ville, pays: 'Maroc', filieres: fil, annees: [5], description: desc, contact: 'Message via la plateforme', lien: '', deadline: null, cooptation: true, remunere: true, duree: '6 mois', status: 'ouverte', created_at: daysAgo(ago, 3) });
-  sujet(giEnc, 'PFE : déployer le Lean sur une ligne de câblage', 'Yazaki Morocco', 'Meknès', ['Génie Industriel'], 'Notre ligne perd 12 % de TRS sur les arrêts courts. Le sujet : cartographie VSM, chantiers SMED et 5S, suivi des gains sur 6 mois. Je t’encadre côté entreprise.', 4);
-  sujet(stell, 'PFE : réduire le temps de changement de série en ferrage', 'Stellantis Kénitra', 'Kénitra', ['Génie Industriel', 'Génie Mécanique'], 'Changement de série de 45 minutes aujourd’hui, objectif 20. Analyse SMED, standardisation et formation des équipes.', 7);
-  sujet(ocp, 'PFE : tableau de bord qualité en temps réel', 'OCP Group', 'Jorf Lasfar', ['Génie Industriel', 'Génie Informatique & IA'], 'Les données qualité sont dans trois fichiers Excel différents. Le sujet : un tableau de bord Power BI branché sur la production, avec alertes.', 11);
+  sujet(giEnc, 'PFE : déployer le Lean sur une ligne de câblage', 'Yazaki Morocco', 'Meknès', [GIEO, GIP], 'Notre ligne perd 12 % de TRS sur les arrêts courts. Le sujet : cartographie VSM, chantiers SMED et 5S, suivi des gains sur 6 mois. Je t’encadre côté entreprise.', 4);
+  sujet(stell, 'PFE : réduire le temps de changement de série en ferrage', 'Stellantis Kénitra', 'Kénitra', [GIEO, CISM], 'Changement de série de 45 minutes aujourd’hui, objectif 20. Analyse SMED, standardisation et formation des équipes.', 7);
+  sujet(ocp, 'PFE : tableau de bord qualité en temps réel', 'OCP Group', 'Jorf Lasfar', [GIEO, IATD], 'Les données qualité sont dans trois fichiers Excel différents. Le sujet : un tableau de bord Power BI branché sur la production, avec alertes.', 11);
   for (const o of offers) o.audience ||= 'etudiants';
 
   // Questions routées : vers les lauréats de Renault, et vers ceux qui vivent en France
@@ -353,10 +363,10 @@ export function buildSeed(now = new Date()) {
   // Groupes par filière, par ville et à l'étranger
   const groupe_messages = []; const gm = (groupe, author, body, d, h = 10) => groupe_messages.push({ id: id('g'), groupe, author_id: author.id, body, created_at: daysAgo(d, h) });
   const gi = lau.filter(p => p.filiere === 'Génie Industriel');
-  gm('filiere:genie industriel', gi[0] || youssef, 'Bonjour à tous ! Qui est sur une mission lean en ce moment ? Je cherche des retours sur le déploiement du TPM.', 6);
-  gm('filiere:genie industriel', salma, 'Bonjour, je prépare mon PFE en excellence opérationnelle. Si quelqu’un a un sujet en tête, je suis preneuse !', 3);
-  gm('filiere:genie industriel', gi[1] || youssef, 'Salma, envoie-moi ton CV en message, on ouvre deux sujets en supply chain en février.', 2, 4);
-  gm('filiere:genie mecanique', youssef, 'Rappel aux 3A : les candidatures pour les stages ouvriers d’été commencent maintenant. N’attendez pas avril.', 4);
+  gm('filiere:electro-industriel', gi[0] || youssef, 'Bonjour à tous ! Qui est sur une mission lean en ce moment ? Je cherche des retours sur le déploiement du TPM.', 6);
+  gm('filiere:electro-industriel', salma, 'Bonjour, je prépare mon PFE en excellence opérationnelle. Si quelqu’un a un sujet en tête, je suis preneuse !', 3);
+  gm('filiere:electro-industriel', gi[1] || youssef, 'Salma, envoie-moi ton CV en message, on ouvre deux sujets en supply chain en février.', 2, 4);
+  gm('filiere:mecanique', youssef, 'Rappel aux 3A : les candidatures pour les stages ouvriers d’été commencent maintenant. N’attendez pas avril.', 4);
   gm('pays:france', enFrance || youssef, 'Pour ceux qui arrivent en France cette année : ouvrez un compte bancaire en ligne avant de partir, ça simplifie tout.', 9);
   gm('pays:france', salma, 'Merci ! Et pour la CAF, il faut combien de temps ?', 8);
   gm('pays:france', enFrance || youssef, 'Environ 6 semaines après la demande. Faites-la dès la signature du bail.', 8, 2);
@@ -401,5 +411,8 @@ export function buildSeed(now = new Date()) {
 
   const base = { profiles, offers, comments, reactions, applications, placements, mentorships, questions, answers, votes, shortlists, invitations, kudos, attestations: [], liens_rdv, annonces, groupe_messages, groupe_membres, cafes, cafe_participants, startups, defis, parrainages };
   const phase3 = seedPhase3(base, S, now);
+  // Comme dans la vraie base : un champ que le membre n'a pas rempli vaut null (pas « absent »)
+  const VIDES = ['entreprise', 'poste', 'ville', 'bio', 'linkedin', 'contact', 'cv_url', 'disponibilite', 'mentor_sujets', 'secteur', 'consent_at', 'cv_path', 'cv_maj'];
+  for (const p of profiles) for (const k of VIDES) if (p[k] === undefined || p[k] === '') p[k] = null;
   return { ...base, ...phase3, ...seedMessages({ ...base, ...phase3 }, now) };
 }

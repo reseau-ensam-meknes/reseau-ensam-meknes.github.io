@@ -154,7 +154,7 @@ export function seedPhase3(base, S, now = new Date()) {
   // ---------------- Liste officielle (importée par l'administration) ----------------
   const liste_officielle = [];
   P.filter(p => p.role === 'etudiant' && p.promo >= S + 1 && !p._persona).forEach((p, i) => { if (i % 6 !== 5) liste_officielle.push({ id: id('lo'), nom: p.full_name.split(' ').reverse().join(' ').toUpperCase(), email: null, promo: p.promo, filiere: p.filiere, matricule: `M${p.promo}${String(i).padStart(3, '0')}`, created_at: daysAgo(10) }); });
-  ['Yassine Ouardi', 'Salima Kabbaj', 'Mouad Chafik', 'Ikram Filali', 'Hamza Rifi'].forEach((nom, i) => liste_officielle.push({ id: id('lo'), nom, email: null, promo: S + 1 + (i % 3), filiere: ['Génie Industriel', 'Génie Mécanique', 'Génie Civil'][i % 3], matricule: null, created_at: daysAgo(10) }));
+  ['Yassine Ouardi', 'Salima Kabbaj', 'Mouad Chafik', 'Ikram Filali', 'Hamza Rifi'].forEach((nom, i) => liste_officielle.push({ id: id('lo'), nom, email: null, promo: S + 1 + (i % 3), filiere: ['Génie Industriel : Excellence Opérationnelle', 'Génie Mécanique : Ingénierie Mécanique et Structures', 'Génie Civil'][i % 3], matricule: null, created_at: daysAgo(10) }));
   for (const p of P) if (!p.verified && p.role === 'etudiant' && liste_officielle.some(l => l.promo === p.promo && cleNom(l.nom) === cleNom(p.full_name))) p.verified = true;
 
   return { coordonnees, demandes_contact, relectures_cv, relecture_commentaires, entretiens, avis_stage, guide_pays, guide_pays_historique, signalements, enquetes_insertion, evenements, evenement_participants, verifications_pairs, liste_officielle };

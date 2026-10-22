@@ -1,8 +1,8 @@
 // Ce que les lauréats y gagnent : vivier de talents (shortlist, invitations), attestation vérifiable,
 // et fil des réussites à partager sur LinkedIn.
 import { html, useState, useEffect } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, RoleLine, BrandLogo, toast, injectCSS } from './ui.js';
-import { FILIERES, FOUND, niveauOf, statutOf, timeAgo, attestationStats } from './logic.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, RoleLine, BrandLogo, toast, injectCSS, FiliereFiltre } from './ui.js';
+import { FOUND, niveauOf, statutOf, timeAgo, attestationStats, filtreFiliere } from './logic.js';
 import { OfferComposer, matchesMe } from './offers.js';
 import { getLang, addAR } from './i18n.js';
 import { CvButton } from './cv.js';
@@ -29,7 +29,7 @@ export function TalentPool({ ctx }) {
   const qq = q.trim().toLowerCase();
   const searching = p => !['trouve', 'validation'].includes(statutOf(data, p, saison).key);
   const list = pool.filter(p => (view === 'shortlist' ? saved.has(p.id) : searching(p)))
-    .filter(p => (!fil || p.filiere === fil) && (!niv || niveauOf(p, saison) === +niv) && (!cv || p.cv_path || p.cv_url)
+    .filter(p => filtreFiliere(fil, p.filiere) && (!niv || niveauOf(p, saison) === +niv) && (!cv || p.cv_path || p.cv_url)
       && (!qq || `${p.full_name} ${p.ville || ''} ${p.bio || ''} ${(p.competences || []).join(' ')}`.toLowerCase().includes(qq)))
     .sort((a, b) => (saved.has(b.id) - saved.has(a.id)) || (!!(b.cv_path || b.cv_url) - !!(a.cv_path || a.cv_url)) || (b.competences?.length || 0) - (a.competences?.length || 0));
   const toggle = p => act(async () => {
@@ -49,7 +49,7 @@ export function TalentPool({ ctx }) {
     ${canRecruit ? html`<div class="seg" role="group"><button class=${view === 'tous' ? 'on' : ''} onClick=${() => setView('tous')}>Tous les talents</button><button class=${view === 'shortlist' ? 'on' : ''} onClick=${() => setView('shortlist')}><${Icon} name="bookmark" size=${15}/> Ma shortlist${saved.size ? html` <span class="count">${saved.size}</span>` : null}</button></div>` : null}
     <div class="filter-row">
       <label class="search"><${Icon} name="search" size=${16}/><input id="t-q" placeholder="Compétence, ville, nom…" value=${q} onInput=${e => setQ(e.target.value)}/></label>
-      <select id="t-fil" value=${fil} onChange=${e => setFil(e.target.value)} aria-label="Filière"><option value="">Toutes filières</option>${FILIERES.map(f => html`<option value=${f}>${f}</option>`)}</select>
+      <${FiliereFiltre} id="t-fil" value=${fil} onChange=${setFil}/>
       <select id="t-niv" value=${niv} onChange=${e => setNiv(e.target.value)} aria-label="Année"><option value="">Toutes les années</option><option value="3">3A</option><option value="4">4A</option><option value="5">5A</option></select>
       <button class=${'chip' + (cv ? ' on' : '')} aria-pressed=${cv} onClick=${() => setCv(!cv)}><${Icon} name="file" size=${14}/> Avec CV</button>
     </div>

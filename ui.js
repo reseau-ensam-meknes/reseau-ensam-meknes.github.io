@@ -1,6 +1,6 @@
 // Composants partagés de l'interface.
 import { html, useState, useEffect, useRef, useMemo } from './vendor/preact-htm.js';
-import { initials, levelOf, NIVEAUX, niveauOf, seasonOf } from './logic.js';
+import { initials, levelOf, NIVEAUX, niveauOf, seasonOf, PARCOURS, FILIERES_INFO } from './logic.js';
 import { sceneMarkup } from './scene.js';
 import { glyph, TUILE_DEFS, TUILE } from './logo.js';
 
@@ -310,4 +310,13 @@ export function injectCSS(id, css) {
   if (styled.has(id) || typeof document === 'undefined') return;
   styled.add(id);
   const s = document.createElement('style'); s.dataset.module = id; s.textContent = css; document.head.appendChild(s);
+}
+
+// Filtre par filière : chaque parcours (en entier, puis ses filières). La valeur « parcours:PM » vise tout un parcours.
+export function FiliereFiltre({ id, value, onChange }) {
+  return html`<select id=${id} class="fil-filtre" value=${value} onChange=${e => onChange(e.target.value)} aria-label="Filière"><option value="">Toutes filières</option>
+    ${PARCOURS.map(p => {
+      const fs = FILIERES_INFO.filter(f => f.parcours === p.code);
+      return html`<optgroup label=${`Parcours ${p.nom}`}>${fs.length > 1 ? html`<option value=${'parcours:' + p.code}>${`Tout le parcours ${p.nom}`}</option>` : null}${fs.map(f => html`<option value=${f.nom}>${f.nom}</option>`)}</optgroup>`;
+    })}</select>`;
 }
