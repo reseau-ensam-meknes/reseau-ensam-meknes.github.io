@@ -7,7 +7,7 @@ import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, s
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
 import { ParcoursPage, EspacePage, ConfirmRecruit, Journey, journeyStep } from './me.js';
 import { DashboardPage } from './dashboard.js';
-import { ReseauPage, ProfileModal, ProfileForm, AskQuestion } from './community.js';
+import { ReseauPage, ProfileModal, ProfileForm, AskQuestion, RoleCoherence } from './community.js';
 import { AdminPage, AnnonceBanner } from './admin.js';
 import { MentoratPage, AskHelp, NextRdv, HelpNeeded, slotWhen } from './mentorat.js';
 import { SuccessFeed, VerifyPage } from './growth.js';
@@ -465,6 +465,7 @@ function Home(ctx) {
       </div>
       <${SchoolScene} align=${getLang() === 'ar' ? 'xMinYMax' : 'xMaxYMax'}/>
     </header>
+    <${RoleCoherence} ctx=${ctx}/>
 
     ${isStudent && stu.pl?.status === 'en_attente' ? html`<${ConfirmRecruit} ctx=${ctx} pl=${stu.pl} helper=${helper}/>` : html`<${Focus} ctx=${ctx} pas=${pas}/>`}
     <${PoulsReseau} ctx=${ctx} onOpen=${() => go(isLaureat ? 'mentorat' : 'reseau')}/>

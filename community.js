@@ -1,8 +1,8 @@
 // Entraide, Communauté (classement, annuaire, vitrine des talents) et profils.
-import { html, useState, useMemo } from './vendor/preact-htm.js';
+import { html, useState, useMemo, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, toast, LevelChip, RoleLine } from './ui.js';
 import { getLang } from './i18n.js';
-import { FILIERES, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo } from './logic.js';
+import { FILIERES, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, seasonOf, roleIncoherent, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo } from './logic.js';
 import { TalentPool } from './growth.js';
 import { GroupesPage } from './groupes.js';
 import { AnnuairePro } from './pro.js';
@@ -13,15 +13,35 @@ import { AgendaPage } from './agenda.js';
 import { MessageBtn } from './messages.js';
 import { CvButton } from './cv.js';
 import { SignalerBtn, ContactBlock, PairVerify, VisibiliteFields, groupesMasques, confirmations, VIS_LABELS, VIS_CHOIX } from './confiance.js';
-import { VIS_CHAMPS } from './store.js';
+import { VIS_CHAMPS, CV_MAX } from './store.js';
 import { addAR } from './i18n.js';
 import { oublierInvitation } from './invitation.js';
 import { parseLinkedin } from './parse-linkedin.js';
+import { lireCV } from './lire-cv.js';
 
 // Arabe : textes du profil ajoutés en Phase 3
 addAR({
   // Profil en une minute depuis LinkedIn
   'Remplir depuis LinkedIn': 'الملء من LinkedIn', 'Remplir mon profil': 'املأ ملفي', 'Bio': 'نبذة',
+  // Remplir avec le CV en PDF, choix du rôle et cohérence avec la promo
+  'Remplir avec mon CV (PDF)': 'املأ بسيرتي الذاتية (PDF)', 'Lecture du CV…': 'جارٍ قراءة السيرة الذاتية…',
+  'Rôle, promo, filière, poste, compétences, téléphone… tout se remplit depuis ton CV. Tu vérifies avant d’enregistrer.': 'الصفة، الدفعة، الشعبة، المنصب، المهارات، الهاتف… كل شيء يُملأ من سيرتك الذاتية. تتحقق قبل الحفظ.',
+  'Rien de reconnu dans ce CV : remplis ton profil à la main.': 'لم نتعرف على شيء في هذه السيرة الذاتية: املأ ملفك يدويًا.',
+  'Ton profil correspond déjà à ton CV.': 'ملفك مطابق لسيرتك الذاتية.', 'Rempli depuis ton CV :': 'مُلئ من سيرتك الذاتية:',
+  'Tu es…': 'أنت…',
+  'Ton année de diplôme est passée : tu es lauréat(e) maintenant ?': 'سنة تخرجك مرّت: هل أصبحت خريج(ة)؟', 'Ton année de diplôme n’est pas encore arrivée : tu es encore étudiant(e) ?': 'سنة تخرجك لم تأتِ بعد: هل ما زلت طالب(ة)؟',
+  'Passe en lauréat(e) : les étudiants pourront te demander conseil, et ton profil sera vérifié.': 'انتقل إلى خريج(ة): سيتمكن الطلبة من طلب نصيحتك، وسيتم التحقق من ملفك.',
+  'Passe en étudiant(e) pour recevoir les offres de stage et l’aide des lauréats.': 'انتقل إلى طالب(ة) لتتلقى عروض التدريب ومساعدة الخريجين.',
+  'Oui, je suis lauréat(e)': 'نعم، أنا خريج(ة)', 'Oui, je suis étudiant(e)': 'نعم، أنا طالب(ة)', 'Corriger ma promo': 'تصحيح دفعتي',
+  'Bienvenue parmi les lauréats !': 'مرحبًا بك بين الخريجين!', 'Profil corrigé : tu es étudiant(e).': 'تم تصحيح الملف: أنت طالب(ة).', 'Choisis d’abord, ou remplis tout avec ton CV.': 'اختر أولًا، أو املأ كل شيء بسيرتك الذاتية.',
+  'Avec cette promo, tes études sont terminées.': 'بهذه الدفعة، دراستك انتهت.', 'Avec cette promo, tu n’es pas encore diplômé(e).': 'بهذه الدفعة، لم تتخرج بعد.',
+  'Si tu as eu ton diplôme, tu es lauréat(e). Sinon, corrige ton année de diplôme prévue.': 'إذا حصلت على شهادتك، فأنت خريج(ة). وإلا صحّح سنة التخرج المتوقعة.',
+  'Si tu es encore à l’école, tu es étudiant(e). Sinon, corrige ton année de diplôme.': 'إذا كنت ما تزال في المدرسة، فأنت طالب(ة). وإلا صحّح سنة تخرجك.',
+  'Joindre aussi ce PDF comme mon CV (visible avec mes candidatures)': 'إرفاق هذا الملف أيضًا كسيرتي الذاتية (تظهر مع ترشيحاتي)',
+  'Choisis « étudiant(e) » ou « lauréat(e) » pour continuer.': 'اختر «طالب(ة)» أو «خريج(ة)» للمتابعة.',
+  'Profil enregistré, mais le CV n’a pas pu être joint. Réessaie depuis « Mon profil ».': 'تم حفظ الملف، لكن تعذر إرفاق السيرة الذاتية. أعد المحاولة من «ملفي».',
+  'Ce PDF n’a pas pu être lu. Remplis ton profil à la main.': 'تعذرت قراءة هذا الملف. املأ ملفك يدويًا.',
+  'Ce PDF ne contient pas de texte lisible (CV scanné en image ?). Remplis ton profil à la main.': 'هذا الملف لا يحتوي على نص مقروء (سيرة ذاتية ممسوحة كصورة؟). املأ ملفك يدويًا.',
   'Sur LinkedIn (ordinateur), ouvre ton profil, puis « Plus » › « Enregistrer au format PDF ».': 'على LinkedIn (من الحاسوب)، افتح ملفك، ثم «المزيد» › «حفظ بصيغة PDF».',
   'Ouvre le PDF, sélectionne tout (Ctrl+A), copie, puis colle ici. Sur téléphone, colle simplement ta section Infos.': 'افتح ملف PDF، حدّد الكل (Ctrl+A)، انسخ ثم الصق هنا. على الهاتف، الصق فقط قسم «نبذة».',
   'Colle ici le texte de ton profil LinkedIn': 'الصق هنا نص ملفك على LinkedIn',
@@ -213,9 +233,34 @@ function LinkedinBox({ onFill }) {
   </details>`;
 }
 
+// Rôle et promo qui ne vont pas ensemble (inscrit comme étudiant alors que diplômé, ou l'inverse) : correction en un clic
+export function RoleCoherence({ ctx }) {
+  const { me, store, act, go } = ctx;
+  const k = roleIncoherent(me, ctx.saison);
+  if (!k) return null;
+  const role = k === 'etudiant' ? 'laureat' : 'etudiant';
+  return html`<div class="cf-warn role-coh" role="alert" id="role-coh">
+    <p><strong>${k === 'etudiant' ? 'Ton année de diplôme est passée : tu es lauréat(e) maintenant ?' : 'Ton année de diplôme n’est pas encore arrivée : tu es encore étudiant(e) ?'}</strong></p>
+    <p class="small">${k === 'etudiant' ? 'Passe en lauréat(e) : les étudiants pourront te demander conseil, et ton profil sera vérifié.' : 'Passe en étudiant(e) pour recevoir les offres de stage et l’aide des lauréats.'}</p>
+    <div class="row"><button class="btn small primary" id="role-coh-ok" onClick=${() => act(async () => { await store.update('profiles', me.id, { role }); toast(role === 'laureat' ? 'Bienvenue parmi les lauréats !' : 'Profil corrigé : tu es étudiant(e).'); })}>${role === 'laureat' ? 'Oui, je suis lauréat(e)' : 'Oui, je suis étudiant(e)'}</button>
+      <button class="btn small" onClick=${() => go('profil')}>Corriger ma promo</button></div>
+  </div>`;
+}
+
+// Le CV en PDF remplit tout le profil (lu sur l'appareil, rien n'est envoyé avant « Enregistrer »)
+function CvImportBox({ onFile, faits, busy }) {
+  const input = useRef(null);
+  return html`<div class="cv-import">
+    <input ref=${input} id="pf-cvfile" type="file" accept="application/pdf,.pdf" hidden onChange=${e => { const fl = e.target.files[0]; e.target.value = ''; if (fl) onFile(fl); }}/>
+    <button type="button" class="btn primary" id="pf-cvbtn" disabled=${busy} onClick=${() => input.current?.click()}><${Icon} name="upload" size=${17}/> ${busy ? 'Lecture du CV…' : 'Remplir avec mon CV (PDF)'}</button>
+    <span class="small muted">Rôle, promo, filière, poste, compétences, téléphone… tout se remplit depuis ton CV. Tu vérifies avant d’enregistrer.</span>
+    ${faits ? html`<p class="small li-faits" role="status" id="pf-cvfaits">${faits.ok === false ? 'Rien de reconnu dans ce CV : remplis ton profil à la main.' : !faits.length ? 'Ton profil correspond déjà à ton CV.' : html`<span>Rempli depuis ton CV :</span> ${faits.map(x => html`<span class="tag">${x}</span>`)}`}</p>` : null}
+  </div>`;
+}
+
 export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
   const { store, act } = ctx;
-  const [f, setF] = useState(() => ({ full_name: '', role: 'etudiant', filiere: FILIERES[0], promo: new Date().getFullYear() + 1, entreprise: '', poste: '', ville: '', pays: 'Maroc', bio: '', competences: [], linkedin: '', contact: '', cv_url: '', disponibilite: '', mentor_dispo: false, mentor_sujets: '', vitrine: true, secteur: '', parrain_dispo: false, ...(preset || {}), ...(initial || {}) }));
+  const [f, setF] = useState(() => ({ full_name: '', role: onboarding ? '' : 'etudiant', filiere: FILIERES[0], promo: new Date().getFullYear() + 1, entreprise: '', poste: '', ville: '', pays: 'Maroc', bio: '', competences: [], linkedin: '', contact: '', cv_url: '', disponibilite: '', mentor_dispo: false, mentor_sujets: '', vitrine: true, secteur: '', parrain_dispo: false, ...(preset || {}), ...(initial || {}) }));
   const set = (k, v) => setF({ ...f, [k]: v });
   const [comp, setComp] = useState((f.competences || []).join(', '));
   // Base à jour (Phase 3) : coordonnées privées et visibilité ; sinon l'ancien champ « contact » public
@@ -228,7 +273,12 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
   const email = (store.session?.user?.email || '').toLowerCase();
   const domaines = store.domainesEcole?.() || [];
   const ecoleBloque = !!onboarding && f.role === 'etudiant' && store.reglages?.email_ecole_obligatoire === true && domaines.length > 0 && !!email && !domaines.some(d => email.endsWith('@' + d) || email.endsWith('.' + d));
-  const ok = f.full_name.trim().length >= 2 && f.promo >= 1990 && f.promo <= 2040 && !ecoleBloque;
+  // Le rôle suit la promo : étudiant(e) tant que l'année de diplôme n'est pas passée, lauréat(e) ensuite
+  const saison = seasonOf();
+  const pr = +f.promo;
+  const incoherent = pr >= 1990 && (f.role === 'etudiant' && pr <= saison ? 'etudiant' : f.role === 'laureat' && pr > saison ? 'laureat' : null);
+  const [cv, setCv] = useState({ busy: false, faits: null, file: null, joindre: false });
+  const ok = !!f.role && f.full_name.trim().length >= 2 && f.promo >= 1990 && f.promo <= 2040 && !ecoleBloque && !incoherent;
   const submit = e => {
     e.preventDefault(); if (!ok) return;
     // Les champs laissés vides à l’inscription valent null dans la base
@@ -252,23 +302,30 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
       if (onboarding) { await store.insert('profiles', { id: store.userId, ...row }); oublierInvitation(); }
       else await store.update('profiles', initial.id, row);
       if (coordChange) await store.enregistrerCoordonnees(champs);
+      if (cv.file && cv.joindre) await store.deposerCV(cv.file).catch(() => toast('Profil enregistré, mais le CV n’a pas pu être joint. Réessaie depuis « Mon profil ».', 'err'));
       toast(onboarding ? 'Bienvenue dans le réseau !' : 'Profil enregistré.');
       onDone?.();
     });
   };
-  // Ne remplit que les champs vides (et, à l'inscription, la promo, la filière et le rôle)
-  const remplir = txt => {
-    const r = parseLinkedin(txt);
+  // Ne remplit que les champs vides ; le rôle, la promo et la filière viennent du CV, ou du texte LinkedIn à l'inscription
+  const appliquer = (r, depuisCV) => {
     if (!Object.keys(r).length) return Object.assign([], { ok: false });
     const n = { ...f }, faits = [];
     const vide = k => !String(f[k] ?? '').trim();
     const neuf = !initial;
-    if (neuf && !preset && r.role && f.role !== 'admin' && r.role !== f.role) { n.role = r.role; faits.push(r.role === 'laureat' ? 'Lauréat(e)' : 'Étudiant(e)'); }
+    const fort = depuisCV || neuf;
+    if (fort && (depuisCV || !preset?.role) && r.role && f.role !== 'admin' && r.role !== f.role) { n.role = r.role; faits.push(r.role === 'laureat' ? 'Lauréat(e)' : 'Étudiant(e)'); }
     for (const [k, l] of [['full_name', 'Nom'], ['poste', 'Poste'], ['entreprise', 'Entreprise'], ['ville', 'Ville'], ['bio', 'Bio'], ['linkedin', 'LinkedIn']]) if (r[k] && vide(k)) { n[k] = r[k]; faits.push(l); }
     if (r.pays && r.pays !== f.pays && (vide('pays') || (neuf && f.pays === 'Maroc'))) { n.pays = r.pays; faits.push('Pays'); }
-    if (neuf && !preset?.promo && r.promo && r.promo !== +f.promo) { n.promo = r.promo; faits.push('Promo'); }
-    if (neuf && r.filiere && r.filiere !== f.filiere) { n.filiere = r.filiere; faits.push('Filière'); }
+    if (fort && (depuisCV || !preset?.promo) && r.promo && r.promo !== +f.promo) { n.promo = r.promo; faits.push('Promo'); }
+    if (fort && r.filiere && r.filiere !== f.filiere) { n.filiere = r.filiere; faits.push('Filière'); }
     setF(n);
+    if (depuisCV && v3) {
+      const c = { ...co };
+      if (r.telephone && !co.telephone.trim()) { c.telephone = r.telephone; faits.push('Téléphone'); }
+      if (r.email && !co.email.trim()) { c.email = r.email; faits.push('Email'); }
+      setCo(c);
+    }
     if (r.competences?.length) {
       const deja = comp.split(',').map(x => x.trim()).filter(Boolean);
       const vu = new Set(deja.map(x => x.toLowerCase()));
@@ -277,16 +334,34 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
     }
     return faits;
   };
+  const remplir = txt => appliquer(parseLinkedin(txt), false);
+  const depuisCV = async file => {
+    setCv(c => ({ ...c, busy: true, faits: null }));
+    try {
+      const r = await lireCV(file);
+      const faits = appliquer(r, true);
+      setCv({ busy: false, faits, file, joindre: !initial?.cv_path && file.size <= CV_MAX });
+    } catch (e) {
+      setCv({ busy: false, faits: null, file: null, joindre: false });
+      toast(/lisible/.test(e.message) ? e.message : 'Ce PDF n’a pas pu être lu. Remplis ton profil à la main.', 'err');
+    }
+  };
   const isStudent = f.role === 'etudiant';
+  const choisi = !!f.role;
   const n = !isStudent && initial && !initial.verified ? confirmations(store.data, initial) : 0;
   return html`<form class="form" onSubmit=${submit}>
-    ${f.role !== 'admin' ? html`<div class="seg" role="group" aria-label="Je suis"><button type="button" class=${isStudent ? 'on' : ''} onClick=${() => set('role', 'etudiant')}>Je suis étudiant(e)</button><button type="button" class=${!isStudent ? 'on' : ''} onClick=${() => set('role', 'laureat')}>Je suis lauréat(e)</button></div>` : null}
+    ${f.role !== 'admin' ? html`${!choisi ? html`<p class="role-q" id="pf-role-q"><strong>Tu es…</strong> <span class="small muted">Choisis d’abord, ou remplis tout avec ton CV.</span></p>` : null}
+      <div class=${'seg' + (choisi ? '' : ' seg-choix')} role="group" aria-label="Je suis"><button type="button" id="pf-role-etu" class=${isStudent ? 'on' : ''} aria-pressed=${isStudent} onClick=${() => set('role', 'etudiant')}>Je suis étudiant(e)</button><button type="button" id="pf-role-lau" class=${f.role === 'laureat' ? 'on' : ''} aria-pressed=${f.role === 'laureat'} onClick=${() => set('role', 'laureat')}>Je suis lauréat(e)</button></div>
+      <${CvImportBox} onFile=${depuisCV} faits=${cv.faits} busy=${cv.busy}/>` : null}
+    ${incoherent ? html`<div class="cf-warn" role="alert" id="pf-incoh"><p><strong>${incoherent === 'etudiant' ? 'Avec cette promo, tes études sont terminées.' : 'Avec cette promo, tu n’es pas encore diplômé(e).'}</strong></p>
+      <p class="small">${incoherent === 'etudiant' ? 'Si tu as eu ton diplôme, tu es lauréat(e). Sinon, corrige ton année de diplôme prévue.' : 'Si tu es encore à l’école, tu es étudiant(e). Sinon, corrige ton année de diplôme.'}</p>
+      <div><button type="button" class="btn small primary" id="pf-incoh-fix" onClick=${() => set('role', incoherent === 'etudiant' ? 'laureat' : 'etudiant')}>${incoherent === 'etudiant' ? 'Je suis lauréat(e)' : 'Je suis étudiant(e)'}</button></div></div>` : null}
     ${ecoleBloque ? html`<div class="cf-warn" role="alert"><p><strong>Inscris-toi avec ton email de l’école.</strong></p>
       <p class="small">Les comptes étudiants utilisent l’email de l’école : <span dir="ltr" translate="no">${domaines.map(d => '@' + d).join(', ')}</span></p>
       <p class="small">Ton compte actuel n’en fait pas partie : <span dir="ltr" translate="no">${email}</span></p>
       <div><button type="button" class="btn small" id="pf-relog" onClick=${() => store.signOut()}><${Icon} name="logout" size=${15}/> Me déconnecter et recommencer</button></div></div>` : null}
-    ${f.role !== 'admin' ? html`<${LinkedinBox} onFill=${remplir}/>` : null}
-    <div class="grid2">
+    ${choisi && f.role !== 'admin' ? html`<${LinkedinBox} onFill=${remplir}/>` : null}
+    ${choisi ? html`<div class="grid2">
       <${Field} label="Nom complet"><input id="pf-name" required value=${f.full_name} onInput=${e => set('full_name', e.target.value)} maxlength="80"/><//>
       <${Field} label=${isStudent ? 'Promo (année de diplôme prévue)' : 'Promo (année de diplôme)'} hint=${isStudent ? 'Ex. en 5A cette année : ' + (new Date().getMonth() >= 8 ? new Date().getFullYear() + 1 : new Date().getFullYear()) + '. Ton niveau se met à jour tout seul chaque année.' : ''}><input id="pf-promo" type="number" min="1990" max="2040" required value=${f.promo} onInput=${e => set('promo', e.target.value)}/><//>
     </div>
@@ -314,6 +389,8 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
     </fieldset>
     <${VisibiliteFields} role=${f.role} value=${vis} onChange=${setVis}/>` : null}
     ${f.role === 'laureat' && !initial?.verified ? html`<p class="small muted">${v3 ? 'Ton badge « Lauréat vérifié » arrive quand l’administration, ou deux lauréats vérifiés de ta promo, confirment ton profil.' : 'Ton badge « Lauréat vérifié » sera ajouté par l’administration de l’école.'}${n ? html` <b>${n}/2</b>` : null}</p>` : null}
+    ${cv.file && cv.file.size <= CV_MAX ? html`<label class="check"><input id="pf-cvjoindre" type="checkbox" checked=${cv.joindre} onChange=${e => setCv(c => ({ ...c, joindre: e.target.checked }))}/> Joindre aussi ce PDF comme mon CV (visible avec mes candidatures)</label>` : null}` : null}
+    ${!choisi ? html`<p class="small muted" id="pf-role-hint">Choisis « étudiant(e) » ou « lauréat(e) » pour continuer.</p>` : null}
     <div class="row-end"><button class="btn primary" disabled=${!ok}>${onboarding ? 'Rejoindre la communauté' : 'Enregistrer'}</button></div>
   </form>`;
 }

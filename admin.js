@@ -4,10 +4,11 @@
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
 import { Icon, Field, Person, Num, Empty, Bar, toast, injectCSS } from './ui.js';
 import { addAR } from './i18n.js';
-import { NIVEAUX, niveauOf, timeAgo, mentorState, cleNom, norm, GUIDE_SECTIONS, pct } from './logic.js';
+import { NIVEAUX, niveauOf, roleIncoherent, timeAgo, mentorState, cleNom, norm, GUIDE_SECTIONS, pct } from './logic.js';
 import { DefisAdmin } from './saison.js';
 import { AgendaAdmin } from './agenda.js';
 import { InvitationsAdmin } from './invitation.js';
+import { lireCV } from './lire-cv.js';
 
 addAR({
   'Vue d’ensemble': 'نظرة عامة', 'Modération': 'الإشراف', 'Liste officielle': 'اللائحة الرسمية', 'Réglages': 'الإعدادات', 'Agenda': 'المفكرة',
@@ -26,6 +27,9 @@ addAR({
   'Le contenu sera retiré pour tout le monde. Continuer ?': 'سيُحذف المحتوى للجميع. هل تتابع؟',
   'Un membre anonyme': 'عضو مجهول', 'Auteur': 'الكاتب', 'Auteur :': 'الكاتب:', 'Signalé par': 'بلّغ عنه',
   // Membres
+  'Profils à contrôler': 'ملفات للمراقبة', 'Passer lauréat(e)': 'تحويل إلى خريج(ة)', 'Passer étudiant(e)': 'تحويل إلى طالب(ة)', 'Appliquer le CV': 'تطبيق السيرة الذاتية',
+  'Le rôle doit suivre la promo : étudiant(e) jusqu’à l’année de diplôme, lauréat(e) ensuite. Les CV déposés peuvent aussi être comparés aux profils.': 'يجب أن تتبع الصفة الدفعة: طالب(ة) حتى سنة التخرج، ثم خريج(ة). يمكن أيضًا مقارنة السير الذاتية المودعة بالملفات.',
+  'Chaque rôle correspond à la promo.': 'كل صفة تطابق الدفعة.', 'Tous les CV correspondent aux profils.': 'كل السير الذاتية تطابق الملفات.', 'CV illisible (image ou fichier abîmé)': 'سيرة ذاتية غير مقروءة (صورة أو ملف تالف)', 'Profil corrigé.': 'تم تصحيح الملف.',
   'Vérifie que la personne est bien diplômée de l’ENSAM Meknès (promo, filière), puis valide. Le badge rassure les étudiants. Deux lauréats vérifiés de sa promo peuvent aussi le confirmer.': 'تحقق من أن الشخص خريج ENSAM مكناس (الدفعة، الشعبة)، ثم أكّد. الشارة تطمئن الطلبة. يمكن أيضًا لخريجَين متحقق منهما من دفعته تأكيد ذلك.',
   'Pas trouvé sur la liste officielle de sa promo': 'غير موجود في اللائحة الرسمية لدفعته', 'Sur la liste officielle': 'في اللائحة الرسمية', 'Aucune confirmation de sa promo': 'لا تأكيد من دفعته',
   // Liste officielle
@@ -53,6 +57,8 @@ addAR({
   'Domaine invalide :': 'نطاق غير صالح:', 'Aucun domaine pour l’instant : tout le monde s’inscrit avec son adresse habituelle.': 'لا نطاق حاليًا: الجميع يسجل بعنوانه المعتاد.',
 }, [
   [/^Signalé (\d+) fois$/, n => `بُلّغ عنه ${n} مرة`],
+  [/^Comparer les (\d+) CV déposés aux profils$/, n => `مقارنة ${n} سيرة ذاتية مودعة بالملفات`],
+  [/^Analyse des CV… (\d+\/\d+)$/, n => `تحليل السير الذاتية… ${n}`],
   [/^(\d+) signalements? à traiter$/, n => `${n} تبليغ للمعالجة`],
   [/^(\d+) lauréats? à vérifier$/, n => `${n} خريج للتحقق`],
   [/^(\d+)\/2 lauréats de sa promo ont confirmé$/, n => `${n}/2 من خريجي دفعته أكدوا`],
@@ -243,6 +249,44 @@ function useListe(store, data) {
   return Array.isArray(data.liste_officielle) ? data.liste_officielle : rows || [];
 }
 
+// Profils à contrôler : rôle qui ne va pas avec la promo, et comparaison avec les CV déposés (lus dans ce navigateur)
+function ControleProfils({ ctx }) {
+  const { data, store, act, openProfile, saison } = ctx;
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const membres = data.profiles.filter(p => p.role !== 'admin');
+  const incoh = membres.filter(p => roleIncoherent(p, saison));
+  const avecCv = membres.filter(p => p.cv_path);
+  const ROLE = { etudiant: 'Étudiant(e)', laureat: 'Lauréat(e)' };
+  const analyser = async () => {
+    const out = [];
+    for (let i = 0; i < avecCv.length; i++) {
+      const p = avecCv[i]; setBusy(`${i + 1}/${avecCv.length}`);
+      try {
+        const r = await lireCV(await (await fetch(await store.lienCV(p.cv_path))).blob());
+        const diff = {};
+        if (r.role && r.role !== p.role) diff.role = r.role;
+        if (r.promo && r.promo !== p.promo) diff.promo = r.promo;
+        if (r.filiere && r.filiere !== p.filiere) diff.filiere = r.filiere;
+        if (Object.keys(diff).length) out.push({ p, diff });
+      } catch { out.push({ p, err: true }); }
+    }
+    setRes(out); setBusy(null);
+  };
+  const corriger = (p, patch) => act(async () => { await store.update('profiles', p.id, patch); setRes(r => r && r.filter(x => x.p.id !== p.id)); toast('Profil corrigé.'); });
+  if (!incoh.length && !avecCv.length) return null;
+  return html`<div class="panel" id="adm-controle"><div class="section-head"><h2 class="h-ico"><${Icon} name="shield"/> Profils à contrôler ${incoh.length ? html`<span class="count">${incoh.length}</span>` : null}</h2></div>
+    <p class="muted small">Le rôle doit suivre la promo : étudiant(e) jusqu’à l’année de diplôme, lauréat(e) ensuite. Les CV déposés peuvent aussi être comparés aux profils.</p>
+    ${incoh.length ? html`<ul class="people-list">${incoh.map(p => { const role = p.role === 'etudiant' ? 'laureat' : 'etudiant'; return html`<li key=${p.id}>
+      <${Person} p=${p} onOpen=${openProfile} sub=${`${ROLE[p.role]} · Promo ${p.promo} · ${p.filiere}`}/><span class="spacer"></span>
+      <button class="btn small primary" onClick=${() => corriger(p, { role })}>${role === 'laureat' ? 'Passer lauréat(e)' : 'Passer étudiant(e)'}</button></li>`; })}</ul>` : html`<p class="small good-t"><${Icon} name="check" size=${15}/> Chaque rôle correspond à la promo.</p>`}
+    ${avecCv.length ? html`<div class="row"><button class="btn small" id="adm-cv-analyse" disabled=${!!busy} onClick=${analyser}><${Icon} name="file" size=${15}/> ${busy ? 'Analyse des CV… ' + busy : `Comparer les ${avecCv.length} CV déposés aux profils`}</button></div>` : null}
+    ${res ? (res.length ? html`<ul class="people-list" id="adm-cv-res">${res.map(({ p, diff, err }) => html`<li key=${'cv' + p.id}>
+      <${Person} p=${p} onOpen=${openProfile} sub=${err ? 'CV illisible (image ou fichier abîmé)' : Object.entries(diff).map(([k, v]) => k === 'role' ? `CV : ${ROLE[v]} (profil : ${ROLE[p.role]})` : k === 'promo' ? `CV : promo ${v} (profil : ${p.promo})` : `CV : ${v} (profil : ${p.filiere})`).join(' · ')}/>
+      <span class="spacer"></span>${err ? null : html`<button class="btn small primary" onClick=${() => corriger(p, diff)}>Appliquer le CV</button>`}</li>`)}</ul>` : html`<p class="small good-t" id="adm-cv-res"><${Icon} name="check" size=${15}/> Tous les CV correspondent aux profils.</p>`) : null}
+  </div>`;
+}
+
 function Membres({ ctx, comptes, toVerify }) {
   const { data, store, act, openProfile, saison } = ctx;
   const [q, setQ] = useState('');
@@ -260,6 +304,7 @@ function Membres({ ctx, comptes, toVerify }) {
   const pairs = p => (data.verifications_pairs || []).filter(v => v.laureat_id === p.id).map(v => store.byId('profiles', v.verificateur_id)).filter(x => x?.role === 'laureat' && x.verified && x.promo === p.promo);
 
   return html`
+    <${ControleProfils} ctx=${ctx}/>
     ${toVerify.length ? html`<div class="panel accent-panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="shield"/> Lauréats à vérifier <span class="count">${toVerify.length}</span></h2></div>
       <p class="muted small">Vérifie que la personne est bien diplômée de l’ENSAM Meknès (promo, filière), puis valide. Le badge rassure les étudiants. Deux lauréats vérifiés de sa promo peuvent aussi le confirmer.</p>
       <ul class="people-list verif-list">${toVerify.map(p => { const pr = pairs(p); return html`<li key=${p.id}><div class="verif-who"><${Person} p=${p} onOpen=${openProfile} sub=${`${p.filiere} · Promo ${p.promo}${p.entreprise ? ' · ' + p.entreprise : ''}`}/>

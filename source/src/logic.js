@@ -27,6 +27,8 @@ export const CATEGORIES_Q = ['PFE', 'Stage', 'Étranger & visas', 'CV & entretie
 // Une saison = une année universitaire, de septembre à août. 2026 = « 2026-2027 ».
 export function seasonOf(d = new Date()) { return d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1; }
 export const seasonLabel = s => `${s}-${s + 1}`;
+// Rôle et promo qui ne vont pas ensemble : étudiant(e) déjà diplômé(e), ou lauréat(e) pas encore diplômé(e)
+export const roleIncoherent = (p, saison = seasonOf()) => !p?.promo ? null : p.role === 'etudiant' && p.promo <= saison ? 'etudiant' : p.role === 'laureat' && p.promo > saison ? 'laureat' : null;
 
 // Niveau d'un membre pendant une saison, calculé depuis sa promo (année de diplôme).
 export function niveauOf(p, saison) {

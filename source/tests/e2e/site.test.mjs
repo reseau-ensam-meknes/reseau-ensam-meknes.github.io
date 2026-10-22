@@ -11,7 +11,7 @@ import { createRequire } from 'node:module';
 const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe.min.js'), 'utf8');
 
 const SITE = path.resolve(process.env.SITE_DIR || new URL('../../dist', import.meta.url).pathname);
-const TYPES = { '.js': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
+const TYPES = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const ECRANS = ['accueil', 'offres', 'mentorat', 'mentorat/cv', 'messages', 'parcours', 'espace', 'reseau/groupes', 'reseau/agenda', 'reseau/entraide',
   'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'reseau/classement', 'reseau/talents', 'suivi', 'profil', 'enquete',
   'confidentialite', 'admin', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda', 'admin/reglages'];
@@ -223,6 +223,51 @@ test('profil : enregistrer deux fois avec des champs vides', async () => {
     }
     await s.page.click('.form .row-end .btn.primary');
     await s.page.getByText('Profil enregistré.').last().waitFor({ timeout: 3000 });
+  }
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('profil : un rôle qui ne va pas avec la promo est signalé et se corrige en un clic', async () => {
+  const s = await ouvrir();
+  await s.comme('Amine'); await s.aller('profil');
+  await s.page.fill('#pf-promo', '2020');
+  await s.page.waitForSelector('#pf-incoh');
+  assert.equal(await s.page.isDisabled('.form .row-end .btn.primary'), true);
+  await s.page.click('#pf-incoh-fix');
+  assert.equal(await s.page.locator('#pf-incoh').count(), 0);
+  assert.match(await s.page.getAttribute('#pf-role-lau', 'class'), /\bon\b/);
+  assert.equal(await s.page.isDisabled('.form .row-end .btn.primary'), false);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('profil : remplir avec le CV en PDF (lu dans le navigateur)', async () => {
+  const s = await ouvrir();
+  await s.comme('Amine'); await s.aller('profil');
+  const cv = ['Amine Kettani', 'Ingénieur méthodes', 'amine.kettani@gmail.com', 'Formation', 'ENSAM Meknès', 'Génie Industriel', '2019 - 2024',
+    'Expérience', 'Lear Corporation', 'Ingénieur méthodes', 'Sept. 2024 - Aujourd’hui', 'Compétences', 'Lean • CATIA • Python'];
+  const octets = await s.page.evaluate(async l => { const { pdfSimple } = await import('./store.js'); return [...new Uint8Array(await pdfSimple(l).arrayBuffer())]; }, cv);
+  await s.page.setInputFiles('#pf-cvfile', { name: 'cv.pdf', mimeType: 'application/pdf', buffer: Buffer.from(octets) });
+  await s.page.waitForSelector('#pf-cvfaits', { timeout: 15000 });
+  assert.match(await s.page.getAttribute('#pf-role-lau', 'class'), /\bon\b/);
+  assert.equal(await s.page.inputValue('#pf-promo'), '2024');
+  assert.equal(await s.page.inputValue('#pf-fil'), 'Génie Industriel');
+  assert.equal(await s.page.inputValue('#pf-ent'), 'Lear Corporation');
+  assert.equal(await s.page.locator('#pf-incoh').count(), 0);
+  await s.page.click('.form .row-end .btn.primary');
+  await s.page.getByText('Profil enregistré.').last().waitFor();
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('administration : profils à contrôler et comparaison avec les CV déposés', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin'); await s.aller('admin/membres');
+  await s.page.waitForSelector('#adm-controle');
+  if (await s.page.locator('#adm-cv-analyse').count()) {
+    await s.page.click('#adm-cv-analyse');
+    await s.page.waitForSelector('#adm-cv-res', { timeout: 30000 });
   }
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();

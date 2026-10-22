@@ -5,7 +5,7 @@
 set -e
 cd "$(dirname "$0")"
 rm -rf dist artifact && mkdir -p dist/vendor artifact/vendor
-for d in dist artifact; do cp src/*.js src/vendor/* "$d/" 2>/dev/null || true; mv "$d"/preact-htm.js "$d"/supabase.js "$d"/591.supabase.js "$d"/leaflet.js "$d"/leaflet.css "$d/vendor/"; done
+for d in dist artifact; do cp src/*.js src/vendor/* "$d/" 2>/dev/null || true; mv "$d"/preact-htm.js "$d"/supabase.js "$d"/591.supabase.js "$d"/leaflet.js "$d"/leaflet.css "$d"/pdf.min.mjs "$d"/pdf.worker.min.mjs "$d/vendor/"; done
 { printf '<!doctype html>\n<html lang="fr">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">\n<meta name="theme-color" content="#1670A8" media="(prefers-color-scheme: light)">\n<meta name="theme-color" content="#0B1320" media="(prefers-color-scheme: dark)">\n<link rel="manifest" href="pwa/manifest.webmanifest">\n<link rel="apple-touch-icon" href="pwa/apple-touch-icon.png">\n<meta name="apple-mobile-web-app-capable" content="yes">\n<meta name="mobile-web-app-capable" content="yes">\n<meta name="apple-mobile-web-app-title" content="Réseau ENSAM">\n'
   sed 's#<!--CONFIG-->#<script src="config.js"></script>#' src/page.html | sed '/^<div id="app">/,$d'
   printf '</head>\n<body>\n'

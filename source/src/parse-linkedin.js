@@ -1,5 +1,5 @@
 // « Profil en une minute » : le membre colle le texte de son profil LinkedIn (PDF « Enregistrer au format PDF »,
-// copie de la page, ou simplement sa section Infos) et le formulaire de profil se remplit.
+// copie de la page, ou simplement sa section Infos), ou dépose son CV en PDF (lire-cv.js), et le formulaire se remplit.
 // LinkedIn n'ouvre pas l'import direct aux petits sites. Pur JS, sans DOM ; ne lève jamais d'exception.
 import { FILIERES, seasonOf } from './logic.js';
 import { lookupVille, paysOf } from './geo.js';
@@ -9,15 +9,15 @@ const low = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replac
 // Titres de rubriques, en français et en anglais (PDF et page web)
 const RUBRIQUES = {
   contact: ['contact', 'coordonnees', 'contact info', 'coordonnees de contact'],
-  competences: ['top skills', 'principales competences', 'competences', 'skills'],
+  competences: ['top skills', 'principales competences', 'competences', 'skills', 'competences techniques', 'competences informatiques', 'technical skills', 'logiciels', 'logiciels maitrises'],
   langues: ['languages', 'langues'],
-  resume: ['summary', 'resume', 'infos', 'about', 'a propos', 'info'],
-  experience: ['experience', 'experiences', 'experience professionnelle'],
-  formation: ['education', 'formation', 'formations'],
+  resume: ['summary', 'resume', 'infos', 'about', 'a propos', 'info', 'profil', 'objectif', 'profile', 'objective'],
+  experience: ['experience', 'experiences', 'experience professionnelle', 'experiences professionnelles', 'parcours professionnel', 'stages', 'stages et experiences', 'work experience', 'professional experience', 'internships'],
+  formation: ['education', 'formation', 'formations', 'formation academique', 'parcours academique', 'cursus', 'diplomes', 'diplomes et formations', 'etudes'],
   autre: ['certifications', 'licences et certifications', 'licenses & certifications', 'licences & certifications', 'honors-awards', 'honors & awards', 'distinctions', 'prix et distinctions',
     'publications', 'projets', 'projects', 'benevolat', 'volunteering', 'volunteer experience', 'experience de benevolat', 'recommandations', 'recommendations',
     'centres d\'interet', 'interests', 'activite', 'activity', 'cours', 'courses', 'organisations', 'organizations', 'brevets', 'patents', 'tests et examens', 'test scores',
-    'services', 'mis en avant', 'featured', 'ressources', 'resources', 'analyses', 'analytics', 'personnes que vous pourriez connaitre', 'people also viewed', 'autres profils consultes'],
+    'services', 'mis en avant', 'featured', 'loisirs', 'hobbies', 'vie associative', 'activites parascolaires', 'projets academiques', 'references', 'ressources', 'resources', 'analyses', 'analytics', 'personnes que vous pourriez connaitre', 'people also viewed', 'autres profils consultes'],
 };
 const RUB = new Map(Object.entries(RUBRIQUES).flatMap(([k, l]) => l.map(x => [x, k])));
 const rubrique = l => RUB.get(low(l).replace(/\s*[:：]$/, '')) || null;
@@ -83,8 +83,8 @@ function experience(L) {
   return null;
 }
 
-// Formation à l'ENSAM : année de fin (= promo) et filière
-function formation(L) {
+// Formation à l'ENSAM : année de fin (= promo) et filière ; encore en cours, la promo vient du niveau (« 4ème année », « 4A »)
+function formation(L, saison) {
   let best = null;
   for (let i = 0; i < L.length; i++) {
     if (!ENSAM.test(L[i])) continue;
@@ -93,7 +93,10 @@ function formation(L) {
     const txt = bloc.join(' ');
     const ans = [...txt.matchAll(/\b(19[89]\d|20[0-4]\d)\b/g)].map(m => +m[1]);
     const fil = FIL_RE.find(([, re]) => re.test(bloc.slice(1).join(' ')) || re.test(L[i].replace(ENSAM, '')))?.[0];
-    const r = { promo: ans.length ? Math.max(...ans) : null, filiere: fil || null, meknes: /mekn[eè]s|meknes/i.test(txt) };
+    const enCours = /aujourd'hui|pr[eé]sent|en cours|actuel|depuis|current|ongoing/i.test(txt);
+    const niv = txt.match(/\b([1-5])\s*(?:[eè]me|eme|e|[eè]re|ere|st|nd|rd|th)?\s*(?:ann[eé]e|year)\b|\b([1-5])A\b/i);
+    const n = niv ? +(niv[1] || niv[2]) : 0;
+    const r = { promo: enCours ? (n ? saison + 6 - n : null) : ans.length ? Math.max(...ans) : null, filiere: fil || null, meknes: /mekn[eè]s|meknes/i.test(txt), enCours };
     if (!best || (r.meknes && !best.meknes)) best = r;
   }
   return best;
@@ -174,7 +177,8 @@ export function parseLinkedin(text, now = new Date()) {
     else if (ex?.poste && !r.poste) r.poste = ex.poste;
 
     // Formation à l'ENSAM : promo et filière
-    const fo = formation(sansLogo(sec.formation || (aucune ? lignes : [])));
+    const saison = seasonOf(now);
+    const fo = formation(sansLogo(sec.formation || (aucune ? lignes : [])), saison);
     if (fo?.promo) r.promo = fo.promo;
     if (fo?.filiere) r.filiere = fo.filiere;
     if (!r.promo) { const m = brut.match(/\b(?:promo(?:tion)?|laur[ée]at(?:e)?|class of|dipl[oô]m[ée]e? en)\s*(19[89]\d|20[0-4]\d)\b/i); if (m) r.promo = +m[1]; }
@@ -194,9 +198,8 @@ export function parseLinkedin(text, now = new Date()) {
     if (aucune && !entete && !r.poste) { const t = titre(lignes[0]); if (lignes[0].length <= 120 && t.entreprise) Object.assign(r, t); }
 
     // Étudiant(e) ou lauréat(e) : d'après l'année de diplôme, sinon le titre
-    const saison = seasonOf(now);
     if (r.promo) r.role = r.promo > saison ? 'etudiant' : 'laureat';
-    else if (/\b(?:[ée]tudiant|student|[ée]l[eè]ve ing[ée]nieur)/i.test(r.titre || '')) r.role = 'etudiant';
+    else if (fo?.enCours || /\b(?:[ée]tudiant|student|[ée]l[eè]ve ing[ée]nieur)/i.test(r.titre || lignes.slice(0, 12).join(' '))) r.role = 'etudiant';
     else if (r.entreprise) r.role = 'laureat';
     // Entreprise et poste ne s'affichent que pour les lauréats (le stage d'un étudiant reste dans sa bio)
     if (r.role === 'etudiant') { delete r.entreprise; delete r.poste; }
