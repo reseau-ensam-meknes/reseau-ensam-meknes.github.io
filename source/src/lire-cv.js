@@ -184,7 +184,8 @@ export function complementsCV(p, cv, role = p?.role) {
   const e = {};
   if (!p || !cv || p.role === 'admin') return e;
   const vide = v => !String(v ?? '').trim();
-  for (const k of COMPLETABLES) if (cv[k] && vide(p[k]) && (role === 'laureat' || (k !== 'poste' && k !== 'entreprise'))) e[k] = k === 'bio' ? String(cv[k]).slice(0, 600) : cv[k];
+  // Un poste sans entreprise n'est que le titre du CV (« Ingénieure électromécanique ») : on ne le propose pas
+  for (const k of COMPLETABLES) if (cv[k] && vide(p[k]) && (role === 'laureat' || (k !== 'poste' && k !== 'entreprise')) && (k !== 'poste' || cv.entreprise)) e[k] = k === 'bio' ? String(cv[k]).slice(0, 600) : cv[k];
   if (cv.competences?.length && !(p.competences || []).length) e.competences = cv.competences.slice(0, 15);
   return e;
 }
