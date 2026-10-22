@@ -82,6 +82,24 @@ test('lauréats : question routée par pays (hors Maroc), jeune diplômé, résu
   assert.equal(resume(ID.rachid), null);
 });
 
+test('filières officielles : talents et offres rapprochés par parcours', () => {
+  // Un lauréat « Mécatronique » (ancienne appellation, parcours électro-industriel) reçoit les talents de Génie Industriel
+  const j = jeu(NOW);
+  j.tables.profiles.find(p => p.id === ID.hamza).filiere = 'Mécatronique';
+  // Une offre pour une seule filière actuelle : vue par les anciennes appellations du parcours, pas par une autre filière actuelle
+  const d = N.indexer(brut(j), NOW);
+  const h = N.resumeDe(d.profils.get(ID.hamza), d);
+  assert.ok(h && h.talents.total >= 3, 'talents du parcours');
+  const o = { filieres: ['Génie Industriel : Excellence Opérationnelle'] };
+  const ok = N.filiereOk;
+  assert.equal(ok(o, 'Génie Industriel : Excellence Opérationnelle'), true);
+  assert.equal(ok(o, 'Génie Industriel'), true, 'ancienne appellation du même parcours');
+  assert.equal(ok(o, 'Génie Industriel et Productique'), false, 'autre filière actuelle');
+  assert.equal(ok(o, 'Génie Mécanique'), false, 'autre parcours');
+  assert.equal(ok({ filieres: ['Génie Industriel'] }, 'Génie Électromécanique : Digitalisation Industrielle'), true, 'offre ancienne, étudiant actuel du parcours');
+  assert.equal(ok({ filieres: [] }, 'Classes préparatoires intégrées'), true);
+});
+
 test('administration : comptes à vérifier, nouveaux membres, recrutements en attente', () => {
   const r = resume(ID.admin);
   assert.deepEqual(r.admin, { nonVerifies: 2, nouveaux: 2, enAttente: 1, signalements: 0 });

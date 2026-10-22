@@ -47,6 +47,59 @@ language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.profiles where id = auth.uid() and role = 'admin');
 $$;
 
+-- ---------------------------------------------------------------------
+-- Filières : 11 filières officielles (choix en 3A) groupées en 5 parcours, plus les anciennes
+-- appellations des promos précédentes, rattachées à leur parcours. Mêmes règles que logic.js.
+-- ---------------------------------------------------------------------
+create or replace function public.parcours_de(f text) returns text[]
+language sql immutable as $$
+  select case f
+    when 'Génie Industriel et Productique' then '{PEI}'
+    when 'Génie Industriel : Excellence Opérationnelle' then '{PEI}'
+    when 'Génie Électromécanique : Digitalisation Industrielle' then '{PEI}'
+    when 'Génie Électromécanique : Maintenance et Commande Industrielles' then '{PEI}'
+    when 'Génie Mécanique : Conception et Industrialisation des Systèmes Mécaniques' then '{PM}'
+    when 'Génie Mécanique : Ingénierie Mécanique et Structures' then '{PM}'
+    when 'Génie Mécanique : Matériaux et Procédés de Fabrication' then '{PM}'
+    when 'Génie Mécanique : Énergétique' then '{PM}'
+    when 'Génie Civil' then '{CIVIL}'
+    when 'Intelligence Artificielle et Technologies des Données : Systèmes Industriels' then '{IA}'
+    when 'Génie Informatique : Ingénierie Logicielle et Systèmes Intelligents' then '{INFO}'
+    -- anciennes appellations
+    when 'Génie Mécanique' then '{PM}'
+    when 'Génie Industriel' then '{PEI}'
+    when 'Génie Électromécanique' then '{PEI}'
+    when 'Génie Énergétique' then '{PM}'
+    when 'Mécatronique' then '{PEI}'
+    when 'Génie Informatique & IA' then '{INFO,IA}'
+    else '{}' end::text[];
+$$;
+-- Filière de la maquette actuelle (sinon : ancienne appellation, classes prépa ou texte libre)
+create or replace function public.filiere_actuelle(f text) returns boolean
+language sql immutable as $$
+  select coalesce(f = any(array['Génie Industriel et Productique', 'Génie Industriel : Excellence Opérationnelle',
+    'Génie Électromécanique : Digitalisation Industrielle', 'Génie Électromécanique : Maintenance et Commande Industrielles',
+    'Génie Mécanique : Conception et Industrialisation des Systèmes Mécaniques', 'Génie Mécanique : Ingénierie Mécanique et Structures',
+    'Génie Mécanique : Matériaux et Procédés de Fabrication', 'Génie Mécanique : Énergétique', 'Génie Civil',
+    'Intelligence Artificielle et Technologies des Données : Systèmes Industriels', 'Génie Informatique : Ingénierie Logicielle et Systèmes Intelligents']), false);
+$$;
+-- Une offre (liste vide = toutes filières) concerne-t-elle cette filière ? Deux filières actuelles doivent être
+-- identiques ; une ancienne appellation couvre son parcours.
+create or replace function public.filiere_ok(p_liste text[], p_filiere text) returns boolean
+language sql immutable as $$
+  select cardinality(coalesce(p_liste, '{}')) = 0
+    or (p_filiere is not null and (p_filiere = any(p_liste) or exists (
+      select 1 from unnest(p_liste) x
+      where (not public.filiere_actuelle(p_filiere) or not public.filiere_actuelle(x))
+        and public.parcours_de(x) && public.parcours_de(p_filiere))));
+$$;
+-- Proximité entre deux membres : 2 = même filière, 1 = même parcours, 0 = sinon
+create or replace function public.proximite_filiere(a text, b text) returns int
+language sql immutable as $$
+  select case when a is null or b is null then 0 when a = b then 2
+              when public.parcours_de(a) && public.parcours_de(b) then 1 else 0 end;
+$$;
+
 -- Personne ne peut s'auto-proclamer admin ou "lauréat vérifié"
 create or replace function public.protect_profile() returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -619,8 +672,8 @@ language sql stable as $$
 $$;
 
 -- ---------------------------------------------------------------------
--- Groupes : par filière, par ville et « à l'étranger » (par pays).
--- Chacun est membre des groupes de sa filière, de sa ville et de son pays,
+-- Groupes : par parcours (clé « filiere:… »), par ville et « à l'étranger » (par pays).
+-- Chacun est membre des groupes de son parcours, de sa ville et de son pays,
 -- et peut en suivre d'autres (ex. un étudiant qui vise la France).
 -- groupe = 'filiere:…', 'ville:…' ou 'pays:…' (en minuscules, sans accents)
 -- ---------------------------------------------------------------------
@@ -640,6 +693,22 @@ create table if not exists public.groupe_membres (
   created_at timestamptz default now(),
   unique (groupe, user_id)
 );
+
+-- Le groupe « filière » réunit désormais tout un parcours (étudiants des filières actuelles et lauréats des
+-- anciennes appellations) : les anciens groupes de filière passent dans le groupe de leur parcours.
+do $$
+declare r record;
+begin
+  for r in select * from (values ('filiere:genie mecanique', 'filiere:mecanique'), ('filiere:genie energetique', 'filiere:mecanique'),
+      ('filiere:genie industriel', 'filiere:electro-industriel'), ('filiere:genie electromecanique', 'filiere:electro-industriel'),
+      ('filiere:mecatronique', 'filiere:electro-industriel'), ('filiere:genie informatique & ia', 'filiere:informatique'),
+      ('filiere:genie civil', 'filiere:civil')) t(ancien, nouveau) loop
+    update public.groupe_messages set groupe = r.nouveau where groupe = r.ancien;
+    update public.groupe_membres g set groupe = r.nouveau where g.groupe = r.ancien
+      and not exists (select 1 from public.groupe_membres x where x.user_id = g.user_id and x.groupe = r.nouveau);
+    delete from public.groupe_membres where groupe = r.ancien;  -- doublons : déjà membres du groupe du parcours
+  end loop;
+end $$;
 
 -- ---------------------------------------------------------------------
 -- Cafés ENSAM : une rencontre dans une ville, on s'inscrit en un clic
@@ -774,9 +843,9 @@ begin
   select parrain_id into v_parrain from public.parrainages where filleul_id = p_etudiant and saison = v_s;
   if v_parrain is not null then return v_parrain; end if;
   select l.id into v_parrain from public.profiles l
-    where l.role = 'laureat' and l.parrain_dispo and l.filiere = v_p.filiere
+    where l.role = 'laureat' and l.parrain_dispo and public.proximite_filiere(l.filiere, v_p.filiere) > 0
       and (select count(*) from public.parrainages x where x.parrain_id = l.id and x.saison = v_s) < 3
-    order by l.verified desc, (select count(*) from public.parrainages x where x.parrain_id = l.id and x.saison = v_s), random()
+    order by public.proximite_filiere(l.filiere, v_p.filiere) desc, l.verified desc, (select count(*) from public.parrainages x where x.parrain_id = l.id and x.saison = v_s), random()
     limit 1;
   if v_parrain is null then return null; end if;
   insert into public.parrainages (filleul_id, parrain_id, saison) values (p_etudiant, v_parrain, v_s)
@@ -818,7 +887,7 @@ begin
     perform public.donner_parrain(new.id);
   elsif new.role = 'laureat' and new.parrain_dispo and (tg_op = 'INSERT' or not coalesce(old.parrain_dispo, false)) then
     perform public.donner_parrain(p.id) from public.profiles p
-      where p.role = 'etudiant' and p.filiere = new.filiere and p.promo = public.saison_courante() + 3
+      where p.role = 'etudiant' and public.proximite_filiere(p.filiere, new.filiere) > 0 and p.promo = public.saison_courante() + 3
         and not exists (select 1 from public.parrainages x where x.filleul_id = p.id and x.saison = public.saison_courante());
   end if;
   return null;
@@ -2401,7 +2470,7 @@ language sql stable as $$
   select o.status = 'ouverte' and coalesce(o.audience, 'etudiants') = 'etudiants' and o.author_id <> p.id
     and p.role in ('etudiant','laureat')
     and public.niveau_de(p.promo, p_saison) = any(coalesce(o.annees, '{}'))
-    and (cardinality(coalesce(o.filieres, '{}')) = 0 or p.filiere = any(o.filieres));
+    and public.filiere_ok(o.filieres, p.filiere);
 $$;
 
 create or replace function public.alerte_offre() returns trigger
@@ -2505,7 +2574,7 @@ begin
         insert into public.push_queue (user_id, kind, data)
         select l.id, 'relecture_demande', jsonb_build_object('nom', v_nom)
         from public.profiles l, public.profiles s
-        where s.id = new.student_id and l.role = 'laureat' and l.mentor_dispo and l.filiere = s.filiere and l.id <> new.student_id
+        where s.id = new.student_id and l.role = 'laureat' and l.mentor_dispo and public.proximite_filiere(l.filiere, s.filiere) > 0 and l.id <> new.student_id
           and exists (select 1 from public.push_subscriptions x where x.user_id = l.id)
         limit 10;
       end if;

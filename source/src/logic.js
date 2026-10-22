@@ -23,7 +23,7 @@ export const FILIERES_INFO = [
   { code: 'GI-ILSI', nom: 'Génie Informatique : Ingénierie Logicielle et Systèmes Intelligents', parcours: 'INFO' },
 ];
 export const FILIERES = FILIERES_INFO.map(f => f.nom);
-export const PREPA = 'Cycle préparatoire intégré';
+export const PREPA = 'Classes préparatoires intégrées';
 // Anciennes appellations : promos précédentes et profils déjà enregistrés. Elles restent valables et sont rapprochées par parcours.
 export const ANCIENNES_FILIERES = [
   ['Génie Mécanique', ['PM']], ['Génie Industriel', ['PEI']], ['Génie Électromécanique', ['PEI']], ['Génie Énergétique', ['PM']],
@@ -56,6 +56,20 @@ export function filiereMatch(list, filiere) {
   const mine = parcoursOf(filiere), vieille = !FIL_PAR_NOM.has(filiere);
   return list.some(x => (vieille || !FIL_PAR_NOM.has(x)) && parcoursOf(x).some(c => mine.includes(c)));
 }
+// Filtre d'une liste de membres : « parcours:PM » (tout un parcours) ou une filière (les anciennes appellations suivent leur parcours)
+export function filtreFiliere(choix, filiere) {
+  if (!choix) return true;
+  if (choix.startsWith('parcours:')) return parcoursOf(filiere).includes(choix.slice(9));
+  return filiereMatch([choix], filiere);
+}
+// Filtre d'une liste d'offres : une offre pour toutes les filières passe toujours
+export function filtreOffre(filieres, choix) {
+  if (!choix || !filieres?.length) return true;
+  if (choix.startsWith('parcours:')) return filieres.some(x => parcoursOf(x).includes(choix.slice(9)));
+  return filiereMatch(filieres, choix);
+}
+// Ce qui suit « : » dans le nom officiel (« Excellence Opérationnelle »), pour les puces groupées par parcours
+export const filiereSousTitre = f => (f || '').split(' : ')[1] || f || '';
 // Proximité entre deux membres : 2 = même filière, 1 = même parcours, 0 = sinon
 export function proximiteFiliere(a, b) {
   if (!a || !b) return 0;
@@ -65,7 +79,7 @@ export function proximiteFiliere(a, b) {
 }
 // Filières proposées dans un formulaire : prépa pour les 1A-2A, maquette actuelle, anciennes appellations pour les lauréats
 export function filieresPour(role, niveau) {
-  if (role === 'etudiant' && niveau <= 2) return [{ label: 'Années préparatoires', options: [PREPA] }];
+  if (role === 'etudiant' && niveau <= 2) return [{ label: 'Années préparatoires intégrées (API)', options: [PREPA] }];
   const groupes = PARCOURS.map(p => ({ label: `Parcours ${p.nom}`, options: FILIERES_INFO.filter(f => f.parcours === p.code).map(f => f.nom) }));
   if (role !== 'etudiant') groupes.push({ label: 'Ancienne appellation (promos précédentes)', options: ANCIENNES_FILIERES.map(([f]) => f) });
   return groupes;

@@ -2,7 +2,7 @@
 import { html, useState, useMemo } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, toast, LevelChip, RoleLine } from './ui.js';
 import { getLang } from './i18n.js';
-import { FILIERES, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo } from './logic.js';
+import { FILIERES, PREPA, filieresPour, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo } from './logic.js';
 import { TalentPool } from './growth.js';
 import { GroupesPage } from './groupes.js';
 import { AnnuairePro } from './pro.js';
@@ -229,9 +229,16 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
   const domaines = store.domainesEcole?.() || [];
   const ecoleBloque = !!onboarding && f.role === 'etudiant' && store.reglages?.email_ecole_obligatoire === true && domaines.length > 0 && !!email && !domaines.some(d => email.endsWith('@' + d) || email.endsWith('.' + d));
   const ok = f.full_name.trim().length >= 2 && f.promo >= 1990 && f.promo <= 2040 && !ecoleBloque;
+  // Filières proposées selon le rôle et l'année : classes prépa en 1A-2A, maquette actuelle par parcours,
+  // anciennes appellations pour les lauréats. Une valeur déjà enregistrée hors liste reste en tête tant qu'on n'en choisit pas une autre.
+  const filPour = (role, promo) => filieresPour(role, role === 'etudiant' ? niveauOf({ promo: +promo }, ctx.saison ?? seasonOf()) : 7);
+  const groupesFil = filPour(f.role, f.promo);
+  const proposees = groupesFil.flatMap(g => g.options);
+  const garde = initial?.filiere && !proposees.includes(initial.filiere) ? initial.filiere : null;
+  const filiere = proposees.includes(f.filiere) || (garde && f.filiere === garde) ? f.filiere : proposees[0];
   const submit = e => {
     e.preventDefault(); if (!ok) return;
-    const row = { full_name: f.full_name.trim(), role: f.role === 'admin' ? 'admin' : f.role, filiere: f.filiere, promo: +f.promo, entreprise: f.entreprise.trim() || null, poste: f.poste.trim() || null, ville: f.ville.trim() || null, pays: f.pays.trim() || 'Maroc', bio: f.bio.trim() || null, competences: comp.split(',').map(x => x.trim()).filter(Boolean).slice(0, 15), linkedin: f.linkedin.trim() || null, cv_url: f.cv_url.trim() || null, mentor_dispo: !!f.mentor_dispo, mentor_sujets: (f.mentor_sujets || '').trim() || null, vitrine: !!f.vitrine };
+    const row = { full_name: f.full_name.trim(), role: f.role === 'admin' ? 'admin' : f.role, filiere, promo: +f.promo, entreprise: f.entreprise.trim() || null, poste: f.poste.trim() || null, ville: f.ville.trim() || null, pays: f.pays.trim() || 'Maroc', bio: f.bio.trim() || null, competences: comp.split(',').map(x => x.trim()).filter(Boolean).slice(0, 15), linkedin: f.linkedin.trim() || null, cv_url: f.cv_url.trim() || null, mentor_dispo: !!f.mentor_dispo, mentor_sujets: (f.mentor_sujets || '').trim() || null, vitrine: !!f.vitrine };
     if (!v3) row.contact = (f.contact || '').trim() || null;
     if (f.role === 'laureat') { row.secteur = f.secteur || null; row.parrain_dispo = !!f.parrain_dispo; }
     // Inscription : l'accord donné sur l'écran de création du compte, la langue et le choix pour les emails
@@ -265,7 +272,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
     for (const [k, l] of [['full_name', 'Nom'], ['poste', 'Poste'], ['entreprise', 'Entreprise'], ['ville', 'Ville'], ['bio', 'Bio'], ['linkedin', 'LinkedIn']]) if (r[k] && vide(k)) { n[k] = r[k]; faits.push(l); }
     if (r.pays && r.pays !== f.pays && (vide('pays') || (neuf && f.pays === 'Maroc'))) { n.pays = r.pays; faits.push('Pays'); }
     if (neuf && !preset?.promo && r.promo && r.promo !== +f.promo) { n.promo = r.promo; faits.push('Promo'); }
-    if (neuf && r.filiere && r.filiere !== f.filiere) { n.filiere = r.filiere; faits.push('Filière'); }
+    if (neuf && r.filiere && r.filiere !== f.filiere && filPour(n.role, n.promo).some(g => g.options.includes(r.filiere))) { n.filiere = r.filiere; faits.push('Filière'); }
     setF(n);
     if (r.competences?.length) {
       const deja = comp.split(',').map(x => x.trim()).filter(Boolean);
@@ -288,7 +295,9 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
       <${Field} label="Nom complet"><input id="pf-name" required value=${f.full_name} onInput=${e => set('full_name', e.target.value)} maxlength="80"/><//>
       <${Field} label=${isStudent ? 'Promo (année de diplôme prévue)' : 'Promo (année de diplôme)'} hint=${isStudent ? 'Ex. en 5A cette année : ' + (new Date().getMonth() >= 8 ? new Date().getFullYear() + 1 : new Date().getFullYear()) + '. Ton niveau se met à jour tout seul chaque année.' : ''}><input id="pf-promo" type="number" min="1990" max="2040" required value=${f.promo} onInput=${e => set('promo', e.target.value)}/><//>
     </div>
-    <${Field} label="Filière"><select id="pf-fil" value=${f.filiere} onChange=${e => set('filiere', e.target.value)}>${FILIERES.map(x => html`<option value=${x}>${x}</option>`)}</select><//>
+    <${Field} label="Filière" hint=${garde && filiere === garde ? 'Nouveau : choisis ta filière dans la liste officielle de l’école.' : filiere === PREPA ? 'La filière se choisit en 3e année.' : ''}><select id="pf-fil" value=${filiere} onChange=${e => set('filiere', e.target.value)}>
+      ${garde ? html`<option value=${garde}>${garde}</option>` : null}
+      ${groupesFil.map(g => html`<optgroup label=${g.label}>${g.options.map(x => html`<option value=${x}>${x}</option>`)}</optgroup>`)}</select><//>
     ${!isStudent ? html`<div class="grid3"><${Field} label="Entreprise"><input id="pf-ent" value=${f.entreprise || ''} onInput=${e => set('entreprise', e.target.value)}/><//><${Field} label="Poste"><input id="pf-poste" value=${f.poste || ''} onInput=${e => set('poste', e.target.value)}/><//>
       <${Field} label="Secteur"><select id="pf-sect" value=${f.secteur || ''} onChange=${e => set('secteur', e.target.value)}><option value="">—</option>${SECTEURS.map(x => html`<option value=${x}>${x}</option>`)}</select><//></div>` : null}
     <div class="grid2"><${Field} label="Ville"><input id="pf-ville" value=${f.ville || ''} onInput=${e => set('ville', e.target.value)}/><//><${Field} label="Pays"><input id="pf-pays" value=${f.pays || ''} onInput=${e => set('pays', e.target.value)}/><//></div>
