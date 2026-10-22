@@ -604,13 +604,15 @@ function Guide({ ctx, g }) {
   </div>`;
 }
 
+// Le formulaire repart des données enregistrées quand elles changent ailleurs (CV appliqué, rôle corrigé…)
+const cleFormulaire = (me, co) => JSON.stringify([me.id, me.role, me.promo, me.filiere, me.poste, me.entreprise, me.ville, me.linkedin, me.bio, me.competences, co?.telephone, co?.email]);
 function MyProfile({ ctx }) {
   const { me, store } = ctx;
   return html`<section class="page narrow">
     <header class="page-head"><div><p class="eyebrow">Visible par les membres connectés</p><h1>Mon profil</h1></div>
       ${store.mode === 'live' ? html`<button class="btn ghost" onClick=${() => store.signOut()}><${Icon} name="logout"/> Se déconnecter</button>` : null}</header>
     <${CvCard} ctx=${ctx}/>
-    <${ProfileForm} ctx=${ctx} initial=${me} key=${[me.id, me.role, me.promo, me.filiere].join('|')}/>
+    <${ProfileForm} ctx=${ctx} initial=${me} key=${cleFormulaire(me, store.coordonneesDe?.(me.id))}/>
     <${MesDonnees} ctx=${ctx}/>
   </section>`;
 }

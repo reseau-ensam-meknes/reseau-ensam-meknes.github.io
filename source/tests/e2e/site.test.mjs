@@ -307,7 +307,7 @@ test('inscription : « Tu es… » bien visible, puis tout se remplit depuis le 
   await s.ctx.close();
 });
 
-test('CV qui contredit le profil : le membre corrige en un clic, l’administration lit les CV et corrige', async () => {
+test('CV qui contredit ou complète le profil : le membre met à jour en un clic, l’administration lit les CV et corrige', async () => {
   const s = await ouvrir();
   await s.comme('Salma'); await s.aller('profil');
   await deposerPdf(s.page, '#cv-file', CV_LAUREAT);
@@ -317,6 +317,8 @@ test('CV qui contredit le profil : le membre corrige en un clic, l’administrat
   assert.match(await s.page.locator('.toast').last().innerText(), /Profil mis à jour d’après ton CV/);
   assert.equal(await s.page.locator('#cv-controle').count(), 0);
   assert.equal(await s.page.inputValue('#pf-promo'), '2021');
+  assert.equal(await s.page.inputValue('#pf-poste'), 'Ingénieur méthodes', 'les champs vides se remplissent depuis le CV');
+  assert.equal(await s.page.inputValue('#pf-ent'), 'OCP Group');
   // Amine dépose le même CV sans corriger : l'administration le trouve en lisant les CV déposés
   await s.comme('Amine'); await s.aller('profil');
   await deposerPdf(s.page, '#cv-file', CV_LAUREAT);

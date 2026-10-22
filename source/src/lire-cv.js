@@ -53,3 +53,22 @@ export function ecartsCV(p, cv, now = new Date()) {
   if (cv.filiere && permises.includes(cv.filiere) && proximiteFiliere(cv.filiere, p.filiere) === 0) e.filiere = cv.filiere;
   return e;
 }
+
+// Les champs vides du profil que le CV peut remplir ; le poste et l'entreprise seulement pour un lauréat
+// (chez un étudiant, ce sont ses stages).
+const COMPLETABLES = ['poste', 'entreprise', 'ville', 'linkedin', 'bio'];
+export function complementsCV(p, cv, role = p?.role) {
+  const e = {};
+  if (!p || !cv || p.role === 'admin') return e;
+  const vide = v => !String(v ?? '').trim();
+  for (const k of COMPLETABLES) if (cv[k] && vide(p[k]) && (role === 'laureat' || (k !== 'poste' && k !== 'entreprise'))) e[k] = k === 'bio' ? String(cv[k]).slice(0, 600) : cv[k];
+  if (cv.competences?.length && !(p.competences || []).length) e.competences = cv.competences.slice(0, 15);
+  return e;
+}
+
+// Tout ce que le CV propose pour un profil : corrections d'abord, puis champs vides à remplir
+export function propositionCV(p, cv, now = new Date()) {
+  const e = ecartsCV(p, cv, now);
+  return { ...e, ...complementsCV(p, cv, e.role || p?.role) };
+}
+export const corrigeProfil = e => 'role' in e || 'promo' in e || 'filiere' in e;

@@ -6,7 +6,7 @@ import { addAR, t as tr } from './i18n.js';
 import { timeAgo, niveauOf, NIVEAUX, proximiteFiliere } from './logic.js';
 import { CV_MAX } from './store.js';
 import { MessageBtn } from './messages.js';
-import { lireCV, ecartsCV } from './lire-cv.js';
+import { lireCV, propositionCV, corrigeProfil } from './lire-cv.js';
 
 const firstName = p => (p?.full_name || '').split(' ')[0];
 const href = u => (/^https?:\/\//i.test(u) ? u : 'https://' + u);
@@ -105,12 +105,16 @@ export function CvCard({ ctx }) {
   </div>`;
 }
 
-// Le CV contredit le profil (rôle, promo, filière) : on le dit au membre, qui corrige en un clic ou garde son profil.
-// Chaque CV n'est lu qu'une fois sur cet appareil.
+// Le CV contredit le profil (rôle, promo, filière) ou peut remplir ses champs vides : le membre vérifie
+// ce qu'on a lu et met son profil à jour en un clic, ou garde son profil. Chaque CV n'est lu qu'une fois sur cet appareil.
 const VU_CV = 'ensam-cv-controle';
 const cvVus = () => { try { return JSON.parse(localStorage.getItem(VU_CV) || '[]'); } catch { return []; } };
 const marquerCV = path => { try { localStorage.setItem(VU_CV, JSON.stringify([...cvVus(), path].slice(-20))); } catch { /* stockage indisponible */ } };
-export const libellesCV = e => [e.role ? (e.role === 'laureat' ? 'Lauréat(e)' : 'Étudiant(e)') : null, e.promo ? `Promo ${e.promo}` : null, e.filiere || null].filter(Boolean);
+const court = t => (t.length > 40 ? t.slice(0, 38).trimEnd() + '…' : t);
+export const libellesCV = e => [e.role ? (e.role === 'laureat' ? 'Lauréat(e)' : 'Étudiant(e)') : null, e.promo ? `Promo ${e.promo}` : null, e.filiere || null,
+  e.poste ? `Poste : ${court(e.poste)}` : null, e.entreprise ? `Entreprise : ${court(e.entreprise)}` : null, e.ville ? `Ville : ${e.ville}` : null,
+  e.competences ? `Compétences : ${court(e.competences.join(', '))}` : null, e.linkedin ? 'LinkedIn' : null, e.bio ? 'Bio' : null,
+  e.telephone ? 'Téléphone' : null, e.email ? 'Email de contact' : null].filter(Boolean);
 // Le texte du CV : le fichier qu'on vient de déposer, sinon celui gardé en ligne
 export async function lireCVDe(store, path, fichier) {
   if (fichier) return lireCV(fichier);
@@ -122,25 +126,39 @@ export async function lireCVDe(store, path, fichier) {
 function ControleCV({ ctx, fichier }) {
   const { me, store, act } = ctx;
   const path = me.cv_path;
-  const [ecarts, setEcarts] = useState(null);
+  const [prop, setProp] = useState(null);
   useEffect(() => {
-    setEcarts(null);
+    setProp(null);
     if (!path || (!fichier && cvVus().includes(path))) return;
     let fini = false;
     lireCVDe(store, path, fichier).then(cv => {
       if (fini) return;
-      const e = ecartsCV(me, cv);
-      if (Object.keys(e).length) setEcarts(e); else marquerCV(path);
+      const e = propositionCV(me, cv);
+      // Coordonnées privées : seulement celles qui manquent
+      const co = store.coordonneesDe?.(me.id) || {};
+      if (cv.telephone && !co.telephone) e.telephone = cv.telephone;
+      if (cv.email && !co.email) e.email = cv.email;
+      if (Object.keys(e).length) setProp(e); else marquerCV(path);
     }).catch(() => { /* CV illisible (scan en image) : rien à proposer */ });
     return () => { fini = true; };
   }, [path, fichier]);
-  if (!ecarts) return null;
-  const fermer = () => { marquerCV(path); setEcarts(null); };
+  if (!prop) return null;
+  const corrige = corrigeProfil(prop);
+  const fermer = () => { marquerCV(path); setProp(null); };
+  const appliquer = () => act(async () => {
+    const { telephone, email, ...profil } = prop;
+    if (Object.keys(profil).length) await store.update('profiles', me.id, profil);
+    if (telephone || email) {
+      const co = store.coordonneesDe?.(me.id) || {};
+      await store.enregistrerCoordonnees({ telephone: co.telephone || telephone || null, email: co.email || email || null, contact: co.contact || null });
+    }
+    marquerCV(path); setProp(null); toast('Profil mis à jour d’après ton CV.');
+  });
   return html`<div class="cf-warn cv-controle" role="status" id="cv-controle">
-    <p><strong>Ton CV et ton profil ne disent pas la même chose.</strong></p>
-    <p class="small"><span>Ton CV indique :</span> ${libellesCV(ecarts).map((x, i) => html`${i ? ' · ' : ''}<b>${x}</b>`)}</p>
-    <div class="row"><button type="button" class="btn small primary" id="cv-appliquer" onClick=${() => act(async () => { await store.update('profiles', me.id, ecarts); marquerCV(path); setEcarts(null); toast('Profil mis à jour d’après ton CV.'); })}>Mettre mon profil à jour</button>
-      <button type="button" class="btn small ghost" onClick=${fermer}>Mon profil est juste</button></div>
+    <p><strong>${corrige ? 'Ton CV et ton profil ne disent pas la même chose.' : 'Ton CV peut compléter ton profil.'}</strong></p>
+    <p class="small"><span>${corrige ? 'Ton CV indique :' : 'Lu dans ton CV :'}</span> ${libellesCV(prop).map((x, i) => html`${i ? ' · ' : ''}<b>${x}</b>`)}</p>
+    <div class="row"><button type="button" class="btn small primary" id="cv-appliquer" onClick=${appliquer}>Mettre mon profil à jour</button>
+      <button type="button" class="btn small ghost" onClick=${fermer}>${corrige ? 'Mon profil est juste' : 'Non merci'}</button></div>
   </div>`;
 }
 

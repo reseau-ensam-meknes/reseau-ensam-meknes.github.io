@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseLinkedin } from '../../src/parse-linkedin.js';
-import { ecartsCV } from '../../src/lire-cv.js';
+import { ecartsCV, complementsCV, propositionCV, corrigeProfil } from '../../src/lire-cv.js';
 
 const OCT_2026 = new Date(2026, 9, 22);
 const CISM = 'Génie Mécanique : Conception et Industrialisation des Systèmes Mécaniques';
@@ -69,4 +69,21 @@ test('écarts entre le CV et le profil : rôle, promo, filière d’un autre par
   const etu = parseLinkedin(ETUDIANT, OCT_2026);
   assert.deepEqual(ecartsCV({ role: 'laureat', promo: 2027, filiere: 'Génie Mécanique' }, etu), { role: 'etudiant' }, 'promo estimée, filière compatible');
   assert.deepEqual(ecartsCV({ role: 'admin', promo: 2010, filiere: 'Génie Civil' }, cv), {});
+});
+
+test('le CV remplit les champs vides du profil, sans rien écraser', () => {
+  const cv = parseLinkedin(LAUREAT, OCT_2026);
+  const etudiant = { role: 'etudiant', promo: 2027, filiere: CISM, poste: null, entreprise: '', ville: null, competences: [] };
+  const e = propositionCV(etudiant, cv, OCT_2026);
+  assert.equal(e.role, 'laureat');
+  assert.equal(e.poste, 'Ingénieur méthodes', 'devenu lauréat : son poste vient du CV');
+  assert.equal(e.entreprise, 'OCP Group');
+  assert.deepEqual(e.competences, ['Lean', 'SMED', 'Power BI']);
+  assert.ok(corrigeProfil(e));
+  const deja = { role: 'laureat', promo: 2021, filiere: 'Génie Industriel', poste: 'Responsable méthodes', entreprise: 'OCP', ville: 'Safi', competences: ['Lean'] };
+  const c = propositionCV(deja, cv, OCT_2026);
+  assert.equal(c.poste, undefined, 'un champ rempli n’est pas remplacé');
+  assert.ok(!corrigeProfil(c));
+  assert.equal(complementsCV({ role: 'etudiant', poste: null, entreprise: null }, { poste: 'Stagiaire', entreprise: 'Renault' }).poste, undefined, 'pas de poste pour un étudiant');
+  assert.deepEqual(propositionCV({ role: 'admin' }, cv), {});
 });

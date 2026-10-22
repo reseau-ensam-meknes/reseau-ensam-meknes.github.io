@@ -9,7 +9,7 @@ import { DefisAdmin } from './saison.js';
 import { AgendaAdmin } from './agenda.js';
 import { InvitationsAdmin } from './invitation.js';
 import { lireCVDe, libellesCV } from './cv.js';
-import { ecartsCV } from './lire-cv.js';
+import { propositionCV, corrigeProfil } from './lire-cv.js';
 
 addAR({
   'Vue d’ensemble': 'نظرة عامة', 'Modération': 'الإشراف', 'Liste officielle': 'اللائحة الرسمية', 'Réglages': 'الإعدادات', 'Agenda': 'المفكرة',
@@ -304,20 +304,28 @@ function ProfilsARevoir({ ctx, members }) {
       try {
         const cv = await lireCVDe(store, p.cv_path);
         if (!Object.keys(cv).length) illisibles++;
-        const e = ecartsCV(p, cv); if (Object.keys(e).length) out.push({ p, e });
+        const e = propositionCV(p, cv); if (Object.keys(e).length) out.push({ p, e });
       } catch { illisibles++; }
       setLecture({ fait: i + 1, total: avecCV.length });
     }
     setCvs(Object.assign(out, { illisibles })); setLecture(null);
   };
-  const corriger = (p, patch, msg) => act(async () => { await store.update('profiles', p.id, patch); setCvs(l => l && l.filter(x => x.p.id !== p.id)); toast(msg); });
+  const retirer = ids => setCvs(l => l && Object.assign(l.filter(x => !ids.includes(x.p.id)), { illisibles: l.illisibles }));
+  const corriger = (p, patch, msg) => act(async () => { await store.update('profiles', p.id, patch); retirer([p.id]); toast(msg); });
+  // Tous les profils d'après leur CV, en une fois (corrections et champs vides)
+  const toutAppliquer = () => act(async () => {
+    const faits = [];
+    for (const { p, e } of cvs) { await store.update('profiles', p.id, e); faits.push(p.id); }
+    retirer(faits); toast(faits.length > 1 ? `${faits.length} profils mis à jour d’après leur CV.` : 'Profil mis à jour d’après son CV.');
+  });
   const lignes = [...incoherents.filter(p => !cvs?.some(x => x.p.id === p.id)).map(p => ({ p, e: p.role === 'laureat' ? { role: 'etudiant' } : { role: 'laureat' }, cv: false })), ...(cvs || []).map(x => ({ ...x, cv: true }))];
   return html`<div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="user"/> Profils à revoir ${lignes.length ? html`<span class="count">${lignes.length}</span>` : null}</h2>
       ${avecCV.length ? html`<button class="btn small" id="adm-lire-cv" disabled=${!!lecture} onClick=${lireTous}><${Icon} name="file" size=${15}/> ${lecture ? `CV lus : ${lecture.fait}/${lecture.total}` : `Lire les CV déposés (${avecCV.length})`}</button>` : null}</div>
-    <p class="muted small">Rôle ou promo qui ne vont pas ensemble, et profils que leur CV contredit. Le membre voit aussi la proposition sur son profil.</p>
+    <p class="muted small">Rôle ou promo qui ne vont pas ensemble, et ce que le CV de chacun corrige ou complète. Le membre voit aussi la proposition sur son profil.</p>
+    ${cvs?.length > 1 ? html`<div class="row"><button class="btn small primary" id="adm-cv-tout" onClick=${toutAppliquer}><${Icon} name="check" size=${15}/> Tout mettre à jour d’après les CV (${cvs.length})</button></div>` : null}
     ${lignes.length ? html`<ul class="people-list revoir-list">${lignes.map(({ p, e, cv }) => html`<li key=${p.id}>
       <${Person} p=${p} onOpen=${openProfile} sub=${`${p.role === 'laureat' ? 'Lauréat(e)' : 'Étudiant(e)'} · Promo ${p.promo} · ${p.filiere}`}/>
-      <span class="small revoir-quoi">${cv ? html`<span>Son CV indique :</span> ${libellesCV(e).map((x, i) => html`${i ? ' · ' : ''}<b>${x}</b>`)}` : p.role === 'laureat' ? `Promo ${p.promo} pas encore diplômée` : `Promo ${p.promo} déjà diplômée`}</span>
+      <span class="small revoir-quoi">${cv ? html`<span>${corrigeProfil(e) ? 'Son CV indique :' : 'Son CV complète :'}</span> ${libellesCV(e).map((x, i) => html`${i ? ' · ' : ''}<b>${x}</b>`)}` : p.role === 'laureat' ? `Promo ${p.promo} pas encore diplômée` : `Promo ${p.promo} déjà diplômée`}</span>
       <span class="spacer"></span>
       <button class="btn small" onClick=${() => corriger(p, e, 'Profil corrigé.')}>${cv ? 'Appliquer' : e.role === 'etudiant' ? 'Passer en étudiant(e)' : 'Passer en lauréat(e)'}</button>
     </li>`)}</ul>` : cvs && cvs.illisibles < avecCV.length ? html`<p class="small good-t"><${Icon} name="check" size=${14}/> Les CV lus confirment les profils.</p>` : null}

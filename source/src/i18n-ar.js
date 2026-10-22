@@ -58,6 +58,8 @@ export const AR = {
   'Ton profil': 'ملفك', 'Mettre à jour': 'تحديث',
   // Inscription et contrôle par le CV
   '1 CV sans texte lisible (scan en image ?) : à vérifier à la main.': 'سيرة ذاتية واحدة بلا نص مقروء (صورة ممسوحة؟): تُراجع يدويًا.',
+  'Ton CV peut compléter ton profil.': 'سيرتك الذاتية يمكن أن تكمل ملفك.', 'Non merci': 'لا، شكرًا', 'Son CV complète :': 'سيرته الذاتية تكمل:',
+  'Profil mis à jour d’après son CV.': 'حُدّث الملف حسب سيرته الذاتية.', 'Email de contact': 'بريد التواصل', 'Bio': 'نبذة', 'Téléphone': 'الهاتف',
   'Tu es…': 'أنت…', 'De la 1re à la 5e année à l’ENSAM Meknès': 'من السنة الأولى إلى الخامسة في ENSAM مكناس', 'Diplômé(e) de l’ENSAM Meknès': 'خريج(ة) ENSAM مكناس',
   'Choisis ci-dessus, ou dépose ton CV : on remplit tout pour toi.': 'اختر أعلاه، أو أضف سيرتك الذاتية: نملأ كل شيء من أجلك.',
   'Tu as déjà ton diplôme ? Choisis « Lauréat(e) » : l’email de l’école n’est demandé qu’aux étudiants.': 'حصلت على شهادتك؟ اختر «خريج(ة)»: بريد المدرسة مطلوب من الطلبة فقط.',
@@ -740,6 +742,9 @@ export const AR_PATTERNS = [
   [/^Promo (\d{4}) : tu es encore étudiant\(e\) \? Mets ton profil à jour\.$/, (p) => `دفعة ${p}: هل ما زلت طالبًا(ة)؟ حدّث ملفك.`],
   [/^Promo (\d{4}) : tu as ton diplôme \? Passe en lauréat\(e\)\.$/, (p) => `دفعة ${p}: هل حصلت على شهادتك؟ انتقل إلى خريج(ة).`],
   [/^Lire les CV déposés \((\d+)\)$/, (n) => `قراءة السير الذاتية المودعة (${n})`],
+  [/^Tout mettre à jour d’après les CV \((\d+)\)$/, n => `تحديث الكل حسب السير الذاتية (${n})`],
+  [/^(\d+) profils mis à jour d’après leur CV\.$/, n => `حُدّث ${n} ملفات حسب سيرهم الذاتية.`],
+  [/^Poste : (.+)$/, x => `المنصب: ${x}`], [/^Entreprise : (.+)$/, x => `الشركة: ${x}`], [/^Ville : (.+)$/, x => `المدينة: ${x}`], [/^Compétences : (.+)$/, x => `المهارات: ${x}`],
   [/^CV lus : (\d+)\/(\d+)$/, (a, b) => `السير المقروءة: ${a}/${b}`],
   [/^(\d+) CV sans texte lisible \(scans en image \?\) : à vérifier à la main\.$/, n => `${n} سير ذاتية بلا نص مقروء (صور ممسوحة؟): تُراجع يدويًا.`],
   [/^Promo (\d{4}) pas encore diplômée$/, (p) => `دفعة ${p} لم تتخرج بعد`],
