@@ -11,7 +11,7 @@ import { createRequire } from 'node:module';
 const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe.min.js'), 'utf8');
 
 const SITE = path.resolve(process.env.SITE_DIR || new URL('../../dist', import.meta.url).pathname);
-const TYPES = { '.js': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
+const TYPES = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const ECRANS = ['accueil', 'offres', 'mentorat', 'mentorat/cv', 'messages', 'parcours', 'espace', 'reseau/groupes', 'reseau/agenda', 'reseau/entraide',
   'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'reseau/classement', 'reseau/talents', 'suivi', 'profil', 'enquete',
   'confidentialite', 'admin', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda', 'admin/reglages'];
@@ -257,6 +257,78 @@ test('profil : remplir depuis le texte LinkedIn collé', async () => {
   await s.page.click('#pf-lifill'); await s.page.waitForTimeout(200);
   assert.match(await s.page.inputValue('#pf-comp'), /SolidWorks, Ansys, Gestion de projet/);
   assert.match(await s.page.locator('.li-faits').innerText(), /Compétences/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// CV de lauréat (texte d'un PDF) ; le PDF est fabriqué dans la page puis déposé dans le champ fichier
+const CV_LAUREAT = ['Yassine BERRADA', 'Ingénieur méthodes – OCP Group', 'yassine.berrada@outlook.fr · 06 61 22 33 44 · Casablanca, Maroc',
+  'EXPÉRIENCE PROFESSIONNELLE', 'OCP Group, Jorf Lasfar', 'Ingénieur méthodes', 'Septembre 2021 – Aujourd\'hui',
+  'FORMATION', '2016 – 2021 : Diplôme d\'ingénieur d\'État en Génie Industriel, ENSAM Meknès', 'COMPÉTENCES TECHNIQUES', 'Lean, SMED, Power BI'];
+const deposerPdf = (page, champ, lignes) => page.evaluate(async ([champ, lignes]) => {
+  const { pdfSimple } = await import('./store.js');
+  const dt = new DataTransfer(); dt.items.add(new File([pdfSimple(lignes)], 'cv.pdf', { type: 'application/pdf' }));
+  const input = document.querySelector(champ); input.files = dt.files; input.dispatchEvent(new Event('change', { bubbles: true }));
+}, [champ, lignes]);
+
+test('inscription : « Tu es… » bien visible, puis tout se remplit depuis le CV', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  // Le formulaire d'inscription (en démo, on a déjà un profil : on l'affiche seul)
+  await s.page.evaluate(async () => {
+    const [{ html, render }, { createStore }, { ProfileForm }] = await Promise.all([import('./vendor/preact-htm.js'), import('./store.js'), import('./community.js')]);
+    const store = await createStore();
+    document.getElementById('app').hidden = true;
+    const el = document.body.appendChild(document.createElement('main')); el.id = 'inscription'; el.className = 'auth-card wide';
+    render(html`<${ProfileForm} ctx=${{ store, act: fn => fn() }} onboarding/>`, el);
+  });
+  await s.page.waitForSelector('#pf-je-laureat');
+  assert.ok(await s.page.isVisible('#pf-choisir'));
+  assert.equal(await s.page.locator('#pf-name').count(), 0, 'le reste du formulaire attend le choix');
+  assert.ok(await s.page.isDisabled('form .row-end .btn.primary'));
+  await s.page.click('#pf-je-etudiant');
+  assert.equal(await s.page.getAttribute('#pf-je-etudiant', 'aria-pressed'), 'true');
+  assert.ok(await s.page.isVisible('#pf-name'));
+  // Le CV d'un lauréat inscrit par erreur comme étudiant : rôle, promo, filière, poste et téléphone viennent du CV
+  await deposerPdf(s.page, '#pf-cvfile', CV_LAUREAT);
+  await s.page.waitForSelector('.cv-lu', { timeout: 15000 });
+  assert.equal(await s.page.getAttribute('#pf-je-laureat', 'aria-pressed'), 'true');
+  assert.equal(await s.page.inputValue('#pf-name'), 'Yassine Berrada');
+  assert.equal(await s.page.inputValue('#pf-promo'), '2021');
+  assert.equal(await s.page.inputValue('#pf-fil'), 'Génie Industriel');
+  assert.equal(await s.page.inputValue('#pf-ent'), 'OCP Group');
+  assert.equal(await s.page.inputValue('#pf-poste'), 'Ingénieur méthodes');
+  assert.equal(await s.page.inputValue('#pf-tel'), '06 61 22 33 44');
+  assert.ok(await s.page.isEnabled('form .row-end .btn.primary'));
+  assert.ok((await s.debordement()) <= 0, 'pas de débordement à 390 px');
+  await s.page.addScriptTag({ content: AXE });
+  const v = await s.page.evaluate(async () => (await axe.run('#inscription', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => x.id));
+  assert.deepEqual(v, []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('CV qui contredit le profil : le membre corrige en un clic, l’administration lit les CV et corrige', async () => {
+  const s = await ouvrir();
+  await s.comme('Salma'); await s.aller('profil');
+  await deposerPdf(s.page, '#cv-file', CV_LAUREAT);
+  await s.page.waitForSelector('#cv-controle', { timeout: 15000 });
+  assert.match(await s.page.locator('#cv-controle').innerText(), /Lauréat\(e\) · Promo 2021/);
+  await s.page.click('#cv-appliquer'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Profil mis à jour d’après ton CV/);
+  assert.equal(await s.page.locator('#cv-controle').count(), 0);
+  assert.equal(await s.page.inputValue('#pf-promo'), '2021');
+  // Amine dépose le même CV sans corriger : l'administration le trouve en lisant les CV déposés
+  await s.comme('Amine'); await s.aller('profil');
+  await deposerPdf(s.page, '#cv-file', CV_LAUREAT);
+  await s.page.waitForSelector('#cv-controle', { timeout: 15000 });
+  await s.comme('Admin'); await s.aller('admin/membres');
+  await s.page.click('#adm-lire-cv');
+  const ligne = s.page.locator('.revoir-list li', { hasText: 'Amine' });
+  await ligne.waitFor({ timeout: 20000 });
+  assert.match(await ligne.innerText(), /Son CV indique :\s*Lauréat\(e\) · Promo 2021/);
+  await ligne.locator('button', { hasText: 'Appliquer' }).click(); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Profil corrigé/);
+  assert.equal(await s.page.locator('.revoir-list li', { hasText: 'Amine' }).count(), 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });

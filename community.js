@@ -1,8 +1,8 @@
 // Entraide, Communauté (classement, annuaire, vitrine des talents) et profils.
-import { html, useState, useMemo } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, toast, LevelChip, RoleLine } from './ui.js';
+import { html, useState, useMemo, useRef } from './vendor/preact-htm.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, toast, LevelChip, RoleLine, injectCSS } from './ui.js';
 import { getLang } from './i18n.js';
-import { FILIERES, PREPA, filieresPour, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo } from './logic.js';
+import { FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo } from './logic.js';
 import { TalentPool } from './growth.js';
 import { GroupesPage } from './groupes.js';
 import { AnnuairePro } from './pro.js';
@@ -13,10 +13,11 @@ import { AgendaPage } from './agenda.js';
 import { MessageBtn } from './messages.js';
 import { CvButton } from './cv.js';
 import { SignalerBtn, ContactBlock, PairVerify, VisibiliteFields, groupesMasques, confirmations, VIS_LABELS, VIS_CHOIX } from './confiance.js';
-import { VIS_CHAMPS } from './store.js';
+import { VIS_CHAMPS, CV_MAX } from './store.js';
 import { addAR } from './i18n.js';
 import { oublierInvitation } from './invitation.js';
 import { parseLinkedin } from './parse-linkedin.js';
+import { lireCV } from './lire-cv.js';
 
 // Arabe : textes du profil ajoutés en Phase 3
 addAR({
@@ -213,12 +214,63 @@ function LinkedinBox({ onFill }) {
   </details>`;
 }
 
+// Inscription : le CV en PDF remplit tout le profil (rôle, promo, filière, poste…), le membre vérifie puis valide
+function CvBox({ onLu }) {
+  const input = useRef();
+  const [etat, setEtat] = useState(null);
+  const lire = async file => {
+    if (!file) return;
+    if (input.current) input.current.value = '';
+    if (file.size > CV_MAX) return setEtat({ erreur: 'Le fichier dépasse 2 Mo. Exporte ton CV en PDF plus léger.' });
+    if (file.type && file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name || '')) return setEtat({ erreur: 'Choisis ton CV au format PDF.' });
+    setEtat('lecture');
+    try {
+      const faits = onLu(await lireCV(file), file);
+      setEtat(faits.ok === false ? { erreur: 'Ce CV ne se lit pas (scan en image ?). Remplis les champs à la main, ça prend une minute.' } : { faits });
+    } catch { setEtat({ erreur: 'Ce PDF ne s’ouvre pas. Essaie un autre fichier, ou remplis les champs à la main.' }); }
+  };
+  return html`<div class="cv-box">
+    <input ref=${input} id="pf-cvfile" type="file" accept="application/pdf,.pdf" hidden onChange=${e => lire(e.target.files[0])}/>
+    <span class="cv-box-ico"><${Icon} name="file" size=${22}/></span>
+    <div class="grow"><strong>Le plus simple : ton CV</strong>
+      <span class="small muted">On lit ton CV (PDF) et on remplit ton profil : étudiant(e) ou lauréat(e), promo, filière, poste… Tu vérifies, puis tu valides.</span>
+      ${etat === 'lecture' ? html`<span class="small" role="status">Lecture de ton CV…</span>`
+        : etat?.erreur ? html`<span class="small warn-t" role="alert">${etat.erreur}</span>`
+        : etat?.faits ? html`<span class="small cv-lu" role="status"><span>Lu dans ton CV :</span> ${etat.faits.map((x, i) => html`${i ? ' · ' : ''}<b>${x}</b>`)}</span>` : null}
+    </div>
+    <button type="button" class=${'btn small' + (etat?.faits ? '' : ' primary')} id="pf-cv" aria-busy=${etat === 'lecture' ? 'true' : null} disabled=${etat === 'lecture'} onClick=${() => input.current?.click()}><${Icon} name="upload" size=${15}/> ${etat?.faits ? 'Un autre CV' : 'Choisir mon CV'}</button>
+  </div>`;
+}
+injectCSS('je-suis', `
+.je-suis { border: 0; padding: 0; margin: 0; min-width: 0; }
+.je-suis legend { font-weight: 650; font-size: 1.05rem; margin-bottom: .55rem; padding: 0; }
+.je-suis-choix { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
+.je-carte { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: .25rem; padding: .95rem 1rem; text-align: start; font: inherit; color: inherit; background: var(--surface); border: 2px solid var(--line); border-radius: 14px; cursor: pointer; transition: border-color .15s, background-color .15s, transform .15s; }
+.je-carte:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.je-carte:active { transform: scale(.985); }
+.je-carte.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+.je-carte strong { font-size: 1.02rem; }
+.je-ico { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 11px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); margin-bottom: .2rem; }
+.je-carte.on .je-ico { background: var(--accent); color: var(--accent-ink); }
+.je-coche { position: absolute; top: .6rem; inset-inline-end: .6rem; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); opacity: 0; transform: scale(.6); transition: opacity .15s, transform .15s; }
+.je-carte.on .je-coche { opacity: 1; transform: none; }
+@media (max-width: 380px) { .je-suis-choix { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .je-carte, .je-coche { transition: none; } }
+`);
+injectCSS('cv-box', `
+.cv-box { display: flex; align-items: center; gap: .8rem; padding: .9rem 1rem; border: 1px solid var(--accent); border-radius: 14px; background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.cv-box .grow { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
+.cv-box-ico { flex: none; display: grid; place-items: center; width: 42px; height: 42px; border-radius: 12px; background: var(--accent); color: var(--accent-ink); }
+.cv-lu b { font-weight: 650; }
+@media (max-width: 560px) { .cv-box { flex-wrap: wrap; } .cv-box .btn { width: 100%; justify-content: center; } }
+`);
+
 // Les champs vides arrivent de la base à null : on garde alors la valeur par défaut du formulaire (texte vide…)
 const sansVides = o => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v != null));
 
 export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
   const { store, act } = ctx;
-  const [f, setF] = useState(() => ({ full_name: '', role: 'etudiant', filiere: FILIERES[0], promo: new Date().getFullYear() + 1, entreprise: '', poste: '', ville: '', pays: 'Maroc', bio: '', competences: [], linkedin: '', contact: '', cv_url: '', disponibilite: '', mentor_dispo: false, mentor_sujets: '', vitrine: true, secteur: '', parrain_dispo: false, ...sansVides(preset), ...sansVides(initial) }));
+  const [f, setF] = useState(() => ({ full_name: '', role: onboarding ? '' : 'etudiant', filiere: FILIERES[0], promo: new Date().getFullYear() + 1, entreprise: '', poste: '', ville: '', pays: 'Maroc', bio: '', competences: [], linkedin: '', contact: '', cv_url: '', disponibilite: '', mentor_dispo: false, mentor_sujets: '', vitrine: true, secteur: '', parrain_dispo: false, ...sansVides(preset), ...sansVides(initial) }));
   const set = (k, v) => setF({ ...f, [k]: v });
   const [comp, setComp] = useState((f.competences || []).join(', '));
   // Base à jour (Phase 3) : coordonnées privées et visibilité ; sinon l'ancien champ « contact » public
@@ -227,6 +279,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
   const [co, setCo] = useState(() => ({ telephone: coord0.telephone || '', email: coord0.email || '', contact: coord0.contact || (v3 && initial?.contact) || '' }));
   const setC = (k, v) => setCo({ ...co, [k]: v });
   const [vis, setVis] = useState(() => ({ ...(initial?.visibilite || {}) }));
+  const [cvFichier, setCvFichier] = useState(null);
   // Email de l'école obligatoire pour les étudiants (réglage de l'administration)
   const email = (store.session?.user?.email || '').toLowerCase();
   const domaines = store.domainesEcole?.() || [];
@@ -235,7 +288,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
   // Rôle et promo cohérents : un lauréat a déjà son diplôme, un étudiant l'aura entre la 5A et la 1re année de cette saison
   const S = ctx.saison ?? seasonOf(), promoN = +f.promo, an = new Date().getFullYear();
   const incoherent = f.role === 'laureat' && promoN > an ? 'futur' : f.role === 'etudiant' && promoN >= 1990 && promoN <= S ? 'diplome' : f.role === 'etudiant' && promoN > S + 5 ? 'loin' : null;
-  const ok = f.full_name.trim().length >= 2 && f.promo >= 1990 && f.promo <= 2040 && !ecoleBloque && !incoherent;
+  const ok = !!f.role && f.full_name.trim().length >= 2 && f.promo >= 1990 && f.promo <= 2040 && !ecoleBloque && !incoherent;
   // Filières proposées selon le rôle et l'année : classes prépa en 1A-2A, maquette actuelle par parcours,
   // anciennes appellations pour les lauréats. Une valeur déjà enregistrée hors liste reste en tête tant qu'on n'en choisit pas une autre.
   const filPour = (role, promo) => filieresPour(role, role === 'etudiant' ? niveauOf({ promo: +promo }, ctx.saison ?? seasonOf()) : 7);
@@ -261,26 +314,40 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
     const champs = { telephone: co.telephone.trim() || null, email: co.email.trim() || null, contact: co.contact.trim() || null };
     const coordChange = v3 && ['telephone', 'email', 'contact'].some(k => (champs[k] || '') !== (coord0[k] || ''));
     act(async () => {
-      if (onboarding) { await store.insert('profiles', { id: store.userId, ...row }); oublierInvitation(); }
+      if (onboarding) {
+        await store.insert('profiles', { id: store.userId, ...row }); oublierInvitation();
+        // Le CV lu à l'inscription est gardé comme CV du membre (joint aux candidatures, relu par un lauréat)
+        if (cvFichier) await store.deposerCV(cvFichier).catch(() => toast('Ton CV n’a pas pu être gardé : ajoute-le depuis « Mon profil ».', 'err'));
+      }
       else await store.update('profiles', initial.id, row);
       if (coordChange) await store.enregistrerCoordonnees(champs);
       toast(onboarding ? 'Bienvenue dans le réseau !' : 'Profil enregistré.');
       onDone?.();
     });
   };
-  // Ne remplit que les champs vides (et, à l'inscription, la promo, la filière et le rôle)
-  const remplir = txt => {
-    const r = parseLinkedin(txt);
+  // Ne remplit que les champs vides (et, à l'inscription, la promo, la filière et le rôle).
+  // Depuis le CV, le rôle, la promo et la filière viennent du CV, même avec un lien d'invitation.
+  const remplir = (txt, { cv = false } = {}) => {
+    const r = typeof txt === 'string' ? parseLinkedin(txt) : txt;
     if (!Object.keys(r).length) return Object.assign([], { ok: false });
     const n = { ...f }, faits = [];
     const vide = k => !String(f[k] ?? '').trim();
     const neuf = !initial;
-    if (neuf && !preset && r.role && f.role !== 'admin' && r.role !== f.role) { n.role = r.role; faits.push(r.role === 'laureat' ? 'Lauréat(e)' : 'Étudiant(e)'); }
+    if (neuf && (!preset || cv) && r.role && f.role !== 'admin' && r.role !== f.role) { n.role = r.role; faits.push(r.role === 'laureat' ? 'Lauréat(e)' : 'Étudiant(e)'); }
+    else if (cv && r.role) faits.push(r.role === 'laureat' ? 'Lauréat(e)' : 'Étudiant(e)');
     for (const [k, l] of [['full_name', 'Nom'], ['poste', 'Poste'], ['entreprise', 'Entreprise'], ['ville', 'Ville'], ['bio', 'Bio'], ['linkedin', 'LinkedIn']]) if (r[k] && vide(k)) { n[k] = r[k]; faits.push(l); }
     if (r.pays && r.pays !== f.pays && (vide('pays') || (neuf && f.pays === 'Maroc'))) { n.pays = r.pays; faits.push('Pays'); }
-    if (neuf && !preset?.promo && r.promo && r.promo !== +f.promo) { n.promo = r.promo; faits.push('Promo'); }
-    if (neuf && r.filiere && r.filiere !== f.filiere && filPour(n.role, n.promo).some(g => g.options.includes(r.filiere))) { n.filiere = r.filiere; faits.push('Filière'); }
+    if (neuf && (!preset?.promo || cv) && r.promo && r.promo !== +f.promo) { n.promo = r.promo; faits.push(cv ? `Promo ${r.promo}` : 'Promo'); }
+    else if (cv && r.promo) faits.push(`Promo ${r.promo}`);
+    if (neuf && r.filiere && filPour(n.role, n.promo).some(g => g.options.includes(r.filiere))) { if (r.filiere !== f.filiere) n.filiere = r.filiere; faits.push(cv ? filiereCourte(r.filiere) : 'Filière'); }
     setF(n);
+    // Coordonnées privées trouvées dans le CV
+    if (r.telephone || r.email) {
+      const c = { ...co };
+      if (r.telephone && !co.telephone) { c.telephone = r.telephone; faits.push('Téléphone'); }
+      if (r.email && !co.email) { c.email = r.email; faits.push('Email'); }
+      setCo(c);
+    }
     if (r.competences?.length) {
       const deja = comp.split(',').map(x => x.trim()).filter(Boolean);
       const vu = new Set(deja.map(x => x.toLowerCase()));
@@ -294,12 +361,18 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
   const choisirRole = role => setF(x => ({ ...x, role, promo: initial ? x.promo : role === 'laureat' && +x.promo > an ? an : role === 'etudiant' && +x.promo <= S ? S + 1 : x.promo }));
   const n = !isStudent && initial && !initial.verified ? confirmations(store.data, initial) : 0;
   return html`<form class="form" onSubmit=${submit}>
-    ${f.role !== 'admin' ? html`<div class="seg" role="group" aria-label="Je suis"><button type="button" class=${isStudent ? 'on' : ''} onClick=${() => choisirRole('etudiant')}>Je suis étudiant(e)</button><button type="button" class=${!isStudent ? 'on' : ''} onClick=${() => choisirRole('laureat')}>Je suis lauréat(e)</button></div>` : null}
+    ${onboarding ? html`<fieldset class="je-suis"><legend>Tu es…</legend><div class="je-suis-choix">
+      ${[['etudiant', 'cap', 'Étudiant(e)', 'De la 1re à la 5e année à l’ENSAM Meknès'], ['laureat', 'briefcase', 'Lauréat(e)', 'Diplômé(e) de l’ENSAM Meknès']].map(([r, ico, t, sous]) => html`<button type="button" id=${'pf-je-' + r} class=${'je-carte' + (f.role === r ? ' on' : '')} aria-pressed=${f.role === r ? 'true' : 'false'} onClick=${() => choisirRole(r)}>
+        <span class="je-ico"><${Icon} name=${ico} size=${22}/></span><strong>${t}</strong><span class="small muted">${sous}</span><span class="je-coche"><${Icon} name="check" size=${16}/></span></button>`)}</div></fieldset>`
+    : f.role !== 'admin' ? html`<div class="seg" role="group" aria-label="Je suis"><button type="button" class=${isStudent ? 'on' : ''} onClick=${() => choisirRole('etudiant')}>Je suis étudiant(e)</button><button type="button" class=${!isStudent ? 'on' : ''} onClick=${() => choisirRole('laureat')}>Je suis lauréat(e)</button></div>` : null}
     ${ecoleBloque ? html`<div class="cf-warn" role="alert"><p><strong>${onboarding ? 'Inscris-toi avec ton email de l’école.' : 'Un compte étudiant utilise l’email de l’école.'}</strong></p>
       <p class="small">Les comptes étudiants utilisent l’email de l’école : <span dir="ltr" translate="no">${domaines.map(d => '@' + d).join(', ')}</span></p>
       <p class="small">Ton compte actuel n’en fait pas partie : <span dir="ltr" translate="no">${email}</span></p>
-      ${onboarding ? html`<div><button type="button" class="btn small" id="pf-relog" onClick=${() => store.signOut()}><${Icon} name="logout" size=${15}/> Me déconnecter et recommencer</button></div>`
+      ${onboarding ? html`<p class="small">Tu as déjà ton diplôme ? Choisis « Lauréat(e) » : l’email de l’école n’est demandé qu’aux étudiants.</p>
+        <div class="row"><button type="button" class="btn small primary" id="pf-plutot-laureat" onClick=${() => choisirRole('laureat')}>Je suis lauréat(e)</button><button type="button" class="btn small" id="pf-relog" onClick=${() => store.signOut()}><${Icon} name="logout" size=${15}/> Me déconnecter et recommencer</button></div>`
         : html`<p class="small">L’administration de la plateforme peut changer ton rôle si besoin.</p>`}</div>` : null}
+    ${onboarding ? html`<${CvBox} onLu=${(r, file) => { setCvFichier(file); return remplir(r, { cv: true }); }}/>` : null}
+    ${!f.role ? html`<p class="small muted center" id="pf-choisir">Choisis ci-dessus, ou dépose ton CV : on remplit tout pour toi.</p>` : html`
     ${f.role !== 'admin' ? html`<${LinkedinBox} onFill=${remplir}/>` : null}
     <div class="grid2">
       <${Field} label="Nom complet"><input id="pf-name" required value=${f.full_name} onInput=${e => set('full_name', e.target.value)} maxlength="80"/><//>
@@ -332,7 +405,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
       <${Field} label="Autre (facultatif)"><input id="pf-contact" maxlength="200" value=${co.contact} onInput=${e => setC('contact', e.target.value)} placeholder="Ex. WhatsApp, plutôt le soir"/><//>
     </fieldset>
     <${VisibiliteFields} role=${f.role} value=${vis} onChange=${setVis}/>` : null}
-    ${f.role === 'laureat' && !initial?.verified ? html`<p class="small muted">${v3 ? 'Ton badge « Lauréat vérifié » arrive quand l’administration, ou deux lauréats vérifiés de ta promo, confirment ton profil.' : 'Ton badge « Lauréat vérifié » sera ajouté par l’administration de l’école.'}${n ? html` <b>${n}/2</b>` : null}</p>` : null}
+    ${f.role === 'laureat' && !initial?.verified ? html`<p class="small muted">${v3 ? 'Ton badge « Lauréat vérifié » arrive quand l’administration, ou deux lauréats vérifiés de ta promo, confirment ton profil.' : 'Ton badge « Lauréat vérifié » sera ajouté par l’administration de l’école.'}${n ? html` <b>${n}/2</b>` : null}</p>` : null}`}
     <div class="row-end"><button class="btn primary" disabled=${!ok}>${onboarding ? 'Rejoindre la communauté' : 'Enregistrer'}</button></div>
   </form>`;
 }

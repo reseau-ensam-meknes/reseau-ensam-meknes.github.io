@@ -427,6 +427,8 @@ function prochainPas(ctx, notifs, guide) {
     const n = requestsFor(data, me, id => store.byId('profiles', id)).length;
     if (n) return { icon: 'heart', tone: 'brass', eyebrow: 'Quand tu as 20 minutes', texte: n > 1 ? `${n} étudiants aimeraient un conseil.` : 'Un étudiant aimerait un conseil.', cta: 'Voir qui', go: () => go('mentorat') };
   }
+  // Le CV vérifie et complète le profil (rôle, promo, filière) : on le propose tant qu'il manque
+  if ((me.role === 'laureat' || me.role === 'etudiant') && !me.cv_path) return { icon: 'file', tone: 'accent', eyebrow: 'Ton CV', texte: 'Ajoute ton CV en PDF : ton profil se vérifie et se complète tout seul.', cta: 'Ajouter mon CV', go: () => go('profil') };
   return { calme: true };
 }
 
@@ -608,7 +610,7 @@ function MyProfile({ ctx }) {
     <header class="page-head"><div><p class="eyebrow">Visible par les membres connectés</p><h1>Mon profil</h1></div>
       ${store.mode === 'live' ? html`<button class="btn ghost" onClick=${() => store.signOut()}><${Icon} name="logout"/> Se déconnecter</button>` : null}</header>
     <${CvCard} ctx=${ctx}/>
-    <${ProfileForm} ctx=${ctx} initial=${me} key=${me.id}/>
+    <${ProfileForm} ctx=${ctx} initial=${me} key=${[me.id, me.role, me.promo, me.filiere].join('|')}/>
     <${MesDonnees} ctx=${ctx}/>
   </section>`;
 }
