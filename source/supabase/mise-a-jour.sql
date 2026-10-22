@@ -1431,6 +1431,10 @@ alter table public.profiles add column if not exists visibilite jsonb not null d
 alter table public.profiles add column if not exists alertes_offres boolean not null default true;
 alter table public.profiles add column if not exists alertes_email boolean not null default true;
 alter table public.profiles add column if not exists emails_messages boolean not null default true;
+-- Lauréat qui cherche un emploi : reçoit les offres « Jeunes diplômés » et entre lauréats, visible dans la Vitrine
+alter table public.profiles add column if not exists en_recherche boolean not null default false;
+-- Photo de profil (stockage privé « photos », vue par les membres connectés)
+alter table public.profiles add column if not exists photo_path text;
 
 -- visibilite : { travail, lieu, linkedin, presentation, cv } -> tous | laureats | contacts
 create or replace function public.visibilite_valide(v jsonb) returns boolean
@@ -1445,6 +1449,9 @@ do $$ begin
   end if;
   if not exists (select 1 from pg_constraint where conname = 'profiles_cv_path_check') then
     alter table public.profiles add constraint profiles_cv_path_check check (cv_path is null or (split_part(cv_path, '/', 1) = id::text and cv_path ~ '^[0-9a-f-]{36}/[A-Za-z0-9._-]{1,80}\.pdf$'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'profiles_photo_path_check') then
+    alter table public.profiles add constraint profiles_photo_path_check check (photo_path is null or (split_part(photo_path, '/', 1) = id::text and photo_path ~ '^[0-9a-f-]{36}/photo-[0-9]{1,16}\.(webp|jpg|png)$'));
   end if;
 end $$;
 
@@ -1596,7 +1603,8 @@ select p.id, p.full_name, p.role, p.filiere, p.promo,
   case when p.id = auth.uid() then p.visibilite else '{}'::jsonb end as visibilite,
   case when p.id = auth.uid() then p.alertes_offres end as alertes_offres,
   case when p.id = auth.uid() then p.alertes_email end as alertes_email,
-  case when p.id = auth.uid() then p.emails_messages end as emails_messages
+  case when p.id = auth.uid() then p.emails_messages end as emails_messages,
+  p.en_recherche, p.photo_path
 from public.profiles p
 where auth.uid() is not null;
 revoke all on public.profils from public, anon;
@@ -2495,10 +2503,13 @@ alter table public.notif_etat add column if not exists alertes_jour date;
 
 create or replace function public.offre_pour(o public.offers, p public.profiles, p_saison int) returns boolean
 language sql stable as $$
-  select o.status = 'ouverte' and coalesce(o.audience, 'etudiants') = 'etudiants' and o.author_id <> p.id
+  -- Un lauréat en recherche d'emploi reçoit aussi les offres « Jeunes diplômés » et celles entre lauréats
+  select o.status = 'ouverte' and o.author_id <> p.id
     and p.role in ('etudiant','laureat')
-    and public.niveau_de(p.promo, p_saison) = any(coalesce(o.annees, '{}'))
-    and public.filiere_ok(o.filieres, p.filiere);
+    and public.filiere_ok(o.filieres, p.filiere)
+    and case when coalesce(o.audience, 'etudiants') = 'laureats' then p.role = 'laureat' and coalesce(p.en_recherche, false)
+      else public.niveau_de(p.promo, p_saison) = any(coalesce(o.annees, '{}'))
+        or (p.role = 'laureat' and coalesce(p.en_recherche, false) and 6 = any(coalesce(o.annees, '{}'))) end;
 $$;
 
 create or replace function public.alerte_offre() returns trigger
@@ -2731,6 +2742,23 @@ do $$ begin
   create policy "cv suppression" on storage.objects for delete to authenticated using (
     bucket_id = 'cv' and ((storage.foldername(name))[1] = auth.uid()::text or public.is_admin()));
 exception when others then raise notice 'Stockage des CV non configuré : %', sqlerrm;
+end $$;
+
+-- Photos de profil (JPEG, PNG ou WebP, 1 Mo au plus) : chacun dépose dans son dossier,
+-- les membres connectés les voient par des liens temporaires ; l'administration peut en retirer une.
+do $$ begin
+  insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+    values ('photos', 'photos', false, 1048576, array['image/jpeg','image/png','image/webp'])
+    on conflict (id) do update set public = false, file_size_limit = 1048576, allowed_mime_types = array['image/jpeg','image/png','image/webp'];
+  drop policy if exists "photos lecture" on storage.objects;
+  drop policy if exists "photos depot" on storage.objects;
+  drop policy if exists "photos suppression" on storage.objects;
+  create policy "photos lecture" on storage.objects for select to authenticated using (bucket_id = 'photos');
+  create policy "photos depot" on storage.objects for insert to authenticated with check (
+    bucket_id = 'photos' and (storage.foldername(name))[1] = auth.uid()::text and lower(storage.extension(name)) in ('webp','jpg','png'));
+  create policy "photos suppression" on storage.objects for delete to authenticated using (
+    bucket_id = 'photos' and ((storage.foldername(name))[1] = auth.uid()::text or public.is_admin()));
+exception when others then raise notice 'Stockage des photos non configuré : %', sqlerrm;
 end $$;
 
 -- ---------------------------------------------------------------------
@@ -3121,4 +3149,4 @@ insert into public.app_secrets (cle, valeur) values ('projet_url', 'https://xqrd
   on conflict (cle) do update set valeur = excluded.valeur;
 
 -- Résultat : 1 = activé
-select (select count(*) from pg_extension where extname = 'pg_net') as envois_pg_net, (select count(*) from pg_extension where extname = 'pg_cron') as taches_pg_cron, (select count(*) from storage.buckets where id = 'cv') as stockage_cv, (select count(*) from storage.buckets where id = 'chat') as stockage_messagerie;
+select (select count(*) from pg_extension where extname = 'pg_net') as envois_pg_net, (select count(*) from pg_extension where extname = 'pg_cron') as taches_pg_cron, (select count(*) from storage.buckets where id = 'cv') as stockage_cv, (select count(*) from storage.buckets where id = 'chat') as stockage_messagerie, (select count(*) from storage.buckets where id = 'photos') as stockage_photos;

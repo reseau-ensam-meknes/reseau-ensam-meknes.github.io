@@ -18,6 +18,7 @@ import { addAR } from './i18n.js';
 import { oublierInvitation } from './invitation.js';
 import { parseLinkedin } from './parse-linkedin.js';
 import { lireCV } from './lire-cv.js';
+import { photoPreteDuCV, PhotoTrouvee } from './photo.js';
 
 // Arabe : textes du profil ajoutés en Phase 3
 addAR({
@@ -192,6 +193,7 @@ export function ProfileModal({ ctx, p: p0, onClose, onAskMentor }) {
       ${p.poste || p.entreprise ? html`<p>${p.poste ? html`<strong>${p.poste}</strong>` : null}${p.entreprise ? html`${p.poste ? ' chez ' : ''}<button class="linkish" onClick=${() => { onClose(); ctx.openEntreprise?.(p.entreprise); }}>${p.entreprise}</button>` : null}${p.secteur ? html` <span class="mini">${p.secteur}</span>` : null}</p>` : null}
       ${st ? html`<p><span class=${'state-pill s-' + st.key}>${st.label}</span>${st.pl ? ` ${st.pl.entreprise}` : ''}</p>` : null}
       ${p.role === 'etudiant' && p.disponibilite ? html`<p class="small"><${Icon} name="calendar" size=${14}/> Disponibilité : <span translate="no" dir="auto">${p.disponibilite}</span></p>` : null}
+      ${p.role === 'laureat' && p.en_recherche ? html`<p class="small"><span class="state-pill s-recherche">Cherche un emploi</span>${p.disponibilite ? html` <span translate="no" dir="auto">${p.disponibilite}</span>` : null}</p>` : null}
       ${p.bio ? html`<p>${p.bio}</p>` : null}
       ${(p.competences || []).length ? html`<p class="offer-target">${p.competences.map(c => html`<span class="mini">${c}</span>`)}</p>` : null}
       ${p.role !== 'etudiant' ? html`<div class="profile-stats"><span><b class="mono">${s?.points || 0}</b> points</span><span><b class="mono">${helped}</b> recrutés</span><span><b class="mono">${s?.mentorats || 0}</b> mentorats</span><span><b class="mono">${s?.offres || 0}</b> offres</span></div>` : null}
@@ -222,12 +224,16 @@ function LinkedinBox({ onFill }) {
 }
 
 // Inscription : le CV en PDF remplit tout le profil (rôle, promo, filière, poste…), le membre vérifie puis valide
-function CvBox({ onLu }) {
+function CvBox({ onLu, onPhoto }) {
   const input = useRef();
   const [etat, setEtat] = useState(null);
+  // Photo trouvée dans le CV : proposée, gardée seulement si le membre dit oui (envoyée avec le profil)
+  const [photo, setPhoto] = useState(null);
   const lire = async file => {
     if (!file) return;
     if (input.current) input.current.value = '';
+    setPhoto(null); onPhoto?.(null);
+    if (onPhoto && file.size <= CV_MAX) photoPreteDuCV(file).then(b => b && setPhoto({ blob: b, ok: false }));
     if (file.size > CV_MAX) return setEtat({ erreur: 'Le fichier dépasse 2 Mo. Exporte ton CV en PDF plus léger.' });
     if (file.type && file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name || '')) return setEtat({ erreur: 'Choisis ton CV au format PDF.' });
     setEtat('lecture');
@@ -244,6 +250,8 @@ function CvBox({ onLu }) {
       ${etat === 'lecture' ? html`<span class="small" role="status">Lecture de ton CV…</span>`
         : etat?.erreur ? html`<span class="small warn-t" role="alert">${etat.erreur}</span>`
         : etat?.faits ? html`<span class="small cv-lu" role="status"><span>Lu dans ton CV :</span> ${etat.faits.map((x, i) => html`${i ? ' · ' : ''}<b>${x}</b>`)}</span>` : null}
+      ${photo && !photo.ok ? html`<${PhotoTrouvee} key=${photo.blob.size} blob=${photo.blob} onUse=${() => { onPhoto(photo.blob); setPhoto({ ...photo, ok: true }); }} onNo=${() => { onPhoto(null); setPhoto(null); }}/>`
+        : photo?.ok ? html`<span class="small good-t" role="status"><${Icon} name="check" size=${14}/> Photo gardée : elle sera sur ton profil.</span>` : null}
     </div>
     <button type="button" class=${'btn small' + (etat?.faits ? '' : ' primary')} id="pf-cv" aria-busy=${etat === 'lecture' ? 'true' : null} disabled=${etat === 'lecture'} onClick=${() => input.current?.click()}><${Icon} name="upload" size=${15}/> ${etat?.faits ? 'Un autre CV' : 'Choisir mon CV'}</button>
   </div>`;
@@ -283,11 +291,14 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
   const [comp, setComp] = useState((f.competences || []).join(', '));
   // Base à jour (Phase 3) : coordonnées privées et visibilité ; sinon l'ancien champ « contact » public
   const v3 = store.mode !== 'live' || 'visibilite' in (initial || store.data.profiles[0] || {});
+  // « Je cherche un emploi » (lauréat) : envoyé seulement quand la base connaît la colonne
+  const rechOk = store.mode !== 'live' || 'en_recherche' in (initial || store.data.profiles[0] || {});
   const coord0 = (initial && store.coordonneesDe(initial.id)) || {};
   const [co, setCo] = useState(() => ({ telephone: coord0.telephone || '', email: coord0.email || '', contact: coord0.contact || (v3 && initial?.contact) || '' }));
   const setC = (k, v) => setCo({ ...co, [k]: v });
   const [vis, setVis] = useState(() => ({ ...(initial?.visibilite || {}) }));
   const [cvFichier, setCvFichier] = useState(null);
+  const [photoCV, setPhotoCV] = useState(null);
   // Inscription courte : rôle, nom, promo et filière (et, pour un lauréat, son poste) ; le reste se complète plus tard
   const [details, setDetails] = useState(!onboarding);
   const court = !!onboarding && !details;
@@ -312,6 +323,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
     const row = { full_name: f.full_name.trim(), role: f.role === 'admin' ? 'admin' : f.role, filiere, promo: +f.promo, entreprise: f.entreprise.trim() || null, poste: f.poste.trim() || null, ville: f.ville.trim() || null, pays: f.pays.trim() || 'Maroc', bio: f.bio.trim() || null, competences: comp.split(',').map(x => x.trim()).filter(Boolean).slice(0, 15), linkedin: f.linkedin.trim() || null, cv_url: f.cv_url.trim() || null, mentor_dispo: !!f.mentor_dispo, mentor_sujets: (f.mentor_sujets || '').trim() || null, vitrine: !!f.vitrine };
     if (!v3) row.contact = (f.contact || '').trim() || null;
     if (f.role === 'laureat') { row.secteur = f.secteur || null; row.parrain_dispo = !!f.parrain_dispo; }
+    if (rechOk && (f.role === 'laureat' || initial?.en_recherche)) row.en_recherche = f.role === 'laureat' && !!f.en_recherche;
     // Inscription : l'accord donné sur l'écran de création du compte, la langue et le choix pour les emails
     if (onboarding) {
       const meta = store.session?.user?.user_metadata || {};
@@ -329,6 +341,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
         await store.insert('profiles', { id: store.userId, ...row }); oublierInvitation();
         // Le CV lu à l'inscription est gardé comme CV du membre (joint aux candidatures, relu par un lauréat)
         if (cvFichier) await store.deposerCV(cvFichier).catch(() => toast('Ton CV n’a pas pu être gardé : ajoute-le depuis « Mon profil ».', 'err'));
+        if (photoCV) await store.deposerPhoto(photoCV).catch(() => {});
       }
       else await store.update('profiles', initial.id, row);
       if (coordChange) await store.enregistrerCoordonnees(champs);
@@ -373,7 +386,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
   const n = !isStudent && initial && !initial.verified ? confirmations(store.data, initial) : 0;
   return html`<form class="form" onSubmit=${submit}>
     ${onboarding ? html`<fieldset class="je-suis"><legend>Tu es…</legend><div class="je-suis-choix">
-      ${[['etudiant', 'cap', 'Étudiant(e)', 'De la 1re à la 5e année à l’ENSAM Meknès'], ['laureat', 'briefcase', 'Lauréat(e)', 'Diplômé(e) de l’ENSAM Meknès']].map(([r, ico, t, sous]) => html`<button type="button" id=${'pf-je-' + r} class=${'je-carte' + (f.role === r ? ' on' : '')} aria-pressed=${f.role === r ? 'true' : 'false'} onClick=${() => choisirRole(r)}>
+      ${[['etudiant', 'cap', 'Étudiant(e)', 'De la 1re à la 5e année à l’ENSAM Meknès'], ['laureat', 'briefcase', 'Lauréat(e)', 'Diplômé(e) de l’ENSAM Meknès, en poste ou en recherche']].map(([r, ico, t, sous]) => html`<button type="button" id=${'pf-je-' + r} class=${'je-carte' + (f.role === r ? ' on' : '')} aria-pressed=${f.role === r ? 'true' : 'false'} onClick=${() => choisirRole(r)}>
         <span class="je-ico"><${Icon} name=${ico} size=${22}/></span><strong>${t}</strong><span class="small muted">${sous}</span><span class="je-coche"><${Icon} name="check" size=${16}/></span></button>`)}</div></fieldset>`
     : f.role !== 'admin' ? html`<div class="seg" role="group" aria-label="Je suis"><button type="button" class=${isStudent ? 'on' : ''} onClick=${() => choisirRole('etudiant')}>Je suis étudiant(e)</button><button type="button" class=${!isStudent ? 'on' : ''} onClick=${() => choisirRole('laureat')}>Je suis lauréat(e)</button></div>` : null}
     ${ecoleBloque ? html`<div class="cf-warn" role="alert"><p><strong>${onboarding ? 'Inscris-toi avec ton email de l’école.' : 'Un compte étudiant utilise l’email de l’école.'}</strong></p>
@@ -382,7 +395,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
       ${onboarding ? html`<p class="small">Tu as déjà ton diplôme ? Choisis « Lauréat(e) » : l’email de l’école n’est demandé qu’aux étudiants.</p>
         <div class="row"><button type="button" class="btn small primary" id="pf-plutot-laureat" onClick=${() => choisirRole('laureat')}>Je suis lauréat(e)</button><button type="button" class="btn small" id="pf-relog" onClick=${() => store.signOut()}><${Icon} name="logout" size=${15}/> Me déconnecter et recommencer</button></div>`
         : html`<p class="small">L’administration de la plateforme peut changer ton rôle si besoin.</p>`}</div>` : null}
-    ${onboarding ? html`<${CvBox} onLu=${(r, file) => { setCvFichier(file); return remplir(r, { cv: true }); }}/>` : null}
+    ${onboarding ? html`<${CvBox} onLu=${(r, file) => { setCvFichier(file); return remplir(r, { cv: true }); }} onPhoto=${setPhotoCV}/>` : null}
     ${!f.role ? html`<p class="small muted center" id="pf-choisir">Choisis ci-dessus, ou dépose ton CV : on remplit tout pour toi.</p>` : html`
     ${f.role !== 'admin' && !court ? html`<${LinkedinBox} onFill=${remplir}/>` : null}
     <div class="grid2">
@@ -394,6 +407,8 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
     <${Field} label="Filière" hint=${garde && filiere === garde ? 'Nouveau : choisis ta filière dans la liste officielle de l’école.' : filiere === PREPA ? 'La filière se choisit en 3e année.' : ''}><select id="pf-fil" value=${filiere} onChange=${e => set('filiere', e.target.value)}>
       ${garde ? html`<option value=${garde}>${garde}</option>` : null}
       ${groupesFil.map(g => html`<optgroup label=${g.label}>${g.options.map(x => html`<option value=${x}>${x}</option>`)}</optgroup>`)}</select><//>
+    ${f.role === 'laureat' && rechOk ? html`<label class="check"><input id="pf-recherche" type="checkbox" checked=${!!f.en_recherche} onChange=${e => set('en_recherche', e.target.checked)}/> Je cherche un emploi en ce moment</label>
+      ${f.en_recherche ? html`<p class="small muted">Les lauréats qui recrutent te verront dans la Vitrine des talents, et tu recevras les offres « Jeunes diplômés » et entre lauréats de ta filière. Ton expérience de PFE aide déjà les étudiants.</p>` : null}` : null}
     ${!isStudent ? html`<div class="grid3"><${Field} label="Entreprise"><input id="pf-ent" value=${f.entreprise || ''} onInput=${e => set('entreprise', e.target.value)}/><//><${Field} label="Poste"><input id="pf-poste" value=${f.poste || ''} onInput=${e => set('poste', e.target.value)}/><//>
       <${Field} label="Secteur"><select id="pf-sect" value=${f.secteur || ''} onChange=${e => set('secteur', e.target.value)}><option value="">—</option>${SECTEURS.map(x => html`<option value=${x}>${x}</option>`)}</select><//></div>` : null}
     ${court ? null : html`<div class="grid2"><${Field} label="Ville"><input id="pf-ville" value=${f.ville || ''} onInput=${e => set('ville', e.target.value)}/><//><${Field} label="Pays"><input id="pf-pays" value=${f.pays || ''} onInput=${e => set('pays', e.target.value)}/><//></div>
@@ -402,7 +417,8 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
     ${isStudent ? html`<div class="grid2"><${Field} label="LinkedIn"><input id="pf-li" value=${f.linkedin || ''} onInput=${e => set('linkedin', e.target.value)} placeholder="linkedin.com/in/…"/><//>
       <${Field} label="Disponibilité"><input id="pf-dispo" maxlength="80" value=${f.disponibilite || ''} onInput=${e => set('disponibilite', e.target.value)} placeholder="Ex. dès février, 6 mois"/><//></div>
       <${Field} label="Ou un lien vers ton CV (facultatif)" hint="Google Drive ou autre, si tu n’as pas déposé de PDF."><input id="pf-cv" value=${f.cv_url || ''} onInput=${e => set('cv_url', e.target.value)} placeholder="https://…"/><//>`
-    : html`<${Field} label="LinkedIn"><input id="pf-li" value=${f.linkedin || ''} onInput=${e => set('linkedin', e.target.value)} placeholder="linkedin.com/in/…"/><//>`}
+    : html`<${Field} label="LinkedIn"><input id="pf-li" value=${f.linkedin || ''} onInput=${e => set('linkedin', e.target.value)} placeholder="linkedin.com/in/…"/><//>
+      ${f.role === 'laureat' && f.en_recherche ? html`<${Field} label="Le poste que je cherche"><input id="pf-dispo" maxlength="80" value=${f.disponibilite || ''} onInput=${e => set('disponibilite', e.target.value)} placeholder="Ex. ingénieur méthodes, Casablanca ou Tanger"/><//>` : null}`}
     ${!v3 ? html`<${Field} label="Contact visible par les membres"><input id="pf-contact" value=${f.contact || ''} onInput=${e => set('contact', e.target.value)} placeholder="Email ou téléphone"/><//>` : null}`}
     ${isStudent ? (court ? null : html`<label class="check"><input id="pf-vit" type="checkbox" checked=${f.vitrine} onChange=${e => set('vitrine', e.target.checked)}/> Apparaître dans la Vitrine des talents quand je cherche (visible par les lauréats)</label>`) : html`
       <label class="check"><input id="pf-mentor" type="checkbox" checked=${f.mentor_dispo} onChange=${e => set('mentor_dispo', e.target.checked)}/> Je suis disponible pour du mentorat</label>
@@ -424,3 +440,22 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
 }
 
 export { levelOf, LevelChip };
+
+// Lauréats qui cherchent un emploi, vérification des lauréats (CV, LinkedIn), photo de profil
+addAR({
+  'Diplômé(e) de l’ENSAM Meknès, en poste ou en recherche': 'خريج(ة) ENSAM مكناس، في وظيفة أو يبحث عن عمل',
+  'Je cherche un emploi en ce moment': 'أبحث عن عمل حاليًا',
+  'Les lauréats qui recrutent te verront dans la Vitrine des talents, et tu recevras les offres « Jeunes diplômés » et entre lauréats de ta filière. Ton expérience de PFE aide déjà les étudiants.':
+    'سيراك الخريجون الذين يوظّفون في واجهة المواهب، وستصلك عروض « الخريجون الجدد » والعروض بين الخريجين في شعبتك. وتجربتك في مشروع نهاية الدراسة تساعد الطلبة منذ الآن.',
+  'Le poste que je cherche': 'الوظيفة التي أبحث عنها', 'Ex. ingénieur méthodes, Casablanca ou Tanger': 'مثال: مهندس طرق، الدار البيضاء أو طنجة',
+  'Cherche un emploi': 'يبحث عن عمل', 'un emploi': 'عمل', 'Lauréats en recherche': 'خريجون يبحثون عن عمل',
+  'Étudiants en recherche qui ont choisi d’être visibles par les lauréats, et lauréats qui cherchent un emploi.': 'طلبة يبحثون عن فرصة واختاروا أن يظهروا للخريجين، وخريجون يبحثون عن عمل.',
+  'Étudiants en recherche qui ont choisi d’être visibles par les lauréats, et lauréats qui cherchent un emploi. Garde les profils intéressants et invite-les à postuler à tes offres.':
+    'طلبة يبحثون عن فرصة واختاروا أن يظهروا للخريجين، وخريجون يبحثون عن عمل. احتفظ بالملفات المهمة وادعهم للترشح لعروضك.',
+  'Offres pour toi': 'عروض لك', 'Le réseau t’aide à trouver ton poste, et ton expérience aide déjà les étudiants.': 'الشبكة تساعدك على إيجاد وظيفتك، وتجربتك تساعد الطلبة منذ الآن.',
+  'Tu cherches un emploi ?': 'تبحث عن عمل؟', 'Un lauréat plus expérimenté peut relire ton CV, te préparer à un entretien ou te parler salaire.': 'خريج أكثر خبرة يمكنه مراجعة سيرتك الذاتية، أو تحضيرك لمقابلة، أو الحديث معك عن الراتب.',
+  'Demander conseil': 'طلب نصيحة', 'Qui as-tu recruté ?': 'من وظّفت؟', 'Son nom': 'اسمه أو اسمها',
+  'Personne avec ce nom. La personne doit d’abord créer son compte.': 'لا أحد بهذا الاسم. يجب على الشخص أن ينشئ حسابه أولًا.',
+  'CV déposé': 'السيرة الذاتية مرفوعة', 'Pas de CV déposé': 'لم يرفع سيرته الذاتية', 'Son profil LinkedIn': 'ملفه على LinkedIn', 'Pas de LinkedIn': 'لا يوجد LinkedIn',
+  'Demander son CV': 'طلب سيرته الذاتية', 'Retirer la photo': 'إزالة الصورة',
+});

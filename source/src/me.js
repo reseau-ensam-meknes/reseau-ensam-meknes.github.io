@@ -102,7 +102,10 @@ export function ConfirmRecruit({ ctx, pl, helper }) {
       <button class="btn ghost" onClick=${() => act(async () => { await store.update('placements', pl.id, { status: 'refuse' }); toast('C’est noté. Le lauréat sera informé.'); })}>Ce n’est pas le cas</button>
       <button class="btn primary" onClick=${() => act(async () => {
         await store.update('placements', pl.id, { status: 'confirme' });
-        const p = (helper?.full_name || '').split(' ')[0];
+        // Un lauréat qui cherchait un emploi l'a trouvé : il sort de la Vitrine, son entreprise est notée
+        const me = ctx.me;
+        if (me?.role === 'laureat' && me.en_recherche) await store.update('profiles', me.id, { en_recherche: false, ...(me.entreprise ? {} : { entreprise: pl.entreprise }) }).catch(() => {});
+        const p = me?.role === 'etudiant' ? (helper?.full_name || '').split(' ')[0] : '';
         const fete = celebrate({
           cle: 'recrutement-' + pl.id, icon: 'trophy', titre: 'Félicitations, c’est officiel !',
           texte: p ? `Ton recrutement chez ${pl.entreprise} est vérifié des deux côtés. Un petit mot fera très plaisir à ${p}.` : `Ton recrutement chez ${pl.entreprise} est vérifié des deux côtés.`,

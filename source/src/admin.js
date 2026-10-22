@@ -2,13 +2,14 @@
 // modération des signalements, membres (rôle, vérification), liste officielle des étudiants,
 // liens d'invitation par promo, agenda de l'école et réglages (email de l'école).
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
-import { Icon, Field, Person, Num, Empty, Bar, toast, injectCSS } from './ui.js';
+import { Icon, Field, Person, Num, Empty, Bar, Avatar, toast, injectCSS } from './ui.js';
 import { addAR } from './i18n.js';
 import { NIVEAUX, niveauOf, timeAgo, cleNom, norm, GUIDE_SECTIONS, pct, reponses48h, parcoursInscription } from './logic.js';
 import { DefisAdmin } from './saison.js';
 import { AgendaAdmin } from './agenda.js';
 import { InvitationsAdmin } from './invitation.js';
-import { lireCVDe, libellesCV, SignalerLecture } from './cv.js';
+import { lireCVDe, libellesCV, SignalerLecture, CvButton } from './cv.js';
+import { MessageBtn } from './messages.js';
 import { propositionCV, corrigeProfil, dejaSignalee } from './lire-cv.js';
 
 addAR({
@@ -186,7 +187,8 @@ function cible(ctx, type, id) {
     case 'question': { const r = by('questions'); return r && { r, titre: r.titre, texte: r.body, auteur: r.author_id, voir: ['Voir la question', () => go('reseau/entraide/' + id)], actions: [['Supprimer la question', rm('questions'), true]] }; }
     case 'reponse': { const r = by('answers'); const q = r && store.byId('questions', r.question_id); return r && { r, titre: q?.titre || '', texte: r.body, auteur: r.author_id, voir: q ? ['Voir la question', () => go('reseau/entraide/' + q.id)] : null, actions: [['Supprimer la réponse', rm('answers'), true]] }; }
     case 'message': { const r = by('groupe_messages'); return r && { r, titre: nomGroupe(r.groupe), texte: r.body, auteur: r.author_id, actions: [['Supprimer le message', rm('groupe_messages'), true]] }; }
-    case 'profil': { const r = by('profiles'); return r && { r, titre: r.full_name, texte: [r.role === 'laureat' ? `Promo ${r.promo}` : r.filiere, r.entreprise, r.bio].filter(Boolean).join(' · '), auteur: null, voir: ['Voir le profil', () => openProfile(r)], actions: r.role === 'laureat' && r.verified ? [['Retirer le badge vérifié', () => store.update('profiles', id, { verified: false }), true]] : [] }; }
+    case 'profil': { const r = by('profiles'); return r && { r, photo: r.photo_path ? r : null, titre: r.full_name, texte: [r.role === 'laureat' ? `Promo ${r.promo}` : r.filiere, r.entreprise, r.bio].filter(Boolean).join(' · '), auteur: null, voir: ['Voir le profil', () => openProfile(r)],
+      actions: [...(r.photo_path ? [['Retirer la photo', () => store.retirerPhoto(r), true]] : []), ...(r.role === 'laureat' && r.verified ? [['Retirer le badge vérifié', () => store.update('profiles', id, { verified: false }), true]] : [])] }; }
     case 'entretien': { const r = by('entretiens'); return r && { r, titre: [r.entreprise, r.poste].filter(Boolean).join(' · '), texte: [...(r.questions || []), r.deroulement, r.conseils].filter(Boolean).join(' · '), auteur: r.author_id, actions: [['Supprimer l’entretien', rm('entretiens'), true]] }; }
     case 'avis': { const r = by('avis_stage'); return r && { r, titre: [r.entreprise, r.ville].filter(Boolean).join(' · '), texte: r.conseils, auteur: r.author_id, actions: [['Supprimer l’avis', rm('avis_stage'), true]] }; }
     case 'guide': { const r = by('guide_pays'); const s = r && GUIDE_SECTIONS.find(x => x[0] === r.section); return r && { r, titre: `${r.pays}${s ? ' · ' + s[1] : ''}`, texte: r.contenu, auteur: r.updated_by, actions: [['Supprimer la rubrique', rm('guide_pays'), true]] }; }
@@ -241,6 +243,7 @@ function Signale({ ctx, g }) {
       ${Object.entries(motifs).map(([m, n]) => html`<span class="tag urgent">${MOTIFS[m] || m}${n > 1 ? ` ×${n}` : ''}</span>`)}
       <span class="spacer"></span><span class="small muted">${g.length > 1 ? `Signalé ${g.length} fois` : timeAgo(s0.created_at)}</span></header>
     ${c ? html`<div class="mod-cible">
+      ${c.photo ? html`<${Avatar} p=${c.photo} size=${72}/>` : null}
       ${c.titre ? html`<strong class="mod-titre" translate="no" dir="auto">${court(c.titre, 120)}</strong>` : null}
       ${c.texte ? html`<p class="mod-texte" translate="no" dir="auto">${court(c.texte)}</p>` : null}
       ${auteur ? html`<span class="small muted">Auteur : <button class="linkish" onClick=${() => openProfile(auteur)} translate="no">${auteur.full_name}</button></span>` : c.auteur === null && s0.cible_type !== 'profil' ? html`<span class="small muted">Un membre anonyme</span>` : null}
@@ -271,6 +274,14 @@ function useListe(store, data) {
   return Array.isArray(data.liste_officielle) ? data.liste_officielle : rows || [];
 }
 
+// Message prêt à envoyer au lauréat sans CV, dans sa langue ; l'administration le relit avant d'envoyer
+const demandeCV = p => {
+  const prenom = (p.full_name || '').split(' ')[0];
+  return p.langue === 'ar'
+    ? `مرحبًا ${prenom}، أهلًا بك في شبكة ENSAM مكناس! للتحقق من ملفك كخريج(ة)، هل يمكنك رفع سيرتك الذاتية بصيغة PDF في « ملفي » (أو إضافة رابط LinkedIn)؟ لن يستغرق ذلك سوى دقيقة. شكرًا!`
+    : `Bonjour ${prenom}, bienvenue sur le Réseau ENSAM Meknès ! Pour vérifier ton profil de lauréat(e), peux-tu déposer ton CV en PDF dans « Mon profil » (ou ajouter ton lien LinkedIn) ? Ça prend une minute. Merci !`;
+};
+
 function Membres({ ctx, comptes, toVerify }) {
   const { data, store, act, openProfile, saison } = ctx;
   const [q, setQ] = useState('');
@@ -297,7 +308,11 @@ function Membres({ ctx, comptes, toVerify }) {
           ${compte.get(p.id) ? html`<span class="mono muted" dir="ltr" translate="no">${compte.get(p.id).email}</span>` : null}
           <span class=${pr.length ? 'good-t' : 'muted'}><${Icon} name="people" size=${13}/> ${pr.length ? `${pr.length}/2 lauréats de sa promo ont confirmé` : 'Aucune confirmation de sa promo'}${pr.length ? html` <span translate="no">(${pr.map(x => x.full_name).join(', ')})</span>` : null}</span>
           ${promosListe.has(p.promo) ? html`<span class=${surListe(p) ? 'good-t' : 'warn-t'}><${Icon} name="file" size=${13}/> ${surListe(p) ? 'Sur la liste officielle' : 'Pas trouvé sur la liste officielle de sa promo'}</span>` : null}
-        </span></div>
+          <span class=${p.cv_path || p.cv_url ? 'good-t' : 'muted'}><${Icon} name="file" size=${13}/> ${p.cv_path || p.cv_url ? 'CV déposé' : 'Pas de CV déposé'}</span>
+          ${p.linkedin ? html`<span><${Icon} name="link" size=${13}/> <a href=${p.linkedin.startsWith('http') ? p.linkedin : 'https://' + p.linkedin} target="_blank" rel="noopener">Son profil LinkedIn</a></span>` : html`<span class="muted"><${Icon} name="link" size=${13}/> Pas de LinkedIn</span>`}
+        </span>
+        <span class="verif-acts"><${CvButton} ctx=${ctx} p=${p} small/>
+          ${!p.cv_path && !p.cv_url ? html`<${MessageBtn} ctx=${ctx} p=${p} cls="btn tiny ghost" label="Demander son CV" texte=${demandeCV(p)}/>` : null}</span></div>
         <button class="btn small primary" onClick=${() => act(async () => { await store.update('profiles', p.id, { verified: true }); toast('Lauréat vérifié.'); })}><${Icon} name="shield" size=${15}/> Vérifier</button></li>`; })}</ul></div>` : null}
 
     <div class="panel">
@@ -707,6 +722,9 @@ injectCSS('admin', `
 .verif-who { display: flex; flex-direction: column; gap: .3rem; min-width: 0; flex: 1; }
 .verif-facts { display: flex; flex-direction: column; gap: .15rem; min-width: 0; padding-inline-start: calc(36px + .6rem); }
 .verif-facts > span { display: inline-flex; align-items: center; gap: .3rem; flex-wrap: wrap; }
+.verif-acts { display: flex; gap: .4rem; flex-wrap: wrap; padding-inline-start: calc(36px + .6rem); }
+.verif-acts:empty { display: none; }
+.mod-cible > .avatar { margin-bottom: .2rem; }
 .good-t { color: var(--good); } .warn-t { color: var(--warn); }
 .parcours { list-style: none; margin: 0 0 .6rem; padding: 0; display: grid; grid-template-columns: auto minmax(60px, 1fr) auto auto; gap: .5rem .8rem; align-items: center; }
 .parcours li { display: contents; }

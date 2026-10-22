@@ -426,6 +426,136 @@ test('CV en deux colonnes : les morceaux d’une ligne sont remis de gauche à d
   await s.ctx.close();
 });
 
+test('lauréat qui cherche un emploi : il le coche, voit les offres pour lui, peut postuler, et apparaît dans la Vitrine', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Nadia'); await s.aller('profil');
+  await s.page.check('#pf-recherche');
+  await s.page.fill('#pf-dispo', 'Ingénieur méthodes, Casablanca');
+  await s.page.click('form .row-end .btn.primary'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Profil enregistré/);
+  await s.aller('accueil');
+  assert.match(await s.page.locator('.hello-sub').innerText(), /Le réseau t’aide à trouver ton poste/);
+  // Une offre « Jeunes diplômés » de sa filière : elle peut postuler
+  await s.aller('offres'); await s.page.fill('#f-q', 'Safran'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.ocard:has-text("Ingénieur méthodes (CDI)") .ocard-apply').count(), 1);
+  // Un lauréat qui recrute la trouve dans la Vitrine des talents
+  await s.comme('Youssef'); await s.aller('reseau/talents');
+  await s.page.selectOption('#t-niv', 'L'); await s.page.waitForTimeout(300);
+  const carte = s.page.locator('.tcard', { hasText: 'Nadia Ferhat' });
+  assert.equal(await carte.count(), 1);
+  assert.match(await carte.innerText(), /Cherche :\s*un emploi/);
+  assert.match(await carte.innerText(), /Ingénieur méthodes, Casablanca/);
+  assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// Une photo « d'identité » fabriquée dans la page (dégradés et grain), en fichier image ou dans un CV en PDF
+const fabriquerPortrait = () => {
+  const c = document.createElement('canvas'); c.width = 240; c.height = 300;
+  const g = c.getContext('2d');
+  g.fillStyle = '#dfe5ea'; g.fillRect(0, 0, 240, 300);
+  const peau = g.createRadialGradient(120, 120, 10, 120, 120, 80); peau.addColorStop(0, '#e2b393'); peau.addColorStop(1, '#a8714f');
+  g.fillStyle = peau; g.beginPath(); g.ellipse(120, 125, 62, 80, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#2b3a55'; g.fillRect(30, 230, 180, 70);
+  const d = g.getImageData(0, 0, 240, 300);
+  for (let i = 0; i < d.data.length; i += 4) { const n = (Math.random() - 0.5) * 30; d.data[i] += n; d.data[i + 1] += n; d.data[i + 2] += n; }
+  g.putImageData(d, 0, 0);
+  return c;
+};
+const choisirPhoto = page => page.evaluate(async fab => {
+  const c = new Function(`return (${fab})()`)();
+  const b = await new Promise(ok => c.toBlob(ok, 'image/png'));
+  const dt = new DataTransfer(); dt.items.add(new File([b], 'moi.png', { type: 'image/png' }));
+  const input = document.querySelector('#photo-file'); input.files = dt.files; input.dispatchEvent(new Event('change', { bubbles: true }));
+}, fabriquerPortrait.toString());
+// CV en PDF avec la photo en haut à droite (JPEG) et un logo plat en bas
+const deposerCvAvecPhoto = (page, champ) => page.evaluate(async ([champ, fab]) => {
+  const c = new Function(`return (${fab})()`)();
+  const jpeg = new Uint8Array(await (await new Promise(ok => c.toBlob(ok, 'image/jpeg', 0.9))).arrayBuffer());
+  const texte = s => Uint8Array.from(s, x => x.charCodeAt(0) & 255);
+  const flux = 'q 110 0 0 137 440 660 cm /Im1 Do Q\nBT /F1 18 Tf 56 780 Td (Nadia Ferhat) Tj ET\nBT /F1 11 Tf 56 750 Td (Ingenieure qualite) Tj ET';
+  const objets = [texte('<< /Type /Catalog /Pages 2 0 R >>'), texte('<< /Type /Pages /Kids [3 0 R] /Count 1 >>'),
+    texte('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> /XObject << /Im1 5 0 R >> >> /Contents 6 0 R >>'),
+    texte('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'),
+    [texte(`<< /Type /XObject /Subtype /Image /Width 240 /Height 300 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`), jpeg, texte('\nendstream')],
+    texte(`<< /Length ${flux.length} >>\nstream\n${flux}\nendstream`)];
+  const parts = [texte('%PDF-1.4\n')]; let n = parts[0].length; const pos = [];
+  objets.forEach((o, i) => { pos.push(n); for (const x of [texte(`${i + 1} 0 obj\n`), ...[].concat(o), texte('\nendobj\n')]) { parts.push(x); n += x.length; } });
+  parts.push(texte(`xref\n0 ${objets.length + 1}\n0000000000 65535 f \n` + pos.map(p => String(p).padStart(10, '0') + ' 00000 n \n').join('') + `trailer\n<< /Size ${objets.length + 1} /Root 1 0 R >>\nstartxref\n${n}\n%%EOF`));
+  const dt = new DataTransfer(); dt.items.add(new File(parts, 'cv.pdf', { type: 'application/pdf' }));
+  const input = document.querySelector(champ); input.files = dt.files; input.dispatchEvent(new Event('change', { bubbles: true }));
+}, [champ, fabriquerPortrait.toString()]);
+
+test('photo de profil : choisie, vue partout, retirée ; celle du CV est proposée (Mon profil, accueil), jamais mise sans accord', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  await s.comme('Salma'); await s.aller('profil');
+  await choisirPhoto(s.page);
+  await s.page.waitForSelector('.photo-card .avatar img', { timeout: 10000 });
+  const taille = await s.page.$eval('.photo-card .avatar img', i => [i.naturalWidth, i.naturalHeight]);
+  assert.deepEqual(taille, [320, 320], 'recadrée en carré et réduite avant l’envoi');
+  // Les autres la voient (annuaire)
+  await s.comme('Youssef'); await s.fiche('Salma Bennani');
+  assert.equal(await s.page.locator('.modal .avatar img').count() > 0, true);
+  await s.fermer();
+  // Retirée : les initiales reviennent
+  await s.comme('Salma'); await s.aller('profil');
+  await s.page.locator('.photo-card .photo-acts .btn').nth(1).click();
+  await s.page.locator('.modal .btn.danger').click(); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.photo-card .avatar img').count(), 0);
+  // Photo dans le CV : proposée dans Mon profil ; « Utiliser » la met
+  await s.comme('Nadia'); await s.aller('profil');
+  await deposerCvAvecPhoto(s.page, '#cv-file');
+  await s.page.waitForSelector('#photo-cv', { timeout: 15000 });
+  assert.equal(await s.page.locator('.photo-card .avatar img').count(), 0, 'rien sans son accord');
+  await s.page.click('#photo-cv-oui');
+  await s.page.waitForSelector('.photo-card .avatar img', { timeout: 10000 });
+  // Déjà inscrit avec un CV : la proposition l'attend à l'accueil ; « Non merci » ne revient pas
+  await s.comme('Youssef'); await s.aller('profil');
+  await deposerCvAvecPhoto(s.page, '#cv-file');
+  await s.page.waitForSelector('#photo-cv', { timeout: 15000 });
+  await s.aller('accueil');
+  await s.page.waitForSelector('.photo-home #photo-cv', { timeout: 5000 });
+  assert.ok((await s.debordement()) <= 0, 'pas de débordement à 390 px');
+  await s.page.click('#photo-cv-non'); await s.page.waitForTimeout(200);
+  await s.aller('profil'); await s.aller('accueil'); await s.page.waitForTimeout(1500);
+  assert.equal(await s.page.locator('#photo-cv').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('inscription : la photo trouvée dans le CV est proposée, gardée seulement si on dit oui', async () => {
+  const s = await ouvrir();
+  await s.page.evaluate(async () => {
+    const [{ html, render }, { createStore }, { ProfileForm }] = await Promise.all([import('./vendor/preact-htm.js'), import('./store.js'), import('./community.js')]);
+    const store = await createStore();
+    document.getElementById('app').hidden = true;
+    const el = document.body.appendChild(document.createElement('main')); el.id = 'inscription'; el.className = 'auth-card wide';
+    render(html`<${ProfileForm} ctx=${{ store, act: fn => fn() }} onboarding/>`, el);
+  });
+  await s.page.click('#pf-je-laureat');
+  await deposerCvAvecPhoto(s.page, '#pf-cvfile');
+  await s.page.waitForSelector('#photo-cv', { timeout: 15000 });
+  await s.page.click('#photo-cv-oui');
+  assert.match(await s.page.locator('.cv-box').innerText(), /Photo gardée : elle sera sur ton profil/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('lauréats à vérifier : CV et LinkedIn en vue ; sans CV, un message tout prêt pour le demander', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin'); await s.aller('admin/membres');
+  const ligne = s.page.locator('.verif-list li', { hasText: 'Pas de CV déposé' }).first();
+  await ligne.waitFor({ timeout: 5000 });
+  const nom = (await ligne.locator('.person-name').first().innerText()).split(' ')[0];
+  await ligne.locator('button', { hasText: 'Demander son CV' }).click(); await s.page.waitForTimeout(400);
+  const brouillon = await s.page.inputValue('#chat-txt');
+  assert.match(brouillon, /^Bonjour .+, bienvenue sur le Réseau ENSAM Meknès ! Pour vérifier ton profil de lauréat\(e\), peux-tu déposer ton CV en PDF/);
+  assert.ok(brouillon.includes(nom), 'le prénom du lauréat');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('clavier : lien « Aller au contenu », fenêtre qui garde le focus puis le rend', async () => {
   const s = await ouvrir();
   await s.page.keyboard.press('Tab');

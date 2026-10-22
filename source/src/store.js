@@ -13,6 +13,7 @@ const OPTIONAL = new Set(['shortlists', 'invitations', 'kudos', 'attestations', 
 // Tant que la base n'a pas ces vues, on lit la table elle-même.
 const VUES = { profiles: 'profils', entretiens: 'entretiens_publics', avis_stage: 'avis_publics' };
 export const CV_MAX = 2 * 1024 * 1024;
+export const PHOTO_MAX = 1024 * 1024;
 // Messagerie : photos et vocaux (5 Mo au plus, 2 minutes de vocal)
 export const CHAT_MAX = 5 * 1024 * 1024;
 export const VOCAL_MAX = 120;
@@ -36,6 +37,33 @@ class Base {
   // En ligne, la base a déjà masqué ce qui ne doit pas être vu : ces deux aides servent surtout à la démo.
   voitChamp(p, champ) { return !!p; }
   coordonneesDe(id) { return this.byId('coordonnees', id) || null; }
+  // Photo de profil : liens temporaires demandés par lots et gardés quelques heures ; l'écran se redessine quand ils arrivent
+  photo(path) {
+    if (!path) return null;
+    this.photosUrl ||= new Map(); this.photosDemandees ||= new Set();
+    const c = this.photosUrl.get(path);
+    if ((!c || c.fin < Date.now()) && !this.photosDemandees.has(path)) {
+      this.photosDemandees.add(path);
+      clearTimeout(this.photosMinuteur);
+      this.photosMinuteur = setTimeout(() => this.chargerPhotos(), 30);
+    }
+    return c?.url || null;
+  }
+  async chargerPhotos() {
+    const paths = [...this.photosDemandees];
+    if (!paths.length) return;
+    const liens = await this.liensPhotos(paths).catch(() => ({}));
+    let neuf = false;
+    for (const p of paths) {
+      const url = liens[p] || null; const avant = this.photosUrl.get(p)?.url || null;
+      if (url && url !== avant) neuf = true;
+      this.photosUrl.set(p, { url: url || avant, fin: Date.now() + (url ? 5 * 3600e3 : 600e3) });
+      this.photosDemandees.delete(p);
+    }
+    if (neuf) this.emit();
+  }
+  // La photo qu'on vient de choisir s'affiche tout de suite, sans attendre de lien
+  retenirPhoto(path, blob) { (this.photosUrl ||= new Map()).set(path, { url: URL.createObjectURL(blob), fin: Date.now() + 5 * 3600e3 }); }
   // Domaines de l'email de l'école (réglage de l'administration), en minuscules
   domainesEcole() { return Array.isArray(this.reglages.domaines_ecole) ? this.reglages.domaines_ecole.map(d => String(d).trim().toLowerCase()).filter(Boolean) : []; }
   // Messagerie : peut-on écrire à ce membre, combien de messages attendent
@@ -81,7 +109,7 @@ export function pdfSimple(lignes) {
 // ---------------------------------------------------------------------------
 // Démo : données d'exemple, gardées dans le navigateur du visiteur
 // ---------------------------------------------------------------------------
-const DEMO_KEY = 'ensam-demo-v11';
+const DEMO_KEY = 'ensam-demo-v12';
 class DemoStore extends Base {
   constructor() { super(); this.mode = 'demo'; this.fichiers = new Map(); }
   async init() {
@@ -221,6 +249,24 @@ class DemoStore extends Base {
     const f = this.fichiers.get(path) || pdfSimple(cvDemo(owner));
     return URL.createObjectURL(f);
   }
+  // Photo de profil : en démo, elle reste dans l'onglet (pas de stockage réel)
+  async deposerPhoto(blob) {
+    verifierPhoto(blob);
+    const ancien = this.me.photo_path;
+    const path = `${this.me.id}/photo-${Date.now()}.${EXT_PHOTO[blob.type]}`;
+    this.fichiers.set(path, blob); this.retenirPhoto(path, blob);
+    const r = await this.update('profiles', this.me.id, { photo_path: path });
+    if (ancien) this.fichiers.delete(ancien);
+    return r;
+  }
+  async retirerPhoto(p = this.me) {
+    const ancien = p?.photo_path;
+    if (!ancien) return null;
+    const r = await this.update('profiles', p.id, { photo_path: null });
+    this.fichiers.delete(ancien);
+    return r;
+  }
+  async liensPhotos(paths) { return Object.fromEntries(paths.filter(p => this.fichiers.has(p)).map(p => [p, URL.createObjectURL(this.fichiers.get(p))])); }
   async lireReglages() { return this.reglages; }
   async enregistrerReglage(cle, valeur) {
     if (this.me?.role !== 'admin') throw new Error('Réservé à l’administration.');
@@ -305,6 +351,11 @@ function verifierPdf(file) {
   if (!file) throw new Error('Choisis un fichier PDF.');
   if (file.type && file.type !== 'application/pdf' || !/\.pdf$/i.test(file.name || 'cv.pdf')) throw new Error('Seuls les fichiers PDF sont acceptés.');
   if (file.size > CV_MAX) throw new Error('Le fichier dépasse 2 Mo. Exporte ton CV en PDF plus léger.');
+}
+const EXT_PHOTO = { 'image/webp': 'webp', 'image/jpeg': 'jpg', 'image/png': 'png' };
+function verifierPhoto(blob) {
+  if (!blob || !EXT_PHOTO[blob.type]) throw new Error('Choisis une photo (JPEG, PNG ou WebP).');
+  if (blob.size > PHOTO_MAX) throw new Error('Photo trop lourde (1 Mo au plus).');
 }
 // Un ancien CV reste gardé tant qu'une relecture en cours ou rendue s'y rapporte
 const cvReference = (data, path) => data.relectures_cv.some(r => r.cv_path === path && r.status !== 'annulee');
@@ -828,9 +879,11 @@ class SupabaseStore extends Base {
     return data || 0;
   }
   async supprimerCompte() {
-    // Les fichiers du stockage ne partent pas avec la base : on retire d'abord ses CV
+    // Les fichiers du stockage ne partent pas avec la base : on retire d'abord ses CV et sa photo
     const { data: f } = await this.sb.storage.from('cv').list(this.userId).catch(() => ({ data: null }));
     if (f?.length) await this.sb.storage.from('cv').remove(f.map(x => `${this.userId}/${x.name}`)).catch(() => {});
+    const { data: ph } = await this.sb.storage.from('photos').list(this.userId).catch(() => ({ data: null }));
+    if (ph?.length) await this.sb.storage.from('photos').remove(ph.map(x => `${this.userId}/${x.name}`)).catch(() => {});
     // Photos et vocaux envoyés : un dossier par destinataire
     const { data: dossiers } = await this.sb.storage.from('chat').list(this.userId).catch(() => ({ data: null }));
     for (const d of dossiers || []) {
@@ -878,6 +931,41 @@ class SupabaseStore extends Base {
     const r = await this.update('profiles', this.userId, { cv_path: null, cv_maj: null });
     if (ancien && !cvReference(this.data, ancien)) await this.sb.storage.from('cv').remove([ancien]).catch(() => {});
     return r;
+  }
+  // Photo de profil : déjà recadrée et réduite par le navigateur ; l'ancienne est retirée du stockage
+  async deposerPhoto(blob) {
+    verifierPhoto(blob);
+    const ancien = this.me?.photo_path;
+    const path = `${this.userId}/photo-${Date.now()}.${EXT_PHOTO[blob.type]}`;
+    const { error } = await this.sb.storage.from('photos').upload(path, blob, { contentType: blob.type, upsert: false });
+    if (error) {
+      const m = (error.message || '').toLowerCase();
+      throw new Error(m.includes('bucket not found') ? 'La photo de profil arrive bientôt : la base est en cours de mise à jour.'
+        : m.includes('size') || m.includes('too large') ? 'Photo trop lourde (1 Mo au plus).' : 'Envoi de la photo impossible. Vérifie ta connexion et réessaie.');
+    }
+    this.retenirPhoto(path, blob);
+    let r;
+    try { r = await this.update('profiles', this.userId, { photo_path: path }); }
+    catch (e) { this.sb.storage.from('photos').remove([path]).catch(() => {}); throw e; }
+    if (ancien && ancien !== path) await this.sb.storage.from('photos').remove([ancien]).catch(() => {});
+    return r;
+  }
+  // Sa propre photo, ou celle d'un membre pour l'administration (modération)
+  async retirerPhoto(p = this.me) {
+    const ancien = p?.photo_path;
+    if (!ancien) return null;
+    const r = await this.update('profiles', p.id, { photo_path: null });
+    await this.sb.storage.from('photos').remove([ancien]).catch(() => {});
+    return r;
+  }
+  async liensPhotos(paths) {
+    const out = {};
+    for (let i = 0; i < paths.length; i += 100) {
+      const { data, error } = await this.sb.storage.from('photos').createSignedUrls(paths.slice(i, i + 100), 6 * 3600);
+      if (error) continue;
+      for (const x of data || []) if (x.signedUrl && !x.error) out[x.path] = x.signedUrl;
+    }
+    return out;
   }
   // Lien temporaire (10 minutes) vers un CV, si la base autorise ce compte à le lire
   async lienCV(path) {

@@ -347,6 +347,24 @@ export function reponses48h(data, now = new Date()) {
   return { total: comptees.length, a48, taux: comptees.length ? a48 / comptees.length : null, attente };
 }
 
+// Offres faites pour un membre : un étudiant, celles de son année ; un jeune diplômé, celles « Jeunes diplômés » ;
+// un lauréat qui cherche un emploi, celles-là et les offres entre lauréats. Toujours dans sa filière.
+export function offrePour(o, me, saison) {
+  if (!me || !filiereMatch(o.filieres, me.filiere)) return false;
+  const recherche = me.role === 'laureat' && !!me.en_recherche;
+  if (o.audience === 'laureats') return recherche;
+  const annees = o.annees || [];
+  return annees.includes(niveauOf(me, saison)) || (recherche && annees.includes(6));
+}
+// Qui peut postuler : un étudiant aux offres étudiantes ; un lauréat aux offres entre lauréats,
+// et aux offres « Jeunes diplômés » s'il est jeune diplômé ou cherche un emploi
+export function peutPostulerA(o, me, saison) {
+  if (!me || o.author_id === me.id) return false;
+  if (me.role === 'etudiant') return o.audience !== 'laureats';
+  if (me.role !== 'laureat') return false;
+  return o.audience === 'laureats' || ((o.annees || []).includes(6) && (!!me.en_recherche || niveauOf(me, saison) === 6));
+}
+
 // Ce qui compte comme une action : publier, commenter, réagir, postuler, demander ou donner de l'aide, répondre…
 const ACTIONS = [['offers', 'author_id'], ['comments', 'author_id'], ['reactions', 'user_id'], ['applications', 'student_id'], ['mentorships', 'student_id'],
   ['questions', 'author_id'], ['answers', 'author_id'], ['votes', 'user_id'], ['kudos', 'user_id'], ['placements', 'laureat_id'], ['groupe_messages', 'author_id'],

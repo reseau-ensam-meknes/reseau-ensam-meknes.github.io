@@ -2,7 +2,7 @@
 import { getLang, setLang, chargerAR } from './i18n.js';
 import { html, render, useState, useEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore } from './store.js';
-import { Icon, Field, Empty, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, Num, useLocal, Celebration, celebrate, voirRangs } from './ui.js';
+import { Icon, Field, Empty, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, Num, useLocal, Celebration, celebrate, voirRangs, brancherPhotos } from './ui.js';
 import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
 import { ParcoursPage, EspacePage, ConfirmRecruit, Journey, journeyStep } from './me.js';
@@ -18,6 +18,7 @@ import { EntrepriseModal } from './pro.js';
 import { DefisPanel, CoupePromos, ParrainCard, DevenirParrain, TonAnnee, TonAnneeStrip } from './saison.js';
 import { AlerteTalents } from './recrutement.js';
 import { CvCard, RelecturesHome } from './cv.js';
+import { PhotoCard, PhotoProposee } from './photo.js';
 import { NudgeAvis } from './entreprises.js';
 import { ConfianceHome } from './confiance.js';
 import { EnquetePage, EnqueteCard } from './enquete.js';
@@ -451,12 +452,14 @@ function Home(ctx) {
   const [compose, setCompose] = useState(false);
   const [plus, setPlus] = useState(false);
   const isStudent = me.role === 'etudiant', isLaureat = me.role === 'laureat';
+  const enRecherche = isLaureat && !!me.en_recherche;
   const guide = guideEtapes(ctx, setCompose);
   const prochaine = guide && !guide.fini ? guide.steps.find(x => !x[3] && x[4]) : null;
   const pas = prochainPas({ ...ctx, openNotif }, notifs, prochaine);
   // « Quand tu as 5 minutes » : trois petites choses au plus, sans la prochaine étape déjà en haut
   const actions = notifs.filter(x => x.action && !x.rdv && !/^(md|eq|dc)/.test(x.key || '') && !(isStudent && x.icon === 'briefcase') && x.key !== pas.key).slice(0, 3);
-  const dernieres = data.offers.filter(o => o.status === 'ouverte').sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 2);
+  // Un lauréat qui cherche un emploi voit d'abord les offres faites pour lui
+  const dernieres = data.offers.filter(o => o.status === 'ouverte' && (!enRecherche || matchesMe(o, me, saison))).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 2);
   const star = ctx.star;
   const starHelped = star ? data.placements.filter(p => p.laureat_id === star.p.id && p.status === 'confirme').length : 0;
   const merci = [
@@ -467,7 +470,9 @@ function Home(ctx) {
   const obj = OBJECTIFS[n];
   const s = scores.get(me.id);
   const myApps = data.applications.filter(a => a.student_id === me.id);
-  const helper = stu?.pl?.laureat_id ? store.byId('profiles', stu.pl.laureat_id) : null;
+  // Un lauréat qui cherchait un emploi confirme aussi son recrutement
+  const plAttente = isStudent ? (stu.pl?.status === 'en_attente' ? stu.pl : null) : isLaureat ? data.placements.find(p => p.student_id === me.id && p.status === 'en_attente') : null;
+  const helper = plAttente?.laureat_id ? store.byId('profiles', plAttente.laureat_id) : null;
   const asking = data.mentorships.some(m => m.student_id === me.id && ['demande', 'acceptee'].includes(m.status));
   const h = new Date().getHours();
   // Les 25 premiers lauréats : on leur dit une fois qu'ils sont membres fondateurs (pas par-dessus une autre fenêtre)
@@ -488,13 +493,14 @@ function Home(ctx) {
       <div class="hello-txt">
         <p class="eyebrow">Saison ${seasonLabel(saison)}${isStudent ? ` · ${NIVEAUX[n]?.label} · ${me.filiere}` : isLaureat ? ` · Promo ${me.promo}` : ''}</p>
         <h1>${MOMENT(h)} ${first}</h1>
-        <p class="hello-sub">${isStudent ? 'Les lauréats de l’école t’ouvrent leurs portes. Avance à ton rythme.' : isLaureat ? 'Merci de garder la porte ouverte aux étudiants de l’école.' : 'Tout le réseau de l’école, en un coup d’œil.'}</p>
+        <p class="hello-sub">${isStudent ? 'Les lauréats de l’école t’ouvrent leurs portes. Avance à ton rythme.' : isLaureat ? (enRecherche ? 'Le réseau t’aide à trouver ton poste, et ton expérience aide déjà les étudiants.' : 'Merci de garder la porte ouverte aux étudiants de l’école.') : 'Tout le réseau de l’école, en un coup d’œil.'}</p>
       </div>
       <${SchoolScene} align=${getLang() === 'ar' ? 'xMinYMax' : 'xMaxYMax'}/>
     </header>
 
     <${AnnonceBanner} ctx=${ctx}/>
-    ${isStudent && stu.pl?.status === 'en_attente' ? html`<${ConfirmRecruit} ctx=${ctx} pl=${stu.pl} helper=${helper}/>` : html`<${Focus} ctx=${ctx} pas=${pas}/>`}
+    ${plAttente ? html`<${ConfirmRecruit} ctx=${ctx} pl=${plAttente} helper=${helper}/>` : html`<${Focus} ctx=${ctx} pas=${pas}/>`}
+    <${PhotoProposee} ctx=${ctx}/>
     ${actions.length ? html`<div class="petits"><h2 class="h-sec">${isLaureat ? 'Quand tu as 5 minutes' : 'Pour avancer'}</h2><ul class="todo">${actions.map(a => html`<li><button class="notif act" onClick=${() => openNotif(a)}><span class=${'n-ico ' + (a.tone || '')}><${Icon} name=${a.icon} size=${16}/></span><span>${a.text}</span><${Icon} name="arrow" size=${16}/></button></li>`)}</ul></div>` : null}
     <${Guide} ctx=${ctx} g=${guide}/>
     <${EnqueteCard} ctx=${ctx}/>
@@ -517,7 +523,7 @@ function Home(ctx) {
         <${HelpNeeded} ctx=${ctx} max=${1} compact/>
         <${RelecturesHome} ctx=${ctx}/>
         <${AlerteTalents} ctx=${ctx}/>
-        ${isStudent ? html`<${RecoOffers} ctx=${ctx} max=${2}/>` : dernieres.length ? html`<div class="section-head"><h3>Dernières offres</h3><button class="btn tiny ghost" onClick=${() => go('offres')}>Tout voir <${Icon} name="arrow" size=${14}/></button></div>
+        ${isStudent ? html`<${RecoOffers} ctx=${ctx} max=${2}/>` : dernieres.length ? html`<div class="section-head"><h3>${enRecherche ? 'Offres pour toi' : 'Dernières offres'}</h3><button class="btn tiny ghost" onClick=${() => go('offres')}>Tout voir <${Icon} name="arrow" size=${14}/></button></div>
           <div class="offer-grid one">${dernieres.map(o => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} onOpen=${() => openOffer(o.id)}/>`)}</div>` : null}
         ${isStudent && !asking ? html`<div class="help-cta"><span class="obj-ico"><${Icon} name="mentor" size=${22}/></span>
           <div class="grow"><strong>Besoin d’un conseil ?</strong><span class="small muted">CV, stage, entretien, étranger : un lauréat te parle 20 minutes en visio.</span></div>
@@ -619,6 +625,7 @@ function MyProfile({ ctx }) {
   return html`<section class="page narrow">
     <header class="page-head"><div><p class="eyebrow">Visible par les membres connectés</p><h1>Mon profil</h1></div>
       ${store.mode === 'live' ? html`<button class="btn ghost" onClick=${() => store.signOut()}><${Icon} name="logout"/> Se déconnecter</button>` : null}</header>
+    <${PhotoCard} ctx=${ctx}/>
     <${CvCard} ctx=${ctx}/>
     <${ProfileForm} ctx=${ctx} initial=${me} key=${cleFormulaire(me, store.coordonneesDe?.(me.id))}/>
     <${MesDonnees} ctx=${ctx}/>
@@ -707,6 +714,7 @@ function Onboarding({ store, relang }) {
   try {
     // L'arabe se charge en même temps que les données, seulement si c'est la langue choisie
     const [store] = await Promise.all([createStore(), getLang() === 'ar' ? chargerAR().catch(() => setLang('fr')) : null]);
+    brancherPhotos(path => store.photo(path));
     root.innerHTML = '';
     render(html`<${App} store=${store}/>`, root);
   } catch (e) {
