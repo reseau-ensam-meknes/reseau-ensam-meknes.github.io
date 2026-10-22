@@ -1,7 +1,7 @@
 // « Profil en une minute » : le membre colle le texte de son profil LinkedIn (PDF « Enregistrer au format PDF »,
 // copie de la page, ou simplement sa section Infos) et le formulaire de profil se remplit.
 // LinkedIn n'ouvre pas l'import direct aux petits sites. Pur JS, sans DOM ; ne lève jamais d'exception.
-import { FILIERES, seasonOf } from './logic.js';
+import { FILIERES, estAncienneFiliere, seasonOf } from './logic.js';
 import { lookupVille, paysOf } from './geo.js';
 
 const low = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[’‘`´]/g, "'").trim();
@@ -30,7 +30,18 @@ const estDates = l => DATES.test(low(l));
 const BRUIT = /^(?:afficher|voir|show|see|approuve|endorsed|\d+\s*(?:recommandations?|endorsements?|approbations?)|.*\b(?:competences?|skills?)\s*$|…|\.\.\.|page \d+|(?:plus|more)$|se connecter|sign in|rejoindre|join now|message|suivre|follow|contacter)/;
 
 const ENSAM = /\bensam\b|arts\s*(?:et|&|and)\s*m[eé]tiers|national school of arts and crafts|المدرسة الوطنية العليا للفنون/i;
+// Filières : d'abord les intitulés précis de la maquette actuelle, puis les anciennes appellations (promos précédentes)
 const FIL_RE = [
+  ['Génie Industriel : Excellence Opérationnelle', /excellence op[eé]rationnelle|operational excellence|\bGIEO\b/i],
+  ['Génie Industriel et Productique', /industriel(?:le)? et productique|\bGIP24\b/i],
+  ['Génie Électromécanique : Digitalisation Industrielle', /digitali[sz]ation industrielle|\bGE-?DI\b/i],
+  ['Génie Électromécanique : Maintenance et Commande Industrielles', /maintenance et commande|\bGE-?MCI\b/i],
+  ['Génie Mécanique : Conception et Industrialisation des Systèmes Mécaniques', /conception et industrialisation|\bGM-?CISM\b/i],
+  ['Génie Mécanique : Ingénierie Mécanique et Structures', /ing[eé]nierie m[eé]canique et structures|\bGM-?IMS\b/i],
+  ['Génie Mécanique : Matériaux et Procédés de Fabrication', /mat[eé]riaux et proc[eé]d[eé]s|\bGM-?MPF\b/i],
+  ['Génie Mécanique : Énergétique', /g[eé]nie m[eé]canique\s*[:,-]\s*[eé]nerg[eé]tique|\bGME24\b/i],
+  ['Intelligence Artificielle et Technologies des Données : Systèmes Industriels', /technologies des donn[eé]es|\bIATD(?:-SI)?\b/i],
+  ['Génie Informatique : Ingénierie Logicielle et Systèmes Intelligents', /ing[eé]nierie logicielle|\bGI-?ILSI\b/i],
   ['Génie Électromécanique', /[eé]lectro\s*-?\s*m[eé]canique|electromechanical/i],
   ['Mécatronique', /m[eé]catronique|mechatronic/i],
   ['Génie Informatique & IA', /[Ii]nformatique|[Ii]ntelligence [Aa]rtificielle|[Cc]omputer|[Ss]oftware|[Dd]ata [Ss]cience|\bIA\b|\bAI\b/],
@@ -38,7 +49,7 @@ const FIL_RE = [
   ['Génie Civil', /\bcivil/i],
   ['Génie Industriel', /industriel|industrial/i],
   ['Génie Mécanique', /m[eé]canique|mechanical/i],
-].filter(([f]) => FILIERES.includes(f));
+].filter(([f]) => FILIERES.includes(f) || estAncienneFiliere(f));
 const METIER = /\b(?:ing[eé]nieur|engineer|manager|chef|directeur|director|consultant|responsable|d[eé]veloppeur|developer|head|ceo|cto|coo|founder|fondateur|stagiaire|intern|analyst|analyste|technicien|technician|[eé]tudiant|student|[eé]l[eè]ve|lead|officer|specialist|sp[eé]cialiste|charg[eé]|professeur|teacher|doctorant|phd)\b/i;
 
 const PAS_NOM = /linkedin|premium|notifications|messagerie|emplois|accueil|r[eé]seau|relations|abonn[eé]s|followers|connections|contenu|recherche|search|jobs|messaging|home/i;

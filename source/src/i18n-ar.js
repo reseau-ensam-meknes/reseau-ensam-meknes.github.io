@@ -52,6 +52,7 @@ export const AR = {
   'Ancienne appellation (promos précédentes)': 'التسمية القديمة (الدفعات السابقة)', 'Ancienne appellation': 'التسمية القديمة', 'Même parcours': 'نفس المسار', 'Ton parcours': 'مسارك', 'Parcours d’études': 'المسار الدراسي',
   'Nouveau : choisis ta filière dans la liste officielle de l’école.': 'جديد: اختر شعبتك من اللائحة الرسمية للمدرسة.', 'La filière se choisit en 3e année.': 'تُختار الشعبة في السنة الثالثة.',
   'Tu es parrain disponible. Dès qu’un 3A de ton parcours s’inscrit, il te sera confié.': 'أنت عرّاب متاح. بمجرد تسجيل طالب من السنة الثالثة في مسارك، سيُعيَّن لك.',
+  'Aucune sélection = toutes les filières. Le nom d’un parcours le sélectionne en entier.': 'دون اختيار = كل الشعب. اسم المسار يختاره بالكامل.',
   'Stage': 'تدريب', 'PFE': 'مشروع نهاية الدراسة', 'Stage à l’étranger': 'تدريب بالخارج', 'Emploi': 'عمل',
   'Stage (3A / 4A)': 'تدريب (3A / 4A)', 'Projet de fin d’études': 'مشروع نهاية الدراسة', 'Emploi (CDI, CDD, VIE…)': 'عمل (عقد دائم، محدد المدة، VIE…)',
   '1re année (cycle prépa)': 'السنة الأولى (السلك التحضيري)', '2e année (cycle prépa)': 'السنة الثانية (السلك التحضيري)', '3e année': 'السنة الثالثة', '4e année': 'السنة الرابعة', '5e année': 'السنة الخامسة',
