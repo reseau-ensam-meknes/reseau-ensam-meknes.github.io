@@ -556,6 +556,20 @@ test('lauréats à vérifier : CV et LinkedIn en vue ; sans CV, un message tout 
   await s.ctx.close();
 });
 
+test('administration : son propre CV se dépose dans Mon profil (sans relecture à demander), sa photo aussi', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin'); await s.aller('profil');
+  await s.page.waitForSelector('.cv-card #cv-drop', { timeout: 5000 });
+  await deposerCvAvecPhoto(s.page, '#cv-file');
+  await s.page.waitForSelector('.cv-card .cv-file', { timeout: 10000 });
+  assert.equal(await s.page.locator('.cv-card .cv-relu').count(), 0, 'pas de relecture pour l’administration');
+  await s.page.waitForSelector('#photo-cv', { timeout: 15000 });
+  await s.page.click('#photo-cv-oui');
+  await s.page.waitForSelector('.photo-card .avatar img', { timeout: 10000 });
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('clavier : lien « Aller au contenu », fenêtre qui garde le focus puis le rend', async () => {
   const s = await ouvrir();
   await s.page.keyboard.press('Tab');
