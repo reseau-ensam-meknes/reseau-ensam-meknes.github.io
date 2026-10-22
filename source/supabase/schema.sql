@@ -47,6 +47,59 @@ language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.profiles where id = auth.uid() and role = 'admin');
 $$;
 
+-- ---------------------------------------------------------------------
+-- Filières : 11 filières officielles (choix en 3A) groupées en 5 parcours, plus les anciennes
+-- appellations des promos précédentes, rattachées à leur parcours. Mêmes règles que logic.js.
+-- ---------------------------------------------------------------------
+create or replace function public.parcours_de(f text) returns text[]
+language sql immutable as $$
+  select case f
+    when 'Génie Industriel et Productique' then '{PEI}'
+    when 'Génie Industriel : Excellence Opérationnelle' then '{PEI}'
+    when 'Génie Électromécanique : Digitalisation Industrielle' then '{PEI}'
+    when 'Génie Électromécanique : Maintenance et Commande Industrielles' then '{PEI}'
+    when 'Génie Mécanique : Conception et Industrialisation des Systèmes Mécaniques' then '{PM}'
+    when 'Génie Mécanique : Ingénierie Mécanique et Structures' then '{PM}'
+    when 'Génie Mécanique : Matériaux et Procédés de Fabrication' then '{PM}'
+    when 'Génie Mécanique : Énergétique' then '{PM}'
+    when 'Génie Civil' then '{CIVIL}'
+    when 'Intelligence Artificielle et Technologies des Données : Systèmes Industriels' then '{IA}'
+    when 'Génie Informatique : Ingénierie Logicielle et Systèmes Intelligents' then '{INFO}'
+    -- anciennes appellations
+    when 'Génie Mécanique' then '{PM}'
+    when 'Génie Industriel' then '{PEI}'
+    when 'Génie Électromécanique' then '{PEI}'
+    when 'Génie Énergétique' then '{PM}'
+    when 'Mécatronique' then '{PEI}'
+    when 'Génie Informatique & IA' then '{INFO,IA}'
+    else '{}' end::text[];
+$$;
+-- Filière de la maquette actuelle (sinon : ancienne appellation, classes prépa ou texte libre)
+create or replace function public.filiere_actuelle(f text) returns boolean
+language sql immutable as $$
+  select coalesce(f = any(array['Génie Industriel et Productique', 'Génie Industriel : Excellence Opérationnelle',
+    'Génie Électromécanique : Digitalisation Industrielle', 'Génie Électromécanique : Maintenance et Commande Industrielles',
+    'Génie Mécanique : Conception et Industrialisation des Systèmes Mécaniques', 'Génie Mécanique : Ingénierie Mécanique et Structures',
+    'Génie Mécanique : Matériaux et Procédés de Fabrication', 'Génie Mécanique : Énergétique', 'Génie Civil',
+    'Intelligence Artificielle et Technologies des Données : Systèmes Industriels', 'Génie Informatique : Ingénierie Logicielle et Systèmes Intelligents']), false);
+$$;
+-- Une offre (liste vide = toutes filières) concerne-t-elle cette filière ? Deux filières actuelles doivent être
+-- identiques ; une ancienne appellation couvre son parcours.
+create or replace function public.filiere_ok(p_liste text[], p_filiere text) returns boolean
+language sql immutable as $$
+  select cardinality(coalesce(p_liste, '{}')) = 0
+    or (p_filiere is not null and (p_filiere = any(p_liste) or exists (
+      select 1 from unnest(p_liste) x
+      where (not public.filiere_actuelle(p_filiere) or not public.filiere_actuelle(x))
+        and public.parcours_de(x) && public.parcours_de(p_filiere))));
+$$;
+-- Proximité entre deux membres : 2 = même filière, 1 = même parcours, 0 = sinon
+create or replace function public.proximite_filiere(a text, b text) returns int
+language sql immutable as $$
+  select case when a is null or b is null then 0 when a = b then 2
+              when public.parcours_de(a) && public.parcours_de(b) then 1 else 0 end;
+$$;
+
 -- Personne ne peut s'auto-proclamer admin ou "lauréat vérifié"
 create or replace function public.protect_profile() returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -80,9 +133,10 @@ begin
     else new.verified := old.verified; end if;
   end if;
   -- Vérifié tout seul : présent dans la liste officielle de l'école (même email, ou même nom et même promo),
-  -- étudiant inscrit avec l'email de l'école, ou lauréat confirmé par deux lauréats vérifiés de sa promo
+  -- étudiant inscrit avec l'email de l'école, ou lauréat confirmé par deux lauréats vérifiés de sa promo.
+  -- Jamais pour un « lauréat » d'une promo pas encore diplômée (un étudiant qui s'est trompé de rôle).
   begin
-    if not new.verified and (public.dans_liste(new.id, new.full_name, new.promo)
+    if not new.verified and (new.role <> 'laureat' or new.promo <= extract(year from now())::int) and (public.dans_liste(new.id, new.full_name, new.promo)
         or (new.role = 'etudiant' and public.email_ecole(new.id))
         or (new.role = 'laureat' and public.pairs_valides(new.id, new.promo) >= 2)) then
       new.verified := true;
@@ -299,6 +353,8 @@ alter table public.mentorships add column if not exists creneaux timestamptz[] n
 alter table public.mentorships add column if not exists rdv_at timestamptz;
 alter table public.mentorships add column if not exists note int check (note between 1 and 5);
 alter table public.mentorships add column if not exists accepted_at timestamptz;
+-- L'étudiant confirme sa présence au rendez-vous fixé (remis à zéro si l'horaire change)
+alter table public.mentorships add column if not exists confirme_at timestamptz;
 alter table public.mentorships drop constraint if exists mentorships_status_check;
 alter table public.mentorships add constraint mentorships_status_check check (status in ('demande','acceptee','terminee','refusee','annulee'));
 create index if not exists mentorships_ouvertes on public.mentorships (created_at) where mentor_id is null and status = 'demande';
@@ -321,7 +377,18 @@ create or replace function public.protect_mentorship() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare v public.mentorships%rowtype; v_role text;
 begin
-  if auth.uid() is null or public.is_admin() then return new; end if;
+  if auth.uid() is null then return new; end if;
+  if public.is_admin() then
+    -- L'administration corrige ce qu'elle veut. Quand elle fixe elle-même un rendez-vous, elle a aussi sa salle de visio.
+    if tg_op = 'UPDATE' and new.status = 'acceptee' and new.rdv_at is not null and new.mentor_id is not null then
+      if old.status = 'demande' then new.accepted_at := coalesce(new.accepted_at, now()); end if;
+      if new.rdv_at is distinct from old.rdv_at then new.confirme_at := null; end if;
+      insert into public.liens_rdv (id, lien)
+        values (old.id, 'https://meet.jit.si/ReseauENSAM-' || substr(md5(gen_random_uuid()::text), 1, 12))
+        on conflict (id) do nothing;
+    end if;
+    return new;
+  end if;
   select role into v_role from public.profiles where id = auth.uid();
   if tg_op = 'INSERT' then
     new.student_id := auth.uid();
@@ -335,7 +402,7 @@ begin
       raise exception 'Tu as déjà 3 demandes en attente. Attends une réponse avant d’en envoyer une autre.';
     end if;
     new.status := 'demande'; new.rdv_at := null; new.reponse := null; new.merci := null; new.note := null;
-    new.accepted_at := null; new.created_at := now();
+    new.accepted_at := null; new.confirme_at := null; new.created_at := now();
     return new;
   end if;
   v := new;
@@ -354,6 +421,7 @@ begin
       if v.rdv_at is null then raise exception 'Choisis l’horaire du rendez-vous.'; end if;
       if v.rdv_at is distinct from old.rdv_at and v.rdv_at < now() then raise exception 'Choisis un moment à venir.'; end if;
       new.status := 'acceptee'; new.rdv_at := v.rdv_at;
+      if v.rdv_at is distinct from old.rdv_at then new.confirme_at := null; end if;
       if old.status = 'demande' then new.accepted_at := now(); end if;
       insert into public.liens_rdv (id, lien)
         values (old.id, 'https://meet.jit.si/ReseauENSAM-' || substr(md5(gen_random_uuid()::text), 1, 12))
@@ -375,10 +443,17 @@ begin
       if v.status = 'annulee' then new.status := 'annulee'; end if;
     elsif old.status = 'acceptee' and v.status in ('terminee','annulee') then
       new.status := v.status;
+    elsif old.status = 'acceptee' and v.confirme_at is not null and old.confirme_at is null then
+      new.confirme_at := now();                              -- « Je serai là »
     end if;
   end if;
   return new;
 end $$;
+-- Rendez-vous fixés sans salle de visio (par l'administration, avant cette mise à jour) : on la crée
+insert into public.liens_rdv (id, lien)
+  select m.id, 'https://meet.jit.si/ReseauENSAM-' || substr(md5(gen_random_uuid()::text), 1, 12)
+  from public.mentorships m where m.status = 'acceptee' and m.rdv_at is not null and m.mentor_id is not null
+  on conflict (id) do nothing;
 drop trigger if exists trg_protect_mentorship on public.mentorships;
 create trigger trg_protect_mentorship before insert or update on public.mentorships
   for each row execute function public.protect_mentorship();
@@ -619,8 +694,8 @@ language sql stable as $$
 $$;
 
 -- ---------------------------------------------------------------------
--- Groupes : par filière, par ville et « à l'étranger » (par pays).
--- Chacun est membre des groupes de sa filière, de sa ville et de son pays,
+-- Groupes : par parcours (clé « filiere:… »), par ville et « à l'étranger » (par pays).
+-- Chacun est membre des groupes de son parcours, de sa ville et de son pays,
 -- et peut en suivre d'autres (ex. un étudiant qui vise la France).
 -- groupe = 'filiere:…', 'ville:…' ou 'pays:…' (en minuscules, sans accents)
 -- ---------------------------------------------------------------------
@@ -640,6 +715,22 @@ create table if not exists public.groupe_membres (
   created_at timestamptz default now(),
   unique (groupe, user_id)
 );
+
+-- Le groupe « filière » réunit désormais tout un parcours (étudiants des filières actuelles et lauréats des
+-- anciennes appellations) : les anciens groupes de filière passent dans le groupe de leur parcours.
+do $$
+declare r record;
+begin
+  for r in select * from (values ('filiere:genie mecanique', 'filiere:mecanique'), ('filiere:genie energetique', 'filiere:mecanique'),
+      ('filiere:genie industriel', 'filiere:electro-industriel'), ('filiere:genie electromecanique', 'filiere:electro-industriel'),
+      ('filiere:mecatronique', 'filiere:electro-industriel'), ('filiere:genie informatique & ia', 'filiere:informatique'),
+      ('filiere:genie civil', 'filiere:civil')) t(ancien, nouveau) loop
+    update public.groupe_messages set groupe = r.nouveau where groupe = r.ancien;
+    update public.groupe_membres g set groupe = r.nouveau where g.groupe = r.ancien
+      and not exists (select 1 from public.groupe_membres x where x.user_id = g.user_id and x.groupe = r.nouveau);
+    delete from public.groupe_membres where groupe = r.ancien;  -- doublons : déjà membres du groupe du parcours
+  end loop;
+end $$;
 
 -- ---------------------------------------------------------------------
 -- Cafés ENSAM : une rencontre dans une ville, on s'inscrit en un clic
@@ -774,9 +865,9 @@ begin
   select parrain_id into v_parrain from public.parrainages where filleul_id = p_etudiant and saison = v_s;
   if v_parrain is not null then return v_parrain; end if;
   select l.id into v_parrain from public.profiles l
-    where l.role = 'laureat' and l.parrain_dispo and l.filiere = v_p.filiere
+    where l.role = 'laureat' and l.parrain_dispo and public.proximite_filiere(l.filiere, v_p.filiere) > 0
       and (select count(*) from public.parrainages x where x.parrain_id = l.id and x.saison = v_s) < 3
-    order by l.verified desc, (select count(*) from public.parrainages x where x.parrain_id = l.id and x.saison = v_s), random()
+    order by public.proximite_filiere(l.filiere, v_p.filiere) desc, l.verified desc, (select count(*) from public.parrainages x where x.parrain_id = l.id and x.saison = v_s), random()
     limit 1;
   if v_parrain is null then return null; end if;
   insert into public.parrainages (filleul_id, parrain_id, saison) values (p_etudiant, v_parrain, v_s)
@@ -818,7 +909,7 @@ begin
     perform public.donner_parrain(new.id);
   elsif new.role = 'laureat' and new.parrain_dispo and (tg_op = 'INSERT' or not coalesce(old.parrain_dispo, false)) then
     perform public.donner_parrain(p.id) from public.profiles p
-      where p.role = 'etudiant' and p.filiere = new.filiere and p.promo = public.saison_courante() + 3
+      where p.role = 'etudiant' and public.proximite_filiere(p.filiere, new.filiere) > 0 and p.promo = public.saison_courante() + 3
         and not exists (select 1 from public.parrainages x where x.filleul_id = p.id and x.saison = public.saison_courante());
   end if;
   return null;
@@ -2401,7 +2492,7 @@ language sql stable as $$
   select o.status = 'ouverte' and coalesce(o.audience, 'etudiants') = 'etudiants' and o.author_id <> p.id
     and p.role in ('etudiant','laureat')
     and public.niveau_de(p.promo, p_saison) = any(coalesce(o.annees, '{}'))
-    and (cardinality(coalesce(o.filieres, '{}')) = 0 or p.filiere = any(o.filieres));
+    and public.filiere_ok(o.filieres, p.filiere);
 $$;
 
 create or replace function public.alerte_offre() returns trigger
@@ -2505,7 +2596,7 @@ begin
         insert into public.push_queue (user_id, kind, data)
         select l.id, 'relecture_demande', jsonb_build_object('nom', v_nom)
         from public.profiles l, public.profiles s
-        where s.id = new.student_id and l.role = 'laureat' and l.mentor_dispo and l.filiere = s.filiere and l.id <> new.student_id
+        where s.id = new.student_id and l.role = 'laureat' and l.mentor_dispo and public.proximite_filiere(l.filiere, s.filiere) > 0 and l.id <> new.student_id
           and exists (select 1 from public.push_subscriptions x where x.user_id = l.id)
         limit 10;
       end if;

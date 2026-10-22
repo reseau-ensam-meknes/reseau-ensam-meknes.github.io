@@ -2,7 +2,7 @@
 import { html, useState, useMemo, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, toast, LevelChip, RoleLine } from './ui.js';
 import { getLang } from './i18n.js';
-import { FILIERES, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, seasonOf, roleIncoherent, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo } from './logic.js';
+import { FILIERES, PREPA, filieresPour, seasonOf, roleIncoherent, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo } from './logic.js';
 import { TalentPool } from './growth.js';
 import { GroupesPage } from './groupes.js';
 import { AnnuairePro } from './pro.js';
@@ -258,9 +258,12 @@ function CvImportBox({ onFile, faits, busy }) {
   </div>`;
 }
 
+// Les champs vides arrivent de la base à null : on garde alors la valeur par défaut du formulaire (texte vide…)
+const sansVides = o => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v != null));
+
 export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
   const { store, act } = ctx;
-  const [f, setF] = useState(() => ({ full_name: '', role: onboarding ? '' : 'etudiant', filiere: FILIERES[0], promo: new Date().getFullYear() + 1, entreprise: '', poste: '', ville: '', pays: 'Maroc', bio: '', competences: [], linkedin: '', contact: '', cv_url: '', disponibilite: '', mentor_dispo: false, mentor_sujets: '', vitrine: true, secteur: '', parrain_dispo: false, ...(preset || {}), ...(initial || {}) }));
+  const [f, setF] = useState(() => ({ full_name: '', role: onboarding ? '' : 'etudiant', filiere: FILIERES[0], promo: new Date().getFullYear() + 1, entreprise: '', poste: '', ville: '', pays: 'Maroc', bio: '', competences: [], linkedin: '', contact: '', cv_url: '', disponibilite: '', mentor_dispo: false, mentor_sujets: '', vitrine: true, secteur: '', parrain_dispo: false, ...sansVides(preset), ...sansVides(initial) }));
   const set = (k, v) => setF({ ...f, [k]: v });
   const [comp, setComp] = useState((f.competences || []).join(', '));
   // Base à jour (Phase 3) : coordonnées privées et visibilité ; sinon l'ancien champ « contact » public
@@ -272,18 +275,23 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
   // Email de l'école obligatoire pour les étudiants (réglage de l'administration)
   const email = (store.session?.user?.email || '').toLowerCase();
   const domaines = store.domainesEcole?.() || [];
-  const ecoleBloque = !!onboarding && f.role === 'etudiant' && store.reglages?.email_ecole_obligatoire === true && domaines.length > 0 && !!email && !domaines.some(d => email.endsWith('@' + d) || email.endsWith('.' + d));
-  // Le rôle suit la promo : étudiant(e) tant que l'année de diplôme n'est pas passée, lauréat(e) ensuite
-  const saison = seasonOf();
-  const pr = +f.promo;
-  const incoherent = pr >= 1990 && (f.role === 'etudiant' && pr <= saison ? 'etudiant' : f.role === 'laureat' && pr > saison ? 'laureat' : null);
+  const versEtudiant = !!onboarding || (!!initial && initial.role !== 'etudiant');
+  const ecoleBloque = versEtudiant && f.role === 'etudiant' && store.reglages?.email_ecole_obligatoire === true && domaines.length > 0 && !!email && !domaines.some(d => email.endsWith('@' + d) || email.endsWith('.' + d));
+  // Rôle et promo cohérents : un lauréat a déjà son diplôme, un étudiant l'aura entre la 5A et la 1re année de cette saison
+  const S = ctx.saison ?? seasonOf(), promoN = +f.promo, an = new Date().getFullYear();
+  const incoherent = f.role === 'laureat' && promoN > an ? 'futur' : f.role === 'etudiant' && promoN >= 1990 && promoN <= S ? 'diplome' : f.role === 'etudiant' && promoN > S + 5 ? 'loin' : null;
   const [cv, setCv] = useState({ busy: false, faits: null, file: null, joindre: false });
   const ok = !!f.role && f.full_name.trim().length >= 2 && f.promo >= 1990 && f.promo <= 2040 && !ecoleBloque && !incoherent;
+  // Filières proposées selon le rôle et l'année : classes prépa en 1A-2A, maquette actuelle par parcours,
+  // anciennes appellations pour les lauréats. Une valeur déjà enregistrée hors liste reste en tête tant qu'on n'en choisit pas une autre.
+  const filPour = (role, promo) => filieresPour(role, role === 'etudiant' ? niveauOf({ promo: +promo }, ctx.saison ?? seasonOf()) : 7);
+  const groupesFil = filPour(f.role, f.promo);
+  const proposees = groupesFil.flatMap(g => g.options);
+  const garde = initial?.filiere && !proposees.includes(initial.filiere) ? initial.filiere : null;
+  const filiere = proposees.includes(f.filiere) || (garde && f.filiere === garde) ? f.filiere : proposees[0];
   const submit = e => {
     e.preventDefault(); if (!ok) return;
-    // Les champs laissés vides à l’inscription valent null dans la base
-    const txt = v => String(v ?? '').trim();
-    const row = { full_name: txt(f.full_name), role: f.role === 'admin' ? 'admin' : f.role, filiere: f.filiere, promo: +f.promo, entreprise: txt(f.entreprise) || null, poste: txt(f.poste) || null, ville: txt(f.ville) || null, pays: txt(f.pays) || 'Maroc', bio: txt(f.bio) || null, competences: comp.split(',').map(x => x.trim()).filter(Boolean).slice(0, 15), linkedin: txt(f.linkedin) || null, cv_url: txt(f.cv_url) || null, mentor_dispo: !!f.mentor_dispo, mentor_sujets: (f.mentor_sujets || '').trim() || null, vitrine: !!f.vitrine };
+    const row = { full_name: f.full_name.trim(), role: f.role === 'admin' ? 'admin' : f.role, filiere, promo: +f.promo, entreprise: f.entreprise.trim() || null, poste: f.poste.trim() || null, ville: f.ville.trim() || null, pays: f.pays.trim() || 'Maroc', bio: f.bio.trim() || null, competences: comp.split(',').map(x => x.trim()).filter(Boolean).slice(0, 15), linkedin: f.linkedin.trim() || null, cv_url: f.cv_url.trim() || null, mentor_dispo: !!f.mentor_dispo, mentor_sujets: (f.mentor_sujets || '').trim() || null, vitrine: !!f.vitrine };
     if (!v3) row.contact = (f.contact || '').trim() || null;
     if (f.role === 'laureat') { row.secteur = f.secteur || null; row.parrain_dispo = !!f.parrain_dispo; }
     // Inscription : l'accord donné sur l'écran de création du compte, la langue et le choix pour les emails
@@ -318,7 +326,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
     for (const [k, l] of [['full_name', 'Nom'], ['poste', 'Poste'], ['entreprise', 'Entreprise'], ['ville', 'Ville'], ['bio', 'Bio'], ['linkedin', 'LinkedIn']]) if (r[k] && vide(k)) { n[k] = r[k]; faits.push(l); }
     if (r.pays && r.pays !== f.pays && (vide('pays') || (neuf && f.pays === 'Maroc'))) { n.pays = r.pays; faits.push('Pays'); }
     if (fort && (depuisCV || !preset?.promo) && r.promo && r.promo !== +f.promo) { n.promo = r.promo; faits.push('Promo'); }
-    if (fort && r.filiere && r.filiere !== f.filiere) { n.filiere = r.filiere; faits.push('Filière'); }
+    if (fort && r.filiere && r.filiere !== f.filiere && filPour(n.role, n.promo).some(g => g.options.includes(r.filiere))) { n.filiere = r.filiere; faits.push('Filière'); }
     setF(n);
     if (depuisCV && v3) {
       const c = { ...co };
@@ -348,24 +356,28 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
   };
   const isStudent = f.role === 'etudiant';
   const choisi = !!f.role;
+  // À l'inscription, la promo proposée suit le rôle (on ne touche pas à une promo déjà enregistrée)
+  const choisirRole = role => setF(x => ({ ...x, role, promo: initial ? x.promo : role === 'laureat' && +x.promo > an ? an : role === 'etudiant' && +x.promo <= S ? S + 1 : x.promo }));
   const n = !isStudent && initial && !initial.verified ? confirmations(store.data, initial) : 0;
   return html`<form class="form" onSubmit=${submit}>
     ${f.role !== 'admin' ? html`${!choisi ? html`<p class="role-q" id="pf-role-q"><strong>Tu es…</strong> <span class="small muted">Choisis d’abord, ou remplis tout avec ton CV.</span></p>` : null}
-      <div class=${'seg' + (choisi ? '' : ' seg-choix')} role="group" aria-label="Je suis"><button type="button" id="pf-role-etu" class=${isStudent ? 'on' : ''} aria-pressed=${isStudent} onClick=${() => set('role', 'etudiant')}>Je suis étudiant(e)</button><button type="button" id="pf-role-lau" class=${f.role === 'laureat' ? 'on' : ''} aria-pressed=${f.role === 'laureat'} onClick=${() => set('role', 'laureat')}>Je suis lauréat(e)</button></div>
+      <div class=${'seg' + (choisi ? '' : ' seg-choix')} role="group" aria-label="Je suis"><button type="button" id="pf-role-etu" class=${isStudent ? 'on' : ''} aria-pressed=${isStudent} onClick=${() => choisirRole('etudiant')}>Je suis étudiant(e)</button><button type="button" id="pf-role-lau" class=${f.role === 'laureat' ? 'on' : ''} aria-pressed=${f.role === 'laureat'} onClick=${() => choisirRole('laureat')}>Je suis lauréat(e)</button></div>
       <${CvImportBox} onFile=${depuisCV} faits=${cv.faits} busy=${cv.busy}/>` : null}
-    ${incoherent ? html`<div class="cf-warn" role="alert" id="pf-incoh"><p><strong>${incoherent === 'etudiant' ? 'Avec cette promo, tes études sont terminées.' : 'Avec cette promo, tu n’es pas encore diplômé(e).'}</strong></p>
-      <p class="small">${incoherent === 'etudiant' ? 'Si tu as eu ton diplôme, tu es lauréat(e). Sinon, corrige ton année de diplôme prévue.' : 'Si tu es encore à l’école, tu es étudiant(e). Sinon, corrige ton année de diplôme.'}</p>
-      <div><button type="button" class="btn small primary" id="pf-incoh-fix" onClick=${() => set('role', incoherent === 'etudiant' ? 'laureat' : 'etudiant')}>${incoherent === 'etudiant' ? 'Je suis lauréat(e)' : 'Je suis étudiant(e)'}</button></div></div>` : null}
-    ${ecoleBloque ? html`<div class="cf-warn" role="alert"><p><strong>Inscris-toi avec ton email de l’école.</strong></p>
+    ${ecoleBloque ? html`<div class="cf-warn" role="alert"><p><strong>${onboarding ? 'Inscris-toi avec ton email de l’école.' : 'Un compte étudiant utilise l’email de l’école.'}</strong></p>
       <p class="small">Les comptes étudiants utilisent l’email de l’école : <span dir="ltr" translate="no">${domaines.map(d => '@' + d).join(', ')}</span></p>
       <p class="small">Ton compte actuel n’en fait pas partie : <span dir="ltr" translate="no">${email}</span></p>
-      <div><button type="button" class="btn small" id="pf-relog" onClick=${() => store.signOut()}><${Icon} name="logout" size=${15}/> Me déconnecter et recommencer</button></div></div>` : null}
+      ${onboarding ? html`<div><button type="button" class="btn small" id="pf-relog" onClick=${() => store.signOut()}><${Icon} name="logout" size=${15}/> Me déconnecter et recommencer</button></div>`
+        : html`<p class="small">L’administration de la plateforme peut changer ton rôle si besoin.</p>`}</div>` : null}
     ${choisi && f.role !== 'admin' ? html`<${LinkedinBox} onFill=${remplir}/>` : null}
     ${choisi ? html`<div class="grid2">
       <${Field} label="Nom complet"><input id="pf-name" required value=${f.full_name} onInput=${e => set('full_name', e.target.value)} maxlength="80"/><//>
       <${Field} label=${isStudent ? 'Promo (année de diplôme prévue)' : 'Promo (année de diplôme)'} hint=${isStudent ? 'Ex. en 5A cette année : ' + (new Date().getMonth() >= 8 ? new Date().getFullYear() + 1 : new Date().getFullYear()) + '. Ton niveau se met à jour tout seul chaque année.' : ''}><input id="pf-promo" type="number" min="1990" max="2040" required value=${f.promo} onInput=${e => set('promo', e.target.value)}/><//>
     </div>
-    <${Field} label="Filière"><select id="pf-fil" value=${f.filiere} onChange=${e => set('filiere', e.target.value)}>${FILIERES.map(x => html`<option value=${x}>${x}</option>`)}</select><//>
+    ${incoherent ? html`<div class="cf-warn" role="alert" id="pf-incoherent"><p class="small">${incoherent === 'futur' ? `Promo ${promoN} : ton diplôme n’est pas encore là. Tu es étudiant(e) ?` : incoherent === 'diplome' ? `Promo ${promoN} : tu as déjà ton diplôme ? Alors tu es lauréat(e).` : `Vérifie ta promo : cette saison, la 1re année est la promo ${S + 5}.`}</p>
+      ${incoherent === 'loin' ? null : html`<div><button type="button" class="btn small" id="pf-role-ok" onClick=${() => choisirRole(incoherent === 'futur' ? 'etudiant' : 'laureat')}>${incoherent === 'futur' ? 'Je suis étudiant(e)' : 'Je suis lauréat(e)'}</button></div>`}</div>` : null}
+    <${Field} label="Filière" hint=${garde && filiere === garde ? 'Nouveau : choisis ta filière dans la liste officielle de l’école.' : filiere === PREPA ? 'La filière se choisit en 3e année.' : ''}><select id="pf-fil" value=${filiere} onChange=${e => set('filiere', e.target.value)}>
+      ${garde ? html`<option value=${garde}>${garde}</option>` : null}
+      ${groupesFil.map(g => html`<optgroup label=${g.label}>${g.options.map(x => html`<option value=${x}>${x}</option>`)}</optgroup>`)}</select><//>
     ${!isStudent ? html`<div class="grid3"><${Field} label="Entreprise"><input id="pf-ent" value=${f.entreprise || ''} onInput=${e => set('entreprise', e.target.value)}/><//><${Field} label="Poste"><input id="pf-poste" value=${f.poste || ''} onInput=${e => set('poste', e.target.value)}/><//>
       <${Field} label="Secteur"><select id="pf-sect" value=${f.secteur || ''} onChange=${e => set('secteur', e.target.value)}><option value="">—</option>${SECTEURS.map(x => html`<option value=${x}>${x}</option>`)}</select><//></div>` : null}
     <div class="grid2"><${Field} label="Ville"><input id="pf-ville" value=${f.ville || ''} onInput=${e => set('ville', e.target.value)}/><//><${Field} label="Pays"><input id="pf-pays" value=${f.pays || ''} onInput=${e => set('pays', e.target.value)}/><//></div>

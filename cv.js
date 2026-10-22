@@ -3,7 +3,7 @@
 import { html, useState, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, toast, injectCSS } from './ui.js';
 import { addAR, t as tr } from './i18n.js';
-import { timeAgo, niveauOf, NIVEAUX } from './logic.js';
+import { timeAgo, niveauOf, NIVEAUX, proximiteFiliere } from './logic.js';
 import { CV_MAX } from './store.js';
 import { MessageBtn } from './messages.js';
 
@@ -106,8 +106,8 @@ export function CvCard({ ctx }) {
 function DemandeRelecture({ ctx, onClose }) {
   const { data, me, store, act } = ctx;
   const [msg, setMsg] = useState(''); const [qui, setQui] = useState('');
-  const proches = data.profiles.filter(p => p.role === 'laureat' && p.id !== me.id && p.filiere === me.filiere && (me.role !== 'laureat' || p.promo < me.promo))
-    .sort((a, b) => (!!b.mentor_dispo - !!a.mentor_dispo) || (!!b.verified - !!a.verified) || a.promo - b.promo).slice(0, 8);
+  const proches = data.profiles.filter(p => p.role === 'laureat' && p.id !== me.id && proximiteFiliere(p.filiere, me.filiere) > 0 && (me.role !== 'laureat' || p.promo < me.promo))
+    .sort((a, b) => proximiteFiliere(b.filiere, me.filiere) - proximiteFiliere(a.filiere, me.filiere) || (!!b.mentor_dispo - !!a.mentor_dispo) || (!!b.verified - !!a.verified) || a.promo - b.promo).slice(0, 8);
   const send = e => {
     e.preventDefault();
     act(async () => {
@@ -155,7 +155,7 @@ export function RelecturesPage({ ctx }) {
   const toMe = R.filter(r => r.reviewer_id === me.id && ACTIVES.includes(r.status)).sort((a, b) => (b.status === 'en_cours') - (a.status === 'en_cours') || new Date(a.created_at) - new Date(b.created_at));
   const queue = isLaureat ? R.filter(r => !r.reviewer_id && r.status === 'demandee' && r.student_id !== me.id)
     .map(r => ({ r, s: store.byId('profiles', r.student_id) }))
-    .sort((a, b) => ((b.s?.filiere === me.filiere) - (a.s?.filiere === me.filiere)) || new Date(a.r.created_at) - new Date(b.r.created_at)) : [];
+    .sort((a, b) => (proximiteFiliere(b.s?.filiere, me.filiere) - proximiteFiliere(a.s?.filiere, me.filiere)) || new Date(a.r.created_at) - new Date(b.r.created_at)) : [];
   const done = R.filter(r => r.reviewer_id === me.id && r.status === 'rendue').sort((a, b) => new Date(b.rendue_at || b.created_at) - new Date(a.rendue_at || a.created_at));
   const canAsk = me.cv_path && mine.filter(r => ACTIVES.includes(r.status)).length < 2;
   const hist = isLaureat ? done : minePast;

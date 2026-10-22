@@ -2,7 +2,7 @@
 import { html, useState, useMemo, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, TYPE_ICON, toast, RoleLine, celebrate, injectCSS } from './ui.js';
 import { getLang, addAR } from './i18n.js';
-import { TYPES, FILIERES, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor } from './logic.js';
+import { TYPES, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, filiereMatch, resumeFilieres, filiereSousTitre } from './logic.js';
 import { RelanceBanner, BanqueSujets, PasteOffer } from './recrutement.js';
 import { CvButton } from './cv.js';
 import { SignalerBtn } from './confiance.js';
@@ -14,9 +14,32 @@ export const APP_STATUS = { postule: 'Envoyée', entretien: 'Entretien', retenu:
 
 export function matchesMe(o, me, saison) {
   const n = niveauOf(me, saison);
-  return (o.audience || 'etudiants') === 'etudiants' && (o.annees || []).includes(n) && (!o.filieres?.length || o.filieres.includes(me.filiere));
+  return (o.audience || 'etudiants') === 'etudiants' && (o.annees || []).includes(n) && filiereMatch(o.filieres, me.filiere);
 }
 const forLaureats = o => o.audience === 'laureats';
+
+// Filières visées par une offre : un parcours entier en un geste, ou ses filières une à une.
+// Une ancienne appellation déjà choisie (offre publiée avant la nouvelle liste) reste affichée, et se retire d'un clic.
+function FilieresPick({ value, onChange }) {
+  const has = v => value.includes(v);
+  const toggle = v => onChange(has(v) ? value.filter(x => x !== v) : [...value, v]);
+  const anciennes = value.filter(v => !FILIERES.includes(v));
+  return html`<div class="fil-pick">${PARCOURS.map(p => {
+    const fs = FILIERES_INFO.filter(x => x.parcours === p.code).map(x => x.nom);
+    const tout = fs.every(has);
+    return html`<div class="fil-groupe" key=${p.code}>
+      <button type="button" class=${'chip fil-parc' + (tout ? ' on' : '')} aria-pressed=${tout} onClick=${() => onChange(tout ? value.filter(x => !fs.includes(x)) : [...new Set([...value, ...fs])])}>${`Parcours ${p.nom}`}</button>
+      ${fs.length > 1 ? html`<span class="chips">${fs.map(v => html`<button type="button" class=${'chip' + (has(v) ? ' on' : '')} aria-pressed=${has(v)} title=${v} onClick=${() => toggle(v)}>${filiereSousTitre(v)}</button>`)}</span>` : null}
+    </div>`;
+  })}
+  ${anciennes.length ? html`<div class="fil-groupe"><span class="small muted">Ancienne appellation</span><span class="chips">${anciennes.map(v => html`<button type="button" class="chip on" aria-pressed="true" onClick=${() => toggle(v)}>${v}</button>`)}</span></div>` : null}</div>`;
+}
+injectCSS('fil-pick', `
+.fil-pick { display: flex; flex-direction: column; gap: .6rem; }
+.fil-groupe { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .5rem; }
+.fil-groupe .chips { display: contents; }
+.chip.fil-parc { font-weight: 650; }
+`);
 
 // Trois onglets : les offres, la banque de sujets PFE (5A et lauréats), les offres entre lauréats
 export function OffersPage(ctx) {
@@ -64,7 +87,7 @@ function OfferList({ ctx, entre }) {
       if (isStudent && !(o.annees || []).includes(niveau)) return false; // un étudiant ne voit que les offres de son année
       if (vue === 'sauvees' && !data.reactions.some(r => r.offer_id === o.id && r.user_id === me.id && r.kind === 'save')) return false;
       if (type !== 'tous' && o.type !== type) return false;
-      if (qq && !`${o.titre} ${o.entreprise} ${o.ville} ${o.pays} ${(o.filieres || []).join(' ')}`.toLowerCase().includes(qq)) return false;
+      if (qq && !`${o.titre} ${o.entreprise} ${o.ville} ${o.pays} ${(o.filieres || []).join(' ')} ${resumeFilieres(o.filieres).join(' ')}`.toLowerCase().includes(qq)) return false;
       return true;
     }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   }, [data, q, type, vue]);
@@ -192,7 +215,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
     ['Lieu', 'pin', html`<span translate="no" dir="auto">${o.ville || ''}</span>${o.pays ? `${o.ville ? ', ' : ''}${o.pays}` : ''}`],
     o.duree ? ['Durée', 'clock', html`<span translate="no" dir="auto">${o.duree}</span>${o.remunere ? ' · rémunéré' : ''}`] : null,
     dl ? ['Date limite', 'calendar', html`${dateTxt}${urgent ? html` <span class="tag urgent">${jours === 0 ? 'Dernier jour' : `J-${jours}`}</span>` : null}`] : null,
-    ['Pour', 'people', forLaureats(o) ? 'Lauréats' : [...(o.annees || []).map(a => NIVEAUX[a]?.short), ...(o.filieres?.length ? o.filieres : ['toutes filières'])].join(' · ')],
+    ['Pour', 'people', forLaureats(o) ? 'Lauréats' : [...(o.annees || []).map(a => NIVEAUX[a]?.short), ...(o.filieres?.length ? resumeFilieres(o.filieres) : ['toutes filières'])].join(' · ')],
   ].filter(Boolean);
   const auteurNom = prenom(author) || 'Le lauréat';
 
@@ -442,7 +465,7 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
       <details class="more-fields" open=${editing}>
         <summary>Plus de détails (facultatif)</summary>
         <div class="form">
-          <${Field} label="Filières" hint="Aucune sélection = toutes les filières"><div class="chips">${FILIERES.map(v => html`<button type="button" class=${'chip' + (f.filieres.includes(v) ? ' on' : '')} onClick=${() => toggleIn('filieres', v)}>${v}</button>`)}</div><//>
+          <${Field} label="Filières" hint="Aucune sélection = toutes les filières. Le nom d’un parcours le sélectionne en entier."><${FilieresPick} value=${f.filieres} onChange=${v => set('filieres', v)}/><//>
           <div class="grid3">
             <${Field} label="Durée"><input id="of-duree" value=${f.duree || ''} onInput=${e => set('duree', e.target.value)} placeholder="6 mois, CDI…"/><//>
             <${Field} label="Date limite"><input id="of-dl" type="date" value=${f.deadline || ''} onInput=${e => set('deadline', e.target.value)}/><//>

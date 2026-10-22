@@ -1,9 +1,89 @@
 // Règles métier : saisons, niveaux, objectifs, points d'impact, badges, statistiques.
 
-export const FILIERES = [
-  'Génie Mécanique', 'Génie Industriel', 'Génie Électromécanique', 'Génie Civil',
-  'Génie Énergétique', 'Génie Informatique & IA', 'Mécatronique',
+// Cycle ingénieur : 5 parcours et 11 filières (choix en 3A). Les 1A et 2A sont en classes préparatoires intégrées.
+// En 5A, les matières communes se font en deux sections : A (électro-industriel, IA, informatique) et B (mécanique, civil).
+export const PARCOURS = [
+  { code: 'PEI', nom: 'Électro-industriel', section: 'A' },
+  { code: 'PM', nom: 'Mécanique', section: 'B' },
+  { code: 'CIVIL', nom: 'Civil', section: 'B' },
+  { code: 'IA', nom: 'Intelligence artificielle', section: 'A' },
+  { code: 'INFO', nom: 'Informatique', section: 'A' },
 ];
+export const FILIERES_INFO = [
+  { code: 'GIP24', nom: 'Génie Industriel et Productique', parcours: 'PEI' },
+  { code: 'GIEO', nom: 'Génie Industriel : Excellence Opérationnelle', parcours: 'PEI' },
+  { code: 'GE-DI', nom: 'Génie Électromécanique : Digitalisation Industrielle', parcours: 'PEI' },
+  { code: 'GE-MCI', nom: 'Génie Électromécanique : Maintenance et Commande Industrielles', parcours: 'PEI' },
+  { code: 'GM-CISM', nom: 'Génie Mécanique : Conception et Industrialisation des Systèmes Mécaniques', parcours: 'PM' },
+  { code: 'GM-IMS', nom: 'Génie Mécanique : Ingénierie Mécanique et Structures', parcours: 'PM' },
+  { code: 'GM-MPF', nom: 'Génie Mécanique : Matériaux et Procédés de Fabrication', parcours: 'PM' },
+  { code: 'GME24', nom: 'Génie Mécanique : Énergétique', parcours: 'PM' },
+  { code: 'GC24', nom: 'Génie Civil', parcours: 'CIVIL' },
+  { code: 'IATD-SI', nom: 'Intelligence Artificielle et Technologies des Données : Systèmes Industriels', parcours: 'IA' },
+  { code: 'GI-ILSI', nom: 'Génie Informatique : Ingénierie Logicielle et Systèmes Intelligents', parcours: 'INFO' },
+];
+export const FILIERES = FILIERES_INFO.map(f => f.nom);
+export const PREPA = 'Classes préparatoires intégrées';
+// Anciennes appellations : promos précédentes et profils déjà enregistrés. Elles restent valables et sont rapprochées par parcours.
+export const ANCIENNES_FILIERES = [
+  ['Génie Mécanique', ['PM']], ['Génie Industriel', ['PEI']], ['Génie Électromécanique', ['PEI']], ['Génie Énergétique', ['PM']],
+  ['Mécatronique', ['PEI']], ['Génie Informatique & IA', ['INFO', 'IA']],
+];
+const FIL_PAR_NOM = new Map(FILIERES_INFO.map(f => [f.nom, f]));
+const ANCIENNES = new Map(ANCIENNES_FILIERES);
+export const filiereInfo = f => FIL_PAR_NOM.get(f) || null;
+export const estAncienneFiliere = f => ANCIENNES.has(f);
+// Parcours d'une filière (plusieurs pour une ancienne appellation à cheval), [] si inconnue
+export const parcoursOf = f => (FIL_PAR_NOM.has(f) ? [FIL_PAR_NOM.get(f).parcours] : ANCIENNES.get(f) || []);
+export const parcoursNom = code => PARCOURS.find(p => p.code === code)?.nom || '';
+// Libellé court pour les listes et les cartes : le code officiel (GM-CISM…), sinon le nom
+export const filiereCourte = f => FIL_PAR_NOM.get(f)?.code || f || '';
+// Filières d'une offre en peu de mots : un parcours complet devient « Parcours Mécanique », le reste en codes officiels
+export function resumeFilieres(list) {
+  const reste = new Set(list || []), out = [];
+  for (const p of PARCOURS) {
+    const fs = FILIERES_INFO.filter(f => f.parcours === p.code).map(f => f.nom);
+    if (fs.length > 1 && fs.every(f => reste.has(f))) { out.push(`Parcours ${p.nom}`); fs.forEach(f => reste.delete(f)); }
+  }
+  return [...out, ...[...reste].map(filiereCourte)];
+}
+// Une offre (liste de filières, vide = toutes) concerne-t-elle cette filière ?
+// Deux filières de la maquette actuelle doivent être identiques ; une ancienne appellation couvre son parcours.
+export function filiereMatch(list, filiere) {
+  if (!list?.length) return true;
+  if (!filiere) return false;
+  if (list.includes(filiere)) return true;
+  const mine = parcoursOf(filiere), vieille = !FIL_PAR_NOM.has(filiere);
+  return list.some(x => (vieille || !FIL_PAR_NOM.has(x)) && parcoursOf(x).some(c => mine.includes(c)));
+}
+// Filtre d'une liste de membres : « parcours:PM » (tout un parcours) ou une filière (les anciennes appellations suivent leur parcours)
+export function filtreFiliere(choix, filiere) {
+  if (!choix) return true;
+  if (choix.startsWith('parcours:')) return parcoursOf(filiere).includes(choix.slice(9));
+  return filiereMatch([choix], filiere);
+}
+// Filtre d'une liste d'offres : une offre pour toutes les filières passe toujours
+export function filtreOffre(filieres, choix) {
+  if (!choix || !filieres?.length) return true;
+  if (choix.startsWith('parcours:')) return filieres.some(x => parcoursOf(x).includes(choix.slice(9)));
+  return filiereMatch(filieres, choix);
+}
+// Ce qui suit « : » dans le nom officiel (« Excellence Opérationnelle »), pour les puces groupées par parcours
+export const filiereSousTitre = f => (f || '').split(' : ')[1] || f || '';
+// Proximité entre deux membres : 2 = même filière, 1 = même parcours, 0 = sinon
+export function proximiteFiliere(a, b) {
+  if (!a || !b) return 0;
+  if (a === b) return 2;
+  const pa = parcoursOf(a);
+  return parcoursOf(b).some(c => pa.includes(c)) ? 1 : 0;
+}
+// Filières proposées dans un formulaire : prépa pour les 1A-2A, maquette actuelle, anciennes appellations pour les lauréats
+export function filieresPour(role, niveau) {
+  if (role === 'etudiant' && niveau <= 2) return [{ label: 'Années préparatoires intégrées (API)', options: [PREPA] }];
+  const groupes = PARCOURS.map(p => ({ label: `Parcours ${p.nom}`, options: FILIERES_INFO.filter(f => f.parcours === p.code).map(f => f.nom) }));
+  if (role !== 'etudiant') groupes.push({ label: 'Ancienne appellation (promos précédentes)', options: ANCIENNES_FILIERES.map(([f]) => f) });
+  return groupes;
+}
 
 export const TYPES = {
   stage: { label: 'Stage', long: 'Stage (3A / 4A)' },
@@ -28,7 +108,7 @@ export const CATEGORIES_Q = ['PFE', 'Stage', 'Étranger & visas', 'CV & entretie
 export function seasonOf(d = new Date()) { return d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1; }
 export const seasonLabel = s => `${s}-${s + 1}`;
 // Rôle et promo qui ne vont pas ensemble : étudiant(e) déjà diplômé(e), ou lauréat(e) pas encore diplômé(e)
-export const roleIncoherent = (p, saison = seasonOf()) => !p?.promo ? null : p.role === 'etudiant' && p.promo <= saison ? 'etudiant' : p.role === 'laureat' && p.promo > saison ? 'laureat' : null;
+export const roleIncoherent = (p, saison = seasonOf(), an = new Date().getFullYear()) => !p?.promo ? null : p.role === 'etudiant' && p.promo <= saison ? 'etudiant' : p.role === 'laureat' && p.promo > an ? 'laureat' : null;
 
 // Niveau d'un membre pendant une saison, calculé depuis sa promo (année de diplôme).
 export function niveauOf(p, saison) {
@@ -82,7 +162,7 @@ export function seasonStats(data, saison, now = new Date()) {
     const elapsed = Math.max(0, Math.min(1, (now - start) / (end - start)));
     const daysLeft = Math.ceil((end - now) / 864e5);
     const rate = pop.length ? found.length / pop.length : 0;
-    const byFiliere = FILIERES.map(f => {
+    const byFiliere = [...new Set([...FILIERES, ...pop.map(p => p.filiere).filter(Boolean)])].map(f => {
       const fp = pop.filter(p => p.filiere === f);
       const ff = fp.filter(p => found.some(pl => pl.student_id === p.id));
       return { filiere: f, total: fp.length, found: ff.length };
@@ -258,7 +338,8 @@ export const norm = t => (t || '').toLowerCase().normalize('NFD').replace(/[̀-�
 // Pourquoi ce lauréat est le bon pour cette demande (et l'inverse)
 export function helpMatch(m, laureat, student, now = new Date()) {
   const why = []; let score = 0;
-  if (student && laureat.filiere === student.filiere) { score += 3; why.push('Même filière'); }
+  const prox = student ? proximiteFiliere(laureat.filiere, student.filiere) : 0;
+  if (prox === 2) { score += 3; why.push('Même filière'); } else if (prox === 1) { score += 2; why.push('Même parcours'); }
   const sujets = norm(`${laureat.mentor_sujets || ''} ${laureat.poste || ''} ${(laureat.competences || []).join(' ')}`);
   const b = BESOINS[m?.besoin];
   if (b && b.mots.some(w => sujets.includes(norm(w)))) { score += 2; why.push(b.label); }
@@ -285,7 +366,7 @@ export function mentorsFor(data, student, besoin, scores) {
 // Offres recommandées : filière, compétences retrouvées dans l'offre, ville, fraîcheur
 export function offerMatch(o, me, now = new Date()) {
   const why = []; let score = 0;
-  if (o.filieres?.includes(me.filiere)) { score += 3; why.push('Ta filière'); } else if (!o.filieres?.length) score += 1;
+  if (o.filieres?.length && filiereMatch(o.filieres, me.filiere)) { score += 3; why.push('Ta filière'); } else if (!o.filieres?.length) score += 1;
   const txt = norm(`${o.titre} ${o.description}`);
   for (const c of me.competences || []) if (c.length > 1 && txt.includes(norm(c)) && why.length < 3) { score += 1; why.push(c); }
   if (me.ville && o.ville && norm(o.ville) === norm(me.ville)) { score += 1; why.push(o.ville); }
@@ -345,9 +426,14 @@ export function sameCompany(a, b) {
 
 // Groupes : « filiere:genie industriel », « ville:casablanca », « pays:france »
 export const groupKey = (kind, v) => (v && norm(v).trim() ? `${kind}:${norm(v).trim().replace(/\s+/g, ' ')}` : null);
+// Le groupe « filière » réunit tout un parcours : étudiants des filières actuelles et lauréats des anciennes appellations
+export function groupeFiliere(f) {
+  const c = parcoursOf(f)[0];
+  return c ? groupKey('filiere', parcoursNom(c)) : groupKey('filiere', f)?.slice(0, 80) || null;
+}
 export function autoGroups(p) {
   if (!p) return [];
-  return [groupKey('filiere', p.filiere), groupKey('ville', p.ville), p.pays && norm(p.pays) !== 'maroc' ? groupKey('pays', p.pays) : null].filter(Boolean);
+  return [groupeFiliere(p.filiere), groupKey('ville', p.ville), p.pays && norm(p.pays) !== 'maroc' ? groupKey('pays', p.pays) : null].filter(Boolean);
 }
 export function myGroups(data, me) {
   const auto = autoGroups(me);
@@ -362,6 +448,8 @@ export function groupMembers(data, key) {
 // Nom affiché d'un groupe : l'écriture la plus courante parmi ses membres
 export function groupLabel(data, key) {
   const [kind, v] = key.split(':');
+  const parcours = kind === 'filiere' && PARCOURS.find(p => groupKey('filiere', p.nom) === key);
+  if (parcours) return parcours.nom;
   const field = { filiere: 'filiere', ville: 'ville', pays: 'pays' }[kind];
   const counts = new Map();
   for (const p of data.profiles) if (p[field] && groupKey(kind, p[field]) === key) counts.set(p[field].trim(), (counts.get(p[field].trim()) || 0) + 1);
@@ -432,7 +520,7 @@ export function routedTo(q, p) {
 // Alerte talents : étudiants de la filière du lauréat qui cherchent encore, les nouveaux d'abord
 export function alerteTalents(data, me, saison, days = 7) {
   const since = Date.now() - days * 864e5;
-  const list = data.profiles.filter(p => p.role === 'etudiant' && p.vitrine !== false && p.filiere === me.filiere && [3, 4, 5].includes(niveauOf(p, saison))
+  const list = data.profiles.filter(p => p.role === 'etudiant' && p.vitrine !== false && proximiteFiliere(p.filiere, me.filiere) > 0 && [3, 4, 5].includes(niveauOf(p, saison))
     && !['trouve', 'validation'].includes(statutOf(data, p, saison).key))
     .map(p => ({ p, nouveau: new Date(p.created_at).getTime() > since }))
     .sort((a, b) => b.nouveau - a.nouveau || (!!b.p.cv_url - !!a.p.cv_url) || (b.p.competences?.length || 0) - (a.p.competences?.length || 0));

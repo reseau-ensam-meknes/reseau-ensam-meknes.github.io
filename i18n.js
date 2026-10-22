@@ -137,7 +137,7 @@ function trChildren(ch) {
   return out;
 }
 
-const ATTRS = ['placeholder', 'title', 'aria-label'];
+const ATTRS = ['placeholder', 'title', 'aria-label', 'label']; // label : titres des groupes d'options (optgroup)
 const prev = options.vnode;
 options.vnode = vnode => {
   // translate="no" : texte libre d'un membre (ex. sa disponibilité), laissé tel quel

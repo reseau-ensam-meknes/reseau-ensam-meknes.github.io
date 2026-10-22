@@ -77,6 +77,25 @@ for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
   });
 }
 
+test('profil : s’enregistre même avec des champs vides ; rôle et promo cohérents', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Nadia'); await s.aller('profil');
+  await s.page.fill('#pf-ville', 'Rabat');
+  await s.page.click('form .row-end .btn.primary'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').innerText(), /Profil enregistré/);
+  await s.aller('accueil'); await s.aller('profil');
+  assert.equal(await s.page.inputValue('#pf-ville'), 'Rabat');
+  // Un « lauréat » d'une promo pas encore diplômée : on le lui dit, et un bouton corrige le rôle
+  await s.page.fill('#pf-promo', String(new Date().getFullYear() + 1)); await s.page.waitForTimeout(150);
+  assert.ok(await s.page.isVisible('#pf-incoherent'));
+  assert.ok(await s.page.isDisabled('form .row-end .btn.primary'));
+  await s.page.click('#pf-role-ok'); await s.page.waitForTimeout(150);
+  assert.ok(!(await s.page.isVisible('#pf-incoherent')));
+  assert.ok(await s.page.isEnabled('form .row-end .btn.primary'));
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('coordonnées : visibles seulement après accord', async () => {
   const s = await ouvrir();
   await s.comme('Amine'); await s.fiche('Youssef El Amrani');
@@ -124,6 +143,40 @@ test('messagerie : écrire, être lu, bloquer ; pas de conversation sans lien', 
   await s.aller('accueil'); await s.comme('Nadia'); await s.aller('messages/' + salma); await s.page.waitForTimeout(200);
   assert.equal(await s.page.locator('#chat-txt').count(), 0);
   assert.equal(await s.page.locator('.composer.ferme').count(), 1);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('mentorat : demander, fixer l’horaire, confirmer sa présence, ignorer une demande', async () => {
+  const s = await ouvrir();
+  const carte = sujet => s.page.locator('.mreq', { hasText: sujet }).first();
+  // Salma demande de l'aide à Youssef depuis sa fiche
+  await s.comme('Salma'); await s.fiche('Youssef El Amrani');
+  await s.page.click('.modal button:has-text("Demander de l’aide")'); await s.page.waitForTimeout(300);
+  await s.page.click('.need-pick .chip >> nth=0'); await s.page.fill('#ah-sujet', 'Préparer mon PFE en lean');
+  await s.page.click('.modal .btn.primary:has-text("Envoyer ma demande")'); await s.page.waitForTimeout(400);
+  // Youssef choisit un horaire : le rendez-vous attend la confirmation de Salma
+  await s.aller('accueil'); await s.comme('Youssef'); await s.aller('mentorat');
+  await carte('Préparer mon PFE en lean').locator('.chip.time').first().click();
+  await carte('Préparer mon PFE en lean').locator('button:has-text("Confirmer le rendez-vous")').click(); await s.page.waitForTimeout(400);
+  await s.page.locator('.fete-acts .btn').last().click({ timeout: 2000 }).catch(() => {});
+  assert.match(await carte('Préparer mon PFE en lean').innerText(), /Salma n’a pas encore confirmé/);
+  // Salma confirme sa présence
+  await s.aller('accueil'); await s.comme('Salma'); await s.aller('mentorat'); await s.page.waitForTimeout(1300);
+  await s.page.locator('.fete-acts .btn').last().click({ timeout: 2000 }).catch(() => {});
+  await carte('Préparer mon PFE en lean').locator('button:has-text("Je serai là")').click(); await s.page.waitForTimeout(300);
+  assert.match(await carte('Préparer mon PFE en lean').innerText(), /Tu as confirmé ta présence/);
+  await s.aller('accueil'); await s.comme('Youssef'); await s.aller('mentorat');
+  assert.match(await carte('Préparer mon PFE en lean').innerText(), /Salma a confirmé sa présence/);
+  // Une demande ouverte à tous peut être écartée : elle ne revient plus
+  await s.page.click('button:has-text("Voir les autres demandes")'); await s.page.waitForTimeout(200);
+  const ign = s.page.locator('.mreq button:has-text("Ignorer")');
+  const avant = await ign.count(); assert.ok(avant > 0, 'au moins une demande ouverte à écarter');
+  await ign.first().click(); await s.page.waitForTimeout(300);
+  assert.equal(await ign.count(), avant - 1);
+  // L'administration voit le suivi de l'école
+  await s.comme('Admin'); await s.aller('mentorat');
+  assert.match(await s.page.locator('.page').innerText(), /Suivi de l’école/);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -232,10 +285,10 @@ test('profil : un rôle qui ne va pas avec la promo est signalé et se corrige e
   const s = await ouvrir();
   await s.comme('Amine'); await s.aller('profil');
   await s.page.fill('#pf-promo', '2020');
-  await s.page.waitForSelector('#pf-incoh');
+  await s.page.waitForSelector('#pf-incoherent');
   assert.equal(await s.page.isDisabled('.form .row-end .btn.primary'), true);
-  await s.page.click('#pf-incoh-fix');
-  assert.equal(await s.page.locator('#pf-incoh').count(), 0);
+  await s.page.click('#pf-role-ok');
+  assert.equal(await s.page.locator('#pf-incoherent').count(), 0);
   assert.match(await s.page.getAttribute('#pf-role-lau', 'class'), /\bon\b/);
   assert.equal(await s.page.isDisabled('.form .row-end .btn.primary'), false);
   assert.deepEqual(s.erreurs, []);
@@ -254,7 +307,7 @@ test('profil : remplir avec le CV en PDF (lu dans le navigateur)', async () => {
   assert.equal(await s.page.inputValue('#pf-promo'), '2024');
   assert.equal(await s.page.inputValue('#pf-fil'), 'Génie Industriel');
   assert.equal(await s.page.inputValue('#pf-ent'), 'Lear Corporation');
-  assert.equal(await s.page.locator('#pf-incoh').count(), 0);
+  assert.equal(await s.page.locator('#pf-incoherent').count(), 0);
   await s.page.click('.form .row-end .btn.primary');
   await s.page.getByText('Profil enregistré.').last().waitFor();
   assert.deepEqual(s.erreurs, []);

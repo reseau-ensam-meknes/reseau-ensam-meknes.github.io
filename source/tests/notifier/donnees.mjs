@@ -39,7 +39,7 @@ export function jeu(now) {
     P(ID.rachid, 'Rachid Naciri', 'etudiant', GI, promo(1), { ville: 'Fès' }),
     P(ID.admin, 'Administration ENSAM', 'admin', GI, 2010, { verified: true }),
     P(ID.ghita, 'Ghita Berrada', 'laureat', 'Génie Énergétique', 2019, { pays: 'France', ville: 'Lyon', created_at: il(1) }),
-    P(ID.hamza, 'Hamza Zouiten', 'laureat', 'Mécatronique', 2015, { ville: 'Agadir' }),
+    P(ID.hamza, 'Hamza Zouiten', 'laureat', 'Génie Informatique & IA', 2015, { ville: 'Agadir' }),
     P(ID.kenza, 'Kenza Mouline', 'laureat', GI, S, { ville: 'Kénitra', verified: true }),
   ];
   const O = (n, author_id, titre, entreprise, x) => ({

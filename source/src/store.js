@@ -1,7 +1,7 @@
 // Couche de données : même interface en mode démo (navigateur) et en mode réel (Supabase).
 // Les données de démonstration (seed.js) ne sont chargées qu'en démo : le site réel n'en a pas besoin
 const chargerSeed = () => import('./seed.js').then(m => m.buildSeed());
-import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus } from './logic.js';
+import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere } from './logic.js';
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
 const PHASE3 = ['coordonnees', 'demandes_contact', 'relectures_cv', 'relecture_commentaires', 'entretiens', 'avis_stage', 'guide_pays', 'signalements', 'enquetes_insertion', 'verifications_pairs', 'evenements', 'evenement_participants'];
@@ -81,7 +81,7 @@ export function pdfSimple(lignes) {
 // ---------------------------------------------------------------------------
 // Démo : données d'exemple, gardées dans le navigateur du visiteur
 // ---------------------------------------------------------------------------
-const DEMO_KEY = 'ensam-demo-v10';
+const DEMO_KEY = 'ensam-demo-v11';
 class DemoStore extends Base {
   constructor() { super(); this.mode = 'demo'; this.fichiers = new Map(); }
   async init() {
@@ -560,8 +560,17 @@ function applyInvitationRules(store, r, old) {
 // Mentorat en 3 étapes : l'étudiant demande avec ses horaires, un lauréat en choisit un (le premier l'emporte),
 // la visio est créée, puis l'étudiant clôt et remercie.
 function applyMentorshipRules(store, r, old) {
-  const me = store.me; if (me?.role === 'admin') return;
+  const me = store.me;
   const now = new Date();
+  if (me?.role === 'admin') {
+    // L'administration corrige ce qu'elle veut ; quand elle fixe elle-même un rendez-vous, la visio est créée aussi
+    if (old && r.status === 'acceptee' && r.rdv_at && r.mentor_id) {
+      if (old.status === 'demande') r.accepted_at = r.accepted_at || now.toISOString();
+      if (r.rdv_at !== old.rdv_at) r.confirme_at = null;
+      if (!store.byId('liens_rdv', old.id)) store.data.liens_rdv = [{ id: old.id, lien: jitsiLink(), created_at: now.toISOString() }, ...store.data.liens_rdv];
+    }
+    return;
+  }
   const clean = c => [...new Set((c || []).filter(x => new Date(x) > now).map(x => new Date(x).toISOString()))].sort().slice(0, 3);
   if (!old) {
     r.student_id = me.id;
@@ -570,7 +579,7 @@ function applyMentorshipRules(store, r, old) {
     r.creneaux = clean(r.creneaux);
     if (!r.creneaux.length) throw new Error('Propose au moins un horaire à venir.');
     if (store.data.mentorships.filter(m => m.student_id === me.id && m.status === 'demande').length >= 3) throw new Error('Tu as déjà 3 demandes en attente. Attends une réponse avant d’en envoyer une autre.');
-    Object.assign(r, { mentor_id: r.mentor_id || null, status: 'demande', rdv_at: null, reponse: null, merci: null, note: null, accepted_at: null });
+    Object.assign(r, { mentor_id: r.mentor_id || null, status: 'demande', rdv_at: null, reponse: null, merci: null, note: null, accepted_at: null, confirme_at: null });
     return;
   }
   const v = { ...r };
@@ -586,6 +595,7 @@ function applyMentorshipRules(store, r, old) {
       if (!v.rdv_at) throw new Error('Choisis l’horaire du rendez-vous.');
       if (v.rdv_at !== old.rdv_at && new Date(v.rdv_at) < now) throw new Error('Choisis un moment à venir.');
       r.status = 'acceptee'; r.rdv_at = v.rdv_at;
+      if (v.rdv_at !== old.rdv_at) r.confirme_at = null;
       if (old.status === 'demande') r.accepted_at = now.toISOString();
       if (!store.byId('liens_rdv', old.id)) store.data.liens_rdv = [{ id: old.id, lien: jitsiLink(), created_at: now.toISOString() }, ...store.data.liens_rdv];
     } else if (v.status === 'refusee' && old.status === 'demande') r.status = 'refusee';
@@ -599,6 +609,7 @@ function applyMentorshipRules(store, r, old) {
       if (JSON.stringify(v.creneaux) !== JSON.stringify(old.creneaux)) { r.creneaux = clean(v.creneaux); if (!r.creneaux.length) throw new Error('Propose au moins un horaire à venir.'); }
       if (v.status === 'annulee') r.status = 'annulee';
     } else if (old.status === 'acceptee' && ['terminee', 'annulee'].includes(v.status)) r.status = v.status;
+    else if (old.status === 'acceptee' && v.confirme_at && !old.confirme_at) r.confirme_at = now.toISOString();
     return;
   }
   if (v.mentor_id === me?.id) throw new Error('Un autre lauréat vient de prendre cette demande.');
@@ -658,8 +669,9 @@ function demoParrains(store, onlyId = null) {
   const waiting = store.data.profiles.filter(p => p.role === 'etudiant' && niveauOf(p, S) === 3 && (!onlyId || p.id === onlyId)
     && !store.data.parrainages.some(x => x.filleul_id === p.id && x.saison === S)).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   for (const st of waiting) {
-    const l = store.data.profiles.filter(x => x.role === 'laureat' && x.parrain_dispo && x.filiere === st.filiere && count(x.id) < 3)
-      .sort((a, b) => (b.verified ? 1 : 0) - (a.verified ? 1 : 0) || count(a.id) - count(b.id))[0];
+    // Un parrain de sa filière d'abord, sinon de son parcours (les lauréats gardent souvent l'ancienne appellation)
+    const l = store.data.profiles.filter(x => x.role === 'laureat' && x.parrain_dispo && proximiteFiliere(x.filiere, st.filiere) > 0 && count(x.id) < 3)
+      .sort((a, b) => proximiteFiliere(b.filiere, st.filiere) - proximiteFiliere(a.filiere, st.filiere) || (b.verified ? 1 : 0) - (a.verified ? 1 : 0) || count(a.id) - count(b.id))[0];
     if (!l) continue;
     store.data.parrainages = [{ id: uuid(), filleul_id: st.id, parrain_id: l.id, saison: S, created_at: new Date().toISOString() }, ...store.data.parrainages];
     n++;

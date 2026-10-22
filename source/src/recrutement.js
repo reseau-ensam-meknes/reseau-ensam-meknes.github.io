@@ -1,8 +1,8 @@
 // Recruter par le réseau : alerte talents, offre en 30 secondes, banque de sujets PFE,
 // relance douce des offres, bilan de cooptation à montrer à sa RH.
 import { html, useState, useMemo } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, BrandLogo, toast } from './ui.js';
-import { FILIERES, TYPES, niveauOf, alerteTalents, bilanCooptation, needsRelance, seasonLabel } from './logic.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, BrandLogo, toast, FiliereFiltre } from './ui.js';
+import { FILIERES, TYPES, niveauOf, alerteTalents, bilanCooptation, needsRelance, seasonLabel, filtreOffre, filiereCourte } from './logic.js';
 import { parseOffre } from './parse-offre.js';
 
 // ---------------------------------------------------------------------------
@@ -65,10 +65,10 @@ const sujetTitre = t => { const s = t.replace(/^(PFE|Sujet de PFE|Stage PFE)\s*[
 
 export function BanqueSujets({ ctx, onPropose }) {
   const { data, me, saison, store, openOffer, openProfile } = ctx;
-  const [fil, setFil] = useState(me.role === 'etudiant' ? me.filiere : '');
+  const [fil, setFil] = useState(me.role === 'etudiant' && FILIERES.includes(me.filiere) ? me.filiere : '');
   const [dispo, setDispo] = useState(true);
   const taken = o => data.placements.find(p => p.offer_id === o.id && p.status !== 'refuse');
-  const sujets = data.offers.filter(o => o.type === 'pfe' && (o.audience || 'etudiants') === 'etudiants' && (!fil || !o.filieres?.length || o.filieres.includes(fil)))
+  const sujets = data.offers.filter(o => o.type === 'pfe' && (o.audience || 'etudiants') === 'etudiants' && filtreOffre(o.filieres, fil))
     .map(o => ({ o, pl: taken(o) }))
     .filter(({ o, pl }) => !dispo || (o.status === 'ouverte' && !pl))
     .sort((a, b) => (a.o.status === 'ouverte' && !a.pl ? 0 : 1) - (b.o.status === 'ouverte' && !b.pl ? 0 : 1) || new Date(b.o.created_at) - new Date(a.o.created_at));
@@ -79,7 +79,7 @@ export function BanqueSujets({ ctx, onPropose }) {
       <li><span class="how-n">3</span><span><strong>Le lauréat l’encadre</strong><span class="small muted">Jusqu’à la soutenance, et parfois l’embauche.</span></span></li>
     </ol>
     <div class="toolbar">
-      <select id="sj-fil" value=${fil} onChange=${e => setFil(e.target.value)} aria-label="Filière"><option value="">Toutes filières</option>${FILIERES.map(f => html`<option value=${f}>${f}</option>`)}</select>
+      <${FiliereFiltre} id="sj-fil" value=${fil} onChange=${setFil}/>
       <div class="seg">${[[true, 'Disponibles'], [false, 'Tous les sujets']].map(([v, l]) => html`<button class=${dispo === v ? 'on' : ''} onClick=${() => setDispo(v)}>${l}</button>`)}</div>
     </div>
     <div class="sujets">${sujets.length ? sujets.map(({ o, pl }) => {
@@ -91,7 +91,7 @@ export function BanqueSujets({ ctx, onPropose }) {
           <span class="grow"><span class="row small"><span class=${'state-pill ' + (libre ? 's-recherche' : 's-trouve')}>${libre ? 'Disponible' : pl ? 'Pris' : 'Clos'}</span><span class="muted">${o.entreprise}${o.ville ? ' · ' + o.ville : ''}</span></span>
             <strong class="sujet-titre" translate="no" dir="auto">${sujetTitre(o.titre)}</strong>
             <span class="small muted sujet-desc" translate="no" dir="auto">${o.description.slice(0, 180)}${o.description.length > 180 ? '…' : ''}</span>
-            ${o.filieres?.length ? html`<span class="ocard-tags">${o.filieres.map(f => html`<span class="mini">${f}</span>`)}</span>` : null}</span>
+            ${o.filieres?.length ? html`<span class="ocard-tags">${o.filieres.map(f => html`<span class="mini" title=${f}>${filiereCourte(f)}</span>`)}</span>` : null}</span>
         </button>
         <footer class="sujet-foot">
           ${a ? html`<span class="small">Encadré par</span><${Person} p=${a} onOpen=${openProfile} size=${26}/>` : null}

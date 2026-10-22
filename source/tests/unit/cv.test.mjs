@@ -57,7 +57,7 @@ test('CV d’étudiant encore à l’école : la promo vient du niveau', () => {
 
 test('rôle et promo : incohérences repérées', () => {
   assert.equal(roleIncoherent({ role: 'etudiant', promo: 2025 }, 2026), 'etudiant');
-  assert.equal(roleIncoherent({ role: 'laureat', promo: 2027 }, 2026), 'laureat');
-  assert.equal(roleIncoherent({ role: 'laureat', promo: 2026 }, 2026), null);
+  assert.equal(roleIncoherent({ role: 'laureat', promo: 2027 }, 2026, 2026), 'laureat');
+  assert.equal(roleIncoherent({ role: 'laureat', promo: 2026 }, 2026, 2026), null);
   assert.equal(roleIncoherent({ role: 'etudiant', promo: 2027 }, 2026), null);
 });

@@ -2,7 +2,7 @@
 // puis l'insertion des diplômés (enquête à 6 et 12 mois) avec le rapport exportable de l'administration.
 import { html, useState, useMemo, useEffect } from './vendor/preact-htm.js';
 import { Icon, Bar, Person, Tabs, Num, injectCSS, toast } from './ui.js';
-import { seasonStats, monthlyActivity, seasonLabel, NIVEAUX, pct, OBJECTIFS, statutOf, FOUND, niveauOf, enqueteDue, SITUATIONS, SALAIRES, CANAUX } from './logic.js';
+import { seasonStats, monthlyActivity, seasonLabel, NIVEAUX, pct, OBJECTIFS, statutOf, FOUND, niveauOf, enqueteDue, SITUATIONS, SALAIRES, CANAUX, proximiteFiliere, filiereMatch } from './logic.js';
 import { CompanyLogo } from './ui.js';
 import { addAR, arCount } from './i18n.js';
 import { PoulsReseau } from './pouls.js';
@@ -153,8 +153,8 @@ function PromoPage({ ctx }) {
   const mine = row.byFiliere.find(f => f.filiere === me.filiere);
   // Les mêmes offres que dans « Offres » : ouvertes, pour les étudiants de cette année
   const ouvertes = data.offers.filter(o => o.status === 'ouverte' && o.audience !== 'laureats' && (o.annees || []).includes(n)).length;
-  const aidants = data.profiles.filter(p => p.role === 'laureat' && p.filiere === me.filiere).length;
-  const pourFiliere = data.offers.filter(o => o.status === 'ouverte' && o.audience !== 'laureats' && (o.annees || []).includes(n) && o.filieres?.includes(me.filiere)).length;
+  const aidants = data.profiles.filter(p => p.role === 'laureat' && proximiteFiliere(p.filiere, me.filiere) > 0).length;
+  const pourFiliere = data.offers.filter(o => o.status === 'ouverte' && o.audience !== 'laureats' && (o.annees || []).includes(n) && o.filieres?.length && filiereMatch(o.filieres, me.filiere)).length;
   return html`<section class="page promo">
     <header class="page-head"><div><p class="eyebrow">Saison ${seasonLabel(saison)} · ${NIVEAUX[n].label}</p><h1>Ma promo</h1></div></header>
     <${SuiviSeg} ctx=${ctx} on="placement"/>
