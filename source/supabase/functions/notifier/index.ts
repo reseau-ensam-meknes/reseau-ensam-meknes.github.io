@@ -371,7 +371,7 @@ async function pousserUn(a: Abonnement, n: Notif, urg: string, v: Vapid): Promis
 // ---------------------------------------------------------------------
 // Textes des notifications (fr / ar)
 // ---------------------------------------------------------------------
-type V = { nom: string; sujet: string; titre: string; entreprise: string; cible: string; ville: string; lieu: string; statut: string; date: string; heure: string; promo: string; n: number; vague: string; motif: string; texte: string; mtype: string; duree: number };
+type V = { nom: string; sujet: string; titre: string; entreprise: string; cible: string; ville: string; lieu: string; statut: string; date: string; heure: string; promo: string; n: number; vague: string; motif: string; texte: string; mtype: string; duree: number; aide: string; dtype: string };
 
 // Aperçu d'un message privé : le début du texte, ou « Photo », « Message vocal (0:42) »
 const minSec = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
@@ -418,15 +418,37 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     ar: v => v.statut === 'entretien' ? ['مقابلة مقترحة', `ترشيحك لـ«${v.titre}» يتقدم: مقابلة.`]
       : v.statut === 'retenu' ? ['خبر سار!', `تم قبولك في «${v.titre}».`] : null,
   },
+  // aide : la réussite vient d'une demande (le lauréat recrute, encadre ou recommande) : on parle de démarrage
   recrutement_a_confirmer: {
     route: 'parcours',
-    fr: v => ['Confirme ton recrutement', `${v.nom} indique t’avoir recruté(e) chez ${v.entreprise}.`],
-    ar: v => ['أكّد توظيفك', `تصريح من ${v.nom} بتوظيفك في ${v.entreprise}. أكّده بنقرة.`],
+    fr: v => v.aide ? ['Confirme ton démarrage', `${v.nom} indique que tu as commencé chez ${v.entreprise}.`] : ['Confirme ton recrutement', `${v.nom} indique t’avoir recruté(e) chez ${v.entreprise}.`],
+    ar: v => v.aide ? ['أكّد بدءك', `تصريح من ${v.nom} بأنك بدأت لدى ${v.entreprise}. أكّده بنقرة.`] : ['أكّد توظيفك', `تصريح من ${v.nom} بتوظيفك في ${v.entreprise}. أكّده بنقرة.`],
   },
   recrutement_confirme: {
     route: 'espace',
-    fr: v => ['Recrutement confirmé', `${v.nom} a confirmé son recrutement chez ${v.entreprise}. +50 points`],
-    ar: v => ['تم تأكيد التوظيف', `تم تأكيد توظيف ${v.nom} في ${v.entreprise}. +50 نقطة`],
+    fr: v => v.aide ? ['Démarrage confirmé', `${v.nom} a confirmé son démarrage chez ${v.entreprise}. +50 points`] : ['Recrutement confirmé', `${v.nom} a confirmé son recrutement chez ${v.entreprise}. +50 points`],
+    ar: v => v.aide ? ['تم تأكيد البدء', `أكد ${v.nom} بدءه لدى ${v.entreprise}. +50 نقطة`] : ['تم تأكيد التوظيف', `تم تأكيد توظيف ${v.nom} في ${v.entreprise}. +50 نقطة`],
+  },
+  // Demandes des étudiants : nouvelle demande du parcours (lauréats), aide proposée, match, fin du match
+  demande_nouvelle: {
+    route: 'offres/demandes',
+    fr: v => [v.dtype === 'emploi' ? 'Quelqu’un du réseau cherche un emploi' : 'Un étudiant de ton parcours cherche', `${v.nom}${TYPES_OFFRE.fr[v.dtype] ? ` · ${TYPES_OFFRE.fr[v.dtype]}` : ''} : ${v.titre}`],
+    ar: v => [v.dtype === 'emploi' ? 'شخص من الشبكة يبحث عن عمل' : 'طالب من مسارك يبحث', `${v.nom}${TYPES_OFFRE.ar[v.dtype] ? ` · ${TYPES_OFFRE.ar[v.dtype]}` : ''}: ${v.titre}`],
+  },
+  demande_proposition: {
+    route: 'offres/demandes',
+    fr: v => ['Un lauréat te propose son aide', `${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''} : ${v.titre}`],
+    ar: v => ['خريج يقترح عليك مساعدته', `${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''}: ${v.titre}`],
+  },
+  demande_match: {
+    route: 'offres/demandes',
+    fr: v => ['C’est un match !', `${v.nom} a accepté ton aide : ${v.titre}. Déclare son démarrage dès qu’il a lieu.`],
+    ar: v => ['إنه تطابق!', `قبل ${v.nom} مساعدتك: ${v.titre}. صرّح ببدئه بمجرد حدوثه.`],
+  },
+  demande_rouverte: {
+    route: 'offres/demandes',
+    fr: v => ['Changement sur une demande', `${v.nom} a mis fin au match : ${v.titre}.`],
+    ar: v => ['تغيير في طلب', `أنهى ${v.nom} التطابق: ${v.titre}.`],
   },
   invitation: {
     route: 'offres',
@@ -567,12 +589,15 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
     promo: /^\d{4}$/.test(txt(d.promo)) ? txt(d.promo) : '', n: Number(d.n) || 0,
     vague: txt(d.vague) === '12' ? '12' : txt(d.vague) === '6' ? '6' : '', motif: txt(d.motif),
     texte: s('texte'), mtype: txt(d.type), duree: Math.max(0, Math.min(600, Number(d.duree) || 0)),
+    aide: ['recrute', 'encadre', 'recommande'].includes(txt(d.aide)) ? txt(d.aide) : '', dtype: txt(d.type),
   };
   const t = g[l](v);
   if (!t) return null;
   // Une alerte ouvre directement l'offre, un message sa conversation (une notification par personne)
-  const route = kind === 'offre_alerte' && estUuid(d.offre) ? `offre/${d.offre}` : kind === 'message' && estUuid(d.de) ? `messages/${d.de}` : g.route;
-  const tag = kind === 'offre_alerte' && estUuid(d.offre) ? `offre-${d.offre}` : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : kind;
+  // Une demande ouvre sa carte
+  const dem = kind.startsWith('demande_') && estUuid(d.demande) ? d.demande : null;
+  const route = kind === 'offre_alerte' && estUuid(d.offre) ? `offre/${d.offre}` : kind === 'message' && estUuid(d.de) ? `messages/${d.de}` : dem ? `offres/demandes/${dem}` : g.route;
+  const tag = kind === 'offre_alerte' && estUuid(d.offre) ? `offre-${d.offre}` : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem ? `${kind}-${dem}` : kind;
   return { title: couper(t[0], 80), body: couper(t[1], 180), url: site + '#' + route, tag };
 }
 
@@ -1350,6 +1375,37 @@ export function rendreAlerte(offres: OffreAlerte[], langue: Langue, site: string
   return { sujet, html, texte, desabo };
 }
 
+// Demandes des étudiants de son parcours (lauréats) : qui, ce qu'il cherche, et « Je peux aider »
+export type DemandeAlerte = { id: string; titre: string; type?: string | null; lieu?: string | null; prenom?: string | null; niveau?: number | null; role?: string | null };
+const niveauCourt = (x: DemandeAlerte, l: Langue) => x.role === 'laureat' ? (l === 'ar' ? 'خريج' : 'Lauréat')
+  : Number(x.niveau) >= 6 ? (l === 'ar' ? 'خريج جديد' : 'Jeune diplômé') : Number(x.niveau) >= 3 ? `${Number(x.niveau)}A` : '';
+export function rendreDemandes(demandes: DemandeAlerte[], langue: Langue, site: string, token: string): Courriel {
+  const ar = langue === 'ar', f = ar ? HTML_AR : HTML, b = ar ? BRUT_AR : BRUT;
+  const n = demandes.length, d0 = demandes[0];
+  const desabo = `${site}#desabo/${token}/alertes`;
+  const qui = (x: DemandeAlerte) => txt(x.prenom) || (ar ? 'طالب' : 'Un étudiant');
+  const ligne = (x: DemandeAlerte, F: Fmt) => [F.g(qui(x)), niveauCourt(x, langue), TYPES_OFFRE[langue][txt(x.type)] || '', F.u(txt(x.titre)), F.u(txt(x.lieu))].filter(Boolean).join(' · ');
+  const sujet = couper(n > 1
+    ? (ar ? `${arN(n, ['', 'طلبان جديدان', '{n} طلبات جديدة', '{n} طلبًا جديدًا'])} من مسارك` : `${n} demandes d’étudiants de ton parcours`) + (ar ? ' · شبكة ENSAM' : ' · Réseau ENSAM')
+    : (ar ? `${qui(d0)} يبحث عن: ${txt(d0.titre)}` : `${qui(d0)} cherche : ${txt(d0.titre)}`), 110);
+  const intro = ar
+    ? 'قال طلبة من مسارك ما يبحثون عنه، مع سيرهم الذاتية. إن كنت تستطيع توظيف أحدهم أو تأطيره أو التوصية به، اقترح ذلك: هو من يختار.'
+    : 'Des étudiants de ton parcours viennent de dire ce qu’ils cherchent, CV joint. Si tu peux recruter, encadrer ou recommander l’un d’eux, propose-le : c’est lui qui choisit.';
+  const lien = (x: DemandeAlerte) => `${site}#offres/demandes/${x.id}`;
+  const html = cadreEmail({
+    langue, sujet, apercu: ligne(d0, b), sousTitre: ar ? 'طلبات الطلبة' : 'Demandes des étudiants',
+    intro: [esc(ar ? 'مرحبًا،' : 'Bonjour,'), esc(intro)],
+    blocs: demandes.map(x => ({ lignes: [`<span style="color:#F39200;">&#8226;</span>&nbsp; ${ligne(x, f)}`], bouton: { texte: ar ? 'أستطيع المساعدة' : 'Je peux aider', url: lien(x) } })),
+    pied: ar ? 'يصلك هذا البريد لأن الطلب من مسارك، مرة في اليوم على الأكثر.' : 'Tu reçois cet email parce que la demande vient de ton parcours, une fois par jour au plus.',
+    liens: [[ar ? 'فتح المنصة' : 'Ouvrir la plateforme', site], [ar ? 'إيقاف تنبيهات البريد' : 'Ne plus recevoir les alertes par email', desabo]],
+  });
+  const texte = [`${(ar ? AR : FR).marque} · ${ar ? 'طلبات الطلبة' : 'Demandes des étudiants'}`, '', ar ? 'مرحبًا،' : 'Bonjour,', intro, '',
+    ...demandes.flatMap(x => [`• ${ligne(x, b)}`, `  ${lien(x)}`]), '', '--',
+    ar ? 'يصلك هذا البريد لأن الطلب من مسارك.' : 'Tu reçois cet email parce que la demande vient de ton parcours.',
+    `${ar ? 'إيقاف تنبيهات البريد' : 'Ne plus recevoir les alertes par email'}${ar ? ': ' : ' : '}${desabo}`].join('\n');
+  return { sujet, html, texte, desabo };
+}
+
 // Messages non lus depuis 30 minutes : qui t'a écrit, et un bouton pour répondre (jamais le contenu)
 export function rendreMessages(n: number, noms: string[], langue: Langue, site: string, token: string): Courriel {
   const ar = langue === 'ar', f = ar ? HTML_AR : HTML, b = ar ? BRUT_AR : BRUT;
@@ -1914,6 +1970,33 @@ async function jobAlertes(env: Env): Promise<Response> {
   return json(b);
 }
 
+// Demandes des étudiants : un email aux lauréats du parcours, une fois par jour au plus (la base choisit qui)
+async function jobDemandes(env: Env): Promise<Response> {
+  const f = facteur(env);
+  if (!f.pret) return json({ skipped: 'email' });
+  const dest = ((await rpc(env, 'demandes_a_signaler', { p_max: 100 })) || []) as { id: string; email: string; langue: string; token: string; demandes: DemandeAlerte[] }[];
+  const b: { sent: number; errors: number; via?: string } = { sent: 0, errors: 0 };
+  if (!dest.length) return json(b);
+  const envoyes: string[] = [];
+  const limite = Date.now() + 100_000;
+  await parallele(dest, f.paralleles, async x => {
+    if (Date.now() > limite) return;
+    const demandes = (Array.isArray(x.demandes) ? x.demandes : []).filter(d => estUuid(d?.id) && txt(d.titre)).slice(0, 5);
+    if (!demandes.length || !x.email || !x.token || !estUuid(x.id)) { b.errors++; return; }
+    try {
+      if (await f.envoyer(x.email, rendreDemandes(demandes, langueDe(x.langue), env.site, x.token))) { b.sent++; envoyes.push(x.id); }
+      else b.errors++;
+    } catch (e) {
+      b.errors++;
+      console.error('notifier : email de demandes impossible', e instanceof Error ? e.message : String(e));
+    }
+  });
+  await f.fermer();
+  b.via = f.via();
+  if (envoyes.length) await rpc(env, 'demandes_signalees', { p_ids: envoyes });
+  return json(b);
+}
+
 // Messages non lus depuis 30 minutes : un email, toutes les 6 heures au plus par personne
 async function jobMessages(env: Env): Promise<Response> {
   const f = facteur(env);
@@ -2001,7 +2084,7 @@ export async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return json({ error: 'Méthode non autorisée' }, 405);
   let job: unknown;
   try { job = (await req.json())?.job; } catch { return json({ error: 'Requête invalide' }, 400); }
-  if (typeof job !== 'string' || !['cle', 'test', 'push', 'resume', 'essai_email', 'alertes', 'enquetes', 'messages', 'relances'].includes(job)) return json({ error: 'Tâche inconnue' }, 400);
+  if (typeof job !== 'string' || !['cle', 'test', 'push', 'resume', 'essai_email', 'alertes', 'enquetes', 'messages', 'relances', 'demandes'].includes(job)) return json({ error: 'Tâche inconnue' }, 400);
   const env = lireEnv();
   if (!env.url || !env.cle) {
     console.error('notifier : SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY manquant');
@@ -2016,6 +2099,7 @@ export async function handler(req: Request): Promise<Response> {
     if (job === 'enquetes') return await jobEnquetes(env);
     if (job === 'messages') return await jobMessages(env);
     if (job === 'relances') return await jobRelances(env);
+    if (job === 'demandes') return await jobDemandes(env);
     return job === 'push' ? await jobPush(env) : await jobResume(env);
   } catch (e) {
     console.error(`notifier : échec de « ${job} »`, e instanceof Error ? e.message : String(e));

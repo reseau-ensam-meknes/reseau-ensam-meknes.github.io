@@ -12,7 +12,7 @@ export const MOTIFS = [
   ['spam', 'Spam ou publicité'], ['arnaque', 'Arnaque ou offre douteuse'], ['faux', 'Faux profil ou fausse information'],
   ['inapproprie', 'Propos déplacés ou offensants'], ['harcelement', 'Harcèlement'], ['donnees', 'Données personnelles exposées'], ['autre', 'Autre chose'],
 ];
-const CIBLES = { offre: 'cette offre', commentaire: 'ce commentaire', question: 'cette question', reponse: 'cette réponse', message: 'ce message', profil: 'ce profil', entretien: 'ce témoignage d’entretien', avis: 'cet avis', guide: 'cette rubrique', cafe: 'ce café', startup: 'cette startup', relecture: 'cette relecture', prive: 'ce message' };
+const CIBLES = { offre: 'cette offre', commentaire: 'ce commentaire', question: 'cette question', reponse: 'cette réponse', message: 'ce message', profil: 'ce profil', entretien: 'ce témoignage d’entretien', avis: 'cet avis', guide: 'cette rubrique', cafe: 'ce café', startup: 'cette startup', relecture: 'cette relecture', prive: 'ce message', demande: 'cette demande' };
 
 // type : offre, commentaire, question, reponse, message, profil, entretien, avis, guide, cafe, startup, relecture
 export function SignalerBtn({ ctx, type, id, small }) {

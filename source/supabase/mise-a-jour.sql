@@ -281,9 +281,51 @@ alter table public.placements add column if not exists partage_ok boolean defaul
 -- Une seule réussite par étudiant et par saison (une déclaration refusée par l'étudiant ne compte pas)
 create unique index if not exists placements_une_par_saison on public.placements (student_id, saison) where status <> 'refuse';
 
+-- ---------------------------------------------------------------------
+-- Demandes des étudiants : l'étudiant (ou le lauréat qui cherche un emploi) dit ce qu'il cherche,
+-- CV joint ; des lauréats lui proposent leur aide (recruter, encadrer, recommander) ; il en accepte
+-- une : c'est un match. Quand il a commencé, le lauréat le déclare et l'étudiant confirme
+-- (table placements, demande_id) : la demande est pourvue et la réussite annoncée.
+-- Règles et suites : voir « Demandes des étudiants » plus bas.
+-- ---------------------------------------------------------------------
+create table if not exists public.demandes (
+  id uuid primary key default gen_random_uuid(),
+  auteur_id uuid not null references public.profiles(id) on delete cascade,
+  type text not null check (type in ('stage','pfe','etranger','emploi')),
+  titre text not null check (char_length(titre) between 4 and 120),
+  details text not null check (char_length(details) between 20 and 1500),
+  lieu text check (char_length(lieu) <= 120),
+  debut date,
+  duree text check (char_length(duree) <= 40),
+  status text not null default 'ouverte' check (status in ('ouverte','match','pourvue','fermee')),
+  laureat_id uuid references public.profiles(id) on delete set null,
+  proposition_id uuid,
+  match_at timestamptz,
+  relancee_at timestamptz not null default now(),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+-- aide : recrute (dans son équipe) | encadre (le stage ou le PFE) | recommande (à son entreprise)
+create table if not exists public.propositions (
+  id uuid primary key default gen_random_uuid(),
+  demande_id uuid not null references public.demandes(id) on delete cascade,
+  laureat_id uuid not null references public.profiles(id) on delete cascade,
+  aide text not null check (aide in ('recrute','encadre','recommande')),
+  entreprise text not null check (char_length(entreprise) between 2 and 120),
+  poste text check (char_length(poste) <= 140),
+  message text not null check (char_length(message) between 10 and 1000),
+  status text not null default 'envoyee' check (status in ('envoyee','acceptee','declinee','retiree','close')),
+  repondu_at timestamptz,
+  created_at timestamptz default now(),
+  unique (demande_id, laureat_id)
+);
+-- Une réussite venue d'une demande : laquelle, et ce que le lauréat a fait (affiché dans l'annonce)
+alter table public.placements add column if not exists demande_id uuid references public.demandes(id) on delete set null;
+alter table public.placements add column if not exists aide text check (aide in ('recrute','encadre','recommande'));
+
 create or replace function public.protect_placement() returns trigger
 language plpgsql security definer set search_path = public as $$
-declare v_author uuid; v_status text; v_merci text; v_note int; v_ent text; v_ville text; v_pays text; v_type text; v_partage boolean;
+declare v_author uuid; v_status text; v_merci text; v_note int; v_ent text; v_ville text; v_pays text; v_type text; v_partage boolean; v_d record;
 begin
   if tg_op = 'INSERT' then
     if auth.uid() is null or public.is_admin() then return new; end if;
@@ -301,6 +343,15 @@ begin
     if new.offer_id is not null then
       select author_id into v_author from public.offers where id = new.offer_id;
       if v_author is distinct from auth.uid() then raise exception 'Seul l’auteur de l’offre peut déclarer ce recrutement.'; end if;
+    end if;
+    -- Depuis une demande : seulement le lauréat du match, pour l'auteur de la demande
+    new.aide := null;
+    if new.demande_id is not null then
+      select d.status, d.auteur_id, d.laureat_id, d.proposition_id into v_d from public.demandes d where d.id = new.demande_id;
+      if v_d.status is distinct from 'match' or v_d.laureat_id is distinct from auth.uid() or v_d.auteur_id is distinct from new.student_id then
+        raise exception 'Cette demande n’est pas en cours avec toi.';
+      end if;
+      select x.aide into new.aide from public.propositions x where x.id = v_d.proposition_id;
     end if;
     new.source := 'plateforme'; new.status := 'en_attente'; new.partage_ok := false;
     return new;
@@ -1109,9 +1160,9 @@ begin
     end if;
   elsif tg_table_name = 'placements' then
     if tg_op = 'INSERT' and new.status = 'en_attente' then
-      perform public.pousser(new.student_id, 'recrutement_a_confirmer', jsonb_build_object('nom', (select full_name from public.profiles where id = new.laureat_id), 'entreprise', new.entreprise));
+      perform public.pousser(new.student_id, 'recrutement_a_confirmer', jsonb_build_object('nom', (select full_name from public.profiles where id = new.laureat_id), 'entreprise', new.entreprise, 'aide', new.aide));
     elsif tg_op = 'UPDATE' and old.status = 'en_attente' and new.status = 'confirme' then
-      perform public.pousser(new.laureat_id, 'recrutement_confirme', jsonb_build_object('nom', (select full_name from public.profiles where id = new.student_id), 'entreprise', new.entreprise));
+      perform public.pousser(new.laureat_id, 'recrutement_confirme', jsonb_build_object('nom', (select full_name from public.profiles where id = new.student_id), 'entreprise', new.entreprise, 'aide', new.aide));
     end if;
   elsif tg_table_name = 'invitations' then
     perform public.pousser(new.student_id, 'invitation', jsonb_build_object('nom', (select full_name from public.profiles where id = new.laureat_id), 'titre', (select titre from public.offers where id = new.offer_id)));
@@ -1506,7 +1557,9 @@ language sql stable security definer set search_path = public as $$
     exists (select 1 from public.demandes_contact d where d.status = 'acceptee'
       and ((d.demandeur_id = p_viewer and d.cible_id = p_owner) or (d.demandeur_id = p_owner and d.cible_id = p_viewer)))
     or exists (select 1 from public.applications a join public.offers o on o.id = a.offer_id
-      where a.student_id = p_owner and o.author_id = p_viewer));
+      where a.student_id = p_owner and o.author_id = p_viewer)
+    or exists (select 1 from public.propositions x join public.demandes d on d.id = x.demande_id
+      where x.status = 'acceptee' and ((d.auteur_id = p_owner and x.laureat_id = p_viewer) or (d.auteur_id = p_viewer and x.laureat_id = p_owner))));
 $$;
 
 create or replace function public.protect_demande_contact() returns trigger
@@ -1578,6 +1631,9 @@ begin
   if p_owner = auth.uid() or a = 'tous' then return true; end if;
   if public.is_admin() then return true; end if;
   if a = 'laureats' and exists (select 1 from public.profiles where id = auth.uid() and role = 'laureat') then return true; end if;
+  -- CV joint à une demande ouverte ou en cours : les lauréats le voient le temps de la demande
+  if p_champ = 'cv' and exists (select 1 from public.demandes d where d.auteur_id = p_owner and d.status in ('ouverte','match'))
+     and exists (select 1 from public.profiles where id = auth.uid() and role = 'laureat') then return true; end if;
   return public.en_relation(auth.uid(), p_owner);
 end $$;
 
@@ -2581,6 +2637,10 @@ begin
   if exists (select 1 from public.offers where created_at > now() - interval '3 hours' and status = 'ouverte') then
     perform public.appeler_notifier('alertes');
   end if;
+  -- Demandes des 3 derniers jours : chaque lauréat du parcours reçoit au plus un email par jour (la base choisit qui)
+  if exists (select 1 from public.demandes where created_at > now() - interval '3 days' and status = 'ouverte') then
+    perform public.appeler_notifier('demandes');
+  end if;
 end $$;
 revoke all on function public.alertes_horaires() from public, anon, authenticated;
 
@@ -2837,7 +2897,9 @@ language sql stable security definer set search_path = public as $$
       or exists (select 1 from public.parrainages x
         where (x.parrain_id = p_moi and x.filleul_id = p_autre) or (x.parrain_id = p_autre and x.filleul_id = p_moi))
       or exists (select 1 from public.relectures_cv r where r.reviewer_id is not null and r.status <> 'annulee'
-        and ((r.student_id = p_moi and r.reviewer_id = p_autre) or (r.student_id = p_autre and r.reviewer_id = p_moi))));
+        and ((r.student_id = p_moi and r.reviewer_id = p_autre) or (r.student_id = p_autre and r.reviewer_id = p_moi)))
+      or exists (select 1 from public.propositions x join public.demandes d on d.id = x.demande_id where x.status in ('envoyee','acceptee')
+        and ((d.auteur_id = p_moi and x.laureat_id = p_autre) or (d.auteur_id = p_autre and x.laureat_id = p_moi))));
 $$;
 revoke all on function public.peut_discuter(uuid, uuid) from public, anon;
 grant execute on function public.peut_discuter(uuid, uuid) to authenticated;
@@ -2907,6 +2969,7 @@ grant execute on function public.marquer_lus(uuid) to authenticated;
 create or replace function public.notif_message() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
+  if current_setting('ensam.sans_push_message', true) = 'on' then return null; end if;
   if exists (select 1 from public.messages m where m.author_id = new.author_id and m.dest_id = new.dest_id and m.id <> new.id
       and m.lu_at is null and m.created_at > now() - interval '10 minutes') then
     return null;
@@ -2923,7 +2986,7 @@ create trigger trg_notif after insert on public.messages for each row execute fu
 -- Signalement d'un message privé : l'administration le voit alors (et seulement alors)
 alter table public.signalements drop constraint if exists signalements_cible_type_check;
 alter table public.signalements add constraint signalements_cible_type_check
-  check (cible_type in ('offre','commentaire','question','reponse','message','profil','entretien','avis','guide','cafe','startup','relecture','prive'));
+  check (cible_type in ('offre','commentaire','question','reponse','message','profil','entretien','avis','guide','cafe','startup','relecture','prive','demande'));
 
 create or replace function public.message_signale(p_id uuid) returns boolean
 language sql stable security definer set search_path = public as $$
@@ -3135,6 +3198,312 @@ do $$ begin
   if exists (select 1 from pg_roles where rolname = 'service_role') then
     grant execute on function public.comptes_a_relancer(int) to service_role;
     grant execute on function public.relances_envoyees(uuid[]) to service_role;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Demandes des étudiants (tables plus haut, près des réussites)
+--   1. L'étudiant publie ce qu'il cherche (2 demandes en cours au plus, CV obligatoire).
+--      Types selon l'année : 3A/4A stage ou étranger ; 5A PFE, étranger ou emploi ;
+--      jeune diplômé ou lauréat qui cherche un emploi : emploi.
+--   2. Un lauréat propose son aide ; son message arrive aussi dans la messagerie de l'étudiant.
+--   3. L'étudiant en accepte une : match (les autres sont closes). Chacun peut arrêter :
+--      la demande se rouvre.
+--   4. Le lauréat déclare le démarrage (placements.demande_id), l'étudiant confirme :
+--      la demande est pourvue.
+-- Une demande ouverte sans nouvelle depuis 60 jours se met en pause (relancee_at) : l'étudiant la relance.
+-- ---------------------------------------------------------------------
+create or replace function public.types_demande(p_role text, p_niveau int, p_recherche boolean) returns text[]
+language sql immutable as $$
+  select case
+    when p_role = 'laureat' then case when coalesce(p_recherche, false) then '{emploi}'::text[] else '{}'::text[] end
+    when p_role is distinct from 'etudiant' then '{}'::text[]
+    when p_niveau in (3, 4) then '{stage,etranger}'::text[]
+    when p_niveau = 5 then '{pfe,etranger,emploi}'::text[]
+    when p_niveau >= 6 then '{emploi}'::text[]
+    else '{}'::text[] end;
+$$;
+
+create or replace function public.protect_demande() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_p record; v public.demandes;
+begin
+  -- Suites automatiques (match, pourvue) : faites par la base elle-même
+  if current_setting('ensam.demande_suite', true) = 'on' then return new; end if;
+  if auth.uid() is null or public.is_admin() then
+    if tg_op = 'UPDATE' then new.updated_at := now(); end if;
+    return new;
+  end if;
+  select role, promo, en_recherche, cv_path into v_p from public.profiles where id = auth.uid();
+  if tg_op = 'INSERT' then
+    new.auteur_id := auth.uid();
+    if not (new.type = any(public.types_demande(v_p.role, public.niveau_de(v_p.promo, public.saison_courante()), v_p.en_recherche))) then
+      raise exception 'Ce type de demande ne correspond pas à ton année.';
+    end if;
+    if v_p.cv_path is null then raise exception 'Dépose d’abord ton CV en PDF dans ton profil.'; end if;
+    if (select count(*) from public.demandes d where d.auteur_id = auth.uid() and d.status in ('ouverte','match')) >= 2 then
+      raise exception 'Tu as déjà 2 demandes en cours. Ferme-en une avant d’en publier une autre.';
+    end if;
+    new.status := 'ouverte'; new.laureat_id := null; new.proposition_id := null; new.match_at := null;
+    new.relancee_at := now(); new.created_at := now(); new.updated_at := now();
+    return new;
+  end if;
+  -- Ensuite, seul l'auteur change sa demande
+  if auth.uid() is distinct from old.auteur_id then raise exception 'Action non autorisée pour ton compte.'; end if;
+  v := new;
+  new := old;
+  new.updated_at := now();
+  if old.status = 'ouverte' then
+    new.titre := v.titre; new.details := v.details; new.lieu := v.lieu; new.debut := v.debut; new.duree := v.duree;
+    if v.type = any(public.types_demande(v_p.role, public.niveau_de(v_p.promo, public.saison_courante()), v_p.en_recherche)) then new.type := v.type; end if;
+    if v.relancee_at is distinct from old.relancee_at then new.relancee_at := now(); end if;
+  end if;
+  if v.status is distinct from old.status then
+    if old.status in ('ouverte','match') and v.status = 'fermee' then new.status := 'fermee';
+    elsif old.status = 'match' and v.status = 'ouverte' then new.status := 'ouverte';
+    elsif old.status = 'fermee' and v.status = 'ouverte' then
+      if (select count(*) from public.demandes d where d.auteur_id = auth.uid() and d.status in ('ouverte','match')) >= 2 then
+        raise exception 'Tu as déjà 2 demandes en cours. Ferme-en une avant d’en rouvrir une autre.';
+      end if;
+      new.status := 'ouverte';
+    end if;
+    if new.status = 'ouverte' and old.status <> 'ouverte' then
+      new.laureat_id := null; new.proposition_id := null; new.match_at := null; new.relancee_at := now();
+    end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_demande on public.demandes;
+create trigger trg_protect_demande before insert or update on public.demandes
+  for each row execute function public.protect_demande();
+
+create or replace function public.protect_proposition() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_d record; v public.propositions;
+begin
+  if current_setting('ensam.demande_suite', true) = 'on' then return new; end if;
+  if auth.uid() is null or public.is_admin() then return new; end if;
+  if tg_op = 'INSERT' then
+    select d.status, d.auteur_id into v_d from public.demandes d where d.id = new.demande_id;
+    if not exists (select 1 from public.profiles where id = auth.uid() and role = 'laureat') then raise exception 'Seul un lauréat peut proposer son aide.'; end if;
+    if v_d.status is distinct from 'ouverte' then raise exception 'Cette demande n’est plus ouverte.'; end if;
+    if v_d.auteur_id = auth.uid() then raise exception 'C’est ta propre demande.'; end if;
+    if exists (select 1 from public.blocages b where (b.user_id = auth.uid() and b.bloque_id = v_d.auteur_id) or (b.user_id = v_d.auteur_id and b.bloque_id = auth.uid())) then
+      raise exception 'Action non autorisée pour ton compte.';
+    end if;
+    new.laureat_id := auth.uid(); new.status := 'envoyee'; new.repondu_at := null; new.created_at := now();
+    return new;
+  end if;
+  select d.status, d.auteur_id into v_d from public.demandes d where d.id = old.demande_id;
+  v := new;
+  new := old;
+  if auth.uid() = old.laureat_id then
+    -- Le lauréat retire son aide (avant ou après le match), la modifie tant qu'elle attend, ou la propose à nouveau
+    if v.status = 'retiree' and old.status in ('envoyee','acceptee') and v_d.status <> 'pourvue' then
+      new.status := 'retiree'; new.repondu_at := now();
+    elsif (old.status = 'envoyee' or (old.status = 'retiree' and v.status = 'envoyee')) and v_d.status = 'ouverte' then
+      new.aide := v.aide; new.entreprise := v.entreprise; new.poste := v.poste; new.message := v.message;
+      if old.status = 'retiree' then new.status := 'envoyee'; new.repondu_at := null; new.created_at := now(); end if;
+    end if;
+  elsif auth.uid() = v_d.auteur_id then
+    -- L'étudiant accepte une aide (une seule) ou dit non merci
+    if old.status = 'envoyee' and v.status = 'acceptee' then
+      if v_d.status <> 'ouverte' then raise exception 'Tu as déjà accepté une aide pour cette demande.'; end if;
+      new.status := 'acceptee'; new.repondu_at := now();
+    elsif old.status = 'envoyee' and v.status = 'declinee' then
+      new.status := 'declinee'; new.repondu_at := now();
+    end if;
+  else
+    raise exception 'Action non autorisée pour ton compte.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_proposition on public.propositions;
+create trigger trg_protect_proposition before insert or update on public.propositions
+  for each row execute function public.protect_proposition();
+
+-- Ce qui suit une aide proposée, acceptée ou retirée
+create or replace function public.suite_proposition() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_d record; v_neuve boolean; v_avant text := coalesce(current_setting('ensam.demande_suite', true), '');
+  v_push text := coalesce(current_setting('ensam.sans_push_message', true), '');
+begin
+  select d.id, d.auteur_id, d.titre, d.status into v_d from public.demandes d where d.id = new.demande_id;
+  if tg_op = 'UPDATE' then v_neuve := old.status = 'retiree' and new.status = 'envoyee'; else v_neuve := true; end if;
+  if v_neuve then
+    -- Le mot du lauréat arrive aussi dans la messagerie de l'étudiant (et par email s'il ne le lit pas)
+    perform set_config('ensam.sans_push_message', 'on', true);
+    begin
+      insert into public.messages (author_id, dest_id, type, body) values (new.laureat_id, v_d.auteur_id, 'texte', left(new.message, 2000));
+    exception when others then null;
+    end;
+    perform set_config('ensam.sans_push_message', v_push, true);
+    perform public.pousser(v_d.auteur_id, 'demande_proposition', jsonb_build_object('nom', (select full_name from public.profiles where id = new.laureat_id), 'titre', v_d.titre, 'entreprise', new.entreprise, 'demande', v_d.id));
+    return null;
+  end if;
+  if new.status = old.status then return null; end if;
+  perform set_config('ensam.demande_suite', 'on', true);
+  if new.status = 'acceptee' then
+    update public.demandes set status = 'match', laureat_id = new.laureat_id, proposition_id = new.id, match_at = now(), updated_at = now() where id = new.demande_id;
+    update public.propositions set status = 'close', repondu_at = now() where demande_id = new.demande_id and id <> new.id and status = 'envoyee';
+    perform public.pousser(new.laureat_id, 'demande_match', jsonb_build_object('nom', (select full_name from public.profiles where id = v_d.auteur_id), 'titre', v_d.titre, 'demande', v_d.id));
+  elsif old.status = 'acceptee' and new.status = 'retiree' then
+    update public.demandes set status = 'ouverte', laureat_id = null, proposition_id = null, match_at = null, relancee_at = now(), updated_at = now()
+      where id = new.demande_id and status = 'match' and proposition_id = new.id;
+    update public.placements set status = 'refuse' where demande_id = new.demande_id and laureat_id = new.laureat_id and status = 'en_attente';
+    perform public.pousser(v_d.auteur_id, 'demande_rouverte', jsonb_build_object('nom', (select full_name from public.profiles where id = new.laureat_id), 'titre', v_d.titre, 'demande', v_d.id));
+  end if;
+  perform set_config('ensam.demande_suite', v_avant, true);
+  return null;
+end $$;
+drop trigger if exists trg_suite_proposition on public.propositions;
+create trigger trg_suite_proposition after insert or update on public.propositions
+  for each row execute function public.suite_proposition();
+
+-- Ce qui suit une demande arrêtée, rouverte, fermée ou pourvue
+create or replace function public.suite_demande() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_avant text := coalesce(current_setting('ensam.demande_suite', true), '');
+begin
+  if new.status = old.status then return null; end if;
+  perform set_config('ensam.demande_suite', 'on', true);
+  -- v_avant = 'on' : le lauréat s'est retiré (suite_proposition a déjà tout fait et prévenu l'étudiant)
+  if old.status = 'match' and new.status in ('ouverte','fermee') and v_avant is distinct from 'on' then
+    -- L'étudiant arrête le match : l'aide acceptée se termine, une déclaration en attente aussi
+    update public.propositions set status = case when new.status = 'ouverte' then 'declinee' else 'close' end, repondu_at = now()
+      where id = old.proposition_id and status = 'acceptee';
+    update public.placements set status = 'refuse' where demande_id = new.id and status = 'en_attente';
+    perform public.pousser(old.laureat_id, 'demande_rouverte', jsonb_build_object('nom', (select full_name from public.profiles where id = new.auteur_id), 'titre', new.titre, 'demande', new.id));
+  end if;
+  if new.status in ('fermee','pourvue') then
+    update public.propositions set status = 'close', repondu_at = now() where demande_id = new.id and status = 'envoyee';
+  end if;
+  perform set_config('ensam.demande_suite', v_avant, true);
+  return null;
+end $$;
+drop trigger if exists trg_suite_demande on public.demandes;
+create trigger trg_suite_demande after update on public.demandes
+  for each row execute function public.suite_demande();
+
+-- Démarrage confirmé par l'étudiant (ou par l'administration) : la demande est pourvue
+create or replace function public.demande_reussie() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_avant text := coalesce(current_setting('ensam.demande_suite', true), '');
+begin
+  if new.demande_id is null or new.status <> 'confirme' or (tg_op = 'UPDATE' and old.status = 'confirme') then return null; end if;
+  perform set_config('ensam.demande_suite', 'on', true);
+  update public.demandes set status = 'pourvue', updated_at = now() where id = new.demande_id and status in ('ouverte','match');
+  perform set_config('ensam.demande_suite', v_avant, true);
+  return null;
+end $$;
+drop trigger if exists trg_demande_reussie on public.placements;
+create trigger trg_demande_reussie after insert or update on public.placements
+  for each row execute function public.demande_reussie();
+
+-- Nouvelle demande : les lauréats du même parcours qui ont activé les notifications sont prévenus
+create or replace function public.notif_demande() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_a record;
+begin
+  select full_name, filiere into v_a from public.profiles where id = new.auteur_id;
+  insert into public.push_queue (user_id, kind, data)
+  select p.id, 'demande_nouvelle', jsonb_build_object('nom', split_part(v_a.full_name, ' ', 1), 'titre', new.titre, 'type', new.type, 'demande', new.id)
+  from public.profiles p
+  where p.role = 'laureat' and p.id <> new.auteur_id and public.proximite_filiere(p.filiere, v_a.filiere) >= 1
+    and exists (select 1 from public.push_subscriptions s where s.user_id = p.id)
+    and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = new.auteur_id) or (b.user_id = new.auteur_id and b.bloque_id = p.id))
+  limit 60;
+  return null;
+exception when others then return null;
+end $$;
+drop trigger if exists trg_notif on public.demandes;
+create trigger trg_notif after insert on public.demandes for each row execute function public.notif_demande();
+
+drop trigger if exists trg_limite on public.demandes;
+create trigger trg_limite before insert on public.demandes for each row execute function public.limiter('auteur_id', '5', '1 day', 'titre');
+drop trigger if exists trg_limite on public.propositions;
+create trigger trg_limite before insert on public.propositions for each row execute function public.limiter('laureat_id', '20', '1 day');
+
+-- Qui voit quoi : la demande, son auteur et les lauréats ; une aide, le lauréat qui la propose et l'auteur de la demande
+alter table public.demandes enable row level security;
+alter table public.propositions enable row level security;
+drop policy if exists "lecture membres" on public.demandes;
+drop policy if exists "ecriture proprietaire" on public.demandes;
+drop policy if exists "modif proprietaire" on public.demandes;
+drop policy if exists "suppression proprietaire" on public.demandes;
+create policy "lecture membres" on public.demandes for select to authenticated using (
+  auteur_id = auth.uid() or public.is_admin() or exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'laureat'));
+create policy "ecriture proprietaire" on public.demandes for insert to authenticated with check (auteur_id = auth.uid());
+create policy "modif proprietaire" on public.demandes for update to authenticated using (auteur_id = auth.uid() or public.is_admin());
+create policy "suppression proprietaire" on public.demandes for delete to authenticated using (
+  (auteur_id = auth.uid() and status in ('ouverte','fermee')) or public.is_admin());
+drop policy if exists "lecture membres" on public.propositions;
+drop policy if exists "ecriture proprietaire" on public.propositions;
+drop policy if exists "modif proprietaire" on public.propositions;
+drop policy if exists "suppression proprietaire" on public.propositions;
+create policy "lecture membres" on public.propositions for select to authenticated using (
+  laureat_id = auth.uid() or public.is_admin() or exists (select 1 from public.demandes d where d.id = demande_id and d.auteur_id = auth.uid()));
+create policy "ecriture proprietaire" on public.propositions for insert to authenticated with check (laureat_id = auth.uid());
+create policy "modif proprietaire" on public.propositions for update to authenticated using (
+  laureat_id = auth.uid() or public.is_admin() or exists (select 1 from public.demandes d where d.id = demande_id and d.auteur_id = auth.uid()));
+create policy "suppression proprietaire" on public.propositions for delete to authenticated using (public.is_admin());
+do $$
+declare t text;
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    foreach t in array array['demandes','propositions'] loop
+      if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
+        execute format('alter publication supabase_realtime add table public.%I', t);
+      end if;
+    end loop;
+  end if;
+end $$;
+
+-- Email aux lauréats : les nouvelles demandes de leur parcours, une fois par jour au plus
+alter table public.notif_etat add column if not exists demandes_at timestamptz;
+
+create or replace function public.demande_pour(d public.demandes, p public.profiles) returns boolean
+language sql stable as $$
+  select d.status = 'ouverte' and d.auteur_id <> p.id and p.role = 'laureat'
+    and d.relancee_at > now() - interval '60 days'
+    and public.proximite_filiere(p.filiere, (select a.filiere from public.profiles a where a.id = d.auteur_id)) >= 1
+    and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = d.auteur_id) or (b.user_id = d.auteur_id and b.bloque_id = p.id));
+$$;
+
+create or replace function public.demandes_a_signaler(p_max int default 100)
+returns table (id uuid, email text, langue text, token uuid, demandes jsonb)
+language plpgsql security definer set search_path = public as $$
+declare v_s int := public.saison_courante();
+begin
+  insert into public.notif_etat (user_id) select p.id from public.profiles p on conflict (user_id) do nothing;
+  return query
+    select x.id, x.email, x.langue, x.token, x.demandes from (
+      select p.id, u.email::text as email, p.langue, n.token, n.demandes_at,
+        (select jsonb_agg(jsonb_build_object('id', d.id, 'titre', d.titre, 'type', d.type, 'lieu', d.lieu,
+            'prenom', split_part(a.full_name, ' ', 1), 'niveau', public.niveau_de(a.promo, v_s), 'role', a.role, 'filiere', a.filiere) order by d.created_at desc)
+          from (select d2.* from public.demandes d2
+            where d2.created_at > greatest(coalesce(n.demandes_at, p.created_at), p.created_at, now() - interval '3 days')
+              and public.demande_pour(d2, p)
+            order by d2.created_at desc limit 5) d join public.profiles a on a.id = d.auteur_id) as demandes
+      from public.profiles p join auth.users u on u.id = p.id join public.notif_etat n on n.user_id = p.id
+      where p.role = 'laureat' and p.alertes_email and u.email is not null
+        and (n.demandes_at is null or n.demandes_at < now() - interval '20 hours')) x
+    where x.demandes is not null
+    order by x.demandes_at nulls first
+    limit greatest(0, least(p_max, 200));
+end $$;
+revoke all on function public.demandes_a_signaler(int) from public, anon, authenticated;
+
+create or replace function public.demandes_signalees(p_ids uuid[]) returns void
+language sql security definer set search_path = public as $$
+  update public.notif_etat set demandes_at = now() where user_id = any(p_ids);
+$$;
+revoke all on function public.demandes_signalees(uuid[]) from public, anon, authenticated;
+
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.demandes_a_signaler(int) to service_role;
+    grant execute on function public.demandes_signalees(uuid[]) to service_role;
   end if;
 end $$;
 

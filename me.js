@@ -94,10 +94,12 @@ export function ParcoursPage(ctx) {
 export function ConfirmRecruit({ ctx, pl, helper }) {
   const { store, act } = ctx;
   const o = pl.offer_id ? store.byId('offers', pl.offer_id) : null;
+  // Depuis une demande : le lauréat du match déclare le démarrage (recrutement, encadrement ou recommandation)
+  const d = pl.demande_id ? store.byId('demandes', pl.demande_id) : null;
   return html`<div class="confirm-card">
     <div class="confirm-top"><${CompanyLogo} name=${pl.entreprise} size=${48}/>
-      <div><p class="eyebrow">À confirmer</p><h2>${helper?.full_name || 'Un lauréat'} indique t’avoir recruté(e) chez ${pl.entreprise}</h2>
-        <p class="muted small">${o ? o.titre : TYPES[pl.type]?.long}. Une fois confirmé, ta réussite est vérifiée des deux côtés et compte dans le suivi de ta promo.</p></div></div>
+      <div><p class="eyebrow">À confirmer</p><h2>${pl.demande_id ? `${helper?.full_name || 'Un lauréat'} indique que tu as commencé chez ${pl.entreprise}` : `${helper?.full_name || 'Un lauréat'} indique t’avoir recruté(e) chez ${pl.entreprise}`}</h2>
+        <p class="muted small">${o ? o.titre : d ? html`<span translate="no" dir="auto">${d.titre}</span>` : TYPES[pl.type]?.long}. Une fois confirmé, ta réussite est vérifiée des deux côtés et compte dans le suivi de ta promo.</p></div></div>
     <div class="row-end">
       <button class="btn ghost" onClick=${() => act(async () => { await store.update('placements', pl.id, { status: 'refuse' }); toast('C’est noté. Le lauréat sera informé.'); })}>Ce n’est pas le cas</button>
       <button class="btn primary" onClick=${() => act(async () => {
