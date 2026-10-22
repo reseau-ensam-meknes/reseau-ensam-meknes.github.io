@@ -87,3 +87,17 @@ test('le CV remplit les champs vides du profil, sans rien écraser', () => {
   assert.equal(complementsCV({ role: 'etudiant', poste: null, entreprise: null }, { poste: 'Stagiaire', entreprise: 'Renault' }).poste, undefined, 'pas de poste pour un étudiant');
   assert.deepEqual(propositionCV({ role: 'admin' }, cv), {});
 });
+
+test('CV d’étudiant : l’année d’études écrite donne la promo', () => {
+  const quatre = `Sara EL IDRISSI
+Élève ingénieure en 4ème année – ENSAM Meknès
+sara.elidrissi@gmail.com | 06 70 11 22 33 | Meknès
+FORMATION
+ENSAM Meknès – Génie Industriel : Excellence Opérationnelle (en cours)
+COMPÉTENCES
+Lean, Python`;
+  const r = parseLinkedin(quatre, OCT_2026);
+  assert.equal(r.role, 'etudiant');
+  assert.equal(r.promo, 2028, '4A en 2026-2027 : diplôme en 2028');
+  assert.equal(r.filiere, 'Génie Industriel : Excellence Opérationnelle');
+});
