@@ -1,11 +1,12 @@
 // CV en PDF et relecture de CV : l'étudiant dépose son CV et choisit qui le voit, demande une relecture ;
 // un lauréat la prend, commente rubrique par rubrique, rédige une synthèse et la rend ; l'étudiant dit merci.
-import { html, useState, useRef } from './vendor/preact-htm.js';
+import { html, useState, useRef, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, toast, injectCSS } from './ui.js';
 import { addAR, t as tr } from './i18n.js';
 import { timeAgo, niveauOf, NIVEAUX, proximiteFiliere } from './logic.js';
 import { CV_MAX } from './store.js';
 import { MessageBtn } from './messages.js';
+import { lireCV, propositionCV, corrigeProfil } from './lire-cv.js';
 
 const firstName = p => (p?.full_name || '').split(' ')[0];
 const href = u => (/^https?:\/\//i.test(u) ? u : 'https://' + u);
@@ -56,13 +57,14 @@ export function CvButton({ ctx, p, small }) {
 export function CvCard({ ctx }) {
   const { me, store, act, data, go } = ctx;
   const input = useRef(); const [over, setOver] = useState(false); const [busy, setBusy] = useState(false); const [ask, setAsk] = useState(false);
+  const [dernier, setDernier] = useState(null);
   if (!me || me.role === 'admin') return null;
   const deposer = file => {
     if (!file) return;
     if (file.size > CV_MAX) { toast('Le fichier dépasse 2 Mo. Exporte ton CV en PDF plus léger.', 'err'); return; }
     const remplace = !!me.cv_path;
     setBusy(true);
-    act(async () => { await store.deposerCV(file); toast(remplace ? 'CV remplacé.' : 'CV déposé.'); }).finally(() => { setBusy(false); if (input.current) input.current.value = ''; });
+    act(async () => { await store.deposerCV(file); setDernier(file); toast(remplace ? 'CV remplacé.' : 'CV déposé.'); }).finally(() => { setBusy(false); if (input.current) input.current.value = ''; });
   };
   const vis = (me.visibilite || {}).cv || 'laureats';
   const mine = data.relectures_cv.filter(r => r.student_id === me.id).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
@@ -72,6 +74,7 @@ export function CvCard({ ctx }) {
 
   return html`<div class="panel cv-card">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="file"/> Mon CV</h2>${me.cv_path ? html`<span class="small muted">Mis à jour ${timeAgo(me.cv_maj || me.created_at)}</span>` : null}</div>
+    ${me.cv_path ? html`<${ControleCV} ctx=${ctx} fichier=${dernier}/>` : null}
     <input ref=${input} id="cv-file" type="file" accept="application/pdf,.pdf" hidden onChange=${e => deposer(e.target.files[0])}/>
     ${me.cv_path ? html`<div class="cv-file">
         <span class="cv-ico"><${Icon} name="file" size=${22}/></span>
@@ -99,6 +102,63 @@ export function CvCard({ ctx }) {
       ${me.cv_path && enCours < 2 && (!last || !ACTIVES.includes(last.status)) ? html`<button id="cv-ask" class=${'btn small' + (last ? ' ghost' : ' primary')} onClick=${() => setAsk(true)}>${last ? 'Nouvelle relecture' : 'Demander une relecture'}</button>` : null}
     </div>` : null}
     ${ask ? html`<${DemandeRelecture} ctx=${ctx} onClose=${() => setAsk(false)}/>` : null}
+  </div>`;
+}
+
+// Le CV contredit le profil (rôle, promo, filière) ou peut remplir ses champs vides : le membre vérifie
+// ce qu'on a lu et met son profil à jour en un clic, ou garde son profil. Chaque CV n'est lu qu'une fois sur cet appareil.
+const VU_CV = 'ensam-cv-controle';
+const cvVus = () => { try { return JSON.parse(localStorage.getItem(VU_CV) || '[]'); } catch { return []; } };
+const marquerCV = path => { try { localStorage.setItem(VU_CV, JSON.stringify([...cvVus(), path].slice(-20))); } catch { /* stockage indisponible */ } };
+const court = t => (t.length > 40 ? t.slice(0, 38).trimEnd() + '…' : t);
+export const libellesCV = e => [e.role ? (e.role === 'laureat' ? 'Lauréat(e)' : 'Étudiant(e)') : null, e.promo ? `Promo ${e.promo}` : null, e.filiere || null,
+  e.poste ? `Poste : ${court(e.poste)}` : null, e.entreprise ? `Entreprise : ${court(e.entreprise)}` : null, e.ville ? `Ville : ${e.ville}` : null,
+  e.competences ? `Compétences : ${court(e.competences.join(', '))}` : null, e.linkedin ? 'LinkedIn' : null, e.bio ? 'Bio' : null,
+  e.telephone ? 'Téléphone' : null, e.email ? 'Email de contact' : null].filter(Boolean);
+// Le texte du CV : le fichier qu'on vient de déposer, sinon celui gardé en ligne
+export async function lireCVDe(store, path, fichier) {
+  if (fichier) return lireCV(fichier);
+  const r = await fetch(await store.lienCV(path));
+  if (!r.ok) throw new Error('CV introuvable');
+  return lireCV(await r.arrayBuffer());
+}
+
+function ControleCV({ ctx, fichier }) {
+  const { me, store, act } = ctx;
+  const path = me.cv_path;
+  const [prop, setProp] = useState(null);
+  useEffect(() => {
+    setProp(null);
+    if (!path || (!fichier && cvVus().includes(path))) return;
+    let fini = false;
+    lireCVDe(store, path, fichier).then(cv => {
+      if (fini) return;
+      const e = propositionCV(me, cv);
+      // Coordonnées privées : seulement celles qui manquent
+      const co = store.coordonneesDe?.(me.id) || {};
+      if (cv.telephone && !co.telephone) e.telephone = cv.telephone;
+      if (cv.email && !co.email) e.email = cv.email;
+      if (Object.keys(e).length) setProp(e); else marquerCV(path);
+    }).catch(() => { /* CV illisible (scan en image) : rien à proposer */ });
+    return () => { fini = true; };
+  }, [path, fichier]);
+  if (!prop) return null;
+  const corrige = corrigeProfil(prop);
+  const fermer = () => { marquerCV(path); setProp(null); };
+  const appliquer = () => act(async () => {
+    const { telephone, email, ...profil } = prop;
+    if (Object.keys(profil).length) await store.update('profiles', me.id, profil);
+    if (telephone || email) {
+      const co = store.coordonneesDe?.(me.id) || {};
+      await store.enregistrerCoordonnees({ telephone: co.telephone || telephone || null, email: co.email || email || null, contact: co.contact || null });
+    }
+    marquerCV(path); setProp(null); toast('Profil mis à jour d’après ton CV.');
+  });
+  return html`<div class="cf-warn cv-controle" role="status" id="cv-controle">
+    <p><strong>${corrige ? 'Ton CV et ton profil ne disent pas la même chose.' : 'Ton CV peut compléter ton profil.'}</strong></p>
+    <p class="small"><span>${corrige ? 'Ton CV indique :' : 'Lu dans ton CV :'}</span> ${libellesCV(prop).map((x, i) => html`${i ? ' · ' : ''}<b>${x}</b>`)}</p>
+    <div class="row"><button type="button" class="btn small primary" id="cv-appliquer" onClick=${appliquer}>Mettre mon profil à jour</button>
+      <button type="button" class="btn small ghost" onClick=${fermer}>${corrige ? 'Mon profil est juste' : 'Non merci'}</button></div>
   </div>`;
 }
 

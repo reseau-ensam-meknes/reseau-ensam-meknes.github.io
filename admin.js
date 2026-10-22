@@ -8,6 +8,8 @@ import { NIVEAUX, niveauOf, timeAgo, mentorState, cleNom, norm, GUIDE_SECTIONS, 
 import { DefisAdmin } from './saison.js';
 import { AgendaAdmin } from './agenda.js';
 import { InvitationsAdmin } from './invitation.js';
+import { lireCVDe, libellesCV } from './cv.js';
+import { propositionCV, corrigeProfil } from './lire-cv.js';
 
 addAR({
   'Vue d’ensemble': 'نظرة عامة', 'Modération': 'الإشراف', 'Liste officielle': 'اللائحة الرسمية', 'Réglages': 'الإعدادات', 'Agenda': 'المفكرة',
@@ -260,6 +262,7 @@ function Membres({ ctx, comptes, toVerify }) {
   const pairs = p => (data.verifications_pairs || []).filter(v => v.laureat_id === p.id).map(v => store.byId('profiles', v.verificateur_id)).filter(x => x?.role === 'laureat' && x.verified && x.promo === p.promo);
 
   return html`
+    <${ProfilsARevoir} ctx=${ctx} members=${members}/>
     ${toVerify.length ? html`<div class="panel accent-panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="shield"/> Lauréats à vérifier <span class="count">${toVerify.length}</span></h2></div>
       <p class="muted small">Vérifie que la personne est bien diplômée de l’ENSAM Meknès (promo, filière), puis valide. Le badge rassure les étudiants. Deux lauréats vérifiés de sa promo peuvent aussi le confirmer.</p>
       <ul class="people-list verif-list">${toVerify.map(p => { const pr = pairs(p); return html`<li key=${p.id}><div class="verif-who"><${Person} p=${p} onOpen=${openProfile} sub=${`${p.filiere} · Promo ${p.promo}${p.entreprise ? ' · ' + p.entreprise : ''}`}/>
@@ -284,6 +287,52 @@ function Membres({ ctx, comptes, toVerify }) {
       ${!qq && list.length > 8 ? html`<button class="linkish small" onClick=${() => setAll(!all)}>${all ? 'Voir moins' : `Voir tous les membres (${list.length})`}</button>` : null}
     </div>`;
 }
+
+// Profils à revoir : rôle et promo qui ne vont pas ensemble (ex. « lauréat » de la promo 2027), et profils que leur CV
+// contredit. L'administration lit les CV déposés depuis son navigateur, puis corrige en un clic.
+function ProfilsARevoir({ ctx, members }) {
+  const { store, act, openProfile, saison } = ctx;
+  const [lecture, setLecture] = useState(null);
+  const [cvs, setCvs] = useState(null);
+  const an = new Date().getFullYear();
+  const incoherents = members.filter(p => (p.role === 'laureat' && p.promo > an) || (p.role === 'etudiant' && p.promo <= saison));
+  const avecCV = members.filter(p => p.cv_path);
+  if (!incoherents.length && !avecCV.length) return null;
+  const lireTous = async () => {
+    const out = []; let illisibles = 0; setLecture({ fait: 0, total: avecCV.length });
+    for (const [i, p] of avecCV.entries()) {
+      try {
+        const cv = await lireCVDe(store, p.cv_path);
+        if (!Object.keys(cv).length) illisibles++;
+        const e = propositionCV(p, cv); if (Object.keys(e).length) out.push({ p, e });
+      } catch { illisibles++; }
+      setLecture({ fait: i + 1, total: avecCV.length });
+    }
+    setCvs(Object.assign(out, { illisibles })); setLecture(null);
+  };
+  const retirer = ids => setCvs(l => l && Object.assign(l.filter(x => !ids.includes(x.p.id)), { illisibles: l.illisibles }));
+  const corriger = (p, patch, msg) => act(async () => { await store.update('profiles', p.id, patch); retirer([p.id]); toast(msg); });
+  // Tous les profils d'après leur CV, en une fois (corrections et champs vides)
+  const toutAppliquer = () => act(async () => {
+    const faits = [];
+    for (const { p, e } of cvs) { await store.update('profiles', p.id, e); faits.push(p.id); }
+    retirer(faits); toast(faits.length > 1 ? `${faits.length} profils mis à jour d’après leur CV.` : 'Profil mis à jour d’après son CV.');
+  });
+  const lignes = [...incoherents.filter(p => !cvs?.some(x => x.p.id === p.id)).map(p => ({ p, e: p.role === 'laureat' ? { role: 'etudiant' } : { role: 'laureat' }, cv: false })), ...(cvs || []).map(x => ({ ...x, cv: true }))];
+  return html`<div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="user"/> Profils à revoir ${lignes.length ? html`<span class="count">${lignes.length}</span>` : null}</h2>
+      ${avecCV.length ? html`<button class="btn small" id="adm-lire-cv" disabled=${!!lecture} onClick=${lireTous}><${Icon} name="file" size=${15}/> ${lecture ? `CV lus : ${lecture.fait}/${lecture.total}` : `Lire les CV déposés (${avecCV.length})`}</button>` : null}</div>
+    <p class="muted small">Rôle ou promo qui ne vont pas ensemble, et ce que le CV de chacun corrige ou complète. Le membre voit aussi la proposition sur son profil.</p>
+    ${cvs?.length > 1 ? html`<div class="row"><button class="btn small primary" id="adm-cv-tout" onClick=${toutAppliquer}><${Icon} name="check" size=${15}/> Tout mettre à jour d’après les CV (${cvs.length})</button></div>` : null}
+    ${lignes.length ? html`<ul class="people-list revoir-list">${lignes.map(({ p, e, cv }) => html`<li key=${p.id}>
+      <${Person} p=${p} onOpen=${openProfile} sub=${`${p.role === 'laureat' ? 'Lauréat(e)' : 'Étudiant(e)'} · Promo ${p.promo} · ${p.filiere}`}/>
+      <span class="small revoir-quoi">${cv ? html`<span>${corrigeProfil(e) ? 'Son CV indique :' : 'Son CV complète :'}</span> ${libellesCV(e).map((x, i) => html`${i ? ' · ' : ''}<b>${x}</b>`)}` : p.role === 'laureat' ? `Promo ${p.promo} pas encore diplômée` : `Promo ${p.promo} déjà diplômée`}</span>
+      <span class="spacer"></span>
+      <button class="btn small" onClick=${() => corriger(p, e, 'Profil corrigé.')}>${cv ? 'Appliquer' : e.role === 'etudiant' ? 'Passer en étudiant(e)' : 'Passer en lauréat(e)'}</button>
+    </li>`)}</ul>` : cvs && cvs.illisibles < avecCV.length ? html`<p class="small good-t"><${Icon} name="check" size=${14}/> Les CV lus confirment les profils.</p>` : null}
+    ${cvs?.illisibles ? html`<p class="small muted" id="adm-cv-illisibles">${cvs.illisibles === 1 ? '1 CV sans texte lisible (scan en image ?) : à vérifier à la main.' : `${cvs.illisibles} CV sans texte lisible (scans en image ?) : à vérifier à la main.`}</p>` : null}
+  </div>`;
+}
+injectCSS('revoir', `.revoir-list li { flex-wrap: wrap; } .revoir-quoi b { font-weight: 650; }`);
 
 // ---------------------------------------------------------------------------
 // Liste officielle : import Excel ou CSV, couverture, absents
