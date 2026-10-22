@@ -231,7 +231,9 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
   const ok = f.full_name.trim().length >= 2 && f.promo >= 1990 && f.promo <= 2040 && !ecoleBloque;
   const submit = e => {
     e.preventDefault(); if (!ok) return;
-    const row = { full_name: f.full_name.trim(), role: f.role === 'admin' ? 'admin' : f.role, filiere: f.filiere, promo: +f.promo, entreprise: f.entreprise.trim() || null, poste: f.poste.trim() || null, ville: f.ville.trim() || null, pays: f.pays.trim() || 'Maroc', bio: f.bio.trim() || null, competences: comp.split(',').map(x => x.trim()).filter(Boolean).slice(0, 15), linkedin: f.linkedin.trim() || null, cv_url: f.cv_url.trim() || null, mentor_dispo: !!f.mentor_dispo, mentor_sujets: (f.mentor_sujets || '').trim() || null, vitrine: !!f.vitrine };
+    // Les champs laissés vides à l’inscription valent null dans la base
+    const txt = v => String(v ?? '').trim();
+    const row = { full_name: txt(f.full_name), role: f.role === 'admin' ? 'admin' : f.role, filiere: f.filiere, promo: +f.promo, entreprise: txt(f.entreprise) || null, poste: txt(f.poste) || null, ville: txt(f.ville) || null, pays: txt(f.pays) || 'Maroc', bio: txt(f.bio) || null, competences: comp.split(',').map(x => x.trim()).filter(Boolean).slice(0, 15), linkedin: txt(f.linkedin) || null, cv_url: txt(f.cv_url) || null, mentor_dispo: !!f.mentor_dispo, mentor_sujets: (f.mentor_sujets || '').trim() || null, vitrine: !!f.vitrine };
     if (!v3) row.contact = (f.contact || '').trim() || null;
     if (f.role === 'laureat') { row.secteur = f.secteur || null; row.parrain_dispo = !!f.parrain_dispo; }
     // Inscription : l'accord donné sur l'écran de création du compte, la langue et le choix pour les emails

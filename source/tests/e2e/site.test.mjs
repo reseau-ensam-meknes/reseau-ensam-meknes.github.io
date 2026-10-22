@@ -208,6 +208,26 @@ test('profil : remplir depuis le texte LinkedIn collé', async () => {
   await s.ctx.close();
 });
 
+// Les champs laissés vides sont gardés à null : le profil doit pouvoir être enregistré à nouveau ensuite
+test('profil : enregistrer deux fois avec des champs vides', async () => {
+  const s = await ouvrir();
+  for (const nom of ['Amine', 'Admin']) {
+    await s.comme(nom); await s.aller('profil');
+    for (const id of ['#pf-ville', '#pf-bio', '#pf-li']) await s.page.fill(id, '');
+    for (const bio of ['', 'Ma bio']) {
+      await s.page.click('.form .row-end .btn.primary');
+      await s.page.getByText('Profil enregistré.').last().waitFor(); await s.page.waitForTimeout(300);
+      // Le formulaire rouvert repart des valeurs enregistrées (null pour les champs vides)
+      await s.aller('accueil'); await s.aller('profil');
+      await s.page.fill('#pf-bio', bio);
+    }
+    await s.page.click('.form .row-end .btn.primary');
+    await s.page.getByText('Profil enregistré.').last().waitFor({ timeout: 3000 });
+  }
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('clavier : lien « Aller au contenu », fenêtre qui garde le focus puis le rend', async () => {
   const s = await ouvrir();
   await s.page.keyboard.press('Tab');

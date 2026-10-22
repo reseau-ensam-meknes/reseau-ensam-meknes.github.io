@@ -199,7 +199,7 @@ function StartupForm({ ctx, s, onClose }) {
   const site = f.site?.trim() ? (/^https?:\/\//i.test(f.site.trim()) ? f.site.trim().replace(/^http:/i, 'https:') : 'https://' + f.site.trim()) : null;
   const ok = f.nom.trim().length >= 2 && f.pitch.trim().length >= 10;
   const submit = e => { e.preventDefault(); if (!ok) return; act(async () => {
-    const row = { nom: f.nom.trim(), pitch: f.pitch.trim(), secteur: f.secteur || null, ville: f.ville.trim() || null, pays: f.pays.trim() || 'Maroc', site, recrute: !!f.recrute };
+    const row = { nom: String(f.nom ?? '').trim(), pitch: String(f.pitch ?? '').trim(), secteur: f.secteur || null, ville: String(f.ville ?? '').trim() || null, pays: String(f.pays ?? '').trim() || 'Maroc', site, recrute: !!f.recrute };
     if (editing) await store.update('startups', s.id, row); else await store.insert('startups', { ...row, fondateur_id: me.id });
     toast(editing ? 'Startup mise à jour.' : 'Ta startup est dans la vitrine.'); onClose();
   }); };
