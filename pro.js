@@ -1,8 +1,8 @@
 // Annuaire pro : personnes (entreprise, ville, pays, secteur), carte des lauréats, entreprises, startups.
 import { html, useState, useMemo, useEffect, useRef } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, CompanyLogo, toast } from './ui.js';
+import { Icon, Modal, Field, Empty, Person, CompanyLogo, toast, FiliereFiltre } from './ui.js';
 import { getLang } from './i18n.js';
-import { FILIERES, SECTEURS, TYPES, niveauOf, entKey, sameCompany, seasonLabel } from './logic.js';
+import { SECTEURS, TYPES, niveauOf, entKey, sameCompany, seasonLabel, filtreFiliere } from './logic.js';
 import { coordsOf, canonPays, countryCentroid, PAYS_AR } from './geo.js';
 import { OfferCard, matchesMe } from './offers.js';
 import { EntrepriseResume, QuestionsRecentes } from './entreprises.js';
@@ -32,14 +32,14 @@ function Personnes({ ctx }) {
   const [q, setQ] = useState(''); const [role, setRole] = useState(''); const [fil, setFil] = useState(''); const [sect, setSect] = useState(''); const [abroad, setAbroad] = useState(false);
   const myN = me.role === 'etudiant' ? niveauOf(me, saison) : null; // un étudiant voit les lauréats et sa propre promo
   const qq = q.trim().toLowerCase();
-  const dir = data.profiles.filter(p => p.role !== 'admin' && (myN === null || p.role !== 'etudiant' || niveauOf(p, saison) === myN) && (!role || p.role === role) && (!fil || p.filiere === fil)
+  const dir = data.profiles.filter(p => p.role !== 'admin' && (myN === null || p.role !== 'etudiant' || niveauOf(p, saison) === myN) && (!role || p.role === role) && filtreFiliere(fil, p.filiere)
     && (!sect || p.secteur === sect) && (!abroad || (p.pays && canonPays(p.pays) !== 'Maroc'))
     && (!qq || `${p.full_name} ${p.entreprise || ''} ${p.ville || ''} ${p.pays || ''} ${p.poste || ''} ${p.secteur || ''} ${(p.competences || []).join(' ')}`.toLowerCase().includes(qq)))
     .sort((a, b) => a.full_name.localeCompare(b.full_name));
   return html`<div class="sub-page">
     <div class="filter-row"><label class="search"><${Icon} name="search" size=${16}/><input id="d-q" placeholder="Nom, entreprise, ville, compétence…" value=${q} onInput=${e => setQ(e.target.value)}/></label>
       <select id="d-role" value=${role} onChange=${e => setRole(e.target.value)} aria-label="Rôle"><option value="">Tous</option><option value="laureat">Lauréats</option><option value="etudiant">${myN ? 'Ma promo' : 'Étudiants'}</option></select>
-      <select id="d-fil" value=${fil} onChange=${e => setFil(e.target.value)} aria-label="Filière"><option value="">Toutes filières</option>${FILIERES.map(f => html`<option value=${f}>${f}</option>`)}</select>
+      <${FiliereFiltre} id="d-fil" value=${fil} onChange=${setFil}/>
       <select id="d-sect" value=${sect} onChange=${e => setSect(e.target.value)} aria-label="Secteur"><option value="">Tous secteurs</option>${SECTEURS.map(f => html`<option value=${f}>${f}</option>`)}</select></div>
     <div class="chips"><button class=${'chip' + (abroad ? ' on' : '')} aria-pressed=${abroad} onClick=${() => setAbroad(!abroad)}><${Icon} name="globe" size=${14}/> À l’étranger</button><span class="muted small">${dir.length} membre${dir.length > 1 ? 's' : ''}</span></div>
     <ul class="dir">${dir.slice(0, 150).map(p => html`<li key=${p.id}><${Person} p=${p} score=${scores.get(p.id)} onOpen=${openProfile}/>
@@ -199,7 +199,7 @@ function StartupForm({ ctx, s, onClose }) {
   const site = f.site?.trim() ? (/^https?:\/\//i.test(f.site.trim()) ? f.site.trim().replace(/^http:/i, 'https:') : 'https://' + f.site.trim()) : null;
   const ok = f.nom.trim().length >= 2 && f.pitch.trim().length >= 10;
   const submit = e => { e.preventDefault(); if (!ok) return; act(async () => {
-    const row = { nom: f.nom.trim(), pitch: f.pitch.trim(), secteur: f.secteur || null, ville: f.ville.trim() || null, pays: f.pays.trim() || 'Maroc', site, recrute: !!f.recrute };
+    const row = { nom: f.nom.trim(), pitch: f.pitch.trim(), secteur: f.secteur || null, ville: (f.ville || '').trim() || null, pays: (f.pays || '').trim() || 'Maroc', site, recrute: !!f.recrute };
     if (editing) await store.update('startups', s.id, row); else await store.insert('startups', { ...row, fondateur_id: me.id });
     toast(editing ? 'Startup mise à jour.' : 'Ta startup est dans la vitrine.'); onClose();
   }); };

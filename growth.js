@@ -1,8 +1,8 @@
 // Ce que les lauréats y gagnent : vivier de talents (shortlist, invitations), attestation vérifiable,
 // et fil des réussites à partager sur LinkedIn.
 import { html, useState, useEffect } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, RoleLine, BrandLogo, toast, injectCSS } from './ui.js';
-import { FILIERES, FOUND, niveauOf, statutOf, timeAgo, attestationStats } from './logic.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, RoleLine, BrandLogo, toast, injectCSS, FiliereFiltre } from './ui.js';
+import { FOUND, niveauOf, statutOf, timeAgo, attestationStats, filtreFiliere } from './logic.js';
 import { OfferComposer, matchesMe } from './offers.js';
 import { getLang, addAR } from './i18n.js';
 import { CvButton } from './cv.js';
@@ -25,11 +25,13 @@ export function TalentPool({ ctx }) {
   const [q, setQ] = useState(''); const [fil, setFil] = useState(''); const [niv, setNiv] = useState(''); const [cv, setCv] = useState(false);
   const [invite, setInvite] = useState(null);
   const saved = new Map(data.shortlists.filter(x => x.laureat_id === me.id).map(x => [x.student_id, x]));
-  const pool = data.profiles.filter(p => p.role === 'etudiant' && p.vitrine !== false && [3, 4, 5].includes(niveauOf(p, saison)));
+  // Étudiants de 3A à 5A visibles, et lauréats qui cherchent un emploi
+  const pool = data.profiles.filter(p => p.id !== me.id && ((p.role === 'etudiant' && p.vitrine !== false && [3, 4, 5].includes(niveauOf(p, saison))) || (p.role === 'laureat' && p.en_recherche)));
+  const laur = p => p.role === 'laureat';
   const qq = q.trim().toLowerCase();
-  const searching = p => !['trouve', 'validation'].includes(statutOf(data, p, saison).key);
+  const searching = p => laur(p) || !['trouve', 'validation'].includes(statutOf(data, p, saison).key);
   const list = pool.filter(p => (view === 'shortlist' ? saved.has(p.id) : searching(p)))
-    .filter(p => (!fil || p.filiere === fil) && (!niv || niveauOf(p, saison) === +niv) && (!cv || p.cv_path || p.cv_url)
+    .filter(p => filtreFiliere(fil, p.filiere) && (!niv || (niv === 'L' ? laur(p) : !laur(p) && niveauOf(p, saison) === +niv)) && (!cv || p.cv_path || p.cv_url)
       && (!qq || `${p.full_name} ${p.ville || ''} ${p.bio || ''} ${(p.competences || []).join(' ')}`.toLowerCase().includes(qq)))
     .sort((a, b) => (saved.has(b.id) - saved.has(a.id)) || (!!(b.cv_path || b.cv_url) - !!(a.cv_path || a.cv_url)) || (b.competences?.length || 0) - (a.competences?.length || 0));
   const toggle = p => act(async () => {
@@ -45,12 +47,12 @@ export function TalentPool({ ctx }) {
   };
 
   return html`<div class="sub-page">
-    <p class="muted small">Étudiants en recherche qui ont choisi d’être visibles par les lauréats.${canRecruit ? ' Garde les profils intéressants et invite-les à postuler à tes offres.' : ''}</p>
+    <p class="muted small">Étudiants en recherche qui ont choisi d’être visibles par les lauréats, et lauréats qui cherchent un emploi.${canRecruit ? ' Garde les profils intéressants et invite-les à postuler à tes offres.' : ''}</p>
     ${canRecruit ? html`<div class="seg" role="group"><button class=${view === 'tous' ? 'on' : ''} onClick=${() => setView('tous')}>Tous les talents</button><button class=${view === 'shortlist' ? 'on' : ''} onClick=${() => setView('shortlist')}><${Icon} name="bookmark" size=${15}/> Ma shortlist${saved.size ? html` <span class="count">${saved.size}</span>` : null}</button></div>` : null}
     <div class="filter-row">
       <label class="search"><${Icon} name="search" size=${16}/><input id="t-q" placeholder="Compétence, ville, nom…" value=${q} onInput=${e => setQ(e.target.value)}/></label>
-      <select id="t-fil" value=${fil} onChange=${e => setFil(e.target.value)} aria-label="Filière"><option value="">Toutes filières</option>${FILIERES.map(f => html`<option value=${f}>${f}</option>`)}</select>
-      <select id="t-niv" value=${niv} onChange=${e => setNiv(e.target.value)} aria-label="Année"><option value="">Toutes les années</option><option value="3">3A</option><option value="4">4A</option><option value="5">5A</option></select>
+      <${FiliereFiltre} id="t-fil" value=${fil} onChange=${setFil}/>
+      <select id="t-niv" value=${niv} onChange=${e => setNiv(e.target.value)} aria-label="Année"><option value="">Toutes les années</option><option value="3">3A</option><option value="4">4A</option><option value="5">5A</option><option value="L">Lauréats en recherche</option></select>
       <button class=${'chip' + (cv ? ' on' : '')} aria-pressed=${cv} onClick=${() => setCv(!cv)}><${Icon} name="file" size=${14}/> Avec CV</button>
     </div>
     <div class="cards">${list.map(p => {
@@ -58,8 +60,8 @@ export function TalentPool({ ctx }) {
       return html`<div class="tcard" key=${p.id}>
         <div class="tcard-head"><${Person} p=${p} onOpen=${openProfile} size=${42}/>
           ${canRecruit ? html`<button class=${'icon-btn save-btn' + (s ? ' on' : '')} aria-pressed=${!!s} aria-label=${s ? 'Retirer de ma shortlist' : 'Garder dans ma shortlist'} title=${s ? 'Retirer de ma shortlist' : 'Garder dans ma shortlist'} onClick=${() => toggle(p)}><${Icon} name="bookmark" size=${18}/></button>` : null}</div>
-        <p class="small">Cherche : <strong>${CHERCHE[niveauOf(p, saison)]}</strong></p>
-        ${p.disponibilite || p.ville ? html`<p class="small muted tmeta">${p.disponibilite ? html`<span><${Icon} name="calendar" size=${14}/> <span translate="no" dir="auto">${p.disponibilite}</span></span>` : null}${p.ville ? html`<span><${Icon} name="pin" size=${14}/> ${p.ville}</span>` : null}</p>` : null}
+        <p class="small">Cherche : <strong>${laur(p) ? 'un emploi' : CHERCHE[niveauOf(p, saison)]}</strong>${laur(p) ? html` <span class="muted">· Lauréat(e), promo ${p.promo}</span>` : null}</p>
+        ${p.disponibilite || p.ville ? html`<p class="small muted tmeta">${p.disponibilite ? html`<span><${Icon} name=${laur(p) ? 'briefcase' : 'calendar'} size=${14}/> <span translate="no" dir="auto">${p.disponibilite}</span></span>` : null}${p.ville ? html`<span><${Icon} name="pin" size=${14}/> ${p.ville}</span>` : null}</p>` : null}
         ${(p.competences || []).length ? html`<p class="chips-line">${p.competences.slice(0, 6).map(c => html`<span class=${'mini' + (qq && c.toLowerCase().includes(qq) ? ' hit' : '')}>${c}</span>`)}</p>` : null}
         ${view === 'shortlist' && s ? html`<input class="note-in" id=${'note-' + p.id} maxlength="300" placeholder="Note pour moi (visible par moi seul)" value=${s.note || ''} onChange=${e => act(() => store.update('shortlists', s.id, { note: e.target.value.trim() }))}/>` : null}
         <div class="row tcard-foot">

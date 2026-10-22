@@ -33,11 +33,13 @@ const apercus = new Map();
 // ---------------------------------------------------------------------------
 // Petits morceaux réutilisés ailleurs (profil, mentorat, candidatures, accueil)
 // ---------------------------------------------------------------------------
-export function MessageBtn({ ctx, p, label = 'Écrire', cls = 'btn small' }) {
+// Message préparé (ex. l'administration demande un CV) : repris une seule fois à l'ouverture de la conversation
+const brouillons = new Map();
+export function MessageBtn({ ctx, p, label = 'Écrire', cls = 'btn small', texte = '' }) {
   const id = p?.id || p;
   if (!id || !ctx.store.peutDiscuter?.(id)) return null;
   const n = (ctx.data.messages || []).filter(m => m.author_id === id && m.dest_id === ctx.me.id && !m.lu_at).length;
-  return html`<button type="button" class=${cls + ' msg-btn'} onClick=${e => { e.stopPropagation(); ctx.ecrire ? ctx.ecrire(id) : ctx.go('messages/' + id); }}>
+  return html`<button type="button" class=${cls + ' msg-btn'} onClick=${e => { e.stopPropagation(); if (texte) brouillons.set(id, texte); ctx.ecrire ? ctx.ecrire(id) : ctx.go('messages/' + id); }}>
     <${Icon} name="chat" size=${15}/> ${label}${n ? html` <span class="count">${n}</span>` : null}</button>`;
 }
 
@@ -153,7 +155,7 @@ function Conversation({ ctx, autre }) {
   const ouvert = store.peutDiscuter(autre);
   const blocage = (data.blocages || []).find(b => b.user_id === me.id && b.bloque_id === autre);
   const [envois, setEnvois] = useState([]);
-  const [txt, setTxt] = useState('');
+  const [txt, setTxt] = useState(() => { const b = brouillons.get(autre) || ''; brouillons.delete(autre); return b; });
   const [tape, setTape] = useState(0);
   const [menu, setMenu] = useState(false);
   const [sel, setSel] = useState(null);

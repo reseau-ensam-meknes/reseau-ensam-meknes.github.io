@@ -1,6 +1,16 @@
 <title>Réseau ENSAM Meknès</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="description" content="Plateforme des lauréats et étudiants de l'ENSAM Meknès : offres de stages, PFE et emplois, mentorat, entraide et suivi de placement.">
+<!-- Aperçu quand on colle un lien du site dans WhatsApp, LinkedIn ou Facebook (image : outils/generer-apercu.mjs) -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Réseau ENSAM Meknès">
+<meta property="og:title" content="Réseau ENSAM Meknès">
+<meta property="og:description" content="Lauréats et étudiants de l'ENSAM Meknès : stages, PFE, emplois, conseils et entraide.">
+<meta property="og:image" content="https://reseau-ensam-meknes.github.io/img/apercu.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:locale" content="fr_FR">
+<meta name="twitter:card" content="summary_large_image">
 <script>/* Thème choisi (clair ou sombre), appliqué avant l'affichage pour éviter un flash */try{var t=localStorage.getItem('ensam-theme');if(t==='light'||t==='dark'){document.documentElement.dataset.theme=t;document.querySelectorAll('meta[name="theme-color"]').forEach(function(m){m.content=t==='dark'?'#0B1320':'#1670A8'})}}catch(e){}</script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2264%22%20height%3D%2264%22%20viewBox%3D%220%200%20512%20512%22%20style%3D%22--lg-o%3A%23F7A11A%3B--lg-b%3A%234FA9E6%3B--lg-k%3A%23FFFFFF%3B--lg-in%3Atransparent%3B--lg-cap%3A%23FFFFFF%3B--lg-cap2%3A%23DCE6F3%3B--lg-bg%3A%231D3150%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22lg-tuile%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%2327497A%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%2316253F%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22512%22%20height%3D%22512%22%20rx%3D%22116%22%20fill%3D%22url(%23lg-tuile)%22%2F%3E%3Cg%3E%3Cpath%20d%3D%22M225.8%20104.9L233.6%2071.3L278.4%2071.3L286.2%20104.9L321.5%20116.4L347.6%2093.8L383.8%20120.1L370.4%20151.9L392.2%20182.0L426.6%20179.0L440.4%20221.6L410.9%20239.4L410.9%20276.6L440.4%20294.4L426.6%20337.0L392.2%20334.0L370.4%20364.1L383.8%20395.9L347.6%20422.2L321.5%20399.6L286.2%20411.1L278.4%20444.7L233.6%20444.7L225.8%20411.1L190.5%20399.6L164.4%20422.2L128.2%20395.9L141.6%20364.1L119.8%20334.0L85.4%20337.0L71.6%20294.4L101.1%20276.6L101.1%20239.4L71.6%20221.6L85.4%20179.0L119.8%20182.0L141.6%20151.9L128.2%20120.1L164.4%2093.8L190.5%20116.4ZM378%20258A122%20122%200%201%200%20134%20258A122%20122%200%201%200%20378%20258Z%22%20fill-rule%3D%22evenodd%22%20style%3D%22fill%3Avar(--lg-o%2C%23F39200)%22%2F%3E%3Ccircle%20cx%3D%22256%22%20cy%3D%22258%22%20r%3D%22122%22%20style%3D%22fill%3Avar(--lg-in%2C%231F3354)%22%2F%3E%3Cpath%20d%3D%22M256%20190%20358%20232%20256%20274%20154%20232Z%22%20style%3D%22fill%3Avar(--lg-cap%2C%23FFFFFF)%22%2F%3E%3Cpath%20d%3D%22M198%20252V294Q256%20326%20314%20294V252L256%20276Z%22%20style%3D%22fill%3Avar(--lg-cap2%2C%23E3EAF4)%22%2F%3E%3Cpath%20d%3D%22M256%20232%20338%20250V302%22%20fill%3D%22none%22%20stroke-width%3D%229%22%20stroke-linecap%3D%22round%22%20style%3D%22stroke%3Avar(--lg-b%2C%234FA9E6)%22%2F%3E%3Ccircle%20cx%3D%22338%22%20cy%3D%22308%22%20r%3D%2212%22%20style%3D%22fill%3Avar(--lg-b%2C%234FA9E6)%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -142,6 +152,8 @@ textarea { resize: vertical; }
 .checks { display: flex; flex-direction: column; gap: .4rem; }
 .check, .switch { display: flex; align-items: center; gap: .5rem; font-size: .9rem; cursor: pointer; }
 .avatar { display: inline-grid; place-items: center; border-radius: 50%; flex: none; background: hsl(var(--h) 42% 34%); color: #fff; font-weight: 600; font-family: var(--f-body); letter-spacing: .02em; }
+.avatar { position: relative; overflow: hidden; }
+.avatar img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
 .person { display: inline-flex; align-items: center; gap: .6rem; border: 0; background: none; padding: 0; text-align: start; cursor: pointer; min-width: 0; color: inherit; }
 .person-txt { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
 .person-name { font-weight: 600; }
@@ -206,6 +218,7 @@ textarea { resize: vertical; }
 /* Offres */
 .filters { display: flex; flex-direction: column; gap: .7rem; }
 .filter-row { display: flex; gap: .5rem; flex-wrap: wrap; }
+.filter-row select.fil-filtre { max-width: min(100%, 17rem); text-overflow: ellipsis; }
 .search { display: flex; align-items: center; gap: .4rem; flex: 1 1 240px; padding: 0 .7rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--muted); }
 .search input { border: 0; padding: .55rem 0; background: transparent; }
 .search input:focus-visible { outline: none; }
@@ -1269,12 +1282,15 @@ button.panel:hover, button.impact-strip:hover, button.objective:hover { border-c
 .petits .todo { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: .3rem; }
 .petits .notif { padding: .65rem .6rem; }
 .merci-une .merci { background: var(--warm); }
+/* Accueil en trois blocs : un bloc sans contenu disparaît avec son titre (réseau encore petit, début de saison) */
+.bloc, .bloc-corps { display: flex; flex-direction: column; gap: .8rem; min-width: 0; }
+.bloc:has(> .bloc-corps:empty) { display: none; }
 .en-plus { display: contents; }
 .plus-reseau { display: none; }
 @media (max-width: 760px) {
   .plus-reseau { display: inline-flex; align-self: center; }
   .en-plus { display: none; }
-  .en-plus.ouvert { display: flex; flex-direction: column; gap: .8rem; }
+  .plus.ouvert .en-plus { display: flex; }
 }
 .home-side .panel.star .small { color: var(--ink-2); }
 

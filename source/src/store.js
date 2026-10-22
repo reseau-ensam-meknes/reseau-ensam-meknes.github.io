@@ -1,10 +1,10 @@
 // Couche de données : même interface en mode démo (navigateur) et en mode réel (Supabase).
 // Les données de démonstration (seed.js) ne sont chargées qu'en démo : le site réel n'en a pas besoin
 const chargerSeed = () => import('./seed.js').then(m => m.buildSeed());
-import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus } from './logic.js';
+import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere } from './logic.js';
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
-const PHASE3 = ['coordonnees', 'demandes_contact', 'relectures_cv', 'relecture_commentaires', 'entretiens', 'avis_stage', 'guide_pays', 'signalements', 'enquetes_insertion', 'verifications_pairs', 'evenements', 'evenement_participants'];
+const PHASE3 = ['coordonnees', 'demandes_contact', 'relectures_cv', 'relecture_commentaires', 'entretiens', 'avis_stage', 'guide_pays', 'signalements', 'enquetes_insertion', 'verifications_pairs', 'evenements', 'evenement_participants', 'retours_cv'];
 const MESSAGERIE = ['messages', 'blocages'];
 export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE];
 // Tables ajoutées par supabase/mise-a-jour.sql : tant que la base n'est pas à jour, elles restent vides au lieu de bloquer le site.
@@ -13,6 +13,7 @@ const OPTIONAL = new Set(['shortlists', 'invitations', 'kudos', 'attestations', 
 // Tant que la base n'a pas ces vues, on lit la table elle-même.
 const VUES = { profiles: 'profils', entretiens: 'entretiens_publics', avis_stage: 'avis_publics' };
 export const CV_MAX = 2 * 1024 * 1024;
+export const PHOTO_MAX = 1024 * 1024;
 // Messagerie : photos et vocaux (5 Mo au plus, 2 minutes de vocal)
 export const CHAT_MAX = 5 * 1024 * 1024;
 export const VOCAL_MAX = 120;
@@ -36,6 +37,33 @@ class Base {
   // En ligne, la base a déjà masqué ce qui ne doit pas être vu : ces deux aides servent surtout à la démo.
   voitChamp(p, champ) { return !!p; }
   coordonneesDe(id) { return this.byId('coordonnees', id) || null; }
+  // Photo de profil : liens temporaires demandés par lots et gardés quelques heures ; l'écran se redessine quand ils arrivent
+  photo(path) {
+    if (!path) return null;
+    this.photosUrl ||= new Map(); this.photosDemandees ||= new Set();
+    const c = this.photosUrl.get(path);
+    if ((!c || c.fin < Date.now()) && !this.photosDemandees.has(path)) {
+      this.photosDemandees.add(path);
+      clearTimeout(this.photosMinuteur);
+      this.photosMinuteur = setTimeout(() => this.chargerPhotos(), 30);
+    }
+    return c?.url || null;
+  }
+  async chargerPhotos() {
+    const paths = [...this.photosDemandees];
+    if (!paths.length) return;
+    const liens = await this.liensPhotos(paths).catch(() => ({}));
+    let neuf = false;
+    for (const p of paths) {
+      const url = liens[p] || null; const avant = this.photosUrl.get(p)?.url || null;
+      if (url && url !== avant) neuf = true;
+      this.photosUrl.set(p, { url: url || avant, fin: Date.now() + (url ? 5 * 3600e3 : 600e3) });
+      this.photosDemandees.delete(p);
+    }
+    if (neuf) this.emit();
+  }
+  // La photo qu'on vient de choisir s'affiche tout de suite, sans attendre de lien
+  retenirPhoto(path, blob) { (this.photosUrl ||= new Map()).set(path, { url: URL.createObjectURL(blob), fin: Date.now() + 5 * 3600e3 }); }
   // Domaines de l'email de l'école (réglage de l'administration), en minuscules
   domainesEcole() { return Array.isArray(this.reglages.domaines_ecole) ? this.reglages.domaines_ecole.map(d => String(d).trim().toLowerCase()).filter(Boolean) : []; }
   // Messagerie : peut-on écrire à ce membre, combien de messages attendent
@@ -81,7 +109,7 @@ export function pdfSimple(lignes) {
 // ---------------------------------------------------------------------------
 // Démo : données d'exemple, gardées dans le navigateur du visiteur
 // ---------------------------------------------------------------------------
-const DEMO_KEY = 'ensam-demo-v10';
+const DEMO_KEY = 'ensam-demo-v12';
 class DemoStore extends Base {
   constructor() { super(); this.mode = 'demo'; this.fichiers = new Map(); }
   async init() {
@@ -221,6 +249,24 @@ class DemoStore extends Base {
     const f = this.fichiers.get(path) || pdfSimple(cvDemo(owner));
     return URL.createObjectURL(f);
   }
+  // Photo de profil : en démo, elle reste dans l'onglet (pas de stockage réel)
+  async deposerPhoto(blob) {
+    verifierPhoto(blob);
+    const ancien = this.me.photo_path;
+    const path = `${this.me.id}/photo-${Date.now()}.${EXT_PHOTO[blob.type]}`;
+    this.fichiers.set(path, blob); this.retenirPhoto(path, blob);
+    const r = await this.update('profiles', this.me.id, { photo_path: path });
+    if (ancien) this.fichiers.delete(ancien);
+    return r;
+  }
+  async retirerPhoto(p = this.me) {
+    const ancien = p?.photo_path;
+    if (!ancien) return null;
+    const r = await this.update('profiles', p.id, { photo_path: null });
+    this.fichiers.delete(ancien);
+    return r;
+  }
+  async liensPhotos(paths) { return Object.fromEntries(paths.filter(p => this.fichiers.has(p)).map(p => [p, URL.createObjectURL(this.fichiers.get(p))])); }
   async lireReglages() { return this.reglages; }
   async enregistrerReglage(cle, valeur) {
     if (this.me?.role !== 'admin') throw new Error('Réservé à l’administration.');
@@ -306,6 +352,11 @@ function verifierPdf(file) {
   if (file.type && file.type !== 'application/pdf' || !/\.pdf$/i.test(file.name || 'cv.pdf')) throw new Error('Seuls les fichiers PDF sont acceptés.');
   if (file.size > CV_MAX) throw new Error('Le fichier dépasse 2 Mo. Exporte ton CV en PDF plus léger.');
 }
+const EXT_PHOTO = { 'image/webp': 'webp', 'image/jpeg': 'jpg', 'image/png': 'png' };
+function verifierPhoto(blob) {
+  if (!blob || !EXT_PHOTO[blob.type]) throw new Error('Choisis une photo (JPEG, PNG ou WebP).');
+  if (blob.size > PHOTO_MAX) throw new Error('Photo trop lourde (1 Mo au plus).');
+}
 // Un ancien CV reste gardé tant qu'une relecture en cours ou rendue s'y rapporte
 const cvReference = (data, path) => data.relectures_cv.some(r => r.cv_path === path && r.status !== 'annulee');
 const cvDemo = p => [p?.full_name || 'CV', `${p?.filiere || ''} · ENSAM Meknès · promo ${p?.promo || ''}`, '', 'CV de démonstration (données fictives).', '',
@@ -321,7 +372,7 @@ const inscritDeListe = (data, l) => data.profiles.some(p => (l.email && demoEmai
 const LIMITES = {
   offers: ['author_id', 10, 864e5, 'titre'], comments: ['author_id', 40, 864e5, 'body'], questions: ['author_id', 5, 864e5, 'titre'],
   answers: ['author_id', 30, 864e5, 'body'], groupe_messages: ['author_id', 60, 864e5, 'body'], invitations: ['laureat_id', 30, 864e5],
-  applications: ['student_id', 10, 864e5], evenement_participants: ['user_id', 30, 864e5], verifications_pairs: ['verificateur_id', 20, 864e5], mentorships: ['student_id', 6, 864e5], cafes: ['organisateur_id', 3, 864e5], startups: ['fondateur_id', 3, 864e5],
+  applications: ['student_id', 10, 864e5], evenement_participants: ['user_id', 30, 864e5], verifications_pairs: ['verificateur_id', 20, 864e5], retours_cv: ['auteur_id', 10, 864e5], mentorships: ['student_id', 6, 864e5], cafes: ['organisateur_id', 3, 864e5], startups: ['fondateur_id', 3, 864e5],
   entretiens: ['author_id', 10, 864e5], avis_stage: ['author_id', 10, 864e5], demandes_contact: ['demandeur_id', 5, 864e5],
   signalements: ['auteur_id', 10, 864e5], relectures_cv: ['student_id', 4, 864e5], relecture_commentaires: ['author_id', 60, 36e5],
   messages: ['author_id', 300, 864e5],
@@ -460,6 +511,17 @@ function applyPhase3Rules(store, table, r, old) {
     r.updated_by = me.id; r.updated_at = now;
     return;
   }
+  // Lecture des CV signalée comme fausse : mêmes règles que protect_retour_cv() et la sécurité de la table
+  if (table === 'retours_cv') {
+    if (!old) {
+      r.auteur_id = me.id; r.status = 'ouvert';
+      if (!isAdmin && r.profil_id !== me.id) deny();
+      return;
+    }
+    if (!isAdmin) deny();
+    for (const k of ['profil_id', 'auteur_id', 'cv_path', 'proposition', 'juste', 'extrait', 'created_at']) r[k] = old[k];
+    return;
+  }
   if (table === 'signalements') {
     if (!old) {
       r.auteur_id = me.id; Object.assign(r, { status: 'ouvert', traite_par: null, traite_at: null });
@@ -560,8 +622,17 @@ function applyInvitationRules(store, r, old) {
 // Mentorat en 3 étapes : l'étudiant demande avec ses horaires, un lauréat en choisit un (le premier l'emporte),
 // la visio est créée, puis l'étudiant clôt et remercie.
 function applyMentorshipRules(store, r, old) {
-  const me = store.me; if (me?.role === 'admin') return;
+  const me = store.me;
   const now = new Date();
+  if (me?.role === 'admin') {
+    // L'administration corrige ce qu'elle veut ; quand elle fixe elle-même un rendez-vous, la visio est créée aussi
+    if (old && r.status === 'acceptee' && r.rdv_at && r.mentor_id) {
+      if (old.status === 'demande') r.accepted_at = r.accepted_at || now.toISOString();
+      if (r.rdv_at !== old.rdv_at) r.confirme_at = null;
+      if (!store.byId('liens_rdv', old.id)) store.data.liens_rdv = [{ id: old.id, lien: jitsiLink(), created_at: now.toISOString() }, ...store.data.liens_rdv];
+    }
+    return;
+  }
   const clean = c => [...new Set((c || []).filter(x => new Date(x) > now).map(x => new Date(x).toISOString()))].sort().slice(0, 3);
   if (!old) {
     r.student_id = me.id;
@@ -570,7 +641,7 @@ function applyMentorshipRules(store, r, old) {
     r.creneaux = clean(r.creneaux);
     if (!r.creneaux.length) throw new Error('Propose au moins un horaire à venir.');
     if (store.data.mentorships.filter(m => m.student_id === me.id && m.status === 'demande').length >= 3) throw new Error('Tu as déjà 3 demandes en attente. Attends une réponse avant d’en envoyer une autre.');
-    Object.assign(r, { mentor_id: r.mentor_id || null, status: 'demande', rdv_at: null, reponse: null, merci: null, note: null, accepted_at: null });
+    Object.assign(r, { mentor_id: r.mentor_id || null, status: 'demande', rdv_at: null, reponse: null, merci: null, note: null, accepted_at: null, confirme_at: null });
     return;
   }
   const v = { ...r };
@@ -586,6 +657,7 @@ function applyMentorshipRules(store, r, old) {
       if (!v.rdv_at) throw new Error('Choisis l’horaire du rendez-vous.');
       if (v.rdv_at !== old.rdv_at && new Date(v.rdv_at) < now) throw new Error('Choisis un moment à venir.');
       r.status = 'acceptee'; r.rdv_at = v.rdv_at;
+      if (v.rdv_at !== old.rdv_at) r.confirme_at = null;
       if (old.status === 'demande') r.accepted_at = now.toISOString();
       if (!store.byId('liens_rdv', old.id)) store.data.liens_rdv = [{ id: old.id, lien: jitsiLink(), created_at: now.toISOString() }, ...store.data.liens_rdv];
     } else if (v.status === 'refusee' && old.status === 'demande') r.status = 'refusee';
@@ -599,6 +671,7 @@ function applyMentorshipRules(store, r, old) {
       if (JSON.stringify(v.creneaux) !== JSON.stringify(old.creneaux)) { r.creneaux = clean(v.creneaux); if (!r.creneaux.length) throw new Error('Propose au moins un horaire à venir.'); }
       if (v.status === 'annulee') r.status = 'annulee';
     } else if (old.status === 'acceptee' && ['terminee', 'annulee'].includes(v.status)) r.status = v.status;
+    else if (old.status === 'acceptee' && v.confirme_at && !old.confirme_at) r.confirme_at = now.toISOString();
     return;
   }
   if (v.mentor_id === me?.id) throw new Error('Un autre lauréat vient de prendre cette demande.');
@@ -658,8 +731,9 @@ function demoParrains(store, onlyId = null) {
   const waiting = store.data.profiles.filter(p => p.role === 'etudiant' && niveauOf(p, S) === 3 && (!onlyId || p.id === onlyId)
     && !store.data.parrainages.some(x => x.filleul_id === p.id && x.saison === S)).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   for (const st of waiting) {
-    const l = store.data.profiles.filter(x => x.role === 'laureat' && x.parrain_dispo && x.filiere === st.filiere && count(x.id) < 3)
-      .sort((a, b) => (b.verified ? 1 : 0) - (a.verified ? 1 : 0) || count(a.id) - count(b.id))[0];
+    // Un parrain de sa filière d'abord, sinon de son parcours (les lauréats gardent souvent l'ancienne appellation)
+    const l = store.data.profiles.filter(x => x.role === 'laureat' && x.parrain_dispo && proximiteFiliere(x.filiere, st.filiere) > 0 && count(x.id) < 3)
+      .sort((a, b) => proximiteFiliere(b.filiere, st.filiere) - proximiteFiliere(a.filiere, st.filiere) || (b.verified ? 1 : 0) - (a.verified ? 1 : 0) || count(a.id) - count(b.id))[0];
     if (!l) continue;
     store.data.parrainages = [{ id: uuid(), filleul_id: st.id, parrain_id: l.id, saison: S, created_at: new Date().toISOString() }, ...store.data.parrainages];
     n++;
@@ -805,9 +879,11 @@ class SupabaseStore extends Base {
     return data || 0;
   }
   async supprimerCompte() {
-    // Les fichiers du stockage ne partent pas avec la base : on retire d'abord ses CV
+    // Les fichiers du stockage ne partent pas avec la base : on retire d'abord ses CV et sa photo
     const { data: f } = await this.sb.storage.from('cv').list(this.userId).catch(() => ({ data: null }));
     if (f?.length) await this.sb.storage.from('cv').remove(f.map(x => `${this.userId}/${x.name}`)).catch(() => {});
+    const { data: ph } = await this.sb.storage.from('photos').list(this.userId).catch(() => ({ data: null }));
+    if (ph?.length) await this.sb.storage.from('photos').remove(ph.map(x => `${this.userId}/${x.name}`)).catch(() => {});
     // Photos et vocaux envoyés : un dossier par destinataire
     const { data: dossiers } = await this.sb.storage.from('chat').list(this.userId).catch(() => ({ data: null }));
     for (const d of dossiers || []) {
@@ -855,6 +931,41 @@ class SupabaseStore extends Base {
     const r = await this.update('profiles', this.userId, { cv_path: null, cv_maj: null });
     if (ancien && !cvReference(this.data, ancien)) await this.sb.storage.from('cv').remove([ancien]).catch(() => {});
     return r;
+  }
+  // Photo de profil : déjà recadrée et réduite par le navigateur ; l'ancienne est retirée du stockage
+  async deposerPhoto(blob) {
+    verifierPhoto(blob);
+    const ancien = this.me?.photo_path;
+    const path = `${this.userId}/photo-${Date.now()}.${EXT_PHOTO[blob.type]}`;
+    const { error } = await this.sb.storage.from('photos').upload(path, blob, { contentType: blob.type, upsert: false });
+    if (error) {
+      const m = (error.message || '').toLowerCase();
+      throw new Error(m.includes('bucket not found') ? 'La photo de profil arrive bientôt : la base est en cours de mise à jour.'
+        : m.includes('size') || m.includes('too large') ? 'Photo trop lourde (1 Mo au plus).' : 'Envoi de la photo impossible. Vérifie ta connexion et réessaie.');
+    }
+    this.retenirPhoto(path, blob);
+    let r;
+    try { r = await this.update('profiles', this.userId, { photo_path: path }); }
+    catch (e) { this.sb.storage.from('photos').remove([path]).catch(() => {}); throw e; }
+    if (ancien && ancien !== path) await this.sb.storage.from('photos').remove([ancien]).catch(() => {});
+    return r;
+  }
+  // Sa propre photo, ou celle d'un membre pour l'administration (modération)
+  async retirerPhoto(p = this.me) {
+    const ancien = p?.photo_path;
+    if (!ancien) return null;
+    const r = await this.update('profiles', p.id, { photo_path: null });
+    await this.sb.storage.from('photos').remove([ancien]).catch(() => {});
+    return r;
+  }
+  async liensPhotos(paths) {
+    const out = {};
+    for (let i = 0; i < paths.length; i += 100) {
+      const { data, error } = await this.sb.storage.from('photos').createSignedUrls(paths.slice(i, i + 100), 6 * 3600);
+      if (error) continue;
+      for (const x of data || []) if (x.signedUrl && !x.error) out[x.path] = x.signedUrl;
+    }
+    return out;
   }
   // Lien temporaire (10 minutes) vers un CV, si la base autorise ce compte à le lire
   async lienCV(path) {

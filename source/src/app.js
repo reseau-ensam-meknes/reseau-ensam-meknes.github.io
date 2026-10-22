@@ -2,14 +2,14 @@
 import { getLang, setLang, chargerAR } from './i18n.js';
 import { html, render, useState, useEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore } from './store.js';
-import { Icon, Field, Empty, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, Num, useLocal, Celebration, celebrate, voirRangs } from './ui.js';
+import { Icon, Field, Empty, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, Num, useLocal, Celebration, celebrate, voirRangs, brancherPhotos } from './ui.js';
 import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
 import { ParcoursPage, EspacePage, ConfirmRecruit, Journey, journeyStep } from './me.js';
 import { DashboardPage } from './dashboard.js';
 import { ReseauPage, ProfileModal, ProfileForm, AskQuestion } from './community.js';
 import { AdminPage, AnnonceBanner } from './admin.js';
-import { MentoratPage, AskHelp, NextRdv, HelpNeeded, slotWhen } from './mentorat.js';
+import { MentoratPage, AskHelp, NextRdv, HelpNeeded, slotWhen, mentoratIgnorees } from './mentorat.js';
 import { SuccessFeed, VerifyPage } from './growth.js';
 import { PrivacyPage, ConsentModal, MesDonnees, DesaboPage } from './privacy.js';
 import { useInstall, IosInstallHelp } from './pwa.js';
@@ -18,6 +18,7 @@ import { EntrepriseModal } from './pro.js';
 import { DefisPanel, CoupePromos, ParrainCard, DevenirParrain, TonAnnee, TonAnneeStrip } from './saison.js';
 import { AlerteTalents } from './recrutement.js';
 import { CvCard, RelecturesHome } from './cv.js';
+import { PhotoCard, PhotoProposee } from './photo.js';
 import { NudgeAvis } from './entreprises.js';
 import { ConfianceHome } from './confiance.js';
 import { EnquetePage, EnqueteCard } from './enquete.js';
@@ -36,6 +37,19 @@ function navFor(me) {
   items.push(['reseau', 'Réseau', 'network'], ['suivi', me.role === 'etudiant' ? 'Ma promo' : 'Suivi', 'chart']);
   if (me.role === 'admin') items.push(['admin', 'Admin', 'shield']);
   return items;
+}
+
+// Filet de sécurité : si un bouton ou un formulaire plante juste après un geste du membre, on le lui dit
+// au lieu de ne rien faire (il croirait que c'est enregistré). Les erreurs de fond (réseau, extensions) restent discrètes.
+if (typeof window !== 'undefined') {
+  let geste = 0, dit = 0;
+  for (const ev of ['pointerdown', 'keydown', 'submit']) window.addEventListener(ev, () => { geste = Date.now(); }, true);
+  const prevenir = () => {
+    if (Date.now() - geste > 3000 || Date.now() - dit < 4000) return;
+    dit = Date.now(); toast('Ça n’a pas marché. Réessaie, ou recharge la page.', 'err');
+  };
+  window.addEventListener('error', e => { if (e.error && !/ResizeObserver/.test(e.message || '')) prevenir(); });
+  window.addEventListener('unhandledrejection', prevenir);
 }
 
 const dec = x => { try { return decodeURIComponent(x || ''); } catch { return x || ''; } };
@@ -280,19 +294,23 @@ function buildNotifs({ data, me, store, saison }) {
     if (m.mentor_id === me.id) {
       if (st === 'demande') out.push({ key: 'md' + m.id, action: true, tone: 'accent', icon: 'mentor', to: 'mentorat', at: m.created_at, text: `${name(m.student_id)} te demande de l’aide : ${m.sujet}` });
       if (soon) out.push({ key: 'mr' + m.id, rdv: true, action: true, tone: 'accent', icon: 'video', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous avec ${name(m.student_id)} ${soon}` });
+      if (st === 'rdv' && m.confirme_at && recent(m.confirme_at, 7)) out.push({ key: 'mc' + m.id + m.rdv_at, tone: 'good', icon: 'checks', to: 'mentorat', at: m.confirme_at, text: `${first(m.student_id)} a confirmé sa présence : ${m.sujet}` });
       if (st === 'apres') out.push({ key: 'mf' + m.id, action: true, tone: 'brass', icon: 'check', to: 'mentorat', at: m.rdv_at, text: `Ton rendez-vous avec ${first(m.student_id)} a eu lieu ? Marque-le comme terminé.` });
       if (st === 'terminee' && m.merci && recent(m.rdv_at || m.created_at, 14)) out.push({ key: 'mm' + m.id, tone: 'brass', icon: 'heart', to: 'espace', at: m.rdv_at || m.created_at, text: `${first(m.student_id)} te remercie pour le mentorat : ${m.sujet}` });
       if (st === 'annulee' && upcoming) out.push({ key: 'mx' + m.id, icon: 'x', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous annulé : ${m.sujet}` });
     }
     if (m.student_id === me.id) {
-      if (st === 'rdv' && !soon && recent(m.accepted_at || m.created_at, 10)) out.push({ key: 'sa' + m.id + m.rdv_at, icon: 'mentor', tone: 'good', to: 'mentorat', at: m.accepted_at || m.created_at, text: `${name(m.mentor_id)} a accepté ta demande : ${m.sujet}` });
+      // Rendez-vous fixé : confirmer sa présence est la prochaine étape (base à jour), sinon une simple nouvelle
+      if (st === 'rdv' && 'confirme_at' in m && !m.confirme_at) out.push({ key: 'sc' + m.id + m.rdv_at, action: true, mine: true, tone: 'accent', icon: 'calendar', to: 'mentorat', at: m.accepted_at || m.created_at, text: `${first(m.mentor_id)} a fixé ton rendez-vous. Confirme ta présence : ${m.sujet}` });
+      else if (st === 'rdv' && !soon && recent(m.accepted_at || m.created_at, 10)) out.push({ key: 'sa' + m.id + m.rdv_at, icon: 'mentor', tone: 'good', to: 'mentorat', at: m.accepted_at || m.created_at, text: `${name(m.mentor_id)} a accepté ta demande : ${m.sujet}` });
       if (soon) out.push({ key: 'sr' + m.id + m.rdv_at, rdv: true, action: true, mine: true, tone: 'accent', icon: 'video', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous avec ${name(m.mentor_id)} ${soon}` });
       if (st === 'apres') out.push({ key: 'sf' + m.id, action: true, mine: true, tone: 'brass', icon: 'heart', to: 'mentorat', at: m.rdv_at, text: `Comment s’est passé ton échange avec ${first(m.mentor_id)} ? Dis-lui merci.` });
       if (st === 'annulee' && upcoming && m.mentor_id) out.push({ key: 'sx' + m.id, icon: 'x', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous annulé : ${m.sujet}` });
     }
   }
   // Lauréat : demandes ouvertes à tous qui lui correspondent bien (deux au plus)
-  if (me.role === 'laureat') for (const { m } of requestsFor(data, me, id => store.byId('profiles', id)).filter(x => !x.direct && x.score >= 3).slice(0, 2)) {
+  const ignorees = mentoratIgnorees();
+  if (me.role === 'laureat') for (const { m } of requestsFor(data, me, id => store.byId('profiles', id)).filter(x => !x.direct && x.score >= 3 && !ignorees.has(x.m.id)).slice(0, 2)) {
     out.push({ key: 'mo' + m.id, tone: 'accent', icon: 'heart', to: 'mentorat', at: m.created_at, text: `${name(m.student_id)} cherche de l’aide : ${m.sujet}` });
   }
   // Invitations à postuler (étudiant)
@@ -388,8 +406,13 @@ function prochainPas(ctx, notifs, guide) {
   const rdv = data.mentorships.filter(m => (m.student_id === me.id || m.mentor_id === me.id) && mentorState(m) === 'rdv' && m.rdv_at && new Date(m.rdv_at) - Date.now() < 48 * 36e5 && new Date(m.rdv_at) - Date.now() > -60 * 6e4)
     .sort((a, b) => new Date(a.rdv_at) - new Date(b.rdv_at))[0];
   if (rdv) return { type: 'rdv' };
+  // Rôle et promo qui ne vont pas ensemble (ex. lauréat de la promo 2027) : on propose de corriger le profil
+  if ((me.role === 'laureat' && me.promo > new Date().getFullYear()) || (me.role === 'etudiant' && me.promo <= saison))
+    return { icon: 'user', tone: 'accent', eyebrow: 'Ton profil', texte: me.role === 'laureat' ? `Promo ${me.promo} : tu es encore étudiant(e) ? Mets ton profil à jour.` : `Promo ${me.promo} : tu as ton diplôme ? Passe en lauréat(e).`, cta: 'Mettre à jour', go: () => go('profil') };
   const md = notifs.find(n => /^md/.test(n.key || ''));
   if (md) return { icon: 'mentor', tone: 'accent', eyebrow: 'Une demande pour toi', texte: md.text, cta: 'Choisir un horaire', go: () => go('mentorat'), key: md.key };
+  const sc = notifs.find(n => /^sc/.test(n.key || ''));
+  if (sc) return { icon: 'calendar', tone: 'accent', eyebrow: 'Ton rendez-vous est fixé', texte: sc.text, cta: 'Confirmer ma présence', go: () => go('mentorat'), key: sc.key };
   const conv = conversations(data, me.id).find(c => c.nonLus);
   if (conv) return { icon: 'chat', tone: 'accent', eyebrow: 'Un message t’attend', texte: conv.nonLus > 1 ? `${nom(conv.autre)} t’a écrit ${conv.nonLus} messages.` : `${nom(conv.autre)} t’a écrit.`, cta: store.byId('profiles', conv.autre)?.role === 'admin' ? 'Répondre' : `Répondre à ${prenom(conv.autre)}`, go: () => go('messages/' + conv.autre), message: true };
   const a = notifs.find(n => n.action && !n.rdv && !/^(eq|dc|md)/.test(n.key || '') && !(me.role === 'etudiant' && n.icon === 'briefcase'));
@@ -405,6 +428,8 @@ function prochainPas(ctx, notifs, guide) {
     const n = requestsFor(data, me, id => store.byId('profiles', id)).length;
     if (n) return { icon: 'heart', tone: 'brass', eyebrow: 'Quand tu as 20 minutes', texte: n > 1 ? `${n} étudiants aimeraient un conseil.` : 'Un étudiant aimerait un conseil.', cta: 'Voir qui', go: () => go('mentorat') };
   }
+  // Le CV vérifie et complète le profil (rôle, promo, filière) : on le propose tant qu'il manque
+  if ((me.role === 'laureat' || me.role === 'etudiant') && !me.cv_path) return { icon: 'file', tone: 'accent', eyebrow: 'Ton CV', texte: 'Ajoute ton CV en PDF : ton profil se vérifie et se complète tout seul.', cta: 'Ajouter mon CV', go: () => go('profil') };
   return { calme: true };
 }
 
@@ -427,11 +452,14 @@ function Home(ctx) {
   const [compose, setCompose] = useState(false);
   const [plus, setPlus] = useState(false);
   const isStudent = me.role === 'etudiant', isLaureat = me.role === 'laureat';
+  const enRecherche = isLaureat && !!me.en_recherche;
   const guide = guideEtapes(ctx, setCompose);
   const prochaine = guide && !guide.fini ? guide.steps.find(x => !x[3] && x[4]) : null;
   const pas = prochainPas({ ...ctx, openNotif }, notifs, prochaine);
   // « Quand tu as 5 minutes » : trois petites choses au plus, sans la prochaine étape déjà en haut
   const actions = notifs.filter(x => x.action && !x.rdv && !/^(md|eq|dc)/.test(x.key || '') && !(isStudent && x.icon === 'briefcase') && x.key !== pas.key).slice(0, 3);
+  // Un lauréat qui cherche un emploi voit d'abord les offres faites pour lui
+  const dernieres = data.offers.filter(o => o.status === 'ouverte' && (!enRecherche || matchesMe(o, me, saison))).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 2);
   const star = ctx.star;
   const starHelped = star ? data.placements.filter(p => p.laureat_id === star.p.id && p.status === 'confirme').length : 0;
   const merci = [
@@ -442,7 +470,9 @@ function Home(ctx) {
   const obj = OBJECTIFS[n];
   const s = scores.get(me.id);
   const myApps = data.applications.filter(a => a.student_id === me.id);
-  const helper = stu?.pl?.laureat_id ? store.byId('profiles', stu.pl.laureat_id) : null;
+  // Un lauréat qui cherchait un emploi confirme aussi son recrutement
+  const plAttente = isStudent ? (stu.pl?.status === 'en_attente' ? stu.pl : null) : isLaureat ? data.placements.find(p => p.student_id === me.id && p.status === 'en_attente') : null;
+  const helper = plAttente?.laureat_id ? store.byId('profiles', plAttente.laureat_id) : null;
   const asking = data.mentorships.some(m => m.student_id === me.id && ['demande', 'acceptee'].includes(m.status));
   const h = new Date().getHours();
   // Les 25 premiers lauréats : on leur dit une fois qu'ils sont membres fondateurs (pas par-dessus une autre fenêtre)
@@ -456,72 +486,80 @@ function Home(ctx) {
     return () => clearTimeout(t);
   }, [fondateur]);
 
+  // Trois blocs : ta prochaine action en haut, puis « Pour toi », puis une réussite ; le reste du réseau sous « Plus du réseau ».
+  // Un bloc vide (réseau encore petit) disparaît avec son titre.
   return html`<section class="page home">
     <header class="hello home-hero sky">
       <div class="hello-txt">
         <p class="eyebrow">Saison ${seasonLabel(saison)}${isStudent ? ` · ${NIVEAUX[n]?.label} · ${me.filiere}` : isLaureat ? ` · Promo ${me.promo}` : ''}</p>
         <h1>${MOMENT(h)} ${first}</h1>
-        <p class="hello-sub">${isStudent ? 'Les lauréats de l’école t’ouvrent leurs portes. Avance à ton rythme.' : isLaureat ? 'Merci de garder la porte ouverte aux étudiants de l’école.' : 'Tout le réseau de l’école, en un coup d’œil.'}</p>
+        <p class="hello-sub">${isStudent ? 'Les lauréats de l’école t’ouvrent leurs portes. Avance à ton rythme.' : isLaureat ? (enRecherche ? 'Le réseau t’aide à trouver ton poste, et ton expérience aide déjà les étudiants.' : 'Merci de garder la porte ouverte aux étudiants de l’école.') : 'Tout le réseau de l’école, en un coup d’œil.'}</p>
       </div>
       <${SchoolScene} align=${getLang() === 'ar' ? 'xMinYMax' : 'xMaxYMax'}/>
     </header>
 
-    ${isStudent && stu.pl?.status === 'en_attente' ? html`<${ConfirmRecruit} ctx=${ctx} pl=${stu.pl} helper=${helper}/>` : html`<${Focus} ctx=${ctx} pas=${pas}/>`}
-    <${PoulsReseau} ctx=${ctx} onOpen=${() => go(isLaureat ? 'mentorat' : 'reseau')}/>
-
     <${AnnonceBanner} ctx=${ctx}/>
-    <${TonAnneeStrip} ctx=${ctx} onOpen=${ctx.openAnnee}/>
-    <${EnqueteCard} ctx=${ctx}/>
-    ${pas.type === 'rdv' ? null : html`<${NextRdv} ctx=${ctx}/>`}
-    ${pas.message ? null : html`<${MessagesHome} ctx=${ctx}/>`}
-    <${ConfianceHome} ctx=${ctx}/>
-
+    ${plAttente ? html`<${ConfirmRecruit} ctx=${ctx} pl=${plAttente} helper=${helper}/>` : html`<${Focus} ctx=${ctx} pas=${pas}/>`}
+    <${PhotoProposee} ctx=${ctx}/>
     ${actions.length ? html`<div class="petits"><h2 class="h-sec">${isLaureat ? 'Quand tu as 5 minutes' : 'Pour avancer'}</h2><ul class="todo">${actions.map(a => html`<li><button class="notif act" onClick=${() => openNotif(a)}><span class=${'n-ico ' + (a.tone || '')}><${Icon} name=${a.icon} size=${16}/></span><span>${a.text}</span><${Icon} name="arrow" size=${16}/></button></li>`)}</ul></div>` : null}
-
     <${Guide} ctx=${ctx} g=${guide}/>
+    <${EnqueteCard} ctx=${ctx}/>
 
     <div class="home-grid">
-      <div class="home-main">
+      <div class="home-main bloc">
         <h2 class="h-sec">Pour toi</h2>
+        <div class="bloc-corps">
+        ${pas.type === 'rdv' ? null : html`<${NextRdv} ctx=${ctx}/>`}
+        ${pas.message ? null : html`<${MessagesHome} ctx=${ctx}/>`}
+        <${ConfianceHome} ctx=${ctx}/>
         ${isStudent && obj ? html`<button class=${'objective compact clickable st-' + stu.key} onClick=${() => go('parcours')}>
           <div class="objective-top"><span class="obj-ico"><${Icon} name="route" size=${22}/></span>
             <div class="objective-main"><p class="eyebrow">Mon objectif de l’année</p><h2>${obj.titre}</h2></div>
             <span class=${'state-pill s-' + stu.key}>${stu.label}</span></div>
           <${Journey} step=${journeyStep(stu, myApps)}/>
         </button>` : null}
+        <${TonAnneeStrip} ctx=${ctx} onOpen=${ctx.openAnnee}/>
         <${ParrainCard} ctx=${ctx}/>
         <${HelpNeeded} ctx=${ctx} max=${1} compact/>
         <${RelecturesHome} ctx=${ctx}/>
         <${AlerteTalents} ctx=${ctx}/>
-        ${isStudent ? html`<${RecoOffers} ctx=${ctx} max=${2}/>` : html`<div class="section-head"><h3>Dernières offres</h3><button class="btn tiny ghost" onClick=${() => go('offres')}>Tout voir <${Icon} name="arrow" size=${14}/></button></div>
-          <div class="offer-grid one">${data.offers.filter(o => o.status === 'ouverte').sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 2).map(o => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} onOpen=${() => openOffer(o.id)}/>`)}</div>`}
+        ${isStudent ? html`<${RecoOffers} ctx=${ctx} max=${2}/>` : dernieres.length ? html`<div class="section-head"><h3>${enRecherche ? 'Offres pour toi' : 'Dernières offres'}</h3><button class="btn tiny ghost" onClick=${() => go('offres')}>Tout voir <${Icon} name="arrow" size=${14}/></button></div>
+          <div class="offer-grid one">${dernieres.map(o => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} onOpen=${() => openOffer(o.id)}/>`)}</div>` : null}
         ${isStudent && !asking ? html`<div class="help-cta"><span class="obj-ico"><${Icon} name="mentor" size=${22}/></span>
           <div class="grow"><strong>Besoin d’un conseil ?</strong><span class="small muted">CV, stage, entretien, étranger : un lauréat te parle 20 minutes en visio.</span></div>
           <button class="btn small" onClick=${() => go('mentorat')}>Demander de l’aide</button></div>` : null}
         <${NudgeAvis} ctx=${ctx}/>
         <${DevenirParrain} ctx=${ctx}/>
-        ${isLaureat && s && s.points ? html`<button class="impact-strip clickable" onClick=${() => go('espace')}><span class="obj-ico brass"><${Icon} name="heart" size=${20}/></span><span>${s.recrutes + s.mentorats > 1 ? `Tu as aidé ${s.recrutes + s.mentorats} étudiants` : s.recrutes + s.mentorats === 1 ? 'Tu as aidé 1 étudiant' : 'Ton espace et tes mercis'}</span><span class="spacer"></span><${LevelChip} points=${s.points}/><${Icon} name="arrow" size=${18}/></button>` : null}
+        </div>
       </div>
       <div class="home-side">
-        <h2 class="h-sec">Dans le réseau</h2>
-        ${merci ? html`<div class="panel merci-une"><p class="eyebrow"><${Icon} name="heart" size=${13}/> Un merci récent</p>
-          <blockquote class="merci"><p translate="no" dir="auto">« ${merci.txt} »</p><footer><span class="small"><span translate="no">${store.byId('profiles', merci.from)?.full_name?.split(' ')[0] || 'Un étudiant'}</span> → <button class="linkish" translate="no" onClick=${() => openProfile(store.byId('profiles', merci.to))}>${store.byId('profiles', merci.to)?.full_name}</button></span></footer></blockquote></div>` : null}
-        <${NextEvent} ctx=${ctx}/>
-        <${SuccessFeed} ctx=${ctx} max=${3}/>
-        ${isStudent ? html`<${NextCafe} ctx=${ctx}/>` : html`<button type="button" class="btn ghost plus-reseau" aria-expanded=${plus} onClick=${() => setPlus(!plus)}>${plus ? 'Moins' : 'Plus du réseau'} <${Icon} name=${plus ? 'x' : 'plus'} size=${15}/></button>`}
-        <div class=${'en-plus' + (plus ? ' ouvert' : '')}>
-        ${!isStudent ? html`<${NextCafe} ctx=${ctx}/>` : null}
-        ${!isStudent ? html`<${DefisPanel} ctx=${ctx}/>` : null}
-        ${!isStudent && star && star.pts ? html`<div class="panel star">
-          <p class="eyebrow"><${Icon} name="trophy" size=${14}/> Lauréat du mois</p>
-          <${Person} p=${star.p} score=${scores.get(star.p.id)} onOpen=${openProfile} size=${48}/>
-          <p class="small">${starHelped > 1 ? `${starHelped} étudiants recrutés grâce à ses offres. Merci !` : starHelped === 1 ? '1 étudiant recruté grâce à ses offres. Merci !' : 'Merci pour son aide ce mois-ci.'}</p>
-        </div>` : null}
-        ${!isStudent ? html`<button class="panel pulse clickable" onClick=${() => go('suivi')}>
-          <div class="section-head"><h3>L’école en ce moment</h3><${Icon} name="arrow" size=${16}/></div>
-          ${st.rows.map(r => html`<div class="pulse-row"><span class="niv-badge">${NIVEAUX[r.n].short}</span><div class="pulse-bar"><div class="row small"><span>${r.objectif.court}</span><span class="spacer"></span><span class="mono">${pct(r.rate)}</span></div><${Bar} value=${r.rate}/></div></div>`)}
-          <p class="small muted">${st.viaTotal > 1 ? `${st.viaTotal} réussites vérifiées grâce aux lauréats cette saison.` : st.viaTotal === 1 ? '1 réussite vérifiée grâce aux lauréats cette saison.' : 'Les premières réussites de la saison arrivent.'}</p>
-        </button>` : null}
+        <div class="bloc">
+          <h2 class="h-sec">Une réussite</h2>
+          <div class="bloc-corps">
+          ${merci ? html`<div class="panel merci-une"><p class="eyebrow"><${Icon} name="heart" size=${13}/> Un merci récent</p>
+            <blockquote class="merci"><p translate="no" dir="auto">« ${merci.txt} »</p><footer><span class="small"><span translate="no">${store.byId('profiles', merci.from)?.full_name?.split(' ')[0] || 'Un étudiant'}</span> → <button class="linkish" translate="no" onClick=${() => openProfile(store.byId('profiles', merci.to))}>${store.byId('profiles', merci.to)?.full_name}</button></span></footer></blockquote></div>` : html`<${SuccessFeed} ctx=${ctx} max=${1}/>`}
+          <${PoulsReseau} ctx=${ctx} onOpen=${() => go(isLaureat ? 'mentorat' : 'reseau')}/>
+          ${isLaureat && s && s.recrutes + s.mentorats ? html`<button class="impact-strip clickable" onClick=${() => go('espace')}><span class="obj-ico brass"><${Icon} name="heart" size=${20}/></span><span>${s.recrutes + s.mentorats > 1 ? `Tu as aidé ${s.recrutes + s.mentorats} étudiants` : 'Tu as aidé 1 étudiant'}</span><span class="spacer"></span><${LevelChip} points=${s.points}/><${Icon} name="arrow" size=${18}/></button>` : null}
+          </div>
+        </div>
+        <div class=${'bloc plus' + (plus ? ' ouvert' : '')}>
+          <button type="button" class="btn ghost plus-reseau" aria-expanded=${plus} onClick=${() => setPlus(!plus)}>${plus ? 'Moins' : 'Plus du réseau'} <${Icon} name=${plus ? 'x' : 'plus'} size=${15}/></button>
+          <div class="en-plus bloc-corps">
+          <${NextEvent} ctx=${ctx}/>
+          <${NextCafe} ctx=${ctx}/>
+          ${merci ? html`<${SuccessFeed} ctx=${ctx} max=${2}/>` : null}
+          ${!isStudent ? html`<${DefisPanel} ctx=${ctx}/>` : null}
+          ${!isStudent && star && star.pts ? html`<div class="panel star">
+            <p class="eyebrow"><${Icon} name="trophy" size=${14}/> Lauréat du mois</p>
+            <${Person} p=${star.p} score=${scores.get(star.p.id)} onOpen=${openProfile} size=${48}/>
+            <p class="small">${starHelped > 1 ? `${starHelped} étudiants recrutés grâce à ses offres. Merci !` : starHelped === 1 ? '1 étudiant recruté grâce à ses offres. Merci !' : 'Merci pour son aide ce mois-ci.'}</p>
+          </div>` : null}
+          ${!isStudent && st.viaTotal ? html`<button class="panel pulse clickable" onClick=${() => go('suivi')}>
+            <div class="section-head"><h3>L’école en ce moment</h3><${Icon} name="arrow" size=${16}/></div>
+            ${st.rows.map(r => html`<div class="pulse-row"><span class="niv-badge">${NIVEAUX[r.n].short}</span><div class="pulse-bar"><div class="row small"><span>${r.objectif.court}</span><span class="spacer"></span><span class="mono">${pct(r.rate)}</span></div><${Bar} value=${r.rate}/></div></div>`)}
+            <p class="small muted">${st.viaTotal > 1 ? `${st.viaTotal} réussites vérifiées grâce aux lauréats cette saison.` : '1 réussite vérifiée grâce aux lauréats cette saison.'}</p>
+          </button>` : null}
+          </div>
         </div>
       </div>
     </div>
@@ -580,13 +618,16 @@ function Guide({ ctx, g }) {
   </div>`;
 }
 
+// Le formulaire repart des données enregistrées quand elles changent ailleurs (CV appliqué, rôle corrigé…)
+const cleFormulaire = (me, co) => JSON.stringify([me.id, me.role, me.promo, me.filiere, me.poste, me.entreprise, me.ville, me.linkedin, me.bio, me.competences, co?.telephone, co?.email]);
 function MyProfile({ ctx }) {
   const { me, store } = ctx;
   return html`<section class="page narrow">
     <header class="page-head"><div><p class="eyebrow">Visible par les membres connectés</p><h1>Mon profil</h1></div>
       ${store.mode === 'live' ? html`<button class="btn ghost" onClick=${() => store.signOut()}><${Icon} name="logout"/> Se déconnecter</button>` : null}</header>
+    <${PhotoCard} ctx=${ctx}/>
     <${CvCard} ctx=${ctx}/>
-    <${ProfileForm} ctx=${ctx} initial=${me} key=${me.id}/>
+    <${ProfileForm} ctx=${ctx} initial=${me} key=${cleFormulaire(me, store.coordonneesDe?.(me.id))}/>
     <${MesDonnees} ctx=${ctx}/>
   </section>`;
 }
@@ -673,6 +714,7 @@ function Onboarding({ store, relang }) {
   try {
     // L'arabe se charge en même temps que les données, seulement si c'est la langue choisie
     const [store] = await Promise.all([createStore(), getLang() === 'ar' ? chargerAR().catch(() => setLang('fr')) : null]);
+    brancherPhotos(path => store.photo(path));
     root.innerHTML = '';
     render(html`<${App} store=${store}/>`, root);
   } catch (e) {

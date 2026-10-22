@@ -5,7 +5,7 @@
 set -e
 cd "$(dirname "$0")"
 rm -rf dist artifact && mkdir -p dist/vendor artifact/vendor
-for d in dist artifact; do cp src/*.js src/vendor/* "$d/" 2>/dev/null || true; mv "$d"/preact-htm.js "$d"/supabase.js "$d"/591.supabase.js "$d"/leaflet.js "$d"/leaflet.css "$d/vendor/"; done
+for d in dist artifact; do cp src/*.js src/vendor/* "$d/" 2>/dev/null || true; mv "$d"/preact-htm.js "$d"/supabase.js "$d"/591.supabase.js "$d"/leaflet.js "$d"/leaflet.css "$d"/pdf.min.mjs "$d"/pdf.worker.min.mjs "$d/vendor/"; done
 { printf '<!doctype html>\n<html lang="fr">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">\n<meta name="theme-color" content="#1670A8" media="(prefers-color-scheme: light)">\n<meta name="theme-color" content="#0B1320" media="(prefers-color-scheme: dark)">\n<link rel="manifest" href="pwa/manifest.webmanifest">\n<link rel="apple-touch-icon" href="pwa/apple-touch-icon.png">\n<meta name="apple-mobile-web-app-capable" content="yes">\n<meta name="mobile-web-app-capable" content="yes">\n<meta name="apple-mobile-web-app-title" content="Réseau ENSAM">\n'
   sed 's#<!--CONFIG-->#<script src="config.js"></script>#' src/page.html | sed '/^<div id="app">/,$d'
   printf '</head>\n<body>\n'
@@ -30,7 +30,7 @@ if [ -n "$url" ] && [ -n "$key" ]; then
   done
 fi
 for f in supabase/installation.sql supabase/mise-a-jour.sql; do
-  printf "\n-- Résultat : 1 = activé\nselect (select count(*) from pg_extension where extname = 'pg_net') as envois_pg_net, (select count(*) from pg_extension where extname = 'pg_cron') as taches_pg_cron, (select count(*) from storage.buckets where id = 'cv') as stockage_cv, (select count(*) from storage.buckets where id = 'chat') as stockage_messagerie;\n" >> "$f"
+  printf "\n-- Résultat : 1 = activé\nselect (select count(*) from pg_extension where extname = 'pg_net') as envois_pg_net, (select count(*) from pg_extension where extname = 'pg_cron') as taches_pg_cron, (select count(*) from storage.buckets where id = 'cv') as stockage_cv, (select count(*) from storage.buckets where id = 'chat') as stockage_messagerie, (select count(*) from storage.buckets where id = 'photos') as stockage_photos;\n" >> "$f"
 done
 # Chargement rapide en 3G : modules préchargés, et version + liste des fichiers pour le service worker
 if command -v node >/dev/null 2>&1; then node outils/precharger.mjs dist; else echo "node absent : préchargement et cache hors ligne non préparés"; fi

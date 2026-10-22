@@ -1,11 +1,12 @@
 // CV en PDF et relecture de CV : l'étudiant dépose son CV et choisit qui le voit, demande une relecture ;
 // un lauréat la prend, commente rubrique par rubrique, rédige une synthèse et la rend ; l'étudiant dit merci.
-import { html, useState, useRef } from './vendor/preact-htm.js';
+import { html, useState, useRef, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, toast, injectCSS } from './ui.js';
 import { addAR, t as tr } from './i18n.js';
-import { timeAgo, niveauOf, NIVEAUX } from './logic.js';
+import { timeAgo, niveauOf, NIVEAUX, proximiteFiliere } from './logic.js';
 import { CV_MAX } from './store.js';
 import { MessageBtn } from './messages.js';
+import { lireCVDetail, propositionCV, corrigeProfil, extraitCV, propositionSansCoordonnees, dejaSignalee } from './lire-cv.js';
 
 const firstName = p => (p?.full_name || '').split(' ')[0];
 const href = u => (/^https?:\/\//i.test(u) ? u : 'https://' + u);
@@ -56,13 +57,16 @@ export function CvButton({ ctx, p, small }) {
 export function CvCard({ ctx }) {
   const { me, store, act, data, go } = ctx;
   const input = useRef(); const [over, setOver] = useState(false); const [busy, setBusy] = useState(false); const [ask, setAsk] = useState(false);
-  if (!me || me.role === 'admin') return null;
+  const [dernier, setDernier] = useState(null);
+  // L'administration est souvent un lauréat : elle a son CV, mais pas de relecture à demander
+  if (!me) return null;
+  const admin = me.role === 'admin';
   const deposer = file => {
     if (!file) return;
     if (file.size > CV_MAX) { toast('Le fichier dépasse 2 Mo. Exporte ton CV en PDF plus léger.', 'err'); return; }
     const remplace = !!me.cv_path;
     setBusy(true);
-    act(async () => { await store.deposerCV(file); toast(remplace ? 'CV remplacé.' : 'CV déposé.'); }).finally(() => { setBusy(false); if (input.current) input.current.value = ''; });
+    act(async () => { await store.deposerCV(file); setDernier(file); toast(remplace ? 'CV remplacé.' : 'CV déposé.'); }).finally(() => { setBusy(false); if (input.current) input.current.value = ''; });
   };
   const vis = (me.visibilite || {}).cv || 'laureats';
   const mine = data.relectures_cv.filter(r => r.student_id === me.id).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
@@ -72,6 +76,7 @@ export function CvCard({ ctx }) {
 
   return html`<div class="panel cv-card">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="file"/> Mon CV</h2>${me.cv_path ? html`<span class="small muted">Mis à jour ${timeAgo(me.cv_maj || me.created_at)}</span>` : null}</div>
+    ${me.cv_path ? html`<${ControleCV} ctx=${ctx} fichier=${dernier}/>` : null}
     <input ref=${input} id="cv-file" type="file" accept="application/pdf,.pdf" hidden onChange=${e => deposer(e.target.files[0])}/>
     ${me.cv_path ? html`<div class="cv-file">
         <span class="cv-ico"><${Icon} name="file" size=${22}/></span>
@@ -89,7 +94,7 @@ export function CvCard({ ctx }) {
       ${me.cv_url ? html`<p class="small muted">Tu as déjà un lien vers ton CV dans ton profil. Le PDF est plus simple pour les lauréats.</p>` : null}`}
     <p class="small muted cv-vis"><${Icon} name="lock" size=${14}/><span>${QUI_VOIT[vis] || QUI_VOIT.laureats}</span><span>Choisis qui le voit plus bas.</span></p>
 
-    ${me.cv_path || last ? html`<div class="cv-relu">
+    ${!admin && (me.cv_path || last) ? html`<div class="cv-relu">
       <span class="obj-ico"><${Icon} name="eye" size=${18}/></span>
       <span class="grow">${!last ? html`<strong>Fais relire ton CV par un lauréat</strong><span class="small muted">Il commente rubrique par rubrique et te donne ses conseils.</span>`
         : last.status === 'rendue' ? html`<strong>${last.merci || last.note ? 'Ta dernière relecture est rendue' : 'Ta relecture est prête'}</strong><span class="small muted">${reviewer ? `Par ${reviewer.full_name} · ${timeAgo(last.rendue_at || last.created_at)}` : timeAgo(last.rendue_at || last.created_at)}</span>`
@@ -102,12 +107,97 @@ export function CvCard({ ctx }) {
   </div>`;
 }
 
+// Le CV contredit le profil (rôle, promo, filière) ou peut remplir ses champs vides : le membre vérifie
+// ce qu'on a lu et met son profil à jour en un clic, ou garde son profil. Chaque CV n'est lu qu'une fois sur cet appareil.
+const VU_CV = 'ensam-cv-controle';
+const cvVus = () => { try { return JSON.parse(localStorage.getItem(VU_CV) || '[]'); } catch { return []; } };
+const marquerCV = path => { try { localStorage.setItem(VU_CV, JSON.stringify([...cvVus(), path].slice(-20))); } catch { /* stockage indisponible */ } };
+const court = t => (t.length > 40 ? t.slice(0, 38).trimEnd() + '…' : t);
+export const libellesCV = e => [e.role ? (e.role === 'laureat' ? 'Lauréat(e)' : 'Étudiant(e)') : null, e.promo ? `Promo ${e.promo}` : null, e.filiere || null,
+  e.poste ? `Poste : ${court(e.poste)}` : null, e.entreprise ? `Entreprise : ${court(e.entreprise)}` : null, e.ville ? `Ville : ${e.ville}` : null,
+  e.competences ? `Compétences : ${court(e.competences.join(', '))}` : null, e.linkedin ? 'LinkedIn' : null, e.bio ? 'Bio' : null,
+  e.telephone ? 'Téléphone' : null, e.email ? 'Email de contact' : null].filter(Boolean);
+// Le CV lu ({ cv, texte }) : le fichier qu'on vient de déposer, sinon celui gardé en ligne
+export async function lireCVDe(store, path, fichier) {
+  if (fichier) return lireCVDetail(fichier);
+  const r = await fetch(await store.lienCV(path));
+  if (!r.ok) throw new Error('CV introuvable');
+  return lireCVDetail(await r.arrayBuffer());
+}
+
+// Une lecture fausse est signalée (par le membre ou l'administration) : elle n'est plus proposée,
+// et l'administration la transmet pour corriger la lecture des CV
+export function SignalerLecture({ ctx, profil, prop, texte, path, onClose, onDone }) {
+  const { store, me, act } = ctx;
+  const [juste, setJuste] = useState('');
+  const soi = profil.id === me.id;
+  const send = e => {
+    e.preventDefault();
+    act(async () => {
+      await store.insert('retours_cv', { profil_id: profil.id, auteur_id: me.id, cv_path: path || null, proposition: propositionSansCoordonnees(prop), juste: juste.trim() || null, extrait: extraitCV(texte) || null });
+      toast('Merci ! L’erreur est signalée, la lecture des CV sera corrigée.'); onDone?.(); onClose();
+    });
+  };
+  return html`<${Modal} title="Signaler une erreur de lecture" onClose=${onClose}>
+    <form class="form" onSubmit=${send}>
+      <p><span>${soi ? 'Lu dans ton CV :' : `Lu dans le CV de ${firstName(profil)} :`}</span> ${libellesCV(prop).map((x, i) => html`${i ? ' · ' : ''}<b>${x}</b>`)}</p>
+      <${Field} label="Ce qui est juste (facultatif)"><input id="cv-juste" maxlength="300" value=${juste} onInput=${e => setJuste(e.target.value)} placeholder="Ex. Promo 2024 : l’ENSAM de 2019 à 2024"/><//>
+      <p class="small hint-box"><${Icon} name="lock" size=${15}/> <span>On joint les lignes de formation lues dans le CV (école, années), sans téléphone ni email, pour corriger la lecture.</span></p>
+      <div class="row-end"><button type="button" class="btn ghost" onClick=${onClose}>Annuler</button><button class="btn primary" id="cv-signal-send">Envoyer</button></div>
+    </form>
+  <//>`;
+}
+
+function ControleCV({ ctx, fichier }) {
+  const { me, store, act } = ctx;
+  const path = me.cv_path;
+  const [prop, setProp] = useState(null);
+  const [texte, setTexte] = useState('');
+  const [signaler, setSignaler] = useState(false);
+  useEffect(() => {
+    setProp(null);
+    if (!path || (!fichier && cvVus().includes(path))) return;
+    let fini = false;
+    lireCVDe(store, path, fichier).then(({ cv, texte }) => {
+      if (fini) return;
+      const e = propositionCV(me, cv);
+      // Coordonnées privées : seulement celles qui manquent
+      const co = store.coordonneesDe?.(me.id) || {};
+      if (cv.telephone && !co.telephone) e.telephone = cv.telephone;
+      if (cv.email && !co.email) e.email = cv.email;
+      // Déjà signalée comme fausse (sur un autre appareil, ou par l'administration) : on ne la repropose pas
+      if (Object.keys(e).length && !dejaSignalee(store.data.retours_cv, me.id, path, e)) { setProp(e); setTexte(texte); } else marquerCV(path);
+    }).catch(() => { /* CV illisible (scan en image) : rien à proposer */ });
+    return () => { fini = true; };
+  }, [path, fichier]);
+  if (!prop) return null;
+  const corrige = corrigeProfil(prop);
+  const fermer = () => { marquerCV(path); setProp(null); };
+  const appliquer = () => act(async () => {
+    const { telephone, email, ...profil } = prop;
+    if (Object.keys(profil).length) await store.update('profiles', me.id, profil);
+    if (telephone || email) {
+      const co = store.coordonneesDe?.(me.id) || {};
+      await store.enregistrerCoordonnees({ telephone: co.telephone || telephone || null, email: co.email || email || null, contact: co.contact || null });
+    }
+    marquerCV(path); setProp(null); toast('Profil mis à jour d’après ton CV.');
+  });
+  return html`<div class="cf-warn cv-controle" role="status" id="cv-controle">
+    <p><strong>${corrige ? 'Ton CV et ton profil ne disent pas la même chose.' : 'Ton CV peut compléter ton profil.'}</strong></p>
+    <p class="small"><span>${corrige ? 'Ton CV indique :' : 'Lu dans ton CV :'}</span> ${libellesCV(prop).map((x, i) => html`${i ? ' · ' : ''}<b>${x}</b>`)}</p>
+    <div class="row"><button type="button" class="btn small primary" id="cv-appliquer" onClick=${appliquer}>Mettre mon profil à jour</button>
+      <button type="button" class="btn small ghost" onClick=${fermer}>${corrige ? 'Mon profil est juste' : 'Non merci'}</button>
+      <button type="button" class="btn small ghost" id="cv-signaler" onClick=${() => setSignaler(true)}><${Icon} name="flag" size=${14}/> C’est mal lu</button></div>
+    ${signaler ? html`<${SignalerLecture} ctx=${ctx} profil=${me} prop=${prop} texte=${texte} path=${path} onClose=${() => setSignaler(false)} onDone=${fermer}/>` : null}
+  </div>`;
+}
+
 // Demande de relecture : à tous les lauréats (le premier disponible), ou à un lauréat de ma filière
 function DemandeRelecture({ ctx, onClose }) {
   const { data, me, store, act } = ctx;
   const [msg, setMsg] = useState(''); const [qui, setQui] = useState('');
-  const proches = data.profiles.filter(p => p.role === 'laureat' && p.id !== me.id && p.filiere === me.filiere && (me.role !== 'laureat' || p.promo < me.promo))
-    .sort((a, b) => (!!b.mentor_dispo - !!a.mentor_dispo) || (!!b.verified - !!a.verified) || a.promo - b.promo).slice(0, 8);
+  const proches = data.profiles.filter(p => p.role === 'laureat' && p.id !== me.id && proximiteFiliere(p.filiere, me.filiere) > 0 && (me.role !== 'laureat' || p.promo < me.promo))
+    .sort((a, b) => proximiteFiliere(b.filiere, me.filiere) - proximiteFiliere(a.filiere, me.filiere) || (!!b.mentor_dispo - !!a.mentor_dispo) || (!!b.verified - !!a.verified) || a.promo - b.promo).slice(0, 8);
   const send = e => {
     e.preventDefault();
     act(async () => {
@@ -155,7 +245,7 @@ export function RelecturesPage({ ctx }) {
   const toMe = R.filter(r => r.reviewer_id === me.id && ACTIVES.includes(r.status)).sort((a, b) => (b.status === 'en_cours') - (a.status === 'en_cours') || new Date(a.created_at) - new Date(b.created_at));
   const queue = isLaureat ? R.filter(r => !r.reviewer_id && r.status === 'demandee' && r.student_id !== me.id)
     .map(r => ({ r, s: store.byId('profiles', r.student_id) }))
-    .sort((a, b) => ((b.s?.filiere === me.filiere) - (a.s?.filiere === me.filiere)) || new Date(a.r.created_at) - new Date(b.r.created_at)) : [];
+    .sort((a, b) => (proximiteFiliere(b.s?.filiere, me.filiere) - proximiteFiliere(a.s?.filiere, me.filiere)) || new Date(a.r.created_at) - new Date(b.r.created_at)) : [];
   const done = R.filter(r => r.reviewer_id === me.id && r.status === 'rendue').sort((a, b) => new Date(b.rendue_at || b.created_at) - new Date(a.rendue_at || a.created_at));
   const canAsk = me.cv_path && mine.filter(r => ACTIVES.includes(r.status)).length < 2;
   const hist = isLaureat ? done : minePast;

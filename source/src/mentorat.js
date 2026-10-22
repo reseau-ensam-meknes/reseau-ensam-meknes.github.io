@@ -10,6 +10,9 @@ import { MessageBtn } from './messages.js';
 import { PoulsReseau } from './pouls.js';
 
 const firstName = p => (p?.full_name || '').split(' ')[0];
+// Demandes ouvertes à tous qu'un lauréat a écartées sur cet appareil : elles ne reviennent plus dans ses listes
+const CLE_IGNOREES = 'ensam-mentorat-ignorees';
+export function mentoratIgnorees() { try { return new Set(JSON.parse(localStorage.getItem(CLE_IGNOREES) || '[]')); } catch { return new Set(); } }
 const pad = n => String(n).padStart(2, '0');
 const isHttps = u => /^https:\/\/\S+$/i.test(u || '');
 
@@ -241,7 +244,7 @@ function TimeChoice({ ctx, m, compact }) {
 // ---------------------------------------------------------------------------
 // Le rendez-vous : une action claire (rejoindre), l'agenda à la demande, le reste dans « ⋯ »
 // ---------------------------------------------------------------------------
-function RdvBox({ ctx, m, side, focus }) {
+function RdvBox({ ctx, m, side, focus, onFini }) {
   const { store, act } = ctx;
   const lienRow = store.byId('liens_rdv', m.id);
   const lien = isHttps(lienRow?.lien) ? lienRow.lien : null;
@@ -263,6 +266,10 @@ function RdvBox({ ctx, m, side, focus }) {
     await store.update('liens_rdv', m.id, { lien: newLien.trim() }); setNewLien(''); setEdit(false); toast('Lien enregistré.');
   });
   const annuler = () => ctx.confirm(side === 'mentor' ? `Annuler le rendez-vous ? ${firstName(other)} sera prévenu(e).` : 'Annuler le rendez-vous ? Le lauréat sera prévenu.', () => act(async () => { await store.update('mentorships', m.id, { status: 'annulee' }); toast('Rendez-vous annulé.'); }), 'Annuler le rendez-vous');
+  // L'étudiant confirme sa présence (base à jour seulement) ; une fois l'heure venue, chacun peut dire « c'est fait »
+  const confirmable = 'confirme_at' in m;
+  const commence = Date.now() >= new Date(m.rdv_at).getTime();
+  const confirmer = () => act(async () => { await store.update('mentorships', m.id, { confirme_at: new Date().toISOString() }); toast(`C’est confirmé. ${firstName(other)} est prévenu(e).`, 'win'); });
   const menu = [
     side === 'mentor' ? { label: 'Changer l’horaire ou le lien', icon: 'clock', onClick: () => setEdit(true) } : null,
     side !== 'admin' ? { label: 'Annuler le rendez-vous', icon: 'x', danger: true, onClick: annuler } : null,
@@ -274,7 +281,7 @@ function RdvBox({ ctx, m, side, focus }) {
         : html`<span class="small muted">Lien de visio en préparation…</span>`}</span>
       <${MoreMenu} items=${menu}/></div>
     <div class="rdv-actions">
-      ${lien ? html`<a class=${'btn rdv-join' + (live || focus ? ' primary' : '')} href=${lien} target="_blank" rel="noopener"><${Icon} name="video" size=${16}/> Rejoindre la visio</a>` : null}
+      ${lien ? html`<a class=${'btn rdv-join' + (live || (focus && !(side === 'student' && confirmable && !m.confirme_at)) ? ' primary' : '')} href=${lien} target="_blank" rel="noopener"><${Icon} name="video" size=${16}/> Rejoindre la visio</a>` : null}
       <details class="rdv-cal"><summary class="btn ghost small"><${Icon} name="calendar" size=${15}/> Ajouter à mon agenda <${Picto} name="chev" size=${15}/></summary>
         <div class="rdv-cal-body">
           <a class="btn ghost small" href=${gcalUrl(txt, side === 'mentor' ? guest : null)} target="_blank" rel="noopener"><${Icon} name="calendar" size=${15}/> ${side === 'mentor' && guest ? 'Inviter via Google Agenda' : 'Ajouter à Google Agenda'}</a>
@@ -282,6 +289,14 @@ function RdvBox({ ctx, m, side, focus }) {
           ${side === 'mentor' && guest ? html`<p class="small muted">Google Agenda ajoute ${firstName(other)} comme invité(e) : enregistre l’événement puis choisis « Envoyer » pour lui envoyer l’invitation par email.</p>` : null}
         </div></details>
     </div>
+    ${side === 'student' && confirmable && !m.confirme_at && !commence ? html`<div class="m-confirm">
+      <p class="small"><strong>Tu seras là ?</strong> ${`Confirme pour rassurer ${firstName(other)}.`}</p>
+      <div class="m-confirm-acts"><button type="button" class="btn small primary" onClick=${confirmer}><${Icon} name="check" size=${15}/> Je serai là</button>
+        <button type="button" class="linkish small m-quiet" onClick=${annuler}>Je ne peux pas</button></div></div>`
+    : side === 'student' && m.confirme_at ? html`<p class="small m-ok good-t"><${Icon} name="checks" size=${15}/> Tu as confirmé ta présence.</p>`
+    : side === 'mentor' && confirmable ? (m.confirme_at ? html`<p class="small m-ok good-t"><${Icon} name="checks" size=${15}/> ${`${firstName(other)} a confirmé sa présence.`}</p>`
+      : html`<p class="small m-ok muted"><${Icon} name="clock" size=${15}/> ${`${firstName(other)} n’a pas encore confirmé.`}</p>`) : null}
+    ${commence && onFini ? html`<div class="m-fini"><span class="small muted">L’échange est terminé ?</span><button type="button" class="btn small m-done" onClick=${onFini}><${Icon} name="check" size=${15}/> C’est fait</button></div>` : null}
     ${jitsi && astuce ? html`<p class="rdv-tip small"><span>Jitsi est gratuit. La première personne qui entre se connecte avec Google pour ouvrir la salle.</span><button type="button" class="linkish small" onClick=${() => setAstuce(false)}>Compris</button></p>` : null}
     ${edit ? html`<div class="rdv-edit"><${TimeChoice} ctx=${ctx} m=${{ ...m, creneaux: [] }} compact/>
       <div class="row"><input id=${'rdv-lien-' + m.id} class="grow" dir="ltr" value=${newLien} onInput=${e => setNewLien(e.target.value)} placeholder="Nouveau lien : https://meet.google.com/…"/><button class="btn small" disabled=${!newLien.trim()} onClick=${saveLien}>Enregistrer le lien</button></div>
@@ -303,11 +318,11 @@ function AfterBox({ ctx, m }) {
 }
 
 // Après le rendez-vous, côté lauréat : une question, une action. S'il n'a pas eu lieu : un autre moment, ou on clôt.
-function AfterMentor({ ctx, m }) {
+// Le lauréat clôt le mentorat : un vrai merci, une seule fois
+function finirMentorat(ctx, m) {
   const { store, act, go } = ctx;
   const s = store.byId('profiles', m.student_id);
-  const [non, setNon] = useState(false);
-  const finir = () => act(async () => {
+  return act(async () => {
     await store.update('mentorships', m.id, { status: 'terminee' });
     const fete = firstName(s) && celebrate({
       cle: 'mentorat-fini-' + m.id, icon: 'heart', titre: 'Merci pour ce mentorat !',
@@ -316,6 +331,12 @@ function AfterMentor({ ctx, m }) {
     });
     if (!fete) toast('Mentorat terminé. +20 points', 'win');
   });
+}
+
+function AfterMentor({ ctx, m }) {
+  const { store, act } = ctx;
+  const [non, setNon] = useState(false);
+  const finir = () => finirMentorat(ctx, m);
   return html`<div class="m-after">
     <p class="m-after-q"><strong>Le rendez-vous a eu lieu ?</strong> <span class="small muted"><${When} iso=${m.rdv_at}/></span></p>
     <div class="m-after-acts"><button type="button" class="btn small m-done" onClick=${finir}><${Icon} name="check" size=${15}/> Marquer comme terminé</button>
@@ -340,21 +361,27 @@ function NewSlots({ ctx, m, onDone }) {
 // ---------------------------------------------------------------------------
 // Une demande, du début à la fin
 // ---------------------------------------------------------------------------
-export function RequestCard({ ctx, m, side, why = [], focus = false }) {
+export function RequestCard({ ctx, m, side, why = [], focus = false, onIgnore = null }) {
   const { store, act, openProfile } = ctx;
   const st = mentorState(m);
   const other = store.byId('profiles', side === 'student' ? m.mentor_id : m.student_id);
   const [reslot, setReslot] = useState(false);
+  const [fin, setFin] = useState(false); // « C'est fait » pendant le rendez-vous : on passe tout de suite au merci
   const slots = futureSlots(m);
   const [cls, label] = side === 'mentor' && st === 'demande' ? ['m-demande', 'Demande pour toi'] : PILL[st] || PILL.demande;
   const waiting = st === 'ouverte' || st === 'demande';
-  const apres = st === 'apres';
+  const apres = st === 'apres' || (st === 'rdv' && fin);
   const annulerDemande = () => ctx.confirm('Annuler cette demande ?', () => act(() => store.update('mentorships', m.id, { status: 'annulee' })), 'Annuler la demande');
+  // L'administration retire une demande restée sans suite (un test, un doublon) ; l'étudiant ne reçoit pas de message
+  const clore = () => ctx.confirm(`Retirer la demande « ${m.sujet} » ? Elle ne sera plus proposée aux lauréats.`, () => act(async () => { await store.update('mentorships', m.id, { status: 'annulee' }); toast('Demande retirée.'); }), 'Retirer la demande');
+  const passer = () => ctx.confirm('Tu n’es pas disponible ? La demande sera proposée aux autres lauréats.', () => act(async () => { await store.update('mentorships', m.id, { mentor_id: null }); toast('Demande proposée aux autres lauréats.'); }), 'Proposer aux autres');
+  const mentorAdmin = side === 'admin' && st === 'rdv' ? store.byId('profiles', m.mentor_id) : null;
   return html`<article class=${'mreq st-' + st + (focus ? ' m-focus-card' : '') + (apres ? ' m-compact' : '')}>
     <div class="mrow-head">
       ${other ? html`<${Person} p=${other} onOpen=${openProfile} size=${36}/>` : html`<span class="open-to"><span class="open-ico"><${Icon} name="people" size=${18}/></span><span><strong>Tous les lauréats</strong><span class="small muted">Le premier disponible choisit un horaire</span></span></span>`}
       <span class="spacer"></span><span class=${'state-pill ' + cls}>${label}</span>${other ? html`<${MessageBtn} ctx=${ctx} p=${other} cls="btn tiny ghost"/>` : null}
-      ${side === 'student' && waiting ? html`<${MoreMenu} items=${[{ label: 'Annuler la demande', icon: 'x', danger: true, onClick: annulerDemande }]}/>` : null}</div>
+      ${side === 'student' && waiting ? html`<${MoreMenu} items=${[{ label: 'Annuler la demande', icon: 'x', danger: true, onClick: annulerDemande }]}/>` : null}
+      ${side === 'admin' && waiting ? html`<${MoreMenu} items=${[{ label: 'Retirer la demande', icon: 'x', danger: true, onClick: clore }]}/>` : null}</div>
     <p class="mreq-subject"><${BesoinTag} k=${m.besoin}/><strong translate="no" dir="auto">${m.sujet}</strong>${waiting ? html` <span class="muted small m-ago">· ${timeAgo(m.created_at)}</span>` : null}</p>
     ${m.message && !apres ? html`<p class="quote" translate="no" dir="auto">${m.message}</p>` : null}
     ${why.length && waiting ? html`<p class="why"><span class="small muted">Pourquoi toi :</span> ${why.map(w => html`<span class="mini good">${w}</span>`)}</p>` : null}
@@ -369,9 +396,12 @@ export function RequestCard({ ctx, m, side, why = [], focus = false }) {
     </div>` : null}
 
     ${side === 'mentor' && waiting ? html`<${TimeChoice} ctx=${ctx} m=${m}/>
-      ${st === 'demande' ? html`<div class="row"><span class="spacer"></span><button class="linkish small m-quiet" onClick=${() => ctx.confirm('Tu n’es pas disponible ? La demande sera proposée aux autres lauréats.', () => act(async () => { await store.update('mentorships', m.id, { mentor_id: null }); toast('Demande proposée aux autres lauréats.'); }), 'Proposer aux autres')}>Pas cette fois</button></div>` : null}` : null}
+      ${st === 'demande' || onIgnore ? html`<div class="row m-decline"><span class="spacer"></span>${st === 'demande'
+        ? html`<button type="button" class="btn tiny ghost" onClick=${passer}><${Icon} name="x" size=${14}/> Pas disponible cette fois</button>`
+        : html`<button type="button" class="btn tiny ghost" onClick=${onIgnore}><${Icon} name="x" size=${14}/> Ignorer</button>`}</div>` : null}` : null}
 
-    ${st === 'rdv' ? html`<${RdvBox} ctx=${ctx} m=${m} side=${side} focus=${focus}/>` : null}
+    ${st === 'rdv' && !fin && side !== 'admin' ? html`<${RdvBox} ctx=${ctx} m=${m} side=${side} focus=${focus} onFini=${() => (side === 'mentor' ? finirMentorat(ctx, m) : setFin(true))}/>` : null}
+    ${mentorAdmin ? html`<p class="small muted m-ok"><${Icon} name="video" size=${15}/> <span>Avec</span> <bdi translate="no">${mentorAdmin.full_name}</bdi> · <${When} iso=${m.rdv_at}/>${m.confirme_at ? html` · <span class="good-t"><${Icon} name="checks" size=${14}/> Présence confirmée</span>` : null}</p>` : null}
     ${apres && side === 'student' ? html`<${AfterBox} ctx=${ctx} m=${m}/>` : null}
     ${apres && side === 'mentor' ? html`<${AfterMentor} ctx=${ctx} m=${m}/>` : null}
     ${st === 'terminee' && (m.merci || m.note) ? html`<p class="small merci-inline">${m.note ? html`<span class="stars-ro" aria-label=${m.note + ' sur 5'}>${'★'.repeat(m.note)}</span>` : null}${m.merci ? html`<${Icon} name="heart" size=${14}/> <span translate="no" dir="auto">${m.merci}</span>` : null}</p>` : null}
@@ -410,7 +440,9 @@ export function MentoratPage(ctx) {
   const [ask, setAsk] = useState(null); // { mentor, besoin }
   const [past, setPast] = useState(false);
   const [more, setMore] = useState(false);
+  const [ignorees, setIgnorees] = useLocal(CLE_IGNOREES, []);
   const isLaureat = me.role === 'laureat';
+  const isAdmin = me.role === 'admin';
   const feter = me.role !== 'admin' && ctx.sub !== 'cv' ? acceptee(data, me) : null;
   // Un lauréat a accepté ma demande : on le fête une fois, avec une seule prochaine étape.
   // Elle arrive une seconde après la page (on voit d'abord son rendez-vous), et part avec elle si on s'en va.
@@ -437,7 +469,9 @@ export function MentoratPage(ctx) {
   const asMentor = data.mentorships.filter(m => m.mentor_id === me.id);
   const rdvs = asMentor.filter(m => ['rdv', 'apres'].includes(mentorState(m))).sort((a, b) => (mentorState(b) === 'apres') - (mentorState(a) === 'apres') || byRdv(a, b));
   const done = asMentor.filter(m => m.status === 'terminee').sort((a, b) => new Date(b.rdv_at || b.created_at) - new Date(a.rdv_at || a.created_at));
-  const need = isLaureat ? requestsFor(data, me, id => store.byId('profiles', id)) : [];
+  // Demandes pour moi : toutes celles qui me vont (lauréat), ou celles qu'un étudiant m'a adressées (administration)
+  const need = isLaureat || isAdmin ? requestsFor(data, me, id => store.byId('profiles', id)).filter(x => x.direct || (isLaureat && !ignorees.includes(x.m.id))) : [];
+  const ignorer = m => { setIgnorees([...ignorees.filter(id => id !== m.id), m.id].slice(-200)); toast('Demande masquée. Elle ne reviendra plus dans ta liste.'); };
   const busy = new Set(mineActive.map(m => m.mentor_id));
   const reco = me.role === 'etudiant' ? mentorsFor(data, me, '', scores).filter(x => !busy.has(x.p.id)).slice(0, 3) : [];
 
@@ -447,14 +481,25 @@ export function MentoratPage(ctx) {
     <${RelecturesPage} ctx=${ctx}/>
   </section>`;
 
-  if (me.role === 'admin') {
-    const open = data.mentorships.filter(m => m.status === 'demande').sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-    const soon = data.mentorships.filter(m => mentorState(m) === 'rdv');
-    return html`<section class="page">
-      <header class="page-head"><div><p class="eyebrow">${open.length} demande${open.length > 1 ? 's' : ''} en attente · ${soon.length} rendez-vous à venir</p><h1>Mentorat</h1></div></header>
+  // Administration : d'abord ce qui la concerne elle-même (une demande adressée, un rendez-vous fixé), puis le suivi de l'école
+  if (isAdmin) {
+    const miens = new Set([...need.map(x => x.m.id), ...rdvs.map(m => m.id)]);
+    const open = data.mentorships.filter(m => m.status === 'demande' && !miens.has(m.id)).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const soon = data.mentorships.filter(m => mentorState(m) === 'rdv' && !miens.has(m.id)).sort(byRdv);
+    const nOpen = data.mentorships.filter(m => m.status === 'demande').length, nSoon = data.mentorships.filter(m => mentorState(m) === 'rdv').length;
+    return html`<section class="page mentorat">
+      <header class="page-head"><div><p class="eyebrow">${nOpen} demande${nOpen > 1 ? 's' : ''} en attente · ${nSoon} rendez-vous à venir</p><h1>Mentorat</h1></div></header>
       <${MentorSeg} ctx=${ctx}/>
-      <${HowItWorks} role="etudiant"/>
-      <div class="list">${open.length ? open.map(m => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="admin"/>`) : html`<${Empty} icon="mentor" title="Aucune demande en attente">Toutes les demandes ont trouvé un lauréat.<//>`}</div>
+      ${rdvs.length ? html`<section class="m-section"><div class="m-head"><h2 class="h-ico"><${Icon} name="video"/> Tes rendez-vous</h2></div>
+        <div class="list">${rdvs.map((m, i) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="mentor" focus=${i === 0}/>`)}</div></section>` : null}
+      ${need.length ? html`<section class="m-section"><div class="m-head"><h2 class="h-ico"><${Icon} name="heart"/> Demandes pour toi <span class="count">${need.length}</span></h2></div>
+        <div class="list">${need.map(({ m, why }) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="mentor" why=${why}/>`)}</div></section>` : null}
+      <section class="m-section"><div class="m-head"><h2 class="h-ico"><${Icon} name="chart"/> Suivi de l’école</h2></div>
+        ${soon.length ? html`<h3 class="m-sub">Rendez-vous à venir <span class="count">${soon.length}</span></h3>
+          <div class="list">${soon.map(m => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="admin"/>`)}</div>` : null}
+        <h3 class="m-sub">Demandes en attente <span class="count">${open.length}</span></h3>
+        <div class="list">${open.length ? open.map(m => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="admin"/>`) : html`<${Empty} icon="mentor" title="Aucune demande en attente">Toutes les demandes ont trouvé un lauréat.<//>`}</div>
+      </section>
     </section>`;
   }
 
@@ -496,7 +541,7 @@ export function MentoratPage(ctx) {
       <div class="m-head"><h2 class="h-ico"><${Icon} name="heart"/> ${`Quand tu as ${RDV_MIN} minutes`}</h2></div>
       ${need.length ? html`<p class="small muted m-invite">Prends la demande qui te parle, à ton rythme. Les autres lauréats s’occupent du reste.</p>` : null}
       ${!me.mentor_dispo ? html`<p class="small muted">Active « Disponible pour aider » pour recevoir des demandes directes.</p>` : null}
-      <div class="list">${need.length ? need.slice(0, more ? 12 : 2).map(({ m, why }) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="mentor" why=${why}/>`) : html`<${Empty} icon="mentor" title="Tout est calme pour l’instant">Tu seras prévenu(e) dès qu’un étudiant demande de l’aide.<//>`}</div>
+      <div class="list">${need.length ? need.slice(0, more ? 12 : 2).map(({ m, why, direct }) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="mentor" why=${why} onIgnore=${direct ? null : () => ignorer(m)}/>`) : html`<${Empty} icon="mentor" title="Tout est calme pour l’instant">Tu seras prévenu(e) dès qu’un étudiant demande de l’aide.<//>`}</div>
       ${need.length > 2 ? html`<button class="linkish small past-toggle" onClick=${() => setMore(!more)}>${more ? 'Voir moins' : `Voir les autres demandes (${need.length - 2})`}</button>` : null}
     </section>` : null}
 
@@ -511,7 +556,8 @@ export function MentoratPage(ctx) {
     ${hist.length ? html`<button class="linkish small past-toggle" onClick=${() => setPast(!past)}>${past ? 'Masquer l’historique' : `Voir l’historique (${hist.length})`}</button>
       ${past ? html`<div class="list">${hist.slice(0, 10).map(m => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side=${isLaureat ? 'mentor' : 'student'}/>`)}</div>` : null}` : null}
 
-    ${isLaureat ? html`<p class="small muted center">Toi aussi, tu cherches un conseil ? <button class="linkish" onClick=${() => setAsk({})}>Demande à un lauréat plus expérimenté</button></p>` : null}
+    ${isLaureat && me.en_recherche ? html`<div class="callout"><p><strong>Tu cherches un emploi ?</strong> Un lauréat plus expérimenté peut relire ton CV, te préparer à un entretien ou te parler salaire.</p><div><button class="btn small primary" id="mt-demande-laureat" onClick=${() => setAsk({ besoin: 'entretien' })}><${Icon} name="heart" size=${15}/> Demander conseil</button></div></div>`
+      : isLaureat ? html`<p class="small muted center">Toi aussi, tu cherches un conseil ? <button class="linkish" onClick=${() => setAsk({})}>Demande à un lauréat plus expérimenté</button></p>` : null}
     ${!nouveau ? html`<${HowMore} role=${role}/>` : null}
     ${ask ? html`<${AskHelp} ctx=${ctx} mentor=${ask.mentor} besoin=${ask.besoin} onClose=${() => setAsk(null)}/>` : null}
   </section>`;
@@ -527,10 +573,13 @@ export function NextRdv({ ctx }) {
   const other = store.byId('profiles', next.mentor_id === me.id ? next.student_id : next.mentor_id);
   const lien = store.byId('liens_rdv', next.id)?.lien;
   const live = enDirect(next.rdv_at);
+  const aConfirmer = next.student_id === me.id && 'confirme_at' in next && !next.confirme_at && !live;
+  const confirmer = () => ctx.act(async () => { await store.update('mentorships', next.id, { confirme_at: new Date().toISOString() }); toast(`C’est confirmé. ${firstName(other)} est prévenu(e).`, 'win'); });
   return html`<div class=${'next-rdv' + (live ? ' live' : '')}>
     <${SlotDate} iso=${next.rdv_at}/>
     <span class="next-main"><span class="eyebrow"><${Icon} name="video" size=${13}/> Prochain rendez-vous</span><strong dir="auto" translate="no">${next.sujet}</strong><span class="small muted">Avec <span translate="no">${other?.full_name || ''}</span></span></span>
-    <span class="next-act">${isHttps(lien) ? html`<a class=${'btn small' + (live ? ' primary' : '')} href=${lien} target="_blank" rel="noopener"><${Icon} name="video" size=${15}/> Rejoindre</a>` : null}
+    <span class="next-act">${aConfirmer ? html`<button class="btn small primary" onClick=${confirmer}><${Icon} name="check" size=${15}/> Je serai là</button>` : null}
+      ${isHttps(lien) && !aConfirmer ? html`<a class=${'btn small' + (live ? ' primary' : '')} href=${lien} target="_blank" rel="noopener"><${Icon} name="video" size=${15}/> Rejoindre</a>` : null}
       <button class="btn small ghost" onClick=${() => go('mentorat')}>Détails</button></span>
   </div>`;
 }
@@ -542,7 +591,8 @@ export function NextRdv({ ctx }) {
 export function HelpNeeded({ ctx, max = 2, compact = false }) {
   const { data, me, store, go } = ctx;
   if (me.role !== 'laureat') return null;
-  const all = requestsFor(data, me, id => store.byId('profiles', id));
+  const ign = mentoratIgnorees();
+  const all = requestsFor(data, me, id => store.byId('profiles', id)).filter(x => x.direct || !ign.has(x.m.id));
   const need = all.filter(x => x.direct || x.score >= 2);
   if (!need.length) return null;
   if (compact) {
@@ -568,6 +618,14 @@ export function HelpNeeded({ ctx, max = 2, compact = false }) {
 // Styles de la passe UX (après ceux de page.html, qu'ils complètent)
 // ---------------------------------------------------------------------------
 injectCSS('mentorat-ux', `
+/* Confirmation de présence, « c'est fait », refus poli */
+.m-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); margin-top: var(--sp-3); padding: var(--sp-3); border-radius: var(--r-md); background: var(--accent-soft); }
+.m-confirm p { margin: 0; flex: 1 1 16rem; }
+.m-confirm-acts { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+.m-ok { display: flex; align-items: center; gap: .4rem; margin: var(--sp-2) 0 0; }
+.m-fini { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3); flex-wrap: wrap; margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px dashed var(--line); }
+.m-decline { margin-top: calc(-1 * var(--sp-1)); }
+.m-sub { margin: var(--sp-2) 0 0; font-size: var(--fs-3, 1rem); display: flex; align-items: center; gap: .5rem; }
 /* Sections : un titre, puis le contenu */
 .m-section { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
 .m-head { display: flex; align-items: center; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; }
@@ -733,7 +791,30 @@ addAR({
   'Rendez-vous fixé !': 'تم تحديد الموعد!',
   'Merci pour ce mentorat !': 'شكرًا على هذا الإرشاد!',
   'Voir mes mercis': 'عرض رسائل الشكر',
+  'Tu seras là ?': 'هل ستحضر؟',
+  'Je serai là': 'سأكون حاضرًا',
+  'Je ne peux pas': 'لا أستطيع',
+  'Tu as confirmé ta présence.': 'لقد أكّدت حضورك.',
+  'L’échange est terminé ?': 'هل انتهى اللقاء؟',
+  'C’est fait': 'تمّ',
+  'Pas disponible cette fois': 'غير متاح هذه المرة',
+  'Ignorer': 'تجاهل',
+  'Demande masquée. Elle ne reviendra plus dans ta liste.': 'تم إخفاء الطلب. لن يظهر في قائمتك مجددًا.',
+  'Tes rendez-vous': 'مواعيدك',
+  'Demandes pour toi': 'طلبات موجّهة إليك',
+  'Suivi de l’école': 'متابعة المدرسة',
+  'Rendez-vous à venir': 'المواعيد القادمة',
+  'Demandes en attente': 'الطلبات المعلّقة',
+  'Ton rendez-vous est fixé': 'تم تحديد موعدك',
+  'Confirmer ma présence': 'تأكيد حضوري',
+  'Présence confirmée': 'الحضور مؤكَّد',
 }, [
+  [/^Confirme pour rassurer (.+)\.$/, n => `أكّد حضورك لطمأنة ${n}.`],
+  [/^(.+) a confirmé sa présence\.$/, n => `${n} أكّد حضوره.`],
+  [/^(.+) a confirmé sa présence : (.+)$/, (n, x) => `${n} أكّد حضوره: ${x}`],
+  [/^(.+) n’a pas encore confirmé\.$/, n => `${n} لم يؤكّد حضوره بعد.`],
+  [/^C’est confirmé\. (.+) est prévenu\(e\)\.$/, n => `تم التأكيد. تم إخبار ${n}.`],
+  [/^(.+) a fixé ton rendez-vous\. Confirme ta présence : (.+)$/, (n, x) => `حدّد ${n} موعدك. أكّد حضورك: ${x}`],
   [/^Quand tu as (\d+) minutes$/, n => `حين تجد ${n} دقيقة`],
   [/^Dans (\d+) min$/, n => `بعد ${arCount(n, ['دقيقة واحدة', 'دقيقتين', 'دقائق', 'دقيقة'])}`],
   [/^Dans (\d+) jours$/, n => `بعد ${arCount(n, ['يوم واحد', 'يومين', 'أيام', 'يومًا'])}`],

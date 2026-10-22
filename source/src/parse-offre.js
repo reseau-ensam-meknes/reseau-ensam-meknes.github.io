@@ -180,16 +180,20 @@ function titreDefaut(core, type, ent) {
 }
 
 // ---------------------------------------------------------------------------
-// Filières (même ordre que FILIERES), seulement sur un signal clair
+// Filières, seulement sur un signal clair : chaque signal désigne les filières officielles concernées
 // ---------------------------------------------------------------------------
+const GM = ['Génie Mécanique : Conception et Industrialisation des Systèmes Mécaniques', 'Génie Mécanique : Ingénierie Mécanique et Structures', 'Génie Mécanique : Matériaux et Procédés de Fabrication'];
+const GI = ['Génie Industriel et Productique', 'Génie Industriel : Excellence Opérationnelle'];
+const GE = ['Génie Électromécanique : Digitalisation Industrielle', 'Génie Électromécanique : Maintenance et Commande Industrielles'];
 const FIL = [
-  [/genie mecanique|mechanical|\bmecaniques?\b|conception mecanique|\bcao\b|catia|solidworks|usinage/],
-  [/genie industriel|ingenieure? industriel|industrial engineer|supply[- ]chain|\blean\b|six sigma|amelioration continue|continuous improvement|logistique|logistics|(?:assurance|controle|ingenieure?|responsable|service|management|systeme|engineer|manager|pole|departement)\s+(?:de la |de |en |d')?(?:qualite|quality)\b|quality (?:engineer|assurance|control|manager)|\bqhse\b/],
-  [/electromecani|electromechani|\belectriques?\b|electrical|automatism|automation|\bautomates?\b|\bplc\b|maintenance|instrumentation|electrotechni/],
-  [/genie civil|civil engineer|\bbtp\b|beton arme|calcul (?:de |des )?structures?|ingenieure? structures?|structures? (?:metalliques?|en beton|beton)|ouvrages? d'art|batiment|travaux publics|geotechni|\bvrd\b/],
-  [/energetique|energies? renouvelables?|renewable|thermique|thermal|solaire|\bsolar\b|photovolta|eolien|wind (?:energy|power|farm)|\bhvac\b|\bcvc\b|hydrogene|hydrogen|(?:ingenieure?|engineer|secteur|domaine|stage|pfe|transition|efficacite|audit)\s+(?:en\s+|de l'|d')?(?:energie|energy)\b/],
-  [/informatique|informaticien|intelligence artificielle|artificial intelligence|machine learning|deep learning|data (?:scien|engineer|analy)|big data|\bsoftware\b|genie logiciel|developpement logiciel|ingenieure? logiciel|developpeur|developer|developpement (?:web|mobile|informatique)|full[- ]?stack|back[- ]?end|front[- ]?end|devops|cyber|computer vision|vision par ordinateur|\bllms?\b|\bnlp\b/, /\b(?:AI|IA)\b/],
-  [/mecatroni|mechatroni|robotique|robotics|\brobots?\b|embarque|embedded|electronique|electronics|\biot\b|microcontr|fpga/],
+  [GM, /genie mecanique|mechanical|\bmecaniques?\b|conception mecanique|\bcao\b|catia|solidworks|usinage/],
+  [GI, /genie industriel|ingenieure? industriel|industrial engineer|supply[- ]chain|\blean\b|six sigma|amelioration continue|continuous improvement|logistique|logistics|(?:assurance|controle|ingenieure?|responsable|service|management|systeme|engineer|manager|pole|departement)\s+(?:de la |de |en |d')?(?:qualite|quality)\b|quality (?:engineer|assurance|control|manager)|\bqhse\b/],
+  [GE, /electromecani|electromechani|\belectriques?\b|electrical|automatism|automation|\bautomates?\b|\bplc\b|maintenance|instrumentation|electrotechni/],
+  [['Génie Civil'], /genie civil|civil engineer|\bbtp\b|beton arme|calcul (?:de |des )?structures?|ingenieure? structures?|structures? (?:metalliques?|en beton|beton)|ouvrages? d'art|batiment|travaux publics|geotechni|\bvrd\b/],
+  [['Génie Mécanique : Énergétique'], /energetique|energies? renouvelables?|renewable|thermique|thermal|solaire|\bsolar\b|photovolta|eolien|wind (?:energy|power|farm)|\bhvac\b|\bcvc\b|hydrogene|hydrogen|(?:ingenieure?|engineer|secteur|domaine|stage|pfe|transition|efficacite|audit)\s+(?:en\s+|de l'|d')?(?:energie|energy)\b/],
+  [['Intelligence Artificielle et Technologies des Données : Systèmes Industriels'], /intelligence artificielle|artificial intelligence|machine learning|deep learning|data (?:scien|engineer|analy)|big data|computer vision|vision par ordinateur|\bllms?\b|\bnlp\b/, /\b(?:AI|IA)\b/],
+  [['Génie Informatique : Ingénierie Logicielle et Systèmes Intelligents'], /informatique|informaticien|\bsoftware\b|genie logiciel|developpement logiciel|ingenieure? logiciel|developpeur|developer|developpement (?:web|mobile|informatique)|full[- ]?stack|back[- ]?end|front[- ]?end|devops|cyber/],
+  [['Génie Électromécanique : Digitalisation Industrielle'], /mecatroni|mechatroni|robotique|robotics|\brobots?\b|embarque|embedded|electronique|electronics|\biot\b|microcontr|fpga|industrie 4\.0|digitali[sz]ation industrielle|jumeau numerique|digital twin/],
 ];
 
 // ---------------------------------------------------------------------------
@@ -279,7 +283,7 @@ function parse(text, me, now) {
   set('contact', contactOf(core));
 
   const Lf = L.replace(/(?:outils?|connaissances?|maitrise)\s+(?:de\s+l'outil\s+|des\s+outils\s+)?informatiques?/g, ' ');
-  const filieres = FIL.map(([re, cs], i) => (re.test(Lf) || cs?.test(core) ? FILIERES[i] : null)).filter(Boolean);
+  const filieres = [...new Set(FIL.flatMap(([fs, re, cs]) => (re.test(Lf) || cs?.test(core) ? fs : [])))].filter(x => FILIERES.includes(x));
   if (filieres.length) set('filieres', filieres);
   const { annees, sure } = anneesOf(type, L, f.duree);
   set('annees', annees, sure || !!t);

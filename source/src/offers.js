@@ -1,22 +1,48 @@
 // Offres : liste compacte, fiche détaillée, candidature, gestion des candidats par le lauréat.
 import { html, useState, useMemo, useEffect } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, TYPE_ICON, toast, RoleLine, celebrate, injectCSS } from './ui.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, TYPE_ICON, toast, RoleLine, celebrate, injectCSS, PartagerWhatsApp, lienWhatsApp, lienDirect } from './ui.js';
 import { getLang, addAR } from './i18n.js';
-import { TYPES, FILIERES, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor } from './logic.js';
+import { TYPES, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA } from './logic.js';
 import { RelanceBanner, BanqueSujets, PasteOffer } from './recrutement.js';
 import { CvButton } from './cv.js';
 import { SignalerBtn } from './confiance.js';
 import { EntrepriseResume } from './entreprises.js';
 import { MessageBtn } from './messages.js';
+// Le message WhatsApp d'une offre : de quoi il s'agit, et le lien qui l'ouvre directement
+// Message prêt pour WhatsApp, dans la langue de l'interface
+const TYPES_AR = { stage: 'تدريب', pfe: 'مشروع نهاية الدراسة', etranger: 'تدريب بالخارج', emploi: 'وظيفة' };
+const texteOffre = o => getLang() === 'ar'
+  ? `${TYPES_AR[o.type] || 'عرض'}: ${o.titre} · ${o.entreprise}\nشاهده على شبكة ENSAM مكناس: ${lienDirect('offre/' + o.id)}`
+  : `${TYPES[o.type]?.long || 'Offre'} : ${o.titre} · ${o.entreprise}\nÀ voir sur le Réseau ENSAM Meknès : ${lienDirect('offre/' + o.id)}`;
 
 const ANNEES_OPTS = [[3, '3A'], [4, '4A'], [5, '5A'], [6, 'Jeunes diplômés']];
 export const APP_STATUS = { postule: 'Envoyée', entretien: 'Entretien', retenu: 'Retenu(e)', refuse: 'Pas retenu(e)' };
 
-export function matchesMe(o, me, saison) {
-  const n = niveauOf(me, saison);
-  return (o.audience || 'etudiants') === 'etudiants' && (o.annees || []).includes(n) && (!o.filieres?.length || o.filieres.includes(me.filiere));
-}
+export const matchesMe = offrePour;
 const forLaureats = o => o.audience === 'laureats';
+
+// Filières visées par une offre : un parcours entier en un geste, ou ses filières une à une.
+// Une ancienne appellation déjà choisie (offre publiée avant la nouvelle liste) reste affichée, et se retire d'un clic.
+function FilieresPick({ value, onChange }) {
+  const has = v => value.includes(v);
+  const toggle = v => onChange(has(v) ? value.filter(x => x !== v) : [...value, v]);
+  const anciennes = value.filter(v => !FILIERES.includes(v));
+  return html`<div class="fil-pick">${PARCOURS.map(p => {
+    const fs = FILIERES_INFO.filter(x => x.parcours === p.code).map(x => x.nom);
+    const tout = fs.every(has);
+    return html`<div class="fil-groupe" key=${p.code}>
+      <button type="button" class=${'chip fil-parc' + (tout ? ' on' : '')} aria-pressed=${tout} onClick=${() => onChange(tout ? value.filter(x => !fs.includes(x)) : [...new Set([...value, ...fs])])}>${`Parcours ${p.nom}`}</button>
+      ${fs.length > 1 ? html`<span class="chips">${fs.map(v => html`<button type="button" class=${'chip' + (has(v) ? ' on' : '')} aria-pressed=${has(v)} title=${v} onClick=${() => toggle(v)}>${filiereSousTitre(v)}</button>`)}</span>` : null}
+    </div>`;
+  })}
+  ${anciennes.length ? html`<div class="fil-groupe"><span class="small muted">Ancienne appellation</span><span class="chips">${anciennes.map(v => html`<button type="button" class="chip on" aria-pressed="true" onClick=${() => toggle(v)}>${v}</button>`)}</span></div>` : null}</div>`;
+}
+injectCSS('fil-pick', `
+.fil-pick { display: flex; flex-direction: column; gap: .6rem; }
+.fil-groupe { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .5rem; }
+.fil-groupe .chips { display: contents; }
+.chip.fil-parc { font-weight: 650; }
+`);
 
 // Trois onglets : les offres, la banque de sujets PFE (5A et lauréats), les offres entre lauréats
 export function OffersPage(ctx) {
@@ -40,8 +66,6 @@ export function OffersPage(ctx) {
 
 // Ce que le membre a écrit lui-même (titre, entreprise, ville, message) porte translate="no" dir="auto" : jamais traduit.
 const prenom = p => (p?.full_name || '').split(' ')[0];
-// Ce visiteur peut-il postuler à cette offre ? (étudiant : offres étudiantes ; lauréat : offres entre lauréats)
-const peutPostuler = (o, me) => o.author_id !== me.id && (me.role === 'etudiant' ? !forLaureats(o) : me.role === 'laureat' && forLaureats(o));
 // Raisons d'une recommandation : « Ta filière » est un texte de l'interface, le reste vient du profil (compétence, ville)
 const Pourquoi = ({ why }) => html`<span class="why">${why.map(w => (w === 'Ta filière' ? html`<span class="mini good">${w}</span>` : html`<span class="mini good" translate="no" dir="auto">${w}</span>`))}</span>`;
 const doux = () => (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
@@ -64,7 +88,7 @@ function OfferList({ ctx, entre }) {
       if (isStudent && !(o.annees || []).includes(niveau)) return false; // un étudiant ne voit que les offres de son année
       if (vue === 'sauvees' && !data.reactions.some(r => r.offer_id === o.id && r.user_id === me.id && r.kind === 'save')) return false;
       if (type !== 'tous' && o.type !== type) return false;
-      if (qq && !`${o.titre} ${o.entreprise} ${o.ville} ${o.pays} ${(o.filieres || []).join(' ')}`.toLowerCase().includes(qq)) return false;
+      if (qq && !`${o.titre} ${o.entreprise} ${o.ville} ${o.pays} ${(o.filieres || []).join(' ')} ${resumeFilieres(o.filieres).join(' ')}`.toLowerCase().includes(qq)) return false;
       return true;
     }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   }, [data, q, type, vue]);
@@ -125,7 +149,7 @@ export function OfferCard({ o, ctx, onOpen, why }) {
   const myApp = apps.find(a => a.student_id === me.id);
   const dl = daysUntil(o.deadline);
   const mine = o.author_id === me.id;
-  const pourMoi = peutPostuler(o, me);
+  const pourMoi = peutPostulerA(o, me, ctx.saison);
   const canApply = !myApp && pourMoi && o.status === 'ouverte';
   const coopt = author && o.cooptation && canApply; // déjà postulé : l'état de la candidature compte davantage
   const lieu = [o.ville, o.pays !== 'Maroc' ? o.pays : ''].filter(Boolean).join(', ');
@@ -179,7 +203,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
   const author = store.byId('profiles', o.author_id);
   const apps = data.applications.filter(a => a.offer_id === o.id);
   const comments = data.comments.filter(c => c.offer_id === o.id);
-  const candidat = peutPostuler(o, me);
+  const candidat = peutPostulerA(o, me, ctx.saison);
   const myApp = candidat ? apps.find(a => a.student_id === me.id) : null;
   const saved = data.reactions.find(r => r.offer_id === o.id && r.user_id === me.id && r.kind === 'save');
   const toggleSave = () => act(() => saved ? store.remove('reactions', saved.id) : store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save' }));
@@ -192,7 +216,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
     ['Lieu', 'pin', html`<span translate="no" dir="auto">${o.ville || ''}</span>${o.pays ? `${o.ville ? ', ' : ''}${o.pays}` : ''}`],
     o.duree ? ['Durée', 'clock', html`<span translate="no" dir="auto">${o.duree}</span>${o.remunere ? ' · rémunéré' : ''}`] : null,
     dl ? ['Date limite', 'calendar', html`${dateTxt}${urgent ? html` <span class="tag urgent">${jours === 0 ? 'Dernier jour' : `J-${jours}`}</span>` : null}`] : null,
-    ['Pour', 'people', forLaureats(o) ? 'Lauréats' : [...(o.annees || []).map(a => NIVEAUX[a]?.short), ...(o.filieres?.length ? o.filieres : ['toutes filières'])].join(' · ')],
+    ['Pour', 'people', forLaureats(o) ? 'Lauréats' : [...(o.annees || []).map(a => NIVEAUX[a]?.short), ...(o.filieres?.length ? resumeFilieres(o.filieres) : ['toutes filières'])].join(' · ')],
   ].filter(Boolean);
   const auteurNom = prenom(author) || 'Le lauréat';
 
@@ -219,6 +243,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
           <h2 translate="no" dir="auto">${o.titre}</h2>
           <p class="od-sub"><button type="button" class="linkish od-ent" onClick=${() => { onClose(); ctx.openEntreprise?.(o.entreprise); }}><span translate="no" dir="auto">${o.entreprise}</span></button><span class="od-dot" aria-hidden="true">·</span><span class="muted">Publiée ${timeAgo(o.created_at)}</span></p>
         </div>
+        ${o.status === 'ouverte' ? html`<${PartagerWhatsApp} id="od-partage" texte=${texteOffre(o)}/>` : null}
         ${!mine && !isAdmin ? html`<${SignalerBtn} ctx=${ctx} type="offre" id=${o.id} small/>` : null}
         ${(mine || isAdmin) ? html`<div class="menu-wrap"><button class="icon-btn" aria-label="Gérer l’offre" aria-expanded=${menu} onClick=${() => setMenu(!menu)}><${Icon} name="more"/></button>
           ${menu ? html`<div class="menu-pop">
@@ -356,12 +381,12 @@ function Matching({ ctx, o }) {
 function PickStudent({ ctx, onClose, onPick }) {
   const { data, saison } = ctx;
   const [q, setQ] = useState('');
-  const res = q.trim().length < 2 ? [] : data.profiles.filter(p => p.role !== 'admin' && niveauOf(p, saison) <= 6 && p.full_name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 8);
-  return html`<${Modal} title="Quel étudiant as-tu recruté ?" onClose=${onClose}>
+  const res = q.trim().length < 2 ? [] : data.profiles.filter(p => p.role !== 'admin' && (niveauOf(p, saison) <= 6 || p.en_recherche) && p.full_name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 8);
+  return html`<${Modal} title="Qui as-tu recruté ?" onClose=${onClose}>
     <p class="muted small">Il ou elle recevra une demande de confirmation. Le recrutement compte une fois confirmé.</p>
-    <label class="search"><${Icon} name="search" size=${16}/><input id="pick-q" placeholder="Nom de l’étudiant" value=${q} onInput=${e => setQ(e.target.value)}/></label>
+    <label class="search"><${Icon} name="search" size=${16}/><input id="pick-q" placeholder="Son nom" value=${q} onInput=${e => setQ(e.target.value)}/></label>
     <ul class="people-list">${res.map(p => html`<li><${Person} p=${p}/><button class="btn small primary" onClick=${() => onPick(p.id)}>Choisir</button></li>`)}</ul>
-    ${q.trim().length >= 2 && !res.length ? html`<p class="muted small">Personne avec ce nom. L’étudiant doit d’abord créer son compte.</p>` : null}
+    ${q.trim().length >= 2 && !res.length ? html`<p class="muted small">Personne avec ce nom. La personne doit d’abord créer son compte.</p>` : null}
   <//>`;
 }
 
@@ -418,7 +443,8 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
         const fete = premiere && celebrate({
           cle: 'premiere-offre-' + me.id, icon: 'feed', titre: 'Ta première offre est en ligne !',
           texte: entre ? 'Les lauréats la voient déjà dans « Entre lauréats ». Merci d’ouvrir la porte !' : 'Les étudiants concernés la voient déjà dans « Pour moi ». Merci d’ouvrir la porte à un étudiant de l’école !',
-          action: neuve?.id && ctx.openOffer ? { label: 'Voir mon offre', icon: 'arrow', onClick: () => ctx.openOffer(neuve.id) } : null,
+          // La suite la plus utile : la faire circuler dans les groupes WhatsApp de promo
+          action: neuve?.id ? { label: 'Partager sur WhatsApp', icon: 'share', onClick: () => window.open(lienWhatsApp(texteOffre(neuve)), '_blank', 'noopener') } : null,
         });
         if (!fete) toast(entre ? 'Offre publiée. Les lauréats la voient dans « Entre lauréats ».' : 'Offre publiée. Les étudiants concernés la voient dans « Pour moi ».');
       }
@@ -442,7 +468,7 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
       <details class="more-fields" open=${editing}>
         <summary>Plus de détails (facultatif)</summary>
         <div class="form">
-          <${Field} label="Filières" hint="Aucune sélection = toutes les filières"><div class="chips">${FILIERES.map(v => html`<button type="button" class=${'chip' + (f.filieres.includes(v) ? ' on' : '')} onClick=${() => toggleIn('filieres', v)}>${v}</button>`)}</div><//>
+          <${Field} label="Filières" hint="Aucune sélection = toutes les filières. Le nom d’un parcours le sélectionne en entier."><${FilieresPick} value=${f.filieres} onChange=${v => set('filieres', v)}/><//>
           <div class="grid3">
             <${Field} label="Durée"><input id="of-duree" value=${f.duree || ''} onInput=${e => set('duree', e.target.value)} placeholder="6 mois, CDI…"/><//>
             <${Field} label="Date limite"><input id="of-dl" type="date" value=${f.deadline || ''} onInput=${e => set('deadline', e.target.value)}/><//>

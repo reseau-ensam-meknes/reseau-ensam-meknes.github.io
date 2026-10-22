@@ -11,7 +11,7 @@ import { createRequire } from 'node:module';
 const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe.min.js'), 'utf8');
 
 const SITE = path.resolve(process.env.SITE_DIR || new URL('../../dist', import.meta.url).pathname);
-const TYPES = { '.js': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
+const TYPES = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const ECRANS = ['accueil', 'offres', 'mentorat', 'mentorat/cv', 'messages', 'parcours', 'espace', 'reseau/groupes', 'reseau/agenda', 'reseau/entraide',
   'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'reseau/classement', 'reseau/talents', 'suivi', 'profil', 'enquete',
   'confidentialite', 'admin', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda', 'admin/reglages'];
@@ -77,6 +77,25 @@ for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
   });
 }
 
+test('profil : s’enregistre même avec des champs vides ; rôle et promo cohérents', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Nadia'); await s.aller('profil');
+  await s.page.fill('#pf-ville', 'Rabat');
+  await s.page.click('form .row-end .btn.primary'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').innerText(), /Profil enregistré/);
+  await s.aller('accueil'); await s.aller('profil');
+  assert.equal(await s.page.inputValue('#pf-ville'), 'Rabat');
+  // Un « lauréat » d'une promo pas encore diplômée : on le lui dit, et un bouton corrige le rôle
+  await s.page.fill('#pf-promo', String(new Date().getFullYear() + 1)); await s.page.waitForTimeout(150);
+  assert.ok(await s.page.isVisible('#pf-incoherent'));
+  assert.ok(await s.page.isDisabled('form .row-end .btn.primary'));
+  await s.page.click('#pf-role-ok'); await s.page.waitForTimeout(150);
+  assert.ok(!(await s.page.isVisible('#pf-incoherent')));
+  assert.ok(await s.page.isEnabled('form .row-end .btn.primary'));
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('coordonnées : visibles seulement après accord', async () => {
   const s = await ouvrir();
   await s.comme('Amine'); await s.fiche('Youssef El Amrani');
@@ -124,6 +143,47 @@ test('messagerie : écrire, être lu, bloquer ; pas de conversation sans lien', 
   await s.aller('accueil'); await s.comme('Nadia'); await s.aller('messages/' + salma); await s.page.waitForTimeout(200);
   assert.equal(await s.page.locator('#chat-txt').count(), 0);
   assert.equal(await s.page.locator('.composer.ferme').count(), 1);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('mentorat : demander, fixer l’horaire, confirmer sa présence, ignorer une demande', async () => {
+  const s = await ouvrir();
+  const carte = sujet => s.page.locator('.mreq', { hasText: sujet }).first();
+  // Salma demande de l'aide à Youssef depuis sa fiche
+  await s.comme('Salma'); await s.fiche('Youssef El Amrani');
+  await s.page.click('.modal button:has-text("Demander de l’aide")'); await s.page.waitForTimeout(300);
+  await s.page.click('.need-pick .chip >> nth=0'); await s.page.fill('#ah-sujet', 'Préparer mon PFE en lean');
+  await s.page.click('.modal .btn.primary:has-text("Envoyer ma demande")'); await s.page.waitForTimeout(400);
+  // Youssef choisit un horaire : le rendez-vous attend la confirmation de Salma
+  await s.aller('accueil'); await s.comme('Youssef'); await s.aller('mentorat');
+  await carte('Préparer mon PFE en lean').locator('.chip.time').first().click();
+  await carte('Préparer mon PFE en lean').locator('button:has-text("Confirmer le rendez-vous")').click(); await s.page.waitForTimeout(400);
+  await s.page.locator('.fete-acts .btn').last().click({ timeout: 2000 }).catch(() => {});
+  assert.match(await carte('Préparer mon PFE en lean').innerText(), /Salma n’a pas encore confirmé/);
+  // Salma confirme sa présence
+  await s.aller('accueil'); await s.comme('Salma'); await s.aller('mentorat'); await s.page.waitForTimeout(1300);
+  await s.page.locator('.fete-acts .btn').last().click({ timeout: 2000 }).catch(() => {});
+  await carte('Préparer mon PFE en lean').locator('button:has-text("Je serai là")').click(); await s.page.waitForTimeout(300);
+  assert.match(await carte('Préparer mon PFE en lean').innerText(), /Tu as confirmé ta présence/);
+  await s.aller('accueil'); await s.comme('Youssef'); await s.aller('mentorat');
+  assert.match(await carte('Préparer mon PFE en lean').innerText(), /Salma a confirmé sa présence/);
+  // Une demande ouverte à tous peut être écartée : elle ne revient plus
+  await s.page.click('button:has-text("Voir les autres demandes")'); await s.page.waitForTimeout(200);
+  const ign = s.page.locator('.mreq button:has-text("Ignorer")');
+  const avant = await ign.count(); assert.ok(avant > 0, 'au moins une demande ouverte à écarter');
+  await ign.first().click(); await s.page.waitForTimeout(300);
+  assert.equal(await ign.count(), avant - 1);
+  // L'administration voit le suivi de l'école, et retire une demande restée sans suite
+  await s.comme('Admin'); await s.aller('mentorat');
+  assert.match(await s.page.locator('.page').innerText(), /Suivi de l’école/);
+  const enAttente = s.page.locator('.m-section', { hasText: 'Suivi de l’école' }).locator('.mreq:has(.m-more-btn)');
+  const n = await enAttente.count(); assert.ok(n > 0, 'au moins une demande en attente à retirer');
+  await enAttente.first().locator('.m-more-btn').click();
+  await s.page.click('[role="menuitem"]:has-text("Retirer la demande")');
+  await s.page.click('.modal .btn.danger'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Demande retirée/);
+  assert.equal(await enAttente.count(), n - 1);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -196,6 +256,30 @@ test('lien d’invitation d’une promo : la promo est gardée, l’adresse nett
   await s.ctx.close();
 });
 
+test('partage WhatsApp : le lien direct rouvre l’offre et la question ; l’administration voit où l’inscription s’arrête', async () => {
+  const s = await ouvrir();
+  await s.comme('Salma'); await s.aller('offres');
+  await s.page.locator('.ocard-main').first().click(); await s.page.waitForSelector('.od h2');
+  const titre = await s.page.locator('.od h2').innerText();
+  const msg = decodeURIComponent((await s.page.getAttribute('#od-partage', 'href')).split('https://wa.me/?text=')[1]);
+  assert.ok(msg.includes(titre), msg);
+  const lien = msg.match(/https?:\/\/\S+#offre\/\S+/)[0];
+  await s.fermer(); await s.aller('accueil');
+  await s.page.goto(lien); await s.page.reload(); await s.page.waitForSelector('.od h2');
+  assert.equal(await s.page.locator('.od h2').innerText(), titre, 'le lien ouvre la même offre');
+  await s.fermer();
+  await s.aller('reseau/entraide'); await s.page.locator('.qrow').first().click(); await s.page.waitForSelector('#q-partage');
+  const q = decodeURIComponent((await s.page.getAttribute('#q-partage', 'href')).split('text=')[1]);
+  assert.match(q, /#reseau\/entraide\/\S+/);
+  await s.comme('Admin'); await s.aller('admin');
+  const parcours = await s.page.locator('#adm-parcours').innerText();
+  assert.match(parcours, /Compte créé[\s\S]*Profil rempli[\s\S]*Première action/);
+  assert.match(parcours, /Le plus grand arrêt|Personne ne s’arrête/);
+  assert.match(await s.page.locator('.kpis').innerText(), /Réponse en 48 h[\s\S]*Actifs cette semaine/i);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('profil : remplir depuis le texte LinkedIn collé', async () => {
   const s = await ouvrir();
   await s.comme('Amine'); await s.aller('profil');
@@ -204,6 +288,284 @@ test('profil : remplir depuis le texte LinkedIn collé', async () => {
   await s.page.click('#pf-lifill'); await s.page.waitForTimeout(200);
   assert.match(await s.page.inputValue('#pf-comp'), /SolidWorks, Ansys, Gestion de projet/);
   assert.match(await s.page.locator('.li-faits').innerText(), /Compétences/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// CV de lauréat (texte d'un PDF) ; le PDF est fabriqué dans la page puis déposé dans le champ fichier
+const CV_LAUREAT = ['Yassine BERRADA', 'Ingénieur méthodes – OCP Group', 'yassine.berrada@outlook.fr · 06 61 22 33 44 · Casablanca, Maroc',
+  'EXPÉRIENCE PROFESSIONNELLE', 'OCP Group, Jorf Lasfar', 'Ingénieur méthodes', 'Septembre 2021 – Aujourd\'hui',
+  'FORMATION', '2016 – 2021 : Diplôme d\'ingénieur d\'État en Génie Industriel, ENSAM Meknès', 'COMPÉTENCES TECHNIQUES', 'Lean, SMED, Power BI'];
+const deposerPdf = (page, champ, lignes) => page.evaluate(async ([champ, lignes]) => {
+  const { pdfSimple } = await import('./store.js');
+  const dt = new DataTransfer(); dt.items.add(new File([pdfSimple(lignes)], 'cv.pdf', { type: 'application/pdf' }));
+  const input = document.querySelector(champ); input.files = dt.files; input.dispatchEvent(new Event('change', { bubbles: true }));
+}, [champ, lignes]);
+
+test('inscription : « Tu es… » bien visible, puis tout se remplit depuis le CV', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  // Le formulaire d'inscription (en démo, on a déjà un profil : on l'affiche seul)
+  await s.page.evaluate(async () => {
+    const [{ html, render }, { createStore }, { ProfileForm }] = await Promise.all([import('./vendor/preact-htm.js'), import('./store.js'), import('./community.js')]);
+    const store = await createStore();
+    document.getElementById('app').hidden = true;
+    const el = document.body.appendChild(document.createElement('main')); el.id = 'inscription'; el.className = 'auth-card wide';
+    render(html`<${ProfileForm} ctx=${{ store, act: fn => fn() }} onboarding/>`, el);
+  });
+  await s.page.waitForSelector('#pf-je-laureat');
+  assert.ok(await s.page.isVisible('#pf-choisir'));
+  assert.equal(await s.page.locator('#pf-name').count(), 0, 'le reste du formulaire attend le choix');
+  assert.ok(await s.page.isDisabled('form .row-end .btn.primary'));
+  await s.page.click('#pf-je-etudiant');
+  assert.equal(await s.page.getAttribute('#pf-je-etudiant', 'aria-pressed'), 'true');
+  assert.ok(await s.page.isVisible('#pf-name'));
+  // Le CV d'un lauréat inscrit par erreur comme étudiant : rôle, promo, filière, poste et téléphone viennent du CV
+  await deposerPdf(s.page, '#pf-cvfile', CV_LAUREAT);
+  await s.page.waitForSelector('.cv-lu', { timeout: 15000 });
+  assert.equal(await s.page.getAttribute('#pf-je-laureat', 'aria-pressed'), 'true');
+  assert.equal(await s.page.inputValue('#pf-name'), 'Yassine Berrada');
+  assert.equal(await s.page.inputValue('#pf-promo'), '2021');
+  assert.equal(await s.page.inputValue('#pf-fil'), 'Génie Industriel');
+  assert.equal(await s.page.inputValue('#pf-ent'), 'OCP Group');
+  assert.equal(await s.page.inputValue('#pf-poste'), 'Ingénieur méthodes');
+  // Inscription courte : le reste (coordonnées comprises, déjà remplies depuis le CV) s'ouvre au besoin
+  assert.equal(await s.page.locator('#pf-tel').count(), 0);
+  await s.page.click('#pf-plus');
+  assert.equal(await s.page.inputValue('#pf-tel'), '06 61 22 33 44');
+  assert.ok(await s.page.isEnabled('form .row-end .btn.primary'));
+  assert.ok((await s.debordement()) <= 0, 'pas de débordement à 390 px');
+  await s.page.addScriptTag({ content: AXE });
+  const v = await s.page.evaluate(async () => (await axe.run('#inscription', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => x.id));
+  assert.deepEqual(v, []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('CV qui contredit ou complète le profil : le membre met à jour en un clic, l’administration lit les CV et corrige', async () => {
+  const s = await ouvrir();
+  await s.comme('Salma'); await s.aller('profil');
+  await deposerPdf(s.page, '#cv-file', CV_LAUREAT);
+  await s.page.waitForSelector('#cv-controle', { timeout: 15000 });
+  assert.match(await s.page.locator('#cv-controle').innerText(), /Lauréat\(e\) · Promo 2021/);
+  await s.page.click('#cv-appliquer'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Profil mis à jour d’après ton CV/);
+  assert.equal(await s.page.locator('#cv-controle').count(), 0);
+  assert.equal(await s.page.inputValue('#pf-promo'), '2021');
+  assert.equal(await s.page.inputValue('#pf-poste'), 'Ingénieur méthodes', 'les champs vides se remplissent depuis le CV');
+  assert.equal(await s.page.inputValue('#pf-ent'), 'OCP Group');
+  // Amine dépose le même CV sans corriger : l'administration le trouve en lisant les CV déposés
+  await s.comme('Amine'); await s.aller('profil');
+  await deposerPdf(s.page, '#cv-file', CV_LAUREAT);
+  await s.page.waitForSelector('#cv-controle', { timeout: 15000 });
+  await s.comme('Admin'); await s.aller('admin/membres');
+  await s.page.click('#adm-lire-cv');
+  const ligne = s.page.locator('.revoir-list li', { hasText: 'Amine' });
+  await ligne.waitFor({ timeout: 20000 });
+  assert.match(await ligne.innerText(), /Son CV indique :\s*Lauréat\(e\) · Promo 2021/);
+  await ligne.locator('button', { hasText: 'Appliquer' }).click(); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Profil corrigé/);
+  assert.equal(await s.page.locator('.revoir-list li', { hasText: 'Amine' }).count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('lecture de CV fausse : le membre la signale, l’administration la copie pour Claude sans coordonnées, puis la classe', async () => {
+  const s = await ouvrir();
+  await s.ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await s.comme('Salma'); await s.aller('profil');
+  await deposerPdf(s.page, '#cv-file', CV_LAUREAT);
+  await s.page.waitForSelector('#cv-controle', { timeout: 15000 });
+  await s.page.click('#cv-signaler');
+  await s.page.fill('#cv-juste', 'Étudiante 5A, promo 2027');
+  await s.page.click('#cv-signal-send'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /L’erreur est signalée/);
+  assert.equal(await s.page.locator('#cv-controle').count(), 0, 'la proposition signalée disparaît');
+  await s.comme('Admin'); await s.aller('admin');
+  assert.match(await s.page.locator('.callout.today').innerText(), /1 erreur de lecture de CV signalée/);
+  await s.aller('admin/membres');
+  const panneau = s.page.locator('#adm-lectures');
+  assert.match(await panneau.innerText(), /Lu :\s*Lauréat\(e\) · Promo 2021[\s\S]*Juste :\s*Étudiante 5A, promo 2027/);
+  await s.page.click('#adm-cv-copier'); await s.page.waitForTimeout(200);
+  const copie = await s.page.evaluate(() => navigator.clipboard.readText());
+  assert.match(copie, /Lu dans le CV : Lauréat\(e\) · Promo 2021/);
+  assert.match(copie, /\| 2016 – 2021 : Diplôme d'ingénieur d'État en Génie Industriel, ENSAM Meknès/);
+  assert.doesNotMatch(copie, /outlook|61 22 33|Salma/, 'ni coordonnées ni nom');
+  // Relue par l'administration, la même lecture n'est plus proposée
+  await s.page.click('#adm-lire-cv');
+  await s.page.waitForSelector('#adm-lire-cv:not([disabled])', { timeout: 20000 });
+  assert.equal(await s.page.locator('.panel:has(#adm-lire-cv) .revoir-list li', { hasText: 'Salma' }).count(), 0);
+  await panneau.locator('button', { hasText: 'Classer' }).click(); await s.page.waitForTimeout(300);
+  assert.match(await panneau.innerText(), /Toutes les erreurs signalées sont classées \(1\)/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('CV en deux colonnes : les morceaux d’une ligne sont remis de gauche à droite', async () => {
+  const s = await ouvrir();
+  // PDF dont la colonne de droite (ville, dates) est écrite avant l'école, sur la même ligne
+  const r = await s.page.evaluate(async () => {
+    const [{ texteDuCV }, { parseLinkedin }] = await Promise.all([import('./lire-cv.js'), import('./parse-linkedin.js')]);
+    const items = [[60, 800, 'HAJEB ABDERRAHMAN', 18], [60, 760, 'FORMATION', 13], [440, 740, 'MEKNES'], [510, 740, '2019-2024'],
+      [60, 740, 'National School of Arts and Crafts-ENSAM'], [80, 726, 'Mechanical Engineering Structures and Product Engineering', 10],
+      [60, 700, 'PROFESSIONAL EXPERIENCES', 13], [60, 680, 'End-of-study industrial project'], [430, 680, 'February 2024 - June 2024']];
+    const flux = items.map(([x, y, t, taille = 11]) => `BT /F1 ${taille} Tf ${x} ${y} Td (${t}) Tj ET`).join('\n');
+    const objets = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>', `<< /Length ${flux.length} >>\nstream\n${flux}\nendstream`];
+    let out = '%PDF-1.4\n'; const pos = [];
+    objets.forEach((o, i) => { pos.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+    const xref = out.length;
+    out += `xref\n0 ${objets.length + 1}\n0000000000 65535 f \n` + pos.map(p => String(p).padStart(10, '0') + ' 00000 n \n').join('') + `trailer\n<< /Size ${objets.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+    const texte = await texteDuCV(Uint8Array.from(out, c => c.charCodeAt(0) & 255).buffer);
+    return { texte, promo: parseLinkedin(texte, new Date(2026, 9, 22)).promo };
+  });
+  assert.match(r.texte, /^National School of Arts and Crafts-ENSAM MEKNES 2019-2024$/m);
+  assert.match(r.texte, /^End-of-study industrial project February 2024 - June 2024$/m);
+  assert.equal(r.promo, 2024);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('lauréat qui cherche un emploi : il le coche, voit les offres pour lui, peut postuler, et apparaît dans la Vitrine', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Nadia'); await s.aller('profil');
+  await s.page.check('#pf-recherche');
+  await s.page.fill('#pf-dispo', 'Ingénieur méthodes, Casablanca');
+  await s.page.click('form .row-end .btn.primary'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Profil enregistré/);
+  await s.aller('accueil');
+  assert.match(await s.page.locator('.hello-sub').innerText(), /Le réseau t’aide à trouver ton poste/);
+  // Une offre « Jeunes diplômés » de sa filière : elle peut postuler
+  await s.aller('offres'); await s.page.fill('#f-q', 'Safran'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.ocard:has-text("Ingénieur méthodes (CDI)") .ocard-apply').count(), 1);
+  // Un lauréat qui recrute la trouve dans la Vitrine des talents
+  await s.comme('Youssef'); await s.aller('reseau/talents');
+  await s.page.selectOption('#t-niv', 'L'); await s.page.waitForTimeout(300);
+  const carte = s.page.locator('.tcard', { hasText: 'Nadia Ferhat' });
+  assert.equal(await carte.count(), 1);
+  assert.match(await carte.innerText(), /Cherche :\s*un emploi/);
+  assert.match(await carte.innerText(), /Ingénieur méthodes, Casablanca/);
+  assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// Une photo « d'identité » fabriquée dans la page (dégradés et grain), en fichier image ou dans un CV en PDF
+const fabriquerPortrait = () => {
+  const c = document.createElement('canvas'); c.width = 240; c.height = 300;
+  const g = c.getContext('2d');
+  g.fillStyle = '#dfe5ea'; g.fillRect(0, 0, 240, 300);
+  const peau = g.createRadialGradient(120, 120, 10, 120, 120, 80); peau.addColorStop(0, '#e2b393'); peau.addColorStop(1, '#a8714f');
+  g.fillStyle = peau; g.beginPath(); g.ellipse(120, 125, 62, 80, 0, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#2b3a55'; g.fillRect(30, 230, 180, 70);
+  const d = g.getImageData(0, 0, 240, 300);
+  for (let i = 0; i < d.data.length; i += 4) { const n = (Math.random() - 0.5) * 30; d.data[i] += n; d.data[i + 1] += n; d.data[i + 2] += n; }
+  g.putImageData(d, 0, 0);
+  return c;
+};
+const choisirPhoto = page => page.evaluate(async fab => {
+  const c = new Function(`return (${fab})()`)();
+  const b = await new Promise(ok => c.toBlob(ok, 'image/png'));
+  const dt = new DataTransfer(); dt.items.add(new File([b], 'moi.png', { type: 'image/png' }));
+  const input = document.querySelector('#photo-file'); input.files = dt.files; input.dispatchEvent(new Event('change', { bubbles: true }));
+}, fabriquerPortrait.toString());
+// CV en PDF avec la photo en haut à droite (JPEG) et un logo plat en bas
+const deposerCvAvecPhoto = (page, champ) => page.evaluate(async ([champ, fab]) => {
+  const c = new Function(`return (${fab})()`)();
+  const jpeg = new Uint8Array(await (await new Promise(ok => c.toBlob(ok, 'image/jpeg', 0.9))).arrayBuffer());
+  const texte = s => Uint8Array.from(s, x => x.charCodeAt(0) & 255);
+  const flux = 'q 110 0 0 137 440 660 cm /Im1 Do Q\nBT /F1 18 Tf 56 780 Td (Nadia Ferhat) Tj ET\nBT /F1 11 Tf 56 750 Td (Ingenieure qualite) Tj ET';
+  const objets = [texte('<< /Type /Catalog /Pages 2 0 R >>'), texte('<< /Type /Pages /Kids [3 0 R] /Count 1 >>'),
+    texte('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> /XObject << /Im1 5 0 R >> >> /Contents 6 0 R >>'),
+    texte('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'),
+    [texte(`<< /Type /XObject /Subtype /Image /Width 240 /Height 300 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`), jpeg, texte('\nendstream')],
+    texte(`<< /Length ${flux.length} >>\nstream\n${flux}\nendstream`)];
+  const parts = [texte('%PDF-1.4\n')]; let n = parts[0].length; const pos = [];
+  objets.forEach((o, i) => { pos.push(n); for (const x of [texte(`${i + 1} 0 obj\n`), ...[].concat(o), texte('\nendobj\n')]) { parts.push(x); n += x.length; } });
+  parts.push(texte(`xref\n0 ${objets.length + 1}\n0000000000 65535 f \n` + pos.map(p => String(p).padStart(10, '0') + ' 00000 n \n').join('') + `trailer\n<< /Size ${objets.length + 1} /Root 1 0 R >>\nstartxref\n${n}\n%%EOF`));
+  const dt = new DataTransfer(); dt.items.add(new File(parts, 'cv.pdf', { type: 'application/pdf' }));
+  const input = document.querySelector(champ); input.files = dt.files; input.dispatchEvent(new Event('change', { bubbles: true }));
+}, [champ, fabriquerPortrait.toString()]);
+
+test('photo de profil : choisie, vue partout, retirée ; celle du CV est proposée (Mon profil, accueil), jamais mise sans accord', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  await s.comme('Salma'); await s.aller('profil');
+  await choisirPhoto(s.page);
+  await s.page.waitForSelector('.photo-card .avatar img', { timeout: 10000 });
+  const taille = await s.page.$eval('.photo-card .avatar img', i => [i.naturalWidth, i.naturalHeight]);
+  assert.deepEqual(taille, [320, 320], 'recadrée en carré et réduite avant l’envoi');
+  // Les autres la voient (annuaire)
+  await s.comme('Youssef'); await s.fiche('Salma Bennani');
+  assert.equal(await s.page.locator('.modal .avatar img').count() > 0, true);
+  await s.fermer();
+  // Retirée : les initiales reviennent
+  await s.comme('Salma'); await s.aller('profil');
+  await s.page.locator('.photo-card .photo-acts .btn').nth(1).click();
+  await s.page.locator('.modal .btn.danger').click(); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.photo-card .avatar img').count(), 0);
+  // Photo dans le CV : proposée dans Mon profil ; « Utiliser » la met
+  await s.comme('Nadia'); await s.aller('profil');
+  await deposerCvAvecPhoto(s.page, '#cv-file');
+  await s.page.waitForSelector('#photo-cv', { timeout: 15000 });
+  assert.equal(await s.page.locator('.photo-card .avatar img').count(), 0, 'rien sans son accord');
+  await s.page.click('#photo-cv-oui');
+  await s.page.waitForSelector('.photo-card .avatar img', { timeout: 10000 });
+  // Déjà inscrit avec un CV : la proposition l'attend à l'accueil ; « Non merci » ne revient pas
+  await s.comme('Youssef'); await s.aller('profil');
+  await deposerCvAvecPhoto(s.page, '#cv-file');
+  await s.page.waitForSelector('#photo-cv', { timeout: 15000 });
+  await s.aller('accueil');
+  await s.page.waitForSelector('.photo-home #photo-cv', { timeout: 5000 });
+  assert.ok((await s.debordement()) <= 0, 'pas de débordement à 390 px');
+  await s.page.click('#photo-cv-non'); await s.page.waitForTimeout(200);
+  await s.aller('profil'); await s.aller('accueil'); await s.page.waitForTimeout(1500);
+  assert.equal(await s.page.locator('#photo-cv').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('inscription : la photo trouvée dans le CV est proposée, gardée seulement si on dit oui', async () => {
+  const s = await ouvrir();
+  await s.page.evaluate(async () => {
+    const [{ html, render }, { createStore }, { ProfileForm }] = await Promise.all([import('./vendor/preact-htm.js'), import('./store.js'), import('./community.js')]);
+    const store = await createStore();
+    document.getElementById('app').hidden = true;
+    const el = document.body.appendChild(document.createElement('main')); el.id = 'inscription'; el.className = 'auth-card wide';
+    render(html`<${ProfileForm} ctx=${{ store, act: fn => fn() }} onboarding/>`, el);
+  });
+  await s.page.click('#pf-je-laureat');
+  await deposerCvAvecPhoto(s.page, '#pf-cvfile');
+  await s.page.waitForSelector('#photo-cv', { timeout: 15000 });
+  await s.page.click('#photo-cv-oui');
+  assert.match(await s.page.locator('.cv-box').innerText(), /Photo gardée : elle sera sur ton profil/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('lauréats à vérifier : CV et LinkedIn en vue ; sans CV, un message tout prêt pour le demander', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin'); await s.aller('admin/membres');
+  const ligne = s.page.locator('.verif-list li', { hasText: 'Pas de CV déposé' }).first();
+  await ligne.waitFor({ timeout: 5000 });
+  const nom = (await ligne.locator('.person-name').first().innerText()).split(' ')[0];
+  await ligne.locator('button', { hasText: 'Demander son CV' }).click(); await s.page.waitForTimeout(400);
+  const brouillon = await s.page.inputValue('#chat-txt');
+  assert.match(brouillon, /^Bonjour .+, bienvenue sur le Réseau ENSAM Meknès ! Pour vérifier ton profil de lauréat\(e\), peux-tu déposer ton CV en PDF/);
+  assert.ok(brouillon.includes(nom), 'le prénom du lauréat');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('administration : son propre CV se dépose dans Mon profil (sans relecture à demander), sa photo aussi', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin'); await s.aller('profil');
+  await s.page.waitForSelector('.cv-card #cv-drop', { timeout: 5000 });
+  await deposerCvAvecPhoto(s.page, '#cv-file');
+  await s.page.waitForSelector('.cv-card .cv-file', { timeout: 10000 });
+  assert.equal(await s.page.locator('.cv-card .cv-relu').count(), 0, 'pas de relecture pour l’administration');
+  await s.page.waitForSelector('#photo-cv', { timeout: 15000 });
+  await s.page.click('#photo-cv-oui');
+  await s.page.waitForSelector('.photo-card .avatar img', { timeout: 10000 });
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });

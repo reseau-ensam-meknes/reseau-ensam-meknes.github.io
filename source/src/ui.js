@@ -1,6 +1,6 @@
 // Composants partagés de l'interface.
 import { html, useState, useEffect, useRef, useMemo } from './vendor/preact-htm.js';
-import { initials, levelOf, NIVEAUX, niveauOf, seasonOf } from './logic.js';
+import { initials, levelOf, NIVEAUX, niveauOf, seasonOf, PARCOURS, FILIERES_INFO } from './logic.js';
 import { sceneMarkup } from './scene.js';
 import { glyph, TUILE_DEFS, TUILE } from './logo.js';
 
@@ -9,9 +9,13 @@ export { html };
 const HUES = [352, 18, 38, 145, 172, 200, 222, 262, 290, 320];
 export function hueOf(id = '') { let h = 0; for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0; return HUES[h % HUES.length]; }
 
+// Photo de profil : le site branche ici la recherche du lien (store.photo). Sans photo, ou tant qu'elle charge, les initiales.
+let lienPhoto = () => null;
+export function brancherPhotos(fn) { lienPhoto = fn; }
 export function Avatar({ p, size = 36 }) {
   const hue = hueOf(p?.id);
-  return html`<span class="avatar" style=${`--h:${hue};width:${size}px;height:${size}px;font-size:${Math.round(size * 0.38)}px`} aria-hidden="true">${initials(p?.full_name)}</span>`;
+  const url = p?.photo_path ? lienPhoto(p.photo_path) : null;
+  return html`<span class=${'avatar' + (url ? ' a-photo' : '')} style=${`--h:${hue};width:${size}px;height:${size}px;font-size:${Math.round(size * 0.38)}px`} aria-hidden="true">${initials(p?.full_name)}${url ? html`<img src=${url} alt="" width=${size} height=${size} loading="lazy" decoding="async" onError=${e => { e.currentTarget.hidden = true; }}/>` : null}</span>`;
 }
 
 export function Icon({ name, size = 18 }) {
@@ -76,6 +80,7 @@ const ICONS = {
   chat: '<path d="M20.5 11.5a8.5 8.5 0 0 1-12.3 7.6L3.5 20.5l1.4-4.4A8.5 8.5 0 1 1 20.5 11.5z"/><path d="M8.5 10h7M8.5 13.5h4.5"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>',
   image: '<rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/>',
+  camera: '<path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/>',
   play: '<path d="M8 5.2v13.6a.8.8 0 0 0 1.2.7l10.6-6.8a.8.8 0 0 0 0-1.4L9.2 4.5A.8.8 0 0 0 8 5.2z" fill="currentColor" stroke="none"/>',
   pause: '<rect x="6.5" y="5" width="3.6" height="14" rx="1.2" fill="currentColor" stroke="none"/><rect x="13.9" y="5" width="3.6" height="14" rx="1.2" fill="currentColor" stroke="none"/>',
   back: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
@@ -304,10 +309,26 @@ export function CompanyLogo({ name = '', size = 44 }) {
 
 export const TYPE_ICON = { stage: 'wrench', pfe: 'cap', etranger: 'globe', emploi: 'briefcase' };
 
+// Partage sur WhatsApp : un texte et le lien direct vers la page (offre, question), pour les groupes de promo
+export const lienDirect = hash => location.origin + location.pathname + '#' + hash;
+export const lienWhatsApp = texte => 'https://wa.me/?text=' + encodeURIComponent(texte);
+export function PartagerWhatsApp({ texte, id }) {
+  return html`<a class="icon-btn partage-wa" id=${id} href=${lienWhatsApp(texte)} target="_blank" rel="noopener" aria-label="Partager sur WhatsApp" title="Partager sur WhatsApp"><${Icon} name="share" size=${18}/></a>`;
+}
+
 // Styles propres à un module : ajoutés une seule fois dans la page, au premier rendu
 const styled = new Set();
 export function injectCSS(id, css) {
   if (styled.has(id) || typeof document === 'undefined') return;
   styled.add(id);
   const s = document.createElement('style'); s.dataset.module = id; s.textContent = css; document.head.appendChild(s);
+}
+
+// Filtre par filière : chaque parcours (en entier, puis ses filières). La valeur « parcours:PM » vise tout un parcours.
+export function FiliereFiltre({ id, value, onChange }) {
+  return html`<select id=${id} class="fil-filtre" value=${value} onChange=${e => onChange(e.target.value)} aria-label="Filière"><option value="">Toutes filières</option>
+    ${PARCOURS.map(p => {
+      const fs = FILIERES_INFO.filter(f => f.parcours === p.code);
+      return html`<optgroup label=${`Parcours ${p.nom}`}>${fs.length > 1 ? html`<option value=${'parcours:' + p.code}>${`Tout le parcours ${p.nom}`}</option>` : null}${fs.map(f => html`<option value=${f.nom}>${f.nom}</option>`)}</optgroup>`;
+    })}</select>`;
 }

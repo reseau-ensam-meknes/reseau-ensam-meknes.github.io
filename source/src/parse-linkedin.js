@@ -1,23 +1,27 @@
 // « Profil en une minute » : le membre colle le texte de son profil LinkedIn (PDF « Enregistrer au format PDF »,
-// copie de la page, ou simplement sa section Infos) et le formulaire de profil se remplit.
+// copie de la page, ou simplement sa section Infos), ou dépose son CV, et le formulaire de profil se remplit.
 // LinkedIn n'ouvre pas l'import direct aux petits sites. Pur JS, sans DOM ; ne lève jamais d'exception.
-import { FILIERES, seasonOf } from './logic.js';
+import { FILIERES, estAncienneFiliere, seasonOf } from './logic.js';
 import { lookupVille, paysOf } from './geo.js';
 
 const low = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[’‘`´]/g, "'").trim();
 
 // Titres de rubriques, en français et en anglais (PDF et page web)
 const RUBRIQUES = {
-  contact: ['contact', 'coordonnees', 'contact info', 'coordonnees de contact'],
-  competences: ['top skills', 'principales competences', 'competences', 'skills'],
-  langues: ['languages', 'langues'],
-  resume: ['summary', 'resume', 'infos', 'about', 'a propos', 'info'],
-  experience: ['experience', 'experiences', 'experience professionnelle'],
-  formation: ['education', 'formation', 'formations'],
+  contact: ['contact', 'coordonnees', 'contact info', 'coordonnees de contact', 'informations personnelles', 'infos personnelles', 'contacts'],
+  competences: ['top skills', 'principales competences', 'competences', 'skills', 'competences techniques', 'competences informatiques', 'competences cles',
+    'logiciels', 'outils', 'outils informatiques', 'logiciels et outils', 'technical skills', 'hard skills', 'tools', 'informatique', 'savoir-faire'],
+  langues: ['languages', 'langues', 'langues etrangeres'],
+  resume: ['summary', 'resume', 'infos', 'about', 'a propos', 'info', 'profil', 'profil personnel', 'objectif', 'a propos de moi', 'presentation', 'profile', 'objective'],
+  experience: ['experience', 'experiences', 'experience professionnelle', 'experiences professionnelles', 'parcours professionnel', 'stages', 'stages et experiences',
+    'experiences et stages', 'stages effectues', 'work experience', 'professional experience', 'internships'],
+  formation: ['education', 'formation', 'formations', 'formation academique', 'formations academiques', 'parcours academique', 'parcours scolaire', 'cursus',
+    'cursus academique', 'cursus universitaire', 'diplomes', 'diplomes et formations', 'etudes', 'academic background'],
   autre: ['certifications', 'licences et certifications', 'licenses & certifications', 'licences & certifications', 'honors-awards', 'honors & awards', 'distinctions', 'prix et distinctions',
     'publications', 'projets', 'projects', 'benevolat', 'volunteering', 'volunteer experience', 'experience de benevolat', 'recommandations', 'recommendations',
     'centres d\'interet', 'interests', 'activite', 'activity', 'cours', 'courses', 'organisations', 'organizations', 'brevets', 'patents', 'tests et examens', 'test scores',
-    'services', 'mis en avant', 'featured', 'ressources', 'resources', 'analyses', 'analytics', 'personnes que vous pourriez connaitre', 'people also viewed', 'autres profils consultes'],
+    'services', 'mis en avant', 'featured', 'ressources', 'resources', 'analyses', 'analytics', 'personnes que vous pourriez connaitre', 'people also viewed', 'autres profils consultes',
+    'loisirs', 'activites parascolaires', 'activites extra-scolaires', 'vie associative', 'activites associatives', 'hobbies', 'projets academiques', 'certificats', 'qualites', 'soft skills', 'references'],
 };
 const RUB = new Map(Object.entries(RUBRIQUES).flatMap(([k, l]) => l.map(x => [x, k])));
 const rubrique = l => RUB.get(low(l).replace(/\s*[:：]$/, '')) || null;
@@ -30,7 +34,18 @@ const estDates = l => DATES.test(low(l));
 const BRUIT = /^(?:afficher|voir|show|see|approuve|endorsed|\d+\s*(?:recommandations?|endorsements?|approbations?)|.*\b(?:competences?|skills?)\s*$|…|\.\.\.|page \d+|(?:plus|more)$|se connecter|sign in|rejoindre|join now|message|suivre|follow|contacter)/;
 
 const ENSAM = /\bensam\b|arts\s*(?:et|&|and)\s*m[eé]tiers|national school of arts and crafts|المدرسة الوطنية العليا للفنون/i;
+// Filières : d'abord les intitulés précis de la maquette actuelle, puis les anciennes appellations (promos précédentes)
 const FIL_RE = [
+  ['Génie Industriel : Excellence Opérationnelle', /excellence op[eé]rationnelle|operational excellence|\bGIEO\b/i],
+  ['Génie Industriel et Productique', /industriel(?:le)? et productique|\bGIP24\b/i],
+  ['Génie Électromécanique : Digitalisation Industrielle', /digitali[sz]ation industrielle|\bGE-?DI\b/i],
+  ['Génie Électromécanique : Maintenance et Commande Industrielles', /maintenance et commande|\bGE-?MCI\b/i],
+  ['Génie Mécanique : Conception et Industrialisation des Systèmes Mécaniques', /conception et industrialisation|\bGM-?CISM\b/i],
+  ['Génie Mécanique : Ingénierie Mécanique et Structures', /ing[eé]nierie m[eé]canique et structures|\bGM-?IMS\b/i],
+  ['Génie Mécanique : Matériaux et Procédés de Fabrication', /mat[eé]riaux et proc[eé]d[eé]s|\bGM-?MPF\b/i],
+  ['Génie Mécanique : Énergétique', /g[eé]nie m[eé]canique\s*[:,-]\s*[eé]nerg[eé]tique|\bGME24\b/i],
+  ['Intelligence Artificielle et Technologies des Données : Systèmes Industriels', /technologies des donn[eé]es|\bIATD(?:-SI)?\b/i],
+  ['Génie Informatique : Ingénierie Logicielle et Systèmes Intelligents', /ing[eé]nierie logicielle|\bGI-?ILSI\b/i],
   ['Génie Électromécanique', /[eé]lectro\s*-?\s*m[eé]canique|electromechanical/i],
   ['Mécatronique', /m[eé]catronique|mechatronic/i],
   ['Génie Informatique & IA', /[Ii]nformatique|[Ii]ntelligence [Aa]rtificielle|[Cc]omputer|[Ss]oftware|[Dd]ata [Ss]cience|\bIA\b|\bAI\b/],
@@ -38,7 +53,7 @@ const FIL_RE = [
   ['Génie Civil', /\bcivil/i],
   ['Génie Industriel', /industriel|industrial/i],
   ['Génie Mécanique', /m[eé]canique|mechanical/i],
-].filter(([f]) => FILIERES.includes(f));
+].filter(([f]) => FILIERES.includes(f) || estAncienneFiliere(f));
 const METIER = /\b(?:ing[eé]nieur|engineer|manager|chef|directeur|director|consultant|responsable|d[eé]veloppeur|developer|head|ceo|cto|coo|founder|fondateur|stagiaire|intern|analyst|analyste|technicien|technician|[eé]tudiant|student|[eé]l[eè]ve|lead|officer|specialist|sp[eé]cialiste|charg[eé]|professeur|teacher|doctorant|phd)\b/i;
 
 const PAS_NOM = /linkedin|premium|notifications|messagerie|emplois|accueil|r[eé]seau|relations|abonn[eé]s|followers|connections|contenu|recherche|search|jobs|messaging|home/i;
@@ -83,18 +98,36 @@ function experience(L) {
   return null;
 }
 
-// Formation à l'ENSAM : année de fin (= promo) et filière
+// Formation à l'ENSAM : année de fin (= promo), filière, et si elle est encore en cours (étudiant)
+const EN_COURS = /aujourd'hui|present|actuel|en cours|maintenant|\bnow\b|a ce jour|depuis|[eé]l[eè]ve[- ]ing[eé]nieur|[eé]tudiant/;
+const AUTRE_ECOLE = /[eé]cole|universit|lyc[eé]e|institut|school|college|faculty|facult[eé]|cpge|classes pr[eé]pa/i;
+// Une ligne qui ne porte que des dates (« 2019 – 2024 », « Depuis 2023 », « 2024 – Présent »)
+const DATES_SEULES = /^\D{0,12}(?:19|20)\d{2}(?:\s*[-–—/àa]+\s*(?:(?:19|20)\d{2}|\D{2,20}))?\s*$/;
+// Année d'études écrite en toutes lettres : « 5e année », « 4ème année », « 3A », « 4th year »
+const NIVEAU_RE = /\b([1-5])\s*(?:[eè]me|eme|[eè]re|ere|e)\s*ann[eé]e\b|\b([1-5])A\b|\b([1-5])(?:st|nd|rd|th) year\b/i;
+const niveauDe = t => { const m = String(t || '').match(NIVEAU_RE); return m ? +(m[1] || m[2] || m[3]) : 0; };
+// Une année coupée en deux par la lecture du PDF (« 202 4 », « 20 24 ») est recollée ; seulement dans la formation,
+// où un numéro de téléphone ne risque pas d'être pris pour une année
+const recollerAnnees = t => t.replace(/(?<!\d)(\d{1,3}) (\d{1,3})(?!\d)/g, (m, a, b) => (/^(?:19[89]\d|20[0-4]\d)$/.test(a + b) ? a + b : m));
+
 function formation(L) {
   let best = null;
   for (let i = 0; i < L.length; i++) {
     if (!ENSAM.test(L[i])) continue;
     const bloc = [L[i]];
-    for (let j = i + 1; j < Math.min(L.length, i + 4) && !ENSAM.test(L[j]) && !/[eé]cole|universit|lyc[eé]e|institut|school|college|faculty|facult[eé]|cpge|classes pr[eé]pa/i.test(L[j]); j++) bloc.push(L[j]);
-    const txt = bloc.join(' ');
-    const ans = [...txt.matchAll(/\b(19[89]\d|20[0-4]\d)\b/g)].map(m => +m[1]);
+    // Beaucoup de CV mettent les dates juste avant l'école (« 2019 – 2024 », puis « ENSAM Meknès »)
+    const avant = i > 0 && DATES_SEULES.test(recollerAnnees(L[i - 1])) ? L[i - 1] : '';
+    // Les lignes suivantes, jusqu'à l'école suivante ou aux dates de l'entrée suivante (sauf si l'école n'a pas encore ses dates)
+    for (let j = i + 1; j < Math.min(L.length, i + 4) && !ENSAM.test(L[j]) && !AUTRE_ECOLE.test(L[j]) && !(avant && DATES_SEULES.test(recollerAnnees(L[j]))); j++) bloc.push(L[j]);
+    const txt = recollerAnnees([avant, ...bloc].join(' '));
+    // (?<!\d) plutôt que \b : une année collée à un mot (« 2019-2024National ») compte quand même
+    const ans = [...txt.matchAll(/(?<!\d)(19[89]\d|20[0-4]\d)(?!\d)/g)].map(m => +m[1]);
     const fil = FIL_RE.find(([, re]) => re.test(bloc.slice(1).join(' ')) || re.test(L[i].replace(ENSAM, '')))?.[0];
-    const r = { promo: ans.length ? Math.max(...ans) : null, filiere: fil || null, meknes: /mekn[eè]s|meknes/i.test(txt) };
-    if (!best || (r.meknes && !best.meknes)) best = r;
+    const r = { promo: ans.length ? Math.max(...ans) : null, debut: ans.length ? Math.min(...ans) : null, filiere: fil || null, meknes: /mekn[eè]s|meknes/i.test(txt),
+      enCours: EN_COURS.test(low(txt)), niveau: niveauDe(bloc.join(' ')), cycle: /cycle (?:d'|des |de l')?ing[eé]nieur|admission parall[eè]le|3e ann[eé]e|3[eè]me ann[eé]e/i.test(txt) };
+    // Meknès d'abord, puis la formation en cours, puis la plus récente (le cycle ingénieur passe avant les classes prépa)
+    const score = x => (x.meknes ? 4 : 0) + (x.enCours ? 2 : 0) + (x.promo || 0) / 1e4;
+    if (!best || score(r) > score(best)) best = r;
   }
   return best;
 }
@@ -126,6 +159,10 @@ export function parseLinkedin(text, now = new Date()) {
 
     const url = brut.match(/(?:https?:\/\/)?(?:[a-z]{2,3}\.)?linkedin\.com\/in\/([\p{L}\p{N}_%-]+)/iu);
     if (url) r.linkedin = `https://www.linkedin.com/in/${url[1]}`;
+    const mail = brut.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/);
+    if (mail && !/linkedin|example/i.test(mail[0])) r.email = mail[0].toLowerCase();
+    const tel = brut.match(/(?:\+|00)\s*212[\s.-]*\(?0?\)?[\s.-]*[5-7](?:[\s.-]*\d){8}|\b0[5-7](?:[\s.-]*\d){8}\b|(?:\+|00)\s*33[\s.-]*\(?0?\)?[\s.-]*[1-9](?:[\s.-]*\d){8}/);
+    if (tel) r.telephone = tel[0].replace(/\s+/g, ' ').trim();
 
     // Découpage en rubriques
     const sec = {}; let cur = 'tete'; const tete = [];
@@ -159,8 +196,11 @@ export function parseLinkedin(text, now = new Date()) {
         entete = { nom: tete[i], titre: t || '', lieu: j < 0 ? null : lieu(apres[j]), bloc: tete, n: i, fin: i + 1 + (j < 0 ? (t ? apres.indexOf(t) : -1) : j) };
       }
     }
+    // CV : la ville est souvent sur la ligne des coordonnées (« 06 12… | nom@… | Meknès, Maroc »)
+    if (!entete?.lieu) for (const l of lignes.slice(0, 15)) { const x = l.split(/\s*[|•·]\s*/).map(lieu).find(Boolean); if (x) { if (entete) entete.lieu = x; else { if (x.ville) r.ville = x.ville; r.pays = x.pays; } break; } }
     if (entete) {
-      r.full_name = entete.nom;
+      // « HAJEB Abderrahman » → « Hajeb Abderrahman »
+      r.full_name = entete.nom.split(/\s+/).map(w => w.length > 1 && w === w.toUpperCase() ? w[0] + w.slice(1).toLowerCase() : w).join(' ');
       if (entete.titre) { r.titre = entete.titre; Object.assign(r, titre(entete.titre)); }
       if (entete.lieu) { if (entete.lieu.ville) r.ville = entete.lieu.ville; r.pays = entete.lieu.pays; }
       // Les compétences du PDF s'arrêtent avant l'en-tête
@@ -170,12 +210,19 @@ export function parseLinkedin(text, now = new Date()) {
     // Expérience : remplace le titre du profil, plus précis pour le poste et l'entreprise
     const sansLogo = L => (L || []).filter(l => !/^logo (?:de |d'|of )|\slogo$/i.test(l));
     const ex = sec.experience?.length ? experience(sansLogo(sec.experience)) : null;
-    if (ex?.entreprise) { r.entreprise = ex.entreprise.replace(/\s+·.*$/, ''); if (ex.poste) r.poste = ex.poste; r.actuel = !!ex.actuel; }
+    if (ex?.entreprise) { r.entreprise = ex.entreprise.replace(/\s+·.*$/, '').replace(/\s*[,–—-]\s*([^,–—-]+)$/, (m, v) => (lieu(v) ? '' : m)); if (ex.poste) r.poste = ex.poste; r.actuel = !!ex.actuel; }
     else if (ex?.poste && !r.poste) r.poste = ex.poste;
 
     // Formation à l'ENSAM : promo et filière
-    const fo = formation(sansLogo(sec.formation || (aucune ? lignes : [])));
+    const fo = formation(sansLogo(sec.formation || (aucune ? lignes : []))) || (sec.formation ? formation(lignes) : null);
     if (fo?.promo) r.promo = fo.promo;
+    // Formation en cours sans année de fin (« 2023 – présent ») : la promo vient de l'année d'études écrite en tête ou dans le
+    // résumé (« élève ingénieur en 4e année »), sinon de l'année d'entrée (une année dans la formation peut être celle de l'admission)
+    if (fo?.enCours && !(fo.promo > seasonOf(now))) {
+      const S = seasonOf(now), n = niveauDe([...tete.slice(0, 4), ...(sec.resume || [])].join(' ')) || (fo.debut ? 0 : fo.niveau);
+      if (n) { r.promo = S + 6 - n; r.promoEstimee = true; }
+      else if (fo.debut) { r.promo = Math.max(fo.debut + (fo.cycle ? 3 : 5), S + 1); r.promoEstimee = true; }
+    }
     if (fo?.filiere) r.filiere = fo.filiere;
     if (!r.promo) { const m = brut.match(/\b(?:promo(?:tion)?|laur[ée]at(?:e)?|class of|dipl[oô]m[ée]e? en)\s*(19[89]\d|20[0-4]\d)\b/i); if (m) r.promo = +m[1]; }
     if (!r.filiere) { const f = FIL_RE.find(([, re]) => re.test(r.titre || '')); if (f && /g[ée]nie|engineering|ing[ée]nieur/i.test(r.titre)) r.filiere = f[0]; }
@@ -195,7 +242,8 @@ export function parseLinkedin(text, now = new Date()) {
 
     // Étudiant(e) ou lauréat(e) : d'après l'année de diplôme, sinon le titre
     const saison = seasonOf(now);
-    if (r.promo) r.role = r.promo > saison ? 'etudiant' : 'laureat';
+    if (fo?.enCours && (!r.promo || r.promo > saison)) r.role = 'etudiant';
+    else if (r.promo) r.role = r.promo > saison ? 'etudiant' : 'laureat';
     else if (/\b(?:[ée]tudiant|student|[ée]l[eè]ve ing[ée]nieur)/i.test(r.titre || '')) r.role = 'etudiant';
     else if (r.entreprise) r.role = 'laureat';
     // Entreprise et poste ne s'affichent que pour les lauréats (le stage d'un étudiant reste dans sa bio)
