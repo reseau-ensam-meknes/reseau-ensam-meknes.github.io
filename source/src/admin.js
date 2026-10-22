@@ -24,6 +24,7 @@ addAR({
   'Masquer l’offre': 'إخفاء العرض', 'Supprimer l’offre': 'حذف العرض', 'Supprimer le commentaire': 'حذف التعليق', 'Supprimer la question': 'حذف السؤال',
   'Supprimer la réponse': 'حذف الجواب', 'Supprimer le message': 'حذف الرسالة', 'Retirer le badge vérifié': 'سحب شارة التحقق', 'Supprimer l’entretien': 'حذف المقابلة',
   'Supprimer l’avis': 'حذف الرأي', 'Supprimer la rubrique': 'حذف الفقرة', 'Annuler le café': 'إلغاء المقهى', 'Retirer la startup': 'سحب الشركة الناشئة', 'Annuler la relecture': 'إلغاء المراجعة',
+  'Demande d’étudiant': 'طلب طالب', 'Voir la demande': 'عرض الطلب', '1 demande d’étudiant sans proposition depuis plus de 24 h': 'طلب طالب واحد دون اقتراح منذ أكثر من 24 ساعة',
   'Ouvrir': 'فتح', 'Voir le profil': 'عرض الملف', 'Voir la question': 'عرض السؤال', 'Historique': 'السجل', 'Traité': 'تمت معالجته', 'Sans suite': 'دون متابعة',
   'Contenu retiré et signalement clos.': 'حُذف المحتوى وأُغلق التبليغ.', 'Signalement classé sans suite.': 'حُفظ التبليغ دون متابعة.', 'Signalement marqué traité.': 'تم تحديد التبليغ كمُعالج.',
   'Le contenu sera retiré pour tout le monde. Continuer ?': 'سيُحذف المحتوى للجميع. هل تتابع؟',
@@ -56,6 +57,7 @@ addAR({
   'Domaine invalide :': 'نطاق غير صالح:', 'Aucun domaine pour l’instant : tout le monde s’inscrit avec son adresse habituelle.': 'لا نطاق حاليًا: الجميع يسجل بعنوانه المعتاد.',
 }, [
   [/^Signalé (\d+) fois$/, n => `بُلّغ عنه ${n} مرة`],
+  [/^(\d+) demandes d’étudiants sans proposition depuis plus de 24 h$/, n => `${n} طلبات طلبة دون اقتراح منذ أكثر من 24 ساعة`],
   [/^(\d+) signalements? à traiter$/, n => `${n} تبليغ للمعالجة`],
   [/^(\d+) lauréats? à vérifier$/, n => `${n} خريج للتحقق`],
   [/^(\d+)\/2 lauréats de sa promo ont confirmé$/, n => `${n}/2 من خريجي دفعته أكدوا`],
@@ -110,7 +112,7 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
   const confirmes = data.placements.filter(p => p.saison === saison && p.status === 'confirme').length;
   // Le chiffre à suivre : chaque demande d'étudiant a une réponse d'un lauréat en moins de 48 h
   const r48 = reponses48h(data);
-  const attenteM = r48.attente.filter(d => d.type === 'mentorat'), attenteQ = r48.attente.filter(d => d.type === 'question');
+  const attenteM = r48.attente.filter(d => d.type === 'mentorat'), attenteQ = r48.attente.filter(d => d.type === 'question'), attenteD = r48.attente.filter(d => d.type === 'demande');
   const parcours = parcoursInscription(comptes, data);
   const kpis = [
     ['Réponse en 48 h', r48.taux === null ? '–' : pct(r48.taux), r48.total ? `${r48.a48} demandes d’étudiants sur ${r48.total}, en 30 jours` : 'Pas encore de demande d’étudiant ce mois-ci'],
@@ -125,6 +127,7 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
     ouverts.length ? ['flag', `${ouverts.length} signalement${ouverts.length > 1 ? 's' : ''} à traiter`, 'admin/moderation'] : null,
     toVerify.length ? ['shield', `${toVerify.length} lauréat${toVerify.length > 1 ? 's' : ''} à vérifier`, 'admin/membres'] : null,
     attenteM.length ? ['clock', attenteM.length > 1 ? `${attenteM.length} demandes d’aide attendent depuis plus de 24 h` : '1 demande d’aide attend depuis plus de 24 h', 'mentorat'] : null,
+    attenteD.length ? ['send', attenteD.length > 1 ? `${attenteD.length} demandes d’étudiants sans proposition depuis plus de 24 h` : '1 demande d’étudiant sans proposition depuis plus de 24 h', 'offres/demandes/' + attenteD[0].id] : null,
     attenteQ.length ? ['qa', attenteQ.length > 1 ? `${attenteQ.length} questions d’étudiants sans réponse depuis plus de 24 h` : '1 question d’étudiant sans réponse depuis plus de 24 h', 'reseau/entraide/' + attenteQ[0].id] : null,
     lecturesFausses.length ? ['file', lecturesFausses.length > 1 ? `${lecturesFausses.length} erreurs de lecture de CV signalées` : '1 erreur de lecture de CV signalée', 'admin/membres'] : null,
   ].filter(Boolean);
@@ -172,7 +175,7 @@ function ParcoursInscription({ p }) {
 // Modération : les signalements, regroupés par contenu
 // ---------------------------------------------------------------------------
 export const MOTIFS = { spam: 'Spam', arnaque: 'Arnaque', inapproprie: 'Inapproprié', faux: 'Faux ou trompeur', harcelement: 'Harcèlement', donnees: 'Données personnelles', autre: 'Autre' };
-const TYPES_CIBLE = { offre: ['Offre', 'feed'], commentaire: ['Commentaire', 'comment'], question: ['Question', 'qa'], reponse: ['Réponse', 'qa'], message: ['Message de groupe', 'people'], profil: ['Profil', 'user'], entretien: ['Entretien', 'briefcase'], avis: ['Avis de stage', 'star'], guide: ['Guide de l’étranger', 'flag'], cafe: ['Café ENSAM', 'clap'], startup: ['Startup', 'spark'], relecture: ['Relecture de CV', 'eye'], prive: ['Message privé', 'chat'] };
+const TYPES_CIBLE = { offre: ['Offre', 'feed'], commentaire: ['Commentaire', 'comment'], question: ['Question', 'qa'], reponse: ['Réponse', 'qa'], message: ['Message de groupe', 'people'], profil: ['Profil', 'user'], entretien: ['Entretien', 'briefcase'], avis: ['Avis de stage', 'star'], guide: ['Guide de l’étranger', 'flag'], cafe: ['Café ENSAM', 'clap'], startup: ['Startup', 'spark'], relecture: ['Relecture de CV', 'eye'], prive: ['Message privé', 'chat'], demande: ['Demande d’étudiant', 'send'] };
 const court = (t, n = 220) => { const s = String(t || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
 const nomGroupe = g => String(g || '').split(':').slice(1).join(':');
 
@@ -194,6 +197,7 @@ function cible(ctx, type, id) {
     case 'guide': { const r = by('guide_pays'); const s = r && GUIDE_SECTIONS.find(x => x[0] === r.section); return r && { r, titre: `${r.pays}${s ? ' · ' + s[1] : ''}`, texte: r.contenu, auteur: r.updated_by, actions: [['Supprimer la rubrique', rm('guide_pays'), true]] }; }
     case 'cafe': { const r = by('cafes'); return r && { r, titre: `${r.ville} · ${r.lieu}`, texte: r.message, auteur: r.organisateur_id, actions: r.annule ? [] : [['Annuler le café', () => store.update('cafes', id, { annule: true }), true]] }; }
     case 'startup': { const r = by('startups'); return r && { r, titre: r.nom, texte: r.pitch, auteur: r.fondateur_id, actions: [['Retirer la startup', rm('startups'), true]] }; }
+    case 'demande': { const r = by('demandes'); return r && { r, titre: r.titre, texte: r.details, auteur: r.auteur_id, voir: ['Voir la demande', () => go('offres/demandes/' + id)], actions: ['ouverte', 'match'].includes(r.status) ? [['Retirer la demande', () => store.update('demandes', id, { status: 'fermee' }), true]] : [] }; }
     case 'relecture': { const r = by('relectures_cv'); const s = r && store.byId('profiles', r.student_id); return r && { r, titre: s?.full_name || '', texte: r.synthese || r.message, auteur: r.reviewer_id, actions: r.status === 'annulee' ? [] : [['Annuler la relecture', () => store.update('relectures_cv', id, { status: 'annulee' }), true]] }; }
     case 'prive': {
       const r = by('messages'); const nom = x => store.byId('profiles', x)?.full_name || '?';

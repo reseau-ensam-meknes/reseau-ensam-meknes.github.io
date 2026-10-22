@@ -2,7 +2,7 @@
 // et fil des réussites à partager sur LinkedIn.
 import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, RoleLine, BrandLogo, toast, injectCSS, FiliereFiltre } from './ui.js';
-import { FOUND, niveauOf, statutOf, timeAgo, attestationStats, filtreFiliere } from './logic.js';
+import { FOUND, niveauOf, statutOf, timeAgo, attestationStats, filtreFiliere, AIDES } from './logic.js';
 import { OfferComposer, matchesMe } from './offers.js';
 import { getLang, addAR } from './i18n.js';
 import { CvButton } from './cv.js';
@@ -223,8 +223,8 @@ export function SuccessFeed({ ctx, max = 5, lien = true }) {
       const own = p.student_id === me.id || (la && la.id === me.id);
       return html`<li class="win" key=${p.id}>
         <${Avatar} p=${st} size=${38}/>
-        <div class="win-txt"><p><button class="linkish strong" onClick=${() => openProfile(st)}>${st ? html`<span translate="no" dir="auto">${st.full_name}</span>` : 'Un étudiant'}</button> a décroché ${WHAT[p.type]} chez <strong translate="no">${p.entreprise}</strong>${la ? html` grâce à <button class="linkish strong" onClick=${() => openProfile(la)}><span translate="no" dir="auto">${la.full_name}</span></button>` : null}</p>
-          <span class="muted small">${p.status === 'confirme' ? 'Vérifié des deux côtés' : 'Trouvé hors plateforme'} · ${timeAgo(p.confirmed_at || p.created_at)}</span></div>
+        <div class="win-txt"><p><button class="linkish strong" onClick=${() => openProfile(st)}>${st ? html`<span translate="no" dir="auto">${st.full_name}</span>` : 'Un étudiant'}</button> a décroché ${WHAT[p.type]} chez <strong translate="no">${p.entreprise}</strong>${la ? html` ${AIDES[p.aide]?.annonce || 'grâce à'} <button class="linkish strong" onClick=${() => openProfile(la)}><span translate="no" dir="auto">${la.full_name}</span></button>` : null}</p>
+          <span class="muted small">${p.status === 'confirme' ? (p.demande_id ? 'Vérifié des deux côtés · Via sa demande' : 'Vérifié des deux côtés') : 'Trouvé hors plateforme'} · ${timeAgo(p.confirmed_at || p.created_at)}</span></div>
         <div class="win-act">
           <button class=${'kudo' + (mine ? ' on' : '')} aria-pressed=${!!mine} disabled=${p.student_id === me.id} title=${mine ? 'Retirer mon bravo' : 'Dire bravo'} onClick=${() => act(() => (mine ? store.remove('kudos', mine.id) : store.insert('kudos', { placement_id: p.id, user_id: me.id })))}><${Icon} name="clap" size=${16}/><span>Bravo</span>${k.length ? html`<b class="mono">${k.length}</b>` : null}</button>
           ${own ? html`<button class="icon-btn small" aria-label="Partager sur LinkedIn" title="Partager sur LinkedIn" onClick=${() => setShare(p)}><${Icon} name="share" size=${16}/></button>` : null}
