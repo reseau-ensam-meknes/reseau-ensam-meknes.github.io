@@ -556,7 +556,8 @@ export function MentoratPage(ctx) {
     ${hist.length ? html`<button class="linkish small past-toggle" onClick=${() => setPast(!past)}>${past ? 'Masquer l’historique' : `Voir l’historique (${hist.length})`}</button>
       ${past ? html`<div class="list">${hist.slice(0, 10).map(m => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side=${isLaureat ? 'mentor' : 'student'}/>`)}</div>` : null}` : null}
 
-    ${isLaureat ? html`<p class="small muted center">Toi aussi, tu cherches un conseil ? <button class="linkish" onClick=${() => setAsk({})}>Demande à un lauréat plus expérimenté</button></p>` : null}
+    ${isLaureat && me.en_recherche ? html`<div class="callout"><p><strong>Tu cherches un emploi ?</strong> Un lauréat plus expérimenté peut relire ton CV, te préparer à un entretien ou te parler salaire.</p><div><button class="btn small primary" id="mt-demande-laureat" onClick=${() => setAsk({ besoin: 'entretien' })}><${Icon} name="heart" size=${15}/> Demander conseil</button></div></div>`
+      : isLaureat ? html`<p class="small muted center">Toi aussi, tu cherches un conseil ? <button class="linkish" onClick=${() => setAsk({})}>Demande à un lauréat plus expérimenté</button></p>` : null}
     ${!nouveau ? html`<${HowMore} role=${role}/>` : null}
     ${ask ? html`<${AskHelp} ctx=${ctx} mentor=${ask.mentor} besoin=${ask.besoin} onClose=${() => setAsk(null)}/>` : null}
   </section>`;

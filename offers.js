@@ -2,7 +2,7 @@
 import { html, useState, useMemo, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, TYPE_ICON, toast, RoleLine, celebrate, injectCSS, PartagerWhatsApp, lienWhatsApp, lienDirect } from './ui.js';
 import { getLang, addAR } from './i18n.js';
-import { TYPES, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, filiereMatch, resumeFilieres, filiereSousTitre } from './logic.js';
+import { TYPES, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA } from './logic.js';
 import { RelanceBanner, BanqueSujets, PasteOffer } from './recrutement.js';
 import { CvButton } from './cv.js';
 import { SignalerBtn } from './confiance.js';
@@ -18,10 +18,7 @@ const texteOffre = o => getLang() === 'ar'
 const ANNEES_OPTS = [[3, '3A'], [4, '4A'], [5, '5A'], [6, 'Jeunes diplômés']];
 export const APP_STATUS = { postule: 'Envoyée', entretien: 'Entretien', retenu: 'Retenu(e)', refuse: 'Pas retenu(e)' };
 
-export function matchesMe(o, me, saison) {
-  const n = niveauOf(me, saison);
-  return (o.audience || 'etudiants') === 'etudiants' && (o.annees || []).includes(n) && filiereMatch(o.filieres, me.filiere);
-}
+export const matchesMe = offrePour;
 const forLaureats = o => o.audience === 'laureats';
 
 // Filières visées par une offre : un parcours entier en un geste, ou ses filières une à une.
@@ -69,8 +66,6 @@ export function OffersPage(ctx) {
 
 // Ce que le membre a écrit lui-même (titre, entreprise, ville, message) porte translate="no" dir="auto" : jamais traduit.
 const prenom = p => (p?.full_name || '').split(' ')[0];
-// Ce visiteur peut-il postuler à cette offre ? (étudiant : offres étudiantes ; lauréat : offres entre lauréats)
-const peutPostuler = (o, me) => o.author_id !== me.id && (me.role === 'etudiant' ? !forLaureats(o) : me.role === 'laureat' && forLaureats(o));
 // Raisons d'une recommandation : « Ta filière » est un texte de l'interface, le reste vient du profil (compétence, ville)
 const Pourquoi = ({ why }) => html`<span class="why">${why.map(w => (w === 'Ta filière' ? html`<span class="mini good">${w}</span>` : html`<span class="mini good" translate="no" dir="auto">${w}</span>`))}</span>`;
 const doux = () => (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
@@ -154,7 +149,7 @@ export function OfferCard({ o, ctx, onOpen, why }) {
   const myApp = apps.find(a => a.student_id === me.id);
   const dl = daysUntil(o.deadline);
   const mine = o.author_id === me.id;
-  const pourMoi = peutPostuler(o, me);
+  const pourMoi = peutPostulerA(o, me, ctx.saison);
   const canApply = !myApp && pourMoi && o.status === 'ouverte';
   const coopt = author && o.cooptation && canApply; // déjà postulé : l'état de la candidature compte davantage
   const lieu = [o.ville, o.pays !== 'Maroc' ? o.pays : ''].filter(Boolean).join(', ');
@@ -208,7 +203,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
   const author = store.byId('profiles', o.author_id);
   const apps = data.applications.filter(a => a.offer_id === o.id);
   const comments = data.comments.filter(c => c.offer_id === o.id);
-  const candidat = peutPostuler(o, me);
+  const candidat = peutPostulerA(o, me, ctx.saison);
   const myApp = candidat ? apps.find(a => a.student_id === me.id) : null;
   const saved = data.reactions.find(r => r.offer_id === o.id && r.user_id === me.id && r.kind === 'save');
   const toggleSave = () => act(() => saved ? store.remove('reactions', saved.id) : store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save' }));
@@ -386,12 +381,12 @@ function Matching({ ctx, o }) {
 function PickStudent({ ctx, onClose, onPick }) {
   const { data, saison } = ctx;
   const [q, setQ] = useState('');
-  const res = q.trim().length < 2 ? [] : data.profiles.filter(p => p.role !== 'admin' && niveauOf(p, saison) <= 6 && p.full_name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 8);
-  return html`<${Modal} title="Quel étudiant as-tu recruté ?" onClose=${onClose}>
+  const res = q.trim().length < 2 ? [] : data.profiles.filter(p => p.role !== 'admin' && (niveauOf(p, saison) <= 6 || p.en_recherche) && p.full_name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 8);
+  return html`<${Modal} title="Qui as-tu recruté ?" onClose=${onClose}>
     <p class="muted small">Il ou elle recevra une demande de confirmation. Le recrutement compte une fois confirmé.</p>
-    <label class="search"><${Icon} name="search" size=${16}/><input id="pick-q" placeholder="Nom de l’étudiant" value=${q} onInput=${e => setQ(e.target.value)}/></label>
+    <label class="search"><${Icon} name="search" size=${16}/><input id="pick-q" placeholder="Son nom" value=${q} onInput=${e => setQ(e.target.value)}/></label>
     <ul class="people-list">${res.map(p => html`<li><${Person} p=${p}/><button class="btn small primary" onClick=${() => onPick(p.id)}>Choisir</button></li>`)}</ul>
-    ${q.trim().length >= 2 && !res.length ? html`<p class="muted small">Personne avec ce nom. L’étudiant doit d’abord créer son compte.</p>` : null}
+    ${q.trim().length >= 2 && !res.length ? html`<p class="muted small">Personne avec ce nom. La personne doit d’abord créer son compte.</p>` : null}
   <//>`;
 }
 

@@ -583,6 +583,7 @@ export type Profil = {
   id: string; full_name: string; role: string; filiere: string; promo: number;
   entreprise?: string | null; pays?: string | null; ville?: string | null; vitrine?: boolean | null;
   verified?: boolean | null; cv_url?: string | null; cv_path?: string | null; competences?: string[] | null; created_at: string;
+  en_recherche?: boolean | null;
 };
 export type Offre = {
   id: string; author_id: string; titre: string; entreprise: string; filieres?: string[] | null; annees?: number[] | null;
@@ -765,9 +766,10 @@ export const filiereOk = (o: Pick<Offre, 'filieres'>, filiere: string) => {
   return l.some(x => (vieille || !PARCOURS_FILIERE[x]) && parcoursDe(x).some(c => mine.includes(c)));
 };
 
-function offresPour(d: Donnees, p: Profil, niveau: number, audiences: string[]) {
-  const l = d.nouvellesOffres.filter(o => o.author_id !== p.id && audiences.includes(o.audience || 'etudiants')
-    && (o.annees || []).includes(niveau) && filiereOk(o, p.filiere));
+// entreLaureats : un lauréat qui cherche un emploi reçoit aussi les offres entre lauréats de sa filière
+function offresPour(d: Donnees, p: Profil, niveau: number, audiences: string[], entreLaureats = false) {
+  const l = d.nouvellesOffres.filter(o => o.author_id !== p.id && filiereOk(o, p.filiere)
+    && ((entreLaureats && o.audience === 'laureats') || (audiences.includes(o.audience || 'etudiants') && (o.annees || []).includes(niveau))));
   return { total: l.length, liste: l.slice(0, 3).map(o => ({ titre: txt(o.titre), entreprise: txt(o.entreprise) })) };
 }
 
@@ -855,8 +857,8 @@ export function resumeDe(p: Profil, d: Donnees): Resume | null {
   for (const o of d.offresParAuteur.get(p.id) || []) {
     if (o.status === 'ouverte' && temps(o.relance_at) >= d.depuis7) r.relances.push(txt(o.titre));
   }
-  // Jeune diplômé de l'année : les offres pour les diplômés (niveau 6)
-  if (p.promo === d.saison) r.offres = offresPour(d, p, 6, ['etudiants', 'laureats']);
+  // Jeune diplômé de l'année, ou lauréat qui cherche un emploi : les offres pour les diplômés (niveau 6)
+  if (p.promo === d.saison || p.en_recherche) r.offres = offresPour(d, p, 6, ['etudiants', 'laureats'], !!p.en_recherche);
   // Alerte talents de son parcours
   const t = d.talents.filter(x => procheFiliere(x.p.filiere, p.filiere));
   r.talents = {
@@ -1435,7 +1437,8 @@ export async function chargerDonnees(env: Env, ids: string[], date: Date): Promi
   const Q = 'select=id,author_id,titre,entreprise,pays,created_at';
   const C = 'select=id,student_id,offer_id,status';
   const [profils, offres, postule, invitations, m1, m2, reponses, questions, parrainages, cafes, p1, p2, p3] = await Promise.all([
-    tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,cv_path,competences,created_at')
+    tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,cv_path,competences,created_at,en_recherche')
+      .catch(() => tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,cv_path,competences,created_at'))
       .catch(() => tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,competences,created_at')),
     tout<Offre>(env, 'offers', 'select=id,author_id,titre,entreprise,filieres,annees,audience,status,created_at,relance_at'),
     tout<Candidature>(env, 'applications', `${C}&status=eq.postule&offer_id=not.is.null`),

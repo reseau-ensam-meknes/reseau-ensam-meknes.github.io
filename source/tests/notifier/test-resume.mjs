@@ -189,3 +189,10 @@ test('aperçus : étudiante en français, lauréat en arabe', () => {
   fs.writeFileSync(path.join(dossier, 'apercus-texte.txt'), `${fr.sujet}\n\n${fr.texte}\n\n==========\n\n${ar.sujet}\n\n${ar.texte}\n`);
   assert.ok(fr.html.length < 20000 && ar.html.length < 20000);
 });
+
+test('lauréat qui cherche un emploi : les offres pour jeunes diplômés et entre lauréats arrivent dans son résumé', () => {
+  const n = profil(ID.nadia);
+  assert.equal(N.resumeDe(n, D)?.offres.total || 0, 0, 'en poste : pas d’offres');
+  const r = N.resumeDe({ ...n, en_recherche: true }, D);
+  assert.ok(r.offres.liste.some(o => o.titre === 'Ingénieur méthodes junior'));
+});
