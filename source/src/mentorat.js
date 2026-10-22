@@ -372,13 +372,16 @@ export function RequestCard({ ctx, m, side, why = [], focus = false, onIgnore = 
   const waiting = st === 'ouverte' || st === 'demande';
   const apres = st === 'apres' || (st === 'rdv' && fin);
   const annulerDemande = () => ctx.confirm('Annuler cette demande ?', () => act(() => store.update('mentorships', m.id, { status: 'annulee' })), 'Annuler la demande');
+  // L'administration retire une demande restée sans suite (un test, un doublon) ; l'étudiant ne reçoit pas de message
+  const clore = () => ctx.confirm(`Retirer la demande « ${m.sujet} » ? Elle ne sera plus proposée aux lauréats.`, () => act(async () => { await store.update('mentorships', m.id, { status: 'annulee' }); toast('Demande retirée.'); }), 'Retirer la demande');
   const passer = () => ctx.confirm('Tu n’es pas disponible ? La demande sera proposée aux autres lauréats.', () => act(async () => { await store.update('mentorships', m.id, { mentor_id: null }); toast('Demande proposée aux autres lauréats.'); }), 'Proposer aux autres');
   const mentorAdmin = side === 'admin' && st === 'rdv' ? store.byId('profiles', m.mentor_id) : null;
   return html`<article class=${'mreq st-' + st + (focus ? ' m-focus-card' : '') + (apres ? ' m-compact' : '')}>
     <div class="mrow-head">
       ${other ? html`<${Person} p=${other} onOpen=${openProfile} size=${36}/>` : html`<span class="open-to"><span class="open-ico"><${Icon} name="people" size=${18}/></span><span><strong>Tous les lauréats</strong><span class="small muted">Le premier disponible choisit un horaire</span></span></span>`}
       <span class="spacer"></span><span class=${'state-pill ' + cls}>${label}</span>${other ? html`<${MessageBtn} ctx=${ctx} p=${other} cls="btn tiny ghost"/>` : null}
-      ${side === 'student' && waiting ? html`<${MoreMenu} items=${[{ label: 'Annuler la demande', icon: 'x', danger: true, onClick: annulerDemande }]}/>` : null}</div>
+      ${side === 'student' && waiting ? html`<${MoreMenu} items=${[{ label: 'Annuler la demande', icon: 'x', danger: true, onClick: annulerDemande }]}/>` : null}
+      ${side === 'admin' && waiting ? html`<${MoreMenu} items=${[{ label: 'Retirer la demande', icon: 'x', danger: true, onClick: clore }]}/>` : null}</div>
     <p class="mreq-subject"><${BesoinTag} k=${m.besoin}/><strong translate="no" dir="auto">${m.sujet}</strong>${waiting ? html` <span class="muted small m-ago">· ${timeAgo(m.created_at)}</span>` : null}</p>
     ${m.message && !apres ? html`<p class="quote" translate="no" dir="auto">${m.message}</p>` : null}
     ${why.length && waiting ? html`<p class="why"><span class="small muted">Pourquoi toi :</span> ${why.map(w => html`<span class="mini good">${w}</span>`)}</p>` : null}
