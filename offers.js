@@ -9,7 +9,11 @@ import { SignalerBtn } from './confiance.js';
 import { EntrepriseResume } from './entreprises.js';
 import { MessageBtn } from './messages.js';
 // Le message WhatsApp d'une offre : de quoi il s'agit, et le lien qui l'ouvre directement
-const texteOffre = o => `${TYPES[o.type]?.long || 'Offre'} : ${o.titre} · ${o.entreprise}\nÀ voir sur le Réseau ENSAM Meknès : ${lienDirect('offre/' + o.id)}`;
+// Message prêt pour WhatsApp, dans la langue de l'interface
+const TYPES_AR = { stage: 'تدريب', pfe: 'مشروع نهاية الدراسة', etranger: 'تدريب بالخارج', emploi: 'وظيفة' };
+const texteOffre = o => getLang() === 'ar'
+  ? `${TYPES_AR[o.type] || 'عرض'}: ${o.titre} · ${o.entreprise}\nشاهده على شبكة ENSAM مكناس: ${lienDirect('offre/' + o.id)}`
+  : `${TYPES[o.type]?.long || 'Offre'} : ${o.titre} · ${o.entreprise}\nÀ voir sur le Réseau ENSAM Meknès : ${lienDirect('offre/' + o.id)}`;
 
 const ANNEES_OPTS = [[3, '3A'], [4, '4A'], [5, '5A'], [6, 'Jeunes diplômés']];
 export const APP_STATUS = { postule: 'Envoyée', entretien: 'Entretien', retenu: 'Retenu(e)', refuse: 'Pas retenu(e)' };

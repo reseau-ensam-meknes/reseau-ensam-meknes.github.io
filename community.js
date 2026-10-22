@@ -82,7 +82,7 @@ function QuestionView({ ctx, q, onBack }) {
       <h2 class="q-title">${q.titre}</h2>
       ${q.body ? html`<p>${q.body}</p>` : null}
       <div class="row"><${Person} p=${au} onOpen=${openProfile} size=${30}/><span class="muted small">${timeAgo(q.created_at)}</span><span class="spacer"></span>
-        <${PartagerWhatsApp} id="q-partage" texte=${`Question sur le Réseau ENSAM Meknès : « ${q.titre} »\nTu peux y répondre ici : ${lienDirect('reseau/entraide/' + q.id)}`}/>
+        <${PartagerWhatsApp} id="q-partage" texte=${getLang() === 'ar' ? `سؤال على شبكة ENSAM مكناس: « ${q.titre} »\nيمكنك الجواب هنا: ${lienDirect('reseau/entraide/' + q.id)}` : `Question sur le Réseau ENSAM Meknès : « ${q.titre} »\nTu peux y répondre ici : ${lienDirect('reseau/entraide/' + q.id)}`}/>
         ${(q.author_id === me.id || me.role === 'admin') ? html`<button class="btn tiny ghost danger-t" onClick=${() => ctx.confirm('Supprimer cette question et ses réponses ?', () => act(async () => { await store.remove('questions', q.id); onBack(); }))}>Supprimer</button>` : html`<${SignalerBtn} ctx=${ctx} type="question" id=${q.id}/>`}</div>
     </article>
     <h2 class="section-title">${ans.length} réponse${ans.length > 1 ? 's' : ''}</h2>
