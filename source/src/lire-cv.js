@@ -9,7 +9,19 @@ const chargerPdf = () => (pdfjs ||= import('./vendor/pdf.min.mjs').then(m => {
   return m;
 }).catch(e => { pdfjs = null; throw e; }));
 
-// Texte des trois premières pages, ligne par ligne (les morceaux d'une même ligne sont recollés d'après leur position)
+// Les morceaux d'une même ligne, recollés de gauche à droite : beaucoup de CV écrivent la colonne de droite
+// (ville, dates) avant celle de gauche. Une ligne en arabe garde l'ordre du PDF.
+function recoller(morceaux) {
+  const m = morceaux.some(o => /[\u0600-\u06FF]/.test(o.s)) ? morceaux : [...morceaux].sort((a, b) => a.x - b.x);
+  let ligne = '', fin = null;
+  for (const o of m) {
+    if (ligne && fin !== null && o.x - fin > o.h * 0.15 && !/\s$/.test(ligne) && !/^\s/.test(o.s)) ligne += ' ';
+    ligne += o.s; fin = o.x + o.w;
+  }
+  return ligne;
+}
+
+// Texte des trois premières pages, ligne par ligne
 export async function texteDuCV(source) {
   const lib = await chargerPdf();
   const data = new Uint8Array(source instanceof ArrayBuffer ? source : await source.arrayBuffer());
@@ -19,26 +31,44 @@ export async function texteDuCV(source) {
     const doc = await tache.promise;
     for (let n = 1; n <= Math.min(doc.numPages, 3); n++) {
       const { items } = await (await doc.getPage(n)).getTextContent();
-      let ligne = '', y = null, fin = null;
+      let morceaux = [], y = null;
+      const finir = () => { if (morceaux.length) lignes.push(recoller(morceaux)); morceaux = []; };
       for (const it of items) {
         if (typeof it.str !== 'string') continue;
         const [, , , , x, yy] = it.transform, h = it.height || 10;
-        if (y !== null && Math.abs(yy - y) > h * 0.6) { lignes.push(ligne); ligne = ''; fin = null; }
-        if (ligne && fin !== null && x - fin > h * 0.15 && !/\s$/.test(ligne) && !/^\s/.test(it.str)) ligne += ' ';
-        ligne += it.str; y = yy; fin = x + (it.width || 0);
-        if (it.hasEOL) { lignes.push(ligne); ligne = ''; y = null; fin = null; }
+        if (y !== null && Math.abs(yy - y) > h * 0.6) finir();
+        morceaux.push({ x, w: it.width || 0, h, s: it.str }); y = yy;
+        if (it.hasEOL) { finir(); y = null; }
       }
-      if (ligne) lignes.push(ligne);
+      finir();
     }
   } finally { tache.destroy(); }
   return lignes.map(l => l.replace(/\s+/g, ' ').trim()).filter(Boolean).join('\n');
 }
 
 // Le profil décrit par un CV ; {} si le PDF n'a pas de texte (CV scanné en image)
-export async function lireCV(source, now = new Date()) {
+export async function lireCVDetail(source, now = new Date()) {
   const texte = await texteDuCV(source);
-  return texte.length < 40 ? {} : parseLinkedin(texte, now);
+  return { cv: texte.length < 40 ? {} : parseLinkedin(texte, now), texte };
 }
+export const lireCV = async (source, now) => (await lireCVDetail(source, now)).cv;
+
+// Pour un signalement : les lignes de formation et de dates qui ont servi à la lecture, sans email ni téléphone
+const LIGNE_UTILE = /ensam|arts\s*(?:et|&|and)\s*m[eé]tiers|arts and crafts|formation|education|dipl[oô]me|ing[eé]nieur|engineer|promo|(?:19|20)\d{2}|ann[eé]e|year/i;
+export function extraitCV(texte) {
+  const out = [];
+  for (const l of String(texte || '').split('\n')) {
+    if (!LIGNE_UTILE.test(l)) continue;
+    const propre = l.replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, '[email]').replace(/\+?\d[\d .-]{7,}\d/g, m => (/^(?:19|20)\d{2}\s*[-–—]\s*(?:19|20)\d{2}$/.test(m.trim()) ? m : '[tél]')).trim();
+    if (propre && out.join('\n').length + propre.length < 1900) out.push(propre.slice(0, 200));
+  }
+  return out.slice(0, 16).join('\n');
+}
+
+// Ce qu'une proposition change, sans les coordonnées privées : sert à la reconnaître une fois signalée
+export const propositionSansCoordonnees = ({ telephone, email, ...e }) => e;
+const cle = e => JSON.stringify(Object.keys(propositionSansCoordonnees(e)).sort().map(k => [k, e[k]]));
+export const dejaSignalee = (retours, profilId, path, e) => (retours || []).some(r => r.profil_id === profilId && r.cv_path === path && cle(r.proposition || {}) === cle(e));
 
 // Ce que le CV dit autrement que le profil, pour les seuls champs qui décident de ce que le membre voit :
 // rôle, promo (sauf promo devinée sans changement de rôle), filière d'un autre parcours.

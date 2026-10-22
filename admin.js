@@ -8,8 +8,8 @@ import { NIVEAUX, niveauOf, timeAgo, mentorState, cleNom, norm, GUIDE_SECTIONS, 
 import { DefisAdmin } from './saison.js';
 import { AgendaAdmin } from './agenda.js';
 import { InvitationsAdmin } from './invitation.js';
-import { lireCVDe, libellesCV } from './cv.js';
-import { propositionCV, corrigeProfil } from './lire-cv.js';
+import { lireCVDe, libellesCV, SignalerLecture } from './cv.js';
+import { propositionCV, corrigeProfil, dejaSignalee } from './lire-cv.js';
 
 addAR({
   'Vue d’ensemble': 'نظرة عامة', 'Modération': 'الإشراف', 'Liste officielle': 'اللائحة الرسمية', 'Réglages': 'الإعدادات', 'Agenda': 'المفكرة',
@@ -115,11 +115,13 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
     ['Demandes d’aide', openReq.length, `en attente · ${rdv} rendez-vous à venir`],
     ['Recrutés et confirmés', confirmes, 'cette saison, via la plateforme'],
   ];
+  const lecturesFausses = (data.retours_cv || []).filter(r => r.status === 'ouvert');
   const stale = data.placements.filter(p => p.status === 'en_attente').sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   const offers = [...data.offers].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 8);
   const todo = [
     ouverts.length ? ['flag', `${ouverts.length} signalement${ouverts.length > 1 ? 's' : ''} à traiter`, 'admin/moderation'] : null,
     toVerify.length ? ['shield', `${toVerify.length} lauréat${toVerify.length > 1 ? 's' : ''} à vérifier`, 'admin/membres'] : null,
+    lecturesFausses.length ? ['file', lecturesFausses.length > 1 ? `${lecturesFausses.length} erreurs de lecture de CV signalées` : '1 erreur de lecture de CV signalée', 'admin/membres'] : null,
   ].filter(Boolean);
   return html`
     <div class="kpis">${kpis.map(([l, v, sub]) => html`<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-val mono"><${Num} v=${v}/></span><span class="small muted">${sub}</span></div>`)}</div>
@@ -263,6 +265,7 @@ function Membres({ ctx, comptes, toVerify }) {
 
   return html`
     <${ProfilsARevoir} ctx=${ctx} members=${members}/>
+    <${LecturesSignalees} ctx=${ctx}/>
     ${toVerify.length ? html`<div class="panel accent-panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="shield"/> Lauréats à vérifier <span class="count">${toVerify.length}</span></h2></div>
       <p class="muted small">Vérifie que la personne est bien diplômée de l’ENSAM Meknès (promo, filière), puis valide. Le badge rassure les étudiants. Deux lauréats vérifiés de sa promo peuvent aussi le confirmer.</p>
       <ul class="people-list verif-list">${toVerify.map(p => { const pr = pairs(p); return html`<li key=${p.id}><div class="verif-who"><${Person} p=${p} onOpen=${openProfile} sub=${`${p.filiere} · Promo ${p.promo}${p.entreprise ? ' · ' + p.entreprise : ''}`}/>
@@ -294,6 +297,7 @@ function ProfilsARevoir({ ctx, members }) {
   const { store, act, openProfile, saison } = ctx;
   const [lecture, setLecture] = useState(null);
   const [cvs, setCvs] = useState(null);
+  const [signaler, setSignaler] = useState(null);
   const an = new Date().getFullYear();
   const incoherents = members.filter(p => (p.role === 'laureat' && p.promo > an) || (p.role === 'etudiant' && p.promo <= saison));
   const avecCV = members.filter(p => p.cv_path);
@@ -302,9 +306,10 @@ function ProfilsARevoir({ ctx, members }) {
     const out = []; let illisibles = 0; setLecture({ fait: 0, total: avecCV.length });
     for (const [i, p] of avecCV.entries()) {
       try {
-        const cv = await lireCVDe(store, p.cv_path);
+        const { cv, texte } = await lireCVDe(store, p.cv_path);
         if (!Object.keys(cv).length) illisibles++;
-        const e = propositionCV(p, cv); if (Object.keys(e).length) out.push({ p, e });
+        // Une lecture déjà signalée comme fausse n'est plus proposée
+        const e = propositionCV(p, cv); if (Object.keys(e).length && !dejaSignalee(store.data.retours_cv, p.id, p.cv_path, e)) out.push({ p, e, texte });
       } catch { illisibles++; }
       setLecture({ fait: i + 1, total: avecCV.length });
     }
@@ -312,13 +317,14 @@ function ProfilsARevoir({ ctx, members }) {
   };
   const retirer = ids => setCvs(l => l && Object.assign(l.filter(x => !ids.includes(x.p.id)), { illisibles: l.illisibles }));
   const corriger = (p, patch, msg) => act(async () => { await store.update('profiles', p.id, patch); retirer([p.id]); toast(msg); });
-  // Tous les profils d'après leur CV, en une fois (corrections et champs vides)
-  const toutAppliquer = () => act(async () => {
+  // Tous les profils d'après leur CV, en une fois (corrections et champs vides), après un dernier coup d'œil
+  const toutAppliquer = () => ctx.confirm(`Mettre à jour ${cvs.length} profils d’après leur CV ? Vérifie chaque ligne avant : si une lecture est fausse, signale-la au lieu de l’appliquer.`, () => act(async () => {
     const faits = [];
     for (const { p, e } of cvs) { await store.update('profiles', p.id, e); faits.push(p.id); }
     retirer(faits); toast(faits.length > 1 ? `${faits.length} profils mis à jour d’après leur CV.` : 'Profil mis à jour d’après son CV.');
-  });
+  }), 'Tout mettre à jour');
   const lignes = [...incoherents.filter(p => !cvs?.some(x => x.p.id === p.id)).map(p => ({ p, e: p.role === 'laureat' ? { role: 'etudiant' } : { role: 'laureat' }, cv: false })), ...(cvs || []).map(x => ({ ...x, cv: true }))];
+  const ligneSignalee = signaler && cvs?.find(x => x.p.id === signaler);
   return html`<div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="user"/> Profils à revoir ${lignes.length ? html`<span class="count">${lignes.length}</span>` : null}</h2>
       ${avecCV.length ? html`<button class="btn small" id="adm-lire-cv" disabled=${!!lecture} onClick=${lireTous}><${Icon} name="file" size=${15}/> ${lecture ? `CV lus : ${lecture.fait}/${lecture.total}` : `Lire les CV déposés (${avecCV.length})`}</button>` : null}</div>
     <p class="muted small">Rôle ou promo qui ne vont pas ensemble, et ce que le CV de chacun corrige ou complète. Le membre voit aussi la proposition sur son profil.</p>
@@ -327,12 +333,42 @@ function ProfilsARevoir({ ctx, members }) {
       <${Person} p=${p} onOpen=${openProfile} sub=${`${p.role === 'laureat' ? 'Lauréat(e)' : 'Étudiant(e)'} · Promo ${p.promo} · ${p.filiere}`}/>
       <span class="small revoir-quoi">${cv ? html`<span>${corrigeProfil(e) ? 'Son CV indique :' : 'Son CV complète :'}</span> ${libellesCV(e).map((x, i) => html`${i ? ' · ' : ''}<b>${x}</b>`)}` : p.role === 'laureat' ? `Promo ${p.promo} pas encore diplômée` : `Promo ${p.promo} déjà diplômée`}</span>
       <span class="spacer"></span>
+      ${cv ? html`<button class="icon-btn small" aria-label="Signaler une erreur de lecture" title="C’est mal lu : signaler" onClick=${() => setSignaler(p.id)}><${Icon} name="flag" size=${15}/></button>` : null}
       <button class="btn small" onClick=${() => corriger(p, e, 'Profil corrigé.')}>${cv ? 'Appliquer' : e.role === 'etudiant' ? 'Passer en étudiant(e)' : 'Passer en lauréat(e)'}</button>
     </li>`)}</ul>` : cvs && cvs.illisibles < avecCV.length ? html`<p class="small good-t"><${Icon} name="check" size=${14}/> Les CV lus confirment les profils.</p>` : null}
+    ${ligneSignalee ? html`<${SignalerLecture} ctx=${ctx} profil=${ligneSignalee.p} prop=${ligneSignalee.e} texte=${ligneSignalee.texte} path=${ligneSignalee.p.cv_path} onClose=${() => setSignaler(null)} onDone=${() => retirer([ligneSignalee.p.id])}/>` : null}
     ${cvs?.illisibles ? html`<p class="small muted" id="adm-cv-illisibles">${cvs.illisibles === 1 ? '1 CV sans texte lisible (scan en image ?) : à vérifier à la main.' : `${cvs.illisibles} CV sans texte lisible (scans en image ?) : à vérifier à la main.`}</p>` : null}
   </div>`;
 }
 injectCSS('revoir', `.revoir-list li { flex-wrap: wrap; } .revoir-quoi b { font-weight: 650; }`);
+
+// Erreurs de lecture des CV signalées : l'administration les copie pour Claude (sans nom ni coordonnées),
+// qui corrige la lecture et ajoute un test pour chacune ; puis elle les classe
+function LecturesSignalees({ ctx }) {
+  const { data, store, act, openProfile } = ctx;
+  const tous = data.retours_cv || [];
+  const ouverts = tous.filter(r => r.status === 'ouvert');
+  if (!tous.length) return null;
+  const profil = id => store.byId('profiles', id);
+  const qui = p => (p ? `${p.role === 'laureat' ? 'Lauréat(e)' : 'Étudiant(e)'} · Promo ${p.promo} · ${p.filiere}` : 'Profil supprimé');
+  const copier = async () => {
+    const txt = [`Erreurs de lecture des CV · Réseau ENSAM (${ouverts.length})`, ...ouverts.map((r, i) => [
+      '', `${i + 1}. Profil : ${qui(profil(r.profil_id))}`, `Lu dans le CV : ${libellesCV(r.proposition || {}).join(' · ') || '?'}`, `Juste : ${r.juste || '(non précisé)'}`,
+      'Lignes lues :', ...(r.extrait || '(aucune)').split('\n').map(l => '  | ' + l)].join('\n'))].join('\n');
+    try { await navigator.clipboard.writeText(txt); toast('Copié : colle-le à Claude dans le fil du projet.'); } catch { toast('Copie impossible ici.', 'err'); }
+  };
+  const classer = r => act(async () => { await store.update('retours_cv', r.id, { status: 'corrige' }); toast('Classée.'); });
+  return html`<div class="panel" id="adm-lectures"><div class="section-head"><h2 class="h-ico"><${Icon} name="flag"/> Erreurs de lecture des CV ${ouverts.length ? html`<span class="count">${ouverts.length}</span>` : null}</h2>
+      ${ouverts.length ? html`<button class="btn small primary" id="adm-cv-copier" onClick=${copier}><${Icon} name="copy" size=${15}/> Copier pour Claude</button>` : null}</div>
+    <p class="muted small">Chaque erreur signalée sert à corriger la lecture pour tous. Copie-les et colle-les à Claude : il corrige et ajoute un test, puis tu les classes.</p>
+    ${ouverts.length ? html`<ul class="people-list revoir-list">${ouverts.map(r => { const p = profil(r.profil_id); return html`<li key=${r.id}>
+      ${p ? html`<${Person} p=${p} onOpen=${openProfile} sub=${`${qui(p)} · ${timeAgo(r.created_at)}`}/>` : html`<span class="muted">Profil supprimé</span>`}
+      <span class="small revoir-quoi"><span>Lu :</span> <b>${libellesCV(r.proposition || {}).join(' · ')}</b>${r.juste ? html` · <span>Juste :</span> <b dir="auto">${r.juste}</b>` : null}</span>
+      <span class="spacer"></span>
+      <button class="btn small ghost" onClick=${() => classer(r)}>Classer</button>
+    </li>`; })}</ul>` : html`<p class="small good-t"><${Icon} name="check" size=${14}/> Toutes les erreurs signalées sont classées (${tous.length}).</p>`}
+  </div>`;
+}
 
 // ---------------------------------------------------------------------------
 // Liste officielle : import Excel ou CSV, couverture, absents

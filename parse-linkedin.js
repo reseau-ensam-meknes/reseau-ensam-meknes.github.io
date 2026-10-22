@@ -106,6 +106,9 @@ const DATES_SEULES = /^\D{0,12}(?:19|20)\d{2}(?:\s*[-–—/àa]+\s*(?:(?:19|20)
 // Année d'études écrite en toutes lettres : « 5e année », « 4ème année », « 3A », « 4th year »
 const NIVEAU_RE = /\b([1-5])\s*(?:[eè]me|eme|[eè]re|ere|e)\s*ann[eé]e\b|\b([1-5])A\b|\b([1-5])(?:st|nd|rd|th) year\b/i;
 const niveauDe = t => { const m = String(t || '').match(NIVEAU_RE); return m ? +(m[1] || m[2] || m[3]) : 0; };
+// Une année coupée en deux par la lecture du PDF (« 202 4 », « 20 24 ») est recollée ; seulement dans la formation,
+// où un numéro de téléphone ne risque pas d'être pris pour une année
+const recollerAnnees = t => t.replace(/(?<!\d)(\d{1,3}) (\d{1,3})(?!\d)/g, (m, a, b) => (/^(?:19[89]\d|20[0-4]\d)$/.test(a + b) ? a + b : m));
 
 function formation(L) {
   let best = null;
@@ -113,11 +116,12 @@ function formation(L) {
     if (!ENSAM.test(L[i])) continue;
     const bloc = [L[i]];
     // Beaucoup de CV mettent les dates juste avant l'école (« 2019 – 2024 », puis « ENSAM Meknès »)
-    const avant = i > 0 && DATES_SEULES.test(L[i - 1]) ? L[i - 1] : '';
+    const avant = i > 0 && DATES_SEULES.test(recollerAnnees(L[i - 1])) ? L[i - 1] : '';
     // Les lignes suivantes, jusqu'à l'école suivante ou aux dates de l'entrée suivante (sauf si l'école n'a pas encore ses dates)
-    for (let j = i + 1; j < Math.min(L.length, i + 4) && !ENSAM.test(L[j]) && !AUTRE_ECOLE.test(L[j]) && !(avant && DATES_SEULES.test(L[j])); j++) bloc.push(L[j]);
-    const txt = [avant, ...bloc].join(' ');
-    const ans = [...txt.matchAll(/\b(19[89]\d|20[0-4]\d)\b/g)].map(m => +m[1]);
+    for (let j = i + 1; j < Math.min(L.length, i + 4) && !ENSAM.test(L[j]) && !AUTRE_ECOLE.test(L[j]) && !(avant && DATES_SEULES.test(recollerAnnees(L[j]))); j++) bloc.push(L[j]);
+    const txt = recollerAnnees([avant, ...bloc].join(' '));
+    // (?<!\d) plutôt que \b : une année collée à un mot (« 2019-2024National ») compte quand même
+    const ans = [...txt.matchAll(/(?<!\d)(19[89]\d|20[0-4]\d)(?!\d)/g)].map(m => +m[1]);
     const fil = FIL_RE.find(([, re]) => re.test(bloc.slice(1).join(' ')) || re.test(L[i].replace(ENSAM, '')))?.[0];
     const r = { promo: ans.length ? Math.max(...ans) : null, debut: ans.length ? Math.min(...ans) : null, filiere: fil || null, meknes: /mekn[eè]s|meknes/i.test(txt),
       enCours: EN_COURS.test(low(txt)), niveau: niveauDe(bloc.join(' ')), cycle: /cycle (?:d'|des |de l')?ing[eé]nieur|admission parall[eè]le|3e ann[eé]e|3[eè]me ann[eé]e/i.test(txt) };

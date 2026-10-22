@@ -3017,6 +3017,58 @@ begin
   end if;
 end $$;
 
+-- ---------------------------------------------------------------------
+-- Lecture des CV : une proposition fausse est signalée, par le membre ou par l'administration.
+-- On garde ce qui a été proposé, ce qui est juste et les lignes de formation lues (sans téléphone
+-- ni email), pour corriger la lecture. Visible par l'auteur, le membre concerné et l'administration.
+-- ---------------------------------------------------------------------
+create table if not exists public.retours_cv (
+  id uuid primary key default gen_random_uuid(),
+  profil_id uuid not null references public.profiles(id) on delete cascade,
+  auteur_id uuid not null references public.profiles(id) on delete cascade,
+  cv_path text check (char_length(cv_path) <= 300),
+  proposition jsonb not null default '{}'::jsonb,
+  juste text check (char_length(juste) <= 300),
+  extrait text check (char_length(extrait) <= 2000),
+  status text not null default 'ouvert' check (status in ('ouvert','corrige')),
+  created_at timestamptz default now()
+);
+
+create or replace function public.protect_retour_cv() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'INSERT' then
+    if auth.uid() is not null then new.auteur_id := auth.uid(); end if;
+    new.status := 'ouvert'; new.created_at := now();
+    return new;
+  end if;
+  -- Ensuite, seul le statut change
+  new.profil_id := old.profil_id; new.auteur_id := old.auteur_id; new.cv_path := old.cv_path; new.proposition := old.proposition;
+  new.juste := old.juste; new.extrait := old.extrait; new.created_at := old.created_at;
+  return new;
+end $$;
+drop trigger if exists trg_protect_retour_cv on public.retours_cv;
+create trigger trg_protect_retour_cv before insert or update on public.retours_cv
+  for each row execute function public.protect_retour_cv();
+drop trigger if exists trg_limite on public.retours_cv;
+create trigger trg_limite before insert on public.retours_cv for each row execute function public.limiter('auteur_id', '10', '1 day');
+
+alter table public.retours_cv enable row level security;
+drop policy if exists "lecture membres" on public.retours_cv;
+drop policy if exists "ecriture proprietaire" on public.retours_cv;
+drop policy if exists "modif proprietaire" on public.retours_cv;
+drop policy if exists "suppression proprietaire" on public.retours_cv;
+create policy "lecture membres" on public.retours_cv for select to authenticated using (auteur_id = auth.uid() or profil_id = auth.uid() or public.is_admin());
+create policy "ecriture proprietaire" on public.retours_cv for insert to authenticated with check (auteur_id = auth.uid() and (profil_id = auth.uid() or public.is_admin()));
+create policy "modif proprietaire" on public.retours_cv for update to authenticated using (public.is_admin());
+create policy "suppression proprietaire" on public.retours_cv for delete to authenticated using (public.is_admin());
+do $$ begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime')
+     and not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='retours_cv') then
+    alter publication supabase_realtime add table public.retours_cv;
+  end if;
+end $$;
+
 -- =====================================================================
 -- APRÈS votre inscription sur la plateforme, devenez administrateur :
 --   update public.profiles set role = 'admin', verified = true

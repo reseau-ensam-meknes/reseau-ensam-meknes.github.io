@@ -101,3 +101,32 @@ Lean, Python`;
   assert.equal(r.promo, 2028, '4A en 2026-2027 : diplôme en 2028');
   assert.equal(r.filiere, 'Génie Industriel : Excellence Opérationnelle');
 });
+
+test('CV en deux colonnes : une année collée au nom de l’école compte, la promo est l’année de fin', () => {
+  // Texte tel que le donnaient les PDF qui écrivent la colonne de droite (ville, dates) avant l'école
+  const colle = `HAJEB ABDERRAHMAN
+Mechanical Engineering: Structures and Product Engineering
+FORMATION
+MEKNES 2019-2024National School of Arts and Crafts-ENSAM
+Mechanical Engineering Structures and Product Engineering
+AIT MELLOUL2018-2019High School ALMAARIFA Baccalaureate science mathematique A
+PROFESSIONAL EXPERIENCES
+End-of-study industrial project February 2024 - June 2024`;
+  const r = parseLinkedin(colle, OCT_2026);
+  assert.equal(r.role, 'laureat');
+  assert.equal(r.promo, 2024, 'formation 2019-2024 : promo 2024, pas 2019');
+  assert.deepEqual(ecartsCV({ role: 'laureat', promo: 2024, filiere: 'Génie Mécanique' }, r, OCT_2026), {}, 'rien à corriger');
+});
+
+test('CV dont la lecture coupe une année (« 202 4 ») : l’année est recollée, pas le téléphone', () => {
+  const coupe = `HAJEB ABDERRAHMAN
++212 6 20 19 33 44 · AGADIR
+FORMATION
+National School of Arts and Crafts-ENSAM MEKNES 2019-202 4
+Mechanical Engineering Structures and Product Engineering
+High School ALMAARIFA Baccalaureate science mathematique A AIT MELLOUL 2018-2019`;
+  const r = parseLinkedin(coupe, OCT_2026);
+  assert.equal(r.promo, 2024);
+  assert.equal(r.role, 'laureat');
+  assert.equal(r.telephone, '+212 6 20 19 33 44');
+});
