@@ -174,9 +174,16 @@ test('mentorat : demander, fixer l’horaire, confirmer sa présence, ignorer un
   const avant = await ign.count(); assert.ok(avant > 0, 'au moins une demande ouverte à écarter');
   await ign.first().click(); await s.page.waitForTimeout(300);
   assert.equal(await ign.count(), avant - 1);
-  // L'administration voit le suivi de l'école
+  // L'administration voit le suivi de l'école, et retire une demande restée sans suite
   await s.comme('Admin'); await s.aller('mentorat');
   assert.match(await s.page.locator('.page').innerText(), /Suivi de l’école/);
+  const enAttente = s.page.locator('.m-section', { hasText: 'Suivi de l’école' }).locator('.mreq:has(.m-more-btn)');
+  const n = await enAttente.count(); assert.ok(n > 0, 'au moins une demande en attente à retirer');
+  await enAttente.first().locator('.m-more-btn').click();
+  await s.page.click('[role="menuitem"]:has-text("Retirer la demande")');
+  await s.page.click('.modal .btn.danger'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Demande retirée/);
+  assert.equal(await enAttente.count(), n - 1);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
