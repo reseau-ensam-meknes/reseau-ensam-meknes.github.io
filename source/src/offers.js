@@ -1,6 +1,6 @@
 // Offres : liste compacte, fiche détaillée, candidature, gestion des candidats par le lauréat.
 import { html, useState, useMemo, useEffect } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, TYPE_ICON, toast, RoleLine, celebrate, injectCSS } from './ui.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, TYPE_ICON, toast, RoleLine, celebrate, injectCSS, PartagerWhatsApp, lienWhatsApp, lienDirect } from './ui.js';
 import { getLang, addAR } from './i18n.js';
 import { TYPES, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, filiereMatch, resumeFilieres, filiereSousTitre } from './logic.js';
 import { RelanceBanner, BanqueSujets, PasteOffer } from './recrutement.js';
@@ -8,6 +8,12 @@ import { CvButton } from './cv.js';
 import { SignalerBtn } from './confiance.js';
 import { EntrepriseResume } from './entreprises.js';
 import { MessageBtn } from './messages.js';
+// Le message WhatsApp d'une offre : de quoi il s'agit, et le lien qui l'ouvre directement
+// Message prêt pour WhatsApp, dans la langue de l'interface
+const TYPES_AR = { stage: 'تدريب', pfe: 'مشروع نهاية الدراسة', etranger: 'تدريب بالخارج', emploi: 'وظيفة' };
+const texteOffre = o => getLang() === 'ar'
+  ? `${TYPES_AR[o.type] || 'عرض'}: ${o.titre} · ${o.entreprise}\nشاهده على شبكة ENSAM مكناس: ${lienDirect('offre/' + o.id)}`
+  : `${TYPES[o.type]?.long || 'Offre'} : ${o.titre} · ${o.entreprise}\nÀ voir sur le Réseau ENSAM Meknès : ${lienDirect('offre/' + o.id)}`;
 
 const ANNEES_OPTS = [[3, '3A'], [4, '4A'], [5, '5A'], [6, 'Jeunes diplômés']];
 export const APP_STATUS = { postule: 'Envoyée', entretien: 'Entretien', retenu: 'Retenu(e)', refuse: 'Pas retenu(e)' };
@@ -242,6 +248,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
           <h2 translate="no" dir="auto">${o.titre}</h2>
           <p class="od-sub"><button type="button" class="linkish od-ent" onClick=${() => { onClose(); ctx.openEntreprise?.(o.entreprise); }}><span translate="no" dir="auto">${o.entreprise}</span></button><span class="od-dot" aria-hidden="true">·</span><span class="muted">Publiée ${timeAgo(o.created_at)}</span></p>
         </div>
+        ${o.status === 'ouverte' ? html`<${PartagerWhatsApp} id="od-partage" texte=${texteOffre(o)}/>` : null}
         ${!mine && !isAdmin ? html`<${SignalerBtn} ctx=${ctx} type="offre" id=${o.id} small/>` : null}
         ${(mine || isAdmin) ? html`<div class="menu-wrap"><button class="icon-btn" aria-label="Gérer l’offre" aria-expanded=${menu} onClick=${() => setMenu(!menu)}><${Icon} name="more"/></button>
           ${menu ? html`<div class="menu-pop">
@@ -441,7 +448,8 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
         const fete = premiere && celebrate({
           cle: 'premiere-offre-' + me.id, icon: 'feed', titre: 'Ta première offre est en ligne !',
           texte: entre ? 'Les lauréats la voient déjà dans « Entre lauréats ». Merci d’ouvrir la porte !' : 'Les étudiants concernés la voient déjà dans « Pour moi ». Merci d’ouvrir la porte à un étudiant de l’école !',
-          action: neuve?.id && ctx.openOffer ? { label: 'Voir mon offre', icon: 'arrow', onClick: () => ctx.openOffer(neuve.id) } : null,
+          // La suite la plus utile : la faire circuler dans les groupes WhatsApp de promo
+          action: neuve?.id ? { label: 'Partager sur WhatsApp', icon: 'share', onClick: () => window.open(lienWhatsApp(texteOffre(neuve)), '_blank', 'noopener') } : null,
         });
         if (!fete) toast(entre ? 'Offre publiée. Les lauréats la voient dans « Entre lauréats ».' : 'Offre publiée. Les étudiants concernés la voient dans « Pour moi ».');
       }

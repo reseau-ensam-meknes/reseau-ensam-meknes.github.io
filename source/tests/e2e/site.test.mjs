@@ -256,6 +256,30 @@ test('lien d’invitation d’une promo : la promo est gardée, l’adresse nett
   await s.ctx.close();
 });
 
+test('partage WhatsApp : le lien direct rouvre l’offre et la question ; l’administration voit où l’inscription s’arrête', async () => {
+  const s = await ouvrir();
+  await s.comme('Salma'); await s.aller('offres');
+  await s.page.locator('.ocard-main').first().click(); await s.page.waitForSelector('.od h2');
+  const titre = await s.page.locator('.od h2').innerText();
+  const msg = decodeURIComponent((await s.page.getAttribute('#od-partage', 'href')).split('https://wa.me/?text=')[1]);
+  assert.ok(msg.includes(titre), msg);
+  const lien = msg.match(/https?:\/\/\S+#offre\/\S+/)[0];
+  await s.fermer(); await s.aller('accueil');
+  await s.page.goto(lien); await s.page.reload(); await s.page.waitForSelector('.od h2');
+  assert.equal(await s.page.locator('.od h2').innerText(), titre, 'le lien ouvre la même offre');
+  await s.fermer();
+  await s.aller('reseau/entraide'); await s.page.locator('.qrow').first().click(); await s.page.waitForSelector('#q-partage');
+  const q = decodeURIComponent((await s.page.getAttribute('#q-partage', 'href')).split('text=')[1]);
+  assert.match(q, /#reseau\/entraide\/\S+/);
+  await s.comme('Admin'); await s.aller('admin');
+  const parcours = await s.page.locator('#adm-parcours').innerText();
+  assert.match(parcours, /Compte créé[\s\S]*Profil rempli[\s\S]*Première action/);
+  assert.match(parcours, /Le plus grand arrêt|Personne ne s’arrête/);
+  assert.match(await s.page.locator('.kpis').innerText(), /Réponse en 48 h[\s\S]*Actifs cette semaine/i);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('profil : remplir depuis le texte LinkedIn collé', async () => {
   const s = await ouvrir();
   await s.comme('Amine'); await s.aller('profil');
@@ -304,6 +328,9 @@ test('inscription : « Tu es… » bien visible, puis tout se remplit depuis le 
   assert.equal(await s.page.inputValue('#pf-fil'), 'Génie Industriel');
   assert.equal(await s.page.inputValue('#pf-ent'), 'OCP Group');
   assert.equal(await s.page.inputValue('#pf-poste'), 'Ingénieur méthodes');
+  // Inscription courte : le reste (coordonnées comprises, déjà remplies depuis le CV) s'ouvre au besoin
+  assert.equal(await s.page.locator('#pf-tel').count(), 0);
+  await s.page.click('#pf-plus');
   assert.equal(await s.page.inputValue('#pf-tel'), '06 61 22 33 44');
   assert.ok(await s.page.isEnabled('form .row-end .btn.primary'));
   assert.ok((await s.debordement()) <= 0, 'pas de débordement à 390 px');
@@ -338,6 +365,63 @@ test('CV qui contredit ou complète le profil : le membre met à jour en un clic
   await ligne.locator('button', { hasText: 'Appliquer' }).click(); await s.page.waitForTimeout(300);
   assert.match(await s.page.locator('.toast').last().innerText(), /Profil corrigé/);
   assert.equal(await s.page.locator('.revoir-list li', { hasText: 'Amine' }).count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('lecture de CV fausse : le membre la signale, l’administration la copie pour Claude sans coordonnées, puis la classe', async () => {
+  const s = await ouvrir();
+  await s.ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await s.comme('Salma'); await s.aller('profil');
+  await deposerPdf(s.page, '#cv-file', CV_LAUREAT);
+  await s.page.waitForSelector('#cv-controle', { timeout: 15000 });
+  await s.page.click('#cv-signaler');
+  await s.page.fill('#cv-juste', 'Étudiante 5A, promo 2027');
+  await s.page.click('#cv-signal-send'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /L’erreur est signalée/);
+  assert.equal(await s.page.locator('#cv-controle').count(), 0, 'la proposition signalée disparaît');
+  await s.comme('Admin'); await s.aller('admin');
+  assert.match(await s.page.locator('.callout.today').innerText(), /1 erreur de lecture de CV signalée/);
+  await s.aller('admin/membres');
+  const panneau = s.page.locator('#adm-lectures');
+  assert.match(await panneau.innerText(), /Lu :\s*Lauréat\(e\) · Promo 2021[\s\S]*Juste :\s*Étudiante 5A, promo 2027/);
+  await s.page.click('#adm-cv-copier'); await s.page.waitForTimeout(200);
+  const copie = await s.page.evaluate(() => navigator.clipboard.readText());
+  assert.match(copie, /Lu dans le CV : Lauréat\(e\) · Promo 2021/);
+  assert.match(copie, /\| 2016 – 2021 : Diplôme d'ingénieur d'État en Génie Industriel, ENSAM Meknès/);
+  assert.doesNotMatch(copie, /outlook|61 22 33|Salma/, 'ni coordonnées ni nom');
+  // Relue par l'administration, la même lecture n'est plus proposée
+  await s.page.click('#adm-lire-cv');
+  await s.page.waitForSelector('#adm-lire-cv:not([disabled])', { timeout: 20000 });
+  assert.equal(await s.page.locator('.panel:has(#adm-lire-cv) .revoir-list li', { hasText: 'Salma' }).count(), 0);
+  await panneau.locator('button', { hasText: 'Classer' }).click(); await s.page.waitForTimeout(300);
+  assert.match(await panneau.innerText(), /Toutes les erreurs signalées sont classées \(1\)/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('CV en deux colonnes : les morceaux d’une ligne sont remis de gauche à droite', async () => {
+  const s = await ouvrir();
+  // PDF dont la colonne de droite (ville, dates) est écrite avant l'école, sur la même ligne
+  const r = await s.page.evaluate(async () => {
+    const [{ texteDuCV }, { parseLinkedin }] = await Promise.all([import('./lire-cv.js'), import('./parse-linkedin.js')]);
+    const items = [[60, 800, 'HAJEB ABDERRAHMAN', 18], [60, 760, 'FORMATION', 13], [440, 740, 'MEKNES'], [510, 740, '2019-2024'],
+      [60, 740, 'National School of Arts and Crafts-ENSAM'], [80, 726, 'Mechanical Engineering Structures and Product Engineering', 10],
+      [60, 700, 'PROFESSIONAL EXPERIENCES', 13], [60, 680, 'End-of-study industrial project'], [430, 680, 'February 2024 - June 2024']];
+    const flux = items.map(([x, y, t, taille = 11]) => `BT /F1 ${taille} Tf ${x} ${y} Td (${t}) Tj ET`).join('\n');
+    const objets = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>', `<< /Length ${flux.length} >>\nstream\n${flux}\nendstream`];
+    let out = '%PDF-1.4\n'; const pos = [];
+    objets.forEach((o, i) => { pos.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+    const xref = out.length;
+    out += `xref\n0 ${objets.length + 1}\n0000000000 65535 f \n` + pos.map(p => String(p).padStart(10, '0') + ' 00000 n \n').join('') + `trailer\n<< /Size ${objets.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+    const texte = await texteDuCV(Uint8Array.from(out, c => c.charCodeAt(0) & 255).buffer);
+    return { texte, promo: parseLinkedin(texte, new Date(2026, 9, 22)).promo };
+  });
+  assert.match(r.texte, /^National School of Arts and Crafts-ENSAM MEKNES 2019-2024$/m);
+  assert.match(r.texte, /^End-of-study industrial project February 2024 - June 2024$/m);
+  assert.equal(r.promo, 2024);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });

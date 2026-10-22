@@ -4,7 +4,7 @@ const chargerSeed = () => import('./seed.js').then(m => m.buildSeed());
 import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere } from './logic.js';
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
-const PHASE3 = ['coordonnees', 'demandes_contact', 'relectures_cv', 'relecture_commentaires', 'entretiens', 'avis_stage', 'guide_pays', 'signalements', 'enquetes_insertion', 'verifications_pairs', 'evenements', 'evenement_participants'];
+const PHASE3 = ['coordonnees', 'demandes_contact', 'relectures_cv', 'relecture_commentaires', 'entretiens', 'avis_stage', 'guide_pays', 'signalements', 'enquetes_insertion', 'verifications_pairs', 'evenements', 'evenement_participants', 'retours_cv'];
 const MESSAGERIE = ['messages', 'blocages'];
 export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE];
 // Tables ajoutées par supabase/mise-a-jour.sql : tant que la base n'est pas à jour, elles restent vides au lieu de bloquer le site.
@@ -321,7 +321,7 @@ const inscritDeListe = (data, l) => data.profiles.some(p => (l.email && demoEmai
 const LIMITES = {
   offers: ['author_id', 10, 864e5, 'titre'], comments: ['author_id', 40, 864e5, 'body'], questions: ['author_id', 5, 864e5, 'titre'],
   answers: ['author_id', 30, 864e5, 'body'], groupe_messages: ['author_id', 60, 864e5, 'body'], invitations: ['laureat_id', 30, 864e5],
-  applications: ['student_id', 10, 864e5], evenement_participants: ['user_id', 30, 864e5], verifications_pairs: ['verificateur_id', 20, 864e5], mentorships: ['student_id', 6, 864e5], cafes: ['organisateur_id', 3, 864e5], startups: ['fondateur_id', 3, 864e5],
+  applications: ['student_id', 10, 864e5], evenement_participants: ['user_id', 30, 864e5], verifications_pairs: ['verificateur_id', 20, 864e5], retours_cv: ['auteur_id', 10, 864e5], mentorships: ['student_id', 6, 864e5], cafes: ['organisateur_id', 3, 864e5], startups: ['fondateur_id', 3, 864e5],
   entretiens: ['author_id', 10, 864e5], avis_stage: ['author_id', 10, 864e5], demandes_contact: ['demandeur_id', 5, 864e5],
   signalements: ['auteur_id', 10, 864e5], relectures_cv: ['student_id', 4, 864e5], relecture_commentaires: ['author_id', 60, 36e5],
   messages: ['author_id', 300, 864e5],
@@ -458,6 +458,17 @@ function applyPhase3Rules(store, table, r, old) {
     } else if (store.data.guide_pays.some(g => norm(g.pays) === norm(r.pays) && g.section === r.section)) throw new Error('Cette rubrique existe déjà : recharge la page pour la modifier.');
     if (!isAdmin && (norm(r.pays) === 'maroc' || me.role !== 'laureat' || norm(me.pays || '') !== norm(r.pays))) throw new Error('Seuls les lauréats qui vivent dans ce pays peuvent écrire son guide.');
     r.updated_by = me.id; r.updated_at = now;
+    return;
+  }
+  // Lecture des CV signalée comme fausse : mêmes règles que protect_retour_cv() et la sécurité de la table
+  if (table === 'retours_cv') {
+    if (!old) {
+      r.auteur_id = me.id; r.status = 'ouvert';
+      if (!isAdmin && r.profil_id !== me.id) deny();
+      return;
+    }
+    if (!isAdmin) deny();
+    for (const k of ['profil_id', 'auteur_id', 'cv_path', 'proposition', 'juste', 'extrait', 'created_at']) r[k] = old[k];
     return;
   }
   if (table === 'signalements') {

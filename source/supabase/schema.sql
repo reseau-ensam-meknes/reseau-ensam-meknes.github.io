@@ -2160,6 +2160,7 @@ begin
   perform public.attribuer_parrains();
   perform public.appeler_notifier('resume');
   perform public.appeler_notifier('enquetes');
+  perform public.appeler_notifier('relances');
 end $$;
 revoke all on function public.taches_quotidiennes() from public, anon, authenticated;
 
@@ -3009,6 +3010,98 @@ begin
         execute format('alter publication supabase_realtime add table public.%I', t);
       end if;
     end loop;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Lecture des CV : une proposition fausse est signalée, par le membre ou par l'administration.
+-- On garde ce qui a été proposé, ce qui est juste et les lignes de formation lues (sans téléphone
+-- ni email), pour corriger la lecture. Visible par l'auteur, le membre concerné et l'administration.
+-- ---------------------------------------------------------------------
+create table if not exists public.retours_cv (
+  id uuid primary key default gen_random_uuid(),
+  profil_id uuid not null references public.profiles(id) on delete cascade,
+  auteur_id uuid not null references public.profiles(id) on delete cascade,
+  cv_path text check (char_length(cv_path) <= 300),
+  proposition jsonb not null default '{}'::jsonb,
+  juste text check (char_length(juste) <= 300),
+  extrait text check (char_length(extrait) <= 2000),
+  status text not null default 'ouvert' check (status in ('ouvert','corrige')),
+  created_at timestamptz default now()
+);
+
+create or replace function public.protect_retour_cv() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'INSERT' then
+    if auth.uid() is not null then new.auteur_id := auth.uid(); end if;
+    new.status := 'ouvert'; new.created_at := now();
+    return new;
+  end if;
+  -- Ensuite, seul le statut change
+  new.profil_id := old.profil_id; new.auteur_id := old.auteur_id; new.cv_path := old.cv_path; new.proposition := old.proposition;
+  new.juste := old.juste; new.extrait := old.extrait; new.created_at := old.created_at;
+  return new;
+end $$;
+drop trigger if exists trg_protect_retour_cv on public.retours_cv;
+create trigger trg_protect_retour_cv before insert or update on public.retours_cv
+  for each row execute function public.protect_retour_cv();
+drop trigger if exists trg_limite on public.retours_cv;
+create trigger trg_limite before insert on public.retours_cv for each row execute function public.limiter('auteur_id', '10', '1 day');
+
+alter table public.retours_cv enable row level security;
+drop policy if exists "lecture membres" on public.retours_cv;
+drop policy if exists "ecriture proprietaire" on public.retours_cv;
+drop policy if exists "modif proprietaire" on public.retours_cv;
+drop policy if exists "suppression proprietaire" on public.retours_cv;
+create policy "lecture membres" on public.retours_cv for select to authenticated using (auteur_id = auth.uid() or profil_id = auth.uid() or public.is_admin());
+create policy "ecriture proprietaire" on public.retours_cv for insert to authenticated with check (auteur_id = auth.uid() and (profil_id = auth.uid() or public.is_admin()));
+create policy "modif proprietaire" on public.retours_cv for update to authenticated using (public.is_admin());
+create policy "suppression proprietaire" on public.retours_cv for delete to authenticated using (public.is_admin());
+do $$ begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime')
+     and not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='retours_cv') then
+    alter publication supabase_realtime add table public.retours_cv;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Rappel d'inscription : un seul email, aux comptes créés depuis plus de 24 h sans profil
+-- (envoyé par la tâche quotidienne ; on garde seulement la date d'envoi)
+-- ---------------------------------------------------------------------
+create table if not exists public.relances_inscription (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  envoye_at timestamptz not null default now()
+);
+alter table public.relances_inscription enable row level security;
+revoke all on public.relances_inscription from anon, authenticated;
+
+create or replace function public.comptes_a_relancer(p_max int default 100)
+returns table (id uuid, email text, langue text)
+language sql stable security definer set search_path = public as $$
+  select u.id, u.email::text, case when u.raw_user_meta_data->>'langue' = 'ar' then 'ar' else 'fr' end
+  from auth.users u
+  where u.email is not null
+    and u.created_at < now() - interval '24 hours' and u.created_at > now() - interval '30 days'
+    and not exists (select 1 from public.profiles p where p.id = u.id)
+    and not exists (select 1 from public.relances_inscription r where r.user_id = u.id)
+  order by u.created_at
+  limit greatest(0, least(p_max, 200));
+$$;
+revoke all on function public.comptes_a_relancer(int) from public, anon, authenticated;
+
+create or replace function public.relances_envoyees(p_ids uuid[]) returns void
+language sql security definer set search_path = public as $$
+  insert into public.relances_inscription (user_id)
+    select u.id from auth.users u where u.id = any(p_ids)
+  on conflict (user_id) do nothing;
+$$;
+revoke all on function public.relances_envoyees(uuid[]) from public, anon, authenticated;
+
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.comptes_a_relancer(int) to service_role;
+    grant execute on function public.relances_envoyees(uuid[]) to service_role;
   end if;
 end $$;
 

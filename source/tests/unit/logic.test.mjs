@@ -78,3 +78,37 @@ test('Membre fondateur : les 25 premiers lauréats inscrits, jamais un étudiant
   assert.ok(ids({ id: 'l29' }).includes('fondateur'));
   assert.ok(!ids({ id: 'l0' }).includes('fondateur'));
 });
+
+test('réponses en 48 h : demandes d’étudiants sur 30 jours, celles qui attendent depuis plus de 24 h', async () => {
+  const { reponses48h } = await import('../../src/logic.js');
+  const now = new Date('2026-11-10T12:00:00Z'), il = h => new Date(now.getTime() - h * 36e5).toISOString();
+  const data = {
+    profiles: [{ id: 'e', role: 'etudiant' }, { id: 'l', role: 'laureat' }, { id: 'a', role: 'admin' }],
+    mentorships: [
+      { id: 'm1', student_id: 'e', sujet: 'PFE', status: 'acceptee', created_at: il(100), accepted_at: il(80) },   // 20 h : à temps
+      { id: 'm2', student_id: 'e', sujet: 'Stage', status: 'demande', created_at: il(60) },                        // 60 h sans réponse : en retard
+      { id: 'm3', student_id: 'e', sujet: 'CV', status: 'demande', created_at: il(30) },                          // 30 h : attend, pas encore compté
+      { id: 'm4', student_id: 'e', sujet: 'Annulée', status: 'annulee', created_at: il(90) },
+      { id: 'm5', student_id: 'a', sujet: 'test admin', status: 'demande', created_at: il(90) },
+      { id: 'm6', student_id: 'e', sujet: 'Vieille', status: 'demande', created_at: il(24 * 40) },
+    ],
+    questions: [{ id: 'q1', author_id: 'e', titre: 'Question', created_at: il(70) }, { id: 'q2', author_id: 'l', titre: 'De lauréat', created_at: il(70) }],
+    answers: [{ question_id: 'q1', author_id: 'e', created_at: il(69) }, { question_id: 'q1', author_id: 'l', created_at: il(60) }],
+  };
+  const r = reponses48h(data, now);
+  assert.equal(r.total, 3); assert.equal(r.a48, 2); assert.equal(Math.round(r.taux * 100), 67);
+  assert.deepEqual(r.attente.map(d => d.id), ['m2', 'm3']);
+});
+
+test('inscriptions : compte créé, profil rempli, première action ; actifs de la semaine', async () => {
+  const { parcoursInscription } = await import('../../src/logic.js');
+  const now = new Date('2026-11-10T12:00:00Z'), il = j => new Date(now.getTime() - j * 864e5).toISOString();
+  const data = {
+    profiles: [{ id: 'e', role: 'etudiant' }, { id: 'l', role: 'laureat' }, { id: 'l2', role: 'laureat' }, { id: 'a', role: 'admin' }],
+    offers: [{ author_id: 'l', created_at: il(10) }, { author_id: 'a', created_at: il(1) }],
+    mentorships: [{ student_id: 'e', mentor_id: 'l2', created_at: il(12), accepted_at: il(2) }],
+  };
+  const comptes = [{ id: 'e', a_profil: true }, { id: 'l', a_profil: true }, { id: 'l2', a_profil: true }, { id: 'a', a_profil: true }, { id: 'x', a_profil: false }, { id: 'y', a_profil: false }];
+  assert.deepEqual(parcoursInscription(comptes, data, now), { comptes: 5, profil: 3, action: 3, actifs: 1 }, 'l’administration ne compte pas ; accepter une demande d’aide est une action');
+  assert.equal(parcoursInscription([], data, now).comptes, 3, 'sans la liste des comptes : les profils');
+});

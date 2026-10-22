@@ -6,7 +6,7 @@ import { addAR, t as tr } from './i18n.js';
 import { timeAgo, niveauOf, NIVEAUX, proximiteFiliere } from './logic.js';
 import { CV_MAX } from './store.js';
 import { MessageBtn } from './messages.js';
-import { lireCV, propositionCV, corrigeProfil } from './lire-cv.js';
+import { lireCVDetail, propositionCV, corrigeProfil, extraitCV, propositionSansCoordonnees, dejaSignalee } from './lire-cv.js';
 
 const firstName = p => (p?.full_name || '').split(' ')[0];
 const href = u => (/^https?:\/\//i.test(u) ? u : 'https://' + u);
@@ -115,30 +115,56 @@ export const libellesCV = e => [e.role ? (e.role === 'laureat' ? 'Lauréat(e)' :
   e.poste ? `Poste : ${court(e.poste)}` : null, e.entreprise ? `Entreprise : ${court(e.entreprise)}` : null, e.ville ? `Ville : ${e.ville}` : null,
   e.competences ? `Compétences : ${court(e.competences.join(', '))}` : null, e.linkedin ? 'LinkedIn' : null, e.bio ? 'Bio' : null,
   e.telephone ? 'Téléphone' : null, e.email ? 'Email de contact' : null].filter(Boolean);
-// Le texte du CV : le fichier qu'on vient de déposer, sinon celui gardé en ligne
+// Le CV lu ({ cv, texte }) : le fichier qu'on vient de déposer, sinon celui gardé en ligne
 export async function lireCVDe(store, path, fichier) {
-  if (fichier) return lireCV(fichier);
+  if (fichier) return lireCVDetail(fichier);
   const r = await fetch(await store.lienCV(path));
   if (!r.ok) throw new Error('CV introuvable');
-  return lireCV(await r.arrayBuffer());
+  return lireCVDetail(await r.arrayBuffer());
+}
+
+// Une lecture fausse est signalée (par le membre ou l'administration) : elle n'est plus proposée,
+// et l'administration la transmet pour corriger la lecture des CV
+export function SignalerLecture({ ctx, profil, prop, texte, path, onClose, onDone }) {
+  const { store, me, act } = ctx;
+  const [juste, setJuste] = useState('');
+  const soi = profil.id === me.id;
+  const send = e => {
+    e.preventDefault();
+    act(async () => {
+      await store.insert('retours_cv', { profil_id: profil.id, auteur_id: me.id, cv_path: path || null, proposition: propositionSansCoordonnees(prop), juste: juste.trim() || null, extrait: extraitCV(texte) || null });
+      toast('Merci ! L’erreur est signalée, la lecture des CV sera corrigée.'); onDone?.(); onClose();
+    });
+  };
+  return html`<${Modal} title="Signaler une erreur de lecture" onClose=${onClose}>
+    <form class="form" onSubmit=${send}>
+      <p><span>${soi ? 'Lu dans ton CV :' : `Lu dans le CV de ${firstName(profil)} :`}</span> ${libellesCV(prop).map((x, i) => html`${i ? ' · ' : ''}<b>${x}</b>`)}</p>
+      <${Field} label="Ce qui est juste (facultatif)"><input id="cv-juste" maxlength="300" value=${juste} onInput=${e => setJuste(e.target.value)} placeholder="Ex. Promo 2024 : l’ENSAM de 2019 à 2024"/><//>
+      <p class="small hint-box"><${Icon} name="lock" size=${15}/> <span>On joint les lignes de formation lues dans le CV (école, années), sans téléphone ni email, pour corriger la lecture.</span></p>
+      <div class="row-end"><button type="button" class="btn ghost" onClick=${onClose}>Annuler</button><button class="btn primary" id="cv-signal-send">Envoyer</button></div>
+    </form>
+  <//>`;
 }
 
 function ControleCV({ ctx, fichier }) {
   const { me, store, act } = ctx;
   const path = me.cv_path;
   const [prop, setProp] = useState(null);
+  const [texte, setTexte] = useState('');
+  const [signaler, setSignaler] = useState(false);
   useEffect(() => {
     setProp(null);
     if (!path || (!fichier && cvVus().includes(path))) return;
     let fini = false;
-    lireCVDe(store, path, fichier).then(cv => {
+    lireCVDe(store, path, fichier).then(({ cv, texte }) => {
       if (fini) return;
       const e = propositionCV(me, cv);
       // Coordonnées privées : seulement celles qui manquent
       const co = store.coordonneesDe?.(me.id) || {};
       if (cv.telephone && !co.telephone) e.telephone = cv.telephone;
       if (cv.email && !co.email) e.email = cv.email;
-      if (Object.keys(e).length) setProp(e); else marquerCV(path);
+      // Déjà signalée comme fausse (sur un autre appareil, ou par l'administration) : on ne la repropose pas
+      if (Object.keys(e).length && !dejaSignalee(store.data.retours_cv, me.id, path, e)) { setProp(e); setTexte(texte); } else marquerCV(path);
     }).catch(() => { /* CV illisible (scan en image) : rien à proposer */ });
     return () => { fini = true; };
   }, [path, fichier]);
@@ -158,7 +184,9 @@ function ControleCV({ ctx, fichier }) {
     <p><strong>${corrige ? 'Ton CV et ton profil ne disent pas la même chose.' : 'Ton CV peut compléter ton profil.'}</strong></p>
     <p class="small"><span>${corrige ? 'Ton CV indique :' : 'Lu dans ton CV :'}</span> ${libellesCV(prop).map((x, i) => html`${i ? ' · ' : ''}<b>${x}</b>`)}</p>
     <div class="row"><button type="button" class="btn small primary" id="cv-appliquer" onClick=${appliquer}>Mettre mon profil à jour</button>
-      <button type="button" class="btn small ghost" onClick=${fermer}>${corrige ? 'Mon profil est juste' : 'Non merci'}</button></div>
+      <button type="button" class="btn small ghost" onClick=${fermer}>${corrige ? 'Mon profil est juste' : 'Non merci'}</button>
+      <button type="button" class="btn small ghost" id="cv-signaler" onClick=${() => setSignaler(true)}><${Icon} name="flag" size=${14}/> C’est mal lu</button></div>
+    ${signaler ? html`<${SignalerLecture} ctx=${ctx} profil=${me} prop=${prop} texte=${texte} path=${path} onClose=${() => setSignaler(false)} onDone=${fermer}/>` : null}
   </div>`;
 }
 

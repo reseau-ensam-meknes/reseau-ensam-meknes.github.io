@@ -304,6 +304,13 @@ export function CompanyLogo({ name = '', size = 44 }) {
 
 export const TYPE_ICON = { stage: 'wrench', pfe: 'cap', etranger: 'globe', emploi: 'briefcase' };
 
+// Partage sur WhatsApp : un texte et le lien direct vers la page (offre, question), pour les groupes de promo
+export const lienDirect = hash => location.origin + location.pathname + '#' + hash;
+export const lienWhatsApp = texte => 'https://wa.me/?text=' + encodeURIComponent(texte);
+export function PartagerWhatsApp({ texte, id }) {
+  return html`<a class="icon-btn partage-wa" id=${id} href=${lienWhatsApp(texte)} target="_blank" rel="noopener" aria-label="Partager sur WhatsApp" title="Partager sur WhatsApp"><${Icon} name="share" size=${18}/></a>`;
+}
+
 // Styles propres à un module : ajoutés une seule fois dans la page, au premier rendu
 const styled = new Set();
 export function injectCSS(id, css) {

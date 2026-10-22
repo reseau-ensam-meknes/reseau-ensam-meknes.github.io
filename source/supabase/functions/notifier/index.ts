@@ -12,6 +12,8 @@
 //    essai_email : le résumé des administrateurs, tout de suite (pour vérifier l'envoi)
 //    alertes : nouvelles offres pour ta filière et ton année, par email (chaque heure)
 //    enquetes : invitations à l'enquête d'insertion, 6 et 12 mois après le diplôme (chaque jour)
+//    messages : email quand un message reste non lu 30 minutes (chaque heure)
+//    relances : un seul rappel aux comptes créés depuis plus de 24 h sans profil (chaque jour)
 //  Toutes sauf cle et test exigent l'en-tête x-notifier = app_secrets.notifier_secret.
 // =====================================================================
 
@@ -1186,6 +1188,7 @@ function sujetDe(r: Resume, L: Dico, langue: Langue): string {
   return t ? couper(t, 100) + L.suffixe : L.defaut;
 }
 
+// desabo vide : email envoyé une seule fois, sans lien de désabonnement
 export type Courriel = { sujet: string; html: string; texte: string; desabo: string };
 
 export function rendreResume(r: Resume, langue: Langue, site: string, token: string): Courriel {
@@ -1398,6 +1401,30 @@ export function rendreEnquete(vague: number, rappel: boolean, langue: Langue, si
   return { sujet, html, texte, desabo };
 }
 
+// Rappel d'inscription : le compte existe, le profil pas encore (envoyé une seule fois)
+export function rendreRelance(langue: Langue, site: string): Courriel {
+  const ar = langue === 'ar';
+  const sujet = ar ? 'ملفك ينتظرك على شبكة ENSAM مكناس' : 'Ton profil t’attend sur le Réseau ENSAM Meknès';
+  const lignes = ar ? [
+    'أنشأت حسابك على شبكة ENSAM مكناس، لكن ملفك لم يكتمل بعد. بقيت خطوة واحدة: اسمك وشعبتك ودفعتك، في دقيقة واحدة.',
+    'بعدها ترى عروض التدريب ومشاريع نهاية الدراسة والوظائف التي ينشرها الخريجون، ويمكنك طلب المساعدة من خريج من شعبتك، أو مساعدة الطلبة إن كنت من الخريجين.',
+  ] : [
+    'Tu as créé ton compte sur le Réseau ENSAM Meknès, mais ton profil n’est pas encore rempli. Il reste une étape : ton nom, ta filière et ta promo, en une minute.',
+    'Ensuite, tu vois les offres de stage, de PFE et d’emploi publiées par les lauréats, tu peux demander de l’aide à un lauréat de ta filière, ou aider les étudiants si tu es lauréat.',
+  ];
+  const bouton = ar ? 'إكمال ملفي' : 'Terminer mon profil';
+  const pied = ar ? 'يصلك هذا التذكير مرة واحدة فقط. إن لم تنشئ هذا الحساب، تجاهل هذا البريد.' : 'Tu reçois ce rappel une seule fois. Si tu n’as pas créé ce compte, ignore simplement cet email.';
+  const html = cadreEmail({
+    langue, sujet, apercu: lignes[0], sousTitre: ar ? 'تسجيلك' : 'Ton inscription',
+    intro: [esc(ar ? 'مرحبًا،' : 'Bonjour,')],
+    blocs: [{ lignes: lignes.map(esc), bouton: { texte: bouton, url: site } }],
+    pied, liens: [[ar ? 'فتح المنصة' : 'Ouvrir la plateforme', site]],
+  });
+  const texte = [`${(ar ? AR : FR).marque} · ${ar ? 'تسجيلك' : 'Ton inscription'}`, '', ar ? 'مرحبًا،' : 'Bonjour,', ...lignes, '',
+    `${bouton}${ar ? ': ' : ' : '}${site}`, '', '--', pied].join('\n');
+  return { sujet, html, texte, desabo: '' };
+}
+
 // ---------------------------------------------------------------------
 // Résumé hebdomadaire : lecture de la base
 // ---------------------------------------------------------------------
@@ -1584,7 +1611,7 @@ export function messageMime(de: { nom: string; email: string }, a: string, m: Co
     `Subject: ${enteteMot(m.sujet)}`,
     `Date: ${date.toUTCString().replace(/GMT$/, '+0000')}`,
     `Message-ID: <${id}@${domaine}>`,
-    `List-Unsubscribe: <${m.desabo}>`,
+    ...(m.desabo ? [`List-Unsubscribe: <${m.desabo}>`] : []),
     'MIME-Version: 1.0',
     `Content-Type: multipart/alternative; boundary="${frontiere}"`,
     '',
@@ -1760,7 +1787,7 @@ async function envoyerBrevo(env: Env, a: string, m: Courriel): Promise<boolean> 
       body: JSON.stringify({
         sender: { name: env.nomExpediteur, email: env.expediteur }, to: [{ email: a }],
         subject: m.sujet, htmlContent: m.html, textContent: m.texte,
-        headers: { 'List-Unsubscribe': `<${m.desabo}>` },
+        ...(m.desabo ? { headers: { 'List-Unsubscribe': `<${m.desabo}>` } } : {}),
       }),
       signal: AbortSignal.timeout(20000),
     });
@@ -1910,6 +1937,32 @@ async function jobMessages(env: Env): Promise<Response> {
   return json(b);
 }
 
+// Rappel d'inscription : un seul email ; seuls les comptes servis sont notés (un échec est retenté le lendemain)
+async function jobRelances(env: Env): Promise<Response> {
+  const f = facteur(env);
+  if (!f.pret) return json({ skipped: 'email' });
+  const dest = ((await rpc(env, 'comptes_a_relancer', { p_max: 100 })) || []) as { id: string; email: string; langue: string }[];
+  const b: { sent: number; errors: number; via?: string } = { sent: 0, errors: 0 };
+  if (!dest.length) return json(b);
+  const envoyes: string[] = [];
+  const limite = Date.now() + 100_000;
+  await parallele(dest, f.paralleles, async x => {
+    if (Date.now() > limite) return;
+    if (!x.email || !estUuid(x.id)) { b.errors++; return; }
+    try {
+      if (await f.envoyer(x.email, rendreRelance(langueDe(x.langue), env.site))) { b.sent++; envoyes.push(x.id); }
+      else b.errors++;
+    } catch (e) {
+      b.errors++;
+      console.error('notifier : rappel d’inscription impossible', e instanceof Error ? e.message : String(e));
+    }
+  });
+  await f.fermer();
+  b.via = f.via();
+  if (envoyes.length) await rpc(env, 'relances_envoyees', { p_ids: envoyes });
+  return json(b);
+}
+
 // Enquête d'insertion : invitation à l'ouverture de la vague, puis un rappel ; la notification
 // sur le téléphone part avec enquetes_invitees, même sans email
 async function jobEnquetes(env: Env): Promise<Response> {
@@ -1945,7 +1998,7 @@ export async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return json({ error: 'Méthode non autorisée' }, 405);
   let job: unknown;
   try { job = (await req.json())?.job; } catch { return json({ error: 'Requête invalide' }, 400); }
-  if (typeof job !== 'string' || !['cle', 'test', 'push', 'resume', 'essai_email', 'alertes', 'enquetes', 'messages'].includes(job)) return json({ error: 'Tâche inconnue' }, 400);
+  if (typeof job !== 'string' || !['cle', 'test', 'push', 'resume', 'essai_email', 'alertes', 'enquetes', 'messages', 'relances'].includes(job)) return json({ error: 'Tâche inconnue' }, 400);
   const env = lireEnv();
   if (!env.url || !env.cle) {
     console.error('notifier : SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY manquant');
@@ -1959,6 +2012,7 @@ export async function handler(req: Request): Promise<Response> {
     if (job === 'alertes') return await jobAlertes(env);
     if (job === 'enquetes') return await jobEnquetes(env);
     if (job === 'messages') return await jobMessages(env);
+    if (job === 'relances') return await jobRelances(env);
     return job === 'push' ? await jobPush(env) : await jobResume(env);
   } catch (e) {
     console.error(`notifier : échec de « ${job} »`, e instanceof Error ? e.message : String(e));
