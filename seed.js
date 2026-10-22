@@ -416,5 +416,33 @@ export function buildSeed(now = new Date()) {
   for (const p of profiles) for (const k of VIDES) if (p[k] === undefined || p[k] === '') p[k] = null;
   // Les jeunes diplômés encore sans poste cherchent un emploi
   for (const p of profiles) p.en_recherche = jeunes.includes(p) && !p.entreprise;
-  return { ...base, ...phase3, ...seedMessages({ ...base, ...phase3 }, now) };
+  const msgs = seedMessages({ ...base, ...phase3 }, now);
+  return { ...base, ...phase3, ...msgs, ...seedDemandes({ ...base, ...msgs }, { S, now, daysAgo, id, s5, s4, seniors: seniors.filter(x => x !== youssef && x.entreprise) }) };
+}
+
+// Demandes des étudiants : une qui attend une première aide, une qui a reçu une proposition, une réussie
+// (encadrée par un lauréat, vérifiée des deux côtés). Les personas n'en ont pas : on les essaie soi-même.
+function seedDemandes(base, { S, now, daysAgo, id, s5, s4, seniors }) {
+  const sans = st => !base.placements.some(p => p.student_id === st.id && p.saison === S);
+  const meca = s5.find(st => sans(st) && proximiteFiliere('Génie Mécanique', st.filiere) >= 1) || s5.find(sans);
+  const quatre = s4.find(st => sans(st));
+  const reussi = s5.find(st => sans(st) && st !== meca);
+  const demandes = [], propositions = [];
+  const cv = st => { st.cv_path = `${st.id}/cv-demo.pdf`; st.cv_maj = daysAgo(4); };
+  const dem = (st, o) => { cv(st); const d = { id: id('dm'), auteur_id: st.id, lieu: null, debut: null, duree: null, status: 'ouverte', laureat_id: null, proposition_id: null, match_at: null, ...o }; d.relancee_at ||= d.created_at; d.updated_at = d.created_at; demandes.push(d); return d; };
+  const aide = (d, l, o) => { const x = { id: id('pr'), demande_id: d.id, laureat_id: l.id, entreprise: l.entreprise, poste: null, status: 'envoyee', repondu_at: null, ...o }; propositions.push(x);
+    base.messages.push({ id: id('m'), author_id: l.id, dest_id: d.auteur_id, type: 'texte', body: x.message, fichier: null, duree: null, largeur: null, hauteur: null, onde: null, lu_at: x.status === 'envoyee' ? null : x.created_at, created_at: x.created_at }); return x; };
+  if (meca) dem(meca, { type: 'pfe', titre: 'PFE en efficacité énergétique industrielle', details: 'Je cherche un PFE de 6 mois à partir de février : audit énergétique, thermique des procédés, utilités (air comprimé, vapeur). Je suis mobile partout au Maroc.', lieu: 'Casablanca, Tanger ou Kénitra', debut: `${S + 1}-02-01`, duree: '6 mois', created_at: daysAgo(1, 3) });
+  if (quatre && seniors[0]) {
+    const d = dem(quatre, { type: 'stage', titre: 'Stage d’été de 4A en production ou qualité', details: 'Stage de 2 mois en juillet-août. J’ai fait mon stage de 3A en atelier ; je voudrais cette fois un stage d’ingénieur adjoint en production ou en qualité.', lieu: 'Meknès ou Fès', debut: `${S + 1}-07-01`, duree: '2 mois', created_at: daysAgo(3, 2) });
+    aide(d, seniors[0], { aide: 'recommande', poste: 'Stage ingénieur adjoint', message: 'Bonjour ! Mon service prend deux stagiaires de 4A cet été. Je peux transmettre ton CV au responsable, dis-moi si ça t’intéresse.', created_at: daysAgo(2, 1) });
+  }
+  if (reussi && seniors[1]) {
+    const l = seniors[1];
+    const d = dem(reussi, { type: 'pfe', titre: 'PFE en amélioration continue', details: 'PFE de février à juin en lean ou supply chain : VSM, SMED, indicateurs de performance. Je maîtrise Excel avancé et Power BI.', lieu: 'Maroc', duree: '5 mois', created_at: daysAgo(26) });
+    const x = aide(d, l, { aide: 'encadre', poste: 'PFE amélioration continue', message: 'J’ai un sujet de PFE sur la réduction des temps de changement de série. Je serai ton encadrant en entreprise.', status: 'acceptee', created_at: daysAgo(24), repondu_at: daysAgo(23) });
+    Object.assign(d, { status: 'pourvue', laureat_id: l.id, proposition_id: x.id, match_at: daysAgo(23), updated_at: daysAgo(6) });
+    base.placements.push({ id: id('p'), student_id: reussi.id, offer_id: null, laureat_id: l.id, demande_id: d.id, aide: 'encadre', source: 'plateforme', status: 'confirme', saison: S, niveau: 5, type: 'pfe', entreprise: l.entreprise, ville: l.ville, pays: l.pays || 'Maroc', merci: 'Merci de m’avoir fait confiance dès ma demande, et pour l’encadrement !', note: 5, partage_ok: false, created_at: daysAgo(8), confirmed_at: daysAgo(6) });
+  }
+  return { demandes, propositions, messages: base.messages, placements: base.placements };
 }

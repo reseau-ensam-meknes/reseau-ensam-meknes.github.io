@@ -336,6 +336,10 @@ export function reponses48h(data, now = new Date()) {
   const demandes = [
     ...(data.mentorships || []).filter(m => m.status !== 'annulee' && role(m.student_id) === 'etudiant')
       .map(m => ({ type: 'mentorat', id: m.id, titre: m.sujet, at: new Date(m.created_at).getTime(), rep: m.accepted_at ? new Date(m.accepted_at).getTime() : null, close: m.status === 'refusee' })),
+    ...(data.demandes || []).filter(d => role(d.auteur_id) === 'etudiant').map(d => {
+      const r = (data.propositions || []).filter(x => x.demande_id === d.id).map(x => new Date(x.created_at).getTime());
+      return { type: 'demande', id: d.id, titre: d.titre, at: new Date(d.created_at).getTime(), rep: r.length ? Math.min(...r) : null, close: !['ouverte', 'match'].includes(d.status) };
+    }),
     ...(data.questions || []).filter(q => role(q.author_id) === 'etudiant').map(q => {
       const r = (data.answers || []).filter(a => a.question_id === q.id && a.author_id !== q.author_id).map(a => new Date(a.created_at).getTime());
       return { type: 'question', id: q.id, titre: q.titre, at: new Date(q.created_at).getTime(), rep: r.length ? Math.min(...r) : null, close: false };
@@ -734,6 +738,12 @@ export function lienAvec(data, me, autre, profil = () => null) {
   const m = data.mentorships.filter(x => x.mentor_id && ['demande', 'acceptee', 'terminee'].includes(x.status) && entre(x, me.id, autre, 'student_id', 'mentor_id'))
     .sort((a, b) => (a.status === 'acceptee' ? 0 : 1) - (b.status === 'acceptee' ? 0 : 1) || new Date(b.created_at) - new Date(a.created_at))[0];
   if (m) return { type: 'mentorat', label: 'Mentorat', detail: m.sujet, m };
+  // Une aide proposée (ou acceptée) sur une demande ouvre la conversation entre l'étudiant et le lauréat
+  for (const x of data.propositions || []) {
+    if (!['envoyee', 'acceptee'].includes(x.status) || !(x.laureat_id === me.id || x.laureat_id === autre)) continue;
+    const d = (data.demandes || []).find(y => y.id === x.demande_id);
+    if (d && entre({ a: d.auteur_id, b: x.laureat_id }, me.id, autre, 'a', 'b')) return { type: 'demande', label: x.status === 'acceptee' ? 'Match' : 'Demande', detail: d.titre, demande: d.id };
+  }
   const r = (data.relectures_cv || []).find(x => x.reviewer_id && x.status !== 'annulee' && entre(x, me.id, autre, 'student_id', 'reviewer_id'));
   if (r) return { type: 'relecture', label: 'Relecture de CV' };
   for (const a of data.applications) {
@@ -789,4 +799,43 @@ export function poulsReseau(data, now = new Date()) {
   };
   const semaine = calc(7);
   return semaine.aidants.length >= 2 ? semaine : { ...calc(30), semaine };
+}
+
+// ---------------------------------------------------------------------------
+// Demandes des étudiants : mêmes règles que types_demande(), demande_pour() et protect_demande() dans la base.
+// L'étudiant dit ce qu'il cherche (CV joint), des lauréats proposent leur aide, il en accepte une : c'est un match.
+// Le lauréat déclare le démarrage, l'étudiant confirme : la demande est pourvue et la réussite annoncée.
+// ---------------------------------------------------------------------------
+export const DEMANDES_MAX = 2;
+export const DEMANDE_PAUSE_JOURS = 60;
+// Types qu'un membre peut demander : 3A/4A stage ou étranger ; 5A PFE, étranger ou emploi ;
+// jeune diplômé, ou lauréat qui cherche un emploi : emploi
+export function typesDemande(me, saison) {
+  if (!me) return [];
+  if (me.role === 'laureat') return me.en_recherche ? ['emploi'] : [];
+  if (me.role !== 'etudiant') return [];
+  const n = niveauOf(me, saison);
+  return n === 3 || n === 4 ? ['stage', 'etranger'] : n === 5 ? ['pfe', 'etranger', 'emploi'] : n >= 6 ? ['emploi'] : [];
+}
+// Ce que le lauréat propose, et comment on l'annonce une fois la réussite confirmée
+export const AIDES = {
+  recrute: { label: 'Je le/la recrute dans mon équipe', court: 'Recrute', icon: 'briefcase', annonce: 'grâce à' },
+  encadre: { label: 'J’encadre son stage ou son PFE', court: 'Encadre', icon: 'cap', annonce: 'encadré(e) par' },
+  recommande: { label: 'Je le/la recommande dans mon entreprise', court: 'Recommande', icon: 'send', annonce: 'recommandé(e) par' },
+};
+export const demandesActives = (data, uid) => (data.demandes || []).filter(d => d.auteur_id === uid && ['ouverte', 'match'].includes(d.status));
+// Une demande ouverte sans nouvelle depuis 60 jours se met en pause : l'étudiant la relance d'un geste
+export const demandeEnPause = (d, now = Date.now()) => d.status === 'ouverte' && now - new Date(d.relancee_at || d.created_at).getTime() > DEMANDE_PAUSE_JOURS * 864e5;
+// Demandes ouvertes qu'un lauréat peut prendre : son parcours d'abord, les plus anciennes sans réponse ensuite
+export function demandesPour(data, me, byId, now = Date.now()) {
+  if (me?.role !== 'laureat') return [];
+  return (data.demandes || [])
+    .filter(d => d.status === 'ouverte' && d.auteur_id !== me.id && !demandeEnPause(d, now) && !bloque(data, me.id, d.auteur_id))
+    .map(d => {
+      // Un lauréat ne voit que ses propres aides (pas celles des autres) : le tri n'en dépend pas
+      const a = byId(d.auteur_id); const prox = proximiteFiliere(me.filiere, a?.filiere);
+      const why = [prox === 2 ? 'Même filière' : prox === 1 ? 'Même parcours' : null, d.type === 'etranger' && me.pays && me.pays !== 'Maroc' ? `Tu es en ${me.pays}` : null].filter(Boolean);
+      return { d, a, prox, why, mienne: (data.propositions || []).find(x => x.demande_id === d.id && x.laureat_id === me.id) || null, score: prox * 3 + Math.min(3, Math.floor((now - new Date(d.created_at)) / 864e5)) };
+    })
+    .sort((x, y) => y.score - x.score || new Date(y.d.created_at) - new Date(x.d.created_at));
 }

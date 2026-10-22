@@ -36,7 +36,7 @@ async function ouvrirCV(store, path) {
 }
 
 // Bouton « Voir le CV » (et lien de secours si la fenêtre a été bloquée)
-function OuvrirCV({ store, path, label = 'Voir le CV', cls = 'btn small ghost' }) {
+export function OuvrirCV({ store, path, label = 'Voir le CV', cls = 'btn small ghost' }) {
   const [lien, setLien] = useState(null); const [busy, setBusy] = useState(false);
   if (lien) return html`<a class=${cls} href=${lien} target="_blank" rel="noopener" onClick=${() => setTimeout(() => setLien(null), 500)}><${Icon} name="file" size=${14}/> Ouvrir le CV</a>`;
   return html`<button type="button" class=${cls} disabled=${busy} onClick=${async () => { setBusy(true); setLien(await ouvrirCV(store, path)); setBusy(false); }}><${Icon} name="eye" size=${14}/> ${label}</button>`;

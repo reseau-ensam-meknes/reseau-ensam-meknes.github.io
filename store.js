@@ -1,14 +1,16 @@
 // Couche de données : même interface en mode démo (navigateur) et en mode réel (Supabase).
 // Les données de démonstration (seed.js) ne sont chargées qu'en démo : le site réel n'en a pas besoin
 const chargerSeed = () => import('./seed.js').then(m => m.buildSeed());
-import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere } from './logic.js';
+import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque } from './logic.js';
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
 const PHASE3 = ['coordonnees', 'demandes_contact', 'relectures_cv', 'relecture_commentaires', 'entretiens', 'avis_stage', 'guide_pays', 'signalements', 'enquetes_insertion', 'verifications_pairs', 'evenements', 'evenement_participants', 'retours_cv'];
 const MESSAGERIE = ['messages', 'blocages'];
-export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE];
+// Demandes des étudiants et aides proposées par les lauréats
+const DEMANDES = ['demandes', 'propositions'];
+export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES];
 // Tables ajoutées par supabase/mise-a-jour.sql : tant que la base n'est pas à jour, elles restent vides au lieu de bloquer le site.
-const OPTIONAL = new Set(['shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE]);
+const OPTIONAL = new Set(['shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES]);
 // Lues par une vue qui masque ce que chacun a choisi de cacher (auteur anonyme, visibilité du profil).
 // Tant que la base n'a pas ces vues, on lit la table elle-même.
 const VUES = { profiles: 'profils', entretiens: 'entretiens_publics', avis_stage: 'avis_publics' };
@@ -76,11 +78,14 @@ class Base {
   }
 }
 
-// Mêmes règles que en_relation() dans la base : une demande de contact acceptée, ou une candidature à son offre
+// Mêmes règles que en_relation() dans la base : une demande de contact acceptée, une candidature à son offre,
+// ou un match sur une demande (dans les deux sens)
 export function enRelation(data, viewer, owner) {
   if (!viewer || !owner) return false;
   return data.demandes_contact.some(d => d.status === 'acceptee' && ((d.demandeur_id === viewer && d.cible_id === owner) || (d.demandeur_id === owner && d.cible_id === viewer)))
-    || data.applications.some(a => a.student_id === owner && a.offer_id && data.offers.some(o => o.id === a.offer_id && o.author_id === viewer));
+    || data.applications.some(a => a.student_id === owner && a.offer_id && data.offers.some(o => o.id === a.offer_id && o.author_id === viewer))
+    || (data.propositions || []).some(x => x.status === 'acceptee' && (x.laureat_id === viewer || x.laureat_id === owner)
+      && (data.demandes || []).some(d => d.id === x.demande_id && ((d.auteur_id === owner && x.laureat_id === viewer) || (d.auteur_id === viewer && x.laureat_id === owner))));
 }
 export function voitChampDemo(data, me, p, champ) {
   if (!p || !me) return false;
@@ -88,6 +93,8 @@ export function voitChampDemo(data, me, p, champ) {
   const a = (p.visibilite || {})[champ] || VIS_DEFAUT[champ] || 'tous';
   if (a === 'tous') return true;
   if (a === 'laureats' && me.role === 'laureat') return true;
+  // CV joint à une demande ouverte ou en cours : les lauréats le voient le temps de la demande
+  if (champ === 'cv' && me.role === 'laureat' && demandesActives(data, p.id).length) return true;
   return enRelation(data, me.id, p.id);
 }
 
@@ -109,7 +116,7 @@ export function pdfSimple(lignes) {
 // ---------------------------------------------------------------------------
 // Démo : données d'exemple, gardées dans le navigateur du visiteur
 // ---------------------------------------------------------------------------
-const DEMO_KEY = 'ensam-demo-v12';
+const DEMO_KEY = 'ensam-demo-v13';
 class DemoStore extends Base {
   constructor() { super(); this.mode = 'demo'; this.fichiers = new Map(); }
   async init() {
@@ -137,6 +144,7 @@ class DemoStore extends Base {
     if (table === 'kudos') { r.user_id = this.me?.id; if (this.data.kudos.some(x => x.placement_id === r.placement_id && x.user_id === r.user_id)) return r; }
     if (table === 'invitations') applyInvitationRules(this, r, null);
     if (MESSAGERIE.includes(table) && applyMessagerieRules(this, table, r, null) === false) return r;
+    if (DEMANDES.includes(table)) applyDemandeRules(this, table, r, null);
     if (PHASE2.includes(table) && applyPhase2Rules(this, table, r, null) === false) return r;
     if (table === 'attestations') { if (this.me?.role !== 'laureat') throw new Error('Seul un lauréat peut obtenir une attestation.'); Object.assign(r, { laureat_id: this.me.id, stats: attestationStats(this.data, this.me.id) }); }
     limiteDemo(this, table, r);
@@ -149,6 +157,7 @@ class DemoStore extends Base {
     if (table === 'cafes') this.data.cafe_participants = [{ id: uuid(), cafe_id: r.id, user_id: r.organisateur_id, created_at: r.created_at }, ...this.data.cafe_participants];
     if (table === 'verifications_pairs') { const c = this.byId('profiles', r.laureat_id); if (c && !c.verified && pairsValides(this.data, c) >= 2) this.data.profiles = this.data.profiles.map(p => p.id === c.id ? { ...p, verified: true } : p); }
     if (table === 'profiles') demoParrains(this);
+    if (DEMANDES.includes(table) || table === 'placements') suitesDemande(this, table, r, null);
     this.persist(); this.emit();
     return r;
   }
@@ -162,6 +171,7 @@ class DemoStore extends Base {
     if (table === 'liens_rdv') applyLienRules(this, r, old);
     if (table === 'annonces' && this.me?.role !== 'admin') throw new Error('Action non autorisée pour ton compte.');
     if (MESSAGERIE.includes(table)) applyMessagerieRules(this, table, r, old);
+    if (DEMANDES.includes(table)) applyDemandeRules(this, table, r, old);
     if (PHASE2.includes(table)) applyPhase2Rules(this, table, r, old);
     if (PHASE3.includes(table)) applyPhase3Rules(this, table, r, old);
     if (table === 'profiles' && this.me?.role !== 'admin') { r.verified = r.role !== old.role ? false : old.verified; if (!r.verified && verifieAuto(this, r)) r.verified = true; }
@@ -169,6 +179,7 @@ class DemoStore extends Base {
     this.data[table] = this.data[table].map(x => x.id === id ? r : x);
     if (table === 'profiles' && id === this.me?.id) this.me = r;
     if (table === 'profiles' && r.parrain_dispo && !old.parrain_dispo) demoParrains(this);
+    if (DEMANDES.includes(table) || table === 'placements') suitesDemande(this, table, r, old);
     this.persist(); this.emit();
     return r;
   }
@@ -180,6 +191,7 @@ class DemoStore extends Base {
       if (!own || row[own] !== this.me?.id) throw new Error('Action non autorisée pour ton compte.');
     }
     if (MESSAGERIE.includes(table) && row && this.me?.role !== 'admin' && row[table === 'messages' ? 'author_id' : 'user_id'] !== this.me?.id) throw new Error('Action non autorisée pour ton compte.');
+    if (DEMANDES.includes(table) && row && this.me?.role !== 'admin' && !(table === 'demandes' && row.auteur_id === this.me?.id && ['ouverte', 'fermee'].includes(row.status))) throw new Error('Action non autorisée pour ton compte.');
     if (PHASE3.includes(table) && row && this.me?.role !== 'admin') {
       const me = this.me?.id;
       const ok = {
@@ -191,6 +203,7 @@ class DemoStore extends Base {
       if (!ok) throw new Error('Action non autorisée pour ton compte.');
     }
     this.data[table] = this.data[table].filter(x => x.id !== id);
+    if (table === 'demandes') { this.data.propositions = this.data.propositions.filter(x => x.demande_id !== id); this.data.placements = this.data.placements.map(p => p.demande_id === id ? { ...p, demande_id: null } : p); }
     this.persist(); this.emit();
   }
   async signOut() {}
@@ -375,7 +388,7 @@ const LIMITES = {
   applications: ['student_id', 10, 864e5], evenement_participants: ['user_id', 30, 864e5], verifications_pairs: ['verificateur_id', 20, 864e5], retours_cv: ['auteur_id', 10, 864e5], mentorships: ['student_id', 6, 864e5], cafes: ['organisateur_id', 3, 864e5], startups: ['fondateur_id', 3, 864e5],
   entretiens: ['author_id', 10, 864e5], avis_stage: ['author_id', 10, 864e5], demandes_contact: ['demandeur_id', 5, 864e5],
   signalements: ['auteur_id', 10, 864e5], relectures_cv: ['student_id', 4, 864e5], relecture_commentaires: ['author_id', 60, 36e5],
-  messages: ['author_id', 300, 864e5],
+  messages: ['author_id', 300, 864e5], demandes: ['auteur_id', 5, 864e5, 'titre'], propositions: ['laureat_id', 20, 864e5],
 };
 function limiteDemo(store, table, r) {
   const L = LIMITES[table]; const me = store.me;
@@ -385,6 +398,122 @@ function limiteDemo(store, table, r) {
   if (miens.filter(x => now - new Date(x.created_at) < ms).length >= max) throw new Error('Doucement : tu as beaucoup publié en peu de temps. Réessaie un peu plus tard.');
   const t = txt && String(r[txt] || '').trim().toLowerCase();
   if (t && miens.some(x => now - new Date(x.created_at) < 864e5 && String(x[txt] || '').trim().toLowerCase() === t)) throw new Error('Tu as déjà publié exactement ce texte.');
+}
+
+// Demandes des étudiants : mêmes règles que protect_demande() et protect_proposition() dans la base
+function verifierDemande(r) {
+  const n = k => String(r[k] || '').trim().length;
+  if (n('titre') < 4 || n('titre') > 120) throw new Error('Le titre fait entre 4 et 120 caractères.');
+  if (n('details') < 20 || n('details') > 1500) throw new Error('Décris ta demande en 20 à 1 500 caractères.');
+  if (n('lieu') > 120 || n('duree') > 40) throw new Error('Lieu ou durée trop long.');
+}
+function verifierProposition(r) {
+  const n = k => String(r[k] || '').trim().length;
+  if (!['recrute', 'encadre', 'recommande'].includes(r.aide)) throw new Error('Choisis ce que tu proposes.');
+  if (n('entreprise') < 2 || n('entreprise') > 120) throw new Error('Indique ton entreprise.');
+  if (n('message') < 10 || n('message') > 1000) throw new Error('Ton mot fait entre 10 et 1 000 caractères.');
+  if (n('poste') > 140) throw new Error('Le poste ou le sujet est trop long.');
+}
+const ACTIVES_DEMANDE = ['ouverte', 'match'];
+function applyDemandeRules(store, table, r, old) {
+  const me = store.me; const now = new Date().toISOString();
+  if (me?.role === 'admin') { if (old && table === 'demandes') r.updated_at = now; return; }
+  if (table === 'demandes') {
+    if (!old) {
+      r.auteur_id = me?.id;
+      if (!typesDemande(me, seasonOf()).includes(r.type)) throw new Error('Ce type de demande ne correspond pas à ton année.');
+      if (!me.cv_path) throw new Error('Dépose d’abord ton CV en PDF dans ton profil.');
+      if (demandesActives(store.data, me.id).length >= DEMANDES_MAX) throw new Error('Tu as déjà 2 demandes en cours. Ferme-en une avant d’en publier une autre.');
+      verifierDemande(r);
+      Object.assign(r, { status: 'ouverte', laureat_id: null, proposition_id: null, match_at: null, relancee_at: now, updated_at: now });
+      return;
+    }
+    // Ensuite, seul l'auteur change sa demande : le texte tant qu'elle est ouverte, et son état
+    if (old.auteur_id !== me?.id) throw new Error('Action non autorisée pour ton compte.');
+    const v = { ...r }; Object.assign(r, old); r.updated_at = now;
+    if (old.status === 'ouverte') {
+      for (const k of ['titre', 'details', 'lieu', 'debut', 'duree']) r[k] = v[k];
+      if (typesDemande(me, seasonOf()).includes(v.type)) r.type = v.type;
+      if (v.relancee_at !== old.relancee_at) r.relancee_at = now;
+      verifierDemande(r);
+    }
+    if (v.status !== old.status) {
+      if (ACTIVES_DEMANDE.includes(old.status) && v.status === 'fermee') r.status = 'fermee';
+      else if (old.status === 'match' && v.status === 'ouverte') r.status = 'ouverte';
+      else if (old.status === 'fermee' && v.status === 'ouverte') {
+        if (demandesActives(store.data, me.id).length >= DEMANDES_MAX) throw new Error('Tu as déjà 2 demandes en cours. Ferme-en une avant d’en rouvrir une autre.');
+        r.status = 'ouverte';
+      }
+      if (r.status === 'ouverte' && old.status !== 'ouverte') Object.assign(r, { laureat_id: null, proposition_id: null, match_at: null, relancee_at: now });
+    }
+    return;
+  }
+  if (!old) {
+    const d = store.byId('demandes', r.demande_id);
+    if (me?.role !== 'laureat') throw new Error('Seul un lauréat peut proposer son aide.');
+    if (d?.status !== 'ouverte') throw new Error('Cette demande n’est plus ouverte.');
+    if (d.auteur_id === me.id) throw new Error('C’est ta propre demande.');
+    if (bloque(store.data, me.id, d.auteur_id)) throw new Error('Action non autorisée pour ton compte.');
+    if (store.data.propositions.some(x => x.demande_id === r.demande_id && x.laureat_id === me.id)) throw new Error('Tu as déjà proposé ton aide pour cette demande.');
+    verifierProposition(r);
+    Object.assign(r, { laureat_id: me.id, status: 'envoyee', repondu_at: null });
+    return;
+  }
+  const d = store.byId('demandes', old.demande_id);
+  const v = { ...r }; Object.assign(r, old);
+  if (me?.id === old.laureat_id) {
+    // Le lauréat retire son aide (avant ou après le match), la modifie tant qu'elle attend, ou la propose à nouveau
+    if (v.status === 'retiree' && ['envoyee', 'acceptee'].includes(old.status) && d?.status !== 'pourvue') Object.assign(r, { status: 'retiree', repondu_at: now });
+    else if ((old.status === 'envoyee' || (old.status === 'retiree' && v.status === 'envoyee')) && d?.status === 'ouverte') {
+      for (const k of ['aide', 'entreprise', 'poste', 'message']) r[k] = v[k];
+      verifierProposition(r);
+      if (old.status === 'retiree') Object.assign(r, { status: 'envoyee', repondu_at: null, created_at: now });
+    }
+  } else if (d && me?.id === d.auteur_id) {
+    // L'étudiant accepte une aide (une seule) ou dit non merci
+    if (old.status === 'envoyee' && v.status === 'acceptee') {
+      if (d.status !== 'ouverte') throw new Error('Tu as déjà accepté une aide pour cette demande.');
+      Object.assign(r, { status: 'acceptee', repondu_at: now });
+    } else if (old.status === 'envoyee' && v.status === 'declinee') Object.assign(r, { status: 'declinee', repondu_at: now });
+  } else throw new Error('Action non autorisée pour ton compte.');
+}
+// Ce qui suit (mêmes suites que suite_proposition(), suite_demande() et demande_reussie() dans la base)
+function suitesDemande(store, table, r, old) {
+  const D = store.data; const now = new Date().toISOString();
+  const majDemande = (id, patch) => { D.demandes = D.demandes.map(d => (d.id === id ? { ...d, ...patch, updated_at: now } : d)); };
+  const majAides = (f, patch) => { D.propositions = D.propositions.map(x => (f(x) ? { ...x, ...patch } : x)); };
+  const refuserDeclarations = (demandeId, laureatId = null) => { D.placements = D.placements.map(p => (p.demande_id === demandeId && p.status === 'en_attente' && (!laureatId || p.laureat_id === laureatId) ? { ...p, status: 'refuse' } : p)); };
+  if (table === 'propositions') {
+    const d = store.byId('demandes', r.demande_id); if (!d) return;
+    if (!old || (old.status === 'retiree' && r.status === 'envoyee')) {
+      // Le mot du lauréat arrive aussi dans la messagerie de l'étudiant
+      D.messages = [{ id: uuid(), author_id: r.laureat_id, dest_id: d.auteur_id, type: 'texte', body: String(r.message).slice(0, 2000), fichier: null, lu_at: null, created_at: now }, ...D.messages];
+      return;
+    }
+    if (r.status === old.status) return;
+    if (r.status === 'acceptee') {
+      majDemande(d.id, { status: 'match', laureat_id: r.laureat_id, proposition_id: r.id, match_at: now });
+      majAides(x => x.demande_id === d.id && x.id !== r.id && x.status === 'envoyee', { status: 'close', repondu_at: now });
+    } else if (old.status === 'acceptee' && r.status === 'retiree' && d.status === 'match' && d.proposition_id === r.id) {
+      majDemande(d.id, { status: 'ouverte', laureat_id: null, proposition_id: null, match_at: null, relancee_at: now });
+      refuserDeclarations(d.id, r.laureat_id);
+    }
+    return;
+  }
+  if (table === 'demandes') {
+    if (!old || r.status === old.status) return;
+    if (old.status === 'match' && ['ouverte', 'fermee'].includes(r.status)) {
+      majAides(x => x.id === old.proposition_id && x.status === 'acceptee', { status: r.status === 'ouverte' ? 'declinee' : 'close', repondu_at: now });
+      refuserDeclarations(r.id);
+    }
+    if (['fermee', 'pourvue'].includes(r.status)) majAides(x => x.demande_id === r.id && x.status === 'envoyee', { status: 'close', repondu_at: now });
+    return;
+  }
+  // Démarrage confirmé par l'étudiant : la demande est pourvue
+  if (table === 'placements' && r.demande_id && r.status === 'confirme' && old?.status !== 'confirme') {
+    const d = store.byId('demandes', r.demande_id);
+    if (d && ACTIVES_DEMANDE.includes(d.status)) { majDemande(d.id, { status: 'pourvue' }); majAides(x => x.demande_id === d.id && x.status === 'envoyee', { status: 'close', repondu_at: now }); }
+  }
 }
 
 // Messagerie : mêmes règles que protect_message(), peut_discuter() et protect_blocage() dans la base
@@ -580,6 +709,13 @@ function applyPlacementRules(store, r, old) {
     if (r.student_id === me?.id) { Object.assign(r, { source: 'autre', status: 'declare', offer_id: null, laureat_id: null }); return; }
     if (me?.role !== 'laureat') throw new Error('Seul un lauréat peut déclarer un recrutement.');
     if (r.offer_id && store.byId('offers', r.offer_id)?.author_id !== me.id) throw new Error('Seul l’auteur de l’offre peut déclarer ce recrutement.');
+    // Depuis une demande : seulement le lauréat du match, pour l'auteur de la demande
+    r.aide = null;
+    if (r.demande_id) {
+      const d = store.byId('demandes', r.demande_id);
+      if (d?.status !== 'match' || d.laureat_id !== me.id || d.auteur_id !== r.student_id) throw new Error('Cette demande n’est pas en cours avec toi.');
+      r.aide = store.byId('propositions', d.proposition_id)?.aide || null;
+    }
     Object.assign(r, { laureat_id: me.id, source: 'plateforme', status: 'en_attente', confirmed_at: null });
     return;
   }
@@ -587,7 +723,7 @@ function applyPlacementRules(store, r, old) {
   if (old.student_id === me?.id) {
     if (r.status !== old.status && !(old.status === 'en_attente' && ['confirme', 'refuse'].includes(r.status))) r.status = old.status;
     if (r.status === 'confirme' && old.status !== 'confirme') r.confirmed_at = new Date().toISOString();
-    if (old.source !== 'autre') for (const k of ['entreprise', 'ville', 'pays', 'type', 'offer_id', 'laureat_id', 'saison', 'niveau']) r[k] = old[k];
+    if (old.source !== 'autre') for (const k of ['entreprise', 'ville', 'pays', 'type', 'offer_id', 'laureat_id', 'saison', 'niveau', 'demande_id', 'aide']) r[k] = old[k];
     return;
   }
   throw new Error('Seul l’étudiant concerné peut confirmer ce recrutement.');
@@ -744,6 +880,7 @@ function demoParrains(store, onlyId = null) {
 // ---------------------------------------------------------------------------
 // Réel : Supabase (comptes, base partagée, temps réel)
 // ---------------------------------------------------------------------------
+const SUITES = { demandes: ['propositions', 'placements'], propositions: ['demandes', 'propositions', 'placements', 'coordonnees'], placements: ['demandes', 'propositions'] };
 class SupabaseStore extends Base {
   constructor(cfg) { super(); this.mode = 'live'; this.cfg = cfg; }
   async init() {
@@ -786,7 +923,8 @@ class SupabaseStore extends Base {
     if (this.channel) return;
     const pending = new Set(); let timer = null;
     // Un accord de contact change ce que chacun voit des coordonnées et des profils de l'autre
-    const LIES = { demandes_contact: ['coordonnees', 'profiles'] };
+    // Une demande change qui voit le CV ; un match ouvre les coordonnées et la messagerie ; un démarrage confirmé la pourvoit
+    const LIES = { demandes_contact: ['coordonnees', 'profiles'], demandes: ['propositions', 'profiles'], propositions: ['demandes', 'coordonnees', 'profiles'], placements: ['demandes', 'propositions'] };
     this.channel = this.sb.channel('ensam-live');
     const recharger = t => {
       pending.add(t); for (const x of LIES[t] || []) pending.add(x); clearTimeout(timer);
@@ -816,6 +954,8 @@ class SupabaseStore extends Base {
     if (table === 'profiles') this.me = this.byId('profiles', this.userId);
     // L'organisateur d'un café y est inscrit d'office par la base
     if (table === 'cafes') await this.loadTable('cafe_participants').catch(() => {});
+    if (table === 'propositions') await this.loadTable('messages').catch(() => {});
+    if (table === 'placements' && row.demande_id) await this.loadTable('demandes').catch(() => {});
     this.emit(); return data;
   }
   async update(table, id, patch) {
@@ -826,6 +966,8 @@ class SupabaseStore extends Base {
     this.data[table] = this.data[table].some(x => x.id === id) ? this.data[table].map(x => x.id === id ? data : x) : [data, ...this.data[table]];
     // Le lien de visio est créé côté base quand le lauréat accepte
     if (table === 'mentorships') await this.loadTable('liens_rdv').catch(() => {});
+    // Demandes : la base fait suivre le match, la reprise et la réussite sur les tables liées
+    for (const t of SUITES[table] || []) await this.loadTable(t).catch(() => {});
     if (table === 'profiles') this.me = this.byId('profiles', this.userId);
     this.emit(); return data;
   }

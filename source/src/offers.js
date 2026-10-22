@@ -2,12 +2,13 @@
 import { html, useState, useMemo, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, TYPE_ICON, toast, RoleLine, celebrate, injectCSS, PartagerWhatsApp, lienWhatsApp, lienDirect } from './ui.js';
 import { getLang, addAR } from './i18n.js';
-import { TYPES, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA } from './logic.js';
+import { TYPES, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande } from './logic.js';
 import { RelanceBanner, BanqueSujets, PasteOffer } from './recrutement.js';
 import { CvButton } from './cv.js';
 import { SignalerBtn } from './confiance.js';
 import { EntrepriseResume } from './entreprises.js';
 import { MessageBtn } from './messages.js';
+import { DemandesTab, demandesAFaire } from './demandes.js';
 // Le message WhatsApp d'une offre : de quoi il s'agit, et le lien qui l'ouvre directement
 // Message prêt pour WhatsApp, dans la langue de l'interface
 const TYPES_AR = { stage: 'تدريب', pfe: 'مشروع نهاية الدراسة', etranger: 'تدريب بالخارج', emploi: 'وظيفة' };
@@ -44,22 +45,25 @@ injectCSS('fil-pick', `
 .chip.fil-parc { font-weight: 650; }
 `);
 
-// Trois onglets : les offres, la banque de sujets PFE (5A et lauréats), les offres entre lauréats
+// Les onglets : les offres, les demandes des étudiants (ce qu'ils cherchent, CV joint), la banque de sujets PFE
+// (5A et lauréats), les offres entre lauréats
 export function OffersPage(ctx) {
-  const { me, saison, sub, go } = ctx;
+  const { me, saison, sub, go, data, store } = ctx;
   const isStudent = me.role === 'etudiant';
   const tabs = [['', 'Offres', 'feed']];
+  if (!isStudent || typesDemande(me, saison).length) tabs.push(['demandes', isStudent ? 'Mes demandes' : 'Demandes d’étudiants', 'send', demandesAFaire(data, me, store)]);
   if (!isStudent || niveauOf(me, saison) === 5) tabs.push(['sujets', 'Sujets PFE', 'cap']);
   if (!isStudent) tabs.push(['laureats', 'Entre lauréats', 'briefcase']);
   const tab = tabs.some(([k]) => k === sub) ? sub : '';
   const [compose, setCompose] = useState(null);
+  const demandes = tab === 'demandes';
   return html`<section class="page">
     <header class="page-head">
-      <div><p class="eyebrow">${tab === 'laureats' ? 'Postes pour lauréats expérimentés, visibles seulement par les lauréats' : tab === 'sujets' ? 'L’entreprise dépose un vrai problème, un étudiant le prend, le lauréat l’encadre' : isStudent ? `Pour ${NIVEAUX[niveauOf(me, saison)]?.label?.toLowerCase() || 'toi'} · partagées par les lauréats` : 'Partagées par les lauréats'}</p><h1>${tab === 'sujets' ? 'Banque de sujets PFE' : tab === 'laureats' ? 'Offres entre lauréats' : 'Offres'}</h1></div>
-      ${!isStudent ? html`<button class="btn primary" onClick=${() => setCompose(tab === 'laureats' ? { audience: 'laureats', type: 'emploi', annees: [] } : tab === 'sujets' ? { type: 'pfe', annees: [5] } : {})}><${Icon} name="plus"/> ${tab === 'sujets' ? 'Déposer un sujet' : 'Publier une offre'}</button>` : null}
+      <div><p class="eyebrow">${demandes ? (isStudent ? 'Tu dis ce que tu cherches, les lauréats te proposent leur aide' : 'Les étudiants disent ce qu’ils cherchent, CV joint') : tab === 'laureats' ? 'Postes pour lauréats expérimentés, visibles seulement par les lauréats' : tab === 'sujets' ? 'L’entreprise dépose un vrai problème, un étudiant le prend, le lauréat l’encadre' : isStudent ? `Pour ${NIVEAUX[niveauOf(me, saison)]?.label?.toLowerCase() || 'toi'} · partagées par les lauréats` : 'Partagées par les lauréats'}</p><h1>${demandes ? (isStudent ? 'Mes demandes' : 'Demandes des étudiants') : tab === 'sujets' ? 'Banque de sujets PFE' : tab === 'laureats' ? 'Offres entre lauréats' : 'Offres'}</h1></div>
+      ${!isStudent && !demandes ? html`<button class="btn primary" onClick=${() => setCompose(tab === 'laureats' ? { audience: 'laureats', type: 'emploi', annees: [] } : tab === 'sujets' ? { type: 'pfe', annees: [5] } : {})}><${Icon} name="plus"/> ${tab === 'sujets' ? 'Déposer un sujet' : 'Publier une offre'}</button>` : null}
     </header>
-    ${tabs.length > 1 ? html`<div class="seg" role="tablist">${tabs.map(([k, l, i]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => go('offres' + (k ? '/' + k : ''))}><${Icon} name=${i} size=${15}/> ${l}</button>`)}</div>` : null}
-    ${tab === 'sujets' ? html`<${BanqueSujets} ctx=${ctx} onPropose=${() => setCompose({ type: 'pfe', annees: [5] })}/>` : html`<${OfferList} ctx=${ctx} entre=${tab === 'laureats'} key=${tab}/>`}
+    ${tabs.length > 1 ? html`<div class="seg" role="tablist">${tabs.map(([k, l, i, n]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => go('offres' + (k ? '/' + k : ''))}><${Icon} name=${i} size=${15}/> ${l}${n ? html` <span class="count">${n}</span>` : null}</button>`)}</div>` : null}
+    ${demandes ? html`<${DemandesTab} ctx=${ctx}/>` : tab === 'sujets' ? html`<${BanqueSujets} ctx=${ctx} onPropose=${() => setCompose({ type: 'pfe', annees: [5] })}/>` : html`<${OfferList} ctx=${ctx} entre=${tab === 'laureats'} key=${tab}/>`}
     ${compose ? html`<${OfferComposer} ctx=${ctx} preset=${compose} onClose=${() => setCompose(null)}/>` : null}
   </section>`;
 }
