@@ -58,7 +58,9 @@ export function CvCard({ ctx }) {
   const { me, store, act, data, go } = ctx;
   const input = useRef(); const [over, setOver] = useState(false); const [busy, setBusy] = useState(false); const [ask, setAsk] = useState(false);
   const [dernier, setDernier] = useState(null);
-  if (!me || me.role === 'admin') return null;
+  // L'administration est souvent un lauréat : elle a son CV, mais pas de relecture à demander
+  if (!me) return null;
+  const admin = me.role === 'admin';
   const deposer = file => {
     if (!file) return;
     if (file.size > CV_MAX) { toast('Le fichier dépasse 2 Mo. Exporte ton CV en PDF plus léger.', 'err'); return; }
@@ -92,7 +94,7 @@ export function CvCard({ ctx }) {
       ${me.cv_url ? html`<p class="small muted">Tu as déjà un lien vers ton CV dans ton profil. Le PDF est plus simple pour les lauréats.</p>` : null}`}
     <p class="small muted cv-vis"><${Icon} name="lock" size=${14}/><span>${QUI_VOIT[vis] || QUI_VOIT.laureats}</span><span>Choisis qui le voit plus bas.</span></p>
 
-    ${me.cv_path || last ? html`<div class="cv-relu">
+    ${!admin && (me.cv_path || last) ? html`<div class="cv-relu">
       <span class="obj-ico"><${Icon} name="eye" size=${18}/></span>
       <span class="grow">${!last ? html`<strong>Fais relire ton CV par un lauréat</strong><span class="small muted">Il commente rubrique par rubrique et te donne ses conseils.</span>`
         : last.status === 'rendue' ? html`<strong>${last.merci || last.note ? 'Ta dernière relecture est rendue' : 'Ta relecture est prête'}</strong><span class="small muted">${reviewer ? `Par ${reviewer.full_name} · ${timeAgo(last.rendue_at || last.created_at)}` : timeAgo(last.rendue_at || last.created_at)}</span>`
