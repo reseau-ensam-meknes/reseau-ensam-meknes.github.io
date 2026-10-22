@@ -130,3 +130,35 @@ High School ALMAARIFA Baccalaureate science mathematique A AIT MELLOUL 2018-2019
   assert.equal(r.role, 'laureat');
   assert.equal(r.telephone, '+212 6 20 19 33 44');
 });
+
+// Signalés par « C'est mal lu » : le diplôme et ses dates au-dessus de l'école
+test('CV : dates sur la ligne du diplôme, école en dessous', () => {
+  const r = parseLinkedin(`Fatima Zahra Test
+Ingénieure Génie Mécanique
+FORMATION
+Diplôme d’ingénieure d’état – Génie Mécanique, Procédés de Fabrication Industrielle 09/2020 – 01/2026
+• École Nationale Supérieure d'Arts et Métiers (ENSAM), Meknès
+Cycle Préparatoire STPI (Sciences et Techniques pour l’Ingénieur) 09/2019 – 06/2020
+• École Nationale des Sciences Appliquées (ENSA), Oujda
+Baccalauréat – Sciences Physiques 09/2018 – 07/2019`, new Date(2026, 9, 22));
+  assert.equal(r.promo, 2026);
+  assert.equal(r.role, 'laureat');
+  assert.equal(r.filiere, 'Génie Mécanique : Matériaux et Procédés de Fabrication');
+});
+
+test('CV : un titre sans entreprise ne devient pas un poste', () => {
+  const texte = `Layla Test
+Ingénieure électromécanique
+Commande et Management Industriel — ENSAM Meknès
+Formation
+2021–2026 — ENSAM Meknès
+Cycle ingénieur, Génie Électromécanique : Commande et Management Industriel.
+2019–2021 — Lycée Abdallah Guennoune, Oujda
+Expérience
+OCP – Jorf Lasfar Projet Industriel de fin d’études, Avril–Juin. 2026`;
+  const cv = parseLinkedin(texte, new Date(2026, 9, 22));
+  assert.equal(cv.promo, 2026);
+  const p = { role: 'laureat', promo: 2026, filiere: 'Génie Électromécanique', poste: null, entreprise: null };
+  assert.equal(complementsCV(p, cv).poste, undefined);
+  assert.equal(complementsCV(p, { ...cv, entreprise: 'OCP' }).poste, cv.poste);
+});
