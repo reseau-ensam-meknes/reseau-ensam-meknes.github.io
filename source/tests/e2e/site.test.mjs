@@ -77,6 +77,25 @@ for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
   });
 }
 
+test('profil : s’enregistre même avec des champs vides ; rôle et promo cohérents', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Nadia'); await s.aller('profil');
+  await s.page.fill('#pf-ville', 'Rabat');
+  await s.page.click('form .row-end .btn.primary'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').innerText(), /Profil enregistré/);
+  await s.aller('accueil'); await s.aller('profil');
+  assert.equal(await s.page.inputValue('#pf-ville'), 'Rabat');
+  // Un « lauréat » d'une promo pas encore diplômée : on le lui dit, et un bouton corrige le rôle
+  await s.page.fill('#pf-promo', String(new Date().getFullYear() + 1)); await s.page.waitForTimeout(150);
+  assert.ok(await s.page.isVisible('#pf-incoherent'));
+  assert.ok(await s.page.isDisabled('form .row-end .btn.primary'));
+  await s.page.click('#pf-role-ok'); await s.page.waitForTimeout(150);
+  assert.ok(!(await s.page.isVisible('#pf-incoherent')));
+  assert.ok(await s.page.isEnabled('form .row-end .btn.primary'));
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('coordonnées : visibles seulement après accord', async () => {
   const s = await ouvrir();
   await s.comme('Amine'); await s.fiche('Youssef El Amrani');

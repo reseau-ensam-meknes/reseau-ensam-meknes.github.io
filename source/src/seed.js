@@ -411,5 +411,8 @@ export function buildSeed(now = new Date()) {
 
   const base = { profiles, offers, comments, reactions, applications, placements, mentorships, questions, answers, votes, shortlists, invitations, kudos, attestations: [], liens_rdv, annonces, groupe_messages, groupe_membres, cafes, cafe_participants, startups, defis, parrainages };
   const phase3 = seedPhase3(base, S, now);
+  // Comme dans la vraie base : un champ que le membre n'a pas rempli vaut null (pas « absent »)
+  const VIDES = ['entreprise', 'poste', 'ville', 'bio', 'linkedin', 'contact', 'cv_url', 'disponibilite', 'mentor_sujets', 'secteur', 'consent_at', 'cv_path', 'cv_maj'];
+  for (const p of profiles) for (const k of VIDES) if (p[k] === undefined || p[k] === '') p[k] = null;
   return { ...base, ...phase3, ...seedMessages({ ...base, ...phase3 }, now) };
 }

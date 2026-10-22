@@ -38,6 +38,19 @@ function navFor(me) {
   return items;
 }
 
+// Filet de sécurité : si un bouton ou un formulaire plante juste après un geste du membre, on le lui dit
+// au lieu de ne rien faire (il croirait que c'est enregistré). Les erreurs de fond (réseau, extensions) restent discrètes.
+if (typeof window !== 'undefined') {
+  let geste = 0, dit = 0;
+  for (const ev of ['pointerdown', 'keydown', 'submit']) window.addEventListener(ev, () => { geste = Date.now(); }, true);
+  const prevenir = () => {
+    if (Date.now() - geste > 3000 || Date.now() - dit < 4000) return;
+    dit = Date.now(); toast('Ça n’a pas marché. Réessaie, ou recharge la page.', 'err');
+  };
+  window.addEventListener('error', e => { if (e.error && !/ResizeObserver/.test(e.message || '')) prevenir(); });
+  window.addEventListener('unhandledrejection', prevenir);
+}
+
 const dec = x => { try { return decodeURIComponent(x || ''); } catch { return x || ''; } };
 function parseRoute(r) {
   const [base, sub, sub2] = (ALIASES[dec(r)] || r).split('/').map(dec);
@@ -392,6 +405,9 @@ function prochainPas(ctx, notifs, guide) {
   const rdv = data.mentorships.filter(m => (m.student_id === me.id || m.mentor_id === me.id) && mentorState(m) === 'rdv' && m.rdv_at && new Date(m.rdv_at) - Date.now() < 48 * 36e5 && new Date(m.rdv_at) - Date.now() > -60 * 6e4)
     .sort((a, b) => new Date(a.rdv_at) - new Date(b.rdv_at))[0];
   if (rdv) return { type: 'rdv' };
+  // Rôle et promo qui ne vont pas ensemble (ex. lauréat de la promo 2027) : on propose de corriger le profil
+  if ((me.role === 'laureat' && me.promo > new Date().getFullYear()) || (me.role === 'etudiant' && me.promo <= saison))
+    return { icon: 'user', tone: 'accent', eyebrow: 'Ton profil', texte: me.role === 'laureat' ? `Promo ${me.promo} : tu es encore étudiant(e) ? Mets ton profil à jour.` : `Promo ${me.promo} : tu as ton diplôme ? Passe en lauréat(e).`, cta: 'Mettre à jour', go: () => go('profil') };
   const md = notifs.find(n => /^md/.test(n.key || ''));
   if (md) return { icon: 'mentor', tone: 'accent', eyebrow: 'Une demande pour toi', texte: md.text, cta: 'Choisir un horaire', go: () => go('mentorat'), key: md.key };
   const sc = notifs.find(n => /^sc/.test(n.key || ''));

@@ -133,9 +133,10 @@ begin
     else new.verified := old.verified; end if;
   end if;
   -- Vérifié tout seul : présent dans la liste officielle de l'école (même email, ou même nom et même promo),
-  -- étudiant inscrit avec l'email de l'école, ou lauréat confirmé par deux lauréats vérifiés de sa promo
+  -- étudiant inscrit avec l'email de l'école, ou lauréat confirmé par deux lauréats vérifiés de sa promo.
+  -- Jamais pour un « lauréat » d'une promo pas encore diplômée (un étudiant qui s'est trompé de rôle).
   begin
-    if not new.verified and (public.dans_liste(new.id, new.full_name, new.promo)
+    if not new.verified and (new.role <> 'laureat' or new.promo <= extract(year from now())::int) and (public.dans_liste(new.id, new.full_name, new.promo)
         or (new.role = 'etudiant' and public.email_ecole(new.id))
         or (new.role = 'laureat' and public.pairs_valides(new.id, new.promo) >= 2)) then
       new.verified := true;
