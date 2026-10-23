@@ -80,4 +80,6 @@ test('cette semaine dans le réseau : qui a aidé combien d’étudiants, sinon 
   assert.equal(poulsReseau(calme, now).jours, 30);
   assert.equal(poulsReseau(calme, now).nbAides, 1);
   assert.equal(poulsReseau({ ...calme, profiles: [] }, now).nbAides, 0, 'sans profil, pas compté');
+  const nonClos = base({ profiles, mentorships: [{ mentor_id: 'l', student_id: 's', status: 'acceptee', accepted_at: il_y_a(3), rdv_at: il_y_a(2) }] });
+  assert.equal(poulsReseau(nonClos, now).nbAides, 0, 'un rendez-vous passé que personne n’a clos n’est pas encore une aide');
 });

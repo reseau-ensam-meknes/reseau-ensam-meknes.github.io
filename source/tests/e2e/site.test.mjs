@@ -768,6 +768,8 @@ test('« Je peux aider » en un geste : depuis l’accueil, et depuis le lien d�
 test('annonce : sur une ligne, seulement pour son public', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Admin'); await s.aller('admin');
+  await s.page.fill('#ann-txt', 'Forum entreprises mardi pour tout le réseau');
+  await s.page.locator('form:has(#ann-txt) button.primary').click(); await s.page.waitForTimeout(300);
   await s.page.fill('#ann-txt', 'Afterwork des lauréats jeudi soir à l’école');
   await s.page.click('#ann-pour-laureats');
   await s.page.locator('form:has(#ann-txt) button.primary').click(); await s.page.waitForTimeout(300);
@@ -775,6 +777,25 @@ test('annonce : sur une ligne, seulement pour son public', async () => {
   assert.match(await s.page.locator('.annonce-ligne').innerText(), /Afterwork des lauréats/);
   await s.comme('Amine'); await s.aller('accueil');
   assert.doesNotMatch(await s.page.locator('.home').innerText(), /Afterwork/);
+  assert.match(await s.page.locator('.annonce-ligne').innerText(), /Forum entreprises mardi/, 'l’annonce pour tout le monde reste aux étudiants');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('arabe : les phrases de l’accueil sont traduites en entier, noms de repli compris', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  const ar = await s.page.evaluate(async () => {
+    const { t } = await import('./i18n.js');
+    return ['Une question pour toi sur France : Où se loger à Toulouse ?', 'C’est un match avec Salma Bennani : déclare son démarrage dès qu’il a lieu.',
+      'Un lauréat relit ton CV', 'Un lauréat indique t’avoir recruté(e) chez Lear', '45 lauréats sont déjà là', '2 lauréats sont déjà là, dont 1 de ta promo',
+      'Tu relis le CV de Hatim Moussaoui', 'Continuer la relecture'].map(t);
+  });
+  assert.match(ar[0], /^سؤال موجّه إليك حول فرنسا/);
+  assert.match(ar[1], /صرّح ببدئه/);
+  for (const x of ar.slice(2, 4)) assert.doesNotMatch(x, /Un lauréat/, x);
+  for (const x of ar.slice(4, 6)) { assert.match(x, /^انضمّ إلى الشبكة/, x); assert.doesNotMatch(x, /معك/, x); }
+  assert.match(ar[6], /تراجع سيرة/);
+  assert.equal(ar[7], 'متابعة المراجعة');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });

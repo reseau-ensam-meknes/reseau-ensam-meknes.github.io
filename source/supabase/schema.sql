@@ -3517,7 +3517,7 @@ create or replace function public.pouls_reseau() returns jsonb
 language sql stable security definer set search_path = public as $$
   with brut as (
     select m.mentor_id as l, m.student_id as s, coalesce(m.rdv_at, m.accepted_at) as at, 'rdv' as k from public.mentorships m
-      where m.mentor_id is not null and (m.status = 'terminee' or (m.status = 'acceptee' and m.rdv_at + interval '20 minutes' < now()))
+      where m.mentor_id is not null and m.status = 'terminee'
     union all select r.reviewer_id, r.student_id, r.rendue_at, 'cv' from public.relectures_cv r where r.status = 'rendue'
     union all select p.laureat_id, p.student_id, p.confirmed_at, 'recrute' from public.placements p where p.status = 'confirme'
     union all select x.laureat_id, d.auteur_id, x.repondu_at, 'match' from public.propositions x join public.demandes d on d.id = x.demande_id where x.status = 'acceptee'

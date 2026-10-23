@@ -57,10 +57,18 @@ function isolate(out, groups) {
 const EXTRA = {}; const EXTRA_PATTERNS = [];
 export function addAR(dict = {}, patterns = []) { Object.assign(EXTRA, dict); EXTRA_PATTERNS.push(...patterns); memo.clear(); }
 
+// Les noms de repli (« Un lauréat » quand le profil n'existe plus) : un motif qui les prend pour un nom les traduit
+const REPLIS = new Set(['Un lauréat', 'Un membre', 'Un étudiant']);
+const nomRepli = x => (x && REPLIS.has(x) ? EXTRA[x] ?? AR[x] ?? x : x);
+
 function lookup(core) {
   if (EXTRA[core] !== undefined) return EXTRA[core];
   if (AR[core] !== undefined) return AR[core];
-  for (const [re, fn] of [...EXTRA_PATTERNS, ...AR_PATTERNS]) { const m = core.match(re); if (m) return isolate(dateFix(typeof fn === 'function' ? fn(...m.slice(1)) : core.replace(re, fn)), m.slice(1)); }
+  for (const [re, fn] of [...EXTRA_PATTERNS, ...AR_PATTERNS]) {
+    const m = core.match(re); if (!m) continue;
+    const g = m.slice(1).map(nomRepli);
+    return isolate(dateFix(typeof fn === 'function' ? fn(...g) : core.replace(re, fn)), g);
+  }
   const d = dateFix(core);
   if (d !== core && !/[a-zà-ÿ]/i.test(d)) return d;
   if (MONTHS[core] || SHORT_MONTHS[core.replace('.', '')]) return MONTHS[core] || SHORT_MONTHS[core.replace('.', '')];

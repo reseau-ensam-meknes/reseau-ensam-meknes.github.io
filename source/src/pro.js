@@ -12,7 +12,7 @@ import { SignalerBtn } from './confiance.js';
 const VUES = [['personnes', 'Personnes', 'people'], ['carte', 'Carte', 'pin'], ['startups', 'Startups', 'spark']];
 const paysLabel = p => (getLang() === 'ar' && PAYS_AR[canonPays(p)]) || canonPays(p);
 // Liens de l'accueil (« … dont 5 de ta filière ») : la liste ouverte montre exactement les personnes annoncées
-const PRESETS = ['ma-filiere', 'mon-parcours', 'ma-promo'];
+const PRESETS = ['ma-filiere', 'mon-parcours', 'ma-promo', 'laureats'];
 
 export function AnnuairePro({ ctx }) {
   // Ancien lien « Annuaire > Entreprises »

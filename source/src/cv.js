@@ -483,7 +483,7 @@ addAR({
   [/^Demandée (il y a .+|à l’instant|\d.+)$/, (a) => `طُلبت ${tr(a)}`],
   [/^Relecture rendue à (.+)\. \+15 points$/, (x) => `تم تسليم المراجعة إلى ${x}. +15 نقطة`],
   [/^Synthèse de (.+)$/, (x) => `خلاصة ${x}`],
-  [/^Une question pour (.+) \?$/, (x) => `سؤال لـ ${x}؟`],
+  [/^Une question pour (?!toi sur )(.+) \?$/, (x) => `سؤال لـ ${x}؟`],
   [/^Un dernier mot pour (.+) \?$/, (x) => `كلمة أخيرة لـ ${x}؟`],
   [/^Merci envoyé à (.+) !$/, (x) => `تم إرسال شكرك إلى ${x}!`],
   [/^Voir les autres demandes \((\d+)\)$/, (n) => `عرض الطلبات الأخرى (${n})`],

@@ -801,14 +801,15 @@ export const nonLus = (data, meId) => (data.messages || []).filter(m => m.dest_i
 
 // ---------------------------------------------------------------------------
 // « Cette semaine dans le réseau » : qui a aidé qui ces 7 derniers jours (sinon 30). Même calcul que pouls_reseau() dans la base.
-// Une aide : rendez-vous de mentorat passé, relecture rendue, recrutement confirmé par l'étudiant, proposition acceptée par l'étudiant.
+// Une aide : rendez-vous de mentorat terminé (merci de l'étudiant ou « C'est fait » du lauréat ; un rendez-vous seulement passé a pu ne pas avoir lieu),
+// relecture rendue, recrutement confirmé par l'étudiant, proposition acceptée par l'étudiant.
 // Toujours d'un lauréat vers un étudiant qui ont un profil. Pas de classement : l'ordre est celui de l'aide la plus récente.
 // ---------------------------------------------------------------------------
 export function poulsReseau(data, now = new Date()) {
   const role = new Map((data.profiles || []).map(p => [p.id, p.role]));
   const ok = (l, s) => !!l && !!s && role.get(l) === 'laureat' && role.get(s) === 'etudiant';
   const brut = [];
-  for (const m of data.mentorships || []) { const st = m.mentor_id ? mentorState(m, now) : null; if ((st === 'terminee' || st === 'apres') && ok(m.mentor_id, m.student_id)) brut.push([m.mentor_id, m.student_id, m.rdv_at || m.accepted_at, 'rdv']); }
+  for (const m of data.mentorships || []) { if (m.status === 'terminee' && ok(m.mentor_id, m.student_id)) brut.push([m.mentor_id, m.student_id, m.rdv_at || m.accepted_at, 'rdv']); }
   for (const r of data.relectures_cv || []) if (r.status === 'rendue' && ok(r.reviewer_id, r.student_id)) brut.push([r.reviewer_id, r.student_id, r.rendue_at, 'cv']);
   for (const p of data.placements || []) if (p.status === 'confirme' && ok(p.laureat_id, p.student_id)) brut.push([p.laureat_id, p.student_id, p.confirmed_at, 'recrute']);
   const auteur = new Map((data.demandes || []).map(d => [d.id, d.auteur_id]));

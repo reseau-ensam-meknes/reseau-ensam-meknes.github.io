@@ -23,7 +23,8 @@ before(async () => {
   // Les lignes d'aide sont posées telles quelles (les triggers de saisie sont testés ailleurs)
   await db.exec('set session_replication_role = replica');
   const m = (mentor, etudiant, rdv, status = 'acceptee') => db.query(`insert into public.mentorships (student_id, mentor_id, sujet, status, rdv_at, accepted_at) values ($1, $2, 'Conseil', $3, $4, $4)`, [etudiant, mentor, status, rdv]);
-  await m(L1, S1, ilYa(2));                                   // rendez-vous passé : une aide
+  await m(L1, S1, ilYa(2), 'terminee');                       // rendez-vous terminé : une aide
+  await m(L4, S3, ilYa(1));                                   // passé mais jamais clos : il a pu ne pas avoir lieu
   await m(L1, S3, new Date(Date.now() + 2 * 864e5).toISOString()); // à venir : pas encore
   await m(ADM, S3, ilYa(1));                                  // l'administration n'est pas un lauréat
   await m(L2, L3, ilYa(1), 'terminee');                       // d'un lauréat vers un lauréat : non
@@ -46,7 +47,7 @@ test('pouls_reseau : que des aides d’un lauréat vers un étudiant, passées, 
   const p = await pouls(S3);
   assert.equal(p.jours, 7);
   assert.equal(p.nb_aidants, 4, 'L1 (rendez-vous), L2 (relecture), L3 (recrutement), L4 (proposition acceptée)');
-  assert.equal(p.nb_aides, 2, 'S1 et S2 ; S3 n’a eu que l’administration et un rendez-vous à venir');
+  assert.equal(p.nb_aides, 2, 'S1 et S2 ; S3 n’a eu que l’administration, un rendez-vous à venir et un rendez-vous jamais clos');
   assert.equal(p.recrutes, 1);
   assert.deepEqual(p.aidants, [L4, L2, L1, L3], 'l’aide la plus récente d’abord, quatre au plus');
   assert.deepEqual(await pouls(L1), p, 'le même chiffre pour tout le monde');
