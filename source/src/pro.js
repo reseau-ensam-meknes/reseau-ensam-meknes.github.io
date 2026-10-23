@@ -16,7 +16,7 @@ const PRESETS = ['ma-filiere', 'mon-parcours', 'ma-promo'];
 
 export function AnnuairePro({ ctx }) {
   // Ancien lien « Annuaire > Entreprises »
-  useEffect(() => { if (ctx.sub2 === 'entreprises') ctx.go('reseau/entreprises', { remplacer: true }); }, [ctx.sub2]);
+  useEffect(() => { if (ctx.sub2 === 'entreprises') ctx.go('reseau/entreprises', { exact: true }); }, [ctx.sub2]);
   const vue = VUES.some(([k]) => k === ctx.sub2) ? ctx.sub2 : 'personnes';
   const preset = PRESETS.includes(ctx.sub2) ? ctx.sub2 : '';
   return html`<div class="sub-page">

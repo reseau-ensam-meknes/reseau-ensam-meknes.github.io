@@ -881,6 +881,19 @@ test('Retour : une fiche qui mène ailleurs (Écrire) ne demande qu’un Retour 
   await s.ctx.close();
 });
 
+test('Retour : un lien « Publier ma demande » ouvert depuis les demandes garde son formulaire ouvert', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('offres/demandes');
+  await s.page.evaluate(() => { const a = document.createElement('a'); a.href = '#offres/demandes/nouvelle'; a.id = 'lien-test'; a.textContent = 'Publier ma demande'; document.querySelector('.page').prepend(a); });
+  await s.page.click('#lien-test'); await s.page.waitForTimeout(900);
+  assert.equal(await ici(s.page), '#offres/demandes');
+  assert.ok(await s.page.locator('.modal #dm-titre').count(), 'le formulaire de demande est resté ouvert');
+  await retour(s.page);
+  assert.equal(await s.page.locator('.modal').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('lien WhatsApp vers une offre : après un toucher, Retour ferme la fiche, puis mène à l’accueil (pas hors du site)', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Salma'); await s.aller('offres');

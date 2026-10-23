@@ -57,7 +57,8 @@ export function DemandesTab({ ctx }) {
   const { me, sub2, saison } = ctx;
   const [form, setForm] = useState(null);
   const focusId = sub2 && sub2 !== 'nouvelle' ? sub2 : null;
-  useEffect(() => { if (sub2 === 'nouvelle') { ctx.go('offres/demandes', { remplacer: true }); setForm({}); } }, [sub2]);
+  // Redirection : l'entrée prend sa nouvelle adresse telle quelle (exact), sans Retour simulé qui refermerait le formulaire
+  useEffect(() => { if (sub2 === 'nouvelle') { ctx.go('offres/demandes', { exact: true }); setForm({}); } }, [sub2]);
   useEffect(() => {
     if (!focusId) return;
     const t = setTimeout(() => document.getElementById('dm-' + focusId)?.scrollIntoView({ block: 'center', behavior: doux() }), 250);

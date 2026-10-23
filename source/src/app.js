@@ -91,8 +91,8 @@ function App({ store }) {
   };
   const versRouteAct = useRef(versRoute); versRouteAct.current = versRoute;
   useLayoutEffect(() => { const y = aRendre.current; if (y == null) return; aRendre.current = null; rendrePosition(y); });
-  // go(r) : un écran de plus. go(r, { remplacer: true }) : onglet d'une page, redirection, « ← Tous les … ».
-  // go(r, { onglet: true }) : la barre du bas ou de côté. go(r, { exact: true }) : un lien direct normalisé.
+  // go(r) : un écran de plus. go(r, { remplacer: true }) : onglet d'une page, « ← Tous les … ».
+  // go(r, { onglet: true }) : la barre du bas ou de côté. go(r, { exact: true }) : un lien direct normalisé, une redirection.
   const go = (r, o) => { if (!aller(r, o)) { try { history.replaceState(null, '', '#' + r); } catch { /* cadre */ } versRoute(r); } };
   // La coque de l'appli (pas les pages publiques ni la connexion) branche l'historique, une fois
   const coque = !['verifier', 'desabo'].includes(route.base) && !(route.base === 'confidentialite' && store.mode !== 'live') && (store.mode !== 'live' || (store.session && store.me));
