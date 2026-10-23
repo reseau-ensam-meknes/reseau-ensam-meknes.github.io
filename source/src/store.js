@@ -5,7 +5,9 @@ import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsI
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
 const PHASE3 = ['coordonnees', 'demandes_contact', 'relectures_cv', 'relecture_commentaires', 'entretiens', 'avis_stage', 'guide_pays', 'signalements', 'enquetes_insertion', 'verifications_pairs', 'evenements', 'evenement_participants', 'retours_cv'];
-const MESSAGERIE = ['messages', 'blocages'];
+const MESSAGERIE = ['messages', 'blocages', 'reactions_messages'];
+// Réactions à un message : quelques émojis calmes, les mêmes que dans la base
+export const REACTIONS = ['👍', '❤️', '😂', '😮', '🙏', '👏'];
 // Demandes des étudiants et aides proposées par les lauréats
 const DEMANDES = ['demandes', 'propositions'];
 export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES];
@@ -36,6 +38,9 @@ class Base {
   on(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
   emit() { this.data = { ...this.data }; for (const fn of this.listeners) fn(); }
   byId(table, id) { return this.data[table].find(r => r.id === id); }
+  // Messagerie : « Répondre » et les réactions ont besoin de la base à jour (en démo, toujours)
+  peutRepondre() { return this.mode !== 'live' || (this.data.messages || []).some(m => 'reponse_a' in m); }
+  peutReagir() { return this.mode !== 'live' || !this.absentes?.has('reactions_messages'); }
   // « Cette semaine dans le réseau » : en démo, le calcul sur toutes les données
   pouls() { return poulsReseau(this.data); }
   // En ligne, la base a déjà masqué ce qui ne doit pas être vu : ces deux aides servent surtout à la démo.
@@ -319,6 +324,14 @@ class DemoStore extends Base {
     const m = this.byId('messages', id);
     await this.remove('messages', id);
     if (m?.fichier) this.fichiers.delete(m.fichier);
+    this.data.reactions_messages = this.data.reactions_messages.filter(r => r.message_id !== id);
+    this.persist(); this.emit();
+  }
+  // Une réaction par personne et par message : la même la retire, une autre la remplace
+  async reagir(messageId, emoji) {
+    const mienne = this.data.reactions_messages.find(r => r.message_id === messageId && r.user_id === this.me?.id);
+    if (!emoji || mienne?.emoji === emoji) { if (mienne) await this.remove('reactions_messages', mienne.id); return null; }
+    return mienne ? this.update('reactions_messages', mienne.id, { emoji }) : this.insert('reactions_messages', { message_id: messageId, emoji });
   }
   canal() { return { tape() {}, fermer() {} }; }
   // Liste officielle (administration)
@@ -528,8 +541,21 @@ function applyMessagerieRules(store, table, r, old) {
     if (store.data.blocages.some(b => b.user_id === me.id && b.bloque_id === r.bloque_id)) return false;
     return;
   }
+  if (table === 'reactions_messages') {
+    const m = store.byId('messages', old ? old.message_id : r.message_id);
+    if (old) { r.message_id = old.message_id; r.user_id = old.user_id; r.created_at = old.created_at; }
+    else r.user_id = me.id;
+    if (!REACTIONS.includes(r.emoji)) throw new Error('Réaction inconnue.');
+    if (!m || ![m.author_id, m.dest_id].includes(r.user_id)) throw new Error('Action non autorisée pour ton compte.');
+    if (bloque(store.data, m.author_id, m.dest_id)) throw new Error('Vous ne pouvez plus vous écrire.');
+    if (!old && store.data.reactions_messages.some(x => x.message_id === r.message_id && x.user_id === r.user_id)) throw new Error('Tu as déjà réagi à ce message.');
+    return;
+  }
   if (!old) {
     r.author_id = me.id; r.lu_at = null; r.body = String(r.body || '').trim() || null;
+    // On ne cite qu'un message de cette conversation (comme protect_message dans la base)
+    const cite = r.reponse_a && store.byId('messages', r.reponse_a);
+    r.reponse_a = cite && ((cite.author_id === me.id && cite.dest_id === r.dest_id) || (cite.author_id === r.dest_id && cite.dest_id === me.id)) ? cite.id : null;
     if (r.type === 'texte' && !r.body) throw new Error('Écris ton message.');
     if (r.body && r.body.length > 2000) throw new Error('Ton message est trop long (2 000 caractères au plus).');
     if (r.type !== 'texte' && !r.fichier) throw new Error('Fichier manquant.');
@@ -921,7 +947,7 @@ class SupabaseStore extends Base {
     for (let from = 0; ; from += 1000) {
       const { data, error } = await this.sb.from(vue || t).select('*').order('created_at', { ascending: false }).range(from, from + 999);
       if (error && vue && from === 0) { this.vues[t] = false; return this.loadTable(t, essai); }  // base pas encore à jour : la table
-      if (error && OPTIONAL.has(t)) { this.data[t] = []; return; }
+      if (error && OPTIONAL.has(t)) { this.data[t] = []; (this.absentes ||= new Set()).add(t); return; }
       // Réseau du téléphone qui coupe une seconde : on réessaie une fois avant d'abandonner
       if (error && !essai) { await new Promise(ok => setTimeout(ok, 1200)); return this.loadTable(t, 1); }
       if (error) throw error;
@@ -929,6 +955,7 @@ class SupabaseStore extends Base {
       if (data.length < 1000) break;
     }
     this.data[t] = all;
+    this.absentes?.delete(t);
   }
   subscribe() {
     if (this.channel) return;
@@ -1175,8 +1202,15 @@ class SupabaseStore extends Base {
           : m.includes('row-level security') ? 'Conversation pas encore ouverte.' : 'Envoi du fichier impossible. Vérifie ta connexion et réessaie.');
       }
     }
-    try { return await this.insert('messages', { author_id: this.userId, dest_id: dest, type, body, fichier, ...meta }); }
-    catch (e) { if (fichier) this.sb.storage.from('chat').remove([fichier]).catch(() => {}); throw e; }
+    const row = { author_id: this.userId, dest_id: dest, type, body, fichier, ...meta };
+    if (!row.reponse_a) delete row.reponse_a;
+    try { return await this.insert('messages', row); }
+    catch (e) {
+      // Base pas encore à jour : le message part sans la citation
+      if (row.reponse_a && /reponse_a/.test(e.message || '')) { delete row.reponse_a; return this.insert('messages', row); }
+      if (fichier) this.sb.storage.from('chat').remove([fichier]).catch(() => {});
+      throw e;
+    }
   }
   // Lien temporaire (1 heure) vers une photo ou un vocal, gardé pour ne pas le redemander à chaque affichage
   async lienChat(path) {
@@ -1201,6 +1235,22 @@ class SupabaseStore extends Base {
     const m = this.byId('messages', id);
     await this.remove('messages', id);
     if (m?.fichier) await this.sb.storage.from('chat').remove([m.fichier]).catch(() => {});
+    this.data.reactions_messages = this.data.reactions_messages.filter(r => r.message_id !== id); this.emit();
+  }
+  // Une réaction par personne et par message : affichée tout de suite, puis enregistrée ; la même la retire
+  async reagir(messageId, emoji) {
+    const avant = this.data.reactions_messages;
+    const mienne = avant.find(r => r.message_id === messageId && r.user_id === this.userId);
+    const retirer = !emoji || mienne?.emoji === emoji;
+    this.data.reactions_messages = retirer ? avant.filter(r => r !== mienne)
+      : mienne ? avant.map(r => r === mienne ? { ...r, emoji } : r) : [{ id: 'tmp-' + uuid(), message_id: messageId, user_id: this.userId, emoji, created_at: new Date().toISOString() }, ...avant];
+    this.emit();
+    const { error } = retirer
+      ? (mienne ? await this.sb.from('reactions_messages').delete().eq('message_id', messageId).eq('user_id', this.userId) : { error: null })
+      : await this.sb.from('reactions_messages').upsert({ message_id: messageId, user_id: this.userId, emoji }, { onConflict: 'message_id,user_id' });
+    if (error) { this.data.reactions_messages = avant; this.emit(); throw new Error(frError(error)); }
+    await this.loadTable('reactions_messages').catch(() => {}); this.emit();
+    return null;
   }
   // « écrit… » : un signal éphémère entre les deux personnes de la conversation (rien n'est enregistré)
   canal(autre, onTape) {
@@ -1276,5 +1326,7 @@ export async function createStore() {
   const cfg = window.ENSAM_CONFIG || {};
   const store = cfg.supabaseUrl && cfg.supabaseAnonKey ? new SupabaseStore(cfg) : new DemoStore();
   await store.init();
+  // Démonstration seulement : les tests automatiques simulent une mise à jour venue d'ailleurs
+  if (store.mode === 'demo') window.__demo = store;
   return store;
 }

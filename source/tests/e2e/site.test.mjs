@@ -147,6 +147,78 @@ test('messagerie : écrire, être lu, bloquer ; pas de conversation sans lien', 
   await s.ctx.close();
 });
 
+test('messagerie : répondre à un message précis, réagir ; sous le nom, qui est la personne (jamais « Administration »)', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const id = nom => s.profils.find(x => x[1].includes(nom))[0];
+  const salma = id('Salma'), youssef = id('Youssef');
+  await s.comme('Salma'); await s.aller('messages/' + youssef); await s.page.waitForTimeout(300);
+  await s.page.fill('#chat-txt', 'Je peux vous envoyer mon CV ici avant jeudi ?');
+  await s.page.click('.composer .send-btn'); await s.page.waitForTimeout(400);
+  await s.aller('accueil'); await s.comme('Youssef'); await s.aller('messages/' + salma); await s.page.waitForTimeout(300);
+  const sienne = s.page.locator('.msg:not(.mine)').last();
+  // Réagir : la pastille apparaît, à moi de la retirer
+  await sienne.locator('.msg-more').click();
+  await s.page.click('.react-btn[aria-label="Réagir avec ❤️"]'); await s.page.waitForTimeout(200);
+  assert.equal(await sienne.locator('button.react-pill').getAttribute('aria-label'), 'Retirer ma réaction ❤️');
+  // Répondre : le message cité s'affiche au-dessus de la zone d'écriture, puis dans la bulle envoyée
+  await sienne.locator('.msg-more').click();
+  await s.page.locator('.msg-actions button', { hasText: 'Répondre' }).click();
+  assert.match(await s.page.locator('.comp-cite').innerText(), /Salma[\s\S]*CV ici avant jeudi/);
+  assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'chat-txt');
+  await s.page.fill('#chat-txt', 'Oui, envoie-le ici.');
+  await s.page.click('.composer .send-btn'); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator('.comp-cite').count(), 0);
+  const reponse = s.page.locator('.msg.mine').last();
+  assert.match(await reponse.locator('.msg-cite').innerText(), /Salma[\s\S]*CV ici avant jeudi/);
+  // Toucher la citation ramène au message d'origine
+  await reponse.locator('.msg-cite').click(); await s.page.waitForTimeout(150);
+  assert.equal(await sienne.evaluate(e => e.classList.contains('eclaire')), true);
+  // Salma voit la réaction de Youssef et la citation
+  await s.aller('accueil'); await s.comme('Salma'); await s.aller('messages/' + youssef); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.msg.mine').last().locator('.react-pill').getAttribute('aria-label'), /^Réaction de Youssef : ❤️$/);
+  assert.match(await s.page.locator('.msg:not(.mine)').last().locator('.msg-cite').innerText(), /^Toi/);
+  await s.page.locator('.msg.mine .react-pill').click();
+  assert.equal(await s.page.locator('.msg.mine .react-pill').count(), 1, 'la réaction de l’autre ne se retire pas');
+  // Youssef retire la sienne
+  await s.aller('accueil'); await s.comme('Youssef'); await s.aller('messages/' + salma); await s.page.waitForTimeout(300);
+  await s.page.locator('button.react-pill').click(); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator('.react-pill').count(), 0);
+  // L'administration écrit à Salma : sous son nom, son année et sa filière ; côté Salma, « Équipe du réseau »
+  await s.aller('accueil'); await s.comme('Admin'); await s.aller('messages/' + salma); await s.page.waitForTimeout(300);
+  const sous = await s.page.locator('.conv-sub').innerText();
+  assert.doesNotMatch(sous, /Administration/); assert.match(sous, /5A · /);
+  await s.page.fill('#chat-txt', 'Bienvenue Salma !'); await s.page.click('.composer .send-btn'); await s.page.waitForTimeout(400);
+  const admin = await s.page.evaluate(() => window.__demo.me.id);
+  await s.aller('accueil'); await s.comme('Salma'); await s.aller('messages/' + admin); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.conv-sub').innerText(), 'Équipe du réseau');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('profil : « Qui voit quoi » s’enregistre dès le choix ; une mise à jour venue d’ailleurs n’efface pas ce qu’on est en train d’écrire', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('profil'); await s.page.waitForTimeout(300);
+  await s.page.click('#vis-lieu-contacts'); await s.page.waitForTimeout(250);
+  assert.match(await s.page.locator('#vis-etat').innerText(), /Enregistré/);
+  assert.equal(await s.page.locator('.pf-collant').count(), 0, 'rien d’autre à enregistrer');
+  await s.page.reload(); await s.page.waitForSelector('#persona'); await s.comme('Youssef'); await s.aller('profil'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.getAttribute('#vis-lieu-contacts', 'aria-checked'), 'true');
+  // Il écrit sa bio sans enregistrer ; son CV met à jour son poste ailleurs : la bio reste, le poste suit
+  await s.page.fill('#pf-bio', 'Bio en cours d’écriture');
+  assert.equal(await s.page.locator('.pf-collant').count(), 1);
+  await s.page.evaluate(() => window.__demo.update('profiles', window.__demo.me.id, { poste: 'Directeur méthodes' })); await s.page.waitForTimeout(250);
+  assert.equal(await s.page.inputValue('#pf-bio'), 'Bio en cours d’écriture');
+  assert.equal(await s.page.inputValue('#pf-poste'), 'Directeur méthodes');
+  await s.page.click('#vis-presentation-laureats'); await s.page.waitForTimeout(250);
+  assert.equal(await s.page.inputValue('#pf-bio'), 'Bio en cours d’écriture');
+  await s.page.locator('.pf-collant .btn.primary').click(); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.pf-collant').count(), 0);
+  const moi = await s.page.evaluate(() => { const m = window.__demo.me; return { bio: m.bio, poste: m.poste, vis: m.visibilite }; });
+  assert.deepEqual(moi, { bio: 'Bio en cours d’écriture', poste: 'Directeur méthodes', vis: { lieu: 'contacts', presentation: 'laureats' } });
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('mentorat : demander, fixer l’horaire, confirmer sa présence, ignorer une demande', async () => {
   const s = await ouvrir();
   const carte = sujet => s.page.locator('.mreq', { hasText: sujet }).first();

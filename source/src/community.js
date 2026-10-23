@@ -1,5 +1,5 @@
 // Entraide, Communauté (classement, annuaire, vitrine des talents) et profils.
-import { html, useState, useMemo, useRef } from './vendor/preact-htm.js';
+import { html, useState, useMemo, useRef, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, toast, LevelChip, RoleLine, injectCSS, PartagerWhatsApp, lienDirect } from './ui.js';
 import { getLang } from './i18n.js';
 import { FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm } from './logic.js';
@@ -274,6 +274,12 @@ injectCSS('je-suis', `
 @media (max-width: 380px) { .je-suis-choix { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .je-carte, .je-coche { transition: none; } }
 `);
+injectCSS('pf-collant', `
+.pf-collant { position: sticky; bottom: .6rem; z-index: 5; flex-wrap: nowrap; align-items: center; justify-content: space-between; padding: .55rem .6rem .55rem 1rem; border-radius: 16px; background: var(--surface); border: 1px solid var(--accent); box-shadow: var(--shadow-lift); animation: fade-in .2s ease; }
+.pf-collant .small { color: var(--ink-2); font-weight: 500; min-width: 0; }
+.pf-collant .btn { flex: none; }
+@media (max-width: 760px) { .pf-collant { bottom: calc(70px + env(safe-area-inset-bottom, 0px)); } }
+`);
 injectCSS('cv-box', `
 .cv-box { display: flex; align-items: center; gap: .8rem; padding: .9rem 1rem; border: 1px solid var(--accent); border-radius: 14px; background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .cv-box .grow { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
@@ -284,11 +290,19 @@ injectCSS('cv-box', `
 
 // Les champs vides arrivent de la base à null : on garde alors la valeur par défaut du formulaire (texte vide…)
 const sansVides = o => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v != null));
+// Ce qui, enregistré ailleurs (CV appliqué, rôle corrigé…), doit se refléter dans « Mon profil »
+export const cleFormulaire = (me, co) => JSON.stringify([me.id, me.role, me.promo, me.filiere, me.poste, me.entreprise, me.ville, me.linkedin, me.bio, me.competences, co?.telephone, co?.email]);
+const DEFAUTS_PROFIL = { full_name: '', role: 'etudiant', filiere: FILIERES[0], entreprise: '', poste: '', ville: '', pays: 'Maroc', bio: '', competences: [], linkedin: '', contact: '', cv_url: '', disponibilite: '', mentor_dispo: false, mentor_sujets: '', vitrine: true, secteur: '', parrain_dispo: false };
+const memeValeur = (a, b) => JSON.stringify(a ?? '') === JSON.stringify(b ?? '');
 
 export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
   const { store, act } = ctx;
-  const [f, setF] = useState(() => ({ full_name: '', role: onboarding ? '' : 'etudiant', filiere: FILIERES[0], promo: new Date().getFullYear() + 1, entreprise: '', poste: '', ville: '', pays: 'Maroc', bio: '', competences: [], linkedin: '', contact: '', cv_url: '', disponibilite: '', mentor_dispo: false, mentor_sujets: '', vitrine: true, secteur: '', parrain_dispo: false, ...sansVides(preset), ...sansVides(initial) }));
-  const set = (k, v) => setF({ ...f, [k]: v });
+  const [f, setF] = useState(() => ({ ...DEFAUTS_PROFIL, role: onboarding ? '' : 'etudiant', promo: new Date().getFullYear() + 1, ...sansVides(preset), ...sansVides(initial) }));
+  // Les champs que le membre a changés sans enregistrer : une mise à jour venue d'ailleurs ne les écrase jamais
+  const touches = useRef(new Set());
+  const [, setSale] = useState(0);
+  const toucher = (...ks) => { for (const k of ks) touches.current.add(k); setSale(n => n + 1); };
+  const set = (k, v) => { toucher(k); setF(x => ({ ...x, [k]: v })); };
   const [comp, setComp] = useState((f.competences || []).join(', '));
   // Base à jour (Phase 3) : coordonnées privées et visibilité ; sinon l'ancien champ « contact » public
   const v3 = store.mode !== 'live' || 'visibilite' in (initial || store.data.profiles[0] || {});
@@ -296,8 +310,33 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
   const rechOk = store.mode !== 'live' || 'en_recherche' in (initial || store.data.profiles[0] || {});
   const coord0 = (initial && store.coordonneesDe(initial.id)) || {};
   const [co, setCo] = useState(() => ({ telephone: coord0.telephone || '', email: coord0.email || '', contact: coord0.contact || (v3 && initial?.contact) || '' }));
-  const setC = (k, v) => setCo({ ...co, [k]: v });
+  const setC = (k, v) => { toucher('co.' + k); setCo(x => ({ ...x, [k]: v })); };
   const [vis, setVis] = useState(() => ({ ...(initial?.visibilite || {}) }));
+  // « Mon profil » : ce qui change ailleurs (CV appliqué, rôle corrigé…) remplit les champs que le membre n'a pas touchés
+  const cle = initial && !onboarding ? cleFormulaire(initial, store.coordonneesDe(initial.id)) : '';
+  const premiereCle = useRef(cle);
+  useEffect(() => {
+    if (!cle || cle === premiereCle.current) return;
+    premiereCle.current = cle;
+    const t = touches.current, base = { ...DEFAUTS_PROFIL, ...sansVides(initial) };
+    setF(x => { const n = { ...x }; for (const [k, v] of Object.entries(base)) if (!t.has(k)) n[k] = v; return n; });
+    if (!t.has('competences')) setComp((initial.competences || []).join(', '));
+    const c = store.coordonneesDe(initial.id) || {};
+    setCo(x => ({ telephone: t.has('co.telephone') ? x.telephone : c.telephone || '', email: t.has('co.email') ? x.email : c.email || '', contact: t.has('co.contact') ? x.contact : c.contact || '' }));
+  }, [cle]);
+  // Qui voit quoi : enregistré dès le choix (dans « Mon profil »), comme un réglage
+  // (les choix rapides partent l'un après l'autre : le dernier touché est celui qui reste)
+  const [visOk, setVisOk] = useState(null);
+  const fileVis = useRef(Promise.resolve());
+  const choisirVis = v => {
+    const avant = vis; setVis(v);
+    if (onboarding || !initial || !v3) return;
+    const propre = Object.fromEntries(Object.entries(v).filter(([k, x]) => VIS_LABELS[k] && VIS_CHOIX.some(c => c[0] === x)));
+    setVisOk('envoi');
+    fileVis.current = fileVis.current.then(() => store.update('profiles', initial.id, { visibilite: propre }))
+      .then(() => setVisOk('ok'))
+      .catch(e => { setVis(avant); setVisOk(null); toast(e.message || String(e), 'err'); });
+  };
   const [cvFichier, setCvFichier] = useState(null);
   const [photoCV, setPhotoCV] = useState(null);
   // Inscription courte : rôle, nom, promo et filière (et, pour un lauréat, son poste) ; le reste se complète plus tard
@@ -346,6 +385,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
       }
       else await store.update('profiles', initial.id, row);
       if (coordChange) await store.enregistrerCoordonnees(champs);
+      touches.current.clear(); setSale(n => n + 1);
       toast(onboarding ? 'Bienvenue dans le réseau !' : 'Profil enregistré.');
       onDone?.();
     });
@@ -365,25 +405,26 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
     if (neuf && (!preset?.promo || cv) && r.promo && r.promo !== +f.promo) { n.promo = r.promo; faits.push(cv ? `Promo ${r.promo}` : 'Promo'); }
     else if (cv && r.promo) faits.push(`Promo ${r.promo}`);
     if (neuf && r.filiere && filPour(n.role, n.promo).some(g => g.options.includes(r.filiere))) { if (r.filiere !== f.filiere) n.filiere = r.filiere; faits.push(cv ? filiereCourte(r.filiere) : 'Filière'); }
+    toucher(...Object.keys(n).filter(k => !memeValeur(n[k], f[k])));
     setF(n);
     // Coordonnées privées trouvées dans le CV
     if (r.telephone || r.email) {
       const c = { ...co };
-      if (r.telephone && !co.telephone) { c.telephone = r.telephone; faits.push('Téléphone'); }
-      if (r.email && !co.email) { c.email = r.email; faits.push('Email'); }
+      if (r.telephone && !co.telephone) { c.telephone = r.telephone; faits.push('Téléphone'); toucher('co.telephone'); }
+      if (r.email && !co.email) { c.email = r.email; faits.push('Email'); toucher('co.email'); }
       setCo(c);
     }
     if (r.competences?.length) {
       const deja = comp.split(',').map(x => x.trim()).filter(Boolean);
       const vu = new Set(deja.map(x => x.toLowerCase()));
       const plus = r.competences.filter(c => !vu.has(c.toLowerCase()));
-      if (plus.length && deja.length < 15) { setComp([...deja, ...plus].slice(0, 15).join(', ')); faits.push('Compétences'); }
+      if (plus.length && deja.length < 15) { setComp([...deja, ...plus].slice(0, 15).join(', ')); faits.push('Compétences'); toucher('competences'); }
     }
     return faits;
   };
   const isStudent = f.role === 'etudiant';
   // À l'inscription, la promo proposée suit le rôle (on ne touche pas à une promo déjà enregistrée)
-  const choisirRole = role => setF(x => ({ ...x, role, promo: initial ? x.promo : role === 'laureat' && +x.promo > an ? an : role === 'etudiant' && +x.promo <= S ? S + 1 : x.promo }));
+  const choisirRole = role => { toucher('role', 'promo'); setF(x => ({ ...x, role, promo: initial ? x.promo : role === 'laureat' && +x.promo > an ? an : role === 'etudiant' && +x.promo <= S ? S + 1 : x.promo })); };
   const n = !isStudent && initial && !initial.verified ? confirmations(store.data, initial) : 0;
   return html`<form class="form" onSubmit=${submit}>
     ${onboarding ? html`<fieldset class="je-suis"><legend>Tu es…</legend><div class="je-suis-choix">
@@ -414,7 +455,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
       <${Field} label="Secteur"><select id="pf-sect" value=${f.secteur || ''} onChange=${e => set('secteur', e.target.value)}><option value="">—</option>${SECTEURS.map(x => html`<option value=${x}>${x}</option>`)}</select><//></div>` : null}
     ${court ? null : html`<div class="grid2"><${Field} label="Ville"><input id="pf-ville" value=${f.ville || ''} onInput=${e => set('ville', e.target.value)}/><//><${Field} label="Pays"><input id="pf-pays" value=${f.pays || ''} onInput=${e => set('pays', e.target.value)}/><//></div>
     <${Field} label="Bio courte"><textarea id="pf-bio" rows="3" maxlength="600" value=${f.bio || ''} onInput=${e => set('bio', e.target.value)} placeholder=${isStudent ? 'Ce que tu cherches, tes projets…' : 'Ton parcours, comment tu peux aider…'}></textarea><//>
-    <${Field} label="Compétences" hint="Séparées par des virgules"><input id="pf-comp" value=${comp} onInput=${e => setComp(e.target.value)} placeholder="Lean, CATIA, Python…"/><//>
+    <${Field} label="Compétences" hint="Séparées par des virgules"><input id="pf-comp" value=${comp} onInput=${e => { toucher('competences'); setComp(e.target.value); }} placeholder="Lean, CATIA, Python…"/><//>
     ${isStudent ? html`<div class="grid2"><${Field} label="LinkedIn"><input id="pf-li" value=${f.linkedin || ''} onInput=${e => set('linkedin', e.target.value)} placeholder="linkedin.com/in/…"/><//>
       <${Field} label="Disponibilité"><input id="pf-dispo" maxlength="80" value=${f.disponibilite || ''} onInput=${e => set('disponibilite', e.target.value)} placeholder="Ex. dès février, 6 mois"/><//></div>
       <${Field} label="Ou un lien vers ton CV (facultatif)" hint="Google Drive ou autre, si tu n’as pas déposé de PDF."><input id="pf-cv" value=${f.cv_url || ''} onInput=${e => set('cv_url', e.target.value)} placeholder="https://…"/><//>`
@@ -432,11 +473,12 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
         <${Field} label="Email de contact"><input id="pf-mail" type="email" maxlength="120" dir="ltr" value=${co.email} onInput=${e => setC('email', e.target.value)} placeholder="prenom.nom@…"/><//></div>
       <${Field} label="Autre (facultatif)"><input id="pf-contact" maxlength="200" value=${co.contact} onInput=${e => setC('contact', e.target.value)} placeholder="Ex. WhatsApp, plutôt le soir"/><//>
     </fieldset>
-    <${VisibiliteFields} role=${f.role} value=${vis} onChange=${setVis}/>` : null}
+    <${VisibiliteFields} role=${f.role} value=${vis} onChange=${choisirVis} etat=${onboarding ? null : visOk}/>` : null}
     ${f.role === 'laureat' && !initial?.verified ? html`<p class="small muted">${v3 ? 'Ton badge « Lauréat vérifié » arrive quand l’équipe du réseau, ou deux lauréats vérifiés de ta promo, confirment ton profil.' : 'Ton badge « Lauréat vérifié » sera ajouté par l’équipe du réseau.'}${n ? html` <b>${n}/2</b>` : null}</p>` : null}`}
     ${court ? html`<div class="pf-plus"><button type="button" class="btn ghost small" id="pf-plus" onClick=${() => setDetails(true)}><${Icon} name="plus" size=${15}/> Ajouter plus de détails (facultatif)</button>
       <p class="small muted">Ville, bio, compétences, coordonnées : tu pourras les compléter plus tard dans « Mon profil ».</p></div>` : null}
-    <div class="row-end"><button class="btn primary" disabled=${!ok}>${onboarding ? 'Rejoindre la communauté' : 'Enregistrer'}</button></div>
+    ${!onboarding && touches.current.size ? html`<div class="row-end pf-collant" role="status"><span class="small">Modifications pas encore enregistrées</span><button class="btn primary" disabled=${!ok}>Enregistrer</button></div>`
+      : html`<div class="row-end"><button class="btn primary" disabled=${!ok}>${onboarding ? 'Rejoindre la communauté' : 'Enregistrer'}</button></div>`}
   </form>`;
 }
 
@@ -444,6 +486,7 @@ export { levelOf, LevelChip };
 
 // Lauréats qui cherchent un emploi, vérification des lauréats (CV, LinkedIn), photo de profil
 addAR({
+  'Modifications pas encore enregistrées': 'تعديلات لم تُحفظ بعد',
   'Diplômé(e) de l’ENSAM Meknès, en poste ou en recherche': 'خريج(ة) ENSAM مكناس، في وظيفة أو يبحث عن عمل',
   'Je cherche un emploi en ce moment': 'أبحث عن عمل حاليًا',
   'Les lauréats qui recrutent te verront dans la Vitrine des talents, et tu recevras les offres « Jeunes diplômés » et entre lauréats de ta filière. Ton expérience de PFE aide déjà les étudiants.':

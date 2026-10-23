@@ -124,6 +124,57 @@ test('bloquer : plus rien dans un sens ni dans l’autre, jusqu’au déblocage'
   await ecrire(LAU, ETU, 'Re-bonjour');
 });
 
+test('répondre à un message précis : seulement dans la même conversation, et rien ne reste quand l’original part', async () => {
+  const origine = await ecrire(ETU, LAU, 'Tu peux relire mon CV ?');
+  const rep = await ecrire(LAU, ETU, 'Oui, envoie-le ici', { reponse_a: origine.id });
+  assert.equal(rep.reponse_a, origine.id);
+  // Un message d'une autre conversation ne peut pas être cité : la citation est retirée, le message part quand même
+  const ailleurs = await ecrire(ADMIN, ETU2, 'Une info pour toi');
+  const r2 = await ecrire(LAU, ETU, 'Autre chose', { reponse_a: ailleurs.id });
+  assert.equal(r2.reponse_a, null);
+  // La citation ne se change pas après coup
+  await q(ETU, 'update public.messages set reponse_a = null where id = $1', [rep.id]);
+  assert.equal((await q(LAU, 'select reponse_a from public.messages where id = $1', [rep.id]))[0].reponse_a, origine.id);
+  // L'original supprimé pour les deux : la réponse reste, son texte à lui disparaît
+  await q(ETU, 'delete from public.messages where id = $1', [origine.id]);
+  const [x] = await q(LAU, 'select reponse_a, body from public.messages where id = $1', [rep.id]);
+  assert.equal(x.body, 'Oui, envoie-le ici');
+  assert.equal((await q(LAU, 'select count(*)::int n from public.messages where id = $1', [origine.id]))[0].n, 0);
+});
+
+test('réactions : une par personne et par message, visibles des deux seulement', async () => {
+  const m = await ecrire(LAU, ETU, 'Bravo pour ton entretien !');
+  const reagir = (u, emoji) => q(u, `insert into public.reactions_messages (message_id, user_id, emoji) values ($1, $2, $3)
+    on conflict (message_id, user_id) do update set emoji = excluded.emoji returning *`, [m.id, u, emoji]).then(r => r[0]);
+  const r = await reagir(ETU, '❤️');
+  assert.equal(r.user_id, ETU);
+  // Changer d'avis remplace la réaction, sans en ajouter une deuxième
+  await reagir(ETU, '🙏');
+  const vues = await q(LAU, 'select user_id, emoji from public.reactions_messages where message_id = $1', [m.id]);
+  assert.deepEqual(vues.map(v => [v.user_id, v.emoji]), [[ETU, '🙏']]);
+  await reagir(LAU, '👍');
+  assert.equal((await q(ETU, 'select count(*)::int n from public.reactions_messages where message_id = $1', [m.id]))[0].n, 2);
+  // Personne d'autre ne les voit ni ne réagit
+  assert.equal((await q(ETU2, 'select count(*)::int n from public.reactions_messages'))[0].n, 0);
+  assert.equal((await q(LAU2, 'select count(*)::int n from public.reactions_messages'))[0].n, 0);
+  await refuse(reagir(LAU2, '👍'), /non autorisée/);
+  // Pas au nom d'un autre, et seulement les émojis prévus
+  await q(ETU, `update public.reactions_messages set user_id = $2, message_id = $3 where message_id = $1 and user_id = $4`, [m.id, LAU2, uid(99), ETU]);
+  assert.deepEqual((await q(ETU, 'select user_id from public.reactions_messages where message_id = $1 and emoji = $2', [m.id, '🙏'])).map(v => v.user_id), [ETU]);
+  await refuse(reagir(ETU, '💩'));
+  // On retire la sienne, pas celle de l'autre
+  await q(ETU, 'delete from public.reactions_messages where message_id = $1 and user_id = $2', [m.id, LAU]);
+  assert.equal((await q(LAU, 'select count(*)::int n from public.reactions_messages where user_id = $1', [LAU]))[0].n, 1);
+  await q(ETU, 'delete from public.reactions_messages where message_id = $1 and user_id = $2', [m.id, ETU]);
+  assert.equal((await q(LAU, 'select count(*)::int n from public.reactions_messages where user_id = $1', [ETU]))[0].n, 0);
+  // Un blocage arrête aussi les réactions ; supprimer le message les emporte
+  const [b] = await q(ETU, `insert into public.blocages (user_id, bloque_id) values ($1, $2) returning id`, [ETU, LAU]);
+  await refuse(reagir(ETU, '👍'), /ne pouvez plus/);
+  await q(ETU, 'delete from public.blocages where id = $1', [b.id]);
+  await q(LAU, 'delete from public.messages where id = $1', [m.id]);
+  assert.equal((await db.query('select count(*)::int n from public.reactions_messages where message_id = $1', [m.id])).rows[0].n, 0);
+});
+
 test('notification : une seule pour une rafale, et un email si le message reste non lu', async () => {
   await db.query(`insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values ($1, 'https://push.example/lau', 'k', 'a')`, [LAU]);
   await q(LAU, 'select public.marquer_lus($1)', [ETU]);

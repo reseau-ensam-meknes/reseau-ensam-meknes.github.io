@@ -771,8 +771,9 @@ export function lienAvec(data, me, autre, profil = () => null) {
   }
   if ((data.parrainages || []).some(x => entre(x, me.id, autre, 'parrain_id', 'filleul_id'))) return { type: 'parrainage', label: 'Parrainage' };
   if ((data.demandes_contact || []).some(d => d.status === 'acceptee' && entre(d, me.id, autre, 'demandeur_id', 'cible_id'))) return { type: 'contact', label: 'Contact accepté' };
-  if (me.role === 'admin' || profil(autre)?.role === 'admin') return { type: 'admin', label: 'Administration' };
-  if ((data.messages || []).some(x => x.author_id === autre && x.dest_id === me.id)) return { type: 'message', label: 'Conversation' };
+  // Sans lien particulier, pas d'étiquette : l'écran dit alors qui est la personne (jamais « Administration »)
+  if (me.role === 'admin' || profil(autre)?.role === 'admin') return { type: 'admin', label: null };
+  if ((data.messages || []).some(x => x.author_id === autre && x.dest_id === me.id)) return { type: 'message', label: null };
   return null;
 }
 export function peutDiscuter(data, me, autre, profil = () => null) {

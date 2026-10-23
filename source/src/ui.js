@@ -86,6 +86,7 @@ const ICONS = {
   back: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
   block: '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
   checks: '<path d="M2.5 12.5 7 17l9.5-9.5"/><path d="M12.5 16.5l.5.5 9-9"/>',
+  reply: '<path d="M9 7l-5 5 5 5"/><path d="M4 12h10a6 6 0 0 1 6 6v1"/>',
 };
 
 // ---------------------------------------------------------------------------
@@ -425,15 +426,18 @@ export function LevelChip({ points }) {
 let rangsVisibles = true;
 export function voirRangs(v) { rangsVisibles = v; }
 
+// Qui est ce membre, en une ligne : « 5A · Génie Industriel », « Promo 2019 · Capgemini », « Équipe du réseau »
+// (le compte qui anime le réseau n'est jamais « Administration », qu'on confondrait avec celle de l'école)
+export function roleTexte(p) {
+  if (!p) return '';
+  if (p.role === 'etudiant') return `${NIVEAUX[niveauOf(p, seasonOf())]?.short || ''} · ${p.filiere}`;
+  if (p.role === 'admin') return 'Équipe du réseau';
+  return `Promo ${p.promo}${p.entreprise ? ' · ' + p.entreprise : ''}`;
+}
+
 export function RoleLine({ p, score }) {
   if (!p) return null;
-  const saison = seasonOf();
-  const n = niveauOf(p, saison);
-  const parts = [];
-  if (p.role === 'etudiant') parts.push(`${NIVEAUX[n]?.short || ''} · ${p.filiere}`);
-  else if (p.role === 'admin') parts.push(p.poste || 'Administration');
-  else parts.push(`Promo ${p.promo}${p.entreprise ? ' · ' + p.entreprise : ''}`);
-  return html`<span class="role-line">${parts.join(' ')}
+  return html`<span class="role-line">${roleTexte(p)}
     ${p.role === 'laureat' && p.verified ? html`<span class="verif" title="Lauréat vérifié par le réseau"><${Icon} name="shield" size=${13}/></span>` : null}
     ${p.role === 'laureat' && score && rangsVisibles ? html` <${LevelChip} points=${score.points}/>` : null}
     ${p.role === 'laureat' && score && !rangsVisibles && aides(score) ? html` <span class="mini aide-chip"><${Icon} name="heart" size=${11}/> ${aides(score) > 1 ? `A aidé ${aides(score)} étudiants` : 'A aidé 1 étudiant'}</span>` : null}</span>`;

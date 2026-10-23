@@ -59,11 +59,11 @@ const remplis = { travail: p => p.entreprise || p.poste, lieu: p => p.ville, lin
 // Ce que ce membre a rempli mais que je ne peux pas voir (en démo ; en ligne la base l'a déjà retiré)
 export const groupesMasques = (store, p) => Object.keys(VIS_LABELS).filter(g => remplis[g](p) && !store.voitChamp(p, g));
 
-export function VisibiliteFields({ role, value = {}, onChange }) {
+export function VisibiliteFields({ role, value = {}, onChange, etat }) {
   const groupes = visGroupes(role);
   if (!groupes.length) return null;
   return html`<fieldset class="cf-vis">
-    <legend class="h-ico"><${Icon} name="eye" size=${17}/> Qui voit quoi</legend>
+    <legend class="h-ico"><${Icon} name="eye" size=${17}/> Qui voit quoi${etat ? html`<span class=${'cf-vis-etat small' + (etat === 'ok' ? ' ok' : '')} role="status" id="vis-etat">${etat === 'ok' ? html`<${Icon} name="check" size=${14}/> <span>Enregistré</span>` : html`<span>Enregistrement…</span>`}</span>` : null}</legend>
     <p class="small muted">Ton profil n’est jamais public. « Mes contacts » : les membres dont tu acceptes la demande, et le lauréat à qui tu envoies une candidature.</p>
     ${groupes.map(g => { const v = value[g] || VIS_DEFAUT[g]; const label = g === 'presentation' && role !== 'etudiant' ? 'Bio et compétences' : VIS_LABELS[g]; return html`<div class="cf-vis-row" key=${g}>
       <span class="cf-vis-label">${label}</span>
@@ -218,6 +218,8 @@ injectCSS('confiance', `
 .cf-vis-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .4rem .8rem; }
 .cf-vis-label { font-size: .9rem; }
 .cf-vis-seg { margin: 0; }
+.cf-vis-etat { margin-inline-start: .5rem; font-weight: 500; color: var(--muted); display: inline-flex; align-items: center; gap: .2rem; animation: fade-in .2s ease; }
+.cf-vis-etat.ok { color: var(--good); }
 .cf-vis-seg button { font-size: .8rem; padding: .3rem .6rem; }
 .cf-warn { background: var(--warn-soft); color: var(--ink); border-radius: var(--r); padding: .7rem .8rem; display: flex; flex-direction: column; gap: .45rem; }
 .cf-warn p { margin: 0; }
@@ -240,6 +242,7 @@ injectCSS('confiance', `
 // ---------------------------------------------------------------------------
 const CIBLES_AR = { 'cette offre': 'هذا العرض', 'ce commentaire': 'هذا التعليق', 'cette question': 'هذا السؤال', 'cette réponse': 'هذا الجواب', 'ce message': 'هذه الرسالة', 'ce profil': 'هذا الملف', 'ce témoignage d’entretien': 'شهادة المقابلة هذه', 'cet avis': 'هذا الرأي', 'cette rubrique': 'هذا القسم', 'ce café': 'هذا اللقاء', 'cette startup': 'هذه الشركة الناشئة', 'cette relecture': 'هذه المراجعة', 'ce contenu': 'هذا المحتوى' };
 addAR({
+  'Enregistré': 'تم الحفظ', 'Enregistrement…': 'جارٍ الحفظ…',
   'Signaler': 'إبلاغ', 'Signalé': 'تم الإبلاغ', 'Tu as signalé ce contenu. Merci !': 'لقد أبلغت عن هذا المحتوى. شكرًا!',
   'Spam ou publicité': 'رسائل مزعجة أو إشهار', 'Arnaque ou offre douteuse': 'احتيال أو عرض مشبوه', 'Faux profil ou fausse information': 'ملف مزيف أو معلومة خاطئة',
   'Propos déplacés ou offensants': 'كلام غير لائق أو مسيء', 'Harcèlement': 'تحرش أو مضايقة', 'Données personnelles exposées': 'بيانات شخصية منشورة', 'Autre chose': 'شيء آخر',

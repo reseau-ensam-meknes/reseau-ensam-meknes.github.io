@@ -83,3 +83,12 @@ test('cette semaine dans le réseau : qui a aidé combien d’étudiants, sinon 
   const nonClos = base({ profiles, mentorships: [{ mentor_id: 'l', student_id: 's', status: 'acceptee', accepted_at: il_y_a(3), rdv_at: il_y_a(2) }] });
   assert.equal(poulsReseau(nonClos, now).nbAides, 0, 'un rendez-vous passé que personne n’a clos n’est pas encore une aide');
 });
+
+test('messagerie : l’administration n’est jamais écrite comme un rôle sous le nom de quelqu’un', () => {
+  // L'admin écrit à un lauréat : l'écran montre qui est la personne (promo, entreprise), pas « Administration »
+  assert.deepEqual(lienAvec(base(), P.a, 'l', profil), { type: 'admin', label: null });
+  assert.deepEqual(lienAvec(base(), P.l, 'a', profil), { type: 'admin', label: null });
+  // Sans lien précis, une conversation existante n'invente pas d'étiquette non plus
+  const m = base({ messages: [{ id: 'x', author_id: 'n', dest_id: 'l', created_at: '2026-10-02' }] });
+  assert.equal(lienAvec(m, P.l, 'n', profil)?.label ?? null, null);
+});

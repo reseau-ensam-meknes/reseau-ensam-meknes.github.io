@@ -2870,6 +2870,9 @@ create table if not exists public.messages (
 );
 create index if not exists messages_dest_lu on public.messages (dest_id, lu_at);
 create index if not exists messages_paire on public.messages (author_id, dest_id, created_at desc);
+-- Répondre à un message précis : la citation renvoie à un message de la même conversation.
+-- Pas de clé étrangère : un message supprimé pour les deux laisse « Message supprimé » à sa place, sans garder son texte.
+alter table public.messages add column if not exists reponse_a uuid;
 
 -- « Bloquer » : plus aucun message dans un sens ni dans l'autre
 create table if not exists public.blocages (
@@ -2923,6 +2926,11 @@ begin
     if new.type = 'vocal' then new.body := null; new.largeur := null; new.hauteur := null; end if;
     if new.fichier is not null and new.fichier not like new.author_id::text || '/' || new.dest_id::text || '/%' then
       raise exception 'Fichier invalide.';
+    end if;
+    -- On ne cite qu'un message de cette conversation (sinon la citation est simplement retirée)
+    if new.reponse_a is not null and not exists (select 1 from public.messages m where m.id = new.reponse_a
+        and ((m.author_id = new.author_id and m.dest_id = new.dest_id) or (m.author_id = new.dest_id and m.dest_id = new.author_id))) then
+      new.reponse_a := null;
     end if;
     if auth.uid() is not null and not public.peut_discuter(new.author_id, new.dest_id) then
       raise exception 'Conversation pas encore ouverte : elle s’ouvre avec un mentorat, une candidature ou une demande de contact acceptée.';
@@ -3010,6 +3018,54 @@ drop policy if exists "suppression proprietaire" on public.blocages;
 create policy "lecture membres" on public.blocages for select to authenticated using (user_id = auth.uid() or public.is_admin());
 create policy "ecriture proprietaire" on public.blocages for insert to authenticated with check (user_id = auth.uid());
 create policy "suppression proprietaire" on public.blocages for delete to authenticated using (user_id = auth.uid() or public.is_admin());
+
+-- Réactions à un message : une par personne et par message, parmi quelques émojis calmes.
+-- Seules les deux personnes de la conversation les voient ; un blocage les arrête aussi.
+create table if not exists public.reactions_messages (
+  id uuid primary key default gen_random_uuid(),
+  message_id uuid not null references public.messages(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  emoji text not null check (emoji in ('👍','❤️','😂','😮','🙏','👏')),
+  created_at timestamptz default now(),
+  unique (message_id, user_id)
+);
+create index if not exists reactions_messages_message on public.reactions_messages (message_id);
+
+create or replace function public.protect_reaction_message() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare m public.messages;
+begin
+  if tg_op = 'UPDATE' then
+    new.message_id := old.message_id; new.user_id := old.user_id; new.created_at := old.created_at;
+  else
+    if auth.uid() is not null then new.user_id := auth.uid(); end if;
+    new.created_at := now();
+  end if;
+  if auth.uid() is null or public.is_admin() then return new; end if;
+  select * into m from public.messages where id = new.message_id;
+  if m.id is null or new.user_id not in (m.author_id, m.dest_id) then raise exception 'Action non autorisée pour ton compte.'; end if;
+  if exists (select 1 from public.blocages b where (b.user_id = m.author_id and b.bloque_id = m.dest_id) or (b.user_id = m.dest_id and b.bloque_id = m.author_id)) then
+    raise exception 'Vous ne pouvez plus vous écrire.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_reaction_message on public.reactions_messages;
+create trigger trg_protect_reaction_message before insert or update on public.reactions_messages
+  for each row execute function public.protect_reaction_message();
+drop trigger if exists trg_limite on public.reactions_messages;
+create trigger trg_limite before insert on public.reactions_messages
+  for each row execute function public.limiter('user_id', '500', '1 day');
+
+alter table public.reactions_messages enable row level security;
+drop policy if exists "lecture conversation" on public.reactions_messages;
+drop policy if exists "ecriture proprietaire" on public.reactions_messages;
+drop policy if exists "modif proprietaire" on public.reactions_messages;
+drop policy if exists "suppression proprietaire" on public.reactions_messages;
+create policy "lecture conversation" on public.reactions_messages for select to authenticated using (
+  exists (select 1 from public.messages m where m.id = message_id and (m.author_id = auth.uid() or m.dest_id = auth.uid())));
+create policy "ecriture proprietaire" on public.reactions_messages for insert to authenticated with check (user_id = auth.uid());
+create policy "modif proprietaire" on public.reactions_messages for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "suppression proprietaire" on public.reactions_messages for delete to authenticated using (user_id = auth.uid());
 
 -- Photos et vocaux : 5 Mo au plus ; lus par les deux personnes de la conversation seulement
 create or replace function public.peut_lire_fichier_chat(p_name text) returns boolean
@@ -3103,7 +3159,7 @@ do $$
 declare t text;
 begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
-    foreach t in array array['messages','blocages'] loop
+    foreach t in array array['messages','blocages','reactions_messages'] loop
       if not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename=t) then
         execute format('alter publication supabase_realtime add table public.%I', t);
       end if;

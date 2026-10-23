@@ -221,7 +221,7 @@ function App({ store }) {
         <button class="icon-btn cloche-btn" aria-label=${todo ? `Notifications (${todo} à faire)` : 'Notifications'} aria-haspopup="dialog" onClick=${() => { setPop(null); setCloche(true); }}><${Icon} name="bell"/>${todo ? html`<span class="badge-n" aria-hidden="true">${neuf(todo)}</span>` : null}</button>
         <div class="pop-wrap"><button class="me-btn" onClick=${() => setPop(pop === 'me' ? null : 'me')} aria-label="Mon compte" aria-expanded=${pop === 'me'}><${Avatar} p=${me} size=${34}/></button>
           ${pop === 'me' ? html`<div class="menu-pop right" role="menu">
-            <div class="menu-who"><strong>${me.full_name}</strong><span class="muted small">${me.role === 'etudiant' ? 'Étudiant(e)' : me.role === 'laureat' ? 'Lauréat(e)' : 'Administration'}</span></div>
+            <div class="menu-who"><strong>${me.full_name}</strong><span class="muted small">${me.role === 'etudiant' ? 'Étudiant(e)' : me.role === 'laureat' ? 'Lauréat(e)' : 'Équipe du réseau'}</span></div>
             <button onClick=${() => go('profil')}><${Icon} name="user" size=${16}/> Mon profil</button>
             <button class="menu-mobile" onClick=${() => go('suivi')}><${Icon} name="chart" size=${16}/> ${me.role === 'etudiant' ? 'Ma promo' : 'Suivi'}</button>
             ${me.role !== 'admin' ? html`<button onClick=${() => go('accueil/etapes')}><${Icon} name="route" size=${16}/> Comment ça marche ?</button>` : null}
@@ -816,8 +816,6 @@ function guideEtapes(ctx, setCompose) {
   return { steps, done, total, fini, suivante: fini ? null : comptees.find(s => !s.fait && s.go) || null };
 }
 
-// Le formulaire repart des données enregistrées quand elles changent ailleurs (CV appliqué, rôle corrigé…)
-const cleFormulaire = (me, co) => JSON.stringify([me.id, me.role, me.promo, me.filiere, me.poste, me.entreprise, me.ville, me.linkedin, me.bio, me.competences, co?.telephone, co?.email]);
 function MyProfile({ ctx }) {
   const { me, store } = ctx;
   return html`<section class="page narrow">
@@ -825,7 +823,7 @@ function MyProfile({ ctx }) {
       ${store.mode === 'live' ? html`<button class="btn ghost" onClick=${() => store.signOut()}><${Icon} name="logout"/> Se déconnecter</button>` : null}</header>
     <${PhotoCard} ctx=${ctx}/>
     <${CvCard} ctx=${ctx}/>
-    <${ProfileForm} ctx=${ctx} initial=${me} key=${cleFormulaire(me, store.coordonneesDe?.(me.id))}/>
+    <${ProfileForm} ctx=${ctx} initial=${me} key=${me.id}/>
     <${MesDonnees} ctx=${ctx}/>
   </section>`;
 }
