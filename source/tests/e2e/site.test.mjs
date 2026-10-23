@@ -779,6 +779,34 @@ test('annonce : sur une ligne, seulement pour son public', async () => {
   await s.ctx.close();
 });
 
+test('un rendez-vous ne prend la carte que la veille ; Mentorat calme propose « Me rendre disponible »', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const demo = f => s.page.evaluate(f => { const k = 'ensam-demo-v14', st = JSON.parse(localStorage.getItem(k)); new Function('d', f)(st.data); localStorage.setItem(k, JSON.stringify(st)); }, f);
+  const recharger = async () => { await s.page.reload(); await s.page.waitForSelector('.hello'); await s.page.waitForTimeout(300); if (await s.page.$('.fete-back')) await s.fermer(); };
+  // Salma a un rendez-vous demain, pas encore confirmé : la carte le propose
+  await s.comme('Salma'); await s.aller('accueil');
+  if (await s.page.$('.fete-back')) await s.fermer();
+  assert.match(await s.page.locator('.pas').getAttribute('data-pas'), /^sc/);
+  assert.match(await s.page.locator('.pas .pas-go').innerText(), /Je serai là/);
+  // Dans quatre jours : une ligne de « Cette semaine », la carte passe à autre chose
+  await demo(`const salma = d.profiles.find(p => p.full_name.startsWith('Salma'));
+    d.mentorships.find(m => m.student_id === salma.id && m.status === 'acceptee' && !m.confirme_at && new Date(m.rdv_at) > Date.now()).rdv_at = new Date(Date.now() + 4 * 864e5).toISOString();`);
+  await recharger();
+  assert.doesNotMatch(await s.page.locator('.pas').getAttribute('data-pas'), /^sc|^rdv/);
+  assert.match(await s.page.locator('.semaine .todo').innerText(), /Confirme ta présence/);
+  // Une lauréate encore invisible, sans demande : une seule action
+  await s.comme('Nadia');
+  await demo(`d.mentorships = d.mentorships.filter(m => m.status !== 'demande');`);
+  await recharger(); await s.aller('mentorat');
+  const calme = s.page.locator('.m-section').first();
+  assert.match(await calme.innerText(), /Tout est calme pour l’instant/);
+  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1);
+  await calme.locator('.empty button:has-text("Me rendre disponible")').click(); await s.page.waitForTimeout(300);
+  assert.match(await calme.innerText(), /Tu seras prévenu\(e\)/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 // page.goBack() = le bouton Retour du navigateur (comme celui du téléphone)
 const retour = async page => { await page.goBack({ waitUntil: 'commit' }); await page.waitForTimeout(350); };
 const ici = page => page.evaluate(() => location.hash);

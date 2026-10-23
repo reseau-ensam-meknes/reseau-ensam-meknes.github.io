@@ -331,12 +331,13 @@ export function mentorState(m, now = new Date()) {
 }
 // Jours de calendrier (ceux de l'appareil) d'aujourd'hui à cette date : 0 aujourd'hui, 1 demain
 export const joursAvant = (iso, now = new Date()) => { const j = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); return Math.round((j(new Date(iso)) - j(now)) / 864e5); };
-// Un rendez-vous ne prend la carte « prochaine étape » que s'il commence, si l'étudiant doit encore confirmer, ou la veille et le jour même
+// Un rendez-vous ne prend la carte « prochaine étape » que s'il commence, la veille ou le jour même.
+// L'étudiant qui n'a pas encore confirmé le fait alors sur la carte ; avant, c'est une ligne de « Cette semaine ».
 export function rdvALaUne(m, meId, now = new Date()) {
   if (!m?.rdv_at || (m.student_id !== meId && m.mentor_id !== meId) || mentorState(m, now) !== 'rdv') return null;
   if (now.getTime() > new Date(m.rdv_at).getTime() - 15 * 6e4) return 'direct';
-  if (m.student_id === meId && 'confirme_at' in m && !m.confirme_at) return 'confirmer';
-  return joursAvant(m.rdv_at, now) <= 1 ? 'proche' : null;
+  if (joursAvant(m.rdv_at, now) > 1) return null;
+  return m.student_id === meId && 'confirme_at' in m && !m.confirme_at ? 'confirmer' : 'proche';
 }
 // Premiers pas d'un lauréat : son profil compte dès qu'il dit où il en est (en poste ou en recherche), jamais bloqué faute d'employeur
 export const profilLaureatFait = me => !!(me?.entreprise || me?.poste || (me?.en_recherche && me?.disponibilite));
@@ -822,9 +823,11 @@ export function poulsReseau(data, now = new Date()) {
   const semaine = calc(7);
   return semaine.nbAidants >= 2 ? semaine : calc(30);
 }
-// À froid : combien de lauréats sont là (moi exclu) et combien me ressemblent. « cle » = le filtre de l'annuaire qui montre exactement ces personnes.
+// À froid : combien de lauréats sont là (le même total pour tout le monde) et combien me ressemblent (moi exclu).
+// « cle » = le filtre de l'annuaire qui montre exactement ces personnes.
 export function presenceReseau(data, me) {
-  const lau = (data.profiles || []).filter(p => p.role === 'laureat' && p.id !== me?.id);
+  const tous = (data.profiles || []).filter(p => p.role === 'laureat');
+  const lau = tous.filter(p => p.id !== me?.id);
   if (!me || !lau.length) return null;
   let cle = null, proches = [];
   const garde = (k, f) => { if (cle) return; const x = lau.filter(f); if (x.length) { cle = k; proches = x; } };
@@ -837,7 +840,7 @@ export function presenceReseau(data, me) {
   const visages = (proches.length ? proches : lau).slice()
     .sort((a, b) => (b.photo_path ? 1 : 0) - (a.photo_path ? 1 : 0) || String(b.created_at || '').localeCompare(String(a.created_at || '')))
     .slice(0, 3).map(p => p.id);
-  return { total: lau.length, proches: proches.length, cle, visages };
+  return { total: tous.length, proches: proches.length, cle, visages };
 }
 const DE_PRES = { filiere: 'de ta filière', parcours: 'de ton parcours', promo: 'de ta promo' };
 // Une seule phrase par cas : la version arabe la reconnaît en entier
@@ -915,7 +918,8 @@ export const annoncePour = (annonces, me, now = Date.now()) => (annonces || []).
 
 // « Cette semaine » : trois petites choses au plus que seul le membre peut boucler.
 // Jamais ce que montre la carte du haut ; pas les demandes d'aide (md, rd, qr : « Ils ont besoin de toi »),
-// ni les coordonnées (dc : leur carte), ni le recrutement à confirmer (pa : la carte), ni les rendez-vous proches (rdv).
+// ni les coordonnées (dc : leur carte), ni le recrutement à confirmer (pa : la carte), ni les rappels de rendez-vous (rdv).
+// Une présence à confirmer (sc) y vient tant que le rendez-vous est loin ; la veille, elle passe sur la carte.
 export const TACHES = { dp: 0, ap: 0, dm: 0, sc: 1, in: 1, sg: 1, sf: 2, rr: 2, pm: 2, mf: 2, ev: 3, dr: 4, ro: 4, eq: 5 };
 export function petitesTaches(notifs, pas = {}) {
   const deja = new Set([pas.key, ...(pas.cles || [])].filter(Boolean));

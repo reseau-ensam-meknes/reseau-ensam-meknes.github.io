@@ -377,7 +377,7 @@ function buildNotifs({ data, me, store, saison }) {
     if (m.student_id === me.id) {
       // Rendez-vous fixé : confirmer sa présence est la chose à faire (base à jour) ; sinon une simple nouvelle, puis le rappel
       const aConfirmer = st === 'rdv' && 'confirme_at' in m && !m.confirme_at;
-      if (aConfirmer) out.push({ key: 'sc' + m.id + m.rdv_at, ref: m.id, rdv: true, action: true, geste: 'Confirmer ma présence', tone: 'accent', icon: 'calendar', to: 'mentorat', at: m.accepted_at || m.created_at, text: `${first(m.mentor_id)} a fixé ton rendez-vous. Confirme ta présence : ${m.sujet}` });
+      if (aConfirmer) out.push({ key: 'sc' + m.id + m.rdv_at, ref: m.id, action: true, geste: 'Confirmer ma présence', tone: 'accent', icon: 'calendar', to: 'mentorat', at: m.accepted_at || m.created_at, text: `${first(m.mentor_id)} a fixé ton rendez-vous. Confirme ta présence : ${m.sujet}` });
       else if (st === 'rdv' && !soon && recent(m.accepted_at || m.created_at, 10)) out.push({ key: 'sa' + m.id + m.rdv_at, ref: m.id, icon: 'mentor', tone: 'good', to: 'mentorat', at: m.accepted_at || m.created_at, text: `${name(m.mentor_id)} a accepté ta demande : ${m.sujet}` });
       if (soon && !aConfirmer) out.push({ key: 'sr' + m.id + m.rdv_at, ref: m.id, rdv: true, rappel: true, action: true, tone: 'accent', icon: 'video', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous avec ${name(m.mentor_id)} ${soon}` });
       if (st === 'apres') out.push({ key: 'sf' + m.id, ref: m.id, action: true, geste: 'Dire merci', tone: 'brass', icon: 'heart', to: 'mentorat', at: m.rdv_at, text: `Comment s’est passé ton échange avec ${first(m.mentor_id)} ? Dis-lui merci.` });
@@ -392,7 +392,8 @@ function buildNotifs({ data, me, store, saison }) {
   // Invitations à postuler (étudiant)
   for (const i of data.invitations) if (i.student_id === me.id && i.status === 'envoyee' && !data.applications.some(a => a.offer_id === i.offer_id && a.student_id === me.id)) {
     const o = store.byId('offers', i.offer_id);
-    if (o && o.status === 'ouverte') out.push({ key: 'in' + i.id, ref: o.id, action: true, geste: 'Voir l’offre', tone: 'accent', icon: 'send', offer: o.id, at: i.created_at, text: `${name(i.laureat_id)} t’invite à postuler : ${o.titre}` });
+    // Une invitation reçue l'an dernier ne pousse pas une offre d'une autre année
+    if (o && o.status === 'ouverte' && peutPostulerA(o, me, saison)) out.push({ key: 'in' + i.id, ref: o.id, action: true, geste: 'Voir l’offre', tone: 'accent', icon: 'send', offer: o.id, at: i.created_at, text: `${name(i.laureat_id)} t’invite à postuler : ${o.titre}` });
   }
   // Demandes des étudiants : aides reçues, match à faire avancer, demande en pause, nouvelles demandes de son parcours
   const dem = id => (data.demandes || []).find(d => d.id === id);

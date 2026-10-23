@@ -481,6 +481,7 @@ export function MentoratPage(ctx) {
   // Demandes pour moi : toutes celles qui me vont (lauréat), ou celles qu'un étudiant m'a adressées (administration)
   const need = isLaureat || isAdmin ? requestsFor(data, me, id => store.byId('profiles', id)).filter(x => x.direct || (isLaureat && !ignorees.includes(x.m.id))) : [];
   const ignorer = m => { setIgnorees([...ignorees.filter(id => id !== m.id), m.id].slice(-200)); toast('Demande masquée. Elle ne reviendra plus dans ta liste.'); };
+  const seRendreDispo = () => act(() => store.update('profiles', me.id, { mentor_dispo: true }));
   const busy = new Set(mineActive.map(m => m.mentor_id));
   const reco = me.role === 'etudiant' ? mentorsFor(data, me, '', scores).filter(x => !busy.has(x.p.id)).slice(0, 3) : [];
 
@@ -549,8 +550,11 @@ export function MentoratPage(ctx) {
     ${isLaureat ? html`<section class="m-section">
       <div class="m-head"><h2 class="h-ico"><${Icon} name="heart"/> ${`Quand tu as ${RDV_MIN} minutes`}</h2></div>
       ${need.length ? html`<p class="small muted m-invite">Prends la demande qui te parle, à ton rythme. Les autres lauréats s’occupent du reste.</p>` : null}
-      ${!me.mentor_dispo ? html`<div class="hint-box"><${Icon} name="mentor" size=${16}/><span class="grow small">Les étudiants ne te voient pas encore : rends-toi disponible pour recevoir leurs demandes directes.</span><button class="btn small primary" onClick=${() => act(() => store.update('profiles', me.id, { mentor_dispo: true }))}>Me rendre disponible</button></div>` : null}
-      <div class="list">${need.length ? need.slice(0, more ? 12 : 2).map(({ m, why, direct }) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="mentor" why=${why} onIgnore=${direct ? null : () => ignorer(m)}/>`) : html`<${Empty} icon="mentor" title="Tout est calme pour l’instant">Tu seras prévenu(e) dès qu’un étudiant demande de l’aide.<//>`}</div>
+      ${!me.mentor_dispo && need.length ? html`<div class="hint-box"><${Icon} name="mentor" size=${16}/><span class="grow small">Les étudiants ne te voient pas encore : rends-toi disponible pour recevoir leurs demandes directes.</span><button class="btn small primary" onClick=${seRendreDispo}>Me rendre disponible</button></div>` : null}
+      <div class="list">${need.length ? need.slice(0, more ? 12 : 2).map(({ m, why, direct }) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="mentor" why=${why} onIgnore=${direct ? null : () => ignorer(m)}/>`) : !me.mentor_dispo
+        // Mentorat calme : une seule action, se rendre disponible
+        ? html`<${Empty} icon="mentor" title="Tout est calme pour l’instant" action=${{ label: 'Me rendre disponible', icon: 'check', onClick: seRendreDispo }}>Rends-toi disponible : les étudiants de ton parcours pourront te demander conseil directement.<//>`
+        : html`<${Empty} icon="mentor" title="Tout est calme pour l’instant">Tu seras prévenu(e) dès qu’un étudiant demande de l’aide.<//>`}</div>
       ${need.length > 2 ? html`<button class="linkish small past-toggle" onClick=${() => setMore(!more)}>${more ? 'Voir moins' : `Voir les autres demandes (${need.length - 2})`}</button>` : null}
     </section>` : null}
 
@@ -906,6 +910,7 @@ addAR({
   'Besoin d’un autre conseil ?': 'تحتاج نصيحة أخرى؟',
   'Prends la demande qui te parle, à ton rythme. Les autres lauréats s’occupent du reste.': 'اختر الطلب الذي يناسبك، على راحتك. باقي الخريجين يتكفّلون بالبقية.',
   'Tout est calme pour l’instant': 'كل شيء هادئ حاليًا',
+  'Rends-toi disponible : les étudiants de ton parcours pourront te demander conseil directement.': 'كن متاحًا: سيتمكن طلبة مسارك من طلب النصح منك مباشرة.',
   'Pas cette fois': 'ليس هذه المرة',
   'Ajouter à mon agenda': 'إضافة إلى أجندتي',
   'Plus d’options': 'خيارات أخرى',

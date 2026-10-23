@@ -14,13 +14,14 @@ test('joursAvant : jours de calendrier, pas des tranches de 24 h', () => {
   assert.equal(joursAvant(at(2, 9), NOW), 2);
 });
 
-test('rdvALaUne : un rendez-vous ne prend la carte que la veille, le jour même, ou pour confirmer', () => {
+test('rdvALaUne : un rendez-vous ne prend la carte que la veille ou le jour même, confirmation comprise', () => {
   const m = x => ({ id: 'm', student_id: 's', mentor_id: 'l', status: 'acceptee', rdv_at: at(3), ...x });
   assert.equal(rdvALaUne(m(), 's', NOW), null, 'dans trois jours : pas encore');
   assert.equal(rdvALaUne(m({ rdv_at: at(1) }), 's', NOW), 'proche', 'demain : la veille');
   assert.equal(rdvALaUne(m({ rdv_at: at(0) }), 'l', NOW), 'proche', 'aujourd’hui, pour le lauréat aussi');
   assert.equal(rdvALaUne(m({ rdv_at: new Date(NOW.getTime() + 10 * 6e4).toISOString() }), 's', NOW), 'direct', 'dans 10 minutes : on rejoint');
-  assert.equal(rdvALaUne(m({ confirme_at: null }), 's', NOW), 'confirmer', 'l’étudiant doit confirmer, même loin');
+  assert.equal(rdvALaUne(m({ confirme_at: null }), 's', NOW), null, 'à confirmer mais dans trois jours : « Cette semaine », pas la carte');
+  assert.equal(rdvALaUne(m({ rdv_at: at(1), confirme_at: null }), 's', NOW), 'confirmer', 'la veille : l’étudiant confirme sur la carte');
   assert.equal(rdvALaUne(m({ confirme_at: null }), 'l', NOW), null, 'le lauréat n’a rien à confirmer');
   assert.equal(rdvALaUne(m({ rdv_at: at(1) }), 'x', NOW), null, 'pas le sien');
   assert.equal(rdvALaUne(m({ status: 'terminee', rdv_at: at(0) }), 's', NOW), null, 'terminé');
@@ -46,15 +47,16 @@ test('annonces : chacun ne voit que la sienne, 14 jours au plus, la plus récent
   assert.equal(pourPublic('laureats', 'etudiant'), false);
 });
 
-test('petitesTaches : trois au plus, jamais ce que montre la carte, ni les aides ni les rendez-vous', () => {
+test('petitesTaches : trois au plus, jamais ce que montre la carte, ni les aides ni les rappels de rendez-vous', () => {
   const n = (key, x = {}) => ({ key, action: true, at: NOW.toISOString(), ...x });
-  const notifs = [n('apO1-3', { ref: 'o1' }), n('mdM1', { besoin: true }), n('scM2', { rdv: true }), n('mfP1'), n('roO2'), n('dmC1'), n('eq6'), n('dcX'), n('paY'), n('zzz'), { key: 'sfA', at: NOW.toISOString() }];
+  const notifs = [n('apO1-3', { ref: 'o1' }), n('mdM1', { besoin: true }), n('srM3', { rdv: true, rappel: true }), n('mfP1'), n('roO2'), n('dmC1'), n('eq6'), n('dcX'), n('paY'), n('zzz'), { key: 'sfA', at: NOW.toISOString() }, n('scM2', { ref: 'm2' })];
   const t = petitesTaches(notifs);
-  assert.deepEqual(t.map(x => x.key), ['apO1-3', 'dmC1', 'mfP1'], 'les candidatures et les messages d’abord, trois au plus');
-  assert.ok(!t.some(x => ['md', 'sc', 'dc', 'pa', 'zz', 'sf'].includes(x.key.slice(0, 2))));
+  assert.deepEqual(t.map(x => x.key), ['apO1-3', 'dmC1', 'scM2'], 'les candidatures, les matchs, puis une présence à confirmer ; trois au plus');
+  assert.ok(!t.some(x => ['md', 'sr', 'dc', 'pa', 'zz', 'sf'].includes(x.key.slice(0, 2))));
   const sans = petitesTaches(notifs, { key: 'dmC1', ref: 'o1' });
-  assert.deepEqual(sans.map(x => x.key), ['mfP1', 'roO2', 'eq6'], 'la carte du haut et son offre ne reviennent pas dessous');
-  assert.deepEqual(petitesTaches(notifs, { cles: ['mfP1', 'roO2'] }).map(x => x.key), ['apO1-3', 'dmC1', 'eq6']);
+  assert.deepEqual(sans.map(x => x.key), ['scM2', 'mfP1', 'roO2'], 'la carte du haut et son offre ne reviennent pas dessous');
+  assert.deepEqual(petitesTaches(notifs, { key: 'rdvm2', ref: 'm2', cles: ['scM2'] }).map(x => x.key), ['apO1-3', 'dmC1', 'mfP1'], 'la veille, la carte montre le rendez-vous : sa confirmation n’est pas répétée');
+  assert.deepEqual(petitesTaches(notifs, { cles: ['mfP1', 'roO2', 'scM2'] }).map(x => x.key), ['apO1-3', 'dmC1', 'eq6']);
 });
 
 const S = seasonOf(NOW);
@@ -140,6 +142,7 @@ test('cette semaine dans le réseau : les phrases', () => {
   assert.equal(lignePresence({ total: 1, proches: 0, cle: null }), '1 lauréat est déjà là');
   const profiles = [{ id: 'me', role: 'laureat', promo: 2016 }, { id: 'a', role: 'laureat', promo: 2016 }, { id: 'b', role: 'laureat', promo: 2018 }, { id: 'c', role: 'etudiant' }];
   const p = presenceReseau({ profiles }, profiles[0]);
-  assert.deepEqual([p.total, p.proches, p.cle, p.visages], [2, 1, 'promo', ['a']], 'moi exclu, les visages sont ceux de la phrase');
+  assert.deepEqual([p.total, p.proches, p.cle, p.visages], [3, 1, 'promo', ['a']], 'le même total pour tous ; « de ta promo » et les visages sans moi');
+  assert.equal(presenceReseau({ profiles }, profiles[3]).total, 3, 'un étudiant voit le même total');
   assert.equal(presenceReseau({ profiles: [profiles[0]] }, profiles[0]), null, 'personne d’autre : rien à dire');
 });
