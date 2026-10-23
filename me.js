@@ -477,7 +477,7 @@ addAR({
   [/^Guide de l’étranger : (.+)$/, x => `دليل الخارج: ${x}`],
   [/^Entretien partagé : (.+)$/, x => `مقابلة مشتركة: ${x}`],
   [/^Avis de stage : (.+)$/, x => `رأي حول تدريب: ${x}`],
-  [/^Vérifié : recrutement déclaré par (.+), confirmé par toi$/, n => `موثّق: توظيف صرّح به ${n === 'un lauréat' ? 'خريج' : n} وأكّدته أنت`],
+  [/^Vérifié : recrutement déclaré par (.+), confirmé par toi$/, n => `موثّق: توظيف بتصريح من ${n === 'un lauréat' ? 'خريج' : n}، وبتأكيد منك`],
   [/^(.+?) déclare ton recrutement chez (.+)$/, (n, e) => `تصريح من ${n === 'Un lauréat' ? 'خريج' : n} بتوظيفك لدى ${e}`],
   [/^Voir les (\d+) autres$/, n => `عرض البقية (${n})`],
   [/^Ton recrutement chez (.+) est vérifié des deux côtés\. Un petit mot fera très plaisir à (.+)\.$/, (e, p) => `توظيفك في ${e} مؤكَّد من الطرفين. كلمة شكر صغيرة ستُسعد ${p} كثيرًا.`],

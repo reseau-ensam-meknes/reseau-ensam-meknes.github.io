@@ -15,7 +15,12 @@ const LAU = ['خريج واحد', 'خريجان', 'خريجين', 'خريجًا'
 const ETU = ['طالب واحد', 'طالبان', 'طلبة', 'طالبًا'];
 const MEMBRES = ['عضو واحد', 'عضوان', 'أعضاء', 'عضوًا'];
 const MOIS_NOM_AR = { Janvier: 'يناير', 'Février': 'فبراير', Mars: 'مارس', Avril: 'أبريل', Mai: 'ماي', Juin: 'يونيو', Juillet: 'يوليوز', 'Août': 'غشت', Septembre: 'شتنبر', Octobre: 'أكتوبر', Novembre: 'نونبر', 'Décembre': 'دجنبر' };
-const DEFI_AR = { 'stages pour les 4A': 'تدريبًا لطلبة السنة الرابعة', 'stages trouvés pour les 4A': 'تدريبًا لطلبة السنة الرابعة', 'mentorats terminés': 'جلسة إرشاد منتهية', 'offres partagées': 'عرضًا منشورًا' };
+const STAGES_4A = [['تدريب واحد', 'تدريبان', 'تدريبات', 'تدريبًا'], ' لطلبة السنة الرابعة'];
+const DEFI_AR = {
+  'stages pour les 4A': STAGES_4A, 'stages trouvés pour les 4A': STAGES_4A,
+  'mentorats terminés': [['جلسة إرشاد منتهية', 'جلستا إرشاد منتهيتان', 'جلسات إرشاد منتهية', 'جلسة إرشاد منتهية'], ''],
+  'offres partagées': [['عرض منشور', 'عرضان منشوران', 'عروض منشورة', 'عرضًا منشورًا'], ''],
+};
 const APP_AR = { Envoyée: 'مُرسَل', Entretien: 'مقابلة', Retenue: 'مقبول', 'Pas retenue': 'غير مقبول' };
 
 export const AR = {
@@ -686,7 +691,7 @@ export const AR_PATTERNS = [
   [/^encore (\d+) pour (.+)$/, (n, l) => `بقي ${n} لبلوغ ${AR[l] || l}`],
   [/^(\d+) sur (\d+)$/, (a, b) => `${a} من ${b}`],
   [/^réponses?$/, () => 'جواب'],
-  [/^(\d+) lauréats · (\d+) étudiants$/, (a, b) => `${a} خريجًا · ${b} طالبًا`],
+  [/^(\d+) lauréats · (\d+) étudiants$/, (a, b) => `${arCount(a, LAU)} · ${arCount(b, ETU)}`],
   [/^(\d+) réponses?$/, (n) => `${n} جواب`],
   [/^publiées par (\d+) lauréats$/, (n) => `نشرها ${n} خريجًا`],
   [/^(.+?) · (\d+) via la plateforme$/, null],
@@ -696,12 +701,16 @@ export const AR_PATTERNS = [
   [/^pour (.+)$/, x => `بخصوص ${x}`],
   [/^(.+), dont (\d+) grâce aux lauréats du réseau\.$/, null],
   [/^Pour (.+) · partagées par les lauréats$/, null],
+  [/^(\d+) (points?|recrutés?|mentorats?|offres?)$/, (n, w) => arCount(n, {
+    point: ['نقطة واحدة', 'نقطتان', 'نقاط', 'نقطة'], recruté: ['موظَّف واحد', 'موظَّفان', 'موظَّفين', 'موظَّفًا'],
+    mentorat: ['جلسة إرشاد واحدة', 'جلستا إرشاد', 'جلسات إرشاد', 'جلسة إرشاد'], offre: ['عرض واحد', 'عرضان', 'عروض', 'عرضًا'],
+  }[w.replace(/s$/, '')])],
   [/^(\d+) points? en 30 jours$/, (n) => `${n} نقطة في 30 يومًا`],
   [/^(\d+) pts$/, (n) => `${n} ن`],
   [/^(\d+) recrutés · (\d+) mentorats · (\d+) offres$/, (a, b, c) => `${a} موظَّفين · ${b} إرشاد · ${c} عروض`],
   // Phase 1
   [/^Inviter (.+)$/, (n) => `دعوة ${n}`],
-  [/^(.+?) t’invite à postuler : (.+)$/, (n, x) => `${n} يدعوك للترشح: ${x}`],
+  [/^(.+?) t’invite à postuler : (.+)$/, (n, x) => `دعوة من ${n} للترشح: ${x}`],
   [/^Rendez-vous de 15 min avec (.+?) (aujourd’hui|demain) à (\d{1,2}:\d{2})$/, (n, d, h) => `موعد 15 دقيقة مع ${n} ${d === 'demain' ? 'غدًا' : 'اليوم'} على الساعة ${h}`],
   [/^(.+?) a réservé ton créneau de 15 min : (.+)$/, (n, x) => `${n} حجز موعدًا معك لمدة 15 دقيقة: ${x}`],
   [/^(.+?) a dû annuler votre rendez-vous de 15 min\.$/, (n) => `اضطر ${n} إلى إلغاء موعدكما (15 دقيقة).`],
@@ -752,7 +761,7 @@ export const AR_PATTERNS = [
   [/^encore (\d+) j$/, (n) => `بقي ${arCount(n, JOURS)}`],
   [/^· (\d+)\/(\d+) · jusqu’au (.+)$/, (a, b, d) => `· ${a}/${b} · حتى ${d}`],
   [/^· (\d+)\/(\d+) · terminé$/, (a, b) => `· ${a}/${b} · انتهى`],
-  [/^(Janvier|Février|Mars|Avril|Mai|Juin|Juillet|Août|Septembre|Octobre|Novembre|Décembre|Cette année) : (\d+) (stages(?: trouvés)? pour les 4A|mentorats terminés|offres partagées)$/, (m, n, x) => `${MOIS_NOM_AR[m] || 'هذه السنة'}: ${n} ${DEFI_AR[x]}`],
+  [/^(Janvier|Février|Mars|Avril|Mai|Juin|Juillet|Août|Septembre|Octobre|Novembre|Décembre|Cette année) : (\d+) (stages(?: trouvés)? pour les 4A|mentorats terminés|offres partagées)$/, (m, n, x) => `${MOIS_NOM_AR[m] || 'هذه السنة'}: ${arCount(n, DEFI_AR[x][0])}${DEFI_AR[x][1]}`],
   [/^Lauréats chez (.+)$/, (e) => `خريجون لدى ${e}`],
   [/^Une question sur (.+) \? Les lauréats qui y travaillent la reçoivent directement\.$/, (e) => `سؤال حول ${e}؟ يتلقاه مباشرة الخريجون الذين يعملون هناك.`],
   [/^Page entreprise : (.+)$/, (e) => `صفحة الشركة: ${e}`],
@@ -787,7 +796,6 @@ export const AR_PATTERNS = [
   [/^Le plus grand arrêt : après le profil, avant la première action \((\d+) membres?\)\.$/, n => `أكبر توقف: بعد الملف وقبل أول نشاط (${n} عضو).`],
   [/^(\d+) demandes d’étudiants sur (\d+), en 30 jours$/, (a, b) => `${a} من ${b} طلبات للطلبة، خلال 30 يومًا`],
   [/^(\d+) sur (\d+) en 30 jours · objectif 8 sur 10( · toutes aides : (\d+)\s?%)?$/, (a, b, x, t) => `${a} من ${b} خلال 30 يومًا · الهدف 8 من 10${x ? ` · كل أنواع المساعدة: ${t}%` : ''}`],
-  [/^Pas encore de Demande ce mois-ci · toutes aides : (\d+)\s?%$/, t => `لا «طلبات» بعد هذا الشهر · كل أنواع المساعدة: ${t}%`],
   [/^(\d+) demandes d’aide attendent depuis plus de 24 h$/, n => `${n} طلبات مساعدة تنتظر منذ أكثر من 24 ساعة`],
   [/^(\d+) questions d’étudiants sans réponse depuis plus de 24 h$/, n => `${n} أسئلة للطلبة بلا جواب منذ أكثر من 24 ساعة`],
   [/^Lu dans le CV de (.+) :$/, x => `قُرئ في سيرة ${x} الذاتية:`],

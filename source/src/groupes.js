@@ -6,7 +6,6 @@ import { myGroups, groupMembers, groupLabel, groupKey, autoGroups, timeAgo } fro
 import { SlotDate } from './mentorat.js';
 import { SignalerBtn } from './confiance.js';
 import { villeAffichee } from './geo.js';
-import { getLang } from './i18n.js';
 
 const KIND = { filiere: ['cap', 'Parcours d’études'], ville: ['pin', 'Ville'], pays: ['globe', 'À l’étranger'] };
 const pad = n => String(n).padStart(2, '0');

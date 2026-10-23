@@ -252,14 +252,15 @@ addAR({ 'Voir toutes les réussites': 'عرض كل النجاحات', 'Voir l’
   [/^Voir les (\d+) autres réussites$/, n => `عرض ${n} نجاحات أخرى`],
 ]);
 
-// Qui remercie qui : les deux visages, l'année (ou la promo) de l'auteur, l'entreprise et la date. L'entreprise du
-// lauréat ne s'affiche que s'il la montre à ce lecteur (« Qui voit quoi ») ; celle d'une réussite confirmée est déjà
-// publique (fil des réussites). seul : le lauréat est déjà nommé à côté (carte de mentor), on ne montre que l'auteur.
+// Qui remercie qui : les deux visages, l'année (ou la promo) de l'auteur, l'entreprise et la date. Écrite à côté du
+// nom du lauréat, l'entreprise (la sienne, ou celle d'une réussite confirmée) ne s'affiche que s'il montre son travail
+// à ce lecteur (« Qui voit quoi » ; en ligne, a.entreprise est vide s'il le cache). seul : le lauréat est déjà nommé à
+// côté (carte de mentor), on ne montre que l'auteur.
 export function MerciDuo({ ctx, m, size = 26, seul = false }) {
   const { store, saison, openProfile } = ctx;
   const de = store.byId('profiles', m.from), a = store.byId('profiles', m.to);
   const annee = !de ? '' : de.role === 'etudiant' ? NIVEAUX[niveauOf(de, saison)]?.short || '' : de.promo ? `Promo ${de.promo}` : '';
-  const ent = m.entreprise || (a && store.voitChamp(a, 'travail') ? a.entreprise : '') || '';
+  const ent = a && a.entreprise && store.voitChamp(a, 'travail') ? m.entreprise || a.entreprise : '';
   const prenom = de?.full_name?.split(' ')[0];
   return html`<footer class="merci-duo">
     <span class="md-qui"><${Avatar} p=${de} size=${size}/><span class="md-txt">${prenom ? html`<b translate="no" dir="auto">${prenom}</b>` : html`<b>Un étudiant</b>`}${annee ? html`<span class="muted"> · ${annee}</span>` : null}</span></span>

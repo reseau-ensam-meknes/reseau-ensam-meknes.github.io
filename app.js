@@ -690,7 +690,7 @@ function Home(ctx) {
   // Un lauréat qui cherche un emploi voit d'abord les offres faites pour lui
   const dernieres = data.offers.filter(o => o.status === 'ouverte' && !montres.has(o.id) && (!enRecherche || matchesMe(o, me, saison))).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 2);
   const star = ctx.star;
-  const starHelped = star ? data.placements.filter(p => p.laureat_id === star.p.id && p.status === 'confirme').length : 0;
+  const starHelped = star ? data.placements.filter(p => p.laureat_id === star.p.id && p.status === 'confirme' && !p.demande_id).length : 0;
   const merci = mercisPublics(data)[0];
   const obj = OBJECTIFS[n];
   const s = scores.get(me.id);

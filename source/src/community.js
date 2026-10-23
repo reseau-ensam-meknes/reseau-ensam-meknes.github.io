@@ -194,6 +194,9 @@ export function ProfileModal({ ctx, p: p0, onClose, onAskMentor }) {
   // Un étudiant ne voit ni points ni classement : seulement les badges qui disent à qui il peut faire confiance
   const badges = badgesOf(s, p, { star: ctx.starId, fondateurs: ctx.fondateurs }).filter(b => me.role !== 'etudiant' || ['verifie', 'fondateur', 'mentor', 'reactif'].includes(b.id));
   const helped = data.placements.filter(x => x.laureat_id === p.id && x.status === 'confirme').length;
+  // Seulement les chiffres non nuls, accordés : un nouveau lauréat n'affiche pas une rangée de zéros
+  const stats = [[s?.points, 'point'], [helped, 'recruté'], [s?.mentorats, 'mentorat'], [s?.offres, 'offre']]
+    .filter(([n]) => n > 0).map(([n, mot]) => `${n} ${mot}${n > 1 ? 's' : ''}`);
   const st = p.role === 'etudiant' ? statutOf(data, p, saison) : null;
   return html`<${Modal} title="Profil" onClose=${onClose}>
     <div class="profile">
@@ -205,7 +208,7 @@ export function ProfileModal({ ctx, p: p0, onClose, onAskMentor }) {
       ${p.role === 'laureat' && p.en_recherche ? html`<p class="small"><span class="state-pill s-recherche">Cherche un emploi</span>${p.disponibilite ? html` <span translate="no" dir="auto">${p.disponibilite}</span>` : null}</p>` : null}
       ${p.bio ? html`<p>${p.bio}</p>` : null}
       ${(p.competences || []).length ? html`<p class="offer-target">${p.competences.map(c => html`<span class="mini">${c}</span>`)}</p>` : null}
-      ${p.role !== 'etudiant' && me.role !== 'etudiant' ? html`<div class="profile-stats"><span><b class="mono">${s?.points || 0}</b> points</span><span><b class="mono">${helped}</b> ${helped === 1 ? 'recruté' : 'recrutés'}</span><span><b class="mono">${s?.mentorats || 0}</b> mentorats</span><span><b class="mono">${s?.offres || 0}</b> offres</span></div>` : null}
+      ${p.role !== 'etudiant' && me.role !== 'etudiant' && stats.length ? html`<div class="profile-stats">${stats.map(x => html`<span>${x}</span>`)}</div>` : null}
       ${badges.length ? html`<div class="badge-row">${badges.map(b => html`<span class="mini badge-mini" title=${b.desc}><${Icon} name="star" size=${12}/> ${b.nom}</span>`)}</div>` : null}
       ${(p.linkedin || p.cv_path || p.cv_url) ? html`<dl class="offer-more">${p.linkedin ? html`<div><dt>LinkedIn</dt><dd><a href=${p.linkedin.startsWith('http') ? p.linkedin : 'https://' + p.linkedin} target="_blank" rel="noopener" dir="ltr" translate="no">${p.linkedin}</a></dd></div>` : null}
         ${p.cv_path || p.cv_url ? html`<div><dt>CV</dt><dd><${CvButton} ctx=${ctx} p=${p} small/></dd></div>` : null}</dl>` : null}

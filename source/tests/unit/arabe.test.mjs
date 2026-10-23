@@ -30,6 +30,18 @@ test('nombres dans les traductions : signe, pourcentage et saison isolés', () =
   assert.equal(t('+258'), `${LRI}+258${PDI}`); // texte sans lettre : seulement isolé
 });
 
+test('nombres accordés : en-tête du Réseau, défis de l’année, chiffres d’une fiche (1, 2, 3 à 10, 11 et plus)', () => {
+  assert.equal(t('5 lauréats · 25 étudiants'), '5 خريجين · 25 طالبًا');
+  assert.equal(t('2 lauréats · 1 étudiants'), 'خريجان · طالب واحد');
+  assert.equal(t('Octobre : 10 stages trouvés pour les 4A'), 'أكتوبر: 10 تدريبات لطلبة السنة الرابعة');
+  assert.equal(t('Cette année : 40 mentorats terminés'), 'هذه السنة: 40 جلسة إرشاد منتهية');
+  assert.equal(t('Novembre : 2 offres partagées'), 'نونبر: عرضان منشوران');
+  assert.equal(t('1 point'), 'نقطة واحدة');
+  assert.equal(t('3 recrutés'), '3 موظَّفين');
+  assert.equal(t('2 mentorats'), 'جلستا إرشاد');
+  assert.equal(t('12 offres'), '12 عرضًا');
+});
+
 // Les dictionnaires : export const AR = {…} dans i18n-ar.js et chaque addAR({…}) des modules
 const SRC = new URL('../../src/', import.meta.url);
 const fichiers = fs.readdirSync(SRC).filter(f => f.endsWith('.js') && !f.startsWith('seed'));

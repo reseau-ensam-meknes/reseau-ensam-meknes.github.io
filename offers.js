@@ -640,7 +640,7 @@ addAR({
   'Ex. Optimiser une ligne d’assemblage': 'مثال: تحسين خط تجميع', 'Pas encore d’offre pour ton année': 'لا عروض بعد لسنتك',
   'Retenue': 'مقبول', 'Pas retenue': 'غير مقبول', 'Recruter': 'توظيف', 'Invitation envoyée': 'دعوة مُرسلة',
   'Recrutement déclaré · attend sa confirmation': 'توظيف مُصرَّح به · في انتظار التأكيد',
-  't’invite à postuler.': 'يدعوك للترشح.', 'Ça ne m’intéresse pas': 'لا يهمني',
+  't’invite à postuler.': ': دعوة لك للترشح.', 'Ça ne m’intéresse pas': 'لا يهمني',
   'Aucune offre mise de côté': 'لا عرض محفوظ', 'Clique sur le marque-page d’une offre pour la mettre de côté ici.': 'انقر على علامة الحفظ في عرض لتحفظه هنا.',
   'Mises de côté': 'المحفوظة', 'Mettre de côté': 'حفظ', 'Ne plus mettre de côté': 'إلغاء الحفظ',
   'Réservées aux lauréats': 'خاصة بالخريجين', 'Par les lauréats': 'من الخريجين',

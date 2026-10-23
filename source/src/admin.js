@@ -61,7 +61,7 @@ addAR({
   'cette année, via la plateforme': 'هذه السنة، عبر المنصة', '1 étudiant attend un horaire depuis plus de 24 h': 'طالب واحد ينتظر توقيتًا منذ أكثر من 24 ساعة',
 }, [
   [/^(\d+) étudiants attendent un horaire depuis plus de 24 h$/, n => `${arCount(n, ['طالب واحد ينتظر', 'طالبان ينتظران', 'طلبة ينتظرون', 'طالبًا ينتظرون'])} توقيتًا منذ أكثر من 24 ساعة`],
-  [/^Pas encore de demande d’étudiant ce mois-ci · toutes aides : (\d+)\u202f%$/, t => `لا طلبات من الطلبة بعد هذا الشهر · كل أنواع المساعدة: ${t}%`],
+  [/^Pas encore de demande d’étudiant ce mois-ci · toutes aides : (\d+)\s?%$/, t => `لا طلبات من الطلبة بعد هذا الشهر · كل أنواع المساعدة: ${t}%`],
   [/^(\d+) filleuls? cette année · (\d+) lauréats? volontaires? · (\d+) étudiants? de 3A sans parrain\. Chaque matin, la plateforme attribue aussi les parrains toute seule\.$/, (a, b, c) => `${arCount(a, ['طالب واحد في الرعاية', 'طالبان في الرعاية', 'طلبة في الرعاية', 'طالبًا في الرعاية'])} هذه السنة · ${arCount(b, ['خريج متطوع', 'خريجان متطوعان', 'خريجين متطوعين', 'خريجًا متطوعًا'])} · ${arCount(c, ['طالب واحد', 'طالبان', 'طلبة', 'طالبًا'])} من السنة الثالثة دون عرّاب. كل صباح تعيّن المنصة العرّابين تلقائيًا أيضًا.`],
   [/^Jusqu’au (\d{1,2}) (\S+)$/, (j, m) => `إلى غاية ${j} ${m}`],
   [/^Signalé (\d+) fois$/, n => `بُلّغ عنه ${n} مرة`],
