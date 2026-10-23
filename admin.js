@@ -683,14 +683,16 @@ function AnnonceBox({ ctx }) {
   const { data, store, me, act } = ctx;
   const visibles = data.annonces.filter(a => annonceVisible(a)).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   const [texte, setTexte] = useState(''); const [lien, setLien] = useState(''); const [pour, setPour] = useState('tous');
-  // Une nouvelle annonce remplace seulement celles qui touchent les mêmes personnes
-  const memes = (x, y) => x === 'tous' || y === 'tous' || x === y;
+  // Une nouvelle annonce remplace celles de son public (« Tout le monde » : toutes) ; les autres restent pour leur public
+  const remplacee = (x, pour) => pour === 'tous' || x === pour;
   const publish = e => {
     e.preventDefault();
     act(async () => {
       if (lien.trim() && !/^https:\/\/\S+$/i.test(lien.trim())) throw new Error('Le lien doit commencer par https://');
-      for (const a of data.annonces.filter(x => x.active && memes(x.public || 'tous', pour))) await store.update('annonces', a.id, { active: false });
+      // La nouvelle d'abord : si elle échoue (base pas encore à jour…), l'annonce en cours reste
+      const anciennes = data.annonces.filter(x => x.active && remplacee(x.public || 'tous', pour));
       await store.insert('annonces', { author_id: me.id, texte: texte.trim(), lien: lien.trim() || null, active: true, ...(pour === 'tous' ? {} : { public: pour }) });
+      for (const a of anciennes) await store.update('annonces', a.id, { active: false });
       setTexte(''); setLien('');
       toast(pour === 'etudiants' ? 'Annonce publiée sur l’accueil des étudiants.' : pour === 'laureats' ? 'Annonce publiée sur l’accueil des lauréats.' : 'Annonce publiée sur l’accueil de tous les membres.', 'win');
     });

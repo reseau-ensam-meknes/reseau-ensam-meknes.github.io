@@ -57,7 +57,8 @@ export function DemandesTab({ ctx }) {
   const { me, sub2, saison } = ctx;
   const [form, setForm] = useState(null);
   const focusId = sub2 && sub2 !== 'nouvelle' ? sub2 : null;
-  useEffect(() => { if (sub2 === 'nouvelle') { ctx.go('offres/demandes', { remplacer: true }); setForm({}); } }, [sub2]);
+  // Redirection : l'entrée prend sa nouvelle adresse telle quelle (exact), sans Retour simulé qui refermerait le formulaire
+  useEffect(() => { if (sub2 === 'nouvelle') { ctx.go('offres/demandes', { exact: true }); setForm({}); } }, [sub2]);
   useEffect(() => {
     if (!focusId) return;
     const t = setTimeout(() => document.getElementById('dm-' + focusId)?.scrollIntoView({ block: 'center', behavior: doux() }), 250);
@@ -622,7 +623,7 @@ addAR({
   [/^(.+) choisit parmi les propositions reçues\.$/, n => `يختار ${n} من بين الاقتراحات التي وصلته.`],
   [/^(.+) a choisi une autre voie\. Merci d’avoir proposé ton aide !$/, n => `اختار ${n} طريقًا آخر. شكرًا على اقتراح مساعدتك!`],
   [/^Te retirer \? La demande de (.+) se rouvre pour les autres lauréats\.$/, n => `الانسحاب؟ يُعاد فتح طلب ${n} أمام الخريجين الآخرين.`],
-  [/^C’est un match avec (.+)$/, n => `إنه تطابق مع ${n}`],
+  [/^C’est un match avec ([^:]+)$/, n => `إنه تطابق مع ${n}`],
   [/^Démarrage déclaré chez (.+)\. En attente de la confirmation de (.+)\.$/, (e, n) => `تم التصريح بالبدء لدى ${e}. في انتظار تأكيد ${n}.`],
   [/^(.+) n’a pas confirmé\. Parlez-en, puis déclare à nouveau quand c’est fait\.$/, n => `لم يؤكد ${n}. تحدثا في الأمر، ثم صرّح من جديد عندما يتم.`],
   [/^Quand (.+) commence \(stage signé, PFE lancé, contrat\), dis-le ici : (.+) confirme et la réussite est annoncée\.$/, n => `عندما يبدأ ${n} (تدريب موقّع، مشروع انطلق، عقد)، قل ذلك هنا: يؤكد ${n} ويُعلن النجاح.`],

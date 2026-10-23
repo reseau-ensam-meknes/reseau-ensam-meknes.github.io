@@ -17,7 +17,7 @@ export function PoulsReseau({ ctx, onOpen, accueil = false, semaine = false }) {
   const pr = !aide && accueil ? presenceReseau(data, me) : null;
   if (!aide && !pr) return null;
   const visages = (aide ? p.aidants : pr.visages).slice(0, 3).map(id => store.byId('profiles', id)).filter(Boolean);
-  const ouvrir = aide ? onOpen : () => go('reseau/annuaire' + (VERS[pr.cle] ? '/' + VERS[pr.cle] : ''));
+  const ouvrir = aide ? onOpen : () => go('reseau/annuaire/' + (VERS[pr.cle] || 'laureats'));
   const quand = aide && !(semaine && p.jours === 7) ? (p.jours === 7 ? 'Cette semaine' : 'Ce mois-ci') : null;
   const Tag = ouvrir ? 'button' : 'div';
   return html`<${Tag} type=${ouvrir ? 'button' : undefined} class=${'pouls' + (ouvrir ? ' clickable' : '')} onClick=${ouvrir}>
@@ -49,7 +49,7 @@ const NB_AR = n => (+n === 1 ? 'واحد' : +n === 2 ? 'اثنان' : n);
 addAR({ 'Cette semaine': 'هذا الأسبوع', 'Ce mois-ci': 'هذا الشهر', '1 recrutement confirmé': 'توظيف واحد مؤكَّد' }, [
   [/^(\d+) lauréats? (?:ont|a) aidé (\d+) étudiants?$/, (a, b) => `${arCount(a, LAU)} ${SAIDE(a)} ${arCount(b, ETU_ACC)}`],
   [/^(\d+) recrutements? confirmés?$/, n => arCount(n, ['توظيف واحد مؤكَّد', 'توظيفان مؤكَّدان', 'توظيفات مؤكَّدة', 'توظيفًا مؤكَّدًا'])],
-  [/^(\d+) lauréats? (?:sont|est) déjà là$/, t => `معك في الشبكة ${arCount(t, LAU)}`],
-  [/^(\d+) lauréats? de (ta filière|ton parcours|ta promo) (?:sont|est) déjà là$/, (t, x) => `معك في الشبكة ${arCount(t, LAU)} ${DE_AR[x]}`],
-  [/^(\d+) lauréats sont déjà là, dont (\d+) de (ta filière|ton parcours|ta promo)$/, (t, n, x) => `معك في الشبكة ${arCount(t, LAU)}، ${+t === 2 ? 'منهما' : 'منهم'} ${NB_AR(n)} ${DE_AR[x]}`],
+  [/^(\d+) lauréats? (?:sont|est) déjà là$/, t => `انضمّ إلى الشبكة ${arCount(t, LAU)}`],
+  [/^(\d+) lauréats? de (ta filière|ton parcours|ta promo) (?:sont|est) déjà là$/, (t, x) => `انضمّ إلى الشبكة ${arCount(t, LAU)} ${DE_AR[x]}`],
+  [/^(\d+) lauréats sont déjà là, dont (\d+) de (ta filière|ton parcours|ta promo)$/, (t, n, x) => `انضمّ إلى الشبكة ${arCount(t, LAU)}، ${+t === 2 ? 'منهما' : 'منهم'} ${NB_AR(n)} ${DE_AR[x]}`],
 ]);

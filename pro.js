@@ -12,11 +12,11 @@ import { SignalerBtn } from './confiance.js';
 const VUES = [['personnes', 'Personnes', 'people'], ['carte', 'Carte', 'pin'], ['startups', 'Startups', 'spark']];
 const paysLabel = p => (getLang() === 'ar' && PAYS_AR[canonPays(p)]) || canonPays(p);
 // Liens de l'accueil (« … dont 5 de ta filière ») : la liste ouverte montre exactement les personnes annoncées
-const PRESETS = ['ma-filiere', 'mon-parcours', 'ma-promo'];
+const PRESETS = ['ma-filiere', 'mon-parcours', 'ma-promo', 'laureats'];
 
 export function AnnuairePro({ ctx }) {
   // Ancien lien « Annuaire > Entreprises »
-  useEffect(() => { if (ctx.sub2 === 'entreprises') ctx.go('reseau/entreprises', { remplacer: true }); }, [ctx.sub2]);
+  useEffect(() => { if (ctx.sub2 === 'entreprises') ctx.go('reseau/entreprises', { exact: true }); }, [ctx.sub2]);
   const vue = VUES.some(([k]) => k === ctx.sub2) ? ctx.sub2 : 'personnes';
   const preset = PRESETS.includes(ctx.sub2) ? ctx.sub2 : '';
   return html`<div class="sub-page">

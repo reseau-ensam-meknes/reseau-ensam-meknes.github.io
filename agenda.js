@@ -231,7 +231,8 @@ export function AgendaPage({ ctx }) {
   const [edit, setEdit] = useState(null); // null | 'new' | événement
   const [old, setOld] = useState(false);
   const isAdmin = me.role === 'admin';
-  useEffect(() => { if (sub2 === 'nouveau' && isAdmin) { setEdit('new'); go('reseau/agenda', { remplacer: true }); } }, [sub2]);
+  // Redirection : l'entrée prend sa nouvelle adresse telle quelle (exact), sans Retour simulé qui refermerait la feuille
+  useEffect(() => { if (sub2 === 'nouveau' && isAdmin) { setEdit('new'); go('reseau/agenda', { exact: true }); } }, [sub2]);
   const mine = eventsFor(data, me);
   const avenir = mine.filter(e => !passe(e)).sort((a, b) => new Date(a.debut) - new Date(b.debut));
   const passes = mine.filter(passe).sort((a, b) => new Date(b.debut) - new Date(a.debut));
