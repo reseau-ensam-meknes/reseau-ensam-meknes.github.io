@@ -269,7 +269,8 @@ export function Modal({ title, onClose, children, wide, footer, cls, historique 
     v.addEventListener('resize', f); v.addEventListener('scroll', f);
     return () => { v.removeEventListener('resize', f); v.removeEventListener('scroll', f); };
   }, [avecPied]);
-  useEffect(() => {
+  // Branché dès l'affichage (pas après) : un Échap tapé aussitôt la fenêtre ouverte la ferme
+  useLayoutEffect(() => {
     const avant = document.activeElement;
     const moi = {};
     ouvertes.push(moi);

@@ -907,6 +907,10 @@ test('clavier : lien « Aller au contenu », fenêtre qui garde le focus puis le
   assert.ok(await s.page.evaluate(() => !!document.activeElement.closest('.modal')), 'le focus est sorti de la fenêtre');
   await s.fermer();
   assert.ok(await s.page.evaluate(() => document.activeElement.matches('.person')), 'le focus n’est pas revenu sur la fiche ouverte');
+  // Échap tapé à l'instant même où la fenêtre apparaît (avant l'image suivante) : elle se ferme quand même
+  await s.page.evaluate(() => { new MutationObserver((l, o) => { if (!document.querySelector('.modal')) return; o.disconnect(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); }).observe(document.body, { childList: true, subtree: true }); });
+  await s.page.locator('.person').first().click(); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator('.modal').count(), 0, 'Échap tapé tout de suite est perdu');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
