@@ -188,7 +188,7 @@ function Editeur({ ctx, sec, row, pays, onDone }) {
       try {
         if (row) await store.update('guide_pays', row.id, { contenu: t });
         else await store.insert('guide_pays', { pays, section: sec, contenu: t });
-        toast(row ? 'Rubrique mise à jour. Merci !' : ctx.me.role === 'laureat' ? 'Rubrique publiée. +10 points, merci !' : 'Rubrique publiée.');
+        toast(row ? 'Rubrique mise à jour. Merci !' : ctx.me.role === 'laureat' ? 'Rubrique publiée. Merci !' : 'Rubrique publiée.', 'ok', !row && ctx.me.role === 'laureat' ? 10 : 0);
         onDone();
       } finally { setBusy(false); }
     });
@@ -340,7 +340,7 @@ addAR({
   'Où trouver les offres, comment candidater…': 'أين تجد العروض، كيف تترشح…',
   'Banque, téléphone, santé, communauté marocaine…': 'البنك، الهاتف، الصحة، الجالية المغربية…',
   'Rubrique mise à jour. Merci !': 'تم تحديث القسم. شكرًا!',
-  'Rubrique publiée. +10 points, merci !': 'تم نشر القسم. +10 نقاط، شكرًا!',
+  'Rubrique publiée. Merci !': 'تم نشر القسم. شكرًا!',
   'Rubrique publiée.': 'تم نشر القسم.',
   'Chargement…': 'جارٍ التحميل…',
   'Version actuelle': 'النسخة الحالية',

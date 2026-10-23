@@ -12,3 +12,15 @@ test('offre collée : « Formation », « Expérience », « Langues » ne devie
   // Seulement des exigences : pas de titre inventé, le lauréat l'écrit
   assert.ok(!/^Formation/.test(titre('Formation : Bac+5 en Qualité / Génie Industriel (ENSAM de préférence)\nDurée : 6 mois') || ''));
 });
+
+test('titre affiché : le type, déjà sur l’étiquette, n’est pas répété (« PFE : … »)', async () => {
+  const { titreOffre } = await import('../../src/logic.js');
+  assert.equal(titreOffre({ type: 'pfe', titre: 'PFE : déployer le Lean sur une ligne de câblage' }), 'Déployer le Lean sur une ligne de câblage');
+  assert.equal(titreOffre({ type: 'pfe', titre: 'Projet de fin d’études – Jumeau numérique' }), 'Jumeau numérique');
+  assert.equal(titreOffre({ type: 'stage', titre: 'Stage : maintenance prédictive' }), 'Maintenance prédictive');
+  assert.equal(titreOffre({ type: 'etranger', titre: 'Stage à l’étranger : bureau d’études à Lyon' }), 'Bureau d’études à Lyon');
+  // Un autre type, un mot qui fait partie du titre, ou un titre réduit au préfixe : inchangés
+  assert.equal(titreOffre({ type: 'stage', titre: 'PFE : déployer le Lean' }), 'PFE : déployer le Lean');
+  assert.equal(titreOffre({ type: 'stage', titre: 'Stage ouvrier chez OCP' }), 'Stage ouvrier chez OCP');
+  assert.equal(titreOffre({ type: 'pfe', titre: 'PFE :' }), 'PFE :');
+});

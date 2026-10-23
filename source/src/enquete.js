@@ -9,7 +9,7 @@ export const EN_POSTE = new Set(['emploi', 'entrepreneur', 'volontariat']);
 const SIT_ICON = { emploi: 'briefcase', entrepreneur: 'spark', volontariat: 'globe', recherche: 'search', etudes: 'cap', autre: 'more' };
 export const CONTRATS = { cdi: 'CDI', cdd: 'CDD', anapec: 'Contrat ANAPEC', freelance: 'Freelance', stage: 'Stage', autre: 'Autre' };
 const LIEN = ['Aucun lien', 'Un peu', 'Moyennement', 'Beaucoup', 'Exactement mon domaine'];
-const SATIS = ['Pas satisfait(e)', 'Peu satisfait(e)', 'Moyennement', 'Satisfait(e)', 'Très satisfait(e)'];
+const SATIS = ['Pas du tout satisfaisante', 'Peu satisfaisante', 'Moyennement', 'Satisfaisante', 'Très satisfaisante'];
 const DELAIS = Array.from({ length: 37 }, (_, i) => i);
 const MOIS_AR = ['يناير', 'فبراير', 'مارس', 'أبريل', 'ماي', 'يونيو', 'يوليوز', 'غشت', 'شتنبر', 'أكتوبر', 'نونبر', 'دجنبر'];
 const MOIS_FR = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
@@ -45,7 +45,7 @@ export function useStatsInsertion(store, dep) {
 addAR({
   'Enquête d’insertion': 'استطلاع الإدماج المهني',
   'Où en es-tu aujourd’hui ?': 'أين وصلت اليوم؟',
-  'Deux minutes pour suivre chaque promo jusqu’au premier emploi, et aider les étudiants à se projeter. Tes réponses restent confidentielles : seuls des chiffres agrégés sont publiés, jamais en dessous de 5 réponses.': 'دقيقتان لتتبع كل دفعة حتى أول عمل، ومساعدة الطلبة على تصور مستقبلهم. أجوبتك سرية: لا تُنشر إلا أرقام مجمّعة، وأبداً تحت 5 أجوبة.',
+  'Tes réponses restent confidentielles : seuls des chiffres agrégés sont publiés, jamais en dessous de 5 réponses.': 'أجوبتك سرية: لا تُنشر إلا أرقام مجمّعة، وأبداً تحت 5 أجوبة.',
   'Ta situation': 'وضعيتك',
   'Ton poste': 'منصبك',
   'Ton avis': 'رأيك',
@@ -66,11 +66,11 @@ addAR({
   'Moyennement': 'متوسط',
   'Beaucoup': 'كثيراً',
   'Exactement mon domaine': 'مجالي بالضبط',
-  'Es-tu satisfait(e) de ta formation à l’ENSAM ?': 'هل أنت راضٍ عن تكوينك في ENSAM؟',
-  'Pas satisfait(e)': 'غير راضٍ',
-  'Peu satisfait(e)': 'قليل الرضا',
-  'Satisfait(e)': 'راضٍ',
-  'Très satisfait(e)': 'راضٍ جداً',
+  'Ta satisfaction vis-à-vis de ta formation à l’ENSAM': 'مدى رضاك عن تكوينك في ENSAM',
+  'Pas du tout satisfaisante': 'غير مُرضٍ إطلاقًا',
+  'Peu satisfaisante': 'مُرضٍ قليلًا',
+  'Satisfaisante': 'مُرضٍ',
+  'Très satisfaisante': 'مُرضٍ جدًا',
   'Un mot pour le réseau (facultatif)': 'كلمة للشبكة (اختياري)',
   'Seule l’administration le lit.': 'لا تقرؤها إلا الإدارة.',
   'Établissement, master, doctorat…': 'المؤسسة، الماستر، الدكتوراه…',
@@ -122,6 +122,7 @@ addAR({
   [/^(\d+,\d+) mois$/, n => `${n} أشهر`],
   [/^(\d+(?:,\d+)?) \/ 5$/, n => `${n} / 5`],
   [/^Réponse à (6|12) mois$/, v => `الجواب بعد ${mois(v)}`],
+  [/^À (6|12) mois$/, v => `بعد ${mois(v)}`],
   [/^La prochaine s’ouvre en (\S+) (\d{4})\.$/, (m, y) => `يُفتح الاستطلاع القادم في ${MOIS_AR[MOIS_FR.indexOf(m)] || m} ${y}.`],
   [/^(\d+) en poste sur (\d+)$/, (a, b) => `${a} يعملون من أصل ${b}`],
 ]);
@@ -179,8 +180,8 @@ export function EnquetePage(ctx) {
   if (edit || (due && !merci)) {
     const vague = edit ? edit.vague : due.vague;
     return html`<section class="page narrow enquete">
-      <header class="page-head"><div><p class="eyebrow">Promo ${me.promo} · ${vague} mois après le diplôme</p><h1>Où en es-tu aujourd’hui ?</h1></div></header>
-      <p class="muted">Deux minutes pour suivre chaque promo jusqu’au premier emploi, et aider les étudiants à se projeter. Tes réponses restent confidentielles : seuls des chiffres agrégés sont publiés, jamais en dessous de 5 réponses.</p>
+      <header class="page-head"><div><p class="eyebrow">À ${vague} mois</p><h1>Où en es-tu aujourd’hui ?</h1></div></header>
+      <p class="muted">Tes réponses restent confidentielles : seuls des chiffres agrégés sont publiés, jamais en dessous de 5 réponses.</p>
       <${EnqueteForm} ctx=${ctx} vague=${vague} initial=${edit} key=${edit?.id || 'new' + vague}
         onDone=${() => { setEdit(null); setMerci(true); window.scrollTo?.(0, 0); }} onCancel=${edit ? () => setEdit(null) : null}/>
     </section>`;
@@ -298,7 +299,7 @@ function EnqueteForm({ ctx, vague, initial, onDone, onCancel }) {
     </div>` : null}
 
     ${f.situation ? html`<div class="panel enq-step"><h2><span class="n">${n++}</span> Ton avis</h2>
-      <${Note} id="enq-satis" label="Es-tu satisfait(e) de ta formation à l’ENSAM ?" labels=${SATIS} value=${f.satisfaction} onChange=${v => set('satisfaction', v)}/>
+      <${Note} id="enq-satis" label="Ta satisfaction vis-à-vis de ta formation à l’ENSAM" labels=${SATIS} value=${f.satisfaction} onChange=${v => set('satisfaction', v)}/>
       <${Field} label="Un mot pour le réseau (facultatif)" hint="Seule l’équipe du réseau le lit."><textarea id="enq-com" dir="auto" rows="3" maxlength="600" value=${f.commentaire} onInput=${e => set('commentaire', e.target.value)}></textarea><//>
     </div>` : null}
 

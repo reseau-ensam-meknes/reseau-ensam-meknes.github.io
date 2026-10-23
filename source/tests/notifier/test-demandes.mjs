@@ -39,7 +39,7 @@ test('notifications : chaque étape d’une demande ouvre sa carte, en français
 
 test('démarrage venu d’une demande : on parle de démarrage, pas de recrutement', () => {
   assert.equal(N.texteNotif('recrutement_a_confirmer', { nom: 'Youssef', entreprise: 'Renault', aide: 'encadre' }, 'fr', SITE).body, 'Youssef indique que tu as commencé chez Renault.');
-  assert.equal(N.texteNotif('recrutement_a_confirmer', { nom: 'Youssef', entreprise: 'Renault' }, 'fr', SITE).body, 'Youssef indique t’avoir recruté(e) chez Renault.');
+  assert.equal(N.texteNotif('recrutement_a_confirmer', { nom: 'Youssef', entreprise: 'Renault' }, 'fr', SITE).body, 'Youssef déclare ton recrutement chez Renault.');
   assert.equal(N.texteNotif('recrutement_confirme', { nom: 'Salma', entreprise: 'Renault', aide: 'recommande' }, 'fr', SITE).title, 'Démarrage confirmé');
   assert.equal(N.texteNotif('recrutement_a_confirmer', { nom: 'Y', entreprise: 'R', aide: 'n’importe quoi' }, 'fr', SITE).title, 'Confirme ton recrutement');
 });

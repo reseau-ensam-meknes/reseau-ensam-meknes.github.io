@@ -76,7 +76,7 @@ export function VisibiliteFields({ role, value = {}, onChange, etat }) {
   };
   return html`<fieldset class="cf-vis">
     <legend class="h-ico"><${Icon} name="eye" size=${17}/> Qui voit quoi</legend>
-    <p class="small muted">Ton profil n’est jamais public. « Mes contacts » : les membres dont tu acceptes la demande, et le lauréat à qui tu envoies une candidature.</p>
+    <p class="small muted">Ton profil n’est jamais public. « Mes contacts » : les membres avec qui tu partages tes coordonnées, l’auteur d’une offre où tu postules, et la personne qu’une demande a réunie avec toi.</p>
     ${etat !== undefined ? html`<p class="small muted">Sur ta propre fiche, tu vois toujours tout.</p>` : null}
     ${groupes.map(g => { const v = value[g] || VIS_DEFAUT[g]; const label = g === 'presentation' && role !== 'etudiant' ? 'Bio et compétences' : VIS_LABELS[g]; return html`<div class="cf-vis-row" key=${g}>
       <span class="cf-vis-label">${label}</span>
@@ -128,10 +128,10 @@ export function ContactBlock({ ctx, p }) {
       ${d.message ? html`<p class="cf-msg small" translate="no" dir="auto">« ${d.message} »</p>` : null}
       <p class="small muted">Si tu acceptes, vous voyez les coordonnées l’un de l’autre.</p>
       <div class="row-end"><button class="btn small ghost" id="cf-refuse" onClick=${() => repondre('refusee')}>Refuser</button><button class="btn small primary" id="cf-accept" onClick=${() => repondre('acceptee')}><${Icon} name="check" size=${15}/> Accepter</button></div></div>`;
-  else if (entrant && d.status === 'acceptee') body = html`<p class="small muted">Tu as accepté sa demande, mais ${prenom(p)} n’a pas encore renseigné de coordonnées.</p>`;
-  else if (entrant) body = html`<p class="small muted">Tu as refusé sa demande.</p><div><button class="btn tiny ghost" onClick=${() => repondre('acceptee')}>Accepter finalement</button></div>`;
-  else if (d.status === 'envoyee') body = html`<p class="small"><${Icon} name="clock" size=${14}/> Demande envoyée, en attente de sa réponse. <span class="muted">${timeAgo(d.created_at)}</span></p>
-      <div><button class="btn tiny ghost" onClick=${() => act(async () => { await store.remove('demandes_contact', d.id); toast('Demande annulée.'); })}>Annuler la demande</button></div>`;
+  else if (entrant && d.status === 'acceptee') body = html`<p class="small muted">Tu as donné ton accord, mais ${prenom(p)} n’a pas encore renseigné de coordonnées.</p>`;
+  else if (entrant) body = html`<p class="small muted">Tu as refusé de partager tes coordonnées.</p><div><button class="btn tiny ghost" onClick=${() => repondre('acceptee')}>Accepter finalement</button></div>`;
+  else if (d.status === 'envoyee') body = html`<p class="small"><${Icon} name="clock" size=${14}/> C’est envoyé : en attente de sa réponse. <span class="muted">${timeAgo(d.created_at)}</span></p>
+      <div><button class="btn tiny ghost" onClick=${() => act(async () => { await store.remove('demandes_contact', d.id); toast('C’est annulé.'); })}>Annuler l’envoi</button></div>`;
   else if (d.status === 'acceptee') body = html`<p class="small muted">${prenom(p)} a accepté, mais n’a pas encore renseigné de coordonnées.</p>`;
   else body = html`<p class="small muted">${prenom(p)} préfère garder ses coordonnées pour l’instant. Pour un conseil, passe par le mentorat ou l’entraide.</p>`;
   const accord = entrant && d.status === 'acceptee' && has;
@@ -147,10 +147,10 @@ function DemandeContact({ ctx, p, onClose }) {
   const { store, me, act } = ctx;
   const [msg, setMsg] = useState('');
   return html`<${Modal} title="Demander ses coordonnées" onClose=${onClose}>
-    <form class="form" onSubmit=${e => { e.preventDefault(); act(async () => { await store.insert('demandes_contact', { demandeur_id: me.id, cible_id: p.id, message: msg.trim() || null }); toast('Demande envoyée.'); onClose(); }); }}>
-      <p>${p.full_name} reçoit ta demande et choisit d’accepter ou non. En cas d’accord, vous voyez les coordonnées l’un de l’autre.</p>
-      <${Field} label="Un mot pour te présenter (facultatif)"><textarea id="cf-ask-msg" rows="3" maxlength="300" value=${msg} onInput=${e => setMsg(e.target.value)} placeholder=${me.role === 'etudiant' ? 'Ex. Je suis en 5A, j’aimerais vous poser deux questions sur votre métier.' : 'Ex. Même promo, je serais ravi(e) d’échanger.'}></textarea><//>
-      <div class="row-end"><button type="button" class="btn ghost" onClick=${onClose}>Annuler</button><button class="btn primary" id="cf-ask-send">Envoyer la demande</button></div>
+    <form class="form" onSubmit=${e => { e.preventDefault(); act(async () => { await store.insert('demandes_contact', { demandeur_id: me.id, cible_id: p.id, message: msg.trim() || null }); toast('C’est envoyé.'); onClose(); }); }}>
+      <p>${p.full_name} choisit d’accepter ou non. En cas d’accord, vous voyez les coordonnées l’un de l’autre.</p>
+      <${Field} label="Un mot pour te présenter (facultatif)"><textarea id="cf-ask-msg" rows="3" maxlength="300" value=${msg} onInput=${e => setMsg(e.target.value)} placeholder=${me.role === 'etudiant' ? 'Ex. Je suis en 5A, j’aimerais vous poser deux questions sur votre métier.' : 'Ex. Même promo, ce serait un plaisir d’échanger.'}></textarea><//>
+      <div class="row-end"><button type="button" class="btn ghost" onClick=${onClose}>Annuler</button><button class="btn primary" id="cf-ask-send">Demander ses coordonnées</button></div>
     </form>
   <//>`;
 }
@@ -188,7 +188,7 @@ export function ConfianceHome({ ctx }) {
   if (!demandes.length && !pairs.length) return null;
   const repondre = (d, status) => act(async () => { await store.update('demandes_contact', d.id, { status }); toast(status === 'acceptee' ? 'Accepté : vous voyez maintenant vos coordonnées.' : 'C’est noté.'); });
   return html`<div class="panel cf-home">
-    ${demandes.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="phone"/> Demandes de coordonnées <span class="count">${demandes.length}</span></h2></div>
+    ${demandes.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="phone"/> Ils aimeraient tes coordonnées <span class="count">${demandes.length}</span></h2></div>
       <ul class="people-list cf-list">${demandes.slice(0, 4).map(({ d, p }) => html`<li key=${d.id}>
         <div class="cf-who"><${Person} p=${p} onOpen=${openProfile} size=${34}/>${d.message ? html`<p class="cf-msg small" translate="no" dir="auto">« ${d.message} »</p>` : null}</div>
         <div class="cf-act"><button class="btn tiny ghost" onClick=${() => repondre(d, 'refusee')}>Refuser</button><button class="btn tiny primary" onClick=${() => repondre(d, 'acceptee')}><${Icon} name="check" size=${14}/> Accepter</button></div></li>`)}</ul>
@@ -269,32 +269,32 @@ addAR({
   'Seule l’administration voit ton signalement. La personne concernée ne sait pas qui l’a fait.': 'الإدارة وحدها ترى بلاغك، ولا يعرف الشخص المعني من قام به.',
   'Merci. L’administration va regarder.': 'شكرًا. ستطّلع الإدارة على الأمر.',
   'Qui voit quoi': 'من يرى ماذا', 'Tous les membres': 'كل الأعضاء', 'Les lauréats': 'الخريجون', 'Mes contacts': 'جهات اتصالي',
-  'Ton profil n’est jamais public. « Mes contacts » : les membres dont tu acceptes la demande, et le lauréat à qui tu envoies une candidature.': 'ملفك ليس عموميًا أبدًا. «جهات اتصالي»: الأعضاء الذين تقبل طلبهم، والخريج الذي ترسل إليه ترشيحك.',
+  'Ton profil n’est jamais public. « Mes contacts » : les membres avec qui tu partages tes coordonnées, l’auteur d’une offre où tu postules, et la personne qu’une demande a réunie avec toi.': 'ملفك ليس عموميًا أبدًا. «جهات اتصالي»: الأعضاء الذين تتبادل معهم معلومات الاتصال، وصاحب عرض ترشحت له، والشخص الذي جمعك به طلب.',
   'Entreprise et poste': 'الشركة والمنصب', 'Ville': 'المدينة', 'Bio, compétences, disponibilité': 'النبذة، الكفاءات، التوفر', 'Bio et compétences': 'النبذة والكفاءات', 'CV': 'السيرة الذاتية',
   'Coordonnées': 'معلومات الاتصال', 'Demander ses coordonnées': 'اطلب معلومات الاتصال',
   'Ses coordonnées restent privées tant que la personne n’a pas accepté.': 'تبقى معلومات الاتصال خاصة ما لم يقبل صاحبها.',
   'Visibles seulement par tes contacts. Modifie-les dans « Mon profil ».': 'لا تراها إلا جهات اتصالك. عدّلها في «ملفي الشخصي».',
   'Tu n’as pas encore renseigné de coordonnées. Ajoute-les dans « Mon profil » : elles restent privées.': 'لم تضف معلومات اتصالك بعد. أضفها في «ملفي الشخصي»، وستبقى خاصة.',
   'Aucune coordonnée renseignée.': 'لا توجد معلومات اتصال.', 'Si tu acceptes, vous voyez les coordonnées l’un de l’autre.': 'إذا قبلت، يرى كل منكما معلومات اتصال الآخر.',
-  'Refuser': 'رفض', 'Accepter': 'قبول', 'Tu as refusé sa demande.': 'لقد رفضت الطلب.', 'Accepter finalement': 'القبول في النهاية',
-  'Demande envoyée, en attente de sa réponse.': 'أُرسل الطلب، في انتظار الرد.',
-  'Annuler la demande': 'إلغاء الطلب', 'Demande annulée.': 'أُلغي الطلب.', 'Retirer mon accord': 'سحب موافقتي',
+  'Refuser': 'رفض', 'Accepter': 'قبول', 'Tu as refusé de partager tes coordonnées.': 'رفضت مشاركة معلومات الاتصال بك.', 'Accepter finalement': 'القبول في النهاية',
+  'C’est envoyé : en attente de sa réponse.': 'أُرسل: في انتظار الرد.',
+  'Annuler l’envoi': 'إلغاء الإرسال', 'C’est annulé.': 'تم الإلغاء.', 'Retirer mon accord': 'سحب موافقتي',
   'Accepté : vous voyez maintenant vos coordonnées.': 'تم القبول: يمكنكما الآن رؤية معلومات الاتصال.', 'C’est noté.': 'تم التسجيل.',
-  'Un mot pour te présenter (facultatif)': 'كلمة لتقديم نفسك (اختياري)', 'Envoyer la demande': 'إرسال الطلب', 'Demande envoyée.': 'تم إرسال الطلب.',
+  'Un mot pour te présenter (facultatif)': 'كلمة لتقديم نفسك (اختياري)', 'C’est envoyé.': 'تم الإرسال.',
   'Ex. Je suis en 5A, j’aimerais vous poser deux questions sur votre métier.': 'مثال: أنا في السنة الخامسة، وأود أن أطرح عليكم سؤالين حول مهنتكم.',
-  'Ex. Même promo, je serais ravi(e) d’échanger.': 'مثال: من نفس الدفعة، يسعدني التواصل معك.',
+  'Ex. Même promo, ce serait un plaisir d’échanger.': 'مثال: من نفس الدفعة، يسعدني التواصل معك.',
   'Annuler ma confirmation': 'إلغاء تأكيدي', 'Merci, ta confirmation est enregistrée.': 'شكرًا، تم تسجيل تأكيدك.',
-  'Demandes de coordonnées': 'طلبات معلومات الاتصال', 'Je ne sais pas': 'لا أعرف', 'Je confirme': 'أؤكد',
+  'Ils aimeraient tes coordonnées': 'يودّون معلومات الاتصال بك', 'Je ne sais pas': 'لا أعرف', 'Je confirme': 'أؤكد',
   'Confirme ceux que tu connais : avec deux confirmations, leur badge « vérifié » arrive.': 'أكّد من تعرفهم: بتأكيدين يحصلون على شارة «موثَّق».',
   'Visible après accord :': 'يظهر بعد الموافقة:',
 }, [
   [/^Qu’est-ce qui ne va pas avec (.+) \?$/, x => `ما المشكل في ${CIBLES_AR[x] || x}؟`],
   [/^(.+?) aimerait avoir tes coordonnées\.$/, n => `يود ${n} الحصول على معلومات اتصالك.`],
   [/^(.+?) a accepté : ses coordonnées sont sur son profil\.$/, n => `تمت الموافقة من ${n}: معلومات الاتصال في الملف.`],
-  [/^Tu as accepté sa demande, mais (.+?) n’a pas encore renseigné de coordonnées\.$/, n => `قبلت الطلب، لكن معلومات الاتصال لم تُضف بعد في ملف ${n}.`],
+  [/^Tu as donné ton accord, mais (.+?) n’a pas encore renseigné de coordonnées\.$/, n => `وافقت، لكن لا توجد بعد معلومات اتصال في ملف ${n}.`],
   [/^(.+?) a accepté, mais n’a pas encore renseigné de coordonnées\.$/, n => `تمت الموافقة من ${n}، لكن معلومات الاتصال لم تُضف بعد.`],
   [/^(.+?) préfère garder ses coordonnées pour l’instant\. Pour un conseil, passe par le mentorat ou l’entraide\.$/, n => `اختيار ${n} حاليًا: الاحتفاظ بمعلومات الاتصال. لطلب نصيحة، استعمل الإرشاد أو التعاون.`],
-  [/^(.+?) reçoit ta demande et choisit d’accepter ou non\. En cas d’accord, vous voyez les coordonnées l’un de l’autre\.$/, n => `يصل طلبك إلى ${n}، والقرار بعدها: قبول أو رفض. في حال الموافقة، يرى كل منكما معلومات اتصال الآخر.`],
+  [/^(.+?) choisit d’accepter ou non\. En cas d’accord, vous voyez les coordonnées l’un de l’autre\.$/, n => `القرار لـ ${n}: قبول أو رفض. في حال الموافقة، يرى كل منكما معلومات اتصال الآخر.`],
   [/^(.+?) est de ta promo \?$/, n => `هل ${n} من دفعتك؟`],
   [/^Tu as confirmé\. Encore (\d+) confirmations? et son badge arrive\.$/, n => `لقد أكدت. ${+n === 1 ? 'تأكيد واحد آخر' : `${n} تأكيدات أخرى`} وتصل الشارة.`],
   [/^Deux lauréats vérifiés de la promo (\d{4}) suffisent pour lui donner son badge\. Confirme seulement si tu le ou la connais\.$/, y => `يكفي خريجان موثَّقان من دفعة ${y} لمنح الشارة. لا تؤكد إلا عن معرفة.`],

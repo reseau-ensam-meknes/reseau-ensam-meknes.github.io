@@ -92,6 +92,13 @@ export const TYPES = {
   emploi: { label: 'Emploi', long: 'Emploi (CDI, CDD, VIE…)' },
 };
 
+// Le type est déjà dit par l'étiquette de l'offre : un titre qui le répète en préfixe (« PFE : Déployer le Lean… ») s'affiche sans
+const PREFIXE_TYPE = { stage: /^stage\s*[:–—-]\s+/i, pfe: /^(?:pfe|projet de fin d[’']études)\s*[:–—-]\s+/i, etranger: /^stage(?: à l[’']étranger)?\s*[:–—-]\s+/i, emploi: /^emploi\s*[:–—-]\s+/i };
+export function titreOffre(o) {
+  const t = (o?.titre || '').trim(), r = PREFIXE_TYPE[o?.type] ? t.replace(PREFIXE_TYPE[o.type], '') : t;
+  return r && r !== t ? r[0].toUpperCase() + r.slice(1) : t;
+}
+
 export const NIVEAUX = {
   1: { short: '1A', label: '1re année (cycle prépa)' },
   2: { short: '2A', label: '2e année (cycle prépa)' },
@@ -253,6 +260,12 @@ export function levelOf(points) {
 }
 
 // Retourne une Map id -> { points, events[], stats } ; `since` limite aux événements récents.
+// Barème d'un recrutement confirmé : 50 points, et 25 de plus à l'étranger (le même que le résumé par email)
+export const bonusInternational = p => p.type === 'etranger' || (!!p.pays && p.pays !== 'Maroc');
+export const pointsRecrutement = p => 50 + (bonusInternational(p) ? 25 : 0);
+// Rendez-vous annulé : l'étudiant a-t-il déjà proposé d'autres horaires à ce lauréat ? La porte n'a alors plus à rester affichée.
+export const nouvelleDemandeApres = (data, m) => data.mentorships.some(x => x.id !== m.id && x.student_id === m.student_id && x.mentor_id === m.mentor_id
+  && ['demande', 'acceptee'].includes(x.status) && new Date(x.created_at) > new Date(m.created_at));
 export function computeScores(data, since = null) {
   const S = new Map();
   const get = id => { if (!S.has(id)) S.set(id, { points: 0, events: [], offres: 0, recrutes: 0, etranger: 0, mentorats: 0, rapides: 0, mercis: 0, reponses: 0, meilleures: 0, candidatures: 0 }); return S.get(id); };
@@ -269,7 +282,7 @@ export function computeScores(data, since = null) {
     if (p.status === 'confirme' && p.laureat_id) {
       const at = p.confirmed_at || p.created_at;
       add(p.laureat_id, 50, `Étudiant recruté chez ${p.entreprise}`, at); get(p.laureat_id).recrutes++;
-      if (p.type === 'etranger' || (p.pays && p.pays !== 'Maroc')) { add(p.laureat_id, 25, `Bonus international (${p.pays})`, at); get(p.laureat_id).etranger++; }
+      if (bonusInternational(p)) { add(p.laureat_id, 25, `Bonus international (${p.pays})`, at); get(p.laureat_id).etranger++; }
       if (p.merci) { add(p.laureat_id, 10, 'Message de remerciement', at); get(p.laureat_id).mercis++; }
     }
   }
@@ -304,7 +317,7 @@ export const BADGES = [
   { id: 'faiseur', nom: 'Faiseur de carrières', desc: '10 étudiants recrutés', test: s => s.recrutes >= 10 },
   { id: 'passeport', nom: 'Passeport', desc: 'A ouvert une porte à l’étranger', test: s => s.etranger >= 1 },
   { id: 'mentor', nom: 'Mentor', desc: '3 mentorats terminés', test: s => s.mentorats >= 3 },
-  { id: 'reactif', nom: 'Toujours là', desc: '3 demandes d’aide acceptées en moins de 24 h', test: s => s.rapides >= 3 },
+  { id: 'reactif', nom: 'Toujours là', desc: '3 horaires choisis en moins de 24 h', test: s => s.rapides >= 3 },
   { id: 'sage', nom: 'Sage de l’entraide', desc: '3 meilleures réponses', test: s => s.meilleures >= 3 },
   { id: 'aime', nom: 'Aimé de la promo', desc: '5 messages de remerciement', test: s => s.mercis >= 5 },
   { id: 'top', nom: 'Top contributeur', desc: '300 points d’impact (niveau Or)', test: s => s.points >= 300 },
@@ -319,7 +332,7 @@ export const ordreArrivee = profiles => (profiles || []).filter(p => p.role === 
 export function fondateursOf(profiles) {
   return new Set(ordreArrivee(profiles).slice(0, NB_FONDATEURS).map(p => p.id));
 }
-// « Te voilà 40e lauréat(e) du réseau » : le rang d'arrivée d'un lauréat (null pour les autres, ou sans date)
+// « Te voilà 40e parmi les lauréats du réseau » : le rang d'arrivée d'un lauréat (null pour les autres, ou sans date)
 export function rangLaureat(profiles, me) {
   if (me?.role !== 'laureat' || !me.created_at) return null;
   const i = ordreArrivee(profiles).findIndex(p => p.id === me.id);
@@ -414,6 +427,23 @@ export function peutPostulerA(o, me, saison) {
   if (me.role === 'etudiant') return o.audience !== 'laureats' && (o.annees || []).includes(niveauOf(me, saison));
   if (me.role !== 'laureat') return false;
   return o.audience === 'laureats' || ((o.annees || []).includes(6) && (!!me.en_recherche || niveauOf(me, saison) === 6));
+}
+// Les offres où ce membre peut encore postuler : ouvertes, pour lui (même règle que le bouton « Postuler »),
+// pas déjà postulé, date limite pas passée. C'est le vrai nombre qu'on annonce après une candidature pas retenue.
+export function offresOuvertesPour(data, me, saison) {
+  if (!me) return [];
+  const deja = new Set(data.applications.filter(a => a.student_id === me.id).map(a => a.offer_id));
+  return data.offers.filter(o => o.status === 'ouverte' && !deja.has(o.id) && peutPostulerA(o, me, saison) && !(daysUntil(o.deadline) < 0));
+}
+// Après une candidature pas retenue, une porte vraie : les autres offres (leur vrai nombre), sinon publier sa demande, sinon un conseil
+export function porteApresRefus(data, me, saison) {
+  const liste = offresOuvertesPour(data, me, saison), n = liste.length;
+  const versOffres = me?.role === 'laureat' && n && liste.every(o => o.audience === 'laureats') ? 'offres/laureats' : 'offres';
+  if (n === 1) return { n, phrase: 'Une autre offre t’attend.', to: versOffres, cta: 'Voir les offres', icon: 'feed' };
+  if (n > 1) return { n, phrase: `${n} autres offres t’attendent.`, to: versOffres, cta: 'Voir les offres', icon: 'feed' };
+  if (typesDemande(me, saison).length && !demandesActives(data, me.id).length)
+    return { n, phrase: 'Dis aux lauréats ce que tu cherches : ils peuvent te proposer leur aide.', to: 'offres/demandes/nouvelle', cta: 'Publier ma demande', icon: 'send' };
+  return { n, phrase: 'Un lauréat peut te conseiller en visio.', to: 'mentorat', cta: 'Demander un conseil', icon: 'mentor', conseil: true };
 }
 
 // Ce qui compte comme une action : publier, commenter, réagir, postuler, demander ou donner de l'aide, répondre…
@@ -944,7 +974,7 @@ export function phrasesArrivee(a) {
   const pr = a.presence;
   const groupe = pr && pr.proches ? lignePresence({ total: pr.proches, proches: pr.proches, cle: pr.cle }) : null;
   if (a.role === 'laureat' && a.rang) {
-    return { titre: a.rang === 1 ? 'Le réseau des lauréats commence avec toi' : `Te voilà ${a.rang}e lauréat(e) du réseau`, sous: pr?.cle === 'promo' ? groupe : null };
+    return { titre: a.rang === 1 ? 'Le réseau des lauréats commence avec toi' : `Te voilà ${a.rang}e parmi les lauréats du réseau`, sous: pr?.cle === 'promo' ? groupe : null };
   }
   if (!pr) return { titre: 'Bienvenue dans le réseau !', sous: null };
   return { titre: groupe || lignePresence({ total: pr.total, proches: 0, cle: null }), sous: null };
@@ -977,9 +1007,9 @@ export function typesDemande(me, saison) {
 }
 // Ce que le lauréat propose, et comment on l'annonce une fois la réussite confirmée
 export const AIDES = {
-  recrute: { label: 'Je le/la recrute dans mon équipe', court: 'Recrute', icon: 'briefcase', annonce: 'grâce à' },
-  encadre: { label: 'J’encadre son stage ou son PFE', court: 'Encadre', icon: 'cap', annonce: 'encadré(e) par' },
-  recommande: { label: 'Je le/la recommande dans mon entreprise', court: 'Recommande', icon: 'send', annonce: 'recommandé(e) par' },
+  recrute: { label: 'Je recrute dans mon équipe', court: 'Recrute', icon: 'briefcase', annonce: 'grâce à' },
+  encadre: { label: 'J’encadre son stage ou son PFE', court: 'Encadre', icon: 'cap', annonce: 'avec l’encadrement de' },
+  recommande: { label: 'Je recommande son profil dans mon entreprise', court: 'Recommande', icon: 'send', annonce: 'sur la recommandation de' },
 };
 export const demandesActives = (data, uid) => (data.demandes || []).filter(d => d.auteur_id === uid && ['ouverte', 'match'].includes(d.status));
 // Une demande ouverte sans nouvelle depuis 60 jours se met en pause : l'étudiant la relance d'un geste

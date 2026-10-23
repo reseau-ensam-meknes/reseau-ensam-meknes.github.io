@@ -38,18 +38,18 @@ export function TalentPool({ ctx }) {
   const toggle = p => act(async () => {
     const s = saved.get(p.id);
     if (s) await store.remove('shortlists', s.id);
-    else { await store.insert('shortlists', { laureat_id: me.id, student_id: p.id, note: '' }); toast(`${firstName(p)} est dans ta shortlist.`); }
+    else { await store.insert('shortlists', { laureat_id: me.id, student_id: p.id, note: '' }); toast(`Profil de ${firstName(p)} mis de côté.`); }
   });
   const invState = p => {
     const inv = data.invitations.filter(i => i.laureat_id === me.id && i.student_id === p.id);
     if (!inv.length) return null;
     if (data.applications.some(a => a.student_id === p.id && inv.some(i => i.offer_id === a.offer_id))) return ['s-trouve', 'A postulé'];
-    return inv.every(i => i.status === 'declinee') ? ['', 'A décliné'] : ['s-validation', 'Invité(e)'];
+    return inv.every(i => i.status === 'declinee') ? ['', 'A décliné'] : ['s-validation', 'Invitation envoyée'];
   };
 
   return html`<div class="sub-page">
-    <p class="muted small">Étudiants en recherche qui ont choisi d’être visibles par les lauréats, et lauréats qui cherchent un emploi.${canRecruit ? ' Garde les profils intéressants et invite-les à postuler à tes offres.' : ''}</p>
-    ${canRecruit ? html`<div class="seg" role="group"><button class=${view === 'tous' ? 'on' : ''} onClick=${() => setView('tous')}>Tous les talents</button><button class=${view === 'shortlist' ? 'on' : ''} onClick=${() => setView('shortlist')}><${Icon} name="bookmark" size=${15}/> Ma shortlist${saved.size ? html` <span class="count">${saved.size}</span>` : null}</button></div>` : null}
+    <p class="muted small">Étudiants et lauréats en recherche, visibles par les lauréats.</p>
+    ${canRecruit ? html`<div class="seg" role="group"><button class=${view === 'tous' ? 'on' : ''} onClick=${() => setView('tous')}>Tous les talents</button><button class=${view === 'shortlist' ? 'on' : ''} onClick=${() => setView('shortlist')}><${Icon} name="bookmark" size=${15}/> Mis de côté${saved.size ? html` <span class="count">${saved.size}</span>` : null}</button></div>` : null}
     <div class="filter-row">
       <label class="search"><${Icon} name="search" size=${16}/><input id="t-q" placeholder="Compétence, ville, nom…" value=${q} onInput=${e => setQ(e.target.value)}/></label>
       <${FiliereFiltre} id="t-fil" value=${fil} onChange=${setFil}/>
@@ -60,8 +60,8 @@ export function TalentPool({ ctx }) {
       const s = saved.get(p.id); const st = statutOf(data, p, saison); const found = !searching(p); const inv = canRecruit ? invState(p) : null;
       return html`<div class="tcard" key=${p.id}>
         <div class="tcard-head"><${Person} p=${p} onOpen=${openProfile} size=${42}/>
-          ${canRecruit ? html`<button class=${'icon-btn save-btn' + (s ? ' on' : '')} aria-pressed=${!!s} aria-label=${s ? 'Retirer de ma shortlist' : 'Garder dans ma shortlist'} title=${s ? 'Retirer de ma shortlist' : 'Garder dans ma shortlist'} onClick=${() => toggle(p)}><${Icon} name="bookmark" size=${18}/></button>` : null}</div>
-        <p class="small">Cherche : <strong>${laur(p) ? 'un emploi' : CHERCHE[niveauOf(p, saison)]}</strong>${laur(p) ? html` <span class="muted">· Lauréat(e), promo ${p.promo}</span>` : null}</p>
+          ${canRecruit ? html`<button class=${'icon-btn save-btn' + (s ? ' on' : '')} aria-pressed=${!!s} aria-label=${s ? 'Ne plus mettre de côté' : 'Mettre de côté'} title=${s ? 'Ne plus mettre de côté' : 'Mettre de côté'} onClick=${() => toggle(p)}><${Icon} name="bookmark" size=${18}/></button>` : null}</div>
+        <p class="small">Cherche : <strong>${laur(p) ? 'un emploi' : CHERCHE[niveauOf(p, saison)]}</strong>${laur(p) ? html` <span class="muted">· Promo ${p.promo}</span>` : null}</p>
         ${p.disponibilite || p.ville ? html`<p class="small muted tmeta">${p.disponibilite ? html`<span><${Icon} name=${laur(p) ? 'briefcase' : 'calendar'} size=${14}/> <span translate="no" dir="auto">${p.disponibilite}</span></span>` : null}${p.ville ? html`<span><${Icon} name="pin" size=${14}/> ${p.ville}</span>` : null}</p>` : null}
         ${(p.competences || []).length ? html`<p class="chips-line">${p.competences.slice(0, 6).map(c => html`<span class=${'mini' + (trouve && trouve(c) ? ' hit' : '')}>${c}</span>`)}</p>` : null}
         ${view === 'shortlist' && s ? html`<input class="note-in" id=${'note-' + p.id} maxlength="300" placeholder="Note pour moi (visible par moi seul)" value=${s.note || ''} onChange=${e => act(() => store.update('shortlists', s.id, { note: e.target.value.trim() }))}/>` : null}
@@ -74,7 +74,7 @@ export function TalentPool({ ctx }) {
       </div>`;
     })}</div>
     ${!list.length ? (view === 'shortlist' && !saved.size
-      ? html`<${Empty} icon="bookmark" title="Ta shortlist est vide">Clique sur le marque-page d’un profil pour le garder ici, avec une note pour toi.<//>`
+      ? html`<${Empty} icon="bookmark" title="Aucun profil mis de côté">Clique sur le marque-page d’un profil pour le mettre de côté ici, avec une note pour toi.<//>`
       : html`<${Empty} icon="spark" title="Personne ne correspond à ces critères">Essaie une autre filière ou enlève un filtre.<//>`) : null}
     ${invite ? html`<${InviteModal} ctx=${ctx} student=${invite} onClose=${() => setInvite(null)}/>` : null}
   </div>`;
@@ -100,7 +100,7 @@ function InviteModal({ ctx, student, onClose }) {
       <fieldset class="pick-list"><legend class="field-label">Sur quelle offre ?</legend>
         ${mine.map(({ o, fit, done, applied }) => html`<label class=${'pick' + (done || applied ? ' off' : '')} key=${o.id}>
           <input type="radio" name="inv-offer" value=${o.id} checked=${offerId === o.id} disabled=${done || applied} onChange=${() => setOfferId(o.id)}/>
-          <span><strong>${o.titre}</strong><span class="small muted">${applied ? 'A déjà postulé' : done ? 'Déjà invité(e)' : fit ? 'Correspond à son année et à sa filière' : 'Hors de son année ou de sa filière'}</span></span></label>`)}
+          <span><strong>${o.titre}</strong><span class="small muted">${applied ? 'A déjà postulé' : done ? 'Invitation déjà envoyée' : fit ? 'Correspond à son année et à sa filière' : 'Hors de son année ou de sa filière'}</span></span></label>`)}
       </fieldset>
       <${Field} label="Message"><textarea id="inv-msg" rows="3" maxlength="600" value=${msg} onInput=${e => setMsg(e.target.value)}></textarea><//>
       ${!offerId ? html`<p class="small muted">Cet étudiant a déjà reçu une invitation ou postulé sur chacune de tes offres ouvertes.</p>` : null}
@@ -217,7 +217,7 @@ export function SuccessFeed({ ctx, max = 5, lien = true }) {
     setTimeout(() => document.getElementById('reussites')?.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }), 400);
   };
   return html`<div class="panel wins-panel" id=${lien ? undefined : 'reussites'}>
-    <div class="section-head"><h2 class="h-ico"><${Icon} name="trophy"/> ${myN ? 'Réussites de ma promo' : 'Réussites de la saison'}</h2></div>
+    <div class="section-head"><h2 class="h-ico"><${Icon} name="trophy"/> ${myN ? 'Réussites de mon année' : 'Réussites de l’année'}</h2></div>
     <ul class="wins">${items.map(p => {
       const st = store.byId('profiles', p.student_id); const la = p.status === 'confirme' && p.laureat_id ? store.byId('profiles', p.laureat_id) : null;
       const k = data.kudos.filter(x => x.placement_id === p.id); const mine = k.find(x => x.user_id === me.id);
@@ -241,7 +241,14 @@ export function SuccessFeed({ ctx, max = 5, lien = true }) {
 injectCSS('growth-ux', `
 .wins-all { align-self: flex-start; margin-inline-start: -.5rem; color: var(--blue-text); }
 `);
-addAR({ 'Voir toutes les réussites': 'عرض كل النجاحات', 'Voir l’autre réussite': 'عرض النجاح الآخر' }, [
+addAR({ 'Voir toutes les réussites': 'عرض كل النجاحات', 'Voir l’autre réussite': 'عرض النجاح الآخر',
+  // Mettre de côté (marque-page), un seul mot pour les offres et les profils
+  'Mis de côté': 'المحفوظة', 'Mettre de côté': 'حفظ', 'Ne plus mettre de côté': 'إلغاء الحفظ', 'Aucun profil mis de côté': 'لا ملف محفوظ',
+  'Clique sur le marque-page d’un profil pour le mettre de côté ici, avec une note pour toi.': 'انقر على علامة الحفظ في ملف لتحفظه هنا، مع ملاحظة لك.',
+  'Invitation envoyée': 'دعوة مُرسلة', 'Invitation déjà envoyée': 'سبق إرسال الدعوة', 'Étudiants et lauréats en recherche, visibles par les lauréats.': 'طلبة وخريجون يبحثون عن فرصة، يظهرون للخريجين.',
+  'Réussites de mon année': 'نجاحات سنتي', 'Réussites de l’année': 'نجاحات السنة',
+}, [
+  [/^Profil de (.+) mis de côté\.$/, n => `حُفظ ملف ${n}.`],
   [/^Voir les (\d+) autres réussites$/, n => `عرض ${n} نجاحات أخرى`],
 ]);
 
@@ -279,12 +286,12 @@ export function shareText(store, me, pl) {
   const st = store.byId('profiles', pl.student_id); const la = pl.laureat_id && pl.status === 'confirme' ? store.byId('profiles', pl.laureat_id) : null;
   const lieu = pl.ville ? ` à ${pl.ville}` : '';
   if (pl.student_id === me.id) {
-    return `Ravi(e) d’annoncer que je rejoins ${pl.entreprise}${lieu} pour ${POUR_MOI[pl.type]} !`
-      + (la ? `\n\nMerci à ${la.full_name}, lauréat(e) de l’ENSAM Meknès, qui m’a ouvert la porte grâce au Réseau ENSAM Meknès.` : '')
+    return `Une belle nouvelle : je rejoins ${pl.entreprise}${lieu} pour ${POUR_MOI[pl.type]} !`
+      + (la ? `\n\nMerci à ${la.full_name} (ENSAM Meknès), qui m’a ouvert la porte grâce au Réseau ENSAM Meknès.` : '')
       + '\n\n#ENSAM #ENSAMMeknès #ArtsEtMétiers';
   }
-  const who = pl.partage_ok ? st?.full_name : 'un(e) étudiant(e) de l’ENSAM Meknès';
-  return `Fier(e) d’accueillir ${who} chez ${pl.entreprise}${lieu} pour ${POUR_LUI[pl.type]}.\n\nSur le Réseau ENSAM Meknès, les lauréats partagent leurs offres de stages, de PFE et d’emplois avec les étudiants de l’école. Lauréats, rejoignez-nous !\n\n#ENSAM #ENSAMMeknès #ArtsEtMétiers`;
+  const who = pl.partage_ok ? st?.full_name : 'un talent de l’ENSAM Meknès';
+  return `C’est une joie d’accueillir ${who} chez ${pl.entreprise}${lieu} pour ${POUR_LUI[pl.type]}.\n\nSur le Réseau ENSAM Meknès, les lauréats partagent leurs offres de stages, de PFE et d’emplois avec les étudiants de l’école. Lauréats, rejoignez-nous !\n\n#ENSAM #ENSAMMeknès #ArtsEtMétiers`;
 }
 
 export function ShareModal({ ctx, pl, onClose }) {

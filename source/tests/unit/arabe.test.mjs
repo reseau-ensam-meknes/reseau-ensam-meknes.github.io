@@ -24,9 +24,9 @@ test('nombres : « 93% », « +258 », « 2026-2027 » isolés de gauche à droi
 });
 
 test('nombres dans les traductions : signe, pourcentage et saison isolés', () => {
-  assert.equal(t('+10 points'), `${LRI}+10${PDI} نقطة`);
+  assert.equal(t('+10 points'), `${LRI}+10${PDI} نقاط`);
   assert.equal(t('93 % des comptes'), `${LRI}93%${PDI} من الحسابات`);
-  assert.equal(t('Saison 2026-2027'), `موسم ${LRI}2026-2027${PDI}`);
+  assert.equal(t('Année 2026-2027'), `السنة ${LRI}2026-2027${PDI}`);
   assert.equal(t('+258'), `${LRI}+258${PDI}`); // texte sans lettre : seulement isolé
 });
 

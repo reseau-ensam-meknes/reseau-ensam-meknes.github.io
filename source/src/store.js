@@ -158,7 +158,7 @@ class DemoStore extends Base {
     if (PHASE3.includes(table)) applyPhase3Rules(this, table, r, null);
     if (table === 'reactions' && this.data.reactions.some(x => x.offer_id === r.offer_id && x.user_id === r.user_id && x.kind === r.kind)) return r;
     if (table === 'votes' && this.data.votes.some(x => x.answer_id === r.answer_id && x.user_id === r.user_id)) return r;
-    if (table === 'placements' && this.data.placements.some(x => x.student_id === r.student_id && x.saison === r.saison && x.status !== 'refuse')) throw new Error('Une réussite est déjà enregistrée pour cet étudiant cette saison.');
+    if (table === 'placements' && this.data.placements.some(x => x.student_id === r.student_id && x.saison === r.saison && x.status !== 'refuse')) throw new Error('Une réussite est déjà enregistrée pour cet étudiant cette année.');
     this.data[table] = [r, ...this.data[table]];
     if (table === 'profiles' && r.id === this.me?.id) this.me = r;
     if (table === 'cafes') this.data.cafe_participants = [{ id: uuid(), cafe_id: r.id, user_id: r.organisateur_id, created_at: r.created_at }, ...this.data.cafe_participants];
@@ -560,7 +560,7 @@ function applyMessagerieRules(store, table, r, old) {
     if (r.body && r.body.length > 2000) throw new Error('Ton message est trop long (2 000 caractères au plus).');
     if (r.type !== 'texte' && !r.fichier) throw new Error('Fichier manquant.');
     if (r.type === 'vocal') r.body = null;
-    if (!peutDiscuter(store.data, me, r.dest_id, x => store.byId('profiles', x))) throw new Error('Conversation pas encore ouverte : elle s’ouvre avec un mentorat, une candidature ou une demande de contact acceptée.');
+    if (!peutDiscuter(store.data, me, r.dest_id, x => store.byId('profiles', x))) throw new Error('Conversation pas encore ouverte : elle s’ouvre avec un mentorat, une candidature ou des coordonnées partagées.');
     return;
   }
   const v = r.lu_at; Object.assign(r, old);
@@ -586,7 +586,7 @@ function applyPhase3Rules(store, table, r, old) {
       if (isAdmin) return;
       r.demandeur_id = me.id; Object.assign(r, { status: 'envoyee', repondu_at: null });
       if (r.cible_id === me.id) throw new Error('Choisis un autre membre que toi.');
-      if (store.data.demandes_contact.some(d => d.demandeur_id === me.id && d.cible_id === r.cible_id)) throw new Error('Tu as déjà envoyé une demande à ce membre.');
+      if (store.data.demandes_contact.some(d => d.demandeur_id === me.id && d.cible_id === r.cible_id)) throw new Error('Tu lui as déjà demandé ses coordonnées.');
       return;
     }
     if (isAdmin) return;
@@ -627,7 +627,7 @@ function applyPhase3Rules(store, table, r, old) {
       if (old.status === 'rendue') { r.merci = v.merci; r.note = v.note; }
       return;
     }
-    if (v.reviewer_id === me.id) throw new Error('Un autre lauréat vient de prendre cette demande.');
+    if (v.reviewer_id === me.id) throw new Error('Un autre lauréat relit déjà ce CV.');
     return;
   }
   if (table === 'relecture_commentaires') {
@@ -653,7 +653,7 @@ function applyPhase3Rules(store, table, r, old) {
       if (!old) r.author_id = me.id;
       else for (const k of ['author_id', 'entreprise', 'type', 'saison', 'placement_id', 'created_at']) r[k] = old[k];
     }
-    if (!old && store.data.avis_stage.some(a => a.author_id === r.author_id && a.saison === r.saison && entKey(a.entreprise) === entKey(r.entreprise))) throw new Error('Tu as déjà donné ton avis sur cette entreprise pour cette saison.');
+    if (!old && store.data.avis_stage.some(a => a.author_id === r.author_id && a.saison === r.saison && entKey(a.entreprise) === entKey(r.entreprise))) throw new Error('Tu as déjà donné ton avis sur cette entreprise pour cette année.');
     if (r.placement_id && !store.data.placements.some(p => p.id === r.placement_id && p.student_id === r.author_id)) r.placement_id = null;
     if (!r.placement_id) r.placement_id = store.data.placements.filter(p => p.student_id === r.author_id && p.saison === r.saison && p.status !== 'refuse' && sameCompany(p.entreprise, r.entreprise)).sort((a, b) => (b.status === 'confirme') - (a.status === 'confirme'))[0]?.id || null;
     r.verifie = !!r.placement_id && store.byId('placements', r.placement_id)?.status === 'confirme';
@@ -804,14 +804,14 @@ function applyMentorshipRules(store, r, old) {
     if (r.mentor_id && store.byId('profiles', r.mentor_id)?.role !== 'laureat') throw new Error('Choisis un lauréat.');
     r.creneaux = clean(r.creneaux);
     if (!r.creneaux.length) throw new Error('Propose au moins un horaire à venir.');
-    if (store.data.mentorships.filter(m => m.student_id === me.id && m.status === 'demande').length >= 3) throw new Error('Tu as déjà 3 demandes en attente. Attends une réponse avant d’en envoyer une autre.');
+    if (store.data.mentorships.filter(m => m.student_id === me.id && m.status === 'demande').length >= 3) throw new Error('Tu as déjà 3 rendez-vous en attente d’un horaire. Attends une réponse avant d’en proposer un autre.');
     Object.assign(r, { mentor_id: r.mentor_id || null, status: 'demande', rdv_at: null, reponse: null, merci: null, note: null, accepted_at: null, confirme_at: null });
     return;
   }
   const v = { ...r };
   Object.assign(r, old);
   if (!old.mentor_id && old.status === 'demande' && v.mentor_id === me.id && me.id !== old.student_id) {
-    if (me.role !== 'laureat') throw new Error('Seul un lauréat peut accepter une demande.');
+    if (me.role !== 'laureat') throw new Error('Seul un lauréat peut choisir un horaire.');
     r.mentor_id = me.id;
   }
   if (r.mentor_id === me.id) {
@@ -838,7 +838,7 @@ function applyMentorshipRules(store, r, old) {
     else if (old.status === 'acceptee' && v.confirme_at && !old.confirme_at) r.confirme_at = now.toISOString();
     return;
   }
-  if (v.mentor_id === me?.id) throw new Error('Un autre lauréat vient de prendre cette demande.');
+  if (v.mentor_id === me?.id) throw new Error('Un autre lauréat vient de choisir un horaire.');
 }
 
 // Lien de visio : seul le lauréat du rendez-vous le change, et seulement pour un lien https
@@ -1012,7 +1012,7 @@ export class SupabaseStore extends Base {
     const { data, error } = await this.sb.from(table).update(patch).eq('id', id).select().single();
     // Aucune ligne modifiée : quelqu'un est passé avant (ex. demande prise entre-temps)
     // Son propre profil : aucune ligne modifiée veut dire que la connexion s'est perdue, pas qu'un autre est passé avant
-    if (error?.code === 'PGRST116') throw new Error(table === 'mentorships' ? 'Un autre lauréat vient de prendre cette demande.' : table === 'profiles' && id === this.userId ? SESSION_PERDUE : 'Cette action n’est plus possible. Recharge la page.');
+    if (error?.code === 'PGRST116') throw new Error(table === 'mentorships' ? 'Un autre lauréat vient de choisir un horaire.' : table === 'profiles' && id === this.userId ? SESSION_PERDUE : 'Cette action n’est plus possible. Recharge la page.');
     if (error) throw new Error(frError(error));
     this.data[table] = this.data[table].some(x => x.id === id) ? this.data[table].map(x => x.id === id ? data : x) : [data, ...this.data[table]];
     // Le lien de visio est créé côté base quand le lauréat accepte
@@ -1339,15 +1339,15 @@ function frError(e) {
   if (m.includes('already registered')) return 'Un compte existe déjà avec cet email. Connecte-toi.';
   if (m.includes('password should be')) return 'Le mot de passe doit contenir au moins 6 caractères.';
   if (m.includes('email not confirmed')) return "Confirme d'abord ton email (regarde ta boîte de réception).";
-  if (m.includes('duplicate key') && m.includes('placements')) return 'Une réussite est déjà enregistrée pour cet étudiant cette saison.';
+  if (m.includes('duplicate key') && m.includes('placements')) return 'Une réussite est déjà enregistrée pour cet étudiant cette année.';
   if (m.includes('duplicate key') && m.includes('applications')) return 'Tu as déjà postulé à cette offre.';
   if (m.includes('duplicate key') && m.includes('invitations')) return 'Cet étudiant est déjà invité sur cette offre.';
   if (m.includes('duplicate key') && m.includes('propositions')) return 'Tu as déjà proposé ton aide pour cette demande.';
   if (m.includes('duplicate key') && (m.includes('cafe_participants') || m.includes('groupe_membres'))) return 'C’est déjà fait.';
   if (m.includes('startups_site_check')) return 'Le lien doit commencer par https://';
-  if (m.includes('avis_stage_un_par_saison')) return 'Tu as déjà donné ton avis sur cette entreprise pour cette saison.';
+  if (m.includes('avis_stage_un_par_saison')) return 'Tu as déjà donné ton avis sur cette entreprise pour cette année.';
   if (m.includes('guide_pays_pays_cle_section')) return 'Cette rubrique existe déjà : recharge la page pour la modifier.';
-  if (m.includes('demandes_contact_demandeur_id_cible_id')) return 'Tu as déjà envoyé une demande à ce membre.';
+  if (m.includes('demandes_contact_demandeur_id_cible_id')) return 'Tu lui as déjà demandé ses coordonnées.';
   if (m.includes('signalements_auteur_id_cible_type_cible_id')) return 'Tu as déjà signalé ce contenu. Merci !';
   if (m.includes('enquetes_insertion_user_id_vague')) return 'Tu as déjà répondu à cette enquête.';
   if (m.includes('duplicate key') && (m.includes('verifications_pairs') || m.includes('evenement_participants'))) return 'C’est déjà fait.';

@@ -19,7 +19,7 @@ export function DashboardPage(ctx) {
 function SuiviSeg({ ctx, on }) {
   const etu = ctx.me.role === 'etudiant';
   return html`<div class="seg suivi-seg ins-noprint" role="tablist">
-    <button role="tab" aria-selected=${on === 'placement'} class=${on === 'placement' ? 'on' : ''} onClick=${() => ctx.go('suivi', { remplacer: true })}><${Icon} name=${etu ? 'people' : 'chart'} size=${15}/> ${etu ? 'Ma promo' : 'Placement'}</button>
+    <button role="tab" aria-selected=${on === 'placement'} class=${on === 'placement' ? 'on' : ''} onClick=${() => ctx.go('suivi', { remplacer: true })}><${Icon} name=${etu ? 'people' : 'chart'} size=${15}/> ${etu ? 'Mon année' : 'Placement'}</button>
     <button role="tab" aria-selected=${on === 'insertion'} class=${on === 'insertion' ? 'on' : ''} onClick=${() => ctx.go('suivi/insertion', { remplacer: true })}><${Icon} name="briefcase" size=${15}/> ${etu ? 'Après le diplôme' : 'Insertion des diplômés'}</button>
   </div>`;
 }
@@ -42,7 +42,7 @@ function SeasonPage({ ctx }) {
   return html`<section class="page">
     <header class="page-head">
       <div><p class="eyebrow">Suivi de placement</p><h1>Tableau de bord</h1></div>
-      <label class="season-pick">Saison <select id="dash-season" value=${saison} onChange=${e => setSaison(+e.target.value)}>${seasons.map(s => html`<option value=${s}>${seasonLabel(s)}${s === cur ? ' (en cours)' : ''}</option>`)}</select></label>
+      <label class="season-pick">Année <select id="dash-season" value=${saison} onChange=${e => setSaison(+e.target.value)}>${seasons.map(s => html`<option value=${s}>${seasonLabel(s)}${s === cur ? ' (en cours)' : ''}</option>`)}</select></label>
     </header>
     <${SuiviSeg} ctx=${ctx} on="placement"/>
 
@@ -56,7 +56,7 @@ function SeasonPage({ ctx }) {
     <div class="niv-grid">${st.rows.map(r => {
       const pace = r.elapsed; const gap = r.rate - pace;
       const tone = r.rate >= 0.999 ? 'good' : r.daysLeft < 0 ? (r.rate >= 0.9 ? 'good' : 'bad') : gap >= -0.05 ? 'good' : gap >= -0.25 ? 'warn' : 'bad';
-      const toneTxt = r.rate >= 0.999 ? 'Objectif atteint' : r.daysLeft < 0 ? 'Saison terminée' : tone === 'good' ? 'Dans les temps' : tone === 'warn' ? 'À surveiller' : 'En retard';
+      const toneTxt = r.rate >= 0.999 ? 'Objectif atteint' : r.daysLeft < 0 ? 'Année terminée' : tone === 'good' ? 'Dans les temps' : tone === 'warn' ? 'À surveiller' : 'En retard';
       return html`<button class=${'niv-card' + (niv === r.n ? ' on' : '')} onClick=${() => setNiv(r.n)} aria-pressed=${niv === r.n}>
         <div class="niv-top"><span class="niv-badge">${NIVEAUX[r.n].short}</span><span class=${'status s-' + tone}><span class="sdot"></span>${toneTxt}</span></div>
         <strong class="niv-obj">${r.objectif.titre}</strong>
@@ -120,7 +120,7 @@ function MonthChart({ months }) {
 function ExportBox({ data, saison, rows }) {
   const [href, setHref] = useState(null);
   const build = () => {
-    const lines = [['Nom', 'Niveau', 'Filière', 'Promo', 'Statut', 'Entreprise', 'Ville', 'Pays', 'Source', 'Vérifié']];
+    const lines = [['Nom', 'Année', 'Filière', 'Promo', 'Statut', 'Entreprise', 'Ville', 'Pays', 'Source', 'Vérifié']];
     for (const r of rows) for (const p of data.profiles.filter(x => x.role !== 'admin')) {
       const n = r.n; const lvl = (5 - (p.promo - (saison + 1)));
       const pn = lvl <= 5 ? lvl : p.promo === saison ? 6 : 7; if (pn !== n) continue;
@@ -131,7 +131,7 @@ function ExportBox({ data, saison, rows }) {
     setHref(URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })));
   };
   return html`<div class="panel"><div class="section-head"><h2>Export administration</h2></div>
-    <p class="muted small">Liste complète de la saison (une ligne par étudiant), à ouvrir dans Excel.</p>
+    <p class="muted small">Liste complète de l’année (une ligne par étudiant), à ouvrir dans Excel.</p>
     ${href ? html`<a class="btn" href=${href} download=${`suivi-placement-${seasonLabel(saison)}.csv`}><${Icon} name="download"/> Télécharger le fichier CSV</a>` : html`<button class="btn" onClick=${build}>Préparer l’export ${seasonLabel(saison)}</button>`}
   </div>`;
 }
@@ -144,7 +144,7 @@ function PromoPage({ ctx }) {
   const n = niveauOf(me, saison);
   const st = useMemo(() => seasonStats(data, saison), [data, saison]);
   const row = st.rows.find(r => r.n === n);
-  if (!row) return html`<section class="page"><header class="page-head"><div><p class="eyebrow">Saison ${seasonLabel(saison)}</p><h1>Ma promo</h1></div></header>
+  if (!row) return html`<section class="page"><header class="page-head"><div><p class="eyebrow">${seasonLabel(saison)}</p><h1>Mon année</h1></div></header>
     <${SuiviSeg} ctx=${ctx} on="placement"/>
     <div class="panel"><p>Le suivi commence en 3e année. En attendant, profite de l’Entraide et du mentorat pour découvrir les métiers des lauréats.</p></div></section>`;
   const companies = new Map();
@@ -156,13 +156,13 @@ function PromoPage({ ctx }) {
   const aidants = data.profiles.filter(p => p.role === 'laureat' && proximiteFiliere(p.filiere, me.filiere) > 0).length;
   const pourFiliere = data.offers.filter(o => o.status === 'ouverte' && o.audience !== 'laureats' && (o.annees || []).includes(n) && o.filieres?.length && filiereMatch(o.filieres, me.filiere)).length;
   return html`<section class="page promo">
-    <header class="page-head"><div><p class="eyebrow">Saison ${seasonLabel(saison)} · ${NIVEAUX[n].label}</p><h1>Ma promo</h1></div></header>
+    <header class="page-head"><div><p class="eyebrow">${seasonLabel(saison)} · ${NIVEAUX[n].label}</p><h1>Mon année</h1></div></header>
     <${SuiviSeg} ctx=${ctx} on="placement"/>
     <div class="pr-avant">
       <button type="button" class="pr-stat" onClick=${() => go('offres')}>
         <span class="pr-stat-ico"><${Icon} name="feed" size=${18}/></span>
         <span class="pr-stat-num mono"><${Num} v=${ouvertes}/></span>
-        <span class="pr-stat-lbl">${ouvertes > 1 ? 'offres ouvertes pour ta promo' : 'offre ouverte pour ta promo'}</span>
+        <span class="pr-stat-lbl">${ouvertes > 1 ? 'offres ouvertes pour ton année' : 'offre ouverte pour ton année'}</span>
         <span class="pr-stat-go">Voir les offres <${Icon} name="arrow" size=${14}/></span>
       </button>
       ${row.via ? html`<div class="pr-stat good">
@@ -182,7 +182,7 @@ function PromoPage({ ctx }) {
       <p class="small muted">Chacun avance à son rythme : les lauréats publient toute l’année.</p>
       ${pourFiliere ? html`<button type="button" class="linkish small pr-fil-go" onClick=${() => go('offres')}>${pourFiliere > 1 ? `${pourFiliere} offres ciblent ta filière` : '1 offre cible ta filière'} <${Icon} name="arrow" size=${13}/></button>` : null}</div>` : null}
     <${SuccessFeed} ctx=${ctx} max=${3} lien=${false}/>
-    ${comp.length ? html`<div class="panel"><div class="section-head"><h2>Où va ta promo</h2></div>
+    ${comp.length ? html`<div class="panel"><div class="section-head"><h2>Où vont les étudiants de ton année</h2></div>
       <ul class="company-cloud">${comp.map(([c, k]) => html`<li><${CompanyLogo} name=${c} size=${34}/><span translate="no" dir="auto">${c}</span><span class="count">${k}</span></li>`)}</ul></div>` : null}
   </section>`;
 }
@@ -205,8 +205,10 @@ button.pr-stat:hover { transform: translateY(-2px); box-shadow: var(--shadow-lif
 `);
 
 addAR({
-  'offres ouvertes pour ta promo': 'عروض مفتوحة لدفعتك',
-  'offre ouverte pour ta promo': 'عرض مفتوح لدفعتك',
+  'offres ouvertes pour ton année': 'عروض مفتوحة لسنتك',
+  'offre ouverte pour ton année': 'عرض مفتوح لسنتك',
+  'Mon année': 'سنتي', 'Année terminée': 'انتهت السنة', 'Où vont les étudiants de ton année': 'أين يتجه طلبة سنتك',
+  'Liste complète de l’année (une ligne par étudiant), à ouvrir dans Excel.': 'اللائحة الكاملة للسنة (سطر لكل طالب)، تُفتح في Excel.',
   'camarades ont trouvé grâce à un lauréat': 'زملاء وجدوا فرصتهم بفضل خريج',
   'camarade a trouvé grâce à un lauréat': 'زميل وجد فرصته بفضل خريج',
   'lauréats de ta filière dans le réseau': 'خريجون من شعبتك في الشبكة',
@@ -362,7 +364,7 @@ function InsertionPage({ ctx }) {
   const due = enqueteDue(me, data.enquetes_insertion || []);
 
   return html`<section class="page insertion">
-    <header class="page-head ins-noprint"><div><p class="eyebrow">Enquête 6 et 12 mois après le diplôme</p><h1>${etu ? 'Après le diplôme' : 'Insertion des diplômés'}</h1></div>
+    <header class="page-head ins-noprint"><div><p class="eyebrow">Enquête d’insertion</p><h1>${etu ? 'Après le diplôme' : 'Insertion des diplômés'}</h1></div>
       ${promos.length ? html`<div class="ins-pick">
         <label class="season-pick">Promotion <select id="ins-promo" value=${p} onChange=${e => { setPromo(+e.target.value); setVague(null); }}>${promos.map(x => html`<option value=${x}>${x}</option>`)}</select></label>
         ${vagues.length > 1 ? html`<div class="seg small-seg" role="group" aria-label="Vague">${vagues.map(x => html`<button class=${x === v ? 'on' : ''} aria-pressed=${x === v} onClick=${() => setVague(x)}>${x} mois</button>`)}</div>` : null}

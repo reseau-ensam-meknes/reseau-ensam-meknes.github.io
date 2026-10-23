@@ -44,11 +44,11 @@ function GroupList({ ctx }) {
   const near = cafes.filter(c => mine.all.includes(groupKey('ville', c.ville)) || mine.all.includes(groupKey('pays', c.pays)));
   const follow = k => act(async () => { await store.insert('groupe_membres', { groupe: k, user_id: me.id }); toast(`Tu suis maintenant le groupe ${groupLabel(data, k)}.`); });
   return html`<div class="sub-page">
-    <p class="muted small">Tu fais partie des groupes de ton parcours et de ta ville. Suis aussi les groupes des lauréats à l’étranger pour poser tes questions.</p>
+    <p class="muted small">Tu es dans les groupes de ton parcours et de ta ville.</p>
     <div class="group-grid">${mine.all.map(k => html`<${GroupCard} ctx=${ctx} gkey=${k} key=${k}/>`)}</div>
 
     <div class="section-head"><h2 class="h-ico"><${Icon} name="clap"/> Cafés ENSAM</h2><button class="btn small" onClick=${() => setCafe(true)}><${Icon} name="plus" size=${15}/> Organiser un café</button></div>
-    <p class="muted small">Une heure autour d’un café avec les lauréats et les étudiants de ta ville. Inscription en un clic.</p>
+    <p class="muted small">Une heure autour d’un café, avec les membres de ta ville.</p>
     ${cafes.length ? html`<div class="cafe-list">${[...near, ...cafes.filter(c => !near.includes(c))].slice(0, 6).map(c => html`<${CafeCard} ctx=${ctx} c=${c} key=${c.id} showCity/>`)}</div>`
       : html`<${Empty} icon="clap" title="Aucun café prévu pour l’instant">Lance le premier dans ta ville : les membres de ta ville sont prévenus.<//>`}
 
@@ -150,11 +150,11 @@ export function CafeCard({ ctx, c, showCity }) {
     </div>
     <div class="cafe-act">
       ${c.annule ? html`<span class="tag done">Annulé</span>` : past ? html`<span class="tag done">Terminé</span>` : mineP ? html`
-        <span class="mini good"><${Icon} name="check" size=${12}/> Inscrit(e)</span>
+        <span class="mini good"><${Icon} name="check" size=${12}/> Tu y vas</span>
         <a class="btn tiny ghost" href=${gcalCafe(c)} target="_blank" rel="noopener"><${Icon} name="calendar" size=${14}/> Agenda</a>
         ${isOrg ? html`<button class="btn tiny ghost danger-t" onClick=${() => ctx.confirm('Annuler ce café ? Les inscrits le verront annulé.', () => act(() => store.update('cafes', c.id, { annule: true })), 'Annuler le café')}>Annuler</button>`
           : html`<button class="btn tiny ghost" onClick=${() => act(() => store.remove('cafe_participants', mineP.id))}>Je ne viens plus</button>`}`
-        : full ? html`<span class="tag done">Complet</span>` : html`<button class="btn small primary" onClick=${() => act(async () => { await store.insert('cafe_participants', { cafe_id: c.id, user_id: me.id }); toast('Inscrit(e) ! Ajoute-le à ton agenda.'); })}>Je viens</button>`}
+        : full ? html`<span class="tag done">Complet</span>` : html`<button class="btn small primary" onClick=${() => act(async () => { await store.insert('cafe_participants', { cafe_id: c.id, user_id: me.id }); toast('C’est noté ! Ajoute-le à ton agenda.'); })}>Je viens</button>`}
       ${!isOrg && !c.annule ? html`<${SignalerBtn} ctx=${ctx} type="cafe" id=${c.id} small/>` : null}
     </div>
   </article>`;

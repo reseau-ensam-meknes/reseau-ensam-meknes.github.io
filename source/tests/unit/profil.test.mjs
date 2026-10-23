@@ -49,6 +49,6 @@ function magasin(erreur) {
 test('session perdue en enregistrant son profil : on le dit, sans « JWT expired » en anglais', async () => {
   await assert.rejects(magasin({ code: 'PGRST116', message: 'JSON object requested, multiple (or no) rows returned' }).update('profiles', 'moi', { ville: 'Rabat' }), /Ta connexion a expiré/);
   await assert.rejects(magasin({ code: 'PGRST301', message: 'JWT expired' }).update('profiles', 'moi', { ville: 'Rabat' }), /Ta connexion a expiré/);
-  await assert.rejects(magasin({ code: 'PGRST116', message: 'x' }).update('mentorships', 'm1', {}), /Un autre lauréat vient de prendre cette demande/);
+  await assert.rejects(magasin({ code: 'PGRST116', message: 'x' }).update('mentorships', 'm1', {}), /Un autre lauréat vient de choisir un horaire/);
   await assert.rejects(magasin({ code: 'PGRST116', message: 'x' }).update('profiles', 'autre', {}), /Cette action n’est plus possible/);
 });
