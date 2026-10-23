@@ -2,7 +2,7 @@
 import { getLang, setLang, chargerAR } from './i18n.js';
 import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore, texteErreur } from './store.js';
-import { Icon, Field, Empty, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, Num, useLocal, Celebration, celebrate, voirRangs, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, rendrePosition, Feuille } from './ui.js';
+import { Icon, Field, Empty, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, Num, useLocal, Celebration, celebrate, voirRangs, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille } from './ui.js';
 import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, besoinsDeMoi, etatAide, AIDE_OUVERTE, peutPostulerA } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
 import { ParcoursPage, EspacePage, Journey, journeyStep, confirmerRecrutement, refuserRecrutement, versMerci } from './me.js';
@@ -376,7 +376,7 @@ function buildNotifs({ data, me, store, saison }) {
     }
     if (m.student_id === me.id) {
       // Rendez-vous fixé : confirmer sa présence est la chose à faire (base à jour) ; sinon une simple nouvelle, puis le rappel
-      const aConfirmer = st === 'rdv' && 'confirme_at' in m && !m.confirme_at;
+      const aConfirmer = st === 'rdv' && 'confirme_at' in m && !m.confirme_at && upcoming;
       if (aConfirmer) out.push({ key: 'sc' + m.id + m.rdv_at, ref: m.id, action: true, geste: 'Confirmer ma présence', tone: 'accent', icon: 'calendar', to: 'mentorat', at: m.accepted_at || m.created_at, text: `${first(m.mentor_id)} a fixé ton rendez-vous. Confirme ta présence : ${m.sujet}` });
       else if (st === 'rdv' && !soon && recent(m.accepted_at || m.created_at, 10)) out.push({ key: 'sa' + m.id + m.rdv_at, ref: m.id, icon: 'mentor', tone: 'good', to: 'mentorat', at: m.accepted_at || m.created_at, text: `${name(m.mentor_id)} a accepté ta demande : ${m.sujet}` });
       if (soon && !aConfirmer) out.push({ key: 'sr' + m.id + m.rdv_at, ref: m.id, rdv: true, rappel: true, action: true, tone: 'accent', icon: 'video', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous avec ${name(m.mentor_id)} ${soon}` });
@@ -445,8 +445,10 @@ function buildNotifs({ data, me, store, saison }) {
   }
   // Relecture de CV
   for (const r of data.relectures_cv || []) {
-    if (r.student_id === me.id && r.status === 'rendue' && !r.merci) out.push({ key: 'rr' + r.id, ref: r.id, action: true, geste: 'Lire ses conseils', tone: 'brass', icon: 'check', to: 'mentorat/cv', at: r.rendue_at || r.created_at, text: `${r.reviewer_id ? first(r.reviewer_id) : 'Un lauréat'} a relu ton CV. Lis ses conseils et dis merci.` });
+    if (r.student_id === me.id && r.status === 'rendue' && !r.merci && !r.note) out.push({ key: 'rr' + r.id, ref: r.id, action: true, geste: 'Lire ses conseils', tone: 'brass', icon: 'check', to: 'mentorat/cv', at: r.rendue_at || r.created_at, text: `${r.reviewer_id ? first(r.reviewer_id) : 'Un lauréat'} a relu ton CV. Lis ses conseils et dis merci.` });
     if (r.student_id === me.id && r.status === 'en_cours' && recent(r.pris_at || r.created_at, 7)) out.push({ key: 'rp' + r.id, ref: r.id, tone: 'good', icon: 'eye', to: 'mentorat/cv', at: r.pris_at || r.created_at, text: `${r.reviewer_id ? name(r.reviewer_id) : 'Un lauréat'} relit ton CV.` });
+    // Relecture commencée : l'étudiant attend la suite, elle reste à faire jusqu'à ce qu'elle soit rendue
+    if (r.reviewer_id === me.id && r.status === 'en_cours') out.push({ key: 'rc' + r.id, ref: r.id, action: true, geste: 'Continuer la relecture', tone: 'accent', icon: 'edit', to: 'mentorat/cv', at: r.pris_at || r.created_at, text: `Tu relis le CV de ${name(r.student_id)}` });
     if (r.reviewer_id === me.id && r.status === 'demandee') out.push({ key: 'rd' + r.id, ref: r.id, action: true, geste: `Relire le CV de ${first(r.student_id)}`, besoin: true, tone: 'accent', icon: 'eye', to: 'mentorat/cv', at: r.created_at, text: `${name(r.student_id)} te demande de relire son CV.` });
     if (r.reviewer_id === me.id && r.status === 'rendue' && r.merci && recent(r.rendue_at || r.created_at, 14)) out.push({ key: 'rm' + r.id, ref: r.id, tone: 'brass', icon: 'heart', to: 'mentorat/cv', at: r.rendue_at || r.created_at, text: `${first(r.student_id)} te remercie pour la relecture de son CV.` });
   }
@@ -490,8 +492,8 @@ function buildNotifs({ data, me, store, saison }) {
 const MOMENT = h => (h < 5 ? 'Bonsoir' : h < 18 ? 'Bonjour' : 'Bonsoir');
 const cleNotif = n => n.key || n.text;
 // Quelqu'un attend ma réponse : ces notifications passent avant tout message, dans cet ordre
-const ATTEND = { laureat: ['md', 'dm', 'rd', 'ap', 'qr'], etudiant: ['dp', 'in'], admin: ['sg'] };
-const OEIL = { md: 'Un étudiant t’attend', dm: 'Un étudiant t’attend', rd: 'Un étudiant t’attend', ap: 'Un étudiant t’attend', qr: 'Une question pour toi', dp: 'Une proposition d’aide', in: 'Une invitation à postuler', sg: 'À traiter' };
+const ATTEND = { laureat: ['md', 'dm', 'rd', 'rc', 'ap', 'qr'], etudiant: ['dp', 'in'], admin: ['sg'] };
+const OEIL = { md: 'Un étudiant t’attend', dm: 'Un étudiant t’attend', rd: 'Un étudiant t’attend', rc: 'Un étudiant t’attend', ap: 'Un étudiant t’attend', qr: 'Une question pour toi', dp: 'Une proposition d’aide', in: 'Une invitation à postuler', sg: 'À traiter' };
 // Le CV se dépose dans Mon profil : on y va et le bouton de dépôt prend le focus (ouvrir le sélecteur à distance, l'iPhone le bloque)
 const versCV = go => {
   go('profil');
@@ -615,7 +617,7 @@ function ProchainPas({ pas, progres, onEtapes }) {
 function EtapesSheet({ me, g, onClose, onHide, historique }) {
   const ligne = s => html`<li key=${s.cle} class=${s.fait ? 'fait' : s.plusTard ? 'plus-tard' : ''}>
     <span class="e-ico"><${Icon} name=${s.fait ? 'check' : s.icon} size=${18}/></span><strong>${s.titre}</strong><span class="small muted">${s.texte}</span>
-    ${!s.fait && s.go ? html`<button type="button" class="btn small" onClick=${() => { onClose(); s.go(); }}>${s.cta}</button>` : null}</li>`;
+    ${!s.fait && s.go ? html`<button type="button" class="btn small" onClick=${() => { onClose(); ensuite(s.go); }}>${s.cta}</button>` : null}</li>`;
   return html`<${Modal} title="Premiers pas" onClose=${onClose} historique=${historique} footer=${g.fini ? null : html`<button type="button" class="linkish small" onClick=${onHide}>Ne plus afficher les premiers pas</button>`}>
     <div class="etapes-tete"><span class="pas-anneau grand" style=${`--p:${g.done / g.total}`} aria-hidden="true"></span>
       <p><strong>${me.role === 'etudiant' ? 'Trouver ton stage avec les lauréats' : 'Aider les étudiants de l’école'}</strong><span class="small muted">${`${g.done} sur ${g.total}`}</span></p></div>

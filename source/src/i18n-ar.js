@@ -577,7 +577,7 @@ Object.assign(AR, {
   'Un étudiant t’attend': 'طالب في انتظارك', 'Une question pour toi': 'سؤال موجّه إليك', 'Une proposition d’aide': 'عرض مساعدة', 'Une invitation à postuler': 'دعوة للترشح',
   'C’est l’heure': 'حان وقت الموعد', 'Tout est à jour': 'كل شيء محدَّث', 'Tu peux aider': 'يمكنك المساعدة', 'Voir le rendez-vous': 'عرض الموعد',
   'Voir la candidature': 'عرض الترشيح', 'Voir les candidatures': 'عرض الترشيحات', 'Relire le CV': 'مراجعة السيرة الذاتية', 'Répondre à la question': 'أجب عن السؤال',
-  'Voir les signalements': 'عرض التبليغات', 'Voir sa proposition': 'عرض اقتراحه', 'Lire ses conseils': 'اقرأ نصائحه', 'Voir ma demande': 'عرض طلبي', 'Voir mon offre': 'فتح عرضي',
+  'Voir les signalements': 'عرض التبليغات', 'Voir sa proposition': 'عرض اقتراحه', 'Continuer la relecture': 'متابعة المراجعة', 'Lire ses conseils': 'اقرأ نصائحه', 'Voir ma demande': 'عرض طلبي', 'Voir mon offre': 'فتح عرضي',
   'Voir l’événement': 'عرض الحدث', 'Compléter mon profil': 'أكمل ملفي', 'Ouvrir l’administration': 'فتح الإدارة', 'Rien à traiter pour l’instant.': 'لا شيء للمعالجة حاليًا.',
   'Ajoute ton CV en PDF': 'أضف سيرتك الذاتية بصيغة PDF', 'Ton profil se complète tout seul, et il part avec tes candidatures.': 'يكتمل ملفك تلقائيًا، وتُرفق سيرتك الذاتية بترشيحاتك.',
   'Ton profil se complète tout seul.': 'يكتمل ملفك تلقائيًا.', 'Crée ton compte': 'أنشئ حسابك', 'C’est fait : bienvenue dans le réseau.': 'تمّ ذلك: مرحبًا بك في الشبكة.',

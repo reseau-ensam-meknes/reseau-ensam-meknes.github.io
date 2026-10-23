@@ -920,7 +920,7 @@ export const annoncePour = (annonces, me, now = Date.now()) => (annonces || []).
 // Jamais ce que montre la carte du haut ; pas les demandes d'aide (md, rd, qr : « Ils ont besoin de toi »),
 // ni les coordonnées (dc : leur carte), ni le recrutement à confirmer (pa : la carte), ni les rappels de rendez-vous (rdv).
 // Une présence à confirmer (sc) y vient tant que le rendez-vous est loin ; la veille, elle passe sur la carte.
-export const TACHES = { dp: 0, ap: 0, dm: 0, sc: 1, in: 1, sg: 1, sf: 2, rr: 2, pm: 2, mf: 2, ev: 3, dr: 4, ro: 4, eq: 5 };
+export const TACHES = { dp: 0, ap: 0, dm: 0, rc: 0, sc: 1, in: 1, sg: 1, sf: 2, rr: 2, pm: 2, mf: 2, ev: 3, dr: 4, ro: 4, eq: 5 };
 export function petitesTaches(notifs, pas = {}) {
   const deja = new Set([pas.key, ...(pas.cles || [])].filter(Boolean));
   return notifs.filter(n => n.action && !n.rdv && TACHES[(n.key || '').slice(0, 2)] !== undefined && !deja.has(n.key) && !(pas.ref && n.ref === pas.ref))

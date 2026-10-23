@@ -807,6 +807,31 @@ test('un rendez-vous ne prend la carte que la veille ; Mentorat calme propose «
   await s.ctx.close();
 });
 
+test('cloche : une relecture commencée reste à faire ; une note sans merci et un rendez-vous commencé n’y restent pas', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const demo = f => s.page.evaluate(f => { const k = 'ensam-demo-v14', st = JSON.parse(localStorage.getItem(k)); new Function('d', f)(st.data); localStorage.setItem(k, JSON.stringify(st)); }, f);
+  const recharger = async () => { await s.page.reload(); await s.page.waitForSelector('.hello'); await s.page.waitForTimeout(300); if (await s.page.$('.fete-back')) await s.fermer(); };
+  const cloche = async () => { await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche'); const t = await s.page.locator('.cloche .af-liste').innerText().catch(() => ''); await s.fermer(); return t; };
+  // Youssef commence la relecture qu'on lui a demandée : elle reste dans « À faire » et sur l'accueil
+  await s.comme('Youssef');
+  await demo(`const y = d.profiles.find(p => p.full_name === 'Youssef El Amrani'); const r = d.relectures_cv.find(x => x.reviewer_id === y.id && x.status === 'demandee'); r.status = 'en_cours'; r.pris_at = new Date().toISOString();`);
+  await recharger();
+  assert.match(await cloche(), /Continuer la relecture/);
+  assert.match(await s.page.locator('.home').innerText(), /Tu relis le CV de/);
+  // Salma note la relecture sans écrire de merci, et son rendez-vous a commencé sans qu'elle ait confirmé
+  await s.comme('Salma');
+  await demo(`const sa = d.profiles.find(p => p.full_name.startsWith('Salma'));
+    for (const r of d.relectures_cv) if (r.student_id === sa.id && r.status === 'rendue' && !r.merci) r.note = 5;
+    d.mentorships.find(m => m.student_id === sa.id && m.status === 'acceptee' && !m.confirme_at && new Date(m.rdv_at) > Date.now()).rdv_at = new Date(Date.now() - 10 * 6e4).toISOString();`);
+  await recharger();
+  const faire = await cloche();
+  assert.doesNotMatch(faire, /Lire ses conseils/, 'une note suffit : rien à faire de plus');
+  assert.doesNotMatch(faire, /Confirmer ma présence/, 'le rendez-vous a commencé : plus rien à confirmer');
+  assert.match(await s.page.locator('.pas .pas-oeil').innerText(), /C’est l’heure/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 // page.goBack() = le bouton Retour du navigateur (comme celui du téléphone)
 const retour = async page => { await page.goBack({ waitUntil: 'commit' }); await page.waitForTimeout(350); };
 const ici = page => page.evaluate(() => location.hash);
@@ -892,6 +917,14 @@ test('Retour : la cloche et « Je peux aider » se ferment sur l’accueil ; les
   await retour(s.page);
   assert.equal(await s.page.locator('.modal').count(), 0, 'Retour ferme les premiers pas');
   assert.equal(await ici(s.page), '#offres');
+  // Une étape qui ouvre une feuille (« Demander un conseil ») : elle s'ouvre sur l'accueil et y reste
+  await s.page.click('.me-btn'); await s.page.click('.menu-pop button:has-text("Comment ça marche ?")');
+  await s.page.waitForSelector('.modal .etapes');
+  await s.page.locator('.modal .etapes button', { hasText: 'Demander un conseil' }).click(); await s.page.waitForTimeout(900);
+  assert.equal(await ici(s.page), '#accueil');
+  assert.match(await s.page.locator('.modal').last().innerText(), /Demander de l’aide/, 'la feuille de l’étape est restée ouverte');
+  await retour(s.page);
+  assert.equal(await s.page.locator('.modal').count(), 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });

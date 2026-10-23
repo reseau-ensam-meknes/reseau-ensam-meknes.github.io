@@ -114,6 +114,8 @@ function ecrire(st, route, empiler) {
 }
 const vider = () => { const a = apres; apres = []; a.forEach(f => f()); };
 const plusTard = fn => (attendus.length ? apres.push(fn) : fn());
+// Ce qui doit suivre un changement d'écran en cours (ouvrir une feuille sur l'écran d'arrivée), sinon tout de suite
+export const ensuite = plusTard;
 // synchro : l'arrivée change d'écran (comme un Retour du membre) ; sinon c'est un simple retrait d'entrées
 function traverser(n, synchro = false) {
   if (!n) return;
