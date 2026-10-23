@@ -1,7 +1,8 @@
 // Confidentialité (loi 09-08) : page publique, accord des anciens membres, « Mes données », désabonnement.
-import { html, useState, useEffect } from './vendor/preact-htm.js';
+import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, BrandLogo, toast } from './ui.js';
 import { PushToggle } from './pwa.js';
+import { PUSH_CATEGORIES, pushChoix } from './logic.js';
 import { addAR } from './i18n.js';
 import { adresseContact } from './regles-entree.js';
 
@@ -47,12 +48,60 @@ addAR({
   'Opposition : désactive les emails, les alertes d’offres ou les notifications en un clic. Le résumé et les alertes par email ont chacun un lien pour se désabonner.': 'الاعتراض: أوقف الرسائل أو تنبيهات العروض أو الإشعارات بنقرة واحدة. ويحتوي الملخص وتنبيهات البريد على رابط لإلغاء الاشتراك.',
   'M’alerter dès qu’une offre de mon année et de ma filière est publiée': 'نبّهني فور نشر عرض يخص سنتي وشعبتي',
   'Aussi par email (3 au plus par jour)': 'أيضًا عبر البريد (3 على الأكثر في اليوم)',
-  'Tu seras alerté(e) dès qu’une offre pour toi est publiée.': 'سيصلك تنبيه فور نشر عرض يخصك.', 'Plus d’alertes d’offres.': 'لا مزيد من تنبيهات العروض.',
+  'Tu recevras une alerte dès qu’une offre pour toi est publiée.': 'سيصلك تنبيه فور نشر عرض يخصك.', 'Plus d’alertes d’offres.': 'لا مزيد من تنبيهات العروض.',
   'Alertes d’offres par email': 'تنبيهات العروض عبر البريد',
   'Tu ne veux plus recevoir les alertes d’offres par email ?': 'ألا تريد تلقي تنبيهات العروض عبر البريد بعد الآن؟',
   'Tu ne recevras plus les alertes d’offres par email.': 'لن تصلك بعد الآن تنبيهات العروض عبر البريد.',
   'Les notifications sur le téléphone et le résumé de la semaine ne changent pas. Tu peux les réactiver dans « Mon profil ».': 'إشعارات الهاتف والملخص الأسبوعي لا تتغير. ويمكنك إعادة تفعيل التنبيهات من «ملفي الشخصي».',
   'Ce lien n’est plus valable. Connecte-toi et désactive les alertes dans « Mon profil ».': 'هذا الرابط لم يعد صالحًا. سجّل الدخول وأوقف التنبيهات من «ملفي الشخصي».',
+});
+
+// Notifications sur le téléphone, par catégorie : les mots de chacun (étudiant ; lauréat, et administration)
+const CATS_NOTIF = {
+  etudiant: {
+    messages: ['Messages', 'Les messages qu’on t’envoie.'],
+    demandes: ['Réponses à mes demandes', 'Un lauréat te propose son aide pour ta demande.'],
+    candidatures: ['Mes candidatures', 'Une candidature qui avance, une invitation à postuler, un recrutement à confirmer.'],
+    mentorat: ['Mentorat et rendez-vous', 'Rendez-vous et rappels, relectures de CV, demandes de contact, parrainage.'],
+    offres: ['Nouvelles offres pour moi', 'Les offres de ton année et de ta filière, dès leur publication.'],
+    reseau: ['Réponses à mes questions et vie du réseau', 'Réponses à tes questions, événements de l’école, cafés de ta ville.'],
+  },
+  laureat: {
+    messages: ['Messages', 'Les messages qu’on t’envoie.'],
+    demandes: ['Nouvelles demandes d’étudiants de ma filière', 'Et la suite de tes propositions d’aide.'],
+    candidatures: ['Candidatures reçues sur mes offres', 'Et les recrutements confirmés.'],
+    mentorat: ['Mentorat et rendez-vous', 'Demandes d’aide et de contact, rappels de rendez-vous, CV à relire, parrainage, mercis.'],
+    offres: ['Nouvelles offres pour moi', 'Utile si tu cherches un emploi : offres jeunes diplômés et offres entre lauréats.'],
+    reseau: ['Questions qui me sont adressées et vie du réseau', 'Questions sur ton entreprise ou ton pays, événements de l’école, cafés de ta ville.'],
+  },
+};
+const NOTES_NOTIF = {
+  tous: 'Tes choix valent pour tous les appareils où les notifications sont activées.',
+  admin: 'Les signalements arrivent toujours à l’équipe du réseau.',
+};
+addAR({
+  'Par email': 'عبر البريد الإلكتروني', 'Sur le téléphone': 'على الهاتف', 'Ce que je reçois': 'ما يصلني', 'Choix enregistré.': 'تم حفظ اختيارك.',
+  'Recevoir par email les nouvelles offres de mon année et de ma filière (3 au plus par jour)': 'استلام العروض الجديدة الخاصة بسنتي وشعبتي عبر البريد (3 على الأكثر في اليوم)',
+  [NOTES_NOTIF.tous]: 'تسري اختياراتك على كل الأجهزة التي فُعّلت فيها الإشعارات.',
+  [NOTES_NOTIF.admin]: 'تصل البلاغات دائمًا إلى فريق الشبكة.',
+  [CATS_NOTIF.etudiant.messages[1]]: 'الرسائل التي تُرسل إليك.',
+  [CATS_NOTIF.etudiant.demandes[0]]: 'الردود على طلباتي',
+  [CATS_NOTIF.etudiant.demandes[1]]: 'خريج يقترح عليك مساعدته في طلبك.',
+  [CATS_NOTIF.etudiant.candidatures[1]]: 'ترشيح يتقدّم، دعوة للترشح، توظيف ينتظر تأكيدك.',
+  [CATS_NOTIF.etudiant.mentorat[0]]: 'الإرشاد والمواعيد',
+  [CATS_NOTIF.etudiant.mentorat[1]]: 'المواعيد والتذكير بها، مراجعات السيرة الذاتية، طلبات الاتصال، الرعاية.',
+  [CATS_NOTIF.etudiant.offres[0]]: 'عروض جديدة تخصني',
+  [CATS_NOTIF.etudiant.offres[1]]: 'عروض سنتك وشعبتك، فور نشرها.',
+  [CATS_NOTIF.etudiant.reseau[0]]: 'الأجوبة على أسئلتي وحياة الشبكة',
+  [CATS_NOTIF.etudiant.reseau[1]]: 'الأجوبة على أسئلتك، أنشطة المدرسة، لقاءات المقهى في مدينتك.',
+  [CATS_NOTIF.laureat.demandes[0]]: 'طلبات جديدة من طلبة شعبتي',
+  [CATS_NOTIF.laureat.demandes[1]]: 'ومآل اقتراحات مساعدتك.',
+  [CATS_NOTIF.laureat.candidatures[0]]: 'الترشيحات التي تصل إلى عروضي',
+  [CATS_NOTIF.laureat.candidatures[1]]: 'والتوظيفات المؤكَّدة.',
+  [CATS_NOTIF.laureat.mentorat[1]]: 'طلبات المساعدة والاتصال، التذكير بالمواعيد، سير ذاتية للمراجعة، الرعاية، رسائل الشكر.',
+  [CATS_NOTIF.laureat.offres[1]]: 'مفيدة إن كنت تبحث عن عمل: عروض حديثي التخرج والعروض بين الخريجين.',
+  [CATS_NOTIF.laureat.reseau[0]]: 'الأسئلة الموجّهة إليّ وحياة الشبكة',
+  [CATS_NOTIF.laureat.reseau[1]]: 'أسئلة حول شركتك أو بلدك، أنشطة المدرسة، لقاءات المقهى في مدينتك.',
 });
 
 
@@ -180,15 +229,22 @@ export function MesDonnees({ ctx }) {
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   };
+  // Notifications par catégorie : en ligne, seulement une fois la base à jour (colonne notif_push). Avant, l'étudiant garde
+  // sa case « M'alerter… » ; après, elle devient « Nouvelles offres pour moi » (téléphone) et la case email à part.
+  const cats = store.mode !== 'live' || 'notif_push' in me;
   return html`<div class="panel" id="mes-donnees">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="shield"/> Mes données et notifications</h2><button class="btn tiny ghost" onClick=${() => go('confidentialite')}>Confidentialité <${Icon} name="arrow" size=${14}/></button></div>
+    <h3 class="md-titre">Par email</h3>
     <label class="check"><input id="md-mail" type="checkbox" checked=${me.emails_hebdo !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { emails_hebdo: e.target.checked }); toast(e.target.checked ? 'Tu recevras un résumé chaque semaine.' : 'Plus de résumé par email.'); })}/> Recevoir un résumé par email chaque semaine</label>
-    ${me.role === 'etudiant' && (store.mode !== 'live' || 'alertes_offres' in me) ? html`<div class="cf-alertes">
-      <label class="check"><input id="md-alertes" type="checkbox" checked=${me.alertes_offres !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { alertes_offres: e.target.checked }); toast(e.target.checked ? 'Tu seras alerté(e) dès qu’une offre pour toi est publiée.' : 'Plus d’alertes d’offres.'); })}/> M’alerter dès qu’une offre de mon année et de ma filière est publiée</label>
+    ${me.role === 'etudiant' && cats && (store.mode !== 'live' || 'alertes_email' in me) ? html`<label class="check"><input id="md-alertes-mail" type="checkbox" checked=${me.alertes_email !== false} onChange=${e => act(() => store.update('profiles', me.id, { alertes_email: e.target.checked }))}/> Recevoir par email les nouvelles offres de mon année et de ma filière (3 au plus par jour)</label>` : null}
+    ${me.role === 'etudiant' && !cats && (store.mode !== 'live' || 'alertes_offres' in me) ? html`<div class="cf-alertes">
+      <label class="check"><input id="md-alertes" type="checkbox" checked=${me.alertes_offres !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { alertes_offres: e.target.checked }); toast(e.target.checked ? 'Tu recevras une alerte dès qu’une offre pour toi est publiée.' : 'Plus d’alertes d’offres.'); })}/> M’alerter dès qu’une offre de mon année et de ma filière est publiée</label>
       ${me.alertes_offres !== false ? html`<label class="check sub"><input id="md-alertes-mail" type="checkbox" checked=${me.alertes_email !== false} onChange=${e => act(() => store.update('profiles', me.id, { alertes_email: e.target.checked }))}/> Aussi par email (3 au plus par jour)</label>` : null}
     </div>` : null}
     ${store.mode !== 'live' || 'emails_messages' in me ? html`<label class="check"><input id="md-msg-mail" type="checkbox" checked=${me.emails_messages !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { emails_messages: e.target.checked }); toast(e.target.checked ? 'Un email te prévient si un message attend depuis 30 minutes.' : 'Plus d’email pour les messages.'); })}/> M’envoyer un email quand un message m’attend (un toutes les 6 heures au plus)</label>` : null}
+    <h3 class="md-titre" id="md-notifs">Sur le téléphone</h3>
     <${PushToggle} ctx=${ctx}/>
+    ${cats ? html`<${ChoixNotifs} ctx=${ctx}/>` : null}
     <div class="row">
       <button class="btn small" onClick=${exportData}><${Icon} name="download" size=${15}/> Télécharger mes données</button>
       <span class="spacer"></span>
@@ -196,6 +252,29 @@ export function MesDonnees({ ctx }) {
     </div>
     ${del ? html`<${DeleteAccount} ctx=${ctx} onClose=${() => setDel(false)}/>` : null}
   </div>`;
+}
+
+// Ce que chacun reçoit sur le téléphone, par catégorie. me.notif_push ne garde que ses choix ; une case jamais touchée
+// suit le défaut de son rôle (pushChoix, mêmes règles que la base). Les choix valent pour tous ses appareils.
+function ChoixNotifs({ ctx }) {
+  const { me, store, act } = ctx;
+  const mots = CATS_NOTIF[me.role === 'etudiant' ? 'etudiant' : 'laureat'];
+  // Deux cases touchées coup sur coup : la seconde garde la première
+  const enCours = useRef({});
+  const changer = (cat, v) => {
+    enCours.current = { ...enCours.current, [cat]: v };
+    act(async () => {
+      try { await store.update('profiles', me.id, { notif_push: { ...(store.me?.notif_push || me.notif_push || {}), ...enCours.current } }); }
+      catch (e) { const { [cat]: _, ...reste } = enCours.current; enCours.current = reste; throw e; }
+      toast('Choix enregistré.');
+    });
+  };
+  return html`<fieldset class="md-cats" aria-describedby="md-cats-note">
+    <legend>Ce que je reçois</legend>
+    ${PUSH_CATEGORIES.map(cat => html`<label class="check" key=${cat}><input type="checkbox" id=${'np-' + cat} checked=${pushChoix(cat, me)} onChange=${e => changer(cat, e.target.checked)}/><span class="cat-txt"><span class="cat-t">${mots[cat][0]}</span><span class="cat-d">${mots[cat][1]}</span></span></label>`)}
+    <p class="small muted" id="md-cats-note">${NOTES_NOTIF.tous}</p>
+    ${me.role === 'admin' ? html`<p class="small muted">${NOTES_NOTIF.admin}</p>` : null}
+  </fieldset>`;
 }
 
 function DeleteAccount({ ctx, onClose }) {

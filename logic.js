@@ -1065,3 +1065,51 @@ export function prevenirVariante({ etat, raison, memo = {}, now = Date.now(), ro
   if (raison === 'question' && emailsHebdo) return 'email';     // les réponses figurent dans le résumé de la semaine
   return null;
 }
+
+// À l'ouverture, « Reçois l'essentiel sur ton téléphone » : pour un membre dont l'appareil peut recevoir des notifications
+// sans y être abonné (etat 'off' ; jamais sur iPhone hors écran d'accueil, ni sans notifications possibles). Même mémo et
+// même plafond que « Me prévenir » : « Plus tard » la ramène 7 jours après, deux refus au plus en tout ; acceptée, ou refusée
+// par le navigateur (etat 'refuse'), plus jamais. Une feuille « Me prévenir » remise à cette visite passe avant.
+export const OUVERTURE_ECART = 7 * 864e5;
+export function ouvertureNotif({ etat, memo = {}, now = Date.now(), role }) {
+  if (role === 'admin' || etat !== 'off' || memo.fait || memo.differe) return false;
+  return (memo.n || 0) < 2 && !(memo.at && now - memo.at < OUVERTURE_ECART);
+}
+
+// Notifications sur le téléphone, par catégorie : chacun choisit dans Mon profil ce qu'il reçoit.
+// me.notif_push ne garde que les choix faits ({ offres: true, reseau: false }) ; une catégorie absente suit le défaut
+// de son rôle. Mêmes règles que la base (push_categorie, push_defaut, push_voulu dans schema.sql) : un test le vérifie.
+// Catégories proposées, dans l'ordre de l'écran (« admin » : signalements, toujours reçus, sans case)
+export const PUSH_CATEGORIES = ['messages', 'demandes', 'candidatures', 'mentorat', 'offres', 'reseau'];
+// Type de notification -> catégorie (un type inconnu : vie du réseau)
+export const PUSH_KINDS = {
+  message: 'messages',
+  demande_nouvelle: 'demandes', demande_proposition: 'demandes', demande_match: 'demandes', demande_rouverte: 'demandes',
+  candidature: 'candidatures', candidature_statut: 'candidatures', invitation: 'candidatures',
+  recrutement_a_confirmer: 'candidatures', recrutement_confirme: 'candidatures', relance_offre: 'candidatures',
+  mentorat_demande: 'mentorat', mentorat_accepte: 'mentorat', mentorat_deplace: 'mentorat', mentorat_annule: 'mentorat',
+  rappel_rdv: 'mentorat', merci: 'mentorat', relecture_demande: 'mentorat', relecture_prise: 'mentorat', relecture_rendue: 'mentorat',
+  contact_demande: 'mentorat', contact_accepte: 'mentorat', filleul: 'mentorat', parrain: 'mentorat',
+  offre_alerte: 'offres',
+  reponse: 'reseau', question_routee: 'reseau', cafe: 'reseau', evenement: 'reseau', evenement_annule: 'reseau', evenement_deplace: 'reseau',
+  enquete: 'reseau', verification_pair: 'reseau', verifier_pair: 'reseau',
+  signalement: 'admin',
+};
+export const pushCategorie = kind => (Object.prototype.hasOwnProperty.call(PUSH_KINDS, kind) ? PUSH_KINDS[kind] : 'reseau');
+// Défaut : tout est activé, sauf les nouvelles offres pour un lauréat qui ne cherche pas d'emploi ;
+// un étudiant garde sa case « M'alerter dès qu'une offre… » (alertes_offres). L'admin a les défauts d'un lauréat.
+export function pushDefaut(cat, me) {
+  if (cat === 'admin') return me?.role === 'admin';
+  if (cat === 'offres') return me?.alertes_offres !== false && (me?.role === 'etudiant' || !!me?.en_recherche);
+  return true;
+}
+// Case cochée dans Mon profil : le choix du membre, sinon le défaut
+export function pushChoix(cat, me) {
+  const v = me?.notif_push?.[cat];
+  return typeof v === 'boolean' ? v : pushDefaut(cat, me);
+}
+// Ce membre recevra-t-il ce type de notification (s'il a activé les notifications sur un appareil) ?
+export function pushVoulu(kind, me) {
+  const cat = pushCategorie(kind);
+  return cat === 'admin' ? true : pushChoix(cat, me);
+}
