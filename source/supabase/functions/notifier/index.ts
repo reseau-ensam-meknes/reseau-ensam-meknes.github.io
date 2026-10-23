@@ -1258,10 +1258,14 @@ function sujetDe(r: Resume, L: Dico, langue: Langue): string {
   return t ? couper(t, 100) + L.suffixe : L.defaut;
 }
 
+// Les liens d'un email arabe ouvrent le site en arabe (?lang=ar), sauf si ce navigateur a déjà choisi sa langue
+export const siteEn = (site: string, langue: Langue) => (langue === 'ar' ? `${site}?lang=ar` : site);
+
 // desabo vide : email envoyé une seule fois, sans lien de désabonnement
 export type Courriel = { sujet: string; html: string; texte: string; desabo: string };
 
 export function rendreResume(r: Resume, langue: Langue, site: string, token: string): Courriel {
+  site = siteEn(site, langue);
   const L = langue === 'ar' ? AR : FR, ar = langue === 'ar';
   const secs = sectionsDe(r, L, langue);
   const sujet = sujetDe(r, L, langue);
@@ -1392,6 +1396,7 @@ const TYPES_OFFRE: Record<Langue, Record<string, string>> = {
 
 // Alerte : les nouvelles offres de son année et de sa filière (5 au plus)
 export function rendreAlerte(offres: OffreAlerte[], langue: Langue, site: string, token: string): Courriel {
+  site = siteEn(site, langue);
   const ar = langue === 'ar', f = ar ? HTML_AR : HTML, b = ar ? BRUT_AR : BRUT;
   const n = offres.length, o0 = offres[0];
   const desabo = `${site}#desabo/${token}/alertes`;
@@ -1424,6 +1429,7 @@ export type DemandeAlerte = { id: string; titre: string; type?: string | null; l
 const niveauCourt = (x: DemandeAlerte, l: Langue) => x.role === 'laureat' ? (l === 'ar' ? 'خريج' : 'Lauréat')
   : Number(x.niveau) >= 6 ? (l === 'ar' ? 'خريج جديد' : 'Jeune diplômé') : Number(x.niveau) >= 3 ? `${Number(x.niveau)}A` : '';
 export function rendreDemandes(demandes: DemandeAlerte[], langue: Langue, site: string, token: string): Courriel {
+  site = siteEn(site, langue);
   const ar = langue === 'ar', f = ar ? HTML_AR : HTML, b = ar ? BRUT_AR : BRUT;
   const n = demandes.length, d0 = demandes[0];
   const desabo = `${site}#desabo/${token}/alertes`;
@@ -1452,6 +1458,7 @@ export function rendreDemandes(demandes: DemandeAlerte[], langue: Langue, site: 
 
 // Messages non lus depuis 30 minutes : qui t'a écrit, et un bouton pour répondre (jamais le contenu)
 export function rendreMessages(n: number, noms: string[], langue: Langue, site: string, token: string): Courriel {
+  site = siteEn(site, langue);
   const ar = langue === 'ar', f = ar ? HTML_AR : HTML, b = ar ? BRUT_AR : BRUT;
   const desabo = `${site}#desabo/${token}/messages`;
   const url = `${site}#messages`;
@@ -1478,6 +1485,7 @@ export function rendreMessages(n: number, noms: string[], langue: Langue, site: 
 
 // Enquête d'insertion : invitation, ou rappel trois semaines après
 export function rendreEnquete(vague: number, rappel: boolean, langue: Langue, site: string, token: string): Courriel {
+  site = siteEn(site, langue);
   const ar = langue === 'ar', v = vague === 12 ? 12 : 6;
   const desabo = `${site}#desabo/${token}`;
   const url = `${site}#enquete`;
@@ -1505,6 +1513,7 @@ export function rendreEnquete(vague: number, rappel: boolean, langue: Langue, si
 
 // Rappel d'inscription : le compte existe, le profil pas encore (envoyé une seule fois)
 export function rendreRelance(langue: Langue, site: string): Courriel {
+  site = siteEn(site, langue);
   const ar = langue === 'ar';
   const sujet = ar ? 'ملفك ينتظرك على شبكة ENSAM مكناس' : 'Ton profil t’attend sur le Réseau ENSAM Meknès';
   const lignes = ar ? [

@@ -3,11 +3,12 @@ import { html, useState, useMemo, useEffect, useRef } from './vendor/preact-htm.
 import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, TYPE_ICON, toast, RoleLine, celebrate, injectCSS, PartagerWhatsApp, lienWhatsApp, lienDirect, allerAuChamp } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
 import { getLang, addAR, arCount } from './i18n.js';
-import { TYPES, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande, manquesOffre } from './logic.js';
+import { TYPES, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande, manquesOffre, peutRecommander } from './logic.js';
 import { RelanceBanner, BanqueSujets, PasteOffer } from './recrutement.js';
 import { CvButton } from './cv.js';
 import { SignalerBtn } from './confiance.js';
 import { EntrepriseResume } from './entreprises.js';
+import { recherche } from './geo.js';
 import { MessageBtn } from './messages.js';
 import { DemandesTab, demandesAFaire } from './demandes.js';
 // Le message WhatsApp d'une offre, dans la langue de l'interface : de quoi il s'agit, et le lien qui l'ouvre directement.
@@ -87,7 +88,7 @@ function OfferList({ ctx, entre }) {
   const [q, setQ] = useState('');
 
   const list = useMemo(() => {
-    const qq = q.trim().toLowerCase();
+    const trouve = recherche(q); // « مكناس » trouve Meknès, accents et casse ignorés
     return data.offers.filter(o => {
       if (forLaureats(o) !== entre) return false;
       if (vue === 'miennes') { if (o.author_id !== me.id) return false; }
@@ -95,7 +96,7 @@ function OfferList({ ctx, entre }) {
       if (isStudent && !(o.annees || []).includes(niveau)) return false; // un étudiant ne voit que les offres de son année
       if (vue === 'sauvees' && !data.reactions.some(r => r.offer_id === o.id && r.user_id === me.id && r.kind === 'save')) return false;
       if (type !== 'tous' && o.type !== type) return false;
-      if (qq && !`${o.titre} ${o.entreprise} ${o.ville} ${o.pays} ${(o.filieres || []).join(' ')} ${resumeFilieres(o.filieres).join(' ')}`.toLowerCase().includes(qq)) return false;
+      if (trouve && !trouve(`${o.titre} ${o.entreprise} ${(o.filieres || []).join(' ')} ${resumeFilieres(o.filieres).join(' ')}`, o.ville, o.pays)) return false;
       return true;
     }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   }, [data, q, type, vue]);
@@ -165,7 +166,9 @@ export function OfferCard({ o, ctx, onOpen, why }) {
   const mine = o.author_id === me.id;
   const pourMoi = peutPostulerA(o, me, ctx.saison);
   const canApply = !myApp && pourMoi && o.status === 'ouverte';
-  const coopt = author && o.cooptation && canApply; // déjà postulé : l'état de la candidature compte davantage
+  // « peut te recommander » seulement s'il travaille dans l'entreprise de l'offre (et la montre) ; déjà postulé :
+  // l'état de la candidature compte davantage
+  const coopt = canApply && !!author && store.voitChamp(author, 'travail') && peutRecommander(o, author);
   const lieu = [o.ville, o.pays !== 'Maroc' ? o.pays : ''].filter(Boolean).join(', ');
   return html`<article class=${'ocard' + (o.status !== 'ouverte' ? ' closed' : '')}>
     <button class="ocard-main" onClick=${onOpen} aria-label=${`Ouvrir : ${o.titre}`}>
@@ -193,7 +196,7 @@ export function OfferCard({ o, ctx, onOpen, why }) {
 // Qui partage l'offre, juste sous le titre : c'est souvent la vraie raison de postuler
 function AuteurOffre({ ctx, o, author, candidat }) {
   const p = prenom(author);
-  const coopt = candidat && o.cooptation && o.status === 'ouverte';
+  const coopt = candidat && o.status === 'ouverte' && ctx.store.voitChamp(author, 'travail') && peutRecommander(o, author);
   const phrase = !candidat ? `Partagée par ${p}` : coopt ? `Partagée par ${p}, qui peut te recommander` : `Partagée par ${p}, qui reçoit ta candidature et te répond ici`;
   return html`<button type="button" class=${'od-author' + (coopt ? ' coopt' : '')} onClick=${() => ctx.openProfile(author)}>
     <${Avatar} p=${author} size=${40}/>

@@ -280,7 +280,7 @@ test('resume : résumés envoyés, vides sautés, notif_etat marqué, une fois p
     assert.equal(corps.to.length, 1);
     const id = Object.keys(j.emails).find(k => j.emails[k] === corps.to[0].email);
     const token = b.tables.notif_etat.find(n => n.user_id === id).token;
-    const desabo = `${SITE}#desabo/${token}`;
+    const desabo = `${SITE}${b.tables.profiles.find(p => p.id === id)?.langue === 'ar' ? '?lang=ar' : ''}#desabo/${token}`;
     assert.equal(corps.headers['List-Unsubscribe'], `<${desabo}>`);
     assert.ok(corps.htmlContent.includes(`href="${desabo}"`));
     assert.ok(corps.textContent.includes(desabo));

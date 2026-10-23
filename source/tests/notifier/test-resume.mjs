@@ -185,9 +185,13 @@ test('email arabe : rtl, textes arabes, contenu des membres tel quel', () => {
   // Contenu des membres isolé (sens de lecture) dans la version texte aussi
   assert.ok(m.texte.includes('سؤال حول \u2068OCP S.A.\u2069: \u2068Comment se passe le stage ouvrier chez OCP ?\u2069'));
   assert.doesNotMatch(N.rendreResume(resume(ID.salma), 'fr', SITE, TOKEN).texte, /[\u2068\u2069]/);
-  assert.ok(m.html.includes(`href="${SITE}#desabo/${TOKEN}"`));
-  assert.ok(m.html.includes(`href="${SITE}#espace"`));
-  assert.ok(m.html.includes(`href="${SITE}#reseau/talents"`));
+  // Les liens d'un email arabe ouvrent le site en arabe (pour qui n'a pas encore choisi sa langue)
+  assert.ok(m.html.includes(`href="${SITE}?lang=ar#desabo/${TOKEN}"`));
+  assert.ok(m.html.includes(`href="${SITE}?lang=ar#espace"`));
+  assert.ok(m.html.includes(`href="${SITE}?lang=ar#reseau/talents"`));
+  assert.ok(!N.rendreResume(resume(ID.salma), 'fr', SITE, TOKEN).html.includes('lang=ar'));
+  assert.ok(N.rendreAlerte([{ id: 'o1', titre: 'PFE', entreprise: 'OCP', type: 'pfe' }], 'ar', SITE, TOKEN).html.includes(`href="${SITE}?lang=ar#offre/o1"`));
+  assert.ok(N.rendreAlerte([{ id: 'o1', titre: 'PFE', entreprise: 'OCP', type: 'pfe' }], 'fr', SITE, TOKEN).html.includes(`href="${SITE}#offre/o1"`));
   assert.match(m.texte, /إلغاء الاشتراك: https/);
 });
 

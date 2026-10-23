@@ -83,3 +83,9 @@ export function phraseLien(lien, infos, inscrire = true, role = '') {
 }
 export const suiteLien = l => (!l ? '' : l.k === 'offre' ? 'Après cette étape, l’offre qu’on t’a partagée s’ouvre.'
   : l.k === 'question' ? 'Après cette étape, la question qu’on t’a partagée s’ouvre.' : 'Après cette étape, la demande de l’étudiant s’ouvre.');
+
+// Langue d'un lien partagé depuis l'interface arabe (?lang=ar) : l'arabe pour cette visite seulement, et jamais
+// par-dessus un choix déjà fait dans ce navigateur (un francophone qui ouvre un lien de son groupe reste en français)
+export const langueDuLien = (search, choix) => (!choix && new URLSearchParams(search || '').get('lang') === 'ar' ? 'ar' : null);
+// Adresse d'un lien à partager : la langue suit l'interface de celui qui partage
+export const avecLangue = (adresse, langue) => (langue === 'ar' ? adresse.replace(/^([^?#]*)(\?[^#]*)?/, (_, a, q) => `${a}${q ? q + '&' : '?'}lang=ar`) : adresse);

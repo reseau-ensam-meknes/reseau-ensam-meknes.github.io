@@ -4,6 +4,8 @@ import { Icon, Modal, Field, Empty, Person, Avatar, toast } from './ui.js';
 import { myGroups, groupMembers, groupLabel, groupKey, autoGroups, timeAgo } from './logic.js';
 import { SlotDate } from './mentorat.js';
 import { SignalerBtn } from './confiance.js';
+import { villeAffichee } from './geo.js';
+import { getLang } from './i18n.js';
 
 const KIND = { filiere: ['cap', 'Parcours d’études'], ville: ['pin', 'Ville'], pays: ['globe', 'À l’étranger'] };
 const pad = n => String(n).padStart(2, '0');
@@ -16,6 +18,9 @@ const cafesOf = (data, key) => {
   return data.cafes.filter(c => (kind === 'ville' ? groupKey('ville', c.ville) : groupKey('pays', c.pays)) === key);
 };
 const go2 = (ctx, key) => ctx.go('reseau/groupes/' + encodeURIComponent(key));
+// Nom affiché d'un groupe, seul (titre, lien) : une ville s'écrit en arabe dans l'interface arabe. Dans une phrase
+// française, le nom reste tel quel (une phrase qui contient de l'arabe n'est plus traduite)
+const nomGroupe = (data, k) => { const l = groupLabel(data, k); return k.startsWith('ville:') ? villeAffichee(l, getLang()) : l; };
 
 export function GroupesPage({ ctx }) {
   const { sub2 } = ctx;
@@ -49,7 +54,7 @@ function GroupList({ ctx }) {
     ${abroad.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="globe"/> Lauréats à l’étranger</h2></div>
       <ul class="group-follow">${abroad.map(([k, n]) => html`<li key=${k}><button class="linkish strong" onClick=${() => go2(ctx, k)}>${groupLabel(data, k)}</button><span class="muted small">${n} membre${n > 1 ? 's' : ''}</span><span class="spacer"></span><button class="btn tiny" onClick=${() => follow(k)}>Suivre</button></li>`)}</ul>` : null}
     ${villes.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="pin"/> Autres villes</h2></div>
-      <ul class="group-follow">${villes.map(([k, n]) => html`<li key=${k}><button class="linkish strong" onClick=${() => go2(ctx, k)}>${groupLabel(data, k)}</button><span class="muted small">${n} membre${n > 1 ? 's' : ''}</span><span class="spacer"></span><button class="btn tiny" onClick=${() => follow(k)}>Suivre</button></li>`)}</ul>` : null}
+      <ul class="group-follow">${villes.map(([k, n]) => html`<li key=${k}><button class="linkish strong" onClick=${() => go2(ctx, k)}>${nomGroupe(data, k)}</button><span class="muted small">${n} membre${n > 1 ? 's' : ''}</span><span class="spacer"></span><button class="btn tiny" onClick=${() => follow(k)}>Suivre</button></li>`)}</ul>` : null}
     ${cafe ? html`<${CafeComposer} ctx=${ctx} onClose=${() => setCafe(false)}/>` : null}
   </div>`;
 }
@@ -63,7 +68,7 @@ function GroupCard({ ctx, gkey }) {
   const nc = cafesOf(data, gkey).filter(upcoming).length;
   return html`<button class="gcard clickable" onClick=${() => go2(ctx, gkey)}>
     <span class=${'g-badge k-' + kind}><${Icon} name=${ico} size=${20}/></span>
-    <span class="gcard-txt"><span class="eyebrow">${lbl}</span><strong>${groupLabel(data, gkey)}</strong>
+    <span class="gcard-txt"><span class="eyebrow">${lbl}</span><strong>${nomGroupe(data, gkey)}</strong>
       <span class="muted small">${n} membre${n > 1 ? 's' : ''}${nc ? html` · <span class="good-t">${nc} café${nc > 1 ? 's' : ''} prévu${nc > 1 ? 's' : ''}</span>` : null}</span>
       ${last ? html`<span class="gcard-last small"><b>${store.byId('profiles', last.author_id)?.full_name?.split(' ')[0] || 'Membre'} :</b> <span translate="no" dir="auto">${last.body.slice(0, 70)}${last.body.length > 70 ? '…' : ''}</span></span>` : html`<span class="gcard-last small muted">Pas encore de message. Dis bonjour !</span>`}</span>
   </button>`;
@@ -89,7 +94,7 @@ function GroupView({ ctx, gkey }) {
     <button class="btn ghost small back" onClick=${() => go('reseau/groupes', { remplacer: true })}>← Tous les groupes</button>
     <div class="group-head">
       <span class=${'g-badge big k-' + kind}><${Icon} name=${ico} size=${26}/></span>
-      <div class="grow"><p class="eyebrow">${lbl}</p><h2>${label}</h2><p class="muted small">${members.length} membre${members.length > 1 ? 's' : ''} · ${members.filter(p => p.role === 'laureat').length} lauréat${members.filter(p => p.role === 'laureat').length > 1 ? 's' : ''}</p></div>
+      <div class="grow"><p class="eyebrow">${lbl}</p><h2>${nomGroupe(data, gkey)}</h2><p class="muted small">${members.length} membre${members.length > 1 ? 's' : ''} · ${members.filter(p => p.role === 'laureat').length} lauréat${members.filter(p => p.role === 'laureat').length > 1 ? 's' : ''}</p></div>
       ${auto ? html`<span class="mini good"><${Icon} name="check" size=${12}/> ${kind === 'filiere' ? 'Ton parcours' : kind === 'ville' ? 'Ta ville' : 'Ton pays'}</span>`
         : follow ? html`<button class="btn small ghost" onClick=${() => act(() => store.remove('groupe_membres', follow.id))}>Ne plus suivre</button>`
         : html`<button class="btn small primary" onClick=${() => act(async () => { await store.insert('groupe_membres', { groupe: gkey, user_id: me.id }); toast('Tu suis ce groupe.'); })}>Suivre</button>`}

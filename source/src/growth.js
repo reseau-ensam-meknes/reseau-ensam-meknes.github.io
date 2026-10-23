@@ -2,10 +2,11 @@
 // et fil des réussites à partager sur LinkedIn.
 import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, RoleLine, BrandLogo, toast, injectCSS, FiliereFiltre } from './ui.js';
-import { FOUND, niveauOf, statutOf, timeAgo, attestationStats, filtreFiliere, AIDES } from './logic.js';
+import { FOUND, niveauOf, statutOf, timeAgo, attestationStats, filtreFiliere, AIDES, NIVEAUX } from './logic.js';
 import { OfferComposer, matchesMe } from './offers.js';
 import { getLang, addAR } from './i18n.js';
 import { CvButton } from './cv.js';
+import { recherche } from './geo.js';
 
 const firstName = p => (p?.full_name || '').split(' ')[0];
 
@@ -28,11 +29,11 @@ export function TalentPool({ ctx }) {
   // Étudiants de 3A à 5A visibles, et lauréats qui cherchent un emploi
   const pool = data.profiles.filter(p => p.id !== me.id && ((p.role === 'etudiant' && p.vitrine !== false && [3, 4, 5].includes(niveauOf(p, saison))) || (p.role === 'laureat' && p.en_recherche)));
   const laur = p => p.role === 'laureat';
-  const qq = q.trim().toLowerCase();
+  const trouve = recherche(q);
   const searching = p => laur(p) || !['trouve', 'validation'].includes(statutOf(data, p, saison).key);
   const list = pool.filter(p => (view === 'shortlist' ? saved.has(p.id) : searching(p)))
     .filter(p => filtreFiliere(fil, p.filiere) && (!niv || (niv === 'L' ? laur(p) : !laur(p) && niveauOf(p, saison) === +niv)) && (!cv || p.cv_path || p.cv_url)
-      && (!qq || `${p.full_name} ${p.ville || ''} ${p.bio || ''} ${(p.competences || []).join(' ')}`.toLowerCase().includes(qq)))
+      && (!trouve || trouve(`${p.full_name} ${p.bio || ''} ${(p.competences || []).join(' ')}`, p.ville)))
     .sort((a, b) => (saved.has(b.id) - saved.has(a.id)) || (!!(b.cv_path || b.cv_url) - !!(a.cv_path || a.cv_url)) || (b.competences?.length || 0) - (a.competences?.length || 0));
   const toggle = p => act(async () => {
     const s = saved.get(p.id);
@@ -62,7 +63,7 @@ export function TalentPool({ ctx }) {
           ${canRecruit ? html`<button class=${'icon-btn save-btn' + (s ? ' on' : '')} aria-pressed=${!!s} aria-label=${s ? 'Retirer de ma shortlist' : 'Garder dans ma shortlist'} title=${s ? 'Retirer de ma shortlist' : 'Garder dans ma shortlist'} onClick=${() => toggle(p)}><${Icon} name="bookmark" size=${18}/></button>` : null}</div>
         <p class="small">Cherche : <strong>${laur(p) ? 'un emploi' : CHERCHE[niveauOf(p, saison)]}</strong>${laur(p) ? html` <span class="muted">· Lauréat(e), promo ${p.promo}</span>` : null}</p>
         ${p.disponibilite || p.ville ? html`<p class="small muted tmeta">${p.disponibilite ? html`<span><${Icon} name=${laur(p) ? 'briefcase' : 'calendar'} size=${14}/> <span translate="no" dir="auto">${p.disponibilite}</span></span>` : null}${p.ville ? html`<span><${Icon} name="pin" size=${14}/> ${p.ville}</span>` : null}</p>` : null}
-        ${(p.competences || []).length ? html`<p class="chips-line">${p.competences.slice(0, 6).map(c => html`<span class=${'mini' + (qq && c.toLowerCase().includes(qq) ? ' hit' : '')}>${c}</span>`)}</p>` : null}
+        ${(p.competences || []).length ? html`<p class="chips-line">${p.competences.slice(0, 6).map(c => html`<span class=${'mini' + (trouve && trouve(c) ? ' hit' : '')}>${c}</span>`)}</p>` : null}
         ${view === 'shortlist' && s ? html`<input class="note-in" id=${'note-' + p.id} maxlength="300" placeholder="Note pour moi (visible par moi seul)" value=${s.note || ''} onChange=${e => act(() => store.update('shortlists', s.id, { note: e.target.value.trim() }))}/>` : null}
         <div class="row tcard-foot">
           ${p.cv_path || p.cv_url ? html`<${CvButton} ctx=${ctx} p=${p} small/>` : html`<span class="muted small">Pas encore de CV</span>`}
@@ -243,6 +244,32 @@ injectCSS('growth-ux', `
 addAR({ 'Voir toutes les réussites': 'عرض كل النجاحات', 'Voir l’autre réussite': 'عرض النجاح الآخر' }, [
   [/^Voir les (\d+) autres réussites$/, n => `عرض ${n} نجاحات أخرى`],
 ]);
+
+// Qui remercie qui : les deux visages, l'année (ou la promo) de l'auteur, l'entreprise et la date. L'entreprise du
+// lauréat ne s'affiche que s'il la montre à ce lecteur (« Qui voit quoi ») ; celle d'une réussite confirmée est déjà
+// publique (fil des réussites). seul : le lauréat est déjà nommé à côté (carte de mentor), on ne montre que l'auteur.
+export function MerciDuo({ ctx, m, size = 26, seul = false }) {
+  const { store, saison, openProfile } = ctx;
+  const de = store.byId('profiles', m.from), a = store.byId('profiles', m.to);
+  const annee = !de ? '' : de.role === 'etudiant' ? NIVEAUX[niveauOf(de, saison)]?.short || '' : de.promo ? `Promo ${de.promo}` : '';
+  const ent = m.entreprise || (a && store.voitChamp(a, 'travail') ? a.entreprise : '') || '';
+  const prenom = de?.full_name?.split(' ')[0];
+  return html`<footer class="merci-duo">
+    <span class="md-qui"><${Avatar} p=${de} size=${size}/><span class="md-txt">${prenom ? html`<b translate="no" dir="auto">${prenom}</b>` : html`<b>Un étudiant</b>`}${annee ? html`<span class="muted"> · ${annee}</span>` : null}</span></span>
+    ${!seul && a ? html`<${Icon} name="arrow" size=${14}/>
+    <span class="md-qui"><${Avatar} p=${a} size=${size}/><span class="md-txt"><button type="button" class="linkish" onClick=${() => openProfile(a)}><span translate="no" dir="auto">${a.full_name}</span></button>${ent ? html`<span class="muted"> · <span translate="no" dir="auto">${ent}</span></span>` : null}</span></span>` : null}
+    <span class="muted small md-quand">${m.confirme && !seul ? `Vérifié des deux côtés · ${timeAgo(m.at)}` : timeAgo(m.at)}</span>
+  </footer>`;
+}
+injectCSS('merci-duo', `
+.merci-duo { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .45rem; font-size: .88rem; }
+.merci-duo .md-qui { display: inline-flex; align-items: center; gap: .35rem; min-width: 0; }
+.merci-duo .md-txt { min-width: 0; overflow-wrap: anywhere; }
+.merci-duo > svg { color: var(--muted); flex: none; }
+.merci-duo .md-quand { flex-basis: 100%; }
+.mcard-merci { align-self: stretch; padding: .5rem .7rem; }
+.mcard-merci p { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; font-size: .9rem; }
+`);
 
 const POUR_MOI = { stage: 'mon stage', pfe: 'mon projet de fin d’études', etranger: 'mon stage à l’étranger', emploi: 'mon premier poste d’ingénieur' };
 const POUR_LUI = { stage: 'son stage', pfe: 'son projet de fin d’études', etranger: 'son stage', emploi: 'son premier poste d’ingénieur' };

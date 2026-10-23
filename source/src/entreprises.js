@@ -2,11 +2,12 @@
 // ont vécu chez chaque entreprise, pour que la suivante se prépare mieux.
 import { html, useState, useMemo } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, CompanyLogo, TYPE_ICON, toast, useLocal, injectCSS } from './ui.js';
-import { addAR } from './i18n.js';
-import { TYPES, FOUND, entKey, sameCompany, seasonOf, seasonLabel, timeAgo } from './logic.js';
+import { addAR, getLang, arCount } from './i18n.js';
+import { TYPES, FOUND, entKey, sameCompany, seasonOf, seasonLabel, timeAgo, noteSiAssez, AVIS_POUR_NOTE } from './logic.js';
 import { companiesOf } from './pro.js';
 import { OfferCard, matchesMe } from './offers.js';
 import { SignalerBtn } from './confiance.js';
+import { recherche, villeAffichee, PAYS_AR, canonPays } from './geo.js';
 
 export const FORMATS = { presentiel: ['Sur place', 'briefcase'], visio: ['Visio', 'video'], telephone: ['Téléphone', 'phone'], test_ecrit: ['Test écrit', 'edit'], autre: ['Autre', 'more'] };
 export const RESULTATS = { retenu: 'Retenu(e)', refuse: 'Pas retenu(e)', attente: 'En attente de réponse', inconnu: 'Je ne sais pas' };
@@ -17,11 +18,12 @@ const NOTES = [['note_encadrement', 'Encadrement'], ['note_apprentissage', 'Appr
 
 const keyOf = name => entKey(name) || (name || '').trim().toLowerCase();
 const lienEntreprise = name => 'reseau/entreprises/' + encodeURIComponent(keyOf(name));
-const moy = v => (v.length ? v.reduce((a, b) => a + b, 0) / v.length : null);
 // Saison isolée en sens gauche-droite, pour que « 2026-2027 » ne s'inverse pas dans une phrase arabe
 const saisonTxt = s => `\u2066${seasonLabel(s)}\u2069`;
 const fmtNote = n => (n == null ? '' : (Math.round(n * 10) / 10).toFixed(1).replace('.', ','));
 const pluriel = (n, un, plus) => `${n} ${n > 1 ? plus : un}`;
+// Le lieu d'une entreprise : ville et pays en arabe dans l'interface arabe
+const lieuTxt = (ville, pays) => { const ar = getLang() === 'ar'; return [villeAffichee(ville, getLang()), (ar && PAYS_AR[canonPays(pays)]) || pays].filter(Boolean).join(ar ? '، ' : ', '); };
 // L'auteur d'un partage anonyme ne s'affiche pas (en ligne, la base l'a déjà masqué)
 const auteurVisible = (row, me) => !!row.author_id && (!row.anonyme || row.author_id === me.id || me.role === 'admin');
 const estAMoi = (row, me) => !!row.author_id && row.author_id === me.id;
@@ -47,16 +49,17 @@ export function entreprisesDe(data) {
     const pays = lieux.map(l => l[1]).find(x => x && x !== 'Maroc') || '';
     const types = new Set([...c.offres, ...c.recrues, ...c.avis, ...c.entretiens].map(x => x.type).filter(Boolean));
     const secteurs = [...new Set(c.laureats.map(p => p.secteur).filter(Boolean))];
-    return { ...c, nom, note: moy(c.avis.map(a => a.note).filter(Boolean)), ville, pays, types, secteurs };
+    return { ...c, nom, note: noteSiAssez(c.avis.map(a => a.note)), ville, pays, types, secteurs };
   });
 }
 
 // Moyennes d'une entreprise
 function synthese(avis) {
-  const r = { n: avis.length, note: moy(avis.map(a => a.note).filter(Boolean)) };
-  for (const [k] of NOTES) r[k] = moy(avis.map(a => a[k]).filter(Boolean));
+  // Comme la note : une moyenne ou un pourcentage seulement à partir de 3 avis qui le renseignent
+  const r = { n: avis.length, note: noteSiAssez(avis.map(a => a.note)) };
+  for (const [k] of NOTES) r[k] = noteSiAssez(avis.map(a => a[k]));
   const rec = avis.filter(a => a.recommande != null);
-  r.recommande = rec.length ? rec.filter(a => a.recommande).length / rec.length : null;
+  r.recommande = rec.length >= AVIS_POUR_NOTE ? rec.filter(a => a.recommande).length / rec.length : null;
   r.gratifs = Object.keys(GRATIFS).map(g => [g, avis.filter(a => a.gratification === g).length]).filter(x => x[1]);
   return r;
 }
@@ -96,7 +99,7 @@ export function EntreprisesPage({ ctx }) {
 function ListeEntreprises({ ctx, all, ouvrir }) {
   const { me, saison } = ctx;
   const [q, setQ] = useState(''); const [type, setType] = useState(''); const [miens, setMiens] = useState(false);
-  const qq = q.trim().toLowerCase();
+  const trouve = recherche(q); // « مكناس » trouve Meknès, accents et casse ignorés
   const ouverte = o => o.status === 'ouverte' && (me.role !== 'etudiant' || matchesMe(o, me, saison));
   const contribue = c => c.avis.some(a => estAMoi(a, me)) || c.entretiens.some(e => estAMoi(e, me));
   const poids = c => (c.avis.length + c.entretiens.length) * 3 + c.laureats.length + c.ouvertes * 2;
@@ -105,12 +108,17 @@ function ListeEntreprises({ ctx, all, ouvrir }) {
     .filter(c => c.laureats.length || c.ouvertes || c.recrues.length || c.avis.length || c.entretiens.length)
     .filter(c => !type || c.types.has(type))
     .filter(c => !miens || contribue(c))
-    .filter(c => !qq || `${[...c.names.keys()].join(' ')} ${c.ville} ${c.pays} ${c.secteurs.join(' ')}`.toLowerCase().includes(qq))
+    .filter(c => !trouve || trouve(`${[...c.names.keys()].join(' ')} ${c.secteurs.join(' ')}`, c.ville, c.pays))
     .sort((a, b) => poids(b) - poids(a) || a.nom.localeCompare(b.nom));
   const nbAvis = all.reduce((s, c) => s + c.avis.length, 0), nbEnt = all.reduce((s, c) => s + c.entretiens.length, 0);
+  // Le chiffre de l'en-tête n'est jamais un zéro : les avis et entretiens s'il y en a, sinon les entreprises où travaillent
+  // des lauréats (le seul chiffre vrai au démarrage), sinon rien
+  const nbOu = all.filter(c => c.laureats.length).length;
+  const chiffre = nbAvis || nbEnt ? [nbAvis ? pluriel(nbAvis, 'avis', 'avis') : '', nbEnt ? pluriel(nbEnt, 'entretien partagé', 'entretiens partagés') : ''].filter(Boolean).join(' · ')
+    : nbOu ? `${nbOu} entreprise${nbOu > 1 ? 's' : ''} où travaillent nos lauréats` : '';
   return html`<div class="sub-page">
     <div class="ent-hero">
-      <div class="grow"><p class="eyebrow">${pluriel(nbAvis, 'avis', 'avis')} · ${pluriel(nbEnt, 'entretien partagé', 'entretiens partagés')}</p>
+      <div class="grow">${chiffre ? html`<p class="eyebrow">${chiffre}</p>` : null}
         <p class="ent-hero-txt">Les questions posées en entretien et les avis sur les stages, laissés par les promos précédentes. Prépare-toi avec leur expérience.</p></div>
       ${ouvrir ? html`<div class="ent-hero-actions">
         <button class="btn primary" id="ent-btn-entretien" onClick=${() => ouvrir('entretien')}><${Icon} name="qa" size=${16}/> Partager un entretien</button>
@@ -123,8 +131,8 @@ function ListeEntreprises({ ctx, all, ouvrir }) {
     <ul class="ent-list">${list.slice(0, 80).map(c => html`<li key=${c.k}><button class="ent-row clickable" onClick=${() => ctx.go('reseau/entreprises/' + encodeURIComponent(c.k))}>
       <${CompanyLogo} name=${c.nom} size=${40}/>
       <span class="grow"><strong translate="no">${c.nom}</strong>
-        <span class="ent-row-sub">${c.note != null ? html`<${Etoiles} note=${c.note} size=${13}/><b class="mono">${fmtNote(c.note)}</b>` : null}${c.ville || c.pays ? html`<span class="muted small" translate="no">${[c.ville, c.pays].filter(Boolean).join(', ')}</span>` : null}</span></span>
-      <span class="mini-stats"><span title="Avis"><${Icon} name="star" size=${15}/> ${c.avis.length}</span><span title="Entretiens"><${Icon} name="qa" size=${15}/> ${c.entretiens.length}</span><span title="Lauréats" class="ent-hide-s"><${Icon} name="people" size=${15}/> ${c.laureats.length}</span></span>
+        <span class="ent-row-sub">${c.note != null ? html`<${Etoiles} note=${c.note} size=${13}/><b class="mono">${fmtNote(c.note)}</b>` : null}${c.ville || c.pays ? html`<span class="muted small" translate="no">${lieuTxt(c.ville, c.pays)}</span>` : null}</span></span>
+      <span class="mini-stats">${c.laureats.length ? html`<span class="ent-nb"><${Icon} name="people" size=${15}/> ${pluriel(c.laureats.length, 'lauréat', 'lauréats')}</span>` : null}${c.avis.length ? html`<span title="Avis"><${Icon} name="star" size=${15}/> ${c.avis.length}</span>` : null}${c.entretiens.length ? html`<span title="Entretiens"><${Icon} name="qa" size=${15}/> ${c.entretiens.length}</span>` : null}</span>
     </button></li>`)}</ul>
     ${!list.length ? html`<${Empty} icon="briefcase" title="Aucune entreprise trouvée">${ouvrir ? 'Tu as passé un entretien ou fait un stage ? Sois le premier à partager.' : ''}<//>` : null}
     ${list.length > 80 ? html`<p class="muted small center">Affine la recherche pour voir les autres.</p>` : null}
@@ -143,7 +151,7 @@ function FicheEntreprise({ ctx, c, ouvrir }) {
   const tabs = [['avis', 'Avis', avis.length], ['entretiens', 'Entretiens', entretiens.length], ['equipe', 'Lauréats et offres', c.laureats.length + offres.length]];
   const [tab, setTab] = useState(avis.length || !entretiens.length ? 'avis' : 'entretiens');
   const base = { entreprise: c.nom, ville: c.ville || '', pays: c.pays || 'Maroc' };
-  const lieu = [c.ville, c.pays].filter(Boolean).join(', ');
+  const lieu = lieuTxt(c.ville, c.pays);
   const suppr = (table, row) => ctx.confirm(table === 'avis_stage' ? 'Supprimer cet avis ?' : 'Supprimer ce partage d’entretien ?', () => act(async () => { await store.remove(table, row.id); toast('Supprimé.'); }));
   return html`<div class="sub-page">
     <button class="linkish small ent-back" onClick=${() => ctx.go('reseau/entreprises', { remplacer: true })}><${Icon} name="arrow" size=${14}/> Toutes les entreprises</button>
@@ -151,14 +159,14 @@ function FicheEntreprise({ ctx, c, ouvrir }) {
       <div class="detail-head"><${CompanyLogo} name=${c.nom} size=${56}/>
         <div class="detail-title grow"><h2 translate="no">${c.nom}</h2>
           <p class="muted small">${c.secteurs.slice(0, 2).join(' · ')}${c.secteurs.length && lieu ? ' · ' : ''}<span translate="no">${lieu}</span></p></div></div>
-      ${s.n ? html`<div class="ent-synth">
+      ${s.note != null ? html`<div class="ent-synth">
         <div class="ent-big"><span class="ent-big-n mono">${fmtNote(s.note)}</span><${Etoiles} note=${s.note} size=${18}/><span class="muted small">${pluriel(s.n, 'avis', 'avis')}</span></div>
         <div class="ent-subnotes">${NOTES.map(([k, l]) => s[k] != null ? html`<div class="ent-subnote"><span class="small">${l}</span><span class="ent-gauge" aria-hidden="true"><span style=${`width:${(s[k] / 5) * 100}%`}></span></span><b class="mono small">${fmtNote(s[k])}</b></div>` : null)}</div>
         ${s.recommande != null || s.gratifs.length ? html`<div class="ent-facts">
           ${s.recommande != null ? html`<span class="ent-fact"><${Icon} name="thumb" size=${15}/> <span><b class="mono">${Math.round(s.recommande * 100)} %</b> recommandent</span></span>` : null}
           ${s.gratifs.length ? html`<span class="ent-fact"><${Icon} name="briefcase" size=${15}/> <span>Gratification :</span> ${s.gratifs.map(([g, n], i) => html`${i ? ' · ' : ''}<span>${GRATIFS[g]} (${n})</span>`)}</span>` : null}
         </div>` : null}
-      </div>` : html`<p class="muted small">Pas encore d’avis sur cette entreprise.</p>`}
+      </div>` : s.n ? html`<p class="muted small ent-peu">${pluriel(s.n, 'avis', 'avis')} · La note s’affiche à partir de ${AVIS_POUR_NOTE} avis.</p>` : html`<p class="muted small">Pas encore d’avis sur cette entreprise.</p>`}
       ${ouvrir ? html`<div class="row ent-actions">
         <button class="btn small primary" id="ent-f-entretien" onClick=${() => ouvrir('entretien', base)}><${Icon} name="qa" size=${15}/> Partager un entretien</button>
         <button class="btn small primary" id="ent-f-avis" onClick=${() => ouvrir('avis', base)}><${Icon} name="star" size=${15}/> Laisser un avis</button>
@@ -166,7 +174,7 @@ function FicheEntreprise({ ctx, c, ouvrir }) {
       </div>` : null}
     </div>
 
-    <div class="seg" role="tablist">${tabs.map(([k, l, n]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => setTab(k)}>${l} <span class="count">${n}</span></button>`)}</div>
+    <div class="seg" role="tablist">${tabs.map(([k, l, n]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => setTab(k)}>${l}${n ? html` <span class="count">${n}</span>` : null}</button>`)}</div>
 
     ${tab === 'avis' ? html`<div class="list">${avis.length ? avis.map(a => html`<${AvisCard} key=${a.id} ctx=${ctx} a=${a} onEdit=${() => ouvrir?.('avis', a)} onDelete=${() => suppr('avis_stage', a)}/>`)
       : html`<${Empty} icon="star" title="Aucun avis pour l’instant">${ouvrir ? 'Tu y as fait un stage ? Ton avis aide la promo suivante à choisir.' : ''}<//>`}</div>` : null}
@@ -174,7 +182,7 @@ function FicheEntreprise({ ctx, c, ouvrir }) {
       : html`<${Empty} icon="qa" title="Aucun entretien partagé">${ouvrir ? 'Tu as passé un entretien ici ? Partage les questions, même celles qui t’ont surpris.' : ''}<//>`}</div>` : null}
     ${tab === 'equipe' ? html`<div class="sub-page">
       ${c.laureats.length ? html`<div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="people"/> Lauréats chez <span translate="no">${c.nom}</span></h2></div>
-        <ul class="people-list">${c.laureats.map(p => html`<li key=${p.id}><${Person} p=${p} onOpen=${openProfile} size=${32}/><span class="muted small" translate="no" dir="auto">${[p.poste, p.ville].filter(Boolean).join(' · ')}</span></li>`)}</ul></div>` : null}
+        <ul class="people-list">${c.laureats.map(p => html`<li key=${p.id}><${Person} p=${p} onOpen=${openProfile} size=${32}/><span class="muted small" translate="no" dir="auto">${[p.poste, villeAffichee(p.ville, getLang())].filter(Boolean).join(' · ')}</span></li>`)}</ul></div>` : null}
       ${offres.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="feed"/> Offres ouvertes</h2></div><div class="offer-grid one">${offres.map(o => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} onOpen=${() => openOffer(o.id)}/>`)}</div>` : null}
       ${!c.laureats.length && !offres.length ? html`<${Empty} icon="people" title="Aucun lauréat ni offre ouverte ici pour l’instant"/>` : null}
     </div>` : null}
@@ -356,7 +364,7 @@ export function EntrepriseResume({ ctx, entreprise, onOpen }) {
     if (!entreprise) return null;
     const avis = (data.avis_stage || []).filter(a => sameCompany(a.entreprise, entreprise));
     const ent = (data.entretiens || []).filter(e => sameCompany(e.entreprise, entreprise));
-    return avis.length || ent.length ? { avis: avis.length, ent: ent.length, note: moy(avis.map(a => a.note).filter(Boolean)) } : null;
+    return avis.length || ent.length ? { avis: avis.length, ent: ent.length, note: noteSiAssez(avis.map(a => a.note)) } : null;
   }, [data.avis_stage, data.entretiens, entreprise]);
   if (!r) return null;
   const voir = () => {
@@ -435,6 +443,7 @@ injectCSS('entreprises', `
 .ent-row .grow strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ent-row-sub { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; min-height: 1.1rem; }
 .ent-row-sub b { font-size: .8rem; color: var(--ink-2); }
+.mini-stats .ent-nb { font: 500 .85rem var(--f-body); white-space: nowrap; }
 .ent-stars { display: inline-flex; gap: 1px; font-size: var(--s, 15px); line-height: 1; color: color-mix(in srgb, var(--brass) 25%, transparent); }
 .ent-stars .on { color: var(--brass); }
 .ent-stars .half { background: linear-gradient(90deg, var(--brass) 50%, color-mix(in srgb, var(--brass) 25%, transparent) 50%); -webkit-background-clip: text; background-clip: text; color: transparent; }
@@ -571,6 +580,8 @@ addAR({
   'Ajoute au moins une question.': 'أضف سؤالا واحدا على الأقل.',
 }, [
   [/^(\d+) avis$/, n => `${n} رأي`],
+  [/^(\d+) entreprises? où travaillent nos lauréats$/, n => `${arCount(n, ['شركة واحدة', 'شركتان', 'شركات', 'شركة'])} يعمل فيها خريجونا`],
+  [/^(\d+) avis · La note s’affiche à partir de (\d+) avis\.$/, (n, m) => `${arCount(n, ['رأي واحد', 'رأيان', 'آراء', 'رأيًا'])} · يظهر التقييم ابتداءً من ${m} آراء.`],
   [/^(\d+) entretiens? partagés?$/, n => `${n} مقابلة مشتركة`],
   [/^([\d,]+) sur 5$/, n => `${n} من 5`],
   [/^Difficulté (\d)\/5$/, n => `الصعوبة ${n}/5`],
