@@ -4,7 +4,7 @@ import { Icon, Modal, Field, Empty, Person, Avatar, Bar, toast, LevelChip, Compa
 import { addAR, arCount } from './i18n.js';
 import { PoulsReseau } from './pouls.js';
 import { OBJECTIFS, NIVEAUX, TYPES, niveauOf, statutOf, typeForNiveau, seasonLabel, timeAgo, levelOf, BADGES, badgesOf, BAREME, computeScores, NIVEAUX_IMPACT, mentorState, requestsFor, demandesPour } from './logic.js';
-import { APP_STATUS, OfferComposer } from './offers.js';
+import { APP_STATUS, OfferComposer, annulerRecrutement } from './offers.js';
 import { AttestationCard, ShareModal } from './growth.js';
 import { Filleuls, ParrainCard } from './saison.js';
 import { BilanCard } from './recrutement.js';
@@ -262,7 +262,7 @@ export function EspacePage(ctx) {
       <p class="small muted">Tu as indiqué avoir recruté ces étudiants. Dès qu’ils confirment, leur réussite est vérifiée des deux côtés.</p>
       <ul class="app-list flat">${waiting.map(p => { const st = store.byId('profiles', p.student_id); return html`<li class="app-row" key=${p.id}>
         <${Person} p=${st} onOpen=${openProfile} size=${36}/><span class="app-txt right"><span class="muted small"><span translate="no">${p.entreprise}</span> · ${timeAgo(p.created_at)}</span></span>
-        <button class="btn small ghost" onClick=${() => ctx.confirm('Annuler cette déclaration de recrutement ?', () => act(() => store.remove('placements', p.id)), 'Annuler la déclaration')}>Annuler</button></li>`; })}</ul></div>` : null}
+        <button class="btn small ghost" onClick=${() => annulerRecrutement(ctx, p)}>Annuler</button></li>`; })}</ul></div>` : null}
 
     ${rdv.length ? html`<button type="button" class="impact-strip clickable esp-rdv" onClick=${() => ctx.go('mentorat')}><span class="obj-ico"><${Icon} name="video" size=${20}/></span>
       <span class="grow"><strong>${rdv.length > 1 ? `${rdv.length} rendez-vous à venir` : '1 rendez-vous à venir'}</strong></span><${Icon} name="arrow" size=${18}/></button>` : null}

@@ -174,7 +174,7 @@ function App({ store }) {
     store, data, me, saison, scores, go, act, sub: route.sub, sub2: route.sub2, star, starId: star?.p.id, fondateurs,
     openProfile: p => p && setProfile(p),
     openOffer: (id, apply = false) => { setOfferId(id); setApplyNow(apply); setPop(null); },
-    confirm: (text, onYes, yes) => setConfirmBox({ text, onYes, yes }),
+    confirm: (text, onYes, yes, { non, cls } = {}) => setConfirmBox({ text, onYes, yes, non, cls }),
     openEntreprise: name => name && setEntreprise(name),
     askQuestion: initial => setAskQ(initial || {}),
     askHelp: (p = null, besoin = '', sujet = '') => setAskMentor({ p, besoin, sujet }),
@@ -275,7 +275,7 @@ function App({ store }) {
     ${aide?.mentorat ? html`<${HoraireSheet} ctx=${ctx} id=${aide.mentorat} key=${'horaire-' + aide.mentorat} onClose=${() => setAide(null)}/>` : null}
     ${profile ? html`<${ProfileModal} ctx=${ctx} p=${profile} onClose=${() => setProfile(null)} onAskMentor=${p => { setProfile(null); setAskMentor({ p }); }}/>` : null}
     ${askMentor ? html`<${AskHelp} ctx=${ctx} mentor=${askMentor.p} besoin=${askMentor.besoin} sujet=${askMentor.sujet} onClose=${() => setAskMentor(null)}/>` : null}
-    ${confirmBox ? html`<${Confirm} text=${confirmBox.text} onYes=${confirmBox.onYes} onClose=${() => setConfirmBox(null)} yes=${confirmBox.yes || 'Supprimer'}/>` : null}
+    ${confirmBox ? html`<${Confirm} text=${confirmBox.text} onYes=${confirmBox.onYes} onClose=${() => setConfirmBox(null)} yes=${confirmBox.yes || 'Supprimer'} non=${confirmBox.non || 'Annuler'} cls=${confirmBox.cls || 'btn danger'}/>` : null}
     ${entreprise ? html`<${EntrepriseModal} ctx=${ctx} name=${entreprise} key=${entreprise} onClose=${() => setEntreprise(null)}/>` : null}
     ${askQ ? html`<${AskQuestion} ctx=${ctx} initial=${askQ} onClose=${() => setAskQ(null)} onDone=${id => { setAskQ(null); go('reseau/entraide/' + id); }}/>` : null}
     ${annee ? html`<${TonAnnee} ctx=${ctx} saison=${annee} onClose=${() => setAnnee(null)}/>` : null}

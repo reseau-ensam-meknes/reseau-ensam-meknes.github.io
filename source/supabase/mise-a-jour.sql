@@ -328,7 +328,14 @@ language plpgsql security definer set search_path = public as $$
 declare v_author uuid; v_status text; v_merci text; v_note int; v_ent text; v_ville text; v_pays text; v_type text; v_partage boolean; v_d record;
 begin
   if tg_op = 'INSERT' then
-    if auth.uid() is null or public.is_admin() then return new; end if;
+    if auth.uid() is null then return new; end if;
+    if public.is_admin() then
+      -- L'administration qui recrute elle-même (son offre, sa demande) : l'étudiant confirme, comme pour un lauréat
+      if new.laureat_id = auth.uid() and new.student_id is distinct from auth.uid() and new.status = 'declare' then
+        new.source := 'plateforme'; new.status := 'en_attente'; new.confirmed_at := null;
+      end if;
+      return new;
+    end if;
     new.confirmed_at := null;
     if auth.uid() = new.student_id then
       -- l'étudiant ne peut déclarer qu'une réussite hors plateforme (non vérifiée)
@@ -1171,7 +1178,9 @@ begin
     if tg_op = 'INSERT' and new.offer_id is not null then
       select author_id into v_auteur from public.offers where id = new.offer_id;
       perform public.pousser(v_auteur, 'candidature', jsonb_build_object('nom', (select full_name from public.profiles where id = new.student_id), 'titre', new.titre));
-    elsif tg_op = 'UPDATE' and new.status is distinct from old.status and new.status in ('entretien', 'retenu') then
+    elsif tg_op = 'UPDATE' and new.status is distinct from old.status and new.status in ('entretien', 'retenu')
+      and not (old.status = 'retenu' and new.status = 'entretien') then
+      -- Retour de « retenu » à « entretien » : un recrutement annulé, pas un nouvel entretien
       perform public.pousser(new.student_id, 'candidature_statut', jsonb_build_object('titre', new.titre, 'statut', new.status));
     end if;
   elsif tg_table_name = 'placements' then

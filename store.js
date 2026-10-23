@@ -190,9 +190,12 @@ class DemoStore extends Base {
     this.persist(); this.emit();
     return r;
   }
-  async remove(table, id) {
+  async remove(table, id, { exiger, saufStatut } = {}) {
     if (table === 'annonces' && this.me?.role !== 'admin') throw new Error('Action non autorisée pour ton compte.');
     const row = this.byId(table, id);
+    if (saufStatut && row?.status === saufStatut) throw new Error(exiger || 'Action non autorisée pour ton compte.');
+    // Comme la règle de la base : l'étudiant retire sa réussite, le lauréat seulement ce qui attend la confirmation
+    if (table === 'placements' && row && this.me?.role !== 'admin' && !(row.student_id === this.me?.id || (row.laureat_id === this.me?.id && row.status === 'en_attente'))) throw new Error(exiger || 'Action non autorisée pour ton compte.');
     if (PHASE2.includes(table) && row && this.me?.role !== 'admin') {
       const own = { groupe_messages: 'author_id', groupe_membres: 'user_id', cafes: 'organisateur_id', cafe_participants: 'user_id', startups: 'fondateur_id' }[table];
       if (!own || row[own] !== this.me?.id) throw new Error('Action non autorisée pour ton compte.');
@@ -733,7 +736,12 @@ function applyPhase3Rules(store, table, r, old) {
 function applyPlacementRules(store, r, old) {
   const me = store.me; const isAdmin = me?.role === 'admin';
   if (!old) {
-    if (isAdmin) { if (r.status === 'confirme') r.confirmed_at = new Date().toISOString(); return; }
+    if (isAdmin) {
+      // L'administration qui recrute elle-même : l'étudiant confirme, comme pour un lauréat
+      if (r.laureat_id === me.id && r.student_id !== me.id && (r.status || 'declare') === 'declare') Object.assign(r, { source: 'plateforme', status: 'en_attente', confirmed_at: null });
+      else if (r.status === 'confirme') r.confirmed_at = new Date().toISOString();
+      return;
+    }
     if (r.student_id === me?.id) { Object.assign(r, { source: 'autre', status: 'declare', offer_id: null, laureat_id: null }); return; }
     if (me?.role !== 'laureat') throw new Error('Seul un lauréat peut déclarer un recrutement.');
     if (r.offer_id && store.byId('offers', r.offer_id)?.author_id !== me.id) throw new Error('Seul l’auteur de l’offre peut déclarer ce recrutement.');
@@ -1022,9 +1030,13 @@ export class SupabaseStore extends Base {
     if (table === 'profiles') this.me = this.byId('profiles', this.userId);
     this.emit(); return data;
   }
-  async remove(table, id) {
-    const { error } = await this.sb.from(table).delete().eq('id', id);
+  // exiger : le message si rien n'a été supprimé (une règle d'accès filtre la ligne sans erreur)
+  async remove(table, id, { exiger, saufStatut } = {}) {
+    let req = this.sb.from(table).delete().eq('id', id);
+    if (saufStatut) req = req.neq('status', saufStatut);
+    const { data: lignes, error } = exiger ? await req.select('id') : await req;
     if (error) throw new Error(frError(error));
+    if (exiger && !lignes?.length) { await this.loadTable(table).catch(() => {}); this.emit(); throw new Error(exiger); }
     this.data[table] = this.data[table].filter(x => x.id !== id);
     this.emit();
   }

@@ -464,8 +464,8 @@ export function Tabs({ tabs, value, onChange }) {
 }
 
 // La fenêtre reste ouverte (bouton occupé) tant que l'action n'est pas finie : pas de double envoi
-export function Confirm({ text, onYes, onClose, yes = 'Confirmer' }) {
-  return html`<${Modal} title="Confirmation" onClose=${onClose}><p>${text}</p><div class="row-end"><button class="btn ghost" onClick=${onClose}>Annuler</button><button class="btn danger" onClick=${async () => { try { await onYes(); } finally { onClose(); } }}>${yes}</button></div><//>`;
+export function Confirm({ text, onYes, onClose, yes = 'Confirmer', non = 'Annuler', cls = 'btn danger' }) {
+  return html`<${Modal} title="Confirmation" onClose=${onClose}><p>${text}</p><div class="row-end"><button class="btn ghost" onClick=${onClose}>${non}</button><button class=${cls} onClick=${async () => { try { await onYes(); } finally { onClose(); } }}>${yes}</button></div><//>`;
 }
 
 export function useLocal(key, init) {
