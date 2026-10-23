@@ -326,11 +326,84 @@ test('lien d’invitation d’une promo : la promo est gardée, l’adresse nett
   assert.ok(await s.page.locator('.inv-row').count() >= 9);
   const wa = await s.page.locator('.inv-row', { hasText: 'Promo 2027' }).locator('a[href^="https://wa.me/"]').getAttribute('href');
   const msg = decodeURIComponent(wa.split('text=')[1]);
-  assert.match(msg, /promo 2027/); assert.ok(msg.includes(adresse + '?promo=2027'));
+  assert.match(msg, /promo 2027/); assert.ok(msg.includes(adresse + 'promo/2027/'));
   await s.page.click('.inv-opts .seg button:nth-child(3)');
   assert.match(await s.page.locator('.inv-msg').innerText(), /مرحبا دفعة/);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
+});
+
+test('lien de promo : sa page d’aperçu nomme la promo, puis ouvre le site avec la promo gardée et l’adresse propre', async () => {
+  const s = await ouvrir();
+  const brut = await (await fetch(adresse + 'promo/2019/')).text();
+  assert.ok(brut.includes('<meta property="og:title" content="Promo 2019 · tes camarades sont sur le Réseau">'));
+  await s.page.goto(adresse + 'promo/2019/'); await s.page.waitForSelector('.hello');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-promo')), '2019');
+  assert.deepEqual(await s.page.evaluate(() => [location.pathname, location.search]), ['/', '']);
+  // Lien arabe : la page s'ouvre en arabe, sauf si ce navigateur a déjà choisi le français
+  await s.page.evaluate(() => localStorage.removeItem('ensam-lang'));
+  await s.page.goto(adresse + 'promo/2019/ar/'); await s.page.waitForSelector('.hello');
+  assert.equal(await s.page.getAttribute('html', 'dir'), 'rtl');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-lang')), 'ar');
+  assert.deepEqual(await s.page.evaluate(() => [location.pathname, location.search]), ['/', '']);
+  await s.page.evaluate(() => localStorage.setItem('ensam-lang', 'fr'));
+  await s.page.goto(adresse + 'promo/2019/ar/'); await s.page.waitForSelector('.hello');
+  assert.equal(await s.page.getAttribute('html', 'dir'), 'ltr');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('lien de promo avec le service worker : l’application gardée s’ouvre tout de suite, sans rechargement de secours', async () => {
+  const s = await ouvrir({ sw: true });
+  await s.page.waitForFunction(() => navigator.serviceWorker.getRegistration().then(r => !!r?.active), null, { timeout: 30000 });
+  await s.page.reload(); await s.page.waitForSelector('.hello');
+  await s.page.goto(adresse + 'promo/2019/'); await s.page.waitForSelector('.hello');
+  assert.ok(await s.page.evaluate(() => !!navigator.serviceWorker.controller));
+  assert.equal(await s.page.evaluate(() => sessionStorage.getItem('ensam-reprise')), null);
+  assert.equal(await s.page.evaluate(() => location.pathname), '/');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-promo')), '2019');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Fais venir ta promo » : un bouton WhatsApp avec le message et le lien de la promo', async () => {
+  const s = await ouvrir();
+  const texte = async sel => decodeURIComponent((await s.page.getAttribute(sel, 'href')).split('text=')[1]);
+  await s.comme('Nadia'); await s.aller('espace');
+  assert.ok((await s.page.getAttribute('#pa-promo', 'href')).startsWith('https://wa.me/?text='));
+  const nadia = await texte('#pa-promo');
+  assert.ok(nadia.includes('Salut la promo 2019')); assert.ok(nadia.includes(adresse + 'promo/2019/'));
+  await s.comme('Youssef'); await s.aller('espace');
+  assert.match(await texte('#promo-wa'), /On est déjà \d+ de la promo 2016\./);
+  assert.equal(await s.page.locator('#promo-wa.primary').count(), 0);
+  await s.comme('Salma'); await s.aller('parcours');
+  assert.ok((await texte('#promo-wa')).includes(adresse + 'promo/2027/'));
+  assert.doesNotMatch(await texte('#promo-wa'), /points|classement/);
+  // Admin > Inviter : une promo sans aucun inscrit garde le lien simple ?promo=
+  await s.comme('Admin'); await s.aller('admin/inviter');
+  await s.page.fill('#inv-promo', '1995'); await s.page.click('.inv-autre button');
+  assert.ok((await s.page.locator('.inv-row', { hasText: 'Promo 1995' }).locator('.inv-link').innerText()).endsWith('?promo=1995'));
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Fais venir ta promo » en arabe : lien arabe de la promo, message en arabe ; l’admin n’a pas de carte', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  await s.comme('Salma'); await s.aller('parcours');
+  const msg = decodeURIComponent((await s.page.getAttribute('#promo-wa', 'href')).split('text=')[1]);
+  assert.ok(msg.includes(adresse + 'promo/2027/ar/')); assert.ok(msg.includes('مرحبا دفعة 2027'));
+  assert.equal(await s.debordement(), 0);
+  await s.comme('Admin'); await s.aller('espace');
+  assert.equal(await s.page.locator('#promo-card').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('construction : pages de promo et image d’aperçu présentes, mais pas gardées par le service worker', () => {
+  const sw = fs.readFileSync(path.join(SITE, 'sw.js'), 'utf8');
+  assert.doesNotMatch(sw.match(/const FICHIERS = (\[.*?\]);/)[1], /"promo\//);
+  assert.ok(fs.statSync(path.join(SITE, 'img/apercu-promo.jpg')).size < 300_000);
+  assert.ok(fs.existsSync(path.join(SITE, 'promo/2040/ar/index.html')));
 });
 
 test('partage WhatsApp : le lien direct rouvre l’offre et la question ; l’administration voit où l’inscription s’arrête', async () => {

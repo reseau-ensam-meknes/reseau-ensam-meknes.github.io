@@ -4,6 +4,10 @@
 // Saison en cours : elle commence en septembre (même règle que seasonOf dans logic.js, vérifiée par un test)
 export const saisonActuelle = (d = new Date()) => (d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1);
 
+// Promos acceptées dans un lien d'invitation (?promo=, pages promo/AAAA/ générées par outils/pages-promo.mjs)
+export const PROMO_MIN = 1990, PROMO_MAX = 2040;
+export const promoValide = n => Number.isInteger(n) && n >= PROMO_MIN && n <= PROMO_MAX;
+
 // Rôle probable d'après la promo : diplôme pas encore obtenu = étudiant(e)
 export const roleDePromo = (promo, saison = saisonActuelle()) => (promo > saison ? 'etudiant' : 'laureat');
 

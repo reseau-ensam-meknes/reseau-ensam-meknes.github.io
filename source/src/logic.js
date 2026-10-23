@@ -106,7 +106,7 @@ export const CATEGORIES_Q = ['PFE', 'Stage', 'Étranger & visas', 'CV & entretie
 
 // Une saison = une année universitaire, de septembre à août. 2026 = « 2026-2027 ».
 // Règles de la page d'entrée (elles vivent à part pour qu'elle s'affiche sans attendre ce fichier)
-export { roleDePromo, presetInscription, lignesChiffres, estEmailEcole, chiffresCode, casErreurAuth, saisonActuelle, lienPartage, lienEncoreBon, LIEN_DUREE, estUuid, phraseLien, suiteLien } from './regles-entree.js';
+export { roleDePromo, promoValide, PROMO_MIN, PROMO_MAX, presetInscription, lignesChiffres, estEmailEcole, chiffresCode, casErreurAuth, saisonActuelle, lienPartage, lienEncoreBon, LIEN_DUREE, estUuid, phraseLien, suiteLien } from './regles-entree.js';
 export function seasonOf(d = new Date()) { return d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1; }
 export const seasonLabel = s => `${s}-${s + 1}`;
 
@@ -117,6 +117,26 @@ export function niveauOf(p, saison) {
   if (n <= 0) return 1;
   if (n <= 5) return n;
   return p.promo === saison ? 6 : 7;
+}
+
+// « Fais venir ta promo » : le lien d'une promo mène à sa petite page d'aperçu (page = true, outils/pages-promo.mjs),
+// qui nomme la promo dans WhatsApp puis ouvre le site avec ?promo= ; sinon le lien simple ?promo=
+export const lienPromo = (promo, langue, page, base) => new URL(page ? `promo/${promo}/${langue === 'ar' ? 'ar/' : ''}` : `./?promo=${promo}${langue === 'ar' ? '&lang=ar' : ''}`, base).href;
+// Membres inscrits avec cette promo, étudiants et lauréats, moi compris
+export const inscritsDeLaPromo = (profiles, promo) => profiles.filter(p => p.promo != null && Number(p.promo) === Number(promo)).length;
+// Message d'un membre à sa propre promo : court, à la première personne, avec le lien. n : déjà inscrits, cité à partir de 3.
+export function messageCamarade(me, langue, lien, n = 0, saison = seasonOf()) {
+  const { promo } = me; const etu = me.role === 'etudiant'; const demande = etu && niveauOf(me, saison) >= 3; const deja = n >= 3;
+  if (langue === 'ar') return [`مرحبا دفعة ${promo} 👋`,
+    !etu ? 'أنا على «شبكة ENSAM مكناس»: نساعد فيها كخريجين الطلبة على إيجاد تدريب أو مشروع نهاية الدراسة أو أول وظيفة، ونلتقي فيها كزملاء.'
+      : demande ? 'أنا على «شبكة ENSAM مكناس»: نقول فيها للخريجين ما نبحث عنه من تدريب أو مشروع نهاية الدراسة، مع السيرة الذاتية، ومن يستطيع المساعدة منهم يجيب.'
+      : 'أنا على «شبكة ENSAM مكناس»: نطرح فيها أسئلتنا على الخريجين (الشعبة، التداريب، الحياة بعد المدرسة) ويقدّمون لنا النصائح.',
+    `${deja ? `نحن بالفعل ${n} من دفعة ${promo}. ` : ''}${etu ? 'سجّل مجانًا' : 'انضمّ إلينا مجانًا'}، دفعتك محدَّدة مسبقًا في الرابط:`, lien].join('\n');
+  return [`Salut la promo ${promo} 👋`,
+    !etu ? 'Je suis sur le Réseau ENSAM Meknès : entre lauréats, on y aide les étudiants à trouver un stage, un PFE ou un premier emploi, et on s’y retrouve entre camarades.'
+      : demande ? 'Je suis sur le Réseau ENSAM Meknès : on y dit aux lauréats le stage ou le PFE qu’on cherche, CV joint, et ceux qui peuvent aider répondent.'
+      : 'Je suis sur le Réseau ENSAM Meknès : on y pose nos questions aux lauréats (filière, stages, vie après l’école) et ils nous conseillent.',
+    `${deja ? `On est déjà ${n} de la promo ${promo}. ` : ''}${etu ? 'Inscris-toi' : 'Rejoins-nous'}, c’est gratuit et ta promo est déjà indiquée :`, lien].join('\n');
 }
 
 // Objectif de chaque niveau pour la saison, avec son échéance.

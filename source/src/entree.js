@@ -6,7 +6,7 @@ import { html, render, useState, useLayoutEffect, useEffect, useRef } from './ve
 import { getLang, setLang, chargerAR, addAR, arCount } from './i18n.js';
 import { sceneMarkup } from './scene.js';
 import { glyph, TUILE_DEFS, TUILE } from './logo.js';
-import { roleDePromo, lignesChiffres, estEmailEcole, chiffresCode, adresseContact, lienPartage, lienEncoreBon, estUuid, phraseLien, suiteLien } from './regles-entree.js';
+import { roleDePromo, promoValide, lignesChiffres, estEmailEcole, chiffresCode, adresseContact, lienPartage, lienEncoreBon, estUuid, phraseLien, suiteLien } from './regles-entree.js';
 
 // La page d'entrée en arabe n'attend pas le grand dictionnaire (i18n-ar.js) : ses phrases sont ici
 // (mêmes traductions que dans i18n-ar.js, vérifié par un test).
@@ -169,20 +169,23 @@ export function LangToggle({ onChange, store, me, aussitot = false }) {
 // La promo et le rôle choisi sont gardés dans ce navigateur jusqu'à la fin de l'inscription, puis oubliés.
 // ---------------------------------------------------------------------------
 const CLE = 'ensam-invite-promo', CLE_ROLE = 'ensam-role-choisi';
-const valide = n => Number.isInteger(n) && n >= 1990 && n <= 2040;
+const valide = promoValide;
 const lire = k => { try { return localStorage.getItem(k); } catch { return null; } };
 const ecrire = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* navigation privée */ } };
 
-// Au chargement : lit ?promo= dans l'adresse, le garde, puis l'enlève de la barre d'adresse
+// Au chargement : lit ?promo= (et &lang=ar) dans l'adresse, garde la promo, puis les enlève de la barre d'adresse.
+// Renvoie 'ar' pour un lien arabe, sauf si ce navigateur a déjà choisi sa langue.
 export function lireInvitation() {
   try {
     const u = new URL(location.href);
-    if (!u.searchParams.has('promo')) return;
+    if (!u.searchParams.has('promo')) return null;
     const n = Number(u.searchParams.get('promo'));
     if (valide(n)) localStorage.setItem(CLE, String(n));
-    u.searchParams.delete('promo');
+    const ar = u.searchParams.get('lang') === 'ar' && !localStorage.getItem('ensam-lang');
+    u.searchParams.delete('promo'); u.searchParams.delete('lang');
     history.replaceState(history.state, '', u.pathname + u.search + u.hash);
-  } catch { /* stockage ou historique indisponible : le lien marche quand même, sans promo pré-remplie */ }
+    return ar ? 'ar' : null;
+  } catch { return null; /* stockage ou historique indisponible : le lien marche quand même, sans promo pré-remplie */ }
 }
 export function promoInvitee() { const n = Number(lire(CLE)); return valide(n) ? n : null; }
 export const retenirRole = r => ecrire(CLE_ROLE, r === 'etudiant' || r === 'laureat' ? r : null);
@@ -458,7 +461,9 @@ export function Entree({ store }) {
 
 if (!window.ENSAM_ENTREE) {
   window.ENSAM_ENTREE = true;
-  lireInvitation(); retenirLien(location.hash);
+  // Lien arabe d'une promo (promo/AAAA/ar/) : la page s'ouvre en arabe, le dictionnaire suit en fond
+  if (lireInvitation() === 'ar') setLang('ar', { attendre: false }).catch(() => {});
+  retenirLien(location.hash);
   const cfg = window.ENSAM_CONFIG || {};
   const enLigne = !!(cfg.supabaseUrl && cfg.supabaseAnonKey);
   let jeton = false;
