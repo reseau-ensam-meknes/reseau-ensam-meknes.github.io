@@ -18,7 +18,7 @@ addAR({
   'Tu es…': 'أنت…', 'Étudiant(e)': 'طالب(ة)', 'Lauréat(e)': 'خريج(ة)',
   'De la 1re à la 5e année à l’ENSAM Meknès': 'من السنة الأولى إلى الخامسة في ENSAM مكناس',
   'Diplômé(e) de l’ENSAM Meknès, en poste ou en recherche': 'خريج(ة) ENSAM مكناس، في وظيفة أو يبحث عن عمل',
-  'De la 1re à la 5e année': 'من السنة الأولى إلى الخامسة', 'Diplômé(e) de l’école': 'خريج(ة) المدرسة',
+  '1re à 5e année': 'من السنة الأولى إلى الخامسة', 'Diplômé(e) ENSAM': 'خريج(ة) المدرسة',
   'Choisis d’abord : étudiant(e) ou lauréat(e).': 'اختر أولًا: طالب(ة) أم خريج(ة).',
   'Pour les lauréats': 'للخريجين', 'Pour les étudiants': 'للطلبة',
   'Recrute tes stagiaires parmi les étudiants de ton école': 'وظّف متدرّبيك من بين طلبة مدرستك',
@@ -30,7 +30,7 @@ addAR({
   'Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.': 'دفعتك محدَّدة مسبقًا: أنشئ حسابك، ثم تحقق من معلوماتك.',
   'Créer mon compte': 'إنشاء حسابي', 'Se connecter': 'تسجيل الدخول', 'Nouveau mot de passe': 'كلمة مرور جديدة',
   'Email': 'البريد الإلكتروني', 'Mot de passe': 'كلمة المرور', '6 caractères minimum': '6 أحرف على الأقل',
-  'Recevoir un résumé par email chaque semaine': 'تلقي ملخص بالبريد الإلكتروني كل أسبوع',
+  'Le résumé de la semaine par email': 'ملخص الأسبوع بالبريد الإلكتروني',
   'J’accepte que mes données servent au réseau (': 'أوافق على استخدام بياناتي لخدمة الشبكة (', 'Confidentialité': 'الخصوصية',
   'Recevoir mon code': 'إرسال الرمز', 'Continuer': 'متابعة', 'Connexion…': 'جارٍ الدخول…', 'Enregistrer': 'حفظ',
   'Pas de mot de passe : on t’envoie un code à 6 chiffres par email.': 'بدون كلمة مرور: نرسل إليك رمزًا من 6 أرقام عبر البريد الإلكتروني.',
@@ -199,8 +199,11 @@ export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null);
 // code de quelqu'un d'autre (adresse mal tapée) ne reprend jamais l'accord ni le rôle de cette personne-là.
 const CLE_ACCORD = 'ensam-accord-ici';
 const adresse = e => String(e || '').trim().toLowerCase();
-const noterAccord = e => ecrire(CLE_ACCORD, JSON.stringify({ e: adresse(e), t: Date.now() }));
-export function accordIci(e) { try { const a = JSON.parse(lire(CLE_ACCORD) || 'null'); return !!a && !!adresse(e) && a.e === adresse(e); } catch { return false; } }
+// Le rôle envoyé avec la demande de code est gardé avec l'adresse (même pré-choisi par le lien d'une promo, sans toucher)
+const noterAccord = (e, r) => ecrire(CLE_ACCORD, JSON.stringify({ e: adresse(e), r: r || null, t: Date.now() }));
+function lireAccord(e) { try { const a = JSON.parse(lire(CLE_ACCORD) || 'null'); return a && adresse(e) && a.e === adresse(e) ? a : null; } catch { return null; } }
+export function accordIci(e) { return !!lireAccord(e); }
+export function roleAccord(e) { const r = lireAccord(e)?.r; return r === 'etudiant' || r === 'laureat' ? r : null; }
 
 // Le lien partagé (offre, question, « Je peux aider ») est gardé 24 h : un détour par la messagerie ou une adresse
 // nettoyée ne le perd pas, et il s'ouvre dès la fin de l'inscription
@@ -214,8 +217,8 @@ export { suiteLien };
 // « Tu es… » : étudiant(e) ou lauréat(e), choisi une seule fois (page d'entrée, puis rappelé à l'étape suivante)
 // ---------------------------------------------------------------------------
 const ROLES = [
-  ['etudiant', 'cap', 'Étudiant(e)', 'De la 1re à la 5e année à l’ENSAM Meknès', 'De la 1re à la 5e année'],
-  ['laureat', 'briefcase', 'Lauréat(e)', 'Diplômé(e) de l’ENSAM Meknès, en poste ou en recherche', 'Diplômé(e) de l’école'],
+  ['etudiant', 'cap', 'Étudiant(e)', 'De la 1re à la 5e année à l’ENSAM Meknès', '1re à 5e année'],
+  ['laureat', 'briefcase', 'Lauréat(e)', 'Diplômé(e) de l’ENSAM Meknès, en poste ou en recherche', 'Diplômé(e) ENSAM'],
 ];
 export function ChoixRole({ value, onChange, idPrefix = 'pf-je-', compact = false }) {
   return html`<fieldset class=${'je-suis' + (compact ? ' compact' : '')}><legend>Tu es…</legend><div class="je-suis-choix">
@@ -303,6 +306,9 @@ export function AuthScreen({ store }) {
   const [mode, setMode] = useState(recovery ? 'nouveau' : attente ? 'code' : ['inscription', 'connexion', 'motdepasse'].includes(saisie?.mode) ? saisie.mode : lien?.k === 'aider' ? 'connexion' : invite || !dejaMembre() ? 'inscription' : 'connexion');
   const [origine, setOrigine] = useState(attente ? (attente.creer ? 'inscription' : 'connexion') : 'inscription');
   const [role, setRoleEtat] = useState(() => roleRetenu() || (invite ? roleDePromo(invite) : ''));
+  // Petit écran (moins de 680 px de haut) : le titre et les chiffres suffisent, la phrase d'explication laisse la place au
+  // bouton. Décidé à l'ouverture : le clavier qui s'ouvre ensuite ne fait rien bouger.
+  const [court] = useState(() => innerWidth < 900 && innerHeight < 680);
   const [email, setEmail] = useState(attente?.email || saisie?.email || ''); const [pw, setPw] = useState('');
   const [ok, setOk] = useState(!!saisie?.ok); const [mails, setMails] = useState(attente ? attente.mails !== false : saisie ? saisie.mails !== false : true);
   garderSaisie = () => sessionStorage.setItem(SAISIE, JSON.stringify({ email, mode, ok, mails, t: Date.now() }));
@@ -332,7 +338,7 @@ export function AuthScreen({ store }) {
     const e = email.trim();
     if (creer && role === 'etudiant' && s.reglages?.email_ecole_obligatoire === true && s.domainesEcole().length && !estEmailEcole(e, s.domainesEcole())) throw new Error('Inscris-toi avec ton email de l’école.');
     const attendu = t => { noterAttente({ email: e, t, creer, mails, langue: getLang() }); setEnvoyeA(t); setOrigine(creer ? 'inscription' : 'connexion'); setMode('code'); focus('au-code'); };
-    if (creer) noterAccord(e);
+    if (creer) noterAccord(e, role);
     // Une offre entre lauréats ne s'ouvrira pas pour un étudiant : rien à promettre après l'inscription
     if (creer && offreFermeePour(infos, role)) oublierLien();
     try { await s.envoyerCode(e, { creer, meta: creer ? meta() : null }); } catch (err) {
@@ -385,7 +391,7 @@ export function AuthScreen({ store }) {
       ${lien && mode !== 'nouveau' ? html`<p id="au-lien" class=${'lien-accueil' + (infos === null || infos?.ouverte === false || (inscrire && offreFermeePour(infos, role)) ? ' fini' : '')}><${Icon} name=${icoLien} size=${18}/><span>${phraseLien(lien, infos, inscrire, inscrire ? role : '')}</span></p>` : null}
       <h1>Les lauréats ouvrent la porte aux étudiants.</h1>
       <p class="auth-chiffres">${(lignes || []).map(l => html`<span>${l}</span>`)}</p>
-      ${lien && mode !== 'nouveau' ? null : html`<p class="entree-sous">Stage, PFE, premier emploi : les étudiants demandent, les lauréats aident et recrutent.</p>`}
+      ${(lien && mode !== 'nouveau') || court ? null : html`<p class="entree-sous">Stage, PFE, premier emploi : les étudiants demandent, les lauréats aident et recrutent.</p>`}
     </section>
     <form class="auth-card form entree-form" onSubmit=${submit} aria-label=${inscription ? 'Créer mon compte' : null}>
       ${inscription ? null : html`<h2>${{ connexion: 'Se connecter', code: 'Ton code est parti', motdepasse: 'Se connecter', nouveau: 'Nouveau mot de passe' }[mode]}</h2>`}
@@ -398,7 +404,7 @@ export function AuthScreen({ store }) {
         <${Field} label="Code à 6 chiffres"><input id="au-code" class="code-otp" type="text" inputmode="numeric" autocomplete="one-time-code" enterkeyhint="go" dir="ltr" placeholder="······" aria-describedby="au-code-envoye au-code-email" value=${code} onInput=${saisir}/><//>`
       : mode === 'nouveau' ? null : champEmail}
       ${mode === 'motdepasse' || mode === 'nouveau' ? html`<${Field} label=${mode === 'nouveau' ? 'Nouveau mot de passe' : 'Mot de passe'} hint=${mode === 'nouveau' ? '6 caractères minimum' : ''}><input id="au-pw" type="password" required minlength="6" autocomplete=${mode === 'nouveau' ? 'new-password' : 'current-password'} value=${pw} onInput=${e => setPw(e.target.value)}/><//>` : null}
-      ${inscription ? html`<label class="check small"><input id="au-mail" type="checkbox" checked=${mails} onChange=${e => setMails(e.target.checked)}/> Recevoir un résumé par email chaque semaine</label>
+      ${inscription ? html`<label class="check small"><input id="au-mail" type="checkbox" checked=${mails} onChange=${e => setMails(e.target.checked)}/> Le résumé de la semaine par email</label>
         <label class="check small"><input id="au-ok" type="checkbox" required checked=${ok} onChange=${e => setOk(e.target.checked)}/> <span>J’accepte que mes données servent au réseau (<a href="#confidentialite">Confidentialité</a>)</span></label>` : null}
       ${msg ? html`<p class=${'auth-msg' + (msg.err ? ' err' : '')} role="alert">${msg.t}</p>` : null}
       <button class="btn primary wide" aria-busy=${busy || entre ? 'true' : null} disabled=${entre}>${entre ? 'Connexion…' : { inscription: 'Recevoir mon code', connexion: 'Recevoir mon code', code: 'Continuer', motdepasse: 'Se connecter', nouveau: 'Enregistrer' }[mode]}</button>
@@ -502,10 +508,16 @@ function chargerApp() {
     if (!document.documentElement.dataset.entree || connecte) relancerApp();
   });
 }
-// L'application n'a pas pu se charger : la page se recharge dès que le réseau répond (la session, elle, est gardée)
+// L'application n'a pas pu se charger : la page se recharge dès que le réseau répond (la session, elle, est gardée).
+// Ce qu'un visiteur a tapé revient ; après la connexion, plus rien à garder.
 function relancerApp() {
   if (relance) return; relance = true;
-  const essai = async (n = 0) => { if (!(await repond('./app.js'))) setTimeout(() => essai(n + 1), Math.min(30e3, 3e3 * 2 ** n)); else if (!recharger(false)) sansReprise(); };
+  const essai = async (n = 0) => {
+    if (!(await repond('./app.js'))) return setTimeout(() => essai(n + 1), Math.min(30e3, 3e3 * 2 ** n));
+    if (recharger(!connecte)) return;
+    if (!connecte) try { garderSaisie(); } catch { /* stockage indisponible */ }
+    sansReprise();
+  };
   essai();
 }
 const apresConnexion = () => { connecte = true; if (appEchec) relancerApp(); };

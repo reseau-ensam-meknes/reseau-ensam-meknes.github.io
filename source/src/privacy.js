@@ -146,7 +146,9 @@ export function PrivacyPage({ onBack }) {
 export function ConsentModal({ ctx }) {
   const { me, store, act, go } = ctx;
   const [ok, setOk] = useState(false);
-  const [mails, setMails] = useState(me.emails_hebdo !== false);
+  // Résumé de la semaine : coché d'avance si le membre le reçoit déjà, ou s'il l'a laissé coché en créant son compte
+  // (il n'est envoyé qu'après « Continuer », la case reste à décocher)
+  const [mails, setMails] = useState(me.emails_hebdo !== false || (!me.consent_at && store.session?.user?.user_metadata?.emails_hebdo === true));
   return html`<div class="modal-back consent-back"><div class="modal" role="dialog" aria-modal="true" aria-label="Tes données">
     <header class="modal-head"><h2>Tes données, en clair</h2></header>
     <div class="modal-body form">

@@ -82,6 +82,20 @@ for (const langue of ['fr', 'ar']) {
   });
 }
 
+test('entrée sur un grand téléphone : la phrase d’explication est là, et le clavier qui s’ouvre ne fait rien bouger', async () => {
+  const s = await visiteur({ largeur: 390, hauteur: 844 });
+  assert.ok(await s.page.isVisible('.entree-sous'));
+  await s.page.focus('#au-email');
+  const haut = () => s.page.evaluate(() => document.getElementById('au-email').getBoundingClientRect().top + scrollY);
+  const avant = await haut();
+  // Une application (WhatsApp, Instagram…) qui réduit la page quand le clavier s'ouvre
+  await s.page.setViewportSize({ width: 390, height: 480 }); await s.page.waitForTimeout(200);
+  assert.ok(await s.page.isVisible('.entree-sous'));
+  assert.equal(await haut(), avant);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('code à 6 chiffres : de l’entrée à la « Dernière étape », le rôle n’est demandé qu’une fois', async () => {
   const s = await visiteur({ largeur: 390, hauteur: 844 });
   // Sans rôle : rien ne part, on le dit
@@ -248,10 +262,10 @@ test('offre partagée en arabe : la phrase traduite, rien qui dépasse, rien d�
   await s.ctx.close();
 });
 
-test('adresse tapée par quelqu’un d’autre : la personne qui a le code ne reprend ni son rôle ni son accord', async () => {
+for (const resume of [false, true]) test(`adresse tapée par quelqu’un d’autre (résumé ${resume ? 'laissé coché' : 'décoché'}) : la personne qui a le code ne reprend ni son rôle ni son accord`, async () => {
   let s = await visiteur();
   await s.page.click('#au-je-laureat'); await s.page.fill('#au-email', 'partage@exemple.ma'); await s.page.check('#au-ok');
-  await s.page.uncheck('#au-mail');
+  if (!resume) await s.page.uncheck('#au-mail');
   await s.page.click('.entree-form button.btn.primary'); await s.page.waitForSelector('#au-code');
   await s.ctx.close();
   // Sur son propre téléphone, la vraie personne se connecte avec le code reçu
@@ -269,7 +283,28 @@ test('adresse tapée par quelqu’un d’autre : la personne qui a le code ne re
   const p = site.inscrits.find(x => x.id === UID);
   assert.equal(p.role, 'etudiant');
   assert.ok(!p.consent_at, 'l’accord n’est pas celui de l’autre personne');
-  assert.equal(p.emails_hebdo, false, 'un « non » au résumé est toujours gardé');
+  assert.equal(p.emails_hebdo, false, 'pas de résumé de la semaine sans un « oui » de cette personne');
+  // La fenêtre « Tes données » demande l'accord ; le résumé y est proposé comme il a été laissé à l'inscription
+  await s.page.waitForSelector('#cs-ok');
+  assert.equal(await s.page.isChecked('#cs-ok'), false);
+  assert.equal(await s.page.isChecked('#cs-mail'), resume);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('lien d’une promo, rôle choisi d’avance sans toucher : la « Dernière étape » garde ce rôle, même pour une adresse qui a déjà servi', async () => {
+  let s = await visiteur();
+  await s.page.click('#au-je-laureat'); await s.page.fill('#au-email', 'promo.role@exemple.ma'); await s.page.check('#au-ok');
+  await s.page.click('.entree-form button.btn.primary'); await s.page.waitForSelector('#au-code');
+  await s.ctx.close();
+  s = await visiteur({ query: `?promo=${S + 1}` });
+  assert.equal(await s.page.getAttribute('#au-je-etudiant', 'aria-pressed'), 'true');
+  await s.page.fill('#au-email', 'promo.role@exemple.ma'); await s.page.check('#au-ok');
+  await s.page.click('.entree-form button.btn.primary'); await s.page.waitForSelector('#au-code');
+  await s.page.fill('#au-code', '123456');
+  await s.page.waitForSelector('.auth-card.wide.onb', { timeout: 15000 });
+  assert.equal(await s.page.locator('#pf-role-rappel').innerText(), 'Tu t’inscris comme étudiant(e).');
+  assert.equal(await s.page.inputValue('#pf-promo'), String(S + 1));
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -405,6 +440,43 @@ test('réseau coupé après la connexion : un module qui tombe une fois la conne
   libre = true; for (const r of tenus.splice(0)) await r.abort('connectionreset');
   await s.page.waitForSelector('.auth-card.wide.onb', { timeout: 20000 });
   assert.equal(await s.page.evaluate(() => sessionStorage.getItem('ensam-entree-saisie')), null, 'rien de tapé ne reviendra après une déconnexion');
+  await s.ctx.close();
+});
+
+test('même appareil, deux liens de promo : le rôle choisi d’avance par le premier ne reste pas pour le second', async () => {
+  const s = await visiteur({ query: '?promo=2015' });
+  assert.equal(await s.page.getAttribute('#au-je-laureat', 'aria-pressed'), 'true');
+  await s.page.fill('#au-email', 'premier@exemple.ma'); await s.page.check('#au-ok');
+  await s.page.click('.entree-form button.btn.primary'); await s.page.waitForSelector('#au-code');
+  // Le code n'est jamais entré ; plus tard, sur le même téléphone, le lien d'une promo d'étudiants
+  await s.page.evaluate(() => localStorage.removeItem('ensam-code-attendu'));
+  await s.page.goto(site.adresse + `?promo=${S + 1}`); await s.page.waitForSelector('#entree .entree-form');
+  assert.equal(await s.page.getAttribute('#au-je-etudiant', 'aria-pressed'), 'true');
+  assert.match(await s.page.locator('.invite-band').innerText(), new RegExp(`promo ${S + 1}`));
+  await s.page.fill('#au-email', 'second@exemple.ma'); await s.page.check('#au-ok');
+  await s.page.click('.entree-form button.btn.primary'); await s.page.waitForSelector('#au-code');
+  await s.page.fill('#au-code', '123456');
+  await s.page.waitForSelector('.auth-card.wide.onb', { timeout: 15000 });
+  assert.equal(await s.page.locator('#pf-role-rappel').innerText(), 'Tu t’inscris comme étudiant(e).');
+  assert.equal(await s.page.inputValue('#pf-promo'), String(S + 1));
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('réseau coupé pendant la lecture de « Confidentialité » : la page se recharge, et au retour le formulaire tapé est là', async () => {
+  const tenus = []; let libre = false;
+  const s = await visiteur({ avant: ctx => ctx.route(/\/community\.js$/, r => (libre ? r.continue() : tenus.push(r))) });
+  await s.page.click('#au-je-laureat'); await s.page.fill('#au-email', 'lit@exemple.ma'); await s.page.check('#au-ok');
+  await s.page.click('.entree-form a[href="#confidentialite"]');
+  while (!tenus.length) await s.page.waitForTimeout(50);
+  libre = true;
+  await Promise.all([s.page.waitForEvent('load'), (async () => { for (const r of tenus.splice(0)) await r.abort('connectionreset'); })()]);
+  assert.equal(await s.page.evaluate(() => location.hash), '#confidentialite');
+  await s.app();
+  await s.page.goBack(); await s.page.waitForSelector('#entree .entree-form #au-email');
+  assert.equal(await s.page.inputValue('#au-email'), 'lit@exemple.ma');
+  assert.ok(await s.page.isChecked('#au-ok'));
+  assert.equal(await s.page.getAttribute('#au-je-laureat', 'aria-pressed'), 'true');
   await s.ctx.close();
 });
 

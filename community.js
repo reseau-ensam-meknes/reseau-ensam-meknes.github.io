@@ -381,17 +381,22 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
   const enVol = useRef(0);
   const voulu = useRef(vis);
   const gen = useRef(0), derniereG = useRef(null);
+  // La grille voulue est déjà celle de la base (un « Enregistrer » l'a envoyée) : un envoi lent ou en échec n'est pas une erreur.
+  // Sauf si un envoi en échec a pu passer quand même (réponse perdue) avec une autre grille : la base n'est alors plus sûre.
+  const douteux = useRef(false);
+  const dejaLa = () => !douteux.current && memeVis(voulu.current, store.byId('profiles', initial.id)?.visibilite);
   const envoyerVis = g => {
     const mien = gen.current; derniereG.current = g;
     setVisOk({ g, etat: 'envoi' }); enVol.current++;
-    const lent = setTimeout(() => { if (gen.current !== mien) return; touches.current.add('visibilite'); setSale(n => n + 1); setVisOk({ g, etat: 'erreur' }); toast('Pas de réseau pour l’instant. Réessaie dans un instant.', 'err'); }, DELAI_VIS);
+    let envoye = null;
+    const lent = setTimeout(() => { if (gen.current !== mien || dejaLa()) return; touches.current.add('visibilite'); setSale(n => n + 1); setVisOk({ g, etat: 'erreur' }); toast('Pas de réseau pour l’instant. Réessaie dans un instant.', 'err'); }, DELAI_VIS);
     fileVis.current = fileVis.current
-      .then(() => store.update('profiles', initial.id, { visibilite: visPropre(voulu.current) }))
-      .then(() => null, e => e)
+      .then(() => store.update('profiles', initial.id, { visibilite: (envoye = visPropre(voulu.current)) }))
+      .then(() => { douteux.current = false; return null; }, e => { if (envoye && !memeVis(envoye, store.byId('profiles', initial.id)?.visibilite)) douteux.current = true; return e; })
       .then(e => {
         clearTimeout(lent); enVol.current--;
         if (gen.current === mien) {
-          if (e) { touches.current.add('visibilite'); setVisOk({ g, etat: 'erreur' }); toast(e.message || String(e), 'err'); }
+          if (e && !dejaLa()) { touches.current.add('visibilite'); setVisOk({ g, etat: 'erreur' }); toast(e.message || String(e), 'err'); }
           else if (!enVol.current) { touches.current.delete('visibilite'); setVisOk(x => ({ g: x?.g ?? g, etat: 'ok' })); }
         }
         setSale(n => n + 1);
@@ -463,8 +468,8 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
       // L'accord vient de la case cochée sur cet appareil ; sinon la fenêtre « Tes données » le demande (emails compris)
       const ici = accordIci(store.session?.user?.email);
       if (ici) { if (meta.consent_at) row.consent_at = meta.consent_at; row.emails_hebdo = meta.emails_hebdo !== false; }
-      // Un « non » au résumé de la semaine est toujours gardé (il ne peut gêner personne)
-      else if (meta.emails_hebdo === false) row.emails_hebdo = false;
+      // Sans accord donné ici, pas de résumé de la semaine tant que la fenêtre « Tes données » n'a pas eu de « oui »
+      else row.emails_hebdo = false;
       row.langue = getLang();
     }
     // Colonne ajoutée par la mise à jour Phase 1 : envoyée seulement si la base la connaît déjà ou si elle est remplie
@@ -483,7 +488,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
         if (cvFichier) await store.deposerCV(cvFichier).catch(() => toast('Ton CV n’a pas pu être gardé : ajoute-le depuis « Mon profil ».', 'err'));
         if (photoCV) await store.deposerPhoto(photoCV).catch(() => {});
       }
-      else { await store.update('profiles', initial.id, row); gen.current++; }
+      else { await store.update('profiles', initial.id, row); gen.current++; if (row.visibilite) douteux.current = false; }
       if (coordChange) await store.enregistrerCoordonnees(champs);
       touches.current.clear(); setSale(n => n + 1); setVisOk(null);
       // Un envoi « Qui voit quoi » encore en route ne doit pas arriver en dernier : la grille voulue repart derrière lui

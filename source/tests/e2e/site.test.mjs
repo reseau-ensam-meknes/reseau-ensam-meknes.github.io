@@ -808,6 +808,20 @@ test('profil : deux choix « Qui voit quoi » coup sur coup, le premier lent : �
   assert.equal(await s.page.evaluate(() => window.__demo.me.visibilite.lieu), 'tous');
   assert.equal(await s.page.locator('.pf-collant').count(), 0);
   await s.page.evaluate(() => { delete window.__demo.update; });
+  // Le renvoi qui suit « Enregistrer » échoue lui aussi : la base a déjà la grille voulue, rien d'alarmant à dire
+  await s.page.evaluate(() => {
+    const d = window.__demo, vrai = d.update.bind(d);
+    d.update = (t, id, patch) => (patch.visibilite && Object.keys(patch).length === 1 ? new Promise((_, ko) => setTimeout(() => ko(new Error('Pas de réseau pour l’instant. Réessaie dans un instant.')), 1500)) : vrai(t, id, patch));
+  });
+  await s.page.click('#vis-lieu-contacts');
+  await s.page.fill('#pf-ville', 'Fès');
+  await s.page.click('.pf-collant .btn.primary');
+  await s.page.waitForTimeout(4000);
+  assert.doesNotMatch(await s.page.locator('.cf-vis').innerText(), /Pas encore enregistré/);
+  assert.match(await s.page.locator('#vis-etat').innerText(), /^Enregistré/);
+  assert.equal(await s.page.evaluate(() => window.__demo.me.visibilite.lieu), 'contacts');
+  assert.equal(await s.page.locator('.pf-collant').count(), 0);
+  await s.page.evaluate(() => { delete window.__demo.update; });
   // Le CV d'un étudiant reste visible des lauréats pendant une demande ouverte
   await s.comme('Salma'); await s.aller('profil'); await s.page.waitForTimeout(300);
   await s.page.click('#vis-cv-contacts');

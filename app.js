@@ -22,7 +22,7 @@ import { NudgeAvis } from './entreprises.js';
 import { ConfianceHome } from './confiance.js';
 import { EnquetePage } from './enquete.js';
 import { NextEvent } from './agenda.js';
-import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, suiteLien, accordIci, oublierInvitation } from './entree.js';
+import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, suiteLien, accordIci, roleAccord, oublierInvitation } from './entree.js';
 import { MessagesPage, MessagesHome, useAlerteMessages } from './messages.js';
 import { PoulsReseau, marquerArrivee, useArrivee, ArriveeSheet, arriveeEnAttente } from './pouls.js';
 import { ProposerAide } from './demandes.js';
@@ -841,7 +841,8 @@ function Onboarding({ store, relang }) {
   const ctx = { store, act };
   // Le dernier rôle touché sur cet appareil, sinon celui donné avec la demande de code faite ici, sinon celui du lien de la promo
   const meta = store.session?.user?.user_metadata || {};
-  const preset = presetInscription({ choisi: roleRetenu() || (accordIci(store.session?.user?.email) && meta.role_choisi), invite: promoInvitee(), saison: seasonOf() });
+  const email = store.session?.user?.email;
+  const preset = presetInscription({ choisi: roleRetenu() || roleAccord(email) || (accordIci(email) && meta.role_choisi), invite: promoInvitee(), saison: seasonOf() });
   const lien = lienRetenu();
   // La langue se change dans l'en-tête (un bouton fixe recouvrirait le titre sur téléphone)
   return html`<main class="auth"><div class="auth-card wide onb">
