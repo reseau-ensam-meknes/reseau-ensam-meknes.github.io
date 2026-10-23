@@ -1496,6 +1496,8 @@ alter table public.profiles add column if not exists alertes_email boolean not n
 alter table public.profiles add column if not exists emails_messages boolean not null default true;
 -- Lauréat qui cherche un emploi : reçoit les offres « Jeunes diplômés » et entre lauréats, visible dans la Vitrine
 alter table public.profiles add column if not exists en_recherche boolean not null default false;
+-- Notifications sur le téléphone choisies par catégorie ({"push": {"offres": false, …}} ; absent = choix par défaut du rôle)
+alter table public.profiles add column if not exists notif_prefs jsonb;
 -- Photo de profil (stockage privé « photos », vue par les membres connectés)
 alter table public.profiles add column if not exists photo_path text;
 
@@ -1672,7 +1674,8 @@ select p.id, p.full_name, p.role, p.filiere, p.promo,
   case when p.id = auth.uid() then p.alertes_offres end as alertes_offres,
   case when p.id = auth.uid() then p.alertes_email end as alertes_email,
   case when p.id = auth.uid() then p.emails_messages end as emails_messages,
-  p.en_recherche, p.photo_path
+  p.en_recherche, p.photo_path,
+  case when p.id = auth.uid() then p.notif_prefs end as notif_prefs
 from public.profiles p
 where auth.uid() is not null;
 revoke all on public.profils from public, anon;
@@ -3639,6 +3642,58 @@ language sql stable security definer set search_path = public as $$
 $$;
 revoke all on function public.offre_partagee(uuid) from public;
 grant execute on function public.offre_partagee(uuid) to anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- Notifications sur le téléphone, par catégorie. Chaque type d'envoi a sa catégorie (même tableau que
+-- CATEGORIE_NOTIF dans logic.js) ; le membre coupe une catégorie dans « Mon profil », la file d'envoi l'écarte.
+-- Par défaut tout est activé, sauf les nouvelles offres pour un lauréat qui ne cherche pas d'emploi.
+-- ---------------------------------------------------------------------
+create or replace function public.categorie_notif(p_kind text) returns text
+language sql immutable set search_path = public as $$
+  select case
+    when p_kind = 'message' then 'messages'
+    when p_kind in ('demande_proposition', 'demande_match', 'demande_rouverte') then 'demandes'
+    when p_kind in ('mentorat_demande', 'mentorat_accepte', 'mentorat_annule', 'mentorat_deplace', 'rappel_rdv') then 'mentorat'
+    when p_kind in ('candidature', 'candidature_statut', 'invitation', 'recrutement_a_confirmer', 'recrutement_confirme', 'relance_offre') then 'candidatures'
+    when p_kind = 'offre_alerte' then 'offres'
+    when p_kind = 'reponse' then 'questions'
+    when p_kind in ('contact_demande', 'contact_accepte', 'merci', 'filleul', 'parrain', 'verification_pair',
+                    'relecture_demande', 'relecture_prise', 'relecture_rendue', 'enquete') then 'reseau'
+    else null end;
+$$;
+
+create or replace function public.push_autorise(p_user uuid, p_kind text) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare v_cat text := public.categorie_notif(p_kind); v_role text; v_recherche boolean; v_prefs jsonb; v_choix text;
+begin
+  if v_cat is null then return true; end if;   -- type sans catégorie (notification de test…) : toujours envoyé
+  select role, coalesce(en_recherche, false), notif_prefs into v_role, v_recherche, v_prefs from public.profiles where id = p_user;
+  if not found then return false; end if;
+  v_choix := v_prefs -> 'push' ->> v_cat;
+  if v_choix in ('true', 'false') then return v_choix::boolean; end if;
+  return v_cat <> 'offres' or v_role <> 'laureat' or v_recherche;
+end $$;
+revoke all on function public.push_autorise(uuid, text) from public, anon, authenticated;
+
+create or replace function public.filtrer_push() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if public.push_autorise(new.user_id, new.kind) then return new; end if;
+  return null;
+exception when others then return new;  -- en cas de doute, la notification part
+end $$;
+revoke all on function public.filtrer_push() from public, anon, authenticated;
+drop trigger if exists trg_filtrer_push on public.push_queue;
+create trigger trg_filtrer_push before insert on public.push_queue
+  for each row execute function public.filtrer_push();
+
+-- Le choix reste un petit objet JSON (les valeurs inconnues sont ignorées par push_autorise)
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'profiles_notif_prefs_check') then
+    alter table public.profiles add constraint profiles_notif_prefs_check check (
+      notif_prefs is null or (jsonb_typeof(notif_prefs) = 'object' and pg_column_size(notif_prefs) <= 2000));
+  end if;
+end $$;
 
 -- =====================================================================
 -- APRÈS votre inscription sur la plateforme, devenez administrateur :

@@ -1065,3 +1065,32 @@ export function prevenirVariante({ etat, raison, memo = {}, now = Date.now(), ro
   if (raison === 'question' && emailsHebdo) return 'email';     // les réponses figurent dans le résumé de la semaine
   return null;
 }
+
+// Notifications sur le téléphone, par catégorie : chaque type d'envoi a sa catégorie, chaque rôle ses choix par défaut.
+// Le même tableau existe côté base (public.categorie_notif) : la base filtre la file d'envoi avec.
+export const NOTIF_CATEGORIES = ['messages', 'demandes', 'mentorat', 'candidatures', 'offres', 'questions', 'reseau'];
+export const CATEGORIE_NOTIF = {
+  message: 'messages',
+  demande_proposition: 'demandes', demande_match: 'demandes', demande_rouverte: 'demandes',
+  mentorat_demande: 'mentorat', mentorat_accepte: 'mentorat', mentorat_annule: 'mentorat', mentorat_deplace: 'mentorat', rappel_rdv: 'mentorat',
+  candidature: 'candidatures', candidature_statut: 'candidatures', invitation: 'candidatures', recrutement_a_confirmer: 'candidatures', recrutement_confirme: 'candidatures', relance_offre: 'candidatures',
+  offre_alerte: 'offres',
+  reponse: 'questions',
+  contact_demande: 'reseau', contact_accepte: 'reseau', merci: 'reseau', filleul: 'reseau', parrain: 'reseau', verification_pair: 'reseau',
+  relecture_demande: 'reseau', relecture_prise: 'reseau', relecture_rendue: 'reseau', enquete: 'reseau',
+};
+// Par défaut tout est activé, sauf les nouvelles offres pour un lauréat qui ne cherche pas d'emploi
+export const notifParDefaut = (p, cat) => cat !== 'offres' || p?.role !== 'laureat' || !!p?.en_recherche;
+export function notifActive(p, cat) {
+  const v = p?.notif_prefs?.push?.[cat];
+  return typeof v === 'boolean' ? v : notifParDefaut(p, cat);
+}
+
+// À l'ouverture de l'application installée, sans notifications sur cet appareil : on les propose une fois,
+// puis au plus tous les 7 jours après « Plus tard », trois fois en tout. Jamais après un refus du navigateur.
+export const ACTIVATION_ECART = 7 * 864e5;
+export function proposerActivation({ etat, installee, memo = {}, now = Date.now() }) {
+  if (!installee || etat !== 'off' || memo.fait) return false;
+  const a = memo.app || {};
+  return (a.n || 0) < 3 && !(a.at && now - a.at < ACTIVATION_ECART);
+}

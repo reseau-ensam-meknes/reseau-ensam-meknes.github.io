@@ -3,7 +3,7 @@
 import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, toast, ensuite, feteOuverte, quandFete } from './ui.js';
 import { addAR } from './i18n.js';
-import { prevenirVariante } from './logic.js';
+import { prevenirVariante, proposerActivation, NOTIF_CATEGORIES, notifActive } from './logic.js';
 
 let installEvt = null;
 const listeners = new Set();
@@ -164,6 +164,11 @@ function etatDemo(store) {
   if (store.mode === 'live') return null;
   try { const e = localStorage.getItem('ensam-prevenir-demo'); return ['off', 'ios', 'absent'].includes(e) ? e : null; } catch { return null; }
 }
+// Application ouverte depuis l'écran d'accueil (en démo, un test peut le simuler)
+function installee(store) {
+  if (store.mode !== 'live') { try { return localStorage.getItem('ensam-installee-demo') === '1'; } catch { return false; } }
+  return isStandalone();
+}
 function variante(raison, memo) {
   const me = hote?.me;
   if (!me) return null;
@@ -201,7 +206,16 @@ export function PrevenirHote({ ctx, bloque }) {
     let t = 0;
     const differe = lireMemo(me.id).differe;
     lire().then(() => {
-      if (!differe || !vivant) return;
+      if (!vivant) return;
+      // Application installée sans notifications sur cet appareil : on les propose à l'ouverture
+      if (!differe) {
+        if (!proposerActivation({ etat: etatConnu, installee: installee(store), memo: lireMemo(me.id) })) return;
+        t = setTimeout(() => {
+          if (bloque || document.querySelector('.modal-back, .fete-back')) return;
+          montrer?.({ raison: 'installe', mot: null, v: 'push', t: Date.now() });
+        }, 3000);
+        return;
+      }
       t = setTimeout(() => {
         const memo = lireMemo(me.id); delete memo.differe; ecrireMemo(me.id, memo);
         if (bloque || document.querySelector('.modal-back, .fete-back')) return;
@@ -218,9 +232,15 @@ export function PrevenirHote({ ctx, bloque }) {
 function FeuillePrevenir({ ctx, f, onClose }) {
   const { store, me } = ctx;
   const [busy, setBusy] = useState(false);
-  const email = f.v === 'email', ios = f.v === 'ios';
-  // Fermer sans accepter (Plus tard, ×, Retour, toucher à côté) compte comme un refus ; la variante email est déjà notée
-  const refuser = () => { if (!email) { const m = lireMemo(me.id); ecrireMemo(me.id, { ...m, n: (m.n || 0) + 1, at: Date.now() }); } onClose(); };
+  const email = f.v === 'email', ios = f.v === 'ios', app = f.raison === 'installe';
+  // Fermer sans accepter (Plus tard, ×, Retour, toucher à côté) compte comme un refus ; la variante email est déjà notée.
+  // À l'ouverture de l'application, le refus a son propre compte (il ne retire pas « Me prévenir » après une action).
+  const refuser = () => {
+    const m = lireMemo(me.id);
+    if (app) ecrireMemo(me.id, { ...m, app: { n: (m.app?.n || 0) + 1, at: Date.now() } });
+    else if (!email) ecrireMemo(me.id, { ...m, n: (m.n || 0) + 1, at: Date.now() });
+    onClose();
+  };
   const accepter = async () => {
     if (email || ios) return refuser();
     if (store.mode !== 'live') { ecrireMemo(me.id, { ...lireMemo(me.id), fait: 1 }); toast(DEMO); onClose(); return; }
@@ -243,17 +263,51 @@ function FeuillePrevenir({ ctx, f, onClose }) {
   };
   const raison = f.raison === 'question' && me.role !== 'etudiant' ? 'questionMembre' : f.raison;
   const pied = html`${email || ios ? null : html`<button type="button" class="btn ghost" id="pv-tard" onClick=${refuser}>Plus tard</button>`}
-    <button type="button" class="btn primary" id="pv-oui" disabled=${busy} onClick=${accepter}>${email || ios ? 'J’ai compris' : html`<${Icon} name="bell" size=${16}/> Me prévenir`}</button>`;
-  return html`<${Modal} title=${email ? 'Tu ne rateras pas la réponse' : 'Te prévenir de la réponse ?'} cls="prevenir" onClose=${refuser} footer=${pied}>
+    <button type="button" class="btn primary" id="pv-oui" disabled=${busy} onClick=${accepter}>${email || ios ? 'J’ai compris' : html`<${Icon} name="bell" size=${16}/> ${app ? 'Activer' : 'Me prévenir'}`}</button>`;
+  return html`<${Modal} title=${app ? 'Active les notifications' : email ? 'Tu ne rateras pas la réponse' : 'Te prévenir de la réponse ?'} cls="prevenir" onClose=${refuser} footer=${pied}>
     ${f.mot ? html`<p class="verify-ok"><${Icon} name="check" size=${16}/> ${f.mot}</p>` : null}
-    ${email ? html`<p>${PAR_EMAIL[f.raison]}</p>` : html`<p>${NOTIF_RAISON[raison]}</p>`}
+    ${app ? html`<p>${me.role === 'etudiant' ? APP_ETUDIANT : APP_LAUREAT}</p><p class="small muted">Tu choisis lesquelles dans « Mon profil » › Notifications.</p>`
+      : email ? html`<p>${PAR_EMAIL[f.raison]}</p>` : html`<p>${NOTIF_RAISON[raison]}</p>`}
     ${ios ? html`<p class="small muted">Sur iPhone, les notifications arrivent une fois le Réseau ENSAM ajouté à l’écran d’accueil :</p><${EtapesIos}/>`
       : email ? null : html`<p class="small muted">Rien d’autre : pas de publicité, et tu l’arrêtes quand tu veux dans « Mon profil ».</p>`}
   <//>`;
 }
 
+const APP_ETUDIANT = 'Tes messages, les propositions des lauréats à tes demandes, tes rendez-vous de mentorat et les nouvelles offres de ta filière arrivent directement sur ce téléphone.';
+const APP_LAUREAT = 'Tes messages, les candidatures à tes offres, les demandes d’étudiants qui te concernent et tes rendez-vous de mentorat arrivent directement sur ce téléphone.';
+
+// ---------------------------------------------------------------------------
+// Mon profil › Notifications : ce qui arrive sur le téléphone, par catégorie (le même choix sur tous les appareils)
+// ---------------------------------------------------------------------------
+const LIBELLES_NOTIF = {
+  etudiant: { messages: 'Messages', demandes: 'Propositions et réponses à mes demandes', mentorat: 'Mentorat et rendez-vous', candidatures: 'Mes candidatures',
+    offres: 'Nouvelles offres pour moi', questions: 'Réponses à mes questions', reseau: 'Mon réseau : contacts, mercis, parrainage, relecture de CV' },
+  laureat: { messages: 'Messages', demandes: 'Demandes d’étudiants qui me concernent', mentorat: 'Mentorat et rendez-vous', candidatures: 'Candidatures à mes offres',
+    offres: 'Offres pour jeunes diplômés', questions: 'Questions qui me sont adressées', reseau: 'Mon réseau : contacts, mercis, parrainage, relecture de CV' },
+};
+export function ChoixNotifs({ ctx }) {
+  const { me, store, act } = ctx;
+  if (!me || (store.mode === 'live' && !('notif_prefs' in me))) return null;  // base pas encore à jour
+  const libelles = LIBELLES_NOTIF[me.role === 'etudiant' ? 'etudiant' : 'laureat'];
+  const changer = (cat, oui) => act(async () => {
+    const push = { ...(me.notif_prefs?.push || {}), [cat]: oui };
+    await store.update('profiles', me.id, { notif_prefs: { ...(me.notif_prefs || {}), push } });
+  });
+  return html`<fieldset class="choix-notifs" id="md-notifs"><legend class="small strong">Sur le téléphone, me prévenir pour :</legend>
+    ${NOTIF_CATEGORIES.map(cat => html`<label class="check sub" key=${cat}><input type="checkbox" id=${'md-notif-' + cat} checked=${notifActive(me, cat)} onChange=${e => changer(cat, e.target.checked)}/> ${libelles[cat]}</label>`)}
+    <p class="small muted">Le même choix vaut pour tous tes appareils. Les emails se règlent juste au-dessus.</p>
+  </fieldset>`;
+}
+
 const SANS_NOTIF = 'Ce navigateur ne peut pas recevoir de notifications pour l’instant.';
 addAR({
+  'Active les notifications': 'فعّل الإشعارات', 'Activer': 'تفعيل', 'Tu choisis lesquelles dans « Mon profil » › Notifications.': 'تختار أيّها من «ملفي» › الإشعارات.',
+  [APP_ETUDIANT]: 'رسائلك، واقتراحات الخريجين على طلباتك، ومواعيد المرافقة، والعروض الجديدة في شعبتك تصلك مباشرة على هذا الهاتف.',
+  [APP_LAUREAT]: 'رسائلك، والترشيحات على عروضك، وطلبات الطلبة التي تخصك، ومواعيد المرافقة تصلك مباشرة على هذا الهاتف.',
+  'Sur le téléphone, me prévenir pour :': 'على الهاتف، نبّهني عند:', 'Le même choix vaut pour tous tes appareils. Les emails se règlent juste au-dessus.': 'هذا الاختيار يسري على كل أجهزتك. إعدادات البريد الإلكتروني أعلاه.',
+  'Propositions et réponses à mes demandes': 'الاقتراحات والردود على طلباتي', 'Mentorat et rendez-vous': 'المرافقة والمواعيد', 'Mes candidatures': 'ترشيحاتي',
+  'Nouvelles offres pour moi': 'عروض جديدة تناسبني', 'Réponses à mes questions': 'الأجوبة على أسئلتي', 'Mon réseau : contacts, mercis, parrainage, relecture de CV': 'شبكتي: الاتصالات، الشكر، العرّاب، مراجعة السيرة الذاتية',
+  'Demandes d’étudiants qui me concernent': 'طلبات الطلبة التي تخصني', 'Candidatures à mes offres': 'الترشيحات على عروضي', 'Offres pour jeunes diplômés': 'عروض للخريجين الجدد', 'Questions qui me sont adressées': 'الأسئلة الموجهة إلي',
   [SANS_NOTIF]: 'لا يستطيع هذا المتصفح استقبال الإشعارات حاليًا.',
   'Te prévenir de la réponse ?': 'هل نُعلمك عند وصول الرد؟', 'Me prévenir': 'أعلِمني', 'J’ai compris': 'فهمت', 'Plus tard': 'لاحقًا',
   'Tu ne rateras pas la réponse': 'لن تفوتك الإجابة',

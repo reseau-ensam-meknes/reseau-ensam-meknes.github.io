@@ -1609,6 +1609,40 @@ test('Retour : la cloche et « Je peux aider » se ferment sur l’accueil ; les
   await s.ctx.close();
 });
 
+test('application installée : les notifications sont proposées à l’ouverture, une seule fois', async () => {
+  const s = await ouvrir({ largeur: 360 });
+  await s.page.evaluate(() => { localStorage.setItem('ensam-prevenir-demo', 'off'); localStorage.setItem('ensam-installee-demo', '1'); });
+  await s.page.reload(); await s.page.waitForSelector('.hello');
+  await s.comme('Amine');
+  await s.page.waitForSelector('.modal.prevenir', { timeout: 8000 });
+  assert.match(await s.page.locator('.modal.prevenir').innerText(), /Active les notifications/);
+  await s.page.click('#pv-tard'); await s.page.waitForTimeout(300);
+  // « Plus tard » : pas de nouvelle feuille à la prochaine ouverture
+  await s.page.reload(); await s.page.waitForSelector('.hello'); await s.comme('Amine'); await s.page.waitForTimeout(4000);
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  // Dans le navigateur (pas installée) : rien non plus pour un autre membre
+  await s.page.evaluate(() => localStorage.removeItem('ensam-installee-demo'));
+  await s.page.reload(); await s.page.waitForSelector('.hello'); await s.comme('Youssef'); await s.page.waitForTimeout(4000);
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('Mon profil › Notifications : choix par catégorie, défaut selon le rôle, gardé', async () => {
+  const s = await ouvrir();
+  await s.comme('Youssef'); await s.aller('profil');
+  await s.page.waitForSelector('#md-notifs');
+  assert.equal(await s.page.isChecked('#md-notif-offres'), false, 'lauréat : nouvelles offres coupées par défaut');
+  assert.equal(await s.page.isChecked('#md-notif-messages'), true);
+  await s.page.click('#md-notif-messages'); await s.page.waitForTimeout(400);
+  await s.aller('accueil'); await s.aller('profil');
+  assert.equal(await s.page.isChecked('#md-notif-messages'), false, 'le choix est gardé');
+  await s.comme('Amine'); await s.aller('profil');
+  assert.equal(await s.page.isChecked('#md-notif-offres'), true, 'étudiant : nouvelles offres activées par défaut');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('clavier : lien « Aller au contenu », fenêtre qui garde le focus puis le rend', async () => {
   const s = await ouvrir();
   await s.page.keyboard.press('Tab');

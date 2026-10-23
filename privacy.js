@@ -1,7 +1,7 @@
 // Confidentialité (loi 09-08) : page publique, accord des anciens membres, « Mes données », désabonnement.
 import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, BrandLogo, toast } from './ui.js';
-import { PushToggle } from './pwa.js';
+import { PushToggle, ChoixNotifs } from './pwa.js';
 import { addAR } from './i18n.js';
 import { adresseContact } from './regles-entree.js';
 
@@ -189,6 +189,7 @@ export function MesDonnees({ ctx }) {
     </div>` : null}
     ${store.mode !== 'live' || 'emails_messages' in me ? html`<label class="check"><input id="md-msg-mail" type="checkbox" checked=${me.emails_messages !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { emails_messages: e.target.checked }); toast(e.target.checked ? 'Un email te prévient si un message attend depuis 30 minutes.' : 'Plus d’email pour les messages.'); })}/> M’envoyer un email quand un message m’attend (un toutes les 6 heures au plus)</label>` : null}
     <${PushToggle} ctx=${ctx}/>
+    <${ChoixNotifs} ctx=${ctx}/>
     <div class="row">
       <button class="btn small" onClick=${exportData}><${Icon} name="download" size=${15}/> Télécharger mes données</button>
       <span class="spacer"></span>
