@@ -68,3 +68,24 @@ test('la mise à jour crée la salle de visio des rendez-vous qui n’en avaient
   await db.exec(bloc);
   assert.equal((await db.query('select count(*)::int n from public.liens_rdv where id = $1', [id])).rows[0].n, 1);
 });
+
+test('rendez-vous annulé : qui annule est nommé ; l’étudiant reçoit de quoi proposer d’autres horaires', async () => {
+  await db.query(`insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) select id, 'https://push.example/' || id, 'k', 'a' from public.profiles on conflict do nothing`);
+  const pushs = async user => (await db.query(`select data from public.push_queue where kind = 'mentorat_annule' and user_id = $1`, [user])).rows.map(r => r.data);
+  const fixe = async (sujet) => { const id = await demande(ETU2, LAU, sujet); await q(LAU, `update public.mentorships set status = 'acceptee', rdv_at = $2 where id = $1`, [id, dans(30)]); return id; };
+  await db.query('delete from public.push_queue');
+  // Le lauréat annule : l'étudiant est prévenu, avec le nom et le rendez-vous à reprendre
+  const a = await fixe('Préparer un entretien');
+  await q(LAU, `update public.mentorships set status = 'annulee' where id = $1`, [a]);
+  assert.deepEqual(await pushs(ETU2), [{ sujet: 'Préparer un entretien', m: a, nom: 'Youssef Alaoui', pour: 'demandeur' }]);
+  // L'étudiant annule : le lauréat est prévenu
+  const b = await fixe('Relire ma lettre');
+  await q(ETU2, `update public.mentorships set status = 'annulee' where id = $1`, [b]);
+  assert.deepEqual(await pushs(LAU), [{ sujet: 'Relire ma lettre', m: b, nom: 'Omar Tazi', pour: 'mentor' }]);
+  // L'administration annule : ni nom ni « pour », le notifier garde l'ancien texte
+  const c = await fixe('Choisir mon stage');
+  await db.query('delete from public.push_queue');
+  await q(ADMIN, `update public.mentorships set status = 'annulee' where id = $1`, [c]);
+  assert.equal((await lire(c)).status, 'annulee');
+  assert.deepEqual([...await pushs(ETU2), ...await pushs(LAU)], [{ sujet: 'Choisir mon stage', m: c }]);
+});

@@ -124,7 +124,7 @@ const NB_AR = n => (+n === 1 ? 'واحد' : +n === 2 ? 'اثنان' : n);
 addAR({ 'Cette semaine': 'هذا الأسبوع', 'Ce mois-ci': 'هذا الشهر', '1 recrutement confirmé': 'توظيف واحد مؤكَّد',
   'Le réseau des lauréats commence avec toi': 'شبكة الخريجين تبدأ معك', 'C’est parti': 'لننطلق',
   [`Tu fais partie des ${NB_FONDATEURS} premiers lauréats : le badge « Membre fondateur » est sur ton profil.`]: `أنت من بين أول ${NB_FONDATEURS} خريجًا في الشبكة: شارة «عضو مؤسس» على ملفك.` }, [
-  [/^Te voilà (\d+)e lauréat\(e\) du réseau$/, n => `أنت الآن رقم ${n} بين خريجي الشبكة`],
+  [/^Te voilà (\d+)e parmi les lauréats du réseau$/, n => `أنت الآن رقم ${n} بين خريجي الشبكة`],
   [/^(\d+) lauréats? (?:ont|a) aidé (\d+) étudiants?$/, (a, b) => `${arCount(a, LAU)} ${SAIDE(a)} ${arCount(b, ETU_ACC)}`],
   [/^(\d+) recrutements? confirmés?$/, n => arCount(n, ['توظيف واحد مؤكَّد', 'توظيفان مؤكَّدان', 'توظيفات مؤكَّدة', 'توظيفًا مؤكَّدًا'])],
   [/^(\d+) lauréats? (?:sont|est) déjà là$/, t => `انضمّ إلى الشبكة ${arCount(t, LAU)}`],

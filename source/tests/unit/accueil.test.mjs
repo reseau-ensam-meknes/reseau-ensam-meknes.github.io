@@ -170,7 +170,7 @@ test('accueil après l’inscription : une phrase vraie par cas', async () => {
   const moi = L('l99', 2019);
   const d = { profiles: [...promo19, ...autres, moi] };
   const a = accueilArrivee(d, moi);
-  assert.deepEqual(phrasesArrivee(a), { titre: 'Te voilà 40e lauréat(e) du réseau', sous: '3 lauréats de ta promo sont déjà là' });
+  assert.deepEqual(phrasesArrivee(a), { titre: 'Te voilà 40e parmi les lauréats du réseau', sous: '3 lauréats de ta promo sont déjà là' });
   assert.equal(a.fondateur, false);
   assert.ok(a.visages.length <= 5 && !a.visages.includes('l99'));
   const seul = L('l1', 2019);
@@ -178,7 +178,7 @@ test('accueil après l’inscription : une phrase vraie par cas', async () => {
   assert.equal(phrasesArrivee(a1).titre, 'Le réseau des lauréats commence avec toi');
   assert.equal(a1.fondateur, true);
   const deux = [L('l1', 2019), L('l2', 2019)];
-  assert.deepEqual(phrasesArrivee(accueilArrivee({ profiles: deux }, deux[1])), { titre: 'Te voilà 2e lauréat(e) du réseau', sous: '1 lauréat de ta promo est déjà là' });
+  assert.deepEqual(phrasesArrivee(accueilArrivee({ profiles: deux }, deux[1])), { titre: 'Te voilà 2e parmi les lauréats du réseau', sous: '1 lauréat de ta promo est déjà là' });
   // Étudiants : la filière, sinon le parcours, sinon tout le réseau ; personne : un simple bienvenue
   const F = 'Génie Mécanique : Énergétique', F2 = 'Génie Mécanique : Ingénierie Mécanique et Structures';
   const etu = { id: 'e1', role: 'etudiant', promo: 2029, filiere: F };

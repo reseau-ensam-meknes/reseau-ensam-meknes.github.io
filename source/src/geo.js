@@ -319,3 +319,109 @@ export function coordsOf(ville, pays) {
     return countryCentroid(pays) || (v ? v.coords : countryCentroid(ville));
   } catch { return null; }
 }
+
+// ---------------------------------------------------------------------------
+// Villes en arabe : le nom affiché dans l'interface arabe (la saisie du membre reste telle quelle en base)
+// ---------------------------------------------------------------------------
+export const VILLES_AR = {
+  Casablanca: 'الدار البيضاء', Rabat: 'الرباط', 'Salé': 'سلا', 'Témara': 'تمارة', Skhirat: 'الصخيرات', Bouznika: 'بوزنيقة',
+  Mohammedia: 'المحمدية', Bouskoura: 'بوسكورة', Nouaceur: 'النواصر', 'Tit Mellil': 'تيط مليل', 'Had Soualem': 'حد السوالم',
+  Berrechid: 'برشيد', Settat: 'سطات', 'El Jadida': 'الجديدة', 'Jorf Lasfar': 'الجرف الأصفر', Safi: 'آسفي', Youssoufia: 'اليوسفية',
+  Benguerir: 'ابن جرير', Khouribga: 'خريبكة', 'Béni Mellal': 'بني ملال', 'Khénifra': 'خنيفرة', 'Kénitra': 'القنيطرة',
+  'Sidi Kacem': 'سيدي قاسم', 'Sidi Slimane': 'سيدي سليمان', 'Khémisset': 'الخميسات', 'Meknès': 'مكناس', 'Fès': 'فاس',
+  Ifrane: 'إفران', Azrou: 'أزرو', Taza: 'تازة', Tanger: 'طنجة', 'Tanger Med': 'طنجة المتوسط', 'Tétouan': 'تطوان', Martil: 'مرتيل',
+  Fnideq: 'الفنيدق', Larache: 'العرائش', 'Ksar El Kébir': 'القصر الكبير', Chefchaouen: 'شفشاون', 'Al Hoceïma': 'الحسيمة',
+  Nador: 'الناظور', Berkane: 'بركان', Oujda: 'وجدة', Taourirt: 'تاوريرت', Midelt: 'ميدلت', Errachidia: 'الرشيدية',
+  Ouarzazate: 'ورزازات', Marrakech: 'مراكش', Essaouira: 'الصويرة', Agadir: 'أكادير', Inezgane: 'إنزكان', 'Aït Melloul': 'أيت ملول',
+  Taroudant: 'تارودانت', Tiznit: 'تيزنيت', Guelmim: 'كلميم', 'Laâyoune': 'العيون', Dakhla: 'الداخلة',
+  Paris: 'باريس', Lyon: 'ليون', Marseille: 'مرسيليا', Toulouse: 'تولوز', Bordeaux: 'بوردو', Lille: 'ليل', Nantes: 'نانت',
+  Strasbourg: 'ستراسبورغ', Grenoble: 'غرونوبل', Montpellier: 'مونبلييه', Nice: 'نيس', Rennes: 'رين', Metz: 'ميتز', Angers: 'أنجي',
+  'Aix-en-Provence': 'إيكس أون بروفانس', 'Clermont-Ferrand': 'كليرمون فيران', Berlin: 'برلين', Munich: 'ميونخ', Hambourg: 'هامبورغ',
+  Francfort: 'فرانكفورت', Stuttgart: 'شتوتغارت', Cologne: 'كولونيا', 'Düsseldorf': 'دوسلدورف', 'Aix-la-Chapelle': 'آخن',
+  Karlsruhe: 'كارلسروه', Wolfsburg: 'فولفسبورغ', Bruxelles: 'بروكسل', 'Liège': 'لييج', Anvers: 'أنتويرب', Gand: 'غنت',
+  'Louvain-la-Neuve': 'لوفان لا نوف', 'Genève': 'جنيف', Zurich: 'زيورخ', Lausanne: 'لوزان', 'Bâle': 'بازل', Madrid: 'مدريد',
+  Barcelone: 'برشلونة', Valencia: 'فالنسيا', 'Séville': 'إشبيلية', Bilbao: 'بلباو', Rome: 'روما', Milan: 'ميلانو', Turin: 'تورينو',
+  Bologne: 'بولونيا', Amsterdam: 'أمستردام', Rotterdam: 'روتردام', 'La Haye': 'لاهاي', Eindhoven: 'آيندهوفن', Londres: 'لندن',
+  Manchester: 'مانشستر', Birmingham: 'برمنغهام', 'Édimbourg': 'إدنبرة', Cambridge: 'كامبريدج', Dublin: 'دبلن', Lisbonne: 'لشبونة',
+  Porto: 'بورتو', Luxembourg: 'لوكسمبورغ', Stockholm: 'ستوكهولم', 'Göteborg': 'غوتنبرغ', Vienne: 'فيينا', Varsovie: 'وارسو',
+  Prague: 'براغ', Copenhague: 'كوبنهاغن', Oslo: 'أوسلو', Helsinki: 'هلسنكي',
+  'Montréal': 'مونتريال', 'Québec': 'كيبيك', Ottawa: 'أوتاوا', Toronto: 'تورونتو', Vancouver: 'فانكوفر', Calgary: 'كالغاري',
+  Sherbrooke: 'شيربروك', 'New York': 'نيويورك', 'San Francisco': 'سان فرانسيسكو', 'Los Angeles': 'لوس أنجلوس', Seattle: 'سياتل',
+  Boston: 'بوسطن', Chicago: 'شيكاغو', Houston: 'هيوستن', Detroit: 'ديترويت', Washington: 'واشنطن', Mexico: 'مكسيكو',
+  'São Paulo': 'ساو باولو',
+  'Dubaï': 'دبي', 'Abou Dabi': 'أبوظبي', Doha: 'الدوحة', Riyad: 'الرياض', Djeddah: 'جدة', Dammam: 'الدمام', Jubail: 'الجبيل',
+  'Koweït': 'الكويت', Manama: 'المنامة', Mascate: 'مسقط', Amman: 'عمّان', Beyrouth: 'بيروت', Istanbul: 'إسطنبول', Ankara: 'أنقرة',
+  'Pékin': 'بكين', Shanghai: 'شنغهاي', Shenzhen: 'شنجن', 'Hong Kong': 'هونغ كونغ', Tokyo: 'طوكيو', Osaka: 'أوساكا', 'Séoul': 'سيول',
+  Bangalore: 'بنغالور', Singapour: 'سنغافورة', 'Kuala Lumpur': 'كوالالمبور', Sydney: 'سيدني',
+  Dakar: 'داكار', Abidjan: 'أبيدجان', Tunis: 'تونس', Sfax: 'صفاقس', Alger: 'الجزائر العاصمة', 'Le Caire': 'القاهرة',
+  Nouakchott: 'نواكشوط', Bamako: 'باماكو', Ouagadougou: 'واغادوغو', Douala: 'دوالا', Libreville: 'ليبرفيل', Lagos: 'لاغوس',
+  Nairobi: 'نيروبي', Johannesburg: 'جوهانسبرغ', Kigali: 'كيغالي',
+};
+for (const [v, ar] of Object.entries(VILLES_AR)) { const row = VILLES.find(x => x[0] === v); if (row) add(byVille, ar, row); }
+
+// Quartiers et zones rangés sous une ville pour la carte (« Technopolis », « Silicon Valley ») : on n'affiche pas
+// la ville à leur place, ce ne serait plus ce que le membre a écrit
+const ZONES = new Set(['technopolis', 'casanearshore', 'casa nearshore', 'midparc', 'mid parc', 'aeroport mohammed v', 'atlantic free zone',
+  'kenitra atlantic free zone', 'afz', 'tanger automotive city', 'port tanger med', 'melloussa', 'ksar sghir', 'tetouan shore', 'nador west med',
+  'noor ouarzazate', 'la defense', 'ile de france', 'idf', 'saclay', 'paris saclay', 'sophia antipolis', 'bay area', 'silicon valley',
+  'san jose', 'manhattan', 'dhahran', 'al khobar', 'khobar']);
+// Nom arabe d'une ville connue, écrite de n'importe quelle façon (« Meknes », « casa », « Fez ») ; sinon null
+export function villeAR(s) {
+  const n = normGeo(s), v = byVille.get(n);
+  return v && !ZONES.has(n) ? VILLES_AR[v[0]] || null : null;
+}
+// La ville telle qu'on l'affiche : en arabe dans l'interface arabe quand on la connaît, sinon telle que le membre l'a écrite
+export const villeAffichee = (s, langue) => (s && langue === 'ar' && villeAR(s)) || s || '';
+
+// ---------------------------------------------------------------------------
+// Recherche : « مكناس », « Meknes » et « MEKNÈS » trouvent Meknès ; « USA » trouve les États-Unis.
+// Casse, accents et voyelles arabes ignorés ; chaque mot cherché doit se trouver (dans n'importe quel ordre).
+// ---------------------------------------------------------------------------
+export const plie = s => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ًͯ-ٰٟـ]/g, '')
+  .replace(/ى/g, 'ي').replace(/ة/g, 'ه').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+const LIEUX = new Map(); // nom plié -> formes à chercher (nom français et nom arabe)
+const noter = (k, formes) => { k = plie(k); if (!k) return; const l = LIEUX.get(k) || []; for (const f of formes) if (f && !l.includes(f)) l.push(f); LIEUX.set(k, l); };
+for (const p of PAYS) { const f = [plie(p[1]), plie(p[2])]; for (const a of [p[1], p[2], ...p[5].split('|')]) noter(a, f); }
+for (const v of VILLES) { const f = [plie(v[0]), plie(VILLES_AR[v[0]])]; for (const a of [v[0], VILLES_AR[v[0]], ...v[4].split('|')]) noter(a, f); }
+// Formes d'un lieu écrit librement (« Zone franche de Kénitra », « Casa ») : le lieu entier, sinon un de ses morceaux
+const formesCache = new Map();
+function formesLieu(s) {
+  const n = plie(s); if (!n) return [];
+  if (formesCache.has(n)) return formesCache.get(n);
+  let r = LIEUX.get(n) || LIEUX.get(normGeo(s));
+  if (!r) {
+    const t = n.split(' ');
+    for (let len = Math.min(4, t.length); len >= 1 && !r; len--) for (let i = 0; i + len <= t.length && !r; i++) {
+      const k = t.slice(i, i + len).join(' ');
+      if (k.length >= 3) r = LIEUX.get(k);
+    }
+  }
+  r = r || [];
+  if (formesCache.size > 2000) formesCache.clear();
+  formesCache.set(n, r);
+  return r;
+}
+// Mots d'une recherche : un lieu connu (même en plusieurs mots) devient « ce qu'on a tapé, ou son nom en français, ou en arabe »
+export function motsRecherche(q) {
+  const mots = plie(q).split(' ').filter(Boolean), out = [];
+  for (let i = 0; i < mots.length;) {
+    let pris = 0;
+    for (let len = Math.min(4, mots.length - i); len >= 1 && !pris; len--) {
+      const k = mots.slice(i, i + len).join(' '), f = LIEUX.get(k);
+      if (f) { out.push([k, ...f.filter(x => x !== k)]); pris = len; }
+    }
+    if (!pris) { out.push([mots[i]]); pris = 1; }
+    i += pris;
+  }
+  return out;
+}
+// Filtre de recherche : null quand rien n'est tapé, sinon (texte, ...lieux) => vrai si chaque mot y est.
+// Les lieux (ville, pays) comptent aussi sous leur nom français et leur nom arabe.
+export function recherche(q) {
+  const mots = motsRecherche(q);
+  if (!mots.length) return null;
+  return (texte, ...lieux) => {
+    const tout = [plie(texte), ...lieux.flatMap(l => (l ? [plie(l), ...formesLieu(l)] : []))].join(' ');
+    return mots.every(alt => alt.some(m => tout.includes(m)));
+  };
+}

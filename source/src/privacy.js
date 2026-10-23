@@ -28,16 +28,16 @@ addAR({
   'T’envoyer les emails utiles : rendez-vous, alertes d’offres, enquête d’insertion, et un résumé par semaine si tu le gardes activé.': 'إرسال الرسائل المفيدة إليك: المواعيد، تنبيهات العروض، استبيان الإدماج، وملخص أسبوعي إن أبقيته مفعّلًا.',
   'Garder la plateforme sûre : vérification des lauréats, signalements, limites contre le spam.': 'الحفاظ على أمان المنصة: التحقق من الخريجين، البلاغات، وحدود ضد الرسائل المزعجة.',
   'Tu choisis qui voit ton entreprise, ta ville, ton LinkedIn, ta présentation et ton CV : tous les membres, seulement les lauréats, ou seulement tes contacts.': 'أنت تختار من يرى شركتك ومدينتك وحساب LinkedIn ونبذتك وسيرتك الذاتية: كل الأعضاء، أو الخريجون فقط، أو جهات اتصالك فقط.',
-  'Tes coordonnées ne sont visibles que par les membres dont tu acceptes la demande, et par le lauréat à qui tu envoies une candidature. Tu peux retirer ton accord à tout moment.': 'لا يرى معلومات اتصالك إلا الأعضاء الذين تقبل طلبهم، والخريج الذي ترسل إليه ترشيحك. ويمكنك سحب موافقتك في أي وقت.',
-  'Ton CV en PDF est rangé dans un espace privé. Il s’ouvre par un lien valable 10 minutes, et seulement pour les personnes autorisées : celles de ton choix, le lauréat à qui tu postules, le lauréat qui relit ton CV.': 'تُحفظ سيرتك الذاتية (PDF) في مساحة خاصة، وتُفتح برابط صالح لمدة 10 دقائق، وفقط للأشخاص المسموح لهم: من تختارهم، والخريج الذي تترشح لديه، والخريج الذي يراجع سيرتك.',
+  'Tes coordonnées ne sont visibles que par tes contacts (les membres avec qui tu les partages, l’auteur d’une offre où tu postules, la personne qu’une demande a réunie avec toi) et par l’administration. Tu peux retirer ton accord à tout moment.': 'لا يرى معلومات اتصالك إلا جهات اتصالك (الأعضاء الذين تتبادلها معهم، وصاحب عرض ترشحت له، والشخص الذي جمعك به طلب) والإدارة. ويمكنك سحب موافقتك في أي وقت.',
+  'Ton CV en PDF est rangé dans un espace privé. Il s’ouvre par un lien valable 10 minutes, et seulement pour : les membres que tu choisis dans « Qui voit quoi », tes contacts (dont l’auteur d’une offre où tu postules), les lauréats quand tu as une demande ouverte, le lauréat qui relit ton CV (ou tous les lauréats tant que personne ne l’a pris), et l’administration.': 'تُحفظ سيرتك الذاتية (PDF) في مساحة خاصة، وتُفتح برابط صالح لمدة 10 دقائق، وفقط لـ: الأعضاء الذين تختارهم في «من يرى ماذا»، وجهات اتصالك (ومنهم صاحب عرض ترشحت له)، والخريجين حين يكون لديك طلب مفتوح، والخريج الذي يراجع سيرتك (أو كل الخريجين ما دام لم يتكفل بها أحد)، والإدارة.',
   'Un avis de stage ou un entretien publié en anonyme n’affiche pas ton nom aux membres.': 'الرأي حول تدريب أو المقابلة المنشورة دون اسم لا تُظهر اسمك للأعضاء.',
   'Sécurité et modération': 'الأمان والإشراف',
   'Chacun peut signaler un contenu ou un profil. Seule l’administration voit le signalement ; la personne concernée ne sait pas qui l’a fait.': 'يمكن لكل عضو الإبلاغ عن محتوى أو ملف. الإدارة وحدها ترى البلاغ، ولا يعرف الشخص المعني من قام به.',
   'L’administration examine chaque signalement et peut retirer un contenu qui ne respecte pas la communauté.': 'تفحص الإدارة كل بلاغ ويمكنها حذف أي محتوى لا يحترم المجتمع.',
-  'Pour éviter le spam, chaque compte a des limites par jour : candidatures, messages, publications et demandes de contact.': 'لتفادي الرسائل المزعجة، لكل حساب حدود يومية: الترشيحات، الرسائل، المنشورات، وطلبات الاتصال.',
+  'Pour éviter le spam, chaque compte a des limites par jour : candidatures, messages, publications et coordonnées demandées.': 'لتفادي الرسائل المزعجة، لكل حساب حدود يومية: الترشيحات، الرسائل، المنشورات، ومعلومات الاتصال المطلوبة.',
   'Un lauréat reçoit son badge « vérifié » par l’administration, ou quand deux lauréats déjà vérifiés de sa promo le confirment.': 'يحصل الخريج على شارة «موثَّق» من الإدارة، أو عندما يؤكده خريجان موثَّقان من دفعته.',
   'L’équipe du réseau peut importer la liste officielle des étudiants (nom, promo, filière, email de l’école). Elle sert seulement à vérifier les inscriptions et seule l’équipe du réseau la voit.': 'يمكن لفريق الشبكة استيراد اللائحة الرسمية للطلبة (الاسم، الدفعة، الشعبة، بريد المدرسة). تُستعمل فقط للتحقق من التسجيلات، ولا يراها إلا فريق الشبكة.',
-  'Enquête d’insertion': 'استبيان الإدماج المهني',
+  'Enquête d’insertion': 'استطلاع الإدماج المهني',
   'Six mois puis douze mois après le diplôme, un court questionnaire te demande ta situation (emploi, recherche, études…).': 'بعد ستة أشهر ثم اثني عشر شهرًا من التخرج، يسألك استبيان قصير عن وضعيتك (عمل، بحث، دراسة…).',
   'Les réponses sont publiées seulement en chiffres globaux par promo et par filière, jamais en dessous de 5 réponses. Seule l’administration voit les réponses individuelles.': 'لا تُنشر الأجوبة إلا كأرقام إجمالية حسب الدفعة والشعبة، ولا تُنشر أبدًا إذا قلّت عن 5 أجوبة. الإدارة وحدها ترى الأجوبة الفردية.',
   'Répondre est facultatif.': 'الإجابة اختيارية.',
@@ -48,11 +48,12 @@ addAR({
   'Opposition : désactive les emails, les alertes d’offres ou les notifications en un clic. Le résumé et les alertes par email ont chacun un lien pour se désabonner.': 'الاعتراض: أوقف الرسائل أو تنبيهات العروض أو الإشعارات بنقرة واحدة. ويحتوي الملخص وتنبيهات البريد على رابط لإلغاء الاشتراك.',
   'M’alerter dès qu’une offre de mon année et de ma filière est publiée': 'نبّهني فور نشر عرض يخص سنتي وشعبتي',
   'Aussi par email (3 au plus par jour)': 'أيضًا عبر البريد (3 على الأكثر في اليوم)',
-  'Tu recevras une alerte dès qu’une offre pour toi est publiée.': 'سيصلك تنبيه فور نشر عرض يخصك.', 'Plus d’alertes d’offres.': 'لا مزيد من تنبيهات العروض.',
+  'On t’alerte dès qu’une offre pour toi est publiée.': 'سيصلك تنبيه فور نشر عرض يخصك.', 'Plus d’alertes d’offres.': 'لا مزيد من تنبيهات العروض.',
   'Alertes d’offres par email': 'تنبيهات العروض عبر البريد',
   'Tu ne veux plus recevoir les alertes d’offres par email ?': 'ألا تريد تلقي تنبيهات العروض عبر البريد بعد الآن؟',
   'Tu ne recevras plus les alertes d’offres par email.': 'لن تصلك بعد الآن تنبيهات العروض عبر البريد.',
   'Les notifications sur le téléphone et le résumé de la semaine ne changent pas. Tu peux les réactiver dans « Mon profil ».': 'إشعارات الهاتف والملخص الأسبوعي لا تتغير. ويمكنك إعادة تفعيل التنبيهات من «ملفي الشخصي».',
+  'Tes données': 'بياناتك',
   'Ce lien n’est plus valable. Connecte-toi et désactive les alertes dans « Mon profil ».': 'هذا الرابط لم يعد صالحًا. سجّل الدخول وأوقف التنبيهات من «ملفي الشخصي».',
 });
 
@@ -61,18 +62,18 @@ addAR({
 const CATS_NOTIF = {
   etudiant: {
     messages: ['Messages', 'Les messages qu’on t’envoie.'],
-    demandes: ['Réponses à mes demandes', 'Un lauréat te propose son aide pour ta demande.'],
+    demandes: ['Mes demandes : les propositions d’aide', 'Un lauréat te propose son aide pour ta demande.'],
     candidatures: ['Mes candidatures', 'Une candidature qui avance, une invitation à postuler, un recrutement à confirmer.'],
-    mentorat: ['Mentorat et rendez-vous', 'Rendez-vous et rappels, relectures de CV, demandes de contact, parrainage.'],
+    mentorat: ['Mentorat et rendez-vous', 'Rendez-vous et rappels, relectures de CV, partage de coordonnées, parrainage.'],
     offres: ['Nouvelles offres pour moi', 'Les offres de ton année et de ta filière, dès leur publication.'],
     reseau: ['Réponses à mes questions et vie du réseau', 'Réponses à tes questions, événements de l’école, cafés de ta ville.'],
   },
   laureat: {
     messages: ['Messages', 'Les messages qu’on t’envoie.'],
-    demandes: ['Nouvelles demandes d’étudiants de ma filière', 'Et la suite de tes propositions d’aide.'],
+    demandes: ['Demandes des étudiants de ma filière', 'Et la suite de tes propositions d’aide.'],
     // Tout lauréat peut postuler aux offres entre lauréats
     candidatures: ['Candidatures reçues sur mes offres', 'Et les recrutements confirmés ; si tu postules, la suite de tes candidatures.'],
-    mentorat: ['Mentorat et rendez-vous', 'Demandes d’aide et de contact, rappels de rendez-vous, CV à relire, parrainage, mercis.'],
+    mentorat: ['Mentorat et rendez-vous', 'Mentorats à accepter, coordonnées à partager, rappels de rendez-vous, CV à relire, parrainage, mercis.'],
     // Les offres arrivent selon le profil (offre_pour dans schema.sql) : la condition est dite, pas conseillée
     offres: ['Nouvelles offres pour moi', 'Avec « Je cherche un emploi en ce moment » coché dans ton profil : offres « Jeunes diplômés » et offres entre lauréats de ta filière. Sans cela, seulement les offres « Jeunes diplômés » l’année de ton diplôme.'],
     // Un lauréat pose aussi des questions : les réponses passent par cette case
@@ -80,7 +81,7 @@ const CATS_NOTIF = {
   },
   // Un lauréat qui cherche un emploi publie sa demande d'emploi et postule : ces cases couvrent aussi les siennes
   recherche: {
-    demandes: ['Demandes', 'Les réponses à ta demande d’emploi, les nouvelles demandes d’étudiants de ta filière et la suite de tes propositions d’aide.'],
+    demandes: ['Mes demandes et celles des étudiants', 'Les réponses à ta demande d’emploi, les étudiants de ta filière qui cherchent de l’aide, et la suite de tes propositions d’aide.'],
     candidatures: ['Candidatures', 'La suite des tiennes (entretien, recrutement à confirmer) et les candidatures reçues sur tes offres.'],
     offres: ['Nouvelles offres pour moi', 'Offres « Jeunes diplômés » et offres entre lauréats de ta filière, dès leur publication.'],
   },
@@ -105,24 +106,24 @@ addAR({
   [NOTES_NOTIF.tous]: 'تسري اختياراتك على كل الأجهزة التي فُعّلت فيها الإشعارات.',
   [NOTES_NOTIF.admin]: 'تصل البلاغات دائمًا إلى فريق الشبكة.',
   [CATS_NOTIF.etudiant.messages[1]]: 'الرسائل التي تُرسل إليك.',
-  [CATS_NOTIF.etudiant.demandes[0]]: 'الردود على طلباتي',
+  [CATS_NOTIF.etudiant.demandes[0]]: 'طلباتي: اقتراحات المساعدة',
   [CATS_NOTIF.etudiant.demandes[1]]: 'خريج يقترح عليك مساعدته في طلبك.',
   [CATS_NOTIF.etudiant.candidatures[1]]: 'ترشيح يتقدّم، دعوة للترشح، توظيف ينتظر تأكيدك.',
   [CATS_NOTIF.etudiant.mentorat[0]]: 'الإرشاد والمواعيد',
-  [CATS_NOTIF.etudiant.mentorat[1]]: 'المواعيد والتذكير بها، مراجعات السيرة الذاتية، طلبات الاتصال، الرعاية.',
+  [CATS_NOTIF.etudiant.mentorat[1]]: 'المواعيد والتذكير بها، مراجعات السيرة الذاتية، مشاركة معلومات الاتصال، الرعاية.',
   [CATS_NOTIF.etudiant.offres[0]]: 'عروض جديدة تخصني',
   [CATS_NOTIF.etudiant.offres[1]]: 'عروض سنتك وشعبتك، فور نشرها.',
   [CATS_NOTIF.etudiant.reseau[0]]: 'الأجوبة على أسئلتي وحياة الشبكة',
   [CATS_NOTIF.etudiant.reseau[1]]: 'الأجوبة على أسئلتك، أنشطة المدرسة، لقاءات المقهى في مدينتك.',
-  [CATS_NOTIF.laureat.demandes[0]]: 'طلبات جديدة من طلبة شعبتي',
+  [CATS_NOTIF.laureat.demandes[0]]: 'طلبات الطلبة من شعبتي',
   [CATS_NOTIF.laureat.demandes[1]]: 'ومآل اقتراحات مساعدتك.',
   [CATS_NOTIF.laureat.candidatures[0]]: 'الترشيحات التي تصل إلى عروضي',
   [CATS_NOTIF.laureat.candidatures[1]]: 'والتوظيفات المؤكَّدة؛ وإن ترشحت، مآل ترشيحاتك.',
   [CATS_NOTIF.admin.candidatures[1]]: 'والتوظيفات المؤكَّدة.',
-  [CATS_NOTIF.laureat.mentorat[1]]: 'طلبات المساعدة والاتصال، التذكير بالمواعيد، سير ذاتية للمراجعة، الرعاية، رسائل الشكر.',
+  [CATS_NOTIF.laureat.mentorat[1]]: 'إرشادات تنتظر قبولك، معلومات اتصال للمشاركة، التذكير بالمواعيد، سير ذاتية للمراجعة، الرعاية، رسائل الشكر.',
   [CATS_NOTIF.laureat.offres[1]]: 'إن فعّلت «أبحث عن عمل حاليًا» في ملفك الشخصي: عروض «الخريجون الجدد» والعروض بين خريجي شعبتك. وبدونه، عروض «الخريجون الجدد» في سنة تخرجك فقط.',
-  [CATS_NOTIF.recherche.demandes[0]]: 'الطلبات',
-  [CATS_NOTIF.recherche.demandes[1]]: 'الردود على طلب العمل الخاص بك، والطلبات الجديدة لطلبة شعبتك، ومآل اقتراحات مساعدتك.',
+  [CATS_NOTIF.recherche.demandes[0]]: 'طلباتي وطلبات الطلبة',
+  [CATS_NOTIF.recherche.demandes[1]]: 'الردود على طلبك للعمل، طلبة شعبتك الذين يبحثون عن مساعدة، ومآل اقتراحات مساعدتك.',
   [CATS_NOTIF.recherche.candidatures[0]]: 'الترشيحات',
   [CATS_NOTIF.recherche.candidatures[1]]: 'مآل ترشيحاتك (مقابلة، توظيف ينتظر تأكيدك) والترشيحات التي تصل إلى عروضك.',
   [CATS_NOTIF.recherche.offres[1]]: 'عروض «الخريجون الجدد» والعروض بين خريجي شعبتك، فور نشرها.',
@@ -154,8 +155,8 @@ const SECTIONS = [
   ['people', 'Qui voit quoi', [
     'Ton profil est visible par les membres connectés, jamais par le public ni par les moteurs de recherche.',
     'Tu choisis qui voit ton entreprise, ta ville, ton LinkedIn, ta présentation et ton CV : tous les membres, seulement les lauréats, ou seulement tes contacts.',
-    'Tes coordonnées ne sont visibles que par les membres dont tu acceptes la demande, et par le lauréat à qui tu envoies une candidature. Tu peux retirer ton accord à tout moment.',
-    'Ton CV en PDF est rangé dans un espace privé. Il s’ouvre par un lien valable 10 minutes, et seulement pour les personnes autorisées : celles de ton choix, le lauréat à qui tu postules, le lauréat qui relit ton CV.',
+    'Tes coordonnées ne sont visibles que par tes contacts (les membres avec qui tu les partages, l’auteur d’une offre où tu postules, la personne qu’une demande a réunie avec toi) et par l’administration. Tu peux retirer ton accord à tout moment.',
+    'Ton CV en PDF est rangé dans un espace privé. Il s’ouvre par un lien valable 10 minutes, et seulement pour : les membres que tu choisis dans « Qui voit quoi », tes contacts (dont l’auteur d’une offre où tu postules), les lauréats quand tu as une demande ouverte, le lauréat qui relit ton CV (ou tous les lauréats tant que personne ne l’a pris), et l’administration.',
     'Une candidature n’est visible que par toi et par le lauréat qui a publié l’offre.',
     'Un message privé n’est visible que par toi et la personne à qui tu écris. Ses photos et vocaux sont dans un espace privé et s’ouvrent par un lien temporaire. L’administration ne voit un message que si l’un de vous deux le signale.',
     'Un étudiant ne voit que les offres de son année ; les offres entre lauréats ne sont pas visibles par les étudiants.',
@@ -167,7 +168,7 @@ const SECTIONS = [
   ['flag', 'Sécurité et modération', [
     'Chacun peut signaler un contenu ou un profil. Seule l’administration voit le signalement ; la personne concernée ne sait pas qui l’a fait.',
     'L’administration examine chaque signalement et peut retirer un contenu qui ne respecte pas la communauté.',
-    'Pour éviter le spam, chaque compte a des limites par jour : candidatures, messages, publications et demandes de contact.',
+    'Pour éviter le spam, chaque compte a des limites par jour : candidatures, messages, publications et coordonnées demandées.',
     'Tu peux bloquer un membre à tout moment : vous ne pouvez plus vous écrire.',
     'Un lauréat reçoit son badge « vérifié » par l’administration, ou quand deux lauréats déjà vérifiés de sa promo le confirment.',
     'L’équipe du réseau peut importer la liste officielle des étudiants (nom, promo, filière, email de l’école). Elle sert seulement à vérifier les inscriptions et seule l’équipe du réseau la voit.',
@@ -265,7 +266,7 @@ export function MesDonnees({ ctx }) {
     <label class="check"><input id="md-mail" type="checkbox" checked=${me.emails_hebdo !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { emails_hebdo: e.target.checked }); toast(e.target.checked ? 'Tu recevras un résumé chaque semaine.' : 'Plus de résumé par email.'); })}/> Recevoir un résumé par email chaque semaine</label>
     ${me.role === 'etudiant' && cats && (store.mode !== 'live' || 'alertes_email' in me) ? html`<label class="check"><input id="md-alertes-mail" type="checkbox" checked=${me.alertes_email !== false} onChange=${e => act(() => store.update('profiles', me.id, { alertes_email: e.target.checked }))}/> Recevoir par email les nouvelles offres de mon année et de ma filière (3 au plus par jour)</label>` : null}
     ${me.role === 'etudiant' && !cats && (store.mode !== 'live' || 'alertes_offres' in me) ? html`<div class="cf-alertes">
-      <label class="check"><input id="md-alertes" type="checkbox" checked=${me.alertes_offres !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { alertes_offres: e.target.checked }); toast(e.target.checked ? 'Tu recevras une alerte dès qu’une offre pour toi est publiée.' : 'Plus d’alertes d’offres.'); })}/> M’alerter dès qu’une offre de mon année et de ma filière est publiée</label>
+      <label class="check"><input id="md-alertes" type="checkbox" checked=${me.alertes_offres !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { alertes_offres: e.target.checked }); toast(e.target.checked ? 'On t’alerte dès qu’une offre pour toi est publiée.' : 'Plus d’alertes d’offres.'); })}/> M’alerter dès qu’une offre de mon année et de ma filière est publiée</label>
       ${me.alertes_offres !== false ? html`<label class="check sub"><input id="md-alertes-mail" type="checkbox" checked=${me.alertes_email !== false} onChange=${e => act(() => store.update('profiles', me.id, { alertes_email: e.target.checked }))}/> Aussi par email (3 au plus par jour)</label>` : null}
     </div>` : null}
     ${store.mode !== 'live' || 'emails_messages' in me ? html`<label class="check"><input id="md-msg-mail" type="checkbox" checked=${me.emails_messages !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { emails_messages: e.target.checked }); toast(e.target.checked ? 'Un email te prévient si un message attend depuis 30 minutes.' : 'Plus d’email pour les messages.'); })}/> M’envoyer un email quand un message m’attend (un toutes les 6 heures au plus)</label>` : null}

@@ -5,7 +5,7 @@ import { getLang, t as tr } from './i18n.js';
 import { MessageBtn } from './messages.js';
 import { MESURES, defiProgress, activeDefis, coupeDesPromos, computeScores, tonAnnee, niveauOf, seasonLabel, NIVEAUX, proximiteFiliere } from './logic.js';
 
-const NIV_OPTS = [['', 'Tous les niveaux'], [3, '3A'], [4, '4A'], [5, '5A'], [6, 'Jeunes diplômés']];
+const NIV_OPTS = [['', 'Toutes les années'], [3, '3A'], [4, '4A'], [5, '5A'], [6, 'Jeunes diplômés']];
 const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const MOIS_NOM = ['Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
 
@@ -19,7 +19,7 @@ export function DefisPanel({ ctx }) {
   const list = activeDefis(data).filter(d => !niv || !d.niveau || d.niveau === niv).map(d => ({ d, p: defiProgress(data, d) })).sort((a, b) => a.p.daysLeft - b.p.daysLeft);
   if (!list.length) return null;
   return html`<div class="panel defis">
-    <div class="section-head"><h2 class="h-ico"><${Icon} name="trophy"/> Défi${list.length > 1 ? 's' : ''} de la saison</h2></div>
+    <div class="section-head"><h2 class="h-ico"><${Icon} name="trophy"/> Défi${list.length > 1 ? 's' : ''} de l’année</h2></div>
     ${list.map(({ d, p }) => html`<div class=${'defi' + (p.done ? ' done' : '')} key=${d.id}>
       <div class="row"><strong class="grow">${d.titre}</strong><span class="mono">${p.n}/${p.cible}</span></div>
       <${Bar} value=${p.ratio} pace=${p.done ? undefined : p.elapsed} label=${`${p.n} sur ${p.cible}`}/>
@@ -46,12 +46,12 @@ export function DefisAdmin({ ctx }) {
     toast('Défi lancé : il apparaît sur l’accueil de tous.'); setF(null);
   }); };
   return html`<div class="panel">
-    <div class="section-head"><h2 class="h-ico"><${Icon} name="trophy"/> Défis de saison</h2><button class="btn small" onClick=${() => start(['', 'reussites', '', 20])}><${Icon} name="plus" size=${15}/> Nouveau défi</button></div>
+    <div class="section-head"><h2 class="h-ico"><${Icon} name="trophy"/> Défis de l’année</h2><button class="btn small" onClick=${() => start(['', 'reussites', '', 20])}><${Icon} name="plus" size=${15}/> Nouveau défi</button></div>
     <p class="muted small">Un objectif collectif affiché sur l’accueil, avec une barre qui avance toute seule.</p>
     ${f ? html`<form class="form defi-form" onSubmit=${save}>
       <${Field} label="Titre"><input id="df-titre" required minlength="4" maxlength="120" value=${f.titre} onInput=${e => setF({ ...f, titre: e.target.value })} placeholder="Ex. Novembre : 15 stages pour les 4A"/><//>
       <div class="grid3"><${Field} label="On compte"><select id="df-mes" value=${f.mesure} onChange=${e => setF({ ...f, mesure: e.target.value })}>${Object.entries(MESURES).map(([k, m]) => html`<option value=${k}>${m.label}</option>`)}</select><//>
-        <${Field} label="Niveau"><select id="df-niv" value=${f.niveau} onChange=${e => setF({ ...f, niveau: e.target.value })}>${NIV_OPTS.map(([v, l]) => html`<option value=${v}>${l}</option>`)}</select><//>
+        <${Field} label="Année"><select id="df-niv" value=${f.niveau} onChange=${e => setF({ ...f, niveau: e.target.value })}>${NIV_OPTS.map(([v, l]) => html`<option value=${v}>${l}</option>`)}</select><//>
         <${Field} label="Objectif"><input id="df-cible" type="number" min="1" max="10000" required value=${f.cible} onInput=${e => setF({ ...f, cible: e.target.value })}/><//></div>
       <div class="grid2"><${Field} label="Début"><input id="df-debut" type="date" required value=${f.debut} onInput=${e => setF({ ...f, debut: e.target.value })}/><//><${Field} label="Fin"><input id="df-fin" type="date" required min=${f.debut} value=${f.fin} onInput=${e => setF({ ...f, fin: e.target.value })}/><//></div>
       <div class="row-end"><button type="button" class="btn ghost" onClick=${() => setF(null)}>Annuler</button><button class="btn primary" disabled=${f.titre.trim().length < 4 || !(+f.cible > 0) || f.fin < f.debut}>Lancer le défi</button></div>
@@ -75,15 +75,15 @@ export function CoupePromos({ ctx, compact = false }) {
     return html`<button class="panel clickable coupe-mini" onClick=${() => ctx.go('reseau/classement/promos')}>
       <div class="section-head"><h2 class="h-ico"><${Icon} name="trophy"/> Coupe des promos</h2><${Icon} name="arrow" size=${16}/></div>
       <ol class="coupe-top">${board.slice(0, 3).map((x, i) => html`<li class=${x.promo === me.promo ? 'me' : ''}><span class=${'medal m' + (i + 1)}>${i + 1}</span> Promo ${x.promo}<span class="spacer"></span><span class="mono">${x.pts} pts</span></li>`)}</ol>
-      ${me.role === 'laureat' ? html`<p class="small muted">${myRank ? (myRank <= 3 ? 'Ta promo est sur le podium. Continuez !' : `Ta promo est ${myRank}e sur ${board.length}.`) : 'Ta promo n’a pas encore de points cette saison. Lance-la !'}</p>` : null}
+      ${me.role === 'laureat' ? html`<p class="small muted">${myRank ? (myRank <= 3 ? 'Ta promo est sur le podium. Continuez !' : `Ta promo est ${myRank}e sur ${board.length}.`) : 'Ta promo n’a pas encore de points cette année. Lance-la !'}</p>` : null}
     </button>`;
   }
   return html`<div class="sub-page">
-    <p class="muted small">Les points d’impact de la saison ${seasonLabel(saison)}, additionnés par promo de lauréats. Remise à zéro chaque 1er septembre.</p>
+    <p class="muted small">Les points d’impact de l’année ${seasonLabel(saison)}, additionnés par promo de lauréats. Remise à zéro chaque 1er septembre.</p>
     ${board.length ? html`<ol class="board">${board.map((x, i) => html`<li key=${x.promo} class=${(i < 3 ? 'podium p' + (i + 1) : '') + (x.promo === me.promo ? ' me' : '')}>
       <span class="rank-n mono">${i < 3 ? html`<span class=${'medal m' + (i + 1)}>${i + 1}</span>` : i + 1}</span>
       <span class="grow"><strong>Promo ${x.promo}</strong><span class="small muted"> · ${x.actifs} lauréat${x.actifs > 1 ? 's' : ''} actif${x.actifs > 1 ? 's' : ''} sur ${x.membres}</span></span>
-      <span class="mono pts">${x.pts} pts</span></li>`)}</ol>` : html`<${Empty} icon="trophy" title="La coupe démarre">La première offre ou le premier mentorat de la saison ouvre le classement.<//>`}
+      <span class="mono pts">${x.pts} pts</span></li>`)}</ol>` : html`<${Empty} icon="trophy" title="La coupe démarre">La première offre ou le premier mentorat de l’année ouvre le classement.<//>`}
   </div>`;
 }
 
@@ -101,9 +101,9 @@ export function ParrainCard({ ctx }) {
   if (!p) return null;
   return html`<div class="parrain-card">
     <span class="obj-ico brass"><${Icon} name="heart" size=${20}/></span>
-    <div class="grow"><p class="eyebrow">Ton parrain cette année</p>
+    <div class="grow"><p class="eyebrow">Ton parrain</p>
       <${Person} p=${p} onOpen=${openProfile} size=${40}/>
-      <p class="small muted">Lauréat(e) de ta filière. Pose-lui tes questions sur les stages, la 4A, la vie après l’école.</p></div>
+      <p class="small muted">De ta filière, avec quelques années d’avance. Pose-lui tes questions sur les stages, la 4A, la vie après l’école.</p></div>
     <div class="parrain-acts"><${MessageBtn} ctx=${ctx} p=${p} label="Lui écrire" cls="btn small primary"/>
       <button class="btn small" onClick=${() => ctx.askHelp(p)}><${Icon} name="mentor" size=${15}/> Lui demander un conseil</button></div>
   </div>`;
@@ -148,7 +148,7 @@ export function TonAnneeStrip({ ctx, onOpen }) {
   const s = bilanSaison(saison);
   const [off, setOff] = useLocal(`annee-off-${me.id}-${s}`, false);
   if (s === null || off || me.role === 'admin') return null;
-  return html`<div class="annonce annee-strip"><${Icon} name="award" size=${20}/><span class="grow"><strong>Ton année dans le réseau</strong> · saison ${seasonLabel(s)} : ce que tu as vécu, en un coup d’œil.</span>
+  return html`<div class="annonce annee-strip"><${Icon} name="award" size=${20}/><span class="grow"><strong>Ton année dans le réseau</strong> · ${seasonLabel(s)} : ce que tu as vécu, en un coup d’œil.</span>
     <button class="btn small primary" onClick=${() => onOpen(s)}>Voir mon année</button><button class="icon-btn small" aria-label="Masquer" onClick=${() => setOff(true)}><${Icon} name="x" size=${15}/></button></div>`;
 }
 
@@ -182,7 +182,7 @@ export function TonAnnee({ ctx, saison, onClose }) {
   const copy = () => { try { navigator.clipboard.writeText(resume).then(() => toast('Texte copié : colle-le où tu veux.'), () => toast('Copie impossible ici.', 'err')); } catch { toast('Copie impossible ici.', 'err'); } };
   return html`<${Modal} title="Ton année dans le réseau" onClose=${onClose} wide>
     <div class="annee">
-      <div class="annee-head sky"><p class="eyebrow">Saison ${seasonLabel(saison)}</p><h2>${first}, voici ton année</h2>
+      <div class="annee-head sky"><p class="eyebrow">Année ${seasonLabel(saison)}</p><h2>${first}, voici ton année</h2>
         ${t.role === 'etudiant' && t.reussite ? html`<p class="annee-win"><${Icon} name="trophy" size=${18}/> Réussite confirmée chez <strong>${t.reussite.entreprise}</strong></p>` : null}
         ${t.role !== 'etudiant' && t.rangPromo ? html`<p class="annee-win"><${Icon} name="trophy" size=${18}/> Ta promo ${me.promo} est ${t.rangPromo === 1 ? '1re' : t.rangPromo + 'e'} sur ${t.promos} à la Coupe des promos</p>` : null}</div>
       ${shown.length ? html`<div class="annee-grid">${shown.map(([ic, n, a, b]) => html`<div class="annee-fact"><span class="fact-ico"><${Icon} name=${ic} size=${18}/></span><span class="big mono"><${Num} v=${n}/></span><span>${n > 1 ? b : a}</span></div>`)}</div>`

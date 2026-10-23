@@ -371,7 +371,7 @@ async function pousserUn(a: Abonnement, n: Notif, urg: string, v: Vapid): Promis
 // ---------------------------------------------------------------------
 // Textes des notifications (fr / ar)
 // ---------------------------------------------------------------------
-type V = { nom: string; sujet: string; titre: string; entreprise: string; cible: string; ville: string; lieu: string; statut: string; date: string; heure: string; promo: string; n: number; vague: string; motif: string; texte: string; mtype: string; duree: number; aide: string; dtype: string };
+type V = { nom: string; sujet: string; titre: string; entreprise: string; cible: string; ville: string; lieu: string; statut: string; date: string; heure: string; promo: string; n: number; vague: string; motif: string; texte: string; mtype: string; duree: number; aide: string; dtype: string; pour: string };
 
 // Aperçu d'un message privé : le début du texte, ou « Photo », « Message vocal (0:42) »
 const minSec = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
@@ -383,13 +383,13 @@ type Texte = (v: V) => [string, string] | null;
 const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
   mentorat_demande: {
     route: 'mentorat',
-    fr: v => ['Nouvelle demande d’aide', `${v.nom} te demande de l’aide : ${v.sujet}`],
-    ar: v => ['طلب مساعدة جديد', `طلب مساعدة من ${v.nom}: ${v.sujet}`],
+    fr: v => ['Des horaires à choisir', `${v.nom} te demande de l’aide : ${v.sujet}`],
+    ar: v => ['توقيتات بانتظار اختيارك', `مساعدتك مطلوبة من ${v.nom}: ${v.sujet}`],
   },
   mentorat_accepte: {
     route: 'mentorat',
-    fr: v => ['Rendez-vous fixé', `${v.nom} a accepté : ${v.sujet}${v.date ? `, ${v.date} à ${v.heure}` : ''}`],
-    ar: v => ['تم تحديد الموعد', `تم قبول طلبك من طرف ${v.nom}: ${v.sujet}${v.date ? `، ${v.date} على الساعة ${v.heure}` : ''}`],
+    fr: v => ['Rendez-vous fixé', `${v.nom} a choisi un de tes horaires : ${v.sujet}${v.date ? `, ${v.date} à ${v.heure}` : ''}`],
+    ar: v => ['تم تحديد الموعد', `تم تحديد موعدك مع ${v.nom}: ${v.sujet}${v.date ? `، ${v.date} على الساعة ${v.heure}` : ''}`],
   },
   mentorat_deplace: {
     route: 'mentorat',
@@ -398,8 +398,10 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
   },
   mentorat_annule: {
     route: 'mentorat',
-    fr: v => ['Rendez-vous annulé', v.sujet],
-    ar: v => ['تم إلغاء الموعد', v.sujet],
+    fr: v => v.pour === 'demandeur' ? [`Rendez-vous annulé : ${v.sujet}`, `${v.nom} a annulé. Tu peux lui proposer d’autres horaires.`]
+      : v.pour === 'mentor' ? [`Rendez-vous annulé : ${v.sujet}`, `${v.nom} a annulé le rendez-vous.`] : ['Rendez-vous annulé', v.sujet],
+    ar: v => v.pour === 'demandeur' ? [`تم إلغاء الموعد: ${v.sujet}`, `أُلغي الموعد من طرف ${v.nom}. يمكنك اقتراح توقيتات أخرى.`]
+      : v.pour === 'mentor' ? [`تم إلغاء الموعد: ${v.sujet}`, `أُلغي الموعد من طرف ${v.nom}.`] : ['تم إلغاء الموعد', v.sujet],
   },
   merci: {
     route: 'espace',
@@ -414,41 +416,45 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
   candidature_statut: {
     route: 'parcours',
     fr: v => v.statut === 'entretien' ? ['Entretien proposé', `Ta candidature « ${v.titre} » avance : entretien.`]
-      : v.statut === 'retenu' ? ['Bonne nouvelle !', `Tu es retenu(e) pour « ${v.titre} ».`] : null,
+      : v.statut === 'retenu' ? ['Bonne nouvelle !', `Ta candidature pour « ${v.titre} » est retenue.`] : null,
     ar: v => v.statut === 'entretien' ? ['مقابلة مقترحة', `ترشيحك لـ«${v.titre}» يتقدم: مقابلة.`]
       : v.statut === 'retenu' ? ['خبر سار!', `تم قبولك في «${v.titre}».`] : null,
   },
   // aide : la réussite vient d'une demande (le lauréat recrute, encadre ou recommande) : on parle de démarrage
   recrutement_a_confirmer: {
     route: 'parcours',
-    fr: v => v.aide ? ['Confirme ton démarrage', `${v.nom} indique que tu as commencé chez ${v.entreprise}.`] : ['Confirme ton recrutement', `${v.nom} indique t’avoir recruté(e) chez ${v.entreprise}.`],
+    fr: v => v.aide ? ['Confirme ton démarrage', `${v.nom} indique que tu as commencé chez ${v.entreprise}.`] : ['Confirme ton recrutement', `${v.nom} déclare ton recrutement chez ${v.entreprise}.`],
     ar: v => v.aide ? ['أكّد بدءك', `تصريح من ${v.nom} بأنك بدأت لدى ${v.entreprise}. أكّده بنقرة.`] : ['أكّد توظيفك', `تصريح من ${v.nom} بتوظيفك في ${v.entreprise}. أكّده بنقرة.`],
   },
   recrutement_confirme: {
     route: 'espace',
-    fr: v => v.aide ? ['Démarrage confirmé', `${v.nom} a confirmé son démarrage chez ${v.entreprise}. +50 points`] : ['Recrutement confirmé', `${v.nom} a confirmé son recrutement chez ${v.entreprise}. +50 points`],
-    ar: v => v.aide ? ['تم تأكيد البدء', `أكد ${v.nom} بدءه لدى ${v.entreprise}. +50 نقطة`] : ['تم تأكيد التوظيف', `تم تأكيد توظيف ${v.nom} في ${v.entreprise}. +50 نقطة`],
+    fr: v => v.aide ? ['Démarrage confirmé', `${v.nom} a confirmé son démarrage chez ${v.entreprise}.`] : ['Recrutement confirmé', `${v.nom} a confirmé son recrutement chez ${v.entreprise}.`],
+    ar: v => v.aide ? ['تم تأكيد البدء', `تم تأكيد بدء ${v.nom} لدى ${v.entreprise}.`] : ['تم تأكيد التوظيف', `تم تأكيد توظيف ${v.nom} لدى ${v.entreprise}.`],
   },
   // Demandes des étudiants : nouvelle demande du parcours (lauréats), aide proposée, match, fin du match
   demande_nouvelle: {
     route: 'offres/demandes',
     fr: v => [v.dtype === 'emploi' ? 'Quelqu’un du réseau cherche un emploi' : 'Un étudiant de ton parcours cherche', `${v.nom}${TYPES_OFFRE.fr[v.dtype] ? ` · ${TYPES_OFFRE.fr[v.dtype]}` : ''} : ${v.titre}`],
-    ar: v => [v.dtype === 'emploi' ? 'شخص من الشبكة يبحث عن عمل' : 'طالب من مسارك يبحث', `${v.nom}${TYPES_OFFRE.ar[v.dtype] ? ` · ${TYPES_OFFRE.ar[v.dtype]}` : ''}: ${v.titre}`],
+    ar: v => [v.dtype === 'emploi' ? 'شخص من الشبكة يبحث عن عمل' : 'طلب جديد من مسارك', `${v.nom}${TYPES_OFFRE.ar[v.dtype] ? ` · ${TYPES_OFFRE.ar[v.dtype]}` : ''}: ${v.titre}`],
   },
   demande_proposition: {
     route: 'offres/demandes',
     fr: v => ['Un lauréat te propose son aide', `${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''} : ${v.titre}`],
-    ar: v => ['خريج يقترح عليك مساعدته', `${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''}: ${v.titre}`],
+    ar: v => ['عرض مساعدة جديد', `${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''}: ${v.titre}`],
   },
   demande_match: {
     route: 'offres/demandes',
     fr: v => ['C’est un match !', `${v.nom} a accepté ton aide : ${v.titre}. Déclare son démarrage dès qu’il a lieu.`],
-    ar: v => ['إنه تطابق!', `قبل ${v.nom} مساعدتك: ${v.titre}. صرّح ببدئه بمجرد حدوثه.`],
+    ar: v => ['تمّ الاتفاق!', `تم قبول مساعدتك من طرف ${v.nom}: ${v.titre}. صرّح بالبداية بمجرد حدوثها.`],
   },
   demande_rouverte: {
     route: 'offres/demandes',
-    fr: v => ['Changement sur une demande', `${v.nom} a mis fin au match : ${v.titre}.`],
-    ar: v => ['تغيير في طلب', `أنهى ${v.nom} التطابق: ${v.titre}.`],
+    fr: v => v.pour === 'auteur' ? ['Ta demande est de nouveau ouverte', `${v.nom} a retiré sa proposition. D’autres lauréats peuvent t’aider : ${v.titre}`]
+      : v.pour === 'aidant' ? ['Merci d’avoir proposé ton aide', `${v.nom} a choisi une autre voie : ${v.titre}`]
+      : ['Changement sur une demande', `${v.nom} a mis fin au match : ${v.titre}.`],
+    ar: v => v.pour === 'auteur' ? ['طلبك مفتوح من جديد', `سُحب اقتراح ${v.nom} للمساعدة. يمكن لخريجين آخرين مساعدتك: ${v.titre}`]
+      : v.pour === 'aidant' ? ['شكرًا على اقتراح مساعدتك', `وقع اختيار ${v.nom} على طريق آخر: ${v.titre}`]
+      : ['تغيير في طلب', `انتهى الاتفاق مع ${v.nom}: ${v.titre}.`],
   },
   invitation: {
     route: 'offres',
@@ -468,11 +474,11 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
   filleul: {
     route: 'espace',
     fr: v => ['Ton nouveau filleul', `${v.nom} (3A) est ton filleul cette année. Fais-lui signe !`],
-    ar: v => ['طالب جديد في رعايتك', `${v.nom} (3A) في رعايتك هذه السنة. بادر بالتواصل!`],
+    ar: v => ['رعاية جديدة', `${v.nom} (3A) في رعايتك هذه السنة. بادر بالتواصل!`],
   },
   parrain: {
     route: 'accueil',
-    fr: v => ['Ton parrain', `${v.nom}, lauréat(e) de ta filière, est ton parrain cette année.`],
+    fr: v => ['Ton parrain', `Ton parrainage cette année : ${v.nom}, de ta filière.`],
     ar: v => ['عرّابك في الشبكة', `عرّابك هذه السنة: ${v.nom}، من خريجي شعبتك.`],
   },
   cafe: {
@@ -497,28 +503,28 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
   },
   contact_demande: {
     route: 'accueil',
-    fr: v => ['Demande de coordonnées', `${v.nom} aimerait avoir tes coordonnées. Tu acceptes ou non, en un clic.`],
-    ar: v => ['طلب معلومات الاتصال', `يرغب ${v.nom} في معلومات الاتصال بك. اقبل أو ارفض بنقرة.`],
+    fr: v => ['Partager tes coordonnées ?', `${v.nom} aimerait avoir tes coordonnées. Tu acceptes ou non, en un clic.`],
+    ar: v => ['مشاركة معلومات الاتصال بك؟', `طلب من ${v.nom} للحصول على معلومات الاتصال بك. القبول أو الرفض بنقرة واحدة.`],
   },
   contact_accepte: {
     route: 'accueil',
-    fr: v => ['Demande acceptée', `${v.nom} a accepté : ses coordonnées sont sur son profil.`],
-    ar: v => ['تم قبول طلبك', `وافق ${v.nom}: معلومات الاتصال به في ملفه.`],
+    fr: v => ['Coordonnées partagées', `${v.nom} a accepté : ses coordonnées sont sur son profil.`],
+    ar: v => ['تمت مشاركة معلومات الاتصال', `تمت الموافقة من ${v.nom}: معلومات الاتصال في الملف الشخصي.`],
   },
   relecture_demande: {
     route: 'mentorat/cv',
     fr: v => ['Un CV à relire', `${v.nom} cherche un lauréat pour relire son CV.`],
-    ar: v => ['سيرة ذاتية للمراجعة', `يبحث ${v.nom} عن خريج يراجع سيرته الذاتية.`],
+    ar: v => ['سيرة ذاتية للمراجعة', `طلب من ${v.nom}: مراجعة سيرة ذاتية.`],
   },
   relecture_prise: {
     route: 'mentorat/cv',
     fr: v => ['Relecture en cours', `${v.nom} relit ton CV.`],
-    ar: v => ['المراجعة جارية', `يراجع ${v.nom} سيرتك الذاتية.`],
+    ar: v => ['المراجعة جارية', `مراجعة سيرتك الذاتية جارية مع ${v.nom}.`],
   },
   relecture_rendue: {
     route: 'mentorat/cv',
     fr: v => ['Ton CV a été relu', `${v.nom} t’a laissé ses conseils. Lis-les, puis dis merci.`],
-    ar: v => ['تمت مراجعة سيرتك الذاتية', `ترك لك ${v.nom} نصائحه. اطّلع عليها ثم قل شكرًا.`],
+    ar: v => ['تمت مراجعة سيرتك الذاتية', `نصائح جديدة من ${v.nom}. اطّلع عليها ثم قل شكرًا.`],
   },
   signalement: {
     route: 'admin/moderation',
@@ -527,15 +533,15 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
   },
   verification_pair: {
     route: 'profil',
-    fr: v => v.n >= 2 ? ['Tu es vérifié(e)', `${v.nom} a confirmé ta promo. Ton badge « Lauréat vérifié » est là.`]
+    fr: v => v.n >= 2 ? ['Ton profil est vérifié', `${v.nom} a confirmé ta promo. Ton badge « Lauréat vérifié » est là.`]
       : ['Ta promo confirmée une fois', `${v.nom} a confirmé que tu es de sa promo. Encore un lauréat et ton badge arrive.`],
-    ar: v => v.n >= 2 ? ['تم التحقق من حسابك', `أكّد ${v.nom} دفعتك. شارة «خريج موثَّق» صارت لك.`]
-      : ['تأكيد أول لدفعتك', `أكّد ${v.nom} أنك من دفعته. تأكيد واحد آخر وتصلك الشارة.`],
+    ar: v => v.n >= 2 ? ['تم التحقق من حسابك', `تأكيد دفعتك من ${v.nom}. شارة «خريج موثَّق» صارت لك.`]
+      : ['تأكيد أول لدفعتك', `تأكيد من ${v.nom}: أنتما من نفس الدفعة. تأكيد واحد آخر وتصلك الشارة.`],
   },
   verifier_pair: {
     route: 'accueil',
     fr: v => ['Un lauréat de ta promo', `${v.nom} vient de rejoindre le réseau${v.promo ? ` (promo ${v.promo})` : ''}. Confirme-le si tu le connais.`],
-    ar: v => ['خريج من دفعتك', `انضم ${v.nom} إلى الشبكة${v.promo ? ` (دفعة ${v.promo})` : ''}. أكّد هويته إن كنت تعرفه.`],
+    ar: v => ['خريج من دفعتك', `انضمام جديد إلى الشبكة: ${v.nom}${v.promo ? ` (دفعة ${v.promo})` : ''}. أكّد الهوية إن كانت لك معرفة سابقة.`],
   },
   evenement: {
     route: 'reseau/agenda',
@@ -590,15 +596,18 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
     vague: txt(d.vague) === '12' ? '12' : txt(d.vague) === '6' ? '6' : '', motif: txt(d.motif),
     texte: s('texte'), mtype: txt(d.type), duree: Math.max(0, Math.min(600, Number(d.duree) || 0)),
     aide: ['recrute', 'encadre', 'recommande'].includes(txt(d.aide)) ? txt(d.aide) : '', dtype: txt(d.type),
+    pour: ['demandeur', 'mentor', 'auteur', 'aidant'].includes(txt(d.pour)) ? txt(d.pour) : '',
   };
   const t = g[l](v);
   if (!t) return null;
   // Une alerte ouvre directement l'offre, un message sa conversation (une notification par personne)
   // Une demande ouvre sa carte ; une nouvelle demande, pour un lauréat, ouvre directement « Je peux aider », prérempli
   const dem = kind.startsWith('demande_') && estUuid(d.demande) ? d.demande : null;
+  const annule = kind === 'mentorat_annule' && estUuid(d.m) ? d.m : null;
   const route = kind === 'offre_alerte' && estUuid(d.offre) ? `offre/${d.offre}` : kind === 'message' && estUuid(d.de) ? `messages/${d.de}`
+    : annule && v.pour === 'demandeur' ? `mentorat/reprendre/${annule}`
     : dem ? (kind === 'demande_nouvelle' ? `aider/${dem}` : `offres/demandes/${dem}`) : g.route;
-  const tag = kind === 'offre_alerte' && estUuid(d.offre) ? `offre-${d.offre}` : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem ? `${kind}-${dem}` : kind;
+  const tag = kind === 'offre_alerte' && estUuid(d.offre) ? `offre-${d.offre}` : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem ? `${kind}-${dem}` : annule ? `${kind}-${annule}` : kind;
   return { title: couper(t[0], 80), body: couper(t[1], 180), url: site + '#' + route, tag };
 }
 
@@ -624,8 +633,10 @@ export type Parrainage = { id: string; filleul_id: string; parrain_id: string; c
 export type Cafe = { id: string; organisateur_id: string; ville: string; lieu: string; date_at: string; annule?: boolean };
 export type Placement = {
   id: string; student_id: string; laureat_id: string | null; saison: number; status: string;
-  entreprise: string; merci?: string | null; confirmed_at?: string | null;
+  entreprise: string; type?: string | null; pays?: string | null; merci?: string | null; confirmed_at?: string | null;
 };
+// Points d'un recrutement confirmé, même barème que logic.js (pointsRecrutement) : 50, +25 à l'international
+export const pointsRecrutement = (p: { type?: string | null; pays?: string | null }) => 50 + (p.type === 'etranger' || (!!p.pays && p.pays !== 'Maroc') ? 25 : 0);
 export type Evenement = { id: string; titre: string; debut: string; lieu?: string | null; public: string; annule?: boolean };
 export type Relecture = { id: string; student_id: string; reviewer_id: string | null; status: string };
 export type DemandeContact = { id: string; demandeur_id: string; cible_id: string; status: string };
@@ -754,7 +765,7 @@ export type Resume = {
   parrain: string;
   talents: { total: number; liste: { prenom: string; niveau: number; competences: string[]; nouveau: boolean }[] };
   ouvertes: { total: number; sujets: string[] };
-  impact: { mercis: number; recrutements: number; citation: { texte: string; prenom: string } | null };
+  impact: { mercis: number; recrutements: number; ptsRecrutements?: number; citation: { texte: string; prenom: string } | null };
   filleuls: string[];
   cafes: { ville: string; lieu: string; at: string }[];
   admin: { nonVerifies: number; nouveaux: number; enAttente: number; signalements?: number };
@@ -811,7 +822,7 @@ export function resumeVide(p: Profil): Resume {
     role: p.role === 'admin' ? 'admin' : p.role === 'laureat' ? 'laureat' : 'etudiant', prenom: prenomDe(p.full_name),
     aConfirmer: [], invitations: [], candidatures: 0, demandes: [], rdv: [], aClore: [], questions: [], relances: [],
     offres: { total: 0, liste: [] }, reponses: [], parrain: '', talents: { total: 0, liste: [] }, ouvertes: { total: 0, sujets: [] },
-    impact: { mercis: 0, recrutements: 0, citation: null }, filleuls: [], cafes: [], admin: { nonVerifies: 0, nouveaux: 0, enAttente: 0, signalements: 0 },
+    impact: { mercis: 0, recrutements: 0, ptsRecrutements: 0, citation: null }, filleuls: [], cafes: [], admin: { nonVerifies: 0, nouveaux: 0, enAttente: 0, signalements: 0 },
     evenements: [], enquete: 0, contacts: 0, relectures: 0, arrivees: { total: 0, liste: [], reseau: { laureats: 0, etudiants: 0 } },
   };
 }
@@ -928,7 +939,7 @@ export function resumeDe(p: Profil, d: Donnees): Resume | null {
   for (const x of d.placementsLaureat.get(p.id) || []) {
     const at = temps(x.confirmed_at);
     if (!(at >= d.depuis7 && at <= d.now)) continue;
-    if (x.status === 'confirme') r.impact.recrutements++;
+    if (x.status === 'confirme') { r.impact.recrutements++; r.impact.ptsRecrutements = (r.impact.ptsRecrutements || 0) + pointsRecrutement(x); }
     merci(x.merci, x.student_id, at);
   }
   for (const m of mes) {
@@ -945,16 +956,19 @@ export function resumeDe(p: Profil, d: Donnees): Resume | null {
 // ---------------------------------------------------------------------
 // Résumé hebdomadaire : les textes (fr / ar)
 // ---------------------------------------------------------------------
-type Fmt = { u: (s: string) => string; g: (s: string) => string };   // u : texte d'un membre ; g : en gras
-const HTML: Fmt = { u: esc, g: s => `<strong>${esc(s)}</strong>` };
-const BRUT: Fmt = { u: s => s, g: s => s };
+type Fmt = { u: (s: string) => string; g: (s: string) => string; p: (s: string) => string };   // u : texte d'un membre ; g : en gras ; p : pastille des points
+const pastille = (s: string) => ` <span style="display:inline-block;padding:0 8px;border-radius:999px;background:#FDEBD3;color:#A65400;font-size:12px;font-weight:600;line-height:18px;white-space:nowrap">${esc(s)}</span>`;
+const HTML: Fmt = { u: esc, g: s => `<strong>${esc(s)}</strong>`, p: pastille };
+const BRUT: Fmt = { u: s => s, g: s => s, p: s => ` (${s})` };
 // En arabe, chaque contenu de membre est isolé (sens de lecture), en HTML comme en texte
-const HTML_AR: Fmt = { u: s => `<span dir="auto">${esc(s)}</span>`, g: s => `<strong dir="auto">${esc(s)}</strong>` };
-const BRUT_AR: Fmt = { u: s => `\u2068${s}\u2069`, g: s => `\u2068${s}\u2069` };
+const HTML_AR: Fmt = { u: s => `<span dir="auto">${esc(s)}</span>`, g: s => `<strong dir="auto">${esc(s)}</strong>`, p: pastille };
+const BRUT_AR: Fmt = { u: s => `\u2068${s}\u2069`, g: s => `\u2068${s}\u2069`, p: s => ` (${s})` };
 const pl = (n: number, un: string, plusieurs: string) => `${n} ${n > 1 ? plusieurs : un}`;
 // Accord en arabe : 1, 2, 3 à 10, 11 et plus (comme arCount dans i18n-ar.js)
 const arN = (n: number, f: [string, string, string, string]) =>
   (n === 1 ? f[0] : n === 2 ? f[1] : n >= 3 && n <= 10 ? f[2] : f[3]).replace('{n}', String(n));
+// « +75 نقطة » : le nombre isolé de gauche à droite, « نقاط » de 3 à 10
+const ptsAR = (n: number) => `\u2066+${n}\u2069 ${n >= 3 && n <= 10 ? 'نقاط' : 'نقطة'}`;
 
 type NomSujet = { nom: string; sujet: string };
 const FR = {
@@ -988,18 +1002,18 @@ const FR = {
     aCloreL: (f: Fmt, x: NomSujet) => `Ton rendez-vous avec ${f.u(x.nom)} a eu lieu ? Marque-le terminé : ${f.u(x.sujet)}`,
     question: (f: Fmt, x: { titre: string; cible: string }) => `Question sur ${f.g(x.cible)} : ${f.u(x.titre)}`,
     relance: (f: Fmt, t: string) => `« ${f.g(t)} » est-elle toujours ouverte ? Un clic pour confirmer, ou la marquer pourvue.`,
-    offresIntro: (f: Fmt, n: number) => `${f.g(pl(n, 'nouvelle offre', 'nouvelles offres'))} cette semaine pour ta filière et ton niveau.`,
+    offresIntro: (f: Fmt, n: number) => `${f.g(pl(n, 'nouvelle offre', 'nouvelles offres'))} cette semaine pour ta filière et ton année.`,
     offre: (f: Fmt, x: { titre: string; entreprise: string }) => `${f.g(x.titre)} · ${f.u(x.entreprise)}`,
     reponse: (f: Fmt, x: { titre: string; n: number }) => `${pl(x.n, 'nouvelle réponse', 'nouvelles réponses')} à « ${f.g(x.titre)} »`,
-    parrain: (f: Fmt, nom: string) => `${f.g(nom)}, lauréat(e) de ta filière, est ton parrain cette année. Fais-lui signe !`,
+    parrain: (f: Fmt, nom: string) => `Ton parrainage cette année : ${f.g(nom)}, de ta filière. Fais-lui signe !`,
     cafe: (f: Fmt, x: { ville: string; lieu: string }, q: string) => `${f.g(x.ville)} · ${q} · ${f.u(x.lieu)}`,
     talentsIntro: (f: Fmt, n: number) => f.g(n > 1 ? `${n} étudiants de ta filière cherchent encore un stage.` : '1 étudiant de ta filière cherche encore un stage.'),
     talent: (f: Fmt, x: { prenom: string; niveau: number; competences: string[]; nouveau: boolean }) =>
       `${f.g(x.prenom)} · ${x.niveau}A${x.competences.length ? ' · ' + f.u(x.competences.join(', ')) : ''}${x.nouveau ? ' · vient d’arriver' : ''}`,
-    ouvertesIntro: (f: Fmt, n: number) => f.g(n > 1 ? `${n} demandes d’aide d’étudiants de ta filière attendent un lauréat.` : '1 demande d’aide d’un étudiant de ta filière attend un lauréat.'),
+    ouvertesIntro: (f: Fmt, n: number) => f.g(n > 1 ? `${n} étudiants de ta filière attendent un horaire.` : '1 étudiant de ta filière attend un horaire.'),
     ouverte: (f: Fmt, s: string) => `« ${f.u(s)} »`,
     mercis: (f: Fmt, n: number) => `${f.g(pl(n, 'merci reçu', 'mercis reçus'))} cette semaine.`,
-    recrutements: (f: Fmt, n: number) => `${f.g(pl(n, 'recrutement confirmé', 'recrutements confirmés'))} : +${50 * n} points.`,
+    recrutements: (f: Fmt, n: number, pts: number) => `${f.g(pl(n, 'recrutement confirmé', 'recrutements confirmés'))} grâce à toi.${f.p(`+${pts} points`)}`,
     citation: (f: Fmt, x: { texte: string; prenom: string }) => `« ${f.u(x.texte)} »${x.prenom ? ` — ${f.u(x.prenom)}` : ''}`,
     filleul: (f: Fmt, nom: string) => `${f.g(nom)} (3A) est ton filleul cette année. Fais-lui signe !`,
     nonVerifies: (f: Fmt, n: number) => f.g(pl(n, 'lauréat à vérifier', 'lauréats à vérifier')),
@@ -1010,7 +1024,7 @@ const FR = {
     enquete: (f: Fmt, v: number) => `${f.g(`Enquête ${v} mois après le diplôme`)} : 2 minutes pour aider les promos suivantes.`,
     relectures: (f: Fmt, n: number) => f.g(n > 1 ? `${n} CV attendent une relecture.` : '1 CV attend une relecture.'),
     evenement: (f: Fmt, x: { titre: string; lieu: string }, q: string) => `${f.g(x.titre)} · ${q}${x.lieu ? ` · ${f.u(x.lieu)}` : ''}`,
-    arriveesIntro: (f: Fmt, n: number) => f.g(n > 1 ? `${n} membres de ta promo ou de ta filière ont rejoint le réseau cette semaine.` : '1 membre de ta promo ou de ta filière a rejoint le réseau cette semaine.'),
+    arriveesIntro: (f: Fmt, n: number, etu = false) => { const de = etu ? 'de ton année ou de ta filière' : 'de ta promo ou de ta filière'; return f.g(n > 1 ? `${n} membres ${de} ont rejoint le réseau cette semaine.` : `1 membre ${de} a rejoint le réseau cette semaine.`); },
     arrivee: (f: Fmt, x: Arrivee) => `${f.u(x.nom)} · ${x.niveau ? `${x.niveau}A` : `promo ${x.promo}`}`,
     reseau: (f: Fmt, l: number, e: number) => (l && e ? `Dans tout le réseau : ${pl(l, 'lauréat', 'lauréats')} et ${pl(e, 'étudiant', 'étudiants')} de plus cette semaine.`
       : `Dans tout le réseau : ${l ? pl(l, 'lauréat', 'lauréats') : pl(e, 'étudiant', 'étudiants')} de plus cette semaine.`),
@@ -1026,23 +1040,23 @@ const FR = {
     aCloreL: (nom: string) => `Ton rendez-vous avec ${nom} a eu lieu ?`,
     cafe: (ville: string) => `Café ENSAM à ${ville}`,
     candidatures: (n: number) => `${pl(n, 'candidature', 'candidatures')} à regarder`,
-    demandes: (n: number, nom: string) => (n > 1 ? `${n} demandes d’aide pour toi` : `${nom} te demande de l’aide`),
-    recrutements: (n: number) => `${pl(n, 'recrutement confirmé', 'recrutements confirmés')} : +${50 * n} points`,
+    demandes: (n: number, nom: string) => (n > 1 ? `${n} étudiants aimeraient ton avis` : `${nom} te demande de l’aide`),
+    recrutements: (n: number) => `${pl(n, 'recrutement confirmé', 'recrutements confirmés')} grâce à toi`,
     mercis: (n: number) => `${pl(n, 'merci', 'mercis')} pour toi cette semaine`,
     questions: (n: number, cible: string) => (n > 1 ? `${n} questions pour toi` : `Une question pour toi sur ${cible}`),
     filleuls: (n: number, nom: string) => (n > 1 ? `${n} nouveaux filleuls` : `Ton nouveau filleul : ${nom}`),
     talents: (n: number) => (n > 1 ? `${n} étudiants de ta filière cherchent un stage` : '1 étudiant de ta filière cherche un stage'),
-    ouvertes: (n: number) => (n > 1 ? `${n} demandes d’aide dans ta filière` : '1 demande d’aide dans ta filière'),
+    ouvertes: (n: number) => (n > 1 ? `${n} étudiants de ta filière attendent un horaire` : '1 étudiant de ta filière attend un horaire'),
     relance: () => 'Ton offre est-elle toujours ouverte ?',
     nonVerifies: (n: number) => pl(n, 'lauréat à vérifier', 'lauréats à vérifier'),
     enAttente: (n: number) => pl(n, 'recrutement à confirmer', 'recrutements à confirmer'),
     nouveaux: (n: number) => `${pl(n, 'nouveau membre', 'nouveaux membres')} cette semaine`,
     signalements: (n: number) => `${pl(n, 'signalement', 'signalements')} à traiter`,
-    contacts: (n: number) => (n > 1 ? `${n} demandes de coordonnées` : 'Une demande de coordonnées'),
+    contacts: (n: number) => (n > 1 ? `${n} membres aimeraient tes coordonnées` : 'Un membre aimerait tes coordonnées'),
     enquete: (v: number) => `Enquête d’insertion : où en es-tu ${v === 12 ? 'un an' : 'six mois'} après ton diplôme ?`,
     relectures: (n: number) => (n > 1 ? `${n} CV à relire` : '1 CV à relire'),
     evenement: (titre: string) => `À l’agenda : ${titre}`,
-    arrivees: (n: number, nom: string) => (n > 1 ? `${n} nouveaux de ta promo ou de ta filière` : `${nom} vient d’arriver sur le réseau`),
+    arrivees: (n: number, nom: string, etu = false) => (n > 1 ? `${n} nouveaux ${etu ? 'de ton année' : 'de ta promo'} ou de ta filière` : `${nom} vient d’arriver sur le réseau`),
   },
 };
 type Dico = typeof FR;
@@ -1059,7 +1073,7 @@ const AR: Dico = {
   t: {
     aFaire: 'مهام هذا الأسبوع', offres: 'عروض جديدة لك', reponses: 'أجوبة على أسئلتك', parrain: 'عرّابك',
     cafes: 'مقاهي ENSAM قربك', talents: 'تنبيه المواهب', ouvertes: 'طلبة يحتاجون مساعدتك', impact: 'أثرك هذا الأسبوع',
-    filleul: 'طالب جديد في رعايتك', filleuls: 'طلبة جدد في رعايتك', admin: 'الإدارة', agenda: 'في أجندة الشبكة', enquete: 'استمارة الإدماج المهني',
+    filleul: 'رعاية جديدة', filleuls: 'طلبة جدد في رعايتك', admin: 'الإدارة', agenda: 'في أجندة الشبكة', enquete: 'استمارة الإدماج المهني',
     arrivees: 'وجوه جديدة في الشبكة',
   },
   routes: {
@@ -1069,26 +1083,26 @@ const AR: Dico = {
     accueil: 'فتح المنصة', admin: 'فتح الإدارة', 'reseau/annuaire': 'عرض الدليل',
   },
   l: {
-    aConfirmer: (f, x) => `أكّد توظيفك في ${f.g(x.entreprise)}${x.nom ? ` (صرّح به ${f.u(x.nom)})` : ''}.`,
+    aConfirmer: (f, x) => `أكّد توظيفك في ${f.g(x.entreprise)}${x.nom ? ` (بتصريح من ${f.u(x.nom)})` : ''}.`,
     invitation: (f, x) => `دعوة من ${f.u(x.nom)} للترشح: ${f.g(x.titre)} · ${f.u(x.entreprise)}`,
     candidatures: (f, n) => f.g(arN(n, ['ترشيح واحد ينتظر ردك.', 'ترشيحان ينتظران ردك.', '{n} ترشيحات تنتظر ردك.', '{n} ترشيحًا ينتظر ردك.'])),
-    demande: (f, x) => `طلب مساعدة من ${f.u(x.nom)}: ${f.g(x.sujet)}`,
+    demande: (f, x) => `مساعدتك مطلوبة من ${f.u(x.nom)}: ${f.g(x.sujet)}`,
     rdv: (f, x, q) => `موعد مع ${f.u(x.nom)} ${f.g(q)}: ${f.u(x.sujet)}`,
     aCloreE: (f, x) => `هل تم موعدك مع ${f.u(x.nom)}؟ لا تنس رسالة الشكر: ${f.u(x.sujet)}`,
     aCloreL: (f, x) => `هل تم موعدك مع ${f.u(x.nom)}؟ أنهِ الإرشاد: ${f.u(x.sujet)}`,
     question: (f, x) => `سؤال حول ${f.g(x.cible)}: ${f.u(x.titre)}`,
     relance: (f, t) => `هل لا يزال عرض «${f.g(t)}» مفتوحًا؟ أكّد بنقرة، أو أشر إلى أنه تم شغله.`,
-    offresIntro: (f, n) => `${f.g(arN(n, ['عرض جديد', 'عرضان جديدان', '{n} عروض جديدة', '{n} عرضًا جديدًا']))} هذا الأسبوع لشعبتك ومستواك.`,
+    offresIntro: (f, n) => `${f.g(arN(n, ['عرض جديد', 'عرضان جديدان', '{n} عروض جديدة', '{n} عرضًا جديدًا']))} هذا الأسبوع لشعبتك وسنتك.`,
     offre: (f, x) => `${f.g(x.titre)} · ${f.u(x.entreprise)}`,
     reponse: (f, x) => `${arN(x.n, ['جواب جديد', 'جوابان جديدان', '{n} أجوبة جديدة', '{n} جوابًا جديدًا'])} على «${f.g(x.titre)}»`,
     parrain: (f, nom) => `عرّابك هذه السنة: ${f.g(nom)}، من خريجي شعبتك. بادر بالتواصل!`,
     cafe: (f, x, q) => `${f.g(x.ville)} · ${q} · ${f.u(x.lieu)}`,
     talentsIntro: (f, n) => f.g(arN(n, ['طالب واحد من شعبتك يبحث عن تدريب.', 'طالبان من شعبتك يبحثان عن تدريب.', '{n} طلبة من شعبتك يبحثون عن تدريب.', '{n} طالبًا من شعبتك يبحثون عن تدريب.'])),
-    talent: (f, x) => `${f.g(x.prenom)} · ${x.niveau}A${x.competences.length ? ' · ' + f.u(x.competences.join('، ')) : ''}${x.nouveau ? ' · انضم حديثًا' : ''}`,
-    ouvertesIntro: (f, n) => f.g(arN(n, ['طلب مساعدة واحد من طلبة شعبتك ينتظر خريجًا.', 'طلبا مساعدة من طلبة شعبتك ينتظران خريجًا.', '{n} طلبات مساعدة من طلبة شعبتك تنتظر خريجًا.', '{n} طلب مساعدة من طلبة شعبتك تنتظر خريجًا.'])),
+    talent: (f, x) => `${f.g(x.prenom)} · ${x.niveau}A${x.competences.length ? ' · ' + f.u(x.competences.join('، ')) : ''}${x.nouveau ? ' · انضمام حديث' : ''}`,
+    ouvertesIntro: (f, n) => f.g(arN(n, ['طالب واحد من شعبتك في انتظار توقيت.', 'طالبان من شعبتك في انتظار توقيت.', '{n} طلبة من شعبتك في انتظار توقيت.', '{n} طالبًا من شعبتك في انتظار توقيت.'])),
     ouverte: (f, s) => `«${f.u(s)}»`,
     mercis: (f, n) => `${f.g(arN(n, ['رسالة شكر واحدة', 'رسالتا شكر', '{n} رسائل شكر', '{n} رسالة شكر']))} هذا الأسبوع.`,
-    recrutements: (f, n) => `${f.g(arN(n, ['توظيف مؤكَّد', 'توظيفان مؤكَّدان', '{n} توظيفات مؤكَّدة', '{n} توظيفًا مؤكَّدًا']))}: +${50 * n} نقطة.`,
+    recrutements: (f, n, pts) => `${f.g(arN(n, ['توظيف مؤكَّد', 'توظيفان مؤكَّدان', '{n} توظيفات مؤكَّدة', '{n} توظيفًا مؤكَّدًا']))} بفضلك.${f.p(ptsAR(pts))}`,
     citation: (f, x) => `«${f.u(x.texte)}»${x.prenom ? ` — ${f.u(x.prenom)}` : ''}`,
     filleul: (f, nom) => `${f.g(nom)} (3A) في رعايتك هذه السنة. بادر بالتواصل!`,
     nonVerifies: (f, n) => f.g(arN(n, ['خريج واحد في انتظار التحقق', 'خريجان في انتظار التحقق', '{n} خريجين في انتظار التحقق', '{n} خريجًا في انتظار التحقق'])),
@@ -1099,7 +1113,7 @@ const AR: Dico = {
     enquete: (f, v) => `${f.g(`استمارة الإدماج بعد ${v === 12 ? 'سنة' : 'ستة أشهر'} من التخرج`)}: دقيقتان لمساعدة الدفعات القادمة.`,
     relectures: (f, n) => f.g(arN(n, ['سيرة ذاتية واحدة تنتظر المراجعة.', 'سيرتان ذاتيتان تنتظران المراجعة.', '{n} سير ذاتية تنتظر المراجعة.', '{n} سيرة ذاتية تنتظر المراجعة.'])),
     evenement: (f, x, q) => `${f.g(x.titre)} · ${q}${x.lieu ? ` · ${f.u(x.lieu)}` : ''}`,
-    arriveesIntro: (f, n) => f.g(`انضم إلى الشبكة هذا الأسبوع ${arN(n, ['عضو واحد', 'عضوان', '{n} أعضاء', '{n} عضوًا'])} من دفعتك أو شعبتك.`),
+    arriveesIntro: (f, n, etu = false) => f.g(`انضم إلى الشبكة هذا الأسبوع ${arN(n, ['عضو واحد', 'عضوان', '{n} أعضاء', '{n} عضوًا'])} ${etu ? 'من سنتك أو شعبتك' : 'من دفعتك أو شعبتك'}.`),
     arrivee: (f, x) => `${f.u(x.nom)} · ${x.niveau ? `${x.niveau}A` : `دفعة ${x.promo}`}`,
     reseau: (f, l, e) => `في الشبكة كلها هذا الأسبوع: ${[l ? arN(l, ['خريج واحد جديد', 'خريجان جديدان', '{n} خريجين جدد', '{n} خريجًا جديدًا']) : '', e ? arN(e, ['طالب واحد جديد', 'طالبان جديدان', '{n} طلاب جدد', '{n} طالبًا جديدًا']) : ''].filter(Boolean).join(' و')}.`,
   },
@@ -1114,23 +1128,23 @@ const AR: Dico = {
     aCloreL: nom => `هل تم موعدك مع ${nom}؟`,
     cafe: ville => `مقهى ENSAM في ${ville}`,
     candidatures: n => arN(n, ['ترشيح واحد ينتظر ردك', 'ترشيحان ينتظران ردك', '{n} ترشيحات تنتظر ردك', '{n} ترشيحًا ينتظر ردك']),
-    demandes: (n, nom) => (n > 1 ? arN(n, ['', 'طلبا مساعدة لك', '{n} طلبات مساعدة لك', '{n} طلب مساعدة لك']) : `طلب مساعدة من ${nom}`),
-    recrutements: n => `${arN(n, ['توظيف مؤكَّد', 'توظيفان مؤكَّدان', '{n} توظيفات مؤكَّدة', '{n} توظيفًا مؤكَّدًا'])}: +${50 * n} نقطة`,
+    demandes: (n, nom) => (n > 1 ? arN(n, ['', 'طالبان ينتظران رأيك', '{n} طلبة ينتظرون رأيك', '{n} طالبًا ينتظرون رأيك']) : `مساعدتك مطلوبة من ${nom}`),
+    recrutements: n => `${arN(n, ['توظيف مؤكَّد', 'توظيفان مؤكَّدان', '{n} توظيفات مؤكَّدة', '{n} توظيفًا مؤكَّدًا'])} بفضلك`,
     mercis: n => arN(n, ['رسالة شكر لك هذا الأسبوع', 'رسالتا شكر لك هذا الأسبوع', '{n} رسائل شكر لك هذا الأسبوع', '{n} رسالة شكر لك هذا الأسبوع']),
     questions: (n, cible) => (n > 1 ? arN(n, ['', 'سؤالان لك', '{n} أسئلة لك', '{n} سؤالًا لك']) : `سؤال لك حول ${cible}`),
-    filleuls: (n, nom) => (n > 1 ? arN(n, ['', 'طالبان جديدان في رعايتك', '{n} طلبة جدد في رعايتك', '{n} طالبًا جديدًا في رعايتك']) : `طالب جديد في رعايتك: ${nom}`),
+    filleuls: (n, nom) => (n > 1 ? arN(n, ['', 'طالبان جديدان في رعايتك', '{n} طلبة جدد في رعايتك', '{n} طالبًا جديدًا في رعايتك']) : `رعاية جديدة: ${nom}`),
     talents: n => arN(n, ['طالب واحد من شعبتك يبحث عن تدريب', 'طالبان من شعبتك يبحثان عن تدريب', '{n} طلبة من شعبتك يبحثون عن تدريب', '{n} طالبًا من شعبتك يبحثون عن تدريب']),
-    ouvertes: n => arN(n, ['طلب مساعدة في شعبتك', 'طلبا مساعدة في شعبتك', '{n} طلبات مساعدة في شعبتك', '{n} طلب مساعدة في شعبتك']),
+    ouvertes: n => arN(n, ['طالب واحد من شعبتك في انتظار توقيت', 'طالبان من شعبتك في انتظار توقيت', '{n} طلبة من شعبتك في انتظار توقيت', '{n} طالبًا من شعبتك في انتظار توقيت']),
     relance: () => 'هل لا يزال عرضك مفتوحًا؟',
     nonVerifies: n => arN(n, ['خريج واحد في انتظار التحقق', 'خريجان في انتظار التحقق', '{n} خريجين في انتظار التحقق', '{n} خريجًا في انتظار التحقق']),
     enAttente: n => arN(n, ['توظيف واحد في انتظار التأكيد', 'توظيفان في انتظار التأكيد', '{n} توظيفات في انتظار التأكيد', '{n} توظيفًا في انتظار التأكيد']),
     nouveaux: n => `${arN(n, ['عضو جديد', 'عضوان جديدان', '{n} أعضاء جدد', '{n} عضوًا جديدًا'])} هذا الأسبوع`,
     signalements: n => `${arN(n, ['تبليغ واحد', 'تبليغان', '{n} تبليغات', '{n} تبليغًا'])} في انتظار المعالجة`,
-    contacts: n => (n > 1 ? arN(n, ['', 'طلبان لمعلومات الاتصال', '{n} طلبات لمعلومات الاتصال', '{n} طلبًا لمعلومات الاتصال']) : 'طلب لمعلومات الاتصال بك'),
+    contacts: n => (n > 1 ? arN(n, ['', 'عضوان يرغبان في معلومات الاتصال بك', '{n} أعضاء يرغبون في معلومات الاتصال بك', '{n} عضوًا يرغبون في معلومات الاتصال بك']) : 'عضو يرغب في معلومات الاتصال بك'),
     enquete: v => `استمارة الإدماج: أين وصلت ${v === 12 ? 'بعد سنة' : 'بعد ستة أشهر'} من تخرجك؟`,
     relectures: n => arN(n, ['سيرة ذاتية للمراجعة', 'سيرتان ذاتيتان للمراجعة', '{n} سير ذاتية للمراجعة', '{n} سيرة ذاتية للمراجعة']),
     evenement: titre => `في الأجندة: ${titre}`,
-    arrivees: (n, nom) => (n > 1 ? arN(n, ['', 'عضوان جديدان من دفعتك أو شعبتك', '{n} أعضاء جدد من دفعتك أو شعبتك', '{n} عضوًا جديدًا من دفعتك أو شعبتك']) : `انضمام جديد إلى الشبكة: ${nom}`),
+    arrivees: (n, nom, etu = false) => (n > 1 ? arN(n, ['', 'عضوان جديدان', '{n} أعضاء جدد', '{n} عضوًا جديدًا']) + (etu ? ' من سنتك أو شعبتك' : ' من دفعتك أو شعبتك') : `انضمام جديد إلى الشبكة: ${nom}`),
   },
 };
 
@@ -1177,10 +1191,10 @@ function sectionsDe(r: Resume, L: Dico, langue: Langue): Section[] {
   }
   if (r.impact.mercis || r.impact.recrutements) {
     const l: Ligne[] = [];
-    if (r.impact.recrutements) l.push(f => L.l.recrutements(f, r.impact.recrutements));
-    if (r.impact.mercis) l.push(f => L.l.mercis(f, r.impact.mercis));
     const c = r.impact.citation;
     if (c) l.push(f => L.l.citation(f, c));
+    if (r.impact.mercis) l.push(f => L.l.mercis(f, r.impact.mercis));
+    if (r.impact.recrutements) l.push(f => L.l.recrutements(f, r.impact.recrutements, r.impact.ptsRecrutements || 50 * r.impact.recrutements));
     out.push({ titre: L.t.impact, route: 'espace', lignes: l });
   }
   if (r.filleuls.length) out.push({ titre: r.filleuls.length > 1 ? L.t.filleuls : L.t.filleul, route: 'espace', lignes: r.filleuls.map(n => (f: Fmt) => L.l.filleul(f, n)) });
@@ -1190,7 +1204,7 @@ function sectionsDe(r: Resume, L: Dico, langue: Langue): Section[] {
   if (r.evenements?.length) out.push({ titre: L.t.agenda, route: 'reseau/agenda', lignes: r.evenements.map(x => (f: Fmt) => L.l.evenement(f, x, q(x.at))) });
   const a = r.arrivees;
   if (a?.total) {
-    const l: Ligne[] = [f => L.l.arriveesIntro(f, a.total), ...a.liste.map(x => (f: Fmt) => L.l.arrivee(f, x))];
+    const l: Ligne[] = [f => L.l.arriveesIntro(f, a.total, r.role === 'etudiant'), ...a.liste.map(x => (f: Fmt) => L.l.arrivee(f, x))];
     if (a.total > a.liste.length) l.push(() => L.plus(a.total - a.liste.length));
     // La ligne du réseau seulement si elle dit plus que la liste
     if (a.reseau.laureats + a.reseau.etudiants > a.total) l.push(f => L.l.reseau(f, a.reseau.laureats, a.reseau.etudiants));
@@ -1238,7 +1252,7 @@ function sujetDe(r: Resume, L: Dico, langue: Langue): string {
     [r.relectures, () => s.relectures(r.relectures || 0)],
     [r.enquete, () => s.enquete(r.enquete || 6)],
     [r.evenements?.length, () => s.evenement(r.evenements?.[0]?.titre || '')],
-    [r.arrivees?.total, () => s.arrivees(r.arrivees?.total || 0, r.arrivees?.liste[0]?.nom || '')],
+    [r.arrivees?.total, () => s.arrivees(r.arrivees?.total || 0, r.arrivees?.liste[0]?.nom || '', r.role === 'etudiant')],
   ] : [
     [r.aConfirmer.length, () => s.aConfirmer(r.aConfirmer[0].entreprise)],
     [r.rdv.length, () => s.rdv(q(r.rdv[0].at))],
@@ -1251,17 +1265,21 @@ function sujetDe(r: Resume, L: Dico, langue: Langue): string {
     [r.contacts, () => s.contacts(r.contacts || 0)],
     [r.enquete, () => s.enquete(r.enquete || 6)],
     [r.evenements?.length, () => s.evenement(r.evenements?.[0]?.titre || '')],
-    [r.arrivees?.total, () => s.arrivees(r.arrivees?.total || 0, r.arrivees?.liste[0]?.nom || '')],
+    [r.arrivees?.total, () => s.arrivees(r.arrivees?.total || 0, r.arrivees?.liste[0]?.nom || '', r.role === 'etudiant')],
   ];
   const c = choix.find(([vrai]) => vrai);
   const t = c ? txt(c[1]()) : '';
   return t ? couper(t, 100) + L.suffixe : L.defaut;
 }
 
+// Les liens d'un email arabe ouvrent le site en arabe (?lang=ar), sauf si ce navigateur a déjà choisi sa langue
+export const siteEn = (site: string, langue: Langue) => (langue === 'ar' ? `${site}?lang=ar` : site);
+
 // desabo vide : email envoyé une seule fois, sans lien de désabonnement
 export type Courriel = { sujet: string; html: string; texte: string; desabo: string };
 
 export function rendreResume(r: Resume, langue: Langue, site: string, token: string): Courriel {
+  site = siteEn(site, langue);
   const L = langue === 'ar' ? AR : FR, ar = langue === 'ar';
   const secs = sectionsDe(r, L, langue);
   const sujet = sujetDe(r, L, langue);
@@ -1392,6 +1410,7 @@ const TYPES_OFFRE: Record<Langue, Record<string, string>> = {
 
 // Alerte : les nouvelles offres de son année et de sa filière (5 au plus)
 export function rendreAlerte(offres: OffreAlerte[], langue: Langue, site: string, token: string): Courriel {
+  site = siteEn(site, langue);
   const ar = langue === 'ar', f = ar ? HTML_AR : HTML, b = ar ? BRUT_AR : BRUT;
   const n = offres.length, o0 = offres[0];
   const desabo = `${site}#desabo/${token}/alertes`;
@@ -1424,6 +1443,7 @@ export type DemandeAlerte = { id: string; titre: string; type?: string | null; l
 const niveauCourt = (x: DemandeAlerte, l: Langue) => x.role === 'laureat' ? (l === 'ar' ? 'خريج' : 'Lauréat')
   : Number(x.niveau) >= 6 ? (l === 'ar' ? 'خريج جديد' : 'Jeune diplômé') : Number(x.niveau) >= 3 ? `${Number(x.niveau)}A` : '';
 export function rendreDemandes(demandes: DemandeAlerte[], langue: Langue, site: string, token: string): Courriel {
+  site = siteEn(site, langue);
   const ar = langue === 'ar', f = ar ? HTML_AR : HTML, b = ar ? BRUT_AR : BRUT;
   const n = demandes.length, d0 = demandes[0];
   const desabo = `${site}#desabo/${token}/alertes`;
@@ -1431,9 +1451,9 @@ export function rendreDemandes(demandes: DemandeAlerte[], langue: Langue, site: 
   const ligne = (x: DemandeAlerte, F: Fmt) => [F.g(qui(x)), niveauCourt(x, langue), TYPES_OFFRE[langue][txt(x.type)] || '', F.u(txt(x.titre)), F.u(txt(x.lieu))].filter(Boolean).join(' · ');
   const sujet = couper(n > 1
     ? (ar ? `${arN(n, ['', 'طلبان جديدان', '{n} طلبات جديدة', '{n} طلبًا جديدًا'])} من مسارك` : `${n} demandes d’étudiants de ton parcours`) + (ar ? ' · شبكة ENSAM' : ' · Réseau ENSAM')
-    : (ar ? `${qui(d0)} يبحث عن: ${txt(d0.titre)}` : `${qui(d0)} cherche : ${txt(d0.titre)}`), 110);
+    : (ar ? `${qui(d0)} · المطلوب: ${txt(d0.titre)}` : `${qui(d0)} cherche : ${txt(d0.titre)}`), 110);
   const intro = ar
-    ? 'قال طلبة من مسارك ما يبحثون عنه، مع سيرهم الذاتية. إن كنت تستطيع توظيف أحدهم أو تأطيره أو التوصية به، اقترح ذلك: هو من يختار.'
+    ? 'قال طلبة من مسارك ما يبحثون عنه، مع سيرهم الذاتية. إن كنت تستطيع توظيف أحدهم أو تأطيره أو التوصية به، اقترح ذلك: القرار يبقى لهم.'
     : 'Des étudiants de ton parcours viennent de dire ce qu’ils cherchent, CV joint. Si tu peux recruter, encadrer ou recommander l’un d’eux, propose-le : c’est lui qui choisit.';
   const lien = (x: DemandeAlerte) => `${site}#aider/${x.id}`;   // « Je peux aider » ouvre la feuille préremplie
   const html = cadreEmail({
@@ -1452,6 +1472,7 @@ export function rendreDemandes(demandes: DemandeAlerte[], langue: Langue, site: 
 
 // Messages non lus depuis 30 minutes : qui t'a écrit, et un bouton pour répondre (jamais le contenu)
 export function rendreMessages(n: number, noms: string[], langue: Langue, site: string, token: string): Courriel {
+  site = siteEn(site, langue);
   const ar = langue === 'ar', f = ar ? HTML_AR : HTML, b = ar ? BRUT_AR : BRUT;
   const desabo = `${site}#desabo/${token}/messages`;
   const url = `${site}#messages`;
@@ -1478,6 +1499,7 @@ export function rendreMessages(n: number, noms: string[], langue: Langue, site: 
 
 // Enquête d'insertion : invitation, ou rappel trois semaines après
 export function rendreEnquete(vague: number, rappel: boolean, langue: Langue, site: string, token: string): Courriel {
+  site = siteEn(site, langue);
   const ar = langue === 'ar', v = vague === 12 ? 12 : 6;
   const desabo = `${site}#desabo/${token}`;
   const url = `${site}#enquete`;
@@ -1505,6 +1527,7 @@ export function rendreEnquete(vague: number, rappel: boolean, langue: Langue, si
 
 // Rappel d'inscription : le compte existe, le profil pas encore (envoyé une seule fois)
 export function rendreRelance(langue: Langue, site: string): Courriel {
+  site = siteEn(site, langue);
   const ar = langue === 'ar';
   const sujet = ar ? 'ملفك ينتظرك على شبكة ENSAM مكناس' : 'Ton profil t’attend sur le Réseau ENSAM Meknès';
   const lignes = ar ? [
@@ -1532,7 +1555,7 @@ export function rendreRelance(langue: Langue, site: string): Courriel {
 // ---------------------------------------------------------------------
 export async function chargerDonnees(env: Env, ids: string[], date: Date): Promise<Brut> {
   const t = date.getTime(), s7 = iso(t - 7 * JOUR), s14 = iso(t - 14 * JOUR);
-  const P = 'select=id,student_id,laureat_id,saison,status,entreprise,merci,confirmed_at';
+  const P = 'select=id,student_id,laureat_id,saison,status,entreprise,type,pays,merci,confirmed_at';
   const M = 'select=id,student_id,mentor_id,sujet,status,rdv_at,merci,created_at';
   const Q = 'select=id,author_id,titre,entreprise,pays,created_at';
   const C = 'select=id,student_id,offer_id,status';

@@ -121,7 +121,7 @@ test('code à 6 chiffres : de l’entrée à la « Dernière étape », le rôle
   // Le code collé avec du texte autour, en chiffres arabes
   await s.page.fill('#au-code', 'Ton code : ١٢٣٤٥٦');
   await s.page.waitForSelector('.auth-card.wide.onb', { timeout: 15000 });
-  assert.equal(await s.page.locator('#pf-role-rappel').innerText(), 'Tu t’inscris comme lauréat(e).');
+  assert.equal(await s.page.locator('#pf-role-rappel').innerText(), 'Tu t’inscris côté lauréats.');
   assert.equal(await s.page.locator('#entree').count(), 0, 'l’entrée est partie');
   assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-deja-membre')), '1');
   // « Dernière étape » : trois champs et « aider », puis le profil part avec le rôle choisi
@@ -134,7 +134,7 @@ test('code à 6 chiffres : de l’entrée à la « Dernière étape », le rôle
   assert.ok(p.consent_at, 'l’accord donné à l’entrée est gardé');
   // Puis l'accueil : son rang parmi les lauréats, le badge annoncé, un seul bouton
   await s.page.waitForSelector('.modal.arrivee', { timeout: 8000 });
-  assert.equal(await s.page.locator('.arrivee-titre').innerText(), 'Te voilà 2e lauréat(e) du réseau');
+  assert.equal(await s.page.locator('.arrivee-titre').innerText(), 'Te voilà 2e parmi les lauréats du réseau');
   assert.match(await s.page.locator('.arrivee-fondateur').innerText(), /Membre fondateur/);
   assert.equal(await s.page.locator('.modal.arrivee .btn.primary').count(), 1);
   assert.deepEqual(s.erreurs, []);
@@ -176,7 +176,7 @@ for (const ici of [true, false]) test(`membre déjà connecté : jamais la page 
   await page.waitForSelector('.auth-card.wide.onb', { timeout: 15000 });
   assert.equal(await page.evaluate(() => window.__vu), false);
   if (ici) {
-    assert.equal(await page.locator('#pf-role-rappel').innerText(), 'Tu t’inscris comme étudiant(e).');
+    assert.equal(await page.locator('#pf-role-rappel').innerText(), 'Tu t’inscris côté étudiants.');
     assert.equal(await page.inputValue('#pf-promo'), String(S + 1));
   } else {
     assert.equal(await page.locator('#pf-role-rappel').count(), 0);
@@ -303,7 +303,7 @@ test('lien d’une promo, rôle choisi d’avance sans toucher : la « Dernière
   await s.page.click('.entree-form button.btn.primary'); await s.page.waitForSelector('#au-code');
   await s.page.fill('#au-code', '123456');
   await s.page.waitForSelector('.auth-card.wide.onb', { timeout: 15000 });
-  assert.equal(await s.page.locator('#pf-role-rappel').innerText(), 'Tu t’inscris comme étudiant(e).');
+  assert.equal(await s.page.locator('#pf-role-rappel').innerText(), 'Tu t’inscris côté étudiants.');
   assert.equal(await s.page.inputValue('#pf-promo'), String(S + 1));
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
@@ -316,7 +316,7 @@ test('adresse tapée par quelqu’un d’autre, puis « Créer mon compte » par
   await s.ctx.close();
   s = await visiteur();
   await sInscrire(s.page, { role: 'etudiant', email: 'salma@exemple.ma' });
-  assert.equal(await s.page.locator('#pf-role-rappel').innerText(), 'Tu t’inscris comme étudiant(e).');
+  assert.equal(await s.page.locator('#pf-role-rappel').innerText(), 'Tu t’inscris côté étudiants.');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -341,6 +341,23 @@ test('entrée : deux touchers dans le même instant n’envoient qu’un code ; 
   await focus('au-pw');
   assert.deepEqual(t.erreurs, []);
   await t.ctx.close();
+});
+
+test('un geste pendant que le magasin est encore en train d’échouer : la page se recharge quand même dès que le réseau répond', async () => {
+  // 3G lente : store.js met du temps à tomber, et le visiteur touche « Recevoir mon code » avant
+  const etat = { ouvert: false, vu: 0 };
+  const s = await visiteur({ avant: ctx => ctx.route(/\/store\.js$/, async r => {
+    if (r.request().resourceType() === 'fetch') etat.ouvert = true;
+    if (etat.ouvert) return r.continue();
+    etat.vu++; await new Promise(ok => setTimeout(ok, 2500)); return r.abort('connectionreset');
+  }) });
+  while (!etat.vu) await s.page.waitForTimeout(50);
+  await s.page.click('#au-je-etudiant'); await s.page.fill('#au-email', 'lent@exemple.ma'); await s.page.check('#au-ok');
+  await Promise.all([s.page.waitForEvent('load', { timeout: 15000 }), s.page.click('.entree-form button.btn.primary')]);
+  await s.page.waitForSelector('#entree .entree-form');
+  assert.equal(await s.page.inputValue('#au-email'), 'lent@exemple.ma');
+  assert.ok(etat.ouvert);
+  await s.ctx.close();
 });
 
 test('réseau coupé pendant le chargement : la page se recharge dès que le réseau répond, l’email tapé reste', async () => {
@@ -457,7 +474,7 @@ test('même appareil, deux liens de promo : le rôle choisi d’avance par le pr
   await s.page.click('.entree-form button.btn.primary'); await s.page.waitForSelector('#au-code');
   await s.page.fill('#au-code', '123456');
   await s.page.waitForSelector('.auth-card.wide.onb', { timeout: 15000 });
-  assert.equal(await s.page.locator('#pf-role-rappel').innerText(), 'Tu t’inscris comme étudiant(e).');
+  assert.equal(await s.page.locator('#pf-role-rappel').innerText(), 'Tu t’inscris côté étudiants.');
   assert.equal(await s.page.inputValue('#pf-promo'), String(S + 1));
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();

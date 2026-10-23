@@ -50,15 +50,19 @@ test('chaque type de notification existe en français et en arabe', () => {
 
 test('textes français exacts', () => {
   const t = (k, d = DONNEES[k]) => N.texteNotif(k, d, 'fr', SITE);
-  assert.deepEqual([t('mentorat_accepte').title, t('mentorat_accepte').body], ['Rendez-vous fixé', 'Youssef Alami a accepté : Relire mon CV, mercredi 21 octobre à 17:30']);
+  assert.deepEqual([t('mentorat_accepte').title, t('mentorat_accepte').body], ['Rendez-vous fixé', 'Youssef Alami a choisi un de tes horaires : Relire mon CV, mercredi 21 octobre à 17:30']);
   assert.equal(t('mentorat_deplace').body, 'Youssef Alami propose mercredi 21 octobre à 17:30 : Relire mon CV');
   assert.equal(t('mentorat_demande').body, 'Salma Idrissi te demande de l’aide : Relire mon CV');
   assert.equal(t('candidature_statut').body, 'Ta candidature « Stage maintenance prédictive » avance : entretien.');
-  assert.deepEqual([t('candidature_statut', { titre: 'X', statut: 'retenu' }).title, t('candidature_statut', { titre: 'X', statut: 'retenu' }).body], ['Bonne nouvelle !', 'Tu es retenu(e) pour « X ».']);
+  assert.deepEqual([t('candidature_statut', { titre: 'X', statut: 'retenu' }).title, t('candidature_statut', { titre: 'X', statut: 'retenu' }).body], ['Bonne nouvelle !', 'Ta candidature pour « X » est retenue.']);
   assert.equal(t('cafe').title, 'Café ENSAM à Casablanca');
   assert.equal(t('cafe').body, 'mercredi 21 octobre à 17:30 · Café Bianca, Maârif. Inscris-toi en un clic.');
   assert.equal(t('rappel_rdv').body, 'Avec Youssef Alami à 17:30 : Relire mon CV');
-  assert.equal(t('recrutement_confirme').body, 'Salma Idrissi a confirmé son recrutement chez OCP. +50 points');
+  // Un push ne porte pas de pastille : la personne d'abord, les points restent dans le site (côté lauréat)
+  assert.equal(t('recrutement_confirme').body, 'Salma Idrissi a confirmé son recrutement chez OCP.');
+  assert.equal(t('mentorat_demande').title, 'Des horaires à choisir');
+  assert.deepEqual([t('contact_demande', { nom: 'Y' }).title, t('contact_accepte', { nom: 'Y' }).title], ['Partager tes coordonnées ?', 'Coordonnées partagées']);
+  assert.equal(t('parrain').body, 'Ton parrainage cette année : Youssef Alami, de ta filière.');
   assert.equal(t('test').body, 'Tu recevras ici les nouvelles importantes du Réseau ENSAM.');
 });
 
@@ -84,9 +88,41 @@ test('cas limites : type inconnu, statut ignoré, langue absente, texte long, no
   assert.equal(Array.from(long.body).length, 180);
   assert.ok(long.body.endsWith('…'));
   assert.equal(N.texteNotif('merci', {}, 'fr', SITE).body, 'Un membre te remercie pour ton aide.');
-  assert.equal(N.texteNotif('mentorat_accepte', { nom: 'Y', sujet: 'S', rdv_at: 'pas une date' }, 'fr', SITE).body, 'Y a accepté : S');
+  assert.equal(N.texteNotif('mentorat_accepte', { nom: 'Y', sujet: 'S', rdv_at: 'pas une date' }, 'fr', SITE).body, 'Y a choisi un de tes horaires : S');
   // Contenu des membres inséré tel quel (pas d'échappement HTML dans une notification)
   assert.equal(N.texteNotif('reponse', { nom: 'A & B', titre: '<b>?</b>' }, 'fr', SITE).body, 'A & B a répondu à ta question : <b>?</b>');
+});
+
+test('rendez-vous annulé : qui annule est nommé ; l’étudiant peut proposer d’autres horaires (lien direct)', () => {
+  const M = '0b6c1f9e-1a2b-4c3d-8e9f-0a1b2c3d4e5f';
+  const e = N.texteNotif('mentorat_annule', { sujet: 'Relire mon CV', m: M, nom: 'Youssef Alami', pour: 'demandeur' }, 'fr', SITE);
+  assert.deepEqual([e.title, e.body], ['Rendez-vous annulé : Relire mon CV', 'Youssef Alami a annulé. Tu peux lui proposer d’autres horaires.']);
+  assert.equal(e.url, SITE + '#mentorat/reprendre/' + M);
+  assert.equal(e.tag, 'mentorat_annule-' + M);
+  const l = N.texteNotif('mentorat_annule', { sujet: 'Relire mon CV', m: M, nom: 'Salma Idrissi', pour: 'mentor' }, 'fr', SITE);
+  assert.deepEqual([l.body, l.url], ['Salma Idrissi a annulé le rendez-vous.', SITE + '#mentorat']);
+  const a = N.texteNotif('mentorat_annule', { sujet: 'Relire mon CV', m: M, nom: 'Youssef Alami', pour: 'demandeur' }, 'ar', SITE);
+  assert.equal(a.body, 'أُلغي الموعد من طرف \u2068Youssef Alami\u2069. يمكنك اقتراح توقيتات أخرى.');
+  // Ancien payload (sans nom ni pour) : l'ancien texte, la route et le tag d'avant
+  const v = N.texteNotif('mentorat_annule', { sujet: 'Relire mon CV' }, 'fr', SITE);
+  assert.deepEqual([v.title, v.body, v.url, v.tag], ['Rendez-vous annulé', 'Relire mon CV', SITE + '#mentorat', 'mentorat_annule']);
+  // Une valeur inconnue de « pour » est ignorée
+  assert.equal(N.texteNotif('mentorat_annule', { sujet: 'S', m: M, nom: 'X', pour: 'admin' }, 'fr', SITE).url, SITE + '#mentorat');
+});
+
+test('demande rouverte : l’auteur garde une porte ouverte, le lauréat est remercié', () => {
+  const D = '1b6c1f9e-1a2b-4c3d-8e9f-0a1b2c3d4e5f';
+  const au = N.texteNotif('demande_rouverte', { nom: 'Youssef', titre: 'Stage chez OCP', demande: D, pour: 'auteur' }, 'fr', SITE);
+  assert.deepEqual([au.title, au.body], ['Ta demande est de nouveau ouverte', 'Youssef a retiré sa proposition. D’autres lauréats peuvent t’aider : Stage chez OCP']);
+  assert.equal(au.url, SITE + '#offres/demandes/' + D);
+  const ai = N.texteNotif('demande_rouverte', { nom: 'Salma', titre: 'Stage chez OCP', demande: D, pour: 'aidant' }, 'fr', SITE);
+  assert.deepEqual([ai.title, ai.body], ['Merci d’avoir proposé ton aide', 'Salma a choisi une autre voie : Stage chez OCP']);
+  assert.equal(N.texteNotif('demande_rouverte', { nom: 'Salma', titre: 'T', demande: D, pour: 'aidant' }, 'ar', SITE).title, 'شكرًا على اقتراح مساعدتك');
+  assert.equal(N.texteNotif('demande_rouverte', { nom: 'Salma', titre: 'T', demande: D }, 'fr', SITE).title, 'Changement sur une demande');
+});
+
+test('points d’un recrutement : même barème que pointsRecrutement de logic.js', () => {
+  for (const p of [{}, { pays: 'Maroc' }, { pays: 'France' }, { type: 'etranger' }, { type: 'stage', pays: null }]) assert.equal(N.pointsRecrutement(p), logic.pointsRecrutement(p), JSON.stringify(p));
 });
 
 test('urgence haute pour les rendez-vous seulement', () => {

@@ -132,7 +132,7 @@ test('push : regroupé par membre, chiffré, VAPID, 410 supprimé, file vidée',
   const recu1 = b.push.filter(x => x.endpoint === s1.endpoint);
   assert.deepEqual(recu1.map(x => x.message.tag), ['mentorat_accepte', 'merci']);
   assert.deepEqual(recu1[0].message, {
-    title: 'Rendez-vous fixé', body: 'Youssef Alami a accepté : Mon CV, mercredi 21 octobre à 17:30', url: SITE + '#mentorat', tag: 'mentorat_accepte',
+    title: 'Rendez-vous fixé', body: 'Youssef Alami a choisi un de tes horaires : Mon CV, mercredi 21 octobre à 17:30', url: SITE + '#mentorat', tag: 'mentorat_accepte',
   });
   assert.equal(recu1[0].entetes.urgency, 'high');
   assert.equal(recu1[1].entetes.urgency, 'normal');
@@ -280,7 +280,7 @@ test('resume : résumés envoyés, vides sautés, notif_etat marqué, une fois p
     assert.equal(corps.to.length, 1);
     const id = Object.keys(j.emails).find(k => j.emails[k] === corps.to[0].email);
     const token = b.tables.notif_etat.find(n => n.user_id === id).token;
-    const desabo = `${SITE}#desabo/${token}`;
+    const desabo = `${SITE}${b.tables.profiles.find(p => p.id === id)?.langue === 'ar' ? '?lang=ar' : ''}#desabo/${token}`;
     assert.equal(corps.headers['List-Unsubscribe'], `<${desabo}>`);
     assert.ok(corps.htmlContent.includes(`href="${desabo}"`));
     assert.ok(corps.textContent.includes(desabo));

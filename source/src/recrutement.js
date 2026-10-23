@@ -88,7 +88,7 @@ export function BanqueSujets({ ctx, onPropose }) {
           ${libre && me.role === 'etudiant' && niveauOf(me, saison) === 5 ? html`<button class="btn tiny primary" onClick=${() => openOffer(o.id, true)}>Je prends ce sujet</button>` : null}
         </footer>
       </article>`;
-    }) : html`<${Empty} icon="cap" title=${dispo ? 'Aucun sujet disponible pour l’instant' : 'Aucun sujet'}>${me.role === 'etudiant' ? html`Pas encore de sujet déposé. Un lauréat de ta filière peut déjà t’aider à choisir ton PFE, en 20 minutes de visio.<div class="empty-act"><button class="btn small primary" onClick=${() => go('mentorat')}>Demander un conseil</button></div>` : html`Dépose le premier : un problème réel de ton équipe, que tu pourrais encadrer.<div class="empty-act"><button class="btn small primary" onClick=${onPropose}><${Icon} name="plus" size=${15}/> Déposer un sujet</button></div>`}<//>`}</div>
+    }) : html`<${Empty} icon="cap" title=${dispo ? 'Aucun sujet disponible pour l’instant' : 'Aucun sujet'}>${me.role === 'etudiant' ? html`Pas encore de sujet déposé. Un lauréat de ta filière peut déjà t’aider à choisir ton sujet, en visio.<div class="empty-act"><button class="btn small primary" onClick=${() => go('mentorat')}>Demander un conseil</button></div>` : html`Dépose le premier : un problème réel de ton équipe, que tu pourrais encadrer.<div class="empty-act"><button class="btn small primary" onClick=${onPropose}><${Icon} name="plus" size=${15}/> Déposer un sujet</button></div>`}<//>`}</div>
   </div>`;
 }
 
@@ -119,11 +119,11 @@ function BilanModal({ ctx, onClose }) {
   const [equipe, setEquipe] = useState(false);
   const since = per === 'saison' ? new Date(saison, 8, 1) : per === 'an' ? new Date(Date.now() - 365 * 864e5) : null;
   const b = useMemo(() => bilanCooptation(data, me, { since, equipe }), [data, me, per, equipe]);
-  const periode = per === 'saison' ? `Saison ${seasonLabel(saison)}` : per === 'an' ? '12 derniers mois' : 'Depuis l’inscription';
+  const periode = per === 'saison' ? `Année ${seasonLabel(saison)}` : per === 'an' ? '12 derniers mois' : 'Depuis l’inscription';
   const today = new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
   return html`<${Modal} title="Bilan de cooptation" onClose=${onClose} wide>
     <div class="row bilan-ctl">
-      <div class="seg">${[['saison', 'Cette saison'], ['an', '12 mois'], ['tout', 'Depuis le début']].map(([k, l]) => html`<button class=${per === k ? 'on' : ''} onClick=${() => setPer(k)}>${l}</button>`)}</div>
+      <div class="seg">${[['saison', 'Cette année'], ['an', '12 mois'], ['tout', 'Depuis le début']].map(([k, l]) => html`<button class=${per === k ? 'on' : ''} onClick=${() => setPer(k)}>${l}</button>`)}</div>
       ${me.entreprise ? html`<label class="check small"><input id="bl-eq" type="checkbox" checked=${equipe} onChange=${e => setEquipe(e.target.checked)}/> Tous les lauréats de ${me.entreprise}</label>` : null}
     </div>
     <div class="bilan-sheet">
@@ -134,10 +134,10 @@ function BilanModal({ ctx, onClose }) {
       </div>
       ${b.delai !== null ? html`<p>Délai moyen entre la publication et la confirmation : <b class="mono">${b.delai}</b> jours.</p>` : null}
       ${b.recrues.length ? html`<table class="tbl"><thead><tr><th>Recrue</th><th>Filière</th><th>Type</th><th>Confirmé le</th></tr></thead><tbody>
-        ${b.recrues.map(p => { const s = store.byId('profiles', p.student_id); return html`<tr><td>${s ? html`<bdi translate="no">${s.full_name.split(' ')[0] + ' ' + (s.full_name.split(' ')[1]?.[0] || '') + '.'}</bdi>` : 'Étudiant(e)'}</td><td>${s?.filiere || ''}</td><td>${TYPES[p.type]?.label || ''}</td><td class="mono">${new Date(p.confirmed_at || p.created_at).toLocaleDateString('fr-FR')}</td></tr>`; })}
+        ${b.recrues.map(p => { const s = store.byId('profiles', p.student_id); return html`<tr><td>${s ? html`<bdi translate="no">${s.full_name.split(' ')[0] + ' ' + (s.full_name.split(' ')[1]?.[0] || '') + '.'}</bdi>` : 'Profil étudiant'}</td><td>${s?.filiere || ''}</td><td>${TYPES[p.type]?.label || ''}</td><td class="mono">${new Date(p.confirmed_at || p.created_at).toLocaleDateString('fr-FR')}</td></tr>`; })}
       </tbody></table>` : html`<p class="muted">Pas encore de recrue confirmée sur cette période.</p>`}
       ${b.filieres.length ? html`<p class="small">Filières recrutées : ${b.filieres.map(([f, n]) => `${f} (${n})`).join(' · ')}</p>` : null}
-      <p class="small muted">Chaque recrutement est déclaré par le lauréat puis confirmé par l’étudiant(e) sur la plateforme. Document généré le ${today}.</p>
+      <p class="small muted">Chaque recrutement est déclaré par le lauréat, puis confirmé sur la plateforme par la personne recrutée. Document généré le ${today}.</p>
     </div>
     <div class="row-end"><button class="btn primary" onClick=${printSheet}><${Icon} name="download" size=${16}/> Imprimer ou PDF</button></div>
   <//>`;

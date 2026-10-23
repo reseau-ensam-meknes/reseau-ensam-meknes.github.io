@@ -328,7 +328,14 @@ language plpgsql security definer set search_path = public as $$
 declare v_author uuid; v_status text; v_merci text; v_note int; v_ent text; v_ville text; v_pays text; v_type text; v_partage boolean; v_d record;
 begin
   if tg_op = 'INSERT' then
-    if auth.uid() is null or public.is_admin() then return new; end if;
+    if auth.uid() is null then return new; end if;
+    if public.is_admin() then
+      -- L'administration qui recrute elle-même (son offre, sa demande) : l'étudiant confirme, comme pour un lauréat
+      if new.laureat_id = auth.uid() and new.student_id is distinct from auth.uid() and new.status = 'declare' then
+        new.source := 'plateforme'; new.status := 'en_attente'; new.confirmed_at := null;
+      end if;
+      return new;
+    end if;
     new.confirmed_at := null;
     if auth.uid() = new.student_id then
       -- l'étudiant ne peut déclarer qu'une réussite hors plateforme (non vérifiée)
@@ -455,7 +462,7 @@ begin
     new.creneaux := public.creneaux_valides(new.creneaux);
     if cardinality(new.creneaux) = 0 then raise exception 'Propose au moins un horaire à venir.'; end if;
     if (select count(*) from public.mentorships where student_id = auth.uid() and status = 'demande') >= 3 then
-      raise exception 'Tu as déjà 3 demandes en attente. Attends une réponse avant d’en envoyer une autre.';
+      raise exception 'Tu as déjà 3 rendez-vous en attente d’un horaire. Attends une réponse avant d’en proposer un autre.';
     end if;
     new.status := 'demande'; new.rdv_at := null; new.reponse := null; new.merci := null; new.note := null;
     new.accepted_at := null; new.confirme_at := null; new.created_at := now();
@@ -465,7 +472,7 @@ begin
   new := old;
   -- Un lauréat prend une demande ouverte à tous
   if old.mentor_id is null and old.status = 'demande' and v.mentor_id = auth.uid() and auth.uid() <> old.student_id then
-    if v_role is distinct from 'laureat' then raise exception 'Seul un lauréat peut accepter une demande.'; end if;
+    if v_role is distinct from 'laureat' then raise exception 'Seul un lauréat peut choisir un horaire.'; end if;
     new.mentor_id := auth.uid();
   end if;
   -- Le lauréat : fixer ou déplacer le rendez-vous, passer la main, clore
@@ -1160,7 +1167,11 @@ begin
       elsif old.status = 'acceptee' and new.status = 'acceptee' and new.rdv_at is distinct from old.rdv_at then
         perform public.pousser(new.student_id, 'mentorat_deplace', jsonb_build_object('nom', (select full_name from public.profiles where id = new.mentor_id), 'sujet', new.sujet, 'rdv_at', new.rdv_at));
       elsif old.status = 'acceptee' and new.status = 'annulee' then
-        perform public.pousser(case when auth.uid() = new.student_id then new.mentor_id else new.student_id end, 'mentorat_annule', jsonb_build_object('sujet', new.sujet));
+        -- Qui annule est nommé ; si c'est le lauréat, l'étudiant reçoit un lien pour proposer d'autres horaires
+        perform public.pousser(case when auth.uid() = new.student_id then new.mentor_id else new.student_id end, 'mentorat_annule',
+          jsonb_strip_nulls(jsonb_build_object('sujet', new.sujet, 'm', new.id,
+            'nom', case when auth.uid() in (new.student_id, new.mentor_id) then (select full_name from public.profiles where id = auth.uid()) end,
+            'pour', case when auth.uid() = new.mentor_id then 'demandeur' when auth.uid() = new.student_id then 'mentor' end)));
       end if;
       if old.merci is null and new.merci is not null and new.mentor_id is not null then
         perform public.pousser(new.mentor_id, 'merci', jsonb_build_object('nom', (select full_name from public.profiles where id = new.student_id)));
@@ -1170,7 +1181,9 @@ begin
     if tg_op = 'INSERT' and new.offer_id is not null then
       select author_id into v_auteur from public.offers where id = new.offer_id;
       perform public.pousser(v_auteur, 'candidature', jsonb_build_object('nom', (select full_name from public.profiles where id = new.student_id), 'titre', new.titre));
-    elsif tg_op = 'UPDATE' and new.status is distinct from old.status and new.status in ('entretien', 'retenu') then
+    elsif tg_op = 'UPDATE' and new.status is distinct from old.status and new.status in ('entretien', 'retenu')
+      and not (old.status = 'retenu' and new.status = 'entretien') then
+      -- Retour de « retenu » à « entretien » : un recrutement annulé, pas un nouvel entretien
       perform public.pousser(new.student_id, 'candidature_statut', jsonb_build_object('titre', new.titre, 'statut', new.status));
     end if;
   elsif tg_table_name = 'placements' then
@@ -3015,7 +3028,7 @@ begin
       new.reponse_a := null;
     end if;
     if auth.uid() is not null and not public.peut_discuter(new.author_id, new.dest_id) then
-      raise exception 'Conversation pas encore ouverte : elle s’ouvre avec un mentorat, une candidature ou une demande de contact acceptée.';
+      raise exception 'Conversation pas encore ouverte : elle s’ouvre avec un mentorat, une candidature ou des coordonnées partagées.';
     end if;
     return new;
   end if;
@@ -3496,7 +3509,7 @@ begin
     update public.demandes set status = 'ouverte', laureat_id = null, proposition_id = null, match_at = null, relancee_at = now(), updated_at = now()
       where id = new.demande_id and status = 'match' and proposition_id = new.id;
     update public.placements set status = 'refuse' where demande_id = new.demande_id and laureat_id = new.laureat_id and status = 'en_attente';
-    perform public.pousser(v_d.auteur_id, 'demande_rouverte', jsonb_build_object('nom', (select full_name from public.profiles where id = new.laureat_id), 'titre', v_d.titre, 'demande', v_d.id));
+    perform public.pousser(v_d.auteur_id, 'demande_rouverte', jsonb_build_object('nom', (select full_name from public.profiles where id = new.laureat_id), 'titre', v_d.titre, 'demande', v_d.id, 'pour', 'auteur'));
   end if;
   perform set_config('ensam.demande_suite', v_avant, true);
   return null;
@@ -3518,7 +3531,7 @@ begin
     update public.propositions set status = case when new.status = 'ouverte' then 'declinee' else 'close' end, repondu_at = now()
       where id = old.proposition_id and status = 'acceptee';
     update public.placements set status = 'refuse' where demande_id = new.id and status = 'en_attente';
-    perform public.pousser(old.laureat_id, 'demande_rouverte', jsonb_build_object('nom', (select full_name from public.profiles where id = new.auteur_id), 'titre', new.titre, 'demande', new.id));
+    perform public.pousser(old.laureat_id, 'demande_rouverte', jsonb_build_object('nom', (select full_name from public.profiles where id = new.auteur_id), 'titre', new.titre, 'demande', new.id, 'pour', 'aidant'));
   end if;
   if new.status in ('fermee','pourvue') then
     update public.propositions set status = 'close', repondu_at = now() where demande_id = new.id and status = 'envoyee';

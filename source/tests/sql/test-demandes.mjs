@@ -137,14 +137,14 @@ test('arrêter : l’étudiant ou le lauréat met fin au match, la demande se ro
   assert.deepEqual([x.status, x.laureat_id, x.proposition_id], ['ouverte', null, null]);
   assert.equal((await db.query('select status from public.propositions where id = $1', [p.id])).rows[0].status, 'declinee');
   assert.equal((await db.query('select status from public.placements where id = $1', [pl.id])).rows[0].status, 'refuse');
-  assert.equal((await pushs('demande_rouverte', L2)).length, 1);
+  assert.deepEqual((await pushs('demande_rouverte', L2)).map(x => x.data.pour), ['aidant'], 'le lauréat est remercié');
   // Un autre lauréat aide ; cette fois c'est lui qui se retire
   const p3 = await proposer(L1, d.id, { aide: 'recrute' });
   await q(AUTRE, `update public.propositions set status = 'acceptee' where id = $1`, [p3.id]);
   await q(L1, `update public.propositions set status = 'retiree' where id = $1`, [p3.id]);
   x = await demande(d.id);
   assert.deepEqual([x.status, x.laureat_id], ['ouverte', null]);
-  assert.equal((await pushs('demande_rouverte', AUTRE)).length, 1);
+  assert.deepEqual((await pushs('demande_rouverte', AUTRE)).map(x => x.data.pour), ['auteur'], 'l’étudiant garde une porte ouverte');
   assert.equal((await pushs('demande_rouverte', L1)).length, 0, 'celui qui se retire n’est pas prévenu de son propre retrait');
   // Il peut la proposer à nouveau tant que la demande est ouverte (son mot repart en message)
   await q(L1, `update public.propositions set status = 'envoyee', message = 'Finalement c’est bon, le poste est ouvert !' where id = $1`, [p3.id]);
