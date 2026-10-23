@@ -98,6 +98,9 @@ test('réponses en 48 h : demandes d’étudiants sur 30 jours, celles qui atten
   const r = reponses48h(data, now);
   assert.equal(r.total, 3); assert.equal(r.a48, 2); assert.equal(Math.round(r.taux * 100), 67);
   assert.deepEqual(r.attente.map(d => d.id), ['m2', 'm3']);
+  assert.deepEqual(r.parType.mentorat, { total: 2, a48: 1, taux: 0.5 });
+  assert.deepEqual(r.parType.question, { total: 1, a48: 1, taux: 1 });
+  assert.equal(r.parType.demande.taux, null, 'pas encore de Demande');
 });
 
 test('inscriptions : compte créé, profil rempli, première action ; actifs de la semaine', async () => {

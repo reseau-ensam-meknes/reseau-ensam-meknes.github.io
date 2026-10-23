@@ -539,8 +539,8 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
   },
   evenement: {
     route: 'reseau/agenda',
-    fr: v => [`À l’agenda : ${v.titre}`, [v.date ? `${v.date} à ${v.heure}` : '', v.lieu].filter(Boolean).join(' · ') || 'Nouvel événement de l’école.'],
-    ar: v => [`في أجندة المدرسة: ${v.titre}`, [v.date ? `${v.date} على الساعة ${v.heure}` : '', v.lieu].filter(Boolean).join(' · ') || 'نشاط جديد للمدرسة.'],
+    fr: v => [`À l’agenda : ${v.titre}`, [v.date ? `${v.date} à ${v.heure}` : '', v.lieu].filter(Boolean).join(' · ') || 'Nouvel événement.'],
+    ar: v => [`في أجندة الشبكة: ${v.titre}`, [v.date ? `${v.date} على الساعة ${v.heure}` : '', v.lieu].filter(Boolean).join(' · ') || 'نشاط جديد.'],
   },
   evenement_annule: {
     route: 'reseau/agenda',
@@ -554,8 +554,8 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
   },
   enquete: {
     route: 'enquete',
-    fr: v => ['Enquête d’insertion', `${v.vague || 6} mois après ton diplôme : 2 minutes pour aider l’école et les promos suivantes.`],
-    ar: v => ['استمارة الإدماج المهني', `${v.vague || 6} أشهر بعد تخرجك: دقيقتان لمساعدة المدرسة والدفعات القادمة.`],
+    fr: v => ['Enquête d’insertion', `${v.vague || 6} mois après ton diplôme : 2 minutes pour aider les promos suivantes.`],
+    ar: v => ['استمارة الإدماج المهني', `${v.vague || 6} أشهر بعد تخرجك: دقيقتان لمساعدة الدفعات القادمة.`],
   },
   message: {
     route: 'messages',
@@ -947,7 +947,7 @@ const FR = {
   t: {
     aFaire: 'À faire cette semaine', offres: 'Nouvelles offres pour toi', reponses: 'Réponses à tes questions', parrain: 'Ton parrain',
     cafes: 'Cafés ENSAM près de chez toi', talents: 'Alerte talents', ouvertes: 'Ils demandent de l’aide', impact: 'Ton impact cette semaine',
-    filleul: 'Ton nouveau filleul', filleuls: 'Tes nouveaux filleuls', admin: 'Administration', agenda: 'À l’agenda de l’école', enquete: 'Enquête d’insertion',
+    filleul: 'Ton nouveau filleul', filleuls: 'Tes nouveaux filleuls', admin: 'Administration', agenda: 'À l’agenda du réseau', enquete: 'Enquête d’insertion',
   },
   routes: {
     enquete: 'Répondre à l’enquête', 'reseau/agenda': 'Voir l’agenda', 'mentorat/cv': 'Voir les CV à relire',
@@ -984,7 +984,7 @@ const FR = {
     enAttente: (f: Fmt, n: number) => `${f.g(pl(n, 'recrutement attend', 'recrutements attendent'))} la confirmation de l’étudiant`,
     signalements: (f: Fmt, n: number) => `${f.g(pl(n, 'signalement', 'signalements'))} à traiter dans la modération`,
     contacts: (f: Fmt, n: number) => f.g(n > 1 ? `${n} membres aimeraient avoir tes coordonnées.` : 'Un membre aimerait avoir tes coordonnées.'),
-    enquete: (f: Fmt, v: number) => `${f.g(`Enquête ${v} mois après le diplôme`)} : 2 minutes pour aider l’école et les promos suivantes.`,
+    enquete: (f: Fmt, v: number) => `${f.g(`Enquête ${v} mois après le diplôme`)} : 2 minutes pour aider les promos suivantes.`,
     relectures: (f: Fmt, n: number) => f.g(n > 1 ? `${n} CV attendent une relecture.` : '1 CV attend une relecture.'),
     evenement: (f: Fmt, x: { titre: string; lieu: string }, q: string) => `${f.g(x.titre)} · ${q}${x.lieu ? ` · ${f.u(x.lieu)}` : ''}`,
   },
@@ -1031,7 +1031,7 @@ const AR: Dico = {
   t: {
     aFaire: 'مهام هذا الأسبوع', offres: 'عروض جديدة لك', reponses: 'أجوبة على أسئلتك', parrain: 'عرّابك',
     cafes: 'مقاهي ENSAM قربك', talents: 'تنبيه المواهب', ouvertes: 'طلبة يحتاجون مساعدتك', impact: 'أثرك هذا الأسبوع',
-    filleul: 'طالب جديد في رعايتك', filleuls: 'طلبة جدد في رعايتك', admin: 'الإدارة', agenda: 'في أجندة المدرسة', enquete: 'استمارة الإدماج المهني',
+    filleul: 'طالب جديد في رعايتك', filleuls: 'طلبة جدد في رعايتك', admin: 'الإدارة', agenda: 'في أجندة الشبكة', enquete: 'استمارة الإدماج المهني',
   },
   routes: {
     enquete: 'الإجابة على الاستمارة', 'reseau/agenda': 'عرض الأجندة', 'mentorat/cv': 'عرض السير الذاتية للمراجعة',
@@ -1067,7 +1067,7 @@ const AR: Dico = {
     enAttente: (f, n) => `${f.g(arN(n, ['توظيف واحد', 'توظيفان', '{n} توظيفات', '{n} توظيفًا']))} في انتظار تأكيد الطالب`,
     signalements: (f, n) => `${f.g(arN(n, ['تبليغ واحد', 'تبليغان', '{n} تبليغات', '{n} تبليغًا']))} في انتظار المعالجة في صفحة الإشراف`,
     contacts: (f, n) => f.g(n > 1 ? arN(n, ['', 'عضوان يرغبان في معلومات الاتصال بك.', '{n} أعضاء يرغبون في معلومات الاتصال بك.', '{n} عضوًا يرغبون في معلومات الاتصال بك.']) : 'عضو يرغب في معلومات الاتصال بك.'),
-    enquete: (f, v) => `${f.g(`استمارة الإدماج بعد ${v === 12 ? 'سنة' : 'ستة أشهر'} من التخرج`)}: دقيقتان لمساعدة المدرسة والدفعات القادمة.`,
+    enquete: (f, v) => `${f.g(`استمارة الإدماج بعد ${v === 12 ? 'سنة' : 'ستة أشهر'} من التخرج`)}: دقيقتان لمساعدة الدفعات القادمة.`,
     relectures: (f, n) => f.g(arN(n, ['سيرة ذاتية واحدة تنتظر المراجعة.', 'سيرتان ذاتيتان تنتظران المراجعة.', '{n} سير ذاتية تنتظر المراجعة.', '{n} سيرة ذاتية تنتظر المراجعة.'])),
     evenement: (f, x, q) => `${f.g(x.titre)} · ${q}${x.lieu ? ` · ${f.u(x.lieu)}` : ''}`,
   },
@@ -1441,10 +1441,10 @@ export function rendreEnquete(vague: number, rappel: boolean, langue: Langue, si
     ? `${rappel ? 'تذكير: ' : ''}أين وصلت ${v === 12 ? 'بعد سنة' : 'بعد ستة أشهر'} من تخرجك؟ استمارة الإدماج المهني`
     : `${rappel ? 'Rappel : où' : 'Où'} en es-tu ${v === 12 ? 'un an' : 'six mois'} après ton diplôme ? Enquête d’insertion`;
   const lignes = ar ? [
-    'تتابع المدرسة ما يصير إليه خريجوها. جوابك (دقيقتان) يساعد الدفعات القادمة ويدعم اعتماد المدرسة.',
+    'تتابع الشبكة ما يصير إليه خريجو كل دفعة. جوابك (دقيقتان) يساعد الطلبة والدفعات القادمة.',
     'لا تُنشر الأجوبة إلا في شكل أرقام إجمالية، ولا شيء تحت 5 أجوبة.',
   ] : [
-    'L’école suit ce que deviennent ses diplômés. Ta réponse (2 minutes) aide les promos suivantes et l’accréditation de l’école.',
+    'Le réseau suit ce que devient chaque promo. Ta réponse (2 minutes) aide les étudiants et les promos suivantes.',
     'Les réponses ne sont publiées qu’en chiffres globaux, jamais en dessous de 5 réponses.',
   ];
   const html = cadreEmail({

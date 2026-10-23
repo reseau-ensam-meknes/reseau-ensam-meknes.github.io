@@ -905,14 +905,16 @@ class SupabaseStore extends Base {
     this.me = this.byId('profiles', this.userId) || null;
     this.subscribe();
   }
-  async loadTable(t) {
+  async loadTable(t, essai = 0) {
     this.vues ||= {};
     const vue = VUES[t] && this.vues[t] !== false ? VUES[t] : null;
     const all = [];
     for (let from = 0; ; from += 1000) {
       const { data, error } = await this.sb.from(vue || t).select('*').order('created_at', { ascending: false }).range(from, from + 999);
-      if (error && vue && from === 0) { this.vues[t] = false; return this.loadTable(t); }  // base pas encore à jour : la table
+      if (error && vue && from === 0) { this.vues[t] = false; return this.loadTable(t, essai); }  // base pas encore à jour : la table
       if (error && OPTIONAL.has(t)) { this.data[t] = []; return; }
+      // Réseau du téléphone qui coupe une seconde : on réessaie une fois avant d'abandonner
+      if (error && !essai) { await new Promise(ok => setTimeout(ok, 1200)); return this.loadTable(t, 1); }
       if (error) throw error;
       all.push(...data);
       if (data.length < 1000) break;
@@ -1227,8 +1229,11 @@ class SupabaseStore extends Base {
   }
 }
 
+// Le message à montrer au membre pour une erreur (jamais un message technique pour une coupure réseau)
+export const texteErreur = e => frError(e);
 function frError(e) {
-  const m = (e?.message || '').toLowerCase();
+  const m = (e?.message || String(e || '')).toLowerCase();
+  if (/failed to fetch|load failed|networkerror|network request failed|fetch failed|timed? ?out/.test(m)) return 'Pas de réseau pour l’instant. Réessaie dans un instant.';
   if (m.includes('invalid login')) return 'Email ou mot de passe incorrect.';
   if (m.includes('already registered')) return 'Un compte existe déjà avec cet email. Connecte-toi.';
   if (m.includes('password should be')) return 'Le mot de passe doit contenir au moins 6 caractères.';

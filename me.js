@@ -3,7 +3,7 @@ import { html, useState } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, Bar, toast, LevelChip, CompanyLogo, TYPE_ICON, Num, celebrate, injectCSS } from './ui.js';
 import { addAR, arCount } from './i18n.js';
 import { PoulsReseau } from './pouls.js';
-import { OBJECTIFS, NIVEAUX, TYPES, niveauOf, statutOf, typeForNiveau, seasonLabel, timeAgo, levelOf, BADGES, badgesOf, BAREME, computeScores, NIVEAUX_IMPACT, mentorState } from './logic.js';
+import { OBJECTIFS, NIVEAUX, TYPES, niveauOf, statutOf, typeForNiveau, seasonLabel, timeAgo, levelOf, BADGES, badgesOf, BAREME, computeScores, NIVEAUX_IMPACT, mentorState, requestsFor, demandesPour } from './logic.js';
 import { APP_STATUS, OfferComposer } from './offers.js';
 import { AttestationCard, ShareModal } from './growth.js';
 import { Filleuls, ParrainCard } from './saison.js';
@@ -277,13 +277,20 @@ export function EspacePage(ctx) {
 }
 
 // Première visite d'un lauréat : trois gestes faciles, avec le temps qu'ils prennent. Aucun n'est obligatoire.
+// Seulement des gestes possibles aujourd'hui : un CV à relire, un étudiant qui attend, sinon se rendre disponible
 function PremiereAide({ ctx, onPublier }) {
-  const { me, go } = ctx;
+  const { data, me, go, store, act } = ctx;
+  const byId = id => store.byId('profiles', id);
+  const cvs = (data.relectures_cv || []).filter(r => !r.reviewer_id && r.status === 'demandee' && r.student_id !== me.id);
+  const demandes = demandesPour(data, me, byId).filter(x => !x.mienne);
+  const attente = requestsFor(data, me, byId);
   const gestes = [
-    ['file', 'Relire un CV', 'Ton regard de pro, quelques remarques suffisent.', '10 min', () => go('mentorat/cv')],
-    ['calendar', 'Choisir un horaire pour un étudiant', 'Un appel en visio, au moment qui t’arrange.', '2 min', () => go('mentorat')],
+    demandes.length ? ['send', 'Répondre à un étudiant qui cherche', 'Il a dit ce qu’il cherche, CV joint : propose ton aide en un clic.', '2 min', () => go('offres/demandes')] : null,
+    cvs.length ? ['file', 'Relire un CV', 'Ton regard de pro, quelques remarques suffisent.', '10 min', () => go('mentorat/cv')] : null,
+    attente.length ? ['calendar', 'Choisir un horaire pour un étudiant', 'Un appel en visio, au moment qui t’arrange.', '2 min', () => go('mentorat')] : null,
+    !me.mentor_dispo ? ['mentor', 'Me rendre disponible', 'Les étudiants de ta filière te verront dans Mentorat.', '1 clic', () => act(async () => { await store.update('profiles', me.id, { mentor_dispo: true }); toast('C’est noté : les étudiants de ta filière te verront dans Mentorat.'); })] : null,
     ['feed', 'Publier une offre', 'Colle l’annonce : les champs se remplissent seuls.', '5 min', onPublier],
-  ];
+  ].filter(Boolean);
   return html`<div class="premiere-aide">
     <div class="pa-head"><span class="pa-ico"><${Icon} name="heart" size=${22}/></span>
       <div><p class="eyebrow">Bienvenue, ${(me.full_name || '').split(' ')[0]}</p><h2>Ta première aide</h2>
@@ -419,6 +426,7 @@ addAR({
   'Choisir un horaire pour un étudiant': 'اختيار موعد لطالب',
   'Un appel en visio, au moment qui t’arrange.': 'مكالمة فيديو في الوقت الذي يناسبك.',
   'Colle l’annonce : les champs se remplissent seuls.': 'الصق الإعلان: تُملأ الخانات تلقائيًا.',
+  'Répondre à un étudiant qui cherche': 'الرد على طالب يبحث', 'Il a dit ce qu’il cherche, CV joint : propose ton aide en un clic.': 'قال ما يبحث عنه مع سيرته الذاتية: اقترح مساعدتك بنقرة واحدة.', 'Les étudiants de ta filière te verront dans Mentorat.': 'سيراك طلبة شعبتك في قسم الإرشاد.', '1 clic': 'نقرة واحدة',
   'Lire l’autre merci': 'قراءة رسالة الشكر الأخرى',
   'Mes badges': 'شاراتي',
   'Ton premier badge': 'شارتك الأولى',

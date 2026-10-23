@@ -540,7 +540,7 @@ export function MentoratPage(ctx) {
     ${isLaureat ? html`<section class="m-section">
       <div class="m-head"><h2 class="h-ico"><${Icon} name="heart"/> ${`Quand tu as ${RDV_MIN} minutes`}</h2></div>
       ${need.length ? html`<p class="small muted m-invite">Prends la demande qui te parle, à ton rythme. Les autres lauréats s’occupent du reste.</p>` : null}
-      ${!me.mentor_dispo ? html`<p class="small muted">Active « Disponible pour aider » pour recevoir des demandes directes.</p>` : null}
+      ${!me.mentor_dispo ? html`<div class="hint-box"><${Icon} name="mentor" size=${16}/><span class="grow small">Les étudiants ne te voient pas encore : rends-toi disponible pour recevoir leurs demandes directes.</span><button class="btn small primary" onClick=${() => act(() => store.update('profiles', me.id, { mentor_dispo: true }))}>Me rendre disponible</button></div>` : null}
       <div class="list">${need.length ? need.slice(0, more ? 12 : 2).map(({ m, why, direct }) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="mentor" why=${why} onIgnore=${direct ? null : () => ignorer(m)}/>`) : html`<${Empty} icon="mentor" title="Tout est calme pour l’instant">Tu seras prévenu(e) dès qu’un étudiant demande de l’aide.<//>`}</div>
       ${need.length > 2 ? html`<button class="linkish small past-toggle" onClick=${() => setMore(!more)}>${more ? 'Voir moins' : `Voir les autres demandes (${need.length - 2})`}</button>` : null}
     </section>` : null}

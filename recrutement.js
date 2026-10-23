@@ -64,7 +64,7 @@ export function RelanceBanner({ ctx, o }) {
 const sujetTitre = t => { const s = t.replace(/^(PFE|Sujet de PFE|Stage PFE)\s*[:–-]\s*/i, ''); return s.charAt(0).toUpperCase() + s.slice(1); };
 
 export function BanqueSujets({ ctx, onPropose }) {
-  const { data, me, saison, store, openOffer, openProfile } = ctx;
+  const { data, me, saison, store, openOffer, openProfile, go } = ctx;
   const [fil, setFil] = useState(me.role === 'etudiant' && FILIERES.includes(me.filiere) ? me.filiere : '');
   const [dispo, setDispo] = useState(true);
   const taken = o => data.placements.find(p => p.offer_id === o.id && p.status !== 'refuse');
@@ -100,7 +100,7 @@ export function BanqueSujets({ ctx, onPropose }) {
           ${libre && me.role === 'etudiant' && niveauOf(me, saison) === 5 ? html`<button class="btn tiny primary" onClick=${() => openOffer(o.id, true)}>Je prends ce sujet</button>` : null}
         </footer>
       </article>`;
-    }) : html`<${Empty} icon="cap" title=${dispo ? 'Aucun sujet disponible pour l’instant' : 'Aucun sujet'}>${me.role === 'etudiant' ? 'Les lauréats déposent des sujets toute l’année. Reviens bientôt ou demande conseil en mentorat.' : html`Dépose le premier : un problème réel de ton équipe, que tu pourrais encadrer.<div class="empty-act"><button class="btn small primary" onClick=${onPropose}><${Icon} name="plus" size=${15}/> Déposer un sujet</button></div>`}<//>`}</div>
+    }) : html`<${Empty} icon="cap" title=${dispo ? 'Aucun sujet disponible pour l’instant' : 'Aucun sujet'}>${me.role === 'etudiant' ? html`Pas encore de sujet déposé. Un lauréat de ta filière peut déjà t’aider à choisir ton PFE, en 20 minutes de visio.<div class="empty-act"><button class="btn small primary" onClick=${() => go('mentorat')}>Demander un conseil</button></div>` : html`Dépose le premier : un problème réel de ton équipe, que tu pourrais encadrer.<div class="empty-act"><button class="btn small primary" onClick=${onPropose}><${Icon} name="plus" size=${15}/> Déposer un sujet</button></div>`}<//>`}</div>
   </div>`;
 }
 

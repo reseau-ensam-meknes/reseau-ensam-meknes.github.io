@@ -276,7 +276,7 @@ export function computeScores(data, since = null) {
 
 export const BADGES = [
   { id: 'fondateur', nom: 'Membre fondateur', desc: 'Parmi les 25 premiers lauréats du réseau', test: (s, p, x) => !!p.id && !!x.fondateurs?.has(p.id) },
-  { id: 'verifie', nom: 'Lauréat vérifié', desc: 'Profil vérifié par l’école', test: (s, p) => p.role === 'laureat' && p.verified },
+  { id: 'verifie', nom: 'Lauréat vérifié', desc: 'Diplôme confirmé par le réseau', test: (s, p) => p.role === 'laureat' && p.verified },
   { id: 'premier', nom: 'Premier coup de pouce', desc: 'A publié une première offre', test: s => s.offres >= 1 },
   { id: 'recruteur', nom: 'Recruteur', desc: '3 étudiants recrutés grâce à ses offres', test: s => s.recrutes >= 3 },
   { id: 'faiseur', nom: 'Faiseur de carrières', desc: '10 étudiants recrutés', test: s => s.recrutes >= 10 },
@@ -348,7 +348,12 @@ export function reponses48h(data, now = new Date()) {
   const comptees = demandes.filter(d => d.rep !== null || t - d.at >= 48 * H);
   const a48 = comptees.filter(d => d.rep !== null && d.rep - d.at <= 48 * H).length;
   const attente = demandes.filter(d => d.rep === null && !d.close && t - d.at > 24 * H).sort((a, b) => a.at - b.at);
-  return { total: comptees.length, a48, taux: comptees.length ? a48 / comptees.length : null, attente };
+  // Le même chiffre pour chaque sorte de demande (la « Demande » d'un étudiant est celle qu'on suit d'abord)
+  const parType = Object.fromEntries(['demande', 'mentorat', 'question'].map(k => {
+    const c = comptees.filter(d => d.type === k), a = c.filter(d => d.rep !== null && d.rep - d.at <= 48 * H).length;
+    return [k, { total: c.length, a48: a, taux: c.length ? a / c.length : null }];
+  }));
+  return { total: comptees.length, a48, taux: comptees.length ? a48 / comptees.length : null, attente, parType };
 }
 
 // Offres faites pour un membre : un étudiant, celles de son année ; un jeune diplômé, celles « Jeunes diplômés » ;
@@ -364,7 +369,8 @@ export function offrePour(o, me, saison) {
 // et aux offres « Jeunes diplômés » s'il est jeune diplômé ou cherche un emploi
 export function peutPostulerA(o, me, saison) {
   if (!me || o.author_id === me.id) return false;
-  if (me.role === 'etudiant') return o.audience !== 'laureats';
+  // Un étudiant ne postule qu'aux offres de son année (comme dans la liste)
+  if (me.role === 'etudiant') return o.audience !== 'laureats' && (o.annees || []).includes(niveauOf(me, saison));
   if (me.role !== 'laureat') return false;
   return o.audience === 'laureats' || ((o.annees || []).includes(6) && (!!me.en_recherche || niveauOf(me, saison) === 6));
 }

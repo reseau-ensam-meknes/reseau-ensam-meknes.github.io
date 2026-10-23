@@ -1257,6 +1257,14 @@ button.panel:hover, button.impact-strip:hover, button.objective:hover { border-c
   .btn.tiny, .icon-btn.small, .linkish { position: relative; }
   .btn.tiny::before, .icon-btn.small::before, .linkish::before { content: ""; position: absolute; inset: -7px -4px; }
 }
+/* Au doigt : pas de zoom surprise sur iPhone quand on touche un champ (16 px au moins),
+   boutons du haut à 44 px de haut (zone touchable un peu plus large que le dessin), filtres faciles à toucher */
+@media (pointer: coarse) {
+  input, select, textarea { font-size: 16px; }
+  .top .icon-btn { height: 44px; }
+  .top .icon-btn::before { content: ""; position: absolute; inset: 0 -3px; }
+  .chip { min-height: 40px; }
+}
 
 /* Accueil : une prochaine étape, deux sections, des titres de section plus nets */
 .home { gap: 1rem; }

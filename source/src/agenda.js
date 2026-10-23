@@ -6,12 +6,12 @@ import { addAR, getLang } from './i18n.js';
 import { TYPES_EVENEMENT } from './logic.js';
 
 addAR({
-  'Agenda de l’école': 'مفكرة المدرسة', 'Forum, conférences, portes ouvertes : ce qui se passe à l’école et en ligne.': 'المنتدى، المحاضرات، الأبواب المفتوحة: ما يجري في المدرسة وعبر الإنترنت.',
+  'Agenda du réseau': 'مفكرة الشبكة', 'Forum, conférences, portes ouvertes : ce qui se passe à l’école et en ligne.': 'المنتدى، المحاضرات، الأبواب المفتوحة: ما يجري في المدرسة وعبر الإنترنت.',
   'Publier un événement': 'نشر حدث', 'Modifier l’événement': 'تعديل الحدث', 'Je participe': 'سأشارك', 'Je ne viens plus': 'لن أحضر', 'Inscrit(e)': 'مسجّل(ة)',
   'Google Agenda': 'تقويم Google', 'Autre agenda (.ics)': 'تقويم آخر (.ics)', 'Rejoindre en ligne': 'الانضمام عبر الإنترنت', 'En ligne': 'عبر الإنترنت',
   'Pour les étudiants': 'للطلبة', 'Pour les lauréats': 'للخريجين', 'Tout le monde': 'الجميع', 'Étudiants': 'الطلبة', 'Lauréats': 'الخريجون',
   'Annulé': 'ملغى', 'Terminé': 'انتهى', 'Annuler l’événement': 'إلغاء الحدث', 'Rétablir': 'إعادة تفعيل', 'Supprimer': 'حذف', 'Modifier': 'تعديل',
-  'Aucun événement à venir': 'لا توجد أحداث قادمة', 'L’école publie ici ses forums, conférences et portes ouvertes.': 'تنشر المدرسة هنا منتدياتها ومحاضراتها وأيامها المفتوحة.',
+  'Aucun événement à venir': 'لا توجد أحداث قادمة', 'Les forums, conférences et portes ouvertes apparaîtront ici.': 'ستظهر هنا المنتديات والمحاضرات والأبواب المفتوحة.',
   'Publie le premier : tous les membres concernés sont prévenus.': 'انشر الأول: يتم إشعار كل الأعضاء المعنيين.',
   'Titre': 'العنوان', 'Type': 'النوع', 'Début': 'البداية', 'Fin (facultatif)': 'النهاية (اختياري)', 'Lieu': 'المكان', 'Lien (facultatif)': 'الرابط (اختياري)',
   'Description': 'الوصف', 'Pour qui ?': 'لمن؟', 'Publier': 'نشر', 'Enregistrer': 'حفظ', 'Annuler': 'إلغاء',
@@ -25,7 +25,7 @@ addAR({
   'Le lien doit commencer par https://': 'يجب أن يبدأ الرابط بـ https://', 'La fin doit être après le début.': 'يجب أن تكون النهاية بعد البداية.',
   'Supprimer cet événement ? Les inscriptions partent avec lui.': 'حذف هذا الحدث؟ ستُحذف التسجيلات معه.',
   'Annuler cet événement ? Il reste visible, barré, et les inscrits sont prévenus.': 'إلغاء هذا الحدث؟ سيبقى ظاهرًا مشطوبًا، ويتم إخبار المسجلين.',
-  'À l’agenda de l’école': 'في مفكرة المدرسة', 'Inscrits': 'المسجلون', 'Personne n’est encore inscrit.': 'لم يسجل أحد بعد.',
+  'À l’agenda du réseau': 'في مفكرة الشبكة', 'Inscrits': 'المسجلون', 'Personne n’est encore inscrit.': 'لم يسجل أحد بعد.',
   'Tout voir': 'عرض الكل', 'Événements': 'الأحداث', 'Liste des inscrits (CSV)': 'لائحة المسجلين (CSV)', 'Événement': 'حدث',
   'Forum': 'منتدى', 'Conférence': 'محاضرة', 'Portes ouvertes': 'أبواب مفتوحة', 'Atelier': 'ورشة', 'Soutenances': 'مناقشات',
 }, [
@@ -241,11 +241,11 @@ export function AgendaPage({ ctx }) {
   for (const e of avenir) { const d = new Date(e.debut); const k = d.getFullYear() * 12 + d.getMonth(); const last = mois[mois.length - 1]; if (last?.k === k) last.items.push(e); else mois.push({ k, d, items: [e] }); }
   const open = e => go('reseau/agenda/' + e.id);
   return html`<div class="sub-page agenda">
-    <div class="section-head"><div class="ag-head"><h2 class="h-ico"><${Icon} name="calendar"/> Agenda de l’école</h2><p class="small muted">Forum, conférences, portes ouvertes : ce qui se passe à l’école et en ligne.</p></div>
+    <div class="section-head"><div class="ag-head"><h2 class="h-ico"><${Icon} name="calendar"/> Agenda du réseau</h2><p class="small muted">Forum, conférences, portes ouvertes : ce qui se passe à l’école et en ligne.</p></div>
       ${isAdmin ? html`<button class="btn primary small" id="ev-new" onClick=${() => setEdit('new')}><${Icon} name="plus" size=${15}/> Publier un événement</button>` : null}</div>
     ${avenir.length ? mois.map(m => html`<section class="ev-month"><h3 class="ev-month-h"><span>${MOIS[m.d.getMonth()]}</span> <span class="mono">${m.d.getFullYear()}</span></h3>
       <div class="ev-list">${m.items.map(e => html`<${EventCard} key=${e.id} ctx=${ctx} e=${e} onOpen=${open} onEdit=${x => setEdit(x)}/>`)}</div></section>`)
-      : html`<${Empty} icon="calendar" title="Aucun événement à venir">${isAdmin ? 'Publie le premier : tous les membres concernés sont prévenus.' : 'L’école publie ici ses forums, conférences et portes ouvertes.'}<//>`}
+      : html`<${Empty} icon="calendar" title="Aucun événement à venir">${isAdmin ? 'Publie le premier : tous les membres concernés sont prévenus.' : 'Les forums, conférences et portes ouvertes apparaîtront ici.'}<//>`}
     ${passes.length ? html`<button class="linkish small past-toggle" aria-expanded=${old} onClick=${() => setOld(!old)}>${`Événements passés (${passes.length})`}</button>
       ${old ? html`<div class="ev-list">${passes.slice(0, 20).map(e => html`<${EventCard} key=${e.id} ctx=${ctx} e=${e} onOpen=${open} onEdit=${x => setEdit(x)}/>`)}</div>` : null}` : null}
     ${ouvert ? html`<${EventDetail} ctx=${ctx} e=${ouvert} key=${ouvert.id} onClose=${() => go('reseau/agenda')} onEdit=${x => setEdit(x)}/>` : null}
@@ -287,7 +287,7 @@ export function NextEvent({ ctx }) {
   const e = eventsFor(data, me).filter(x => !x.annule && !passe(x)).sort((a, b) => new Date(a.debut) - new Date(b.debut))[0];
   if (!e) return null;
   return html`<div class="panel next-ev">
-    <div class="section-head"><h2 class="h-ico"><${Icon} name="calendar"/> À l’agenda de l’école</h2><button class="btn tiny ghost" onClick=${() => go('reseau/agenda')}>Agenda <${Icon} name="arrow" size=${14}/></button></div>
+    <div class="section-head"><h2 class="h-ico"><${Icon} name="calendar"/> À l’agenda du réseau</h2><button class="btn tiny ghost" onClick=${() => go('reseau/agenda')}>Agenda <${Icon} name="arrow" size=${14}/></button></div>
     <div class="next-ev-row"><${DateBloc} iso=${e.debut} compact/>
       <div class="ev-main"><${TypeTag} type=${e.type}/>
         <button class="linkish strong ev-title-s" onClick=${() => go('reseau/agenda/' + e.id)} translate="no" dir="auto">${e.titre}</button>

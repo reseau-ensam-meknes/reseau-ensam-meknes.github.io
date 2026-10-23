@@ -223,7 +223,7 @@ export function RoleLine({ p, score }) {
   else if (p.role === 'admin') parts.push(p.poste || 'Administration');
   else parts.push(`Promo ${p.promo}${p.entreprise ? ' · ' + p.entreprise : ''}`);
   return html`<span class="role-line">${parts.join(' ')}
-    ${p.role === 'laureat' && p.verified ? html`<span class="verif" title="Lauréat vérifié par l’école"><${Icon} name="shield" size=${13}/></span>` : null}
+    ${p.role === 'laureat' && p.verified ? html`<span class="verif" title="Lauréat vérifié par le réseau"><${Icon} name="shield" size=${13}/></span>` : null}
     ${p.role === 'laureat' && score && rangsVisibles ? html` <${LevelChip} points=${score.points}/>` : null}
     ${p.role === 'laureat' && score && !rangsVisibles && aides(score) ? html` <span class="mini aide-chip"><${Icon} name="heart" size=${11}/> ${aides(score) > 1 ? `A aidé ${aides(score)} étudiants` : 'A aidé 1 étudiant'}</span>` : null}</span>`;
 }
@@ -249,8 +249,9 @@ export function Tabs({ tabs, value, onChange }) {
   return html`<div class="tabs" role="tablist">${tabs.map(([k, l, c]) => html`<button role="tab" aria-selected=${value === k} class=${'tab' + (value === k ? ' on' : '')} onClick=${() => onChange(k)}>${l}${c ? html` <span class="count">${c}</span>` : null}</button>`)}</div>`;
 }
 
+// La fenêtre reste ouverte (bouton occupé) tant que l'action n'est pas finie : pas de double envoi
 export function Confirm({ text, onYes, onClose, yes = 'Confirmer' }) {
-  return html`<${Modal} title="Confirmation" onClose=${onClose}><p>${text}</p><div class="row-end"><button class="btn ghost" onClick=${onClose}>Annuler</button><button class="btn danger" onClick=${() => { onYes(); onClose(); }}>${yes}</button></div><//>`;
+  return html`<${Modal} title="Confirmation" onClose=${onClose}><p>${text}</p><div class="row-end"><button class="btn ghost" onClick=${onClose}>Annuler</button><button class="btn danger" onClick=${async () => { try { await onYes(); } finally { onClose(); } }}>${yes}</button></div><//>`;
 }
 
 export function useLocal(key, init) {

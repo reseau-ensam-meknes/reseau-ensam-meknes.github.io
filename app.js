@@ -1,9 +1,9 @@
 // Point d'entrée : coque de l'application, connexion, accueil, notifications.
 import { getLang, setLang, chargerAR } from './i18n.js';
 import { html, render, useState, useEffect, useMemo, useRef } from './vendor/preact-htm.js';
-import { createStore } from './store.js';
+import { createStore, texteErreur } from './store.js';
 import { Icon, Field, Empty, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, Num, useLocal, Celebration, celebrate, voirRangs, brancherPhotos } from './ui.js';
-import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause } from './logic.js';
+import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
 import { ParcoursPage, EspacePage, ConfirmRecruit, Journey, journeyStep } from './me.js';
 import { DashboardPage } from './dashboard.js';
@@ -27,6 +27,10 @@ import { lireInvitation, promoInvitee, roleDePromo } from './invitation.js';
 import { MessagesPage, MessagesHome, useAlerteMessages } from './messages.js';
 import { PoulsReseau } from './pouls.js';
 import { DemandesHome } from './demandes.js';
+
+// Le dernier bouton touché, pour que act le retrouve même sans focus (iPhone)
+let dernierBouton = { b: null, t: 0 };
+document.addEventListener('click', e => { dernierBouton = { b: e.target?.closest?.('button.btn') || null, t: Date.now() }; }, true);
 
 const ROUTES = ['accueil', 'offres', 'mentorat', 'messages', 'parcours', 'espace', 'reseau', 'suivi', 'profil', 'admin', 'verifier', 'confidentialite', 'desabo', 'enquete', 'offre'];
 const ALIASES = { impact: 'espace', tableau: 'suivi', communaute: 'reseau', entraide: 'reseau/entraide', groupes: 'reseau/groupes', sujets: 'offres/sujets', 'reseau/mentorat': 'mentorat', 'reseau/mentorat/rdv': 'mentorat', agenda: 'reseau/agenda', entreprises: 'reseau/entreprises', etranger: 'reseau/etranger', relecture: 'mentorat/cv', cv: 'mentorat/cv', moderation: 'admin/moderation', message: 'messages', chat: 'messages' };
@@ -128,13 +132,14 @@ function App({ store }) {
   if (store.mode === 'live' && !store.session) return html`<${AuthScreen} store=${store} relang=${relang}/>`;
   if (store.mode === 'live' && !me) return html`<${Onboarding} store=${store} relang=${relang}/>`;
 
-  // Le bouton qui lance l'action attend sa fin (grisé, petit cercle) : pas de double envoi sur une connexion lente
+  // Le bouton qui lance l'action attend sa fin (grisé, petit cercle) : pas de double envoi sur une connexion lente.
+  // Sur iPhone, un bouton touché ne prend pas le focus : on se sert alors du dernier bouton touché.
   const act = async fn => {
     lastAct.current = Date.now();
-    const b = document.activeElement?.closest?.('button.btn');
+    const b = document.activeElement?.closest?.('button.btn') || (Date.now() - dernierBouton.t < 800 ? dernierBouton.b : null);
     if (b?.getAttribute('aria-busy') === 'true') return;
     b?.setAttribute('aria-busy', 'true');
-    try { await fn(); } catch (e) { toast(e.message || String(e), 'err'); } finally { b?.removeAttribute('aria-busy'); }
+    try { await fn(); } catch (e) { toast(texteErreur(e), 'err'); } finally { b?.removeAttribute('aria-busy'); }
     lastAct.current = Date.now();
   };
   voirRangs(me.role !== 'etudiant');
@@ -393,11 +398,11 @@ function buildNotifs({ data, me, store, saison }) {
     const jours = Math.floor((new Date(e.debut).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 864e5);
     const quand = new Date(e.debut).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
     if (inscrit && jours >= 0 && jours <= 1) out.push({ key: 'ev' + e.id + jours, action: true, tone: 'accent', icon: 'calendar', to: 'reseau/agenda/' + e.id, at: e.created_at, text: `${e.titre} : ${jours === 0 ? 'c’est aujourd’hui' : 'c’est demain'}.` });
-    else if (!inscrit && recent(e.created_at, 10) && e.author_id !== me.id) out.push({ key: 'en' + e.id, tone: 'good', icon: TYPES_EVENEMENT[e.type]?.[1] || 'calendar', to: 'reseau/agenda/' + e.id, at: e.created_at, text: `${TYPES_EVENEMENT[e.type]?.[0] || 'Événement'} à l’agenda de l’école : ${e.titre}, ${quand}.` });
+    else if (!inscrit && recent(e.created_at, 10) && e.author_id !== me.id) out.push({ key: 'en' + e.id, tone: 'good', icon: TYPES_EVENEMENT[e.type]?.[1] || 'calendar', to: 'reseau/agenda/' + e.id, at: e.created_at, text: `${TYPES_EVENEMENT[e.type]?.[0] || 'Événement'} à l’agenda du réseau : ${e.titre}, ${quand}.` });
   }
   // Enquête d'insertion (6 et 12 mois après le diplôme)
   const due = enqueteDue(me, data.enquetes_insertion);
-  if (due) out.push({ key: 'eq' + due.vague, action: true, mine: true, tone: 'brass', icon: 'chart', to: 'enquete', at: new Date().toISOString(), text: `Enquête ${due.vague} mois après le diplôme : 2 minutes pour aider l’école et les promos suivantes.` });
+  if (due) out.push({ key: 'eq' + due.vague, action: true, mine: true, tone: 'brass', icon: 'chart', to: 'enquete', at: new Date().toISOString(), text: `Enquête ${due.vague} mois après le diplôme : 2 minutes pour aider les promos suivantes.` });
   // Administration : signalements à traiter
   if (me.role === 'admin') {
     const sig = (data.signalements || []).filter(x => x.status === 'ouvert');
@@ -432,7 +437,7 @@ function prochainPas(ctx, notifs, guide) {
   if (conv) return { icon: 'chat', tone: 'accent', eyebrow: 'Un message t’attend', texte: conv.nonLus > 1 ? `${nom(conv.autre)} t’a écrit ${conv.nonLus} messages.` : `${nom(conv.autre)} t’a écrit.`, cta: store.byId('profiles', conv.autre)?.role === 'admin' ? 'Répondre' : `Répondre à ${prenom(conv.autre)}`, go: () => go('messages/' + conv.autre), message: true };
   const a = notifs.find(n => n.action && !n.rdv && !/^(eq|dc|md)/.test(n.key || '') && !(me.role === 'etudiant' && n.icon === 'briefcase'));
   if (a) return { icon: a.icon, tone: a.tone, eyebrow: 'Ta prochaine étape', texte: a.text, cta: 'Y aller', go: () => openNotif(a), key: a.key };
-  if (guide) return { icon: guide[0], tone: 'accent', eyebrow: 'Premiers pas', texte: guide[1], detail: guide[2], cta: guide[5], go: guide[4], guide: true };
+  if (guide) return { icon: guide[0], tone: 'accent', eyebrow: 'Premiers pas', texte: guide[1], detail: guide[2], cta: guide[5], go: guide[4], guide: true, cle: guide[6] };
   if (me.role === 'etudiant') {
     const n = niveauOf(me, saison);
     const o = data.offers.filter(x => x.status === 'ouverte' && (x.annees || []).includes(n) && !data.applications.some(y => y.offer_id === x.id && y.student_id === me.id))
@@ -443,8 +448,8 @@ function prochainPas(ctx, notifs, guide) {
     const n = requestsFor(data, me, id => store.byId('profiles', id)).length;
     if (n) return { icon: 'heart', tone: 'brass', eyebrow: 'Quand tu as 20 minutes', texte: n > 1 ? `${n} étudiants aimeraient un conseil.` : 'Un étudiant aimerait un conseil.', cta: 'Voir qui', go: () => go('mentorat') };
   }
-  // Le CV vérifie et complète le profil (rôle, promo, filière) : on le propose tant qu'il manque
-  if ((me.role === 'laureat' || me.role === 'etudiant') && !me.cv_path) return { icon: 'file', tone: 'accent', eyebrow: 'Ton CV', texte: 'Ajoute ton CV en PDF : ton profil se vérifie et se complète tout seul.', cta: 'Ajouter mon CV', go: () => go('profil') };
+  // Le CV complète le profil (rôle, promo, filière) : on le propose tant qu'il manque
+  if ((me.role === 'laureat' || me.role === 'etudiant') && !me.cv_path) return { icon: 'file', tone: 'accent', eyebrow: 'Ton CV', texte: me.role === 'etudiant' ? 'Ajoute ton CV en PDF : ton profil se complète tout seul, et il part avec tes candidatures.' : 'Ajoute ton CV en PDF : ton profil se complète tout seul.', cta: 'Ajouter mon CV', go: () => go('profil') };
   return { calme: true };
 }
 
@@ -517,7 +522,7 @@ function Home(ctx) {
     ${plAttente ? html`<${ConfirmRecruit} ctx=${ctx} pl=${plAttente} helper=${helper}/>` : html`<${Focus} ctx=${ctx} pas=${pas}/>`}
     <${PhotoProposee} ctx=${ctx}/>
     ${actions.length ? html`<div class="petits"><h2 class="h-sec">${isLaureat ? 'Quand tu as 5 minutes' : 'Pour avancer'}</h2><ul class="todo">${actions.map(a => html`<li><button class="notif act" onClick=${() => openNotif(a)}><span class=${'n-ico ' + (a.tone || '')}><${Icon} name=${a.icon} size=${16}/></span><span>${a.text}</span><${Icon} name="arrow" size=${16}/></button></li>`)}</ul></div>` : null}
-    <${Guide} ctx=${ctx} g=${guide}/>
+    <${Guide} key=${me.id} ctx=${ctx} g=${guide}/>
     <${EnqueteCard} ctx=${ctx}/>
 
     <div class="home-grid">
@@ -538,7 +543,7 @@ function Home(ctx) {
         <${HelpNeeded} ctx=${ctx} max=${1} compact/>
         <${RelecturesHome} ctx=${ctx}/>
         <${AlerteTalents} ctx=${ctx}/>
-        <${DemandesHome} ctx=${ctx}/>
+        ${isStudent && pas.cle === 'demande' ? null : html`<${DemandesHome} ctx=${ctx}/>`}
         ${isStudent ? html`<${RecoOffers} ctx=${ctx} max=${2}/>` : dernieres.length ? html`<div class="section-head"><h3>${enRecherche ? 'Offres pour toi' : 'Dernières offres'}</h3><button class="btn tiny ghost" onClick=${() => go('offres')}>Tout voir <${Icon} name="arrow" size=${14}/></button></div>
           <div class="offer-grid one">${dernieres.map(o => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} onOpen=${() => openOffer(o.id)}/>`)}</div>` : null}
         ${isStudent && !asking ? html`<div class="help-cta"><span class="obj-ico"><${Icon} name="mentor" size=${22}/></span>
@@ -584,29 +589,49 @@ function Home(ctx) {
 }
 
 // Premiers pas : les étapes se cochent toutes seules. Le guide disparaît quand tout ce qui dépend de moi est fait.
+// Une étape qui n'a rien à proposer aujourd'hui (aucune offre ouverte pour mon année, personne à aider) n'est pas montrée.
+// [icône, titre, texte, fait, action, bouton, clé]
 function guideEtapes(ctx, setCompose) {
-  const { data, me, saison, go } = ctx;
+  const { data, me, saison, go, store, act } = ctx;
   if (me.role === 'admin') return null;
   const n = niveauOf(me, saison);
   const myApps = data.applications.filter(a => a.student_id === me.id);
   const myOffers = data.offers.filter(o => o.author_id === me.id);
-  const steps = me.role === 'etudiant' ? [
-    ['user', 'Dépose ton CV en PDF', 'Il sera joint à chaque candidature, et un lauréat peut le relire pour toi.', !!(me.cv_path || me.cv_url), () => go('profil'), 'Mon profil'],
-    ['feed', 'Postule à une offre', `Tu ne vois que les offres de ${NIVEAUX[n]?.short || 'ton année'}. Un message de deux phrases suffit.`, myApps.some(a => a.offer_id), () => go('offres'), 'Voir les offres'],
-    ['mentor', 'Demande un conseil', 'Un lauréat choisit un de tes horaires et t’appelle 20 minutes en visio.', data.mentorships.some(m => m.student_id === me.id), () => go('mentorat'), 'Mentorat'],
-    ['heart', 'Confirme et dis merci', 'Quand il te marque recruté(e), tu confirmes en un clic et tu lui laisses un mot.', data.placements.some(p => p.student_id === me.id && p.status === 'confirme' && p.merci), null, ''],
-  ] : [
-    ['user', 'Complète ton profil', 'Entreprise, poste, sujets sur lesquels tu peux aider : les étudiants te trouvent plus facilement.', !!(me.entreprise && me.poste), () => go('profil'), 'Mon profil'],
-    ['plus', 'Publie une offre', 'Une minute suffit. Seuls les étudiants de l’année concernée la voient.', myOffers.length > 0, () => setCompose(true), 'Publier'],
-    ['mentor', 'Aide un étudiant', 'Clique sur un de ses horaires : la visio et l’invitation sont prêtes.', data.mentorships.some(m => m.mentor_id === me.id && m.status !== 'demande'), () => go('mentorat'), 'Mentorat'],
-    ['check', 'Marque « Recruté(e) »', 'L’étudiant confirme, et tu reçois ses remerciements et 50 points.', data.placements.some(p => p.laureat_id === me.id && p.status === 'confirme'), null, ''],
-  ];
+  let steps;
+  if (me.role === 'etudiant') {
+    const aPostule = myApps.some(a => a.offer_id);
+    const offresOuvertes = data.offers.some(o => o.status === 'ouverte' && o.audience !== 'laureats' && (o.annees || []).includes(n));
+    steps = [
+      ['user', 'Dépose ton CV en PDF', 'Il sera joint à chaque candidature, et un lauréat peut le relire pour toi.', !!(me.cv_path || me.cv_url), () => go('profil'), 'Mon profil', 'cv'],
+      typesDemande(me, saison).length ? ['send', 'Dis aux lauréats ce que tu cherches', 'Ta demande et ton CV arrivent chez les lauréats de ton parcours : ceux qui peuvent t’aider te le proposent.', (data.demandes || []).some(d => d.auteur_id === me.id), () => go('offres/demandes/nouvelle'), 'Publier ma demande', 'demande'] : null,
+      aPostule || offresOuvertes ? ['feed', 'Postule à une offre', `Tu ne vois que les offres de ${NIVEAUX[n]?.short || 'ton année'}. Un message de deux phrases suffit.`, aPostule, () => go('offres'), 'Voir les offres', 'postule'] : null,
+      ['mentor', 'Demande un conseil', 'Un lauréat choisit un de tes horaires et t’appelle 20 minutes en visio.', data.mentorships.some(m => m.student_id === me.id), () => go('mentorat'), 'Mentorat', 'conseil'],
+      ['heart', 'Confirme et dis merci', 'Quand il te marque recruté(e), tu confirmes en un clic et tu lui laisses un mot.', data.placements.some(p => p.student_id === me.id && p.status === 'confirme' && p.merci), null, '', 'merci'],
+    ];
+  } else {
+    const byId = id => store.byId('profiles', id);
+    const aAide = data.mentorships.some(m => m.mentor_id === me.id && m.status !== 'demande') || (data.propositions || []).some(x => x.laureat_id === me.id);
+    const demandes = demandesPour(data, me, byId).filter(x => !x.mienne);
+    const aAider = requestsFor(data, me, byId).length || demandes.length;
+    steps = [
+      me.en_recherche
+        ? ['user', 'Complète ton profil', 'Le poste que tu cherches et ta disponibilité : les lauréats qui recrutent te trouvent plus facilement.', !!((me.entreprise && me.poste) || me.disponibilite), () => go('profil'), 'Mon profil', 'profil']
+        : ['user', 'Complète ton profil', 'Entreprise, poste, sujets sur lesquels tu peux aider : les étudiants te trouvent plus facilement.', !!(me.entreprise && me.poste), () => go('profil'), 'Mon profil', 'profil'],
+      ['mentor', 'Rends-toi disponible', 'Les étudiants de ta filière te voient dans Mentorat et peuvent te demander 20 minutes de conseil.', !!me.mentor_dispo,
+        () => act(async () => { await store.update('profiles', me.id, { mentor_dispo: true }); toast('C’est noté : les étudiants de ta filière te verront dans Mentorat.'); }), 'Me rendre disponible', 'dispo'],
+      ['plus', 'Publie une offre', 'Une minute suffit. Seuls les étudiants de l’année concernée la voient.', myOffers.length > 0, () => setCompose(true), 'Publier', 'offre'],
+      aAide || aAider ? ['heart', 'Aide un étudiant', demandes.length ? 'Un étudiant de ton parcours a dit ce qu’il cherche : propose-lui ton aide en un clic.' : 'Clique sur un de ses horaires : la visio et l’invitation sont prêtes.', aAide, () => go(demandes.length ? 'offres/demandes' : 'mentorat'), demandes.length ? 'Voir les demandes' : 'Mentorat', 'aide'] : null,
+      ['check', 'Marque « Recruté(e) »', 'L’étudiant confirme, et tu reçois ses remerciements et 50 points.', data.placements.some(p => p.laureat_id === me.id && p.status === 'confirme'), null, '', 'recrute'],
+    ];
+  }
+  steps = steps.filter(Boolean);
   const done = steps.filter(x => x[3]).length;
   // Fini quand toutes les étapes qui dépendent de moi sont faites (la dernière arrive toute seule, plus tard)
   const fini = steps.filter(x => x[4]).every(x => x[3]);
   return { steps, done, fini };
 }
 
+// Une instance par membre (key) : son état gardé dans ce navigateur ne passe jamais d'un compte à l'autre
 function Guide({ ctx, g }) {
   const { me } = ctx;
   const [off, setOff] = useLocal('guide-off-' + me.id, false);
@@ -651,20 +676,33 @@ function MyProfile({ ctx }) {
 // ---------------------------------------------------------------------------
 // Connexion et inscription (mode réel)
 // ---------------------------------------------------------------------------
+// Ce téléphone a déjà servi à un membre : il retrouvera « Se connecter » en premier
+const DEJA_MEMBRE = 'ensam-deja-membre';
+const marquerMembre = () => { try { localStorage.setItem(DEJA_MEMBRE, '1'); } catch { /* navigation privée */ } };
+const dejaMembre = () => { try { return localStorage.getItem(DEJA_MEMBRE) === '1'; } catch { return false; } };
 function AuthScreen({ store, relang }) {
   const recovery = /type=recovery/.test(location.hash);
-  // Arrivé(e) par le lien d'invitation d'une promo : on commence par « Créer mon compte »
+  // Quelqu'un qui découvre le réseau (lien partagé, invitation d'une promo) commence par « Créer mon compte »
   const invite = promoInvitee();
-  const [mode, setMode] = useState(recovery ? 'nouveau' : invite ? 'inscription' : 'connexion');
+  const [mode, setMode] = useState(recovery ? 'nouveau' : invite || !dejaMembre() ? 'inscription' : 'connexion');
   const [email, setEmail] = useState(''); const [pw, setPw] = useState('');
   const [ok, setOk] = useState(false); const [mails, setMails] = useState(true);
   const [msg, setMsg] = useState(null); const [busy, setBusy] = useState(false);
-  const run = async fn => { setBusy(true); setMsg(null); try { await fn(); } catch (e) { setMsg({ err: true, t: e.message }); } setBusy(false); };
+  const run = async fn => { setBusy(true); setMsg(null); try { await fn(); } catch (e) { setMsg({ err: true, t: texteErreur(e) }); } setBusy(false); };
   const ecole = store.domainesEcole?.() || [];
   const submit = e => {
     e.preventDefault();
-    if (mode === 'connexion') run(() => store.signIn(email.trim(), pw));
-    else if (mode === 'inscription') run(async () => { const r = await store.signUp(email.trim(), pw, { consent_at: new Date().toISOString(), emails_hebdo: mails, langue: getLang() }); if (r.needsConfirm) setMsg({ t: 'Compte créé. Ouvre l’email de confirmation reçu, puis reviens te connecter.' }); });
+    if (mode === 'connexion') run(async () => { await store.signIn(email.trim(), pw); marquerMembre(); });
+    else if (mode === 'inscription') run(async () => {
+      let r;
+      try { r = await store.signUp(email.trim(), pw, { consent_at: new Date().toISOString(), emails_hebdo: mails, langue: getLang() }); } catch (e) {
+        if (!/existe déjà/.test(e.message)) throw e;
+        // Déjà inscrit(e) : on le connecte avec le même mot de passe, sinon on passe doucement à « Se connecter »
+        try { await store.signIn(email.trim(), pw); marquerMembre(); return; } catch { setMode('connexion'); throw new Error('Tu as déjà un compte avec cet email : entre ton mot de passe pour te connecter.'); }
+      }
+      marquerMembre();
+      if (r.needsConfirm) setMsg({ t: 'Compte créé. Ouvre l’email de confirmation reçu, puis reviens te connecter.' });
+    });
     else if (mode === 'oubli') run(async () => { await store.resetPassword(email.trim()); setMsg({ t: 'Si un compte existe, un lien de réinitialisation vient d’être envoyé.' }); });
     else run(async () => { await store.setPassword(pw); setMsg({ t: 'Mot de passe changé.' }); });
   };
@@ -674,14 +712,14 @@ function AuthScreen({ store, relang }) {
       <div class="auth-hero-txt">
         <${BrandLogo} size=${64} draw/>
         <h1>Réseau ENSAM Meknès</h1>
-        <p>Les lauréats y recrutent leurs stagiaires et donnent un coup de main à l’école. Les étudiants y trouvent stage, PFE et premier emploi plus vite, avec l’aide des anciens.</p>
+        <p>Les lauréats y recrutent leurs stagiaires. Les étudiants y trouvent stage, PFE et premier emploi plus vite, avec l’aide des lauréats.</p>
       </div>
       <${SchoolScene} fit="slice"/>
     </section>
     <div class="auth-right">
     <form class="auth-card form" onSubmit=${submit}>
       <h2>${{ connexion: 'Se connecter', inscription: 'Créer mon compte', oubli: 'Mot de passe oublié', nouveau: 'Nouveau mot de passe' }[mode]}</h2>
-      ${invite && mode === 'inscription' ? html`<p class="invite-band"><${Icon} name="send" size=${18}/><span><strong>Bienvenue, promo ${invite} !</strong> Ta promo est déjà remplie : crée ton compte, puis vérifie tes informations.</span></p>` : null}
+      ${invite && mode === 'inscription' ? html`<p class="invite-band"><${Icon} name="send" size=${18}/><span><strong>Bienvenue, promo ${invite} !</strong> Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.</span></p>` : null}
       ${mode !== 'nouveau' ? html`<${Field} label="Email" hint=${mode === 'inscription' && ecole.length ? `Étudiant(e) : ${store.reglages?.email_ecole_obligatoire ? 'inscris-toi' : 'de préférence'} avec ton email de l’école (${ecole.map(d => '@' + d).join(', ')}). Ton compte est alors vérifié tout de suite.` : ''}><input id="au-email" type="email" required autocomplete="email" value=${email} onInput=${e => setEmail(e.target.value)}/><//>` : null}
       ${mode !== 'oubli' ? html`<${Field} label="Mot de passe" hint=${mode === 'connexion' ? '' : '6 caractères minimum'}><input id="au-pw" type="password" required minlength="6" autocomplete=${mode === 'connexion' ? 'current-password' : 'new-password'} value=${pw} onInput=${e => setPw(e.target.value)}/><//>` : null}
       ${mode === 'inscription' ? html`<label class="check small"><input id="au-ok" type="checkbox" required checked=${ok} onChange=${e => setOk(e.target.checked)}/> <span>J’accepte que mes données servent au réseau (<a href="#confidentialite">Confidentialité</a>)</span></label>
@@ -697,12 +735,12 @@ function AuthScreen({ store, relang }) {
       <section><h2 class="eyebrow">Pour les lauréats</h2><ul class="auth-points">
         <li><span class="sc-ico"><${Icon} name="briefcase"/></span> Recrute tes stagiaires parmi les étudiants de ton école</li>
         <li><span class="sc-ico"><${Icon} name="mentor"/></span> Aide un étudiant en 20 minutes de visio, quand tu as le temps</li>
-        <li><span class="sc-ico"><${Icon} name="award"/></span> Badges, mercis et « Membre fondateur » pour les 25 premiers lauréats</li>
+        <li><span class="sc-ico"><${Icon} name="award"/></span> Les mercis des étudiants que tu aides, et une attestation à ajouter sur LinkedIn</li>
       </ul></section>
       <section><h2 class="eyebrow">Pour les étudiants</h2><ul class="auth-points">
-        <li><span class="sc-ico"><${Icon} name="feed"/></span> Offres de stage, de PFE et d’emploi partagées par les anciens</li>
+        <li><span class="sc-ico"><${Icon} name="send"/></span> Dis aux lauréats le stage que tu cherches, CV joint : ils te répondent</li>
         <li><span class="sc-ico"><${Icon} name="chat"/></span> Un lauréat te conseille : CV, entretien, départ à l’étranger</li>
-        <li><span class="sc-ico"><${Icon} name="check"/></span> Recrutements vérifiés : le lauréat déclare, tu confirmes</li>
+        <li><span class="sc-ico"><${Icon} name="feed"/></span> Les offres de stage, de PFE et d’emploi publiées par les lauréats</li>
       </ul></section>
     </div>
     <p class="small muted center"><a href="#confidentialite">Confidentialité</a></p>
@@ -711,7 +749,7 @@ function AuthScreen({ store, relang }) {
 }
 
 function Onboarding({ store, relang }) {
-  const act = async fn => { try { await fn(); } catch (e) { toast(e.message, 'err'); } };
+  const act = async fn => { try { await fn(); } catch (e) { toast(texteErreur(e), 'err'); } };
   const ctx = { store, act };
   const invite = promoInvitee();
   const preset = invite ? { promo: invite, role: roleDePromo(invite) } : null;
@@ -731,19 +769,30 @@ function Onboarding({ store, relang }) {
     // L'arabe se charge en même temps que les données, seulement si c'est la langue choisie
     const [store] = await Promise.all([createStore(), getLang() === 'ar' ? chargerAR().catch(() => setLang('fr')) : null]);
     brancherPhotos(path => store.photo(path));
+    if (store.session) marquerMembre();
+    try { sessionStorage.removeItem('ensam-essais'); } catch { /* */ }
     root.innerHTML = '';
     render(html`<${App} store=${store}/>`, root);
   } catch (e) {
-    // Fichiers gardés sur le téléphone abîmés ou d'une ancienne version : on les oublie et on recharge, une seule fois
+    console.error(e);
+    const reseau = !navigator.onLine || texteErreur(e).startsWith('Pas de réseau');
+    // Fichiers gardés sur le téléphone abîmés ou d'une ancienne version (une erreur de code, pas une coupure réseau) :
+    // on les oublie et on recharge, une seule fois
     try {
-      if ('serviceWorker' in navigator && navigator.serviceWorker.controller && !sessionStorage.getItem('ensam-reprise')) {
+      if (!reseau && /^(SyntaxError|TypeError|ReferenceError)$/.test(e?.name) && 'serviceWorker' in navigator && navigator.serviceWorker.controller && !sessionStorage.getItem('ensam-reprise')) {
         sessionStorage.setItem('ensam-reprise', '1');
         for (const k of await caches.keys()) await caches.delete(k);
         for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister();
         return location.reload();
       }
-    } catch { /* on affiche l'erreur */ }
+    } catch { /* on affiche l'écran calme */ }
+    // Jamais de message technique : un écran calme, et on réessaie tout seul quand le réseau revient (3 fois au plus)
     root.innerHTML = '';
-    render(html`<div class="fatal"><h1>Impossible de charger la plateforme</h1><p>${e.message}</p><p class="muted">Vérifie ta connexion internet puis recharge la page.</p></div>`, root);
+    render(html`<div class="fatal" role="alert"><${BrandLogo} size=${56}/><h1>Pas de connexion pour l’instant</h1><p>Vérifie ton réseau : on réessaie tout seul dans un instant.</p><p><button class="btn primary" onClick=${() => location.reload()}>Réessayer</button></p></div>`, root);
+    addEventListener('online', () => location.reload(), { once: true });
+    try {
+      const n = +(sessionStorage.getItem('ensam-essais') || 0);
+      if (n < 3) setTimeout(() => { try { sessionStorage.setItem('ensam-essais', n + 1); } catch { /* */ } location.reload(); }, 15000);
+    } catch { /* */ }
   }
 })();

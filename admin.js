@@ -114,8 +114,9 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
   const r48 = reponses48h(data);
   const attenteM = r48.attente.filter(d => d.type === 'mentorat'), attenteQ = r48.attente.filter(d => d.type === 'question'), attenteD = r48.attente.filter(d => d.type === 'demande');
   const parcours = parcoursInscription(comptes, data);
+  const dm = r48.parType.demande;
   const kpis = [
-    ['Réponse en 48 h', r48.taux === null ? '–' : pct(r48.taux), r48.total ? `${r48.a48} demandes d’étudiants sur ${r48.total}, en 30 jours` : 'Pas encore de demande d’étudiant ce mois-ci'],
+    ['Demandes aidées en 48 h', dm.taux === null ? '–' : pct(dm.taux), dm.total ? `${dm.a48} sur ${dm.total} en 30 jours · objectif 8 sur 10${r48.total > dm.total ? ` · toutes aides : ${pct(r48.taux)}` : ''}` : r48.total ? `Pas encore de Demande ce mois-ci · toutes aides : ${pct(r48.taux)}` : 'Pas encore de demande d’étudiant ce mois-ci'],
     ['Membres', members.length, `${members.filter(p => p.role === 'etudiant').length} étudiants · ${members.filter(p => p.role === 'laureat').length} lauréats`],
     ['Actifs cette semaine', parcours.actifs, `${nouveaux.length} nouveau${nouveaux.length > 1 ? 'x' : ''} inscrit${nouveaux.length > 1 ? 's' : ''}${sansProfil.length ? ` · ${sansProfil.length} sans profil` : ''}`],
     ['Recrutés et confirmés', confirmes, 'cette saison, via la plateforme'],
@@ -132,8 +133,8 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
     lecturesFausses.length ? ['file', lecturesFausses.length > 1 ? `${lecturesFausses.length} erreurs de lecture de CV signalées` : '1 erreur de lecture de CV signalée', 'admin/membres'] : null,
   ].filter(Boolean);
   return html`
-    <div class="kpis">${kpis.map(([l, v, sub]) => html`<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-val mono">${typeof v === 'number' ? html`<${Num} v=${v}/>` : v}</span><span class="small muted">${sub}</span></div>`)}</div>
     ${todo.length ? html`<div class="callout today"><h2 class="h-ico"><${Icon} name="bell"/> À traiter</h2><ul class="todo">${todo.map(([i, t, r]) => html`<li><button class="notif act" onClick=${() => go(r)}><span class="n-ico accent"><${Icon} name=${i} size=${16}/></span><span>${t}</span><${Icon} name="arrow" size=${16}/></button></li>`)}</ul></div>` : null}
+    <div class="kpis">${kpis.map(([l, v, sub]) => html`<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-val mono">${typeof v === 'number' ? html`<${Num} v=${v}/>` : v}</span><span class="small muted">${sub}</span></div>`)}</div>
 
     <${ParcoursInscription} p=${parcours}/>
 

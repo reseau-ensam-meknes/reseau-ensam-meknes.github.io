@@ -32,6 +32,7 @@ test('postuler : le lauréat qui cherche un emploi (ou diplômé de l’année) 
   assert.equal(peutPostulerA(offre({ audience: 'laureats', annees: [] }), ancien, S), true, 'entre lauréats : comme avant');
   assert.equal(peutPostulerA(offre({ audience: 'laureats', annees: [] }), etu5, S), false);
   assert.equal(peutPostulerA(offre({ annees: [5] }), etu5, S), true);
+  assert.equal(peutPostulerA(offre({ annees: [3, 4] }), etu5, S), false, 'un étudiant postule seulement aux offres de son année');
   assert.equal(peutPostulerA(offre({ author_id: 'ac' }), ancienCherche, S), false, 'pas à sa propre offre');
   assert.equal(peutPostulerA(offre(), { id: 'adm', role: 'admin', promo: 2015 }, S), false);
 });

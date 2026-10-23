@@ -275,7 +275,45 @@ test('partage WhatsApp : le lien direct rouvre l’offre et la question ; l’ad
   const parcours = await s.page.locator('#adm-parcours').innerText();
   assert.match(parcours, /Compte créé[\s\S]*Profil rempli[\s\S]*Première action/);
   assert.match(parcours, /Le plus grand arrêt|Personne ne s’arrête/);
-  assert.match(await s.page.locator('.kpis').innerText(), /Réponse en 48 h[\s\S]*Actifs cette semaine/i);
+  assert.match(await s.page.locator('.kpis').innerText(), /Demandes aidées en 48 h[\s\S]*Actifs cette semaine/i);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('règles du réseau : un étudiant ne voit ni points ni classement, et le lien d’une offre d’une autre année reste doux', async () => {
+  const s = await ouvrir();
+  // Salma (étudiante) ouvre la fiche d'un lauréat : badges de confiance seulement
+  await s.comme('Salma'); await s.fiche('Youssef El Amrani');
+  const fiche = await s.page.locator('.modal').innerText();
+  assert.equal(await s.page.locator('.modal .profile-stats').count(), 0);
+  assert.doesNotMatch(fiche, /points|Top contributeur|Lauréat du mois/i);
+  await s.fermer();
+  // Une offre de Salma (5A) qui n'est pas pour les 3A : son lien, ouvert par Amine (3A)
+  await s.aller('offres');
+  let lien = null;
+  for (let i = 0; i < Math.min(6, await s.page.locator('.ocard-main').count()) && !lien; i++) {
+    await s.page.locator('.ocard-main').nth(i).click(); await s.page.waitForSelector('.od h2');
+    const pour = await s.page.locator('.od-facts').innerText();
+    const msg = decodeURIComponent((await s.page.getAttribute('#od-partage', 'href')).split('https://wa.me/?text=')[1]);
+    assert.match(msg, /Ouvre-la ici/); assert.doesNotMatch(msg, /^(Stage|PFE|Emploi) : \1/i, 'le type n’est pas répété');
+    if (!/3A/.test(pour)) lien = msg.match(/https?:\/\/\S+#offre\/\S+/)[0];
+    await s.fermer();
+  }
+  assert.ok(lien, 'une offre de 5A sans les 3A');
+  await s.comme('Amine'); await s.aller('accueil');
+  await s.page.goto(lien); await s.page.reload(); await s.page.waitForSelector('.modal');
+  const doux = await s.page.locator('.modal').innerText();
+  assert.match(doux, /Cette offre est pour les/); assert.match(doux, /Voici celles de ta 3A/);
+  assert.equal(await s.page.locator('.modal .od h2').count(), 0, 'la fiche n’est pas montrée');
+  await s.page.click('.modal .btn.primary:has-text("Voir mes offres")'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.modal').count(), 0);
+  // L'administration voit les chiffres du lauréat, et « À traiter » avant les chiffres
+  await s.comme('Admin'); await s.fiche('Youssef El Amrani');
+  assert.equal(await s.page.locator('.modal .profile-stats').count(), 1);
+  await s.fermer(); await s.aller('admin');
+  if (await s.page.locator('.callout.today').count()) {
+    assert.ok(await s.page.evaluate(() => !!(document.querySelector('.callout.today').compareDocumentPosition(document.querySelector('.kpis')) & Node.DOCUMENT_POSITION_FOLLOWING)), '« À traiter » en premier');
+  }
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
