@@ -19,8 +19,8 @@ export function DashboardPage(ctx) {
 function SuiviSeg({ ctx, on }) {
   const etu = ctx.me.role === 'etudiant';
   return html`<div class="seg suivi-seg ins-noprint" role="tablist">
-    <button role="tab" aria-selected=${on === 'placement'} class=${on === 'placement' ? 'on' : ''} onClick=${() => ctx.go('suivi')}><${Icon} name=${etu ? 'people' : 'chart'} size=${15}/> ${etu ? 'Ma promo' : 'Placement'}</button>
-    <button role="tab" aria-selected=${on === 'insertion'} class=${on === 'insertion' ? 'on' : ''} onClick=${() => ctx.go('suivi/insertion')}><${Icon} name="briefcase" size=${15}/> ${etu ? 'Après le diplôme' : 'Insertion des diplômés'}</button>
+    <button role="tab" aria-selected=${on === 'placement'} class=${on === 'placement' ? 'on' : ''} onClick=${() => ctx.go('suivi', { remplacer: true })}><${Icon} name=${etu ? 'people' : 'chart'} size=${15}/> ${etu ? 'Ma promo' : 'Placement'}</button>
+    <button role="tab" aria-selected=${on === 'insertion'} class=${on === 'insertion' ? 'on' : ''} onClick=${() => ctx.go('suivi/insertion', { remplacer: true })}><${Icon} name="briefcase" size=${15}/> ${etu ? 'Après le diplôme' : 'Insertion des diplômés'}</button>
   </div>`;
 }
 

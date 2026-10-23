@@ -58,8 +58,17 @@ test('conversations : la plus récente d’abord, messages dans l’ordre, non l
 test('cette semaine dans le réseau : qui a aidé combien d’étudiants, sinon sur 30 jours', () => {
   const now = new Date('2026-10-21T12:00:00Z');
   const il_y_a = j => new Date(now - j * 864e5).toISOString();
+  const profiles = ['s', 't', 'u'].map(id => ({ id, role: 'etudiant' })).concat(['l', 'n'].map(id => ({ id, role: 'laureat' })), { id: 'a', role: 'admin' });
   const d = base({
-    mentorships: [{ mentor_id: 'l', student_id: 's', status: 'acceptee', accepted_at: il_y_a(2) }, { mentor_id: 'n', student_id: 't', status: 'terminee', accepted_at: il_y_a(5) }, { mentor_id: 'n', student_id: 'u', status: 'demande', accepted_at: il_y_a(1) }],
+    profiles,
+    mentorships: [
+      { mentor_id: 'l', student_id: 's', status: 'acceptee', accepted_at: il_y_a(3), rdv_at: il_y_a(2) },
+      { mentor_id: 'n', student_id: 't', status: 'terminee', accepted_at: il_y_a(6), rdv_at: il_y_a(5) },
+      { mentor_id: 'n', student_id: 'u', status: 'demande', accepted_at: il_y_a(1) },
+      // Un rendez-vous encore à venir n'est pas une aide ; un admin n'est pas un lauréat
+      { mentor_id: 'l', student_id: 'u', status: 'acceptee', accepted_at: il_y_a(1), rdv_at: new Date(+now + 864e5).toISOString() },
+      { mentor_id: 'a', student_id: 'u', status: 'terminee', rdv_at: il_y_a(1) },
+    ],
     placements: [{ laureat_id: 'l', student_id: 's', status: 'confirme', confirmed_at: il_y_a(1) }],
   });
   const p = poulsReseau(d, now);
@@ -67,7 +76,10 @@ test('cette semaine dans le réseau : qui a aidé combien d’étudiants, sinon 
   assert.deepEqual(p.aidants, ['l', 'n']);
   assert.equal(p.nbAides, 2);
   assert.equal(p.recrutes, 1);
-  const calme = base({ mentorships: [{ mentor_id: 'l', student_id: 's', status: 'terminee', accepted_at: il_y_a(20) }] });
+  const calme = base({ profiles, mentorships: [{ mentor_id: 'l', student_id: 's', status: 'terminee', rdv_at: il_y_a(20) }] });
   assert.equal(poulsReseau(calme, now).jours, 30);
   assert.equal(poulsReseau(calme, now).nbAides, 1);
+  assert.equal(poulsReseau({ ...calme, profiles: [] }, now).nbAides, 0, 'sans profil, pas compté');
+  const nonClos = base({ profiles, mentorships: [{ mentor_id: 'l', student_id: 's', status: 'acceptee', accepted_at: il_y_a(3), rdv_at: il_y_a(2) }] });
+  assert.equal(poulsReseau(nonClos, now).nbAides, 0, 'un rendez-vous passé que personne n’a clos n’est pas encore une aide');
 });

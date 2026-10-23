@@ -329,6 +329,18 @@ export function mentorState(m, now = new Date()) {
   if (m.status === 'acceptee') return m.rdv_at && new Date(m.rdv_at).getTime() + RDV_MIN * 6e4 < now.getTime() ? 'apres' : 'rdv';
   return m.status;
 }
+// Jours de calendrier (ceux de l'appareil) d'aujourd'hui à cette date : 0 aujourd'hui, 1 demain
+export const joursAvant = (iso, now = new Date()) => { const j = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); return Math.round((j(new Date(iso)) - j(now)) / 864e5); };
+// Un rendez-vous ne prend la carte « prochaine étape » que s'il commence, la veille ou le jour même.
+// L'étudiant qui n'a pas encore confirmé le fait alors sur la carte ; avant, c'est une ligne de « Cette semaine ».
+export function rdvALaUne(m, meId, now = new Date()) {
+  if (!m?.rdv_at || (m.student_id !== meId && m.mentor_id !== meId) || mentorState(m, now) !== 'rdv') return null;
+  if (now.getTime() > new Date(m.rdv_at).getTime() - 15 * 6e4) return 'direct';
+  if (joursAvant(m.rdv_at, now) > 1) return null;
+  return m.student_id === meId && 'confirme_at' in m && !m.confirme_at ? 'confirmer' : 'proche';
+}
+// Premiers pas d'un lauréat : son profil compte dès qu'il dit où il en est (en poste ou en recherche), jamais bloqué faute d'employeur
+export const profilLaureatFait = me => !!(me?.entreprise || me?.poste || (me?.en_recherche && me?.disponibilite));
 // Le chiffre des 30 premiers jours : les demandes d'étudiants (aide d'un lauréat, questions) qui ont une réponse en 48 h.
 // Sur 30 jours ; une demande de moins de 48 h encore sans réponse ne compte pas encore. « attente » : sans réponse depuis plus de 24 h.
 export function reponses48h(data, now = new Date()) {
@@ -662,7 +674,7 @@ export function enqueteDue(me, enquetes = [], now = new Date()) {
   if (!me || me.role === 'admin' || !me.promo || (me.role !== 'laureat' && niveauOf(me, seasonOf(now)) < 6)) return null;
   const P = me.promo; const t = now.getTime();
   const vagues = [[6, new Date(P + 1, 0, 1), new Date(P + 1, 6, 1)], [12, new Date(P + 1, 6, 1), new Date(P + 2, 3, 1)]];
-  for (const [v, debut, fin] of vagues) if (t >= debut && t < fin && !enquetes.some(e => e.user_id === me.id && e.vague === v)) return { vague: v, fin };
+  for (const [v, debut, fin] of vagues) if (t >= debut && t < fin && !enquetes.some(e => e.user_id === me.id && e.vague === v)) return { vague: v, debut, fin };
   return null;
 }
 
@@ -788,24 +800,58 @@ export function conversations(data, meId) {
 export const nonLus = (data, meId) => (data.messages || []).filter(m => m.dest_id === meId && !m.lu_at).length;
 
 // ---------------------------------------------------------------------------
-// « Cette semaine dans le réseau » : qui a aidé qui ces 7 derniers jours (sinon ces 30 derniers jours).
-// Sert de preuve douce que ça marche, sans classement ni comparaison.
+// « Cette semaine dans le réseau » : qui a aidé qui ces 7 derniers jours (sinon 30). Même calcul que pouls_reseau() dans la base.
+// Une aide : rendez-vous de mentorat terminé (merci de l'étudiant ou « C'est fait » du lauréat ; un rendez-vous seulement passé a pu ne pas avoir lieu),
+// relecture rendue, recrutement confirmé par l'étudiant, proposition acceptée par l'étudiant.
+// Toujours d'un lauréat vers un étudiant qui ont un profil. Pas de classement : l'ordre est celui de l'aide la plus récente.
 // ---------------------------------------------------------------------------
 export function poulsReseau(data, now = new Date()) {
+  const role = new Map((data.profiles || []).map(p => [p.id, p.role]));
+  const ok = (l, s) => !!l && !!s && role.get(l) === 'laureat' && role.get(s) === 'etudiant';
+  const brut = [];
+  for (const m of data.mentorships || []) { if (m.status === 'terminee' && ok(m.mentor_id, m.student_id)) brut.push([m.mentor_id, m.student_id, m.rdv_at || m.accepted_at, 'rdv']); }
+  for (const r of data.relectures_cv || []) if (r.status === 'rendue' && ok(r.reviewer_id, r.student_id)) brut.push([r.reviewer_id, r.student_id, r.rendue_at, 'cv']);
+  for (const p of data.placements || []) if (p.status === 'confirme' && ok(p.laureat_id, p.student_id)) brut.push([p.laureat_id, p.student_id, p.confirmed_at, 'recrute']);
+  const auteur = new Map((data.demandes || []).map(d => [d.id, d.auteur_id]));
+  for (const x of data.propositions || []) if (x.status === 'acceptee' && ok(x.laureat_id, auteur.get(x.demande_id))) brut.push([x.laureat_id, auteur.get(x.demande_id), x.repondu_at, 'match']);
   const calc = jours => {
-    const depuis = now.getTime() - jours * 864e5;
-    const dans = iso => iso && new Date(iso).getTime() >= depuis && new Date(iso).getTime() <= now.getTime();
-    const aidants = new Map(); const aides = new Set(); let recrutes = 0, rdv = 0, cv = 0;
-    const aide = (l, s, at) => { if (!l || !s) return; aidants.set(l, Math.max(aidants.get(l) || 0, new Date(at).getTime())); aides.add(s); };
-    for (const m of data.mentorships || []) if (m.mentor_id && ['acceptee', 'terminee'].includes(m.status) && dans(m.accepted_at || m.rdv_at)) { aide(m.mentor_id, m.student_id, m.accepted_at || m.rdv_at); rdv++; }
-    for (const r of data.relectures_cv || []) if (r.status === 'rendue' && dans(r.rendue_at)) { aide(r.reviewer_id, r.student_id, r.rendue_at); cv++; }
-    for (const p of data.placements || []) if (p.status === 'confirme' && p.laureat_id && dans(p.confirmed_at)) { aide(p.laureat_id, p.student_id, p.confirmed_at); recrutes++; }
+    const fin = now.getTime(), debut = fin - jours * 864e5;
+    const aidants = new Map(), aides = new Set(); let recrutes = 0;
+    for (const [l, s, at, k] of brut) { const t = at ? new Date(at).getTime() : NaN; if (!(t >= debut && t <= fin)) continue; aidants.set(l, Math.max(aidants.get(l) || 0, t)); aides.add(s); if (k === 'recrute') recrutes++; }
     const ids = [...aidants.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
-    return { jours, aidants: ids, nbAides: aides.size, recrutes, rdv, cv };
+    return { jours, aidants: ids, nbAidants: ids.length, nbAides: aides.size, recrutes };
   };
   const semaine = calc(7);
-  return semaine.aidants.length >= 2 ? semaine : { ...calc(30), semaine };
+  return semaine.nbAidants >= 2 ? semaine : calc(30);
 }
+// À froid : combien de lauréats sont là (le même total pour tout le monde) et combien me ressemblent (moi exclu).
+// « cle » = le filtre de l'annuaire qui montre exactement ces personnes.
+export function presenceReseau(data, me) {
+  const tous = (data.profiles || []).filter(p => p.role === 'laureat');
+  const lau = tous.filter(p => p.id !== me?.id);
+  if (!me || !lau.length) return null;
+  let cle = null, proches = [];
+  const garde = (k, f) => { if (cle) return; const x = lau.filter(f); if (x.length) { cle = k; proches = x; } };
+  if (me.role === 'laureat' && me.promo) garde('promo', p => p.promo === me.promo);
+  if (me.role === 'etudiant') {
+    if (filiereInfo(me.filiere)) garde('filiere', p => filtreFiliere(me.filiere, p.filiere));
+    const c = parcoursOf(me.filiere)[0];
+    if (c) garde('parcours', p => filtreFiliere('parcours:' + c, p.filiere));
+  }
+  const visages = (proches.length ? proches : lau).slice()
+    .sort((a, b) => (b.photo_path ? 1 : 0) - (a.photo_path ? 1 : 0) || String(b.created_at || '').localeCompare(String(a.created_at || '')))
+    .slice(0, 3).map(p => p.id);
+  return { total: tous.length, proches: proches.length, cle, visages };
+}
+const DE_PRES = { filiere: 'de ta filière', parcours: 'de ton parcours', promo: 'de ta promo' };
+// Une seule phrase par cas : la version arabe la reconnaît en entier
+export function lignePresence({ total: t, proches: n, cle }) {
+  const de = DE_PRES[cle];
+  if (de && n === t) return t > 1 ? `${t} lauréats ${de} sont déjà là` : `1 lauréat ${de} est déjà là`;
+  const base = t > 1 ? `${t} lauréats sont déjà là` : '1 lauréat est déjà là';
+  return de && n ? `${base}, dont ${n} ${de}` : base;
+}
+export const lignePouls = p => `${p.nbAidants > 1 ? `${p.nbAidants} lauréats ont aidé` : '1 lauréat a aidé'} ${p.nbAides > 1 ? `${p.nbAides} étudiants` : '1 étudiant'}`;
 
 // ---------------------------------------------------------------------------
 // Demandes des étudiants : mêmes règles que types_demande(), demande_pour() et protect_demande() dans la base.
@@ -844,4 +890,89 @@ export function demandesPour(data, me, byId, now = Date.now()) {
       return { d, a, prox, why, mienne: (data.propositions || []).find(x => x.demande_id === d.id && x.laureat_id === me.id) || null, score: prox * 3 + Math.min(3, Math.floor((now - new Date(d.created_at)) / 864e5)) };
     })
     .sort((x, y) => y.score - x.score || new Date(y.d.created_at) - new Date(x.d.created_at));
+}
+// Ce qu'un lauréat peut faire sur une demande (mêmes règles que protect_proposition, plus la pause et le match)
+export const AIDE_OUVERTE = ['proposer', 'reproposer', 'modifier'];
+export function etatAide(data, me, d, now = Date.now()) {
+  if (me?.role !== 'laureat') return 'non';
+  if (!d) return 'fermee';
+  if (d.auteur_id === me.id || bloque(data, me.id, d.auteur_id)) return 'non';
+  const x = (data.propositions || []).find(p => p.demande_id === d.id && p.laureat_id === me.id);
+  if (x?.status === 'acceptee') return 'non';
+  if (d.status !== 'ouverte') return 'fermee';
+  if (x?.status === 'envoyee') return 'modifier';
+  if (x && x.status !== 'retiree') return 'non';
+  if (demandeEnPause(d, now)) return 'pause';
+  return x ? 'reproposer' : 'proposer';
+}
+
+// ---------------------------------------------------------------------------
+// Accueil : ce qui est dit une seule fois, au bon endroit
+// ---------------------------------------------------------------------------
+// Annonces de l'administration : un public, comme les événements de l'agenda ; chacun ne voit que la sienne, 14 jours au plus
+export const PUBLICS = [['tous', 'Tout le monde'], ['etudiants', 'Étudiants'], ['laureats', 'Lauréats']];
+export const pourPublic = (pub, role) => role === 'admin' || !pub || pub === 'tous' || (pub === 'etudiants' && role === 'etudiant') || (pub === 'laureats' && role === 'laureat');
+export const ANNONCE_JOURS = 14;
+export const annonceVisible = (a, now = Date.now()) => !!a?.active && now - new Date(a.created_at).getTime() < ANNONCE_JOURS * 864e5;
+export const annoncePour = (annonces, me, now = Date.now()) => (annonces || []).filter(a => annonceVisible(a, now) && pourPublic(a.public, me?.role))
+  .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0] || null;
+
+// « Cette semaine » : trois petites choses au plus que seul le membre peut boucler.
+// Jamais ce que montre la carte du haut ; pas les demandes d'aide (md, rd, qr : « Ils ont besoin de toi »),
+// ni les coordonnées (dc : leur carte), ni le recrutement à confirmer (pa : la carte), ni les rappels de rendez-vous (rdv).
+// Une présence à confirmer (sc) y vient tant que le rendez-vous est loin ; la veille, elle passe sur la carte.
+export const TACHES = { dp: 0, ap: 0, dm: 0, rc: 0, sc: 1, in: 1, sg: 1, sf: 2, rr: 2, pm: 2, mf: 2, ev: 3, dr: 4, ro: 4, eq: 5 };
+export function petitesTaches(notifs, pas = {}) {
+  const deja = new Set([pas.key, ...(pas.cles || [])].filter(Boolean));
+  return notifs.filter(n => n.action && !n.rdv && TACHES[(n.key || '').slice(0, 2)] !== undefined && !deja.has(n.key) && !(pas.ref && n.ref === pas.ref))
+    .map(n => ({ ...n, rang: TACHES[n.key.slice(0, 2)] }))
+    .sort((a, b) => a.rang - b.rang || new Date(b.at) - new Date(a.at)).slice(0, 3);
+}
+
+// « Ils ont besoin de toi » : ce que des étudiants attendent de ce lauréat. Ceux qui l'ont choisi d'abord, puis une sorte après l'autre.
+const BESOIN_ORDRE = ['question', 'demande', 'conseil', 'cv'];
+export function besoinsDeMoi(data, me, byId, { ignorees = new Set(), exclure = new Set(), now = Date.now() } = {}) {
+  if (me?.role !== 'laureat') return [];
+  const out = [];
+  for (const x of requestsFor(data, me, byId, new Date(now))) if (x.direct || (x.score >= 2 && !ignorees.has(x.m.id)))
+    out.push({ kind: 'conseil', id: x.m.id, who: x.m.student_id, sujet: x.m.sujet, direct: x.direct, at: x.m.created_at });
+  (data.relectures_cv || []).filter(r => r.status === 'demandee' && r.student_id !== me.id && (r.reviewer_id === me.id || !r.reviewer_id))
+    .map(r => ({ r, prox: proximiteFiliere(byId(r.student_id)?.filiere, me.filiere) }))
+    .sort((a, b) => b.prox - a.prox || new Date(a.r.created_at) - new Date(b.r.created_at))
+    .forEach(({ r }) => out.push({ kind: 'cv', id: r.id, who: r.student_id, sujet: r.message || '', direct: r.reviewer_id === me.id, at: r.created_at }));
+  for (const x of demandesPour(data, me, byId, now)) if (!x.mienne && x.prox >= 1)
+    out.push({ kind: 'demande', id: x.d.id, who: x.d.auteur_id, sujet: x.d.titre, type: x.d.type, direct: false, at: x.d.created_at });
+  (data.questions || []).filter(q => routedTo(q, me) && now - new Date(q.created_at) < 14 * 864e5 && !(data.answers || []).some(a => a.question_id === q.id && a.author_id === me.id))
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    .forEach(q => out.push({ kind: 'question', id: q.id, who: q.author_id, sujet: q.titre, cible: q.entreprise || q.pays, direct: false, at: q.created_at }));
+  const reste = out.filter(b => !exclure.has(b.id));
+  const directs = reste.filter(b => b.direct).sort((a, b) => new Date(a.at) - new Date(b.at));
+  const files = BESOIN_ORDRE.map(k => reste.filter(b => !b.direct && b.kind === k));
+  const tour = []; for (let i = 0; files.some(f => f[i]); i++) for (const f of files) if (f[i]) tour.push(f[i]);
+  return [...directs, ...tour];
+}
+
+// Carte « Besoin d'un coup de main ? » (étudiant) : une porte en bouton, deux au plus en liens, une ligne sur ce qui est en route
+export function coupDeMain(data, me, saison, { exclure = new Set(), cle = null } = {}) {
+  if (me?.role !== 'etudiant') return { principal: null, autres: [], suivi: null };
+  const actives = demandesActives(data, me.id).sort((a, b) => (b.status === 'match') - (a.status === 'match') || new Date(b.created_at) - new Date(a.created_at));
+  const attente = data.mentorships.find(m => m.student_id === me.id && m.status === 'demande');
+  const rel = (data.relectures_cv || []).filter(r => r.student_id === me.id);
+  const relEnRoute = rel.some(r => ['demandee', 'en_cours'].includes(r.status) || (r.status === 'rendue' && !r.merci && !r.note));
+  const portes = [typesDemande(me, saison).length && !actives.length && cle !== 'demande' ? 'demande' : null,
+    !attente && cle !== 'conseil' ? 'conseil' : null, me.cv_path && !relEnRoute ? 'cv' : null].filter(Boolean);
+  const enCours = rel.find(r => r.status === 'en_cours');
+  const suivi = [actives[0] && { kind: 'demande', id: actives[0].id }, enCours && { kind: 'cv', id: enCours.id }, attente && { kind: 'conseil', id: attente.id }]
+    .find(x => x && !exclure.has(x.id)) || null;
+  return { principal: portes[0] || null, autres: portes.slice(1, 3), suivi };
+}
+
+// Publier : champs obligatoires encore vides, dans l'ordre de l'écran. Mêmes règles que la base
+// (offres : titre de 4 caractères au moins, entreprise et description non vides ; demandes : titre 4, détails 20, CV exigé)
+export function manquesOffre(f) {
+  return [(f.titre || '').trim().length < 4 && 'titre', !(f.entreprise || '').trim() && 'entreprise',
+    !(f.description || '').trim() && 'description', f.audience !== 'laureats' && !(f.annees || []).length && 'annees'].filter(Boolean);
+}
+export function manquesDemande(f, me) {
+  return [(f.titre || '').trim().length < 4 && 'titre', (f.details || '').trim().length < 20 && 'details', !me?.cv_path && 'cv'].filter(Boolean);
 }

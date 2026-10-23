@@ -1,8 +1,8 @@
 // Offres : liste compacte, fiche détaillée, candidature, gestion des candidats par le lauréat.
-import { html, useState, useMemo, useEffect } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, TYPE_ICON, toast, RoleLine, celebrate, injectCSS, PartagerWhatsApp, lienWhatsApp, lienDirect } from './ui.js';
-import { getLang, addAR } from './i18n.js';
-import { TYPES, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande } from './logic.js';
+import { html, useState, useMemo, useEffect, useRef } from './vendor/preact-htm.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, TYPE_ICON, toast, RoleLine, celebrate, injectCSS, PartagerWhatsApp, lienWhatsApp, lienDirect, allerAuChamp } from './ui.js';
+import { getLang, addAR, arCount } from './i18n.js';
+import { TYPES, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande, manquesOffre } from './logic.js';
 import { RelanceBanner, BanqueSujets, PasteOffer } from './recrutement.js';
 import { CvButton } from './cv.js';
 import { SignalerBtn } from './confiance.js';
@@ -26,11 +26,11 @@ const forLaureats = o => o.audience === 'laureats';
 
 // Filières visées par une offre : un parcours entier en un geste, ou ses filières une à une.
 // Une ancienne appellation déjà choisie (offre publiée avant la nouvelle liste) reste affichée, et se retire d'un clic.
-function FilieresPick({ value, onChange }) {
+function FilieresPick({ value, onChange, cls = '', style }) {
   const has = v => value.includes(v);
   const toggle = v => onChange(has(v) ? value.filter(x => x !== v) : [...value, v]);
   const anciennes = value.filter(v => !FILIERES.includes(v));
-  return html`<div class="fil-pick">${PARCOURS.map(p => {
+  return html`<div class=${'fil-pick' + cls} style=${style}>${PARCOURS.map(p => {
     const fs = FILIERES_INFO.filter(x => x.parcours === p.code).map(x => x.nom);
     const tout = fs.every(has);
     return html`<div class="fil-groupe" key=${p.code}>
@@ -64,7 +64,7 @@ export function OffersPage(ctx) {
       <div><p class="eyebrow">${demandes ? (isStudent ? 'Tu dis ce que tu cherches, les lauréats te proposent leur aide' : 'Les étudiants disent ce qu’ils cherchent, CV joint') : tab === 'laureats' ? 'Postes pour lauréats expérimentés, visibles seulement par les lauréats' : tab === 'sujets' ? 'L’entreprise dépose un vrai problème, un étudiant le prend, le lauréat l’encadre' : isStudent ? `Pour ${NIVEAUX[niveauOf(me, saison)]?.label?.toLowerCase() || 'toi'} · partagées par les lauréats` : 'Partagées par les lauréats'}</p><h1>${demandes ? (isStudent ? 'Mes demandes' : 'Demandes des étudiants') : tab === 'sujets' ? 'Banque de sujets PFE' : tab === 'laureats' ? 'Offres entre lauréats' : 'Offres'}</h1></div>
       ${!isStudent && !demandes ? html`<button class="btn primary" onClick=${() => setCompose(tab === 'laureats' ? { audience: 'laureats', type: 'emploi', annees: [] } : tab === 'sujets' ? { type: 'pfe', annees: [5] } : {})}><${Icon} name="plus"/> ${tab === 'sujets' ? 'Déposer un sujet' : 'Publier une offre'}</button>` : null}
     </header>
-    ${tabs.length > 1 ? html`<div class="seg" role="tablist">${tabs.map(([k, l, i, n]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => go('offres' + (k ? '/' + k : ''))}><${Icon} name=${i} size=${15}/> ${l}${n ? html` <span class="count">${n}</span>` : null}</button>`)}</div>` : null}
+    ${tabs.length > 1 ? html`<div class="seg" role="tablist">${tabs.map(([k, l, i, n]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => go('offres' + (k ? '/' + k : ''), { remplacer: true })}><${Icon} name=${i} size=${15}/> ${l}${n ? html` <span class="count">${n}</span>` : null}</button>`)}</div>` : null}
     ${demandes ? html`<${DemandesTab} ctx=${isStudent ? ctx : { ...ctx, publierOffre: () => setCompose({}) }}/>` : tab === 'sujets' ? html`<${BanqueSujets} ctx=${ctx} onPropose=${() => setCompose({ type: 'pfe', annees: [5] })}/>` : html`<${OfferList} ctx=${ctx} entre=${tab === 'laureats'} key=${tab}/>`}
     ${compose ? html`<${OfferComposer} ctx=${ctx} preset=${compose} onClose=${() => setCompose(null)}/>` : null}
   </section>`;
@@ -142,9 +142,10 @@ function recoFor(ctx, max) {
     .map(o => ({ o, ...offerMatch(o, me) })).sort((a, b) => b.score - a.score || new Date(b.o.created_at) - new Date(a.o.created_at)).slice(0, max);
 }
 
-export function RecoOffers({ ctx, max = 3, inOffres = false, reco }) {
+export function RecoOffers({ ctx, max = 3, inOffres = false, reco, exclure }) {
   const { openOffer, go } = ctx;
-  const liste = reco || recoFor(ctx, max);
+  // Une offre déjà montrée plus haut (prochaine étape, « Cette semaine ») n'est pas redite ici
+  const liste = reco || recoFor(ctx, max + (exclure?.size || 0)).filter(x => !exclure?.has(x.o.id)).slice(0, max);
   if (!liste.length) return null;  // rien à recommander : pas de bloc vide ni de promesse
   return html`<div class="reco">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="spark"/> Recommandé pour toi</h2>${inOffres ? null : html`<button class="btn tiny ghost" onClick=${() => go('offres')}>Toutes les offres <${Icon} name="arrow" size=${14}/></button>`}</div>
@@ -429,12 +430,25 @@ function Questions({ ctx, o, comments }) {
   </div>`;
 }
 
+// Publier une offre : le bouton reste au pouce, en bas de la feuille. Rien n'est signalé avant d'appuyer
+// (ou avant un collage) ; ensuite, seuls les champs obligatoires encore vides le sont, et « Publier » y mène.
+const ORDRE = ['type', 'titre', 'entreprise', 'ville', 'pays', 'description', 'annees', 'filieres', 'duree', 'deadline', 'lien', 'cooptation', 'remunere'];
+const DETAILS = ['filieres', 'duree', 'deadline', 'lien', 'cooptation', 'remunere'];
+const ID_OF = { titre: 'of-titre', entreprise: 'of-ent', description: 'of-desc', annees: 'of-annees' };
+const MSG_OF = { titre: f => (f.titre.trim() ? 'Un intitulé de 4 caractères au moins.' : 'Donne un intitulé à l’offre.'),
+  entreprise: () => 'Indique l’entreprise.', description: () => 'Ajoute quelques lignes : missions, profil recherché.', annees: () => 'Choisis au moins un niveau.' };
+const nChamps = n => `${n} champ${n > 1 ? 's' : ''}`;
+
 export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
   const { store, me, act, data } = ctx;
   const editing = !!offer?.id;
   const [f, setF] = useState(() => ({
     type: 'stage', titre: '', entreprise: me.entreprise || '', ville: me.ville || '', pays: me.pays || 'Maroc', filieres: [], annees: [3, 4], description: '', contact: '', lien: '', deadline: '', cooptation: false, remunere: false, duree: '', audience: 'etudiants', ...preset, ...(offer || {}),
   }));
+  const [tente, setTente] = useState(false);   // rien n'est signalé avant « Publier » ou un collage
+  const [eclat, setEclat] = useState(null);    // { keys } : ce que « Offre en 30 secondes » vient de remplir
+  const plus = useRef();                       // <details> « Plus de détails »
+  useEffect(() => { if (!eclat) return; const t = setTimeout(() => setEclat(null), 2400); return () => clearTimeout(t); }, [eclat]);
   const set = (k, v) => setF({ ...f, [k]: v });
   const toggleIn = (k, v) => set(k, f[k].includes(v) ? f[k].filter(x => x !== v) : [...f[k], v]);
   const entre = f.audience === 'laureats';
@@ -442,17 +456,31 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
   const setType = t => setF({ ...f, type: t, annees: anneesDe(t) });
   const setAudience = a => setF(a === 'laureats' ? { ...f, audience: a, type: 'emploi', annees: [] } : { ...f, audience: a, annees: f.annees.length ? f.annees : [6] });
   // Offre en 30 secondes : on remplit les champs reconnus, sans effacer ce qui n'a pas été trouvé
-  const fill = x => setF(cur => {
+  const fusion = (cur, x) => {
     const n = { ...cur };
     for (const [k, v] of Object.entries(x)) if (v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && !v.length)) n[k] = v;
     // Type reconnu sans années : on prend les années habituelles de ce type
     if (x.type && x.type !== cur.type && !(x.annees && x.annees.length)) n.annees = anneesDe(x.type);
     if (cur.audience === 'laureats') { n.type = 'emploi'; n.annees = []; }
     return n;
-  });
-  const valid = f.titre.trim().length >= 4 && f.entreprise.trim() && f.description.trim() && (entre || f.annees.length);
+  };
+  // … puis on éclaire ce qui a été rempli, et le chiffre annoncé est celui des champs éclairés
+  const fill = (x, found = Object.keys(x)) => {
+    const n = fusion(f, x); setF(n);
+    const keys = ORDRE.filter(k => found.includes(k) && !(n.audience === 'laureats' && (k === 'type' || k === 'annees')));
+    setEclat({ keys }); setTente(true);
+    if (keys.some(k => DETAILS.includes(k)) && plus.current) plus.current.open = true;
+    const m = manquesOffre(n).length, c = keys.length;
+    toast(m ? `${nChamps(c)} rempli${c > 1 ? 's' : ''}. Il reste ${nChamps(m)} à compléter.` : `${nChamps(c)} rempli${c > 1 ? 's' : ''}. Vérifie, puis publie.`);
+  };
+  const manques = manquesOffre(f);
+  const err = k => (tente && manques.includes(k) ? MSG_OF[k](f) : null);
+  const aria = k => (err(k) ? { 'aria-invalid': 'true', 'aria-describedby': ID_OF[k] + '-err' } : {});
+  const r = k => (eclat?.keys.includes(k) ? ' rempli' : '');
+  const ri = k => (eclat?.keys.includes(k) ? `--i:${eclat.keys.indexOf(k)}` : null);
   const submit = e => {
-    e.preventDefault(); if (!valid) return;
+    e.preventDefault();
+    if (manques.length) { setTente(true); allerAuChamp(ID_OF[manques[0]]); return; }
     const row = { type: f.type, titre: f.titre.trim(), entreprise: f.entreprise.trim(), ville: (f.ville || '').trim(), pays: (f.pays || '').trim() || 'Maroc', filieres: f.filieres, annees: entre ? [] : f.annees, description: f.description.trim(), contact: (f.contact || '').trim(), lien: (f.lien || '').trim(), deadline: f.deadline || null, cooptation: f.cooptation, remunere: f.remunere, duree: (f.duree || '').trim() };
     if (entre || offer?.audience) row.audience = f.audience;
     act(async () => {
@@ -472,36 +500,38 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
       onClose();
     });
   };
-  return html`<${Modal} title=${editing ? 'Modifier l’offre' : 'Publier une offre'} onClose=${onClose} wide>
-    <form class="form" onSubmit=${submit}>
+  const pied = html`<button class="btn primary" type="submit" form="of-form" id="of-publier">${editing ? 'Enregistrer' : 'Publier'}</button>`;
+  return html`<${Modal} title=${editing ? 'Modifier l’offre' : 'Publier une offre'} onClose=${onClose} wide footer=${pied}>
+    <form class="form" id="of-form" noValidate onSubmit=${submit}>
       ${editing ? null : html`<${PasteOffer} me=${me} onFill=${fill}/>`}
-      ${me.role === 'etudiant' ? null : html`<div class="seg" role="group" aria-label="Pour qui">${[['etudiants', 'Pour les étudiants'], ['laureats', 'Entre lauréats']].map(([k, l]) => html`<button type="button" class=${f.audience === k ? 'on' : ''} onClick=${() => setAudience(k)}>${l}</button>`)}</div>`}
+      ${me.role === 'etudiant' ? null : html`<div class="seg" role="group" aria-label="Pour qui">${[['etudiants', 'Pour les étudiants'], ['laureats', 'Entre lauréats']].map(([k, l]) => html`<button type="button" class=${f.audience === k ? 'on' : ''} aria-pressed=${f.audience === k} onClick=${() => setAudience(k)}>${l}</button>`)}</div>`}
       ${entre ? html`<p class="small muted hint-box"><${Icon} name="briefcase" size=${15}/> <span>Un poste pour un profil expérimenté : seuls les lauréats le voient, les étudiants non.</span></p>` : html`
-      <div class="type-pick" role="group" aria-label="Type">${Object.entries(TYPES).map(([k, v]) => html`<button type="button" class=${'type-opt t-' + k + (f.type === k ? ' on' : '')} onClick=${() => setType(k)}><${Icon} name=${TYPE_ICON[k]} size=${22}/><span>${v.label}</span></button>`)}</div>`}
-      <${Field} label="Intitulé"><input id="of-titre" required value=${f.titre} onInput=${e => set('titre', e.target.value)} placeholder="Ex. PFE : optimisation d’une ligne d’assemblage" maxlength="140"/><//>
+      <div class="type-pick" role="group" aria-label="Type">${Object.entries(TYPES).map(([k, v]) => html`<button type="button" class=${'type-opt t-' + k + (f.type === k ? ' on' + r('type') : '')} style=${f.type === k ? ri('type') : null} aria-pressed=${f.type === k} onClick=${() => setType(k)}><${Icon} name=${TYPE_ICON[k]} size=${22}/><span>${v.label}</span></button>`)}</div>`}
+      <${Field} label="Intitulé" err=${err('titre')} errId="of-titre-err"><input id="of-titre" dir="auto" class=${r('titre')} style=${ri('titre')} ...${aria('titre')} required value=${f.titre} onInput=${e => set('titre', e.target.value)} placeholder="Ex. PFE : optimisation d’une ligne d’assemblage" maxlength="140"/><//>
       <div class="grid3">
-        <${Field} label="Entreprise"><input id="of-ent" required value=${f.entreprise} onInput=${e => set('entreprise', e.target.value)}/><//>
-        <${Field} label="Ville"><input id="of-ville" value=${f.ville || ''} onInput=${e => set('ville', e.target.value)}/><//>
-        <${Field} label="Pays"><input id="of-pays" value=${f.pays || ''} onInput=${e => set('pays', e.target.value)}/><//>
+        <${Field} label="Entreprise" err=${err('entreprise')} errId="of-ent-err"><input id="of-ent" dir="auto" class=${r('entreprise')} style=${ri('entreprise')} ...${aria('entreprise')} required value=${f.entreprise} onInput=${e => set('entreprise', e.target.value)}/><//>
+        <${Field} label="Ville"><input id="of-ville" dir="auto" class=${r('ville')} style=${ri('ville')} value=${f.ville || ''} onInput=${e => set('ville', e.target.value)}/><//>
+        <${Field} label="Pays"><input id="of-pays" dir="auto" class=${r('pays')} style=${ri('pays')} value=${f.pays || ''} onInput=${e => set('pays', e.target.value)}/><//>
       </div>
-      <${Field} label="Description"><textarea id="of-desc" required rows="5" value=${f.description} onInput=${e => set('description', e.target.value)} placeholder="Missions, profil recherché, comment se passe la sélection…" maxlength="4000"></textarea><//>
-      ${entre ? null : html`<${Field} label="Pour quels niveaux ?"><div class="chips">${ANNEES_OPTS.map(([v, l]) => html`<button type="button" class=${'chip' + (f.annees.includes(v) ? ' on' : '')} onClick=${() => toggleIn('annees', v)}>${l}</button>`)}</div><//>`}
-      <details class="more-fields" open=${editing}>
+      <${Field} label="Description" err=${err('description')} errId="of-desc-err"><textarea id="of-desc" dir="auto" class=${r('description')} style=${ri('description')} ...${aria('description')} required rows="5" value=${f.description} onInput=${e => set('description', e.target.value)} placeholder="Missions, profil recherché, comment se passe la sélection…" maxlength="4000"></textarea><//>
+      ${entre ? null : html`<div class=${'field' + (err('annees') ? ' manque' : '')}><span class="field-label" id="of-annees-l">Pour quels niveaux ?</span>
+        <div id="of-annees" class=${'chips' + r('annees')} style=${ri('annees')} role="group" aria-labelledby="of-annees-l" aria-describedby=${err('annees') ? 'of-annees-err' : null}>${ANNEES_OPTS.map(([v, l]) => html`<button type="button" class=${'chip' + (f.annees.includes(v) ? ' on' : '')} aria-pressed=${f.annees.includes(v)} onClick=${() => toggleIn('annees', v)}>${l}</button>`)}</div>
+        ${err('annees') ? html`<span class="field-err" id="of-annees-err">${err('annees')}</span>` : null}</div>`}
+      <details class="more-fields" ref=${plus} open=${editing}>
         <summary>Plus de détails (facultatif)</summary>
         <div class="form">
-          <${Field} label="Filières" hint="Aucune sélection = toutes les filières. Le nom d’un parcours le sélectionne en entier."><${FilieresPick} value=${f.filieres} onChange=${v => set('filieres', v)}/><//>
+          <div class="field"><span class="field-label" id="of-fil-l">Filières</span><div role="group" aria-labelledby="of-fil-l"><${FilieresPick} value=${f.filieres} onChange=${v => set('filieres', v)} cls=${r('filieres')} style=${ri('filieres')}/></div><span class="field-hint">Aucune sélection = toutes les filières. Le nom d’un parcours le sélectionne en entier.</span></div>
           <div class="grid3">
-            <${Field} label="Durée"><input id="of-duree" value=${f.duree || ''} onInput=${e => set('duree', e.target.value)} placeholder="6 mois, CDI…"/><//>
-            <${Field} label="Date limite"><input id="of-dl" type="date" value=${f.deadline || ''} onInput=${e => set('deadline', e.target.value)}/><//>
-            <${Field} label="Lien vers l’annonce"><input id="of-lien" value=${f.lien || ''} onInput=${e => set('lien', e.target.value)} placeholder="https://…"/><//>
+            <${Field} label="Durée"><input id="of-duree" class=${r('duree')} style=${ri('duree')} value=${f.duree || ''} onInput=${e => set('duree', e.target.value)} placeholder="6 mois, CDI…"/><//>
+            <${Field} label="Date limite"><input id="of-dl" type="date" class=${r('deadline')} style=${ri('deadline')} value=${f.deadline || ''} onInput=${e => set('deadline', e.target.value)}/><//>
+            <${Field} label="Lien vers l’annonce"><input id="of-lien" class=${r('lien')} style=${ri('lien')} value=${f.lien || ''} onInput=${e => set('lien', e.target.value)} placeholder="https://…"/><//>
           </div>
-          <label class="check"><input id="of-coopt" type="checkbox" checked=${f.cooptation} onChange=${e => set('cooptation', e.target.checked)}/> Je peux recommander (coopter) les bons profils</label>
-          <label class="check"><input id="of-rem" type="checkbox" checked=${f.remunere} onChange=${e => set('remunere', e.target.checked)}/> Rémunéré / gratifié</label>
+          <label class=${'check' + r('cooptation')} style=${ri('cooptation')}><input id="of-coopt" type="checkbox" checked=${f.cooptation} onChange=${e => set('cooptation', e.target.checked)}/> Je peux recommander (coopter) les bons profils</label>
+          <label class=${'check' + r('remunere')} style=${ri('remunere')}><input id="of-rem" type="checkbox" checked=${f.remunere} onChange=${e => set('remunere', e.target.checked)}/> Rémunéré / gratifié</label>
         </div>
       </details>
       ${f.type === 'pfe' && !entre ? html`<p class="small muted"><${Icon} name="cap" size=${14}/> Un PFE apparaît aussi dans la Banque de sujets : décris le vrai problème de l’équipe, tu pourras encadrer l’étudiant qui le prend.</p>` : null}
       <p class="small muted">Les candidatures arrivent ici, dans l’onglet « Candidats » de ton offre. Tu n’as pas besoin de donner ton email.</p>
-      <div class="row-end"><button type="button" class="btn ghost" onClick=${onClose}>Annuler</button><button class="btn primary" type="submit" disabled=${!valid}>${editing ? 'Enregistrer' : 'Publier'}</button></div>
     </form>
   <//>`;
 }
@@ -584,7 +614,11 @@ addAR({
   'Change la recherche ou les filtres.': 'غيّر البحث أو المرشحات.',
   'Cette offre n’est plus disponible, ou elle ne t’est pas destinée.': 'لم يعد هذا العرض متاحًا، أو أنه غير موجّه لك.',
   'Cette offre est réservée aux lauréats.': 'هذا العرض مخصص للخريجين.', 'Voici les tiennes.': 'إليك عروضك.', 'Voir mes offres': 'عرض عروضي',
+  'Donne un intitulé à l’offre.': 'أعطِ العرض عنوانًا.', 'Un intitulé de 4 caractères au moins.': 'عنوان من 4 أحرف على الأقل.',
+  'Indique l’entreprise.': 'اذكر الشركة.', 'Ajoute quelques lignes : missions, profil recherché.': 'أضف بضعة أسطر: المهام والملف المطلوب.',
+  'Choisis au moins un niveau.': 'اختر مستوى واحدًا على الأقل.',
 }, [
+  [/^(\d+) champs? remplis?\. Il reste (\d+) champs? à compléter\.$/, (n, m) => { const F = ['حقل واحد', 'حقلين', 'حقول', 'حقلًا']; return `تم ملء ${arCount(n, F)}. بقي عليك إكمال ${arCount(m, F)}.`; }],
   [/^Pas encore d’offre pour ta (.+)$/, a => `لا عروض بعد لـ${a}`],
   [/^Cette offre est pour les (.+)\.$/, a => `هذا العرض موجّه لـ${a}.`],
   [/^Voici celles de ta (.+)\.$/, a => `إليك عروض ${a}.`],

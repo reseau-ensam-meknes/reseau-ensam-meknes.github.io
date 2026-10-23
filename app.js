@@ -1,38 +1,37 @@
 // Point d'entrée : coque de l'application, connexion, accueil, notifications.
 import { getLang, setLang, chargerAR } from './i18n.js';
-import { html, render, useState, useEffect, useMemo, useRef } from './vendor/preact-htm.js';
+import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore, texteErreur } from './store.js';
-import { Icon, Field, Empty, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, Num, useLocal, Celebration, celebrate, voirRangs, brancherPhotos } from './ui.js';
-import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande } from './logic.js';
+import { Icon, Field, Empty, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, Num, useLocal, Celebration, celebrate, voirRangs, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille } from './ui.js';
+import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, besoinsDeMoi, etatAide, AIDE_OUVERTE, peutPostulerA } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
-import { ParcoursPage, EspacePage, ConfirmRecruit, Journey, journeyStep } from './me.js';
+import { ParcoursPage, EspacePage, Journey, journeyStep, confirmerRecrutement, refuserRecrutement, versMerci } from './me.js';
 import { DashboardPage } from './dashboard.js';
 import { ReseauPage, ProfileModal, ProfileForm, AskQuestion } from './community.js';
 import { AdminPage, AnnonceBanner } from './admin.js';
-import { MentoratPage, AskHelp, NextRdv, HelpNeeded, slotWhen, mentoratIgnorees } from './mentorat.js';
+import { MentoratPage, AskHelp, NextRdv, slotWhen, mentoratIgnorees, IlsOntBesoin, CoupDeMain, HoraireSheet, ICONE_BESOIN, VERBE_BESOIN, phraseBesoin, ouvrirBesoin, confirmerPresence, finirMentorat, lienVisio } from './mentorat.js';
 import { SuccessFeed, VerifyPage } from './growth.js';
 import { PrivacyPage, ConsentModal, MesDonnees, DesaboPage } from './privacy.js';
 import { useInstall, IosInstallHelp } from './pwa.js';
 import { NextCafe } from './groupes.js';
 import { EntrepriseModal } from './pro.js';
-import { DefisPanel, CoupePromos, ParrainCard, DevenirParrain, TonAnnee, TonAnneeStrip } from './saison.js';
-import { AlerteTalents } from './recrutement.js';
-import { CvCard, RelecturesHome } from './cv.js';
+import { DefisPanel, CoupePromos, DevenirParrain, TonAnnee, TonAnneeStrip } from './saison.js';
+import { CvCard } from './cv.js';
 import { PhotoCard, PhotoProposee } from './photo.js';
 import { NudgeAvis } from './entreprises.js';
 import { ConfianceHome } from './confiance.js';
-import { EnquetePage, EnqueteCard } from './enquete.js';
+import { EnquetePage } from './enquete.js';
 import { NextEvent } from './agenda.js';
 import { lireInvitation, promoInvitee, roleDePromo } from './invitation.js';
 import { MessagesPage, MessagesHome, useAlerteMessages } from './messages.js';
 import { PoulsReseau } from './pouls.js';
-import { DemandesHome } from './demandes.js';
+import { ProposerAide } from './demandes.js';
 
 // Le dernier bouton touché, pour que act le retrouve même sans focus (iPhone)
 let dernierBouton = { b: null, t: 0 };
 document.addEventListener('click', e => { dernierBouton = { b: e.target?.closest?.('button.btn') || null, t: Date.now() }; }, true);
 
-const ROUTES = ['accueil', 'offres', 'mentorat', 'messages', 'parcours', 'espace', 'reseau', 'suivi', 'profil', 'admin', 'verifier', 'confidentialite', 'desabo', 'enquete', 'offre'];
+const ROUTES = ['accueil', 'offres', 'mentorat', 'messages', 'parcours', 'espace', 'reseau', 'suivi', 'profil', 'admin', 'verifier', 'confidentialite', 'desabo', 'enquete', 'offre', 'aider'];
 const ALIASES = { impact: 'espace', tableau: 'suivi', communaute: 'reseau', entraide: 'reseau/entraide', groupes: 'reseau/groupes', sujets: 'offres/sujets', 'reseau/mentorat': 'mentorat', 'reseau/mentorat/rdv': 'mentorat', agenda: 'reseau/agenda', entreprises: 'reseau/entreprises', etranger: 'reseau/etranger', relecture: 'mentorat/cv', cv: 'mentorat/cv', moderation: 'admin/moderation', message: 'messages', chat: 'messages' };
 
 function navFor(me) {
@@ -72,19 +71,32 @@ function App({ store }) {
   const [applyNow, setApplyNow] = useState(false);
   const [askMentor, setAskMentor] = useState(null);
   const [confirmBox, setConfirmBox] = useState(null);
-  const [pop, setPop] = useState(null); // 'bell' | 'me'
+  const [pop, setPop] = useState(null); // le menu du compte ('me')
+  const [cloche, setCloche] = useState(false);
+  // « Je peux aider » et « Choisir un horaire » s'ouvrent sur place : { demande: id } ou { mentorat: id }
+  const [aide, setAide] = useState(null);
   const seen = useRef(null); const lastAct = useRef(0);
   useEffect(() => store.on(() => setTick(t => t + 1)), []);
-  useEffect(() => { const f = () => setRoute(readRoute()); addEventListener('hashchange', f); return () => removeEventListener('hashchange', f); }, []);
+  // Pages publiques (attestation, désabonnement) : le lien « #… » suffit. Dans la coque, l'historique s'en charge (ui.js).
+  useEffect(() => { const f = () => { if (!historiqueBranche()) setRoute(readRoute()); }; addEventListener('hashchange', f); return () => removeEventListener('hashchange', f); }, []);
   useEffect(() => { if (!pop) return; const f = e => { if (!e.target.closest('.pop-wrap')) setPop(null); }; document.addEventListener('click', f); return () => document.removeEventListener('click', f); }, [pop]);
-  // Changement d'écran : un fondu court (View Transitions) là où le navigateur le permet
-  const go = r => {
-    try { history.replaceState(null, '', '#' + r); } catch { /* cadre */ }
-    const changer = () => { setRoute(parseRoute(r)); setPop(null); window.scrollTo?.(0, 0); };
-    const doux = document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches && parseRoute(r).base !== route.base;
-    if (doux) document.startViewTransition(() => new Promise(ok => { changer(); setTimeout(ok, 0); }));
+  // Changement d'écran. En avançant : un fondu court (View Transitions) là où le navigateur le permet.
+  // Au Retour : pas de fondu (l'iPhone anime déjà son geste), et la page reprend sa place (y).
+  const routeAct = useRef(route); routeAct.current = route;
+  const aRendre = useRef(null);
+  const versRoute = (r, { y = 0, doux = false } = {}) => {
+    const changer = () => { setRoute(parseRoute(r)); setPop(null); setCloche(false); aRendre.current = y; };
+    if (doux && document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches && parseRoute(r).base !== routeAct.current.base) document.startViewTransition(() => new Promise(ok => { changer(); setTimeout(ok, 0); }));
     else changer();
   };
+  const versRouteAct = useRef(versRoute); versRouteAct.current = versRoute;
+  useLayoutEffect(() => { const y = aRendre.current; if (y == null) return; aRendre.current = null; rendrePosition(y); });
+  // go(r) : un écran de plus. go(r, { remplacer: true }) : onglet d'une page, « ← Tous les … ».
+  // go(r, { onglet: true }) : la barre du bas ou de côté. go(r, { exact: true }) : un lien direct normalisé, une redirection.
+  const go = (r, o) => { if (!aller(r, o)) { try { history.replaceState(null, '', '#' + r); } catch { /* cadre */ } versRoute(r); } };
+  // La coque de l'appli (pas les pages publiques ni la connexion) branche l'historique, une fois
+  const coque = !['verifier', 'desabo'].includes(route.base) && !(route.base === 'confidentialite' && store.mode !== 'live') && (store.mode !== 'live' || (store.session && store.me));
+  useEffect(() => { if (!coque) return; const brut = (location.hash || '').slice(1); brancherHistorique(parseRoute(brut).base === 'accueil' ? 'accueil' : brut, (r, o) => versRouteAct.current(r, o)); }, [coque]);
   // Les blocs arrivent en cascade au premier affichage seulement
   const [premier, setPremier] = useState(true);
   useEffect(() => { const t = setTimeout(() => setPremier(false), 1600); return () => clearTimeout(t); }, []);
@@ -94,7 +106,9 @@ function App({ store }) {
   const [iosHelp, setIosHelp] = useState(false);
   const install = useInstall();
   // Lien direct vers une offre (alertes par email et notifications) : #offre/<id>
-  useEffect(() => { if (route.base === 'offre' && route.sub) { setOfferId(route.sub); setApplyNow(false); go('offres'); } }, [route.base, route.sub]);
+  useEffect(() => { if (route.base === 'offre' && route.sub) { setOfferId(route.sub); setApplyNow(false); go('offres', { exact: true }); } }, [route.base, route.sub]);
+  // Lien direct « Je peux aider » (notification sur le téléphone, email) : #aider/<id> ouvre la feuille devant la demande
+  useEffect(() => { if (route.base === 'aider' && route.sub && store.me) { setAide({ demande: route.sub }); go('offres/demandes/' + route.sub, { exact: true }); } }, [route.base, route.sub, !!store.me]);
 
   const data = store.data;
   const me = store.me;
@@ -128,7 +142,7 @@ function App({ store }) {
   // Pages publiques, sans compte : vérification d'une attestation, désabonnement des emails, confidentialité
   if (route.base === 'verifier') return html`<main class="auth verify-wrap"><div class="auth-lang"><${LangToggle} onChange=${relang}/></div><${VerifyPage} store=${store} id=${route.sub}/></main>`;
   if (route.base === 'desabo') return html`<main class="auth verify-wrap"><div class="auth-lang"><${LangToggle} onChange=${relang}/></div><${DesaboPage} store=${store} token=${route.sub} quoi=${route.sub2}/></main>`;
-  if (route.base === 'confidentialite' && (store.mode !== 'live' || !store.session || !me)) return html`<main class="auth verify-wrap privacy-wrap"><div class="auth-lang"><${LangToggle} onChange=${relang}/></div><${PrivacyPage} onBack=${() => { history.back(); setTimeout(() => setRoute(readRoute()), 50); }}/></main>`;
+  if (route.base === 'confidentialite' && (store.mode !== 'live' || !store.session || !me)) return html`<main class="auth verify-wrap privacy-wrap"><div class="auth-lang"><${LangToggle} onChange=${relang}/></div><${PrivacyPage} onBack=${() => go('accueil')}/></main>`;
   if (store.mode === 'live' && !store.session) return html`<${AuthScreen} store=${store} relang=${relang}/>`;
   if (store.mode === 'live' && !me) return html`<${Onboarding} store=${store} relang=${relang}/>`;
 
@@ -150,31 +164,50 @@ function App({ store }) {
     confirm: (text, onYes, yes) => setConfirmBox({ text, onYes, yes }),
     openEntreprise: name => name && setEntreprise(name),
     askQuestion: initial => setAskQ(initial || {}),
-    askHelp: p => setAskMentor(p),
+    askHelp: (p = null, besoin = '') => setAskMentor({ p, besoin }),
     openAnnee: s => setAnnee(s || saison),
     ecrire: id => { setProfile(null); setOfferId(null); setPop(null); go('messages/' + id); },
+    // Un geste, sans changer d'écran ; si la demande n'attend plus d'aide, sa carte dit pourquoi
+    proposerAide: id => { setPop(null); setCloche(false); AIDE_OUVERTE.includes(etatAide(data, me, (data.demandes || []).find(d => d.id === id))) ? setAide({ demande: id }) : go('offres/demandes/' + id); },
+    choisirHoraire: id => {
+      setPop(null); setCloche(false);
+      const m = data.mentorships.find(x => x.id === id);
+      m && m.status === 'demande' && m.student_id !== me.id && (!m.mentor_id || m.mentor_id === me.id) ? setAide({ mentorat: id }) : go('mentorat');
+    },
   };
   const notifs = buildNotifs(ctx);
-  const todo = notifs.filter(n => n.action).length;
+  // La cloche ne compte que ce qui attend un geste du membre (et disparaît une fois fait)
+  const todo = notifs.filter(n => n.geste).length;
   const msgs = store.nonLus();
   latest.current = { notifs, todo, me, msgs };
   const nav = navFor(me);
   // En bas sur le téléphone : cinq onglets au plus. Les messages ont leur bulle en haut, le suivi passe dans le menu.
   const navBas = nav.filter(([k]) => k !== 'messages' && k !== 'suivi');
-  let page = route.base === 'offre' ? 'offres' : route.base;
+  let page = route.base === 'offre' || route.base === 'aider' ? 'offres' : route.base;
   if (page === 'parcours' && me.role !== 'etudiant') page = me.role === 'laureat' ? 'espace' : 'accueil';
   if (page === 'espace' && me.role !== 'laureat') page = me.role === 'etudiant' ? 'parcours' : 'accueil';
   if (page === 'admin' && me.role !== 'admin') page = 'accueil';
   const needConsent = store.mode === 'live' && !me.consent_at && !['confidentialite', 'profil'].includes(page);
-  const openNotif = n => { setPop(null); if (n.offer) ctx.openOffer(n.offer); else if (n.profile) { const p = store.byId('profiles', n.profile); if (p) setProfile(p); else go(n.to || 'accueil'); } else go(n.to); };
-  const dotFor = k => ((k === 'parcours' || k === 'espace') && notifs.some(n => n.action && n.mine)) || (k === 'mentorat' && notifs.some(n => n.action && n.to === 'mentorat'));
+  const openNotif = n => {
+    setPop(null); setCloche(false);
+    if (n.aider) return ctx.proposerAide(n.aider);
+    if (n.horaire) return ctx.choisirHoraire(n.horaire);
+    if (n.offer) ctx.openOffer(n.offer); else if (n.profile) { const p = store.byId('profiles', n.profile); if (p) setProfile(p); else go(n.to || 'accueil'); } else go(n.to);
+  };
+  ctx.notifs = notifs; ctx.openNotif = openNotif;
+  // Une chose à faire = une pastille, sur l'onglet où elle se fait (les fiches et le perso : Mon parcours, Mon espace)
+  const perso = me.role === 'etudiant' ? 'parcours' : me.role === 'laureat' ? 'espace' : 'accueil';
+  const ongletDe = n => { const b = (n.to || '').split('/')[0]; return n.offer || n.profile || !b || b === 'parcours' || b === 'espace' ? perso : b; };
+  const ouAFaire = new Set(notifs.filter(n => n.geste).map(ongletDe));
+  const dotFor = k => ouAFaire.has(k);
+  const neuf = x => (x > 9 ? '9+' : x);
   const plein = page === 'messages';
 
   return html`<div class=${'shell' + (premier ? ' premier' : '')}>
     <a class="skip" href="#contenu" onClick=${e => { e.preventDefault(); document.getElementById('contenu')?.focus(); }}>Aller au contenu</a>
     <aside class="side">
       <a class="brand" href="#accueil" onClick=${e => { e.preventDefault(); go('accueil'); }}><${BrandLogo} size=${40}/><span class="brand-txt"><strong>Réseau ENSAM</strong><span>Meknès · Lauréats & étudiants</span></span></a>
-      <nav class="side-nav">${nav.map(([k, l, i]) => html`<a href=${'#' + k} class=${page === k ? 'on' : ''} onClick=${e => { e.preventDefault(); go(k); }}><span class="nav-ico"><${Icon} name=${i}/></span> ${l}${k === 'messages' && msgs ? html`<span class="nav-n"><span aria-hidden="true">${msgs}</span><span class="sr-only">${msgs > 1 ? `${msgs} messages non lus` : '1 message non lu'}</span></span>` : dotFor(k) ? html`<span class="dotn"></span>` : null}</a>`)}</nav>
+      <nav class="side-nav">${nav.map(([k, l, i]) => html`<a href=${'#' + k} class=${page === k ? 'on' : ''} onClick=${e => { e.preventDefault(); go(k, { onglet: true }); }}><span class="nav-ico"><${Icon} name=${i}/></span> ${l}${k === 'messages' && msgs ? html`<span class="nav-n"><span aria-hidden="true">${msgs}</span><span class="sr-only">${msgs > 1 ? `${msgs} messages non lus` : '1 message non lu'}</span></span>` : dotFor(k) ? html`<span class="dotn" aria-hidden="true"></span><span class="sr-only">À faire ici</span>` : null}</a>`)}</nav>
       <div class="side-foot"><span class="mono small muted">Saison ${seasonLabel(saison)}</span><a class="small muted" href="#confidentialite" onClick=${e => { e.preventDefault(); go('confidentialite'); }}>Confidentialité</a></div>
     </aside>
     <div class=${'main' + (plein ? ' full' : '')}>
@@ -183,17 +216,15 @@ function App({ store }) {
         <span class="spacer"></span>
         ${store.mode === 'demo' ? html`<${PersonaSwitch} store=${store} go=${go}/>` : null}
         <${ThemeToggle} onChange=${relang}/>
-        <a class=${'icon-btn chat-top mobile-only' + (page === 'messages' ? ' on' : '')} href="#messages" aria-label=${msgs ? `Messages (${msgs} non lus)` : 'Messages'} onClick=${e => { e.preventDefault(); go('messages'); }}><${Icon} name="chat"/>${msgs ? html`<span class="badge-n">${msgs}</span>` : null}</a>
+        <a class=${'icon-btn chat-top mobile-only' + (page === 'messages' ? ' on' : '')} href="#messages" aria-label=${msgs ? `Messages (${msgs} non lus)` : 'Messages'} onClick=${e => { e.preventDefault(); go('messages', { onglet: true }); }}><${Icon} name="chat"/>${msgs ? html`<span class="badge-n" aria-hidden="true">${neuf(msgs)}</span>` : null}</a>
         <${LangToggle} onChange=${relang} store=${store} me=${me}/>
-        <div class="pop-wrap"><button class="icon-btn" aria-label=${`Notifications (${todo} à traiter)`} aria-expanded=${pop === 'bell'} onClick=${() => setPop(pop === 'bell' ? null : 'bell')}><${Icon} name="bell"/>${todo ? html`<span class="badge-n">${todo}</span>` : null}</button>
-          ${pop === 'bell' ? html`<div class="bell-pop" role="menu"><h3>Notifications</h3>${notifs.length ? notifs.slice(0, 14).map(n => html`<button class=${'notif' + (n.action ? ' act' : '')} onClick=${() => openNotif(n)}><span class=${'n-ico ' + (n.tone || '')}><${Icon} name=${n.icon} size=${16}/></span><span>${n.text}<span class="muted small">${timeAgo(n.at)}</span></span></button>`) : html`<p class="muted small">Rien de nouveau.</p>`}</div>` : null}
-        </div>
+        <button class="icon-btn cloche-btn" aria-label=${todo ? `Notifications (${todo} à faire)` : 'Notifications'} aria-haspopup="dialog" onClick=${() => { setPop(null); setCloche(true); }}><${Icon} name="bell"/>${todo ? html`<span class="badge-n" aria-hidden="true">${neuf(todo)}</span>` : null}</button>
         <div class="pop-wrap"><button class="me-btn" onClick=${() => setPop(pop === 'me' ? null : 'me')} aria-label="Mon compte" aria-expanded=${pop === 'me'}><${Avatar} p=${me} size=${34}/></button>
           ${pop === 'me' ? html`<div class="menu-pop right" role="menu">
             <div class="menu-who"><strong>${me.full_name}</strong><span class="muted small">${me.role === 'etudiant' ? 'Étudiant(e)' : me.role === 'laureat' ? 'Lauréat(e)' : 'Administration'}</span></div>
             <button onClick=${() => go('profil')}><${Icon} name="user" size=${16}/> Mon profil</button>
             <button class="menu-mobile" onClick=${() => go('suivi')}><${Icon} name="chart" size=${16}/> ${me.role === 'etudiant' ? 'Ma promo' : 'Suivi'}</button>
-            <button onClick=${() => { try { localStorage.removeItem('guide-off-' + me.id); } catch { /* */ } go('accueil'); }}><${Icon} name="route" size=${16}/> Comment ça marche ?</button>
+            ${me.role !== 'admin' ? html`<button onClick=${() => go('accueil/etapes')}><${Icon} name="route" size=${16}/> Comment ça marche ?</button>` : null}
             ${me.role !== 'admin' ? html`<button onClick=${() => { setPop(null); ctx.openAnnee(); }}><${Icon} name="award" size=${16}/> Ton année dans le réseau</button>` : null}
             ${install ? html`<button onClick=${() => { setPop(null); install.ios ? setIosHelp(true) : install.prompt(); }}><${Icon} name="download" size=${16}/> Installer l’application</button>` : null}
             <button onClick=${() => go('confidentialite')}><${Icon} name="shield" size=${16}/> Confidentialité</button>
@@ -206,7 +237,7 @@ function App({ store }) {
       </header>
       ${store.mode === 'demo' && !plein ? html`<section class="demo-band" aria-label="Démo"><${Icon} name="spark" size=${15}/><span>Démo avec des données fictives. Essaie le mentorat : <b translate="no">Salma</b> demande de l’aide, <b translate="no">Youssef</b> (lauréat) clique sur un horaire, la visio est prête. Change de rôle en haut.</span></section>` : null}
       <main class=${'content' + (plein ? ' flush' : '')} id="contenu" tabindex="-1">
-        ${page === 'accueil' ? html`<${Home} ...${ctx} notifs=${notifs} openNotif=${openNotif}/>` : null}
+        ${page === 'accueil' ? html`<${Home} key=${me.id} ...${ctx}/>` : null}
         ${page === 'offres' ? html`<${OffersPage} ...${ctx}/>` : null}
         ${page === 'mentorat' ? html`<${MentoratPage} ...${ctx}/>` : null}
         ${page === 'messages' ? html`<${MessagesPage} ...${ctx}/>` : null}
@@ -220,16 +251,20 @@ function App({ store }) {
         ${page === 'enquete' ? html`<${EnquetePage} ...${ctx}/>` : null}
       </main>
     </div>
-    <nav class=${'bottom-nav' + (plein && route.sub ? ' cache' : '')}>${navBas.map(([k, l, i]) => html`<a href=${'#' + k} class=${page === k ? 'on' : ''} onClick=${e => { e.preventDefault(); go(k); }}><span class="bn-ico"><${Icon} name=${i}/>${dotFor(k) ? html`<span class="dotn"></span>` : null}</span><span>${{ 'Mon parcours': 'Parcours', 'Mon espace': 'Espace', 'Ma promo': 'Promo' }[l] || l}</span></a>`)}</nav>
+    <nav class=${'bottom-nav' + (plein && route.sub ? ' cache' : '')}>${navBas.map(([k, l, i]) => html`<a href=${'#' + k} class=${page === k ? 'on' : ''} onClick=${e => { e.preventDefault(); go(k, { onglet: true }); }}><span class="bn-ico"><${Icon} name=${i}/>${dotFor(k) ? html`<span class="dotn" aria-hidden="true"></span>` : null}</span><span>${{ 'Mon parcours': 'Parcours', 'Mon espace': 'Espace', 'Ma promo': 'Promo' }[l] || l}</span>${dotFor(k) ? html`<span class="sr-only">À faire ici</span>` : null}</a>`)}</nav>
+    ${cloche ? html`<${Cloche} notifs=${notifs} onGo=${openNotif} onClose=${() => setCloche(false)}/>` : null}
     ${offerId ? html`<${OfferDetail} ctx=${ctx} id=${offerId} key=${offerId} apply=${applyNow} onClose=${() => setOfferId(null)}/>` : null}
-    ${profile ? html`<${ProfileModal} ctx=${ctx} p=${profile} onClose=${() => setProfile(null)} onAskMentor=${p => { setProfile(null); setAskMentor(p); }}/>` : null}
-    ${askMentor ? html`<${AskHelp} ctx=${ctx} mentor=${askMentor} onClose=${() => setAskMentor(null)}/>` : null}
+    ${aide?.demande ? html`<${ProposerAide} ctx=${ctx} id=${aide.demande} key=${'aide-' + aide.demande} onClose=${() => setAide(null)}/>` : null}
+    ${aide?.mentorat ? html`<${HoraireSheet} ctx=${ctx} id=${aide.mentorat} key=${'horaire-' + aide.mentorat} onClose=${() => setAide(null)}/>` : null}
+    ${profile ? html`<${ProfileModal} ctx=${ctx} p=${profile} onClose=${() => setProfile(null)} onAskMentor=${p => { setProfile(null); setAskMentor({ p }); }}/>` : null}
+    ${askMentor ? html`<${AskHelp} ctx=${ctx} mentor=${askMentor.p} besoin=${askMentor.besoin} onClose=${() => setAskMentor(null)}/>` : null}
     ${confirmBox ? html`<${Confirm} text=${confirmBox.text} onYes=${confirmBox.onYes} onClose=${() => setConfirmBox(null)} yes=${confirmBox.yes || 'Supprimer'}/>` : null}
     ${entreprise ? html`<${EntrepriseModal} ctx=${ctx} name=${entreprise} key=${entreprise} onClose=${() => setEntreprise(null)}/>` : null}
     ${askQ ? html`<${AskQuestion} ctx=${ctx} initial=${askQ} onClose=${() => setAskQ(null)} onDone=${id => { setAskQ(null); go('reseau/entraide/' + id); }}/>` : null}
     ${annee ? html`<${TonAnnee} ctx=${ctx} saison=${annee} onClose=${() => setAnnee(null)}/>` : null}
     ${iosHelp ? html`<${IosInstallHelp} onClose=${() => setIosHelp(false)}/>` : null}
     ${needConsent ? html`<${ConsentModal} ctx=${ctx}/>` : null}
+    ${pop ? html`<${Feuille} key=${pop} onClose=${() => setPop(null)}/>` : null}
     <${Toaster}/>
     <${Celebration}/>
   </div>`;
@@ -266,7 +301,33 @@ function PersonaSwitch({ store, go }) {
 }
 
 // ---------------------------------------------------------------------------
-// Notifications calculées à partir des données
+// La cloche : une feuille (en bas sur téléphone, sous la cloche sur ordinateur), deux groupes.
+// « À faire » : ce qui attend un geste du membre, chacun avec son bouton ; c'est le seul chiffre de la cloche.
+// « Nouvelles » : les rappels d'abord, puis du plus récent au plus ancien (10 au plus). Rien n'y est compté, donc pas de « non lu ».
+// ---------------------------------------------------------------------------
+function Cloche({ notifs, onGo, onClose }) {
+  const faire = notifs.filter(n => n.geste);
+  const nouvelles = notifs.filter(n => !n.geste).sort((a, b) => (b.rappel ? 1 : 0) - (a.rappel ? 1 : 0) || new Date(b.at) - new Date(a.at)).slice(0, 10);
+  return html`<${Modal} title="Notifications" cls="cloche" onClose=${onClose}>
+    ${!faire.length && !nouvelles.length ? html`<p class="cl-vide"><${Icon} name="check" size=${20}/><span><strong>Tout est à jour.</strong><span class="small muted">Ce qui te concerne arrivera ici.</span></span></p>` : html`
+    <section class="cl-groupe" aria-labelledby="cl-faire">
+      <h3 class="cl-titre" id="cl-faire">À faire${faire.length ? html` <span class="count">${faire.length}</span>` : null}</h3>
+      ${faire.length ? html`<ul class="af-liste">${faire.map(n => html`<${LigneAFaire} key=${n.key} n=${n} onGo=${onGo}/>`)}</ul>`
+        : html`<p class="cl-vide small"><${Icon} name="check" size=${16}/> Rien à faire pour l’instant.</p>`}
+    </section>
+    <section class="cl-groupe" aria-labelledby="cl-nouv">
+      <h3 class="cl-titre" id="cl-nouv">Nouvelles</h3>
+      ${nouvelles.length ? html`<ul class="nv-liste">${nouvelles.map(n => html`<${LigneNouvelle} key=${n.key || n.text} n=${n} onGo=${onGo}/>`)}</ul>`
+        : html`<p class="cl-vide small muted">Rien de nouveau pour l’instant.</p>`}
+    </section>`}
+  <//>`;
+}
+
+// ---------------------------------------------------------------------------
+// Notifications calculées à partir des données.
+// geste : le verbe du bouton d'une chose qui attend le membre ; la cloche ne compte qu'elles, et elles disparaissent une fois faites.
+// action : ce que l'accueil peut proposer de faire ; rappel : un rendez-vous ou un événement proche ;
+// besoin : une demande faite aux lauréats (« Ils ont besoin de toi ») ; ref : l'élément concerné, pour ne le dire qu'une fois.
 // ---------------------------------------------------------------------------
 const recent = (iso, days) => Date.now() - new Date(iso) < days * 864e5;
 
@@ -274,11 +335,13 @@ function buildNotifs({ data, me, store, saison }) {
   const out = [];
   const name = id => store.byId('profiles', id)?.full_name || 'Un membre';
   const first = id => name(id).split(' ')[0];
+  // Ce qui se confirme ou se remercie sur place : Mon parcours (étudiant) ou Mon espace (lauréat recruté)
+  const perso = me.role === 'etudiant' ? 'parcours' : 'espace';
   // Étudiant : recrutement à confirmer, évolution des candidatures, nouvelles offres
   for (const p of data.placements) {
     if (p.student_id !== me.id) continue;
-    if (p.status === 'en_attente') out.push({ key: 'pa' + p.id, action: true, mine: true, tone: 'accent', icon: 'briefcase', to: 'parcours', at: p.created_at, text: p.demande_id ? `${name(p.laureat_id)} indique que tu as commencé chez ${p.entreprise}. Confirme-le.` : `${name(p.laureat_id)} indique t’avoir recruté(e) chez ${p.entreprise}. Confirme-le.` });
-    if (p.status === 'confirme' && p.laureat_id && !p.merci) out.push({ action: true, mine: true, tone: 'brass', icon: 'heart', to: 'parcours', at: p.confirmed_at || p.created_at, text: `Ta réussite chez ${p.entreprise} est confirmée. Laisse un merci à ${first(p.laureat_id)}.` });
+    if (p.status === 'en_attente') out.push({ key: 'pa' + p.id, ref: p.id, action: true, geste: 'Confirmer', tone: 'accent', icon: 'briefcase', to: perso, at: p.created_at, text: p.demande_id ? `${name(p.laureat_id)} indique que tu as commencé chez ${p.entreprise}. Confirme-le.` : `${name(p.laureat_id)} indique t’avoir recruté(e) chez ${p.entreprise}. Confirme-le.` });
+    if (p.status === 'confirme' && p.laureat_id && !p.merci) out.push({ key: 'pm' + p.id, ref: p.id, action: true, geste: 'Dire merci', tone: 'brass', icon: 'heart', to: perso, at: p.confirmed_at || p.created_at, text: `Ta réussite chez ${p.entreprise} est confirmée. Laisse un merci à ${first(p.laureat_id)}.` });
   }
   for (const a of data.applications) if (a.student_id === me.id && a.offer_id && a.status !== 'postule' && recent(a.updated_at || a.created_at, 21)) {
     out.push({ key: 'as' + a.id + a.status, icon: a.status === 'refuse' ? 'x' : a.status === 'entretien' ? 'people' : 'check', tone: a.status === 'refuse' ? '' : 'good', offer: a.offer_id, at: a.updated_at || a.created_at, text: `Ta candidature « ${a.titre} » : ${APP_STATUS[a.status]}.` });
@@ -286,57 +349,66 @@ function buildNotifs({ data, me, store, saison }) {
   if (me.role === 'etudiant') {
     for (const o of data.offers) if (o.status === 'ouverte' && matchesMe(o, me, saison) && recent(o.created_at, 7)) out.push({ icon: 'feed', offer: o.id, at: o.created_at, text: `Nouvelle offre pour toi : ${o.titre} (${o.entreprise})` });
   }
-  // Lauréat : candidatures reçues, confirmations, commentaires
+  // Lauréat : candidatures reçues, une ligne par offre (elles se traitent toutes dans la fiche de l'offre), confirmations, commentaires
   const myOffers = new Map(data.offers.filter(o => o.author_id === me.id).map(o => [o.id, o]));
-  for (const a of data.applications) if (myOffers.has(a.offer_id) && a.status === 'postule') out.push({ key: 'ap' + a.id, action: true, mine: true, tone: 'accent', icon: 'inbox', offer: a.offer_id, at: a.created_at, text: `Nouvelle candidature de ${name(a.student_id)} : ${myOffers.get(a.offer_id).titre}` });
+  const recues = new Map();
+  for (const a of data.applications) if (myOffers.has(a.offer_id) && a.status === 'postule') recues.set(a.offer_id, [...(recues.get(a.offer_id) || []), a]);
+  for (const [oid, as] of recues) {
+    const o = myOffers.get(oid), last = as.reduce((m, a) => (a.created_at > m.created_at ? a : m));
+    out.push({ key: 'ap' + oid + '-' + as.length, ref: oid, action: true, geste: as.length > 1 ? 'Voir les candidatures' : `Voir la candidature de ${first(last.student_id)}`, tone: 'accent', icon: 'inbox', offer: oid, at: last.created_at,
+      text: as.length > 1 ? `${as.length} nouvelles candidatures : ${o.titre}` : `Nouvelle candidature de ${name(last.student_id)} : ${o.titre}` });
+  }
   for (const p of data.placements) if (p.laureat_id === me.id && p.status === 'confirme' && recent(p.confirmed_at || p.created_at, 30)) out.push({ key: 'pc' + p.id, icon: 'trophy', tone: 'brass', to: 'espace', at: p.confirmed_at || p.created_at, text: `${name(p.student_id)} a confirmé son ${p.demande_id ? 'démarrage' : 'recrutement'} chez ${p.entreprise}. +50 points${p.merci ? ' et un merci' : ''}.` });
   for (const c of data.comments) if (myOffers.has(c.offer_id) && c.author_id !== me.id && recent(c.created_at, 14)) out.push({ icon: 'comment', offer: c.offer_id, at: c.created_at, text: `${name(c.author_id)} a posé une question sur ton offre : « ${c.body.slice(0, 60)}${c.body.length > 60 ? '…' : ''} »` });
-  // Mentorat : demande reçue, horaire choisi, rendez-vous proche, puis merci
+  // Mentorat : demande reçue, horaire choisi, rendez-vous proche, puis merci. Un rendez-vous = une seule ligne.
   for (const m of data.mentorships) {
     const st = mentorState(m);
     const w = st === 'rdv' && m.rdv_at ? slotWhen(m.rdv_at) : null;
     const soon = w && w.diff >= 0 && w.diff <= 1 ? `${w.diff === 0 ? 'aujourd’hui' : 'demain'} à ${w.time}` : null;
     const upcoming = m.rdv_at && new Date(m.rdv_at) > Date.now();
     if (m.mentor_id === me.id) {
-      if (st === 'demande') out.push({ key: 'md' + m.id, action: true, tone: 'accent', icon: 'mentor', to: 'mentorat', at: m.created_at, text: `${name(m.student_id)} te demande de l’aide : ${m.sujet}` });
-      if (soon) out.push({ key: 'mr' + m.id, rdv: true, action: true, tone: 'accent', icon: 'video', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous avec ${name(m.student_id)} ${soon}` });
-      if (st === 'rdv' && m.confirme_at && recent(m.confirme_at, 7)) out.push({ key: 'mc' + m.id + m.rdv_at, tone: 'good', icon: 'checks', to: 'mentorat', at: m.confirme_at, text: `${first(m.student_id)} a confirmé sa présence : ${m.sujet}` });
-      if (st === 'apres') out.push({ key: 'mf' + m.id, action: true, tone: 'brass', icon: 'check', to: 'mentorat', at: m.rdv_at, text: `Ton rendez-vous avec ${first(m.student_id)} a eu lieu ? Marque-le comme terminé.` });
-      if (st === 'terminee' && m.merci && recent(m.rdv_at || m.created_at, 14)) out.push({ key: 'mm' + m.id, tone: 'brass', icon: 'heart', to: 'espace', at: m.rdv_at || m.created_at, text: `${first(m.student_id)} te remercie pour le mentorat : ${m.sujet}` });
-      if (st === 'annulee' && upcoming) out.push({ key: 'mx' + m.id, icon: 'x', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous annulé : ${m.sujet}` });
+      if (st === 'demande') out.push({ key: 'md' + m.id, ref: m.id, action: true, geste: 'Choisir un horaire', besoin: true, horaire: m.id, tone: 'accent', icon: 'mentor', to: 'mentorat', at: m.created_at, text: `${name(m.student_id)} te demande de l’aide : ${m.sujet}` });
+      if (soon) out.push({ key: 'mr' + m.id, ref: m.id, rdv: true, rappel: true, action: true, tone: 'accent', icon: 'video', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous avec ${name(m.student_id)} ${soon}` });
+      if (st === 'rdv' && m.confirme_at && recent(m.confirme_at, 7)) out.push({ key: 'mc' + m.id + m.rdv_at, ref: m.id, tone: 'good', icon: 'checks', to: 'mentorat', at: m.confirme_at, text: `${first(m.student_id)} a confirmé sa présence : ${m.sujet}` });
+      if (st === 'apres') out.push({ key: 'mf' + m.id, ref: m.id, action: true, geste: 'Marquer comme terminé', tone: 'brass', icon: 'check', to: 'mentorat', at: m.rdv_at, text: `Ton rendez-vous avec ${first(m.student_id)} a eu lieu ? Marque-le comme terminé.` });
+      if (st === 'terminee' && m.merci && recent(m.rdv_at || m.created_at, 14)) out.push({ key: 'mm' + m.id, ref: m.id, tone: 'brass', icon: 'heart', to: 'espace', at: m.rdv_at || m.created_at, text: `${first(m.student_id)} te remercie pour le mentorat : ${m.sujet}` });
+      if (st === 'annulee' && upcoming) out.push({ key: 'mx' + m.id, ref: m.id, icon: 'x', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous annulé : ${m.sujet}` });
     }
     if (m.student_id === me.id) {
-      // Rendez-vous fixé : confirmer sa présence est la prochaine étape (base à jour), sinon une simple nouvelle
-      if (st === 'rdv' && 'confirme_at' in m && !m.confirme_at) out.push({ key: 'sc' + m.id + m.rdv_at, action: true, mine: true, tone: 'accent', icon: 'calendar', to: 'mentorat', at: m.accepted_at || m.created_at, text: `${first(m.mentor_id)} a fixé ton rendez-vous. Confirme ta présence : ${m.sujet}` });
-      else if (st === 'rdv' && !soon && recent(m.accepted_at || m.created_at, 10)) out.push({ key: 'sa' + m.id + m.rdv_at, icon: 'mentor', tone: 'good', to: 'mentorat', at: m.accepted_at || m.created_at, text: `${name(m.mentor_id)} a accepté ta demande : ${m.sujet}` });
-      if (soon) out.push({ key: 'sr' + m.id + m.rdv_at, rdv: true, action: true, mine: true, tone: 'accent', icon: 'video', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous avec ${name(m.mentor_id)} ${soon}` });
-      if (st === 'apres') out.push({ key: 'sf' + m.id, action: true, mine: true, tone: 'brass', icon: 'heart', to: 'mentorat', at: m.rdv_at, text: `Comment s’est passé ton échange avec ${first(m.mentor_id)} ? Dis-lui merci.` });
-      if (st === 'annulee' && upcoming && m.mentor_id) out.push({ key: 'sx' + m.id, icon: 'x', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous annulé : ${m.sujet}` });
+      // Rendez-vous fixé : confirmer sa présence est la chose à faire (base à jour) ; sinon une simple nouvelle, puis le rappel
+      const aConfirmer = st === 'rdv' && 'confirme_at' in m && !m.confirme_at && upcoming;
+      if (aConfirmer) out.push({ key: 'sc' + m.id + m.rdv_at, ref: m.id, action: true, geste: 'Confirmer ma présence', tone: 'accent', icon: 'calendar', to: 'mentorat', at: m.accepted_at || m.created_at, text: `${first(m.mentor_id)} a fixé ton rendez-vous. Confirme ta présence : ${m.sujet}` });
+      else if (st === 'rdv' && !soon && recent(m.accepted_at || m.created_at, 10)) out.push({ key: 'sa' + m.id + m.rdv_at, ref: m.id, icon: 'mentor', tone: 'good', to: 'mentorat', at: m.accepted_at || m.created_at, text: `${name(m.mentor_id)} a accepté ta demande : ${m.sujet}` });
+      if (soon && !aConfirmer) out.push({ key: 'sr' + m.id + m.rdv_at, ref: m.id, rdv: true, rappel: true, action: true, tone: 'accent', icon: 'video', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous avec ${name(m.mentor_id)} ${soon}` });
+      if (st === 'apres') out.push({ key: 'sf' + m.id, ref: m.id, action: true, geste: 'Dire merci', tone: 'brass', icon: 'heart', to: 'mentorat', at: m.rdv_at, text: `Comment s’est passé ton échange avec ${first(m.mentor_id)} ? Dis-lui merci.` });
+      if (st === 'annulee' && upcoming && m.mentor_id) out.push({ key: 'sx' + m.id, ref: m.id, icon: 'x', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous annulé : ${m.sujet}` });
     }
   }
-  // Lauréat : demandes ouvertes à tous qui lui correspondent bien (deux au plus)
+  // Lauréat : demandes ouvertes à tous qui lui correspondent bien (deux au plus) ; elles s'ouvrent sur place avec leurs horaires
   const ignorees = mentoratIgnorees();
   if (me.role === 'laureat') for (const { m } of requestsFor(data, me, id => store.byId('profiles', id)).filter(x => !x.direct && x.score >= 3 && !ignorees.has(x.m.id)).slice(0, 2)) {
-    out.push({ key: 'mo' + m.id, tone: 'accent', icon: 'heart', to: 'mentorat', at: m.created_at, text: `${name(m.student_id)} cherche de l’aide : ${m.sujet}` });
+    out.push({ key: 'mo' + m.id, ref: m.id, besoin: true, horaire: m.id, tone: 'accent', icon: 'heart', to: 'mentorat', at: m.created_at, text: `${name(m.student_id)} cherche de l’aide : ${m.sujet}` });
   }
   // Invitations à postuler (étudiant)
   for (const i of data.invitations) if (i.student_id === me.id && i.status === 'envoyee' && !data.applications.some(a => a.offer_id === i.offer_id && a.student_id === me.id)) {
     const o = store.byId('offers', i.offer_id);
-    if (o && o.status === 'ouverte') out.push({ key: 'in' + i.id, action: true, mine: true, tone: 'accent', icon: 'send', offer: o.id, at: i.created_at, text: `${name(i.laureat_id)} t’invite à postuler : ${o.titre}` });
+    // Une invitation reçue l'an dernier ne pousse pas une offre d'une autre année
+    if (o && o.status === 'ouverte' && peutPostulerA(o, me, saison)) out.push({ key: 'in' + i.id, ref: o.id, action: true, geste: 'Voir l’offre', tone: 'accent', icon: 'send', offer: o.id, at: i.created_at, text: `${name(i.laureat_id)} t’invite à postuler : ${o.titre}` });
   }
   // Demandes des étudiants : aides reçues, match à faire avancer, demande en pause, nouvelles demandes de son parcours
-  const dem = id => store.byId('demandes', id);
+  const dem = id => (data.demandes || []).find(d => d.id === id);
   const demarre = d => data.placements.some(p => p.demande_id === d.id && p.status !== 'refuse');
   for (const x of data.propositions || []) {
     const d = dem(x.demande_id); if (!d) continue;
-    if (d.auteur_id === me.id && x.status === 'envoyee' && d.status === 'ouverte') out.push({ key: 'dp' + x.id, action: true, mine: true, tone: 'accent', icon: 'send', to: 'offres/demandes/' + d.id, at: x.created_at, text: `${name(x.laureat_id)} te propose son aide : ${d.titre}` });
-    if (d.auteur_id === me.id && x.status === 'retiree' && d.status === 'ouverte' && recent(x.repondu_at || x.created_at, 7)) out.push({ key: 'dw' + x.id, icon: 'send', to: 'offres/demandes/' + d.id, at: x.repondu_at || x.created_at, text: `${name(x.laureat_id)} s’est retiré(e). Ta demande est de nouveau ouverte aux lauréats.` });
-    if (x.laureat_id === me.id && x.status === 'acceptee' && d.status === 'match' && !demarre(d)) out.push({ key: 'dm' + x.id, action: true, tone: 'accent', icon: 'heart', to: 'offres/demandes/' + d.id, at: x.repondu_at || x.created_at, text: `C’est un match avec ${name(d.auteur_id)} : déclare son démarrage dès qu’il a lieu.` });
-    if (x.laureat_id === me.id && ['declinee', 'close'].includes(x.status) && recent(x.repondu_at || x.created_at, 7)) out.push({ key: 'dx' + x.id + x.status, icon: 'heart', to: 'offres/demandes/' + d.id, at: x.repondu_at || x.created_at, text: `${first(d.auteur_id)} a choisi une autre voie pour « ${d.titre} ». Merci d’avoir proposé ton aide !` });
+    if (d.auteur_id === me.id && x.status === 'envoyee' && d.status === 'ouverte') out.push({ key: 'dp' + x.id, ref: d.id, action: true, geste: 'Voir sa proposition', tone: 'accent', icon: 'send', to: 'offres/demandes/' + d.id, at: x.created_at, text: `${name(x.laureat_id)} te propose son aide : ${d.titre}` });
+    if (d.auteur_id === me.id && x.status === 'retiree' && d.status === 'ouverte' && recent(x.repondu_at || x.created_at, 7)) out.push({ key: 'dw' + x.id, ref: d.id, icon: 'send', to: 'offres/demandes/' + d.id, at: x.repondu_at || x.created_at, text: `${name(x.laureat_id)} s’est retiré(e). Ta demande est de nouveau ouverte aux lauréats.` });
+    // Le démarrage attend un événement extérieur, parfois des mois : l'accueil le propose, la cloche ne le compte pas
+    if (x.laureat_id === me.id && x.status === 'acceptee' && d.status === 'match' && !demarre(d)) out.push({ key: 'dm' + x.id, ref: d.id, action: true, tone: 'accent', icon: 'heart', to: 'offres/demandes/' + d.id, at: x.repondu_at || x.created_at, text: `C’est un match avec ${name(d.auteur_id)} : déclare son démarrage dès qu’il a lieu.` });
+    if (x.laureat_id === me.id && ['declinee', 'close'].includes(x.status) && recent(x.repondu_at || x.created_at, 7)) out.push({ key: 'dx' + x.id + x.status, ref: d.id, icon: 'heart', to: 'offres/demandes/' + d.id, at: x.repondu_at || x.created_at, text: `${first(d.auteur_id)} a choisi une autre voie pour « ${d.titre} ». Merci d’avoir proposé ton aide !` });
   }
-  for (const d of data.demandes || []) if (d.auteur_id === me.id && demandeEnPause(d)) out.push({ key: 'dr' + d.id, action: true, mine: true, icon: 'clock', to: 'offres/demandes/' + d.id, at: d.relancee_at || d.created_at, text: `Ta demande « ${d.titre} » est en pause. Relance-la si tu cherches toujours.` });
+  for (const d of data.demandes || []) if (d.auteur_id === me.id && demandeEnPause(d)) out.push({ key: 'dr' + d.id, ref: d.id, action: true, geste: 'Voir ma demande', icon: 'clock', to: 'offres/demandes/' + d.id, at: d.relancee_at || d.created_at, text: `Ta demande « ${d.titre} » est en pause. Relance-la si tu cherches toujours.` });
   if (me.role === 'laureat') for (const { d } of demandesPour(data, me, id => store.byId('profiles', id)).filter(x => !x.mienne && x.prox >= 1 && recent(x.d.created_at, 4)).slice(0, 2)) {
-    out.push({ key: 'dn' + d.id, tone: 'accent', icon: 'send', to: 'offres/demandes/' + d.id, at: d.created_at, text: `${name(d.auteur_id)} cherche : ${d.titre}` });
+    out.push({ key: 'dn' + d.id, ref: d.id, besoin: true, aider: d.id, tone: 'accent', icon: 'send', to: 'offres/demandes/' + d.id, at: d.created_at, text: `${name(d.auteur_id)} cherche : ${d.titre}` });
   }
   // Bravos reçus sur sa réussite
   for (const p of data.placements) if (p.student_id === me.id && FOUND.has(p.status)) {
@@ -346,16 +418,16 @@ function buildNotifs({ data, me, store, saison }) {
   }
   const myQ = new Set(data.questions.filter(q => q.author_id === me.id).map(q => q.id));
   for (const a of data.answers) if (myQ.has(a.question_id) && a.author_id !== me.id) out.push({ key: 'an' + a.id, tone: 'good', icon: 'qa', to: 'reseau/entraide/' + a.question_id, at: a.created_at, text: `${name(a.author_id)} a répondu à ta question.` });
-  // Questions routées vers ce lauréat (son entreprise ou son pays), sans réponse de sa part
+  // Questions routées vers ce lauréat (son entreprise ou son pays), sans réponse de sa part : envoyées à tout un groupe, donc pas comptées
   if (me.role === 'laureat') for (const q of data.questions) if (routedTo(q, me) && recent(q.created_at, 14) && !data.answers.some(a => a.question_id === q.id && a.author_id === me.id)) {
-    out.push({ key: 'qr' + q.id, action: true, tone: 'accent', icon: 'qa', to: 'reseau/entraide/' + q.id, at: q.created_at, text: `Une question pour toi sur ${q.entreprise || q.pays} : ${q.titre}` });
+    out.push({ key: 'qr' + q.id, ref: q.id, action: true, besoin: true, tone: 'accent', icon: 'qa', to: 'reseau/entraide/' + q.id, at: q.created_at, text: `Une question pour toi sur ${q.entreprise || q.pays} : ${q.titre}` });
   }
   // Relance douce : mes offres ouvertes sans activité depuis 3 semaines
-  for (const o of data.offers) if (o.author_id === me.id && needsRelance(data, o)) out.push({ key: 'ro' + o.id, action: true, mine: true, icon: 'clock', offer: o.id, at: o.relance_at || o.created_at, text: `Ton offre « ${o.titre} » est-elle toujours ouverte ?` });
+  for (const o of data.offers) if (o.author_id === me.id && needsRelance(data, o)) out.push({ key: 'ro' + o.id, ref: o.id, action: true, geste: 'Mettre à jour', icon: 'clock', offer: o.id, at: o.relance_at || o.created_at, text: `Ton offre « ${o.titre} » est-elle toujours ouverte ?` });
   // Parrainage
   for (const x of data.parrainages) if (x.saison === saison && recent(x.created_at, 14)) {
     if (x.parrain_id === me.id) out.push({ key: 'pf' + x.id, tone: 'brass', icon: 'heart', to: 'espace', at: x.created_at, text: `${name(x.filleul_id)} (3A) est ton filleul cette année. Fais-lui signe !` });
-    if (x.filleul_id === me.id) out.push({ key: 'pp' + x.id, tone: 'brass', icon: 'heart', to: 'accueil', at: x.created_at, text: `${name(x.parrain_id)}, lauréat(e) de ta filière, est ton parrain cette année.` });
+    if (x.filleul_id === me.id) out.push({ key: 'pp' + x.id, tone: 'brass', icon: 'heart', to: 'parcours', at: x.created_at, text: `${name(x.parrain_id)}, lauréat(e) de ta filière, est ton parrain cette année.` });
   }
   // Un café ENSAM annoncé dans ma ville ou mon pays
   const groups = myGroups(data, me).all;
@@ -368,19 +440,21 @@ function buildNotifs({ data, me, store, saison }) {
   }
   // Coordonnées : demandes reçues, puis réponse à mes demandes
   for (const d of data.demandes_contact || []) {
-    if (d.cible_id === me.id && d.status === 'envoyee') out.push({ key: 'dc' + d.id, action: true, mine: true, tone: 'accent', icon: 'phone', profile: d.demandeur_id, to: 'accueil', at: d.created_at, text: `${name(d.demandeur_id)} aimerait avoir tes coordonnées.` });
+    if (d.cible_id === me.id && d.status === 'envoyee') out.push({ key: 'dc' + d.id, ref: d.id, action: true, geste: 'Répondre', tone: 'accent', icon: 'phone', profile: d.demandeur_id, to: 'accueil', at: d.created_at, text: `${name(d.demandeur_id)} aimerait avoir tes coordonnées.` });
     if (d.demandeur_id === me.id && d.status === 'acceptee' && recent(d.repondu_at || d.created_at, 14)) out.push({ key: 'da' + d.id, tone: 'good', icon: 'phone', profile: d.cible_id, at: d.repondu_at || d.created_at, text: `${name(d.cible_id)} a accepté : ses coordonnées sont sur son profil.` });
   }
   // Relecture de CV
   for (const r of data.relectures_cv || []) {
-    if (r.student_id === me.id && r.status === 'rendue' && !r.merci) out.push({ key: 'rr' + r.id, action: true, mine: true, tone: 'brass', icon: 'check', to: 'mentorat/cv', at: r.rendue_at || r.created_at, text: `${r.reviewer_id ? first(r.reviewer_id) : 'Un lauréat'} a relu ton CV. Lis ses conseils et dis merci.` });
-    if (r.student_id === me.id && r.status === 'en_cours' && recent(r.pris_at || r.created_at, 7)) out.push({ key: 'rp' + r.id, tone: 'good', icon: 'eye', to: 'mentorat/cv', at: r.pris_at || r.created_at, text: `${r.reviewer_id ? name(r.reviewer_id) : 'Un lauréat'} relit ton CV.` });
-    if (r.reviewer_id === me.id && r.status === 'demandee') out.push({ key: 'rd' + r.id, action: true, tone: 'accent', icon: 'eye', to: 'mentorat/cv', at: r.created_at, text: `${name(r.student_id)} te demande de relire son CV.` });
-    if (r.reviewer_id === me.id && r.status === 'rendue' && r.merci && recent(r.rendue_at || r.created_at, 14)) out.push({ key: 'rm' + r.id, tone: 'brass', icon: 'heart', to: 'mentorat/cv', at: r.rendue_at || r.created_at, text: `${first(r.student_id)} te remercie pour la relecture de son CV.` });
+    if (r.student_id === me.id && r.status === 'rendue' && !r.merci && !r.note) out.push({ key: 'rr' + r.id, ref: r.id, action: true, geste: 'Lire ses conseils', tone: 'brass', icon: 'check', to: 'mentorat/cv', at: r.rendue_at || r.created_at, text: `${r.reviewer_id ? first(r.reviewer_id) : 'Un lauréat'} a relu ton CV. Lis ses conseils et dis merci.` });
+    if (r.student_id === me.id && r.status === 'en_cours' && recent(r.pris_at || r.created_at, 7)) out.push({ key: 'rp' + r.id, ref: r.id, tone: 'good', icon: 'eye', to: 'mentorat/cv', at: r.pris_at || r.created_at, text: `${r.reviewer_id ? name(r.reviewer_id) : 'Un lauréat'} relit ton CV.` });
+    // Relecture commencée : l'étudiant attend la suite, elle reste à faire jusqu'à ce qu'elle soit rendue
+    if (r.reviewer_id === me.id && r.status === 'en_cours') out.push({ key: 'rc' + r.id, ref: r.id, action: true, geste: 'Continuer la relecture', tone: 'accent', icon: 'edit', to: 'mentorat/cv', at: r.pris_at || r.created_at, text: `Tu relis le CV de ${name(r.student_id)}` });
+    if (r.reviewer_id === me.id && r.status === 'demandee') out.push({ key: 'rd' + r.id, ref: r.id, action: true, geste: `Relire le CV de ${first(r.student_id)}`, besoin: true, tone: 'accent', icon: 'eye', to: 'mentorat/cv', at: r.created_at, text: `${name(r.student_id)} te demande de relire son CV.` });
+    if (r.reviewer_id === me.id && r.status === 'rendue' && r.merci && recent(r.rendue_at || r.created_at, 14)) out.push({ key: 'rm' + r.id, ref: r.id, tone: 'brass', icon: 'heart', to: 'mentorat/cv', at: r.rendue_at || r.created_at, text: `${first(r.student_id)} te remercie pour la relecture de son CV.` });
   }
   if (me.role === 'laureat') {
     const ouvertes = (data.relectures_cv || []).filter(r => r.status === 'demandee' && !r.reviewer_id && r.student_id !== me.id);
-    if (ouvertes.length) out.push({ key: 'rq' + ouvertes.length, tone: 'accent', icon: 'eye', to: 'mentorat/cv', at: ouvertes.reduce((m, r) => (r.created_at > m ? r.created_at : m), ''), text: `${ouvertes.length} CV attend${ouvertes.length > 1 ? 'ent' : ''} une relecture.` });
+    if (ouvertes.length) out.push({ key: 'rq' + ouvertes.length, besoin: true, tone: 'accent', icon: 'eye', to: 'mentorat/cv', at: ouvertes.reduce((m, r) => (r.created_at > m ? r.created_at : m), ''), text: `${ouvertes.length} CV attend${ouvertes.length > 1 ? 'ent' : ''} une relecture.` });
   }
   // Vérification par deux lauréats de la même promo
   const pairs = data.verifications_pairs || [];
@@ -397,103 +471,210 @@ function buildNotifs({ data, me, store, saison }) {
     const inscrit = (data.evenement_participants || []).some(x => x.evenement_id === e.id && x.user_id === me.id);
     const jours = Math.floor((new Date(e.debut).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 864e5);
     const quand = new Date(e.debut).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
-    if (inscrit && jours >= 0 && jours <= 1) out.push({ key: 'ev' + e.id + jours, action: true, tone: 'accent', icon: 'calendar', to: 'reseau/agenda/' + e.id, at: e.created_at, text: `${e.titre} : ${jours === 0 ? 'c’est aujourd’hui' : 'c’est demain'}.` });
-    else if (!inscrit && recent(e.created_at, 10) && e.author_id !== me.id) out.push({ key: 'en' + e.id, tone: 'good', icon: TYPES_EVENEMENT[e.type]?.[1] || 'calendar', to: 'reseau/agenda/' + e.id, at: e.created_at, text: `${TYPES_EVENEMENT[e.type]?.[0] || 'Événement'} à l’agenda du réseau : ${e.titre}, ${quand}.` });
+    if (inscrit && jours >= 0 && jours <= 1) out.push({ key: 'ev' + e.id + jours, ref: e.id, action: true, rappel: true, tone: 'accent', icon: 'calendar', to: 'reseau/agenda/' + e.id, at: e.created_at, text: `${e.titre} : ${jours === 0 ? 'c’est aujourd’hui' : 'c’est demain'}.` });
+    else if (!inscrit && recent(e.created_at, 10) && e.author_id !== me.id) out.push({ key: 'en' + e.id, ref: e.id, tone: 'good', icon: TYPES_EVENEMENT[e.type]?.[1] || 'calendar', to: 'reseau/agenda/' + e.id, at: e.created_at, text: `${TYPES_EVENEMENT[e.type]?.[0] || 'Événement'} à l’agenda du réseau : ${e.titre}, ${quand}.` });
   }
-  // Enquête d'insertion (6 et 12 mois après le diplôme)
+  // Enquête d'insertion (6 et 12 mois après le diplôme) : facultative, personne ne l'attend ; datée du début de sa vague
   const due = enqueteDue(me, data.enquetes_insertion);
-  if (due) out.push({ key: 'eq' + due.vague, action: true, mine: true, tone: 'brass', icon: 'chart', to: 'enquete', at: new Date().toISOString(), text: `Enquête ${due.vague} mois après le diplôme : 2 minutes pour aider les promos suivantes.` });
+  if (due) out.push({ key: 'eq' + due.vague, action: true, tone: 'brass', icon: 'chart', to: 'enquete', at: due.debut.toISOString(), text: `Enquête ${due.vague} mois après le diplôme : 2 minutes pour aider les promos suivantes.` });
   // Administration : signalements à traiter
   if (me.role === 'admin') {
     const sig = (data.signalements || []).filter(x => x.status === 'ouvert');
-    if (sig.length) out.push({ key: 'sg' + sig.length, action: true, tone: 'accent', icon: 'shield', to: 'admin/moderation', at: sig.reduce((m, x) => (x.created_at > m ? x.created_at : m), ''), text: `${sig.length} signalement${sig.length > 1 ? 's' : ''} à traiter.` });
+    if (sig.length) out.push({ key: 'sg' + sig.length, action: true, geste: 'Voir les signalements', tone: 'accent', icon: 'shield', to: 'admin/moderation', at: sig.reduce((m, x) => (x.created_at > m ? x.created_at : m), ''), text: `${sig.length} signalement${sig.length > 1 ? 's' : ''} à traiter.` });
   }
-  return out.sort((a, b) => (b.action ? 1 : 0) - (a.action ? 1 : 0) || new Date(b.at) - new Date(a.at));
+  return out.sort((a, b) => (b.geste ? 1 : 0) - (a.geste ? 1 : 0) || (b.action ? 1 : 0) - (a.action ? 1 : 0) || new Date(b.at) - new Date(a.at));
 }
 
 // ---------------------------------------------------------------------------
-// Accueil : une seule prochaine étape en haut, puis « Pour toi » et « Dans le réseau ».
-// Le ton reste doux : pas de liste de devoirs, pas de comparaison qui stresse.
+// Accueil : « Bonsoir Salma », une seule carte « prochaine étape », « Cette semaine », puis « Pour toi ».
+// Chaque chose n'y est dite qu'une fois (montres). Le ton reste doux : pas de comparaison qui stresse.
 // ---------------------------------------------------------------------------
 const MOMENT = h => (h < 5 ? 'Bonsoir' : h < 18 ? 'Bonjour' : 'Bonsoir');
+const cleNotif = n => n.key || n.text;
+// Quelqu'un attend ma réponse : ces notifications passent avant tout message, dans cet ordre
+const ATTEND = { laureat: ['md', 'dm', 'rd', 'rc', 'ap', 'qr'], etudiant: ['dp', 'in'], admin: ['sg'] };
+const OEIL = { md: 'Un étudiant t’attend', dm: 'Un étudiant t’attend', rd: 'Un étudiant t’attend', rc: 'Un étudiant t’attend', ap: 'Un étudiant t’attend', qr: 'Une question pour toi', dp: 'Une proposition d’aide', in: 'Une invitation à postuler', sg: 'À traiter' };
+// Le CV se dépose dans Mon profil : on y va et le bouton de dépôt prend le focus (ouvrir le sélecteur à distance, l'iPhone le bloque)
+const versCV = go => {
+  go('profil');
+  setTimeout(() => {
+    const b = document.getElementById('cv-drop');
+    if (!b) return;
+    b.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    b.focus({ preventScroll: true });
+  }, 350);
+};
 
-// La prochaine étape, une seule, choisie dans cet ordre : un rendez-vous proche, une demande d'aide qui m'est adressée,
-// un message qui attend, une action à faire, puis l'étape suivante des premiers pas, puis une offre faite pour moi.
-function prochainPas(ctx, notifs, guide) {
-  const { data, me, store, saison, go, openOffer, openNotif } = ctx;
-  const nom = id => store.byId('profiles', id)?.full_name || 'Un membre';
-  const prenom = id => nom(id).split(' ')[0];
-  const rdv = data.mentorships.filter(m => (m.student_id === me.id || m.mentor_id === me.id) && mentorState(m) === 'rdv' && m.rdv_at && new Date(m.rdv_at) - Date.now() < 48 * 36e5 && new Date(m.rdv_at) - Date.now() > -60 * 6e4)
-    .sort((a, b) => new Date(a.rdv_at) - new Date(b.rdv_at))[0];
-  if (rdv) return { type: 'rdv' };
+// La prochaine étape, une seule, la première qui convient : un rendez-vous qui commence, une confirmation de recrutement,
+// quelqu'un qui attend ma réponse, un rendez-vous la veille ou le jour même, un message, une autre chose à faire,
+// l'étape suivante des premiers pas, une offre faite pour moi, un étudiant que je peux aider, le CV, sinon le calme.
+// Chaque carte a une clé stable (key) et dit ce qu'elle montre (ref, cles) pour que l'accueil ne le répète pas.
+function prochainPas(ctx, notifs, etape, { plAttente, helper, besoins = [] } = {}) {
+  const { data, me, store, saison, go, openOffer, setCompose } = ctx;
+  const nom = id => store.byId('profiles', id)?.full_name || 'Un membre', prenom = id => nom(id).split(' ')[0], role = me.role;
+  const rdvs = data.mentorships.map(m => ({ m, q: rdvALaUne(m, me.id) })).filter(x => x.q).sort((a, b) => new Date(a.m.rdv_at) - new Date(b.m.rdv_at));
+  const rdv = q => rdvs.find(x => x.q === q)?.m;
+  if (rdv('direct')) return pasRdv(ctx, rdv('direct'), 'direct');
+  if (plAttente) return pasConfirmer(ctx, plAttente, helper);
   // Rôle et promo qui ne vont pas ensemble (ex. lauréat de la promo 2027) : on propose de corriger le profil
-  if ((me.role === 'laureat' && me.promo > new Date().getFullYear()) || (me.role === 'etudiant' && me.promo <= saison))
-    return { icon: 'user', tone: 'accent', eyebrow: 'Ton profil', texte: me.role === 'laureat' ? `Promo ${me.promo} : tu es encore étudiant(e) ? Mets ton profil à jour.` : `Promo ${me.promo} : tu as ton diplôme ? Passe en lauréat(e).`, cta: 'Mettre à jour', go: () => go('profil') };
-  const md = notifs.find(n => /^md/.test(n.key || ''));
-  if (md) return { icon: 'mentor', tone: 'accent', eyebrow: 'Une demande pour toi', texte: md.text, cta: 'Choisir un horaire', go: () => go('mentorat'), key: md.key };
-  const sc = notifs.find(n => /^sc/.test(n.key || ''));
-  if (sc) return { icon: 'calendar', tone: 'accent', eyebrow: 'Ton rendez-vous est fixé', texte: sc.text, cta: 'Confirmer ma présence', go: () => go('mentorat'), key: sc.key };
-  const conv = conversations(data, me.id).find(c => c.nonLus);
-  if (conv) return { icon: 'chat', tone: 'accent', eyebrow: 'Un message t’attend', texte: conv.nonLus > 1 ? `${nom(conv.autre)} t’a écrit ${conv.nonLus} messages.` : `${nom(conv.autre)} t’a écrit.`, cta: store.byId('profiles', conv.autre)?.role === 'admin' ? 'Répondre' : `Répondre à ${prenom(conv.autre)}`, go: () => go('messages/' + conv.autre), message: true };
-  const a = notifs.find(n => n.action && !n.rdv && !/^(eq|dc|md)/.test(n.key || '') && !(me.role === 'etudiant' && n.icon === 'briefcase'));
-  if (a) return { icon: a.icon, tone: a.tone, eyebrow: 'Ta prochaine étape', texte: a.text, cta: 'Y aller', go: () => openNotif(a), key: a.key };
-  if (guide) return { icon: guide[0], tone: 'accent', eyebrow: 'Premiers pas', texte: guide[1], detail: guide[2], cta: guide[5], go: guide[4], guide: true, cle: guide[6] };
-  if (me.role === 'etudiant') {
-    const n = niveauOf(me, saison);
-    const o = data.offers.filter(x => x.status === 'ouverte' && (x.annees || []).includes(n) && !data.applications.some(y => y.offer_id === x.id && y.student_id === me.id))
-      .map(x => ({ x, s: offerMatch(x, me).score })).sort((p, q) => q.s - p.s || new Date(q.x.created_at) - new Date(p.x.created_at))[0]?.x;
-    if (o) return { icon: 'spark', tone: 'accent', eyebrow: 'Une offre faite pour toi', texte: o.titre, detail: o.entreprise, cta: 'Voir l’offre', go: () => openOffer(o.id), membre: true };
+  if ((role === 'laureat' && me.promo > new Date().getFullYear()) || (role === 'etudiant' && me.promo <= saison))
+    return { key: 'promo', icon: 'user', eyebrow: 'Ton profil', titre: role === 'laureat' ? `Promo ${me.promo} : tu es encore étudiant(e) ? Mets ton profil à jour.` : `Promo ${me.promo} : tu as ton diplôme ? Passe en lauréat(e).`, cta: 'Mettre à jour', go: () => go('profil') };
+  if (rdv('confirmer')) return pasRdv(ctx, rdv('confirmer'), 'confirmer');
+  for (const p of ATTEND[role] || []) {
+    const n = notifs.filter(x => x.action && (x.key || '').startsWith(p) && (p !== 'dm' || recent(x.at, 7))).sort((a, b) => new Date(a.at) - new Date(b.at))[0];
+    const r = n && pasNotif(ctx, n); if (r) return r;
   }
-  if (me.role === 'laureat') {
-    const n = requestsFor(data, me, id => store.byId('profiles', id)).length;
-    if (n) return { icon: 'heart', tone: 'brass', eyebrow: 'Quand tu as 20 minutes', texte: n > 1 ? `${n} étudiants aimeraient un conseil.` : 'Un étudiant aimerait un conseil.', cta: 'Voir qui', go: () => go('mentorat') };
+  if (rdv('proche')) return pasRdv(ctx, rdv('proche'), 'proche');
+  // Un message de l'administration attend dans la bulle pendant les premiers pas
+  const conv = conversations(data, me.id).find(c => c.nonLus && !(etape && store.byId('profiles', c.autre)?.role === 'admin'));
+  if (conv) {
+    const adm = store.byId('profiles', conv.autre)?.role === 'admin';
+    return { key: 'msg' + conv.autre, ref: conv.autre, message: true, icon: 'chat', eyebrow: 'Un message t’attend', titre: conv.nonLus > 1 ? `${nom(conv.autre)} t’a écrit ${conv.nonLus} messages.` : `${nom(conv.autre)} t’a écrit.`, cta: adm ? 'Répondre' : `Répondre à ${prenom(conv.autre)}`, go: () => go('messages/' + conv.autre) };
   }
-  // Le CV complète le profil (rôle, promo, filière) : on le propose tant qu'il manque
-  if ((me.role === 'laureat' || me.role === 'etudiant') && !me.cv_path) return { icon: 'file', tone: 'accent', eyebrow: 'Ton CV', texte: me.role === 'etudiant' ? 'Ajoute ton CV en PDF : ton profil se complète tout seul, et il part avec tes candidatures.' : 'Ajoute ton CV en PDF : ton profil se complète tout seul.', cta: 'Ajouter mon CV', go: () => go('profil') };
-  return { calme: true };
+  const a = notifs.find(n => n.action && !n.rdv && !n.besoin && !/^(eq|dc|md|sc|pa|dm)/.test(n.key || '') && !(role === 'etudiant' && n.icon === 'briefcase'));
+  if (a) return pasNotif(ctx, a);
+  // Un étudiant précis vaut mieux que l'étape « Aide un étudiant »
+  const aide = role === 'laureat' && besoins[0] ? pasBesoin(ctx, besoins[0]) : null;
+  if (etape && !(etape.cle === 'aide' && aide)) return { key: 'guide-' + etape.cle, guide: true, icon: etape.icon, titre: etape.titre, detail: etape.texte, cta: etape.cta, go: etape.go, ici: etape.cle === 'dispo' };
+  const deja = o => data.applications.some(y => y.offer_id === o.id && y.student_id === me.id);
+  let o = null;
+  if (role === 'etudiant') {
+    const niv = niveauOf(me, saison);
+    o = data.offers.filter(x => x.status === 'ouverte' && (x.annees || []).includes(niv) && !deja(x)).map(x => ({ x, s: offerMatch(x, me).score })).sort((p, q) => q.s - p.s || new Date(q.x.created_at) - new Date(p.x.created_at))[0]?.x;
+  }
+  if (role === 'laureat' && me.en_recherche) o = data.offers.filter(x => x.status === 'ouverte' && x.author_id !== me.id && matchesMe(x, me, saison) && peutPostulerA(x, me, saison) && !deja(x)).sort((p, q) => new Date(q.created_at) - new Date(p.created_at))[0];
+  if (o) return { key: 'offre' + o.id, ref: o.id, icon: 'spark', eyebrow: 'Une offre faite pour toi', titre: o.titre, membre: true, detail: o.entreprise, detailMembre: true, cta: 'Voir l’offre', go: () => openOffer(o.id) };
+  if (aide) return aide;
+  if (role !== 'admin' && !(me.cv_path || me.cv_url)) return { key: 'cv', icon: 'file', eyebrow: 'Ton CV', titre: 'Ajoute ton CV en PDF', detail: role === 'etudiant' ? 'Ton profil se complète tout seul, et il part avec tes candidatures.' : 'Ton profil se complète tout seul.', cta: 'Ajouter mon CV', go: () => versCV(go) };
+  const fin = role === 'admin' ? { cta: 'Ouvrir l’administration', go: () => go('admin') } : role === 'laureat' && !me.en_recherche ? { cta: 'Publier une offre', go: () => setCompose(true) } : { cta: role === 'laureat' ? 'Voir les offres pour moi' : 'Voir les offres', go: () => go('offres') };
+  return { key: 'calme', icon: 'check', eyebrow: 'Tout est à jour', titre: role === 'laureat' ? 'Merci pour ce que tu fais pour les étudiants.' : role === 'admin' ? 'Rien à traiter pour l’instant.' : 'Rien ne presse : avance à ton rythme.', ...fin };
 }
 
-function Focus({ ctx, pas }) {
+function pasRdv(ctx, m, q) {
+  const { store, me, go } = ctx;
+  const autre = m.mentor_id === me.id ? m.student_id : m.mentor_id, w = slotWhen(m.rdv_at), lien = lienVisio(store, m.id);
+  const eyebrow = q === 'direct' ? 'C’est l’heure' : w.diff === 0 ? `Rendez-vous aujourd’hui à ${w.time}` : w.diff === 1 ? `Rendez-vous demain à ${w.time}` : `Rendez-vous le ${w.date} à ${w.time}`;
+  const voir = { label: 'Voir le rendez-vous', go: () => go('mentorat') };
+  const base = { type: 'rdv', key: 'rdv' + m.id, ref: m.id, cles: ['sc' + m.id + m.rdv_at], icon: 'video', eyebrow, titre: m.sujet, membre: true, avec: store.byId('profiles', autre)?.full_name };
+  if (q === 'confirmer') return { ...base, key: 'sc' + m.id + m.rdv_at, cta: 'Je serai là', ici: true, go: () => confirmerPresence(ctx, m), lien: voir };
+  if (q === 'direct' && lien) return { ...base, cta: 'Rejoindre la visio', href: lien, lien: voir };
+  return { ...base, cta: 'Voir le rendez-vous', go: voir.go };
+}
+function pasConfirmer(ctx, pl, helper) {
+  const { data } = ctx, qui = helper?.full_name || 'Un lauréat';
+  const sur = (pl.offer_id && data.offers.find(o => o.id === pl.offer_id)?.titre) || (pl.demande_id && (data.demandes || []).find(d => d.id === pl.demande_id)?.titre) || null;
+  return { key: 'pa' + pl.id, ref: pl.id, icon: 'briefcase', eyebrow: 'À confirmer', titre: pl.demande_id ? `${qui} indique que tu as commencé chez ${pl.entreprise}` : `${qui} indique t’avoir recruté(e) chez ${pl.entreprise}`, detail: sur, detailMembre: true,
+    cta: 'Oui, je confirme', ici: true, go: () => confirmerRecrutement(ctx, pl, helper), lien: { label: 'Ce n’est pas le cas', go: () => refuserRecrutement(ctx, pl) } };
+}
+// Une notification devient la carte : son geste est le bouton (jamais « Y aller »)
+function pasNotif(ctx, n) {
+  const { data, store, go, openNotif } = ctx;
+  const p = (n.key || '').slice(0, 2);
+  const nom = uid => store.byId('profiles', uid)?.full_name || 'Un membre', prenom = uid => nom(uid).split(' ')[0];
+  const base = { key: cleNotif(n), ref: n.ref || n.offer, icon: n.icon, eyebrow: OEIL[p] || 'Ta prochaine étape', titre: n.text, cta: n.geste || 'Ouvrir', go: () => openNotif(n) };
+  switch (p) {
+    case 'dm': { const d = (data.demandes || []).find(y => y.id === n.ref); return d ? { ...base, titre: `${nom(d.auteur_id)} a accepté ton aide : ${d.titre}`, cta: `Écrire à ${prenom(d.auteur_id)}`, go: () => go('messages/' + d.auteur_id), lien: { label: 'Voir la demande', go: () => go('offres/demandes/' + d.id) } } : null; }
+    case 'qr': return { ...base, cta: 'Répondre à la question' };
+    case 'mf': { const m = data.mentorships.find(y => y.id === n.ref); return m ? { ...base, ici: true, go: () => finirMentorat(ctx, m), lien: { label: 'Il n’a pas eu lieu', go: () => go('mentorat') } } : base; }
+    case 'pm': return { ...base, go: () => versMerci(ctx) };
+    case 'ev': return { ...base, cta: 'Voir l’événement' };
+    default: return base;
+  }
+}
+// Lauréat : le premier étudiant qui attend une aide qu'il peut donner, ouvert sur place
+function pasBesoin(ctx, b) {
+  const nom = ctx.store.byId('profiles', b.who)?.full_name || 'Un membre';
+  const cta = b.kind === 'cv' ? `Relire le CV de ${nom.split(' ')[0]}` : b.kind === 'question' ? 'Répondre à la question' : VERBE_BESOIN[b.kind];
+  return { key: 'besoin-' + b.kind + b.id, ref: b.id, icon: ICONE_BESOIN[b.kind], eyebrow: 'Tu peux aider', titre: phraseBesoin(b, nom), cta, go: () => ouvrirBesoin(ctx, b) };
+}
+
+// La carte « prochaine étape » : une seule forme, un seul bouton plein qui nomme l'action, au plus deux liens dessous.
+// Les premiers pas y sont fondus : « Premiers pas · 2 sur 5 » ouvre la feuille des étapes.
+function ProchainPas({ pas, progres, onEtapes }) {
   if (!pas) return null;
-  if (pas.type === 'rdv') return html`<div class="focus-slot"><${NextRdv} ctx=${ctx}/></div>`;
-  if (pas.calme) return html`<div class="focus calme"><span class="focus-ico"><${Icon} name="check" size=${20}/></span><span class="focus-txt"><strong>Tout est à jour.</strong><span class="small muted">${ctx.me.role === 'laureat' ? 'Merci pour ce que tu fais pour les étudiants.' : 'Rien ne presse : avance à ton rythme.'}</span></span></div>`;
-  return html`<div class=${'focus t-' + (pas.tone || 'accent')}>
-    <span class="focus-ico"><${Icon} name=${pas.icon || 'arrow'} size=${22}/></span>
-    <span class="focus-txt"><span class="eyebrow">${pas.eyebrow}</span><strong translate=${pas.membre ? 'no' : undefined} dir=${pas.membre ? 'auto' : undefined}>${pas.texte}</strong>${pas.detail ? html`<span class="small muted" translate=${pas.membre ? 'no' : undefined}>${pas.detail}</span>` : null}</span>
-    <button class="btn primary" onClick=${pas.go}>${pas.cta} <${Icon} name="arrow" size=${16}/></button>
-  </div>`;
+  const anneau = progres ? html`<span class="pas-anneau" style=${`--p:${progres.done / progres.total}`} aria-hidden="true"></span>` : null;
+  const etapes = progres ? `Premiers pas · ${progres.done} sur ${progres.total}` : '';
+  const lien = pas.guide ? { label: 'Voir les étapes', go: onEtapes, dialog: true } : pas.lien;
+  const membre = pas.membre ? { translate: 'no', dir: 'auto' } : {};
+  return html`<section class="pas" aria-labelledby="pas-titre" data-pas=${pas.key}>
+    <div class="pas-txt">
+      <p class="pas-oeil">${pas.guide ? anneau : html`<${Icon} name=${pas.icon || 'arrow'} size=${16}/>`}<span>${pas.guide ? etapes : pas.eyebrow}</span></p>
+      <h2 class="pas-titre" id="pas-titre" ...${membre}>${pas.titre}</h2>
+      ${pas.avec ? html`<p class="pas-detail">Avec <span translate="no">${pas.avec}</span></p>` : pas.detail ? html`<p class="pas-detail" translate=${pas.detailMembre ? 'no' : undefined} dir=${pas.detailMembre ? 'auto' : undefined}>${pas.detail}</p>` : null}
+    </div>
+    <div class="pas-act">
+      ${pas.href ? html`<a class="btn primary pas-go" href=${pas.href} target="_blank" rel="noopener"><${Icon} name="video" size=${18}/> ${pas.cta}</a>`
+        : html`<button type="button" class="btn primary pas-go" onClick=${pas.go}>${pas.ici ? html`<${Icon} name="check" size=${18}/>` : null}${pas.cta}${pas.ici ? null : html`<${Icon} name="arrow" size=${18}/>`}</button>`}
+      ${lien || (progres && !pas.guide) ? html`<div class="pas-pied">
+        ${lien ? html`<button type="button" class="linkish pas-lien" aria-haspopup=${lien.dialog ? 'dialog' : undefined} onClick=${lien.go}>${lien.label}</button>` : null}
+        ${progres && !pas.guide ? html`<button type="button" class="linkish pas-etapes" aria-haspopup="dialog" onClick=${onEtapes}>${anneau}<span>${etapes}</span></button>` : null}
+      </div>` : null}
+    </div>
+  </section>`;
+}
+
+// Les premiers pas en feuille : ce qui est fait, ce qui reste (chaque bouton ferme la feuille puis agit), puis « Ensuite »
+function EtapesSheet({ me, g, onClose, onHide, historique }) {
+  const ligne = s => html`<li key=${s.cle} class=${s.fait ? 'fait' : s.plusTard ? 'plus-tard' : ''}>
+    <span class="e-ico"><${Icon} name=${s.fait ? 'check' : s.icon} size=${18}/></span><strong>${s.titre}</strong><span class="small muted">${s.texte}</span>
+    ${!s.fait && s.go ? html`<button type="button" class="btn small" onClick=${() => { onClose(); ensuite(s.go); }}>${s.cta}</button>` : null}</li>`;
+  return html`<${Modal} title="Premiers pas" onClose=${onClose} historique=${historique} footer=${g.fini ? null : html`<button type="button" class="linkish small" onClick=${onHide}>Ne plus afficher les premiers pas</button>`}>
+    <div class="etapes-tete"><span class="pas-anneau grand" style=${`--p:${g.done / g.total}`} aria-hidden="true"></span>
+      <p><strong>${me.role === 'etudiant' ? 'Trouver ton stage avec les lauréats' : 'Aider les étudiants de l’école'}</strong><span class="small muted">${`${g.done} sur ${g.total}`}</span></p></div>
+    <ol class="etapes">${g.steps.filter(s => !s.plusTard).map(ligne)}</ol>
+    ${g.steps.some(s => s.plusTard) ? html`<p class="etapes-ensuite">Ensuite</p><ul class="etapes">${g.steps.filter(s => s.plusTard).map(ligne)}</ul>` : null}
+  <//>`;
+}
+// Premiers pas terminés (vus en cours auparavant) : on le fête une fois. Clés gardées dans ce navigateur, par membre.
+function useFetePremiersPas(me, g) {
+  const [etat, setEtat] = useLocal('guide-etat-' + me.id, null);
+  useEffect(() => {
+    if (!g) return;
+    if (!g.fini && etat !== 'en-cours') setEtat('en-cours');
+    if (g.fini && etat === 'en-cours') { setEtat('fini'); celebrate({ cle: 'premiers-pas-' + me.id, icon: 'award', titre: 'Premiers pas terminés !', texte: me.role === 'etudiant' ? 'Ton profil est prêt et les lauréats peuvent t’aider. Bravo pour ta démarche.' : 'Merci ! Les étudiants de l’école peuvent compter sur toi.' }); }
+  }, [g?.fini]);
 }
 
 function Home(ctx) {
-  const { data, me, saison, scores, store, go, openProfile, openOffer, notifs, openNotif } = ctx;
+  const { data, me, saison, scores, store, go, openProfile, openOffer, notifs = [], openNotif } = ctx;
   const n = niveauOf(me, saison);
   const st = useMemo(() => seasonStats(data, saison), [data, saison]);
   const first = me.full_name.split(' ')[0];
   const [compose, setCompose] = useState(false);
   const [plus, setPlus] = useState(false);
+  // Une instance par membre (key) : ce qui est gardé dans ce navigateur ne passe jamais d'un compte à l'autre
+  const [off, setOff] = useLocal('guide-off-' + me.id, false);
+  const [voirEtapes, setVoirEtapes] = useState(false);
   const isStudent = me.role === 'etudiant', isLaureat = me.role === 'laureat';
   const enRecherche = isLaureat && !!me.en_recherche;
   const guide = guideEtapes(ctx, setCompose);
-  const prochaine = guide && !guide.fini ? guide.steps.find(x => !x[3] && x[4]) : null;
-  const pas = prochainPas({ ...ctx, openNotif }, notifs, prochaine);
-  // « Quand tu as 5 minutes » : trois petites choses au plus, sans la prochaine étape déjà en haut
-  const actions = notifs.filter(x => x.action && !x.rdv && !/^(md|eq|dc)/.test(x.key || '') && !(isStudent && x.icon === 'briefcase') && x.key !== pas.key).slice(0, 3);
+  useFetePremiersPas(me, guide);
+  // Menu « Comment ça marche ? » (#accueil/etapes) : les premiers pas reviennent ; l'écran est la feuille, Retour ou la croix ramènent à l'accueil
+  const parRoute = ctx.sub === 'etapes';
+  useEffect(() => { if (parRoute) setOff(false); }, [parRoute]);
+  const enCours = !off && guide && !guide.fini ? guide : null;
+  const stu = isStudent ? statutOf(data, me, saison) : null;
+  // Un lauréat qui cherchait un emploi confirme aussi son recrutement
+  const plAttente = isStudent ? (stu.pl?.status === 'en_attente' ? stu.pl : null) : isLaureat ? data.placements.find(p => p.student_id === me.id && p.status === 'en_attente') : null;
+  const helper = plAttente?.laureat_id ? store.byId('profiles', plAttente.laureat_id) : null;
+  const besoins = isLaureat ? besoinsDeMoi(data, me, id => store.byId('profiles', id), { ignorees: mentoratIgnorees() }) : [];
+  const pas = prochainPas({ ...ctx, setCompose }, notifs, enCours?.suivante || null, { plAttente, helper, besoins });
+  // « Cette semaine » : trois petites choses au plus, jamais ce que montre la carte
+  const taches = petitesTaches(notifs, pas);
+  // Ce que l'accueil a déjà dit : les blocs suivants le sautent
+  const montres = new Set([pas.ref, ...taches.flatMap(t => [t.ref, t.offer])].filter(Boolean));
+  const meta = isStudent ? [NIVEAUX[n]?.label, me.filiere].filter(Boolean).join(' · ') : isLaureat ? `Promo ${me.promo}` : '';
   // Un lauréat qui cherche un emploi voit d'abord les offres faites pour lui
-  const dernieres = data.offers.filter(o => o.status === 'ouverte' && (!enRecherche || matchesMe(o, me, saison))).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 2);
+  const dernieres = data.offers.filter(o => o.status === 'ouverte' && !montres.has(o.id) && (!enRecherche || matchesMe(o, me, saison))).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 2);
   const star = ctx.star;
   const starHelped = star ? data.placements.filter(p => p.laureat_id === star.p.id && p.status === 'confirme').length : 0;
   const merci = [
     ...data.placements.filter(p => p.merci && p.laureat_id).map(p => ({ from: p.student_id, to: p.laureat_id, txt: p.merci, at: p.confirmed_at || p.created_at })),
     ...data.mentorships.filter(m => m.merci && m.mentor_id).map(m => ({ from: m.student_id, to: m.mentor_id, txt: m.merci, at: m.rdv_at || m.created_at })),
   ].sort((a, b) => new Date(b.at) - new Date(a.at))[0];
-  const stu = isStudent ? statutOf(data, me, saison) : null;
   const obj = OBJECTIFS[n];
   const s = scores.get(me.id);
   const myApps = data.applications.filter(a => a.student_id === me.id);
-  // Un lauréat qui cherchait un emploi confirme aussi son recrutement
-  const plAttente = isStudent ? (stu.pl?.status === 'en_attente' ? stu.pl : null) : isLaureat ? data.placements.find(p => p.student_id === me.id && p.status === 'en_attente') : null;
-  const helper = plAttente?.laureat_id ? store.byId('profiles', plAttente.laureat_id) : null;
-  const asking = data.mentorships.some(m => m.student_id === me.id && ['demande', 'acceptee'].includes(m.status));
   const h = new Date().getHours();
   // Les 25 premiers lauréats : on leur dit une fois qu'ils sont membres fondateurs (pas par-dessus une autre fenêtre)
   const fondateur = store.mode === 'live' && isLaureat && !!me.consent_at && !!ctx.fondateurs?.has(me.id);
@@ -505,32 +686,40 @@ function Home(ctx) {
     }, 1200);
     return () => clearTimeout(t);
   }, [fondateur]);
+  const offresBloc = dernieres.length ? html`<div class="section-head"><h3>${enRecherche ? 'Offres pour toi' : 'Dernières offres'}</h3><button class="btn tiny ghost" onClick=${() => go('offres')}>Tout voir <${Icon} name="arrow" size=${14}/></button></div>
+    <div class="offer-grid one">${dernieres.map(o => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} onOpen=${() => openOffer(o.id)}/>`)}</div>` : null;
 
-  // Trois blocs : ta prochaine action en haut, puis « Pour toi », puis une réussite ; le reste du réseau sous « Plus du réseau ».
+  // De haut en bas : bonjour et l'entrée de l'école, la prochaine étape, « Cette semaine », l'annonce, puis « Pour toi ».
   // Un bloc vide (réseau encore petit) disparaît avec son titre.
   return html`<section class="page home">
     <header class="hello home-hero sky">
       <div class="hello-txt">
-        <p class="eyebrow">Saison ${seasonLabel(saison)}${isStudent ? ` · ${NIVEAUX[n]?.label} · ${me.filiere}` : isLaureat ? ` · Promo ${me.promo}` : ''}</p>
         <h1>${MOMENT(h)} ${first}</h1>
+        ${meta ? html`<p class="hello-meta">${meta}</p>` : null}
         <p class="hello-sub">${isStudent ? 'Les lauréats de l’école t’ouvrent leurs portes. Avance à ton rythme.' : isLaureat ? (enRecherche ? 'Le réseau t’aide à trouver ton poste, et ton expérience aide déjà les étudiants.' : 'Merci de garder la porte ouverte aux étudiants de l’école.') : 'Tout le réseau de l’école, en un coup d’œil.'}</p>
       </div>
-      <${SchoolScene} align=${getLang() === 'ar' ? 'xMinYMax' : 'xMaxYMax'}/>
+      <${SchoolScene} align=${getLang() === 'ar' ? 'xMinYMax' : 'xMaxYMax'} pose=${10000}/>
     </header>
 
-    <${AnnonceBanner} ctx=${ctx}/>
-    ${plAttente ? html`<${ConfirmRecruit} ctx=${ctx} pl=${plAttente} helper=${helper}/>` : html`<${Focus} ctx=${ctx} pas=${pas}/>`}
+    <${ProchainPas} pas=${pas} progres=${enCours} onEtapes=${() => setVoirEtapes(true)}/>
+    <section class="bloc semaine" aria-labelledby="h-semaine">
+      <h2 class="h-sec" id="h-semaine">Cette semaine</h2>
+      <div class="bloc-corps">
+        <${PoulsReseau} ctx=${ctx} accueil semaine onOpen=${() => go(isStudent || isLaureat ? 'mentorat' : 'suivi')}/>
+        ${taches.length ? html`<ul class="todo">${taches.map(a => html`<li key=${a.key}><button type="button" class="notif act" onClick=${() => openNotif(a)}><span class=${'n-ico ' + (a.tone || '')} aria-hidden="true"><${Icon} name=${a.icon} size=${16}/></span><span>${a.text}</span><${Icon} name="arrow" size=${16}/></button></li>`)}</ul>` : null}
+      </div>
+    </section>
+    <${AnnonceBanner} key=${'an-' + me.id} ctx=${ctx}/>
     <${PhotoProposee} ctx=${ctx}/>
-    ${actions.length ? html`<div class="petits"><h2 class="h-sec">${isLaureat ? 'Quand tu as 5 minutes' : 'Pour avancer'}</h2><ul class="todo">${actions.map(a => html`<li><button class="notif act" onClick=${() => openNotif(a)}><span class=${'n-ico ' + (a.tone || '')}><${Icon} name=${a.icon} size=${16}/></span><span>${a.text}</span><${Icon} name="arrow" size=${16}/></button></li>`)}</ul></div>` : null}
-    <${Guide} key=${me.id} ctx=${ctx} g=${guide}/>
-    <${EnqueteCard} ctx=${ctx}/>
 
     <div class="home-grid">
       <div class="home-main bloc">
         <h2 class="h-sec">Pour toi</h2>
         <div class="bloc-corps">
-        ${pas.type === 'rdv' ? null : html`<${NextRdv} ctx=${ctx}/>`}
-        ${pas.message ? null : html`<${MessagesHome} ctx=${ctx}/>`}
+        ${enRecherche ? offresBloc : null}
+        <${IlsOntBesoin} ctx=${ctx} besoins=${besoins.filter(b => !montres.has(b.id))}/>
+        <${NextRdv} ctx=${ctx} exclure=${montres}/>
+        <${MessagesHome} ctx=${ctx} exclure=${montres}/>
         <${ConfianceHome} ctx=${ctx}/>
         ${isStudent && obj ? html`<button class=${'objective compact clickable st-' + stu.key} onClick=${() => go('parcours')}>
           <div class="objective-top"><span class="obj-ico"><${Icon} name="route" size=${22}/></span>
@@ -538,17 +727,9 @@ function Home(ctx) {
             <span class=${'state-pill s-' + stu.key}>${stu.label}</span></div>
           <${Journey} step=${journeyStep(stu, myApps)}/>
         </button>` : null}
+        <${CoupDeMain} ctx=${ctx} exclure=${montres} cle=${{ 'guide-demande': 'demande', 'guide-conseil': 'conseil' }[pas.key] || null}/>
         <${TonAnneeStrip} ctx=${ctx} onOpen=${ctx.openAnnee}/>
-        <${ParrainCard} ctx=${ctx}/>
-        <${HelpNeeded} ctx=${ctx} max=${1} compact/>
-        <${RelecturesHome} ctx=${ctx}/>
-        <${AlerteTalents} ctx=${ctx}/>
-        ${isStudent && pas.cle === 'demande' ? null : html`<${DemandesHome} ctx=${ctx}/>`}
-        ${isStudent ? html`<${RecoOffers} ctx=${ctx} max=${2}/>` : dernieres.length ? html`<div class="section-head"><h3>${enRecherche ? 'Offres pour toi' : 'Dernières offres'}</h3><button class="btn tiny ghost" onClick=${() => go('offres')}>Tout voir <${Icon} name="arrow" size=${14}/></button></div>
-          <div class="offer-grid one">${dernieres.map(o => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} onOpen=${() => openOffer(o.id)}/>`)}</div>` : null}
-        ${isStudent && !asking ? html`<div class="help-cta"><span class="obj-ico"><${Icon} name="mentor" size=${22}/></span>
-          <div class="grow"><strong>Besoin d’un conseil ?</strong><span class="small muted">CV, stage, entretien, étranger : un lauréat te parle 20 minutes en visio.</span></div>
-          <button class="btn small" onClick=${() => go('mentorat')}>Demander de l’aide</button></div>` : null}
+        ${isStudent ? html`<${RecoOffers} ctx=${ctx} max=${2} exclure=${montres}/>` : enRecherche ? null : offresBloc}
         <${NudgeAvis} ctx=${ctx}/>
         <${DevenirParrain} ctx=${ctx}/>
         </div>
@@ -559,8 +740,7 @@ function Home(ctx) {
           <div class="bloc-corps">
           ${merci ? html`<div class="panel merci-une"><p class="eyebrow"><${Icon} name="heart" size=${13}/> Un merci récent</p>
             <blockquote class="merci"><p translate="no" dir="auto">« ${merci.txt} »</p><footer><span class="small"><span translate="no">${store.byId('profiles', merci.from)?.full_name?.split(' ')[0] || 'Un étudiant'}</span> → <button class="linkish" translate="no" onClick=${() => openProfile(store.byId('profiles', merci.to))}>${store.byId('profiles', merci.to)?.full_name}</button></span></footer></blockquote></div>` : html`<${SuccessFeed} ctx=${ctx} max=${1}/>`}
-          <${PoulsReseau} ctx=${ctx} onOpen=${() => go(isLaureat ? 'mentorat' : 'reseau')}/>
-          ${isLaureat && s && s.recrutes + s.mentorats ? html`<button class="impact-strip clickable" onClick=${() => go('espace')}><span class="obj-ico brass"><${Icon} name="heart" size=${20}/></span><span>${s.recrutes + s.mentorats > 1 ? `Tu as aidé ${s.recrutes + s.mentorats} étudiants` : 'Tu as aidé 1 étudiant'}</span><span class="spacer"></span><${LevelChip} points=${s.points}/><${Icon} name="arrow" size=${18}/></button>` : null}
+          ${isLaureat && s && s.recrutes + s.mentorats ? html`<button class="impact-strip clickable" onClick=${() => go('espace')}><span class="obj-ico brass"><${Icon} name="heart" size=${20}/></span><span class="grow" style="min-width:0">${s.recrutes + s.mentorats > 1 ? `Tu as aidé ${s.recrutes + s.mentorats} étudiants` : 'Tu as aidé 1 étudiant'}</span><${LevelChip} points=${s.points}/><${Icon} name="arrow" size=${18}/></button>` : null}
           </div>
         </div>
         <div class=${'bloc plus' + (plus ? ' ouvert' : '')}>
@@ -585,78 +765,55 @@ function Home(ctx) {
       </div>
     </div>
     ${compose ? html`<${OfferComposer} ctx=${ctx} onClose=${() => setCompose(false)}/>` : null}
+    ${(voirEtapes || parRoute) && guide ? html`<${EtapesSheet} me=${me} g=${guide} historique=${!parRoute} onClose=${() => { setVoirEtapes(false); if (parRoute) go('accueil'); }}
+      onHide=${() => { setOff(true); setVoirEtapes(false); if (parRoute) go('accueil'); toast('C’est noté. Tu retrouves les premiers pas dans ton menu : « Comment ça marche ? ».'); }}/>` : null}
   </section>`;
 }
 
-// Premiers pas : les étapes se cochent toutes seules. Le guide disparaît quand tout ce qui dépend de moi est fait.
-// Une étape qui n'a rien à proposer aujourd'hui (aucune offre ouverte pour mon année, personne à aider) n'est pas montrée.
-// [icône, titre, texte, fait, action, bouton, clé]
+// Premiers pas : les étapes se cochent toutes seules. « Crée ton compte » est faite d'emblée ; celles qui arrivent
+// d'elles-mêmes plus tard (le merci, le recrutement) ne comptent pas. Une étape qui n'a rien à proposer aujourd'hui n'est pas montrée.
+const E = (cle, icon, titre, texte, fait, go, cta, plusTard = false) => ({ cle, icon, titre, texte, fait: !!fait, go, cta, plusTard });
 function guideEtapes(ctx, setCompose) {
   const { data, me, saison, go, store, act } = ctx;
   if (me.role === 'admin') return null;
   const n = niveauOf(me, saison);
   const myApps = data.applications.filter(a => a.student_id === me.id);
   const myOffers = data.offers.filter(o => o.author_id === me.id);
+  const aPostule = myApps.some(a => a.offer_id);
+  const compte = E('compte', 'check', 'Crée ton compte', 'C’est fait : bienvenue dans le réseau.', true, null, '');
   let steps;
   if (me.role === 'etudiant') {
-    const aPostule = myApps.some(a => a.offer_id);
     const offresOuvertes = data.offers.some(o => o.status === 'ouverte' && o.audience !== 'laureats' && (o.annees || []).includes(n));
-    steps = [
-      ['user', 'Dépose ton CV en PDF', 'Il sera joint à chaque candidature, et un lauréat peut le relire pour toi.', !!(me.cv_path || me.cv_url), () => go('profil'), 'Mon profil', 'cv'],
-      typesDemande(me, saison).length ? ['send', 'Dis aux lauréats ce que tu cherches', 'Ta demande et ton CV arrivent chez les lauréats de ton parcours : ceux qui peuvent t’aider te le proposent.', (data.demandes || []).some(d => d.auteur_id === me.id), () => go('offres/demandes/nouvelle'), 'Publier ma demande', 'demande'] : null,
-      aPostule || offresOuvertes ? ['feed', 'Postule à une offre', `Tu ne vois que les offres de ${NIVEAUX[n]?.short || 'ton année'}. Un message de deux phrases suffit.`, aPostule, () => go('offres'), 'Voir les offres', 'postule'] : null,
-      ['mentor', 'Demande un conseil', 'Un lauréat choisit un de tes horaires et t’appelle 20 minutes en visio.', data.mentorships.some(m => m.student_id === me.id), () => go('mentorat'), 'Mentorat', 'conseil'],
-      ['heart', 'Confirme et dis merci', 'Quand il te marque recruté(e), tu confirmes en un clic et tu lui laisses un mot.', data.placements.some(p => p.student_id === me.id && p.status === 'confirme' && p.merci), null, '', 'merci'],
+    steps = [compte,
+      E('cv', 'file', 'Dépose ton CV en PDF', 'Il sera joint à chaque candidature, et un lauréat peut le relire pour toi.', me.cv_path || me.cv_url, () => versCV(go), 'Ajouter mon CV'),
+      typesDemande(me, saison).length ? E('demande', 'send', 'Dis aux lauréats ce que tu cherches', 'Ta demande et ton CV arrivent chez les lauréats de ton parcours.', (data.demandes || []).some(d => d.auteur_id === me.id), () => go('offres/demandes/nouvelle'), 'Publier ma demande') : null,
+      aPostule || offresOuvertes ? E('postule', 'feed', 'Postule à une offre', `Tu ne vois que les offres de ${NIVEAUX[n]?.short || 'ton année'}. Un message de deux phrases suffit.`, aPostule, () => go('offres'), 'Voir les offres') : null,
+      E('conseil', 'mentor', 'Demande un conseil', 'Un lauréat choisit un de tes horaires et t’appelle 20 minutes en visio.', data.mentorships.some(m => m.student_id === me.id), () => ctx.askHelp(), 'Demander un conseil'),
+      E('merci', 'heart', 'Confirme et dis merci', 'Quand il te marque recruté(e), tu confirmes en un clic et tu lui laisses un mot.', data.placements.some(p => p.student_id === me.id && p.status === 'confirme' && p.merci), null, '', true),
     ];
   } else {
     const byId = id => store.byId('profiles', id);
+    const cherche = !!me.en_recherche;
     const aAide = data.mentorships.some(m => m.mentor_id === me.id && m.status !== 'demande') || (data.propositions || []).some(x => x.laureat_id === me.id);
-    const demandes = demandesPour(data, me, byId).filter(x => !x.mienne);
+    const demandes = demandesPour(data, me, byId).filter(x => !x.mienne && AIDE_OUVERTE.includes(etatAide(data, me, x.d)));
     const aAider = requestsFor(data, me, byId).length || demandes.length;
-    steps = [
-      me.en_recherche
-        ? ['user', 'Complète ton profil', 'Le poste que tu cherches et ta disponibilité : les lauréats qui recrutent te trouvent plus facilement.', !!((me.entreprise && me.poste) || me.disponibilite), () => go('profil'), 'Mon profil', 'profil']
-        : ['user', 'Complète ton profil', 'Entreprise, poste, sujets sur lesquels tu peux aider : les étudiants te trouvent plus facilement.', !!(me.entreprise && me.poste), () => go('profil'), 'Mon profil', 'profil'],
-      ['mentor', 'Rends-toi disponible', 'Les étudiants de ta filière te voient dans Mentorat et peuvent te demander 20 minutes de conseil.', !!me.mentor_dispo,
-        () => act(async () => { await store.update('profiles', me.id, { mentor_dispo: true }); toast('C’est noté : les étudiants de ta filière te verront dans Mentorat.'); }), 'Me rendre disponible', 'dispo'],
-      ['plus', 'Publie une offre', 'Une minute suffit. Seuls les étudiants de l’année concernée la voient.', myOffers.length > 0, () => setCompose(true), 'Publier', 'offre'],
-      aAide || aAider ? ['heart', 'Aide un étudiant', demandes.length ? 'Un étudiant de ton parcours a dit ce qu’il cherche : propose-lui ton aide en un clic.' : 'Clique sur un de ses horaires : la visio et l’invitation sont prêtes.', aAide, () => go(demandes.length ? 'offres/demandes' : 'mentorat'), demandes.length ? 'Voir les demandes' : 'Mentorat', 'aide'] : null,
-      ['check', 'Marque « Recruté(e) »', 'L’étudiant confirme, et tu reçois ses remerciements et 50 points.', data.placements.some(p => p.laureat_id === me.id && p.status === 'confirme'), null, '', 'recrute'],
+    const pourMoi = data.offers.some(o => o.status === 'ouverte' && o.author_id !== me.id && matchesMe(o, me, saison) && peutPostulerA(o, me, saison));
+    steps = [compte,
+      // Jamais bloqué faute d'employeur : en poste ou en recherche, dire où il en est suffit
+      E('profil', 'user', 'Complète ton profil', cherche ? 'Le poste que tu cherches : les lauréats qui recrutent te trouvent plus vite.' : 'En poste ou en recherche d’emploi : dis-le, et le réseau te trouve plus facilement.', profilLaureatFait(me), () => go('profil'), 'Compléter mon profil'),
+      E('dispo', 'mentor', 'Rends-toi disponible', 'Les étudiants de ta filière pourront te demander 20 minutes de conseil.', me.mentor_dispo,
+        () => act(async () => { await store.update('profiles', me.id, { mentor_dispo: true }); toast('C’est noté : les étudiants de ta filière te verront dans Mentorat.'); }), 'Me rendre disponible'),
+      cherche ? (aPostule || pourMoi ? E('offres', 'feed', 'Regarde les offres pour toi', 'Les offres « Jeunes diplômés » et celles partagées entre lauréats.', aPostule, () => go('offres'), 'Voir les offres pour moi') : null)
+        : E('offre', 'plus', 'Publie une offre', 'Une minute suffit. Seuls les étudiants de l’année concernée la voient.', myOffers.length > 0, () => setCompose(true), 'Publier une offre'),
+      aAide || aAider ? E('aide', 'heart', 'Aide un étudiant', demandes.length ? 'Un étudiant de ton parcours a dit ce qu’il cherche : propose ton aide.' : 'Clique sur un de ses horaires : la visio et l’invitation sont prêtes.', aAide,
+        demandes.length ? () => ctx.proposerAide(demandes[0].d.id) : () => go('mentorat'), demandes.length ? 'Je peux aider' : 'Voir les demandes') : null,
+      cherche ? null : E('recrute', 'check', 'Marque « Recruté(e) »', 'L’étudiant confirme, et tu reçois ses remerciements et 50 points.', data.placements.some(p => p.laureat_id === me.id && p.status === 'confirme'), null, '', true),
     ];
   }
   steps = steps.filter(Boolean);
-  const done = steps.filter(x => x[3]).length;
-  // Fini quand toutes les étapes qui dépendent de moi sont faites (la dernière arrive toute seule, plus tard)
-  const fini = steps.filter(x => x[4]).every(x => x[3]);
-  return { steps, done, fini };
-}
-
-// Une instance par membre (key) : son état gardé dans ce navigateur ne passe jamais d'un compte à l'autre
-function Guide({ ctx, g }) {
-  const { me } = ctx;
-  const [off, setOff] = useLocal('guide-off-' + me.id, false);
-  const [ouvert, setOuvert] = useState(false);
-  // Premiers pas terminés (le guide avait été vu en cours) : on le fête une fois, puis le guide s'efface
-  const [etat, setEtat] = useLocal('guide-etat-' + me.id, null);
-  useEffect(() => {
-    if (!g) return;
-    if (!g.fini && etat !== 'en-cours') setEtat('en-cours');
-    if (g.fini && etat === 'en-cours') { setEtat('fini'); celebrate({ cle: 'premiers-pas-' + me.id, icon: 'award', titre: 'Premiers pas terminés !', texte: me.role === 'etudiant' ? 'Ton profil est prêt et les lauréats peuvent t’aider. Bravo pour ta démarche.' : 'Merci ! Les étudiants de l’école peuvent compter sur toi.' }); }
-  }, [g?.fini]);
-  if (!g || off || g.fini) return null;
-  const { steps, done } = g;
-  const pctFait = done / steps.length;
-  return html`<div class=${'guide compact' + (ouvert ? ' ouvert' : '')}>
-    <div class="guide-head">
-      <span class="guide-ring" style=${`--p:${pctFait}`} aria-hidden="true"><span class="mono">${done}/${steps.length}</span></span>
-      <div><p class="eyebrow">Premiers pas</p><h2 class="guide-titre">${me.role === 'etudiant' ? 'Trouver ton stage avec les lauréats' : 'Aider les étudiants de l’école'}</h2></div>
-      <button class="btn tiny ghost" aria-expanded=${ouvert} onClick=${() => setOuvert(!ouvert)}>${ouvert ? 'Fermer' : 'Voir les étapes'}</button>
-      <button class="icon-btn small" aria-label="Masquer le guide" onClick=${() => setOff(true)}><${Icon} name="x" size=${16}/></button></div>
-    ${ouvert ? html`<ol class="guide-steps">${steps.map(([ic, t, d, ok, fn, cta], i) => html`<li class=${ok ? 'ok' : ''}>
-      <span class="g-ico"><${Icon} name=${ok ? 'check' : ic} size=${20}/></span>
-      <strong>${i + 1}. ${t}</strong><span class="small muted">${d}</span>
-      ${!ok && fn ? html`<button class="btn tiny" onClick=${fn}>${cta}</button>` : null}</li>`)}</ol>` : null}
-  </div>`;
+  const comptees = steps.filter(s => !s.plusTard);
+  const done = comptees.filter(s => s.fait).length, total = comptees.length, fini = done === total;
+  return { steps, done, total, fini, suivante: fini ? null : comptees.find(s => !s.fait && s.go) || null };
 }
 
 // Le formulaire repart des données enregistrées quand elles changent ailleurs (CV appliqué, rôle corrigé…)

@@ -1,6 +1,6 @@
 // Composants partagés de l'interface.
-import { html, useState, useEffect, useRef, useMemo } from './vendor/preact-htm.js';
-import { initials, levelOf, NIVEAUX, niveauOf, seasonOf, PARCOURS, FILIERES_INFO } from './logic.js';
+import { html, useState, useEffect, useLayoutEffect, useRef, useMemo } from './vendor/preact-htm.js';
+import { initials, levelOf, NIVEAUX, niveauOf, seasonOf, PARCOURS, FILIERES_INFO, timeAgo } from './logic.js';
 import { sceneMarkup } from './scene.js';
 import { glyph, TUILE_DEFS, TUILE } from './logo.js';
 
@@ -88,16 +88,212 @@ const ICONS = {
   checks: '<path d="M2.5 12.5 7 17l9.5-9.5"/><path d="M12.5 16.5l.5.5 9-9"/>',
 };
 
+// ---------------------------------------------------------------------------
+// Retour (bouton du téléphone, flèche du navigateur, geste de l'iPhone) : il ferme la feuille ouverte,
+// sinon il revient à l'écran précédent, à la même place dans la liste. Il ne fait plus quitter le site.
+// Chaque écran a son entrée d'historique ; chaque feuille ouverte en ajoute une, retirée à sa fermeture.
+// État d'une entrée : { app, k: clé, i: rang depuis l'arrivée, r: route, prev: route de l'entrée du dessous,
+//   b: route de la toute première entrée, o: atteinte par un onglet, f: feuilles comptées, y: défilement }
+// ---------------------------------------------------------------------------
+const feuilles = [];            // feuilles ouvertes, de bas en haut : { fermer, entree }
+const positions = new Map();    // défilement de chaque entrée quittée, par clé
+let courante = null;            // état de l'entrée affichée
+let versRoute = null;           // (route, { y, doux }) : fourni par App au branchement
+let attendus = [];              // nos history.go() pas encore arrivés : { synchro }
+let apres = [];                 // ce qui attend leur arrivée
+let dansRetour = false;         // des feuilles se ferment à cause de Retour (ou d'un changement d'écran)
+let prevu = false;
+let base = null;                // rang dans l'onglet de la première entrée de l'appli (Navigation API, si le navigateur l'a)
+const cle = () => Math.random().toString(36).slice(2, 10);
+const rang = () => { try { return window.navigation?.currentEntry?.index ?? null; } catch { return null; } };
+const lireEtat = () => (history.state && history.state.app ? history.state : null);
+const entrees = () => feuilles.filter(f => f.entree).length;
+const ecran = st => st.kr || st.k;   // une entrée de feuille garde la clé de son écran : une seule position par écran
+// Chrome saute, au Retour, les entrées ajoutées sans geste du membre : on n'empile que juste après un toucher
+const geste = () => !navigator.userActivation || navigator.userActivation.isActive;
+function ecrire(st, route, empiler) {
+  try { history[empiler ? 'pushState' : 'replaceState'](st, '', route == null ? undefined : '#' + route); courante = st; } catch { /* cadre sans historique, Safari trop sollicité */ }
+}
+const vider = () => { const a = apres; apres = []; a.forEach(f => f()); };
+const plusTard = fn => (attendus.length ? apres.push(fn) : fn());
+// Ce qui doit suivre un changement d'écran en cours (ouvrir une feuille sur l'écran d'arrivée), sinon tout de suite
+export const ensuite = plusTard;
+// synchro : l'arrivée change d'écran (comme un Retour du membre) ; sinon c'est un simple retrait d'entrées
+function traverser(n, synchro = false) {
+  if (!n) return;
+  attendus.push({ synchro });
+  try { history.go(n); } catch { attendus.pop(); return; }
+  // Filet : un navigateur qui ne répond pas (historique plus court que prévu) ne bloque rien
+  setTimeout(() => { if (attendus.length) { attendus = []; vider(); } }, 700);
+}
+function fermerJusqua(n, tout = false) {
+  dansRetour = true;
+  try { while (feuilles.length && (tout || entrees() > n)) feuilles.pop().fermer(); } finally { dansRetour = false; }
+}
+function relacher() {
+  if (prevu) return;
+  prevu = true;
+  queueMicrotask(() => { prevu = false; plusTard(() => { const trop = (courante?.f || 0) - entrees(); if (trop > 0) traverser(-trop); }); });
+}
+
+function synchroniser() {
+  let st = lireEtat();
+  if (st && courante && st.k === courante.k) return;          // déjà traité (popstate puis hashchange)
+  const avant = courante;
+  if (!st) {                                                  // un lien « #… » ou location.hash : on adopte la nouvelle entrée
+    const r = location.hash.slice(1), n = rang();
+    // Retour jusqu'à une entrée d'avant l'appli (page publique, écran de connexion) : l'appli repart d'elle,
+    // pour qu'aucun raccourci (« l'accueil est tout en bas ») ne recule plus loin que l'appli
+    if (n != null && base != null && n < base) { base = n; st = { app: 1, k: cle(), i: 0, r, prev: null, b: r, o: 0, f: 0 }; }
+    else st = { app: 1, k: cle(), i: n != null && base != null ? n - base : (avant ? avant.i : -1) + 1, r, prev: avant ? avant.r : null, b: avant ? avant.b : r, o: 0, f: 0 };
+    try { history.replaceState(st, ''); } catch { /* */ }
+  }
+  if (avant) positions.set(ecran(avant), scrollY);
+  courante = st;
+  const attendu = attendus.shift();
+  if (attendu && !attendu.synchro) { if (!attendus.length) vider(); return; }   // notre propre retrait d'entrées
+  const meme = avant && avant.r === st.r;
+  // Même écran : Retour ferme les feuilles au-dessus de celles que l'entrée compte. Autre écran : toutes.
+  fermerJusqua(meme ? st.f || 0 : 0, !meme);
+  if (!meme) versRoute?.(st.r, { y: positions.get(ecran(st)) ?? st.y ?? 0 });
+  // Entrée d'une feuille déjà fermée (bouton Suivant, lien « # » ouvert depuis une feuille) : on la saute
+  if ((st.f || 0) > entrees()) traverser(entrees() - st.f);
+  if (!attendus.length) vider();
+}
+
+// Arrivée directe sur un écran intérieur (lien partagé sur WhatsApp) : au premier toucher, l'accueil passe
+// dessous, pour que Retour y mène. Les feuilles ouvertes avant tout geste reçoivent alors leur entrée.
+function rattraper(e) {
+  if (e.type === 'keydown' && e.key === 'Escape') return;
+  if (!courante || attendus.length || !geste()) return;
+  const c = courante;
+  if (c.i === 0 && c.r !== 'accueil' && !c.f) {
+    ecrire({ ...c, r: 'accueil', b: 'accueil', o: 0, y: 0 }, 'accueil', false);
+    ecrire({ ...c, k: cle(), i: 1, prev: 'accueil', b: 'accueil' }, c.r, true);
+  }
+  for (const f of feuilles) if (!f.entree) { f.entree = true; ecrire({ ...courante, k: cle(), kr: ecran(courante), i: courante.i + 1, f: entrees() }, null, true); }
+}
+
+// App le branche une fois, quand la coque de l'appli s'affiche (pas sur les pages publiques)
+// r : la route affichée, déjà ramenée à « accueil » si l'adresse n'en est pas une (jeton de connexion…)
+export function brancherHistorique(r, surRoute) {
+  if (versRoute) return;
+  versRoute = surRoute;
+  try { history.scrollRestoration = 'manual'; } catch { /* */ }
+  const st = lireEtat();
+  if (!st) ecrire({ app: 1, k: cle(), i: 0, r, prev: null, b: r, o: 0, f: 0 }, location.hash.slice(1) === r ? null : r, false);
+  else { courante = st; if (st.f) traverser(-st.f); }          // rechargée avec une feuille ouverte : on redescend
+  const n = rang(); base = n == null ? null : n - (st ? st.i : 0);
+  addEventListener('popstate', synchroniser);
+  addEventListener('hashchange', synchroniser);
+  document.addEventListener('click', rattraper, true);
+  document.addEventListener('keydown', rattraper, true);
+}
+export const historiqueBranche = () => !!versRoute;
+
+// Changer d'écran. remplacer : un onglet de la même page, une redirection, ou « ← Tous les … » (remonter).
+// onglet : la barre du bas ou de côté ; passer d'un onglet à l'autre ne s'empile pas, Retour mène à l'accueil.
+// exact : un lien direct (#offre, #aider) prend la place de son entrée telle quelle, sans raccourci vers l'écran d'avant,
+// pour que la feuille qu'il ouvre dans le même temps ne soit pas refermée par un Retour simulé
+export function aller(r, { remplacer = false, onglet = false, exact = false } = {}) {
+  if (!versRoute || !courante) return false;
+  if (dansRetour) return true;                                 // une feuille fermée par Retour ne relance pas une navigation
+  const n = entrees();
+  fermerJusqua(0, true);                                       // les feuilles ouvertes se ferment…
+  if (n || attendus.length) { traverser(-n); plusTard(() => aller(r, { remplacer, onglet, exact })); return true; }   // …et leurs entrées partent d'abord
+  const c = courante;
+  if (onglet && r.split('/')[0] === c.r.split('/')[0]) remplacer = true;                      // l'onglet de la page où l'on est : on remonte à sa racine
+  if (r === c.r) { versRoute(r, { y: 0 }); return true; }                                     // même écran : on remonte en haut
+  if (exact) remplacer = true;
+  else if (r === c.prev) { traverser(-1, true); return true; }                                // l'écran d'avant : comme Retour, à la même place
+  else if (r === 'accueil' && c.b === 'accueil' && c.i > 0) { traverser(-c.i, true); return true; } // l'accueil est tout en bas
+  positions.set(c.k, scrollY);
+  if (remplacer || (onglet && c.o) || !geste()) ecrire({ ...c, k: cle(), r, b: c.i === 0 ? r : c.b, o: onglet ? 1 : c.o, f: 0, y: 0 }, r, false);
+  else {
+    try { history.replaceState({ ...c, y: scrollY }, ''); } catch { /* */ }
+    ecrire({ app: 1, k: cle(), i: c.i + 1, r, prev: c.r, b: c.b, o: onglet ? 1 : 0, f: 0 }, r, true);
+  }
+  versRoute(r, { y: 0, doux: true });
+  return true;
+}
+
+// Une feuille (Modal, fête, menu) : son entrée d'historique, que Retour referme
+export function useFeuille(onClose, actif = true) {
+  const fermer = useRef(onClose);
+  fermer.current = onClose;
+  useLayoutEffect(() => {
+    if (!actif || !versRoute) return;
+    const moi = { fermer: () => fermer.current?.(), entree: false };
+    feuilles.push(moi);
+    // Une feuille vient de se fermer pour laisser place à celle-ci (même geste) : elle reprend son entrée
+    if (!attendus.length && (courante?.f || 0) > entrees()) moi.entree = true;
+    else if (geste()) { moi.entree = true; plusTard(() => { if (feuilles.includes(moi)) ecrire({ ...courante, k: cle(), kr: ecran(courante), i: courante.i + 1, f: entrees() }, null, true); }); }
+    return () => {
+      const i = feuilles.indexOf(moi);
+      if (i < 0) return;                                       // déjà fermée par Retour ou par un changement d'écran
+      feuilles.splice(i, 1);
+      if (moi.entree) relacher();                              // fermée par la croix, Échap, le fond ou le formulaire
+    };
+  }, []);
+}
+// Pour ce qui n'est pas une Modal (menu du compte) : la même entrée, sans rien afficher
+export function Feuille({ onClose }) { useFeuille(onClose); return null; }
+
+// Après un Retour : la page reprend sa place, même si la liste s'allonge encore un instant
+export function rendrePosition(y) {
+  let n = 0, stop = false;
+  const arreter = () => { stop = true; };
+  addEventListener('touchstart', arreter, { once: true, passive: true });
+  addEventListener('wheel', arreter, { once: true, passive: true });
+  const essai = () => {
+    if (stop) return;
+    window.scrollTo(0, y);
+    if (Math.abs(scrollY - y) > 2 && n++ < 20) requestAnimationFrame(essai);
+    else { removeEventListener('touchstart', arreter); removeEventListener('wheel', arreter); }
+  };
+  essai();
+}
+
 // Fenêtres ouvertes, la plus récente à la fin : seule celle du dessus réagit au clavier
 const ouvertes = [];
 const FOCUSABLES = 'a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 // Sur téléphone, chaque fenêtre arrive par le bas comme une feuille (voir le CSS). « footer » reste collé
 // en bas, à portée du pouce : c'est là que va l'action principale.
-export function Modal({ title, onClose, children, wide, footer }) {
+export function Modal({ title, onClose, children, wide, footer, cls, historique = true }) {
   const ref = useRef();
+  useFeuille(onClose, historique);
   const fermer = useRef(onClose);
   fermer.current = onClose;
+  // Téléphone, clavier ouvert : la feuille se loge au-dessus du clavier ; son pied (l'action principale) reste au pouce
+  const [vv, setVv] = useState(null);
+  const avecPied = !!footer;
   useEffect(() => {
+    const v = window.visualViewport;
+    if (!avecPied || !v) return;
+    // Le champ suivi est ramené au-dessus du pied, puis encore une fois quand la feuille a fini de rapetisser
+    let t = 0;
+    const viser = () => { const a = document.activeElement; if (ref.current?.contains(a) && !a.closest('.modal-foot')) (a.closest('.field') || a).scrollIntoView({ block: 'nearest' }); };
+    const f = () => {
+      const clavier = innerWidth <= 760 && Math.abs(v.scale - 1) < .01 && innerHeight - v.height > 120;
+      setVv(clavier ? { h: Math.round(v.height), t: Math.round(v.offsetTop) } : null);
+      if (clavier) { requestAnimationFrame(viser); clearTimeout(t); t = setTimeout(viser, 220); }
+    };
+    v.addEventListener('resize', f); v.addEventListener('scroll', f);
+    return () => { clearTimeout(t); v.removeEventListener('resize', f); v.removeEventListener('scroll', f); };
+  }, [avecPied]);
+  // Hauteur du titre et du pied collés, pour que le défilement s'arrête avant eux (scroll-padding)
+  useLayoutEffect(() => {
+    const m = ref.current;
+    if (!m || typeof ResizeObserver === 'undefined') return;
+    const tete = m.querySelector(':scope > .modal-head'), pied = m.querySelector(':scope > .modal-foot');
+    const mesurer = () => { m.style.setProperty('--tete', (tete?.offsetHeight || 0) + 'px'); m.style.setProperty('--pied', (pied?.offsetHeight || 0) + 'px'); };
+    const ro = new ResizeObserver(mesurer);
+    for (const x of [tete, pied]) if (x) ro.observe(x);
+    mesurer();
+    return () => ro.disconnect();
+  }, [avecPied]);
+  // Branché dès l'affichage (pas après) : un Échap tapé aussitôt la fenêtre ouverte la ferme
+  useLayoutEffect(() => {
     const avant = document.activeElement;
     const moi = {};
     ouvertes.push(moi);
@@ -121,8 +317,8 @@ export function Modal({ title, onClose, children, wide, footer }) {
       if (avant?.isConnected) avant.focus?.();
     };
   }, []);
-  return html`<div class="modal-back" onClick=${e => { if (e.target === e.currentTarget) onClose(); }}>
-    <div class=${'modal' + (wide ? ' wide' : '') + (footer ? ' has-foot' : '')} role="dialog" aria-modal="true" aria-label=${title} ref=${ref}>
+  return html`<div class=${'modal-back' + (vv ? ' clavier' : '')} style=${vv ? `--vvh:${vv.h}px;--vvt:${vv.t}px` : ''} onClick=${e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div class=${'modal' + (wide ? ' wide' : '') + (footer ? ' has-foot' : '') + (cls ? ' ' + cls : '')} role="dialog" aria-modal="true" aria-label=${title} ref=${ref}>
       <header class="modal-head"><span class="sheet-grip" aria-hidden="true"></span><h2>${title}</h2><button class="icon-btn" onClick=${onClose} aria-label="Fermer"><${Icon} name="x"/></button></header>
       <div class="modal-body">${children}</div>
       ${footer ? html`<footer class="modal-foot">${footer}</footer>` : null}
@@ -140,8 +336,29 @@ export function Toaster() {
   return html`<div class="toast-zone" role="status" aria-live="polite">${t ? html`<div class=${'toast ' + t.kind} key=${t.t}>${t.msg}</div>` : null}</div>`;
 }
 
-export function Field({ label, hint, children }) {
-  return html`<label class="field"><span class="field-label">${label}</span>${children}${hint ? html`<span class="field-hint">${hint}</span>` : null}</label>`;
+// err : un champ obligatoire encore vide, signalé seulement après un essai de publication (jamais à l'ouverture)
+export function Field({ label, hint, children, err, errId }) {
+  return html`<label class=${'field' + (err ? ' manque' : '')}><span class="field-label">${label}</span>${children}${err ? html`<span class="field-err" id=${errId} aria-hidden="true">${err}</span>` : null}${hint ? html`<span class="field-hint">${hint}</span>` : null}</label>`;
+}
+// Mène au premier champ à compléter : au milieu de la fenêtre (doux, sauf mouvement réduit), le curseur dedans
+export function allerAuChamp(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  (el.closest('.field') || el).scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  (el.matches('input, textarea, button') ? el : el.querySelector('button'))?.focus({ preventScroll: true });
+}
+
+// Une chose à faire : le fait, puis UN bouton qui y mène, et depuis quand. Même ligne dans la cloche, Mon espace, Mon parcours.
+export function LigneAFaire({ n, onGo }) {
+  return html`<li class="af-row">
+    <span class=${'n-ico ' + (n.tone || 'accent')} aria-hidden="true"><${Icon} name=${n.icon} size=${16}/></span>
+    <span class="af-txt">${n.text}</span>
+    <span class="af-bas"><button type="button" class="btn small af-go" onClick=${() => onGo(n)}>${n.geste}</button><span class="muted small">${timeAgo(n.at)}</span></span>
+  </li>`;
+}
+// Une nouvelle : toute la ligne s'ouvre ; un rappel dit déjà quand, donc pas de « il y a »
+export function LigneNouvelle({ n, onGo }) {
+  return html`<li><button type="button" class="notif" onClick=${() => onGo(n)}><span class=${'n-ico ' + (n.tone || '')} aria-hidden="true"><${Icon} name=${n.icon} size=${16}/></span><span>${n.text}${n.rappel ? null : html`<span class="muted small">${timeAgo(n.at)}</span>`}</span></button></li>`;
 }
 
 // Écran vide : une phrase chaleureuse et, si possible, une seule action pour avancer.
@@ -165,18 +382,12 @@ export function celebrate({ cle, titre, texte, action, icon = 'trophy' }) {
 export function Celebration() {
   const [f, setF] = useState(null);
   feteSet = setF;
-  // On quitte l'écran (bouton retour) : la fête ne suit pas sur la page suivante
-  useEffect(() => {
-    if (!f) return;
-    const k = () => { if (Date.now() - f.t > 800) setF(null); };
-    window.addEventListener('hashchange', k);
-    return () => window.removeEventListener('hashchange', k);
-  }, [f]);
   return f ? html`<${Fete} f=${f} key=${f.t} onClose=${() => setF(null)}/>` : null;
 }
 const COULEURS_FETE = ['var(--em-o)', 'var(--em-b)', 'var(--orange)', 'var(--accent)', 'var(--good)', '#FFD166'];
 function Fete({ f, onClose }) {
   const ref = useRef();
+  useFeuille(onClose);   // Retour la ferme ; changer d'écran aussi
   const morceaux = useMemo(() => Array.from({ length: 34 }, (_, i) => ({ x: Math.round(Math.random() * 100), dx: Math.round(Math.random() * 120 - 60), d: (1.1 + Math.random() * .9).toFixed(2), w: (Math.random() * .35).toFixed(2), r: Math.round(Math.random() * 720 - 360), c: COULEURS_FETE[i % COULEURS_FETE.length], rond: i % 3 === 0 })), []);
   useEffect(() => {
     const avant = document.activeElement;
@@ -271,9 +482,9 @@ export function BrandLogo({ size = 38, draw = false }) {
 }
 
 // L'entrée de l'école dessinée. La porte s'ouvre une seule fois par visite ; les animations
-// s'arrêtent quand l'image sort de l'écran.
+// s'arrêtent quand l'image sort de l'écran. « pose » (ms) : à l'accueil, l'entrée s'anime à l'arrivée puis se pose.
 let gateOpened = false;
-export function SchoolScene({ align = 'xMidYMax', fit = 'meet' }) {
+export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0 }) {
   const ref = useRef();
   const [opening] = useState(() => { const o = !gateOpened; gateOpened = true; return o; });
   useEffect(() => {
@@ -283,6 +494,7 @@ export function SchoolScene({ align = 'xMidYMax', fit = 'meet' }) {
     io.observe(el);
     return () => io.disconnect();
   }, []);
+  useEffect(() => { const el = ref.current; if (!el || !pose) return; const t = setTimeout(() => el.setAttribute('data-pose', ''), pose); return () => clearTimeout(t); }, [pose]);
   return html`<div ref=${ref} class=${'scene' + (opening ? ' opening' : '')} aria-hidden="true" dangerouslySetInnerHTML=${{ __html: sceneMarkup(align, fit) }}></div>`;
 }
 

@@ -615,6 +615,13 @@ create table if not exists public.annonces (
   active boolean not null default true,
   created_at timestamptz default now()
 );
+-- Annonces : un public, comme les événements de l'agenda (l'accueil ne montre à chacun que la sienne, 14 jours)
+alter table public.annonces add column if not exists public text not null default 'tous';
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'annonces_public_check') then
+    alter table public.annonces add constraint annonces_public_check check (public in ('tous', 'etudiants', 'laureats'));
+  end if;
+end $$;
 
 -- Comptes vus par l'administration : email, dernière connexion, profil rempli ou non
 create or replace function public.admin_comptes()
@@ -3506,6 +3513,37 @@ do $$ begin
     grant execute on function public.demandes_signalees(uuid[]) to service_role;
   end if;
 end $$;
+
+-- « Cette semaine dans le réseau » : même calcul que poulsReseau() dans logic.js. Les relectures et les propositions
+-- ne sont pas lisibles par tous : sans cette fonction, chacun verrait un chiffre différent.
+-- Une aide va d'un lauréat vers un étudiant : rendez-vous passé, relecture rendue, recrutement confirmé, proposition acceptée.
+-- Que des totaux et les 4 lauréats les plus récents (déjà visibles dans l'annuaire), jamais qui a aidé qui.
+create or replace function public.pouls_reseau() returns jsonb
+language sql stable security definer set search_path = public as $$
+  with brut as (
+    select m.mentor_id as l, m.student_id as s, coalesce(m.rdv_at, m.accepted_at) as at, 'rdv' as k from public.mentorships m
+      where m.mentor_id is not null and m.status = 'terminee'
+    union all select r.reviewer_id, r.student_id, r.rendue_at, 'cv' from public.relectures_cv r where r.status = 'rendue'
+    union all select p.laureat_id, p.student_id, p.confirmed_at, 'recrute' from public.placements p where p.status = 'confirme'
+    union all select x.laureat_id, d.auteur_id, x.repondu_at, 'match' from public.propositions x join public.demandes d on d.id = x.demande_id where x.status = 'acceptee'
+  ), aides as (
+    select b.* from brut b
+      join public.profiles pl on pl.id = b.l and pl.role = 'laureat'
+      join public.profiles ps on ps.id = b.s and ps.role = 'etudiant'
+    where b.at <= now() and b.at >= now() - interval '30 days'
+  ), fenetre as (
+    select case when (select count(distinct l) from aides where at >= now() - interval '7 days') >= 2 then 7 else 30 end as jours
+  ), f as (select a.* from aides a, fenetre w where a.at >= now() - make_interval(days => w.jours))
+  select case when auth.uid() is null then null else jsonb_build_object(
+    'jours', (select jours from fenetre),
+    'nb_aidants', (select count(distinct l) from f),
+    'nb_aides', (select count(distinct s) from f),
+    'recrutes', (select count(*) from f where k = 'recrute'),
+    'aidants', coalesce((select jsonb_agg(l order by dernier desc) from (select l, max(at) as dernier from f group by l order by dernier desc limit 4) t), '[]'::jsonb)
+  ) end;
+$$;
+revoke all on function public.pouls_reseau() from public, anon;
+grant execute on function public.pouls_reseau() to authenticated;
 
 -- =====================================================================
 -- APRÈS votre inscription sur la plateforme, devenez administrateur :

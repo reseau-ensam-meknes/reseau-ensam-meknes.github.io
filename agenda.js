@@ -3,7 +3,7 @@
 import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Avatar, Person, toast, injectCSS } from './ui.js';
 import { addAR, getLang } from './i18n.js';
-import { TYPES_EVENEMENT } from './logic.js';
+import { TYPES_EVENEMENT, PUBLICS, pourPublic } from './logic.js';
 
 addAR({
   'Agenda du réseau': 'مفكرة الشبكة', 'Forum, conférences, portes ouvertes : ce qui se passe à l’école et en ligne.': 'المنتدى، المحاضرات، الأبواب المفتوحة: ما يجري في المدرسة وعبر الإنترنت.',
@@ -44,11 +44,10 @@ const toInput = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDat
 const memeJour = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 const finDe = e => new Date(e.fin || new Date(new Date(e.debut).getTime() + 2 * 36e5));
 export const passe = e => new Date(e.fin || e.debut) < Date.now();
-const PUBLICS = [['tous', 'Tout le monde'], ['etudiants', 'Étudiants'], ['laureats', 'Lauréats']];
 
 // Ce que chacun voit : l'administration tout, sinon les événements ouverts à son rôle
 export function eventsFor(data, me) {
-  return (data.evenements || []).filter(e => me.role === 'admin' || e.public === 'tous' || (e.public === 'etudiants' && me.role === 'etudiant') || (e.public === 'laureats' && me.role === 'laureat'));
+  return (data.evenements || []).filter(e => pourPublic(e.public, me.role));
 }
 
 // ---------------------------------------------------------------------------
@@ -168,7 +167,7 @@ function EventCard({ ctx, e, onOpen, onEdit }) {
 function EventDetail({ ctx, e, onClose, onEdit }) {
   const { me, openProfile } = ctx;
   const { gens } = useParticipants(ctx, e);
-  return html`<${Modal} title=${TYPES_EVENEMENT[e.type]?.[0] || 'Événement'} onClose=${onClose}>
+  return html`<${Modal} title=${TYPES_EVENEMENT[e.type]?.[0] || 'Événement'} onClose=${onClose} historique=${false}>
     <div class="ev-detail">
       <div class="row"><${DateBloc} iso=${e.debut}/><div class="grow ev-main">
         <div class="ev-tags"><${TypeTag} type=${e.type}/><${PublicTag} e=${e}/><${Etat} e=${e}/></div>
@@ -232,7 +231,8 @@ export function AgendaPage({ ctx }) {
   const [edit, setEdit] = useState(null); // null | 'new' | événement
   const [old, setOld] = useState(false);
   const isAdmin = me.role === 'admin';
-  useEffect(() => { if (sub2 === 'nouveau' && isAdmin) { setEdit('new'); go('reseau/agenda'); } }, [sub2]);
+  // Redirection : l'entrée prend sa nouvelle adresse telle quelle (exact), sans Retour simulé qui refermerait la feuille
+  useEffect(() => { if (sub2 === 'nouveau' && isAdmin) { setEdit('new'); go('reseau/agenda', { exact: true }); } }, [sub2]);
   const mine = eventsFor(data, me);
   const avenir = mine.filter(e => !passe(e)).sort((a, b) => new Date(a.debut) - new Date(b.debut));
   const passes = mine.filter(passe).sort((a, b) => new Date(b.debut) - new Date(a.debut));
@@ -248,7 +248,7 @@ export function AgendaPage({ ctx }) {
       : html`<${Empty} icon="calendar" title="Aucun événement à venir">${isAdmin ? 'Publie le premier : tous les membres concernés sont prévenus.' : 'Les forums, conférences et portes ouvertes apparaîtront ici.'}<//>`}
     ${passes.length ? html`<button class="linkish small past-toggle" aria-expanded=${old} onClick=${() => setOld(!old)}>${`Événements passés (${passes.length})`}</button>
       ${old ? html`<div class="ev-list">${passes.slice(0, 20).map(e => html`<${EventCard} key=${e.id} ctx=${ctx} e=${e} onOpen=${open} onEdit=${x => setEdit(x)}/>`)}</div>` : null}` : null}
-    ${ouvert ? html`<${EventDetail} ctx=${ctx} e=${ouvert} key=${ouvert.id} onClose=${() => go('reseau/agenda')} onEdit=${x => setEdit(x)}/>` : null}
+    ${ouvert ? html`<${EventDetail} ctx=${ctx} e=${ouvert} key=${ouvert.id} onClose=${() => go('reseau/agenda', { remplacer: true })} onEdit=${x => setEdit(x)}/>` : null}
     ${edit ? html`<${EventForm} ctx=${ctx} e=${edit === 'new' ? null : edit} key=${edit === 'new' ? 'new' : edit.id} onClose=${() => setEdit(null)}/>` : null}
   </div>`;
 }

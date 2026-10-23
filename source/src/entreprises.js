@@ -86,7 +86,7 @@ export function EntreprisesPage({ ctx }) {
   return html`<div class="sub-page ent-page">
     ${!sub2 ? html`<${ListeEntreprises} ctx=${ctx} all=${all} ouvrir=${ouvrir}/>`
       : c ? html`<${FicheEntreprise} ctx=${ctx} c=${c} ouvrir=${ouvrir}/>`
-      : html`<button class="linkish small ent-back" onClick=${() => ctx.go('reseau/entreprises')}><${Icon} name="arrow" size=${14}/> Toutes les entreprises</button>
+      : html`<button class="linkish small ent-back" onClick=${() => ctx.go('reseau/entreprises', { remplacer: true })}><${Icon} name="arrow" size=${14}/> Toutes les entreprises</button>
         <${Empty} icon="briefcase" title="Entreprise introuvable">Elle n’a peut-être plus de lauréats ni d’avis sur la plateforme.<//>`}
     ${form?.kind === 'entretien' ? html`<${EntretienForm} ctx=${ctx} initial=${form.initial} onClose=${() => setForm(null)}/>` : null}
     ${form?.kind === 'avis' ? html`<${AvisForm} ctx=${ctx} initial=${form.initial} onClose=${() => setForm(null)}/>` : null}
@@ -146,7 +146,7 @@ function FicheEntreprise({ ctx, c, ouvrir }) {
   const lieu = [c.ville, c.pays].filter(Boolean).join(', ');
   const suppr = (table, row) => ctx.confirm(table === 'avis_stage' ? 'Supprimer cet avis ?' : 'Supprimer ce partage d’entretien ?', () => act(async () => { await store.remove(table, row.id); toast('Supprimé.'); }));
   return html`<div class="sub-page">
-    <button class="linkish small ent-back" onClick=${() => ctx.go('reseau/entreprises')}><${Icon} name="arrow" size=${14}/> Toutes les entreprises</button>
+    <button class="linkish small ent-back" onClick=${() => ctx.go('reseau/entreprises', { remplacer: true })}><${Icon} name="arrow" size=${14}/> Toutes les entreprises</button>
     <div class="panel ent-head">
       <div class="detail-head"><${CompanyLogo} name=${c.nom} size=${56}/>
         <div class="detail-title grow"><h2 translate="no">${c.nom}</h2>

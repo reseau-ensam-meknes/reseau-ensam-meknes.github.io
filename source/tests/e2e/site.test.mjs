@@ -13,7 +13,7 @@ const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe
 const SITE = path.resolve(process.env.SITE_DIR || new URL('../../dist', import.meta.url).pathname);
 const TYPES = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const ECRANS = ['accueil', 'offres', 'offres/demandes', 'mentorat', 'mentorat/cv', 'messages', 'parcours', 'espace', 'reseau/groupes', 'reseau/agenda', 'reseau/entraide',
-  'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'reseau/classement', 'reseau/talents', 'suivi', 'profil', 'enquete',
+  'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'reseau/annuaire/ma-filiere', 'reseau/annuaire/ma-promo', 'reseau/classement', 'reseau/talents', 'suivi', 'profil', 'enquete',
   'confidentialite', 'admin', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda', 'admin/reglages'];
 
 let serveur, adresse, navigateur;
@@ -615,12 +615,15 @@ test('demande d’un étudiant : il publie (CV joint), un lauréat propose, matc
   const fete = () => s.page.locator('.fete-acts .btn').last().click({ timeout: 2000 }).catch(() => {});
   // Salma (5A) publie ce qu'elle cherche : son CV est déjà dans son profil
   await s.comme('Salma'); await s.aller('accueil');
-  assert.match(await s.page.locator('.dm-cta').innerText(), /Dis aux lauréats ce que tu cherches/);
+  assert.match(await s.page.locator('#coup-de-main').innerText(), /Dis aux lauréats ce que tu cherches/);
   await s.aller('offres/demandes');
   await s.page.click('#dm-nouvelle'); await s.page.waitForTimeout(200);
   assert.equal(await s.page.locator('.dm-form [role="radio"]').count(), 3, '5A : PFE, étranger ou emploi');
   await s.page.click('#dm-type-pfe');
-  assert.ok(await s.page.locator('#dm-publier').isDisabled(), 'pas de publication sans description');
+  // « Publier » reste au pouce : s'il manque quelque chose, rien ne part et le premier champ à compléter est signalé
+  await s.page.click('#dm-publier'); await s.page.waitForTimeout(250);
+  assert.equal(await s.page.evaluate(() => document.activeElement.id), 'dm-titre', 'pas de publication sans titre ni description');
+  assert.match(await s.page.locator('#dm-titre-err').innerText(), /4 caractères au moins/);
   await s.page.fill('#dm-titre', TITRE);
   await s.page.fill('#dm-details', 'Je cherche un PFE de 6 mois en lean : VSM, SMED, chantiers 5S. Mobile à Tanger et Kénitra.');
   await s.page.fill('#dm-lieu', 'Tanger');
@@ -670,6 +673,351 @@ test('demande d’un étudiant : il publie (CV joint), un lauréat propose, matc
   await s.ctx.close();
 });
 
+// Accueil qui guide : sur un petit Android, une seule carte, un seul bouton plein, visible sans défiler
+test('accueil (360 × 640) : une carte « prochaine étape » et son seul bouton plein, visibles sans défiler ; trois petites choses au plus', async () => {
+  const s = await ouvrir({ largeur: 360 });
+  await s.page.setViewportSize({ width: 360, height: 640 });
+  for (const [id, nom] of s.profils) {
+    await s.page.selectOption('#persona', id); await s.page.waitForTimeout(300);
+    await s.aller('accueil');
+    if (await s.page.$('.fete-back')) await s.fermer();
+    const r = await s.page.evaluate(() => {
+      const go = document.querySelector('.pas .pas-go'), fond = go && getComputedStyle(go).backgroundColor;
+      return { cartes: document.querySelectorAll('.home .pas').length, bas: go && go.getBoundingClientRect().bottom, nav: document.querySelector('.bottom-nav').getBoundingClientRect().top,
+        pleins: [...document.querySelectorAll('.home .btn.primary')].filter(b => b.offsetParent && getComputedStyle(b).backgroundColor === fond).length,
+        taches: document.querySelectorAll('.semaine .todo > li').length };
+    });
+    assert.equal(r.cartes, 1, `${nom} : une seule carte`);
+    assert.ok(r.bas && r.bas < r.nav, `${nom} : le bouton de la carte est sous la barre du bas (${r.bas} ≥ ${r.nav})`);
+    assert.equal(r.pleins, 1, `${nom} : un seul bouton plein sur l’accueil`);
+    assert.ok(r.taches <= 3, `${nom} : ${r.taches} petites choses`);
+  }
+  assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('cloche : son chiffre compte ce qui attend un geste, la feuille dit « À faire » puis « Nouvelles » ; pastilles seulement où il y a à faire', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('accueil');
+  const chiffre = (await s.page.textContent('.cloche-btn .badge-n')).trim();
+  await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
+  assert.equal(String(await s.page.locator('.cloche .af-row').count()), chiffre);
+  assert.match(await s.page.locator('.modal.cloche').innerText(), /À faire[\s\S]*Nouvelles/);
+  // Un geste depuis la cloche : elle se ferme et l'écran du geste s'ouvre
+  await s.page.locator('.cloche .af-row', { hasText: 'candidatures' }).locator('button').first().click(); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.modal.cloche').count(), 0);
+  assert.match(await s.page.locator('.modal').last().innerText(), /PFE : réduction des rebuts[\s\S]*Candidats/, 'l’offre s’ouvre sur ses candidats');
+  await s.fermer();
+  const pastilles = () => s.page.$$eval('.bottom-nav a', as => as.filter(a => a.querySelector('.dotn')).map(a => a.innerText.trim().split('\n')[0]));
+  assert.deepEqual((await pastilles()).sort(), ['Espace', 'Mentorat']);
+  // Mon espace commence par « À faire »
+  await s.aller('espace');
+  assert.ok(await s.page.evaluate(() => document.querySelector('.page-head').nextElementSibling.classList.contains('a-faire')), 'Mon espace commence par À faire');
+  // Un étudiant sans rien à faire : ni chiffre ni pastille, et la cloche le dit calmement
+  await s.comme('Amine'); await s.aller('accueil');
+  assert.equal(await s.page.locator('.cloche-btn .badge-n').count(), 0);
+  assert.deepEqual(await pastilles(), []);
+  await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
+  assert.equal(await s.page.locator('.cloche .af-row').count(), 0);
+  await s.fermer();
+  // Salma : Mon parcours commence aussi par « À faire »
+  await s.comme('Salma'); await s.aller('parcours');
+  assert.ok(await s.page.evaluate(() => document.querySelector('.page-head').nextElementSibling.classList.contains('a-faire')), 'Mon parcours commence par À faire');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('premiers pas fondus dans la carte : la feuille s’ouvre, se masque, et se retrouve dans le menu', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Amine'); await s.aller('accueil');
+  assert.match(await s.page.locator('.pas').innerText(), /Premiers pas · 1 sur 5[\s\S]*Ajouter mon CV/);
+  await s.page.locator('.pas').getByText('Voir les étapes').click();
+  await s.page.waitForSelector('.modal .etapes');
+  assert.equal(await s.page.locator('.modal .etapes li.fait').count(), 1, 'le compte est fait');
+  await s.page.click('text=Ne plus afficher les premiers pas'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.modal .etapes').count(), 0);
+  assert.doesNotMatch(await s.page.locator('.pas').innerText(), /Premiers pas/);
+  await s.aller('accueil/etapes'); await s.page.waitForSelector('.modal .etapes');
+  await s.fermer();
+  assert.equal(await s.page.evaluate(() => location.hash), '#accueil');
+  // La jeune lauréate sans emploi : ses premiers pas ne demandent pas d'employeur
+  await s.comme('Nadia'); await s.aller('accueil');
+  assert.match(await s.page.locator('.pas').innerText(), /Premiers pas · 1 sur 5[\s\S]*En poste ou en recherche d’emploi/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Je peux aider » en un geste : depuis l’accueil, et depuis le lien d’une notification', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('accueil');
+  await s.page.locator('.bs-ligne', { hasText: 'Je peux aider' }).first().click();
+  await s.page.waitForSelector('.modal:has(#dm-p-envoyer)');
+  assert.match(await s.page.inputValue('#dm-p-msg'), /^Bonjour \S+/, 'le mot est déjà prêt');
+  assert.equal(await s.page.evaluate(() => location.hash), '#accueil', 'on reste sur l’accueil');
+  await s.fermer();
+  // Le lien « Je peux aider » d'un email ou d'une notification
+  const id = await s.page.evaluate(() => { const { data } = JSON.parse(localStorage.getItem('ensam-demo-v14')); const douae = data.profiles.find(p => p.full_name === 'Douae Idrissi'); return data.demandes.find(d => d.auteur_id === douae.id && d.status === 'ouverte').id; });
+  await s.aller('aider/' + id); await s.page.waitForSelector('.modal:has(#dm-p-envoyer)');
+  assert.match(await s.page.locator('.modal').innerText(), /Aider Douae/);
+  assert.equal(await s.page.evaluate(() => location.hash), '#offres/demandes/' + id);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('feuilles : le pied « Publier » ne cache jamais le champ suivi ; « Je peux aider » dit ce qui manque ; une feuille ouverte de l’accueil garde son bouton plein', async () => {
+  const s = await ouvrir({ largeur: 360 });
+  await s.page.setViewportSize({ width: 360, height: 640 });
+  // Tab de champ en champ dans « Publier une offre » : chaque champ reste au-dessus du pied
+  await s.comme('Youssef'); await s.aller('offres');
+  await s.page.click('.page-head button.btn.primary'); await s.page.waitForSelector('#of-titre');
+  await s.page.focus('#of-titre');
+  for (let k = 0; k < 6; k++) {
+    await s.page.keyboard.press('Tab'); await s.page.waitForTimeout(80);
+    const r = await s.page.evaluate(() => { const a = document.activeElement, f = document.querySelector('.modal-foot'); if (!a.closest('.modal') || f.contains(a)) return null; return { id: a.id, bas: a.getBoundingClientRect().bottom, pied: f.getBoundingClientRect().top }; });
+    if (!r) break;
+    assert.ok(r.bas <= r.pied + 1, `${r.id} est caché sous le pied (${r.bas} > ${r.pied})`);
+  }
+  await s.fermer();
+  // Nadia n'a pas d'entreprise : le bouton reste actif, dit ce qui manque et y mène
+  await s.comme('Nadia');
+  const id = await s.page.evaluate(() => { const { data } = JSON.parse(localStorage.getItem('ensam-demo-v14')); const douae = data.profiles.find(p => p.full_name === 'Douae Idrissi'); return data.demandes.find(d => d.auteur_id === douae.id && d.status === 'ouverte').id; });
+  await s.aller('aider/' + id); await s.page.waitForSelector('.modal:has(#dm-p-envoyer)');
+  assert.equal(await s.page.isDisabled('#dm-p-envoyer'), false);
+  await s.page.click('#dm-p-envoyer'); await s.page.waitForTimeout(400);
+  assert.match(await s.page.locator('#dm-p-ent-err').innerText(), /Indique l’entreprise/);
+  assert.equal(await s.page.evaluate(() => document.activeElement.id), 'dm-p-ent');
+  assert.equal(await s.page.getByRole('textbox', { name: 'Entreprise', exact: true }).count(), 1, 'l’erreur n’entre pas dans le nom du champ');
+  await s.page.fill('#dm-p-ent', 'Lear Corporation'); await s.page.click('#dm-p-envoyer'); await s.page.waitForTimeout(400);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Proposition envoyée/);
+  // Amine (CV déposé) ouvre « Faire relire mon CV » depuis l'accueil : l'action de la feuille reste un bouton plein
+  await s.comme('Amine');
+  await s.page.evaluate(() => { const k = 'ensam-demo-v14', st = JSON.parse(localStorage.getItem(k)); const me = st.data.profiles.find(p => p.id === st.meId); me.cv_path = me.id + '/cv.pdf'; localStorage.setItem(k, JSON.stringify(st)); });
+  await s.page.reload(); await s.page.waitForSelector('.hello'); await s.aller('accueil');
+  if (await s.page.$('.fete-back')) await s.fermer();
+  const style = sel => s.page.evaluate(x => { const c = getComputedStyle(document.querySelector(x)); return [c.backgroundColor, c.backgroundImage, c.color].join(' | '); }, sel);
+  const carte = await style('.pas .pas-go');
+  await s.page.locator('.coup-de-main button', { hasText: 'Faire relire mon CV' }).first().click(); await s.page.waitForSelector('.modal .btn.primary');
+  assert.equal(await style('.modal .btn.primary'), carte, 'le bouton de la feuille est plein, comme celui de la carte');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('annonce : sur une ligne, seulement pour son public', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Admin'); await s.aller('admin');
+  await s.page.fill('#ann-txt', 'Forum entreprises mardi pour tout le réseau');
+  await s.page.locator('form:has(#ann-txt) button.primary').click(); await s.page.waitForTimeout(300);
+  await s.page.fill('#ann-txt', 'Afterwork des lauréats jeudi soir à l’école');
+  await s.page.click('#ann-pour-laureats');
+  await s.page.locator('form:has(#ann-txt) button.primary').click(); await s.page.waitForTimeout(300);
+  await s.comme('Youssef'); await s.aller('accueil');
+  assert.match(await s.page.locator('.annonce-ligne').innerText(), /Afterwork des lauréats/);
+  await s.comme('Amine'); await s.aller('accueil');
+  assert.doesNotMatch(await s.page.locator('.home').innerText(), /Afterwork/);
+  assert.match(await s.page.locator('.annonce-ligne').innerText(), /Forum entreprises mardi/, 'l’annonce pour tout le monde reste aux étudiants');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('arabe : les phrases de l’accueil sont traduites en entier, noms de repli compris', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  const ar = await s.page.evaluate(async () => {
+    const { t } = await import('./i18n.js');
+    return ['Une question pour toi sur France : Où se loger à Toulouse ?', 'C’est un match avec Salma Bennani : déclare son démarrage dès qu’il a lieu.',
+      'Un lauréat relit ton CV', 'Un lauréat indique t’avoir recruté(e) chez Lear', '45 lauréats sont déjà là', '2 lauréats sont déjà là, dont 1 de ta promo',
+      'Tu relis le CV de Hatim Moussaoui', 'Continuer la relecture'].map(t);
+  });
+  assert.match(ar[0], /^سؤال موجّه إليك حول فرنسا/);
+  assert.match(ar[1], /صرّح ببدئه/);
+  for (const x of ar.slice(2, 4)) assert.doesNotMatch(x, /Un lauréat/, x);
+  for (const x of ar.slice(4, 6)) { assert.match(x, /^انضمّ إلى الشبكة/, x); assert.doesNotMatch(x, /معك/, x); }
+  assert.match(ar[6], /تراجع سيرة/);
+  assert.equal(ar[7], 'متابعة المراجعة');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('un rendez-vous ne prend la carte que la veille ; Mentorat calme propose « Me rendre disponible »', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const demo = f => s.page.evaluate(f => { const k = 'ensam-demo-v14', st = JSON.parse(localStorage.getItem(k)); new Function('d', f)(st.data); localStorage.setItem(k, JSON.stringify(st)); }, f);
+  const recharger = async () => { await s.page.reload(); await s.page.waitForSelector('.hello'); await s.page.waitForTimeout(300); if (await s.page.$('.fete-back')) await s.fermer(); };
+  // Salma a un rendez-vous demain, pas encore confirmé : la carte le propose
+  await s.comme('Salma'); await s.aller('accueil');
+  if (await s.page.$('.fete-back')) await s.fermer();
+  assert.match(await s.page.locator('.pas').getAttribute('data-pas'), /^sc/);
+  assert.match(await s.page.locator('.pas .pas-go').innerText(), /Je serai là/);
+  // Dans quatre jours : une ligne de « Cette semaine », la carte passe à autre chose
+  await demo(`const salma = d.profiles.find(p => p.full_name.startsWith('Salma'));
+    d.mentorships.find(m => m.student_id === salma.id && m.status === 'acceptee' && !m.confirme_at && new Date(m.rdv_at) > Date.now()).rdv_at = new Date(Date.now() + 4 * 864e5).toISOString();`);
+  await recharger();
+  assert.doesNotMatch(await s.page.locator('.pas').getAttribute('data-pas'), /^sc|^rdv/);
+  assert.match(await s.page.locator('.semaine .todo').innerText(), /Confirme ta présence/);
+  // Une lauréate encore invisible, sans demande : une seule action
+  await s.comme('Nadia');
+  await demo(`d.mentorships = d.mentorships.filter(m => m.status !== 'demande');`);
+  await recharger(); await s.aller('mentorat');
+  const calme = s.page.locator('.m-section').first();
+  assert.match(await calme.innerText(), /Tout est calme pour l’instant/);
+  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1);
+  await calme.locator('.empty button:has-text("Me rendre disponible")').click(); await s.page.waitForTimeout(300);
+  assert.match(await calme.innerText(), /Tu seras prévenu\(e\)/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('cloche : une relecture commencée reste à faire ; une note sans merci et un rendez-vous commencé n’y restent pas', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const demo = f => s.page.evaluate(f => { const k = 'ensam-demo-v14', st = JSON.parse(localStorage.getItem(k)); new Function('d', f)(st.data); localStorage.setItem(k, JSON.stringify(st)); }, f);
+  const recharger = async () => { await s.page.reload(); await s.page.waitForSelector('.hello'); await s.page.waitForTimeout(300); if (await s.page.$('.fete-back')) await s.fermer(); };
+  const cloche = async () => { await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche'); const t = await s.page.locator('.cloche .af-liste').innerText().catch(() => ''); await s.fermer(); return t; };
+  // Youssef commence la relecture qu'on lui a demandée : elle reste dans « À faire » et sur l'accueil
+  await s.comme('Youssef');
+  await demo(`const y = d.profiles.find(p => p.full_name === 'Youssef El Amrani'); const r = d.relectures_cv.find(x => x.reviewer_id === y.id && x.status === 'demandee'); r.status = 'en_cours'; r.pris_at = new Date().toISOString();`);
+  await recharger();
+  assert.match(await cloche(), /Continuer la relecture/);
+  assert.match(await s.page.locator('.home').innerText(), /Tu relis le CV de/);
+  // Salma note la relecture sans écrire de merci, et son rendez-vous a commencé sans qu'elle ait confirmé
+  await s.comme('Salma');
+  await demo(`const sa = d.profiles.find(p => p.full_name.startsWith('Salma'));
+    for (const r of d.relectures_cv) if (r.student_id === sa.id && r.status === 'rendue' && !r.merci) r.note = 5;
+    d.mentorships.find(m => m.student_id === sa.id && m.status === 'acceptee' && !m.confirme_at && new Date(m.rdv_at) > Date.now()).rdv_at = new Date(Date.now() - 10 * 6e4).toISOString();`);
+  await recharger();
+  const faire = await cloche();
+  assert.doesNotMatch(faire, /Lire ses conseils/, 'une note suffit : rien à faire de plus');
+  assert.doesNotMatch(faire, /Confirmer ma présence/, 'le rendez-vous a commencé : plus rien à confirmer');
+  assert.match(await s.page.locator('.pas .pas-oeil').innerText(), /C’est l’heure/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// page.goBack() = le bouton Retour du navigateur (comme celui du téléphone)
+const retour = async page => { await page.goBack({ waitUntil: 'commit' }); await page.waitForTimeout(350); };
+const ici = page => page.evaluate(() => location.hash);
+
+test('Retour : ferme la feuille, puis revient à l’écran d’avant, à la même place', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma');
+  await s.page.click('.bottom-nav a[href="#offres"]'); await s.page.waitForTimeout(300);
+  await s.page.locator('.ocard-main').first().click(); await s.page.waitForSelector('.od h2');
+  await retour(s.page);
+  assert.equal(await s.page.locator('.modal').count(), 0, 'Retour ferme la fiche');
+  assert.equal(await ici(s.page), '#offres', 'et reste sur la liste');
+  await retour(s.page);
+  assert.equal(await ici(s.page), '#accueil');
+  // La liste reprend sa place
+  await s.page.click('.bottom-nav a[href="#reseau"]'); await s.page.waitForTimeout(300);
+  await s.page.click('.icon-tabs button:has-text("Entraide")'); await s.page.waitForTimeout(300);
+  const ligne = s.page.locator('.qrow').nth(4); await ligne.scrollIntoViewIfNeeded();
+  const avant = await s.page.evaluate(() => scrollY); assert.ok(avant > 200);
+  await ligne.click(); await s.page.waitForTimeout(300);
+  await retour(s.page);
+  assert.ok(Math.abs(await s.page.evaluate(() => scrollY) - avant) <= 2, 'même place dans la liste');
+  // « ← Toutes les questions » fait comme Retour, sans empiler
+  await s.page.locator('.qrow').nth(4).click(); await s.page.waitForTimeout(300);
+  await s.page.click('button.back'); await s.page.waitForTimeout(350);
+  assert.ok(Math.abs(await s.page.evaluate(() => scrollY) - avant) <= 2);
+  await retour(s.page);
+  assert.equal(await ici(s.page), '#accueil', 'les onglets ne s’empilent pas : Retour mène à l’accueil');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('Retour : une fiche qui mène ailleurs (Écrire) ne demande qu’un Retour ; Échap et la croix ne laissent rien', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.fiche('Youssef El Amrani');
+  await s.page.locator('.modal .msg-btn').first().click(); await s.page.waitForTimeout(400);
+  assert.match(await ici(s.page), /^#messages\//);
+  await retour(s.page);
+  assert.equal(await ici(s.page), '#reseau/annuaire'); assert.equal(await s.page.locator('.modal').count(), 0);
+  for (const fermer of [() => s.page.keyboard.press('Escape'), () => s.page.click('.modal-head .icon-btn')]) {
+    await s.page.locator('.person').first().click(); await s.page.waitForSelector('.modal');
+    await fermer(); await s.page.waitForTimeout(300);
+  }
+  await retour(s.page);
+  assert.notEqual(await ici(s.page), '#reseau/annuaire', 'aucune fiche fantôme à refermer');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('Retour : un lien « Publier ma demande » ouvert depuis les demandes garde son formulaire ouvert', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('offres/demandes');
+  await s.page.evaluate(() => { const a = document.createElement('a'); a.href = '#offres/demandes/nouvelle'; a.id = 'lien-test'; a.textContent = 'Publier ma demande'; document.querySelector('.page').prepend(a); });
+  await s.page.click('#lien-test'); await s.page.waitForTimeout(900);
+  assert.equal(await ici(s.page), '#offres/demandes');
+  assert.ok(await s.page.locator('.modal #dm-titre').count(), 'le formulaire de demande est resté ouvert');
+  await retour(s.page);
+  assert.equal(await s.page.locator('.modal').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('Retour jusqu’à une page d’avant l’appli (vérification d’attestation) : l’onglet Accueil ne fait pas sortir du site', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.page.goto('about:blank'); await s.page.goto(adresse + '#verifier/abc'); await s.page.waitForTimeout(600);
+  await s.page.click('a[href="#accueil"]'); await s.page.waitForSelector('.hello');
+  await retour(s.page);
+  assert.equal(await ici(s.page), '#verifier/abc');
+  await s.page.click('a[href="#accueil"]'); await s.page.waitForSelector('.hello');
+  await s.page.click('.bottom-nav a[href="#reseau"]'); await s.page.waitForTimeout(400);
+  await s.page.click('.icon-tabs button:has-text("Entraide")'); await s.page.waitForTimeout(300);
+  await s.page.locator('.qrow').first().click(); await s.page.waitForTimeout(400);
+  await s.page.click('.bottom-nav a[href="#accueil"]'); await s.page.waitForTimeout(900);
+  assert.equal(await ici(s.page), '#accueil');
+  assert.equal(await s.page.locator('.hello').count(), 1);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('lien WhatsApp vers une offre : après un toucher, Retour ferme la fiche, puis mène à l’accueil (pas hors du site)', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('offres');
+  await s.page.locator('.ocard-main').first().click(); await s.page.waitForSelector('#od-partage');
+  const msg = decodeURIComponent((await s.page.getAttribute('#od-partage', 'href')).split('text=')[1]);
+  const lien = msg.match(/https?:\/\/\S+#offre\/\S+/)[0];
+  const page = await s.ctx.newPage();
+  await page.goto(adresse + 'vide.html').catch(() => {});          // une page d'avant (le 404 du serveur de test suffit)
+  await page.goto(lien); await page.waitForSelector('.od h2');
+  await page.locator('.modal .modal-body').click({ position: { x: 12, y: 12 } });
+  await retour(page);
+  assert.equal(await page.locator('.modal').count(), 0); assert.equal(await ici(page), '#offres');
+  await retour(page);
+  assert.equal(await ici(page), '#accueil');
+  assert.ok(await page.locator('.hello').count(), 'on est toujours dans la plateforme');
+  await s.ctx.close();
+});
+
+test('Retour : la cloche et « Je peux aider » se ferment sur l’accueil ; les premiers pas ouverts du menu ramènent où l’on était', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('accueil');
+  await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
+  await retour(s.page);
+  assert.equal(await s.page.locator('.modal').count(), 0, 'Retour ferme la cloche');
+  assert.equal(await ici(s.page), '#accueil');
+  await s.page.locator('.bs-ligne', { hasText: 'Je peux aider' }).first().click(); await s.page.waitForSelector('.modal:has(#dm-p-envoyer)');
+  await retour(s.page);
+  assert.equal(await s.page.locator('.modal').count(), 0, 'Retour ferme « Je peux aider »');
+  assert.equal(await ici(s.page), '#accueil');
+  // « Comment ça marche ? » depuis le menu, sur Offres : Retour ferme la feuille et ramène sur Offres
+  await s.comme('Amine'); await s.aller('offres');
+  await s.page.click('.me-btn'); await s.page.click('.menu-pop button:has-text("Comment ça marche ?")');
+  await s.page.waitForSelector('.modal .etapes');
+  await retour(s.page);
+  assert.equal(await s.page.locator('.modal').count(), 0, 'Retour ferme les premiers pas');
+  assert.equal(await ici(s.page), '#offres');
+  // Une étape qui ouvre une feuille (« Demander un conseil ») : elle s'ouvre sur l'accueil et y reste
+  await s.page.click('.me-btn'); await s.page.click('.menu-pop button:has-text("Comment ça marche ?")');
+  await s.page.waitForSelector('.modal .etapes');
+  await s.page.locator('.modal .etapes button', { hasText: 'Demander un conseil' }).click(); await s.page.waitForTimeout(900);
+  assert.equal(await ici(s.page), '#accueil');
+  assert.match(await s.page.locator('.modal').last().innerText(), /Demander de l’aide/, 'la feuille de l’étape est restée ouverte');
+  await retour(s.page);
+  assert.equal(await s.page.locator('.modal').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('clavier : lien « Aller au contenu », fenêtre qui garde le focus puis le rend', async () => {
   const s = await ouvrir();
   await s.page.keyboard.press('Tab');
@@ -681,6 +1029,10 @@ test('clavier : lien « Aller au contenu », fenêtre qui garde le focus puis le
   assert.ok(await s.page.evaluate(() => !!document.activeElement.closest('.modal')), 'le focus est sorti de la fenêtre');
   await s.fermer();
   assert.ok(await s.page.evaluate(() => document.activeElement.matches('.person')), 'le focus n’est pas revenu sur la fiche ouverte');
+  // Échap tapé à l'instant même où la fenêtre apparaît (avant l'image suivante) : elle se ferme quand même
+  await s.page.evaluate(() => { new MutationObserver((l, o) => { if (!document.querySelector('.modal')) return; o.disconnect(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); }).observe(document.body, { childList: true, subtree: true }); });
+  await s.page.locator('.person').first().click(); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator('.modal').count(), 0, 'Échap tapé tout de suite est perdu');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });

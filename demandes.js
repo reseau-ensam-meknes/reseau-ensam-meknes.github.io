@@ -3,9 +3,9 @@
 // Quand il a commencé, le lauréat le déclare et l'étudiant confirme : la réussite est vérifiée des deux côtés et annoncée.
 // Les règles sont celles de la base (protect_demande, protect_proposition, protect_placement).
 import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, toast, injectCSS, celebrate, TYPE_ICON } from './ui.js';
-import { addAR } from './i18n.js';
-import { TYPES, AIDES, DEMANDES_MAX, typesDemande, demandesActives, demandeEnPause, demandesPour, niveauOf, timeAgo, fmtDate, placementOf } from './logic.js';
+import { Icon, Modal, Field, Empty, Person, toast, injectCSS, celebrate, TYPE_ICON, allerAuChamp } from './ui.js';
+import { addAR, arCount, t as tr } from './i18n.js';
+import { TYPES, AIDES, DEMANDES_MAX, typesDemande, demandesActives, demandeEnPause, demandesPour, niveauOf, timeAgo, fmtDate, placementOf, etatAide, AIDE_OUVERTE, manquesDemande } from './logic.js';
 import { CV_MAX } from './store.js';
 import { CvButton, OuvrirCV } from './cv.js';
 import { MessageBtn } from './messages.js';
@@ -55,16 +55,17 @@ function Aide({ x }) {
 // ---------------------------------------------------------------------------
 export function DemandesTab({ ctx }) {
   const { me, sub2, saison } = ctx;
-  const [form, setForm] = useState(sub2 === 'nouvelle' ? {} : null);
+  const [form, setForm] = useState(null);
   const focusId = sub2 && sub2 !== 'nouvelle' ? sub2 : null;
-  useEffect(() => { if (sub2 === 'nouvelle') setForm({}); }, [sub2]);
+  // Redirection : l'entrée prend sa nouvelle adresse telle quelle (exact), sans Retour simulé qui refermerait le formulaire
+  useEffect(() => { if (sub2 === 'nouvelle') { ctx.go('offres/demandes', { exact: true }); setForm({}); } }, [sub2]);
   useEffect(() => {
     if (!focusId) return;
     const t = setTimeout(() => document.getElementById('dm-' + focusId)?.scrollIntoView({ block: 'center', behavior: doux() }), 250);
     return () => clearTimeout(t);
   }, [focusId]);
   const peutPublier = typesDemande(me, saison).length > 0;
-  const fermer = () => { setForm(null); if (sub2 === 'nouvelle') ctx.go('offres/demandes'); };
+  const fermer = () => setForm(null);
   return html`<div class="dm-page">
     ${me.role === 'admin' ? html`<${DemandesAdmin} ctx=${ctx} focusId=${focusId}/>` : null}
     ${me.role === 'laureat' ? html`<${DemandesLaureat} ctx=${ctx} focusId=${focusId}/>` : null}
@@ -202,7 +203,15 @@ function DemandeForm({ ctx, d = null, onClose }) {
   const [busy, setBusy] = useState(false);
   const input = useRef();
   const set = k => e => setF({ ...f, [k]: e.target.value });
-  const ok = f.titre.trim().length >= 4 && f.details.trim().length >= 20 && !!me.cv_path && types.includes(f.type);
+  // « Publier » reste actif et au pouce : s'il manque quelque chose, il mène au premier champ à compléter
+  const [tente, setTente] = useState(false);
+  const manques = manquesDemande(f, me);
+  const ok = !manques.length && types.includes(f.type);
+  const nd = f.details.trim().length, reste = 20 - nd;
+  const MSG = { titre: 'Dis-le en une phrase : 4 caractères au moins.',
+    details: nd ? `Encore ${reste} caractère${reste > 1 ? 's' : ''} au moins.` : 'Quelques lignes suffisent : 20 caractères au moins.' };
+  const err = k => (tente && manques.includes(k) ? MSG[k] : null);
+  const aria = k => (err(k) ? { 'aria-invalid': 'true', 'aria-describedby': `dm-${k}-err` } : {});
   const deposer = file => {
     if (!file) return;
     if (file.size > CV_MAX) { toast('Le fichier dépasse 2 Mo. Exporte ton CV en PDF plus léger.', 'err'); return; }
@@ -211,6 +220,7 @@ function DemandeForm({ ctx, d = null, onClose }) {
   };
   const envoyer = e => {
     e.preventDefault();
+    if (manques.length) { setTente(true); allerAuChamp({ titre: 'dm-titre', details: 'dm-details', cv: 'dm-cv' }[manques[0]]); return; }
     if (!ok) return;
     act(async () => {
       const champs = { type: f.type, titre: f.titre.trim(), details: f.details.trim(), lieu: f.lieu.trim() || null, debut: f.debut || null, duree: f.duree.trim() || null };
@@ -220,20 +230,20 @@ function DemandeForm({ ctx, d = null, onClose }) {
       if (!celebrate({ cle: 'premiere-demande-' + me.id, icon: 'send', titre: 'Ta demande est publiée', texte: 'Les lauréats de ton parcours sont prévenus. Leurs propositions arriveront ici et dans tes messages.' })) toast('Demande publiée. Les lauréats de ton parcours sont prévenus.');
     });
   };
-  return html`<${Modal} title=${d ? 'Modifier ma demande' : 'Publier ma demande'} onClose=${onClose}>
-    <form class="form dm-form" onSubmit=${envoyer}>
+  const pied = html`<button class="btn primary" type="submit" form="dm-form" id="dm-publier">${d ? 'Enregistrer' : 'Publier ma demande'}</button>`;
+  return html`<${Modal} title=${d ? 'Modifier ma demande' : 'Publier ma demande'} onClose=${onClose} footer=${pied}>
+    <form class="form dm-form" id="dm-form" noValidate onSubmit=${envoyer}>
       ${types.length > 1 ? html`<div class="field"><span class="field-label">Je cherche</span><div class="chips" role="radiogroup" aria-label="Je cherche">${types.map(t => html`<button type="button" role="radio" aria-checked=${f.type === t} class=${'chip' + (f.type === t ? ' on' : '')} id=${'dm-type-' + t} onClick=${() => setF({ ...f, type: t })}><${Icon} name=${TYPE_ICON[t]} size=${14}/> ${TYPES[t].label}</button>`)}</div></div>`
         : html`<p class="small muted"><${Icon} name=${TYPE_ICON[f.type] || 'briefcase'} size=${14}/> ${`Je cherche : ${TYPES[f.type]?.label || ''}`}</p>`}
-      <${Field} label="En une phrase"><input id="dm-titre" dir="auto" maxlength="120" value=${f.titre} onInput=${set('titre')} placeholder=${EXEMPLES[f.type] || ''} required/><//>
-      <${Field} label="Ce que tu cherches et ce que tu sais faire" hint="Domaine, missions qui te plaisent, compétences, contraintes (dates, mobilité). Les lauréats décident sur ces lignes et ton CV."><textarea id="dm-details" dir="auto" rows="4" maxlength="1500" value=${f.details} onInput=${set('details')} placeholder="Ex. Je cherche un PFE de 6 mois en lean ou supply chain. J’ai fait mon stage de 4A en méthodes chez un équipementier ; je maîtrise VSM, SMED et Power BI." required></textarea><//>
+      <${Field} label="En une phrase" err=${err('titre')} errId="dm-titre-err"><input id="dm-titre" dir="auto" maxlength="120" value=${f.titre} onInput=${set('titre')} placeholder=${EXEMPLES[f.type] || ''} ...${aria('titre')} required/><//>
+      <${Field} label="Ce que tu cherches et ce que tu sais faire" err=${err('details')} errId="dm-details-err" hint="Domaine, missions qui te plaisent, compétences, contraintes (dates, mobilité). Les lauréats décident sur ces lignes et ton CV."><textarea id="dm-details" dir="auto" rows="4" maxlength="1500" value=${f.details} onInput=${set('details')} ...${aria('details')} placeholder="Ex. Je cherche un PFE de 6 mois en lean ou supply chain. J’ai fait mon stage de 4A en méthodes chez un équipementier ; je maîtrise VSM, SMED et Power BI." required></textarea><//>
       <div class="grid2"><${Field} label="Où (facultatif)"><input id="dm-lieu" dir="auto" maxlength="120" value=${f.lieu} onInput=${set('lieu')} placeholder="Ex. Casablanca, Tanger ou à distance"/><//>
         <${Field} label="À partir du (facultatif)"><input id="dm-debut" type="date" value=${f.debut || ''} onInput=${set('debut')}/><//></div>
       <${Field} label="Durée (facultatif)"><input id="dm-duree" dir="auto" maxlength="40" value=${f.duree} onInput=${set('duree')} placeholder="Ex. 2 mois, 6 mois, CDI"/><//>
       <input ref=${input} id="dm-cv-file" type="file" accept="application/pdf,.pdf" hidden onChange=${e => deposer(e.target.files[0])}/>
       ${me.cv_path ? html`<p class="small hint-box"><${Icon} name="file" size=${15}/> <span>Ton CV PDF est joint. Les lauréats le voient tant que ta demande est ouverte.</span> <${OuvrirCV} store=${store} path=${me.cv_path} label="Voir" cls="btn tiny ghost"/></p>`
-        : html`<button type="button" id="dm-cv" class="cv-drop" disabled=${busy} onClick=${() => input.current?.click()}><span class="cv-ico"><${Icon} name="upload" size=${22}/></span><strong>${busy ? 'Envoi en cours…' : 'Joins ton CV en PDF'}</strong><span class="small muted">Obligatoire : c’est la première chose que regardent les lauréats. PDF, 2 Mo maximum.</span></button>`}
+        : html`<button type="button" id="dm-cv" class=${'cv-drop' + (tente && manques.includes('cv') ? ' manque' : '')} disabled=${busy} onClick=${() => input.current?.click()}><span class="cv-ico"><${Icon} name="upload" size=${22}/></span><strong>${busy ? 'Envoi en cours…' : 'Joins ton CV en PDF'}</strong><span class="small muted">Obligatoire : c’est la première chose que regardent les lauréats. PDF, 2 Mo maximum.</span></button>`}
       <p class="small muted"><${Icon} name="lock" size=${14}/> Visible par les lauréats seulement. Tes coordonnées restent cachées jusqu’au match.</p>
-      <div class="row-end"><button type="button" class="btn ghost" onClick=${onClose}>Annuler</button><button class="btn primary" id="dm-publier" disabled=${!ok}>${d ? 'Enregistrer' : 'Publier ma demande'}</button></div>
     </form>
   <//>`;
 }
@@ -280,11 +290,11 @@ function CarteLaureat({ ctx, d, why = [], focus = false }) {
   const { data, me, store, act, openProfile } = ctx;
   const a = store.byId('profiles', d.auteur_id);
   const mienne = (data.propositions || []).find(x => x.demande_id === d.id && x.laureat_id === me.id) || null;
-  const [form, setForm] = useState(false);
+  const e = etatAide(data, me, d);  // une seule feuille « Je peux aider » pour tous les points d'entrée
   const retirer = () => ctx.confirm(mienne?.status === 'acceptee' ? `Te retirer ? La demande de ${prenom(a)} se rouvre pour les autres lauréats.` : 'Retirer ton aide ?', () => act(async () => { await store.update('propositions', mienne.id, { status: 'retiree' }); toast('Ton aide est retirée.'); }), 'Me retirer');
   const s = mienne?.status;
   return html`<article class=${'dm-card st-' + d.status + (focus ? ' dm-focus' : '')} id=${'dm-' + d.id}>
-    <div class="dm-head"><${Person} p=${a} onOpen=${openProfile} size=${40}/><span class="spacer"></span><${TypeTag} type=${d.type}/>${d.status !== 'ouverte' ? html`<${Pill} d=${d}/>` : null}</div>
+    <div class="dm-head"><${Person} p=${a} onOpen=${openProfile} size=${40}/><span class="spacer"></span><${TypeTag} type=${d.type}/>${d.status !== 'ouverte' || demandeEnPause(d) ? html`<${Pill} d=${d}/>` : null}</div>
     <h3 class="dm-titre" translate="no" dir="auto">${d.titre}</h3>
     <${Meta} d=${d}/>
     ${d.status === 'ouverte' || s === 'envoyee' ? html`<p class="dm-details" translate="no" dir="auto">${d.details}</p>` : null}
@@ -302,11 +312,10 @@ function CarteLaureat({ ctx, d, why = [], focus = false }) {
       ${mienne && ['envoyee', 'acceptee'].includes(s) && d.status !== 'match' ? html`<${MessageBtn} ctx=${ctx} p=${a} cls="btn tiny ghost"/>` : null}
       <span class="spacer"></span>
       <${SignalerBtn} ctx=${ctx} type="demande" id=${d.id} small/>
-      ${s === 'envoyee' ? html`<button type="button" class="btn tiny ghost" onClick=${() => setForm(true)}><${Icon} name="edit" size=${14}/> Modifier</button><button type="button" class="btn tiny ghost" onClick=${retirer}>Retirer</button>` : null}
-      ${s === 'retiree' && d.status === 'ouverte' ? html`<button type="button" class="btn small" onClick=${() => setForm(true)}>Proposer à nouveau</button>` : null}
-      ${!mienne && d.status === 'ouverte' ? html`<button type="button" class="btn small primary dm-aider" onClick=${() => setForm(true)}><${Icon} name="heart" size=${15}/> Je peux aider</button>` : null}
+      ${e === 'modifier' ? html`<button type="button" class="btn tiny ghost" onClick=${() => ctx.proposerAide(d.id)}><${Icon} name="edit" size=${14}/> Modifier</button><button type="button" class="btn tiny ghost" onClick=${retirer}>Retirer</button>` : null}
+      ${e === 'reproposer' ? html`<button type="button" class="btn small" onClick=${() => ctx.proposerAide(d.id)}>Proposer à nouveau</button>` : null}
+      ${e === 'proposer' ? html`<button type="button" class="btn small primary dm-aider" onClick=${() => ctx.proposerAide(d.id)}><${Icon} name="heart" size=${15}/> Je peux aider</button>` : null}
     </div>
-    ${form ? html`<${ProposerForm} ctx=${ctx} d=${d} x=${mienne} onClose=${() => setForm(false)}/>` : null}
   </article>`;
 }
 
@@ -355,35 +364,75 @@ function DeclarerDemarrage({ ctx, d, x, onClose }) {
   <//>`;
 }
 
-// Proposer son aide : recruter, encadrer ou recommander ; son entreprise ; un mot (il arrive aussi dans les messages)
-function ProposerForm({ ctx, d, x = null, onClose }) {
-  const { me, store, act } = ctx;
-  const a = store.byId('profiles', d.auteur_id);
-  const [f, setF] = useState(() => ({ aide: x?.aide || (d.type === 'pfe' ? 'encadre' : d.type === 'emploi' ? 'recrute' : 'recommande'), entreprise: x?.entreprise || me.entreprise || '', poste: x?.poste || '', message: x?.message || '' }));
-  const ok = !!AIDES[f.aide] && f.entreprise.trim().length >= 2 && f.message.trim().length >= 10;
+// « Je peux aider » en un geste : une feuille du bas ouverte sur place (accueil, cloche, carte), déjà remplie.
+// Sa demande et son CV en haut, l'aide préchoisie d'après le type, « Chez … » replié, un mot prêt ; un seul bouton, au pouce.
+const AIDE_PAR_TYPE = { pfe: 'encadre', emploi: 'recrute', stage: 'recommande', etranger: 'recommande' };
+const CHOIX = { recrute: 'Recruter', encadre: 'Encadrer', recommande: 'Recommander' };
+const MOT = {
+  recrute: p => `Bonjour ${p}, j’ai lu ta demande et ton CV. Je peux te proposer une place dans mon équipe. Réponds-moi quand tu veux, on en parle.`,
+  encadre: p => `Bonjour ${p}, j’ai lu ta demande et ton CV. Je peux t’encadrer dans mon entreprise. Réponds-moi quand tu veux, on en parle.`,
+  recommande: p => `Bonjour ${p}, j’ai lu ta demande et ton CV. Je peux te recommander dans mon entreprise. Réponds-moi quand tu veux, on en parle.`,
+};
+// Le mot suit la langue de l'écran ; sans les marques invisibles qui isolent le prénom
+const motPret = (aide, p) => tr(MOT[aide](p)).replace(/[⁨⁩]/g, '');
+
+export function ProposerAide({ ctx, id, onClose }) {
+  const { me, store, act, data } = ctx;
+  const d = store.byId('demandes', id);
+  const a = d ? store.byId('profiles', d.auteur_id) : null;
+  const p = prenom(a);
+  const etat = etatAide(data, me, d);         // recalculé à chaque rendu : la demande peut se fermer pendant ce temps
+  const [mode] = useState(etat);              // figé à l'ouverture : libellés du bouton et du toast
+  const x = (data.propositions || []).find(y => y.demande_id === id && y.laureat_id === me.id) || null;
+  const [f, setF] = useState(() => { const aide = x?.aide || AIDE_PAR_TYPE[d?.type] || 'recommande'; return { aide, entreprise: x?.entreprise || me.entreprise || '', poste: x?.poste || '', message: x?.message || motPret(aide, p) }; });
+  const [chezOuvert] = useState(() => !(x?.entreprise || me.entreprise || '').trim());
+  const [lire, setLire] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [tente, setTente] = useState(false);
+  useEffect(() => { if (etat === 'non') onClose(); }, [etat]);
+  if (etat === 'non') return null;
+  const possible = AIDE_OUVERTE.includes(etat);
+  // Changer d'aide réécrit le mot seulement s'il n'a pas été retouché
+  const choisir = k => setF(v => ({ ...v, aide: k, message: v.message === motPret(v.aide, p) ? motPret(k, p) : v.message }));
+  // « Proposer mon aide » reste actif : après un essai, seuls les champs à compléter sont signalés, et il mène au premier
+  const manques = { entreprise: f.entreprise.trim().length < 2, message: f.message.trim().length < 10 };
+  const ok = !!AIDES[f.aide] && !manques.entreprise && !manques.message;
+  const errAide = k => (tente && manques[k] ? (k === 'entreprise' ? 'Indique l’entreprise où tu peux aider.' : 'Écris-lui quelques mots (10 caractères au moins).') : null);
+  const ariaAide = (k, idErr) => (errAide(k) ? { 'aria-invalid': 'true', 'aria-describedby': idErr } : {});
   const envoyer = e => {
     e.preventDefault();
-    if (!ok) return;
+    if (!possible || busy) return;
+    if (!ok) { setTente(true); setTimeout(() => allerAuChamp(manques.entreprise ? 'dm-p-ent' : 'dm-p-msg'), 0); return; }
+    setBusy(true);
     act(async () => {
       const champs = { aide: f.aide, entreprise: f.entreprise.trim(), poste: f.poste.trim() || null, message: f.message.trim() };
       if (x) await store.update('propositions', x.id, x.status === 'retiree' ? { ...champs, status: 'envoyee' } : champs);
       else await store.insert('propositions', { demande_id: d.id, laureat_id: me.id, ...champs });
-      toast(x && x.status === 'envoyee' ? 'Proposition modifiée.' : `Proposition envoyée. ${prenom(a)} la reçoit aussi dans ses messages.`);
+      toast(mode === 'modifier' ? 'Proposition modifiée.' : `Proposition envoyée. ${p} la reçoit aussi dans ses messages.`);
       onClose();
-    });
+    }).finally(() => setBusy(false));
   };
-  return html`<${Modal} title=${`Aider ${prenom(a)}`} onClose=${onClose}>
-    <form class="form dm-form" onSubmit=${envoyer}>
-      <p class="small muted dm-rappel" translate="no" dir="auto">${d.titre}</p>
-      <div class="field"><span class="field-label">Ce que tu proposes</span>
-        <div class="dm-aides" role="radiogroup" aria-label="Ce que tu proposes">${Object.entries(AIDES).map(([k, v]) => html`<label class=${'dm-aide-choix' + (f.aide === k ? ' on' : '')} key=${k}>
-          <input type="radio" name="dm-aide" id=${'dm-aide-' + k} value=${k} checked=${f.aide === k} onChange=${() => setF({ ...f, aide: k })}/><${Icon} name=${v.icon} size=${17}/><span>${v.label}</span></label>`)}</div></div>
-      <div class="grid2"><${Field} label="Entreprise"><input id="dm-p-ent" dir="auto" maxlength="120" value=${f.entreprise} onInput=${e => setF({ ...f, entreprise: e.target.value })} required/><//>
-        <${Field} label="Poste ou sujet (facultatif)"><input id="dm-p-poste" dir="auto" maxlength="140" value=${f.poste} onInput=${e => setF({ ...f, poste: e.target.value })} placeholder="Ex. PFE méthodes, stage qualité"/><//></div>
-      <${Field} label=${`Ton mot à ${prenom(a)}`} hint="Ce que tu proposes concrètement et la prochaine étape. Il arrive aussi dans ses messages."><textarea id="dm-p-msg" dir="auto" rows="4" maxlength="1000" value=${f.message} onInput=${e => setF({ ...f, message: e.target.value })} placeholder=${`Bonjour ${prenom(a)}, j’ai lu ta demande et ton CV…`} required></textarea><//>
-      <p class="small hint-box"><${Icon} name="shield" size=${15}/> <span>Propose seulement ce que tu peux vraiment faire. Si ça ne se fait pas, tu pourras te retirer : la demande se rouvre.</span></p>
-      <div class="row-end"><button type="button" class="btn ghost" onClick=${onClose}>Annuler</button><button class="btn primary" id="dm-p-envoyer" disabled=${!ok}>${x && x.status === 'envoyee' ? 'Enregistrer' : 'Envoyer ma proposition'}</button></div>
-    </form>
+  if (!d) return html`<${Modal} title="Demandes des étudiants" onClose=${onClose}><p class="dm-box"><${Icon} name="heart" size=${18}/><span>Cette demande n’attend plus d’aide : elle est pourvue ou fermée. Merci d’avoir voulu aider !</span></p><//>`;
+  const pied = possible ? html`<button class="btn primary" type="submit" form="dm-aider-form" id="dm-p-envoyer" disabled=${busy}><${Icon} name="heart" size=${16}/> ${mode === 'modifier' ? 'Enregistrer' : 'Proposer mon aide'}</button>` : null;
+  return html`<${Modal} title=${`Aider ${p}`} onClose=${onClose} footer=${pied}>
+    <section class="dm-resume" aria-label="Sa demande">
+      <div class="dm-head"><${Person} p=${a} onOpen=${ctx.openProfile} size=${36}/><span class="spacer"></span><${TypeTag} type=${d.type}/></div>
+      <p class="dm-titre-home"><strong translate="no" dir="auto">${d.titre}</strong></p>
+      <${Meta} d=${d}/>
+      ${lire ? html`<p class="dm-details" translate="no" dir="auto">${d.details}</p>` : null}
+      <div class="dm-resume-acts"><${CvButton} ctx=${ctx} p=${a} small/><button type="button" class="linkish small" aria-expanded=${lire} onClick=${() => setLire(!lire)}>${lire ? 'Réduire' : 'Lire sa demande'}</button></div>
+    </section>
+    ${possible ? html`<form id="dm-aider-form" class="form dm-form" onSubmit=${envoyer}>
+      <div class="field"><span class="field-label" id="dm-aide-l">Ce que tu proposes</span>
+        <div class="dm-aides" role="radiogroup" aria-labelledby="dm-aide-l">${Object.keys(AIDES).map(k => html`<label key=${k} class=${'dm-aide-choix' + (f.aide === k ? ' on' : '')} title=${AIDES[k].label}>
+          <input type="radio" name="dm-aide" id=${'dm-aide-' + k} value=${k} checked=${f.aide === k} onChange=${() => choisir(k)}/><span>${CHOIX[k]}</span></label>`)}</div></div>
+      <details class="dm-chez" open=${chezOuvert || !!errAide('entreprise')}>
+        <summary><${Icon} name="briefcase" size=${16}/><span class="grow">${f.entreprise.trim() ? `Chez ${f.entreprise.trim()}` : 'Ton entreprise'}</span><span class="linkish small">Modifier</span></summary>
+        <div class="grid2"><${Field} label="Entreprise" err=${errAide('entreprise')} errId="dm-p-ent-err"><input id="dm-p-ent" dir="auto" maxlength="120" value=${f.entreprise} onInput=${e => setF({ ...f, entreprise: e.target.value })} ...${ariaAide('entreprise', 'dm-p-ent-err')}/><//>
+          <${Field} label="Poste ou sujet (facultatif)"><input id="dm-p-poste" dir="auto" maxlength="140" value=${f.poste} onInput=${e => setF({ ...f, poste: e.target.value })} placeholder="Ex. PFE méthodes, stage qualité"/><//></div>
+      </details>
+      <${Field} label=${`Ton mot à ${p}`} err=${errAide('message')} errId="dm-p-msg-err" hint="Propose seulement ce que tu peux vraiment faire. Si ça ne se fait pas, tu pourras te retirer."><textarea id="dm-p-msg" dir="auto" rows="4" maxlength="1000" value=${f.message} onInput=${e => setF({ ...f, message: e.target.value })} ...${ariaAide('message', 'dm-p-msg-err')}></textarea><//>
+    </form>` : html`<p class="dm-box"><${Icon} name="heart" size=${18}/><span>${etat === 'pause' ? `La demande de ${p} est en pause : 60 jours sans nouvelle. Elle revient ici dès qu’elle est relancée.` : 'Cette demande n’attend plus d’aide : elle est pourvue ou fermée. Merci d’avoir voulu aider !'}</span></p>`}
   <//>`;
 }
 
@@ -408,37 +457,6 @@ function DemandesAdmin({ ctx, focusId }) {
       </article>`;
     })}</div>` : html`<${Empty} icon="send" title="Aucune demande en cours">Les demandes des étudiants apparaissent ici dès qu’elles sont publiées.<//>`}
   </section>`;
-}
-
-// ---------------------------------------------------------------------------
-// Sur l'accueil : une demande de son parcours (lauréat), ou l'invitation à publier la sienne (étudiant)
-// ---------------------------------------------------------------------------
-export function DemandesHome({ ctx }) {
-  const { data, me, store, go, saison, openProfile } = ctx;
-  if (me.role === 'laureat') {
-    const pour = demandesPour(data, me, id => store.byId('profiles', id)).filter(x => !x.mienne && x.prox >= 1);
-    if (!pour.length) return null;
-    const { d, a } = pour[0];
-    return html`<section class="panel dm-home">
-      <div class="section-head"><h3 class="h-ico"><${Icon} name="send"/> Un étudiant de ton parcours cherche</h3>${pour.length > 1 ? html`<button type="button" class="btn tiny ghost" onClick=${() => go('offres/demandes')}>${`Voir les ${pour.length}`} <${Icon} name="arrow" size=${14}/></button>` : null}</div>
-      <div class="dm-head"><${Person} p=${a} onOpen=${openProfile} size=${36}/><span class="spacer"></span><${TypeTag} type=${d.type}/></div>
-      <p class="dm-titre-home"><strong translate="no" dir="auto">${d.titre}</strong></p>
-      <div class="row"><span class="spacer"></span><button type="button" class="btn small primary" onClick=${() => go('offres/demandes/' + d.id)}><${Icon} name="heart" size=${15}/> Je peux aider</button></div>
-    </section>`;
-  }
-  if (!typesDemande(me, saison).length) return null;
-  const mine = (data.demandes || []).filter(d => d.auteur_id === me.id);
-  if (mine.length) {
-    const d = demandesActives(data, me.id).sort(parOrdre)[0];
-    if (!d) return null;
-    const n = (data.propositions || []).filter(x => x.demande_id === d.id && x.status === 'envoyee').length;
-    return html`<button type="button" class="impact-strip clickable dm-strip" onClick=${() => go('offres/demandes/' + d.id)}><span class="obj-ico"><${Icon} name="send" size=${20}/></span>
-      <span class="grow"><span class="small muted">Ma demande</span> <strong translate="no" dir="auto">${d.titre}</strong></span>
-      <span class="small">${d.status === 'match' ? 'Match' : n > 1 ? `${n} propositions` : n ? '1 proposition' : 'En attente'}</span><${Icon} name="arrow" size=${18}/></button>`;
-  }
-  return html`<div class="help-cta dm-cta"><span class="obj-ico"><${Icon} name="send" size=${22}/></span>
-    <div class="grow"><strong>Dis aux lauréats ce que tu cherches</strong><span class="small muted">Ta demande et ton CV arrivent chez les lauréats de ton parcours : ceux qui peuvent t’aider te le proposent.</span></div>
-    <button type="button" class="btn small primary" onClick=${() => go('offres/demandes/nouvelle')}>Publier ma demande</button></div>`;
 }
 
 // Le nombre affiché sur l'onglet : ce qui attend une réponse de moi
@@ -503,19 +521,27 @@ injectCSS('demandes', `
 .dm-anciennes .list { margin-top: var(--sp-2); }
 .dm-filtres { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); }
 .dm-form .chips { display: flex; flex-wrap: wrap; gap: .4rem; }
-.dm-rappel { margin: 0; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-md); background: var(--surface-2); overflow-wrap: anywhere; }
-.dm-aides { display: flex; flex-direction: column; gap: .4rem; }
-.dm-aide-choix { display: flex; align-items: center; gap: .6rem; padding: .65rem .8rem; border: 1px solid var(--line); border-radius: var(--r-md); cursor: pointer; }
+.dm-resume { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3); border-radius: var(--r-md); background: var(--surface-2); min-width: 0; }
+.dm-resume .dm-titre-home { margin: 0; }
+.dm-resume .dm-meta, .dm-resume .dm-details { margin: 0; }
+.dm-resume-acts { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2) var(--sp-3); }
+.dm-aides { display: flex; flex-wrap: nowrap; gap: .4rem; }
+.dm-aide-choix { position: relative; flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: .45rem .6rem; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink-2); font-size: .9rem; white-space: nowrap; cursor: pointer; }
 .dm-aide-choix input { position: absolute; opacity: 0; pointer-events: none; }
-.dm-aide-choix.on { border-color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.dm-aide-choix.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .dm-aide-choix:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
-.dm-home .dm-head { margin-top: var(--sp-2); }
-.dm-strip .grow { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 340px) { .dm-aides { flex-wrap: wrap; } }
+.dm-chez > summary { display: flex; align-items: center; gap: .5rem; min-height: 44px; cursor: pointer; list-style: none; color: var(--ink-2); font-size: .9rem; }
+.dm-chez > summary::-webkit-details-marker { display: none; }
+.dm-chez > summary .grow { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dm-chez[open] > summary .linkish { display: none; }
+.dm-chez .grid2 { margin-top: var(--sp-2); }
 @media (prefers-reduced-motion: no-preference) { .dm-card.dm-focus { animation: dm-flash 1.2s ease-out 1; } }
 @keyframes dm-flash { from { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); } }
 `);
 
 addAR({
+  'Indique l’entreprise où tu peux aider.': 'اذكر الشركة التي يمكنك المساعدة فيها.', 'Écris-lui quelques mots (10 caractères au moins).': 'اكتب له بضع كلمات (10 أحرف على الأقل).',
   'En pause': 'متوقف مؤقتًا', 'Match': 'تطابق', 'Réussie': 'ناجح',   'Demande publiée': 'نُشر الطلب', 'Démarrage confirmé': 'تأكيد البدء', 'Où en est la demande': 'أين وصل الطلب',
   'Recrute': 'يوظّف', 'Encadre': 'يؤطّر', 'Recommande': 'يوصي',
   'Je le/la recrute dans mon équipe': 'أوظّفه في فريقي', 'J’encadre son stage ou son PFE': 'أؤطّر تدريبه أو مشروع نهاية دراسته', 'Je le/la recommande dans mon entreprise': 'أوصي به في شركتي',
@@ -561,7 +587,22 @@ addAR({
   'Demandes d’étudiants': 'طلبات الطلبة', 'Demandes des étudiants': 'طلبات الطلبة', 'Via sa demande': 'عبر طلبه',
   'Tu dis ce que tu cherches, les lauréats te proposent leur aide': 'تقول ما تبحث عنه، ويقترح عليك الخريجون مساعدتهم', 'Les étudiants disent ce qu’ils cherchent, CV joint': 'يقول الطلبة ما يبحثون عنه مع سيرتهم الذاتية',
   'encadré(e) par': 'بتأطير من', 'recommandé(e) par': 'بتوصية من',
+  'Proposer mon aide': 'اقتراح مساعدتي', 'Recruter': 'التوظيف', 'Encadrer': 'التأطير', 'Recommander': 'التوصية',
+  'Lire sa demande': 'قراءة الطلب', 'Réduire': 'إخفاء', 'Sa demande': 'الطلب', 'Ton entreprise': 'شركتك',
+  'Propose seulement ce que tu peux vraiment faire. Si ça ne se fait pas, tu pourras te retirer.': 'اقترح فقط ما تستطيع فعله حقًا. إن لم يتم الأمر، يمكنك الانسحاب.',
+  'Cette demande n’attend plus d’aide : elle est pourvue ou fermée. Merci d’avoir voulu aider !': 'لم يعد هذا الطلب ينتظر مساعدة: تمت تلبيته أو أُغلق. شكرًا على رغبتك في المساعدة!',
+  'Tu as déjà proposé ton aide pour cette demande.': 'سبق أن اقترحت مساعدتك لهذا الطلب.',
+  'Cette demande n’est plus ouverte.': 'لم يعد هذا الطلب مفتوحًا.', 'C’est ta propre demande.': 'هذا طلبك أنت.',
+  'Dis-le en une phrase : 4 caractères au moins.': 'قلها في جملة واحدة: 4 أحرف على الأقل.',
+  'Quelques lignes suffisent : 20 caractères au moins.': 'تكفي بضعة أسطر: 20 حرفًا على الأقل.',
 }, [
+  [/^Bonjour (.+), j’ai lu ta demande et ton CV\. Je peux te proposer une place dans mon équipe\. Réponds-moi quand tu veux, on en parle\.$/, n => `مرحبًا ${n}، قرأت طلبك وسيرتك الذاتية. أستطيع أن أقترح عليك مكانًا في فريقي. يسعدني أن نتحدث في الأمر متى شئت.`],
+  [/^Bonjour (.+), j’ai lu ta demande et ton CV\. Je peux t’encadrer dans mon entreprise\. Réponds-moi quand tu veux, on en parle\.$/, n => `مرحبًا ${n}، قرأت طلبك وسيرتك الذاتية. أستطيع تأطيرك في شركتي. يسعدني أن نتحدث في الأمر متى شئت.`],
+  [/^Bonjour (.+), j’ai lu ta demande et ton CV\. Je peux te recommander dans mon entreprise\. Réponds-moi quand tu veux, on en parle\.$/, n => `مرحبًا ${n}، قرأت طلبك وسيرتك الذاتية. أستطيع التوصية بك في شركتي. يسعدني أن نتحدث في الأمر متى شئت.`],
+  [/^Chez (.+)$/, e => `لدى ${e}`],
+  [/^Ton aide est envoyée à (.+)\. Merci !$/, n => `تم إرسال مساعدتك إلى ${n}. شكرًا!`],
+  [/^La demande de (.+) est en pause : 60 jours sans nouvelle\. Elle revient ici dès qu’elle est relancée\.$/, n => `طلب ${n} متوقف مؤقتًا: 60 يومًا دون جديد. يعود هنا بمجرد إعادة إطلاقه.`],
+  [/^Encore (\d+) caractères? au moins\.$/, k => `ما زال ينقص ${arCount(k, ['حرف واحد', 'حرفان', 'أحرف', 'حرفًا'])} على الأقل.`],
   [/^Dès le (.+)$/, d => `ابتداءً من ${d}`],
   [/^Tu es en (.+)$/, p => `أنت في ${p}`],
   [/^Anciennes demandes \((\d+)\)$/, n => `الطلبات السابقة (${n})`],
@@ -589,7 +630,7 @@ addAR({
   [/^(.+) choisit parmi les propositions reçues\.$/, n => `يختار ${n} من بين الاقتراحات التي وصلته.`],
   [/^(.+) a choisi une autre voie\. Merci d’avoir proposé ton aide !$/, n => `اختار ${n} طريقًا آخر. شكرًا على اقتراح مساعدتك!`],
   [/^Te retirer \? La demande de (.+) se rouvre pour les autres lauréats\.$/, n => `الانسحاب؟ يُعاد فتح طلب ${n} أمام الخريجين الآخرين.`],
-  [/^C’est un match avec (.+)$/, n => `إنه تطابق مع ${n}`],
+  [/^C’est un match avec ([^:]+)$/, n => `إنه تطابق مع ${n}`],
   [/^Démarrage déclaré chez (.+)\. En attente de la confirmation de (.+)\.$/, (e, n) => `تم التصريح بالبدء لدى ${e}. في انتظار تأكيد ${n}.`],
   [/^(.+) n’a pas confirmé\. Parlez-en, puis déclare à nouveau quand c’est fait\.$/, n => `لم يؤكد ${n}. تحدثا في الأمر، ثم صرّح من جديد عندما يتم.`],
   [/^Quand (.+) commence \(stage signé, PFE lancé, contrat\), dis-le ici : (.+) confirme et la réussite est annoncée\.$/, n => `عندما يبدأ ${n} (تدريب موقّع، مشروع انطلق، عقد)، قل ذلك هنا: يؤكد ${n} ويُعلن النجاح.`],

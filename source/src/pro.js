@@ -2,7 +2,7 @@
 import { html, useState, useMemo, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, CompanyLogo, toast, FiliereFiltre } from './ui.js';
 import { getLang } from './i18n.js';
-import { SECTEURS, TYPES, niveauOf, entKey, sameCompany, seasonLabel, filtreFiliere } from './logic.js';
+import { SECTEURS, TYPES, niveauOf, entKey, sameCompany, seasonLabel, filtreFiliere, parcoursOf } from './logic.js';
 import { coordsOf, canonPays, countryCentroid, PAYS_AR } from './geo.js';
 import { OfferCard, matchesMe } from './offers.js';
 import { EntrepriseResume, QuestionsRecentes } from './entreprises.js';
@@ -11,14 +11,17 @@ import { SignalerBtn } from './confiance.js';
 // Les entreprises ont leur propre onglet (Réseau > Entreprises), avec les avis et les entretiens
 const VUES = [['personnes', 'Personnes', 'people'], ['carte', 'Carte', 'pin'], ['startups', 'Startups', 'spark']];
 const paysLabel = p => (getLang() === 'ar' && PAYS_AR[canonPays(p)]) || canonPays(p);
+// Liens de l'accueil (« … dont 5 de ta filière ») : la liste ouverte montre exactement les personnes annoncées
+const PRESETS = ['ma-filiere', 'mon-parcours', 'ma-promo', 'laureats'];
 
 export function AnnuairePro({ ctx }) {
   // Ancien lien « Annuaire > Entreprises »
-  useEffect(() => { if (ctx.sub2 === 'entreprises') ctx.go('reseau/entreprises'); }, [ctx.sub2]);
+  useEffect(() => { if (ctx.sub2 === 'entreprises') ctx.go('reseau/entreprises', { exact: true }); }, [ctx.sub2]);
   const vue = VUES.some(([k]) => k === ctx.sub2) ? ctx.sub2 : 'personnes';
+  const preset = PRESETS.includes(ctx.sub2) ? ctx.sub2 : '';
   return html`<div class="sub-page">
-    <div class="seg" role="tablist" aria-label="Annuaire">${VUES.map(([k, l, i]) => html`<button role="tab" aria-selected=${vue === k} class=${vue === k ? 'on' : ''} onClick=${() => ctx.go('reseau/annuaire' + (k === 'personnes' ? '' : '/' + k))}><${Icon} name=${i} size=${15}/> ${l}</button>`)}</div>
-    ${vue === 'personnes' ? html`<${Personnes} ctx=${ctx}/>` : null}
+    <div class="seg" role="tablist" aria-label="Annuaire">${VUES.map(([k, l, i]) => html`<button role="tab" aria-selected=${vue === k} class=${vue === k ? 'on' : ''} onClick=${() => ctx.go('reseau/annuaire' + (k === 'personnes' ? '' : '/' + k), { remplacer: true })}><${Icon} name=${i} size=${15}/> ${l}</button>`)}</div>
+    ${vue === 'personnes' ? html`<${Personnes} key=${preset || 'tous'} ctx=${ctx} preset=${preset}/>` : null}
     ${vue === 'carte' ? html`<${Carte} ctx=${ctx}/>` : null}
     ${vue === 'startups' ? html`<${Startups} ctx=${ctx}/>` : null}
   </div>`;
@@ -27,13 +30,17 @@ export function AnnuairePro({ ctx }) {
 // ---------------------------------------------------------------------------
 // Personnes
 // ---------------------------------------------------------------------------
-function Personnes({ ctx }) {
+function Personnes({ ctx, preset = '' }) {
   const { data, scores, openProfile, me, saison } = ctx;
-  const [q, setQ] = useState(''); const [role, setRole] = useState(''); const [fil, setFil] = useState(''); const [sect, setSect] = useState(''); const [abroad, setAbroad] = useState(false);
+  const parc = parcoursOf(me.filiere)[0];
+  const [q, setQ] = useState(''); const [role, setRole] = useState(preset ? 'laureat' : ''); const [sect, setSect] = useState(''); const [abroad, setAbroad] = useState(false);
+  const [fil, setFil] = useState(preset === 'ma-filiere' ? me.filiere || '' : preset === 'mon-parcours' && parc ? 'parcours:' + parc : '');
+  const maPromo = me.role === 'laureat' && !!me.promo;
+  const [promo, setPromo] = useState(preset === 'ma-promo');
   const myN = me.role === 'etudiant' ? niveauOf(me, saison) : null; // un étudiant voit les lauréats et sa propre promo
   const qq = q.trim().toLowerCase();
   const dir = data.profiles.filter(p => p.role !== 'admin' && (myN === null || p.role !== 'etudiant' || niveauOf(p, saison) === myN) && (!role || p.role === role) && filtreFiliere(fil, p.filiere)
-    && (!sect || p.secteur === sect) && (!abroad || (p.pays && canonPays(p.pays) !== 'Maroc'))
+    && (!sect || p.secteur === sect) && (!abroad || (p.pays && canonPays(p.pays) !== 'Maroc')) && (!promo || !maPromo || (p.promo === me.promo && p.id !== me.id))
     && (!qq || `${p.full_name} ${p.entreprise || ''} ${p.ville || ''} ${p.pays || ''} ${p.poste || ''} ${p.secteur || ''} ${(p.competences || []).join(' ')}`.toLowerCase().includes(qq)))
     .sort((a, b) => a.full_name.localeCompare(b.full_name));
   return html`<div class="sub-page">
@@ -41,7 +48,7 @@ function Personnes({ ctx }) {
       <select id="d-role" value=${role} onChange=${e => setRole(e.target.value)} aria-label="Rôle"><option value="">Tous</option><option value="laureat">Lauréats</option><option value="etudiant">${myN ? 'Ma promo' : 'Étudiants'}</option></select>
       <${FiliereFiltre} id="d-fil" value=${fil} onChange=${setFil}/>
       <select id="d-sect" value=${sect} onChange=${e => setSect(e.target.value)} aria-label="Secteur"><option value="">Tous secteurs</option>${SECTEURS.map(f => html`<option value=${f}>${f}</option>`)}</select></div>
-    <div class="chips"><button class=${'chip' + (abroad ? ' on' : '')} aria-pressed=${abroad} onClick=${() => setAbroad(!abroad)}><${Icon} name="globe" size=${14}/> À l’étranger</button><span class="muted small">${dir.length} membre${dir.length > 1 ? 's' : ''}</span></div>
+    <div class="chips">${maPromo ? html`<button id="d-promo" class=${'chip' + (promo ? ' on' : '')} aria-pressed=${promo} onClick=${() => setPromo(!promo)}><${Icon} name="cap" size=${14}/> Ma promo</button>` : null}<button class=${'chip' + (abroad ? ' on' : '')} aria-pressed=${abroad} onClick=${() => setAbroad(!abroad)}><${Icon} name="globe" size=${14}/> À l’étranger</button><span class="muted small">${dir.length} membre${dir.length > 1 ? 's' : ''}</span></div>
     <ul class="dir">${dir.slice(0, 150).map(p => html`<li key=${p.id}><${Person} p=${p} score=${scores.get(p.id)} onOpen=${openProfile}/>
       <span class="muted small">${[p.poste, p.secteur, p.ville, p.pays && canonPays(p.pays) !== 'Maroc' ? paysLabel(p.pays) : ''].filter(Boolean).join(' · ')}</span>
       ${p.role === 'laureat' && p.entreprise ? html`<button class="linkish small ent-link" onClick=${() => ctx.openEntreprise(p.entreprise)}><${Icon} name="briefcase" size=${13}/> ${p.entreprise}</button>` : null}</li>`)}</ul>

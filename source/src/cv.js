@@ -193,7 +193,7 @@ function ControleCV({ ctx, fichier }) {
 }
 
 // Demande de relecture : à tous les lauréats (le premier disponible), ou à un lauréat de ma filière
-function DemandeRelecture({ ctx, onClose }) {
+export function DemandeRelecture({ ctx, onClose }) {
   const { data, me, store, act } = ctx;
   const [msg, setMsg] = useState(''); const [qui, setQui] = useState('');
   const proches = data.profiles.filter(p => p.role === 'laureat' && p.id !== me.id && proximiteFiliere(p.filiere, me.filiere) > 0 && (me.role !== 'laureat' || p.promo < me.promo))
@@ -379,29 +379,6 @@ function Retour({ ctx, r, side }) {
   </div>`;
 }
 
-// ---------------------------------------------------------------------------
-// Accueil : une seule ligne, seulement quand il y a quelque chose à suivre
-// (les demandes qui me sont adressées et les relectures rendues sont déjà dans « À faire aujourd'hui »)
-// ---------------------------------------------------------------------------
-export function RelecturesHome({ ctx }) {
-  const { data, me, store, go } = ctx;
-  const R = data.relectures_cv || [];
-  let ico = 'eye', titre = null, sous = '', cta = '';
-  if (me.role === 'laureat') {
-    const enCours = R.find(r => r.reviewer_id === me.id && r.status === 'en_cours');
-    const file = R.filter(r => !r.reviewer_id && r.status === 'demandee' && r.student_id !== me.id);
-    if (enCours) { ico = 'edit'; titre = `Tu relis le CV de ${firstName(store.byId('profiles', enCours.student_id))}`; sous = 'Quelques commentaires et une synthèse, puis tu la rends.'; cta = 'Continuer'; }
-    else if (file.length) { titre = file.length > 1 ? `${file.length} CV attendent une relecture` : '1 CV attend une relecture'; sous = 'Dix minutes suffisent : tes conseils, rubrique par rubrique.'; cta = 'Relire un CV'; }
-  } else if (me.role === 'etudiant') {
-    const r = R.find(x => x.student_id === me.id && x.status === 'en_cours');
-    if (r) { titre = `${firstName(store.byId('profiles', r.reviewer_id)) || 'Un lauréat'} relit ton CV`; sous = 'Tu seras prévenu(e) dès que ses conseils sont prêts.'; cta = 'Suivre'; }
-  }
-  if (!titre) return null;
-  return html`<div class="help-cta rel-home"><span class="obj-ico"><${Icon} name=${ico} size=${22}/></span>
-    <div class="grow"><strong>${titre}</strong><span class="small muted">${sous}</span></div>
-    <button class="btn small" onClick=${() => go('mentorat/cv')}>${cta}</button></div>`;
-}
-
 injectCSS('cv', `
 .cv-card { display: flex; flex-direction: column; gap: .75rem; }
 .cv-card .section-head { margin: 0; }
@@ -506,7 +483,7 @@ addAR({
   [/^Demandée (il y a .+|à l’instant|\d.+)$/, (a) => `طُلبت ${tr(a)}`],
   [/^Relecture rendue à (.+)\. \+15 points$/, (x) => `تم تسليم المراجعة إلى ${x}. +15 نقطة`],
   [/^Synthèse de (.+)$/, (x) => `خلاصة ${x}`],
-  [/^Une question pour (.+) \?$/, (x) => `سؤال لـ ${x}؟`],
+  [/^Une question pour (?!toi sur )(.+) \?$/, (x) => `سؤال لـ ${x}؟`],
   [/^Un dernier mot pour (.+) \?$/, (x) => `كلمة أخيرة لـ ${x}؟`],
   [/^Merci envoyé à (.+) !$/, (x) => `تم إرسال شكرك إلى ${x}!`],
   [/^Voir les autres demandes \((\d+)\)$/, (n) => `عرض الطلبات الأخرى (${n})`],
