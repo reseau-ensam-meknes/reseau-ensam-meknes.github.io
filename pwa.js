@@ -1,9 +1,10 @@
 // Application installable (écran d'accueil du téléphone) et notifications sur le téléphone.
 // Le service worker n'est enregistré que sur le vrai site (dist/), qui déclare un manifeste.
-import { html, useState, useEffect } from './vendor/preact-htm.js';
+import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, toast, ensuite, feteOuverte, quandFete } from './ui.js';
 import { addAR } from './i18n.js';
-import { prevenirVariante } from './logic.js';
+import { prevenirVariante, ouvertureNotif, pushChoix, PUSH_CATEGORIES } from './logic.js';
+import { arriveeEnAttente } from './pouls.js';
 
 let installEvt = null;
 const listeners = new Set();
@@ -16,6 +17,8 @@ if (typeof window !== 'undefined') {
 // Enregistré au premier moment calme : son installation (tout le site gardé sur le téléphone) ne passe pas
 // devant les données du membre en 3G
 const ouverture = Date.now();
+// Une nouvelle version ne recharge la page visible que pendant ses premières secondes ; après, elle attend que la page soit cachée
+const FENETRE_MAJ = 8000;
 const auRepos = f => (typeof requestIdleCallback === 'function' ? requestIdleCallback(f, { timeout: 4000 }) : setTimeout(f, 1500));
 export const swReady = (() => {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator) || !document.querySelector('link[rel="manifest"]')) return Promise.resolve(null);
@@ -39,7 +42,7 @@ function suivreMisesAJour(reg) {
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (fait || !avait) return;
     fait = true;
-    if (document.visibilityState === 'hidden' || Date.now() - debut < 8000) location.reload();
+    if (document.visibilityState === 'hidden' || Date.now() - debut < FENETRE_MAJ) location.reload();
   });
 }
 
@@ -71,6 +74,7 @@ function b64ToBytes(b64) {
   return Uint8Array.from(s, c => c.charCodeAt(0));
 }
 
+const PUSH_CHANGE = 'ensam-push';
 // Les notifications sur cet appareil : demo | absent | ios | refuse | off | on
 export async function etatPush(store) {
   if (store.mode !== 'live') return 'demo';
@@ -99,25 +103,37 @@ export async function activerPush(store) {
 
 // Interrupteur « Notifications sur ce téléphone », dans Mon profil
 export function PushToggle({ ctx }) {
-  const { store } = ctx;
-  const [st, setSt] = useState('…'); // … | absent | demo | ios | refuse | off | on
+  const { store, me } = ctx;
+  // Activées ou coupées ici : c'est une réponse, ni la feuille d'ouverture ni « Me prévenir » ne reviennent la demander
+  const repondu = () => { if (me?.id) ecrireMemo(me.id, { ...lireMemo(me.id), fait: 1 }); };
+  // En démo, un test peut simuler un vrai téléphone (comme pour la feuille d'ouverture) : l'interrupteur répond sans rien abonner
+  const simule = etatDemo(store);
+  const [st, setSt] = useState(simule || '…'); // … | absent | demo | ios | refuse | off | on
   const [busy, setBusy] = useState(false);
   const [help, setHelp] = useState(false);
-  useEffect(() => { etatPush(store).then(setSt, () => setSt('absent')); }, []);
+  useEffect(() => {
+    if (simule) return undefined;
+    const lire = () => etatPush(store).then(setSt, () => setSt('absent'));
+    lire();
+    // Activées depuis une feuille pendant que Mon profil est ouvert : l'interrupteur suit
+    addEventListener(PUSH_CHANGE, lire);
+    return () => removeEventListener(PUSH_CHANGE, lire);
+  }, []);
+  // Simulé : rien n'est demandé au navigateur ni à la plateforme, le reste est le même
   const turnOn = async () => {
     setBusy(true);
     try {
-      const r = await activerPush(store);
-      setSt(r); etatConnu = r;
-      if (r === 'on') toast('Notifications activées sur cet appareil.');
+      const r = simule ? 'on' : await activerPush(store);
+      setSt(r); etatConnu = r; repondu();
+      if (r === 'on') toast(simule ? DEMO : 'Notifications activées sur cet appareil.');
     } catch (e) { toast(e.message || String(e), 'err'); } finally { setBusy(false); }
   };
   const turnOff = async () => {
     setBusy(true);
     try {
-      const sub = await (await swReady)?.pushManager.getSubscription();
+      const sub = simule ? null : await (await swReady)?.pushManager.getSubscription();
       if (sub) { await store.desabonnerPush(sub.endpoint).catch(() => {}); await sub.unsubscribe(); }
-      setSt('off'); etatConnu = 'off'; toast('Notifications désactivées sur cet appareil.');
+      setSt('off'); etatConnu = 'off'; repondu(); toast('Notifications désactivées sur cet appareil.');
     } catch (e) { toast(e.message || String(e), 'err'); } finally { setBusy(false); }
   };
   const test = async () => { setBusy(true); try { const n = await store.testPush(); toast(n ? 'Notification de test envoyée.' : 'Aucun appareil abonné pour l’instant.'); } catch (e) { toast(e.message, 'err'); } finally { setBusy(false); } };
@@ -128,7 +144,7 @@ export function PushToggle({ ctx }) {
   }[st];
   return html`<div class="push-row">
     <label class="check"><input id="md-push" type="checkbox" checked=${st === 'on'} disabled=${busy || !['on', 'off'].includes(st)} onChange=${e => (e.target.checked ? turnOn() : turnOff())}/> Notifications sur ce téléphone ou cet ordinateur</label>
-    ${st === 'on' ? html`<button class="btn tiny ghost" disabled=${busy} onClick=${test}>Tester</button>` : null}
+    ${st === 'on' && !simule ? html`<button class="btn tiny ghost" disabled=${busy} onClick=${test}>Tester</button>` : null}
     ${note ? html`<p class="small muted">${note}</p>` : null}
     ${st === 'ios' ? html`<p class="small muted">Sur iPhone, installe d’abord l’application sur l’écran d’accueil. <button class="linkish" onClick=${() => setHelp(true)}>Comment faire ?</button></p>` : null}
     ${help ? html`<${IosInstallHelp} onClose=${() => setHelp(false)}/>` : null}
@@ -164,10 +180,12 @@ function etatDemo(store) {
   if (store.mode === 'live') return null;
   try { const e = localStorage.getItem('ensam-prevenir-demo'); return ['off', 'ios', 'absent'].includes(e) ? e : null; } catch { return null; }
 }
+// La catégorie de Mon profil dont dépend la réponse attendue : décochée, « Me prévenir » ne promet pas de notification
+const CAT_RAISON = { demande: 'demandes', proposition: 'demandes', mentorat: 'mentorat', relecture: 'mentorat', candidature: 'candidatures', question: 'reseau', questionMembre: 'reseau' };
 function variante(raison, memo) {
   const me = hote?.me;
   if (!me) return null;
-  return prevenirVariante({ etat: etatConnu, raison, memo, now: Date.now(), role: me.role,
+  return prevenirVariante({ etat: etatConnu, raison, memo, now: Date.now(), role: me.role, voulu: pushChoix(CAT_RAISON[raison] || 'reseau', me),
     emailsMessages: me.emails_messages !== false && 'emails_messages' in me, emailsHebdo: me.emails_hebdo !== false });
 }
 
@@ -186,33 +204,125 @@ export function proposerPrevenir(raison, mot) {
 export function PrevenirHote({ ctx, bloque }) {
   const { store, me } = ctx;
   const [f, setF] = useState(null);
+  const [ouv, setOuv] = useState(null);
+  // La feuille d'ouverture à l'écran : le mémo d'avant son affichage (elle compte dès qu'elle s'affiche)
+  const vue = useRef(null);
   hote = { me, store };
   useEffect(() => {
+    // Une feuille « Me prévenir » ou une fête dans cette visite : pas de feuille d'ouverture en plus
+    let demandee = false;
     // Une fête ouverte entre-temps : la feuille attend la prochaine visite
     const remettre = raison => { if (variante(raison, lireMemo(me.id))) ecrireMemo(me.id, { ...lireMemo(me.id), differe: raison }); };
-    montrer = x => { if (feteOuverte()) { remettre(x.raison); return; } if (x.v === 'email') ecrireMemo(me.id, { ...lireMemo(me.id), mail: 1 }); setF(x); };
+    // La feuille d'ouverture rangée par une fête ou remplacée par « Me prévenir » : ce n'était pas une vraie présentation,
+    // le compte d'avant revient (le reste du mémo, écrit entre-temps, est gardé)
+    const rendre = () => {
+      const v = vue.current; vue.current = null;
+      if (!v) return;
+      const { n, at, ...reste } = lireMemo(me.id);
+      ecrireMemo(me.id, { ...reste, ...(v.n ? { n: v.n } : {}), ...(v.at ? { at: v.at } : {}) });
+    };
+    montrer = x => { if (feteOuverte()) { remettre(x.raison); return; } demandee = true; rendre(); setOuv(null); if (x.v === 'email') ecrireMemo(me.id, { ...lireMemo(me.id), mail: 1 }); setF(x); };
     // Une fête qui s'ouvre après la feuille passe devant : la feuille se range sans compter de refus
-    const sansFete = quandFete(() => setF(x => { if (x) remettre(x.raison); return null; }));
-    let vivant = true;
+    const sansFete = quandFete(() => { demandee = true; setF(x => { if (x) remettre(x.raison); return null; }); rendre(); setOuv(null); });
+    let vivant = true, pret = false, lancee = false, t = 0;
     const lire = () => { const d = etatDemo(store); if (d) { etatConnu = d; return Promise.resolve(); } return etatPush(store).then(e => { if (vivant) etatConnu = e; }, () => {}); };
-    const vu = () => { if (document.visibilityState === 'visible') lire(); };
+    const montage = Date.now();
+    let debut = montage;
+    const memo0 = lireMemo(me.id);
+    let avant = JSON.stringify(memo0);
+    // La bienvenue d'un nouveau membre, ou l'accord à donner : la feuille d'ouverture attend la visite suivante
+    let autreVisite = bloque || arriveeEnAttente(me.id);
+    // Rien de coché dans Mon profil : rien à proposer
+    const ouvrable = () => {
+      const m = hote?.me || me;
+      return ouvertureNotif({ etat: etatConnu, memo: lireMemo(me.id), now: Date.now(), role: m.role, voulu: PUSH_CATEGORIES.some(c => pushChoix(c, m)) });
+    };
+    // Un écran calme : rien d'ouvert par-dessus (toute fenêtre modale, la photo agrandie d'un message comprise), pas en train
+    // d'écrire, l'onglet au premier plan
+    const occupe = () => document.visibilityState !== 'visible' || !!document.querySelector('.modal-back, .fete-back, .menu-pop, [aria-modal="true"]') || ecrit(document.activeElement);
+    const essayer = () => {
+      // Quelque chose a déjà été demandé ou répondu pendant cette visite (mémo changé) : à la visite suivante
+      if (!vivant || demandee || feteOuverte() || arriveeEnAttente(me.id) || JSON.stringify(lireMemo(me.id)) !== avant || !ouvrable()) return;
+      // Une nouvelle version peut encore recharger la page : la feuille disparaîtrait sous les yeux du membre en comptant comme un refus
+      const maj = attenteMaj();
+      if (maj > 0) { t = setTimeout(essayer, maj); return; }
+      if (occupe()) { if (Date.now() - debut < OUV_FIN) t = setTimeout(essayer, OUV_ESSAI); return; }
+      // Comptée dès qu'elle s'affiche, comme « Plus tard » : quitter l'application sans répondre ne la ramène pas à chaque visite
+      const m = lireMemo(me.id);
+      vue.current = { n: m.n, at: m.at };
+      ecrireMemo(me.id, { ...m, n: (m.n || 0) + 1, at: Date.now() });
+      setOuv({ t: Date.now() });
+    };
+    // « Reçois l'essentiel sur ton téléphone », quelques secondes après le début de la visite
+    // (l'état connu trop tard, téléphone lent à la première visite : à la visite suivante)
+    const demarrer = depuis => {
+      lancee = true; debut = depuis;
+      if (!autreVisite && ouvrable() && Date.now() - debut < OUV_FIN) t = setTimeout(essayer, Math.max(0, OUV_DELAI - (Date.now() - debut), attenteMaj()));
+    };
+    // La visite commence au premier moment où l'écran est visible : une application installée se recharge souvent cachée
+    // (nouvelle version), et le membre la retrouve plus tard. Revenu après une longue absence : c'est une nouvelle visite.
+    let visibleDepuis = document.visibilityState === 'visible' ? montage : 0, cacheeDepuis = visibleDepuis ? 0 : montage;
+    const vu = () => {
+      if (document.visibilityState !== 'visible') { cacheeDepuis = cacheeDepuis || Date.now(); return; }
+      const absence = cacheeDepuis ? Date.now() - cacheeDepuis : 0;
+      cacheeDepuis = 0; visibleDepuis = visibleDepuis || Date.now();
+      lire().then(() => {
+        if (!vivant || !pret || document.visibilityState !== 'visible') return;
+        if (!lancee) { demarrer(visibleDepuis); return; }
+        if (absence < OUV_ABSENCE) return;
+        clearTimeout(t);
+        demandee = false; avant = JSON.stringify(lireMemo(me.id));
+        autreVisite = (store.mode === 'live' && !(hote?.me || me).consent_at) || arriveeEnAttente(me.id);
+        demarrer(Date.now());
+      });
+    };
     document.addEventListener('visibilitychange', vu);
-    // Une feuille remise à plus tard (une fête était à l'écran) : à la visite suivante, quand rien d'autre n'est ouvert
-    let t = 0;
-    const differe = lireMemo(me.id).differe;
     lire().then(() => {
-      if (!differe || !vivant) return;
-      t = setTimeout(() => {
-        const memo = lireMemo(me.id); delete memo.differe; ecrireMemo(me.id, memo);
-        if (bloque || document.querySelector('.modal-back, .fete-back')) return;
-        const v = variante(differe, memo);
-        if (v) montrer({ raison: differe, mot: null, v, t: Date.now() });
-      }, 2500);
+      if (!vivant) return;
+      pret = true;
+      // Une feuille remise à plus tard (une fête était à l'écran) : à la visite suivante, quand rien d'autre n'est ouvert
+      if (memo0.differe) {
+        lancee = true;
+        t = setTimeout(() => {
+          const memo = lireMemo(me.id); delete memo.differe; ecrireMemo(me.id, memo);
+          if (bloque || document.querySelector('.modal-back, .fete-back')) return;
+          const v = variante(memo0.differe, memo);
+          if (v) montrer({ raison: memo0.differe, mot: null, v, t: Date.now() });
+        }, 2500);
+        return;
+      }
+      if (document.visibilityState === 'visible') demarrer(visibleDepuis || Date.now());
     });
-    return () => { vivant = false; clearTimeout(t); montrer = null; sansFete(); document.removeEventListener('visibilitychange', vu); };
+    return () => { vivant = false; clearTimeout(t); montrer = null; sansFete(); vue.current = null; setOuv(null); document.removeEventListener('visibilitychange', vu); };
   }, [me.id]);
-  if (!f) return null;
-  return html`<${FeuillePrevenir} ctx=${ctx} f=${f} key=${f.t} onClose=${() => setF(null)}/>`;
+  if (f) return html`<${FeuillePrevenir} ctx=${ctx} f=${f} key=${f.t} onClose=${() => setF(null)}/>`;
+  if (ouv) return html`<${FeuilleOuverture} ctx=${ctx} key=${ouv.t} onClose=${() => { vue.current = null; setOuv(null); }}/>`;
+  return null;
+}
+
+// Le toucher sur « Me prévenir » ou « Activer » : c'est lui qui permet au navigateur de demander l'autorisation.
+// true quand la feuille peut se fermer ; false (pas de réseau) : elle reste, on peut réessayer.
+async function accepterNotif(store, me) {
+  if (store.mode !== 'live') { ecrireMemo(me.id, { ...lireMemo(me.id), fait: 1 }); toast(DEMO); return true; }
+  try {
+    const r = await activerPush(store);
+    etatConnu = r;
+    ecrireMemo(me.id, { ...lireMemo(me.id), fait: 1 });
+    dispatchEvent(new Event(PUSH_CHANGE));
+    if (r === 'on') toast('Notifications activées sur cet appareil.', 'win');
+    return true;
+  } catch (e) {
+    // Navigateur sans service de notifications (Brave, téléphone sans services Google…) : une phrase calme, et la feuille
+    // ne revient plus sur ce navigateur ; le bouton de « Mon profil » reste là pour réessayer
+    if (e?.plateforme) {
+      etatConnu = 'absent';
+      ecrireMemo(me.id, { ...lireMemo(me.id), fait: 1 });
+      toast(SANS_NOTIF, 'err');
+      return true;
+    }
+    toast(e?.message || 'Pas de réseau pour l’instant. Réessaie dans un instant.', 'err');
+    return false;
+  }
 }
 
 function FeuillePrevenir({ ctx, f, onClose }) {
@@ -223,23 +333,8 @@ function FeuillePrevenir({ ctx, f, onClose }) {
   const refuser = () => { if (!email) { const m = lireMemo(me.id); ecrireMemo(me.id, { ...m, n: (m.n || 0) + 1, at: Date.now() }); } onClose(); };
   const accepter = async () => {
     if (email || ios) return refuser();
-    if (store.mode !== 'live') { ecrireMemo(me.id, { ...lireMemo(me.id), fait: 1 }); toast(DEMO); onClose(); return; }
     setBusy(true);
-    try {
-      const r = await activerPush(store);
-      etatConnu = r;
-      ecrireMemo(me.id, { ...lireMemo(me.id), fait: 1 });
-      if (r === 'on') toast('Notifications activées sur cet appareil.', 'win');
-      onClose();
-    } catch (e) {
-      // Navigateur sans service de notifications (Brave, téléphone sans services Google…) : une phrase calme, et la feuille
-      // ne revient plus sur ce navigateur ; le bouton de « Mon profil » reste là pour réessayer
-      if (e?.plateforme) {
-        etatConnu = 'absent';
-        ecrireMemo(me.id, { ...lireMemo(me.id), fait: 1 });
-        toast(SANS_NOTIF, 'err'); onClose();
-      } else { setBusy(false); toast(e?.message || 'Pas de réseau pour l’instant. Réessaie dans un instant.', 'err'); } // réseau : la feuille reste, on peut réessayer
-    }
+    if (await accepterNotif(store, me)) onClose(); else setBusy(false);
   };
   const raison = f.raison === 'question' && me.role !== 'etudiant' ? 'questionMembre' : f.raison;
   const pied = html`${email || ios ? null : html`<button type="button" class="btn ghost" id="pv-tard" onClick=${refuser}>Plus tard</button>`}
@@ -249,6 +344,67 @@ function FeuillePrevenir({ ctx, f, onClose }) {
     ${email ? html`<p>${PAR_EMAIL[f.raison]}</p>` : html`<p>${NOTIF_RAISON[raison]}</p>`}
     ${ios ? html`<p class="small muted">Sur iPhone, les notifications arrivent une fois le Réseau ENSAM ajouté à l’écran d’accueil :</p><${EtapesIos}/>`
       : email ? null : html`<p class="small muted">Rien d’autre : pas de publicité, et tu l’arrêtes quand tu veux dans « Mon profil ».</p>`}
+  <//>`;
+}
+
+// ---------------------------------------------------------------------------
+// À l'ouverture : « Reçois l'essentiel sur ton téléphone » (« sur cet ordinateur » sur un ordinateur), pour un membre dont
+// l'appareil peut recevoir des notifications sans y être abonné (règle : ouvertureNotif). Quelques secondes après l'arrivée
+// (le premier moment où l'écran est visible ; pas tant qu'une nouvelle version peut recharger la page), sur un écran calme ;
+// sinon la visite suivante. Revenir après une heure ou plus est une nouvelle visite. Jamais la même
+// visite que la bienvenue, l'accord à donner, une fête ou une feuille « Me prévenir ». Elle compte comme un refus dès
+// qu'elle s'affiche (« Plus tard », fermer, ou quitter l'application sans répondre), dans le même mémo que « Me prévenir ».
+// ---------------------------------------------------------------------------
+const OUV_DELAI = 3000, OUV_ESSAI = 2500, OUV_FIN = 30000, OUV_ABSENCE = 3600e3;
+// Page servie par le service worker : une nouvelle version peut la recharger pendant ses premières secondes
+// (suivreMisesAJour) ; la feuille attend la fin de cette fenêtre. Ce qu'il reste à attendre, en millisecondes.
+const attenteMaj = () => (navigator.serviceWorker?.controller ? FENETRE_MAJ + 500 - (Date.now() - ouverture) : 0);
+// Un téléphone ou une tablette : la feuille parle de « ton téléphone » ; sur un ordinateur, de cet ordinateur (c'est lui
+// qu'« Activer » abonne)
+const surTelephone = () => isIOS() || /android|mobile/i.test(navigator.userAgent);
+const OUV_TITRE = { tel: 'Reçois l’essentiel sur ton téléphone', pc: 'Reçois l’essentiel sur cet ordinateur' };
+// En train d'écrire (un champ de texte a le curseur) : la feuille attend
+const ecrit = el => !!el && (el.isContentEditable || el.tagName === 'TEXTAREA'
+  || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'range', 'color', 'image'].includes(el.type)));
+// Ce que chacun reçoit, dans l'ordre où le dire ; la feuille en montre quatre au plus, parmi ses catégories activées
+const OUV_POINTS = {
+  etudiant: {
+    messages: 'Tes messages',
+    demandes: 'Les lauréats qui te proposent leur aide',
+    candidatures: 'Tes candidatures qui avancent',
+    offres: 'Les nouvelles offres de ton année et de ta filière',
+    mentorat: 'Tes rendez-vous de mentorat et relectures de CV',
+    reseau: 'Les réponses à tes questions',
+  },
+  laureat: {
+    messages: 'Tes messages',
+    demandes: 'Les nouvelles demandes d’étudiants de ta filière',
+    offres: 'Les nouvelles offres pour toi',
+    candidatures: 'Les candidatures reçues sur tes offres',
+    mentorat: 'Les demandes de mentorat et tes rendez-vous',
+    reseau: 'Les questions qui te sont adressées',
+  },
+  // Un lauréat qui cherche un emploi publie sa demande et postule : la suite des siennes d'abord
+  recherche: {
+    demandes: 'Les réponses à ta demande d’emploi',
+    candidatures: 'Tes candidatures qui avancent',
+  },
+};
+const OUV_ICONES = { messages: 'chat', demandes: 'send', candidatures: 'briefcase', offres: 'feed', mentorat: 'mentor', reseau: 'qa' };
+const OUV_INTRO = 'Ce qui te concerne arrive tout de suite, même quand l’application est fermée :';
+
+function FeuilleOuverture({ ctx, onClose }) {
+  const { store, me } = ctx;
+  const [busy, setBusy] = useState(false);
+  const mots = me.role === 'etudiant' ? OUV_POINTS.etudiant : me.en_recherche ? { ...OUV_POINTS.laureat, ...OUV_POINTS.recherche } : OUV_POINTS.laureat;
+  const points = Object.entries(mots).filter(([cat]) => pushChoix(cat, me)).slice(0, 4);
+  const activer = async () => { setBusy(true); if (await accepterNotif(store, me)) onClose(); else setBusy(false); };
+  const pied = html`<button type="button" class="btn ghost" id="ouv-tard" onClick=${() => onClose()}>Plus tard</button>
+    <button type="button" class="btn primary" id="ouv-oui" disabled=${busy} onClick=${activer}><${Icon} name="bell" size=${16}/> Activer</button>`;
+  return html`<${Modal} title=${surTelephone() ? OUV_TITRE.tel : OUV_TITRE.pc} cls="prevenir ouverture" onClose=${onClose} footer=${pied}>
+    <p>${OUV_INTRO}</p>
+    ${points.length ? html`<ul class="ouv-points">${points.map(([cat, txt]) => html`<li key=${cat} data-cat=${cat}><span class="g-ico"><${Icon} name=${OUV_ICONES[cat]} size=${18}/></span> ${txt}</li>`)}</ul>` : null}
+    <p class="small muted">Tu choisis quoi recevoir dans « Mon profil ». Pas de publicité.</p>
   <//>`;
 }
 
@@ -268,4 +424,21 @@ addAR({
   [NOTIF_RAISON.question]: 'بمجرد أن يجيب أحد الخريجين عن سؤالك، يصلك إشعار على هذا الجهاز.',
   [NOTIF_RAISON.questionMembre]: 'بمجرد أن يجيب أحد أعضاء الشبكة عن سؤالك، يصلك إشعار على هذا الجهاز.',
   [NOTIF_RAISON.relecture]: 'بمجرد أن يراجع أحد الخريجين سيرتك الذاتية، يصلك إشعار على هذا الجهاز.',
+  // Feuille d'ouverture
+  [OUV_TITRE.tel]: 'الأهم يصلك على هاتفك',
+  [OUV_TITRE.pc]: 'الأهم يصلك على هذا الحاسوب',
+  'Tu choisis quoi recevoir dans « Mon profil ». Pas de publicité.': 'تختار ما يصلك من «ملفي الشخصي». لا إعلانات.',
+  [OUV_INTRO]: 'ما يخصك يصلك فورًا، حتى والتطبيق مغلق:',
+  [OUV_POINTS.etudiant.messages]: 'رسائلك',
+  [OUV_POINTS.etudiant.demandes]: 'الخريجون الذين يقترحون عليك مساعدتهم',
+  [OUV_POINTS.etudiant.candidatures]: 'تقدّم ترشيحاتك',
+  [OUV_POINTS.etudiant.offres]: 'العروض الجديدة الخاصة بسنتك وشعبتك',
+  [OUV_POINTS.etudiant.mentorat]: 'مواعيد الإرشاد ومراجعات سيرتك الذاتية',
+  [OUV_POINTS.etudiant.reseau]: 'الأجوبة على أسئلتك',
+  [OUV_POINTS.laureat.demandes]: 'الطلبات الجديدة لطلبة شعبتك',
+  [OUV_POINTS.laureat.offres]: 'العروض الجديدة الخاصة بك',
+  [OUV_POINTS.laureat.candidatures]: 'الترشيحات التي تصل إلى عروضك',
+  [OUV_POINTS.laureat.mentorat]: 'طلبات الإرشاد ومواعيدك',
+  [OUV_POINTS.laureat.reseau]: 'الأسئلة الموجّهة إليك',
+  [OUV_POINTS.recherche.demandes]: 'الردود على طلب العمل الخاص بك',
 });

@@ -1108,11 +1108,12 @@ end $$;
 revoke all on function public.appeler_notifier(text) from public, anon, authenticated;
 
 -- Met une notification en file pour un membre, seulement s'il l'a activée sur un téléphone
+-- et qu'il veut ce type de notification (push_voulu, plus bas : son choix dans Mon profil, sinon le défaut de son rôle)
 create or replace function public.pousser(p_user uuid, p_kind text, p_data jsonb default '{}') returns void
 language plpgsql security definer set search_path = public as $$
 begin
   if p_user is null or p_user = auth.uid() then return; end if;
-  if exists (select 1 from public.push_subscriptions where user_id = p_user) then
+  if exists (select 1 from public.push_subscriptions where user_id = p_user) and public.push_voulu(p_user, p_kind) then
     insert into public.push_queue (user_id, kind, data) values (p_user, p_kind, coalesce(p_data, '{}'));
   end if;
 exception when others then null;  -- une notification ne doit jamais bloquer l'action du membre
@@ -1124,6 +1125,8 @@ language plpgsql security definer set search_path = public as $$
 begin
   -- Un seul appel par transaction : la fonction vide toute la file d'un coup, après la validation
   if coalesce(current_setting('ensam.push_appele', true), '') = '1' then return null; end if;
+  -- Rien en file (personne d'abonné, ou des notifications que leurs destinataires ne veulent pas) : pas d'appel
+  if not exists (select 1 from public.push_queue) then return null; end if;
   perform set_config('ensam.push_appele', '1', true);
   perform public.appeler_notifier('push');
   return null;
@@ -1195,7 +1198,7 @@ begin
       select p.id, 'question_routee', jsonb_build_object('cible', coalesce(nullif(new.entreprise, ''), new.pays), 'titre', new.titre)
       from public.profiles p
       where p.role = 'laureat' and p.id <> new.author_id
-        and exists (select 1 from public.push_subscriptions s where s.user_id = p.id)
+        and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'question_routee')
         and ((coalesce(new.entreprise, '') <> '' and public.meme_entreprise(p.entreprise, new.entreprise))
           or (public.cle_lieu(new.pays) <> 'maroc' and public.cle_lieu(p.pays) = public.cle_lieu(new.pays)))
       limit 40;
@@ -1208,7 +1211,7 @@ begin
     select p.id, 'cafe', jsonb_build_object('ville', new.ville, 'lieu', new.lieu, 'date_at', new.date_at)
     from public.profiles p
     where p.id <> new.organisateur_id and public.cle_lieu(p.ville) = public.cle_lieu(new.ville)
-      and exists (select 1 from public.push_subscriptions s where s.user_id = p.id)
+      and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'cafe')
     limit 200;
   end if;
   return null;
@@ -1526,6 +1529,71 @@ do $$ begin
   end if;
 end $$;
 
+-- ---------------------------------------------------------------------
+-- Notifications sur le téléphone : chacun choisit ce qu'il reçoit, par catégorie (Mon profil > Notifications).
+-- notif_push ne garde que les choix faits par le membre ({ "offres": true, "reseau": false }) ;
+-- une catégorie absente suit le défaut de son rôle (push_defaut). Mêmes règles que logic.js (PUSH_KINDS, pushDefaut).
+-- Un seul filtre pour toutes les notifications : le trigger trg_push_filtre sur push_queue.
+-- ---------------------------------------------------------------------
+alter table public.profiles add column if not exists notif_push jsonb not null default '{}'::jsonb;
+create or replace function public.notif_push_valide(v jsonb) returns boolean
+language sql immutable as $$
+  select jsonb_typeof(coalesce(v, '{}')) = 'object' and not exists (
+    select 1 from jsonb_each(coalesce(v, '{}')) e
+    where e.key not in ('messages','demandes','candidatures','mentorat','offres','reseau') or jsonb_typeof(e.value) <> 'boolean');
+$$;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'profiles_notif_push_check') then
+    alter table public.profiles add constraint profiles_notif_push_check check (public.notif_push_valide(notif_push));
+  end if;
+end $$;
+
+-- Catégorie de chaque type de notification (un type inconnu : vie du réseau)
+create or replace function public.push_categorie(p_kind text) returns text
+language sql immutable as $$
+  select case
+    when p_kind = 'message' then 'messages'
+    when p_kind in ('demande_nouvelle','demande_proposition','demande_match','demande_rouverte') then 'demandes'
+    when p_kind in ('candidature','candidature_statut','invitation','recrutement_a_confirmer','recrutement_confirme','relance_offre') then 'candidatures'
+    when p_kind in ('mentorat_demande','mentorat_accepte','mentorat_deplace','mentorat_annule','rappel_rdv','merci',
+                    'relecture_demande','relecture_prise','relecture_rendue','contact_demande','contact_accepte','filleul','parrain') then 'mentorat'
+    when p_kind = 'offre_alerte' then 'offres'
+    when p_kind = 'signalement' then 'admin'
+    else 'reseau' end;
+$$;
+
+-- Défaut d'une catégorie selon le profil : tout est activé, sauf les nouvelles offres pour un lauréat
+-- qui ne cherche pas d'emploi ; un étudiant garde sa case « M'alerter » (alertes_offres). Admin : signalements toujours.
+create or replace function public.push_defaut(p_cat text, p public.profiles) returns boolean
+language sql immutable as $$
+  select case p_cat
+    when 'admin' then p.role = 'admin'
+    when 'offres' then coalesce(p.alertes_offres, true) and (p.role = 'etudiant' or coalesce(p.en_recherche, false))
+    else true end;
+$$;
+
+-- Ce membre veut-il ce type de notification ? Son choix s'il en a fait un, sinon le défaut de son rôle
+create or replace function public.push_voulu(p_user uuid, p_kind text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select case when x.c = 'admin' then true else coalesce((
+    select case when jsonb_typeof(p.notif_push -> x.c) = 'boolean' then (p.notif_push ->> x.c)::boolean else public.push_defaut(x.c, p) end
+    from public.profiles p where p.id = p_user), true) end
+  from (select public.push_categorie(p_kind) as c) x;
+$$;
+revoke all on function public.push_voulu(uuid, text) from public, anon, authenticated;
+
+-- Filtre central : couvre pousser() et les envois groupés (offres, demandes, agenda…). Dans le doute, la notification part.
+create or replace function public.push_filtre() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if public.push_voulu(new.user_id, new.kind) is false then return null; end if;
+  return new;
+exception when others then return new;
+end $$;
+drop trigger if exists trg_push_filtre on public.push_queue;
+create trigger trg_push_filtre before insert on public.push_queue
+  for each row execute function public.push_filtre();
+
 -- Niveau d'un membre (même calcul que le site : 3, 4, 5 ; 6 = jeune diplômé ; 7 = plus ancien)
 create or replace function public.niveau_de(p_promo int, p_saison int) returns int
 language sql immutable as $$
@@ -1680,7 +1748,8 @@ select p.id, p.full_name, p.role, p.filiere, p.promo,
   case when p.id = auth.uid() then p.alertes_offres end as alertes_offres,
   case when p.id = auth.uid() then p.alertes_email end as alertes_email,
   case when p.id = auth.uid() then p.emails_messages end as emails_messages,
-  p.en_recherche, p.photo_path
+  p.en_recherche, p.photo_path,
+  case when p.id = auth.uid() then p.notif_push end as notif_push
 from public.profiles p
 where auth.uid() is not null;
 revoke all on public.profils from public, anon;
@@ -2114,7 +2183,7 @@ begin
     select x.id, 'verifier_pair', jsonb_build_object('nom', new.full_name, 'promo', new.promo)
     from public.profiles x
     where x.role = 'laureat' and x.verified and x.promo = new.promo and x.id <> new.id
-      and exists (select 1 from public.push_subscriptions s where s.user_id = x.id)
+      and exists (select 1 from public.push_subscriptions s where s.user_id = x.id) and public.push_voulu(x.id, 'verifier_pair')
     limit 5;
   end if;
   return null;
@@ -2169,16 +2238,18 @@ create trigger trg_protect_evenement_participant before insert on public.eveneme
 
 create or replace function public.notif_evenement() returns trigger
 language plpgsql security definer set search_path = public as $$
+declare v_kind text;
 begin
   if tg_op = 'INSERT' or (not old.annule and new.annule) or new.debut is distinct from old.debut then
+    v_kind := case when tg_op = 'INSERT' then 'evenement' when new.annule then 'evenement_annule' else 'evenement_deplace' end;
     insert into public.push_queue (user_id, kind, data)
-    select p.id, case when tg_op = 'INSERT' then 'evenement' when new.annule then 'evenement_annule' else 'evenement_deplace' end,
+    select p.id, v_kind,
       jsonb_build_object('titre', new.titre, 'debut', new.debut, 'lieu', new.lieu)
     from public.profiles p
     where p.id is distinct from new.author_id
       and (new.public = 'tous' or (new.public = 'etudiants' and p.role = 'etudiant') or (new.public = 'laureats' and p.role = 'laureat'))
       and (tg_op = 'INSERT' or exists (select 1 from public.evenement_participants x where x.evenement_id = new.id and x.user_id = p.id))
-      and exists (select 1 from public.push_subscriptions s where s.user_id = p.id)
+      and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, v_kind)
     limit 2000;
   end if;
   return null;
@@ -2594,8 +2665,9 @@ begin
   insert into public.push_queue (user_id, kind, data)
   select p.id, 'offre_alerte', jsonb_build_object('titre', new.titre, 'entreprise', new.entreprise, 'offre', new.id)
   from public.profiles p
-  where p.alertes_offres and public.offre_pour(new, p, public.saison_courante())
-    and exists (select 1 from public.push_subscriptions s where s.user_id = p.id)
+  -- push_voulu : le choix « Nouvelles offres » de Mon profil, sinon le défaut (case « M'alerter » pour un étudiant)
+  where public.offre_pour(new, p, public.saison_courante())
+    and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'offre_alerte')
   limit 500;
   return null;
 exception when others then return null;
@@ -2694,7 +2766,7 @@ begin
         select l.id, 'relecture_demande', jsonb_build_object('nom', v_nom)
         from public.profiles l, public.profiles s
         where s.id = new.student_id and l.role = 'laureat' and l.mentor_dispo and public.proximite_filiere(l.filiere, s.filiere) > 0 and l.id <> new.student_id
-          and exists (select 1 from public.push_subscriptions x where x.user_id = l.id)
+          and exists (select 1 from public.push_subscriptions x where x.user_id = l.id) and public.push_voulu(l.id, 'relecture_demande')
         limit 10;
       end if;
     elsif old.status = 'demandee' and new.status = 'en_cours' then
@@ -3491,7 +3563,7 @@ begin
   select p.id, 'demande_nouvelle', jsonb_build_object('nom', split_part(v_a.full_name, ' ', 1), 'titre', new.titre, 'type', new.type, 'demande', new.id)
   from public.profiles p
   where p.role = 'laureat' and p.id <> new.auteur_id and public.proximite_filiere(p.filiere, v_a.filiere) >= 1
-    and exists (select 1 from public.push_subscriptions s where s.user_id = p.id)
+    and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'demande_nouvelle')
     and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = new.auteur_id) or (b.user_id = new.auteur_id and b.bloque_id = p.id))
   limit 60;
   return null;

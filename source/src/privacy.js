@@ -1,7 +1,8 @@
 // Confidentialité (loi 09-08) : page publique, accord des anciens membres, « Mes données », désabonnement.
-import { html, useState, useEffect } from './vendor/preact-htm.js';
+import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, BrandLogo, toast } from './ui.js';
 import { PushToggle } from './pwa.js';
+import { PUSH_CATEGORIES, pushChoix } from './logic.js';
 import { addAR } from './i18n.js';
 import { adresseContact } from './regles-entree.js';
 
@@ -54,6 +55,80 @@ addAR({
   'Les notifications sur le téléphone et le résumé de la semaine ne changent pas. Tu peux les réactiver dans « Mon profil ».': 'إشعارات الهاتف والملخص الأسبوعي لا تتغير. ويمكنك إعادة تفعيل التنبيهات من «ملفي الشخصي».',
   'Tes données': 'بياناتك',
   'Ce lien n’est plus valable. Connecte-toi et désactive les alertes dans « Mon profil ».': 'هذا الرابط لم يعد صالحًا. سجّل الدخول وأوقف التنبيهات من «ملفي الشخصي».',
+});
+
+// Notifications sur le téléphone, par catégorie : les mots de chacun (étudiant ; lauréat, qui cherche un emploi ou non ;
+// administration)
+const CATS_NOTIF = {
+  etudiant: {
+    messages: ['Messages', 'Les messages qu’on t’envoie.'],
+    demandes: ['Mes demandes : les propositions d’aide', 'Un lauréat te propose son aide pour ta demande.'],
+    candidatures: ['Mes candidatures', 'Une candidature qui avance, une invitation à postuler, un recrutement à confirmer.'],
+    mentorat: ['Mentorat et rendez-vous', 'Rendez-vous et rappels, relectures de CV, partage de coordonnées, parrainage.'],
+    offres: ['Nouvelles offres pour moi', 'Les offres de ton année et de ta filière, dès leur publication.'],
+    reseau: ['Réponses à mes questions et vie du réseau', 'Réponses à tes questions, événements de l’école, cafés de ta ville.'],
+  },
+  laureat: {
+    messages: ['Messages', 'Les messages qu’on t’envoie.'],
+    demandes: ['Demandes des étudiants de ma filière', 'Et la suite de tes propositions d’aide.'],
+    // Tout lauréat peut postuler aux offres entre lauréats
+    candidatures: ['Candidatures reçues sur mes offres', 'Et les recrutements confirmés ; si tu postules, la suite de tes candidatures.'],
+    mentorat: ['Mentorat et rendez-vous', 'Mentorats à accepter, coordonnées à partager, rappels de rendez-vous, CV à relire, parrainage, mercis.'],
+    // Les offres arrivent selon le profil (offre_pour dans schema.sql) : la condition est dite, pas conseillée
+    offres: ['Nouvelles offres pour moi', 'Avec « Je cherche un emploi en ce moment » coché dans ton profil : offres « Jeunes diplômés » et offres entre lauréats de ta filière. Sans cela, seulement les offres « Jeunes diplômés » l’année de ton diplôme.'],
+    // Un lauréat pose aussi des questions : les réponses passent par cette case
+    reseau: ['Questions et vie du réseau', 'Réponses à tes questions, questions sur ton entreprise ou ton pays, événements de l’école, cafés de ta ville.'],
+  },
+  // Un lauréat qui cherche un emploi publie sa demande d'emploi et postule : ces cases couvrent aussi les siennes
+  recherche: {
+    demandes: ['Mes demandes et celles des étudiants', 'Les réponses à ta demande d’emploi, les étudiants de ta filière qui cherchent de l’aide, et la suite de tes propositions d’aide.'],
+    candidatures: ['Candidatures', 'La suite des tiennes (entretien, recrutement à confirmer) et les candidatures reçues sur tes offres.'],
+    offres: ['Nouvelles offres pour moi', 'Offres « Jeunes diplômés » et offres entre lauréats de ta filière, dès leur publication.'],
+  },
+  // L'équipe du réseau ne postule pas, et les questions sur une entreprise ou un pays ne vont qu'aux lauréats
+  admin: {
+    candidatures: ['Candidatures reçues sur mes offres', 'Et les recrutements confirmés.'],
+    reseau: ['Réponses à mes questions et vie du réseau', 'Réponses à tes questions, événements de l’école, cafés de ta ville.'],
+  },
+};
+const motsNotif = me => (me.role === 'etudiant' ? CATS_NOTIF.etudiant
+  : { ...CATS_NOTIF.laureat, ...(me.role === 'admin' ? CATS_NOTIF.admin : me.en_recherche ? CATS_NOTIF.recherche : {}) });
+// L'équipe du réseau ne reçoit ni les nouvelles demandes d'étudiants (réservées aux lauréats) ni d'alertes d'offres :
+// pas de case qui ne servirait à rien (les signalements, eux, arrivent toujours)
+const catsNotif = me => PUSH_CATEGORIES.filter(c => me.role !== 'admin' || (c !== 'demandes' && c !== 'offres'));
+const NOTES_NOTIF = {
+  tous: 'Tes choix valent pour tous les appareils où les notifications sont activées.',
+  admin: 'Les signalements arrivent toujours à l’équipe du réseau.',
+};
+addAR({
+  'Par email': 'عبر البريد الإلكتروني', 'Sur le téléphone': 'على الهاتف', 'Ce que je reçois': 'ما يصلني', 'Choix enregistré.': 'تم حفظ اختيارك.',
+  'Recevoir par email les nouvelles offres de mon année et de ma filière (3 au plus par jour)': 'استلام العروض الجديدة الخاصة بسنتي وشعبتي عبر البريد (3 على الأكثر في اليوم)',
+  [NOTES_NOTIF.tous]: 'تسري اختياراتك على كل الأجهزة التي فُعّلت فيها الإشعارات.',
+  [NOTES_NOTIF.admin]: 'تصل البلاغات دائمًا إلى فريق الشبكة.',
+  [CATS_NOTIF.etudiant.messages[1]]: 'الرسائل التي تُرسل إليك.',
+  [CATS_NOTIF.etudiant.demandes[0]]: 'طلباتي: اقتراحات المساعدة',
+  [CATS_NOTIF.etudiant.demandes[1]]: 'خريج يقترح عليك مساعدته في طلبك.',
+  [CATS_NOTIF.etudiant.candidatures[1]]: 'ترشيح يتقدّم، دعوة للترشح، توظيف ينتظر تأكيدك.',
+  [CATS_NOTIF.etudiant.mentorat[0]]: 'الإرشاد والمواعيد',
+  [CATS_NOTIF.etudiant.mentorat[1]]: 'المواعيد والتذكير بها، مراجعات السيرة الذاتية، مشاركة معلومات الاتصال، الرعاية.',
+  [CATS_NOTIF.etudiant.offres[0]]: 'عروض جديدة تخصني',
+  [CATS_NOTIF.etudiant.offres[1]]: 'عروض سنتك وشعبتك، فور نشرها.',
+  [CATS_NOTIF.etudiant.reseau[0]]: 'الأجوبة على أسئلتي وحياة الشبكة',
+  [CATS_NOTIF.etudiant.reseau[1]]: 'الأجوبة على أسئلتك، أنشطة المدرسة، لقاءات المقهى في مدينتك.',
+  [CATS_NOTIF.laureat.demandes[0]]: 'طلبات الطلبة من شعبتي',
+  [CATS_NOTIF.laureat.demandes[1]]: 'ومآل اقتراحات مساعدتك.',
+  [CATS_NOTIF.laureat.candidatures[0]]: 'الترشيحات التي تصل إلى عروضي',
+  [CATS_NOTIF.laureat.candidatures[1]]: 'والتوظيفات المؤكَّدة؛ وإن ترشحت، مآل ترشيحاتك.',
+  [CATS_NOTIF.admin.candidatures[1]]: 'والتوظيفات المؤكَّدة.',
+  [CATS_NOTIF.laureat.mentorat[1]]: 'إرشادات تنتظر قبولك، معلومات اتصال للمشاركة، التذكير بالمواعيد، سير ذاتية للمراجعة، الرعاية، رسائل الشكر.',
+  [CATS_NOTIF.laureat.offres[1]]: 'إن فعّلت «أبحث عن عمل حاليًا» في ملفك الشخصي: عروض «الخريجون الجدد» والعروض بين خريجي شعبتك. وبدونه، عروض «الخريجون الجدد» في سنة تخرجك فقط.',
+  [CATS_NOTIF.recherche.demandes[0]]: 'طلباتي وطلبات الطلبة',
+  [CATS_NOTIF.recherche.demandes[1]]: 'الردود على طلبك للعمل، طلبة شعبتك الذين يبحثون عن مساعدة، ومآل اقتراحات مساعدتك.',
+  [CATS_NOTIF.recherche.candidatures[0]]: 'الترشيحات',
+  [CATS_NOTIF.recherche.candidatures[1]]: 'مآل ترشيحاتك (مقابلة، توظيف ينتظر تأكيدك) والترشيحات التي تصل إلى عروضك.',
+  [CATS_NOTIF.recherche.offres[1]]: 'عروض «الخريجون الجدد» والعروض بين خريجي شعبتك، فور نشرها.',
+  [CATS_NOTIF.laureat.reseau[0]]: 'الأسئلة وحياة الشبكة',
+  [CATS_NOTIF.laureat.reseau[1]]: 'الأجوبة على أسئلتك، أسئلة حول شركتك أو بلدك، أنشطة المدرسة، لقاءات المقهى في مدينتك.',
 });
 
 
@@ -181,15 +256,23 @@ export function MesDonnees({ ctx }) {
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   };
+  // Notifications par catégorie : en ligne, seulement une fois la base à jour (colonne notif_push). Avant, l'étudiant garde
+  // sa case « M'alerter… » ; après, elle devient « Nouvelles offres pour moi » (téléphone) et la case email à part.
+  // Les titres « Par email » / « Sur le téléphone » aussi : avant, « M'alerter… » (le téléphone) se retrouverait sous « Par email ».
+  const cats = store.mode !== 'live' || 'notif_push' in me;
   return html`<div class="panel" id="mes-donnees">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="shield"/> Mes données et notifications</h2><button class="btn tiny ghost" onClick=${() => go('confidentialite')}>Confidentialité <${Icon} name="arrow" size=${14}/></button></div>
+    ${cats ? html`<h3 class="md-titre">Par email</h3>` : null}
     <label class="check"><input id="md-mail" type="checkbox" checked=${me.emails_hebdo !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { emails_hebdo: e.target.checked }); toast(e.target.checked ? 'Tu recevras un résumé chaque semaine.' : 'Plus de résumé par email.'); })}/> Recevoir un résumé par email chaque semaine</label>
-    ${me.role === 'etudiant' && (store.mode !== 'live' || 'alertes_offres' in me) ? html`<div class="cf-alertes">
+    ${me.role === 'etudiant' && cats && (store.mode !== 'live' || 'alertes_email' in me) ? html`<label class="check"><input id="md-alertes-mail" type="checkbox" checked=${me.alertes_email !== false} onChange=${e => act(() => store.update('profiles', me.id, { alertes_email: e.target.checked }))}/> Recevoir par email les nouvelles offres de mon année et de ma filière (3 au plus par jour)</label>` : null}
+    ${me.role === 'etudiant' && !cats && (store.mode !== 'live' || 'alertes_offres' in me) ? html`<div class="cf-alertes">
       <label class="check"><input id="md-alertes" type="checkbox" checked=${me.alertes_offres !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { alertes_offres: e.target.checked }); toast(e.target.checked ? 'On t’alerte dès qu’une offre pour toi est publiée.' : 'Plus d’alertes d’offres.'); })}/> M’alerter dès qu’une offre de mon année et de ma filière est publiée</label>
       ${me.alertes_offres !== false ? html`<label class="check sub"><input id="md-alertes-mail" type="checkbox" checked=${me.alertes_email !== false} onChange=${e => act(() => store.update('profiles', me.id, { alertes_email: e.target.checked }))}/> Aussi par email (3 au plus par jour)</label>` : null}
     </div>` : null}
     ${store.mode !== 'live' || 'emails_messages' in me ? html`<label class="check"><input id="md-msg-mail" type="checkbox" checked=${me.emails_messages !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { emails_messages: e.target.checked }); toast(e.target.checked ? 'Un email te prévient si un message attend depuis 30 minutes.' : 'Plus d’email pour les messages.'); })}/> M’envoyer un email quand un message m’attend (un toutes les 6 heures au plus)</label>` : null}
+    ${cats ? html`<h3 class="md-titre" id="md-notifs">Sur le téléphone</h3>` : null}
     <${PushToggle} ctx=${ctx}/>
+    ${cats ? html`<${ChoixNotifs} ctx=${ctx}/>` : null}
     <div class="row">
       <button class="btn small" onClick=${exportData}><${Icon} name="download" size=${15}/> Télécharger mes données</button>
       <span class="spacer"></span>
@@ -197,6 +280,31 @@ export function MesDonnees({ ctx }) {
     </div>
     ${del ? html`<${DeleteAccount} ctx=${ctx} onClose=${() => setDel(false)}/>` : null}
   </div>`;
+}
+
+// Ce que chacun reçoit sur le téléphone, par catégorie. me.notif_push ne garde que ses choix ; une case jamais touchée
+// suit le défaut de son rôle (pushChoix, mêmes règles que la base). Les choix valent pour tous ses appareils.
+function ChoixNotifs({ ctx }) {
+  const { me, store, act } = ctx;
+  const mots = motsNotif(me);
+  // Deux cases touchées coup sur coup : la seconde garde la première
+  const enCours = useRef({});
+  // Pas enregistré (réseau) : la case est redessinée, elle revient à ce qui est enregistré (Preact la compare à la page)
+  const [, redessiner] = useState(0);
+  const changer = (cat, v) => {
+    enCours.current = { ...enCours.current, [cat]: v };
+    act(async () => {
+      try { await store.update('profiles', me.id, { notif_push: { ...(store.me?.notif_push || me.notif_push || {}), ...enCours.current } }); }
+      catch (e) { const { [cat]: _, ...reste } = enCours.current; enCours.current = reste; redessiner(n => n + 1); throw e; }
+      toast('Choix enregistré.');
+    });
+  };
+  return html`<fieldset class="md-cats" aria-describedby="md-cats-note">
+    <legend>Ce que je reçois</legend>
+    ${catsNotif(me).map(cat => html`<label class="check" key=${cat}><input type="checkbox" id=${'np-' + cat} checked=${pushChoix(cat, me)} onChange=${e => changer(cat, e.target.checked)}/><span class="cat-txt"><span class="cat-t">${mots[cat][0]}</span><span class="cat-d">${mots[cat][1]}</span></span></label>`)}
+    <p class="small muted" id="md-cats-note">${NOTES_NOTIF.tous}</p>
+    ${me.role === 'admin' ? html`<p class="small muted">${NOTES_NOTIF.admin}</p>` : null}
+  </fieldset>`;
 }
 
 function DeleteAccount({ ctx, onClose }) {
