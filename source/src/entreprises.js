@@ -9,7 +9,7 @@ import { OfferCard, matchesMe } from './offers.js';
 import { SignalerBtn } from './confiance.js';
 
 export const FORMATS = { presentiel: ['Sur place', 'briefcase'], visio: ['Visio', 'video'], telephone: ['Téléphone', 'phone'], test_ecrit: ['Test écrit', 'edit'], autre: ['Autre', 'more'] };
-export const RESULTATS = { retenu: 'Retenu(e)', refuse: 'Pas retenu(e)', attente: 'En attente de réponse', inconnu: 'Je ne sais pas' };
+export const RESULTATS = { retenu: 'Candidature retenue', refuse: 'Candidature non retenue', attente: 'En attente de réponse', inconnu: 'Je ne sais pas' };
 export const GRATIFS = { non: 'Non rémunéré', symbolique: 'Symbolique', correcte: 'Correcte', bonne: 'Bonne' };
 const DIFFS = ['', 'Facile', 'Abordable', 'Moyen', 'Difficile', 'Très difficile'];
 const TYPE_CHIPS = [['stage', 'Stage'], ['pfe', 'PFE'], ['etranger', 'Étranger'], ['emploi', 'Emploi']];
@@ -188,7 +188,7 @@ function Auteur({ ctx, row }) {
   const quand = `${TYPES[row.type]?.label || ''}${row.saison ? ' · ' + saisonTxt(row.saison) : ''}`;
   if (p) return html`<div class="ent-auteur"><${Person} p=${p} onOpen=${openProfile} size=${28} sub=${quand}/>
     ${row.anonyme ? html`<span class="mini" title=${estAMoi(row, me) ? 'Les autres membres ne voient pas ton nom' : 'Nom caché aux membres, visible par l’administration'}><${Icon} name="lock" size=${12}/> Anonyme</span>` : null}${estAMoi(row, me) ? html`<span class="mini good">Toi</span>` : null}</div>`;
-  return html`<div class="ent-auteur"><span class="ent-anon" aria-hidden="true"><${Icon} name="user" size=${15}/></span><span class="ent-anon-txt"><b class="small">${row.type === 'emploi' ? 'Membre anonyme' : 'Étudiant(e) anonyme'}</b><span class="muted small">${quand}</span></span></div>`;
+  return html`<div class="ent-auteur"><span class="ent-anon" aria-hidden="true"><${Icon} name="user" size=${15}/></span><span class="ent-anon-txt"><b class="small">Membre anonyme</b><span class="muted small">${quand}</span></span></div>`;
 }
 
 function Actions({ ctx, row, type, onEdit, onDelete }) {
@@ -275,18 +275,18 @@ export function EntretienForm({ ctx, initial = {}, onClose }) {
     <form class="form" onSubmit=${submit}>
       ${!editing ? html`<p class="hint-box small"><${Icon} name="qa" size=${16}/><span>Les questions qu’on t’a posées aident les suivants à se préparer. Pas de nom de recruteur ni d’information confidentielle.</span></p>` : null}
       <div class="grid2">
-        <${Field} label="Entreprise" hint=${editing ? 'L’entreprise, le type et la saison ne changent plus.' : ''}><input id="en-ent" dir="auto" list="ent-noms" required maxlength="80" disabled=${editing} value=${f.entreprise} onInput=${e => set('entreprise', e.target.value)} translate="no"/><//>
+        <${Field} label="Entreprise" hint=${editing ? 'L’entreprise, le type et l’année ne changent plus.' : ''}><input id="en-ent" dir="auto" list="ent-noms" required maxlength="80" disabled=${editing} value=${f.entreprise} onInput=${e => set('entreprise', e.target.value)} translate="no"/><//>
         <${Field} label="Poste ou sujet"><input id="en-poste" dir="auto" maxlength="100" value=${f.poste || ''} onInput=${e => set('poste', e.target.value)} placeholder="Ex. PFE méthodes, ingénieur qualité…"/><//>
       </div>
       <datalist id="ent-noms">${noms.map(n => html`<option value=${n}/>`)}</datalist>
       <div class="ent-form-row"><${TypeSeg} value=${f.type} onChange=${v => set('type', v)} disabled=${editing}/>
-        <label class="ent-inline"><span class="field-label">Saison</span><select id="en-saison" disabled=${editing} value=${f.saison} onChange=${e => set('saison', +e.target.value)}>${saisonsOpts(S, f.saison).map(s => html`<option value=${s}>${saisonTxt(s)}</option>`)}</select></label></div>
+        <label class="ent-inline"><span class="field-label">Année</span><select id="en-saison" disabled=${editing} value=${f.saison} onChange=${e => set('saison', +e.target.value)}>${saisonsOpts(S, f.saison).map(s => html`<option value=${s}>${saisonTxt(s)}</option>`)}</select></label></div>
       <div class="grid2">
         <${Field} label="Format"><select id="en-format" value=${f.format || ''} onChange=${e => set('format', e.target.value)}><option value="">—</option>${Object.entries(FORMATS).map(([k, [l]]) => html`<option value=${k}>${l}</option>`)}</select><//>
         <${Field} label="Résultat"><select id="en-res" value=${f.resultat || ''} onChange=${e => set('resultat', e.target.value)}><option value="">—</option>${Object.entries(RESULTATS).map(([k, l]) => html`<option value=${k}>${l}</option>`)}</select><//>
       </div>
       <div class="field"><span class="field-label">Les questions posées</span>
-        <ol class="ent-q-edit">${f.questions.map((q, i) => html`<li key=${i}><input id=${'en-q' + i} dir="auto" maxlength="300" value=${q} onInput=${e => setQ(i, e.target.value)} placeholder=${i === 0 ? 'Ex. Présente un projet dont tu es fier(e).' : 'Une autre question…'} aria-label=${'Question ' + (i + 1)}/>
+        <ol class="ent-q-edit">${f.questions.map((q, i) => html`<li key=${i}><input id=${'en-q' + i} dir="auto" maxlength="300" value=${q} onInput=${e => setQ(i, e.target.value)} placeholder=${i === 0 ? 'Ex. Présente ton projet le plus marquant.' : 'Une autre question…'} aria-label=${'Question ' + (i + 1)}/>
           ${f.questions.length > 1 ? html`<button type="button" class="icon-btn small" aria-label="Retirer cette question" onClick=${() => setF(x => ({ ...x, questions: x.questions.filter((_, j) => j !== i) }))}><${Icon} name="x" size=${14}/></button>` : null}</li>`)}</ol>
         ${f.questions.length < 20 ? html`<button type="button" class="btn tiny ghost ent-addq" id="en-addq" onClick=${() => setF(x => ({ ...x, questions: [...x.questions, ''] }))}><${Icon} name="plus" size=${14}/> Ajouter une question</button>` : null}
         ${total > 4000 ? html`<span class="field-hint danger-t">Les questions sont trop longues (4 000 caractères au total).</span>` : null}
@@ -321,22 +321,22 @@ export function AvisForm({ ctx, initial = {}, onClose }) {
   };
   return html`<${Modal} title=${editing ? 'Modifier mon avis' : 'Laisser un avis'} onClose=${onClose} wide>
     <form class="form" onSubmit=${submit}>
-      ${!editing ? html`<p class="hint-box small"><${Icon} name="star" size=${16}/><span>Comment s’est passé ce stage ? Ton avis aide les étudiants à choisir. Reste honnête et bienveillant(e).</span></p>` : null}
+      ${!editing ? html`<p class="hint-box small"><${Icon} name="star" size=${16}/><span>Comment s’est passé ce stage ? Ton avis aide les étudiants à choisir. Un avis honnête et bienveillant aide le plus.</span></p>` : null}
       <div class="grid2">
-        <${Field} label="Entreprise" hint=${editing ? 'L’entreprise, le type et la saison ne changent plus.' : ''}><input id="av-ent" dir="auto" list="av-noms" required maxlength="80" disabled=${editing} value=${f.entreprise} onInput=${e => set('entreprise', e.target.value)} translate="no"/><//>
+        <${Field} label="Entreprise" hint=${editing ? 'L’entreprise, le type et l’année ne changent plus.' : ''}><input id="av-ent" dir="auto" list="av-noms" required maxlength="80" disabled=${editing} value=${f.entreprise} onInput=${e => set('entreprise', e.target.value)} translate="no"/><//>
         <${Field} label="Poste ou sujet"><input id="av-poste" dir="auto" maxlength="100" value=${f.poste || ''} onInput=${e => set('poste', e.target.value)}/><//>
       </div>
       <datalist id="av-noms">${noms.map(n => html`<option value=${n}/>`)}</datalist>
       <div class="grid2"><${Field} label="Ville"><input id="av-ville" dir="auto" maxlength="60" value=${f.ville || ''} onInput=${e => set('ville', e.target.value)}/><//><${Field} label="Pays"><input id="av-pays" dir="auto" maxlength="60" value=${f.pays || ''} onInput=${e => set('pays', e.target.value)}/><//></div>
       <div class="ent-form-row"><${TypeSeg} value=${f.type} onChange=${v => set('type', v)} disabled=${editing}/>
-        <label class="ent-inline"><span class="field-label">Saison</span><select id="av-saison" disabled=${editing} value=${f.saison} onChange=${e => set('saison', +e.target.value)}>${saisonsOpts(S, f.saison).map(s => html`<option value=${s}>${saisonTxt(s)}</option>`)}</select></label></div>
+        <label class="ent-inline"><span class="field-label">Année</span><select id="av-saison" disabled=${editing} value=${f.saison} onChange=${e => set('saison', +e.target.value)}>${saisonsOpts(S, f.saison).map(s => html`<option value=${s}>${saisonTxt(s)}</option>`)}</select></label></div>
       <div class="ent-notes-grid">
         <${NoteInput} id="av-note" label="Note globale" value=${f.note} onChange=${v => set('note', v)}/>
         ${NOTES.map(([k, l]) => html`<${NoteInput} id=${'av-' + k} label=${l} value=${f[k]} optional onChange=${v => set(k, v)}/>`)}
       </div>
       <div class="field"><span class="field-label">Gratification</span>
         <div class="seg" role="group" aria-label="Gratification">${Object.entries(GRATIFS).map(([k, l]) => html`<button type="button" class=${f.gratification === k ? 'on' : ''} aria-pressed=${f.gratification === k} onClick=${() => set('gratification', f.gratification === k ? '' : k)}>${l}</button>`)}</div></div>
-      <div class="field"><span class="field-label">Tu le recommandes à un(e) camarade ?</span>
+      <div class="field"><span class="field-label">Tu le recommandes aux autres étudiants ?</span>
         <div class="seg" role="group" aria-label="Recommandation">${[[true, 'Oui'], [false, 'Non']].map(([v, l]) => html`<button type="button" id=${'av-rec-' + (v ? 'oui' : 'non')} class=${f.recommande === v ? 'on' : ''} aria-pressed=${f.recommande === v} onClick=${() => set('recommande', f.recommande === v ? null : v)}>${l}</button>`)}</div></div>
       <${Field} label="Tes conseils" hint="Encadrement, missions, ambiance, transport, ce qu’il faut savoir avant d’y aller"><textarea id="av-cons" dir="auto" rows="3" maxlength="1500" value=${f.conseils || ''} onInput=${e => set('conseils', e.target.value)}></textarea><//>
       <label class="check"><input id="av-anon" type="checkbox" checked=${f.anonyme} onChange=${e => set('anonyme', e.target.checked)}/> <span>Rester anonyme <span class="muted small">(ton nom n’apparaît pour aucun membre)</span></span></label>
@@ -534,7 +534,7 @@ addAR({
   'Aucun entretien partagé': 'لم تتم مشاركة أي مقابلة بعد',
   'Tu as passé un entretien ici ? Partage les questions, même celles qui t’ont surpris.': 'اجتزت مقابلة هنا؟ شارك الأسئلة، حتى التي فاجأتك.',
   'Lauréats chez': 'الخريجون في', 'Aucun lauréat ni offre ouverte ici pour l’instant': 'لا يوجد خريجون ولا عروض مفتوحة هنا حاليا',
-  'Anonyme': 'مجهول', 'Toi': 'أنت', 'Membre anonyme': 'عضو مجهول', 'Étudiant(e) anonyme': 'طالب(ة) مجهول(ة)',
+  'Anonyme': 'مجهول', 'Toi': 'أنت', 'Membre anonyme': 'عضو مجهول', 'Candidature retenue': 'ترشيح مقبول', 'Candidature non retenue': 'ترشيح غير مقبول',
   'Les autres membres ne voient pas ton nom': 'باقي الأعضاء لا يرون اسمك',
   'Nom caché aux membres, visible par l’administration': 'الاسم مخفي عن الأعضاء، وتراه الإدارة فقط',
   'Supprimer cet avis ?': 'حذف هذا الرأي؟', 'Supprimer ce partage d’entretien ?': 'حذف هذه المقابلة؟', 'Supprimé.': 'تم الحذف.',
@@ -543,10 +543,10 @@ addAR({
   'Déroulement': 'سير المقابلة', 'Conseils': 'نصائح', 'Déroulement et conseils': 'سير المقابلة والنصائح',
   'Modifier mon entretien': 'تعديل مقابلتي', 'Modifier mon avis': 'تعديل رأيي',
   'Les questions qu’on t’a posées aident les suivants à se préparer. Pas de nom de recruteur ni d’information confidentielle.': 'الأسئلة التي طرحت عليك تساعد من يأتي بعدك على الاستعداد. بدون اسم المشغّل ولا معلومات سرية.',
-  'L’entreprise, le type et la saison ne changent plus.': 'لم يعد ممكنا تغيير الشركة والنوع والموسم.',
+  'L’entreprise, le type et l’année ne changent plus.': 'لم يعد ممكنا تغيير الشركة والنوع والسنة.',
   'Ex. PFE méthodes, ingénieur qualité…': 'مثال: مشروع نهاية الدراسة في المناهج، مهندس جودة…',
   'Format': 'الشكل', 'Résultat': 'النتيجة',
-  'Les questions posées': 'الأسئلة المطروحة', 'Ex. Présente un projet dont tu es fier(e).': 'مثال: قدّم مشروعا تفتخر به.', 'Une autre question…': 'سؤال آخر…',
+  'Les questions posées': 'الأسئلة المطروحة', 'Ex. Présente ton projet le plus marquant.': 'مثال: قدّم أبرز مشروع لك.', 'Une autre question…': 'سؤال آخر…',
   'Retirer cette question': 'حذف هذا السؤال', 'Ajouter une question': 'أضف سؤالا',
   'Les questions sont trop longues (4 000 caractères au total).': 'الأسئلة طويلة جدا (4000 حرف في المجموع).',
   'Difficulté': 'الصعوبة', 'Durée, avec qui, étapes, test technique…': 'المدة، مع من، المراحل، اختبار تقني…',
@@ -554,9 +554,9 @@ addAR({
   'Partager anonymement': 'شارك دون ذكر اسمك', '(ton nom n’apparaît pour aucun membre)': '(لن يظهر اسمك لأي عضو)',
   'Partager mes questions': 'شارك أسئلتي',
   'Entretien mis à jour.': 'تم تحديث المقابلة.', 'Merci ! Tes questions aideront la promo suivante.': 'شكرا! أسئلتك ستساعد الدفعة القادمة.',
-  'Comment s’est passé ce stage ? Ton avis aide les étudiants à choisir. Reste honnête et bienveillant(e).': 'كيف مر هذا التدريب؟ رأيك يساعد الطلبة على الاختيار. كن صادقا ولطيفا.',
+  'Comment s’est passé ce stage ? Ton avis aide les étudiants à choisir. Un avis honnête et bienveillant aide le plus.': 'كيف مر هذا التدريب؟ رأيك يساعد الطلبة على الاختيار. الرأي الصادق واللطيف هو الأنفع.',
   'Note globale': 'التقييم العام', 'Gratification': 'المنحة',
-  'Tu le recommandes à un(e) camarade ?': 'هل تنصح به زميلا(ة)؟', 'Oui': 'نعم', 'Non': 'لا', 'Recommandation': 'التوصية',
+  'Tu le recommandes aux autres étudiants ?': 'هل تنصح به باقي الطلبة؟', 'Oui': 'نعم', 'Non': 'لا', 'Recommandation': 'التوصية',
   'Tes conseils': 'نصائحك', 'Encadrement, missions, ambiance, transport, ce qu’il faut savoir avant d’y aller': 'التأطير، المهام، الأجواء، التنقل، وما يجب معرفته قبل الذهاب',
   'Rester anonyme': 'البقاء مجهولا',
   'Choisis au moins la note globale.': 'اختر على الأقل التقييم العام.', 'Publier mon avis': 'انشر رأيي',
@@ -567,7 +567,7 @@ addAR({
   'Ton avis, anonyme si tu veux, aide la promo suivante à choisir.': 'رأيك، دون ذكر اسمك إن أردت، يساعد الدفعة القادمة على الاختيار.',
   'Même trois questions suffisent pour aider ceux qui passent après toi.': 'حتى ثلاثة أسئلة تكفي لمساعدة من يأتي بعدك.',
   'Donner mon avis': 'أعط رأيي',
-  'Tu as déjà donné ton avis sur cette entreprise pour cette saison.': 'سبق أن أعطيت رأيك في هذه الشركة لهذا الموسم.',
+  'Tu as déjà donné ton avis sur cette entreprise pour cette année.': 'سبق أن أعطيت رأيك في هذه الشركة لهذه السنة.',
   'Ajoute au moins une question.': 'أضف سؤالا واحدا على الأقل.',
 }, [
   [/^(\d+) avis$/, n => `${n} رأي`],

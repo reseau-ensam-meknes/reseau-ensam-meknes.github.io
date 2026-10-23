@@ -27,7 +27,7 @@ test('notifications Phase 3 : textes fr / ar, liens', () => {
   assert.equal(t('signalement', { motif: '<script>' }).body, 'Motif : autre. À regarder dans la modération.');
   assert.equal(t('signalement', { motif: 'spam' }).url, `${SITE}#admin/moderation`);
   assert.equal(t('verification_pair', { nom: 'Hamid', n: 1 }).title, 'Ta promo confirmée une fois');
-  assert.equal(t('verification_pair', { nom: 'Hamid', n: 2 }).title, 'Tu es vérifié(e)');
+  assert.equal(t('verification_pair', { nom: 'Hamid', n: 2 }).title, 'Ton profil est vérifié');
   assert.equal(t('verifier_pair', { nom: 'Rachid', promo: 2016 }).body, 'Rachid vient de rejoindre le réseau (promo 2016). Confirme-le si tu le connais.');
   assert.equal(t('verifier_pair', { nom: 'Rachid', promo: '20x6' }).body, 'Rachid vient de rejoindre le réseau. Confirme-le si tu le connais.');
   const e = t('evenement', { titre: 'Forum ENSAM Entreprises', debut: '2026-11-12T09:00:00Z', lieu: 'Amphi A' });
@@ -41,7 +41,7 @@ test('notifications Phase 3 : textes fr / ar, liens', () => {
   assert.equal(t('enquete', {}).url, `${SITE}#enquete`);
   // Arabe : contenu des membres isolé
   const a = t('contact_demande', { nom: 'Salma' }, 'ar');
-  assert.equal(a.title, 'طلب معلومات الاتصال');
+  assert.equal(a.title, 'مشاركة معلومات الاتصال بك؟');
   assert.ok(a.body.includes('⁨Salma⁩'));
   assert.equal(t('signalement', { motif: 'faux' }, 'ar').body, 'السبب: معلومة خاطئة. راجعه في صفحة الإشراف.');
   for (const k of ['offre_alerte', 'contact_demande', 'contact_accepte', 'relecture_demande', 'relecture_prise', 'relecture_rendue', 'signalement', 'verification_pair', 'verifier_pair', 'evenement', 'evenement_annule', 'evenement_deplace', 'enquete']) {

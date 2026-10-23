@@ -267,7 +267,7 @@ test('mentorat : demander, fixer l’horaire, confirmer sa présence, ignorer un
   await s.comme('Salma'); await s.fiche('Youssef El Amrani');
   await s.page.click('.modal button:has-text("Demander de l’aide")'); await s.page.waitForTimeout(300);
   await s.page.click('.need-pick .chip >> nth=0'); await s.page.fill('#ah-sujet', 'Préparer mon PFE en lean');
-  await s.page.click('.modal .btn.primary:has-text("Envoyer ma demande")'); await s.page.waitForTimeout(400);
+  await s.page.click('.modal .btn.primary:has-text("Envoyer ces horaires")'); await s.page.waitForTimeout(400);
   // Youssef choisit un horaire : le rendez-vous attend la confirmation de Salma
   await s.aller('accueil'); await s.comme('Youssef'); await s.aller('mentorat');
   await carte('Préparer mon PFE en lean').locator('.chip.time').first().click();
@@ -282,7 +282,7 @@ test('mentorat : demander, fixer l’horaire, confirmer sa présence, ignorer un
   await s.aller('accueil'); await s.comme('Youssef'); await s.aller('mentorat');
   assert.match(await carte('Préparer mon PFE en lean').innerText(), /Salma a confirmé sa présence/);
   // Une demande ouverte à tous peut être écartée : elle ne revient plus
-  await s.page.click('button:has-text("Voir les autres demandes")'); await s.page.waitForTimeout(200);
+  await s.page.click('button:has-text("Voir les autres étudiants")'); await s.page.waitForTimeout(200);
   const ign = s.page.locator('.mreq button:has-text("Ignorer")');
   const avant = await ign.count(); assert.ok(avant > 0, 'au moins une demande ouverte à écarter');
   await ign.first().click(); await s.page.waitForTimeout(300);
@@ -293,9 +293,9 @@ test('mentorat : demander, fixer l’horaire, confirmer sa présence, ignorer un
   const enAttente = s.page.locator('.m-section', { hasText: 'Suivi de l’école' }).locator('.mreq:has(.m-more-btn)');
   const n = await enAttente.count(); assert.ok(n > 0, 'au moins une demande en attente à retirer');
   await enAttente.first().locator('.m-more-btn').click();
-  await s.page.click('[role="menuitem"]:has-text("Retirer la demande")');
+  await s.page.click('[role="menuitem"]:has-text("Retirer ces horaires")');
   await s.page.click('.modal .btn.danger'); await s.page.waitForTimeout(300);
-  assert.match(await s.page.locator('.toast').last().innerText(), /Demande retirée/);
+  assert.match(await s.page.locator('.toast').last().innerText(), /C’est retiré/);
   assert.equal(await enAttente.count(), n - 1);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
@@ -448,7 +448,7 @@ async function prevenirSur(etat, opts = {}) {
     await s.fiche('Youssef El Amrani');
     await s.page.click('.modal button:has-text("Demander de l’aide")'); await s.page.waitForTimeout(300);
     await s.page.click('.need-pick .chip >> nth=0'); await s.page.fill('#ah-sujet', sujet);
-    await s.page.click('.modal .btn.primary:has-text("Envoyer ma demande")'); await s.page.waitForTimeout(700);
+    await s.page.click('.modal .btn.primary:has-text("Envoyer ces horaires")'); await s.page.waitForTimeout(700);
   };
   return { ...s, memo, changerMemo, mentorat };
 }
@@ -457,7 +457,7 @@ test('« Me prévenir » : rien en démo ordinaire, le petit mot reste', async (
   const s = await prevenirSur(null);
   await s.comme('Amine'); await s.mentorat('Choisir mon stage de 3A');
   assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
-  assert.match(await s.page.locator('.toast').last().innerText(), /Demande envoyée à Youssef/);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Horaires envoyés à Youssef/);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -468,7 +468,7 @@ test('« Me prévenir » : après une demande de mentorat, la feuille remplace l
   await s.page.waitForSelector('.modal.prevenir');
   assert.equal(await s.page.locator('.prevenir .modal-head h2, .prevenir h2').first().innerText(), 'Te prévenir de la réponse ?');
   assert.match(await s.page.locator('.modal.prevenir').innerText(), /choisit un horaire/);
-  assert.match(await s.page.locator('.prevenir .verify-ok').innerText(), /Demande envoyée à Youssef\./);
+  assert.match(await s.page.locator('.prevenir .verify-ok').innerText(), /Horaires envoyés à Youssef\./);
   assert.match(await s.page.locator('#pv-oui').innerText(), /Me prévenir/);
   assert.equal(await s.page.locator('.toast').count(), 0, 'pas de petit mot sous la feuille');
   assert.ok(await s.page.evaluate(() => document.querySelector('.prevenir .modal-foot').getBoundingClientRect().bottom <= innerHeight + .5));
@@ -479,7 +479,7 @@ test('« Me prévenir » : après une demande de mentorat, la feuille remplace l
   // Juste après un refus : le petit mot, pas la feuille
   await s.mentorat('Préparer mon entretien');
   assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
-  assert.match(await s.page.locator('.toast').last().innerText(), /Demande envoyée à Youssef/);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Horaires envoyés à Youssef/);
   // 15 jours plus tard : une dernière fois
   await s.changerMemo('({ ...m, at: m.at - 15 * 864e5 })');
   await s.mentorat('Relire mon rapport');
@@ -568,7 +568,8 @@ test('partage WhatsApp : le lien direct rouvre l’offre et la question ; l’ad
   await s.page.locator('.ocard-main').first().click(); await s.page.waitForSelector('.od h2');
   const titre = await s.page.locator('.od h2').innerText();
   const msg = decodeURIComponent((await s.page.getAttribute('#od-partage', 'href')).split('https://wa.me/?text=')[1]);
-  assert.ok(msg.includes(titre), msg);
+  // La fiche ne répète pas le type (« PFE : ») déjà dit par l’étiquette ; le message, lui, le garde
+  assert.ok(msg.toLowerCase().includes(titre.toLowerCase()), msg);
   const lien = msg.match(/https?:\/\/\S+#offre\/\S+/)[0];
   await s.fermer(); await s.aller('accueil');
   await s.page.goto(lien); await s.page.reload(); await s.page.waitForSelector('.od h2');
@@ -707,7 +708,7 @@ for (const langue of ['fr', 'ar']) {
     await s.page.waitForSelector('#pf-role-rappel');
     // Le rôle choisi sur la page d'entrée n'est pas redemandé : il est rappelé
     assert.equal(await s.page.locator('#pf-je-laureat').count(), 0);
-    if (langue === 'fr') assert.equal(await s.page.locator('#pf-role-rappel').innerText(), 'Tu t’inscris comme lauréat(e).');
+    if (langue === 'fr') assert.equal(await s.page.locator('#pf-role-rappel').innerText(), 'Tu t’inscris côté lauréats.');
     assert.equal(await s.page.inputValue('#pf-promo'), '', 'aucune promo choisie d’avance');
     for (const id of ['#pf-name', '#pf-promo', '#pf-fil', '#pf-aide-oui']) {
       const b = await s.page.locator(id).boundingBox();
@@ -764,7 +765,7 @@ test('inscription d’un étudiant : la promo part vide, puis dit l’année ; c
   assert.equal(await s.page.inputValue('#pf-promo'), '', 'une promo vide reste vide');
   const S = await s.page.evaluate(async () => (await import('./logic.js')).seasonOf());
   await s.page.fill('#pf-promo', String(S + 3)); await s.page.waitForTimeout(150);
-  assert.match(await s.page.locator('#pf-promo').locator('xpath=ancestor::label').innerText(), /Cette saison, tu es en 3e année\./);
+  assert.match(await s.page.locator('#pf-promo').locator('xpath=ancestor::label').innerText(), /En \d{4}-\d{4}, tu es en 3e année\./);
   assert.equal(await s.page.locator('#pf-aide').count(), 0, '« aider » ne concerne que les lauréats');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
@@ -910,7 +911,7 @@ test('accueil après l’inscription : une lauréate apprend son rang, voit des 
   await s.page.setViewportSize({ width: 360, height: 640 });
   await s.comme('Nadia'); await signalArrivee(s.page);
   await s.page.reload(); await s.page.waitForSelector('.modal.arrivee', { timeout: 5000 });
-  const attendu = await s.page.evaluate(async () => { const { rangLaureat } = await import('./logic.js'); return `Te voilà ${rangLaureat(window.__demo.data.profiles, window.__demo.me)}e lauréat(e) du réseau`; });
+  const attendu = await s.page.evaluate(async () => { const { rangLaureat } = await import('./logic.js'); return `Te voilà ${rangLaureat(window.__demo.data.profiles, window.__demo.me)}e parmi les lauréats du réseau`; });
   assert.equal(await s.page.locator('.arrivee-titre').innerText(), attendu);
   const n = await s.page.locator('.arrivee-visages .avatar').count();
   assert.ok(n >= 1 && n <= 5, `${n} visages`);
@@ -973,7 +974,7 @@ test('CV qui contredit ou complète le profil : le membre met à jour en un clic
   await s.comme('Salma'); await s.aller('profil');
   await deposerPdf(s.page, '#cv-file', CV_LAUREAT);
   await s.page.waitForSelector('#cv-controle', { timeout: 15000 });
-  assert.match(await s.page.locator('#cv-controle').innerText(), /Lauréat\(e\) · Promo 2021/);
+  assert.match(await s.page.locator('#cv-controle').innerText(), /Profil lauréat · Promo 2021/);
   await s.page.click('#cv-appliquer'); await s.page.waitForTimeout(300);
   assert.match(await s.page.locator('.toast').last().innerText(), /Profil mis à jour d’après ton CV/);
   assert.equal(await s.page.locator('#cv-controle').count(), 0);
@@ -988,7 +989,7 @@ test('CV qui contredit ou complète le profil : le membre met à jour en un clic
   await s.page.click('#adm-lire-cv');
   const ligne = s.page.locator('.revoir-list li', { hasText: 'Amine' });
   await ligne.waitFor({ timeout: 20000 });
-  assert.match(await ligne.innerText(), /Son CV indique :\s*Lauréat\(e\) · Promo 2021/);
+  assert.match(await ligne.innerText(), /Son CV indique :\s*Profil lauréat · Promo 2021/);
   await ligne.locator('button', { hasText: 'Appliquer' }).click(); await s.page.waitForTimeout(300);
   assert.match(await s.page.locator('.toast').last().innerText(), /Profil corrigé/);
   assert.equal(await s.page.locator('.revoir-list li', { hasText: 'Amine' }).count(), 0);
@@ -1011,10 +1012,10 @@ test('lecture de CV fausse : le membre la signale, l’administration la copie p
   assert.match(await s.page.locator('.callout.today').innerText(), /1 erreur de lecture de CV signalée/);
   await s.aller('admin/membres');
   const panneau = s.page.locator('#adm-lectures');
-  assert.match(await panneau.innerText(), /Lu :\s*Lauréat\(e\) · Promo 2021[\s\S]*Juste :\s*Étudiante 5A, promo 2027/);
+  assert.match(await panneau.innerText(), /Lu :\s*Profil lauréat · Promo 2021[\s\S]*Juste :\s*Étudiante 5A, promo 2027/);
   await s.page.click('#adm-cv-copier'); await s.page.waitForTimeout(200);
   const copie = await s.page.evaluate(() => navigator.clipboard.readText());
-  assert.match(copie, /Lu dans le CV : Lauréat\(e\) · Promo 2021/);
+  assert.match(copie, /Lu dans le CV : Profil lauréat · Promo 2021/);
   assert.match(copie, /\| 2016 – 2021 : Diplôme d'ingénieur d'État en Génie Industriel, ENSAM Meknès/);
   assert.doesNotMatch(copie, /outlook|61 22 33|Salma/, 'ni coordonnées ni nom');
   // Relue par l'administration, la même lecture n'est plus proposée
@@ -1179,7 +1180,7 @@ test('lauréats à vérifier : CV et LinkedIn en vue ; sans CV, un message tout 
   const nom = (await ligne.locator('.person-name').first().innerText()).split(' ')[0];
   await ligne.locator('button', { hasText: 'Demander son CV' }).click(); await s.page.waitForTimeout(400);
   const brouillon = await s.page.inputValue('#chat-txt');
-  assert.match(brouillon, /^Bonjour .+, bienvenue sur le Réseau ENSAM Meknès ! Pour vérifier ton profil de lauréat\(e\), peux-tu déposer ton CV en PDF/);
+  assert.match(brouillon, /^Bonjour .+, bienvenue sur le Réseau ENSAM Meknès ! Pour vérifier ton profil, peux-tu déposer ton CV en PDF/);
   assert.ok(brouillon.includes(nom), 'le prénom du lauréat');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
@@ -1255,7 +1256,7 @@ test('demande d’un étudiant : il publie (CV joint), un lauréat propose, matc
   await s.aller('offres/demandes');
   assert.match(await carte().innerText(), /Réussie/);
   await s.aller('suivi');
-  assert.match(await s.page.locator('.wins').first().innerText(), /Salma Bennani a décroché son PFE chez Renault Group Maroc encadré\(e\) par Youssef El Amrani/);
+  assert.match(await s.page.locator('.wins').first().innerText(), /Salma Bennani a décroché son PFE chez Renault Group Maroc avec l’encadrement de Youssef El Amrani/);
   // L'administration voit les demandes en cours
   await s.comme('Admin'); await s.aller('offres/demandes');
   assert.match(await s.page.locator('.dm-page').innerText(), /ouvertes · \d+ en match · \d+ réussies/);
@@ -1298,7 +1299,7 @@ test('cloche : son chiffre compte ce qui attend un geste, la feuille dit « À f
   // Un geste depuis la cloche : elle se ferme et l'écran du geste s'ouvre
   await s.page.locator('.cloche .af-row', { hasText: 'candidatures' }).locator('button').first().click(); await s.page.waitForTimeout(300);
   assert.equal(await s.page.locator('.modal.cloche').count(), 0);
-  assert.match(await s.page.locator('.modal').last().innerText(), /PFE : réduction des rebuts[\s\S]*Candidats/, 'l’offre s’ouvre sur ses candidats');
+  assert.match(await s.page.locator('.modal').last().innerText(), /Réduction des rebuts[\s\S]*Candidats/, 'l’offre s’ouvre sur ses candidats');
   await s.fermer();
   const pastilles = () => s.page.$$eval('.bottom-nav a', as => as.filter(a => a.querySelector('.dotn')).map(a => a.innerText.trim().split('\n')[0]));
   assert.deepEqual((await pastilles()).sort(), ['Espace', 'Mentorat']);
@@ -1416,7 +1417,7 @@ test('arabe : les phrases de l’accueil sont traduites en entier, noms de repli
   const ar = await s.page.evaluate(async () => {
     const { t } = await import('./i18n.js');
     return ['Une question pour toi sur France : Où se loger à Toulouse ?', 'C’est un match avec Salma Bennani : déclare son démarrage dès qu’il a lieu.',
-      'Un lauréat relit ton CV', 'Un lauréat indique t’avoir recruté(e) chez Lear', '45 lauréats sont déjà là', '2 lauréats sont déjà là, dont 1 de ta promo',
+      'Un lauréat relit ton CV', 'Un lauréat déclare ton recrutement chez Lear', '45 lauréats sont déjà là', '2 lauréats sont déjà là, dont 1 de ta promo',
       'Tu relis le CV de Hatim Moussaoui', 'Continuer la relecture'].map(t);
   });
   assert.match(ar[0], /^سؤال موجّه إليك حول فرنسا/);
@@ -1452,7 +1453,7 @@ test('un rendez-vous ne prend la carte que la veille ; Mentorat calme propose «
   assert.match(await calme.innerText(), /Tout est calme pour l’instant/);
   assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1);
   await calme.locator('.empty button:has-text("Me rendre disponible")').click(); await s.page.waitForTimeout(300);
-  assert.match(await calme.innerText(), /Tu seras prévenu\(e\)/);
+  assert.match(await calme.innerText(), /On te prévient dès qu’un étudiant demande de l’aide/);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -1478,6 +1479,42 @@ test('cloche : une relecture commencée reste à faire ; une note sans merci et 
   assert.doesNotMatch(faire, /Lire ses conseils/, 'une note suffit : rien à faire de plus');
   assert.doesNotMatch(faire, /Confirmer ma présence/, 'le rendez-vous a commencé : plus rien à confirmer');
   assert.match(await s.page.locator('.pas .pas-oeil').innerText(), /C’est l’heure/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('portes ouvertes : un refus dit le vrai nombre d’offres, un rendez-vous annulé propose d’autres horaires, les points restent côté lauréat', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const demo = f => s.page.evaluate(f => { const k = 'ensam-demo-v14', st = JSON.parse(localStorage.getItem(k)); new Function('d', f)(st.data); localStorage.setItem(k, JSON.stringify(st)); }, f);
+  const recharger = async () => { await s.page.reload(); await s.page.waitForSelector('.hello'); await s.page.waitForTimeout(300); if (await s.page.$('.fete-back')) await s.fermer(); };
+  const cloche = async () => { await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche'); const t = await s.page.locator('.modal.cloche').innerText(); await s.fermer(); return t; };
+  // Salma : une candidature pas retenue, et le lauréat annule son prochain rendez-vous
+  await s.comme('Salma');
+  await demo(`const sa = d.profiles.find(p => p.full_name.startsWith('Salma')), now = new Date().toISOString();
+    const a = d.applications.find(x => x.student_id === sa.id && x.offer_id); a.status = 'refuse'; a.updated_at = now;
+    const m = d.mentorships.find(x => x.student_id === sa.id && x.status === 'acceptee' && new Date(x.rdv_at) > Date.now()); m.status = 'annulee'; m.sujet = 'Préparer mon entretien';`);
+  await recharger();
+  const n = await s.page.evaluate(async () => { const { offresOuvertesPour, seasonOf } = await import('./logic.js'); return offresOuvertesPour(window.__demo.data, window.__demo.me, seasonOf()).length; });
+  const t = await cloche();
+  assert.match(t, n > 1 ? new RegExp(`pas retenue cette fois\\. ${n} autres offres t’attendent\\.`) : n === 1 ? /pas retenue cette fois\. Une autre offre t’attend\./ : /pas retenue cette fois\. (Dis aux lauréats|Un lauréat peut)/);
+  assert.match(t, /Ton rendez-vous avec \S+ pour « Préparer mon entretien » est annulé\. Tu peux lui proposer d’autres horaires\./);
+  assert.doesNotMatch(t, /points|Pas retenu\(e\)|\(e\)/);
+  // Le lien de la notification : « Proposer d'autres horaires » au même lauréat, sur le même sujet
+  const id = await s.page.evaluate(() => window.__demo.data.mentorships.find(x => x.status === 'annulee' && x.sujet === 'Préparer mon entretien').id);
+  await s.aller('mentorat/reprendre/' + id); await s.page.waitForSelector('#ah-sujet');
+  assert.equal(await s.page.inputValue('#ah-sujet'), 'Préparer mon entretien');
+  await s.fermer();
+  // Côté étudiant, aucun point nulle part ; côté lauréat, un recrutement confirmé met la personne d'abord et les points en pastille
+  assert.equal(await s.page.locator('.pastille-pts').count(), 0);
+  await s.comme('Youssef');
+  await demo(`const y = d.profiles.find(p => p.full_name === 'Youssef El Amrani'); const p = d.placements.find(x => x.laureat_id === y.id && x.status === 'confirme');
+    p.confirmed_at = new Date().toISOString(); p.merci = 'Merci pour tout !'; p.pays = 'France';`);
+  await recharger();
+  await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
+  const ligne = s.page.locator('.modal.cloche .notif', { hasText: 'te remercie : son' }).first();
+  assert.match(await ligne.innerText(), /te remercie : son (recrutement|démarrage) chez .+ est confirmé\.\s*\+85 points/);
+  assert.equal(await ligne.locator('.pastille-pts').innerText(), '+85 points');
+  await s.fermer();
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });

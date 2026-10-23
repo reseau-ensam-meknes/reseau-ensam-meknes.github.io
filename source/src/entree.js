@@ -15,11 +15,11 @@ addAR({
   'Réseau ENSAM Meknès': 'شبكة ENSAM مكناس',
   'Les lauréats ouvrent la porte aux étudiants.': 'الخريجون يفتحون الباب أمام الطلبة.',
   'Stage, PFE, premier emploi : les étudiants demandent, les lauréats aident et recrutent.': 'تدريب، مشروع نهاية الدراسة، أول عمل: الطلبة يطلبون، والخريجون يساعدون ويوظّفون.',
-  'Tu es…': 'أنت…', 'Étudiant(e)': 'طالب(ة)', 'Lauréat(e)': 'خريج(ة)',
+  'Ta situation': 'وضعيتك', 'Je suis à l’école': 'أدرس في المدرسة', 'J’ai mon diplôme': 'حصلت على شهادتي',
   'De la 1re à la 5e année à l’ENSAM Meknès': 'من السنة الأولى إلى الخامسة في ENSAM مكناس',
-  'Diplômé(e) de l’ENSAM Meknès, en poste ou en recherche': 'خريج(ة) ENSAM مكناس، في وظيفة أو يبحث عن عمل',
-  '1re à 5e année': 'من السنة الأولى إلى الخامسة', 'Diplômé(e) ENSAM': 'خريج(ة) المدرسة',
-  'Choisis d’abord : étudiant(e) ou lauréat(e).': 'اختر أولًا: طالب(ة) أم خريج(ة).',
+  'De l’ENSAM Meknès, en poste ou en recherche d’emploi': 'من ENSAM مكناس، في وظيفة أو في بحث عن عمل',
+  '1re à 5e année': 'من السنة الأولى إلى الخامسة', 'Diplôme ENSAM': 'شهادة ENSAM',
+  'Choisis d’abord ta situation.': 'اختر أولًا وضعيتك.',
   'Pour les lauréats': 'للخريجين', 'Pour les étudiants': 'للطلبة',
   'Recrute tes stagiaires parmi les étudiants de ton école': 'وظّف متدرّبيك من بين طلبة مدرستك',
   'Aide un étudiant en 20 minutes de visio, quand tu as le temps': 'ساعد طالبًا في 20 دقيقة عبر الفيديو، متى توفّر لك الوقت',
@@ -88,7 +88,7 @@ addAR({
   [/^(\d+) promos?$/, n => arCount(n, ['دفعة واحدة', 'دفعتان', 'دفعات', 'دفعة'])],
   [/^Renvoyer le code dans (\d+) s$/, n => `يمكنك طلب رمز جديد بعد ${arCount(n, ['ثانية واحدة', 'ثانيتين', 'ثوانٍ', 'ثانية'])}`],
   [/^Bienvenue, promo (\d{4}) !$/, y => `مرحبا بك، دفعة ${y}!`],
-  [/^Étudiant\(e\) : (inscris-toi|de préférence) avec ton email de l’école \((.+)\)\. Ton compte est alors vérifié tout de suite\.$/, (m, d) => m === 'inscris-toi' ? `طالب(ة): سجّل ببريد المدرسة (${d}). يُوثَّق حسابك فورًا.` : `طالب(ة): يُفضَّل التسجيل ببريد المدرسة (${d}). يُوثَّق حسابك فورًا.`],
+  [/^Côté étudiants : (inscris-toi|de préférence) avec ton email de l’école \((.+)\)\. Ton compte est alors vérifié tout de suite\.$/, (m, d) => m === 'inscris-toi' ? `للطلبة: التسجيل ببريد المدرسة (${d}). يُوثَّق الحساب فورًا.` : `للطلبة: يُفضَّل التسجيل ببريد المدرسة (${d}). يُوثَّق الحساب فورًا.`],
 ]);
 
 // ---------------------------------------------------------------------------
@@ -214,14 +214,14 @@ export const oublierLien = () => ecrire(CLE_LIEN, null);
 export { suiteLien };
 
 // ---------------------------------------------------------------------------
-// « Tu es… » : étudiant(e) ou lauréat(e), choisi une seule fois (page d'entrée, puis rappelé à l'étape suivante)
+// « Ta situation » : à l'école ou diplômé, choisi une seule fois (page d'entrée, puis rappelé à l'étape suivante)
 // ---------------------------------------------------------------------------
 const ROLES = [
-  ['etudiant', 'cap', 'Étudiant(e)', 'De la 1re à la 5e année à l’ENSAM Meknès', '1re à 5e année'],
-  ['laureat', 'briefcase', 'Lauréat(e)', 'Diplômé(e) de l’ENSAM Meknès, en poste ou en recherche', 'Diplômé(e) ENSAM'],
+  ['etudiant', 'cap', 'Je suis à l’école', 'De la 1re à la 5e année à l’ENSAM Meknès', '1re à 5e année'],
+  ['laureat', 'briefcase', 'J’ai mon diplôme', 'De l’ENSAM Meknès, en poste ou en recherche d’emploi', 'Diplôme ENSAM'],
 ];
 export function ChoixRole({ value, onChange, idPrefix = 'pf-je-', compact = false }) {
-  return html`<fieldset class=${'je-suis' + (compact ? ' compact' : '')}><legend>Tu es…</legend><div class="je-suis-choix">
+  return html`<fieldset class=${'je-suis' + (compact ? ' compact' : '')}><legend>Ta situation</legend><div class="je-suis-choix">
     ${ROLES.map(([r, ico, t, long, court]) => html`<button type="button" id=${idPrefix + r} class=${'je-carte' + (value === r ? ' on' : '')} aria-pressed=${value === r ? 'true' : 'false'} onClick=${() => onChange(r)}>
       <span class="je-ico"><${Icon} name=${ico} size=${compact ? 18 : 22}/></span><strong>${t}</strong><span class="small muted">${compact ? court : long}</span><span class="je-coche"><${Icon} name="check" size=${16}/></span></button>`)}</div></fieldset>`;
 }
@@ -377,7 +377,7 @@ export function AuthScreen({ store }) {
   const etuAvant = (role || (invite ? roleDePromo(invite) : '')) === 'etudiant';
   const bandeau = invite && inscription && (!role || role === roleDePromo(invite));
   const ecoleOk = deLEcole && (inscription || mode === 'connexion') ? html`<span id="au-ecole" class="field-hint good-t" role="status"><${Icon} name="check" size=${14}/> ${role === 'laureat' || mode === 'connexion' ? 'Email de l’école reconnu.' : 'Email de l’école reconnu : ton profil étudiant sera vérifié tout de suite.'}</span>` : null;
-  const indice = inscription && role === 'etudiant' && ecole.length && !deLEcole ? `Étudiant(e) : ${store?.reglages?.email_ecole_obligatoire ? 'inscris-toi' : 'de préférence'} avec ton email de l’école (${ecole.map(d => '@' + d).join(', ')}). Ton compte est alors vérifié tout de suite.` : '';
+  const indice = inscription && role === 'etudiant' && ecole.length && !deLEcole ? `Côté étudiants : ${store?.reglages?.email_ecole_obligatoire ? 'inscris-toi' : 'de préférence'} avec ton email de l’école (${ecole.map(d => '@' + d).join(', ')}). Ton compte est alors vérifié tout de suite.` : '';
   const champEmail = html`<${Field} label="Email" hint=${indice}><input id="au-email" type="email" required autocomplete="email" inputmode="email" dir="ltr" value=${email} onInput=${e => setEmail(e.target.value)}/>${ecoleOk}<//>`;
   const pourquoiCode = html`<p class="small muted au-sans-mdp">Pas de mot de passe : on t’envoie un code à 6 chiffres par email.</p>`;
   const pour = (etuAvant ? ['etudiant', 'laureat'] : ['laureat', 'etudiant']).map(r => POUR[r]);
@@ -397,7 +397,7 @@ export function AuthScreen({ store }) {
       ${inscription ? null : html`<h2>${{ connexion: 'Se connecter', code: 'Ton code est parti', motdepasse: 'Se connecter', nouveau: 'Nouveau mot de passe' }[mode]}</h2>`}
       ${bandeau ? html`<p class="invite-band"><${Icon} name="send" size=${18}/><span><strong>Bienvenue, promo ${invite} !</strong> Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.</span></p>` : null}
       ${inscription ? html`<${ChoixRole} value=${role} onChange=${setRole} idPrefix="au-je-" compact/>
-        ${roleMsg ? html`<p id="au-role-msg" class="auth-msg err" role="alert">Choisis d’abord : étudiant(e) ou lauréat(e).</p>` : null}` : null}
+        ${roleMsg ? html`<p id="au-role-msg" class="auth-msg err" role="alert">Choisis d’abord ta situation.</p>` : null}` : null}
       ${mode === 'code' ? html`
         <p id="au-code-envoye" class="muted">Entre le code à 6 chiffres envoyé à</p>
         <p class="au-adresse"><strong id="au-code-email" dir="ltr" translate="no">${email.trim()}</strong><button type="button" id="au-changer" class="linkish" aria-label="Changer d’email" onClick=${changerEmail}>Changer</button></p>

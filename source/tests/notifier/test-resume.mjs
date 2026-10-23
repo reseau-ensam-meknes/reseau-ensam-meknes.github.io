@@ -210,6 +210,45 @@ test('objets : pluriels français et accords arabes', () => {
   assert.equal(N.rendreResume(r, 'fr', SITE, TOKEN).sujet, 'Ta semaine sur le Réseau ENSAM Meknès');
 });
 
+test('impact : la personne d’abord (son merci), puis les mercis, puis les recrutements avec leurs points en pastille', () => {
+  const r = resume(ID.youssef);
+  assert.equal(r.impact.ptsRecrutements, 50);
+  const m = N.rendreResume(r, 'fr', SITE, TOKEN);
+  const sec = m.texte.slice(m.texte.indexOf('TON IMPACT CETTE SEMAINE'), m.texte.indexOf('TON NOUVEAU FILLEUL'));
+  const [cit, mer, rec] = ['— Hiba', '2 mercis', '1 recrutement confirmé grâce à toi. (+50 points)'].map(x => sec.indexOf(x));
+  assert.ok(cit > 0 && cit < mer && mer < rec, sec);
+  assert.match(m.html, /recrutement confirmé<\/strong> grâce à toi\. <span style="[^"]*border-radius:999px[^"]*">\+50 points<\/span>/);
+  // À l'international, le vrai nombre (75) ; en arabe « نقطة » au-delà de 10, le nombre isolé de gauche à droite
+  const loin = { ...r, impact: { ...r.impact, ptsRecrutements: 75 } };
+  assert.ok(N.rendreResume(loin, 'fr', SITE, TOKEN).texte.includes('1 recrutement confirmé grâce à toi. (+75 points)'));
+  assert.ok(N.rendreResume(loin, 'ar', SITE, TOKEN).texte.includes('بفضلك. (\u2066+75\u2069 نقطة)'));
+  // L'objet et les lignes des étudiants ne portent jamais de points
+  const objet = N.rendreResume({ ...r, candidatures: 0, demandes: [], rdv: [] }, 'fr', SITE, TOKEN).sujet;
+  assert.equal(objet, '1 recrutement confirmé grâce à toi · Réseau ENSAM');
+  assert.equal(N.rendreResume({ ...r, candidatures: 0, demandes: [], rdv: [] }, 'ar', SITE, TOKEN).sujet, 'توظيف مؤكَّد بفضلك · شبكة ENSAM');
+  for (const id of [ID.salma, ID.amine, ID.leila]) assert.doesNotMatch(N.rendreResume(resume(id), 'fr', SITE, TOKEN).texte, /points/);
+});
+
+test('un mot pour chaque chose : horaires, avis, coordonnées, année', () => {
+  const r = resume(ID.youssef);
+  const fr = N.rendreResume(r, 'fr', SITE, TOKEN).texte, ar = N.rendreResume(r, 'ar', SITE, TOKEN).texte;
+  assert.ok(fr.includes('2 étudiants de ta filière attendent un horaire.'));
+  assert.ok(ar.includes('طالبان من شعبتك في انتظار توقيت.'));
+  assert.ok(ar.includes('مساعدتك مطلوبة من \u2068Imane Chraibi\u2069'));
+  const sujet = (x, l) => N.rendreResume({ ...r, candidatures: 0, rdv: [], impact: { mercis: 0, recrutements: 0, citation: null }, questions: [], filleuls: [], offres: { total: 0, liste: [] }, talents: { total: 0, liste: [] }, ...x }, l, SITE, TOKEN).sujet;
+  assert.equal(sujet({ demandes: [{ nom: 'A', sujet: 'S' }, { nom: 'B', sujet: 'T' }] }, 'fr'), '2 étudiants aimeraient ton avis · Réseau ENSAM');
+  assert.equal(sujet({ demandes: [{ nom: 'A', sujet: 'S' }, { nom: 'B', sujet: 'T' }, { nom: 'C', sujet: 'U' }] }, 'ar'), '3 طلبة ينتظرون رأيك · شبكة ENSAM');
+  assert.equal(sujet({ demandes: [] }, 'fr'), '2 étudiants de ta filière attendent un horaire · Réseau ENSAM');
+  const seul = { demandes: [], ouvertes: { total: 0, sujets: [] }, aClore: [], relances: [], reponses: [], cafes: [] };
+  assert.equal(sujet({ ...seul, contacts: 3 }, 'fr'), '3 membres aimeraient tes coordonnées · Réseau ENSAM');
+  assert.equal(sujet({ ...seul, contacts: 1 }, 'fr'), 'Un membre aimerait tes coordonnées · Réseau ENSAM');
+  assert.equal(sujet({ ...seul, contacts: 2 }, 'ar'), 'عضوان يرغبان في معلومات الاتصال بك · شبكة ENSAM');
+  // Côté étudiant : « ton année » (pas « ta promo », ni « ton niveau »)
+  assert.ok(N.rendreResume(resume(ID.leila), 'fr', SITE, TOKEN).texte.includes('1 membre de ton année ou de ta filière a rejoint le réseau cette semaine.'));
+  assert.ok(N.rendreResume(resume(ID.salma), 'fr', SITE, TOKEN).texte.includes('cette semaine pour ta filière et ton année.'));
+  assert.ok(N.rendreResume(resume(ID.amine), 'fr', SITE, TOKEN).texte.includes('Ton parrainage cette année : Youssef Alami, de ta filière. Fais-lui signe !'));
+});
+
 test('aperçus : étudiante en français, lauréat en arabe', () => {
   const dossier = process.env.APERCU_DIR || path.join(os.tmpdir(), 'ensam-apercus');
   fs.mkdirSync(dossier, { recursive: true });

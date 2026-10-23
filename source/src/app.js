@@ -2,8 +2,8 @@
 import { getLang, setLang, chargerAR } from './i18n.js';
 import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore, texteErreur } from './store.js';
-import { Icon, Field, Empty, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, Num, useLocal, Celebration, celebrate, voirRangs, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille } from './ui.js';
-import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, besoinsDeMoi, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription } from './logic.js';
+import { Icon, Field, Empty, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, Num, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille } from './ui.js';
+import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, besoinsDeMoi, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
 import { ParcoursPage, EspacePage, Journey, journeyStep, confirmerRecrutement, refuserRecrutement, versMerci } from './me.js';
 import { DashboardPage } from './dashboard.js';
@@ -38,7 +38,7 @@ function navFor(me) {
   const items = [['accueil', 'Accueil', 'home'], ['offres', 'Offres', 'feed'], ['mentorat', 'Mentorat', 'mentor'], ['messages', 'Messages', 'chat']];
   if (me.role === 'etudiant') items.push(['parcours', 'Mon parcours', 'route']);
   else if (me.role === 'laureat') items.push(['espace', 'Mon espace', 'star']);
-  items.push(['reseau', 'Réseau', 'network'], ['suivi', me.role === 'etudiant' ? 'Ma promo' : 'Suivi', 'chart']);
+  items.push(['reseau', 'Réseau', 'network'], ['suivi', me.role === 'etudiant' ? 'Mon année' : 'Suivi', 'chart']);
   if (me.role === 'admin') items.push(['admin', 'Admin', 'shield']);
   return items;
 }
@@ -114,6 +114,13 @@ function App({ store }) {
   useEffect(() => { if (coque && route.base === 'offre' && route.sub) { setOfferId(route.sub); setApplyNow(false); go('offres', { exact: true }); } }, [route.base, route.sub, coque]);
   // Lien direct « Je peux aider » (notification sur le téléphone, email) : #aider/<id> ouvre la feuille devant la demande
   useEffect(() => { if (route.base === 'aider' && route.sub && store.me) { setAide({ demande: route.sub }); go('offres/demandes/' + route.sub, { exact: true }); } }, [route.base, route.sub, !!store.me]);
+  // Lien direct « Proposer d'autres horaires » (notification d'un rendez-vous annulé) : #mentorat/reprendre/<id>
+  useEffect(() => {
+    if (route.base !== 'mentorat' || route.sub !== 'reprendre' || !store.me) return;
+    const m = store.byId('mentorships', route.sub2);
+    if (m && m.student_id === store.me.id && m.status === 'annulee') setAskMentor({ p: store.byId('profiles', m.mentor_id) || null, besoin: m.besoin || '', sujet: m.sujet || '' });
+    go('mentorat', { exact: true });
+  }, [route.base, route.sub, route.sub2, !!store.me]);
 
   const data = store.data;
   const me = store.me;
@@ -133,7 +140,7 @@ function App({ store }) {
     const prev = seen.current;
     if (prev && prev.id === who.id && Date.now() - lastAct.current > 2500) {
       const fresh = notifs.find(n => n.key && !prev.keys.has(n.key) && (n.action || n.tone === 'good'));
-      if (fresh) toast(fresh.text);
+      if (fresh) toast(fresh.text, 'ok', fresh.pts || 0);
     }
     seen.current = { id: who.id, keys };
     const n = todo + (cur.msgs || 0);
@@ -170,7 +177,9 @@ function App({ store }) {
     confirm: (text, onYes, yes) => setConfirmBox({ text, onYes, yes }),
     openEntreprise: name => name && setEntreprise(name),
     askQuestion: initial => setAskQ(initial || {}),
-    askHelp: (p = null, besoin = '') => setAskMentor({ p, besoin }),
+    askHelp: (p = null, besoin = '', sujet = '') => setAskMentor({ p, besoin, sujet }),
+    // Un rendez-vous annulé : proposer d'autres horaires au même lauréat, avec le même besoin et le même sujet
+    redemander: id => { const m = store.byId('mentorships', id); if (!m) return go('mentorat'); setAskMentor({ p: store.byId('profiles', m.mentor_id) || null, besoin: m.besoin || '', sujet: m.sujet || '' }); },
     openAnnee: s => setAnnee(s || saison),
     ecrire: id => { setProfile(null); setOfferId(null); setPop(null); go('messages/' + id); },
     // Un geste, sans changer d'écran ; si la demande n'attend plus d'aide, sa carte dit pourquoi
@@ -196,6 +205,8 @@ function App({ store }) {
   const needConsent = store.mode === 'live' && !me.consent_at && !['confidentialite', 'profil'].includes(page);
   const openNotif = n => {
     setPop(null); setCloche(false);
+    if (n.redemander) return ctx.redemander(n.redemander);
+    if (n.conseil) { go('mentorat'); return ctx.askHelp(); }
     if (n.aider) return ctx.proposerAide(n.aider);
     if (n.horaire) return ctx.choisirHoraire(n.horaire);
     if (n.offer) ctx.openOffer(n.offer); else if (n.profile) { const p = store.byId('profiles', n.profile); if (p) setProfile(p); else go(n.to || 'accueil'); } else go(n.to);
@@ -214,7 +225,7 @@ function App({ store }) {
     <aside class="side">
       <a class="brand" href="#accueil" onClick=${e => { e.preventDefault(); go('accueil'); }}><${BrandLogo} size=${40}/><span class="brand-txt"><strong>Réseau ENSAM</strong><span>Meknès · Lauréats & étudiants</span></span></a>
       <nav class="side-nav">${nav.map(([k, l, i]) => html`<a href=${'#' + k} class=${page === k ? 'on' : ''} onClick=${e => { e.preventDefault(); go(k, { onglet: true }); }}><span class="nav-ico"><${Icon} name=${i}/></span> ${l}${k === 'messages' && msgs ? html`<span class="nav-n"><span aria-hidden="true">${msgs}</span><span class="sr-only">${msgs > 1 ? `${msgs} messages non lus` : '1 message non lu'}</span></span>` : dotFor(k) ? html`<span class="dotn" aria-hidden="true"></span><span class="sr-only">À faire ici</span>` : null}</a>`)}</nav>
-      <div class="side-foot"><span class="mono small muted">Saison ${seasonLabel(saison)}</span><a class="small muted" href="#confidentialite" onClick=${e => { e.preventDefault(); go('confidentialite'); }}>Confidentialité</a></div>
+      <div class="side-foot"><span class="mono small muted">Année ${seasonLabel(saison)}</span><a class="small muted" href="#confidentialite" onClick=${e => { e.preventDefault(); go('confidentialite'); }}>Confidentialité</a></div>
     </aside>
     <div class=${'main' + (plein ? ' full' : '')}>
       <header class="top">
@@ -227,9 +238,9 @@ function App({ store }) {
         <button class="icon-btn cloche-btn" aria-label=${todo ? `Notifications (${todo} à faire)` : 'Notifications'} aria-haspopup="dialog" onClick=${() => { setPop(null); setCloche(true); }}><${Icon} name="bell"/>${todo ? html`<span class="badge-n" aria-hidden="true">${neuf(todo)}</span>` : null}</button>
         <div class="pop-wrap"><button class="me-btn" onClick=${() => setPop(pop === 'me' ? null : 'me')} aria-label="Mon compte" aria-expanded=${pop === 'me'}><${Avatar} p=${me} size=${34}/></button>
           ${pop === 'me' ? html`<div class="menu-pop right" role="menu">
-            <div class="menu-who"><strong>${me.full_name}</strong><span class="muted small">${me.role === 'etudiant' ? 'Étudiant(e)' : me.role === 'laureat' ? 'Lauréat(e)' : 'Équipe du réseau'}</span></div>
+            <div class="menu-who"><strong>${me.full_name}</strong><span class="muted small">${roleTexte(me)}</span></div>
             <button onClick=${() => go('profil')}><${Icon} name="user" size=${16}/> Mon profil</button>
-            <button class="menu-mobile" onClick=${() => go('suivi')}><${Icon} name="chart" size=${16}/> ${me.role === 'etudiant' ? 'Ma promo' : 'Suivi'}</button>
+            <button class="menu-mobile" onClick=${() => go('suivi')}><${Icon} name="chart" size=${16}/> ${me.role === 'etudiant' ? 'Mon année' : 'Suivi'}</button>
             ${me.role !== 'admin' ? html`<button onClick=${() => go('accueil/etapes')}><${Icon} name="route" size=${16}/> Comment ça marche ?</button>` : null}
             ${me.role !== 'admin' ? html`<button onClick=${() => { setPop(null); ctx.openAnnee(); }}><${Icon} name="award" size=${16}/> Ton année dans le réseau</button>` : null}
             ${install ? html`<button onClick=${() => { setPop(null); install.ios ? setIosHelp(true) : install.prompt(); }}><${Icon} name="download" size=${16}/> Installer l’application</button>` : null}
@@ -263,7 +274,7 @@ function App({ store }) {
     ${aide?.demande ? html`<${ProposerAide} ctx=${ctx} id=${aide.demande} key=${'aide-' + aide.demande} onClose=${() => setAide(null)}/>` : null}
     ${aide?.mentorat ? html`<${HoraireSheet} ctx=${ctx} id=${aide.mentorat} key=${'horaire-' + aide.mentorat} onClose=${() => setAide(null)}/>` : null}
     ${profile ? html`<${ProfileModal} ctx=${ctx} p=${profile} onClose=${() => setProfile(null)} onAskMentor=${p => { setProfile(null); setAskMentor({ p }); }}/>` : null}
-    ${askMentor ? html`<${AskHelp} ctx=${ctx} mentor=${askMentor.p} besoin=${askMentor.besoin} onClose=${() => setAskMentor(null)}/>` : null}
+    ${askMentor ? html`<${AskHelp} ctx=${ctx} mentor=${askMentor.p} besoin=${askMentor.besoin} sujet=${askMentor.sujet} onClose=${() => setAskMentor(null)}/>` : null}
     ${confirmBox ? html`<${Confirm} text=${confirmBox.text} onYes=${confirmBox.onYes} onClose=${() => setConfirmBox(null)} yes=${confirmBox.yes || 'Supprimer'}/>` : null}
     ${entreprise ? html`<${EntrepriseModal} ctx=${ctx} name=${entreprise} key=${entreprise} onClose=${() => setEntreprise(null)}/>` : null}
     ${askQ ? html`<${AskQuestion} ctx=${ctx} initial=${askQ} onClose=${() => setAskQ(null)} onDone=${id => { setAskQ(null); go('reseau/entraide/' + id); }}/>` : null}
@@ -340,11 +351,15 @@ function buildNotifs({ data, me, store, saison }) {
   // Étudiant : recrutement à confirmer, évolution des candidatures, nouvelles offres
   for (const p of data.placements) {
     if (p.student_id !== me.id) continue;
-    if (p.status === 'en_attente') out.push({ key: 'pa' + p.id, ref: p.id, action: true, geste: 'Confirmer', tone: 'accent', icon: 'briefcase', to: perso, at: p.created_at, text: p.demande_id ? `${name(p.laureat_id)} indique que tu as commencé chez ${p.entreprise}. Confirme-le.` : `${name(p.laureat_id)} indique t’avoir recruté(e) chez ${p.entreprise}. Confirme-le.` });
+    if (p.status === 'en_attente') out.push({ key: 'pa' + p.id, ref: p.id, action: true, geste: 'Confirmer', tone: 'accent', icon: 'briefcase', to: perso, at: p.created_at, text: p.demande_id ? `${name(p.laureat_id)} indique que tu as commencé chez ${p.entreprise}. Confirme-le.` : `${name(p.laureat_id)} déclare ton recrutement chez ${p.entreprise}. Confirme-le.` });
     if (p.status === 'confirme' && p.laureat_id && !p.merci) out.push({ key: 'pm' + p.id, ref: p.id, action: true, geste: 'Dire merci', tone: 'brass', icon: 'heart', to: perso, at: p.confirmed_at || p.created_at, text: `Ta réussite chez ${p.entreprise} est confirmée. Laisse un merci à ${first(p.laureat_id)}.` });
   }
   for (const a of data.applications) if (a.student_id === me.id && a.offer_id && a.status !== 'postule' && recent(a.updated_at || a.created_at, 21)) {
-    out.push({ key: 'as' + a.id + a.status, icon: a.status === 'refuse' ? 'x' : a.status === 'entretien' ? 'people' : 'check', tone: a.status === 'refuse' ? '' : 'good', offer: a.offer_id, at: a.updated_at || a.created_at, text: `Ta candidature « ${a.titre} » : ${APP_STATUS[a.status]}.` });
+    // Pas retenue : la ligne ouvre une porte vraie (le vrai nombre d'autres offres, sinon sa demande ou un conseil), pas l'offre refusée
+    if (a.status === 'refuse') {
+      const porte = porteApresRefus(data, me, saison);
+      out.push({ key: 'as' + a.id + a.status, icon: porte.icon, to: porte.to, conseil: porte.conseil, at: a.updated_at || a.created_at, text: `Ta candidature « ${a.titre} » : pas retenue cette fois. ${porte.phrase}` });
+    } else out.push({ key: 'as' + a.id + a.status, icon: a.status === 'entretien' ? 'people' : 'check', tone: 'good', offer: a.offer_id, at: a.updated_at || a.created_at, text: `Ta candidature « ${a.titre} » : ${APP_STATUS[a.status]}.` });
   }
   if (me.role === 'etudiant') {
     for (const o of data.offers) if (o.status === 'ouverte' && matchesMe(o, me, saison) && recent(o.created_at, 7)) out.push({ icon: 'feed', offer: o.id, at: o.created_at, text: `Nouvelle offre pour toi : ${o.titre} (${o.entreprise})` });
@@ -358,7 +373,12 @@ function buildNotifs({ data, me, store, saison }) {
     out.push({ key: 'ap' + oid + '-' + as.length, ref: oid, action: true, geste: as.length > 1 ? 'Voir les candidatures' : `Voir la candidature de ${first(last.student_id)}`, tone: 'accent', icon: 'inbox', offer: oid, at: last.created_at,
       text: as.length > 1 ? `${as.length} nouvelles candidatures : ${o.titre}` : `Nouvelle candidature de ${name(last.student_id)} : ${o.titre}` });
   }
-  for (const p of data.placements) if (p.laureat_id === me.id && p.status === 'confirme' && recent(p.confirmed_at || p.created_at, 30)) out.push({ key: 'pc' + p.id, icon: 'trophy', tone: 'brass', to: 'espace', at: p.confirmed_at || p.created_at, text: `${name(p.student_id)} a confirmé son ${p.demande_id ? 'démarrage' : 'recrutement'} chez ${p.entreprise}. +50 points${p.merci ? ' et un merci' : ''}.` });
+  // Un recrutement confirmé : la personne d'abord (son merci), les points en petite pastille (vrais : +25 à l'étranger, +10 avec un merci)
+  for (const p of data.placements) if (p.laureat_id === me.id && p.status === 'confirme' && recent(p.confirmed_at || p.created_at, 30)) {
+    const mot = p.demande_id ? 'démarrage' : 'recrutement';
+    out.push({ key: 'pc' + p.id + (p.merci ? 'm' : ''), icon: p.merci ? 'heart' : 'trophy', tone: 'brass', to: 'espace', at: p.confirmed_at || p.created_at, pts: pointsRecrutement(p) + (p.merci ? 10 : 0),
+      text: p.merci ? `${name(p.student_id)} te remercie : son ${mot} chez ${p.entreprise} est confirmé.` : `${name(p.student_id)} a confirmé son ${mot} chez ${p.entreprise}.` });
+  }
   for (const c of data.comments) if (myOffers.has(c.offer_id) && c.author_id !== me.id && recent(c.created_at, 14)) out.push({ icon: 'comment', offer: c.offer_id, at: c.created_at, text: `${name(c.author_id)} a posé une question sur ton offre : « ${c.body.slice(0, 60)}${c.body.length > 60 ? '…' : ''} »` });
   // Mentorat : demande reçue, horaire choisi, rendez-vous proche, puis merci. Un rendez-vous = une seule ligne.
   for (const m of data.mentorships) {
@@ -372,16 +392,17 @@ function buildNotifs({ data, me, store, saison }) {
       if (st === 'rdv' && m.confirme_at && recent(m.confirme_at, 7)) out.push({ key: 'mc' + m.id + m.rdv_at, ref: m.id, tone: 'good', icon: 'checks', to: 'mentorat', at: m.confirme_at, text: `${first(m.student_id)} a confirmé sa présence : ${m.sujet}` });
       if (st === 'apres') out.push({ key: 'mf' + m.id, ref: m.id, action: true, geste: 'Marquer comme terminé', tone: 'brass', icon: 'check', to: 'mentorat', at: m.rdv_at, text: `Ton rendez-vous avec ${first(m.student_id)} a eu lieu ? Marque-le comme terminé.` });
       if (st === 'terminee' && m.merci && recent(m.rdv_at || m.created_at, 14)) out.push({ key: 'mm' + m.id, ref: m.id, tone: 'brass', icon: 'heart', to: 'espace', at: m.rdv_at || m.created_at, text: `${first(m.student_id)} te remercie pour le mentorat : ${m.sujet}` });
-      if (st === 'annulee' && upcoming) out.push({ key: 'mx' + m.id, ref: m.id, icon: 'x', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous annulé : ${m.sujet}` });
+      if (st === 'annulee' && upcoming) out.push({ key: 'mx' + m.id, ref: m.id, icon: 'calendar', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Ton rendez-vous avec ${first(m.student_id)} pour « ${m.sujet} » est annulé.` });
     }
     if (m.student_id === me.id) {
       // Rendez-vous fixé : confirmer sa présence est la chose à faire (base à jour) ; sinon une simple nouvelle, puis le rappel
       const aConfirmer = st === 'rdv' && 'confirme_at' in m && !m.confirme_at && upcoming;
       if (aConfirmer) out.push({ key: 'sc' + m.id + m.rdv_at, ref: m.id, action: true, geste: 'Confirmer ma présence', tone: 'accent', icon: 'calendar', to: 'mentorat', at: m.accepted_at || m.created_at, text: `${first(m.mentor_id)} a fixé ton rendez-vous. Confirme ta présence : ${m.sujet}` });
-      else if (st === 'rdv' && !soon && recent(m.accepted_at || m.created_at, 10)) out.push({ key: 'sa' + m.id + m.rdv_at, ref: m.id, icon: 'mentor', tone: 'good', to: 'mentorat', at: m.accepted_at || m.created_at, text: `${name(m.mentor_id)} a accepté ta demande : ${m.sujet}` });
+      else if (st === 'rdv' && !soon && recent(m.accepted_at || m.created_at, 10)) out.push({ key: 'sa' + m.id + m.rdv_at, ref: m.id, icon: 'mentor', tone: 'good', to: 'mentorat', at: m.accepted_at || m.created_at, text: `${name(m.mentor_id)} a choisi un de tes horaires : ${m.sujet}` });
       if (soon && !aConfirmer) out.push({ key: 'sr' + m.id + m.rdv_at, ref: m.id, rdv: true, rappel: true, action: true, tone: 'accent', icon: 'video', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous avec ${name(m.mentor_id)} ${soon}` });
       if (st === 'apres') out.push({ key: 'sf' + m.id, ref: m.id, action: true, geste: 'Dire merci', tone: 'brass', icon: 'heart', to: 'mentorat', at: m.rdv_at, text: `Comment s’est passé ton échange avec ${first(m.mentor_id)} ? Dis-lui merci.` });
-      if (st === 'annulee' && upcoming && m.mentor_id) out.push({ key: 'sx' + m.id, ref: m.id, icon: 'x', to: 'mentorat', at: m.accepted_at || m.created_at, text: `Rendez-vous annulé : ${m.sujet}` });
+      // Rendez-vous annulé : d'autres horaires au même lauréat, en un geste (la ligne s'en va dès qu'ils sont envoyés)
+      if (st === 'annulee' && upcoming && m.mentor_id && !nouvelleDemandeApres(data, m)) out.push({ key: 'sx' + m.id, ref: m.id, icon: 'calendar', to: 'mentorat', redemander: m.id, at: m.accepted_at || m.created_at, text: `Ton rendez-vous avec ${first(m.mentor_id)} pour « ${m.sujet} » est annulé. Tu peux lui proposer d’autres horaires.` });
     }
   }
   // Lauréat : demandes ouvertes à tous qui lui correspondent bien (deux au plus) ; elles s'ouvrent sur place avec leurs horaires
@@ -401,7 +422,7 @@ function buildNotifs({ data, me, store, saison }) {
   for (const x of data.propositions || []) {
     const d = dem(x.demande_id); if (!d) continue;
     if (d.auteur_id === me.id && x.status === 'envoyee' && d.status === 'ouverte') out.push({ key: 'dp' + x.id, ref: d.id, action: true, geste: 'Voir sa proposition', tone: 'accent', icon: 'send', to: 'offres/demandes/' + d.id, at: x.created_at, text: `${name(x.laureat_id)} te propose son aide : ${d.titre}` });
-    if (d.auteur_id === me.id && x.status === 'retiree' && d.status === 'ouverte' && recent(x.repondu_at || x.created_at, 7)) out.push({ key: 'dw' + x.id, ref: d.id, icon: 'send', to: 'offres/demandes/' + d.id, at: x.repondu_at || x.created_at, text: `${name(x.laureat_id)} s’est retiré(e). Ta demande est de nouveau ouverte aux lauréats.` });
+    if (d.auteur_id === me.id && x.status === 'retiree' && d.status === 'ouverte' && recent(x.repondu_at || x.created_at, 7)) out.push({ key: 'dw' + x.id, ref: d.id, icon: 'send', to: 'offres/demandes/' + d.id, at: x.repondu_at || x.created_at, text: `${name(x.laureat_id)} a retiré sa proposition. Ta demande est de nouveau ouverte aux lauréats.` });
     // Le démarrage attend un événement extérieur, parfois des mois : l'accueil le propose, la cloche ne le compte pas
     if (x.laureat_id === me.id && x.status === 'acceptee' && d.status === 'match' && !demarre(d)) out.push({ key: 'dm' + x.id, ref: d.id, action: true, tone: 'accent', icon: 'heart', to: 'offres/demandes/' + d.id, at: x.repondu_at || x.created_at, text: `C’est un match avec ${name(d.auteur_id)} : déclare son démarrage dès qu’il a lieu.` });
     if (x.laureat_id === me.id && ['declinee', 'close'].includes(x.status) && recent(x.repondu_at || x.created_at, 7)) out.push({ key: 'dx' + x.id + x.status, ref: d.id, icon: 'heart', to: 'offres/demandes/' + d.id, at: x.repondu_at || x.created_at, text: `${first(d.auteur_id)} a choisi une autre voie pour « ${d.titre} ». Merci d’avoir proposé ton aide !` });
@@ -427,7 +448,7 @@ function buildNotifs({ data, me, store, saison }) {
   // Parrainage
   for (const x of data.parrainages) if (x.saison === saison && recent(x.created_at, 14)) {
     if (x.parrain_id === me.id) out.push({ key: 'pf' + x.id, tone: 'brass', icon: 'heart', to: 'espace', at: x.created_at, text: `${name(x.filleul_id)} (3A) est ton filleul cette année. Fais-lui signe !` });
-    if (x.filleul_id === me.id) out.push({ key: 'pp' + x.id, tone: 'brass', icon: 'heart', to: 'parcours', at: x.created_at, text: `${name(x.parrain_id)}, lauréat(e) de ta filière, est ton parrain cette année.` });
+    if (x.filleul_id === me.id) out.push({ key: 'pp' + x.id, tone: 'brass', icon: 'heart', to: 'parcours', at: x.created_at, text: `Ton parrainage cette année : ${name(x.parrain_id)}, de ta filière.` });
   }
   // Un café ENSAM annoncé dans ma ville ou mon pays
   const groups = myGroups(data, me).all;
@@ -493,7 +514,7 @@ const MOMENT = h => (h < 5 ? 'Bonsoir' : h < 18 ? 'Bonjour' : 'Bonsoir');
 const cleNotif = n => n.key || n.text;
 // Quelqu'un attend ma réponse : ces notifications passent avant tout message, dans cet ordre
 const ATTEND = { laureat: ['md', 'dm', 'rd', 'rc', 'ap', 'qr'], etudiant: ['dp', 'in'], admin: ['sg'] };
-const OEIL = { md: 'Un étudiant t’attend', dm: 'Un étudiant t’attend', rd: 'Un étudiant t’attend', rc: 'Un étudiant t’attend', ap: 'Un étudiant t’attend', qr: 'Une question pour toi', dp: 'Une proposition d’aide', in: 'Une invitation à postuler', sg: 'À traiter' };
+const OEIL = { md: 'Un étudiant t’attend', dm: 'Un étudiant t’attend', rd: 'Un étudiant t’attend', rc: 'Un étudiant t’attend', ap: 'Un étudiant t’attend', qr: 'Une question', dp: 'Une proposition d’aide', in: 'Une invitation', sg: 'À traiter' };
 // Le CV se dépose dans Mon profil : on y va et le bouton de dépôt prend le focus (ouvrir le sélecteur à distance, l'iPhone le bloque)
 const versCV = go => {
   go('profil');
@@ -518,7 +539,7 @@ function prochainPas(ctx, notifs, etape, { plAttente, helper, besoins = [] } = {
   if (plAttente) return pasConfirmer(ctx, plAttente, helper);
   // Rôle et promo qui ne vont pas ensemble (ex. lauréat de la promo 2027) : on propose de corriger le profil
   if ((role === 'laureat' && me.promo > new Date().getFullYear()) || (role === 'etudiant' && me.promo <= saison))
-    return { key: 'promo', icon: 'user', eyebrow: 'Ton profil', titre: role === 'laureat' ? `Promo ${me.promo} : tu es encore étudiant(e) ? Mets ton profil à jour.` : `Promo ${me.promo} : tu as ton diplôme ? Passe en lauréat(e).`, cta: 'Mettre à jour', go: () => go('profil') };
+    return { key: 'promo', icon: 'user', eyebrow: 'Ton profil', titre: role === 'laureat' ? `Promo ${me.promo} : tu es encore à l’école ? Mets ton profil à jour.` : `Promo ${me.promo} : tu as ton diplôme ? Passe ton profil côté lauréats.`, cta: 'Mettre à jour', go: () => go('profil') };
   if (rdv('confirmer')) return pasRdv(ctx, rdv('confirmer'), 'confirmer');
   for (const p of ATTEND[role] || []) {
     const n = notifs.filter(x => x.action && (x.key || '').startsWith(p) && (p !== 'dm' || recent(x.at, 7))).sort((a, b) => new Date(a.at) - new Date(b.at))[0];
@@ -543,11 +564,11 @@ function prochainPas(ctx, notifs, etape, { plAttente, helper, besoins = [] } = {
     o = data.offers.filter(x => x.status === 'ouverte' && (x.annees || []).includes(niv) && !deja(x)).map(x => ({ x, s: offerMatch(x, me).score })).sort((p, q) => q.s - p.s || new Date(q.x.created_at) - new Date(p.x.created_at))[0]?.x;
   }
   if (role === 'laureat' && me.en_recherche) o = data.offers.filter(x => x.status === 'ouverte' && x.author_id !== me.id && matchesMe(x, me, saison) && peutPostulerA(x, me, saison) && !deja(x)).sort((p, q) => new Date(q.created_at) - new Date(p.created_at))[0];
-  if (o) return { key: 'offre' + o.id, ref: o.id, icon: 'spark', eyebrow: 'Une offre faite pour toi', titre: o.titre, membre: true, detail: o.entreprise, detailMembre: true, cta: 'Voir l’offre', go: () => openOffer(o.id) };
+  if (o) return { key: 'offre' + o.id, ref: o.id, icon: 'spark', eyebrow: 'Pour toi', titre: o.titre, membre: true, detail: o.entreprise, detailMembre: true, cta: 'Voir l’offre', go: () => openOffer(o.id) };
   if (aide) return aide;
   if (role !== 'admin' && !(me.cv_path || me.cv_url)) return { key: 'cv', icon: 'file', eyebrow: 'Ton CV', titre: 'Ajoute ton CV en PDF', detail: role === 'etudiant' ? 'Ton profil se complète tout seul, et il part avec tes candidatures.' : 'Ton profil se complète tout seul.', cta: 'Ajouter mon CV', go: () => versCV(go) };
   const fin = role === 'admin' ? { cta: 'Ouvrir l’administration', go: () => go('admin') } : role === 'laureat' && !me.en_recherche ? { cta: 'Publier une offre', go: () => setCompose(true) } : { cta: role === 'laureat' ? 'Voir les offres pour moi' : 'Voir les offres', go: () => go('offres') };
-  return { key: 'calme', icon: 'check', eyebrow: 'Tout est à jour', titre: role === 'laureat' ? 'Merci pour ce que tu fais pour les étudiants.' : role === 'admin' ? 'Rien à traiter pour l’instant.' : 'Rien ne presse : avance à ton rythme.', ...fin };
+  return { key: 'calme', icon: 'check', eyebrow: 'Rien en attente', titre: role === 'laureat' ? 'Merci pour ce que tu fais pour les étudiants.' : role === 'admin' ? 'Rien à traiter pour l’instant.' : 'Rien ne presse : avance à ton rythme.', ...fin };
 }
 
 function pasRdv(ctx, m, q) {
@@ -563,7 +584,7 @@ function pasRdv(ctx, m, q) {
 function pasConfirmer(ctx, pl, helper) {
   const { data } = ctx, qui = helper?.full_name || 'Un lauréat';
   const sur = (pl.offer_id && data.offers.find(o => o.id === pl.offer_id)?.titre) || (pl.demande_id && (data.demandes || []).find(d => d.id === pl.demande_id)?.titre) || null;
-  return { key: 'pa' + pl.id, ref: pl.id, icon: 'briefcase', eyebrow: 'À confirmer', titre: pl.demande_id ? `${qui} indique que tu as commencé chez ${pl.entreprise}` : `${qui} indique t’avoir recruté(e) chez ${pl.entreprise}`, detail: sur, detailMembre: true,
+  return { key: 'pa' + pl.id, ref: pl.id, icon: 'briefcase', eyebrow: 'À confirmer', titre: pl.demande_id ? `${qui} indique que tu as commencé chez ${pl.entreprise}` : `${qui} déclare ton recrutement chez ${pl.entreprise}`, detail: sur, detailMembre: true,
     cta: 'Oui, je confirme', ici: true, go: () => confirmerRecrutement(ctx, pl, helper), lien: { label: 'Ce n’est pas le cas', go: () => refuserRecrutement(ctx, pl) } };
 }
 // Une notification devient la carte : son geste est le bouton (jamais « Y aller »)
@@ -616,7 +637,7 @@ function ProchainPas({ pas, progres, onEtapes }) {
 // Les premiers pas en feuille : ce qui est fait, ce qui reste (chaque bouton ferme la feuille puis agit), puis « Ensuite »
 function EtapesSheet({ me, g, onClose, onHide, historique }) {
   const ligne = s => html`<li key=${s.cle} class=${s.fait ? 'fait' : s.plusTard ? 'plus-tard' : ''}>
-    <span class="e-ico"><${Icon} name=${s.fait ? 'check' : s.icon} size=${18}/></span><strong>${s.titre}</strong><span class="small muted">${s.texte}</span>
+    <span class="e-ico"><${Icon} name=${s.fait ? 'check' : s.icon} size=${18}/></span><strong>${s.titre}</strong><span class="small muted">${s.texte}<${Pastille} n=${s.pts}/></span>
     ${!s.fait && s.go ? html`<button type="button" class="btn small" onClick=${() => { onClose(); ensuite(s.go); }}>${s.cta}</button>` : null}</li>`;
   return html`<${Modal} title="Premiers pas" onClose=${onClose} historique=${historique} footer=${g.fini ? null : html`<button type="button" class="linkish small" onClick=${onHide}>Ne plus afficher les premiers pas</button>`}>
     <div class="etapes-tete"><span class="pas-anneau grand" style=${`--p:${g.done / g.total}`} aria-hidden="true"></span>
@@ -631,7 +652,7 @@ function useFetePremiersPas(me, g) {
   useEffect(() => {
     if (!g) return;
     if (!g.fini && etat !== 'en-cours') setEtat('en-cours');
-    if (g.fini && etat === 'en-cours') { setEtat('fini'); celebrate({ cle: 'premiers-pas-' + me.id, icon: 'award', titre: 'Premiers pas terminés !', texte: me.role === 'etudiant' ? 'Ton profil est prêt et les lauréats peuvent t’aider. Bravo pour ta démarche.' : 'Merci ! Les étudiants de l’école peuvent compter sur toi.' }); }
+    if (g.fini && etat === 'en-cours') { setEtat('fini'); celebrate({ cle: 'premiers-pas-' + me.id, icon: 'award', titre: 'Premiers pas terminés !', texte: me.role === 'etudiant' ? 'Ton profil est prêt : les lauréats peuvent maintenant t’aider.' : 'Merci ! Les étudiants de l’école peuvent compter sur toi.' }); }
   }, [g?.fini]);
 }
 
@@ -665,7 +686,7 @@ function Home(ctx) {
   const taches = petitesTaches(notifs, pas);
   // Ce que l'accueil a déjà dit : les blocs suivants le sautent
   const montres = new Set([pas.ref, ...taches.flatMap(t => [t.ref, t.offer])].filter(Boolean));
-  const meta = isStudent ? [NIVEAUX[n]?.label, me.filiere].filter(Boolean).join(' · ') : isLaureat ? `Promo ${me.promo}` : '';
+  const meta = isStudent ? [NIVEAUX[n]?.label, filiereCourte(me.filiere)].filter(Boolean).join(' · ') : isLaureat ? `Promo ${me.promo}` : '';
   // Un lauréat qui cherche un emploi voit d'abord les offres faites pour lui
   const dernieres = data.offers.filter(o => o.status === 'ouverte' && !montres.has(o.id) && (!enRecherche || matchesMe(o, me, saison))).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 2);
   const star = ctx.star;
@@ -699,7 +720,7 @@ function Home(ctx) {
       <div class="hello-txt">
         <h1>${MOMENT(h)} ${first}</h1>
         ${meta ? html`<p class="hello-meta">${meta}</p>` : null}
-        <p class="hello-sub">${isStudent ? 'Les lauréats de l’école t’ouvrent leurs portes. Avance à ton rythme.' : isLaureat ? (enRecherche ? 'Le réseau t’aide à trouver ton poste, et ton expérience aide déjà les étudiants.' : 'Merci de garder la porte ouverte aux étudiants de l’école.') : 'Tout le réseau de l’école, en un coup d’œil.'}</p>
+        <p class="hello-sub">${isStudent ? 'Les lauréats de l’école sont là pour t’aider.' : isLaureat ? (enRecherche ? 'Le réseau t’aide à trouver ton poste, et ton expérience aide déjà les étudiants.' : 'Merci de garder la porte ouverte aux étudiants de l’école.') : 'Tout le réseau de l’école, en un coup d’œil.'}</p>
       </div>
       <${SchoolScene} align=${getLang() === 'ar' ? 'xMinYMax' : 'xMaxYMax'} pose=${10000}/>
     </header>
@@ -761,7 +782,7 @@ function Home(ctx) {
           ${!isStudent && st.viaTotal ? html`<button class="panel pulse clickable" onClick=${() => go('suivi')}>
             <div class="section-head"><h3>L’école en ce moment</h3><${Icon} name="arrow" size=${16}/></div>
             ${st.rows.map(r => html`<div class="pulse-row"><span class="niv-badge">${NIVEAUX[r.n].short}</span><div class="pulse-bar"><div class="row small"><span>${r.objectif.court}</span><span class="spacer"></span><span class="mono">${pct(r.rate)}</span></div><${Bar} value=${r.rate}/></div></div>`)}
-            <p class="small muted">${st.viaTotal > 1 ? `${st.viaTotal} réussites vérifiées grâce aux lauréats cette saison.` : '1 réussite vérifiée grâce aux lauréats cette saison.'}</p>
+            <p class="small muted">${st.viaTotal > 1 ? `${st.viaTotal} réussites vérifiées grâce aux lauréats cette année.` : '1 réussite vérifiée grâce aux lauréats cette année.'}</p>
           </button>` : null}
           </div>
         </div>
@@ -776,7 +797,7 @@ function Home(ctx) {
 
 // Premiers pas : les étapes se cochent toutes seules. « Crée ton compte » est faite d'emblée ; celles qui arrivent
 // d'elles-mêmes plus tard (le merci, le recrutement) ne comptent pas. Une étape qui n'a rien à proposer aujourd'hui n'est pas montrée.
-const E = (cle, icon, titre, texte, fait, go, cta, plusTard = false) => ({ cle, icon, titre, texte, fait: !!fait, go, cta, plusTard });
+const E = (cle, icon, titre, texte, fait, go, cta, plusTard = false, pts = 0) => ({ cle, icon, titre, texte, fait: !!fait, go, cta, plusTard, pts });
 function guideEtapes(ctx, setCompose) {
   const { data, me, saison, go, store, act } = ctx;
   if (me.role === 'admin') return null;
@@ -793,7 +814,7 @@ function guideEtapes(ctx, setCompose) {
       typesDemande(me, saison).length ? E('demande', 'send', 'Dis aux lauréats ce que tu cherches', 'Ta demande et ton CV arrivent chez les lauréats de ton parcours.', (data.demandes || []).some(d => d.auteur_id === me.id), () => go('offres/demandes/nouvelle'), 'Publier ma demande') : null,
       aPostule || offresOuvertes ? E('postule', 'feed', 'Postule à une offre', `Tu ne vois que les offres de ${NIVEAUX[n]?.short || 'ton année'}. Un message de deux phrases suffit.`, aPostule, () => go('offres'), 'Voir les offres') : null,
       E('conseil', 'mentor', 'Demande un conseil', 'Un lauréat choisit un de tes horaires et t’appelle 20 minutes en visio.', data.mentorships.some(m => m.student_id === me.id), () => ctx.askHelp(), 'Demander un conseil'),
-      E('merci', 'heart', 'Confirme et dis merci', 'Quand il te marque recruté(e), tu confirmes en un clic et tu lui laisses un mot.', data.placements.some(p => p.student_id === me.id && p.status === 'confirme' && p.merci), null, '', true),
+      E('merci', 'heart', 'Confirme et dis merci', 'Quand il déclare ton recrutement, tu confirmes en un clic et tu lui laisses un mot.', data.placements.some(p => p.student_id === me.id && p.status === 'confirme' && p.merci), null, '', true),
     ];
   } else {
     const byId = id => store.byId('profiles', id);
@@ -810,8 +831,8 @@ function guideEtapes(ctx, setCompose) {
       cherche ? (aPostule || pourMoi ? E('offres', 'feed', 'Regarde les offres pour toi', 'Les offres « Jeunes diplômés » et celles partagées entre lauréats.', aPostule, () => go('offres'), 'Voir les offres pour moi') : null)
         : E('offre', 'plus', 'Publie une offre', 'Une minute suffit. Seuls les étudiants de l’année concernée la voient.', myOffers.length > 0, () => setCompose(true), 'Publier une offre'),
       aAide || aAider ? E('aide', 'heart', 'Aide un étudiant', demandes.length ? 'Un étudiant de ton parcours a dit ce qu’il cherche : propose ton aide.' : 'Clique sur un de ses horaires : la visio et l’invitation sont prêtes.', aAide,
-        demandes.length ? () => ctx.proposerAide(demandes[0].d.id) : () => go('mentorat'), demandes.length ? 'Je peux aider' : 'Voir les demandes') : null,
-      cherche ? null : E('recrute', 'check', 'Marque « Recruté(e) »', 'L’étudiant confirme, et tu reçois ses remerciements et 50 points.', data.placements.some(p => p.laureat_id === me.id && p.status === 'confirme'), null, '', true),
+        demandes.length ? () => ctx.proposerAide(demandes[0].d.id) : () => go('mentorat'), demandes.length ? 'Je peux aider' : 'Voir leurs horaires') : null,
+      cherche ? null : E('recrute', 'check', 'Déclare le recrutement', 'L’étudiant confirme en un clic et peut te laisser un mot de remerciement.', data.placements.some(p => p.laureat_id === me.id && p.status === 'confirme'), null, '', true, 50),
     ];
   }
   steps = steps.filter(Boolean);
@@ -823,7 +844,7 @@ function guideEtapes(ctx, setCompose) {
 function MyProfile({ ctx }) {
   const { me, store } = ctx;
   return html`<section class="page narrow">
-    <header class="page-head"><div><p class="eyebrow">Visible par les membres connectés</p><h1>Mon profil</h1></div>
+    <header class="page-head"><div><p class="eyebrow">Jamais public</p><h1>Mon profil</h1></div>
       ${store.mode === 'live' ? html`<button class="btn ghost" onClick=${() => store.signOut()}><${Icon} name="logout"/> Se déconnecter</button>` : null}</header>
     <${PhotoCard} ctx=${ctx}/>
     <${CvCard} ctx=${ctx}/>

@@ -132,7 +132,7 @@ test('push : regroupé par membre, chiffré, VAPID, 410 supprimé, file vidée',
   const recu1 = b.push.filter(x => x.endpoint === s1.endpoint);
   assert.deepEqual(recu1.map(x => x.message.tag), ['mentorat_accepte', 'merci']);
   assert.deepEqual(recu1[0].message, {
-    title: 'Rendez-vous fixé', body: 'Youssef Alami a accepté : Mon CV, mercredi 21 octobre à 17:30', url: SITE + '#mentorat', tag: 'mentorat_accepte',
+    title: 'Rendez-vous fixé', body: 'Youssef Alami a choisi un de tes horaires : Mon CV, mercredi 21 octobre à 17:30', url: SITE + '#mentorat', tag: 'mentorat_accepte',
   });
   assert.equal(recu1[0].entetes.urgency, 'high');
   assert.equal(recu1[1].entetes.urgency, 'normal');
