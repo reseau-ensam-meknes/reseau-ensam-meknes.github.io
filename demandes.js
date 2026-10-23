@@ -94,7 +94,7 @@ function MesDemandes({ ctx, focusId, onNew, onEdit }) {
   const peutPlus = actives.length < DEMANDES_MAX;
   const laureat = me.role === 'laureat';
   if (!mine.length) return html`<section class="panel dm-hero">
-    <p class="eyebrow">${laureat ? 'Tu cherches un emploi ?' : 'Ce que tu cherches'}</p>
+    ${laureat ? html`<p class="eyebrow">Un nouveau poste ?</p>` : null}
     <h2>${laureat ? 'Dis-le aux lauréats du réseau' : 'Dis aux lauréats ce que tu cherches'}</h2>
     <p class="muted">${laureat ? 'Ta demande et ton CV arrivent chez les lauréats de ton parcours. Ceux qui recrutent ou peuvent te recommander te le proposent, tu choisis.' : 'Stage, PFE, étranger ou emploi : ta demande et ton CV arrivent chez les lauréats de ton parcours. Ceux qui peuvent t’aider te le proposent, tu choisis.'}</p>
     <${Comment}/>
@@ -282,7 +282,7 @@ function DemandesLaureat({ ctx, focusId }) {
       </div>` : null}
       ${liste.length ? html`<div class="list">${liste.map(({ d, why }) => html`<${CarteLaureat} key=${d.id} ctx=${ctx} d=${d} why=${why} focus=${d.id === focusId}/>`)}</div>`
         : libres.length ? html`<p class="small muted">Rien de ce côté pour l’instant. <button type="button" class="linkish" onClick=${() => { setProche(false); setType('tous'); }}>Voir toutes les demandes</button></p>`
-        : html`<${Empty} icon="send" title="Pas de demande ouverte pour le moment" action=${ctx.publierOffre ? { label: 'Publier une offre', icon: 'plus', onClick: ctx.publierOffre } : null}>Dès qu’un étudiant de ton parcours publie ce qu’il cherche, tu es prévenu(e). En attendant, une offre publiée lui parle tout de suite.<//>`}
+        : html`<${Empty} icon="send" title="Pas de demande ouverte pour le moment" action=${ctx.publierOffre ? { label: 'Publier une offre', icon: 'plus', onClick: ctx.publierOffre } : null}>Dès qu’un étudiant de ton parcours publie ce qu’il cherche, on te prévient. En attendant, une offre publiée lui parle tout de suite.<//>`}
     </section>
     ${passees.length ? html`<details class="dm-anciennes"><summary>${passees.length > 1 ? `Mes aides passées (${passees.length})` : 'Mon aide passée'}</summary>
       <div class="list">${passees.map(({ d }) => html`<${CarteLaureat} key=${d.id} ctx=${ctx} d=${d}/>`)}</div></details>` : null}
@@ -329,7 +329,7 @@ function MatchLaureat({ ctx, d, x }) {
   const pl = declarationDe(data, d);
   const refusee = !pl && data.placements.some(p => p.demande_id === d.id && p.status === 'refuse');
   const [declare, setDeclare] = useState(false);
-  const retirer = () => ctx.confirm(`Te retirer ? La demande de ${prenom(a)} se rouvre pour les autres lauréats.`, () => act(async () => { await store.update('propositions', x.id, { status: 'retiree' }); toast('Tu t’es retiré(e). Merci de l’avoir dit.'); }), 'Me retirer');
+  const retirer = () => ctx.confirm(`Te retirer ? La demande de ${prenom(a)} se rouvre pour les autres lauréats.`, () => act(async () => { await store.update('propositions', x.id, { status: 'retiree' }); toast('C’est noté, tu ne l’accompagnes plus. Merci de l’avoir dit.'); }), 'Me retirer');
   return html`<div class="dm-match">
     <p class="eyebrow"><${Icon} name="heart" size=${13}/> ${`C’est un match avec ${prenom(a)}`}</p>
     <${Etapes} d=${d}/>
@@ -350,7 +350,7 @@ function DeclarerDemarrage({ ctx, d, x, onClose }) {
     e.preventDefault();
     act(async () => {
       const deja = placementOf(data, d.auteur_id, saison);
-      if (deja && deja.status !== 'refuse') { toast(`${a?.full_name || 'Cet étudiant'} a déjà une réussite enregistrée cette saison.`, 'err'); return; }
+      if (deja && deja.status !== 'refuse') { toast(`${a?.full_name || 'Cet étudiant'} a déjà une réussite enregistrée cette année.`, 'err'); return; }
       const pays = f.pays.trim() || 'Maroc';
       await store.insert('placements', { student_id: d.auteur_id, laureat_id: me.id, demande_id: d.id, saison, niveau: Math.min(niveauOf(a, saison), 6), type: pays !== 'Maroc' && d.type !== 'emploi' ? 'etranger' : d.type, entreprise: f.entreprise.trim(), ville: f.ville.trim() || null, pays, source: 'plateforme' });
       toast(`${prenom(a)} doit maintenant confirmer. Tes 50 points arrivent dès sa confirmation.`);
@@ -545,14 +545,14 @@ injectCSS('demandes', `
 `);
 
 addAR({
-  'Indique l’entreprise où tu peux aider.': 'اذكر الشركة التي يمكنك المساعدة فيها.', 'Écris-lui quelques mots (10 caractères au moins).': 'اكتب له بضع كلمات (10 أحرف على الأقل).',
+  'Indique l’entreprise où tu peux aider.': 'اذكر الشركة التي يمكنك المساعدة فيها.', 'Écris-lui quelques mots (10 caractères au moins).': 'اكتب بضع كلمات (10 أحرف على الأقل).',
   'En pause': 'متوقف مؤقتًا', 'Match': 'تطابق', 'Réussie': 'ناجح',   'Demande publiée': 'نُشر الطلب', 'Démarrage confirmé': 'تأكيد البدء', 'Où en est la demande': 'أين وصل الطلب',
-  'Recrute': 'يوظّف', 'Encadre': 'يؤطّر', 'Recommande': 'يوصي',
-  'Je le/la recrute dans mon équipe': 'أوظّفه في فريقي', 'J’encadre son stage ou son PFE': 'أؤطّر تدريبه أو مشروع نهاية دراسته', 'Je le/la recommande dans mon entreprise': 'أوصي به في شركتي',
+  'Recrute': 'توظيف', 'Encadre': 'تأطير', 'Recommande': 'توصية',
+  'Je recrute dans mon équipe': 'توظيف في فريقي', 'J’encadre son stage ou son PFE': 'أؤطّر التدريب أو مشروع نهاية الدراسة', 'Je recommande son profil dans mon entreprise': 'توصية داخل شركتي', 'Un nouveau poste ?': 'وظيفة جديدة؟',
   'Les demandes arrivent en 3e année': 'الطلبات تبدأ من السنة الثالثة',
   'À partir de la 3e année, tu pourras dire aux lauréats le stage que tu cherches, CV joint. En attendant, demande-leur un conseil dans Mentorat.': 'ابتداءً من السنة الثالثة، ستستطيع إخبار الخريجين بالتدريب الذي تبحث عنه مع سيرتك الذاتية. في انتظار ذلك، اطلب منهم نصيحة في صفحة المواكبة.',
   'Un étudiant publie ce qu’il cherche, CV joint': 'ينشر طالب ما يبحث عنه مع سيرته الذاتية', 'Tu proposes : recruter, encadrer ou recommander': 'تقترح: التوظيف أو التأطير أو التوصية',
-  'Il accepte, puis confirme son démarrage : c’est annoncé': 'يقبل ثم يؤكد بدءه: يُعلن النجاح',
+  'Il accepte, puis confirme son démarrage : c’est annoncé': 'القبول، ثم تأكيد البداية: ويُعلن الخبر',
   'Tu dis ce que tu cherches, CV joint': 'تقول ما تبحث عنه مع سيرتك الذاتية', 'Des lauréats te proposent leur aide': 'يقترح عليك الخريجون مساعدتهم', 'Tu choisis, vous démarrez : c’est annoncé': 'تختار وتبدآن: يُعلن النجاح',
   'Tu cherches un emploi ?': 'تبحث عن عمل؟', 'Ce que tu cherches': 'ما تبحث عنه', 'Dis-le aux lauréats du réseau': 'أخبر خريجي الشبكة', 'Dis aux lauréats ce que tu cherches': 'أخبر الخريجين بما تبحث عنه',
   'Ta demande et ton CV arrivent chez les lauréats de ton parcours. Ceux qui recrutent ou peuvent te recommander te le proposent, tu choisis.': 'يصل طلبك وسيرتك الذاتية إلى خريجي مسارك. من يوظّف أو يستطيع التوصية بك يقترح عليك ذلك، وأنت تختار.',
@@ -563,11 +563,11 @@ addAR({
   'Les lauréats de ton parcours sont prévenus. Leurs propositions arrivent ici et dans tes messages.': 'تم إخبار خريجي مسارك. تصلك اقتراحاتهم هنا وفي رسائلك.',
   'Ton CV n’est plus joint : ajoute-le dans ton profil.': 'سيرتك الذاتية لم تعد مرفقة: أضفها في ملفك.',   'Fermer ta demande ? Les lauréats ne la verront plus. Tu pourras la rouvrir.': 'إغلاق طلبك؟ لن يراه الخريجون بعد الآن. يمكنك إعادة فتحه.', 'Fermer la demande': 'إغلاق الطلب', 'Demande fermée.': 'تم إغلاق الطلب.',
   'Demande rouverte : les lauréats la voient de nouveau.': 'أُعيد فتح الطلب: يراه الخريجون من جديد.', 'Supprimer cette demande ? Elle disparaît pour tout le monde.': 'حذف هذا الطلب؟ سيختفي عند الجميع.', 'Demande supprimée.': 'تم حذف الطلب.',
-  'Demande relancée : les lauréats la voient de nouveau.': 'أُعيد إطلاق الطلب: يراه الخريجون من جديد.', 'C’est un match !': 'إنه تطابق!',
-  'C’est un match ! Écris-lui pour la suite.': 'إنه تطابق! راسله من أجل الخطوات التالية.', 'C’est noté. Merci pour ta réponse.': 'تم التسجيل. شكرًا على ردك.',
-  'C’est un match': 'إنه تطابق', 'Une fois confirmé, ta réussite est vérifiée des deux côtés et annoncée.': 'بعد التأكيد، يُوثَّق نجاحك من الطرفين ويُعلن.', 'Pas encore': 'ليس بعد',   'Ça ne s’est pas fait': 'لم يتم الأمر', 'J’ai trouvé autrement': 'وجدت بطريقة أخرى', 'Rouvrir ma demande': 'إعادة فتح طلبي',
+  'Demande relancée : les lauréats la voient de nouveau.': 'أُعيد إطلاق الطلب: يراه الخريجون من جديد.', 'C’est un match !': 'تمّ الاتفاق!',
+  'C’est un match ! Écris-lui pour la suite.': 'تمّ الاتفاق! الخطوة التالية: رسالة قصيرة لترتيب البداية.', 'C’est noté. Merci pour ta réponse.': 'تم التسجيل. شكرًا على ردك.',
+  'C’est un match': 'تمّ الاتفاق', 'Une fois confirmé, ta réussite est vérifiée des deux côtés et annoncée.': 'بعد التأكيد، يُوثَّق نجاحك من الطرفين ويُعلن.', 'Pas encore': 'ليس بعد',   'Ça ne s’est pas fait': 'لم يتم الأمر', 'J’ai trouvé autrement': 'وجدت بطريقة أخرى', 'Rouvrir ma demande': 'إعادة فتح طلبي',
   'Ta demande est de nouveau ouverte.': 'طلبك مفتوح من جديد.', 'Tu as trouvé autrement ? Ta demande sera fermée. Pense à l’indiquer dans Mon parcours.': 'وجدت بطريقة أخرى؟ سيُغلق طلبك. لا تنس الإشارة إلى ذلك في مساري.',
-  'Fermer ma demande': 'إغلاق طلبي', 'Bravo ! Ta demande est fermée.': 'مبروك! تم إغلاق طلبك.',   'Réussite confirmée.': 'تم تأكيد النجاح.', 'Dire merci': 'قل شكرًا', 'Voir son profil': 'عرض ملفه',
+  'Fermer ma demande': 'إغلاق طلبي', 'Bravo ! Ta demande est fermée.': 'مبروك! تم إغلاق طلبك.',   'Réussite confirmée.': 'تم تأكيد النجاح.', 'Dire merci': 'قل شكرًا', 'Voir son profil': 'عرض الملف',
   'Modifier ma demande': 'تعديل طلبي', 'Je cherche': 'أبحث عن', 'En une phrase': 'في جملة واحدة', 'Ce que tu cherches et ce que tu sais faire': 'ما تبحث عنه وما تتقنه',
   'Domaine, missions qui te plaisent, compétences, contraintes (dates, mobilité). Les lauréats décident sur ces lignes et ton CV.': 'المجال، المهام التي تعجبك، الكفاءات، القيود (التواريخ، التنقل). يقرر الخريجون بناءً على هذه الأسطر وسيرتك الذاتية.',
   'Où (facultatif)': 'أين (اختياري)', 'À partir du (facultatif)': 'ابتداءً من (اختياري)', 'Durée (facultatif)': 'المدة (اختياري)',
@@ -578,20 +578,19 @@ addAR({
   'Ex. Je cherche un PFE de 6 mois en lean ou supply chain. J’ai fait mon stage de 4A en méthodes chez un équipementier ; je maîtrise VSM, SMED et Power BI.': 'مثال: أبحث عن مشروع نهاية دراسة لمدة 6 أشهر في اللين أو سلسلة الإمداد. قمت بتدريب السنة الرابعة في المناهج لدى مُصنّع معدات، وأتقن VSM وSMED وPower BI.',
   'Ex. Casablanca, Tanger ou à distance': 'مثال: الدار البيضاء، طنجة أو عن بعد', 'Ex. 2 mois, 6 mois, CDI': 'مثال: شهران، 6 أشهر، عقد دائم',
   'Mes aides en cours': 'مساعداتي الجارية', 'Demandes en cours': 'الطلبات الجارية', 'Proches de ma filière': 'قريبة من شعبتي', 'Ils cherchent': 'يبحثون عن', 'Toutes les filières': 'كل الشعب',   'Rien de ce côté pour l’instant.': 'لا شيء هنا حاليًا.', 'Voir toutes les demandes': 'عرض كل الطلبات', 'Pas de demande ouverte pour le moment': 'لا يوجد طلب مفتوح حاليًا',
-  'Dès qu’un étudiant de ton parcours publie ce qu’il cherche, tu es prévenu(e). En attendant, une offre publiée lui parle tout de suite.': 'بمجرد أن ينشر طالب من مسارك ما يبحث عنه، يصلك إشعار. في انتظار ذلك، عرض منشور يصله مباشرة.',
+  'Dès qu’un étudiant de ton parcours publie ce qu’il cherche, on te prévient. En attendant, une offre publiée lui parle tout de suite.': 'بمجرد أن ينشر طالب من مسارك ما يبحث عنه، يصلك إشعار. في انتظار ذلك، عرض منشور يصله مباشرة.',
   'Mon aide passée': 'مساعدتي السابقة', 'Ton aide est envoyée.': 'تم إرسال مساعدتك.',
   'La demande est pourvue ou fermée. Merci d’avoir proposé ton aide !': 'تمت تلبية الطلب أو إغلاقه. شكرًا على اقتراح مساعدتك!', 'Tu as retiré ton aide.': 'سحبت مساعدتك.',
   'Proposer à nouveau': 'الاقتراح من جديد', 'Je peux aider': 'أستطيع المساعدة', 'Retirer ton aide ?': 'سحب مساعدتك؟', 'Me retirer': 'الانسحاب', 'Ton aide est retirée.': 'تم سحب مساعدتك.',
-  'Tu t’es retiré(e). Merci de l’avoir dit.': 'انسحبت. شكرًا على إخبارنا.', 'Déclarer': 'تصريح',   'Ce que tu proposes': 'ما تقترحه', 'Poste ou sujet (facultatif)': 'المنصب أو الموضوع (اختياري)', 'Ex. PFE méthodes, stage qualité': 'مثال: مشروع نهاية الدراسة في المناهج، تدريب في الجودة',
-  'Ce que tu proposes concrètement et la prochaine étape. Il arrive aussi dans ses messages.': 'ما تقترحه بالتحديد والخطوة التالية. يصل أيضًا إلى رسائله.',
+  'C’est noté, tu ne l’accompagnes plus. Merci de l’avoir dit.': 'تم تسجيل انسحابك. شكرًا على إخبارنا.', 'Déclarer': 'تصريح',   'Ce que tu proposes': 'ما تقترحه', 'Poste ou sujet (facultatif)': 'المنصب أو الموضوع (اختياري)', 'Ex. PFE méthodes, stage qualité': 'مثال: مشروع نهاية الدراسة في المناهج، تدريب في الجودة',
+  'Ce que tu proposes concrètement et la prochaine étape. Il arrive aussi dans ses messages.': 'ما تقترحه بالتحديد والخطوة التالية. يصل أيضًا إلى الرسائل.',
   'Propose seulement ce que tu peux vraiment faire. Si ça ne se fait pas, tu pourras te retirer : la demande se rouvre.': 'اقترح فقط ما تستطيع فعله حقًا. إن لم يتم الأمر، يمكنك الانسحاب: يُعاد فتح الطلب.',
   'Envoyer ma proposition': 'إرسال اقتراحي', 'Proposition modifiée.': 'تم تعديل الاقتراح.',
-  'Aucune demande en cours': 'لا يوجد طلب جارٍ', 'Les demandes des étudiants apparaissent ici dès qu’elles sont publiées.': 'تظهر طلبات الطلبة هنا بمجرد نشرها.', 'Retirer la demande': 'سحب الطلب', 'Demande retirée.': 'تم سحب الطلب.',
+  'Aucune demande en cours': 'لا يوجد طلب جارٍ', 'Les demandes des étudiants apparaissent ici dès qu’elles sont publiées.': 'تظهر طلبات الطلبة هنا بمجرد نشرها.', 'Retirer la demande': 'سحب الطلب', 'Demande retirée.': 'سُحب الطلب.',
   'Pas encore de proposition': 'لا يوجد اقتراح بعد', '1 proposition': 'اقتراح واحد', 'Un étudiant de ton parcours cherche': 'طالب من مسارك يبحث عن', 'Ma demande': 'طلبي',   'Ta demande et ton CV arrivent chez les lauréats de ton parcours : ceux qui peuvent t’aider te le proposent.': 'يصل طلبك وسيرتك الذاتية إلى خريجي مسارك: من يستطيع مساعدتك يقترح عليك ذلك.',
-  'Demandes d’étudiants': 'طلبات الطلبة', 'Demandes des étudiants': 'طلبات الطلبة', 'Via sa demande': 'عبر طلبه',
-  'Tu dis ce que tu cherches, les lauréats te proposent leur aide': 'تقول ما تبحث عنه، ويقترح عليك الخريجون مساعدتهم', 'Les étudiants disent ce qu’ils cherchent, CV joint': 'يقول الطلبة ما يبحثون عنه مع سيرتهم الذاتية',
-  'encadré(e) par': 'بتأطير من', 'recommandé(e) par': 'بتوصية من',
-  'Proposer mon aide': 'اقتراح مساعدتي', 'Recruter': 'التوظيف', 'Encadrer': 'التأطير', 'Recommander': 'التوصية',
+  'Demandes des étudiants': 'طلبات الطلبة', 'Via sa demande': 'عبر الطلب',
+  'avec l’encadrement de': 'بتأطير من', 'sur la recommandation de': 'بتوصية من',
+  'Proposer mon aide': 'اقتراح مساعدتي', 'Recruter': 'توظيف', 'Encadrer': 'تأطير', 'Recommander': 'توصية',
   'Lire sa demande': 'قراءة الطلب', 'Réduire': 'إخفاء', 'Sa demande': 'الطلب', 'Ton entreprise': 'شركتك',
   'Propose seulement ce que tu peux vraiment faire. Si ça ne se fait pas, tu pourras te retirer.': 'اقترح فقط ما تستطيع فعله حقًا. إن لم يتم الأمر، يمكنك الانسحاب.',
   'Cette demande n’attend plus d’aide : elle est pourvue ou fermée. Merci d’avoir voulu aider !': 'لم يعد هذا الطلب ينتظر مساعدة: تمت تلبيته أو أُغلق. شكرًا على رغبتك في المساعدة!',
@@ -619,37 +618,35 @@ addAR({
   [/^Aider (.+)$/, n => `مساعدة ${n}`],
   [/^Ton mot à (.+)$/, n => `كلمتك إلى ${n}`],
   [/^Bonjour (.+), j’ai lu ta demande et ton CV…$/, n => `مرحبًا ${n}، قرأت طلبك وسيرتك الذاتية…`],
-  [/^Proposition envoyée\. (.+) la reçoit aussi dans ses messages\.$/, n => `تم إرسال الاقتراح. يصل أيضًا إلى ${n} في رسائله.`],
+  [/^Proposition envoyée\. (.+) la reçoit aussi dans ses messages\.$/, n => `تم إرسال الاقتراح، ويصل أيضًا إلى رسائل ${n}.`],
   [/^Accepter l’aide de (.+) \? Les autres propositions seront closes, et vous verrez vos coordonnées\.$/, n => `قبول مساعدة ${n}؟ ستُغلق الاقتراحات الأخرى، وسيرى كل منكما معلومات اتصال الآخر.`],
-  [/^Parle avec (.+) de la suite\. Quand tu commences, (.+) le déclare et tu confirmes : ta réussite sera annoncée\.$/, n => `تحدث مع ${n} عن الخطوات التالية. عندما تبدأ، يصرّح ${n} بذلك وتؤكد أنت: سيُعلن نجاحك.`],
+  [/^Parle avec (.+) de la suite\. Quand tu commences, (.+) le déclare et tu confirmes : ta réussite sera annoncée\.$/, n => `تحدث مع ${n} عن الخطوات التالية. عند بدايتك، يأتي تصريح ${n} ثم تأكيدك: ويُعلن نجاحك.`],
   [/^Écrire à (.+)$/, n => `مراسلة ${n}`],
   [/^Dire merci à (.+)$/, n => `قل شكرًا لـ${n}`],
-  [/^(.+) indique que tu as commencé chez (.+)\. Confirme-le\.$/, (n, e) => `يصرّح ${n} بأنك بدأت لدى ${e}. أكّد ذلك.`],
-  [/^(.+) indique que tu as commencé chez (.+?)\.?$/, (n, e) => `يصرّح ${n} بأنك بدأت لدى ${e}.`],
-  [/^Vous avez accès à vos coordonnées\. Quand tu commences, (.+) le déclare ici et tu confirmes\.$/, n => `يمكن لكل منكما رؤية معلومات اتصال الآخر. عندما تبدأ، يصرّح ${n} بذلك هنا وتؤكد أنت.`],
+  [/^(.+) indique que tu as commencé chez (.+)\. Confirme-le\.$/, (n, e) => `تصريح من ${n}: بدأت لدى ${e}. أكّد ذلك.`],
+  [/^(.+) indique que tu as commencé chez (.+?)\.?$/, (n, e) => `تصريح من ${n}: بدأت لدى ${e}.`],
+  [/^Vous avez accès à vos coordonnées\. Quand tu commences, (.+) le déclare ici et tu confirmes\.$/, n => `يمكن لكل منكما رؤية معلومات اتصال الآخر. عند بدايتك، يأتي تصريح ${n} هنا ثم تأكيدك.`],
   [/^Ça ne s’est pas fait avec (.+) \? Ta demande se rouvre et d’autres lauréats pourront te proposer leur aide\.$/, n => `لم يتم الأمر مع ${n}؟ يُعاد فتح طلبك ويمكن لخريجين آخرين اقتراح مساعدتهم.`],
   [/^Ta réussite chez (.+) est vérifiée des deux côtés et annoncée dans le réseau\. Un petit merci fera plaisir à (.+)\.$/, (e, n) => `نجاحك لدى ${e} موثّق من الطرفين ومُعلن في الشبكة. كلمة شكر صغيرة ستُسعد ${n}.`],
   [/^Réussite confirmée chez (.+), avec (.+)\.$/, (e, n) => `تم تأكيد النجاح لدى ${e}، مع ${n}.`],
-  [/^(.+) a confirmé son démarrage\. Ta réussite est annoncée dans le réseau : merci !$/, n => `أكد ${n} بدءه. نجاحك مُعلن في الشبكة: شكرًا!`],
-  [/^(.+) choisit parmi les propositions reçues\.$/, n => `يختار ${n} من بين الاقتراحات التي وصلته.`],
-  [/^(.+) a choisi une autre voie\. Merci d’avoir proposé ton aide !$/, n => `اختار ${n} طريقًا آخر. شكرًا على اقتراح مساعدتك!`],
+  [/^(.+) a confirmé son démarrage\. Ta réussite est annoncée dans le réseau : merci !$/, n => `تأكيد البداية من ${n}. نجاحك مُعلن في الشبكة: شكرًا!`],
+  [/^(.+) choisit parmi les propositions reçues\.$/, n => `الاختيار بين الاقتراحات الواردة بيد ${n}.`],
+  [/^(.+) a choisi une autre voie\. Merci d’avoir proposé ton aide !$/, n => `اختيار ${n}: طريق آخر. شكرًا على اقتراح مساعدتك!`],
   [/^Te retirer \? La demande de (.+) se rouvre pour les autres lauréats\.$/, n => `الانسحاب؟ يُعاد فتح طلب ${n} أمام الخريجين الآخرين.`],
-  [/^C’est un match avec ([^:]+)$/, n => `إنه تطابق مع ${n}`],
+  [/^C’est un match avec ([^:]+)$/, n => `تمّ الاتفاق مع ${n}`],
   [/^Démarrage déclaré chez (.+)\. En attente de la confirmation de (.+)\.$/, (e, n) => `تم التصريح بالبدء لدى ${e}. في انتظار تأكيد ${n}.`],
-  [/^(.+) n’a pas confirmé\. Parlez-en, puis déclare à nouveau quand c’est fait\.$/, n => `لم يؤكد ${n}. تحدثا في الأمر، ثم صرّح من جديد عندما يتم.`],
-  [/^Quand (.+) commence \(stage signé, PFE lancé, contrat\), dis-le ici : (.+) confirme et la réussite est annoncée\.$/, n => `عندما يبدأ ${n} (تدريب موقّع، مشروع انطلق، عقد)، قل ذلك هنا: يؤكد ${n} ويُعلن النجاح.`],
-  [/^(.+) a commencé$/, n => `بدأ ${n}`],
-  [/^(.+) doit maintenant confirmer\. Tes 50 points arrivent dès sa confirmation\.$/, n => `على ${n} الآن التأكيد. تصلك 50 نقطة بمجرد تأكيده.`],
-  [/^(.+) reçoit une demande de confirmation\. Une fois confirmé, c’est vérifié des deux côtés et annoncé dans le réseau\.$/, n => `يتلقى ${n} طلب تأكيد. بعد التأكيد، يُوثَّق من الطرفين ويُعلن في الشبكة.`],
-  [/^(.+) a déjà une réussite enregistrée cette saison\.$/, n => `لدى ${n} نجاح مسجّل هذا الموسم.`],
+  [/^(.+) n’a pas confirmé\. Parlez-en, puis déclare à nouveau quand c’est fait\.$/, n => `لا تأكيد من ${n} بعد. تحدثا في الأمر، ثم صرّح من جديد عندما يتم.`],
+  [/^Quand (.+) commence \(stage signé, PFE lancé, contrat\), dis-le ici : (.+) confirme et la réussite est annoncée\.$/, n => `عند بداية ${n} (تدريب موقّع، مشروع انطلق، عقد)، قل ذلك هنا: يأتي التأكيد ويُعلن النجاح.`],
+  [/^(.+) a commencé$/, n => `بداية ${n}`],
+  [/^(.+) doit maintenant confirmer\. Tes 50 points arrivent dès sa confirmation\.$/, n => `ننتظر الآن تأكيد ${n}. تصلك 50 نقطة بمجرد التأكيد.`],
+  [/^(.+) reçoit une demande de confirmation\. Une fois confirmé, c’est vérifié des deux côtés et annoncé dans le réseau\.$/, n => `يصل طلب تأكيد إلى ${n}. بعد التأكيد، يُوثَّق من الطرفين ويُعلن في الشبكة.`],
+  [/^(.+) a déjà une réussite enregistrée cette année\.$/, n => `لدى ${n} نجاح مسجّل هذه السنة.`],
   [/^Retirer la demande « (.+) » \? Elle ne sera plus proposée aux lauréats\.$/, t => `سحب الطلب «${t}»؟ لن يُقترح على الخريجين بعد الآن.`],
   // Notifications de l'accueil (app.js)
-  [/^(.+?) a confirmé son démarrage chez (.+?)\. \+50 points et un merci\.$/, (n, e) => `أكد ${n} بدءه لدى ${e}. +50 نقطة ورسالة شكر.`],
-  [/^(.+?) a confirmé son démarrage chez (.+?)\. \+50 points\.$/, (n, e) => `أكد ${n} بدءه لدى ${e}. +50 نقطة.`],
-  [/^(.+?) te propose son aide : (.+)$/, (n, t) => `يقترح عليك ${n} مساعدته: ${t}`],
-  [/^(.+?) s’est retiré\(e\)\. Ta demande est de nouveau ouverte aux lauréats\.$/, n => `انسحب ${n}. طلبك مفتوح من جديد أمام الخريجين.`],
-  [/^C’est un match avec (.+?) : déclare son démarrage dès qu’il a lieu\.$/, n => `إنه تطابق مع ${n}: صرّح ببدئه بمجرد حدوثه.`],
-  [/^(.+?) a choisi une autre voie pour « (.+) »\. Merci d’avoir proposé ton aide !$/, (n, t) => `اختار ${n} طريقًا آخر لـ«${t}». شكرًا على اقتراح مساعدتك!`],
+  [/^(.+?) te propose son aide : (.+)$/, (n, t) => `عرض مساعدة من ${n}: ${t}`],
+  [/^(.+?) a retiré sa proposition\. Ta demande est de nouveau ouverte aux lauréats\.$/, n => `سُحب اقتراح ${n}: طلبك مفتوح من جديد أمام الخريجين.`],
+  [/^C’est un match avec (.+?) : déclare son démarrage dès qu’il a lieu\.$/, n => `تمّ الاتفاق مع ${n}: صرّح بالبداية بمجرد حدوثها.`],
+  [/^(.+?) a choisi une autre voie pour « (.+) »\. Merci d’avoir proposé ton aide !$/, (n, t) => `اختيار ${n} لـ«${t}»: طريق آخر. شكرًا على اقتراح مساعدتك!`],
   [/^Ta demande « (.+) » est en pause\. Relance-la si tu cherches toujours\.$/, t => `طلبك «${t}» متوقف مؤقتًا. أعد إطلاقه إن كنت لا تزال تبحث.`],
-  [/^(.+?) cherche : (.+)$/, (n, t) => `${n} يبحث عن: ${t}`],
+  [/^(.+?) cherche : (.+)$/, (n, t) => `${n} · المطلوب: ${t}`],
 ]);

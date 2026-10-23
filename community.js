@@ -4,7 +4,8 @@ import { Icon, Modal, Field, Empty, Person, Avatar, toast, LevelChip, RoleLine, 
 import { proposerPrevenir } from './pwa.js';
 import { ChoixRole, accordIci } from './entree.js';
 import { getLang, setLang } from './i18n.js';
-import { FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole } from './logic.js';
+import { FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole, chiffreReseau } from './logic.js';
+import { villeAffichee } from './geo.js';
 import { TalentPool } from './growth.js';
 import { GroupesPage } from './groupes.js';
 import { AnnuairePro } from './pro.js';
@@ -62,7 +63,7 @@ export function EntraidePage(ctx) {
   const open = id => go('reseau/entraide/' + id);
   if (q) return html`<${QuestionView} ctx=${ctx} q=${q} onBack=${() => go('reseau/entraide', { remplacer: true })}/>`;
   return html`<div class="sub-page">
-    <div class="toolbar"><p class="muted small grow">Les questions des étudiants, les réponses des lauréats. Une question sur une entreprise ou un pays arrive directement aux lauréats concernés.</p><button class="btn primary small" onClick=${() => setAsk(true)}><${Icon} name="plus" size=${16}/> Poser une question</button></div>
+    <div class="toolbar"><p class="muted small grow">Les questions des étudiants, les réponses des lauréats.</p><button class="btn primary small" onClick=${() => setAsk(true)}><${Icon} name="plus" size=${16}/> Poser une question</button></div>
     <div class="chips">${pourMoi.length ? html`<button class=${'chip' + (cat === 'moi' ? ' on' : '')} onClick=${() => setCat(cat === 'moi' ? '' : 'moi')}><${Icon} name="send" size=${13}/> Pour toi <span class="count">${pourMoi.length}</span></button>` : null}${['', ...CATEGORIES_Q].map(c => html`<button class=${'chip' + (cat === c ? ' on' : '')} onClick=${() => setCat(c)}>${c || 'Toutes'}</button>`)}</div>
     <div class="list">${qs.length ? qs.map(q => {
       const ans = data.answers.filter(a => a.question_id === q.id); const au = store.byId('profiles', q.author_id);
@@ -99,7 +100,7 @@ function QuestionView({ ctx, q, onBack }) {
         ${q.author_id === me.id && !best && a.author_id !== me.id ? html`<button class="btn tiny ghost" onClick=${() => act(async () => { await store.update('questions', q.id, { best_answer_id: a.id }); toast('Meilleure réponse choisie. Merci pour le lauréat !'); })}>Choisir comme meilleure réponse</button>` : null}
         ${(a.author_id === me.id || me.role === 'admin') ? html`<button class="icon-btn small" aria-label="Supprimer" onClick=${() => act(() => store.remove('answers', a.id))}><${Icon} name="trash" size=${14}/></button>` : html`<${SignalerBtn} ctx=${ctx} type="reponse" id=${a.id} small/>`}</div></div>
     </div>`; })}</div>
-    <form class="form answer-form" onSubmit=${e => { e.preventDefault(); act(async () => { await store.insert('answers', { question_id: q.id, author_id: me.id, body: txt.trim() }); setTxt(''); toast('Réponse publiée. +5 points'); }); }}>
+    <form class="form answer-form" onSubmit=${e => { e.preventDefault(); act(async () => { await store.insert('answers', { question_id: q.id, author_id: me.id, body: txt.trim() }); setTxt(''); toast('Réponse publiée.', 'ok', 5); }); }}>
       <${Field} label="Ta réponse"><textarea id="ans-txt" rows="4" value=${txt} onInput=${e => setTxt(e.target.value)} placeholder="Partage ton expérience concrète…" maxlength="3000"></textarea><//>
       <div class="row-end"><button class="btn primary" disabled=${!txt.trim()}>Répondre</button></div>
     </form>
@@ -140,8 +141,10 @@ export function ReseauPage(ctx) {
   };
   const tabs = RESEAU_TABS.filter(([k]) => (me.role !== 'etudiant' || !['classement', 'talents'].includes(k)) && (me.role === 'admin' || !vide[k]));
   const tab = tabs.some(([k]) => k === sub) ? sub : 'groupes';
+  // Un seul chiffre par écran : l'annuaire, l'étranger et les entreprises ont déjà le leur
+  const chiffre = ['annuaire', 'etranger', 'entreprises'].includes(tab) ? '' : chiffreReseau(data.profiles, me);
   return html`<section class="page">
-    <header class="page-head"><div><p class="eyebrow">${data.profiles.filter(p => p.role === 'laureat').length} lauréats · ${data.profiles.filter(p => p.role === 'etudiant').length} étudiants</p><h1>Réseau</h1></div></header>
+    <header class="page-head"><div>${chiffre ? html`<p class="eyebrow">${chiffre}</p>` : null}<h1>Réseau</h1></div></header>
     <div class="icon-tabs" role="tablist" style=${`--n:${tabs.length}`}>${tabs.map(([k, l, i]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => go('reseau/' + k, { remplacer: true })}><${Icon} name=${i} size=${20}/><span>${l}</span></button>`)}</div>
     ${tab === 'groupes' ? html`<${GroupesPage} ctx=${ctx}/>` : null}
     ${tab === 'agenda' ? html`<${AgendaPage} ctx=${ctx}/>` : null}
@@ -169,7 +172,7 @@ function ClassementLaureats({ ctx }) {
   const board = data.profiles.filter(p => p.role === 'laureat').map(p => ({ p, pts: periodScores.get(p.id)?.points || 0 })).filter(x => x.pts > 0).sort((a, b) => b.pts - a.pts).slice(0, 20);
   return html`<div class="sub-page">
     <p class="muted small">Les lauréats qui aident le plus : offres, recrutements confirmés, mentorats, réponses.</p>
-    <div class="seg">${[['mois', '30 jours'], ['saison', `Saison ${seasonLabel(saison)}`], ['tout', 'Depuis le début']].map(([k, l]) => html`<button class=${period === k ? 'on' : ''} onClick=${() => setPeriod(k)}>${l}</button>`)}</div>
+    <div class="seg">${[['mois', '30 jours'], ['saison', `Année ${seasonLabel(saison)}`], ['tout', 'Depuis le début']].map(([k, l]) => html`<button class=${period === k ? 'on' : ''} onClick=${() => setPeriod(k)}>${l}</button>`)}</div>
     <ol class="board">${board.map((x, i) => { const s = scores.get(x.p.id); return html`<li class=${i < 3 ? 'podium p' + (i + 1) : ''}>
       <span class="rank-n mono">${i < 3 ? html`<span class=${'medal m' + (i + 1)}>${i + 1}</span>` : i + 1}</span><${Person} p=${x.p} score=${s} onOpen=${openProfile}/>
       <span class="board-facts small muted"><span title="Recrutés"><${Icon} name="briefcase" size=${14}/> ${s?.recrutes || 0}</span><span title="Mentorats"><${Icon} name="mentor" size=${14}/> ${s?.mentorats || 0}</span><span title="Offres"><${Icon} name="feed" size=${14}/> ${s?.offres || 0}</span></span>
@@ -194,8 +197,8 @@ export function ProfileModal({ ctx, p: p0, onClose, onAskMentor }) {
   const st = p.role === 'etudiant' ? statutOf(data, p, saison) : null;
   return html`<${Modal} title="Profil" onClose=${onClose}>
     <div class="profile">
-      <div class="profile-head"><${Avatar} p=${p} size=${64}/><div><h2>${p.full_name}</h2><${RoleLine} p=${p} score=${s}/>
-        <p class="small muted">${p.role === 'laureat' ? `${p.filiere} · Promo ${p.promo}` : p.role === 'etudiant' ? `${NIVEAUX[niveauOf(p, saison)]?.label} · promo ${p.promo}` : ''}${p.ville ? ` · ${p.ville}` : ''}${p.pays && p.pays !== 'Maroc' ? `, ${p.pays}` : ''}</p></div></div>
+      <div class="profile-head"><${Avatar} p=${p} size=${64}/><div><h2>${p.full_name}</h2><${RoleLine} p=${p} score=${s} sansEntreprise=${!!p.entreprise}/>
+        <p class="small muted">${p.role === 'laureat' ? p.filiere : p.role === 'etudiant' ? `${NIVEAUX[niveauOf(p, saison)]?.label} · promo ${p.promo}` : ''}${p.ville ? html` · <span translate="no">${villeAffichee(p.ville, getLang())}</span>` : ''}${p.pays && p.pays !== 'Maroc' ? `, ${p.pays}` : ''}</p></div></div>
       ${p.poste || p.entreprise ? html`<p>${p.poste ? html`<strong>${p.poste}</strong>` : null}${p.entreprise ? html`${p.poste ? ' chez ' : ''}<button class="linkish" onClick=${() => { onClose(); ctx.openEntreprise?.(p.entreprise); }}>${p.entreprise}</button>` : null}${p.secteur ? html` <span class="mini">${p.secteur}</span>` : null}</p>` : null}
       ${st ? html`<p><span class=${'state-pill s-' + st.key}>${st.label}</span>${st.pl ? ` ${st.pl.entreprise}` : ''}</p>` : null}
       ${p.role === 'etudiant' && p.disponibilite ? html`<p class="small"><${Icon} name="calendar" size=${14}/> Disponibilité : <span translate="no" dir="auto">${p.disponibilite}</span></p>` : null}
@@ -333,7 +336,7 @@ const DELAI_VIS = 20000;
 
 // Ce qui manque encore : le bouton le dit, et y mène (jamais un bouton grisé sans raison)
 const MANQUE = {
-  role: ['Choisis : étudiant(e) ou lauréat(e)', 'pf-je-etudiant'], ecole: ['Utilise l’email de l’école', 'pf-ecole'], nom: ['Ajoute ton nom', 'pf-name'],
+  role: ['Choisis ta situation', 'pf-je-etudiant'], ecole: ['Utilise l’email de l’école', 'pf-ecole'], nom: ['Ajoute ton nom', 'pf-name'],
   promo: ['Ajoute ta promo', 'pf-promo'], coherence: ['Vérifie ta promo', 'pf-incoherent'], filiere: ['Choisis ta filière', 'pf-fil'], aide: ['Dis si tu peux aider', 'pf-aide-oui'],
 };
 const ERR = { nom: 'Écris ton nom complet.', promo: 'Indique l’année de ton diplôme.', filiere: 'Choisis ta filière dans la liste.', aide: 'Choisis l’une des deux réponses.' };
@@ -507,8 +510,8 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
     const n = { ...f }, faits = [];
     const vide = k => !String(f[k] ?? '').trim();
     const neuf = !initial;
-    if (neuf && (!preset || cv) && r.role && f.role !== 'admin' && r.role !== f.role) { n.role = r.role; faits.push(r.role === 'laureat' ? 'Lauréat(e)' : 'Étudiant(e)'); }
-    else if (cv && r.role) faits.push(r.role === 'laureat' ? 'Lauréat(e)' : 'Étudiant(e)');
+    if (neuf && (!preset || cv) && r.role && f.role !== 'admin' && r.role !== f.role) { n.role = r.role; faits.push(r.role === 'laureat' ? 'Profil lauréat' : 'Profil étudiant'); }
+    else if (cv && r.role) faits.push(r.role === 'laureat' ? 'Profil lauréat' : 'Profil étudiant');
     for (const [k, l] of [['full_name', 'Nom'], ['poste', 'Poste'], ['entreprise', 'Entreprise'], ['ville', 'Ville'], ['bio', 'Bio'], ['linkedin', 'LinkedIn']]) if (r[k] && vide(k)) { n[k] = r[k]; faits.push(l); }
     if (r.pays && r.pays !== f.pays && (vide('pays') || (neuf && f.pays === 'Maroc'))) { n.pays = r.pays; faits.push('Pays'); }
     if (neuf && (!preset?.promo || cv) && r.promo && r.promo !== +f.promo) { n.promo = r.promo; faits.push(cv ? `Promo ${r.promo}` : 'Promo'); }
@@ -538,20 +541,20 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
   const choisirRole = role => { toucher('role'); setF(x => ({ ...x, role })); };
   const changerRole = () => { setVoirRole(true); requestAnimationFrame(() => document.getElementById('pf-je-' + f.role)?.focus()); };
   const promoValide = f.promo !== '' && Number.isInteger(promoN) && promoN >= 1990 && promoN <= 2040;
-  const hintPromo = !isStudent ? '' : promoValide && !incoherent ? `Cette saison, tu es en ${NIVEAUX[niveauOf({ promo: promoN }, S)].label}.`
-    : 'Ex. en 5A cette année : ' + (S + 1) + '. Ton niveau se met à jour tout seul chaque année.';
+  const hintPromo = !isStudent ? '' : promoValide && !incoherent ? `En ${seasonLabel(S)}, tu es en ${NIVEAUX[niveauOf({ promo: promoN }, S)].label}.`
+    : 'Ex. en 5A cette année : ' + (S + 1) + '. Ton année d’études avance toute seule chaque septembre.';
   const n = !isStudent && initial && !initial.verified ? confirmations(store.data, initial) : 0;
   const aide = html`<${ChoixAide} value=${f.mentor_dispo} onChange=${v => set('mentor_dispo', v)} err=${err('aide')}/>`;
   const bouton = html`<button class="btn primary" data-manque=${manques[0] || null}>${libelle}</button>`;
   return html`<form class="form" onSubmit=${submit}>
     ${onboarding ? (voirRole || !f.role ? html`<${ChoixRole} value=${f.role} onChange=${choisirRole}/>`
-      : html`<div class="pf-role"><p class="small" id="pf-role-rappel">${f.role === 'laureat' ? 'Tu t’inscris comme lauréat(e).' : 'Tu t’inscris comme étudiant(e).'}</p><button type="button" class="linkish small" id="pf-role-changer" onClick=${changerRole}>Changer</button></div>`)
-    : f.role !== 'admin' ? html`<div class="seg" role="group" aria-label="Je suis"><button type="button" class=${isStudent ? 'on' : ''} onClick=${() => choisirRole('etudiant')}>Je suis étudiant(e)</button><button type="button" class=${!isStudent ? 'on' : ''} onClick=${() => choisirRole('laureat')}>Je suis lauréat(e)</button></div>` : null}
+      : html`<div class="pf-role"><p class="small" id="pf-role-rappel">${f.role === 'laureat' ? 'Tu t’inscris côté lauréats.' : 'Tu t’inscris côté étudiants.'}</p><button type="button" class="linkish small" id="pf-role-changer" onClick=${changerRole}>Changer</button></div>`)
+    : f.role !== 'admin' ? html`<div class="seg" role="group" aria-label="Ta situation"><button type="button" class=${isStudent ? 'on' : ''} onClick=${() => choisirRole('etudiant')}>Je suis à l’école</button><button type="button" class=${!isStudent ? 'on' : ''} onClick=${() => choisirRole('laureat')}>J’ai mon diplôme</button></div>` : null}
     ${ecoleBloque ? html`<div class="cf-warn" role="alert" id="pf-ecole"><p><strong>${onboarding ? 'Inscris-toi avec ton email de l’école.' : 'Un compte étudiant utilise l’email de l’école.'}</strong></p>
       <p class="small">Les comptes étudiants utilisent l’email de l’école : <span dir="ltr" translate="no">${domaines.map(d => '@' + d).join(', ')}</span></p>
       <p class="small">Ton compte actuel n’en fait pas partie : <span dir="ltr" translate="no">${email}</span></p>
-      ${onboarding ? html`<p class="small">Tu as déjà ton diplôme ? Choisis « Lauréat(e) » : l’email de l’école n’est demandé qu’aux étudiants.</p>
-        <div class="row"><button type="button" class="btn small primary" id="pf-plutot-laureat" onClick=${() => choisirRole('laureat')}>Je suis lauréat(e)</button><button type="button" class="btn small" id="pf-relog" onClick=${() => store.signOut()}><${Icon} name="logout" size=${15}/> Me déconnecter et recommencer</button></div>`
+      ${onboarding ? html`<p class="small">Tu as déjà ton diplôme ? Choisis « J’ai mon diplôme » : l’email de l’école n’est demandé qu’aux étudiants.</p>
+        <div class="row"><button type="button" class="btn small primary" id="pf-plutot-laureat" onClick=${() => choisirRole('laureat')}>J’ai mon diplôme</button><button type="button" class="btn small" id="pf-relog" onClick=${() => store.signOut()}><${Icon} name="logout" size=${15}/> Me déconnecter et recommencer</button></div>`
         : html`<p class="small">L’administration de la plateforme peut changer ton rôle si besoin.</p>`}</div>` : null}
     ${onboarding ? html`<${CvBox} onLu=${(r, file) => { setCvFichier(file); return remplir(r, { cv: true }); }} onPhoto=${setPhotoCV}/>` : null}
     ${!f.role ? html`<p class="small muted center" id="pf-choisir">Choisis ci-dessus, ou dépose ton CV : on remplit tout pour toi.</p>` : html`
@@ -560,8 +563,8 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
       <${Field} label="Nom complet" err=${err('nom')} errId="pf-err-nom"><input id="pf-name" autocomplete="name" value=${f.full_name} onInput=${e => set('full_name', e.target.value)} maxlength="80" ...${aria('nom')}/><//>
       <${Field} label=${isStudent ? 'Promo (année de diplôme prévue)' : 'Promo (année de diplôme)'} hint=${hintPromo} err=${err('promo')} errId="pf-err-promo"><input id="pf-promo" type="number" inputmode="numeric" placeholder=${onboarding && !isStudent ? 'Ex. 2019' : null} value=${f.promo} onInput=${e => set('promo', e.target.value)} ...${aria('promo')}/><//>
     </div>
-    ${incoherent ? html`<div class="cf-warn" role="alert" id="pf-incoherent"><p class="small">${incoherent === 'futur' ? `Promo ${promoN} : ton diplôme n’est pas encore là. Tu es étudiant(e) ?` : incoherent === 'diplome' ? `Promo ${promoN} : tu as déjà ton diplôme ? Alors tu es lauréat(e).` : `Vérifie ta promo : cette saison, la 1re année est la promo ${S + 5}.`}</p>
-      ${incoherent === 'loin' ? null : html`<div><button type="button" class="btn small" id="pf-role-ok" onClick=${() => choisirRole(incoherent === 'futur' ? 'etudiant' : 'laureat')}>${incoherent === 'futur' ? 'Je suis étudiant(e)' : 'Je suis lauréat(e)'}</button></div>`}</div>` : null}
+    ${incoherent ? html`<div class="cf-warn" role="alert" id="pf-incoherent"><p class="small">${incoherent === 'futur' ? `Promo ${promoN} : ton diplôme n’est pas encore là. Tu es encore à l’école ?` : incoherent === 'diplome' ? `Promo ${promoN} : tu as déjà ton diplôme ? Passe côté lauréats.` : `Vérifie ta promo : en ${seasonLabel(S)}, la 1re année est la promo ${S + 5}.`}</p>
+      ${incoherent === 'loin' ? null : html`<div><button type="button" class="btn small" id="pf-role-ok" onClick=${() => choisirRole(incoherent === 'futur' ? 'etudiant' : 'laureat')}>${incoherent === 'futur' ? 'Je suis à l’école' : 'J’ai mon diplôme'}</button></div>`}</div>` : null}
     <${Field} label="Filière" hint=${garde && filiere === garde ? 'Nouveau : choisis ta filière dans la liste officielle de l’école.' : filiere === PREPA ? 'La filière se choisit en 3e année.' : ''} err=${err('filiere')} errId="pf-err-filiere"><select id="pf-fil" value=${filiere} onChange=${e => set('filiere', e.target.value)} ...${aria('filiere')}>
       ${filiere === '' ? html`<option value="">Choisis ta filière</option>` : null}
       ${garde ? html`<option value=${garde}>${garde}</option>` : null}
@@ -609,36 +612,43 @@ addAR({
   'Quelques secondes, et tu es dans le réseau.': 'بضع ثوانٍ، وتصبح في الشبكة.',
   'On remplit ton profil depuis ton CV (PDF).': 'نملأ ملفك انطلاقًا من سيرتك الذاتية (PDF).',
   'Facultatif': 'اختياري', 'entreprise, poste, ville, LinkedIn…': 'الشركة، المنصب، المدينة، LinkedIn…', 'ville, LinkedIn, compétences…': 'المدينة، LinkedIn، المهارات…',
-  'Choisis ta filière': 'اختر شعبتك', 'Disponible pour aider les étudiants ?': 'هل أنت مستعد لمساعدة الطلبة؟',
+  'Choisis ta filière': 'اختر شعبتك', 'Disponible pour aider les étudiants ?': 'هل تودّ مساعدة الطلبة؟',
   'Oui, avec plaisir': 'نعم، بكل سرور', 'Pas pour l’instant': 'ليس الآن',
   'Les étudiants de ta filière pourront te demander 20 minutes de conseil en visio. Tu choisis parmi leurs horaires, ou tu réponds « Pas disponible cette fois ». Tu peux changer d’avis à tout moment.':
     'سيتمكن طلبة شعبتك من طلب 20 دقيقة من النصح عبر الفيديو. تختار من بين المواعيد التي يقترحونها، أو تجيب « غير متاح هذه المرة ». يمكنك تغيير رأيك في أي وقت.',
-  'Choisis : étudiant(e) ou lauréat(e)': 'اختر: طالب(ة) أم خريج(ة)', 'Utilise l’email de l’école': 'استعمل بريد المدرسة',
+  'Choisis ta situation': 'اختر وضعيتك', 'Utilise l’email de l’école': 'استعمل بريد المدرسة',
   'Ajoute ton nom': 'أضف اسمك', 'Ajoute ta promo': 'أضف دفعتك', 'Vérifie ta promo': 'تحقّق من دفعتك', 'Dis si tu peux aider': 'أخبرنا إن كنت تستطيع المساعدة',
   'Écris ton nom complet.': 'اكتب اسمك الكامل.', 'Indique l’année de ton diplôme.': 'اذكر سنة تخرّجك.',
   'Choisis ta filière dans la liste.': 'اختر شعبتك من القائمة.', 'Choisis l’une des deux réponses.': 'اختر أحد الجوابين.',
-  'Tu t’inscris comme lauréat(e).': 'تسجّل بصفتك خريج(ة).', 'Tu t’inscris comme étudiant(e).': 'تسجّل بصفتك طالب(ة).',
+  'Tu t’inscris côté lauréats.': 'تسجيلك في فضاء الخريجين.', 'Tu t’inscris côté étudiants.': 'تسجيلك في فضاء الطلبة.',
+  'Ta situation': 'وضعيتك', 'Je suis à l’école': 'أدرس في المدرسة', 'J’ai mon diplôme': 'حصلت على شهادتي', 'Profil étudiant': 'ملف طالب', 'Profil lauréat': 'ملف خريج',
+  'Tu as déjà ton diplôme ? Choisis « J’ai mon diplôme » : l’email de l’école n’est demandé qu’aux étudiants.': 'حصلت على شهادتك؟ اختر «حصلت على شهادتي»: بريد المدرسة مطلوب من الطلبة فقط.',
   'Ex. 2019': 'مثال: 2019', 'Enregistrement…': 'جارٍ الحفظ…',
-}, [[/^Cette saison, tu es en (.+)\.$/, l => `في هذا الموسم، أنت في ${NIV_AR[l] || l}.`]]);
+}, [
+  [/^En (\d{4}-\d{4}), tu es en (.+)\.$/, (y, l) => `في ${y}، أنت في ${NIV_AR[l] || l}.`],
+  [/^Ex\. en 5A cette année : (\d{4})\. Ton année d’études avance toute seule chaque septembre\.$/, y => `مثال: في 5A هذه السنة: ${y}. تتقدّم سنتك الدراسية تلقائيًا كل شتنبر.`],
+  [/^Promo (\d{4}) : ton diplôme n’est pas encore là\. Tu es encore à l’école \?$/, p => `دفعة ${p}: لم تحصل على شهادتك بعد. هل ما زلت تدرس في المدرسة؟`],
+  [/^Promo (\d{4}) : tu as déjà ton diplôme \? Passe côté lauréats\.$/, p => `دفعة ${p}: هل حصلت على شهادتك؟ انتقل إلى فضاء الخريجين.`],
+  [/^Vérifie ta promo : en (\d{4}-\d{4}), la 1re année est la promo (\d{4})\.$/, (y, p) => `تحقق من دفعتك: في ${y}، السنة الأولى هي دفعة ${p}.`],
+]);
 
 export { levelOf, LevelChip };
 
 // Lauréats qui cherchent un emploi, vérification des lauréats (CV, LinkedIn), photo de profil
 addAR({
   'Modifications pas encore enregistrées': 'تعديلات لم تُحفظ بعد',
-  'Diplômé(e) de l’ENSAM Meknès, en poste ou en recherche': 'خريج(ة) ENSAM مكناس، في وظيفة أو يبحث عن عمل',
+  'De l’ENSAM Meknès, en poste ou en recherche d’emploi': 'من ENSAM مكناس، في وظيفة أو في بحث عن عمل',
   'Je cherche un emploi en ce moment': 'أبحث عن عمل حاليًا',
   'Les lauréats qui recrutent te verront dans la Vitrine des talents, et tu recevras les offres « Jeunes diplômés » et entre lauréats de ta filière. Ton expérience de PFE aide déjà les étudiants.':
     'سيراك الخريجون الذين يوظّفون في واجهة المواهب، وستصلك عروض « الخريجون الجدد » والعروض بين الخريجين في شعبتك. وتجربتك في مشروع نهاية الدراسة تساعد الطلبة منذ الآن.',
   'Le poste que je cherche': 'الوظيفة التي أبحث عنها', 'Ex. ingénieur méthodes, Casablanca ou Tanger': 'مثال: مهندس طرق، الدار البيضاء أو طنجة',
-  'Cherche un emploi': 'يبحث عن عمل', 'un emploi': 'عمل', 'Lauréats en recherche': 'خريجون يبحثون عن عمل',
-  'Étudiants en recherche qui ont choisi d’être visibles par les lauréats, et lauréats qui cherchent un emploi.': 'طلبة يبحثون عن فرصة واختاروا أن يظهروا للخريجين، وخريجون يبحثون عن عمل.',
+  'Cherche un emploi': 'بحث عن عمل', 'un emploi': 'عمل', 'Lauréats en recherche': 'خريجون يبحثون عن عمل',
   'Étudiants en recherche qui ont choisi d’être visibles par les lauréats, et lauréats qui cherchent un emploi. Garde les profils intéressants et invite-les à postuler à tes offres.':
     'طلبة يبحثون عن فرصة واختاروا أن يظهروا للخريجين، وخريجون يبحثون عن عمل. احتفظ بالملفات المهمة وادعهم للترشح لعروضك.',
   'Offres pour toi': 'عروض لك', 'Le réseau t’aide à trouver ton poste, et ton expérience aide déjà les étudiants.': 'الشبكة تساعدك على إيجاد وظيفتك، وتجربتك تساعد الطلبة منذ الآن.',
   'Tu cherches un emploi ?': 'تبحث عن عمل؟', 'Un lauréat plus expérimenté peut relire ton CV, te préparer à un entretien ou te parler salaire.': 'خريج أكثر خبرة يمكنه مراجعة سيرتك الذاتية، أو تحضيرك لمقابلة، أو الحديث معك عن الراتب.',
-  'Demander conseil': 'طلب نصيحة', 'Qui as-tu recruté ?': 'من وظّفت؟', 'Son nom': 'اسمه أو اسمها',
+  'Demander conseil': 'طلب نصيحة', 'Qui as-tu recruté ?': 'من وظّفت؟', 'Son nom': 'الاسم',
   'Personne avec ce nom. La personne doit d’abord créer son compte.': 'لا أحد بهذا الاسم. يجب على الشخص أن ينشئ حسابه أولًا.',
-  'CV déposé': 'السيرة الذاتية مرفوعة', 'Pas de CV déposé': 'لم يرفع سيرته الذاتية', 'Son profil LinkedIn': 'ملفه على LinkedIn', 'Pas de LinkedIn': 'لا يوجد LinkedIn',
-  'Demander son CV': 'طلب سيرته الذاتية', 'Retirer la photo': 'إزالة الصورة',
+  'CV déposé': 'السيرة الذاتية مرفوعة', 'Pas de CV déposé': 'لا سيرة ذاتية مرفوعة', 'Son profil LinkedIn': 'الملف على LinkedIn', 'Pas de LinkedIn': 'لا يوجد LinkedIn',
+  'Demander son CV': 'طلب السيرة الذاتية', 'Retirer la photo': 'إزالة الصورة',
 });

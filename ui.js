@@ -2,6 +2,8 @@
 import { html, useState, useEffect, useLayoutEffect, useRef, useMemo } from './vendor/preact-htm.js';
 import { initials, levelOf, NIVEAUX, niveauOf, seasonOf, PARCOURS, FILIERES_INFO, timeAgo } from './logic.js';
 import { Icon, Field, BrandLogo, SchoolScene, TYPE_ICON, ajouterIcones } from './entree.js';
+import { getLang } from './i18n.js';
+import { avecLangue } from './regles-entree.js';
 
 export { html, Icon, Field, BrandLogo, SchoolScene, TYPE_ICON };
 
@@ -317,13 +319,14 @@ export function Modal({ title, onClose, children, wide, footer, cls, historique 
 }
 
 let toastSet = null;
-export function toast(msg, kind = 'ok') { toastSet?.({ msg, kind, t: Date.now() }); }
+// pts : les points d'impact gagnés, en petite pastille après la phrase (jamais montrés à un étudiant)
+export function toast(msg, kind = 'ok', pts = 0) { toastSet?.({ msg, kind, pts, t: Date.now() }); }
 export function Toaster() {
   const [t, setT] = useState(null);
   toastSet = setT;
   useEffect(() => { if (!t) return; const h = setTimeout(() => setT(null), 3800); return () => clearTimeout(h); }, [t]);
   // La zone reste toujours là (vide entre deux messages) pour que les lecteurs d'écran annoncent chaque message
-  return html`<div class="toast-zone" role="status" aria-live="polite">${t ? html`<div class=${'toast ' + t.kind} key=${t.t}>${t.msg}</div>` : null}</div>`;
+  return html`<div class="toast-zone" role="status" aria-live="polite">${t ? html`<div class=${'toast ' + t.kind} key=${t.t}>${t.msg}<${Pastille} n=${t.pts}/></div>` : null}</div>`;
 }
 
 // Mène au premier champ à compléter : au milieu de la fenêtre (doux, sauf mouvement réduit), le curseur dedans
@@ -344,7 +347,7 @@ export function LigneAFaire({ n, onGo }) {
 }
 // Une nouvelle : toute la ligne s'ouvre ; un rappel dit déjà quand, donc pas de « il y a »
 export function LigneNouvelle({ n, onGo }) {
-  return html`<li><button type="button" class="notif" onClick=${() => onGo(n)}><span class=${'n-ico ' + (n.tone || '')} aria-hidden="true"><${Icon} name=${n.icon} size=${16}/></span><span>${n.text}${n.rappel ? null : html`<span class="muted small">${timeAgo(n.at)}</span>`}</span></button></li>`;
+  return html`<li><button type="button" class="notif" onClick=${() => onGo(n)}><span class=${'n-ico ' + (n.tone || '')} aria-hidden="true"><${Icon} name=${n.icon} size=${16}/></span><span>${n.text}<${Pastille} n=${n.pts}/>${n.rappel ? null : html`<span class="muted small">${timeAgo(n.at)}</span>`}</span></button></li>`;
 }
 
 // Écran vide : une phrase chaleureuse et, si possible, une seule action pour avancer.
@@ -360,10 +363,10 @@ export function Empty({ icon = 'spark', title, children, action }) {
 // ---------------------------------------------------------------------------
 let feteSet = null, feteActive = false;
 const surFete = new Set();
-export function celebrate({ cle, titre, texte, action, icon = 'trophy' }) {
+export function celebrate({ cle, titre, texte, action, icon = 'trophy', pts = 0 }) {
   if (cle) { try { if (localStorage.getItem('fete-' + cle)) return false; localStorage.setItem('fete-' + cle, '1'); } catch { /* pas de stockage : on fête quand même */ } }
   if (!feteSet) return false;
-  feteSet({ titre, texte, action, icon, t: Date.now() });
+  feteSet({ titre, texte, action, icon, pts, t: Date.now() });
   feteActive = true;
   for (const fn of surFete) fn();
   return true;
@@ -395,6 +398,7 @@ function Fete({ f, onClose }) {
       <span class="fete-ico"><${Icon} name=${f.icon} size=${34}/></span>
       <h2 id="fete-titre">${f.titre}</h2>
       ${f.texte ? html`<p>${f.texte}</p>` : null}
+      ${f.pts && rangsVisibles ? html`<p class="fete-pts"><${Pastille} n=${f.pts}/></p>` : null}
       <div class="fete-acts">
         ${f.action ? html`<button type="button" class="btn primary" onClick=${() => { onClose(); f.action.onClick(); }}>${f.action.icon ? html`<${Icon} name=${f.action.icon} size=${16}/> ` : null}${f.action.label}</button>` : null}
         <button type="button" class=${'btn ' + (f.action ? 'ghost' : 'primary')} onClick=${onClose}>${f.action ? 'Plus tard' : 'Merci !'}</button>
@@ -417,19 +421,22 @@ export function LevelChip({ points }) {
 
 let rangsVisibles = true;
 export function voirRangs(v) { rangsVisibles = v; }
+// Les points d'impact en petite pastille après la phrase : la personne d'abord, les points ensuite ; jamais pour un étudiant
+export const Pastille = ({ n }) => (n > 0 && rangsVisibles ? html`<span class="pastille-pts">${`+${n} points`}</span>` : null);
 
 // Qui est ce membre, en une ligne : « 5A · Génie Industriel », « Promo 2019 · Capgemini », « Équipe du réseau »
 // (le compte qui anime le réseau n'est jamais « Administration », qu'on confondrait avec celle de l'école)
-export function roleTexte(p) {
+// sansEntreprise : l'entreprise est déjà écrite juste à côté (annuaire, fiche), on ne la répète pas
+export function roleTexte(p, sansEntreprise = false) {
   if (!p) return '';
   if (p.role === 'etudiant') return `${NIVEAUX[niveauOf(p, seasonOf())]?.short || ''} · ${p.filiere}`;
   if (p.role === 'admin') return 'Équipe du réseau';
-  return `Promo ${p.promo}${p.entreprise ? ' · ' + p.entreprise : ''}`;
+  return `Promo ${p.promo}${p.entreprise && !sansEntreprise ? ' · ' + p.entreprise : ''}`;
 }
 
-export function RoleLine({ p, score }) {
+export function RoleLine({ p, score, sansEntreprise }) {
   if (!p) return null;
-  return html`<span class="role-line">${roleTexte(p)}
+  return html`<span class="role-line">${roleTexte(p, sansEntreprise)}
     ${p.role === 'laureat' && p.verified ? html`<span class="verif" title="Lauréat vérifié par le réseau"><${Icon} name="shield" size=${13}/></span>` : null}
     ${p.role === 'laureat' && score && rangsVisibles ? html` <${LevelChip} points=${score.points}/>` : null}
     ${p.role === 'laureat' && score && !rangsVisibles && aides(score) ? html` <span class="mini aide-chip"><${Icon} name="heart" size=${11}/> ${aides(score) > 1 ? `A aidé ${aides(score)} étudiants` : 'A aidé 1 étudiant'}</span>` : null}</span>`;
@@ -437,16 +444,16 @@ export function RoleLine({ p, score }) {
 
 const aides = s => (s?.recrutes || 0) + (s?.mentorats || 0);
 
-export function Person({ p, score, onOpen, size = 36, sub }) {
+export function Person({ p, score, onOpen, size = 36, sub, sansEntreprise }) {
   return html`<button class="person" onClick=${() => onOpen?.(p)} type="button">
     <${Avatar} p=${p} size=${size}/>
-    <span class="person-txt">${p?.full_name ? html`<span class="person-name" translate="no" dir="auto">${p.full_name}</span>` : html`<span class="person-name">Membre</span>`}${sub !== undefined ? html`<span class="role-line">${sub}</span>` : html`<${RoleLine} p=${p} score=${score}/>`}</span>
+    <span class="person-txt">${p?.full_name ? html`<span class="person-name" translate="no" dir="auto">${p.full_name}</span>` : html`<span class="person-name">Membre</span>`}${sub !== undefined ? html`<span class="role-line">${sub}</span>` : html`<${RoleLine} p=${p} score=${score} sansEntreprise=${sansEntreprise}/>`}</span>
   </button>`;
 }
 
 export function Bar({ value, pace, label }) {
   const v = Math.max(0, Math.min(1, value || 0));
-  return html`<div class="bar" role="img" aria-label=${label || `${Math.round(v * 100)} %`}>
+  return html`<div class="bar" role="img" aria-label=${label || `${Math.round(v * 100)}%`}>
     <span class="bar-fill" style=${`width:${v * 100}%`}></span>
     ${pace !== undefined ? html`<span class="bar-pace" style=${`inset-inline-start:${Math.max(0, Math.min(1, pace)) * 100}%`} title="Rythme attendu à cette date"></span>` : null}
   </div>`;
@@ -491,8 +498,9 @@ export function CompanyLogo({ name = '', size = 44 }) {
 }
 
 
-// Partage sur WhatsApp : un texte et le lien direct vers la page (offre, question), pour les groupes de promo
-export const lienDirect = hash => location.origin + location.pathname + '#' + hash;
+// Partage sur WhatsApp : un texte et le lien direct vers la page (offre, question), pour les groupes de promo.
+// Partagé depuis l'interface arabe, le lien s'ouvre en arabe chez qui n'a pas encore choisi sa langue.
+export const lienDirect = hash => avecLangue(location.origin + location.pathname, getLang()) + '#' + hash;
 export const lienWhatsApp = texte => 'https://wa.me/?text=' + encodeURIComponent(texte);
 export function PartagerWhatsApp({ texte, id }) {
   return html`<a class="icon-btn partage-wa" id=${id} href=${lienWhatsApp(texte)} target="_blank" rel="noopener" aria-label="Partager sur WhatsApp" title="Partager sur WhatsApp"><${Icon} name="share" size=${18}/></a>`;

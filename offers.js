@@ -3,11 +3,12 @@ import { html, useState, useMemo, useEffect, useRef } from './vendor/preact-htm.
 import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, TYPE_ICON, toast, RoleLine, celebrate, injectCSS, PartagerWhatsApp, lienWhatsApp, lienDirect, allerAuChamp } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
 import { getLang, addAR, arCount } from './i18n.js';
-import { TYPES, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande, manquesOffre } from './logic.js';
+import { TYPES, titreOffre, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande, manquesOffre, peutRecommander, porteApresRefus } from './logic.js';
 import { RelanceBanner, BanqueSujets, PasteOffer } from './recrutement.js';
 import { CvButton } from './cv.js';
 import { SignalerBtn } from './confiance.js';
 import { EntrepriseResume } from './entreprises.js';
+import { recherche } from './geo.js';
 import { MessageBtn } from './messages.js';
 import { DemandesTab, demandesAFaire } from './demandes.js';
 // Le message WhatsApp d'une offre, dans la langue de l'interface : de quoi il s'agit, et le lien qui l'ouvre directement.
@@ -20,7 +21,7 @@ const texteOffre = o => getLang() === 'ar'
   : `${titreDit(o) ? '' : `${TYPES[o.type]?.label || 'Offre'} : `}${o.titre} · ${o.entreprise}\nOffre partagée sur le Réseau ENSAM Meknès. Ouvre-la ici : ${lienDirect('offre/' + o.id)}`;
 
 const ANNEES_OPTS = [[3, '3A'], [4, '4A'], [5, '5A'], [6, 'Jeunes diplômés']];
-export const APP_STATUS = { postule: 'Envoyée', entretien: 'Entretien', retenu: 'Retenu(e)', refuse: 'Pas retenu(e)' };
+export const APP_STATUS = { postule: 'Envoyée', entretien: 'Entretien', retenu: 'Retenue', refuse: 'Pas retenue' };
 
 export const matchesMe = offrePour;
 const forLaureats = o => o.audience === 'laureats';
@@ -54,7 +55,7 @@ export function OffersPage(ctx) {
   const { me, saison, sub, go, data, store } = ctx;
   const isStudent = me.role === 'etudiant';
   const tabs = [['', 'Offres', 'feed']];
-  if (!isStudent || typesDemande(me, saison).length) tabs.push(['demandes', isStudent ? 'Mes demandes' : 'Demandes d’étudiants', 'send', demandesAFaire(data, me, store)]);
+  if (!isStudent || typesDemande(me, saison).length) tabs.push(['demandes', isStudent ? 'Mes demandes' : 'Demandes des étudiants', 'send', demandesAFaire(data, me, store)]);
   if (!isStudent || niveauOf(me, saison) === 5) tabs.push(['sujets', 'Sujets PFE', 'cap']);
   if (!isStudent) tabs.push(['laureats', 'Entre lauréats', 'briefcase']);
   const tab = tabs.some(([k]) => k === sub) ? sub : '';
@@ -62,7 +63,7 @@ export function OffersPage(ctx) {
   const demandes = tab === 'demandes';
   return html`<section class="page">
     <header class="page-head">
-      <div><p class="eyebrow">${demandes ? (isStudent ? 'Tu dis ce que tu cherches, les lauréats te proposent leur aide' : 'Les étudiants disent ce qu’ils cherchent, CV joint') : tab === 'laureats' ? 'Postes pour lauréats expérimentés, visibles seulement par les lauréats' : tab === 'sujets' ? 'L’entreprise dépose un vrai problème, un étudiant le prend, le lauréat l’encadre' : isStudent ? `Pour ${NIVEAUX[niveauOf(me, saison)]?.label?.toLowerCase() || 'toi'} · partagées par les lauréats` : 'Partagées par les lauréats'}</p><h1>${demandes ? (isStudent ? 'Mes demandes' : 'Demandes des étudiants') : tab === 'sujets' ? 'Banque de sujets PFE' : tab === 'laureats' ? 'Offres entre lauréats' : 'Offres'}</h1></div>
+      <div>${demandes || tab === 'sujets' ? null : html`<p class="eyebrow">${tab === 'laureats' ? 'Réservées aux lauréats' : isStudent ? NIVEAUX[niveauOf(me, saison)]?.label || 'Pour toi' : 'Par les lauréats'}</p>`}<h1>${demandes ? (isStudent ? 'Mes demandes' : 'Demandes des étudiants') : tab === 'sujets' ? 'Banque de sujets PFE' : tab === 'laureats' ? 'Offres entre lauréats' : 'Offres'}</h1></div>
       ${!isStudent && !demandes ? html`<button class="btn primary" onClick=${() => setCompose(tab === 'laureats' ? { audience: 'laureats', type: 'emploi', annees: [] } : tab === 'sujets' ? { type: 'pfe', annees: [5] } : {})}><${Icon} name="plus"/> ${tab === 'sujets' ? 'Déposer un sujet' : 'Publier une offre'}</button>` : null}
     </header>
     ${tabs.length > 1 ? html`<div class="seg" role="tablist">${tabs.map(([k, l, i, n]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => go('offres' + (k ? '/' + k : ''), { remplacer: true })}><${Icon} name=${i} size=${15}/> ${l}${n ? html` <span class="count">${n}</span>` : null}</button>`)}</div>` : null}
@@ -87,7 +88,7 @@ function OfferList({ ctx, entre }) {
   const [q, setQ] = useState('');
 
   const list = useMemo(() => {
-    const qq = q.trim().toLowerCase();
+    const trouve = recherche(q); // « مكناس » trouve Meknès, accents et casse ignorés
     return data.offers.filter(o => {
       if (forLaureats(o) !== entre) return false;
       if (vue === 'miennes') { if (o.author_id !== me.id) return false; }
@@ -95,7 +96,7 @@ function OfferList({ ctx, entre }) {
       if (isStudent && !(o.annees || []).includes(niveau)) return false; // un étudiant ne voit que les offres de son année
       if (vue === 'sauvees' && !data.reactions.some(r => r.offer_id === o.id && r.user_id === me.id && r.kind === 'save')) return false;
       if (type !== 'tous' && o.type !== type) return false;
-      if (qq && !`${o.titre} ${o.entreprise} ${o.ville} ${o.pays} ${(o.filieres || []).join(' ')} ${resumeFilieres(o.filieres).join(' ')}`.toLowerCase().includes(qq)) return false;
+      if (trouve && !trouve(`${o.titre} ${o.entreprise} ${(o.filieres || []).join(' ')} ${resumeFilieres(o.filieres).join(' ')}`, o.ville, o.pays)) return false;
       return true;
     }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   }, [data, q, type, vue]);
@@ -110,12 +111,12 @@ function OfferList({ ctx, entre }) {
   const versToutes = { label: 'Voir toutes les offres', icon: 'feed', onClick: () => setVue('toutes') };
   const effacer = !plain && vue !== 'sauvees' ? { label: 'Effacer les filtres', icon: 'x', onClick: () => { setQ(''); setType('tous'); setVue('toutes'); } } : null;
   const vide = vue === 'sauvees'
-    ? html`<${Empty} icon="bookmark" title="Aucune offre sauvegardée" action=${versToutes}>Clique sur le marque-page d’une offre pour la garder ici.<//>`
+    ? html`<${Empty} icon="bookmark" title="Aucune offre mise de côté" action=${versToutes}>Clique sur le marque-page d’une offre pour la mettre de côté ici.<//>`
     : entre ? html`<${Empty} icon="briefcase" title="Aucune offre ici" action=${effacer}>Ton équipe cherche un profil expérimenté ? Publie le poste ici : seuls les lauréats le voient.<//>`
     // Le réseau qui démarre : pas de promesse, une vraie action (sa demande, ou un conseil)
     : plain && isStudent ? (typesDemande(me, saison).length
-      ? html`<${Empty} icon="feed" title=${`Pas encore d’offre pour ta ${NIVEAUX[niveau]?.short || 'promo'}`} action=${{ label: 'Publier ma demande', icon: 'send', onClick: () => go('offres/demandes/nouvelle') }}>Le réseau vient d’ouvrir. Dis aux lauréats ce que tu cherches : ils te répondent ici.<//>`
-      : html`<${Empty} icon="feed" title=${`Pas encore d’offre pour ta ${NIVEAUX[niveau]?.short || 'promo'}`} action=${{ label: 'Demander un conseil', icon: 'mentor', onClick: () => go('mentorat') }}>Le réseau vient d’ouvrir. Un lauréat peut déjà te conseiller en 20 minutes de visio.<//>`)
+      ? html`<${Empty} icon="feed" title=${NIVEAUX[niveau]?.short ? `Pas encore d’offre pour ta ${NIVEAUX[niveau].short}` : 'Pas encore d’offre pour ton année'} action=${{ label: 'Publier ma demande', icon: 'send', onClick: () => go('offres/demandes/nouvelle') }}>Le réseau vient d’ouvrir. Dis aux lauréats ce que tu cherches : ils te répondent ici.<//>`
+      : html`<${Empty} icon="feed" title=${NIVEAUX[niveau]?.short ? `Pas encore d’offre pour ta ${NIVEAUX[niveau].short}` : 'Pas encore d’offre pour ton année'} action=${{ label: 'Demander un conseil', icon: 'mentor', onClick: () => go('mentorat') }}>Le réseau vient d’ouvrir. Un lauréat peut déjà te conseiller en visio.<//>`)
     : html`<${Empty} icon="feed" title="Aucune offre ici" action=${effacer}>${plain ? 'Le réseau vient d’ouvrir : la première offre peut être la tienne.' : 'Change la recherche ou les filtres.'}<//>`;
 
   return html`<div class="sub-page">
@@ -125,7 +126,7 @@ function OfferList({ ctx, entre }) {
     </div>
     ${chips.length > 2 || isStudent ? html`<div class="chips offres-chips" role="group" aria-label="Type d’offre">
       ${chips.length > 2 ? chips.map(([k, l]) => html`<button class=${'chip t-' + k + (type === k ? ' on' : '')} aria-pressed=${type === k} onClick=${() => setType(k)}>${k !== 'tous' ? html`<${Icon} name=${TYPE_ICON[k]} size=${15}/>` : null}${l}</button>`) : null}
-      ${isStudent ? html`${chips.length > 2 ? html`<span class="chips-sep" aria-hidden="true"></span>` : null}<button class=${'chip' + (vue === 'sauvees' ? ' on' : '')} aria-pressed=${vue === 'sauvees'} onClick=${() => setVue(vue === 'sauvees' ? 'toutes' : 'sauvees')}><${Icon} name="bookmark" size=${14}/> Sauvegardées</button>` : null}
+      ${isStudent ? html`${chips.length > 2 ? html`<span class="chips-sep" aria-hidden="true"></span>` : null}<button class=${'chip' + (vue === 'sauvees' ? ' on' : '')} aria-pressed=${vue === 'sauvees'} onClick=${() => setVue(vue === 'sauvees' ? 'toutes' : 'sauvees')}><${Icon} name="bookmark" size=${14}/> Mises de côté</button>` : null}
     </div>` : null}
     ${avecReco ? html`<${RecoOffers} ctx=${ctx} reco=${reco} inOffres/>` : null}
     ${avecReco && reste.length ? html`<div class="section-head"><h2>${NIVEAUX[niveau]?.short ? `Les autres offres de ${NIVEAUX[niveau].short}` : 'Les autres offres'}</h2><span class="count">${reste.length}</span></div>` : null}
@@ -165,17 +166,19 @@ export function OfferCard({ o, ctx, onOpen, why }) {
   const mine = o.author_id === me.id;
   const pourMoi = peutPostulerA(o, me, ctx.saison);
   const canApply = !myApp && pourMoi && o.status === 'ouverte';
-  const coopt = author && o.cooptation && canApply; // déjà postulé : l'état de la candidature compte davantage
+  // « peut te recommander » seulement s'il travaille dans l'entreprise de l'offre (et la montre) ; déjà postulé :
+  // l'état de la candidature compte davantage
+  const coopt = canApply && !!author && store.voitChamp(author, 'travail') && peutRecommander(o, author);
   const lieu = [o.ville, o.pays !== 'Maroc' ? o.pays : ''].filter(Boolean).join(', ');
   return html`<article class=${'ocard' + (o.status !== 'ouverte' ? ' closed' : '')}>
-    <button class="ocard-main" onClick=${onOpen} aria-label=${`Ouvrir : ${o.titre}`}>
+    <button class="ocard-main" onClick=${onOpen} aria-label=${`Ouvrir : ${titreOffre(o)}`}>
       <${CompanyLogo} name=${o.entreprise}/>
       <span class="ocard-txt">
         <span class="ocard-tags"><span class=${'tag t-' + o.type}><${Icon} name=${TYPE_ICON[o.type]} size=${13}/>${TYPES[o.type]?.label}</span>
           ${o.status === 'ouverte' && dl !== null && dl >= 0 && dl <= 7 ? html`<span class="tag urgent">${dl === 0 ? 'Dernier jour' : `J-${dl}`}</span>` : null}
           ${o.status !== 'ouverte' ? html`<span class="tag done">${o.status === 'pourvue' ? 'Pourvue' : 'Fermée'}</span>` : null}
           ${forLaureats(o) ? html`<span class="tag entre">Entre lauréats</span>` : null}</span>
-        <strong class="ocard-title" translate="no" dir="auto">${o.titre}</strong>
+        <strong class="ocard-title" translate="no" dir="auto">${titreOffre(o)}</strong>
         <span class="ocard-meta" translate="no" dir="auto">${o.entreprise}${lieu ? ` · ${lieu}` : ''}</span>
         ${why?.length ? html`<${Pourquoi} why=${why}/>` : null}
       </span>
@@ -185,7 +188,7 @@ export function OfferCard({ o, ctx, onOpen, why }) {
       <span class="spacer"></span>
       ${myApp ? html`<span class=${'state-pill a-' + myApp.status}>${APP_STATUS[myApp.status]}</span>` : mine ? html`<span class="muted small">${apps.length} candidat${apps.length > 1 ? 's' : ''}</span>` : canApply ? null : html`<span class="muted small nowrap">${timeAgo(o.created_at)}</span>`}
       ${canApply ? html`<button class="btn tiny ocard-apply" onClick=${() => ctx.openOffer(o.id, true)}>Postuler</button>` : null}
-      ${!mine ? html`<button class=${'icon-btn small' + (saved ? ' on' : '')} aria-pressed=${!!saved} aria-label=${saved ? 'Retirer des sauvegardes' : 'Sauvegarder'} onClick=${() => act(() => saved ? store.remove('reactions', saved.id) : store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save' }))}><${Icon} name="bookmark" size=${16}/></button>` : null}
+      ${!mine ? html`<button class=${'icon-btn small' + (saved ? ' on' : '')} aria-pressed=${!!saved} aria-label=${saved ? 'Ne plus mettre de côté' : 'Mettre de côté'} onClick=${() => act(() => saved ? store.remove('reactions', saved.id) : store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save' }))}><${Icon} name="bookmark" size=${16}/></button>` : null}
     </footer>
   </article>`;
 }
@@ -193,7 +196,7 @@ export function OfferCard({ o, ctx, onOpen, why }) {
 // Qui partage l'offre, juste sous le titre : c'est souvent la vraie raison de postuler
 function AuteurOffre({ ctx, o, author, candidat }) {
   const p = prenom(author);
-  const coopt = candidat && o.cooptation && o.status === 'ouverte';
+  const coopt = candidat && o.status === 'ouverte' && ctx.store.voitChamp(author, 'travail') && peutRecommander(o, author);
   const phrase = !candidat ? `Partagée par ${p}` : coopt ? `Partagée par ${p}, qui peut te recommander` : `Partagée par ${p}, qui reçoit ta candidature et te répond ici`;
   return html`<button type="button" class=${'od-author' + (coopt ? ' coopt' : '')} onClick=${() => ctx.openProfile(author)}>
     <${Avatar} p=${author} size=${40}/>
@@ -229,7 +232,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
       }
       const dem = typesDemande(me, ctx.saison).length > 0;
       return html`<${Modal} title="Offre" onClose=${onClose}><p>${pour}</p><p class="muted">Pas encore d’offre pour ta ${court}.</p>
-        <p class="muted">${dem ? 'Le réseau vient d’ouvrir. Dis aux lauréats ce que tu cherches : ils te répondent ici.' : 'Le réseau vient d’ouvrir. Un lauréat peut déjà te conseiller en 20 minutes de visio.'}</p>
+        <p class="muted">${dem ? 'Le réseau vient d’ouvrir. Dis aux lauréats ce que tu cherches : ils te répondent ici.' : 'Le réseau vient d’ouvrir. Un lauréat peut déjà te conseiller en visio.'}</p>
         <div class="row-end"><button class="btn primary" id="od-ensuite" onClick=${() => { onClose(); if (dem) ctx.go('offres/demandes/nouvelle'); else ctx.askHelp(); }}>${dem ? 'Publier ma demande' : 'Demander un conseil'}</button></div><//>`;
     }
   }
@@ -252,14 +255,16 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
   const auteurNom = prenom(author) || 'Le lauréat';
 
   // Pied collé : postuler (et garder l'offre), puis l'état de la candidature une fois envoyée
-  const saveBtn = html`<button type="button" class=${'icon-btn od-save' + (saved ? ' on' : '')} aria-pressed=${!!saved} aria-label=${saved ? 'Retirer des sauvegardes' : 'Sauvegarder'} title=${saved ? 'Retirer des sauvegardes' : 'Sauvegarder'} onClick=${toggleSave}><${Icon} name="bookmark" size=${18}/></button>`;
+  const saveBtn = html`<button type="button" class=${'icon-btn od-save' + (saved ? ' on' : '')} aria-pressed=${!!saved} aria-label=${saved ? 'Ne plus mettre de côté' : 'Mettre de côté'} title=${saved ? 'Ne plus mettre de côté' : 'Mettre de côté'} onClick=${toggleSave}><${Icon} name="bookmark" size=${18}/></button>`;
   let footer = null;
   if (candidat && tab === 'offre') {
     if (myApp) {
       const pl = myApp.status === 'retenu' ? placementOf(data, me.id, ctx.saison) : null;
-      const suite = { postule: `${auteurNom} te répond ici`, entretien: 'Bonne préparation pour l’entretien !', retenu: pl?.status === 'en_attente' ? 'Confirme ton recrutement dans « Mon parcours ».' : 'Bravo !', refuse: 'D’autres offres t’attendent.' }[myApp.status];
-      footer = html`<div class="od-foot"><span class=${'state-pill a-' + myApp.status}>${APP_STATUS[myApp.status]}</span><span class="small muted od-foot-txt">${suite}</span>
-        ${myApp.status === 'retenu' && pl?.status === 'en_attente' ? html`<button type="button" class="btn small" onClick=${() => { onClose(); ctx.go('parcours'); }}>Mon parcours</button>` : null}</div>`;
+      const suite = { postule: `${auteurNom} te répond ici`, entretien: 'Bonne préparation pour l’entretien !', retenu: pl?.status === 'en_attente' ? 'Confirme ton recrutement dans « Mon parcours ».' : 'Bravo !' }[myApp.status];
+      const porte = myApp.status === 'refuse' ? porteApresRefus(data, me, ctx.saison) : null;
+      footer = html`<div class="od-foot"><span class=${'state-pill a-' + myApp.status}>${APP_STATUS[myApp.status]}</span><span class="small muted od-foot-txt">${porte ? porte.phrase : suite}</span>
+        ${myApp.status === 'retenu' && pl?.status === 'en_attente' ? html`<button type="button" class="btn small" onClick=${() => { onClose(); ctx.go('parcours'); }}>Mon parcours</button>` : null}
+        ${porte ? html`<button type="button" id="od-porte" class="btn small" onClick=${() => { onClose(); if (porte.conseil) ctx.askHelp(); else ctx.go(porte.to); }}>${porte.cta}</button>` : null}</div>`;
     } else if (o.status !== 'ouverte') footer = html`<div class="od-foot"><span class="small muted od-foot-txt">Cette offre n’accepte plus de candidatures.</span>${saveBtn}</div>`;
     else if (form) footer = html`<div class="od-foot"><button type="button" class="btn ghost" onClick=${() => setForm(false)}>Annuler</button><button class="btn primary" type="submit" form=${'apply-' + o.id}><${Icon} name="send" size=${16}/> Envoyer ma candidature</button></div>`;
     else footer = html`<div class="od-foot">${saveBtn}<button type="button" class="btn primary" onClick=${() => setForm(true)}><${Icon} name="send" size=${16}/> Postuler</button></div>`;
@@ -271,7 +276,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
         <${CompanyLogo} name=${o.entreprise} size=${56}/>
         <div class="detail-title">
           ${o.status !== 'ouverte' ? html`<span class="tag done">${o.status === 'pourvue' ? 'Pourvue' : 'Fermée'}</span>` : null}
-          <h2 translate="no" dir="auto">${o.titre}</h2>
+          <h2 translate="no" dir="auto">${titreOffre(o)}</h2>
           <p class="od-sub"><button type="button" class="linkish od-ent" onClick=${() => { onClose(); ctx.openEntreprise?.(o.entreprise); }}><span translate="no" dir="auto">${o.entreprise}</span></button><span class="od-dot" aria-hidden="true">·</span><span class="muted">Publiée ${timeAgo(o.created_at)}</span></p>
         </div>
         ${o.status === 'ouverte' ? html`<${PartagerWhatsApp} id="od-partage" texte=${texteOffre(o)}/>` : null}
@@ -319,18 +324,18 @@ function ApplyBox({ ctx, o, form, setForm, onClose }) {
     const idx = app.status === 'refuse' ? -1 : steps.indexOf(app.status);
     return html`<div class="apply-box">
       <p class="eyebrow">Ma candidature</p>
-      ${app.status === 'refuse' ? html`<p><span class="state-pill a-refuse">Pas retenu(e)</span> <span class="small muted">Ce n’est pas pour cette fois. Les autres offres t’attendent.</span></p>` : html`
+      ${app.status === 'refuse' ? null : html`
       <ol class="stepper">${steps.map((s, i) => html`<li class=${i <= idx ? 'done' : ''}><span class="step-dot">${i <= idx ? html`<${Icon} name="check" size=${13}/>` : i + 1}</span>${APP_STATUS[s]}</li>`)}</ol>`}
-      <p class="small muted">Le lauréat met à jour ce statut. ${app.status === 'retenu' ? (pl?.status === 'en_attente' ? 'Confirme ton recrutement dans « Mon parcours ».' : '') : `Envoyée ${timeAgo(app.created_at)}.`}</p>
+      <p class="small muted">${app.status === 'refuse' ? null : 'Le lauréat met à jour ce statut. '}${app.status === 'retenu' ? (pl?.status === 'en_attente' ? 'Confirme ton recrutement dans « Mon parcours ».' : '') : `Envoyée ${timeAgo(app.created_at)}.`}</p>
       ${app.status === 'postule' ? html`<button class="btn ghost small" onClick=${() => act(() => store.remove('applications', app.id))}>Retirer ma candidature</button>` : null}
     </div>`;
   }
   if (o.status !== 'ouverte') return null; // le pied de la fiche le dit déjà
   // Un lauréat a invité cet étudiant depuis le vivier de talents
   const inv = (data.invitations || []).find(i => i.offer_id === o.id && i.student_id === me.id && i.status === 'envoyee');
-  const invite = inv ? html`<div class="invite-note"><${Icon} name="send" size=${16}/><div><p><strong translate="no">${store.byId('profiles', inv.laureat_id)?.full_name || 'Un lauréat'}</strong> t’a invité(e) à postuler.</p>
+  const invite = inv ? html`<div class="invite-note"><${Icon} name="send" size=${16}/><div><p><strong translate="no">${store.byId('profiles', inv.laureat_id)?.full_name || 'Un lauréat'}</strong> t’invite à postuler.</p>
     ${inv.message ? html`<p class="quote small" translate="no" dir="auto">${inv.message}</p>` : null}
-    <button class="linkish small" onClick=${() => act(async () => { await store.update('invitations', inv.id, { status: 'declinee' }); toast('C’est noté, merci d’avoir répondu.'); })}>Pas intéressé(e)</button></div></div>` : null;
+    <button class="linkish small" onClick=${() => act(async () => { await store.update('invitations', inv.id, { status: 'declinee' }); toast('C’est noté, merci d’avoir répondu.'); })}>Ça ne m’intéresse pas</button></div></div>` : null;
   if (!form) return invite;
   const hasCv = !!(me.cv_path || me.cv_url);
   const auteur = store.byId('profiles', o.author_id);
@@ -367,7 +372,7 @@ function Candidates({ ctx, o, apps }) {
   const recruit = (studentId, app) => act(async () => {
     const st = store.byId('profiles', studentId);
     const existing = placementOf(data, studentId, saison);
-    if (existing && existing.status !== 'refuse') { toast(`${st.full_name} a déjà une réussite enregistrée cette saison.`, 'err'); return; }
+    if (existing && existing.status !== 'refuse') { toast(`${st.full_name} a déjà une réussite enregistrée cette année.`, 'err'); return; }
     if (app) await store.update('applications', app.id, { status: 'retenu' });
     await store.insert('placements', { student_id: studentId, offer_id: o.id, laureat_id: ctx.me.id, saison, niveau: Math.min(niveauOf(st, saison), 6), type: o.type, entreprise: o.entreprise, ville: o.ville, pays: o.pays || 'Maroc', source: 'plateforme' });
     toast(`${st.full_name.split(' ')[0]} doit maintenant confirmer. Tes 50 points arrivent dès sa confirmation.`);
@@ -377,16 +382,16 @@ function Candidates({ ctx, o, apps }) {
       const st = store.byId('profiles', a.student_id);
       const pl = data.placements.find(p => p.student_id === a.student_id && p.offer_id === o.id && p.status !== 'refuse');
       return html`<div class="cand" key=${a.id}>
-        <div class="cand-head"><${Person} p=${st} onOpen=${openProfile} size=${36}/><span class="spacer"></span>${(data.invitations || []).some(i => i.offer_id === o.id && i.student_id === a.student_id) ? html`<span class="mini good">Invité(e) par toi</span>` : null}<span class="muted small">${timeAgo(a.created_at)}</span><${MessageBtn} ctx=${ctx} p=${st} cls="btn tiny ghost"/></div>
+        <div class="cand-head"><${Person} p=${st} onOpen=${openProfile} size=${36}/><span class="spacer"></span>${(data.invitations || []).some(i => i.offer_id === o.id && i.student_id === a.student_id) ? html`<span class="mini good">Invitation envoyée</span>` : null}<span class="muted small">${timeAgo(a.created_at)}</span><${MessageBtn} ctx=${ctx} p=${st} cls="btn tiny ghost"/></div>
         ${a.message ? html`<p class="quote" translate="no" dir="auto">${a.message}</p>` : null}
         ${st && (st.cv_path || st.cv_url) ? html`<div class="row"><${CvButton} ctx=${ctx} p=${st} small/></div>` : null}
-        ${pl ? html`<p class=${'state-pill ' + (pl.status === 'confirme' ? 's-trouve' : 's-validation')}>${pl.status === 'confirme' ? 'Recrutement confirmé par l’étudiant' : 'Recruté(e) · attend sa confirmation'}</p>` : html`
+        ${pl ? html`<p class=${'state-pill ' + (pl.status === 'confirme' ? 's-trouve' : 's-validation')}>${pl.status === 'confirme' ? 'Recrutement confirmé par l’étudiant' : 'Recrutement déclaré · attend sa confirmation'}</p>` : html`
         <div class="seg small-seg" role="group" aria-label="Statut de la candidature">
-          ${[['postule', 'Reçue'], ['entretien', 'Entretien'], ...(entre ? [['retenu', 'Retenu(e)']] : []), ['refuse', 'Pas retenu(e)']].map(([k, l]) => html`<button class=${a.status === k ? 'on' : ''} onClick=${() => act(() => store.update('applications', a.id, { status: k }))}>${l}</button>`)}
-          ${entre ? null : html`<button class="seg-accent" onClick=${() => recruit(a.student_id, a)}><${Icon} name="check" size=${14}/> Recruté(e)</button>`}
+          ${[['postule', 'Reçue'], ['entretien', 'Entretien'], ...(entre ? [['retenu', 'Retenue']] : []), ['refuse', 'Pas retenue']].map(([k, l]) => html`<button class=${a.status === k ? 'on' : ''} onClick=${() => act(() => store.update('applications', a.id, { status: k }))}>${l}</button>`)}
+          ${entre ? null : html`<button class="seg-accent" onClick=${() => recruit(a.student_id, a)}><${Icon} name="check" size=${14}/> Recruter</button>`}
         </div>`}
       </div>`;
-    }) : html`<${Empty} icon="inbox" title="Pas encore de candidat">${entre ? 'Les lauréats intéressés postulent ici. Partage aussi l’offre dans le groupe de ta ville.' : 'Partage l’offre dans les groupes de promo : les étudiants concernés la voient déjà dans « Pour moi ».'}<//>`}
+    }) : html`<${Empty} icon="inbox" title="Pas encore de candidat">${entre ? 'Les lauréats intéressés postulent ici. Partage aussi l’offre dans le groupe de ta ville.' : 'Les étudiants concernés la voient déjà dans leurs offres. Partage-la sur WhatsApp : un étudiant la fera circuler dans sa promo.'}<//>`}
     ${entre ? null : html`<${Matching} ctx=${ctx} o=${o}/>
     <button class="btn ghost small" onClick=${() => setDeclare(true)}><${Icon} name="plus" size=${15}/> J’ai recruté un étudiant qui n’a pas postulé ici</button>`}
     ${declare ? html`<${PickStudent} ctx=${ctx} onClose=${() => setDeclare(false)} onPick=${id => { setDeclare(false); recruit(id, null); }}/>` : null}
@@ -407,7 +412,7 @@ function Matching({ ctx, o }) {
   });
   return html`<div class="matching"><p class="small"><${Icon} name="spark" size=${14}/> <strong>Profils qui correspondent à ton offre</strong></p>
     <ul class="people-list">${list.map(({ p, why }) => html`<li key=${p.id}><${Person} p=${p} onOpen=${openProfile} size=${32}/><${Pourquoi} why=${why}/><span class="spacer"></span>
-      ${invited(p.id) ? html`<span class="state-pill s-validation">Invité(e)</span>` : html`<button class="btn small" onClick=${() => invite(p)}><${Icon} name="send" size=${14}/> Inviter à postuler</button>`}</li>`)}</ul></div>`;
+      ${invited(p.id) ? html`<span class="state-pill s-validation">Invitation envoyée</span>` : html`<button class="btn small" onClick=${() => invite(p)}><${Icon} name="send" size=${14}/> Inviter à postuler</button>`}</li>`)}</ul></div>`;
 }
 
 function PickStudent({ ctx, onClose, onPick }) {
@@ -415,7 +420,7 @@ function PickStudent({ ctx, onClose, onPick }) {
   const [q, setQ] = useState('');
   const res = q.trim().length < 2 ? [] : data.profiles.filter(p => p.role !== 'admin' && (niveauOf(p, saison) <= 6 || p.en_recherche) && p.full_name.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 8);
   return html`<${Modal} title="Qui as-tu recruté ?" onClose=${onClose}>
-    <p class="muted small">Il ou elle recevra une demande de confirmation. Le recrutement compte une fois confirmé.</p>
+    <p class="muted small">On lui demandera de confirmer. Le recrutement compte une fois confirmé.</p>
     <label class="search"><${Icon} name="search" size=${16}/><input id="pick-q" placeholder="Son nom" value=${q} onInput=${e => setQ(e.target.value)}/></label>
     <ul class="people-list">${res.map(p => html`<li><${Person} p=${p}/><button class="btn small primary" onClick=${() => onPick(p.id)}>Choisir</button></li>`)}</ul>
     ${q.trim().length >= 2 && !res.length ? html`<p class="muted small">Personne avec ce nom. La personne doit d’abord créer son compte.</p>` : null}
@@ -445,8 +450,8 @@ function Questions({ ctx, o, comments }) {
 const ORDRE = ['type', 'titre', 'entreprise', 'ville', 'pays', 'description', 'annees', 'filieres', 'duree', 'deadline', 'lien', 'cooptation', 'remunere'];
 const DETAILS = ['filieres', 'duree', 'deadline', 'lien', 'cooptation', 'remunere'];
 const ID_OF = { titre: 'of-titre', entreprise: 'of-ent', description: 'of-desc', annees: 'of-annees' };
-const MSG_OF = { titre: f => (f.titre.trim() ? 'Un intitulé de 4 caractères au moins.' : 'Donne un intitulé à l’offre.'),
-  entreprise: () => 'Indique l’entreprise.', description: () => 'Ajoute quelques lignes : missions, profil recherché.', annees: () => 'Choisis au moins un niveau.' };
+const MSG_OF = { titre: f => (f.titre.trim() ? 'Un titre de 4 caractères au moins.' : 'Donne un titre à l’offre.'),
+  entreprise: () => 'Indique l’entreprise.', description: () => 'Ajoute quelques lignes : missions, profil recherché.', annees: () => 'Choisis au moins une année.' };
 const nChamps = n => `${n} champ${n > 1 ? 's' : ''}`;
 
 export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
@@ -501,11 +506,11 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
         // Première offre d'un lauréat : on le remercie, une seule fois
         const fete = premiere && celebrate({
           cle: 'premiere-offre-' + me.id, icon: 'feed', titre: 'Ta première offre est en ligne !',
-          texte: entre ? 'Les lauréats la voient déjà dans « Entre lauréats ». Merci d’ouvrir la porte !' : 'Les étudiants concernés la voient déjà dans « Pour moi ». Merci d’ouvrir la porte à un étudiant de l’école !',
+          texte: entre ? 'Les lauréats la voient déjà dans « Entre lauréats ». Merci !' : 'Les étudiants concernés la voient déjà dans leurs offres. Merci pour eux !',
           // La suite la plus utile : la faire circuler dans les groupes WhatsApp de promo
           action: neuve?.id ? { label: 'Partager sur WhatsApp', icon: 'share', onClick: () => window.open(lienWhatsApp(texteOffre(neuve)), '_blank', 'noopener') } : null,
         });
-        if (!fete) toast(entre ? 'Offre publiée. Les lauréats la voient dans « Entre lauréats ».' : 'Offre publiée. Les étudiants concernés la voient dans « Pour moi ».');
+        if (!fete) toast(entre ? 'Offre publiée. Les lauréats la voient dans « Entre lauréats ».' : 'Offre publiée. Les étudiants concernés la voient dans leurs offres.');
       }
       onClose();
     });
@@ -517,14 +522,14 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
       ${me.role === 'etudiant' ? null : html`<div class="seg" role="group" aria-label="Pour qui">${[['etudiants', 'Pour les étudiants'], ['laureats', 'Entre lauréats']].map(([k, l]) => html`<button type="button" class=${f.audience === k ? 'on' : ''} aria-pressed=${f.audience === k} onClick=${() => setAudience(k)}>${l}</button>`)}</div>`}
       ${entre ? html`<p class="small muted hint-box"><${Icon} name="briefcase" size=${15}/> <span>Un poste pour un profil expérimenté : seuls les lauréats le voient, les étudiants non.</span></p>` : html`
       <div class="type-pick" role="group" aria-label="Type">${Object.entries(TYPES).map(([k, v]) => html`<button type="button" class=${'type-opt t-' + k + (f.type === k ? ' on' + r('type') : '')} style=${f.type === k ? ri('type') : null} aria-pressed=${f.type === k} onClick=${() => setType(k)}><${Icon} name=${TYPE_ICON[k]} size=${22}/><span>${v.label}</span></button>`)}</div>`}
-      <${Field} label="Intitulé" err=${err('titre')} errId="of-titre-err"><input id="of-titre" dir="auto" class=${r('titre')} style=${ri('titre')} ...${aria('titre')} required value=${f.titre} onInput=${e => set('titre', e.target.value)} placeholder="Ex. PFE : optimisation d’une ligne d’assemblage" maxlength="140"/><//>
+      <${Field} label="Titre de l’offre" err=${err('titre')} errId="of-titre-err"><input id="of-titre" dir="auto" class=${r('titre')} style=${ri('titre')} ...${aria('titre')} required value=${f.titre} onInput=${e => set('titre', e.target.value)} placeholder="Ex. Optimiser une ligne d’assemblage" maxlength="140"/><//>
       <div class="grid3">
         <${Field} label="Entreprise" err=${err('entreprise')} errId="of-ent-err"><input id="of-ent" dir="auto" class=${r('entreprise')} style=${ri('entreprise')} ...${aria('entreprise')} required value=${f.entreprise} onInput=${e => set('entreprise', e.target.value)}/><//>
         <${Field} label="Ville"><input id="of-ville" dir="auto" class=${r('ville')} style=${ri('ville')} value=${f.ville || ''} onInput=${e => set('ville', e.target.value)}/><//>
         <${Field} label="Pays"><input id="of-pays" dir="auto" class=${r('pays')} style=${ri('pays')} value=${f.pays || ''} onInput=${e => set('pays', e.target.value)}/><//>
       </div>
       <${Field} label="Description" err=${err('description')} errId="of-desc-err"><textarea id="of-desc" dir="auto" class=${r('description')} style=${ri('description')} ...${aria('description')} required rows="5" value=${f.description} onInput=${e => set('description', e.target.value)} placeholder="Missions, profil recherché, comment se passe la sélection…" maxlength="4000"></textarea><//>
-      ${entre ? null : html`<div class=${'field' + (err('annees') ? ' manque' : '')}><span class="field-label" id="of-annees-l">Pour quels niveaux ?</span>
+      ${entre ? null : html`<div class=${'field' + (err('annees') ? ' manque' : '')}><span class="field-label" id="of-annees-l">Pour quelles années ?</span>
         <div id="of-annees" class=${'chips' + r('annees')} style=${ri('annees')} role="group" aria-labelledby="of-annees-l" aria-describedby=${err('annees') ? 'of-annees-err' : null}>${ANNEES_OPTS.map(([v, l]) => html`<button type="button" class=${'chip' + (f.annees.includes(v) ? ' on' : '')} aria-pressed=${f.annees.includes(v)} onClick=${() => toggleIn('annees', v)}>${l}</button>`)}</div>
         ${err('annees') ? html`<span class="field-err" id="of-annees-err">${err('annees')}</span>` : null}</div>`}
       <details class="more-fields" ref=${plus} open=${editing}>
@@ -602,6 +607,12 @@ injectCSS('offres-ux', `
 @media (min-width: 761px) { .od-foot .btn.primary { flex: 0 0 auto; min-width: 15rem; margin-inline-start: auto; } }
 `);
 
+const OFFRES_AR = ['عرض آخر', 'عرضان آخران', 'عروض أخرى', 'عرضًا آخر'];
+const PORTE_DEMANDE = 'Dis aux lauréats ce que tu cherches : ils peuvent te proposer leur aide.';
+const porteAR = p => p === 'Une autre offre t’attend.' ? 'عرض آخر في انتظارك.'
+  : /^(\d+) autres offres t’attendent\.$/.test(p) ? `${arCount(+p.match(/^\d+/)[0], OFFRES_AR)} في انتظارك.`
+  : p === PORTE_DEMANDE ? 'يمكنك نشر طلب يصف بحثك، ويمكن للخريجين أن يقترحوا مساعدتهم.'
+  : p === 'Un lauréat peut te conseiller en visio.' ? 'يمكن لخريج أن ينصحك عبر الفيديو.' : null;
 addAR({
   'Les autres offres': 'عروض أخرى',
   'Voir toutes les offres': 'عرض كل العروض',
@@ -609,33 +620,50 @@ addAR({
   'Offre entre lauréats': 'عرض بين الخريجين',
   'Ta candidature': 'ترشيحك',
   'Bonne préparation pour l’entretien !': 'بالتوفيق في التحضير للمقابلة!',
-  'D’autres offres t’attendent.': 'عروض أخرى في انتظارك.',
-  'Bravo !': 'برافو!',
+  'Bravo !': 'رائع!',
   'Candidature envoyée !': 'تم إرسال ترشيحك!',
   'Voir mon parcours': 'عرض مساري',
   'Ta première offre est en ligne !': 'عرضك الأول منشور الآن!',
-  'Les lauréats la voient déjà dans « Entre lauréats ». Merci d’ouvrir la porte !': 'يراه الخريجون الآن في «بين الخريجين». شكرًا لأنك تفتح الباب!',
-  'Les étudiants concernés la voient déjà dans « Pour moi ». Merci d’ouvrir la porte à un étudiant de l’école !': 'يراه الطلبة المعنيون الآن في «لي». شكرًا لأنك تفتح الباب لطالب من المدرسة!',
-  'Voir mon offre': 'مشاهدة عرضي',
-  'peut te recommander': 'يمكنه أن يزكّيك',
+  'Les lauréats la voient déjà dans « Entre lauréats ». Merci !': 'يراه الخريجون الآن في «بين الخريجين». شكرًا!',
+  'Les étudiants concernés la voient déjà dans leurs offres. Merci pour eux !': 'يراه الطلبة المعنيون الآن ضمن عروضهم. شكرًا من أجلهم!',
+  'Voir mon offre': 'فتح عرضي',
+  'peut te recommander': 'تزكية ممكنة',
   'Le réseau vient d’ouvrir. Dis aux lauréats ce que tu cherches : ils te répondent ici.': 'الشبكة فتحت للتو. قل للخريجين ما تبحث عنه: سيجيبونك هنا.',
-  'Le réseau vient d’ouvrir. Un lauréat peut déjà te conseiller en 20 minutes de visio.': 'الشبكة فتحت للتو. يمكن لخريج أن ينصحك منذ الآن في 20 دقيقة عبر الفيديو.',
+  'Le réseau vient d’ouvrir. Un lauréat peut déjà te conseiller en visio.': 'الشبكة فتحت للتو. يمكن لخريج أن ينصحك منذ الآن عبر الفيديو.',
   'Le réseau vient d’ouvrir : la première offre peut être la tienne.': 'الشبكة فتحت للتو: يمكن أن يكون العرض الأول عرضك.',
   'Change la recherche ou les filtres.': 'غيّر البحث أو المرشحات.',
   'Cette offre n’est plus disponible, ou elle ne t’est pas destinée.': 'لم يعد هذا العرض متاحًا، أو أنه غير موجّه لك.',
-  'Cette offre est réservée aux lauréats.': 'هذا العرض مخصص للخريجين.', 'Voici les tiennes.': 'إليك عروضك.', 'Voir mes offres': 'عرض عروضي',
-  'Donne un intitulé à l’offre.': 'أعطِ العرض عنوانًا.', 'Un intitulé de 4 caractères au moins.': 'عنوان من 4 أحرف على الأقل.',
+  'Cette offre est réservée aux lauréats.': 'هذا العرض مخصّص للخريجين.', 'Voici les tiennes.': 'إليك عروضك.', 'Voir mes offres': 'عرض عروضي',
+  'Donne un titre à l’offre.': 'أعطِ العرض عنوانًا.', 'Un titre de 4 caractères au moins.': 'عنوان من 4 أحرف على الأقل.',
   'Indique l’entreprise.': 'اذكر الشركة.', 'Ajoute quelques lignes : missions, profil recherché.': 'أضف بضعة أسطر: المهام والملف المطلوب.',
-  'Choisis au moins un niveau.': 'اختر مستوى واحدًا على الأقل.',
+  'Choisis au moins une année.': 'اختر سنة واحدة على الأقل.', 'Pour quelles années ?': 'لأي سنوات؟', 'Titre de l’offre': 'عنوان العرض',
+  'Ex. Optimiser une ligne d’assemblage': 'مثال: تحسين خط تجميع', 'Pas encore d’offre pour ton année': 'لا عروض بعد لسنتك',
+  'Retenue': 'مقبول', 'Pas retenue': 'غير مقبول', 'Recruter': 'توظيف', 'Invitation envoyée': 'دعوة مُرسلة',
+  'Recrutement déclaré · attend sa confirmation': 'توظيف مُصرَّح به · في انتظار التأكيد',
+  't’invite à postuler.': 'يدعوك للترشح.', 'Ça ne m’intéresse pas': 'لا يهمني',
+  'Aucune offre mise de côté': 'لا عرض محفوظ', 'Clique sur le marque-page d’une offre pour la mettre de côté ici.': 'انقر على علامة الحفظ في عرض لتحفظه هنا.',
+  'Mises de côté': 'المحفوظة', 'Mettre de côté': 'حفظ', 'Ne plus mettre de côté': 'إلغاء الحفظ',
+  'Réservées aux lauréats': 'خاصة بالخريجين', 'Par les lauréats': 'من الخريجين',
+  'Les étudiants concernés la voient déjà dans leurs offres. Partage-la sur WhatsApp : un étudiant la fera circuler dans sa promo.': 'يراه الطلبة المعنيون الآن ضمن عروضهم. شاركه على واتساب: سينشره طالب في دفعته.',
+  'Offre publiée. Les étudiants concernés la voient dans leurs offres.': 'تم نشر العرض. يراه الطلبة المعنيون ضمن عروضهم.',
+  'On lui demandera de confirmer. Le recrutement compte une fois confirmé.': 'سيُطلب تأكيد التوظيف من الشخص المعني. يُحتسب التوظيف بعد تأكيده.',
+  // Après un refus, une porte vraie : le nombre réel d'autres offres, sinon sa demande ou un conseil
+  'Une autre offre t’attend.': 'عرض آخر في انتظارك.', [PORTE_DEMANDE]: 'يمكنك نشر طلب يصف بحثك، ويمكن للخريجين أن يقترحوا مساعدتهم.',
+  'Un lauréat peut te conseiller en visio.': 'يمكن لخريج أن ينصحك عبر الفيديو.',
+  'Entreprise, ville, filière…': 'الشركة، المدينة، الشعبة…', 'Le lauréat': 'الخريج', 'Cette offre est pour les autres années.': 'هذا العرض موجّه لسنوات أخرى.',
 }, [
+  [/^(\d+) autres offres t’attendent\.$/, n => porteAR(`${n} autres offres t’attendent.`)],
+  [/^Ta candidature « (.+) » : pas retenue cette fois\. (.+)$/, (t, p) => `لم يُقبل ترشيحك «${t}» هذه المرة. ${porteAR(p) || p}`],
+  [/^(.+?) a déjà une réussite enregistrée cette année\.$/, n => `لدى ${n} نجاح مسجّل هذه السنة.`],
   [/^(\d+) champs? remplis?\. Il reste (\d+) champs? à compléter\.$/, (n, m) => { const F = ['حقل واحد', 'حقلين', 'حقول', 'حقلًا']; return `تم ملء ${arCount(n, F)}. بقي عليك إكمال ${arCount(m, F)}.`; }],
   [/^Pas encore d’offre pour ta (.+)$/, a => `لا عروض بعد لـ${a}`],
   [/^Cette offre est pour les (.+)\.$/, a => `هذا العرض موجّه لـ${a}.`],
+  [/^Invitation envoyée à (.+)\.$/, n => `تم إرسال الدعوة إلى ${n}.`],
   [/^Voici celles de ta (.+)\.$/, a => `إليك عروض ${a}.`],
   [/^Les autres offres de (.+)$/, a => `عروض أخرى لـ${a}`],
-  [/^Partagée par ([^,]+), qui peut te recommander$/, n => `نشره ${n}، ويمكنه أن يزكّيك`],
-  [/^Partagée par ([^,]+), qui reçoit ta candidature et te répond ici$/, n => `نشره ${n}، وهو من يتلقى ترشيحك ويجيبك هنا`],
-  [/^Partagée par ([^,]+)$/, n => `نشره ${n}`],
-  [/^([^,]+) te répond ici$/, n => `${n} يجيبك هنا`],
-  [/^(.+) reçoit ta candidature avec ton profil( et ton CV)?\. Tu suis sa réponse dans « Mon parcours »\.$/, (n, cv) => `${n === 'Le lauréat' ? 'الخريج' : n} يتلقى ترشيحك مع ملفك${cv ? ' وسيرتك الذاتية' : ''}. تتابع ردّه في «مساري».`],
+  [/^Partagée par ([^,]+), qui peut te recommander$/, n => `عرض من ${n}، مع إمكانية التزكية`],
+  [/^Partagée par ([^,]+), qui reçoit ta candidature et te répond ici$/, n => `عرض من ${n}، يصله ترشيحك ويأتيك الجواب هنا`],
+  [/^Partagée par ([^,]+)$/, n => `عرض من ${n}`],
+  [/^([^,]+) te répond ici$/, n => `الجواب من ${n} هنا`],
+  [/^(.+) reçoit ta candidature avec ton profil( et ton CV)?\. Tu suis sa réponse dans « Mon parcours »\.$/, (n, cv) => `يصل ترشيحك إلى ${n === 'Le lauréat' ? 'الخريج' : n} مع ملفك${cv ? ' وسيرتك الذاتية' : ''}. تتابع الرد في «مساري».`],
 ]);

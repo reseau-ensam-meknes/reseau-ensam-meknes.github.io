@@ -189,7 +189,7 @@ export function buildSeed(now = new Date()) {
   reactions.push({ id: id('r'), offer_id: offerOf('Stage de recherche').id, user_id: salma.id, kind: 'save', created_at: daysAgo(2) });
 
   // Candidatures de Salma (persona) + d'autres
-  const MSG = ['Bonjour, je suis en 5A et ce sujet correspond exactement à mon projet de fin d’études. Mon CV est sur mon profil.', 'Bonjour, j’ai fait mon stage de 4A en méthodes et j’aimerais continuer dans cette voie. Disponible pour un appel quand vous voulez.', 'Bonjour, très intéressé(e) par l’offre. J’ai travaillé sur un projet AMDEC au club industrie de l’école.', 'Bonjour, je suis disponible dès février. Merci pour le partage !'];
+  const MSG = ['Bonjour, je suis en 5A et ce sujet correspond exactement à mon projet de fin d’études. Mon CV est sur mon profil.', 'Bonjour, j’ai fait mon stage de 4A en méthodes et j’aimerais continuer dans cette voie. Disponible pour un appel quand vous voulez.', 'Bonjour, l’offre m’intéresse beaucoup. J’ai travaillé sur un projet AMDEC au club industrie de l’école.', 'Bonjour, je suis disponible dès février. Merci pour le partage !'];
   for (const a of recruitApps) applications.push({ id: id('a'), ...a, status: 'retenu', message: pick(MSG), note: '', updated_at: a.created_at });
   // Candidatures de Salma (persona)
   applications.push({ id: id('a'), student_id: salma.id, offer_id: offerOf('PFE : réduction').id, entreprise: 'Renault Group Maroc', titre: offerOf('PFE : réduction').titre, status: 'entretien', message: 'Bonjour M. El Amrani, je suis en 5A Génie Industriel. J’ai appliqué la VSM et le SMED pendant mon stage chez Yazaki, et je voudrais en faire mon PFE. Mon CV est en lien sur mon profil.', note: 'Entretien technique jeudi 10h avec le service méthodes', created_at: daysAgo(6), updated_at: daysAgo(1) });
@@ -406,7 +406,7 @@ export function buildSeed(now = new Date()) {
   const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const defis = [
     { id: id('df'), titre: `${MOIS[now.getMonth()]} : 10 stages trouvés pour les 4A`, mesure: 'stages', niveau: 4, cible: 10, debut: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), fin: ymd(new Date(now.getFullYear(), now.getMonth() + 1, 0)), created_at: daysAgo(15) },
-    { id: id('df'), titre: 'Cette saison : 40 mentorats terminés', mesure: 'mentorats', niveau: null, cible: 40, debut: ymd(new Date(S, 8, 1)), fin: ymd(new Date(S + 1, 5, 30)), created_at: daysAgo(40) },
+    { id: id('df'), titre: 'Cette année : 40 mentorats terminés', mesure: 'mentorats', niveau: null, cible: 40, debut: ymd(new Date(S, 8, 1)), fin: ymd(new Date(S + 1, 5, 30)), created_at: daysAgo(40) },
   ];
 
   const base = { profiles, offers, comments, reactions, applications, placements, mentorships, questions, answers, votes, shortlists, invitations, kudos, attestations: [], liens_rdv, annonces, groupe_messages, groupe_membres, cafes, cafe_participants, startups, defis, parrainages };
