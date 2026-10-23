@@ -3,7 +3,7 @@ import { getLang, setLang, chargerAR } from './i18n.js';
 import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore, texteErreur } from './store.js';
 import { Icon, Field, Empty, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, Num, useLocal, Celebration, celebrate, voirRangs, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille } from './ui.js';
-import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, besoinsDeMoi, etatAide, AIDE_OUVERTE, peutPostulerA } from './logic.js';
+import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, besoinsDeMoi, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
 import { ParcoursPage, EspacePage, Journey, journeyStep, confirmerRecrutement, refuserRecrutement, versMerci } from './me.js';
 import { DashboardPage } from './dashboard.js';
@@ -22,7 +22,7 @@ import { NudgeAvis } from './entreprises.js';
 import { ConfianceHome } from './confiance.js';
 import { EnquetePage } from './enquete.js';
 import { NextEvent } from './agenda.js';
-import { lireInvitation, promoInvitee, roleDePromo } from './invitation.js';
+import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, lienDuVisiteur, suiteLien } from './entree.js';
 import { MessagesPage, MessagesHome, useAlerteMessages } from './messages.js';
 import { PoulsReseau } from './pouls.js';
 import { ProposerAide } from './demandes.js';
@@ -105,8 +105,10 @@ function App({ store }) {
   const [annee, setAnnee] = useState(null);
   const [iosHelp, setIosHelp] = useState(false);
   const install = useInstall();
-  // Lien direct vers une offre (alertes par email et notifications) : #offre/<id>
-  useEffect(() => { if (route.base === 'offre' && route.sub) { setOfferId(route.sub); setApplyNow(false); go('offres', { exact: true }); } }, [route.base, route.sub]);
+  // Le lien partagé gardé pendant l'inscription : ouvert dès que l'application s'affiche, puis oublié
+  useEffect(() => { if (!coque) return; const l = lienRetenu(); oublierLien(); if (l && l.r !== (location.hash || '').slice(1)) go(l.r, { exact: true }); }, [coque]);
+  // Lien direct vers une offre (WhatsApp, alertes par email, notifications) : sans compte, l'adresse garde #offre/<id>
+  useEffect(() => { if (coque && route.base === 'offre' && route.sub) { setOfferId(route.sub); setApplyNow(false); go('offres', { exact: true }); } }, [route.base, route.sub, coque]);
   // Lien direct « Je peux aider » (notification sur le téléphone, email) : #aider/<id> ouvre la feuille devant la demande
   useEffect(() => { if (route.base === 'aider' && route.sub && store.me) { setAide({ demande: route.sub }); go('offres/demandes/' + route.sub, { exact: true }); } }, [route.base, route.sub, !!store.me]);
 
@@ -143,7 +145,8 @@ function App({ store }) {
   if (route.base === 'verifier') return html`<main class="auth verify-wrap"><div class="auth-lang"><${LangToggle} onChange=${relang}/></div><${VerifyPage} store=${store} id=${route.sub}/></main>`;
   if (route.base === 'desabo') return html`<main class="auth verify-wrap"><div class="auth-lang"><${LangToggle} onChange=${relang}/></div><${DesaboPage} store=${store} token=${route.sub} quoi=${route.sub2}/></main>`;
   if (route.base === 'confidentialite' && (store.mode !== 'live' || !store.session || !me)) return html`<main class="auth verify-wrap privacy-wrap"><div class="auth-lang"><${LangToggle} onChange=${relang}/></div><${PrivacyPage} onBack=${() => go('accueil')}/></main>`;
-  if (store.mode === 'live' && !store.session) return html`<${AuthScreen} store=${store} relang=${relang}/>`;
+  // Pas de session : la page d'entrée, déjà à l'écran avant l'application, est reprise telle quelle
+  if (store.mode === 'live' && !store.session) return html`<${Entree} store=${store}/>`;
   if (store.mode === 'live' && !me) return html`<${Onboarding} store=${store} relang=${relang}/>`;
 
   // Le bouton qui lance l'action attend sa fin (grisé, petit cercle) : pas de double envoi sur une connexion lente.
@@ -286,13 +289,6 @@ function ThemeToggle({ onChange }) {
   return html`<button class="icon-btn theme-btn" onClick=${() => { setTheme(sombre ? 'light' : 'dark'); onChange?.(); }} aria-label=${sombre ? 'Passer en mode clair' : 'Passer en mode sombre'} title=${sombre ? 'Mode clair' : 'Mode sombre'}><${Icon} name=${sombre ? 'sun' : 'moon'}/></button>`;
 }
 
-// Bouton français / arabe, en haut à côté des notifications
-export function LangToggle({ onChange, store, me }) {
-  const ar = getLang() === 'ar';
-  const save = l => { if (store?.mode === 'live' && me && me.langue !== l && 'langue' in me) store.update('profiles', me.id, { langue: l }).catch(() => {}); };
-  return html`<button class="lang-btn" onClick=${async () => { try { await setLang(ar ? 'fr' : 'ar'); } catch { toast('Connexion trop lente : réessaie dans un instant.', 'err'); return; } save(ar ? 'fr' : 'ar'); onChange?.(); }} aria-label=${ar ? 'Passer en français' : 'التبديل إلى العربية'} lang=${ar ? 'fr' : 'ar'}>
-    <${Icon} name="globe" size=${16}/><span>${ar ? 'FR' : 'ع'}</span><span class="lang-long">${ar ? 'Français' : 'العربية'}</span></button>`;
-}
 
 function PersonaSwitch({ store, go }) {
   const ps = store.personas();
@@ -831,86 +827,19 @@ function MyProfile({ ctx }) {
 // ---------------------------------------------------------------------------
 // Connexion et inscription (mode réel)
 // ---------------------------------------------------------------------------
-// Ce téléphone a déjà servi à un membre : il retrouvera « Se connecter » en premier
-const DEJA_MEMBRE = 'ensam-deja-membre';
-const marquerMembre = () => { try { localStorage.setItem(DEJA_MEMBRE, '1'); } catch { /* navigation privée */ } };
-const dejaMembre = () => { try { return localStorage.getItem(DEJA_MEMBRE) === '1'; } catch { return false; } };
-function AuthScreen({ store, relang }) {
-  const recovery = /type=recovery/.test(location.hash);
-  // Quelqu'un qui découvre le réseau (lien partagé, invitation d'une promo) commence par « Créer mon compte »
-  const invite = promoInvitee();
-  const [mode, setMode] = useState(recovery ? 'nouveau' : invite || !dejaMembre() ? 'inscription' : 'connexion');
-  const [email, setEmail] = useState(''); const [pw, setPw] = useState('');
-  const [ok, setOk] = useState(false); const [mails, setMails] = useState(true);
-  const [msg, setMsg] = useState(null); const [busy, setBusy] = useState(false);
-  const run = async fn => { setBusy(true); setMsg(null); try { await fn(); } catch (e) { setMsg({ err: true, t: texteErreur(e) }); } setBusy(false); };
-  const ecole = store.domainesEcole?.() || [];
-  const submit = e => {
-    e.preventDefault();
-    if (mode === 'connexion') run(async () => { await store.signIn(email.trim(), pw); marquerMembre(); });
-    else if (mode === 'inscription') run(async () => {
-      let r;
-      try { r = await store.signUp(email.trim(), pw, { consent_at: new Date().toISOString(), emails_hebdo: mails, langue: getLang() }); } catch (e) {
-        if (!/existe déjà/.test(e.message)) throw e;
-        // Déjà inscrit(e) : on le connecte avec le même mot de passe, sinon on passe doucement à « Se connecter »
-        try { await store.signIn(email.trim(), pw); marquerMembre(); return; } catch { setMode('connexion'); throw new Error('Tu as déjà un compte avec cet email : entre ton mot de passe pour te connecter.'); }
-      }
-      marquerMembre();
-      if (r.needsConfirm) setMsg({ t: 'Compte créé. Ouvre l’email de confirmation reçu, puis reviens te connecter.' });
-    });
-    else if (mode === 'oubli') run(async () => { await store.resetPassword(email.trim()); setMsg({ t: 'Si un compte existe, un lien de réinitialisation vient d’être envoyé.' }); });
-    else run(async () => { await store.setPassword(pw); setMsg({ t: 'Mot de passe changé.' }); });
-  };
-  return html`<main class="auth">
-    <div class="auth-lang"><${LangToggle} onChange=${relang}/></div>
-    <section class="auth-hero sky">
-      <div class="auth-hero-txt">
-        <${BrandLogo} size=${64} draw/>
-        <h1>Réseau ENSAM Meknès</h1>
-        <p>Les lauréats y recrutent leurs stagiaires. Les étudiants y trouvent stage, PFE et premier emploi plus vite, avec l’aide des lauréats.</p>
-      </div>
-      <${SchoolScene} fit="slice"/>
-    </section>
-    <div class="auth-right">
-    <form class="auth-card form" onSubmit=${submit}>
-      <h2>${{ connexion: 'Se connecter', inscription: 'Créer mon compte', oubli: 'Mot de passe oublié', nouveau: 'Nouveau mot de passe' }[mode]}</h2>
-      ${invite && mode === 'inscription' ? html`<p class="invite-band"><${Icon} name="send" size=${18}/><span><strong>Bienvenue, promo ${invite} !</strong> Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.</span></p>` : null}
-      ${mode !== 'nouveau' ? html`<${Field} label="Email" hint=${mode === 'inscription' && ecole.length ? `Étudiant(e) : ${store.reglages?.email_ecole_obligatoire ? 'inscris-toi' : 'de préférence'} avec ton email de l’école (${ecole.map(d => '@' + d).join(', ')}). Ton compte est alors vérifié tout de suite.` : ''}><input id="au-email" type="email" required autocomplete="email" value=${email} onInput=${e => setEmail(e.target.value)}/><//>` : null}
-      ${mode !== 'oubli' ? html`<${Field} label="Mot de passe" hint=${mode === 'connexion' ? '' : '6 caractères minimum'}><input id="au-pw" type="password" required minlength="6" autocomplete=${mode === 'connexion' ? 'current-password' : 'new-password'} value=${pw} onInput=${e => setPw(e.target.value)}/><//>` : null}
-      ${mode === 'inscription' ? html`<label class="check small"><input id="au-ok" type="checkbox" required checked=${ok} onChange=${e => setOk(e.target.checked)}/> <span>J’accepte que mes données servent au réseau (<a href="#confidentialite">Confidentialité</a>)</span></label>
-        <label class="check small"><input id="au-mail" type="checkbox" checked=${mails} onChange=${e => setMails(e.target.checked)}/> Recevoir un résumé par email chaque semaine</label>` : null}
-      ${msg ? html`<p class=${'auth-msg' + (msg.err ? ' err' : '')} role="alert">${msg.t}</p>` : null}
-      <button class="btn primary wide" disabled=${busy || (mode === 'inscription' && !ok)}>${busy ? '…' : { connexion: 'Se connecter', inscription: 'Créer mon compte', oubli: 'Envoyer le lien', nouveau: 'Enregistrer' }[mode]}</button>
-      <div class="auth-links">
-        ${mode !== 'connexion' ? html`<button type="button" class="linkish" onClick=${() => { setMode('connexion'); setMsg(null); }}>J’ai déjà un compte</button>` : html`<button type="button" class="linkish" onClick=${() => { setMode('inscription'); setMsg(null); }}>Créer un compte</button>`}
-        ${mode === 'connexion' ? html`<button type="button" class="linkish" onClick=${() => { setMode('oubli'); setMsg(null); }}>Mot de passe oublié ?</button>` : null}
-      </div>
-    </form>
-    <div class=${'auth-pour' + (invite && roleDePromo(invite) === 'etudiant' ? ' etu-avant' : '')}>
-      <section><h2 class="eyebrow">Pour les lauréats</h2><ul class="auth-points">
-        <li><span class="sc-ico"><${Icon} name="briefcase"/></span> Recrute tes stagiaires parmi les étudiants de ton école</li>
-        <li><span class="sc-ico"><${Icon} name="mentor"/></span> Aide un étudiant en 20 minutes de visio, quand tu as le temps</li>
-        <li><span class="sc-ico"><${Icon} name="award"/></span> Les mercis des étudiants que tu aides, et une attestation à ajouter sur LinkedIn</li>
-      </ul></section>
-      <section><h2 class="eyebrow">Pour les étudiants</h2><ul class="auth-points">
-        <li><span class="sc-ico"><${Icon} name="send"/></span> Dis aux lauréats le stage que tu cherches, CV joint : ils te répondent</li>
-        <li><span class="sc-ico"><${Icon} name="chat"/></span> Un lauréat te conseille : CV, entretien, départ à l’étranger</li>
-        <li><span class="sc-ico"><${Icon} name="feed"/></span> Les offres de stage, de PFE et d’emploi publiées par les lauréats</li>
-      </ul></section>
-    </div>
-    <p class="small muted center"><a href="#confidentialite">Confidentialité</a></p>
-    </div>
-  </main>`;
-}
 
 function Onboarding({ store, relang }) {
   const act = async fn => { try { await fn(); } catch (e) { toast(texteErreur(e), 'err'); } };
   const ctx = { store, act };
-  const invite = promoInvitee();
-  const preset = invite ? { promo: invite, role: roleDePromo(invite) } : null;
-  return html`<main class="auth"><div class="auth-lang"><${LangToggle} onChange=${relang}/></div><div class="auth-card wide">
-    <div class="row"><${BrandLogo} size=${44}/><div><p class="eyebrow">Dernière étape</p><h2>Présente-toi à la communauté</h2></div></div>
-    <p class="muted">Ces informations permettent de te proposer les bonnes offres et de suivre ta promo.</p>
+  // Le rôle choisi sur la page d'entrée (il suit le compte d'un appareil à l'autre), sinon celui du lien de la promo
+  const meta = store.session?.user?.user_metadata || {};
+  const preset = presetInscription({ choisi: meta.role_choisi || roleRetenu(), invite: promoInvitee(), saison: seasonOf() });
+  const lien = lienDuVisiteur();
+  // La langue se change dans l'en-tête (un bouton fixe recouvrirait le titre sur téléphone)
+  return html`<main class="auth"><div class="auth-card wide onb">
+    <div class="row onb-tete"><${BrandLogo} size=${44}/><div><p class="eyebrow">Dernière étape</p><h2>Présente-toi à la communauté</h2></div><${LangToggle} onChange=${relang}/></div>
+    ${lien ? html`<p class="lien-suite small" id="onb-lien"><${Icon} name="arrow" size=${15}/><span>${suiteLien(lien)}</span></p>` : null}
+    <p class="muted">Quelques secondes, et tu es dans le réseau.</p>
     <${ProfileForm} ctx=${ctx} preset=${preset} onboarding/>
     <button class="linkish small" onClick=${() => store.signOut()}>Se déconnecter</button>
   </div><${Toaster}/></main>`;
@@ -919,15 +848,17 @@ function Onboarding({ store, relang }) {
 // ---------------------------------------------------------------------------
 (async () => {
   const root = document.getElementById('app');
-  lireInvitation();
   try {
-    // L'arabe se charge en même temps que les données, seulement si c'est la langue choisie
-    const [store] = await Promise.all([createStore(), getLang() === 'ar' ? chargerAR().catch(() => setLang('fr')) : null]);
+    // Le magasin déjà prêt pour la page d'entrée, sinon on le crée ; l'arabe se charge en même temps que les données
+    // (sur la page d'entrée, ses phrases sont déjà traduites : on ne repasse pas en français pour une coupure)
+    const [store] = await Promise.all([magasinEntree() || createStore(), getLang() === 'ar' ? chargerAR().catch(() => { if (!document.getElementById('entree')) return setLang('fr'); }) : null]);
     brancherPhotos(path => store.photo(path));
-    if (store.session) marquerMembre();
+    brancherSignal(m => toast(m, 'err'));
+    if (store.session) { marquerMembre(); cacherEntree(true); }
     try { sessionStorage.removeItem('ensam-essais'); } catch { /* */ }
     root.innerHTML = '';
     render(html`<${App} store=${store}/>`, root);
+    window.ENSAM_APP = true;
   } catch (e) {
     console.error(e);
     const reseau = !navigator.onLine || texteErreur(e).startsWith('Pas de réseau');

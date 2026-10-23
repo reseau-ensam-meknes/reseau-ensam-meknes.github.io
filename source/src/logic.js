@@ -105,6 +105,8 @@ export const NIVEAUX = {
 export const CATEGORIES_Q = ['PFE', 'Stage', 'Étranger & visas', 'CV & entretiens', 'Premier emploi', 'Vie à l’école'];
 
 // Une saison = une année universitaire, de septembre à août. 2026 = « 2026-2027 ».
+// Règles de la page d'entrée (elles vivent à part pour qu'elle s'affiche sans attendre ce fichier)
+export { roleDePromo, presetInscription, lignesChiffres, estEmailEcole, chiffresCode, casErreurAuth, saisonActuelle, lienPartage, lienEncoreBon, LIEN_DUREE, estUuid, phraseLien, suiteLien } from './regles-entree.js';
 export function seasonOf(d = new Date()) { return d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1; }
 export const seasonLabel = s => `${s}-${s + 1}`;
 
@@ -400,9 +402,33 @@ export function dernieresActions(data) {
   return m;
 }
 // Où les inscriptions s'arrêtent : compte créé → profil rempli → première action ; et qui a agi cette semaine
+// Rôle et promo cohérents : un lauréat a déjà son diplôme, un étudiant l'aura entre la 5A et la 1re année de cette saison
+export function incoherenceProfil(role, promo, S, an) {
+  const p = Number(promo); if (promo === '' || promo == null || !Number.isInteger(p) || p < 1990 || p > 2040) return null;
+  return role === 'laureat' && p > an ? 'futur' : role === 'etudiant' && p <= S ? 'diplome' : role === 'etudiant' && p > S + 5 ? 'loin' : null;
+}
+// Ce qui manque encore pour enregistrer le profil, dans l'ordre de l'écran (le bouton le dit, et y mène)
+export function manquesProfil(f, { onboarding = false, ecoleBloque = false, incoherent = null } = {}) {
+  const p = Number(f.promo);
+  return [!f.role && 'role', ecoleBloque && 'ecole', String(f.full_name || '').trim().length < 2 && 'nom',
+    !(f.promo !== '' && f.promo != null && Number.isInteger(p) && p >= 1990 && p <= 2040) && 'promo', !!incoherent && 'coherence', !f.filiere && 'filiere',
+    onboarding && f.role === 'laureat' && typeof f.mentor_dispo !== 'boolean' && 'aide'].filter(Boolean);
+}
+// Avec le code à 6 chiffres, demander un code crée déjà le compte (connexion notée dans la seconde) :
+// un compte n'est « ouvert » qu'avec un profil, un mot de passe, ou une connexion venue plus tard (le code entré).
+// Un champ absent (base pas encore à jour) garde l'ancien comportement : le compte compte.
+export function compteOuvert(c) {
+  if (c.a_profil || c.mot_de_passe !== false || c.last_sign_in_at == null || c.created_at == null) return true;
+  return new Date(c.last_sign_in_at) - new Date(c.created_at) > 5000;
+}
+// Personnes qui ont demandé un code sans l'entrer (code pas reçu, ou visite interrompue), hors administration
+export function codesSansSuite(comptes, profils = []) {
+  const admins = new Set(profils.filter(p => p.role === 'admin').map(p => p.id));
+  return (comptes || []).filter(c => !admins.has(c.id) && !compteOuvert(c)).length;
+}
 export function parcoursInscription(comptes, data, now = new Date()) {
   const admins = new Set((data.profiles || []).filter(p => p.role === 'admin').map(p => p.id));
-  const liste = (comptes?.length ? comptes : (data.profiles || []).map(p => ({ id: p.id, a_profil: true }))).filter(c => !admins.has(c.id));
+  const liste = (comptes?.length ? comptes : (data.profiles || []).map(p => ({ id: p.id, a_profil: true }))).filter(c => !admins.has(c.id) && compteOuvert(c));
   const actions = dernieresActions(data);
   const profil = liste.filter(c => c.a_profil).length, action = liste.filter(c => c.a_profil && actions.has(c.id)).length;
   const semaine = now.getTime() - 7 * 864e5;

@@ -24,10 +24,11 @@ let lang = 'fr';
 try { lang = localStorage.getItem(KEY) === 'ar' ? 'ar' : 'fr'; } catch { /* stockage indisponible */ }
 
 export const getLang = () => lang;
-// Passe à l'arabe une fois le dictionnaire chargé (sinon l'écran basculerait à droite encore en français)
-export async function setLang(l) {
+// Passe à l'arabe une fois le dictionnaire chargé (sinon l'écran basculerait à droite encore en français).
+// attendre: false (page d'entrée, dont les phrases arabes sont déjà là) : tout de suite, le dictionnaire suit en fond.
+export async function setLang(l, { attendre = true } = {}) {
   const v = l === 'ar' ? 'ar' : 'fr';
-  if (v === 'ar') await chargerAR();
+  if (v === 'ar') { if (attendre) await chargerAR(); else chargerAR().catch(() => {}); }
   lang = v;
   try { localStorage.setItem(KEY, lang); } catch { /* stockage indisponible */ }
   applyDir();

@@ -1,0 +1,487 @@
+// Page d'entrée d'un visiteur (sans compte) : elle s'affiche en environ une seconde en 3G, avant le reste du site.
+// Ce module ne dépend que de Preact, de la traduction, du logo et de la scène dessinée. Le magasin (Supabase)
+// se charge ensuite, puis l'application, qui « adopte » l'entrée déjà à l'écran : rien ne clignote,
+// et ce qui a été tapé reste en place. Un membre déjà connecté ne voit jamais cette page.
+import { html, render, useState, useLayoutEffect, useEffect, useRef } from './vendor/preact-htm.js';
+import { getLang, setLang, chargerAR, addAR, arCount } from './i18n.js';
+import { sceneMarkup } from './scene.js';
+import { glyph, TUILE_DEFS, TUILE } from './logo.js';
+import { roleDePromo, lignesChiffres, estEmailEcole, chiffresCode, adresseContact, lienPartage, lienEncoreBon, estUuid, phraseLien, suiteLien } from './regles-entree.js';
+
+// La page d'entrée en arabe n'attend pas le grand dictionnaire (i18n-ar.js) : ses phrases sont ici
+// (mêmes traductions que dans i18n-ar.js, vérifié par un test).
+const LAU = ['خريج واحد', 'خريجان', 'خريجين', 'خريجًا'];
+addAR({
+  'Réseau ENSAM Meknès': 'شبكة ENSAM مكناس',
+  'Les lauréats ouvrent la porte aux étudiants.': 'الخريجون يفتحون الباب أمام الطلبة.',
+  'Stage, PFE, premier emploi : les étudiants demandent, les lauréats aident et recrutent.': 'تدريب، مشروع نهاية الدراسة، أول عمل: الطلبة يطلبون، والخريجون يساعدون ويوظّفون.',
+  'Tu es…': 'أنت…', 'Étudiant(e)': 'طالب(ة)', 'Lauréat(e)': 'خريج(ة)',
+  'De la 1re à la 5e année à l’ENSAM Meknès': 'من السنة الأولى إلى الخامسة في ENSAM مكناس',
+  'Diplômé(e) de l’ENSAM Meknès, en poste ou en recherche': 'خريج(ة) ENSAM مكناس، في وظيفة أو يبحث عن عمل',
+  'De la 1re à la 5e année': 'من السنة الأولى إلى الخامسة', 'Diplômé(e) de l’école': 'خريج(ة) المدرسة',
+  'Choisis d’abord : étudiant(e) ou lauréat(e).': 'اختر أولًا: طالب(ة) أم خريج(ة).',
+  'Pour les lauréats': 'للخريجين', 'Pour les étudiants': 'للطلبة',
+  'Recrute tes stagiaires parmi les étudiants de ton école': 'وظّف متدرّبيك من بين طلبة مدرستك',
+  'Aide un étudiant en 20 minutes de visio, quand tu as le temps': 'ساعد طالبًا في 20 دقيقة عبر الفيديو، متى توفّر لك الوقت',
+  'Les mercis des étudiants que tu aides, et une attestation à ajouter sur LinkedIn': 'كلمات شكر من الطلبة الذين تساعدهم، وشهادة تضيفها إلى LinkedIn',
+  'Dis aux lauréats le stage que tu cherches, CV joint : ils te répondent': 'قل للخريجين أي تدريب تبحث عنه، مع سيرتك الذاتية: سيجيبونك',
+  'Un lauréat te conseille : CV, entretien, départ à l’étranger': 'خريج ينصحك: السيرة الذاتية، المقابلة، الانطلاق إلى الخارج',
+  'Les offres de stage, de PFE et d’emploi publiées par les lauréats': 'عروض التدريب ومشاريع نهاية الدراسة والعمل التي ينشرها الخريجون',
+  'Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.': 'دفعتك محدَّدة مسبقًا: أنشئ حسابك، ثم تحقق من معلوماتك.',
+  'Créer mon compte': 'إنشاء حسابي', 'Se connecter': 'تسجيل الدخول', 'Nouveau mot de passe': 'كلمة مرور جديدة',
+  'Email': 'البريد الإلكتروني', 'Mot de passe': 'كلمة المرور', '6 caractères minimum': '6 أحرف على الأقل',
+  'Recevoir un résumé par email chaque semaine': 'تلقي ملخص بالبريد الإلكتروني كل أسبوع',
+  'J’accepte que mes données servent au réseau (': 'أوافق على استخدام بياناتي لخدمة الشبكة (', 'Confidentialité': 'الخصوصية',
+  'Recevoir mon code': 'إرسال الرمز', 'Continuer': 'متابعة', 'Connexion…': 'جارٍ الدخول…', 'Enregistrer': 'حفظ',
+  'Pas de mot de passe : on t’envoie un code à 6 chiffres par email.': 'بدون كلمة مرور: نرسل إليك رمزًا من 6 أرقام عبر البريد الإلكتروني.',
+  'Email de l’école reconnu : ton profil étudiant sera vérifié tout de suite.': 'تم التعرّف على بريد المدرسة: سيُوثَّق ملفك كطالب فورًا.',
+  'Email de l’école reconnu.': 'تم التعرّف على بريد المدرسة.',
+  'Ton code est parti': 'رمزك في الطريق', 'Entre le code à 6 chiffres envoyé à': 'أدخل الرمز المكوّن من 6 أرقام المرسل إلى',
+  'Changer d’email': 'تغيير البريد الإلكتروني', 'Changer': 'تغيير', 'Code à 6 chiffres': 'الرمز المكوّن من 6 أرقام',
+  'Rien reçu ? Regarde dans tes spams.': 'لم يصلك شيء؟ ابحث في الرسائل غير المرغوب فيها (Spam).', 'Renvoyer le code': 'إعادة إرسال الرمز',
+  'Entre les 6 chiffres du code.': 'أدخل أرقام الرمز الستة.',
+  'Nouveau code envoyé. Seul le dernier code reçu marche.': 'أُرسل رمز جديد. وحده آخر رمز يصلك يعمل.',
+  'Un code t’a déjà été envoyé il y a moins d’une minute : entre-le ici.': 'أُرسل إليك رمز قبل أقل من دقيقة: أدخله هنا.',
+  'Pas encore de compte avec cet email : crée-le ici en une minute.': 'لا يوجد حساب بهذا البريد بعد: أنشئه هنا في دقيقة.',
+  'J’ai déjà un compte': 'لدي حساب', 'Créer un compte': 'إنشاء حساب', 'J’ai un mot de passe': 'لدي كلمة مرور', 'Recevoir un code à la place': 'استلام رمز بدلًا من ذلك',
+  'Initiative de lauréats, indépendante de l’administration de l’école': 'مبادرة من الخريجين، مستقلة عن إدارة المدرسة', 'Contact': 'التواصل',
+  'Mot de passe changé.': 'تم تغيير كلمة المرور.', 'Inscris-toi avec ton email de l’école.': 'سجّل باستعمال بريد المدرسة.',
+  'Connexion trop lente : réessaie dans un instant.': 'الاتصال بطيء جدًا: أعد المحاولة بعد لحظة.',
+  // Réponses de la base pendant l'inscription (store.js, frError)
+  'Pas de réseau pour l’instant. Réessaie dans un instant.': 'لا توجد شبكة حاليًا. أعد المحاولة بعد لحظة.',
+  'Ce code ne marche pas. Vérifie les 6 chiffres, ou demande un nouveau code.': 'هذا الرمز لا يعمل. تحقّق من الأرقام الستة، أو اطلب رمزًا جديدًا.',
+  'Un code vient de partir. Attends une minute avant d’en demander un autre.': 'أُرسل رمز للتو. انتظر دقيقة قبل طلب رمز آخر.',
+  'Beaucoup de codes sont partis cette heure-ci. Réessaie dans un moment.': 'أُرسلت رموز كثيرة خلال هذه الساعة. أعد المحاولة بعد قليل.',
+  'Les inscriptions sont en pause pour l’instant. Réessaie plus tard.': 'التسجيل متوقف مؤقتًا. أعد المحاولة لاحقًا.',
+  'L’email n’a pas pu partir. Vérifie l’adresse, ou réessaie dans un instant.': 'تعذّر إرسال البريد. تحقّق من العنوان، أو أعد المحاولة بعد لحظة.',
+  'Cette adresse email ne semble pas valide. Vérifie-la.': 'يبدو أن هذا البريد الإلكتروني غير صالح. تحقّق منه.',
+  'Trop de tentatives. Réessaie dans quelques minutes.': 'محاولات كثيرة. أعد المحاولة بعد بضع دقائق.',
+  'Email ou mot de passe incorrect.': 'البريد الإلكتروني أو كلمة المرور غير صحيحة.',
+  'Erreur inconnue.': 'خطأ غير معروف.',
+  // Lien partagé : ce qui attend le visiteur
+  'On t’a partagé une offre : crée ton compte pour la voir.': 'شارك أحدهم معك عرضًا: أنشئ حسابك لتطّلع عليه.',
+  'Une offre de stage t’attend : crée ton compte pour la voir.': 'عرض تدريب في انتظارك: أنشئ حسابك لتطّلع عليه.',
+  'Une offre de PFE t’attend : crée ton compte pour la voir.': 'عرض مشروع نهاية الدراسة في انتظارك: أنشئ حسابك لتطّلع عليه.',
+  'Une offre de stage à l’étranger t’attend : crée ton compte pour la voir.': 'عرض تدريب بالخارج في انتظارك: أنشئ حسابك لتطّلع عليه.',
+  'Une offre d’emploi t’attend : crée ton compte pour la voir.': 'عرض وظيفة في انتظارك: أنشئ حسابك لتطّلع عليه.',
+  'Une offre entre lauréats t’attend : crée ton compte pour la voir.': 'عرض بين الخريجين في انتظارك: أنشئ حسابك لتطّلع عليه.',
+  'On t’a partagé une offre : connecte-toi pour la voir.': 'شارك أحدهم معك عرضًا: سجّل الدخول لتطّلع عليه.',
+  'Une offre de stage t’attend : connecte-toi pour la voir.': 'عرض تدريب في انتظارك: سجّل الدخول لتطّلع عليه.',
+  'Une offre de PFE t’attend : connecte-toi pour la voir.': 'عرض مشروع نهاية الدراسة في انتظارك: سجّل الدخول لتطّلع عليه.',
+  'Une offre de stage à l’étranger t’attend : connecte-toi pour la voir.': 'عرض تدريب بالخارج في انتظارك: سجّل الدخول لتطّلع عليه.',
+  'Une offre d’emploi t’attend : connecte-toi pour la voir.': 'عرض وظيفة في انتظارك: سجّل الدخول لتطّلع عليه.',
+  'Une offre entre lauréats t’attend : connecte-toi pour la voir.': 'عرض بين الخريجين في انتظارك: سجّل الدخول لتطّلع عليه.',
+  'Une question t’attend : crée ton compte pour y répondre.': 'سؤال في انتظارك: أنشئ حسابك لتجيب عنه.',
+  'Une question t’attend : connecte-toi pour y répondre.': 'سؤال في انتظارك: سجّل الدخول لتجيب عنه.',
+  'Connecte-toi pour voir la demande de l’étudiant.': 'سجّل الدخول لترى طلب الطالب.',
+  'Cette offre n’est plus en ligne.': 'هذا العرض لم يعد منشورًا.',
+  'Cette offre n’accepte plus de candidatures.': 'هذا العرض لم يعد يقبل ترشيحات.',
+  'Après cette étape, l’offre qu’on t’a partagée s’ouvre.': 'بعد هذه الخطوة، سيُفتح العرض الذي وصلك.',
+  'Après cette étape, la question qu’on t’a partagée s’ouvre.': 'بعد هذه الخطوة، سيُفتح السؤال الذي وصلك.',
+  'Après cette étape, la demande de l’étudiant s’ouvre.': 'بعد هذه الخطوة، سيُفتح طلب الطالب.',
+}, [
+  [/^(\d+) lauréats?$/, n => arCount(n, LAU)],
+  [/^(\d+) entreprises?$/, n => arCount(n, ['شركة واحدة', 'شركتان', 'شركات', 'شركة'])],
+  [/^(\d+) promos?$/, n => arCount(n, ['دفعة واحدة', 'دفعتان', 'دفعات', 'دفعة'])],
+  [/^Renvoyer le code dans (\d+) s$/, n => `يمكنك طلب رمز جديد بعد ${arCount(n, ['ثانية واحدة', 'ثانيتين', 'ثوانٍ', 'ثانية'])}`],
+  [/^Bienvenue, promo (\d{4}) !$/, y => `مرحبا بك، دفعة ${y}!`],
+  [/^Étudiant\(e\) : (inscris-toi|de préférence) avec ton email de l’école \((.+)\)\. Ton compte est alors vérifié tout de suite\.$/, (m, d) => m === 'inscris-toi' ? `طالب(ة): سجّل ببريد المدرسة (${d}). يُوثَّق حسابك فورًا.` : `طالب(ة): يُفضَّل التسجيل ببريد المدرسة (${d}). يُوثَّق حسابك فورًا.`],
+]);
+
+// ---------------------------------------------------------------------------
+// Briques d'interface partagées avec tout le site (ui.js les réexporte)
+// ---------------------------------------------------------------------------
+// L'icône de chaque type d'offre (page d'entrée d'un lien partagé, listes d'offres)
+export const TYPE_ICON = { stage: 'wrench', pfe: 'cap', etranger: 'globe', emploi: 'briefcase' };
+export function Icon({ name, size = 18 }) {
+  const P = ICONS[name] || '';
+  return html`<svg class=${`ico ico-${name}`} width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: P }}></svg>`;
+}
+
+const ICONS = {
+  feed: '<rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/>',
+  mentor: '<circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 4.5a3 3 0 0 1 0 6M18 14c2 .8 3 2.8 3 6"/>',
+  qa: '<path d="M4 5h11v8H8l-4 3z"/><path d="M15 9h5v8l-3-2h-6v-2"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.5 3 14.5 0 18M12 3c-3 3.5-3 14.5 0 18"/>',
+  send: '<path d="M4 12l16-8-6 17-3-7z"/>',
+  arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  briefcase: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5h6v2M3 13h18"/>',
+  wrench: '<path d="M14.5 6.5a4 4 0 0 0 5 5L12 19a2.1 2.1 0 0 1-3-3l7.5-7.5"/><path d="M14.5 6.5 17 4l3 3-2.5 2.5"/>',
+  cap: '<path d="M2 9l10-5 10 5-10 5z"/><path d="M6 11v5c3 2 9 2 12 0v-5M22 9v6"/>',
+  award: '<circle cx="12" cy="9" r="6"/><path d="M12 6.5l.9 1.8 2 .3-1.45 1.4.35 2-1.8-.95-1.8.95.35-2L9.1 8.6l2-.3z"/><path d="M8.6 13.9 7 21l5-2.6 5 2.6-1.6-7.1"/>',
+  chat: '<path d="M20.5 11.5a8.5 8.5 0 0 1-12.3 7.6L3.5 20.5l1.4-4.4A8.5 8.5 0 1 1 20.5 11.5z"/><path d="M8.5 10h7M8.5 13.5h4.5"/>',
+};
+// Les autres icônes arrivent avec le reste du site (ui.js) : la page d'entrée n'en a pas besoin
+export const ajouterIcones = o => Object.assign(ICONS, o);
+
+// err : un champ obligatoire encore vide, signalé seulement après un essai de publication (jamais à l'ouverture)
+export function Field({ label, hint, children, err, errId }) {
+  return html`<label class=${'field' + (err ? ' manque' : '')}><span class="field-label">${label}</span>${children}${err ? html`<span class="field-err" id=${errId} aria-hidden="true">${err}</span>` : null}${hint ? html`<span class="field-hint">${hint}</span>` : null}</label>`;
+}
+
+// Logo de la plateforme : la tuile bleu nuit avec la roue et la toque (voir logo.js). « draw » l'anime à l'arrivée.
+// Chaque logo a son propre dégradé : avec un id partagé, la tuile disparaît quand le premier logo
+// de la page est caché (le menu de gauche sur téléphone).
+const LOGO_SVG = `${TUILE_DEFS}${TUILE}<g class="lg-glyph">${glyph()}</g>`;
+let logoN = 0;
+export function BrandLogo({ size = 38, draw = false }) {
+  const [svg] = useState(() => LOGO_SVG.replaceAll('lg-tuile', `lg-tuile-${++logoN}`));
+  return html`<svg class=${'brand-logo' + (draw ? ' draw' : '')} width=${size} height=${size} viewBox="0 0 512 512" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: svg }}></svg>`;
+}
+
+// L'entrée de l'école dessinée. La porte s'ouvre une seule fois par visite ; les animations
+// s'arrêtent quand l'image sort de l'écran. « pose » (ms) : à l'accueil, l'entrée s'anime à l'arrivée puis se pose.
+let gateOpened = false;
+export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0 }) {
+  const ref = useRef();
+  const [opening] = useState(() => { const o = !gateOpened; gateOpened = true; return o; });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(([e]) => el.toggleAttribute('data-paused', !e.isIntersecting));
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  useEffect(() => { const el = ref.current; if (!el || !pose) return; const t = setTimeout(() => el.setAttribute('data-pose', ''), pose); return () => clearTimeout(t); }, [pose]);
+  return html`<div ref=${ref} class=${'scene' + (opening ? ' opening' : '')} aria-hidden="true" dangerouslySetInnerHTML=${{ __html: sceneMarkup(align, fit) }}></div>`;
+}
+
+// Message d'erreur en dehors d'un formulaire (l'application branche ici ses petits messages en bas de l'écran)
+let signaler = () => {};
+export const brancherSignal = f => { signaler = f; };
+
+// Bouton français / arabe, en haut à côté des notifications
+export function LangToggle({ onChange, store, me, aussitot = false }) {
+  const ar = getLang() === 'ar';
+  const save = l => { if (store?.mode === 'live' && me && me.langue !== l && 'langue' in me) store.update('profiles', me.id, { langue: l }).catch(() => {}); };
+  return html`<button class="lang-btn" translate="no" onClick=${async () => {
+    try { await setLang(ar ? 'fr' : 'ar', { attendre: !aussitot }); } catch { signaler('Connexion trop lente : réessaie dans un instant.'); return; }
+    save(ar ? 'fr' : 'ar'); onChange?.();
+    if (aussitot && !ar) chargerAR().then(() => onChange?.(), () => {});
+  }} aria-label=${ar ? 'Passer en français' : 'التبديل إلى العربية'} lang=${ar ? 'fr' : 'ar'}>
+    <${Icon} name="globe" size=${16}/><span translate="no">${ar ? 'FR' : 'ع'}</span><span class="lang-long" translate="no">${ar ? 'Français' : 'العربية'}</span></button>`;
+}
+
+// ---------------------------------------------------------------------------
+// Lien d'invitation par promo, à coller dans les groupes WhatsApp : reseau-ensam-meknes.github.io/?promo=2027
+// Le lien ouvre directement « Créer mon compte » et, à l'étape suivante, la promo (et le rôle) sont déjà remplis.
+// La promo et le rôle choisi sont gardés dans ce navigateur jusqu'à la fin de l'inscription, puis oubliés.
+// ---------------------------------------------------------------------------
+const CLE = 'ensam-invite-promo', CLE_ROLE = 'ensam-role-choisi';
+const valide = n => Number.isInteger(n) && n >= 1990 && n <= 2040;
+const lire = k => { try { return localStorage.getItem(k); } catch { return null; } };
+const ecrire = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* navigation privée */ } };
+
+// Au chargement : lit ?promo= dans l'adresse, le garde, puis l'enlève de la barre d'adresse
+export function lireInvitation() {
+  try {
+    const u = new URL(location.href);
+    if (!u.searchParams.has('promo')) return;
+    const n = Number(u.searchParams.get('promo'));
+    if (valide(n)) localStorage.setItem(CLE, String(n));
+    u.searchParams.delete('promo');
+    history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+  } catch { /* stockage ou historique indisponible : le lien marche quand même, sans promo pré-remplie */ }
+}
+export function promoInvitee() { const n = Number(lire(CLE)); return valide(n) ? n : null; }
+export const retenirRole = r => ecrire(CLE_ROLE, r === 'etudiant' || r === 'laureat' ? r : null);
+export const roleRetenu = () => { const r = lire(CLE_ROLE); return r === 'etudiant' || r === 'laureat' ? r : null; };
+export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); }
+
+// Le lien partagé (offre, question, « Je peux aider ») est gardé 24 h : un détour par la messagerie ou une adresse
+// nettoyée ne le perd pas, et il s'ouvre dès la fin de l'inscription
+const CLE_LIEN = 'ensam-lien-partage';
+export function retenirLien(hash) { const l = lienPartage(hash); if (l) ecrire(CLE_LIEN, JSON.stringify({ r: l.r, t: Date.now() })); }
+export function lienRetenu() { try { return lienEncoreBon(JSON.parse(lire(CLE_LIEN) || 'null')); } catch { return null; } }
+export const oublierLien = () => ecrire(CLE_LIEN, null);
+export const lienDuVisiteur = () => lienPartage(location.hash) || lienRetenu();
+export { suiteLien };
+
+// ---------------------------------------------------------------------------
+// « Tu es… » : étudiant(e) ou lauréat(e), choisi une seule fois (page d'entrée, puis rappelé à l'étape suivante)
+// ---------------------------------------------------------------------------
+const ROLES = [
+  ['etudiant', 'cap', 'Étudiant(e)', 'De la 1re à la 5e année à l’ENSAM Meknès', 'De la 1re à la 5e année'],
+  ['laureat', 'briefcase', 'Lauréat(e)', 'Diplômé(e) de l’ENSAM Meknès, en poste ou en recherche', 'Diplômé(e) de l’école'],
+];
+export function ChoixRole({ value, onChange, idPrefix = 'pf-je-', compact = false }) {
+  return html`<fieldset class=${'je-suis' + (compact ? ' compact' : '')}><legend>Tu es…</legend><div class="je-suis-choix">
+    ${ROLES.map(([r, ico, t, long, court]) => html`<button type="button" id=${idPrefix + r} class=${'je-carte' + (value === r ? ' on' : '')} aria-pressed=${value === r ? 'true' : 'false'} onClick=${() => onChange(r)}>
+      <span class="je-ico"><${Icon} name=${ico} size=${compact ? 18 : 22}/></span><strong>${t}</strong><span class="small muted">${compact ? court : long}</span><span class="je-coche"><${Icon} name="check" size=${16}/></span></button>`)}</div></fieldset>`;
+}
+
+// ---------------------------------------------------------------------------
+// Chiffres vrais pour un visiteur sans compte : trois totaux, jamais un nom (fonction chiffres_publics de la base).
+// Un simple appel web : il part dès l'ouverture de la page, sans attendre Supabase.
+// ---------------------------------------------------------------------------
+// Une fonction publique de la base : { ok, x } ; ok faux si la base n'est pas à jour, sans réseau, ou après 8 s
+async function appelPublic(nom, corps, cfg) {
+  const c = new AbortController(); const t = setTimeout(() => c.abort(), 8000);
+  try {
+    const r = await fetch(`${cfg.supabaseUrl}/rest/v1/rpc/${nom}`, { method: 'POST', headers: { apikey: cfg.supabaseAnonKey, Authorization: `Bearer ${cfg.supabaseAnonKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(corps), signal: c.signal });
+    return r.ok ? { ok: true, x: await r.json() } : { ok: false };
+  } catch { return { ok: false }; } finally { clearTimeout(t); }
+}
+const enLigneCfg = cfg => !!(cfg.supabaseUrl && cfg.supabaseAnonKey);
+let chiffresP = null;
+export function chiffresPublics(cfg = window.ENSAM_CONFIG || {}) {
+  if (!enLigneCfg(cfg)) return Promise.resolve(null);
+  return chiffresP ||= appelPublic('chiffres_publics', {}, cfg).then(r => { if (!r.ok) chiffresP = null; return r.ok ? r.x : null; });
+}
+// L'offre d'un lien partagé, sans compte : son type, son public et si elle est ouverte ; jamais son titre ni l'entreprise.
+// null : elle n'existe plus ; undefined : on ne sait pas (démo, base pas encore à jour, réseau)
+export async function offrePartagee(id, cfg = window.ENSAM_CONFIG || {}) {
+  if (!estUuid(id) || !enLigneCfg(cfg)) return undefined;
+  const { ok, x } = await appelPublic('offre_partagee', { p_id: id }, cfg);
+  if (!ok) return undefined;
+  if (x === null) return null;
+  return ['stage', 'pfe', 'etranger', 'emploi'].includes(x?.type) ? { type: x.type, audience: x.audience === 'laureats' ? 'laureats' : 'etudiants', ouverte: x.ouverte !== false } : undefined;
+}
+
+// ---------------------------------------------------------------------------
+// L'écran d'entrée : choisir son rôle, donner son email, taper le code à 6 chiffres reçu. Pas de mot de passe à inventer.
+// Les comptes qui ont un mot de passe peuvent toujours s'en servir (« J'ai un mot de passe »).
+// ---------------------------------------------------------------------------
+// Ce téléphone a déjà servi à un membre : il retrouvera « Se connecter » en premier
+const DEJA_MEMBRE = 'ensam-deja-membre';
+export const marquerMembre = () => ecrire(DEJA_MEMBRE, '1');
+const dejaMembre = () => lire(DEJA_MEMBRE) === '1';
+// Un code attendu (valable 1 h) : l'onglet rechargé après un passage par la messagerie revient à l'étape du code
+const CLE_CODE = 'ensam-code-attendu';
+const lireAttente = () => { try { const a = JSON.parse(lire(CLE_CODE)); return a?.email && Date.now() - a.t < 3600e3 ? a : null; } catch { return null; } };
+const noterAttente = a => ecrire(CLE_CODE, a ? JSON.stringify(a) : null);
+const focus = id => setTimeout(() => document.getElementById(id)?.focus());
+
+// « Renvoyer le code » : possible une minute après l'envoi (son propre minuteur : la scène n'est pas redessinée chaque seconde)
+function Renvoi({ envoyeA, onRenvoyer, busy }) {
+  const [, setT] = useState(0);
+  const reste = Math.ceil((envoyeA + 60e3 - Date.now()) / 1000);
+  useEffect(() => { if (reste <= 0) return; const i = setInterval(() => setT(t => t + 1), 1000); return () => clearInterval(i); }, [reste > 0]);
+  return html`<button type="button" id="au-renvoyer" class="linkish" disabled=${reste > 0 || busy} onClick=${onRenvoyer}>${reste > 0 ? `Renvoyer le code dans ${reste} s` : 'Renvoyer le code'}</button>`;
+}
+
+const POUR = {
+  laureat: ['Pour les lauréats', [['briefcase', 'Recrute tes stagiaires parmi les étudiants de ton école'], ['mentor', 'Aide un étudiant en 20 minutes de visio, quand tu as le temps'], ['award', 'Les mercis des étudiants que tu aides, et une attestation à ajouter sur LinkedIn']]],
+  etudiant: ['Pour les étudiants', [['send', 'Dis aux lauréats le stage que tu cherches, CV joint : ils te répondent'], ['chat', 'Un lauréat te conseille : CV, entretien, départ à l’étranger'], ['feed', 'Les offres de stage, de PFE et d’emploi publiées par les lauréats']]],
+};
+
+export function AuthScreen({ store }) {
+  const [, setTick] = useState(0); const relang = () => setTick(t => t + 1);
+  const recovery = /type=recovery/.test(location.hash);
+  const [attente] = useState(lireAttente);
+  // Quelqu'un qui découvre le réseau (lien partagé, invitation d'une promo) commence par « Créer mon compte »
+  const invite = promoInvitee();
+  // Un lien partagé (offre, question, « Je peux aider ») : la page dit ce qui attend le visiteur
+  const [lien] = useState(lienDuVisiteur);
+  const [infos, setInfos] = useState(undefined);
+  useEffect(() => {
+    if (lien?.k !== 'offre') return;
+    let vivant = true;
+    offrePartagee(lien.id).then(x => {
+      if (!vivant) return;
+      setInfos(x);
+      // Plus rien à rouvrir après l'inscription
+      if (x === null) { oublierLien(); try { location.replace('#accueil'); } catch { /* */ } }
+    });
+    return () => { vivant = false; };
+  }, []);
+  const [mode, setMode] = useState(recovery ? 'nouveau' : attente ? 'code' : lien?.k === 'aider' ? 'connexion' : invite || !dejaMembre() ? 'inscription' : 'connexion');
+  const [origine, setOrigine] = useState(attente ? (attente.creer ? 'inscription' : 'connexion') : 'inscription');
+  const [role, setRoleEtat] = useState(() => roleRetenu() || (invite ? roleDePromo(invite) : ''));
+  const [email, setEmail] = useState(attente?.email || ''); const [pw, setPw] = useState('');
+  const [ok, setOk] = useState(false); const [mails, setMails] = useState(attente ? attente.mails !== false : true);
+  const [code, setCode] = useState(''); const essai = useRef('');
+  const [envoyeA, setEnvoyeA] = useState(attente?.t || 0);
+  const [msg, setMsg] = useState(null); const [roleMsg, setRoleMsg] = useState(false);
+  const [busy, setBusy] = useState(false); const [entre, setEntre] = useState(false);
+  const [lignes, setLignes] = useState(null);
+  useEffect(() => { let vivant = true; chiffresPublics().then(c => { if (vivant) setLignes(lignesChiffres(c)); }); return () => { vivant = false; }; }, []);
+  const setRole = r => { setRoleEtat(r); retenirRole(r); setRoleMsg(false); };
+  const run = async fn => {
+    setBusy(true); setMsg(null);
+    try { await fn(store || await attendreMagasin().catch(e => { throw Object.assign(e, { magasin: true }); })); } catch (e) { setMsg({ err: true, t: await texteErreurEntree(e) }); }
+    setBusy(false);
+  };
+  const ecole = store?.domainesEcole?.() || [];
+  const deLEcole = estEmailEcole(email, ecole);
+  const meta = () => ({ consent_at: new Date().toISOString(), emails_hebdo: mails, langue: getLang(), ...(role ? { role_choisi: role } : {}) });
+  const vers = m => { setMode(m); setMsg(null); setRoleMsg(false); };
+
+  // Demander un code : creer = la personne s'inscrit (un email déjà connu est simplement connecté)
+  const envoyer = (creer, renvoi = false) => run(async s => {
+    const e = email.trim();
+    if (creer && role === 'etudiant' && s.reglages?.email_ecole_obligatoire === true && s.domainesEcole().length && !estEmailEcole(e, s.domainesEcole())) throw new Error('Inscris-toi avec ton email de l’école.');
+    const attendu = t => { noterAttente({ email: e, t, creer, mails }); setEnvoyeA(t); setOrigine(creer ? 'inscription' : 'connexion'); setMode('code'); focus('au-code'); };
+    try { await s.envoyerCode(e, { creer, meta: creer ? meta() : null }); } catch (err) {
+      if (err.cas === 'pas_de_compte' && !creer) { setOrigine('inscription'); setMode('inscription'); setMsg({ t: 'Pas encore de compte avec cet email : crée-le ici en une minute.' }); return; }
+      if (err.cas === 'trop_tot') { attendu(Date.now() - Math.max(0, 60 - err.attente) * 1000); setMsg({ t: 'Un code t’a déjà été envoyé il y a moins d’une minute : entre-le ici.' }); return; }
+      throw err;
+    }
+    attendu(Date.now());
+    if (renvoi) { setCode(''); essai.current = ''; const el = document.getElementById('au-code'); if (el) el.value = ''; setMsg({ t: 'Nouveau code envoyé. Seul le dernier code reçu marche.' }); }
+  });
+  const verifier = v => { essai.current = v; run(async s => {
+    try { await s.verifierCode(email.trim(), v, origine === 'inscription' ? meta() : null); } catch (e) { setTimeout(() => document.getElementById('au-code')?.select()); throw e; }
+    noterAttente(null); marquerMembre(); setEntre(true);
+  }); };
+  const saisir = e => {
+    const v = chiffresCode(e.target.value);
+    if (e.target.value !== v) e.target.value = v;
+    setCode(v);
+    if (v.length === 6 && v !== essai.current && !busy && !entre) verifier(v);
+  };
+  const changerEmail = () => { noterAttente(null); setCode(''); essai.current = ''; vers(origine); focus('au-email'); };
+
+  const submit = e => {
+    e.preventDefault();
+    if (mode === 'inscription') {
+      if (!role) { setRoleMsg(true); document.getElementById('au-je-etudiant')?.focus(); return; }
+      envoyer(true);
+    } else if (mode === 'connexion') envoyer(false);
+    else if (mode === 'code') { if (code.length < 6) { setMsg({ err: true, t: 'Entre les 6 chiffres du code.' }); document.getElementById('au-code')?.focus(); } else if (!entre) verifier(code); }
+    else if (mode === 'motdepasse') run(async s => { await s.signIn(email.trim(), pw); marquerMembre(); setEntre(true); });
+    else run(async s => { await s.setPassword(pw); setMsg({ t: 'Mot de passe changé.' }); });
+  };
+
+  const inscription = mode === 'inscription';
+  const etuAvant = (role || (invite ? roleDePromo(invite) : '')) === 'etudiant';
+  const bandeau = invite && inscription && (!role || role === roleDePromo(invite));
+  const ecoleOk = deLEcole && (inscription || mode === 'connexion') ? html`<span id="au-ecole" class="field-hint good-t" role="status"><${Icon} name="check" size=${14}/> ${role === 'laureat' || mode === 'connexion' ? 'Email de l’école reconnu.' : 'Email de l’école reconnu : ton profil étudiant sera vérifié tout de suite.'}</span>` : null;
+  const indice = inscription && role === 'etudiant' && ecole.length && !deLEcole ? `Étudiant(e) : ${store?.reglages?.email_ecole_obligatoire ? 'inscris-toi' : 'de préférence'} avec ton email de l’école (${ecole.map(d => '@' + d).join(', ')}). Ton compte est alors vérifié tout de suite.` : '';
+  const champEmail = html`<${Field} label="Email" hint=${indice}><input id="au-email" type="email" required autocomplete="email" inputmode="email" dir="ltr" value=${email} onInput=${e => setEmail(e.target.value)}/>${ecoleOk}<//>`;
+  const pourquoiCode = html`<p class="small muted au-sans-mdp">Pas de mot de passe : on t’envoie un code à 6 chiffres par email.</p>`;
+  const pour = (etuAvant ? ['etudiant', 'laureat'] : ['laureat', 'etudiant']).map(r => POUR[r]);
+  const inscrire = inscription || (mode === 'code' && origine === 'inscription');
+  const icoLien = lien?.k === 'question' ? 'qa' : lien?.k === 'aider' ? 'send' : infos?.audience === 'laureats' ? 'briefcase' : TYPE_ICON[infos?.type] || 'feed';
+
+  return html`<main class="auth entree">
+    <div class="entree-ciel sky" aria-hidden="true"></div>
+    <header class="entree-top"><span class="entree-marque"><${BrandLogo} size=${34} draw/><span>Réseau ENSAM Meknès</span></span><${LangToggle} onChange=${relang} aussitot/></header>
+    <section class="entree-promesse">
+      ${lien && mode !== 'nouveau' ? html`<p id="au-lien" class=${'lien-accueil' + (infos === null || infos?.ouverte === false ? ' fini' : '')}><${Icon} name=${icoLien} size=${18}/><span>${phraseLien(lien, infos, inscrire)}</span></p>` : null}
+      <h1>Les lauréats ouvrent la porte aux étudiants.</h1>
+      <p class="auth-chiffres">${(lignes || []).map(l => html`<span>${l}</span>`)}</p>
+      ${lien && mode !== 'nouveau' ? null : html`<p class="entree-sous">Stage, PFE, premier emploi : les étudiants demandent, les lauréats aident et recrutent.</p>`}
+    </section>
+    <form class="auth-card form entree-form" onSubmit=${submit} aria-label=${inscription ? 'Créer mon compte' : null}>
+      ${inscription ? null : html`<h2>${{ connexion: 'Se connecter', code: 'Ton code est parti', motdepasse: 'Se connecter', nouveau: 'Nouveau mot de passe' }[mode]}</h2>`}
+      ${bandeau ? html`<p class="invite-band"><${Icon} name="send" size=${18}/><span><strong>Bienvenue, promo ${invite} !</strong> Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.</span></p>` : null}
+      ${inscription ? html`<${ChoixRole} value=${role} onChange=${setRole} idPrefix="au-je-" compact/>
+        ${roleMsg ? html`<p id="au-role-msg" class="auth-msg err" role="alert">Choisis d’abord : étudiant(e) ou lauréat(e).</p>` : null}` : null}
+      ${mode === 'code' ? html`
+        <p id="au-code-envoye" class="muted">Entre le code à 6 chiffres envoyé à</p>
+        <p class="au-adresse"><strong dir="ltr" translate="no">${email.trim()}</strong><button type="button" id="au-changer" class="linkish" aria-label="Changer d’email" onClick=${changerEmail}>Changer</button></p>
+        <${Field} label="Code à 6 chiffres"><input id="au-code" class="code-otp" type="text" inputmode="numeric" autocomplete="one-time-code" enterkeyhint="go" dir="ltr" placeholder="······" aria-describedby="au-code-envoye" value=${code} onInput=${saisir}/><//>`
+      : mode === 'nouveau' ? null : champEmail}
+      ${mode === 'motdepasse' || mode === 'nouveau' ? html`<${Field} label=${mode === 'nouveau' ? 'Nouveau mot de passe' : 'Mot de passe'} hint=${mode === 'nouveau' ? '6 caractères minimum' : ''}><input id="au-pw" type="password" required minlength="6" autocomplete=${mode === 'nouveau' ? 'new-password' : 'current-password'} value=${pw} onInput=${e => setPw(e.target.value)}/><//>` : null}
+      ${inscription ? html`<label class="check small"><input id="au-mail" type="checkbox" checked=${mails} onChange=${e => setMails(e.target.checked)}/> Recevoir un résumé par email chaque semaine</label>
+        <label class="check small"><input id="au-ok" type="checkbox" required checked=${ok} onChange=${e => setOk(e.target.checked)}/> <span>J’accepte que mes données servent au réseau (<a href="#confidentialite">Confidentialité</a>)</span></label>` : null}
+      ${msg ? html`<p class=${'auth-msg' + (msg.err ? ' err' : '')} role="alert">${msg.t}</p>` : null}
+      <button class="btn primary wide" aria-busy=${busy || entre ? 'true' : null} disabled=${entre}>${entre ? 'Connexion…' : { inscription: 'Recevoir mon code', connexion: 'Recevoir mon code', code: 'Continuer', motdepasse: 'Se connecter', nouveau: 'Enregistrer' }[mode]}</button>
+      ${inscription || mode === 'connexion' ? pourquoiCode : null}
+      ${mode === 'code' ? html`<div class="au-code-pied"><span class="muted">Rien reçu ? Regarde dans tes spams.</span><${Renvoi} envoyeA=${envoyeA} busy=${busy} onRenvoyer=${() => envoyer(origine === 'inscription', true)}/></div>` : null}
+      <div class="auth-links">
+        ${inscription ? html`<button type="button" class="linkish" onClick=${() => vers('connexion')}>J’ai déjà un compte</button>` : null}
+        ${mode === 'connexion' ? html`<button type="button" class="linkish" onClick=${() => vers('inscription')}>Créer un compte</button><button type="button" class="linkish" id="au-mdp" onClick=${() => { vers('motdepasse'); focus('au-pw'); }}>J’ai un mot de passe</button>` : null}
+        ${mode === 'motdepasse' ? html`<button type="button" class="linkish" onClick=${() => vers('connexion')}>Recevoir un code à la place</button>` : null}
+      </div>
+    </form>
+    <div class="auth-pour">${pour.map(([t, items]) => html`<section><h2 class="eyebrow">${t}</h2><ul class="auth-points">${items.map(([i, x]) => html`<li><span class="sc-ico"><${Icon} name=${i}/></span> ${x}</li>`)}</ul></section>`)}</div>
+    <div class="entree-scene sky"><${SchoolScene} fit="slice"/></div>
+    <footer class="auth-pied small"><span>Initiative de lauréats, indépendante de l’administration de l’école</span><span class="auth-pied-liens"><a href=${'mailto:' + adresseContact()} translate="no">Contact</a><a href="#confidentialite">Confidentialité</a></span></footer>
+  </main>`;
+}
+
+// Le magasin (Supabase) n'est pas importé d'avance : la page d'entrée n'attend pas ses 30 Ko.
+// Jamais de message technique : s'il n'a pas pu se charger, c'est le réseau.
+const PAS_DE_RESEAU = 'Pas de réseau pour l’instant. Réessaie dans un instant.';
+async function texteErreurEntree(e) {
+  if (e?.magasin) return PAS_DE_RESEAU;
+  try { return (await import('./store.js')).texteErreur(e); } catch { return PAS_DE_RESEAU; }
+}
+
+// ---------------------------------------------------------------------------
+// Démarrage : qui voit quoi, et dans quel ordre tout se charge
+// ---------------------------------------------------------------------------
+// Pages ouvertes sans compte (vérification d'attestation, désabonnement, confidentialité) et retours d'emails
+const PUBLIQUE = /^#(verifier|desabo|confidentialite)\b|access_token=|type=recovery|error_description=/;
+const precharger = fichiers => {
+  for (const f of fichiers || []) {
+    if (document.querySelector(`link[href="${f}"]`)) continue;
+    const l = document.createElement('link');
+    if (/supabase\.js$/.test(f)) { l.rel = 'preload'; l.as = 'script'; } else l.rel = 'modulepreload';
+    l.href = f; document.head.appendChild(l);
+  }
+};
+
+let magasin = null;
+// Le magasin, une seule fois ; s'il échoue (réseau), on réessaie au prochain geste
+export function attendreMagasin() {
+  if (!magasin) {
+    precharger(window.ENSAM_MAGASIN);
+    magasin = import('./store.js').then(m => m.createStore()).then(s => { monter(s); chargerApp(); return s; }, e => { magasin = null; throw e; });
+  }
+  return magasin;
+}
+export const magasinEntree = () => magasin;
+
+let appLancee = false;
+function chargerApp() {
+  if (appLancee) return; appLancee = true;
+  if (getLang() === 'ar') chargerAR().catch(() => {});
+  precharger(window.ENSAM_MODULES);
+  import('./app.js').catch(e => {
+    appLancee = false;
+    if (/^(SyntaxError|TypeError|ReferenceError)$/.test(e?.name) && navigator.serviceWorker?.controller) window.ensamReprise?.();
+    else addEventListener('online', chargerApp, { once: true });
+  });
+}
+
+// L'entrée vit dans son propre conteneur, à côté de #app ; l'application la reprend telle quelle
+let el = null;
+function monter(store) {
+  if (!el) { el = document.createElement('div'); el.id = 'entree'; }
+  if (!el.isConnected) document.getElementById('app')?.before(el);
+  el.hidden = false;
+  render(html`<${AuthScreen} store=${store}/>`, el);
+}
+export function cacherEntree(fin) {
+  if (!el) return;
+  if (fin) { render(null, el); el.remove(); el = null; } else el.hidden = true;
+}
+// Dans l'application : affiche l'entrée (même composant, même conteneur : l'état est gardé)
+export function Entree({ store }) {
+  useLayoutEffect(() => { monter(store); return () => cacherEntree(!!store.session); }, [store]);
+  return null;
+}
+
+if (!window.ENSAM_ENTREE) {
+  window.ENSAM_ENTREE = true;
+  lireInvitation(); retenirLien(location.hash);
+  const cfg = window.ENSAM_CONFIG || {};
+  const enLigne = !!(cfg.supabaseUrl && cfg.supabaseAnonKey);
+  let jeton = false;
+  try { jeton = enLigne && !!lire(`sb-${new URL(cfg.supabaseUrl).hostname.split('.')[0]}-auth-token`); } catch { /* adresse invalide */ }
+  const d = document.documentElement;
+  if (!enLigne || jeton || PUBLIQUE.test(location.hash)) {
+    // Démo, membre déjà connecté, ou page publique : l'application tout de suite (le logo patiente)
+    delete d.dataset.entree;
+    chargerApp();
+  } else {
+    d.dataset.entree = 'visiteur';
+    chiffresPublics();
+    monter(null);
+    // Le magasin juste après le premier affichage (onglet en arrière-plan : requestAnimationFrame est suspendu)
+    let parti = false; const go = () => { if (!parti) { parti = true; attendreMagasin().catch(() => addEventListener('online', () => attendreMagasin().catch(() => {}), { once: true })); } };
+    requestAnimationFrame(() => setTimeout(go)); setTimeout(go, 200);
+    // Un lien public ouvert depuis l'entrée (Confidentialité) avant que l'application soit là : le logo patiente
+    // à sa place, l'entrée attend cachée (ce qui a été tapé reste) ; ensuite, c'est l'application qui décide
+    addEventListener('hashchange', () => {
+      if (window.ENSAM_APP || !el) return;
+      const pub = PUBLIQUE.test(location.hash);
+      el.hidden = pub;
+      if (pub) delete d.dataset.entree; else d.dataset.entree = 'visiteur';
+    });
+  }
+}

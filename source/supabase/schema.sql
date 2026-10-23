@@ -618,13 +618,17 @@ do $$ begin
   end if;
 end $$;
 
--- Comptes vus par l'administration : email, dernière connexion, profil rempli ou non
-create or replace function public.admin_comptes()
-returns table (id uuid, email text, created_at timestamptz, last_sign_in_at timestamptz, a_profil boolean)
+-- Comptes vus par l'administration : email, dernière connexion, profil rempli ou non, mot de passe ou non.
+-- Avec le code à 6 chiffres, demander un code crée déjà le compte : « mot_de_passe » et la dernière connexion
+-- permettent de ne pas compter une adresse tapée sans que le code soit jamais entré.
+drop function if exists public.admin_comptes();
+create function public.admin_comptes()
+returns table (id uuid, email text, created_at timestamptz, last_sign_in_at timestamptz, a_profil boolean, mot_de_passe boolean)
 language plpgsql stable security definer set search_path = public as $$
 begin
   if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
-  return query select u.id, u.email::text, u.created_at, u.last_sign_in_at, exists (select 1 from public.profiles p where p.id = u.id)
+  return query select u.id, u.email::text, u.created_at, u.last_sign_in_at, exists (select 1 from public.profiles p where p.id = u.id),
+    coalesce(u.encrypted_password, '') <> ''
     from auth.users u order by u.created_at desc;
 end $$;
 revoke all on function public.admin_comptes() from public;
@@ -3237,6 +3241,8 @@ language sql stable security definer set search_path = public as $$
   from auth.users u
   where u.email is not null
     and u.created_at < now() - interval '24 hours' and u.created_at > now() - interval '30 days'
+    -- Un code demandé mais jamais entré (adresse tapée par erreur, code pas reçu) n'est pas un compte ouvert
+    and (coalesce(u.encrypted_password, '') <> '' or u.last_sign_in_at is null or u.last_sign_in_at > u.created_at + interval '5 seconds')
     and not exists (select 1 from public.profiles p where p.id = u.id)
     and not exists (select 1 from public.relances_inscription r where r.user_id = u.id)
   order by u.created_at
@@ -3595,6 +3601,31 @@ language sql stable security definer set search_path = public as $$
 $$;
 revoke all on function public.pouls_reseau() from public, anon;
 grant execute on function public.pouls_reseau() to authenticated;
+
+-- Page d'entrée (visiteur sans compte) : trois totaux, jamais un nom ni une ligne.
+-- Lauréats inscrits (l'administration n'est pas comptée), leurs promos, et les entreprises où ils travaillent.
+-- « Renault » et « Renault Tanger Med » comptent pour une seule entreprise (règle de meme_entreprise) : jamais gonflé.
+create or replace function public.chiffres_publics() returns jsonb
+language sql stable security definer set search_path = public as $$
+  with l as (select promo, public.cle_entreprise(entreprise) as k from public.profiles where role = 'laureat'),
+  ks as (select distinct k from l where k is not null and k <> '')
+  select jsonb_build_object(
+    'laureats', (select count(*) from l),
+    'promos', (select count(distinct promo) from l),
+    'entreprises', (select count(*) from ks a where not exists (select 1 from ks b where a.k like b.k || ' %')));
+$$;
+revoke all on function public.chiffres_publics() from public;
+grant execute on function public.chiffres_publics() to anon, authenticated;
+
+-- Lien d'une offre partagé : la page d'entrée dit de quoi il s'agit, sans compte.
+-- Le type, le public et l'état seulement ; jamais titre, entreprise, auteur, années ni texte. null si l'offre n'existe plus.
+create or replace function public.offre_partagee(p_id uuid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('type', o.type, 'audience', coalesce(o.audience, 'etudiants'), 'ouverte', o.status = 'ouverte')
+  from public.offers o where o.id = p_id;
+$$;
+revoke all on function public.offre_partagee(uuid) from public;
+grant execute on function public.offre_partagee(uuid) to anon, authenticated;
 
 -- =====================================================================
 -- APRÈS votre inscription sur la plateforme, devenez administrateur :

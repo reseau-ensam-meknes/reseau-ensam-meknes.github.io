@@ -5,28 +5,11 @@ import { html, useState } from './vendor/preact-htm.js';
 import { Icon, toast, injectCSS } from './ui.js';
 import { addAR, getLang } from './i18n.js';
 import { NIVEAUX, niveauOf, seasonOf } from './logic.js';
+import { roleDePromo } from './regles-entree.js';
 
-const CLE = 'ensam-invite-promo';
-const valide = n => Number.isInteger(n) && n >= 1990 && n <= 2040;
-
-// Au chargement : lit ?promo= dans l'adresse, le garde, puis l'enlève de la barre d'adresse
-export function lireInvitation() {
-  try {
-    const u = new URL(location.href);
-    if (!u.searchParams.has('promo')) return;
-    const n = Number(u.searchParams.get('promo'));
-    if (valide(n)) localStorage.setItem(CLE, String(n));
-    u.searchParams.delete('promo');
-    history.replaceState(history.state, '', u.pathname + u.search + u.hash);
-  } catch { /* stockage ou historique indisponible : le lien marche quand même, sans promo pré-remplie */ }
-}
-export function promoInvitee() {
-  try { const n = Number(localStorage.getItem(CLE)); return valide(n) ? n : null; } catch { return null; }
-}
-export function oublierInvitation() { try { localStorage.removeItem(CLE); } catch { /* */ } }
-
-// Rôle probable d'après la promo : diplôme pas encore obtenu = étudiant(e)
-export const roleDePromo = (promo, saison = seasonOf()) => (promo > saison ? 'etudiant' : 'laureat');
+// Lire le lien, garder la promo et le rôle choisi : la page d'entrée s'en charge (elle s'affiche avant le reste du site)
+export { lireInvitation, promoInvitee, oublierInvitation, retenirRole, roleRetenu } from './entree.js';
+export { roleDePromo };
 
 export const lienInvitation = (promo, base = location.origin + location.pathname) => `${base}?promo=${promo}`;
 
@@ -127,6 +110,4 @@ injectCSS('invitation', `
 .inv-link { color: var(--ink-2); overflow-wrap: anywhere; }
 .inv-act { display: flex; flex-wrap: wrap; gap: .3rem; }
 .inv-msg { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: .9rem; line-height: 1.55; padding: .8rem .9rem; border-radius: 10px; background: var(--surface-2); color: var(--ink); }
-.invite-band { display: flex; gap: .5rem; align-items: flex-start; margin: 0; padding: .65rem .8rem; border-radius: 10px; background: var(--accent-soft); color: var(--ink); font-size: .9rem; }
-.invite-band svg { color: var(--accent); flex: none; margin-top: .1rem; }
 `);

@@ -221,7 +221,15 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
     const n = niveauOf(me, ctx.saison);
     if (forLaureats(o) || !(o.annees || []).includes(n)) {
       const pour = forLaureats(o) ? 'Cette offre est réservée aux lauréats.' : `${`Cette offre est pour les ${(o.annees || []).map(a => NIVEAUX[a]?.short).filter(Boolean).join(', ') || 'autres années'}.`}`;
-      return html`<${Modal} title="Offre" onClose=${onClose}><p>${pour}</p><p class="muted">${NIVEAUX[n]?.short ? `Voici celles de ta ${NIVEAUX[n].short}.` : 'Voici les tiennes.'}</p>${versOffres('Voir mes offres')}<//>`;
+      const court = NIVEAUX[n]?.short;
+      // « Voici celles de ta 3A » seulement s'il y en a : sinon, ce que l'étudiant peut faire tout de suite
+      if (!court || data.offers.some(x => x.status === 'ouverte' && !forLaureats(x) && (x.annees || []).includes(n))) {
+        return html`<${Modal} title="Offre" onClose=${onClose}><p>${pour}</p><p class="muted">${court ? `Voici celles de ta ${court}.` : 'Voici les tiennes.'}</p>${versOffres('Voir mes offres')}<//>`;
+      }
+      const dem = typesDemande(me, ctx.saison).length > 0;
+      return html`<${Modal} title="Offre" onClose=${onClose}><p>${pour}</p><p class="muted">Pas encore d’offre pour ta ${court}.</p>
+        <p class="muted">${dem ? 'Le réseau vient d’ouvrir. Dis aux lauréats ce que tu cherches : ils te répondent ici.' : 'Le réseau vient d’ouvrir. Un lauréat peut déjà te conseiller en 20 minutes de visio.'}</p>
+        <div class="row-end"><button class="btn primary" id="od-ensuite" onClick=${() => { onClose(); if (dem) ctx.go('offres/demandes/nouvelle'); else ctx.askHelp(); }}>${dem ? 'Publier ma demande' : 'Demander un conseil'}</button></div><//>`;
     }
   }
   const comments = data.comments.filter(c => c.offer_id === o.id);

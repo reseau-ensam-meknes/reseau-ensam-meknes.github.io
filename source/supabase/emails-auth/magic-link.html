@@ -1,5 +1,5 @@
 <!doctype html>
-<html><body style="margin:0;padding:0;background:#F3F6FA">
+<html><body style="margin:0;padding:0;background:#F3F6FA"><div style="display:none;max-height:0;overflow:hidden;mso-hide:all">Ton code : {{ .Token }} · رمزك: {{ .Token }}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F3F6FA;padding:24px 12px"><tr><td align="center">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:14px;border:1px solid #D7DFE9">
     <tr><td style="background:#1F3354;padding:16px 24px;border-bottom:4px solid #F39200;border-radius:13px 13px 0 0">
@@ -9,19 +9,22 @@
           <div dir="rtl" lang="ar" style="font-family:Tahoma,'Segoe UI',Arial,sans-serif;font-size:13px;line-height:19px;color:#C8D3E3;text-align:left">شبكة ENSAM مكناس</div>
         </td>
       </tr></table>
+    </td></tr><tr><td style="padding:24px 26px 0;text-align:center">
+      <div style="font-family:'Segoe UI',Helvetica,Arial,sans-serif;font-size:13px;color:#66748A">Ton code · <span lang="ar" dir="rtl" style="font-family:Tahoma,Arial,sans-serif">رمزك</span></div>
+      <div dir="ltr" style="margin:6px auto 0;display:inline-block;padding:10px 18px;border:1px solid #D7DFE9;border-radius:12px;background:#F3F6FA;font-family:Consolas,'Courier New',monospace;font-size:34px;line-height:42px;letter-spacing:8px;font-weight:700;color:#1F3354">{{ .Token }}</div>
     </td></tr>
     <tr><td style="padding:26px 26px 8px"><div lang="fr" style="text-align:left;font-family:'Segoe UI', Helvetica, Arial, sans-serif">
-      <h1 style="margin:0 0 10px;font-size:20px;color:#1F3354">Ton lien de connexion</h1>
-      <p style="margin:0;font-size:15px;line-height:1.6;color:#42506A">Clique sur le bouton pour te connecter. Le lien ne marche qu’une fois.</p>
-      <p style="margin:22px 0;text-align:left"><a href="{{ .ConfirmationURL }}" style="display:inline-block;background:#1670A8;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:10px">Me connecter</a></p>
-      <p style="margin:0;font-size:13px;line-height:1.6;color:#66748A">Ce n’est pas toi ? Ignore cet email.</p>
+      <h1 style="margin:0 0 10px;font-size:20px;color:#1F3354">Ton code de connexion</h1>
+      <p style="margin:0;font-size:15px;line-height:1.6;color:#42506A">Entre ce code sur la page du Réseau restée ouverte. Il marche une seule fois, pendant 1 heure.</p>
+      
+      <p style="margin:14px 0 0;font-size:13px;line-height:1.6;color:#66748A">Tu n’as rien demandé ? Ignore cet email : sans ce code, personne ne peut entrer sur ton compte.</p>
     </div></td></tr>
     <tr><td style="padding:0 26px"><hr style="border:none;border-top:1px solid #E9EEF4;margin:18px 0"></td></tr>
     <tr><td style="padding:8px 26px 26px"><div lang="ar" dir="rtl" style="text-align:right;font-family:Tahoma, 'Segoe UI', Arial, sans-serif">
-      <h1 style="margin:0 0 10px;font-size:20px;color:#1F3354">رابط الدخول</h1>
-      <p style="margin:0;font-size:15px;line-height:1.6;color:#42506A">اضغط على الزر لتسجيل الدخول. الرابط صالح لمرة واحدة.</p>
-      <p style="margin:22px 0;text-align:right"><a href="{{ .ConfirmationURL }}" style="display:inline-block;background:#1670A8;color:#ffffff;text-decoration:none;font-weight:600;padding:12px 22px;border-radius:10px">تسجيل الدخول</a></p>
-      <p style="margin:0;font-size:13px;line-height:1.6;color:#66748A">لست أنت؟ تجاهل هذه الرسالة.</p>
+      <h1 style="margin:0 0 10px;font-size:20px;color:#1F3354">رمز الدخول</h1>
+      <p style="margin:0;font-size:15px;line-height:1.6;color:#42506A">أدخل هذا الرمز في صفحة الشبكة التي بقيت مفتوحة. يعمل مرة واحدة فقط، لمدة ساعة.</p>
+      
+      <p style="margin:14px 0 0;font-size:13px;line-height:1.6;color:#66748A">لم تطلب شيئًا؟ تجاهل هذه الرسالة: لا أحد يستطيع دخول حسابك بدون هذا الرمز.</p>
     </div></td></tr>
   </table>
   <p style="font-family:'Segoe UI',Helvetica,Arial,sans-serif;font-size:12px;color:#66748A;margin:14px 0 0">Réseau ENSAM Meknès · <a href="{{ .SiteURL }}" style="color:#1670A8">{{ .SiteURL }}</a></p>

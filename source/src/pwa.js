@@ -11,16 +11,20 @@ if (typeof window !== 'undefined') {
   addEventListener('appinstalled', () => { installEvt = null; notify(); toast('Application installée.'); });
 }
 
+// Enregistré au premier moment calme : son installation (tout le site gardé sur le téléphone) ne passe pas
+// devant les données du membre en 3G
+const ouverture = Date.now();
+const auRepos = f => (typeof requestIdleCallback === 'function' ? requestIdleCallback(f, { timeout: 4000 }) : setTimeout(f, 1500));
 export const swReady = (() => {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator) || !document.querySelector('link[rel="manifest"]')) return Promise.resolve(null);
-  return navigator.serviceWorker.register('sw.js').then(reg => { suivreMisesAJour(reg); return navigator.serviceWorker.ready; }).catch(() => null);
+  return new Promise(ok => auRepos(ok)).then(() => navigator.serviceWorker.register('sw.js')).then(reg => { suivreMisesAJour(reg); return navigator.serviceWorker.ready; }).catch(() => null);
 })();
 
 // Nouvelle version du site : le téléphone la télécharge en arrière-plan, puis elle prend la main
 // quand la page est cachée (ou tout de suite si la page vient de s'ouvrir), et la page se recharge
 // sans que personne ne le voie. Jamais au milieu de ce que le membre est en train de faire.
 function suivreMisesAJour(reg) {
-  const debut = Date.now();
+  const debut = ouverture;
   const avait = !!navigator.serviceWorker.controller;
   const appliquer = w => {
     if (!w || !avait) return;

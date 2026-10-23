@@ -88,10 +88,15 @@ test('profil : s’enregistre même avec des champs vides ; rôle et promo cohé
   // Un « lauréat » d'une promo pas encore diplômée : on le lui dit, et un bouton corrige le rôle
   await s.page.fill('#pf-promo', String(new Date().getFullYear() + 1)); await s.page.waitForTimeout(150);
   assert.ok(await s.page.isVisible('#pf-incoherent'));
-  assert.ok(await s.page.isDisabled('form .row-end .btn.primary'));
+  // Le bouton n'est jamais grisé : il dit ce qui manque et y mène
+  const bouton = 'form .row-end .btn.primary';
+  assert.equal(await s.page.getAttribute(bouton, 'data-manque'), 'coherence');
+  assert.match(await s.page.locator(bouton).innerText(), /Vérifie ta promo/);
+  await s.page.click(bouton); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'pf-role-ok');
   await s.page.click('#pf-role-ok'); await s.page.waitForTimeout(150);
   assert.ok(!(await s.page.isVisible('#pf-incoherent')));
-  assert.ok(await s.page.isEnabled('form .row-end .btn.primary'));
+  assert.equal(await s.page.getAttribute(bouton, 'data-manque'), null);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -425,7 +430,7 @@ test('inscription : « Tu es… » bien visible, puis tout se remplit depuis le 
   await s.page.waitForSelector('#pf-je-laureat');
   assert.ok(await s.page.isVisible('#pf-choisir'));
   assert.equal(await s.page.locator('#pf-name').count(), 0, 'le reste du formulaire attend le choix');
-  assert.ok(await s.page.isDisabled('form .row-end .btn.primary'));
+  assert.equal(await s.page.getAttribute('form .row-end .btn.primary', 'data-manque'), 'role');
   await s.page.click('#pf-je-etudiant');
   assert.equal(await s.page.getAttribute('#pf-je-etudiant', 'aria-pressed'), 'true');
   assert.ok(await s.page.isVisible('#pf-name'));
@@ -436,17 +441,155 @@ test('inscription : « Tu es… » bien visible, puis tout se remplit depuis le 
   assert.equal(await s.page.inputValue('#pf-name'), 'Yassine Berrada');
   assert.equal(await s.page.inputValue('#pf-promo'), '2021');
   assert.equal(await s.page.inputValue('#pf-fil'), 'Génie Industriel');
-  assert.equal(await s.page.inputValue('#pf-ent'), 'OCP Group');
-  assert.equal(await s.page.inputValue('#pf-poste'), 'Ingénieur méthodes');
-  // Inscription courte : le reste (coordonnées comprises, déjà remplies depuis le CV) s'ouvre au besoin
+  // Un lauréat dit s'il peut aider : c'est la seule chose qui manque encore
+  assert.equal(await s.page.getAttribute('form .row-end .btn.primary', 'data-manque'), 'aide');
+  await s.page.click('#pf-aide-oui');
+  assert.equal(await s.page.getAttribute('form .row-end .btn.primary', 'data-manque'), null);
+  // Inscription courte : le reste (entreprise, coordonnées, déjà remplies depuis le CV) s'ouvre au besoin
+  assert.equal(await s.page.locator('#pf-ent').count(), 0);
   assert.equal(await s.page.locator('#pf-tel').count(), 0);
   await s.page.click('#pf-plus');
+  assert.equal(await s.page.inputValue('#pf-ent'), 'OCP Group');
+  assert.equal(await s.page.inputValue('#pf-poste'), 'Ingénieur méthodes');
   assert.equal(await s.page.inputValue('#pf-tel'), '06 61 22 33 44');
-  assert.ok(await s.page.isEnabled('form .row-end .btn.primary'));
   assert.ok((await s.debordement()) <= 0, 'pas de débordement à 390 px');
   await s.page.addScriptTag({ content: AXE });
   const v = await s.page.evaluate(async () => (await axe.run('#inscription', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => x.id));
   assert.deepEqual(v, []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// La « Dernière étape » seule, comme à l'inscription (en démo, on a déjà un profil)
+const monterInscription = (page, preset) => page.evaluate(async preset => {
+  const [{ html, render }, { createStore }, { ProfileForm }] = await Promise.all([import('./vendor/preact-htm.js'), import('./store.js'), import('./community.js')]);
+  const store = await createStore();
+  document.getElementById('app').hidden = true;
+  const el = document.body.appendChild(document.createElement('main')); el.id = 'inscription'; el.className = 'auth-card wide onb';
+  render(html`<${ProfileForm} ctx=${{ store, act: fn => fn() }} preset=${preset} onboarding/>`, el);
+}, preset);
+
+for (const langue of ['fr', 'ar']) {
+  test(`inscription courte d’un lauréat : trois champs et « aider » au-dessus du pli, le bouton dit ce qui manque (360 px, ${langue})`, async () => {
+    const s = await ouvrir({ largeur: 360, langue });
+    await s.page.setViewportSize({ width: 360, height: 640 });
+    const avant = await s.page.evaluate(() => [...(window.__ensamMissing || [])]);
+    await monterInscription(s.page, { role: 'laureat' });
+    await s.page.waitForSelector('#pf-role-rappel');
+    // Le rôle choisi sur la page d'entrée n'est pas redemandé : il est rappelé
+    assert.equal(await s.page.locator('#pf-je-laureat').count(), 0);
+    if (langue === 'fr') assert.equal(await s.page.locator('#pf-role-rappel').innerText(), 'Tu t’inscris comme lauréat(e).');
+    assert.equal(await s.page.inputValue('#pf-promo'), '', 'aucune promo choisie d’avance');
+    for (const id of ['#pf-name', '#pf-promo', '#pf-fil', '#pf-aide-oui']) {
+      const b = await s.page.locator(id).boundingBox();
+      assert.ok(b && b.y + b.height < 640, `${id} visible sans défiler (bas à ${b && Math.round(b.y + b.height)})`);
+    }
+    assert.equal(await s.page.locator('#pf-ent').count(), 0);
+    assert.equal(await s.page.locator('#pf-tel').count(), 0);
+    assert.equal(await s.page.locator('#pf-cv-choisir.primary').count(), 0, 'le CV est un raccourci, pas l’action principale');
+    const bouton = s.page.locator('.pf-pied .btn');
+    const bb = await bouton.boundingBox();
+    assert.ok(bb.y >= 0 && bb.y + bb.height <= 640, 'le bouton reste à portée du pouce');
+    assert.ok(await bouton.isEnabled());
+    // Un appui à vide mène au premier champ qui manque, et le dit
+    await bouton.click(); await s.page.waitForTimeout(400);
+    assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'pf-name');
+    assert.ok(await s.page.locator('.field-err').first().isVisible());
+    assert.equal(await s.page.getAttribute('#pf-name', 'aria-invalid'), 'true');
+    await s.page.fill('#pf-name', 'Yassine Berrada');
+    await s.page.fill('#pf-promo', '2019');
+    await s.page.selectOption('#pf-fil', { index: 1 });
+    assert.equal(await bouton.getAttribute('data-manque'), 'aide');
+    await s.page.click('#pf-aide-non');
+    assert.equal(await bouton.getAttribute('data-manque'), null);
+    assert.equal((await bouton.innerText()).trim(), langue === 'fr' ? 'Rejoindre la communauté' : 'الانضمام إلى المجتمع');
+    // « Changer » ramène les cartes, le rôle choisi en évidence
+    await s.page.click('#pf-role-changer');
+    assert.equal(await s.page.getAttribute('#pf-je-laureat', 'aria-pressed'), 'true');
+    // « Facultatif » s'ouvre et se referme
+    await s.page.click('#pf-plus');
+    assert.equal(await s.page.getAttribute('#pf-plus', 'aria-expanded'), 'true');
+    assert.ok(await s.page.isVisible('#pf-ent'));
+    await s.page.click('#pf-plus');
+    assert.equal(await s.page.locator('#pf-ent').count(), 0);
+    assert.ok((await s.debordement()) <= 0, 'pas de débordement à 360 px');
+    await s.page.addScriptTag({ content: AXE });
+    const v = await s.page.evaluate(async () => (await axe.run('#inscription', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => x.id));
+    assert.deepEqual(v, []);
+    if (langue === 'ar') {
+      const nouveaux = await s.page.evaluate(a => [...(window.__ensamMissing || [])].filter(x => !a.includes(x)), avant);
+      assert.deepEqual(nouveaux.filter(x => !/^(Yassine Berrada|2019|Ex\. 2019)$/.test(x)), [], 'tout est traduit');
+    }
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}
+
+test('inscription d’un étudiant : la promo part vide, puis dit l’année ; changer de rôle ne remplit rien', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await monterInscription(s.page, { role: 'etudiant' });
+  await s.page.waitForSelector('#pf-role-rappel');
+  assert.equal(await s.page.inputValue('#pf-promo'), '');
+  await s.page.click('#pf-role-changer');
+  await s.page.click('#pf-je-etudiant'); await s.page.click('#pf-je-laureat'); await s.page.click('#pf-je-etudiant');
+  assert.equal(await s.page.inputValue('#pf-promo'), '', 'une promo vide reste vide');
+  const S = await s.page.evaluate(async () => (await import('./logic.js')).seasonOf());
+  await s.page.fill('#pf-promo', String(S + 3)); await s.page.waitForTimeout(150);
+  assert.match(await s.page.locator('#pf-promo').locator('xpath=ancestor::label').innerText(), /Cette saison, tu es en 3e année\./);
+  assert.equal(await s.page.locator('#pf-aide').count(), 0, '« aider » ne concerne que les lauréats');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('profil : un réglage « Qui voit quoi » qui ne part pas reste affiché, et part avec « Enregistrer »', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('profil'); await s.page.waitForTimeout(300);
+  await s.page.evaluate(() => {
+    const d = window.__demo, vrai = d.update.bind(d);
+    d.update = (t, id, patch) => (patch.visibilite && Object.keys(patch).length === 1 ? Promise.reject(new Error('Pas de réseau pour l’instant. Réessaie dans un instant.')) : vrai(t, id, patch));
+  });
+  await s.page.click('#vis-lieu-contacts'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.getAttribute('#vis-lieu-contacts', 'aria-checked'), 'true', 'le choix reste');
+  assert.match(await s.page.locator('#vis-etat').innerText(), /Pas encore enregistré/);
+  assert.equal(await s.page.locator('.pf-collant').count(), 1);
+  await s.page.evaluate(() => { delete window.__demo.update; });
+  await s.page.click('.pf-collant .btn.primary'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.evaluate(() => window.__demo.me.visibilite?.lieu), 'contacts');
+  assert.equal(await s.page.locator('.pf-collant').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('profil : promo effacée, le bouton le dit et mène au champ', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Nadia'); await s.aller('profil');
+  await s.page.fill('#pf-promo', ''); await s.page.waitForTimeout(150);
+  const bouton = '.pf-collant .btn.primary';
+  assert.equal(await s.page.getAttribute(bouton, 'data-manque'), 'promo');
+  assert.match(await s.page.locator(bouton).innerText(), /Ajoute ta promo/);
+  await s.page.click(bouton); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'pf-promo');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('offre d’une autre année ouverte par un lien : sans offre pour son année, l’étudiant peut agir tout de suite', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Amine');
+  const id = await s.page.evaluate(async () => {
+    const d = window.__demo, { niveauOf, seasonOf } = await import('./logic.js');
+    const n = niveauOf(d.me, seasonOf());
+    for (const o of d.data.offers.filter(o => o.status === 'ouverte' && o.audience !== 'laureats' && (o.annees || []).includes(n))) await d.update('offers', o.id, { status: 'pourvue' });
+    return d.data.offers.find(o => o.status === 'ouverte' && o.audience !== 'laureats' && !(o.annees || []).includes(n))?.id;
+  });
+  assert.ok(id, 'une offre d’une autre année');
+  await s.aller('offre/' + id); await s.page.waitForSelector('.modal');
+  const txt = await s.page.locator('.modal').innerText();
+  assert.match(txt, /Pas encore d’offre pour ta 3A\./);
+  assert.doesNotMatch(txt, /Voici celles de ta/);
+  await s.page.click('#od-ensuite');
+  await s.page.waitForSelector('#dm-titre', { timeout: 3000 });
+  assert.equal(await s.page.evaluate(() => location.hash), '#offres/demandes');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
