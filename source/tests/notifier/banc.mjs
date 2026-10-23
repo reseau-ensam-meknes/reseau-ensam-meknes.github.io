@@ -210,6 +210,7 @@ export class Banc {
     }
     if (fn === 'destinataires_resume') {
       // Comme la fonction SQL : une fois par semaine, comptes de plus de 2 jours, emails_hebdo
+      (this.argsRpc ||= {})[fn] = [...(this.argsRpc[fn] || []), args];
       const now = Date.now();
       for (const p of this.tables.profiles) {
         if (!this.tables.notif_etat.some(n => n.user_id === p.id)) this.tables.notif_etat.push({ user_id: p.id, token: nodeCrypto.randomUUID(), resume_at: null });

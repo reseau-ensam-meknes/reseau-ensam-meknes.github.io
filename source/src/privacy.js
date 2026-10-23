@@ -7,6 +7,7 @@ import { adresseContact } from './regles-entree.js';
 
 // Arabe : textes ajoutés en Phase 3 (le reste est dans i18n-ar.js)
 addAR({
+  'La semaine de ton inscription, le résumé par email peut citer ton nom et ta promo (ou ton année) aux membres de ta promo ou de ta filière, comme le fait l’annuaire.': 'في أسبوع تسجيلك، قد يذكر الملخص الأسبوعي اسمك ودفعتك (أو سنتك) لأعضاء دفعتك أو شعبتك، كما يفعل الدليل.',
   'Tes messages privés : textes, photos, messages vocaux et réactions échangés avec un autre membre.': 'رسائلك الخاصة: النصوص والصور والرسائل الصوتية والتفاعلات المتبادلة مع عضو آخر.',
   'Un message privé n’est visible que par toi et la personne à qui tu écris. Ses photos et vocaux sont dans un espace privé et s’ouvrent par un lien temporaire. L’administration ne voit un message que si l’un de vous deux le signale.': 'لا يرى الرسالة الخاصة إلا أنت والشخص الذي تراسله. صورها وتسجيلاتها الصوتية محفوظة في فضاء خاص وتُفتح برابط مؤقت. لا ترى الإدارة رسالةً إلا إذا بلّغ عنها أحدكما.',
   'Tu peux bloquer un membre à tout moment : vous ne pouvez plus vous écrire.': 'يمكنك حظر عضو في أي وقت: لن يعود بإمكانكما المراسلة.',
@@ -83,6 +84,7 @@ const SECTIONS = [
     'Une candidature n’est visible que par toi et par le lauréat qui a publié l’offre.',
     'Un message privé n’est visible que par toi et la personne à qui tu écris. Ses photos et vocaux sont dans un espace privé et s’ouvrent par un lien temporaire. L’administration ne voit un message que si l’un de vous deux le signale.',
     'Un étudiant ne voit que les offres de son année ; les offres entre lauréats ne sont pas visibles par les étudiants.',
+    'La semaine de ton inscription, le résumé par email peut citer ton nom et ta promo (ou ton année) aux membres de ta promo ou de ta filière, comme le fait l’annuaire.',
     'Un avis de stage ou un entretien publié en anonyme n’affiche pas ton nom aux membres.',
     'L’administration voit les emails des comptes, seulement pour vérifier les lauréats et aider en cas de problème.',
     'Une attestation de lauréat peut être vérifiée par un lien que son titulaire choisit de partager.',

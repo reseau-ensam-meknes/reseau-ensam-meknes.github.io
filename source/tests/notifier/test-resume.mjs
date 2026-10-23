@@ -82,6 +82,37 @@ test('lauréats : question routée par pays (hors Maroc), jeune diplômé, résu
   assert.equal(resume(ID.rachid), null);
 });
 
+test('arrivées : sa promo et sa filière, jamais une autre année ; jamais soi-même', () => {
+  const p3 = profil(ID.amine).promo;
+  assert.deepEqual(resume(ID.leila).arrivees, { total: 1, liste: [{ nom: 'Amine Tazi', promo: p3, niveau: 3 }], reseau: { laureats: 1, etudiants: 1 } });
+  assert.equal(resume(ID.salma).arrivees.total, 0, 'une étudiante de 4A ne voit pas les 3A');
+  assert.deepEqual(resume(ID.nadia).arrivees.liste, [{ nom: 'Ghita Berrada', promo: 2019, niveau: 0 }], 'même parcours (Génie Énergétique)');
+  assert.ok(resume(ID.youssef).arrivees.liste.some(x => x.nom === 'Amine Tazi'), 'un lauréat voit les étudiants de sa filière');
+  assert.ok(!resume(ID.amine).arrivees.liste.some(x => x.nom === 'Amine Tazi'));
+  assert.equal(resume(ID.hamza), null);
+});
+
+test('arrivées seules : un résumé calme, qui nomme l’arrivée, sans ville ni email', () => {
+  const m = N.rendreResume(resume(ID.leila), 'fr', SITE, TOKEN);
+  assert.equal(m.sujet, 'Amine Tazi vient d’arriver sur le réseau · Réseau ENSAM');
+  assert.equal(N.rendreResume(resume(ID.leila), 'ar', SITE, TOKEN).sujet, 'انضمام جديد إلى الشبكة: Amine Tazi · شبكة ENSAM');
+  assert.ok(m.texte.includes('Rien à faire cette semaine. Voici qui vient d’arriver.'));
+  assert.ok(m.texte.includes('Amine Tazi · 3A'));
+  assert.ok(m.texte.includes('#reseau/annuaire'));
+  assert.ok(m.texte.includes('Dans tout le réseau : 1 lauréat et 1 étudiant de plus cette semaine.'));
+  // Rien d'autre sur la personne : ni sa ville (Meknès), ni son email, ni des points
+  const section = m.texte.slice(m.texte.indexOf('NOUVEAUX SUR LE RÉSEAU'), m.texte.indexOf('Voir l’annuaire'));
+  assert.doesNotMatch(section, /Meknès|@|points/);
+  // Au plus 5 noms, puis « Et N de plus. »
+  const j = jeu(NOW);
+  const p3 = j.tables.profiles.find(p => p.id === ID.amine).promo;
+  for (let i = 0; i < 7; i++) j.tables.profiles.push({ ...j.tables.profiles.find(p => p.id === ID.amine), id: `00000000-0000-4000-8000-0000000009${i}0`, full_name: `Nouveau ${i}`, promo: p3, created_at: new Date(NOW.getTime() - 864e5).toISOString() });
+  const d = N.indexer(brut(j), NOW);
+  const r = N.resumeDe(d.profils.get(ID.leila), d);
+  assert.equal(r.arrivees.total, 8); assert.equal(r.arrivees.liste.length, 5);
+  assert.ok(N.rendreResume(r, 'fr', SITE, TOKEN).texte.includes('Et 3 de plus.'));
+});
+
 test('filières officielles : talents et offres rapprochés par parcours', () => {
   // Un lauréat « Mécatronique » (ancienne appellation, parcours électro-industriel) reçoit les talents de Génie Industriel
   const j = jeu(NOW);
