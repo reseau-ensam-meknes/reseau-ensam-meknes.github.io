@@ -75,7 +75,8 @@ const CATS_NOTIF = {
     mentorat: ['Mentorat et rendez-vous', 'Demandes d’aide et de contact, rappels de rendez-vous, CV à relire, parrainage, mercis.'],
     // Les offres arrivent selon le profil (offre_pour dans schema.sql) : la condition est dite, pas conseillée
     offres: ['Nouvelles offres pour moi', 'Avec « Je cherche un emploi en ce moment » coché dans ton profil : offres « Jeunes diplômés » et offres entre lauréats de ta filière. Sans cela, seulement les offres « Jeunes diplômés » l’année de ton diplôme.'],
-    reseau: ['Questions qui me sont adressées et vie du réseau', 'Questions sur ton entreprise ou ton pays, événements de l’école, cafés de ta ville.'],
+    // Un lauréat pose aussi des questions : les réponses passent par cette case
+    reseau: ['Questions et vie du réseau', 'Réponses à tes questions, questions sur ton entreprise ou ton pays, événements de l’école, cafés de ta ville.'],
   },
   // Un lauréat qui cherche un emploi publie sa demande d'emploi et postule : ces cases couvrent aussi les siennes
   recherche: {
@@ -83,9 +84,10 @@ const CATS_NOTIF = {
     candidatures: ['Candidatures', 'La suite des tiennes (entretien, recrutement à confirmer) et les candidatures reçues sur tes offres.'],
     offres: ['Nouvelles offres pour moi', 'Offres « Jeunes diplômés » et offres entre lauréats de ta filière, dès leur publication.'],
   },
-  // L'équipe du réseau ne postule pas
+  // L'équipe du réseau ne postule pas, et les questions sur une entreprise ou un pays ne vont qu'aux lauréats
   admin: {
     candidatures: ['Candidatures reçues sur mes offres', 'Et les recrutements confirmés.'],
+    reseau: ['Réponses à mes questions et vie du réseau', 'Réponses à tes questions, événements de l’école, cafés de ta ville.'],
   },
 };
 const motsNotif = me => (me.role === 'etudiant' ? CATS_NOTIF.etudiant
@@ -124,8 +126,8 @@ addAR({
   [CATS_NOTIF.recherche.candidatures[0]]: 'الترشيحات',
   [CATS_NOTIF.recherche.candidatures[1]]: 'مآل ترشيحاتك (مقابلة، توظيف ينتظر تأكيدك) والترشيحات التي تصل إلى عروضك.',
   [CATS_NOTIF.recherche.offres[1]]: 'عروض «الخريجون الجدد» والعروض بين خريجي شعبتك، فور نشرها.',
-  [CATS_NOTIF.laureat.reseau[0]]: 'الأسئلة الموجّهة إليّ وحياة الشبكة',
-  [CATS_NOTIF.laureat.reseau[1]]: 'أسئلة حول شركتك أو بلدك، أنشطة المدرسة، لقاءات المقهى في مدينتك.',
+  [CATS_NOTIF.laureat.reseau[0]]: 'الأسئلة وحياة الشبكة',
+  [CATS_NOTIF.laureat.reseau[1]]: 'الأجوبة على أسئلتك، أسئلة حول شركتك أو بلدك، أنشطة المدرسة، لقاءات المقهى في مدينتك.',
 });
 
 
@@ -255,10 +257,11 @@ export function MesDonnees({ ctx }) {
   };
   // Notifications par catégorie : en ligne, seulement une fois la base à jour (colonne notif_push). Avant, l'étudiant garde
   // sa case « M'alerter… » ; après, elle devient « Nouvelles offres pour moi » (téléphone) et la case email à part.
+  // Les titres « Par email » / « Sur le téléphone » aussi : avant, « M'alerter… » (le téléphone) se retrouverait sous « Par email ».
   const cats = store.mode !== 'live' || 'notif_push' in me;
   return html`<div class="panel" id="mes-donnees">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="shield"/> Mes données et notifications</h2><button class="btn tiny ghost" onClick=${() => go('confidentialite')}>Confidentialité <${Icon} name="arrow" size=${14}/></button></div>
-    <h3 class="md-titre">Par email</h3>
+    ${cats ? html`<h3 class="md-titre">Par email</h3>` : null}
     <label class="check"><input id="md-mail" type="checkbox" checked=${me.emails_hebdo !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { emails_hebdo: e.target.checked }); toast(e.target.checked ? 'Tu recevras un résumé chaque semaine.' : 'Plus de résumé par email.'); })}/> Recevoir un résumé par email chaque semaine</label>
     ${me.role === 'etudiant' && cats && (store.mode !== 'live' || 'alertes_email' in me) ? html`<label class="check"><input id="md-alertes-mail" type="checkbox" checked=${me.alertes_email !== false} onChange=${e => act(() => store.update('profiles', me.id, { alertes_email: e.target.checked }))}/> Recevoir par email les nouvelles offres de mon année et de ma filière (3 au plus par jour)</label>` : null}
     ${me.role === 'etudiant' && !cats && (store.mode !== 'live' || 'alertes_offres' in me) ? html`<div class="cf-alertes">
@@ -266,7 +269,7 @@ export function MesDonnees({ ctx }) {
       ${me.alertes_offres !== false ? html`<label class="check sub"><input id="md-alertes-mail" type="checkbox" checked=${me.alertes_email !== false} onChange=${e => act(() => store.update('profiles', me.id, { alertes_email: e.target.checked }))}/> Aussi par email (3 au plus par jour)</label>` : null}
     </div>` : null}
     ${store.mode !== 'live' || 'emails_messages' in me ? html`<label class="check"><input id="md-msg-mail" type="checkbox" checked=${me.emails_messages !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { emails_messages: e.target.checked }); toast(e.target.checked ? 'Un email te prévient si un message attend depuis 30 minutes.' : 'Plus d’email pour les messages.'); })}/> M’envoyer un email quand un message m’attend (un toutes les 6 heures au plus)</label>` : null}
-    <h3 class="md-titre" id="md-notifs">Sur le téléphone</h3>
+    ${cats ? html`<h3 class="md-titre" id="md-notifs">Sur le téléphone</h3>` : null}
     <${PushToggle} ctx=${ctx}/>
     ${cats ? html`<${ChoixNotifs} ctx=${ctx}/>` : null}
     <div class="row">
@@ -285,11 +288,13 @@ function ChoixNotifs({ ctx }) {
   const mots = motsNotif(me);
   // Deux cases touchées coup sur coup : la seconde garde la première
   const enCours = useRef({});
+  // Pas enregistré (réseau) : la case est redessinée, elle revient à ce qui est enregistré (Preact la compare à la page)
+  const [, redessiner] = useState(0);
   const changer = (cat, v) => {
     enCours.current = { ...enCours.current, [cat]: v };
     act(async () => {
       try { await store.update('profiles', me.id, { notif_push: { ...(store.me?.notif_push || me.notif_push || {}), ...enCours.current } }); }
-      catch (e) { const { [cat]: _, ...reste } = enCours.current; enCours.current = reste; throw e; }
+      catch (e) { const { [cat]: _, ...reste } = enCours.current; enCours.current = reste; redessiner(n => n + 1); throw e; }
       toast('Choix enregistré.');
     });
   };

@@ -1,6 +1,7 @@
 // Un faux site « en ligne » pour les tests : dist/ servi avec un config.js qui pointe vers un faux Supabase local.
-// Il répond juste assez pour la page d'entrée, le code à 6 chiffres (123456 est le bon code), la « Dernière étape »
-// et le lien d'une offre partagée. Chaque appel est noté (appels) pour vérifier ce qui part vers la base.
+// Il répond juste assez pour la page d'entrée, le code à 6 chiffres (123456 est le bon code), la « Dernière étape »,
+// le lien d'une offre partagée et l'abonnement d'un appareil aux notifications. Chaque appel est noté (appels) pour
+// vérifier ce qui part vers la base.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -44,6 +45,9 @@ export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 1
           const x = partagees[corps?.p_id];
           return x === undefined || x === 404 ? json(r, 404, { code: 'PGRST202', message: 'Could not find the function' }) : json(r, 200, x);
         }
+        // Notifications : la clé publique de la plateforme, puis l'abonnement d'un appareil
+        if (u === '/sb/functions/v1/notifier' && corps?.job === 'cle') return json(r, 200, { publicKey: 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U' });
+        if (u === '/sb/rest/v1/rpc/abonner_push') return json(r, 204);
         if (u.startsWith('/sb/rest/v1/rpc/')) return json(r, 404, { code: 'PGRST202', message: 'Could not find the function' });
         if (u === '/sb/rest/v1/reglages') return json(r, 200, reglages);
         if (u === '/sb/rest/v1/offers' && q.method === 'GET') return json(r, 200, offres);

@@ -51,6 +51,23 @@ test('catégories : messages, demandes, candidatures, mentorat, offres, vie du r
   assert.equal(pushCategorie('constructor'), 'reseau');
 });
 
+// La règle annoncée, type par type : un même reclassement fait dans logic.js et dans schema.sql échoue ici
+// (sql/test-notif-push.mjs vérifie que push_categorie donne la même chose que pushCategorie)
+test('chaque type est dans la catégorie annoncée', () => {
+  const regle = {
+    messages: ['message'],
+    demandes: ['demande_nouvelle', 'demande_proposition', 'demande_match', 'demande_rouverte'],
+    candidatures: ['candidature', 'candidature_statut', 'invitation', 'recrutement_a_confirmer', 'recrutement_confirme', 'relance_offre'],
+    mentorat: ['mentorat_demande', 'mentorat_accepte', 'mentorat_deplace', 'mentorat_annule', 'rappel_rdv', 'merci', 'relecture_demande', 'relecture_prise',
+      'relecture_rendue', 'contact_demande', 'contact_accepte', 'filleul', 'parrain'],
+    offres: ['offre_alerte'],
+    reseau: ['reponse', 'question_routee', 'cafe', 'evenement', 'evenement_annule', 'evenement_deplace', 'enquete', 'verification_pair', 'verifier_pair'],
+    admin: ['signalement'],
+  };
+  const attendu = Object.fromEntries(Object.entries(regle).flatMap(([cat, kinds]) => kinds.map(k => [k, cat])));
+  assert.deepEqual(PUSH_KINDS, attendu);
+});
+
 test('défauts : un étudiant reçoit tout (les offres suivent sa case « M’alerter ») ; un lauréat tout sauf les offres, sauf s’il cherche un emploi', () => {
   const etu = { role: 'etudiant' }, lau = { role: 'laureat' }, cherche = { role: 'laureat', en_recherche: true }, admin = { role: 'admin' };
   for (const c of ['messages', 'demandes', 'candidatures', 'mentorat', 'reseau']) {

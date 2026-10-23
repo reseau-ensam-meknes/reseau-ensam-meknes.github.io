@@ -17,9 +17,12 @@ const ECRANS = ['accueil', 'offres', 'offres/demandes', 'mentorat', 'mentorat/cv
   'confidentialite', 'admin', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda', 'admin/reglages'];
 
 let serveur, adresse, navigateur;
+// Une nouvelle version du site publiée pendant un test : sw.js change de VERSION, et les fichiers que le service worker
+// télécharge pour l'installer (fetch, sec-fetch-dest « empty ») attendent « retenue »
+let nouvelleVersion = null; // { version, retenue: Promise }
 before(async () => {
   assert.ok(fs.existsSync(path.join(SITE, 'index.html')), `site introuvable : ${SITE} (lance d’abord sh build.sh)`);
-  serveur = http.createServer((q, r) => {
+  const repondre = (q, r) => {
     let u = decodeURIComponent(new URL(q.url, 'http://x').pathname);
     if (u.endsWith('/')) u += 'index.html';
     // config.js vide : la plateforme s'ouvre en démonstration
@@ -28,8 +31,13 @@ before(async () => {
     if (!f.startsWith(SITE)) { r.writeHead(403); return r.end(); }
     fs.readFile(f, (e, b) => {
       if (e) { r.writeHead(404); return r.end(); }
+      if (u === '/sw.js' && nouvelleVersion) b = Buffer.from(String(b).replace(/const VERSION = '[^']*'/, `const VERSION = '${nouvelleVersion.version}'`));
       r.writeHead(200, { 'content-type': TYPES[path.extname(f)] || 'application/octet-stream' }); r.end(b);
     });
+  };
+  serveur = http.createServer((q, r) => {
+    if (nouvelleVersion && q.headers['sec-fetch-dest'] === 'empty' && !q.url.startsWith('/sw.js')) return void nouvelleVersion.retenue.then(() => repondre(q, r));
+    repondre(q, r);
   });
   await new Promise(ok => serveur.listen(0, '127.0.0.1', ok));
   adresse = `http://127.0.0.1:${serveur.address().port}/`;
@@ -38,8 +46,9 @@ before(async () => {
 after(async () => { await navigateur?.close(); serveur?.close(); });
 
 // Une page neuve, dans la langue voulue, avec un relevé des erreurs
-async function ouvrir({ largeur = 1280, langue = 'fr', sw = false, theme = 'light' } = {}) {
-  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: largeur > 800 ? 900 : 844 }, serviceWorkers: sw ? 'allow' : 'block', colorScheme: theme, reducedMotion: 'reduce' });
+// ua : le user-agent d'un vrai appareil (TELEPHONE) ; sinon celui de Chromium sur un ordinateur
+async function ouvrir({ largeur = 1280, langue = 'fr', sw = false, theme = 'light', ua } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: largeur > 800 ? 900 : 844 }, serviceWorkers: sw ? 'allow' : 'block', colorScheme: theme, reducedMotion: 'reduce', ...(ua ? { userAgent: ua } : {}) });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
   const page = await ctx.newPage(); const erreurs = [];
   page.on('pageerror', e => erreurs.push(e.message));
@@ -448,9 +457,11 @@ const PLAN = () => {
   window.__plan = (x, avance = 0) => { d += avance; if (x !== v) { v = x; document.dispatchEvent(new Event('visibilitychange')); } };
 };
 
+// Un téléphone Android
+const TELEPHONE = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36';
 // « Me prévenir » : en démo, un test simule l'état des notifications d'un vrai téléphone (ensam-prevenir-demo)
 async function prevenirSur(etat, { cachee = false, ...opts } = {}) {
-  const s = await ouvrir({ largeur: 360, ...opts });
+  const s = await ouvrir({ largeur: 360, ua: TELEPHONE, ...opts });
   await s.page.setViewportSize({ width: 360, height: 640 });
   if (cachee) await s.ctx.addInitScript(PLAN);
   if (etat) { await s.page.evaluate(e => localStorage.setItem('ensam-prevenir-demo', e), etat); await s.page.reload(); await s.page.waitForSelector('.hello'); }
@@ -778,6 +789,122 @@ test('à l’ouverture : jamais par-dessus une autre feuille ni la bienvenue ; r
   await s.ctx.close();
 });
 
+test('Mon profil : un choix qui n’a pas pu être enregistré n’est pas montré comme fait ; réessayé, c’est bien le sien', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('profil');
+  assert.equal(await s.page.isChecked('#np-reseau'), true);
+  await s.page.evaluate(() => { const d = window.__demo; d.__update = d.update; d.update = async () => { throw new Error('Pas de réseau pour l’instant. Réessaie dans un instant.'); }; });
+  await s.page.click('#np-reseau'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Pas de réseau/);
+  assert.equal(await s.page.isChecked('#np-reseau'), true, 'la case revient à ce qui est enregistré');
+  assert.deepEqual(await s.page.evaluate(() => window.__demo.me.notif_push), {});
+  // Le réseau revenu, le même geste enregistre ce que le membre voulait
+  await s.page.evaluate(() => { const d = window.__demo; d.update = d.__update; delete d.__update; });
+  await s.page.click('#np-reseau'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Choix enregistré/);
+  assert.equal(await s.page.isChecked('#np-reseau'), false);
+  assert.deepEqual(await s.page.evaluate(() => window.__demo.me.notif_push), { reseau: false });
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('à l’ouverture : jamais sous la photo agrandie d’un message ; elle vient une fois la photo fermée', async () => {
+  const s = await prevenirSur('off');
+  const id = nom => s.profils.find(x => x[1].includes(nom))[0];
+  const salma = id('Salma'), youssef = id('Youssef');
+  await s.comme('Salma');
+  // Une photo de Youssef (une url : en démo, les fichiers envoyés ne vivent que dans l'onglet)
+  const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  await s.page.evaluate(([y, sa, png]) => {
+    const d = window.__demo;
+    d.data.messages.push({ id: 'photo-test-1', author_id: y, dest_id: sa, type: 'photo', body: null, fichier: 'x/y/z.png', url: png, largeur: 400, hauteur: 300, created_at: new Date().toISOString(), lu_at: null });
+    d.persist(); location.hash = 'messages/' + y;
+  }, [youssef, salma, png]);
+  // Nouvelle visite, droit dans la conversation : la photo touchée dès l'arrivée
+  await s.page.reload(); await s.page.waitForSelector('.msg-photo img');
+  await s.page.click('.msg-photo'); await s.page.waitForSelector('.visionneuse');
+  await rienALouverture(s, 'jamais sous la photo agrandie');
+  assert.deepEqual(await s.memo(), {}, 'rien de compté sans avoir été vue');
+  await s.page.click('.visionneuse .icon-btn'); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator('.visionneuse').count(), 0);
+  await attendreOuverture(s);
+  assert.equal((await s.memo()).n, 1);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('à l’ouverture : jamais pendant que le membre écrit ni sur un menu ouvert ; elle vient ensuite', async () => {
+  let s = await prevenirSur('off');
+  await s.aller('reseau/annuaire');
+  await s.page.click('#d-q'); await s.page.keyboard.type('Youss');
+  await rienALouverture(s, 'pas pendant la saisie');
+  assert.deepEqual(await s.memo(), {});
+  await s.page.evaluate(() => document.activeElement.blur());
+  await attendreOuverture(s);
+  await s.ctx.close();
+  s = await prevenirSur('off');
+  await s.page.click('.me-btn'); await s.page.waitForSelector('.menu-pop');
+  await rienALouverture(s, 'pas sur un menu ouvert');
+  await s.page.click('.me-btn'); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator('.menu-pop').count(), 0);
+  await attendreOuverture(s);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('à l’ouverture sur un ordinateur : la feuille parle de cet ordinateur, pas du téléphone (fr, ar)', async () => {
+  const s = await ouvrir();
+  const titre = () => s.page.locator(`${ouverture} .modal-head h2`).innerText();
+  await s.page.evaluate(() => localStorage.setItem('ensam-prevenir-demo', 'off'));
+  await recharger(s); await attendreOuverture(s);
+  assert.equal(await titre(), 'Reçois l’essentiel sur cet ordinateur');
+  await s.page.evaluate(() => {
+    for (const k of Object.keys(localStorage)) if (k.startsWith('ensam-prevenir-') && k !== 'ensam-prevenir-demo') localStorage.removeItem(k);
+    localStorage.setItem('ensam-lang', 'ar');
+  });
+  await recharger(s); await attendreOuverture(s);
+  assert.equal(await s.page.getAttribute('html', 'dir'), 'rtl');
+  assert.equal(await titre(), 'الأهم يصلك على هذا الحاسوب');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('à l’ouverture : jamais pendant qu’une nouvelle version peut recharger la page ; affichée ensuite, elle reste et compte une fois', async () => {
+  const s = await prevenirSur('off', { sw: true });
+  let liberer = () => {};
+  try {
+    await s.page.waitForFunction(() => navigator.serviceWorker.getRegistration().then(r => !!r?.active), null, { timeout: 30000 });
+    await recharger(s);
+    assert.ok(await s.page.evaluate(() => !!navigator.serviceWorker.controller));
+    // Un membre jamais sollicité sur cet appareil ; une nouvelle version du site vient d'être publiée
+    await s.page.evaluate(() => localStorage.removeItem('ensam-prevenir-' + window.__demo.me.id));
+    nouvelleVersion = { version: 'test-' + Date.now(), retenue: new Promise(ok => { liberer = ok; }) };
+    let chargements = 0;
+    s.page.on('load', () => { chargements++; });
+    await recharger(s);
+    // Elle s'installe pendant les premières secondes de la visite, juste après le moment où la feuille venait (3 s) :
+    // la page se recharge alors d'elle-même
+    const tropTot = await s.page.waitForSelector(ouverture, { timeout: 3000 }).then(() => true, () => false);
+    liberer();
+    for (let i = 0; i < 80 && chargements < 2; i++) await s.page.waitForTimeout(100);
+    assert.equal(chargements, 2, 'la nouvelle version recharge la page');
+    assert.equal(tropTot, false, 'pas de feuille tant que la page peut encore se recharger');
+    await s.page.waitForSelector('.hello');
+    assert.deepEqual(await s.memo(), {}, 'rien de compté sans avoir été vue');
+    // Une fois la page stable : la feuille, qui reste à l'écran
+    await s.page.waitForSelector(ouverture, { timeout: 15000 });
+    assert.ok(await s.page.evaluate(() => performance.now()) > 8000, 'pas avant la fin de la fenêtre des mises à jour');
+    await s.page.waitForTimeout(1500);
+    assert.equal(await s.page.locator(ouverture).count(), 1);
+    assert.equal(chargements, 2);
+    assert.equal((await s.memo()).n, 1);
+    assert.deepEqual(s.erreurs, []);
+  } finally {
+    liberer(); nouvelleVersion = null;
+    await s.ctx.close();
+  }
+});
+
 test('Mon profil : les notifications par catégorie, défauts selon le rôle, enregistrées et relues après rechargement', async () => {
   const s = await ouvrir({ largeur: 390 });
   const cases = () => s.page.$$eval('.md-cats input[type=checkbox]', xs => Object.fromEntries(xs.map(x => [x.id.replace('np-', ''), x.checked])));
@@ -805,6 +932,8 @@ test('Mon profil : les notifications par catégorie, défauts selon le rôle, en
   const lau = await s.page.locator('.md-cats').innerText();
   assert.match(lau, /Nouvelles demandes d’étudiants de ma filière/); assert.match(lau, /Candidatures reçues sur mes offres/);
   assert.doesNotMatch(lau, /Réponses à mes demandes/);
+  // Un lauréat pose aussi des questions : la case qui les coupe le dit
+  assert.match(lau, /Questions et vie du réseau/); assert.match(lau, /Réponses à tes questions, questions sur ton entreprise ou ton pays/);
   // Tout lauréat peut postuler ; les offres n'arrivent qu'avec « Je cherche un emploi en ce moment » : le texte le dit
   assert.match(lau, /si tu postules, la suite de tes candidatures/);
   assert.match(lau, /Avec « Je cherche un emploi en ce moment » coché dans ton profil/);
@@ -822,7 +951,10 @@ test('Mon profil : les notifications par catégorie, défauts selon le rôle, en
   assert.equal(await s.page.isChecked('#np-offres'), true);
   // L'équipe du réseau : les signalements arrivent toujours (pas de case) ; ni nouvelles demandes ni offres, qui ne lui arrivent jamais
   await s.comme('Admin'); await s.aller('profil');
-  assert.match(await s.page.locator('.md-cats').innerText(), /Les signalements arrivent toujours à l’équipe du réseau\./);
+  const adm = await s.page.locator('.md-cats').innerText();
+  assert.match(adm, /Les signalements arrivent toujours à l’équipe du réseau\./);
+  // Les questions sur une entreprise ou un pays ne vont qu'aux lauréats : l'admin reçoit les réponses aux siennes
+  assert.match(adm, /Réponses à mes questions et vie du réseau/); assert.doesNotMatch(adm, /questions sur ton entreprise|Questions qui me sont adressées/);
   assert.equal(await s.page.locator('#np-admin').count(), 0);
   assert.deepEqual(await cases(), { messages: true, candidatures: true, mentorat: true, reseau: true });
   assert.equal(await s.debordement(), 0);

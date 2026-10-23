@@ -516,18 +516,24 @@ test('code demandé en arabe, entré dans un autre onglet : toujours en arabe', 
 });
 
 // Un membre déjà connecté sur cet appareil (session gardée), ouvert sur « hash ». push : un navigateur qui peut recevoir
-// des notifications sans y être abonné (etatPush 'off'), comme un téléphone Android
-async function membre({ hash = '', push = false } = {}) {
+// des notifications sans y être abonné (etatPush 'off'), comme un téléphone Android. permission : la réponse du membre
+// à la demande du navigateur ; les demandes sont comptées (window.__demandes)
+async function membre({ hash = '', push = false, permission = 'default' } = {}) {
   const ctx = await navigateur.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
-  if (push) await ctx.addInitScript(() => {
-    const pm = { getSubscription: async () => null, subscribe: async () => ({}) };
+  if (push) await ctx.addInitScript(permission => {
+    const sub = { endpoint: 'https://push.exemple.ma/abc', toJSON: () => ({ endpoint: 'https://push.exemple.ma/abc', keys: { p256dh: 'p256', auth: 'auth' } }), unsubscribe: async () => true };
+    const pm = { getSubscription: async () => null, subscribe: async () => sub };
     const reg = { waiting: null, installing: null, addEventListener() {}, pushManager: pm };
     const sw = { register: async () => reg, ready: Promise.resolve(reg), controller: null, addEventListener() {} };
     Object.defineProperty(Navigator.prototype, 'serviceWorker', { get: () => sw, configurable: true });
-    window.Notification = class { static permission = 'default'; static requestPermission = async () => 'default'; };
+    window.__demandes = 0;
+    window.Notification = class {
+      static permission = 'default';
+      static requestPermission = async () => { window.__demandes++; window.Notification.permission = permission; return permission; };
+    };
     if (!('PushManager' in window)) window.PushManager = function PushManager() {};
-  });
+  }, permission);
   await ctx.addInitScript(uid => {
     if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1');
     localStorage.setItem('ensam-lang', 'fr');
@@ -567,8 +573,42 @@ test('Mon profil en ligne : les notifications par catégorie seulement une fois 
     await m.page.waitForSelector('#mes-donnees', { timeout: 15000 });
     assert.equal(await m.page.locator('.md-cats').count(), colonne ? 1 : 0, 'les cases par catégorie');
     assert.equal(await m.page.locator('#md-alertes').count(), colonne ? 0 : 1, 'avant la mise à jour, l’étudiant garde sa case « M’alerter… »');
+    // Avant, la présentation d'avant : « M'alerter… » (le téléphone) ne se range pas sous un titre « Par email »
+    assert.equal(await m.page.locator('.md-titre').count(), colonne ? 2 : 0, 'les titres « Par email » et « Sur le téléphone »');
     assert.ok(await m.page.isChecked('#md-alertes-mail'), 'l’email des offres reste là');
     assert.deepEqual(m.erreurs, []);
     await m.ctx.close();
   }
+});
+
+test('« Activer » en ligne : le toucher demande l’autorisation au navigateur ; refusée, plus jamais de feuille ; acceptée, cet appareil est abonné', async () => {
+  const cle = 'ensam-prevenir-' + UID;
+  // Refusée par le membre dans la fenêtre du navigateur
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z', notif_push: {} });
+  let m = await membre({ push: true, permission: 'denied' });
+  await m.page.waitForSelector('.modal.ouverture', { timeout: 12000 });
+  assert.equal(await m.page.evaluate(() => window.__demandes), 0, 'rien demandé avant le toucher');
+  await m.page.click('#ouv-oui'); await m.page.waitForTimeout(500);
+  assert.equal(await m.page.evaluate(() => window.__demandes), 1, 'le toucher sur « Activer » demande l’autorisation');
+  assert.equal(await m.page.locator('.modal.ouverture').count(), 0);
+  assert.equal(await m.page.evaluate(k => JSON.parse(localStorage.getItem(k) || '{}').fait, cle), 1);
+  assert.ok(!site.appels.some(a => a.u === '/sb/rest/v1/rpc/abonner_push'), 'refusée : rien d’abonné');
+  await m.page.reload(); await m.page.waitForSelector('.me-btn', { timeout: 15000 });
+  await m.page.waitForTimeout(8000);
+  assert.equal(await m.page.locator('.modal.ouverture').count(), 0, 'refusée par le navigateur : plus jamais');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+  // Acceptée : la clé de la plateforme, puis l'abonnement de cet appareil
+  site.vider(); site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z', notif_push: {} });
+  m = await membre({ push: true, permission: 'granted' });
+  await m.page.waitForSelector('.modal.ouverture', { timeout: 12000 });
+  await m.page.click('#ouv-oui');
+  await m.page.waitForSelector('.modal.ouverture', { state: 'detached', timeout: 5000 });
+  assert.equal(await m.page.evaluate(() => window.__demandes), 1);
+  const abonne = site.appels.find(a => a.u === '/sb/rest/v1/rpc/abonner_push');
+  assert.deepEqual(abonne?.corps, { p_endpoint: 'https://push.exemple.ma/abc', p_p256dh: 'p256', p_auth: 'auth' });
+  assert.match(await m.page.locator('.toast').last().innerText(), /Notifications activées sur cet appareil\./);
+  assert.equal(await m.page.evaluate(k => JSON.parse(localStorage.getItem(k) || '{}').fait, cle), 1);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
 });

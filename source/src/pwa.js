@@ -17,6 +17,8 @@ if (typeof window !== 'undefined') {
 // Enregistré au premier moment calme : son installation (tout le site gardé sur le téléphone) ne passe pas
 // devant les données du membre en 3G
 const ouverture = Date.now();
+// Une nouvelle version ne recharge la page visible que pendant ses premières secondes ; après, elle attend que la page soit cachée
+const FENETRE_MAJ = 8000;
 const auRepos = f => (typeof requestIdleCallback === 'function' ? requestIdleCallback(f, { timeout: 4000 }) : setTimeout(f, 1500));
 export const swReady = (() => {
   if (typeof navigator === 'undefined' || !('serviceWorker' in navigator) || !document.querySelector('link[rel="manifest"]')) return Promise.resolve(null);
@@ -40,7 +42,7 @@ function suivreMisesAJour(reg) {
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (fait || !avait) return;
     fait = true;
-    if (document.visibilityState === 'hidden' || Date.now() - debut < 8000) location.reload();
+    if (document.visibilityState === 'hidden' || Date.now() - debut < FENETRE_MAJ) location.reload();
   });
 }
 
@@ -235,11 +237,15 @@ export function PrevenirHote({ ctx, bloque }) {
       const m = hote?.me || me;
       return ouvertureNotif({ etat: etatConnu, memo: lireMemo(me.id), now: Date.now(), role: m.role, voulu: PUSH_CATEGORIES.some(c => pushChoix(c, m)) });
     };
-    // Un écran calme : rien d'ouvert par-dessus, pas en train d'écrire, l'onglet au premier plan
-    const occupe = () => document.visibilityState !== 'visible' || !!document.querySelector('.modal-back, .fete-back, .menu-pop') || ecrit(document.activeElement);
+    // Un écran calme : rien d'ouvert par-dessus (toute fenêtre modale, la photo agrandie d'un message comprise), pas en train
+    // d'écrire, l'onglet au premier plan
+    const occupe = () => document.visibilityState !== 'visible' || !!document.querySelector('.modal-back, .fete-back, .menu-pop, [aria-modal="true"]') || ecrit(document.activeElement);
     const essayer = () => {
       // Quelque chose a déjà été demandé ou répondu pendant cette visite (mémo changé) : à la visite suivante
       if (!vivant || demandee || feteOuverte() || arriveeEnAttente(me.id) || JSON.stringify(lireMemo(me.id)) !== avant || !ouvrable()) return;
+      // Une nouvelle version peut encore recharger la page : la feuille disparaîtrait sous les yeux du membre en comptant comme un refus
+      const maj = attenteMaj();
+      if (maj > 0) { t = setTimeout(essayer, maj); return; }
       if (occupe()) { if (Date.now() - debut < OUV_FIN) t = setTimeout(essayer, OUV_ESSAI); return; }
       // Comptée dès qu'elle s'affiche, comme « Plus tard » : quitter l'application sans répondre ne la ramène pas à chaque visite
       const m = lireMemo(me.id);
@@ -251,7 +257,7 @@ export function PrevenirHote({ ctx, bloque }) {
     // (l'état connu trop tard, téléphone lent à la première visite : à la visite suivante)
     const demarrer = depuis => {
       lancee = true; debut = depuis;
-      if (!autreVisite && ouvrable() && Date.now() - debut < OUV_FIN) t = setTimeout(essayer, Math.max(0, OUV_DELAI - (Date.now() - debut)));
+      if (!autreVisite && ouvrable() && Date.now() - debut < OUV_FIN) t = setTimeout(essayer, Math.max(0, OUV_DELAI - (Date.now() - debut), attenteMaj()));
     };
     // La visite commence au premier moment où l'écran est visible : une application installée se recharge souvent cachée
     // (nouvelle version), et le membre la retrouve plus tard. Revenu après une longue absence : c'est une nouvelle visite.
@@ -342,13 +348,21 @@ function FeuillePrevenir({ ctx, f, onClose }) {
 }
 
 // ---------------------------------------------------------------------------
-// À l'ouverture : « Reçois l'essentiel sur ton téléphone », pour un membre dont l'appareil peut recevoir des notifications
-// sans y être abonné (règle : ouvertureNotif). Quelques secondes après l'arrivée (le premier moment où l'écran est visible),
-// sur un écran calme ; sinon la visite suivante. Revenir après une heure ou plus est une nouvelle visite. Jamais la même
+// À l'ouverture : « Reçois l'essentiel sur ton téléphone » (« sur cet ordinateur » sur un ordinateur), pour un membre dont
+// l'appareil peut recevoir des notifications sans y être abonné (règle : ouvertureNotif). Quelques secondes après l'arrivée
+// (le premier moment où l'écran est visible ; pas tant qu'une nouvelle version peut recharger la page), sur un écran calme ;
+// sinon la visite suivante. Revenir après une heure ou plus est une nouvelle visite. Jamais la même
 // visite que la bienvenue, l'accord à donner, une fête ou une feuille « Me prévenir ». Elle compte comme un refus dès
 // qu'elle s'affiche (« Plus tard », fermer, ou quitter l'application sans répondre), dans le même mémo que « Me prévenir ».
 // ---------------------------------------------------------------------------
 const OUV_DELAI = 3000, OUV_ESSAI = 2500, OUV_FIN = 30000, OUV_ABSENCE = 3600e3;
+// Page servie par le service worker : une nouvelle version peut la recharger pendant ses premières secondes
+// (suivreMisesAJour) ; la feuille attend la fin de cette fenêtre. Ce qu'il reste à attendre, en millisecondes.
+const attenteMaj = () => (navigator.serviceWorker?.controller ? FENETRE_MAJ + 500 - (Date.now() - ouverture) : 0);
+// Un téléphone ou une tablette : la feuille parle de « ton téléphone » ; sur un ordinateur, de cet ordinateur (c'est lui
+// qu'« Activer » abonne)
+const surTelephone = () => isIOS() || /android|mobile/i.test(navigator.userAgent);
+const OUV_TITRE = { tel: 'Reçois l’essentiel sur ton téléphone', pc: 'Reçois l’essentiel sur cet ordinateur' };
 // En train d'écrire (un champ de texte a le curseur) : la feuille attend
 const ecrit = el => !!el && (el.isContentEditable || el.tagName === 'TEXTAREA'
   || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'range', 'color', 'image'].includes(el.type)));
@@ -387,7 +401,7 @@ function FeuilleOuverture({ ctx, onClose }) {
   const activer = async () => { setBusy(true); if (await accepterNotif(store, me)) onClose(); else setBusy(false); };
   const pied = html`<button type="button" class="btn ghost" id="ouv-tard" onClick=${() => onClose()}>Plus tard</button>
     <button type="button" class="btn primary" id="ouv-oui" disabled=${busy} onClick=${activer}><${Icon} name="bell" size=${16}/> Activer</button>`;
-  return html`<${Modal} title="Reçois l’essentiel sur ton téléphone" cls="prevenir ouverture" onClose=${onClose} footer=${pied}>
+  return html`<${Modal} title=${surTelephone() ? OUV_TITRE.tel : OUV_TITRE.pc} cls="prevenir ouverture" onClose=${onClose} footer=${pied}>
     <p>${OUV_INTRO}</p>
     ${points.length ? html`<ul class="ouv-points">${points.map(([cat, txt]) => html`<li key=${cat} data-cat=${cat}><span class="g-ico"><${Icon} name=${OUV_ICONES[cat]} size=${18}/></span> ${txt}</li>`)}</ul>` : null}
     <p class="small muted">Tu choisis quoi recevoir dans « Mon profil ». Pas de publicité.</p>
@@ -411,7 +425,8 @@ addAR({
   [NOTIF_RAISON.questionMembre]: 'بمجرد أن يجيب أحد أعضاء الشبكة عن سؤالك، يصلك إشعار على هذا الجهاز.',
   [NOTIF_RAISON.relecture]: 'بمجرد أن يراجع أحد الخريجين سيرتك الذاتية، يصلك إشعار على هذا الجهاز.',
   // Feuille d'ouverture
-  'Reçois l’essentiel sur ton téléphone': 'الأهم يصلك على هاتفك',
+  [OUV_TITRE.tel]: 'الأهم يصلك على هاتفك',
+  [OUV_TITRE.pc]: 'الأهم يصلك على هذا الحاسوب',
   'Tu choisis quoi recevoir dans « Mon profil ». Pas de publicité.': 'تختار ما يصلك من «ملفي الشخصي». لا إعلانات.',
   [OUV_INTRO]: 'ما يخصك يصلك فورًا، حتى والتطبيق مغلق:',
   [OUV_POINTS.etudiant.messages]: 'رسائلك',
