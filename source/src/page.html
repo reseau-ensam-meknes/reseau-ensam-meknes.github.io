@@ -1207,6 +1207,8 @@ button.panel:hover, button.impact-strip:hover, button.objective:hover { border-c
 .modal-body { flex: 1 1 auto; }
 .modal-foot { position: sticky; bottom: 0; display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; padding: .75rem 1.1rem calc(.75rem + env(safe-area-inset-bottom, 0px)); background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(8px); border-top: 1px solid var(--line); z-index: 1; }
 .modal-foot .btn.primary { flex: 1; min-height: 46px; }
+/* Le titre et le pied collés ne cachent jamais le champ où l'on écrit : le défilement (Tab, clavier) s'arrête avant eux */
+.modal { scroll-padding-block: calc(var(--tete, 0px) + .5rem) calc(var(--pied, 0px) + .5rem); }
 @media (min-width: 761px) { .modal-foot { justify-content: flex-end; } .modal-foot > .btn.primary { flex: 0 1 auto; min-width: 14rem; } }
 .sheet-grip { display: none; }
 @keyframes sheet-in { from { transform: translateY(100%); } }
@@ -1325,8 +1327,8 @@ button.panel:hover, button.impact-strip:hover, button.objective:hover { border-c
 .etapes li > .btn { grid-column: 2; justify-self: start; margin-block-start: .35rem; min-height: 40px; }
 .etapes-ensuite { margin: 1rem 0 0; font-size: .8125rem; font-weight: 600; color: var(--muted); }
 /* Accueil : un seul bouton plein, celui de la carte « prochaine étape » ; ailleurs sur l'accueil, des boutons tonals */
-.home .home-grid .btn.primary { background: var(--accent-soft); border-color: transparent; color: var(--accent); box-shadow: none; }
-.home .home-grid .btn.primary:hover { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.home :is(.home-grid, .photo-trouvee) .btn.primary:not(.modal .btn) { background: var(--accent-soft); border-color: transparent; color: var(--accent); box-shadow: none; }
+.home :is(.home-grid, .photo-trouvee) .btn.primary:not(.modal .btn):hover { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 /* « Cette semaine » : la vie du réseau, puis trois petites choses au plus */
 .semaine > .bloc-corps { gap: .5rem; }
 .semaine .todo { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: .2rem; }

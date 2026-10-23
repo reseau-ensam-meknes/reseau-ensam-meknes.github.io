@@ -388,15 +388,21 @@ export function ProposerAide({ ctx, id, onClose }) {
   const [chezOuvert] = useState(() => !(x?.entreprise || me.entreprise || '').trim());
   const [lire, setLire] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [tente, setTente] = useState(false);
   useEffect(() => { if (etat === 'non') onClose(); }, [etat]);
   if (etat === 'non') return null;
   const possible = AIDE_OUVERTE.includes(etat);
   // Changer d'aide réécrit le mot seulement s'il n'a pas été retouché
   const choisir = k => setF(v => ({ ...v, aide: k, message: v.message === motPret(v.aide, p) ? motPret(k, p) : v.message }));
-  const ok = !!AIDES[f.aide] && f.entreprise.trim().length >= 2 && f.message.trim().length >= 10;
+  // « Proposer mon aide » reste actif : après un essai, seuls les champs à compléter sont signalés, et il mène au premier
+  const manques = { entreprise: f.entreprise.trim().length < 2, message: f.message.trim().length < 10 };
+  const ok = !!AIDES[f.aide] && !manques.entreprise && !manques.message;
+  const errAide = k => (tente && manques[k] ? (k === 'entreprise' ? 'Indique l’entreprise où tu peux aider.' : 'Écris-lui quelques mots (10 caractères au moins).') : null);
+  const ariaAide = (k, idErr) => (errAide(k) ? { 'aria-invalid': 'true', 'aria-describedby': idErr } : {});
   const envoyer = e => {
     e.preventDefault();
-    if (!ok || !possible || busy) return;
+    if (!possible || busy) return;
+    if (!ok) { setTente(true); setTimeout(() => allerAuChamp(manques.entreprise ? 'dm-p-ent' : 'dm-p-msg'), 0); return; }
     setBusy(true);
     act(async () => {
       const champs = { aide: f.aide, entreprise: f.entreprise.trim(), poste: f.poste.trim() || null, message: f.message.trim() };
@@ -407,7 +413,7 @@ export function ProposerAide({ ctx, id, onClose }) {
     }).finally(() => setBusy(false));
   };
   if (!d) return html`<${Modal} title="Demandes des étudiants" onClose=${onClose}><p class="dm-box"><${Icon} name="heart" size=${18}/><span>Cette demande n’attend plus d’aide : elle est pourvue ou fermée. Merci d’avoir voulu aider !</span></p><//>`;
-  const pied = possible ? html`<button class="btn primary" type="submit" form="dm-aider-form" id="dm-p-envoyer" disabled=${!ok || busy}><${Icon} name="heart" size=${16}/> ${mode === 'modifier' ? 'Enregistrer' : 'Proposer mon aide'}</button>` : null;
+  const pied = possible ? html`<button class="btn primary" type="submit" form="dm-aider-form" id="dm-p-envoyer" disabled=${busy}><${Icon} name="heart" size=${16}/> ${mode === 'modifier' ? 'Enregistrer' : 'Proposer mon aide'}</button>` : null;
   return html`<${Modal} title=${`Aider ${p}`} onClose=${onClose} footer=${pied}>
     <section class="dm-resume" aria-label="Sa demande">
       <div class="dm-head"><${Person} p=${a} onOpen=${ctx.openProfile} size=${36}/><span class="spacer"></span><${TypeTag} type=${d.type}/></div>
@@ -420,12 +426,12 @@ export function ProposerAide({ ctx, id, onClose }) {
       <div class="field"><span class="field-label" id="dm-aide-l">Ce que tu proposes</span>
         <div class="dm-aides" role="radiogroup" aria-labelledby="dm-aide-l">${Object.keys(AIDES).map(k => html`<label key=${k} class=${'dm-aide-choix' + (f.aide === k ? ' on' : '')} title=${AIDES[k].label}>
           <input type="radio" name="dm-aide" id=${'dm-aide-' + k} value=${k} checked=${f.aide === k} onChange=${() => choisir(k)}/><span>${CHOIX[k]}</span></label>`)}</div></div>
-      <details class="dm-chez" open=${chezOuvert}>
+      <details class="dm-chez" open=${chezOuvert || !!errAide('entreprise')}>
         <summary><${Icon} name="briefcase" size=${16}/><span class="grow">${f.entreprise.trim() ? `Chez ${f.entreprise.trim()}` : 'Ton entreprise'}</span><span class="linkish small">Modifier</span></summary>
-        <div class="grid2"><${Field} label="Entreprise"><input id="dm-p-ent" dir="auto" maxlength="120" value=${f.entreprise} onInput=${e => setF({ ...f, entreprise: e.target.value })}/><//>
+        <div class="grid2"><${Field} label="Entreprise" err=${errAide('entreprise')} errId="dm-p-ent-err"><input id="dm-p-ent" dir="auto" maxlength="120" value=${f.entreprise} onInput=${e => setF({ ...f, entreprise: e.target.value })} ...${ariaAide('entreprise', 'dm-p-ent-err')}/><//>
           <${Field} label="Poste ou sujet (facultatif)"><input id="dm-p-poste" dir="auto" maxlength="140" value=${f.poste} onInput=${e => setF({ ...f, poste: e.target.value })} placeholder="Ex. PFE méthodes, stage qualité"/><//></div>
       </details>
-      <${Field} label=${`Ton mot à ${p}`} hint="Propose seulement ce que tu peux vraiment faire. Si ça ne se fait pas, tu pourras te retirer."><textarea id="dm-p-msg" dir="auto" rows="4" maxlength="1000" value=${f.message} onInput=${e => setF({ ...f, message: e.target.value })}></textarea><//>
+      <${Field} label=${`Ton mot à ${p}`} err=${errAide('message')} errId="dm-p-msg-err" hint="Propose seulement ce que tu peux vraiment faire. Si ça ne se fait pas, tu pourras te retirer."><textarea id="dm-p-msg" dir="auto" rows="4" maxlength="1000" value=${f.message} onInput=${e => setF({ ...f, message: e.target.value })} ...${ariaAide('message', 'dm-p-msg-err')}></textarea><//>
     </form>` : html`<p class="dm-box"><${Icon} name="heart" size=${18}/><span>${etat === 'pause' ? `La demande de ${p} est en pause : 60 jours sans nouvelle. Elle revient ici dès qu’elle est relancée.` : 'Cette demande n’attend plus d’aide : elle est pourvue ou fermée. Merci d’avoir voulu aider !'}</span></p>`}
   <//>`;
 }
@@ -535,6 +541,7 @@ injectCSS('demandes', `
 `);
 
 addAR({
+  'Indique l’entreprise où tu peux aider.': 'اذكر الشركة التي يمكنك المساعدة فيها.', 'Écris-lui quelques mots (10 caractères au moins).': 'اكتب له بضع كلمات (10 أحرف على الأقل).',
   'En pause': 'متوقف مؤقتًا', 'Match': 'تطابق', 'Réussie': 'ناجح',   'Demande publiée': 'نُشر الطلب', 'Démarrage confirmé': 'تأكيد البدء', 'Où en est la demande': 'أين وصل الطلب',
   'Recrute': 'يوظّف', 'Encadre': 'يؤطّر', 'Recommande': 'يوصي',
   'Je le/la recrute dans mon équipe': 'أوظّفه في فريقي', 'J’encadre son stage ou son PFE': 'أؤطّر تدريبه أو مشروع نهاية دراسته', 'Je le/la recommande dans mon entreprise': 'أوصي به في شركتي',

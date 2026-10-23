@@ -765,6 +765,44 @@ test('« Je peux aider » en un geste : depuis l’accueil, et depuis le lien d�
   await s.ctx.close();
 });
 
+test('feuilles : le pied « Publier » ne cache jamais le champ suivi ; « Je peux aider » dit ce qui manque ; une feuille ouverte de l’accueil garde son bouton plein', async () => {
+  const s = await ouvrir({ largeur: 360 });
+  await s.page.setViewportSize({ width: 360, height: 640 });
+  // Tab de champ en champ dans « Publier une offre » : chaque champ reste au-dessus du pied
+  await s.comme('Youssef'); await s.aller('offres');
+  await s.page.click('.page-head button.btn.primary'); await s.page.waitForSelector('#of-titre');
+  await s.page.focus('#of-titre');
+  for (let k = 0; k < 6; k++) {
+    await s.page.keyboard.press('Tab'); await s.page.waitForTimeout(80);
+    const r = await s.page.evaluate(() => { const a = document.activeElement, f = document.querySelector('.modal-foot'); if (!a.closest('.modal') || f.contains(a)) return null; return { id: a.id, bas: a.getBoundingClientRect().bottom, pied: f.getBoundingClientRect().top }; });
+    if (!r) break;
+    assert.ok(r.bas <= r.pied + 1, `${r.id} est caché sous le pied (${r.bas} > ${r.pied})`);
+  }
+  await s.fermer();
+  // Nadia n'a pas d'entreprise : le bouton reste actif, dit ce qui manque et y mène
+  await s.comme('Nadia');
+  const id = await s.page.evaluate(() => { const { data } = JSON.parse(localStorage.getItem('ensam-demo-v14')); const douae = data.profiles.find(p => p.full_name === 'Douae Idrissi'); return data.demandes.find(d => d.auteur_id === douae.id && d.status === 'ouverte').id; });
+  await s.aller('aider/' + id); await s.page.waitForSelector('.modal:has(#dm-p-envoyer)');
+  assert.equal(await s.page.isDisabled('#dm-p-envoyer'), false);
+  await s.page.click('#dm-p-envoyer'); await s.page.waitForTimeout(400);
+  assert.match(await s.page.locator('#dm-p-ent-err').innerText(), /Indique l’entreprise/);
+  assert.equal(await s.page.evaluate(() => document.activeElement.id), 'dm-p-ent');
+  assert.equal(await s.page.getByRole('textbox', { name: 'Entreprise', exact: true }).count(), 1, 'l’erreur n’entre pas dans le nom du champ');
+  await s.page.fill('#dm-p-ent', 'Lear Corporation'); await s.page.click('#dm-p-envoyer'); await s.page.waitForTimeout(400);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Proposition envoyée/);
+  // Amine (CV déposé) ouvre « Faire relire mon CV » depuis l'accueil : l'action de la feuille reste un bouton plein
+  await s.comme('Amine');
+  await s.page.evaluate(() => { const k = 'ensam-demo-v14', st = JSON.parse(localStorage.getItem(k)); const me = st.data.profiles.find(p => p.id === st.meId); me.cv_path = me.id + '/cv.pdf'; localStorage.setItem(k, JSON.stringify(st)); });
+  await s.page.reload(); await s.page.waitForSelector('.hello'); await s.aller('accueil');
+  if (await s.page.$('.fete-back')) await s.fermer();
+  const style = sel => s.page.evaluate(x => { const c = getComputedStyle(document.querySelector(x)); return [c.backgroundColor, c.backgroundImage, c.color].join(' | '); }, sel);
+  const carte = await style('.pas .pas-go');
+  await s.page.locator('.coup-de-main button', { hasText: 'Faire relire mon CV' }).first().click(); await s.page.waitForSelector('.modal .btn.primary');
+  assert.equal(await style('.modal .btn.primary'), carte, 'le bouton de la feuille est plein, comme celui de la carte');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('annonce : sur une ligne, seulement pour son public', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Admin'); await s.aller('admin');
