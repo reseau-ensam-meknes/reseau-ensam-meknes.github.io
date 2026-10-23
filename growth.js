@@ -264,8 +264,8 @@ export function MerciDuo({ ctx, m, size = 26, seul = false }) {
   const prenom = de?.full_name?.split(' ')[0];
   return html`<footer class="merci-duo">
     <span class="md-qui"><${Avatar} p=${de} size=${size}/><span class="md-txt">${prenom ? html`<b translate="no" dir="auto">${prenom}</b>` : html`<b>Un étudiant</b>`}${annee ? html`<span class="muted"> · ${annee}</span>` : null}</span></span>
-    ${!seul && a ? html`<${Icon} name="arrow" size=${14}/><span class="sr-only"> → </span>
-    <span class="md-qui"><${Avatar} p=${a} size=${size}/><span class="md-txt"><button type="button" class="linkish" onClick=${() => openProfile(a)}><span translate="no" dir="auto">${a.full_name}</span></button>${ent ? html`<span class="muted"> · <span translate="no" dir="auto">${ent}</span></span>` : null}</span></span>` : null}
+    ${!seul && a ? html`<span class="md-vers"><${Icon} name="arrow" size=${14}/><span class="sr-only"> → </span>
+    <span class="md-qui"><${Avatar} p=${a} size=${size}/><span class="md-txt"><button type="button" class="linkish" onClick=${() => openProfile(a)}><span translate="no" dir="auto">${a.full_name}</span></button>${ent ? html`<span class="muted"> · <span translate="no" dir="auto">${ent}</span></span>` : null}</span></span></span>` : null}
     <span class="muted small md-quand">${m.confirme && !seul ? `Vérifié des deux côtés · ${timeAgo(m.at)}` : timeAgo(m.at)}</span>
   </footer>`;
 }
@@ -273,7 +273,8 @@ injectCSS('merci-duo', `
 .merci-duo { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .45rem; font-size: .88rem; }
 .merci-duo .md-qui { display: inline-flex; align-items: center; gap: .35rem; min-width: 0; }
 .merci-duo .md-txt { min-width: 0; overflow-wrap: anywhere; }
-.merci-duo > svg { color: var(--muted); flex: none; }
+.merci-duo .md-vers { display: inline-flex; align-items: center; gap: .45rem; min-width: 0; }
+.merci-duo .md-vers > svg { color: var(--muted); flex: none; }
 .merci-duo .md-quand { flex-basis: 100%; }
 .mcard-merci { align-self: stretch; padding: .5rem .7rem; }
 .mcard-merci p { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; font-size: .9rem; }

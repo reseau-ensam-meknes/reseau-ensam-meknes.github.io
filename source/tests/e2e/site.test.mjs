@@ -1587,13 +1587,15 @@ test('arabe dans le bon ordre et lisible : aperçus, flèche du merci, saisie, n
   // Un merci : de qui → à qui, la flèche suit le sens de lecture (de droite à gauche)
   await s.aller('accueil');
   const merci = await s.page.evaluate(() => {
-    const f = document.querySelector('.merci-une footer .small'); if (!f) return null;
-    const x = e => e.getBoundingClientRect().left;
+    const f = document.querySelector('.merci-une footer.merci-duo'); if (!f) return null;
+    const r = e => e.getBoundingClientRect(), svg = f.querySelector('.md-vers > svg');
     const q = document.querySelector('.merci-une .merci p');
-    return { de: x(f.querySelector('span[translate]')), fleche: x(f.querySelector('svg')), a: x(f.querySelector('button')), retournee: getComputedStyle(f.querySelector('svg')).transform, italique: q && getComputedStyle(q).fontStyle };
+    const de = r(f.querySelector('.md-qui b')), fl = r(svg), a = r(f.querySelector('.md-vers button'));
+    return { de: de.left, deBas: de.bottom, fleche: fl.left, flecheHaut: fl.top, a: a.left, retournee: getComputedStyle(svg).transform, italique: q && getComputedStyle(q).fontStyle };
   });
   assert.ok(merci, 'un merci sur l’accueil du premier profil');
-  assert.ok(merci.de > merci.fleche && merci.fleche > merci.a, JSON.stringify(merci));
+  // La flèche reste collée à celui qu'on remercie, à sa droite ; l'auteur est à droite de la flèche, ou au-dessus si la ligne passe à la suivante
+  assert.ok(merci.fleche > merci.a && (merci.de > merci.fleche || merci.flecheHaut >= merci.deBas - 2), JSON.stringify(merci));
   assert.equal(merci.retournee, 'matrix(-1, 0, 0, 1, 0, 0)');
   assert.equal(merci.italique, 'normal');
   // Petites étiquettes : au moins 13 px en arabe
