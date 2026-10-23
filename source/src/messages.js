@@ -211,7 +211,8 @@ function Conversation({ ctx, autre }) {
   const debloquer = () => act(async () => { await store.remove('blocages', blocage.id); toast('Débloqué(e).'); });
   const supprimer = m => ctx.confirm('Supprimer ce message pour vous deux ?', () => act(async () => { await store.supprimerMessage(m.id); setSel(null); }), 'Supprimer');
   const copier = async m => { try { await navigator.clipboard.writeText(m.body || ''); toast('Message copié.'); } catch { toast('Copie impossible sur cet appareil.', 'err'); } setSel(null); };
-  const repondre = m => { setCite(m); setSel(null); requestAnimationFrame(() => document.getElementById('chat-txt')?.focus()); };
+  // Le focus se donne pendant le geste lui-même : iOS n'ouvre le clavier qu'à cette condition
+  const repondre = m => { document.getElementById('chat-txt')?.focus(); setCite(m); setSel(null); };
   const reagir = (m, emoji) => { setSel(null); store.reagir(m.id, emoji).catch(e => toast(e.message || String(e), 'err')); };
   // Le message cité : on y va, et il s'éclaire un instant
   const allerA = id => {
