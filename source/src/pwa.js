@@ -86,8 +86,14 @@ export async function activerPush(store) {
   const key = await store.pushKey();
   if (!key) throw new Error('Les notifications ne sont pas encore prêtes sur la plateforme. Réessaie plus tard.');
   const reg = await swReady;
-  const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
-  await store.abonnerPush(sub);
+  // Le navigateur lui-même ne sait pas recevoir de notifications (pas de service de notifications) : « plateforme »
+  let sub;
+  try {
+    if (!reg?.pushManager) throw new Error('pushManager absent');
+    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
+  } catch (e) { throw Object.assign(new Error(SANS_NOTIF), { plateforme: true, cause: e }); }
+  // Pas enregistré par la plateforme (réseau) : l'abonnement du navigateur est retiré, sinon il paraîtrait actif
+  try { await store.abonnerPush(sub); } catch (e) { await sub.unsubscribe().catch(() => {}); throw e; }
   return 'on';
 }
 
@@ -225,12 +231,14 @@ function FeuillePrevenir({ ctx, f, onClose }) {
       ecrireMemo(me.id, { ...lireMemo(me.id), fait: 1 });
       if (r === 'on') toast('Notifications activées sur cet appareil.', 'win');
       onClose();
-    } catch {
+    } catch (e) {
       // Navigateur sans service de notifications (Brave, téléphone sans services Google…) : une phrase calme, et la feuille
       // ne revient plus sur ce navigateur ; le bouton de « Mon profil » reste là pour réessayer
-      etatConnu = 'absent';
-      ecrireMemo(me.id, { ...lireMemo(me.id), fait: 1 });
-      toast(SANS_NOTIF, 'err'); onClose();
+      if (e?.plateforme) {
+        etatConnu = 'absent';
+        ecrireMemo(me.id, { ...lireMemo(me.id), fait: 1 });
+        toast(SANS_NOTIF, 'err'); onClose();
+      } else { setBusy(false); toast(e?.message || 'Pas de réseau pour l’instant. Réessaie dans un instant.', 'err'); } // réseau : la feuille reste, on peut réessayer
     }
   };
   const raison = f.raison === 'question' && me.role !== 'etudiant' ? 'questionMembre' : f.raison;

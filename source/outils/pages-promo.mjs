@@ -4,7 +4,8 @@
 // tout de suite vers l'application avec ?promo=AAAA (et &lang=ar). Les promos sont celles qu'accepte le lien
 // d'invitation (regles-entree.js) : la sortie ne dépend pas de la date, la CI compare dist/ et la racine.
 // Pas de meta refresh : certains robots le suivent et montreraient l'aperçu de la page d'accueil.
-// L'image montre l'entrée de l'école : la description dit donc, dès l'aperçu, que le Réseau est indépendant de l'école.
+// L'image montre l'entrée de l'école : la description commence donc par dire que le Réseau est indépendant de l'école
+// (WhatsApp n'en montre que le début).
 import fs from 'node:fs'; import path from 'node:path';
 import { PROMO_MIN as PREMIERE, PROMO_MAX as DERNIERE } from '../src/regles-entree.js';
 const dist = path.resolve(process.argv[2] || 'dist');
@@ -15,10 +16,10 @@ if (!site) throw new Error('pages-promo : og:image introuvable dans index.html')
 const esc = s => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 const TXT = {
   fr: { lang: 'fr', dir: 'ltr', locale: 'fr_FR', titre: a => `Promo ${a} · tes camarades sont sur le Réseau`,
-    desc: 'Stages, PFE, emplois et conseils entre lauréats et étudiants de l’ENSAM Meknès. Initiative de lauréats, indépendante de l’administration de l’école. Inscription gratuite, ta promo est déjà indiquée.',
+    desc: 'Initiative de lauréats, indépendante de l’école : stages, PFE, emplois et conseils entre lauréats et étudiants de l’ENSAM Meknès. Inscription gratuite, ta promo est déjà indiquée.',
     site: 'Réseau ENSAM Meknès', alt: 'Dessin de l’entrée de l’ENSAM Meknès', ouvrir: 'Ouvrir le Réseau ENSAM Meknès' },
   ar: { lang: 'ar', dir: 'rtl', locale: 'ar_MA', titre: a => `دفعة ${a} · زملاؤك على الشبكة`,
-    desc: 'تداريب، مشاريع نهاية الدراسة، وظائف ونصائح بين خريجي وطلبة ENSAM مكناس. مبادرة من الخريجين، مستقلة عن إدارة المدرسة. التسجيل مجاني، ودفعتك محدَّدة مسبقًا.',
+    desc: 'مبادرة من الخريجين، مستقلة عن إدارة المدرسة: تداريب، مشاريع نهاية الدراسة، وظائف ونصائح بين خريجي وطلبة ENSAM مكناس. التسجيل مجاني، ودفعتك محدَّدة مسبقًا.',
     site: 'شبكة ENSAM مكناس', alt: 'رسم لمدخل ENSAM مكناس', ouvrir: 'فتح شبكة ENSAM مكناس' },
 };
 function html(a, l) {

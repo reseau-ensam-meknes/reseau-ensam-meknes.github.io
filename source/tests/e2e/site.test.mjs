@@ -788,6 +788,26 @@ test('profil : deux choix « Qui voit quoi » coup sur coup, le premier lent : �
   await s.page.waitForFunction(() => /^Enregistré/.test(document.getElementById('vis-etat')?.textContent.trim() || ''), null, { timeout: 4000 });
   assert.equal(await s.page.locator('#vis-etat').innerText(), 'Enregistré : les lauréats et tes contacts le voient.');
   await s.page.evaluate(() => { delete window.__demo.update; });
+  // Un lauréat peut aussi publier une demande (emploi) : même phrase pour le CV
+  await s.page.click('#vis-cv-contacts');
+  await s.page.waitForFunction(() => /^Enregistré/.test(document.getElementById('vis-etat')?.textContent.trim() || ''), null, { timeout: 4000 });
+  assert.equal(await s.page.locator('#vis-etat').innerText(), 'Enregistré : tes contacts le voient ; les lauréats aussi quand tu as une demande ouverte.');
+  // Un envoi qui échoue après un « Enregistrer » réussi ne dit plus « Pas encore enregistré »
+  await s.page.evaluate(() => {
+    const d = window.__demo, vrai = d.update.bind(d); let premier = true;
+    d.update = (t, id, patch) => {
+      if (patch.visibilite && Object.keys(patch).length === 1 && premier) { premier = false; return new Promise((_, ko) => setTimeout(() => ko(new Error('Pas de réseau pour l’instant. Réessaie dans un instant.')), 1500)); }
+      return vrai(t, id, patch);
+    };
+  });
+  await s.page.click('#vis-lieu-tous');
+  await s.page.fill('#pf-ville', 'Rabat');
+  await s.page.click('.pf-collant .btn.primary');
+  await s.page.waitForTimeout(2500);
+  assert.doesNotMatch(await s.page.locator('.cf-vis').innerText(), /Pas encore enregistré/);
+  assert.equal(await s.page.evaluate(() => window.__demo.me.visibilite.lieu), 'tous');
+  assert.equal(await s.page.locator('.pf-collant').count(), 0);
+  await s.page.evaluate(() => { delete window.__demo.update; });
   // Le CV d'un étudiant reste visible des lauréats pendant une demande ouverte
   await s.comme('Salma'); await s.aller('profil'); await s.page.waitForTimeout(300);
   await s.page.click('#vis-cv-contacts');

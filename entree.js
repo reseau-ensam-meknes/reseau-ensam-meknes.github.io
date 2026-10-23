@@ -39,6 +39,7 @@ addAR({
   'Pas encore de compte avec cet email : crée-le ici en une minute.': 'لا يوجد حساب بهذا البريد بعد: أنشئه هنا في دقيقة.',
   'J’ai déjà un compte': 'لدي حساب', 'Créer un compte': 'إنشاء حساب', 'J’ai un mot de passe': 'لدي كلمة مرور', 'Recevoir un code à la place': 'استلام رمز بدلًا من ذلك',
   'Initiative de lauréats, indépendante de l’administration de l’école': 'مبادرة من الخريجين، مستقلة عن إدارة المدرسة', 'Contact': 'التواصل',
+  'Pas de connexion pour l’instant': 'لا يوجد اتصال حاليًا', 'Vérifie ton réseau, puis réessaie.': 'تحقق من شبكتك، ثم أعد المحاولة.', 'Réessayer': 'أعد المحاولة',
   'Mot de passe changé.': 'تم تغيير كلمة المرور.', 'Inscris-toi avec ton email de l’école.': 'سجّل باستعمال بريد المدرسة.',
   'Connexion trop lente : réessaie dans un instant.': 'الاتصال بطيء جدًا: أعد المحاولة بعد لحظة.',
   'Pas de réseau pour l’instant. Réessaie dans un instant.': 'لا توجد شبكة حاليًا. أعد المحاولة بعد لحظة.',
@@ -149,12 +150,12 @@ const valide = promoValide;
 const lire = k => { try { return localStorage.getItem(k); } catch { return null; } };
 const ecrire = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* navigation privée */ } };
 
-export function lireInvitation(membre = false) {
+export function lireInvitation() {
   try {
     const u = new URL(location.href);
     if (!u.searchParams.has('promo')) return null;
     const n = Number(u.searchParams.get('promo'));
-    if (valide(n) && !membre) localStorage.setItem(CLE, String(n));
+    if (valide(n)) localStorage.setItem(CLE, String(n));
     const ar = u.searchParams.get('lang') === 'ar' && !localStorage.getItem('ensam-lang');
     u.searchParams.delete('promo'); u.searchParams.delete('lang');
     history.replaceState(history.state, '', u.pathname + u.search + u.hash);
@@ -246,12 +247,13 @@ export function AuthScreen({ store }) {
     });
     return () => { vivant = false; };
   }, []);
-  const [mode, setMode] = useState(recovery ? 'nouveau' : attente ? 'code' : saisie?.mode === 'inscription' || saisie?.mode === 'connexion' ? saisie.mode : lien?.k === 'aider' ? 'connexion' : invite || !dejaMembre() ? 'inscription' : 'connexion');
+  const [mode, setMode] = useState(recovery ? 'nouveau' : attente ? 'code' : ['inscription', 'connexion', 'motdepasse'].includes(saisie?.mode) ? saisie.mode : lien?.k === 'aider' ? 'connexion' : invite || !dejaMembre() ? 'inscription' : 'connexion');
   const [origine, setOrigine] = useState(attente ? (attente.creer ? 'inscription' : 'connexion') : 'inscription');
   const [role, setRoleEtat] = useState(() => roleRetenu() || (invite ? roleDePromo(invite) : ''));
   const [email, setEmail] = useState(attente?.email || saisie?.email || ''); const [pw, setPw] = useState('');
   const [ok, setOk] = useState(!!saisie?.ok); const [mails, setMails] = useState(attente ? attente.mails !== false : saisie ? saisie.mails !== false : true);
   garderSaisie = () => sessionStorage.setItem(SAISIE, JSON.stringify({ email, mode, ok, mails, t: Date.now() }));
+  useEffect(() => { if (mode === 'motdepasse' && saisie?.mode === 'motdepasse') focus('au-pw'); }, []);
   const [code, setCode] = useState(''); const essai = useRef('');
   const [envoyeA, setEnvoyeA] = useState(attente?.t || 0);
   const [msg, setMsg] = useState(null); const [roleMsg, setRoleMsg] = useState(false);
@@ -274,7 +276,7 @@ export function AuthScreen({ store }) {
   const envoyer = (creer, renvoi = false) => run(async s => {
     const e = email.trim();
     if (creer && role === 'etudiant' && s.reglages?.email_ecole_obligatoire === true && s.domainesEcole().length && !estEmailEcole(e, s.domainesEcole())) throw new Error('Inscris-toi avec ton email de l’école.');
-    const attendu = t => { noterAttente({ email: e, t, creer, mails }); setEnvoyeA(t); setOrigine(creer ? 'inscription' : 'connexion'); setMode('code'); focus('au-code'); };
+    const attendu = t => { noterAttente({ email: e, t, creer, mails, langue: getLang() }); setEnvoyeA(t); setOrigine(creer ? 'inscription' : 'connexion'); setMode('code'); focus('au-code'); };
     if (creer) noterAccord(e);
     if (creer && offreFermeePour(infos, role)) oublierLien();
     try { await s.envoyerCode(e, { creer, meta: creer ? meta() : null }); } catch (err) {
@@ -377,17 +379,37 @@ const precharger = fichiers => {
 };
 
 const repond = async f => { try { return (await fetch(f, { cache: 'no-store' })).ok; } catch { return false; } };
-const SAISIE = 'ensam-entree-saisie';
+const SAISIE = 'ensam-entree-saisie', RECHARGES = 'ensam-rechargements';
 let garderSaisie = () => {};
-function recharger() { try { garderSaisie(); } catch { /* stockage indisponible */ } location.reload(); return new Promise(() => {}); }
+function recharger(garder = true) {
+  try {
+    const r = JSON.parse(sessionStorage.getItem(RECHARGES) || 'null');
+    const n = r && Date.now() - r.t < 120e3 ? r.n : 0;
+    if (n >= 2) return false;
+    sessionStorage.setItem(RECHARGES, JSON.stringify({ n: n + 1, t: n ? r.t : Date.now() }));
+    if (garder) garderSaisie();
+  } catch { return false; /* stockage indisponible : pas de rechargement automatique */ }
+  location.reload(); return new Promise(() => {});
+}
 function lireSaisie() {
-  try { const x = JSON.parse(sessionStorage.getItem(SAISIE) || 'null'); sessionStorage.removeItem(SAISIE); return x && Date.now() - x.t < 600e3 ? x : null; } catch { return null; }
+  try {
+    const x = JSON.parse(sessionStorage.getItem(SAISIE) || 'null'); sessionStorage.removeItem(SAISIE);
+    return x && Date.now() - x.t < 600e3 ? { ...x, ok: !!x.ok && Date.now() - x.t < 60e3 } : null;
+  } catch { return null; }
+}
+function sansReprise() {
+  cacherEntree(true);
+  delete document.documentElement.dataset.entree;
+  const app = document.getElementById('app'); if (!app) return;
+  app.innerHTML = '';
+  render(html`<div class="fatal" role="alert"><${BrandLogo} size=${56}/><h1>Pas de connexion pour l’instant</h1><p>Vérifie ton réseau, puis réessaie.</p><p><button class="btn primary" onClick=${() => location.reload()}>Réessayer</button></p></div>`, app);
+  addEventListener('online', () => location.reload(), { once: true });
 }
 
 let magasin = null, magasinEchec = false;
 export function attendreMagasin() {
   if (!magasin) {
-    if (magasinEchec) return repond('./store.js').then(ok => (ok ? recharger() : Promise.reject(new Error(PAS_DE_RESEAU))));
+    if (magasinEchec) return repond('./store.js').then(ok => (ok && recharger()) || Promise.reject(new Error(PAS_DE_RESEAU)));
     precharger(window.ENSAM_MAGASIN);
     magasin = import('./store.js').then(m => m.createStore(), e => { magasinEchec = true; throw e; })
       .then(s => { monter(s); chargerApp(); return s; }, e => { magasin = null; throw e; });
@@ -396,7 +418,7 @@ export function attendreMagasin() {
 }
 export const magasinEntree = () => magasin;
 
-let appLancee = false, appEchec = false, relance = false;
+let appLancee = false, appEchec = false, relance = false, connecte = false;
 function chargerApp() {
   if (appLancee) return; appLancee = true;
   if (getLang() === 'ar') chargerAR().catch(() => {});
@@ -404,15 +426,15 @@ function chargerApp() {
   import('./app.js').catch(e => {
     if (/^(SyntaxError|TypeError|ReferenceError)$/.test(e?.name) && navigator.serviceWorker?.controller) window.ensamReprise?.();
     appEchec = true;
-    if (!document.documentElement.dataset.entree) relancerApp();
+    if (!document.documentElement.dataset.entree || connecte) relancerApp();
   });
 }
 function relancerApp() {
   if (relance) return; relance = true;
-  const essai = async (n = 0) => { if (await repond('./app.js')) recharger(); else setTimeout(() => essai(n + 1), Math.min(30e3, 3e3 * 2 ** n)); };
+  const essai = async (n = 0) => { if (!(await repond('./app.js'))) setTimeout(() => essai(n + 1), Math.min(30e3, 3e3 * 2 ** n)); else if (!recharger(false)) sansReprise(); };
   essai();
 }
-const apresConnexion = () => { if (appEchec) relancerApp(); };
+const apresConnexion = () => { connecte = true; if (appEchec) relancerApp(); };
 
 let el = null;
 function monter(store) {
@@ -436,8 +458,8 @@ if (!window.ENSAM_ENTREE) {
   const enLigne = !!(cfg.supabaseUrl && cfg.supabaseAnonKey);
   let jeton = false;
   try { jeton = enLigne && !!lire(`sb-${new URL(cfg.supabaseUrl).hostname.split('.')[0]}-auth-token`); } catch { /* adresse invalide */ }
-  if (lireInvitation(jeton) === 'ar') setLang('ar', { attendre: false, garder: false }).catch(() => {});
-  if (!jeton) retenirLien(location.hash);
+  if (lireInvitation() === 'ar' || (!lire('ensam-lang') && lireAttente()?.langue === 'ar')) setLang('ar', { attendre: false, garder: false }).catch(() => {});
+  retenirLien(location.hash);
   const d = document.documentElement;
   if (!enLigne || jeton || PUBLIQUE.test(location.hash)) {
     delete d.dataset.entree;

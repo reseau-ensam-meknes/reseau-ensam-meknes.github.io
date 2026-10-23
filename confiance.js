@@ -60,18 +60,18 @@ const remplis = { travail: p => p.entreprise || p.poste, lieu: p => p.ville, lin
 export const groupesMasques = (store, p) => Object.keys(VIS_LABELS).filter(g => remplis[g](p) && !store.voitChamp(p, g));
 
 // etat : { g, etat } — la ligne touchée dit si son choix est enregistré (« Mon profil » enregistre dès le choix)
-// Dit exactement ce que la base laisse voir (voit_champ) : « Les lauréats » ouvre aussi à tes contacts, et le CV
-// d'un étudiant reste visible des lauréats tant qu'une de ses demandes est ouverte
+// Dit exactement ce que la base laisse voir (voit_champ) : « Les lauréats » ouvre aussi à tes contacts, et un CV
+// reste visible des lauréats tant qu'une demande de son auteur est ouverte (étudiant, ou lauréat qui cherche un emploi)
 const VIS_OK = { tous: 'Enregistré : tous les membres le voient.', laureats: 'Enregistré : les lauréats et tes contacts le voient.', contacts: 'Enregistré : seuls tes contacts le voient.' };
 const VIS_OK_CV = 'Enregistré : tes contacts le voient ; les lauréats aussi quand tu as une demande ouverte.';
-const texteOk = (role, g, v) => role === 'etudiant' && g === 'cv' && v === 'contacts' ? VIS_OK_CV : VIS_OK[v];
+const texteOk = (g, v) => g === 'cv' && v === 'contacts' ? VIS_OK_CV : VIS_OK[v];
 export function VisibiliteFields({ role, value = {}, onChange, etat }) {
   const groupes = visGroupes(role);
   if (!groupes.length) return null;
   const ligneEtat = g => {
     if (!etat || etat.g !== g) return null;
     const v = value[g] || VIS_DEFAUT[g];
-    return html`<span class=${'cf-vis-etat small' + (etat.etat === 'ok' ? ' ok' : etat.etat === 'erreur' ? ' err' : '')} role="status" id="vis-etat">${etat.etat === 'ok' ? html`<${Icon} name="check" size=${14}/> <span>${texteOk(role, g, v)}</span>`
+    return html`<span class=${'cf-vis-etat small' + (etat.etat === 'ok' ? ' ok' : etat.etat === 'erreur' ? ' err' : '')} role="status" id="vis-etat">${etat.etat === 'ok' ? html`<${Icon} name="check" size=${14}/> <span>${texteOk(g, v)}</span>`
       : etat.etat === 'erreur' ? html`<span>Pas encore enregistré : touche « Enregistrer ».</span>` : html`<span>Enregistrement…</span>`}</span>`;
   };
   return html`<fieldset class="cf-vis">

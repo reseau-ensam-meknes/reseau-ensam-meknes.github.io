@@ -375,24 +375,32 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
   // Les envois partent strictement l'un après l'autre, chacun avec la grille voulue au moment où il part : le dernier
   // enregistré est toujours le dernier choix. Sans réponse après 20 s, la ligne le dit (l'envoi continue, et
   // « Enregistrer » reste possible) ; « Enregistré » ne s'affiche que quand plus rien n'attend.
+  // Un « Enregistrer » réussi ouvre une nouvelle génération : ce que disent ensuite les envois d'avant ne compte plus.
   const [visOk, setVisOk] = useState(null);
   const fileVis = useRef(Promise.resolve());
   const enVol = useRef(0);
   const voulu = useRef(vis);
-  const choisirVis = (v, g) => {
-    setVis(v); voulu.current = v;
-    if (onboarding || !initial || !v3) return;
+  const gen = useRef(0), derniereG = useRef(null);
+  const envoyerVis = g => {
+    const mien = gen.current; derniereG.current = g;
     setVisOk({ g, etat: 'envoi' }); enVol.current++;
-    const lent = setTimeout(() => { touches.current.add('visibilite'); setSale(n => n + 1); setVisOk({ g, etat: 'erreur' }); toast('Pas de réseau pour l’instant. Réessaie dans un instant.', 'err'); }, DELAI_VIS);
+    const lent = setTimeout(() => { if (gen.current !== mien) return; touches.current.add('visibilite'); setSale(n => n + 1); setVisOk({ g, etat: 'erreur' }); toast('Pas de réseau pour l’instant. Réessaie dans un instant.', 'err'); }, DELAI_VIS);
     fileVis.current = fileVis.current
       .then(() => store.update('profiles', initial.id, { visibilite: visPropre(voulu.current) }))
       .then(() => null, e => e)
       .then(e => {
         clearTimeout(lent); enVol.current--;
-        if (e) { touches.current.add('visibilite'); setVisOk({ g, etat: 'erreur' }); toast(e.message || String(e), 'err'); }
-        else if (!enVol.current) { touches.current.delete('visibilite'); setVisOk(x => ({ g: x?.g ?? g, etat: 'ok' })); }
+        if (gen.current === mien) {
+          if (e) { touches.current.add('visibilite'); setVisOk({ g, etat: 'erreur' }); toast(e.message || String(e), 'err'); }
+          else if (!enVol.current) { touches.current.delete('visibilite'); setVisOk(x => ({ g: x?.g ?? g, etat: 'ok' })); }
+        }
         setSale(n => n + 1);
       });
+  };
+  const choisirVis = (v, g) => {
+    setVis(v); voulu.current = v;
+    if (onboarding || !initial || !v3) return;
+    envoyerVis(g);
   };
   // Changé depuis un autre appareil : la grille suit ce qui est enregistré, sauf pendant un envoi ou un choix pas encore enregistré
   const visServeur = JSON.stringify(initial?.visibilite || {});
@@ -455,6 +463,8 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
       // L'accord vient de la case cochée sur cet appareil ; sinon la fenêtre « Tes données » le demande (emails compris)
       const ici = accordIci(store.session?.user?.email);
       if (ici) { if (meta.consent_at) row.consent_at = meta.consent_at; row.emails_hebdo = meta.emails_hebdo !== false; }
+      // Un « non » au résumé de la semaine est toujours gardé (il ne peut gêner personne)
+      else if (meta.emails_hebdo === false) row.emails_hebdo = false;
       row.langue = getLang();
     }
     // Colonne ajoutée par la mise à jour Phase 1 : envoyée seulement si la base la connaît déjà ou si elle est remplie
@@ -473,13 +483,11 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
         if (cvFichier) await store.deposerCV(cvFichier).catch(() => toast('Ton CV n’a pas pu être gardé : ajoute-le depuis « Mon profil ».', 'err'));
         if (photoCV) await store.deposerPhoto(photoCV).catch(() => {});
       }
-      else {
-        await store.update('profiles', initial.id, row);
-        // Un envoi « Qui voit quoi » encore en route ne doit pas arriver en dernier : la grille voulue repart derrière lui
-        if (enVol.current) fileVis.current = fileVis.current.then(() => store.update('profiles', initial.id, { visibilite: visPropre(voulu.current) })).catch(() => {});
-      }
+      else { await store.update('profiles', initial.id, row); gen.current++; }
       if (coordChange) await store.enregistrerCoordonnees(champs);
       touches.current.clear(); setSale(n => n + 1); setVisOk(null);
+      // Un envoi « Qui voit quoi » encore en route ne doit pas arriver en dernier : la grille voulue repart derrière lui
+      if (!onboarding && enVol.current) envoyerVis(derniereG.current);
       // À l'inscription, c'est la feuille d'accueil qui souhaite la bienvenue
       if (!onboarding) toast('Profil enregistré.');
       onDone?.();

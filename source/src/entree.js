@@ -45,6 +45,7 @@ addAR({
   'Pas encore de compte avec cet email : crée-le ici en une minute.': 'لا يوجد حساب بهذا البريد بعد: أنشئه هنا في دقيقة.',
   'J’ai déjà un compte': 'لدي حساب', 'Créer un compte': 'إنشاء حساب', 'J’ai un mot de passe': 'لدي كلمة مرور', 'Recevoir un code à la place': 'استلام رمز بدلًا من ذلك',
   'Initiative de lauréats, indépendante de l’administration de l’école': 'مبادرة من الخريجين، مستقلة عن إدارة المدرسة', 'Contact': 'التواصل',
+  'Pas de connexion pour l’instant': 'لا يوجد اتصال حاليًا', 'Vérifie ton réseau, puis réessaie.': 'تحقق من شبكتك، ثم أعد المحاولة.', 'Réessayer': 'أعد المحاولة',
   'Mot de passe changé.': 'تم تغيير كلمة المرور.', 'Inscris-toi avec ton email de l’école.': 'سجّل باستعمال بريد المدرسة.',
   'Connexion trop lente : réessaie dans un instant.': 'الاتصال بطيء جدًا: أعد المحاولة بعد لحظة.',
   // Réponses de la base pendant l'inscription (store.js, frError)
@@ -177,12 +178,12 @@ const ecrire = (k, v) => { try { if (v == null) localStorage.removeItem(k); else
 
 // Au chargement : lit ?promo= (et &lang=ar) dans l'adresse, garde la promo (sauf pour un membre connecté),
 // puis les enlève de la barre d'adresse. Renvoie 'ar' pour un lien arabe, sauf si ce navigateur a déjà choisi sa langue.
-export function lireInvitation(membre = false) {
+export function lireInvitation() {
   try {
     const u = new URL(location.href);
     if (!u.searchParams.has('promo')) return null;
     const n = Number(u.searchParams.get('promo'));
-    if (valide(n) && !membre) localStorage.setItem(CLE, String(n));
+    if (valide(n)) localStorage.setItem(CLE, String(n));
     const ar = u.searchParams.get('lang') === 'ar' && !localStorage.getItem('ensam-lang');
     u.searchParams.delete('promo'); u.searchParams.delete('lang');
     history.replaceState(history.state, '', u.pathname + u.search + u.hash);
@@ -299,12 +300,13 @@ export function AuthScreen({ store }) {
     });
     return () => { vivant = false; };
   }, []);
-  const [mode, setMode] = useState(recovery ? 'nouveau' : attente ? 'code' : saisie?.mode === 'inscription' || saisie?.mode === 'connexion' ? saisie.mode : lien?.k === 'aider' ? 'connexion' : invite || !dejaMembre() ? 'inscription' : 'connexion');
+  const [mode, setMode] = useState(recovery ? 'nouveau' : attente ? 'code' : ['inscription', 'connexion', 'motdepasse'].includes(saisie?.mode) ? saisie.mode : lien?.k === 'aider' ? 'connexion' : invite || !dejaMembre() ? 'inscription' : 'connexion');
   const [origine, setOrigine] = useState(attente ? (attente.creer ? 'inscription' : 'connexion') : 'inscription');
   const [role, setRoleEtat] = useState(() => roleRetenu() || (invite ? roleDePromo(invite) : ''));
   const [email, setEmail] = useState(attente?.email || saisie?.email || ''); const [pw, setPw] = useState('');
   const [ok, setOk] = useState(!!saisie?.ok); const [mails, setMails] = useState(attente ? attente.mails !== false : saisie ? saisie.mails !== false : true);
   garderSaisie = () => sessionStorage.setItem(SAISIE, JSON.stringify({ email, mode, ok, mails, t: Date.now() }));
+  useEffect(() => { if (mode === 'motdepasse' && saisie?.mode === 'motdepasse') focus('au-pw'); }, []);
   const [code, setCode] = useState(''); const essai = useRef('');
   const [envoyeA, setEnvoyeA] = useState(attente?.t || 0);
   const [msg, setMsg] = useState(null); const [roleMsg, setRoleMsg] = useState(false);
@@ -329,7 +331,7 @@ export function AuthScreen({ store }) {
   const envoyer = (creer, renvoi = false) => run(async s => {
     const e = email.trim();
     if (creer && role === 'etudiant' && s.reglages?.email_ecole_obligatoire === true && s.domainesEcole().length && !estEmailEcole(e, s.domainesEcole())) throw new Error('Inscris-toi avec ton email de l’école.');
-    const attendu = t => { noterAttente({ email: e, t, creer, mails }); setEnvoyeA(t); setOrigine(creer ? 'inscription' : 'connexion'); setMode('code'); focus('au-code'); };
+    const attendu = t => { noterAttente({ email: e, t, creer, mails, langue: getLang() }); setEnvoyeA(t); setOrigine(creer ? 'inscription' : 'connexion'); setMode('code'); focus('au-code'); };
     if (creer) noterAccord(e);
     // Une offre entre lauréats ne s'ouvrira pas pour un étudiant : rien à promettre après l'inscription
     if (creer && offreFermeePour(infos, role)) oublierLien();
@@ -440,21 +442,44 @@ const precharger = fichiers => {
 };
 
 // Un module qui n'a pas pu se charger reste en échec dans cette page : le navigateur ne le redemande jamais.
-// On recharge donc la page, mais seulement quand le réseau répond (sinon le navigateur afficherait sa propre erreur) ;
-// ce qui a été tapé sur la page d'entrée est gardé le temps du rechargement.
+// On recharge donc la page, mais seulement quand le réseau répond (sinon le navigateur afficherait sa propre erreur),
+// et deux fois au plus en deux minutes : une panne qui dure ne fait jamais tourner la page en boucle.
+// garder : ce qui a été tapé sur la page d'entrée revient après le rechargement (jamais le mot de passe).
 const repond = async f => { try { return (await fetch(f, { cache: 'no-store' })).ok; } catch { return false; } };
-const SAISIE = 'ensam-entree-saisie';
+const SAISIE = 'ensam-entree-saisie', RECHARGES = 'ensam-rechargements';
 let garderSaisie = () => {};
-function recharger() { try { garderSaisie(); } catch { /* stockage indisponible */ } location.reload(); return new Promise(() => {}); }
+function recharger(garder = true) {
+  try {
+    const r = JSON.parse(sessionStorage.getItem(RECHARGES) || 'null');
+    const n = r && Date.now() - r.t < 120e3 ? r.n : 0;
+    if (n >= 2) return false;
+    sessionStorage.setItem(RECHARGES, JSON.stringify({ n: n + 1, t: n ? r.t : Date.now() }));
+    if (garder) garderSaisie();
+  } catch { return false; /* stockage indisponible : pas de rechargement automatique */ }
+  location.reload(); return new Promise(() => {});
+}
+// L'accord (case cochée) ne revient que juste après le rechargement qui l'a interrompu
 function lireSaisie() {
-  try { const x = JSON.parse(sessionStorage.getItem(SAISIE) || 'null'); sessionStorage.removeItem(SAISIE); return x && Date.now() - x.t < 600e3 ? x : null; } catch { return null; }
+  try {
+    const x = JSON.parse(sessionStorage.getItem(SAISIE) || 'null'); sessionStorage.removeItem(SAISIE);
+    return x && Date.now() - x.t < 600e3 ? { ...x, ok: !!x.ok && Date.now() - x.t < 60e3 } : null;
+  } catch { return null; }
+}
+// Plus de rechargement automatique : un écran calme, et la page se recharge au retour du réseau ou d'un toucher
+function sansReprise() {
+  cacherEntree(true);
+  delete document.documentElement.dataset.entree;
+  const app = document.getElementById('app'); if (!app) return;
+  app.innerHTML = '';
+  render(html`<div class="fatal" role="alert"><${BrandLogo} size=${56}/><h1>Pas de connexion pour l’instant</h1><p>Vérifie ton réseau, puis réessaie.</p><p><button class="btn primary" onClick=${() => location.reload()}>Réessayer</button></p></div>`, app);
+  addEventListener('online', () => location.reload(), { once: true });
 }
 
 let magasin = null, magasinEchec = false;
 // Le magasin, une seule fois ; s'il n'a pas pu se charger (réseau), le prochain geste recharge la page dès que le réseau répond
 export function attendreMagasin() {
   if (!magasin) {
-    if (magasinEchec) return repond('./store.js').then(ok => (ok ? recharger() : Promise.reject(new Error(PAS_DE_RESEAU))));
+    if (magasinEchec) return repond('./store.js').then(ok => (ok && recharger()) || Promise.reject(new Error(PAS_DE_RESEAU)));
     precharger(window.ENSAM_MAGASIN);
     magasin = import('./store.js').then(m => m.createStore(), e => { magasinEchec = true; throw e; })
       .then(s => { monter(s); chargerApp(); return s; }, e => { magasin = null; throw e; });
@@ -463,7 +488,7 @@ export function attendreMagasin() {
 }
 export const magasinEntree = () => magasin;
 
-let appLancee = false, appEchec = false, relance = false;
+let appLancee = false, appEchec = false, relance = false, connecte = false;
 function chargerApp() {
   if (appLancee) return; appLancee = true;
   if (getLang() === 'ar') chargerAR().catch(() => {});
@@ -472,18 +497,18 @@ function chargerApp() {
     // Un service worker garde peut-être une version qui ne colle plus : on le remet à neuf (une fois par visite)
     if (/^(SyntaxError|TypeError|ReferenceError)$/.test(e?.name) && navigator.serviceWorker?.controller) window.ensamReprise?.();
     // Sans service worker : un membre connecté (ou la démo) attend le réseau, puis la page se recharge ;
-    // un visiteur garde la page d'entrée, et la page se recharge juste après sa connexion
+    // un visiteur garde la page d'entrée, et la page se recharge dès qu'il est connecté (avant ou après cet échec)
     appEchec = true;
-    if (!document.documentElement.dataset.entree) relancerApp();
+    if (!document.documentElement.dataset.entree || connecte) relancerApp();
   });
 }
 // L'application n'a pas pu se charger : la page se recharge dès que le réseau répond (la session, elle, est gardée)
 function relancerApp() {
   if (relance) return; relance = true;
-  const essai = async (n = 0) => { if (await repond('./app.js')) recharger(); else setTimeout(() => essai(n + 1), Math.min(30e3, 3e3 * 2 ** n)); };
+  const essai = async (n = 0) => { if (!(await repond('./app.js'))) setTimeout(() => essai(n + 1), Math.min(30e3, 3e3 * 2 ** n)); else if (!recharger(false)) sansReprise(); };
   essai();
 }
-const apresConnexion = () => { if (appEchec) relancerApp(); };
+const apresConnexion = () => { connecte = true; if (appEchec) relancerApp(); };
 
 // L'entrée vit dans son propre conteneur, à côté de #app ; l'application la reprend telle quelle
 let el = null;
@@ -510,10 +535,11 @@ if (!window.ENSAM_ENTREE) {
   let jeton = false;
   try { jeton = enLigne && !!lire(`sb-${new URL(cfg.supabaseUrl).hostname.split('.')[0]}-auth-token`); } catch { /* adresse invalide */ }
   // Lien arabe d'une promo (promo/AAAA/ar/) : la page s'ouvre en arabe pour cette visite (pas un choix gardé),
-  // le dictionnaire suit en fond. Un membre connecté qui ouvre le lien de sa promo n'est pas pris pour un invité.
-  if (lireInvitation(jeton) === 'ar') setLang('ar', { attendre: false, garder: false }).catch(() => {});
-  // Le lien partagé n'est gardé que pour un visiteur (un membre connecté l'ouvre directement)
-  if (!jeton) retenirLien(location.hash);
+  // le dictionnaire suit en fond. Même chose quand on revient entrer un code demandé en arabe (autre onglet, lien de l'email).
+  // La promo et le lien partagé sont gardés jusqu'à la fin de l'inscription : l'application les oublie dès
+  // qu'un membre a son profil (un compte sans « Dernière étape » n'est pas encore un membre).
+  if (lireInvitation() === 'ar' || (!lire('ensam-lang') && lireAttente()?.langue === 'ar')) setLang('ar', { attendre: false, garder: false }).catch(() => {});
+  retenirLien(location.hash);
   const d = document.documentElement;
   if (!enLigne || jeton || PUBLIQUE.test(location.hash)) {
     // Démo, membre déjà connecté, ou page publique : l'application tout de suite (le logo patiente)

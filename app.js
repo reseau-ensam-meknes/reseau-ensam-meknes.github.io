@@ -839,9 +839,9 @@ function MyProfile({ ctx }) {
 function Onboarding({ store, relang }) {
   const act = async fn => { try { await fn(); } catch (e) { toast(texteErreur(e), 'err'); } };
   const ctx = { store, act };
-  // Le rôle choisi sur la page d'entrée (il suit le compte d'un appareil à l'autre), sinon celui du lien de la promo
+  // Le dernier rôle touché sur cet appareil, sinon celui donné avec la demande de code faite ici, sinon celui du lien de la promo
   const meta = store.session?.user?.user_metadata || {};
-  const preset = presetInscription({ choisi: (accordIci(store.session?.user?.email) && meta.role_choisi) || roleRetenu(), invite: promoInvitee(), saison: seasonOf() });
+  const preset = presetInscription({ choisi: roleRetenu() || (accordIci(store.session?.user?.email) && meta.role_choisi), invite: promoInvitee(), saison: seasonOf() });
   const lien = lienRetenu();
   // La langue se change dans l'en-tête (un bouton fixe recouvrirait le titre sur téléphone)
   return html`<main class="auth"><div class="auth-card wide onb">
@@ -862,8 +862,9 @@ function Onboarding({ store, relang }) {
     const [store] = await Promise.all([magasinEntree() || createStore(), getLang() === 'ar' ? chargerAR().catch(() => { if (!document.getElementById('entree')) return setLang('fr'); }) : null]);
     brancherPhotos(path => store.photo(path));
     brancherSignal(m => toast(m, 'err'));
-    if (store.session) { marquerMembre(); cacherEntree(true); }
-    try { sessionStorage.removeItem('ensam-essais'); } catch { /* */ }
+    // Connecté : ce qui avait été tapé sur la page d'entrée ne doit jamais revenir après une déconnexion
+    if (store.session) { marquerMembre(); cacherEntree(true); try { sessionStorage.removeItem('ensam-entree-saisie'); } catch { /* */ } }
+    try { sessionStorage.removeItem('ensam-essais'); sessionStorage.removeItem('ensam-rechargements'); } catch { /* */ }
     root.innerHTML = '';
     render(html`<${App} store=${store}/>`, root);
     window.ENSAM_APP = true;

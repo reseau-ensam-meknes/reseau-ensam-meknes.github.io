@@ -27,7 +27,8 @@ export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 1
         if (u === '/sb/auth/v1/otp') {
           if (corps.email === 'vite@exemple.ma') return json(r, 429, { code: 'over_email_send_rate_limit', msg: 'For security purposes, you can only request this after 42 seconds.' });
           if (corps.email === 'inconnu@exemple.ma' && corps.create_user === false) return json(r, 422, { code: 'otp_disabled', msg: 'Signups not allowed for otp' });
-          if (corps.data) meta[corps.email] = { ...corps.data };
+          // Comme Supabase : les données ne sont gardées qu'à la création du compte
+          if (corps.data && !meta[corps.email]) meta[corps.email] = { ...corps.data };
           return json(r, 200, {});
         }
         if (u === '/sb/auth/v1/verify') return corps.token === '123456' ? json(r, 200, session(corps.email)) : json(r, 403, { code: 'otp_expired', msg: 'Token has expired or is invalid' });

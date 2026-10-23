@@ -157,13 +157,14 @@ for (const ici of [true, false]) test(`membre déjà connecté : jamais la page 
     window.__vu = false; new MutationObserver(() => { if (document.getElementById('entree')) window.__vu = true; }).observe(document, { childList: true, subtree: true });
   }, [UID, ici]);
   const page = await ctx.newPage(); const erreurs = []; page.on('pageerror', e => erreurs.push(e.message));
-  // Le lien de sa promo, ouvert par un membre : pas pris pour une invitation
-  await page.goto(site.adresse + '?promo=2019');
+  // Code entré mais « Dernière étape » pas finie : pas encore membre, le lien de sa promo garde la promo
+  await page.goto(site.adresse + (ici ? `?promo=${S + 1}` : ''));
   await page.waitForSelector('.auth-card.wide.onb', { timeout: 15000 });
   assert.equal(await page.evaluate(() => window.__vu), false);
-  assert.equal(await page.evaluate(() => localStorage.getItem('ensam-invite-promo')), null);
-  if (ici) assert.equal(await page.locator('#pf-role-rappel').innerText(), 'Tu t’inscris comme étudiant(e).');
-  else {
+  if (ici) {
+    assert.equal(await page.locator('#pf-role-rappel').innerText(), 'Tu t’inscris comme étudiant(e).');
+    assert.equal(await page.inputValue('#pf-promo'), String(S + 1));
+  } else {
     assert.equal(await page.locator('#pf-role-rappel').count(), 0);
     assert.ok(await page.isVisible('#pf-je-etudiant'), 'rôle et accord ne sont repris que s’ils ont été donnés sur cet appareil');
   }
@@ -250,6 +251,7 @@ test('offre partagée en arabe : la phrase traduite, rien qui dépasse, rien d�
 test('adresse tapée par quelqu’un d’autre : la personne qui a le code ne reprend ni son rôle ni son accord', async () => {
   let s = await visiteur();
   await s.page.click('#au-je-laureat'); await s.page.fill('#au-email', 'partage@exemple.ma'); await s.page.check('#au-ok');
+  await s.page.uncheck('#au-mail');
   await s.page.click('.entree-form button.btn.primary'); await s.page.waitForSelector('#au-code');
   await s.ctx.close();
   // Sur son propre téléphone, la vraie personne se connecte avec le code reçu
@@ -267,7 +269,19 @@ test('adresse tapée par quelqu’un d’autre : la personne qui a le code ne re
   const p = site.inscrits.find(x => x.id === UID);
   assert.equal(p.role, 'etudiant');
   assert.ok(!p.consent_at, 'l’accord n’est pas celui de l’autre personne');
-  assert.equal(p.emails_hebdo, undefined);
+  assert.equal(p.emails_hebdo, false, 'un « non » au résumé est toujours gardé');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('adresse tapée par quelqu’un d’autre, puis « Créer mon compte » par la vraie personne : son rôle à elle', async () => {
+  let s = await visiteur();
+  await s.page.click('#au-je-laureat'); await s.page.fill('#au-email', 'salma@exemple.ma'); await s.page.check('#au-ok');
+  await s.page.click('.entree-form button.btn.primary'); await s.page.waitForSelector('#au-code');
+  await s.ctx.close();
+  s = await visiteur();
+  await sInscrire(s.page, { role: 'etudiant', email: 'salma@exemple.ma' });
+  assert.equal(await s.page.locator('#pf-role-rappel').innerText(), 'Tu t’inscris comme étudiant(e).');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -316,6 +330,18 @@ test('réseau coupé pendant le chargement : la page se recharge dès que le ré
   await s.page.click('.entree-form button.btn.primary');
   await s.page.waitForSelector('#au-code');
   await s.ctx.close();
+  // Avec un mot de passe : le même formulaire revient (sans le mot de passe), prêt à le retaper
+  const e0 = { ouvert: false, coupes: 0 };
+  const m = await visiteur({ stockage: { 'ensam-deja-membre': '1' }, avant: coupe('store\\.js', e0) });
+  while (!e0.coupes) await m.page.waitForTimeout(50);
+  await m.page.waitForTimeout(300);
+  await m.page.click('#au-mdp'); await m.page.fill('#au-email', 'laureat@exemple.ma'); await m.page.fill('#au-pw', 'secret123');
+  await Promise.all([m.page.waitForEvent('load'), m.page.click('.entree-form button.btn.primary')]);
+  await m.page.waitForSelector('#au-pw');
+  assert.equal(await m.page.inputValue('#au-email'), 'laureat@exemple.ma');
+  assert.equal(await m.page.inputValue('#au-pw'), '');
+  await m.page.waitForFunction(() => document.activeElement?.id === 'au-pw', null, { timeout: 3000 });
+  await m.ctx.close();
   // app.js tombe : après le bon code, la page se recharge dès que le réseau répond et la « Dernière étape » s'ouvre
   const e2 = { ouvert: false, coupes: 0 };
   const t = await visiteur({ avant: coupe('app\\.js', e2) });
@@ -350,8 +376,9 @@ test('déconnexion en lisant une question : l’entrée ne prétend pas qu’on 
     localStorage.setItem('sb-127-auth-token', JSON.stringify({ access_token: 'x.' + btoa(JSON.stringify({ sub: uid, exp: now + 7200 })) + '.y', token_type: 'bearer', expires_in: 7200, expires_at: now + 7200, refresh_token: 'r', user: { id: uid, aud: 'authenticated', email: 'membre@exemple.ma', user_metadata: {}, app_metadata: {} } }));
   }, UID);
   const page = await ctx.newPage(); const erreurs = []; page.on('pageerror', e => erreurs.push(e.message));
-  await page.goto(site.adresse + '#reseau/entraide');
+  await page.goto(site.adresse + '?promo=2019#reseau/entraide');
   await page.waitForSelector('.me-btn', { timeout: 15000 });
+  assert.equal(await page.evaluate(() => localStorage.getItem('ensam-invite-promo')), null, 'un membre avec son profil n’est pas un invité');
   await page.evaluate(() => { location.hash = '#reseau/entraide/' + '7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d'; });
   await page.waitForTimeout(300);
   await page.keyboard.press('Escape');
@@ -359,6 +386,59 @@ test('déconnexion en lisant une question : l’entrée ne prétend pas qu’on 
   await page.waitForSelector('#entree .entree-form', { timeout: 15000 });
   assert.equal(await page.locator('#au-lien').count(), 0);
   assert.ok(await page.isVisible('.entree-sous'));
+  // Rechargée plus tard (onglet restauré) : toujours rien
+  await page.reload(); await page.waitForSelector('#entree .entree-form');
+  assert.equal(await page.locator('#au-lien').count(), 0);
+  assert.equal(await page.evaluate(() => localStorage.getItem('ensam-lien-partage')), null);
   assert.deepEqual(erreurs, []);
   await ctx.close();
+});
+
+test('réseau coupé après la connexion : un module qui tombe une fois la connexion faite recharge aussi la page', async () => {
+  const tenus = []; let libre = false;
+  const s = await visiteur({ avant: ctx => ctx.route(/\/community\.js$/, r => (libre ? r.continue() : tenus.push(r))) });
+  await s.page.click('#au-je-etudiant'); await s.page.fill('#au-email', 'tard@exemple.ma'); await s.page.check('#au-ok');
+  await s.page.click('.entree-form button.btn.primary'); await s.page.waitForSelector('#au-code');
+  await s.page.fill('#au-code', '123456');
+  await s.page.waitForFunction(() => /Connexion/.test(document.querySelector('.entree-form button.btn.primary')?.textContent || ''));
+  while (!tenus.length) await s.page.waitForTimeout(50);
+  libre = true; for (const r of tenus.splice(0)) await r.abort('connectionreset');
+  await s.page.waitForSelector('.auth-card.wide.onb', { timeout: 20000 });
+  assert.equal(await s.page.evaluate(() => sessionStorage.getItem('ensam-entree-saisie')), null, 'rien de tapé ne reviendra après une déconnexion');
+  await s.ctx.close();
+});
+
+test('panne qui dure (un fichier toujours en échec) : deux rechargements au plus, puis un écran calme', async () => {
+  const ctx = await navigateur.newContext({ viewport: { width: 360, height: 640 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  await ctx.route(/\/parse-offre\.js$/, r => r.abort('connectionreset'));
+  await ctx.addInitScript(uid => {
+    if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1');
+    localStorage.setItem('ensam-lang', 'fr');
+    const now = Math.floor(Date.now() / 1000);
+    localStorage.setItem('sb-127-auth-token', JSON.stringify({ access_token: 'x.' + btoa(JSON.stringify({ sub: uid, exp: now + 7200 })) + '.y', token_type: 'bearer', expires_in: 7200, expires_at: now + 7200, refresh_token: 'r', user: { id: uid, aud: 'authenticated', email: 'membre@exemple.ma', user_metadata: {}, app_metadata: {} } }));
+  }, UID);
+  const page = await ctx.newPage(); let chargements = 0;
+  page.on('load', () => { chargements++; });
+  await page.goto(site.adresse);
+  await page.waitForSelector('.fatal', { timeout: 20000 });
+  await page.waitForTimeout(3000);
+  assert.ok(chargements <= 3, `${chargements} chargements`);
+  assert.match(await page.locator('.fatal').innerText(), /Pas de connexion pour l’instant/);
+  assert.equal(await page.locator('.fatal .btn.primary').innerText(), 'Réessayer');
+  await ctx.close();
+});
+
+test('code demandé en arabe, entré dans un autre onglet : toujours en arabe', async () => {
+  const s = await visiteur({ langue: null, query: '?promo=2019&lang=ar' });
+  await s.page.click('#au-je-laureat'); await s.page.fill('#au-email', 'hiba@exemple.ma'); await s.page.check('#au-ok');
+  await s.page.click('.entree-form button.btn.primary'); await s.page.waitForSelector('#au-code');
+  const p = await s.ctx.newPage();
+  await p.goto(site.adresse); await p.waitForSelector('#au-code');
+  assert.equal(await p.getAttribute('html', 'dir'), 'rtl');
+  await p.fill('#au-code', '123456');
+  await p.waitForSelector('.auth-card.wide.onb', { timeout: 15000 });
+  assert.equal(await p.getAttribute('html', 'dir'), 'rtl');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
 });

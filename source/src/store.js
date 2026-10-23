@@ -1,7 +1,7 @@
 // Couche de données : même interface en mode démo (navigateur) et en mode réel (Supabase).
 // Les données de démonstration (seed.js) ne sont chargées qu'en démo : le site réel n'en a pas besoin
 const chargerSeed = () => import('./seed.js').then(m => m.buildSeed());
-import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth } from './logic.js';
+import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage } from './logic.js';
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
 const PHASE3 = ['coordonnees', 'demandes_contact', 'relectures_cv', 'relecture_commentaires', 'entretiens', 'avis_stage', 'guide_pays', 'signalements', 'enquetes_insertion', 'verifications_pairs', 'evenements', 'evenement_participants', 'retours_cv'];
@@ -922,6 +922,9 @@ export class SupabaseStore extends Base {
     this.session = session;
     this.sb.auth.onAuthStateChange(async (_e, s) => {
       const changed = (s?.user?.id || null) !== (this.session?.user?.id || null);
+      // Déconnexion (bouton ou session perdue) sur une question ou une offre : cette adresse n'est pas un lien
+      // partagé pour la personne qui ouvrira la page ensuite
+      if (!s && this.session && lienPartage(location.hash)) try { location.replace('#accueil'); } catch { /* */ }
       this.session = s;
       if (changed) { await this.loadAll(); this.emit(); }
     });

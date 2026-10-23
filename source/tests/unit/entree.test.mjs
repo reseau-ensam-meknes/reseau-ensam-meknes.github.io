@@ -121,6 +121,13 @@ test('arabe de la page d’entrée : les mêmes mots que le reste du site', asyn
   assert.doesNotMatch(entree, /القدامى/);
 });
 
+test('aperçu d’un lien de promo : l’indépendance de l’école dite d’abord (WhatsApp n’affiche que le début)', () => {
+  for (const [f, debut] of [['promo/2019/index.html', 'Initiative de lauréats, indépendante de l’école'], ['promo/2019/ar/index.html', 'مبادرة من الخريجين، مستقلة عن إدارة المدرسة']]) {
+    const desc = (fs.readFileSync(new URL(f, DIST), 'utf8').match(/property="og:description" content="([^"]+)"/) || [])[1];
+    assert.ok(desc?.startsWith(debut), f);
+  }
+});
+
 test('page d’entrée légère : six fichiers préchargés, moins de 32 Ko compressés', () => {
   const index = fs.readFileSync(new URL('index.html', DIST), 'utf8');
   const pre = [...index.matchAll(/<link rel="modulepreload" href="([^"]+)">/g)].map(m => m[1]);
