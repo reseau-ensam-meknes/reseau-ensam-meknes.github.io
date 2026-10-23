@@ -382,18 +382,19 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
   const voulu = useRef(vis);
   const gen = useRef(0), derniereG = useRef(null);
   // La grille voulue est déjà celle de la base (un « Enregistrer » l'a envoyée) : un envoi lent ou en échec n'est pas une erreur.
-  // Sauf si un envoi en échec a pu passer quand même (réponse perdue) avec une autre grille : la base n'est alors plus sûre.
-  const douteux = useRef(false);
-  const dejaLa = () => !douteux.current && memeVis(voulu.current, store.byId('profiles', initial.id)?.visibilite);
+  // Sauf si un envoi parti avec une autre grille peut encore arriver, ou a pu passer malgré son échec (réponse perdue).
+  const partis = useRef([]), douteux = useRef(false);
+  const dejaLa = () => !douteux.current && partis.current.every(x => memeVis(x, voulu.current)) && memeVis(voulu.current, store.byId('profiles', initial.id)?.visibilite);
   const envoyerVis = g => {
     const mien = gen.current; derniereG.current = g;
     setVisOk({ g, etat: 'envoi' }); enVol.current++;
     let envoye = null;
     const lent = setTimeout(() => { if (gen.current !== mien || dejaLa()) return; touches.current.add('visibilite'); setSale(n => n + 1); setVisOk({ g, etat: 'erreur' }); toast('Pas de réseau pour l’instant. Réessaie dans un instant.', 'err'); }, DELAI_VIS);
     fileVis.current = fileVis.current
-      .then(() => store.update('profiles', initial.id, { visibilite: (envoye = visPropre(voulu.current)) }))
+      .then(() => { envoye = visPropre(voulu.current); partis.current.push(envoye); return store.update('profiles', initial.id, { visibilite: envoye }); })
       .then(() => { douteux.current = false; return null; }, e => { if (envoye && !memeVis(envoye, store.byId('profiles', initial.id)?.visibilite)) douteux.current = true; return e; })
       .then(e => {
+        partis.current = partis.current.filter(x => x !== envoye);
         clearTimeout(lent); enVol.current--;
         if (gen.current === mien) {
           if (e && !dejaLa()) { touches.current.add('visibilite'); setVisOk({ g, etat: 'erreur' }); toast(e.message || String(e), 'err'); }

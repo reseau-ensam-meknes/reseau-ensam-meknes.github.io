@@ -831,6 +831,24 @@ test('profil : deux choix « Qui voit quoi » coup sur coup, le premier lent : �
   await s.ctx.close();
 });
 
+test('profil : un choix « Qui voit quoi » défait pendant qu’un envoi traîne : au bout de 20 s, la ligne dit que rien n’est sûr', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('profil'); await s.page.waitForTimeout(300);
+  const garde = await s.page.evaluate(() => window.__demo.me.visibilite?.lieu || 'tous');
+  const autre = garde === 'tous' ? 'contacts' : 'tous';
+  // Les envois de « Qui voit quoi » ne reviennent jamais (le premier peut encore arriver au serveur)
+  await s.page.evaluate(() => {
+    const d = window.__demo, vrai = d.update.bind(d);
+    d.update = (t, id, patch) => (patch.visibilite && Object.keys(patch).length === 1 ? new Promise(() => {}) : vrai(t, id, patch));
+  });
+  await s.page.click(`#vis-lieu-${autre}`); await s.page.waitForTimeout(200);
+  await s.page.click(`#vis-lieu-${garde}`);
+  await s.page.waitForFunction(() => /Pas encore enregistré/.test(document.getElementById('vis-etat')?.textContent || ''), null, { timeout: 25000 });
+  await s.page.evaluate(() => { delete window.__demo.update; });
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('profil : un réglage « Qui voit quoi » qui ne part pas reste affiché, et part avec « Enregistrer »', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Youssef'); await s.aller('profil'); await s.page.waitForTimeout(300);
@@ -1101,6 +1119,8 @@ test('photo de profil : choisie, vue partout, retirée ; celle du CV est propos�
   await s.comme('Salma'); await s.aller('profil');
   await choisirPhoto(s.page);
   await s.page.waitForSelector('.photo-card .avatar img', { timeout: 10000 });
+  // L'image est dans la page avant d'être décodée : ses dimensions se lisent une fois chargée
+  await s.page.waitForFunction(() => { const i = document.querySelector('.photo-card .avatar img'); return i?.complete && i.naturalWidth > 0; }, null, { timeout: 10000 });
   const taille = await s.page.$eval('.photo-card .avatar img', i => [i.naturalWidth, i.naturalHeight]);
   assert.deepEqual(taille, [320, 320], 'recadrée en carré et réduite avant l’envoi');
   // Les autres la voient (annuaire)
