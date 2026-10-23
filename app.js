@@ -193,7 +193,10 @@ function App({ store }) {
   if (page === 'parcours' && me.role !== 'etudiant') page = me.role === 'laureat' ? 'espace' : 'accueil';
   if (page === 'espace' && me.role !== 'laureat') page = me.role === 'etudiant' ? 'parcours' : 'accueil';
   if (page === 'admin' && me.role !== 'admin') page = 'accueil';
-  const needConsent = store.mode === 'live' && !me.consent_at && !['confidentialite', 'profil'].includes(page);
+  // L'accord (loi 09-08) pas encore donné : la fenêtre de l'accord, sauf sur Confidentialité et Mon profil ;
+  // les feuilles de notifications attendent, quelle que soit la page
+  const sansAccord = store.mode === 'live' && !me.consent_at;
+  const needConsent = sansAccord && !['confidentialite', 'profil'].includes(page);
   const openNotif = n => {
     setPop(null); setCloche(false);
     if (n.aider) return ctx.proposerAide(n.aider);
@@ -273,7 +276,7 @@ function App({ store }) {
     ${pop ? html`<${Feuille} key=${pop} onClose=${() => setPop(null)}/>` : null}
     <${Toaster}/>
     <${Celebration}/>
-    ${me.role === 'admin' ? null : html`<${PrevenirHote} ctx=${ctx} bloque=${needConsent}/>`}
+    ${me.role === 'admin' ? null : html`<${PrevenirHote} ctx=${ctx} bloque=${sansAccord}/>`}
   </div>`;
 }
 

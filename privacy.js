@@ -56,7 +56,8 @@ addAR({
   'Ce lien n’est plus valable. Connecte-toi et désactive les alertes dans « Mon profil ».': 'هذا الرابط لم يعد صالحًا. سجّل الدخول وأوقف التنبيهات من «ملفي الشخصي».',
 });
 
-// Notifications sur le téléphone, par catégorie : les mots de chacun (étudiant ; lauréat, et administration)
+// Notifications sur le téléphone, par catégorie : les mots de chacun (étudiant ; lauréat, qui cherche un emploi ou non ;
+// administration)
 const CATS_NOTIF = {
   etudiant: {
     messages: ['Messages', 'Les messages qu’on t’envoie.'],
@@ -69,12 +70,29 @@ const CATS_NOTIF = {
   laureat: {
     messages: ['Messages', 'Les messages qu’on t’envoie.'],
     demandes: ['Nouvelles demandes d’étudiants de ma filière', 'Et la suite de tes propositions d’aide.'],
-    candidatures: ['Candidatures reçues sur mes offres', 'Et les recrutements confirmés.'],
+    // Tout lauréat peut postuler aux offres entre lauréats
+    candidatures: ['Candidatures reçues sur mes offres', 'Et les recrutements confirmés ; si tu postules, la suite de tes candidatures.'],
     mentorat: ['Mentorat et rendez-vous', 'Demandes d’aide et de contact, rappels de rendez-vous, CV à relire, parrainage, mercis.'],
-    offres: ['Nouvelles offres pour moi', 'Utile si tu cherches un emploi : offres jeunes diplômés et offres entre lauréats.'],
+    // Les offres arrivent selon le profil (offre_pour dans schema.sql) : la condition est dite, pas conseillée
+    offres: ['Nouvelles offres pour moi', 'Avec « Je cherche un emploi en ce moment » coché dans ton profil : offres « Jeunes diplômés » et offres entre lauréats de ta filière. Sans cela, seulement les offres « Jeunes diplômés » l’année de ton diplôme.'],
     reseau: ['Questions qui me sont adressées et vie du réseau', 'Questions sur ton entreprise ou ton pays, événements de l’école, cafés de ta ville.'],
   },
+  // Un lauréat qui cherche un emploi publie sa demande d'emploi et postule : ces cases couvrent aussi les siennes
+  recherche: {
+    demandes: ['Demandes', 'Les réponses à ta demande d’emploi, les nouvelles demandes d’étudiants de ta filière et la suite de tes propositions d’aide.'],
+    candidatures: ['Candidatures', 'La suite des tiennes (entretien, recrutement à confirmer) et les candidatures reçues sur tes offres.'],
+    offres: ['Nouvelles offres pour moi', 'Offres « Jeunes diplômés » et offres entre lauréats de ta filière, dès leur publication.'],
+  },
+  // L'équipe du réseau ne postule pas
+  admin: {
+    candidatures: ['Candidatures reçues sur mes offres', 'Et les recrutements confirmés.'],
+  },
 };
+const motsNotif = me => (me.role === 'etudiant' ? CATS_NOTIF.etudiant
+  : { ...CATS_NOTIF.laureat, ...(me.role === 'admin' ? CATS_NOTIF.admin : me.en_recherche ? CATS_NOTIF.recherche : {}) });
+// L'équipe du réseau ne reçoit ni les nouvelles demandes d'étudiants (réservées aux lauréats) ni d'alertes d'offres :
+// pas de case qui ne servirait à rien (les signalements, eux, arrivent toujours)
+const catsNotif = me => PUSH_CATEGORIES.filter(c => me.role !== 'admin' || (c !== 'demandes' && c !== 'offres'));
 const NOTES_NOTIF = {
   tous: 'Tes choix valent pour tous les appareils où les notifications sont activées.',
   admin: 'Les signalements arrivent toujours à l’équipe du réseau.',
@@ -97,9 +115,15 @@ addAR({
   [CATS_NOTIF.laureat.demandes[0]]: 'طلبات جديدة من طلبة شعبتي',
   [CATS_NOTIF.laureat.demandes[1]]: 'ومآل اقتراحات مساعدتك.',
   [CATS_NOTIF.laureat.candidatures[0]]: 'الترشيحات التي تصل إلى عروضي',
-  [CATS_NOTIF.laureat.candidatures[1]]: 'والتوظيفات المؤكَّدة.',
+  [CATS_NOTIF.laureat.candidatures[1]]: 'والتوظيفات المؤكَّدة؛ وإن ترشحت، مآل ترشيحاتك.',
+  [CATS_NOTIF.admin.candidatures[1]]: 'والتوظيفات المؤكَّدة.',
   [CATS_NOTIF.laureat.mentorat[1]]: 'طلبات المساعدة والاتصال، التذكير بالمواعيد، سير ذاتية للمراجعة، الرعاية، رسائل الشكر.',
-  [CATS_NOTIF.laureat.offres[1]]: 'مفيدة إن كنت تبحث عن عمل: عروض حديثي التخرج والعروض بين الخريجين.',
+  [CATS_NOTIF.laureat.offres[1]]: 'إن فعّلت «أبحث عن عمل حاليًا» في ملفك الشخصي: عروض «الخريجون الجدد» والعروض بين خريجي شعبتك. وبدونه، عروض «الخريجون الجدد» في سنة تخرجك فقط.',
+  [CATS_NOTIF.recherche.demandes[0]]: 'الطلبات',
+  [CATS_NOTIF.recherche.demandes[1]]: 'الردود على طلب العمل الخاص بك، والطلبات الجديدة لطلبة شعبتك، ومآل اقتراحات مساعدتك.',
+  [CATS_NOTIF.recherche.candidatures[0]]: 'الترشيحات',
+  [CATS_NOTIF.recherche.candidatures[1]]: 'مآل ترشيحاتك (مقابلة، توظيف ينتظر تأكيدك) والترشيحات التي تصل إلى عروضك.',
+  [CATS_NOTIF.recherche.offres[1]]: 'عروض «الخريجون الجدد» والعروض بين خريجي شعبتك، فور نشرها.',
   [CATS_NOTIF.laureat.reseau[0]]: 'الأسئلة الموجّهة إليّ وحياة الشبكة',
   [CATS_NOTIF.laureat.reseau[1]]: 'أسئلة حول شركتك أو بلدك، أنشطة المدرسة، لقاءات المقهى في مدينتك.',
 });
@@ -258,7 +282,7 @@ export function MesDonnees({ ctx }) {
 // suit le défaut de son rôle (pushChoix, mêmes règles que la base). Les choix valent pour tous ses appareils.
 function ChoixNotifs({ ctx }) {
   const { me, store, act } = ctx;
-  const mots = CATS_NOTIF[me.role === 'etudiant' ? 'etudiant' : 'laureat'];
+  const mots = motsNotif(me);
   // Deux cases touchées coup sur coup : la seconde garde la première
   const enCours = useRef({});
   const changer = (cat, v) => {
@@ -271,7 +295,7 @@ function ChoixNotifs({ ctx }) {
   };
   return html`<fieldset class="md-cats" aria-describedby="md-cats-note">
     <legend>Ce que je reçois</legend>
-    ${PUSH_CATEGORIES.map(cat => html`<label class="check" key=${cat}><input type="checkbox" id=${'np-' + cat} checked=${pushChoix(cat, me)} onChange=${e => changer(cat, e.target.checked)}/><span class="cat-txt"><span class="cat-t">${mots[cat][0]}</span><span class="cat-d">${mots[cat][1]}</span></span></label>`)}
+    ${catsNotif(me).map(cat => html`<label class="check" key=${cat}><input type="checkbox" id=${'np-' + cat} checked=${pushChoix(cat, me)} onChange=${e => changer(cat, e.target.checked)}/><span class="cat-txt"><span class="cat-t">${mots[cat][0]}</span><span class="cat-d">${mots[cat][1]}</span></span></label>`)}
     <p class="small muted" id="md-cats-note">${NOTES_NOTIF.tous}</p>
     ${me.role === 'admin' ? html`<p class="small muted">${NOTES_NOTIF.admin}</p>` : null}
   </fieldset>`;
