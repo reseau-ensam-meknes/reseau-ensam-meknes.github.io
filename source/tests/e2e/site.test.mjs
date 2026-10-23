@@ -638,8 +638,9 @@ test('demande d’un étudiant : il publie (CV joint), un lauréat propose, matc
   await s.page.click('#dm-p-envoyer'); await s.page.waitForTimeout(400);
   assert.match(await s.page.locator('.toast').last().innerText(), /Proposition envoyée/);
   assert.match(await carte().innerText(), /Ton aide est envoyée/);
-  // Salma : sa prochaine étape, le mot dans ses messages ; elle accepte : c'est un match
-  await s.comme('Salma'); await s.aller('accueil');
+  // Salma : sa prochaine étape, le mot dans ses messages ; elle accepte : c'est un match.
+  // Sa demande publiée termine ses premiers pas : la fête s'ouvre à l'accueil, elle la ferme.
+  await s.comme('Salma'); await s.aller('accueil'); await fete();
   assert.match(await s.page.locator('.page').innerText(), /Youssef El Amrani te propose son aide : PFE en lean manufacturing/);
   await s.aller('messages');
   assert.match(await s.page.locator('main').first().innerText(), /j’ai un sujet de PFE lean dans mon équipe/);
