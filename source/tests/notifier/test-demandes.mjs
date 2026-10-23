@@ -21,7 +21,8 @@ test('notifications : chaque étape d’une demande ouvre sa carte, en français
   const n = N.texteNotif('demande_nouvelle', { nom: 'Salma', titre: 'PFE lean', type: 'pfe', demande: D1 }, 'fr', SITE);
   assert.equal(n.title, 'Un étudiant de ton parcours cherche');
   assert.equal(n.body, 'Salma · PFE : PFE lean');
-  assert.equal(n.url, `${SITE}#offres/demandes/${D1}`);
+  assert.equal(n.url, `${SITE}#aider/${D1}`, 'une nouvelle demande ouvre « Je peux aider » prérempli');
+  assert.equal(N.texteNotif('demande_proposition', { nom: 'Y', titre: 't', demande: D1 }, 'fr', SITE).url, `${SITE}#offres/demandes/${D1}`);
   assert.equal(n.tag, `demande_nouvelle-${D1}`);
   assert.equal(N.texteNotif('demande_nouvelle', { nom: 'Halima', titre: 'Poste en qualité', type: 'emploi', demande: D1 }, 'fr', SITE).title, 'Quelqu’un du réseau cherche un emploi');
   const p = N.texteNotif('demande_proposition', { nom: 'Youssef Amrani', titre: 'PFE lean', entreprise: 'Renault', demande: D1 }, 'fr', SITE);
@@ -46,7 +47,7 @@ test('démarrage venu d’une demande : on parle de démarrage, pas de recruteme
 test('email : les demandes du parcours, un bouton « Je peux aider » par demande, désabonnement des alertes', () => {
   const c = N.rendreDemandes([dem(D1), dem(D2, { prenom: 'Halima', role: 'laureat', niveau: 7, type: 'emploi', titre: 'Poste en qualité', lieu: null })], 'fr', SITE, 'jeton');
   assert.equal(c.sujet, '2 demandes d’étudiants de ton parcours · Réseau ENSAM');
-  assert.ok(c.html.includes(`href="${SITE}#offres/demandes/${D1}"`) && c.html.includes('Je peux aider'));
+  assert.ok(c.html.includes(`href="${SITE}#aider/${D1}"`) && c.html.includes('Je peux aider'));
   assert.ok(c.texte.includes('Salma · 5A · PFE · PFE en amélioration continue · Casablanca'));
   assert.ok(c.texte.includes('Halima · Lauréat · Emploi · Poste en qualité'));
   assert.equal(c.desabo, `${SITE}#desabo/jeton/alertes`);

@@ -594,9 +594,10 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
   const t = g[l](v);
   if (!t) return null;
   // Une alerte ouvre directement l'offre, un message sa conversation (une notification par personne)
-  // Une demande ouvre sa carte
+  // Une demande ouvre sa carte ; une nouvelle demande, pour un lauréat, ouvre directement « Je peux aider », prérempli
   const dem = kind.startsWith('demande_') && estUuid(d.demande) ? d.demande : null;
-  const route = kind === 'offre_alerte' && estUuid(d.offre) ? `offre/${d.offre}` : kind === 'message' && estUuid(d.de) ? `messages/${d.de}` : dem ? `offres/demandes/${dem}` : g.route;
+  const route = kind === 'offre_alerte' && estUuid(d.offre) ? `offre/${d.offre}` : kind === 'message' && estUuid(d.de) ? `messages/${d.de}`
+    : dem ? (kind === 'demande_nouvelle' ? `aider/${dem}` : `offres/demandes/${dem}`) : g.route;
   const tag = kind === 'offre_alerte' && estUuid(d.offre) ? `offre-${d.offre}` : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem ? `${kind}-${dem}` : kind;
   return { title: couper(t[0], 80), body: couper(t[1], 180), url: site + '#' + route, tag };
 }
@@ -1391,7 +1392,7 @@ export function rendreDemandes(demandes: DemandeAlerte[], langue: Langue, site: 
   const intro = ar
     ? 'قال طلبة من مسارك ما يبحثون عنه، مع سيرهم الذاتية. إن كنت تستطيع توظيف أحدهم أو تأطيره أو التوصية به، اقترح ذلك: هو من يختار.'
     : 'Des étudiants de ton parcours viennent de dire ce qu’ils cherchent, CV joint. Si tu peux recruter, encadrer ou recommander l’un d’eux, propose-le : c’est lui qui choisit.';
-  const lien = (x: DemandeAlerte) => `${site}#offres/demandes/${x.id}`;
+  const lien = (x: DemandeAlerte) => `${site}#aider/${x.id}`;   // « Je peux aider » ouvre la feuille préremplie
   const html = cadreEmail({
     langue, sujet, apercu: ligne(d0, b), sousTitre: ar ? 'طلبات الطلبة' : 'Demandes des étudiants',
     intro: [esc(ar ? 'مرحبًا،' : 'Bonjour,'), esc(intro)],

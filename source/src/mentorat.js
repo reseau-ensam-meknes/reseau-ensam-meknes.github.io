@@ -3,9 +3,9 @@
 // Ce qui compte d'abord : le prochain rendez-vous en haut, le mode d'emploi seulement pour qui découvre.
 import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, toast, celebrate, useLocal, injectCSS } from './ui.js';
-import { BESOINS, RDV_MIN, mentorState, futureSlots, requestsFor, mentorsFor, timeAgo } from './logic.js';
+import { BESOINS, RDV_MIN, mentorState, futureSlots, requestsFor, mentorsFor, timeAgo, helpMatch, niveauOf, coupDeMain, alerteTalents } from './logic.js';
 import { getLang, addAR, arCount, t as tr } from './i18n.js';
-import { RelecturesPage } from './cv.js';
+import { RelecturesPage, DemandeRelecture } from './cv.js';
 import { MessageBtn } from './messages.js';
 import { PoulsReseau } from './pouls.js';
 
@@ -15,6 +15,15 @@ const CLE_IGNOREES = 'ensam-mentorat-ignorees';
 export function mentoratIgnorees() { try { return new Set(JSON.parse(localStorage.getItem(CLE_IGNOREES) || '[]')); } catch { return new Set(); } }
 const pad = n => String(n).padStart(2, '0');
 const isHttps = u => /^https:\/\/\S+$/i.test(u || '');
+// Le lien de visio d'un rendez-vous, s'il est sûr
+export const lienVisio = (store, id) => { const l = (store.data.liens_rdv || []).find(x => x.id === id)?.lien; return isHttps(l) ? l : null; };
+// L'étudiant confirme sa présence : le lauréat est prévenu
+export const confirmerPresence = (ctx, m) => ctx.act(async () => { await ctx.store.update('mentorships', m.id, { confirme_at: new Date().toISOString() }); toast(`C’est confirmé. ${firstName(ctx.store.byId('profiles', m.mentor_id))} est prévenu(e).`, 'win'); });
+// Le lauréat choisi n'est pas disponible : la demande part aux autres lauréats
+export function passerDemande(ctx, m, apres) {
+  const { store, act } = ctx;
+  ctx.confirm('Tu n’es pas disponible ? La demande sera proposée aux autres lauréats.', () => act(async () => { await store.update('mentorships', m.id, { mentor_id: null }); toast('Demande proposée aux autres lauréats.'); apres?.(); }), 'Proposer aux autres');
+}
 
 // ---------------------------------------------------------------------------
 // Dates
@@ -269,7 +278,7 @@ function RdvBox({ ctx, m, side, focus, onFini }) {
   // L'étudiant confirme sa présence (base à jour seulement) ; une fois l'heure venue, chacun peut dire « c'est fait »
   const confirmable = 'confirme_at' in m;
   const commence = Date.now() >= new Date(m.rdv_at).getTime();
-  const confirmer = () => act(async () => { await store.update('mentorships', m.id, { confirme_at: new Date().toISOString() }); toast(`C’est confirmé. ${firstName(other)} est prévenu(e).`, 'win'); });
+  const confirmer = () => confirmerPresence(ctx, m);
   const menu = [
     side === 'mentor' ? { label: 'Changer l’horaire ou le lien', icon: 'clock', onClick: () => setEdit(true) } : null,
     side !== 'admin' ? { label: 'Annuler le rendez-vous', icon: 'x', danger: true, onClick: annuler } : null,
@@ -319,7 +328,7 @@ function AfterBox({ ctx, m }) {
 
 // Après le rendez-vous, côté lauréat : une question, une action. S'il n'a pas eu lieu : un autre moment, ou on clôt.
 // Le lauréat clôt le mentorat : un vrai merci, une seule fois
-function finirMentorat(ctx, m) {
+export function finirMentorat(ctx, m) {
   const { store, act, go } = ctx;
   const s = store.byId('profiles', m.student_id);
   return act(async () => {
@@ -374,7 +383,7 @@ export function RequestCard({ ctx, m, side, why = [], focus = false, onIgnore = 
   const annulerDemande = () => ctx.confirm('Annuler cette demande ?', () => act(() => store.update('mentorships', m.id, { status: 'annulee' })), 'Annuler la demande');
   // L'administration retire une demande restée sans suite (un test, un doublon) ; l'étudiant ne reçoit pas de message
   const clore = () => ctx.confirm(`Retirer la demande « ${m.sujet} » ? Elle ne sera plus proposée aux lauréats.`, () => act(async () => { await store.update('mentorships', m.id, { status: 'annulee' }); toast('Demande retirée.'); }), 'Retirer la demande');
-  const passer = () => ctx.confirm('Tu n’es pas disponible ? La demande sera proposée aux autres lauréats.', () => act(async () => { await store.update('mentorships', m.id, { mentor_id: null }); toast('Demande proposée aux autres lauréats.'); }), 'Proposer aux autres');
+  const passer = () => passerDemande(ctx, m);
   const mentorAdmin = side === 'admin' && st === 'rdv' ? store.byId('profiles', m.mentor_id) : null;
   return html`<article class=${'mreq st-' + st + (focus ? ' m-focus-card' : '') + (apres ? ' m-compact' : '')}>
     <div class="mrow-head">
@@ -421,8 +430,8 @@ function MentorSeg({ ctx }) {
   const R = data.relectures_cv || [];
   const aFaire = R.filter(r => (r.reviewer_id === me.id && ['demandee', 'en_cours'].includes(r.status)) || (r.student_id === me.id && r.status === 'rendue' && !r.merci && !r.note)).length;
   return html`<div class="seg mentor-seg" role="tablist" aria-label="Mentorat">
-    <button role="tab" aria-selected=${!cv} class=${!cv ? 'on' : ''} onClick=${() => go('mentorat')}><${Icon} name="video" size=${15}/> Rendez-vous</button>
-    <button role="tab" aria-selected=${cv} class=${cv ? 'on' : ''} onClick=${() => go('mentorat/cv')}><${Icon} name="file" size=${15}/> Relecture de CV${aFaire ? html` <span class="count">${aFaire}</span>` : null}</button></div>`;
+    <button role="tab" aria-selected=${!cv} class=${!cv ? 'on' : ''} onClick=${() => go('mentorat', { remplacer: true })}><${Icon} name="video" size=${15}/> Rendez-vous</button>
+    <button role="tab" aria-selected=${cv} class=${cv ? 'on' : ''} onClick=${() => go('mentorat/cv', { remplacer: true })}><${Icon} name="file" size=${15}/> Relecture de CV${aFaire ? html` <span class="count">${aFaire}</span>` : null}</button></div>`;
 }
 
 // « Comment ça marche ? » replié, pour celles et ceux qui connaissent déjà
@@ -564,54 +573,149 @@ export function MentoratPage(ctx) {
 }
 
 // ---------------------------------------------------------------------------
-// Sur l'accueil : le prochain rendez-vous, et (lauréat) les demandes qui l'attendent
+// Sur l'accueil : le prochain rendez-vous (sauf celui que la carte du haut montre déjà)
 // ---------------------------------------------------------------------------
-export function NextRdv({ ctx }) {
+export function NextRdv({ ctx, exclure }) {
   const { data, me, store, go } = ctx;
-  const next = data.mentorships.filter(m => (m.student_id === me.id || m.mentor_id === me.id) && mentorState(m) === 'rdv' && m.rdv_at).sort(byRdv)[0];
+  const next = data.mentorships.filter(m => (m.student_id === me.id || m.mentor_id === me.id) && mentorState(m) === 'rdv' && m.rdv_at && !exclure?.has(m.id)).sort(byRdv)[0];
   if (!next) return null;
   const other = store.byId('profiles', next.mentor_id === me.id ? next.student_id : next.mentor_id);
-  const lien = store.byId('liens_rdv', next.id)?.lien;
+  const lien = lienVisio(store, next.id);
   const live = enDirect(next.rdv_at);
   const aConfirmer = next.student_id === me.id && 'confirme_at' in next && !next.confirme_at && !live;
-  const confirmer = () => ctx.act(async () => { await store.update('mentorships', next.id, { confirme_at: new Date().toISOString() }); toast(`C’est confirmé. ${firstName(other)} est prévenu(e).`, 'win'); });
   return html`<div class=${'next-rdv' + (live ? ' live' : '')}>
     <${SlotDate} iso=${next.rdv_at}/>
     <span class="next-main"><span class="eyebrow"><${Icon} name="video" size=${13}/> Prochain rendez-vous</span><strong dir="auto" translate="no">${next.sujet}</strong><span class="small muted">Avec <span translate="no">${other?.full_name || ''}</span></span></span>
-    <span class="next-act">${aConfirmer ? html`<button class="btn small primary" onClick=${confirmer}><${Icon} name="check" size=${15}/> Je serai là</button>` : null}
-      ${isHttps(lien) && !aConfirmer ? html`<a class=${'btn small' + (live ? ' primary' : '')} href=${lien} target="_blank" rel="noopener"><${Icon} name="video" size=${15}/> Rejoindre</a>` : null}
+    <span class="next-act">${aConfirmer ? html`<button class="btn small" onClick=${() => confirmerPresence(ctx, next)}><${Icon} name="check" size=${15}/> Je serai là</button>` : null}
+      ${lien && !aConfirmer ? html`<a class="btn small" href=${lien} target="_blank" rel="noopener"><${Icon} name="video" size=${15}/> Rejoindre</a>` : null}
       <button class="btn small ghost" onClick=${() => go('mentorat')}>Détails</button></span>
   </div>`;
 }
 
-// Demandes qui attendent un lauréat.
-//   max     : nombre de demandes affichées (2 par défaut)
-//   compact : version légère pour l'accueil (qui, quel besoin, les horaires à accepter d'un geste,
-//             puis « Voir les N autres demandes »). Sans ces options, l'affichage reste celui d'avant.
-export function HelpNeeded({ ctx, max = 2, compact = false }) {
-  const { data, me, store, go } = ctx;
+// ---------------------------------------------------------------------------
+// Accueil d'un lauréat : « Ils ont besoin de toi », un seul bloc, trois lignes au plus.
+// Chaque ligne : qui, ce qu'il attend, le sujet, et un seul geste qui s'ouvre sur place.
+// ---------------------------------------------------------------------------
+export const ICONE_BESOIN = { conseil: 'mentor', cv: 'eye', demande: 'send', question: 'qa' };
+export const VERBE_BESOIN = { conseil: 'Choisir un horaire', cv: 'Relire', demande: 'Je peux aider', question: 'Répondre' };
+const CHERCHE = { stage: 'Cherche un stage', pfe: 'Cherche un PFE', etranger: 'Cherche un stage à l’étranger', emploi: 'Cherche un emploi' };
+export const quoiBesoin = b => (b.kind === 'conseil' ? (b.direct ? 'Te demande un conseil' : 'Cherche un conseil')
+  : b.kind === 'cv' ? (b.direct ? 'Te demande de relire son CV' : 'Attend une relecture de CV')
+  : b.kind === 'demande' ? CHERCHE[b.type] || 'Cherche un stage' : `Question sur ${b.cible}`);
+// Phrases de la carte du haut : celles des notifications, déjà traduites
+export const phraseBesoin = (b, nom) => (b.kind === 'conseil' ? `${nom} ${b.direct ? 'te demande' : 'cherche'} de l’aide : ${b.sujet}`
+  : b.kind === 'cv' ? (b.direct ? `${nom} te demande de relire son CV.` : `${nom} attend une relecture de son CV.`)
+  : b.kind === 'demande' ? `${nom} cherche : ${b.sujet}` : `Une question pour toi sur ${b.cible} : ${b.sujet}`);
+// Le geste d'une ligne : la feuille sur place (demande, conseil), sinon la page où il se fait
+export const ouvrirBesoin = (ctx, b) => (b.kind === 'demande' ? ctx.proposerAide(b.id) : b.kind === 'conseil' ? ctx.choisirHoraire(b.id)
+  : ctx.go(b.kind === 'cv' ? 'mentorat/cv' : 'reseau/entraide/' + b.id));
+
+function LigneBesoin({ ctx, b, onOpen }) {
+  const p = ctx.store.byId('profiles', b.who);
+  return html`<li><button type="button" class="bs-ligne" onClick=${() => onOpen(b)}>
+    <${Avatar} p=${p} size=${40}/>
+    <span class="bs-txt"><span class="bs-l1"><strong class="bs-nom" translate="no" dir="auto">${p?.full_name || 'Un membre'}</strong><span class="bs-verbe">${VERBE_BESOIN[b.kind]}<${Icon} name="arrow" size=${16}/></span></span>
+      <span class="bs-quoi">${quoiBesoin(b)}</span>${b.sujet ? html`<span class="bs-sujet" translate="no" dir="auto">${b.sujet}</span>` : null}</span></button></li>`;
+}
+export function IlsOntBesoin({ ctx, besoins }) {
+  const { data, me, saison, go } = ctx;
+  const [tout, setTout] = useState(false);
   if (me.role !== 'laureat') return null;
-  const ign = mentoratIgnorees();
-  const all = requestsFor(data, me, id => store.byId('profiles', id)).filter(x => x.direct || !ign.has(x.m.id));
-  const need = all.filter(x => x.direct || x.score >= 2);
-  if (!need.length) return null;
-  if (compact) {
-    const shown = need.slice(0, Math.max(1, max));
-    const reste = all.length - shown.length;
-    return html`<section class="help-needed hn-compact" aria-labelledby="hn-h">
-      <div class="m-head"><h2 id="hn-h" class="h-ico"><${Icon} name="heart"/> ${`Quand tu as ${RDV_MIN} minutes`}</h2></div>
-      ${shown.map(({ m }) => html`<article class="hn-card" key=${m.id}>
-        <${Person} p=${store.byId('profiles', m.student_id)} onOpen=${ctx.openProfile} size=${36}/>
-        <p class="mreq-subject"><${BesoinTag} k=${m.besoin}/><strong translate="no" dir="auto">${m.sujet}</strong></p>
-        <${TimeChoice} ctx=${ctx} m=${m} compact/>
-      </article>`)}
-      ${reste > 0 ? html`<button type="button" class="linkish small hn-more" onClick=${() => go('mentorat')}>${reste > 1 ? `Voir les ${reste} autres demandes` : 'Voir l’autre demande'} <${Icon} name="arrow" size=${14}/></button>` : null}
-    </section>`;
+  const ouvrir = b => ouvrirBesoin(ctx, b);
+  // Réseau encore calme : les étudiants de sa filière qui cherchent encore, en une ligne
+  if (!besoins.length) {
+    const { list, nouveaux } = alerteTalents(data, me, saison);
+    if (!list.length) return null;
+    return html`<section class="besoins" aria-labelledby="bs-h"><div class="section-head"><h3 id="bs-h">Ils ont besoin de toi</h3></div>
+      <button class="impact-strip clickable talents-strip" onClick=${() => go('reseau/talents')}>
+        <span class="obj-ico"><${Icon} name="spark" size=${20}/></span>
+        <span class="grow"><strong>${list.length > 1 ? `${list.length} étudiants de ${me.filiere} cherchent encore` : `1 étudiant de ${me.filiere} cherche encore`}</strong>${nouveaux ? html`<span class="mini hit">${nouveaux > 1 ? `${nouveaux} nouveaux cette semaine` : '1 nouveau cette semaine'}</span>` : null}
+          <span class="small muted">Un stage, un PFE ou un premier emploi dans ton équipe ? Invite-les à postuler en un clic.</span></span>
+        <span class="av-stack">${list.slice(0, 3).map(({ p }) => html`<${Avatar} p=${p} size=${28}/>`)}</span>
+        <${Icon} name="arrow" size=${18}/>
+      </button></section>`;
   }
-  return html`<div class="help-needed">
-    <div class="section-head"><h2 class="h-ico"><${Icon} name="heart"/> Ces étudiants ont besoin de toi</h2>${need.length > max ? html`<button class="btn tiny ghost" onClick=${() => go('mentorat')}>Tout voir (${need.length}) <${Icon} name="arrow" size=${14}/></button>` : null}</div>
-    <div class="list">${need.slice(0, max).map(({ m, why }) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="mentor" why=${why}/>`)}</div>
-  </div>`;
+  return html`<section class="besoins" aria-labelledby="bs-h">
+    <div class="section-head"><h3 id="bs-h">Ils ont besoin de toi</h3>
+      ${besoins.length > 3 ? html`<button type="button" class="btn tiny ghost bs-tout" aria-haspopup="dialog" onClick=${() => setTout(true)}>${`Tout voir (${besoins.length})`}</button>` : null}</div>
+    <ul class="bs-liste">${besoins.slice(0, 3).map(b => html`<${LigneBesoin} key=${b.kind + b.id} ctx=${ctx} b=${b} onOpen=${ouvrir}/>`)}</ul>
+    ${tout ? html`<${Modal} title="Ils ont besoin de toi" onClose=${() => setTout(false)}><ul class="bs-liste">${besoins.map(b => html`<${LigneBesoin} key=${b.kind + b.id} ctx=${ctx} b=${b} onOpen=${x => { setTout(false); ouvrir(x); }}/>`)}</ul><//>` : null}
+  </section>`;
+}
+
+// Une demande de conseil touchée (accueil, cloche) s'ouvre sur place avec ses horaires.
+// Elle se ferme dès que l'horaire est choisi (la fête prend le relais) ; prise par un autre, elle le dit.
+export function HoraireSheet({ ctx, id, onClose }) {
+  const { store, me, data, go } = ctx;
+  const m = data.mentorships.find(x => x.id === id);
+  const s = m ? store.byId('profiles', m.student_id) : null;
+  const libre = !!m && m.status === 'demande' && m.student_id !== me.id && (!m.mentor_id || m.mentor_id === me.id);
+  const fixe = !!m && m.mentor_id === me.id && mentorState(m) === 'rdv';
+  const [ign, setIgn] = useLocal(CLE_IGNOREES, []);
+  useEffect(() => { if (fixe) onClose(); }, [fixe]);
+  if (fixe) return null;
+  const why = libre && s ? helpMatch(m, me, s).why : [];
+  const autres = requestsFor(data, me, x => store.byId('profiles', x)).filter(x => x.m.id !== id).length;
+  const voirAutres = autres ? { label: 'Voir les autres demandes', onClick: () => { onClose(); go('mentorat'); } } : null;
+  const ignorer = () => { setIgn([...ign.filter(k => k !== id), id].slice(-200)); toast('Demande masquée. Elle ne reviendra plus dans ta liste.'); onClose(); };
+  return html`<${Modal} title=${s ? `Aider ${firstName(s)}` : 'Mentorat'} onClose=${onClose}>
+    ${libre ? html`<div class="hn-card">
+      <${Person} p=${s} onOpen=${ctx.openProfile} size=${40}/>
+      <p class="mreq-subject"><${BesoinTag} k=${m.besoin}/><strong translate="no" dir="auto">${m.sujet}</strong></p>
+      ${m.message ? html`<p class="quote" translate="no" dir="auto">${m.message}</p>` : null}
+      ${why.length ? html`<p class="why"><span class="small muted">Pourquoi toi :</span> ${why.map(w => html`<span class="mini good">${w}</span>`)}</p>` : null}
+      <${TimeChoice} ctx=${ctx} m=${m} compact/>
+      <div class="row m-decline"><span class="spacer"></span>${m.mentor_id === me.id
+        ? html`<button type="button" class="btn tiny ghost" onClick=${() => passerDemande(ctx, m, onClose)}><${Icon} name="x" size=${14}/> Pas disponible cette fois</button>`
+        : html`<button type="button" class="btn tiny ghost" onClick=${ignorer}><${Icon} name="x" size=${14}/> Ignorer</button>`}</div>
+    </div>` : html`<${Empty} icon="heart" title="Cette demande n’attend plus de réponse" action=${voirAutres}>Un autre lauréat l’a prise, ou l’étudiant l’a retirée. Merci d’avoir voulu aider !<//>`}
+  <//>`;
+}
+
+// ---------------------------------------------------------------------------
+// Accueil d'un étudiant : « Besoin d'un coup de main ? », une seule carte.
+// Une porte en bouton (demande, conseil ou CV), les autres en liens, et ce qui est déjà en route.
+// ---------------------------------------------------------------------------
+export function CoupDeMain({ ctx, exclure, cle }) {
+  const { data, me, saison, store, go } = ctx;
+  const [relire, setRelire] = useState(false);
+  const [demande, setDemande] = useState(false);
+  const n = niveauOf(me, saison);
+  const pr = me.role === 'etudiant' ? (data.parrainages || []).find(x => x.filleul_id === me.id && x.saison === saison) : null;
+  // Un 3A reçoit son parrain à son premier passage à l'accueil
+  useEffect(() => { if (me.role === 'etudiant' && n === 3 && !pr && !demande) { setDemande(true); store.monParrain?.().catch(() => {}); } }, [n, !!pr]);
+  if (me.role !== 'etudiant') return null;
+  const { principal, autres, suivi } = coupDeMain(data, me, saison, { exclure, cle });
+  if (!principal && !suivi) return null;
+  const parrain = pr ? store.byId('profiles', pr.parrain_id) : null;
+  const P = {
+    demande: ['Publier ma demande', 'Dis aux lauréats ce que tu cherches : ta demande et ton CV arrivent chez ceux de ton parcours.', () => go('offres/demandes/nouvelle')],
+    conseil: [parrain ? `Demander conseil à ${firstName(parrain)}, ton parrain` : 'Demander un conseil', 'CV, stage, entretien, étranger : un lauréat te parle 20 minutes en visio.', () => ctx.askHelp(parrain)],
+    cv: ['Faire relire mon CV', 'Un lauréat relit ton CV et te laisse ses conseils, rubrique par rubrique.', () => setRelire(true)],
+  };
+  return html`<section class="coup-de-main" id="coup-de-main" aria-labelledby="cm-h">
+    <div class="cm-head"><span class="obj-ico"><${Icon} name="heart" size=${22}/></span>
+      <span class="cm-txt"><h3 id="cm-h" class="cm-titre">Besoin d’un coup de main ?</h3>${principal ? html`<span class="small muted">${P[principal][1]}</span>` : null}</span></div>
+    ${suivi ? html`<${SuiviAide} ctx=${ctx} s=${suivi}/>` : null}
+    ${principal ? html`<div class="cm-acts"><button type="button" id="cm-go" class="btn small" onClick=${P[principal][2]}>${P[principal][0]}</button></div>` : null}
+    ${autres.length ? html`<p class="cm-ou small"><span class="muted">Ou</span> ${autres.map((k, i) => html`${i ? html`<span class="muted" aria-hidden="true"> · </span>` : null}<button type="button" class="linkish small" onClick=${P[k][2]}>${P[k][0]}</button>`)}</p>` : null}
+    ${relire ? html`<${DemandeRelecture} ctx=${ctx} onClose=${() => setRelire(false)}/>` : null}
+  </section>`;
+}
+function SuiviAide({ ctx, s }) {
+  const { data, store, go } = ctx;
+  const ligne = (ico, route, txt, etat) => html`<button type="button" class="cm-suivi" onClick=${() => go(route)}><${Icon} name=${ico} size=${16}/><span class="cm-suivi-txt">${txt}</span>${etat ? html`<span class="small">${etat}</span>` : null}<${Icon} name="arrow" size=${16}/></button>`;
+  if (s.kind === 'demande') {
+    const d = (data.demandes || []).find(x => x.id === s.id); if (!d) return null;
+    const n = (data.propositions || []).filter(x => x.demande_id === d.id && x.status === 'envoyee').length;
+    return ligne('send', 'offres/demandes/' + d.id, html`<span class="small muted">Ma demande</span> <bdi translate="no" dir="auto">${d.titre}</bdi>`, d.status === 'match' ? 'Match' : n > 1 ? `${n} propositions` : n ? '1 proposition' : 'En attente');
+  }
+  if (s.kind === 'cv') {
+    const r = (data.relectures_cv || []).find(x => x.id === s.id); if (!r) return null;
+    return ligne('eye', 'mentorat/cv', `${firstName(store.byId('profiles', r.reviewer_id)) || 'Un lauréat'} relit ton CV`);
+  }
+  const m = data.mentorships.find(x => x.id === s.id); if (!m) return null;
+  return ligne('mentor', 'mentorat', html`<span class="small muted">Ma demande de conseil</span> <bdi translate="no" dir="auto">${m.sujet}</bdi>`, 'En attente');
 }
 
 // ---------------------------------------------------------------------------
@@ -743,13 +847,38 @@ injectCSS('mentorat-ux', `
 .linkish.m-quiet { color: var(--ink-2); font-weight: 500; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 3px; }
 .linkish.m-quiet:hover { color: var(--ink); }
 
-/* Accueil (lauréat) : une demande, légère */
-.hn-compact { display: flex; flex-direction: column; gap: var(--sp-3); }
-.hn-card { display: flex; flex-direction: column; gap: var(--sp-2); padding: .9rem 1rem; border-radius: var(--r-lg); background: var(--surface); border: 1px solid var(--line); border-inline-start: 4px solid var(--accent); min-width: 0; }
+/* Une demande de conseil ouverte sur place (feuille) */
+.hn-card { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
 .hn-card > .person { align-self: flex-start; }
 .hn-card > p { margin: 0; }
 .hn-card .tchoice > p { color: var(--ink-2); }
-.hn-more { align-self: flex-start; display: inline-flex; align-items: center; gap: .3rem; }
+
+/* Accueil (lauréat) : « Ils ont besoin de toi », trois lignes au plus */
+.besoins { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+.besoins > .section-head { margin: 0; }
+.bs-tout { min-height: 40px; }
+.bs-liste { list-style: none; margin: 0; padding: var(--sp-1); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
+.modal .bs-liste { border: 0; padding: 0; background: none; }
+.bs-liste li + li { border-top: 1px solid var(--line); }
+.bs-ligne { display: flex; align-items: flex-start; gap: var(--sp-3); width: 100%; min-height: 56px; padding: var(--sp-3) var(--sp-2); border: 0; background: none; border-radius: var(--r-md); color: var(--ink); font: inherit; text-align: start; cursor: pointer; }
+.bs-ligne:hover { background: var(--surface-2); }
+.bs-txt { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.bs-l1 { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+.bs-nom { font-weight: 650; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bs-verbe { margin-inline-start: auto; flex: none; display: inline-flex; align-items: center; gap: .25rem; color: var(--accent); font-size: var(--fs-2); font-weight: 600; white-space: nowrap; }
+.bs-quoi { color: var(--ink-2); font-size: var(--fs-2); line-height: 1.35; }
+.bs-sujet { color: var(--muted); font-size: var(--fs-2); line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Accueil (étudiant) : « Besoin d'un coup de main ? », une seule carte */
+.coup-de-main { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4); border-radius: var(--r-lg); background: var(--surface); border: 1px solid var(--line); min-width: 0; }
+.cm-head { display: flex; align-items: flex-start; gap: var(--sp-3); }
+.cm-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cm-titre { margin: 0; font-size: var(--fs-3, 1rem); font-weight: 650; }
+.cm-acts .btn { min-height: 44px; }
+.cm-ou { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .4rem; }
+.cm-ou .linkish { min-height: 40px; text-align: start; }
+.cm-suivi { display: flex; align-items: center; gap: var(--sp-2); width: 100%; min-height: 44px; padding: var(--sp-2) var(--sp-3); border: 0; border-radius: var(--r-md); background: var(--surface-2); color: var(--ink); font: inherit; text-align: start; cursor: pointer; }
+.cm-suivi-txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @media (prefers-reduced-motion: reduce) {
   @keyframes m-ouvre { from { opacity: 0; } }
@@ -808,7 +937,30 @@ addAR({
   'Ton rendez-vous est fixé': 'تم تحديد موعدك',
   'Confirmer ma présence': 'تأكيد حضوري',
   'Présence confirmée': 'الحضور مؤكَّد',
+  'Te demande un conseil': 'يطلب منك نصيحة',
+  'Cherche un conseil': 'يبحث عن نصيحة',
+  'Te demande de relire son CV': 'يطلب منك مراجعة سيرته الذاتية',
+  'Attend une relecture de CV': 'ينتظر مراجعة سيرته الذاتية',
+  'Cherche un stage': 'يبحث عن تدريب',
+  'Cherche un PFE': 'يبحث عن مشروع نهاية الدراسة',
+  'Cherche un stage à l’étranger': 'يبحث عن تدريب في الخارج',
+  'Cherche un emploi': 'يبحث عن عمل',
+  'Relire': 'مراجعة',
+  'Un membre': 'عضو',
+  'Un lauréat': 'خريج',
+  'Besoin d’un coup de main ?': 'تحتاج إلى مساعدة؟',
+  'Dis aux lauréats ce que tu cherches : ta demande et ton CV arrivent chez ceux de ton parcours.': 'قل للخريجين ما تبحث عنه: يصل طلبك وسيرتك الذاتية إلى خريجي مسارك.',
+  'CV, stage, entretien, étranger : un lauréat te parle 20 minutes en visio.': 'السيرة الذاتية، التدريب، المقابلة، الخارج: خريج يحدّثك 20 دقيقة عبر الفيديو.',
+  'Faire relire mon CV': 'مراجعة سيرتي الذاتية',
+  'Un lauréat relit ton CV et te laisse ses conseils, rubrique par rubrique.': 'يراجع خريج سيرتك الذاتية ويترك لك نصائحه، قسمًا بقسم.',
+  'Ou': 'أو',
+  'Ma demande de conseil': 'طلبي للنصيحة',
+  'Cette demande n’attend plus de réponse': 'هذا الطلب لم يعد ينتظر ردًّا',
+  'Un autre lauréat l’a prise, ou l’étudiant l’a retirée. Merci d’avoir voulu aider !': 'تكفّل به خريج آخر، أو سحبه الطالب. شكرًا لرغبتك في المساعدة!',
+  'Voir les autres demandes': 'عرض الطلبات الأخرى',
 }, [
+  [/^Demander conseil à (.+), ton parrain$/, n => `اطلب نصيحة من ${n}، عرّابك`],
+  [/^(.+) attend une relecture de son CV\.$/, n => `${n} ينتظر مراجعة سيرته الذاتية.`],
   [/^Confirme pour rassurer (.+)\.$/, n => `أكّد حضورك لطمأنة ${n}.`],
   [/^(.+) a confirmé sa présence\.$/, n => `${n} أكّد حضوره.`],
   [/^(.+) a confirmé sa présence : (.+)$/, (n, x) => `${n} أكّد حضوره: ${x}`],

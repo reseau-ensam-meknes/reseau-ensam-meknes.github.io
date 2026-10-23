@@ -1,6 +1,6 @@
 // « Mon parcours » (étudiants) et « Mon espace » (lauréats).
 import { html, useState } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, Bar, toast, LevelChip, CompanyLogo, TYPE_ICON, Num, celebrate, injectCSS } from './ui.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, Bar, toast, LevelChip, CompanyLogo, TYPE_ICON, Num, celebrate, injectCSS, LigneAFaire } from './ui.js';
 import { addAR, arCount } from './i18n.js';
 import { PoulsReseau } from './pouls.js';
 import { OBJECTIFS, NIVEAUX, TYPES, niveauOf, statutOf, typeForNiveau, seasonLabel, timeAgo, levelOf, BADGES, badgesOf, BAREME, computeScores, NIVEAUX_IMPACT, mentorState, requestsFor, demandesPour } from './logic.js';
@@ -8,7 +8,6 @@ import { APP_STATUS, OfferComposer } from './offers.js';
 import { AttestationCard, ShareModal } from './growth.js';
 import { Filleuls, ParrainCard } from './saison.js';
 import { BilanCard } from './recrutement.js';
-import { SlotDate } from './mentorat.js';
 
 // Étapes vues par l'étudiant : il postule, le lauréat fait avancer, l'étudiant confirme.
 const JOURNEY = [['send', 'Je postule'], ['people', 'Entretien'], ['briefcase', 'Recruté(e)'], ['check', 'Confirmé']];
@@ -44,7 +43,7 @@ export function ParcoursPage(ctx) {
   return html`<section class="page">
     <header class="page-head"><div><p class="eyebrow">Saison ${seasonLabel(saison)} · ${NIVEAUX[n]?.label}</p><h1>Mon parcours</h1></div></header>
 
-    ${pl?.status === 'en_attente' ? html`<${ConfirmRecruit} ctx=${ctx} pl=${pl} helper=${helper}/>` : null}
+    <${AFaire} ctx=${ctx}/>
     <${ParrainCard} ctx=${ctx}/>
 
     <div class=${'objective st-' + st.key}>
@@ -64,7 +63,7 @@ export function ParcoursPage(ctx) {
       ${!pl && obj && (apps.length || parrain) ? html`<div class="row"><button class=${'btn' + (parrain ? '' : ' primary')} onClick=${() => ctx.go('offres')}><${Icon} name="search" size=${16}/> Voir les offres pour moi</button></div>` : null}
     </div>
 
-    ${pl && pl.laureat_id && pl.status === 'confirme' ? html`<${MerciBox} ctx=${ctx} pl=${pl} helper=${helper}/>` : null}
+    ${pl && pl.laureat_id && pl.status === 'confirme' && pl.merci ? html`<${MerciBox} ctx=${ctx} pl=${pl} helper=${helper}/>` : null}
 
     <div class="section-head"><h2>Mes candidatures <span class="count">${apps.length}</span></h2><button class="btn small ghost" onClick=${() => setAddApp(true)}><${Icon} name="plus" size=${15}/> Candidature hors plateforme</button></div>
     ${apps.length ? html`<ul class="app-list">${apps.map(a => {
@@ -90,9 +89,24 @@ export function ParcoursPage(ctx) {
   </section>`;
 }
 
-// Le lauréat a déclaré le recrutement : l'étudiant confirme ou non.
+// Le lauréat a déclaré le recrutement : l'étudiant confirme ou non (ici, ou depuis la carte « prochaine étape » de l'accueil)
+export const refuserRecrutement = (ctx, pl) => ctx.act(async () => { await ctx.store.update('placements', pl.id, { status: 'refuse' }); toast('C’est noté. Le lauréat sera informé.'); });
+export const confirmerRecrutement = (ctx, pl, helper) => ctx.act(async () => {
+  const { store } = ctx;
+  await store.update('placements', pl.id, { status: 'confirme' });
+  // Un lauréat qui cherchait un emploi l'a trouvé : il sort de la Vitrine, son entreprise est notée
+  const me = ctx.me;
+  if (me?.role === 'laureat' && me.en_recherche) await store.update('profiles', me.id, { en_recherche: false, ...(me.entreprise ? {} : { entreprise: pl.entreprise }) }).catch(() => {});
+  const p = me?.role === 'etudiant' ? (helper?.full_name || '').split(' ')[0] : '';
+  const fete = celebrate({
+    cle: 'recrutement-' + pl.id, icon: 'trophy', titre: 'Félicitations, c’est officiel !',
+    texte: p ? `Ton recrutement chez ${pl.entreprise} est vérifié des deux côtés. Un petit mot fera très plaisir à ${p}.` : `Ton recrutement chez ${pl.entreprise} est vérifié des deux côtés.`,
+    action: p ? { label: `Dire merci à ${p}`, icon: 'heart', onClick: () => versMerci(ctx) } : null,
+  });
+  if (!fete) toast('Félicitations ! Ta réussite est confirmée.', 'win');
+});
 export function ConfirmRecruit({ ctx, pl, helper }) {
-  const { store, act } = ctx;
+  const { store } = ctx;
   const o = pl.offer_id ? store.byId('offers', pl.offer_id) : null;
   // Depuis une demande : le lauréat du match déclare le démarrage (recrutement, encadrement ou recommandation)
   const d = pl.demande_id ? store.byId('demandes', pl.demande_id) : null;
@@ -101,33 +115,42 @@ export function ConfirmRecruit({ ctx, pl, helper }) {
       <div><p class="eyebrow">À confirmer</p><h2>${pl.demande_id ? `${helper?.full_name || 'Un lauréat'} indique que tu as commencé chez ${pl.entreprise}` : `${helper?.full_name || 'Un lauréat'} indique t’avoir recruté(e) chez ${pl.entreprise}`}</h2>
         <p class="muted small">${o ? o.titre : d ? html`<span translate="no" dir="auto">${d.titre}</span>` : TYPES[pl.type]?.long}. Une fois confirmé, ta réussite est vérifiée des deux côtés et compte dans le suivi de ta promo.</p></div></div>
     <div class="row-end">
-      <button class="btn ghost" onClick=${() => act(async () => { await store.update('placements', pl.id, { status: 'refuse' }); toast('C’est noté. Le lauréat sera informé.'); })}>Ce n’est pas le cas</button>
-      <button class="btn primary" onClick=${() => act(async () => {
-        await store.update('placements', pl.id, { status: 'confirme' });
-        // Un lauréat qui cherchait un emploi l'a trouvé : il sort de la Vitrine, son entreprise est notée
-        const me = ctx.me;
-        if (me?.role === 'laureat' && me.en_recherche) await store.update('profiles', me.id, { en_recherche: false, ...(me.entreprise ? {} : { entreprise: pl.entreprise }) }).catch(() => {});
-        const p = me?.role === 'etudiant' ? (helper?.full_name || '').split(' ')[0] : '';
-        const fete = celebrate({
-          cle: 'recrutement-' + pl.id, icon: 'trophy', titre: 'Félicitations, c’est officiel !',
-          texte: p ? `Ton recrutement chez ${pl.entreprise} est vérifié des deux côtés. Un petit mot fera très plaisir à ${p}.` : `Ton recrutement chez ${pl.entreprise} est vérifié des deux côtés.`,
-          action: p ? { label: `Dire merci à ${p}`, icon: 'heart', onClick: () => versMerci(ctx) } : null,
-        });
-        if (!fete) toast('Félicitations ! Ta réussite est confirmée.', 'win');
-      })}><${Icon} name="check" size=${16}/> Oui, je confirme</button>
+      <button class="btn ghost" onClick=${() => refuserRecrutement(ctx, pl)}>Ce n’est pas le cas</button>
+      <button class="btn primary" onClick=${() => confirmerRecrutement(ctx, pl, helper)}><${Icon} name="check" size=${16}/> Oui, je confirme</button>
     </div>
   </div>`;
 }
 
-// Après la fête : on ouvre « Mon parcours » et on place le curseur dans le mot de remerciement
-function versMerci(ctx) {
-  ctx.go('parcours');
+// Après la fête : on ouvre « Mon parcours » (ou « Mon espace ») et on place le curseur dans le mot de remerciement
+export function versMerci(ctx) {
+  ctx.go(ctx.me?.role === 'etudiant' ? 'parcours' : 'espace');
   setTimeout(() => {
     const t = document.getElementById('merci-txt');
     if (!t) return;
     t.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
     t.focus({ preventScroll: true });
   }, 450);
+}
+
+// « À faire » en tête de Mon parcours et de Mon espace : les mêmes choses que la cloche, au même nombre.
+// Ce qui se fait ici même (confirmer, dire merci) s'affiche en carte ; le reste en lignes avec leur bouton. Rien à faire : rien ne s'affiche.
+export function AFaire({ ctx, max = 3 }) {
+  const { data, me, store, notifs = [], openNotif } = ctx;
+  const helper = p => store.byId('profiles', p.laureat_id);
+  const aConfirmer = data.placements.filter(p => p.student_id === me.id && p.status === 'en_attente');
+  const aRemercier = data.placements.filter(p => p.student_id === me.id && p.status === 'confirme' && p.laureat_id && !p.merci);
+  const lignes = notifs.filter(n => n.geste && !/^(pa|pm)/.test(n.key || ''));
+  const total = aConfirmer.length + aRemercier.length + lignes.length;
+  if (!total) return null;
+  const vues = lignes.length > max + 1 ? lignes.slice(0, max) : lignes, reste = lignes.slice(vues.length);
+  const liste = xs => html`<ul class="af-liste">${xs.map(n => html`<${LigneAFaire} key=${n.key} n=${n} onGo=${openNotif}/>`)}</ul>`;
+  return html`<section class="a-faire" aria-labelledby="af-titre">
+    <div class="section-head"><h2 id="af-titre">À faire <span class="count">${total}</span></h2></div>
+    ${aConfirmer.map(p => html`<${ConfirmRecruit} key=${p.id} ctx=${ctx} pl=${p} helper=${helper(p)}/>`)}
+    ${aRemercier.map(p => html`<${MerciBox} key=${p.id} ctx=${ctx} pl=${p} helper=${helper(p)}/>`)}
+    ${vues.length ? liste(vues) : null}
+    ${reste.length ? html`<details class="af-plus"><summary>${`Voir les ${reste.length} autres`}</summary>${liste(reste)}</details>` : null}
+  </section>`;
 }
 
 function MerciBox({ ctx, pl, helper }) {
@@ -191,8 +214,6 @@ export function EspacePage(ctx) {
   const lvl = levelOf(s.points);
   const mine = badgesOf(s, me, { star: ctx.starId, fondateurs: ctx.fondateurs });
   const myOffers = data.offers.filter(o => o.author_id === me.id).sort((a, b) => (a.status === 'ouverte' ? 0 : 1) - (b.status === 'ouverte' ? 0 : 1) || new Date(b.created_at) - new Date(a.created_at));
-  const myOfferIds = new Set(myOffers.map(o => o.id));
-  const toTreat = data.applications.filter(a => myOfferIds.has(a.offer_id) && a.status === 'postule').sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   const waiting = data.placements.filter(p => p.laureat_id === me.id && p.status === 'en_attente');
   const helped = data.placements.filter(p => p.laureat_id === me.id && p.status === 'confirme');
   const mercis = [
@@ -207,10 +228,14 @@ export function EspacePage(ctx) {
   const recrues = helped.filter(p => p.saison === ctx.saison).sort((a, b) => new Date(b.confirmed_at || b.created_at) - new Date(a.confirmed_at || a.created_at));
   const events = [...(s.events || [])].sort((a, b) => new Date(b.at) - new Date(a.at));
   const nouveau = !s.points && !myOffers.length && !helped.length && !waiting.length && !rdv.length && !mercis.length;
+  // Une seule action principale : si « À faire » montre une carte avec son bouton plein, « Publier une offre » se fait discret
+  const carteAFaire = data.placements.some(p => p.student_id === me.id && (p.status === 'en_attente' || (p.status === 'confirme' && p.laureat_id && !p.merci)));
 
   return html`<section class="page espace">
     <header class="page-head"><div><p class="eyebrow">Promo ${me.promo}${me.entreprise ? ' · ' + me.entreprise : ''}</p><h1>Mon espace</h1></div>
-      ${nouveau ? null : html`<button class="btn primary" onClick=${() => setCompose(true)}><${Icon} name="plus"/> Publier une offre</button>`}</header>
+      ${nouveau ? null : html`<button class=${'btn' + (carteAFaire ? '' : ' primary')} onClick=${() => setCompose(true)}><${Icon} name="plus"/> Publier une offre</button>`}</header>
+
+    <${AFaire} ctx=${ctx}/>
 
     ${nouveau ? html`<${PremiereAide} ctx=${ctx} onPublier=${() => setCompose(true)}/>` : html`<div class="impact-hero">
       <div class="impact-score">
@@ -230,19 +255,14 @@ export function EspacePage(ctx) {
 
     ${mercis.length ? html`<${MesMercis} ctx=${ctx} mercis=${mercis}/>` : null}
 
-    ${toTreat.length ? html`<div class="panel accent-panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="inbox"/> Nouvelles candidatures <span class="count">${toTreat.length}</span></h2></div>
-      <ul class="app-list flat">${toTreat.slice(0, 6).map(a => { const p = store.byId('profiles', a.student_id); const o = store.byId('offers', a.offer_id); return html`<li class="app-row" key=${a.id}>
-        <${Person} p=${p} onOpen=${openProfile} size=${36}/><span class="app-txt right"><span class="muted small">pour ${o?.titre}</span></span>
-        <button class="btn small" onClick=${() => openOffer(o.id)}>Voir</button></li>`; })}</ul></div>` : null}
-
     ${waiting.length ? html`<div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="clock"/> En attente de confirmation <span class="count">${waiting.length}</span></h2></div>
       <p class="small muted">Tu as indiqué avoir recruté ces étudiants. Dès qu’ils confirment, leur réussite est vérifiée des deux côtés.</p>
       <ul class="app-list flat">${waiting.map(p => { const st = store.byId('profiles', p.student_id); return html`<li class="app-row" key=${p.id}>
         <${Person} p=${st} onOpen=${openProfile} size=${36}/><span class="app-txt right"><span class="muted small"><span translate="no">${p.entreprise}</span> · ${timeAgo(p.created_at)}</span></span>
         <button class="btn small ghost" onClick=${() => ctx.confirm('Annuler cette déclaration de recrutement ?', () => act(() => store.remove('placements', p.id)), 'Annuler la déclaration')}>Annuler</button></li>`; })}</ul></div>` : null}
 
-    ${rdv.length ? html`<div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="video"/> Mes prochains rendez-vous <span class="count">${rdv.length}</span></h2><button class="btn tiny ghost" onClick=${() => ctx.go('mentorat')}>Mentorat <${Icon} name="arrow" size=${14}/></button></div>
-      <ul class="slot-list">${rdv.slice(0, 3).map(m => html`<li class="slot-row" key=${m.id}><${SlotDate} iso=${m.rdv_at}/><span class="slot-main"><${Person} p=${store.byId('profiles', m.student_id)} onOpen=${openProfile} size=${30}/><span class="small" translate="no" dir="auto">${m.sujet}</span></span></li>`)}</ul></div>` : null}
+    ${rdv.length ? html`<button type="button" class="impact-strip clickable esp-rdv" onClick=${() => ctx.go('mentorat')}><span class="obj-ico"><${Icon} name="video" size=${20}/></span>
+      <span class="grow"><strong>${rdv.length > 1 ? `${rdv.length} rendez-vous à venir` : '1 rendez-vous à venir'}</strong></span><${Icon} name="arrow" size=${18}/></button>` : null}
 
     <${Filleuls} ctx=${ctx}/>
 
@@ -441,7 +461,9 @@ addAR({
   'Accepte 3 demandes d’aide en moins de 24 h': 'اقبل 3 طلبات مساعدة في أقل من 24 ساعة',
   'Aide 10 étudiants à être recrutés': 'ساعد 10 طلبة على التوظيف',
   'Atteins 300 points d’impact': 'اجمع 300 نقطة أثر',
+  '1 rendez-vous à venir': 'موعد واحد قادم',
 }, [
+  [/^Voir les (\d+) autres$/, n => `عرض البقية (${n})`],
   [/^Ton recrutement chez (.+) est vérifié des deux côtés\. Un petit mot fera très plaisir à (.+)\.$/, (e, p) => `توظيفك في ${e} مؤكَّد من الطرفين. كلمة شكر صغيرة ستُسعد ${p} كثيرًا.`],
   [/^Ton recrutement chez (.+) est vérifié des deux côtés\.$/, e => `توظيفك في ${e} مؤكَّد من الطرفين.`],
   [/^Dire merci à (.+)$/, p => `قل شكرًا لـ${p}`],

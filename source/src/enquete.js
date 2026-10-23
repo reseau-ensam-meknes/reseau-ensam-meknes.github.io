@@ -1,7 +1,7 @@
 // Enquête d'insertion à 6 et 12 mois après le diplôme : le questionnaire (2 minutes), la carte d'accueil,
 // et les aides partagées avec le tableau de bord (chiffres agrégés, jamais en dessous de 5 réponses).
 import { html, useState, useEffect } from './vendor/preact-htm.js';
-import { Icon, Field, Bar, toast, useLocal, injectCSS } from './ui.js';
+import { Icon, Field, Bar, toast, injectCSS } from './ui.js';
 import { addAR } from './i18n.js';
 import { enqueteDue, niveauOf, seasonOf, pct, SITUATIONS, SALAIRES, CANAUX, SECTEURS } from './logic.js';
 
@@ -140,8 +140,6 @@ injectCSS('enquete', `
 .enq-ok .obj-ico { background: var(--good-soft); color: var(--good); }
 .enq-ok h2 { margin: 0 0 .2rem; }
 .enq-ok p { margin: 0; }
-.enq-card { display: flex; gap: .9rem; align-items: center; padding: .9rem 1rem; border-radius: 14px; background: linear-gradient(135deg, var(--brass-soft), var(--surface) 85%); border: 1px solid var(--line); }
-.enq-card .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .15rem; }
 .enq-answer + .enq-answer { border-top: 1px solid var(--line); padding-top: .7rem; }
 .enq-answer .eyebrow { margin: 0 0 .4rem; }
 .enq-mine { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .3rem .9rem; margin: 0; font-size: .9rem; }
@@ -152,9 +150,6 @@ injectCSS('enquete', `
 .ins-kpis .bar { margin-top: .3rem; }
 @media (max-width: 760px) {
   .enq-sits { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .enq-card { flex-wrap: wrap; }
-  .enq-card .grow { flex-basis: calc(100% - 60px); }
-  .enq-card .btn { flex: 1; }
 }
 `);
 
@@ -336,18 +331,3 @@ export function KpisInsertion({ r }) {
   </div>`;
 }
 
-// ---------------------------------------------------------------------------
-// Carte d'accueil quand l'enquête est ouverte pour moi
-// ---------------------------------------------------------------------------
-export function EnqueteCard({ ctx }) {
-  const { data, me, go } = ctx;
-  const [off, setOff] = useLocal('enquete-off-' + (me?.id || ''), 0);
-  const due = enqueteDue(me, data.enquetes_insertion || []);
-  if (!due || (off && Date.now() - off < 7 * 864e5)) return null;
-  return html`<div class="enq-card" role="region" aria-label="Enquête d’insertion">
-    <span class="obj-ico brass"><${Icon} name="chart" size=${20}/></span>
-    <div class="grow"><strong>Enquête ${due.vague} mois après le diplôme</strong><span class="small muted">2 minutes pour aider les promos suivantes.</span></div>
-    <button class="btn primary small" id="enq-go" onClick=${() => go('enquete')}>Répondre</button>
-    <button class="icon-btn small" aria-label="Masquer pour 7 jours" title="Masquer pour 7 jours" onClick=${() => setOff(Date.now())}><${Icon} name="x" size=${16}/></button>
-  </div>`;
-}

@@ -55,7 +55,7 @@ export function EntraidePage(ctx) {
   const qs = (cat === 'moi' ? pourMoi : data.questions.filter(q => !cat || q.categorie === cat)).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   const q = ctx.sub2 && store.byId('questions', ctx.sub2);
   const open = id => go('reseau/entraide/' + id);
-  if (q) return html`<${QuestionView} ctx=${ctx} q=${q} onBack=${() => go('reseau/entraide')}/>`;
+  if (q) return html`<${QuestionView} ctx=${ctx} q=${q} onBack=${() => go('reseau/entraide', { remplacer: true })}/>`;
   return html`<div class="sub-page">
     <div class="toolbar"><p class="muted small grow">Les questions des étudiants, les réponses des lauréats. Une question sur une entreprise ou un pays arrive directement aux lauréats concernés.</p><button class="btn primary small" onClick=${() => setAsk(true)}><${Icon} name="plus" size=${16}/> Poser une question</button></div>
     <div class="chips">${pourMoi.length ? html`<button class=${'chip' + (cat === 'moi' ? ' on' : '')} onClick=${() => setCat(cat === 'moi' ? '' : 'moi')}><${Icon} name="send" size=${13}/> Pour toi <span class="count">${pourMoi.length}</span></button>` : null}${['', ...CATEGORIES_Q].map(c => html`<button class=${'chip' + (cat === c ? ' on' : '')} onClick=${() => setCat(c)}>${c || 'Toutes'}</button>`)}</div>
@@ -137,7 +137,7 @@ export function ReseauPage(ctx) {
   const tab = tabs.some(([k]) => k === sub) ? sub : 'groupes';
   return html`<section class="page">
     <header class="page-head"><div><p class="eyebrow">${data.profiles.filter(p => p.role === 'laureat').length} lauréats · ${data.profiles.filter(p => p.role === 'etudiant').length} étudiants</p><h1>Réseau</h1></div></header>
-    <div class="icon-tabs" role="tablist" style=${`--n:${tabs.length}`}>${tabs.map(([k, l, i]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => go('reseau/' + k)}><${Icon} name=${i} size=${20}/><span>${l}</span></button>`)}</div>
+    <div class="icon-tabs" role="tablist" style=${`--n:${tabs.length}`}>${tabs.map(([k, l, i]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => go('reseau/' + k, { remplacer: true })}><${Icon} name=${i} size=${20}/><span>${l}</span></button>`)}</div>
     ${tab === 'groupes' ? html`<${GroupesPage} ctx=${ctx}/>` : null}
     ${tab === 'agenda' ? html`<${AgendaPage} ctx=${ctx}/>` : null}
     ${tab === 'entraide' ? html`<${EntraidePage} ...${ctx}/>` : null}
@@ -152,7 +152,7 @@ export function ReseauPage(ctx) {
 function Classement({ ctx }) {
   const promos = ctx.sub2 === 'promos';
   return html`<div class="sub-page">
-    <div class="seg">${[['', 'Lauréats'], ['promos', 'Coupe des promos']].map(([k, l]) => html`<button class=${(ctx.sub2 || '') === k ? 'on' : ''} onClick=${() => ctx.go('reseau/classement' + (k ? '/' + k : ''))}>${l}</button>`)}</div>
+    <div class="seg">${[['', 'Lauréats'], ['promos', 'Coupe des promos']].map(([k, l]) => html`<button class=${(ctx.sub2 || '') === k ? 'on' : ''} onClick=${() => ctx.go('reseau/classement' + (k ? '/' + k : ''), { remplacer: true })}>${l}</button>`)}</div>
     ${promos ? html`<${CoupePromos} ctx=${ctx}/>` : html`<${ClassementLaureats} ctx=${ctx}/>`}
   </div>`;
 }

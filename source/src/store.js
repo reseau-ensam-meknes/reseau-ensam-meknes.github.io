@@ -1,7 +1,7 @@
 // Couche de données : même interface en mode démo (navigateur) et en mode réel (Supabase).
 // Les données de démonstration (seed.js) ne sont chargées qu'en démo : le site réel n'en a pas besoin
 const chargerSeed = () => import('./seed.js').then(m => m.buildSeed());
-import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque } from './logic.js';
+import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau } from './logic.js';
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
 const PHASE3 = ['coordonnees', 'demandes_contact', 'relectures_cv', 'relecture_commentaires', 'entretiens', 'avis_stage', 'guide_pays', 'signalements', 'enquetes_insertion', 'verifications_pairs', 'evenements', 'evenement_participants', 'retours_cv'];
@@ -36,6 +36,8 @@ class Base {
   on(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
   emit() { this.data = { ...this.data }; for (const fn of this.listeners) fn(); }
   byId(table, id) { return this.data[table].find(r => r.id === id); }
+  // « Cette semaine dans le réseau » : en démo, le calcul sur toutes les données
+  pouls() { return poulsReseau(this.data); }
   // En ligne, la base a déjà masqué ce qui ne doit pas être vu : ces deux aides servent surtout à la démo.
   voitChamp(p, champ) { return !!p; }
   coordonneesDe(id) { return this.byId('coordonnees', id) || null; }
@@ -116,7 +118,7 @@ export function pdfSimple(lignes) {
 // ---------------------------------------------------------------------------
 // Démo : données d'exemple, gardées dans le navigateur du visiteur
 // ---------------------------------------------------------------------------
-const DEMO_KEY = 'ensam-demo-v13';
+const DEMO_KEY = 'ensam-demo-v14';
 class DemoStore extends Base {
   constructor() { super(); this.mode = 'demo'; this.fichiers = new Map(); }
   async init() {
@@ -901,10 +903,17 @@ class SupabaseStore extends Base {
   get userId() { return this.session?.user?.id || null; }
   async loadAll() {
     if (!this.userId) { this.data = Object.fromEntries(TABLES.map(t => [t, []])); this.me = null; return; }
-    await Promise.all(TABLES.map(t => this.loadTable(t)));
+    await Promise.all([...TABLES.map(t => this.loadTable(t)), this.chargerPouls().catch(() => {})]);
     this.me = this.byId('profiles', this.userId) || null;
     this.subscribe();
   }
+  // « Cette semaine dans le réseau » : la base compte tout (relectures et propositions comprises), pour que chacun voie le même chiffre
+  async chargerPouls() {
+    const { data, error } = await this.sb.rpc('pouls_reseau');
+    this._pouls = !error && data ? { jours: data.jours, aidants: data.aidants || [], nbAidants: data.nb_aidants || 0, nbAides: data.nb_aides || 0, recrutes: data.recrutes || 0 } : null;
+  }
+  // Base pas encore à jour : seulement ce que tout membre peut lire, pour que le chiffre reste le même pour tous
+  pouls() { return this._pouls || poulsReseau({ ...this.data, relectures_cv: [], propositions: [] }); }
   async loadTable(t, essai = 0) {
     this.vues ||= {};
     const vue = VUES[t] && this.vues[t] !== false ? VUES[t] : null;
@@ -932,7 +941,8 @@ class SupabaseStore extends Base {
       pending.add(t); for (const x of LIES[t] || []) pending.add(x); clearTimeout(timer);
       timer = setTimeout(async () => {
         const ts = [...pending]; pending.clear();
-        await Promise.all(ts.map(x => this.loadTable(x)));
+        const pouls = ts.some(x => ['mentorships', 'placements', 'relectures_cv', 'propositions'].includes(x));
+        await Promise.all([...ts.map(x => this.loadTable(x)), pouls ? this.chargerPouls().catch(() => {}) : null]);
         this.me = this.byId('profiles', this.userId) || null;
         this.emit();
       }, 400);
@@ -1241,6 +1251,7 @@ function frError(e) {
   if (m.includes('duplicate key') && m.includes('placements')) return 'Une réussite est déjà enregistrée pour cet étudiant cette saison.';
   if (m.includes('duplicate key') && m.includes('applications')) return 'Tu as déjà postulé à cette offre.';
   if (m.includes('duplicate key') && m.includes('invitations')) return 'Cet étudiant est déjà invité sur cette offre.';
+  if (m.includes('duplicate key') && m.includes('propositions')) return 'Tu as déjà proposé ton aide pour cette demande.';
   if (m.includes('duplicate key') && (m.includes('cafe_participants') || m.includes('groupe_membres'))) return 'C’est déjà fait.';
   if (m.includes('startups_site_check')) return 'Le lien doit commencer par https://';
   if (m.includes('avis_stage_un_par_saison')) return 'Tu as déjà donné ton avis sur cette entreprise pour cette saison.';

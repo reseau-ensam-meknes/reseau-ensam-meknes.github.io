@@ -2,9 +2,9 @@
 // modération des signalements, membres (rôle, vérification), liste officielle des étudiants,
 // liens d'invitation par promo, agenda de l'école et réglages (email de l'école).
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
-import { Icon, Field, Person, Num, Empty, Bar, Avatar, toast, injectCSS } from './ui.js';
+import { Icon, Field, Person, Num, Empty, Bar, Avatar, toast, injectCSS, useLocal } from './ui.js';
 import { addAR } from './i18n.js';
-import { NIVEAUX, niveauOf, timeAgo, cleNom, norm, GUIDE_SECTIONS, pct, reponses48h, parcoursInscription } from './logic.js';
+import { NIVEAUX, niveauOf, timeAgo, cleNom, norm, GUIDE_SECTIONS, pct, reponses48h, parcoursInscription, PUBLICS, ANNONCE_JOURS, annonceVisible, annoncePour } from './logic.js';
 import { DefisAdmin } from './saison.js';
 import { AgendaAdmin } from './agenda.js';
 import { InvitationsAdmin } from './invitation.js';
@@ -55,7 +55,10 @@ addAR({
   'Un étudiant qui s’inscrit avec une autre adresse (Gmail…) ne peut pas créer son profil. Les lauréats gardent leur adresse personnelle.': 'الطالب الذي يسجل بعنوان آخر (Gmail…) لا يمكنه إنشاء ملفه. يحتفظ الخريجون بعناوينهم الشخصية.',
   'Ajoute d’abord au moins un domaine.': 'أضف أولًا نطاقًا واحدًا على الأقل.', 'Réglage enregistré.': 'تم حفظ الإعداد.',
   'Domaine invalide :': 'نطاق غير صالح:', 'Aucun domaine pour l’instant : tout le monde s’inscrit avec son adresse habituelle.': 'لا نطاق حاليًا: الجميع يسجل بعنوانه المعتاد.',
+  '280 caractères au plus. Elle s’affiche sur une ligne, sur l’accueil des membres choisis, pendant 14 jours, et remplace l’annonce en cours pour eux.': '280 حرفًا على الأكثر. يظهر في سطر واحد في الصفحة الرئيسية للأعضاء المختارين لمدة 14 يومًا، ويحلّ محلّ الإعلان الحالي الموجّه إليهم.',
+  'Annonce publiée sur l’accueil des étudiants.': 'نُشر الإعلان في الصفحة الرئيسية للطلبة.', 'Annonce publiée sur l’accueil des lauréats.': 'نُشر الإعلان في الصفحة الرئيسية للخريجين.',
 }, [
+  [/^Jusqu’au (\d{1,2}) (\S+)$/, (j, m) => `إلى غاية ${j} ${m}`],
   [/^Signalé (\d+) fois$/, n => `بُلّغ عنه ${n} مرة`],
   [/^(\d+) demandes d’étudiants sans proposition depuis plus de 24 h$/, n => `${n} طلبات طلبة دون اقتراح منذ أكثر من 24 ساعة`],
   [/^(\d+) signalements? à traiter$/, n => `${n} تبليغ للمعالجة`],
@@ -673,41 +676,50 @@ function ParrainsAdmin({ ctx }) {
   </div>`;
 }
 
-// Annonce affichée en haut de l'accueil de tous les membres
+// Annonce sur l'accueil : une ligne, pour un public (tout le monde, les étudiants ou les lauréats), pendant 14 jours
+const POUR_LABEL = { etudiants: 'Pour les étudiants', laureats: 'Pour les lauréats' };
+const finAnnonce = a => new Date(new Date(a.created_at).getTime() + ANNONCE_JOURS * 864e5).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' });
 function AnnonceBox({ ctx }) {
   const { data, store, me, act } = ctx;
-  const current = data.annonces.filter(a => a.active).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
-  const [texte, setTexte] = useState(''); const [lien, setLien] = useState('');
+  const visibles = data.annonces.filter(a => annonceVisible(a)).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  const [texte, setTexte] = useState(''); const [lien, setLien] = useState(''); const [pour, setPour] = useState('tous');
+  // Une nouvelle annonce remplace seulement celles qui touchent les mêmes personnes
+  const memes = (x, y) => x === 'tous' || y === 'tous' || x === y;
   const publish = e => {
     e.preventDefault();
     act(async () => {
       if (lien.trim() && !/^https:\/\/\S+$/i.test(lien.trim())) throw new Error('Le lien doit commencer par https://');
-      for (const a of data.annonces.filter(x => x.active)) await store.update('annonces', a.id, { active: false });
-      await store.insert('annonces', { author_id: me.id, texte: texte.trim(), lien: lien.trim() || null, active: true });
-      setTexte(''); setLien(''); toast('Annonce publiée sur l’accueil de tous les membres.', 'win');
+      for (const a of data.annonces.filter(x => x.active && memes(x.public || 'tous', pour))) await store.update('annonces', a.id, { active: false });
+      await store.insert('annonces', { author_id: me.id, texte: texte.trim(), lien: lien.trim() || null, active: true, ...(pour === 'tous' ? {} : { public: pour }) });
+      setTexte(''); setLien('');
+      toast(pour === 'etudiants' ? 'Annonce publiée sur l’accueil des étudiants.' : pour === 'laureats' ? 'Annonce publiée sur l’accueil des lauréats.' : 'Annonce publiée sur l’accueil de tous les membres.', 'win');
     });
   };
   return html`<div class="panel">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="bell"/> Annonce sur l’accueil</h2></div>
-    ${current ? html`<div class="annonce preview"><${Icon} name="bell" size=${18}/><span class="grow">${current.texte}</span><button class="btn tiny ghost" onClick=${() => act(() => store.update('annonces', current.id, { active: false }))}>Retirer</button></div>` : html`<p class="small muted">Aucune annonce en ce moment.</p>`}
+    ${visibles.length ? visibles.map(a => html`<div class="annonce preview" key=${a.id}><${Icon} name="bell" size=${18}/><span class="grow"><span dir="auto" translate="no">${a.texte}</span><span class="annonce-meta"><span class="mini">${POUR_LABEL[a.public] || 'Tout le monde'}</span> <span class="small muted">${`Jusqu’au ${finAnnonce(a)}`}</span></span></span><button class="btn tiny ghost" onClick=${() => act(() => store.update('annonces', a.id, { active: false }))}>Retirer</button></div>`) : html`<p class="small muted">Aucune annonce en ce moment.</p>`}
     <form class="form" onSubmit=${publish}>
-      <${Field} label=${current ? 'Remplacer par une nouvelle annonce' : 'Nouvelle annonce'} hint="280 caractères au plus. Elle s’affiche en haut de l’accueil de tout le monde."><textarea id="ann-txt" rows="2" maxlength="280" value=${texte} onInput=${e => setTexte(e.target.value)} placeholder="Ex. Forum entreprises jeudi à l’école : les lauréats sont les bienvenus."></textarea><//>
+      <${Field} label="Nouvelle annonce" hint="280 caractères au plus. Elle s’affiche sur une ligne, sur l’accueil des membres choisis, pendant 14 jours, et remplace l’annonce en cours pour eux."><textarea id="ann-txt" rows="2" maxlength="280" value=${texte} onInput=${e => setTexte(e.target.value)} placeholder="Ex. Forum entreprises jeudi à l’école : les lauréats sont les bienvenus."></textarea><//>
+      <div class="field"><span class="field-label" id="ann-pour-l">Pour qui ?</span><div class="seg" role="radiogroup" aria-labelledby="ann-pour-l">${PUBLICS.map(([k, l]) => html`<button type="button" role="radio" id=${'ann-pour-' + k} aria-checked=${pour === k} class=${pour === k ? 'on' : ''} onClick=${() => setPour(k)}>${l}</button>`)}</div></div>
       <div class="row"><input id="ann-lien" class="grow" dir="ltr" value=${lien} onInput=${e => setLien(e.target.value)} placeholder="Lien (facultatif) : https://…"/><button class="btn primary" disabled=${texte.trim().length < 3}>Publier</button></div>
     </form>
   </div>`;
 }
 
-// Bandeau de l'accueil, que chacun peut masquer pour lui
+// L'annonce sur l'accueil : une ligne discrète, pour son seul public ; un appui la déplie ; chacun la masque pour lui
 export function AnnonceBanner({ ctx }) {
-  const { data } = ctx;
-  const a = data.annonces.filter(x => x.active).sort((x, y) => new Date(y.created_at) - new Date(x.created_at))[0];
-  const [hidden, setHidden] = useState(() => { try { return localStorage.getItem('annonce-off') || ''; } catch { return ''; } });
-  const [lire, setLire] = useState(false);
-  if (!a || hidden === a.id) return null;
-  const hide = () => { setHidden(a.id); try { localStorage.setItem('annonce-off', a.id); } catch { /* */ } };
-  const long = (a.texte || '').length > 140;
-  return html`<div class="annonce" role="status"><${Icon} name="spark" size=${18}/><span class="grow"><span class=${'annonce-txt' + (long && !lire ? ' clamp' : '')} dir="auto" translate="no">${a.texte}</span>${long ? html` <button class="linkish small" onClick=${() => setLire(!lire)}>${lire ? 'Réduire' : 'Lire la suite'}</button>` : null}${a.lien && /^https:\/\//i.test(a.lien) ? html` <a href=${a.lien} target="_blank" rel="noopener">En savoir plus</a>` : null}</span>
-    <button class="icon-btn small" aria-label="Masquer l’annonce" onClick=${hide}><${Icon} name="x" size=${15}/></button></div>`;
+  const { data, me } = ctx;
+  const a = annoncePour(data.annonces, me);
+  const [off, setOff] = useLocal('annonce-off-' + me.id, '');
+  const [ouverte, setOuverte] = useState(false);
+  if (!a || off === a.id) return null;
+  const lien = a.lien && /^https:\/\//i.test(a.lien) ? a.lien : null;
+  return html`<div class=${'annonce-ligne' + (ouverte ? ' ouverte' : '')} role="note">
+    <${Icon} name="spark" size=${16}/>
+    <button type="button" class="annonce-txt" aria-expanded=${ouverte} onClick=${() => setOuverte(!ouverte)}><span dir="auto" translate="no">${a.texte}</span></button>
+    <button type="button" class="icon-btn small" aria-label="Masquer l’annonce" onClick=${() => setOff(a.id)}><${Icon} name="x" size=${15}/></button>
+    ${ouverte && lien ? html`<a class="annonce-lien" href=${lien} target="_blank" rel="noopener">En savoir plus</a>` : null}
+  </div>`;
 }
 
 injectCSS('admin', `

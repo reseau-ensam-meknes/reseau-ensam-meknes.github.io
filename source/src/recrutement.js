@@ -1,25 +1,9 @@
-// Recruter par le réseau : alerte talents, offre en 30 secondes, banque de sujets PFE,
+// Recruter par le réseau : offre en 30 secondes, banque de sujets PFE,
 // relance douce des offres, bilan de cooptation à montrer à sa RH.
-import { html, useState, useMemo } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, BrandLogo, toast, FiliereFiltre } from './ui.js';
-import { FILIERES, TYPES, niveauOf, alerteTalents, bilanCooptation, needsRelance, seasonLabel, filtreOffre, filiereCourte } from './logic.js';
+import { html, useState, useMemo, useRef } from './vendor/preact-htm.js';
+import { Icon, Modal, Field, Empty, Person, CompanyLogo, BrandLogo, toast, FiliereFiltre } from './ui.js';
+import { FILIERES, TYPES, niveauOf, bilanCooptation, needsRelance, seasonLabel, filtreOffre, filiereCourte } from './logic.js';
 import { parseOffre } from './parse-offre.js';
-
-// ---------------------------------------------------------------------------
-// Alerte talents (accueil lauréat) : les étudiants de sa filière qui cherchent encore
-// ---------------------------------------------------------------------------
-export function AlerteTalents({ ctx }) {
-  const { data, me, saison, go } = ctx;
-  const { list, nouveaux } = useMemo(() => alerteTalents(data, me, saison), [data, me, saison]);
-  if (me.role !== 'laureat' || !list.length) return null;
-  return html`<button class="impact-strip clickable talents-strip" onClick=${() => go('reseau/talents')}>
-    <span class="obj-ico"><${Icon} name="spark" size=${20}/></span>
-    <span class="grow"><strong>${list.length} étudiant${list.length > 1 ? 's' : ''} de ${me.filiere} cherche${list.length > 1 ? 'nt' : ''} encore</strong>${nouveaux ? html`<span class="mini hit">${nouveaux} nouveau${nouveaux > 1 ? 'x' : ''} cette semaine</span>` : null}
-      <span class="small muted">Un stage, un PFE ou un premier emploi dans ton équipe ? Invite-les à postuler en un clic.</span></span>
-    <span class="av-stack">${list.slice(0, 4).map(({ p }) => html`<${Avatar} p=${p} size=${28}/>`)}</span>
-    <${Icon} name="arrow" size=${18}/>
-  </button>`;
-}
 
 // ---------------------------------------------------------------------------
 // Offre en 30 secondes : coller le texte d'une annonce, le formulaire se remplit
@@ -27,13 +11,17 @@ export function AlerteTalents({ ctx }) {
 export function PasteOffer({ me, onFill }) {
   const [open, setOpen] = useState(false);
   const [txt, setTxt] = useState('');
+  const cta = useRef();
+  // Seulement ce qui a été reconnu, et rien d'invisible (aucun champ « contact » dans le formulaire).
+  // Le formulaire éclaire ce qu'il a reçu et dit lui-même combien ; le focus revient sur ce bouton.
   const fill = () => {
     const { fields, found } = parseOffre(txt, me);
-    if (!found.length) { toast('Rien de reconnu. Remplis les champs à la main.', 'err'); return; }
-    onFill(Object.fromEntries(found.map(k => [k, fields[k]]))); setOpen(false); setTxt('');  // seulement ce qui a été reconnu
-    toast(`${found.length} champ${found.length > 1 ? 's' : ''} rempli${found.length > 1 ? 's' : ''}. Vérifie, puis publie.`);
+    const vus = found.filter(k => k !== 'contact');
+    if (!vus.length) { toast('Rien de reconnu. Remplis les champs à la main.', 'err'); return; }
+    onFill(Object.fromEntries(vus.map(k => [k, fields[k]])), vus); setOpen(false); setTxt('');
+    setTimeout(() => cta.current?.focus({ preventScroll: true }));
   };
-  if (!open) return html`<button type="button" class="paste-cta" onClick=${() => setOpen(true)}><span class="obj-ico"><${Icon} name="copy" size=${20}/></span>
+  if (!open) return html`<button type="button" class="paste-cta" ref=${cta} onClick=${() => setOpen(true)}><span class="obj-ico"><${Icon} name="copy" size=${20}/></span>
     <span class="grow"><strong>Offre en 30 secondes</strong><span class="small muted">Colle le texte de l’annonce (LinkedIn, email, WhatsApp) : le formulaire se remplit tout seul.</span></span><${Icon} name="arrow" size=${18}/></button>`;
   return html`<div class="paste-box">
     <${Field} label="Texte de l’annonce"><textarea id="of-paste" rows="6" value=${txt} onInput=${e => setTxt(e.target.value)} placeholder="Colle ici le post LinkedIn ou l’email de la RH…" dir="auto"></textarea><//>

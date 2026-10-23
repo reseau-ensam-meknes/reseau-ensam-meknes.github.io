@@ -99,7 +99,7 @@ function PaysView({ ctx, cle }) {
   const [tous, setTous] = useState(false);
   const k = paysKey(cle);
   const e = idx.get(k) || (k && k !== 'maroc' ? { key: k, nom: cap(canonPays(cle)), rows: [], laureats: [], offres: [] } : null);
-  if (!e) return html`<div class="sub-page"><button class="btn ghost small back" onClick=${() => go('reseau/etranger')}>← Tous les pays</button><${Empty} icon="globe" title="Pays introuvable"/></div>`;
+  if (!e) return html`<div class="sub-page"><button class="btn ghost small back" onClick=${() => go('reseau/etranger', { remplacer: true })}>← Tous les pays</button><${Empty} icon="globe" title="Pays introuvable"/></div>`;
   const ecrire = paysPourEcrire(me, e);
   const ici = me.role === 'laureat' && !!me.pays && paysKey(me.pays) === e.key;
   const n = ecrites(e); const total = GUIDE_SECTIONS.length;
@@ -107,7 +107,7 @@ function PaysView({ ctx, cle }) {
   const niv = me.role === 'etudiant' ? niveauOf(me, saison) : 0;
   const gk = groupKey('pays', e.laureats[0]?.pays || e.nom);
   return html`<div class="sub-page etranger">
-    <button class="btn ghost small back" onClick=${() => go('reseau/etranger')}>← Tous les pays</button>
+    <button class="btn ghost small back" onClick=${() => go('reseau/etranger', { remplacer: true })}>← Tous les pays</button>
     <div class="group-head gp-head">
       <span class="g-badge big k-pays"><${Icon} name="flag" size=${26}/></span>
       <div class="grow"><p class="eyebrow">Guide écrit par les lauréats sur place</p><h2 translate="no">${paysLabel(e.nom)}</h2>

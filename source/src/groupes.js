@@ -74,7 +74,7 @@ function GroupView({ ctx, gkey }) {
   const [txt, setTxt] = useState('');
   const [more, setMore] = useState(false);
   const [cafe, setCafe] = useState(false);
-  if (!/^(filiere|ville|pays):.+/.test(gkey)) return html`<div class="sub-page"><button class="btn ghost small back" onClick=${() => go('reseau/groupes')}>← Tous les groupes</button><${Empty} title="Groupe introuvable"/></div>`;
+  if (!/^(filiere|ville|pays):.+/.test(gkey)) return html`<div class="sub-page"><button class="btn ghost small back" onClick=${() => go('reseau/groupes', { remplacer: true })}>← Tous les groupes</button><${Empty} title="Groupe introuvable"/></div>`;
   const [kind] = gkey.split(':');
   const [ico, lbl] = KIND[kind];
   const auto = autoGroups(me).includes(gkey);
@@ -86,7 +86,7 @@ function GroupView({ ctx, gkey }) {
   const canPost = auto || follow;
   const post = e => { e.preventDefault(); if (!txt.trim()) return; act(async () => { await store.insert('groupe_messages', { groupe: gkey, author_id: me.id, body: txt.trim() }); setTxt(''); }); };
   return html`<div class="sub-page">
-    <button class="btn ghost small back" onClick=${() => go('reseau/groupes')}>← Tous les groupes</button>
+    <button class="btn ghost small back" onClick=${() => go('reseau/groupes', { remplacer: true })}>← Tous les groupes</button>
     <div class="group-head">
       <span class=${'g-badge big k-' + kind}><${Icon} name=${ico} size=${26}/></span>
       <div class="grow"><p class="eyebrow">${lbl}</p><h2>${label}</h2><p class="muted small">${members.length} membre${members.length > 1 ? 's' : ''} · ${members.filter(p => p.role === 'laureat').length} lauréat${members.filter(p => p.role === 'laureat').length > 1 ? 's' : ''}</p></div>

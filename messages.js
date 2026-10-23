@@ -51,9 +51,10 @@ function Apercu({ m, me }) {
 }
 
 // Sur l'accueil : les messages qui attendent une réponse
-export function MessagesHome({ ctx }) {
+export function MessagesHome({ ctx, exclure }) {
   const { data, me, store, go } = ctx;
-  const att = conversations(data, me.id).filter(c => c.nonLus).slice(0, 3);
+  // La conversation déjà mise en avant plus haut (prochaine étape) n'est pas redite
+  const att = conversations(data, me.id).filter(c => c.nonLus && !exclure?.has(c.autre)).slice(0, 3);
   if (!att.length) return null;
   return html`<div class="panel msg-home">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="chat"/> On t’a écrit</h2><button class="btn tiny ghost" onClick=${() => go('messages')}>Tous les messages <${Icon} name="arrow" size=${14}/></button></div>
@@ -217,7 +218,7 @@ function Conversation({ ctx, autre }) {
   let jour = null;
   return html`<section class="conv" aria-label=${'Conversation avec ' + (p?.full_name || '')}>
     <header class="conv-top">
-      <button class="icon-btn conv-back" aria-label="Retour aux conversations" onClick=${() => go('messages')}><${Icon} name="back"/></button>
+      <button class="icon-btn conv-back" aria-label="Retour aux conversations" onClick=${() => go('messages', { remplacer: true })}><${Icon} name="back"/></button>
       <button type="button" class="conv-who" onClick=${() => openProfile(p)}>
         <${Avatar} p=${p} size=${40}/>
         <span class="conv-who-txt"><strong translate="no">${p?.full_name || 'Membre'}</strong>
