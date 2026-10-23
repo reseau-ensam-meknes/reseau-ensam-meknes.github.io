@@ -4,11 +4,12 @@
 import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, toast, celebrate, useLocal, injectCSS } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
-import { BESOINS, RDV_MIN, mentorState, futureSlots, requestsFor, mentorsFor, timeAgo, helpMatch, niveauOf, coupDeMain, alerteTalents } from './logic.js';
+import { BESOINS, RDV_MIN, mentorState, futureSlots, requestsFor, mentorsFor, timeAgo, helpMatch, niveauOf, coupDeMain, alerteTalents, mercisPublics, dernierMerciPour } from './logic.js';
 import { getLang, addAR, arCount, t as tr } from './i18n.js';
 import { RelecturesPage, DemandeRelecture } from './cv.js';
 import { MessageBtn } from './messages.js';
 import { PoulsReseau } from './pouls.js';
+import { MerciDuo } from './growth.js';
 
 const firstName = p => (p?.full_name || '').split(' ')[0];
 // Demandes ouvertes à tous qu'un lauréat a écartées sur cet appareil : elles ne reviennent plus dans ses listes
@@ -486,6 +487,8 @@ export function MentoratPage(ctx) {
   const seRendreDispo = () => act(() => store.update('profiles', me.id, { mentor_dispo: true }));
   const busy = new Set(mineActive.map(m => m.mentor_id));
   const reco = me.role === 'etudiant' ? mentorsFor(data, me, '', scores).filter(x => !busy.has(x.p.id)).slice(0, 3) : [];
+  // Sur chaque carte : le dernier merci reçu, s'il est déjà sur le mur des mercis (sinon rien)
+  const mercis = reco.length ? mercisPublics(data) : [];
 
   if (ctx.sub === 'cv') return html`<section class="page mentorat">
     <header class="page-head"><div><p class="eyebrow">${me.role === 'admin' ? 'Le suivi des relectures de CV' : isLaureat ? 'Relire le CV d’un étudiant, rubrique par rubrique' : 'Un lauréat relit ton CV et te conseille'}</p><h1>Mentorat</h1></div></header>
@@ -563,8 +566,9 @@ export function MentoratPage(ctx) {
     ${!isLaureat && reco.length ? html`<div class="section-head"><h2>Des lauréats qui peuvent t’aider</h2><span class="muted small">Ou choisis toi-même</span></div>
       <div class="cards">${reco.map(({ p, why }) => html`<div class="mcard" key=${p.id}>
         <${Person} p=${p} score=${scores.get(p.id)} onOpen=${openProfile} size=${44}/>
-        ${p.poste ? html`<p class="small"><${Icon} name="briefcase" size=${14}/> <span translate="no" dir="auto">${p.poste}${p.entreprise ? ' · ' + p.entreprise : ''}</span></p>` : null}
+        ${p.poste ? html`<p class="small"><${Icon} name="briefcase" size=${14}/> <span translate="no" dir="auto">${p.poste}</span></p>` : null}
         ${p.mentor_sujets ? html`<p class="topics"><span class="muted small">Peut t’aider sur :</span> <span translate="no" dir="auto">${p.mentor_sujets}</span></p>` : null}
+        ${(m => m ? html`<blockquote class="merci mcard-merci"><p translate="no" dir="auto">« ${m.txt} »</p><${MerciDuo} ctx=${ctx} m=${m} size=${22} seul/></blockquote>` : null)(dernierMerciPour(mercis, p.id))}
         <div class="row"><span class="why">${why.map(w => html`<span class="mini good">${w}</span>`)}</span><span class="spacer"></span><button class="btn small" onClick=${() => setAsk({ mentor: p })}>Lui demander</button></div>
       </div>`)}</div>` : null}
 

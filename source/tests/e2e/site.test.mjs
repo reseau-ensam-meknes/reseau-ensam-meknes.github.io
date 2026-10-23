@@ -455,6 +455,140 @@ test('« Fais venir ta promo » en arabe : lien arabe de la promo, message en ar
   await s.ctx.close();
 });
 
+test('lien partagé depuis l’arabe : ?lang=ar, en arabe pour cette visite chez qui n’a rien choisi, jamais par-dessus un choix', async () => {
+  // Le lien WhatsApp d'une offre partagée depuis l'interface arabe porte la langue ; depuis le français, non
+  const lienOffre = async langue => {
+    const s = await ouvrir({ langue });
+    await s.comme('Salma'); await s.aller('offres');
+    await s.page.locator('.ocard-main').first().click(); await s.page.waitForSelector('#od-partage');
+    const texte = decodeURIComponent((await s.page.getAttribute('#od-partage', 'href')).split('text=')[1]);
+    assert.deepEqual(s.erreurs, []); await s.ctx.close();
+    return texte.match(/https?:\/\/\S+/)[0];
+  };
+  const lien = await lienOffre('ar');
+  assert.ok(lien.startsWith(adresse + '?lang=ar#offre/'), lien);
+  assert.ok((await lienOffre('fr')).startsWith(adresse + '#offre/'));
+  // Ouvert dans un navigateur neuf : en arabe pour la visite (rechargement compris), sans devenir un choix gardé
+  const ctx = await navigateur.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  const page = await ctx.newPage(); const erreurs = []; page.on('pageerror', e => erreurs.push(e.message));
+  await page.goto(lien); await page.waitForSelector('#persona');
+  assert.equal(await page.getAttribute('html', 'dir'), 'rtl');
+  assert.equal(await page.evaluate(() => localStorage.getItem('ensam-lang')), null);
+  assert.equal(await page.evaluate(() => sessionStorage.getItem('ensam-lang-visite')), 'ar');
+  await page.reload(); await page.waitForSelector('#persona');
+  assert.equal(await page.getAttribute('html', 'dir'), 'rtl');
+  // Quelqu'un qui a choisi le français reste en français
+  await page.evaluate(() => { localStorage.setItem('ensam-lang', 'fr'); sessionStorage.clear(); });
+  await page.goto(adresse + 'index.html' + lien.slice(adresse.length)); await page.waitForSelector('#persona');
+  assert.equal(await page.getAttribute('html', 'dir'), 'ltr');
+  assert.deepEqual(erreurs, []);
+  await ctx.close();
+});
+
+test('recherche et villes : « مكناس » trouve Meknès ; en arabe, les villes s’écrivent en arabe', async () => {
+  const s = await ouvrir();
+  await s.comme('Salma'); await s.aller('reseau/annuaire');
+  const nb = async q => { await s.page.fill('#d-q', q); await s.page.waitForTimeout(250); return s.page.locator('.dir > li').count(); };
+  const meknes = await nb('Meknès');
+  assert.ok(meknes > 0);
+  assert.equal(await nb('مكناس'), meknes);
+  assert.equal(await nb('MEKNES'), meknes);
+  await s.ctx.close();
+  const a = await ouvrir({ largeur: 390, langue: 'ar' });
+  await a.comme('Salma'); await a.aller('reseau/annuaire');
+  await a.page.fill('#d-q', 'مكناس'); await a.page.waitForTimeout(250);
+  assert.ok(await a.page.locator('.dir > li').count() > 0);
+  assert.match(await a.page.locator('.dir').innerText(), /مكناس/);
+  assert.doesNotMatch(await a.page.locator('.dir').innerText(), /Meknès/);
+  await a.aller('reseau/groupes');
+  assert.match(await a.page.locator('.page').innerText(), /مكناس/, 'le groupe de la ville');
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
+test('preuves : dernier merci sur la carte du mentor, deux visages sur le merci de l’accueil, « peut te recommander » dans son entreprise seulement', async () => {
+  const s = await ouvrir();
+  await s.comme('Salma'); await s.aller('mentorat');
+  const cartes = s.page.locator('.mcard');
+  assert.equal(await cartes.count(), 3);
+  // Le dernier merci montré (réussite confirmée ou mentorat terminé) ; aucun : rien
+  const attendu = await s.page.evaluate(nom => {
+    const d = window.__demo.data, p = d.profiles.find(x => x.full_name === nom);
+    const m = [...d.placements.filter(x => x.laureat_id === p.id && x.merci && x.status === 'confirme').map(x => [x.merci, x.confirmed_at || x.created_at]),
+      ...d.mentorships.filter(x => x.mentor_id === p.id && x.merci && x.status === 'terminee').map(x => [x.merci, x.rdv_at || x.created_at])].sort((a, b) => new Date(b[1]) - new Date(a[1]));
+    return { merci: m[0]?.[0], ent: p.entreprise };
+  }, 'Ismail Sebti');
+  const ismail = cartes.filter({ hasText: 'Ismail Sebti' });
+  assert.equal(await ismail.locator('.mcard-merci p').innerText(), `« ${attendu.merci} »`);
+  assert.equal(await ismail.locator('.mcard-merci .avatar').count(), 1, 'le visage de l’étudiant');
+  assert.match(await ismail.locator('.mcard-merci .merci-duo').innerText(), /·\s*(\dA|Promo \d{4})/, 'son année ou sa promo');
+  assert.equal(await cartes.filter({ hasText: 'Hiba Rahmouni' }).locator('.mcard-merci').count(), 0);
+  // L'entreprise n'est écrite qu'une fois sur la carte
+  assert.equal((await ismail.innerText()).split(attendu.ent).length - 1, 1);
+  // Accueil : le merci récent montre les deux visages, l'année, l'entreprise et la date
+  await s.aller('accueil');
+  const duo = s.page.locator('.merci-une .merci-duo');
+  assert.equal(await duo.locator('.avatar').count(), 2);
+  assert.match(await duo.innerText(), /Zineb · (\dA|Promo \d{4})[\s\S]*Karim Moussaoui · OCP Group[\s\S]*il y a/);
+  // « peut te recommander » : l'auteur travaille dans l'entreprise de l'offre (Nour, chez Siemens Gamesa, ne le promet pas pour Yazaki)
+  const verif = await s.page.evaluate(() => {
+    const d = window.__demo.data; const nour = d.profiles.find(p => p.full_name.startsWith('Nour '));
+    return { yazaki: d.offers.find(o => o.author_id === nour?.id && o.entreprise === 'Yazaki Morocco')?.id };
+  });
+  await s.comme('Amine'); await s.aller('offres');
+  for (const c of await s.page.locator('.ocard:has(.oa-coopt)').all()) {
+    const ent = (await c.locator('.ocard-meta').innerText()).split(' · ')[0].split(' ')[0].toLowerCase();
+    await c.locator('.ocard-main').click(); await s.page.waitForSelector('.od-author');
+    assert.ok((await s.page.locator('.od-author .role-line').innerText()).toLowerCase().includes(ent), ent);
+    await s.fermer();
+  }
+  if (verif.yazaki) {
+    await s.page.evaluate(id => { location.hash = '#offre/' + id; }, verif.yazaki); await s.page.waitForSelector('.od-author');
+    assert.doesNotMatch(await s.page.locator('.od-author').innerText(), /recommander/);
+    await s.fermer();
+  }
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('chiffres : « 3 lauréats » plutôt que des zéros, une note à partir de 3 avis, un seul chiffre par écran', async () => {
+  for (const [largeur, langue] of [[390, 'fr'], [390, 'ar']]) {
+    const s = await ouvrir({ largeur, langue });
+    await s.comme('Salma'); await s.aller('reseau/entreprises');
+    // Le nombre de lauréats, visible sur téléphone ; aucun zéro mis en avant
+    const nb = s.page.locator('.ent-row .ent-nb').first();
+    assert.ok(await nb.isVisible());
+    assert.match(await nb.innerText(), langue === 'ar' ? /خريج/ : /^\d+ lauréats?$/);
+    for (const t of await s.page.locator('.ent-row .mini-stats > span').allInnerTexts()) assert.doesNotMatch(t, /^\s*0\s*$/);
+    assert.doesNotMatch(await s.page.locator('.ent-hero').innerText(), /(^|\s)0\s/);
+    assert.equal(await s.page.locator('.page-head .eyebrow').count(), 0, 'l’en-tête du Réseau ne double pas le chiffre de la page');
+    // Renault : 3 avis, sa note s'affiche ; Yazaki : un seul avis, pas de moyenne
+    await s.page.locator('.ent-row', { hasText: 'Renault' }).first().click(); await s.page.waitForSelector('.ent-head');
+    assert.equal(await s.page.locator('.ent-synth').count(), 1);
+    assert.match(await s.page.locator('.ent-big-n').innerText(), /4[,.]3/);
+    await s.aller('reseau/entreprises');
+    await s.page.locator('.ent-row', { hasText: 'Yazaki' }).first().click(); await s.page.waitForSelector('.ent-head');
+    assert.equal(await s.page.locator('.ent-synth').count(), 0);
+    assert.equal(await s.page.locator('.ent-head .ent-stars').count(), 0);
+    if (langue === 'fr') assert.equal(await s.page.locator('.ent-peu').innerText(), '1 avis · La note s’affiche à partir de 3 avis.');
+    else assert.match(await s.page.locator('.ent-peu').innerText(), /رأي واحد · يظهر التقييم ابتداءً من 3 آراء/);
+    // Annuaire et guide de l'étranger : un seul compteur, pas de « 0 lauréat »
+    await s.aller('reseau/annuaire');
+    assert.equal(await s.page.locator('.page-head .eyebrow').count(), 0);
+    await s.aller('reseau/etranger');
+    assert.equal(await s.page.locator('.page-head .eyebrow').count(), 0);
+    assert.equal(await s.page.locator('.gp-prog .mono').count(), 0);
+    assert.doesNotMatch(await s.page.locator('.gp-grid').innerText(), /(^|\s)0 (lauréat|خريج)/);
+    await s.aller('reseau/groupes');
+    assert.match(await s.page.locator('.page-head .eyebrow').textContent(), langue === 'ar' ? /خريج/ : /^\d+ lauréats$/, 'un étudiant ne voit qu’un chiffre : les lauréats');
+    if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...window.__ensamMissing].filter(t => /lauréat|La note s’affiche|où travaillent/.test(t))), []);
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
 // « Me prévenir » : en démo, un test simule l'état des notifications d'un vrai téléphone (ensam-prevenir-demo)
 async function prevenirSur(etat, opts = {}) {
   const s = await ouvrir({ largeur: 360, ...opts });

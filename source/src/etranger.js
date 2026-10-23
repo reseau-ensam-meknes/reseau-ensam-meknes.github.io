@@ -3,7 +3,7 @@
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Bar, toast, useLocal, injectCSS } from './ui.js';
 import { GUIDE_SECTIONS, niveauOf, timeAgo, groupKey } from './logic.js';
-import { canonPays, PAYS_AR } from './geo.js';
+import { canonPays, PAYS_AR, recherche, villeAffichee } from './geo.js';
 import { getLang, addAR } from './i18n.js';
 import { arCount } from './i18n.js';
 import { OfferCard, matchesMe } from './offers.js';
@@ -68,10 +68,10 @@ function PaysList({ ctx }) {
   const { data, me, saison } = ctx;
   const [q, setQ] = useState('');
   const idx = useMemo(() => indexPays(data, me, saison), [data.guide_pays, data.profiles, data.offers, me, saison]);
-  const qq = cleLieu(q);
+  const trouve = recherche(q); // « فرنسا », « usa » ou « fra » : accents, casse et alias ignorés
   const total = GUIDE_SECTIONS.length;
   const list = [...idx.values()]
-    .filter(e => !qq || e.key.includes(qq) || cleLieu(paysLabel(e.nom)).includes(qq))
+    .filter(e => !trouve || trouve('', e.nom))
     .sort((a, b) => (ecrites(b) * 3 + b.laureats.length + b.offres.length) - (ecrites(a) * 3 + a.laureats.length + a.offres.length) || a.nom.localeCompare(b.nom));
   const monPays = me.role === 'laureat' && me.pays && paysKey(me.pays) !== 'maroc' ? idx.get(paysKey(me.pays)) : null;
   const reste = monPays ? total - ecrites(monPays) : 0;
@@ -84,11 +84,11 @@ function PaysList({ ctx }) {
     ${list.length ? html`<div class="group-grid gp-grid">${list.map(e => { const n = ecrites(e); return html`<button class="gcard gp-card" key=${e.key} onClick=${() => goPays(ctx, e.key)}>
       <span class="g-badge k-pays"><${Icon} name="flag" size=${20}/></span>
       <span class="gcard-txt"><strong translate="no">${paysLabel(e.nom)}</strong>
-        <span class="small muted gp-facts"><span><${Icon} name="people" size=${13}/> ${e.laureats.length} lauréat${e.laureats.length > 1 ? 's' : ''} sur place</span>${e.offres.length ? html`<span><${Icon} name="feed" size=${13}/> ${e.offres.length} offre${e.offres.length > 1 ? 's' : ''}</span>` : null}</span>
-        <span class="gp-prog"><${Bar} value=${n / total} label=${`${n}/${total}`}/><span class="small mono">${n}/${total}</span></span>
+        ${e.laureats.length || e.offres.length ? html`<span class="small muted gp-facts">${e.laureats.length ? html`<span><${Icon} name="people" size=${13}/> ${e.laureats.length} lauréat${e.laureats.length > 1 ? 's' : ''} sur place</span>` : null}${e.offres.length ? html`<span><${Icon} name="feed" size=${13}/> ${e.offres.length} offre${e.offres.length > 1 ? 's' : ''}</span>` : null}</span>` : null}
+        ${n ? html`<span class="gp-prog"><${Bar} value=${n / total} label=${`${n}/${total}`}/></span>` : null}
         <span class="small muted">${n ? `${n} rubrique${n > 1 ? 's' : ''} écrite${n > 1 ? 's' : ''} sur ${total}` : 'Guide pas encore commencé'}</span></span>
     </button>`; })}</div>`
-      : html`<${Empty} icon="globe" title=${q ? 'Aucun pays ne correspond' : 'Aucun lauréat à l’étranger pour l’instant'}>${q ? 'Essaie un autre nom, en français.' : 'Dès qu’un lauréat indique un pays étranger sur son profil, son pays apparaît ici.'}<//>`}
+      : html`<${Empty} icon="globe" title=${q ? 'Aucun pays ne correspond' : 'Aucun lauréat à l’étranger pour l’instant'}>${q ? 'Essaie un autre nom.' : 'Dès qu’un lauréat indique un pays étranger sur son profil, son pays apparaît ici.'}<//>`}
   </div>`;
 }
 
@@ -111,7 +111,7 @@ function PaysView({ ctx, cle }) {
     <div class="group-head gp-head">
       <span class="g-badge big k-pays"><${Icon} name="flag" size=${26}/></span>
       <div class="grow"><p class="eyebrow">Guide écrit par les lauréats sur place</p><h2 translate="no">${paysLabel(e.nom)}</h2>
-        <p class="muted small">${n} rubrique${n > 1 ? 's' : ''} sur ${total} · ${e.laureats.length} lauréat${e.laureats.length > 1 ? 's' : ''} sur place</p></div>
+        <p class="muted small">${n ? `${n} rubrique${n > 1 ? 's' : ''} écrite${n > 1 ? 's' : ''} sur ${total}` : 'Guide pas encore commencé'}</p></div>
     </div>
 
     ${ecrire ? html`<p class="hint-box small"><${Icon} name="heart" size=${15}/><span>${me.role === 'admin' ? 'En tant qu’administration, tu peux écrire, corriger ou supprimer chaque rubrique.' : 'Tu vis ici : complète ou corrige le guide. +10 points par rubrique, et toutes les versions restent dans l’historique.'}</span></p>`
@@ -127,7 +127,7 @@ function PaysView({ ctx, cle }) {
       <div class="home-side">
         <div class="panel">
           <div class="section-head"><h2 class="h-ico"><${Icon} name="people"/> Lauréats sur place <span class="count">${lau.length}</span></h2></div>
-          ${lau.length ? html`<ul class="people-list gp-people">${lau.slice(0, tous ? 40 : 5).map(p => html`<li key=${p.id}><${Person} p=${p} onOpen=${openProfile} sub=${[p.poste, p.entreprise, p.ville].filter(Boolean).join(' · ') || `Promo ${p.promo}`}/></li>`)}</ul>
+          ${lau.length ? html`<ul class="people-list gp-people">${lau.slice(0, tous ? 40 : 5).map(p => html`<li key=${p.id}><${Person} p=${p} onOpen=${openProfile} sub=${[p.poste, p.entreprise, villeAffichee(p.ville, getLang())].filter(Boolean).join(' · ') || `Promo ${p.promo}`}/></li>`)}</ul>
             ${lau.length > 5 ? html`<button class="linkish small" onClick=${() => setTous(!tous)}>${tous ? 'Voir moins' : `Voir les ${lau.length} lauréats`}</button>` : null}`
             : html`<p class="muted small">Aucun lauréat inscrit n’y vit encore.</p>`}
           ${me.role !== 'admin' && !ici ? html`<button class="btn primary small" onClick=${() => ctx.askQuestion({ pays: e.rows[0]?.pays || e.laureats[0]?.pays || e.nom })}><${Icon} name="qa" size=${15}/> Poser une question</button>
@@ -297,7 +297,7 @@ addAR({
   'Guide pas encore commencé': 'الدليل لم يبدأ بعد',
   'Aucun pays ne correspond': 'لا يوجد بلد مطابق',
   'Aucun lauréat à l’étranger pour l’instant': 'لا يوجد خريج في الخارج حاليًا',
-  'Essaie un autre nom, en français.': 'جرّب اسمًا آخر بالفرنسية.',
+  'Essaie un autre nom.': 'جرّب اسمًا آخر.',
   'Dès qu’un lauréat indique un pays étranger sur son profil, son pays apparaît ici.': 'بمجرد أن يذكر خريج بلدًا أجنبيًا في ملفه، يظهر هذا البلد هنا.',
   '← Tous les pays': '→ كل البلدان',
   'Pays introuvable': 'البلد غير موجود',

@@ -2,6 +2,7 @@
 // des éléments au moment du rendu, ce qui évite de toucher chaque écran. Les contenus écrits par
 // les membres (offres, messages, noms) restent tels quels.
 import { options } from './vendor/preact-htm.js';
+import { langueDuLien } from './regles-entree.js';
 
 // Le dictionnaire arabe (le plus gros fichier du site) n'est chargé que pour l'arabe : plus rapide en 3G
 let AR = {}; let AR_PATTERNS = []; let arPret = null;
@@ -21,8 +22,13 @@ export function arCount(n, [one, two, few, many]) {
 
 const KEY = 'ensam-lang', VISITE = 'ensam-lang-visite';
 let lang = 'fr';
-// Le choix gardé (bouton de langue) ; sinon la langue d'un lien ouvert pendant cette visite (lien arabe d'une promo)
-try { const l = localStorage.getItem(KEY); lang = l === 'ar' || (!l && sessionStorage.getItem(VISITE) === 'ar') ? 'ar' : 'fr'; } catch { /* stockage indisponible */ }
+// Le choix gardé (bouton de langue) ; sinon la langue d'un lien ouvert pendant cette visite (lien arabe d'une promo,
+// d'une offre, d'une question… : ?lang=ar), gardée pour les rechargements de cette visite seulement
+let choix = null, visite = null;
+try { choix = localStorage.getItem(KEY); } catch { /* stockage indisponible */ }
+const duLien = typeof location !== 'undefined' ? langueDuLien(location.search, choix) : null;
+try { if (duLien) sessionStorage.setItem(VISITE, duLien); visite = sessionStorage.getItem(VISITE); } catch { /* stockage indisponible */ }
+lang = choix === 'ar' || (!choix && (duLien || visite) === 'ar') ? 'ar' : 'fr';
 
 export const getLang = () => lang;
 // Passe à l'arabe une fois le dictionnaire chargé (sinon l'écran basculerait à droite encore en français).

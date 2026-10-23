@@ -555,6 +555,40 @@ export function sameCompany(a, b) {
   return !!x && !!y && (x === y || x.startsWith(y + ' ') || y.startsWith(x + ' '));
 }
 
+// « Peut te recommander » : seulement si l'auteur de l'offre a coché la cooptation ET travaille dans l'entreprise de
+// l'offre (casse, accents et formes juridiques ignorés). Son entreprise cachée (« Qui voit quoi ») : on ne le dit pas.
+export const peutRecommander = (o, auteur) => !!(o?.cooptation && auteur?.entreprise && sameCompany(auteur.entreprise, o.entreprise));
+
+// Une note moyenne (étoiles, barres, « % recommandent ») ne s'affiche qu'à partir de 3 avis : sur un ou deux avis,
+// elle ne prouve rien et pèse trop sur l'employeur. En dessous : null, et on montre les avis eux-mêmes.
+export const AVIS_POUR_NOTE = 3;
+export const noteSiAssez = notes => {
+  const v = (notes || []).filter(n => typeof n === 'number' && n > 0);
+  return v.length >= AVIS_POUR_NOTE ? v.reduce((a, b) => a + b, 0) / v.length : null;
+};
+
+// Les mercis montrés aux membres (« mur des mercis ») : celui d'une réussite confirmée par les deux personnes, ou
+// d'un mentorat terminé. L'étudiant les écrit en sachant qu'ils s'affichent sur le mur ; les autres (relecture de CV)
+// restent entre eux. Le plus récent d'abord.
+export function mercisPublics(data) {
+  return [
+    ...(data.placements || []).filter(p => p.merci && p.laureat_id && p.status === 'confirme')
+      .map(p => ({ id: 'p' + p.id, from: p.student_id, to: p.laureat_id, txt: p.merci, at: p.confirmed_at || p.created_at, entreprise: p.entreprise, confirme: true })),
+    ...(data.mentorships || []).filter(m => m.merci && m.mentor_id && m.status === 'terminee')
+      .map(m => ({ id: 'm' + m.id, from: m.student_id, to: m.mentor_id, txt: m.merci, at: m.rdv_at || m.created_at })),
+  ].filter(x => x.txt.trim()).sort((a, b) => new Date(b.at) - new Date(a.at));
+}
+export const dernierMerciPour = (mercis, laureatId) => mercis.find(x => x.to === laureatId) || null;
+
+// Le chiffre en tête du Réseau, un seul et adapté au lecteur : les lauréats ; les étudiants seulement pour un lauréat
+// ou l'administration, et à partir de 20 (« 3 étudiants » découragerait). Rien quand il n'y a encore personne.
+export function chiffreReseau(profiles, me) {
+  const l = profiles.filter(p => p.role === 'laureat').length, e = profiles.filter(p => p.role === 'etudiant').length;
+  if (!l) return '';
+  const lau = `${l} lauréat${l > 1 ? 's' : ''}`;
+  return me?.role !== 'etudiant' && e >= 20 ? `${lau} · ${e} étudiants` : lau;
+}
+
 // Groupes : « filiere:genie industriel », « ville:casablanca », « pays:france »
 export const groupKey = (kind, v) => (v && norm(v).trim() ? `${kind}:${norm(v).trim().replace(/\s+/g, ' ')}` : null);
 // Le groupe « filière » réunit tout un parcours : étudiants des filières actuelles et lauréats des anciennes appellations

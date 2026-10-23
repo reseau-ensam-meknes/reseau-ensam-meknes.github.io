@@ -58,7 +58,9 @@ test('resume par Gmail : 465 en TLS, compte du mot de passe sans espaces, messag
     assert.match(x.entetes['message-id'], /^<[0-9a-f-]{36}@gmail\.com>$/);
     for (const mot of x.entetes.subject.split('\r\n ')) assert.ok(mot.length <= 76, mot);
     const id = Object.keys(j.emails).find(k => j.emails[k] === m.a[0]);
-    const desabo = `${SITE}#desabo/${b.tables.notif_etat.find(n => n.user_id === id).token}`;
+    // Un email arabe ouvre le site en arabe (?lang=ar), désabonnement compris
+    const ar = b.tables.profiles.find(p => p.id === id)?.langue === 'ar' ? '?lang=ar' : '';
+    const desabo = `${SITE}${ar}#desabo/${b.tables.notif_etat.find(n => n.user_id === id).token}`;
     assert.equal(x.entetes['list-unsubscribe'], `<${desabo}>`);
     assert.deepEqual(x.parties.map(p => p.type), ['text/plain', 'text/html']);
     assert.ok(x.parties[0].texte.includes(desabo));
