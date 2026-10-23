@@ -59,15 +59,29 @@ const remplis = { travail: p => p.entreprise || p.poste, lieu: p => p.ville, lin
 // Ce que ce membre a rempli mais que je ne peux pas voir (en démo ; en ligne la base l'a déjà retiré)
 export const groupesMasques = (store, p) => Object.keys(VIS_LABELS).filter(g => remplis[g](p) && !store.voitChamp(p, g));
 
+// etat : { g, etat } — la ligne touchée dit si son choix est enregistré (« Mon profil » enregistre dès le choix)
+// Dit exactement ce que la base laisse voir (voit_champ) : « Les lauréats » ouvre aussi à tes contacts, et le CV
+// d'un étudiant reste visible des lauréats tant qu'une de ses demandes est ouverte
+const VIS_OK = { tous: 'Enregistré : tous les membres le voient.', laureats: 'Enregistré : les lauréats et tes contacts le voient.', contacts: 'Enregistré : seuls tes contacts le voient.' };
+const VIS_OK_CV = 'Enregistré : tes contacts le voient ; les lauréats aussi quand tu as une demande ouverte.';
+const texteOk = (role, g, v) => role === 'etudiant' && g === 'cv' && v === 'contacts' ? VIS_OK_CV : VIS_OK[v];
 export function VisibiliteFields({ role, value = {}, onChange, etat }) {
   const groupes = visGroupes(role);
   if (!groupes.length) return null;
+  const ligneEtat = g => {
+    if (!etat || etat.g !== g) return null;
+    const v = value[g] || VIS_DEFAUT[g];
+    return html`<span class=${'cf-vis-etat small' + (etat.etat === 'ok' ? ' ok' : etat.etat === 'erreur' ? ' err' : '')} role="status" id="vis-etat">${etat.etat === 'ok' ? html`<${Icon} name="check" size=${14}/> <span>${texteOk(role, g, v)}</span>`
+      : etat.etat === 'erreur' ? html`<span>Pas encore enregistré : touche « Enregistrer ».</span>` : html`<span>Enregistrement…</span>`}</span>`;
+  };
   return html`<fieldset class="cf-vis">
-    <legend class="h-ico"><${Icon} name="eye" size=${17}/> Qui voit quoi${etat ? html`<span class=${'cf-vis-etat small' + (etat === 'ok' ? ' ok' : '')} role="status" id="vis-etat">${etat === 'ok' ? html`<${Icon} name="check" size=${14}/> <span>Enregistré</span>` : html`<span>Enregistrement…</span>`}</span>` : null}</legend>
+    <legend class="h-ico"><${Icon} name="eye" size=${17}/> Qui voit quoi</legend>
     <p class="small muted">Ton profil n’est jamais public. « Mes contacts » : les membres dont tu acceptes la demande, et le lauréat à qui tu envoies une candidature.</p>
+    ${etat !== undefined ? html`<p class="small muted">Sur ta propre fiche, tu vois toujours tout.</p>` : null}
     ${groupes.map(g => { const v = value[g] || VIS_DEFAUT[g]; const label = g === 'presentation' && role !== 'etudiant' ? 'Bio et compétences' : VIS_LABELS[g]; return html`<div class="cf-vis-row" key=${g}>
       <span class="cf-vis-label">${label}</span>
-      <div class="seg cf-vis-seg" role="radiogroup" aria-label=${label}>${VIS_CHOIX.map(([k, l]) => html`<button type="button" role="radio" id=${`vis-${g}-${k}`} aria-checked=${v === k} class=${v === k ? 'on' : ''} onClick=${() => onChange({ ...value, [g]: k })}>${l}</button>`)}</div>
+      <div class="seg cf-vis-seg" role="radiogroup" aria-label=${label}>${VIS_CHOIX.map(([k, l]) => html`<button type="button" role="radio" id=${`vis-${g}-${k}`} aria-checked=${v === k} class=${v === k ? 'on' : ''} onClick=${() => onChange({ ...value, [g]: k }, g)}>${l}</button>`)}</div>
+      ${ligneEtat(g)}
     </div>`; })}
   </fieldset>`;
 }
@@ -218,7 +232,8 @@ injectCSS('confiance', `
 .cf-vis-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .4rem .8rem; }
 .cf-vis-label { font-size: .9rem; }
 .cf-vis-seg { margin: 0; }
-.cf-vis-etat { margin-inline-start: .5rem; font-weight: 500; color: var(--muted); display: inline-flex; align-items: center; gap: .2rem; animation: fade-in .2s ease; }
+.cf-vis-etat { grid-column: 1 / -1; font-weight: 500; color: var(--muted); display: inline-flex; align-items: center; gap: .2rem; animation: fade-in .2s ease; }
+.cf-vis-etat.err { color: var(--warn); }
 .cf-vis-etat.ok { color: var(--good); }
 .cf-vis-seg button { font-size: .8rem; padding: .3rem .6rem; }
 .cf-warn { background: var(--warn-soft); color: var(--ink); border-radius: var(--r); padding: .7rem .8rem; display: flex; flex-direction: column; gap: .45rem; }
@@ -243,6 +258,10 @@ injectCSS('confiance', `
 const CIBLES_AR = { 'cette offre': 'هذا العرض', 'ce commentaire': 'هذا التعليق', 'cette question': 'هذا السؤال', 'cette réponse': 'هذا الجواب', 'ce message': 'هذه الرسالة', 'ce profil': 'هذا الملف', 'ce témoignage d’entretien': 'شهادة المقابلة هذه', 'cet avis': 'هذا الرأي', 'cette rubrique': 'هذا القسم', 'ce café': 'هذا اللقاء', 'cette startup': 'هذه الشركة الناشئة', 'cette relecture': 'هذه المراجعة', 'ce contenu': 'هذا المحتوى' };
 addAR({
   'Enregistré': 'تم الحفظ', 'Enregistrement…': 'جارٍ الحفظ…',
+  'Enregistré : tous les membres le voient.': 'تم الحفظ: يراه جميع الأعضاء.', 'Enregistré : les lauréats et tes contacts le voient.': 'تم الحفظ: يراه الخريجون وجهات اتصالك.',
+  'Enregistré : seuls tes contacts le voient.': 'تم الحفظ: لا يراه إلا جهات اتصالك.', 'Pas encore enregistré : touche « Enregistrer ».': 'لم يُحفظ بعد: اضغط « حفظ ».',
+  'Enregistré : tes contacts le voient ; les lauréats aussi quand tu as une demande ouverte.': 'تم الحفظ: تراه جهات اتصالك، ويراه الخريجون أيضًا حين يكون لديك طلب مفتوح.',
+  'Sur ta propre fiche, tu vois toujours tout.': 'في بطاقتك أنت، ترى دائمًا كل شيء.',
   'Signaler': 'إبلاغ', 'Signalé': 'تم الإبلاغ', 'Tu as signalé ce contenu. Merci !': 'لقد أبلغت عن هذا المحتوى. شكرًا!',
   'Spam ou publicité': 'رسائل مزعجة أو إشهار', 'Arnaque ou offre douteuse': 'احتيال أو عرض مشبوه', 'Faux profil ou fausse information': 'ملف مزيف أو معلومة خاطئة',
   'Propos déplacés ou offensants': 'كلام غير لائق أو مسيء', 'Harcèlement': 'تحرش أو مضايقة', 'Données personnelles exposées': 'بيانات شخصية منشورة', 'Autre chose': 'شيء آخر',

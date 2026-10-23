@@ -68,13 +68,16 @@ export const lienEncoreBon = (x, now = Date.now()) => (x && typeof x.t === 'numb
 export const estUuid = s => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s || '');
 // Une seule phrase par cas. infos : { type, audience, ouverte } | null (l'offre n'existe plus) | undefined (on ne sait pas)
 const TETE_OFFRE = { stage: 'Une offre de stage t’attend', pfe: 'Une offre de PFE t’attend', etranger: 'Une offre de stage à l’étranger t’attend', emploi: 'Une offre d’emploi t’attend' };
-export function phraseLien(lien, infos, inscrire = true) {
+// role : celui choisi sur la page d'entrée (une offre entre lauréats ne s'ouvre pas pour un étudiant)
+export const offreFermeePour = (infos, role) => infos?.audience === 'laureats' && role === 'etudiant';
+export function phraseLien(lien, infos, inscrire = true, role = '') {
   if (!lien) return '';
   const verbe = inscrire ? 'crée ton compte' : 'connecte-toi';
   if (lien.k === 'question') return `Une question t’attend : ${verbe} pour y répondre.`;
   if (lien.k === 'aider') return 'Connecte-toi pour voir la demande de l’étudiant.';
   if (infos === null) return 'Cette offre n’est plus en ligne.';
   if (infos?.ouverte === false) return 'Cette offre n’accepte plus de candidatures.';
+  if (offreFermeePour(infos, role)) return 'Cette offre est réservée aux lauréats.';
   const tete = infos?.audience === 'laureats' ? 'Une offre entre lauréats t’attend' : TETE_OFFRE[infos?.type] || 'On t’a partagé une offre';
   return `${tete} : ${verbe} pour la voir.`;
 }

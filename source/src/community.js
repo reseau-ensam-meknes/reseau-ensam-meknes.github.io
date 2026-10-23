@@ -2,8 +2,8 @@
 import { html, useState, useMemo, useRef, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, toast, LevelChip, RoleLine, injectCSS, PartagerWhatsApp, lienDirect, allerAuChamp } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
-import { ChoixRole } from './entree.js';
-import { getLang } from './i18n.js';
+import { ChoixRole, accordIci } from './entree.js';
+import { getLang, setLang } from './i18n.js';
 import { FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole } from './logic.js';
 import { TalentPool } from './growth.js';
 import { GroupesPage } from './groupes.js';
@@ -268,8 +268,8 @@ function ChoixAide({ value, onChange, err }) {
   return html`<fieldset class=${'pf-aide' + (err ? ' manque' : '')} id="pf-aide">
     <legend>Disponible pour aider les étudiants ?</legend>
     <div class="cf-motifs pf-aide-choix">${[[true, 'oui', 'Oui, avec plaisir'], [false, 'non', 'Pas pour l’instant']].map(([v, k, l]) => html`<label key=${k} class=${'cf-motif' + (value === v ? ' on' : '')}>
-      <input type="radio" name="pf-aide" id=${'pf-aide-' + k} checked=${value === v} aria-describedby="pf-aide-txt" onChange=${() => onChange(v)}/><span>${l}</span></label>`)}</div>
-    ${err ? html`<span class="field-err">${err}</span>` : null}
+      <input type="radio" name="pf-aide" id=${'pf-aide-' + k} checked=${value === v} aria-invalid=${err ? 'true' : null} aria-describedby=${err ? 'pf-err-aide pf-aide-txt' : 'pf-aide-txt'} onChange=${() => onChange(v)}/><span>${l}</span></label>`)}</div>
+    ${err ? html`<span class="field-err" id="pf-err-aide">${err}</span>` : null}
     <p class="small muted" id="pf-aide-txt">Les étudiants de ta filière pourront te demander 20 minutes de conseil en visio. Tu choisis parmi leurs horaires, ou tu réponds « Pas disponible cette fois ». Tu peux changer d’avis à tout moment.</p>
   </fieldset>`;
 }
@@ -338,7 +338,7 @@ const MANQUE = {
 };
 const ERR = { nom: 'Écris ton nom complet.', promo: 'Indique l’année de ton diplôme.', filiere: 'Choisis ta filière dans la liste.', aide: 'Choisis l’une des deux réponses.' };
 
-export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
+export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboarding }) {
   const { store, act } = ctx;
   const S = ctx.saison ?? seasonOf(), an = new Date().getFullYear();
   // À l'inscription, rien n'est choisi d'avance (promo, filière, aide) : un « 2027 » ou une filière qu'on ne remarque pas mènerait à la mauvaise année
@@ -372,27 +372,31 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
     setCo(x => ({ telephone: t.has('co.telephone') ? x.telephone : c.telephone || '', email: t.has('co.email') ? x.email : c.email || '', contact: t.has('co.contact') ? x.contact : c.contact || '' }));
   }, [cle]);
   // Qui voit quoi : enregistré dès le choix (dans « Mon profil »), comme un réglage. La ligne touchée dit où on en est.
-  // Les choix rapides partent l'un après l'autre, chacun avec toute la grille affichée (le dernier touché reste) ;
-  // un envoi bloqué abandonne après 20 s. En cas d'échec, le choix reste affiché et part avec « Enregistrer ».
+  // Les envois partent strictement l'un après l'autre, chacun avec la grille voulue au moment où il part : le dernier
+  // enregistré est toujours le dernier choix. Sans réponse après 20 s, la ligne le dit (l'envoi continue, et
+  // « Enregistrer » reste possible) ; « Enregistré » ne s'affiche que quand plus rien n'attend.
   const [visOk, setVisOk] = useState(null);
   const fileVis = useRef(Promise.resolve());
   const enVol = useRef(0);
+  const voulu = useRef(vis);
   const choisirVis = (v, g) => {
-    setVis(v);
+    setVis(v); voulu.current = v;
     if (onboarding || !initial || !v3) return;
-    const propre = visPropre(v);
     setVisOk({ g, etat: 'envoi' }); enVol.current++;
-    const envoi = () => Promise.race([store.update('profiles', initial.id, { visibilite: propre }),
-      new Promise((_, ko) => setTimeout(() => ko(new Error('Pas de réseau pour l’instant. Réessaie dans un instant.')), DELAI_VIS))]);
-    fileVis.current = fileVis.current.then(envoi).then(
-      // Réussi : ce choix et ceux d'avant (toute la grille est partie) sont enregistrés
-      () => { touches.current.delete('visibilite'); setVisOk(x => (x?.g === g || x?.etat === 'erreur' ? { g, etat: 'ok' } : x)); },
-      e => { touches.current.add('visibilite'); setVisOk({ g, etat: 'erreur' }); toast(e.message || String(e), 'err'); })
-      .then(() => { enVol.current--; setSale(n => n + 1); });
+    const lent = setTimeout(() => { touches.current.add('visibilite'); setSale(n => n + 1); setVisOk({ g, etat: 'erreur' }); toast('Pas de réseau pour l’instant. Réessaie dans un instant.', 'err'); }, DELAI_VIS);
+    fileVis.current = fileVis.current
+      .then(() => store.update('profiles', initial.id, { visibilite: visPropre(voulu.current) }))
+      .then(() => null, e => e)
+      .then(e => {
+        clearTimeout(lent); enVol.current--;
+        if (e) { touches.current.add('visibilite'); setVisOk({ g, etat: 'erreur' }); toast(e.message || String(e), 'err'); }
+        else if (!enVol.current) { touches.current.delete('visibilite'); setVisOk(x => ({ g: x?.g ?? g, etat: 'ok' })); }
+        setSale(n => n + 1);
+      });
   };
   // Changé depuis un autre appareil : la grille suit ce qui est enregistré, sauf pendant un envoi ou un choix pas encore enregistré
   const visServeur = JSON.stringify(initial?.visibilite || {});
-  useEffect(() => { if (initial && !onboarding && !enVol.current && !touches.current.has('visibilite')) setVis({ ...(initial.visibilite || {}) }); }, [visServeur]);
+  useEffect(() => { if (initial && !onboarding && !enVol.current && !touches.current.has('visibilite')) { voulu.current = { ...(initial.visibilite || {}) }; setVis(voulu.current); } }, [visServeur]);
   // La barre « pas encore enregistrées » ne reste que si une valeur diffère vraiment de ce qui est enregistré
   const differe = () => {
     if (!initial) return false;
@@ -448,8 +452,9 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
     // Inscription : l'accord donné sur l'écran de création du compte, la langue et le choix pour les emails
     if (onboarding) {
       const meta = store.session?.user?.user_metadata || {};
-      if (meta.consent_at) row.consent_at = meta.consent_at;
-      row.emails_hebdo = meta.emails_hebdo !== false;
+      // L'accord vient de la case cochée sur cet appareil ; sinon la fenêtre « Tes données » le demande (emails compris)
+      const ici = accordIci(store.session?.user?.email);
+      if (ici) { if (meta.consent_at) row.consent_at = meta.consent_at; row.emails_hebdo = meta.emails_hebdo !== false; }
       row.langue = getLang();
     }
     // Colonne ajoutée par la mise à jour Phase 1 : envoyée seulement si la base la connaît déjà ou si elle est remplie
@@ -460,11 +465,19 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
     act(async () => {
       if (onboarding) {
         await store.insert('profiles', { id: store.userId, ...row }); oublierInvitation();
+        // L'accueil s'annonce tout de suite : CV, photo et coordonnées suivent sans le retarder
+        onInscrit?.();
+        // La langue de l'inscription (celle d'un lien arabe, par exemple) devient celle du membre sur cet appareil
+        setLang(getLang(), { attendre: false }).catch(() => {});
         // Le CV lu à l'inscription est gardé comme CV du membre (joint aux candidatures, relu par un lauréat)
         if (cvFichier) await store.deposerCV(cvFichier).catch(() => toast('Ton CV n’a pas pu être gardé : ajoute-le depuis « Mon profil ».', 'err'));
         if (photoCV) await store.deposerPhoto(photoCV).catch(() => {});
       }
-      else await store.update('profiles', initial.id, row);
+      else {
+        await store.update('profiles', initial.id, row);
+        // Un envoi « Qui voit quoi » encore en route ne doit pas arriver en dernier : la grille voulue repart derrière lui
+        if (enVol.current) fileVis.current = fileVis.current.then(() => store.update('profiles', initial.id, { visibilite: visPropre(voulu.current) })).catch(() => {});
+      }
       if (coordChange) await store.enregistrerCoordonnees(champs);
       touches.current.clear(); setSale(n => n + 1); setVisOk(null);
       // À l'inscription, c'est la feuille d'accueil qui souhaite la bienvenue
@@ -507,7 +520,8 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
   const isStudent = f.role === 'etudiant';
   // La promo proposée suit le rôle, seulement à l'inscription et seulement si une promo est déjà écrite
   // (une promo enregistrée ne bouge pas ; une promo vide reste vide)
-  const choisirRole = role => { toucher('role', 'promo'); setF(x => ({ ...x, role, promo: initial || !(+x.promo >= 1990) ? x.promo : role === 'laureat' && +x.promo > an ? an : role === 'etudiant' && +x.promo <= S ? S + 1 : x.promo })); };
+  // Un rôle changé ne réécrit jamais la promo tapée : l'avertissement de cohérence (et son bouton) s'en charge
+  const choisirRole = role => { toucher('role'); setF(x => ({ ...x, role })); };
   const changerRole = () => { setVoirRole(true); requestAnimationFrame(() => document.getElementById('pf-je-' + f.role)?.focus()); };
   const promoValide = f.promo !== '' && Number.isInteger(promoN) && promoN >= 1990 && promoN <= 2040;
   const hintPromo = !isStudent ? '' : promoValide && !incoherent ? `Cette saison, tu es en ${NIVEAUX[niveauOf({ promo: promoN }, S)].label}.`
@@ -589,10 +603,6 @@ addAR({
   'Ajoute ton nom': 'أضف اسمك', 'Ajoute ta promo': 'أضف دفعتك', 'Vérifie ta promo': 'تحقّق من دفعتك', 'Dis si tu peux aider': 'أخبرنا إن كنت تستطيع المساعدة',
   'Écris ton nom complet.': 'اكتب اسمك الكامل.', 'Indique l’année de ton diplôme.': 'اذكر سنة تخرّجك.',
   'Choisis ta filière dans la liste.': 'اختر شعبتك من القائمة.', 'Choisis l’une des deux réponses.': 'اختر أحد الجوابين.',
-  'Enregistré : tous les membres le voient.': 'تم الحفظ: يراه جميع الأعضاء.', 'Enregistré : seuls les lauréats le voient.': 'تم الحفظ: لا يراه إلا الخريجون.',
-  'Enregistré : seuls tes contacts le voient.': 'تم الحفظ: لا يراه إلا جهات اتصالك.', 'Pas encore enregistré : touche « Enregistrer ».': 'لم يُحفظ بعد: اضغط « حفظ ».',
-  'Sur ta propre fiche, tu vois toujours tout.': 'في بطاقتك أنت، ترى دائمًا كل شيء.',
-  'Ta connexion a expiré. Recharge la page, puis réessaie.': 'انتهت صلاحية اتصالك. أعد تحميل الصفحة ثم حاول من جديد.',
   'Tu t’inscris comme lauréat(e).': 'تسجّل بصفتك خريج(ة).', 'Tu t’inscris comme étudiant(e).': 'تسجّل بصفتك طالب(ة).',
   'Ex. 2019': 'مثال: 2019', 'Enregistrement…': 'جارٍ الحفظ…',
 }, [[/^Cette saison, tu es en (.+)\.$/, l => `في هذا الموسم، أنت في ${NIV_AR[l] || l}.`]]);

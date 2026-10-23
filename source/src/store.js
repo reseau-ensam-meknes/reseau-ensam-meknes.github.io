@@ -1037,7 +1037,8 @@ export class SupabaseStore extends Base {
   // Inscription et connexion par code à 6 chiffres reçu par email (pas de mot de passe à inventer).
   // creer : la personne s'inscrit ; un email déjà connu reçoit simplement un code de connexion.
   async envoyerCode(email, { creer = false, meta = null } = {}) {
-    const { error } = await this.sb.auth.signInWithOtp({ email, options: { shouldCreateUser: creer, ...(creer && meta ? { data: meta } : {}) } });
+    // par_code : dit à la base que ce compte naît d'une demande de code (rappel et chiffres de l'administration)
+    const { error } = await this.sb.auth.signInWithOtp({ email, options: { shouldCreateUser: creer, ...(creer ? { data: { ...(meta || {}), par_code: true } } : {}) } });
     if (error) throw Object.assign(new Error(frError(error)), casErreurAuth(error));
   }
   async verifierCode(email, token, meta = null) {
@@ -1329,6 +1330,8 @@ const SESSION_PERDUE = 'Ta connexion a expiré. Recharge la page, puis réessaie
 function frError(e) {
   const m = (e?.message || String(e || '')).toLowerCase();
   if (/failed to fetch|load failed|networkerror|network request failed|fetch failed|timed? ?out/.test(m)) return 'Pas de réseau pour l’instant. Réessaie dans un instant.';
+  // Passerelle de Supabase indisponible (502-504, projet en pause) : l'erreur d'authentification n'a alors pour texte que « {} »
+  if (e?.name === 'AuthRetryableFetchError' || [502, 503, 504].includes(e?.status) || m.trim() === '{}') return 'Pas de réseau pour l’instant. Réessaie dans un instant.';
   if (m.includes('invalid login')) return 'Email ou mot de passe incorrect.';
   if (m.includes('already registered')) return 'Un compte existe déjà avec cet email. Connecte-toi.';
   if (m.includes('password should be')) return 'Le mot de passe doit contenir au moins 6 caractères.';
@@ -1354,7 +1357,8 @@ function frError(e) {
   if (m.includes('could not find the') || m.includes('does not exist')) return 'Cette fonction arrive bientôt : la base est en cours de mise à jour.';
   if (/jwt expired|invalid jwt/.test(m)) return SESSION_PERDUE;
   if (m.includes('row-level security')) return "Action non autorisée pour ton compte.";
-  if (/token has expired or is invalid|email link is invalid/.test(m)) return 'Ce code ne marche pas. Vérifie les 6 chiffres, ou demande un nouveau code.';
+  if (/token has expired or is invalid|email link is invalid|user not found/.test(m)) return 'Ce code ne marche pas. Vérifie les 6 chiffres, ou demande un nouveau code.';
+  if (m.includes('email address not authorized')) return 'L’email n’a pas pu partir. Vérifie l’adresse, ou réessaie dans un instant.';
   if (m.includes('only request this after')) return 'Un code vient de partir. Attends une minute avant d’en demander un autre.';
   if (m.includes('email rate limit exceeded')) return 'Beaucoup de codes sont partis cette heure-ci. Réessaie dans un moment.';
   if (m.includes('signups not allowed')) return 'Les inscriptions sont en pause pour l’instant. Réessaie plus tard.';

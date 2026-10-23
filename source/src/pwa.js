@@ -1,7 +1,7 @@
 // Application installable (écran d'accueil du téléphone) et notifications sur le téléphone.
 // Le service worker n'est enregistré que sur le vrai site (dist/), qui déclare un manifeste.
 import { html, useState, useEffect } from './vendor/preact-htm.js';
-import { Icon, Modal, toast, ensuite, feteOuverte } from './ui.js';
+import { Icon, Modal, toast, ensuite, feteOuverte, quandFete } from './ui.js';
 import { addAR } from './i18n.js';
 import { prevenirVariante } from './logic.js';
 
@@ -182,7 +182,11 @@ export function PrevenirHote({ ctx, bloque }) {
   const [f, setF] = useState(null);
   hote = { me, store };
   useEffect(() => {
-    montrer = x => { if (x.v === 'email') ecrireMemo(me.id, { ...lireMemo(me.id), mail: 1 }); setF(x); };
+    // Une fête ouverte entre-temps : la feuille attend la prochaine visite
+    const remettre = raison => { if (variante(raison, lireMemo(me.id))) ecrireMemo(me.id, { ...lireMemo(me.id), differe: raison }); };
+    montrer = x => { if (feteOuverte()) { remettre(x.raison); return; } if (x.v === 'email') ecrireMemo(me.id, { ...lireMemo(me.id), mail: 1 }); setF(x); };
+    // Une fête qui s'ouvre après la feuille passe devant : la feuille se range sans compter de refus
+    const sansFete = quandFete(() => setF(x => { if (x) remettre(x.raison); return null; }));
     let vivant = true;
     const lire = () => { const d = etatDemo(store); if (d) { etatConnu = d; return Promise.resolve(); } return etatPush(store).then(e => { if (vivant) etatConnu = e; }, () => {}); };
     const vu = () => { if (document.visibilityState === 'visible') lire(); };
@@ -199,7 +203,7 @@ export function PrevenirHote({ ctx, bloque }) {
         if (v) montrer({ raison: differe, mot: null, v, t: Date.now() });
       }, 2500);
     });
-    return () => { vivant = false; clearTimeout(t); montrer = null; document.removeEventListener('visibilitychange', vu); };
+    return () => { vivant = false; clearTimeout(t); montrer = null; sansFete(); document.removeEventListener('visibilitychange', vu); };
   }, [me.id]);
   if (!f) return null;
   return html`<${FeuillePrevenir} ctx=${ctx} f=${f} key=${f.t} onClose=${() => setF(null)}/>`;
@@ -221,7 +225,13 @@ function FeuillePrevenir({ ctx, f, onClose }) {
       ecrireMemo(me.id, { ...lireMemo(me.id), fait: 1 });
       if (r === 'on') toast('Notifications activées sur cet appareil.', 'win');
       onClose();
-    } catch (e) { setBusy(false); toast(e.message || String(e), 'err'); }
+    } catch {
+      // Navigateur sans service de notifications (Brave, téléphone sans services Google…) : une phrase calme, et la feuille
+      // ne revient plus sur ce navigateur ; le bouton de « Mon profil » reste là pour réessayer
+      etatConnu = 'absent';
+      ecrireMemo(me.id, { ...lireMemo(me.id), fait: 1 });
+      toast(SANS_NOTIF, 'err'); onClose();
+    }
   };
   const raison = f.raison === 'question' && me.role !== 'etudiant' ? 'questionMembre' : f.raison;
   const pied = html`${email || ios ? null : html`<button type="button" class="btn ghost" id="pv-tard" onClick=${refuser}>Plus tard</button>`}
@@ -234,7 +244,9 @@ function FeuillePrevenir({ ctx, f, onClose }) {
   <//>`;
 }
 
+const SANS_NOTIF = 'Ce navigateur ne peut pas recevoir de notifications pour l’instant.';
 addAR({
+  [SANS_NOTIF]: 'لا يستطيع هذا المتصفح استقبال الإشعارات حاليًا.',
   'Te prévenir de la réponse ?': 'هل نُعلمك عند وصول الرد؟', 'Me prévenir': 'أعلِمني', 'J’ai compris': 'فهمت', 'Plus tard': 'لاحقًا',
   'Tu ne rateras pas la réponse': 'لن تفوتك الإجابة',
   'Rien d’autre : pas de publicité, et tu l’arrêtes quand tu veux dans « Mon profil ».': 'لا شيء غير ذلك: لا إعلانات، ويمكنك إيقافه متى شئت من «ملفي الشخصي».',

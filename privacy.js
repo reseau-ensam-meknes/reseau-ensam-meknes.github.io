@@ -3,9 +3,11 @@ import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, BrandLogo, toast } from './ui.js';
 import { PushToggle } from './pwa.js';
 import { addAR } from './i18n.js';
+import { adresseContact } from './regles-entree.js';
 
 // Arabe : textes ajoutés en Phase 3 (le reste est dans i18n-ar.js)
 addAR({
+  'La semaine de ton inscription, le résumé par email peut citer ton nom et ta promo (ou ton année) aux membres de ta promo ou de ta filière, comme le fait l’annuaire.': 'في أسبوع تسجيلك، قد يذكر الملخص الأسبوعي اسمك ودفعتك (أو سنتك) لأعضاء دفعتك أو شعبتك، كما يفعل الدليل.',
   'Tes messages privés : textes, photos, messages vocaux et réactions échangés avec un autre membre.': 'رسائلك الخاصة: النصوص والصور والرسائل الصوتية والتفاعلات المتبادلة مع عضو آخر.',
   'Un message privé n’est visible que par toi et la personne à qui tu écris. Ses photos et vocaux sont dans un espace privé et s’ouvrent par un lien temporaire. L’administration ne voit un message que si l’un de vous deux le signale.': 'لا يرى الرسالة الخاصة إلا أنت والشخص الذي تراسله. صورها وتسجيلاتها الصوتية محفوظة في فضاء خاص وتُفتح برابط مؤقت. لا ترى الإدارة رسالةً إلا إذا بلّغ عنها أحدكما.',
   'Tu peux bloquer un membre à tout moment : vous ne pouvez plus vous écrire.': 'يمكنك حظر عضو في أي وقت: لن يعود بإمكانكما المراسلة.',
@@ -59,7 +61,7 @@ const cfg = () => (typeof window !== 'undefined' && window.ENSAM_CONFIG) || {};
 // Le texte est court et concret : ce qui est collecté, pourquoi, qui le voit, où il est stocké, combien de temps, les droits.
 const SECTIONS = [
   ['user', 'Ce que nous collectons', [
-    'Ton compte : ton email et ton mot de passe (chiffré, jamais visible, même par l’administration).',
+    'Ton compte : ton email (et ton mot de passe si tu en as un : chiffré, jamais visible, même par l’équipe du Réseau).',
     'Ton profil : nom, rôle, filière, promo, et si tu les remplis : entreprise, poste, secteur, ville, pays, bio, compétences, LinkedIn, CV (fichier PDF ou lien), disponibilité.',
     'Tes coordonnées privées, si tu les donnes : téléphone, email de contact, autre moyen de te joindre.',
     'Ce que tu fais sur la plateforme : offres, candidatures, rendez-vous de mentorat, relectures de CV, questions et réponses, mercis, messages de groupe, cafés, inscriptions aux événements de l’école.',
@@ -82,6 +84,7 @@ const SECTIONS = [
     'Une candidature n’est visible que par toi et par le lauréat qui a publié l’offre.',
     'Un message privé n’est visible que par toi et la personne à qui tu écris. Ses photos et vocaux sont dans un espace privé et s’ouvrent par un lien temporaire. L’administration ne voit un message que si l’un de vous deux le signale.',
     'Un étudiant ne voit que les offres de son année ; les offres entre lauréats ne sont pas visibles par les étudiants.',
+    'La semaine de ton inscription, le résumé par email peut citer ton nom et ta promo (ou ton année) aux membres de ta promo ou de ta filière, comme le fait l’annuaire.',
     'Un avis de stage ou un entretien publié en anonyme n’affiche pas ton nom aux membres.',
     'L’administration voit les emails des comptes, seulement pour vérifier les lauréats et aider en cas de problème.',
     'Une attestation de lauréat peut être vérifiée par un lien que son titulaire choisit de partager.',
@@ -132,7 +135,7 @@ export function PrivacyPage({ onBack }) {
     ${SECTIONS.map(([ic, h, items]) => html`<div class="panel priv-sec"><h2 class="h-ico"><${Icon} name=${ic}/> ${h}</h2><ul>${items.map(t => html`<li>${t}</li>`)}</ul></div>`)}
     <div class="panel priv-sec"><h2 class="h-ico"><${Icon} name="inbox"/> Contact</h2>
       <p>Responsable du traitement : l’équipe qui administre le Réseau ENSAM Meknès.</p>
-      ${c.contactEmail ? html`<p>Pour toute question sur tes données : <a href=${'mailto:' + c.contactEmail} dir="ltr" translate="no">${c.contactEmail}</a></p>` : html`<p>Pour toute question sur tes données, écris à l’administration depuis la plateforme (Entraide ou profil d’un administrateur).</p>`}
+      ${adresseContact(c) ? html`<p>Pour toute question sur tes données : <a href=${'mailto:' + adresseContact(c)} dir="ltr" translate="no">${adresseContact(c)}</a></p>` : html`<p>Pour toute question sur tes données, écris à l’administration depuis la plateforme (Entraide ou profil d’un administrateur).</p>`}
       ${c.cndp ? html`<p class="small muted">Déclaration CNDP : <span dir="ltr" translate="no">${c.cndp}</span></p>` : null}
     </div>
     <p class="small muted">Dernière mise à jour : octobre 2026.</p>

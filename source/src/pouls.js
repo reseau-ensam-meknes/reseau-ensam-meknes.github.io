@@ -86,7 +86,8 @@ export function ArriveeSheet({ a, pas, me, store, onClose }) {
     <p class="arrivee-titre">${ph.titre}</p>
     ${ph.sous ? html`<p class="arrivee-sous">${ph.sous}</p>` : null}
     ${a.fondateur ? html`<p class="arrivee-fondateur"><${Icon} name="award" size=${16}/><span>${`Tu fais partie des ${NB_FONDATEURS} premiers lauréats : le badge « Membre fondateur » est sur ton profil.`}</span></p>` : null}
-    ${pas ? html`<p class="arrivee-pas" ...${membre}>${pas.guide ? pas.detail : pas.titre}</p>` : null}
+    ${!pas ? null : pas.guide ? html`<p class="arrivee-pas"><strong class="arrivee-pas-t">${pas.titre}</strong><span>${pas.detail}</span></p>`
+      : html`<p class="arrivee-pas" ...${membre}>${pas.titre}</p>`}
   <//>`;
 }
 
@@ -100,6 +101,7 @@ injectCSS('pouls', `
 .arrivee-fondateur { font-size: var(--fs-2); display: flex; gap: .4rem; align-items: flex-start; text-align: start; }
 .arrivee-fondateur .ico { flex: none; margin-block-start: .15rem; color: var(--accent); }
 .arrivee-pas { margin: .5rem 0 0; color: var(--muted); font-size: var(--fs-2); max-inline-size: 36ch; text-wrap: pretty; }
+.arrivee-pas-t { display: block; color: var(--ink); font-weight: 600; }
 
 .pouls { display: flex; align-items: center; gap: .7rem; padding: .55rem .8rem .55rem .6rem; border-radius: var(--r-pill); background: color-mix(in srgb, var(--good-soft) 70%, var(--surface)); border: 1px solid color-mix(in srgb, var(--good) 22%, var(--line)); color: var(--ink-2); font-size: var(--fs-2); text-align: start; width: 100%; }
 button.pouls { cursor: pointer; font: inherit; font-size: var(--fs-2); }

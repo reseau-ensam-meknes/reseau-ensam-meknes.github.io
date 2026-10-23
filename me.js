@@ -8,6 +8,7 @@ import { APP_STATUS, OfferComposer } from './offers.js';
 import { AttestationCard, ShareModal } from './growth.js';
 import { Filleuls, ParrainCard } from './saison.js';
 import { BilanCard } from './recrutement.js';
+import { FaisVenirPromo } from './invitation.js';
 
 // Étapes vues par l'étudiant : il postule, le lauréat fait avancer, l'étudiant confirme.
 const JOURNEY = [['send', 'Je postule'], ['people', 'Entretien'], ['briefcase', 'Recruté(e)'], ['check', 'Confirmé']];
@@ -77,6 +78,8 @@ export function ParcoursPage(ctx) {
       </li>`;
     })}</ul>
     <p class="small muted hint"><${Icon} name="shield" size=${14}/> Pour les offres de la plateforme, c’est le lauréat qui met à jour le statut. Quand il te marque « Recruté(e) », tu confirmes ici.</p>` : html`<${Empty} icon="send" title="Aucune candidature pour l’instant" action=${versOffres}>Ouvre une offre et clique sur « Postuler ». Le lauréat reçoit ton message et ton CV.<//>`}
+
+    <${FaisVenirPromo} ctx=${ctx}/>
 
     ${!pl && obj ? html`<p class="small muted center">Tu as trouvé sans passer par la plateforme ? <button class="linkish" onClick=${() => setDeclare(true)}>Indique-le ici</button> pour que ta promo soit bien suivie.</p>` : null}
 
@@ -280,6 +283,7 @@ export function EspacePage(ctx) {
         <span class="mini-stats"><span title="Candidats"><${Icon} name="inbox" size=${15}/> ${nApps}</span><span title="Recrutés confirmés"><${Icon} name="check" size=${15}/> ${nRec}</span></span></button></li>`;
     })}</ul>` : html`<${Empty} icon="feed" title="Aucune offre publiée">Une offre partagée peut lancer une carrière : les étudiants concernés la voient tout de suite.<//>`}`}
 
+    ${nouveau ? null : html`<${FaisVenirPromo} ctx=${ctx}/>`}
     <${MesBadges} s=${s} mine=${mine}/>
     ${nouveau ? null : html`<${AttestationCard} ctx=${ctx}/><${BilanCard} ctx=${ctx}/>`}
 
@@ -318,7 +322,7 @@ function PremiereAide({ ctx, onPublier }) {
     <ul class="pa-gestes">${gestes.map(([ic, t, sub, d, fn]) => html`<li key=${ic}><button type="button" class="pa-geste" onClick=${fn}>
       <span class="pa-geste-ico"><${Icon} name=${ic} size=${20}/></span>
       <span class="pa-geste-txt"><span class="pa-geste-titre"><strong>${t}</strong><span class="pa-duree">${d}</span></span><span class="small muted">${sub}</span></span>
-      <span class="pa-geste-go" aria-hidden="true"><${Icon} name="arrow" size=${16}/></span></button></li>`)}</ul>
+      <span class="pa-geste-go" aria-hidden="true"><${Icon} name="arrow" size=${16}/></span></button></li>`)}<li key="promo"><${FaisVenirPromo} ctx=${ctx} geste/></li></ul>
     <${PoulsReseau} ctx=${ctx}/>
   </div>`;
 }

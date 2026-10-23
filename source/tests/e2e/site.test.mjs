@@ -376,11 +376,13 @@ test('lien de promo : sa page d’aperçu nomme la promo, puis ouvre le site ave
   await s.page.goto(adresse + 'promo/2019/'); await s.page.waitForSelector('.hello');
   assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-promo')), '2019');
   assert.deepEqual(await s.page.evaluate(() => [location.pathname, location.search]), ['/', '']);
-  // Lien arabe : la page s'ouvre en arabe, sauf si ce navigateur a déjà choisi le français
+  // Lien arabe : la page s'ouvre en arabe pour cette visite (jamais gardé comme un choix), sauf si ce navigateur
+  // a déjà choisi le français
   await s.page.evaluate(() => localStorage.removeItem('ensam-lang'));
   await s.page.goto(adresse + 'promo/2019/ar/'); await s.page.waitForSelector('.hello');
   assert.equal(await s.page.getAttribute('html', 'dir'), 'rtl');
-  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-lang')), 'ar');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-lang')), null);
+  assert.equal(await s.page.evaluate(() => sessionStorage.getItem('ensam-lang-visite')), 'ar');
   assert.deepEqual(await s.page.evaluate(() => [location.pathname, location.search]), ['/', '']);
   await s.page.evaluate(() => localStorage.setItem('ensam-lang', 'fr'));
   await s.page.goto(adresse + 'promo/2019/ar/'); await s.page.waitForSelector('.hello');
@@ -505,6 +507,24 @@ test('« Me prévenir » sur iPhone, en arabe : les étapes pour ajouter le Rés
   assert.equal(await s.debordement(), 0);
   await s.page.click('#pv-oui'); await s.page.waitForTimeout(300);
   assert.equal((await s.memo()).n, 1);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Me prévenir » : une fête qui s’ouvre pendant la feuille passe devant ; la feuille revient plus tard, sans compter de refus', async () => {
+  const s = await prevenirSur('off');
+  await s.comme('Amine'); await s.mentorat('Choisir mon stage de 3A');
+  await s.page.waitForSelector('.modal.prevenir');
+  await s.page.evaluate(async () => {
+    const ui = await import(new URL('ui.js', location.href).href);
+    ui.celebrate({ cle: 'test-fete-' + Date.now(), titre: 'Bravo', texte: 'Une fête pour le test.' });
+  });
+  await s.page.waitForSelector('.fete-back');
+  await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0, 'jamais deux fenêtres l’une sur l’autre');
+  const m = await s.memo();
+  assert.ok(!m.n, 'pas un refus');
+  assert.ok(m.differe, 'gardée pour la visite suivante');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -746,6 +766,33 @@ test('inscription d’un étudiant : la promo part vide, puis dit l’année ; c
   await s.page.fill('#pf-promo', String(S + 3)); await s.page.waitForTimeout(150);
   assert.match(await s.page.locator('#pf-promo').locator('xpath=ancestor::label').innerText(), /Cette saison, tu es en 3e année\./);
   assert.equal(await s.page.locator('#pf-aide').count(), 0, '« aider » ne concerne que les lauréats');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('profil : deux choix « Qui voit quoi » coup sur coup, le premier lent : « Enregistré » seulement quand le dernier est parti, et des mots exacts', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('profil'); await s.page.waitForTimeout(300);
+  await s.page.evaluate(() => {
+    const d = window.__demo, vrai = d.update.bind(d);
+    d.update = (t, id, patch) => (patch.visibilite && Object.keys(patch).length === 1 ? new Promise(ok => setTimeout(ok, 1000)).then(() => vrai(t, id, patch)) : vrai(t, id, patch));
+  });
+  await s.page.click('#vis-lieu-laureats'); await s.page.click('#vis-lieu-contacts');
+  await s.page.waitForTimeout(1500); // le premier est enregistré, le second encore en route
+  assert.equal(await s.page.locator('#vis-etat').innerText(), 'Enregistrement…');
+  await s.page.waitForFunction(() => /^Enregistré/.test(document.getElementById('vis-etat')?.textContent.trim() || ''), null, { timeout: 4000 });
+  assert.equal(await s.page.locator('#vis-etat').innerText(), 'Enregistré : seuls tes contacts le voient.');
+  assert.equal(await s.page.evaluate(() => window.__demo.me.visibilite.lieu), 'contacts');
+  // « Les lauréats » ouvre aussi aux contacts (la base les laisse voir) : on le dit
+  await s.page.click('#vis-travail-laureats');
+  await s.page.waitForFunction(() => /^Enregistré/.test(document.getElementById('vis-etat')?.textContent.trim() || ''), null, { timeout: 4000 });
+  assert.equal(await s.page.locator('#vis-etat').innerText(), 'Enregistré : les lauréats et tes contacts le voient.');
+  await s.page.evaluate(() => { delete window.__demo.update; });
+  // Le CV d'un étudiant reste visible des lauréats pendant une demande ouverte
+  await s.comme('Salma'); await s.aller('profil'); await s.page.waitForTimeout(300);
+  await s.page.click('#vis-cv-contacts');
+  await s.page.waitForFunction(() => /^Enregistré/.test(document.getElementById('vis-etat')?.textContent.trim() || ''), null, { timeout: 4000 });
+  assert.equal(await s.page.locator('#vis-etat').innerText(), 'Enregistré : tes contacts le voient ; les lauréats aussi quand tu as une demande ouverte.');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });

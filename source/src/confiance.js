@@ -60,14 +60,18 @@ const remplis = { travail: p => p.entreprise || p.poste, lieu: p => p.ville, lin
 export const groupesMasques = (store, p) => Object.keys(VIS_LABELS).filter(g => remplis[g](p) && !store.voitChamp(p, g));
 
 // etat : { g, etat } — la ligne touchée dit si son choix est enregistré (« Mon profil » enregistre dès le choix)
-const VIS_OK = { tous: 'Enregistré : tous les membres le voient.', laureats: 'Enregistré : seuls les lauréats le voient.', contacts: 'Enregistré : seuls tes contacts le voient.' };
+// Dit exactement ce que la base laisse voir (voit_champ) : « Les lauréats » ouvre aussi à tes contacts, et le CV
+// d'un étudiant reste visible des lauréats tant qu'une de ses demandes est ouverte
+const VIS_OK = { tous: 'Enregistré : tous les membres le voient.', laureats: 'Enregistré : les lauréats et tes contacts le voient.', contacts: 'Enregistré : seuls tes contacts le voient.' };
+const VIS_OK_CV = 'Enregistré : tes contacts le voient ; les lauréats aussi quand tu as une demande ouverte.';
+const texteOk = (role, g, v) => role === 'etudiant' && g === 'cv' && v === 'contacts' ? VIS_OK_CV : VIS_OK[v];
 export function VisibiliteFields({ role, value = {}, onChange, etat }) {
   const groupes = visGroupes(role);
   if (!groupes.length) return null;
   const ligneEtat = g => {
     if (!etat || etat.g !== g) return null;
     const v = value[g] || VIS_DEFAUT[g];
-    return html`<span class=${'cf-vis-etat small' + (etat.etat === 'ok' ? ' ok' : etat.etat === 'erreur' ? ' err' : '')} role="status" id="vis-etat">${etat.etat === 'ok' ? html`<${Icon} name="check" size=${14}/> <span>${VIS_OK[v]}</span>`
+    return html`<span class=${'cf-vis-etat small' + (etat.etat === 'ok' ? ' ok' : etat.etat === 'erreur' ? ' err' : '')} role="status" id="vis-etat">${etat.etat === 'ok' ? html`<${Icon} name="check" size=${14}/> <span>${texteOk(role, g, v)}</span>`
       : etat.etat === 'erreur' ? html`<span>Pas encore enregistré : touche « Enregistrer ».</span>` : html`<span>Enregistrement…</span>`}</span>`;
   };
   return html`<fieldset class="cf-vis">
@@ -254,8 +258,9 @@ injectCSS('confiance', `
 const CIBLES_AR = { 'cette offre': 'هذا العرض', 'ce commentaire': 'هذا التعليق', 'cette question': 'هذا السؤال', 'cette réponse': 'هذا الجواب', 'ce message': 'هذه الرسالة', 'ce profil': 'هذا الملف', 'ce témoignage d’entretien': 'شهادة المقابلة هذه', 'cet avis': 'هذا الرأي', 'cette rubrique': 'هذا القسم', 'ce café': 'هذا اللقاء', 'cette startup': 'هذه الشركة الناشئة', 'cette relecture': 'هذه المراجعة', 'ce contenu': 'هذا المحتوى' };
 addAR({
   'Enregistré': 'تم الحفظ', 'Enregistrement…': 'جارٍ الحفظ…',
-  'Enregistré : tous les membres le voient.': 'تم الحفظ: يراه جميع الأعضاء.', 'Enregistré : seuls les lauréats le voient.': 'تم الحفظ: لا يراه إلا الخريجون.',
+  'Enregistré : tous les membres le voient.': 'تم الحفظ: يراه جميع الأعضاء.', 'Enregistré : les lauréats et tes contacts le voient.': 'تم الحفظ: يراه الخريجون وجهات اتصالك.',
   'Enregistré : seuls tes contacts le voient.': 'تم الحفظ: لا يراه إلا جهات اتصالك.', 'Pas encore enregistré : touche « Enregistrer ».': 'لم يُحفظ بعد: اضغط « حفظ ».',
+  'Enregistré : tes contacts le voient ; les lauréats aussi quand tu as une demande ouverte.': 'تم الحفظ: تراه جهات اتصالك، ويراه الخريجون أيضًا حين يكون لديك طلب مفتوح.',
   'Sur ta propre fiche, tu vois toujours tout.': 'في بطاقتك أنت، ترى دائمًا كل شيء.',
   'Signaler': 'إبلاغ', 'Signalé': 'تم الإبلاغ', 'Tu as signalé ce contenu. Merci !': 'لقد أبلغت عن هذا المحتوى. شكرًا!',
   'Spam ou publicité': 'رسائل مزعجة أو إشهار', 'Arnaque ou offre douteuse': 'احتيال أو عرض مشبوه', 'Faux profil ou fausse information': 'ملف مزيف أو معلومة خاطئة',

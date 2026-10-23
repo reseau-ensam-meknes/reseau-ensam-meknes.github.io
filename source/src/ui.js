@@ -359,13 +359,17 @@ export function Empty({ icon = 'spark', title, children, action }) {
 // Une seule fois chacun (cle), avec une phrase chaleureuse et une seule prochaine étape.
 // ---------------------------------------------------------------------------
 let feteSet = null, feteActive = false;
+const surFete = new Set();
 export function celebrate({ cle, titre, texte, action, icon = 'trophy' }) {
   if (cle) { try { if (localStorage.getItem('fete-' + cle)) return false; localStorage.setItem('fete-' + cle, '1'); } catch { /* pas de stockage : on fête quand même */ } }
   if (!feteSet) return false;
   feteSet({ titre, texte, action, icon, t: Date.now() });
   feteActive = true;
+  for (const fn of surFete) fn();
   return true;
 }
+// Une fenêtre déjà ouverte qui doit laisser la place à une fête qui arrive après elle
+export const quandFete = fn => { surFete.add(fn); return () => surFete.delete(fn); };
 // Une fête est à l'écran : rien d'autre ne s'ouvre par-dessus (la feuille « Me prévenir » attend la prochaine visite)
 export const feteOuverte = () => feteActive;
 export function Celebration() {

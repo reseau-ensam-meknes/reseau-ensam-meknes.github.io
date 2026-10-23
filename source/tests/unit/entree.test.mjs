@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import zlib from 'node:zlib';
 import {
   saisonActuelle, roleDePromo, presetInscription, lignesChiffres, estEmailEcole, chiffresCode, casErreurAuth, adresseContact,
-  lienPartage, lienEncoreBon, estUuid, phraseLien, suiteLien,
+  lienPartage, lienEncoreBon, estUuid, phraseLien, suiteLien, offreFermeePour,
 } from '../../src/regles-entree.js';
 import { seasonOf } from '../../src/logic.js';
 
@@ -94,9 +94,15 @@ test('lien partagé : une phrase par cas, et chacune traduite', () => {
   assert.equal(phraseLien(q, undefined, false), 'Une question t’attend : connecte-toi pour y répondre.');
   assert.equal(phraseLien(a, undefined), 'Connecte-toi pour voir la demande de l’étudiant.');
   assert.equal(phraseLien(null, undefined), '');
+  // Une offre entre lauréats ne s'ouvrira pas pour un étudiant : on le dit dès le rôle choisi, rien n'est promis
+  const entreLaureats = { type: 'emploi', audience: 'laureats', ouverte: true };
+  assert.equal(phraseLien(o, entreLaureats, true, 'etudiant'), 'Cette offre est réservée aux lauréats.');
+  assert.equal(phraseLien(o, entreLaureats, true, 'laureat'), 'Une offre entre lauréats t’attend : crée ton compte pour la voir.');
+  assert.equal(offreFermeePour(entreLaureats, 'etudiant'), true);
+  assert.equal(offreFermeePour({ type: 'pfe', audience: 'etudiants', ouverte: true }, 'etudiant'), false);
   const entree = lireSrc('entree.js');
   const traduit = s => entree.includes(`'${s}':`);
-  const phrases = [suiteLien(o), suiteLien(q), suiteLien(a), phraseLien(o, null), phraseLien(a)];
+  const phrases = [suiteLien(o), suiteLien(q), suiteLien(a), phraseLien(o, null), phraseLien(a), phraseLien(o, entreLaureats, true, 'etudiant')];
   for (const ins of [true, false]) {
     phrases.push(phraseLien(q, undefined, ins), phraseLien(o, undefined, ins), phraseLien(o, { type: 'pfe', audience: 'laureats', ouverte: true }, ins), phraseLien(o, { type: 'pfe', ouverte: false }, ins));
     for (const type of ['stage', 'pfe', 'etranger', 'emploi']) phrases.push(phraseLien(o, { type, audience: 'etudiants', ouverte: true }, ins));

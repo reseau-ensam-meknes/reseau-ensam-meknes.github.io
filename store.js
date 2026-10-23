@@ -1,7 +1,7 @@
 // Couche de données : même interface en mode démo (navigateur) et en mode réel (Supabase).
 // Les données de démonstration (seed.js) ne sont chargées qu'en démo : le site réel n'en a pas besoin
 const chargerSeed = () => import('./seed.js').then(m => m.buildSeed());
-import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau } from './logic.js';
+import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth } from './logic.js';
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
 const PHASE3 = ['coordonnees', 'demandes_contact', 'relectures_cv', 'relecture_commentaires', 'entretiens', 'avis_stage', 'guide_pays', 'signalements', 'enquetes_insertion', 'verifications_pairs', 'evenements', 'evenement_participants', 'retours_cv'];
@@ -1008,7 +1008,8 @@ export class SupabaseStore extends Base {
   async update(table, id, patch) {
     const { data, error } = await this.sb.from(table).update(patch).eq('id', id).select().single();
     // Aucune ligne modifiée : quelqu'un est passé avant (ex. demande prise entre-temps)
-    if (error?.code === 'PGRST116') throw new Error(table === 'mentorships' ? 'Un autre lauréat vient de prendre cette demande.' : 'Cette action n’est plus possible. Recharge la page.');
+    // Son propre profil : aucune ligne modifiée veut dire que la connexion s'est perdue, pas qu'un autre est passé avant
+    if (error?.code === 'PGRST116') throw new Error(table === 'mentorships' ? 'Un autre lauréat vient de prendre cette demande.' : table === 'profiles' && id === this.userId ? SESSION_PERDUE : 'Cette action n’est plus possible. Recharge la page.');
     if (error) throw new Error(frError(error));
     this.data[table] = this.data[table].some(x => x.id === id) ? this.data[table].map(x => x.id === id ? data : x) : [data, ...this.data[table]];
     // Le lien de visio est créé côté base quand le lauréat accepte
@@ -1032,6 +1033,19 @@ export class SupabaseStore extends Base {
   async signIn(email, password) {
     const { error } = await this.sb.auth.signInWithPassword({ email, password });
     if (error) throw new Error(frError(error));
+  }
+  // Inscription et connexion par code à 6 chiffres reçu par email (pas de mot de passe à inventer).
+  // creer : la personne s'inscrit ; un email déjà connu reçoit simplement un code de connexion.
+  async envoyerCode(email, { creer = false, meta = null } = {}) {
+    // par_code : dit à la base que ce compte naît d'une demande de code (rappel et chiffres de l'administration)
+    const { error } = await this.sb.auth.signInWithOtp({ email, options: { shouldCreateUser: creer, ...(creer ? { data: { ...(meta || {}), par_code: true } } : {}) } });
+    if (error) throw Object.assign(new Error(frError(error)), casErreurAuth(error));
+  }
+  async verifierCode(email, token, meta = null) {
+    const { error } = await this.sb.auth.verifyOtp({ email, token, type: 'email' });
+    if (error) throw Object.assign(new Error(frError(error)), casErreurAuth(error));
+    // L'accord retenu est celui de qui a le code (un compte a pu être commencé avant, par elle ou par erreur)
+    if (meta) await this.sb.auth.updateUser({ data: meta }).catch(() => {});
   }
   async resetPassword(email) {
     const { error } = await this.sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
@@ -1312,9 +1326,12 @@ export class SupabaseStore extends Base {
 
 // Le message à montrer au membre pour une erreur (jamais un message technique pour une coupure réseau)
 export const texteErreur = e => frError(e);
+const SESSION_PERDUE = 'Ta connexion a expiré. Recharge la page, puis réessaie.';
 function frError(e) {
   const m = (e?.message || String(e || '')).toLowerCase();
   if (/failed to fetch|load failed|networkerror|network request failed|fetch failed|timed? ?out/.test(m)) return 'Pas de réseau pour l’instant. Réessaie dans un instant.';
+  // Passerelle de Supabase indisponible (502-504, projet en pause) : l'erreur d'authentification n'a alors pour texte que « {} »
+  if (e?.name === 'AuthRetryableFetchError' || [502, 503, 504].includes(e?.status) || m.trim() === '{}') return 'Pas de réseau pour l’instant. Réessaie dans un instant.';
   if (m.includes('invalid login')) return 'Email ou mot de passe incorrect.';
   if (m.includes('already registered')) return 'Un compte existe déjà avec cet email. Connecte-toi.';
   if (m.includes('password should be')) return 'Le mot de passe doit contenir au moins 6 caractères.';
@@ -1338,7 +1355,15 @@ function frError(e) {
   if (m.includes('bucket not found')) return 'Cette fonction arrive bientôt : la base est en cours de mise à jour.';
   if (m.includes('lien_check')) return 'Le lien doit commencer par https://';
   if (m.includes('could not find the') || m.includes('does not exist')) return 'Cette fonction arrive bientôt : la base est en cours de mise à jour.';
+  if (/jwt expired|invalid jwt/.test(m)) return SESSION_PERDUE;
   if (m.includes('row-level security')) return "Action non autorisée pour ton compte.";
+  if (/token has expired or is invalid|email link is invalid|user not found/.test(m)) return 'Ce code ne marche pas. Vérifie les 6 chiffres, ou demande un nouveau code.';
+  if (m.includes('email address not authorized')) return 'L’email n’a pas pu partir. Vérifie l’adresse, ou réessaie dans un instant.';
+  if (m.includes('only request this after')) return 'Un code vient de partir. Attends une minute avant d’en demander un autre.';
+  if (m.includes('email rate limit exceeded')) return 'Beaucoup de codes sont partis cette heure-ci. Réessaie dans un moment.';
+  if (m.includes('signups not allowed')) return 'Les inscriptions sont en pause pour l’instant. Réessaie plus tard.';
+  if (/error sending (magic link|confirmation|recovery|otp)? ?email/.test(m)) return 'L’email n’a pas pu partir. Vérifie l’adresse, ou réessaie dans un instant.';
+  if (/unable to validate email address|email address .* is invalid/.test(m)) return 'Cette adresse email ne semble pas valide. Vérifie-la.';
   if (m.includes('rate limit')) return 'Trop de tentatives. Réessaie dans quelques minutes.';
   return e?.message || 'Erreur inconnue.';
 }

@@ -442,10 +442,10 @@ export function manquesProfil(f, { onboarding = false, ecoleBloque = false, inco
     onboarding && f.role === 'laureat' && typeof f.mentor_dispo !== 'boolean' && 'aide'].filter(Boolean);
 }
 // Avec le code à 6 chiffres, demander un code crée déjà le compte (connexion notée dans la seconde) :
-// un compte n'est « ouvert » qu'avec un profil, un mot de passe, ou une connexion venue plus tard (le code entré).
-// Un champ absent (base pas encore à jour) garde l'ancien comportement : le compte compte.
+// un compte créé par code n'est « ouvert » qu'avec un profil ou une connexion venue plus tard (le code entré).
+// Un compte d'avant les codes, ou un champ absent (base pas encore à jour), compte toujours.
 export function compteOuvert(c) {
-  if (c.a_profil || c.mot_de_passe !== false || c.last_sign_in_at == null || c.created_at == null) return true;
+  if (c.a_profil || c.par_code !== true || c.last_sign_in_at == null || c.created_at == null) return true;
   return new Date(c.last_sign_in_at) - new Date(c.created_at) > 5000;
 }
 // Personnes qui ont demandé un code sans l'entrer (code pas reçu, ou visite interrompue), hors administration

@@ -19,18 +19,20 @@ export function arCount(n, [one, two, few, many]) {
   return `${n} ${many}`;
 }
 
-const KEY = 'ensam-lang';
+const KEY = 'ensam-lang', VISITE = 'ensam-lang-visite';
 let lang = 'fr';
-try { lang = localStorage.getItem(KEY) === 'ar' ? 'ar' : 'fr'; } catch { /* stockage indisponible */ }
+// Le choix gardé (bouton de langue) ; sinon la langue d'un lien ouvert pendant cette visite (lien arabe d'une promo)
+try { const l = localStorage.getItem(KEY); lang = l === 'ar' || (!l && sessionStorage.getItem(VISITE) === 'ar') ? 'ar' : 'fr'; } catch { /* stockage indisponible */ }
 
 export const getLang = () => lang;
 // Passe à l'arabe une fois le dictionnaire chargé (sinon l'écran basculerait à droite encore en français).
 // attendre: false (page d'entrée, dont les phrases arabes sont déjà là) : tout de suite, le dictionnaire suit en fond.
-export async function setLang(l, { attendre = true } = {}) {
+// garder: false : seulement pour cette visite (la langue d'un lien), jamais comme un choix du visiteur
+export async function setLang(l, { attendre = true, garder = true } = {}) {
   const v = l === 'ar' ? 'ar' : 'fr';
   if (v === 'ar') { if (attendre) await chargerAR(); else chargerAR().catch(() => {}); }
   lang = v;
-  try { localStorage.setItem(KEY, lang); } catch { /* stockage indisponible */ }
+  try { if (garder) localStorage.setItem(KEY, lang); else sessionStorage.setItem(VISITE, lang); } catch { /* stockage indisponible */ }
   applyDir();
 }
 function applyDir() {

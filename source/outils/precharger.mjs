@@ -19,6 +19,19 @@ function graphe(depart) {
 // Trois temps : la page d'entrée (préchargée dans <head>), le magasin (Supabase), puis le reste de l'application.
 // Un membre déjà connecté précharge les deux derniers dès <head> (script de tête de page.html).
 const entree = graphe('entree.js');
+// Page d'entrée : ses modules perdent leurs lignes de commentaire (environ 5 Ko compressés de moins en 3G).
+// Seules les lignes entières qui commencent par // et hors d'un gabarit `…` (le texte d'une page) sont retirées.
+for (const f of entree.filter(f => !f.startsWith('vendor/'))) {
+  const lignes = fs.readFileSync(path.join(dist, f), 'utf8').split('\n');
+  let gabarit = false;
+  const gardees = lignes.filter(l => {
+    const commentaire = !gabarit && /^\s*\/\/(?!#)/.test(l);
+    if (!commentaire && (l.replace(/\\./g, '').match(/`/g) || []).length % 2) gabarit = !gabarit;
+    return !commentaire;
+  });
+  if (gabarit) throw new Error(`précharge : ${f}, gabarit non refermé, retrait des commentaires à vérifier`);
+  fs.writeFileSync(path.join(dist, f), gardees.join('\n'));
+}
 const magasin = ['vendor/supabase.js', ...graphe('store.js').filter(f => !entree.includes(f))];
 const appli = graphe('app.js').filter(f => !entree.includes(f) && !magasin.includes(f));
 const config = fs.readFileSync(path.join(dist, 'config.js'), 'utf8');

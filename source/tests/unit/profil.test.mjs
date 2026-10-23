@@ -31,13 +31,13 @@ test('ce qui manque, dans l’ordre de l’écran', () => {
 
 test('comptes : un code demandé mais jamais entré ne compte pas comme une inscription', () => {
   const t = '2026-10-23T10:00:00Z';
-  assert.equal(compteOuvert({ a_profil: true, mot_de_passe: false, created_at: t, last_sign_in_at: t }), true);
-  assert.equal(compteOuvert({ mot_de_passe: true, created_at: t, last_sign_in_at: t }), true, 'ancien compte avec mot de passe');
+  assert.equal(compteOuvert({ a_profil: true, par_code: true, created_at: t, last_sign_in_at: t }), true);
+  assert.equal(compteOuvert({ par_code: false, created_at: t, last_sign_in_at: t }), true, 'ancien compte à mot de passe');
   assert.equal(compteOuvert({ created_at: t, last_sign_in_at: t }), true, 'base pas encore à jour : le compte compte');
-  assert.equal(compteOuvert({ mot_de_passe: false, created_at: t, last_sign_in_at: null }), true);
-  assert.equal(compteOuvert({ mot_de_passe: false, created_at: t, last_sign_in_at: '2026-10-23T10:00:01Z' }), false, 'code demandé, pas entré');
-  assert.equal(compteOuvert({ mot_de_passe: false, created_at: t, last_sign_in_at: '2026-10-23T10:03:00Z' }), true, 'code entré plus tard');
-  const comptes = [{ id: 'a', mot_de_passe: false, created_at: t, last_sign_in_at: t }, { id: 'adm', mot_de_passe: false, created_at: t, last_sign_in_at: t }, { id: 'b', a_profil: true }];
+  assert.equal(compteOuvert({ par_code: true, created_at: t, last_sign_in_at: null }), true);
+  assert.equal(compteOuvert({ par_code: true, created_at: t, last_sign_in_at: '2026-10-23T10:00:01Z' }), false, 'code demandé, pas entré');
+  assert.equal(compteOuvert({ par_code: true, created_at: t, last_sign_in_at: '2026-10-23T10:03:00Z' }), true, 'code entré plus tard');
+  const comptes = [{ id: 'a', par_code: true, created_at: t, last_sign_in_at: t }, { id: 'adm', par_code: true, created_at: t, last_sign_in_at: t }, { id: 'b', a_profil: true }];
   assert.equal(codesSansSuite(comptes, [{ id: 'adm', role: 'admin' }]), 1);
 });
 

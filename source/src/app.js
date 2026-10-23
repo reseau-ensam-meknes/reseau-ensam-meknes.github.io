@@ -22,7 +22,7 @@ import { NudgeAvis } from './entreprises.js';
 import { ConfianceHome } from './confiance.js';
 import { EnquetePage } from './enquete.js';
 import { NextEvent } from './agenda.js';
-import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, lienDuVisiteur, suiteLien } from './entree.js';
+import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, suiteLien, accordIci, oublierInvitation } from './entree.js';
 import { MessagesPage, MessagesHome, useAlerteMessages } from './messages.js';
 import { PoulsReseau, marquerArrivee, useArrivee, ArriveeSheet, arriveeEnAttente } from './pouls.js';
 import { ProposerAide } from './demandes.js';
@@ -107,6 +107,9 @@ function App({ store }) {
   const install = useInstall();
   // Le lien partagé gardé pendant l'inscription : ouvert dès que l'application s'affiche, puis oublié
   useEffect(() => { if (!coque) return; const l = lienRetenu(); oublierLien(); if (l && l.r !== (location.hash || '').slice(1)) go(l.r, { exact: true }); }, [coque]);
+  // Un membre avec son profil : une invitation de promo gardée ici ne sert plus (après une déconnexion, « Se connecter » d'abord).
+  // La démo n'a pas d'inscription : rien à oublier
+  useEffect(() => { if (coque && store.mode === 'live') oublierInvitation(); }, [coque]);
   // Lien direct vers une offre (WhatsApp, alertes par email, notifications) : sans compte, l'adresse garde #offre/<id>
   useEffect(() => { if (coque && route.base === 'offre' && route.sub) { setOfferId(route.sub); setApplyNow(false); go('offres', { exact: true }); } }, [route.base, route.sub, coque]);
   // Lien direct « Je peux aider » (notification sur le téléphone, email) : #aider/<id> ouvre la feuille devant la demande
@@ -681,7 +684,7 @@ function Home(ctx) {
     // Juste après l'inscription, la feuille d'accueil l'annonce elle-même
     if (!fondateur || arriveeEnAttente(me.id)) return;
     const t = setTimeout(() => {
-      if (document.querySelector('.modal-back, .fete-back')) return;
+      if (arriveeEnAttente(me.id) || document.querySelector('.modal-back, .fete-back')) return;
       celebrate({ cle: 'fondateur-' + me.id, icon: 'award', titre: 'Tu es Membre fondateur !', texte: 'Tu fais partie des 25 premiers lauréats du réseau. Ce badge restera sur ton profil.', action: { label: 'Voir mon badge', onClick: () => go('espace') } });
     }, 1200);
     return () => clearTimeout(t);
@@ -838,14 +841,14 @@ function Onboarding({ store, relang }) {
   const ctx = { store, act };
   // Le rôle choisi sur la page d'entrée (il suit le compte d'un appareil à l'autre), sinon celui du lien de la promo
   const meta = store.session?.user?.user_metadata || {};
-  const preset = presetInscription({ choisi: meta.role_choisi || roleRetenu(), invite: promoInvitee(), saison: seasonOf() });
-  const lien = lienDuVisiteur();
+  const preset = presetInscription({ choisi: (accordIci(store.session?.user?.email) && meta.role_choisi) || roleRetenu(), invite: promoInvitee(), saison: seasonOf() });
+  const lien = lienRetenu();
   // La langue se change dans l'en-tête (un bouton fixe recouvrirait le titre sur téléphone)
   return html`<main class="auth"><div class="auth-card wide onb">
     <div class="row onb-tete"><${BrandLogo} size=${44}/><div><p class="eyebrow">Dernière étape</p><h2>Présente-toi à la communauté</h2></div><${LangToggle} onChange=${relang}/></div>
     ${lien ? html`<p class="lien-suite small" id="onb-lien"><${Icon} name="arrow" size=${15}/><span>${suiteLien(lien)}</span></p>` : null}
     <p class="muted">Quelques secondes, et tu es dans le réseau.</p>
-    <${ProfileForm} ctx=${ctx} preset=${preset} onboarding onDone=${() => marquerArrivee(store.userId)}/>
+    <${ProfileForm} ctx=${ctx} preset=${preset} onboarding onInscrit=${() => marquerArrivee(store.userId)} onDone=${() => marquerArrivee(store.userId)}/>
     <button class="linkish small" onClick=${() => store.signOut()}>Se déconnecter</button>
   </div><${Toaster}/></main>`;
 }

@@ -15,7 +15,7 @@
    un membre déjà connecté précharge toute l'application. build.sh (outils/precharger.mjs) remplit les deux listes. */
 (function(){var d=document.documentElement,ar=false,membre=false,L,i;
 try{L=localStorage;var t=L.getItem('ensam-theme');if(t==='light'||t==='dark'){d.dataset.theme=t;document.querySelectorAll('meta[name="theme-color"]').forEach(function(m){m.content=t==='dark'?'#0B1320':'#1670A8'})}
-ar=L.getItem('ensam-lang')==='ar';for(i=0;i<L.length;i++)if(/^sb-.+-auth-token$/.test(L.key(i)))membre=true}catch(e){}
+var g=L.getItem('ensam-lang');ar=g==='ar'||(!g&&sessionStorage.getItem('ensam-lang-visite')==='ar');for(i=0;i<L.length;i++)if(/^sb-.+-auth-token$/.test(L.key(i)))membre=true}catch(e){}
 d.lang=ar?'ar':'fr';d.dir=ar?'rtl':'ltr';
 var M=window.ENSAM_MAGASIN=/*MAGASIN*/[],A=window.ENSAM_MODULES=/*MODULES*/[];
 if(!A.length)return;

@@ -618,17 +618,18 @@ do $$ begin
   end if;
 end $$;
 
--- Comptes vus par l'administration : email, dernière connexion, profil rempli ou non, mot de passe ou non.
--- Avec le code à 6 chiffres, demander un code crée déjà le compte : « mot_de_passe » et la dernière connexion
--- permettent de ne pas compter une adresse tapée sans que le code soit jamais entré.
+-- Comptes vus par l'administration : email, dernière connexion, profil rempli ou non, compte créé par code ou non.
+-- Avec le code à 6 chiffres, demander un code crée déjà le compte, avec un mot de passe tiré au hasard par Supabase
+-- et une connexion notée dans la seconde : « par_code » (posé par le site à la demande du code) et la dernière
+-- connexion permettent de ne pas compter une adresse tapée sans que le code soit jamais entré.
 drop function if exists public.admin_comptes();
 create function public.admin_comptes()
-returns table (id uuid, email text, created_at timestamptz, last_sign_in_at timestamptz, a_profil boolean, mot_de_passe boolean)
+returns table (id uuid, email text, created_at timestamptz, last_sign_in_at timestamptz, a_profil boolean, par_code boolean)
 language plpgsql stable security definer set search_path = public as $$
 begin
   if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
   return query select u.id, u.email::text, u.created_at, u.last_sign_in_at, exists (select 1 from public.profiles p where p.id = u.id),
-    coalesce(u.encrypted_password, '') <> ''
+    coalesce(u.raw_user_meta_data->>'par_code', '') = 'true'
     from auth.users u order by u.created_at desc;
 end $$;
 revoke all on function public.admin_comptes() from public;
@@ -3242,8 +3243,10 @@ language sql stable security definer set search_path = public as $$
   from auth.users u
   where u.email is not null
     and u.created_at < now() - interval '24 hours' and u.created_at > now() - interval '30 days'
-    -- Un code demandé mais jamais entré (adresse tapée par erreur, code pas reçu) n'est pas un compte ouvert
-    and (coalesce(u.encrypted_password, '') <> '' or u.last_sign_in_at is null or u.last_sign_in_at > u.created_at + interval '5 seconds')
+    -- Un code demandé mais jamais entré (adresse tapée par erreur, code pas reçu) n'est pas un compte ouvert :
+    -- seule la connexion notée à la création existe (le mot de passe, tiré au hasard par Supabase, ne dit rien)
+    and not (coalesce(u.raw_user_meta_data->>'par_code', '') = 'true'
+             and u.last_sign_in_at is not null and u.last_sign_in_at <= u.created_at + interval '5 seconds')
     and not exists (select 1 from public.profiles p where p.id = u.id)
     and not exists (select 1 from public.relances_inscription r where r.user_id = u.id)
   order by u.created_at
@@ -3613,7 +3616,11 @@ language sql stable security definer set search_path = public as $$
   select jsonb_build_object(
     'laureats', (select count(*) from l),
     'promos', (select count(distinct promo) from l),
-    'entreprises', (select count(*) from ks a where not exists (select 1 from ks b where a.k like b.k || ' %')));
+    -- Une clé dont un début de mots est aussi une clé (« renault tanger med » / « renault ») ne compte pas :
+    -- comparaison par égalité sur chaque début, linéaire (un LIKE clé contre clé serait quadratique)
+    'entreprises', (select count(*) from ks) - (select count(distinct a.k) from ks a
+      cross join lateral generate_series(1, array_length(string_to_array(a.k, ' '), 1) - 1) i
+      join ks b on b.k = array_to_string((string_to_array(a.k, ' '))[1:i], ' ')));
 $$;
 revoke all on function public.chiffres_publics() from public;
 grant execute on function public.chiffres_publics() to anon, authenticated;

@@ -6,7 +6,7 @@ import { html, render, useState, useLayoutEffect, useEffect, useRef } from './ve
 import { getLang, setLang, chargerAR, addAR, arCount } from './i18n.js';
 import { sceneMarkup } from './scene.js';
 import { glyph, TUILE_DEFS, TUILE } from './logo.js';
-import { roleDePromo, promoValide, lignesChiffres, estEmailEcole, chiffresCode, adresseContact, lienPartage, lienEncoreBon, estUuid, phraseLien, suiteLien } from './regles-entree.js';
+import { roleDePromo, promoValide, lignesChiffres, estEmailEcole, chiffresCode, adresseContact, lienPartage, lienEncoreBon, estUuid, phraseLien, suiteLien, offreFermeePour } from './regles-entree.js';
 
 // La page d'entrée en arabe n'attend pas le grand dictionnaire (i18n-ar.js) : ses phrases sont ici
 // (mêmes traductions que dans i18n-ar.js, vérifié par un test).
@@ -76,6 +76,8 @@ addAR({
   'Connecte-toi pour voir la demande de l’étudiant.': 'سجّل الدخول لترى طلب الطالب.',
   'Cette offre n’est plus en ligne.': 'هذا العرض لم يعد منشورًا.',
   'Cette offre n’accepte plus de candidatures.': 'هذا العرض لم يعد يقبل ترشيحات.',
+  'Cette offre est réservée aux lauréats.': 'هذا العرض مخصّص للخريجين.',
+  'Ça n’a pas marché. Réessaie dans un instant.': 'لم ينجح ذلك. أعد المحاولة بعد لحظة.',
   'Après cette étape, l’offre qu’on t’a partagée s’ouvre.': 'بعد هذه الخطوة، سيُفتح العرض الذي وصلك.',
   'Après cette étape, la question qu’on t’a partagée s’ouvre.': 'بعد هذه الخطوة، سيُفتح السؤال الذي وصلك.',
   'Après cette étape, la demande de l’étudiant s’ouvre.': 'بعد هذه الخطوة، سيُفتح طلب الطالب.',
@@ -173,14 +175,14 @@ const valide = promoValide;
 const lire = k => { try { return localStorage.getItem(k); } catch { return null; } };
 const ecrire = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* navigation privée */ } };
 
-// Au chargement : lit ?promo= (et &lang=ar) dans l'adresse, garde la promo, puis les enlève de la barre d'adresse.
-// Renvoie 'ar' pour un lien arabe, sauf si ce navigateur a déjà choisi sa langue.
-export function lireInvitation() {
+// Au chargement : lit ?promo= (et &lang=ar) dans l'adresse, garde la promo (sauf pour un membre connecté),
+// puis les enlève de la barre d'adresse. Renvoie 'ar' pour un lien arabe, sauf si ce navigateur a déjà choisi sa langue.
+export function lireInvitation(membre = false) {
   try {
     const u = new URL(location.href);
     if (!u.searchParams.has('promo')) return null;
     const n = Number(u.searchParams.get('promo'));
-    if (valide(n)) localStorage.setItem(CLE, String(n));
+    if (valide(n) && !membre) localStorage.setItem(CLE, String(n));
     const ar = u.searchParams.get('lang') === 'ar' && !localStorage.getItem('ensam-lang');
     u.searchParams.delete('promo'); u.searchParams.delete('lang');
     history.replaceState(history.state, '', u.pathname + u.search + u.hash);
@@ -192,13 +194,19 @@ export const retenirRole = r => ecrire(CLE_ROLE, r === 'etudiant' || r === 'laur
 export const roleRetenu = () => { const r = lire(CLE_ROLE); return r === 'etudiant' || r === 'laureat' ? r : null; };
 export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); }
 
+// L'accord donné sur CET appareil (case cochée à l'inscription), pour cette adresse. Un compte créé par la demande de
+// code de quelqu'un d'autre (adresse mal tapée) ne reprend jamais l'accord ni le rôle de cette personne-là.
+const CLE_ACCORD = 'ensam-accord-ici';
+const adresse = e => String(e || '').trim().toLowerCase();
+const noterAccord = e => ecrire(CLE_ACCORD, JSON.stringify({ e: adresse(e), t: Date.now() }));
+export function accordIci(e) { try { const a = JSON.parse(lire(CLE_ACCORD) || 'null'); return !!a && !!adresse(e) && a.e === adresse(e); } catch { return false; } }
+
 // Le lien partagé (offre, question, « Je peux aider ») est gardé 24 h : un détour par la messagerie ou une adresse
 // nettoyée ne le perd pas, et il s'ouvre dès la fin de l'inscription
 const CLE_LIEN = 'ensam-lien-partage';
 export function retenirLien(hash) { const l = lienPartage(hash); if (l) ecrire(CLE_LIEN, JSON.stringify({ r: l.r, t: Date.now() })); }
 export function lienRetenu() { try { return lienEncoreBon(JSON.parse(lire(CLE_LIEN) || 'null')); } catch { return null; } }
 export const oublierLien = () => ecrire(CLE_LIEN, null);
-export const lienDuVisiteur = () => lienPartage(location.hash) || lienRetenu();
 export { suiteLien };
 
 // ---------------------------------------------------------------------------
@@ -273,10 +281,12 @@ export function AuthScreen({ store }) {
   const [, setTick] = useState(0); const relang = () => setTick(t => t + 1);
   const recovery = /type=recovery/.test(location.hash);
   const [attente] = useState(lireAttente);
+  const [saisie] = useState(lireSaisie);
   // Quelqu'un qui découvre le réseau (lien partagé, invitation d'une promo) commence par « Créer mon compte »
   const invite = promoInvitee();
   // Un lien partagé (offre, question, « Je peux aider ») : la page dit ce qui attend le visiteur
-  const [lien] = useState(lienDuVisiteur);
+  // Seulement le lien gardé à l'ouverture de la page par un visiteur : jamais l'adresse d'un membre qui se déconnecte
+  const [lien] = useState(lienRetenu);
   const [infos, setInfos] = useState(undefined);
   useEffect(() => {
     if (lien?.k !== 'offre') return;
@@ -289,11 +299,12 @@ export function AuthScreen({ store }) {
     });
     return () => { vivant = false; };
   }, []);
-  const [mode, setMode] = useState(recovery ? 'nouveau' : attente ? 'code' : lien?.k === 'aider' ? 'connexion' : invite || !dejaMembre() ? 'inscription' : 'connexion');
+  const [mode, setMode] = useState(recovery ? 'nouveau' : attente ? 'code' : saisie?.mode === 'inscription' || saisie?.mode === 'connexion' ? saisie.mode : lien?.k === 'aider' ? 'connexion' : invite || !dejaMembre() ? 'inscription' : 'connexion');
   const [origine, setOrigine] = useState(attente ? (attente.creer ? 'inscription' : 'connexion') : 'inscription');
   const [role, setRoleEtat] = useState(() => roleRetenu() || (invite ? roleDePromo(invite) : ''));
-  const [email, setEmail] = useState(attente?.email || ''); const [pw, setPw] = useState('');
-  const [ok, setOk] = useState(false); const [mails, setMails] = useState(attente ? attente.mails !== false : true);
+  const [email, setEmail] = useState(attente?.email || saisie?.email || ''); const [pw, setPw] = useState('');
+  const [ok, setOk] = useState(!!saisie?.ok); const [mails, setMails] = useState(attente ? attente.mails !== false : saisie ? saisie.mails !== false : true);
+  garderSaisie = () => sessionStorage.setItem(SAISIE, JSON.stringify({ email, mode, ok, mails, t: Date.now() }));
   const [code, setCode] = useState(''); const essai = useRef('');
   const [envoyeA, setEnvoyeA] = useState(attente?.t || 0);
   const [msg, setMsg] = useState(null); const [roleMsg, setRoleMsg] = useState(false);
@@ -301,21 +312,27 @@ export function AuthScreen({ store }) {
   const [lignes, setLignes] = useState(null);
   useEffect(() => { let vivant = true; chiffresPublics().then(c => { if (vivant) setLignes(lignesChiffres(c)); }); return () => { vivant = false; }; }, []);
   const setRole = r => { setRoleEtat(r); retenirRole(r); setRoleMsg(false); };
+  // Un seul envoi à la fois, même pour deux touchers dans le même instant (l'écran n'a pas encore grisé le bouton)
+  const occupe = useRef(false);
   const run = async fn => {
+    if (occupe.current) return; occupe.current = true;
     setBusy(true); setMsg(null);
     try { await fn(store || await attendreMagasin().catch(e => { throw Object.assign(e, { magasin: true }); })); } catch (e) { setMsg({ err: true, t: await texteErreurEntree(e) }); }
-    setBusy(false);
+    occupe.current = false; setBusy(false);
   };
   const ecole = store?.domainesEcole?.() || [];
   const deLEcole = estEmailEcole(email, ecole);
   const meta = () => ({ consent_at: new Date().toISOString(), emails_hebdo: mails, langue: getLang(), ...(role ? { role_choisi: role } : {}) });
-  const vers = m => { setMode(m); setMsg(null); setRoleMsg(false); };
+  const vers = (m, cible = m === 'motdepasse' ? 'au-pw' : m === 'inscription' && !role ? 'au-je-etudiant' : 'au-email') => { setMode(m); setMsg(null); setRoleMsg(false); focus(cible); };
 
   // Demander un code : creer = la personne s'inscrit (un email déjà connu est simplement connecté)
   const envoyer = (creer, renvoi = false) => run(async s => {
     const e = email.trim();
     if (creer && role === 'etudiant' && s.reglages?.email_ecole_obligatoire === true && s.domainesEcole().length && !estEmailEcole(e, s.domainesEcole())) throw new Error('Inscris-toi avec ton email de l’école.');
     const attendu = t => { noterAttente({ email: e, t, creer, mails }); setEnvoyeA(t); setOrigine(creer ? 'inscription' : 'connexion'); setMode('code'); focus('au-code'); };
+    if (creer) noterAccord(e);
+    // Une offre entre lauréats ne s'ouvrira pas pour un étudiant : rien à promettre après l'inscription
+    if (creer && offreFermeePour(infos, role)) oublierLien();
     try { await s.envoyerCode(e, { creer, meta: creer ? meta() : null }); } catch (err) {
       if (err.cas === 'pas_de_compte' && !creer) { setOrigine('inscription'); setMode('inscription'); setMsg({ t: 'Pas encore de compte avec cet email : crée-le ici en une minute.' }); return; }
       if (err.cas === 'trop_tot') { attendu(Date.now() - Math.max(0, 60 - err.attente) * 1000); setMsg({ t: 'Un code t’a déjà été envoyé il y a moins d’une minute : entre-le ici.' }); return; }
@@ -326,7 +343,7 @@ export function AuthScreen({ store }) {
   });
   const verifier = v => { essai.current = v; run(async s => {
     try { await s.verifierCode(email.trim(), v, origine === 'inscription' ? meta() : null); } catch (e) { setTimeout(() => document.getElementById('au-code')?.select()); throw e; }
-    noterAttente(null); marquerMembre(); setEntre(true);
+    noterAttente(null); marquerMembre(); setEntre(true); apresConnexion();
   }); };
   const saisir = e => {
     const v = chiffresCode(e.target.value);
@@ -334,16 +351,17 @@ export function AuthScreen({ store }) {
     setCode(v);
     if (v.length === 6 && v !== essai.current && !busy && !entre) verifier(v);
   };
-  const changerEmail = () => { noterAttente(null); setCode(''); essai.current = ''; vers(origine); focus('au-email'); };
+  const changerEmail = () => { noterAttente(null); setCode(''); essai.current = ''; vers(origine, 'au-email'); };
 
   const submit = e => {
     e.preventDefault();
+    if (busy) return;
     if (mode === 'inscription') {
       if (!role) { setRoleMsg(true); document.getElementById('au-je-etudiant')?.focus(); return; }
       envoyer(true);
     } else if (mode === 'connexion') envoyer(false);
     else if (mode === 'code') { if (code.length < 6) { setMsg({ err: true, t: 'Entre les 6 chiffres du code.' }); document.getElementById('au-code')?.focus(); } else if (!entre) verifier(code); }
-    else if (mode === 'motdepasse') run(async s => { await s.signIn(email.trim(), pw); marquerMembre(); setEntre(true); });
+    else if (mode === 'motdepasse') run(async s => { await s.signIn(email.trim(), pw); marquerMembre(); setEntre(true); apresConnexion(); });
     else run(async s => { await s.setPassword(pw); setMsg({ t: 'Mot de passe changé.' }); });
   };
 
@@ -362,7 +380,7 @@ export function AuthScreen({ store }) {
     <div class="entree-ciel sky" aria-hidden="true"></div>
     <header class="entree-top"><span class="entree-marque"><${BrandLogo} size=${34} draw/><span>Réseau ENSAM Meknès</span></span><${LangToggle} onChange=${relang} aussitot/></header>
     <section class="entree-promesse">
-      ${lien && mode !== 'nouveau' ? html`<p id="au-lien" class=${'lien-accueil' + (infos === null || infos?.ouverte === false ? ' fini' : '')}><${Icon} name=${icoLien} size=${18}/><span>${phraseLien(lien, infos, inscrire)}</span></p>` : null}
+      ${lien && mode !== 'nouveau' ? html`<p id="au-lien" class=${'lien-accueil' + (infos === null || infos?.ouverte === false || (inscrire && offreFermeePour(infos, role)) ? ' fini' : '')}><${Icon} name=${icoLien} size=${18}/><span>${phraseLien(lien, infos, inscrire, inscrire ? role : '')}</span></p>` : null}
       <h1>Les lauréats ouvrent la porte aux étudiants.</h1>
       <p class="auth-chiffres">${(lignes || []).map(l => html`<span>${l}</span>`)}</p>
       ${lien && mode !== 'nouveau' ? null : html`<p class="entree-sous">Stage, PFE, premier emploi : les étudiants demandent, les lauréats aident et recrutent.</p>`}
@@ -374,8 +392,8 @@ export function AuthScreen({ store }) {
         ${roleMsg ? html`<p id="au-role-msg" class="auth-msg err" role="alert">Choisis d’abord : étudiant(e) ou lauréat(e).</p>` : null}` : null}
       ${mode === 'code' ? html`
         <p id="au-code-envoye" class="muted">Entre le code à 6 chiffres envoyé à</p>
-        <p class="au-adresse"><strong dir="ltr" translate="no">${email.trim()}</strong><button type="button" id="au-changer" class="linkish" aria-label="Changer d’email" onClick=${changerEmail}>Changer</button></p>
-        <${Field} label="Code à 6 chiffres"><input id="au-code" class="code-otp" type="text" inputmode="numeric" autocomplete="one-time-code" enterkeyhint="go" dir="ltr" placeholder="······" aria-describedby="au-code-envoye" value=${code} onInput=${saisir}/><//>`
+        <p class="au-adresse"><strong id="au-code-email" dir="ltr" translate="no">${email.trim()}</strong><button type="button" id="au-changer" class="linkish" aria-label="Changer d’email" onClick=${changerEmail}>Changer</button></p>
+        <${Field} label="Code à 6 chiffres"><input id="au-code" class="code-otp" type="text" inputmode="numeric" autocomplete="one-time-code" enterkeyhint="go" dir="ltr" placeholder="······" aria-describedby="au-code-envoye au-code-email" value=${code} onInput=${saisir}/><//>`
       : mode === 'nouveau' ? null : champEmail}
       ${mode === 'motdepasse' || mode === 'nouveau' ? html`<${Field} label=${mode === 'nouveau' ? 'Nouveau mot de passe' : 'Mot de passe'} hint=${mode === 'nouveau' ? '6 caractères minimum' : ''}><input id="au-pw" type="password" required minlength="6" autocomplete=${mode === 'nouveau' ? 'new-password' : 'current-password'} value=${pw} onInput=${e => setPw(e.target.value)}/><//>` : null}
       ${inscription ? html`<label class="check small"><input id="au-mail" type="checkbox" checked=${mails} onChange=${e => setMails(e.target.checked)}/> Recevoir un résumé par email chaque semaine</label>
@@ -386,13 +404,13 @@ export function AuthScreen({ store }) {
       ${mode === 'code' ? html`<div class="au-code-pied"><span class="muted">Rien reçu ? Regarde dans tes spams.</span><${Renvoi} envoyeA=${envoyeA} busy=${busy} onRenvoyer=${() => envoyer(origine === 'inscription', true)}/></div>` : null}
       <div class="auth-links">
         ${inscription ? html`<button type="button" class="linkish" onClick=${() => vers('connexion')}>J’ai déjà un compte</button>` : null}
-        ${mode === 'connexion' ? html`<button type="button" class="linkish" onClick=${() => vers('inscription')}>Créer un compte</button><button type="button" class="linkish" id="au-mdp" onClick=${() => { vers('motdepasse'); focus('au-pw'); }}>J’ai un mot de passe</button>` : null}
+        ${mode === 'connexion' ? html`<button type="button" class="linkish" onClick=${() => vers('inscription')}>Créer un compte</button><button type="button" class="linkish" id="au-mdp" onClick=${() => vers('motdepasse')}>J’ai un mot de passe</button>` : null}
         ${mode === 'motdepasse' ? html`<button type="button" class="linkish" onClick=${() => vers('connexion')}>Recevoir un code à la place</button>` : null}
       </div>
     </form>
     <div class="auth-pour">${pour.map(([t, items]) => html`<section><h2 class="eyebrow">${t}</h2><ul class="auth-points">${items.map(([i, x]) => html`<li><span class="sc-ico"><${Icon} name=${i}/></span> ${x}</li>`)}</ul></section>`)}</div>
     <div class="entree-scene sky"><${SchoolScene} fit="slice"/></div>
-    <footer class="auth-pied small"><span>Initiative de lauréats, indépendante de l’administration de l’école</span><span class="auth-pied-liens"><a href=${'mailto:' + adresseContact()} translate="no">Contact</a><a href="#confidentialite">Confidentialité</a></span></footer>
+    <footer class="auth-pied small"><span>Initiative de lauréats, indépendante de l’administration de l’école</span><span class="auth-pied-liens"><a href=${'mailto:' + adresseContact()}>Contact</a><a href="#confidentialite">Confidentialité</a></span></footer>
   </main>`;
 }
 
@@ -401,7 +419,10 @@ export function AuthScreen({ store }) {
 const PAS_DE_RESEAU = 'Pas de réseau pour l’instant. Réessaie dans un instant.';
 async function texteErreurEntree(e) {
   if (e?.magasin) return PAS_DE_RESEAU;
-  try { return (await import('./store.js')).texteErreur(e); } catch { return PAS_DE_RESEAU; }
+  let t;
+  try { t = (await import('./store.js')).texteErreur(e); } catch { return PAS_DE_RESEAU; }
+  // Une erreur du service d'authentification que rien n'a traduite (anglais, « {} ») : jamais montrée telle quelle
+  return (e?.__isAuthError || /^Auth/.test(e?.name || '')) && t === e.message ? 'Ça n’a pas marché. Réessaie dans un instant.' : t;
 }
 
 // ---------------------------------------------------------------------------
@@ -418,28 +439,51 @@ const precharger = fichiers => {
   }
 };
 
-let magasin = null;
-// Le magasin, une seule fois ; s'il échoue (réseau), on réessaie au prochain geste
+// Un module qui n'a pas pu se charger reste en échec dans cette page : le navigateur ne le redemande jamais.
+// On recharge donc la page, mais seulement quand le réseau répond (sinon le navigateur afficherait sa propre erreur) ;
+// ce qui a été tapé sur la page d'entrée est gardé le temps du rechargement.
+const repond = async f => { try { return (await fetch(f, { cache: 'no-store' })).ok; } catch { return false; } };
+const SAISIE = 'ensam-entree-saisie';
+let garderSaisie = () => {};
+function recharger() { try { garderSaisie(); } catch { /* stockage indisponible */ } location.reload(); return new Promise(() => {}); }
+function lireSaisie() {
+  try { const x = JSON.parse(sessionStorage.getItem(SAISIE) || 'null'); sessionStorage.removeItem(SAISIE); return x && Date.now() - x.t < 600e3 ? x : null; } catch { return null; }
+}
+
+let magasin = null, magasinEchec = false;
+// Le magasin, une seule fois ; s'il n'a pas pu se charger (réseau), le prochain geste recharge la page dès que le réseau répond
 export function attendreMagasin() {
   if (!magasin) {
+    if (magasinEchec) return repond('./store.js').then(ok => (ok ? recharger() : Promise.reject(new Error(PAS_DE_RESEAU))));
     precharger(window.ENSAM_MAGASIN);
-    magasin = import('./store.js').then(m => m.createStore()).then(s => { monter(s); chargerApp(); return s; }, e => { magasin = null; throw e; });
+    magasin = import('./store.js').then(m => m.createStore(), e => { magasinEchec = true; throw e; })
+      .then(s => { monter(s); chargerApp(); return s; }, e => { magasin = null; throw e; });
   }
   return magasin;
 }
 export const magasinEntree = () => magasin;
 
-let appLancee = false;
+let appLancee = false, appEchec = false, relance = false;
 function chargerApp() {
   if (appLancee) return; appLancee = true;
   if (getLang() === 'ar') chargerAR().catch(() => {});
   precharger(window.ENSAM_MODULES);
   import('./app.js').catch(e => {
-    appLancee = false;
+    // Un service worker garde peut-être une version qui ne colle plus : on le remet à neuf (une fois par visite)
     if (/^(SyntaxError|TypeError|ReferenceError)$/.test(e?.name) && navigator.serviceWorker?.controller) window.ensamReprise?.();
-    else addEventListener('online', chargerApp, { once: true });
+    // Sans service worker : un membre connecté (ou la démo) attend le réseau, puis la page se recharge ;
+    // un visiteur garde la page d'entrée, et la page se recharge juste après sa connexion
+    appEchec = true;
+    if (!document.documentElement.dataset.entree) relancerApp();
   });
 }
+// L'application n'a pas pu se charger : la page se recharge dès que le réseau répond (la session, elle, est gardée)
+function relancerApp() {
+  if (relance) return; relance = true;
+  const essai = async (n = 0) => { if (await repond('./app.js')) recharger(); else setTimeout(() => essai(n + 1), Math.min(30e3, 3e3 * 2 ** n)); };
+  essai();
+}
+const apresConnexion = () => { if (appEchec) relancerApp(); };
 
 // L'entrée vit dans son propre conteneur, à côté de #app ; l'application la reprend telle quelle
 let el = null;
@@ -461,13 +505,15 @@ export function Entree({ store }) {
 
 if (!window.ENSAM_ENTREE) {
   window.ENSAM_ENTREE = true;
-  // Lien arabe d'une promo (promo/AAAA/ar/) : la page s'ouvre en arabe, le dictionnaire suit en fond
-  if (lireInvitation() === 'ar') setLang('ar', { attendre: false }).catch(() => {});
-  retenirLien(location.hash);
   const cfg = window.ENSAM_CONFIG || {};
   const enLigne = !!(cfg.supabaseUrl && cfg.supabaseAnonKey);
   let jeton = false;
   try { jeton = enLigne && !!lire(`sb-${new URL(cfg.supabaseUrl).hostname.split('.')[0]}-auth-token`); } catch { /* adresse invalide */ }
+  // Lien arabe d'une promo (promo/AAAA/ar/) : la page s'ouvre en arabe pour cette visite (pas un choix gardé),
+  // le dictionnaire suit en fond. Un membre connecté qui ouvre le lien de sa promo n'est pas pris pour un invité.
+  if (lireInvitation(jeton) === 'ar') setLang('ar', { attendre: false, garder: false }).catch(() => {});
+  // Le lien partagé n'est gardé que pour un visiteur (un membre connecté l'ouvre directement)
+  if (!jeton) retenirLien(location.hash);
   const d = document.documentElement;
   if (!enLigne || jeton || PUBLIQUE.test(location.hash)) {
     // Démo, membre déjà connecté, ou page publique : l'application tout de suite (le logo patiente)
