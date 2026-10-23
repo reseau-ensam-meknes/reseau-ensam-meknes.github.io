@@ -31,7 +31,7 @@ jobs:
         run: sh build.sh
       - name: Le site publié correspond aux sources
         run: |
-          diff -r -x source -x .github -x .git -x .nojekyll -x README.md dist ..
+          diff -r -x source -x .github -x .git -x .nojekyll -x README.md -x LICENSE -x CONTRIBUTING.md -x SECURITY.md dist ..
           git diff --exit-code -- supabase/mise-a-jour.sql
       - name: Installer les outils de test
         working-directory: source/tests
