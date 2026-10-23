@@ -416,6 +416,8 @@ export function buildSeed(now = new Date()) {
   for (const p of profiles) for (const k of VIDES) if (p[k] === undefined || p[k] === '') p[k] = null;
   // Les jeunes diplômés encore sans poste cherchent un emploi
   for (const p of profiles) p.en_recherche = jeunes.includes(p) && !p.entreprise;
+  // Notifications sur le téléphone : aucun choix fait, chacun suit les défauts de son rôle (comme dans la base)
+  for (const p of profiles) p.notif_push = {};
   const msgs = seedMessages({ ...base, ...phase3 }, now);
   return { ...base, ...phase3, ...msgs, ...seedDemandes({ ...base, ...msgs }, { S, now, daysAgo, id, s5, s4, seniors: seniors.filter(x => x !== youssef && x.entreprise) }) };
 }

@@ -1066,6 +1066,16 @@ export function prevenirVariante({ etat, raison, memo = {}, now = Date.now(), ro
   return null;
 }
 
+// À l'ouverture, « Reçois l'essentiel sur ton téléphone » : pour un membre dont l'appareil peut recevoir des notifications
+// sans y être abonné (etat 'off' ; jamais sur iPhone hors écran d'accueil, ni sans notifications possibles). Même mémo et
+// même plafond que « Me prévenir » : « Plus tard » la ramène 7 jours après, deux refus au plus en tout ; acceptée, ou refusée
+// par le navigateur (etat 'refuse'), plus jamais. Une feuille « Me prévenir » remise à cette visite passe avant.
+export const OUVERTURE_ECART = 7 * 864e5;
+export function ouvertureNotif({ etat, memo = {}, now = Date.now(), role }) {
+  if (role === 'admin' || etat !== 'off' || memo.fait || memo.differe) return false;
+  return (memo.n || 0) < 2 && !(memo.at && now - memo.at < OUVERTURE_ECART);
+}
+
 // Notifications sur le téléphone, par catégorie : chacun choisit dans Mon profil ce qu'il reçoit.
 // me.notif_push ne garde que les choix faits ({ offres: true, reseau: false }) ; une catégorie absente suit le défaut
 // de son rôle. Mêmes règles que la base (push_categorie, push_defaut, push_voulu dans schema.sql) : un test le vérifie.
