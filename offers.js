@@ -363,32 +363,54 @@ function ApplyBox({ ctx, o, form, setForm, onClose }) {
   </form>`;
 }
 
+// Un recrutement déclaré par erreur : on le retire tant que l'étudiant ne l'a pas confirmé, et sa candidature
+// redevient « Envoyée » (aucune notification ne part pour ce retour)
+export function annulerRecrutement(ctx, p) {
+  const { store, data, act } = ctx;
+  const prenom = store.byId('profiles', p.student_id)?.full_name?.split(' ')[0] || 'Cette personne';
+  ctx.confirm(`Annuler le recrutement de ${prenom} ? Il n’y aura plus rien à confirmer de son côté.`, () => act(async () => {
+    await store.remove('placements', p.id);
+    const app = p.offer_id && data.applications.find(x => x.offer_id === p.offer_id && x.student_id === p.student_id && x.status === 'retenu');
+    if (app) await store.update('applications', app.id, { status: 'postule' });
+    toast('Recrutement annulé.');
+  }), 'Annuler le recrutement', { non: 'Garder' });
+}
+
 // Côté lauréat : les candidats de son offre, et la déclaration de recrutement
 function Candidates({ ctx, o, apps }) {
-  const { data, store, act, openProfile, saison } = ctx;
+  const { data, store, act, openProfile, saison, me } = ctx;
   const [declare, setDeclare] = useState(false);
   const entre = forLaureats(o);
   const sorted = [...apps].sort((a, b) => ['postule', 'entretien', 'retenu', 'refuse'].indexOf(a.status) - ['postule', 'entretien', 'retenu', 'refuse'].indexOf(b.status));
-  const recruit = (studentId, app) => act(async () => {
+  // Une confirmation avant de déclarer : un toucher de trop ne recrute personne
+  const recruit = (studentId, app) => {
     const st = store.byId('profiles', studentId);
     const existing = placementOf(data, studentId, saison);
     if (existing && existing.status !== 'refuse') { toast(`${st.full_name} a déjà une réussite enregistrée cette année.`, 'err'); return; }
-    if (app) await store.update('applications', app.id, { status: 'retenu' });
-    await store.insert('placements', { student_id: studentId, offer_id: o.id, laureat_id: ctx.me.id, saison, niveau: Math.min(niveauOf(st, saison), 6), type: o.type, entreprise: o.entreprise, ville: o.ville, pays: o.pays || 'Maroc', source: 'plateforme' });
-    toast(`${st.full_name.split(' ')[0]} doit maintenant confirmer. Tes 50 points arrivent dès sa confirmation.`);
-  });
+    const prenom = st.full_name.split(' ')[0];
+    ctx.confirm(`Recruter ${prenom} ? ${prenom} recevra une demande de confirmation, et tu peux annuler tant que ce n’est pas confirmé.`, () => act(async () => {
+      if (app) await store.update('applications', app.id, { status: 'retenu' });
+      await store.insert('placements', { student_id: studentId, offer_id: o.id, laureat_id: me.id, saison, niveau: Math.min(niveauOf(st, saison), 6), type: o.type, entreprise: o.entreprise, ville: o.ville, pays: o.pays || 'Maroc', source: 'plateforme' });
+      toast(`${prenom} doit maintenant confirmer. Tes 50 points arrivent dès sa confirmation.`);
+    }), 'Recruter', { non: 'Pas maintenant', cls: 'btn primary' });
+  };
   return html`<div class="cands">
     ${sorted.length ? sorted.map(a => {
       const st = store.byId('profiles', a.student_id);
       const pl = data.placements.find(p => p.student_id === a.student_id && p.offer_id === o.id && p.status !== 'refuse');
+      const invite = (data.invitations || []).some(i => i.offer_id === o.id && i.student_id === a.student_id);
+      // Annulable par celui qui l'a déclaré (ou l'administration) tant que l'étudiant n'a pas confirmé
+      const annulable = pl && pl.status !== 'confirme' && (pl.laureat_id === me.id || me.role === 'admin');
       return html`<div class="cand" key=${a.id}>
-        <div class="cand-head"><${Person} p=${st} onOpen=${openProfile} size=${36}/><span class="spacer"></span>${(data.invitations || []).some(i => i.offer_id === o.id && i.student_id === a.student_id) ? html`<span class="mini good">Invitation envoyée</span>` : null}<span class="muted small">${timeAgo(a.created_at)}</span><${MessageBtn} ctx=${ctx} p=${st} cls="btn tiny ghost"/></div>
+        <div class="cand-head"><${Person} p=${st} onOpen=${openProfile} size=${40}/><span class="muted small cand-quand">${timeAgo(a.created_at)}</span></div>
+        ${pl || invite ? html`<div class="cand-etats">${pl ? html`<span class=${'state-pill ' + (pl.status === 'confirme' ? 's-trouve' : 's-validation')}>${pl.status === 'confirme' ? 'Recrutement confirmé par l’étudiant' : 'Recrutement déclaré · attend sa confirmation'}</span>` : null}${invite ? html`<span class="mini good">Invitation envoyée</span>` : null}</div>` : null}
         ${a.message ? html`<p class="quote" translate="no" dir="auto">${a.message}</p>` : null}
-        ${st && (st.cv_path || st.cv_url) ? html`<div class="row"><${CvButton} ctx=${ctx} p=${st} small/></div>` : null}
-        ${pl ? html`<p class=${'state-pill ' + (pl.status === 'confirme' ? 's-trouve' : 's-validation')}>${pl.status === 'confirme' ? 'Recrutement confirmé par l’étudiant' : 'Recrutement déclaré · attend sa confirmation'}</p>` : html`
-        <div class="seg small-seg" role="group" aria-label="Statut de la candidature">
-          ${[['postule', 'Reçue'], ['entretien', 'Entretien'], ...(entre ? [['retenu', 'Retenue']] : []), ['refuse', 'Pas retenue']].map(([k, l]) => html`<button class=${a.status === k ? 'on' : ''} onClick=${() => act(() => store.update('applications', a.id, { status: k }))}>${l}</button>`)}
-          ${entre ? null : html`<button class="seg-accent" onClick=${() => recruit(a.student_id, a)}><${Icon} name="check" size=${14}/> Recruter</button>`}
+        <div class="cand-actions"><${MessageBtn} ctx=${ctx} p=${st} cls="btn small ghost"/><${CvButton} ctx=${ctx} p=${st}/>${annulable ? html`<button type="button" class="btn small ghost cand-annuler" onClick=${() => annulerRecrutement(ctx, pl)}><${Icon} name="x" size=${15}/> Annuler le recrutement</button>` : null}</div>
+        ${pl ? null : html`<div class="cand-statut">
+          <div class="seg small-seg" role="group" aria-label="Statut de la candidature">
+            ${[['postule', 'Reçue'], ['entretien', 'Entretien'], ...(entre ? [['retenu', 'Retenue']] : []), ['refuse', 'Pas retenue']].map(([k, l]) => html`<button type="button" class=${a.status === k ? 'on' : ''} aria-pressed=${a.status === k ? 'true' : 'false'} onClick=${() => act(() => store.update('applications', a.id, { status: k }))}>${l}</button>`)}
+          </div>
+          ${entre ? null : html`<button type="button" class="btn small cand-recruter" onClick=${() => recruit(a.student_id, a)}><${Icon} name="check" size=${15}/> Recruter</button>`}
         </div>`}
       </div>`;
     }) : html`<${Empty} icon="inbox" title="Pas encore de candidat">${entre ? 'Les lauréats intéressés postulent ici. Partage aussi l’offre dans le groupe de ta ville.' : 'Les étudiants concernés la voient déjà dans leurs offres. Partage-la sur WhatsApp : un étudiant la fera circuler dans sa promo.'}<//>`}
@@ -640,6 +662,7 @@ addAR({
   'Ex. Optimiser une ligne d’assemblage': 'مثال: تحسين خط تجميع', 'Pas encore d’offre pour ton année': 'لا عروض بعد لسنتك',
   'Retenue': 'مقبول', 'Pas retenue': 'غير مقبول', 'Recruter': 'توظيف', 'Invitation envoyée': 'دعوة مُرسلة',
   'Recrutement déclaré · attend sa confirmation': 'توظيف مُصرَّح به · في انتظار التأكيد',
+  'Annuler le recrutement': 'إلغاء التوظيف', 'Recrutement annulé.': 'أُلغي التوظيف.', 'Garder': 'إبقاء', 'Pas maintenant': 'ليس الآن',
   't’invite à postuler.': ': دعوة لك للترشح.', 'Ça ne m’intéresse pas': 'لا يهمني',
   'Aucune offre mise de côté': 'لا عرض محفوظ', 'Clique sur le marque-page d’une offre pour la mettre de côté ici.': 'انقر على علامة الحفظ في عرض لتحفظه هنا.',
   'Mises de côté': 'المحفوظة', 'Mettre de côté': 'حفظ', 'Ne plus mettre de côté': 'إلغاء الحفظ',
@@ -666,4 +689,6 @@ addAR({
   [/^Partagée par ([^,]+)$/, n => `عرض من ${n}`],
   [/^([^,]+) te répond ici$/, n => `الجواب من ${n} هنا`],
   [/^(.+) reçoit ta candidature avec ton profil( et ton CV)?\. Tu suis sa réponse dans « Mon parcours »\.$/, (n, cv) => `يصل ترشيحك إلى ${n === 'Le lauréat' ? 'الخريج' : n} مع ملفك${cv ? ' وسيرتك الذاتية' : ''}. تتابع الرد في «مساري».`],
+  [/^Recruter (.+?) \? (.+?) recevra une demande de confirmation, et tu peux annuler tant que ce n’est pas confirmé\.$/, n => `توظيف ${n}؟ يصل طلب تأكيد إلى ${n}، ويمكنك الإلغاء ما دام لم يُؤكَّد بعد.`],
+  [/^Annuler le recrutement de (.+?) \? Il n’y aura plus rien à confirmer de son côté\.$/, n => `إلغاء توظيف ${n}؟ لن يبقى ما يجب تأكيده.`],
 ]);

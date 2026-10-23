@@ -1441,6 +1441,38 @@ test('accueil (360 × 640) : une carte « prochaine étape » et son seul bouton
   await s.ctx.close();
 });
 
+test('candidats sur téléphone : gros boutons groupés ; « Recruter » demande une confirmation et s’annule tant que l’étudiant n’a pas confirmé', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('accueil');
+  await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
+  await s.page.locator('.cloche .af-row', { hasText: 'candidatures' }).locator('button').first().click(); await s.page.waitForSelector('.modal .cand');
+  const carte = s.page.locator('.modal .cand').filter({ has: s.page.locator('.cand-recruter') }).first();
+  const nom = (await carte.locator('.person-name').innerText()).trim();
+  const sienne = () => s.page.locator('.modal .cand', { hasText: nom });
+  // Des boutons qu'on touche sans viser (44 px), rien qui dépasse de la carte
+  const hauteurs = await carte.locator('.cand-actions .btn, .cand-recruter').evaluateAll(bs => bs.map(b => b.offsetHeight));
+  assert.ok(hauteurs.length >= 2 && hauteurs.every(h => h >= 44), JSON.stringify(hauteurs));
+  assert.ok(await s.page.evaluate(() => [...document.querySelectorAll('.modal .cand')].every(c => c.scrollWidth <= c.clientWidth + 1)), 'rien ne dépasse');
+  // Un toucher de trop ne recrute personne : « Pas maintenant » ne change rien
+  await carte.locator('.cand-recruter').click(); await s.page.waitForSelector('.modal .row-end .btn.primary');
+  assert.match(await s.page.locator('.modal').last().innerText(), new RegExp(`Recruter ${nom.split(' ')[0]} \\?`));
+  await s.page.click('.modal .row-end .btn.ghost'); await s.page.waitForTimeout(200);
+  assert.equal(await sienne().locator('.cand-recruter').count(), 1);
+  // Recruter pour de vrai, puis annuler : la candidature redevient « Reçue », plus rien à confirmer
+  await sienne().locator('.cand-recruter').click(); await s.page.click('.modal .row-end .btn.primary'); await s.page.waitForTimeout(300);
+  assert.match(await sienne().innerText(), /Recrutement déclaré · attend sa confirmation/);
+  await sienne().locator('.cand-annuler').click(); await s.page.waitForSelector('.modal .row-end .btn.danger');
+  assert.match(await s.page.locator('.modal').last().innerText(), /Garder/);
+  await s.page.click('.modal .row-end .btn.danger'); await s.page.waitForTimeout(300);
+  assert.equal(await sienne().locator('.cand-annuler').count(), 0);
+  assert.equal(await sienne().locator('.cand-recruter').count(), 1);
+  assert.equal(await sienne().locator('.seg button[aria-pressed="true"]').innerText(), 'Reçue');
+  const reste = await s.page.evaluate(n => { const d = window.__demo.data; const st = d.profiles.find(p => p.full_name === n); return d.placements.filter(p => p.student_id === st.id && p.status !== 'refuse' && p.laureat_id).length; }, nom);
+  assert.equal(reste, 0, 'plus de recrutement à confirmer');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('cloche : son chiffre compte ce qui attend un geste, la feuille dit « À faire » puis « Nouvelles » ; pastilles seulement où il y a à faire', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Youssef'); await s.aller('accueil');

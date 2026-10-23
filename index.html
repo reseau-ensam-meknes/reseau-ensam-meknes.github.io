@@ -501,8 +501,25 @@ textarea { resize: vertical; }
 .stepper li.done .step-dot { background: var(--good); border-color: var(--good); color: #fff; }
 .cands { display: flex; flex-direction: column; gap: .7rem; align-items: stretch; }
 .cands > .btn { align-self: flex-start; }
-.cand { border: 1px solid var(--line); border-radius: 12px; padding: .8rem .9rem; display: flex; flex-direction: column; gap: .55rem; }
-.cand-head { display: flex; align-items: center; gap: .5rem; }
+.cand { border: 1px solid var(--line); border-radius: 12px; padding: .8rem .9rem; display: flex; flex-direction: column; gap: .6rem; }
+.cand-head { display: flex; align-items: flex-start; gap: .5rem; }
+.cand-head .person { flex: 1; min-width: 0; }
+.cand-quand { flex: none; white-space: nowrap; padding-block-start: .2rem; }
+.cand-etats, .cand-actions, .cand-statut { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.cand .cand-actions .btn { min-height: 40px; }
+.cand-annuler { color: var(--bad); }
+.cand-statut { gap: .5rem; }
+.cand-recruter { background: var(--good); border-color: var(--good); color: var(--surface); }
+.cand-recruter:hover { filter: brightness(1.08); border-color: var(--good); }
+/* Téléphone : deux gros boutons côte à côte, les statuts sur une ligne qui prend toute la largeur, « Recruter » en dessous */
+@media (max-width: 599px) {
+  .cand .cand-actions .btn { flex: 1 1 auto; min-height: 44px; }
+  .cand-actions .cand-annuler { flex-basis: 100%; }
+  .cand-statut { flex-direction: column; align-items: stretch; }
+  .cand-statut .seg { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); align-self: stretch; }
+  .cand-statut .seg button { min-height: 40px; padding-inline: .3rem; }
+  .cand .btn.cand-recruter { min-height: 44px; }
+}
 .seg.small-seg button { padding: .3rem .65rem; font-size: .82rem; }
 .seg .seg-accent { background: var(--good); color: #fff; display: inline-flex; align-items: center; gap: .3rem; }
 .seg .seg-accent:hover { filter: brightness(1.08); }

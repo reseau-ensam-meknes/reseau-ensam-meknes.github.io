@@ -328,7 +328,14 @@ language plpgsql security definer set search_path = public as $$
 declare v_author uuid; v_status text; v_merci text; v_note int; v_ent text; v_ville text; v_pays text; v_type text; v_partage boolean; v_d record;
 begin
   if tg_op = 'INSERT' then
-    if auth.uid() is null or public.is_admin() then return new; end if;
+    if auth.uid() is null then return new; end if;
+    if public.is_admin() then
+      -- L'administration qui recrute elle-même (son offre, sa demande) : l'étudiant confirme, comme pour un lauréat
+      if new.laureat_id = auth.uid() and new.student_id is distinct from auth.uid() and new.status = 'declare' then
+        new.source := 'plateforme'; new.status := 'en_attente'; new.confirmed_at := null;
+      end if;
+      return new;
+    end if;
     new.confirmed_at := null;
     if auth.uid() = new.student_id then
       -- l'étudiant ne peut déclarer qu'une réussite hors plateforme (non vérifiée)

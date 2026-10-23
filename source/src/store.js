@@ -733,7 +733,12 @@ function applyPhase3Rules(store, table, r, old) {
 function applyPlacementRules(store, r, old) {
   const me = store.me; const isAdmin = me?.role === 'admin';
   if (!old) {
-    if (isAdmin) { if (r.status === 'confirme') r.confirmed_at = new Date().toISOString(); return; }
+    if (isAdmin) {
+      // L'administration qui recrute elle-même : l'étudiant confirme, comme pour un lauréat
+      if (r.laureat_id === me.id && r.student_id !== me.id && (r.status || 'declare') === 'declare') Object.assign(r, { source: 'plateforme', status: 'en_attente', confirmed_at: null });
+      else if (r.status === 'confirme') r.confirmed_at = new Date().toISOString();
+      return;
+    }
     if (r.student_id === me?.id) { Object.assign(r, { source: 'autre', status: 'declare', offer_id: null, laureat_id: null }); return; }
     if (me?.role !== 'laureat') throw new Error('Seul un lauréat peut déclarer un recrutement.');
     if (r.offer_id && store.byId('offers', r.offer_id)?.author_id !== me.id) throw new Error('Seul l’auteur de l’offre peut déclarer ce recrutement.');
