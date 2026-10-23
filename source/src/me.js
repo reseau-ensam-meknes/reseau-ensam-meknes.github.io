@@ -11,7 +11,7 @@ import { BilanCard } from './recrutement.js';
 import { FaisVenirPromo } from './invitation.js';
 
 // Étapes vues par l'étudiant : il postule, le lauréat fait avancer, l'étudiant confirme.
-const JOURNEY = [['send', 'Je postule'], ['people', 'Entretien'], ['briefcase', 'Recruté(e)'], ['check', 'Confirmé']];
+const JOURNEY = [['send', 'Je postule'], ['people', 'Entretien'], ['briefcase', 'Recrutement'], ['check', 'Confirmé']];
 export function journeyStep(st, apps) {
   if (st.key === 'trouve') return 4;
   if (st.key === 'validation') return 3;
@@ -42,7 +42,7 @@ export function ParcoursPage(ctx) {
   const versOffres = obj && !pl && !parrain ? { label: 'Voir les offres pour moi', icon: 'search', onClick: () => ctx.go('offres') } : null;
 
   return html`<section class="page">
-    <header class="page-head"><div><p class="eyebrow">Saison ${seasonLabel(saison)} · ${NIVEAUX[n]?.label}</p><h1>Mon parcours</h1></div></header>
+    <header class="page-head"><div><p class="eyebrow">${NIVEAUX[n]?.label}</p><h1>Mon parcours</h1></div></header>
 
     <${AFaire} ctx=${ctx}/>
     <${ParrainCard} ctx=${ctx}/>
@@ -51,14 +51,14 @@ export function ParcoursPage(ctx) {
       <div class="objective-top">
         <span class="obj-ico"><${Icon} name=${obj ? TYPE_ICON[obj.types[0]] : 'cap'} size=${24}/></span>
         <div class="objective-main">
-          <p class="eyebrow">Mon objectif cette saison</p>
+          <p class="eyebrow">Mon objectif de l’année</p>
           <h2>${obj ? obj.titre : 'Pas d’objectif de placement cette année'}</h2>
           ${obj ? html`<p class="muted small">Les lauréats sont là pour t’aider. Avance à ton rythme.</p>` : html`<p class="muted small">En cycle préparatoire, profite de l’Entraide et du mentorat pour préparer ton premier stage.</p>`}
         </div>
         <span class=${'state-pill s-' + st.key}>${st.label}</span>
       </div>
       ${obj ? html`<${Journey} step=${step}/>` : null}
-      ${pl && pl.status !== 'en_attente' ? html`<div class="found-line"><${CompanyLogo} name=${pl.entreprise} size=${36}/><span class="grow"><strong translate="no">${pl.entreprise}</strong>${pl.ville ? html`, <span translate="no">${pl.ville}</span>` : ''}${pl.pays && pl.pays !== 'Maroc' ? ` (${pl.pays})` : ''}<br/><span class="muted small">${pl.status === 'confirme' ? `Vérifié : recruté(e) par ${helper?.full_name || 'un lauréat'}, confirmé par toi` : 'Trouvé en dehors de la plateforme'}</span></span>
+      ${pl && pl.status !== 'en_attente' ? html`<div class="found-line"><${CompanyLogo} name=${pl.entreprise} size=${36}/><span class="grow"><strong translate="no">${pl.entreprise}</strong>${pl.ville ? html`, <span translate="no">${pl.ville}</span>` : ''}${pl.pays && pl.pays !== 'Maroc' ? ` (${pl.pays})` : ''}<br/><span class="muted small">${pl.status === 'confirme' ? `Vérifié : recrutement déclaré par ${helper?.full_name || 'un lauréat'}, confirmé par toi` : 'Trouvé en dehors de la plateforme'}</span></span>
         <button class="btn small ghost" onClick=${() => setShare(true)}><${Icon} name="share" size=${15}/> Partager</button></div>` : null}
       ${pl && pl.status === 'confirme' && helper ? html`<label class="check small consent"><input id="pl-partage" type="checkbox" checked=${!!pl.partage_ok} onChange=${e => act(() => store.update('placements', pl.id, { partage_ok: e.target.checked }))}/> ${helper.full_name.split(' ')[0]} peut citer mon nom s’il partage mon recrutement sur LinkedIn</label>` : null}
       ${!pl && obj && (apps.length || parrain) ? html`<div class="row"><button class=${'btn' + (parrain ? '' : ' primary')} onClick=${() => ctx.go('offres')}><${Icon} name="search" size=${16}/> Voir les offres pour moi</button></div>` : null}
@@ -77,13 +77,13 @@ export function ParcoursPage(ctx) {
           <button class="icon-btn small" aria-label="Supprimer" onClick=${() => act(() => store.remove('applications', a.id))}><${Icon} name="trash" size=${14}/></button></span>`}
       </li>`;
     })}</ul>
-    <p class="small muted hint"><${Icon} name="shield" size=${14}/> Pour les offres de la plateforme, c’est le lauréat qui met à jour le statut. Quand il te marque « Recruté(e) », tu confirmes ici.</p>` : html`<${Empty} icon="send" title="Aucune candidature pour l’instant" action=${versOffres}>Ouvre une offre et clique sur « Postuler ». Le lauréat reçoit ton message et ton CV.<//>`}
+    <p class="small muted hint"><${Icon} name="shield" size=${14}/> Pour les offres de la plateforme, c’est le lauréat qui met à jour le statut. Quand il déclare ton recrutement, tu confirmes ici.</p>` : html`<${Empty} icon="send" title="Aucune candidature pour l’instant" action=${versOffres}>Ouvre une offre et clique sur « Postuler ». Le lauréat reçoit ton message et ton CV.<//>`}
 
     <${FaisVenirPromo} ctx=${ctx}/>
 
-    ${!pl && obj ? html`<p class="small muted center">Tu as trouvé sans passer par la plateforme ? <button class="linkish" onClick=${() => setDeclare(true)}>Indique-le ici</button> pour que ta promo soit bien suivie.</p>` : null}
+    ${!pl && obj ? html`<p class="small muted center">Tu as trouvé sans passer par la plateforme ? <button class="linkish" onClick=${() => setDeclare(true)}>Indique-le ici</button> pour que le suivi de ton année soit juste.</p>` : null}
 
-    ${history.length ? html`<div class="section-head"><h2>Saisons précédentes</h2></div>
+    ${history.length ? html`<div class="section-head"><h2>Années précédentes</h2></div>
       <ul class="app-list">${history.map(h => html`<li class="app-row"><${CompanyLogo} name=${h.entreprise} size=${36}/><span class="app-txt"><strong>${TYPES[h.type]?.label} chez <span translate="no">${h.entreprise}</span></strong><span class="muted small">${seasonLabel(h.saison)}${h.pays && h.pays !== 'Maroc' ? ` · ${h.pays}` : ''}</span></span>${h.source === 'plateforme' ? html`<span class="state-pill s-trouve">Via la plateforme</span>` : null}</li>`)}</ul>` : null}
 
     ${declare ? html`<${DeclareOutside} ctx=${ctx} onClose=${() => setDeclare(false)}/>` : null}
@@ -115,8 +115,8 @@ export function ConfirmRecruit({ ctx, pl, helper }) {
   const d = pl.demande_id ? store.byId('demandes', pl.demande_id) : null;
   return html`<div class="confirm-card">
     <div class="confirm-top"><${CompanyLogo} name=${pl.entreprise} size=${48}/>
-      <div><p class="eyebrow">À confirmer</p><h2>${pl.demande_id ? `${helper?.full_name || 'Un lauréat'} indique que tu as commencé chez ${pl.entreprise}` : `${helper?.full_name || 'Un lauréat'} indique t’avoir recruté(e) chez ${pl.entreprise}`}</h2>
-        <p class="muted small">${o ? o.titre : d ? html`<span translate="no" dir="auto">${d.titre}</span>` : TYPES[pl.type]?.long}. Une fois confirmé, ta réussite est vérifiée des deux côtés et compte dans le suivi de ta promo.</p></div></div>
+      <div><p class="eyebrow">À confirmer</p><h2>${pl.demande_id ? `${helper?.full_name || 'Un lauréat'} indique que tu as commencé chez ${pl.entreprise}` : `${helper?.full_name || 'Un lauréat'} déclare ton recrutement chez ${pl.entreprise}`}</h2>
+        <p class="muted small">${o ? o.titre : d ? html`<span translate="no" dir="auto">${d.titre}</span>` : TYPES[pl.type]?.long}. Une fois confirmé, ta réussite est vérifiée des deux côtés et compte dans le suivi de ton année.</p></div></div>
     <div class="row-end">
       <button class="btn ghost" onClick=${() => refuserRecrutement(ctx, pl)}>Ce n’est pas le cas</button>
       <button class="btn primary" onClick=${() => confirmerRecrutement(ctx, pl, helper)}><${Icon} name="check" size=${16}/> Oui, je confirme</button>
@@ -184,7 +184,7 @@ function DeclareOutside({ ctx, onClose }) {
   };
   return html`<${Modal} title="J’ai trouvé hors plateforme" onClose=${onClose}>
     <form class="form" onSubmit=${submit}>
-      <p class="small muted">Pour une offre de la plateforme, pas besoin de remplir ceci : le lauréat te marque « Recruté(e) » et tu confirmes.</p>
+      <p class="small muted">Pour une offre de la plateforme, pas besoin de remplir ceci : le lauréat déclare ton recrutement et tu confirmes.</p>
       <${Field} label="Type"><select id="dc-type" value=${f.type} onChange=${e => setF({ ...f, type: e.target.value })}>${Object.entries(TYPES).map(([k, v]) => html`<option value=${k}>${v.long}</option>`)}</select><//>
       <${Field} label="Entreprise"><input id="dc-ent" value=${f.entreprise} onInput=${e => setF({ ...f, entreprise: e.target.value })} required/><//>
       <div class="grid2"><${Field} label="Ville"><input id="dc-ville" value=${f.ville} onInput=${e => setF({ ...f, ville: e.target.value })}/><//><${Field} label="Pays"><input id="dc-pays" value=${f.pays} onInput=${e => setF({ ...f, pays: e.target.value })}/><//></div>
@@ -269,7 +269,7 @@ export function EspacePage(ctx) {
 
     <${Filleuls} ctx=${ctx}/>
 
-    ${recrues.length ? html`<div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="briefcase"/> Recrutés grâce à toi cette saison <span class="count">${recrues.length}</span></h2></div>
+    ${recrues.length ? html`<div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="briefcase"/> Recrutés grâce à toi cette année <span class="count">${recrues.length}</span></h2></div>
       <ul class="app-list flat">${recrues.slice(0, 5).map(p => html`<li class="app-row" key=${p.id}><${Person} p=${store.byId('profiles', p.student_id)} onOpen=${openProfile} size=${36}/><span class="app-txt right"><span class="muted small"><span translate="no">${p.entreprise}</span> · ${TYPES[p.type]?.label}</span></span>
         <button class="icon-btn small" aria-label="Partager sur LinkedIn" title="Partager sur LinkedIn" onClick=${() => setShare(p)}><${Icon} name="share" size=${16}/></button></li>`)}</ul></div>` : null}
 
@@ -318,7 +318,7 @@ function PremiereAide({ ctx, onPublier }) {
   return html`<div class="premiere-aide">
     <div class="pa-head"><span class="pa-ico"><${Icon} name="heart" size=${22}/></span>
       <div><p class="eyebrow">Bienvenue, ${(me.full_name || '').split(' ')[0]}</p><h2>Ta première aide</h2>
-        <p class="muted">Merci d’être là. Choisis ce qui te prend le moins de temps : un seul geste peut changer la saison d’un étudiant.</p></div></div>
+        <p class="muted">Merci d’être là. Choisis ce qui te prend le moins de temps : un seul geste peut changer l’année d’un étudiant.</p></div></div>
     <ul class="pa-gestes">${gestes.map(([ic, t, sub, d, fn]) => html`<li key=${ic}><button type="button" class="pa-geste" onClick=${fn}>
       <span class="pa-geste-ico"><${Icon} name=${ic} size=${20}/></span>
       <span class="pa-geste-txt"><span class="pa-geste-titre"><strong>${t}</strong><span class="pa-duree">${d}</span></span><span class="small muted">${sub}</span></span>
@@ -351,7 +351,7 @@ const VERS_BADGE = {
   aime: ['Reçois 5 mercis d’étudiants', s => [s.mercis, 5]],
   passeport: ['Ouvre une porte à l’étranger', s => [s.etranger, 1]],
   sage: ['Donne 3 meilleures réponses dans l’Entraide', s => [s.meilleures, 3]],
-  reactif: ['Accepte 3 demandes d’aide en moins de 24 h', s => [s.rapides, 3]],
+  reactif: ['Choisis un horaire pour 3 étudiants en moins de 24 h', s => [s.rapides, 3]],
   faiseur: ['Aide 10 étudiants à être recrutés', s => [s.recrutes, 10]],
   top: ['Atteins 300 points d’impact', s => [s.points, 300]],
 };
@@ -444,7 +444,7 @@ addAR({
   'Une offre partagée peut lancer une carrière : les étudiants concernés la voient tout de suite.': 'عرض واحد قد يطلق مسارًا مهنيًا: يراه الطلبة المعنيون فورًا.',
   'Historique de mes points': 'سجل نقاطي',
   'Ta première aide': 'أول مساعدة لك',
-  'Merci d’être là. Choisis ce qui te prend le moins de temps : un seul geste peut changer la saison d’un étudiant.': 'شكرًا لوجودك. اختر ما يأخذ منك أقل وقت: خطوة واحدة قد تغيّر موسم طالب.',
+  'Merci d’être là. Choisis ce qui te prend le moins de temps : un seul geste peut changer l’année d’un étudiant.': 'شكرًا لوجودك. اختر ما يأخذ منك أقل وقت: خطوة واحدة قد تغيّر سنة طالب.',
   'Relire un CV': 'مراجعة سيرة ذاتية',
   'Ton regard de pro, quelques remarques suffisent.': 'نظرتك المهنية، وبضع ملاحظات تكفي.',
   'Choisir un horaire pour un étudiant': 'اختيار موعد لطالب',
@@ -462,11 +462,22 @@ addAR({
   'Reçois 5 mercis d’étudiants': 'تلقَّ 5 رسائل شكر من الطلبة',
   'Ouvre une porte à l’étranger': 'افتح بابًا نحو الخارج',
   'Donne 3 meilleures réponses dans l’Entraide': 'قدّم 3 أفضل أجوبة في التعاون',
-  'Accepte 3 demandes d’aide en moins de 24 h': 'اقبل 3 طلبات مساعدة في أقل من 24 ساعة',
+  'Choisis un horaire pour 3 étudiants en moins de 24 h': 'اختيار توقيت لـ3 طلبة في أقل من 24 ساعة',
   'Aide 10 étudiants à être recrutés': 'ساعد 10 طلبة على التوظيف',
   'Atteins 300 points d’impact': 'اجمع 300 نقطة أثر',
   '1 rendez-vous à venir': 'موعد واحد قادم',
+  // Barème et derniers points (logic.js)
+  'CV relu et rendu à un étudiant': 'مراجعة سيرة ذاتية لطالب', 'Rubrique du guide de l’étranger écrite': 'قسم مكتوب في دليل الخارج',
+  'Entretien ou avis de stage partagé': 'مشاركة مقابلة أو رأي حول تدريب', 'CV relu et rendu': 'مراجعة سيرة ذاتية مُنجزة',
+  'Recrutement': 'التوظيف', 'Mon objectif de l’année': 'هدفي لهذه السنة', 'Années précédentes': 'السنوات السابقة', 'Recrutés grâce à toi cette année': 'تم توظيفهم بفضلك هذه السنة',
+  'Pour les offres de la plateforme, c’est le lauréat qui met à jour le statut. Quand il déclare ton recrutement, tu confirmes ici.': 'في عروض المنصة، الخريج هو من يحدّث الحالة. عندما يصرّح بتوظيفك، تؤكد هنا.',
+  'Pour une offre de la plateforme, pas besoin de remplir ceci : le lauréat déclare ton recrutement et tu confirmes.': 'لعرض من المنصة، لا حاجة لملء هذا: الخريج يصرّح بتوظيفك وأنت تؤكد.',
+  'pour que le suivi de ton année soit juste.': 'ليكون تتبّع سنتك دقيقًا.',
 }, [
+  [/^Guide de l’étranger : (.+)$/, x => `دليل الخارج: ${x}`],
+  [/^Entretien partagé : (.+)$/, x => `مقابلة مشتركة: ${x}`],
+  [/^Avis de stage : (.+)$/, x => `رأي حول تدريب: ${x}`],
+  [/^Vérifié : recrutement déclaré par (.+), confirmé par toi$/, n => `موثّق: توظيف بتصريح من ${n === 'un lauréat' ? 'خريج' : n}، وبتأكيد منك`],
   [/^Voir les (\d+) autres$/, n => `عرض البقية (${n})`],
   [/^Ton recrutement chez (.+) est vérifié des deux côtés\. Un petit mot fera très plaisir à (.+)\.$/, (e, p) => `توظيفك في ${e} مؤكَّد من الطرفين. كلمة شكر صغيرة ستُسعد ${p} كثيرًا.`],
   [/^Ton recrutement chez (.+) est vérifié des deux côtés\.$/, e => `توظيفك في ${e} مؤكَّد من الطرفين.`],

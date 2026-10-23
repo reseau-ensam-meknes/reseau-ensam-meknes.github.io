@@ -157,5 +157,11 @@ export function seedPhase3(base, S, now = new Date()) {
   ['Yassine Ouardi', 'Salima Kabbaj', 'Mouad Chafik', 'Ikram Filali', 'Hamza Rifi'].forEach((nom, i) => liste_officielle.push({ id: id('lo'), nom, email: null, promo: S + 1 + (i % 3), filiere: ['Génie Industriel : Excellence Opérationnelle', 'Génie Mécanique : Ingénierie Mécanique et Structures', 'Génie Civil'][i % 3], matricule: null, created_at: daysAgo(10) }));
   for (const p of P) if (!p.verified && p.role === 'etudiant' && liste_officielle.some(l => l.promo === p.promo && cleNom(l.nom) === cleNom(p.full_name))) p.verified = true;
 
+  // Une entreprise avec 3 avis : sa note moyenne s'affiche (en dessous de 3 avis, on montre les avis eux-mêmes)
+  const dejaRenault = new Set(avis_stage.filter(x => x.entreprise === 'Renault Group Maroc').map(x => x.author_id));
+  const autresAuteurs = auteurs.filter(p => !dejaRenault.has(p.id));
+  [['stage', 4, 4, 5, 4, 'Stage ouvrier bien organisé : on tourne sur plusieurs postes de la ligne.'], ['pfe', 4, 3, 4, 4, 'Sujet clair dès le départ. Les horaires d’usine demandent de s’organiser.']]
+    .forEach(([type, note, ne, na, nam, conseils], i) => avis_stage.push({ id: id('av'), author_id: autresAuteurs[i].id, entreprise: 'Renault Group Maroc', ville: 'Tanger', pays: 'Maroc', type, saison: S - 1, poste: null, note, note_encadrement: ne, note_apprentissage: na, note_ambiance: nam, gratification: 'correcte', conseils, recommande: true, anonyme: true, placement_id: null, verifie: false, created_at: daysAgo(70 + i * 20) }));
+
   return { coordonnees, demandes_contact, relectures_cv, relecture_commentaires, entretiens, avis_stage, guide_pays, guide_pays_historique, signalements, enquetes_insertion, evenements, evenement_participants, verifications_pairs, liste_officielle };
 }

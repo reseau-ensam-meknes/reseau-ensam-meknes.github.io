@@ -33,13 +33,13 @@ test('notifications : chaque étape d’une demande ouvre sa carte, en français
   // Sans identifiant valable : la liste des demandes
   assert.equal(N.texteNotif('demande_match', { nom: 'S', titre: 't', demande: 'x' }, 'fr', SITE).url, `${SITE}#offres/demandes`);
   const ar = N.texteNotif('demande_proposition', { nom: 'Youssef', titre: 'PFE lean', entreprise: 'Renault', demande: D1 }, 'ar', SITE);
-  assert.equal(ar.title, 'خريج يقترح عليك مساعدته');
+  assert.equal(ar.title, 'عرض مساعدة جديد');
   assert.ok(ar.body.includes('⁨Youssef⁩'));
 });
 
 test('démarrage venu d’une demande : on parle de démarrage, pas de recrutement', () => {
   assert.equal(N.texteNotif('recrutement_a_confirmer', { nom: 'Youssef', entreprise: 'Renault', aide: 'encadre' }, 'fr', SITE).body, 'Youssef indique que tu as commencé chez Renault.');
-  assert.equal(N.texteNotif('recrutement_a_confirmer', { nom: 'Youssef', entreprise: 'Renault' }, 'fr', SITE).body, 'Youssef indique t’avoir recruté(e) chez Renault.');
+  assert.equal(N.texteNotif('recrutement_a_confirmer', { nom: 'Youssef', entreprise: 'Renault' }, 'fr', SITE).body, 'Youssef déclare ton recrutement chez Renault.');
   assert.equal(N.texteNotif('recrutement_confirme', { nom: 'Salma', entreprise: 'Renault', aide: 'recommande' }, 'fr', SITE).title, 'Démarrage confirmé');
   assert.equal(N.texteNotif('recrutement_a_confirmer', { nom: 'Y', entreprise: 'R', aide: 'n’importe quoi' }, 'fr', SITE).title, 'Confirme ton recrutement');
 });

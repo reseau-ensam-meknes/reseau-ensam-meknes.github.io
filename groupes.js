@@ -1,9 +1,11 @@
 // Groupes (filière, ville, à l'étranger) et Cafés ENSAM : on se retrouve, en ligne puis en vrai.
 import { html, useState } from './vendor/preact-htm.js';
+import { getLang } from './i18n.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, toast } from './ui.js';
 import { myGroups, groupMembers, groupLabel, groupKey, autoGroups, timeAgo } from './logic.js';
 import { SlotDate } from './mentorat.js';
 import { SignalerBtn } from './confiance.js';
+import { villeAffichee } from './geo.js';
 
 const KIND = { filiere: ['cap', 'Parcours d’études'], ville: ['pin', 'Ville'], pays: ['globe', 'À l’étranger'] };
 const pad = n => String(n).padStart(2, '0');
@@ -16,6 +18,9 @@ const cafesOf = (data, key) => {
   return data.cafes.filter(c => (kind === 'ville' ? groupKey('ville', c.ville) : groupKey('pays', c.pays)) === key);
 };
 const go2 = (ctx, key) => ctx.go('reseau/groupes/' + encodeURIComponent(key));
+// Nom affiché d'un groupe, seul (titre, lien) : une ville s'écrit en arabe dans l'interface arabe. Dans une phrase
+// française, le nom reste tel quel (une phrase qui contient de l'arabe n'est plus traduite)
+const nomGroupe = (data, k) => { const l = groupLabel(data, k); return k.startsWith('ville:') ? villeAffichee(l, getLang()) : l; };
 
 export function GroupesPage({ ctx }) {
   const { sub2 } = ctx;
@@ -38,18 +43,18 @@ function GroupList({ ctx }) {
   const near = cafes.filter(c => mine.all.includes(groupKey('ville', c.ville)) || mine.all.includes(groupKey('pays', c.pays)));
   const follow = k => act(async () => { await store.insert('groupe_membres', { groupe: k, user_id: me.id }); toast(`Tu suis maintenant le groupe ${groupLabel(data, k)}.`); });
   return html`<div class="sub-page">
-    <p class="muted small">Tu fais partie des groupes de ton parcours et de ta ville. Suis aussi les groupes des lauréats à l’étranger pour poser tes questions.</p>
+    <p class="muted small">Tu es dans les groupes de ton parcours et de ta ville.</p>
     <div class="group-grid">${mine.all.map(k => html`<${GroupCard} ctx=${ctx} gkey=${k} key=${k}/>`)}</div>
 
     <div class="section-head"><h2 class="h-ico"><${Icon} name="clap"/> Cafés ENSAM</h2><button class="btn small" onClick=${() => setCafe(true)}><${Icon} name="plus" size=${15}/> Organiser un café</button></div>
-    <p class="muted small">Une heure autour d’un café avec les lauréats et les étudiants de ta ville. Inscription en un clic.</p>
+    <p class="muted small">Une heure autour d’un café, avec les membres de ta ville.</p>
     ${cafes.length ? html`<div class="cafe-list">${[...near, ...cafes.filter(c => !near.includes(c))].slice(0, 6).map(c => html`<${CafeCard} ctx=${ctx} c=${c} key=${c.id} showCity/>`)}</div>`
       : html`<${Empty} icon="clap" title="Aucun café prévu pour l’instant">Lance le premier dans ta ville : les membres de ta ville sont prévenus.<//>`}
 
     ${abroad.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="globe"/> Lauréats à l’étranger</h2></div>
       <ul class="group-follow">${abroad.map(([k, n]) => html`<li key=${k}><button class="linkish strong" onClick=${() => go2(ctx, k)}>${groupLabel(data, k)}</button><span class="muted small">${n} membre${n > 1 ? 's' : ''}</span><span class="spacer"></span><button class="btn tiny" onClick=${() => follow(k)}>Suivre</button></li>`)}</ul>` : null}
     ${villes.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="pin"/> Autres villes</h2></div>
-      <ul class="group-follow">${villes.map(([k, n]) => html`<li key=${k}><button class="linkish strong" onClick=${() => go2(ctx, k)}>${groupLabel(data, k)}</button><span class="muted small">${n} membre${n > 1 ? 's' : ''}</span><span class="spacer"></span><button class="btn tiny" onClick=${() => follow(k)}>Suivre</button></li>`)}</ul>` : null}
+      <ul class="group-follow">${villes.map(([k, n]) => html`<li key=${k}><button class="linkish strong" onClick=${() => go2(ctx, k)}>${nomGroupe(data, k)}</button><span class="muted small">${n} membre${n > 1 ? 's' : ''}</span><span class="spacer"></span><button class="btn tiny" onClick=${() => follow(k)}>Suivre</button></li>`)}</ul>` : null}
     ${cafe ? html`<${CafeComposer} ctx=${ctx} onClose=${() => setCafe(false)}/>` : null}
   </div>`;
 }
@@ -63,9 +68,9 @@ function GroupCard({ ctx, gkey }) {
   const nc = cafesOf(data, gkey).filter(upcoming).length;
   return html`<button class="gcard clickable" onClick=${() => go2(ctx, gkey)}>
     <span class=${'g-badge k-' + kind}><${Icon} name=${ico} size=${20}/></span>
-    <span class="gcard-txt"><span class="eyebrow">${lbl}</span><strong>${groupLabel(data, gkey)}</strong>
+    <span class="gcard-txt"><span class="eyebrow">${lbl}</span><strong>${nomGroupe(data, gkey)}</strong>
       <span class="muted small">${n} membre${n > 1 ? 's' : ''}${nc ? html` · <span class="good-t">${nc} café${nc > 1 ? 's' : ''} prévu${nc > 1 ? 's' : ''}</span>` : null}</span>
-      ${last ? html`<span class="gcard-last small"><b>${store.byId('profiles', last.author_id)?.full_name?.split(' ')[0] || 'Membre'} :</b> <span translate="no" dir="auto">${last.body.slice(0, 70)}${last.body.length > 70 ? '…' : ''}</span></span>` : html`<span class="gcard-last small muted">Pas encore de message. Dis bonjour !</span>`}</span>
+      ${last ? html`<span class="gcard-last apercu small"><b class="ap-qui"><bdi translate="no">${store.byId('profiles', last.author_id)?.full_name?.split(' ')[0] || 'Membre'}</bdi>${getLang() === 'ar' ? ':' : ' :'}</b><span class="ap-txt" translate="no" dir="auto">${last.body.slice(0, 70)}${last.body.length > 70 ? '…' : ''}</span></span>` : html`<span class="gcard-last small muted">Pas encore de message. Dis bonjour !</span>`}</span>
   </button>`;
 }
 
@@ -89,7 +94,7 @@ function GroupView({ ctx, gkey }) {
     <button class="btn ghost small back" onClick=${() => go('reseau/groupes', { remplacer: true })}>← Tous les groupes</button>
     <div class="group-head">
       <span class=${'g-badge big k-' + kind}><${Icon} name=${ico} size=${26}/></span>
-      <div class="grow"><p class="eyebrow">${lbl}</p><h2>${label}</h2><p class="muted small">${members.length} membre${members.length > 1 ? 's' : ''} · ${members.filter(p => p.role === 'laureat').length} lauréat${members.filter(p => p.role === 'laureat').length > 1 ? 's' : ''}</p></div>
+      <div class="grow"><p class="eyebrow">${lbl}</p><h2>${nomGroupe(data, gkey)}</h2><p class="muted small">${members.length} membre${members.length > 1 ? 's' : ''} · ${members.filter(p => p.role === 'laureat').length} lauréat${members.filter(p => p.role === 'laureat').length > 1 ? 's' : ''}</p></div>
       ${auto ? html`<span class="mini good"><${Icon} name="check" size=${12}/> ${kind === 'filiere' ? 'Ton parcours' : kind === 'ville' ? 'Ta ville' : 'Ton pays'}</span>`
         : follow ? html`<button class="btn small ghost" onClick=${() => act(() => store.remove('groupe_membres', follow.id))}>Ne plus suivre</button>`
         : html`<button class="btn small primary" onClick=${() => act(async () => { await store.insert('groupe_membres', { groupe: gkey, user_id: me.id }); toast('Tu suis ce groupe.'); })}>Suivre</button>`}
@@ -144,11 +149,11 @@ export function CafeCard({ ctx, c, showCity }) {
     </div>
     <div class="cafe-act">
       ${c.annule ? html`<span class="tag done">Annulé</span>` : past ? html`<span class="tag done">Terminé</span>` : mineP ? html`
-        <span class="mini good"><${Icon} name="check" size=${12}/> Inscrit(e)</span>
+        <span class="mini good"><${Icon} name="check" size=${12}/> Tu y vas</span>
         <a class="btn tiny ghost" href=${gcalCafe(c)} target="_blank" rel="noopener"><${Icon} name="calendar" size=${14}/> Agenda</a>
         ${isOrg ? html`<button class="btn tiny ghost danger-t" onClick=${() => ctx.confirm('Annuler ce café ? Les inscrits le verront annulé.', () => act(() => store.update('cafes', c.id, { annule: true })), 'Annuler le café')}>Annuler</button>`
           : html`<button class="btn tiny ghost" onClick=${() => act(() => store.remove('cafe_participants', mineP.id))}>Je ne viens plus</button>`}`
-        : full ? html`<span class="tag done">Complet</span>` : html`<button class="btn small primary" onClick=${() => act(async () => { await store.insert('cafe_participants', { cafe_id: c.id, user_id: me.id }); toast('Inscrit(e) ! Ajoute-le à ton agenda.'); })}>Je viens</button>`}
+        : full ? html`<span class="tag done">Complet</span>` : html`<button class="btn small primary" onClick=${() => act(async () => { await store.insert('cafe_participants', { cafe_id: c.id, user_id: me.id }); toast('C’est noté ! Ajoute-le à ton agenda.'); })}>Je viens</button>`}
       ${!isOrg && !c.annule ? html`<${SignalerBtn} ctx=${ctx} type="cafe" id=${c.id} small/>` : null}
     </div>
   </article>`;

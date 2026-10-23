@@ -3,7 +3,7 @@
 // liens d'invitation par promo, agenda de l'école et réglages (email de l'école).
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
 import { Icon, Field, Person, Num, Empty, Bar, Avatar, toast, injectCSS, useLocal } from './ui.js';
-import { addAR } from './i18n.js';
+import { addAR, arCount } from './i18n.js';
 import { NIVEAUX, niveauOf, timeAgo, cleNom, norm, GUIDE_SECTIONS, pct, reponses48h, parcoursInscription, compteOuvert, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible, annoncePour } from './logic.js';
 import { DefisAdmin } from './saison.js';
 import { AgendaAdmin } from './agenda.js';
@@ -14,16 +14,16 @@ import { propositionCV, corrigeProfil, dejaSignalee } from './lire-cv.js';
 
 addAR({
   'Vue d’ensemble': 'نظرة عامة', 'Modération': 'الإشراف', 'Liste officielle': 'اللائحة الرسمية', 'Réglages': 'الإعدادات', 'Agenda': 'المفكرة',
-  'À traiter': 'للمعالجة', 'Signalements': 'التبليغات', 'Tout est à jour.': 'كل شيء محيَّن.',
+  'À traiter': 'للمعالجة', 'Signalements': 'التبليغات', 'Tout est à jour.': 'كل شيء محدَّث.',
   // Modération
-  'Offre': 'عرض', 'Commentaire': 'تعليق', 'Question': 'سؤال', 'Réponse': 'جواب', 'Message de groupe': 'رسالة في مجموعة', 'Message privé': 'رسالة خاصة', 'Voir la photo': 'عرض الصورة', 'Fichier indisponible.': 'الملف غير متاح.', 'Profil': 'ملف شخصي',
-  'Entretien': 'مقابلة', 'Avis de stage': 'رأي حول تدريب', 'Guide de l’étranger': 'دليل الخارج', 'Café ENSAM': 'مقهى ENSAM', 'Startup': 'شركة ناشئة', 'Relecture de CV': 'مراجعة سيرة ذاتية',
-  'Spam': 'رسائل مزعجة', 'Arnaque': 'احتيال', 'Inapproprié': 'غير لائق', 'Faux ou trompeur': 'خاطئ أو مضلل', 'Harcèlement': 'تحرش', 'Données personnelles': 'معطيات شخصية', 'Autre': 'آخر',
+  'Offre': 'عرض', 'Commentaire': 'تعليق', 'Question': 'سؤال', 'Réponse': 'جواب', 'Message de groupe': 'رسالة في مجموعة', 'Message privé': 'رسالة خاصة', 'Voir la photo': 'عرض الصورة', 'Fichier indisponible.': 'الملف غير متاح.', 'Profil': 'الملف الشخصي',
+  'Entretien': 'مقابلة', 'Avis de stage': 'رأي حول تدريب', 'Guide de l’étranger': 'دليل الخارج', 'Café ENSAM': 'مقهى ENSAM', 'Startup': 'شركة ناشئة', 'Relecture de CV': 'مراجعة السيرة الذاتية',
+  'Spam': 'رسائل مزعجة', 'Arnaque': 'احتيال', 'Inapproprié': 'غير لائق', 'Faux ou trompeur': 'خاطئ أو مضلل', 'Harcèlement': 'تحرش أو مضايقة', 'Données personnelles': 'معطيات شخصية', 'Autre': 'غير ذلك',
   'Rien à modérer': 'لا شيء للإشراف', 'Quand un membre signale un contenu, il apparaît ici. Tu décides de le retirer ou de le garder.': 'عندما يبلّغ عضو عن محتوى، يظهر هنا. تقرر حذفه أو إبقاءه.',
   'Contenu déjà supprimé': 'المحتوى حُذف من قبل', 'Clore': 'إغلاق', 'Classer sans suite': 'حفظ دون متابعة', 'Marquer traité': 'تحديد كمُعالج',
   'Masquer l’offre': 'إخفاء العرض', 'Supprimer l’offre': 'حذف العرض', 'Supprimer le commentaire': 'حذف التعليق', 'Supprimer la question': 'حذف السؤال',
   'Supprimer la réponse': 'حذف الجواب', 'Supprimer le message': 'حذف الرسالة', 'Retirer le badge vérifié': 'سحب شارة التحقق', 'Supprimer l’entretien': 'حذف المقابلة',
-  'Supprimer l’avis': 'حذف الرأي', 'Supprimer la rubrique': 'حذف الفقرة', 'Annuler le café': 'إلغاء المقهى', 'Retirer la startup': 'سحب الشركة الناشئة', 'Annuler la relecture': 'إلغاء المراجعة',
+  'Supprimer l’avis': 'حذف الرأي', 'Supprimer la rubrique': 'حذف القسم', 'Annuler le café': 'إلغاء اللقاء', 'Retirer la startup': 'سحب الشركة الناشئة', 'Annuler la relecture': 'إلغاء المراجعة',
   'Demande d’étudiant': 'طلب طالب', 'Voir la demande': 'عرض الطلب', '1 demande d’étudiant sans proposition depuis plus de 24 h': 'طلب طالب واحد دون اقتراح منذ أكثر من 24 ساعة',
   'Ouvrir': 'فتح', 'Voir le profil': 'عرض الملف', 'Voir la question': 'عرض السؤال', 'Historique': 'السجل', 'Traité': 'تمت معالجته', 'Sans suite': 'دون متابعة',
   'Contenu retiré et signalement clos.': 'حُذف المحتوى وأُغلق التبليغ.', 'Signalement classé sans suite.': 'حُفظ التبليغ دون متابعة.', 'Signalement marqué traité.': 'تم تحديد التبليغ كمُعالج.',
@@ -31,11 +31,11 @@ addAR({
   'Un membre anonyme': 'عضو مجهول', 'Auteur': 'الكاتب', 'Auteur :': 'الكاتب:', 'Signalé par': 'بلّغ عنه',
   // Membres
   'Vérifie que la personne est bien diplômée de l’ENSAM Meknès (promo, filière), puis valide. Le badge rassure les étudiants. Deux lauréats vérifiés de sa promo peuvent aussi le confirmer.': 'تحقق من أن الشخص خريج ENSAM مكناس (الدفعة، الشعبة)، ثم أكّد. الشارة تطمئن الطلبة. يمكن أيضًا لخريجَين متحقق منهما من دفعته تأكيد ذلك.',
-  'Pas trouvé sur la liste officielle de sa promo': 'غير موجود في اللائحة الرسمية لدفعته', 'Sur la liste officielle': 'في اللائحة الرسمية', 'Aucune confirmation de sa promo': 'لا تأكيد من دفعته',
+  'Pas trouvé sur la liste officielle de sa promo': 'غير موجود في اللائحة الرسمية لدفعته', 'Sur la liste officielle': 'في اللائحة الرسمية', 'Aucune confirmation de sa promo': 'لا تأكيد من الدفعة',
   // Liste officielle
   'Importer la liste': 'استيراد اللائحة', 'Fichier Excel (.xlsx) ou CSV exporté de la scolarité : une ligne par étudiant, avec au moins le nom et la promo.': 'ملف Excel (.xlsx) أو CSV من مصلحة الشؤون الطلابية: سطر لكل طالب، مع الاسم والدفعة على الأقل.',
   'Les inscrits qui figurent sur la liste (même nom et même promo, ou même email) sont vérifiés automatiquement.': 'المسجلون الموجودون في اللائحة (نفس الاسم ونفس الدفعة، أو نفس البريد) يتم التحقق منهم تلقائيًا.',
-  'Choisir un fichier': 'اختيار ملف', 'Modèle CSV': 'نموذج CSV', 'Colonnes': 'الأعمدة', 'Nom complet': 'الاسم الكامل', 'Nom': 'الاسم العائلي', 'Prénom': 'الاسم الشخصي',
+  'Choisir un fichier': 'اختيار ملف', 'Modèle CSV': 'نموذج CSV', 'Colonnes': 'الأعمدة', 'Nom complet': 'الاسم الكامل', 'Nom de famille': 'الاسم العائلي', 'Prénom': 'الاسم الشخصي',
   'Email': 'البريد الإلكتروني', 'Promo': 'الدفعة', 'Filière': 'الشعبة', 'Matricule': 'رقم التسجيل', '(aucune)': '(لا شيء)',
   'Promo pour toutes les lignes': 'الدفعة لكل الأسطر', 'Si le fichier n’a pas de colonne promo (un fichier par promo).': 'إذا لم يكن في الملف عمود للدفعة (ملف لكل دفعة).',
   'Aperçu': 'معاينة', 'Remplacer la liste de ces promos': 'استبدال لائحة هذه الدفعات', 'Sinon, les lignes sont ajoutées ou mises à jour.': 'وإلا تُضاف الأسطر أو تُحدَّث.',
@@ -57,14 +57,19 @@ addAR({
   'Domaine invalide :': 'نطاق غير صالح:', 'Aucun domaine pour l’instant : tout le monde s’inscrit avec son adresse habituelle.': 'لا نطاق حاليًا: الجميع يسجل بعنوانه المعتاد.',
   '280 caractères au plus. Elle s’affiche sur une ligne, sur l’accueil des membres choisis, pendant 14 jours, et remplace l’annonce en cours pour eux.': '280 حرفًا على الأكثر. يظهر في سطر واحد في الصفحة الرئيسية للأعضاء المختارين لمدة 14 يومًا، ويحلّ محلّ الإعلان الحالي الموجّه إليهم.',
   'Annonce publiée sur l’accueil des étudiants.': 'نُشر الإعلان في الصفحة الرئيسية للطلبة.', 'Annonce publiée sur l’accueil des lauréats.': 'نُشر الإعلان في الصفحة الرئيسية للخريجين.',
+  'Profil étudiant': 'ملف طالب', 'Profil lauréat': 'ملف خريج', 'Passer côté étudiants': 'النقل إلى فضاء الطلبة', 'Passer côté lauréats': 'النقل إلى فضاء الخريجين',
+  'cette année, via la plateforme': 'هذه السنة، عبر المنصة', '1 étudiant attend un horaire depuis plus de 24 h': 'طالب واحد ينتظر توقيتًا منذ أكثر من 24 ساعة',
 }, [
+  [/^(\d+) étudiants attendent un horaire depuis plus de 24 h$/, n => `${arCount(n, ['طالب واحد ينتظر', 'طالبان ينتظران', 'طلبة ينتظرون', 'طالبًا ينتظرون'])} توقيتًا منذ أكثر من 24 ساعة`],
+  [/^Pas encore de demande d’étudiant ce mois-ci · toutes aides : (\d+)\s?%$/, t => `لا طلبات من الطلبة بعد هذا الشهر · كل أنواع المساعدة: ${t}%`],
+  [/^(\d+) filleuls? cette année · (\d+) lauréats? volontaires? · (\d+) étudiants? de 3A sans parrain\. Chaque matin, la plateforme attribue aussi les parrains toute seule\.$/, (a, b, c) => `${arCount(a, ['طالب واحد في الرعاية', 'طالبان في الرعاية', 'طلبة في الرعاية', 'طالبًا في الرعاية'])} هذه السنة · ${arCount(b, ['خريج متطوع', 'خريجان متطوعان', 'خريجين متطوعين', 'خريجًا متطوعًا'])} · ${arCount(c, ['طالب واحد', 'طالبان', 'طلبة', 'طالبًا'])} من السنة الثالثة دون عرّاب. كل صباح تعيّن المنصة العرّابين تلقائيًا أيضًا.`],
   [/^Jusqu’au (\d{1,2}) (\S+)$/, (j, m) => `إلى غاية ${j} ${m}`],
   [/^Signalé (\d+) fois$/, n => `بُلّغ عنه ${n} مرة`],
   [/^Personnes qui ont demandé un code sans l’entrer : (\d+) \(code pas reçu, ou visite interrompue\)\.$/, n => `عدد من طلبوا رمزًا دون إدخاله: ${n} (لم يصلهم الرمز، أو انقطعت الزيارة).`],
   [/^(\d+) demandes d’étudiants sans proposition depuis plus de 24 h$/, n => `${n} طلبات طلبة دون اقتراح منذ أكثر من 24 ساعة`],
   [/^(\d+) signalements? à traiter$/, n => `${n} تبليغ للمعالجة`],
   [/^(\d+) lauréats? à vérifier$/, n => `${n} خريج للتحقق`],
-  [/^(\d+)\/2 lauréats de sa promo ont confirmé$/, n => `${n}/2 من خريجي دفعته أكدوا`],
+  [/^(\d+)\/2 lauréats de sa promo ont confirmé$/, n => `${n}/2 تأكيدات من خريجي الدفعة`],
   [/^Importer (\d+) lignes?$/, n => `استيراد ${n} سطر`],
   [/^(\d+) lignes? lisibles? sur (\d+)$/, (a, b) => `${a} سطر صالح من أصل ${b}`],
   [/^(\d+) importées?, (\d+) rejetées?, (\d+) comptes? vérifiés?$/, (a, b, c) => `${a} مستورد، ${b} مرفوض، ${c} حساب تم التحقق منه`],
@@ -74,7 +79,7 @@ addAR({
   [/^Vider la liste de la promo (\d{4}) \? Les comptes déjà vérifiés le restent\.$/, y => `إفراغ لائحة دفعة ${y}؟ تبقى الحسابات المتحقق منها كما هي.`],
 ]);
 
-const ROLES = [['etudiant', 'Étudiant(e)'], ['laureat', 'Lauréat(e)']];
+const ROLES = [['etudiant', 'Profil étudiant'], ['laureat', 'Profil lauréat']];
 const TABS = [['', 'Vue d’ensemble', 'chart'], ['moderation', 'Modération', 'flag'], ['membres', 'Membres', 'people'], ['liste', 'Liste officielle', 'file'], ['inviter', 'Inviter', 'send'], ['agenda', 'Agenda', 'calendar'], ['reglages', 'Réglages', 'wrench']];
 
 // Comptes (emails, dernière connexion), lus une fois pour toute la page
@@ -92,7 +97,7 @@ export function AdminPage(ctx) {
   const toVerify = data.profiles.filter(p => p.role === 'laureat' && !p.verified);
   const dot = { moderation: ouverts.length, membres: toVerify.length };
   return html`<section class="page admin">
-    <header class="page-head"><div><p class="eyebrow">Réservé à l’administration</p><h1>Administration</h1></div></header>
+    <header class="page-head"><div><h1>Administration</h1></div></header>
     <div class="icon-tabs adm-tabs" role="tablist" style=${`--n:${TABS.length}`}>${TABS.map(([k, l, i]) => html`<button role="tab" id=${'adm-tab-' + (k || 'vue')} aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => go(k ? 'admin/' + k : 'admin')}><${Icon} name=${i} size=${20}/><span>${l}</span>${dot[k] ? html`<span class="adm-n mono">${dot[k]}</span>` : null}</button>`)}</div>
     ${tab === '' ? html`<${VueEnsemble} ctx=${ctx} comptes=${comptes} ouverts=${ouverts} toVerify=${toVerify}/>` : null}
     ${tab === 'moderation' ? html`<${Moderation} ctx=${ctx}/>` : null}
@@ -120,10 +125,10 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
   const parcours = parcoursInscription(comptes, data);
   const dm = r48.parType.demande;
   const kpis = [
-    ['Demandes aidées en 48 h', dm.taux === null ? '–' : pct(dm.taux), dm.total ? `${dm.a48} sur ${dm.total} en 30 jours · objectif 8 sur 10${r48.total > dm.total ? ` · toutes aides : ${pct(r48.taux)}` : ''}` : r48.total ? `Pas encore de Demande ce mois-ci · toutes aides : ${pct(r48.taux)}` : 'Pas encore de demande d’étudiant ce mois-ci'],
+    ['Demandes aidées en 48 h', dm.taux === null ? '–' : pct(dm.taux), dm.total ? `${dm.a48} sur ${dm.total} en 30 jours · objectif 8 sur 10${r48.total > dm.total ? ` · toutes aides : ${pct(r48.taux)}` : ''}` : r48.total ? `Pas encore de demande d’étudiant ce mois-ci · toutes aides : ${pct(r48.taux)}` : 'Pas encore de demande d’étudiant ce mois-ci'],
     ['Membres', members.length, `${members.filter(p => p.role === 'etudiant').length} étudiants · ${members.filter(p => p.role === 'laureat').length} lauréats`],
     ['Actifs cette semaine', parcours.actifs, `${nouveaux.length} nouveau${nouveaux.length > 1 ? 'x' : ''} inscrit${nouveaux.length > 1 ? 's' : ''}${sansProfil.length ? ` · ${sansProfil.length} sans profil` : ''}`],
-    ['Recrutés et confirmés', confirmes, 'cette saison, via la plateforme'],
+    ['Recrutés et confirmés', confirmes, 'cette année, via la plateforme'],
   ];
   const lecturesFausses = (data.retours_cv || []).filter(r => r.status === 'ouvert');
   const stale = data.placements.filter(p => p.status === 'en_attente').sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
@@ -131,7 +136,7 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
   const todo = [
     ouverts.length ? ['flag', `${ouverts.length} signalement${ouverts.length > 1 ? 's' : ''} à traiter`, 'admin/moderation'] : null,
     toVerify.length ? ['shield', `${toVerify.length} lauréat${toVerify.length > 1 ? 's' : ''} à vérifier`, 'admin/membres'] : null,
-    attenteM.length ? ['clock', attenteM.length > 1 ? `${attenteM.length} demandes d’aide attendent depuis plus de 24 h` : '1 demande d’aide attend depuis plus de 24 h', 'mentorat'] : null,
+    attenteM.length ? ['clock', attenteM.length > 1 ? `${attenteM.length} étudiants attendent un horaire depuis plus de 24 h` : '1 étudiant attend un horaire depuis plus de 24 h', 'mentorat'] : null,
     attenteD.length ? ['send', attenteD.length > 1 ? `${attenteD.length} demandes d’étudiants sans proposition depuis plus de 24 h` : '1 demande d’étudiant sans proposition depuis plus de 24 h', 'offres/demandes/' + attenteD[0].id] : null,
     attenteQ.length ? ['qa', attenteQ.length > 1 ? `${attenteQ.length} questions d’étudiants sans réponse depuis plus de 24 h` : '1 question d’étudiant sans réponse depuis plus de 24 h', 'reseau/entraide/' + attenteQ[0].id] : null,
     lecturesFausses.length ? ['file', lecturesFausses.length > 1 ? `${lecturesFausses.length} erreurs de lecture de CV signalées` : '1 erreur de lecture de CV signalée', 'admin/membres'] : null,
@@ -288,8 +293,8 @@ function useListe(store, data) {
 const demandeCV = p => {
   const prenom = (p.full_name || '').split(' ')[0];
   return p.langue === 'ar'
-    ? `مرحبًا ${prenom}، أهلًا بك في شبكة ENSAM مكناس! للتحقق من ملفك كخريج(ة)، هل يمكنك رفع سيرتك الذاتية بصيغة PDF في « ملفي » (أو إضافة رابط LinkedIn)؟ لن يستغرق ذلك سوى دقيقة. شكرًا!`
-    : `Bonjour ${prenom}, bienvenue sur le Réseau ENSAM Meknès ! Pour vérifier ton profil de lauréat(e), peux-tu déposer ton CV en PDF dans « Mon profil » (ou ajouter ton lien LinkedIn) ? Ça prend une minute. Merci !`;
+    ? `مرحبًا ${prenom}، أهلًا بك في شبكة ENSAM مكناس! للتحقق من ملفك، هل يمكنك رفع سيرتك الذاتية بصيغة PDF في « ملفي » (أو إضافة رابط LinkedIn)؟ لن يستغرق ذلك سوى دقيقة. شكرًا!`
+    : `Bonjour ${prenom}, bienvenue sur le Réseau ENSAM Meknès ! Pour vérifier ton profil, peux-tu déposer ton CV en PDF dans « Mon profil » (ou ajouter ton lien LinkedIn) ? Ça prend une minute. Merci !`;
 };
 
 function Membres({ ctx, comptes, toVerify }) {
@@ -379,11 +384,11 @@ function ProfilsARevoir({ ctx, members }) {
     <p class="muted small">Rôle ou promo qui ne vont pas ensemble, et ce que le CV de chacun corrige ou complète. Le membre voit aussi la proposition sur son profil.</p>
     ${cvs?.length > 1 ? html`<div class="row"><button class="btn small primary" id="adm-cv-tout" onClick=${toutAppliquer}><${Icon} name="check" size=${15}/> Tout mettre à jour d’après les CV (${cvs.length})</button></div>` : null}
     ${lignes.length ? html`<ul class="people-list revoir-list">${lignes.map(({ p, e, cv }) => html`<li key=${p.id}>
-      <${Person} p=${p} onOpen=${openProfile} sub=${`${p.role === 'laureat' ? 'Lauréat(e)' : 'Étudiant(e)'} · Promo ${p.promo} · ${p.filiere}`}/>
+      <${Person} p=${p} onOpen=${openProfile} sub=${`${p.role === 'laureat' ? 'Profil lauréat' : 'Profil étudiant'} · Promo ${p.promo} · ${p.filiere}`}/>
       <span class="small revoir-quoi">${cv ? html`<span>${corrigeProfil(e) ? 'Son CV indique :' : 'Son CV complète :'}</span> ${libellesCV(e).map((x, i) => html`${i ? ' · ' : ''}<b>${x}</b>`)}` : p.role === 'laureat' ? `Promo ${p.promo} pas encore diplômée` : `Promo ${p.promo} déjà diplômée`}</span>
       <span class="spacer"></span>
       ${cv ? html`<button class="icon-btn small" aria-label="Signaler une erreur de lecture" title="C’est mal lu : signaler" onClick=${() => setSignaler(p.id)}><${Icon} name="flag" size=${15}/></button>` : null}
-      <button class="btn small" onClick=${() => corriger(p, e, 'Profil corrigé.')}>${cv ? 'Appliquer' : e.role === 'etudiant' ? 'Passer en étudiant(e)' : 'Passer en lauréat(e)'}</button>
+      <button class="btn small" onClick=${() => corriger(p, e, 'Profil corrigé.')}>${cv ? 'Appliquer' : e.role === 'etudiant' ? 'Passer côté étudiants' : 'Passer côté lauréats'}</button>
     </li>`)}</ul>` : cvs && cvs.illisibles < avecCV.length ? html`<p class="small good-t"><${Icon} name="check" size=${14}/> Les CV lus confirment les profils.</p>` : null}
     ${ligneSignalee ? html`<${SignalerLecture} ctx=${ctx} profil=${ligneSignalee.p} prop=${ligneSignalee.e} texte=${ligneSignalee.texte} path=${ligneSignalee.p.cv_path} onClose=${() => setSignaler(null)} onDone=${() => retirer([ligneSignalee.p.id])}/>` : null}
     ${cvs?.illisibles ? html`<p class="small muted" id="adm-cv-illisibles">${cvs.illisibles === 1 ? '1 CV sans texte lisible (scan en image ?) : à vérifier à la main.' : `${cvs.illisibles} CV sans texte lisible (scans en image ?) : à vérifier à la main.`}</p>` : null}
@@ -399,7 +404,7 @@ function LecturesSignalees({ ctx }) {
   const ouverts = tous.filter(r => r.status === 'ouvert');
   if (!tous.length) return null;
   const profil = id => store.byId('profiles', id);
-  const qui = p => (p ? `${p.role === 'laureat' ? 'Lauréat(e)' : 'Étudiant(e)'} · Promo ${p.promo} · ${p.filiere}` : 'Profil supprimé');
+  const qui = p => (p ? `${p.role === 'laureat' ? 'Profil lauréat' : 'Profil étudiant'} · Promo ${p.promo} · ${p.filiere}` : 'Profil supprimé');
   const copier = async () => {
     const txt = [`Erreurs de lecture des CV · Réseau ENSAM (${ouverts.length})`, ...ouverts.map((r, i) => [
       '', `${i + 1}. Profil : ${qui(profil(r.profil_id))}`, `Lu dans le CV : ${libellesCV(r.proposition || {}).join(' · ') || '?'}`, `Juste : ${r.juste || '(non précisé)'}`,
@@ -496,7 +501,7 @@ export async function parseXLSX(buf) {
   return rows.filter(r => r.some(Boolean));
 }
 
-const CHAMPS = [['complet', 'Nom complet'], ['nom', 'Nom'], ['prenom', 'Prénom'], ['email', 'Email'], ['promo', 'Promo'], ['filiere', 'Filière'], ['matricule', 'Matricule']];
+const CHAMPS = [['complet', 'Nom complet'], ['nom', 'Nom de famille'], ['prenom', 'Prénom'], ['email', 'Email'], ['promo', 'Promo'], ['filiere', 'Filière'], ['matricule', 'Matricule']];
 const DETECT = {
   complet: /(nom (et |& )?prenom|prenom (et |& )?nom|nom complet|full ?name|etudiant|laureat|identite)/,
   nom: /^(nom|nom de famille|last ?name|surname|family ?name)$/,
@@ -674,7 +679,7 @@ function ParrainsAdmin({ ctx }) {
   return html`<div class="panel">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="heart"/> Parrainage des 3A</h2>
       <button class="btn small" disabled=${!sans.length} onClick=${() => act(async () => { const k = await store.attribuerParrains(); toast(k ? `${k} parrain${k > 1 ? 's' : ''} attribué${k > 1 ? 's' : ''}.` : 'Aucun parrain disponible dans ces filières pour l’instant.'); })}>Attribuer les parrains</button></div>
-    <p class="small muted">${n} filleul${n > 1 ? 's' : ''} cette saison · ${parrains} lauréat${parrains > 1 ? 's' : ''} volontaire${parrains > 1 ? 's' : ''} · ${sans.length} étudiant${sans.length > 1 ? 's' : ''} de 3A sans parrain. Chaque matin, la plateforme attribue aussi les parrains toute seule.</p>
+    <p class="small muted">${n} filleul${n > 1 ? 's' : ''} cette année · ${parrains} lauréat${parrains > 1 ? 's' : ''} volontaire${parrains > 1 ? 's' : ''} · ${sans.length} étudiant${sans.length > 1 ? 's' : ''} de 3A sans parrain. Chaque matin, la plateforme attribue aussi les parrains toute seule.</p>
   </div>`;
 }
 

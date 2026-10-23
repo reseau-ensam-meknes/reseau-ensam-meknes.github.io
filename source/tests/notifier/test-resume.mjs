@@ -181,13 +181,17 @@ test('email arabe : rtl, textes arabes, contenu des membres tel quel', () => {
   assert.match(m.html, /شبكة ENSAM مكناس/);
   assert.match(m.html, /تنبيه المواهب/);
   assert.match(m.html, /إلغاء الاشتراك/);
-  assert.match(m.html, /<strong dir="auto">Amine<\/strong> · 3A · <span dir="auto">SolidWorks، Python<\/span> · انضم حديثًا/);
+  assert.match(m.html, /<strong dir="auto">Amine<\/strong> · 3A · <span dir="auto">SolidWorks، Python<\/span> · انضمام حديث/);
   // Contenu des membres isolé (sens de lecture) dans la version texte aussi
   assert.ok(m.texte.includes('سؤال حول \u2068OCP S.A.\u2069: \u2068Comment se passe le stage ouvrier chez OCP ?\u2069'));
   assert.doesNotMatch(N.rendreResume(resume(ID.salma), 'fr', SITE, TOKEN).texte, /[\u2068\u2069]/);
-  assert.ok(m.html.includes(`href="${SITE}#desabo/${TOKEN}"`));
-  assert.ok(m.html.includes(`href="${SITE}#espace"`));
-  assert.ok(m.html.includes(`href="${SITE}#reseau/talents"`));
+  // Les liens d'un email arabe ouvrent le site en arabe (pour qui n'a pas encore choisi sa langue)
+  assert.ok(m.html.includes(`href="${SITE}?lang=ar#desabo/${TOKEN}"`));
+  assert.ok(m.html.includes(`href="${SITE}?lang=ar#espace"`));
+  assert.ok(m.html.includes(`href="${SITE}?lang=ar#reseau/talents"`));
+  assert.ok(!N.rendreResume(resume(ID.salma), 'fr', SITE, TOKEN).html.includes('lang=ar'));
+  assert.ok(N.rendreAlerte([{ id: 'o1', titre: 'PFE', entreprise: 'OCP', type: 'pfe' }], 'ar', SITE, TOKEN).html.includes(`href="${SITE}?lang=ar#offre/o1"`));
+  assert.ok(N.rendreAlerte([{ id: 'o1', titre: 'PFE', entreprise: 'OCP', type: 'pfe' }], 'fr', SITE, TOKEN).html.includes(`href="${SITE}#offre/o1"`));
   assert.match(m.texte, /إلغاء الاشتراك: https/);
 });
 
@@ -208,6 +212,45 @@ test('objets : pluriels français et accords arabes', () => {
   // Rien de marquant : objet par défaut
   const r = { ...s, aConfirmer: [], rdv: [], invitations: [], offres: { total: 0, liste: [] }, reponses: [], aClore: [], cafes: [], parrain: '' };
   assert.equal(N.rendreResume(r, 'fr', SITE, TOKEN).sujet, 'Ta semaine sur le Réseau ENSAM Meknès');
+});
+
+test('impact : la personne d’abord (son merci), puis les mercis, puis les recrutements avec leurs points en pastille', () => {
+  const r = resume(ID.youssef);
+  assert.equal(r.impact.ptsRecrutements, 50);
+  const m = N.rendreResume(r, 'fr', SITE, TOKEN);
+  const sec = m.texte.slice(m.texte.indexOf('TON IMPACT CETTE SEMAINE'), m.texte.indexOf('TON NOUVEAU FILLEUL'));
+  const [cit, mer, rec] = ['— Hiba', '2 mercis', '1 recrutement confirmé grâce à toi. (+50 points)'].map(x => sec.indexOf(x));
+  assert.ok(cit > 0 && cit < mer && mer < rec, sec);
+  assert.match(m.html, /recrutement confirmé<\/strong> grâce à toi\. <span style="[^"]*border-radius:999px[^"]*">\+50 points<\/span>/);
+  // À l'international, le vrai nombre (75) ; en arabe « نقطة » au-delà de 10, le nombre isolé de gauche à droite
+  const loin = { ...r, impact: { ...r.impact, ptsRecrutements: 75 } };
+  assert.ok(N.rendreResume(loin, 'fr', SITE, TOKEN).texte.includes('1 recrutement confirmé grâce à toi. (+75 points)'));
+  assert.ok(N.rendreResume(loin, 'ar', SITE, TOKEN).texte.includes('بفضلك. (\u2066+75\u2069 نقطة)'));
+  // L'objet et les lignes des étudiants ne portent jamais de points
+  const objet = N.rendreResume({ ...r, candidatures: 0, demandes: [], rdv: [] }, 'fr', SITE, TOKEN).sujet;
+  assert.equal(objet, '1 recrutement confirmé grâce à toi · Réseau ENSAM');
+  assert.equal(N.rendreResume({ ...r, candidatures: 0, demandes: [], rdv: [] }, 'ar', SITE, TOKEN).sujet, 'توظيف مؤكَّد بفضلك · شبكة ENSAM');
+  for (const id of [ID.salma, ID.amine, ID.leila]) assert.doesNotMatch(N.rendreResume(resume(id), 'fr', SITE, TOKEN).texte, /points/);
+});
+
+test('un mot pour chaque chose : horaires, avis, coordonnées, année', () => {
+  const r = resume(ID.youssef);
+  const fr = N.rendreResume(r, 'fr', SITE, TOKEN).texte, ar = N.rendreResume(r, 'ar', SITE, TOKEN).texte;
+  assert.ok(fr.includes('2 étudiants de ta filière attendent un horaire.'));
+  assert.ok(ar.includes('طالبان من شعبتك في انتظار توقيت.'));
+  assert.ok(ar.includes('مساعدتك مطلوبة من \u2068Imane Chraibi\u2069'));
+  const sujet = (x, l) => N.rendreResume({ ...r, candidatures: 0, rdv: [], impact: { mercis: 0, recrutements: 0, citation: null }, questions: [], filleuls: [], offres: { total: 0, liste: [] }, talents: { total: 0, liste: [] }, ...x }, l, SITE, TOKEN).sujet;
+  assert.equal(sujet({ demandes: [{ nom: 'A', sujet: 'S' }, { nom: 'B', sujet: 'T' }] }, 'fr'), '2 étudiants aimeraient ton avis · Réseau ENSAM');
+  assert.equal(sujet({ demandes: [{ nom: 'A', sujet: 'S' }, { nom: 'B', sujet: 'T' }, { nom: 'C', sujet: 'U' }] }, 'ar'), '3 طلبة ينتظرون رأيك · شبكة ENSAM');
+  assert.equal(sujet({ demandes: [] }, 'fr'), '2 étudiants de ta filière attendent un horaire · Réseau ENSAM');
+  const seul = { demandes: [], ouvertes: { total: 0, sujets: [] }, aClore: [], relances: [], reponses: [], cafes: [] };
+  assert.equal(sujet({ ...seul, contacts: 3 }, 'fr'), '3 membres aimeraient tes coordonnées · Réseau ENSAM');
+  assert.equal(sujet({ ...seul, contacts: 1 }, 'fr'), 'Un membre aimerait tes coordonnées · Réseau ENSAM');
+  assert.equal(sujet({ ...seul, contacts: 2 }, 'ar'), 'عضوان يرغبان في معلومات الاتصال بك · شبكة ENSAM');
+  // Côté étudiant : « ton année » (pas « ta promo », ni « ton niveau »)
+  assert.ok(N.rendreResume(resume(ID.leila), 'fr', SITE, TOKEN).texte.includes('1 membre de ton année ou de ta filière a rejoint le réseau cette semaine.'));
+  assert.ok(N.rendreResume(resume(ID.salma), 'fr', SITE, TOKEN).texte.includes('cette semaine pour ta filière et ton année.'));
+  assert.ok(N.rendreResume(resume(ID.amine), 'fr', SITE, TOKEN).texte.includes('Ton parrainage cette année : Youssef Alami, de ta filière. Fais-lui signe !'));
 });
 
 test('aperçus : étudiante en français, lauréat en arabe', () => {

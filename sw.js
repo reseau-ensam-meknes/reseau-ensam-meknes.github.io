@@ -1,7 +1,7 @@
 // Service worker du Réseau ENSAM : l'application s'ouvre depuis le téléphone, même sans réseau
 // ou en 3G, et affiche les notifications envoyées par la fonction « notifier ».
 // build.sh (outils/precharger.mjs) remplace la version et la liste des fichiers du site.
-const VERSION = 'd248c56423c5';
+const VERSION = '8805b10b5d85';
 const FICHIERS = ["./","admin.js","agenda.js","app.js","community.js","confiance.js","config.js","cv.js","dashboard.js","demandes.js","enquete.js","entree.js","entreprises.js","etranger.js","geo.js","groupes.js","growth.js","i18n-ar.js","i18n.js","invitation.js","lire-cv.js","logic.js","logo.js","me.js","mentorat.js","messages.js","offers.js","parse-linkedin.js","parse-offre.js","pdf-compat.js","pdf-worker.js","photo.js","pouls.js","privacy.js","pro.js","pwa.js","pwa/badge-96.png","pwa/icon-192.png","pwa/manifest.webmanifest","recrutement.js","regles-entree.js","saison.js","scene.js","store.js","ui.js","vendor/591.supabase.js","vendor/preact-htm.js","vendor/supabase.js"];
 const CACHE = 'ensam-' + VERSION;
 

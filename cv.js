@@ -1,7 +1,7 @@
 // CV en PDF et relecture de CV : l'étudiant dépose son CV et choisit qui le voit, demande une relecture ;
 // un lauréat la prend, commente rubrique par rubrique, rédige une synthèse et la rend ; l'étudiant dit merci.
 import { html, useState, useRef, useEffect } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, toast, injectCSS } from './ui.js';
+import { Icon, Modal, Field, Empty, Person, Pastille, toast, injectCSS } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
 import { addAR, t as tr } from './i18n.js';
 import { timeAgo, niveauOf, NIVEAUX, proximiteFiliere } from './logic.js';
@@ -17,11 +17,12 @@ export const RUBRIQUES = [['general', 'Général', 'spark'], ['profil', 'Profil 
 const PILL = { demandee: ['m-demande', 'En attente'], ouverte: ['m-demande', 'Ouverte à tous les lauréats'], en_cours: ['m-acceptee', 'En cours de relecture'], rendue: ['m-terminee', 'Relecture rendue'], annulee: ['m-refusee', 'Annulée'] };
 const ETAPES = ['Demandée', 'En cours', 'Rendue'];
 
-// Qui voit mon CV, selon le choix « CV » de la visibilité du profil
+// Qui peut ouvrir mon CV, selon le choix « CV » de la visibilité du profil : exactement peut_voir_cv() et voit_champ()
+// dans la base (tes contacts = en_relation : coordonnées partagées, l'auteur d'une offre où tu postules, un match)
 const QUI_VOIT = {
-  tous: 'Visible par tous les membres connectés.',
-  laureats: 'Visible par les lauréats, et par le lauréat dont tu postules à l’offre.',
-  contacts: 'Visible seulement par tes contacts acceptés et par le lauréat dont tu postules à l’offre.',
+  tous: 'Tous les membres connectés peuvent l’ouvrir.',
+  laureats: 'Les lauréats et tes contacts peuvent l’ouvrir.',
+  contacts: 'Tes contacts peuvent l’ouvrir, et les lauréats quand tu as une demande ouverte.',
 };
 
 // Ouvre un CV : la fenêtre s'ouvre tout de suite (sinon le navigateur la bloque), le lien temporaire arrive ensuite.
@@ -99,8 +100,8 @@ export function CvCard({ ctx }) {
       <span class="obj-ico"><${Icon} name="eye" size=${18}/></span>
       <span class="grow">${!last ? html`<strong>Fais relire ton CV par un lauréat</strong><span class="small muted">Il commente rubrique par rubrique et te donne ses conseils.</span>`
         : last.status === 'rendue' ? html`<strong>${last.merci || last.note ? 'Ta dernière relecture est rendue' : 'Ta relecture est prête'}</strong><span class="small muted">${reviewer ? `Par ${reviewer.full_name} · ${timeAgo(last.rendue_at || last.created_at)}` : timeAgo(last.rendue_at || last.created_at)}</span>`
-        : last.status === 'en_cours' ? html`<strong>${reviewer ? `${firstName(reviewer)} relit ton CV` : 'Ton CV est en cours de relecture'}</strong><span class="small muted">Tu seras prévenu(e) dès que c’est fini.</span>`
-        : html`<strong>Demande de relecture envoyée</strong><span class="small muted">${reviewer ? `En attente de ${firstName(reviewer)} · ${timeAgo(last.created_at)}` : 'En attente d’un lauréat disponible'}</span>`}</span>
+        : last.status === 'en_cours' ? html`<strong>${reviewer ? `${firstName(reviewer)} relit ton CV` : 'Ton CV est en cours de relecture'}</strong><span class="small muted">On te prévient dès que c’est fini.</span>`
+        : html`<strong>CV envoyé</strong><span class="small muted">${reviewer ? `En attente de ${firstName(reviewer)} · ${timeAgo(last.created_at)}` : 'En attente d’un lauréat disponible'}</span>`}</span>
       ${last ? html`<button class=${'btn small' + (last.status === 'rendue' && !last.merci && !last.note ? ' primary' : ' ghost')} onClick=${() => go('mentorat/cv')}>${last.status === 'rendue' && !last.merci && !last.note ? 'Lire les conseils' : 'Suivre'}</button>` : null}
       ${me.cv_path && enCours < 2 && (!last || !ACTIVES.includes(last.status)) ? html`<button id="cv-ask" class=${'btn small' + (last ? ' ghost' : ' primary')} onClick=${() => setAsk(true)}>${last ? 'Nouvelle relecture' : 'Demander une relecture'}</button>` : null}
     </div>` : null}
@@ -114,7 +115,7 @@ const VU_CV = 'ensam-cv-controle';
 const cvVus = () => { try { return JSON.parse(localStorage.getItem(VU_CV) || '[]'); } catch { return []; } };
 const marquerCV = path => { try { localStorage.setItem(VU_CV, JSON.stringify([...cvVus(), path].slice(-20))); } catch { /* stockage indisponible */ } };
 const court = t => (t.length > 40 ? t.slice(0, 38).trimEnd() + '…' : t);
-export const libellesCV = e => [e.role ? (e.role === 'laureat' ? 'Lauréat(e)' : 'Étudiant(e)') : null, e.promo ? `Promo ${e.promo}` : null, e.filiere || null,
+export const libellesCV = e => [e.role ? (e.role === 'laureat' ? 'Profil lauréat' : 'Profil étudiant') : null, e.promo ? `Promo ${e.promo}` : null, e.filiere || null,
   e.poste ? `Poste : ${court(e.poste)}` : null, e.entreprise ? `Entreprise : ${court(e.entreprise)}` : null, e.ville ? `Ville : ${e.ville}` : null,
   e.competences ? `Compétences : ${court(e.competences.join(', '))}` : null, e.linkedin ? 'LinkedIn' : null, e.bio ? 'Bio' : null,
   e.telephone ? 'Téléphone' : null, e.email ? 'Email de contact' : null].filter(Boolean);
@@ -193,7 +194,7 @@ function ControleCV({ ctx, fichier }) {
   </div>`;
 }
 
-// Demande de relecture : à tous les lauréats (le premier disponible), ou à un lauréat de ma filière
+// Relecture de CV : à tous les lauréats (le premier disponible), ou à un lauréat de ma filière
 export function DemandeRelecture({ ctx, onClose }) {
   const { data, me, store, act } = ctx;
   const [msg, setMsg] = useState(''); const [qui, setQui] = useState('');
@@ -204,19 +205,19 @@ export function DemandeRelecture({ ctx, onClose }) {
     act(async () => {
       await store.insert('relectures_cv', { student_id: me.id, cv_path: me.cv_path, reviewer_id: qui || null, message: msg.trim() || null });
       onClose();
-      const mot = qui ? `Demande envoyée à ${firstName(store.byId('profiles', qui))}.` : 'Demande envoyée aux lauréats.';
+      const mot = qui ? `CV envoyé à ${firstName(store.byId('profiles', qui))}.` : 'CV envoyé aux lauréats.';
       if (!proposerPrevenir('relecture', mot)) toast(mot);
     });
   };
   return html`<${Modal} title="Demander une relecture" onClose=${onClose}>
     <form class="form" onSubmit=${send}>
-      <p class="small muted">Un lauréat ouvre ton CV, laisse des commentaires rubrique par rubrique et une synthèse. Tu es prévenu(e) quand c’est prêt.</p>
+      <p class="small muted">Un lauréat ouvre ton CV, laisse des commentaires rubrique par rubrique et une synthèse. On te prévient quand c’est prêt.</p>
       <${Field} label="Ce que tu vises (facultatif)" hint="Ex. PFE en excellence opérationnelle, stage 4A dans l’automobile…"><textarea id="rv-msg" rows="3" maxlength="600" value=${msg} onInput=${e => setMsg(e.target.value)} placeholder="Le poste visé, ce qui t’inquiète dans ton CV…"></textarea><//>
       <${Field} label="Qui relit ?"><select id="rv-qui" value=${qui} onChange=${e => setQui(e.target.value)}>
         <option value="">Tous les lauréats (le premier disponible)</option>
         ${proches.map(p => html`<option value=${p.id} translate="no">${p.full_name} · ${p.entreprise || p.promo}</option>`)}
       </select><//>
-      <div class="row-end"><button type="button" class="btn ghost" onClick=${onClose}>Annuler</button><button class="btn primary"><${Icon} name="send" size=${15}/> Envoyer ma demande</button></div>
+      <div class="row-end"><button type="button" class="btn ghost" onClick=${onClose}>Annuler</button><button class="btn primary"><${Icon} name="send" size=${15}/> Envoyer mon CV</button></div>
     </form>
   <//>`;
 }
@@ -234,7 +235,7 @@ export function RelecturesPage({ ctx }) {
     const rendues = R.filter(r => r.status === 'rendue'); const notes = rendues.map(r => r.note).filter(Boolean);
     const vieilles = ouv.filter(r => Date.now() - new Date(r.created_at) > 7 * 864e5).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
     return html`<div class="sub-page">
-      <div class="kpis">${[['Demandes en attente', ouv.length, 'pas encore prises'], ['En cours', cours.length, 'un lauréat relit'], ['Relectures rendues', rendues.length, 'depuis le début'],
+      <div class="kpis">${[['CV en attente', ouv.length, 'pas encore pris en charge'], ['En cours', cours.length, 'un lauréat relit'], ['Relectures rendues', rendues.length, 'depuis le début'],
         ['Note moyenne', notes.length ? (notes.reduce((a, b) => a + b, 0) / notes.length).toFixed(1) : '–', notes.length ? 'donnée par les étudiants' : 'pas encore de note']].map(([l, v, s]) => html`<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-val mono">${v}</span><span class="small muted">${s}</span></div>`)}</div>
       ${vieilles.length ? html`<div class="section-head"><h2>En attente depuis plus d’une semaine <span class="count">${vieilles.length}</span></h2></div>
         <ul class="people-list">${vieilles.map(r => html`<li key=${r.id}><${Person} p=${store.byId('profiles', r.student_id)} onOpen=${ctx.openProfile} size=${32}/><span class="spacer"></span><span class="small muted">${timeAgo(r.created_at)}</span></li>`)}</ul>` : null}
@@ -252,23 +253,23 @@ export function RelecturesPage({ ctx }) {
   const canAsk = me.cv_path && mine.filter(r => ACTIVES.includes(r.status)).length < 2;
   const hist = isLaureat ? done : minePast;
   const steps = isLaureat
-    ? [['inbox', 'Un étudiant demande une relecture'], ['edit', 'Tu commentes rubrique par rubrique'], ['heart', 'Il te remercie : +15 points']]
+    ? [['inbox', 'Un étudiant demande une relecture'], ['edit', 'Tu commentes rubrique par rubrique', 15], ['heart', 'L’étudiant peut te remercier', 10]]
     : [['upload', 'Tu déposes ton CV en PDF'], ['eye', 'Un lauréat le relit et le commente'], ['check', 'Tu reçois ses conseils, rubrique par rubrique']];
 
   // Le mode d'emploi en grand pour qui découvre ; replié pour celles et ceux qui ont déjà une relecture (comme les rendez-vous)
-  const how = html`<ol class="how">${steps.map(([ic, t], i) => html`<li><span class="how-n">${i + 1}</span><${Icon} name=${ic} size=${18}/><span>${t}</span></li>`)}</ol>`;
+  const how = html`<ol class="how">${steps.map(([ic, t, pts], i) => html`<li><span class="how-n">${i + 1}</span><${Icon} name=${ic} size=${18}/><span>${t}<${Pastille} n=${pts}/></span></li>`)}</ol>`;
   const connu = mine.length || done.length || toMe.length;
   return html`<div class="sub-page relectures">
     ${connu ? null : how}
 
-    ${toMe.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="edit"/> Mes relectures <span class="count">${toMe.length}</span></h2></div>
+    ${toMe.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="edit"/> CV que je relis <span class="count">${toMe.length}</span></h2></div>
       <div class="list">${toMe.map(r => html`<${RelectureCard} key=${r.id} ctx=${ctx} r=${r} side="reviewer"/>`)}</div>` : null}
 
     ${isLaureat ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="eye"/> CV à relire <span class="count">${queue.length}</span></h2>${queue.length > 1 ? html`<span class="small muted">Ceux de ta filière d’abord</span>` : null}</div>
-      <div class="list">${queue.length ? queue.slice(0, more ? 20 : 3).map(({ r }) => html`<${RelectureCard} key=${r.id} ctx=${ctx} r=${r} side="queue"/>`) : html`<${Empty} icon="eye" title="Aucun CV n’attend de relecture">Tu seras prévenu(e) dès qu’un étudiant en demande une.<//>`}</div>
-      ${queue.length > 3 ? html`<button class="linkish small past-toggle" onClick=${() => setMore(!more)}>${more ? 'Voir moins' : `Voir les autres demandes (${queue.length - 3})`}</button>` : null}` : null}
+      <div class="list">${queue.length ? queue.slice(0, more ? 20 : 3).map(({ r }) => html`<${RelectureCard} key=${r.id} ctx=${ctx} r=${r} side="queue"/>`) : html`<${Empty} icon="eye" title="Aucun CV n’attend de relecture">On te prévient dès qu’un étudiant en demande une.<//>`}</div>
+      ${queue.length > 3 ? html`<button class="linkish small past-toggle" onClick=${() => setMore(!more)}>${more ? 'Voir moins' : `Voir les autres CV (${queue.length - 3})`}</button>` : null}` : null}
 
-    ${!isLaureat || mineActive.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="file"/> Mes demandes${mineActive.length ? html` <span class="count">${mineActive.length}</span>` : null}</h2>
+    ${!isLaureat || mineActive.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="file"/> Mes relectures${mineActive.length ? html` <span class="count">${mineActive.length}</span>` : null}</h2>
         ${canAsk ? html`<button id="rv-new" class="btn small primary" onClick=${() => setAsk(true)}><${Icon} name="plus" size=${15}/> Demander une relecture</button>` : null}</div>
       ${mineActive.length ? html`<div class="list">${mineActive.map(r => html`<${RelectureCard} key=${r.id} ctx=${ctx} r=${r} side="student"/>`)}</div>`
         : !me.cv_path ? html`<div class="help-cta"><span class="obj-ico"><${Icon} name="upload" size=${22}/></span><div class="grow"><strong>Dépose d’abord ton CV en PDF</strong><span class="small muted">Dans « Mon profil ». Ensuite, un lauréat peut le relire.</span></div><button class="btn primary small" onClick=${() => go('profil')}>Mon profil</button></div>`
@@ -287,13 +288,13 @@ function Etapes({ r }) {
   return html`<ol class="stepper mstep">${ETAPES.map((s, i) => html`<li class=${i < n ? 'done' : ''}><span class="step-dot">${i < n ? html`<${Icon} name="check" size=${13}/>` : i + 1}</span>${s}</li>`)}</ol>`;
 }
 
-// Une demande de relecture, vue par l'étudiant (student), le lauréat qui relit (reviewer) ou un lauréat qui parcourt la file (queue)
+// Une relecture de CV, vue par l'étudiant (student), le lauréat qui relit (reviewer) ou un lauréat qui parcourt la file (queue)
 function RelectureCard({ ctx, r, side }) {
   const { store, act, openProfile, me } = ctx;
   const student = store.byId('profiles', r.student_id); const reviewer = r.reviewer_id ? store.byId('profiles', r.reviewer_id) : null;
   const other = side === 'student' ? reviewer : student;
   const [cls, label] = PILL[r.status === 'demandee' && !r.reviewer_id ? 'ouverte' : r.status] || PILL.demandee;
-  const prendre = () => act(async () => { await store.update('relectures_cv', r.id, { reviewer_id: me.id }); toast(`Merci ! Le CV de ${firstName(student)} est dans « Mes relectures ».`); });
+  const prendre = () => act(async () => { await store.update('relectures_cv', r.id, { reviewer_id: me.id }); toast(`Merci ! Le CV de ${firstName(student)} est dans « CV que je relis ».`); });
   const sub = student?.role === 'etudiant' ? `${NIVEAUX[niveauOf(student, ctx.saison)]?.short || ''} · ${student.filiere}` : student ? `Promo ${student.promo} · ${student.filiere}` : '';
   return html`<article class=${'mreq rel-card st-' + (r.status === 'rendue' ? 'terminee' : r.status === 'en_cours' ? 'rdv' : r.status === 'annulee' ? 'annulee' : 'demande')}>
     <div class="mrow-head">
@@ -305,15 +306,15 @@ function RelectureCard({ ctx, r, side }) {
 
     ${side === 'queue' ? html`<div class="row"><${OuvrirCV} store=${store} path=${r.cv_path}/><span class="spacer"></span><button class="btn small primary" onClick=${prendre}><${Icon} name="check" size=${15}/> Je m’en occupe</button></div>` : null}
 
-    ${side === 'reviewer' && r.status === 'demandee' ? html`<p class="small">${`${firstName(student)} t’a choisi(e) pour relire son CV.`}</p>
+    ${side === 'reviewer' && r.status === 'demandee' ? html`<p class="small">${`${firstName(student)} aimerait que tu relises son CV.`}</p>
       <div class="row"><${OuvrirCV} store=${store} path=${r.cv_path}/><span class="spacer"></span>
-        <button class="linkish small" onClick=${() => ctx.confirm('Tu n’es pas disponible ? La demande sera proposée aux autres lauréats.', () => act(async () => { await store.update('relectures_cv', r.id, { reviewer_id: null }); toast('Demande proposée aux autres lauréats.'); }), 'Proposer aux autres')}>Pas disponible</button>
+        <button class="linkish small" onClick=${() => ctx.confirm('Tu n’es pas disponible ? Son CV sera proposé aux autres lauréats.', () => act(async () => { await store.update('relectures_cv', r.id, { reviewer_id: null }); toast('CV proposé aux autres lauréats.'); }), 'Proposer aux autres')}>Pas disponible</button>
         <button class="btn small primary" onClick=${prendre}><${Icon} name="check" size=${15}/> Je m’en occupe</button></div>` : null}
     ${side === 'reviewer' && r.status === 'en_cours' ? html`<${Atelier} ctx=${ctx} r=${r} student=${student}/>` : null}
     ${r.status === 'rendue' && side !== 'queue' ? html`<${Retour} ctx=${ctx} r=${r} side=${side}/>` : null}
 
-    ${side === 'student' && ACTIVES.includes(r.status) ? html`<div class="row"><span class="small muted">${r.status === 'en_cours' ? `${firstName(reviewer) || 'Un lauréat'} relit ton CV. Tu seras prévenu(e).` : reviewer ? `En attente de ${firstName(reviewer)}…` : 'En attente d’un lauréat…'}</span><span class="spacer"></span>
-      <button class="linkish small m-quiet" onClick=${() => ctx.confirm('Annuler cette demande de relecture ?', () => act(() => store.update('relectures_cv', r.id, { status: 'annulee' })), 'Annuler la demande')}>Annuler</button></div>` : null}
+    ${side === 'student' && ACTIVES.includes(r.status) ? html`<div class="row"><span class="small muted">${r.status === 'en_cours' ? `${firstName(reviewer) || 'Un lauréat'} relit ton CV. On te prévient dès que c’est fini.` : reviewer ? `En attente de ${firstName(reviewer)}…` : 'En attente d’un lauréat…'}</span><span class="spacer"></span>
+      <button class="linkish small m-quiet" onClick=${() => ctx.confirm('Annuler cette relecture ?', () => act(() => store.update('relectures_cv', r.id, { status: 'annulee' })), 'Annuler la relecture')}>Annuler</button></div>` : null}
     ${side === 'student' && r.status === 'annulee' ? html`<div class="row"><span class="spacer"></span><button class="linkish small" onClick=${() => act(() => store.remove('relectures_cv', r.id))}>Supprimer</button></div>` : null}
   </article>`;
 }
@@ -330,7 +331,7 @@ function Atelier({ ctx, r, student }) {
     act(async () => { await store.insert('relecture_commentaires', { relecture_id: r.id, author_id: me.id, section: rub, body: txt.trim() }); setTxt(''); }).finally(() => setBusy(false));
   };
   const peutRendre = syn.trim() || coms.some(c => c.author_id === me.id);
-  const rendre = () => act(async () => { await store.update('relectures_cv', r.id, { status: 'rendue', synthese: syn.trim() || null, reviewer_id: me.id }); toast(`Relecture rendue à ${firstName(student)}. +15 points`, 'win'); });
+  const rendre = () => act(async () => { await store.update('relectures_cv', r.id, { status: 'rendue', synthese: syn.trim() || null, reviewer_id: me.id }); toast(`Relecture rendue à ${firstName(student)}.`, 'win', 15); });
   return html`<div class="atelier">
     <div class="row wrap"><${OuvrirCV} store=${store} path=${r.cv_path} label="Ouvrir le CV" cls="btn small"/><span class="small muted">Le CV s’ouvre dans un nouvel onglet : garde cette page à côté.</span></div>
     <${Commentaires} ctx=${ctx} r=${r} coms=${coms}/>
@@ -341,7 +342,7 @@ function Atelier({ ctx, r, student }) {
     </form>
     <${Field} label="Synthèse" hint="Ce qu’il faut retenir en trois lignes : points forts, priorités."><textarea id=${'rv-syn-' + r.id} rows="3" maxlength="2000" value=${syn} onInput=${e => setSyn(e.target.value)}
       onBlur=${() => { if ((syn.trim() || null) !== (r.synthese || null)) act(() => store.update('relectures_cv', r.id, { synthese: syn.trim() || null, reviewer_id: me.id })); }}></textarea><//>
-    <div class="row"><button type="button" class="linkish small" onClick=${() => ctx.confirm('Rendre la main ? La demande sera proposée aux autres lauréats.', () => act(() => store.update('relectures_cv', r.id, { reviewer_id: null })), 'Rendre la main')}>Je ne peux plus</button><span class="spacer"></span>
+    <div class="row"><button type="button" class="linkish small" onClick=${() => ctx.confirm('Rendre la main ? Le CV sera proposé aux autres lauréats.', () => act(() => store.update('relectures_cv', r.id, { reviewer_id: null })), 'Rendre la main')}>Je ne peux plus</button><span class="spacer"></span>
       <button id=${'rv-rendre-' + r.id} class="btn primary small" disabled=${!peutRendre} title=${peutRendre ? '' : 'Ajoute au moins un commentaire ou une synthèse'} onClick=${rendre}><${Icon} name="send" size=${15}/> Rendre la relecture</button></div>
   </div>`;
 }
@@ -369,7 +370,7 @@ function Retour({ ctx, r, side }) {
     ${r.synthese ? html`<div class="rel-syn"><p class="eyebrow"><${Icon} name="spark" size=${13}/> ${side === 'student' && reviewer ? `Synthèse de ${firstName(reviewer)}` : 'Synthèse'}</p><p dir="auto" translate="no">${r.synthese}</p></div>` : null}
     <${Commentaires} ctx=${ctx} r=${r} coms=${coms}/>
     ${side === 'student' && !r.merci && !r.note ? html`<form class="merci-box" onSubmit=${e => { e.preventDefault(); act(async () => { await store.update('relectures_cv', r.id, { note, merci: merci.trim() || null }); toast(merci.trim() ? `Merci envoyé à ${firstName(reviewer)} !` : 'C’est noté, merci !', 'win'); }); }}>
-      <p><${Icon} name="heart" size=${16}/> <strong>Cette relecture t’a aidé(e) ?</strong></p>
+      <p><${Icon} name="heart" size=${16}/> <strong>Cette relecture t’a été utile ?</strong></p>
       <span class="stars" role="group" aria-label="Aide reçue">${[1, 2, 3, 4, 5].map(v => html`<button type="button" class=${v <= note ? 'on' : ''} aria-label=${v + ' sur 5'} onClick=${() => setNote(v)}>★</button>`)}</span>
       <textarea id=${'rv-merci-' + r.id} rows="2" maxlength="800" placeholder="Un mot de remerciement…" value=${merci} onInput=${e => setMerci(e.target.value)}></textarea>
       <div class="row-end"><button class="btn primary small">${merci.trim() ? 'Envoyer mon merci' : 'Envoyer ma note'}</button></div>
@@ -426,45 +427,43 @@ addAR({
   'Dépose ton CV en PDF ici': 'ضع سيرتك الذاتية بصيغة PDF هنا', 'Envoi en cours…': 'جارٍ الإرسال…', 'ou clique pour choisir un fichier · PDF, 2 Mo maximum': 'أو انقر لاختيار ملف · PDF، 2 ميغا كحد أقصى',
   'Tu as déjà un lien vers ton CV dans ton profil. Le PDF est plus simple pour les lauréats.': 'لديك رابط لسيرتك الذاتية في ملفك. ملف PDF أبسط للخريجين.',
   'Le fichier dépasse 2 Mo. Exporte ton CV en PDF plus léger.': 'الملف يتجاوز 2 ميغا. صدّر سيرتك الذاتية بصيغة PDF أخف.',
-  'Visible par tous les membres connectés.': 'مرئية لكل الأعضاء المسجلين.',
-  'Visible par les lauréats, et par le lauréat dont tu postules à l’offre.': 'مرئية للخريجين، وللخريج الذي تترشح لعرضه.',
-  'Visible seulement par tes contacts acceptés et par le lauréat dont tu postules à l’offre.': 'مرئية فقط لجهات اتصالك المقبولة وللخريج الذي تترشح لعرضه.',
+  'Tous les membres connectés peuvent l’ouvrir.': 'يمكن لكل الأعضاء المسجلين فتحها.',
+  'Les lauréats et tes contacts peuvent l’ouvrir.': 'يمكن للخريجين ولجهات اتصالك فتحها.',
+  'Tes contacts peuvent l’ouvrir, et les lauréats quand tu as une demande ouverte.': 'يمكن لجهات اتصالك فتحها، وللخريجين أيضًا حين يكون لديك طلب مفتوح.',
   'Choisis qui le voit plus bas.': 'اختر من يراها في الأسفل.',
   'Fais relire ton CV par un lauréat': 'اطلب من خريج مراجعة سيرتك الذاتية', 'Il commente rubrique par rubrique et te donne ses conseils.': 'يعلّق قسمًا بقسم ويقدّم لك نصائحه.',
   'Ta relecture est prête': 'مراجعتك جاهزة', 'Ta dernière relecture est rendue': 'آخر مراجعة لك جاهزة', 'Ton CV est en cours de relecture': 'سيرتك الذاتية قيد المراجعة',
-  'Tu seras prévenu(e) dès que c’est fini.': 'ستُخبَر بمجرد الانتهاء.', 'Demande de relecture envoyée': 'تم إرسال طلب المراجعة', 'En attente d’un lauréat disponible': 'في انتظار خريج متاح',
+  'On te prévient dès que c’est fini.': 'سيصلك إشعار عند الانتهاء.', 'CV envoyé': 'أُرسلت سيرتك الذاتية', 'En attente d’un lauréat disponible': 'في انتظار خريج متاح',
   'Lire les conseils': 'قراءة النصائح', 'Suivre': 'متابعة', 'Nouvelle relecture': 'مراجعة جديدة', 'Demander une relecture': 'طلب مراجعة',
-  'Un lauréat ouvre ton CV, laisse des commentaires rubrique par rubrique et une synthèse. Tu es prévenu(e) quand c’est prêt.': 'يفتح خريج سيرتك الذاتية ويترك تعليقات قسمًا بقسم وخلاصة. ستُخبَر عندما تكون جاهزة.',
+  'Un lauréat ouvre ton CV, laisse des commentaires rubrique par rubrique et une synthèse. On te prévient quand c’est prêt.': 'يفتح خريج سيرتك الذاتية ويترك تعليقات قسمًا بقسم وخلاصة. سيصلك إشعار عندما تكون جاهزة.',
   'Ce que tu vises (facultatif)': 'ما تطمح إليه (اختياري)', 'Ex. PFE en excellence opérationnelle, stage 4A dans l’automobile…': 'مثال: مشروع نهاية الدراسة في التميز العملياتي، تدريب السنة الرابعة في صناعة السيارات…',
   'Le poste visé, ce qui t’inquiète dans ton CV…': 'المنصب المستهدف، ما يقلقك في سيرتك الذاتية…', 'Qui relit ?': 'من يراجع؟', 'Tous les lauréats (le premier disponible)': 'كل الخريجين (أول خريج متاح)',
-  'Demande envoyée aux lauréats.': 'تم إرسال الطلب إلى الخريجين.', 'Envoyer ma demande': 'أرسل طلبي',
-  'Demandes en attente': 'طلبات في الانتظار', 'pas encore prises': 'لم يتكفل بها أحد بعد', 'En cours': 'قيد الإنجاز', 'un lauréat relit': 'خريج يراجع', 'Relectures rendues': 'مراجعات منجزة',
+  'CV envoyé aux lauréats.': 'أُرسلت سيرتك الذاتية إلى الخريجين.', 'Envoyer mon CV': 'أرسل سيرتي الذاتية',
+  'CV en attente': 'سير ذاتية في الانتظار', 'pas encore pris en charge': 'لم يتكفل بها أحد بعد', 'En cours': 'قيد الإنجاز', 'un lauréat relit': 'خريج يراجع', 'Relectures rendues': 'مراجعات منجزة',
   'depuis le début': 'منذ البداية', 'Note moyenne': 'متوسط التقييم', 'donnée par les étudiants': 'من الطلبة', 'pas encore de note': 'لا تقييم بعد',
   'En attente depuis plus d’une semaine': 'في الانتظار منذ أكثر من أسبوع',
-  'Un étudiant demande une relecture': 'طالب يطلب مراجعة', 'Tu commentes rubrique par rubrique': 'تعلّق قسمًا بقسم', 'Il te remercie : +15 points': 'يشكرك: +15 نقطة',
-  'Tu déposes ton CV en PDF': 'ترفع سيرتك الذاتية بصيغة PDF', 'Un lauréat le relit et le commente': 'يراجعها خريج ويعلّق عليها', 'Tu reçois ses conseils, rubrique par rubrique': 'تتلقى نصائحه قسمًا بقسم',
-  'Mes relectures': 'مراجعاتي', 'CV à relire': 'سير ذاتية للمراجعة', 'Ceux de ta filière d’abord': 'سير شعبتك أولًا', 'Aucun CV n’attend de relecture': 'لا توجد سيرة ذاتية تنتظر المراجعة',
-  'Tu seras prévenu(e) dès qu’un étudiant en demande une.': 'ستُخبَر بمجرد أن يطلب طالب مراجعة.', 'Mes demandes': 'طلباتي',
-  'Dépose d’abord ton CV en PDF': 'ارفع أولًا سيرتك الذاتية بصيغة PDF', 'Dans « Mon profil ». Ensuite, un lauréat peut le relire.': 'في «ملفي». بعد ذلك يمكن لخريج مراجعتها.', 'Mon profil': 'ملفي',
-  'Pas encore de relecture': 'لا مراجعة بعد', 'Demande une relecture : un lauréat ouvre ton CV et te laisse ses conseils.': 'اطلب مراجعة: يفتح خريج سيرتك الذاتية ويترك لك نصائحه.',
+  'Un étudiant demande une relecture': 'طالب يطلب مراجعة', 'Tu commentes rubrique par rubrique': 'تعلّق قسمًا بقسم', 'L’étudiant peut te remercier': 'يمكن للطالب أن يشكرك',
+  'Tu déposes ton CV en PDF': 'ترفع سيرتك الذاتية بصيغة PDF', 'Un lauréat le relit et le commente': 'يراجعها خريج ويعلّق عليها', 'Tu reçois ses conseils, rubrique par rubrique': 'تصلك النصائح قسمًا بقسم',
+  'Mes relectures': 'مراجعاتي', 'CV que je relis': 'سير ذاتية أراجعها', 'CV à relire': 'سير ذاتية للمراجعة', 'Ceux de ta filière d’abord': 'سير شعبتك أولًا', 'Aucun CV n’attend de relecture': 'لا توجد سيرة ذاتية تنتظر المراجعة',
+  'On te prévient dès qu’un étudiant en demande une.': 'سيصلك إشعار بمجرد أن يطلب طالب مراجعة.',
+  'Dépose d’abord ton CV en PDF': 'ارفع أولًا سيرتك الذاتية بصيغة PDF', 'Dans « Mon profil ». Ensuite, un lauréat peut le relire.': 'في «ملفي». بعد ذلك يمكن لخريج مراجعتها.', 'Mon profil': 'ملفي الشخصي',
+  'Pas encore de relecture': 'لا مراجعة بعد', 'Demande une relecture : un lauréat ouvre ton CV et te laisse ses conseils.': 'اطلب مراجعة: يفتح خريج سيرتك الذاتية ويترك لك نصائح.',
   'Toi aussi, tu veux un regard neuf sur ton CV ?': 'أنت أيضًا تريد نظرة جديدة على سيرتك الذاتية؟', 'Demande à un lauréat plus expérimenté': 'اطلب من خريج أكثر خبرة',
-  'Demandée': 'مطلوبة', 'Rendue': 'منجزة', 'Ouverte à tous les lauréats': 'مفتوحة لكل الخريجين', 'En cours de relecture': 'قيد المراجعة', 'Relecture rendue': 'المراجعة منجزة', 'Annulée': 'ملغاة',
+  'Demandée': 'مطلوبة', 'Rendue': 'منجزة', 'Ouverte à tous les lauréats': 'لكل الخريجين', 'En cours de relecture': 'قيد المراجعة', 'Relecture rendue': 'المراجعة منجزة', 'Annulée': 'ملغاة',
   'Tous les lauréats': 'كل الخريجين', 'Le premier disponible relit ton CV': 'أول خريج متاح يراجع سيرتك الذاتية', 'Je m’en occupe': 'سأتكفل بها',
-  'Pas disponible': 'غير متاح', 'Proposer aux autres': 'اقتراحها على الآخرين', 'Tu n’es pas disponible ? La demande sera proposée aux autres lauréats.': 'لست متاحًا؟ سيُقترح الطلب على باقي الخريجين.',
-  'Demande proposée aux autres lauréats.': 'تم اقتراح الطلب على باقي الخريجين.', 'En attente d’un lauréat…': 'في انتظار خريج…', 'Annuler la demande': 'إلغاء الطلب',
-  'Annuler cette demande de relecture ?': 'إلغاء طلب المراجعة هذا؟', 'Supprimer': 'حذف', 'Ouvrir le CV': 'فتح السيرة الذاتية', 'Voir le CV': 'عرض السيرة الذاتية',
+  'Pas disponible': 'لا يناسبني الوقت', 'Proposer aux autres': 'عرض على باقي الخريجين', 'Tu n’es pas disponible ? Son CV sera proposé aux autres lauréats.': 'الوقت لا يناسبك؟ ستُعرض السيرة الذاتية على باقي الخريجين.',
+  'CV proposé aux autres lauréats.': 'عُرضت السيرة الذاتية على باقي الخريجين.', 'En attente d’un lauréat…': 'في انتظار خريج…', 'Annuler la relecture': 'إلغاء المراجعة',
+  'Annuler cette relecture ?': 'إلغاء هذه المراجعة؟', 'Supprimer': 'حذف', 'Ouvrir le CV': 'فتح السيرة الذاتية', 'Voir le CV': 'عرض السيرة الذاتية',
   'Le CV s’ouvre dans un nouvel onglet : garde cette page à côté.': 'تُفتح السيرة الذاتية في علامة تبويب جديدة: أبقِ هذه الصفحة بجانبها.',
-  'Rubrique': 'القسم', 'Général': 'عام', 'Profil et accroche': 'الملف والتقديم', 'Formation': 'التكوين', 'Expériences': 'الخبرات', 'Projets': 'المشاريع', 'Compétences': 'المهارات', 'Langues': 'اللغات', 'Mise en page': 'التنسيق',
+  'Rubrique': 'القسم', 'Général': 'عام', 'Profil et accroche': 'الملف والتقديم', 'Formation': 'التكوين', 'Expériences': 'الخبرات', 'Projets': 'المشاريع', 'Compétences': 'الكفاءات', 'Langues': 'اللغات', 'Mise en page': 'التنسيق',
   'Un conseil précis, ex. « Mets le résultat chiffré de ton projet Lean en premier »': 'نصيحة دقيقة، مثال: «ضع النتيجة الرقمية لمشروع Lean أولًا»', 'Ajouter': 'إضافة',
   'Synthèse': 'الخلاصة', 'Ce qu’il faut retenir en trois lignes : points forts, priorités.': 'ما يجب تذكره في ثلاثة أسطر: نقاط القوة والأولويات.',
-  'Je ne peux plus': 'لم أعد أستطيع', 'Rendre la main ? La demande sera proposée aux autres lauréats.': 'التخلي عن المراجعة؟ سيُقترح الطلب على باقي الخريجين.', 'Rendre la main': 'التخلي عنها',
+  'Je ne peux plus': 'لم أعد أستطيع', 'Rendre la main ? Le CV sera proposé aux autres lauréats.': 'التخلي عن المراجعة؟ ستُعرض السيرة الذاتية على باقي الخريجين.', 'Rendre la main': 'التخلي عنها',
   'Ajoute au moins un commentaire ou une synthèse': 'أضف تعليقًا واحدًا على الأقل أو خلاصة', 'Rendre la relecture': 'تسليم المراجعة', 'Pas encore de commentaire.': 'لا تعليق بعد.',
-  'Cette relecture t’a aidé(e) ?': 'هل ساعدتك هذه المراجعة؟', 'Aide reçue': 'المساعدة المتلقاة', 'Un mot de remerciement…': 'كلمة شكر…', 'Envoyer mon merci': 'أرسل شكري', 'Envoyer ma note': 'أرسل تقييمي',
+  'Cette relecture t’a été utile ?': 'هل كانت هذه المراجعة مفيدة لك؟', 'Aide reçue': 'المساعدة المتلقاة', 'Un mot de remerciement…': 'كلمة شكر…', 'Envoyer mon merci': 'أرسل شكري', 'Envoyer ma note': 'أرسل تقييمي',
   'C’est noté, merci !': 'تم التسجيل، شكرًا!', 'Envoyer': 'إرسال', 'Continuer': 'متابعة', 'Relire un CV': 'مراجعة سيرة ذاتية', '1 CV attend une relecture': 'سيرة ذاتية واحدة تنتظر المراجعة',
-  'Quelques commentaires et une synthèse, puis tu la rends.': 'بعض التعليقات وخلاصة، ثم تسلّمها.', 'Dix minutes suffisent : tes conseils, rubrique par rubrique.': 'عشر دقائق تكفي: نصائحك، قسمًا بقسم.',
-  'Tu seras prévenu(e) dès que ses conseils sont prêts.': 'ستُخبَر بمجرد أن تصبح نصائحه جاهزة.', 'Rendez-vous': 'المواعيد', 'Relecture de CV': 'مراجعة السيرة الذاتية',
-  'Un lauréat relit ton CV et te conseille': 'خريج يراجع سيرتك الذاتية وينصحك', 'Relire le CV d’un étudiant, rubrique par rubrique': 'مراجعة سيرة طالب، قسمًا بقسم',
-  'Le suivi des relectures de CV': 'متابعة مراجعات السير الذاتية',
+  'Quelques commentaires et une synthèse, puis tu la rends.': 'بعض التعليقات وخلاصة، ثم تسلّمها.',
+  'Rendez-vous': 'الموعد', 'Relecture de CV': 'مراجعة السيرة الذاتية',
   'Ton CV PDF sera visible par l’auteur de l’offre.': 'ستكون سيرتك الذاتية (PDF) مرئية لصاحب العرض.', 'Ajouter mon CV': 'إضافة سيرتي الذاتية',
   'Ajoute ton CV en PDF dans ton profil : le lauréat le verra avec ta candidature.': 'أضف سيرتك الذاتية بصيغة PDF في ملفك: سيراها الخريج مع ترشيحك.',
   'Le lien vers ton CV sera joint.': 'سيُرفق رابط سيرتك الذاتية.', 'Ton CV sera joint.': 'ستُرفق سيرتك الذاتية.',
@@ -473,22 +472,22 @@ addAR({
   [/^Mis à jour (il y a \d+ (?:min|h|j)|à l’instant|\d{1,2} \S+ \d{4})$/, (x) => `محيَّنة ${tr(x)}`],
   [/^(\d+) CV attendent une relecture$/, (n) => `${n} سير ذاتية تنتظر المراجعة`],
   [/^Tu relis le CV de (.+)$/, (x) => `تراجع سيرة ${x} الذاتية`],
-  [/^(.+) relit ton CV\. Tu seras prévenu\(e\)\.$/, (x) => `${x} يراجع سيرتك الذاتية. ستُخبَر.`],
-  [/^(.+) relit ton CV$/, (x) => `${x} يراجع سيرتك الذاتية`],
+  [/^(.+) relit ton CV\. On te prévient dès que c’est fini\.$/, (x) => `سيرتك الذاتية قيد المراجعة لدى ${x}. سيصلك إشعار عند الانتهاء.`],
+  [/^(.+) relit ton CV$/, (x) => `مراجعة سيرتك الذاتية جارية مع ${x}`],
   [/^Par (.+) · (.+)$/, (x, t) => `بواسطة ${x} · ${tr(t)}`],
   [/^En attente de (.+) · (.+)$/, (x, t) => `في انتظار ${x} · ${tr(t)}`],
   [/^En attente de (.+)…$/, (x) => `في انتظار ${x}…`],
-  [/^Demande envoyée à (.+)\.$/, (x) => `تم إرسال الطلب إلى ${x}.`],
-  [/^Merci ! Le CV de (.+) est dans « Mes relectures »\.$/, (x) => `شكرًا! سيرة ${x} الذاتية في «مراجعاتي».`],
-  [/^(.+) t’a choisi\(e\) pour relire son CV\.$/, (x) => `اختارك ${x} لمراجعة سيرته الذاتية.`],
+  [/^CV envoyé à (.+)\.$/, (x) => `أُرسلت سيرتك الذاتية إلى ${x}.`],
+  [/^Merci ! Le CV de (.+) est dans « CV que je relis »\.$/, (x) => `شكرًا! سيرة ${x} الذاتية في «سير ذاتية أراجعها».`],
+  [/^(.+) aimerait que tu relises son CV\.$/, (x) => `سيرة ${x} الذاتية بانتظار مراجعتك.`],
   [/^Demandée (.+) · rendue (.+)$/, (a, b) => `طُلبت ${tr(a)} · سُلّمت ${tr(b)}`],
   [/^Demandée (il y a .+|à l’instant|\d.+)$/, (a) => `طُلبت ${tr(a)}`],
-  [/^Relecture rendue à (.+)\. \+15 points$/, (x) => `تم تسليم المراجعة إلى ${x}. +15 نقطة`],
+  [/^Relecture rendue à (.+)\.$/, (x) => `تم تسليم المراجعة إلى ${x}.`],
   [/^Synthèse de (.+)$/, (x) => `خلاصة ${x}`],
   [/^Une question pour (?!toi sur )(.+) \?$/, (x) => `سؤال لـ ${x}؟`],
   [/^Un dernier mot pour (.+) \?$/, (x) => `كلمة أخيرة لـ ${x}؟`],
   [/^Merci envoyé à (.+) !$/, (x) => `تم إرسال شكرك إلى ${x}!`],
-  [/^Voir les autres demandes \((\d+)\)$/, (n) => `عرض الطلبات الأخرى (${n})`],
+  [/^Voir les autres CV \((\d+)\)$/, (n) => `عرض السير الذاتية الأخرى (${n})`],
   [/^Voir l’historique \((\d+)\)$/, (n) => `عرض السجل (${n})`],
   [/^(\d) sur 5$/, (n) => `${n} من 5`],
   [/^Ton CV PDF sera visible par (.+), l’auteur de l’offre\.$/, (x) => `ستكون سيرتك الذاتية (PDF) مرئية لـ ${x}، صاحب العرض.`],

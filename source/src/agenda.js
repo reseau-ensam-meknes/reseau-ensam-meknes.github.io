@@ -7,7 +7,7 @@ import { TYPES_EVENEMENT, PUBLICS, pourPublic } from './logic.js';
 
 addAR({
   'Agenda du réseau': 'مفكرة الشبكة', 'Forum, conférences, portes ouvertes : ce qui se passe à l’école et en ligne.': 'المنتدى، المحاضرات، الأبواب المفتوحة: ما يجري في المدرسة وعبر الإنترنت.',
-  'Publier un événement': 'نشر حدث', 'Modifier l’événement': 'تعديل الحدث', 'Je participe': 'سأشارك', 'Je ne viens plus': 'لن أحضر', 'Inscrit(e)': 'مسجّل(ة)',
+  'Publier un événement': 'نشر حدث', 'Modifier l’événement': 'تعديل الحدث', 'Je participe': 'سأشارك', 'Je ne viens plus': 'لن أحضر', 'Tu y vas': 'حضورك مسجّل',
   'Google Agenda': 'تقويم Google', 'Autre agenda (.ics)': 'تقويم آخر (.ics)', 'Rejoindre en ligne': 'الانضمام عبر الإنترنت', 'En ligne': 'عبر الإنترنت',
   'Pour les étudiants': 'للطلبة', 'Pour les lauréats': 'للخريجين', 'Tout le monde': 'الجميع', 'Étudiants': 'الطلبة', 'Lauréats': 'الخريجون',
   'Annulé': 'ملغى', 'Terminé': 'انتهى', 'Annuler l’événement': 'إلغاء الحدث', 'Rétablir': 'إعادة تفعيل', 'Supprimer': 'حذف', 'Modifier': 'تعديل',
@@ -21,7 +21,7 @@ addAR({
   'Les membres concernés reçoivent une notification. S’il est annulé ou déplacé, les inscrits sont prévenus.': 'يتلقى الأعضاء المعنيون إشعارًا. إذا أُلغي أو أُجّل، يتم إخبار المسجلين.',
   'Événement publié. Les membres concernés sont prévenus.': 'نُشر الحدث. تم إشعار الأعضاء المعنيين.', 'Événement modifié.': 'تم تعديل الحدث.',
   'Événement annulé. Les inscrits sont prévenus.': 'أُلغي الحدث. تم إخبار المسجلين.', 'Événement rétabli.': 'أُعيد تفعيل الحدث.', 'Événement supprimé.': 'حُذف الحدث.',
-  'Inscrit(e) ! Ajoute-le à ton agenda.': 'تم تسجيلك! أضفه إلى مفكرتك.', 'C’est noté, tu n’es plus inscrit(e).': 'تم، لم تعد مسجلًا.',
+  'C’est noté ! Ajoute-le à ton agenda.': 'تم التسجيل! أضفه إلى مفكرتك.', 'C’est noté, tu n’y vas plus.': 'تم، أُلغي حضورك.',
   'Le lien doit commencer par https://': 'يجب أن يبدأ الرابط بـ https://', 'La fin doit être après le début.': 'يجب أن تكون النهاية بعد البداية.',
   'Supprimer cet événement ? Les inscriptions partent avec lui.': 'حذف هذا الحدث؟ ستُحذف التسجيلات معه.',
   'Annuler cet événement ? Il reste visible, barré, et les inscrits sont prévenus.': 'إلغاء هذا الحدث؟ سيبقى ظاهرًا مشطوبًا، ويتم إخبار المسجلين.',
@@ -107,9 +107,9 @@ function Participer({ ctx, e, small }) {
   const { store, me, act } = ctx;
   const { mine } = useParticipants(ctx, e);
   if (me.role === 'admin' || e.annule || passe(e)) return null;
-  if (mine) return html`<span class="mini good"><${Icon} name="check" size=${12}/> Inscrit(e)</span>
-    <button class="btn tiny ghost" onClick=${() => act(async () => { await store.remove('evenement_participants', mine.id); toast('C’est noté, tu n’es plus inscrit(e).'); })}>Je ne viens plus</button>`;
-  return html`<button class=${'btn primary ' + (small ? 'tiny' : 'small')} onClick=${() => act(async () => { await store.insert('evenement_participants', { evenement_id: e.id, user_id: me.id }); toast('Inscrit(e) ! Ajoute-le à ton agenda.'); })}><${Icon} name="check" size=${14}/> Je participe</button>`;
+  if (mine) return html`<span class="mini good"><${Icon} name="check" size=${12}/> Tu y vas</span>
+    <button class="btn tiny ghost" onClick=${() => act(async () => { await store.remove('evenement_participants', mine.id); toast('C’est noté, tu n’y vas plus.'); })}>Je ne viens plus</button>`;
+  return html`<button class=${'btn primary ' + (small ? 'tiny' : 'small')} onClick=${() => act(async () => { await store.insert('evenement_participants', { evenement_id: e.id, user_id: me.id }); toast('C’est noté ! Ajoute-le à ton agenda.'); })}><${Icon} name="check" size=${14}/> Je participe</button>`;
 }
 
 function AjoutAgenda({ e }) {
@@ -262,7 +262,7 @@ export function AgendaAdmin({ ctx }) {
   const csv = e => {
     const rows = inscrits(e.id).map(x => store.byId('profiles', x.user_id)).filter(Boolean);
     const q = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const txt = '\ufeff' + [['Nom', 'Rôle', 'Filière', 'Promo'].join(';'), ...rows.map(p => [p.full_name, p.role === 'etudiant' ? 'Étudiant(e)' : 'Lauréat(e)', p.filiere, p.promo].map(q).join(';'))].join('\r\n');
+    const txt = '\ufeff' + [['Nom', 'Rôle', 'Filière', 'Promo'].join(';'), ...rows.map(p => [p.full_name, p.role === 'etudiant' ? 'Profil étudiant' : 'Profil lauréat', p.filiere, p.promo].map(q).join(';'))].join('\r\n');
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'text/csv;charset=utf-8' }));
     a.download = `inscrits-${e.titre.replace(/[^\p{L}\p{N}]+/gu, '-').slice(0, 40)}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   };

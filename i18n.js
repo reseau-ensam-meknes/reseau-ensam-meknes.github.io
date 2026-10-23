@@ -1,4 +1,5 @@
 import { options } from './vendor/preact-htm.js';
+import { langueDuLien } from './regles-entree.js';
 
 let AR = {}; let AR_PATTERNS = []; let arPret = null;
 export function chargerAR() {
@@ -16,7 +17,11 @@ export function arCount(n, [one, two, few, many]) {
 
 const KEY = 'ensam-lang', VISITE = 'ensam-lang-visite';
 let lang = 'fr';
-try { const l = localStorage.getItem(KEY); lang = l === 'ar' || (!l && sessionStorage.getItem(VISITE) === 'ar') ? 'ar' : 'fr'; } catch { /* stockage indisponible */ }
+let choix = null, visite = null;
+try { choix = localStorage.getItem(KEY); } catch { /* stockage indisponible */ }
+const duLien = typeof location !== 'undefined' ? langueDuLien(location.search, choix) : null;
+try { if (duLien) sessionStorage.setItem(VISITE, duLien); visite = sessionStorage.getItem(VISITE); } catch { /* stockage indisponible */ }
+lang = choix === 'ar' || (!choix && (duLien || visite) === 'ar') ? 'ar' : 'fr';
 
 export const getLang = () => lang;
 export async function setLang(l, { attendre = true, garder = true } = {}) {
@@ -40,6 +45,12 @@ export const missing = new Set(); // textes non traduits, pour compléter le dic
 if (typeof window !== 'undefined') window.__ensamMissing = missing;
 
 const dateFix = s => s.replace(/\b(\d{1,2}) (janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\b/g, (_, j, mo) => `${j} ${MONTHS[mo]}`);
+
+const NOMBRES = /[+\u2212]?\d+(?:[.,]\d+)?\s?%|[+\u2212]\d+(?:[.,]\d+)?|\d{4}\s?[-–]\s?\d{4}/g;
+export function nombresLTR(s) {
+  if (typeof s !== 'string' || !/\d/.test(s)) return s;
+  return s.replace(NOMBRES, (m, i) => (s[i - 1] === '\u2066' ? m : `\u2066${m.replace(/\s?%$/, '%').replace(/\s?[-–]\s?/, '-')}\u2069`));
+}
 
 function isolate(out, groups) {
   for (const g of groups) if (g && /[A-Za-zÀ-ÿ]{2}/.test(g) && out.includes(g)) out = out.replace(g, `\u2068${g}\u2069`);
@@ -70,13 +81,13 @@ function composite(core) {
   for (const [re, sep] of [[/\s*·\s*/, ' · '], [/,\s+/, '، ']]) {
     const parts = core.split(re);
     if (parts.length < 2) continue;
-    let hit = false, prose = false;
+    let hit = false, prose = false; const reste = [];
     const out = parts.map(x => {
       const r = x && /[A-Za-zÀ-ÿ]/.test(x) ? lookup(x) ?? composite(x) : null;
-      if (r !== null) hit = true; else if (x.split(/\s+/).length > 4) prose = true;
+      if (r !== null) hit = true; else if (x.split(/\s+/).length > 4) prose = true; else if (/[a-zà-ÿ]/.test(x)) reste.push(x.trim());
       return r ?? x;
     });
-    if (hit && !prose) return out.join(sep); // une phrase écrite par un membre (« Bonjour, j’ai… ») reste telle quelle
+    if (hit && !prose) { for (const x of reste) missing.add(x); return out.join(sep); } // un morceau resté en français est signalé (window.__ensamMissing) ; une phrase écrite par un membre (« Bonjour, j’ai… ») reste telle quelle
   }
   return null;
 }
@@ -90,10 +101,10 @@ function trExact(s) {
 }
 function trCore(s) {
   const m = /^(\s*)([\s\S]*?)(\s*)$/.exec(s);
-  if (!m[2] || !/[A-Za-zÀ-ÿ]/.test(m[2]) || /[\u0600-\u06FF]/.test(m[2])) return s; // rien à traduire, ou déjà en arabe
+  if (!m[2] || !/[A-Za-zÀ-ÿ]/.test(m[2]) || /[\u0600-\u06FF]/.test(m[2])) return nombresLTR(s); // rien à traduire, ou déjà en arabe
   const t = lookup(m[2]) ?? composite(m[2]);
-  if (t === null && !/[a-zà-ÿ]/.test(m[2])) return s; // sigles et initiales (SB, 5A, OCP)
-  return t === null ? null : m[1] + t + m[3];
+  if (t === null && !/[a-zà-ÿ]/.test(m[2])) return nombresLTR(s); // sigles et initiales (SB, 5A, OCP)
+  return t === null ? null : m[1] + nombresLTR(t) + m[3];
 }
 
 let foreign = false; // l'élément en cours contient un texte non traduit (contenu écrit par un membre)
@@ -112,7 +123,7 @@ function trChildren(ch) {
     if (!run.length) return;
     if (run.some(x => typeof x === 'string')) {
       const joined = run.join('');
-      const whole = /[A-Za-zÀ-ÿ]/.test(joined) ? trExact(joined) : joined;
+      const whole = /[A-Za-zÀ-ÿ]/.test(joined) ? trExact(joined) : nombresLTR(joined);
       if (whole !== null) out.push(whole);
       else for (const x of run) {
         if (typeof x !== 'string') out.push(x);
@@ -131,8 +142,10 @@ function trChildren(ch) {
 }
 
 const ATTRS = ['placeholder', 'title', 'aria-label', 'label']; // label : titres des groupes d'options (optgroup)
+const SAISIE_LIBRE = new Set([undefined, 'text', 'search']);
 const prev = options.vnode;
 options.vnode = vnode => {
+  if ((vnode.type === 'textarea' || vnode.type === 'input' && SAISIE_LIBRE.has(vnode.props?.type)) && vnode.props && vnode.props.dir === undefined) vnode.props.dir = 'auto';
   if (lang === 'ar' && typeof vnode.type === 'string' && vnode.props && vnode.props.translate !== 'no') {
     const p = vnode.props;
     foreign = false;

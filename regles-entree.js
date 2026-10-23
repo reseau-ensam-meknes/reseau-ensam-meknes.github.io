@@ -66,3 +66,6 @@ export function phraseLien(lien, infos, inscrire = true, role = '') {
 }
 export const suiteLien = l => (!l ? '' : l.k === 'offre' ? 'Après cette étape, l’offre qu’on t’a partagée s’ouvre.'
   : l.k === 'question' ? 'Après cette étape, la question qu’on t’a partagée s’ouvre.' : 'Après cette étape, la demande de l’étudiant s’ouvre.');
+
+export const langueDuLien = (search, choix) => (!choix && new URLSearchParams(search || '').get('lang') === 'ar' ? 'ar' : null);
+export const avecLangue = (adresse, langue) => (langue === 'ar' ? adresse.replace(/^([^?#]*)(\?[^#]*)?/, (_, a, q) => `${a}${q ? q + '&' : '?'}lang=ar`) : adresse);
