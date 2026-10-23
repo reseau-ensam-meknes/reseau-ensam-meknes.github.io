@@ -13,7 +13,7 @@ import { AgendaPage } from './agenda.js';
 import { MessageBtn } from './messages.js';
 import { CvButton } from './cv.js';
 import { SignalerBtn, ContactBlock, PairVerify, VisibiliteFields, groupesMasques, confirmations, VIS_LABELS, VIS_CHOIX } from './confiance.js';
-import { VIS_CHAMPS, CV_MAX } from './store.js';
+import { VIS_CHAMPS, VIS_DEFAUT, CV_MAX } from './store.js';
 import { addAR } from './i18n.js';
 import { oublierInvitation } from './invitation.js';
 import { parseLinkedin } from './parse-linkedin.js';
@@ -275,10 +275,13 @@ injectCSS('je-suis', `
 @media (prefers-reduced-motion: reduce) { .je-carte, .je-coche { transition: none; } }
 `);
 injectCSS('pf-collant', `
-.pf-collant { position: sticky; bottom: .6rem; z-index: 5; flex-wrap: nowrap; align-items: center; justify-content: space-between; padding: .55rem .6rem .55rem 1rem; border-radius: 16px; background: var(--surface); border: 1px solid var(--accent); box-shadow: var(--shadow-lift); animation: fade-in .2s ease; }
+.pf-collant { position: sticky; bottom: .6rem; z-index: 5; flex-wrap: nowrap; align-items: center; justify-content: space-between; padding-block: .55rem; padding-inline: 1rem .6rem; border-radius: 16px; background: var(--surface); border: 1px solid var(--accent); box-shadow: var(--shadow-lift); animation: fade-in .2s ease; }
 .pf-collant .small { color: var(--ink-2); font-weight: 500; min-width: 0; }
 .pf-collant .btn { flex: none; }
 @media (max-width: 760px) { .pf-collant { bottom: calc(70px + env(safe-area-inset-bottom, 0px)); } }
+/* Le champ où arrive le focus (Tab) n'est jamais caché sous la barre */
+html:has(.pf-collant) { scroll-padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px)); }
+@media (max-width: 760px) { html:has(.pf-collant) { scroll-padding-bottom: calc(5rem + 70px + env(safe-area-inset-bottom, 0px)); } }
 `);
 injectCSS('cv-box', `
 .cv-box { display: flex; align-items: center; gap: .8rem; padding: .9rem 1rem; border: 1px solid var(--accent); border-radius: 14px; background: color-mix(in srgb, var(--accent) 7%, transparent); }
@@ -294,6 +297,9 @@ const sansVides = o => Object.fromEntries(Object.entries(o || {}).filter(([, v])
 export const cleFormulaire = (me, co) => JSON.stringify([me.id, me.role, me.promo, me.filiere, me.poste, me.entreprise, me.ville, me.linkedin, me.bio, me.competences, co?.telephone, co?.email]);
 const DEFAUTS_PROFIL = { full_name: '', role: 'etudiant', filiere: FILIERES[0], entreprise: '', poste: '', ville: '', pays: 'Maroc', bio: '', competences: [], linkedin: '', contact: '', cv_url: '', disponibilite: '', mentor_dispo: false, mentor_sujets: '', vitrine: true, secteur: '', parrain_dispo: false };
 const memeValeur = (a, b) => JSON.stringify(a ?? '') === JSON.stringify(b ?? '');
+const visPropre = v => Object.fromEntries(Object.entries(v || {}).filter(([k, x]) => VIS_LABELS[k] && VIS_CHOIX.some(c => c[0] === x)));
+const memeVis = (a, b) => Object.keys(VIS_LABELS).every(k => ((a || {})[k] || VIS_DEFAUT[k]) === ((b || {})[k] || VIS_DEFAUT[k]));
+const listeComp = txt => txt.split(',').map(x => x.trim()).filter(Boolean).slice(0, 15);
 
 export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
   const { store, act } = ctx;
@@ -324,18 +330,38 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
     const c = store.coordonneesDe(initial.id) || {};
     setCo(x => ({ telephone: t.has('co.telephone') ? x.telephone : c.telephone || '', email: t.has('co.email') ? x.email : c.email || '', contact: t.has('co.contact') ? x.contact : c.contact || '' }));
   }, [cle]);
-  // Qui voit quoi : enregistré dès le choix (dans « Mon profil »), comme un réglage
-  // (les choix rapides partent l'un après l'autre : le dernier touché est celui qui reste)
+  // Qui voit quoi : enregistré dès le choix (dans « Mon profil »), comme un réglage.
+  // Les choix rapides partent l'un après l'autre, chacun avec toute la grille affichée (le dernier touché reste).
+  // En cas d'échec, le choix reste affiché et part avec « Enregistrer » (jamais un retour en arrière silencieux).
   const [visOk, setVisOk] = useState(null);
   const fileVis = useRef(Promise.resolve());
+  const enVol = useRef(0);
   const choisirVis = v => {
-    const avant = vis; setVis(v);
+    setVis(v);
     if (onboarding || !initial || !v3) return;
-    const propre = Object.fromEntries(Object.entries(v).filter(([k, x]) => VIS_LABELS[k] && VIS_CHOIX.some(c => c[0] === x)));
-    setVisOk('envoi');
-    fileVis.current = fileVis.current.then(() => store.update('profiles', initial.id, { visibilite: propre }))
-      .then(() => setVisOk('ok'))
-      .catch(e => { setVis(avant); setVisOk(null); toast(e.message || String(e), 'err'); });
+    const propre = visPropre(v);
+    setVisOk('envoi'); enVol.current++;
+    fileVis.current = fileVis.current
+      .then(() => store.update('profiles', initial.id, { visibilite: propre }))
+      .then(() => { touches.current.delete('visibilite'); return 'ok'; }, e => { touches.current.add('visibilite'); toast(e.message || String(e), 'err'); return null; })
+      .then(etat => { enVol.current--; setSale(n => n + 1); if (!enVol.current) setVisOk(etat); });
+  };
+  // Changé depuis un autre appareil : la grille suit ce qui est enregistré, sauf pendant un envoi ou un choix pas encore enregistré
+  const visServeur = JSON.stringify(initial?.visibilite || {});
+  useEffect(() => { if (initial && !onboarding && !enVol.current && !touches.current.has('visibilite')) setVis({ ...(initial.visibilite || {}) }); }, [visServeur]);
+  // La barre « pas encore enregistrées » ne reste que si une valeur diffère vraiment de ce qui est enregistré
+  const differe = () => {
+    if (!initial) return false;
+    const base = { ...DEFAUTS_PROFIL, ...sansVides(initial) };
+    for (const k of touches.current) {
+      if (k === 'visibilite') { if (!memeVis(vis, initial.visibilite)) return true; }
+      else if (k === 'competences') { if (!memeValeur(listeComp(comp), initial.competences || [])) return true; }
+      else if (k.startsWith('co.')) { const c = k.slice(3); if ((co[c] || '').trim() !== (coord0[c] || '')) return true; }
+      else if (typeof f[k] === 'boolean' || typeof base[k] === 'boolean') { if (!!f[k] !== !!base[k]) return true; }
+      else if (k === 'promo') { if (+f.promo !== +base.promo) return true; }
+      else if (String(f[k] ?? '').trim() !== String(base[k] ?? '').trim()) return true;
+    }
+    return false;
   };
   const [cvFichier, setCvFichier] = useState(null);
   const [photoCV, setPhotoCV] = useState(null);
@@ -360,7 +386,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
   const filiere = proposees.includes(f.filiere) || (garde && f.filiere === garde) ? f.filiere : proposees[0];
   const submit = e => {
     e.preventDefault(); if (!ok) return;
-    const row = { full_name: f.full_name.trim(), role: f.role === 'admin' ? 'admin' : f.role, filiere, promo: +f.promo, entreprise: f.entreprise.trim() || null, poste: f.poste.trim() || null, ville: f.ville.trim() || null, pays: f.pays.trim() || 'Maroc', bio: f.bio.trim() || null, competences: comp.split(',').map(x => x.trim()).filter(Boolean).slice(0, 15), linkedin: f.linkedin.trim() || null, cv_url: f.cv_url.trim() || null, mentor_dispo: !!f.mentor_dispo, mentor_sujets: (f.mentor_sujets || '').trim() || null, vitrine: !!f.vitrine };
+    const row = { full_name: f.full_name.trim(), role: f.role === 'admin' ? 'admin' : f.role, filiere, promo: +f.promo, entreprise: f.entreprise.trim() || null, poste: f.poste.trim() || null, ville: f.ville.trim() || null, pays: f.pays.trim() || 'Maroc', bio: f.bio.trim() || null, competences: listeComp(comp), linkedin: f.linkedin.trim() || null, cv_url: f.cv_url.trim() || null, mentor_dispo: !!f.mentor_dispo, mentor_sujets: (f.mentor_sujets || '').trim() || null, vitrine: !!f.vitrine };
     if (!v3) row.contact = (f.contact || '').trim() || null;
     if (f.role === 'laureat') { row.secteur = f.secteur || null; row.parrain_dispo = !!f.parrain_dispo; }
     if (rechOk && (f.role === 'laureat' || initial?.en_recherche)) row.en_recherche = f.role === 'laureat' && !!f.en_recherche;
@@ -373,7 +399,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
     }
     // Colonne ajoutée par la mise à jour Phase 1 : envoyée seulement si la base la connaît déjà ou si elle est remplie
     if ((f.disponibilite || '').trim() || (initial && 'disponibilite' in initial)) row.disponibilite = (f.disponibilite || '').trim() || null;
-    if (v3 && JSON.stringify(vis) !== JSON.stringify(initial?.visibilite || {})) row.visibilite = Object.fromEntries(Object.entries(vis).filter(([k, v]) => VIS_LABELS[k] && VIS_CHOIX.some(c => c[0] === v)));
+    if (v3 && !memeVis(vis, initial?.visibilite)) row.visibilite = visPropre(vis);
     const champs = { telephone: co.telephone.trim() || null, email: co.email.trim() || null, contact: co.contact.trim() || null };
     const coordChange = v3 && ['telephone', 'email', 'contact'].some(k => (champs[k] || '') !== (coord0[k] || ''));
     act(async () => {
@@ -477,7 +503,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
     ${f.role === 'laureat' && !initial?.verified ? html`<p class="small muted">${v3 ? 'Ton badge « Lauréat vérifié » arrive quand l’équipe du réseau, ou deux lauréats vérifiés de ta promo, confirment ton profil.' : 'Ton badge « Lauréat vérifié » sera ajouté par l’équipe du réseau.'}${n ? html` <b>${n}/2</b>` : null}</p>` : null}`}
     ${court ? html`<div class="pf-plus"><button type="button" class="btn ghost small" id="pf-plus" onClick=${() => setDetails(true)}><${Icon} name="plus" size=${15}/> Ajouter plus de détails (facultatif)</button>
       <p class="small muted">Ville, bio, compétences, coordonnées : tu pourras les compléter plus tard dans « Mon profil ».</p></div>` : null}
-    ${!onboarding && touches.current.size ? html`<div class="row-end pf-collant" role="status"><span class="small">Modifications pas encore enregistrées</span><button class="btn primary" disabled=${!ok}>Enregistrer</button></div>`
+    ${!onboarding && differe() ? html`<div class="row-end pf-collant" role="status"><span class="small">Modifications pas encore enregistrées</span><button class="btn primary" disabled=${!ok}>Enregistrer</button></div>`
       : html`<div class="row-end"><button class="btn primary" disabled=${!ok}>${onboarding ? 'Rejoindre la communauté' : 'Enregistrer'}</button></div>`}
   </form>`;
 }

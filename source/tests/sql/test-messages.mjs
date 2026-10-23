@@ -158,6 +158,8 @@ test('réactions : une par personne et par message, visibles des deux seulement'
   assert.equal((await q(ETU2, 'select count(*)::int n from public.reactions_messages'))[0].n, 0);
   assert.equal((await q(LAU2, 'select count(*)::int n from public.reactions_messages'))[0].n, 0);
   await refuse(reagir(LAU2, '👍'), /non autorisée/);
+  // L'administration non plus : elle ne réagit que dans ses propres conversations
+  await refuse(q(ADMIN, `insert into public.reactions_messages (message_id, user_id, emoji) values ($1, $2, '👍')`, [m.id, ADMIN]), /non autorisée/);
   // Pas au nom d'un autre, et seulement les émojis prévus
   await q(ETU, `update public.reactions_messages set user_id = $2, message_id = $3 where message_id = $1 and user_id = $4`, [m.id, LAU2, uid(99), ETU]);
   assert.deepEqual((await q(ETU, 'select user_id from public.reactions_messages where message_id = $1 and emoji = $2', [m.id, '🙏'])).map(v => v.user_id), [ETU]);

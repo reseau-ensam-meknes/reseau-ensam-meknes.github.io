@@ -5,7 +5,7 @@
 import { html, useState, useEffect, useLayoutEffect, useRef, useMemo } from './vendor/preact-htm.js';
 import { Icon, Avatar, Empty, toast, injectCSS, roleTexte } from './ui.js';
 import { conversations, lienAvec, mentorState, norm } from './logic.js';
-import { addAR } from './i18n.js';
+import { addAR, getLang } from './i18n.js';
 import { VOCAL_MAX, REACTIONS } from './store.js';
 import { SignalerBtn } from './confiance.js';
 
@@ -213,13 +213,23 @@ function Conversation({ ctx, autre }) {
   const copier = async m => { try { await navigator.clipboard.writeText(m.body || ''); toast('Message copié.'); } catch { toast('Copie impossible sur cet appareil.', 'err'); } setSel(null); };
   // Le focus se donne pendant le geste lui-même : iOS n'ouvre le clavier qu'à cette condition
   const repondre = m => { document.getElementById('chat-txt')?.focus(); setCite(m); setSel(null); };
-  const reagir = (m, emoji) => { setSel(null); store.reagir(m.id, emoji).catch(e => toast(e.message || String(e), 'err')); };
-  // Le message cité : on y va, et il s'éclaire un instant
+  // Au clavier, le focus revient sur le bouton « Actions du message » (les boutons de réaction disparaissent)
+  const reagir = (m, emoji) => {
+    const ici = document.getElementById('msg-' + m.id)?.contains(document.activeElement);
+    setSel(null); store.reagir(m.id, emoji).catch(e => toast(e.message || String(e), 'err'));
+    if (ici) requestAnimationFrame(() => document.querySelector('#msg-' + m.id + ' .msg-more')?.focus());
+  };
+  // Le message cité : on y va, il prend le focus (lecteur d'écran, clavier) et s'éclaire un instant, un seul à la fois
+  const eclaire = useRef({});
   const allerA = id => {
     const el = document.getElementById('msg-' + id); if (!el) return;
     el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    const e = eclaire.current; clearTimeout(e.t); e.el?.classList.remove('eclaire');
     el.classList.remove('eclaire'); void el.offsetWidth; el.classList.add('eclaire');
+    el.setAttribute('tabindex', '-1'); el.focus({ preventScroll: true });
+    eclaire.current = { el, t: setTimeout(() => el.classList.remove('eclaire'), 1600) };
   };
+  useEffect(() => () => clearTimeout(eclaire.current.t), []);
 
   const tous = [...fil, ...envois.map(e => ({ ...e, author_id: me.id, dest_id: autre }))];
   const parId = new Map(fil.map(m => [m.id, m]));
@@ -269,7 +279,7 @@ function Conversation({ ctx, autre }) {
       })}
       ${tape ? html`<div class="msg tape-bulle" aria-hidden="true"><div class="bulle"><span class="tape-dots"><i></i><i></i><i></i></span></div></div>` : null}
     </div>
-    ${plusBas ? html`<button class="conv-bas" aria-label="Aller aux derniers messages" onClick=${versLeBas}><${Icon} name="arrow" size=${16}/></button>` : null}
+    ${plusBas ? html`<div class="conv-bas-ancre"><button class="conv-bas" aria-label="Aller aux derniers messages" onClick=${versLeBas}><${Icon} name="arrow" size=${16}/></button></div>` : null}
 
     ${blocage ? html`<div class="composer ferme"><${Icon} name="block" size=${16}/><span>Tu as bloqué <span translate="no">${prenom(p)}</span>.</span><span class="spacer"></span><button class="btn small" onClick=${debloquer}>Débloquer</button></div>`
       : !ouvert ? html`<div class="composer ferme"><${Icon} name="lock" size=${16}/><span>Vous ne pouvez pas vous écrire pour l’instant. Une conversation s’ouvre avec un mentorat, une candidature ou une demande de coordonnées acceptée.</span></div>`
@@ -349,9 +359,11 @@ function Bulle({ ctx, m, mine, suite, neuf, sel, onSel, onVoir, onCopier, onSupp
       ${pastilles.length ? html`<span class="msg-reacts">${pastilles.map(p => {
         const aMoi = p.qui.includes(moi);
         const n = p.qui.length > 1 ? html`<span class="react-n">${p.qui.length}</span>` : null;
+        // Le nom accessible dit aussi quand l'autre personne a choisi le même emoji (le « 2 » affiché)
+        const autre = p.qui.find(u => u !== moi), nomAutre = autre ? prenom(ctx.store.byId('profiles', autre)) : null;
         return aMoi && peutReagir
-          ? html`<button type="button" key=${p.emoji} class="react-pill mien" aria-label=${'Retirer ma réaction ' + p.emoji} title="Retirer" onClick=${() => onReagir(m, p.emoji)}>${p.emoji}${n}</button>`
-          : html`<span key=${p.emoji} class=${'react-pill' + (aMoi ? ' mien' : '')} role="img" aria-label=${aMoi ? 'Ta réaction ' + p.emoji : 'Réaction de ' + prenom(ctx.store.byId('profiles', p.qui[0])) + ' : ' + p.emoji}>${p.emoji}${n}</span>`;
+          ? html`<button type="button" key=${p.emoji} class="react-pill mien" aria-label=${'Retirer ma réaction ' + p.emoji + (nomAutre ? ' (' + nomAutre + ' aussi)' : '')} title=${'Retirer ma réaction ' + p.emoji} onClick=${() => onReagir(m, p.emoji)}>${p.emoji}${n}</button>`
+          : html`<span key=${p.emoji} class=${'react-pill' + (aMoi ? ' mien' : '')} role="img" aria-label=${aMoi ? (nomAutre ? 'Toi et ' + nomAutre + ' : ' + p.emoji : 'Ta réaction ' + p.emoji) : 'Réaction de ' + nomAutre + ' : ' + p.emoji}>${p.emoji}${n}</span>`;
       })}</span>` : null}
     </div>
     ${erreur ? html`<button type="button" class="linkish small msg-retry" onClick=${() => onReessayer(m)}>Non envoyé · Réessayer</button>`
@@ -359,7 +371,7 @@ function Bulle({ ctx, m, mine, suite, neuf, sel, onSel, onVoir, onCopier, onSupp
     ${sel ? html`<div class="msg-actions" role="group" aria-label="Actions du message">
       ${peutReagir ? html`<div class="react-bar" role="group" aria-label="Réagir à ce message">${REACTIONS.map(e => html`<button type="button" class=${'react-btn' + (mienne === e ? ' on' : '')} aria-pressed=${mienne === e} aria-label=${'Réagir avec ' + e} onClick=${() => onReagir(m, e)}>${e}</button>`)}</div>` : null}
       <div class="msg-acts-row">
-        ${peutRepondre ? html`<button type="button" class="btn tiny ghost" onClick=${() => onRepondre(m)}><${Icon} name="reply" size=${14}/> Répondre</button>` : null}
+        ${peutRepondre ? html`<button type="button" class="btn tiny ghost" onClick=${() => onRepondre(m)}><${Icon} name="reply" size=${14}/> ${getLang() === 'ar' ? 'رد' : 'Répondre'}</button>` : null}
         ${m.body && m.type !== 'vocal' ? html`<button type="button" class="btn tiny ghost" onClick=${() => onCopier(m)}><${Icon} name="copy" size=${14}/> Copier</button>` : null}
         ${mine ? html`<button type="button" class="btn tiny ghost danger-t" onClick=${() => onSupprimer(m)}><${Icon} name="trash" size=${14}/> Supprimer</button>` : html`<${SignalerBtn} ctx=${ctx} type="prive" id=${m.id}/>`}
       </div>
@@ -530,17 +542,22 @@ function Composer({ txt, setTxt, onEnvoyer, onTape, cite, nomDe, onAnnulerCite }
     try { const { blob, largeur, hauteur } = await compresserImage(f); partir({ type: 'photo', fichier: blob, ext: 'jpg', largeur, hauteur, body: txt.trim() || null }); setTxt(''); }
     catch (err) { toast(err.message || 'Photo impossible à envoyer.', 'err'); }
   };
-  if (rec.etat === 'rec') return html`<div class="composer rec" role="group" aria-label="Enregistrement d’un message vocal">
-    <button type="button" class="icon-btn" aria-label="Annuler l’enregistrement" onClick=${() => rec.arreter(false)}><${Icon} name="trash"/></button>
-    <span class="rec-dot" aria-hidden="true"></span><span class="mono rec-t">${minSec(rec.sec)}</span>
-    <span class="rec-niv" aria-hidden="true">${rec.niv.map(v => html`<i style=${`--h:${Math.max(.08, v)}`}></i>`)}</span>
-    <span class="small muted rec-max">${minSec(VOCAL_MAX)} max</span>
-    <button type="button" class="send-btn" aria-label="Envoyer le message vocal" onClick=${() => rec.arreter(true)}><${Icon} name="send" size=${19}/></button>
+  // Le message cité reste affiché (et annulable) pendant l'enregistrement d'un vocal : le vocal lui répondra
+  const bandeau = cite ? html`<div class="comp-cite" role="group" aria-label="Tu réponds à ce message">
+    <${Icon} name="reply" size=${16}/><span class="comp-cite-txt">${nomDe(cite.author_id)}<${ExtraitCite} m=${cite}/></span>
+    <button type="button" class="icon-btn small" aria-label="Annuler la réponse" onClick=${() => { onAnnulerCite(); if (rec.etat !== 'rec') ta.current?.focus(); }}><${Icon} name="x" size=${16}/></button></div>` : null;
+  if (rec.etat === 'rec') return html`<div class="composer rec ecrire" role="group" aria-label="Enregistrement d’un message vocal">
+    ${bandeau}
+    <div class="comp-row">
+      <button type="button" class="icon-btn" aria-label="Annuler l’enregistrement" onClick=${() => rec.arreter(false)}><${Icon} name="trash"/></button>
+      <span class="rec-dot" aria-hidden="true"></span><span class="mono rec-t">${minSec(rec.sec)}</span>
+      <span class="rec-niv" aria-hidden="true">${rec.niv.map(v => html`<i style=${`--h:${Math.max(.08, v)}`}></i>`)}</span>
+      <span class="small muted rec-max">${minSec(VOCAL_MAX)} max</span>
+      <button type="button" class="send-btn" aria-label="Envoyer le message vocal" onClick=${() => rec.arreter(true)}><${Icon} name="send" size=${19}/></button>
+    </div>
   </div>`;
   return html`<div class="composer ecrire">
-    ${cite ? html`<div class="comp-cite" role="group" aria-label="Tu réponds à ce message">
-      <${Icon} name="reply" size=${16}/><span class="comp-cite-txt">${nomDe(cite.author_id)}<${ExtraitCite} m=${cite}/></span>
-      <button type="button" class="icon-btn small" aria-label="Annuler la réponse" onClick=${onAnnulerCite}><${Icon} name="x" size=${16}/></button></div>` : null}
+    ${bandeau}
     <div class="comp-row">
       <button type="button" class="icon-btn comp-photo" aria-label="Envoyer une photo" title="Photo" onClick=${() => fichierIn.current?.click()}><${Icon} name="image"/></button>
       <input type="file" accept="image/*" class="sr-file" tabindex="-1" aria-hidden="true" ref=${fichierIn} onChange=${photo}/>
@@ -643,7 +660,8 @@ injectCSS('messagerie', `
 .react-btn:hover { transform: scale(1.18); background: var(--surface-2); }
 .react-btn:active { transform: scale(.9); }
 .react-btn.on { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); }
-.msg.a-react { margin-bottom: 12px; }
+.msg.a-react { margin-bottom: 18px; }
+.msg.a-react .msg-actions { padding-top: 18px; }
 .msg-reacts { position: absolute; bottom: -15px; inset-inline-start: 10px; display: flex; gap: 3px; z-index: 1; }
 .react-pill { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 6px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 1px 3px rgb(19 33 58 / .12); font-size: .9rem; line-height: 1; color: var(--ink); animation: react-pop .28s var(--ease); }
 button.react-pill { cursor: pointer; font-family: inherit; }
@@ -651,21 +669,25 @@ button.react-pill { cursor: pointer; font-family: inherit; }
 .react-n { font-size: .72rem; font-weight: 600; color: var(--muted); }
 @keyframes react-pop { 0% { transform: scale(.3); opacity: 0; } 70% { transform: scale(1.12); } }
 .msg-cite { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; min-width: 0; margin: 0 0 .3rem; padding: .3rem .6rem; border: 0; border-inline-start: 3px solid var(--accent); border-radius: 10px; background: color-mix(in srgb, var(--accent) 9%, var(--surface-2)); color: var(--ink); font: inherit; font-size: .82rem; text-align: start; cursor: pointer; }
-.msg-cite strong { font-size: .78rem; color: var(--accent); }
-.msg.mine .msg-cite { background: rgb(255 255 255 / .16); border-inline-start-color: var(--accent-ink); color: var(--accent-ink); }
+.msg-cite strong { font-size: .78rem; color: var(--blue-text); }
+.msg.mine .msg-cite { background: color-mix(in srgb, var(--accent) 80%, var(--ink)); border-inline-start-color: var(--accent-ink); color: var(--accent-ink); }
 .msg.mine .msg-cite strong { color: var(--accent-ink); }
 .msg-cite.supprime { cursor: default; font-style: italic; opacity: .8; }
 .t-photo .msg-cite { margin-bottom: 4px; }
-.cite-extrait { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .9; }
+.cite-extrait { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cite-extrait .ico { vertical-align: -2px; }
 .bulle.avec-cite { min-width: min(220px, 70vw); }
-.msg.eclaire .bulle { animation: eclaire 1.6s ease; }
 @keyframes eclaire { 0%, 35% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); } }
 .glisse-ico { position: absolute; inset-inline-start: 0; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); color: var(--accent); box-shadow: var(--shadow); opacity: var(--g, 0); transform: scale(calc(.5 + var(--g, 0) / 2)); pointer-events: none; }
 .msg { position: relative; }
 .msg .bulle { transition: transform .18s var(--ease); }
-@media (hover: none) { .bulle { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: pan-y; } }
+@media (hover: none) { .bulle { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: pan-y pinch-zoom; } }
 .msg.neuf .bulle { animation: msg-in .32s var(--ease) backwards; }
+/* Après l'arrivée (« neuf ») : l'éclat du message cité passe devant, et l'arrivée ne rejoue pas quand il s'éteint */
+.msg.eclaire .bulle { animation: eclaire 1.6s ease; }
+.msg.neuf.eclaire .bulle { animation: msg-in .32s var(--ease) backwards, eclaire 1.6s ease; }
+.msg:focus { outline: none; }
+.msg:focus-visible > .bulle { outline: 2px solid var(--accent); outline-offset: 2px; }
 @keyframes msg-in { from { opacity: 0; transform: translateY(10px) scale(.96); } }
 .msg.mine.neuf .bulle { transform-origin: 100% 100%; }
 .tape-bulle .bulle { padding: .7rem .9rem; color: var(--muted); }
@@ -688,16 +710,18 @@ button.react-pill { cursor: pointer; font-family: inherit; }
 .vocal-onde i.on { opacity: 1; }
 .vocal-t { font-size: .74rem; min-width: 2.4rem; }
 
-.conv-bas { position: absolute; inset-inline-end: 1rem; bottom: 5.2rem; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); box-shadow: var(--shadow-lift); display: grid; place-items: center; cursor: pointer; z-index: 2; }
+/* Accrochée au haut de la zone d'écriture, quelle que soit sa hauteur (message cité, texte sur plusieurs lignes) */
+.conv-bas-ancre { position: relative; height: 0; flex: none; z-index: 2; }
+.conv-bas { position: absolute; inset-inline-end: 1rem; bottom: .9rem; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); box-shadow: var(--shadow-lift); display: grid; place-items: center; cursor: pointer; z-index: 2; }
 .conv-bas .ico { transform: rotate(90deg); }
 
 .composer { display: flex; align-items: center; gap: .5rem; padding: .55rem .65rem; padding-bottom: calc(.55rem + env(safe-area-inset-bottom, 0px)); background: var(--surface); border-top: 1px solid var(--line); }
 .comp-row { flex: 1; display: flex; align-items: flex-end; gap: .4rem; }
 .composer.ecrire { flex-direction: column; align-items: stretch; gap: .4rem; }
 .composer.ecrire .comp-row { flex: none; }
-.comp-cite { display: flex; align-items: center; gap: .5rem; padding: .35rem .3rem .35rem .7rem; border-radius: 12px; border-inline-start: 3px solid var(--accent); background: var(--surface-2); color: var(--accent); animation: fade-in .18s ease; }
+.comp-cite { display: flex; align-items: center; gap: .5rem; padding-block: .35rem; padding-inline: .7rem .3rem; border-radius: 12px; border-inline-start: 3px solid var(--accent); background: var(--surface-2); color: var(--accent); animation: fade-in .18s ease; }
 .comp-cite-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; color: var(--ink); font-size: .84rem; }
-.comp-cite-txt strong { color: var(--accent); font-size: .78rem; }
+.comp-cite-txt strong { color: var(--blue-text); font-size: .78rem; }
 .comp-row textarea { flex: 1; resize: none; min-height: 42px; max-height: 140px; padding: .6rem .95rem; border-radius: 21px; line-height: 1.4; background: var(--surface-2); border-color: transparent; }
 .comp-row textarea:focus { border-color: var(--accent); background: var(--surface); }
 .comp-photo { width: 42px; height: 42px; border-radius: 50%; flex: none; }
@@ -708,7 +732,7 @@ button.react-pill { cursor: pointer; font-family: inherit; }
 .send-btn:disabled { opacity: .45; cursor: default; }
 .send-btn .ico-send { margin-inline-start: -2px; }
 .composer.ferme { color: var(--muted); font-size: .88rem; padding: .9rem 1rem; padding-bottom: calc(.9rem + env(safe-area-inset-bottom, 0px)); }
-.composer.rec { gap: .6rem; }
+.composer.rec .comp-row { align-items: center; gap: .6rem; }
 .rec-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--bad); animation: rec 1s ease-in-out infinite; flex: none; }
 @keyframes rec { 50% { opacity: .3; } }
 .rec-t { font-weight: 600; min-width: 2.6rem; }
@@ -742,7 +766,7 @@ button.react-pill { cursor: pointer; font-family: inherit; }
   .conv-back { display: inline-grid; }
   .bulle { max-width: 84%; }
 }
-@media (prefers-reduced-motion: reduce) { .tape-dots i { animation: none !important; opacity: .8; } .react-pill, .react-bar, .comp-cite { animation: none; } .msg .bulle { transition: none; } .msg.eclaire .bulle { animation-duration: .01s; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .tape-dots i { animation: none !important; opacity: .8; } .react-pill, .react-bar, .comp-cite { animation: none; } .msg .bulle { transition: none; } .msg.eclaire .bulle, .msg.neuf.eclaire .bulle { animation-duration: .01s; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); } }
 `);
 
 addAR({
@@ -775,8 +799,8 @@ addAR({
   'Ton message est trop long (2 000 caractères au plus).': 'رسالتك طويلة جدًا (2000 حرف كحد أقصى).',
   'Conversation pas encore ouverte : elle s’ouvre avec un mentorat, une candidature ou une demande de contact acceptée.': 'المحادثة غير مفتوحة بعد: تُفتح مع إرشاد أو ترشّح أو طلب اتصال مقبول.',
   '1 message non lu': 'رسالة واحدة غير مقروءة', 'Lui écrire': 'راسله', 'Voir la photo': 'عرض الصورة',
-  'Répondre': 'رد', 'Toi': 'أنت', 'Message supprimé': 'رسالة محذوفة', 'Annuler la réponse': 'إلغاء الرد', 'Tu réponds à ce message': 'أنت ترد على هذه الرسالة',
-  'Réagir à ce message': 'التفاعل مع هذه الرسالة', 'Retirer': 'إزالة', 'Équipe du réseau': 'فريق الشبكة', 'Réaction inconnue.': 'تفاعل غير معروف.',
+  'Toi': 'أنت', 'Message supprimé': 'رسالة محذوفة', 'Annuler la réponse': 'إلغاء الرد', 'Tu réponds à ce message': 'أنت ترد على هذه الرسالة',
+  'Réagir à ce message': 'التفاعل مع هذه الرسالة', 'Équipe du réseau': 'فريق الشبكة', 'Réaction inconnue.': 'تفاعل غير معروف.',
   'Tu as déjà réagi à ce message.': 'لقد تفاعلت مع هذه الرسالة من قبل.', 'Vous ne pouvez plus vous écrire.': 'لم يعد بإمكانكما المراسلة.',
 }, [
   [/^(\d+) messages non lus$/, n => `${n} رسائل غير مقروءة`],
@@ -787,6 +811,8 @@ addAR({
   [/^Bloquer (.+) \? Vous ne pourrez plus vous écrire\. Tu peux débloquer à tout moment\.$/, x => `حظر ${x}؟ لن يعود بإمكانكما المراسلة. يمكنك إلغاء الحظر في أي وقت.`],
   [/^(\d+):(\d\d) max$/, (m, s) => `${m}:${s} كحد أقصى`],
   [/^Réagir avec (.+)$/, x => `التفاعل بـ ${x}`],
+  [/^Retirer ma réaction (\S+) \((.+) aussi\)$/, (e, x) => `إزالة تفاعلي ${e} (${x} أيضًا)`],
+  [/^Toi et (.+) : (\S+)$/, (x, e) => `أنت و${x}: ${e}`],
   [/^Retirer ma réaction (.+)$/, x => `إزالة تفاعلي ${x}`],
   [/^Ta réaction (.+)$/, x => `تفاعلك ${x}`],
   [/^Réaction de (.+) : (.+)$/, (x, y) => `تفاعل ${x}: ${y}`],
