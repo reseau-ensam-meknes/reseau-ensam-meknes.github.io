@@ -103,7 +103,9 @@ let attendus = [];              // nos history.go() pas encore arrivés : { sync
 let apres = [];                 // ce qui attend leur arrivée
 let dansRetour = false;         // des feuilles se ferment à cause de Retour (ou d'un changement d'écran)
 let prevu = false;
+let base = null;                // rang dans l'onglet de la première entrée de l'appli (Navigation API, si le navigateur l'a)
 const cle = () => Math.random().toString(36).slice(2, 10);
+const rang = () => { try { return window.navigation?.currentEntry?.index ?? null; } catch { return null; } };
 const lireEtat = () => (history.state && history.state.app ? history.state : null);
 const entrees = () => feuilles.filter(f => f.entree).length;
 const ecran = st => st.kr || st.k;   // une entrée de feuille garde la clé de son écran : une seule position par écran
@@ -139,7 +141,11 @@ function synchroniser() {
   if (st && courante && st.k === courante.k) return;          // déjà traité (popstate puis hashchange)
   const avant = courante;
   if (!st) {                                                  // un lien « #… » ou location.hash : on adopte la nouvelle entrée
-    st = { app: 1, k: cle(), i: (avant ? avant.i : -1) + 1, r: location.hash.slice(1), prev: avant ? avant.r : null, b: avant ? avant.b : location.hash.slice(1), o: 0, f: 0 };
+    const r = location.hash.slice(1), n = rang();
+    // Retour jusqu'à une entrée d'avant l'appli (page publique, écran de connexion) : l'appli repart d'elle,
+    // pour qu'aucun raccourci (« l'accueil est tout en bas ») ne recule plus loin que l'appli
+    if (n != null && base != null && n < base) { base = n; st = { app: 1, k: cle(), i: 0, r, prev: null, b: r, o: 0, f: 0 }; }
+    else st = { app: 1, k: cle(), i: n != null && base != null ? n - base : (avant ? avant.i : -1) + 1, r, prev: avant ? avant.r : null, b: avant ? avant.b : r, o: 0, f: 0 };
     try { history.replaceState(st, ''); } catch { /* */ }
   }
   if (avant) positions.set(ecran(avant), scrollY);
@@ -177,6 +183,7 @@ export function brancherHistorique(r, surRoute) {
   const st = lireEtat();
   if (!st) ecrire({ app: 1, k: cle(), i: 0, r, prev: null, b: r, o: 0, f: 0 }, location.hash.slice(1) === r ? null : r, false);
   else { courante = st; if (st.f) traverser(-st.f); }          // rechargée avec une feuille ouverte : on redescend
+  const n = rang(); base = n == null ? null : n - (st ? st.i : 0);
   addEventListener('popstate', synchroniser);
   addEventListener('hashchange', synchroniser);
   document.addEventListener('click', rattraper, true);

@@ -915,6 +915,23 @@ test('Retour : un lien « Publier ma demande » ouvert depuis les demandes garde
   await s.ctx.close();
 });
 
+test('Retour jusqu’à une page d’avant l’appli (vérification d’attestation) : l’onglet Accueil ne fait pas sortir du site', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.page.goto('about:blank'); await s.page.goto(adresse + '#verifier/abc'); await s.page.waitForTimeout(600);
+  await s.page.click('a[href="#accueil"]'); await s.page.waitForSelector('.hello');
+  await retour(s.page);
+  assert.equal(await ici(s.page), '#verifier/abc');
+  await s.page.click('a[href="#accueil"]'); await s.page.waitForSelector('.hello');
+  await s.page.click('.bottom-nav a[href="#reseau"]'); await s.page.waitForTimeout(400);
+  await s.page.click('.icon-tabs button:has-text("Entraide")'); await s.page.waitForTimeout(300);
+  await s.page.locator('.qrow').first().click(); await s.page.waitForTimeout(400);
+  await s.page.click('.bottom-nav a[href="#accueil"]'); await s.page.waitForTimeout(900);
+  assert.equal(await ici(s.page), '#accueil');
+  assert.equal(await s.page.locator('.hello').count(), 1);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('lien WhatsApp vers une offre : après un toucher, Retour ferme la fiche, puis mène à l’accueil (pas hors du site)', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Salma'); await s.aller('offres');
