@@ -278,6 +278,7 @@ addAR({
   [/^(\d+) groupes? \(promo et vague\) ont encore moins de 5 réponses : leurs résultats s’afficheront plus tard\.$/, n => `${n} ${+n === 1 ? 'مجموعة' : 'مجموعات'} (دفعة وموجة) لها أقل من 5 أجوبة بعد: ستظهر نتائجها لاحقاً.`],
   [/^Total (6|12) mois$/, v => `المجموع ${v === '12' ? '12 شهراً' : '6 أشهر'}`],
   [/^Généré le (.+)$/, d => `أُنجز في ${d}`],
+  [/^et (\d+) autres \(voir la Vitrine des talents dans Communauté\)\.$/, n => `و${arCount(n, ['طالب آخر', 'طالبان آخران', 'طلبة آخرون', 'طالبًا آخر'])} (انظر واجهة المواهب في الشبكة).`],
   [/^Promo (\d{4}) · (6|12) mois$/, (p, v) => `دفعة ${p} · ${v === '12' ? '12 شهراً' : '6 أشهر'}`],
   [/^(\d+) lignes?$/, n => `${n} ${+n === 1 ? 'سطر' : 'أسطر'}`],
   [/^En poste (\d+), En recherche (\d+), Poursuite d’études (\d+), Autre situation (\d+)$/, (a, b, c, d) => `يعملون ${a}، في طور البحث ${b}، متابعة الدراسة ${c}، وضعية أخرى ${d}`],

@@ -609,7 +609,7 @@ addAR({
   'Quelques secondes, et tu es dans le réseau.': 'بضع ثوانٍ، وتصبح في الشبكة.',
   'On remplit ton profil depuis ton CV (PDF).': 'نملأ ملفك انطلاقًا من سيرتك الذاتية (PDF).',
   'Facultatif': 'اختياري', 'entreprise, poste, ville, LinkedIn…': 'الشركة، المنصب، المدينة، LinkedIn…', 'ville, LinkedIn, compétences…': 'المدينة، LinkedIn، المهارات…',
-  'Choisis ta filière': 'اختر شعبتك', 'Disponible pour aider les étudiants ?': 'هل أنت مستعد لمساعدة الطلبة؟',
+  'Choisis ta filière': 'اختر شعبتك', 'Disponible pour aider les étudiants ?': 'هل تودّ مساعدة الطلبة؟',
   'Oui, avec plaisir': 'نعم، بكل سرور', 'Pas pour l’instant': 'ليس الآن',
   'Les étudiants de ta filière pourront te demander 20 minutes de conseil en visio. Tu choisis parmi leurs horaires, ou tu réponds « Pas disponible cette fois ». Tu peux changer d’avis à tout moment.':
     'سيتمكن طلبة شعبتك من طلب 20 دقيقة من النصح عبر الفيديو. تختار من بين المواعيد التي يقترحونها، أو تجيب « غير متاح هذه المرة ». يمكنك تغيير رأيك في أي وقت.',
@@ -626,19 +626,19 @@ export { levelOf, LevelChip };
 // Lauréats qui cherchent un emploi, vérification des lauréats (CV, LinkedIn), photo de profil
 addAR({
   'Modifications pas encore enregistrées': 'تعديلات لم تُحفظ بعد',
-  'Diplômé(e) de l’ENSAM Meknès, en poste ou en recherche': 'خريج(ة) ENSAM مكناس، في وظيفة أو يبحث عن عمل',
+  'Diplômé(e) de l’ENSAM Meknès, en poste ou en recherche': 'خريج(ة) ENSAM مكناس، في وظيفة أو في بحث عن عمل',
   'Je cherche un emploi en ce moment': 'أبحث عن عمل حاليًا',
   'Les lauréats qui recrutent te verront dans la Vitrine des talents, et tu recevras les offres « Jeunes diplômés » et entre lauréats de ta filière. Ton expérience de PFE aide déjà les étudiants.':
     'سيراك الخريجون الذين يوظّفون في واجهة المواهب، وستصلك عروض « الخريجون الجدد » والعروض بين الخريجين في شعبتك. وتجربتك في مشروع نهاية الدراسة تساعد الطلبة منذ الآن.',
   'Le poste que je cherche': 'الوظيفة التي أبحث عنها', 'Ex. ingénieur méthodes, Casablanca ou Tanger': 'مثال: مهندس طرق، الدار البيضاء أو طنجة',
-  'Cherche un emploi': 'يبحث عن عمل', 'un emploi': 'عمل', 'Lauréats en recherche': 'خريجون يبحثون عن عمل',
+  'Cherche un emploi': 'بحث عن عمل', 'un emploi': 'عمل', 'Lauréats en recherche': 'خريجون يبحثون عن عمل',
   'Étudiants en recherche qui ont choisi d’être visibles par les lauréats, et lauréats qui cherchent un emploi.': 'طلبة يبحثون عن فرصة واختاروا أن يظهروا للخريجين، وخريجون يبحثون عن عمل.',
   'Étudiants en recherche qui ont choisi d’être visibles par les lauréats, et lauréats qui cherchent un emploi. Garde les profils intéressants et invite-les à postuler à tes offres.':
     'طلبة يبحثون عن فرصة واختاروا أن يظهروا للخريجين، وخريجون يبحثون عن عمل. احتفظ بالملفات المهمة وادعهم للترشح لعروضك.',
   'Offres pour toi': 'عروض لك', 'Le réseau t’aide à trouver ton poste, et ton expérience aide déjà les étudiants.': 'الشبكة تساعدك على إيجاد وظيفتك، وتجربتك تساعد الطلبة منذ الآن.',
   'Tu cherches un emploi ?': 'تبحث عن عمل؟', 'Un lauréat plus expérimenté peut relire ton CV, te préparer à un entretien ou te parler salaire.': 'خريج أكثر خبرة يمكنه مراجعة سيرتك الذاتية، أو تحضيرك لمقابلة، أو الحديث معك عن الراتب.',
-  'Demander conseil': 'طلب نصيحة', 'Qui as-tu recruté ?': 'من وظّفت؟', 'Son nom': 'اسمه أو اسمها',
+  'Demander conseil': 'طلب نصيحة', 'Qui as-tu recruté ?': 'من وظّفت؟', 'Son nom': 'الاسم',
   'Personne avec ce nom. La personne doit d’abord créer son compte.': 'لا أحد بهذا الاسم. يجب على الشخص أن ينشئ حسابه أولًا.',
-  'CV déposé': 'السيرة الذاتية مرفوعة', 'Pas de CV déposé': 'لم يرفع سيرته الذاتية', 'Son profil LinkedIn': 'ملفه على LinkedIn', 'Pas de LinkedIn': 'لا يوجد LinkedIn',
-  'Demander son CV': 'طلب سيرته الذاتية', 'Retirer la photo': 'إزالة الصورة',
+  'CV déposé': 'السيرة الذاتية مرفوعة', 'Pas de CV déposé': 'لا سيرة ذاتية مرفوعة', 'Son profil LinkedIn': 'الملف على LinkedIn', 'Pas de LinkedIn': 'لا يوجد LinkedIn',
+  'Demander son CV': 'طلب السيرة الذاتية', 'Retirer la photo': 'إزالة الصورة',
 });

@@ -427,28 +427,28 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
   recrutement_confirme: {
     route: 'espace',
     fr: v => v.aide ? ['Démarrage confirmé', `${v.nom} a confirmé son démarrage chez ${v.entreprise}. +50 points`] : ['Recrutement confirmé', `${v.nom} a confirmé son recrutement chez ${v.entreprise}. +50 points`],
-    ar: v => v.aide ? ['تم تأكيد البدء', `أكد ${v.nom} بدءه لدى ${v.entreprise}. +50 نقطة`] : ['تم تأكيد التوظيف', `تم تأكيد توظيف ${v.nom} في ${v.entreprise}. +50 نقطة`],
+    ar: v => v.aide ? ['تم تأكيد البدء', `تأكيد البدء من ${v.nom} لدى ${v.entreprise}. ⁦+50⁩ نقطة`] : ['تم تأكيد التوظيف', `تم تأكيد توظيف ${v.nom} في ${v.entreprise}. ⁦+50⁩ نقطة`],
   },
   // Demandes des étudiants : nouvelle demande du parcours (lauréats), aide proposée, match, fin du match
   demande_nouvelle: {
     route: 'offres/demandes',
     fr: v => [v.dtype === 'emploi' ? 'Quelqu’un du réseau cherche un emploi' : 'Un étudiant de ton parcours cherche', `${v.nom}${TYPES_OFFRE.fr[v.dtype] ? ` · ${TYPES_OFFRE.fr[v.dtype]}` : ''} : ${v.titre}`],
-    ar: v => [v.dtype === 'emploi' ? 'شخص من الشبكة يبحث عن عمل' : 'طالب من مسارك يبحث', `${v.nom}${TYPES_OFFRE.ar[v.dtype] ? ` · ${TYPES_OFFRE.ar[v.dtype]}` : ''}: ${v.titre}`],
+    ar: v => [v.dtype === 'emploi' ? 'شخص من الشبكة يبحث عن عمل' : 'طلب جديد من مسارك', `${v.nom}${TYPES_OFFRE.ar[v.dtype] ? ` · ${TYPES_OFFRE.ar[v.dtype]}` : ''}: ${v.titre}`],
   },
   demande_proposition: {
     route: 'offres/demandes',
     fr: v => ['Un lauréat te propose son aide', `${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''} : ${v.titre}`],
-    ar: v => ['خريج يقترح عليك مساعدته', `${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''}: ${v.titre}`],
+    ar: v => ['عرض مساعدة جديد', `${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''}: ${v.titre}`],
   },
   demande_match: {
     route: 'offres/demandes',
     fr: v => ['C’est un match !', `${v.nom} a accepté ton aide : ${v.titre}. Déclare son démarrage dès qu’il a lieu.`],
-    ar: v => ['إنه تطابق!', `قبل ${v.nom} مساعدتك: ${v.titre}. صرّح ببدئه بمجرد حدوثه.`],
+    ar: v => ['تمّ الاتفاق!', `تم قبول مساعدتك من طرف ${v.nom}: ${v.titre}. صرّح بالبداية بمجرد حدوثها.`],
   },
   demande_rouverte: {
     route: 'offres/demandes',
     fr: v => ['Changement sur une demande', `${v.nom} a mis fin au match : ${v.titre}.`],
-    ar: v => ['تغيير في طلب', `أنهى ${v.nom} التطابق: ${v.titre}.`],
+    ar: v => ['تغيير في طلب', `انتهى الاتفاق مع ${v.nom}: ${v.titre}.`],
   },
   invitation: {
     route: 'offres',
@@ -468,7 +468,7 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
   filleul: {
     route: 'espace',
     fr: v => ['Ton nouveau filleul', `${v.nom} (3A) est ton filleul cette année. Fais-lui signe !`],
-    ar: v => ['طالب جديد في رعايتك', `${v.nom} (3A) في رعايتك هذه السنة. بادر بالتواصل!`],
+    ar: v => ['رعاية جديدة', `${v.nom} (3A) في رعايتك هذه السنة. بادر بالتواصل!`],
   },
   parrain: {
     route: 'accueil',
@@ -498,27 +498,27 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
   contact_demande: {
     route: 'accueil',
     fr: v => ['Demande de coordonnées', `${v.nom} aimerait avoir tes coordonnées. Tu acceptes ou non, en un clic.`],
-    ar: v => ['طلب معلومات الاتصال', `يرغب ${v.nom} في معلومات الاتصال بك. اقبل أو ارفض بنقرة.`],
+    ar: v => ['طلب معلومات الاتصال', `طلب من ${v.nom} للحصول على معلومات الاتصال بك. القبول أو الرفض بنقرة واحدة.`],
   },
   contact_accepte: {
     route: 'accueil',
     fr: v => ['Demande acceptée', `${v.nom} a accepté : ses coordonnées sont sur son profil.`],
-    ar: v => ['تم قبول طلبك', `وافق ${v.nom}: معلومات الاتصال به في ملفه.`],
+    ar: v => ['تم قبول طلبك', `تمت الموافقة من ${v.nom}: معلومات الاتصال في الملف الشخصي.`],
   },
   relecture_demande: {
     route: 'mentorat/cv',
     fr: v => ['Un CV à relire', `${v.nom} cherche un lauréat pour relire son CV.`],
-    ar: v => ['سيرة ذاتية للمراجعة', `يبحث ${v.nom} عن خريج يراجع سيرته الذاتية.`],
+    ar: v => ['سيرة ذاتية للمراجعة', `طلب من ${v.nom}: مراجعة سيرة ذاتية.`],
   },
   relecture_prise: {
     route: 'mentorat/cv',
     fr: v => ['Relecture en cours', `${v.nom} relit ton CV.`],
-    ar: v => ['المراجعة جارية', `يراجع ${v.nom} سيرتك الذاتية.`],
+    ar: v => ['المراجعة جارية', `مراجعة سيرتك الذاتية جارية مع ${v.nom}.`],
   },
   relecture_rendue: {
     route: 'mentorat/cv',
     fr: v => ['Ton CV a été relu', `${v.nom} t’a laissé ses conseils. Lis-les, puis dis merci.`],
-    ar: v => ['تمت مراجعة سيرتك الذاتية', `ترك لك ${v.nom} نصائحه. اطّلع عليها ثم قل شكرًا.`],
+    ar: v => ['تمت مراجعة سيرتك الذاتية', `نصائح جديدة من ${v.nom}. اطّلع عليها ثم قل شكرًا.`],
   },
   signalement: {
     route: 'admin/moderation',
@@ -529,13 +529,13 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     route: 'profil',
     fr: v => v.n >= 2 ? ['Tu es vérifié(e)', `${v.nom} a confirmé ta promo. Ton badge « Lauréat vérifié » est là.`]
       : ['Ta promo confirmée une fois', `${v.nom} a confirmé que tu es de sa promo. Encore un lauréat et ton badge arrive.`],
-    ar: v => v.n >= 2 ? ['تم التحقق من حسابك', `أكّد ${v.nom} دفعتك. شارة «خريج موثَّق» صارت لك.`]
-      : ['تأكيد أول لدفعتك', `أكّد ${v.nom} أنك من دفعته. تأكيد واحد آخر وتصلك الشارة.`],
+    ar: v => v.n >= 2 ? ['تم التحقق من حسابك', `تأكيد دفعتك من ${v.nom}. شارة «خريج موثَّق» صارت لك.`]
+      : ['تأكيد أول لدفعتك', `تأكيد من ${v.nom}: أنتما من نفس الدفعة. تأكيد واحد آخر وتصلك الشارة.`],
   },
   verifier_pair: {
     route: 'accueil',
     fr: v => ['Un lauréat de ta promo', `${v.nom} vient de rejoindre le réseau${v.promo ? ` (promo ${v.promo})` : ''}. Confirme-le si tu le connais.`],
-    ar: v => ['خريج من دفعتك', `انضم ${v.nom} إلى الشبكة${v.promo ? ` (دفعة ${v.promo})` : ''}. أكّد هويته إن كنت تعرفه.`],
+    ar: v => ['خريج من دفعتك', `انضمام جديد إلى الشبكة: ${v.nom}${v.promo ? ` (دفعة ${v.promo})` : ''}. أكّد الهوية إن كانت لك معرفة سابقة.`],
   },
   evenement: {
     route: 'reseau/agenda',
@@ -1059,7 +1059,7 @@ const AR: Dico = {
   t: {
     aFaire: 'مهام هذا الأسبوع', offres: 'عروض جديدة لك', reponses: 'أجوبة على أسئلتك', parrain: 'عرّابك',
     cafes: 'مقاهي ENSAM قربك', talents: 'تنبيه المواهب', ouvertes: 'طلبة يحتاجون مساعدتك', impact: 'أثرك هذا الأسبوع',
-    filleul: 'طالب جديد في رعايتك', filleuls: 'طلبة جدد في رعايتك', admin: 'الإدارة', agenda: 'في أجندة الشبكة', enquete: 'استمارة الإدماج المهني',
+    filleul: 'رعاية جديدة', filleuls: 'طلبة جدد في رعايتك', admin: 'الإدارة', agenda: 'في أجندة الشبكة', enquete: 'استمارة الإدماج المهني',
     arrivees: 'وجوه جديدة في الشبكة',
   },
   routes: {
@@ -1069,7 +1069,7 @@ const AR: Dico = {
     accueil: 'فتح المنصة', admin: 'فتح الإدارة', 'reseau/annuaire': 'عرض الدليل',
   },
   l: {
-    aConfirmer: (f, x) => `أكّد توظيفك في ${f.g(x.entreprise)}${x.nom ? ` (صرّح به ${f.u(x.nom)})` : ''}.`,
+    aConfirmer: (f, x) => `أكّد توظيفك في ${f.g(x.entreprise)}${x.nom ? ` (بتصريح من ${f.u(x.nom)})` : ''}.`,
     invitation: (f, x) => `دعوة من ${f.u(x.nom)} للترشح: ${f.g(x.titre)} · ${f.u(x.entreprise)}`,
     candidatures: (f, n) => f.g(arN(n, ['ترشيح واحد ينتظر ردك.', 'ترشيحان ينتظران ردك.', '{n} ترشيحات تنتظر ردك.', '{n} ترشيحًا ينتظر ردك.'])),
     demande: (f, x) => `طلب مساعدة من ${f.u(x.nom)}: ${f.g(x.sujet)}`,
@@ -1084,11 +1084,11 @@ const AR: Dico = {
     parrain: (f, nom) => `عرّابك هذه السنة: ${f.g(nom)}، من خريجي شعبتك. بادر بالتواصل!`,
     cafe: (f, x, q) => `${f.g(x.ville)} · ${q} · ${f.u(x.lieu)}`,
     talentsIntro: (f, n) => f.g(arN(n, ['طالب واحد من شعبتك يبحث عن تدريب.', 'طالبان من شعبتك يبحثان عن تدريب.', '{n} طلبة من شعبتك يبحثون عن تدريب.', '{n} طالبًا من شعبتك يبحثون عن تدريب.'])),
-    talent: (f, x) => `${f.g(x.prenom)} · ${x.niveau}A${x.competences.length ? ' · ' + f.u(x.competences.join('، ')) : ''}${x.nouveau ? ' · انضم حديثًا' : ''}`,
+    talent: (f, x) => `${f.g(x.prenom)} · ${x.niveau}A${x.competences.length ? ' · ' + f.u(x.competences.join('، ')) : ''}${x.nouveau ? ' · انضمام حديث' : ''}`,
     ouvertesIntro: (f, n) => f.g(arN(n, ['طلب مساعدة واحد من طلبة شعبتك ينتظر خريجًا.', 'طلبا مساعدة من طلبة شعبتك ينتظران خريجًا.', '{n} طلبات مساعدة من طلبة شعبتك تنتظر خريجًا.', '{n} طلب مساعدة من طلبة شعبتك تنتظر خريجًا.'])),
     ouverte: (f, s) => `«${f.u(s)}»`,
     mercis: (f, n) => `${f.g(arN(n, ['رسالة شكر واحدة', 'رسالتا شكر', '{n} رسائل شكر', '{n} رسالة شكر']))} هذا الأسبوع.`,
-    recrutements: (f, n) => `${f.g(arN(n, ['توظيف مؤكَّد', 'توظيفان مؤكَّدان', '{n} توظيفات مؤكَّدة', '{n} توظيفًا مؤكَّدًا']))}: +${50 * n} نقطة.`,
+    recrutements: (f, n) => `${f.g(arN(n, ['توظيف مؤكَّد', 'توظيفان مؤكَّدان', '{n} توظيفات مؤكَّدة', '{n} توظيفًا مؤكَّدًا']))}: ⁦+${50 * n}⁩ نقطة.`,
     citation: (f, x) => `«${f.u(x.texte)}»${x.prenom ? ` — ${f.u(x.prenom)}` : ''}`,
     filleul: (f, nom) => `${f.g(nom)} (3A) في رعايتك هذه السنة. بادر بالتواصل!`,
     nonVerifies: (f, n) => f.g(arN(n, ['خريج واحد في انتظار التحقق', 'خريجان في انتظار التحقق', '{n} خريجين في انتظار التحقق', '{n} خريجًا في انتظار التحقق'])),
@@ -1115,10 +1115,10 @@ const AR: Dico = {
     cafe: ville => `مقهى ENSAM في ${ville}`,
     candidatures: n => arN(n, ['ترشيح واحد ينتظر ردك', 'ترشيحان ينتظران ردك', '{n} ترشيحات تنتظر ردك', '{n} ترشيحًا ينتظر ردك']),
     demandes: (n, nom) => (n > 1 ? arN(n, ['', 'طلبا مساعدة لك', '{n} طلبات مساعدة لك', '{n} طلب مساعدة لك']) : `طلب مساعدة من ${nom}`),
-    recrutements: n => `${arN(n, ['توظيف مؤكَّد', 'توظيفان مؤكَّدان', '{n} توظيفات مؤكَّدة', '{n} توظيفًا مؤكَّدًا'])}: +${50 * n} نقطة`,
+    recrutements: n => `${arN(n, ['توظيف مؤكَّد', 'توظيفان مؤكَّدان', '{n} توظيفات مؤكَّدة', '{n} توظيفًا مؤكَّدًا'])}: ⁦+${50 * n}⁩ نقطة`,
     mercis: n => arN(n, ['رسالة شكر لك هذا الأسبوع', 'رسالتا شكر لك هذا الأسبوع', '{n} رسائل شكر لك هذا الأسبوع', '{n} رسالة شكر لك هذا الأسبوع']),
     questions: (n, cible) => (n > 1 ? arN(n, ['', 'سؤالان لك', '{n} أسئلة لك', '{n} سؤالًا لك']) : `سؤال لك حول ${cible}`),
-    filleuls: (n, nom) => (n > 1 ? arN(n, ['', 'طالبان جديدان في رعايتك', '{n} طلبة جدد في رعايتك', '{n} طالبًا جديدًا في رعايتك']) : `طالب جديد في رعايتك: ${nom}`),
+    filleuls: (n, nom) => (n > 1 ? arN(n, ['', 'طالبان جديدان في رعايتك', '{n} طلبة جدد في رعايتك', '{n} طالبًا جديدًا في رعايتك']) : `رعاية جديدة: ${nom}`),
     talents: n => arN(n, ['طالب واحد من شعبتك يبحث عن تدريب', 'طالبان من شعبتك يبحثان عن تدريب', '{n} طلبة من شعبتك يبحثون عن تدريب', '{n} طالبًا من شعبتك يبحثون عن تدريب']),
     ouvertes: n => arN(n, ['طلب مساعدة في شعبتك', 'طلبا مساعدة في شعبتك', '{n} طلبات مساعدة في شعبتك', '{n} طلب مساعدة في شعبتك']),
     relance: () => 'هل لا يزال عرضك مفتوحًا؟',
@@ -1431,9 +1431,9 @@ export function rendreDemandes(demandes: DemandeAlerte[], langue: Langue, site: 
   const ligne = (x: DemandeAlerte, F: Fmt) => [F.g(qui(x)), niveauCourt(x, langue), TYPES_OFFRE[langue][txt(x.type)] || '', F.u(txt(x.titre)), F.u(txt(x.lieu))].filter(Boolean).join(' · ');
   const sujet = couper(n > 1
     ? (ar ? `${arN(n, ['', 'طلبان جديدان', '{n} طلبات جديدة', '{n} طلبًا جديدًا'])} من مسارك` : `${n} demandes d’étudiants de ton parcours`) + (ar ? ' · شبكة ENSAM' : ' · Réseau ENSAM')
-    : (ar ? `${qui(d0)} يبحث عن: ${txt(d0.titre)}` : `${qui(d0)} cherche : ${txt(d0.titre)}`), 110);
+    : (ar ? `${qui(d0)} · المطلوب: ${txt(d0.titre)}` : `${qui(d0)} cherche : ${txt(d0.titre)}`), 110);
   const intro = ar
-    ? 'قال طلبة من مسارك ما يبحثون عنه، مع سيرهم الذاتية. إن كنت تستطيع توظيف أحدهم أو تأطيره أو التوصية به، اقترح ذلك: هو من يختار.'
+    ? 'قال طلبة من مسارك ما يبحثون عنه، مع سيرهم الذاتية. إن كنت تستطيع توظيف أحدهم أو تأطيره أو التوصية به، اقترح ذلك: القرار يبقى لهم.'
     : 'Des étudiants de ton parcours viennent de dire ce qu’ils cherchent, CV joint. Si tu peux recruter, encadrer ou recommander l’un d’eux, propose-le : c’est lui qui choisit.';
   const lien = (x: DemandeAlerte) => `${site}#aider/${x.id}`;   // « Je peux aider » ouvre la feuille préremplie
   const html = cadreEmail({

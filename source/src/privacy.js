@@ -36,7 +36,7 @@ addAR({
   'Pour éviter le spam, chaque compte a des limites par jour : candidatures, messages, publications et demandes de contact.': 'لتفادي الرسائل المزعجة، لكل حساب حدود يومية: الترشيحات، الرسائل، المنشورات، وطلبات الاتصال.',
   'Un lauréat reçoit son badge « vérifié » par l’administration, ou quand deux lauréats déjà vérifiés de sa promo le confirment.': 'يحصل الخريج على شارة «موثَّق» من الإدارة، أو عندما يؤكده خريجان موثَّقان من دفعته.',
   'L’équipe du réseau peut importer la liste officielle des étudiants (nom, promo, filière, email de l’école). Elle sert seulement à vérifier les inscriptions et seule l’équipe du réseau la voit.': 'يمكن لفريق الشبكة استيراد اللائحة الرسمية للطلبة (الاسم، الدفعة، الشعبة، بريد المدرسة). تُستعمل فقط للتحقق من التسجيلات، ولا يراها إلا فريق الشبكة.',
-  'Enquête d’insertion': 'استبيان الإدماج المهني',
+  'Enquête d’insertion': 'استطلاع الإدماج المهني',
   'Six mois puis douze mois après le diplôme, un court questionnaire te demande ta situation (emploi, recherche, études…).': 'بعد ستة أشهر ثم اثني عشر شهرًا من التخرج، يسألك استبيان قصير عن وضعيتك (عمل، بحث، دراسة…).',
   'Les réponses sont publiées seulement en chiffres globaux par promo et par filière, jamais en dessous de 5 réponses. Seule l’administration voit les réponses individuelles.': 'لا تُنشر الأجوبة إلا كأرقام إجمالية حسب الدفعة والشعبة، ولا تُنشر أبدًا إذا قلّت عن 5 أجوبة. الإدارة وحدها ترى الأجوبة الفردية.',
   'Répondre est facultatif.': 'الإجابة اختيارية.',
@@ -52,6 +52,7 @@ addAR({
   'Tu ne veux plus recevoir les alertes d’offres par email ?': 'ألا تريد تلقي تنبيهات العروض عبر البريد بعد الآن؟',
   'Tu ne recevras plus les alertes d’offres par email.': 'لن تصلك بعد الآن تنبيهات العروض عبر البريد.',
   'Les notifications sur le téléphone et le résumé de la semaine ne changent pas. Tu peux les réactiver dans « Mon profil ».': 'إشعارات الهاتف والملخص الأسبوعي لا تتغير. ويمكنك إعادة تفعيل التنبيهات من «ملفي الشخصي».',
+  'Tes données': 'بياناتك',
   'Ce lien n’est plus valable. Connecte-toi et désactive les alertes dans « Mon profil ».': 'هذا الرابط لم يعد صالحًا. سجّل الدخول وأوقف التنبيهات من «ملفي الشخصي».',
 });
 

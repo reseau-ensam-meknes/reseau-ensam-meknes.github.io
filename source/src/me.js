@@ -466,7 +466,13 @@ addAR({
   'Aide 10 étudiants à être recrutés': 'ساعد 10 طلبة على التوظيف',
   'Atteins 300 points d’impact': 'اجمع 300 نقطة أثر',
   '1 rendez-vous à venir': 'موعد واحد قادم',
+  // Barème et derniers points (logic.js)
+  'CV relu et rendu à un étudiant': 'مراجعة سيرة ذاتية لطالب', 'Rubrique du guide de l’étranger écrite': 'قسم مكتوب في دليل الخارج',
+  'Entretien ou avis de stage partagé': 'مشاركة مقابلة أو رأي حول تدريب', 'CV relu et rendu': 'مراجعة سيرة ذاتية مُنجزة',
 }, [
+  [/^Guide de l’étranger : (.+)$/, x => `دليل الخارج: ${x}`],
+  [/^Entretien partagé : (.+)$/, x => `مقابلة مشتركة: ${x}`],
+  [/^Avis de stage : (.+)$/, x => `رأي حول تدريب: ${x}`],
   [/^Voir les (\d+) autres$/, n => `عرض البقية (${n})`],
   [/^Ton recrutement chez (.+) est vérifié des deux côtés\. Un petit mot fera très plaisir à (.+)\.$/, (e, p) => `توظيفك في ${e} مؤكَّد من الطرفين. كلمة شكر صغيرة ستُسعد ${p} كثيرًا.`],
   [/^Ton recrutement chez (.+) est vérifié des deux côtés\.$/, e => `توظيفك في ${e} مؤكَّد من الطرفين.`],

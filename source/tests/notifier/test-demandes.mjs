@@ -33,7 +33,7 @@ test('notifications : chaque étape d’une demande ouvre sa carte, en français
   // Sans identifiant valable : la liste des demandes
   assert.equal(N.texteNotif('demande_match', { nom: 'S', titre: 't', demande: 'x' }, 'fr', SITE).url, `${SITE}#offres/demandes`);
   const ar = N.texteNotif('demande_proposition', { nom: 'Youssef', titre: 'PFE lean', entreprise: 'Renault', demande: D1 }, 'ar', SITE);
-  assert.equal(ar.title, 'خريج يقترح عليك مساعدته');
+  assert.equal(ar.title, 'عرض مساعدة جديد');
   assert.ok(ar.body.includes('⁨Youssef⁩'));
 });
 
