@@ -446,7 +446,7 @@ export function Person({ p, score, onOpen, size = 36, sub }) {
 
 export function Bar({ value, pace, label }) {
   const v = Math.max(0, Math.min(1, value || 0));
-  return html`<div class="bar" role="img" aria-label=${label || `${Math.round(v * 100)} %`}>
+  return html`<div class="bar" role="img" aria-label=${label || `${Math.round(v * 100)}%`}>
     <span class="bar-fill" style=${`width:${v * 100}%`}></span>
     ${pace !== undefined ? html`<span class="bar-pace" style=${`inset-inline-start:${Math.max(0, Math.min(1, pace)) * 100}%`} title="Rythme attendu à cette date"></span>` : null}
   </div>`;

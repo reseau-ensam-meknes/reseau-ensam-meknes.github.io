@@ -257,7 +257,7 @@ function App({ store }) {
         ${page === 'enquete' ? html`<${EnquetePage} ...${ctx}/>` : null}
       </main>
     </div>
-    <nav class=${'bottom-nav' + (plein && route.sub ? ' cache' : '')}>${navBas.map(([k, l, i]) => html`<a href=${'#' + k} class=${page === k ? 'on' : ''} onClick=${e => { e.preventDefault(); go(k, { onglet: true }); }}><span class="bn-ico"><${Icon} name=${i}/>${dotFor(k) ? html`<span class="dotn" aria-hidden="true"></span>` : null}</span><span>${{ 'Mon parcours': 'Parcours', 'Mon espace': 'Espace', 'Ma promo': 'Promo' }[l] || l}</span>${dotFor(k) ? html`<span class="sr-only">À faire ici</span>` : null}</a>`)}</nav>
+    <nav class=${'bottom-nav' + (plein && route.sub ? ' cache' : '')}>${navBas.map(([k, l, i]) => html`<a href=${'#' + k} class=${page === k ? 'on' : ''} onClick=${e => { e.preventDefault(); go(k, { onglet: true }); }}><span class="bn-ico"><${Icon} name=${i}/>${dotFor(k) ? html`<span class="dotn" aria-hidden="true"></span>` : null}</span><span>${getLang() === 'ar' ? l : { 'Mon parcours': 'Parcours', 'Mon espace': 'Espace', 'Ma promo': 'Promo' }[l] || l}</span>${dotFor(k) ? html`<span class="sr-only">À faire ici</span>` : null}</a>`)}</nav>
     ${cloche ? html`<${Cloche} notifs=${notifs} onGo=${openNotif} onClose=${() => setCloche(false)}/>` : null}
     ${offerId ? html`<${OfferDetail} ctx=${ctx} id=${offerId} key=${offerId} apply=${applyNow} onClose=${() => setOfferId(null)}/>` : null}
     ${aide?.demande ? html`<${ProposerAide} ctx=${ctx} id=${aide.demande} key=${'aide-' + aide.demande} onClose=${() => setAide(null)}/>` : null}
@@ -742,7 +742,7 @@ function Home(ctx) {
           <h2 class="h-sec">Une réussite</h2>
           <div class="bloc-corps">
           ${merci ? html`<div class="panel merci-une"><p class="eyebrow"><${Icon} name="heart" size=${13}/> Un merci récent</p>
-            <blockquote class="merci"><p translate="no" dir="auto">« ${merci.txt} »</p><footer><span class="small"><span translate="no">${store.byId('profiles', merci.from)?.full_name?.split(' ')[0] || 'Un étudiant'}</span> → <button class="linkish" translate="no" onClick=${() => openProfile(store.byId('profiles', merci.to))}>${store.byId('profiles', merci.to)?.full_name}</button></span></footer></blockquote></div>` : html`<${SuccessFeed} ctx=${ctx} max=${1}/>`}
+            <blockquote class="merci"><p translate="no" dir="auto">« ${merci.txt} »</p><footer><span class="small"><span translate="no">${store.byId('profiles', merci.from)?.full_name?.split(' ')[0] || 'Un étudiant'}</span> <${Icon} name="arrow" size=${13}/><span class="sr-only"> → </span> <button class="linkish" translate="no" onClick=${() => openProfile(store.byId('profiles', merci.to))}>${store.byId('profiles', merci.to)?.full_name}</button></span></footer></blockquote></div>` : html`<${SuccessFeed} ctx=${ctx} max=${1}/>`}
           ${isLaureat && s && s.recrutes + s.mentorats ? html`<button class="impact-strip clickable" onClick=${() => go('espace')}><span class="obj-ico brass"><${Icon} name="heart" size=${20}/></span><span class="grow" style="min-width:0">${s.recrutes + s.mentorats > 1 ? `Tu as aidé ${s.recrutes + s.mentorats} étudiants` : 'Tu as aidé 1 étudiant'}</span><${LevelChip} points=${s.points}/><${Icon} name="arrow" size=${18}/></button>` : null}
           </div>
         </div>

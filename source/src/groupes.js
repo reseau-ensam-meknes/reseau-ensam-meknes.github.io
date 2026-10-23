@@ -1,5 +1,6 @@
 // Groupes (filière, ville, à l'étranger) et Cafés ENSAM : on se retrouve, en ligne puis en vrai.
 import { html, useState } from './vendor/preact-htm.js';
+import { getLang } from './i18n.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, toast } from './ui.js';
 import { myGroups, groupMembers, groupLabel, groupKey, autoGroups, timeAgo } from './logic.js';
 import { SlotDate } from './mentorat.js';
@@ -65,7 +66,7 @@ function GroupCard({ ctx, gkey }) {
     <span class=${'g-badge k-' + kind}><${Icon} name=${ico} size=${20}/></span>
     <span class="gcard-txt"><span class="eyebrow">${lbl}</span><strong>${groupLabel(data, gkey)}</strong>
       <span class="muted small">${n} membre${n > 1 ? 's' : ''}${nc ? html` · <span class="good-t">${nc} café${nc > 1 ? 's' : ''} prévu${nc > 1 ? 's' : ''}</span>` : null}</span>
-      ${last ? html`<span class="gcard-last small"><b>${store.byId('profiles', last.author_id)?.full_name?.split(' ')[0] || 'Membre'} :</b> <span translate="no" dir="auto">${last.body.slice(0, 70)}${last.body.length > 70 ? '…' : ''}</span></span>` : html`<span class="gcard-last small muted">Pas encore de message. Dis bonjour !</span>`}</span>
+      ${last ? html`<span class="gcard-last apercu small"><b class="ap-qui"><bdi translate="no">${store.byId('profiles', last.author_id)?.full_name?.split(' ')[0] || 'Membre'}</bdi>${getLang() === 'ar' ? ':' : ' :'}</b><span class="ap-txt" translate="no" dir="auto">${last.body.slice(0, 70)}${last.body.length > 70 ? '…' : ''}</span></span>` : html`<span class="gcard-last small muted">Pas encore de message. Dis bonjour !</span>`}</span>
   </button>`;
 }
 
