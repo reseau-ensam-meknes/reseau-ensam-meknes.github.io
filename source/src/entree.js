@@ -325,7 +325,7 @@ export function AuthScreen({ store }) {
   const run = async fn => {
     if (occupe.current) return; occupe.current = true;
     setBusy(true); setMsg(null);
-    try { await fn(store || await attendreMagasin().catch(e => { throw Object.assign(e, { magasin: true }); })); } catch (e) { setMsg({ err: true, t: await texteErreurEntree(e) }); }
+    try { await fn(store || await attendreMagasin(true).catch(e => { throw Object.assign(e, { magasin: true }); })); } catch (e) { setMsg({ err: true, t: await texteErreurEntree(e) }); }
     occupe.current = false; setBusy(false);
   };
   const ecole = store?.domainesEcole?.() || [];
@@ -482,15 +482,16 @@ function sansReprise() {
 }
 
 let magasin = null, magasinEchec = false;
-// Le magasin, une seule fois ; s'il n'a pas pu se charger (réseau), le prochain geste recharge la page dès que le réseau répond
-export function attendreMagasin() {
+// Le magasin, une seule fois ; s'il n'a pas pu se charger (réseau), le prochain geste recharge la page dès que le réseau répond.
+// geste : un toucher qui attendait un chargement encore en cours, et qui le voit échouer, suit le même chemin
+export function attendreMagasin(geste = false) {
   if (!magasin) {
     if (magasinEchec) return repond('./store.js').then(ok => (ok && recharger()) || Promise.reject(new Error(PAS_DE_RESEAU)));
     precharger(window.ENSAM_MAGASIN);
     magasin = import('./store.js').then(m => m.createStore(), e => { magasinEchec = true; throw e; })
       .then(s => { monter(s); chargerApp(); return s; }, e => { magasin = null; throw e; });
   }
-  return magasin;
+  return geste ? magasin.catch(e => magasinEchec ? attendreMagasin() : Promise.reject(e)) : magasin;
 }
 export const magasinEntree = () => magasin;
 

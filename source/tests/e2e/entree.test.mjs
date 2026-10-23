@@ -343,6 +343,23 @@ test('entrée : deux touchers dans le même instant n’envoient qu’un code ; 
   await t.ctx.close();
 });
 
+test('un geste pendant que le magasin est encore en train d’échouer : la page se recharge quand même dès que le réseau répond', async () => {
+  // 3G lente : store.js met du temps à tomber, et le visiteur touche « Recevoir mon code » avant
+  const etat = { ouvert: false, vu: 0 };
+  const s = await visiteur({ avant: ctx => ctx.route(/\/store\.js$/, async r => {
+    if (r.request().resourceType() === 'fetch') etat.ouvert = true;
+    if (etat.ouvert) return r.continue();
+    etat.vu++; await new Promise(ok => setTimeout(ok, 2500)); return r.abort('connectionreset');
+  }) });
+  while (!etat.vu) await s.page.waitForTimeout(50);
+  await s.page.click('#au-je-etudiant'); await s.page.fill('#au-email', 'lent@exemple.ma'); await s.page.check('#au-ok');
+  await Promise.all([s.page.waitForEvent('load', { timeout: 15000 }), s.page.click('.entree-form button.btn.primary')]);
+  await s.page.waitForSelector('#entree .entree-form');
+  assert.equal(await s.page.inputValue('#au-email'), 'lent@exemple.ma');
+  assert.ok(etat.ouvert);
+  await s.ctx.close();
+});
+
 test('réseau coupé pendant le chargement : la page se recharge dès que le réseau répond, l’email tapé reste', async () => {
   // store.js tombe (3G instable) jusqu'à ce que le site vérifie que le réseau répond : le navigateur, lui,
   // ne redemanderait jamais ce module dans cette page
