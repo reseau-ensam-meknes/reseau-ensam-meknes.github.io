@@ -1052,12 +1052,13 @@ export function manquesDemande(f, me) {
 // « Me prévenir » : après une action qui attend une réponse, une feuille propose les notifications sur cet appareil.
 // etat : celui des notifications ici (… | demo | absent | ios | refuse | off | on) ; memo : ce que cet appareil a déjà
 // répondu ({ n refus, at dernier refus, fait, mail }). Deux refus au plus, 14 jours entre les deux ; la variante email
-// (navigateur sans notifications) une seule fois, et seulement si un email part vraiment.
+// (navigateur sans notifications) une seule fois, et seulement si un email part vraiment. voulu : false quand le membre a
+// décoché dans Mon profil la catégorie de la réponse attendue (pas de notification à promettre, l'email reste possible).
 export const PREVENIR_ECART = 14 * 864e5;
-export function prevenirVariante({ etat, raison, memo = {}, now = Date.now(), role, emailsMessages, emailsHebdo }) {
+export function prevenirVariante({ etat, raison, memo = {}, now = Date.now(), role, emailsMessages, emailsHebdo, voulu = true }) {
   if (role === 'admin' || memo.fait || etat === 'on' || etat === '…' || etat === 'demo') return null;
   if (etat === 'off' || etat === 'ios') {
-    if ((memo.n || 0) >= 2 || (memo.at && now - memo.at < PREVENIR_ECART)) return null;
+    if (!voulu || (memo.n || 0) >= 2 || (memo.at && now - memo.at < PREVENIR_ECART)) return null;
     return etat === 'off' ? 'push' : 'ios';
   }
   if (memo.mail) return null;
@@ -1068,11 +1069,13 @@ export function prevenirVariante({ etat, raison, memo = {}, now = Date.now(), ro
 
 // À l'ouverture, « Reçois l'essentiel sur ton téléphone » : pour un membre dont l'appareil peut recevoir des notifications
 // sans y être abonné (etat 'off' ; jamais sur iPhone hors écran d'accueil, ni sans notifications possibles). Même mémo et
-// même plafond que « Me prévenir » : « Plus tard » la ramène 7 jours après, deux refus au plus en tout ; acceptée, ou refusée
+// même plafond que « Me prévenir » : chaque affichage sans « Activer » (« Plus tard », fermer, quitter l'application) la
+// ramène 7 jours après, deux fois au plus en tout ; acceptée, ou refusée
 // par le navigateur (etat 'refuse'), plus jamais. Une feuille « Me prévenir » remise à cette visite passe avant.
+// voulu : false quand toutes les catégories sont décochées dans Mon profil (rien à proposer).
 export const OUVERTURE_ECART = 7 * 864e5;
-export function ouvertureNotif({ etat, memo = {}, now = Date.now(), role }) {
-  if (role === 'admin' || etat !== 'off' || memo.fait || memo.differe) return false;
+export function ouvertureNotif({ etat, memo = {}, now = Date.now(), role, voulu = true }) {
+  if (role === 'admin' || !voulu || etat !== 'off' || memo.fait || memo.differe) return false;
   return (memo.n || 0) < 2 && !(memo.at && now - memo.at < OUVERTURE_ECART);
 }
 

@@ -514,3 +514,61 @@ test('code demandé en arabe, entré dans un autre onglet : toujours en arabe', 
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
+
+// Un membre déjà connecté sur cet appareil (session gardée), ouvert sur « hash ». push : un navigateur qui peut recevoir
+// des notifications sans y être abonné (etatPush 'off'), comme un téléphone Android
+async function membre({ hash = '', push = false } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  if (push) await ctx.addInitScript(() => {
+    const pm = { getSubscription: async () => null, subscribe: async () => ({}) };
+    const reg = { waiting: null, installing: null, addEventListener() {}, pushManager: pm };
+    const sw = { register: async () => reg, ready: Promise.resolve(reg), controller: null, addEventListener() {} };
+    Object.defineProperty(Navigator.prototype, 'serviceWorker', { get: () => sw, configurable: true });
+    window.Notification = class { static permission = 'default'; static requestPermission = async () => 'default'; };
+    if (!('PushManager' in window)) window.PushManager = function PushManager() {};
+  });
+  await ctx.addInitScript(uid => {
+    if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1');
+    localStorage.setItem('ensam-lang', 'fr');
+    const now = Math.floor(Date.now() / 1000);
+    localStorage.setItem('sb-127-auth-token', JSON.stringify({ access_token: 'x.' + btoa(JSON.stringify({ sub: uid, exp: now + 7200 })) + '.y', token_type: 'bearer', expires_in: 7200, expires_at: now + 7200, refresh_token: 'r', user: { id: uid, aud: 'authenticated', email: 'membre@exemple.ma', user_metadata: {}, app_metadata: {} } }));
+  }, UID);
+  const page = await ctx.newPage(); const erreurs = [];
+  page.on('pageerror', e => erreurs.push(e.message));
+  await page.goto(site.adresse + hash);
+  await page.waitForSelector('.me-btn', { timeout: 15000 });
+  return { ctx, page, erreurs };
+}
+const ETUDIANT = { id: UID, full_name: 'Salma Test', role: 'etudiant', filiere: 'Génie Industriel', promo: S + 1, created_at: '2025-10-01T10:00:00Z', verified: true,
+  emails_hebdo: true, alertes_offres: true, alertes_email: true, emails_messages: true };
+
+test('accord pas encore donné (loi 09-08) : jamais de demande de notifications, même sur Confidentialité ou Mon profil', async () => {
+  // Témoin : l'accord donné, la feuille d'ouverture vient
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z', notif_push: {} });
+  let m = await membre({ hash: '#profil', push: true });
+  await m.page.waitForSelector('.modal.ouverture', { timeout: 12000 });
+  await m.ctx.close();
+  for (const hash of ['#profil', '#confidentialite']) {
+    site.vider(); site.inscrits.push({ ...ETUDIANT, notif_push: {} });
+    m = await membre({ hash, push: true });
+    await m.page.waitForTimeout(8000);
+    assert.equal(await m.page.locator('.consent-back').count(), 0, 'la fenêtre de l’accord attend ailleurs');
+    assert.equal(await m.page.locator('.modal.ouverture').count(), 0, hash);
+    assert.deepEqual(m.erreurs, []);
+    await m.ctx.close();
+  }
+});
+
+test('Mon profil en ligne : les notifications par catégorie seulement une fois la base à jour (colonne notif_push)', async () => {
+  for (const colonne of [false, true]) {
+    site.vider(); site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z', ...(colonne ? { notif_push: {} } : {}) });
+    const m = await membre({ hash: '#profil' });
+    await m.page.waitForSelector('#mes-donnees', { timeout: 15000 });
+    assert.equal(await m.page.locator('.md-cats').count(), colonne ? 1 : 0, 'les cases par catégorie');
+    assert.equal(await m.page.locator('#md-alertes').count(), colonne ? 0 : 1, 'avant la mise à jour, l’étudiant garde sa case « M’alerter… »');
+    assert.ok(await m.page.isChecked('#md-alertes-mail'), 'l’email des offres reste là');
+    assert.deepEqual(m.erreurs, []);
+    await m.ctx.close();
+  }
+});

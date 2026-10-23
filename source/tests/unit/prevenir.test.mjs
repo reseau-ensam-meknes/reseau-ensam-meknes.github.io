@@ -58,3 +58,15 @@ test('ouvertureNotif : « Plus tard » la ramène 7 jours après, deux refus au 
   // La variante email de « Me prévenir » ne compte pas comme une demande d'autorisation
   assert.equal(o({ memo: { mail: 1 } }), true);
 });
+
+test('catégorie décochée dans Mon profil : « Me prévenir » ne promet pas de notification, l’email reste possible', () => {
+  assert.equal(v({ etat: 'off', voulu: false }), null);
+  assert.equal(v({ etat: 'ios', voulu: false }), null);
+  assert.equal(v({ etat: 'off', voulu: true }), 'push');
+  assert.equal(v({ etat: 'absent', raison: 'demande', voulu: false }), 'email');
+});
+
+test('ouvertureNotif : toutes les catégories décochées, rien à proposer', () => {
+  assert.equal(o({ voulu: false }), false);
+  assert.equal(o({ voulu: true }), true);
+});

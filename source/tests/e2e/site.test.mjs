@@ -437,10 +437,22 @@ test('« Fais venir ta promo » en arabe : lien arabe de la promo, message en ar
   await s.ctx.close();
 });
 
+// Une application installée rechargée en arrière-plan (nouvelle version) : l'écran est caché au chargement.
+// __plan(etat, avance) le montre ou le cache, et avance l'horloge de la page (Date.now) de « avance » millisecondes.
+const PLAN = () => {
+  let v = 'hidden', d = 0;
+  const vrai = Date.now.bind(Date);
+  Object.defineProperty(Document.prototype, 'visibilityState', { configurable: true, get: () => v });
+  Object.defineProperty(Document.prototype, 'hidden', { configurable: true, get: () => v === 'hidden' });
+  Date.now = () => vrai() + d;
+  window.__plan = (x, avance = 0) => { d += avance; if (x !== v) { v = x; document.dispatchEvent(new Event('visibilitychange')); } };
+};
+
 // « Me prévenir » : en démo, un test simule l'état des notifications d'un vrai téléphone (ensam-prevenir-demo)
-async function prevenirSur(etat, opts = {}) {
+async function prevenirSur(etat, { cachee = false, ...opts } = {}) {
   const s = await ouvrir({ largeur: 360, ...opts });
   await s.page.setViewportSize({ width: 360, height: 640 });
+  if (cachee) await s.ctx.addInitScript(PLAN);
   if (etat) { await s.page.evaluate(e => localStorage.setItem('ensam-prevenir-demo', e), etat); await s.page.reload(); await s.page.waitForSelector('.hello'); }
   const memo = () => s.page.evaluate(() => { const k = Object.keys(localStorage).find(x => x.startsWith('ensam-prevenir-') && x !== 'ensam-prevenir-demo'); return k ? JSON.parse(localStorage.getItem(k)) : {}; });
   const changerMemo = f => s.page.evaluate(f => { const k = Object.keys(localStorage).find(x => x.startsWith('ensam-prevenir-') && x !== 'ensam-prevenir-demo'); localStorage.setItem(k, JSON.stringify(new Function('m', 'return ' + f)(JSON.parse(localStorage.getItem(k))))); }, f);
@@ -452,6 +464,12 @@ async function prevenirSur(etat, opts = {}) {
   };
   return { ...s, memo, changerMemo, mentorat };
 }
+
+// La feuille d'ouverture : « Reçois l'essentiel sur ton téléphone »
+const ouverture = '.modal.ouverture';
+const attendreOuverture = s => s.page.waitForSelector(ouverture, { timeout: 8000 });
+const rienALouverture = async (s, msg) => { await s.page.waitForTimeout(4500); assert.equal(await s.page.locator(ouverture).count(), 0, msg); };
+const recharger = async s => { await s.page.reload(); await s.page.waitForSelector('.hello'); };
 
 test('« Me prévenir » : rien en démo ordinaire, le petit mot reste', async () => {
   const s = await prevenirSur(null);
@@ -489,6 +507,24 @@ test('« Me prévenir » : après une demande de mentorat, la feuille remplace l
   await s.changerMemo('({ ...m, at: m.at - 30 * 864e5 })');
   await s.mentorat('Choisir une option');
   assert.equal(await s.page.locator('.modal.prevenir').count(), 0, 'plus jamais après deux refus');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Me prévenir » : la catégorie de la réponse décochée dans Mon profil, pas de notification promise ; le petit mot reste', async () => {
+  const s = await prevenirSur('off');
+  await s.comme('Amine'); await s.aller('profil');
+  await s.page.click('#np-mentorat'); await s.page.waitForTimeout(250);
+  await attendreOuverture(s); await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
+  await s.changerMemo('({ ...m, at: m.at - 15 * 864e5 })');
+  await s.mentorat('Choisir mon stage de 3A');
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0, 'mentorat décoché : pas de feuille');
+  assert.match(await s.page.locator('.toast').last().innerText(), /Demande envoyée à Youssef/);
+  // Recochée : la feuille revient
+  await s.aller('profil'); await s.page.click('#np-mentorat'); await s.page.waitForTimeout(250);
+  await s.mentorat('Préparer mon entretien');
+  await s.page.waitForSelector('.modal.prevenir');
+  assert.match(await s.page.locator('.modal.prevenir').innerText(), /choisit un horaire/);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -556,11 +592,6 @@ test('« Me prévenir » n’arrive jamais par-dessus une fête : il attend la v
 });
 
 // À l'ouverture : « Reçois l'essentiel sur ton téléphone », quelques secondes après l'arrivée, sur un écran calme
-const ouverture = '.modal.ouverture';
-const attendreOuverture = s => s.page.waitForSelector(ouverture, { timeout: 8000 });
-const rienALouverture = async (s, msg) => { await s.page.waitForTimeout(4500); assert.equal(await s.page.locator(ouverture).count(), 0, msg); };
-const recharger = async s => { await s.page.reload(); await s.page.waitForSelector('.hello'); };
-
 test('à l’ouverture : la feuille des notifications selon le rôle ; « Plus tard » la range 7 jours, deux fois au plus', async () => {
   const s = await prevenirSur('off');
   // Pas tout de suite : quelques secondes après l'arrivée
@@ -568,13 +599,14 @@ test('à l’ouverture : la feuille des notifications selon le rôle ; « Plus t
   await attendreOuverture(s);
   const txt = await s.page.locator(ouverture).innerText();
   assert.match(await s.page.locator(`${ouverture} .modal-head h2`).innerText(), /^Reçois l’essentiel sur ton téléphone$/);
-  assert.match(txt, /Les réponses des lauréats arrivent tout de suite/);
+  assert.match(txt, /Ce qui te concerne arrive tout de suite, même quand l’application est fermée/);
   assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['messages', 'demandes', 'candidatures', 'offres']);
   assert.match(txt, /Les nouvelles offres de ton année et de ta filière/);
   assert.match(txt, /Tu choisis quoi recevoir dans « Mon profil »\. Pas de publicité\./);
   assert.match(await s.page.locator('#ouv-oui').innerText(), /Activer/);
   assert.ok(await s.page.evaluate(() => document.querySelector('.ouverture .modal-foot').getBoundingClientRect().bottom <= innerHeight + .5), 'les boutons à portée du pouce');
   assert.equal(await s.debordement(), 0);
+  assert.equal((await s.memo()).n, 1, 'comptée dès qu’elle s’affiche');
   await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
   assert.equal(await s.page.locator(ouverture).count(), 0);
   assert.equal((await s.memo()).n, 1);
@@ -596,12 +628,105 @@ test('à l’ouverture : la feuille des notifications selon le rôle ; « Plus t
   await s.ctx.close();
 });
 
+test('à l’ouverture : affichée puis laissée sans réponse (application quittée), elle compte comme « Plus tard »', async () => {
+  const s = await prevenirSur('off');
+  await attendreOuverture(s);
+  await recharger(s); await rienALouverture(s, 'pas à chaque visite : rien avant 7 jours');
+  assert.equal((await s.memo()).n, 1);
+  await s.changerMemo('({ ...m, at: m.at - 8 * 864e5 })');
+  await recharger(s); await attendreOuverture(s);
+  await recharger(s);
+  await s.changerMemo('({ ...m, at: m.at - 30 * 864e5 })');
+  await recharger(s); await rienALouverture(s, 'deux fois au plus en tout');
+  assert.equal((await s.memo()).n, 2);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('à l’ouverture : rechargée cachée (nouvelle version installée), elle attend que le membre revienne ; une longue absence est une nouvelle visite', async () => {
+  const s = await prevenirSur('off', { cachee: true });
+  const plan = (etat, avance = 0) => s.page.evaluate(([e, a]) => window.__plan(e, a), [etat, avance]);
+  // Cachée plus de 30 secondes après le chargement : rien pendant ce temps
+  await s.page.waitForTimeout(3500); await plan('hidden', 35e3); await s.page.waitForTimeout(3000);
+  assert.equal(await s.page.locator(ouverture).count(), 0);
+  assert.deepEqual(await s.memo(), {});
+  // Le membre revient : sa visite commence maintenant
+  await plan('visible');
+  await attendreOuverture(s);
+  await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
+  await s.changerMemo('({ ...m, at: m.at - 8 * 864e5 })');
+  // Revenu après quelques minutes : la même visite
+  await plan('hidden'); await plan('visible', 10 * 60e3);
+  await rienALouverture(s, 'même visite');
+  // Revenu le lendemain, l'application restée ouverte : une nouvelle visite
+  await plan('hidden'); await plan('visible', 20 * 3600e3);
+  await attendreOuverture(s);
+  assert.equal((await s.memo()).n, 2);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('à l’ouverture : jamais par-dessus une fête ; une fête qui arrive range la feuille sans compter de refus', async () => {
+  const fete = s => s.page.evaluate(async () => {
+    const ui = await import(new URL('ui.js', location.href).href);
+    ui.celebrate({ cle: 'test-fete-' + Date.now(), titre: 'Bravo', texte: 'Une fête pour le test.' });
+  });
+  let s = await prevenirSur('off');
+  await fete(s); await s.page.waitForSelector('.fete-back');
+  await rienALouverture(s, 'jamais par-dessus une fête');
+  assert.deepEqual(await s.memo(), {});
+  await s.ctx.close();
+  s = await prevenirSur('off');
+  await attendreOuverture(s);
+  await fete(s); await s.page.waitForSelector('.fete-back'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator(ouverture).count(), 0, 'la fête passe devant');
+  assert.ok(!(await s.memo()).n, 'pas un refus');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('à l’ouverture : rien de coché dans Mon profil, rien à proposer', async () => {
+  const s = await prevenirSur('off');
+  await attendreOuverture(s); await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
+  await s.aller('profil');
+  for (const c of ['messages', 'demandes', 'candidatures', 'mentorat', 'offres', 'reseau']) { await s.page.click('#np-' + c); await s.page.waitForTimeout(150); }
+  await s.changerMemo('({ ...m, at: m.at - 8 * 864e5 })');
+  const relire = async () => { await s.page.reload(); await s.page.waitForSelector('#mes-donnees'); };
+  await relire(); await rienALouverture(s, 'rien à proposer');
+  // Une case recochée : la feuille revient, avec ce seul point
+  await s.page.click('#np-messages'); await s.page.waitForTimeout(250);
+  await relire(); await attendreOuverture(s);
+  assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['messages']);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('Mon profil : activer ou couper les notifications ici est une réponse, plus aucune demande ensuite', async () => {
+  const s = await prevenirSur('off');
+  await attendreOuverture(s); await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
+  await s.changerMemo('({ ...m, at: m.at - 8 * 864e5 })');
+  await s.aller('profil');
+  assert.equal(await s.page.isDisabled('#md-push'), false);
+  await s.page.check('#md-push'); await s.page.waitForTimeout(250);
+  assert.equal((await s.memo()).fait, 1, 'activées ici');
+  assert.match(await s.page.locator('.toast').last().innerText(), /Sur la vraie plateforme/);
+  assert.equal(await s.page.locator('.push-row button').count(), 0, 'rien à tester en démo');
+  await s.changerMemo('({ ...m, fait: undefined })');
+  await s.page.uncheck('#md-push'); await s.page.waitForTimeout(250);
+  assert.equal((await s.memo()).fait, 1, 'coupées ici');
+  await s.page.reload(); await s.page.waitForSelector('#mes-donnees');
+  await rienALouverture(s, 'coupées dans Mon profil : plus de demande');
+  assert.equal(await s.page.isChecked('#md-push'), false);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('à l’ouverture : un lauréat voit ce qui le concerne ; « Activer » vaut pour « Me prévenir » aussi', async () => {
   const s = await prevenirSur('off');
   await s.comme('Youssef');
   await attendreOuverture(s);
   const txt = await s.page.locator(ouverture).innerText();
-  assert.match(txt, /Quand un étudiant a besoin de toi/);
+  assert.match(txt, /Ce qui te concerne arrive tout de suite/);
   // Les nouvelles offres ne sont pas activées d'office pour un lauréat qui ne cherche pas d'emploi
   assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['messages', 'demandes', 'candidatures', 'mentorat']);
   assert.match(txt, /Les nouvelles demandes d’étudiants de ta filière/);
@@ -610,6 +735,13 @@ test('à l’ouverture : un lauréat voit ce qui le concerne ; « Activer » vau
   assert.match(await s.page.locator('.toast').last().innerText(), /Sur la vraie plateforme/);
   assert.equal((await s.memo()).fait, 1);
   await recharger(s); await rienALouverture(s, 'acceptée : plus jamais');
+  // Un lauréat qui cherche un emploi : la suite de sa demande et de ses candidatures, et les offres pour lui
+  await s.comme('Nadia');
+  await s.page.evaluate(() => window.__demo.update('profiles', window.__demo.me.id, { en_recherche: true }));
+  await attendreOuverture(s);
+  assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['messages', 'demandes', 'offres', 'candidatures']);
+  const rech = await s.page.locator(ouverture).innerText();
+  assert.match(rech, /Les réponses à ta demande d’emploi/); assert.match(rech, /Tes candidatures qui avancent/);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -632,7 +764,7 @@ test('à l’ouverture : jamais par-dessus une autre feuille ni la bienvenue ; r
   assert.deepEqual(await s.memo(), {});
   await recharger(s); await attendreOuverture(s);
   await s.ctx.close();
-  // L'accord à donner, une fête : voir les tests de « Me prévenir » (même hôte). Ici : iPhone, navigateur sans notifications, admin
+  // Une fête : test à part ; l'accord à donner : entree.test.mjs (en ligne). Ici : iPhone, navigateur sans notifications, admin
   for (const etat of ['ios', 'absent']) {
     s = await prevenirSur(etat);
     await rienALouverture(s, etat);
@@ -660,6 +792,8 @@ test('Mon profil : les notifications par catégorie, défauts selon le rôle, en
   assert.ok(await s.page.isChecked('#md-alertes-mail'));
   await s.page.click('#np-reseau'); await s.page.waitForTimeout(250);
   assert.match(await s.page.locator('.toast').last().innerText(), /Choix enregistré/);
+  // Visite suivante : le choix d'avant est gardé quand une autre case change
+  await s.page.reload(); await s.page.waitForSelector('#mes-donnees');
   await s.page.click('#np-offres'); await s.page.waitForTimeout(250);
   await s.page.reload(); await s.page.waitForSelector('#mes-donnees');
   assert.deepEqual(await cases(), { ...tout, offres: false, reseau: false });
@@ -671,14 +805,26 @@ test('Mon profil : les notifications par catégorie, défauts selon le rôle, en
   const lau = await s.page.locator('.md-cats').innerText();
   assert.match(lau, /Nouvelles demandes d’étudiants de ma filière/); assert.match(lau, /Candidatures reçues sur mes offres/);
   assert.doesNotMatch(lau, /Réponses à mes demandes/);
+  // Tout lauréat peut postuler ; les offres n'arrivent qu'avec « Je cherche un emploi en ce moment » : le texte le dit
+  assert.match(lau, /si tu postules, la suite de tes candidatures/);
+  assert.match(lau, /Avec « Je cherche un emploi en ce moment » coché dans ton profil/);
   assert.equal(await s.page.locator('#md-alertes-mail').count(), 0);
   await s.page.click('#np-offres'); await s.page.waitForTimeout(250);
   await s.page.reload(); await s.page.waitForSelector('#mes-donnees');
   assert.equal(await s.page.isChecked('#np-offres'), true);
-  // L'équipe du réseau : les signalements arrivent toujours (pas de case)
+  // Un lauréat qui cherche un emploi : ses demandes et ses candidatures aussi ; les offres d'office
+  await s.comme('Nadia');
+  await s.page.evaluate(() => window.__demo.update('profiles', window.__demo.me.id, { en_recherche: true }));
+  await s.aller('profil');
+  const rech = await s.page.locator('.md-cats').innerText();
+  assert.match(rech, /Les réponses à ta demande d’emploi/); assert.match(rech, /La suite des tiennes \(entretien, recrutement à confirmer\)/);
+  assert.doesNotMatch(rech, /Candidatures reçues sur mes offres/);
+  assert.equal(await s.page.isChecked('#np-offres'), true);
+  // L'équipe du réseau : les signalements arrivent toujours (pas de case) ; ni nouvelles demandes ni offres, qui ne lui arrivent jamais
   await s.comme('Admin'); await s.aller('profil');
   assert.match(await s.page.locator('.md-cats').innerText(), /Les signalements arrivent toujours à l’équipe du réseau\./);
   assert.equal(await s.page.locator('#np-admin').count(), 0);
+  assert.deepEqual(await cases(), { messages: true, candidatures: true, mentorat: true, reseau: true });
   assert.equal(await s.debordement(), 0);
   await s.page.addScriptTag({ content: AXE });
   const v = await s.page.evaluate(async () => (await axe.run('#mes-donnees', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => x.id));
@@ -697,7 +843,15 @@ test('notifications en arabe : la feuille d’ouverture et les réglages, sans t
   assert.deepEqual(await latin(ouverture), []);
   assert.equal(await s.debordement(), 0);
   await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
-  for (const nom of ['Salma', 'Youssef', 'Admin']) {
+  await s.comme('Youssef'); await attendreOuverture(s);
+  assert.deepEqual(await latin(ouverture), [], 'lauréat');
+  await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
+  await s.comme('Nadia');
+  await s.page.evaluate(() => window.__demo.update('profiles', window.__demo.me.id, { en_recherche: true }));
+  await attendreOuverture(s);
+  assert.deepEqual(await latin(ouverture), [], 'lauréat qui cherche un emploi');
+  await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
+  for (const nom of ['Salma', 'Youssef', 'Nadia', 'Admin']) {
     await s.comme(nom); await s.aller('profil');
     await s.page.waitForSelector('.md-cats');
     assert.deepEqual(await latin('.md-cats'), [], nom);

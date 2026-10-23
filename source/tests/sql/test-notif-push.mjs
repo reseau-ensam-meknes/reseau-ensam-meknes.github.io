@@ -90,6 +90,13 @@ test('vraies actions : nouvelle offre et nouvelle demande prévenues selon les c
   await offre('PFE Lean');
   await offre('Ingénieur méthodes', 'laureats', '{}');
   assert.deepEqual((await file()).filter(x => x.endsWith(':offre_alerte')).sort(), ['CHERCHE:offre_alerte', 'ETU:offre_alerte']);
+  // Ancienne case « M'alerter » décochée (elle n'est plus à l'écran), puis « Nouvelles offres pour moi » cochée :
+  // une vraie offre suit le choix explicite
+  await q(ETU, `update public.profiles set alertes_offres = false, notif_push = '{"offres":true}' where id = $1`, [ETU]);
+  await vider();
+  await offre('PFE Maintenance');
+  assert.deepEqual((await file()).filter(x => x.startsWith('ETU:')), ['ETU:offre_alerte'], 'le choix explicite l’emporte aussi sur une vraie offre');
+  await q(ETU, `update public.profiles set alertes_offres = true, notif_push = '{}' where id = $1`, [ETU]);
   await choisir(ETU, { offres: false });
   await choisir(CHERCHE, { offres: false });
   await vider();
