@@ -1617,7 +1617,7 @@ test('arabe dans le bon ordre et lisible : aperçus, flèche du merci, saisie, n
   // Nombres : « 93% », « +258 », « 2026-2027 » isolés de gauche à droite, comme en français
   const nombres = await s.page.evaluate(async () => {
     const { t } = await import('./i18n.js');
-    return [t('Saison 2026-2027'), t('+10 points'), t('93 % des comptes')];
+    return [t('Année 2026-2027'), t('+10 points'), t('93 % des comptes')];
   });
   assert.match(nombres[0], /⁦2026-2027⁩/);
   assert.match(nombres[1], /^⁦\+10⁩/);

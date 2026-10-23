@@ -268,7 +268,7 @@ function App({ store }) {
         ${page === 'enquete' ? html`<${EnquetePage} ...${ctx}/>` : null}
       </main>
     </div>
-    <nav class=${'bottom-nav' + (plein && route.sub ? ' cache' : '')}>${navBas.map(([k, l, i]) => html`<a href=${'#' + k} class=${page === k ? 'on' : ''} onClick=${e => { e.preventDefault(); go(k, { onglet: true }); }}><span class="bn-ico"><${Icon} name=${i}/>${dotFor(k) ? html`<span class="dotn" aria-hidden="true"></span>` : null}</span><span>${getLang() === 'ar' ? l : { 'Mon parcours': 'Parcours', 'Mon espace': 'Espace', 'Ma promo': 'Promo' }[l] || l}</span>${dotFor(k) ? html`<span class="sr-only">À faire ici</span>` : null}</a>`)}</nav>
+    <nav class=${'bottom-nav' + (plein && route.sub ? ' cache' : '')}>${navBas.map(([k, l, i]) => html`<a href=${'#' + k} class=${page === k ? 'on' : ''} onClick=${e => { e.preventDefault(); go(k, { onglet: true }); }}><span class="bn-ico"><${Icon} name=${i}/>${dotFor(k) ? html`<span class="dotn" aria-hidden="true"></span>` : null}</span><span>${getLang() === 'ar' ? l : { 'Mon parcours': 'Parcours', 'Mon espace': 'Espace', 'Mon année': 'Année' }[l] || l}</span>${dotFor(k) ? html`<span class="sr-only">À faire ici</span>` : null}</a>`)}</nav>
     ${cloche ? html`<${Cloche} notifs=${notifs} onGo=${openNotif} onClose=${() => setCloche(false)}/>` : null}
     ${offerId ? html`<${OfferDetail} ctx=${ctx} id=${offerId} key=${offerId} apply=${applyNow} onClose=${() => setOfferId(null)}/>` : null}
     ${aide?.demande ? html`<${ProposerAide} ctx=${ctx} id=${aide.demande} key=${'aide-' + aide.demande} onClose=${() => setAide(null)}/>` : null}
@@ -878,7 +878,7 @@ function Onboarding({ store, relang }) {
   try {
     // Le magasin déjà prêt pour la page d'entrée, sinon on le crée ; l'arabe se charge en même temps que les données
     // (sur la page d'entrée, ses phrases sont déjà traduites : on ne repasse pas en français pour une coupure)
-    const [store] = await Promise.all([magasinEntree() || createStore(), getLang() === 'ar' ? chargerAR().catch(() => { if (!document.getElementById('entree')) return setLang('fr'); }) : null]);
+    const [store] = await Promise.all([magasinEntree() || createStore(), getLang() === 'ar' ? chargerAR().catch(() => { if (!document.getElementById('entree')) return setLang('fr', { garder: false }); }) : null]);
     brancherPhotos(path => store.photo(path));
     brancherSignal(m => toast(m, 'err'));
     // Connecté : ce qui avait été tapé sur la page d'entrée ne doit jamais revenir après une déconnexion
