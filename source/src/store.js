@@ -908,8 +908,11 @@ function demoParrains(store, onlyId = null) {
 // ---------------------------------------------------------------------------
 // Réel : Supabase (comptes, base partagée, temps réel)
 // ---------------------------------------------------------------------------
+// Une table ou une vue qui n'existe pas encore (mise à jour de la base pas encore faite).
+// Une session expirée (401, PGRST301), un droit refusé (42501) ou une coupure réseau ne sont que passagers.
+const absente = e => ['42P01', 'PGRST205'].includes(e?.code) || /relation .* does not exist|could not find the table/i.test(e?.message || '');
 const SUITES = { demandes: ['propositions', 'placements'], propositions: ['demandes', 'propositions', 'placements', 'coordonnees'], placements: ['demandes', 'propositions'] };
-class SupabaseStore extends Base {
+export class SupabaseStore extends Base {
   constructor(cfg) { super(); this.mode = 'live'; this.cfg = cfg; }
   async init() {
     await new Promise((ok, ko) => { const el = document.createElement('script'); el.src = 'vendor/supabase.js'; el.onload = ok; el.onerror = () => ko(new Error('Chargement de Supabase impossible')); document.head.appendChild(el); });
@@ -946,11 +949,16 @@ class SupabaseStore extends Base {
     const all = [];
     for (let from = 0; ; from += 1000) {
       const { data, error } = await this.sb.from(vue || t).select('*').order('created_at', { ascending: false }).range(from, from + 999);
-      if (error && vue && from === 0) { this.vues[t] = false; return this.loadTable(t, essai); }  // base pas encore à jour : la table
-      if (error && OPTIONAL.has(t)) { this.data[t] = []; (this.absentes ||= new Set()).add(t); return; }
-      // Réseau du téléphone qui coupe une seconde : on réessaie une fois avant d'abandonner
+      // Base pas encore à jour : la vue manque (on lit la table), ou la table facultative manque (liste vide)
+      if (error && absente(error)) {
+        if (vue && from === 0) { this.vues[t] = false; return this.loadTable(t, essai); }
+        if (OPTIONAL.has(t)) { this.data[t] = []; (this.absentes ||= new Set()).add(t); return; }
+        throw error;
+      }
+      // Réseau du téléphone qui coupe, ou session expirée le temps d'être renouvelée : on réessaie une fois,
+      // puis on garde ce qu'on avait (jamais une liste vidée, ni la vue abandonnée pour toute la visite)
       if (error && !essai) { await new Promise(ok => setTimeout(ok, 1200)); return this.loadTable(t, 1); }
-      if (error) throw error;
+      if (error) { if (this.data[t]?.length || OPTIONAL.has(t)) return; throw error; }
       all.push(...data);
       if (data.length < 1000) break;
     }
@@ -969,7 +977,7 @@ class SupabaseStore extends Base {
       timer = setTimeout(async () => {
         const ts = [...pending]; pending.clear();
         const pouls = ts.some(x => ['mentorships', 'placements', 'relectures_cv', 'propositions'].includes(x));
-        await Promise.all([...ts.map(x => this.loadTable(x)), pouls ? this.chargerPouls().catch(() => {}) : null]);
+        await Promise.all([...ts.map(x => this.loadTable(x).catch(() => {})), pouls ? this.chargerPouls().catch(() => {}) : null]);
         this.me = this.byId('profiles', this.userId) || null;
         this.emit();
       }, 400);
