@@ -24,7 +24,7 @@ import { EnquetePage } from './enquete.js';
 import { NextEvent } from './agenda.js';
 import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, lienDuVisiteur, suiteLien } from './entree.js';
 import { MessagesPage, MessagesHome, useAlerteMessages } from './messages.js';
-import { PoulsReseau } from './pouls.js';
+import { PoulsReseau, marquerArrivee, useArrivee, ArriveeSheet, arriveeEnAttente } from './pouls.js';
 import { ProposerAide } from './demandes.js';
 
 // Le dernier bouton touché, pour que act le retrouve même sans focus (iPhone)
@@ -655,6 +655,8 @@ function Home(ctx) {
   const helper = plAttente?.laureat_id ? store.byId('profiles', plAttente.laureat_id) : null;
   const besoins = isLaureat ? besoinsDeMoi(data, me, id => store.byId('profiles', id), { ignorees: mentoratIgnorees() }) : [];
   const pas = prochainPas({ ...ctx, setCompose }, notifs, enCours?.suivante || null, { plAttente, helper, besoins });
+  // Juste après la « Dernière étape » : une feuille d'accueil, une fois, avec le même bouton que la carte
+  const [arrivee, finArrivee] = useArrivee(ctx);
   // « Cette semaine » : trois petites choses au plus, jamais ce que montre la carte
   const taches = petitesTaches(notifs, pas);
   // Ce que l'accueil a déjà dit : les blocs suivants le sautent
@@ -675,7 +677,8 @@ function Home(ctx) {
   // Les 25 premiers lauréats : on leur dit une fois qu'ils sont membres fondateurs (pas par-dessus une autre fenêtre)
   const fondateur = store.mode === 'live' && isLaureat && !!me.consent_at && !!ctx.fondateurs?.has(me.id);
   useEffect(() => {
-    if (!fondateur) return;
+    // Juste après l'inscription, la feuille d'accueil l'annonce elle-même
+    if (!fondateur || arriveeEnAttente(me.id)) return;
     const t = setTimeout(() => {
       if (document.querySelector('.modal-back, .fete-back')) return;
       celebrate({ cle: 'fondateur-' + me.id, icon: 'award', titre: 'Tu es Membre fondateur !', texte: 'Tu fais partie des 25 premiers lauréats du réseau. Ce badge restera sur ton profil.', action: { label: 'Voir mon badge', onClick: () => go('espace') } });
@@ -761,6 +764,7 @@ function Home(ctx) {
       </div>
     </div>
     ${compose ? html`<${OfferComposer} ctx=${ctx} onClose=${() => setCompose(false)}/>` : null}
+    ${arrivee ? html`<${ArriveeSheet} a=${arrivee} pas=${pas} me=${me} store=${store} onClose=${finArrivee}/>` : null}
     ${(voirEtapes || parRoute) && guide ? html`<${EtapesSheet} me=${me} g=${guide} historique=${!parRoute} onClose=${() => { setVoirEtapes(false); if (parRoute) go('accueil'); }}
       onHide=${() => { setOff(true); setVoirEtapes(false); if (parRoute) go('accueil'); toast('C’est noté. Tu retrouves les premiers pas dans ton menu : « Comment ça marche ? ».'); }}/>` : null}
   </section>`;
@@ -840,7 +844,7 @@ function Onboarding({ store, relang }) {
     <div class="row onb-tete"><${BrandLogo} size=${44}/><div><p class="eyebrow">Dernière étape</p><h2>Présente-toi à la communauté</h2></div><${LangToggle} onChange=${relang}/></div>
     ${lien ? html`<p class="lien-suite small" id="onb-lien"><${Icon} name="arrow" size=${15}/><span>${suiteLien(lien)}</span></p>` : null}
     <p class="muted">Quelques secondes, et tu es dans le réseau.</p>
-    <${ProfileForm} ctx=${ctx} preset=${preset} onboarding/>
+    <${ProfileForm} ctx=${ctx} preset=${preset} onboarding onDone=${() => marquerArrivee(store.userId)}/>
     <button class="linkish small" onClick=${() => store.signOut()}>Se déconnecter</button>
   </div><${Toaster}/></main>`;
 }

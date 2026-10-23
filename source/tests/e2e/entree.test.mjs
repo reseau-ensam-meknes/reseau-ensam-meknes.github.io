@@ -115,6 +115,11 @@ test('code à 6 chiffres : de l’entrée à la « Dernière étape », le rôle
   const p = site.inscrits.find(x => x.id === UID);
   assert.equal(p.role, 'laureat'); assert.equal(p.promo, 2019); assert.equal(p.mentor_dispo, true); assert.equal(p.full_name, 'Yassine Berrada');
   assert.ok(p.consent_at, 'l’accord donné à l’entrée est gardé');
+  // Puis l'accueil : son rang parmi les lauréats, le badge annoncé, un seul bouton
+  await s.page.waitForSelector('.modal.arrivee', { timeout: 8000 });
+  assert.equal(await s.page.locator('.arrivee-titre').innerText(), 'Te voilà 2e lauréat(e) du réseau');
+  assert.match(await s.page.locator('.arrivee-fondateur').innerText(), /Membre fondateur/);
+  assert.equal(await s.page.locator('.modal.arrivee .btn.primary').count(), 1);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });

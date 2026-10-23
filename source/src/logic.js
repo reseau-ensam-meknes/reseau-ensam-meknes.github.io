@@ -293,10 +293,17 @@ export const BADGES = [
 
 // Membres fondateurs : les 25 premiers lauréats arrivés sur la plateforme (ils ont lancé l'entraide)
 export const NB_FONDATEURS = 25;
+// Les lauréats dans l'ordre où ils ont rejoint le réseau (même ordre pour le badge et pour l'accueil)
+export const ordreArrivee = profiles => (profiles || []).filter(p => p.role === 'laureat' && p.created_at)
+  .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.id).localeCompare(String(b.id)));
 export function fondateursOf(profiles) {
-  return new Set((profiles || []).filter(p => p.role === 'laureat' && p.created_at)
-    .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.id).localeCompare(String(b.id)))
-    .slice(0, NB_FONDATEURS).map(p => p.id));
+  return new Set(ordreArrivee(profiles).slice(0, NB_FONDATEURS).map(p => p.id));
+}
+// « Te voilà 40e lauréat(e) du réseau » : le rang d'arrivée d'un lauréat (null pour les autres, ou sans date)
+export function rangLaureat(profiles, me) {
+  if (me?.role !== 'laureat' || !me.created_at) return null;
+  const i = ordreArrivee(profiles).findIndex(p => p.id === me.id);
+  return i < 0 ? null : i + 1;
 }
 
 // `extra.star` : id du lauréat du mois (voir starOfMonth) ; `extra.fondateurs` : voir fondateursOf
@@ -853,7 +860,7 @@ export function poulsReseau(data, now = new Date()) {
 }
 // À froid : combien de lauréats sont là (le même total pour tout le monde) et combien me ressemblent (moi exclu).
 // « cle » = le filtre de l'annuaire qui montre exactement ces personnes.
-export function presenceReseau(data, me) {
+export function presenceReseau(data, me, { visages: nbVisages = 3 } = {}) {
   const tous = (data.profiles || []).filter(p => p.role === 'laureat');
   const lau = tous.filter(p => p.id !== me?.id);
   if (!me || !lau.length) return null;
@@ -867,8 +874,26 @@ export function presenceReseau(data, me) {
   }
   const visages = (proches.length ? proches : lau).slice()
     .sort((a, b) => (b.photo_path ? 1 : 0) - (a.photo_path ? 1 : 0) || String(b.created_at || '').localeCompare(String(a.created_at || '')))
-    .slice(0, 3).map(p => p.id);
+    .slice(0, nbVisages).map(p => p.id);
   return { total: tous.length, proches: proches.length, cle, visages };
+}
+// L'accueil juste après l'inscription : des chiffres vrais (les mêmes que l'accueil), des visages, rien d'inventé
+export function accueilArrivee(data, me) {
+  if (!me || !['laureat', 'etudiant'].includes(me.role)) return null;
+  const presence = presenceReseau(data, me, { visages: 5 });
+  const rang = rangLaureat(data.profiles, me);
+  return { role: me.role, rang, fondateur: !!rang && rang <= NB_FONDATEURS, presence, visages: presence?.visages || [] };
+}
+// Une seule phrase par cas (la version arabe la reconnaît en entier)
+export function phrasesArrivee(a) {
+  if (!a) return null;
+  const pr = a.presence;
+  const groupe = pr && pr.proches ? lignePresence({ total: pr.proches, proches: pr.proches, cle: pr.cle }) : null;
+  if (a.role === 'laureat' && a.rang) {
+    return { titre: a.rang === 1 ? 'Le réseau des lauréats commence avec toi' : `Te voilà ${a.rang}e lauréat(e) du réseau`, sous: pr?.cle === 'promo' ? groupe : null };
+  }
+  if (!pr) return { titre: 'Bienvenue dans le réseau !', sous: null };
+  return { titre: groupe || lignePresence({ total: pr.total, proches: 0, cle: null }), sous: null };
 }
 const DE_PRES = { filiere: 'de ta filière', parcours: 'de ton parcours', promo: 'de ta promo' };
 // Une seule phrase par cas : la version arabe la reconnaît en entier

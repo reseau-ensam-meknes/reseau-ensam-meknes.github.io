@@ -594,6 +594,72 @@ test('offre d’une autre année ouverte par un lien : sans offre pour son anné
   await s.ctx.close();
 });
 
+// Juste après la « Dernière étape » : le signal posé par l'inscription (en démo, à la main)
+const signalArrivee = page => page.evaluate(() => sessionStorage.setItem('ensam-arrivee', window.__demo.me.id));
+
+test('accueil après l’inscription : une lauréate apprend son rang, voit des visages, et un seul bouton (une fois)', async () => {
+  const s = await ouvrir({ largeur: 360 });
+  await s.page.setViewportSize({ width: 360, height: 640 });
+  await s.comme('Nadia'); await signalArrivee(s.page);
+  await s.page.reload(); await s.page.waitForSelector('.modal.arrivee', { timeout: 5000 });
+  const attendu = await s.page.evaluate(async () => { const { rangLaureat } = await import('./logic.js'); return `Te voilà ${rangLaureat(window.__demo.data.profiles, window.__demo.me)}e lauréat(e) du réseau`; });
+  assert.equal(await s.page.locator('.arrivee-titre').innerText(), attendu);
+  const n = await s.page.locator('.arrivee-visages .avatar').count();
+  assert.ok(n >= 1 && n <= 5, `${n} visages`);
+  assert.equal(await s.page.locator('.modal.arrivee .btn.primary').count(), 1);
+  assert.equal((await s.page.locator('#arrivee-go').innerText()).trim(), (await s.page.locator('.pas .pas-go').innerText()).trim(), 'le même bouton que la carte');
+  const b = await s.page.locator('#arrivee-go').boundingBox();
+  assert.ok(b.y + b.height <= 640);
+  assert.ok((await s.debordement()) <= 0);
+  const id = await s.page.evaluate(() => window.__demo.me.id);
+  await s.page.click('#arrivee-go'); await s.page.waitForTimeout(500);
+  assert.equal(await s.page.locator('.modal.arrivee').count(), 0);
+  await s.aller('accueil'); await s.page.reload(); await s.page.waitForSelector('#persona'); await s.page.waitForTimeout(1500);
+  assert.equal(await s.page.locator('.modal.arrivee').count(), 0, 'une seule fois');
+  assert.equal(await s.page.evaluate(id => localStorage.getItem('accueil-vu-' + id), id), '1');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('accueil après l’inscription : un étudiant voit les lauréats de sa filière ; jamais par-dessus une autre fenêtre', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Amine'); await signalArrivee(s.page);
+  await s.page.reload(); await s.page.waitForSelector('.modal.arrivee', { timeout: 5000 });
+  const attendu = await s.page.evaluate(async () => { const { phrasesArrivee, accueilArrivee } = await import('./logic.js'); return phrasesArrivee(accueilArrivee(window.__demo.data, window.__demo.me)).titre; });
+  assert.equal(await s.page.locator('.arrivee-titre').innerText(), attendu);
+  assert.match(attendu, /lauréats? (?:de (?:ta filière|ton parcours) )?(?:sont|est) déjà là/);
+  assert.equal((await s.page.locator('#arrivee-go').innerText()).trim(), (await s.page.locator('.pas .pas-go').innerText()).trim());
+  await s.fermer();
+  // Les premiers pas ouverts par le menu : la feuille d'accueil attend le prochain accueil
+  await s.comme('Youssef'); await signalArrivee(s.page);
+  await s.page.evaluate(() => { location.hash = 'accueil/etapes'; }); await s.page.reload(); await s.page.waitForSelector('#persona');
+  await s.page.waitForTimeout(1500);
+  assert.equal(await s.page.locator('.modal.arrivee').count(), 0, 'pas deux feuilles l’une sur l’autre');
+  await s.fermer(); await s.aller('offres'); await s.aller('accueil');
+  await s.page.waitForSelector('.modal.arrivee', { timeout: 5000 });
+  assert.equal(await s.page.locator('.fete-back').count(), 0);
+  // Sans rechargement : le signal de la « Dernière étape » ouvre la feuille sur un accueil déjà affiché
+  await s.fermer();
+  await s.comme('Nadia'); await s.aller('accueil');
+  await s.page.evaluate(() => { localStorage.removeItem('accueil-vu-' + window.__demo.me.id); return import('./pouls.js').then(m => m.marquerArrivee(window.__demo.me.id)); });
+  await s.page.waitForSelector('.modal.arrivee', { timeout: 1500 });
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('accueil après l’inscription en arabe : رقم N, مرحبًا, rien d’oublié', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  await s.comme('Nadia'); await signalArrivee(s.page);
+  await s.page.reload(); await s.page.waitForSelector('.modal.arrivee', { timeout: 5000 });
+  assert.match(await s.page.locator('.arrivee-titre').innerText(), /^أنت الآن رقم \d+ بين خريجي الشبكة$/);
+  assert.match(await s.page.locator('.modal.arrivee .modal-head h2').innerText(), /مرحبًا/);
+  const manque = await s.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /Te voilà|Bienvenue|déjà là|Membre fondateur|commence avec toi/.test(x)));
+  assert.deepEqual(manque, []);
+  assert.match(await s.page.evaluate(async () => { const { t } = await import('./i18n.js'); return t('1 lauréat de ta filière est déjà là'); }), /^انضمّ إلى الشبكة خريج واحد من شعبتك$/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('CV qui contredit ou complète le profil : le membre met à jour en un clic, l’administration lit les CV et corrige', async () => {
   const s = await ouvrir();
   await s.comme('Salma'); await s.aller('profil');

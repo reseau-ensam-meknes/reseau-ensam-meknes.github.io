@@ -438,7 +438,8 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
       else await store.update('profiles', initial.id, row);
       if (coordChange) await store.enregistrerCoordonnees(champs);
       touches.current.clear(); setSale(n => n + 1); setVisOk(null);
-      toast(onboarding ? 'Bienvenue dans le réseau !' : 'Profil enregistré.');
+      // À l'inscription, c'est la feuille d'accueil qui souhaite la bienvenue
+      if (!onboarding) toast('Profil enregistré.');
       onDone?.();
     });
   };
