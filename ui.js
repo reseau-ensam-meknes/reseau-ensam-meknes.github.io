@@ -270,13 +270,27 @@ export function Modal({ title, onClose, children, wide, footer, cls, historique 
   useEffect(() => {
     const v = window.visualViewport;
     if (!avecPied || !v) return;
+    // Le champ suivi est ramené au-dessus du pied, puis encore une fois quand la feuille a fini de rapetisser
+    let t = 0;
+    const viser = () => { const a = document.activeElement; if (ref.current?.contains(a) && !a.closest('.modal-foot')) (a.closest('.field') || a).scrollIntoView({ block: 'nearest' }); };
     const f = () => {
       const clavier = innerWidth <= 760 && Math.abs(v.scale - 1) < .01 && innerHeight - v.height > 120;
       setVv(clavier ? { h: Math.round(v.height), t: Math.round(v.offsetTop) } : null);
-      if (clavier) requestAnimationFrame(() => { const a = document.activeElement; if (ref.current?.contains(a)) (a.closest('.field') || a).scrollIntoView({ block: 'nearest' }); });
+      if (clavier) { requestAnimationFrame(viser); clearTimeout(t); t = setTimeout(viser, 220); }
     };
     v.addEventListener('resize', f); v.addEventListener('scroll', f);
-    return () => { v.removeEventListener('resize', f); v.removeEventListener('scroll', f); };
+    return () => { clearTimeout(t); v.removeEventListener('resize', f); v.removeEventListener('scroll', f); };
+  }, [avecPied]);
+  // Hauteur du titre et du pied collés, pour que le défilement s'arrête avant eux (scroll-padding)
+  useLayoutEffect(() => {
+    const m = ref.current;
+    if (!m || typeof ResizeObserver === 'undefined') return;
+    const tete = m.querySelector(':scope > .modal-head'), pied = m.querySelector(':scope > .modal-foot');
+    const mesurer = () => { m.style.setProperty('--tete', (tete?.offsetHeight || 0) + 'px'); m.style.setProperty('--pied', (pied?.offsetHeight || 0) + 'px'); };
+    const ro = new ResizeObserver(mesurer);
+    for (const x of [tete, pied]) if (x) ro.observe(x);
+    mesurer();
+    return () => ro.disconnect();
   }, [avecPied]);
   // Branché dès l'affichage (pas après) : un Échap tapé aussitôt la fenêtre ouverte la ferme
   useLayoutEffect(() => {
@@ -324,7 +338,7 @@ export function Toaster() {
 
 // err : un champ obligatoire encore vide, signalé seulement après un essai de publication (jamais à l'ouverture)
 export function Field({ label, hint, children, err, errId }) {
-  return html`<label class=${'field' + (err ? ' manque' : '')}><span class="field-label">${label}</span>${children}${err ? html`<span class="field-err" id=${errId}>${err}</span>` : null}${hint ? html`<span class="field-hint">${hint}</span>` : null}</label>`;
+  return html`<label class=${'field' + (err ? ' manque' : '')}><span class="field-label">${label}</span>${children}${err ? html`<span class="field-err" id=${errId} aria-hidden="true">${err}</span>` : null}${hint ? html`<span class="field-hint">${hint}</span>` : null}</label>`;
 }
 // Mène au premier champ à compléter : au milieu de la fenêtre (doux, sauf mouvement réduit), le curseur dedans
 export function allerAuChamp(id) {
