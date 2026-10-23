@@ -363,15 +363,28 @@ function ApplyBox({ ctx, o, form, setForm, onClose }) {
   </form>`;
 }
 
+// Le statut de la candidature juste avant « Recruter », pour le rétablir si le recrutement est annulé (sur cet appareil)
+const AVANT = 'avant-recrutement:';
+const statutAvant = {
+  garder(id, s) { try { localStorage.setItem(AVANT + id, s); } catch {} },
+  lire(id) { try { return localStorage.getItem(AVANT + id); } catch { return null; } },
+  oublier(id) { try { localStorage.removeItem(AVANT + id); } catch {} },
+};
+
 // Un recrutement déclaré par erreur : on le retire tant que l'étudiant ne l'a pas confirmé, et sa candidature
-// redevient « Envoyée » (aucune notification ne part pour ce retour)
+// retrouve son statut d'avant (« Entretien », sinon « Reçue »), sans nouvelle notification
 export function annulerRecrutement(ctx, p) {
   const { store, data, act } = ctx;
-  const prenom = store.byId('profiles', p.student_id)?.full_name?.split(' ')[0] || 'Cette personne';
-  ctx.confirm(`Annuler le recrutement de ${prenom} ? Il n’y aura plus rien à confirmer de son côté.`, () => act(async () => {
-    await store.remove('placements', p.id);
+  const prenom = store.byId('profiles', p.student_id)?.full_name?.split(' ')[0];
+  ctx.confirm(prenom ? `Annuler le recrutement de ${prenom} ? Il n’y aura plus rien à confirmer de son côté.` : 'Annuler ce recrutement ? Il n’y aura plus rien à confirmer.', () => act(async () => {
+    // Si l'étudiant a confirmé entre-temps, rien n'est supprimé et la candidature ne bouge pas
+    await store.remove('placements', p.id, { saufStatut: 'confirme', exiger: 'Ce recrutement vient d’être confirmé : il ne peut plus être annulé.' });
     const app = p.offer_id && data.applications.find(x => x.offer_id === p.offer_id && x.student_id === p.student_id && x.status === 'retenu');
-    if (app) await store.update('applications', app.id, { status: 'postule' });
+    if (app) {
+      const avant = statutAvant.lire(app.id);
+      await store.update('applications', app.id, { status: ['postule', 'entretien', 'refuse'].includes(avant) ? avant : 'postule' });
+      statutAvant.oublier(app.id);
+    }
     toast('Recrutement annulé.');
   }), 'Annuler le recrutement', { non: 'Garder' });
 }
@@ -389,7 +402,7 @@ function Candidates({ ctx, o, apps }) {
     if (existing && existing.status !== 'refuse') { toast(`${st.full_name} a déjà une réussite enregistrée cette année.`, 'err'); return; }
     const prenom = st.full_name.split(' ')[0];
     ctx.confirm(`Recruter ${prenom} ? ${prenom} recevra une demande de confirmation, et tu peux annuler tant que ce n’est pas confirmé.`, () => act(async () => {
-      if (app) await store.update('applications', app.id, { status: 'retenu' });
+      if (app) { if (app.status !== 'retenu') statutAvant.garder(app.id, app.status); await store.update('applications', app.id, { status: 'retenu' }); }
       await store.insert('placements', { student_id: studentId, offer_id: o.id, laureat_id: me.id, saison, niveau: Math.min(niveauOf(st, saison), 6), type: o.type, entreprise: o.entreprise, ville: o.ville, pays: o.pays || 'Maroc', source: 'plateforme' });
       toast(`${prenom} doit maintenant confirmer. Tes 50 points arrivent dès sa confirmation.`);
     }), 'Recruter', { non: 'Pas maintenant', cls: 'btn primary' });
@@ -663,6 +676,8 @@ addAR({
   'Retenue': 'مقبول', 'Pas retenue': 'غير مقبول', 'Recruter': 'توظيف', 'Invitation envoyée': 'دعوة مُرسلة',
   'Recrutement déclaré · attend sa confirmation': 'توظيف مُصرَّح به · في انتظار التأكيد',
   'Annuler le recrutement': 'إلغاء التوظيف', 'Recrutement annulé.': 'أُلغي التوظيف.', 'Garder': 'إبقاء', 'Pas maintenant': 'ليس الآن',
+  'Annuler ce recrutement ? Il n’y aura plus rien à confirmer.': 'إلغاء هذا التوظيف؟ لن يبقى ما يجب تأكيده.',
+  'Ce recrutement vient d’être confirmé : il ne peut plus être annulé.': 'أُكِّد هذا التوظيف للتو، فلم يعد ممكنًا إلغاؤه.',
   't’invite à postuler.': ': دعوة لك للترشح.', 'Ça ne m’intéresse pas': 'لا يهمني',
   'Aucune offre mise de côté': 'لا عرض محفوظ', 'Clique sur le marque-page d’une offre pour la mettre de côté ici.': 'انقر على علامة الحفظ في عرض لتحفظه هنا.',
   'Mises de côté': 'المحفوظة', 'Mettre de côté': 'حفظ', 'Ne plus mettre de côté': 'إلغاء الحفظ',

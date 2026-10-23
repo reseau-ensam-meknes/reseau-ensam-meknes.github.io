@@ -1173,7 +1173,9 @@ begin
     if tg_op = 'INSERT' and new.offer_id is not null then
       select author_id into v_auteur from public.offers where id = new.offer_id;
       perform public.pousser(v_auteur, 'candidature', jsonb_build_object('nom', (select full_name from public.profiles where id = new.student_id), 'titre', new.titre));
-    elsif tg_op = 'UPDATE' and new.status is distinct from old.status and new.status in ('entretien', 'retenu') then
+    elsif tg_op = 'UPDATE' and new.status is distinct from old.status and new.status in ('entretien', 'retenu')
+      and not (old.status = 'retenu' and new.status = 'entretien') then
+      -- Retour de « retenu » à « entretien » : un recrutement annulé, pas un nouvel entretien
       perform public.pousser(new.student_id, 'candidature_statut', jsonb_build_object('titre', new.titre, 'statut', new.status));
     end if;
   elsif tg_table_name = 'placements' then

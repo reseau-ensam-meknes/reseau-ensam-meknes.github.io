@@ -68,3 +68,14 @@ test('une ancienne déclaration de l’administration restée « declare » peut
   await q(ADMIN, 'delete from public.placements where id = $1', [p.id]);
   assert.equal(await lire(p.id), undefined);
 });
+
+test('un recrutement annulé qui ramène la candidature à « Entretien » ne renvoie pas de notification d’entretien', async () => {
+  const etu = uid(36);
+  await creerCompte(db, { id: etu, full_name: 'Hamza Idrissi', role: 'etudiant', filiere: 'Génie Industriel', promo: S + 1 });
+  await db.query(`insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values ($1, $2, 'k', 'a')`, [etu, 'https://push.example/' + etu]);
+  const o = await offre(LAU);
+  const [app] = await q(etu, `insert into public.applications (student_id, offer_id, entreprise, titre) values ($1, $2, 'Trèves Group', 'PFE Qualité') returning id`, [etu, o]);
+  for (const st of ['entretien', 'retenu', 'entretien']) await q(LAU, 'update public.applications set status = $2 where id = $1', [app.id, st]);
+  const pushs = (await db.query(`select data->>'statut' as s from public.push_queue where kind = 'candidature_statut' and user_id = $1`, [etu])).rows.map(r => r.s).sort();
+  assert.deepEqual(pushs, ['entretien', 'retenu'], 'un seul « Entretien »');
+});

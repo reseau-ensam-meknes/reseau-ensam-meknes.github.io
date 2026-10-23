@@ -190,9 +190,12 @@ class DemoStore extends Base {
     this.persist(); this.emit();
     return r;
   }
-  async remove(table, id) {
+  async remove(table, id, { exiger, saufStatut } = {}) {
     if (table === 'annonces' && this.me?.role !== 'admin') throw new Error('Action non autorisée pour ton compte.');
     const row = this.byId(table, id);
+    if (saufStatut && row?.status === saufStatut) throw new Error(exiger || 'Action non autorisée pour ton compte.');
+    // Comme la règle de la base : l'étudiant retire sa réussite, le lauréat seulement ce qui attend la confirmation
+    if (table === 'placements' && row && this.me?.role !== 'admin' && !(row.student_id === this.me?.id || (row.laureat_id === this.me?.id && row.status === 'en_attente'))) throw new Error(exiger || 'Action non autorisée pour ton compte.');
     if (PHASE2.includes(table) && row && this.me?.role !== 'admin') {
       const own = { groupe_messages: 'author_id', groupe_membres: 'user_id', cafes: 'organisateur_id', cafe_participants: 'user_id', startups: 'fondateur_id' }[table];
       if (!own || row[own] !== this.me?.id) throw new Error('Action non autorisée pour ton compte.');
@@ -1027,9 +1030,13 @@ export class SupabaseStore extends Base {
     if (table === 'profiles') this.me = this.byId('profiles', this.userId);
     this.emit(); return data;
   }
-  async remove(table, id) {
-    const { error } = await this.sb.from(table).delete().eq('id', id);
+  // exiger : le message si rien n'a été supprimé (une règle d'accès filtre la ligne sans erreur)
+  async remove(table, id, { exiger, saufStatut } = {}) {
+    let req = this.sb.from(table).delete().eq('id', id);
+    if (saufStatut) req = req.neq('status', saufStatut);
+    const { data: lignes, error } = exiger ? await req.select('id') : await req;
     if (error) throw new Error(frError(error));
+    if (exiger && !lignes?.length) { await this.loadTable(table).catch(() => {}); this.emit(); throw new Error(exiger); }
     this.data[table] = this.data[table].filter(x => x.id !== id);
     this.emit();
   }
