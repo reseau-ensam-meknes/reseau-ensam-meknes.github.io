@@ -618,13 +618,18 @@ do $$ begin
   end if;
 end $$;
 
--- Comptes vus par l'administration : email, dernière connexion, profil rempli ou non
-create or replace function public.admin_comptes()
-returns table (id uuid, email text, created_at timestamptz, last_sign_in_at timestamptz, a_profil boolean)
+-- Comptes vus par l'administration : email, dernière connexion, profil rempli ou non, compte créé par code ou non.
+-- Avec le code à 6 chiffres, demander un code crée déjà le compte, avec un mot de passe tiré au hasard par Supabase
+-- et une connexion notée dans la seconde : « par_code » (posé par le site à la demande du code) et la dernière
+-- connexion permettent de ne pas compter une adresse tapée sans que le code soit jamais entré.
+drop function if exists public.admin_comptes();
+create function public.admin_comptes()
+returns table (id uuid, email text, created_at timestamptz, last_sign_in_at timestamptz, a_profil boolean, par_code boolean)
 language plpgsql stable security definer set search_path = public as $$
 begin
   if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
-  return query select u.id, u.email::text, u.created_at, u.last_sign_in_at, exists (select 1 from public.profiles p where p.id = u.id)
+  return query select u.id, u.email::text, u.created_at, u.last_sign_in_at, exists (select 1 from public.profiles p where p.id = u.id),
+    coalesce(u.raw_user_meta_data->>'par_code', '') = 'true'
     from auth.users u order by u.created_at desc;
 end $$;
 revoke all on function public.admin_comptes() from public;
@@ -2870,6 +2875,9 @@ create table if not exists public.messages (
 );
 create index if not exists messages_dest_lu on public.messages (dest_id, lu_at);
 create index if not exists messages_paire on public.messages (author_id, dest_id, created_at desc);
+-- Répondre à un message précis : la citation renvoie à un message de la même conversation.
+-- Pas de clé étrangère : un message supprimé pour les deux laisse « Message supprimé » à sa place, sans garder son texte.
+alter table public.messages add column if not exists reponse_a uuid;
 
 -- « Bloquer » : plus aucun message dans un sens ni dans l'autre
 create table if not exists public.blocages (
@@ -2923,6 +2931,11 @@ begin
     if new.type = 'vocal' then new.body := null; new.largeur := null; new.hauteur := null; end if;
     if new.fichier is not null and new.fichier not like new.author_id::text || '/' || new.dest_id::text || '/%' then
       raise exception 'Fichier invalide.';
+    end if;
+    -- On ne cite qu'un message de cette conversation (sinon la citation est simplement retirée)
+    if new.reponse_a is not null and not exists (select 1 from public.messages m where m.id = new.reponse_a
+        and ((m.author_id = new.author_id and m.dest_id = new.dest_id) or (m.author_id = new.dest_id and m.dest_id = new.author_id))) then
+      new.reponse_a := null;
     end if;
     if auth.uid() is not null and not public.peut_discuter(new.author_id, new.dest_id) then
       raise exception 'Conversation pas encore ouverte : elle s’ouvre avec un mentorat, une candidature ou une demande de contact acceptée.';
@@ -3010,6 +3023,55 @@ drop policy if exists "suppression proprietaire" on public.blocages;
 create policy "lecture membres" on public.blocages for select to authenticated using (user_id = auth.uid() or public.is_admin());
 create policy "ecriture proprietaire" on public.blocages for insert to authenticated with check (user_id = auth.uid());
 create policy "suppression proprietaire" on public.blocages for delete to authenticated using (user_id = auth.uid() or public.is_admin());
+
+-- Réactions à un message : une par personne et par message, parmi quelques émojis calmes.
+-- Seules les deux personnes de la conversation les voient ; un blocage les arrête aussi.
+create table if not exists public.reactions_messages (
+  id uuid primary key default gen_random_uuid(),
+  message_id uuid not null references public.messages(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  emoji text not null check (emoji in ('👍','❤️','😂','😮','🙏','👏')),
+  created_at timestamptz default now(),
+  unique (message_id, user_id)
+);
+create index if not exists reactions_messages_message on public.reactions_messages (message_id);
+
+create or replace function public.protect_reaction_message() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare m public.messages;
+begin
+  if tg_op = 'UPDATE' then
+    new.message_id := old.message_id; new.user_id := old.user_id; new.created_at := old.created_at;
+  else
+    if auth.uid() is not null then new.user_id := auth.uid(); end if;
+    new.created_at := now();
+  end if;
+  -- Même l'administration ne réagit que dans ses propres conversations (elle ne lit pas celles des autres)
+  if auth.uid() is null then return new; end if;
+  select * into m from public.messages where id = new.message_id;
+  if m.id is null or new.user_id not in (m.author_id, m.dest_id) then raise exception 'Action non autorisée pour ton compte.'; end if;
+  if exists (select 1 from public.blocages b where (b.user_id = m.author_id and b.bloque_id = m.dest_id) or (b.user_id = m.dest_id and b.bloque_id = m.author_id)) then
+    raise exception 'Vous ne pouvez plus vous écrire.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_reaction_message on public.reactions_messages;
+create trigger trg_protect_reaction_message before insert or update on public.reactions_messages
+  for each row execute function public.protect_reaction_message();
+drop trigger if exists trg_limite on public.reactions_messages;
+create trigger trg_limite before insert on public.reactions_messages
+  for each row execute function public.limiter('user_id', '500', '1 day');
+
+alter table public.reactions_messages enable row level security;
+drop policy if exists "lecture conversation" on public.reactions_messages;
+drop policy if exists "ecriture proprietaire" on public.reactions_messages;
+drop policy if exists "modif proprietaire" on public.reactions_messages;
+drop policy if exists "suppression proprietaire" on public.reactions_messages;
+create policy "lecture conversation" on public.reactions_messages for select to authenticated using (
+  exists (select 1 from public.messages m where m.id = message_id and (m.author_id = auth.uid() or m.dest_id = auth.uid())));
+create policy "ecriture proprietaire" on public.reactions_messages for insert to authenticated with check (user_id = auth.uid());
+create policy "modif proprietaire" on public.reactions_messages for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "suppression proprietaire" on public.reactions_messages for delete to authenticated using (user_id = auth.uid());
 
 -- Photos et vocaux : 5 Mo au plus ; lus par les deux personnes de la conversation seulement
 create or replace function public.peut_lire_fichier_chat(p_name text) returns boolean
@@ -3103,7 +3165,7 @@ do $$
 declare t text;
 begin
   if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
-    foreach t in array array['messages','blocages'] loop
+    foreach t in array array['messages','blocages','reactions_messages'] loop
       if not exists (select 1 from pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename=t) then
         execute format('alter publication supabase_realtime add table public.%I', t);
       end if;
@@ -3181,6 +3243,10 @@ language sql stable security definer set search_path = public as $$
   from auth.users u
   where u.email is not null
     and u.created_at < now() - interval '24 hours' and u.created_at > now() - interval '30 days'
+    -- Un code demandé mais jamais entré (adresse tapée par erreur, code pas reçu) n'est pas un compte ouvert :
+    -- seule la connexion notée à la création existe (le mot de passe, tiré au hasard par Supabase, ne dit rien)
+    and not (coalesce(u.raw_user_meta_data->>'par_code', '') = 'true'
+             and u.last_sign_in_at is not null and u.last_sign_in_at <= u.created_at + interval '5 seconds')
     and not exists (select 1 from public.profiles p where p.id = u.id)
     and not exists (select 1 from public.relances_inscription r where r.user_id = u.id)
   order by u.created_at
@@ -3539,6 +3605,35 @@ language sql stable security definer set search_path = public as $$
 $$;
 revoke all on function public.pouls_reseau() from public, anon;
 grant execute on function public.pouls_reseau() to authenticated;
+
+-- Page d'entrée (visiteur sans compte) : trois totaux, jamais un nom ni une ligne.
+-- Lauréats inscrits (l'administration n'est pas comptée), leurs promos, et les entreprises où ils travaillent.
+-- « Renault » et « Renault Tanger Med » comptent pour une seule entreprise (règle de meme_entreprise) : jamais gonflé.
+create or replace function public.chiffres_publics() returns jsonb
+language sql stable security definer set search_path = public as $$
+  with l as (select promo, public.cle_entreprise(entreprise) as k from public.profiles where role = 'laureat'),
+  ks as (select distinct k from l where k is not null and k <> '')
+  select jsonb_build_object(
+    'laureats', (select count(*) from l),
+    'promos', (select count(distinct promo) from l),
+    -- Une clé dont un début de mots est aussi une clé (« renault tanger med » / « renault ») ne compte pas :
+    -- comparaison par égalité sur chaque début, linéaire (un LIKE clé contre clé serait quadratique)
+    'entreprises', (select count(*) from ks) - (select count(distinct a.k) from ks a
+      cross join lateral generate_series(1, array_length(string_to_array(a.k, ' '), 1) - 1) i
+      join ks b on b.k = array_to_string((string_to_array(a.k, ' '))[1:i], ' ')));
+$$;
+revoke all on function public.chiffres_publics() from public;
+grant execute on function public.chiffres_publics() to anon, authenticated;
+
+-- Lien d'une offre partagé : la page d'entrée dit de quoi il s'agit, sans compte.
+-- Le type, le public et l'état seulement ; jamais titre, entreprise, auteur, années ni texte. null si l'offre n'existe plus.
+create or replace function public.offre_partagee(p_id uuid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('type', o.type, 'audience', coalesce(o.audience, 'etudiants'), 'ouverte', o.status = 'ouverte')
+  from public.offers o where o.id = p_id;
+$$;
+revoke all on function public.offre_partagee(uuid) from public;
+grant execute on function public.offre_partagee(uuid) to anon, authenticated;
 
 -- =====================================================================
 -- APRÈS votre inscription sur la plateforme, devenez administrateur :

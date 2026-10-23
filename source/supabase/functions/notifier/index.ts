@@ -668,7 +668,7 @@ export type Donnees = {
   invitations: Map<string, Invitation[]>; mentoratsEtudiant: Map<string, Mentorat[]>; mentoratsMentor: Map<string, Mentorat[]>;
   ouvertes: Mentorat[]; questions: Map<string, Question>; questionsRecentes: Question[]; reponses: Reponse[]; repondues: Set<string>;
   parrainages: Parrainage[]; cafes: Cafe[]; placementsEtudiant: Map<string, Placement[]>; placementsLaureat: Map<string, Placement[]>;
-  enAttente: number; talents: Talent[];
+  enAttente: number; talents: Talent[]; arrivees: Profil[];
   evenements: Evenement[]; enquetesFaites: Set<string>; relectures: Relecture[]; contactsEnAttente: Map<string, number>; signalements: number;
 };
 
@@ -717,6 +717,9 @@ export function indexer(b: Brut, date: Date): Donnees {
     placementsLaureat: grouper(placements, x => x.laureat_id),
     enAttente: placements.filter(x => x.status === 'en_attente').length,
     talents,
+    // Nouveaux membres de la semaine (étudiants et lauréats), du plus récent au plus ancien
+    arrivees: b.profils.filter(p => (p.role === 'etudiant' || p.role === 'laureat') && temps(p.created_at) >= depuis7 && temps(p.created_at) <= now)
+      .sort((x, y) => temps(y.created_at) - temps(x.created_at)),
     evenements: (b.evenements || []).filter(e => !e.annule && temps(e.debut) >= now && temps(e.debut) <= now + 14 * JOUR)
       .sort((x, y) => temps(x.debut) - temps(y.debut)),
     enquetesFaites: new Set((b.enquetes || []).map(e => `${e.user_id}|${e.vague}`)),
@@ -758,14 +761,17 @@ export type Resume = {
   // Phase 3 (facultatifs : un résumé construit sans eux reste valable)
   evenements?: { titre: string; at: string; lieu: string }[];
   enquete?: number; contacts?: number; relectures?: number;
+  // Nouveaux de sa promo ou de sa filière (5 noms au plus) ; reseau : toutes les arrivées de la semaine
+  arrivees?: { total: number; liste: Arrivee[]; reseau: { laureats: number; etudiants: number } };
 };
+export type Arrivee = { nom: string; promo: number; niveau: number };
 
 export function estVide(r: Resume): boolean {
   return !(r.aConfirmer.length || r.invitations.length || r.candidatures || r.demandes.length || r.rdv.length || r.aClore.length
     || r.questions.length || r.relances.length || r.offres.total || r.reponses.length || r.parrain || r.talents.total
     || r.ouvertes.total || r.impact.mercis || r.impact.recrutements || r.filleuls.length || r.cafes.length
     || r.admin.nonVerifies || r.admin.nouveaux || r.admin.enAttente || r.admin.signalements
-    || r.evenements?.length || r.enquete || r.contacts || r.relectures);
+    || r.evenements?.length || r.enquete || r.contacts || r.relectures || r.arrivees?.total);
 }
 
 // Filières officielles (choix en 3A) groupées par parcours, et anciennes appellations des promos précédentes (même règle que logic.js)
@@ -806,7 +812,7 @@ export function resumeVide(p: Profil): Resume {
     aConfirmer: [], invitations: [], candidatures: 0, demandes: [], rdv: [], aClore: [], questions: [], relances: [],
     offres: { total: 0, liste: [] }, reponses: [], parrain: '', talents: { total: 0, liste: [] }, ouvertes: { total: 0, sujets: [] },
     impact: { mercis: 0, recrutements: 0, citation: null }, filleuls: [], cafes: [], admin: { nonVerifies: 0, nouveaux: 0, enAttente: 0, signalements: 0 },
-    evenements: [], enquete: 0, contacts: 0, relectures: 0,
+    evenements: [], enquete: 0, contacts: 0, relectures: 0, arrivees: { total: 0, liste: [], reseau: { laureats: 0, etudiants: 0 } },
   };
 }
 
@@ -852,6 +858,21 @@ export function resumeDe(p: Profil, d: Donnees): Resume | null {
     r.cafes = d.cafes.filter(c => c.organisateur_id !== p.id && normVille(c.ville) === ville).slice(0, 3)
       .map(c => ({ ville: txt(c.ville), lieu: txt(c.lieu), at: c.date_at }));
   }
+
+  // Qui vient d'arriver : un étudiant voit sa promo et les lauréats de sa filière ; un lauréat, sa promo et sa filière
+  const autres = (d.arrivees || []).filter(x => x.id !== p.id);
+  const proches = autres.filter(x => laureat
+    ? (x.role === 'laureat' && x.promo === p.promo) || procheFiliere(x.filiere, p.filiere)
+    : (x.role === 'etudiant' && x.promo === p.promo) || (x.role === 'laureat' && procheFiliere(x.filiere, p.filiere)));
+  proches.sort((x, y) => +(y.promo === p.promo) - +(x.promo === p.promo));
+  r.arrivees = {
+    total: proches.length,
+    liste: proches.slice(0, 5).map(x => {
+      const n = x.role === 'etudiant' ? niveauDe(x.promo, d.saison) : 0;
+      return { nom: couper(txt(x.full_name), 40), promo: x.promo, niveau: n >= 1 && n <= 5 ? n : 0 };
+    }),
+    reseau: { laureats: autres.filter(x => x.role === 'laureat').length, etudiants: autres.filter(x => x.role === 'etudiant').length },
+  };
 
   if (!laureat) {
     const niveau = niveauDe(p.promo, d.saison);
@@ -940,7 +961,7 @@ const FR = {
   marque: 'Réseau ENSAM Meknès', suffixe: ' · Réseau ENSAM', defaut: 'Ta semaine sur le Réseau ENSAM Meknès',
   sousTitre: 'Ta semaine sur le réseau', sep: ' : ',
   bonjour: (p: string) => (p ? `Bonjour ${p},` : 'Bonjour,'),
-  intro: 'Voici ce qui t’attend cette semaine.', introAdmin: 'Voici le point de la semaine pour l’administration.',
+  intro: 'Voici ce qui t’attend cette semaine.', introCalme: 'Rien à faire cette semaine. Voici qui vient d’arriver.', introAdmin: 'Voici le point de la semaine pour l’administration.',
   quand: (date: string, heure: string) => `${date} à ${heure}`,
   pied: 'Tu reçois ce résumé une fois par semaine parce que tu es membre du Réseau ENSAM Meknès.',
   ouvrir: 'Ouvrir la plateforme', desabo: 'Se désabonner',
@@ -949,12 +970,13 @@ const FR = {
     aFaire: 'À faire cette semaine', offres: 'Nouvelles offres pour toi', reponses: 'Réponses à tes questions', parrain: 'Ton parrain',
     cafes: 'Cafés ENSAM près de chez toi', talents: 'Alerte talents', ouvertes: 'Ils demandent de l’aide', impact: 'Ton impact cette semaine',
     filleul: 'Ton nouveau filleul', filleuls: 'Tes nouveaux filleuls', admin: 'Administration', agenda: 'À l’agenda du réseau', enquete: 'Enquête d’insertion',
+    arrivees: 'Nouveaux sur le réseau',
   },
   routes: {
     enquete: 'Répondre à l’enquête', 'reseau/agenda': 'Voir l’agenda', 'mentorat/cv': 'Voir les CV à relire',
     parcours: 'Ouvrir mon parcours', offres: 'Voir les offres', mentorat: 'Ouvrir le mentorat', espace: 'Ouvrir mon espace',
     'reseau/entraide': 'Aller à l’Entraide', 'reseau/groupes': 'Voir les cafés', 'reseau/talents': 'Voir les talents',
-    accueil: 'Ouvrir la plateforme', admin: 'Ouvrir l’administration',
+    accueil: 'Ouvrir la plateforme', admin: 'Ouvrir l’administration', 'reseau/annuaire': 'Voir l’annuaire',
   } as Record<string, string>,
   l: {
     aConfirmer: (f: Fmt, x: { entreprise: string; nom: string }) => `Confirme ton recrutement chez ${f.g(x.entreprise)}${x.nom ? ` (déclaré par ${f.u(x.nom)})` : ''}.`,
@@ -988,6 +1010,10 @@ const FR = {
     enquete: (f: Fmt, v: number) => `${f.g(`Enquête ${v} mois après le diplôme`)} : 2 minutes pour aider les promos suivantes.`,
     relectures: (f: Fmt, n: number) => f.g(n > 1 ? `${n} CV attendent une relecture.` : '1 CV attend une relecture.'),
     evenement: (f: Fmt, x: { titre: string; lieu: string }, q: string) => `${f.g(x.titre)} · ${q}${x.lieu ? ` · ${f.u(x.lieu)}` : ''}`,
+    arriveesIntro: (f: Fmt, n: number) => f.g(n > 1 ? `${n} membres de ta promo ou de ta filière ont rejoint le réseau cette semaine.` : '1 membre de ta promo ou de ta filière a rejoint le réseau cette semaine.'),
+    arrivee: (f: Fmt, x: Arrivee) => `${f.u(x.nom)} · ${x.niveau ? `${x.niveau}A` : `promo ${x.promo}`}`,
+    reseau: (f: Fmt, l: number, e: number) => (l && e ? `Dans tout le réseau : ${pl(l, 'lauréat', 'lauréats')} et ${pl(e, 'étudiant', 'étudiants')} de plus cette semaine.`
+      : `Dans tout le réseau : ${l ? pl(l, 'lauréat', 'lauréats') : pl(e, 'étudiant', 'étudiants')} de plus cette semaine.`),
   },
   s: {
     aConfirmer: (e: string) => `Confirme ton recrutement chez ${e}`,
@@ -1016,6 +1042,7 @@ const FR = {
     enquete: (v: number) => `Enquête d’insertion : où en es-tu ${v === 12 ? 'un an' : 'six mois'} après ton diplôme ?`,
     relectures: (n: number) => (n > 1 ? `${n} CV à relire` : '1 CV à relire'),
     evenement: (titre: string) => `À l’agenda : ${titre}`,
+    arrivees: (n: number, nom: string) => (n > 1 ? `${n} nouveaux de ta promo ou de ta filière` : `${nom} vient d’arriver sur le réseau`),
   },
 };
 type Dico = typeof FR;
@@ -1024,7 +1051,7 @@ const AR: Dico = {
   marque: 'شبكة ENSAM مكناس', suffixe: ' · شبكة ENSAM', defaut: 'أسبوعك على شبكة ENSAM مكناس',
   sousTitre: 'أسبوعك على الشبكة', sep: ': ',
   bonjour: p => (p ? `مرحبًا ${p}،` : 'مرحبًا،'),
-  intro: 'إليك ما ينتظرك هذا الأسبوع.', introAdmin: 'إليك حصيلة الأسبوع للإدارة.',
+  intro: 'إليك ما ينتظرك هذا الأسبوع.', introCalme: 'لا شيء ينتظرك هذا الأسبوع. إليك من انضم حديثًا.', introAdmin: 'إليك حصيلة الأسبوع للإدارة.',
   quand: (date, heure) => `${date} على الساعة ${heure}`,
   pied: 'يصلك هذا الملخص مرة في الأسبوع لأنك عضو في شبكة ENSAM مكناس.',
   ouvrir: 'فتح المنصة', desabo: 'إلغاء الاشتراك',
@@ -1033,12 +1060,13 @@ const AR: Dico = {
     aFaire: 'مهام هذا الأسبوع', offres: 'عروض جديدة لك', reponses: 'أجوبة على أسئلتك', parrain: 'عرّابك',
     cafes: 'مقاهي ENSAM قربك', talents: 'تنبيه المواهب', ouvertes: 'طلبة يحتاجون مساعدتك', impact: 'أثرك هذا الأسبوع',
     filleul: 'طالب جديد في رعايتك', filleuls: 'طلبة جدد في رعايتك', admin: 'الإدارة', agenda: 'في أجندة الشبكة', enquete: 'استمارة الإدماج المهني',
+    arrivees: 'وجوه جديدة في الشبكة',
   },
   routes: {
     enquete: 'الإجابة على الاستمارة', 'reseau/agenda': 'عرض الأجندة', 'mentorat/cv': 'عرض السير الذاتية للمراجعة',
     parcours: 'فتح مساري', offres: 'عرض العروض', mentorat: 'فتح الإرشاد', espace: 'فتح فضائي',
     'reseau/entraide': 'الذهاب إلى التعاون', 'reseau/groupes': 'عرض المقاهي', 'reseau/talents': 'عرض المواهب',
-    accueil: 'فتح المنصة', admin: 'فتح الإدارة',
+    accueil: 'فتح المنصة', admin: 'فتح الإدارة', 'reseau/annuaire': 'عرض الدليل',
   },
   l: {
     aConfirmer: (f, x) => `أكّد توظيفك في ${f.g(x.entreprise)}${x.nom ? ` (صرّح به ${f.u(x.nom)})` : ''}.`,
@@ -1071,6 +1099,9 @@ const AR: Dico = {
     enquete: (f, v) => `${f.g(`استمارة الإدماج بعد ${v === 12 ? 'سنة' : 'ستة أشهر'} من التخرج`)}: دقيقتان لمساعدة الدفعات القادمة.`,
     relectures: (f, n) => f.g(arN(n, ['سيرة ذاتية واحدة تنتظر المراجعة.', 'سيرتان ذاتيتان تنتظران المراجعة.', '{n} سير ذاتية تنتظر المراجعة.', '{n} سيرة ذاتية تنتظر المراجعة.'])),
     evenement: (f, x, q) => `${f.g(x.titre)} · ${q}${x.lieu ? ` · ${f.u(x.lieu)}` : ''}`,
+    arriveesIntro: (f, n) => f.g(`انضم إلى الشبكة هذا الأسبوع ${arN(n, ['عضو واحد', 'عضوان', '{n} أعضاء', '{n} عضوًا'])} من دفعتك أو شعبتك.`),
+    arrivee: (f, x) => `${f.u(x.nom)} · ${x.niveau ? `${x.niveau}A` : `دفعة ${x.promo}`}`,
+    reseau: (f, l, e) => `في الشبكة كلها هذا الأسبوع: ${[l ? arN(l, ['خريج واحد جديد', 'خريجان جديدان', '{n} خريجين جدد', '{n} خريجًا جديدًا']) : '', e ? arN(e, ['طالب واحد جديد', 'طالبان جديدان', '{n} طلاب جدد', '{n} طالبًا جديدًا']) : ''].filter(Boolean).join(' و')}.`,
   },
   s: {
     aConfirmer: e => `أكّد توظيفك في ${e}`,
@@ -1099,6 +1130,7 @@ const AR: Dico = {
     enquete: v => `استمارة الإدماج: أين وصلت ${v === 12 ? 'بعد سنة' : 'بعد ستة أشهر'} من تخرجك؟`,
     relectures: n => arN(n, ['سيرة ذاتية للمراجعة', 'سيرتان ذاتيتان للمراجعة', '{n} سير ذاتية للمراجعة', '{n} سيرة ذاتية للمراجعة']),
     evenement: titre => `في الأجندة: ${titre}`,
+    arrivees: (n, nom) => (n > 1 ? arN(n, ['', 'عضوان جديدان من دفعتك أو شعبتك', '{n} أعضاء جدد من دفعتك أو شعبتك', '{n} عضوًا جديدًا من دفعتك أو شعبتك']) : `انضمام جديد إلى الشبكة: ${nom}`),
   },
 };
 
@@ -1156,6 +1188,14 @@ function sectionsDe(r: Resume, L: Dico, langue: Langue): Section[] {
   if (r.parrain) out.push({ titre: L.t.parrain, route: 'accueil', lignes: [f => L.l.parrain(f, r.parrain)] });
   if (r.cafes.length) out.push({ titre: L.t.cafes, route: 'reseau/groupes', lignes: r.cafes.map(x => (f: Fmt) => L.l.cafe(f, x, q(x.at))) });
   if (r.evenements?.length) out.push({ titre: L.t.agenda, route: 'reseau/agenda', lignes: r.evenements.map(x => (f: Fmt) => L.l.evenement(f, x, q(x.at))) });
+  const a = r.arrivees;
+  if (a?.total) {
+    const l: Ligne[] = [f => L.l.arriveesIntro(f, a.total), ...a.liste.map(x => (f: Fmt) => L.l.arrivee(f, x))];
+    if (a.total > a.liste.length) l.push(() => L.plus(a.total - a.liste.length));
+    // La ligne du réseau seulement si elle dit plus que la liste
+    if (a.reseau.laureats + a.reseau.etudiants > a.total) l.push(f => L.l.reseau(f, a.reseau.laureats, a.reseau.etudiants));
+    out.push({ titre: L.t.arrivees, route: 'reseau/annuaire', lignes: l });
+  }
   if (r.role === 'admin') {
     const l: Ligne[] = [];
     const a = r.admin;
@@ -1198,6 +1238,7 @@ function sujetDe(r: Resume, L: Dico, langue: Langue): string {
     [r.relectures, () => s.relectures(r.relectures || 0)],
     [r.enquete, () => s.enquete(r.enquete || 6)],
     [r.evenements?.length, () => s.evenement(r.evenements?.[0]?.titre || '')],
+    [r.arrivees?.total, () => s.arrivees(r.arrivees?.total || 0, r.arrivees?.liste[0]?.nom || '')],
   ] : [
     [r.aConfirmer.length, () => s.aConfirmer(r.aConfirmer[0].entreprise)],
     [r.rdv.length, () => s.rdv(q(r.rdv[0].at))],
@@ -1210,6 +1251,7 @@ function sujetDe(r: Resume, L: Dico, langue: Langue): string {
     [r.contacts, () => s.contacts(r.contacts || 0)],
     [r.enquete, () => s.enquete(r.enquete || 6)],
     [r.evenements?.length, () => s.evenement(r.evenements?.[0]?.titre || '')],
+    [r.arrivees?.total, () => s.arrivees(r.arrivees?.total || 0, r.arrivees?.liste[0]?.nom || '')],
   ];
   const c = choix.find(([vrai]) => vrai);
   const t = c ? txt(c[1]()) : '';
@@ -1224,7 +1266,8 @@ export function rendreResume(r: Resume, langue: Langue, site: string, token: str
   const secs = sectionsDe(r, L, langue);
   const sujet = sujetDe(r, L, langue);
   const desabo = `${site}#desabo/${token}`;
-  const salut = L.bonjour(r.prenom), intro = r.role === 'admin' ? L.introAdmin : L.intro;
+  const salut = L.bonjour(r.prenom), seulementArrivees = secs.length === 1 && secs[0].route === 'reseau/annuaire';
+  const intro = r.role === 'admin' ? L.introAdmin : seulementArrivees ? L.introCalme : L.intro;
   const debut = ar ? 'right' : 'left', dir = ar ? 'rtl' : 'ltr';
   const police = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Tahoma,Helvetica,Arial,sans-serif;";
   const fh = ar ? HTML_AR : HTML, ft = ar ? BRUT_AR : BRUT;
@@ -1802,7 +1845,8 @@ export class PosteGmail {
     if (!adresseSure(a)) { console.error('notifier : adresse email invalide'); return false; }
     const donnees = messageMime(de, a, m);
     for (let essai = 0; essai < 2; essai++) {
-      const reprise = this.libres.pop();
+      // Le nouvel essai se fait sur une connexion neuve : une autre connexion gardée a pu être coupée elle aussi
+      const reprise = essai === 0 ? this.libres.pop() : undefined;
       let c: ClientSmtp | undefined = reprise;
       try {
         if (!c) c = await ClientSmtp.ouvrir(this.user, this.mdp);
@@ -1912,7 +1956,7 @@ async function jobResume(env: Env): Promise<Response> {
   const f = facteur(env);
   if (!f.pret) return json({ skipped: 'email' });
   const date = new Date();
-  const dest = ((await rpc(env, 'destinataires_resume', { p_max: 250 })) || []) as { id: string; email: string; langue: string; token: string }[];
+  const dest = ((await rpc(env, 'destinataires_resume', { p_max: 150 })) || []) as { id: string; email: string; langue: string; token: string }[];
   const b: { sent: number; empty: number; errors: number; via?: string } = { sent: 0, empty: 0, errors: 0 };
   if (!dest.length) return json(b);
   const d = indexer(await chargerDonnees(env, dest.map(x => x.id), date), date);

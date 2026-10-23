@@ -32,6 +32,9 @@ fi
 for f in supabase/installation.sql supabase/mise-a-jour.sql; do
   printf "\n-- Résultat : 1 = activé\nselect (select count(*) from pg_extension where extname = 'pg_net') as envois_pg_net, (select count(*) from pg_extension where extname = 'pg_cron') as taches_pg_cron, (select count(*) from storage.buckets where id = 'cv') as stockage_cv, (select count(*) from storage.buckets where id = 'chat') as stockage_messagerie, (select count(*) from storage.buckets where id = 'photos') as stockage_photos;\n" >> "$f"
 done
-# Chargement rapide en 3G : modules préchargés, et version + liste des fichiers pour le service worker
-if command -v node >/dev/null 2>&1; then node outils/precharger.mjs dist; else echo "node absent : préchargement et cache hors ligne non préparés"; fi
+# Chargement rapide en 3G : modules préchargés, et version + liste des fichiers pour le service worker.
+# Pages d'aperçu des liens de promo (sans elles, chaque lien partagé mènerait à une page introuvable)
+command -v node >/dev/null 2>&1 || { echo "node est nécessaire : pages de promo et préchargement"; exit 1; }
+node outils/pages-promo.mjs dist
+node outils/precharger.mjs dist
 echo "OK: dist/ et artifact/ prêts"

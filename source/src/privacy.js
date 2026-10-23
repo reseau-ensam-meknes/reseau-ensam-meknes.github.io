@@ -3,13 +3,15 @@ import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, BrandLogo, toast } from './ui.js';
 import { PushToggle } from './pwa.js';
 import { addAR } from './i18n.js';
+import { adresseContact } from './regles-entree.js';
 
 // Arabe : textes ajoutés en Phase 3 (le reste est dans i18n-ar.js)
 addAR({
-  'Tes messages privés : textes, photos et messages vocaux échangés avec un autre membre.': 'رسائلك الخاصة: النصوص والصور والرسائل الصوتية المتبادلة مع عضو آخر.',
+  'La semaine de ton inscription, le résumé par email peut citer ton nom et ta promo (ou ton année) aux membres de ta promo ou de ta filière, comme le fait l’annuaire.': 'في أسبوع تسجيلك، قد يذكر الملخص الأسبوعي اسمك ودفعتك (أو سنتك) لأعضاء دفعتك أو شعبتك، كما يفعل الدليل.',
+  'Tes messages privés : textes, photos, messages vocaux et réactions échangés avec un autre membre.': 'رسائلك الخاصة: النصوص والصور والرسائل الصوتية والتفاعلات المتبادلة مع عضو آخر.',
   'Un message privé n’est visible que par toi et la personne à qui tu écris. Ses photos et vocaux sont dans un espace privé et s’ouvrent par un lien temporaire. L’administration ne voit un message que si l’un de vous deux le signale.': 'لا يرى الرسالة الخاصة إلا أنت والشخص الذي تراسله. صورها وتسجيلاتها الصوتية محفوظة في فضاء خاص وتُفتح برابط مؤقت. لا ترى الإدارة رسالةً إلا إذا بلّغ عنها أحدكما.',
   'Tu peux bloquer un membre à tout moment : vous ne pouvez plus vous écrire.': 'يمكنك حظر عضو في أي وقت: لن يعود بإمكانكما المراسلة.',
-  'Un message que tu supprimes est effacé pour vous deux, avec sa photo ou son vocal.': 'الرسالة التي تحذفها تُمحى لديكما معًا، مع صورتها أو تسجيلها الصوتي.',
+  'Un message que tu supprimes est effacé pour vous deux, avec sa photo ou son vocal et ses réactions.': 'الرسالة التي تحذفها تُمحى لديكما معًا، مع صورتها أو تسجيلها الصوتي وتفاعلاتها.',
   'Un email te prévient si un message attend depuis 30 minutes.': 'سيصلك بريد إذا انتظرتك رسالة 30 دقيقة.', 'Plus d’email pour les messages.': 'لا بريد بعد الآن للرسائل.',
   'M’envoyer un email quand un message m’attend (un toutes les 6 heures au plus)': 'أرسل لي بريدًا عندما تنتظرني رسالة (مرة كل 6 ساعات على الأكثر)',
   'Emails des messages': 'رسائل البريد الخاصة بالرسائل', 'Tu ne veux plus recevoir d’email quand un message t’attend ?': 'لا تريد تلقي بريد عندما تنتظرك رسالة؟',
@@ -59,11 +61,11 @@ const cfg = () => (typeof window !== 'undefined' && window.ENSAM_CONFIG) || {};
 // Le texte est court et concret : ce qui est collecté, pourquoi, qui le voit, où il est stocké, combien de temps, les droits.
 const SECTIONS = [
   ['user', 'Ce que nous collectons', [
-    'Ton compte : ton email et ton mot de passe (chiffré, jamais visible, même par l’administration).',
+    'Ton compte : ton email (et ton mot de passe si tu en as un : chiffré, jamais visible, même par l’équipe du Réseau).',
     'Ton profil : nom, rôle, filière, promo, et si tu les remplis : entreprise, poste, secteur, ville, pays, bio, compétences, LinkedIn, CV (fichier PDF ou lien), disponibilité.',
     'Tes coordonnées privées, si tu les donnes : téléphone, email de contact, autre moyen de te joindre.',
     'Ce que tu fais sur la plateforme : offres, candidatures, rendez-vous de mentorat, relectures de CV, questions et réponses, mercis, messages de groupe, cafés, inscriptions aux événements de l’école.',
-    'Tes messages privés : textes, photos et messages vocaux échangés avec un autre membre.',
+    'Tes messages privés : textes, photos, messages vocaux et réactions échangés avec un autre membre.',
     'Ce que tu partages pour les suivants, si tu le fais : avis de stage, questions d’entretien, rubriques du guide de l’étranger, réponses à l’enquête d’insertion.',
     'Si tu les actives : l’adresse technique de ton téléphone pour les notifications, et ta langue préférée pour les emails.',
   ]],
@@ -82,6 +84,7 @@ const SECTIONS = [
     'Une candidature n’est visible que par toi et par le lauréat qui a publié l’offre.',
     'Un message privé n’est visible que par toi et la personne à qui tu écris. Ses photos et vocaux sont dans un espace privé et s’ouvrent par un lien temporaire. L’administration ne voit un message que si l’un de vous deux le signale.',
     'Un étudiant ne voit que les offres de son année ; les offres entre lauréats ne sont pas visibles par les étudiants.',
+    'La semaine de ton inscription, le résumé par email peut citer ton nom et ta promo (ou ton année) aux membres de ta promo ou de ta filière, comme le fait l’annuaire.',
     'Un avis de stage ou un entretien publié en anonyme n’affiche pas ton nom aux membres.',
     'L’administration voit les emails des comptes, seulement pour vérifier les lauréats et aider en cas de problème.',
     'Une attestation de lauréat peut être vérifiée par un lien que son titulaire choisit de partager.',
@@ -112,7 +115,7 @@ const SECTIONS = [
     'Tant que ton compte existe. Quand tu le supprimes, ton profil, ton CV et tout ce qui t’est lié sont effacés tout de suite. Seuls restent des chiffres globaux sans nom.',
     'Quand tu remplaces ou retires ton CV, l’ancien fichier est effacé, sauf s’il est encore lié à une relecture.',
     'Les notifications en attente sont effacées dès leur envoi.',
-    'Un message que tu supprimes est effacé pour vous deux, avec sa photo ou son vocal.',
+    'Un message que tu supprimes est effacé pour vous deux, avec sa photo ou son vocal et ses réactions.',
   ]],
   ['check', 'Tes droits (loi 09-08)', [
     'Accès : télécharge toutes tes données depuis « Mon profil ».',
@@ -132,7 +135,7 @@ export function PrivacyPage({ onBack }) {
     ${SECTIONS.map(([ic, h, items]) => html`<div class="panel priv-sec"><h2 class="h-ico"><${Icon} name=${ic}/> ${h}</h2><ul>${items.map(t => html`<li>${t}</li>`)}</ul></div>`)}
     <div class="panel priv-sec"><h2 class="h-ico"><${Icon} name="inbox"/> Contact</h2>
       <p>Responsable du traitement : l’équipe qui administre le Réseau ENSAM Meknès.</p>
-      ${c.contactEmail ? html`<p>Pour toute question sur tes données : <a href=${'mailto:' + c.contactEmail} dir="ltr" translate="no">${c.contactEmail}</a></p>` : html`<p>Pour toute question sur tes données, écris à l’administration depuis la plateforme (Entraide ou profil d’un administrateur).</p>`}
+      ${adresseContact(c) ? html`<p>Pour toute question sur tes données : <a href=${'mailto:' + adresseContact(c)} dir="ltr" translate="no">${adresseContact(c)}</a></p>` : html`<p>Pour toute question sur tes données, écris à l’administration depuis la plateforme (Entraide ou profil d’un administrateur).</p>`}
       ${c.cndp ? html`<p class="small muted">Déclaration CNDP : <span dir="ltr" translate="no">${c.cndp}</span></p>` : null}
     </div>
     <p class="small muted">Dernière mise à jour : octobre 2026.</p>
@@ -143,7 +146,9 @@ export function PrivacyPage({ onBack }) {
 export function ConsentModal({ ctx }) {
   const { me, store, act, go } = ctx;
   const [ok, setOk] = useState(false);
-  const [mails, setMails] = useState(me.emails_hebdo !== false);
+  // Résumé de la semaine : coché d'avance si le membre le reçoit déjà, ou s'il l'a laissé coché en créant son compte
+  // (il n'est envoyé qu'après « Continuer », la case reste à décocher)
+  const [mails, setMails] = useState(me.emails_hebdo !== false || (!me.consent_at && store.session?.user?.user_metadata?.emails_hebdo === true));
   return html`<div class="modal-back consent-back"><div class="modal" role="dialog" aria-modal="true" aria-label="Tes données">
     <header class="modal-head"><h2>Tes données, en clair</h2></header>
     <div class="modal-body form">
@@ -164,7 +169,7 @@ export function MesDonnees({ ctx }) {
   const exportData = () => {
     const mine = {};
     const owner = { offers: ['author_id'], comments: ['author_id'], reactions: ['user_id'], applications: ['student_id'], placements: ['student_id', 'laureat_id'], mentorships: ['student_id', 'mentor_id'], questions: ['author_id'], answers: ['author_id'], votes: ['user_id'], shortlists: ['laureat_id', 'student_id'], invitations: ['laureat_id', 'student_id'], kudos: ['user_id'], attestations: ['laureat_id'], groupe_messages: ['author_id'], groupe_membres: ['user_id'], cafes: ['organisateur_id'], cafe_participants: ['user_id'], startups: ['fondateur_id'], parrainages: ['filleul_id', 'parrain_id'] };
-    Object.assign(owner, { coordonnees: ['id'], demandes_contact: ['demandeur_id', 'cible_id'], relectures_cv: ['student_id', 'reviewer_id'], entretiens: ['author_id'], avis_stage: ['author_id'], enquetes_insertion: ['user_id'], signalements: ['auteur_id'], evenement_participants: ['user_id'], verifications_pairs: ['laureat_id', 'verificateur_id'], messages: ['author_id', 'dest_id'], blocages: ['user_id'] });
+    Object.assign(owner, { coordonnees: ['id'], demandes_contact: ['demandeur_id', 'cible_id'], relectures_cv: ['student_id', 'reviewer_id'], entretiens: ['author_id'], avis_stage: ['author_id'], enquetes_insertion: ['user_id'], signalements: ['auteur_id'], evenement_participants: ['user_id'], verifications_pairs: ['laureat_id', 'verificateur_id'], messages: ['author_id', 'dest_id'], blocages: ['user_id'], reactions_messages: ['user_id'] });
     for (const [t, cols] of Object.entries(owner)) mine[t] = (data[t] || []).filter(r => cols.some(c => r[c] === me.id));
     const relues = new Set(mine.relectures_cv.map(r => r.id));
     mine.relecture_commentaires = (data.relecture_commentaires || []).filter(c => c.author_id === me.id || relues.has(c.relecture_id));

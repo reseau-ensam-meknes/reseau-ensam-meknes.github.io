@@ -88,10 +88,15 @@ test('profil : s’enregistre même avec des champs vides ; rôle et promo cohé
   // Un « lauréat » d'une promo pas encore diplômée : on le lui dit, et un bouton corrige le rôle
   await s.page.fill('#pf-promo', String(new Date().getFullYear() + 1)); await s.page.waitForTimeout(150);
   assert.ok(await s.page.isVisible('#pf-incoherent'));
-  assert.ok(await s.page.isDisabled('form .row-end .btn.primary'));
+  // Le bouton n'est jamais grisé : il dit ce qui manque et y mène
+  const bouton = 'form .row-end .btn.primary';
+  assert.equal(await s.page.getAttribute(bouton, 'data-manque'), 'coherence');
+  assert.match(await s.page.locator(bouton).innerText(), /Vérifie ta promo/);
+  await s.page.click(bouton); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'pf-role-ok');
   await s.page.click('#pf-role-ok'); await s.page.waitForTimeout(150);
   assert.ok(!(await s.page.isVisible('#pf-incoherent')));
-  assert.ok(await s.page.isEnabled('form .row-end .btn.primary'));
+  assert.equal(await s.page.getAttribute(bouton, 'data-manque'), null);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -143,6 +148,114 @@ test('messagerie : écrire, être lu, bloquer ; pas de conversation sans lien', 
   await s.aller('accueil'); await s.comme('Nadia'); await s.aller('messages/' + salma); await s.page.waitForTimeout(200);
   assert.equal(await s.page.locator('#chat-txt').count(), 0);
   assert.equal(await s.page.locator('.composer.ferme').count(), 1);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('messagerie : répondre à un message précis, réagir ; sous le nom, qui est la personne (jamais « Administration »)', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const id = nom => s.profils.find(x => x[1].includes(nom))[0];
+  const salma = id('Salma'), youssef = id('Youssef');
+  await s.comme('Salma'); await s.aller('messages/' + youssef); await s.page.waitForTimeout(300);
+  await s.page.fill('#chat-txt', 'Je peux vous envoyer mon CV ici avant jeudi ?');
+  await s.page.click('.composer .send-btn'); await s.page.waitForTimeout(400);
+  await s.aller('accueil'); await s.comme('Youssef'); await s.aller('messages/' + salma); await s.page.waitForTimeout(300);
+  const sienne = s.page.locator('.msg:not(.mine)').last();
+  // Réagir : la pastille apparaît, à moi de la retirer
+  await sienne.locator('.msg-more').click();
+  await s.page.click('.react-btn[aria-label="Réagir avec ❤️"]'); await s.page.waitForTimeout(200);
+  assert.equal(await sienne.locator('button.react-pill').getAttribute('aria-label'), 'Retirer ma réaction ❤️');
+  // Répondre : le message cité s'affiche au-dessus de la zone d'écriture, puis dans la bulle envoyée
+  await sienne.locator('.msg-more').click();
+  await s.page.locator('.msg-actions button', { hasText: 'Répondre' }).click();
+  assert.match(await s.page.locator('.comp-cite').innerText(), /Salma[\s\S]*CV ici avant jeudi/);
+  assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'chat-txt');
+  await s.page.fill('#chat-txt', 'Oui, envoie-le ici.');
+  await s.page.click('.composer .send-btn'); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator('.comp-cite').count(), 0);
+  const reponse = s.page.locator('.msg.mine').last();
+  assert.match(await reponse.locator('.msg-cite').innerText(), /Salma[\s\S]*CV ici avant jeudi/);
+  // Toucher la citation ramène au message d'origine
+  await reponse.locator('.msg-cite').click(); await s.page.waitForTimeout(150);
+  assert.equal(await sienne.evaluate(e => e.classList.contains('eclaire')), true);
+  assert.equal(await sienne.evaluate(e => document.activeElement === e), true, 'le message cité prend le focus');
+  // Une citation et une réaction lisibles (contrastes, noms), en clair et en sombre
+  await s.page.addScriptTag({ content: AXE });
+  for (const theme of ['light', 'dark']) {
+    await s.page.emulateMedia({ colorScheme: theme }); await s.page.waitForTimeout(100);
+    await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* animation sans fin */ } }));
+    const v = await s.page.evaluate(async () => (await axe.run('.conv', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => `${x.id} : ${x.nodes.map(n => n.target.join(' ')).join(' ; ')}`));
+    assert.deepEqual(v, [], 'citation et réaction : axe ' + theme);
+  }
+  await s.page.emulateMedia({ colorScheme: 'light' });
+  // L'éclat s'éteint, même avec les animations réduites
+  await s.page.waitForTimeout(1700);
+  assert.equal(await sienne.evaluate(e => e.classList.contains('eclaire')), false);
+  // Salma voit la réaction de Youssef et la citation
+  await s.aller('accueil'); await s.comme('Salma'); await s.aller('messages/' + youssef); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.msg.mine').last().locator('.react-pill').getAttribute('aria-label'), /^Réaction de Youssef : ❤️$/);
+  assert.match(await s.page.locator('.msg:not(.mine)').last().locator('.msg-cite').innerText(), /^Toi/);
+  await s.page.locator('.msg.mine .react-pill').click();
+  assert.equal(await s.page.locator('.msg.mine .react-pill').count(), 1, 'la réaction de l’autre ne se retire pas');
+  // Le même emoji des deux côtés : « 2 », et le nom accessible dit que l'autre a aussi réagi
+  const mien = s.page.locator('.msg.mine').last();
+  await mien.locator('.msg-more').click();
+  await s.page.click('.react-btn[aria-label="Réagir avec ❤️"]'); await s.page.waitForTimeout(200);
+  assert.equal(await mien.locator('button.react-pill').getAttribute('aria-label'), 'Retirer ma réaction ❤️ (Youssef aussi)');
+  assert.equal(await mien.locator('.react-n').innerText(), '2');
+  assert.equal(await s.page.evaluate(() => document.activeElement?.classList.contains('msg-more')), true, 'le focus revient sur les actions du message');
+  await mien.locator('button.react-pill').click(); await s.page.waitForTimeout(200);
+  assert.equal(await mien.locator('.react-pill').getAttribute('aria-label'), 'Réaction de Youssef : ❤️');
+  // Youssef retire la sienne
+  await s.aller('accueil'); await s.comme('Youssef'); await s.aller('messages/' + salma); await s.page.waitForTimeout(300);
+  await s.page.locator('button.react-pill').click(); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator('.react-pill').count(), 0);
+  // L'administration écrit à Salma : sous son nom, son année et sa filière ; côté Salma, « Équipe du réseau »
+  await s.aller('accueil'); await s.comme('Admin'); await s.aller('messages/' + salma); await s.page.waitForTimeout(300);
+  const sous = await s.page.locator('.conv-sub').innerText();
+  assert.doesNotMatch(sous, /Administration/); assert.match(sous, /5A · /);
+  await s.page.fill('#chat-txt', 'Bienvenue Salma !'); await s.page.click('.composer .send-btn'); await s.page.waitForTimeout(400);
+  const admin = await s.page.evaluate(() => window.__demo.me.id);
+  await s.aller('accueil'); await s.comme('Salma'); await s.aller('messages/' + admin); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.conv-sub').innerText(), 'Équipe du réseau');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('profil : « Qui voit quoi » s’enregistre dès le choix ; une mise à jour venue d’ailleurs n’efface pas ce qu’on est en train d’écrire', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('profil'); await s.page.waitForTimeout(300);
+  await s.page.click('#vis-lieu-contacts'); await s.page.waitForTimeout(250);
+  assert.match(await s.page.locator('#vis-etat').innerText(), /Enregistré/);
+  assert.equal(await s.page.locator('.pf-collant').count(), 0, 'rien d’autre à enregistrer');
+  await s.page.reload(); await s.page.waitForSelector('#persona'); await s.comme('Youssef'); await s.aller('profil'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.getAttribute('#vis-lieu-contacts', 'aria-checked'), 'true');
+  // Il écrit sa bio sans enregistrer ; son CV met à jour son poste ailleurs : la bio reste, le poste suit
+  await s.page.fill('#pf-bio', 'Bio en cours d’écriture');
+  assert.equal(await s.page.locator('.pf-collant').count(), 1);
+  await s.page.evaluate(() => window.__demo.update('profiles', window.__demo.me.id, { poste: 'Directeur méthodes' })); await s.page.waitForTimeout(250);
+  assert.equal(await s.page.inputValue('#pf-bio'), 'Bio en cours d’écriture');
+  assert.equal(await s.page.inputValue('#pf-poste'), 'Directeur méthodes');
+  await s.page.click('#vis-presentation-laureats'); await s.page.waitForTimeout(250);
+  assert.equal(await s.page.inputValue('#pf-bio'), 'Bio en cours d’écriture');
+  await s.page.locator('.pf-collant .btn.primary').click(); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.pf-collant').count(), 0);
+  const moi = await s.page.evaluate(() => { const m = window.__demo.me; return { bio: m.bio, poste: m.poste, vis: m.visibilite }; });
+  assert.deepEqual(moi, { bio: 'Bio en cours d’écriture', poste: 'Directeur méthodes', vis: { lieu: 'contacts', presentation: 'laureats' } });
+  // Une lettre tapée puis effacée : rien à enregistrer
+  const ville = await s.page.inputValue('#pf-ville');
+  await s.page.fill('#pf-ville', ville + 'x');
+  assert.equal(await s.page.locator('.pf-collant').count(), 1);
+  await s.page.fill('#pf-ville', ville);
+  assert.equal(await s.page.locator('.pf-collant').count(), 0, 'la barre part quand rien ne diffère');
+  // Un choix qui ne part pas (réseau coupé) reste affiché, et part avec « Enregistrer »
+  await s.page.evaluate(() => { const d = window.__demo, u = d.update; d.update = async () => { d.update = u; throw new Error('Pas de réseau pour l’instant.'); }; });
+  await s.page.click('#vis-cv-contacts'); await s.page.waitForTimeout(250);
+  assert.equal(await s.page.getAttribute('#vis-cv-contacts', 'aria-checked'), 'true');
+  assert.equal(await s.page.locator('.pf-collant').count(), 1);
+  await s.page.locator('.pf-collant .btn.primary').click(); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.pf-collant').count(), 0);
+  assert.equal(await s.page.evaluate(() => window.__demo.me.visibilite.cv), 'contacts');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -249,11 +362,204 @@ test('lien d’invitation d’une promo : la promo est gardée, l’adresse nett
   assert.ok(await s.page.locator('.inv-row').count() >= 9);
   const wa = await s.page.locator('.inv-row', { hasText: 'Promo 2027' }).locator('a[href^="https://wa.me/"]').getAttribute('href');
   const msg = decodeURIComponent(wa.split('text=')[1]);
-  assert.match(msg, /promo 2027/); assert.ok(msg.includes(adresse + '?promo=2027'));
+  assert.match(msg, /promo 2027/); assert.ok(msg.includes(adresse + 'promo/2027/'));
   await s.page.click('.inv-opts .seg button:nth-child(3)');
   assert.match(await s.page.locator('.inv-msg').innerText(), /مرحبا دفعة/);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
+});
+
+test('lien de promo : sa page d’aperçu nomme la promo, puis ouvre le site avec la promo gardée et l’adresse propre', async () => {
+  const s = await ouvrir();
+  const brut = await (await fetch(adresse + 'promo/2019/')).text();
+  assert.ok(brut.includes('<meta property="og:title" content="Promo 2019 · tes camarades sont sur le Réseau">'));
+  await s.page.goto(adresse + 'promo/2019/'); await s.page.waitForSelector('.hello');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-promo')), '2019');
+  assert.deepEqual(await s.page.evaluate(() => [location.pathname, location.search]), ['/', '']);
+  // Lien arabe : la page s'ouvre en arabe pour cette visite (jamais gardé comme un choix), sauf si ce navigateur
+  // a déjà choisi le français
+  await s.page.evaluate(() => localStorage.removeItem('ensam-lang'));
+  await s.page.goto(adresse + 'promo/2019/ar/'); await s.page.waitForSelector('.hello');
+  assert.equal(await s.page.getAttribute('html', 'dir'), 'rtl');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-lang')), null);
+  assert.equal(await s.page.evaluate(() => sessionStorage.getItem('ensam-lang-visite')), 'ar');
+  assert.deepEqual(await s.page.evaluate(() => [location.pathname, location.search]), ['/', '']);
+  await s.page.evaluate(() => localStorage.setItem('ensam-lang', 'fr'));
+  await s.page.goto(adresse + 'promo/2019/ar/'); await s.page.waitForSelector('.hello');
+  assert.equal(await s.page.getAttribute('html', 'dir'), 'ltr');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('lien de promo avec le service worker : l’application gardée s’ouvre tout de suite, sans rechargement de secours', async () => {
+  const s = await ouvrir({ sw: true });
+  await s.page.waitForFunction(() => navigator.serviceWorker.getRegistration().then(r => !!r?.active), null, { timeout: 30000 });
+  await s.page.reload(); await s.page.waitForSelector('.hello');
+  await s.page.goto(adresse + 'promo/2019/'); await s.page.waitForSelector('.hello');
+  assert.ok(await s.page.evaluate(() => !!navigator.serviceWorker.controller));
+  assert.equal(await s.page.evaluate(() => sessionStorage.getItem('ensam-reprise')), null);
+  assert.equal(await s.page.evaluate(() => location.pathname), '/');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-promo')), '2019');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Fais venir ta promo » : un bouton WhatsApp avec le message et le lien de la promo', async () => {
+  const s = await ouvrir();
+  const texte = async sel => decodeURIComponent((await s.page.getAttribute(sel, 'href')).split('text=')[1]);
+  await s.comme('Nadia'); await s.aller('espace');
+  assert.ok((await s.page.getAttribute('#pa-promo', 'href')).startsWith('https://wa.me/?text='));
+  const nadia = await texte('#pa-promo');
+  assert.ok(nadia.includes('Salut la promo 2019')); assert.ok(nadia.includes(adresse + 'promo/2019/'));
+  await s.comme('Youssef'); await s.aller('espace');
+  assert.match(await texte('#promo-wa'), /On est déjà \d+ de la promo 2016\./);
+  assert.equal(await s.page.locator('#promo-wa.primary').count(), 0);
+  await s.comme('Salma'); await s.aller('parcours');
+  assert.ok((await texte('#promo-wa')).includes(adresse + 'promo/2027/'));
+  assert.doesNotMatch(await texte('#promo-wa'), /points|classement/);
+  // Admin > Inviter : une promo sans aucun inscrit garde le lien simple ?promo=
+  await s.comme('Admin'); await s.aller('admin/inviter');
+  await s.page.fill('#inv-promo', '1995'); await s.page.click('.inv-autre button');
+  assert.ok((await s.page.locator('.inv-row', { hasText: 'Promo 1995' }).locator('.inv-link').innerText()).endsWith('?promo=1995'));
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Fais venir ta promo » en arabe : lien arabe de la promo, message en arabe ; l’admin n’a pas de carte', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  await s.comme('Salma'); await s.aller('parcours');
+  const msg = decodeURIComponent((await s.page.getAttribute('#promo-wa', 'href')).split('text=')[1]);
+  assert.ok(msg.includes(adresse + 'promo/2027/ar/')); assert.ok(msg.includes('مرحبا دفعة 2027'));
+  assert.equal(await s.debordement(), 0);
+  await s.comme('Admin'); await s.aller('espace');
+  assert.equal(await s.page.locator('#promo-card').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// « Me prévenir » : en démo, un test simule l'état des notifications d'un vrai téléphone (ensam-prevenir-demo)
+async function prevenirSur(etat, opts = {}) {
+  const s = await ouvrir({ largeur: 360, ...opts });
+  await s.page.setViewportSize({ width: 360, height: 640 });
+  if (etat) { await s.page.evaluate(e => localStorage.setItem('ensam-prevenir-demo', e), etat); await s.page.reload(); await s.page.waitForSelector('.hello'); }
+  const memo = () => s.page.evaluate(() => { const k = Object.keys(localStorage).find(x => x.startsWith('ensam-prevenir-') && x !== 'ensam-prevenir-demo'); return k ? JSON.parse(localStorage.getItem(k)) : {}; });
+  const changerMemo = f => s.page.evaluate(f => { const k = Object.keys(localStorage).find(x => x.startsWith('ensam-prevenir-') && x !== 'ensam-prevenir-demo'); localStorage.setItem(k, JSON.stringify(new Function('m', 'return ' + f)(JSON.parse(localStorage.getItem(k))))); }, f);
+  const mentorat = async sujet => {
+    await s.fiche('Youssef El Amrani');
+    await s.page.click('.modal button:has-text("Demander de l’aide")'); await s.page.waitForTimeout(300);
+    await s.page.click('.need-pick .chip >> nth=0'); await s.page.fill('#ah-sujet', sujet);
+    await s.page.click('.modal .btn.primary:has-text("Envoyer ma demande")'); await s.page.waitForTimeout(700);
+  };
+  return { ...s, memo, changerMemo, mentorat };
+}
+
+test('« Me prévenir » : rien en démo ordinaire, le petit mot reste', async () => {
+  const s = await prevenirSur(null);
+  await s.comme('Amine'); await s.mentorat('Choisir mon stage de 3A');
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Demande envoyée à Youssef/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Me prévenir » : après une demande de mentorat, la feuille remplace le petit mot ; deux refus au plus, à 14 jours d’écart', async () => {
+  const s = await prevenirSur('off');
+  await s.comme('Amine'); await s.mentorat('Choisir mon stage de 3A');
+  await s.page.waitForSelector('.modal.prevenir');
+  assert.equal(await s.page.locator('.prevenir .modal-head h2, .prevenir h2').first().innerText(), 'Te prévenir de la réponse ?');
+  assert.match(await s.page.locator('.modal.prevenir').innerText(), /choisit un horaire/);
+  assert.match(await s.page.locator('.prevenir .verify-ok').innerText(), /Demande envoyée à Youssef\./);
+  assert.match(await s.page.locator('#pv-oui').innerText(), /Me prévenir/);
+  assert.equal(await s.page.locator('.toast').count(), 0, 'pas de petit mot sous la feuille');
+  assert.ok(await s.page.evaluate(() => document.querySelector('.prevenir .modal-foot').getBoundingClientRect().bottom <= innerHeight + .5));
+  assert.equal(await s.debordement(), 0);
+  await s.page.click('#pv-tard'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.equal((await s.memo()).n, 1);
+  // Juste après un refus : le petit mot, pas la feuille
+  await s.mentorat('Préparer mon entretien');
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Demande envoyée à Youssef/);
+  // 15 jours plus tard : une dernière fois
+  await s.changerMemo('({ ...m, at: m.at - 15 * 864e5 })');
+  await s.mentorat('Relire mon rapport');
+  await s.page.waitForSelector('.modal.prevenir');
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).n, 2);
+  await s.changerMemo('({ ...m, at: m.at - 30 * 864e5 })');
+  await s.mentorat('Choisir une option');
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0, 'plus jamais après deux refus');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Me prévenir » sur iPhone, en arabe : les étapes pour ajouter le Réseau à l’écran d’accueil', async () => {
+  const s = await prevenirSur('ios', { langue: 'ar' });
+  await s.comme('Salma'); await s.aller('reseau/entraide');
+  await s.page.click('.toolbar .btn.primary'); await s.page.waitForTimeout(200);
+  await s.page.fill('#aq-titre', 'Quel logiciel apprendre avant un PFE en lean ?');
+  await s.page.click('.modal form .btn.primary'); await s.page.waitForTimeout(700);
+  await s.page.waitForSelector('.modal.prevenir');
+  assert.equal(await s.page.getAttribute('html', 'dir'), 'rtl');
+  assert.match(await s.page.locator('.modal.prevenir').innerText(), /هل نُعلمك عند وصول الرد؟/);
+  assert.equal(await s.page.locator('.prevenir .ios-steps li').count(), 3);
+  assert.equal((await s.page.locator('#pv-oui').innerText()).trim(), 'فهمت');
+  assert.equal(await s.debordement(), 0);
+  await s.page.click('#pv-oui'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).n, 1);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Me prévenir » : une fête qui s’ouvre pendant la feuille passe devant ; la feuille revient plus tard, sans compter de refus', async () => {
+  const s = await prevenirSur('off');
+  await s.comme('Amine'); await s.mentorat('Choisir mon stage de 3A');
+  await s.page.waitForSelector('.modal.prevenir');
+  await s.page.evaluate(async () => {
+    const ui = await import(new URL('ui.js', location.href).href);
+    ui.celebrate({ cle: 'test-fete-' + Date.now(), titre: 'Bravo', texte: 'Une fête pour le test.' });
+  });
+  await s.page.waitForSelector('.fete-back');
+  await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0, 'jamais deux fenêtres l’une sur l’autre');
+  const m = await s.memo();
+  assert.ok(!m.n, 'pas un refus');
+  assert.ok(m.differe, 'gardée pour la visite suivante');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Me prévenir » n’arrive jamais par-dessus une fête : il attend la visite suivante ; accepté, il ne revient plus', async () => {
+  const s = await prevenirSur('off');
+  await s.comme('Salma'); await s.aller('offres/demandes');
+  await s.page.click('#dm-nouvelle'); await s.page.waitForTimeout(200);
+  await s.page.click('#dm-type-pfe');
+  await s.page.fill('#dm-titre', 'PFE en maintenance prédictive');
+  await s.page.fill('#dm-details', 'Je cherche un PFE de 6 mois en maintenance prédictive, à Casablanca ou à Kénitra.');
+  await s.page.click('#dm-publier'); await s.page.waitForTimeout(500);
+  assert.ok(await s.page.locator('.fete-back').isVisible());
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.equal((await s.memo()).differe, 'demande');
+  await s.page.goto(adresse); await s.page.waitForSelector('.hello');
+  await s.comme('Salma');
+  await s.page.waitForSelector('.modal.prevenir', { timeout: 4000 });
+  assert.equal(await s.page.locator('.prevenir .verify-ok').count(), 0);
+  assert.match(await s.page.locator('.modal.prevenir').innerText(), /te propose son aide/);
+  assert.equal((await s.memo()).differe, undefined);
+  await s.page.click('#pv-oui'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Sur la vraie plateforme/);
+  assert.equal((await s.memo()).fait, 1);
+  await s.mentorat('Préparer mes entretiens');
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('construction : pages de promo et image d’aperçu présentes, mais pas gardées par le service worker', () => {
+  const sw = fs.readFileSync(path.join(SITE, 'sw.js'), 'utf8');
+  assert.doesNotMatch(sw.match(/const FICHIERS = (\[.*?\]);/)[1], /"promo\//);
+  assert.ok(fs.statSync(path.join(SITE, 'img/apercu-promo.jpg')).size < 300_000);
+  assert.ok(fs.existsSync(path.join(SITE, 'promo/2040/ar/index.html')));
 });
 
 test('partage WhatsApp : le lien direct rouvre l’offre et la question ; l’administration voit où l’inscription s’arrête', async () => {
@@ -353,7 +659,7 @@ test('inscription : « Tu es… » bien visible, puis tout se remplit depuis le 
   await s.page.waitForSelector('#pf-je-laureat');
   assert.ok(await s.page.isVisible('#pf-choisir'));
   assert.equal(await s.page.locator('#pf-name').count(), 0, 'le reste du formulaire attend le choix');
-  assert.ok(await s.page.isDisabled('form .row-end .btn.primary'));
+  assert.equal(await s.page.getAttribute('form .row-end .btn.primary', 'data-manque'), 'role');
   await s.page.click('#pf-je-etudiant');
   assert.equal(await s.page.getAttribute('#pf-je-etudiant', 'aria-pressed'), 'true');
   assert.ok(await s.page.isVisible('#pf-name'));
@@ -364,17 +670,300 @@ test('inscription : « Tu es… » bien visible, puis tout se remplit depuis le 
   assert.equal(await s.page.inputValue('#pf-name'), 'Yassine Berrada');
   assert.equal(await s.page.inputValue('#pf-promo'), '2021');
   assert.equal(await s.page.inputValue('#pf-fil'), 'Génie Industriel');
-  assert.equal(await s.page.inputValue('#pf-ent'), 'OCP Group');
-  assert.equal(await s.page.inputValue('#pf-poste'), 'Ingénieur méthodes');
-  // Inscription courte : le reste (coordonnées comprises, déjà remplies depuis le CV) s'ouvre au besoin
+  // Un lauréat dit s'il peut aider : c'est la seule chose qui manque encore
+  assert.equal(await s.page.getAttribute('form .row-end .btn.primary', 'data-manque'), 'aide');
+  await s.page.click('#pf-aide-oui');
+  assert.equal(await s.page.getAttribute('form .row-end .btn.primary', 'data-manque'), null);
+  // Inscription courte : le reste (entreprise, coordonnées, déjà remplies depuis le CV) s'ouvre au besoin
+  assert.equal(await s.page.locator('#pf-ent').count(), 0);
   assert.equal(await s.page.locator('#pf-tel').count(), 0);
   await s.page.click('#pf-plus');
+  assert.equal(await s.page.inputValue('#pf-ent'), 'OCP Group');
+  assert.equal(await s.page.inputValue('#pf-poste'), 'Ingénieur méthodes');
   assert.equal(await s.page.inputValue('#pf-tel'), '06 61 22 33 44');
-  assert.ok(await s.page.isEnabled('form .row-end .btn.primary'));
   assert.ok((await s.debordement()) <= 0, 'pas de débordement à 390 px');
   await s.page.addScriptTag({ content: AXE });
   const v = await s.page.evaluate(async () => (await axe.run('#inscription', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => x.id));
   assert.deepEqual(v, []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// La « Dernière étape » seule, comme à l'inscription (en démo, on a déjà un profil)
+const monterInscription = (page, preset) => page.evaluate(async preset => {
+  const [{ html, render }, { createStore }, { ProfileForm }] = await Promise.all([import('./vendor/preact-htm.js'), import('./store.js'), import('./community.js')]);
+  const store = await createStore();
+  document.getElementById('app').hidden = true;
+  const el = document.body.appendChild(document.createElement('main')); el.id = 'inscription'; el.className = 'auth-card wide onb';
+  render(html`<${ProfileForm} ctx=${{ store, act: fn => fn() }} preset=${preset} onboarding/>`, el);
+}, preset);
+
+for (const langue of ['fr', 'ar']) {
+  test(`inscription courte d’un lauréat : trois champs et « aider » au-dessus du pli, le bouton dit ce qui manque (360 px, ${langue})`, async () => {
+    const s = await ouvrir({ largeur: 360, langue });
+    await s.page.setViewportSize({ width: 360, height: 640 });
+    const avant = await s.page.evaluate(() => [...(window.__ensamMissing || [])]);
+    await monterInscription(s.page, { role: 'laureat' });
+    await s.page.waitForSelector('#pf-role-rappel');
+    // Le rôle choisi sur la page d'entrée n'est pas redemandé : il est rappelé
+    assert.equal(await s.page.locator('#pf-je-laureat').count(), 0);
+    if (langue === 'fr') assert.equal(await s.page.locator('#pf-role-rappel').innerText(), 'Tu t’inscris comme lauréat(e).');
+    assert.equal(await s.page.inputValue('#pf-promo'), '', 'aucune promo choisie d’avance');
+    for (const id of ['#pf-name', '#pf-promo', '#pf-fil', '#pf-aide-oui']) {
+      const b = await s.page.locator(id).boundingBox();
+      assert.ok(b && b.y + b.height < 640, `${id} visible sans défiler (bas à ${b && Math.round(b.y + b.height)})`);
+    }
+    assert.equal(await s.page.locator('#pf-ent').count(), 0);
+    assert.equal(await s.page.locator('#pf-tel').count(), 0);
+    assert.equal(await s.page.locator('#pf-cv-choisir.primary').count(), 0, 'le CV est un raccourci, pas l’action principale');
+    const bouton = s.page.locator('.pf-pied .btn');
+    const bb = await bouton.boundingBox();
+    assert.ok(bb.y >= 0 && bb.y + bb.height <= 640, 'le bouton reste à portée du pouce');
+    assert.ok(await bouton.isEnabled());
+    // Un appui à vide mène au premier champ qui manque, et le dit
+    await bouton.click(); await s.page.waitForTimeout(400);
+    assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'pf-name');
+    assert.ok(await s.page.locator('.field-err').first().isVisible());
+    assert.equal(await s.page.getAttribute('#pf-name', 'aria-invalid'), 'true');
+    await s.page.fill('#pf-name', 'Yassine Berrada');
+    await s.page.fill('#pf-promo', '2019');
+    await s.page.selectOption('#pf-fil', { index: 1 });
+    assert.equal(await bouton.getAttribute('data-manque'), 'aide');
+    await s.page.click('#pf-aide-non');
+    assert.equal(await bouton.getAttribute('data-manque'), null);
+    assert.equal((await bouton.innerText()).trim(), langue === 'fr' ? 'Rejoindre la communauté' : 'الانضمام إلى المجتمع');
+    // « Changer » ramène les cartes, le rôle choisi en évidence
+    await s.page.click('#pf-role-changer');
+    assert.equal(await s.page.getAttribute('#pf-je-laureat', 'aria-pressed'), 'true');
+    // « Facultatif » s'ouvre et se referme
+    await s.page.click('#pf-plus');
+    assert.equal(await s.page.getAttribute('#pf-plus', 'aria-expanded'), 'true');
+    assert.ok(await s.page.isVisible('#pf-ent'));
+    await s.page.click('#pf-plus');
+    assert.equal(await s.page.locator('#pf-ent').count(), 0);
+    assert.ok((await s.debordement()) <= 0, 'pas de débordement à 360 px');
+    await s.page.addScriptTag({ content: AXE });
+    const v = await s.page.evaluate(async () => (await axe.run('#inscription', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => x.id));
+    assert.deepEqual(v, []);
+    if (langue === 'ar') {
+      const nouveaux = await s.page.evaluate(a => [...(window.__ensamMissing || [])].filter(x => !a.includes(x)), avant);
+      assert.deepEqual(nouveaux.filter(x => !/^(Yassine Berrada|2019|Ex\. 2019)$/.test(x)), [], 'tout est traduit');
+    }
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}
+
+test('inscription d’un étudiant : la promo part vide, puis dit l’année ; changer de rôle ne remplit rien', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await monterInscription(s.page, { role: 'etudiant' });
+  await s.page.waitForSelector('#pf-role-rappel');
+  assert.equal(await s.page.inputValue('#pf-promo'), '');
+  await s.page.click('#pf-role-changer');
+  await s.page.click('#pf-je-etudiant'); await s.page.click('#pf-je-laureat'); await s.page.click('#pf-je-etudiant');
+  assert.equal(await s.page.inputValue('#pf-promo'), '', 'une promo vide reste vide');
+  const S = await s.page.evaluate(async () => (await import('./logic.js')).seasonOf());
+  await s.page.fill('#pf-promo', String(S + 3)); await s.page.waitForTimeout(150);
+  assert.match(await s.page.locator('#pf-promo').locator('xpath=ancestor::label').innerText(), /Cette saison, tu es en 3e année\./);
+  assert.equal(await s.page.locator('#pf-aide').count(), 0, '« aider » ne concerne que les lauréats');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('profil : deux choix « Qui voit quoi » coup sur coup, le premier lent : « Enregistré » seulement quand le dernier est parti, et des mots exacts', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('profil'); await s.page.waitForTimeout(300);
+  await s.page.evaluate(() => {
+    const d = window.__demo, vrai = d.update.bind(d);
+    d.update = (t, id, patch) => (patch.visibilite && Object.keys(patch).length === 1 ? new Promise(ok => setTimeout(ok, 1000)).then(() => vrai(t, id, patch)) : vrai(t, id, patch));
+  });
+  await s.page.click('#vis-lieu-laureats'); await s.page.click('#vis-lieu-contacts');
+  await s.page.waitForTimeout(1500); // le premier est enregistré, le second encore en route
+  assert.equal(await s.page.locator('#vis-etat').innerText(), 'Enregistrement…');
+  await s.page.waitForFunction(() => /^Enregistré/.test(document.getElementById('vis-etat')?.textContent.trim() || ''), null, { timeout: 4000 });
+  assert.equal(await s.page.locator('#vis-etat').innerText(), 'Enregistré : seuls tes contacts le voient.');
+  assert.equal(await s.page.evaluate(() => window.__demo.me.visibilite.lieu), 'contacts');
+  // « Les lauréats » ouvre aussi aux contacts (la base les laisse voir) : on le dit
+  await s.page.click('#vis-travail-laureats');
+  await s.page.waitForFunction(() => /^Enregistré/.test(document.getElementById('vis-etat')?.textContent.trim() || ''), null, { timeout: 4000 });
+  assert.equal(await s.page.locator('#vis-etat').innerText(), 'Enregistré : les lauréats et tes contacts le voient.');
+  await s.page.evaluate(() => { delete window.__demo.update; });
+  // Un lauréat peut aussi publier une demande (emploi) : même phrase pour le CV
+  await s.page.click('#vis-cv-contacts');
+  await s.page.waitForFunction(() => /^Enregistré/.test(document.getElementById('vis-etat')?.textContent.trim() || ''), null, { timeout: 4000 });
+  assert.equal(await s.page.locator('#vis-etat').innerText(), 'Enregistré : tes contacts le voient ; les lauréats aussi quand tu as une demande ouverte.');
+  // Un envoi qui échoue après un « Enregistrer » réussi ne dit plus « Pas encore enregistré »
+  await s.page.evaluate(() => {
+    const d = window.__demo, vrai = d.update.bind(d); let premier = true;
+    d.update = (t, id, patch) => {
+      if (patch.visibilite && Object.keys(patch).length === 1 && premier) { premier = false; return new Promise((_, ko) => setTimeout(() => ko(new Error('Pas de réseau pour l’instant. Réessaie dans un instant.')), 1500)); }
+      return vrai(t, id, patch);
+    };
+  });
+  await s.page.click('#vis-lieu-tous');
+  await s.page.fill('#pf-ville', 'Rabat');
+  await s.page.click('.pf-collant .btn.primary');
+  await s.page.waitForTimeout(2500);
+  assert.doesNotMatch(await s.page.locator('.cf-vis').innerText(), /Pas encore enregistré/);
+  assert.equal(await s.page.evaluate(() => window.__demo.me.visibilite.lieu), 'tous');
+  assert.equal(await s.page.locator('.pf-collant').count(), 0);
+  await s.page.evaluate(() => { delete window.__demo.update; });
+  // Le renvoi qui suit « Enregistrer » échoue lui aussi : la base a déjà la grille voulue, rien d'alarmant à dire
+  await s.page.evaluate(() => {
+    const d = window.__demo, vrai = d.update.bind(d);
+    d.update = (t, id, patch) => (patch.visibilite && Object.keys(patch).length === 1 ? new Promise((_, ko) => setTimeout(() => ko(new Error('Pas de réseau pour l’instant. Réessaie dans un instant.')), 1500)) : vrai(t, id, patch));
+  });
+  await s.page.click('#vis-lieu-contacts');
+  await s.page.fill('#pf-ville', 'Fès');
+  await s.page.click('.pf-collant .btn.primary');
+  await s.page.waitForTimeout(4000);
+  assert.doesNotMatch(await s.page.locator('.cf-vis').innerText(), /Pas encore enregistré/);
+  assert.match(await s.page.locator('#vis-etat').innerText(), /^Enregistré/);
+  assert.equal(await s.page.evaluate(() => window.__demo.me.visibilite.lieu), 'contacts');
+  assert.equal(await s.page.locator('.pf-collant').count(), 0);
+  await s.page.evaluate(() => { delete window.__demo.update; });
+  // Le CV d'un étudiant reste visible des lauréats pendant une demande ouverte
+  await s.comme('Salma'); await s.aller('profil'); await s.page.waitForTimeout(300);
+  await s.page.click('#vis-cv-contacts');
+  await s.page.waitForFunction(() => /^Enregistré/.test(document.getElementById('vis-etat')?.textContent.trim() || ''), null, { timeout: 4000 });
+  assert.equal(await s.page.locator('#vis-etat').innerText(), 'Enregistré : tes contacts le voient ; les lauréats aussi quand tu as une demande ouverte.');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('profil : un choix « Qui voit quoi » défait pendant qu’un envoi traîne : au bout de 20 s, la ligne dit que rien n’est sûr', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('profil'); await s.page.waitForTimeout(300);
+  const garde = await s.page.evaluate(() => window.__demo.me.visibilite?.lieu || 'tous');
+  const autre = garde === 'tous' ? 'contacts' : 'tous';
+  // Les envois de « Qui voit quoi » ne reviennent jamais (le premier peut encore arriver au serveur)
+  await s.page.evaluate(() => {
+    const d = window.__demo, vrai = d.update.bind(d);
+    d.update = (t, id, patch) => (patch.visibilite && Object.keys(patch).length === 1 ? new Promise(() => {}) : vrai(t, id, patch));
+  });
+  await s.page.click(`#vis-lieu-${autre}`); await s.page.waitForTimeout(200);
+  await s.page.click(`#vis-lieu-${garde}`);
+  await s.page.waitForFunction(() => /Pas encore enregistré/.test(document.getElementById('vis-etat')?.textContent || ''), null, { timeout: 25000 });
+  await s.page.evaluate(() => { delete window.__demo.update; });
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('profil : un réglage « Qui voit quoi » qui ne part pas reste affiché, et part avec « Enregistrer »', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('profil'); await s.page.waitForTimeout(300);
+  await s.page.evaluate(() => {
+    const d = window.__demo, vrai = d.update.bind(d);
+    d.update = (t, id, patch) => (patch.visibilite && Object.keys(patch).length === 1 ? Promise.reject(new Error('Pas de réseau pour l’instant. Réessaie dans un instant.')) : vrai(t, id, patch));
+  });
+  await s.page.click('#vis-lieu-contacts'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.getAttribute('#vis-lieu-contacts', 'aria-checked'), 'true', 'le choix reste');
+  assert.match(await s.page.locator('#vis-etat').innerText(), /Pas encore enregistré/);
+  assert.equal(await s.page.locator('.pf-collant').count(), 1);
+  await s.page.evaluate(() => { delete window.__demo.update; });
+  await s.page.click('.pf-collant .btn.primary'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.evaluate(() => window.__demo.me.visibilite?.lieu), 'contacts');
+  assert.equal(await s.page.locator('.pf-collant').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('profil : promo effacée, le bouton le dit et mène au champ', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Nadia'); await s.aller('profil');
+  await s.page.fill('#pf-promo', ''); await s.page.waitForTimeout(150);
+  const bouton = '.pf-collant .btn.primary';
+  assert.equal(await s.page.getAttribute(bouton, 'data-manque'), 'promo');
+  assert.match(await s.page.locator(bouton).innerText(), /Ajoute ta promo/);
+  await s.page.click(bouton); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'pf-promo');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('offre d’une autre année ouverte par un lien : sans offre pour son année, l’étudiant peut agir tout de suite', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Amine');
+  const id = await s.page.evaluate(async () => {
+    const d = window.__demo, { niveauOf, seasonOf } = await import('./logic.js');
+    const n = niveauOf(d.me, seasonOf());
+    for (const o of d.data.offers.filter(o => o.status === 'ouverte' && o.audience !== 'laureats' && (o.annees || []).includes(n))) await d.update('offers', o.id, { status: 'pourvue' });
+    return d.data.offers.find(o => o.status === 'ouverte' && o.audience !== 'laureats' && !(o.annees || []).includes(n))?.id;
+  });
+  assert.ok(id, 'une offre d’une autre année');
+  await s.aller('offre/' + id); await s.page.waitForSelector('.modal');
+  const txt = await s.page.locator('.modal').innerText();
+  assert.match(txt, /Pas encore d’offre pour ta 3A\./);
+  assert.doesNotMatch(txt, /Voici celles de ta/);
+  await s.page.click('#od-ensuite');
+  await s.page.waitForSelector('#dm-titre', { timeout: 3000 });
+  assert.equal(await s.page.evaluate(() => location.hash), '#offres/demandes');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// Juste après la « Dernière étape » : le signal posé par l'inscription (en démo, à la main)
+const signalArrivee = page => page.evaluate(() => sessionStorage.setItem('ensam-arrivee', window.__demo.me.id));
+
+test('accueil après l’inscription : une lauréate apprend son rang, voit des visages, et un seul bouton (une fois)', async () => {
+  const s = await ouvrir({ largeur: 360 });
+  await s.page.setViewportSize({ width: 360, height: 640 });
+  await s.comme('Nadia'); await signalArrivee(s.page);
+  await s.page.reload(); await s.page.waitForSelector('.modal.arrivee', { timeout: 5000 });
+  const attendu = await s.page.evaluate(async () => { const { rangLaureat } = await import('./logic.js'); return `Te voilà ${rangLaureat(window.__demo.data.profiles, window.__demo.me)}e lauréat(e) du réseau`; });
+  assert.equal(await s.page.locator('.arrivee-titre').innerText(), attendu);
+  const n = await s.page.locator('.arrivee-visages .avatar').count();
+  assert.ok(n >= 1 && n <= 5, `${n} visages`);
+  assert.equal(await s.page.locator('.modal.arrivee .btn.primary').count(), 1);
+  assert.equal((await s.page.locator('#arrivee-go').innerText()).trim(), (await s.page.locator('.pas .pas-go').innerText()).trim(), 'le même bouton que la carte');
+  const b = await s.page.locator('#arrivee-go').boundingBox();
+  assert.ok(b.y + b.height <= 640);
+  assert.ok((await s.debordement()) <= 0);
+  const id = await s.page.evaluate(() => window.__demo.me.id);
+  await s.page.click('#arrivee-go'); await s.page.waitForTimeout(500);
+  assert.equal(await s.page.locator('.modal.arrivee').count(), 0);
+  await s.aller('accueil'); await s.page.reload(); await s.page.waitForSelector('#persona'); await s.page.waitForTimeout(1500);
+  assert.equal(await s.page.locator('.modal.arrivee').count(), 0, 'une seule fois');
+  assert.equal(await s.page.evaluate(id => localStorage.getItem('accueil-vu-' + id), id), '1');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('accueil après l’inscription : un étudiant voit les lauréats de sa filière ; jamais par-dessus une autre fenêtre', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Amine'); await signalArrivee(s.page);
+  await s.page.reload(); await s.page.waitForSelector('.modal.arrivee', { timeout: 5000 });
+  const attendu = await s.page.evaluate(async () => { const { phrasesArrivee, accueilArrivee } = await import('./logic.js'); return phrasesArrivee(accueilArrivee(window.__demo.data, window.__demo.me)).titre; });
+  assert.equal(await s.page.locator('.arrivee-titre').innerText(), attendu);
+  assert.match(attendu, /lauréats? (?:de (?:ta filière|ton parcours) )?(?:sont|est) déjà là/);
+  assert.equal((await s.page.locator('#arrivee-go').innerText()).trim(), (await s.page.locator('.pas .pas-go').innerText()).trim());
+  await s.fermer();
+  // Les premiers pas ouverts par le menu : la feuille d'accueil attend le prochain accueil
+  await s.comme('Youssef'); await signalArrivee(s.page);
+  await s.page.evaluate(() => { location.hash = 'accueil/etapes'; }); await s.page.reload(); await s.page.waitForSelector('#persona');
+  await s.page.waitForTimeout(1500);
+  assert.equal(await s.page.locator('.modal.arrivee').count(), 0, 'pas deux feuilles l’une sur l’autre');
+  await s.fermer(); await s.aller('offres'); await s.aller('accueil');
+  await s.page.waitForSelector('.modal.arrivee', { timeout: 5000 });
+  assert.equal(await s.page.locator('.fete-back').count(), 0);
+  // Sans rechargement : le signal de la « Dernière étape » ouvre la feuille sur un accueil déjà affiché
+  await s.fermer();
+  await s.comme('Nadia'); await s.aller('accueil');
+  await s.page.evaluate(() => { localStorage.removeItem('accueil-vu-' + window.__demo.me.id); return import('./pouls.js').then(m => m.marquerArrivee(window.__demo.me.id)); });
+  await s.page.waitForSelector('.modal.arrivee', { timeout: 1500 });
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('accueil après l’inscription en arabe : رقم N, مرحبًا, rien d’oublié', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  await s.comme('Nadia'); await signalArrivee(s.page);
+  await s.page.reload(); await s.page.waitForSelector('.modal.arrivee', { timeout: 5000 });
+  assert.match(await s.page.locator('.arrivee-titre').innerText(), /^أنت الآن رقم \d+ بين خريجي الشبكة$/);
+  assert.match(await s.page.locator('.modal.arrivee .modal-head h2').innerText(), /مرحبًا/);
+  const manque = await s.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /Te voilà|Bienvenue|déjà là|Membre fondateur|commence avec toi/.test(x)));
+  assert.deepEqual(manque, []);
+  assert.match(await s.page.evaluate(async () => { const { t } = await import('./i18n.js'); return t('1 lauréat de ta filière est déjà là'); }), /^انضمّ إلى الشبكة خريج واحد من شعبتك$/);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -530,6 +1119,8 @@ test('photo de profil : choisie, vue partout, retirée ; celle du CV est propos�
   await s.comme('Salma'); await s.aller('profil');
   await choisirPhoto(s.page);
   await s.page.waitForSelector('.photo-card .avatar img', { timeout: 10000 });
+  // L'image est dans la page avant d'être décodée : ses dimensions se lisent une fois chargée
+  await s.page.waitForFunction(() => { const i = document.querySelector('.photo-card .avatar img'); return i?.complete && i.naturalWidth > 0; }, null, { timeout: 10000 });
   const taille = await s.page.$eval('.photo-card .avatar img', i => [i.naturalWidth, i.naturalHeight]);
   assert.deepEqual(taille, [320, 320], 'recadrée en carré et réduite avant l’envoi');
   // Les autres la voient (annuaire)

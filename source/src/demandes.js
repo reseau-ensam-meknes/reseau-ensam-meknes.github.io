@@ -4,6 +4,7 @@
 // Les règles sont celles de la base (protect_demande, protect_proposition, protect_placement).
 import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, toast, injectCSS, celebrate, TYPE_ICON, allerAuChamp } from './ui.js';
+import { proposerPrevenir } from './pwa.js';
 import { addAR, arCount, t as tr } from './i18n.js';
 import { TYPES, AIDES, DEMANDES_MAX, typesDemande, demandesActives, demandeEnPause, demandesPour, niveauOf, timeAgo, fmtDate, placementOf, etatAide, AIDE_OUVERTE, manquesDemande } from './logic.js';
 import { CV_MAX } from './store.js';
@@ -227,7 +228,9 @@ function DemandeForm({ ctx, d = null, onClose }) {
       if (d) { await store.update('demandes', d.id, champs); toast('Demande mise à jour.'); onClose(); return; }
       await store.insert('demandes', { auteur_id: me.id, ...champs });
       onClose();
-      if (!celebrate({ cle: 'premiere-demande-' + me.id, icon: 'send', titre: 'Ta demande est publiée', texte: 'Les lauréats de ton parcours sont prévenus. Leurs propositions arriveront ici et dans tes messages.' })) toast('Demande publiée. Les lauréats de ton parcours sont prévenus.');
+      const mot = 'Demande publiée. Les lauréats de ton parcours sont prévenus.';
+      if (celebrate({ cle: 'premiere-demande-' + me.id, icon: 'send', titre: 'Ta demande est publiée', texte: 'Les lauréats de ton parcours sont prévenus. Leurs propositions arriveront ici et dans tes messages.' })) proposerPrevenir('demande');
+      else if (!proposerPrevenir('demande', mot)) toast(mot);
     });
   };
   const pied = html`<button class="btn primary" type="submit" form="dm-form" id="dm-publier">${d ? 'Enregistrer' : 'Publier ma demande'}</button>`;
@@ -408,8 +411,9 @@ export function ProposerAide({ ctx, id, onClose }) {
       const champs = { aide: f.aide, entreprise: f.entreprise.trim(), poste: f.poste.trim() || null, message: f.message.trim() };
       if (x) await store.update('propositions', x.id, x.status === 'retiree' ? { ...champs, status: 'envoyee' } : champs);
       else await store.insert('propositions', { demande_id: d.id, laureat_id: me.id, ...champs });
-      toast(mode === 'modifier' ? 'Proposition modifiée.' : `Proposition envoyée. ${p} la reçoit aussi dans ses messages.`);
       onClose();
+      const mot = mode === 'modifier' ? 'Proposition modifiée.' : `Proposition envoyée. ${p} la reçoit aussi dans ses messages.`;
+      if (mode === 'modifier' || !proposerPrevenir('proposition', mot)) toast(mot);
     }).finally(() => setBusy(false));
   };
   if (!d) return html`<${Modal} title="Demandes des étudiants" onClose=${onClose}><p class="dm-box"><${Icon} name="heart" size=${18}/><span>Cette demande n’attend plus d’aide : elle est pourvue ou fermée. Merci d’avoir voulu aider !</span></p><//>`;

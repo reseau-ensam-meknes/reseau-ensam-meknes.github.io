@@ -1,0 +1,75 @@
+// Un faux site « en ligne » pour les tests : dist/ servi avec un config.js qui pointe vers un faux Supabase local.
+// Il répond juste assez pour la page d'entrée, le code à 6 chiffres (123456 est le bon code), la « Dernière étape »
+// et le lien d'une offre partagée. Chaque appel est noté (appels) pour vérifier ce qui part vers la base.
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const TYPES = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.jpg': 'image/jpeg' };
+export const UID = '00000000-0000-4000-8000-0000000000a1';
+
+export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 19, promos: 14 }, reglages = [{ cle: 'domaines_ecole', valeur: ['ensam-umi.ac.ma'] }], offres = [], partagees = {}, profils = [] } = {}) {
+  let port; const appels = []; const meta = {}; const inscrits = [];
+  const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' };
+  const json = (r, code, body) => { r.writeHead(code, { 'content-type': 'application/json', ...cors }); r.end(body === undefined ? '' : JSON.stringify(body)); };
+  const session = email => {
+    const now = Math.floor(Date.now() / 1000);
+    return { access_token: 'x.' + Buffer.from(JSON.stringify({ sub: UID, exp: now + 3600 })).toString('base64url') + '.y', token_type: 'bearer', expires_in: 3600, expires_at: now + 3600, refresh_token: 'r1',
+      user: { id: UID, aud: 'authenticated', role: 'authenticated', email, user_metadata: meta[email] || {}, app_metadata: {}, created_at: new Date().toISOString() } };
+  };
+  const srv = http.createServer((q, r) => {
+    const url = new URL(q.url, 'http://x'); const u = decodeURIComponent(url.pathname);
+    if (u.startsWith('/sb/')) {
+      let b = ''; q.on('data', c => { b += c; }); q.on('end', () => {
+        if (q.method === 'OPTIONS') return json(r, 204);
+        const corps = b ? JSON.parse(b) : null;
+        appels.push({ u, m: q.method, corps });
+        if (u === '/sb/auth/v1/otp') {
+          if (corps.email === 'vite@exemple.ma') return json(r, 429, { code: 'over_email_send_rate_limit', msg: 'For security purposes, you can only request this after 42 seconds.' });
+          if (corps.email === 'inconnu@exemple.ma' && corps.create_user === false) return json(r, 422, { code: 'otp_disabled', msg: 'Signups not allowed for otp' });
+          // Comme Supabase : les données ne sont gardées qu'à la création du compte
+          if (corps.data && !meta[corps.email]) meta[corps.email] = { ...corps.data };
+          return json(r, 200, {});
+        }
+        if (u === '/sb/auth/v1/verify') return corps.token === '123456' ? json(r, 200, session(corps.email)) : json(r, 403, { code: 'otp_expired', msg: 'Token has expired or is invalid' });
+        if (u === '/sb/auth/v1/user') {
+          const email = Object.keys(meta).pop() || 'membre@exemple.ma';
+          if (q.method === 'PUT') meta[email] = { ...(meta[email] || {}), ...(corps?.data || {}) };
+          return json(r, 200, session(email).user);
+        }
+        if (u === '/sb/auth/v1/logout') return json(r, 204);
+        if (u === '/sb/auth/v1/token') return json(r, 400, { error: 'invalid_grant', error_description: 'Invalid login credentials' });
+        if (u === '/sb/rest/v1/rpc/chiffres_publics') return chiffres ? json(r, 200, chiffres) : json(r, 404, { code: 'PGRST202', message: 'Could not find the function' });
+        if (u === '/sb/rest/v1/rpc/offre_partagee') {
+          const x = partagees[corps?.p_id];
+          return x === undefined || x === 404 ? json(r, 404, { code: 'PGRST202', message: 'Could not find the function' }) : json(r, 200, x);
+        }
+        if (u.startsWith('/sb/rest/v1/rpc/')) return json(r, 404, { code: 'PGRST202', message: 'Could not find the function' });
+        if (u === '/sb/rest/v1/reglages') return json(r, 200, reglages);
+        if (u === '/sb/rest/v1/offers' && q.method === 'GET') return json(r, 200, offres);
+        if ((u === '/sb/rest/v1/profils' || u === '/sb/rest/v1/profiles') && q.method === 'GET') return json(r, 200, [...profils, ...inscrits]);
+        if (u === '/sb/rest/v1/profiles' && q.method === 'POST') {
+          const row = { created_at: new Date().toISOString(), verified: false, ...(Array.isArray(corps) ? corps[0] : corps) };
+          inscrits.push(row);
+          return json(r, 201, /vnd\.pgrst\.object/.test(q.headers.accept || '') ? row : [row]);
+        }
+        if (q.method === 'GET' || q.method === 'HEAD') return json(r, 200, []);
+        return json(r, 201, /vnd\.pgrst\.object/.test(q.headers.accept || '') ? (Array.isArray(corps) ? corps[0] : corps) : []);
+      });
+      return;
+    }
+    const f = u.endsWith('/') ? u + 'index.html' : u;
+    if (f === '/config.js') { r.writeHead(200, { 'content-type': 'text/javascript' }); return r.end(`window.ENSAM_CONFIG = { supabaseUrl: 'http://127.0.0.1:${port}/sb', supabaseAnonKey: 'cle' };`); }
+    const fichier = path.join(SITE, path.normalize(f));
+    if (!fichier.startsWith(SITE)) { r.writeHead(403); return r.end(); }
+    fs.readFile(fichier, (e, b) => {
+      if (e) { r.writeHead(404); return r.end(); }
+      r.writeHead(200, { 'content-type': TYPES[path.extname(f)] || 'application/octet-stream' }); r.end(b);
+    });
+  });
+  srv.on('upgrade', (_q, s) => s.destroy()); // temps réel : absent ici
+  await new Promise(ok => srv.listen(0, '127.0.0.1', ok)); port = srv.address().port;
+  // Chaque test repart d'une base vide (personne d'inscrit, aucun appel noté)
+  const vider = () => { appels.length = 0; inscrits.length = 0; for (const k of Object.keys(meta)) delete meta[k]; };
+  return { adresse: `http://127.0.0.1:${port}/`, appels, inscrits, vider, fermer: () => srv.close() };
+}

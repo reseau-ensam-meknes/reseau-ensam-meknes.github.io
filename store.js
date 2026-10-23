@@ -1,11 +1,13 @@
 // Couche de données : même interface en mode démo (navigateur) et en mode réel (Supabase).
 // Les données de démonstration (seed.js) ne sont chargées qu'en démo : le site réel n'en a pas besoin
 const chargerSeed = () => import('./seed.js').then(m => m.buildSeed());
-import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau } from './logic.js';
+import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage } from './logic.js';
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
 const PHASE3 = ['coordonnees', 'demandes_contact', 'relectures_cv', 'relecture_commentaires', 'entretiens', 'avis_stage', 'guide_pays', 'signalements', 'enquetes_insertion', 'verifications_pairs', 'evenements', 'evenement_participants', 'retours_cv'];
-const MESSAGERIE = ['messages', 'blocages'];
+const MESSAGERIE = ['messages', 'blocages', 'reactions_messages'];
+// Réactions à un message : quelques émojis calmes, les mêmes que dans la base
+export const REACTIONS = ['👍', '❤️', '😂', '😮', '🙏', '👏'];
 // Demandes des étudiants et aides proposées par les lauréats
 const DEMANDES = ['demandes', 'propositions'];
 export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES];
@@ -36,6 +38,9 @@ class Base {
   on(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
   emit() { this.data = { ...this.data }; for (const fn of this.listeners) fn(); }
   byId(table, id) { return this.data[table].find(r => r.id === id); }
+  // Messagerie : « Répondre » et les réactions ont besoin de la base à jour (en démo, toujours)
+  peutRepondre() { return this.mode !== 'live' || (this.data.messages || []).some(m => 'reponse_a' in m); }
+  peutReagir() { return this.mode !== 'live' || !this.absentes?.has('reactions_messages'); }
   // « Cette semaine dans le réseau » : en démo, le calcul sur toutes les données
   pouls() { return poulsReseau(this.data); }
   // En ligne, la base a déjà masqué ce qui ne doit pas être vu : ces deux aides servent surtout à la démo.
@@ -134,7 +139,7 @@ class DemoStore extends Base {
   persist() { safeSet(DEMO_KEY, JSON.stringify({ data: this.data, meId: this.me?.id, reglages: this.reglages })); }
   personas() { const o = { etudiant: 0, laureat: 1, admin: 2 }; return this.data.profiles.filter(p => p._persona).sort((a, b) => o[a.role] - o[b.role]); }
   switchTo(id) { this.me = this.byId('profiles', id); this.persist(); this.emit(); }
-  async reset() { this.data = await chargerSeed(); for (const t of ['guide_pays_historique', 'liste_officielle']) this.data[t] ||= []; this.reglages = {}; this.me = this.personas()[0]; this.persist(); this.emit(); }
+  async reset() { this.data = await chargerSeed(); for (const t of [...TABLES, 'guide_pays_historique', 'liste_officielle']) this.data[t] ||= []; this.reglages = {}; this.me = this.personas()[0]; this.persist(); this.emit(); }
   async insert(table, row) {
     const r = { id: uuid(), created_at: new Date().toISOString(), ...row };
     if (table === 'placements') applyPlacementRules(this, r, null);
@@ -319,6 +324,14 @@ class DemoStore extends Base {
     const m = this.byId('messages', id);
     await this.remove('messages', id);
     if (m?.fichier) this.fichiers.delete(m.fichier);
+    this.data.reactions_messages = this.data.reactions_messages.filter(r => r.message_id !== id);
+    this.persist(); this.emit();
+  }
+  // Une réaction par personne et par message : la même la retire, une autre la remplace
+  async reagir(messageId, emoji) {
+    const mienne = this.data.reactions_messages.find(r => r.message_id === messageId && r.user_id === this.me?.id);
+    if (!emoji || mienne?.emoji === emoji) { if (mienne) await this.remove('reactions_messages', mienne.id); return null; }
+    return mienne ? this.update('reactions_messages', mienne.id, { emoji }) : this.insert('reactions_messages', { message_id: messageId, emoji });
   }
   canal() { return { tape() {}, fermer() {} }; }
   // Liste officielle (administration)
@@ -528,8 +541,21 @@ function applyMessagerieRules(store, table, r, old) {
     if (store.data.blocages.some(b => b.user_id === me.id && b.bloque_id === r.bloque_id)) return false;
     return;
   }
+  if (table === 'reactions_messages') {
+    const m = store.byId('messages', old ? old.message_id : r.message_id);
+    if (old) { r.message_id = old.message_id; r.user_id = old.user_id; r.created_at = old.created_at; }
+    else r.user_id = me.id;
+    if (!REACTIONS.includes(r.emoji)) throw new Error('Réaction inconnue.');
+    if (!m || ![m.author_id, m.dest_id].includes(r.user_id)) throw new Error('Action non autorisée pour ton compte.');
+    if (bloque(store.data, m.author_id, m.dest_id)) throw new Error('Vous ne pouvez plus vous écrire.');
+    if (!old && store.data.reactions_messages.some(x => x.message_id === r.message_id && x.user_id === r.user_id)) throw new Error('Tu as déjà réagi à ce message.');
+    return;
+  }
   if (!old) {
     r.author_id = me.id; r.lu_at = null; r.body = String(r.body || '').trim() || null;
+    // On ne cite qu'un message de cette conversation (comme protect_message dans la base)
+    const cite = r.reponse_a && store.byId('messages', r.reponse_a);
+    r.reponse_a = cite && ((cite.author_id === me.id && cite.dest_id === r.dest_id) || (cite.author_id === r.dest_id && cite.dest_id === me.id)) ? cite.id : null;
     if (r.type === 'texte' && !r.body) throw new Error('Écris ton message.');
     if (r.body && r.body.length > 2000) throw new Error('Ton message est trop long (2 000 caractères au plus).');
     if (r.type !== 'texte' && !r.fichier) throw new Error('Fichier manquant.');
@@ -882,8 +908,11 @@ function demoParrains(store, onlyId = null) {
 // ---------------------------------------------------------------------------
 // Réel : Supabase (comptes, base partagée, temps réel)
 // ---------------------------------------------------------------------------
+// Une table ou une vue qui n'existe pas encore (mise à jour de la base pas encore faite).
+// Une session expirée (401, PGRST301), un droit refusé (42501) ou une coupure réseau ne sont que passagers.
+const absente = e => ['42P01', 'PGRST205'].includes(e?.code) || /relation .* does not exist|could not find the table/i.test(e?.message || '');
 const SUITES = { demandes: ['propositions', 'placements'], propositions: ['demandes', 'propositions', 'placements', 'coordonnees'], placements: ['demandes', 'propositions'] };
-class SupabaseStore extends Base {
+export class SupabaseStore extends Base {
   constructor(cfg) { super(); this.mode = 'live'; this.cfg = cfg; }
   async init() {
     await new Promise((ok, ko) => { const el = document.createElement('script'); el.src = 'vendor/supabase.js'; el.onload = ok; el.onerror = () => ko(new Error('Chargement de Supabase impossible')); document.head.appendChild(el); });
@@ -893,6 +922,9 @@ class SupabaseStore extends Base {
     this.session = session;
     this.sb.auth.onAuthStateChange(async (_e, s) => {
       const changed = (s?.user?.id || null) !== (this.session?.user?.id || null);
+      // Déconnexion (bouton ou session perdue) sur une question ou une offre : cette adresse n'est pas un lien
+      // partagé pour la personne qui ouvrira la page ensuite
+      if (!s && this.session && lienPartage(location.hash)) try { location.replace('#accueil'); } catch { /* */ }
       this.session = s;
       if (changed) { await this.loadAll(); this.emit(); }
     });
@@ -920,15 +952,21 @@ class SupabaseStore extends Base {
     const all = [];
     for (let from = 0; ; from += 1000) {
       const { data, error } = await this.sb.from(vue || t).select('*').order('created_at', { ascending: false }).range(from, from + 999);
-      if (error && vue && from === 0) { this.vues[t] = false; return this.loadTable(t, essai); }  // base pas encore à jour : la table
-      if (error && OPTIONAL.has(t)) { this.data[t] = []; return; }
-      // Réseau du téléphone qui coupe une seconde : on réessaie une fois avant d'abandonner
+      // Base pas encore à jour : la vue manque (on lit la table), ou la table facultative manque (liste vide)
+      if (error && absente(error)) {
+        if (vue && from === 0) { this.vues[t] = false; return this.loadTable(t, essai); }
+        if (OPTIONAL.has(t)) { this.data[t] = []; (this.absentes ||= new Set()).add(t); return; }
+        throw error;
+      }
+      // Réseau du téléphone qui coupe, ou session expirée le temps d'être renouvelée : on réessaie une fois,
+      // puis on garde ce qu'on avait (jamais une liste vidée, ni la vue abandonnée pour toute la visite)
       if (error && !essai) { await new Promise(ok => setTimeout(ok, 1200)); return this.loadTable(t, 1); }
-      if (error) throw error;
+      if (error) { if (this.data[t]?.length || OPTIONAL.has(t)) return; throw error; }
       all.push(...data);
       if (data.length < 1000) break;
     }
     this.data[t] = all;
+    this.absentes?.delete(t);
   }
   subscribe() {
     if (this.channel) return;
@@ -942,7 +980,7 @@ class SupabaseStore extends Base {
       timer = setTimeout(async () => {
         const ts = [...pending]; pending.clear();
         const pouls = ts.some(x => ['mentorships', 'placements', 'relectures_cv', 'propositions'].includes(x));
-        await Promise.all([...ts.map(x => this.loadTable(x)), pouls ? this.chargerPouls().catch(() => {}) : null]);
+        await Promise.all([...ts.map(x => this.loadTable(x).catch(() => {})), pouls ? this.chargerPouls().catch(() => {}) : null]);
         this.me = this.byId('profiles', this.userId) || null;
         this.emit();
       }, 400);
@@ -961,7 +999,7 @@ class SupabaseStore extends Base {
   }
   async insert(table, row) {
     const { data, error } = await this.sb.from(table).insert(row).select().single();
-    if (error) throw new Error(frError(error));
+    if (error) throw new Error(frError(error), { cause: error });
     this.data[table] = [data, ...this.data[table].filter(x => x.id !== data.id)];
     if (table === 'profiles') this.me = this.byId('profiles', this.userId);
     // L'organisateur d'un café y est inscrit d'office par la base
@@ -973,7 +1011,8 @@ class SupabaseStore extends Base {
   async update(table, id, patch) {
     const { data, error } = await this.sb.from(table).update(patch).eq('id', id).select().single();
     // Aucune ligne modifiée : quelqu'un est passé avant (ex. demande prise entre-temps)
-    if (error?.code === 'PGRST116') throw new Error(table === 'mentorships' ? 'Un autre lauréat vient de prendre cette demande.' : 'Cette action n’est plus possible. Recharge la page.');
+    // Son propre profil : aucune ligne modifiée veut dire que la connexion s'est perdue, pas qu'un autre est passé avant
+    if (error?.code === 'PGRST116') throw new Error(table === 'mentorships' ? 'Un autre lauréat vient de prendre cette demande.' : table === 'profiles' && id === this.userId ? SESSION_PERDUE : 'Cette action n’est plus possible. Recharge la page.');
     if (error) throw new Error(frError(error));
     this.data[table] = this.data[table].some(x => x.id === id) ? this.data[table].map(x => x.id === id ? data : x) : [data, ...this.data[table]];
     // Le lien de visio est créé côté base quand le lauréat accepte
@@ -997,6 +1036,19 @@ class SupabaseStore extends Base {
   async signIn(email, password) {
     const { error } = await this.sb.auth.signInWithPassword({ email, password });
     if (error) throw new Error(frError(error));
+  }
+  // Inscription et connexion par code à 6 chiffres reçu par email (pas de mot de passe à inventer).
+  // creer : la personne s'inscrit ; un email déjà connu reçoit simplement un code de connexion.
+  async envoyerCode(email, { creer = false, meta = null } = {}) {
+    // par_code : dit à la base que ce compte naît d'une demande de code (rappel et chiffres de l'administration)
+    const { error } = await this.sb.auth.signInWithOtp({ email, options: { shouldCreateUser: creer, ...(creer ? { data: { ...(meta || {}), par_code: true } } : {}) } });
+    if (error) throw Object.assign(new Error(frError(error)), casErreurAuth(error));
+  }
+  async verifierCode(email, token, meta = null) {
+    const { error } = await this.sb.auth.verifyOtp({ email, token, type: 'email' });
+    if (error) throw Object.assign(new Error(frError(error)), casErreurAuth(error));
+    // L'accord retenu est celui de qui a le code (un compte a pu être commencé avant, par elle ou par erreur)
+    if (meta) await this.sb.auth.updateUser({ data: meta }).catch(() => {});
   }
   async resetPassword(email) {
     const { error } = await this.sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
@@ -1175,8 +1227,19 @@ class SupabaseStore extends Base {
           : m.includes('row-level security') ? 'Conversation pas encore ouverte.' : 'Envoi du fichier impossible. Vérifie ta connexion et réessaie.');
       }
     }
-    try { return await this.insert('messages', { author_id: this.userId, dest_id: dest, type, body, fichier, ...meta }); }
-    catch (e) { if (fichier) this.sb.storage.from('chat').remove([fichier]).catch(() => {}); throw e; }
+    const row = { author_id: this.userId, dest_id: dest, type, body, fichier, ...meta };
+    if (!row.reponse_a) delete row.reponse_a;
+    try { return await this.insert('messages', row); }
+    catch (e) {
+      // Base pas encore à jour (colonne absente, ou cache de l'API pas encore relu) : le message part sans la citation.
+      // On regarde l'erreur brute : le message traduit pour le membre ne nomme plus la colonne
+      if (row.reponse_a && /reponse_a/.test(e.cause?.message || '')) {
+        delete row.reponse_a;
+        try { return await this.insert('messages', row); } catch (e2) { e = e2; }
+      }
+      if (fichier) this.sb.storage.from('chat').remove([fichier]).catch(() => {});
+      throw e;
+    }
   }
   // Lien temporaire (1 heure) vers une photo ou un vocal, gardé pour ne pas le redemander à chaque affichage
   async lienChat(path) {
@@ -1201,6 +1264,31 @@ class SupabaseStore extends Base {
     const m = this.byId('messages', id);
     await this.remove('messages', id);
     if (m?.fichier) await this.sb.storage.from('chat').remove([m.fichier]).catch(() => {});
+    this.data.reactions_messages = this.data.reactions_messages.filter(r => r.message_id !== id); this.emit();
+  }
+  // Une réaction par personne et par message : affichée tout de suite, puis enregistrée ; la même la retire
+  async reagir(messageId, emoji) {
+    const lui = r => r.message_id === messageId && r.user_id === this.userId;
+    const avant = this.data.reactions_messages;
+    const mienne = avant.find(lui);
+    const retirer = !emoji || mienne?.emoji === emoji;
+    const ecrite = retirer ? null : mienne ? { ...mienne, emoji } : { id: 'tmp-' + uuid(), message_id: messageId, user_id: this.userId, emoji, created_at: new Date().toISOString() };
+    this.data.reactions_messages = retirer ? avant.filter(r => r !== mienne) : mienne ? avant.map(r => r === mienne ? ecrite : r) : [ecrite, ...avant];
+    this.emit();
+    const { error } = retirer
+      ? (mienne ? await this.sb.from('reactions_messages').delete().eq('message_id', messageId).eq('user_id', this.userId) : { error: null })
+      : await this.sb.from('reactions_messages').upsert({ message_id: messageId, user_id: this.userId, emoji }, { onConflict: 'message_id,user_id' });
+    if (error) {
+      // On défait seulement ce que cet appel a affiché, s'il est encore à l'écran ; jamais une réaction provisoire d'un autre appel
+      if ((this.data.reactions_messages.find(lui) || null) === ecrite) {
+        const garder = mienne && !String(mienne.id).startsWith('tmp-') ? [mienne] : [];
+        this.data.reactions_messages = [...garder, ...this.data.reactions_messages.filter(r => !lui(r))];
+        this.emit();
+      }
+      throw new Error(frError(error));
+    }
+    await this.loadTable('reactions_messages').catch(() => {}); this.emit();
+    return null;
   }
   // « écrit… » : un signal éphémère entre les deux personnes de la conversation (rien n'est enregistré)
   canal(autre, onTape) {
@@ -1241,9 +1329,12 @@ class SupabaseStore extends Base {
 
 // Le message à montrer au membre pour une erreur (jamais un message technique pour une coupure réseau)
 export const texteErreur = e => frError(e);
+const SESSION_PERDUE = 'Ta connexion a expiré. Recharge la page, puis réessaie.';
 function frError(e) {
   const m = (e?.message || String(e || '')).toLowerCase();
   if (/failed to fetch|load failed|networkerror|network request failed|fetch failed|timed? ?out/.test(m)) return 'Pas de réseau pour l’instant. Réessaie dans un instant.';
+  // Passerelle de Supabase indisponible (502-504, projet en pause) : l'erreur d'authentification n'a alors pour texte que « {} »
+  if (e?.name === 'AuthRetryableFetchError' || [502, 503, 504].includes(e?.status) || m.trim() === '{}') return 'Pas de réseau pour l’instant. Réessaie dans un instant.';
   if (m.includes('invalid login')) return 'Email ou mot de passe incorrect.';
   if (m.includes('already registered')) return 'Un compte existe déjà avec cet email. Connecte-toi.';
   if (m.includes('password should be')) return 'Le mot de passe doit contenir au moins 6 caractères.';
@@ -1267,7 +1358,15 @@ function frError(e) {
   if (m.includes('bucket not found')) return 'Cette fonction arrive bientôt : la base est en cours de mise à jour.';
   if (m.includes('lien_check')) return 'Le lien doit commencer par https://';
   if (m.includes('could not find the') || m.includes('does not exist')) return 'Cette fonction arrive bientôt : la base est en cours de mise à jour.';
+  if (/jwt expired|invalid jwt/.test(m)) return SESSION_PERDUE;
   if (m.includes('row-level security')) return "Action non autorisée pour ton compte.";
+  if (/token has expired or is invalid|email link is invalid|user not found/.test(m)) return 'Ce code ne marche pas. Vérifie les 6 chiffres, ou demande un nouveau code.';
+  if (m.includes('email address not authorized')) return 'L’email n’a pas pu partir. Vérifie l’adresse, ou réessaie dans un instant.';
+  if (m.includes('only request this after')) return 'Un code vient de partir. Attends une minute avant d’en demander un autre.';
+  if (m.includes('email rate limit exceeded')) return 'Beaucoup de codes sont partis cette heure-ci. Réessaie dans un moment.';
+  if (m.includes('signups not allowed')) return 'Les inscriptions sont en pause pour l’instant. Réessaie plus tard.';
+  if (/error sending (magic link|confirmation|recovery|otp)? ?email/.test(m)) return 'L’email n’a pas pu partir. Vérifie l’adresse, ou réessaie dans un instant.';
+  if (/unable to validate email address|email address .* is invalid/.test(m)) return 'Cette adresse email ne semble pas valide. Vérifie-la.';
   if (m.includes('rate limit')) return 'Trop de tentatives. Réessaie dans quelques minutes.';
   return e?.message || 'Erreur inconnue.';
 }
@@ -1276,5 +1375,7 @@ export async function createStore() {
   const cfg = window.ENSAM_CONFIG || {};
   const store = cfg.supabaseUrl && cfg.supabaseAnonKey ? new SupabaseStore(cfg) : new DemoStore();
   await store.init();
+  // Démonstration seulement : les tests automatiques simulent une mise à jour venue d'ailleurs
+  if (store.mode === 'demo') window.__demo = store;
   return store;
 }

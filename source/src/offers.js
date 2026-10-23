@@ -1,6 +1,7 @@
 // Offres : liste compacte, fiche détaillée, candidature, gestion des candidats par le lauréat.
 import { html, useState, useMemo, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, TYPE_ICON, toast, RoleLine, celebrate, injectCSS, PartagerWhatsApp, lienWhatsApp, lienDirect, allerAuChamp } from './ui.js';
+import { proposerPrevenir } from './pwa.js';
 import { getLang, addAR, arCount } from './i18n.js';
 import { TYPES, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande, manquesOffre } from './logic.js';
 import { RelanceBanner, BanqueSujets, PasteOffer } from './recrutement.js';
@@ -221,7 +222,15 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
     const n = niveauOf(me, ctx.saison);
     if (forLaureats(o) || !(o.annees || []).includes(n)) {
       const pour = forLaureats(o) ? 'Cette offre est réservée aux lauréats.' : `${`Cette offre est pour les ${(o.annees || []).map(a => NIVEAUX[a]?.short).filter(Boolean).join(', ') || 'autres années'}.`}`;
-      return html`<${Modal} title="Offre" onClose=${onClose}><p>${pour}</p><p class="muted">${NIVEAUX[n]?.short ? `Voici celles de ta ${NIVEAUX[n].short}.` : 'Voici les tiennes.'}</p>${versOffres('Voir mes offres')}<//>`;
+      const court = NIVEAUX[n]?.short;
+      // « Voici celles de ta 3A » seulement s'il y en a : sinon, ce que l'étudiant peut faire tout de suite
+      if (!court || data.offers.some(x => x.status === 'ouverte' && !forLaureats(x) && (x.annees || []).includes(n))) {
+        return html`<${Modal} title="Offre" onClose=${onClose}><p>${pour}</p><p class="muted">${court ? `Voici celles de ta ${court}.` : 'Voici les tiennes.'}</p>${versOffres('Voir mes offres')}<//>`;
+      }
+      const dem = typesDemande(me, ctx.saison).length > 0;
+      return html`<${Modal} title="Offre" onClose=${onClose}><p>${pour}</p><p class="muted">Pas encore d’offre pour ta ${court}.</p>
+        <p class="muted">${dem ? 'Le réseau vient d’ouvrir. Dis aux lauréats ce que tu cherches : ils te répondent ici.' : 'Le réseau vient d’ouvrir. Un lauréat peut déjà te conseiller en 20 minutes de visio.'}</p>
+        <div class="row-end"><button class="btn primary" id="od-ensuite" onClick=${() => { onClose(); if (dem) ctx.go('offres/demandes/nouvelle'); else ctx.askHelp(); }}>${dem ? 'Publier ma demande' : 'Demander un conseil'}</button></div><//>`;
     }
   }
   const comments = data.comments.filter(c => c.offer_id === o.id);
@@ -336,7 +345,8 @@ function ApplyBox({ ctx, o, form, setForm, onClose }) {
         texte: `${prenom(auteur) || 'Le lauréat'} reçoit ta candidature avec ton profil${hasCv ? ' et ton CV' : ''}. Tu suis sa réponse dans « Mon parcours ».`,
         action: { label: 'Voir mon parcours', icon: 'route', onClick: () => { onClose?.(); ctx.go('parcours'); } },
       });
-      if (!fete) toast('Candidature envoyée à ' + (auteur?.full_name || 'au lauréat') + '.', 'win');
+      const mot = 'Candidature envoyée à ' + (auteur?.full_name || 'au lauréat') + '.';
+      if (fete) proposerPrevenir('candidature'); else if (!proposerPrevenir('candidature', mot)) toast(mot, 'win');
     });
   };
   return html`${invite}<form class="apply-box form" id=${'apply-' + o.id} onSubmit=${envoyer}>

@@ -146,3 +146,49 @@ test('cette semaine dans le réseau : les phrases', () => {
   assert.equal(presenceReseau({ profiles }, profiles[3]).total, 3, 'un étudiant voit le même total');
   assert.equal(presenceReseau({ profiles: [profiles[0]] }, profiles[0]), null, 'personne d’autre : rien à dire');
 });
+
+test('accueil après l’inscription : le rang d’arrivée d’un lauréat, le même ordre que les membres fondateurs', async () => {
+  const { rangLaureat, ordreArrivee, fondateursOf, NB_FONDATEURS } = await import('../../src/logic.js');
+  const jour = i => new Date(Date.UTC(2026, 9, 1) + i * 36e5).toISOString();
+  const lau = Array.from({ length: 39 }, (_, i) => ({ id: 'l' + String(i).padStart(2, '0'), role: 'laureat', promo: 2010 + (i % 10), created_at: jour(i) }));
+  const moi = { id: 'moi', role: 'laureat', promo: 2019, created_at: jour(100) };
+  const profiles = [{ id: 'adm', role: 'admin', created_at: jour(-5) }, { id: 'etu', role: 'etudiant', created_at: jour(-4) }, ...lau, moi];
+  assert.equal(rangLaureat(profiles, moi), 40);
+  assert.equal(rangLaureat(profiles, lau[0]), 1);
+  assert.equal(rangLaureat([{ id: 'b', role: 'laureat', created_at: jour(1) }, { id: 'a', role: 'laureat', created_at: jour(1) }], { id: 'b', role: 'laureat', created_at: jour(1) }), 2, 'même date : ordre des ids');
+  assert.equal(rangLaureat(profiles, { ...moi, created_at: null }), null);
+  assert.equal(rangLaureat(profiles, { id: 'etu', role: 'etudiant', created_at: jour(-4) }), null);
+  assert.deepEqual([...fondateursOf(profiles)], ordreArrivee(profiles).slice(0, NB_FONDATEURS).map(p => p.id));
+});
+
+test('accueil après l’inscription : une phrase vraie par cas', async () => {
+  const { accueilArrivee, phrasesArrivee, presenceReseau } = await import('../../src/logic.js');
+  const jour = i => new Date(Date.UTC(2026, 9, 1) + i * 36e5).toISOString();
+  const L = (id, promo, extra = {}) => ({ id, role: 'laureat', promo, filiere: 'Génie Mécanique', created_at: jour(+id.slice(1)), ...extra });
+  const promo19 = [L('l1', 2019), L('l2', 2019), L('l3', 2019)];
+  const autres = Array.from({ length: 36 }, (_, i) => L('l' + (10 + i), 2012, { photo_path: i === 30 ? 'p.jpg' : null }));
+  const moi = L('l99', 2019);
+  const d = { profiles: [...promo19, ...autres, moi] };
+  const a = accueilArrivee(d, moi);
+  assert.deepEqual(phrasesArrivee(a), { titre: 'Te voilà 40e lauréat(e) du réseau', sous: '3 lauréats de ta promo sont déjà là' });
+  assert.equal(a.fondateur, false);
+  assert.ok(a.visages.length <= 5 && !a.visages.includes('l99'));
+  const seul = L('l1', 2019);
+  const a1 = accueilArrivee({ profiles: [seul] }, seul);
+  assert.equal(phrasesArrivee(a1).titre, 'Le réseau des lauréats commence avec toi');
+  assert.equal(a1.fondateur, true);
+  const deux = [L('l1', 2019), L('l2', 2019)];
+  assert.deepEqual(phrasesArrivee(accueilArrivee({ profiles: deux }, deux[1])), { titre: 'Te voilà 2e lauréat(e) du réseau', sous: '1 lauréat de ta promo est déjà là' });
+  // Étudiants : la filière, sinon le parcours, sinon tout le réseau ; personne : un simple bienvenue
+  const F = 'Génie Mécanique : Énergétique', F2 = 'Génie Mécanique : Ingénierie Mécanique et Structures';
+  const etu = { id: 'e1', role: 'etudiant', promo: 2029, filiere: F };
+  const lauF = [L('l1', 2015, { filiere: F }), L('l2', 2016, { filiere: F }), L('l3', 2017, { filiere: 'Génie Civil' })];
+  assert.equal(phrasesArrivee(accueilArrivee({ profiles: [...lauF, etu] }, etu)).titre, '2 lauréats de ta filière sont déjà là');
+  assert.equal(phrasesArrivee(accueilArrivee({ profiles: [L('l1', 2015, { filiere: F }), etu] }, etu)).titre, '1 lauréat de ta filière est déjà là');
+  assert.equal(phrasesArrivee(accueilArrivee({ profiles: [L('l1', 2015, { filiere: F2 }), etu] }, etu)).titre, '1 lauréat de ton parcours est déjà là');
+  const prepa = { id: 'e2', role: 'etudiant', promo: 2031, filiere: 'Classes préparatoires intégrées' };
+  assert.equal(phrasesArrivee(accueilArrivee({ profiles: [...lauF.slice(0, 2), prepa] }, prepa)).titre, '2 lauréats sont déjà là');
+  assert.deepEqual(phrasesArrivee(accueilArrivee({ profiles: [etu] }, etu)), { titre: 'Bienvenue dans le réseau !', sous: null });
+  assert.equal(accueilArrivee({ profiles: [] }, { id: 'a', role: 'admin' }), null);
+  assert.equal(presenceReseau(d, moi).visages.length, 3, 'l’accueil garde ses trois visages');
+});

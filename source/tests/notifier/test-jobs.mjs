@@ -263,12 +263,15 @@ test('resume : résumés envoyés, vides sautés, notif_etat marqué, une fois p
   b.delaiBrevo = 10;
   const r = await appel({ job: 'resume' }, { 'x-notifier': SECRET });
   assert.equal(r.status, 200);
-  // 14 destinataires (Karim s'est désabonné, Ghita est inscrite d'hier) ; Rachid, Hamza et Leila n'ont rien cette semaine
-  assert.deepEqual(await corpsDe(r), { sent: 10, empty: 3, errors: 1, via: 'brevo' });
+  // 14 destinataires (Karim s'est désabonné, Ghita est inscrite d'hier) ; Rachid et Hamza n'ont rien cette semaine,
+  // Leila n'a que l'arrivée d'Amine, de sa promo
+  assert.deepEqual(await corpsDe(r), { sent: 11, empty: 2, errors: 1, via: 'brevo' });
+  // 150 résumés par jour au plus : le quota Gmail (500 par jour) sert aussi aux codes de connexion et aux autres envois
+  assert.deepEqual(b.argsRpc.destinataires_resume, [{ p_max: 150 }]);
   assert.ok(b.maxEnVol <= 5, `au plus 5 envois en même temps (vu ${b.maxEnVol})`);
   assert.ok(b.maxEnVol >= 2);
   const destinataires = b.brevo.map(x => x.corps.to[0].email);
-  for (const vide of [ID.rachid, ID.hamza, ID.leila, ID.karim, ID.ghita]) assert.ok(!destinataires.includes(j.emails[vide]), vide);
+  for (const vide of [ID.rachid, ID.hamza, ID.karim, ID.ghita]) assert.ok(!destinataires.includes(j.emails[vide]), vide);
   // Forme du corps Brevo
   for (const { entetes, corps } of b.brevo) {
     assert.equal(entetes['api-key'], 'xkeysib-test');

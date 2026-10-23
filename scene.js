@@ -1,11 +1,6 @@
-// Illustration de l'entrée de l'école : la porte triangulaire, les massifs fleuris, les bâtiments blancs.
-// Dessin original en SVG. Les couleurs viennent du CSS (.sky, thème clair ou sombre) et le mouvement
-// aussi (nuages, oiseaux, arbres, étudiants qui marchent vers la porte), coupé si l'appareil le demande.
 
 const r1 = n => Math.round(n * 10) / 10;
 
-// Logo de l'ENSAM tel qu'il est peint sur le fronton de l'école (deux A, losange, crémaillère et roue),
-// redessiné dans un repère de 200 de large.
 function ensamLogo() {
   const dents = [35, 62, 88.5, 114.5, 138.5, 162.5].map(c => `M${c - 7} 143.5H${c + 7}L${c + 4.5} 161H${c - 4.5}Z`).join('');
   const roue = [-14, 0, 14].map(a => {
@@ -42,7 +37,6 @@ function palm(x, h, lean = 1) {
   return `<g class="sc-tree palm" style="animation-delay:${r1(-(x % 6))}s"><path class="t-stem" d="M${x} 300Q${x + 2 * lean} ${300 - h * 0.6} ${tx} ${ty}"/>${fronds}<circle class="t-2" cx="${tx}" cy="${ty + 1}" r="3"/></g>`;
 }
 
-// Massifs de fleurs jaunes et orange de part et d'autre de l'allée (comme devant la vraie entrée).
 function flowerBeds() {
   const pathX = y => 372 - (y - 300) * (172 / 120); // bord gauche de l'allée
   const gap = y => 3 + (y - 300) * 0.06;
@@ -67,7 +61,6 @@ function flowerBeds() {
   return s;
 }
 
-// Étudiants vus de dos, qui remontent l'allée vers la porte (sac orange, pull bleu, et inversement).
 const walker = (cls, delay) => `<g class="sc-walk ${cls}" style="animation-delay:${delay}s"><g class="sc-step">`
   + '<rect class="w-leg l1" x="-5" y="-12" width="4" height="12" rx="2"/><rect class="w-leg l2" x="1" y="-12" width="4" height="12" rx="2"/>'
   + '<rect class="w-body" x="-7" y="-29" width="14" height="19" rx="5.5"/><rect class="w-bag" x="-5" y="-27" width="10" height="12" rx="3"/>'

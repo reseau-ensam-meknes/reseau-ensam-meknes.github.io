@@ -105,6 +105,8 @@ export const NIVEAUX = {
 export const CATEGORIES_Q = ['PFE', 'Stage', 'Étranger & visas', 'CV & entretiens', 'Premier emploi', 'Vie à l’école'];
 
 // Une saison = une année universitaire, de septembre à août. 2026 = « 2026-2027 ».
+// Règles de la page d'entrée (elles vivent à part pour qu'elle s'affiche sans attendre ce fichier)
+export { roleDePromo, promoValide, PROMO_MIN, PROMO_MAX, presetInscription, lignesChiffres, estEmailEcole, chiffresCode, casErreurAuth, saisonActuelle, lienPartage, lienEncoreBon, LIEN_DUREE, estUuid, phraseLien, suiteLien } from './regles-entree.js';
 export function seasonOf(d = new Date()) { return d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1; }
 export const seasonLabel = s => `${s}-${s + 1}`;
 
@@ -115,6 +117,26 @@ export function niveauOf(p, saison) {
   if (n <= 0) return 1;
   if (n <= 5) return n;
   return p.promo === saison ? 6 : 7;
+}
+
+// « Fais venir ta promo » : le lien d'une promo mène à sa petite page d'aperçu (page = true, outils/pages-promo.mjs),
+// qui nomme la promo dans WhatsApp puis ouvre le site avec ?promo= ; sinon le lien simple ?promo=
+export const lienPromo = (promo, langue, page, base) => new URL(page ? `promo/${promo}/${langue === 'ar' ? 'ar/' : ''}` : `./?promo=${promo}${langue === 'ar' ? '&lang=ar' : ''}`, base).href;
+// Membres inscrits avec cette promo, étudiants et lauréats, moi compris
+export const inscritsDeLaPromo = (profiles, promo) => profiles.filter(p => p.promo != null && Number(p.promo) === Number(promo)).length;
+// Message d'un membre à sa propre promo : court, à la première personne, avec le lien. n : déjà inscrits, cité à partir de 3.
+export function messageCamarade(me, langue, lien, n = 0, saison = seasonOf()) {
+  const { promo } = me; const etu = me.role === 'etudiant'; const demande = etu && niveauOf(me, saison) >= 3; const deja = n >= 3;
+  if (langue === 'ar') return [`مرحبا دفعة ${promo} 👋`,
+    !etu ? 'أنا على «شبكة ENSAM مكناس»: نساعد فيها كخريجين الطلبة على إيجاد تدريب أو مشروع نهاية الدراسة أو أول وظيفة، ونلتقي فيها كزملاء.'
+      : demande ? 'أنا على «شبكة ENSAM مكناس»: نقول فيها للخريجين ما نبحث عنه من تدريب أو مشروع نهاية الدراسة، مع السيرة الذاتية، ومن يستطيع المساعدة منهم يجيب.'
+      : 'أنا على «شبكة ENSAM مكناس»: نطرح فيها أسئلتنا على الخريجين (الشعبة، التداريب، الحياة بعد المدرسة) ويقدّمون لنا النصائح.',
+    `${deja ? `نحن بالفعل ${n} من دفعة ${promo}. ` : ''}${etu ? 'سجّل مجانًا' : 'انضمّ إلينا مجانًا'}، دفعتك محدَّدة مسبقًا في الرابط:`, lien].join('\n');
+  return [`Salut la promo ${promo} 👋`,
+    !etu ? 'Je suis sur le Réseau ENSAM Meknès : entre lauréats, on y aide les étudiants à trouver un stage, un PFE ou un premier emploi, et on s’y retrouve entre camarades.'
+      : demande ? 'Je suis sur le Réseau ENSAM Meknès : on y dit aux lauréats le stage ou le PFE qu’on cherche, CV joint, et ceux qui peuvent aider répondent.'
+      : 'Je suis sur le Réseau ENSAM Meknès : on y pose nos questions aux lauréats (filière, stages, vie après l’école) et ils nous conseillent.',
+    `${deja ? `On est déjà ${n} de la promo ${promo}. ` : ''}${etu ? 'Inscris-toi' : 'Rejoins-nous'}, c’est gratuit et ta promo est déjà indiquée :`, lien].join('\n');
 }
 
 // Objectif de chaque niveau pour la saison, avec son échéance.
@@ -291,10 +313,17 @@ export const BADGES = [
 
 // Membres fondateurs : les 25 premiers lauréats arrivés sur la plateforme (ils ont lancé l'entraide)
 export const NB_FONDATEURS = 25;
+// Les lauréats dans l'ordre où ils ont rejoint le réseau (même ordre pour le badge et pour l'accueil)
+export const ordreArrivee = profiles => (profiles || []).filter(p => p.role === 'laureat' && p.created_at)
+  .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.id).localeCompare(String(b.id)));
 export function fondateursOf(profiles) {
-  return new Set((profiles || []).filter(p => p.role === 'laureat' && p.created_at)
-    .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.id).localeCompare(String(b.id)))
-    .slice(0, NB_FONDATEURS).map(p => p.id));
+  return new Set(ordreArrivee(profiles).slice(0, NB_FONDATEURS).map(p => p.id));
+}
+// « Te voilà 40e lauréat(e) du réseau » : le rang d'arrivée d'un lauréat (null pour les autres, ou sans date)
+export function rangLaureat(profiles, me) {
+  if (me?.role !== 'laureat' || !me.created_at) return null;
+  const i = ordreArrivee(profiles).findIndex(p => p.id === me.id);
+  return i < 0 ? null : i + 1;
 }
 
 // `extra.star` : id du lauréat du mois (voir starOfMonth) ; `extra.fondateurs` : voir fondateursOf
@@ -400,9 +429,33 @@ export function dernieresActions(data) {
   return m;
 }
 // Où les inscriptions s'arrêtent : compte créé → profil rempli → première action ; et qui a agi cette semaine
+// Rôle et promo cohérents : un lauréat a déjà son diplôme, un étudiant l'aura entre la 5A et la 1re année de cette saison
+export function incoherenceProfil(role, promo, S, an) {
+  const p = Number(promo); if (promo === '' || promo == null || !Number.isInteger(p) || p < 1990 || p > 2040) return null;
+  return role === 'laureat' && p > an ? 'futur' : role === 'etudiant' && p <= S ? 'diplome' : role === 'etudiant' && p > S + 5 ? 'loin' : null;
+}
+// Ce qui manque encore pour enregistrer le profil, dans l'ordre de l'écran (le bouton le dit, et y mène)
+export function manquesProfil(f, { onboarding = false, ecoleBloque = false, incoherent = null } = {}) {
+  const p = Number(f.promo);
+  return [!f.role && 'role', ecoleBloque && 'ecole', String(f.full_name || '').trim().length < 2 && 'nom',
+    !(f.promo !== '' && f.promo != null && Number.isInteger(p) && p >= 1990 && p <= 2040) && 'promo', !!incoherent && 'coherence', !f.filiere && 'filiere',
+    onboarding && f.role === 'laureat' && typeof f.mentor_dispo !== 'boolean' && 'aide'].filter(Boolean);
+}
+// Avec le code à 6 chiffres, demander un code crée déjà le compte (connexion notée dans la seconde) :
+// un compte créé par code n'est « ouvert » qu'avec un profil ou une connexion venue plus tard (le code entré).
+// Un compte d'avant les codes, ou un champ absent (base pas encore à jour), compte toujours.
+export function compteOuvert(c) {
+  if (c.a_profil || c.par_code !== true || c.last_sign_in_at == null || c.created_at == null) return true;
+  return new Date(c.last_sign_in_at) - new Date(c.created_at) > 5000;
+}
+// Personnes qui ont demandé un code sans l'entrer (code pas reçu, ou visite interrompue), hors administration
+export function codesSansSuite(comptes, profils = []) {
+  const admins = new Set(profils.filter(p => p.role === 'admin').map(p => p.id));
+  return (comptes || []).filter(c => !admins.has(c.id) && !compteOuvert(c)).length;
+}
 export function parcoursInscription(comptes, data, now = new Date()) {
   const admins = new Set((data.profiles || []).filter(p => p.role === 'admin').map(p => p.id));
-  const liste = (comptes?.length ? comptes : (data.profiles || []).map(p => ({ id: p.id, a_profil: true }))).filter(c => !admins.has(c.id));
+  const liste = (comptes?.length ? comptes : (data.profiles || []).map(p => ({ id: p.id, a_profil: true }))).filter(c => !admins.has(c.id) && compteOuvert(c));
   const actions = dernieresActions(data);
   const profil = liste.filter(c => c.a_profil).length, action = liste.filter(c => c.a_profil && actions.has(c.id)).length;
   const semaine = now.getTime() - 7 * 864e5;
@@ -771,8 +824,9 @@ export function lienAvec(data, me, autre, profil = () => null) {
   }
   if ((data.parrainages || []).some(x => entre(x, me.id, autre, 'parrain_id', 'filleul_id'))) return { type: 'parrainage', label: 'Parrainage' };
   if ((data.demandes_contact || []).some(d => d.status === 'acceptee' && entre(d, me.id, autre, 'demandeur_id', 'cible_id'))) return { type: 'contact', label: 'Contact accepté' };
-  if (me.role === 'admin' || profil(autre)?.role === 'admin') return { type: 'admin', label: 'Administration' };
-  if ((data.messages || []).some(x => x.author_id === autre && x.dest_id === me.id)) return { type: 'message', label: 'Conversation' };
+  // Sans lien particulier, pas d'étiquette : l'écran dit alors qui est la personne (jamais « Administration »)
+  if (me.role === 'admin' || profil(autre)?.role === 'admin') return { type: 'admin', label: null };
+  if ((data.messages || []).some(x => x.author_id === autre && x.dest_id === me.id)) return { type: 'message', label: null };
   return null;
 }
 export function peutDiscuter(data, me, autre, profil = () => null) {
@@ -826,7 +880,7 @@ export function poulsReseau(data, now = new Date()) {
 }
 // À froid : combien de lauréats sont là (le même total pour tout le monde) et combien me ressemblent (moi exclu).
 // « cle » = le filtre de l'annuaire qui montre exactement ces personnes.
-export function presenceReseau(data, me) {
+export function presenceReseau(data, me, { visages: nbVisages = 3 } = {}) {
   const tous = (data.profiles || []).filter(p => p.role === 'laureat');
   const lau = tous.filter(p => p.id !== me?.id);
   if (!me || !lau.length) return null;
@@ -840,8 +894,26 @@ export function presenceReseau(data, me) {
   }
   const visages = (proches.length ? proches : lau).slice()
     .sort((a, b) => (b.photo_path ? 1 : 0) - (a.photo_path ? 1 : 0) || String(b.created_at || '').localeCompare(String(a.created_at || '')))
-    .slice(0, 3).map(p => p.id);
+    .slice(0, nbVisages).map(p => p.id);
   return { total: tous.length, proches: proches.length, cle, visages };
+}
+// L'accueil juste après l'inscription : des chiffres vrais (les mêmes que l'accueil), des visages, rien d'inventé
+export function accueilArrivee(data, me) {
+  if (!me || !['laureat', 'etudiant'].includes(me.role)) return null;
+  const presence = presenceReseau(data, me, { visages: 5 });
+  const rang = rangLaureat(data.profiles, me);
+  return { role: me.role, rang, fondateur: !!rang && rang <= NB_FONDATEURS, presence, visages: presence?.visages || [] };
+}
+// Une seule phrase par cas (la version arabe la reconnaît en entier)
+export function phrasesArrivee(a) {
+  if (!a) return null;
+  const pr = a.presence;
+  const groupe = pr && pr.proches ? lignePresence({ total: pr.proches, proches: pr.proches, cle: pr.cle }) : null;
+  if (a.role === 'laureat' && a.rang) {
+    return { titre: a.rang === 1 ? 'Le réseau des lauréats commence avec toi' : `Te voilà ${a.rang}e lauréat(e) du réseau`, sous: pr?.cle === 'promo' ? groupe : null };
+  }
+  if (!pr) return { titre: 'Bienvenue dans le réseau !', sous: null };
+  return { titre: groupe || lignePresence({ total: pr.total, proches: 0, cle: null }), sous: null };
 }
 const DE_PRES = { filiere: 'de ta filière', parcours: 'de ton parcours', promo: 'de ta promo' };
 // Une seule phrase par cas : la version arabe la reconnaît en entier
@@ -975,4 +1047,21 @@ export function manquesOffre(f) {
 }
 export function manquesDemande(f, me) {
   return [(f.titre || '').trim().length < 4 && 'titre', (f.details || '').trim().length < 20 && 'details', !me?.cv_path && 'cv'].filter(Boolean);
+}
+
+// « Me prévenir » : après une action qui attend une réponse, une feuille propose les notifications sur cet appareil.
+// etat : celui des notifications ici (… | demo | absent | ios | refuse | off | on) ; memo : ce que cet appareil a déjà
+// répondu ({ n refus, at dernier refus, fait, mail }). Deux refus au plus, 14 jours entre les deux ; la variante email
+// (navigateur sans notifications) une seule fois, et seulement si un email part vraiment.
+export const PREVENIR_ECART = 14 * 864e5;
+export function prevenirVariante({ etat, raison, memo = {}, now = Date.now(), role, emailsMessages, emailsHebdo }) {
+  if (role === 'admin' || memo.fait || etat === 'on' || etat === '…' || etat === 'demo') return null;
+  if (etat === 'off' || etat === 'ios') {
+    if ((memo.n || 0) >= 2 || (memo.at && now - memo.at < PREVENIR_ECART)) return null;
+    return etat === 'off' ? 'push' : 'ios';
+  }
+  if (memo.mail) return null;
+  if (raison === 'demande' && emailsMessages) return 'email';   // chaque proposition arrive en message, un email suit si elle reste non lue
+  if (raison === 'question' && emailsHebdo) return 'email';     // les réponses figurent dans le résumé de la semaine
+  return null;
 }

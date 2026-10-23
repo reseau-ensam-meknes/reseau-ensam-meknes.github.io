@@ -38,13 +38,13 @@ test('resume par Gmail : 465 en TLS, compte du mot de passe sans espaces, messag
   faux.rejets.add(j.emails[ID.omar]);
   faux.delai = 15;
   const vus = brancher(N, faux);
-  assert.deepEqual(await resume(), { sent: 10, empty: 3, errors: 1, via: 'gmail' });
+  assert.deepEqual(await resume(), { sent: 11, empty: 2, errors: 1, via: 'gmail' });
   assert.ok(vus.every(v => v === 'smtp.gmail.com:465'), vus.join());
   assert.equal(b.brevo.length, 0, 'rien par Brevo');
   assert.ok(faux.maxOuvertes <= 3 && faux.maxOuvertes >= 2, `connexions en même temps : ${faux.maxOuvertes}`);
   assert.ok(faux.connexions <= 3, `connexions réutilisées (${faux.connexions})`);
   assert.equal(faux.quits, faux.connexions, 'chaque connexion est fermée proprement');
-  assert.equal(faux.messages.length, 10);
+  assert.equal(faux.messages.length, 11);
   for (const m of faux.messages) {
     assert.equal(m.de, GMAIL);
     assert.equal(m.a.length, 1);
@@ -81,9 +81,9 @@ test('Gmail refuse le mot de passe : Brevo prend le relais', async () => {
   configurerEnv({ GMAIL_USER: GMAIL, GMAIL_APP_PASSWORD: 'mauvais', BREVO_API_KEY: 'xkeysib-test', SENDER_EMAIL: 'reseau@ensam-meknes.example' });
   brancher(N, faux);
   const r = await resume();
-  assert.deepEqual(r, { sent: 11, empty: 3, errors: 0, via: 'gmail+brevo' });
+  assert.deepEqual(r, { sent: 12, empty: 2, errors: 0, via: 'gmail+brevo' });
   assert.equal(faux.messages.length, 0);
-  assert.equal(b.brevo.length, 11);
+  assert.equal(b.brevo.length, 12);
   assert.ok(faux.auths <= 3, `Gmail n’est pas réessayé pour chaque email (${faux.auths})`);
   assert.ok(erreurs.some(e => e.includes('Gmail refuse les envois') && e.includes('535')));
 });
@@ -92,8 +92,8 @@ test('Gmail refuse le mot de passe, sans Brevo : rien n’est marqué', async ()
   const { b } = banc();
   configurerEnv({ GMAIL_USER: GMAIL, GMAIL_APP_PASSWORD: 'mauvais' });
   brancher(N, faux);
-  assert.deepEqual(await resume(), { sent: 0, empty: 3, errors: 11, via: 'gmail' });
-  assert.equal(b.tables.notif_etat.filter(n => n.resume_at).length, 3, 'seuls les résumés vides sont marqués');
+  assert.deepEqual(await resume(), { sent: 0, empty: 2, errors: 12, via: 'gmail' });
+  assert.equal(b.tables.notif_etat.filter(n => n.resume_at).length, 2, 'seuls les résumés vides sont marqués');
 });
 
 test('limite du jour atteinte : le reste part par Brevo', async () => {
@@ -102,12 +102,12 @@ test('limite du jour atteinte : le reste part par Brevo', async () => {
   faux.limite = 4;
   brancher(N, faux);
   const r = await resume();
-  assert.equal(r.sent, 11);
+  assert.equal(r.sent, 12);
   assert.equal(r.via, 'gmail+brevo');
   assert.equal(faux.messages.length, 4);
-  assert.equal(b.brevo.length, 7);
+  assert.equal(b.brevo.length, 8);
   const tous = [...faux.messages.map(m => m.a[0]), ...b.brevo.map(x => x.corps.to[0].email)];
-  assert.equal(new Set(tous).size, 11, 'personne ne reçoit deux fois');
+  assert.equal(new Set(tous).size, 12, 'personne ne reçoit deux fois');
 });
 
 test('connexion coupée par Gmail entre deux envois : un nouvel essai sur une connexion neuve', async () => {
@@ -115,8 +115,8 @@ test('connexion coupée par Gmail entre deux envois : un nouvel essai sur une co
   configurerEnv({ GMAIL_USER: GMAIL, GMAIL_APP_PASSWORD: 'abcdefghijklmnop' });
   faux.couperApres = 2;
   brancher(N, faux);
-  assert.deepEqual(await resume(), { sent: 11, empty: 3, errors: 0, via: 'gmail' });
-  assert.equal(new Set(faux.messages.map(m => m.a[0])).size, 11);
+  assert.deepEqual(await resume(), { sent: 12, empty: 2, errors: 0, via: 'gmail' });
+  assert.equal(new Set(faux.messages.map(m => m.a[0])).size, 12);
   assert.ok(faux.connexions >= 6);
 });
 
@@ -124,7 +124,7 @@ test('Gmail injoignable : erreurs comptées, pas de plantage', async () => {
   const { b } = banc();
   configurerEnv({ GMAIL_USER: GMAIL, GMAIL_APP_PASSWORD: 'abcdefghijklmnop' });
   N.tls.connecter = () => Promise.reject(new Error('Connection refused'));
-  assert.deepEqual(await resume(), { sent: 0, empty: 3, errors: 11, via: 'gmail' });
+  assert.deepEqual(await resume(), { sent: 0, empty: 2, errors: 12, via: 'gmail' });
   assert.equal(b.brevo.length, 0);
   assert.ok(erreurs.some(e => e.includes('Gmail injoignable')));
 });
@@ -139,7 +139,7 @@ test('serveur muet : abandon après le délai, sans bloquer la fonction', async 
   const vrai = globalThis.setTimeout;
   globalThis.setTimeout = (f, ms, ...a) => vrai(f, Math.min(ms, 5), ...a);
   try {
-    assert.deepEqual(await resume(), { sent: 0, empty: 3, errors: 11, via: 'gmail' });
+    assert.deepEqual(await resume(), { sent: 0, empty: 2, errors: 12, via: 'gmail' });
   } finally { globalThis.setTimeout = vrai; }
   assert.ok(Date.now() - t < 5000);
   assert.ok(ferme >= 11);

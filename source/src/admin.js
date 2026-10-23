@@ -4,7 +4,7 @@
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
 import { Icon, Field, Person, Num, Empty, Bar, Avatar, toast, injectCSS, useLocal } from './ui.js';
 import { addAR } from './i18n.js';
-import { NIVEAUX, niveauOf, timeAgo, cleNom, norm, GUIDE_SECTIONS, pct, reponses48h, parcoursInscription, PUBLICS, ANNONCE_JOURS, annonceVisible, annoncePour } from './logic.js';
+import { NIVEAUX, niveauOf, timeAgo, cleNom, norm, GUIDE_SECTIONS, pct, reponses48h, parcoursInscription, compteOuvert, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible, annoncePour } from './logic.js';
 import { DefisAdmin } from './saison.js';
 import { AgendaAdmin } from './agenda.js';
 import { InvitationsAdmin } from './invitation.js';
@@ -60,6 +60,7 @@ addAR({
 }, [
   [/^Jusqu’au (\d{1,2}) (\S+)$/, (j, m) => `إلى غاية ${j} ${m}`],
   [/^Signalé (\d+) fois$/, n => `بُلّغ عنه ${n} مرة`],
+  [/^Personnes qui ont demandé un code sans l’entrer : (\d+) \(code pas reçu, ou visite interrompue\)\.$/, n => `عدد من طلبوا رمزًا دون إدخاله: ${n} (لم يصلهم الرمز، أو انقطعت الزيارة).`],
   [/^(\d+) demandes d’étudiants sans proposition depuis plus de 24 h$/, n => `${n} طلبات طلبة دون اقتراح منذ أكثر من 24 ساعة`],
   [/^(\d+) signalements? à traiter$/, n => `${n} تبليغ للمعالجة`],
   [/^(\d+) lauréats? à vérifier$/, n => `${n} خريج للتحقق`],
@@ -108,7 +109,7 @@ export function AdminPage(ctx) {
 // ---------------------------------------------------------------------------
 function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
   const { data, store, act, openProfile, saison, go } = ctx;
-  const sansProfil = (comptes || []).filter(c => !c.a_profil);
+  const sansProfil = (comptes || []).filter(c => !c.a_profil && compteOuvert(c));
   const week = Date.now() - 7 * 864e5;
   const members = data.profiles.filter(p => p.role !== 'admin');
   const nouveaux = members.filter(p => new Date(p.created_at) > week);
@@ -139,7 +140,7 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
     ${todo.length ? html`<div class="callout today"><h2 class="h-ico"><${Icon} name="bell"/> À traiter</h2><ul class="todo">${todo.map(([i, t, r]) => html`<li><button class="notif act" onClick=${() => go(r)}><span class="n-ico accent"><${Icon} name=${i} size=${16}/></span><span>${t}</span><${Icon} name="arrow" size=${16}/></button></li>`)}</ul></div>` : null}
     <div class="kpis">${kpis.map(([l, v, sub]) => html`<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-val mono">${typeof v === 'number' ? html`<${Num} v=${v}/>` : v}</span><span class="small muted">${sub}</span></div>`)}</div>
 
-    <${ParcoursInscription} p=${parcours}/>
+    <${ParcoursInscription} p=${parcours} sansSuite=${codesSansSuite(comptes, data.profiles)}/>
 
     <${AnnonceBox} ctx=${ctx}/>
     <${DefisAdmin} ctx=${ctx}/>
@@ -158,7 +159,7 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
 }
 
 // Où les inscriptions s'arrêtent : compte créé → profil rempli → première action
-function ParcoursInscription({ p }) {
+function ParcoursInscription({ p, sansSuite = 0 }) {
   if (!p.comptes) return null;
   const etapes = [
     ['Compte créé', p.comptes, 1, null],
@@ -172,6 +173,7 @@ function ParcoursInscription({ p }) {
   return html`<div class="panel" id="adm-parcours"><div class="section-head"><h2 class="h-ico"><${Icon} name="people"/> Inscriptions : où les gens s’arrêtent</h2></div>
     <ol class="parcours">${etapes.map(([l, n, v, sub]) => html`<li key=${l}><span class="parcours-l">${l}</span><${Bar} value=${v}/><span class="mono strong">${n}</span>${sub ? html`<span class="small muted">${sub}</span>` : html`<span></span>`}</li>`)}</ol>
     <p class="small"><strong>${arret}</strong> <span class="muted">Première action : publier, répondre, demander ou donner de l’aide, postuler, réagir. Un rappel par email part tout seul aux comptes restés sans profil 24 h après l’inscription.</span></p>
+    ${sansSuite ? html`<p class="small muted" id="adm-codes">${`Personnes qui ont demandé un code sans l’entrer : ${sansSuite} (code pas reçu, ou visite interrompue).`}</p>` : null}
   </div>`;
 }
 
@@ -296,7 +298,7 @@ function Membres({ ctx, comptes, toVerify }) {
   const [all, setAll] = useState(false);
   const liste = useListe(store, data);
   const compte = new Map((comptes || []).map(c => [c.id, c]));
-  const sansProfil = (comptes || []).filter(c => !c.a_profil);
+  const sansProfil = (comptes || []).filter(c => !c.a_profil && compteOuvert(c));
   const members = data.profiles.filter(p => p.role !== 'admin');
   const qq = q.trim().toLowerCase();
   const list = members.filter(p => !qq || `${p.full_name} ${p.filiere} ${p.promo} ${p.entreprise || ''} ${compte.get(p.id)?.email || ''}`.toLowerCase().includes(qq))

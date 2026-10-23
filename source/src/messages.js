@@ -3,10 +3,10 @@
 // parrainage, relecture de CV) ; l'administration peut écrire à tout le monde.
 // Les règles sont dans la base (peut_discuter, protect_message) ; l'écran les reflète.
 import { html, useState, useEffect, useLayoutEffect, useRef, useMemo } from './vendor/preact-htm.js';
-import { Icon, Avatar, Empty, toast, injectCSS } from './ui.js';
+import { Icon, Avatar, Empty, toast, injectCSS, roleTexte } from './ui.js';
 import { conversations, lienAvec, mentorState, norm } from './logic.js';
-import { addAR } from './i18n.js';
-import { VOCAL_MAX } from './store.js';
+import { addAR, getLang } from './i18n.js';
+import { VOCAL_MAX, REACTIONS } from './store.js';
 import { SignalerBtn } from './confiance.js';
 
 const pad = n => String(n).padStart(2, '0');
@@ -125,7 +125,7 @@ function ConvList({ ctx, convs, actif }) {
     ${convs.length > 5 ? html`<div class="conv-search"><${Icon} name="search" size=${16}/><input id="conv-q" type="search" aria-label="Chercher une conversation" placeholder="Chercher un nom" value=${q} onInput=${e => setQ(e.target.value)}/></div>` : null}
     ${sugg.length ? html`<div class="conv-sugg"><p class="eyebrow">Écrire à</p>
       <div class="sugg-row">${sugg.map(id => { const p = store.byId('profiles', id); const l = lienAvec(data, me, id, x => store.byId('profiles', x)); return html`<a key=${id} class="sugg" href=${'#messages/' + id} onClick=${e => ouvrir(e, id)}>
-        <${Avatar} p=${p} size=${48}/><span class="sugg-nom" translate="no">${prenom(p)}</span><span class="sugg-lien">${l?.label || ''}</span></a>`; })}</div></div>` : null}
+        <${Avatar} p=${p} size=${48}/><span class="sugg-nom" translate="no">${prenom(p)}</span><span class="sugg-lien">${l?.label || roleTexte(p)}</span></a>`; })}</div></div>` : null}
     ${list.length ? html`<ul class="convs">${list.map(c => { const p = store.byId('profiles', c.autre); return html`<li key=${c.autre}>
       <a class=${'conv-item' + (c.autre === actif ? ' on' : '') + (c.nonLus ? ' unread' : '')} href=${'#messages/' + c.autre} aria-current=${c.autre === actif ? 'true' : undefined} onClick=${e => ouvrir(e, c.autre)}>
         <${Avatar} p=${p} size=${46}/>
@@ -162,6 +162,8 @@ function Conversation({ ctx, autre }) {
   const [sel, setSel] = useState(null);
   const [vue, setVue] = useState(null);
   const [plusBas, setPlusBas] = useState(false);
+  // Répondre à un message précis : il s'affiche au-dessus de la zone d'écriture jusqu'à l'envoi
+  const [cite, setCite] = useState(null);
   const zone = useRef(); const canal = useRef(null); const enBas = useRef(true); const ouvertA = useRef(Date.now());
 
   // « écrit… » : signal éphémère de l'autre personne
@@ -209,8 +211,33 @@ function Conversation({ ctx, autre }) {
   const debloquer = () => act(async () => { await store.remove('blocages', blocage.id); toast('Débloqué(e).'); });
   const supprimer = m => ctx.confirm('Supprimer ce message pour vous deux ?', () => act(async () => { await store.supprimerMessage(m.id); setSel(null); }), 'Supprimer');
   const copier = async m => { try { await navigator.clipboard.writeText(m.body || ''); toast('Message copié.'); } catch { toast('Copie impossible sur cet appareil.', 'err'); } setSel(null); };
+  // Le focus se donne pendant le geste lui-même : iOS n'ouvre le clavier qu'à cette condition
+  const repondre = m => { document.getElementById('chat-txt')?.focus(); setCite(m); setSel(null); };
+  // Au clavier, le focus revient sur le bouton « Actions du message » (les boutons de réaction disparaissent)
+  const reagir = (m, emoji) => {
+    const ici = document.getElementById('msg-' + m.id)?.contains(document.activeElement);
+    setSel(null); store.reagir(m.id, emoji).catch(e => toast(e.message || String(e), 'err'));
+    if (ici) requestAnimationFrame(() => document.querySelector('#msg-' + m.id + ' .msg-more')?.focus());
+  };
+  // Le message cité : on y va, il prend le focus (lecteur d'écran, clavier) et s'éclaire un instant, un seul à la fois
+  const eclaire = useRef({});
+  const allerA = id => {
+    const el = document.getElementById('msg-' + id); if (!el) return;
+    el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    const e = eclaire.current; clearTimeout(e.t); e.el?.classList.remove('eclaire');
+    el.classList.remove('eclaire'); void el.offsetWidth; el.classList.add('eclaire');
+    el.setAttribute('tabindex', '-1'); el.focus({ preventScroll: true });
+    eclaire.current = { el, t: setTimeout(() => el.classList.remove('eclaire'), 1600) };
+  };
+  useEffect(() => () => clearTimeout(eclaire.current.t), []);
 
   const tous = [...fil, ...envois.map(e => ({ ...e, author_id: me.id, dest_id: autre }))];
+  const parId = new Map(fil.map(m => [m.id, m]));
+  const reactions = new Map();
+  for (const r of data.reactions_messages || []) if (parId.has(r.message_id)) reactions.set(r.message_id, [...(reactions.get(r.message_id) || []), r]);
+  const actif = ouvert && !blocage;
+  const options = { repondre: actif && store.peutRepondre?.(), reagir: actif && store.peutReagir?.() };
+  const nomDe = id => (id === me.id ? html`<strong>Toi</strong>` : html`<strong translate="no">${prenom(store.byId('profiles', id))}</strong>`);
   const rdv = lien?.type === 'mentorat' && mentorState(lien.m) === 'rdv' && lien.m.rdv_at ? lien.m : null;
   const lienVisio = rdv && store.byId('liens_rdv', rdv.id)?.lien;
   const brise = BRISE_GLACE[me.role] || BRISE_GLACE.etudiant;
@@ -223,7 +250,7 @@ function Conversation({ ctx, autre }) {
         <${Avatar} p=${p} size=${40}/>
         <span class="conv-who-txt"><strong translate="no">${p?.full_name || 'Membre'}</strong>
           <span class="conv-sub">${tape ? html`<span class="tape-txt">écrit<span class="tape-dots" aria-hidden="true"><i></i><i></i><i></i></span></span>`
-            : lien ? html`<span>${lien.label}</span>${lien.detail ? html` · <span translate="no" dir="auto">${lien.detail}</span>` : null}` : null}</span></span>
+            : lien?.label ? html`<span>${lien.label}</span>${lien.detail ? html` · <span translate="no" dir="auto">${lien.detail}</span>` : null}` : html`<span>${roleTexte(p)}</span>`}</span></span>
       </button>
       <div class="pop-wrap conv-menu"><button class="icon-btn" aria-label="Options de la conversation" aria-expanded=${menu} onClick=${() => setMenu(!menu)}><${Icon} name="more"/></button>
         ${menu ? html`<div class="menu-pop right" role="menu">
@@ -239,22 +266,25 @@ function Conversation({ ctx, autre }) {
     <div class="conv-fil" ref=${zone} onScroll=${defile} role="log" aria-live="polite" aria-label="Messages">
       <p class="conv-safe"><${Icon} name="lock" size=${13}/> Messages visibles seulement par vous deux. Un souci ? Signale un message en un clic.</p>
       ${!tous.length ? html`<div class="conv-start"><${Avatar} p=${p} size=${72}/><strong translate="no">${p?.full_name || ''}</strong>
-        <span class="small muted">${lien ? html`<span>${lien.label}</span>${lien.detail ? html` · <span translate="no" dir="auto">${lien.detail}</span>` : null}` : null}</span>
+        <span class="small muted">${lien?.label ? html`<span>${lien.label}</span>${lien.detail ? html` · <span translate="no" dir="auto">${lien.detail}</span>` : null}` : html`<span>${roleTexte(p)}</span>`}</span>
         ${ouvert && !blocage ? html`<p class="small">Pour briser la glace :</p><div class="chips brise">${brise.map(b => html`<button type="button" class="chip" onClick=${() => { setTxt(b); document.getElementById('chat-txt')?.focus(); }}>${b}</button>`)}</div>` : null}</div>` : null}
       ${tous.map((m, i) => {
         const j = jourDe(m.created_at); const sep = j !== jour; jour = j;
         const prev = tous[i - 1]; const suite = !sep && prev && prev.author_id === m.author_id && new Date(m.created_at) - new Date(prev.created_at) < 5 * 6e4;
         return html`${sep ? html`<p class="jour" key=${'j' + j}><span>${j}</span></p>` : null}
           <${Bulle} key=${m.id} ctx=${ctx} m=${m} mine=${m.author_id === me.id} suite=${suite} neuf=${new Date(m.created_at) > ouvertA.current - 1500}
-            sel=${sel === m.id} onSel=${() => setSel(sel === m.id ? null : m.id)} onVoir=${setVue} onCopier=${copier} onSupprimer=${supprimer} onReessayer=${reessayer}/>`;
+            sel=${sel === m.id} onSel=${() => setSel(sel === m.id ? null : m.id)} onVoir=${setVue} onCopier=${copier} onSupprimer=${supprimer} onReessayer=${reessayer}
+            cite=${m.reponse_a ? parId.get(m.reponse_a) || 'supprime' : null} nomDe=${nomDe} onAller=${allerA} reactions=${reactions.get(m.id) || []} options=${options}
+            onRepondre=${repondre} onReagir=${reagir}/>`;
       })}
       ${tape ? html`<div class="msg tape-bulle" aria-hidden="true"><div class="bulle"><span class="tape-dots"><i></i><i></i><i></i></span></div></div>` : null}
     </div>
-    ${plusBas ? html`<button class="conv-bas" aria-label="Aller aux derniers messages" onClick=${versLeBas}><${Icon} name="arrow" size=${16}/></button>` : null}
+    ${plusBas ? html`<div class="conv-bas-ancre"><button class="conv-bas" aria-label="Aller aux derniers messages" onClick=${versLeBas}><${Icon} name="arrow" size=${16}/></button></div>` : null}
 
     ${blocage ? html`<div class="composer ferme"><${Icon} name="block" size=${16}/><span>Tu as bloqué <span translate="no">${prenom(p)}</span>.</span><span class="spacer"></span><button class="btn small" onClick=${debloquer}>Débloquer</button></div>`
       : !ouvert ? html`<div class="composer ferme"><${Icon} name="lock" size=${16}/><span>Vous ne pouvez pas vous écrire pour l’instant. Une conversation s’ouvre avec un mentorat, une candidature ou une demande de coordonnées acceptée.</span></div>`
-      : html`<${Composer} txt=${txt} setTxt=${setTxt} onEnvoyer=${envoyer} onTape=${() => canal.current?.tape()}/>`}
+      : html`<${Composer} txt=${txt} setTxt=${setTxt} onEnvoyer=${envoyer} onTape=${() => canal.current?.tape()}
+          cite=${cite && fil.some(m => m.id === cite.id) ? cite : null} nomDe=${nomDe} onAnnulerCite=${() => setCite(null)}/>`}
     ${vue ? html`<${Visionneuse} url=${vue} onClose=${() => setVue(null)}/>` : null}
   </section>`;
 }
@@ -265,21 +295,86 @@ function Texte({ body }) {
   return html`<p class="msg-txt" translate="no" dir="auto">${parts.map((x, i) => (i % 2 ? html`<a href=${x} target="_blank" rel="noopener nofollow ugc">${x}</a>` : x))}</p>`;
 }
 
-function Bulle({ ctx, m, mine, suite, neuf, sel, onSel, onVoir, onCopier, onSupprimer, onReessayer }) {
-  const envoi = m.etat === 'envoi', erreur = m.etat === 'erreur';
-  return html`<div class=${'msg' + (mine ? ' mine' : '') + (suite ? ' suite' : '') + (neuf ? ' neuf' : '') + (envoi ? ' envoi' : '') + (erreur ? ' erreur' : '') + (sel ? ' sel' : '')}>
-    <div class=${'bulle t-' + (m.type || 'texte')}>
+// Ce que montre un message cité : sa première ligne, ou « Photo » / « Message vocal »
+function ExtraitCite({ m }) {
+  const ligne = String(m.body || '').split('\n').find(x => x.trim()) || '';
+  if (m.type === 'vocal') return html`<span class="cite-extrait"><${Icon} name="mic" size=${13}/> <span>Message vocal</span></span>`;
+  if (m.type === 'photo') return html`<span class="cite-extrait"><${Icon} name="image" size=${13}/> ${ligne ? html`<span translate="no" dir="auto">${ligne}</span>` : html`<span>Photo</span>`}</span>`;
+  return html`<span class="cite-extrait" translate="no" dir="auto">${ligne}</span>`;
+}
+
+// Téléphone : glisser une bulle vers l'intérieur répond, un appui long ouvre les actions
+const SEUIL_GLISSE = 56;
+function useGeste({ onRepondre, onSel }) {
+  const g = useRef({});
+  const fin = e => {
+    const s = g.current; if (!s.el) return;
+    clearTimeout(s.long);
+    s.el.style.transform = ''; s.el.parentElement?.style.removeProperty('--g');
+    if (s.glisse && s.dx >= SEUIL_GLISSE && e.type === 'pointerup' && onRepondre) { navigator.vibrate?.(8); onRepondre(); }
+    g.current = {};
+  };
+  return {
+    onPointerDown: e => {
+      if (e.pointerType !== 'touch') return;
+      const el = e.currentTarget;
+      g.current = { el, id: e.pointerId, x: e.clientX, y: e.clientY, dx: 0, glisse: null, sens: getComputedStyle(el).direction === 'rtl' ? -1 : 1,
+        long: setTimeout(() => { if (g.current.el === el && !g.current.glisse) { g.current.glisse = false; navigator.vibrate?.(8); onSel(); } }, 480) };
+    },
+    onPointerMove: e => {
+      const s = g.current; if (!s.el || e.pointerId !== s.id) return;
+      const dx = (e.clientX - s.x) * s.sens, dy = e.clientY - s.y;
+      if (s.glisse === null && Math.hypot(dx, dy) > 8) { clearTimeout(s.long); s.glisse = !!onRepondre && dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.4; }
+      if (!s.glisse) return;
+      s.dx = Math.max(0, Math.min(84, dx));
+      s.el.style.transform = `translateX(${s.sens * s.dx}px)`;
+      s.el.parentElement?.style.setProperty('--g', Math.min(1, s.dx / SEUIL_GLISSE).toFixed(2));
+    },
+    onPointerUp: fin, onPointerCancel: fin,
+  };
+}
+
+function Bulle({ ctx, m, mine, suite, neuf, sel, onSel, onVoir, onCopier, onSupprimer, onReessayer, cite, nomDe, onAller, reactions = [], options = {}, onRepondre, onReagir }) {
+  const envoi = m.etat === 'envoi', erreur = m.etat === 'erreur', pret = !envoi && !erreur;
+  const peutRepondre = pret && options.repondre, peutReagir = pret && options.reagir;
+  const geste = useGeste({ onRepondre: peutRepondre ? () => onRepondre(m) : null, onSel: pret ? onSel : () => {} });
+  const moi = ctx.me.id;
+  const mienne = reactions.find(r => r.user_id === moi)?.emoji;
+  // Les actions ouvertes sous le dernier message restent à l'écran
+  const racine = useRef();
+  useEffect(() => { if (sel) racine.current?.querySelector('.msg-actions')?.scrollIntoView({ block: 'nearest' }); }, [sel]);
+  // Une pastille par emoji (deux personnes au plus dans une conversation)
+  const pastilles = [];
+  for (const r of reactions) { const x = pastilles.find(p => p.emoji === r.emoji); if (x) x.qui.push(r.user_id); else pastilles.push({ emoji: r.emoji, qui: [r.user_id] }); }
+  return html`<div id=${'msg-' + m.id} ref=${racine} class=${'msg' + (mine ? ' mine' : '') + (suite ? ' suite' : '') + (neuf ? ' neuf' : '') + (envoi ? ' envoi' : '') + (erreur ? ' erreur' : '') + (sel ? ' sel' : '') + (pastilles.length ? ' a-react' : '')}>
+    ${peutRepondre ? html`<span class="glisse-ico" aria-hidden="true"><${Icon} name="reply" size=${18}/></span>` : null}
+    <div class=${'bulle t-' + (m.type || 'texte') + (cite ? ' avec-cite' : '')} ...${geste}>
+      ${cite === 'supprime' ? html`<span class="msg-cite supprime"><span>Message supprimé</span></span>`
+        : cite ? html`<button type="button" class="msg-cite" onClick=${() => onAller(cite.id)}>${nomDe(cite.author_id)}<${ExtraitCite} m=${cite}/></button>` : null}
       ${m.type === 'photo' ? html`<${Photo} ctx=${ctx} m=${m} onVoir=${onVoir}/>` : null}
       ${m.type === 'vocal' ? html`<${Vocal} ctx=${ctx} m=${m}/>` : null}
       ${m.body && m.type !== 'vocal' ? html`<${Texte} body=${m.body}/>` : null}
       <span class="msg-meta"><span class="mono">${heure(m.created_at)}</span>${mine ? html`<span class=${'msg-etat' + (m.lu_at ? ' lu' : '')} title=${erreur ? 'Non envoyé' : envoi ? 'Envoi en cours' : m.lu_at ? 'Vu' : 'Envoyé'}><span class="sr-only">${erreur ? 'Non envoyé' : envoi ? 'Envoi en cours' : m.lu_at ? 'Vu' : 'Envoyé'}</span>
         <${Icon} name=${erreur ? 'x' : envoi ? 'clock' : m.lu_at ? 'checks' : 'check'} size=${14}/></span>` : null}</span>
+      ${pastilles.length ? html`<span class="msg-reacts">${pastilles.map(p => {
+        const aMoi = p.qui.includes(moi);
+        const n = p.qui.length > 1 ? html`<span class="react-n">${p.qui.length}</span>` : null;
+        // Le nom accessible dit aussi quand l'autre personne a choisi le même emoji (le « 2 » affiché)
+        const autre = p.qui.find(u => u !== moi), nomAutre = autre ? prenom(ctx.store.byId('profiles', autre)) : null;
+        return aMoi && peutReagir
+          ? html`<button type="button" key=${p.emoji} class="react-pill mien" aria-label=${'Retirer ma réaction ' + p.emoji + (nomAutre ? ' (' + nomAutre + ' aussi)' : '')} title=${'Retirer ma réaction ' + p.emoji} onClick=${() => onReagir(m, p.emoji)}>${p.emoji}${n}</button>`
+          : html`<span key=${p.emoji} class=${'react-pill' + (aMoi ? ' mien' : '')} role="img" aria-label=${aMoi ? (nomAutre ? 'Toi et ' + nomAutre + ' : ' + p.emoji : 'Ta réaction ' + p.emoji) : 'Réaction de ' + nomAutre + ' : ' + p.emoji}>${p.emoji}${n}</span>`;
+      })}</span>` : null}
     </div>
     ${erreur ? html`<button type="button" class="linkish small msg-retry" onClick=${() => onReessayer(m)}>Non envoyé · Réessayer</button>`
       : envoi ? null : html`<button type="button" class="icon-btn small msg-more" aria-label="Actions du message" aria-expanded=${sel} onClick=${onSel}><${Icon} name="more" size=${16}/></button>`}
     ${sel ? html`<div class="msg-actions" role="group" aria-label="Actions du message">
-      ${m.body && m.type !== 'vocal' ? html`<button type="button" class="btn tiny ghost" onClick=${() => onCopier(m)}><${Icon} name="copy" size=${14}/> Copier</button>` : null}
-      ${mine ? html`<button type="button" class="btn tiny ghost danger-t" onClick=${() => onSupprimer(m)}><${Icon} name="trash" size=${14}/> Supprimer</button>` : html`<${SignalerBtn} ctx=${ctx} type="prive" id=${m.id}/>`}
+      ${peutReagir ? html`<div class="react-bar" role="group" aria-label="Réagir à ce message">${REACTIONS.map(e => html`<button type="button" class=${'react-btn' + (mienne === e ? ' on' : '')} aria-pressed=${mienne === e} aria-label=${'Réagir avec ' + e} onClick=${() => onReagir(m, e)}>${e}</button>`)}</div>` : null}
+      <div class="msg-acts-row">
+        ${peutRepondre ? html`<button type="button" class="btn tiny ghost" onClick=${() => onRepondre(m)}><${Icon} name="reply" size=${14}/> ${getLang() === 'ar' ? 'رد' : 'Répondre'}</button>` : null}
+        ${m.body && m.type !== 'vocal' ? html`<button type="button" class="btn tiny ghost" onClick=${() => onCopier(m)}><${Icon} name="copy" size=${14}/> Copier</button>` : null}
+        ${mine ? html`<button type="button" class="btn tiny ghost danger-t" onClick=${() => onSupprimer(m)}><${Icon} name="trash" size=${14}/> Supprimer</button>` : html`<${SignalerBtn} ctx=${ctx} type="prive" id=${m.id}/>`}
+      </div>
     </div>` : null}
   </div>`;
 }
@@ -431,27 +526,38 @@ function useEnregistreur(onFini) {
   return { possible, etat, sec, niv, demarrer, arreter };
 }
 
-function Composer({ txt, setTxt, onEnvoyer, onTape }) {
+function Composer({ txt, setTxt, onEnvoyer, onTape, cite, nomDe, onAnnulerCite }) {
   const ta = useRef(); const fichierIn = useRef();
-  const rec = useEnregistreur(onEnvoyer);
+  // Ce qui part pendant qu'un message est cité lui répond (texte, photo ou vocal)
+  const citeRef = useRef(cite); citeRef.current = cite;
+  const partir = a => { const c = citeRef.current; onEnvoyer(c ? { ...a, reponse_a: c.id } : a); if (c) onAnnulerCite(); };
+  const rec = useEnregistreur(partir);
   const ajuster = () => { const t = ta.current; if (!t) return; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 140) + 'px'; };
   useEffect(ajuster, [txt]);
-  const envoyerTexte = () => { const b = txt.trim(); if (!b) return; onEnvoyer({ type: 'texte', body: b }); setTxt(''); ta.current?.focus(); };
+  const envoyerTexte = () => { const b = txt.trim(); if (!b) return; partir({ type: 'texte', body: b }); setTxt(''); ta.current?.focus(); };
   // Ordinateur : Entrée envoie, Maj+Entrée va à la ligne. Téléphone : Entrée va à la ligne.
   const clavier = e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && matchMedia?.('(pointer: fine)').matches) { e.preventDefault(); envoyerTexte(); } };
   const photo = async e => {
     const f = e.target.files?.[0]; e.target.value = ''; if (!f) return;
-    try { const { blob, largeur, hauteur } = await compresserImage(f); onEnvoyer({ type: 'photo', fichier: blob, ext: 'jpg', largeur, hauteur, body: txt.trim() || null }); setTxt(''); }
+    try { const { blob, largeur, hauteur } = await compresserImage(f); partir({ type: 'photo', fichier: blob, ext: 'jpg', largeur, hauteur, body: txt.trim() || null }); setTxt(''); }
     catch (err) { toast(err.message || 'Photo impossible à envoyer.', 'err'); }
   };
-  if (rec.etat === 'rec') return html`<div class="composer rec" role="group" aria-label="Enregistrement d’un message vocal">
-    <button type="button" class="icon-btn" aria-label="Annuler l’enregistrement" onClick=${() => rec.arreter(false)}><${Icon} name="trash"/></button>
-    <span class="rec-dot" aria-hidden="true"></span><span class="mono rec-t">${minSec(rec.sec)}</span>
-    <span class="rec-niv" aria-hidden="true">${rec.niv.map(v => html`<i style=${`--h:${Math.max(.08, v)}`}></i>`)}</span>
-    <span class="small muted rec-max">${minSec(VOCAL_MAX)} max</span>
-    <button type="button" class="send-btn" aria-label="Envoyer le message vocal" onClick=${() => rec.arreter(true)}><${Icon} name="send" size=${19}/></button>
+  // Le message cité reste affiché (et annulable) pendant l'enregistrement d'un vocal : le vocal lui répondra
+  const bandeau = cite ? html`<div class="comp-cite" role="group" aria-label="Tu réponds à ce message">
+    <${Icon} name="reply" size=${16}/><span class="comp-cite-txt">${nomDe(cite.author_id)}<${ExtraitCite} m=${cite}/></span>
+    <button type="button" class="icon-btn small" aria-label="Annuler la réponse" onClick=${() => { onAnnulerCite(); if (rec.etat !== 'rec') ta.current?.focus(); }}><${Icon} name="x" size=${16}/></button></div>` : null;
+  if (rec.etat === 'rec') return html`<div class="composer rec ecrire" role="group" aria-label="Enregistrement d’un message vocal">
+    ${bandeau}
+    <div class="comp-row">
+      <button type="button" class="icon-btn" aria-label="Annuler l’enregistrement" onClick=${() => rec.arreter(false)}><${Icon} name="trash"/></button>
+      <span class="rec-dot" aria-hidden="true"></span><span class="mono rec-t">${minSec(rec.sec)}</span>
+      <span class="rec-niv" aria-hidden="true">${rec.niv.map(v => html`<i style=${`--h:${Math.max(.08, v)}`}></i>`)}</span>
+      <span class="small muted rec-max">${minSec(VOCAL_MAX)} max</span>
+      <button type="button" class="send-btn" aria-label="Envoyer le message vocal" onClick=${() => rec.arreter(true)}><${Icon} name="send" size=${19}/></button>
+    </div>
   </div>`;
-  return html`<div class="composer">
+  return html`<div class="composer ecrire">
+    ${bandeau}
     <div class="comp-row">
       <button type="button" class="icon-btn comp-photo" aria-label="Envoyer une photo" title="Photo" onClick=${() => fichierIn.current?.click()}><${Icon} name="image"/></button>
       <input type="file" accept="image/*" class="sr-file" tabindex="-1" aria-hidden="true" ref=${fichierIn} onChange=${photo}/>
@@ -544,9 +650,44 @@ injectCSS('messagerie', `
 .msg-more { opacity: 0; transition: opacity .15s; color: var(--muted); }
 .msg:hover .msg-more, .msg-more:focus-visible, .msg.sel .msg-more { opacity: 1; }
 @media (hover: none) { .msg-more { opacity: .6; } }
-.msg-actions { flex-basis: 100%; display: flex; gap: .3rem; justify-content: flex-start; padding: .25rem .2rem 0; }
-.msg.mine .msg-actions { justify-content: flex-end; }
+.msg-actions { flex-basis: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: .35rem; padding: .3rem .2rem 0; }
+.msg.mine .msg-actions { align-items: flex-end; }
+.msg-acts-row { display: flex; flex-wrap: wrap; gap: .3rem; }
+.msg.mine .msg-acts-row { justify-content: flex-end; }
+.react-bar { display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-lift); animation: react-bar-in .2s var(--ease); }
+@keyframes react-bar-in { from { opacity: 0; transform: translateY(6px) scale(.94); } }
+.react-btn { width: 40px; height: 40px; border-radius: 50%; border: 0; background: none; font-size: 1.3rem; line-height: 1; cursor: pointer; display: grid; place-items: center; transition: transform .15s var(--ease), background .15s; }
+.react-btn:hover { transform: scale(1.18); background: var(--surface-2); }
+.react-btn:active { transform: scale(.9); }
+.react-btn.on { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); }
+.msg.a-react { margin-bottom: 18px; }
+.msg.a-react .msg-actions { padding-top: 18px; }
+.msg-reacts { position: absolute; bottom: -15px; inset-inline-start: 10px; display: flex; gap: 3px; z-index: 1; }
+.react-pill { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 6px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 1px 3px rgb(19 33 58 / .12); font-size: .9rem; line-height: 1; color: var(--ink); animation: react-pop .28s var(--ease); }
+button.react-pill { cursor: pointer; font-family: inherit; }
+.react-pill.mien { border-color: var(--accent); background: var(--accent-soft); }
+.react-n { font-size: .72rem; font-weight: 600; color: var(--muted); }
+@keyframes react-pop { 0% { transform: scale(.3); opacity: 0; } 70% { transform: scale(1.12); } }
+.msg-cite { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; min-width: 0; margin: 0 0 .3rem; padding: .3rem .6rem; border: 0; border-inline-start: 3px solid var(--accent); border-radius: 10px; background: color-mix(in srgb, var(--accent) 9%, var(--surface-2)); color: var(--ink); font: inherit; font-size: .82rem; text-align: start; cursor: pointer; }
+.msg-cite strong { font-size: .78rem; color: var(--blue-text); }
+.msg.mine .msg-cite { background: color-mix(in srgb, var(--accent) 80%, var(--ink)); border-inline-start-color: var(--accent-ink); color: var(--accent-ink); }
+.msg.mine .msg-cite strong { color: var(--accent-ink); }
+.msg-cite.supprime { cursor: default; font-style: italic; opacity: .8; }
+.t-photo .msg-cite { margin-bottom: 4px; }
+.cite-extrait { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cite-extrait .ico { vertical-align: -2px; }
+.bulle.avec-cite { min-width: min(220px, 70vw); }
+@keyframes eclaire { 0%, 35% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); } }
+.glisse-ico { position: absolute; inset-inline-start: 0; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); color: var(--accent); box-shadow: var(--shadow); opacity: var(--g, 0); transform: scale(calc(.5 + var(--g, 0) / 2)); pointer-events: none; }
+.msg { position: relative; }
+.msg .bulle { transition: transform .18s var(--ease); }
+@media (hover: none) { .bulle { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: pan-y pinch-zoom; } }
 .msg.neuf .bulle { animation: msg-in .32s var(--ease) backwards; }
+/* Après l'arrivée (« neuf ») : l'éclat du message cité passe devant, et l'arrivée ne rejoue pas quand il s'éteint */
+.msg.eclaire .bulle { animation: eclaire 1.6s ease; }
+.msg.neuf.eclaire .bulle { animation: msg-in .32s var(--ease) backwards, eclaire 1.6s ease; }
+.msg:focus { outline: none; }
+.msg:focus-visible > .bulle { outline: 2px solid var(--accent); outline-offset: 2px; }
 @keyframes msg-in { from { opacity: 0; transform: translateY(10px) scale(.96); } }
 .msg.mine.neuf .bulle { transform-origin: 100% 100%; }
 .tape-bulle .bulle { padding: .7rem .9rem; color: var(--muted); }
@@ -569,11 +710,18 @@ injectCSS('messagerie', `
 .vocal-onde i.on { opacity: 1; }
 .vocal-t { font-size: .74rem; min-width: 2.4rem; }
 
-.conv-bas { position: absolute; inset-inline-end: 1rem; bottom: 5.2rem; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); box-shadow: var(--shadow-lift); display: grid; place-items: center; cursor: pointer; z-index: 2; }
+/* Accrochée au haut de la zone d'écriture, quelle que soit sa hauteur (message cité, texte sur plusieurs lignes) */
+.conv-bas-ancre { position: relative; height: 0; flex: none; z-index: 2; }
+.conv-bas { position: absolute; inset-inline-end: 1rem; bottom: .9rem; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); box-shadow: var(--shadow-lift); display: grid; place-items: center; cursor: pointer; z-index: 2; }
 .conv-bas .ico { transform: rotate(90deg); }
 
 .composer { display: flex; align-items: center; gap: .5rem; padding: .55rem .65rem; padding-bottom: calc(.55rem + env(safe-area-inset-bottom, 0px)); background: var(--surface); border-top: 1px solid var(--line); }
 .comp-row { flex: 1; display: flex; align-items: flex-end; gap: .4rem; }
+.composer.ecrire { flex-direction: column; align-items: stretch; gap: .4rem; }
+.composer.ecrire .comp-row { flex: none; }
+.comp-cite { display: flex; align-items: center; gap: .5rem; padding-block: .35rem; padding-inline: .7rem .3rem; border-radius: 12px; border-inline-start: 3px solid var(--accent); background: var(--surface-2); color: var(--accent); animation: fade-in .18s ease; }
+.comp-cite-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; color: var(--ink); font-size: .84rem; }
+.comp-cite-txt strong { color: var(--blue-text); font-size: .78rem; }
 .comp-row textarea { flex: 1; resize: none; min-height: 42px; max-height: 140px; padding: .6rem .95rem; border-radius: 21px; line-height: 1.4; background: var(--surface-2); border-color: transparent; }
 .comp-row textarea:focus { border-color: var(--accent); background: var(--surface); }
 .comp-photo { width: 42px; height: 42px; border-radius: 50%; flex: none; }
@@ -584,7 +732,7 @@ injectCSS('messagerie', `
 .send-btn:disabled { opacity: .45; cursor: default; }
 .send-btn .ico-send { margin-inline-start: -2px; }
 .composer.ferme { color: var(--muted); font-size: .88rem; padding: .9rem 1rem; padding-bottom: calc(.9rem + env(safe-area-inset-bottom, 0px)); }
-.composer.rec { gap: .6rem; }
+.composer.rec .comp-row { align-items: center; gap: .6rem; }
 .rec-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--bad); animation: rec 1s ease-in-out infinite; flex: none; }
 @keyframes rec { 50% { opacity: .3; } }
 .rec-t { font-weight: 600; min-width: 2.6rem; }
@@ -618,7 +766,7 @@ injectCSS('messagerie', `
   .conv-back { display: inline-grid; }
   .bulle { max-width: 84%; }
 }
-@media (prefers-reduced-motion: reduce) { .tape-dots i { animation: none !important; opacity: .8; } }
+@media (prefers-reduced-motion: reduce) { .tape-dots i { animation: none !important; opacity: .8; } .react-pill, .react-bar, .comp-cite { animation: none; } .msg .bulle { transition: none; } .msg.eclaire .bulle, .msg.neuf.eclaire .bulle { animation-duration: .01s; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); } }
 `);
 
 addAR({
@@ -651,6 +799,9 @@ addAR({
   'Ton message est trop long (2 000 caractères au plus).': 'رسالتك طويلة جدًا (2000 حرف كحد أقصى).',
   'Conversation pas encore ouverte : elle s’ouvre avec un mentorat, une candidature ou une demande de contact acceptée.': 'المحادثة غير مفتوحة بعد: تُفتح مع إرشاد أو ترشّح أو طلب اتصال مقبول.',
   '1 message non lu': 'رسالة واحدة غير مقروءة', 'Lui écrire': 'راسله', 'Voir la photo': 'عرض الصورة',
+  'Toi': 'أنت', 'Message supprimé': 'رسالة محذوفة', 'Annuler la réponse': 'إلغاء الرد', 'Tu réponds à ce message': 'أنت ترد على هذه الرسالة',
+  'Réagir à ce message': 'التفاعل مع هذه الرسالة', 'Équipe du réseau': 'فريق الشبكة', 'Réaction inconnue.': 'تفاعل غير معروف.',
+  'Tu as déjà réagi à ce message.': 'لقد تفاعلت مع هذه الرسالة من قبل.', 'Vous ne pouvez plus vous écrire.': 'لم يعد بإمكانكما المراسلة.',
 }, [
   [/^(\d+) messages non lus$/, n => `${n} رسائل غير مقروءة`],
   [/^Conversation avec (.+)$/, x => `محادثة مع ${x}`],
@@ -659,4 +810,10 @@ addAR({
   [/^(.+) t’a envoyé un message vocal\.$/, x => `أرسل لك ${x} رسالة صوتية.`],
   [/^Bloquer (.+) \? Vous ne pourrez plus vous écrire\. Tu peux débloquer à tout moment\.$/, x => `حظر ${x}؟ لن يعود بإمكانكما المراسلة. يمكنك إلغاء الحظر في أي وقت.`],
   [/^(\d+):(\d\d) max$/, (m, s) => `${m}:${s} كحد أقصى`],
+  [/^Réagir avec (.+)$/, x => `التفاعل بـ ${x}`],
+  [/^Retirer ma réaction (\S+) \((.+) aussi\)$/, (e, x) => `إزالة تفاعلي ${e} (${x} أيضًا)`],
+  [/^Toi et (.+) : (\S+)$/, (x, e) => `أنت و${x}: ${e}`],
+  [/^Retirer ma réaction (.+)$/, x => `إزالة تفاعلي ${x}`],
+  [/^Ta réaction (.+)$/, x => `تفاعلك ${x}`],
+  [/^Réaction de (.+) : (.+)$/, (x, y) => `تفاعل ${x}: ${y}`],
 ]);

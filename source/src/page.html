@@ -11,7 +11,17 @@
 <meta property="og:image:height" content="630">
 <meta property="og:locale" content="fr_FR">
 <meta name="twitter:card" content="summary_large_image">
-<script>/* Thème choisi (clair ou sombre), appliqué avant l'affichage pour éviter un flash */try{var t=localStorage.getItem('ensam-theme');if(t==='light'||t==='dark'){document.documentElement.dataset.theme=t;document.querySelectorAll('meta[name="theme-color"]').forEach(function(m){m.content=t==='dark'?'#0B1320':'#1670A8'})}}catch(e){}</script>
+<script>/* Avant l'affichage : thème, langue et sens de lecture. Un visiteur sans compte attend la page d'entrée (pas le logo) ;
+   un membre déjà connecté précharge toute l'application. build.sh (outils/precharger.mjs) remplit les deux listes. */
+(function(){var d=document.documentElement,ar=false,membre=false,L,i;
+try{L=localStorage;var t=L.getItem('ensam-theme');if(t==='light'||t==='dark'){d.dataset.theme=t;document.querySelectorAll('meta[name="theme-color"]').forEach(function(m){m.content=t==='dark'?'#0B1320':'#1670A8'})}
+var g=L.getItem('ensam-lang');ar=g==='ar'||(!g&&sessionStorage.getItem('ensam-lang-visite')==='ar');for(i=0;i<L.length;i++)if(/^sb-.+-auth-token$/.test(L.key(i)))membre=true}catch(e){}
+d.lang=ar?'ar':'fr';d.dir=ar?'rtl':'ltr';
+var M=window.ENSAM_MAGASIN=/*MAGASIN*/[],A=window.ENSAM_MODULES=/*MODULES*/[];
+if(!A.length)return;
+if(membre||/^#(verifier|desabo|confidentialite)\b|access_token=|type=recovery|error_description=/.test(location.hash))M.concat(A).forEach(function(f){var l=document.createElement('link');if(/supabase\.js$/.test(f)){l.rel='preload';l.as='script'}else l.rel='modulepreload';l.href=f;document.head.appendChild(l)});
+else{d.dataset.entree='visiteur';setTimeout(function(){if(!window.ENSAM_ENTREE)delete d.dataset.entree},4000)}})()</script>
+<!--PRECHARGE-->
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2264%22%20height%3D%2264%22%20viewBox%3D%220%200%20512%20512%22%20style%3D%22--lg-o%3A%23F7A11A%3B--lg-b%3A%234FA9E6%3B--lg-k%3A%23FFFFFF%3B--lg-in%3Atransparent%3B--lg-cap%3A%23FFFFFF%3B--lg-cap2%3A%23DCE6F3%3B--lg-bg%3A%231D3150%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22lg-tuile%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%2327497A%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%2316253F%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22512%22%20height%3D%22512%22%20rx%3D%22116%22%20fill%3D%22url(%23lg-tuile)%22%2F%3E%3Cg%3E%3Cpath%20d%3D%22M225.8%20104.9L233.6%2071.3L278.4%2071.3L286.2%20104.9L321.5%20116.4L347.6%2093.8L383.8%20120.1L370.4%20151.9L392.2%20182.0L426.6%20179.0L440.4%20221.6L410.9%20239.4L410.9%20276.6L440.4%20294.4L426.6%20337.0L392.2%20334.0L370.4%20364.1L383.8%20395.9L347.6%20422.2L321.5%20399.6L286.2%20411.1L278.4%20444.7L233.6%20444.7L225.8%20411.1L190.5%20399.6L164.4%20422.2L128.2%20395.9L141.6%20364.1L119.8%20334.0L85.4%20337.0L71.6%20294.4L101.1%20276.6L101.1%20239.4L71.6%20221.6L85.4%20179.0L119.8%20182.0L141.6%20151.9L128.2%20120.1L164.4%2093.8L190.5%20116.4ZM378%20258A122%20122%200%201%200%20134%20258A122%20122%200%201%200%20378%20258Z%22%20fill-rule%3D%22evenodd%22%20style%3D%22fill%3Avar(--lg-o%2C%23F39200)%22%2F%3E%3Ccircle%20cx%3D%22256%22%20cy%3D%22258%22%20r%3D%22122%22%20style%3D%22fill%3Avar(--lg-in%2C%231F3354)%22%2F%3E%3Cpath%20d%3D%22M256%20190%20358%20232%20256%20274%20154%20232Z%22%20style%3D%22fill%3Avar(--lg-cap%2C%23FFFFFF)%22%2F%3E%3Cpath%20d%3D%22M198%20252V294Q256%20326%20314%20294V252L256%20276Z%22%20style%3D%22fill%3Avar(--lg-cap2%2C%23E3EAF4)%22%2F%3E%3Cpath%20d%3D%22M256%20232%20338%20250V302%22%20fill%3D%22none%22%20stroke-width%3D%229%22%20stroke-linecap%3D%22round%22%20style%3D%22stroke%3Avar(--lg-b%2C%234FA9E6)%22%2F%3E%3Ccircle%20cx%3D%22338%22%20cy%3D%22308%22%20r%3D%2212%22%20style%3D%22fill%3Avar(--lg-b%2C%234FA9E6)%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -640,7 +650,7 @@ button.panel:hover, button.impact-strip:hover, button.objective:hover { border-c
 [dir="rtl"] [dir="auto"]:not(p, textarea, input) { text-align: right; }
 [dir="rtl"] .journey li.next::before { background: linear-gradient(270deg, var(--good), var(--line)); }
 [dir="rtl"] input[type="email"], [dir="rtl"] input[type="url"], [dir="rtl"] input[type="password"], [dir="rtl"] input[type="tel"] { direction: ltr; text-align: right; }
-[dir="rtl"] .ico-arrow, [dir="rtl"] .ico-send, [dir="rtl"] .ico-logout, [dir="rtl"] .ico-back { transform: scaleX(-1); }
+[dir="rtl"] .ico-arrow, [dir="rtl"] .ico-send, [dir="rtl"] .ico-logout, [dir="rtl"] .ico-back, [dir="rtl"] .ico-reply { transform: scaleX(-1); }
 @media (max-width: 760px) { .lang-btn .lang-long { display: none; } .lang-btn > span:first-of-type { display: inline; } .lang-btn { padding: 0 .55rem; } }
 .menu-pop .menu-theme { display: none; }
 @media (max-width: 480px) { .top .theme-btn { display: none; } .menu-pop .menu-theme { display: flex; } }
@@ -756,15 +766,8 @@ button.panel:hover, button.impact-strip:hover, button.objective:hover { border-c
 .home-hero .scene .sc-walk { animation-duration: 8s; animation-iteration-count: 1; animation-fill-mode: both; }
 .home-hero .scene .sc-walk.w2 { animation-delay: 1.5s !important; }
 
-/* Connexion : l'école à gauche, le formulaire à droite */
+/* Connexion */
 .auth { max-width: 1180px; grid-template-columns: minmax(0, 1.12fr) minmax(0, .88fr); gap: 2.4rem; align-items: stretch; }
-.auth-hero { position: relative; display: flex; flex-direction: column; border-radius: 26px; overflow: hidden; min-height: min(720px, calc(100vh - 4rem)); border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--line)); box-shadow: var(--shadow-lift); }
-.auth-hero-txt { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: flex-start; gap: .85rem; padding: 2.2rem 2.4rem 0; }
-.auth-hero-txt h1 { font-size: clamp(2rem, 1.3rem + 2.4vw, 3.1rem); }
-.auth-hero-txt p { color: var(--ink-2); max-width: 44ch; animation: rise .7s var(--ease) .3s backwards; }
-.auth-hero-txt h1 { animation: rise .7s var(--ease) .15s backwards; }
-.auth-hero .scene { flex: 1; min-height: 280px; max-height: 400px; margin-top: auto; overflow: visible; }
-.auth-right { display: flex; flex-direction: column; justify-content: center; gap: 1.4rem; min-width: 0; }
 .auth-card { position: relative; overflow: hidden; padding: 1.8rem 1.6rem 1.5rem; border-radius: 18px; animation: rise .7s var(--ease) .2s backwards; }
 .auth-card::before { content: ""; position: absolute; inset: 0 0 auto; height: 5px; background: linear-gradient(90deg, var(--em-o) 0 36%, var(--em-b) 36% 100%); }
 [dir="rtl"] .auth-card::before { background: linear-gradient(270deg, var(--em-o) 0 36%, var(--em-b) 36% 100%); }
@@ -777,6 +780,99 @@ button.panel:hover, button.impact-strip:hover, button.objective:hover { border-c
 .auth-pour { display: flex; flex-direction: column; gap: 1.1rem; }
 .auth-pour.etu-avant section:last-child { order: -1; }
 .auth-pour h2.eyebrow { margin: 0 0 .5rem; padding-inline: .3rem; font-size: .78rem; }
+/* ---------- Page d'entrée du visiteur (AuthScreen) : promesse, chiffres vrais, rôle au-dessus de l'email ----------
+   Téléphone d'abord : une colonne, le ciel derrière la marque et la promesse, le formulaire sans cadre, l'entrée dessinée en bas.
+   Ordinateur (900 px et plus) : la promesse, les bénéfices et l'entrée dessinée à gauche dans le ciel, le formulaire large à droite. */
+.auth.entree { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-areas: "top" "promesse" "form" "pour" "scene" "pied"; align-items: start; gap: 0; max-width: 620px; min-height: 100vh; padding-block: 0; }
+.entree-ciel { grid-row: 1 / 3; grid-column: 1 / -1; align-self: stretch; margin-inline: -16px; border-end-start-radius: 24px; border-end-end-radius: 24px; }
+.entree-top { grid-area: top; position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: .8rem; padding-block: calc(10px + env(safe-area-inset-top, 0px)) 0; }
+.entree-marque { display: inline-flex; align-items: center; gap: .55rem; font: 700 1rem/1.2 var(--f-display); color: var(--ink); }
+.entree-promesse { grid-area: promesse; position: relative; z-index: 1; display: flex; flex-direction: column; gap: .45rem; padding-block: .9rem 1rem; }
+.entree-promesse h1 { margin: 0; font-size: clamp(1.7rem, 1.25rem + 2vw, 3rem); line-height: 1.12; max-width: 17ch; text-wrap: balance; }
+.auth-chiffres { display: flex; flex-wrap: wrap; min-height: 1.6em; margin: 0; font: 650 .9rem/1.6 var(--f-body); font-variant-numeric: tabular-nums; color: var(--ink); transition: opacity .3s; }
+.auth-chiffres:empty { opacity: 0; }
+.auth-chiffres span { white-space: nowrap; }
+.auth-chiffres span:not(:last-child)::after { content: "·"; margin-inline: .4em; color: var(--muted); }
+.entree-sous { margin: 0; color: var(--ink-2); max-width: 46ch; }
+/* Lien d'invitation d'une promo, et lien partagé : la ligne d'accueil de l'entrée et son rappel à la « Dernière étape » */
+.invite-band { display: flex; gap: .5rem; align-items: flex-start; margin: 0; padding: .65rem .8rem; border-radius: 10px; background: var(--accent-soft); color: var(--ink); font-size: .9rem; }
+.invite-band svg { color: var(--accent); flex: none; margin-block-start: .1rem; }
+.lien-accueil { display: flex; align-items: flex-start; gap: .5rem; margin: 0; padding: .45rem .7rem; min-block-size: calc(2.7em + .9rem + 2px); max-inline-size: 46ch; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--line)); background: color-mix(in srgb, var(--surface) 82%, transparent); color: var(--ink); font: 600 .92rem/1.35 var(--f-body); }
+.lien-accueil > span { text-wrap: balance; }
+.lien-accueil .ico { flex: none; margin-block-start: .12rem; color: var(--accent); }
+.lien-accueil.fini { font-weight: 500; color: var(--ink-2); }
+.lien-accueil.fini .ico { color: var(--muted); }
+.lien-suite { display: flex; align-items: flex-start; gap: .4rem; margin: 0; font-weight: 600; color: var(--ink); }
+.lien-suite .ico { flex: none; margin-block-start: .15rem; color: var(--accent); }
+.auth-card.entree-form { grid-area: form; display: flex; flex-direction: column; gap: .9rem; margin-block-start: .9rem; padding: 0; border: 0; box-shadow: none; background: none; overflow: visible; animation: none; }
+.auth-card.entree-form::before { display: none; }
+.entree .auth-pour { grid-area: pour; margin-block-start: 2rem; }
+.entree-scene { grid-area: scene; margin-inline: -16px; margin-block-start: 1.6rem; content-visibility: auto; contain-intrinsic-size: auto 150px; }
+.entree-scene .scene { height: 150px; }
+.auth-pied { grid-area: pied; display: flex; flex-wrap: wrap; justify-content: center; gap: .25rem 1rem; padding-block: 1rem calc(1rem + env(safe-area-inset-bottom, 0px)); text-align: center; color: var(--muted); }
+.auth-pied-liens { display: inline-flex; gap: 1rem; }
+.auth-pied a { color: var(--ink-2); }
+/* Cartes du rôle, version entrée : côte à côte même à 360 px, sélection = bordure + tuile pleine (pas de coche) */
+.je-suis.compact legend { font: 650 1.1rem/1.3 var(--f-display); margin-block-end: .5rem; }
+.je-suis.compact .je-suis-choix { grid-template-columns: 1fr 1fr; gap: .6rem; }
+.je-suis.compact .je-carte { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: .3rem .55rem; padding: .7rem .75rem .75rem; }
+.je-suis.compact .je-ico { width: 30px; height: 30px; border-radius: 9px; margin: 0; }
+.je-suis.compact .je-carte strong { font-size: 1rem; }
+.je-suis.compact .je-carte .small { grid-column: 1 / -1; line-height: 1.35; }
+.je-suis.compact .je-coche { display: none; }
+/* Téléphone : le rôle, l’email et « Recevoir mon code » tiennent dans le premier écran, même avec une police large */
+@media (max-width: 899px) {
+  .entree-promesse:has(.lien-accueil) { padding-block: .7rem .8rem; }
+  .auth-card.entree-form { gap: .7rem; }
+  .je-suis.compact legend { margin-block-end: .4rem; }
+  .je-suis.compact .je-carte { padding: .6rem .7rem .65rem; }
+}
+@media (min-width: 900px) {
+  .auth.entree { max-width: 1180px; grid-template-columns: minmax(0, 1fr) minmax(400px, 480px); grid-template-rows: auto auto auto 1fr auto; grid-template-areas: "top top" "promesse form" "pour form" "scene form" "pied pied"; column-gap: 2.6rem; padding-block: 1.4rem 0; }
+  .entree-ciel { grid-row: 1 / 5; grid-column: 1; margin: 0; border-radius: 26px; border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--line)); }
+  .entree-top { padding: 1.6rem 0 0; padding-inline-start: 2.4rem; }
+  .entree-promesse { padding: 1.8rem 2.4rem 0; gap: .7rem; }
+  .entree .auth-pour { display: grid; grid-template-columns: 1fr 1fr; gap: 1.4rem; margin: 0; padding: 1.8rem 2.4rem 0; position: relative; z-index: 1; }
+  .entree-scene { align-self: end; margin: 1.2rem 0 0; position: relative; z-index: 1; border-end-start-radius: 26px; border-end-end-radius: 26px; overflow: hidden; content-visibility: visible; }
+  .entree-scene.sky { background: none; }
+  .entree-scene .scene { height: 290px; }
+  .auth-card.entree-form { align-self: start; position: sticky; top: 1.4rem; margin: 0; padding: 1.8rem 1.8rem 1.5rem; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); box-shadow: var(--shadow); overflow: hidden; }
+  .auth-card.entree-form::before { display: block; }
+}
+@media (prefers-reduced-motion: reduce) { .auth-chiffres { transition: none; } }
+/* Avant l'application : le visiteur attend la page d'entrée, pas le logo ; le texte du logo suit la langue */
+html[data-entree="visiteur"] #app > .boot { display: none; }
+html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"] { display: none; }
+#entree[hidden] { display: none; }
+/* Sur téléphone, l'entrée dessinée est une bande basse : les oiseaux y seraient coupés au bord */
+@media (max-width: 899px) { .entree-scene .sc-birds { display: none; } }
+@media (prefers-reduced-motion: reduce) { .scene .sc-birds { display: none; } }
+.entree .auth-links { justify-content: center; }
+.au-sans-mdp { margin: -.35rem 0 0; text-align: center; }
+/* « Tu es… » : étudiant(e) ou lauréat(e) (page d'entrée et étape « Présente-toi ») */
+.pf-plus { display: flex; flex-direction: column; align-items: flex-start; gap: .25rem; }
+.je-suis { border: 0; padding: 0; margin: 0; min-width: 0; }
+.je-suis legend { font-weight: 650; font-size: 1.05rem; margin-bottom: .55rem; padding: 0; }
+.je-suis-choix { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
+.je-carte { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: .25rem; padding: .95rem 1rem; text-align: start; font: inherit; color: inherit; background: var(--surface); border: 2px solid var(--line); border-radius: 14px; cursor: pointer; transition: border-color .15s, background-color .15s, transform .15s; }
+.je-carte:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.je-carte:active { transform: scale(.985); }
+.je-carte.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+.je-carte strong { font-size: 1.02rem; }
+.je-ico { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 11px; background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); margin-bottom: .2rem; }
+.je-carte.on .je-ico { background: var(--accent); color: var(--accent-ink); }
+.je-coche { position: absolute; top: .6rem; inset-inline-end: .6rem; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); opacity: 0; transform: scale(.6); transition: opacity .15s, transform .15s; }
+.je-carte.on .je-coche { opacity: 1; transform: none; }
+@media (max-width: 380px) { .je-suis:not(.compact) .je-suis-choix { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .je-carte, .je-coche { transition: none; } }
+/* Code à 6 chiffres reçu par email : un seul champ (collage, remplissage automatique, lecteurs d'écran) */
+.code-otp { display: block; inline-size: 100%; max-inline-size: 15rem; margin-inline: auto; font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-size: 1.75rem; letter-spacing: .45em; text-align: center; padding-block: .5rem; padding-inline: .45em 0; }
+.code-otp::placeholder { color: color-mix(in srgb, var(--muted) 45%, transparent); }
+[dir="rtl"] .code-otp, [dir="rtl"] .code-otp::placeholder { letter-spacing: .45em !important; }
+.au-adresse { display: flex; flex-wrap: wrap; align-items: baseline; gap: .2rem .7rem; margin: -.4rem 0 0; }
+.au-adresse strong { overflow-wrap: anywhere; }
+.au-code-pied { display: flex; flex-direction: column; align-items: center; gap: .35rem; margin: 0; font-size: .9rem; text-align: center; }
+.au-code-pied .linkish:disabled { color: var(--muted); font-weight: 500; cursor: default; text-decoration: none; }
 
 /* Coque : marque, navigation, boutons */
 .side { gap: 1.4rem; }
@@ -829,11 +925,6 @@ button.panel:hover, button.impact-strip:hover, button.objective:hover { border-c
 
 @media (max-width: 760px) {
   .auth { grid-template-columns: minmax(0, 1fr); gap: 1.4rem; padding-top: 0; }
-  .auth-hero { min-height: 0; margin-inline: -16px; border-radius: 0 0 26px 26px; border-top: 0; box-shadow: none; }
-  .auth-hero-txt { padding: calc(4rem + env(safe-area-inset-top, 0px)) 1.2rem 0; gap: .6rem; }
-  .auth-hero-txt .brand-logo { width: 52px; height: 52px; }
-  .auth-hero-txt h1 { font-size: 2rem; }
-  .auth-hero .scene { flex: none; height: 210px; min-height: 0; margin-top: .4rem; overflow: hidden; }
   .side-nav a.on::before { display: none; }
   .bottom-nav a .bn-ico { padding: 3px 16px; border-radius: 999px; transition: background .25s; }
   .bottom-nav a.on .bn-ico { background: var(--accent-soft); animation: pop-in .3s var(--ease); }
@@ -1397,8 +1488,8 @@ button.panel:hover, button.impact-strip:hover, button.objective:hover { border-c
   .rempli, .type-opt.on.rempli { background-color: var(--accent-soft); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
 }
 </style>
-<div id="app"><div class="boot"><svg class="brand-logo boot-logo" width="72" height="72" viewBox="0 0 512 512" aria-hidden="true"><defs><linearGradient id="lg-tuile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#27497A"/><stop offset="1" stop-color="#16253F"/></linearGradient></defs><rect width="512" height="512" rx="116" fill="url(#lg-tuile)"/><g class="lg-glyph"><path d="M225.8 104.9L233.6 71.3L278.4 71.3L286.2 104.9L321.5 116.4L347.6 93.8L383.8 120.1L370.4 151.9L392.2 182.0L426.6 179.0L440.4 221.6L410.9 239.4L410.9 276.6L440.4 294.4L426.6 337.0L392.2 334.0L370.4 364.1L383.8 395.9L347.6 422.2L321.5 399.6L286.2 411.1L278.4 444.7L233.6 444.7L225.8 411.1L190.5 399.6L164.4 422.2L128.2 395.9L141.6 364.1L119.8 334.0L85.4 337.0L71.6 294.4L101.1 276.6L101.1 239.4L71.6 221.6L85.4 179.0L119.8 182.0L141.6 151.9L128.2 120.1L164.4 93.8L190.5 116.4ZM378 258A122 122 0 1 0 134 258A122 122 0 1 0 378 258Z" fill-rule="evenodd" style="fill:var(--lg-o,#F39200)"/><circle cx="256" cy="258" r="122" style="fill:var(--lg-in,#1F3354)"/><path d="M256 190 358 232 256 274 154 232Z" style="fill:var(--lg-cap,#FFFFFF)"/><path d="M198 252V294Q256 326 314 294V252L256 276Z" style="fill:var(--lg-cap2,#E3EAF4)"/><path d="M256 232 338 250V302" fill="none" stroke-width="9" stroke-linecap="round" style="stroke:var(--lg-b,#4FA9E6)"/><circle cx="338" cy="308" r="12" style="fill:var(--lg-b,#4FA9E6)"/></g></svg><p>Chargement du réseau…</p></div></div>
+<div id="app"><div class="boot"><svg class="brand-logo boot-logo" width="72" height="72" viewBox="0 0 512 512" aria-hidden="true"><defs><linearGradient id="lg-tuile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#27497A"/><stop offset="1" stop-color="#16253F"/></linearGradient></defs><rect width="512" height="512" rx="116" fill="url(#lg-tuile)"/><g class="lg-glyph"><path d="M225.8 104.9L233.6 71.3L278.4 71.3L286.2 104.9L321.5 116.4L347.6 93.8L383.8 120.1L370.4 151.9L392.2 182.0L426.6 179.0L440.4 221.6L410.9 239.4L410.9 276.6L440.4 294.4L426.6 337.0L392.2 334.0L370.4 364.1L383.8 395.9L347.6 422.2L321.5 399.6L286.2 411.1L278.4 444.7L233.6 444.7L225.8 411.1L190.5 399.6L164.4 422.2L128.2 395.9L141.6 364.1L119.8 334.0L85.4 337.0L71.6 294.4L101.1 276.6L101.1 239.4L71.6 221.6L85.4 179.0L119.8 182.0L141.6 151.9L128.2 120.1L164.4 93.8L190.5 116.4ZM378 258A122 122 0 1 0 134 258A122 122 0 1 0 378 258Z" fill-rule="evenodd" style="fill:var(--lg-o,#F39200)"/><circle cx="256" cy="258" r="122" style="fill:var(--lg-in,#1F3354)"/><path d="M256 190 358 232 256 274 154 232Z" style="fill:var(--lg-cap,#FFFFFF)"/><path d="M198 252V294Q256 326 314 294V252L256 276Z" style="fill:var(--lg-cap2,#E3EAF4)"/><path d="M256 232 338 250V302" fill="none" stroke-width="9" stroke-linecap="round" style="stroke:var(--lg-b,#4FA9E6)"/><circle cx="338" cy="308" r="12" style="fill:var(--lg-b,#4FA9E6)"/></g></svg><p><span lang="fr">Chargement du réseau…</span><span lang="ar">جارٍ تحميل الشبكة…</span></p></div></div>
 <!--CONFIG-->
 <script>/* Si les fichiers gardés sur le téléphone sont abîmés ou d'une autre version, on les oublie et on recharge (une fois) */
 function ensamReprise(){try{if(sessionStorage.getItem('ensam-reprise')||!('serviceWorker' in navigator))return;sessionStorage.setItem('ensam-reprise','1');Promise.all([caches.keys().then(function(k){return Promise.all(k.map(function(x){return caches.delete(x)}))}),navigator.serviceWorker.getRegistrations().then(function(r){return Promise.all(r.map(function(x){return x.unregister()}))})]).then(function(){location.reload()})}catch(e){}}</script>
-<script type="module" src="app.js" onerror="ensamReprise()"></script>
+<script type="module" src="entree.js" onerror="ensamReprise()"></script>

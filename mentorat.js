@@ -3,6 +3,7 @@
 // Ce qui compte d'abord : le prochain rendez-vous en haut, le mode d'emploi seulement pour qui découvre.
 import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, toast, celebrate, useLocal, injectCSS } from './ui.js';
+import { proposerPrevenir } from './pwa.js';
 import { BESOINS, RDV_MIN, mentorState, futureSlots, requestsFor, mentorsFor, timeAgo, helpMatch, niveauOf, coupDeMain, alerteTalents } from './logic.js';
 import { getLang, addAR, arCount, t as tr } from './i18n.js';
 import { RelecturesPage, DemandeRelecture } from './cv.js';
@@ -185,8 +186,9 @@ export function AskHelp({ ctx, mentor = null, besoin: b0 = '', onClose }) {
     e.preventDefault(); if (!ok) return;
     act(async () => {
       await store.insert('mentorships', { student_id: me.id, mentor_id: to || null, besoin, sujet: sujet.trim(), message: msg.trim() || null, creneaux: valid.map(x => new Date(x).toISOString()) });
-      toast(to ? `Demande envoyée à ${firstName(target)}. Tu seras prévenu(e) dès qu’un horaire est choisi.` : 'Demande envoyée aux lauréats. Tu seras prévenu(e) dès qu’un horaire est choisi.', 'win');
       onClose(); go('mentorat');
+      if (!proposerPrevenir('mentorat', to ? `Demande envoyée à ${firstName(target)}.` : 'Demande envoyée aux lauréats.'))
+        toast(to ? `Demande envoyée à ${firstName(target)}. Tu seras prévenu(e) dès qu’un horaire est choisi.` : 'Demande envoyée aux lauréats. Tu seras prévenu(e) dès qu’un horaire est choisi.', 'win');
     });
   };
   return html`<${Modal} title=${mentor ? `Demander à ${mentor.full_name}` : 'Demander de l’aide'} onClose=${onClose}>

@@ -39,3 +39,13 @@ test('la tâche quotidienne appelle aussi les rappels', async () => {
   const [{ def }] = (await db.query(`select pg_get_functiondef('public.taches_quotidiennes'::regproc) def`)).rows;
   assert.match(def, /appeler_notifier\('relances'\)/);
 });
+
+test('code demandé mais jamais entré : pas de rappel ; code entré, ou ancien compte à mot de passe : rappel', async () => {
+  // Comme Supabase : tout compte a un mot de passe (tiré au hasard pour ceux créés par code)
+  const n = async (id, email, connexion, meta = '{"par_code": true}') => db.query(`insert into auth.users (id, email, created_at, last_sign_in_at, encrypted_password, raw_user_meta_data) values ($1, $2, now() - interval '30 hours', now() - interval '30 hours' + $3::interval, '$2a$10$hasard', $4::jsonb)`, [id, email, connexion, meta]);
+  await n(uid(71), 'code.pas.entre@exemple.ma', '300 milliseconds');
+  await n(uid(72), 'code.entre@exemple.ma', '2 minutes');
+  await n(uid(73), 'ancien.mdp@exemple.ma', '200 milliseconds', '{}');
+  const r = await service('select email from public.comptes_a_relancer(100)');
+  assert.deepEqual(r.map(x => x.email).sort(), ['ancien.mdp@exemple.ma', 'code.entre@exemple.ma']);
+});
