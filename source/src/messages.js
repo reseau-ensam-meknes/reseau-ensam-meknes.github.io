@@ -45,9 +45,9 @@ export function MessageBtn({ ctx, p, label = 'Écrire', cls = 'btn small', texte
 
 function Apercu({ m, me }) {
   const moi = m.author_id === me;
-  return html`<span class="ci-prev">${moi ? html`<span class="ci-moi">Toi :</span> ` : null}${m.type === 'photo' ? html`<span class="ci-media"><${Icon} name="image" size=${14}/> Photo</span>`
+  return html`<span class="ci-prev apercu">${moi ? html`<span class="ci-moi ap-qui">Toi :</span>` : null}${m.type === 'photo' ? html`<span class="ci-media"><${Icon} name="image" size=${14}/> Photo</span>`
     : m.type === 'vocal' ? html`<span class="ci-media"><${Icon} name="mic" size=${14}/> Message vocal · <span class="mono">${minSec(m.duree)}</span></span>`
-    : html`<span translate="no" dir="auto">${m.body}</span>`}</span>`;
+    : html`<span class="ap-txt" translate="no" dir="auto">${m.body}</span>`}</span>`;
 }
 
 // Sur l'accueil : les messages qui attendent une réponse
@@ -78,7 +78,8 @@ export function useAlerteMessages(store, me, route) {
     const m = recus.find(x => !x.lu_at && !avant.has(x.id));
     if (!m || (route.base === 'messages' && route.sub === m.author_id)) return;
     const p = store.byId('profiles', m.author_id);
-    toast(m.type === 'texte' ? `${prenom(p)} : ${m.body.length > 70 ? m.body.slice(0, 69) + '…' : m.body}` : m.type === 'photo' ? `${prenom(p)} t’a envoyé une photo.` : `${prenom(p)} t’a envoyé un message vocal.`);
+    // Le nom isolé, puis le début du message dans son propre sens de lecture (français dans l'interface arabe, et l'inverse)
+    toast(m.type === 'texte' ? html`<span class="toast-msg"><b><bdi translate="no">${prenom(p)}</bdi>${getLang() === 'ar' ? ':' : ' :'}</b> <span translate="no" dir="auto">${m.body.length > 70 ? m.body.slice(0, 69) + '…' : m.body}</span></span>` : m.type === 'photo' ? `${prenom(p)} t’a envoyé une photo.` : `${prenom(p)} t’a envoyé un message vocal.`);
   });
 }
 
@@ -594,8 +595,10 @@ injectCSS('messagerie', `
 .ci-top, .ci-bas { display: flex; align-items: center; gap: .5rem; min-width: 0; }
 .ci-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ci-time { font-size: .74rem; color: var(--muted); flex: none; }
-.ci-prev { flex: 1; min-width: 0; color: var(--muted); font-size: .88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ci-prev { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: .3rem; color: var(--muted); font-size: .88rem; overflow: hidden; white-space: nowrap; }
 .ci-prev > span { white-space: nowrap; }
+.ci-prev > :not(.ci-moi) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ci-moi { flex: none; }
 .ci-media { display: inline-flex; align-items: center; gap: .25rem; vertical-align: middle; }
 .conv-item.unread .ci-prev { color: var(--ink); font-weight: 500; }
 .conv-item.unread .ci-time { color: var(--accent); font-weight: 600; }
@@ -770,18 +773,18 @@ button.react-pill { cursor: pointer; font-family: inherit; }
 `);
 
 addAR({
-  'Écrire': 'مراسلة', 'Message': 'رسالة', 'Messages': 'الرسائل', 'Écrire à': 'راسل', 'Toi :': 'أنت:', 'Photo': 'صورة', 'Message vocal': 'رسالة صوتية',
+  'Écrire': 'مراسلة', 'Message': 'الرسالة', 'Messages': 'الرسائل', 'Écrire à': 'راسل', 'Toi :': 'أنت:', 'Photo': 'صورة', 'Message vocal': 'رسالة صوتية',
   'On t’a écrit': 'وصلتك رسائل', 'Tous les messages': 'كل الرسائل', 'Conversations': 'المحادثات', 'Chercher une conversation': 'البحث عن محادثة', 'Chercher un nom': 'ابحث عن اسم',
   'Tes conversations': 'محادثاتك', 'Écris à un lauréat qui t’aide, à un étudiant qui a postulé, à ton parrain : en texte, en photo ou en message vocal.': 'راسل خريجًا يساعدك، أو طالبًا ترشّح لعرضك، أو عرّابك: كتابةً أو بصورة أو برسالة صوتية.',
   'Pas encore de message': 'لا رسائل بعد', 'Une conversation s’ouvre avec un mentorat, une candidature, ton parrain ou une demande de coordonnées acceptée.': 'تُفتح المحادثة مع إرشاد أو ترشّح أو عرّابك أو طلب معلومات اتصال مقبول.',
   'Voir qui a besoin d’aide': 'من يحتاج مساعدتك', 'Demander un conseil': 'اطلب نصيحة', 'Aucune conversation à ce nom.': 'لا محادثة بهذا الاسم.',
   'Une conversation n’est visible que par vous deux.': 'لا يرى المحادثة غيركما.',
-  'Mentorat': 'الإرشاد', 'Candidature': 'ترشّح', 'Relecture de CV': 'مراجعة السيرة الذاتية', 'Parrainage': 'العرّاب', 'Contact accepté': 'اتصال مقبول', 'Administration': 'الإدارة', 'Conversation': 'محادثة',
+  'Mentorat': 'الإرشاد', 'Candidature': 'ترشيح', 'Relecture de CV': 'مراجعة السيرة الذاتية', 'Parrainage': 'العرّاب', 'Contact accepté': 'اتصال مقبول', 'Administration': 'الإدارة', 'Conversation': 'محادثة',
   'Retour aux conversations': 'العودة إلى المحادثات', 'Options de la conversation': 'خيارات المحادثة', 'Voir le profil': 'عرض الملف', 'Bloquer': 'حظر', 'Débloquer': 'إلغاء الحظر',
   'écrit': 'يكتب', 'Rendez-vous': 'الموعد', 'Rejoindre': 'انضم', 'Messages visibles seulement par vous deux. Un souci ? Signale un message en un clic.': 'لا يرى الرسائل غيركما. مشكلة؟ بلّغ عن رسالة بنقرة.',
   'Pour briser la glace :': 'لكسر الجليد:', 'Aller aux derniers messages': 'إلى آخر الرسائل',
   'Vous ne pouvez pas vous écrire pour l’instant. Une conversation s’ouvre avec un mentorat, une candidature ou une demande de coordonnées acceptée.': 'لا يمكنكما المراسلة الآن. تُفتح المحادثة مع إرشاد أو ترشّح أو طلب معلومات اتصال مقبول.',
-  'Tu as bloqué': 'لقد حظرت', 'Non envoyé · Réessayer': 'لم تُرسل · أعد المحاولة', 'Non envoyé': 'لم تُرسل', 'Envoi en cours': 'جارٍ الإرسال', 'Vu': 'شوهدت', 'Envoyé': 'أُرسلت',
+  'Tu as bloqué': 'لقد حظرت', 'Non envoyé · Réessayer': 'لم تُرسل · أعد المحاولة', 'Non envoyé': 'لم تُرسل', 'Envoi en cours': 'جارٍ الإرسال', 'Vu': 'تمت المشاهدة', 'Envoyé': 'أُرسلت',
   'Actions du message': 'خيارات الرسالة', 'Copier': 'نسخ', 'Supprimer': 'حذف', 'Agrandir la photo': 'تكبير الصورة', 'Photo indisponible': 'الصورة غير متاحة',
   'Pause': 'إيقاف مؤقت', 'Écouter le message vocal': 'استمع إلى الرسالة الصوتية', 'Lecture impossible': 'تعذّر التشغيل', 'Fermer': 'إغلاق',
   'Enregistrement d’un message vocal': 'تسجيل رسالة صوتية', 'Annuler l’enregistrement': 'إلغاء التسجيل', 'Envoyer le message vocal': 'إرسال الرسالة الصوتية',
@@ -798,7 +801,7 @@ addAR({
   'Envoi du fichier impossible. Vérifie ta connexion et réessaie.': 'تعذّر إرسال الملف. تحقق من اتصالك وأعد المحاولة.', 'Fichier manquant.': 'الملف مفقود.', 'Écris ton message.': 'اكتب رسالتك.',
   'Ton message est trop long (2 000 caractères au plus).': 'رسالتك طويلة جدًا (2000 حرف كحد أقصى).',
   'Conversation pas encore ouverte : elle s’ouvre avec un mentorat, une candidature ou une demande de contact acceptée.': 'المحادثة غير مفتوحة بعد: تُفتح مع إرشاد أو ترشّح أو طلب اتصال مقبول.',
-  '1 message non lu': 'رسالة واحدة غير مقروءة', 'Lui écrire': 'راسله', 'Voir la photo': 'عرض الصورة',
+  '1 message non lu': 'رسالة واحدة غير مقروءة', 'Lui écrire': 'مراسلة', 'Voir la photo': 'عرض الصورة',
   'Toi': 'أنت', 'Message supprimé': 'رسالة محذوفة', 'Annuler la réponse': 'إلغاء الرد', 'Tu réponds à ce message': 'أنت ترد على هذه الرسالة',
   'Réagir à ce message': 'التفاعل مع هذه الرسالة', 'Équipe du réseau': 'فريق الشبكة', 'Réaction inconnue.': 'تفاعل غير معروف.',
   'Tu as déjà réagi à ce message.': 'لقد تفاعلت مع هذه الرسالة من قبل.', 'Vous ne pouvez plus vous écrire.': 'لم يعد بإمكانكما المراسلة.',
@@ -806,8 +809,8 @@ addAR({
   [/^(\d+) messages non lus$/, n => `${n} رسائل غير مقروءة`],
   [/^Conversation avec (.+)$/, x => `محادثة مع ${x}`],
   [/^Messages \((\d+) non lus\)$/, n => `الرسائل (${n} غير مقروءة)`],
-  [/^(.+) t’a envoyé une photo\.$/, x => `أرسل لك ${x} صورة.`],
-  [/^(.+) t’a envoyé un message vocal\.$/, x => `أرسل لك ${x} رسالة صوتية.`],
+  [/^(.+) t’a envoyé une photo\.$/, x => `صورة من ${x}.`],
+  [/^(.+) t’a envoyé un message vocal\.$/, x => `رسالة صوتية من ${x}.`],
   [/^Bloquer (.+) \? Vous ne pourrez plus vous écrire\. Tu peux débloquer à tout moment\.$/, x => `حظر ${x}؟ لن يعود بإمكانكما المراسلة. يمكنك إلغاء الحظر في أي وقت.`],
   [/^(\d+):(\d\d) max$/, (m, s) => `${m}:${s} كحد أقصى`],
   [/^Réagir avec (.+)$/, x => `التفاعل بـ ${x}`],

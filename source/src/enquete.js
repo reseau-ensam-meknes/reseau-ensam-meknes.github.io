@@ -79,7 +79,7 @@ addAR({
   'Envoyer ma réponse': 'إرسال جوابي',
   'Choisis ta situation pour continuer.': 'اختر وضعيتك للمتابعة.',
   'Merci, ta réponse est enregistrée.': 'شكراً، تم حفظ جوابك.',
-  'Merci !': 'شكراً!',
+  'Merci !': 'شكرًا!',
   'Ta réponse aide à suivre l’insertion de chaque promo, et les étudiants à se projeter.': 'جوابك يساعد على تتبع إدماج كل دفعة، ويساعد الطلبة على تصور مستقبلهم.',
   'Ta réponse est enregistrée.': 'تم حفظ جوابك.',
   'Réponse mise à jour.': 'تم تحديث الجواب.',

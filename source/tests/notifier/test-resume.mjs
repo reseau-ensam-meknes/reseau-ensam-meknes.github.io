@@ -181,7 +181,7 @@ test('email arabe : rtl, textes arabes, contenu des membres tel quel', () => {
   assert.match(m.html, /شبكة ENSAM مكناس/);
   assert.match(m.html, /تنبيه المواهب/);
   assert.match(m.html, /إلغاء الاشتراك/);
-  assert.match(m.html, /<strong dir="auto">Amine<\/strong> · 3A · <span dir="auto">SolidWorks، Python<\/span> · انضم حديثًا/);
+  assert.match(m.html, /<strong dir="auto">Amine<\/strong> · 3A · <span dir="auto">SolidWorks، Python<\/span> · انضمام حديث/);
   // Contenu des membres isolé (sens de lecture) dans la version texte aussi
   assert.ok(m.texte.includes('سؤال حول \u2068OCP S.A.\u2069: \u2068Comment se passe le stage ouvrier chez OCP ?\u2069'));
   assert.doesNotMatch(N.rendreResume(resume(ID.salma), 'fr', SITE, TOKEN).texte, /[\u2068\u2069]/);

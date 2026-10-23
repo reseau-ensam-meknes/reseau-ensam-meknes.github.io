@@ -537,7 +537,7 @@ export function timeAgo(iso, now = new Date()) {
 export const fmtDate = iso => iso ? new Date(iso).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }) : '';
 export function daysUntil(dateStr, now = new Date()) { if (!dateStr) return null; return Math.ceil((new Date(dateStr + 'T23:59:59') - now) / 864e5); }
 export const initials = name => (name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('');
-export const pct = x => `${Math.round(x * 100)}\u202f%`;
+export const pct = x => `${Math.round(x * 100)}%`;
 
 // ---------------------------------------------------------------------------
 // Phase 2 : annuaire pro, entreprises, groupes, défis, coupe des promos, relance douce, bilans

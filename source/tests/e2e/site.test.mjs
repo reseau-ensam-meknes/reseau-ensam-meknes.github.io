@@ -60,17 +60,35 @@ async function ouvrir({ largeur = 1280, langue = 'fr', sw = false, theme = 'ligh
   return { ctx, page, erreurs, profils, comme, aller, debordement, fiche, fermer };
 }
 
+// Contenu écrit par les membres de démo : chaque morceau (« Ingénieure qualité · Kénitra ») se trouve tel quel dans les graines,
+// ou c'est un nom propre fait de mots des graines (« Soufiane Hajji »).
+let GRAINES, MOTS_GRAINES;
+function ecritParUnMembre(x) {
+  GRAINES ??= ['seed.js', 'seed3.js', 'seed4.js'].map(f => fs.readFileSync(path.join(SITE, f), 'utf8')).join('\n');
+  MOTS_GRAINES ??= new Set(GRAINES.match(/\p{L}[\p{L}’-]*/gu));
+  return x.split(/\s+·\s+|,\s+/).map(p => p.replace(/^·\s*/, '').trim()).filter(Boolean)
+    .every(p => GRAINES.includes(p) || p.split(/\s+/).every(m => /^\p{Lu}/u.test(m) && MOTS_GRAINES.has(m)));
+}
+
 for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
-  test(`tous les écrans, tous les profils : sans erreur ni débordement (${largeur} px, ${langue})`, async () => {
+  test(`tous les écrans, tous les profils : sans erreur ni débordement${langue === 'ar' ? ', sans texte oublié en français' : ''} (${largeur} px, ${langue})`, async () => {
     const s = await ouvrir({ largeur, langue });
     if (langue === 'ar') assert.equal(await s.page.getAttribute('html', 'dir'), 'rtl');
-    const problemes = [];
+    const problemes = [], oublis = new Map();
+    // En arabe, chaque texte laissé en français est relevé (window.__ensamMissing), sauf ce qu'écrivent les membres de démo (noms, villes, offres, questions…)
+    const lireOublis = async ou => { for (const x of await s.page.evaluate(() => { const m = [...(window.__ensamMissing || [])]; window.__ensamMissing?.clear(); return m; })) if (!oublis.has(x)) oublis.set(x, ou); };
     for (const [id, nom] of s.profils) {
       await s.page.selectOption('#persona', id); await s.page.waitForTimeout(250);
       for (const e of ECRANS) {
         await s.aller(e);
         const d = await s.debordement(); if (d > 0) problemes.push(`${nom} · ${e} : ${d} px de trop en largeur`);
+        if (langue === 'ar') await lireOublis(`${nom} · ${e}`);
       }
+    }
+    if (langue === 'ar') {
+      for (const [x, ou] of oublis) if (!ecritParUnMembre(x)) problemes.push(`${ou} : texte non traduit ${JSON.stringify(x)}`);
+      // « Français » sur le bouton de langue, même après l'écran d'invitation qui traduit « Français » (langue du message)
+      assert.equal(await s.page.textContent('.lang-btn .lang-long'), 'Français');
     }
     assert.deepEqual([...s.erreurs, ...problemes], []);
     await s.ctx.close();
@@ -1420,11 +1438,55 @@ test('arabe : les phrases de l’accueil sont traduites en entier, noms de repli
       'Tu relis le CV de Hatim Moussaoui', 'Continuer la relecture'].map(t);
   });
   assert.match(ar[0], /^سؤال موجّه إليك حول فرنسا/);
-  assert.match(ar[1], /صرّح ببدئه/);
+  assert.match(ar[1], /صرّح بالبداية/);
   for (const x of ar.slice(2, 4)) assert.doesNotMatch(x, /Un lauréat/, x);
   for (const x of ar.slice(4, 6)) { assert.match(x, /^انضمّ إلى الشبكة/, x); assert.doesNotMatch(x, /معك/, x); }
   assert.match(ar[6], /تراجع سيرة/);
   assert.equal(ar[7], 'متابعة المراجعة');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('arabe dans le bon ordre et lisible : aperçus, flèche du merci, saisie, nombres, petites étiquettes, pas d’italique', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  // Un merci : de qui → à qui, la flèche suit le sens de lecture (de droite à gauche)
+  await s.aller('accueil');
+  const merci = await s.page.evaluate(() => {
+    const f = document.querySelector('.merci-une footer .small'); if (!f) return null;
+    const x = e => e.getBoundingClientRect().left;
+    const q = document.querySelector('.merci-une .merci p');
+    return { de: x(f.querySelector('span[translate]')), fleche: x(f.querySelector('svg')), a: x(f.querySelector('button')), retournee: getComputedStyle(f.querySelector('svg')).transform, italique: q && getComputedStyle(q).fontStyle };
+  });
+  assert.ok(merci, 'un merci sur l’accueil du premier profil');
+  assert.ok(merci.de > merci.fleche && merci.fleche > merci.a, JSON.stringify(merci));
+  assert.equal(merci.retournee, 'matrix(-1, 0, 0, 1, 0, 0)');
+  assert.equal(merci.italique, 'normal');
+  // Petites étiquettes : au moins 13 px en arabe
+  const petites = await s.page.$$eval('.eyebrow, .tag, .mini, .status, .bottom-nav a', es => es.filter(e => e.getClientRects().length && /[؀-ۿ]/.test(e.textContent)).map(e => parseFloat(getComputedStyle(e).fontSize)).filter(t => t < 13));
+  assert.deepEqual(petites, []);
+  // Aperçus des conversations : le texte d'un membre garde sa direction (le début d'un message en français reste visible, à gauche)
+  await s.aller('messages');
+  const apercus = await s.page.$$eval('.ci-prev .ap-txt', es => es.map(e => [e.getAttribute('dir'), getComputedStyle(e).direction, e.textContent]));
+  assert.ok(apercus.length, 'des aperçus de conversation');
+  for (const [dir, sens, txt] of apercus) {
+    assert.equal(dir, 'auto', txt);
+    if (/^[A-Za-zÀ-ÿ]/.test(txt.trim())) assert.equal(sens, 'ltr', txt);
+  }
+  // Saisie : le texte tapé suit sa propre langue, le champ vide reste à droite
+  await s.aller('reseau/annuaire');
+  assert.equal(await s.page.getAttribute('#d-q', 'dir'), 'auto');
+  assert.equal(await s.page.$eval('#d-q', e => getComputedStyle(e).direction), 'rtl');
+  await s.page.fill('#d-q', 'Bonjour !');
+  assert.equal(await s.page.$eval('#d-q', e => e.matches(':dir(ltr)')), true);
+  await s.page.fill('#d-q', '');
+  // Nombres : « 93% », « +258 », « 2026-2027 » isolés de gauche à droite, comme en français
+  const nombres = await s.page.evaluate(async () => {
+    const { t } = await import('./i18n.js');
+    return [t('Saison 2026-2027'), t('+10 points'), t('93 % des comptes')];
+  });
+  assert.match(nombres[0], /⁦2026-2027⁩/);
+  assert.match(nombres[1], /^⁦\+10⁩/);
+  assert.match(nombres[2], /⁦93%⁩/);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });

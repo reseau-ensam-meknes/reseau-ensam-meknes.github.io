@@ -17,7 +17,7 @@ addAR({
   'Stage, PFE, premier emploi : les étudiants demandent, les lauréats aident et recrutent.': 'تدريب، مشروع نهاية الدراسة، أول عمل: الطلبة يطلبون، والخريجون يساعدون ويوظّفون.',
   'Tu es…': 'أنت…', 'Étudiant(e)': 'طالب(ة)', 'Lauréat(e)': 'خريج(ة)',
   'De la 1re à la 5e année à l’ENSAM Meknès': 'من السنة الأولى إلى الخامسة في ENSAM مكناس',
-  'Diplômé(e) de l’ENSAM Meknès, en poste ou en recherche': 'خريج(ة) ENSAM مكناس، في وظيفة أو يبحث عن عمل',
+  'Diplômé(e) de l’ENSAM Meknès, en poste ou en recherche': 'خريج(ة) ENSAM مكناس، في وظيفة أو في بحث عن عمل',
   '1re à 5e année': 'من السنة الأولى إلى الخامسة', 'Diplômé(e) ENSAM': 'خريج(ة) المدرسة',
   'Choisis d’abord : étudiant(e) ou lauréat(e).': 'اختر أولًا: طالب(ة) أم خريج(ة).',
   'Pour les lauréats': 'للخريجين', 'Pour les étudiants': 'للطلبة',

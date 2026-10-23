@@ -515,7 +515,7 @@ injectCSS('entreprises', `
 // ---------------------------------------------------------------------------
 addAR({
   'Sur place': 'حضوريا', 'Visio': 'عن بعد', 'Téléphone': 'الهاتف', 'Test écrit': 'اختبار كتابي',
-  'En attente de réponse': 'في انتظار الجواب', 'Je ne sais pas': 'لا أعرف بعد',
+  'En attente de réponse': 'في انتظار الجواب', 'Je ne sais pas': 'لا أعرف',
   'Non rémunéré': 'بدون منحة', 'Symbolique': 'رمزية', 'Correcte': 'مقبولة', 'Bonne': 'جيدة',
   'Facile': 'سهلة', 'Abordable': 'في المتناول', 'Moyen': 'متوسطة', 'Difficile': 'صعبة', 'Très difficile': 'صعبة جدا',
   'Encadrement': 'التأطير', 'Apprentissage': 'التعلم', 'Ambiance': 'الأجواء',
@@ -539,7 +539,7 @@ addAR({
   'Nom caché aux membres, visible par l’administration': 'الاسم مخفي عن الأعضاء، وتراه الإدارة فقط',
   'Supprimer cet avis ?': 'حذف هذا الرأي؟', 'Supprimer ce partage d’entretien ?': 'حذف هذه المقابلة؟', 'Supprimé.': 'تم الحذف.',
   'Stage vérifié': 'تدريب موثق', 'Ce stage a été confirmé par l’étudiant et le lauréat sur la plateforme': 'أكد الطالب والخريج هذا التدريب على المنصة',
-  'Recommande': 'ينصح به', 'Ne recommande pas': 'لا ينصح به',
+  'Recommande': 'توصية', 'Ne recommande pas': 'دون توصية',
   'Déroulement': 'سير المقابلة', 'Conseils': 'نصائح', 'Déroulement et conseils': 'سير المقابلة والنصائح',
   'Modifier mon entretien': 'تعديل مقابلتي', 'Modifier mon avis': 'تعديل رأيي',
   'Les questions qu’on t’a posées aident les suivants à se préparer. Pas de nom de recruteur ni d’information confidentielle.': 'الأسئلة التي طرحت عليك تساعد من يأتي بعدك على الاستعداد. بدون اسم المشغّل ولا معلومات سرية.',
