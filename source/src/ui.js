@@ -95,7 +95,11 @@ const lireEtat = () => (history.state && history.state.app ? history.state : nul
 const entrees = () => feuilles.filter(f => f.entree).length;
 const ecran = st => st.kr || st.k;   // une entrée de feuille garde la clé de son écran : une seule position par écran
 // Chrome saute, au Retour, les entrées ajoutées sans geste du membre : on n'empile que juste après un toucher
-const geste = () => !navigator.userActivation || navigator.userActivation.isActive;
+// Un vrai toucher dans cette page compte, pas l'activation que le navigateur donne à une adresse ouverte depuis une autre appli
+// (lien WhatsApp) : sinon la fiche ouverte par le lien prendrait une entrée avant le premier geste, et l'accueil ne passerait plus dessous
+let touche = false;
+if (typeof document !== 'undefined') for (const t of ['pointerdown', 'keydown', 'click']) document.addEventListener(t, () => { touche = true; }, true);
+const geste = () => touche && (!navigator.userActivation || navigator.userActivation.isActive);
 function ecrire(st, route, empiler) {
   try { history[empiler ? 'pushState' : 'replaceState'](st, '', route == null ? undefined : '#' + route); courante = st; } catch { /* cadre sans historique, Safari trop sollicité */ }
 }
