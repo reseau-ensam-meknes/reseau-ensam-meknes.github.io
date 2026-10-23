@@ -2,6 +2,7 @@
 // un lauréat la prend, commente rubrique par rubrique, rédige une synthèse et la rend ; l'étudiant dit merci.
 import { html, useState, useRef, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, toast, injectCSS } from './ui.js';
+import { proposerPrevenir } from './pwa.js';
 import { addAR, t as tr } from './i18n.js';
 import { timeAgo, niveauOf, NIVEAUX, proximiteFiliere } from './logic.js';
 import { CV_MAX } from './store.js';
@@ -202,8 +203,9 @@ export function DemandeRelecture({ ctx, onClose }) {
     e.preventDefault();
     act(async () => {
       await store.insert('relectures_cv', { student_id: me.id, cv_path: me.cv_path, reviewer_id: qui || null, message: msg.trim() || null });
-      toast(qui ? `Demande envoyée à ${firstName(store.byId('profiles', qui))}.` : 'Demande envoyée aux lauréats.');
       onClose();
+      const mot = qui ? `Demande envoyée à ${firstName(store.byId('profiles', qui))}.` : 'Demande envoyée aux lauréats.';
+      if (!proposerPrevenir('relecture', mot)) toast(mot);
     });
   };
   return html`<${Modal} title="Demander une relecture" onClose=${onClose}>

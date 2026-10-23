@@ -99,7 +99,8 @@ const geste = () => !navigator.userActivation || navigator.userActivation.isActi
 function ecrire(st, route, empiler) {
   try { history[empiler ? 'pushState' : 'replaceState'](st, '', route == null ? undefined : '#' + route); courante = st; } catch { /* cadre sans historique, Safari trop sollicité */ }
 }
-const vider = () => { const a = apres; apres = []; a.forEach(f => f()); };
+// Dans l'ordre ; si l'une relance une navigation (aller vers l'écran d'avant = un Retour), les suivantes attendent qu'elle finisse
+const vider = () => { while (apres.length && !attendus.length) apres.shift()(); };
 const plusTard = fn => (attendus.length ? apres.push(fn) : fn());
 // Ce qui doit suivre un changement d'écran en cours (ouvrir une feuille sur l'écran d'arrivée), sinon tout de suite
 export const ensuite = plusTard;
@@ -353,17 +354,20 @@ export function Empty({ icon = 'spark', title, children, action }) {
 // Les grands moments : première candidature, rendez-vous fixé, recrutement confirmé, premier merci…
 // Une seule fois chacun (cle), avec une phrase chaleureuse et une seule prochaine étape.
 // ---------------------------------------------------------------------------
-let feteSet = null;
+let feteSet = null, feteActive = false;
 export function celebrate({ cle, titre, texte, action, icon = 'trophy' }) {
   if (cle) { try { if (localStorage.getItem('fete-' + cle)) return false; localStorage.setItem('fete-' + cle, '1'); } catch { /* pas de stockage : on fête quand même */ } }
   if (!feteSet) return false;
   feteSet({ titre, texte, action, icon, t: Date.now() });
+  feteActive = true;
   return true;
 }
+// Une fête est à l'écran : rien d'autre ne s'ouvre par-dessus (la feuille « Me prévenir » attend la prochaine visite)
+export const feteOuverte = () => feteActive;
 export function Celebration() {
   const [f, setF] = useState(null);
   feteSet = setF;
-  return f ? html`<${Fete} f=${f} key=${f.t} onClose=${() => setF(null)}/>` : null;
+  return f ? html`<${Fete} f=${f} key=${f.t} onClose=${() => { feteActive = false; setF(null); }}/>` : null;
 }
 const COULEURS_FETE = ['var(--em-o)', 'var(--em-b)', 'var(--orange)', 'var(--accent)', 'var(--good)', '#FFD166'];
 function Fete({ f, onClose }) {

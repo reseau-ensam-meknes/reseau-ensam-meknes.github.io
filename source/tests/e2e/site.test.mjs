@@ -399,6 +399,106 @@ test('« Fais venir ta promo » en arabe : lien arabe de la promo, message en ar
   await s.ctx.close();
 });
 
+// « Me prévenir » : en démo, un test simule l'état des notifications d'un vrai téléphone (ensam-prevenir-demo)
+async function prevenirSur(etat, opts = {}) {
+  const s = await ouvrir({ largeur: 360, ...opts });
+  await s.page.setViewportSize({ width: 360, height: 640 });
+  if (etat) { await s.page.evaluate(e => localStorage.setItem('ensam-prevenir-demo', e), etat); await s.page.reload(); await s.page.waitForSelector('.hello'); }
+  const memo = () => s.page.evaluate(() => { const k = Object.keys(localStorage).find(x => x.startsWith('ensam-prevenir-') && x !== 'ensam-prevenir-demo'); return k ? JSON.parse(localStorage.getItem(k)) : {}; });
+  const changerMemo = f => s.page.evaluate(f => { const k = Object.keys(localStorage).find(x => x.startsWith('ensam-prevenir-') && x !== 'ensam-prevenir-demo'); localStorage.setItem(k, JSON.stringify(new Function('m', 'return ' + f)(JSON.parse(localStorage.getItem(k))))); }, f);
+  const mentorat = async sujet => {
+    await s.fiche('Youssef El Amrani');
+    await s.page.click('.modal button:has-text("Demander de l’aide")'); await s.page.waitForTimeout(300);
+    await s.page.click('.need-pick .chip >> nth=0'); await s.page.fill('#ah-sujet', sujet);
+    await s.page.click('.modal .btn.primary:has-text("Envoyer ma demande")'); await s.page.waitForTimeout(700);
+  };
+  return { ...s, memo, changerMemo, mentorat };
+}
+
+test('« Me prévenir » : rien en démo ordinaire, le petit mot reste', async () => {
+  const s = await prevenirSur(null);
+  await s.comme('Amine'); await s.mentorat('Choisir mon stage de 3A');
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Demande envoyée à Youssef/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Me prévenir » : après une demande de mentorat, la feuille remplace le petit mot ; deux refus au plus, à 14 jours d’écart', async () => {
+  const s = await prevenirSur('off');
+  await s.comme('Amine'); await s.mentorat('Choisir mon stage de 3A');
+  await s.page.waitForSelector('.modal.prevenir');
+  assert.equal(await s.page.locator('.prevenir .modal-head h2, .prevenir h2').first().innerText(), 'Te prévenir de la réponse ?');
+  assert.match(await s.page.locator('.modal.prevenir').innerText(), /choisit un horaire/);
+  assert.match(await s.page.locator('.prevenir .verify-ok').innerText(), /Demande envoyée à Youssef\./);
+  assert.match(await s.page.locator('#pv-oui').innerText(), /Me prévenir/);
+  assert.equal(await s.page.locator('.toast').count(), 0, 'pas de petit mot sous la feuille');
+  assert.ok(await s.page.evaluate(() => document.querySelector('.prevenir .modal-foot').getBoundingClientRect().bottom <= innerHeight + .5));
+  assert.equal(await s.debordement(), 0);
+  await s.page.click('#pv-tard'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.equal((await s.memo()).n, 1);
+  // Juste après un refus : le petit mot, pas la feuille
+  await s.mentorat('Préparer mon entretien');
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Demande envoyée à Youssef/);
+  // 15 jours plus tard : une dernière fois
+  await s.changerMemo('({ ...m, at: m.at - 15 * 864e5 })');
+  await s.mentorat('Relire mon rapport');
+  await s.page.waitForSelector('.modal.prevenir');
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).n, 2);
+  await s.changerMemo('({ ...m, at: m.at - 30 * 864e5 })');
+  await s.mentorat('Choisir une option');
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0, 'plus jamais après deux refus');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Me prévenir » sur iPhone, en arabe : les étapes pour ajouter le Réseau à l’écran d’accueil', async () => {
+  const s = await prevenirSur('ios', { langue: 'ar' });
+  await s.comme('Salma'); await s.aller('reseau/entraide');
+  await s.page.click('.toolbar .btn.primary'); await s.page.waitForTimeout(200);
+  await s.page.fill('#aq-titre', 'Quel logiciel apprendre avant un PFE en lean ?');
+  await s.page.click('.modal form .btn.primary'); await s.page.waitForTimeout(700);
+  await s.page.waitForSelector('.modal.prevenir');
+  assert.equal(await s.page.getAttribute('html', 'dir'), 'rtl');
+  assert.match(await s.page.locator('.modal.prevenir').innerText(), /هل نُعلمك عند وصول الرد؟/);
+  assert.equal(await s.page.locator('.prevenir .ios-steps li').count(), 3);
+  assert.equal((await s.page.locator('#pv-oui').innerText()).trim(), 'فهمت');
+  assert.equal(await s.debordement(), 0);
+  await s.page.click('#pv-oui'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).n, 1);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Me prévenir » n’arrive jamais par-dessus une fête : il attend la visite suivante ; accepté, il ne revient plus', async () => {
+  const s = await prevenirSur('off');
+  await s.comme('Salma'); await s.aller('offres/demandes');
+  await s.page.click('#dm-nouvelle'); await s.page.waitForTimeout(200);
+  await s.page.click('#dm-type-pfe');
+  await s.page.fill('#dm-titre', 'PFE en maintenance prédictive');
+  await s.page.fill('#dm-details', 'Je cherche un PFE de 6 mois en maintenance prédictive, à Casablanca ou à Kénitra.');
+  await s.page.click('#dm-publier'); await s.page.waitForTimeout(500);
+  assert.ok(await s.page.locator('.fete-back').isVisible());
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.equal((await s.memo()).differe, 'demande');
+  await s.page.goto(adresse); await s.page.waitForSelector('.hello');
+  await s.comme('Salma');
+  await s.page.waitForSelector('.modal.prevenir', { timeout: 4000 });
+  assert.equal(await s.page.locator('.prevenir .verify-ok').count(), 0);
+  assert.match(await s.page.locator('.modal.prevenir').innerText(), /te propose son aide/);
+  assert.equal((await s.memo()).differe, undefined);
+  await s.page.click('#pv-oui'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Sur la vraie plateforme/);
+  assert.equal((await s.memo()).fait, 1);
+  await s.mentorat('Préparer mes entretiens');
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('construction : pages de promo et image d’aperçu présentes, mais pas gardées par le service worker', () => {
   const sw = fs.readFileSync(path.join(SITE, 'sw.js'), 'utf8');
   assert.doesNotMatch(sw.match(/const FICHIERS = (\[.*?\]);/)[1], /"promo\//);

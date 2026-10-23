@@ -12,7 +12,7 @@ import { AdminPage, AnnonceBanner } from './admin.js';
 import { MentoratPage, AskHelp, NextRdv, slotWhen, mentoratIgnorees, IlsOntBesoin, CoupDeMain, HoraireSheet, ICONE_BESOIN, VERBE_BESOIN, phraseBesoin, ouvrirBesoin, confirmerPresence, finirMentorat, lienVisio } from './mentorat.js';
 import { SuccessFeed, VerifyPage } from './growth.js';
 import { PrivacyPage, ConsentModal, MesDonnees, DesaboPage } from './privacy.js';
-import { useInstall, IosInstallHelp } from './pwa.js';
+import { useInstall, IosInstallHelp, PrevenirHote } from './pwa.js';
 import { NextCafe } from './groupes.js';
 import { EntrepriseModal } from './pro.js';
 import { DefisPanel, CoupePromos, DevenirParrain, TonAnnee, TonAnneeStrip } from './saison.js';
@@ -270,6 +270,7 @@ function App({ store }) {
     ${pop ? html`<${Feuille} key=${pop} onClose=${() => setPop(null)}/>` : null}
     <${Toaster}/>
     <${Celebration}/>
+    ${me.role === 'admin' ? null : html`<${PrevenirHote} ctx=${ctx} bloque=${needConsent}/>`}
   </div>`;
 }
 

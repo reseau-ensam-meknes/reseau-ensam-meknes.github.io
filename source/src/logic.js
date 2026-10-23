@@ -1048,3 +1048,20 @@ export function manquesOffre(f) {
 export function manquesDemande(f, me) {
   return [(f.titre || '').trim().length < 4 && 'titre', (f.details || '').trim().length < 20 && 'details', !me?.cv_path && 'cv'].filter(Boolean);
 }
+
+// « Me prévenir » : après une action qui attend une réponse, une feuille propose les notifications sur cet appareil.
+// etat : celui des notifications ici (… | demo | absent | ios | refuse | off | on) ; memo : ce que cet appareil a déjà
+// répondu ({ n refus, at dernier refus, fait, mail }). Deux refus au plus, 14 jours entre les deux ; la variante email
+// (navigateur sans notifications) une seule fois, et seulement si un email part vraiment.
+export const PREVENIR_ECART = 14 * 864e5;
+export function prevenirVariante({ etat, raison, memo = {}, now = Date.now(), role, emailsMessages, emailsHebdo }) {
+  if (role === 'admin' || memo.fait || etat === 'on' || etat === '…' || etat === 'demo') return null;
+  if (etat === 'off' || etat === 'ios') {
+    if ((memo.n || 0) >= 2 || (memo.at && now - memo.at < PREVENIR_ECART)) return null;
+    return etat === 'off' ? 'push' : 'ios';
+  }
+  if (memo.mail) return null;
+  if (raison === 'demande' && emailsMessages) return 'email';   // chaque proposition arrive en message, un email suit si elle reste non lue
+  if (raison === 'question' && emailsHebdo) return 'email';     // les réponses figurent dans le résumé de la semaine
+  return null;
+}

@@ -1,6 +1,7 @@
 // Offres : liste compacte, fiche détaillée, candidature, gestion des candidats par le lauréat.
 import { html, useState, useMemo, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, TYPE_ICON, toast, RoleLine, celebrate, injectCSS, PartagerWhatsApp, lienWhatsApp, lienDirect, allerAuChamp } from './ui.js';
+import { proposerPrevenir } from './pwa.js';
 import { getLang, addAR, arCount } from './i18n.js';
 import { TYPES, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande, manquesOffre } from './logic.js';
 import { RelanceBanner, BanqueSujets, PasteOffer } from './recrutement.js';
@@ -344,7 +345,8 @@ function ApplyBox({ ctx, o, form, setForm, onClose }) {
         texte: `${prenom(auteur) || 'Le lauréat'} reçoit ta candidature avec ton profil${hasCv ? ' et ton CV' : ''}. Tu suis sa réponse dans « Mon parcours ».`,
         action: { label: 'Voir mon parcours', icon: 'route', onClick: () => { onClose?.(); ctx.go('parcours'); } },
       });
-      if (!fete) toast('Candidature envoyée à ' + (auteur?.full_name || 'au lauréat') + '.', 'win');
+      const mot = 'Candidature envoyée à ' + (auteur?.full_name || 'au lauréat') + '.';
+      if (fete) proposerPrevenir('candidature'); else if (!proposerPrevenir('candidature', mot)) toast(mot, 'win');
     });
   };
   return html`${invite}<form class="apply-box form" id=${'apply-' + o.id} onSubmit=${envoyer}>

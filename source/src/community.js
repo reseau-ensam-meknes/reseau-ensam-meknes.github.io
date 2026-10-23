@@ -1,6 +1,7 @@
 // Entraide, Communauté (classement, annuaire, vitrine des talents) et profils.
 import { html, useState, useMemo, useRef, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, toast, LevelChip, RoleLine, injectCSS, PartagerWhatsApp, lienDirect, allerAuChamp } from './ui.js';
+import { proposerPrevenir } from './pwa.js';
 import { ChoixRole } from './entree.js';
 import { getLang } from './i18n.js';
 import { FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole } from './logic.js';
@@ -15,7 +16,7 @@ import { MessageBtn } from './messages.js';
 import { CvButton } from './cv.js';
 import { SignalerBtn, ContactBlock, PairVerify, VisibiliteFields, groupesMasques, confirmations, VIS_LABELS, VIS_CHOIX } from './confiance.js';
 import { VIS_CHAMPS, VIS_DEFAUT, CV_MAX } from './store.js';
-import { addAR } from './i18n.js';
+import { addAR, arCount } from './i18n.js';
 import { oublierInvitation } from './invitation.js';
 import { parseLinkedin } from './parse-linkedin.js';
 import { lireCV } from './lire-cv.js';
@@ -42,7 +43,10 @@ addAR({
   'prenom.nom@…': 'prenom.nom@…', 'https://…': 'https://…',
   'Ton badge « Lauréat vérifié » arrive quand l’équipe du réseau, ou deux lauréats vérifiés de ta promo, confirment ton profil.': 'تحصل على شارة «خريج موثَّق» عندما يؤكد فريق الشبكة ملفك، أو خريجان موثَّقان من دفعتك.',
   'Voir le CV': 'عرض السيرة الذاتية',
-});
+  'Ta question est publiée.': 'تم نشر سؤالك.',
+}, [
+  [/^Question envoyée à (\d+) lauréats?\.$/, n => `أُرسل السؤال إلى ${arCount(n, ['خريج واحد', 'خريجَين', 'خريجين', 'خريجًا'])}.`],
+]);
 
 
 // ---------------------------------------------------------------------------
@@ -110,7 +114,7 @@ export function AskQuestion({ ctx, onClose, onDone, initial = {} }) {
   const fake = { entreprise: cible ? f.entreprise.trim() : '', pays: cible ? f.pays.trim() : '', author_id: me.id };
   const n = cible && (fake.entreprise || fake.pays) ? data.profiles.filter(p => routedTo(fake, p)).length : 0;
   return html`<${Modal} title="Poser une question" onClose=${onClose}>
-    <form class="form" onSubmit=${e => { e.preventDefault(); act(async () => { const row = { author_id: me.id, categorie: f.categorie, titre: f.titre.trim(), body: f.body.trim() }; if (fake.entreprise) row.entreprise = fake.entreprise; if (fake.pays) row.pays = fake.pays; const q = await store.insert('questions', row); if (n) toast(`Question envoyée à ${n} lauréat${n > 1 ? 's' : ''}.`); onDone(q.id); }); }}>
+    <form class="form" onSubmit=${e => { e.preventDefault(); act(async () => { const row = { author_id: me.id, categorie: f.categorie, titre: f.titre.trim(), body: f.body.trim() }; if (fake.entreprise) row.entreprise = fake.entreprise; if (fake.pays) row.pays = fake.pays; const q = await store.insert('questions', row); onDone(q.id); const mot = n ? `Question envoyée à ${n} lauréat${n > 1 ? 's' : ''}.` : 'Ta question est publiée.'; if (!proposerPrevenir('question', mot) && n) toast(mot); }); }}>
       <${Field} label="Catégorie"><select id="aq-cat" value=${f.categorie} onChange=${e => setF({ ...f, categorie: e.target.value })}>${CATEGORIES_Q.map(c => html`<option value=${c}>${c}</option>`)}</select><//>
       <${Field} label="Question"><input id="aq-titre" required value=${f.titre} onInput=${e => setF({ ...f, titre: e.target.value })} maxlength="160" placeholder="Ex. Comment obtenir un visa pour un stage au Canada ?"/><//>
       <${Field} label="Détails (facultatif)"><textarea id="aq-body" rows="4" value=${f.body} onInput=${e => setF({ ...f, body: e.target.value })} maxlength="3000"></textarea><//>
