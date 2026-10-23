@@ -52,3 +52,64 @@ test('premier chargement sans rien en main : une table obligatoire en erreur le 
   const { s } = magasin(() => EXPIREE);
   await assert.rejects(() => s.loadTable('offers'));
 });
+
+// Réactions sur un réseau qui hésite : deux échecs de suite ne laissent jamais une réaction qui n'existe nulle part
+function reactions(serveur = []) {
+  const s = new SupabaseStore({}); s.session = { user: { id: 'moi' } };
+  const attentes = [];
+  const attendre = () => new Promise(ok => attentes.push(ok));
+  s.sb = { from: () => ({ upsert: attendre, delete: () => ({ eq: () => ({ eq: attendre }) }) }) };
+  s.data.reactions_messages = serveur;
+  return { s, attentes };
+}
+const COUPE = { error: { message: 'Failed to fetch' } };
+
+test('réactions : deux réactions qui échouent, dans un ordre ou dans l’autre, ne laissent rien à l’écran', async () => {
+  for (const ordre of [[0, 1], [1, 0]]) {
+    const { s, attentes } = reactions();
+    const p = [s.reagir('A', '👍').catch(() => 'e'), s.reagir('A', '❤️').catch(() => 'e')];
+    for (const i of ordre) attentes[i](COUPE);
+    assert.deepEqual(await Promise.all(p), ['e', 'e']);
+    assert.deepEqual(s.data.reactions_messages, [], 'ordre ' + ordre);
+  }
+});
+
+test('réactions : changer d’avis puis échouer remet la réaction enregistrée', async () => {
+  const pouce = { id: 'r1', message_id: 'A', user_id: 'moi', emoji: '👍' };
+  const { s, attentes } = reactions([pouce]);
+  const p = s.reagir('A', '❤️').catch(() => 'e');
+  assert.equal(s.data.reactions_messages[0].emoji, '❤️');
+  attentes[0](COUPE); await p;
+  assert.deepEqual(s.data.reactions_messages, [pouce]);
+});
+
+test('réactions : un échec ne touche pas une réaction posée entre-temps sur le même message', async () => {
+  const { s, attentes } = reactions();
+  const p1 = s.reagir('A', '👍').catch(() => 'e');
+  attentes[0](COUPE); await p1;
+  const p2 = s.reagir('A', '😂').catch(() => 'e');
+  assert.equal(s.data.reactions_messages[0].emoji, '😂');
+  attentes[1](COUPE); await p2;
+  assert.deepEqual(s.data.reactions_messages, []);
+});
+
+test('répondre : base pas encore relue par l’API → le message part quand même, sans la citation', async () => {
+  const s = new SupabaseStore({}); s.session = { user: { id: 'moi' } };
+  const envois = [];
+  s.sb = { from: () => ({ insert: row => ({ select: () => ({ single: async () => {
+    envois.push({ ...row });
+    return 'reponse_a' in row ? { data: null, error: { code: 'PGRST204', message: "Could not find the 'reponse_a' column of 'messages' in the schema cache" } }
+      : { data: { id: 'm1', ...row }, error: null };
+  } }) }) }) };
+  const m = await s.envoyerMessage({ dest: 'lui', body: 'Salut', reponse_a: 'm0' });
+  assert.equal(envois.length, 2); assert.equal('reponse_a' in envois[1], false);
+  assert.equal(m.id, 'm1'); assert.equal(s.data.messages[0].id, 'm1');
+});
+
+test('répondre : une autre erreur ne renvoie pas le message en double', async () => {
+  const s = new SupabaseStore({}); s.session = { user: { id: 'moi' } };
+  let n = 0;
+  s.sb = { from: () => ({ insert: () => ({ select: () => ({ single: async () => { n++; return { data: null, error: { code: '42501', message: 'new row violates row-level security policy for table "messages"' } }; } }) }) }) };
+  await assert.rejects(() => s.envoyerMessage({ dest: 'lui', body: 'Salut', reponse_a: 'm0' }));
+  assert.equal(n, 1);
+});

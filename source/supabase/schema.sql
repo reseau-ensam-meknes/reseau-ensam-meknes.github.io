@@ -3041,7 +3041,8 @@ begin
     if auth.uid() is not null then new.user_id := auth.uid(); end if;
     new.created_at := now();
   end if;
-  if auth.uid() is null or public.is_admin() then return new; end if;
+  -- Même l'administration ne réagit que dans ses propres conversations (elle ne lit pas celles des autres)
+  if auth.uid() is null then return new; end if;
   select * into m from public.messages where id = new.message_id;
   if m.id is null or new.user_id not in (m.author_id, m.dest_id) then raise exception 'Action non autorisée pour ton compte.'; end if;
   if exists (select 1 from public.blocages b where (b.user_id = m.author_id and b.bloque_id = m.dest_id) or (b.user_id = m.dest_id and b.bloque_id = m.author_id)) then

@@ -173,12 +173,34 @@ test('messagerie : répondre à un message précis, réagir ; sous le nom, qui e
   // Toucher la citation ramène au message d'origine
   await reponse.locator('.msg-cite').click(); await s.page.waitForTimeout(150);
   assert.equal(await sienne.evaluate(e => e.classList.contains('eclaire')), true);
+  assert.equal(await sienne.evaluate(e => document.activeElement === e), true, 'le message cité prend le focus');
+  // Une citation et une réaction lisibles (contrastes, noms), en clair et en sombre
+  await s.page.addScriptTag({ content: AXE });
+  for (const theme of ['light', 'dark']) {
+    await s.page.emulateMedia({ colorScheme: theme }); await s.page.waitForTimeout(100);
+    await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* animation sans fin */ } }));
+    const v = await s.page.evaluate(async () => (await axe.run('.conv', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => `${x.id} : ${x.nodes.map(n => n.target.join(' ')).join(' ; ')}`));
+    assert.deepEqual(v, [], 'citation et réaction : axe ' + theme);
+  }
+  await s.page.emulateMedia({ colorScheme: 'light' });
+  // L'éclat s'éteint, même avec les animations réduites
+  await s.page.waitForTimeout(1700);
+  assert.equal(await sienne.evaluate(e => e.classList.contains('eclaire')), false);
   // Salma voit la réaction de Youssef et la citation
   await s.aller('accueil'); await s.comme('Salma'); await s.aller('messages/' + youssef); await s.page.waitForTimeout(300);
   assert.match(await s.page.locator('.msg.mine').last().locator('.react-pill').getAttribute('aria-label'), /^Réaction de Youssef : ❤️$/);
   assert.match(await s.page.locator('.msg:not(.mine)').last().locator('.msg-cite').innerText(), /^Toi/);
   await s.page.locator('.msg.mine .react-pill').click();
   assert.equal(await s.page.locator('.msg.mine .react-pill').count(), 1, 'la réaction de l’autre ne se retire pas');
+  // Le même emoji des deux côtés : « 2 », et le nom accessible dit que l'autre a aussi réagi
+  const mien = s.page.locator('.msg.mine').last();
+  await mien.locator('.msg-more').click();
+  await s.page.click('.react-btn[aria-label="Réagir avec ❤️"]'); await s.page.waitForTimeout(200);
+  assert.equal(await mien.locator('button.react-pill').getAttribute('aria-label'), 'Retirer ma réaction ❤️ (Youssef aussi)');
+  assert.equal(await mien.locator('.react-n').innerText(), '2');
+  assert.equal(await s.page.evaluate(() => document.activeElement?.classList.contains('msg-more')), true, 'le focus revient sur les actions du message');
+  await mien.locator('button.react-pill').click(); await s.page.waitForTimeout(200);
+  assert.equal(await mien.locator('.react-pill').getAttribute('aria-label'), 'Réaction de Youssef : ❤️');
   // Youssef retire la sienne
   await s.aller('accueil'); await s.comme('Youssef'); await s.aller('messages/' + salma); await s.page.waitForTimeout(300);
   await s.page.locator('button.react-pill').click(); await s.page.waitForTimeout(200);
@@ -215,6 +237,20 @@ test('profil : « Qui voit quoi » s’enregistre dès le choix ; une mise à jo
   assert.equal(await s.page.locator('.pf-collant').count(), 0);
   const moi = await s.page.evaluate(() => { const m = window.__demo.me; return { bio: m.bio, poste: m.poste, vis: m.visibilite }; });
   assert.deepEqual(moi, { bio: 'Bio en cours d’écriture', poste: 'Directeur méthodes', vis: { lieu: 'contacts', presentation: 'laureats' } });
+  // Une lettre tapée puis effacée : rien à enregistrer
+  const ville = await s.page.inputValue('#pf-ville');
+  await s.page.fill('#pf-ville', ville + 'x');
+  assert.equal(await s.page.locator('.pf-collant').count(), 1);
+  await s.page.fill('#pf-ville', ville);
+  assert.equal(await s.page.locator('.pf-collant').count(), 0, 'la barre part quand rien ne diffère');
+  // Un choix qui ne part pas (réseau coupé) reste affiché, et part avec « Enregistrer »
+  await s.page.evaluate(() => { const d = window.__demo, u = d.update; d.update = async () => { d.update = u; throw new Error('Pas de réseau pour l’instant.'); }; });
+  await s.page.click('#vis-cv-contacts'); await s.page.waitForTimeout(250);
+  assert.equal(await s.page.getAttribute('#vis-cv-contacts', 'aria-checked'), 'true');
+  assert.equal(await s.page.locator('.pf-collant').count(), 1);
+  await s.page.locator('.pf-collant .btn.primary').click(); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.pf-collant').count(), 0);
+  assert.equal(await s.page.evaluate(() => window.__demo.me.visibilite.cv), 'contacts');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });

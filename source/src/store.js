@@ -139,7 +139,7 @@ class DemoStore extends Base {
   persist() { safeSet(DEMO_KEY, JSON.stringify({ data: this.data, meId: this.me?.id, reglages: this.reglages })); }
   personas() { const o = { etudiant: 0, laureat: 1, admin: 2 }; return this.data.profiles.filter(p => p._persona).sort((a, b) => o[a.role] - o[b.role]); }
   switchTo(id) { this.me = this.byId('profiles', id); this.persist(); this.emit(); }
-  async reset() { this.data = await chargerSeed(); for (const t of ['guide_pays_historique', 'liste_officielle']) this.data[t] ||= []; this.reglages = {}; this.me = this.personas()[0]; this.persist(); this.emit(); }
+  async reset() { this.data = await chargerSeed(); for (const t of [...TABLES, 'guide_pays_historique', 'liste_officielle']) this.data[t] ||= []; this.reglages = {}; this.me = this.personas()[0]; this.persist(); this.emit(); }
   async insert(table, row) {
     const r = { id: uuid(), created_at: new Date().toISOString(), ...row };
     if (table === 'placements') applyPlacementRules(this, r, null);
@@ -996,7 +996,7 @@ export class SupabaseStore extends Base {
   }
   async insert(table, row) {
     const { data, error } = await this.sb.from(table).insert(row).select().single();
-    if (error) throw new Error(frError(error));
+    if (error) throw new Error(frError(error), { cause: error });
     this.data[table] = [data, ...this.data[table].filter(x => x.id !== data.id)];
     if (table === 'profiles') this.me = this.byId('profiles', this.userId);
     // L'organisateur d'un café y est inscrit d'office par la base
@@ -1214,8 +1214,12 @@ export class SupabaseStore extends Base {
     if (!row.reponse_a) delete row.reponse_a;
     try { return await this.insert('messages', row); }
     catch (e) {
-      // Base pas encore à jour : le message part sans la citation
-      if (row.reponse_a && /reponse_a/.test(e.message || '')) { delete row.reponse_a; return this.insert('messages', row); }
+      // Base pas encore à jour (colonne absente, ou cache de l'API pas encore relu) : le message part sans la citation.
+      // On regarde l'erreur brute : le message traduit pour le membre ne nomme plus la colonne
+      if (row.reponse_a && /reponse_a/.test(e.cause?.message || '')) {
+        delete row.reponse_a;
+        try { return await this.insert('messages', row); } catch (e2) { e = e2; }
+      }
       if (fichier) this.sb.storage.from('chat').remove([fichier]).catch(() => {});
       throw e;
     }
@@ -1247,16 +1251,25 @@ export class SupabaseStore extends Base {
   }
   // Une réaction par personne et par message : affichée tout de suite, puis enregistrée ; la même la retire
   async reagir(messageId, emoji) {
+    const lui = r => r.message_id === messageId && r.user_id === this.userId;
     const avant = this.data.reactions_messages;
-    const mienne = avant.find(r => r.message_id === messageId && r.user_id === this.userId);
+    const mienne = avant.find(lui);
     const retirer = !emoji || mienne?.emoji === emoji;
-    this.data.reactions_messages = retirer ? avant.filter(r => r !== mienne)
-      : mienne ? avant.map(r => r === mienne ? { ...r, emoji } : r) : [{ id: 'tmp-' + uuid(), message_id: messageId, user_id: this.userId, emoji, created_at: new Date().toISOString() }, ...avant];
+    const ecrite = retirer ? null : mienne ? { ...mienne, emoji } : { id: 'tmp-' + uuid(), message_id: messageId, user_id: this.userId, emoji, created_at: new Date().toISOString() };
+    this.data.reactions_messages = retirer ? avant.filter(r => r !== mienne) : mienne ? avant.map(r => r === mienne ? ecrite : r) : [ecrite, ...avant];
     this.emit();
     const { error } = retirer
       ? (mienne ? await this.sb.from('reactions_messages').delete().eq('message_id', messageId).eq('user_id', this.userId) : { error: null })
       : await this.sb.from('reactions_messages').upsert({ message_id: messageId, user_id: this.userId, emoji }, { onConflict: 'message_id,user_id' });
-    if (error) { this.data.reactions_messages = avant; this.emit(); throw new Error(frError(error)); }
+    if (error) {
+      // On défait seulement ce que cet appel a affiché, s'il est encore à l'écran ; jamais une réaction provisoire d'un autre appel
+      if ((this.data.reactions_messages.find(lui) || null) === ecrite) {
+        const garder = mienne && !String(mienne.id).startsWith('tmp-') ? [mienne] : [];
+        this.data.reactions_messages = [...garder, ...this.data.reactions_messages.filter(r => !lui(r))];
+        this.emit();
+      }
+      throw new Error(frError(error));
+    }
     await this.loadTable('reactions_messages').catch(() => {}); this.emit();
     return null;
   }
