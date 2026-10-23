@@ -21,4 +21,10 @@ test('Phase 2 -> Phase 3 : données gardées, contact déplacé, relançable', a
   assert.equal((await db.query('select contact from public.profiles where id = $1', [uid(1)])).rows[0].contact, null);
   const vus = await en(db, uid(1), tx => tx.query('select full_name, entreprise from public.profils order by full_name'));
   assert.deepEqual(vus.rows.map(r => r.full_name), ['Salma Test', 'Youssef Test']);
+  // Notifications par catégorie : les membres déjà inscrits n'ont rien choisi, le défaut de leur rôle s'applique
+  assert.deepEqual((await db.query('select notif_push from public.profiles order by id')).rows.map(r => r.notif_push), [{}, {}]);
+  const voulu = async (u, k) => (await db.query('select public.push_voulu($1, $2) v', [u, k])).rows[0].v;
+  assert.equal(await voulu(uid(1), 'offre_alerte'), true, 'étudiante : les nouvelles offres');
+  assert.equal(await voulu(uid(2), 'offre_alerte'), false, 'lauréat qui ne cherche pas d’emploi : pas les nouvelles offres');
+  assert.equal(await voulu(uid(2), 'candidature'), true);
 });
