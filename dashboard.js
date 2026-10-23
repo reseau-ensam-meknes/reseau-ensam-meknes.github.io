@@ -234,7 +234,7 @@ addAR({
   'Pas encore assez de réponses': 'لا توجد أجوبة كافية بعد',
   'Les résultats s’affichent dès 5 réponses par promo, pour protéger l’anonymat. L’enquête est envoyée aux diplômés 6 et 12 mois après le diplôme.': 'تظهر النتائج ابتداءً من 5 أجوبة لكل دفعة، حمايةً لسرية المشاركين. يُرسل الاستطلاع إلى الخريجين بعد 6 و12 شهراً من التخرج.',
   'Aucune réponse pour l’instant.': 'لا توجد أجوبة حالياً.',
-  'Ta réponse compte : elle aide l’école et les promos suivantes.': 'جوابك مهم: يساعد المدرسة والدفعات القادمة.',
+  'Ta réponse compte : elle aide les promos suivantes.': 'جوابك مهم: يساعد الدفعات القادمة.',
   'Situation des diplômés': 'وضعية الخريجين',
   'En poste': 'يعملون',
   'Autre situation': 'وضعية أخرى',
@@ -368,7 +368,7 @@ function InsertionPage({ ctx }) {
       </div>` : null}
     </header>
     <${SuiviSeg} ctx=${ctx} on="insertion"/>
-    ${due ? html`<div class="hint-box ins-noprint"><${Icon} name="chart" size=${16}/><span class="grow">Ta réponse compte : elle aide l’école et les promos suivantes.</span><button class="btn small primary" onClick=${() => go('enquete')}>Répondre</button></div>` : null}
+    ${due ? html`<div class="hint-box ins-noprint"><${Icon} name="chart" size=${16}/><span class="grow">Ta réponse compte : elle aide les promos suivantes.</span><button class="btn small primary" onClick=${() => go('enquete')}>Répondre</button></div>` : null}
 
     <div class="ins-stats ins-noprint">
       ${stats === null ? html`<p class="muted">Chargement…</p>` : !r ? html`<div class="panel"><div class="empty"><${Icon} name="chart" size=${28}/><strong>Pas encore assez de réponses</strong><div>${admin ? 'Aucune réponse pour l’instant.' : 'Les résultats s’affichent dès 5 réponses par promo, pour protéger l’anonymat. L’enquête est envoyée aux diplômés 6 et 12 mois après le diplôme.'}</div></div></div>` : html`

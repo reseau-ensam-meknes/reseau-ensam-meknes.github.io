@@ -9,12 +9,14 @@ import { SignalerBtn } from './confiance.js';
 import { EntrepriseResume } from './entreprises.js';
 import { MessageBtn } from './messages.js';
 import { DemandesTab, demandesAFaire } from './demandes.js';
-// Le message WhatsApp d'une offre : de quoi il s'agit, et le lien qui l'ouvre directement
-// Message prêt pour WhatsApp, dans la langue de l'interface
+// Le message WhatsApp d'une offre, dans la langue de l'interface : de quoi il s'agit, et le lien qui l'ouvre directement.
+// Le type n'est ajouté que si le titre ne le dit pas déjà (« Stage : Stage PFE… »), et l'auteur n'est jamais nommé.
 const TYPES_AR = { stage: 'تدريب', pfe: 'مشروع نهاية الدراسة', etranger: 'تدريب بالخارج', emploi: 'وظيفة' };
+const sansAccent = s => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const titreDit = o => sansAccent(o.titre).startsWith(sansAccent(TYPES[o.type]?.label.split(' ')[0] || '-'));
 const texteOffre = o => getLang() === 'ar'
-  ? `${TYPES_AR[o.type] || 'عرض'}: ${o.titre} · ${o.entreprise}\nشاهده على شبكة ENSAM مكناس: ${lienDirect('offre/' + o.id)}`
-  : `${TYPES[o.type]?.long || 'Offre'} : ${o.titre} · ${o.entreprise}\nÀ voir sur le Réseau ENSAM Meknès : ${lienDirect('offre/' + o.id)}`;
+  ? `${titreDit(o) ? '' : `${TYPES_AR[o.type] || 'عرض'}: `}${o.titre} · ${o.entreprise}\nعرض منشور على شبكة ENSAM مكناس. افتحه هنا: ${lienDirect('offre/' + o.id)}`
+  : `${titreDit(o) ? '' : `${TYPES[o.type]?.label || 'Offre'} : `}${o.titre} · ${o.entreprise}\nOffre partagée sur le Réseau ENSAM Meknès. Ouvre-la ici : ${lienDirect('offre/' + o.id)}`;
 
 const ANNEES_OPTS = [[3, '3A'], [4, '4A'], [5, '5A'], [6, 'Jeunes diplômés']];
 export const APP_STATUS = { postule: 'Envoyée', entretien: 'Entretien', retenu: 'Retenu(e)', refuse: 'Pas retenu(e)' };
@@ -63,7 +65,7 @@ export function OffersPage(ctx) {
       ${!isStudent && !demandes ? html`<button class="btn primary" onClick=${() => setCompose(tab === 'laureats' ? { audience: 'laureats', type: 'emploi', annees: [] } : tab === 'sujets' ? { type: 'pfe', annees: [5] } : {})}><${Icon} name="plus"/> ${tab === 'sujets' ? 'Déposer un sujet' : 'Publier une offre'}</button>` : null}
     </header>
     ${tabs.length > 1 ? html`<div class="seg" role="tablist">${tabs.map(([k, l, i, n]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => go('offres' + (k ? '/' + k : ''))}><${Icon} name=${i} size=${15}/> ${l}${n ? html` <span class="count">${n}</span>` : null}</button>`)}</div>` : null}
-    ${demandes ? html`<${DemandesTab} ctx=${ctx}/>` : tab === 'sujets' ? html`<${BanqueSujets} ctx=${ctx} onPropose=${() => setCompose({ type: 'pfe', annees: [5] })}/>` : html`<${OfferList} ctx=${ctx} entre=${tab === 'laureats'} key=${tab}/>`}
+    ${demandes ? html`<${DemandesTab} ctx=${isStudent ? ctx : { ...ctx, publierOffre: () => setCompose({}) }}/>` : tab === 'sujets' ? html`<${BanqueSujets} ctx=${ctx} onPropose=${() => setCompose({ type: 'pfe', annees: [5] })}/>` : html`<${OfferList} ctx=${ctx} entre=${tab === 'laureats'} key=${tab}/>`}
     ${compose ? html`<${OfferComposer} ctx=${ctx} preset=${compose} onClose=${() => setCompose(null)}/>` : null}
   </section>`;
 }
@@ -75,7 +77,7 @@ const Pourquoi = ({ why }) => html`<span class="why">${why.map(w => (w === 'Ta f
 const doux = () => (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
 
 function OfferList({ ctx, entre }) {
-  const { data, me, saison, openOffer } = ctx;
+  const { data, me, saison, openOffer, go } = ctx;
   const isStudent = me.role === 'etudiant';
   const niveau = niveauOf(me, saison);
   const myTypes = isStudent ? (OBJECTIFS[niveau]?.types || []) : Object.keys(TYPES);
@@ -108,7 +110,12 @@ function OfferList({ ctx, entre }) {
   const effacer = !plain && vue !== 'sauvees' ? { label: 'Effacer les filtres', icon: 'x', onClick: () => { setQ(''); setType('tous'); setVue('toutes'); } } : null;
   const vide = vue === 'sauvees'
     ? html`<${Empty} icon="bookmark" title="Aucune offre sauvegardée" action=${versToutes}>Clique sur le marque-page d’une offre pour la garder ici.<//>`
-    : html`<${Empty} icon=${entre ? 'briefcase' : 'feed'} title="Aucune offre ici" action=${effacer}>${entre ? 'Ton équipe cherche un profil expérimenté ? Publie le poste ici : seuls les lauréats le voient.' : 'Change la recherche ou reviens bientôt : les lauréats publient régulièrement.'}<//>`;
+    : entre ? html`<${Empty} icon="briefcase" title="Aucune offre ici" action=${effacer}>Ton équipe cherche un profil expérimenté ? Publie le poste ici : seuls les lauréats le voient.<//>`
+    // Le réseau qui démarre : pas de promesse, une vraie action (sa demande, ou un conseil)
+    : plain && isStudent ? (typesDemande(me, saison).length
+      ? html`<${Empty} icon="feed" title=${`Pas encore d’offre pour ta ${NIVEAUX[niveau]?.short || 'promo'}`} action=${{ label: 'Publier ma demande', icon: 'send', onClick: () => go('offres/demandes/nouvelle') }}>Le réseau vient d’ouvrir. Dis aux lauréats ce que tu cherches : ils te répondent ici.<//>`
+      : html`<${Empty} icon="feed" title=${`Pas encore d’offre pour ta ${NIVEAUX[niveau]?.short || 'promo'}`} action=${{ label: 'Demander un conseil', icon: 'mentor', onClick: () => go('mentorat') }}>Le réseau vient d’ouvrir. Un lauréat peut déjà te conseiller en 20 minutes de visio.<//>`)
+    : html`<${Empty} icon="feed" title="Aucune offre ici" action=${effacer}>${plain ? 'Le réseau vient d’ouvrir : la première offre peut être la tienne.' : 'Change la recherche ou les filtres.'}<//>`;
 
   return html`<div class="sub-page">
     <div class="toolbar">
@@ -138,9 +145,10 @@ function recoFor(ctx, max) {
 export function RecoOffers({ ctx, max = 3, inOffres = false, reco }) {
   const { openOffer, go } = ctx;
   const liste = reco || recoFor(ctx, max);
+  if (!liste.length) return null;  // rien à recommander : pas de bloc vide ni de promesse
   return html`<div class="reco">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="spark"/> Recommandé pour toi</h2>${inOffres ? null : html`<button class="btn tiny ghost" onClick=${() => go('offres')}>Toutes les offres <${Icon} name="arrow" size=${14}/></button>`}</div>
-    <div class="offer-grid one">${liste.length ? liste.map(({ o, why }) => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} why=${why} onOpen=${() => openOffer(o.id)}/>`) : html`<${Empty} icon="feed" title="Pas encore d’offre pour ton niveau">Elles arrivent vite. En attendant, demande un conseil à un lauréat dans Mentorat.<//>`}</div>
+    <div class="offer-grid one">${liste.map(({ o, why }) => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} why=${why} onOpen=${() => openOffer(o.id)}/>`)}</div>
   </div>`;
 }
 
@@ -202,10 +210,19 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
   const [edit, setEdit] = useState(false);
   const [menu, setMenu] = useState(false);
   const [form, setForm] = useState(!!apply); // le formulaire de candidature est ouvert
-  if (!o) return html`<${Modal} title="Offre" onClose=${onClose}><p>Cette offre a été supprimée.</p><//>`;
+  const versOffres = label => html`<div class="row-end"><button class="btn primary" onClick=${() => { onClose(); ctx.go('offres'); }}>${label}</button></div>`;
+  if (!o) return html`<${Modal} title="Offre" onClose=${onClose}><p>Cette offre n’est plus disponible, ou elle ne t’est pas destinée.</p>${versOffres('Voir les offres')}<//>`;
   if (edit) return html`<${OfferComposer} ctx=${ctx} offer=${o} onClose=${() => setEdit(false)}/>`;
   const author = store.byId('profiles', o.author_id);
   const apps = data.applications.filter(a => a.offer_id === o.id);
+  // Un lien partagé vers l'offre d'une autre année : un mot doux, et ses propres offres (un étudiant ne voit que son année)
+  if (me.role === 'etudiant' && !mine && !apps.some(a => a.student_id === me.id)) {
+    const n = niveauOf(me, ctx.saison);
+    if (forLaureats(o) || !(o.annees || []).includes(n)) {
+      const pour = forLaureats(o) ? 'Cette offre est réservée aux lauréats.' : `${`Cette offre est pour les ${(o.annees || []).map(a => NIVEAUX[a]?.short).filter(Boolean).join(', ') || 'autres années'}.`}`;
+      return html`<${Modal} title="Offre" onClose=${onClose}><p>${pour}</p><p class="muted">${NIVEAUX[n]?.short ? `Voici celles de ta ${NIVEAUX[n].short}.` : 'Voici les tiennes.'}</p>${versOffres('Voir mes offres')}<//>`;
+    }
+  }
   const comments = data.comments.filter(c => c.offer_id === o.id);
   const candidat = peutPostulerA(o, me, ctx.saison);
   const myApp = candidat ? apps.find(a => a.student_id === me.id) : null;
@@ -561,7 +578,16 @@ addAR({
   'Les étudiants concernés la voient déjà dans « Pour moi ». Merci d’ouvrir la porte à un étudiant de l’école !': 'يراه الطلبة المعنيون الآن في «لي». شكرًا لأنك تفتح الباب لطالب من المدرسة!',
   'Voir mon offre': 'مشاهدة عرضي',
   'peut te recommander': 'يمكنه أن يزكّيك',
+  'Le réseau vient d’ouvrir. Dis aux lauréats ce que tu cherches : ils te répondent ici.': 'الشبكة فتحت للتو. قل للخريجين ما تبحث عنه: سيجيبونك هنا.',
+  'Le réseau vient d’ouvrir. Un lauréat peut déjà te conseiller en 20 minutes de visio.': 'الشبكة فتحت للتو. يمكن لخريج أن ينصحك منذ الآن في 20 دقيقة عبر الفيديو.',
+  'Le réseau vient d’ouvrir : la première offre peut être la tienne.': 'الشبكة فتحت للتو: يمكن أن يكون العرض الأول عرضك.',
+  'Change la recherche ou les filtres.': 'غيّر البحث أو المرشحات.',
+  'Cette offre n’est plus disponible, ou elle ne t’est pas destinée.': 'لم يعد هذا العرض متاحًا، أو أنه غير موجّه لك.',
+  'Cette offre est réservée aux lauréats.': 'هذا العرض مخصص للخريجين.', 'Voici les tiennes.': 'إليك عروضك.', 'Voir mes offres': 'عرض عروضي',
 }, [
+  [/^Pas encore d’offre pour ta (.+)$/, a => `لا عروض بعد لـ${a}`],
+  [/^Cette offre est pour les (.+)\.$/, a => `هذا العرض موجّه لـ${a}.`],
+  [/^Voici celles de ta (.+)\.$/, a => `إليك عروض ${a}.`],
   [/^Les autres offres de (.+)$/, a => `عروض أخرى لـ${a}`],
   [/^Partagée par ([^,]+), qui peut te recommander$/, n => `نشره ${n}، ويمكنه أن يزكّيك`],
   [/^Partagée par ([^,]+), qui reçoit ta candidature et te répond ici$/, n => `نشره ${n}، وهو من يتلقى ترشيحك ويجيبك هنا`],

@@ -34,10 +34,10 @@ test('notifications Phase 3 : textes fr / ar, liens', () => {
   assert.equal(e.title, 'À l’agenda : Forum ENSAM Entreprises');
   assert.match(e.body, /^jeudi 12 novembre à 09:00 · Amphi A$/);
   assert.equal(e.url, `${SITE}#reseau/agenda`);
-  assert.equal(t('evenement', { titre: 'Atelier' }).body, 'Nouvel événement de l’école.');
+  assert.equal(t('evenement', { titre: 'Atelier' }).body, 'Nouvel événement.');
   assert.equal(t('evenement_annule', { titre: 'Atelier CV' }).body, 'Atelier CV');
-  assert.equal(t('enquete', { vague: 12 }).body, '12 mois après ton diplôme : 2 minutes pour aider l’école et les promos suivantes.');
-  assert.equal(t('enquete', { vague: 99 }).body, '6 mois après ton diplôme : 2 minutes pour aider l’école et les promos suivantes.');
+  assert.equal(t('enquete', { vague: 12 }).body, '12 mois après ton diplôme : 2 minutes pour aider les promos suivantes.');
+  assert.equal(t('enquete', { vague: 99 }).body, '6 mois après ton diplôme : 2 minutes pour aider les promos suivantes.');
   assert.equal(t('enquete', {}).url, `${SITE}#enquete`);
   // Arabe : contenu des membres isolé
   const a = t('contact_demande', { nom: 'Salma' }, 'ar');
@@ -159,7 +159,7 @@ test('résumé : agenda, enquête, coordonnées, CV à relire, signalements', ()
   assert.equal(jd.enquete, 6);
   const m = N.rendreResume(jd, 'fr', SITE, uid(99));
   assert.equal(m.sujet, 'Enquête d’insertion : où en es-tu six mois après ton diplôme ? · Réseau ENSAM');
-  assert.ok(m.html.includes(`${SITE}#enquete`) && m.html.includes('À l’agenda de l’école'));
+  assert.ok(m.html.includes(`${SITE}#enquete`) && m.html.includes('À l’agenda du réseau'));
   // Réponse déjà donnée : plus d'enquête
   B.enquetes = [{ user_id: uid(70), vague: 6 }];
   assert.equal(N.resumeDe(jd && N.indexer(B, NOW).profils.get(uid(70)), N.indexer(B, NOW)).enquete, 0);

@@ -45,7 +45,7 @@ export function useStatsInsertion(store, dep) {
 addAR({
   'Enquête d’insertion': 'استطلاع الإدماج المهني',
   'Où en es-tu aujourd’hui ?': 'أين وصلت اليوم؟',
-  'Deux minutes pour aider l’école à suivre chaque promo, et les étudiants à se projeter. Tes réponses restent confidentielles : seuls des chiffres agrégés sont publiés, jamais en dessous de 5 réponses.': 'دقيقتان لمساعدة المدرسة على تتبع كل دفعة، ومساعدة الطلبة على تصور مستقبلهم. أجوبتك سرية: لا تُنشر إلا أرقام مجمّعة، وأبداً تحت 5 أجوبة.',
+  'Deux minutes pour suivre chaque promo jusqu’au premier emploi, et aider les étudiants à se projeter. Tes réponses restent confidentielles : seuls des chiffres agrégés sont publiés, jamais en dessous de 5 réponses.': 'دقيقتان لتتبع كل دفعة حتى أول عمل، ومساعدة الطلبة على تصور مستقبلهم. أجوبتك سرية: لا تُنشر إلا أرقام مجمّعة، وأبداً تحت 5 أجوبة.',
   'Ta situation': 'وضعيتك',
   'Ton poste': 'منصبك',
   'Ton avis': 'رأيك',
@@ -71,7 +71,7 @@ addAR({
   'Peu satisfait(e)': 'قليل الرضا',
   'Satisfait(e)': 'راضٍ',
   'Très satisfait(e)': 'راضٍ جداً',
-  'Un mot pour l’école (facultatif)': 'كلمة للمدرسة (اختياري)',
+  'Un mot pour le réseau (facultatif)': 'كلمة للشبكة (اختياري)',
   'Seule l’administration le lit.': 'لا تقرؤها إلا الإدارة.',
   'Établissement, master, doctorat…': 'المؤسسة، الماستر، الدكتوراه…',
   'Mettre aussi à jour mon profil (entreprise, poste, ville, pays)': 'تحديث ملفي أيضاً (المقاولة، المنصب، المدينة، البلد)',
@@ -80,7 +80,7 @@ addAR({
   'Choisis ta situation pour continuer.': 'اختر وضعيتك للمتابعة.',
   'Merci, ta réponse est enregistrée.': 'شكراً، تم حفظ جوابك.',
   'Merci !': 'شكراً!',
-  'Ta réponse aide l’école à suivre l’insertion de chaque promo, et les étudiants à se projeter.': 'جوابك يساعد المدرسة على تتبع إدماج كل دفعة، ويساعد الطلبة على تصور مستقبلهم.',
+  'Ta réponse aide à suivre l’insertion de chaque promo, et les étudiants à se projeter.': 'جوابك يساعد على تتبع إدماج كل دفعة، ويساعد الطلبة على تصور مستقبلهم.',
   'Ta réponse est enregistrée.': 'تم حفظ جوابك.',
   'Réponse mise à jour.': 'تم تحديث الجواب.',
   'Modifier ma réponse': 'تعديل جوابي',
@@ -102,7 +102,7 @@ addAR({
   'des diplômés en poste': 'من الخريجين العاملين',
   'formation reçue, sur 5': 'التكوين المتلقى، من 5',
   'Masquer pour 7 jours': 'إخفاء لمدة 7 أيام',
-  '2 minutes pour aider l’école et les promos suivantes.': 'دقيقتان لمساعدة المدرسة والدفعات القادمة.',
+  '2 minutes pour aider les promos suivantes.': 'دقيقتان لمساعدة الدفعات القادمة.',
   'Cette plateforme': 'هذه المنصة',
   'Suite au stage ou PFE': 'بعد التدريب أو مشروع التخرج',
   'Candidature spontanée': 'ترشيح تلقائي',
@@ -116,7 +116,7 @@ addAR({
   'Je préfère ne pas dire': 'أفضل عدم الإفصاح',
 }, [
   [/^Enquête (6|12) mois après le diplôme$/, v => `استطلاع ${mois(v)} بعد التخرج`],
-  [/^Enquête (6|12) mois après le diplôme : 2 minutes pour aider l’école et les promos suivantes\.$/, v => `استطلاع ${mois(v)} بعد التخرج: دقيقتان لمساعدة المدرسة والدفعات القادمة.`],
+  [/^Enquête (6|12) mois après le diplôme : 2 minutes pour aider les promos suivantes\.$/, v => `استطلاع ${mois(v)} بعد التخرج: دقيقتان لمساعدة الدفعات القادمة.`],
   [/^Promo (\d{4}) · (6|12) mois après le diplôme$/, (p, v) => `دفعة ${p} · ${mois(v)} بعد التخرج`],
   [/^(\d+) mois$/, n => (+n === 1 ? 'شهر واحد' : +n === 2 ? 'شهران' : +n <= 10 ? `${n} أشهر` : `${n} شهراً`)],
   [/^(\d+,\d+) mois$/, n => `${n} أشهر`],
@@ -185,7 +185,7 @@ export function EnquetePage(ctx) {
     const vague = edit ? edit.vague : due.vague;
     return html`<section class="page narrow enquete">
       <header class="page-head"><div><p class="eyebrow">Promo ${me.promo} · ${vague} mois après le diplôme</p><h1>Où en es-tu aujourd’hui ?</h1></div></header>
-      <p class="muted">Deux minutes pour aider l’école à suivre chaque promo, et les étudiants à se projeter. Tes réponses restent confidentielles : seuls des chiffres agrégés sont publiés, jamais en dessous de 5 réponses.</p>
+      <p class="muted">Deux minutes pour suivre chaque promo jusqu’au premier emploi, et aider les étudiants à se projeter. Tes réponses restent confidentielles : seuls des chiffres agrégés sont publiés, jamais en dessous de 5 réponses.</p>
       <${EnqueteForm} ctx=${ctx} vague=${vague} initial=${edit} key=${edit?.id || 'new' + vague}
         onDone=${() => { setEdit(null); setMerci(true); window.scrollTo?.(0, 0); }} onCancel=${edit ? () => setEdit(null) : null}/>
     </section>`;
@@ -197,7 +197,7 @@ export function EnquetePage(ctx) {
     <header class="page-head"><div><p class="eyebrow">Enquête d’insertion</p><h1>${mine.length ? 'Merci !' : 'Pas d’enquête ouverte pour ta promo en ce moment'}</h1></div></header>
     ${mine.length ? html`<div class="enq-ok"><span class="obj-ico"><${Icon} name="check" size=${24}/></span><div>
         <h2>${merci ? 'Merci, ta réponse est enregistrée.' : 'Ta réponse est enregistrée.'}</h2>
-        <p class="muted">Ta réponse aide l’école à suivre l’insertion de chaque promo, et les étudiants à se projeter.</p></div></div>`
+        <p class="muted">Ta réponse aide à suivre l’insertion de chaque promo, et les étudiants à se projeter.</p></div></div>`
       : html`<div class="panel">${prochaine || ouverte ? html`<p>Elle s’adresse aux diplômés : une première fois 6 mois après le diplôme (de janvier à juin), puis 12 mois après (de juillet à mars). Tu recevras un email le moment venu.</p>
         ${!ouverte && prochaine ? html`<p class="small muted">La prochaine s’ouvre en ${moisAn(prochaine)}.</p>` : null}`
         : html`<p>L’enquête suit chaque promo 6 mois puis 12 mois après le diplôme : pour ta promo, ces deux étapes sont passées. Garder ton profil à jour (entreprise, poste, ville) aide tout autant les étudiants.</p>`}</div>`}
@@ -304,7 +304,7 @@ function EnqueteForm({ ctx, vague, initial, onDone, onCancel }) {
 
     ${f.situation ? html`<div class="panel enq-step"><h2><span class="n">${n++}</span> Ton avis</h2>
       <${Note} id="enq-satis" label="Es-tu satisfait(e) de ta formation à l’ENSAM ?" labels=${SATIS} value=${f.satisfaction} onChange=${v => set('satisfaction', v)}/>
-      <${Field} label="Un mot pour l’école (facultatif)" hint="Seule l’administration le lit."><textarea id="enq-com" dir="auto" rows="3" maxlength="600" value=${f.commentaire} onInput=${e => set('commentaire', e.target.value)}></textarea><//>
+      <${Field} label="Un mot pour le réseau (facultatif)" hint="Seule l’équipe du réseau le lit."><textarea id="enq-com" dir="auto" rows="3" maxlength="600" value=${f.commentaire} onInput=${e => set('commentaire', e.target.value)}></textarea><//>
     </div>` : null}
 
     <div class="row-end">${onCancel ? html`<button type="button" class="btn ghost" onClick=${onCancel}>Annuler</button>` : null}
@@ -346,7 +346,7 @@ export function EnqueteCard({ ctx }) {
   if (!due || (off && Date.now() - off < 7 * 864e5)) return null;
   return html`<div class="enq-card" role="region" aria-label="Enquête d’insertion">
     <span class="obj-ico brass"><${Icon} name="chart" size=${20}/></span>
-    <div class="grow"><strong>Enquête ${due.vague} mois après le diplôme</strong><span class="small muted">2 minutes pour aider l’école et les promos suivantes.</span></div>
+    <div class="grow"><strong>Enquête ${due.vague} mois après le diplôme</strong><span class="small muted">2 minutes pour aider les promos suivantes.</span></div>
     <button class="btn primary small" id="enq-go" onClick=${() => go('enquete')}>Répondre</button>
     <button class="icon-btn small" aria-label="Masquer pour 7 jours" title="Masquer pour 7 jours" onClick=${() => setOff(Date.now())}><${Icon} name="x" size=${16}/></button>
   </div>`;

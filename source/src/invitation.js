@@ -30,15 +30,22 @@ export const roleDePromo = (promo, saison = seasonOf()) => (promo > saison ? 'et
 
 export const lienInvitation = (promo, base = location.origin + location.pathname) => `${base}?promo=${promo}`;
 
-// Message prêt à coller dans le groupe WhatsApp de la promo
+// Message prêt à coller dans le groupe WhatsApp de la promo. Une seule chose à faire en arrivant :
+// un étudiant de 3A à 5A dit aux lauréats ce qu'il cherche ; en 1re et 2e année, il demande un conseil ;
+// un lauréat publie une offre ou aide un étudiant.
 export function messageInvitation(promo, langue, lien, saison = seasonOf()) {
   const etu = roleDePromo(promo, saison) === 'etudiant';
-  const fr = etu
-    ? `Salut la promo ${promo} 👋\nOn lance le Réseau ENSAM Meknès : une plateforme gratuite où les lauréats de l'école partagent des offres de stage, de PFE et d'emploi, et proposent du mentorat (CV, entretiens, stage à l'étranger).\nInscris-toi en une minute avec ce lien, ta promo est déjà remplie :\n${lien}\nPartage-le avec tes camarades 🙏`
-    : `Salut la promo ${promo} 👋\nOn lance le Réseau ENSAM Meknès, la plateforme des lauréats et des étudiants de l'école.\nTu peux y partager une offre de stage ou d'emploi en 30 secondes, aider un étudiant (CV, entretien, PFE) et retrouver les lauréats de ta promo et de ta filière.\nInscris-toi avec ce lien, ta promo est déjà remplie :\n${lien}\nMerci de le faire passer aux lauréats de ta promo 🙏`;
-  const ar = etu
-    ? `مرحبا دفعة ${promo} 👋\nأطلقنا «شبكة ENSAM مكناس»: منصة مجانية يشارك فيها خريجو المدرسة عروض التداريب ومشاريع نهاية الدراسة والوظائف، ويقدمون الإرشاد (السيرة الذاتية، المقابلات، التدريب بالخارج).\nسجّل في دقيقة واحدة عبر هذا الرابط، دفعتك معبأة مسبقًا:\n${lien}\nشارك الرابط مع زملائك 🙏`
-    : `مرحبا دفعة ${promo} 👋\nأطلقنا «شبكة ENSAM مكناس»، منصة خريجي المدرسة وطلبتها.\nيمكنك نشر عرض تدريب أو عمل في 30 ثانية، ومساعدة طالب (سيرة ذاتية، مقابلة، مشروع نهاية الدراسة)، والتواصل مع خريجي دفعتك وشعبتك.\nسجّل عبر هذا الرابط، دفعتك معبأة مسبقًا:\n${lien}\nشكرًا على مشاركته مع خريجي دفعتك 🙏`;
+  const demande = etu && niveauOf({ promo }, saison) >= 3;
+  const fr = !etu
+    ? `Salut la promo ${promo} 👋\nLe Réseau ENSAM Meknès est ouvert : la plateforme gratuite des lauréats et des étudiants de l'ENSAM Meknès.\nUn étudiant de ta filière cherche peut-être un stage ou un PFE chez toi : tu peux publier une offre en 30 secondes, ou lui donner 20 minutes de conseil, quand tu as le temps.\nInscris-toi avec ce lien, ta promo (${promo}) est déjà indiquée :\n${lien}\nMerci de le faire passer aux lauréats de ta promo 🙏`
+    : demande
+      ? `Salut la promo ${promo} 👋\nLe Réseau ENSAM Meknès est ouvert : une plateforme gratuite entre étudiants et lauréats de l'ENSAM Meknès.\nTu cherches un stage ou un PFE ? Dis aux lauréats de ta filière ce que tu cherches, CV joint : ceux qui peuvent t'aider te répondent sur la plateforme. Tu peux aussi demander 20 minutes de conseil (CV, entretien, stage à l'étranger).\nInscris-toi en une minute avec ce lien, ta promo (${promo}) est déjà indiquée :\n${lien}\nPartage-le avec tes camarades 🙏`
+      : `Salut la promo ${promo} 👋\nLe Réseau ENSAM Meknès est ouvert : une plateforme gratuite entre étudiants et lauréats de l'ENSAM Meknès.\nUne question sur la filière à choisir, les stages ou la vie après l'école ? Un lauréat te répond en 20 minutes de visio.\nInscris-toi en une minute avec ce lien, ta promo (${promo}) est déjà indiquée :\n${lien}\nPartage-le avec tes camarades 🙏`;
+  const ar = !etu
+    ? `مرحبا دفعة ${promo} 👋\n«شبكة ENSAM مكناس» مفتوحة الآن: المنصة المجانية لخريجي وطلبة ENSAM مكناس.\nربما يبحث طالب من شعبتك عن تدريب أو مشروع نهاية الدراسة عندك: يمكنك نشر عرض في 30 ثانية، أو منحه 20 دقيقة من النصح متى توفّر لك الوقت.\nسجّل عبر هذا الرابط، دفعتك (${promo}) محدَّدة مسبقًا:\n${lien}\nشكرًا على مشاركته مع خريجي دفعتك 🙏`
+    : demande
+      ? `مرحبا دفعة ${promo} 👋\n«شبكة ENSAM مكناس» مفتوحة الآن: منصة مجانية تجمع طلبة وخريجي ENSAM مكناس.\nتبحث عن تدريب أو مشروع نهاية الدراسة؟ قل لخريجي شعبتك ما تبحث عنه مع سيرتك الذاتية: من يستطيع مساعدتك يجيبك على المنصة. يمكنك أيضًا طلب 20 دقيقة من النصح (السيرة الذاتية، المقابلة، التدريب بالخارج).\nسجّل في دقيقة واحدة عبر هذا الرابط، دفعتك (${promo}) محدَّدة مسبقًا:\n${lien}\nشارك الرابط مع زملائك 🙏`
+      : `مرحبا دفعة ${promo} 👋\n«شبكة ENSAM مكناس» مفتوحة الآن: منصة مجانية تجمع طلبة وخريجي ENSAM مكناس.\nسؤال عن الشعبة التي ستختارها أو التداريب أو الحياة بعد المدرسة؟ يجيبك خريج في 20 دقيقة عبر الفيديو.\nسجّل في دقيقة واحدة عبر هذا الرابط، دفعتك (${promo}) محدَّدة مسبقًا:\n${lien}\nشارك الرابط مع زملائك 🙏`;
   return langue === 'ar' ? ar : langue === 'fr' ? fr : `${fr}\n\n${ar}`;
 }
 
@@ -51,7 +58,7 @@ addAR({
   'Lien copié.': 'تم نسخ الرابط.', 'Message copié : colle-le dans le groupe WhatsApp.': 'تم نسخ الرسالة: الصقها في مجموعة واتساب.',
   'Copie impossible ici : sélectionne le texte et copie-le.': 'النسخ غير ممكن هنا: حدّد النص وانسخه.',
   'Message pour la promo': 'رسالة للدفعة', 'Promo entre 1990 et 2040.': 'الدفعة بين 1990 و2040.',
-  'Ta promo est déjà remplie : crée ton compte, puis vérifie tes informations.': 'دفعتك معبأة مسبقًا: أنشئ حسابك، ثم تحقق من معلوماتك.',
+  'Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.': 'دفعتك محدَّدة مسبقًا: أنشئ حسابك، ثم تحقق من معلوماتك.',
 }, [
   [/^Bienvenue, promo (\d{4}) !$/, y => `مرحبا بك، دفعة ${y}!`],
 ]);

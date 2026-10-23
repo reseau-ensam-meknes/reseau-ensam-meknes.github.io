@@ -30,7 +30,7 @@ addAR({
   'Rempli :': 'تم ملء:', 'Vérifie avant d’enregistrer.': 'تحقق قبل الحفظ.',
   'Rien de reconnu : colle tout le texte du PDF LinkedIn.': 'لم يتم التعرف على شيء: الصق كل نص ملف PDF من LinkedIn.',
   'Rien de nouveau : les champs étaient déjà remplis.': 'لا جديد: الحقول كانت معبأة من قبل.',
-  'Inscris-toi avec ton email de l’école.': 'سجّل باستعمال بريد المدرسة.',
+  'Inscris-toi avec ton email de l’école.': 'سجّل باستعمال بريد المدرسة.', 'recruté': 'موظَّف',
   'Les comptes étudiants utilisent l’email de l’école :': 'تستعمل حسابات الطلبة بريد المدرسة:',
   'Ton compte actuel n’en fait pas partie :': 'حسابك الحالي ليس منها:',
   'Me déconnecter et recommencer': 'تسجيل الخروج وإعادة التسجيل',
@@ -39,7 +39,7 @@ addAR({
   'Visibles seulement par les membres que tu acceptes, et par le lauréat à qui tu envoies une candidature.': 'لا يراها إلا الأعضاء الذين تقبلهم، والخريج الذي ترسل إليه ترشيحك.',
   'Téléphone': 'الهاتف', 'Email de contact': 'بريد التواصل', 'Autre (facultatif)': 'وسيلة أخرى (اختياري)', 'Ex. WhatsApp, plutôt le soir': 'مثال: واتساب، في المساء أفضل',
   'prenom.nom@…': 'prenom.nom@…', 'https://…': 'https://…',
-  'Ton badge « Lauréat vérifié » arrive quand l’administration, ou deux lauréats vérifiés de ta promo, confirment ton profil.': 'تحصل على شارة «خريج موثَّق» عندما تؤكد الإدارة ملفك، أو خريجان موثَّقان من دفعتك.',
+  'Ton badge « Lauréat vérifié » arrive quand l’équipe du réseau, ou deux lauréats vérifiés de ta promo, confirment ton profil.': 'تحصل على شارة «خريج موثَّق» عندما يؤكد فريق الشبكة ملفك، أو خريجان موثَّقان من دفعتك.',
   'Voir le CV': 'عرض السيرة الذاتية',
 });
 
@@ -57,7 +57,7 @@ export function EntraidePage(ctx) {
   const open = id => go('reseau/entraide/' + id);
   if (q) return html`<${QuestionView} ctx=${ctx} q=${q} onBack=${() => go('reseau/entraide')}/>`;
   return html`<div class="sub-page">
-    <div class="toolbar"><p class="muted small grow">Les questions des étudiants, les réponses des anciens. Une question sur une entreprise ou un pays arrive directement aux lauréats concernés.</p><button class="btn primary small" onClick=${() => setAsk(true)}><${Icon} name="plus" size=${16}/> Poser une question</button></div>
+    <div class="toolbar"><p class="muted small grow">Les questions des étudiants, les réponses des lauréats. Une question sur une entreprise ou un pays arrive directement aux lauréats concernés.</p><button class="btn primary small" onClick=${() => setAsk(true)}><${Icon} name="plus" size=${16}/> Poser une question</button></div>
     <div class="chips">${pourMoi.length ? html`<button class=${'chip' + (cat === 'moi' ? ' on' : '')} onClick=${() => setCat(cat === 'moi' ? '' : 'moi')}><${Icon} name="send" size=${13}/> Pour toi <span class="count">${pourMoi.length}</span></button>` : null}${['', ...CATEGORIES_Q].map(c => html`<button class=${'chip' + (cat === c ? ' on' : '')} onClick=${() => setCat(c)}>${c || 'Toutes'}</button>`)}</div>
     <div class="list">${qs.length ? qs.map(q => {
       const ans = data.answers.filter(a => a.question_id === q.id); const au = store.byId('profiles', q.author_id);
@@ -183,7 +183,8 @@ export function ProfileModal({ ctx, p: p0, onClose, onAskMentor }) {
   const masques = groupesMasques(store, p1);
   const p = masques.length ? { ...p1, ...Object.fromEntries(masques.flatMap(g => VIS_CHAMPS[g].map(c => [c, null]))) } : p1;
   const s = scores.get(p.id);
-  const badges = badgesOf(s, p, { star: ctx.starId, fondateurs: ctx.fondateurs });
+  // Un étudiant ne voit ni points ni classement : seulement les badges qui disent à qui il peut faire confiance
+  const badges = badgesOf(s, p, { star: ctx.starId, fondateurs: ctx.fondateurs }).filter(b => me.role !== 'etudiant' || ['verifie', 'fondateur', 'mentor', 'reactif'].includes(b.id));
   const helped = data.placements.filter(x => x.laureat_id === p.id && x.status === 'confirme').length;
   const st = p.role === 'etudiant' ? statutOf(data, p, saison) : null;
   return html`<${Modal} title="Profil" onClose=${onClose}>
@@ -196,7 +197,7 @@ export function ProfileModal({ ctx, p: p0, onClose, onAskMentor }) {
       ${p.role === 'laureat' && p.en_recherche ? html`<p class="small"><span class="state-pill s-recherche">Cherche un emploi</span>${p.disponibilite ? html` <span translate="no" dir="auto">${p.disponibilite}</span>` : null}</p>` : null}
       ${p.bio ? html`<p>${p.bio}</p>` : null}
       ${(p.competences || []).length ? html`<p class="offer-target">${p.competences.map(c => html`<span class="mini">${c}</span>`)}</p>` : null}
-      ${p.role !== 'etudiant' ? html`<div class="profile-stats"><span><b class="mono">${s?.points || 0}</b> points</span><span><b class="mono">${helped}</b> recrutés</span><span><b class="mono">${s?.mentorats || 0}</b> mentorats</span><span><b class="mono">${s?.offres || 0}</b> offres</span></div>` : null}
+      ${p.role !== 'etudiant' && me.role !== 'etudiant' ? html`<div class="profile-stats"><span><b class="mono">${s?.points || 0}</b> points</span><span><b class="mono">${helped}</b> ${helped === 1 ? 'recruté' : 'recrutés'}</span><span><b class="mono">${s?.mentorats || 0}</b> mentorats</span><span><b class="mono">${s?.offres || 0}</b> offres</span></div>` : null}
       ${badges.length ? html`<div class="badge-row">${badges.map(b => html`<span class="mini badge-mini" title=${b.desc}><${Icon} name="star" size=${12}/> ${b.nom}</span>`)}</div>` : null}
       ${(p.linkedin || p.cv_path || p.cv_url) ? html`<dl class="offer-more">${p.linkedin ? html`<div><dt>LinkedIn</dt><dd><a href=${p.linkedin.startsWith('http') ? p.linkedin : 'https://' + p.linkedin} target="_blank" rel="noopener" dir="ltr" translate="no">${p.linkedin}</a></dd></div>` : null}
         ${p.cv_path || p.cv_url ? html`<div><dt>CV</dt><dd><${CvButton} ctx=${ctx} p=${p} small/></dd></div>` : null}</dl>` : null}
@@ -432,7 +433,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onboarding }) {
       <${Field} label="Autre (facultatif)"><input id="pf-contact" maxlength="200" value=${co.contact} onInput=${e => setC('contact', e.target.value)} placeholder="Ex. WhatsApp, plutôt le soir"/><//>
     </fieldset>
     <${VisibiliteFields} role=${f.role} value=${vis} onChange=${setVis}/>` : null}
-    ${f.role === 'laureat' && !initial?.verified ? html`<p class="small muted">${v3 ? 'Ton badge « Lauréat vérifié » arrive quand l’administration, ou deux lauréats vérifiés de ta promo, confirment ton profil.' : 'Ton badge « Lauréat vérifié » sera ajouté par l’administration de l’école.'}${n ? html` <b>${n}/2</b>` : null}</p>` : null}`}
+    ${f.role === 'laureat' && !initial?.verified ? html`<p class="small muted">${v3 ? 'Ton badge « Lauréat vérifié » arrive quand l’équipe du réseau, ou deux lauréats vérifiés de ta promo, confirment ton profil.' : 'Ton badge « Lauréat vérifié » sera ajouté par l’équipe du réseau.'}${n ? html` <b>${n}/2</b>` : null}</p>` : null}`}
     ${court ? html`<div class="pf-plus"><button type="button" class="btn ghost small" id="pf-plus" onClick=${() => setDetails(true)}><${Icon} name="plus" size=${15}/> Ajouter plus de détails (facultatif)</button>
       <p class="small muted">Ville, bio, compétences, coordonnées : tu pourras les compléter plus tard dans « Mon profil ».</p></div>` : null}
     <div class="row-end"><button class="btn primary" disabled=${!ok}>${onboarding ? 'Rejoindre la communauté' : 'Enregistrer'}</button></div>
