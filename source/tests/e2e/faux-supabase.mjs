@@ -11,7 +11,7 @@ export const UID = '00000000-0000-4000-8000-0000000000a1';
 
 // fondateurs : la réponse de fondateurs_publics() (absente : la base n'est pas à jour), ou (membre) => réponse ;
 // photo : l'image servie par les liens temporaires du stockage (photos des fondateurs)
-export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 19, promos: 14 }, reglages = [{ cle: 'domaines_ecole', valeur: ['ensam-umi.ac.ma'] }], offres = [], partagees = {}, profils = [], fondateurs = null, photo = null } = {}) {
+export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 19, promos: 14 }, reglages = [{ cle: 'domaines_ecole', valeur: ['ensam-umi.ac.ma'] }], offres = [], partagees = {}, profils = [], fondateurs = null, photo = null, ambassadeurs = null, chiffresPromo = null } = {}) {
   let port; const appels = []; const meta = {}; const inscrits = [];
   const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' };
   const json = (r, code, body) => { r.writeHead(code, { 'content-type': 'application/json', ...cors }); r.end(body === undefined ? '' : JSON.stringify(body)); };
@@ -61,6 +61,19 @@ export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 1
           return x ? json(r, 200, x) : json(r, 404, { code: 'PGRST202', message: 'Could not find the function' });
         }
         if (u === '/sb/storage/v1/object/sign/photos' && q.method === 'POST') return json(r, 200, (corps?.paths || []).map(x => ({ path: x, signedURL: `/object/sign/photos/${x}?token=t`, error: null })));
+        // Ambassadeurs de promo : la table (null : base pas encore à jour), la proposition à l'ouverture, les chiffres
+        const ambs = typeof ambassadeurs === 'function' ? ambassadeurs() : ambassadeurs;
+        if (ambs && u === '/sb/rest/v1/rpc/ambassadeurs_proposer') return json(r, 200, 0);
+        if (ambs && u === '/sb/rest/v1/rpc/chiffres_ma_promo') return chiffresPromo ? json(r, 200, chiffresPromo) : json(r, 200, null);
+        if (u === '/sb/rest/v1/ambassadeurs') {
+          if (!ambs) return json(r, 404, { code: 'PGRST205', message: 'Could not find the table public.ambassadeurs' });
+          if (q.method === 'GET') return json(r, 200, ambs);
+          if (q.method === 'PATCH') {
+            const row = ambs.find(x => x.id === (url.searchParams.get('id') || '').replace(/^eq\./, ''));
+            if (row) Object.assign(row, corps || {}, { repondu_at: new Date().toISOString() });
+            return row ? json(r, 200, /vnd\.pgrst\.object/.test(q.headers.accept || '') ? row : [row]) : json(r, 406, { code: 'PGRST116', message: 'no rows' });
+          }
+        }
         if (u.startsWith('/sb/rest/v1/rpc/')) return json(r, 404, { code: 'PGRST202', message: 'Could not find the function' });
         if (u === '/sb/rest/v1/reglages') return json(r, 200, reglages);
         if (u === '/sb/rest/v1/offers' && q.method === 'GET') return json(r, 200, offres);

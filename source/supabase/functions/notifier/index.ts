@@ -640,12 +640,19 @@ export const pointsRecrutement = (p: { type?: string | null; pays?: string | nul
 export type Evenement = { id: string; titre: string; debut: string; lieu?: string | null; public: string; annule?: boolean };
 export type Relecture = { id: string; student_id: string; reviewer_id: string | null; status: string };
 export type DemandeContact = { id: string; demandeur_id: string; cible_id: string; status: string };
+// Ambassadeur de promo et les chiffres de sa promo pour un mois (chiffres_ambassadeurs, schema.sql)
+export type ChiffresPromo = {
+  user_id: string; promo: number; filiere: string;
+  chiffres: { inscrits: number; nouveaux: number; demandes: number; demandes_mois: number; stages: number; stages_mois: number };
+};
 export type Brut = {
   profils: Profil[]; offres: Offre[]; candidatures: Candidature[]; invitations: Invitation[]; mentorats: Mentorat[];
   questions: Question[]; reponses: Reponse[]; parrainages: Parrainage[]; cafes: Cafe[]; placements: Placement[];
   // Phase 3 (absents tant que la base n'est pas à jour)
   evenements?: Evenement[]; enquetes?: { user_id: string; vague: number }[]; relectures?: Relecture[];
   demandesContact?: DemandeContact[]; signalements?: number;
+  // Ambassadeurs : seulement le premier résumé du mois (jours 1 à 7), avec les chiffres du mois précédent
+  ambassadeurs?: ChiffresPromo[]; moisAmbassadeurs?: string;
 };
 
 // Nom d'entreprise comparable, comme cle_entreprise() en SQL : « Renault Group Maroc » -> « renault »
@@ -681,6 +688,7 @@ export type Donnees = {
   parrainages: Parrainage[]; cafes: Cafe[]; placementsEtudiant: Map<string, Placement[]>; placementsLaureat: Map<string, Placement[]>;
   enAttente: number; talents: Talent[]; arrivees: Profil[];
   evenements: Evenement[]; enquetesFaites: Set<string>; relectures: Relecture[]; contactsEnAttente: Map<string, number>; signalements: number;
+  ambassadeurs?: Map<string, ChiffresPromo>; moisAmbassadeurs?: string;
 };
 
 export function indexer(b: Brut, date: Date): Donnees {
@@ -737,7 +745,16 @@ export function indexer(b: Brut, date: Date): Donnees {
     relectures: (b.relectures || []).filter(x => x.status === 'demandee'),
     contactsEnAttente: (() => { const m = new Map<string, number>(); for (const x of b.demandesContact || []) if (x.status === 'envoyee') m.set(x.cible_id, (m.get(x.cible_id) || 0) + 1); return m; })(),
     signalements: b.signalements || 0,
+    ambassadeurs: new Map((b.ambassadeurs || []).filter(x => x && x.user_id && x.chiffres).map(x => [x.user_id, x])),
+    moisAmbassadeurs: b.moisAmbassadeurs,
   };
+}
+
+// Le premier résumé du mois (il part une fois par semaine : les jours 1 à 7 n'en voient qu'un) porte les chiffres du
+// mois précédent : son premier jour (UTC), ou null les autres jours
+export function moisPrecedent(date: Date): string | null {
+  if (date.getUTCDate() > 7) return null;
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() - 1, 1)).toISOString();
 }
 
 // Vague de l'enquête d'insertion ouverte pour une promo (comme vague_ouverte() en SQL), ou 0
@@ -774,6 +791,8 @@ export type Resume = {
   enquete?: number; contacts?: number; relectures?: number;
   // Nouveaux de sa promo ou de sa filière (5 noms au plus) ; reseau : toutes les arrivées de la semaine
   arrivees?: { total: number; liste: Arrivee[]; reseau: { laureats: number; etudiants: number } };
+  // Ambassadeur de promo : les chiffres vrais de sa promo le mois dernier (mois : 0 à 11)
+  promo?: { promo: number; filiere: string; mois: number; inscrits: number; nouveaux: number; demandes: number; demandesMois: number; stages: number; stagesMois: number };
 };
 export type Arrivee = { nom: string; promo: number; niveau: number };
 
@@ -782,7 +801,7 @@ export function estVide(r: Resume): boolean {
     || r.questions.length || r.relances.length || r.offres.total || r.reponses.length || r.parrain || r.talents.total
     || r.ouvertes.total || r.impact.mercis || r.impact.recrutements || r.filleuls.length || r.cafes.length
     || r.admin.nonVerifies || r.admin.nouveaux || r.admin.enAttente || r.admin.signalements
-    || r.evenements?.length || r.enquete || r.contacts || r.relectures || r.arrivees?.total);
+    || r.evenements?.length || r.enquete || r.contacts || r.relectures || r.arrivees?.total || r.promo);
 }
 
 // Filières officielles (choix en 3A) groupées par parcours, et anciennes appellations des promos précédentes (même règle que logic.js)
@@ -884,6 +903,13 @@ export function resumeDe(p: Profil, d: Donnees): Resume | null {
     }),
     reseau: { laureats: autres.filter(x => x.role === 'laureat').length, etudiants: autres.filter(x => x.role === 'etudiant').length },
   };
+  // Ambassadeur de sa promo : ses chiffres du mois dernier, une fois par mois
+  const amb = d.ambassadeurs?.get(p.id);
+  if (amb && d.moisAmbassadeurs) {
+    const c = amb.chiffres;
+    r.promo = { promo: amb.promo, filiere: txt(amb.filiere), mois: new Date(d.moisAmbassadeurs).getUTCMonth(), inscrits: +c.inscrits || 0, nouveaux: +c.nouveaux || 0,
+      demandes: +c.demandes || 0, demandesMois: +c.demandes_mois || 0, stages: +c.stages || 0, stagesMois: +c.stages_mois || 0 };
+  }
 
   if (!laureat) {
     const niveau = niveauDe(p.promo, d.saison);
@@ -964,6 +990,9 @@ const BRUT: Fmt = { u: s => s, g: s => s, p: s => ` (${s})` };
 const HTML_AR: Fmt = { u: s => `<span dir="auto">${esc(s)}</span>`, g: s => `<strong dir="auto">${esc(s)}</strong>`, p: pastille };
 const BRUT_AR: Fmt = { u: s => `\u2068${s}\u2069`, g: s => `\u2068${s}\u2069`, p: s => ` (${s})` };
 const pl = (n: number, un: string, plusieurs: string) => `${n} ${n > 1 ? plusieurs : un}`;
+type PromoChiffres = NonNullable<Resume['promo']>;
+const MOIS_FR = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+const MOIS_AR = ['يناير', 'فبراير', 'مارس', 'أبريل', 'ماي', 'يونيو', 'يوليوز', 'غشت', 'شتنبر', 'أكتوبر', 'نونبر', 'دجنبر'];
 // Accord en arabe : 1, 2, 3 à 10, 11 et plus (comme arCount dans i18n-ar.js)
 const arN = (n: number, f: [string, string, string, string]) =>
   (n === 1 ? f[0] : n === 2 ? f[1] : n >= 3 && n <= 10 ? f[2] : f[3]).replace('{n}', String(n));
@@ -984,7 +1013,7 @@ const FR = {
     aFaire: 'À faire cette semaine', offres: 'Nouvelles offres pour toi', reponses: 'Réponses à tes questions', parrain: 'Ton parrain',
     cafes: 'Cafés ENSAM près de chez toi', talents: 'Alerte talents', ouvertes: 'Ils demandent de l’aide', impact: 'Ton impact cette semaine',
     filleul: 'Ton nouveau filleul', filleuls: 'Tes nouveaux filleuls', admin: 'Administration', agenda: 'À l’agenda du réseau', enquete: 'Enquête d’insertion',
-    arrivees: 'Nouveaux sur le réseau',
+    arrivees: 'Nouveaux sur le réseau', promo: 'Ta promo le mois dernier',
   },
   routes: {
     enquete: 'Répondre à l’enquête', 'reseau/agenda': 'Voir l’agenda', 'mentorat/cv': 'Voir les CV à relire',
@@ -1026,6 +1055,11 @@ const FR = {
     evenement: (f: Fmt, x: { titre: string; lieu: string }, q: string) => `${f.g(x.titre)} · ${q}${x.lieu ? ` · ${f.u(x.lieu)}` : ''}`,
     arriveesIntro: (f: Fmt, n: number, etu = false) => { const de = etu ? 'de ton année ou de ta filière' : 'de ta promo ou de ta filière'; return f.g(n > 1 ? `${n} membres ${de} ont rejoint le réseau cette semaine.` : `1 membre ${de} a rejoint le réseau cette semaine.`); },
     arrivee: (f: Fmt, x: Arrivee) => `${f.u(x.nom)} · ${x.niveau ? `${x.niveau}A` : `promo ${x.promo}`}`,
+    promoIntro: (f: Fmt, x: PromoChiffres) => f.g(`Promo ${x.promo} · ${x.filiere}, en ${MOIS_FR[x.mois]}`),
+    promoInscrits: (f: Fmt, x: PromoChiffres) => `${pl(x.inscrits, 'inscrit', 'inscrits')} sur le réseau${x.nouveaux ? `, dont ${x.nouveaux} ${x.nouveaux > 1 ? 'nouveaux' : 'nouveau'} ce mois-là` : ''}.`,
+    promoDemandes: (f: Fmt, x: PromoChiffres) => `${pl(x.demandesMois, 'demande pourvue', 'demandes pourvues')} ce mois-là (${x.demandes} en tout).`,
+    promoStages: (f: Fmt, x: PromoChiffres) => `${pl(x.stagesMois, 'stage ou emploi trouvé', 'stages et emplois trouvés')} ce mois-là (${x.stages} en tout).`,
+    promoMerci: () => 'Merci de faire vivre ta promo : son lien d’inscription et les réussites à partager sont sur ton accueil.',
     reseau: (f: Fmt, l: number, e: number) => (l && e ? `Dans tout le réseau : ${pl(l, 'lauréat', 'lauréats')} et ${pl(e, 'étudiant', 'étudiants')} de plus cette semaine.`
       : `Dans tout le réseau : ${l ? pl(l, 'lauréat', 'lauréats') : pl(e, 'étudiant', 'étudiants')} de plus cette semaine.`),
   },
@@ -1074,7 +1108,7 @@ const AR: Dico = {
     aFaire: 'مهام هذا الأسبوع', offres: 'عروض جديدة لك', reponses: 'أجوبة على أسئلتك', parrain: 'عرّابك',
     cafes: 'مقاهي ENSAM قربك', talents: 'تنبيه المواهب', ouvertes: 'طلبة يحتاجون مساعدتك', impact: 'أثرك هذا الأسبوع',
     filleul: 'رعاية جديدة', filleuls: 'طلبة جدد في رعايتك', admin: 'الإدارة', agenda: 'في أجندة الشبكة', enquete: 'استمارة الإدماج المهني',
-    arrivees: 'وجوه جديدة في الشبكة',
+    arrivees: 'وجوه جديدة في الشبكة', promo: 'دفعتك في الشهر الماضي',
   },
   routes: {
     enquete: 'الإجابة على الاستمارة', 'reseau/agenda': 'عرض الأجندة', 'mentorat/cv': 'عرض السير الذاتية للمراجعة',
@@ -1115,6 +1149,11 @@ const AR: Dico = {
     evenement: (f, x, q) => `${f.g(x.titre)} · ${q}${x.lieu ? ` · ${f.u(x.lieu)}` : ''}`,
     arriveesIntro: (f, n, etu = false) => f.g(`انضم إلى الشبكة هذا الأسبوع ${arN(n, ['عضو واحد', 'عضوان', '{n} أعضاء', '{n} عضوًا'])} ${etu ? 'من سنتك أو شعبتك' : 'من دفعتك أو شعبتك'}.`),
     arrivee: (f, x) => `${f.u(x.nom)} · ${x.niveau ? `${x.niveau}A` : `دفعة ${x.promo}`}`,
+    promoIntro: (f, x) => f.g(`دفعة ${x.promo} · ${x.filiere}، في ${MOIS_AR[x.mois]}`),
+    promoInscrits: (f, x) => `${arN(x.inscrits, ['عضو واحد مسجَّل', 'عضوان مسجَّلان', '{n} أعضاء مسجَّلين', '{n} عضوًا مسجَّلًا'])} في الشبكة${x.nouveaux ? `، منهم ${arN(x.nouveaux, ['عضو جديد', 'عضوان جديدان', '{n} أعضاء جدد', '{n} عضوًا جديدًا'])} في ذلك الشهر` : ''}.`,
+    promoDemandes: (f, x) => `${arN(x.demandesMois, ['طلب واحد تحقّق', 'طلبان تحقّقا', '{n} طلبات تحقّقت', '{n} طلبًا تحقّق'])} في ذلك الشهر (${x.demandes} في المجموع).`,
+    promoStages: (f, x) => `${arN(x.stagesMois, ['تدريب أو وظيفة واحدة', 'تدريبان أو وظيفتان', '{n} تداريب ووظائف', '{n} تدريبًا ووظيفة'])} في ذلك الشهر (${x.stages} في المجموع).`,
+    promoMerci: () => 'شكرًا لأنك تُبقي دفعتك حاضرة: رابط التسجيل والنجاحات الجاهزة للمشاركة في صفحتك الرئيسية.',
     reseau: (f, l, e) => `في الشبكة كلها هذا الأسبوع: ${[l ? arN(l, ['خريج واحد جديد', 'خريجان جديدان', '{n} خريجين جدد', '{n} خريجًا جديدًا']) : '', e ? arN(e, ['طالب واحد جديد', 'طالبان جديدان', '{n} طلاب جدد', '{n} طالبًا جديدًا']) : ''].filter(Boolean).join(' و')}.`,
   },
   s: {
@@ -1210,6 +1249,8 @@ function sectionsDe(r: Resume, L: Dico, langue: Langue): Section[] {
     if (a.reseau.laureats + a.reseau.etudiants > a.total) l.push(f => L.l.reseau(f, a.reseau.laureats, a.reseau.etudiants));
     out.push({ titre: L.t.arrivees, route: 'reseau/annuaire', lignes: l });
   }
+  const pr = r.promo;
+  if (pr) out.push({ titre: L.t.promo, route: 'accueil', lignes: [f => L.l.promoIntro(f, pr), f => L.l.promoInscrits(f, pr), f => L.l.promoDemandes(f, pr), f => L.l.promoStages(f, pr), () => L.l.promoMerci()] });
   if (r.role === 'admin') {
     const l: Ligne[] = [];
     const a = r.admin;
@@ -1584,16 +1625,19 @@ export async function chargerDonnees(env: Env, ids: string[], date: Date): Promi
   ]);
   // Phase 3 : facultatif tant que la mise à jour de la base n'est pas passée
   const fac = <T>(p: Promise<T[]>): Promise<T[]> => p.catch(() => [] as T[]);
-  const [evenements, enquetes, relectures, demandesContact, signalements] = await Promise.all([
+  const moisAmb = moisPrecedent(date);
+  const [evenements, enquetes, relectures, demandesContact, signalements, ambassadeurs] = await Promise.all([
     fac(tout<Evenement>(env, 'evenements', `select=id,titre,debut,lieu,public,annule&annule=is.false&debut=gte.${iso(t)}&debut=lte.${iso(t + 14 * JOUR)}`)),
     fac(parIds<{ user_id: string; vague: number }>(env, 'enquetes_insertion', 'select=id,user_id,vague', 'user_id', ids)),
     fac(tout<Relecture>(env, 'relectures_cv', 'select=id,student_id,reviewer_id,status&status=eq.demandee')),
     fac(parIds<DemandeContact>(env, 'demandes_contact', 'select=id,demandeur_id,cible_id,status&status=eq.envoyee', 'cible_id', ids)),
     fac(tout<{ id: string }>(env, 'signalements', 'select=id&status=eq.ouvert')),
+    moisAmb ? fac(rpc(env, 'chiffres_ambassadeurs', { p_debut: moisAmb }).then(x => (Array.isArray(x) ? x as ChiffresPromo[] : []))) : Promise.resolve([] as ChiffresPromo[]),
   ]);
   return {
     profils, offres, invitations, reponses, parrainages, cafes,
     evenements, enquetes, relectures, demandesContact, signalements: signalements.length,
+    ambassadeurs, moisAmbassadeurs: moisAmb || undefined,
     candidatures: unique([...postule, ...c2]),
     mentorats: unique([...m1, ...m2]),
     questions: unique([...questions, ...q2]),

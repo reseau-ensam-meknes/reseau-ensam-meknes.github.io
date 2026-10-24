@@ -27,6 +27,7 @@ import { MessagesPage, MessagesHome, useAlerteMessages } from './messages.js';
 import { PoulsReseau, marquerArrivee, useArrivee, ArriveeSheet, arriveeEnAttente } from './pouls.js';
 import { ProposerAide } from './demandes.js';
 import { useFondateurs, FondateursBandeau, useFondateurMoi } from './fondateurs.js';
+import { useAmbassadeurs, pasAmbassadeur, notifsAmbassadeur, AmbassadeurAccueil } from './ambassadeurs.js';
 
 // Le dernier bouton touché, pour que act le retrouve même sans focus (iPhone)
 let dernierBouton = { b: null, t: 0 };
@@ -137,6 +138,8 @@ function App({ store }) {
   const star = useMemo(() => starOfMonth(data, monthScores), [data, monthScores]);
   // Membres fondateurs : les 25 premiers lauréats à aider les étudiants (fondateurs.js)
   const fondateurs = useFondateurs(store, data);
+  // Ambassadeurs de promo : la proposition à l'ouverture, et ceux qui ont accepté (ambassadeurs.js)
+  const ambassadeurs = useAmbassadeurs(store, data);
 
   // Temps réel : une nouvelle notification venue d'un autre membre s'affiche aussi en bas de l'écran
   const latest = useRef(null);
@@ -147,7 +150,7 @@ function App({ store }) {
     const keys = new Set(notifs.map(n => n.key).filter(Boolean));
     const prev = seen.current;
     if (prev && prev.id === who.id && Date.now() - lastAct.current > 2500) {
-      const fresh = notifs.find(n => n.key && !prev.keys.has(n.key) && (n.action || n.tone === 'good'));
+      const fresh = notifs.find(n => n.key && !prev.keys.has(n.key) && !n.sansToast && (n.action || n.tone === 'good'));
       if (fresh) toast(fresh.text, 'ok', fresh.pts || 0);
     }
     seen.current = { id: who.id, keys };
@@ -179,7 +182,7 @@ function App({ store }) {
   };
   voirRangs(me.role !== 'etudiant');
   const ctx = {
-    store, data, me, saison, scores, go, act, sub: route.sub, sub2: route.sub2, star, starId: star?.p.id, fondateurs,
+    store, data, me, saison, scores, go, act, sub: route.sub, sub2: route.sub2, star, starId: star?.p.id, fondateurs, ambassadeurs,
     openProfile: p => p && setProfile(p),
     openOffer: (id, apply = false) => { setOfferId(id); setApplyNow(apply); setPop(null); },
     confirm: (text, onYes, yes, { non, cls } = {}) => setConfirmBox({ text, onYes, yes, non, cls }),
@@ -527,6 +530,8 @@ function buildNotifs({ data, me, store, saison }) {
     const sig = (data.signalements || []).filter(x => x.status === 'ouvert');
     if (sig.length) out.push({ key: 'sg' + sig.length, action: true, geste: 'Voir les signalements', tone: 'accent', icon: 'shield', to: 'admin/moderation', at: sig.reduce((m, x) => (x.created_at > m ? x.created_at : m), ''), text: `${sig.length} signalement${sig.length > 1 ? 's' : ''} à traiter.` });
   }
+  // Ambassadeur de promo : la proposition attend une réponse
+  out.push(...notifsAmbassadeur({ data, me }));
   return out.sort((a, b) => (b.geste ? 1 : 0) - (a.geste ? 1 : 0) || (b.action ? 1 : 0) - (a.action ? 1 : 0) || new Date(b.at) - new Date(a.at));
 }
 
@@ -570,6 +575,8 @@ function prochainPas(ctx, notifs, etape, { plAttente, helper, besoins = [] } = {
     const r = n && pasNotif(ctx, n); if (r) return r;
   }
   if (rdv('proche')) return pasRdv(ctx, rdv('proche'), 'proche');
+  // La plateforme lui propose d'être ambassadeur de sa promo (7 jours pour répondre)
+  const amb = pasAmbassadeur(ctx); if (amb) return amb;
   // Un message de l'administration attend dans la bulle pendant les premiers pas
   const conv = conversations(data, me.id).find(c => c.nonLus && !(etape && store.byId('profiles', c.autre)?.role === 'admin'));
   if (conv) {
@@ -876,6 +883,7 @@ function Home(ctx) {
         <${NextRdv} ctx=${ctx} exclure=${montres}/>
         <${MessagesHome} ctx=${ctx} exclure=${montres}/>
         <${ConfianceHome} ctx=${ctx}/>
+        <${AmbassadeurAccueil} ctx=${ctx} pasKey=${pas.key}/>
         ${isStudent && obj ? html`<button class=${'objective compact clickable st-' + stu.key} onClick=${() => go('parcours')}>
           <div class="objective-top"><span class="obj-ico"><${Icon} name="route" size=${22}/></span>
             <div class="objective-main"><p class="eyebrow">Mon objectif de l’année</p><h2>${obj.titre}</h2></div>

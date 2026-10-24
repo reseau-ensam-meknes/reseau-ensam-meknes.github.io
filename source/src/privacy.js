@@ -136,6 +136,9 @@ addAR({
 // Lot mouvement · D : la seule exception au « jamais public », et seulement avec l'accord du membre
 const PHRASE_FONDATEURS = 'Les membres fondateurs (les 25 premiers lauréats à aider les étudiants) peuvent apparaître en haut de la page d’entrée, visible sans compte : leur nom, leur filière, leur promo, leur photo et la date de leur première aide, seulement s’ils ont dit oui. Sans cet accord, la page n’en donne que le nombre. Tu changes d’avis quand tu veux dans « Mon profil ».';
 addAR({ [PHRASE_FONDATEURS]: 'يمكن أن يظهر الأعضاء المؤسسون (أول 25 خريجًا ساعدوا الطلبة) في أعلى صفحة الدخول، المرئية دون حساب: الاسم والشعبة والدفعة والصورة وتاريخ أول مساعدة، وذلك فقط إن وافقوا. ودون هذه الموافقة، لا تعرض الصفحة إلا عددهم. يمكنك تغيير رأيك متى شئت من «ملفي الشخصي».' });
+// Ambassadeurs de promo : ce que la plateforme regarde pour proposer le rôle, et ce qui sort du réseau
+const PHRASE_AMBASSADEURS = 'Ambassadeurs de promo : la plateforme propose ce rôle au membre le plus actif de chaque promo et filière (offres, aides, mentorats, réponses, dernière connexion) ; tu peux refuser. Accepté, ton badge est visible des membres. Les réussites qu’un ambassadeur partage sur WhatsApp sont déjà vérifiées et annoncées dans le réseau, et ne citent le prénom que de qui a accepté d’être cité.';
+addAR({ [PHRASE_AMBASSADEURS]: 'سفراء الدفعات: تقترح المنصة هذا الدور على العضو الأكثر نشاطًا في كل دفعة وشعبة (العروض، المساعدات، الإرشاد، الأجوبة، آخر دخول)؛ ويمكنك الرفض. وعند القبول، تظهر شارتك للأعضاء. أما النجاحات التي يشاركها السفير عبر واتساب فهي مؤكَّدة ومُعلنة في الشبكة مسبقًا، ولا تذكر إلا اسم من وافق على ذكره.' });
 
 const cfg = () => (typeof window !== 'undefined' && window.ENSAM_CONFIG) || {};
 
@@ -160,6 +163,7 @@ const SECTIONS = [
   ['people', 'Qui voit quoi', [
     'Ton profil est visible par les membres connectés, jamais par le public ni par les moteurs de recherche.',
     PHRASE_FONDATEURS,
+    PHRASE_AMBASSADEURS,
     'Tu choisis qui voit ton entreprise, ta ville, ton LinkedIn, ta présentation et ton CV : tous les membres, seulement les lauréats, ou seulement tes contacts.',
     'Tes coordonnées ne sont visibles que par tes contacts (les membres avec qui tu les partages, l’auteur d’une offre où tu postules, la personne qu’une demande a réunie avec toi) et par l’administration. Tu peux retirer ton accord à tout moment.',
     'Ton CV en PDF est rangé dans un espace privé. Il s’ouvre par un lien valable 10 minutes, et seulement pour : les membres que tu choisis dans « Qui voit quoi », tes contacts (dont l’auteur d’une offre où tu postules), les lauréats quand tu as une demande ouverte, le lauréat qui relit ton CV (ou tous les lauréats tant que personne ne l’a pris), et l’administration.',

@@ -9,6 +9,7 @@ import { NIVEAUX, niveauOf, timeAgo, cleNom, norm, GUIDE_SECTIONS, pct, reponses
 import { DefisAdmin } from './saison.js';
 import { AgendaAdmin } from './agenda.js';
 import { InvitationsAdmin } from './invitation.js';
+import { AmbassadeursAdmin } from './ambassadeurs.js';
 import { lireCVDe, libellesCV, SignalerLecture, CvButton } from './cv.js';
 import { MessageBtn } from './messages.js';
 import { propositionCV, corrigeProfil, dejaSignalee } from './lire-cv.js';
@@ -104,7 +105,7 @@ export function AdminPage(ctx) {
     ${tab === 'moderation' ? html`<${Moderation} ctx=${ctx}/>` : null}
     ${tab === 'membres' ? html`<${Membres} ctx=${ctx} comptes=${comptes} toVerify=${toVerify}/>` : null}
     ${tab === 'liste' ? html`<${ListeOfficielle} ctx=${ctx}/>` : null}
-    ${tab === 'inviter' ? html`<${InvitationsAdmin} ctx=${ctx}/>` : null}
+    ${tab === 'inviter' ? html`<${InvitationsAdmin} ctx=${ctx}/><${AmbassadeursAdmin} ctx=${ctx}/>` : null}
     ${tab === 'agenda' ? html`<${AgendaAdmin} ctx=${ctx}/>` : null}
     ${tab === 'reglages' ? html`<${Reglages} ctx=${ctx}/>` : null}
   </section>`;
