@@ -784,37 +784,39 @@ button.impact-strip, button.panel { font: inherit; color: inherit; text-align: s
 .scene .w2 .w-body { fill: var(--w-body-2); } .scene .w2 .w-bag { fill: var(--gate); }
 .scene .w-leg { fill: #2A3550; }
 
-/* Mouvement de la scène */
-.scene .sc-cloud { animation: sc-drift 110s linear infinite; }
-.scene .sc-cloud.c1 { animation-delay: -40s; } .scene .sc-cloud.c2 { animation-duration: 150s; animation-delay: -95s; } .scene .sc-cloud.c3 { animation-duration: 130s; animation-delay: -10s; } .scene .sc-cloud.c4 { animation-duration: 170s; animation-delay: -60s; }
-@keyframes sc-drift { from { transform: translateX(-700px); } to { transform: translateX(1300px); } }
-.scene .sc-halo { transform-box: fill-box; transform-origin: center; animation: sc-glow 5s ease-in-out infinite alternate; }
-@keyframes sc-glow { to { transform: scale(1.12); opacity: .7; } }
-.scene .sc-stars circle { animation: sc-twinkle 3.2s ease-in-out infinite alternate; }
-@keyframes sc-twinkle { to { opacity: .25; } }
-.scene .sc-birds { animation: sc-fly 34s linear infinite; animation-delay: -8s; }
+/* Mouvement de la scène : tout s'anime à l'ouverture puis se pose (en une dizaine de secondes), rien ne tourne sans fin.
+   Chaque boucle finit là où elle a commencé : les arbres se redressent, les étoiles se rallument, les nuages arrivent à leur place. */
+.scene .sc-cloud { --dx: -50px; animation: sc-drift 9s cubic-bezier(.2, .6, .3, 1) 1 backwards; }
+.scene .sc-cloud.c2 { --dx: -36px; animation-duration: 10s; } .scene .sc-cloud.c3 { --dx: -64px; animation-duration: 8s; } .scene .sc-cloud.c4 { --dx: -44px; animation-duration: 9.5s; }
+@keyframes sc-drift { from { transform: translateX(var(--dx)); } }
+.scene .sc-halo { transform-box: fill-box; transform-origin: center; animation: sc-glow 4.5s ease-in-out 2; }
+@keyframes sc-glow { 50% { transform: scale(1.12); opacity: .7; } }
+.scene .sc-stars circle { animation: sc-twinkle 3.2s ease-in-out 2; }
+@keyframes sc-twinkle { 50% { opacity: .25; } }
+.scene .sc-birds { animation: sc-fly 26s linear 1 forwards; animation-delay: -8s; }
 @keyframes sc-fly { from { transform: translate(-200px, 150px); } to { transform: translate(1000px, 40px); } }
-.scene .bird { transform-box: fill-box; transform-origin: center; animation: sc-flap .5s ease-in-out infinite alternate; }
+.scene .bird { transform-box: fill-box; transform-origin: center; animation: sc-flap .5s ease-in-out 36 alternate; }
 .scene .bird:nth-child(2) { animation-delay: -.2s; } .scene .bird:nth-child(3) { animation-delay: -.35s; }
 @keyframes sc-flap { to { transform: scaleY(-.5); } }
-.scene .sc-tree { transform-box: fill-box; transform-origin: 50% 100%; animation: sc-sway 7s ease-in-out infinite alternate; }
-.scene .sc-tree.palm { animation-duration: 5s; }
-@keyframes sc-sway { from { transform: rotate(-1.4deg); } to { transform: rotate(1.4deg); } }
+.scene .sc-tree { transform-box: fill-box; transform-origin: 50% 100%; animation: sc-sway 4.6s ease-in-out 2; }
+.scene .sc-tree.palm { animation-duration: 3.6s; }
+@keyframes sc-sway { 25% { transform: rotate(-1.4deg); } 75% { transform: rotate(1.4deg); } }
 .scene .sc-leaf { transform-box: fill-box; transform: scaleX(.14); }
 .scene .sc-leaf.l { transform-origin: 0 50%; } .scene .sc-leaf.r { transform-origin: 100% 50%; }
 .scene.opening .sc-leaf { animation: sc-open 1.8s cubic-bezier(.65, 0, .35, 1) .7s backwards; }
 @keyframes sc-open { from { transform: scaleX(1); } }
 .scene.opening .sc-row { transform-box: fill-box; transform-origin: center bottom; animation: sc-bloom .7s var(--ease) backwards; }
 @keyframes sc-bloom { from { transform: scale(.2); opacity: 0; } }
-.scene .sc-walk { opacity: 0; animation: sc-walk 18s cubic-bezier(.3, .55, .5, 1) infinite; }
-.scene .sc-walk.w1 { --x0: 372px; --x1: 397px; } .scene .sc-walk.w2 { --x0: 432px; --x1: 404px; }
+/* Deux passants franchissent la porte une fois, l'un après l'autre */
+.scene .sc-walk { opacity: 0; animation: sc-walk 8s cubic-bezier(.3, .55, .5, 1) 1 both; }
+.scene .sc-walk.w1 { --x0: 372px; --x1: 397px; } .scene .sc-walk.w2 { --x0: 432px; --x1: 404px; animation-delay: 1.5s !important; }
 @keyframes sc-walk { 0% { transform: translate(var(--x0), 420px) scale(1.05); opacity: 0; } 5% { opacity: 1; } 82% { opacity: 1; } 100% { transform: translate(var(--x1), 304px) scale(.24); opacity: 0; } }
-.scene .sc-step { animation: sc-bob .42s ease-in-out infinite alternate; }
+.scene .sc-step { animation: sc-bob .42s ease-in-out 24 alternate; }
 @keyframes sc-bob { to { transform: translateY(-1.6px); } }
-.scene .w-leg { transform-box: fill-box; transform-origin: top; animation: sc-leg .42s ease-in-out infinite alternate; }
+.scene .w-leg { transform-box: fill-box; transform-origin: top; animation: sc-leg .42s ease-in-out 24 alternate; }
 .scene .w-leg.l2 { animation-delay: -.42s; }
 @keyframes sc-leg { to { transform: scaleY(.72); } }
-.scene .lamp-glow { transform-box: fill-box; transform-origin: center; animation: sc-glow 3s ease-in-out infinite alternate; }
+.scene .lamp-glow { transform-box: fill-box; transform-origin: center; animation: sc-glow 3s ease-in-out 3; }
 .scene[data-paused] *, .scene[data-paused], .scene[data-pose] *, .scene[data-pose] { animation-play-state: paused !important; }
 
 /* Accueil : bandeau avec l'école */
@@ -826,9 +828,6 @@ button.impact-strip, button.panel { font: inherit; color: inherit; text-align: s
 .hello h1 { animation: rise .7s var(--ease) .1s backwards; }
 .hello-sub { animation: rise .7s var(--ease) .22s backwards; }
 .hello-meta { margin: 0; font-size: var(--fs-2); font-weight: 500; line-height: 1.4; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* Accueil : deux passants franchissent la porte une fois, puis l'entrée se pose (plus de boucle en fond) */
-.home-hero .scene .sc-walk { animation-duration: 8s; animation-iteration-count: 1; animation-fill-mode: both; }
-.home-hero .scene .sc-walk.w2 { animation-delay: 1.5s !important; }
 
 /* Connexion */
 .auth { max-width: 1180px; grid-template-columns: minmax(0, 1.12fr) minmax(0, .88fr); gap: 2.4rem; align-items: stretch; }
@@ -1800,6 +1799,35 @@ svg.ico :is(path, circle, rect, line, polyline, polygon, ellipse) { vector-effec
   .scene, .scene *, .fete-pluie, .bar-fill, .chart rect, .tape-dots i, .rec-dot, .journey li.next .j-dot, .msg-photo, .btn[aria-busy="true"]::after, .badge-n, .fete-ico, .rempli { animation: none !important; }
   .rempli, .type-opt.on.rempli { background-color: var(--sel-bg); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
 }
+/* Lot mouvement · A : la carte qui dit « Fait » (accueil). L'étape accomplie se coche en vert, l'anneau avance,
+   puis elle s'efface vers le début de la ligne et la suivante arrive de l'autre côté. Calme : environ 1,6 s en tout. */
+@property --p { syntax: '<number>'; inherits: true; initial-value: 0; }
+.pas-fait, .pas-arrive { --sens: 1; }
+[dir="rtl"] :is(.pas-fait, .pas-arrive) { --sens: -1; }
+.pas.pas-fait { background: var(--good-soft); }
+.pas-fait .pas-oeil { color: var(--good); }
+.pas-fait .pas-titre { color: var(--ink-2); }
+.pas-fait .pas-anneau { background: conic-gradient(var(--good) calc(var(--p) * 1turn), color-mix(in srgb, var(--good) 24%, transparent) 0); }
+.pas-ok { display: flex; align-items: center; justify-content: center; gap: .55rem; min-height: 48px; margin: 0; font: 650 var(--fs-4)/1.2 var(--f-body); color: var(--good); }
+.pas-coche { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--good); color: var(--good-soft); }
+.pas-coche svg { fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+@media (min-width: 761px) { .pas-ok { min-height: 44px; } }
+@media (prefers-reduced-motion: no-preference) {
+  .shell .home-col > .pas.pas-fait { animation: pas-vert .5s ease backwards; }
+  .pas-fait .pas-anneau { animation: pas-monte .7s var(--ease) .3s backwards; }
+  .pas-coche { animation: pas-coche .45s cubic-bezier(.3, 1.45, .5, 1) .15s backwards; }
+  .pas-coche path { stroke-dasharray: 20; animation: pas-trait .38s ease-out .38s backwards; }
+  .pas-ok > span:last-child { animation: fade-in .3s ease .5s backwards; }
+  .shell .home-col > .pas.pas-fait.part { animation: pas-part .26s ease-in forwards; }
+  .shell .home-col > .pas.pas-arrive { animation: pas-arrive .5s var(--ease) backwards; }
+}
+@keyframes pas-vert { from { background-color: var(--accent-soft); } }
+@keyframes pas-monte { from { --p: var(--p0); } }
+@keyframes pas-coche { from { opacity: 0; transform: scale(.4); } }
+@keyframes pas-trait { from { stroke-dashoffset: 20; } }
+@keyframes pas-part { to { opacity: 0; transform: translateX(calc(-20px * var(--sens))); } }
+@keyframes pas-arrive { from { opacity: 0; transform: translateX(calc(28px * var(--sens))); } }
+/* (fin du Lot mouvement · A) */
 </style>
 <div id="app"><div class="boot"><svg class="brand-logo boot-logo" width="72" height="72" viewBox="0 0 512 512" aria-hidden="true"><defs><linearGradient id="lg-tuile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#27497A"/><stop offset="1" stop-color="#16253F"/></linearGradient></defs><rect width="512" height="512" rx="116" fill="url(#lg-tuile)"/><g class="lg-glyph"><path d="M225.8 104.9L233.6 71.3L278.4 71.3L286.2 104.9L321.5 116.4L347.6 93.8L383.8 120.1L370.4 151.9L392.2 182.0L426.6 179.0L440.4 221.6L410.9 239.4L410.9 276.6L440.4 294.4L426.6 337.0L392.2 334.0L370.4 364.1L383.8 395.9L347.6 422.2L321.5 399.6L286.2 411.1L278.4 444.7L233.6 444.7L225.8 411.1L190.5 399.6L164.4 422.2L128.2 395.9L141.6 364.1L119.8 334.0L85.4 337.0L71.6 294.4L101.1 276.6L101.1 239.4L71.6 221.6L85.4 179.0L119.8 182.0L141.6 151.9L128.2 120.1L164.4 93.8L190.5 116.4ZM378 258A122 122 0 1 0 134 258A122 122 0 1 0 378 258Z" fill-rule="evenodd" style="fill:var(--lg-o,#F39200)"/><circle cx="256" cy="258" r="122" style="fill:var(--lg-in,#1F3354)"/><path d="M256 190 358 232 256 274 154 232Z" style="fill:var(--lg-cap,#FFFFFF)"/><path d="M198 252V294Q256 326 314 294V252L256 276Z" style="fill:var(--lg-cap2,#E3EAF4)"/><path d="M256 232 338 250V302" fill="none" stroke-width="9" stroke-linecap="round" style="stroke:var(--lg-b,#4FA9E6)"/><circle cx="338" cy="308" r="12" style="fill:var(--lg-b,#4FA9E6)"/></g></svg><p><span lang="fr">Chargement du réseau…</span><span lang="ar">جارٍ تحميل الشبكة…</span></p></div></div>
 <!--CONFIG-->

@@ -77,7 +77,7 @@ export function ParcoursPage(ctx) {
           <button class="icon-btn small" aria-label="Supprimer" onClick=${() => act(() => store.remove('applications', a.id))}><${Icon} name="trash" size=${14}/></button></span>`}
       </li>`;
     })}</ul>
-    <p class="small muted hint"><${Icon} name="shield" size=${14}/> Pour les offres de la plateforme, c’est le lauréat qui met à jour le statut. Quand il déclare ton recrutement, tu confirmes ici.</p>` : html`<${Empty} icon="send" title="Aucune candidature pour l’instant" action=${versOffres}>Ouvre une offre et clique sur « Postuler ». Le lauréat reçoit ton message et ton CV.<//>`}
+    <p class="small muted hint"><${Icon} name="shield" size=${14}/> Pour les offres de la plateforme, c’est le lauréat qui met à jour le statut. Quand il déclare ton recrutement, tu confirmes ici.</p>` : html`<${Empty} icon="send" scene="candidatures" title="Aucune candidature pour l’instant" action=${versOffres}>Ouvre une offre et clique sur « Postuler ». Le lauréat reçoit ton message et ton CV.<//>`}
 
     <${FaisVenirPromo} ctx=${ctx}/>
 

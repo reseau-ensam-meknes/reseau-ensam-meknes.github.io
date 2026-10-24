@@ -47,8 +47,9 @@ after(async () => { await navigateur?.close(); serveur?.close(); });
 
 // Une page neuve, dans la langue voulue, avec un relevé des erreurs
 // ua : le user-agent d'un vrai appareil (TELEPHONE) ; sinon celui de Chromium sur un ordinateur
-async function ouvrir({ largeur = 1280, langue = 'fr', sw = false, theme = 'light', ua } = {}) {
-  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: largeur > 800 ? 900 : 844 }, serviceWorkers: sw ? 'allow' : 'block', colorScheme: theme, reducedMotion: 'reduce', ...(ua ? { userAgent: ua } : {}) });
+// mouvement : les animations telles qu'un appareil sans « Réduire les animations » les joue
+async function ouvrir({ largeur = 1280, langue = 'fr', sw = false, theme = 'light', ua, mouvement = false } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: largeur > 800 ? 900 : 844 }, serviceWorkers: sw ? 'allow' : 'block', colorScheme: theme, reducedMotion: mouvement ? 'no-preference' : 'reduce', ...(ua ? { userAgent: ua } : {}) });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
   const page = await ctx.newPage(); const erreurs = [];
   page.on('pageerror', e => erreurs.push(e.message));
@@ -1915,7 +1916,7 @@ test('demande d’un étudiant : il publie (CV joint), un lauréat propose, matc
   assert.match(await s.page.locator('main').first().innerText(), /j’ai un sujet de PFE lean dans mon équipe/);
   await s.aller('offres/demandes');
   assert.match(await carte().locator('.dm-prop').innerText(), /Encadre/);
-  await carte().locator('.dm-accepter').click(); await s.page.click('.modal .btn.danger'); await s.page.waitForTimeout(400); await fete();
+  await carte().locator('.dm-accepter').click(); await s.page.click('.modal .dm-oui'); await s.page.waitForTimeout(400); await fete();
   assert.match(await carte().innerText(), /C’est un match/i);
   // Youssef déclare le démarrage ; Salma confirme : demande réussie, annoncée « encadré(e) par »
   await s.comme('Youssef'); await s.aller('offres/demandes');
@@ -2132,6 +2133,8 @@ test('feuilles : le pied « Publier » ne cache jamais le champ suivi ; « Je pe
   await s.page.reload(); await s.page.waitForSelector('.hello'); await s.aller('accueil');
   if (await s.page.$('.fete-back')) await s.fermer();
   const style = sel => s.page.evaluate(x => { const c = getComputedStyle(document.querySelector(x)); return [c.backgroundColor, c.backgroundImage, c.color].join(' | '); }, sel);
+  // Le CV était l'étape montrée : la carte la coche d'abord (« Fait »), puis l'étape suivante arrive avec son bouton
+  await s.page.waitForSelector('.pas .pas-go', { timeout: 3000 });
   const carte = await style('.pas .pas-go');
   await s.page.locator('.coup-de-main button', { hasText: 'Faire relire mon CV' }).first().click(); await s.page.waitForSelector('.modal .btn.primary');
   assert.equal(await style('.modal .btn.primary'), carte, 'le bouton de la feuille est plein, comme celui de la carte');
@@ -2451,6 +2454,229 @@ test('clavier : lien « Aller au contenu », fenêtre qui garde le focus puis le
   await s.page.evaluate(() => { new MutationObserver((l, o) => { if (!document.querySelector('.modal')) return; o.disconnect(); document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); }).observe(document.body, { childList: true, subtree: true }); });
   await s.page.locator('.person').first().click(); await s.page.waitForTimeout(400);
   assert.equal(await s.page.locator('.modal').count(), 0, 'Échap tapé tout de suite est perdu');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Lot mouvement · A : le match fêté des deux côtés, la carte qui dit « Fait », les écrans vides illustrés, le décor qui se pose
+// ---------------------------------------------------------------------------
+const MATCH = ['var(--accent)', 'var(--orange)', 'var(--navy)'];
+// Salma publie une demande, Youssef (déjà passé par l'accueil) propose d'encadrer ; rend le titre de la demande
+async function demandeAvecAide(s, TITRE) {
+  const fete = () => s.page.locator('.fete-acts .btn').last().click({ timeout: 2000 }).catch(() => {});
+  await s.comme('Youssef'); await s.page.waitForTimeout(200);
+  await s.comme('Salma'); await s.aller('offres/demandes');
+  await s.page.click('#dm-nouvelle'); await s.page.waitForTimeout(200);
+  await s.page.click('#dm-type-pfe');
+  await s.page.fill('#dm-titre', TITRE);
+  await s.page.fill('#dm-details', 'Je cherche un PFE de 6 mois en maintenance : AMDEC, TPM, indicateurs. Mobile à Tanger et Kénitra.');
+  await s.page.click('#dm-publier'); await s.page.waitForTimeout(400); await fete();
+  await s.comme('Youssef'); await s.aller('offres/demandes');
+  const carte = s.page.locator('.dm-card', { hasText: TITRE }).first();
+  if (!(await carte.count())) await s.page.click('.dm-filtres button[aria-pressed="true"]:has-text("Proches de ma filière")');
+  await carte.locator('.dm-aider').click(); await s.page.waitForTimeout(200);
+  await s.page.click('.dm-aide-choix:has(#dm-aide-encadre)');
+  await s.page.fill('#dm-p-msg', 'Bonjour Salma, j’ai un sujet de PFE en maintenance dans mon équipe. Je serai ton encadrant.');
+  await s.page.click('#dm-p-envoyer'); await s.page.waitForTimeout(400);
+  return fete;
+}
+
+test('match fêté des deux côtés : « Oui, accepter » avec son visage, les deux visages et le cœur ; le lauréat le vit à son retour, une fois', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const TITRE = 'PFE en maintenance industrielle à Tanger';
+  const fete = await demandeAvecAide(s, TITRE);
+  await s.comme('Salma'); await s.page.waitForTimeout(300); await fete();
+  await s.aller('offres/demandes');
+  const carte = s.page.locator('.dm-card', { hasText: TITRE }).first();
+  // La confirmation : son visage, son nom, ce qu'il propose ; « Oui, accepter » est le bouton plein, rien en rouge
+  await carte.locator('.dm-accepter').click(); await s.page.waitForSelector('.modal.dm-oui-feuille');
+  const feuille = s.page.locator('.modal.dm-oui-feuille');
+  assert.match(await feuille.locator('h2').innerText(), /Accepter l’aide de Youssef \?/);
+  assert.equal(await feuille.locator('.dm-oui-qui .avatar').count(), 1);
+  assert.match(await feuille.innerText(), /Youssef El Amrani[\s\S]*Encadre/);
+  assert.equal(await feuille.locator('.btn.danger').count(), 0, 'accepter n’est pas une action rouge');
+  assert.equal(await feuille.locator('.btn.primary').count(), 1);
+  assert.equal((await feuille.locator('.btn.primary').innerText()).trim(), 'Oui, accepter');
+  await feuille.locator('.btn.primary').click();
+  await s.page.waitForSelector('.fete.fete-match');
+  // Les deux visages (le sien, puis celui du lauréat), le cœur, des confettis bleu, orange et bleu nuit ; aucun point pour l'étudiante
+  assert.equal(await s.page.locator('.fete-match .fm-duo .avatar').count(), 2);
+  assert.equal(await s.page.locator('.fete-match .fm-coeur').count(), 1);
+  assert.match(await s.page.locator('#fete-titre').innerText(), /C’est un match/);
+  const couleurs = await s.page.$$eval('.fete-pluie i', is => [...new Set(is.map(i => i.style.getPropertyValue('--c')))]);
+  assert.deepEqual(couleurs.sort(), [...MATCH].sort());
+  assert.equal(await s.page.locator('.fete .pastille-pts').count(), 0);
+  await fete();
+  assert.match(await carte.innerText(), /C’est un match/i);
+  // Youssef revient sur l'accueil : « Salma a accepté ton aide », les deux visages, et « Écrire à Salma »
+  await s.comme('Youssef'); await s.page.waitForSelector('.fete.fete-match', { timeout: 4000 });
+  assert.equal(await s.page.locator('#fete-titre').innerText(), 'Salma a accepté ton aide');
+  assert.match(await s.page.locator('.fete').innerText(), new RegExp(`C’est un match pour « ${TITRE} »`));
+  assert.equal(await s.page.locator('.fete-match .fm-duo .avatar').count(), 2);
+  assert.equal((await s.page.locator('.fete-acts .btn.primary').innerText()).trim(), 'Écrire à Salma');
+  await fete();
+  // Une seule fois : ni au retour sur l'accueil, ni après un rechargement
+  await s.aller('offres'); await s.aller('accueil'); await s.page.waitForTimeout(1300);
+  assert.equal(await s.page.locator('.fete-back').count(), 0);
+  await s.page.reload(); await s.page.waitForSelector('.hello'); await s.page.waitForTimeout(1300);
+  assert.equal(await s.page.locator('.fete-back').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('premier merci reçu par un lauréat : une fête le cite en entier, une seule fois ; ceux d’avant ne sont pas fêtés', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const demo = f => s.page.evaluate(f => { const k = 'ensam-demo-v14', st = JSON.parse(localStorage.getItem(k)); new Function('d', f)(st.data); localStorage.setItem(k, JSON.stringify(st)); }, f);
+  const recharger = async () => { await s.page.reload(); await s.page.waitForSelector('.hello'); await s.page.waitForTimeout(1300); };
+  // Youssef a déjà des mercis : rien n'est fêté
+  await s.comme('Youssef'); await s.page.waitForTimeout(1300);
+  assert.equal(await s.page.locator('.fete-back').count(), 0);
+  // Nadia vient d'arriver (aucun merci) ; Salma lui dit merci après un mentorat
+  await s.comme('Nadia'); await s.page.waitForTimeout(1300);
+  assert.equal(await s.page.locator('.fete-back').count(), 0);
+  const MOT = 'Merci Nadia pour ces 20 minutes : tes conseils sur l’entretien chez OCP m’ont vraiment rassurée.\nJe me sens prête pour la suite !';
+  await demo(`const nadia = d.profiles.find(p => p.full_name === 'Nadia Ferhat'), salma = d.profiles.find(p => p.full_name === 'Salma Bennani');
+    const m = d.mentorships.find(x => x.status === 'terminee');
+    d.mentorships.push({ ...m, id: 'm-merci-nadia', mentor_id: nadia.id, student_id: salma.id, status: 'terminee', sujet: 'Préparer mon entretien', merci: ${JSON.stringify(MOT)}, rdv_at: new Date(Date.now() - 36e5).toISOString(), created_at: new Date(Date.now() - 864e5).toISOString() });`);
+  await recharger(); await s.page.waitForSelector('.fete.fete-merci', { timeout: 3000 });
+  assert.equal(await s.page.locator('#fete-titre').innerText(), 'Ton premier merci');
+  assert.equal(await s.page.locator('.fete-cite p').innerText(), `« ${MOT} »`, 'le merci est cité en entier');
+  assert.match(await s.page.locator('.fete-cite footer').innerText(), /Salma/);
+  assert.equal(await s.page.locator('.fete-cite footer .avatar').count(), 1);
+  assert.equal((await s.page.locator('.fete-acts .btn').last().innerText()).trim(), 'Avec plaisir');
+  await s.page.locator('.fete-acts .btn').last().click(); await s.page.waitForTimeout(200);
+  await recharger();
+  assert.equal(await s.page.locator('.fete-back').count(), 0, 'une seule fois');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('carte « Fait » : au retour sur l’accueil, l’étape accomplie se coche en vert, puis la suivante arrive ; sur place aussi ; pas par-dessus la fête de fin', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Nadia');
+  assert.equal(await s.page.getAttribute('.pas', 'data-pas'), 'guide-profil');
+  await s.aller('profil'); await s.page.fill('#pf-ent', 'OCP Group');
+  await s.page.click('form .row-end .btn.primary'); await s.page.waitForTimeout(300);
+  await s.aller('accueil');
+  // L'étape faite, cochée en vert, avec l'anneau qui avance d'un cran
+  const fait = s.page.locator('.pas.pas-fait');
+  assert.equal(await fait.count(), 1);
+  assert.equal(await fait.getAttribute('data-pas'), 'fait-profil');
+  assert.match(await fait.innerText(), /Premiers pas · 2 sur 5[\s\S]*Complète ton profil[\s\S]*Fait/);
+  assert.equal(await fait.locator('.pas-coche svg').count(), 1);
+  assert.equal(await s.page.locator('.home .pas').count(), 1, 'une seule carte à la fois');
+  assert.equal(await s.page.locator('.pas .btn.primary').count(), 0, 'pas de bouton pendant qu’elle se coche');
+  // Puis la suivante arrive, toute seule
+  await s.page.waitForSelector('.pas:not(.pas-fait)', { timeout: 3000 });
+  assert.equal(await s.page.getAttribute('.pas', 'data-pas'), 'guide-dispo');
+  assert.match(await s.page.getAttribute('.pas', 'class'), /pas-arrive/);
+  // Sur place : « Me rendre disponible » se coche aussi, puis l'étape suivante
+  await s.page.click('.pas .pas-go'); await s.page.waitForSelector('.pas.pas-fait[data-pas="fait-dispo"]', { timeout: 2000 });
+  await s.page.waitForSelector('.pas:not(.pas-fait)', { timeout: 3000 });
+  assert.notEqual(await s.page.getAttribute('.pas', 'data-pas'), 'guide-dispo');
+  // Une seule fois : rien ne se recoche au retour
+  await s.aller('offres'); await s.aller('accueil');
+  assert.equal(await s.page.locator('.pas.pas-fait').count(), 0);
+  await s.page.reload(); await s.page.waitForSelector('.hello');
+  assert.equal(await s.page.locator('.pas.pas-fait').count(), 0);
+  // La dernière étape : c'est la fête « Premiers pas terminés ! » qui le dit, pas la carte
+  await s.comme('Amine');
+  const demo = f => s.page.evaluate(f => { const k = 'ensam-demo-v14', st = JSON.parse(localStorage.getItem(k)); new Function('d', f)(st.data); localStorage.setItem(k, JSON.stringify(st)); }, f);
+  const vue = await s.page.getAttribute('.pas', 'data-pas');
+  assert.match(vue, /^guide-/);
+  await demo(`const a = d.profiles.find(p => p.full_name === 'Amine Talbi'); a.cv_path = a.id + '/cv.pdf';
+    const o = d.offers.find(x => x.status === 'ouverte' && (x.annees || []).includes(3));
+    d.demandes.push({ id: 'dm-amine', auteur_id: a.id, type: 'stage', titre: 'Stage de 3A', details: 'Un stage ouvrier de 1 mois en atelier.', status: 'ouverte', lieu: null, debut: null, duree: null, laureat_id: null, proposition_id: null, match_at: null, created_at: new Date().toISOString(), relancee_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+    if (o) d.applications.push({ id: 'ap-amine', offer_id: o.id, student_id: a.id, status: 'envoyee', message: 'Bonjour', created_at: new Date().toISOString() });
+    const m = d.mentorships.find(x => x.status === 'demande'); d.mentorships.push({ ...m, id: 'm-amine', student_id: a.id, mentor_id: null, status: 'demande', created_at: new Date().toISOString() });`);
+  await s.page.reload(); await s.page.waitForSelector('.hello');
+  await s.page.waitForSelector('.fete-back', { timeout: 2000 });
+  assert.match(await s.page.locator('#fete-titre').innerText(), /Premiers pas terminés/);
+  assert.equal(await s.page.locator('.pas.pas-fait').count(), 0, 'la carte ne coche pas par-dessus la fête');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('écrans vides illustrés : une scène dessinée pour aucune demande, aucun message, aucune candidature ; jour et nuit, en arabe aussi', async () => {
+  for (const [theme, langue] of [['light', 'fr'], ['dark', 'ar']]) {
+    const s = await ouvrir({ largeur: 390, theme, langue });
+    const scenes = {};
+    const voir = async (nom, e, scene) => {
+      await s.comme(nom); await s.aller(e);
+      const el = s.page.locator(`.empty .es.es-${scene}`).first();
+      assert.equal(await el.count(), 1, `${nom} · ${e} : la scène ${scene}`);
+      assert.equal(await el.getAttribute('aria-hidden'), 'true');
+      scenes[scene] = await el.evaluate(x => ({ ko: x.innerHTML.length / 1024, soleil: getComputedStyle(x.querySelector('.es-soleil')).fill, etoiles: getComputedStyle(x.querySelector('.es-etoiles')).opacity,
+        miroir: getComputedStyle(x.querySelector('svg')).transform, w: x.getBoundingClientRect().width, deborde: x.getBoundingClientRect().right > innerWidth || x.getBoundingClientRect().left < 0 }));
+    };
+    await voir('Hajar', 'messages', 'messages');
+    await voir('Amine', 'parcours', 'candidatures');
+    // Aucune demande d'étudiant dans le réseau : la porte de l'école et un avion de papier qui attend
+    await s.aller('accueil');
+    await s.page.evaluate(() => { const k = 'ensam-demo-v14', st = JSON.parse(localStorage.getItem(k)); st.data.demandes = []; st.data.propositions = []; localStorage.setItem(k, JSON.stringify(st)); });
+    await s.page.reload(); await s.page.waitForSelector('.hello');
+    await voir('Youssef', 'offres/demandes', 'demandes');
+    for (const [k, v] of Object.entries(scenes)) {
+      assert.ok(v.ko < 4, `${k} : ${v.ko.toFixed(1)} Ko, une petite scène`);
+      assert.ok(v.w >= 150 && !v.deborde, `${k} : ${v.w} px`);
+      assert.equal(v.etoiles, theme === 'dark' ? '1' : '0', `${k} : les étoiles la nuit seulement`);
+      assert.equal(v.soleil, theme === 'dark' ? 'rgb(239, 233, 214)' : 'rgb(255, 201, 77)', `${k} : le soleil le jour, la lune la nuit`);
+      assert.equal(v.miroir !== 'none', langue === 'ar', `${k} : la scène suit le sens de lecture`);
+    }
+    assert.ok((await s.debordement()) <= 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('le décor ne tourne plus sans fin : l’entrée dessinée s’anime à l’ouverture puis se pose ; immobile si l’appareil réduit les animations', async () => {
+  let s = await ouvrir({ largeur: 390, mouvement: true });
+  await s.comme('Youssef'); await s.page.waitForTimeout(300);
+  const boucles = () => s.page.evaluate(() => document.getAnimations().filter(a => a.effect?.target?.closest?.('.scene')).map(a => {
+    const t = a.effect.getComputedTiming();
+    return { qui: a.effect.target.getAttribute('class'), nom: a.animationName, fin: t.endTime };
+  }));
+  const anims = await boucles();
+  assert.ok(anims.length > 10, 'l’entrée s’anime à l’ouverture');
+  const sansFin = anims.filter(a => !Number.isFinite(a.fin));
+  assert.deepEqual(sansFin, [], 'aucune animation de la scène sans fin');
+  // Tout ce qu'on voit (hors oiseaux qui s'en vont) se pose en une dizaine de secondes
+  const longues = anims.filter(a => a.fin > 10500 && !/sc-fly|sc-flap/.test(a.nom));
+  assert.deepEqual(longues, []);
+  // Les écrans vides aussi : un seul mouvement à l'arrivée
+  await s.comme('Hajar'); await s.aller('messages');
+  const vides = await s.page.evaluate(() => document.getAnimations().filter(a => a.effect?.target?.closest?.('.es')).map(a => a.effect.getComputedTiming().endTime));
+  assert.ok(vides.length > 0 && vides.every(x => Number.isFinite(x) && x < 4000), JSON.stringify(vides));
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.page.waitForTimeout(300);
+  assert.equal((await boucles()).length, 0, 'immobile avec « Réduire les animations »');
+  await s.ctx.close();
+});
+
+test('arabe : les fêtes du match et du merci, et la carte « Fait », sont traduites ; les visages suivent le sens de lecture', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  await s.comme('Youssef'); await s.page.waitForTimeout(300);
+  const ar = await s.page.evaluate(async () => {
+    const { t } = await import('./i18n.js');
+    return ['Salma a accepté ton aide', 'C’est un match pour « PFE en lean ». Écris-lui pour la suite, et déclare son démarrage dès qu’il a lieu.', 'Accepter l’aide de Youssef ?',
+      'Oui, accepter', 'Fait', 'Ton premier merci', 'Avec plaisir', 'Quelqu’un que tu as aidé t’a laissé ce mot :', 'Les autres propositions seront closes, et vous verrez vos coordonnées.', 'Écrire à Salma'].map(t);
+  });
+  for (const x of ar) assert.doesNotMatch(x.replace(/Salma|Youssef|PFE en lean/g, ''), /[A-Za-zÀ-ÿ]{3,}/, x);
+  await s.page.evaluate(async () => {
+    const ui = await import(new URL('ui.js', location.href).href);
+    const { data } = JSON.parse(localStorage.getItem('ensam-demo-v14'));
+    const p = n => data.profiles.find(x => x.full_name === n);
+    ui.celebrate({ cle: 'test-match-' + Date.now(), titre: 'Salma a accepté ton aide', visages: [p('Youssef El Amrani'), p('Salma Bennani')] });
+  });
+  await s.page.waitForSelector('.fete-match');
+  const [a, b] = await s.page.$$eval('.fm-duo .fm-v', vs => vs.map(v => v.getBoundingClientRect().left));
+  assert.ok(a > b, 'en arabe, le premier visage est à droite');
+  const coeur = await s.page.$eval('.fm-coeur', c => { const r = c.getBoundingClientRect(), d = c.parentElement.getBoundingClientRect(); return Math.abs((r.left + r.right) / 2 - (d.left + d.right) / 2); });
+  assert.ok(coeur < 2, 'le cœur est entre les deux visages');
+  assert.deepEqual((await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), []);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });

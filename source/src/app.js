@@ -633,13 +633,21 @@ function pasBesoin(ctx, b) {
 
 // La carte « prochaine étape » : une seule forme, un seul bouton plein qui nomme l'action, au plus deux liens dessous.
 // Les premiers pas y sont fondus : « Premiers pas · 2 sur 5 » ouvre la feuille des étapes.
-function ProchainPas({ pas, progres, onEtapes }) {
+function ProchainPas({ pas, progres, onEtapes, faite }) {
   if (!pas) return null;
   const anneau = progres ? html`<span class="pas-anneau" style=${`--p:${progres.done / progres.total}`} aria-hidden="true"></span>` : null;
   const etapes = progres ? `Premiers pas · ${progres.done} sur ${progres.total}` : '';
+  // L'étape vue la dernière fois est faite : elle se coche en vert, l'anneau avance, puis la carte laisse la place à la suivante
+  if (faite?.s && progres) return html`<section key="fait" class=${'pas pas-fait' + (faite.part ? ' part' : '')} aria-labelledby="pas-titre" data-pas=${'fait-' + faite.s.cle}>
+    <div class="pas-txt">
+      <p class="pas-oeil"><span class="pas-anneau" style=${`--p:${progres.done / progres.total};--p0:${Math.max(0, progres.done - 1) / progres.total}`} aria-hidden="true"></span><span>${etapes}</span></p>
+      <h2 class="pas-titre" id="pas-titre">${faite.s.titre}</h2>
+    </div>
+    <div class="pas-act"><p class="pas-ok" role="status"><span class="pas-coche" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M6 12.5l4 4 8-9"/></svg></span><span>Fait</span></p></div>
+  </section>`;
   const lien = pas.guide ? { label: 'Voir les étapes', go: onEtapes, dialog: true } : pas.lien;
   const membre = pas.membre ? { translate: 'no', dir: 'auto' } : {};
-  return html`<section class="pas" aria-labelledby="pas-titre" data-pas=${pas.key}>
+  return html`<section key="pas" class=${'pas' + (faite?.arrive ? ' pas-arrive' : '')} aria-labelledby="pas-titre" data-pas=${pas.key}>
     <div class="pas-txt">
       <p class="pas-oeil">${pas.guide ? anneau : html`<${Icon} name=${pas.icon || 'arrow'} size=${16}/>`}<span>${pas.guide ? etapes : pas.eyebrow}</span></p>
       <h2 class="pas-titre" id="pas-titre" ...${membre}>${pas.titre}</h2>
@@ -676,6 +684,76 @@ function useFetePremiersPas(me, g) {
     if (!g.fini && etat !== 'en-cours') setEtat('en-cours');
     if (g.fini && etat === 'en-cours') { setEtat('fini'); celebrate({ cle: 'premiers-pas-' + me.id, icon: 'award', titre: 'Premiers pas terminés !', texte: me.role === 'etudiant' ? 'Ton profil est prêt : les lauréats peuvent maintenant t’aider.' : 'Merci ! Les étudiants de l’école peuvent compter sur toi.' }); }
   }, [g?.fini]);
+}
+
+// La carte qui dit « Fait » : l'étape des premiers pas que la carte montrait (gardée par membre dans ce navigateur)
+// est faite au retour sur l'accueil, ou sur place ? Elle se coche en vert, puis la suivante arrive en glissant.
+// Pas quand les premiers pas se terminent : c'est alors la fête « Premiers pas terminés ! » qui le dit (useFetePremiersPas).
+const lireLocal = k => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
+const ecrireLocal = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)); } catch { /* pas de stockage */ } };
+function useEtapeFaite(me, g, pas) {
+  const k = 'guide-vu-' + me.id;
+  const vu = useRef(undefined);
+  if (vu.current === undefined) vu.current = lireLocal(k);
+  const [phase, setPhase] = useState(0);   // 0 : rien · 1 : cochée · 2 : elle s'en va · 3 : la suivante arrive
+  const minuteurs = useRef([]);
+  useEffect(() => () => minuteurs.current.forEach(clearTimeout), []);
+  const s = g && !g.fini && vu.current ? g.steps.find(x => x.cle === vu.current && x.fait) || null : null;
+  const montree = pas?.guide ? pas.key.replace(/^guide-/, '') : null;
+  useEffect(() => {
+    if (s) {
+      if (phase === 1 || phase === 2) return;
+      setPhase(1);
+      minuteurs.current.push(setTimeout(() => setPhase(2), 1350), setTimeout(() => { vu.current = null; setPhase(3); }, 1620));
+      return;
+    }
+    if (vu.current !== montree) { vu.current = montree; ecrireLocal(k, montree); }
+  });
+  return { s, part: phase === 2, arrive: phase === 3 };
+}
+
+// Lauréat : il vit aussi le match. À son retour sur l'accueil, « Salma a accepté ton aide » avec les deux visages
+// (une fois par match), puis, le jour où il arrive, son tout premier merci d'un étudiant, cité en entier.
+// Ce qui existait déjà à sa première visite dans ce navigateur n'est pas fêté, sauf s'il date de moins de deux jours.
+// Jamais par-dessus une autre fenêtre : la fête attend alors la visite suivante.
+function mercisRecus(data, id) {
+  const ok = x => typeof x === 'string' && x.trim();
+  return [
+    ...data.placements.filter(p => p.laureat_id === id && p.status === 'confirme' && ok(p.merci)).map(p => ({ txt: p.merci, de: p.student_id, at: p.confirmed_at || p.created_at })),
+    ...data.mentorships.filter(m => m.mentor_id === id && ok(m.merci)).map(m => ({ txt: m.merci, de: m.student_id, at: m.rdv_at || m.created_at })),
+    ...(data.relectures_cv || []).filter(r => r.reviewer_id === id && ok(r.merci)).map(r => ({ txt: r.merci, de: r.student_id, at: r.rendue_at || r.created_at })),
+  ].sort((a, b) => new Date(a.at) - new Date(b.at));
+}
+const dejaFete = cle => { try { return !!localStorage.getItem('fete-' + cle); } catch { return true; } };
+function useFetesLaureat(ctx) {
+  const { data, me, store, go } = ctx;
+  const lau = me.role === 'laureat';
+  const matchs = lau ? (data.propositions || []).filter(x => x.laureat_id === me.id && x.status === 'acceptee')
+    .map(x => ({ x, d: (data.demandes || []).find(d => d.id === x.demande_id) })).filter(y => y.d && ['match', 'pourvue'].includes(y.d.status)) : [];
+  const mercis = lau ? mercisRecus(data, me.id) : [];
+  useEffect(() => {
+    if (!lau) return;
+    const kM = 'matchs-vus-' + me.id, kR = 'mercis-avant-' + me.id, frais = iso => !!iso && recent(iso, 2);
+    let vus = lireLocal(kM);
+    if (!Array.isArray(vus)) { vus = matchs.filter(y => !frais(y.x.repondu_at)).map(y => y.x.id); ecrireLocal(kM, vus); }
+    let avant = lireLocal(kR);
+    if (typeof avant !== 'number') { avant = mercis.filter(m => !frais(m.at)).length; ecrireLocal(kR, avant); }
+    const nouveau = matchs.find(y => !vus.includes(y.x.id) && recent(y.x.repondu_at || y.x.created_at, 14) && !dejaFete(`match-${me.id}-${y.x.id}`));
+    const premier = !avant && mercis[0] && !dejaFete('premier-merci-' + me.id) ? mercis[0] : null;
+    if (!nouveau && !premier) return;
+    const t = setTimeout(() => {
+      if (document.querySelector('.modal-back, .fete-back')) return;
+      if (nouveau) {
+        const e = store.byId('profiles', nouveau.d.auteur_id), p = e?.full_name?.split(' ')[0] || 'Un étudiant';
+        if (celebrate({ cle: `match-${me.id}-${nouveau.x.id}`, icon: 'heart', visages: [me, e], titre: `${p} a accepté ton aide`, texte: `C’est un match pour « ${nouveau.d.titre} ». Écris-lui pour la suite, et déclare son démarrage dès qu’il a lieu.`,
+          action: e ? { label: `Écrire à ${p}`, icon: 'chat', onClick: () => go('messages/' + e.id) } : null })) ecrireLocal(kM, [...vus, nouveau.x.id]);
+        return;
+      }
+      const e = store.byId('profiles', premier.de);
+      celebrate({ cle: 'premier-merci-' + me.id, icon: 'heart', titre: 'Ton premier merci', texte: 'Quelqu’un que tu as aidé t’a laissé ce mot :', citation: { txt: premier.txt, de: e }, ok: 'Avec plaisir' });
+    }, 900);
+    return () => clearTimeout(t);
+  }, [matchs.map(y => y.x.id).join(), mercis.length]);
 }
 
 function Home(ctx) {
@@ -722,6 +800,8 @@ function Home(ctx) {
   const helper = plAttente?.laureat_id ? store.byId('profiles', plAttente.laureat_id) : null;
   const besoins = isLaureat ? besoinsDeMoi(data, me, id => store.byId('profiles', id), { ignorees: mentoratIgnorees() }) : [];
   const pas = prochainPas({ ...ctx, setCompose }, notifs, enCours?.suivante || null, { plAttente, helper, besoins });
+  const faite = useEtapeFaite(me, enCours, pas);
+  useFetesLaureat(ctx);
   // Juste après la « Dernière étape » : une feuille d'accueil, une fois, avec le même bouton que la carte
   const [arrivee, finArrivee] = useArrivee(ctx);
   // « Cette semaine » : trois petites choses au plus, jamais ce que montre la carte ;
@@ -781,7 +861,7 @@ function Home(ctx) {
         <${SchoolScene} align=${getLang() === 'ar' ? 'xMinYMax' : 'xMaxYMax'} pose=${10000}/>
       </header>
 
-      <${ProchainPas} pas=${pas} progres=${enCours} onEtapes=${() => setVoirEtapes(true)}/>
+      <${ProchainPas} pas=${pas} progres=${enCours} faite=${faite} onEtapes=${() => setVoirEtapes(true)}/>
       <section class="bloc semaine" aria-labelledby="h-semaine">
         <h2 class="h-sec" id="h-semaine">Cette semaine</h2>
         <div class="bloc-corps">

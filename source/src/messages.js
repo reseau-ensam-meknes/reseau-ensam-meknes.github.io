@@ -133,7 +133,7 @@ function ConvList({ ctx, convs, actif }) {
         <span class="ci-main"><span class="ci-top"><span class="ci-name" translate="no">${p?.full_name || 'Membre'}</span><span class="ci-time">${quandCourt(c.dernier.created_at)}</span></span>
           <span class="ci-bas"><${Apercu} m=${c.dernier} me=${me.id}/>${c.nonLus ? html`<span class="ci-n"><span aria-hidden="true">${c.nonLus}</span><span class="sr-only">${c.nonLus > 1 ? `${c.nonLus} messages non lus` : '1 message non lu'}</span></span>` : c.dernier.author_id === me.id && c.dernier.lu_at ? html`<span class="ci-vu"><${Icon} name="checks" size=${15}/></span>` : null}</span></span>
       </a></li>`; })}</ul>`
-    : !sugg.length && !q ? html`<div class="conv-empty"><${Empty} icon="chat" title="Pas encore de message">Une conversation s’ouvre avec un mentorat, une candidature, ton parrain ou des coordonnées partagées.<//>
+    : !sugg.length && !q ? html`<div class="conv-empty"><${Empty} icon="chat" scene="messages" title="Pas encore de message">Une conversation s’ouvre avec un mentorat, une candidature, ton parrain ou des coordonnées partagées.<//>
         <button class="btn small" onClick=${() => go('mentorat')}><${Icon} name="mentor" size=${15}/> ${me.role === 'laureat' ? 'Voir qui a besoin d’aide' : 'Demander un conseil'}</button></div>`
     : q ? html`<p class="small muted conv-none">Aucune conversation à ce nom.</p>` : null}
     <p class="small muted conv-note"><${Icon} name="lock" size=${13}/> Une conversation n’est visible que par vous deux.</p>
