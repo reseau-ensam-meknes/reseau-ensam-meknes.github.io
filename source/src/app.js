@@ -79,8 +79,8 @@ function App({ store }) {
   const [cloche, setCloche] = useState(false);
   // « Je peux aider » et « Choisir un horaire » s'ouvrent sur place : { demande: id } ou { mentorat: id }
   const [aide, setAide] = useState(null);
-  // « Publier une offre » ouvert depuis la barre latérale (ordinateur), sur place
-  const [publierOffre, setPublierOffre] = useState(false);
+  // « Publier une offre » ouvert depuis la barre latérale (ordinateur), sur place : null ou les champs déjà remplis
+  const [publierOffre, setPublierOffre] = useState(null);
   const seen = useRef(null); const lastAct = useRef(0);
   useEffect(() => store.on(() => setTick(t => t + 1)), []);
   // Pages publiques (attestation, désabonnement) : le lien « #… » suffit. Dans la coque, l'historique s'en charge (ui.js).
@@ -230,11 +230,12 @@ function App({ store }) {
   const plein = page === 'messages';
   // En haut de la barre latérale (ordinateur) : le formulaire de publication du rôle. Un étudiant qui ne peut pas
   // (avant la 3e année, ou déjà 2 demandes en cours) n'a pas de bouton ; l'admin publie un événement de l'agenda.
-  const publier = me.role === 'laureat' ? { label: 'Publier une offre', icon: 'plus', faire: () => setPublierOffre(true) }
-    : me.role === 'etudiant' ? (typesDemande(me, saison).length && demandesActives(data, me.id).length < DEMANDES_MAX ? { label: 'Publier ma demande', icon: 'send', faire: () => go('offres/demandes/nouvelle') } : null)
-    : me.role === 'admin' ? { label: 'Publier un événement', icon: 'calendar', faire: () => go('reseau/agenda/nouveau') } : null;
+  // Sur l'onglet « Entre lauréats », l'offre est d'emblée pour les lauréats. Le même bouton dans la page se cache alors (page.html).
+  const publier = me.role === 'laureat' ? { cle: 'offre', label: 'Publier une offre', icon: 'plus', faire: () => setPublierOffre(page === 'offres' && route.sub === 'laureats' ? { audience: 'laureats', type: 'emploi', annees: [] } : {}) }
+    : me.role === 'etudiant' ? (typesDemande(me, saison).length && demandesActives(data, me.id).length < DEMANDES_MAX ? { cle: 'demande', label: 'Publier ma demande', icon: 'send', faire: () => go('offres/demandes/nouvelle') } : null)
+    : me.role === 'admin' ? { cle: 'evenement', label: 'Publier un événement', icon: 'calendar', faire: () => go('reseau/agenda/nouveau') } : null;
 
-  return html`<div class=${'shell' + (premier ? ' premier' : '')}>
+  return html`<div class=${'shell' + (premier ? ' premier' : '')} data-publier=${publier?.cle || null}>
     <a class="skip" href="#contenu" onClick=${e => { e.preventDefault(); document.getElementById('contenu')?.focus(); }}>Aller au contenu</a>
     <aside class="side">
       <div class="side-in">
@@ -287,7 +288,7 @@ function App({ store }) {
     </div>
     <nav class=${'bottom-nav' + (plein && route.sub ? ' cache' : '')}>${navBas.map(([k, l, i]) => html`<a href=${'#' + k} class=${page === k ? 'on' : ''} aria-current=${page === k ? 'page' : null} onClick=${e => { e.preventDefault(); go(k, { onglet: true }); }}><span class="bn-ico"><${Icon} name=${i}/>${dotFor(k) ? html`<span class="dotn" aria-hidden="true"></span>` : null}</span><span>${court(l)}</span>${dotFor(k) ? html`<span class="sr-only">À faire ici</span>` : null}</a>`)}</nav>
     ${cloche ? html`<${Cloche} notifs=${notifs} onGo=${openNotif} onClose=${() => setCloche(false)}/>` : null}
-    ${publierOffre ? html`<${OfferComposer} ctx=${ctx} onClose=${() => setPublierOffre(false)}/>` : null}
+    ${publierOffre ? html`<${OfferComposer} ctx=${ctx} preset=${publierOffre} onClose=${() => setPublierOffre(null)}/>` : null}
     ${offerId ? html`<${OfferDetail} ctx=${ctx} id=${offerId} key=${offerId} apply=${applyNow} onClose=${() => setOfferId(null)}/>` : null}
     ${aide?.demande ? html`<${ProposerAide} ctx=${ctx} id=${aide.demande} key=${'aide-' + aide.demande} onClose=${() => setAide(null)}/>` : null}
     ${aide?.mentorat ? html`<${HoraireSheet} ctx=${ctx} id=${aide.mentorat} key=${'horaire-' + aide.mentorat} onClose=${() => setAide(null)}/>` : null}

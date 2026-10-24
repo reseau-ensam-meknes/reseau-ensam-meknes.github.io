@@ -1565,6 +1565,8 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"] { display: 
   .side-nav a.on::before { content: none; }
   .side-nav a:hover .nav-ico { transform: none; }
   .side-nav .nav-n { font-size: var(--fs-1); }
+  /* Le bouton « Publier » de la barre latérale suffit : le même bouton dans la page se cache (offre du lauréat, événement de l'admin) */
+  .shell[data-publier="offre"] .page-head .publier-offre, .shell[data-publier="evenement"] :is(#ev-new, #adm-ev-new) { display: none; }
   /* Largeurs : des marges régulières, une seule largeur de page */
   .content { padding-block: var(--sp-5) var(--sp-7); padding-inline: var(--sp-5); }
   .page { max-width: 1040px; }
@@ -1646,7 +1648,7 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"] { display: 
 /* En-tête de l'accueil sur ordinateur : la porte de l'école s'écarte du texte, le voile derrière le texte est plus franc */
 @media (min-width: 761px) {
   .home-hero { min-height: 224px; }
-  .home-hero .scene { inset-inline-end: -10%; }
+  .home-hero .scene { inset-inline-end: -6%; }
   .home-hero h1 { font-size: 2.25rem; line-height: 1.15; }
   .home-hero .hello-txt { max-width: min(58%, 22rem); }
   .home-hero .hello-txt::before { inset: -1.7rem -4.5rem -1.7rem -1.9rem; background: linear-gradient(90deg, color-mix(in srgb, var(--sky-2) 95%, transparent) 72%, transparent); }

@@ -236,7 +236,7 @@ export function EspacePage(ctx) {
 
   return html`<section class="page espace">
     <header class="page-head"><div><p class="eyebrow">Promo ${me.promo}${me.entreprise ? ' · ' + me.entreprise : ''}</p><h1>Mon espace</h1></div>
-      ${nouveau ? null : html`<button class=${'btn' + (carteAFaire ? '' : ' primary')} onClick=${() => setCompose(true)}><${Icon} name="plus"/> Publier une offre</button>`}</header>
+      ${nouveau ? null : html`<button class=${'btn publier-offre' + (carteAFaire ? '' : ' primary')} onClick=${() => setCompose(true)}><${Icon} name="plus"/> Publier une offre</button>`}</header>
 
     <${AFaire} ctx=${ctx}/>
 
