@@ -3225,3 +3225,155 @@ test('ambassadeur (démo, arabe, sombre) : la proposition et la carte traduites,
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
+
+// ---------------------------------------------------------------------------------------------------------------
+// Relecture du lot mouvement : prénom effacé en arabe, brouillons, demande en pause, « Annuler » qui reste, fête du lauréat
+
+// Une demande de Salma (u-0001) et l'aide proposée par Youssef (u-0002), écrites directement dans la démo
+const demandeEtAide = (page, { accepter = false, pause = false } = {}) => page.evaluate(async ({ accepter, pause }) => {
+  const d = window.__demo, moi = d.me;
+  const dm = await d.insert('demandes', { auteur_id: moi.id, type: 'pfe', titre: 'Stage PFE relecture', details: 'Je cherche un PFE de 6 mois en maintenance industrielle.' });
+  if (pause) { const r = d.data.demandes.find(x => x.id === dm.id); r.relancee_at = r.created_at = new Date(Date.now() - 70 * 864e5).toISOString(); }
+  if (!pause) {
+    d.me = d.byId('profiles', 'u-0002');
+    const p = await d.insert('propositions', { demande_id: dm.id, laureat_id: 'u-0002', aide: 'recommande', entreprise: 'OCP', message: 'Je peux te recommander chez OCP.', status: 'envoyee' });
+    d.me = moi;
+    if (accepter) await d.update('propositions', p.id, { status: 'acceptee' });
+  }
+  d.emit();
+  return dm.id;
+}, { accepter, pause });
+
+test('arabe : un prénom cité deux fois dans la fête du match reste à l’écran, isolé une seule fois ; la police arabe ne prend pas les isolants', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  await s.comme('Salma'); await s.page.waitForTimeout(300); await fermerFete(s);
+  // La plage de la police arabe du site : jamais U+2066-2069 (deux isolants de suite y rendaient le nom à 0 px)
+  const plages = await s.page.evaluate(() => [...document.styleSheets].flatMap(f => { try { return [...f.cssRules]; } catch { return []; } })
+    .filter(r => r instanceof CSSFontFaceRule && /arabe/.test(r.style.getPropertyValue('font-family'))).map(r => r.style.getPropertyValue('unicode-range')));
+  assert.equal(plages.length, 4);
+  for (const p of plages) assert.doesNotMatch(p, /206[6-9]/i);
+  await demandeEtAide(s.page);
+  await s.aller('offres/demandes');
+  await s.page.click('.dm-accepter'); await s.page.waitForSelector('.modal.dm-oui-feuille');
+  await s.page.click('.dm-oui'); await s.page.waitForSelector('.fete.fete-match'); await s.page.waitForTimeout(300);
+  const r = await s.page.evaluate(() => {
+    const p = document.querySelector('.fete p'), out = [];
+    const w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+    for (let n; (n = w.nextNode());) for (let i = n.data.indexOf('Youssef'); i >= 0; i = n.data.indexOf('Youssef', i + 1)) {
+      const rg = document.createRange(); rg.setStart(n, i); rg.setEnd(n, i + 7); out.push(Math.round(rg.getBoundingClientRect().width));
+    }
+    return { txt: p.textContent, largeurs: out };
+  });
+  assert.match(r.txt, /تحدث مع/);
+  assert.equal(r.largeurs.length, 2, 'le prénom paraît deux fois');
+  for (const l of r.largeurs) assert.ok(l > 20, `prénom visible (${l} px)`);
+  assert.doesNotMatch(r.txt, /[⁦-⁩]{2}/, 'jamais deux isolants de suite');
+  assert.equal((r.txt.match(/⁨Youssef⁩/g) || []).length, 2, 'chaque prénom isolé une fois');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('brouillons : passer d’une question à une autre garde chaque réponse sous sa question ; une offre ne part jamais vers un autre public que celui de l’onglet', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Youssef'); await fermerFete(s);
+  const brouillons = () => s.page.evaluate(() => Object.fromEntries(Object.keys(localStorage).filter(k => k.startsWith('ensam-brouillon:')).map(k => [k, JSON.parse(localStorage.getItem(k)).v])));
+  // Entraide : la question A puis la question B, sans quitter l'écran
+  const [a, b] = await s.page.evaluate(() => window.__demo.data.questions.slice(0, 2).map(q => q.id));
+  const champ = 'form.answer-form textarea';
+  await s.aller('reseau/entraide/' + a); await s.page.fill(champ, 'Ma réponse à la question A'); await s.page.waitForTimeout(150);
+  await s.aller('reseau/entraide/' + b);
+  assert.equal(await s.page.inputValue(champ), '', 'la question B n’hérite pas du texte de A');
+  let br = await brouillons();
+  assert.equal(br[`ensam-brouillon:u-0002:reponse:${a}`], 'Ma réponse à la question A');
+  assert.equal(br[`ensam-brouillon:u-0002:reponse:${b}`], undefined);
+  await s.page.fill(champ, 'Et pour B'); await s.page.waitForTimeout(150);
+  await s.aller('reseau/entraide/' + a);
+  assert.equal(await s.page.inputValue(champ), 'Ma réponse à la question A');
+  br = await brouillons();
+  assert.equal(br[`ensam-brouillon:u-0002:reponse:${b}`], 'Et pour B');
+  // Offres : un brouillon par point de départ, et le public de l'onglet passe par-dessus le brouillon
+  const ouvrirForm = async route => { await s.aller(route); await s.page.$eval('#of-publier', x => x.click()); await s.page.waitForSelector('#of-titre'); await s.page.waitForTimeout(150); };
+  const etat = () => s.page.evaluate(() => ({ titre: document.querySelector('#of-titre').value, choisis: [...document.querySelectorAll('.modal [aria-pressed="true"]')].map(x => x.textContent.trim()) }));
+  await ouvrirForm('offres');
+  await s.page.fill('#of-titre', 'Stage ouvrier été'); await s.page.waitForTimeout(150); await s.fermer(); await s.page.waitForTimeout(200);
+  await ouvrirForm('offres/laureats');
+  let e = await etat();
+  assert.equal(e.titre, '', 'le brouillon d’une offre pour les étudiants ne vient pas dans « Entre lauréats »');
+  assert.ok(e.choisis.includes('Entre lauréats'));
+  await s.page.fill('#of-titre', 'Responsable méthodes confirmé'); await s.page.waitForTimeout(150); await s.fermer(); await s.page.waitForTimeout(200);
+  // Même un brouillon qui dirait « étudiants » sous cette clé : l'onglet « Entre lauréats » l'emporte
+  await s.page.evaluate(() => { const k = 'ensam-brouillon:u-0002:offre:laureats'; const x = JSON.parse(localStorage.getItem(k)); x.v.audience = 'etudiants'; x.v.type = 'stage'; x.v.annees = [3, 4]; localStorage.setItem(k, JSON.stringify(x)); });
+  await ouvrirForm('offres/laureats');
+  e = await etat();
+  assert.equal(e.titre, 'Responsable méthodes confirmé');
+  assert.ok(e.choisis.includes('Entre lauréats') && !e.choisis.includes('Pour les étudiants'), JSON.stringify(e.choisis));
+  await s.fermer(); await s.page.waitForTimeout(200);
+  await ouvrirForm('offres/sujets');
+  e = await etat();
+  assert.equal(e.titre, '');
+  assert.ok(e.choisis.includes('PFE') && e.choisis.includes('Pour les étudiants'), JSON.stringify(e.choisis));
+  await s.fermer(); await s.page.waitForTimeout(200);
+  await s.aller('accueil'); await fermerFete(s); await ouvrirForm('offres');
+  assert.equal((await etat()).titre, 'Stage ouvrier été', 'le brouillon de « Publier une offre » est toujours là');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('demande en pause : « Fermer » demande d’abord (sans « Annuler », qui la relancerait) ; les autres se ferment d’un geste', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Salma'); await fermerFete(s);
+  const id = await demandeEtAide(s.page, { pause: true });
+  const etat = () => s.page.evaluate(id => { const d = window.__demo.data.demandes.find(x => x.id === id); return { status: d.status, relancee: d.relancee_at.slice(0, 10) }; }, id);
+  const avant = await etat();
+  await s.aller('offres/demandes');
+  assert.match(await s.page.locator(`#dm-${id}`).innerText(), /En pause/);
+  await s.page.locator(`#dm-${id} button:has-text("Fermer")`).first().click(); await s.page.waitForTimeout(300);
+  assert.equal(await feuillesOuvertes(s.page), 1, 'une confirmation');
+  assert.equal((await etat()).status, 'ouverte');
+  await s.page.locator('.modal-back:not(.sortie) .modal button:has-text("Fermer la demande")').click(); await s.page.waitForTimeout(400);
+  assert.deepEqual(await etat(), { ...avant, status: 'fermee' });
+  assert.match(await s.page.locator('.toast:not(.sortie)').innerText(), /Demande fermée/);
+  assert.equal(await s.page.locator('.toast-annuler').count(), 0, 'pas d’« Annuler » pour une demande en pause');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Annuler » reste utilisable jusqu’à son échéance : un autre message s’affiche au-dessus sans le cacher (fr, ar, mouvement réduit ou non)', async () => {
+  for (const [langue, mouvement] of [['fr', true], ['fr', false], ['ar', true], ['ar', false]]) {
+    const s = await ouvrir({ largeur: 390, langue, mouvement });
+    await s.comme('Salma'); await fermerFete(s);
+    const id = await s.page.evaluate(async () => { const d = window.__demo; return (await d.insert('demandes', { auteur_id: d.me.id, type: 'pfe', titre: 'Stage PFE à fermer', details: 'Je cherche un PFE de 6 mois en maintenance industrielle.' })).id; });
+    const statut = () => s.page.evaluate(id => window.__demo.data.demandes.find(x => x.id === id).status, id);
+    await s.aller('offres/demandes');
+    await s.page.locator(`#dm-${id} .dm-acts button`).last().click(); await s.page.waitForTimeout(300);
+    assert.equal(await statut(), 'fermee');
+    // Un message ordinaire arrive pendant les 6 s
+    await s.page.evaluate(async () => { const ui = await import(new URL('ui.js', location.href).href); ui.toast('Profil enregistré.'); });
+    await s.page.waitForTimeout(600);
+    const ts = await s.page.$$eval('.toast:not(.sortie)', ts => ts.map(t => { const b = t.getBoundingClientRect(); return { annuler: !!t.querySelector('.toast-annuler:not(:disabled)'), haut: b.top, bas: b.bottom, op: getComputedStyle(t).opacity }; }));
+    assert.equal(ts.length, 2, `${langue} ${mouvement} : les deux messages sont là`);
+    const [avec, sans] = ts[0].annuler ? ts : [ts[1], ts[0]];
+    assert.ok(avec.annuler && !sans.annuler);
+    assert.ok(sans.bas <= avec.haut + 0.5, `le message ordinaire au-dessus, sans chevauchement (${JSON.stringify(ts)})`);
+    assert.ok(ts.every(t => t.op === '1'));
+    await s.page.locator('.toast-annuler').click(); await s.page.waitForTimeout(400);
+    assert.equal(await statut(), 'ouverte', `${langue} ${mouvement} : « Annuler » a rouvert la demande`);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('fête du match chez le lauréat : une feuille qui s’en va (copie .sortie) ne la fait pas sauter', async () => {
+  const s = await ouvrir({ largeur: 390, mouvement: true });
+  await s.comme('Salma'); await fermerFete(s);
+  await demandeEtAide(s.page, { accepter: true });
+  await s.page.evaluate(() => localStorage.setItem('matchs-vus-u-0002', '[]'));
+  await s.aller('offres');
+  // La copie inerte d'une feuille qui vient de se fermer, présente au moment où la fête se demande si l'écran est libre
+  await s.page.evaluate(() => { const c = document.createElement('div'); c.className = 'modal-back sortie'; c.inert = true; document.body.appendChild(c); setTimeout(() => c.remove(), 1500); });
+  await s.page.selectOption('#persona', 'u-0002');
+  await s.page.waitForSelector('.fete.fete-match', { timeout: 4000 });
+  assert.equal(await s.page.locator('#fete-titre').innerText(), 'Salma a accepté ton aide');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});

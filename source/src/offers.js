@@ -507,10 +507,13 @@ const nChamps = n => `${n} champ${n > 1 ? 's' : ''}`;
 export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
   const { store, me, act, data } = ctx;
   const editing = !!offer?.id;
-  // Une nouvelle offre en cours d'écriture reste sur l'appareil (session expirée, rechargement)
-  const [f, setF, oublierBrouillon] = useBrouillon(editing ? null : me.id + ':offre', () => ({
+  // Une nouvelle offre en cours d'écriture reste sur l'appareil (session expirée, rechargement). Un brouillon par point de
+  // départ (« Publier une offre », « Déposer un sujet », « Entre lauréats ») ; le public et le type choisis en ouvrant
+  // passent par-dessus le brouillon : une offre ne part jamais vers un autre public que celui de l'onglet.
+  const depart = preset.audience === 'laureats' ? ':laureats' : preset.type === 'pfe' ? ':pfe' : '';
+  const [f, setF, oublierBrouillon] = useBrouillon(editing ? null : me.id + ':offre' + depart, () => ({
     type: 'stage', titre: '', entreprise: me.entreprise || '', ville: me.ville || '', pays: me.pays || 'Maroc', filieres: [], annees: [3, 4], description: '', contact: '', lien: '', deadline: '', cooptation: false, remunere: false, duree: '', audience: 'etudiants', ...preset, ...(offer || {}),
-  }));
+  }), preset);
   const [tente, setTente] = useState(false);   // rien n'est signalé avant « Publier » ou un collage
   const [eclat, setEclat] = useState(null);    // { keys } : ce que « Offre en 30 secondes » vient de remplir
   const plus = useRef();                       // <details> « Plus de détails »

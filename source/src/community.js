@@ -61,7 +61,7 @@ export function EntraidePage(ctx) {
   const qs = (cat === 'moi' ? pourMoi : data.questions.filter(q => !cat || q.categorie === cat)).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   const q = ctx.sub2 && store.byId('questions', ctx.sub2);
   const open = id => go('reseau/entraide/' + id);
-  if (q) return html`<${QuestionView} ctx=${ctx} q=${q} onBack=${() => go('reseau/entraide', { remplacer: true })}/>`;
+  if (q) return html`<${QuestionView} key=${q.id} ctx=${ctx} q=${q} onBack=${() => go('reseau/entraide', { remplacer: true })}/>`;
   return html`<div class="sub-page">
     <div class="toolbar"><p class="muted small grow">Les questions des étudiants, les réponses des lauréats.</p><button class="btn primary small" onClick=${() => setAsk(true)}><${Icon} name="plus" size=${16}/> Poser une question</button></div>
     <div class="chips rangee" role="group" aria-label="Catégorie">${pourMoi.length ? html`<button class=${'chip' + (cat === 'moi' ? ' on' : '')} aria-pressed=${cat === 'moi'} onClick=${() => setCat(cat === 'moi' ? '' : 'moi')}><${Icon} name="send" size=${13}/> Pour toi <span class="count">${pourMoi.length}</span></button>` : null}${['', ...CATEGORIES_Q].map(c => html`<button class=${'chip' + (cat === c ? ' on' : '')} aria-pressed=${cat === c} onClick=${() => setCat(c)}>${c || 'Toutes'}</button>`)}</div>

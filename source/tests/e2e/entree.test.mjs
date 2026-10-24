@@ -939,9 +939,11 @@ test('message envoyé avec un jeton refusé et un renouvellement refusé : il re
   site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
   site.tables.mentorships = EN_CONTACT();
   const m = await connecte({ hash: '#messages/' + AUTEUR, attendre: '#chat-txt' });
-  site.jetons.depuis = Math.floor(Date.now() / 1000) + 1; // la base ne reconnaît plus ce jeton (révoqué, horloge…)
-  await m.page.waitForTimeout(1100);
   await m.page.fill('#chat-txt', 'Je t’envoie mon CV ce soir.');
+  // La base ne reconnaît plus ce jeton (révoqué, horloge…) juste avant l'envoi : posé plus tôt (avec une attente d'une
+  // seconde), une requête de fond pouvait perdre la session avant le toucher sur « Envoyer ». Les jetons émis à partir de
+  // cette seconde (la reconnexion) restent bons.
+  site.jetons.depuis = Math.floor(Date.now() / 1000);
   await m.page.click('.composer .send-btn');
   await m.page.waitForSelector('#entree #au-session', { timeout: 15000 });
   assert.ok(!site.appels.some(a => a.u === '/sb/rest/v1/messages' && a.m === 'POST' && !a.refuse), 'rien n’est parti');

@@ -91,3 +91,11 @@ test('mots du réseau : خريجين pour les lauréats, jamais القدامى',
   assert.deepEqual(textes.filter(([, s]) => s.replace(/^\s*\/\/.*$/gm, '').includes('القدامى')).map(([f]) => f), []); // la règle peut être rappelée en commentaire
   assert.match(t('Lauréats'), /الخريجون|الخريجين/);
 });
+
+test('noms isolés : un prénom capturé deux fois par un motif, ou déjà isolé, ne reçoit jamais deux isolants de suite', async () => {
+  const { addAR } = await import('../../src/i18n.js');
+  addAR({}, [[/^Essai : parle avec (.+), puis (.+) confirme\.$/, n => `تجربة: تحدث مع ${n}، ثم يؤكد ${n}.`], [/^Essai isolé : (.+)$/, n => `تجربة ⁨${n}⁩`]]);
+  const FSI = '⁨';
+  assert.equal(t('Essai : parle avec Youssef, puis Youssef confirme.'), `تجربة: تحدث مع ${FSI}Youssef${PDI}، ثم يؤكد ${FSI}Youssef${PDI}.`);
+  assert.equal(t('Essai isolé : Salma Bennani'), `تجربة ${FSI}Salma Bennani${PDI}`);
+});
