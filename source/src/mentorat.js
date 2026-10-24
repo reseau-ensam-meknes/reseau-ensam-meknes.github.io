@@ -765,13 +765,15 @@ injectCSS('mentorat-ux', `
   .mstep li + li::before { width: 12px; }
   .mstep .step-dot { width: 20px; height: 20px; font-size: .75rem; }
 }
-/* Le sujet coule comme une phrase : « · il y a 2 j » suit le dernier mot au lieu de partir seul à la ligne */
+/* Le besoin au-dessus, comme un sur-titre ; puis le sujet coule comme une phrase : « · il y a 2 j » suit le dernier mot */
 .mreq-subject { display: block; line-height: 1.5; }
-.mreq-subject > .mini.besoin { margin: 0; margin-inline-end: .45rem; vertical-align: .08em; }
+.mreq-subject > .mini.besoin { display: flex; width: fit-content; margin: 0 0 .3rem; }
 .mreq-subject > .m-ago { white-space: nowrap; }
-/* En arabe, un sujet écrit en français garde sa propre boîte (sinon ses lignes se croisent avec le texte arabe) */
-[dir="rtl"] .mreq-subject { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .45rem; }
-[dir="rtl"] .mreq-subject > .mini.besoin { margin: 0; }
+/* En arabe, un sujet écrit en français garde sa propre boîte (sinon ses lignes se croisent avec le texte arabe) ;
+   le besoin reste seul sur sa ligne (le ::before vide passe à la ligne entre les deux) */
+[dir="rtl"] .mreq-subject { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .45rem; }
+[dir="rtl"] .mreq-subject > .mini.besoin { margin: 0; order: -2; }
+[dir="rtl"] .mreq-subject::before { content: ""; order: -1; flex-basis: 100%; height: 0; }
 .mrow-head > .m-more { margin-inline-start: -.2rem; }
 
 /* Mode d'emploi replié */
