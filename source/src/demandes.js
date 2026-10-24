@@ -3,7 +3,7 @@
 // Quand il a commencé, le lauréat le déclare et l'étudiant confirme : la réussite est vérifiée des deux côtés et annoncée.
 // Les règles sont celles de la base (protect_demande, protect_proposition, protect_placement).
 import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, toast, injectCSS, celebrate, TYPE_ICON, allerAuChamp } from './ui.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, roleTexte, useBusy, toast, injectCSS, celebrate, TYPE_ICON, allerAuChamp } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
 import { addAR, arCount, t as tr } from './i18n.js';
 import { TYPES, AIDES, DEMANDES_MAX, typesDemande, demandesActives, demandeEnPause, demandesPour, niveauOf, timeAgo, fmtDate, placementOf, etatAide, AIDE_OUVERTE, manquesDemande } from './logic.js';
@@ -71,7 +71,7 @@ export function DemandesTab({ ctx }) {
     ${me.role === 'admin' ? html`<${DemandesAdmin} ctx=${ctx} focusId=${focusId}/>` : null}
     ${me.role === 'laureat' ? html`<${DemandesLaureat} ctx=${ctx} focusId=${focusId}/>` : null}
     ${peutPublier ? html`<${MesDemandes} ctx=${ctx} focusId=${focusId} onNew=${() => setForm({})} onEdit=${d => setForm({ d })}/>` : null}
-    ${me.role === 'etudiant' && !peutPublier ? html`<${Empty} icon="send" title="Les demandes arrivent en 3e année">À partir de la 3e année, tu pourras dire aux lauréats le stage que tu cherches, CV joint. En attendant, demande-leur un conseil dans Mentorat.<//>` : null}
+    ${me.role === 'etudiant' && !peutPublier ? html`<${Empty} icon="send" scene="demandes" title="Les demandes arrivent en 3e année">À partir de la 3e année, tu pourras dire aux lauréats le stage que tu cherches, CV joint. En attendant, demande-leur un conseil dans Mentorat.<//>` : null}
     ${form ? html`<${DemandeForm} ctx=${ctx} d=${form.d || null} onClose=${fermer}/>` : null}
   </div>`;
 }
@@ -150,21 +150,36 @@ function CarteAuteur({ ctx, d, focus, onEdit }) {
 
 // Une aide reçue : qui, quoi, son mot ; on l'accepte (c'est un match) ou on dit non merci
 function PropositionRecue({ ctx, d, x }) {
-  const { store, act, openProfile } = ctx;
+  const { store, act, openProfile, me } = ctx;
   const l = store.byId('profiles', x.laureat_id);
-  const accepter = () => ctx.confirm(`Accepter l’aide de ${l?.full_name || 'ce lauréat'} ? Les autres propositions seront closes, et vous verrez vos coordonnées.`, () => act(async () => {
+  const [oui, setOui] = useState(false);
+  // Le match : les deux visages se rejoignent (le sien, puis celui du lauréat), une seule fois par aide
+  const accepter = () => act(async () => {
     await store.update('propositions', x.id, { status: 'acceptee' });
-    if (!celebrate({ cle: 'match-' + x.id, icon: 'heart', titre: 'C’est un match !', texte: `Parle avec ${prenom(l)} de la suite. Quand tu commences, ${prenom(l)} le déclare et tu confirmes : ta réussite sera annoncée.`, action: { label: `Écrire à ${prenom(l)}`, icon: 'chat', onClick: () => ctx.ecrire?.(x.laureat_id) } })) toast('C’est un match ! Écris-lui pour la suite.', 'win');
-  }), 'Accepter');
+    setOui(false);
+    if (!celebrate({ cle: 'match-' + x.id, icon: 'heart', visages: [me, l], titre: 'C’est un match !', texte: `Parle avec ${prenom(l)} de la suite. Quand tu commences, ${prenom(l)} le déclare et tu confirmes : ta réussite sera annoncée.`, action: { label: `Écrire à ${prenom(l)}`, icon: 'chat', onClick: () => ctx.ecrire?.(x.laureat_id) } })) toast('C’est un match ! Écris-lui pour la suite.', 'win');
+  });
   const nonMerci = () => act(async () => { await store.update('propositions', x.id, { status: 'declinee' }); toast('C’est noté. Merci pour ta réponse.'); });
   return html`<div class="dm-prop">
     <div class="dm-prop-head"><${Person} p=${l} onOpen=${openProfile} size=${36}/><span class="spacer"></span><span class="small muted">${timeAgo(x.created_at)}</span></div>
     <${Aide} x=${x}/>
     <p class="quote" translate="no" dir="auto">${x.message}</p>
-    <div class="row dm-prop-acts"><button type="button" class="btn small tonal dm-accepter" onClick=${accepter}><${Icon} name="check" size=${15}/> Accepter</button>
+    <div class="row dm-prop-acts"><button type="button" class="btn small tonal dm-accepter" aria-haspopup="dialog" onClick=${() => setOui(true)}><${Icon} name="check" size=${15}/> Accepter</button>
       <${MessageBtn} ctx=${ctx} p=${l} cls="btn small ghost"/><span class="spacer"></span>
       <button type="button" class="btn small ghost" onClick=${nonMerci}>Non merci</button></div>
+    ${oui ? html`<${AccepterAide} l=${l} x=${x} onYes=${accepter} onClose=${() => setOui(false)}/>` : null}
   </div>`;
+}
+
+// « Oui, accepter » : le visage de qui on choisit, ce qu'il propose, et ce que le choix change
+function AccepterAide({ l, x, onYes, onClose }) {
+  const [busy, run] = useBusy();
+  const nom = l?.full_name || 'Un lauréat';
+  return html`<${Modal} title=${l ? `Accepter l’aide de ${prenom(l)} ?` : 'Accepter cette aide ?'} onClose=${onClose} cls="dm-oui-feuille">
+    <div class="dm-oui-qui"><${Avatar} p=${l} size=${72}/><strong translate="no" dir="auto">${nom}</strong>${l ? html`<span class="small muted">${roleTexte(l, true)}</span>` : null}<${Aide} x=${x}/></div>
+    <p class="dm-oui-txt">Les autres propositions seront closes, et vous verrez vos coordonnées.</p>
+    <div class="row-end"><button type="button" class="btn ghost" onClick=${onClose}>Pas maintenant</button><button type="button" class="btn primary dm-oui" aria-busy=${busy ? 'true' : undefined} disabled=${busy} onClick=${run(onYes)}><${Icon} name="heart" size=${16}/> Oui, accepter</button></div>
+  <//>`;
 }
 
 // Le match, côté étudiant : avec qui, la suite, et la confirmation du démarrage
@@ -288,7 +303,7 @@ function DemandesLaureat({ ctx, focusId }) {
       </div>` : null}
       ${liste.length ? html`<div class="list">${liste.map(({ d, why }) => html`<${CarteLaureat} key=${d.id} ctx=${ctx} d=${d} why=${why} focus=${d.id === focusId}/>`)}</div>`
         : libres.length ? html`<p class="small muted">Rien de ce côté pour l’instant. <button type="button" class="linkish" onClick=${() => { setProche(false); setType('tous'); }}>Voir toutes les demandes</button></p>`
-        : html`<${Empty} icon="send" title="Pas de demande ouverte pour le moment" action=${ctx.publierOffre ? { label: 'Publier une offre', icon: 'plus', onClick: ctx.publierOffre } : null}>Dès qu’un étudiant de ton parcours publie ce qu’il cherche, on te prévient. En attendant, une offre publiée lui parle tout de suite.<//>`}
+        : html`<${Empty} icon="send" scene="demandes" title="Pas de demande ouverte pour le moment" action=${ctx.publierOffre ? { label: 'Publier une offre', icon: 'plus', onClick: ctx.publierOffre } : null}>Dès qu’un étudiant de ton parcours publie ce qu’il cherche, on te prévient. En attendant, une offre publiée lui parle tout de suite.<//>`}
     </section>
     ${passees.length ? html`<details class="dm-anciennes"><summary>${passees.length > 1 ? `Mes aides passées (${passees.length})` : 'Mon aide passée'}</summary>
       <div class="list">${passees.map(({ d }) => html`<${CarteLaureat} key=${d.id} ctx=${ctx} d=${d}/>`)}</div></details>` : null}
@@ -465,7 +480,7 @@ function DemandesAdmin({ ctx, focusId }) {
         <h3 class="dm-titre" translate="no" dir="auto">${d.titre}</h3><${Meta} d=${d}/>
         <div class="dm-acts"><span class="small muted">${props > 1 ? `${props} propositions` : props ? '1 proposition' : 'Pas encore de proposition'}</span><span class="spacer"></span><button type="button" class="btn tiny ghost" onClick=${() => retirer(d)}><${Icon} name="x" size=${14}/> Retirer la demande</button></div>
       </article>`;
-    })}</div>` : html`<${Empty} icon="send" title="Aucune demande en cours">Les demandes des étudiants apparaissent ici dès qu’elles sont publiées.<//>`}
+    })}</div>` : html`<${Empty} icon="send" scene="demandes" title="Aucune demande en cours">Les demandes des étudiants apparaissent ici dès qu’elles sont publiées.<//>`}
   </section>`;
 }
 
@@ -512,6 +527,17 @@ injectCSS('demandes', `
 .dm-prop .quote { margin: 0; }
 .dm-prop-head { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
 .dm-prop-acts { gap: var(--sp-2); flex-wrap: wrap; align-items: center; }
+/* « Oui, accepter » : le visage du lauréat au centre, ce qu'il propose dessous */
+.dm-oui-qui { display: flex; flex-direction: column; align-items: center; gap: .3rem; padding-block: .3rem .6rem; text-align: center; }
+.dm-oui-qui .avatar { margin-block-end: .3rem; box-shadow: 0 0 0 4px var(--surface), 0 0 0 5px color-mix(in srgb, var(--accent) 22%, transparent); }
+.dm-oui-qui strong { font: 700 var(--fs-5)/1.25 var(--f-display); }
+.dm-oui-qui .dm-aide { margin-block-start: .25rem; }
+.dm-oui-txt { color: var(--ink-2); text-align: center; text-wrap: pretty; }
+.dm-oui-feuille .row-end { margin-block-start: var(--sp-4); }
+.dm-oui-feuille .row-end .btn { min-height: 46px; }
+.dm-oui-feuille .row-end .btn.primary { flex: 1 1 12rem; }
+@media (prefers-reduced-motion: no-preference) { .dm-oui-qui .avatar { animation: dm-oui-av .45s var(--ease) .08s backwards; } }
+@keyframes dm-oui-av { from { opacity: 0; transform: scale(.85); } }
 .dm-aide { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; overflow-wrap: anywhere; }
 .dm-match { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) 0 0; border-top: 1px solid var(--line); }
 .dm-match > .eyebrow { margin: 0; color: var(--good, #2e7d32); display: inline-flex; align-items: center; gap: .3rem; }

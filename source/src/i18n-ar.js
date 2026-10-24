@@ -632,6 +632,13 @@ Object.assign(AR, {
   'C’est noté': 'تم بنجاح',
 });
 
+// Lot mouvement · A : fêtes des deux côtés, carte « Fait », écrans vides illustrés
+Object.assign(AR, {
+  'Fait': 'تمّ', 'Oui, accepter': 'نعم، أقبل', 'Pas maintenant': 'ليس الآن', 'Accepter cette aide ?': 'قبول هذه المساعدة؟',
+  'Les autres propositions seront closes, et vous verrez vos coordonnées.': 'ستُغلق الاقتراحات الأخرى، وسيرى كل منكما معلومات اتصال الآخر.',
+  'Un lauréat': 'خريج', 'Ton premier merci': 'أول رسالة شكر تصلك', 'Quelqu’un que tu as aidé t’a laissé ce mot :': 'كلمة شكر وصلتك ممن ساعدتهم:', 'Avec plaisir': 'بكل سرور',
+});
+
 export const AR_PATTERNS = [
   // Lot design · A (motifs)
   // (fin A)
@@ -648,6 +655,12 @@ export const AR_PATTERNS = [
   // (fin C)
   // Lot design · D (motifs)
   // (fin D)
+  // Lot mouvement · A (motifs)
+  [/^Accepter l’aide de (.+) \?$/, n => `قبول مساعدة ${n}؟`],
+  [/^(.+) a accepté ton aide$/, n => `تم قبول مساعدتك من طرف ${n}`],
+  [/^C’est un match pour « (.+) »\. Écris-lui pour la suite, et déclare son démarrage dès qu’il a lieu\.$/, t => `تمّ الاتفاق حول «${t}». الخطوة التالية: رسالة قصيرة، ثم التصريح بالبداية بمجرد حدوثها.`],
+  [/^Écrire à (.+)$/, n => `مراسلة ${n}`],
+  // (fin mouvement A)
   // Accueil : la carte « prochaine étape » et la cloche
   [/^Premiers pas · (\d+) sur (\d+)$/, (a, b) => `الخطوات الأولى · ${a} من ${b}`],
   [/^Rendez-vous (aujourd’hui|demain) à (\d{1,2}:\d{2})$/, (d, h) => `موعد ${d === 'demain' ? 'غدًا' : 'اليوم'} على الساعة ${h}`],

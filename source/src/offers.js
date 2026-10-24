@@ -439,7 +439,7 @@ function Candidates({ ctx, o, apps }) {
           ${entre ? null : html`<button type="button" class="btn small cand-recruter" onClick=${() => recruit(a.student_id, a)}><${Icon} name="check" size=${15}/> Recruter</button>`}
         </div>`}
       </div>`;
-    }) : html`<${Empty} icon="inbox" title="Pas encore de candidat">${entre ? 'Les lauréats intéressés postulent ici. Partage aussi l’offre dans le groupe de ta ville.' : 'Les étudiants concernés la voient déjà dans leurs offres. Partage-la sur WhatsApp : un étudiant la fera circuler dans sa promo.'}<//>`}
+    }) : html`<${Empty} icon="inbox" scene="candidatures" title="Pas encore de candidat">${entre ? 'Les lauréats intéressés postulent ici. Partage aussi l’offre dans le groupe de ta ville.' : 'Les étudiants concernés la voient déjà dans leurs offres. Partage-la sur WhatsApp : un étudiant la fera circuler dans sa promo.'}<//>`}
     ${entre ? null : html`<${Matching} ctx=${ctx} o=${o}/>
     <button class="btn ghost small" onClick=${() => setDeclare(true)}><${Icon} name="plus" size=${15}/> J’ai recruté un étudiant qui n’a pas postulé ici</button>`}
     ${declare ? html`<${PickStudent} ctx=${ctx} onClose=${() => setDeclare(false)} onPick=${id => { setDeclare(false); recruit(id, null); }}/>` : null}

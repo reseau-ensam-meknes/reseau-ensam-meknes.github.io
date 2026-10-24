@@ -570,11 +570,86 @@ export function LigneNouvelle({ n, onGo }) {
 }
 
 // Écran vide : une phrase chaleureuse et, si possible, une seule action pour avancer.
-// action = { label, onClick, icon }
-export function Empty({ icon = 'spark', title, children, action }) {
-  return html`<div class="empty"><span class="empty-ico"><${Icon} name=${icon} size=${26}/></span><strong>${title}</strong><div>${children}</div>
+// action = { label, onClick, icon } ; scene = 'demandes' | 'messages' | 'candidatures' : une petite scène dessinée
+// (tirée de l'entrée de l'école) à la place de l'icône, de jour en thème clair et de nuit en thème sombre.
+export function Empty({ icon = 'spark', title, children, action, scene }) {
+  const dessin = scene && SCENES_VIDES[scene];
+  if (dessin) injectCSS('empty-scene', CSS_SCENES);
+  return html`<div class=${'empty' + (dessin ? ' a-scene' : '')}>${dessin ? html`<span class=${'es sky es-' + scene} aria-hidden="true" dangerouslySetInnerHTML=${{ __html: dessin }}></span>` : html`<span class="empty-ico"><${Icon} name=${icon} size=${26}/></span>`}<strong>${title}</strong><div>${children}</div>
     ${action ? html`<button type="button" class="btn primary small empty-act" onClick=${action.onClick}>${action.icon ? html`<${Icon} name=${action.icon} size=${15}/> ` : null}${action.label}</button>` : null}</div>`;
 }
+
+// Les scènes des écrans vides (240 × 120) : le ciel, le soleil ou la lune, la colline et la pelouse, puis le sujet.
+// Les couleurs sont celles de l'entrée dessinée (.sky) : elles passent à la nuit avec le thème sombre.
+const FOND_VIDE = '<svg viewBox="0 0 240 120" focusable="false"><defs><radialGradient id="es-lueur"><stop offset="0" class="es-st" stop-opacity=".55"/><stop offset="1" class="es-st" stop-opacity="0"/></radialGradient><radialGradient id="es-lampe"><stop offset="0" stop-color="#FFD98A" stop-opacity=".85"/><stop offset="1" stop-color="#FFD98A" stop-opacity="0"/></radialGradient></defs><g class="es-etoiles"><circle cx="22" cy="18" r="1"/><circle cx="58" cy="9" r="1.2"/><circle cx="132" cy="14" r=".9"/><circle cx="164" cy="30" r="1"/><circle cx="226" cy="54" r="1.1"/><circle cx="96" cy="26" r=".8"/></g>'
+  + '<g class="es-astre"><circle cx="206" cy="24" r="22" fill="url(#es-lueur)"/><circle class="es-soleil" cx="206" cy="24" r="9.5"/><circle class="es-cratere" cx="203" cy="21" r="2"/><circle class="es-cratere" cx="209" cy="28" r="1.4"/></g>'
+  + '<path class="es-nuage" d="M30 40c-1-5 5-8 9-6 2-6 11-7 14-1 4-2 9 0 9 4 4 0 6 3 4 5H31c-2 0-2-2-1-2z"/>'
+  + '<path class="es-colline" d="M0 84C34 74 70 80 104 77S176 70 240 80V120H0Z"/><path class="es-pelouse" d="M0 95C60 90 170 90 240 95V120H0Z"/>';
+const SCENES_VIDES = {
+  // La porte triangulaire de l'école, l'allée, et un avion de papier qui attend de partir
+  demandes: FOND_VIDE
+    + '<path class="es-allee" d="M77 95H93L116 120H54Z"/>'
+    + '<g class="es-porte"><polygon class="es-cadre" points="85,24 55,66 115,66"/><polygon class="es-dedans" points="85,34 64,62 106,62"/><rect class="es-dedans es-trait" x="58" y="64" width="54" height="7"/>'
+    + '<rect class="es-cadre" x="63" y="71" width="6" height="24"/><rect class="es-cadre" x="101" y="71" width="6" height="24"/>'
+    + '<path class="es-fer" d="M69 76h32M69 92h32M73 76v16M78 76v16M83 76v16M88 76v16M93 76v16M98 76v16"/><path class="es-orange" d="M80 49l5-9 5 9z"/><path class="es-bleu" d="M86 55l4-7 5 9h-9z"/></g>'
+    + '<g class="es-fleurs"><circle class="es-f1" cx="58" cy="99" r="2.2"/><circle class="es-f2" cx="51" cy="102" r="2.4"/><circle class="es-f3" cx="45" cy="99" r="2"/><circle class="es-f1" cx="40" cy="104" r="2.6"/><circle class="es-f2" cx="113" cy="99" r="2.2"/><circle class="es-f1" cx="120" cy="102" r="2.4"/><circle class="es-f3" cx="126" cy="99" r="2"/><circle class="es-f2" cx="131" cy="104" r="2.6"/></g>'
+    + '<path class="es-sillage" d="M108 46C126 32 142 62 160 55"/>'
+    + '<g class="es-avion"><path class="es-papier" d="M162 54l30-12-10 25-7-8z"/><path class="es-pli" d="M175 59l17-17"/></g></svg>',
+  // Un banc sous un arbre, un réverbère, et une bulle qui attend le premier mot
+  messages: FOND_VIDE
+    + '<g class="es-arbre"><rect class="es-tronc" x="56" y="70" width="5" height="26"/><circle class="es-t2" cx="47" cy="66" r="12"/><circle class="es-t2" cx="70" cy="65" r="12"/><circle class="es-t1" cx="58" cy="56" r="16"/><circle class="es-lumiere" cx="53" cy="50" r="5"/></g>'
+    + '<g class="es-banc"><rect class="es-bois" x="84" y="79" width="52" height="4" rx="2"/><rect class="es-bois" x="84" y="86" width="52" height="4" rx="2"/><path class="es-fer" d="M90 90v7M130 90v7M88 83v7M132 83v7"/></g>'
+    + '<g class="es-lampe"><circle class="es-lueur" cx="176" cy="46" r="20" fill="url(#es-lampe)"/><rect class="es-fer-p" x="174.5" y="48" width="3" height="48"/><path class="es-fer-p" d="M170 48h12l-2-5h-8z"/><rect class="es-ampoule" x="173.5" y="43" width="5" height="4" rx="1.2"/></g>'
+    + '<g class="es-bulle"><path class="es-bulle-fond" d="M98 30h34a11 11 0 0 1 0 22h-24l-8 7 1-7a11 11 0 0 1-3-22z"/><circle class="es-point" cx="105" cy="41" r="2.4"/><circle class="es-point" cx="114" cy="41" r="2.4"/><circle class="es-point" cx="123" cy="41" r="2.4"/></g></svg>',
+  // Un bâtiment blanc de l'école aux fenêtres en arc, et une boîte aux lettres, drapeau baissé
+  candidatures: FOND_VIDE
+    + '<g class="es-batiment"><rect class="es-mur" x="34" y="50" width="104" height="46"/><rect class="es-ombre" x="128" y="50" width="10" height="46"/><rect class="es-toit" x="31" y="45" width="110" height="6" rx="1"/>'
+    + '<path class="es-fenetre" d="M44 70v-9a4 4 0 0 1 8 0v9zM60 70v-9a4 4 0 0 1 8 0v9zM104 70v-9a4 4 0 0 1 8 0v9zM120 70v-9a4 4 0 0 1 8 0v9zM44 90v-9a4 4 0 0 1 8 0v9zM60 90v-9a4 4 0 0 1 8 0v9zM104 90v-9a4 4 0 0 1 8 0v9zM120 90v-9a4 4 0 0 1 8 0v9z"/>'
+    + '<path class="es-porte-b" d="M78 96V74a8 8 0 0 1 16 0v22z"/></g>'
+    + '<g class="es-cypres"><rect class="es-tronc" x="213" y="88" width="3" height="8"/><ellipse class="es-t2" cx="214.5" cy="70" rx="6" ry="19"/></g>'
+    + '<g class="es-boite"><rect class="es-fer-p" x="179" y="72" width="4" height="24"/><path class="es-boite-fond" d="M166 74V62a9 9 0 0 1 9-9h12a9 9 0 0 1 9 9v12z"/><path class="es-boite-face" d="M166 74V62a9 9 0 0 1 18 0v12z"/><rect class="es-fente" x="169" y="63" width="12" height="2.4" rx="1.2"/>'
+    + '<g class="es-drapeau"><rect class="es-fer-p" x="194" y="57" width="2" height="15"/><path class="es-orange" d="M196 66h8l-2 3 2 3h-8z"/></g></g></svg>',
+};
+const CSS_SCENES = `
+.empty.a-scene { gap: .45rem; }
+.es { display: block; inline-size: min(240px, 78%); aspect-ratio: 2 / 1; margin-block-end: .35rem; border-radius: var(--r-lg); overflow: hidden;
+  -webkit-mask: radial-gradient(120% 120% at 50% 40%, #000 62%, transparent 71%); mask: radial-gradient(120% 120% at 50% 40%, #000 62%, transparent 71%); }
+.es svg { display: block; inline-size: 100%; block-size: 100%; }
+[dir="rtl"] .es svg { transform: scaleX(-1); }
+.es .es-etoiles { fill: #FFFFFF; opacity: var(--stars); }
+.es .es-soleil { fill: var(--sun); } .es .es-st { stop-color: var(--sun); } .es .es-cratere { fill: #9C9480; opacity: var(--crater); }
+.es .es-nuage { fill: var(--cloud); } .es .es-colline { fill: var(--hill); } .es .es-pelouse { fill: var(--lawn-2); }
+.es .es-allee { fill: var(--walk); }
+.es .es-cadre { fill: var(--gate); } .es .es-dedans { fill: var(--gate-in); } .es .es-trait { stroke: var(--gate); stroke-width: 1.4; }
+.es .es-fer { fill: none; stroke: var(--iron); stroke-width: 1.6; stroke-linecap: round; } .es .es-fer-p { fill: var(--iron); }
+.es .es-orange { fill: var(--fl-2); } .es .es-bleu { fill: var(--w-body-1); }
+.es .es-f1 { fill: var(--fl-1); } .es .es-f2 { fill: var(--fl-2); } .es .es-f3 { fill: var(--fl-3); }
+.es .es-sillage { fill: none; stroke: var(--gate); stroke-width: 1.6; stroke-linecap: round; stroke-dasharray: 1 5; opacity: .45; }
+.es .es-papier { fill: var(--gate-in); stroke: var(--gate); stroke-width: 1.6; stroke-linejoin: round; } .es .es-pli { fill: none; stroke: var(--gate); stroke-width: 1.4; stroke-linecap: round; }
+.es .es-tronc { fill: var(--trunk); } .es .es-t1 { fill: var(--tree-1); } .es .es-t2 { fill: var(--tree-2); } .es .es-lumiere { fill: var(--tree-hi); opacity: .55; }
+.es .es-bois { fill: var(--trunk); }
+.es .es-lueur { opacity: var(--lamp); } .es .es-ampoule { fill: #FFE7A8; }
+.es .es-bulle-fond { fill: var(--bldg); stroke: var(--bldg-top); stroke-width: 1.4; stroke-linejoin: round; } .es .es-point { fill: var(--win); }
+.es .es-mur { fill: var(--bldg); } .es .es-ombre { fill: var(--bldg-shade); } .es .es-toit { fill: var(--bldg-top); } .es .es-fenetre { fill: var(--win); } .es .es-porte-b { fill: var(--gate); }
+.es .es-boite-fond { fill: var(--gate); } .es .es-boite-face { fill: color-mix(in srgb, var(--gate) 78%, #000); } .es .es-fente { fill: var(--gate-in); opacity: .8; }
+/* Un seul mouvement, à l'arrivée, puis la scène se pose */
+@media (prefers-reduced-motion: no-preference) {
+  .es { animation: es-in .5s var(--ease) backwards; }
+  .es .es-avion { animation: es-vol 1.1s cubic-bezier(.22, .8, .3, 1) .25s backwards; }
+  .es .es-sillage { animation: es-fondu .9s ease .55s backwards; }
+  .es .es-bulle { transform-box: fill-box; transform-origin: 10% 100%; animation: es-bulle .55s cubic-bezier(.3, 1.4, .5, 1) .3s backwards; }
+  .es .es-point { animation: es-point 1.2s ease-in-out .85s 2; }
+  .es .es-point:nth-of-type(2) { animation-delay: 1s; } .es .es-point:nth-of-type(3) { animation-delay: 1.15s; }
+  .es .es-drapeau { transform-box: fill-box; transform-origin: 0 100%; animation: es-drapeau .9s cubic-bezier(.3, 1.3, .5, 1) .45s backwards; }
+  .es .es-fenetre { animation: es-fondu .8s ease .3s backwards; }
+}
+@keyframes es-in { from { opacity: 0; transform: translateY(6px) scale(.98); } }
+@keyframes es-vol { from { opacity: 0; transform: translate(-26px, 12px) rotate(-8deg); } }
+@keyframes es-fondu { from { opacity: 0; } }
+@keyframes es-bulle { from { opacity: 0; transform: scale(.6); } }
+@keyframes es-point { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes es-drapeau { from { transform: rotate(-70deg); } }
+`;
 
 // ---------------------------------------------------------------------------
 // Les grands moments : première candidature, rendez-vous fixé, recrutement confirmé, premier merci…
@@ -582,10 +657,12 @@ export function Empty({ icon = 'spark', title, children, action }) {
 // ---------------------------------------------------------------------------
 let feteSet = null, feteActive = false;
 const surFete = new Set();
-export function celebrate({ cle, titre, texte, action, icon = 'trophy', pts = 0 }) {
+// visages = [p1, p2] : la fête « match », les deux visages glissent l'un vers l'autre et se rejoignent sous un cœur.
+// citation = { txt, de } : un merci cité en entier, avec le visage et le prénom de qui l'a écrit. ok : le libellé du bouton seul.
+export function celebrate({ cle, titre, texte, action, icon = 'trophy', pts = 0, visages, citation, ok }) {
   if (cle) { try { if (localStorage.getItem('fete-' + cle)) return false; localStorage.setItem('fete-' + cle, '1'); } catch { /* pas de stockage : on fête quand même */ } }
   if (!feteSet) return false;
-  feteSet({ titre, texte, action, icon, pts, t: Date.now() });
+  feteSet({ titre, texte, action, icon, pts, visages: visages?.length === 2 && visages.every(Boolean) ? visages : null, citation: citation?.txt ? citation : null, ok, t: Date.now() });
   feteActive = true;
   for (const fn of surFete) fn();
   return true;
@@ -600,11 +677,15 @@ export function Celebration() {
   return f ? html`<${Fete} f=${f} key=${f.t} onClose=${() => { feteActive = false; setF(null); }}/>` : null;
 }
 const COULEURS_FETE = ['var(--em-o)', 'var(--em-b)', 'var(--orange)', 'var(--accent)', 'var(--good)', '#FFD166'];
+// Le match : les couleurs de l'école seulement (bleu, orange, bleu nuit), et la pluie part quand le cœur apparaît
+const COULEURS_MATCH = ['var(--accent)', 'var(--orange)', 'var(--navy)'];
+const COEUR = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 20.7l-1.2-1.1C6.4 15.6 3.5 13 3.5 9.7A4.7 4.7 0 0 1 8.3 5c1.5 0 2.9.7 3.7 1.8A4.7 4.7 0 0 1 15.7 5a4.7 4.7 0 0 1 4.8 4.7c0 3.3-2.9 5.9-7.3 9.9z"/></svg>';
 function Fete({ f, onClose }) {
   const ref = useRef();
   useFeuille(onClose);   // Retour la ferme ; changer d'écran aussi
   useFeuilleDuBas(ref, onClose, '.sheet-grip');   // Lot mouvement · B : sur téléphone, une feuille du bas qu'on glisse pour fermer
-  const morceaux = useMemo(() => Array.from({ length: 34 }, (_, i) => ({ x: Math.round(Math.random() * 100), dx: Math.round(Math.random() * 120 - 60), d: (1.1 + Math.random() * .9).toFixed(2), w: (Math.random() * .35).toFixed(2), r: Math.round(Math.random() * 720 - 360), c: COULEURS_FETE[i % COULEURS_FETE.length], rond: i % 3 === 0 })), []);
+  const match = !!f.visages;
+  const morceaux = useMemo(() => { const c = match ? COULEURS_MATCH : COULEURS_FETE; return Array.from({ length: match ? 36 : 34 }, (_, i) => ({ x: Math.round(Math.random() * 100), dx: Math.round(Math.random() * 120 - 60), d: (1.1 + Math.random() * .9).toFixed(2), w: ((match ? .7 : 0) + Math.random() * .35).toFixed(2), r: Math.round(Math.random() * 720 - 360), c: c[i % c.length], rond: i % 3 === 0 })); }, []);
   useEffect(() => {
     const avant = document.activeElement;
     ref.current?.querySelector('button')?.focus();
@@ -612,21 +693,51 @@ function Fete({ f, onClose }) {
     document.addEventListener('keydown', k);
     return () => { document.removeEventListener('keydown', k); if (avant?.isConnected) avant.focus?.(); };
   }, []);
+  const cite = f.citation, prenomCite = cite?.de?.full_name?.split(' ')[0];
+  if (match || cite) injectCSS('fete-match', CSS_FETE_MATCH);
   return html`<div class="fete-back" onClick=${e => { if (e.target === e.currentTarget) onClose(); }}>
     <div class="fete-pluie" aria-hidden="true">${morceaux.map(m => html`<i class=${m.rond ? 'rond' : ''} style=${`--x:${m.x}%;--dx:${m.dx}px;--d:${m.d}s;--w:${m.w}s;--r:${m.r}deg;--c:${m.c}`}></i>`)}</div>
-    <div class="fete" role="dialog" aria-modal="true" aria-labelledby="fete-titre" ref=${ref}>
+    <div class=${'fete' + (match ? ' fete-match' : '') + (cite ? ' fete-merci' : '')} role="dialog" aria-modal="true" aria-labelledby="fete-titre" ref=${ref}>
       <span class="sheet-grip" aria-hidden="true"></span>
-      <span class="fete-ico"><${Icon} name=${f.icon} size=${34}/></span>
+      ${match ? html`<div class="fm-duo" aria-hidden="true"><span class="fm-v fm-a"><${Avatar} p=${f.visages[0]} size=${76}/></span><span class="fm-coeur" dangerouslySetInnerHTML=${{ __html: COEUR }}></span><span class="fm-v fm-b"><${Avatar} p=${f.visages[1]} size=${76}/></span></div>`
+        : html`<span class="fete-ico"><${Icon} name=${f.icon} size=${34}/></span>`}
       <h2 id="fete-titre">${f.titre}</h2>
       ${f.texte ? html`<p>${f.texte}</p>` : null}
+      ${cite ? html`<blockquote class="fete-cite"><p translate="no" dir="auto">${`« ${cite.txt.trim()} »`}</p>
+        <footer><${Avatar} p=${cite.de} size=${28}/>${prenomCite ? html`<b translate="no" dir="auto">${prenomCite}</b>` : html`<b>Un étudiant</b>`}</footer></blockquote>` : null}
       ${f.pts && rangsVisibles ? html`<p class="fete-pts"><${Pastille} n=${f.pts}/></p>` : null}
       <div class="fete-acts">
         ${f.action ? html`<button type="button" class="btn primary" onClick=${() => { onClose(); f.action.onClick(); }}>${f.action.icon ? html`<${Icon} name=${f.action.icon} size=${16}/> ` : null}${f.action.label}</button>` : null}
-        <button type="button" class=${'btn ' + (f.action ? 'ghost' : 'primary')} onClick=${onClose}>${f.action ? 'Plus tard' : 'Merci !'}</button>
+        <button type="button" class=${'btn ' + (f.action ? 'ghost' : 'primary')} onClick=${onClose}>${f.action ? 'Plus tard' : f.ok || 'Merci !'}</button>
       </div>
     </div>
   </div>`;
 }
+// Les deux visages partent chacun de son côté, glissent l'un vers l'autre et se touchent ; le cœur naît à leur rencontre.
+// --sens suit le sens de lecture (en arabe, le premier visage est à droite).
+const CSS_FETE_MATCH = `
+.fm-duo { --sens: 1; position: relative; display: flex; align-items: center; justify-content: center; padding-block: .3rem .55rem; margin-block-end: .15rem; }
+[dir="rtl"] .fm-duo { --sens: -1; }
+.fm-v { position: relative; display: block; border-radius: 50%; box-shadow: 0 0 0 4px var(--surface), 0 10px 24px -10px rgb(10 20 40 / .45); }
+.fm-a { z-index: 1; margin-inline-end: -12px; } .fm-b { margin-inline-start: -12px; }
+.fm-v .avatar { display: grid; }
+.fm-coeur { position: absolute; z-index: 2; inset-block-end: -2px; inset-inline-start: 50%; translate: calc(-50% * var(--sens)) 0; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%;
+  background: var(--surface); color: var(--em-o); box-shadow: 0 6px 16px -6px rgb(243 146 0 / .6), inset 0 0 0 2px color-mix(in srgb, var(--em-o) 28%, transparent); }
+@media (prefers-reduced-motion: no-preference) {
+  .fm-a { animation: fm-a .62s cubic-bezier(.2, .85, .25, 1) .12s backwards; }
+  .fm-b { animation: fm-b .62s cubic-bezier(.2, .85, .25, 1) .12s backwards; }
+  .fm-coeur { animation: fm-coeur .5s cubic-bezier(.3, 1.5, .5, 1) .62s backwards; }
+  .fm-coeur::after { content: ""; position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 2px var(--em-o); opacity: 0; animation: fm-onde .7s ease-out .8s 1; }
+}
+@keyframes fm-a { from { opacity: 0; transform: translateX(calc(-46px * var(--sens))) rotate(calc(-8deg * var(--sens))); } 60% { opacity: 1; } }
+@keyframes fm-b { from { opacity: 0; transform: translateX(calc(46px * var(--sens))) rotate(calc(8deg * var(--sens))); } 60% { opacity: 1; } }
+@keyframes fm-coeur { from { opacity: 0; transform: scale(.2); } }
+@keyframes fm-onde { from { opacity: .7; transform: scale(1); } to { opacity: 0; transform: scale(1.7); } }
+.fete-cite { margin: .2rem 0 .1rem; padding: .8rem .95rem .7rem; inline-size: 100%; border-radius: var(--r-lg); background: color-mix(in srgb, var(--em-o) 9%, var(--surface)); text-align: start; }
+.fete .fete-cite p { margin: 0; max-width: none; color: var(--ink); font-size: var(--fs-4); line-height: 1.5; overflow-wrap: anywhere; white-space: pre-line; }
+.fete-cite footer { display: flex; align-items: center; gap: .45rem; margin-block-start: .55rem; color: var(--ink-2); font-size: var(--fs-2); }
+.fete-merci .fete-ico { color: var(--em-o); }
+`;
 
 // Bouton qui attend la fin de son action : il se grise et montre un petit cercle, ce qui évite le double clic
 export function useBusy() {
