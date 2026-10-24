@@ -600,7 +600,31 @@ Object.assign(AR, {
   'Réponse publiée.': 'تم نشر الجواب.',
 });
 
+// Lot design · A : système visuel (boutons, sélection, typographie)
+Object.assign(AR, {
+});
+
+// Lot design · B : onglets sur une ligne, listes courtes, filtres en feuille
+Object.assign(AR, {
+});
+
+// Lot design · C : visages, logos, icônes, badges, bouclier « vérifié »
+Object.assign(AR, {
+});
+
+// Lot design · D : ordinateur
+Object.assign(AR, {
+});
+
 export const AR_PATTERNS = [
+  // Lot design · A (motifs)
+  // (fin A)
+  // Lot design · B (motifs)
+  // (fin B)
+  // Lot design · C (motifs)
+  // (fin C)
+  // Lot design · D (motifs)
+  // (fin D)
   // Accueil : la carte « prochaine étape » et la cloche
   [/^Premiers pas · (\d+) sur (\d+)$/, (a, b) => `الخطوات الأولى · ${a} من ${b}`],
   [/^Rendez-vous (aujourd’hui|demain) à (\d{1,2}:\d{2})$/, (d, h) => `موعد ${d === 'demain' ? 'غدًا' : 'اليوم'} على الساعة ${h}`],

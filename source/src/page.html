@@ -26,43 +26,65 @@ else{d.dataset.entree='visiteur';setTimeout(function(){if(!window.ENSAM_ENTREE)d
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <!-- Polices chargées sans bloquer l’affichage (3G) : le texte s’affiche tout de suite avec la police du système -->
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,750&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap" media="print" onload="this.media='all'">
-<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,750&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap"></noscript>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,750&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,750&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap"></noscript>
 <style>
 /* Mise en page : rail de navigation (ordinateur) / barre d'onglets en bas (téléphone),
    contenu en colonne de lecture large. Identité : couleurs de l'ENSAM Meknès, bleu (actions), orange (impact), bleu nuit. */
 :root {
-  --bg: #F3F6FA; --surface: #FFFFFF; --surface-2: #E9EEF4; --ink: #13213A; --ink-2: #42506A; --muted: #58657A; --line: #D7DFE9;
-  --accent: #1670A8; --accent-ink: #FFFFFF; --accent-soft: #E2F0F9;
+  --bg: #EEF2F7; --surface: #FFFFFF; --surface-2: #E6EBF2; --raised: #FFFFFF; --ink: #13213A; --ink-2: #42506A; --muted: #58657A; --line: #DDE4ED; --line-strong: #C5CFDC;
+  --accent: #1670A8; --accent-ink: #FFFFFF; --accent-soft: #E2F0F9; --accent-hover: #12628F;
   --brass: #A65400; --brass-soft: #FDEBD3; --orange: #F39200; --navy: #1F3354;
   --brass-on-ink: #F6A94A; --blue-text: #135F8F; --lvl1: #9C6B3E; --bad-ink: #FFFFFF;
   --good: #1D7348; --good-soft: #E1F2E8; --warn: #9A5800; --warn-soft: #FAEDD5; --bad: #B0222E; --bad-soft: #FAE3E4;
   --s1: #1670A8; --s2: #F39200; --blue: #1670A8; --teal: #0F6F66; --indigo: #4A4FB5;
   --em-o: #F39200; --em-b: #1B7DBF; --em-n: #1F3354;
-  --shadow: 0 1px 2px rgb(19 33 58 / .06), 0 4px 16px rgb(19 33 58 / .05);
-  --shadow-lift: 0 2px 6px rgb(19 33 58 / .06), 0 14px 30px -14px rgb(22 72 120 / .35);
+  /* Élévation : 1 = cartes (sans bordure, ombre douce et filet très léger), 2 = survol et éléments levés, 3 = feuilles et menus */
+  --hair: rgb(19 33 58 / .07);
+  --sh1: 0 0 0 1px var(--hair), 0 1px 2px rgb(19 33 58 / .04), 0 3px 10px -4px rgb(19 33 58 / .08);
+  --sh2: 0 0 0 1px var(--hair), 0 2px 4px rgb(19 33 58 / .05), 0 12px 28px -10px rgb(19 33 58 / .2);
+  --sh3: 0 0 0 1px var(--hair), 0 20px 50px -14px rgb(10 20 40 / .32);
+  --shadow: var(--sh1); --shadow-lift: var(--sh2);
+  /* Une seule façon de montrer « choisi » (puces, segments, onglets, barre du bas, barre latérale), et le bouton tonal des listes */
+  --sel-bg: #E2F0F9; --sel-ink: #135F8F; --sel-ring: rgb(22 112 168 / .34);
+  --tonal-bg: #E2F0F9; --tonal-ink: #135F8F; --tonal-hover: #D3E8F6;
   --ease: cubic-bezier(.2, .8, .2, 1);
   --f-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
   --f-body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
-  --r: 10px;
+  --f-mono: var(--f-body);
+  /* Échelles : 12 · 13 · 15 · 17 · 20 · 24 · 28 px ; rayons 8 · 12 · 16 · 22 ; espaces 4 · 8 · 12 · 16 · 24 · 32 · 48 ; icônes 16 · 20 · 24 */
+  --fs-1: .75rem; --fs-2: .8125rem; --fs-3: .9375rem; --fs-4: 1.0625rem; --fs-5: 1.25rem; --fs-6: 1.5rem; --fs-7: 1.75rem;
+  --r-sm: 8px; --r-md: 12px; --r-lg: 16px; --r-xl: 22px; --r-pill: 999px; --r: var(--r-md);
+  --sp-1: .25rem; --sp-2: .5rem; --sp-3: .75rem; --sp-4: 1rem; --sp-5: 1.5rem; --sp-6: 2rem; --sp-7: 3rem;
+  --ico-s: 16px; --ico-m: 20px; --ico-l: 24px;
 }
+/* Nuit : quatre bleus nuit, ce qui est au-dessus est plus clair (fond, cartes, éléments levés, feuilles) ; plus de fonds bruns */
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --bg: #0B1320; --surface: #121C2B; --surface-2: #1A2638; --ink: #E6ECF4; --ink-2: #B3BFD0; --muted: #8492A8; --line: #26344A;
-  --accent: #5DB4EA; --accent-ink: #04121F; --accent-soft: #11293F; --brass: #F6A94A; --brass-soft: #33240F; --orange: #F6A94A; --navy: #C9D6E8;
-  --brass-on-ink: #8F4800; --blue-text: #5DB4EA; --lvl1: #C8925F; --bad-ink: #2A0A0C;
-  --good: #5DC991; --good-soft: #14301F; --warn: #EEAE52; --warn-soft: #33270F; --bad: #F27C83; --bad-soft: #3A1719;
+  --bg: #0B1320; --surface: #131D2D; --surface-2: #1B2739; --raised: #24324A; --ink: #E6ECF4; --ink-2: #B3BFD0; --muted: #8C9AB0; --line: #233046; --line-strong: #34445D;
+  --accent: #5DB4EA; --accent-ink: #04121F; --accent-soft: #1A3450; --accent-hover: #7CC3EE; --brass: #F6A94A; --brass-soft: #2C2B31; --orange: #F6A94A; --navy: #C9D6E8;
+  --brass-on-ink: #8F4800; --blue-text: #7CC3EE; --lvl1: #C8925F; --bad-ink: #2A0A0C;
+  --good: #5DC991; --good-soft: #1B3338; --warn: #EEAE52; --warn-soft: #2E2E31; --bad: #F27C83; --bad-soft: #312938;
   --s1: #5DB4EA; --s2: #F6A94A; --blue: #5DB4EA; --teal: #4FC7B9; --indigo: #A4A8F7;
   --em-o: #F6A23A; --em-b: #4BA8E6; --em-n: #C9D6E8;
-  --shadow: 0 1px 2px rgb(0 0 0 / .4); --shadow-lift: 0 2px 6px rgb(0 0 0 / .35), 0 16px 32px -14px rgb(0 0 0 / .7); color-scheme: dark; } }
+  --hair: rgb(255 255 255 / .05);
+  --sh1: inset 0 1px 0 rgb(255 255 255 / .035), 0 0 0 1px var(--hair);
+  --sh2: inset 0 1px 0 rgb(255 255 255 / .05), 0 0 0 1px rgb(255 255 255 / .08), 0 14px 30px -14px rgb(0 0 0 / .7);
+  --sh3: inset 0 1px 0 rgb(255 255 255 / .06), 0 0 0 1px rgb(255 255 255 / .07), 0 24px 60px -16px rgb(0 0 0 / .75);
+  --sel-bg: #1C3A58; --sel-ink: #9AD2F5; --sel-ring: rgb(93 180 234 / .42);
+  --tonal-bg: #1A3450; --tonal-ink: #9AD2F5; --tonal-hover: #20405F; color-scheme: dark; } }
 :root[data-theme="dark"] {
-  --bg: #0B1320; --surface: #121C2B; --surface-2: #1A2638; --ink: #E6ECF4; --ink-2: #B3BFD0; --muted: #8492A8; --line: #26344A;
-  --accent: #5DB4EA; --accent-ink: #04121F; --accent-soft: #11293F; --brass: #F6A94A; --brass-soft: #33240F; --orange: #F6A94A; --navy: #C9D6E8;
-  --brass-on-ink: #8F4800; --blue-text: #5DB4EA; --lvl1: #C8925F; --bad-ink: #2A0A0C;
-  --good: #5DC991; --good-soft: #14301F; --warn: #EEAE52; --warn-soft: #33270F; --bad: #F27C83; --bad-soft: #3A1719;
+  --bg: #0B1320; --surface: #131D2D; --surface-2: #1B2739; --raised: #24324A; --ink: #E6ECF4; --ink-2: #B3BFD0; --muted: #8C9AB0; --line: #233046; --line-strong: #34445D;
+  --accent: #5DB4EA; --accent-ink: #04121F; --accent-soft: #1A3450; --accent-hover: #7CC3EE; --brass: #F6A94A; --brass-soft: #2C2B31; --orange: #F6A94A; --navy: #C9D6E8;
+  --brass-on-ink: #8F4800; --blue-text: #7CC3EE; --lvl1: #C8925F; --bad-ink: #2A0A0C;
+  --good: #5DC991; --good-soft: #1B3338; --warn: #EEAE52; --warn-soft: #2E2E31; --bad: #F27C83; --bad-soft: #312938;
   --s1: #5DB4EA; --s2: #F6A94A; --blue: #5DB4EA; --teal: #4FC7B9; --indigo: #A4A8F7;
   --em-o: #F6A23A; --em-b: #4BA8E6; --em-n: #C9D6E8;
-  --shadow: 0 1px 2px rgb(0 0 0 / .4); --shadow-lift: 0 2px 6px rgb(0 0 0 / .35), 0 16px 32px -14px rgb(0 0 0 / .7); color-scheme: dark; }
+  --hair: rgb(255 255 255 / .05);
+  --sh1: inset 0 1px 0 rgb(255 255 255 / .035), 0 0 0 1px var(--hair);
+  --sh2: inset 0 1px 0 rgb(255 255 255 / .05), 0 0 0 1px rgb(255 255 255 / .08), 0 14px 30px -14px rgb(0 0 0 / .7);
+  --sh3: inset 0 1px 0 rgb(255 255 255 / .06), 0 0 0 1px rgb(255 255 255 / .07), 0 24px 60px -16px rgb(0 0 0 / .75);
+  --sel-bg: #1C3A58; --sel-ink: #9AD2F5; --sel-ring: rgb(93 180 234 / .42);
+  --tonal-bg: #1A3450; --tonal-ink: #9AD2F5; --tonal-hover: #20405F; color-scheme: dark; }
 
 * { box-sizing: border-box; }
 html, body { min-height: 100%; }
@@ -1327,12 +1349,7 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"] { display: 
   @page bilan { size: A4 portrait; margin: 16mm; }
 }
 /* ---------- Passe UX : échelles, feuilles, fêtes, mouvement ---------- */
-:root {
-  --fs-1: .75rem; --fs-2: .875rem; --fs-3: 1rem; --fs-4: 1.125rem; --fs-5: 1.375rem; --fs-6: 1.75rem; --fs-7: 2.25rem;
-  --r-sm: 6px; --r-md: 10px; --r-lg: 14px; --r-xl: 20px; --r-pill: 999px;
-  --sp-1: .25rem; --sp-2: .5rem; --sp-3: .75rem; --sp-4: 1rem; --sp-5: 1.5rem; --sp-6: 2rem;
-  --warm: color-mix(in srgb, var(--brass) 9%, var(--surface));
-}
+:root { --warm: color-mix(in srgb, var(--brass) 9%, var(--surface)); }
 
 /* Écran vide : une icône douce, une phrase, une action */
 .empty { border-style: solid; border-color: var(--line); background: color-mix(in srgb, var(--surface) 70%, transparent); gap: .5rem; padding: 1.8rem 1.2rem; }
@@ -1521,6 +1538,15 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"] { display: 
 ::view-transition-new(root) { animation: .2s var(--ease) both vt-in; }
 @keyframes fade-out { to { opacity: 0; } }
 @keyframes vt-in { from { opacity: 0; transform: translateY(6px); } }
+
+/* ===== Lot design · B : onglets sur une ligne, listes régulières et courtes, filtres en feuille ===== */
+/* (fin de la partie B) */
+
+/* ===== Lot design · C : visages, logos, icônes, badges, bouclier « vérifié » ===== */
+/* (fin de la partie C) */
+
+/* ===== Lot design · D : ordinateur, vraie mise en page ===== */
+/* (fin de la partie D) */
 
 /* Moins de mouvement demandé : on garde des fondus très courts, sans déplacement ni boucle */
 @media (prefers-reduced-motion: reduce) {
