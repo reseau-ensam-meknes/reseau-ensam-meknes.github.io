@@ -65,9 +65,13 @@ export function nombresLTR(s) {
 }
 
 // Les noms et titres glissés dans une phrase arabe sont isolés (FSI…PDI) pour que leur ponctuation reste en place.
+// Chacun une seule fois, à chaque endroit où il paraît : un motif qui capture deux fois le même prénom, ou un nom déjà
+// isolé, ne donne jamais deux isolants de suite (le nom pouvait disparaître à l'écran).
+const echapper = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function isolate(out, groups) {
-  for (const g of groups) if (g && /[A-Za-zÀ-ÿ]{2}/.test(g) && out.includes(g)) out = out.replace(g, `\u2068${g}\u2069`);
-  return out;
+  const gs = [...new Set(groups.filter(g => g && /[A-Za-zÀ-ÿ]{2}/.test(g) && out.includes(g)))].sort((a, b) => b.length - a.length);
+  if (!gs.length) return out;
+  return out.replace(new RegExp(gs.map(echapper).join('|'), 'g'), (m, i, s) => (/[\u2066-\u2068]/.test(s[i - 1] || '') && s[i + m.length] === '\u2069' ? m : `\u2068${m}\u2069`));
 }
 
 // Traductions apportées par un module (ex. cv.js) : addAR({ 'Texte français': 'نص عربي' }, [[/^motif$/, fn]])

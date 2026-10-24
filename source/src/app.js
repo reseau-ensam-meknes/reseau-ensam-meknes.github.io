@@ -2,8 +2,8 @@
 import { getLang, setLang, chargerAR } from './i18n.js';
 import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore, texteErreur } from './store.js';
-import { Icon, Field, Empty, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, Num, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille } from './ui.js';
-import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour } from './logic.js';
+import { Icon, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille, ecranLibre } from './ui.js';
+import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
 import { ParcoursPage, EspacePage, Journey, journeyStep, confirmerRecrutement, refuserRecrutement, versMerci } from './me.js';
 import { ReseauPage, ProfileModal, ProfileForm, AskQuestion } from './community.js';
@@ -13,7 +13,7 @@ import { PrivacyPage, ConsentModal, MesDonnees, DesaboPage } from './privacy.js'
 import { useInstall, IosInstallHelp, PrevenirHote } from './pwa.js';
 import { NextCafe } from './groupes.js';
 import { EntrepriseModal } from './pro.js';
-import { DefisPanel, CoupePromos, DevenirParrain, TonAnnee, TonAnneeStrip } from './saison.js';
+import { DefisPanel, DevenirParrain, TonAnnee, TonAnneeStrip } from './saison.js';
 import { CvCard } from './cv.js';
 import { PhotoCard, PhotoProposee } from './photo.js';
 import { NudgeAvis } from './entreprises.js';
@@ -21,7 +21,7 @@ import { ConfianceHome } from './confiance.js';
 import { NextEvent } from './agenda.js';
 import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, suiteLien, accordIci, roleAccord, oublierInvitation } from './entree.js';
 import { MessagesPage, MessagesHome, useAlerteMessages } from './messages.js';
-import { PoulsReseau, marquerArrivee, useArrivee, ArriveeSheet, arriveeEnAttente } from './pouls.js';
+import { PoulsReseau, marquerArrivee, useArrivee, ArriveeSheet } from './pouls.js';
 import { ProposerAide } from './demandes.js';
 import { useFondateurs, FondateursBandeau, useFondateurMoi } from './fondateurs.js';
 import { useAmbassadeurs, pasAmbassadeur, notifsAmbassadeur, AmbassadeurAccueil } from './ambassadeurs.js';
@@ -807,7 +807,7 @@ function useFetesLaureat(ctx) {
     const premier = !avant && mercis[0] && !dejaFete('premier-merci-' + me.id) ? mercis[0] : null;
     if (!nouveau && !premier) return;
     const t = setTimeout(() => {
-      if (document.querySelector('.modal-back, .fete-back')) return;
+      if (!ecranLibre()) return; // le même test que les fêtes des fondateurs : une feuille qui s'en va ne compte pas
       if (nouveau) {
         const e = store.byId('profiles', nouveau.d.auteur_id), p = e?.full_name?.split(' ')[0] || 'Un étudiant';
         if (celebrate({ cle: `match-${me.id}-${nouveau.x.id}`, icon: 'heart', visages: [me, e], titre: `${p} a accepté ton aide`, texte: `C’est un match pour « ${nouveau.d.titre} ». Écris-lui pour la suite, et déclare son démarrage dès qu’il a lieu.`,

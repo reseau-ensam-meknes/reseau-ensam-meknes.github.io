@@ -5,7 +5,7 @@
 // par les deux personnes concernées, et chacun doit voir les mêmes fondateurs. Base pas encore à jour : le même calcul
 // sur ce que tout membre peut lire (offres et mentorats). En démo : le calcul sur toutes les données (classementFondateurs).
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
-import { Icon, Avatar, Bouclier, Modal, toast, celebrate, feteOuverte, injectCSS } from './ui.js';
+import { Icon, Avatar, Bouclier, Modal, toast, celebrate, ecranLibre, injectCSS } from './ui.js';
 import { classementFondateurs, lignePlaces, NB_FONDATEURS } from './logic.js';
 import { addAR, arCount } from './i18n.js';
 import { MessageBtn } from './messages.js';
@@ -96,7 +96,7 @@ export function FondateursBandeau({ ctx, onPublier }) {
 // Un lauréat devient fondateur : la fête (une fois), puis, une fois la fête fermée, la question de la page d'entrée.
 // Jamais par-dessus une autre fenêtre, ni juste après l'inscription (la feuille d'accueil passe d'abord).
 // ---------------------------------------------------------------------------
-const libre = () => !document.querySelector('.modal-back:not(.sortie), .fete-back:not(.sortie)') && !feteOuverte();
+const libre = ecranLibre;
 const vuIci = id => { try { return localStorage.getItem('fondateur-question-' + id) === '1'; } catch { return false; } };
 const noterVu = id => { try { localStorage.setItem('fondateur-question-' + id, '1'); } catch { /* stockage indisponible */ } };
 

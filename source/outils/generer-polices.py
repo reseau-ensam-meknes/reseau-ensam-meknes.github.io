@@ -27,9 +27,11 @@ def plage(s):
     return out
 
 # Latin : ASCII, lettres accentuées, guillemets, tirets, espaces et ponctuation du français (les mêmes plages que
-# unicode-range dans page.html : un autre caractère prend la police du système). L'arabe : lettres, signes, chiffres, isolants bidi
+# unicode-range dans page.html : un autre caractère prend la police du système). L'arabe : lettres, signes, chiffres et marques
+# de jointure/direction (U+200C-200F). Pas les isolants bidi U+2066-2069 (ni ici, ni dans l'unicode-range de page.html) : pris
+# dans la police arabe, deux isolants de suite effaçaient à l'écran (largeur 0) le nom latin qu'ils entourent.
 LATIN = 'U+0020-007E, U+00A0, U+00A9, U+00AB, U+00B0, U+00B7, U+00BB, U+00C0-00FF, U+0152-0153, U+2000-200B, U+2010-2011, U+2013-2014, U+2018-2019, U+201C-201D, U+2022, U+2026, U+202F, U+2039-203A, U+20AC, U+2212'
-ARABE = 'U+0600-0603, U+060C, U+061B, U+061F, U+0621-063A, U+0640-0652, U+0660-066C, U+0670, U+067E, U+0686, U+06A4, U+06A9, U+06AD, U+06AF, U+06CC, U+200C-200F, U+2066-2069'
+ARABE = 'U+0600-0603, U+060C, U+061B, U+061F, U+0621-063A, U+0640-0652, U+0660-066C, U+0670, U+067E, U+0686, U+06A4, U+06A9, U+06AD, U+06AF, U+06CC, U+200C-200F'
 
 def lire(url):
     return urllib.request.urlopen(urllib.request.Request(url, headers={'User-Agent': UA})).read()

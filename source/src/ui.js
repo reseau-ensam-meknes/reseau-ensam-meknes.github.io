@@ -525,8 +525,14 @@ const ICO_TOAST = {
 };
 export function Toaster() {
   const [liste, setListe] = useState([]);
-  // Un nouveau message pousse le précédent, qui s'en va en douceur (mouvement réduit : il laisse simplement la place)
-  toastAjout = t => setListe(l => [...(mouvementReduit() ? [] : l.filter(x => !x.sortie).map(x => ({ ...x, sortie: true }))), t]);
+  // Un nouveau message pousse le précédent, qui s'en va en douceur (mouvement réduit : il laisse simplement la place).
+  // Celui qui porte « Annuler » reste jusqu'à son échéance (ou un autre « Annuler », qui vaut pour le dernier geste) :
+  // les messages ordinaires s'affichent au-dessus de lui, dans leur propre rangée, sans le cacher.
+  toastAjout = t => setListe(l => {
+    const garde = x => !t.annuler && x.annuler && !x.sortie;
+    const reste = mouvementReduit() ? l.filter(garde) : l.filter(x => garde(x) || !x.sortie).map(x => (garde(x) ? x : { ...x, sortie: true }));
+    return [...reste, t];
+  });
   const partir = id => setListe(l => (mouvementReduit() ? l.filter(x => x.t !== id) : l.map(x => (x.t === id ? { ...x, sortie: true } : x))));
   const retirer = id => setListe(l => l.filter(x => x.t !== id));
   // La zone reste toujours là (vide entre deux messages) pour que les lecteurs d'écran annoncent chaque message
@@ -540,7 +546,7 @@ function Toast({ t, partir, retirer }) {
   const fait = useRef(false);
   const annuler = () => { if (fait.current) return; fait.current = true; partir(t.t); t.annuler(); };
   const kind = ICO_TOAST[t.kind] ? t.kind : 'ok';
-  return html`<div class=${'toast ' + kind + (t.annuler ? ' avec-action' : '') + (t.sortie ? ' sortie' : '')} aria-hidden=${t.sortie ? 'true' : null}
+  return html`<div class=${'toast ' + kind + (t.annuler ? ' avec-action' : '') + (t.sortie ? ' sortie' : '')} aria-hidden=${t.sortie ? 'true' : null} style=${t.annuler ? 'grid-row:2' : null}
     onPointerEnter=${e => e.pointerType === 'mouse' && setRetenu(true)} onPointerLeave=${() => setRetenu(false)} onFocusIn=${() => setRetenu(true)} onFocusOut=${() => setRetenu(false)}>
     <svg class="toast-ico" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: ICO_TOAST[kind] }}></svg>
     <span class="toast-txt">${kind === 'envoi' ? html`<strong class="toast-titre">C’est noté</strong>` : null}<span>${t.msg}<${Pastille} n=${t.pts}/></span></span>
@@ -671,6 +677,8 @@ export function celebrate({ cle, titre, texte, action, icon = 'trophy', pts = 0,
 export const quandFete = fn => { surFete.add(fn); return () => surFete.delete(fn); };
 // Une fête est à l'écran : rien d'autre ne s'ouvre par-dessus (la feuille « Me prévenir » attend la prochaine visite)
 export const feteOuverte = () => feteActive;
+// Rien d'ouvert par-dessus l'écran (feuille, fenêtre ou fête ; une copie qui s'en va ne compte pas) : une fête peut venir
+export const ecranLibre = () => !document.querySelector('.modal-back:not(.sortie), .fete-back:not(.sortie)') && !feteActive;
 export function Celebration() {
   const [f, setF] = useState(null);
   feteSet = setF;
@@ -909,28 +917,44 @@ export function useLocal(key, init) {
 // Ce qui est en train d'être écrit (message, demande, offre, question…) : gardé sur l'appareil à chaque frappe, il revient
 // après un rechargement ou une session expirée, pour ce compte seulement (cle commence par l'id du membre ; null : pas
 // de brouillon). Gardé 14 jours ; oublier() une fois envoyé. S'utilise comme useState : [valeur, changer, oublier].
-export function useBrouillon(cle, init) {
+// La clé peut changer sans que l'écran soit refait (passer d'une question à une autre) : le brouillon de la nouvelle clé
+// est alors relu avant toute écriture, jamais celui de l'ancienne recopié dessous. imposer : des champs qui passent
+// par-dessus un brouillon d'objet (ex. le public choisi en ouvrant le formulaire).
+const lireBrouillonObjet = (k, d, imposer) => {
+  try {
+    const x = k && JSON.parse(localStorage.getItem(k) || 'null');
+    if (x && Date.now() - x.t < 14 * 864e5) return d && typeof d === 'object' && !Array.isArray(d) ? { ...d, ...x.v, ...imposer } : x.v;
+  } catch { /* stockage indisponible */ }
+  return d;
+};
+// Gardé tout de suite, à chaque frappe (pas après l'affichage) : un rechargement ou un téléphone qui coupe l'onglet juste
+// après n'emporte rien ; un texte vide ou revenu à son état de départ n'est pas un brouillon.
+const garderBrouillon = (k, v, d) => {
+  try {
+    if (v === '' || JSON.stringify(v) === JSON.stringify(d)) localStorage.removeItem(k);
+    else localStorage.setItem(k, JSON.stringify({ t: Date.now(), v }));
+  } catch { /* stockage plein ou indisponible : le brouillon reste à l'écran */ }
+};
+export function useBrouillon(cle, init, imposer) {
   const k = cle ? PREFIXE_BROUILLON + cle : null;
-  const depart = useRef(null); depart.current ??= typeof init === 'function' ? init() : init;
-  const [v, setV] = useState(() => {
-    const d = depart.current;
-    try {
-      const x = k && JSON.parse(localStorage.getItem(k) || 'null');
-      if (x && Date.now() - x.t < 14 * 864e5) return d && typeof d === 'object' && !Array.isArray(d) ? { ...d, ...x.v } : x.v;
-    } catch { /* stockage indisponible */ }
-    return d;
-  });
-  const parti = useRef(false);
-  useEffect(() => {
-    if (!k) return;
-    if (parti.current) { parti.current = false; return; } // envoyé : le prochain changement (champ vidé) n'est pas un brouillon
-    try {
-      if (v === '' || JSON.stringify(v) === JSON.stringify(depart.current)) localStorage.removeItem(k);
-      else localStorage.setItem(k, JSON.stringify({ t: Date.now(), v }));
-    } catch { /* stockage plein ou indisponible : le brouillon reste à l'écran */ }
-  }, [k, v]);
+  const etat = useRef(null), parti = useRef(false);
+  if (!etat.current || etat.current.k !== k) {
+    const d = typeof init === 'function' ? init() : init;
+    etat.current = { k, d, v: lireBrouillonObjet(k, d, imposer) };
+    parti.current = false;
+  }
+  const [, rendre] = useState(0);
+  const changer = useRef(x => {
+    const e = etat.current, v = typeof x === 'function' ? x(e.v) : x;
+    if (v === e.v) return;
+    etat.current = { ...e, v };
+    if (e.k) { if (parti.current) parti.current = false; else garderBrouillon(e.k, v, e.d); } // envoyé : le champ vidé n'est pas un brouillon
+    rendre(n => n + 1);
+  }).current;
+  // À l'ouverture (ou quand la clé change) : le brouillon relu est gardé de nouveau (il repart pour 14 jours)
+  useEffect(() => { const e = etat.current; if (e.k) garderBrouillon(e.k, e.v, e.d); }, [k]);
   const oublier = () => { parti.current = true; oublierBrouillon(cle); };
-  return [v, setV, oublier];
+  return [etat.current.v, changer, oublier];
 }
 export function oublierBrouillon(cle) { try { if (cle) localStorage.removeItem(PREFIXE_BROUILLON + cle); } catch { /* */ } }
 // Lu et écrit tout de suite, même par un écran qui n'est plus affiché (un envoi qui échoue après une session perdue)

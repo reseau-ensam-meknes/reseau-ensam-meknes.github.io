@@ -116,10 +116,11 @@ function CarteAuteur({ ctx, d, focus, onEdit }) {
   const envoyees = props.filter(x => x.status === 'envoyee').sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   const pause = demandeEnPause(d);
   // Fermer ou rouvrir se fait d'un geste : « Annuler » dans le message du bas remet l'état d'avant.
-  // Des propositions attendent une réponse : elles seraient closes pour de bon, alors on demande d'abord.
+  // Des propositions attendent une réponse : elles seraient closes pour de bon, alors on demande d'abord. Une demande en
+  // pause aussi : la rouvrir la relance (elle repartirait chez les lauréats), « Annuler » ne la remettrait pas en pause.
   const changer = (status, mot, retour) => act(async () => { await store.update('demandes', d.id, { status }); toast(mot, 'ok', 0, retour ? { annuler: retour } : {}); });
   const FERMEE = 'Demande fermée.', ROUVERTE = 'Demande rouverte : les lauréats la voient de nouveau.';
-  const fermer = () => (envoyees.length
+  const fermer = () => (envoyees.length || pause
     ? ctx.confirm('Fermer ta demande ? Les lauréats ne la verront plus. Tu pourras la rouvrir.', () => changer('fermee', FERMEE), 'Fermer la demande')
     : changer('fermee', FERMEE, () => changer('ouverte', ROUVERTE)));
   const rouvrir = () => changer('ouverte', ROUVERTE, () => changer('fermee', FERMEE));
