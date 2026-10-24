@@ -3,6 +3,7 @@
 // Ce qui compte d'abord : le prochain rendez-vous en haut, le mode d'emploi seulement pour qui découvre.
 import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, toast, celebrate, useLocal, injectCSS } from './ui.js';
+import { useBrouillon } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
 import { BESOINS, RDV_MIN, mentorState, futureSlots, requestsFor, mentorsFor, timeAgo, helpMatch, niveauOf, coupDeMain, alerteTalents, mercisPublics, dernierMerciPour, nouvelleDemandeApres } from './logic.js';
 import { getLang, addAR, arCount, t as tr } from './i18n.js';
@@ -175,9 +176,11 @@ const EXEMPLES = {
 
 export function AskHelp({ ctx, mentor = null, besoin: b0 = '', sujet: s0 = '', onClose }) {
   const { store, me, act, go, scores, data } = ctx;
-  const [besoin, setBesoin] = useState(b0 || '');
-  const [sujet, setSujet] = useState(s0 || '');
-  const [msg, setMsg] = useState('');
+  // La demande en cours d'écriture reste sur l'appareil (session expirée, rechargement), pour ce lauréat ou pour tous
+  const cle = me.id + ':aide-mentorat:' + (mentor?.id || 'tous');
+  const [besoin, setBesoin, oublierBesoin] = useBrouillon(b0 ? null : cle + ':besoin', b0 || '');
+  const [sujet, setSujet, oublierSujet] = useBrouillon(s0 ? null : cle + ':sujet', s0 || '');
+  const [msg, setMsg, oublierMsg] = useBrouillon(cle + ':message', '');
   const [slots, setSlots] = useState(() => [...defaultSlots().slice(0, 2), '']);
   const [to, setTo] = useState(mentor?.id || '');
   const reco = mentor ? [] : mentorsFor(data, me, besoin, scores).slice(0, 3);
@@ -188,9 +191,10 @@ export function AskHelp({ ctx, mentor = null, besoin: b0 = '', sujet: s0 = '', o
     e.preventDefault(); if (!ok) return;
     act(async () => {
       await store.insert('mentorships', { student_id: me.id, mentor_id: to || null, besoin, sujet: sujet.trim(), message: msg.trim() || null, creneaux: valid.map(x => new Date(x).toISOString()) });
+      oublierBesoin(); oublierSujet(); oublierMsg();
       onClose(); go('mentorat');
       if (!proposerPrevenir('mentorat', to ? `Horaires envoyés à ${firstName(target)}.` : 'Horaires envoyés aux lauréats.'))
-        toast(to ? `Horaires envoyés à ${firstName(target)}. On te prévient dès qu’un horaire est choisi.` : 'Horaires envoyés aux lauréats. On te prévient dès qu’un horaire est choisi.', 'win');
+        toast(to ? `Horaires envoyés à ${firstName(target)}. On te prévient dès qu’un horaire est choisi.` : 'Horaires envoyés aux lauréats. On te prévient dès qu’un horaire est choisi.', 'envoi');
     });
   };
   return html`<${Modal} title=${mentor ? `Demander à ${mentor.full_name}` : 'Demander de l’aide'} onClose=${onClose}>

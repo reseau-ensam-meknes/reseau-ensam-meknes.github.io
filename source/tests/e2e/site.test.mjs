@@ -47,8 +47,9 @@ after(async () => { await navigateur?.close(); serveur?.close(); });
 
 // Une page neuve, dans la langue voulue, avec un relevé des erreurs
 // ua : le user-agent d'un vrai appareil (TELEPHONE) ; sinon celui de Chromium sur un ordinateur
-async function ouvrir({ largeur = 1280, langue = 'fr', sw = false, theme = 'light', ua } = {}) {
-  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: largeur > 800 ? 900 : 844 }, serviceWorkers: sw ? 'allow' : 'block', colorScheme: theme, reducedMotion: 'reduce', ...(ua ? { userAgent: ua } : {}) });
+// mouvement : les animations jouent (sinon, mouvement réduit) ; toucher : un écran tactile (événements touch, pour glisser au doigt)
+async function ouvrir({ largeur = 1280, langue = 'fr', sw = false, theme = 'light', ua, mouvement = false, toucher = false } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: largeur > 800 ? 900 : 844 }, serviceWorkers: sw ? 'allow' : 'block', colorScheme: theme, reducedMotion: mouvement ? 'no-preference' : 'reduce', hasTouch: toucher, ...(ua ? { userAgent: ua } : {}) });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
   const page = await ctx.newPage(); const erreurs = [];
   page.on('pageerror', e => erreurs.push(e.message));
@@ -1915,7 +1916,7 @@ test('demande d’un étudiant : il publie (CV joint), un lauréat propose, matc
   assert.match(await s.page.locator('main').first().innerText(), /j’ai un sujet de PFE lean dans mon équipe/);
   await s.aller('offres/demandes');
   assert.match(await carte().locator('.dm-prop').innerText(), /Encadre/);
-  await carte().locator('.dm-accepter').click(); await s.page.click('.modal .btn.danger'); await s.page.waitForTimeout(400); await fete();
+  await carte().locator('.dm-accepter').click(); await s.page.click('.modal .dm-oui'); await s.page.waitForTimeout(400); await fete();
   assert.match(await carte().innerText(), /C’est un match/i);
   // Youssef déclare le démarrage ; Salma confirme : demande réussie, annoncée « encadré(e) par »
   await s.comme('Youssef'); await s.aller('offres/demandes');
@@ -2046,7 +2047,8 @@ test('cloche : son chiffre compte ce qui attend un geste, la feuille dit « À f
   assert.match(await s.page.locator('.modal').last().innerText(), /Réduction des rebuts[\s\S]*Candidats/, 'l’offre s’ouvre sur ses candidats');
   await s.fermer();
   const pastilles = () => s.page.$$eval('.bottom-nav a', as => as.filter(a => a.querySelector('.dotn')).map(a => a.innerText.trim().split('\n')[0]));
-  assert.deepEqual((await pastilles()).sort(), ['Espace', 'Mentorat']);
+  // Accueil : la plateforme lui propose d'être ambassadeur de sa promo (ambassadeurs.js)
+  assert.deepEqual((await pastilles()).sort(), ['Accueil', 'Espace', 'Mentorat']);
   // Mon espace commence par « À faire »
   await s.aller('espace');
   assert.ok(await s.page.evaluate(() => document.querySelector('.page-head').nextElementSibling.classList.contains('a-faire')), 'Mon espace commence par À faire');
@@ -2132,6 +2134,8 @@ test('feuilles : le pied « Publier » ne cache jamais le champ suivi ; « Je pe
   await s.page.reload(); await s.page.waitForSelector('.hello'); await s.aller('accueil');
   if (await s.page.$('.fete-back')) await s.fermer();
   const style = sel => s.page.evaluate(x => { const c = getComputedStyle(document.querySelector(x)); return [c.backgroundColor, c.backgroundImage, c.color].join(' | '); }, sel);
+  // Le CV était l'étape montrée : la carte la coche d'abord (« Fait »), puis l'étape suivante arrive avec son bouton
+  await s.page.waitForSelector('.pas .pas-go', { timeout: 3000 });
   const carte = await style('.pas .pas-go');
   await s.page.locator('.coup-de-main button', { hasText: 'Faire relire mon CV' }).first().click(); await s.page.waitForSelector('.modal .btn.primary');
   assert.equal(await style('.modal .btn.primary'), carte, 'le bouton de la feuille est plein, comme celui de la carte');
@@ -2455,6 +2459,445 @@ test('clavier : lien « Aller au contenu », fenêtre qui garde le focus puis le
   await s.ctx.close();
 });
 
+// ---------------------------------------------------------------------------
+// Lot mouvement · B : feuilles du bas au doigt, onglets qui glissent, messages du bas avec icône et « Annuler »
+// ---------------------------------------------------------------------------
+// Un vrai glisser au doigt (événements tactiles, donc aussi les pointer events), de y0 à y1 en n étapes de dt ms.
+// lacher: false : le doigt reste posé ; la fonction rendue le lève.
+async function glisserDoigt(page, x, y0, y1, { n = 10, dt = 16, lacher = true } = {}) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y: y0 }] });
+  for (let i = 1; i <= n; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: Math.round(y0 + (y1 - y0) * i / n) }] }); await page.waitForTimeout(dt); }
+  const lever = async () => { await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await cdp.detach(); };
+  if (lacher) await lever();
+  return lever;
+}
+const feuillesOuvertes = page => page.locator('.modal-back:not(.sortie)').count();
+const pageBloquee = page => page.evaluate(() => document.documentElement.classList.contains('defil-bloque'));
+
+test('feuilles du bas : on les ferme en glissant vers le bas, elles reviennent en ressort sinon, et la page derrière ne bouge plus (390 px)', async () => {
+  const s = await ouvrir({ largeur: 390, mouvement: true, toucher: true });
+  await s.comme('Youssef'); await s.aller('reseau/talents');
+  // La liste défile un peu, le bouton « Filtres » reste à l'écran (pas de défilement automatique au toucher)
+  await s.page.evaluate(() => scrollTo(0, document.querySelector('#t-filtres').getBoundingClientRect().top + scrollY - 140)); await s.page.waitForTimeout(150);
+  const y = await s.page.evaluate(() => scrollY); assert.ok(y > 150, 'la liste défile');
+  const ouvrirFiltres = async () => { await s.page.click('#t-filtres'); await s.page.waitForSelector('.modal-back:not(.sortie) .modal'); await s.page.waitForTimeout(550); };
+  await ouvrirFiltres();
+  // La page derrière ne défile plus (molette, doigt sur le voile), et n'a pas sauté
+  assert.ok(await pageBloquee(s.page));
+  assert.equal(await s.page.evaluate(() => scrollY), y, 'pas de saut à l’ouverture');
+  await s.page.mouse.move(200, 120); await s.page.mouse.wheel(0, 500); await s.page.waitForTimeout(200);
+  await glisserDoigt(s.page, 200, 300, 60);
+  await s.page.waitForTimeout(200);
+  assert.equal(await s.page.evaluate(() => scrollY), y, 'la page derrière a défilé');
+  assert.equal(await feuillesOuvertes(s.page), 1, 'un geste sur le voile ne ferme pas la feuille');
+  // Un petit glisser de la poignée : la feuille suit le doigt et le voile s'éclaircit ; lâchée, elle revient en ressort
+  const tete = await s.page.locator('.modal-head').boundingBox();
+  const lever = await glisserDoigt(s.page, 200, tete.y + 20, tete.y + 90, { lacher: false });
+  assert.match(await s.page.evaluate(() => document.querySelector('.modal').style.transform), /translate3d\(0px, (6[5-9]|7\d)/);
+  assert.ok(await s.page.evaluate(() => +getComputedStyle(document.querySelector('.modal-back')).getPropertyValue('--voile') < 1));
+  await lever(); await s.page.waitForTimeout(700);
+  assert.equal(await feuillesOuvertes(s.page), 1, 'un petit glisser ne ferme pas');
+  assert.equal(await s.page.evaluate(() => document.querySelector('.modal').style.transform), '', 'la feuille est revenue à sa place');
+  // Vers le haut, elle résiste (24 px au plus)
+  const lever2 = await glisserDoigt(s.page, 200, tete.y + 20, tete.y - 200, { lacher: false });
+  const haut = await s.page.evaluate(() => +document.querySelector('.modal').style.transform.match(/, (-?[\d.]+)px/)[1]);
+  assert.ok(haut < 0 && haut >= -24, `résistance vers le haut : ${haut}`);
+  await lever2(); await s.page.waitForTimeout(600);
+  // Plus loin que 30 % de sa hauteur : elle part ; une copie inerte finit le mouvement, puis la page se libère à sa place
+  await glisserDoigt(s.page, 200, tete.y + 20, tete.y + 420, { n: 8, dt: 20 });
+  await s.page.waitForTimeout(40);
+  assert.equal(await feuillesOuvertes(s.page), 0, 'la feuille glissée loin se ferme');
+  assert.equal(await s.page.locator('.modal-back.sortie[aria-hidden="true"]').count(), 1, 'elle s’en va en douceur, cachée aux lecteurs d’écran');
+  await s.page.waitForTimeout(700);
+  assert.equal(await s.page.locator('.sortie').count(), 0);
+  assert.ok(!(await pageBloquee(s.page)), 'la page est libérée');
+  assert.equal(await s.page.evaluate(() => scrollY), y, 'la liste est restée à sa place');
+  assert.equal(await s.page.evaluate(() => (history.state?.f || 0)), 0, 'l’entrée d’historique de la feuille est retirée');
+  assert.equal(await ici(s.page), '#reseau/talents');
+  // Un geste vif, même court, suffit
+  await ouvrirFiltres();
+  await glisserDoigt(s.page, 200, tete.y + 20, tete.y + 70, { n: 3, dt: 8 });
+  await s.page.waitForTimeout(400);
+  assert.equal(await feuillesOuvertes(s.page), 0, 'un geste vif ferme la feuille');
+  // Le contenu tiré vers le bas quand il est tout en haut : la feuille descend aussi
+  await ouvrirFiltres();
+  const corps = await s.page.locator('.modal-body').boundingBox();
+  await glisserDoigt(s.page, 200, corps.y + 30, corps.y + 430, { n: 8, dt: 20 });
+  await s.page.waitForTimeout(400);
+  assert.equal(await feuillesOuvertes(s.page), 0, 'tirée par son contenu, la feuille se ferme');
+  // Retour mène toujours à l'écran d'avant (les feuilles fermées au doigt n'ont pas laissé d'entrée)
+  await s.page.waitForTimeout(400);
+  await retour(s.page);
+  assert.notEqual(await ici(s.page), '#reseau/talents');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('feuilles empilées : la page reste bloquée tant qu’il en reste une, Échap et Retour ferment celle du dessus ; une fête monte aussi du bas', async () => {
+  const s = await ouvrir({ largeur: 390, mouvement: true, toucher: true });
+  await s.comme('Admin'); await s.aller('offres');
+  await s.page.locator('.ocard-main').first().click(); await s.page.waitForSelector('.od h2'); await s.page.waitForTimeout(300);
+  await s.page.click('[aria-label="Gérer l’offre"]'); await s.page.click('.menu-pop .danger-t'); await s.page.waitForTimeout(450);
+  assert.equal(await feuillesOuvertes(s.page), 2, 'la confirmation s’ouvre par-dessus la fiche');
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(450);
+  assert.equal(await feuillesOuvertes(s.page), 1, 'Échap ferme celle du dessus');
+  assert.ok(await pageBloquee(s.page), 'la fiche est encore ouverte : la page reste bloquée');
+  assert.ok(await s.page.evaluate(() => !!document.activeElement.closest('.modal')), 'le focus revient dans la fiche (le menu qui l’avait ouverte est fermé)');
+  await retour(s.page);
+  assert.equal(await feuillesOuvertes(s.page), 0, 'Retour ferme la fiche');
+  await s.page.waitForTimeout(500);
+  assert.ok(!(await pageBloquee(s.page)));
+  assert.equal(await s.page.locator('.sortie').count(), 0, 'les copies qui s’en vont disparaissent');
+  // Une fête : sur téléphone, une feuille du bas (poignée comprise), qu'on ferme en la glissant
+  await s.page.evaluate(() => import('./ui.js').then(m => m.celebrate({ titre: 'Bravo !', texte: 'Un moment à fêter.' })));
+  await s.page.waitForSelector('.fete'); await s.page.waitForTimeout(700);
+  const f = await s.page.locator('.fete').boundingBox();
+  assert.ok(Math.abs(f.y + f.height - 844) < 2 && f.width === 390, 'la fête est posée en bas, sur toute la largeur');
+  assert.ok(await s.page.isVisible('.fete .sheet-grip'));
+  assert.ok(await pageBloquee(s.page));
+  await glisserDoigt(s.page, 195, f.y + 8, f.y + 300, { n: 8, dt: 20 });
+  await s.page.waitForTimeout(600);
+  assert.equal(await s.page.locator('.fete').count(), 0, 'la fête se ferme en la glissant');
+  assert.ok(!(await pageBloquee(s.page)));
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('feuilles sur ordinateur : la barre de défilement garde sa place, rien ne glisse, la fenêtre s’en va en fondu', async () => {
+  const s = await ouvrir({ mouvement: true });
+  await s.comme('Youssef'); await s.aller('reseau/talents');
+  const largeur = () => s.page.evaluate(() => document.documentElement.clientWidth);
+  const l0 = await largeur();
+  await s.page.click('#t-filtres'); await s.page.waitForSelector('.modal'); await s.page.waitForTimeout(400);
+  assert.ok(await pageBloquee(s.page));
+  assert.equal(await largeur(), l0, 'la page ne bouge pas de côté à l’ouverture');
+  const tete = await s.page.locator('.modal-head').boundingBox();
+  await s.page.mouse.move(tete.x + tete.width / 2, tete.y + 20); await s.page.mouse.down();
+  await s.page.mouse.move(tete.x + tete.width / 2, tete.y + 300, { steps: 6 }); await s.page.mouse.up();
+  assert.equal(await s.page.evaluate(() => document.querySelector('.modal').style.transform), '', 'au-dessus de 760 px, la fenêtre ne se glisse pas');
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(60);
+  assert.equal(await feuillesOuvertes(s.page), 0);
+  assert.equal(await s.page.locator('.modal-back.sortie').count(), 1, 'elle s’en va en fondu');
+  await s.page.waitForTimeout(500);
+  assert.equal(await s.page.locator('.sortie').count(), 0);
+  assert.equal(await largeur(), l0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('fermer ou rouvrir sa demande d’un geste : « Annuler » dans le message du bas remet l’état d’avant ; chaque message a son icône', async () => {
+  const s = await ouvrir({ largeur: 390, mouvement: true });
+  const TITRE = 'PFE en maintenance industrielle à Meknès';
+  const carte = () => s.page.locator('.dm-card', { hasText: TITRE }).first();
+  const message = () => s.page.locator('.toast:not(.sortie)');
+  const fete = () => s.page.locator('.fete-acts .btn').last().click({ timeout: 2000 }).catch(() => {});
+  await s.comme('Salma'); await s.aller('offres/demandes');
+  await s.page.click('#dm-nouvelle'); await s.page.waitForTimeout(300);
+  await s.page.click('#dm-type-pfe');
+  await s.page.fill('#dm-titre', TITRE);
+  await s.page.fill('#dm-details', 'Je cherche un PFE de 6 mois en maintenance : GMAO, plans de maintenance préventive, analyse des pannes.');
+  await s.page.click('#dm-publier'); await s.page.waitForTimeout(600); await fete(); await s.page.waitForTimeout(400);
+  for (let i = 0; i < 2 && await feuillesOuvertes(s.page); i++) { await s.fermer(); await s.page.waitForTimeout(300); }
+  assert.match(await carte().innerText(), /Ouverte/);
+  // Fermer : pas de « Es-tu sûr ? », un message avec son icône et « Annuler »
+  await carte().locator('.dm-acts button:has-text("Fermer")').click(); await s.page.waitForTimeout(400);
+  assert.equal(await feuillesOuvertes(s.page), 0, 'pas de fenêtre de confirmation');
+  assert.match(await carte().innerText(), /Fermée/);
+  assert.match(await message().innerText(), /Demande fermée/);
+  assert.equal(await message().locator('svg.toast-ico').count(), 1, 'le message a son icône');
+  await message().locator('.toast-annuler').click(); await s.page.waitForTimeout(500);
+  assert.match(await carte().innerText(), /Ouverte/, '« Annuler » rouvre la demande');
+  assert.match(await message().innerText(), /Demande rouverte/);
+  assert.equal(await message().locator('.toast-annuler').count(), 0, 'pas d’« Annuler » sur l’annulation');
+  // Le message d'avant s'en va en douceur, caché aux lecteurs d'écran, puis disparaît
+  await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator('.toast').count(), 1);
+  // Rouvrir se fait aussi d'un geste, et s'annule de même
+  await carte().locator('.dm-acts button:has-text("Fermer")').click(); await s.page.waitForTimeout(400);
+  await carte().locator('.dm-acts button:has-text("Rouvrir")').click(); await s.page.waitForTimeout(400);
+  assert.match(await carte().innerText(), /Ouverte/);
+  await message().locator('.toast-annuler').click(); await s.page.waitForTimeout(500);
+  assert.match(await carte().innerText(), /Fermée/, '« Annuler » referme la demande');
+  // Avec « Annuler », le message reste le temps de changer d'avis (6 s), puis s'en va
+  await carte().locator('.dm-acts button:has-text("Rouvrir")').click(); await s.page.waitForTimeout(4500);
+  assert.equal(await message().locator('.toast-annuler').count(), 1, 'encore là après 4,5 s');
+  await s.page.waitForTimeout(2200);
+  assert.equal(await s.page.locator('.toast').count(), 0, 'parti après 6 s');
+  // Un envoi réussi : la coche se trace, « C’est noté »
+  await s.aller('profil');
+  await s.page.click('form .row-end .btn.primary'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast.envoi').innerText(), /C’est noté\s+Profil enregistré/);
+  assert.equal(await s.page.locator('.toast.envoi .toast-trace').count(), 1);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('onglets : la pastille suit l’onglet choisi, seul le contenu glisse, dans le sens du changement (inversé en arabe)', async () => {
+  // Le décalage de départ des blocs qui glissent sous la rangée (px, > 0 : ils viennent de la droite)
+  const glissements = page => page.evaluate(() => document.getAnimations().map(a => a.effect?.getKeyframes?.()[0]?.transform || '')
+    .filter(t => t.startsWith('translate3d')).map(t => parseFloat(t.slice(12))));
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 390, langue, mouvement: true });
+    const sens = langue === 'ar' ? -1 : 1;
+    await s.comme('Salma'); await s.aller('offres'); await s.page.waitForTimeout(600);
+    await s.page.locator('.offres-seg [role="tab"]').nth(1).click(); await s.page.waitForTimeout(80);
+    assert.ok(await s.page.evaluate(() => document.querySelector('.offres-seg').classList.contains('trait-vol')), 'la pastille glisse');
+    const g = await glissements(s.page);
+    assert.ok(g.length && g.every(x => x * sens > 0), `${langue} : le contenu arrive du côté de l’onglet choisi (${g})`);
+    assert.equal(await ici(s.page), '#offres/demandes');
+    await s.page.waitForTimeout(600);
+    assert.ok(!(await s.page.evaluate(() => document.querySelector('.offres-seg').classList.contains('trait-vol'))), 'la pastille ne reste pas après le geste');
+    await s.page.locator('.offres-seg [role="tab"]').nth(0).click(); await s.page.waitForTimeout(80);
+    const g2 = await glissements(s.page);
+    assert.ok(g2.length && g2.every(x => x * sens < 0), `${langue} : en revenant, il arrive de l’autre côté (${g2})`);
+    // Les puces du Réseau : même geste
+    await s.aller('reseau/groupes'); await s.page.waitForTimeout(600);
+    await s.page.locator('.puces-nav [role="tab"]').nth(2).click(); await s.page.waitForTimeout(80);
+    assert.ok(await s.page.evaluate(() => document.querySelector('.puces-nav').classList.contains('trait-vol')));
+    assert.ok((await glissements(s.page)).every(x => x * sens > 0));
+    // Un message du bas en arabe : tout est traduit, « Annuler » s'y dit « تراجع »
+    if (langue === 'ar') {
+      await s.page.evaluate(() => import('./ui.js').then(m => m.toast('Demande fermée.', 'envoi', 0, { annuler() {} })));
+      await s.page.waitForTimeout(200);
+      const t = await s.page.locator('.toast').innerText();
+      assert.match(t, /تم بنجاح/); assert.match(t, /تراجع/); assert.doesNotMatch(t, /[A-Za-z]/);
+    }
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+  // Mouvement réduit : rien ne glisse, l'onglet change aussitôt
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('offres');
+  await s.page.locator('.offres-seg [role="tab"]').nth(1).click(); await s.page.waitForTimeout(80);
+  assert.ok(!(await s.page.evaluate(() => document.querySelector('.offres-seg').classList.contains('trait-vol'))));
+  assert.deepEqual(await glissements(s.page), []);
+  await s.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Lot mouvement · A : le match fêté des deux côtés, la carte qui dit « Fait », les écrans vides illustrés, le décor qui se pose
+// ---------------------------------------------------------------------------
+const MATCH = ['var(--accent)', 'var(--orange)', 'var(--navy)'];
+// Salma publie une demande, Youssef (déjà passé par l'accueil) propose d'encadrer ; rend le titre de la demande
+async function demandeAvecAide(s, TITRE) {
+  const fete = () => s.page.locator('.fete-acts .btn').last().click({ timeout: 2000 }).catch(() => {});
+  await s.comme('Youssef'); await s.page.waitForTimeout(200);
+  await s.comme('Salma'); await s.aller('offres/demandes');
+  await s.page.click('#dm-nouvelle'); await s.page.waitForTimeout(200);
+  await s.page.click('#dm-type-pfe');
+  await s.page.fill('#dm-titre', TITRE);
+  await s.page.fill('#dm-details', 'Je cherche un PFE de 6 mois en maintenance : AMDEC, TPM, indicateurs. Mobile à Tanger et Kénitra.');
+  await s.page.click('#dm-publier'); await s.page.waitForTimeout(400); await fete();
+  await s.comme('Youssef'); await s.aller('offres/demandes');
+  const carte = s.page.locator('.dm-card', { hasText: TITRE }).first();
+  if (!(await carte.count())) await s.page.click('.dm-filtres button[aria-pressed="true"]:has-text("Proches de ma filière")');
+  await carte.locator('.dm-aider').click(); await s.page.waitForTimeout(200);
+  await s.page.click('.dm-aide-choix:has(#dm-aide-encadre)');
+  await s.page.fill('#dm-p-msg', 'Bonjour Salma, j’ai un sujet de PFE en maintenance dans mon équipe. Je serai ton encadrant.');
+  await s.page.click('#dm-p-envoyer'); await s.page.waitForTimeout(400);
+  return fete;
+}
+
+test('match fêté des deux côtés : « Oui, accepter » avec son visage, les deux visages et le cœur ; le lauréat le vit à son retour, une fois', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const TITRE = 'PFE en maintenance industrielle à Tanger';
+  const fete = await demandeAvecAide(s, TITRE);
+  await s.comme('Salma'); await s.page.waitForTimeout(300); await fete();
+  await s.aller('offres/demandes');
+  const carte = s.page.locator('.dm-card', { hasText: TITRE }).first();
+  // La confirmation : son visage, son nom, ce qu'il propose ; « Oui, accepter » est le bouton plein, rien en rouge
+  await carte.locator('.dm-accepter').click(); await s.page.waitForSelector('.modal.dm-oui-feuille');
+  const feuille = s.page.locator('.modal.dm-oui-feuille');
+  assert.match(await feuille.locator('h2').innerText(), /Accepter l’aide de Youssef \?/);
+  assert.equal(await feuille.locator('.dm-oui-qui .avatar').count(), 1);
+  assert.match(await feuille.innerText(), /Youssef El Amrani[\s\S]*Encadre/);
+  assert.equal(await feuille.locator('.btn.danger').count(), 0, 'accepter n’est pas une action rouge');
+  assert.equal(await feuille.locator('.btn.primary').count(), 1);
+  assert.equal((await feuille.locator('.btn.primary').innerText()).trim(), 'Oui, accepter');
+  await feuille.locator('.btn.primary').click();
+  await s.page.waitForSelector('.fete.fete-match');
+  // Les deux visages (le sien, puis celui du lauréat), le cœur, des confettis bleu, orange et bleu nuit ; aucun point pour l'étudiante
+  assert.equal(await s.page.locator('.fete-match .fm-duo .avatar').count(), 2);
+  assert.equal(await s.page.locator('.fete-match .fm-coeur').count(), 1);
+  assert.match(await s.page.locator('#fete-titre').innerText(), /C’est un match/);
+  const couleurs = await s.page.$$eval('.fete-pluie i', is => [...new Set(is.map(i => i.style.getPropertyValue('--c')))]);
+  assert.deepEqual(couleurs.sort(), [...MATCH].sort());
+  assert.equal(await s.page.locator('.fete .pastille-pts').count(), 0);
+  await fete();
+  assert.match(await carte.innerText(), /C’est un match/i);
+  // Youssef revient sur l'accueil : « Salma a accepté ton aide », les deux visages, et « Écrire à Salma »
+  await s.comme('Youssef'); await s.page.waitForSelector('.fete.fete-match', { timeout: 4000 });
+  assert.equal(await s.page.locator('#fete-titre').innerText(), 'Salma a accepté ton aide');
+  assert.match(await s.page.locator('.fete').innerText(), new RegExp(`C’est un match pour « ${TITRE} »`));
+  assert.equal(await s.page.locator('.fete-match .fm-duo .avatar').count(), 2);
+  assert.equal((await s.page.locator('.fete-acts .btn.primary').innerText()).trim(), 'Écrire à Salma');
+  await fete();
+  // Une seule fois : ni au retour sur l'accueil, ni après un rechargement
+  await s.aller('offres'); await s.aller('accueil'); await s.page.waitForTimeout(1300);
+  assert.equal(await s.page.locator('.fete-back').count(), 0);
+  await s.page.reload(); await s.page.waitForSelector('.hello'); await s.page.waitForTimeout(1300);
+  assert.equal(await s.page.locator('.fete-back').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('premier merci reçu par un lauréat : une fête le cite en entier, une seule fois ; ceux d’avant ne sont pas fêtés', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const demo = f => s.page.evaluate(f => { const k = 'ensam-demo-v14', st = JSON.parse(localStorage.getItem(k)); new Function('d', f)(st.data); localStorage.setItem(k, JSON.stringify(st)); }, f);
+  const recharger = async () => { await s.page.reload(); await s.page.waitForSelector('.hello'); await s.page.waitForTimeout(1300); };
+  // Youssef a déjà des mercis : rien n'est fêté
+  await s.comme('Youssef'); await s.page.waitForTimeout(1300);
+  assert.equal(await s.page.locator('.fete-back').count(), 0);
+  // Nadia vient d'arriver (aucun merci) ; Salma lui dit merci après un mentorat
+  await s.comme('Nadia'); await s.page.waitForTimeout(1300);
+  assert.equal(await s.page.locator('.fete-back').count(), 0);
+  const MOT = 'Merci Nadia pour ces 20 minutes : tes conseils sur l’entretien chez OCP m’ont vraiment rassurée.\nJe me sens prête pour la suite !';
+  await demo(`const nadia = d.profiles.find(p => p.full_name === 'Nadia Ferhat'), salma = d.profiles.find(p => p.full_name === 'Salma Bennani');
+    const m = d.mentorships.find(x => x.status === 'terminee');
+    d.mentorships.push({ ...m, id: 'm-merci-nadia', mentor_id: nadia.id, student_id: salma.id, status: 'terminee', sujet: 'Préparer mon entretien', merci: ${JSON.stringify(MOT)}, rdv_at: new Date(Date.now() - 36e5).toISOString(), created_at: new Date(Date.now() - 864e5).toISOString() });`);
+  await recharger(); await s.page.waitForSelector('.fete.fete-merci', { timeout: 3000 });
+  assert.equal(await s.page.locator('#fete-titre').innerText(), 'Ton premier merci');
+  assert.equal(await s.page.locator('.fete-cite p').innerText(), `« ${MOT} »`, 'le merci est cité en entier');
+  assert.match(await s.page.locator('.fete-cite footer').innerText(), /Salma/);
+  assert.equal(await s.page.locator('.fete-cite footer .avatar').count(), 1);
+  assert.equal((await s.page.locator('.fete-acts .btn').last().innerText()).trim(), 'Avec plaisir');
+  await s.page.locator('.fete-acts .btn').last().click(); await s.page.waitForTimeout(200);
+  await recharger();
+  assert.equal(await s.page.locator('.fete-back').count(), 0, 'une seule fois');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('carte « Fait » : au retour sur l’accueil, l’étape accomplie se coche en vert, puis la suivante arrive ; sur place aussi ; pas par-dessus la fête de fin', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Nadia');
+  assert.equal(await s.page.getAttribute('.pas', 'data-pas'), 'guide-profil');
+  await s.aller('profil'); await s.page.fill('#pf-ent', 'OCP Group');
+  await s.page.click('form .row-end .btn.primary'); await s.page.waitForTimeout(300);
+  await s.aller('accueil');
+  // L'étape faite, cochée en vert, avec l'anneau qui avance d'un cran
+  const fait = s.page.locator('.pas.pas-fait');
+  assert.equal(await fait.count(), 1);
+  assert.equal(await fait.getAttribute('data-pas'), 'fait-profil');
+  assert.match(await fait.innerText(), /Premiers pas · 2 sur 5[\s\S]*Complète ton profil[\s\S]*Fait/);
+  assert.equal(await fait.locator('.pas-coche svg').count(), 1);
+  assert.equal(await s.page.locator('.home .pas').count(), 1, 'une seule carte à la fois');
+  assert.equal(await s.page.locator('.pas .btn.primary').count(), 0, 'pas de bouton pendant qu’elle se coche');
+  // Puis la suivante arrive, toute seule
+  await s.page.waitForSelector('.pas:not(.pas-fait)', { timeout: 3000 });
+  assert.equal(await s.page.getAttribute('.pas', 'data-pas'), 'guide-dispo');
+  assert.match(await s.page.getAttribute('.pas', 'class'), /pas-arrive/);
+  // Sur place : « Me rendre disponible » se coche aussi, puis l'étape suivante
+  await s.page.click('.pas .pas-go'); await s.page.waitForSelector('.pas.pas-fait[data-pas="fait-dispo"]', { timeout: 2000 });
+  await s.page.waitForSelector('.pas:not(.pas-fait)', { timeout: 3000 });
+  assert.notEqual(await s.page.getAttribute('.pas', 'data-pas'), 'guide-dispo');
+  // Une seule fois : rien ne se recoche au retour
+  await s.aller('offres'); await s.aller('accueil');
+  assert.equal(await s.page.locator('.pas.pas-fait').count(), 0);
+  await s.page.reload(); await s.page.waitForSelector('.hello');
+  assert.equal(await s.page.locator('.pas.pas-fait').count(), 0);
+  // La dernière étape : c'est la fête « Premiers pas terminés ! » qui le dit, pas la carte
+  await s.comme('Amine');
+  const demo = f => s.page.evaluate(f => { const k = 'ensam-demo-v14', st = JSON.parse(localStorage.getItem(k)); new Function('d', f)(st.data); localStorage.setItem(k, JSON.stringify(st)); }, f);
+  const vue = await s.page.getAttribute('.pas', 'data-pas');
+  assert.match(vue, /^guide-/);
+  await demo(`const a = d.profiles.find(p => p.full_name === 'Amine Talbi'); a.cv_path = a.id + '/cv.pdf';
+    const o = d.offers.find(x => x.status === 'ouverte' && (x.annees || []).includes(3));
+    d.demandes.push({ id: 'dm-amine', auteur_id: a.id, type: 'stage', titre: 'Stage de 3A', details: 'Un stage ouvrier de 1 mois en atelier.', status: 'ouverte', lieu: null, debut: null, duree: null, laureat_id: null, proposition_id: null, match_at: null, created_at: new Date().toISOString(), relancee_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+    if (o) d.applications.push({ id: 'ap-amine', offer_id: o.id, student_id: a.id, status: 'envoyee', message: 'Bonjour', created_at: new Date().toISOString() });
+    const m = d.mentorships.find(x => x.status === 'demande'); d.mentorships.push({ ...m, id: 'm-amine', student_id: a.id, mentor_id: null, status: 'demande', created_at: new Date().toISOString() });`);
+  await s.page.reload(); await s.page.waitForSelector('.hello');
+  await s.page.waitForSelector('.fete-back', { timeout: 2000 });
+  assert.match(await s.page.locator('#fete-titre').innerText(), /Premiers pas terminés/);
+  assert.equal(await s.page.locator('.pas.pas-fait').count(), 0, 'la carte ne coche pas par-dessus la fête');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('écrans vides illustrés : une scène dessinée pour aucune demande, aucun message, aucune candidature ; jour et nuit, en arabe aussi', async () => {
+  for (const [theme, langue] of [['light', 'fr'], ['dark', 'ar']]) {
+    const s = await ouvrir({ largeur: 390, theme, langue });
+    const scenes = {};
+    const voir = async (nom, e, scene) => {
+      await s.comme(nom); await s.aller(e);
+      const el = s.page.locator(`.empty .es.es-${scene}`).first();
+      assert.equal(await el.count(), 1, `${nom} · ${e} : la scène ${scene}`);
+      assert.equal(await el.getAttribute('aria-hidden'), 'true');
+      scenes[scene] = await el.evaluate(x => ({ ko: x.innerHTML.length / 1024, soleil: getComputedStyle(x.querySelector('.es-soleil')).fill, etoiles: getComputedStyle(x.querySelector('.es-etoiles')).opacity,
+        miroir: getComputedStyle(x.querySelector('svg')).transform, w: x.getBoundingClientRect().width, deborde: x.getBoundingClientRect().right > innerWidth || x.getBoundingClientRect().left < 0 }));
+    };
+    await voir('Hajar', 'messages', 'messages');
+    await voir('Amine', 'parcours', 'candidatures');
+    // Aucune demande d'étudiant dans le réseau : la porte de l'école et un avion de papier qui attend
+    await s.aller('accueil');
+    await s.page.evaluate(() => { const k = 'ensam-demo-v14', st = JSON.parse(localStorage.getItem(k)); st.data.demandes = []; st.data.propositions = []; localStorage.setItem(k, JSON.stringify(st)); });
+    await s.page.reload(); await s.page.waitForSelector('.hello');
+    await voir('Youssef', 'offres/demandes', 'demandes');
+    for (const [k, v] of Object.entries(scenes)) {
+      assert.ok(v.ko < 4, `${k} : ${v.ko.toFixed(1)} Ko, une petite scène`);
+      assert.ok(v.w >= 150 && !v.deborde, `${k} : ${v.w} px`);
+      assert.equal(v.etoiles, theme === 'dark' ? '1' : '0', `${k} : les étoiles la nuit seulement`);
+      assert.equal(v.soleil, theme === 'dark' ? 'rgb(239, 233, 214)' : 'rgb(255, 201, 77)', `${k} : le soleil le jour, la lune la nuit`);
+      assert.equal(v.miroir !== 'none', langue === 'ar', `${k} : la scène suit le sens de lecture`);
+    }
+    assert.ok((await s.debordement()) <= 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('le décor ne tourne plus sans fin : l’entrée dessinée s’anime à l’ouverture puis se pose ; immobile si l’appareil réduit les animations', async () => {
+  let s = await ouvrir({ largeur: 390, mouvement: true });
+  await s.comme('Youssef'); await s.page.waitForTimeout(300);
+  const boucles = () => s.page.evaluate(() => document.getAnimations().filter(a => a.effect?.target?.closest?.('.scene')).map(a => {
+    const t = a.effect.getComputedTiming();
+    return { qui: a.effect.target.getAttribute('class'), nom: a.animationName, fin: t.endTime };
+  }));
+  const anims = await boucles();
+  assert.ok(anims.length > 10, 'l’entrée s’anime à l’ouverture');
+  const sansFin = anims.filter(a => !Number.isFinite(a.fin));
+  assert.deepEqual(sansFin, [], 'aucune animation de la scène sans fin');
+  // Tout ce qu'on voit (hors oiseaux qui s'en vont) se pose en une dizaine de secondes
+  const longues = anims.filter(a => a.fin > 10500 && !/sc-fly|sc-flap/.test(a.nom));
+  assert.deepEqual(longues, []);
+  // Les écrans vides aussi : un seul mouvement à l'arrivée
+  await s.comme('Hajar'); await s.aller('messages');
+  const vides = await s.page.evaluate(() => document.getAnimations().filter(a => a.effect?.target?.closest?.('.es')).map(a => a.effect.getComputedTiming().endTime));
+  assert.ok(vides.length > 0 && vides.every(x => Number.isFinite(x) && x < 4000), JSON.stringify(vides));
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.page.waitForTimeout(300);
+  assert.equal((await boucles()).length, 0, 'immobile avec « Réduire les animations »');
+  await s.ctx.close();
+});
+
+test('arabe : les fêtes du match et du merci, et la carte « Fait », sont traduites ; les visages suivent le sens de lecture', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  await s.comme('Youssef'); await s.page.waitForTimeout(300);
+  const ar = await s.page.evaluate(async () => {
+    const { t } = await import('./i18n.js');
+    return ['Salma a accepté ton aide', 'C’est un match pour « PFE en lean ». Écris-lui pour la suite, et déclare son démarrage dès qu’il a lieu.', 'Accepter l’aide de Youssef ?',
+      'Oui, accepter', 'Fait', 'Ton premier merci', 'Avec plaisir', 'Quelqu’un que tu as aidé t’a laissé ce mot :', 'Les autres propositions seront closes, et vous verrez vos coordonnées.', 'Écrire à Salma'].map(t);
+  });
+  for (const x of ar) assert.doesNotMatch(x.replace(/Salma|Youssef|PFE en lean/g, ''), /[A-Za-zÀ-ÿ]{3,}/, x);
+  await s.page.evaluate(async () => {
+    const ui = await import(new URL('ui.js', location.href).href);
+    const { data } = JSON.parse(localStorage.getItem('ensam-demo-v14'));
+    const p = n => data.profiles.find(x => x.full_name === n);
+    ui.celebrate({ cle: 'test-match-' + Date.now(), titre: 'Salma a accepté ton aide', visages: [p('Youssef El Amrani'), p('Salma Bennani')] });
+  });
+  await s.page.waitForSelector('.fete-match');
+  const [a, b] = await s.page.$$eval('.fm-duo .fm-v', vs => vs.map(v => v.getBoundingClientRect().left));
+  assert.ok(a > b, 'en arabe, le premier visage est à droite');
+  const coeur = await s.page.$eval('.fm-coeur', c => { const r = c.getBoundingClientRect(), d = c.parentElement.getBoundingClientRect(); return Math.abs((r.left + r.right) / 2 - (d.left + d.right) / 2); });
+  assert.ok(coeur < 2, 'le cœur est entre les deux visages');
+  assert.deepEqual((await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 // Audit automatique (axe-core) : contrastes, noms des boutons et champs, repères pour les lecteurs d'écran
 for (const [largeur, langue, theme] of [[1280, 'fr', 'light'], [390, 'ar', 'dark']]) {
   test(`accessibilité : aucun problème relevé par axe (${largeur} px, ${langue}, ${theme})`, async () => {
@@ -2477,3 +2920,460 @@ for (const [largeur, langue, theme] of [[1280, 'fr', 'light'], [390, 'ar', 'dark
     await s.ctx.close();
   });
 }
+
+// ---------------------------------------------------------------------------
+// Membres fondateurs (démo) : les 25 premiers lauréats à aider les étudiants, tout en haut de l'accueil
+// ---------------------------------------------------------------------------
+const classementDemo = page => page.evaluate(async () => {
+  const L = await import(new URL('logic.js', location.href).href);
+  const d = window.__demo;
+  return L.classementFondateurs(d.data).map(f => ({ ...f, nom: d.data.profiles.find(p => p.id === f.id).full_name, role: d.data.profiles.find(p => p.id === f.id).role }));
+});
+
+test('accueil (démo) : les membres fondateurs tout en haut, des chiffres vrais, jamais l’administration ni de points', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('accueil');
+  await s.page.waitForSelector('.fd-accueil .fd-carte');
+  assert.ok(await s.page.evaluate(() => document.querySelector('.home-col').firstElementChild.classList.contains('fd-accueil')), 'au-dessus du bonjour');
+  const c = await classementDemo(s.page);
+  assert.ok(c.length > 0 && c.length <= 25);
+  assert.deepEqual([...new Set(c.map(f => f.role))], ['laureat']);
+  assert.deepEqual(await s.page.$$eval('.fd-accueil .fd-nom-t', x => x.map(e => e.textContent)), c.map(f => f.nom), 'dans l’ordre de leur première aide');
+  const t = await s.page.locator('.fd-accueil').innerText();
+  assert.match(t, /Membres fondateurs[\s\S]*Lauréats du mois[\s\S]*Les premiers à aider les étudiants/);
+  assert.match(t, new RegExp(`${25 - c.length} places? de membre fondateur restantes? sur 25`));
+  assert.doesNotMatch(t, /\bpoints?\b|\bpts\b/i, 'une étudiante ne voit jamais de points');
+  assert.equal(await s.page.locator('.fd-accueil .btn.primary').count(), 0, 'pas de bouton plein');
+  assert.equal(await s.page.locator('#fd-rejoindre').count(), 0, 'l’invitation est pour les lauréats');
+  assert.ok((await s.debordement()) <= 0);
+  // « Merci » : la conversation s'ouvre, le mot déjà écrit
+  const merci = s.page.locator('.fd-merci').first();
+  assert.ok(await merci.count());
+  await merci.click(); await s.page.waitForSelector('#chat-txt');
+  assert.match(await s.page.inputValue('#chat-txt'), /Merci d’aider les étudiants de l’école !/);
+  // Une carte ouvre le profil
+  await s.aller('accueil'); await s.page.locator('.fd-accueil .fd-qui').first().click(); await s.page.waitForTimeout(300);
+  assert.ok(await s.page.locator('.modal').count(), 'la fiche du fondateur');
+  await s.fermer();
+  // Au lancement : deux lauréats ont publié les deux premières offres
+  await s.page.evaluate(() => {
+    const d = window.__demo;
+    const deux = new Set(d.data.offers.filter(o => (o.audience || 'etudiants') === 'etudiants' && d.data.profiles.find(p => p.id === o.author_id)?.role === 'laureat')
+      .sort((a, b) => a.created_at.localeCompare(b.created_at)).map(o => o.author_id).filter((x, i, l) => l.indexOf(x) === i).slice(0, 2));
+    d.data.offers = d.data.offers.filter(o => deux.has(o.author_id));
+    d.data.mentorships = d.data.mentorships.filter(m => !['acceptee', 'terminee'].includes(m.status));
+    d.data.propositions = [];
+    d.emit();
+  });
+  await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.fd-accueil .fd-carte').count(), 2);
+  assert.match(await s.page.locator('.fd-accueil .fd-places').innerText(), /^23 places de membre fondateur restantes sur 25$/);
+  assert.match(await s.page.locator('.fd-accueil .fd-carte').first().innerText(), /Promo \d{4}[\s\S]*Offre publiée le \d{1,2} \p{L}+/u);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('accueil (démo) : un lauréat pas encore fondateur est invité à publier ; un fondateur se reconnaît', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Nadia'); await s.aller('accueil');
+  await s.page.waitForSelector('#fd-rejoindre');
+  assert.match(await s.page.locator('#fd-rejoindre').innerText(), /Publie une offre ou aide un étudiant pour en faire partie/);
+  await s.page.click('#fd-rejoindre'); await s.page.waitForSelector('#of-publier');
+  await s.fermer();
+  await s.comme('Youssef'); await s.aller('accueil');
+  await s.page.waitForSelector('.fd-accueil .fd-toi');
+  assert.equal(await s.page.locator('#fd-rejoindre').count(), 0);
+  assert.equal(await s.page.locator('.fete-back').count(), 0, 'pas de fête surprise en démo');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('accueil (démo, arabe, sombre) : le bandeau traduit, rien d’oublié, rien qui dépasse', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar', theme: 'dark' });
+  for (const nom of ['Salma', 'Nadia']) {
+    await s.comme(nom); await s.aller('accueil');
+    await s.page.waitForSelector('.fd-accueil .fd-carte');
+    const t = await s.page.locator('.fd-accueil').innerText();
+    assert.match(t, /الأعضاء المؤسسون/); assert.match(t, /خريجو الشهر/); assert.match(t, /أول من ساعد الطلبة/);
+    assert.doesNotMatch(t, /القدامى|Promo|places|Offre publiée|Merci|fondateur/);
+    assert.ok((await s.debordement()) <= 0);
+  }
+  assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /fondateur|Lauréats du mois|premiers à aider|Merci|place|Publie une offre ou aide/i.test(x))), []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('membre fondateur (démo) : « Ton nom sur la page d’entrée ? » une fois, puis dans Mon profil', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef');
+  await s.page.evaluate(() => { const d = window.__demo; d.me.fondateur_public = null; d.data.profiles = d.data.profiles.map(p => p.id === d.me.id ? d.me : p); d.emit(); });
+  await s.aller('accueil');
+  await s.page.waitForSelector('.modal.fd-feuille', { timeout: 8000 });
+  assert.match(await s.page.locator('.modal.fd-feuille').innerText(), /Tu es membre fondateur\. Ton nom et ta photo peuvent apparaître en haut de la page d’entrée, pour donner envie aux autres\./);
+  assert.equal(await s.page.locator('.modal.fd-feuille .btn.primary').count(), 1);
+  await s.page.click('#fd-non'); await s.page.waitForSelector('.modal.fd-feuille', { state: 'detached' });
+  assert.equal(await s.page.evaluate(() => window.__demo.me.fondateur_public), false);
+  await s.aller('profil'); await s.page.waitForSelector('#md-fondateur');
+  assert.equal(await s.page.isChecked('#md-fondateur'), false);
+  await s.page.click('#md-fondateur'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.evaluate(() => window.__demo.me.fondateur_public), true);
+  assert.ok(await s.page.isChecked('#md-fondateur'));
+  await s.aller('accueil'); await s.page.waitForTimeout(2500);
+  assert.equal(await s.page.locator('.modal.fd-feuille').count(), 0, 'une seule fois');
+  // Une étudiante n'a pas cette case
+  await s.comme('Salma'); await s.aller('profil'); await s.page.waitForSelector('#mes-donnees');
+  assert.equal(await s.page.locator('#md-fondateur').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('accueil (démo, 360 × 640) : les fondateurs sur une ligne, un toucher les montre en grand', async () => {
+  const s = await ouvrir({ largeur: 360 });
+  await s.page.setViewportSize({ width: 360, height: 640 });
+  await s.comme('Nadia'); await s.aller('accueil');
+  await s.page.waitForSelector('.fd-accueil .fd-resume', { state: 'visible' });
+  assert.ok((await s.page.locator('.fd-accueil').boundingBox()).height <= 80, 'une ligne');
+  assert.equal(await s.page.isVisible('.fd-accueil .fd-liste'), false);
+  await s.page.click('.fd-accueil .fd-resume');
+  await s.page.waitForSelector('.fd-accueil .fd-liste', { state: 'visible' });
+  assert.ok(await s.page.isVisible('#fd-rejoindre'));
+  assert.equal(await s.page.isVisible('.fd-accueil .fd-resume'), false);
+  assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// Lot mouvement · C : écrans lourds à la demande, polices gardées sur le site (l'arabe seulement en arabe), brouillons gardés
+const A_LA_DEMANDE = /\/(admin|dashboard|enquete|lire-cv|parse-offre|parse-linkedin)\.js$|\/vendor\/pdf\./;
+for (const langue of ['fr', 'ar']) {
+  test(`démarrage léger (${langue}) : ni Admin, ni Suivi, ni lecteurs de CV ; ${langue === 'fr' ? 'ni dictionnaire ni police arabes' : 'le dictionnaire et la police arabes'}`, async () => {
+    const s = await ouvrir({ largeur: 390, langue });
+    const demandes = [];
+    s.page.on('request', r => demandes.push(new URL(r.url()).pathname));
+    // Le démarrage complet (ouvrir recharge la page dans la langue choisie)
+    await s.page.reload(); await s.page.waitForSelector('.hello'); await s.page.evaluate(() => document.fonts.ready); await s.page.waitForTimeout(500);
+    assert.deepEqual(demandes.filter(u => A_LA_DEMANDE.test(u)), [], 'rien de lourd au démarrage');
+    assert.equal(demandes.some(u => /\/i18n-ar\.js$/.test(u)), langue === 'ar');
+    assert.equal(demandes.some(u => /\/polices\/arabe-/.test(u)), langue === 'ar', 'la police arabe');
+    assert.ok(demandes.some(u => /\/polices\/texte\.woff2$/.test(u)), 'la police du texte vient du site');
+    assert.ok(!demandes.some(u => /fonts\.(googleapis|gstatic)/.test(u)), 'plus de Google Fonts');
+    // Suivi et Admin arrivent quand on les ouvre
+    await s.aller('suivi'); await s.page.waitForSelector('.page:not(.page-attente)');
+    assert.ok(demandes.some(u => /\/dashboard\.js$/.test(u)));
+    await s.comme('Admin'); await s.aller('admin'); await s.page.waitForSelector('#adm-parcours');
+    assert.ok(demandes.some(u => /\/admin\.js$/.test(u)));
+    if (langue === 'ar') assert.deepEqual((await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), [], 'Suivi et Admin chargés à la demande : tout traduit');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}
+
+test('écran chargé à la demande sans réseau : la forme de la page, puis un mot calme et « Réessayer » qui le fait venir', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  let coupe = true;
+  await s.ctx.route(/\/admin\.js$/, r => (coupe ? r.abort('internetdisconnected') : r.continue()));
+  await s.comme('Admin'); await s.aller('admin');
+  await s.page.waitForSelector('.ecran-echec[role="alert"]');
+  assert.match(await s.page.locator('.ecran-echec').innerText(), /Cette page n’a pas pu se charger\. Vérifie ton réseau, puis réessaie\./);
+  assert.equal(await s.page.locator('.ecran-echec .btn').innerText(), 'Réessayer');
+  assert.equal(await s.page.locator('.ecran-echec .btn.primary, .ecran-echec .btn.danger').count(), 0, 'un bouton calme, ni plein ni rouge');
+  coupe = false;
+  // Selon le navigateur, le module revient tout de suite, ou la page se recharge (au deuxième essai) sur la même page
+  for (let i = 0; i < 3 && !(await s.page.locator('#adm-parcours').count()); i++) {
+    await s.page.locator('.ecran-echec .btn').click({ timeout: 3000 }).catch(() => {});
+    await s.page.waitForSelector('#adm-parcours', { timeout: 4000 }).catch(() => {});
+  }
+  assert.ok(await s.page.isVisible('#adm-parcours'));
+  assert.equal(await s.page.evaluate(() => location.hash), '#admin');
+  assert.deepEqual(s.erreurs.filter(e => !/admin\.js|dynamically imported module/i.test(e)), []);
+  await s.ctx.close();
+});
+
+test('brouillons : le message en cours revient après un rechargement, pour ce compte seulement, et part une fois envoyé', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const id = nom => s.profils.find(x => x[1].includes(nom))[0];
+  const youssef = id('Youssef');
+  await s.comme('Salma'); await s.aller('messages/' + youssef); await s.page.waitForSelector('#chat-txt');
+  await s.page.fill('#chat-txt', 'Bonjour, je voulais vous demander');
+  await s.page.reload(); await s.page.waitForSelector('#chat-txt');
+  assert.equal(await s.page.inputValue('#chat-txt'), 'Bonjour, je voulais vous demander', 'le brouillon revient');
+  // Un autre compte de démo, même conversation ouverte d'un autre côté : rien
+  await s.aller('accueil'); await s.comme('Youssef'); await s.aller('messages/' + id('Salma')); await s.page.waitForSelector('#chat-txt');
+  assert.equal(await s.page.inputValue('#chat-txt'), '');
+  await s.aller('accueil'); await s.comme('Salma'); await s.aller('messages/' + youssef); await s.page.waitForSelector('#chat-txt');
+  await s.page.fill('#chat-txt', 'Bonjour, je voulais vous demander un conseil.');
+  await s.page.click('.composer .send-btn'); await s.page.waitForTimeout(400);
+  assert.match(await s.page.locator('.msg.mine').last().innerText(), /un conseil/);
+  assert.equal(await s.page.evaluate(() => Object.keys(localStorage).filter(k => k.startsWith('ensam-brouillon:') && k.includes(':msg:')).length), 0, 'envoyé : plus de brouillon');
+  await s.page.reload(); await s.page.waitForSelector('#chat-txt');
+  assert.equal(await s.page.inputValue('#chat-txt'), '');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Ambassadeurs de promo (démo) : la plateforme propose au plus actif, il accepte, il relaie ; ses camarades le remercient
+// ---------------------------------------------------------------------------
+const lignesAmb = page => page.evaluate(() => window.__demo.data.ambassadeurs.map(a => ({ ...a, nom: window.__demo.data.profiles.find(p => p.id === a.user_id)?.full_name })));
+const fermerFete = async s => { if (await s.page.$('.fete-back')) { await s.fermer(); await s.page.waitForTimeout(200); } };
+
+test('ambassadeur (démo) : la proposition au plus actif, la cloche, « Accepter », puis le lien, les réussites et les vrais chiffres', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('accueil');
+  await s.page.waitForSelector('#amb-proposition, [data-pas^="am"]', { timeout: 6000 });
+  await fermerFete(s);
+  // La même règle que la base : le membre le plus actif de sa promo et de sa filière
+  const attendu = await s.page.evaluate(async () => {
+    const L = await import(new URL('logic.js', location.href).href);
+    const d = window.__demo, me = d.me;
+    return L.candidatsAmbassadeur({ ...d.data, ambassadeurs: [] }, me.promo, me.filiere)[0]?.id === me.id;
+  });
+  assert.ok(attendu, 'Salma est la plus active de son groupe');
+  assert.equal((await lignesAmb(s.page)).filter(a => a.statut === 'propose' && a.nom.startsWith('Salma')).length, 1);
+  // La cloche : « Répondre »
+  await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
+  assert.match(await s.page.locator('.modal.cloche').innerText(), /La plateforme te propose d’être ambassadeur de ta promo \(.+ \d{4}\)\./);
+  await s.fermer();
+  assert.equal(await s.page.locator('#amb-proposition .btn.primary').count(), 0, 'la carte « prochaine étape » garde le seul bouton plein');
+  // « Pas pour moi », puis « Annuler » : la proposition revient
+  await s.page.click('#amb-refuser');
+  await s.page.locator('.toast button', { hasText: 'Annuler' }).click();
+  await s.page.waitForSelector('#amb-proposition');
+  // Accepter
+  await s.page.click('#amb-accepter');
+  await s.page.waitForSelector('.fete-back');
+  assert.match(await s.page.locator('.fete').innerText(), /Merci, ambassadeur de ta promo ![\s\S]*Ambassadeur promo \d{4}/);
+  await s.fermer();
+  await s.page.waitForSelector('#amb-carte');
+  const vrais = await s.page.evaluate(async () => {
+    const L = await import(new URL('logic.js', location.href).href);
+    const d = window.__demo, me = d.me, n = new Date();
+    return L.chiffresPromo(d.data, me.promo, me.filiere, new Date(n.getFullYear(), n.getMonth(), 1));
+  });
+  const nombres = await s.page.$$eval('#amb-carte .amb-chiffres b', bs => bs.map(b => +b.textContent));
+  assert.deepEqual(nombres, [vrais.inscrits, vrais.demandes, vrais.stages], 'les chiffres sont vrais');
+  assert.match(decodeURIComponent(await s.page.getAttribute('#amb-wa', 'href')), /Salut la promo (\d{4})[\s\S]*\/promo\/\1\//);
+  assert.match(await s.page.locator('#amb-carte').innerText(), /Réussites à partager/);
+  assert.doesNotMatch(await s.page.locator('#amb-carte').innerText(), /\bpoints?\b/i);
+  assert.ok((await s.debordement()) <= 0);
+  const salma = await s.page.evaluate(() => window.__demo.me.full_name);
+  // Un camarade de sa promo et de sa filière la remercie depuis son accueil
+  await s.page.evaluate(() => { const d = window.__demo, salma = d.data.profiles.find(p => p.full_name.startsWith('Salma') && p._persona);
+    const cam = d.data.profiles.find(p => p.id !== salma.id && p.promo === salma.promo && p.filiere === salma.filiere && ['etudiant', 'laureat'].includes(p.role));
+    d.switchTo(cam.id); });
+  await s.aller('accueil'); await fermerFete(s);
+  await s.page.waitForSelector('#amb-merci');
+  assert.match(await s.page.locator('#amb-merci').innerText(), new RegExp(`Ambassadeur de ta promo[\\s\\S]*${salma}`));
+  // Sa fiche porte le badge, vu par un camarade
+  await s.page.click('#amb-merci .amb-qui'); await s.page.waitForSelector('.modal .badge-row');
+  assert.match(await s.page.locator('.modal .badge-row').innerText(), /Ambassadeur promo \d{4}/);
+  await s.fermer();
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('ambassadeur (démo) : refus, puis le suivant ; l’administration voit, retire (avec « Annuler ») et nomme', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Salma'); await s.aller('accueil');
+  await s.page.waitForSelector('#amb-proposition, [data-pas^="am"]', { timeout: 6000 });
+  await fermerFete(s);
+  await s.page.click('#amb-refuser'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('#amb-proposition').count(), 0);
+  const groupe = await s.page.evaluate(() => [window.__demo.me.promo, window.__demo.me.filiere]);
+  // L'administration : « Proposer maintenant » passe au suivant
+  await s.comme('Admin'); await s.aller('admin/inviter');
+  await s.page.waitForSelector('#amb-admin');
+  await s.page.click('#amb-lancer'); await s.page.waitForTimeout(400);
+  const suivant = (await lignesAmb(s.page)).find(a => a.promo === groupe[0] && a.filiere === groupe[1] && a.statut === 'propose');
+  assert.ok(suivant && !suivant.nom.startsWith('Salma'), 'proposé au suivant de la promo');
+  assert.ok((await lignesAmb(s.page)).every(a => a.nom), 'jamais l’administration');
+  const n = await s.page.locator('#amb-admin .amb-liste li').count();
+  assert.ok(n > 1);
+  // Retirer, puis Annuler
+  const premier = s.page.locator('#amb-admin .amb-liste li').first();
+  const qui = await premier.locator('strong').innerText();
+  await premier.locator('.amb-retirer').click();
+  await s.page.waitForTimeout(250);
+  assert.equal(await s.page.locator('#amb-admin .amb-liste li').count(), n - 1);
+  await s.page.locator('.toast button', { hasText: 'Annuler' }).click(); await s.page.waitForTimeout(250);
+  assert.equal(await s.page.locator('#amb-admin .amb-liste li').count(), n);
+  // Nommer à la main : une proposition, que la personne acceptera depuis son accueil
+  await s.page.fill('#amb-qui', 'Nadia'); await s.page.waitForSelector('#amb-admin .amb-trouves li');
+  await s.page.locator('#amb-admin .amb-nommer-btn').first().click(); await s.page.waitForTimeout(300);
+  const nadia = (await lignesAmb(s.page)).find(a => a.nom?.startsWith('Nadia') && a.statut === 'propose');
+  assert.equal(nadia?.par, 'admin');
+  assert.match(await s.page.locator('#amb-admin').innerText(), /nommé par l’administration/);
+  assert.ok(qui);
+  await s.comme('Nadia'); await s.aller('accueil'); await fermerFete(s);
+  await s.page.waitForSelector('#amb-proposition, [data-pas^="am"]');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('ambassadeur (démo, arabe, sombre) : la proposition et la carte traduites, rien d’oublié', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar', theme: 'dark' });
+  await s.comme('Salma'); await s.aller('accueil');
+  await s.page.waitForSelector('#amb-proposition, [data-pas^="am"]', { timeout: 6000 });
+  await fermerFete(s);
+  assert.match(await s.page.locator('#amb-proposition, [data-pas^="am"]').first().innerText(), /كن سفير دفعتك/);
+  await s.page.click('#amb-accepter'); await s.page.waitForSelector('.fete-back'); await s.fermer();
+  await s.page.waitForSelector('#amb-carte');
+  const t = await s.page.locator('#amb-carte').innerText();
+  assert.match(t, /سفير دفعتك/); assert.match(t, /رابط دفعتك/); assert.doesNotMatch(t, /القدامى|inscrit|Réussites|Promo/);
+  assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /ambassad|promo|Réussite|inscrit|pourvue|WhatsApp|Merci/i.test(x))), []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// Relecture du lot mouvement : prénom effacé en arabe, brouillons, demande en pause, « Annuler » qui reste, fête du lauréat
+
+// Une demande de Salma (u-0001) et l'aide proposée par Youssef (u-0002), écrites directement dans la démo
+const demandeEtAide = (page, { accepter = false, pause = false } = {}) => page.evaluate(async ({ accepter, pause }) => {
+  const d = window.__demo, moi = d.me;
+  const dm = await d.insert('demandes', { auteur_id: moi.id, type: 'pfe', titre: 'Stage PFE relecture', details: 'Je cherche un PFE de 6 mois en maintenance industrielle.' });
+  if (pause) { const r = d.data.demandes.find(x => x.id === dm.id); r.relancee_at = r.created_at = new Date(Date.now() - 70 * 864e5).toISOString(); }
+  if (!pause) {
+    d.me = d.byId('profiles', 'u-0002');
+    const p = await d.insert('propositions', { demande_id: dm.id, laureat_id: 'u-0002', aide: 'recommande', entreprise: 'OCP', message: 'Je peux te recommander chez OCP.', status: 'envoyee' });
+    d.me = moi;
+    if (accepter) await d.update('propositions', p.id, { status: 'acceptee' });
+  }
+  d.emit();
+  return dm.id;
+}, { accepter, pause });
+
+test('arabe : un prénom cité deux fois dans la fête du match reste à l’écran, isolé une seule fois ; la police arabe ne prend pas les isolants', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  await s.comme('Salma'); await s.page.waitForTimeout(300); await fermerFete(s);
+  // La plage de la police arabe du site : jamais U+2066-2069 (deux isolants de suite y rendaient le nom à 0 px)
+  const plages = await s.page.evaluate(() => [...document.styleSheets].flatMap(f => { try { return [...f.cssRules]; } catch { return []; } })
+    .filter(r => r instanceof CSSFontFaceRule && /arabe/.test(r.style.getPropertyValue('font-family'))).map(r => r.style.getPropertyValue('unicode-range')));
+  assert.equal(plages.length, 4);
+  for (const p of plages) assert.doesNotMatch(p, /206[6-9]/i);
+  await demandeEtAide(s.page);
+  await s.aller('offres/demandes');
+  await s.page.click('.dm-accepter'); await s.page.waitForSelector('.modal.dm-oui-feuille');
+  await s.page.click('.dm-oui'); await s.page.waitForSelector('.fete.fete-match'); await s.page.waitForTimeout(300);
+  const r = await s.page.evaluate(() => {
+    const p = document.querySelector('.fete p'), out = [];
+    const w = document.createTreeWalker(p, NodeFilter.SHOW_TEXT);
+    for (let n; (n = w.nextNode());) for (let i = n.data.indexOf('Youssef'); i >= 0; i = n.data.indexOf('Youssef', i + 1)) {
+      const rg = document.createRange(); rg.setStart(n, i); rg.setEnd(n, i + 7); out.push(Math.round(rg.getBoundingClientRect().width));
+    }
+    return { txt: p.textContent, largeurs: out };
+  });
+  assert.match(r.txt, /تحدث مع/);
+  assert.equal(r.largeurs.length, 2, 'le prénom paraît deux fois');
+  for (const l of r.largeurs) assert.ok(l > 20, `prénom visible (${l} px)`);
+  assert.doesNotMatch(r.txt, /[⁦-⁩]{2}/, 'jamais deux isolants de suite');
+  assert.equal((r.txt.match(/⁨Youssef⁩/g) || []).length, 2, 'chaque prénom isolé une fois');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('brouillons : passer d’une question à une autre garde chaque réponse sous sa question ; une offre ne part jamais vers un autre public que celui de l’onglet', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Youssef'); await fermerFete(s);
+  const brouillons = () => s.page.evaluate(() => Object.fromEntries(Object.keys(localStorage).filter(k => k.startsWith('ensam-brouillon:')).map(k => [k, JSON.parse(localStorage.getItem(k)).v])));
+  // Entraide : la question A puis la question B, sans quitter l'écran
+  const [a, b] = await s.page.evaluate(() => window.__demo.data.questions.slice(0, 2).map(q => q.id));
+  const champ = 'form.answer-form textarea';
+  await s.aller('reseau/entraide/' + a); await s.page.fill(champ, 'Ma réponse à la question A'); await s.page.waitForTimeout(150);
+  await s.aller('reseau/entraide/' + b);
+  assert.equal(await s.page.inputValue(champ), '', 'la question B n’hérite pas du texte de A');
+  let br = await brouillons();
+  assert.equal(br[`ensam-brouillon:u-0002:reponse:${a}`], 'Ma réponse à la question A');
+  assert.equal(br[`ensam-brouillon:u-0002:reponse:${b}`], undefined);
+  await s.page.fill(champ, 'Et pour B'); await s.page.waitForTimeout(150);
+  await s.aller('reseau/entraide/' + a);
+  assert.equal(await s.page.inputValue(champ), 'Ma réponse à la question A');
+  br = await brouillons();
+  assert.equal(br[`ensam-brouillon:u-0002:reponse:${b}`], 'Et pour B');
+  // Offres : un brouillon par point de départ, et le public de l'onglet passe par-dessus le brouillon
+  const ouvrirForm = async route => { await s.aller(route); await s.page.$eval('#of-publier', x => x.click()); await s.page.waitForSelector('#of-titre'); await s.page.waitForTimeout(150); };
+  const etat = () => s.page.evaluate(() => ({ titre: document.querySelector('#of-titre').value, choisis: [...document.querySelectorAll('.modal [aria-pressed="true"]')].map(x => x.textContent.trim()) }));
+  await ouvrirForm('offres');
+  await s.page.fill('#of-titre', 'Stage ouvrier été'); await s.page.waitForTimeout(150); await s.fermer(); await s.page.waitForTimeout(200);
+  await ouvrirForm('offres/laureats');
+  let e = await etat();
+  assert.equal(e.titre, '', 'le brouillon d’une offre pour les étudiants ne vient pas dans « Entre lauréats »');
+  assert.ok(e.choisis.includes('Entre lauréats'));
+  await s.page.fill('#of-titre', 'Responsable méthodes confirmé'); await s.page.waitForTimeout(150); await s.fermer(); await s.page.waitForTimeout(200);
+  // Même un brouillon qui dirait « étudiants » sous cette clé : l'onglet « Entre lauréats » l'emporte
+  await s.page.evaluate(() => { const k = 'ensam-brouillon:u-0002:offre:laureats'; const x = JSON.parse(localStorage.getItem(k)); x.v.audience = 'etudiants'; x.v.type = 'stage'; x.v.annees = [3, 4]; localStorage.setItem(k, JSON.stringify(x)); });
+  await ouvrirForm('offres/laureats');
+  e = await etat();
+  assert.equal(e.titre, 'Responsable méthodes confirmé');
+  assert.ok(e.choisis.includes('Entre lauréats') && !e.choisis.includes('Pour les étudiants'), JSON.stringify(e.choisis));
+  await s.fermer(); await s.page.waitForTimeout(200);
+  await ouvrirForm('offres/sujets');
+  e = await etat();
+  assert.equal(e.titre, '');
+  assert.ok(e.choisis.includes('PFE') && e.choisis.includes('Pour les étudiants'), JSON.stringify(e.choisis));
+  await s.fermer(); await s.page.waitForTimeout(200);
+  await s.aller('accueil'); await fermerFete(s); await ouvrirForm('offres');
+  assert.equal((await etat()).titre, 'Stage ouvrier été', 'le brouillon de « Publier une offre » est toujours là');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('demande en pause : « Fermer » demande d’abord (sans « Annuler », qui la relancerait) ; les autres se ferment d’un geste', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Salma'); await fermerFete(s);
+  const id = await demandeEtAide(s.page, { pause: true });
+  const etat = () => s.page.evaluate(id => { const d = window.__demo.data.demandes.find(x => x.id === id); return { status: d.status, relancee: d.relancee_at.slice(0, 10) }; }, id);
+  const avant = await etat();
+  await s.aller('offres/demandes');
+  assert.match(await s.page.locator(`#dm-${id}`).innerText(), /En pause/);
+  await s.page.locator(`#dm-${id} button:has-text("Fermer")`).first().click(); await s.page.waitForTimeout(300);
+  assert.equal(await feuillesOuvertes(s.page), 1, 'une confirmation');
+  assert.equal((await etat()).status, 'ouverte');
+  await s.page.locator('.modal-back:not(.sortie) .modal button:has-text("Fermer la demande")').click(); await s.page.waitForTimeout(400);
+  assert.deepEqual(await etat(), { ...avant, status: 'fermee' });
+  assert.match(await s.page.locator('.toast:not(.sortie)').innerText(), /Demande fermée/);
+  assert.equal(await s.page.locator('.toast-annuler').count(), 0, 'pas d’« Annuler » pour une demande en pause');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Annuler » reste utilisable jusqu’à son échéance : un autre message s’affiche au-dessus sans le cacher (fr, ar, mouvement réduit ou non)', async () => {
+  for (const [langue, mouvement] of [['fr', true], ['fr', false], ['ar', true], ['ar', false]]) {
+    const s = await ouvrir({ largeur: 390, langue, mouvement });
+    await s.comme('Salma'); await fermerFete(s);
+    const id = await s.page.evaluate(async () => { const d = window.__demo; return (await d.insert('demandes', { auteur_id: d.me.id, type: 'pfe', titre: 'Stage PFE à fermer', details: 'Je cherche un PFE de 6 mois en maintenance industrielle.' })).id; });
+    const statut = () => s.page.evaluate(id => window.__demo.data.demandes.find(x => x.id === id).status, id);
+    await s.aller('offres/demandes');
+    await s.page.locator(`#dm-${id} .dm-acts button`).last().click(); await s.page.waitForTimeout(300);
+    assert.equal(await statut(), 'fermee');
+    // Un message ordinaire arrive pendant les 6 s
+    await s.page.evaluate(async () => { const ui = await import(new URL('ui.js', location.href).href); ui.toast('Profil enregistré.'); });
+    await s.page.waitForTimeout(600);
+    const ts = await s.page.$$eval('.toast:not(.sortie)', ts => ts.map(t => { const b = t.getBoundingClientRect(); return { annuler: !!t.querySelector('.toast-annuler:not(:disabled)'), haut: b.top, bas: b.bottom, op: getComputedStyle(t).opacity }; }));
+    assert.equal(ts.length, 2, `${langue} ${mouvement} : les deux messages sont là`);
+    const [avec, sans] = ts[0].annuler ? ts : [ts[1], ts[0]];
+    assert.ok(avec.annuler && !sans.annuler);
+    assert.ok(sans.bas <= avec.haut + 0.5, `le message ordinaire au-dessus, sans chevauchement (${JSON.stringify(ts)})`);
+    assert.ok(ts.every(t => t.op === '1'));
+    await s.page.locator('.toast-annuler').click(); await s.page.waitForTimeout(400);
+    assert.equal(await statut(), 'ouverte', `${langue} ${mouvement} : « Annuler » a rouvert la demande`);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('fête du match chez le lauréat : une feuille qui s’en va (copie .sortie) ne la fait pas sauter', async () => {
+  const s = await ouvrir({ largeur: 390, mouvement: true });
+  await s.comme('Salma'); await fermerFete(s);
+  await demandeEtAide(s.page, { accepter: true });
+  await s.page.evaluate(() => localStorage.setItem('matchs-vus-u-0002', '[]'));
+  await s.aller('offres');
+  // La copie inerte d'une feuille qui vient de se fermer, présente au moment où la fête se demande si l'écran est libre
+  await s.page.evaluate(() => { const c = document.createElement('div'); c.className = 'modal-back sortie'; c.inert = true; document.body.appendChild(c); setTimeout(() => c.remove(), 1500); });
+  await s.page.selectOption('#persona', 'u-0002');
+  await s.page.waitForSelector('.fete.fete-match', { timeout: 4000 });
+  assert.equal(await s.page.locator('#fete-titre').innerText(), 'Salma a accepté ton aide');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});

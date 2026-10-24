@@ -30,16 +30,17 @@ function building(x, y, w, h, rows = 2) {
   return s;
 }
 
-const cypress = (x, h) => `<g class="sc-tree" style="animation-delay:${r1(-(x % 7))}s"><rect class="t-trunk" x="${x - 1.5}" y="292" width="3" height="8"/><ellipse class="t-2" cx="${x}" cy="${292 - h / 2}" rx="${r1(h * 0.17)}" ry="${h / 2}"/><ellipse class="t-hi" cx="${x - h * 0.05}" cy="${292 - h / 2}" rx="${r1(h * 0.07)}" ry="${r1(h * 0.4)}"/></g>`;
+// Délais négatifs (ou nuls) : chaque arbre part à un autre moment de son balancement et se pose avant les autres mouvements
+const cypress = (x, h) => `<g class="sc-tree" style="animation-delay:${r1(-Math.abs(x % 7))}s"><rect class="t-trunk" x="${x - 1.5}" y="292" width="3" height="8"/><ellipse class="t-2" cx="${x}" cy="${292 - h / 2}" rx="${r1(h * 0.17)}" ry="${h / 2}"/><ellipse class="t-hi" cx="${x - h * 0.05}" cy="${292 - h / 2}" rx="${r1(h * 0.07)}" ry="${r1(h * 0.4)}"/></g>`;
 
-const roundTree = (x, s = 1) => `<g class="sc-tree" style="animation-delay:${r1(-(x % 5))}s"><rect class="t-trunk" x="${x - 2.5 * s}" y="${300 - 24 * s}" width="${5 * s}" height="${24 * s}"/>`
+const roundTree = (x, s = 1) => `<g class="sc-tree" style="animation-delay:${r1(-Math.abs(x % 5))}s"><rect class="t-trunk" x="${x - 2.5 * s}" y="${300 - 24 * s}" width="${5 * s}" height="${24 * s}"/>`
   + `<circle class="t-2" cx="${x - 12 * s}" cy="${300 - 26 * s}" r="${12 * s}"/><circle class="t-2" cx="${x + 12 * s}" cy="${300 - 27 * s}" r="${12 * s}"/><circle class="t-1" cx="${x}" cy="${300 - 36 * s}" r="${17 * s}"/><circle class="t-hi" cx="${x - 5 * s}" cy="${300 - 42 * s}" r="${6 * s}"/></g>`;
 
 function palm(x, h, lean = 1) {
   const tx = x + 10 * lean, ty = 300 - h;
   const fronds = [[-30, -6], [-24, 10], [-12, 16], [14, 15], [26, 9], [31, -5], [2, -14]]
     .map(([dx, dy]) => `<path class="t-palm" d="M${tx} ${ty}q${r1(dx * 0.5)} ${r1(dy * 0.5 - 10)} ${dx} ${dy}"/>`).join('');
-  return `<g class="sc-tree palm" style="animation-delay:${r1(-(x % 6))}s"><path class="t-stem" d="M${x} 300Q${x + 2 * lean} ${300 - h * 0.6} ${tx} ${ty}"/>${fronds}<circle class="t-2" cx="${tx}" cy="${ty + 1}" r="3"/></g>`;
+  return `<g class="sc-tree palm" style="animation-delay:${r1(-Math.abs(x % 6))}s"><path class="t-stem" d="M${x} 300Q${x + 2 * lean} ${300 - h * 0.6} ${tx} ${ty}"/>${fronds}<circle class="t-2" cx="${tx}" cy="${ty + 1}" r="3"/></g>`;
 }
 
 // Massifs de fleurs jaunes et orange de part et d'autre de l'allée (comme devant la vraie entrée).

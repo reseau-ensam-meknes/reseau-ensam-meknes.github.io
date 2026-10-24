@@ -1,6 +1,7 @@
 // Entraide, Communauté (classement, annuaire, vitrine des talents) et profils.
 import { html, useState, useMemo, useRef, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, toast, LevelChip, RoleLine, roleTexte, injectCSS, PartagerWhatsApp, lienDirect, allerAuChamp, Bouclier, Embleme } from './ui.js';
+import { useBrouillon } from './ui.js';
 import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
 import { proposerPrevenir } from './pwa.js';
 import { ChoixRole, accordIci } from './entree.js';
@@ -20,8 +21,6 @@ import { SignalerBtn, ContactBlock, PairVerify, VisibiliteFields, groupesMasques
 import { VIS_CHAMPS, VIS_DEFAUT, CV_MAX } from './store.js';
 import { addAR, arCount } from './i18n.js';
 import { oublierInvitation } from './invitation.js';
-import { parseLinkedin } from './parse-linkedin.js';
-import { lireCV } from './lire-cv.js';
 import { photoPreteDuCV, PhotoTrouvee } from './photo.js';
 
 // Arabe : textes du profil ajoutés en Phase 3
@@ -62,7 +61,7 @@ export function EntraidePage(ctx) {
   const qs = (cat === 'moi' ? pourMoi : data.questions.filter(q => !cat || q.categorie === cat)).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   const q = ctx.sub2 && store.byId('questions', ctx.sub2);
   const open = id => go('reseau/entraide/' + id);
-  if (q) return html`<${QuestionView} ctx=${ctx} q=${q} onBack=${() => go('reseau/entraide', { remplacer: true })}/>`;
+  if (q) return html`<${QuestionView} key=${q.id} ctx=${ctx} q=${q} onBack=${() => go('reseau/entraide', { remplacer: true })}/>`;
   return html`<div class="sub-page">
     <div class="toolbar"><p class="muted small grow">Les questions des étudiants, les réponses des lauréats.</p><button class="btn primary small" onClick=${() => setAsk(true)}><${Icon} name="plus" size=${16}/> Poser une question</button></div>
     <div class="chips rangee" role="group" aria-label="Catégorie">${pourMoi.length ? html`<button class=${'chip' + (cat === 'moi' ? ' on' : '')} aria-pressed=${cat === 'moi'} onClick=${() => setCat(cat === 'moi' ? '' : 'moi')}><${Icon} name="send" size=${13}/> Pour toi <span class="count">${pourMoi.length}</span></button>` : null}${['', ...CATEGORIES_Q].map(c => html`<button class=${'chip' + (cat === c ? ' on' : '')} aria-pressed=${cat === c} onClick=${() => setCat(c)}>${c || 'Toutes'}</button>`)}</div>
@@ -79,7 +78,7 @@ export function EntraidePage(ctx) {
 
 function QuestionView({ ctx, q, onBack }) {
   const { data, store, me, act, openProfile, scores } = ctx;
-  const [txt, setTxt] = useState('');
+  const [txt, setTxt] = useBrouillon(me.id + ':reponse:' + q.id, '');
   const au = store.byId('profiles', q.author_id);
   const ans = data.answers.filter(a => a.question_id === q.id).map(a => ({ ...a, v: data.votes.filter(v => v.answer_id === a.id) }))
     .sort((a, b) => (b.id === q.best_answer_id) - (a.id === q.best_answer_id) || b.v.length - a.v.length);
@@ -110,13 +109,14 @@ function QuestionView({ ctx, q, onBack }) {
 
 export function AskQuestion({ ctx, onClose, onDone, initial = {} }) {
   const { store, me, act, data } = ctx;
-  const [f, setF] = useState({ categorie: initial.pays ? 'Étranger & visas' : CATEGORIES_Q[0], titre: '', body: '', entreprise: '', pays: '', ...initial });
+  // La question en cours d'écriture reste sur l'appareil (session expirée, rechargement)
+  const [f, setF, oublierBrouillon] = useBrouillon(initial.entreprise || initial.pays || initial.titre ? null : me.id + ':question', () => ({ categorie: initial.pays ? 'Étranger & visas' : CATEGORIES_Q[0], titre: '', body: '', entreprise: '', pays: '', ...initial }));
   const [cible, setCible] = useState(initial.entreprise || initial.pays ? true : false);
   // Combien de lauréats recevront la question
   const fake = { entreprise: cible ? f.entreprise.trim() : '', pays: cible ? f.pays.trim() : '', author_id: me.id };
   const n = cible && (fake.entreprise || fake.pays) ? data.profiles.filter(p => routedTo(fake, p)).length : 0;
   return html`<${Modal} title="Poser une question" onClose=${onClose}>
-    <form class="form" onSubmit=${e => { e.preventDefault(); act(async () => { const row = { author_id: me.id, categorie: f.categorie, titre: f.titre.trim(), body: f.body.trim() }; if (fake.entreprise) row.entreprise = fake.entreprise; if (fake.pays) row.pays = fake.pays; const q = await store.insert('questions', row); onDone(q.id); const mot = n ? `Question envoyée à ${n} lauréat${n > 1 ? 's' : ''}.` : 'Ta question est publiée.'; if (!proposerPrevenir('question', mot) && n) toast(mot); }); }}>
+    <form class="form" onSubmit=${e => { e.preventDefault(); act(async () => { const row = { author_id: me.id, categorie: f.categorie, titre: f.titre.trim(), body: f.body.trim() }; if (fake.entreprise) row.entreprise = fake.entreprise; if (fake.pays) row.pays = fake.pays; const q = await store.insert('questions', row); oublierBrouillon(); onDone(q.id); const mot = n ? `Question envoyée à ${n} lauréat${n > 1 ? 's' : ''}.` : 'Ta question est publiée.'; if (!proposerPrevenir('question', mot) && n) toast(mot, 'envoi'); }); }}>
       <${Field} label="Catégorie"><select id="aq-cat" value=${f.categorie} onChange=${e => setF({ ...f, categorie: e.target.value })}>${CATEGORIES_Q.map(c => html`<option value=${c}>${c}</option>`)}</select><//>
       <${Field} label="Question"><input id="aq-titre" required value=${f.titre} onInput=${e => setF({ ...f, titre: e.target.value })} maxlength="160" placeholder="Ex. Comment obtenir un visa pour un stage au Canada ?"/><//>
       <${Field} label="Détails (facultatif)"><textarea id="aq-body" rows="4" value=${f.body} onInput=${e => setF({ ...f, body: e.target.value })} maxlength="3000"></textarea><//>
@@ -199,7 +199,7 @@ export function ProfileModal({ ctx, p: p0, onClose, onAskMentor }) {
   const s = scores.get(p.id);
   // Un étudiant ne voit ni points ni classement : seulement les badges qui disent à qui il peut faire confiance.
   // « Vérifié » n'est pas un badge ici : c'est le bouclier, juste après le nom.
-  const badges = badgesOf(s, p, { star: ctx.starId, fondateurs: ctx.fondateurs }).filter(b => b.id !== 'verifie' && (me.role !== 'etudiant' || ['fondateur', 'mentor', 'reactif'].includes(b.id)));
+  const badges = badgesOf(s, p, { star: ctx.starId, fondateurs: ctx.fondateurs, ambassadeurs: ctx.ambassadeurs }).filter(b => b.id !== 'verifie' && (me.role !== 'etudiant' || ['fondateur', 'ambassadeur', 'mentor', 'reactif'].includes(b.id)));
   const helped = data.placements.filter(x => x.laureat_id === p.id && x.status === 'confirme').length;
   // Seulement les chiffres non nuls, accordés : un nouveau lauréat n'affiche pas une rangée de zéros
   const stats = [[s?.points, 'point'], [helped, 'recruté'], [s?.mentorats, 'mentorat'], [s?.offres, 'offre']]
@@ -233,11 +233,16 @@ export function ProfileModal({ ctx, p: p0, onClose, onAskMentor }) {
 function LinkedinBox({ onFill }) {
   const [txt, setTxt] = useState('');
   const [faits, setFaits] = useState(null);
+  // Le lecteur du texte LinkedIn n'est téléchargé qu'au premier usage
+  const lire = async () => {
+    try { const { parseLinkedin } = await import('./parse-linkedin.js'); setFaits(onFill(parseLinkedin(txt))); }
+    catch { toast('Pas de réseau pour l’instant. Réessaie dans un instant.', 'err'); }
+  };
   return html`<details class="li-box">
     <summary><${Icon} name="link" size=${16}/> Remplir depuis LinkedIn</summary>
     <ol class="small li-steps"><li>Sur LinkedIn (ordinateur), ouvre ton profil, puis « Plus » › « Enregistrer au format PDF ».</li><li>Ouvre le PDF, sélectionne tout (Ctrl+A), copie, puis colle ici. Sur téléphone, colle simplement ta section Infos.</li></ol>
     <textarea id="pf-litxt" rows="5" aria-label="Colle ici le texte de ton profil LinkedIn" placeholder="Colle ici le texte de ton profil LinkedIn" value=${txt} onInput=${e => setTxt(e.target.value)}></textarea>
-    <div class="row"><button type="button" class="btn small" id="pf-lifill" disabled=${txt.trim().length < 20} onClick=${() => setFaits(onFill(txt))}><${Icon} name="spark" size=${15}/> Remplir mon profil</button></div>
+    <div class="row"><button type="button" class="btn small" id="pf-lifill" disabled=${txt.trim().length < 20} onClick=${lire}><${Icon} name="spark" size=${15}/> Remplir mon profil</button></div>
     ${faits ? html`<p class="small li-faits" role="status">${faits.ok === false ? 'Rien de reconnu : colle tout le texte du PDF LinkedIn.' : !faits.length ? 'Rien de nouveau : les champs étaient déjà remplis.' : html`<span>Rempli :</span> ${faits.map(x => html`<span class="tag">${x}</span>`)} <span>Vérifie avant d’enregistrer.</span>`}</p>` : null}
   </details>`;
 }
@@ -258,6 +263,7 @@ function CvBox({ onLu, onPhoto }) {
     if (file.type && file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name || '')) return setEtat({ erreur: 'Choisis ton CV au format PDF.' });
     setEtat('lecture');
     try {
+      const { lireCV } = await import('./lire-cv.js');
       const faits = onLu(await lireCV(file), file);
       setEtat(faits.ok === false ? { erreur: 'Ce CV ne se lit pas (scan en image ?). Remplis les champs à la main, ça prend une minute.' } : { faits });
     } catch { setEtat({ erreur: 'Ce PDF ne s’ouvre pas. Essaie un autre fichier, ou remplis les champs à la main.' }); }
@@ -508,14 +514,13 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
       // Un envoi « Qui voit quoi » encore en route ne doit pas arriver en dernier : la grille voulue repart derrière lui
       if (!onboarding && enVol.current) envoyerVis(derniereG.current);
       // À l'inscription, c'est la feuille d'accueil qui souhaite la bienvenue
-      if (!onboarding) toast('Profil enregistré.');
+      if (!onboarding) toast('Profil enregistré.', 'envoi');
       onDone?.();
     });
   };
   // Ne remplit que les champs vides (et, à l'inscription, la promo, la filière et le rôle).
   // Depuis le CV, le rôle, la promo et la filière viennent du CV, même avec un lien d'invitation.
-  const remplir = (txt, { cv = false } = {}) => {
-    const r = typeof txt === 'string' ? parseLinkedin(txt) : txt;
+  const remplir = (r, { cv = false } = {}) => {
     if (!Object.keys(r).length) return Object.assign([], { ok: false });
     const n = { ...f }, faits = [];
     const vide = k => !String(f[k] ?? '').trim();

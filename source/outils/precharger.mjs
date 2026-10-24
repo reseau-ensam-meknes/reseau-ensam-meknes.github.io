@@ -47,10 +47,13 @@ fs.writeFileSync(index, html);
 // les pages d'aperçu des promos aussi : le service worker les remplace par l'application)
 const tous = [];
 (function lister(d) { for (const e of fs.readdirSync(path.join(dist, d), { withFileTypes: true })) { const r = d ? `${d}/${e.name}` : e.name; if (e.isDirectory()) lister(r); else tous.push(r); } })('');
-const garder = tous.filter(f => f !== 'sw.js' && !/^vendor\/(?:leaflet|pdf)\.|^img\/|^promo\/|-512\.png$|apple-touch-icon|^seed|^config\.example/.test(f)).sort();
+// L'arabe (dictionnaire et police) n'est téléchargé que par qui le choisit : le service worker ne le garde d'avance
+// que si la version précédente l'avait déjà (FACULTATIFS) ; sinon il le garde au premier usage.
+const facultatifs = tous.filter(f => /^i18n-ar\.js$|^polices\/arabe-/.test(f)).sort();
+const garder = tous.filter(f => f !== 'sw.js' && !facultatifs.includes(f) && !/^vendor\/(?:leaflet|pdf)\.|^img\/|^promo\/|-512\.png$|apple-touch-icon|^seed|^config\.example|\.txt$/.test(f)).sort();
 const version = crypto.createHash('sha256').update(tous.filter(f => f !== 'sw.js').sort().map(f => f + '\0' + fs.readFileSync(path.join(dist, f), 'latin1')).join('\0')).digest('hex').slice(0, 12);
 const sw = path.join(dist, 'sw.js');
-const code = fs.readFileSync(sw, 'utf8').replace("/*VERSION*/'dev'", `'${version}'`).replace('/*FICHIERS*/[]', JSON.stringify(['./', ...garder.filter(f => f !== 'index.html')]));
-if (!code.includes(`'${version}'`)) throw new Error('sw.js : repère de version introuvable');
+const code = fs.readFileSync(sw, 'utf8').replace("/*VERSION*/'dev'", `'${version}'`).replace('/*FICHIERS*/[]', JSON.stringify(['./', ...garder.filter(f => f !== 'index.html')])).replace('/*FACULTATIFS*/[]', JSON.stringify(facultatifs));
+if (!code.includes(`'${version}'`) || code.includes('/*FACULTATIFS*/')) throw new Error('sw.js : repère de version ou des fichiers facultatifs introuvable');
 fs.writeFileSync(sw, code);
 console.log(`précharge : entrée ${entree.length} · magasin ${magasin.length} · application ${appli.length} modules · service worker ${version} · ${garder.length} fichiers`);

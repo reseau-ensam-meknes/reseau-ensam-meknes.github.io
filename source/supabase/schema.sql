@@ -3725,6 +3725,357 @@ $$;
 revoke all on function public.offre_partagee(uuid) from public;
 grant execute on function public.offre_partagee(uuid) to anon, authenticated;
 
+-- ---------------------------------------------------------------------
+-- Membres fondateurs : les 25 premiers lauréats à aider les étudiants, dans l'ordre de leur première contribution
+-- (même règle que classementFondateurs() dans logic.js) : une offre publiée pour les étudiants (pas « entre lauréats » ;
+-- pourvue ou fermée, elle compte ; supprimée, elle ne compte plus), une aide proposée sur la demande d'un étudiant
+-- (sauf retirée par le lauréat), un mentorat accepté ou terminé avec un étudiant. Jamais l'administration.
+-- Égalité : le type (aide, mentorat, offre), puis l'id.
+-- fondateur_public : le fondateur accepte que son nom et sa photo soient sur la page d'entrée (null = pas encore demandé).
+-- ---------------------------------------------------------------------
+alter table public.profiles add column if not exists fondateur_public boolean;
+create index if not exists profiles_photo_fondateur on public.profiles (photo_path) where fondateur_public;
+
+create or replace function public.fondateurs_classement() returns table (id uuid, at timestamptz, type text, rang int)
+language sql stable security definer set search_path = public as $$
+  with c as (
+    select o.author_id as l, o.created_at as at, 'offre'::text as k from public.offers o
+      where coalesce(o.audience, 'etudiants') = 'etudiants'
+    union all select x.laureat_id, x.created_at, 'aide' from public.propositions x
+      join public.demandes d on d.id = x.demande_id
+      join public.profiles s on s.id = d.auteur_id and s.role = 'etudiant'
+      where x.status <> 'retiree'
+    union all select m.mentor_id, coalesce(m.accepted_at, m.created_at), 'mentorat' from public.mentorships m
+      join public.profiles s on s.id = m.student_id and s.role = 'etudiant'
+      where m.mentor_id is not null and m.status in ('acceptee', 'terminee')
+  ), premiere as (
+    select distinct on (c.l) c.l, c.at, c.k from c
+      join public.profiles p on p.id = c.l and p.role = 'laureat'
+      where c.at is not null
+      order by c.l, c.at, c.k
+  )
+  select l, at, k, (row_number() over (order by at, l))::int from premiere order by at, l limit 25;
+$$;
+revoke all on function public.fondateurs_classement() from public, anon, authenticated;
+
+-- Le bandeau des fondateurs. Un membre connecté reçoit tout le classement (les profils lui sont déjà visibles) et
+-- son propre choix (mon_choix). Un visiteur sans compte reçoit les totaux, et seulement les fondateurs qui ont dit oui
+-- (prénom et nom, filière, promo, type et date de la première contribution, chemin de la photo) ; pas de champ id,
+-- mais le chemin de la photo commence par l'id du membre (photos/<id>/…) : il n'est donné que pour qui a dit oui.
+create or replace function public.fondateurs_publics() returns jsonb
+language sql stable security definer set search_path = public as $$
+  with f as (
+    select c.id, c.at, c.type, c.rang, p.full_name, p.filiere, p.promo, p.photo_path, p.verified, p.fondateur_public
+    from public.fondateurs_classement() c join public.profiles p on p.id = c.id
+  ), qui as (select exists (select 1 from public.profiles where id = auth.uid()) as membre)
+  select jsonb_build_object(
+    'max', 25,
+    'total', (select count(*) from f),
+    'places', greatest(0, 25 - (select count(*) from f)),
+    'mon_choix', case when q.membre then (select to_jsonb(fondateur_public) from public.profiles where id = auth.uid()) end,
+    'fondateurs', coalesce((select jsonb_agg(jsonb_build_object(
+        'id', case when q.membre then f.id end, 'rang', f.rang, 'type', f.type, 'at', f.at,
+        'nom', f.full_name, 'filiere', f.filiere, 'promo', f.promo, 'photo', f.photo_path, 'verifie', coalesce(f.verified, false))
+        order by f.rang) from f where q.membre or f.fondateur_public is true), '[]'::jsonb))
+  from qui q;
+$$;
+revoke all on function public.fondateurs_publics() from public;
+grant execute on function public.fondateurs_publics() to anon, authenticated;
+
+-- Seul le membre lui-même dit oui : l'administration peut le retirer de la page d'entrée, jamais l'y mettre
+create or replace function public.protect_fondateur_public() returns trigger
+language plpgsql as $$
+begin
+  if auth.uid() is not null and new.id is distinct from auth.uid() and new.fondateur_public is true and old.fondateur_public is distinct from true then
+    new.fondateur_public := old.fondateur_public;
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_fondateur_public on public.profiles;
+create trigger trg_protect_fondateur_public before update of fondateur_public on public.profiles
+  for each row execute function public.protect_fondateur_public();
+
+-- Photos de la page d'entrée : le stockage « photos » reste privé ; un visiteur peut seulement obtenir un lien temporaire
+-- (createSignedUrl) vers la photo actuelle d'un fondateur qui a dit oui. Rien d'autre n'est lisible sans compte.
+create or replace function public.photo_fondateur_publique(p_name text) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare v uuid;
+begin
+  -- D'abord le profil (index partiel, une ligne au plus) : le classement n'est calculé que pour une photo consentie
+  select p.id into v from public.profiles p where p.photo_path = p_name and p.fondateur_public and p.role = 'laureat' limit 1;
+  if v is null then return false; end if;
+  return exists (select 1 from public.fondateurs_classement() c where c.id = v);
+end $$;
+revoke all on function public.photo_fondateur_publique(text) from public;
+grant execute on function public.photo_fondateur_publique(text) to anon;
+do $$ begin
+  drop policy if exists "photos fondateurs publics" on storage.objects;
+  create policy "photos fondateurs publics" on storage.objects for select to anon using (bucket_id = 'photos' and public.photo_fondateur_publique(name));
+exception when others then raise notice 'Photos des fondateurs non configurées : %', sqlerrm;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Ambassadeurs de promo : pour chaque promo × filière, la plateforme propose le rôle au membre le plus actif
+-- (offres, aides proposées, mentorats, réponses, connexions récentes ; étudiant ou lauréat ; jamais l'administration).
+-- Il accepte ou refuse ; 7 jours sans réponse ou un refus : le suivant. Un seul ambassadeur en cours par promo × filière.
+-- Pas de tâche planifiée : ambassadeurs_proposer() est appelée à l'ouverture de l'appli (le groupe du membre ;
+-- tous les groupes pour l'administration). Mêmes règles que candidatsAmbassadeur() dans logic.js.
+-- statut : propose | accepte | refuse | expire (7 jours sans réponse) | retire (par lui ou par l'administration)
+-- ---------------------------------------------------------------------
+create table if not exists public.ambassadeurs (
+  id uuid primary key default gen_random_uuid(),
+  promo int not null check (promo between 1990 and 2040),
+  filiere text not null check (char_length(filiere) between 1 and 120),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  statut text not null default 'propose' check (statut in ('propose','accepte','refuse','expire','retire')),
+  par text not null default 'auto' check (par in ('auto','admin')),
+  propose_at timestamptz not null default now(),
+  repondu_at timestamptz,
+  created_at timestamptz not null default now()
+);
+-- Qui a retiré (membre, admin, systeme : changement de promo ou de filière) et le statut d'avant : chacun n'annule que son geste
+alter table public.ambassadeurs add column if not exists retire_par text check (retire_par in ('membre','admin','systeme'));
+alter table public.ambassadeurs add column if not exists statut_avant text check (statut_avant in ('propose','accepte'));
+create unique index if not exists ambassadeurs_un_en_cours on public.ambassadeurs (promo, filiere) where statut in ('propose','accepte');
+create index if not exists ambassadeurs_membre on public.ambassadeurs (user_id);
+-- Le classement compte l'activité de chaque membre : un index par auteur (sinon une lecture complète par membre)
+create index if not exists offers_auteur on public.offers (author_id);
+create index if not exists propositions_laureat on public.propositions (laureat_id);
+create index if not exists mentorships_mentor on public.mentorships (mentor_id);
+create index if not exists mentorships_etudiant on public.mentorships (student_id);
+create index if not exists answers_auteur on public.answers (author_id);
+create index if not exists questions_auteur on public.questions (author_id);
+-- Dernier passage sans personne à proposer, par groupe : un groupe sans candidat n'est recalculé qu'une fois par heure
+create table if not exists public.ambassadeurs_passages (
+  promo int not null,
+  filiere text not null,
+  at timestamptz not null default now(),
+  primary key (promo, filiere)
+);
+alter table public.ambassadeurs_passages enable row level security;
+revoke all on public.ambassadeurs_passages from anon, authenticated;
+alter table public.ambassadeurs enable row level security;
+-- Les membres voient les ambassadeurs acceptés (badge, merci) ; chacun voit ses propres lignes ; l'administration tout
+drop policy if exists "ambassadeurs lecture" on public.ambassadeurs;
+create policy "ambassadeurs lecture" on public.ambassadeurs for select to authenticated
+  using (statut = 'accepte' or user_id = auth.uid() or public.is_admin());
+-- L'administration nomme à la main : une proposition, que le membre accepte ou non
+drop policy if exists "ambassadeurs nommer" on public.ambassadeurs;
+create policy "ambassadeurs nommer" on public.ambassadeurs for insert to authenticated
+  with check (public.is_admin() and statut = 'propose' and par = 'admin');
+drop policy if exists "ambassadeurs repondre" on public.ambassadeurs;
+create policy "ambassadeurs repondre" on public.ambassadeurs for update to authenticated
+  using (user_id = auth.uid() or public.is_admin()) with check (user_id = auth.uid() or public.is_admin());
+revoke all on public.ambassadeurs from anon, authenticated;
+grant select, insert, update on public.ambassadeurs to authenticated;
+
+-- Une nomination prend la promo et la filière du membre ; jamais un administrateur
+create or replace function public.protect_ambassadeur_insert() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v record;
+begin
+  select promo, filiere, role into v from public.profiles where id = new.user_id;
+  if v is null or v.role not in ('etudiant','laureat') then raise exception 'Seul un étudiant ou un lauréat peut être ambassadeur' using errcode = '42501'; end if;
+  -- Un seul groupe à la fois
+  if exists (select 1 from public.ambassadeurs a where a.user_id = new.user_id and a.statut in ('propose','accepte')) then
+    raise exception 'Déjà ambassadeur ou déjà proposé' using errcode = '23505';
+  end if;
+  new.promo := v.promo; new.filiere := v.filiere; new.propose_at := now(); new.created_at := now(); new.repondu_at := null;
+  new.retire_par := null; new.statut_avant := null;
+  if current_setting('ensam.amb_systeme', true) = 'on' then new.par := 'auto'; new.statut := 'propose'; end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_ambassadeur_insert on public.ambassadeurs;
+create trigger trg_protect_ambassadeur_insert before insert on public.ambassadeurs
+  for each row execute function public.protect_ambassadeur_insert();
+
+-- Qui change quoi : le membre accepte ou refuse (dans les 7 jours), se retire ; il peut annuler son geste dans les
+-- 10 minutes (le « Annuler » du message du bas). L'administration retire, et peut annuler son retrait (retour au statut
+-- d'avant, jamais plus) ; elle n'accepte jamais à la place du membre. Chacun n'annule que son propre retrait.
+create or replace function public.protect_ambassadeur() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_frais boolean := old.repondu_at is not null and old.repondu_at > now() - interval '10 minutes';
+  v_ouvert boolean := old.propose_at > now() - interval '7 days';
+begin
+  new.id := old.id; new.promo := old.promo; new.filiere := old.filiere; new.user_id := old.user_id; new.par := old.par;
+  new.propose_at := old.propose_at; new.created_at := old.created_at;
+  if new.statut = old.statut then
+    new.repondu_at := old.repondu_at; new.retire_par := old.retire_par; new.statut_avant := old.statut_avant; return new;
+  end if;
+  if current_setting('ensam.amb_systeme', true) = 'on' or auth.uid() is null then
+    if new.statut = 'retire' and new.retire_par is null then new.retire_par := 'systeme'; new.statut_avant := old.statut; end if;
+    return new;
+  end if;
+  new.retire_par := old.retire_par; new.statut_avant := old.statut_avant;
+  if old.user_id = auth.uid() and (
+       (old.statut = 'propose' and new.statut in ('accepte','refuse') and v_ouvert)
+    or (old.statut = 'accepte' and new.statut = 'retire')
+    or (old.statut = 'refuse' and new.statut = 'propose' and v_frais and v_ouvert)
+    or (old.statut = 'retire' and new.statut = 'accepte' and v_frais and old.retire_par = 'membre')) then
+    new.repondu_at := case when new.statut = 'propose' then null else now() end;
+    if new.statut = 'retire' then new.retire_par := 'membre'; new.statut_avant := old.statut;
+    else new.retire_par := null; new.statut_avant := null; end if;
+    return new;
+  end if;
+  if public.is_admin() and old.user_id is distinct from auth.uid() then
+    if old.statut in ('propose','accepte') and new.statut = 'retire' then
+      new.repondu_at := now(); new.retire_par := 'admin'; new.statut_avant := old.statut;
+      return new;
+    end if;
+    if old.statut = 'retire' and old.retire_par = 'admin' and new.statut = old.statut_avant and v_frais then
+      new.repondu_at := case when new.statut = 'propose' then null else now() end;
+      new.retire_par := null; new.statut_avant := null;
+      return new;
+    end if;
+  end if;
+  raise exception 'Changement non autorisé' using errcode = '42501';
+end $$;
+drop trigger if exists trg_protect_ambassadeur on public.ambassadeurs;
+create trigger trg_protect_ambassadeur before update on public.ambassadeurs
+  for each row execute function public.protect_ambassadeur();
+
+-- Changer de promo, de filière ou de rôle met fin au rôle dans l'ancien groupe (jamais ambassadeur d'un groupe où l'on
+-- n'est plus, ni de deux groupes) : ses propositions et son rôle en cours passent à « retire » (par le systeme).
+create or replace function public.ambassadeur_change_groupe() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_avant text := current_setting('ensam.amb_systeme', true);
+begin
+  if new.promo is not distinct from old.promo and new.filiere is not distinct from old.filiere and new.role is not distinct from old.role then return null; end if;
+  if not exists (select 1 from public.ambassadeurs a where a.user_id = new.id and a.statut in ('propose','accepte')) then return null; end if;
+  perform set_config('ensam.amb_systeme', 'on', true);
+  update public.ambassadeurs set statut = 'retire', repondu_at = now(), retire_par = 'systeme', statut_avant = statut
+    where user_id = new.id and statut in ('propose','accepte');
+  perform set_config('ensam.amb_systeme', coalesce(v_avant, 'off'), true);
+  return null;
+end $$;
+revoke all on function public.ambassadeur_change_groupe() from public, anon, authenticated;
+drop trigger if exists trg_ambassadeur_change_groupe on public.profiles;
+create trigger trg_ambassadeur_change_groupe after update of promo, filiere, role on public.profiles
+  for each row execute function public.ambassadeur_change_groupe();
+
+-- Les membres d'un groupe qui peuvent être proposés, du plus actif au moins actif (égalité : le plus ancien inscrit).
+-- Points : offre 3, aide proposée 3, mentorat accepté ou terminé 3 (1 pour l'étudiant aidé), réponse 2, question 1,
+-- connexion dans les 30 derniers jours 2 (seulement pour qui a déjà agi). Rien fait, pas proposé. Déjà refusé, expiré ou retiré dans ce groupe : jamais.
+-- Déjà proposé (depuis moins de 7 jours) ou ambassadeur ailleurs : pas ici (un seul groupe à la fois).
+create or replace function public.ambassadeur_candidats(p_promo int, p_filiere text)
+returns table (id uuid, score int, created_at timestamptz)
+language sql stable security definer set search_path = public as $$
+  select p.id, s.score, p.created_at
+  from public.profiles p
+  cross join lateral (select (
+      3 * (select count(*) from public.offers o where o.author_id = p.id)
+    + 3 * (select count(*) from public.propositions x where x.laureat_id = p.id and x.status <> 'retiree')
+    + 3 * (select count(*) from public.mentorships m where m.mentor_id = p.id and m.status in ('acceptee','terminee'))
+    + 1 * (select count(*) from public.mentorships m where m.student_id = p.id and m.status in ('acceptee','terminee'))
+    + 2 * (select count(*) from public.answers a where a.author_id = p.id)
+    + 1 * (select count(*) from public.questions q where q.author_id = p.id)
+  )::int as actions) x
+  -- La connexion récente départage ceux qui ont agi ; seule, elle ne suffit pas (rien fait, pas proposé)
+  cross join lateral (select x.actions + case when x.actions > 0
+      and (select u.last_sign_in_at from auth.users u where u.id = p.id) > now() - interval '30 days' then 2 else 0 end as score) s
+  where p.promo = p_promo and p.filiere = p_filiere and p.role in ('etudiant','laureat') and p.consent_at is not null
+    and not exists (select 1 from public.ambassadeurs a where a.user_id = p.id and a.promo = p_promo and a.filiere = p_filiere
+      and (a.statut in ('refuse','expire','retire') or (a.statut = 'propose' and a.propose_at <= now() - interval '7 days')))
+    and not exists (select 1 from public.ambassadeurs a where a.user_id = p.id
+      and (a.statut = 'accepte' or (a.statut = 'propose' and a.propose_at > now() - interval '7 days')))
+    and s.score > 0
+  order by s.score desc, p.created_at asc, p.id asc;
+$$;
+revoke all on function public.ambassadeur_candidats(int, text) from public, anon, authenticated;
+
+-- Appelée à l'ouverture de l'appli : expire les propositions de plus de 7 jours, puis propose le suivant.
+-- Renvoie le nombre de lignes changées (0 : rien à relire). Un groupe sans personne à proposer n'est recalculé
+-- qu'une fois par heure (ambassadeurs_passages) ; un groupe qui échoue (donnée inattendue) n'arrête pas les autres.
+create or replace function public.ambassadeurs_proposer() returns int
+language plpgsql security definer set search_path = public as $$
+declare g record; v_id uuid; n int := 0; k int; v_admin boolean := public.is_admin(); v_moi record;
+begin
+  if auth.uid() is null then return 0; end if;
+  select promo, filiere, role into v_moi from public.profiles where id = auth.uid();
+  if v_moi is null then return 0; end if;
+  perform set_config('ensam.amb_systeme', 'on', true);
+  for g in select distinct p.promo, p.filiere from public.profiles p
+    where p.role in ('etudiant','laureat') and p.promo between 1990 and 2040 and char_length(p.filiere) between 1 and 120
+      and (v_admin or (p.promo = v_moi.promo and p.filiere = v_moi.filiere))
+  loop
+    begin
+      update public.ambassadeurs set statut = 'expire', repondu_at = now()
+        where promo = g.promo and filiere = g.filiere and statut = 'propose' and propose_at <= now() - interval '7 days';
+      get diagnostics k = row_count; n := n + k;
+      if exists (select 1 from public.ambassadeurs a where a.promo = g.promo and a.filiere = g.filiere and a.statut in ('propose','accepte')) then continue; end if;
+      if k = 0 and exists (select 1 from public.ambassadeurs_passages x where x.promo = g.promo and x.filiere = g.filiere and x.at > now() - interval '1 hour') then continue; end if;
+      v_id := null;
+      select c.id into v_id from public.ambassadeur_candidats(g.promo, g.filiere) c limit 1;
+      if v_id is null then
+        insert into public.ambassadeurs_passages (promo, filiere, at) values (g.promo, g.filiere, now())
+          on conflict (promo, filiere) do update set at = excluded.at;
+        continue;
+      end if;
+      insert into public.ambassadeurs (promo, filiere, user_id) values (g.promo, g.filiere, v_id) on conflict do nothing;
+      get diagnostics k = row_count; n := n + k;
+    exception when others then null;
+    end;
+  end loop;
+  perform set_config('ensam.amb_systeme', 'off', true);
+  return n;
+end $$;
+revoke all on function public.ambassadeurs_proposer() from public, anon;
+grant execute on function public.ambassadeurs_proposer() to authenticated;
+
+-- Les chiffres vrais d'une promo × filière : depuis toujours, et pendant le mois qui commence à p_debut.
+-- Comme chiffresPromo() dans logic.js.
+create or replace function public.chiffres_groupe(p_promo int, p_filiere text, p_debut timestamptz)
+returns jsonb language sql stable security definer set search_path = public as $$
+  with m as (select p.id, p.created_at from public.profiles p where p.promo = p_promo and p.filiere = p_filiere and p.role in ('etudiant','laureat')),
+  d as (select x.updated_at, x.created_at from public.demandes x join m on m.id = x.auteur_id where x.status = 'pourvue'),
+  s as (select coalesce(x.confirmed_at, x.created_at) as t from public.placements x join m on m.id = x.student_id where x.status in ('declare','confirme'))
+  select jsonb_build_object(
+    'inscrits', (select count(*) from m),
+    'nouveaux', (select count(*) from m where m.created_at >= p_debut and m.created_at < p_debut + interval '1 month'),
+    'demandes', (select count(*) from d),
+    'demandes_mois', (select count(*) from d where coalesce(d.updated_at, d.created_at) >= p_debut and coalesce(d.updated_at, d.created_at) < p_debut + interval '1 month'),
+    'stages', (select count(*) from s),
+    'stages_mois', (select count(*) from s where s.t >= p_debut and s.t < p_debut + interval '1 month'));
+$$;
+revoke all on function public.chiffres_groupe(int, text, timestamptz) from public, anon, authenticated;
+
+-- L'ambassadeur (accepté) lit les chiffres de sa promo ; l'administration ceux de n'importe quel groupe
+create or replace function public.chiffres_ma_promo(p_debut timestamptz default null, p_promo int default null, p_filiere text default null)
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+declare a record; v_debut timestamptz := coalesce(p_debut, date_trunc('month', now()));
+begin
+  if public.is_admin() and p_promo is not null and p_filiere is not null then
+    return public.chiffres_groupe(p_promo, p_filiere, v_debut) || jsonb_build_object('promo', p_promo, 'filiere', p_filiere, 'debut', v_debut);
+  end if;
+  -- Le groupe actuel du membre : un rôle d'un ancien groupe ne donne rien
+  select x.promo, x.filiere into a from public.ambassadeurs x join public.profiles p on p.id = x.user_id and p.promo = x.promo and p.filiere = x.filiere
+    where x.user_id = auth.uid() and x.statut = 'accepte' limit 1;
+  if a is null then return null; end if;
+  return public.chiffres_groupe(a.promo, a.filiere, v_debut) || jsonb_build_object('promo', a.promo, 'filiere', a.filiere, 'debut', v_debut);
+end $$;
+revoke all on function public.chiffres_ma_promo(timestamptz, int, text) from public, anon;
+grant execute on function public.chiffres_ma_promo(timestamptz, int, text) to authenticated;
+
+-- Pour le résumé de la semaine (notifier, clé de service) : chaque ambassadeur accepté et les chiffres de sa promo
+create or replace function public.chiffres_ambassadeurs(p_debut timestamptz)
+returns table (user_id uuid, promo int, filiere text, chiffres jsonb)
+language sql stable security definer set search_path = public as $$
+  select a.user_id, a.promo, a.filiere, public.chiffres_groupe(a.promo, a.filiere, p_debut)
+  from public.ambassadeurs a join public.profiles p on p.id = a.user_id and p.promo = a.promo and p.filiere = a.filiere
+  where a.statut = 'accepte';
+$$;
+revoke all on function public.chiffres_ambassadeurs(timestamptz) from public, anon, authenticated;
+grant execute on function public.chiffres_ambassadeurs(timestamptz) to service_role;
+
+-- Le temps réel suit la table (les membres voient arriver une proposition ou un nouvel ambassadeur)
+do $$ begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime')
+     and not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'ambassadeurs') then
+    execute 'alter publication supabase_realtime add table public.ambassadeurs';
+  end if;
+exception when others then raise notice 'Temps réel des ambassadeurs non configuré : %', sqlerrm;
+end $$;
+
 -- =====================================================================
 -- APRÈS votre inscription sur la plateforme, devenez administrateur :
 --   update public.profiles set role = 'admin', verified = true

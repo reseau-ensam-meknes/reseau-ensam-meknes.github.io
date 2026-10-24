@@ -52,9 +52,11 @@ export function nombresLTR(s) {
   return s.replace(NOMBRES, (m, i) => (s[i - 1] === '\u2066' ? m : `\u2066${m.replace(/\s?%$/, '%').replace(/\s?[-–]\s?/, '-')}\u2069`));
 }
 
+const echapper = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 function isolate(out, groups) {
-  for (const g of groups) if (g && /[A-Za-zÀ-ÿ]{2}/.test(g) && out.includes(g)) out = out.replace(g, `\u2068${g}\u2069`);
-  return out;
+  const gs = [...new Set(groups.filter(g => g && /[A-Za-zÀ-ÿ]{2}/.test(g) && out.includes(g)))].sort((a, b) => b.length - a.length);
+  if (!gs.length) return out;
+  return out.replace(new RegExp(gs.map(echapper).join('|'), 'g'), (m, i, s) => (/[\u2066-\u2068]/.test(s[i - 1] || '') && s[i + m.length] === '\u2069' ? m : `\u2068${m}\u2069`));
 }
 
 const EXTRA = {}; const EXTRA_PATTERNS = [];

@@ -279,8 +279,8 @@ export const AR = {
   'Les mercis des étudiants que tu aides, et une attestation à ajouter sur LinkedIn': 'كلمات شكر من الطلبة الذين تساعدهم، وشهادة تضيفها إلى LinkedIn',
   'Les offres de stage, de PFE et d’emploi publiées par les lauréats': 'عروض التدريب ومشاريع نهاية الدراسة والعمل التي ينشرها الخريجون', 'Dis aux lauréats le stage que tu cherches, CV joint : ils te répondent': 'قل للخريجين أي تدريب تبحث عنه، مع سيرتك الذاتية: سيجيبونك', 'Un lauréat te conseille : CV, entretien, départ à l’étranger': 'خريج ينصحك: السيرة الذاتية، المقابلة، الانطلاق إلى الخارج',
   'Recrutements vérifiés : le lauréat déclare, tu confirmes': 'توظيفات موثّقة: الخريج يصرّح وأنت تؤكد',
-  'Membre fondateur': 'عضو مؤسس', 'Parmi les 25 premiers lauréats du réseau': 'من بين أول 25 خريجًا في الشبكة',
-  'Tu es Membre fondateur !': 'أنت عضو مؤسس!', 'Tu fais partie des 25 premiers lauréats du réseau. Ce badge restera sur ton profil.': 'أنت من بين أول 25 خريجًا في الشبكة. ستبقى هذه الشارة على ملفك.', 'Voir mon badge': 'عرض شارتي',
+  'Membre fondateur': 'عضو مؤسس',
+  'Tu es Membre fondateur !': 'أنت عضو مؤسس!', 'Voir mon badge': 'عرض شارتي',
   'Dernière étape': 'الخطوة الأخيرة', 'Présente-toi à la communauté': 'قدّم نفسك للمجتمع', 'Ces informations permettent de te proposer les bonnes offres et de suivre ta promo.': 'تسمح هذه المعلومات باقتراح العروض المناسبة عليك ومتابعة دفعتك.',
   'Impossible de charger la plateforme': 'تعذر تحميل المنصة', 'Vérifie ta connexion internet puis recharge la page.': 'تحقق من اتصالك بالإنترنت ثم أعد تحميل الصفحة.',
   'Demande': 'طلب',
@@ -539,6 +539,26 @@ export const AR = {
   'bravo reçu': 'تهنئة مستلمة', 'bravos reçus': 'تهانٍ مستلمة', 'point d’impact': 'نقطة تأثير', 'recruté grâce à toi': 'موظَّف بفضلك', 'recrutés grâce à toi': 'موظَّفون بفضلك', 'offre partagée': 'عرض منشور',
   'offres partagées': 'عروض منشورة', 'réponse donnée': 'جواب مقدَّم', 'réponses données': 'أجوبة مقدَّمة', 'filleul': 'طالب في رعايتك', 'filleuls': 'طلبة في رعايتك', 'merci reçu': 'شكر مستلم',
   'mercis reçus': 'رسائل شكر مستلمة', 'un bon début': 'بداية جيدة',
+  // Lot mouvement · C : ouverture instantanée, écrans à la demande, session renouvelée et brouillons gardés
+  'Chargement…': 'جارٍ التحميل…',
+  'Cette page n’a pas pu se charger. Vérifie ton réseau, puis réessaie.': 'تعذّر تحميل هذه الصفحة. تحقّق من شبكتك، ثم أعد المحاولة.',
+  'Pas de réseau pour l’instant : cette page s’affiche dès qu’il revient.': 'لا توجد شبكة حاليًا: ستظهر هذه الصفحة فور عودتها.',
+  'Ta session a expiré. Reconnecte-toi : ce que tu étais en train d’écrire est gardé.': 'انتهت جلستك. سجّل الدخول من جديد: ما كنت تكتبه محفوظ.',
+  'Ta session a expiré. Reconnecte-toi pour continuer.': 'انتهت جلستك. سجّل الدخول من جديد للمتابعة.',
+  'Ta connexion a expiré. Réessaie dans un instant : ce que tu as écrit est gardé.': 'انتهت صلاحية اتصالك. أعد المحاولة بعد لحظة: ما كتبته محفوظ.',
+  'Le navigateur garde ta langue, tes préférences d’affichage, ce que tu es en train d’écrire et une copie de ton accueil pour l’ouvrir tout de suite. Cette copie est effacée quand tu te déconnectes, tes brouillons aussi.': 'يحتفظ المتصفح بلغتك وتفضيلات العرض وما تكتبه حاليًا ونسخة من صفحتك الرئيسية لفتحها فورًا. تُحذف هذه النسخة عند تسجيل خروجك، وكذلك مسوّداتك.',
+  'Carte : fonds OpenStreetMap et CARTO. Notifications du téléphone : le service de ton navigateur (Google, Apple ou Mozilla), seulement si tu les actives.': 'الخريطة: خلفيات OpenStreetMap وCARTO. إشعارات الهاتف: خدمة متصفحك (Google أو Apple أو Mozilla)، فقط إن فعّلتها.',
+  // Mots des écrans chargés à la demande (Suivi, Admin, Enquête) qui s'affichent aussi ailleurs : traduits dès le démarrage
+  'Mon année': 'سنتي', '12 mois': '12 شهراً', 'Poursuite d’études': 'متابعة الدراسة', 'Agenda': 'المفكرة', 'À traiter': 'للمعالجة',
+  'Tout est à jour.': 'كل شيء محدَّث.', 'Offre': 'عرض', 'Commentaire': 'تعليق', 'Question': 'سؤال', 'Profil': 'الملف الشخصي', 'Entretien': 'مقابلة',
+  'Avis de stage': 'رأي حول تدريب', 'Guide de l’étranger': 'دليل الخارج', 'Café ENSAM': 'مقهى ENSAM', 'Startup': 'شركة ناشئة', 'Autre': 'غير ذلك',
+  'Annuler le café': 'إلغاء اللقاء', 'Voir la demande': 'عرض الطلب', 'Ouvrir': 'فتح', 'Auteur': 'الكاتب', 'Nom complet': 'الاسم الكامل',
+  'Promo': 'الدفعة', 'Filière': 'الشعبة', 'En emploi': 'في وظيفة', 'Création d’entreprise': 'إنشاء مقاولة', 'Volontariat ou VIE': 'تطوع أو VIE',
+  'Merci !': 'شكرًا!', '2 minutes pour aider les promos suivantes.': 'دقيقتان لمساعدة الدفعات القادمة.', 'Cette plateforme': 'هذه المنصة',
+  'Suite au stage ou PFE': 'بعد التدريب أو مشروع التخرج', 'Candidature spontanée': 'ترشيح تلقائي', 'Concours': 'مباراة',
+  'Moins de 6 000 DH': 'أقل من 6000 درهم', '6 000 à 10 000 DH': 'من 6000 إلى 10000 درهم', '10 000 à 15 000 DH': 'من 10000 إلى 15000 درهم',
+  '15 000 à 20 000 DH': 'من 15000 إلى 20000 درهم', '20 000 à 30 000 DH': 'من 20000 إلى 30000 درهم', 'Plus de 30 000 DH': 'أكثر من 30000 درهم',
+  'Je préfère ne pas dire': 'أفضل عدم الإفصاح',
 };
 
 // Passe UX : accueil, premiers pas, moments fêtés, messagerie dans la navigation
@@ -627,6 +647,18 @@ Object.assign(AR, {
 Object.assign(AR, {
 });
 
+// Lot mouvement · B : messages du bas (la coche d'un envoi réussi ; « Annuler » s'y lit « تراجع », voir ui.js)
+Object.assign(AR, {
+  'C’est noté': 'تم بنجاح',
+});
+
+// Lot mouvement · A : fêtes des deux côtés, carte « Fait », écrans vides illustrés
+Object.assign(AR, {
+  'Fait': 'تمّ', 'Oui, accepter': 'نعم، أقبل', 'Pas maintenant': 'ليس الآن', 'Accepter cette aide ?': 'قبول هذه المساعدة؟',
+  'Les autres propositions seront closes, et vous verrez vos coordonnées.': 'ستُغلق الاقتراحات الأخرى، وسيرى كل منكما معلومات اتصال الآخر.',
+  'Un lauréat': 'خريج', 'Ton premier merci': 'أول رسالة شكر تصلك', 'Quelqu’un que tu as aidé t’a laissé ce mot :': 'كلمة شكر وصلتك ممن ساعدتهم:', 'Avec plaisir': 'بكل سرور',
+});
+
 export const AR_PATTERNS = [
   // Lot design · A (motifs)
   // (fin A)
@@ -643,6 +675,12 @@ export const AR_PATTERNS = [
   // (fin C)
   // Lot design · D (motifs)
   // (fin D)
+  // Lot mouvement · A (motifs)
+  [/^Accepter l’aide de (.+) \?$/, n => `قبول مساعدة ${n}؟`],
+  [/^(.+) a accepté ton aide$/, n => `تم قبول مساعدتك من طرف ${n}`],
+  [/^C’est un match pour « (.+) »\. Écris-lui pour la suite, et déclare son démarrage dès qu’il a lieu\.$/, t => `تمّ الاتفاق حول «${t}». الخطوة التالية: رسالة قصيرة، ثم التصريح بالبداية بمجرد حدوثها.`],
+  [/^Écrire à (.+)$/, n => `مراسلة ${n}`],
+  // (fin mouvement A)
   // Accueil : la carte « prochaine étape » et la cloche
   [/^Premiers pas · (\d+) sur (\d+)$/, (a, b) => `الخطوات الأولى · ${a} من ${b}`],
   [/^Rendez-vous (aujourd’hui|demain) à (\d{1,2}:\d{2})$/, (d, h) => `موعد ${d === 'demain' ? 'غدًا' : 'اليوم'} على الساعة ${h}`],

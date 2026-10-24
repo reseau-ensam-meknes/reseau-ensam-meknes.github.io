@@ -2,30 +2,81 @@
 import { getLang, setLang, chargerAR } from './i18n.js';
 import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore, texteErreur } from './store.js';
-import { Icon, Field, Empty, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, Num, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille } from './ui.js';
-import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX } from './logic.js';
+import { Icon, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille, ecranLibre } from './ui.js';
+import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
 import { ParcoursPage, EspacePage, Journey, journeyStep, confirmerRecrutement, refuserRecrutement, versMerci } from './me.js';
-import { DashboardPage } from './dashboard.js';
 import { ReseauPage, ProfileModal, ProfileForm, AskQuestion } from './community.js';
-import { AdminPage, AnnonceBanner } from './admin.js';
 import { MentoratPage, AskHelp, NextRdv, slotWhen, mentoratIgnorees, IlsOntBesoin, CoupDeMain, HoraireSheet, ICONE_BESOIN, VERBE_BESOIN, phraseBesoin, ouvrirBesoin, confirmerPresence, finirMentorat, lienVisio } from './mentorat.js';
 import { SuccessFeed, VerifyPage, MerciDuo } from './growth.js';
 import { PrivacyPage, ConsentModal, MesDonnees, DesaboPage } from './privacy.js';
 import { useInstall, IosInstallHelp, PrevenirHote } from './pwa.js';
 import { NextCafe } from './groupes.js';
 import { EntrepriseModal } from './pro.js';
-import { DefisPanel, CoupePromos, DevenirParrain, TonAnnee, TonAnneeStrip } from './saison.js';
+import { DefisPanel, DevenirParrain, TonAnnee, TonAnneeStrip } from './saison.js';
 import { CvCard } from './cv.js';
 import { PhotoCard, PhotoProposee } from './photo.js';
 import { NudgeAvis } from './entreprises.js';
 import { ConfianceHome } from './confiance.js';
-import { EnquetePage } from './enquete.js';
 import { NextEvent } from './agenda.js';
 import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, suiteLien, accordIci, roleAccord, oublierInvitation } from './entree.js';
 import { MessagesPage, MessagesHome, useAlerteMessages } from './messages.js';
-import { PoulsReseau, marquerArrivee, useArrivee, ArriveeSheet, arriveeEnAttente } from './pouls.js';
+import { PoulsReseau, marquerArrivee, useArrivee, ArriveeSheet } from './pouls.js';
 import { ProposerAide } from './demandes.js';
+import { useFondateurs, FondateursBandeau, useFondateurMoi } from './fondateurs.js';
+import { useAmbassadeurs, pasAmbassadeur, notifsAmbassadeur, AmbassadeurAccueil } from './ambassadeurs.js';
+
+// Écrans lourds et peu ouverts (Suivi, Admin, Enquête) : chargés à la demande, pas au démarrage.
+// Le temps qu'ils arrivent, la forme d'une page ; s'ils ne peuvent pas arriver (réseau), un mot calme et « Réessayer ».
+// Certains navigateurs ne redemandent jamais un module qui a échoué : au deuxième échec, « Réessayer » recharge la page
+// dès que le fichier répond (les brouillons et la page ouverte sont gardés).
+function aLaDemande(charger, nom, fichier) {
+  let Ecran = null, enCours = null, rates = 0;
+  const venir = () => (enCours ||= charger().then(m => { Ecran = m[nom]; }, e => { enCours = null; rates++; throw e; }));
+  const reessayer = async setEtat => {
+    if (rates >= 2) { try { if ((await fetch(fichier, { cache: 'no-store' })).ok) return location.reload(); } catch { /* toujours pas de réseau */ } }
+    setEtat('attente');
+  };
+  function AlaDemande(props) {
+    const [etat, setEtat] = useState(Ecran ? 'pret' : 'attente');
+    useEffect(() => {
+      if (Ecran) return;
+      let fini = false;
+      venir().then(() => { if (!fini) setEtat('pret'); }, () => { if (!fini) setEtat('echec'); });
+      return () => { fini = true; };
+    }, [etat === 'attente']);
+    if (Ecran) return html`<${Ecran} ...${props}/>`;
+    if (etat === 'echec') return html`<section class="page"><div class="panel ecran-echec" role="alert"><p>Cette page n’a pas pu se charger. Vérifie ton réseau, puis réessaie.</p><p><button type="button" class="btn" onClick=${() => reessayer(setEtat)}>Réessayer</button></p></div></section>`;
+    return html`<${PageEnChargement}/>`;
+  }
+  return AlaDemande;
+}
+// La forme d'une page qui arrive : un titre et deux blocs, sans texte ni animation qui insiste. Sans réseau, on le dit calmement.
+function PageEnChargement({ horsLigne = false }) {
+  return html`<section class="page page-attente" aria-busy=${horsLigne ? null : 'true'}>
+    ${horsLigne ? html`<p class="muted small" role="status">Pas de réseau pour l’instant : cette page s’affiche dès qu’il revient.</p>` : html`<span class="sr-only" role="status">Chargement…</span>`}
+    <div class="sq sq-titre" aria-hidden="true"></div><div class="sq sq-bloc" aria-hidden="true"></div><div class="sq sq-bloc court" aria-hidden="true"></div></section>`;
+}
+const DashboardPage = aLaDemande(() => import('./dashboard.js'), 'DashboardPage', './dashboard.js');
+const AdminPage = aLaDemande(() => import('./admin.js'), 'AdminPage', './admin.js');
+const EnquetePage = aLaDemande(() => import('./enquete.js'), 'EnquetePage', './enquete.js');
+
+// L'annonce de l'administration sur l'accueil : une ligne discrète, pour son seul public ; un appui la déplie ;
+// chacun la masque pour lui (ici et non dans admin.js, chargé seulement pour l'administration)
+function AnnonceBanner({ ctx }) {
+  const { data, me } = ctx;
+  const a = annoncePour(data.annonces, me);
+  const [off, setOff] = useLocal('annonce-off-' + me.id, '');
+  const [ouverte, setOuverte] = useState(false);
+  if (!a || off === a.id) return null;
+  const lien = a.lien && /^https:\/\//i.test(a.lien) ? a.lien : null;
+  return html`<div class=${'annonce-ligne' + (ouverte ? ' ouverte' : '')} role="note">
+    <${Icon} name="spark" size=${16}/>
+    <button type="button" class="annonce-txt" aria-expanded=${ouverte} onClick=${() => setOuverte(!ouverte)}><span dir="auto" translate="no">${a.texte}</span></button>
+    <button type="button" class="icon-btn small" aria-label="Masquer l’annonce" onClick=${() => setOff(a.id)}><${Icon} name="x" size=${15}/></button>
+    ${ouverte && lien ? html`<a class="annonce-lien" href=${lien} target="_blank" rel="noopener">En savoir plus</a>` : null}
+  </div>`;
+}
 
 // Le dernier bouton touché, pour que act le retrouve même sans focus (iPhone)
 let dernierBouton = { b: null, t: 0 };
@@ -105,7 +156,9 @@ function App({ store }) {
   useEffect(() => { if (!coque) return; const brut = (location.hash || '').slice(1); brancherHistorique(parseRoute(brut).base === 'accueil' ? 'accueil' : brut, (r, o) => versRouteAct.current(r, o)); }, [coque]);
   // Les blocs arrivent en cascade au premier affichage seulement
   const [premier, setPremier] = useState(true);
-  useEffect(() => { const t = setTimeout(() => setPremier(false), 1600); return () => clearTimeout(t); }, []);
+  // Au premier changement d'écran seulement : un minuteur rejouait le fondu sur tout l'écran déjà affiché (et une feuille ouverte pâlissait)
+  const ecranVu = useRef(null);
+  useEffect(() => { const k = route.base + '/' + route.sub; if (ecranVu.current === null) ecranVu.current = k; else if (ecranVu.current !== k) setPremier(false); }, [route.base, route.sub]);
   const [entreprise, setEntreprise] = useState(null);
   const [askQ, setAskQ] = useState(null);
   const [annee, setAnnee] = useState(null);
@@ -134,7 +187,10 @@ function App({ store }) {
   const scores = useMemo(() => computeScores(data), [data.offers, data.applications, data.comments, data.placements, data.mentorships, data.answers, data.questions, data.votes]);
   const monthScores = useMemo(() => computeScores(data, new Date(Date.now() - 30 * 864e5)), [data]);
   const star = useMemo(() => starOfMonth(data, monthScores), [data, monthScores]);
-  const fondateurs = useMemo(() => fondateursOf(data.profiles), [data]);
+  // Membres fondateurs : les 25 premiers lauréats à aider les étudiants (fondateurs.js)
+  const fondateurs = useFondateurs(store, data);
+  // Ambassadeurs de promo : la proposition à l'ouverture, et ceux qui ont accepté (ambassadeurs.js)
+  const ambassadeurs = useAmbassadeurs(store, data);
 
   // Temps réel : une nouvelle notification venue d'un autre membre s'affiche aussi en bas de l'écran
   const latest = useRef(null);
@@ -144,11 +200,12 @@ function App({ store }) {
     const { notifs, todo, me: who } = cur;
     const keys = new Set(notifs.map(n => n.key).filter(Boolean));
     const prev = seen.current;
-    if (prev && prev.id === who.id && Date.now() - lastAct.current > 2500) {
-      const fresh = notifs.find(n => n.key && !prev.keys.has(n.key) && (n.action || n.tone === 'good'));
+    // Au passage des données gardées sur l'appareil aux données fraîches, rien n'est « nouveau » : l'accueil se met à jour sans bruit
+    if (prev && prev.id === who.id && !prev.cache && Date.now() - lastAct.current > 2500) {
+      const fresh = notifs.find(n => n.key && !prev.keys.has(n.key) && !n.sansToast && (n.action || n.tone === 'good'));
       if (fresh) toast(fresh.text, 'ok', fresh.pts || 0);
     }
-    seen.current = { id: who.id, keys };
+    seen.current = { id: who.id, keys, cache: !!store.depuisCache };
     const n = todo + (cur.msgs || 0);
     try { document.title = (n ? `(${n}) ` : '') + 'Réseau ENSAM Meknès'; } catch { /* */ }
   });
@@ -177,7 +234,7 @@ function App({ store }) {
   };
   voirRangs(me.role !== 'etudiant');
   const ctx = {
-    store, data, me, saison, scores, go, act, sub: route.sub, sub2: route.sub2, star, starId: star?.p.id, fondateurs,
+    store, data, me, saison, scores, go, act, sub: route.sub, sub2: route.sub2, star, starId: star?.p.id, fondateurs, ambassadeurs,
     openProfile: p => p && setProfile(p),
     openOffer: (id, apply = false) => { setOfferId(id); setApplyNow(apply); setPop(null); },
     confirm: (text, onYes, yes, { non, cls } = {}) => setConfirmBox({ text, onYes, yes, non, cls }),
@@ -208,6 +265,9 @@ function App({ store }) {
   if (page === 'parcours' && me.role !== 'etudiant') page = me.role === 'laureat' ? 'espace' : 'accueil';
   if (page === 'espace' && me.role !== 'laureat') page = me.role === 'etudiant' ? 'parcours' : 'accueil';
   if (page === 'admin' && me.role !== 'admin') page = 'accueil';
+  // Ouverture depuis les données gardées sur l'appareil, mise à jour pas encore arrivée : les écrans qui ont besoin de ce
+  // qui n'y est pas gardé (conversations entières, messages des groupes, commentaires de relecture, modération) l'attendent
+  const attente = !!store.enAttente && (page === 'messages' || page === 'admin' || (page === 'reseau' && route.sub === 'groupes') || (page === 'mentorat' && route.sub === 'cv'));
   // L'accord (loi 09-08) pas encore donné : la fenêtre de l'accord, sauf sur Confidentialité et Mon profil ;
   // les feuilles de notifications attendent, quelle que soit la page
   const sansAccord = store.mode === 'live' && !me.consent_at;
@@ -274,13 +334,14 @@ function App({ store }) {
       <main class=${'content' + (plein ? ' flush' : '')} id="contenu" tabindex="-1">
         ${page === 'accueil' ? html`<${Home} key=${me.id} ...${ctx}/>` : null}
         ${page === 'offres' ? html`<${OffersPage} ...${ctx}/>` : null}
-        ${page === 'mentorat' ? html`<${MentoratPage} ...${ctx}/>` : null}
-        ${page === 'messages' ? html`<${MessagesPage} ...${ctx}/>` : null}
+        ${attente ? html`<${PageEnChargement} horsLigne=${store.horsLigne}/>` : null}
+        ${page === 'mentorat' && !attente ? html`<${MentoratPage} ...${ctx}/>` : null}
+        ${page === 'messages' && !attente ? html`<${MessagesPage} ...${ctx}/>` : null}
         ${page === 'parcours' ? html`<${ParcoursPage} ...${ctx}/>` : null}
         ${page === 'espace' ? html`<${EspacePage} ...${ctx}/>` : null}
-        ${page === 'reseau' ? html`<${ReseauPage} ...${ctx}/>` : null}
+        ${page === 'reseau' && !attente ? html`<${ReseauPage} ...${ctx}/>` : null}
         ${page === 'suivi' ? html`<${DashboardPage} ...${ctx}/>` : null}
-        ${page === 'admin' ? html`<${AdminPage} ...${ctx}/>` : null}
+        ${page === 'admin' && !attente ? html`<${AdminPage} ...${ctx}/>` : null}
         ${page === 'profil' ? html`<${MyProfile} ctx=${ctx}/>` : null}
         ${page === 'confidentialite' ? html`<${PrivacyPage}/>` : null}
         ${page === 'enquete' ? html`<${EnquetePage} ...${ctx}/>` : null}
@@ -525,6 +586,8 @@ function buildNotifs({ data, me, store, saison }) {
     const sig = (data.signalements || []).filter(x => x.status === 'ouvert');
     if (sig.length) out.push({ key: 'sg' + sig.length, action: true, geste: 'Voir les signalements', tone: 'accent', icon: 'shield', to: 'admin/moderation', at: sig.reduce((m, x) => (x.created_at > m ? x.created_at : m), ''), text: `${sig.length} signalement${sig.length > 1 ? 's' : ''} à traiter.` });
   }
+  // Ambassadeur de promo : la proposition attend une réponse
+  out.push(...notifsAmbassadeur({ data, me }));
   return out.sort((a, b) => (b.geste ? 1 : 0) - (a.geste ? 1 : 0) || (b.action ? 1 : 0) - (a.action ? 1 : 0) || new Date(b.at) - new Date(a.at));
 }
 
@@ -568,6 +631,8 @@ function prochainPas(ctx, notifs, etape, { plAttente, helper, besoins = [] } = {
     const r = n && pasNotif(ctx, n); if (r) return r;
   }
   if (rdv('proche')) return pasRdv(ctx, rdv('proche'), 'proche');
+  // La plateforme lui propose d'être ambassadeur de sa promo (7 jours pour répondre)
+  const amb = pasAmbassadeur(ctx); if (amb) return amb;
   // Un message de l'administration attend dans la bulle pendant les premiers pas
   const conv = conversations(data, me.id).find(c => c.nonLus && !(etape && store.byId('profiles', c.autre)?.role === 'admin'));
   if (conv) {
@@ -633,13 +698,21 @@ function pasBesoin(ctx, b) {
 
 // La carte « prochaine étape » : une seule forme, un seul bouton plein qui nomme l'action, au plus deux liens dessous.
 // Les premiers pas y sont fondus : « Premiers pas · 2 sur 5 » ouvre la feuille des étapes.
-function ProchainPas({ pas, progres, onEtapes }) {
+function ProchainPas({ pas, progres, onEtapes, faite }) {
   if (!pas) return null;
   const anneau = progres ? html`<span class="pas-anneau" style=${`--p:${progres.done / progres.total}`} aria-hidden="true"></span>` : null;
   const etapes = progres ? `Premiers pas · ${progres.done} sur ${progres.total}` : '';
+  // L'étape vue la dernière fois est faite : elle se coche en vert, l'anneau avance, puis la carte laisse la place à la suivante
+  if (faite?.s && progres) return html`<section key="fait" class=${'pas pas-fait' + (faite.part ? ' part' : '')} aria-labelledby="pas-titre" data-pas=${'fait-' + faite.s.cle}>
+    <div class="pas-txt">
+      <p class="pas-oeil"><span class="pas-anneau" style=${`--p:${progres.done / progres.total};--p0:${Math.max(0, progres.done - 1) / progres.total}`} aria-hidden="true"></span><span>${etapes}</span></p>
+      <h2 class="pas-titre" id="pas-titre">${faite.s.titre}</h2>
+    </div>
+    <div class="pas-act"><p class="pas-ok" role="status"><span class="pas-coche" aria-hidden="true"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M6 12.5l4 4 8-9"/></svg></span><span>Fait</span></p></div>
+  </section>`;
   const lien = pas.guide ? { label: 'Voir les étapes', go: onEtapes, dialog: true } : pas.lien;
   const membre = pas.membre ? { translate: 'no', dir: 'auto' } : {};
-  return html`<section class="pas" aria-labelledby="pas-titre" data-pas=${pas.key}>
+  return html`<section key="pas" class=${'pas' + (faite?.arrive ? ' pas-arrive' : '')} aria-labelledby="pas-titre" data-pas=${pas.key}>
     <div class="pas-txt">
       <p class="pas-oeil">${pas.guide ? anneau : html`<${Icon} name=${pas.icon || 'arrow'} size=${16}/>`}<span>${pas.guide ? etapes : pas.eyebrow}</span></p>
       <h2 class="pas-titre" id="pas-titre" ...${membre}>${pas.titre}</h2>
@@ -676,6 +749,76 @@ function useFetePremiersPas(me, g) {
     if (!g.fini && etat !== 'en-cours') setEtat('en-cours');
     if (g.fini && etat === 'en-cours') { setEtat('fini'); celebrate({ cle: 'premiers-pas-' + me.id, icon: 'award', titre: 'Premiers pas terminés !', texte: me.role === 'etudiant' ? 'Ton profil est prêt : les lauréats peuvent maintenant t’aider.' : 'Merci ! Les étudiants de l’école peuvent compter sur toi.' }); }
   }, [g?.fini]);
+}
+
+// La carte qui dit « Fait » : l'étape des premiers pas que la carte montrait (gardée par membre dans ce navigateur)
+// est faite au retour sur l'accueil, ou sur place ? Elle se coche en vert, puis la suivante arrive en glissant.
+// Pas quand les premiers pas se terminent : c'est alors la fête « Premiers pas terminés ! » qui le dit (useFetePremiersPas).
+const lireLocal = k => { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } };
+const ecrireLocal = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)); } catch { /* pas de stockage */ } };
+function useEtapeFaite(me, g, pas) {
+  const k = 'guide-vu-' + me.id;
+  const vu = useRef(undefined);
+  if (vu.current === undefined) vu.current = lireLocal(k);
+  const [phase, setPhase] = useState(0);   // 0 : rien · 1 : cochée · 2 : elle s'en va · 3 : la suivante arrive
+  const minuteurs = useRef([]);
+  useEffect(() => () => minuteurs.current.forEach(clearTimeout), []);
+  const s = g && !g.fini && vu.current ? g.steps.find(x => x.cle === vu.current && x.fait) || null : null;
+  const montree = pas?.guide ? pas.key.replace(/^guide-/, '') : null;
+  useEffect(() => {
+    if (s) {
+      if (phase === 1 || phase === 2) return;
+      setPhase(1);
+      minuteurs.current.push(setTimeout(() => setPhase(2), 1350), setTimeout(() => { vu.current = null; setPhase(3); }, 1620));
+      return;
+    }
+    if (vu.current !== montree) { vu.current = montree; ecrireLocal(k, montree); }
+  });
+  return { s, part: phase === 2, arrive: phase === 3 };
+}
+
+// Lauréat : il vit aussi le match. À son retour sur l'accueil, « Salma a accepté ton aide » avec les deux visages
+// (une fois par match), puis, le jour où il arrive, son tout premier merci d'un étudiant, cité en entier.
+// Ce qui existait déjà à sa première visite dans ce navigateur n'est pas fêté, sauf s'il date de moins de deux jours.
+// Jamais par-dessus une autre fenêtre : la fête attend alors la visite suivante.
+function mercisRecus(data, id) {
+  const ok = x => typeof x === 'string' && x.trim();
+  return [
+    ...data.placements.filter(p => p.laureat_id === id && p.status === 'confirme' && ok(p.merci)).map(p => ({ txt: p.merci, de: p.student_id, at: p.confirmed_at || p.created_at })),
+    ...data.mentorships.filter(m => m.mentor_id === id && ok(m.merci)).map(m => ({ txt: m.merci, de: m.student_id, at: m.rdv_at || m.created_at })),
+    ...(data.relectures_cv || []).filter(r => r.reviewer_id === id && ok(r.merci)).map(r => ({ txt: r.merci, de: r.student_id, at: r.rendue_at || r.created_at })),
+  ].sort((a, b) => new Date(a.at) - new Date(b.at));
+}
+const dejaFete = cle => { try { return !!localStorage.getItem('fete-' + cle); } catch { return true; } };
+function useFetesLaureat(ctx) {
+  const { data, me, store, go } = ctx;
+  const lau = me.role === 'laureat';
+  const matchs = lau ? (data.propositions || []).filter(x => x.laureat_id === me.id && x.status === 'acceptee')
+    .map(x => ({ x, d: (data.demandes || []).find(d => d.id === x.demande_id) })).filter(y => y.d && ['match', 'pourvue'].includes(y.d.status)) : [];
+  const mercis = lau ? mercisRecus(data, me.id) : [];
+  useEffect(() => {
+    if (!lau) return;
+    const kM = 'matchs-vus-' + me.id, kR = 'mercis-avant-' + me.id, frais = iso => !!iso && recent(iso, 2);
+    let vus = lireLocal(kM);
+    if (!Array.isArray(vus)) { vus = matchs.filter(y => !frais(y.x.repondu_at)).map(y => y.x.id); ecrireLocal(kM, vus); }
+    let avant = lireLocal(kR);
+    if (typeof avant !== 'number') { avant = mercis.filter(m => !frais(m.at)).length; ecrireLocal(kR, avant); }
+    const nouveau = matchs.find(y => !vus.includes(y.x.id) && recent(y.x.repondu_at || y.x.created_at, 14) && !dejaFete(`match-${me.id}-${y.x.id}`));
+    const premier = !avant && mercis[0] && !dejaFete('premier-merci-' + me.id) ? mercis[0] : null;
+    if (!nouveau && !premier) return;
+    const t = setTimeout(() => {
+      if (!ecranLibre()) return; // le même test que les fêtes des fondateurs : une feuille qui s'en va ne compte pas
+      if (nouveau) {
+        const e = store.byId('profiles', nouveau.d.auteur_id), p = e?.full_name?.split(' ')[0] || 'Un étudiant';
+        if (celebrate({ cle: `match-${me.id}-${nouveau.x.id}`, icon: 'heart', visages: [me, e], titre: `${p} a accepté ton aide`, texte: `C’est un match pour « ${nouveau.d.titre} ». Écris-lui pour la suite, et déclare son démarrage dès qu’il a lieu.`,
+          action: e ? { label: `Écrire à ${p}`, icon: 'chat', onClick: () => go('messages/' + e.id) } : null })) ecrireLocal(kM, [...vus, nouveau.x.id]);
+        return;
+      }
+      const e = store.byId('profiles', premier.de);
+      celebrate({ cle: 'premier-merci-' + me.id, icon: 'heart', titre: 'Ton premier merci', texte: 'Quelqu’un que tu as aidé t’a laissé ce mot :', citation: { txt: premier.txt, de: e }, ok: 'Avec plaisir' });
+    }, 900);
+    return () => clearTimeout(t);
+  }, [matchs.map(y => y.x.id).join(), mercis.length]);
 }
 
 function Home(ctx) {
@@ -722,6 +865,8 @@ function Home(ctx) {
   const helper = plAttente?.laureat_id ? store.byId('profiles', plAttente.laureat_id) : null;
   const besoins = isLaureat ? besoinsDeMoi(data, me, id => store.byId('profiles', id), { ignorees: mentoratIgnorees() }) : [];
   const pas = prochainPas({ ...ctx, setCompose }, notifs, enCours?.suivante || null, { plAttente, helper, besoins });
+  const faite = useEtapeFaite(me, enCours, pas);
+  useFetesLaureat(ctx);
   // Juste après la « Dernière étape » : une feuille d'accueil, une fois, avec le même bouton que la carte
   const [arrivee, finArrivee] = useArrivee(ctx);
   // « Cette semaine » : trois petites choses au plus, jamais ce que montre la carte ;
@@ -740,17 +885,8 @@ function Home(ctx) {
   const s = scores.get(me.id);
   const myApps = data.applications.filter(a => a.student_id === me.id);
   const h = new Date().getHours();
-  // Les 25 premiers lauréats : on leur dit une fois qu'ils sont membres fondateurs (pas par-dessus une autre fenêtre)
-  const fondateur = store.mode === 'live' && isLaureat && !!me.consent_at && !!ctx.fondateurs?.has(me.id);
-  useEffect(() => {
-    // Juste après l'inscription, la feuille d'accueil l'annonce elle-même
-    if (!fondateur || arriveeEnAttente(me.id)) return;
-    const t = setTimeout(() => {
-      if (arriveeEnAttente(me.id) || document.querySelector('.modal-back, .fete-back')) return;
-      celebrate({ cle: 'fondateur-' + me.id, icon: 'award', titre: 'Tu es Membre fondateur !', texte: 'Tu fais partie des 25 premiers lauréats du réseau. Ce badge restera sur ton profil.', action: { label: 'Voir mon badge', onClick: () => go('espace') } });
-    }, 1200);
-    return () => clearTimeout(t);
-  }, [fondateur]);
+  // Un lauréat devient membre fondateur par sa première aide aux étudiants : la fête, puis « Ton nom sur la page d'entrée ? »
+  const feuilleFondateur = useFondateurMoi(ctx);
   const offresBloc = dernieres.length ? html`<div class="section-head"><h3>${enRecherche ? 'Offres pour toi' : 'Dernières offres'}</h3><button class="btn tiny ghost" onClick=${() => go('offres')}>Tout voir <${Icon} name="arrow" size=${14}/></button></div>
     <div class="offer-grid one">${dernieres.map(o => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} onOpen=${() => openOffer(o.id)}/>`)}</div>` : null;
 
@@ -772,6 +908,7 @@ function Home(ctx) {
   return html`<section class="page home">
     <div class="home-cols">
     <div class="home-col">
+      <${FondateursBandeau} ctx=${ctx} onPublier=${() => setCompose(true)}/>
       <header class="hello home-hero sky">
         <div class="hello-txt">
           <h1>${MOMENT(h)} ${first}</h1>
@@ -781,7 +918,7 @@ function Home(ctx) {
         <${SchoolScene} align=${getLang() === 'ar' ? 'xMinYMax' : 'xMaxYMax'} pose=${10000}/>
       </header>
 
-      <${ProchainPas} pas=${pas} progres=${enCours} onEtapes=${() => setVoirEtapes(true)}/>
+      <${ProchainPas} pas=${pas} progres=${enCours} faite=${faite} onEtapes=${() => setVoirEtapes(true)}/>
       <section class="bloc semaine" aria-labelledby="h-semaine">
         <h2 class="h-sec" id="h-semaine">Cette semaine</h2>
         <div class="bloc-corps">
@@ -802,6 +939,7 @@ function Home(ctx) {
         <${NextRdv} ctx=${ctx} exclure=${montres}/>
         <${MessagesHome} ctx=${ctx} exclure=${montres}/>
         <${ConfianceHome} ctx=${ctx}/>
+        <${AmbassadeurAccueil} ctx=${ctx} pasKey=${pas.key}/>
         ${isStudent && obj ? html`<button class=${'objective compact clickable st-' + stu.key} onClick=${() => go('parcours')}>
           <div class="objective-top"><span class="obj-ico"><${Icon} name="route" size=${22}/></span>
             <div class="objective-main"><p class="eyebrow">Mon objectif de l’année</p><h2>${obj.titre}</h2></div>
@@ -839,6 +977,7 @@ function Home(ctx) {
     </div>
     </div>
     ${compose ? html`<${OfferComposer} ctx=${ctx} onClose=${() => setCompose(false)}/>` : null}
+    ${feuilleFondateur}
     ${arrivee ? html`<${ArriveeSheet} a=${arrivee} pas=${pas} me=${me} store=${store} onClose=${finArrivee}/>` : null}
     ${(voirEtapes || parRoute) && guide ? html`<${EtapesSheet} me=${me} g=${guide} historique=${!parRoute} onClose=${() => { setVoirEtapes(false); if (parRoute) go('accueil'); }}
       onHide=${() => { setOff(true); setVoirEtapes(false); if (parRoute) go('accueil'); toast('C’est noté. Tu retrouves les premiers pas dans ton menu : « Comment ça marche ? ».'); }}/>` : null}

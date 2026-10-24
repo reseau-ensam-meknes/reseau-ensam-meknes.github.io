@@ -4,6 +4,7 @@
 // Les règles sont dans la base (peut_discuter, protect_message) ; l'écran les reflète.
 import { html, useState, useEffect, useLayoutEffect, useRef, useMemo } from './vendor/preact-htm.js';
 import { Icon, Avatar, Empty, toast, injectCSS, roleTexte } from './ui.js';
+import { useBrouillon, oublierBrouillon, lireBrouillon, ecrireBrouillon } from './ui.js';
 import { conversations, lienAvec, mentorState, norm } from './logic.js';
 import { addAR, getLang } from './i18n.js';
 import { VOCAL_MAX, REACTIONS } from './store.js';
@@ -35,12 +36,13 @@ const apercus = new Map();
 // ---------------------------------------------------------------------------
 // Message préparé (ex. l'administration demande un CV) : repris une seule fois à l'ouverture de la conversation
 const brouillons = new Map();
-export function MessageBtn({ ctx, p, label = 'Écrire', cls = 'btn small', texte = '' }) {
+// icone, compte : le « Merci » des membres fondateurs (accueil) a son cœur et ne compte pas les messages non lus
+export function MessageBtn({ ctx, p, label = 'Écrire', cls = 'btn small', texte = '', icone = 'chat', compte = true }) {
   const id = p?.id || p;
   if (!id || !ctx.store.peutDiscuter?.(id)) return null;
-  const n = (ctx.data.messages || []).filter(m => m.author_id === id && m.dest_id === ctx.me.id && !m.lu_at).length;
+  const n = compte ? (ctx.data.messages || []).filter(m => m.author_id === id && m.dest_id === ctx.me.id && !m.lu_at).length : 0;
   return html`<button type="button" class=${cls + ' msg-btn'} onClick=${e => { e.stopPropagation(); if (texte) brouillons.set(id, texte); ctx.ecrire ? ctx.ecrire(id) : ctx.go('messages/' + id); }}>
-    <${Icon} name="chat" size=${15}/> ${label}${n ? html` <span class="count">${n}</span>` : null}</button>`;
+    <${Icon} name=${icone} size=${15}/> ${label}${n ? html` <span class="count">${n}</span>` : null}</button>`;
 }
 
 function Apercu({ m, me }) {
@@ -72,8 +74,9 @@ export function useAlerteMessages(store, me, route) {
     if (!me) return;
     const recus = (store.data.messages || []).filter(m => m.dest_id === me.id);
     // Au premier affichage, ou quand on change de compte, rien n'est « nouveau »
-    const avant = vus.current?.id === me.id ? vus.current.ids : null;
-    vus.current = { id: me.id, ids: new Set(recus.map(m => m.id)) };
+    // Ni au passage des données gardées sur l'appareil aux données fraîches (ouverture instantanée)
+    const avant = vus.current?.id === me.id && !vus.current.cache ? vus.current.ids : null;
+    vus.current = { id: me.id, ids: new Set(recus.map(m => m.id)), cache: !!store.depuisCache };
     if (!avant) return;
     const m = recus.find(x => !x.lu_at && !avant.has(x.id));
     if (!m || (route.base === 'messages' && route.sub === m.author_id)) return;
@@ -133,7 +136,7 @@ function ConvList({ ctx, convs, actif }) {
         <span class="ci-main"><span class="ci-top"><span class="ci-name" translate="no">${p?.full_name || 'Membre'}</span><span class="ci-time">${quandCourt(c.dernier.created_at)}</span></span>
           <span class="ci-bas"><${Apercu} m=${c.dernier} me=${me.id}/>${c.nonLus ? html`<span class="ci-n"><span aria-hidden="true">${c.nonLus}</span><span class="sr-only">${c.nonLus > 1 ? `${c.nonLus} messages non lus` : '1 message non lu'}</span></span>` : c.dernier.author_id === me.id && c.dernier.lu_at ? html`<span class="ci-vu"><${Icon} name="checks" size=${15}/></span>` : null}</span></span>
       </a></li>`; })}</ul>`
-    : !sugg.length && !q ? html`<div class="conv-empty"><${Empty} icon="chat" title="Pas encore de message">Une conversation s’ouvre avec un mentorat, une candidature, ton parrain ou des coordonnées partagées.<//>
+    : !sugg.length && !q ? html`<div class="conv-empty"><${Empty} icon="chat" scene="messages" title="Pas encore de message">Une conversation s’ouvre avec un mentorat, une candidature, ton parrain ou des coordonnées partagées.<//>
         <button class="btn small" onClick=${() => go('mentorat')}><${Icon} name="mentor" size=${15}/> ${me.role === 'laureat' ? 'Voir qui a besoin d’aide' : 'Demander un conseil'}</button></div>`
     : q ? html`<p class="small muted conv-none">Aucune conversation à ce nom.</p>` : null}
     <p class="small muted conv-note"><${Icon} name="lock" size=${13}/> Une conversation n’est visible que par vous deux.</p>
@@ -156,8 +159,13 @@ function Conversation({ ctx, autre }) {
   const lien = lienAvec(data, me, autre, x => store.byId('profiles', x));
   const ouvert = store.peutDiscuter(autre);
   const blocage = (data.blocages || []).find(b => b.user_id === me.id && b.bloque_id === autre);
-  const [envois, setEnvois] = useState([]);
-  const [txt, setTxt] = useState(() => { const b = brouillons.get(autre) || ''; brouillons.delete(autre); return b; });
+  // Le message en cours et ceux qui n'ont pas pu partir restent sur l'appareil (session expirée, réseau, rechargement) ;
+  // un mot préparé ailleurs (« Écrire » avec un texte) passe devant le brouillon
+  const cleMsg = me.id + ':msg:' + autre;
+  const cleEchecs = me.id + ':msg-echecs:' + autre;
+  const [envois, setEnvois] = useState(() => lireBrouillon(cleEchecs, []).map((a, i) => ({ id: 'echec-' + i, args: a, ...a, fichier: null, url: null, etat: 'erreur', created_at: new Date().toISOString() })));
+  const [pret] = useState(() => { const b = brouillons.get(autre) || ''; brouillons.delete(autre); if (b) oublierBrouillon(cleMsg); return b; });
+  const [txt, setTxt] = useBrouillon(cleMsg, pret);
   const [tape, setTape] = useState(0);
   const [menu, setMenu] = useState(false);
   const [sel, setSel] = useState(null);
@@ -202,8 +210,11 @@ function Conversation({ ctx, autre }) {
       const r = await store.envoyerMessage({ dest: autre, ...args });
       if (url && r?.fichier) apercus.set(r.fichier, url);
       setEnvois(x => x.filter(e => e.id !== tmp));
+      if (args.type === 'texte') { const l = lireBrouillon(cleEchecs, []), i = l.findIndex(a => a.body === args.body); if (i >= 0) ecrireBrouillon(cleEchecs, l.filter((_, j) => j !== i)); }
     } catch (e) {
       setEnvois(x => x.map(m => (m.id === tmp ? { ...m, etat: 'erreur' } : m)));
+      // Gardé sur l'appareil tout de suite : la session a pu se perdre et cet écran disparaître pendant l'envoi
+      if (args.type === 'texte') { const l = lireBrouillon(cleEchecs, []); if (!l.some(a => a.body === args.body)) ecrireBrouillon(cleEchecs, [...l, { type: 'texte', body: args.body, ...(args.reponse_a ? { reponse_a: args.reponse_a } : {}) }]); }
       toast(e.message || String(e), 'err');
     }
   };

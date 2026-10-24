@@ -3,7 +3,8 @@
 import { html, useState, useMemo, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, BrandLogo, toast } from './ui.js';
 import { TYPES, bilanCooptation, needsRelance, seasonLabel } from './logic.js';
-import { parseOffre } from './parse-offre.js';
+// La lecture d'une annonce (parse-offre.js) n'arrive qu'à l'ouverture de « Offre en 30 secondes »
+const lecteurOffre = () => import('./parse-offre.js');
 
 // ---------------------------------------------------------------------------
 // Offre en 30 secondes : coller le texte d'une annonce, le formulaire se remplit
@@ -14,14 +15,15 @@ export function PasteOffer({ me, onFill }) {
   const cta = useRef();
   // Seulement ce qui a été reconnu, et rien d'invisible (aucun champ « contact » dans le formulaire).
   // Le formulaire éclaire ce qu'il a reçu et dit lui-même combien ; le focus revient sur ce bouton.
-  const fill = () => {
+  const fill = async () => {
+    const { parseOffre } = await lecteurOffre();
     const { fields, found } = parseOffre(txt, me);
     const vus = found.filter(k => k !== 'contact');
     if (!vus.length) { toast('Rien de reconnu. Remplis les champs à la main.', 'err'); return; }
     onFill(Object.fromEntries(vus.map(k => [k, fields[k]])), vus); setOpen(false); setTxt('');
     setTimeout(() => cta.current?.focus({ preventScroll: true }));
   };
-  if (!open) return html`<button type="button" class="paste-cta" ref=${cta} onClick=${() => setOpen(true)}><span class="obj-ico"><${Icon} name="copy" size=${20}/></span>
+  if (!open) return html`<button type="button" class="paste-cta" ref=${cta} onClick=${() => { lecteurOffre().catch(() => {}); setOpen(true); }}><span class="obj-ico"><${Icon} name="copy" size=${20}/></span>
     <span class="grow"><strong>Offre en 30 secondes</strong><span class="small muted">Colle le texte de l’annonce (LinkedIn, email, WhatsApp) : le formulaire se remplit tout seul.</span></span><${Icon} name="arrow" size=${18}/></button>`;
   return html`<div class="paste-box">
     <${Field} label="Texte de l’annonce"><textarea id="of-paste" rows="6" value=${txt} onInput=${e => setTxt(e.target.value)} placeholder="Colle ici le post LinkedIn ou l’email de la RH…" dir="auto"></textarea><//>

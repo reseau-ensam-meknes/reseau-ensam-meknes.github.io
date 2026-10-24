@@ -2,6 +2,8 @@
 
 // Cycle ingénieur : 5 parcours et 11 filières (choix en 3A). Les 1A et 2A sont en classes préparatoires intégrées.
 // En 5A, les matières communes se font en deux sections : A (électro-industriel, IA, informatique) et B (mécanique, civil).
+// Brouillons gardés sur l'appareil (ui.js useBrouillon, store.js) : « ensam-brouillon:<id du membre>:<formulaire> »
+export const PREFIXE_BROUILLON = 'ensam-brouillon:';
 export const PARCOURS = [
   { code: 'PEI', nom: 'Électro-industriel', section: 'A' },
   { code: 'PM', nom: 'Mécanique', section: 'B' },
@@ -310,7 +312,7 @@ export function computeScores(data, since = null) {
 }
 
 export const BADGES = [
-  { id: 'fondateur', nom: 'Membre fondateur', desc: 'Parmi les 25 premiers lauréats du réseau', test: (s, p, x) => !!p.id && !!x.fondateurs?.has(p.id) },
+  { id: 'fondateur', nom: 'Membre fondateur', desc: 'Parmi les 25 premiers lauréats à aider les étudiants', test: (s, p, x) => !!p.id && !!x.fondateurs?.has(p.id) },
   { id: 'verifie', nom: 'Lauréat vérifié', desc: 'Diplôme confirmé par le réseau', test: (s, p) => p.role === 'laureat' && p.verified },
   { id: 'premier', nom: 'Premier coup de pouce', desc: 'A publié une première offre', test: s => s.offres >= 1 },
   { id: 'recruteur', nom: 'Recruteur', desc: '3 étudiants recrutés grâce à ses offres', test: s => s.recrutes >= 3 },
@@ -322,16 +324,41 @@ export const BADGES = [
   { id: 'aime', nom: 'Aimé de la promo', desc: '5 messages de remerciement', test: s => s.mercis >= 5 },
   { id: 'top', nom: 'Top contributeur', desc: '300 points d’impact (niveau Or)', test: s => s.points >= 300 },
   { id: 'mois', nom: 'Lauréat du mois', desc: 'Le plus d’impact sur les 30 derniers jours', test: (s, p, x) => !!p.id && x.star === p.id },
+  { id: 'ambassadeur', nom: 'Ambassadeur de promo', desc: 'Fait venir sa promo et relaie ses réussites', test: (s, p, x) => !!p.id && !!x.ambassadeurs?.has(p.id) },
 ];
 
-// Membres fondateurs : les 25 premiers lauréats arrivés sur la plateforme (ils ont lancé l'entraide)
+// Membres fondateurs : les 25 premiers lauréats à aider les étudiants, dans l'ordre de leur première contribution :
+// une offre publiée pour les étudiants (pas une offre « entre lauréats » ; pourvue ou fermée, elle compte toujours ;
+// supprimée, elle ne compte plus), une aide proposée sur la demande d'un étudiant (sauf retirée par le lauréat),
+// ou un mentorat accepté (ou terminé) avec un étudiant. Jamais l'administration ; rien fait, pas fondateur.
+// Même classement que fondateurs_classement() dans schema.sql. Égalité : le type (aide, mentorat, offre), puis l'id.
 export const NB_FONDATEURS = 25;
-// Les lauréats dans l'ordre où ils ont rejoint le réseau (même ordre pour le badge et pour l'accueil)
+export const CONTRIBUTIONS = { offre: 'Offre publiée', aide: 'Aide proposée', mentorat: 'Mentorat accepté' };
+export function classementFondateurs(data, max = NB_FONDATEURS) {
+  const role = new Map((data?.profiles || []).map(p => [p.id, p.role]));
+  const auteur = new Map((data?.demandes || []).map(d => [d.id, d.auteur_id]));
+  const premiere = new Map();
+  const noter = (id, quand, type) => {
+    const t = quand ? new Date(quand).getTime() : NaN;
+    if (!id || role.get(id) !== 'laureat' || !Number.isFinite(t)) return;
+    const x = premiere.get(id);
+    if (!x || t < x.t || (t === x.t && type < x.type)) premiere.set(id, { id, t, type });
+  };
+  for (const o of data?.offers || []) if ((o.audience || 'etudiants') === 'etudiants') noter(o.author_id, o.created_at, 'offre');
+  for (const x of data?.propositions || []) if (x.status !== 'retiree' && role.get(auteur.get(x.demande_id)) === 'etudiant') noter(x.laureat_id, x.created_at, 'aide');
+  for (const m of data?.mentorships || []) if (['acceptee', 'terminee'].includes(m.status) && role.get(m.student_id) === 'etudiant') noter(m.mentor_id, m.accepted_at || m.created_at, 'mentorat');
+  return [...premiere.values()].sort((a, b) => a.t - b.t || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).slice(0, max)
+    .map((x, i) => ({ id: x.id, at: new Date(x.t).toISOString(), type: x.type, rang: i + 1 }));
+}
+export const fondateursOf = data => new Set(classementFondateurs(data).map(f => f.id));
+// « 23 places de membre fondateur restantes sur 25 » (une seule phrase par cas : la version arabe la reconnaît)
+export function lignePlaces(total) {
+  const n = Math.max(0, NB_FONDATEURS - (total || 0));
+  return !n ? `Les ${NB_FONDATEURS} places de membre fondateur sont prises` : n === 1 ? `1 place de membre fondateur restante sur ${NB_FONDATEURS}` : `${n} places de membre fondateur restantes sur ${NB_FONDATEURS}`;
+}
+// Les lauréats dans l'ordre où ils ont rejoint le réseau (« Te voilà 40e parmi les lauréats », rien de plus)
 export const ordreArrivee = profiles => (profiles || []).filter(p => p.role === 'laureat' && p.created_at)
   .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.id).localeCompare(String(b.id)));
-export function fondateursOf(profiles) {
-  return new Set(ordreArrivee(profiles).slice(0, NB_FONDATEURS).map(p => p.id));
-}
 // « Te voilà 40e parmi les lauréats du réseau » : le rang d'arrivée d'un lauréat (null pour les autres, ou sans date)
 export function rangLaureat(profiles, me) {
   if (me?.role !== 'laureat' || !me.created_at) return null;
@@ -339,10 +366,14 @@ export function rangLaureat(profiles, me) {
   return i < 0 ? null : i + 1;
 }
 
-// `extra.star` : id du lauréat du mois (voir starOfMonth) ; `extra.fondateurs` : voir fondateursOf
+// `extra.star` : id du lauréat du mois (voir starOfMonth) ; `extra.fondateurs` : voir fondateursOf ;
+// `extra.ambassadeurs` : Map des ambassadeurs acceptés (voir ambassadeursActifs), le badge nomme sa promo
 export function badgesOf(score, profile, extra = {}) {
   const s = score || { points: 0, offres: 0, recrutes: 0, etranger: 0, mentorats: 0, rapides: 0, meilleures: 0, mercis: 0 };
-  return BADGES.filter(b => b.test(s, profile || {}, extra));
+  return BADGES.filter(b => b.test(s, profile || {}, extra)).map(b => {
+    const a = b.id === 'ambassadeur' ? extra.ambassadeurs.get(profile.id) : null;
+    return a ? { ...b, nom: `Ambassadeur promo ${a.promo}`, desc: `Fait venir la promo ${a.promo} (${filiereCourte(a.filiere)}) et relaie ses réussites` } : b;
+  });
 }
 
 // Lauréat qui a eu le plus d'impact sur 30 jours (null si personne n'a de points)
@@ -1010,8 +1041,7 @@ export function presenceReseau(data, me, { visages: nbVisages = 3 } = {}) {
 export function accueilArrivee(data, me) {
   if (!me || !['laureat', 'etudiant'].includes(me.role)) return null;
   const presence = presenceReseau(data, me, { visages: 5 });
-  const rang = rangLaureat(data.profiles, me);
-  return { role: me.role, rang, fondateur: !!rang && rang <= NB_FONDATEURS, presence, visages: presence?.visages || [] };
+  return { role: me.role, rang: rangLaureat(data.profiles, me), presence, visages: presence?.visages || [] };
 }
 // Une seule phrase par cas (la version arabe la reconnaît en entier)
 export function phrasesArrivee(a) {
@@ -1231,4 +1261,115 @@ export function pushChoix(cat, me) {
 export function pushVoulu(kind, me) {
   const cat = pushCategorie(kind);
   return cat === 'admin' ? true : pushChoix(cat, me);
+}
+
+// ---------------------------------------------------------------------------
+// Ambassadeurs de promo : pour chaque promo × filière, la plateforme propose le rôle au membre le plus actif
+// (jamais l'administration). 7 jours sans réponse, ou un refus : le suivant. Un seul ambassadeur à la fois.
+// Mêmes règles que ambassadeur_candidats() et ambassadeurs_proposer() dans schema.sql. En ligne, c'est la base qui
+// propose (elle voit tout, et les connexions récentes) ; ce calcul sert à la démo et aux tests.
+// ---------------------------------------------------------------------------
+export const AMB_DELAI_JOURS = 7;
+export const AMB_POIDS = { offre: 3, aide: 3, mentor: 3, reponse: 2, question: 1, mentore: 1 };
+export const memeGroupe = (a, promo, filiere) => !!a && Number(a.promo) === Number(promo) && !!filiere && a.filiere === filiere;
+const ambExpire = (a, now) => a.statut === 'propose' && now - new Date(a.propose_at || a.created_at).getTime() >= AMB_DELAI_JOURS * 864e5;
+// La ligne en cours d'un groupe : proposée (moins de 7 jours) ou acceptée
+export function ambassadeurDuGroupe(data, promo, filiere, now = Date.now()) {
+  return (data?.ambassadeurs || []).find(a => memeGroupe(a, promo, filiere) && (a.statut === 'accepte' || (a.statut === 'propose' && !ambExpire(a, now)))) || null;
+}
+// Qui change quoi (comme protect_ambassadeur() dans schema.sql) : le membre accepte ou refuse dans les 7 jours, se
+// retire, et annule son geste dans les 10 minutes ; l'administration retire, et n'annule son retrait que vers le statut
+// d'avant (jamais accepter à sa place) ; chacun n'annule que son propre retrait. systeme : expiration, changement de groupe.
+// Renvoie la ligne à garder (les colonnes fixes reprises de old), ou lève « Action non autorisée ».
+export const AMB_ANNULER_MS = 10 * 60e3;
+export function transitionAmbassadeur(old, r, { moi, admin = false, systeme = false, now = Date.now() } = {}) {
+  const x = { ...r };
+  for (const k of ['id', 'promo', 'filiere', 'user_id', 'par', 'propose_at', 'created_at']) x[k] = old[k];
+  const garder = () => { x.retire_par = old.retire_par ?? null; x.statut_avant = old.statut_avant ?? null; };
+  if (x.statut === old.statut) { x.repondu_at = old.repondu_at ?? null; garder(); return x; }
+  const iso = new Date(now).toISOString();
+  if (systeme) {
+    if (x.statut === 'retire' && !x.retire_par) { x.retire_par = 'systeme'; x.statut_avant = old.statut; }
+    return x;
+  }
+  garder();
+  const frais = !!old.repondu_at && now - new Date(old.repondu_at).getTime() < AMB_ANNULER_MS;
+  const ouvert = now - new Date(old.propose_at || old.created_at).getTime() < AMB_DELAI_JOURS * 864e5;
+  const de = old.statut, vers = x.statut;
+  if (moi && old.user_id === moi && ((de === 'propose' && ['accepte', 'refuse'].includes(vers) && ouvert) || (de === 'accepte' && vers === 'retire')
+    || (de === 'refuse' && vers === 'propose' && frais && ouvert) || (de === 'retire' && vers === 'accepte' && frais && old.retire_par === 'membre'))) {
+    x.repondu_at = vers === 'propose' ? null : iso;
+    if (vers === 'retire') { x.retire_par = 'membre'; x.statut_avant = de; } else { x.retire_par = null; x.statut_avant = null; }
+    return x;
+  }
+  if (admin && old.user_id !== moi) {
+    if (['propose', 'accepte'].includes(de) && vers === 'retire') return Object.assign(x, { repondu_at: iso, retire_par: 'admin', statut_avant: de });
+    if (de === 'retire' && old.retire_par === 'admin' && vers === old.statut_avant && frais) return Object.assign(x, { repondu_at: vers === 'propose' ? null : iso, retire_par: null, statut_avant: null });
+  }
+  throw new Error('Action non autorisée pour ton compte.');
+}
+// Les ambassadeurs acceptés, par membre (badge, merci public) ; seulement du groupe où le membre est encore
+// (en ligne, changer de promo ou de filière retire le rôle : trigger ambassadeur_change_groupe)
+export function ambassadeursActifs(data) {
+  const profils = new Map((data?.profiles || []).map(p => [p.id, p]));
+  return new Map((data?.ambassadeurs || []).filter(a => a.statut === 'accepte' && (!profils.has(a.user_id) || memeGroupe(a, profils.get(a.user_id).promo, profils.get(a.user_id).filiere))).map(a => [a.user_id, a]));
+}
+// Activité de chaque membre du groupe qui peut être proposé, dans l'ordre (le plus actif d'abord ; égalité : le plus ancien)
+// consent_at : null = pas encore accepté les conditions (en ligne) ; absent en démo
+export function candidatsAmbassadeur(data, promo, filiere, now = Date.now()) {
+  // Jamais deux groupes : déjà proposé (moins de 7 jours) ou ambassadeur quelque part, pas candidat ici
+  const deja = new Set((data?.ambassadeurs || []).filter(a => (memeGroupe(a, promo, filiere) && (['refuse', 'expire', 'retire'].includes(a.statut) || ambExpire(a, now)))
+    || a.statut === 'accepte' || (a.statut === 'propose' && !ambExpire(a, now))).map(a => a.user_id));
+  const score = new Map();
+  const groupe = (data?.profiles || []).filter(p => memeGroupe(p, promo, filiere) && ['etudiant', 'laureat'].includes(p.role) && p.consent_at !== null && !deja.has(p.id));
+  for (const p of groupe) score.set(p.id, 0);
+  const plus = (id, n) => { if (score.has(id)) score.set(id, score.get(id) + n); };
+  for (const o of data?.offers || []) plus(o.author_id, AMB_POIDS.offre);
+  for (const x of data?.propositions || []) if (x.status !== 'retiree') plus(x.laureat_id, AMB_POIDS.aide);
+  for (const m of data?.mentorships || []) if (['acceptee', 'terminee'].includes(m.status)) { plus(m.mentor_id, AMB_POIDS.mentor); plus(m.student_id, AMB_POIDS.mentore); }
+  for (const a of data?.answers || []) plus(a.author_id, AMB_POIDS.reponse);
+  for (const q of data?.questions || []) plus(q.author_id, AMB_POIDS.question);
+  return groupe.map(p => ({ id: p.id, score: score.get(p.id), at: new Date(p.created_at || 0).getTime() }))
+    .filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score || a.at - b.at || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+// Ce que la base ferait pour ce groupe : les propositions expirées, et le membre à proposer (null : personne, ou déjà quelqu'un)
+export function proposerAmbassadeur(data, promo, filiere, now = Date.now()) {
+  const expirees = (data?.ambassadeurs || []).filter(a => memeGroupe(a, promo, filiere) && ambExpire(a, now));
+  if (ambassadeurDuGroupe(data, promo, filiere, now)) return { expirees, candidat: null };
+  return { expirees, candidat: candidatsAmbassadeur(data, promo, filiere, now)[0]?.id || null };
+}
+// Les chiffres vrais d'une promo × filière : depuis toujours, et pendant le mois qui commence à `debut`
+// (inscrits ; demandes pourvues ; stages, PFE et emplois trouvés, vérifiés ou déclarés). Comme chiffres_groupe() en SQL.
+export function chiffresPromo(data, promo, filiere, debut) {
+  const d0 = new Date(debut).getTime(), d1 = new Date(new Date(d0).setMonth(new Date(d0).getMonth() + 1)).getTime();
+  const dans = iso => { const t = new Date(iso || 0).getTime(); return t >= d0 && t < d1; };
+  const membres = (data?.profiles || []).filter(p => memeGroupe(p, promo, filiere) && ['etudiant', 'laureat'].includes(p.role));
+  const ids = new Set(membres.map(p => p.id));
+  const demandes = (data?.demandes || []).filter(x => ids.has(x.auteur_id) && x.status === 'pourvue');
+  const stages = (data?.placements || []).filter(x => ids.has(x.student_id) && FOUND.has(x.status));
+  return {
+    inscrits: membres.length, nouveaux: membres.filter(p => dans(p.created_at)).length,
+    demandes: demandes.length, demandes_mois: demandes.filter(x => dans(x.updated_at || x.created_at)).length,
+    stages: stages.length, stages_mois: stages.filter(x => dans(x.confirmed_at || x.created_at)).length,
+  };
+}
+// Réussites qu'un ambassadeur peut relayer : vérifiées des deux côtés (déjà annoncées dans le réseau), des 60 derniers jours
+export function reussitesDuGroupe(data, promo, filiere, now = Date.now(), jours = 60) {
+  const ids = new Set((data?.profiles || []).filter(p => memeGroupe(p, promo, filiere)).map(p => p.id));
+  return (data?.placements || []).filter(x => ids.has(x.student_id) && x.status === 'confirme' && now - new Date(x.confirmed_at || x.created_at).getTime() <= jours * 864e5)
+    .sort((a, b) => new Date(b.confirmed_at || b.created_at) - new Date(a.confirmed_at || a.created_at));
+}
+const TROUVE = { fr: { stage: 'un stage', pfe: 'un PFE', etranger: 'un stage à l’étranger', emploi: 'un premier emploi' }, ar: { stage: 'تدريبًا', pfe: 'مشروع نهاية الدراسة', etranger: 'تدريبًا بالخارج', emploi: 'أول وظيفة' } };
+// Le texte d'une réussite, prêt pour WhatsApp. Le prénom seulement si l'étudiant a accepté d'être cité (partage_ok) ;
+// sinon « Quelqu'un de la promo ». Jamais le nom du lauréat (il n'a rien accepté de tel).
+export function texteReussite(pl, etudiant, langue, lien) {
+  const prenom = pl.partage_ok && etudiant?.full_name ? etudiant.full_name.split(' ')[0] : '';
+  const promo = etudiant?.promo, code = filiereCourte(etudiant?.filiere);
+  if (langue === 'ar') {
+    const qui = prenom || `أحد أفراد دفعة ${promo} (${code})`;
+    return `خبر سار للدفعة ${promo} 🎉\n${qui} حصل على ${TROUVE.ar[pl.type] || TROUVE.ar.stage} لدى ${pl.entreprise}${pl.laureat_id ? '، بفضل خريج من الشبكة' : ''}.\nتبحث أنت أيضًا؟ الخريجون على «شبكة ENSAM مكناس» يساعدون الطلبة:\n${lien}`;
+  }
+  const qui = prenom || `Quelqu’un de la promo ${promo} (${code})`;
+  return `Bonne nouvelle pour la promo ${promo} 🎉\n${qui} a décroché ${TROUVE.fr[pl.type] || TROUVE.fr.stage} chez ${pl.entreprise}${pl.laureat_id ? ', grâce à un lauréat du réseau' : ''}.\nTu cherches aussi ? Les lauréats du Réseau ENSAM Meknès aident les étudiants :\n${lien}`;
 }

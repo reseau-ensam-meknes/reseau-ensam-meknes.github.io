@@ -1,8 +1,10 @@
 // Service worker du Réseau ENSAM : l'application s'ouvre depuis le téléphone, même sans réseau
 // ou en 3G, et affiche les notifications envoyées par la fonction « notifier ».
 // build.sh (outils/precharger.mjs) remplace la version et la liste des fichiers du site.
-const VERSION = 'ba9c95f5acd6';
-const FICHIERS = ["./","admin.js","agenda.js","app.js","community.js","confiance.js","config.js","cv.js","dashboard.js","demandes.js","enquete.js","entree.js","entreprises.js","etranger.js","geo.js","groupes.js","growth.js","i18n-ar.js","i18n.js","invitation.js","lignes.js","lire-cv.js","logic.js","logo.js","me.js","mentorat.js","messages.js","offers.js","parse-linkedin.js","parse-offre.js","pdf-compat.js","pdf-worker.js","photo.js","pouls.js","privacy.js","pro.js","pwa.js","pwa/badge-96.png","pwa/icon-192.png","pwa/manifest.webmanifest","recrutement.js","regles-entree.js","saison.js","scene.js","store.js","ui.js","vendor/591.supabase.js","vendor/preact-htm.js","vendor/supabase.js"];
+const VERSION = '7e78b1959c9b';
+const FICHIERS = ["./","admin.js","agenda.js","ambassadeurs.js","app.js","community.js","confiance.js","config.js","cv.js","dashboard.js","demandes.js","enquete.js","entree.js","entreprises.js","etranger.js","fondateurs-public.js","fondateurs.js","geo.js","groupes.js","growth.js","i18n.js","invitation.js","lignes.js","lire-cv.js","logic.js","logo.js","me.js","mentorat.js","messages.js","offers.js","parse-linkedin.js","parse-offre.js","pdf-compat.js","pdf-worker.js","photo.js","polices/texte.woff2","polices/titres.woff2","pouls.js","privacy.js","pro.js","pwa.js","pwa/badge-96.png","pwa/icon-192.png","pwa/manifest.webmanifest","recrutement.js","regles-entree.js","saison.js","scene.js","store.js","ui.js","vendor/591.supabase.js","vendor/preact-htm.js","vendor/supabase.js"];
+// L'arabe (dictionnaire, police) : gardé d'avance seulement pour qui l'avait déjà, sinon au premier usage
+const FACULTATIFS = ["i18n-ar.js","polices/arabe-400.woff2","polices/arabe-500.woff2","polices/arabe-600.woff2","polices/arabe-700.woff2"];
 const CACHE = 'ensam-' + VERSION;
 
 // Chaque version du site est gardée en entier, d'un coup : une page n'utilise jamais un mélange
@@ -12,6 +14,13 @@ self.addEventListener('install', e => e.waitUntil((async () => {
   const c = await caches.open(CACHE);
   // no-cache : le navigateur revalide ce qu'il vient de télécharger (réponse 304, presque rien en 3G)
   await c.addAll(FICHIERS.map(f => new Request(f, { cache: 'no-cache' })));
+  const deja = [];
+  for (const k of await caches.keys()) {
+    if (k === CACHE) continue;
+    const ancien = await caches.open(k);
+    for (const f of FACULTATIFS) if (!deja.includes(f) && await ancien.match(f, { ignoreSearch: true })) deja.push(f);
+  }
+  if (deja.length) await c.addAll(deja.map(f => new Request(f, { cache: 'no-cache' }))).catch(() => {});
 })()));
 self.addEventListener('activate', e => e.waitUntil((async () => {
   for (const k of await caches.keys()) if (k !== CACHE) await caches.delete(k);

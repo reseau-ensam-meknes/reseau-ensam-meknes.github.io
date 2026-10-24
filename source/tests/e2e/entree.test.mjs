@@ -18,13 +18,18 @@ const PROFILS = [{ id: AUTEUR, full_name: 'Hajar Lauréate', role: 'laureat', fi
 const OFFRES = [{ id: OFFRE, author_id: AUTEUR, type: 'pfe', titre: 'PFE Lean manufacturing', entreprise: 'OCP', description: 'Amélioration continue.', annees: [5], filieres: [], status: 'ouverte', audience: 'etudiants', created_at: new Date().toISOString() }];
 
 let site, navigateur;
+// Membres fondateurs : la réponse de fondateurs_publics() pour un test (null : la base n'a pas encore la fonction)
+let fondateursFaux = null;
+// Ambassadeurs de promo : les lignes de la table (null : la base n'a pas encore la table)
+let ambFaux = null;
+const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
 before(async () => {
   assert.ok(fs.existsSync(path.join(SITE, 'index.html')), `site introuvable : ${SITE} (lance d’abord sh build.sh)`);
-  site = await fauxSite(SITE, { offres: OFFRES, profils: PROFILS, partagees: { [OFFRE]: { type: 'pfe', audience: 'etudiants', ouverte: true }, [DISPARUE]: null, [INCONNUE]: 404 } });
+  site = await fauxSite(SITE, { offres: OFFRES, profils: PROFILS, partagees: { [OFFRE]: { type: 'pfe', audience: 'etudiants', ouverte: true }, [DISPARUE]: null, [INCONNUE]: 404 }, fondateurs: m => fondateursFaux?.(m) ?? null, photo: PIXEL, ambassadeurs: () => ambFaux, chiffresPromo: { inscrits: 12, nouveaux: 3, demandes: 2, demandes_mois: 1, stages: 4, stages_mois: 1 } });
   navigateur = await chromium.launch();
 });
 after(async () => { await navigateur?.close(); site?.fermer(); });
-beforeEach(() => site.vider());
+beforeEach(() => { site.vider(); fondateursFaux = null; ambFaux = null; });
 
 // langue: null = un visiteur qui n'a jamais choisi de langue ; avant(ctx) : réseau à régler avant la première visite
 async function visiteur({ largeur = 360, hauteur = 640, langue = 'fr', hash = '', query = '', stockage = {}, avant } = {}) {
@@ -132,10 +137,10 @@ test('code à 6 chiffres : de l’entrée à la « Dernière étape », le rôle
   const p = site.inscrits.find(x => x.id === UID);
   assert.equal(p.role, 'laureat'); assert.equal(p.promo, 2019); assert.equal(p.mentor_dispo, true); assert.equal(p.full_name, 'Yassine Berrada');
   assert.ok(p.consent_at, 'l’accord donné à l’entrée est gardé');
-  // Puis l'accueil : son rang parmi les lauréats, le badge annoncé, un seul bouton
+  // Puis l'accueil : son rang parmi les lauréats, un seul bouton ; « Membre fondateur » ne se promet plus à l'arrivée
   await s.page.waitForSelector('.modal.arrivee', { timeout: 8000 });
   assert.equal(await s.page.locator('.arrivee-titre').innerText(), 'Te voilà 2e parmi les lauréats du réseau');
-  assert.match(await s.page.locator('.arrivee-fondateur').innerText(), /Membre fondateur/);
+  assert.doesNotMatch(await s.page.locator('.modal.arrivee').innerText(), /fondateur/i);
   assert.equal(await s.page.locator('.modal.arrivee .btn.primary').count(), 1);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
@@ -500,7 +505,8 @@ test('réseau coupé pendant la lecture de « Confidentialité » : la page se r
 test('panne qui dure (un fichier toujours en échec) : deux rechargements au plus, puis un écran calme', async () => {
   const ctx = await navigateur.newContext({ viewport: { width: 360, height: 640 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
-  await ctx.route(/\/parse-offre\.js$/, r => r.abort('connectionreset'));
+  // Un module de l'application chargé au démarrage (parse-offre.js, l'ancien témoin, ne se charge plus qu'à la demande)
+  await ctx.route(/\/recrutement\.js$/, r => r.abort('connectionreset'));
   await ctx.addInitScript(uid => {
     if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1');
     localStorage.setItem('ensam-lang', 'fr');
@@ -686,3 +692,338 @@ test('Mon profil ouvert : après « Activer » sur la feuille, l’interrupteur 
   assert.deepEqual(m.erreurs, []);
   await m.ctx.close();
 });
+
+// ---------------------------------------------------------------------------
+// Membres fondateurs : en haut de la page d'entrée (seulement ceux qui ont dit oui), et sur l'accueil des membres
+// ---------------------------------------------------------------------------
+const HAJEB = { rang: 1, type: 'offre', at: '2026-10-23T09:12:00Z', nom: 'Abderrahman Hajeb', filiere: 'Génie Mécanique', promo: 2024, photo: UID + '/photo-1.webp', verifie: true };
+const SEDKI = { rang: 2, type: 'offre', at: '2026-10-23T11:40:00Z', nom: 'Hamza Sedki', filiere: 'Génie Électromécanique', promo: 2024, photo: null, verifie: false };
+const AUTRE_ID = '00000000-0000-4000-8000-0000000000c3';
+const reponse = ({ oui = [HAJEB, SEDKI], choix = null } = {}) => membre => ({ max: 25, total: 2, places: 23, mon_choix: membre ? choix : null,
+  fondateurs: (membre ? [HAJEB, SEDKI] : oui).map(f => ({ ...f, id: membre ? (f === HAJEB ? UID : AUTRE_ID) : null })) });
+
+for (const langue of ['fr', 'ar']) test(`entrée (${langue}) : les membres fondateurs en haut, leur photo, « Recevoir mon code » toujours en vue`, async () => {
+  fondateursFaux = reponse();
+  const s = await visiteur({ langue, largeur: 390, hauteur: 844 });
+  await s.page.waitForSelector('.fd-public .fd-carte', { timeout: 8000 });
+  const bandeau = s.page.locator('.fd-public');
+  assert.ok(await s.page.evaluate(() => document.querySelector('.fd-public').compareDocumentPosition(document.querySelector('.entree-promesse h1')) & Node.DOCUMENT_POSITION_FOLLOWING), 'au-dessus de la promesse');
+  assert.deepEqual(await s.page.$$eval('.fd-public .fd-nom-t', x => x.map(e => e.textContent)), ['Abderrahman Hajeb', 'Hamza Sedki']);
+  await s.page.waitForFunction(() => document.querySelector('.fd-public img')?.naturalWidth > 0);
+  assert.equal(await s.page.locator('.fd-public .fd-liste img').count(), 1, 'une photo (l’autre : ses initiales)');
+  assert.equal(await s.page.locator('.fd-public .fd-liste .verif').count(), 1);
+  assert.equal(await s.page.locator('.fd-public .btn.primary').count(), 0, 'pas de bouton plein dans le bandeau');
+  const sign = site.appels.find(a => a.u === '/sb/storage/v1/object/sign/photos');
+  assert.deepEqual(sign?.corps, { expiresIn: 3600, paths: [UID + '/photo-1.webp'] }, 'un lien temporaire, seulement pour la photo publiée');
+  if (langue === 'fr') {
+    assert.match(await bandeau.innerText(), /Membres fondateurs[\s\S]*Lauréats du mois[\s\S]*Les premiers à aider les étudiants\. Merci !/);
+    assert.match(await bandeau.innerText(), /GM · Promo 2024[\s\S]*Offre publiée le 23 octobre/);
+    assert.match(await bandeau.innerText(), /2 membres fondateurs · 23 places restantes/);
+  } else {
+    const t = await bandeau.innerText();
+    assert.match(t, /الأعضاء المؤسسون/); assert.match(t, /خريجو الشهر/); assert.match(t, /أول من ساعد الطلبة/);
+    assert.match(t, /نشر عرض يوم 23 أكتوبر/); assert.match(t, /عضوان مؤسسان/); assert.doesNotMatch(t, /القدامى|Promo|Offre|places/);
+  }
+  assert.ok((await basBouton(s.page)) <= 844);
+  assert.ok((await s.debordement()) <= 0);
+  await s.app();
+  assert.ok(await s.page.isVisible('.fd-public'), 'l’application reprend le bandeau');
+  if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])]), []);
+  assert.deepEqual(await axe(s.page, '#entree'), []);
+  assert.deepEqual(s.erreurs, []);
+  // Petit téléphone : les visages seuls, et le bouton reste en vue
+  await s.page.setViewportSize({ width: 360, height: 640 }); await s.page.reload();
+  await s.page.waitForSelector('.fd-public .fd-pile', { state: 'visible', timeout: 8000 });
+  assert.equal(await s.page.isVisible('.fd-public .fd-liste'), false);
+  assert.ok((await basBouton(s.page)) <= 640, 'le bouton « Recevoir mon code » se voit sans défiler');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('entrée : sans l’accord des fondateurs, leur nombre seulement ; base pas encore à jour, pas de bandeau', async () => {
+  fondateursFaux = reponse({ oui: [] });
+  let s = await visiteur({ largeur: 390, hauteur: 844 });
+  await s.page.waitForSelector('.fd-public', { timeout: 8000 });
+  assert.equal(await s.page.locator('.fd-public .fd-carte').count(), 0);
+  assert.doesNotMatch(await s.page.locator('.fd-public').innerText(), /Hajeb|Sedki/);
+  assert.match(await s.page.locator('.fd-public .fd-totaux').innerText(), /^2 membres fondateurs · 23 places restantes$/);
+  assert.equal(site.appels.filter(a => a.u.startsWith('/sb/storage/')).length, 0, 'aucune photo demandée');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  fondateursFaux = null; site.vider();
+  s = await visiteur({ largeur: 390, hauteur: 844 });
+  await s.app(); await s.page.waitForTimeout(500);
+  assert.ok(site.appels.some(a => a.u === '/sb/rest/v1/rpc/fondateurs_publics'), 'demandé');
+  assert.equal(await s.page.locator('.fd-public').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('un lauréat devenu membre fondateur : le bandeau, la fête, puis « Ton nom sur la page d’entrée ? » une fois', async () => {
+  fondateursFaux = reponse();
+  site.inscrits.push({ id: UID, full_name: 'Abderrahman Hajeb', role: 'laureat', filiere: 'Génie Mécanique', promo: 2024, created_at: '2026-10-20T10:00:00Z', verified: true, consent_at: '2026-10-20T10:00:00Z', emails_hebdo: true });
+  const m = await membre();
+  await m.page.waitForSelector('.fd-accueil .fd-carte', { timeout: 15000 });
+  assert.ok(await m.page.evaluate(() => document.querySelector('.home-col').firstElementChild.classList.contains('fd-accueil')), 'tout en haut de l’accueil');
+  assert.equal(await m.page.locator('.fd-accueil .fd-carte').count(), 2);
+  assert.match(await m.page.locator('.fd-accueil .fd-carte').first().innerText(), /Abderrahman Hajeb[\s\S]*C’est toi/);
+  assert.match(await m.page.locator('.fd-accueil .fd-places').innerText(), /23 places de membre fondateur restantes sur 25/);
+  assert.equal(await m.page.locator('.fd-accueil .btn.primary').count(), 0);
+  // La fête, puis la question
+  await m.page.waitForSelector('.fete-back', { timeout: 8000 });
+  assert.match(await m.page.locator('.fete').innerText(), /Tu es Membre fondateur ![\s\S]*25 premiers lauréats à aider les étudiants/);
+  await m.page.keyboard.press('Escape');
+  await m.page.waitForSelector('.modal.fd-feuille', { timeout: 8000 });
+  assert.match(await m.page.locator('.modal.fd-feuille').innerText(), /Ton nom et ta photo peuvent apparaître en haut de la page d’entrée, pour donner envie aux autres/);
+  await m.page.click('#fd-oui');
+  await m.page.waitForSelector('.modal.fd-feuille', { state: 'detached' });
+  const envoi = site.appels.find(a => a.u === '/sb/rest/v1/profiles' && a.m === 'PATCH');
+  assert.deepEqual(envoi?.corps, { fondateur_public: true });
+  // Mon profil : la même question, à changer quand on veut
+  await m.page.evaluate(() => { location.hash = 'profil'; });
+  await m.page.waitForSelector('#md-fondateur');
+  assert.ok(await m.page.isChecked('#md-fondateur'));
+  await m.page.click('#md-fondateur'); await m.page.waitForTimeout(400);
+  assert.deepEqual(site.appels.filter(a => a.u === '/sb/rest/v1/profiles' && a.m === 'PATCH').at(-1).corps, { fondateur_public: false });
+  assert.equal(await m.page.isChecked('#md-fondateur'), false);
+  // Une seule fois : de retour à l'accueil, plus de fête ni de question
+  await m.page.evaluate(() => { location.hash = 'accueil'; }); await m.page.waitForTimeout(3000);
+  assert.equal(await m.page.locator('.fete-back, .modal.fd-feuille').count(), 0);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('base pas encore à jour : l’accueil d’un membre s’ouvre, les fondateurs calculés depuis les offres lisibles, sans question', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  const m = await membre();
+  await m.page.waitForSelector('.hello', { timeout: 15000 }); await m.page.waitForTimeout(2500);
+  assert.ok(site.appels.some(a => a.u === '/sb/rest/v1/rpc/fondateurs_publics'), 'demandé, absent (404)');
+  assert.deepEqual(await m.page.$$eval('.fd-accueil .fd-nom-t', x => x.map(e => e.textContent)), ['Hajar Lauréate'], 'la lauréate qui a publié l’offre');
+  assert.match(await m.page.locator('.fd-accueil .fd-places').innerText(), /24 places de membre fondateur restantes sur 25/);
+  assert.doesNotMatch(await m.page.locator('.fd-accueil').innerText(), /points?\b/i, 'jamais de points pour une étudiante');
+  assert.equal(await m.page.locator('.modal.fd-feuille, .fete-back').count(), 0);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Ambassadeurs de promo (en ligne) : la base propose, le membre accepte ; base pas encore à jour : rien ne casse
+// ---------------------------------------------------------------------------
+test('ambassadeur de promo en ligne : la proposition sur l’accueil, « Accepter », puis le lien et les chiffres de la promo', async () => {
+  const now = new Date().toISOString();
+  ambFaux = [{ id: 'a0000000-0000-4000-8000-000000000001', promo: S + 1, filiere: 'Génie Industriel', user_id: UID, statut: 'propose', par: 'auto', propose_at: now, repondu_at: null, created_at: now }];
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  const m = await membre();
+  await m.page.waitForSelector('[data-pas^="am"], #amb-proposition', { timeout: 15000 });
+  await m.page.waitForTimeout(1500);
+  assert.ok(site.appels.some(a => a.u === '/sb/rest/v1/rpc/ambassadeurs_proposer'), 'la base est appelée à l’ouverture');
+  if (await m.page.$('.fete-back')) { await m.page.keyboard.press('Escape'); await m.page.waitForTimeout(300); }
+  assert.match(await m.page.locator('[data-pas^="am"], #amb-proposition').first().innerText(), new RegExp(`Deviens ambassadeur de ta promo \\(.+ ${S + 1}\\)`));
+  const bouton = (await m.page.$('[data-pas^="am"] .pas-go')) ? '[data-pas^="am"] .pas-go' : '#amb-accepter';
+  await m.page.click(bouton);
+  await m.page.waitForSelector('.fete-back', { timeout: 8000 });
+  assert.match(await m.page.locator('.fete').innerText(), /Merci, ambassadeur de ta promo !/);
+  assert.deepEqual(site.appels.find(a => a.u === '/sb/rest/v1/ambassadeurs' && a.m === 'PATCH')?.corps, { statut: 'accepte' });
+  await m.page.keyboard.press('Escape');
+  await m.page.waitForSelector('#amb-carte');
+  const t = await m.page.locator('#amb-carte').innerText();
+  assert.match(t, /12\s*inscrits\s*\+3 ce mois-ci/);
+  assert.match(t, /4\s*stages et emplois trouvés/);
+  assert.match(await m.page.getAttribute('#amb-wa', 'href'), /^https:\/\/wa\.me\/\?text=.*promo/);
+  assert.equal(await m.page.locator('#amb-carte .btn.primary').count(), 0, 'pas de bouton plein en plus');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('ambassadeurs, base pas encore à jour : l’accueil s’ouvre, rien de cassé', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  const m = await membre();
+  await m.page.waitForSelector('.hello', { timeout: 15000 }); await m.page.waitForTimeout(2500);
+  assert.equal(await m.page.locator('#amb-carte, #amb-proposition, [data-pas^="am"]').count(), 0);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// Lot mouvement · C : ouverture instantanée (données gardées sur l'appareil), forme de l'accueil au tout premier
+// chargement, session qui expire (bug d'un membre sur Android 10) et brouillons gardés.
+// exp : secondes avant l'expiration écrite dans le jeton (ce que la base vérifie) ; expiresAt : celle que Supabase garde
+// sur l'appareil (une horloge de téléphone décalée les fait diverger)
+async function connecte({ hash = '', langue = 'fr', theme = 'light', exp = 7200, expiresAt = exp, avant, attendre = '.me-btn' } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block', reducedMotion: 'reduce', colorScheme: theme });
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  if (avant) await avant(ctx);
+  await ctx.addInitScript(([uid, langue, exp, expiresAt]) => {
+    if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1');
+    localStorage.setItem('ensam-lang', langue);
+    const now = Math.floor(Date.now() / 1000);
+    localStorage.setItem('sb-127-auth-token', JSON.stringify({ access_token: 'x.' + btoa(JSON.stringify({ sub: uid, exp: now + exp })) + '.y', token_type: 'bearer', expires_in: 7200, expires_at: now + expiresAt, refresh_token: 'r', user: { id: uid, aud: 'authenticated', email: 'membre@exemple.ma', user_metadata: {}, app_metadata: {} } }));
+  }, [UID, langue, exp, expiresAt]);
+  const page = await ctx.newPage(); const erreurs = [];
+  page.on('pageerror', e => erreurs.push(e.message));
+  await page.goto(site.adresse + hash);
+  if (attendre) await page.waitForSelector(attendre, { timeout: 15000 });
+  return { ctx, page, erreurs };
+}
+const ACCUEIL = '.shell:not(.squelette) .home-grid';
+const lireCacheMembre = page => page.evaluate(() => new Promise(ok => {
+  const r = indexedDB.open('ensam', 1);
+  r.onupgradeneeded = () => r.result.createObjectStore('cache');
+  r.onsuccess = () => { try { const g = r.result.transaction('cache').objectStore('cache').get('membre'); g.onsuccess = () => { ok(g.result || null); r.result.close(); }; g.onerror = () => ok(null); } catch { ok(null); } };
+  r.onerror = () => ok(null);
+}));
+const brouillons = page => page.evaluate(() => Object.keys(localStorage).filter(k => k.startsWith('ensam-brouillon:')));
+const EN_CONTACT = () => [{ id: '5c1d2e3f-4a5b-4c6d-8e7f-8a9b0c1d2e3f', student_id: UID, mentor_id: AUTEUR, status: 'acceptee', sujet: 'Préparer mon PFE', created_at: '2026-10-02T10:00:00Z' }];
+
+test('jeton refusé par la base (horloge du téléphone décalée) : renouvelé une seule fois, chaque requête refaite, l’accueil arrive', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.jetons.renouveler = true;
+  const m = await connecte({ exp: -60, expiresAt: 7200 });
+  await m.page.waitForSelector(ACCUEIL, { timeout: 15000 });
+  const renouvellements = site.appels.filter(a => a.u === '/sb/auth/v1/token');
+  assert.equal(renouvellements.length, 1, 'un seul renouvellement pour toutes les requêtes refusées');
+  const refusees = site.appels.filter(a => a.refuse);
+  assert.ok(refusees.length >= 1, 'la base a d’abord refusé le jeton');
+  for (const a of refusees) assert.ok(site.appels.some(b => b.u === a.u && b.m === a.m && !b.refuse && site.appels.indexOf(b) > site.appels.indexOf(a)), `${a.u} refaite`);
+  assert.ok(site.appels.slice(site.appels.indexOf(renouvellements[0])).every(a => !a.refuse), 'plus aucun refus après le renouvellement');
+  assert.ok(site.appels.some(a => /\/sb\/rest\/v1\/profil/.test(a.u) && !a.refuse), 'les profils sont arrivés');
+  assert.equal(await m.page.locator('#entree .entree-form').count(), 0, 'aucune page de connexion');
+  assert.notEqual(await m.page.evaluate(() => JSON.parse(localStorage.getItem('sb-127-auth-token')).refresh_token), 'r', 'la nouvelle session est gardée');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+for (const langue of ['fr', 'ar']) {
+  test(`session trop ancienne à l’ouverture (renouvellement refusé, ${langue}) : la connexion redemandée calmement, l’adresse déjà là`, async () => {
+    site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+    const m = await connecte({ langue, exp: -3600, expiresAt: -3600, attendre: '#entree #au-session' });
+    assert.equal(await m.page.locator('#au-session').innerText(), langue === 'fr' ? 'Ta session a expiré. Reconnecte-toi pour continuer.' : 'انتهت جلستك. سجّل الدخول من جديد للمتابعة.');
+    assert.equal(await m.page.inputValue('#au-email'), 'membre@exemple.ma');
+    assert.equal(await m.page.locator('#au-je-etudiant').count(), 0, 'se connecter, pas créer un compte');
+    assert.equal(await m.page.locator('.auth-msg.err').count(), 0, 'pas un message d’erreur');
+    if (langue === 'ar') {
+      assert.equal(await m.page.getAttribute('html', 'dir'), 'rtl');
+      assert.deepEqual(await m.page.evaluate(() => [...(window.__ensamMissing || [])]), []);
+    }
+    assert.deepEqual(await axe(m.page, '#entree'), []);
+    assert.deepEqual(m.erreurs, []);
+    await m.ctx.close();
+  });
+}
+
+test('session perdue en écrivant un message (Android au réveil, renouvellement refusé) : reconnexion calme, le message rendu tel quel', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.mentorships = EN_CONTACT();
+  const m = await connecte({ hash: '#messages/' + AUTEUR, attendre: '#chat-txt' });
+  await m.page.fill('#chat-txt', 'Bonjour Hajar, je voulais te demander');
+  // Le téléphone sort de veille : la session expire dans moins de deux minutes, elle est renouvelée tout de suite… et refusée
+  await m.page.evaluate(() => {
+    const k = 'sb-127-auth-token', s = JSON.parse(localStorage.getItem(k));
+    s.expires_at = Math.floor(Date.now() / 1000) + 30; localStorage.setItem(k, JSON.stringify(s));
+    dispatchEvent(new Event('focus'));
+  });
+  await m.page.waitForSelector('#entree #au-session', { timeout: 15000 });
+  assert.ok(site.appels.some(a => a.u === '/sb/auth/v1/token'), 'le renouvellement est parti au réveil');
+  assert.equal(await m.page.locator('#au-session').innerText(), 'Ta session a expiré. Reconnecte-toi : ce que tu étais en train d’écrire est gardé.');
+  assert.equal(await m.page.inputValue('#au-email'), 'membre@exemple.ma');
+  assert.equal((await brouillons(m.page)).length, 1, 'le brouillon reste sur l’appareil');
+  await m.page.click('.entree-form button.btn.primary'); await m.page.waitForSelector('#au-code');
+  await m.page.fill('#au-code', '123456');
+  await m.page.waitForSelector('#chat-txt', { timeout: 15000 });
+  assert.equal(await m.page.evaluate(() => location.hash), '#messages/' + AUTEUR);
+  assert.equal(await m.page.inputValue('#chat-txt'), 'Bonjour Hajar, je voulais te demander');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('message envoyé avec un jeton refusé et un renouvellement refusé : il reste, marqué « pas parti », et revient après la reconnexion', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.mentorships = EN_CONTACT();
+  const m = await connecte({ hash: '#messages/' + AUTEUR, attendre: '#chat-txt' });
+  await m.page.fill('#chat-txt', 'Je t’envoie mon CV ce soir.');
+  // La base ne reconnaît plus ce jeton (révoqué, horloge…) juste avant l'envoi : posé plus tôt (avec une attente d'une
+  // seconde), une requête de fond pouvait perdre la session avant le toucher sur « Envoyer ». Les jetons émis à partir de
+  // cette seconde (la reconnexion) restent bons.
+  site.jetons.depuis = Math.floor(Date.now() / 1000);
+  await m.page.click('.composer .send-btn');
+  await m.page.waitForSelector('#entree #au-session', { timeout: 15000 });
+  assert.ok(!site.appels.some(a => a.u === '/sb/rest/v1/messages' && a.m === 'POST' && !a.refuse), 'rien n’est parti');
+  await m.page.click('.entree-form button.btn.primary'); await m.page.waitForSelector('#au-code');
+  await m.page.fill('#au-code', '123456');
+  await m.page.waitForSelector('#chat-txt', { timeout: 15000 });
+  assert.match(await m.page.locator('.msg.mine').last().innerText(), /Je t’envoie mon CV ce soir\./, 'le message n’est pas perdu');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('membre revenu : l’accueil s’ouvre depuis l’appareil avant la réponse de la base, la mise à jour arrive sans bruit ; jamais pour un autre compte', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.coordonnees = [{ id: UID, telephone: '0612345678' }, { id: AUTEUR, telephone: '0698765432' }];
+  let tenir = false; const tenus = [];
+  const m = await connecte({ avant: ctx => ctx.route(/\/sb\/rest\/v1\//, r => (tenir ? tenus.push(r) : r.continue())) });
+  await m.page.waitForSelector(ACCUEIL);
+  let c = null;
+  for (let i = 0; i < 40 && !c; i++) { await m.page.waitForTimeout(250); c = await lireCacheMembre(m.page); }
+  assert.ok(c, 'une copie de l’accueil est gardée');
+  assert.equal(c.uid, UID);
+  assert.deepEqual(c.data.coordonnees.map(x => x.id), [UID], 'jamais les coordonnées des autres');
+  // Rechargée, la base ne répond pas encore : l'accueil est là quand même
+  tenir = true;
+  await m.page.reload();
+  await m.page.waitForSelector(ACCUEIL, { timeout: 5000 });
+  assert.ok(tenus.length > 0, 'la base n’a pas encore répondu');
+  assert.equal(await m.page.locator('#entree .entree-form').count(), 0);
+  tenir = false; for (const r of tenus.splice(0)) await r.continue();
+  await m.page.waitForTimeout(1200);
+  assert.equal(await m.page.locator('.toast').count(), 0, 'la mise à jour arrive sans message');
+  assert.ok(await m.page.isVisible(ACCUEIL));
+  // Une autre personne se connecte sur ce téléphone : la copie n'est jamais montrée, elle est effacée
+  const AUTRE = '00000000-0000-4000-8000-0000000000c3';
+  await m.page.evaluate(id => { const k = 'sb-127-auth-token', s = JSON.parse(localStorage.getItem(k)); s.user.id = id; localStorage.setItem(k, JSON.stringify(s)); }, AUTRE);
+  tenir = true;
+  await m.page.reload(); await m.page.waitForTimeout(1500);
+  assert.equal(await m.page.locator(ACCUEIL).count(), 0, 'rien de l’autre compte');
+  assert.equal(await lireCacheMembre(m.page), null, 'la copie est effacée');
+  tenir = false; for (const r of tenus.splice(0)) await r.continue();
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('se déconnecter soi-même : la copie de l’accueil et les brouillons de ce compte sont effacés', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.mentorships = EN_CONTACT();
+  const m = await connecte({ hash: '#messages/' + AUTEUR, attendre: '#chat-txt' });
+  await m.page.fill('#chat-txt', 'Un mot pas encore envoyé');
+  let c = null;
+  for (let i = 0; i < 40 && !c; i++) { await m.page.waitForTimeout(250); c = await lireCacheMembre(m.page); }
+  assert.ok(c); assert.equal((await brouillons(m.page)).length, 1);
+  await m.page.evaluate(() => { location.hash = '#accueil'; }); await m.page.waitForSelector(ACCUEIL);
+  await m.page.click('.me-btn'); await m.page.click('.menu-pop button:has-text("Se déconnecter")');
+  await m.page.waitForSelector('#entree .entree-form', { timeout: 15000 });
+  assert.equal(await m.page.locator('#au-session').count(), 0, 'déconnexion voulue : pas de « session expirée »');
+  assert.deepEqual(await brouillons(m.page), []);
+  assert.equal(await lireCacheMembre(m.page), null);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+for (const [langue, theme] of [['fr', 'light'], ['ar', 'dark']]) {
+  test(`tout premier chargement d’un membre (${langue}, ${theme}) : la forme de l’accueil à sa taille, pas le logo`, async () => {
+    site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+    let tenir = true; const tenus = [];
+    const m = await connecte({ langue, theme, attendre: '#app .shell.squelette', avant: ctx => ctx.route(/\/sb\/rest\/v1\//, r => (tenir ? tenus.push(r) : r.continue())) });
+    assert.equal(await m.page.locator('#app .boot').count(), 0, 'plus de logo qui attend');
+    assert.equal(await m.page.getAttribute('html', 'dir'), langue === 'ar' ? 'rtl' : 'ltr');
+    assert.ok(await m.page.isVisible('.shell.squelette .bottom-nav'), 'la barre du bas, à sa place');
+    assert.ok((await m.page.evaluate(() => document.documentElement.scrollWidth - innerWidth)) <= 0);
+    const fond = await m.page.evaluate(() => getComputedStyle(document.body).backgroundColor.match(/\d+/g).slice(0, 3).map(Number));
+    assert.ok(theme === 'dark' ? fond.every(x => x < 80) : fond.every(x => x > 200), `fond ${fond}`);
+    assert.equal(await m.page.locator('.shell.squelette [role="status"]').count(), 1, 'dit aux lecteurs d’écran que ça charge');
+    tenir = false; for (const r of tenus.splice(0)) await r.continue();
+    await m.page.waitForSelector(ACCUEIL, { timeout: 15000 });
+    assert.equal(await m.page.locator('.shell.squelette').count(), 0);
+    // Seuls les prénoms des membres restent tels quels
+    if (langue === 'ar') assert.deepEqual(await m.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => !['Salma', 'Hajar'].includes(x))), []);
+    assert.deepEqual(m.erreurs, []);
+    await m.ctx.close();
+  });
+}
