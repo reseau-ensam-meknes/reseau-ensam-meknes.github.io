@@ -3,7 +3,7 @@ import { getLang, setLang, chargerAR } from './i18n.js';
 import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore, texteErreur } from './store.js';
 import { Icon, Field, Empty, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, Num, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille } from './ui.js';
-import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, besoinsDeMoi, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte } from './logic.js';
+import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, besoinsDeMoi, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
 import { ParcoursPage, EspacePage, Journey, journeyStep, confirmerRecrutement, refuserRecrutement, versMerci } from './me.js';
 import { DashboardPage } from './dashboard.js';
@@ -33,6 +33,10 @@ document.addEventListener('click', e => { dernierBouton = { b: e.target?.closest
 
 const ROUTES = ['accueil', 'offres', 'mentorat', 'messages', 'parcours', 'espace', 'reseau', 'suivi', 'profil', 'admin', 'verifier', 'confidentialite', 'desabo', 'enquete', 'offre', 'aider'];
 const ALIASES = { impact: 'espace', tableau: 'suivi', communaute: 'reseau', entraide: 'reseau/entraide', groupes: 'reseau/groupes', sujets: 'offres/sujets', 'reseau/mentorat': 'mentorat', 'reseau/mentorat/rdv': 'mentorat', agenda: 'reseau/agenda', entreprises: 'reseau/entreprises', etranger: 'reseau/etranger', relecture: 'mentorat/cv', cv: 'mentorat/cv', moderation: 'admin/moderation', message: 'messages', chat: 'messages' };
+
+// Libellés courts de la barre du bas et du rail (petit ordinateur) ; en arabe, le libellé entier est déjà court
+const COURT = { 'Mon parcours': 'Parcours', 'Mon espace': 'Espace', 'Mon année': 'Année' };
+const court = l => (getLang() === 'ar' ? l : COURT[l] || l);
 
 function navFor(me) {
   const items = [['accueil', 'Accueil', 'home'], ['offres', 'Offres', 'feed'], ['mentorat', 'Mentorat', 'mentor'], ['messages', 'Messages', 'chat']];
@@ -75,6 +79,8 @@ function App({ store }) {
   const [cloche, setCloche] = useState(false);
   // « Je peux aider » et « Choisir un horaire » s'ouvrent sur place : { demande: id } ou { mentorat: id }
   const [aide, setAide] = useState(null);
+  // « Publier une offre » ouvert depuis la barre latérale (ordinateur), sur place
+  const [publierOffre, setPublierOffre] = useState(false);
   const seen = useRef(null); const lastAct = useRef(0);
   useEffect(() => store.on(() => setTick(t => t + 1)), []);
   // Pages publiques (attestation, désabonnement) : le lien « #… » suffit. Dans la coque, l'historique s'en charge (ui.js).
@@ -222,13 +228,21 @@ function App({ store }) {
   const dotFor = k => ouAFaire.has(k);
   const neuf = x => (x > 9 ? '9+' : x);
   const plein = page === 'messages';
+  // En haut de la barre latérale (ordinateur) : le formulaire de publication du rôle. Un étudiant qui ne peut pas
+  // (avant la 3e année, ou déjà 2 demandes en cours) n'a pas de bouton ; l'admin publie un événement de l'agenda.
+  const publier = me.role === 'laureat' ? { label: 'Publier une offre', icon: 'plus', faire: () => setPublierOffre(true) }
+    : me.role === 'etudiant' ? (typesDemande(me, saison).length && demandesActives(data, me.id).length < DEMANDES_MAX ? { label: 'Publier ma demande', icon: 'send', faire: () => go('offres/demandes/nouvelle') } : null)
+    : me.role === 'admin' ? { label: 'Publier un événement', icon: 'calendar', faire: () => go('reseau/agenda/nouveau') } : null;
 
   return html`<div class=${'shell' + (premier ? ' premier' : '')}>
     <a class="skip" href="#contenu" onClick=${e => { e.preventDefault(); document.getElementById('contenu')?.focus(); }}>Aller au contenu</a>
     <aside class="side">
-      <a class="brand" href="#accueil" onClick=${e => { e.preventDefault(); go('accueil'); }}><${BrandLogo} size=${40}/><span class="brand-txt"><strong>Réseau ENSAM</strong><span>Meknès · Lauréats & étudiants</span></span></a>
-      <nav class="side-nav">${nav.map(([k, l, i]) => html`<a href=${'#' + k} class=${page === k ? 'on' : ''} onClick=${e => { e.preventDefault(); go(k, { onglet: true }); }}><span class="nav-ico"><${Icon} name=${i}/></span> ${l}${k === 'messages' && msgs ? html`<span class="nav-n"><span aria-hidden="true">${msgs}</span><span class="sr-only">${msgs > 1 ? `${msgs} messages non lus` : '1 message non lu'}</span></span>` : dotFor(k) ? html`<span class="dotn" aria-hidden="true"></span><span class="sr-only">À faire ici</span>` : null}</a>`)}</nav>
-      <div class="side-foot"><span class="mono small muted">Année ${seasonLabel(saison)}</span><a class="small muted" href="#confidentialite" onClick=${e => { e.preventDefault(); go('confidentialite'); }}>Confidentialité</a></div>
+      <div class="side-in">
+        <a class="brand" href="#accueil" onClick=${e => { e.preventDefault(); go('accueil'); }}><${BrandLogo} size=${40}/><span class="brand-txt"><strong>Réseau ENSAM</strong><span>Meknès · Lauréats & étudiants</span></span></a>
+        ${publier ? html`<button type="button" class="btn primary side-pub" onClick=${() => { setPop(null); setCloche(false); publier.faire(); }}><${Icon} name=${publier.icon} size=${20}/><span class="side-lib">${publier.label}</span><span class="side-court" aria-hidden="true">Publier</span></button>` : null}
+        <nav class="side-nav">${nav.map(([k, l, i]) => html`<a href=${'#' + k} class=${page === k ? 'on' : ''} aria-current=${page === k ? 'page' : null} onClick=${e => { e.preventDefault(); go(k, { onglet: true }); }}><span class="nav-ico"><${Icon} name=${i} size=${20}/></span><span class="side-lib">${l}</span><span class="side-court" aria-hidden="true">${court(l)}</span>${k === 'messages' && msgs ? html`<span class="nav-n"><span aria-hidden="true">${neuf(msgs)}</span><span class="sr-only">${msgs > 1 ? `${msgs} messages non lus` : '1 message non lu'}</span></span>` : dotFor(k) ? html`<span class="dotn" aria-hidden="true"></span><span class="sr-only">À faire ici</span>` : null}</a>`)}</nav>
+        <div class="side-foot"><span class="small muted">Année ${seasonLabel(saison)}</span><a class="small muted" href="#confidentialite" onClick=${e => { e.preventDefault(); go('confidentialite'); }}>Confidentialité</a></div>
+      </div>
     </aside>
     <div class=${'main' + (plein ? ' full' : '')}>
       <header class="top">
@@ -236,7 +250,7 @@ function App({ store }) {
         <span class="spacer"></span>
         ${store.mode === 'demo' ? html`<${PersonaSwitch} store=${store} go=${go}/>` : null}
         <${ThemeToggle} onChange=${relang}/>
-        <a class=${'icon-btn chat-top mobile-only' + (page === 'messages' ? ' on' : '')} href="#messages" aria-label=${msgs ? `Messages (${msgs} non lus)` : 'Messages'} onClick=${e => { e.preventDefault(); go('messages', { onglet: true }); }}><${Icon} name="chat"/>${msgs ? html`<span class="badge-n" aria-hidden="true">${neuf(msgs)}</span>` : null}</a>
+        <a class=${'icon-btn chat-top mobile-only' + (page === 'messages' ? ' on' : '')} aria-current=${page === 'messages' ? 'page' : null} href="#messages" aria-label=${msgs ? `Messages (${msgs} non lus)` : 'Messages'} onClick=${e => { e.preventDefault(); go('messages', { onglet: true }); }}><${Icon} name="chat"/>${msgs ? html`<span class="badge-n" aria-hidden="true">${neuf(msgs)}</span>` : null}</a>
         <${LangToggle} onChange=${relang} store=${store} me=${me}/>
         <button class="icon-btn cloche-btn" aria-label=${todo ? `Notifications (${todo} à faire)` : 'Notifications'} aria-haspopup="dialog" onClick=${() => { setPop(null); setCloche(true); }}><${Icon} name="bell"/>${todo ? html`<span class="badge-n" aria-hidden="true">${neuf(todo)}</span>` : null}</button>
         <div class="pop-wrap"><button class="me-btn" onClick=${() => setPop(pop === 'me' ? null : 'me')} aria-label="Mon compte" aria-expanded=${pop === 'me'}><${Avatar} p=${me} size=${34}/></button>
@@ -271,8 +285,9 @@ function App({ store }) {
         ${page === 'enquete' ? html`<${EnquetePage} ...${ctx}/>` : null}
       </main>
     </div>
-    <nav class=${'bottom-nav' + (plein && route.sub ? ' cache' : '')}>${navBas.map(([k, l, i]) => html`<a href=${'#' + k} class=${page === k ? 'on' : ''} onClick=${e => { e.preventDefault(); go(k, { onglet: true }); }}><span class="bn-ico"><${Icon} name=${i}/>${dotFor(k) ? html`<span class="dotn" aria-hidden="true"></span>` : null}</span><span>${getLang() === 'ar' ? l : { 'Mon parcours': 'Parcours', 'Mon espace': 'Espace', 'Mon année': 'Année' }[l] || l}</span>${dotFor(k) ? html`<span class="sr-only">À faire ici</span>` : null}</a>`)}</nav>
+    <nav class=${'bottom-nav' + (plein && route.sub ? ' cache' : '')}>${navBas.map(([k, l, i]) => html`<a href=${'#' + k} class=${page === k ? 'on' : ''} aria-current=${page === k ? 'page' : null} onClick=${e => { e.preventDefault(); go(k, { onglet: true }); }}><span class="bn-ico"><${Icon} name=${i}/>${dotFor(k) ? html`<span class="dotn" aria-hidden="true"></span>` : null}</span><span>${court(l)}</span>${dotFor(k) ? html`<span class="sr-only">À faire ici</span>` : null}</a>`)}</nav>
     ${cloche ? html`<${Cloche} notifs=${notifs} onGo=${openNotif} onClose=${() => setCloche(false)}/>` : null}
+    ${publierOffre ? html`<${OfferComposer} ctx=${ctx} onClose=${() => setPublierOffre(false)}/>` : null}
     ${offerId ? html`<${OfferDetail} ctx=${ctx} id=${offerId} key=${offerId} apply=${applyNow} onClose=${() => setOfferId(null)}/>` : null}
     ${aide?.demande ? html`<${ProposerAide} ctx=${ctx} id=${aide.demande} key=${'aide-' + aide.demande} onClose=${() => setAide(null)}/>` : null}
     ${aide?.mentorat ? html`<${HoraireSheet} ctx=${ctx} id=${aide.mentorat} key=${'horaire-' + aide.mentorat} onClose=${() => setAide(null)}/>` : null}
@@ -669,6 +684,16 @@ function Home(ctx) {
   // Une instance par membre (key) : ce qui est gardé dans ce navigateur ne passe jamais d'un compte à l'autre
   const [off, setOff] = useLocal('guide-off-' + me.id, false);
   const [voirEtapes, setVoirEtapes] = useState(false);
+  // Ordinateur : la colonne de droite reste en vue, collée sous la barre du haut si elle tient dans l'écran,
+  // sinon par le bas une fois lue jusqu'au bout (sa hauteur et celle de la barre du haut sont mesurées ici)
+  const cote = useRef(null);
+  useEffect(() => {
+    const el = cote.current, haut = document.querySelector('.top');
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const mesurer = () => { el.style.setProperty('--cote-h', el.offsetHeight + 'px'); if (haut) el.style.setProperty('--haut-h', haut.offsetHeight + 'px'); };
+    const ro = new ResizeObserver(mesurer); ro.observe(el); if (haut) ro.observe(haut);
+    return () => ro.disconnect();
+  }, []);
   const isStudent = me.role === 'etudiant', isLaureat = me.role === 'laureat';
   const enRecherche = isLaureat && !!me.en_recherche;
   const guide = guideEtapes(ctx, setCompose);
@@ -716,25 +741,28 @@ function Home(ctx) {
   // De haut en bas : bonjour et l'entrée de l'école, la prochaine étape, « Cette semaine », l'annonce, puis « Pour toi ».
   // Un bloc vide (réseau encore petit) disparaît avec son titre.
   return html`<section class="page home">
-    <header class="hello home-hero sky">
-      <div class="hello-txt">
-        <h1>${MOMENT(h)} ${first}</h1>
-        ${meta ? html`<p class="hello-meta">${meta}</p>` : null}
-        <p class="hello-sub">${isStudent ? 'Les lauréats de l’école sont là pour t’aider.' : isLaureat ? (enRecherche ? 'Le réseau t’aide à trouver ton poste, et ton expérience aide déjà les étudiants.' : 'Merci de garder la porte ouverte aux étudiants de l’école.') : 'Tout le réseau de l’école, en un coup d’œil.'}</p>
-      </div>
-      <${SchoolScene} align=${getLang() === 'ar' ? 'xMinYMax' : 'xMaxYMax'} pose=${10000}/>
-    </header>
+    <div class="home-cols">
+    <div class="home-col">
+      <header class="hello home-hero sky">
+        <div class="hello-txt">
+          <h1>${MOMENT(h)} ${first}</h1>
+          ${meta ? html`<p class="hello-meta">${meta}</p>` : null}
+          <p class="hello-sub">${isStudent ? 'Les lauréats de l’école sont là pour t’aider.' : isLaureat ? (enRecherche ? 'Le réseau t’aide à trouver ton poste, et ton expérience aide déjà les étudiants.' : 'Merci de garder la porte ouverte aux étudiants de l’école.') : 'Tout le réseau de l’école, en un coup d’œil.'}</p>
+        </div>
+        <${SchoolScene} align=${getLang() === 'ar' ? 'xMinYMax' : 'xMaxYMax'} pose=${10000}/>
+      </header>
 
-    <${ProchainPas} pas=${pas} progres=${enCours} onEtapes=${() => setVoirEtapes(true)}/>
-    <section class="bloc semaine" aria-labelledby="h-semaine">
-      <h2 class="h-sec" id="h-semaine">Cette semaine</h2>
-      <div class="bloc-corps">
-        <${PoulsReseau} ctx=${ctx} accueil semaine onOpen=${() => go(isStudent || isLaureat ? 'mentorat' : 'suivi')}/>
-        ${taches.length ? html`<ul class="todo">${taches.map(a => html`<li key=${a.key}><button type="button" class="notif act" onClick=${() => openNotif(a)}><span class=${'n-ico ' + (a.tone || '')} aria-hidden="true"><${Icon} name=${a.icon} size=${16}/></span><span>${a.text}</span><${Icon} name="arrow" size=${16}/></button></li>`)}</ul>` : null}
-      </div>
-    </section>
-    <${AnnonceBanner} key=${'an-' + me.id} ctx=${ctx}/>
-    <${PhotoProposee} ctx=${ctx}/>
+      <${ProchainPas} pas=${pas} progres=${enCours} onEtapes=${() => setVoirEtapes(true)}/>
+      <section class="bloc semaine" aria-labelledby="h-semaine">
+        <h2 class="h-sec" id="h-semaine">Cette semaine</h2>
+        <div class="bloc-corps">
+          <${PoulsReseau} ctx=${ctx} accueil semaine onOpen=${() => go(isStudent || isLaureat ? 'mentorat' : 'suivi')}/>
+          ${taches.length ? html`<ul class="todo">${taches.map(a => html`<li key=${a.key}><button type="button" class="notif act" onClick=${() => openNotif(a)}><span class=${'n-ico ' + (a.tone || '')} aria-hidden="true"><${Icon} name=${a.icon} size=${16}/></span><span>${a.text}</span><${Icon} name="arrow" size=${16}/></button></li>`)}</ul>` : null}
+        </div>
+      </section>
+      <${AnnonceBanner} key=${'an-' + me.id} ctx=${ctx}/>
+      <${PhotoProposee} ctx=${ctx}/>
+    </div>
 
     <div class="home-grid">
       <div class="home-main bloc">
@@ -758,7 +786,7 @@ function Home(ctx) {
         <${DevenirParrain} ctx=${ctx}/>
         </div>
       </div>
-      <div class="home-side">
+      <div class="home-side" ref=${cote}>
         <div class="bloc">
           <h2 class="h-sec">Une réussite</h2>
           <div class="bloc-corps">
@@ -787,6 +815,7 @@ function Home(ctx) {
           </div>
         </div>
       </div>
+    </div>
     </div>
     ${compose ? html`<${OfferComposer} ctx=${ctx} onClose=${() => setCompose(false)}/>` : null}
     ${arrivee ? html`<${ArriveeSheet} a=${arrivee} pas=${pas} me=${me} store=${store} onClose=${finArrivee}/>` : null}
