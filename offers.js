@@ -1,6 +1,7 @@
 // Offres : liste compacte, fiche détaillée, candidature, gestion des candidats par le lauréat.
 import { html, useState, useMemo, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, TYPE_ICON, toast, RoleLine, celebrate, injectCSS, PartagerWhatsApp, lienWhatsApp, lienDirect, allerAuChamp, Bouclier } from './ui.js';
+import { useBrouillon } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
 import { getLang, addAR, arCount } from './i18n.js';
 import { TYPES, titreOffre, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande, manquesOffre, peutRecommander, porteApresRefus, demandesPour } from './logic.js';
@@ -324,7 +325,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
 function ApplyBox({ ctx, o, form, setForm, onClose }) {
   const { data, me, store, act, saison } = ctx;
   const app = data.applications.find(a => a.offer_id === o.id && a.student_id === me.id);
-  const [msg, setMsg] = useState('');
+  const [msg, setMsg, oublierBrouillon] = useBrouillon(me.id + ':candidature:' + o.id, '');
   const pl = placementOf(data, me.id, saison);
   // Formulaire ouvert : on l'amène sous les yeux et on place le curseur dans le message
   useEffect(() => {
@@ -357,6 +358,7 @@ function ApplyBox({ ctx, o, form, setForm, onClose }) {
     act(async () => {
       const premiere = me.role === 'etudiant' && !data.applications.some(a => a.student_id === me.id && a.offer_id);
       await store.insert('applications', { student_id: me.id, offer_id: o.id, entreprise: o.entreprise, titre: o.titre, message: msg.trim(), status: 'postule' });
+      oublierBrouillon();
       // Première candidature : un vrai moment, avec la prochaine étape. Ensuite, un simple mot en bas de l'écran.
       const fete = premiere && celebrate({
         cle: 'premiere-candidature-' + me.id, icon: 'send', titre: 'Candidature envoyée !',
@@ -364,7 +366,7 @@ function ApplyBox({ ctx, o, form, setForm, onClose }) {
         action: { label: 'Voir mon parcours', icon: 'route', onClick: () => { onClose?.(); ctx.go('parcours'); } },
       });
       const mot = 'Candidature envoyée à ' + (auteur?.full_name || 'au lauréat') + '.';
-      if (fete) proposerPrevenir('candidature'); else if (!proposerPrevenir('candidature', mot)) toast(mot, 'win');
+      if (fete) proposerPrevenir('candidature'); else if (!proposerPrevenir('candidature', mot)) toast(mot, 'envoi');
     });
   };
   return html`${invite}<form class="apply-box form" id=${'apply-' + o.id} onSubmit=${envoyer}>
@@ -439,7 +441,7 @@ function Candidates({ ctx, o, apps }) {
           ${entre ? null : html`<button type="button" class="btn small cand-recruter" onClick=${() => recruit(a.student_id, a)}><${Icon} name="check" size=${15}/> Recruter</button>`}
         </div>`}
       </div>`;
-    }) : html`<${Empty} icon="inbox" title="Pas encore de candidat">${entre ? 'Les lauréats intéressés postulent ici. Partage aussi l’offre dans le groupe de ta ville.' : 'Les étudiants concernés la voient déjà dans leurs offres. Partage-la sur WhatsApp : un étudiant la fera circuler dans sa promo.'}<//>`}
+    }) : html`<${Empty} icon="inbox" scene="candidatures" title="Pas encore de candidat">${entre ? 'Les lauréats intéressés postulent ici. Partage aussi l’offre dans le groupe de ta ville.' : 'Les étudiants concernés la voient déjà dans leurs offres. Partage-la sur WhatsApp : un étudiant la fera circuler dans sa promo.'}<//>`}
     ${entre ? null : html`<${Matching} ctx=${ctx} o=${o}/>
     <button class="btn ghost small" onClick=${() => setDeclare(true)}><${Icon} name="plus" size=${15}/> J’ai recruté un étudiant qui n’a pas postulé ici</button>`}
     ${declare ? html`<${PickStudent} ctx=${ctx} onClose=${() => setDeclare(false)} onPick=${id => { setDeclare(false); recruit(id, null); }}/>` : null}
@@ -505,9 +507,13 @@ const nChamps = n => `${n} champ${n > 1 ? 's' : ''}`;
 export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
   const { store, me, act, data } = ctx;
   const editing = !!offer?.id;
-  const [f, setF] = useState(() => ({
+  // Une nouvelle offre en cours d'écriture reste sur l'appareil (session expirée, rechargement). Un brouillon par point de
+  // départ (« Publier une offre », « Déposer un sujet », « Entre lauréats ») ; le public et le type choisis en ouvrant
+  // passent par-dessus le brouillon : une offre ne part jamais vers un autre public que celui de l'onglet.
+  const depart = preset.audience === 'laureats' ? ':laureats' : preset.type === 'pfe' ? ':pfe' : '';
+  const [f, setF, oublierBrouillon] = useBrouillon(editing ? null : me.id + ':offre' + depart, () => ({
     type: 'stage', titre: '', entreprise: me.entreprise || '', ville: me.ville || '', pays: me.pays || 'Maroc', filieres: [], annees: [3, 4], description: '', contact: '', lien: '', deadline: '', cooptation: false, remunere: false, duree: '', audience: 'etudiants', ...preset, ...(offer || {}),
-  }));
+  }), preset);
   const [tente, setTente] = useState(false);   // rien n'est signalé avant « Publier » ou un collage
   const [eclat, setEclat] = useState(null);    // { keys } : ce que « Offre en 30 secondes » vient de remplir
   const plus = useRef();                       // <details> « Plus de détails »
@@ -551,6 +557,7 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
       else {
         const premiere = me.role === 'laureat' && !(data || store.data).offers.some(x => x.author_id === me.id);
         const neuve = await store.insert('offers', { ...row, author_id: me.id, status: 'ouverte' });
+        oublierBrouillon();
         // Première offre d'un lauréat : on le remercie, une seule fois
         const fete = premiere && celebrate({
           cle: 'premiere-offre-' + me.id, icon: 'feed', titre: 'Ta première offre est en ligne !',
@@ -558,7 +565,7 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
           // La suite la plus utile : la faire circuler dans les groupes WhatsApp de promo
           action: neuve?.id ? { label: 'Partager sur WhatsApp', icon: 'share', onClick: () => window.open(lienWhatsApp(texteOffre(neuve)), '_blank', 'noopener') } : null,
         });
-        if (!fete) toast(entre ? 'Offre publiée. Les lauréats la voient dans « Entre lauréats ».' : 'Offre publiée. Les étudiants concernés la voient dans leurs offres.');
+        if (!fete) toast(entre ? 'Offre publiée. Les lauréats la voient dans « Entre lauréats ».' : 'Offre publiée. Les étudiants concernés la voient dans leurs offres.', 'envoi');
       }
       onClose();
     });

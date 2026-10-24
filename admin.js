@@ -2,13 +2,14 @@
 // modération des signalements, membres (rôle, vérification), liste officielle des étudiants,
 // liens d'invitation par promo, agenda de l'école et réglages (email de l'école).
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
-import { Icon, Field, Person, Num, Empty, Bar, Avatar, toast, injectCSS, useLocal } from './ui.js';
+import { Icon, Field, Person, Num, Empty, Bar, Avatar, toast, injectCSS } from './ui.js';
 import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
 import { addAR, arCount } from './i18n.js';
-import { NIVEAUX, niveauOf, timeAgo, cleNom, norm, GUIDE_SECTIONS, pct, reponses48h, parcoursInscription, compteOuvert, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible, annoncePour } from './logic.js';
+import { NIVEAUX, niveauOf, timeAgo, cleNom, norm, GUIDE_SECTIONS, pct, reponses48h, parcoursInscription, compteOuvert, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible } from './logic.js';
 import { DefisAdmin } from './saison.js';
 import { AgendaAdmin } from './agenda.js';
 import { InvitationsAdmin } from './invitation.js';
+import { AmbassadeursAdmin } from './ambassadeurs.js';
 import { lireCVDe, libellesCV, SignalerLecture, CvButton } from './cv.js';
 import { MessageBtn } from './messages.js';
 import { propositionCV, corrigeProfil, dejaSignalee } from './lire-cv.js';
@@ -104,7 +105,7 @@ export function AdminPage(ctx) {
     ${tab === 'moderation' ? html`<${Moderation} ctx=${ctx}/>` : null}
     ${tab === 'membres' ? html`<${Membres} ctx=${ctx} comptes=${comptes} toVerify=${toVerify}/>` : null}
     ${tab === 'liste' ? html`<${ListeOfficielle} ctx=${ctx}/>` : null}
-    ${tab === 'inviter' ? html`<${InvitationsAdmin} ctx=${ctx}/>` : null}
+    ${tab === 'inviter' ? html`<${InvitationsAdmin} ctx=${ctx}/><${AmbassadeursAdmin} ctx=${ctx}/>` : null}
     ${tab === 'agenda' ? html`<${AgendaAdmin} ctx=${ctx}/>` : null}
     ${tab === 'reglages' ? html`<${Reglages} ctx=${ctx}/>` : null}
   </section>`;
@@ -711,22 +712,6 @@ function AnnonceBox({ ctx }) {
       <div class="field"><span class="field-label" id="ann-pour-l">Pour qui ?</span><div class="seg" role="radiogroup" aria-labelledby="ann-pour-l">${PUBLICS.map(([k, l]) => html`<button type="button" role="radio" id=${'ann-pour-' + k} aria-checked=${pour === k} class=${pour === k ? 'on' : ''} onClick=${() => setPour(k)}>${l}</button>`)}</div></div>
       <div class="row"><input id="ann-lien" class="grow" dir="ltr" value=${lien} onInput=${e => setLien(e.target.value)} placeholder="Lien (facultatif) : https://…"/><button class="btn primary" disabled=${texte.trim().length < 3}>Publier</button></div>
     </form>
-  </div>`;
-}
-
-// L'annonce sur l'accueil : une ligne discrète, pour son seul public ; un appui la déplie ; chacun la masque pour lui
-export function AnnonceBanner({ ctx }) {
-  const { data, me } = ctx;
-  const a = annoncePour(data.annonces, me);
-  const [off, setOff] = useLocal('annonce-off-' + me.id, '');
-  const [ouverte, setOuverte] = useState(false);
-  if (!a || off === a.id) return null;
-  const lien = a.lien && /^https:\/\//i.test(a.lien) ? a.lien : null;
-  return html`<div class=${'annonce-ligne' + (ouverte ? ' ouverte' : '')} role="note">
-    <${Icon} name="spark" size=${16}/>
-    <button type="button" class="annonce-txt" aria-expanded=${ouverte} onClick=${() => setOuverte(!ouverte)}><span dir="auto" translate="no">${a.texte}</span></button>
-    <button type="button" class="icon-btn small" aria-label="Masquer l’annonce" onClick=${() => setOff(a.id)}><${Icon} name="x" size=${15}/></button>
-    ${ouverte && lien ? html`<a class="annonce-lien" href=${lien} target="_blank" rel="noopener">En savoir plus</a>` : null}
   </div>`;
 }
 

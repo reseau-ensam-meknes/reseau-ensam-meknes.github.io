@@ -1,6 +1,6 @@
 // Composants partagés de l'interface.
 import { html, useState, useEffect, useLayoutEffect, useRef, useMemo } from './vendor/preact-htm.js';
-import { initials, levelOf, NIVEAUX, niveauOf, seasonOf, PARCOURS, FILIERES_INFO, timeAgo, logoEntreprise, monogramme } from './logic.js';
+import { initials, levelOf, NIVEAUX, niveauOf, seasonOf, PARCOURS, FILIERES_INFO, timeAgo, logoEntreprise, monogramme, PREFIXE_BROUILLON } from './logic.js';
 import { Icon, Field, BrandLogo, SchoolScene, TYPE_ICON, ajouterIcones } from './entree.js';
 import { getLang } from './i18n.js';
 import { avecLangue } from './regles-entree.js';
@@ -264,6 +264,178 @@ export function rendrePosition(y) {
   essai();
 }
 
+// ---------------------------------------------------------------------------
+// Lot mouvement · B : les feuilles du bas se manipulent au doigt.
+//  - La page derrière ne défile plus tant qu'une feuille est ouverte (sans saut : la position reste, scrollY aussi).
+//  - Sur téléphone, on la ferme en glissant la poignée (ou le contenu tout en haut) vers le bas : elle suit le doigt,
+//    résiste vers le haut ; au-delà de 30 % de sa hauteur ou d'un geste vif elle part, sinon elle revient en ressort.
+//  - Elle repart en douceur : une copie inerte finit le mouvement, le contenu (état, focus, historique) est déjà fermé.
+// ---------------------------------------------------------------------------
+export const mouvementReduit = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return true; } };
+const surTelephone = () => { try { return matchMedia('(max-width: 760px)').matches; } catch { return false; } };
+const verrous = [];               // fonds des feuilles ouvertes, de bas en haut
+let doigt = null;                 // dernière position du doigt (pour le sens du geste)
+const noterDoigt = e => { const t = e.touches[0]; doigt = t ? { x: t.clientX, y: t.clientY } : null; };
+// Un geste qui ferait défiler la page derrière est retenu ; dans la feuille, ce qui peut encore défiler défile
+// (iPhone compris, où overflow: hidden ne suffit pas toujours), le pincement pour zoomer reste libre
+function retenirDoigt(e) {
+  const fond = verrous[verrous.length - 1], t = e.touches[0];
+  if (!fond || e.touches.length > 1 || !t) return;
+  const dx = doigt ? t.clientX - doigt.x : 0, dy = doigt ? t.clientY - doigt.y : 0;
+  doigt = { x: t.clientX, y: t.clientY };
+  if (!e.cancelable) return;
+  for (let el = e.target; el && el.nodeType === 1 && fond.contains(el); el = el.parentElement) {
+    if (el.matches('input, textarea, select, [contenteditable="true"], .leaflet-container')) return;
+    const st = getComputedStyle(el);
+    if (Math.abs(dx) > Math.abs(dy)) { if (/auto|scroll/.test(st.overflowX) && el.scrollWidth > el.clientWidth + 1) return; }
+    else if (/auto|scroll/.test(st.overflowY) && el.scrollHeight > el.clientHeight + 1
+      && ((dy > 0 && el.scrollTop > 0) || (dy < 0 && Math.ceil(el.scrollTop + el.clientHeight) < el.scrollHeight))) return;
+  }
+  e.preventDefault();
+}
+// Plusieurs feuilles empilées : la page ne se libère qu'à la fermeture de la dernière
+function verrouiller(fond) {
+  const de = document.documentElement;
+  if (!verrous.length) {
+    if (innerWidth - de.clientWidth > 0) de.classList.add('defil-gouttiere');   // la barre de défilement garde sa place : rien ne bouge
+    de.classList.add('defil-bloque');
+    document.addEventListener('touchstart', noterDoigt, { capture: true, passive: true });
+    document.addEventListener('touchmove', retenirDoigt, { capture: true, passive: false });
+  }
+  verrous.push(fond);
+  return () => {
+    const i = verrous.lastIndexOf(fond);
+    if (i >= 0) verrous.splice(i, 1);
+    if (verrous.length) return;
+    de.classList.remove('defil-bloque', 'defil-gouttiere');
+    document.removeEventListener('touchstart', noterDoigt, { capture: true });
+    document.removeEventListener('touchmove', retenirDoigt, { capture: true });
+  };
+}
+export const pageVerrouillee = () => verrous.length > 0;
+
+// La copie qui s'en va : mêmes classes (même allure), sans id, inerte, cachée aux lecteurs d'écran
+function sortieDouce(fond, feuille) {
+  if (!fond?.isConnected || mouvementReduit()) return;
+  const i = [...fond.children].indexOf(feuille);
+  const c = fond.cloneNode(true);
+  for (const x of [c, ...c.querySelectorAll('[id]')]) x.removeAttribute('id');
+  for (const x of c.querySelectorAll('[role="dialog"]')) { x.removeAttribute('role'); x.removeAttribute('aria-modal'); }
+  const avant = fond.querySelectorAll('input, textarea, select'), apres = c.querySelectorAll('input, textarea, select');
+  avant.forEach((x, k) => { if (apres[k] && x.type !== 'file') { try { apres[k].value = x.value; apres[k].checked = x.checked; } catch { /* */ } } });
+  c.setAttribute('aria-hidden', 'true'); c.inert = true;
+  c.classList.add('sortie');
+  document.body.appendChild(c);
+  const f = c.children[i];
+  if (f) f.scrollTop = feuille.scrollTop;
+  const fin = () => c.remove();
+  c.addEventListener('animationend', e => { if (e.target === f) fin(); });
+  setTimeout(fin, 600);
+}
+
+// Le ressort : un léger dépassement, puis la feuille se pose
+const RESSORT = 'transform .46s cubic-bezier(.22, 1.25, .36, 1)';
+function useFeuilleDuBas(ref, onClose, poignee) {
+  const fermer = useRef(onClose);
+  fermer.current = onClose;
+  useLayoutEffect(() => {
+    const feuille = ref.current;
+    if (!feuille) return;
+    const fond = feuille.parentElement;
+    const liberer = verrouiller(fond);
+    let g = null;      // geste en cours : { y0, dy, h, pts, id }
+    let cand = null;   // un toucher dans le contenu, peut-être un glisser
+    const commencer = (y, t, id) => {
+      g = { y0: y, dy: 0, h: feuille.getBoundingClientRect().height || 1, pts: [[t, y]], id };
+      feuille.style.transition = 'none';
+      feuille.classList.add('glisse');
+    };
+    const suivre = (y, t) => {
+      const dy = y - g.y0;
+      g.dy = dy;
+      g.pts.push([t, y]); while (g.pts.length > 2 && t - g.pts[0][0] > 90) g.pts.shift();
+      // Vers le haut, la feuille résiste (24 px au plus) ; vers le bas, elle suit le doigt
+      const v = dy >= 0 ? dy : -24 * (1 - Math.exp(dy / 60));
+      feuille.style.transform = `translate3d(0, ${v.toFixed(1)}px, 0)`;
+      fond.style.setProperty('--voile', Math.max(0, 1 - Math.max(0, dy) / g.h).toFixed(3));
+    };
+    const lacher = () => {
+      if (!g) return;
+      const { dy, h, pts } = g; g = null;
+      const [t0, y0] = pts[0], [t1, y1] = pts[pts.length - 1];
+      const vitesse = t1 > t0 ? (y1 - y0) / (t1 - t0) : 0;      // px/ms, vers le bas > 0
+      if (dy > h * .3 || (vitesse > .5 && dy > 12)) {
+        // Elle part à la vitesse du doigt (ni plus lente, ni brutale)
+        const d = Math.round(Math.min(300, Math.max(140, (h - dy) / Math.max(vitesse, 1.2))));
+        fond.style.setProperty('--sortie-d', d + 'ms');
+        fond.style.setProperty('--sortie-e', 'cubic-bezier(.25, .25, .6, 1)');   // part de la vitesse du doigt
+        fermer.current?.();
+        // Une feuille qui ne se ferme pas (rien à fermer, action en cours) revient à sa place
+        setTimeout(() => { if (feuille.isConnected && !g) revenir(); }, 150);
+        return;
+      }
+      revenir();
+    };
+    const revenir = () => {
+      feuille.style.transition = RESSORT + ', box-shadow .3s';
+      feuille.style.transform = '';
+      fond.style.setProperty('--voile', '1');
+      const poser = e => { if (e && e.target !== feuille) return; feuille.removeEventListener('transitionend', poser); if (!g) { feuille.style.transition = ''; feuille.classList.remove('glisse'); } };
+      feuille.addEventListener('transitionend', poser);
+      setTimeout(poser, 520);
+    };
+    // La poignée (en-tête) : souris, stylet ou doigt, avec capture du pointeur
+    const interactif = el => el.closest('button, a, input, select, textarea, label, [role="tab"], [contenteditable="true"]');
+    const pd = e => {
+      if (g || cand || !surTelephone() || (e.pointerType === 'mouse' && e.button !== 0) || !e.target.closest(poignee) || interactif(e.target)) return;
+      const y0 = e.clientY, id = e.pointerId;
+      const pm = ev => {
+        if (ev.pointerId !== id) return;
+        if (!g) { if (Math.abs(ev.clientY - y0) < 4) return; commencer(y0, ev.timeStamp, id); try { feuille.setPointerCapture(id); } catch { /* */ } }
+        suivre(ev.clientY, ev.timeStamp);
+      };
+      const pu = ev => { if (ev.pointerId !== id) return; off(); lacher(); };
+      const off = () => { feuille.removeEventListener('pointermove', pm); feuille.removeEventListener('pointerup', pu); feuille.removeEventListener('pointercancel', pu); };
+      feuille.addEventListener('pointermove', pm); feuille.addEventListener('pointerup', pu); feuille.addEventListener('pointercancel', pu);
+    };
+    // Le contenu : tiré vers le bas quand il est déjà tout en haut, la feuille descend au lieu de rebondir
+    const peutRemonter = el => { for (; el && el !== feuille; el = el.parentElement) if (el.scrollTop > 0 && /auto|scroll/.test(getComputedStyle(el).overflowY)) return true; return false; };
+    const ts = e => {
+      cand = null;
+      if (g || e.touches.length !== 1 || !surTelephone() || e.target.closest(poignee) || e.target.closest('input, textarea, select, [contenteditable="true"], .leaflet-container')) return;
+      const t = e.touches[0];
+      cand = { x: t.clientX, y: t.clientY };
+    };
+    const tm = e => {
+      const t = e.touches[0];
+      if (g && g.id === 'doigt') { if (e.cancelable) e.preventDefault(); suivre(t.clientY, e.timeStamp); return; }
+      if (!cand || !t) return;
+      const dx = t.clientX - cand.x, dy = t.clientY - cand.y;
+      if (Math.abs(dy) < 6 && Math.abs(dx) < 6) return;
+      const ok = dy > 0 && Math.abs(dy) > Math.abs(dx) && feuille.scrollTop <= 0 && !peutRemonter(e.target);
+      cand = null;
+      if (!ok || !e.cancelable) return;
+      e.preventDefault();
+      commencer(t.clientY, e.timeStamp, 'doigt');
+    };
+    const te = () => { cand = null; if (g && g.id === 'doigt') lacher(); };
+    feuille.addEventListener('pointerdown', pd);
+    feuille.addEventListener('touchstart', ts, { passive: true });
+    feuille.addEventListener('touchmove', tm, { passive: false });
+    feuille.addEventListener('touchend', te);
+    feuille.addEventListener('touchcancel', te);
+    return () => {
+      feuille.removeEventListener('pointerdown', pd);
+      feuille.removeEventListener('touchstart', ts);
+      feuille.removeEventListener('touchmove', tm);
+      feuille.removeEventListener('touchend', te);
+      feuille.removeEventListener('touchcancel', te);
+      liberer();
+      sortieDouce(fond, feuille);
+    };
+  }, []);
+}
+
 // Fenêtres ouvertes, la plus récente à la fin : seule celle du dessus réagit au clavier
 const ouvertes = [];
 const FOCUSABLES = 'a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
@@ -272,6 +444,7 @@ const FOCUSABLES = 'a[href],button:not([disabled]),input:not([disabled]):not([ty
 export function Modal({ title, onClose, children, wide, footer, cls, historique = true }) {
   const ref = useRef();
   useFeuille(onClose, historique);
+  useFeuilleDuBas(ref, onClose, '.modal-head');
   const fermer = useRef(onClose);
   fermer.current = onClose;
   // Téléphone, clavier ouvert : la feuille se loge au-dessus du clavier ; son pied (l'action principale) reste au pouce
@@ -305,7 +478,7 @@ export function Modal({ title, onClose, children, wide, footer, cls, historique 
   // Branché dès l'affichage (pas après) : un Échap tapé aussitôt la fenêtre ouverte la ferme
   useLayoutEffect(() => {
     const avant = document.activeElement;
-    const moi = {};
+    const moi = { ref };
     ouvertes.push(moi);
     const k = e => {
       if (ouvertes[ouvertes.length - 1] !== moi || !ref.current) return;
@@ -323,8 +496,9 @@ export function Modal({ title, onClose, children, wide, footer, cls, historique 
     return () => {
       document.removeEventListener('keydown', k);
       ouvertes.splice(ouvertes.indexOf(moi), 1);
-      // On rend le focus au bouton qui avait ouvert la fenêtre, s'il est toujours là
-      if (avant?.isConnected) avant.focus?.();
+      // On rend le focus au bouton qui avait ouvert la fenêtre, s'il est toujours là ; sinon à la fenêtre restée dessous
+      if (avant?.isConnected && avant !== document.body) avant.focus?.();
+      else ouvertes[ouvertes.length - 1]?.ref.current?.querySelector(FOCUSABLES)?.focus();
     };
   }, []);
   return html`<div class=${'modal-back' + (vv ? ' clavier' : '')} style=${vv ? `--vvh:${vv.h}px;--vvt:${vv.t}px` : ''} onClick=${e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -336,15 +510,48 @@ export function Modal({ title, onClose, children, wide, footer, cls, historique 
   </div>`;
 }
 
-let toastSet = null;
+let toastAjout = null, nToast = 0;
 // pts : les points d'impact gagnés, en petite pastille après la phrase (jamais montrés à un étudiant)
-export function toast(msg, kind = 'ok', pts = 0) { toastSet?.({ msg, kind, pts, t: Date.now() }); }
+// kind : ok (coche), envoi (un envoi réussi : la coche se trace, « C’est noté »), win (étoile), err (point d'exclamation), info
+// annuler : une fonction ; le message montre alors « Annuler » et reste 6 s (le temps de changer d'avis)
+export function toast(msg, kind = 'ok', pts = 0, { annuler } = {}) { toastAjout?.({ msg, kind, pts, annuler, t: ++nToast }); }
+const DUREE_TOAST = 3800, DUREE_ANNULER = 6000;
+const COCHE = '<circle cx="12" cy="12" r="9"/><path class="toast-trace" pathLength="1" d="M8 12.3l2.8 2.8 5.3-5.6"/>';
+const ICO_TOAST = {
+  ok: COCHE, envoi: COCHE,
+  win: '<path d="M12 3.5l2.5 5.2 5.6.8-4 4 1 5.6-5.1-2.7-5.1 2.7 1-5.6-4-4 5.6-.8z"/>',
+  err: '<circle cx="12" cy="12" r="9"/><path d="M12 7.6v5.2M12 16.3v.2"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11.2v5.2M12 7.7v.2"/>',
+};
 export function Toaster() {
-  const [t, setT] = useState(null);
-  toastSet = setT;
-  useEffect(() => { if (!t) return; const h = setTimeout(() => setT(null), 3800); return () => clearTimeout(h); }, [t]);
+  const [liste, setListe] = useState([]);
+  // Un nouveau message pousse le précédent, qui s'en va en douceur (mouvement réduit : il laisse simplement la place).
+  // Celui qui porte « Annuler » reste jusqu'à son échéance (ou un autre « Annuler », qui vaut pour le dernier geste) :
+  // les messages ordinaires s'affichent au-dessus de lui, dans leur propre rangée, sans le cacher.
+  toastAjout = t => setListe(l => {
+    const garde = x => !t.annuler && x.annuler && !x.sortie;
+    const reste = mouvementReduit() ? l.filter(garde) : l.filter(x => garde(x) || !x.sortie).map(x => (garde(x) ? x : { ...x, sortie: true }));
+    return [...reste, t];
+  });
+  const partir = id => setListe(l => (mouvementReduit() ? l.filter(x => x.t !== id) : l.map(x => (x.t === id ? { ...x, sortie: true } : x))));
+  const retirer = id => setListe(l => l.filter(x => x.t !== id));
   // La zone reste toujours là (vide entre deux messages) pour que les lecteurs d'écran annoncent chaque message
-  return html`<div class="toast-zone" role="status" aria-live="polite">${t ? html`<div class=${'toast ' + t.kind} key=${t.t}>${t.msg}<${Pastille} n=${t.pts}/></div>` : null}</div>`;
+  return html`<div class="toast-zone" role="status" aria-live="polite">${liste.map(t => html`<${Toast} key=${t.t} t=${t} partir=${partir} retirer=${retirer}/>`)}</div>`;
+}
+function Toast({ t, partir, retirer }) {
+  // Le doigt, la souris ou le clavier dessus : le message attend
+  const [retenu, setRetenu] = useState(false);
+  useEffect(() => { if (t.sortie || retenu) return; const h = setTimeout(() => partir(t.t), t.annuler ? DUREE_ANNULER : DUREE_TOAST); return () => clearTimeout(h); }, [t.sortie, retenu]);
+  useEffect(() => { if (!t.sortie) return; const h = setTimeout(() => retirer(t.t), 260); return () => clearTimeout(h); }, [t.sortie]);
+  const fait = useRef(false);
+  const annuler = () => { if (fait.current) return; fait.current = true; partir(t.t); t.annuler(); };
+  const kind = ICO_TOAST[t.kind] ? t.kind : 'ok';
+  return html`<div class=${'toast ' + kind + (t.annuler ? ' avec-action' : '') + (t.sortie ? ' sortie' : '')} aria-hidden=${t.sortie ? 'true' : null} style=${t.annuler ? 'grid-row:2' : null}
+    onPointerEnter=${e => e.pointerType === 'mouse' && setRetenu(true)} onPointerLeave=${() => setRetenu(false)} onFocusIn=${() => setRetenu(true)} onFocusOut=${() => setRetenu(false)}>
+    <svg class="toast-ico" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: ICO_TOAST[kind] }}></svg>
+    <span class="toast-txt">${kind === 'envoi' ? html`<strong class="toast-titre">C’est noté</strong>` : null}<span>${t.msg}<${Pastille} n=${t.pts}/></span></span>
+    ${t.annuler ? html`<button type="button" class="toast-annuler" disabled=${t.sortie} onClick=${annuler}>${getLang() === 'ar' ? 'تراجع' : 'Annuler'}</button>` : null}
+  </div>`;
 }
 
 // Mène au premier champ à compléter : au milieu de la fenêtre (doux, sauf mouvement réduit), le curseur dedans
@@ -369,11 +576,86 @@ export function LigneNouvelle({ n, onGo }) {
 }
 
 // Écran vide : une phrase chaleureuse et, si possible, une seule action pour avancer.
-// action = { label, onClick, icon }
-export function Empty({ icon = 'spark', title, children, action }) {
-  return html`<div class="empty"><span class="empty-ico"><${Icon} name=${icon} size=${26}/></span><strong>${title}</strong><div>${children}</div>
+// action = { label, onClick, icon } ; scene = 'demandes' | 'messages' | 'candidatures' : une petite scène dessinée
+// (tirée de l'entrée de l'école) à la place de l'icône, de jour en thème clair et de nuit en thème sombre.
+export function Empty({ icon = 'spark', title, children, action, scene }) {
+  const dessin = scene && SCENES_VIDES[scene];
+  if (dessin) injectCSS('empty-scene', CSS_SCENES);
+  return html`<div class=${'empty' + (dessin ? ' a-scene' : '')}>${dessin ? html`<span class=${'es sky es-' + scene} aria-hidden="true" dangerouslySetInnerHTML=${{ __html: dessin }}></span>` : html`<span class="empty-ico"><${Icon} name=${icon} size=${26}/></span>`}<strong>${title}</strong><div>${children}</div>
     ${action ? html`<button type="button" class="btn primary small empty-act" onClick=${action.onClick}>${action.icon ? html`<${Icon} name=${action.icon} size=${15}/> ` : null}${action.label}</button>` : null}</div>`;
 }
+
+// Les scènes des écrans vides (240 × 120) : le ciel, le soleil ou la lune, la colline et la pelouse, puis le sujet.
+// Les couleurs sont celles de l'entrée dessinée (.sky) : elles passent à la nuit avec le thème sombre.
+const FOND_VIDE = '<svg viewBox="0 0 240 120" focusable="false"><defs><radialGradient id="es-lueur"><stop offset="0" class="es-st" stop-opacity=".55"/><stop offset="1" class="es-st" stop-opacity="0"/></radialGradient><radialGradient id="es-lampe"><stop offset="0" stop-color="#FFD98A" stop-opacity=".85"/><stop offset="1" stop-color="#FFD98A" stop-opacity="0"/></radialGradient></defs><g class="es-etoiles"><circle cx="22" cy="18" r="1"/><circle cx="58" cy="9" r="1.2"/><circle cx="132" cy="14" r=".9"/><circle cx="164" cy="30" r="1"/><circle cx="226" cy="54" r="1.1"/><circle cx="96" cy="26" r=".8"/></g>'
+  + '<g class="es-astre"><circle cx="206" cy="24" r="22" fill="url(#es-lueur)"/><circle class="es-soleil" cx="206" cy="24" r="9.5"/><circle class="es-cratere" cx="203" cy="21" r="2"/><circle class="es-cratere" cx="209" cy="28" r="1.4"/></g>'
+  + '<path class="es-nuage" d="M30 40c-1-5 5-8 9-6 2-6 11-7 14-1 4-2 9 0 9 4 4 0 6 3 4 5H31c-2 0-2-2-1-2z"/>'
+  + '<path class="es-colline" d="M0 84C34 74 70 80 104 77S176 70 240 80V120H0Z"/><path class="es-pelouse" d="M0 95C60 90 170 90 240 95V120H0Z"/>';
+const SCENES_VIDES = {
+  // La porte triangulaire de l'école, l'allée, et un avion de papier qui attend de partir
+  demandes: FOND_VIDE
+    + '<path class="es-allee" d="M77 95H93L116 120H54Z"/>'
+    + '<g class="es-porte"><polygon class="es-cadre" points="85,24 55,66 115,66"/><polygon class="es-dedans" points="85,34 64,62 106,62"/><rect class="es-dedans es-trait" x="58" y="64" width="54" height="7"/>'
+    + '<rect class="es-cadre" x="63" y="71" width="6" height="24"/><rect class="es-cadre" x="101" y="71" width="6" height="24"/>'
+    + '<path class="es-fer" d="M69 76h32M69 92h32M73 76v16M78 76v16M83 76v16M88 76v16M93 76v16M98 76v16"/><path class="es-orange" d="M80 49l5-9 5 9z"/><path class="es-bleu" d="M86 55l4-7 5 9h-9z"/></g>'
+    + '<g class="es-fleurs"><circle class="es-f1" cx="58" cy="99" r="2.2"/><circle class="es-f2" cx="51" cy="102" r="2.4"/><circle class="es-f3" cx="45" cy="99" r="2"/><circle class="es-f1" cx="40" cy="104" r="2.6"/><circle class="es-f2" cx="113" cy="99" r="2.2"/><circle class="es-f1" cx="120" cy="102" r="2.4"/><circle class="es-f3" cx="126" cy="99" r="2"/><circle class="es-f2" cx="131" cy="104" r="2.6"/></g>'
+    + '<path class="es-sillage" d="M108 46C126 32 142 62 160 55"/>'
+    + '<g class="es-avion"><path class="es-papier" d="M162 54l30-12-10 25-7-8z"/><path class="es-pli" d="M175 59l17-17"/></g></svg>',
+  // Un banc sous un arbre, un réverbère, et une bulle qui attend le premier mot
+  messages: FOND_VIDE
+    + '<g class="es-arbre"><rect class="es-tronc" x="56" y="70" width="5" height="26"/><circle class="es-t2" cx="47" cy="66" r="12"/><circle class="es-t2" cx="70" cy="65" r="12"/><circle class="es-t1" cx="58" cy="56" r="16"/><circle class="es-lumiere" cx="53" cy="50" r="5"/></g>'
+    + '<g class="es-banc"><rect class="es-bois" x="84" y="79" width="52" height="4" rx="2"/><rect class="es-bois" x="84" y="86" width="52" height="4" rx="2"/><path class="es-fer" d="M90 90v7M130 90v7M88 83v7M132 83v7"/></g>'
+    + '<g class="es-lampe"><circle class="es-lueur" cx="176" cy="46" r="20" fill="url(#es-lampe)"/><rect class="es-fer-p" x="174.5" y="48" width="3" height="48"/><path class="es-fer-p" d="M170 48h12l-2-5h-8z"/><rect class="es-ampoule" x="173.5" y="43" width="5" height="4" rx="1.2"/></g>'
+    + '<g class="es-bulle"><path class="es-bulle-fond" d="M98 30h34a11 11 0 0 1 0 22h-24l-8 7 1-7a11 11 0 0 1-3-22z"/><circle class="es-point" cx="105" cy="41" r="2.4"/><circle class="es-point" cx="114" cy="41" r="2.4"/><circle class="es-point" cx="123" cy="41" r="2.4"/></g></svg>',
+  // Un bâtiment blanc de l'école aux fenêtres en arc, et une boîte aux lettres, drapeau baissé
+  candidatures: FOND_VIDE
+    + '<g class="es-batiment"><rect class="es-mur" x="34" y="50" width="104" height="46"/><rect class="es-ombre" x="128" y="50" width="10" height="46"/><rect class="es-toit" x="31" y="45" width="110" height="6" rx="1"/>'
+    + '<path class="es-fenetre" d="M44 70v-9a4 4 0 0 1 8 0v9zM60 70v-9a4 4 0 0 1 8 0v9zM104 70v-9a4 4 0 0 1 8 0v9zM120 70v-9a4 4 0 0 1 8 0v9zM44 90v-9a4 4 0 0 1 8 0v9zM60 90v-9a4 4 0 0 1 8 0v9zM104 90v-9a4 4 0 0 1 8 0v9zM120 90v-9a4 4 0 0 1 8 0v9z"/>'
+    + '<path class="es-porte-b" d="M78 96V74a8 8 0 0 1 16 0v22z"/></g>'
+    + '<g class="es-cypres"><rect class="es-tronc" x="213" y="88" width="3" height="8"/><ellipse class="es-t2" cx="214.5" cy="70" rx="6" ry="19"/></g>'
+    + '<g class="es-boite"><rect class="es-fer-p" x="179" y="72" width="4" height="24"/><path class="es-boite-fond" d="M166 74V62a9 9 0 0 1 9-9h12a9 9 0 0 1 9 9v12z"/><path class="es-boite-face" d="M166 74V62a9 9 0 0 1 18 0v12z"/><rect class="es-fente" x="169" y="63" width="12" height="2.4" rx="1.2"/>'
+    + '<g class="es-drapeau"><rect class="es-fer-p" x="194" y="57" width="2" height="15"/><path class="es-orange" d="M196 66h8l-2 3 2 3h-8z"/></g></g></svg>',
+};
+const CSS_SCENES = `
+.empty.a-scene { gap: .45rem; }
+.es { display: block; inline-size: min(240px, 78%); aspect-ratio: 2 / 1; margin-block-end: .35rem; border-radius: var(--r-lg); overflow: hidden;
+  -webkit-mask: radial-gradient(120% 120% at 50% 40%, #000 62%, transparent 71%); mask: radial-gradient(120% 120% at 50% 40%, #000 62%, transparent 71%); }
+.es svg { display: block; inline-size: 100%; block-size: 100%; }
+[dir="rtl"] .es svg { transform: scaleX(-1); }
+.es .es-etoiles { fill: #FFFFFF; opacity: var(--stars); }
+.es .es-soleil { fill: var(--sun); } .es .es-st { stop-color: var(--sun); } .es .es-cratere { fill: #9C9480; opacity: var(--crater); }
+.es .es-nuage { fill: var(--cloud); } .es .es-colline { fill: var(--hill); } .es .es-pelouse { fill: var(--lawn-2); }
+.es .es-allee { fill: var(--walk); }
+.es .es-cadre { fill: var(--gate); } .es .es-dedans { fill: var(--gate-in); } .es .es-trait { stroke: var(--gate); stroke-width: 1.4; }
+.es .es-fer { fill: none; stroke: var(--iron); stroke-width: 1.6; stroke-linecap: round; } .es .es-fer-p { fill: var(--iron); }
+.es .es-orange { fill: var(--fl-2); } .es .es-bleu { fill: var(--w-body-1); }
+.es .es-f1 { fill: var(--fl-1); } .es .es-f2 { fill: var(--fl-2); } .es .es-f3 { fill: var(--fl-3); }
+.es .es-sillage { fill: none; stroke: var(--gate); stroke-width: 1.6; stroke-linecap: round; stroke-dasharray: 1 5; opacity: .45; }
+.es .es-papier { fill: var(--gate-in); stroke: var(--gate); stroke-width: 1.6; stroke-linejoin: round; } .es .es-pli { fill: none; stroke: var(--gate); stroke-width: 1.4; stroke-linecap: round; }
+.es .es-tronc { fill: var(--trunk); } .es .es-t1 { fill: var(--tree-1); } .es .es-t2 { fill: var(--tree-2); } .es .es-lumiere { fill: var(--tree-hi); opacity: .55; }
+.es .es-bois { fill: var(--trunk); }
+.es .es-lueur { opacity: var(--lamp); } .es .es-ampoule { fill: #FFE7A8; }
+.es .es-bulle-fond { fill: var(--bldg); stroke: var(--bldg-top); stroke-width: 1.4; stroke-linejoin: round; } .es .es-point { fill: var(--win); }
+.es .es-mur { fill: var(--bldg); } .es .es-ombre { fill: var(--bldg-shade); } .es .es-toit { fill: var(--bldg-top); } .es .es-fenetre { fill: var(--win); } .es .es-porte-b { fill: var(--gate); }
+.es .es-boite-fond { fill: var(--gate); } .es .es-boite-face { fill: color-mix(in srgb, var(--gate) 78%, #000); } .es .es-fente { fill: var(--gate-in); opacity: .8; }
+/* Un seul mouvement, à l'arrivée, puis la scène se pose */
+@media (prefers-reduced-motion: no-preference) {
+  .es { animation: es-in .5s var(--ease) backwards; }
+  .es .es-avion { animation: es-vol 1.1s cubic-bezier(.22, .8, .3, 1) .25s backwards; }
+  .es .es-sillage { animation: es-fondu .9s ease .55s backwards; }
+  .es .es-bulle { transform-box: fill-box; transform-origin: 10% 100%; animation: es-bulle .55s cubic-bezier(.3, 1.4, .5, 1) .3s backwards; }
+  .es .es-point { animation: es-point 1.2s ease-in-out .85s 2; }
+  .es .es-point:nth-of-type(2) { animation-delay: 1s; } .es .es-point:nth-of-type(3) { animation-delay: 1.15s; }
+  .es .es-drapeau { transform-box: fill-box; transform-origin: 0 100%; animation: es-drapeau .9s cubic-bezier(.3, 1.3, .5, 1) .45s backwards; }
+  .es .es-fenetre { animation: es-fondu .8s ease .3s backwards; }
+}
+@keyframes es-in { from { opacity: 0; transform: translateY(6px) scale(.98); } }
+@keyframes es-vol { from { opacity: 0; transform: translate(-26px, 12px) rotate(-8deg); } }
+@keyframes es-fondu { from { opacity: 0; } }
+@keyframes es-bulle { from { opacity: 0; transform: scale(.6); } }
+@keyframes es-point { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes es-drapeau { from { transform: rotate(-70deg); } }
+`;
 
 // ---------------------------------------------------------------------------
 // Les grands moments : première candidature, rendez-vous fixé, recrutement confirmé, premier merci…
@@ -381,10 +663,12 @@ export function Empty({ icon = 'spark', title, children, action }) {
 // ---------------------------------------------------------------------------
 let feteSet = null, feteActive = false;
 const surFete = new Set();
-export function celebrate({ cle, titre, texte, action, icon = 'trophy', pts = 0 }) {
+// visages = [p1, p2] : la fête « match », les deux visages glissent l'un vers l'autre et se rejoignent sous un cœur.
+// citation = { txt, de } : un merci cité en entier, avec le visage et le prénom de qui l'a écrit. ok : le libellé du bouton seul.
+export function celebrate({ cle, titre, texte, action, icon = 'trophy', pts = 0, visages, citation, ok }) {
   if (cle) { try { if (localStorage.getItem('fete-' + cle)) return false; localStorage.setItem('fete-' + cle, '1'); } catch { /* pas de stockage : on fête quand même */ } }
   if (!feteSet) return false;
-  feteSet({ titre, texte, action, icon, pts, t: Date.now() });
+  feteSet({ titre, texte, action, icon, pts, visages: visages?.length === 2 && visages.every(Boolean) ? visages : null, citation: citation?.txt ? citation : null, ok, t: Date.now() });
   feteActive = true;
   for (const fn of surFete) fn();
   return true;
@@ -393,16 +677,23 @@ export function celebrate({ cle, titre, texte, action, icon = 'trophy', pts = 0 
 export const quandFete = fn => { surFete.add(fn); return () => surFete.delete(fn); };
 // Une fête est à l'écran : rien d'autre ne s'ouvre par-dessus (la feuille « Me prévenir » attend la prochaine visite)
 export const feteOuverte = () => feteActive;
+// Rien d'ouvert par-dessus l'écran (feuille, fenêtre ou fête ; une copie qui s'en va ne compte pas) : une fête peut venir
+export const ecranLibre = () => !document.querySelector('.modal-back:not(.sortie), .fete-back:not(.sortie)') && !feteActive;
 export function Celebration() {
   const [f, setF] = useState(null);
   feteSet = setF;
   return f ? html`<${Fete} f=${f} key=${f.t} onClose=${() => { feteActive = false; setF(null); }}/>` : null;
 }
 const COULEURS_FETE = ['var(--em-o)', 'var(--em-b)', 'var(--orange)', 'var(--accent)', 'var(--good)', '#FFD166'];
+// Le match : les couleurs de l'école seulement (bleu, orange, bleu nuit), et la pluie part quand le cœur apparaît
+const COULEURS_MATCH = ['var(--accent)', 'var(--orange)', 'var(--navy)'];
+const COEUR = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 20.7l-1.2-1.1C6.4 15.6 3.5 13 3.5 9.7A4.7 4.7 0 0 1 8.3 5c1.5 0 2.9.7 3.7 1.8A4.7 4.7 0 0 1 15.7 5a4.7 4.7 0 0 1 4.8 4.7c0 3.3-2.9 5.9-7.3 9.9z"/></svg>';
 function Fete({ f, onClose }) {
   const ref = useRef();
   useFeuille(onClose);   // Retour la ferme ; changer d'écran aussi
-  const morceaux = useMemo(() => Array.from({ length: 34 }, (_, i) => ({ x: Math.round(Math.random() * 100), dx: Math.round(Math.random() * 120 - 60), d: (1.1 + Math.random() * .9).toFixed(2), w: (Math.random() * .35).toFixed(2), r: Math.round(Math.random() * 720 - 360), c: COULEURS_FETE[i % COULEURS_FETE.length], rond: i % 3 === 0 })), []);
+  useFeuilleDuBas(ref, onClose, '.sheet-grip');   // Lot mouvement · B : sur téléphone, une feuille du bas qu'on glisse pour fermer
+  const match = !!f.visages;
+  const morceaux = useMemo(() => { const c = match ? COULEURS_MATCH : COULEURS_FETE; return Array.from({ length: match ? 36 : 34 }, (_, i) => ({ x: Math.round(Math.random() * 100), dx: Math.round(Math.random() * 120 - 60), d: (1.1 + Math.random() * .9).toFixed(2), w: ((match ? .7 : 0) + Math.random() * .35).toFixed(2), r: Math.round(Math.random() * 720 - 360), c: c[i % c.length], rond: i % 3 === 0 })); }, []);
   useEffect(() => {
     const avant = document.activeElement;
     ref.current?.querySelector('button')?.focus();
@@ -410,20 +701,51 @@ function Fete({ f, onClose }) {
     document.addEventListener('keydown', k);
     return () => { document.removeEventListener('keydown', k); if (avant?.isConnected) avant.focus?.(); };
   }, []);
+  const cite = f.citation, prenomCite = cite?.de?.full_name?.split(' ')[0];
+  if (match || cite) injectCSS('fete-match', CSS_FETE_MATCH);
   return html`<div class="fete-back" onClick=${e => { if (e.target === e.currentTarget) onClose(); }}>
     <div class="fete-pluie" aria-hidden="true">${morceaux.map(m => html`<i class=${m.rond ? 'rond' : ''} style=${`--x:${m.x}%;--dx:${m.dx}px;--d:${m.d}s;--w:${m.w}s;--r:${m.r}deg;--c:${m.c}`}></i>`)}</div>
-    <div class="fete" role="dialog" aria-modal="true" aria-labelledby="fete-titre" ref=${ref}>
-      <span class="fete-ico"><${Icon} name=${f.icon} size=${34}/></span>
+    <div class=${'fete' + (match ? ' fete-match' : '') + (cite ? ' fete-merci' : '')} role="dialog" aria-modal="true" aria-labelledby="fete-titre" ref=${ref}>
+      <span class="sheet-grip" aria-hidden="true"></span>
+      ${match ? html`<div class="fm-duo" aria-hidden="true"><span class="fm-v fm-a"><${Avatar} p=${f.visages[0]} size=${76}/></span><span class="fm-coeur" dangerouslySetInnerHTML=${{ __html: COEUR }}></span><span class="fm-v fm-b"><${Avatar} p=${f.visages[1]} size=${76}/></span></div>`
+        : html`<span class="fete-ico"><${Icon} name=${f.icon} size=${34}/></span>`}
       <h2 id="fete-titre">${f.titre}</h2>
       ${f.texte ? html`<p>${f.texte}</p>` : null}
+      ${cite ? html`<blockquote class="fete-cite"><p translate="no" dir="auto">${`« ${cite.txt.trim()} »`}</p>
+        <footer><${Avatar} p=${cite.de} size=${28}/>${prenomCite ? html`<b translate="no" dir="auto">${prenomCite}</b>` : html`<b>Un étudiant</b>`}</footer></blockquote>` : null}
       ${f.pts && rangsVisibles ? html`<p class="fete-pts"><${Pastille} n=${f.pts}/></p>` : null}
       <div class="fete-acts">
         ${f.action ? html`<button type="button" class="btn primary" onClick=${() => { onClose(); f.action.onClick(); }}>${f.action.icon ? html`<${Icon} name=${f.action.icon} size=${16}/> ` : null}${f.action.label}</button>` : null}
-        <button type="button" class=${'btn ' + (f.action ? 'ghost' : 'primary')} onClick=${onClose}>${f.action ? 'Plus tard' : 'Merci !'}</button>
+        <button type="button" class=${'btn ' + (f.action ? 'ghost' : 'primary')} onClick=${onClose}>${f.action ? 'Plus tard' : f.ok || 'Merci !'}</button>
       </div>
     </div>
   </div>`;
 }
+// Les deux visages partent chacun de son côté, glissent l'un vers l'autre et se touchent ; le cœur naît à leur rencontre.
+// --sens suit le sens de lecture (en arabe, le premier visage est à droite).
+const CSS_FETE_MATCH = `
+.fm-duo { --sens: 1; position: relative; display: flex; align-items: center; justify-content: center; padding-block: .3rem .55rem; margin-block-end: .15rem; }
+[dir="rtl"] .fm-duo { --sens: -1; }
+.fm-v { position: relative; display: block; border-radius: 50%; box-shadow: 0 0 0 4px var(--surface), 0 10px 24px -10px rgb(10 20 40 / .45); }
+.fm-a { z-index: 1; margin-inline-end: -12px; } .fm-b { margin-inline-start: -12px; }
+.fm-v .avatar { display: grid; }
+.fm-coeur { position: absolute; z-index: 2; inset-block-end: -2px; inset-inline-start: 50%; translate: calc(-50% * var(--sens)) 0; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%;
+  background: var(--surface); color: var(--em-o); box-shadow: 0 6px 16px -6px rgb(243 146 0 / .6), inset 0 0 0 2px color-mix(in srgb, var(--em-o) 28%, transparent); }
+@media (prefers-reduced-motion: no-preference) {
+  .fm-a { animation: fm-a .62s cubic-bezier(.2, .85, .25, 1) .12s backwards; }
+  .fm-b { animation: fm-b .62s cubic-bezier(.2, .85, .25, 1) .12s backwards; }
+  .fm-coeur { animation: fm-coeur .5s cubic-bezier(.3, 1.5, .5, 1) .62s backwards; }
+  .fm-coeur::after { content: ""; position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 2px var(--em-o); opacity: 0; animation: fm-onde .7s ease-out .8s 1; }
+}
+@keyframes fm-a { from { opacity: 0; transform: translateX(calc(-46px * var(--sens))) rotate(calc(-8deg * var(--sens))); } 60% { opacity: 1; } }
+@keyframes fm-b { from { opacity: 0; transform: translateX(calc(46px * var(--sens))) rotate(calc(8deg * var(--sens))); } 60% { opacity: 1; } }
+@keyframes fm-coeur { from { opacity: 0; transform: scale(.2); } }
+@keyframes fm-onde { from { opacity: .7; transform: scale(1); } to { opacity: 0; transform: scale(1.7); } }
+.fete-cite { margin: .2rem 0 .1rem; padding: .8rem .95rem .7rem; inline-size: 100%; border-radius: var(--r-lg); background: color-mix(in srgb, var(--em-o) 9%, var(--surface)); text-align: start; }
+.fete .fete-cite p { margin: 0; max-width: none; color: var(--ink); font-size: var(--fs-4); line-height: 1.5; overflow-wrap: anywhere; white-space: pre-line; }
+.fete-cite footer { display: flex; align-items: center; gap: .45rem; margin-block-start: .55rem; color: var(--ink-2); font-size: var(--fs-2); }
+.fete-merci .fete-ico { color: var(--em-o); }
+`;
 
 // Bouton qui attend la fin de son action : il se grise et montre un petit cercle, ce qui évite le double clic
 export function useBusy() {
@@ -512,6 +834,7 @@ const EMBLEMES = {
   sage: '<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.3 1 2.2h5.2c0-.9.4-1.7 1-2.2A6 6 0 0 0 12 3z"/>',
   aime: '<path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.2 4.3 4.3 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z"/>',
   top: '<path d="M8 4h8v5a4 4 0 0 1-8 0z"/><path d="M8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8.5 20.5h7M10 17h4"/>',
+  ambassadeur: '<path d="M4 10.5v3a1 1 0 0 0 1 1h2.5L13 19V5L7.5 9.5H5a1 1 0 0 0-1 1z"/><path d="M16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"/>',
   mois: '<rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M8 3v4M16 3v4"/><path d="M12 11.6l1 2 2.2.3-1.6 1.5.4 2.2-2-1-2 1 .4-2.2-1.6-1.5 2.2-.3z"/>',
 };
 export function Embleme({ id, size = 20 }) {
@@ -524,6 +847,56 @@ export function Bar({ value, pace, label }) {
     <span class="bar-fill" style=${`width:${v * 100}%`}></span>
     ${pace !== undefined ? html`<span class="bar-pace" style=${`inset-inline-start:${Math.max(0, Math.min(1, pace)) * 100}%`} title="Rythme attendu à cette date"></span>` : null}
   </div>`;
+}
+
+// Lot mouvement · B : en changeant d'onglet, le trait (ou la pastille) glisse de l'ancien onglet au nouveau, et seul le
+// contenu glisse, dans le sens du changement (inversé en arabe). Un seul écouteur pour toutes les rangées : Tabs, .seg
+// (aussi les choix d'un formulaire, sans contenu qui glisse) et les puces de PucesNav. Mouvement réduit : rien ne glisse.
+const RANGEES = '.tabs, .seg, .puces-nav';
+const actifDans = l => [...l.children].find(b => b.matches('.on, [aria-selected="true"]'));
+const boite = (l, el) => (l.classList.contains('tabs') ? { x: el.offsetLeft, y: el.offsetTop + el.offsetHeight - 2, w: el.offsetWidth, h: 2 } : { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight });
+function glisserTrait(l, a, b) {
+  clearTimeout(l._trait);
+  const poser = r => { for (const [k, v] of [['--tx', r.x], ['--ty', r.y], ['--tw', r.w], ['--th', r.h]]) l.style.setProperty(k, v + 'px'); };
+  poser(a);
+  l.classList.add('trait-vol', 'trait-pose');
+  getComputedStyle(l, '::after').transform;   // la pastille part de l'ancien onglet…
+  l.classList.remove('trait-pose');
+  poser(b);                                    // …et glisse jusqu'au nouveau
+  l._trait = setTimeout(() => { l.classList.remove('trait-vol'); for (const k of ['--tx', '--ty', '--tw', '--th']) l.style.removeProperty(k); }, 420);
+}
+function glisserContenu(l, sens) {
+  let hote = l;
+  for (let k = 0; k < 3 && !hote.nextElementSibling && hote.parentElement && !hote.parentElement.matches('main, .page, .modal-body, body'); k++) hote = hote.parentElement;
+  let n = 0;
+  for (let el = hote.nextElementSibling; el && n < 6; el = el.nextElementSibling) {
+    if (el.matches('.modal-back, .fete-back, .toast-zone, script, style') || getComputedStyle(el).position === 'fixed') continue;
+    n++;
+    el.animate?.([{ opacity: .2, transform: `translate3d(${sens * 28}px, 0, 0)` }, { opacity: 1, transform: 'none' }], { duration: 320, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+  }
+}
+function suivreOnglet(e) {
+  const b = e.target.closest?.('button, [role="tab"]'), l = b?.parentElement;
+  if (!l || !l.matches(RANGEES) || b.disabled || mouvementReduit()) return;
+  const avant = actifDans(l);
+  if (!avant || avant === b) return;
+  const depart = boite(l, avant), iAvant = [...l.children].indexOf(avant);
+  const onglets = l.getAttribute('role') === 'tablist' || l.classList.contains('tabs');
+  let n = 0;
+  // Le nouvel onglet s'affiche au rendu suivant (ou après un Retour simulé par l'historique) : on le guette quelques images
+  const guetter = () => {
+    if (!l.isConnected) return;
+    const apres = actifDans(l);
+    if (!apres || apres === avant) { if (++n < 30) requestAnimationFrame(guetter); return; }
+    glisserTrait(l, depart, boite(l, apres));
+    if (onglets) glisserContenu(l, ([...l.children].indexOf(apres) > iAvant ? 1 : -1) * (getComputedStyle(l).direction === 'rtl' ? -1 : 1));
+  };
+  requestAnimationFrame(guetter);
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('click', suivreOnglet, true);
+  // iPhone : sans un écouteur de toucher, :active (l'enfoncement sous le doigt) ne s'affiche pas
+  document.addEventListener('touchstart', () => {}, { passive: true });
 }
 
 export function Tabs({ tabs, value, onChange }) {
@@ -539,6 +912,58 @@ export function useLocal(key, init) {
   const [v, setV] = useState(() => { try { const x = localStorage.getItem(key); return x == null ? init : JSON.parse(x); } catch { return init; } });
   const set = x => { setV(x); try { localStorage.setItem(key, JSON.stringify(x)); } catch { /* pas de stockage */ } };
   return [v, set];
+}
+
+// Ce qui est en train d'être écrit (message, demande, offre, question…) : gardé sur l'appareil à chaque frappe, il revient
+// après un rechargement ou une session expirée, pour ce compte seulement (cle commence par l'id du membre ; null : pas
+// de brouillon). Gardé 14 jours ; oublier() une fois envoyé. S'utilise comme useState : [valeur, changer, oublier].
+// La clé peut changer sans que l'écran soit refait (passer d'une question à une autre) : le brouillon de la nouvelle clé
+// est alors relu avant toute écriture, jamais celui de l'ancienne recopié dessous. imposer : des champs qui passent
+// par-dessus un brouillon d'objet (ex. le public choisi en ouvrant le formulaire).
+const lireBrouillonObjet = (k, d, imposer) => {
+  try {
+    const x = k && JSON.parse(localStorage.getItem(k) || 'null');
+    if (x && Date.now() - x.t < 14 * 864e5) return d && typeof d === 'object' && !Array.isArray(d) ? { ...d, ...x.v, ...imposer } : x.v;
+  } catch { /* stockage indisponible */ }
+  return d;
+};
+// Gardé tout de suite, à chaque frappe (pas après l'affichage) : un rechargement ou un téléphone qui coupe l'onglet juste
+// après n'emporte rien ; un texte vide ou revenu à son état de départ n'est pas un brouillon.
+const garderBrouillon = (k, v, d) => {
+  try {
+    if (v === '' || JSON.stringify(v) === JSON.stringify(d)) localStorage.removeItem(k);
+    else localStorage.setItem(k, JSON.stringify({ t: Date.now(), v }));
+  } catch { /* stockage plein ou indisponible : le brouillon reste à l'écran */ }
+};
+export function useBrouillon(cle, init, imposer) {
+  const k = cle ? PREFIXE_BROUILLON + cle : null;
+  const etat = useRef(null), parti = useRef(false);
+  if (!etat.current || etat.current.k !== k) {
+    const d = typeof init === 'function' ? init() : init;
+    etat.current = { k, d, v: lireBrouillonObjet(k, d, imposer) };
+    parti.current = false;
+  }
+  const [, rendre] = useState(0);
+  const changer = useRef(x => {
+    const e = etat.current, v = typeof x === 'function' ? x(e.v) : x;
+    if (v === e.v) return;
+    etat.current = { ...e, v };
+    if (e.k) { if (parti.current) parti.current = false; else garderBrouillon(e.k, v, e.d); } // envoyé : le champ vidé n'est pas un brouillon
+    rendre(n => n + 1);
+  }).current;
+  // À l'ouverture (ou quand la clé change) : le brouillon relu est gardé de nouveau (il repart pour 14 jours)
+  useEffect(() => { const e = etat.current; if (e.k) garderBrouillon(e.k, e.v, e.d); }, [k]);
+  const oublier = () => { parti.current = true; oublierBrouillon(cle); };
+  return [etat.current.v, changer, oublier];
+}
+export function oublierBrouillon(cle) { try { if (cle) localStorage.removeItem(PREFIXE_BROUILLON + cle); } catch { /* */ } }
+// Lu et écrit tout de suite, même par un écran qui n'est plus affiché (un envoi qui échoue après une session perdue)
+export function lireBrouillon(cle, init) {
+  try { const x = JSON.parse(localStorage.getItem(PREFIXE_BROUILLON + cle) || 'null'); if (x && Date.now() - x.t < 14 * 864e5) return x.v; } catch { /* */ }
+  return init;
+}
+export function ecrireBrouillon(cle, v) {
+  try { if (v == null || v === '' || (Array.isArray(v) && !v.length)) localStorage.removeItem(PREFIXE_BROUILLON + cle); else localStorage.setItem(PREFIXE_BROUILLON + cle, JSON.stringify({ t: Date.now(), v })); } catch { /* */ }
 }
 
 

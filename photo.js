@@ -3,7 +3,6 @@
 import { html, useState, useRef, useEffect } from './vendor/preact-htm.js';
 import { Icon, Avatar, toast, injectCSS } from './ui.js';
 import { addAR } from './i18n.js';
-import { photoDuCV } from './lire-cv.js';
 
 const COTE = 320;
 
@@ -33,7 +32,8 @@ async function ouvrir(file) {
 }
 
 // La photo du CV, recadrée et prête à envoyer ; null si le CV n'en a pas (ou ne s'ouvre pas)
-export const photoPreteDuCV = source => photoDuCV(source).then(b => (b ? preparerPhoto(b) : null)).catch(() => null);
+// La lecture du CV (lire-cv.js, et pdf.js derrière) n'arrive qu'au premier CV lu
+export const photoPreteDuCV = source => import('./lire-cv.js').then(m => m.photoDuCV(source)).then(b => (b ? preparerPhoto(b) : null)).catch(() => null);
 
 // « Photo trouvée dans ton CV : l'utiliser ? » : rien n'est publié sans l'accord du membre
 export function PhotoTrouvee({ blob, onUse, onOther, onNo, busy }) {
