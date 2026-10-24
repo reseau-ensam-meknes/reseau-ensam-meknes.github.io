@@ -699,9 +699,11 @@ function Home(ctx) {
   const [large, setLarge] = useState(() => typeof matchMedia === 'function' && matchMedia('(min-width: 1080px)').matches);
   useEffect(() => {
     if (typeof matchMedia !== 'function') return;
-    const m = matchMedia('(min-width: 1080px)'), f = () => setLarge(m.matches);
+    // Un peu d'attente : une largeur qui ne fait que passer (capture, rotation) ne déplace rien
+    let t = 0;
+    const m = matchMedia('(min-width: 1080px)'), f = () => { clearTimeout(t); t = setTimeout(() => setLarge(m.matches), 200); };
     m.addEventListener?.('change', f);
-    return () => m.removeEventListener?.('change', f);
+    return () => { clearTimeout(t); m.removeEventListener?.('change', f); };
   }, []);
   const isStudent = me.role === 'etudiant', isLaureat = me.role === 'laureat';
   const enRecherche = isLaureat && !!me.en_recherche;
