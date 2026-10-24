@@ -88,7 +88,8 @@ export function OffersPage(ctx) {
 // Ce que le membre a écrit lui-même (titre, entreprise, ville, message) porte translate="no" dir="auto" : jamais traduit.
 const prenom = p => (p?.full_name || '').split(' ')[0];
 // Raisons d'une recommandation : « Ta filière » est un texte de l'interface, le reste vient du profil (compétence, ville)
-const Pourquoi = ({ why }) => html`<span class="why">${why.map(w => (w === 'Ta filière' ? html`<span class="mini good">${w}</span>` : html`<span class="mini good" translate="no" dir="auto">${w}</span>`))}</span>`;
+// Une seule raison en couleur (la filière) ; les autres restent neutres
+const Pourquoi = ({ why }) => html`<span class="why">${why.map(w => (w === 'Ta filière' ? html`<span class="mini good">${w}</span>` : html`<span class="mini" translate="no" dir="auto">${w}</span>`))}</span>`;
 const doux = () => (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
 
 function OfferList({ ctx, filtre, setFiltre, onPropose }) {

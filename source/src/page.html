@@ -1684,8 +1684,9 @@ svg.ico :is(path, circle, rect, line, polyline, polygon, ellipse) { vector-effec
   .side .brand { flex: none; display: flex; align-items: center; gap: .65rem; min-height: 60px; border-radius: var(--r-md); }
   .top { min-height: 60px; }
   /* « Publier » : le seul bouton plein de la barre, uni (sans dégradé ni ombre colorée) */
-  .btn.side-pub { flex: none; background: var(--accent); border-color: var(--accent); color: var(--accent-ink); box-shadow: none; }
-  .btn.side-pub:hover { background: var(--accent-hover); border-color: var(--accent-hover); box-shadow: none; transform: none; }
+  /* Publier : tonal, comme « Nouveau message » des messageries, pour laisser le seul bouton plein à l'écran ouvert */
+  .btn.side-pub { flex: none; background: var(--tonal-bg); border-color: transparent; color: var(--tonal-ink); box-shadow: var(--sh1); font-weight: 650; }
+  .btn.side-pub:hover { background: var(--tonal-hover); border-color: transparent; box-shadow: var(--sh2); transform: none; }
   /* Navigation : plus de tuile grise autour des icônes (20 px), plus de barre orange ; un seul aspect « sélectionné » */
   .nav-ico { width: auto; height: auto; border-radius: 0; background: none; color: inherit; }
   .side-nav a.on .nav-ico { background: none; color: inherit; }
