@@ -274,7 +274,7 @@ function DemandesLaureat({ ctx, focusId }) {
     ${enCours.length ? html`<section class="m-section"><div class="m-head"><h2 class="h-ico"><${Icon} name="heart"/> Mes aides en cours</h2></div>
       <div class="list">${enCours.map(({ d }) => html`<${CarteLaureat} key=${d.id} ctx=${ctx} d=${d} focus=${d.id === focusId}/>`)}</div></section>` : null}
     <section class="m-section">
-      ${enCours.length || seule ? html`<div class="m-head"><h2 class="h-ico"><${Icon} name="send"/> Ils cherchent</h2></div>` : null}
+      ${enCours.length || (seule && seule.auteur_id !== me.id) ? html`<div class="m-head"><h2 class="h-ico"><${Icon} name="send"/> Ils cherchent</h2></div>` : html`<h2 class="sr-only">Ils cherchent</h2>`}
       ${!enCours.length && !passees.length ? html`<details class="m-how" open=${!libres.length}><summary>Comment ça marche ?</summary><${Comment} laureat/></details>` : null}
       ${libres.length ? html`<div class="chips offres-chips dm-filtres" role="group" aria-label="Filtrer les demandes">
         <button type="button" class=${'chip' + (proche ? ' on' : '')} aria-pressed=${proche} onClick=${() => setProche(!proche)}>${proche ? html`<${Icon} name="check" size=${15}/>` : null}Proches de ma filière</button>
@@ -574,7 +574,7 @@ addAR({
   'Ex. Stage de 4 à 6 mois en France ou au Canada': 'مثال: تدريب من 4 إلى 6 أشهر في فرنسا أو كندا', 'Ex. Premier poste en méthodes, qualité ou data': 'مثال: أول منصب في المناهج أو الجودة أو البيانات',
   'Ex. Je cherche un PFE de 6 mois en lean ou supply chain. J’ai fait mon stage de 4A en méthodes chez un équipementier ; je maîtrise VSM, SMED et Power BI.': 'مثال: أبحث عن مشروع نهاية دراسة لمدة 6 أشهر في اللين أو سلسلة الإمداد. قمت بتدريب السنة الرابعة في المناهج لدى مُصنّع معدات، وأتقن VSM وSMED وPower BI.',
   'Ex. Casablanca, Tanger ou à distance': 'مثال: الدار البيضاء، طنجة أو عن بعد', 'Ex. 2 mois, 6 mois, CDI': 'مثال: شهران، 6 أشهر، عقد دائم',
-  'Mes aides en cours': 'مساعداتي الجارية', 'Demandes en cours': 'الطلبات الجارية', 'Proches de ma filière': 'قريبة من شعبتي', 'Ils cherchent': 'يبحثون عن', 'Toutes les filières': 'كل الشعب',   'Rien de ce côté pour l’instant.': 'لا شيء هنا حاليًا.', 'Voir toutes les demandes': 'عرض كل الطلبات', 'Pas de demande ouverte pour le moment': 'لا يوجد طلب مفتوح حاليًا',
+  'Mes aides en cours': 'مساعداتي الجارية', 'Demandes en cours': 'الطلبات الجارية', 'Proches de ma filière': 'قريبة من شعبتي', 'Filtrer les demandes': 'تصفية الطلبات', 'Ils cherchent': 'يبحثون عن', 'Toutes les filières': 'كل الشعب',   'Rien de ce côté pour l’instant.': 'لا شيء هنا حاليًا.', 'Voir toutes les demandes': 'عرض كل الطلبات', 'Pas de demande ouverte pour le moment': 'لا يوجد طلب مفتوح حاليًا',
   'Dès qu’un étudiant de ton parcours publie ce qu’il cherche, on te prévient. En attendant, une offre publiée lui parle tout de suite.': 'بمجرد أن ينشر طالب من مسارك ما يبحث عنه، يصلك إشعار. في انتظار ذلك، عرض منشور يصله مباشرة.',
   'Mon aide passée': 'مساعدتي السابقة', 'Ton aide est envoyée.': 'تم إرسال مساعدتك.',
   'La demande est pourvue ou fermée. Merci d’avoir proposé ton aide !': 'تمت تلبية الطلب أو إغلاقه. شكرًا على اقتراح مساعدتك!', 'Tu as retiré ton aide.': 'سحبت مساعدتك.',
