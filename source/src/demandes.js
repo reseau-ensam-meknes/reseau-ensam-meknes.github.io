@@ -481,10 +481,8 @@ injectCSS('demandes', `
 .dm-hero h2 { margin: 0; }
 .dm-hero p { margin: 0; max-width: 62ch; }
 .dm-card { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-4); border: 0; box-shadow: var(--sh1); border-radius: var(--r-lg); background: var(--surface); min-width: 0; }
-.dm-card.st-match { border-inline-start: 4px solid var(--good, #2e7d32); }
-.dm-card.st-pourvue { border-inline-start: 4px solid var(--brass, #c58b2b); }
 .dm-card.st-fermee { opacity: .85; }
-.dm-card.dm-focus { box-shadow: var(--shadow-lift); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.dm-card.dm-focus { box-shadow: var(--sh2), 0 0 0 2px var(--sel-ring); }
 .dm-head { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; min-width: 0; }
 .dm-head > .person { flex: 1 1 10rem; min-width: 0; }
 .dm-head > .person + .spacer { display: none; }
