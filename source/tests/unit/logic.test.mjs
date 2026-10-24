@@ -63,20 +63,14 @@ test('taux d’insertion : ceux qui poursuivent leurs études ne comptent pas', 
   assert.equal(r.taux_reponse, 0.75);
 });
 
-test('Membre fondateur : les 25 premiers lauréats inscrits, jamais un étudiant', async () => {
-  const { fondateursOf, badgesOf, NB_FONDATEURS } = await import('../../src/logic.js');
-  const jour = i => new Date(Date.UTC(2026, 9, 1) + i * 36e5).toISOString();
-  const profiles = [
-    { id: 'etu', role: 'etudiant', created_at: jour(0) },
-    ...Array.from({ length: 30 }, (_, i) => ({ id: 'l' + i, role: 'laureat', created_at: jour(30 - i) })),
-  ];
-  const f = fondateursOf(profiles);
-  assert.equal(f.size, NB_FONDATEURS);
-  assert.ok(!f.has('etu'));
-  assert.ok(f.has('l29') && f.has('l5') && !f.has('l4'));
+test('Membre fondateur : le badge suit le classement des fondateurs (voir fondateurs.test.mjs)', async () => {
+  const { fondateursOf, badgesOf } = await import('../../src/logic.js');
+  const profiles = [{ id: 'etu', role: 'etudiant' }, { id: 'l1', role: 'laureat' }, { id: 'l2', role: 'laureat' }];
+  const f = fondateursOf({ profiles, offers: [{ id: 'o', author_id: 'l1', audience: 'etudiants', created_at: '2026-10-23T09:00:00Z' }] });
   const ids = p => badgesOf({}, p, { fondateurs: f }).map(b => b.id);
-  assert.ok(ids({ id: 'l29' }).includes('fondateur'));
-  assert.ok(!ids({ id: 'l0' }).includes('fondateur'));
+  assert.ok(ids({ id: 'l1' }).includes('fondateur'));
+  assert.ok(!ids({ id: 'l2' }).includes('fondateur'), 'inscrit mais n’a encore aidé personne');
+  assert.ok(!ids({ id: 'etu' }).includes('fondateur'));
 });
 
 test('réponses en 48 h : demandes d’étudiants sur 30 jours, celles qui attendent depuis plus de 24 h', async () => {

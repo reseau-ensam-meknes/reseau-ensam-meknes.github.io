@@ -3725,6 +3725,94 @@ $$;
 revoke all on function public.offre_partagee(uuid) from public;
 grant execute on function public.offre_partagee(uuid) to anon, authenticated;
 
+-- ---------------------------------------------------------------------
+-- Membres fondateurs : les 25 premiers lauréats à aider les étudiants, dans l'ordre de leur première contribution
+-- (même règle que classementFondateurs() dans logic.js) : une offre publiée pour les étudiants (pas « entre lauréats » ;
+-- pourvue ou fermée, elle compte ; supprimée, elle ne compte plus), une aide proposée sur la demande d'un étudiant
+-- (sauf retirée par le lauréat), un mentorat accepté ou terminé avec un étudiant. Jamais l'administration.
+-- Égalité : le type (aide, mentorat, offre), puis l'id.
+-- fondateur_public : le fondateur accepte que son nom et sa photo soient sur la page d'entrée (null = pas encore demandé).
+-- ---------------------------------------------------------------------
+alter table public.profiles add column if not exists fondateur_public boolean;
+create index if not exists profiles_photo_fondateur on public.profiles (photo_path) where fondateur_public;
+
+create or replace function public.fondateurs_classement() returns table (id uuid, at timestamptz, type text, rang int)
+language sql stable security definer set search_path = public as $$
+  with c as (
+    select o.author_id as l, o.created_at as at, 'offre'::text as k from public.offers o
+      where coalesce(o.audience, 'etudiants') = 'etudiants'
+    union all select x.laureat_id, x.created_at, 'aide' from public.propositions x
+      join public.demandes d on d.id = x.demande_id
+      join public.profiles s on s.id = d.auteur_id and s.role = 'etudiant'
+      where x.status <> 'retiree'
+    union all select m.mentor_id, coalesce(m.accepted_at, m.created_at), 'mentorat' from public.mentorships m
+      join public.profiles s on s.id = m.student_id and s.role = 'etudiant'
+      where m.mentor_id is not null and m.status in ('acceptee', 'terminee')
+  ), premiere as (
+    select distinct on (c.l) c.l, c.at, c.k from c
+      join public.profiles p on p.id = c.l and p.role = 'laureat'
+      where c.at is not null
+      order by c.l, c.at, c.k
+  )
+  select l, at, k, (row_number() over (order by at, l))::int from premiere order by at, l limit 25;
+$$;
+revoke all on function public.fondateurs_classement() from public, anon, authenticated;
+
+-- Le bandeau des fondateurs. Un membre connecté reçoit tout le classement (les profils lui sont déjà visibles) et
+-- son propre choix (mon_choix). Un visiteur sans compte reçoit les totaux, et seulement les fondateurs qui ont dit oui
+-- (prénom et nom, filière, promo, type et date de la première contribution, chemin de la photo) ; jamais un id.
+create or replace function public.fondateurs_publics() returns jsonb
+language sql stable security definer set search_path = public as $$
+  with f as (
+    select c.id, c.at, c.type, c.rang, p.full_name, p.filiere, p.promo, p.photo_path, p.verified, p.fondateur_public
+    from public.fondateurs_classement() c join public.profiles p on p.id = c.id
+  ), qui as (select exists (select 1 from public.profiles where id = auth.uid()) as membre)
+  select jsonb_build_object(
+    'max', 25,
+    'total', (select count(*) from f),
+    'places', greatest(0, 25 - (select count(*) from f)),
+    'mon_choix', case when q.membre then (select to_jsonb(fondateur_public) from public.profiles where id = auth.uid()) end,
+    'fondateurs', coalesce((select jsonb_agg(jsonb_build_object(
+        'id', case when q.membre then f.id end, 'rang', f.rang, 'type', f.type, 'at', f.at,
+        'nom', f.full_name, 'filiere', f.filiere, 'promo', f.promo, 'photo', f.photo_path, 'verifie', coalesce(f.verified, false))
+        order by f.rang) from f where q.membre or f.fondateur_public is true), '[]'::jsonb))
+  from qui q;
+$$;
+revoke all on function public.fondateurs_publics() from public;
+grant execute on function public.fondateurs_publics() to anon, authenticated;
+
+-- Seul le membre lui-même dit oui : l'administration peut le retirer de la page d'entrée, jamais l'y mettre
+create or replace function public.protect_fondateur_public() returns trigger
+language plpgsql as $$
+begin
+  if auth.uid() is not null and new.id is distinct from auth.uid() and new.fondateur_public is true and old.fondateur_public is distinct from true then
+    new.fondateur_public := old.fondateur_public;
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_fondateur_public on public.profiles;
+create trigger trg_protect_fondateur_public before update of fondateur_public on public.profiles
+  for each row execute function public.protect_fondateur_public();
+
+-- Photos de la page d'entrée : le stockage « photos » reste privé ; un visiteur peut seulement obtenir un lien temporaire
+-- (createSignedUrl) vers la photo actuelle d'un fondateur qui a dit oui. Rien d'autre n'est lisible sans compte.
+create or replace function public.photo_fondateur_publique(p_name text) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare v uuid;
+begin
+  -- D'abord le profil (index partiel, une ligne au plus) : le classement n'est calculé que pour une photo consentie
+  select p.id into v from public.profiles p where p.photo_path = p_name and p.fondateur_public and p.role = 'laureat' limit 1;
+  if v is null then return false; end if;
+  return exists (select 1 from public.fondateurs_classement() c where c.id = v);
+end $$;
+revoke all on function public.photo_fondateur_publique(text) from public;
+grant execute on function public.photo_fondateur_publique(text) to anon;
+do $$ begin
+  drop policy if exists "photos fondateurs publics" on storage.objects;
+  create policy "photos fondateurs publics" on storage.objects for select to anon using (bucket_id = 'photos' and public.photo_fondateur_publique(name));
+exception when others then raise notice 'Photos des fondateurs non configurées : %', sqlerrm;
+end $$;
+
 -- =====================================================================
 -- APRÈS votre inscription sur la plateforme, devenez administrateur :
 --   update public.profiles set role = 'admin', verified = true

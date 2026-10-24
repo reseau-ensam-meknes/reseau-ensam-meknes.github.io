@@ -285,6 +285,14 @@ const POUR = {
   etudiant: ['Pour les étudiants', [['send', 'Dis aux lauréats le stage que tu cherches, CV joint : ils te répondent'], ['chat', 'Un lauréat te conseille : CV, entretien, départ à l’étranger'], ['feed', 'Les offres de stage, de PFE et d’emploi publiées par les lauréats']]],
 };
 
+// Lot mouvement · D : les membres fondateurs en haut de la page. Leur module arrive à part, après l'affichage
+// (la page d'entrée garde ses six fichiers) ; sans base à jour ni réseau, rien ne s'affiche.
+function Fondateurs() {
+  const [M, setM] = useState(null);
+  useEffect(() => { import('./fondateurs-public.js').then(m => setM(() => m.FondateursPublics), () => {}); }, []);
+  return M ? html`<${M}/>` : null;
+}
+
 export function AuthScreen({ store }) {
   const [, setTick] = useState(0); const relang = () => setTick(t => t + 1);
   const recovery = /type=recovery/.test(location.hash);
@@ -393,6 +401,7 @@ export function AuthScreen({ store }) {
     <header class="entree-top"><span class="entree-marque"><${BrandLogo} size=${34} draw/><span>Réseau ENSAM Meknès</span></span><${LangToggle} onChange=${relang} aussitot/></header>
     <section class="entree-promesse">
       ${lien && mode !== 'nouveau' ? html`<p id="au-lien" class=${'lien-accueil' + (infos === null || infos?.ouverte === false || (inscrire && offreFermeePour(infos, role)) ? ' fini' : '')}><${Icon} name=${icoLien} size=${18}/><span>${phraseLien(lien, infos, inscrire, inscrire ? role : '')}</span></p>` : null}
+      <${Fondateurs}/>
       <h1>Les lauréats ouvrent la porte aux étudiants.</h1>
       <p class="auth-chiffres">${(lignes || []).map(l => html`<span>${l}</span>`)}</p>
       ${(lien && mode !== 'nouveau') || court ? null : html`<p class="entree-sous">Stage, PFE, premier emploi : les étudiants demandent, les lauréats aident et recrutent.</p>`}

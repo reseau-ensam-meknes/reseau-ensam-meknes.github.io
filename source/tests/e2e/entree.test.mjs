@@ -18,13 +18,16 @@ const PROFILS = [{ id: AUTEUR, full_name: 'Hajar Lauréate', role: 'laureat', fi
 const OFFRES = [{ id: OFFRE, author_id: AUTEUR, type: 'pfe', titre: 'PFE Lean manufacturing', entreprise: 'OCP', description: 'Amélioration continue.', annees: [5], filieres: [], status: 'ouverte', audience: 'etudiants', created_at: new Date().toISOString() }];
 
 let site, navigateur;
+// Membres fondateurs : la réponse de fondateurs_publics() pour un test (null : la base n'a pas encore la fonction)
+let fondateursFaux = null;
+const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
 before(async () => {
   assert.ok(fs.existsSync(path.join(SITE, 'index.html')), `site introuvable : ${SITE} (lance d’abord sh build.sh)`);
-  site = await fauxSite(SITE, { offres: OFFRES, profils: PROFILS, partagees: { [OFFRE]: { type: 'pfe', audience: 'etudiants', ouverte: true }, [DISPARUE]: null, [INCONNUE]: 404 } });
+  site = await fauxSite(SITE, { offres: OFFRES, profils: PROFILS, partagees: { [OFFRE]: { type: 'pfe', audience: 'etudiants', ouverte: true }, [DISPARUE]: null, [INCONNUE]: 404 }, fondateurs: m => fondateursFaux?.(m) ?? null, photo: PIXEL });
   navigateur = await chromium.launch();
 });
 after(async () => { await navigateur?.close(); site?.fermer(); });
-beforeEach(() => site.vider());
+beforeEach(() => { site.vider(); fondateursFaux = null; });
 
 // langue: null = un visiteur qui n'a jamais choisi de langue ; avant(ctx) : réseau à régler avant la première visite
 async function visiteur({ largeur = 360, hauteur = 640, langue = 'fr', hash = '', query = '', stockage = {}, avant } = {}) {
@@ -132,10 +135,10 @@ test('code à 6 chiffres : de l’entrée à la « Dernière étape », le rôle
   const p = site.inscrits.find(x => x.id === UID);
   assert.equal(p.role, 'laureat'); assert.equal(p.promo, 2019); assert.equal(p.mentor_dispo, true); assert.equal(p.full_name, 'Yassine Berrada');
   assert.ok(p.consent_at, 'l’accord donné à l’entrée est gardé');
-  // Puis l'accueil : son rang parmi les lauréats, le badge annoncé, un seul bouton
+  // Puis l'accueil : son rang parmi les lauréats, un seul bouton ; « Membre fondateur » ne se promet plus à l'arrivée
   await s.page.waitForSelector('.modal.arrivee', { timeout: 8000 });
   assert.equal(await s.page.locator('.arrivee-titre').innerText(), 'Te voilà 2e parmi les lauréats du réseau');
-  assert.match(await s.page.locator('.arrivee-fondateur').innerText(), /Membre fondateur/);
+  assert.doesNotMatch(await s.page.locator('.modal.arrivee').innerText(), /fondateur/i);
   assert.equal(await s.page.locator('.modal.arrivee .btn.primary').count(), 1);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
@@ -683,6 +686,119 @@ test('Mon profil ouvert : après « Activer » sur la feuille, l’interrupteur 
   assert.equal(await m.page.isDisabled('#md-push'), false);
   await m.page.click('#ouv-oui'); await m.page.waitForTimeout(800);
   assert.equal(await m.page.isDisabled('#md-push'), true, 'refusée : l’interrupteur le montre');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Membres fondateurs : en haut de la page d'entrée (seulement ceux qui ont dit oui), et sur l'accueil des membres
+// ---------------------------------------------------------------------------
+const HAJEB = { rang: 1, type: 'offre', at: '2026-10-23T09:12:00Z', nom: 'Abderrahman Hajeb', filiere: 'Génie Mécanique', promo: 2024, photo: UID + '/photo-1.webp', verifie: true };
+const SEDKI = { rang: 2, type: 'offre', at: '2026-10-23T11:40:00Z', nom: 'Hamza Sedki', filiere: 'Génie Électromécanique', promo: 2024, photo: null, verifie: false };
+const AUTRE_ID = '00000000-0000-4000-8000-0000000000c3';
+const reponse = ({ oui = [HAJEB, SEDKI], choix = null } = {}) => membre => ({ max: 25, total: 2, places: 23, mon_choix: membre ? choix : null,
+  fondateurs: (membre ? [HAJEB, SEDKI] : oui).map(f => ({ ...f, id: membre ? (f === HAJEB ? UID : AUTRE_ID) : null })) });
+
+for (const langue of ['fr', 'ar']) test(`entrée (${langue}) : les membres fondateurs en haut, leur photo, « Recevoir mon code » toujours en vue`, async () => {
+  fondateursFaux = reponse();
+  const s = await visiteur({ langue, largeur: 390, hauteur: 844 });
+  await s.page.waitForSelector('.fd-public .fd-carte', { timeout: 8000 });
+  const bandeau = s.page.locator('.fd-public');
+  assert.ok(await s.page.evaluate(() => document.querySelector('.fd-public').compareDocumentPosition(document.querySelector('.entree-promesse h1')) & Node.DOCUMENT_POSITION_FOLLOWING), 'au-dessus de la promesse');
+  assert.deepEqual(await s.page.$$eval('.fd-public .fd-nom-t', x => x.map(e => e.textContent)), ['Abderrahman Hajeb', 'Hamza Sedki']);
+  await s.page.waitForFunction(() => document.querySelector('.fd-public img')?.naturalWidth > 0);
+  assert.equal(await s.page.locator('.fd-public .fd-liste img').count(), 1, 'une photo (l’autre : ses initiales)');
+  assert.equal(await s.page.locator('.fd-public .fd-liste .verif').count(), 1);
+  assert.equal(await s.page.locator('.fd-public .btn.primary').count(), 0, 'pas de bouton plein dans le bandeau');
+  const sign = site.appels.find(a => a.u === '/sb/storage/v1/object/sign/photos');
+  assert.deepEqual(sign?.corps, { expiresIn: 3600, paths: [UID + '/photo-1.webp'] }, 'un lien temporaire, seulement pour la photo publiée');
+  if (langue === 'fr') {
+    assert.match(await bandeau.innerText(), /Membres fondateurs[\s\S]*Lauréats du mois[\s\S]*Les premiers à aider les étudiants\. Merci !/);
+    assert.match(await bandeau.innerText(), /GM · Promo 2024[\s\S]*Offre publiée le 23 octobre/);
+    assert.match(await bandeau.innerText(), /2 membres fondateurs · 23 places restantes/);
+  } else {
+    const t = await bandeau.innerText();
+    assert.match(t, /الأعضاء المؤسسون/); assert.match(t, /خريجو الشهر/); assert.match(t, /أول من ساعد الطلبة/);
+    assert.match(t, /نشر عرض يوم 23 أكتوبر/); assert.match(t, /عضوان مؤسسان/); assert.doesNotMatch(t, /القدامى|Promo|Offre|places/);
+  }
+  assert.ok((await basBouton(s.page)) <= 844);
+  assert.ok((await s.debordement()) <= 0);
+  await s.app();
+  assert.ok(await s.page.isVisible('.fd-public'), 'l’application reprend le bandeau');
+  if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])]), []);
+  assert.deepEqual(await axe(s.page, '#entree'), []);
+  assert.deepEqual(s.erreurs, []);
+  // Petit téléphone : les visages seuls, et le bouton reste en vue
+  await s.page.setViewportSize({ width: 360, height: 640 }); await s.page.reload();
+  await s.page.waitForSelector('.fd-public .fd-pile', { state: 'visible', timeout: 8000 });
+  assert.equal(await s.page.isVisible('.fd-public .fd-liste'), false);
+  assert.ok((await basBouton(s.page)) <= 640, 'le bouton « Recevoir mon code » se voit sans défiler');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('entrée : sans l’accord des fondateurs, leur nombre seulement ; base pas encore à jour, pas de bandeau', async () => {
+  fondateursFaux = reponse({ oui: [] });
+  let s = await visiteur({ largeur: 390, hauteur: 844 });
+  await s.page.waitForSelector('.fd-public', { timeout: 8000 });
+  assert.equal(await s.page.locator('.fd-public .fd-carte').count(), 0);
+  assert.doesNotMatch(await s.page.locator('.fd-public').innerText(), /Hajeb|Sedki/);
+  assert.match(await s.page.locator('.fd-public .fd-totaux').innerText(), /^2 membres fondateurs · 23 places restantes$/);
+  assert.equal(site.appels.filter(a => a.u.startsWith('/sb/storage/')).length, 0, 'aucune photo demandée');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  fondateursFaux = null; site.vider();
+  s = await visiteur({ largeur: 390, hauteur: 844 });
+  await s.app(); await s.page.waitForTimeout(500);
+  assert.ok(site.appels.some(a => a.u === '/sb/rest/v1/rpc/fondateurs_publics'), 'demandé');
+  assert.equal(await s.page.locator('.fd-public').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('un lauréat devenu membre fondateur : le bandeau, la fête, puis « Ton nom sur la page d’entrée ? » une fois', async () => {
+  fondateursFaux = reponse();
+  site.inscrits.push({ id: UID, full_name: 'Abderrahman Hajeb', role: 'laureat', filiere: 'Génie Mécanique', promo: 2024, created_at: '2026-10-20T10:00:00Z', verified: true, consent_at: '2026-10-20T10:00:00Z', emails_hebdo: true });
+  const m = await membre();
+  await m.page.waitForSelector('.fd-accueil .fd-carte', { timeout: 15000 });
+  assert.ok(await m.page.evaluate(() => document.querySelector('.home-col').firstElementChild.classList.contains('fd-accueil')), 'tout en haut de l’accueil');
+  assert.equal(await m.page.locator('.fd-accueil .fd-carte').count(), 2);
+  assert.match(await m.page.locator('.fd-accueil .fd-carte').first().innerText(), /Abderrahman Hajeb[\s\S]*C’est toi/);
+  assert.match(await m.page.locator('.fd-accueil .fd-places').innerText(), /23 places de membre fondateur restantes sur 25/);
+  assert.equal(await m.page.locator('.fd-accueil .btn.primary').count(), 0);
+  // La fête, puis la question
+  await m.page.waitForSelector('.fete-back', { timeout: 8000 });
+  assert.match(await m.page.locator('.fete').innerText(), /Tu es Membre fondateur ![\s\S]*25 premiers lauréats à aider les étudiants/);
+  await m.page.keyboard.press('Escape');
+  await m.page.waitForSelector('.modal.fd-feuille', { timeout: 8000 });
+  assert.match(await m.page.locator('.modal.fd-feuille').innerText(), /Ton nom et ta photo peuvent apparaître en haut de la page d’entrée, pour donner envie aux autres/);
+  await m.page.click('#fd-oui');
+  await m.page.waitForSelector('.modal.fd-feuille', { state: 'detached' });
+  const envoi = site.appels.find(a => a.u === '/sb/rest/v1/profiles' && a.m === 'PATCH');
+  assert.deepEqual(envoi?.corps, { fondateur_public: true });
+  // Mon profil : la même question, à changer quand on veut
+  await m.page.evaluate(() => { location.hash = 'profil'; });
+  await m.page.waitForSelector('#md-fondateur');
+  assert.ok(await m.page.isChecked('#md-fondateur'));
+  await m.page.click('#md-fondateur'); await m.page.waitForTimeout(400);
+  assert.deepEqual(site.appels.filter(a => a.u === '/sb/rest/v1/profiles' && a.m === 'PATCH').at(-1).corps, { fondateur_public: false });
+  assert.equal(await m.page.isChecked('#md-fondateur'), false);
+  // Une seule fois : de retour à l'accueil, plus de fête ni de question
+  await m.page.evaluate(() => { location.hash = 'accueil'; }); await m.page.waitForTimeout(3000);
+  assert.equal(await m.page.locator('.fete-back, .modal.fd-feuille').count(), 0);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('base pas encore à jour : l’accueil d’un membre s’ouvre, les fondateurs calculés depuis les offres lisibles, sans question', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  const m = await membre();
+  await m.page.waitForSelector('.hello', { timeout: 15000 }); await m.page.waitForTimeout(2500);
+  assert.ok(site.appels.some(a => a.u === '/sb/rest/v1/rpc/fondateurs_publics'), 'demandé, absent (404)');
+  assert.deepEqual(await m.page.$$eval('.fd-accueil .fd-nom-t', x => x.map(e => e.textContent)), ['Hajar Lauréate'], 'la lauréate qui a publié l’offre');
+  assert.match(await m.page.locator('.fd-accueil .fd-places').innerText(), /24 places de membre fondateur restantes sur 25/);
+  assert.doesNotMatch(await m.page.locator('.fd-accueil').innerText(), /points?\b/i, 'jamais de points pour une étudiante');
+  assert.equal(await m.page.locator('.modal.fd-feuille, .fete-back').count(), 0);
   assert.deepEqual(m.erreurs, []);
   await m.ctx.close();
 });

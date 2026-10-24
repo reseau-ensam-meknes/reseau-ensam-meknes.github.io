@@ -310,7 +310,7 @@ export function computeScores(data, since = null) {
 }
 
 export const BADGES = [
-  { id: 'fondateur', nom: 'Membre fondateur', desc: 'Parmi les 25 premiers lauréats du réseau', test: (s, p, x) => !!p.id && !!x.fondateurs?.has(p.id) },
+  { id: 'fondateur', nom: 'Membre fondateur', desc: 'Parmi les 25 premiers lauréats à aider les étudiants', test: (s, p, x) => !!p.id && !!x.fondateurs?.has(p.id) },
   { id: 'verifie', nom: 'Lauréat vérifié', desc: 'Diplôme confirmé par le réseau', test: (s, p) => p.role === 'laureat' && p.verified },
   { id: 'premier', nom: 'Premier coup de pouce', desc: 'A publié une première offre', test: s => s.offres >= 1 },
   { id: 'recruteur', nom: 'Recruteur', desc: '3 étudiants recrutés grâce à ses offres', test: s => s.recrutes >= 3 },
@@ -324,14 +324,38 @@ export const BADGES = [
   { id: 'mois', nom: 'Lauréat du mois', desc: 'Le plus d’impact sur les 30 derniers jours', test: (s, p, x) => !!p.id && x.star === p.id },
 ];
 
-// Membres fondateurs : les 25 premiers lauréats arrivés sur la plateforme (ils ont lancé l'entraide)
+// Membres fondateurs : les 25 premiers lauréats à aider les étudiants, dans l'ordre de leur première contribution :
+// une offre publiée pour les étudiants (pas une offre « entre lauréats » ; pourvue ou fermée, elle compte toujours ;
+// supprimée, elle ne compte plus), une aide proposée sur la demande d'un étudiant (sauf retirée par le lauréat),
+// ou un mentorat accepté (ou terminé) avec un étudiant. Jamais l'administration ; rien fait, pas fondateur.
+// Même classement que fondateurs_classement() dans schema.sql. Égalité : le type (aide, mentorat, offre), puis l'id.
 export const NB_FONDATEURS = 25;
-// Les lauréats dans l'ordre où ils ont rejoint le réseau (même ordre pour le badge et pour l'accueil)
+export const CONTRIBUTIONS = { offre: 'Offre publiée', aide: 'Aide proposée', mentorat: 'Mentorat accepté' };
+export function classementFondateurs(data, max = NB_FONDATEURS) {
+  const role = new Map((data?.profiles || []).map(p => [p.id, p.role]));
+  const auteur = new Map((data?.demandes || []).map(d => [d.id, d.auteur_id]));
+  const premiere = new Map();
+  const noter = (id, quand, type) => {
+    const t = quand ? new Date(quand).getTime() : NaN;
+    if (!id || role.get(id) !== 'laureat' || !Number.isFinite(t)) return;
+    const x = premiere.get(id);
+    if (!x || t < x.t || (t === x.t && type < x.type)) premiere.set(id, { id, t, type });
+  };
+  for (const o of data?.offers || []) if ((o.audience || 'etudiants') === 'etudiants') noter(o.author_id, o.created_at, 'offre');
+  for (const x of data?.propositions || []) if (x.status !== 'retiree' && role.get(auteur.get(x.demande_id)) === 'etudiant') noter(x.laureat_id, x.created_at, 'aide');
+  for (const m of data?.mentorships || []) if (['acceptee', 'terminee'].includes(m.status) && role.get(m.student_id) === 'etudiant') noter(m.mentor_id, m.accepted_at || m.created_at, 'mentorat');
+  return [...premiere.values()].sort((a, b) => a.t - b.t || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).slice(0, max)
+    .map((x, i) => ({ id: x.id, at: new Date(x.t).toISOString(), type: x.type, rang: i + 1 }));
+}
+export const fondateursOf = data => new Set(classementFondateurs(data).map(f => f.id));
+// « 23 places de membre fondateur restantes sur 25 » (une seule phrase par cas : la version arabe la reconnaît)
+export function lignePlaces(total) {
+  const n = Math.max(0, NB_FONDATEURS - (total || 0));
+  return !n ? `Les ${NB_FONDATEURS} places de membre fondateur sont prises` : n === 1 ? `1 place de membre fondateur restante sur ${NB_FONDATEURS}` : `${n} places de membre fondateur restantes sur ${NB_FONDATEURS}`;
+}
+// Les lauréats dans l'ordre où ils ont rejoint le réseau (« Te voilà 40e parmi les lauréats », rien de plus)
 export const ordreArrivee = profiles => (profiles || []).filter(p => p.role === 'laureat' && p.created_at)
   .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.id).localeCompare(String(b.id)));
-export function fondateursOf(profiles) {
-  return new Set(ordreArrivee(profiles).slice(0, NB_FONDATEURS).map(p => p.id));
-}
 // « Te voilà 40e parmi les lauréats du réseau » : le rang d'arrivée d'un lauréat (null pour les autres, ou sans date)
 export function rangLaureat(profiles, me) {
   if (me?.role !== 'laureat' || !me.created_at) return null;
@@ -1010,8 +1034,7 @@ export function presenceReseau(data, me, { visages: nbVisages = 3 } = {}) {
 export function accueilArrivee(data, me) {
   if (!me || !['laureat', 'etudiant'].includes(me.role)) return null;
   const presence = presenceReseau(data, me, { visages: 5 });
-  const rang = rangLaureat(data.profiles, me);
-  return { role: me.role, rang, fondateur: !!rang && rang <= NB_FONDATEURS, presence, visages: presence?.visages || [] };
+  return { role: me.role, rang: rangLaureat(data.profiles, me), presence, visages: presence?.visages || [] };
 }
 // Une seule phrase par cas (la version arabe la reconnaît en entier)
 export function phrasesArrivee(a) {

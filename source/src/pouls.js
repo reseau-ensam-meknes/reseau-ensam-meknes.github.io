@@ -5,7 +5,7 @@
 import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { AvatarPile, Icon, injectCSS, Modal, ensuite } from './ui.js';
 import { addAR, arCount } from './i18n.js';
-import { poulsReseau, presenceReseau, lignePresence, lignePouls, accueilArrivee, phrasesArrivee, NB_FONDATEURS } from './logic.js';
+import { poulsReseau, presenceReseau, lignePresence, lignePouls, accueilArrivee, phrasesArrivee } from './logic.js';
 
 const VERS = { filiere: 'ma-filiere', parcours: 'mon-parcours', promo: 'ma-promo' };
 
@@ -46,14 +46,11 @@ export function marquerArrivee(uid) {
   dispatchEvent(new Event(CLE));
 }
 export const arriveeEnAttente = uid => !!uid && (lireS() || enMemoire) === uid && !vu(uid);
-function consommer(uid, fondateur) {
+// « Membre fondateur » ne se promet plus à l'arrivée : il vient de la première aide aux étudiants (fondateurs.js)
+function consommer(uid) {
   enMemoire = null;
   try { sessionStorage.removeItem(CLE); } catch { /* */ }
-  try {
-    localStorage.setItem('accueil-vu-' + uid, '1');
-    // Le badge « Membre fondateur » est annoncé ici : pas une deuxième fenêtre ensuite
-    if (fondateur) localStorage.setItem('fete-fondateur-' + uid, '1');
-  } catch { /* */ }
+  try { localStorage.setItem('accueil-vu-' + uid, '1'); } catch { /* */ }
 }
 // Ouvre la feuille ~600 ms après le premier accueil (jamais par-dessus une autre fenêtre : elle attend le prochain accueil)
 export function useArrivee({ store, me }) {
@@ -68,7 +65,7 @@ export function useArrivee({ store, me }) {
         if (store.mode === 'live' && store.loadTable) await Promise.race([store.loadTable('profiles').catch(() => {}), new Promise(ok => setTimeout(ok, 2500))]);
         if (!vivant || !arriveeEnAttente(me.id) || document.querySelector('.modal-back:not(.sortie), .fete-back:not(.sortie)')) return;
         const x = accueilArrivee(store.data, store.byId('profiles', me.id) || me);
-        consommer(me.id, x?.fondateur);
+        consommer(me.id);
         if (x) setA(x);
       }, 600);
     };
@@ -90,7 +87,6 @@ export function ArriveeSheet({ a, pas, me, store, onClose }) {
     ${visages.length ? html`<${AvatarPile} gens=${visages} size=${44} reste=${resteDe(a.presence, me, Math.min(3, visages.length))} cls="arrivee-visages"/>` : null}
     <p class="arrivee-titre">${ph.titre}</p>
     ${ph.sous ? html`<p class="arrivee-sous">${ph.sous}</p>` : null}
-    ${a.fondateur ? html`<p class="arrivee-fondateur"><${Icon} name="award" size=${16}/><span>${`Tu fais partie des ${NB_FONDATEURS} premiers lauréats : le badge « Membre fondateur » est sur ton profil.`}</span></p>` : null}
     ${!pas ? null : pas.guide ? html`<p class="arrivee-pas"><strong class="arrivee-pas-t">${pas.titre}</strong><span>${pas.detail}</span></p>`
       : html`<p class="arrivee-pas" ...${membre}>${pas.titre}</p>`}
   <//>`;
@@ -100,9 +96,7 @@ injectCSS('pouls', `
 .modal.arrivee .modal-body { align-items: center; text-align: center; gap: .5rem; padding-block: 1.4rem 1rem; }
 .arrivee-visages { justify-content: center; margin-block-end: .25rem; }
 .arrivee-titre { margin: 0; font-family: var(--f-display); font-weight: 700; font-size: 1.3rem; line-height: 1.25; color: var(--ink); text-wrap: balance; }
-.arrivee-sous, .arrivee-fondateur { margin: 0; color: var(--ink-2); }
-.arrivee-fondateur { font-size: var(--fs-2); display: flex; gap: .4rem; align-items: flex-start; text-align: start; }
-.arrivee-fondateur .ico { flex: none; margin-block-start: .15rem; color: var(--accent); }
+.arrivee-sous { margin: 0; color: var(--ink-2); }
 .arrivee-pas { margin: .5rem 0 0; color: var(--muted); font-size: var(--fs-2); max-inline-size: 36ch; text-wrap: pretty; }
 .arrivee-pas-t { display: block; color: var(--ink); font-weight: 600; }
 
@@ -122,8 +116,7 @@ const SAIDE = n => (+n === 1 ? 'ساعد' : +n === 2 ? 'ساعدا' : 'ساعد�
 const DE_AR = { 'ta filière': 'من شعبتك', 'ton parcours': 'من مسارك', 'ta promo': 'من دفعتك' };
 const NB_AR = n => (+n === 1 ? 'واحد' : +n === 2 ? 'اثنان' : n);
 addAR({ 'Cette semaine': 'هذا الأسبوع', 'Ce mois-ci': 'هذا الشهر', '1 recrutement confirmé': 'توظيف واحد مؤكَّد',
-  'Le réseau des lauréats commence avec toi': 'شبكة الخريجين تبدأ معك', 'C’est parti': 'لننطلق',
-  [`Tu fais partie des ${NB_FONDATEURS} premiers lauréats : le badge « Membre fondateur » est sur ton profil.`]: `أنت من بين أول ${NB_FONDATEURS} خريجًا في الشبكة: شارة «عضو مؤسس» على ملفك.` }, [
+  'Le réseau des lauréats commence avec toi': 'شبكة الخريجين تبدأ معك', 'C’est parti': 'لننطلق' }, [
   [/^Te voilà (\d+)e parmi les lauréats du réseau$/, n => `أنت الآن رقم ${n} بين خريجي الشبكة`],
   [/^(\d+) lauréats? (?:ont|a) aidé (\d+) étudiants?$/, (a, b) => `${arCount(a, LAU)} ${SAIDE(a)} ${arCount(b, ETU_ACC)}`],
   [/^(\d+) recrutements? confirmés?$/, n => arCount(n, ['توظيف واحد مؤكَّد', 'توظيفان مؤكَّدان', 'توظيفات مؤكَّدة', 'توظيفًا مؤكَّدًا'])],
