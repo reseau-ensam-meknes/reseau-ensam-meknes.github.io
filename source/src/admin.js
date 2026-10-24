@@ -734,6 +734,8 @@ injectCSS('admin', `
 .adm-tabs { margin-bottom: .2rem; }
 .mod-card { display: flex; flex-direction: column; gap: .55rem; padding: .95rem 1.05rem; border-radius: var(--r-lg); background: var(--surface); border: 0; box-shadow: var(--sh1), inset 3px 0 0 var(--brass); }
 :root[dir="rtl"] .mod-card { box-shadow: var(--sh1), inset -3px 0 0 var(--brass); }
+/* L'annonce en cours (Vue d'ensemble) : sa date reste lisible sur le fond teinté, de nuit aussi */
+.annonce.preview .annonce-meta .muted { color: var(--ink-2); }
 .mod-head { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
 .mod-ico { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--brass-soft); color: var(--brass); flex: none; }
 .mod-cible { display: flex; flex-direction: column; gap: .25rem; padding: 0; padding-inline-start: .75rem; border-inline-start: 2px solid var(--line); margin: 0; }
