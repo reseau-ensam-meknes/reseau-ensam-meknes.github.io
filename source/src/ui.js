@@ -1,6 +1,6 @@
 // Composants partagés de l'interface.
 import { html, useState, useEffect, useLayoutEffect, useRef, useMemo } from './vendor/preact-htm.js';
-import { initials, levelOf, NIVEAUX, niveauOf, seasonOf, PARCOURS, FILIERES_INFO, timeAgo } from './logic.js';
+import { initials, levelOf, NIVEAUX, niveauOf, seasonOf, PARCOURS, FILIERES_INFO, timeAgo, logoEntreprise, monogramme } from './logic.js';
 import { Icon, Field, BrandLogo, SchoolScene, TYPE_ICON, ajouterIcones } from './entree.js';
 import { getLang } from './i18n.js';
 import { avecLangue } from './regles-entree.js';
@@ -62,16 +62,34 @@ ajouterIcones({
   reply: '<path d="M9 7l-5 5 5 5"/><path d="M4 12h10a6 6 0 0 1 6 6v1"/>',
 });
 
-const HUES = [352, 18, 38, 145, 172, 200, 222, 262, 290, 320];
-export function hueOf(id = '') { let h = 0; for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0; return HUES[h % HUES.length]; }
+// Neuf teintes douces accordées au bleu, à l'orange et au bleu nuit de l'école (pas un arc-en-ciel) : [teinte, saturation].
+// Le jour, un fond très pâle et des lettres foncées de la même teinte ; la nuit, un fond sombre désaturé et des lettres claires (AA partout).
+const TEINTES = [[205, 62], [28, 78], [222, 32], [176, 46], [150, 34], [244, 42], [350, 52], [42, 66], [290, 28]];
+const hacher = (id = '') => { let h = 0; for (const c of String(id)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; };
+export const teinteDe = id => hacher(id) % TEINTES.length;
+export const hueOf = id => TEINTES[teinteDe(id)][0];
+const styleTeinte = t => { const [h, s] = TEINTES[t % TEINTES.length]; return `--h:${h};--s:${s}%;--s2:${Math.min(s + 8, 70)}%`; };
 
 // Photo de profil : le site branche ici la recherche du lien (store.photo). Sans photo, ou tant qu'elle charge, les initiales.
+// Sous 28 px (et dans une pile, où le voisin couvre le bord), une seule lettre ; jamais de texte sous 12 px.
+// teinte : imposée par une pile (deux voisins jamais pareils).
 let lienPhoto = () => null;
 export function brancherPhotos(fn) { lienPhoto = fn; }
-export function Avatar({ p, size = 36 }) {
-  const hue = hueOf(p?.id);
+export function Avatar({ p, size = 36, teinte, une = false }) {
   const url = p?.photo_path ? lienPhoto(p.photo_path) : null;
-  return html`<span class=${'avatar' + (url ? ' a-photo' : '')} style=${`--h:${hue};width:${size}px;height:${size}px;font-size:${Math.round(size * 0.38)}px`} aria-hidden="true">${initials(p?.full_name)}${url ? html`<img src=${url} alt="" width=${size} height=${size} loading="lazy" decoding="async" onError=${e => { e.currentTarget.hidden = true; }}/>` : null}</span>`;
+  const un = une || size < 28;
+  const ini = initials(p?.full_name);
+  return html`<span class=${'avatar' + (url ? ' a-photo' : '')} style=${`${styleTeinte(teinte ?? teinteDe(p?.id))};width:${size}px;height:${size}px;font-size:${Math.max(12, Math.round(size * (un ? 0.5 : 0.38)))}px`} aria-hidden="true"><span class="av-ini">${[...ini][0] || ''}${!un && [...ini].length > 1 ? html`<span class="av-l2">${[...ini].slice(1).join('')}</span>` : null}</span>${url ? html`<img src=${url} alt="" width=${size} height=${size} loading="lazy" decoding="async" onError=${e => { e.currentTarget.hidden = true; }}/>` : null}</span>`;
+}
+
+// Pile de visages : trois au plus puis « +N » (N vrai : passé par reste, sinon ceux de la liste qu'on ne montre pas),
+// 6 px de recouvrement, un anneau de la couleur du fond, et jamais deux teintes identiques côte à côte
+export function AvatarPile({ gens = [], size = 28, max = 3, reste, cls = '' }) {
+  const vus = gens.filter(Boolean).slice(0, max);
+  const plus = reste ?? Math.max(0, gens.filter(Boolean).length - vus.length);
+  let avant = -1;
+  const teintes = vus.map(p => { let t = teinteDe(p.id); if (t === avant) t = (t + 1) % TEINTES.length; avant = t; return t; });
+  return html`<span class=${'av-pile' + (cls ? ' ' + cls : '')} aria-hidden="true">${vus.map((p, i) => html`<${Avatar} key=${p.id} p=${p} size=${size} teinte=${teintes[i]} une=${size < 40}/>`)}${plus > 0 ? html`<span class="av-plus" dir="ltr" style=${`height:${size}px;min-width:${size}px;font-size:${Math.max(12, Math.round(size * 0.4))}px`}>${'+' + plus}</span>` : null}</span>`;
 }
 
 
@@ -434,10 +452,10 @@ export function roleTexte(p, sansEntreprise = false) {
   return `Promo ${p.promo}${p.entreprise && !sansEntreprise ? ' · ' + p.entreprise : ''}`;
 }
 
+// Le bouclier « vérifié » se met juste après le nom (Bouclier), plus dans cette ligne
 export function RoleLine({ p, score, sansEntreprise }) {
   if (!p) return null;
   return html`<span class="role-line">${roleTexte(p, sansEntreprise)}
-    ${p.role === 'laureat' && p.verified ? html`<span class="verif" title="Lauréat vérifié par le réseau"><${Icon} name="shield" size=${13}/></span>` : null}
     ${p.role === 'laureat' && score && rangsVisibles ? html` <${LevelChip} points=${score.points}/>` : null}
     ${p.role === 'laureat' && score && !rangsVisibles && aides(score) ? html` <span class="mini aide-chip"><${Icon} name="heart" size=${11}/> ${aides(score) > 1 ? `A aidé ${aides(score)} étudiants` : 'A aidé 1 étudiant'}</span>` : null}</span>`;
 }
@@ -447,8 +465,57 @@ const aides = s => (s?.recrutes || 0) + (s?.mentorats || 0);
 export function Person({ p, score, onOpen, size = 36, sub, sansEntreprise }) {
   return html`<button class="person" onClick=${() => onOpen?.(p)} type="button">
     <${Avatar} p=${p} size=${size}/>
-    <span class="person-txt">${p?.full_name ? html`<span class="person-name" translate="no" dir="auto">${p.full_name}</span>` : html`<span class="person-name">Membre</span>`}${sub !== undefined ? html`<span class="role-line">${sub}</span>` : html`<${RoleLine} p=${p} score=${score} sansEntreprise=${sansEntreprise}/>`}</span>
+    <span class="person-txt"><span class="person-l1">${p?.full_name ? html`<span class="person-name" translate="no" dir="auto">${p.full_name}</span>` : html`<span class="person-name">Membre</span>`}<${Bouclier} p=${p}/></span>${sub !== undefined ? html`<span class="role-line">${sub}</span>` : html`<${RoleLine} p=${p} score=${score} sansEntreprise=${sansEntreprise}/>`}</span>
   </button>`;
+}
+
+// Bouclier « vérifié », teal, 16 px, juste après le nom. La vérification est réelle (store.js, schema.sql) :
+// un lauréat est sur la liste officielle de sa promo, ou confirmé par deux lauréats vérifiés de la même promo ;
+// un étudiant s'est inscrit avec l'e-mail de l'école, ou est sur la liste officielle de sa promo ; ou l'équipe du réseau l'a vérifié.
+// Ce n'est ni un niveau ni un badge. Dans une ligne qui est déjà un bouton, c'est une image ; sur la fiche (explique),
+// un appui ou Entrée ouvre l'explication, Échap ou un appui ailleurs la ferme.
+export const estVerifie = p => !!p?.verified && (p.role === 'laureat' || p.role === 'etudiant');
+export const sensVerifie = p => (p?.role === 'etudiant'
+  ? 'Inscription confirmée : e-mail de l’école, nom sur la liste officielle de sa promo, ou confirmation par l’équipe du réseau.'
+  : 'Diplôme confirmé : nom sur la liste officielle de sa promo, confirmation par deux lauréats vérifiés de la même promo, ou par l’équipe du réseau.');
+let nVerif = 0;
+export function Bouclier({ p, explique = false }) {
+  const [ouvert, setOuvert] = useState(false);
+  const boite = useRef();
+  const id = useRef('');
+  if (!id.current) id.current = 'verif-' + (++nVerif);
+  useEffect(() => {
+    if (!ouvert) return;
+    const ailleurs = e => { if (!boite.current?.contains(e.target)) setOuvert(false); };
+    document.addEventListener('pointerdown', ailleurs);
+    return () => document.removeEventListener('pointerdown', ailleurs);
+  }, [ouvert]);
+  if (!estVerifie(p)) return null;
+  if (!explique) return html`<span class="verif" role="img" aria-label="Profil vérifié" title="Profil vérifié"><${Icon} name="shield" size=${16}/></span>`;
+  return html`<span class="verif-boite" ref=${boite}>
+    <button type="button" class="verif verif-btn" aria-expanded=${ouvert} aria-controls=${id.current} aria-label="Profil vérifié : ce que ça veut dire"
+      onClick=${() => setOuvert(!ouvert)} onKeyDown=${e => { if (e.key === 'Escape' && ouvert) { e.stopPropagation(); setOuvert(false); } }}><${Icon} name="shield" size=${16}/></button>
+    <span class="verif-pop" id=${id.current} role="note" hidden=${!ouvert}><strong>Profil vérifié</strong><span>${sensVerifie(p)}</span></span>
+  </span>`;
+}
+
+// Emblèmes des badges : un dessin propre à chacun, au même trait que les icônes (24 × 24, 1,75 px)
+const EMBLEMES = {
+  fondateur: '<path d="M6 21V4"/><path d="M6 4.5h11l-2.4 3.75L17 12H6"/>',
+  verifie: '<path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+  premier: '<path d="M7 11v9H4v-9z"/><path d="M7 11l3.6-6.4a1.6 1.6 0 0 1 2.9 1.1L13 10h5.3a2 2 0 0 1 2 2.4l-1.3 6A2 2 0 0 1 17 20H7"/>',
+  recruteur: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5h6v2"/><path d="M8.5 13.5l2.3 2.3 4.7-4.6"/>',
+  faiseur: '<path d="M3 20h5v-5h5v-5h5V5h3"/><path d="M15 5h3v3"/>',
+  passeport: '<rect x="5" y="3" width="14" height="18" rx="2"/><circle cx="12" cy="11" r="3.5"/><path d="M8.5 11h7M12 7.5c1.2 1 1.2 6 0 7M9 17.5h6"/>',
+  mentor: '<circle cx="12" cy="12" r="9"/><path d="M15.5 8.5l-2 5-5 2 2-5z"/>',
+  reactif: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 1.5M10 2.5h4M19 5.5l1.5 1.5"/>',
+  sage: '<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.3 1 2.2h5.2c0-.9.4-1.7 1-2.2A6 6 0 0 0 12 3z"/>',
+  aime: '<path d="M12 20s-7.5-4.6-7.5-10A4.3 4.3 0 0 1 12 7.2 4.3 4.3 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z"/>',
+  top: '<path d="M8 4h8v5a4 4 0 0 1-8 0z"/><path d="M8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8.5 20.5h7M10 17h4"/>',
+  mois: '<rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M8 3v4M16 3v4"/><path d="M12 11.6l1 2 2.2.3-1.6 1.5.4 2.2-2-1-2 1 .4-2.2-1.6-1.5 2.2-.3z"/>',
+};
+export function Embleme({ id, size = 20 }) {
+  return html`<svg class=${'ico embleme em-' + id} width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: EMBLEMES[id] || EMBLEMES.premier }}></svg>`;
 }
 
 export function Bar({ value, pace, label }) {
@@ -490,12 +557,20 @@ export function Num({ v }) {
   return html`<span ref=${ref}>${String(n)}</span>`;
 }
 
-// « Logo » d'entreprise : monogramme coloré, stable pour un même nom
+// Logo d'entreprise : le vrai logo (gardé sur le site, img/logos/) sur une petite tuile blanche arrondie avec un filet,
+// sinon un monogramme sur une teinte douce, stable pour un même nom (sigle entier, villes et « Groupe » ignorés)
+// Logos en longueur (un mot écrit) : moins de marge, pour qu'ils restent lisibles à 40 px
+const LOGOS_LARGES = /\/(airbus|safran)\.png$/;
 export function CompanyLogo({ name = '', size = 44 }) {
-  const words = name.replace(/\(.*?\)/g, '').split(/[\s\-–&]+/).filter(w => w && !/^(de|du|la|le|des|group|groupe|maroc|morocco|corporation|operations)$/i.test(w));
-  const ini = (words.length >= 2 ? words[0][0] + words[1][0] : (words[0] || name).slice(0, 2)).toUpperCase();
-  return html`<span class="clogo" style=${`--h:${hueOf(name)};width:${size}px;height:${size}px;font-size:${Math.round(size * 0.36)}px`} aria-hidden="true">${ini}</span>`;
+  const src = logoEntreprise(name);
+  const [rate, setRate] = useState(false);
+  if (src && !rate) return html`<span class=${'clogo c-img' + (LOGOS_LARGES.test(src) ? ' c-large' : '')} style=${`width:${size}px;height:${size}px`} aria-hidden="true"><img src=${src} alt="" width=${size} height=${size} onError=${() => setRate(true)}/></span>`;
+  const ini = monogramme(name);
+  const n = [...ini].length;
+  return html`<span class="clogo" style=${`${styleTeinte(teinteDe(name))};width:${size}px;height:${size}px;font-size:${Math.max(12, Math.round(size * [0.42, 0.42, 0.36, 0.3, 0.26][Math.min(n, 4)]))}px`} aria-hidden="true">${ini}</span>`;
 }
+// La phrase discrète sous une liste où paraissent de vrais logos
+export const MentionLogos = ({ noms = [] }) => (noms.some(n => logoEntreprise(n)) ? html`<p class="mention-logos">Logos affichés pour reconnaître les entreprises, sans aucun partenariat.</p>` : null);
 
 
 // Partage sur WhatsApp : un texte et le lien direct vers la page (offre, question), pour les groupes de promo.

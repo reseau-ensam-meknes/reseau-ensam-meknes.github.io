@@ -148,7 +148,7 @@ function AvantDePartir({ ctx, e }) {
   const n = AVANT.filter(k => faits[k]).length;
   const voir = sec => document.getElementById('gp-' + sec)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   return html`<div class="panel gp-avant">
-    <div class="section-head"><h2 class="h-ico"><${Icon} name="route"/> Avant de partir</h2><span class="small mono muted">${n}/${AVANT.length}</span></div>
+    <div class="section-head"><h2 class="h-ico"><${Icon} name="route"/> Avant de partir</h2><span class="small muted">${n}/${AVANT.length}</span></div>
     <ul class="gp-check">${AVANT.map(sec => { const ok = !!faits[sec]; return html`<li class=${ok ? 'ok' : ''} key=${sec}>
       <label class="check"><input id=${'gp-av-' + sec} type="checkbox" checked=${ok} onChange=${ev => setFaits({ ...faits, [sec]: ev.target.checked })}/> <span>${TACHE[sec]}</span></label>
       ${rubrique(e, sec) ? html`<button class="linkish small" onClick=${() => voir(sec)}>Lire le conseil</button>` : html`<span class="small muted">Pas encore écrit</span>`}</li>`; })}</ul>
@@ -196,7 +196,7 @@ function Editeur({ ctx, sec, row, pays, onDone }) {
   return html`<form class="form gp-edit" onSubmit=${save}>
     <${Field} label="Ton conseil" hint="Une ligne qui commence par « - » devient une liste. Les liens https s’affichent tout seuls.">
       <textarea id=${'gp-txt-' + sec} rows="7" maxlength=${MAX} value=${txt} onInput=${ev => setTxt(ev.target.value)} placeholder=${AIDE[sec]} dir="auto"></textarea><//>
-    <div class="row"><span class="small muted mono">${txt.length}/${MAX}</span><span class="spacer"></span>
+    <div class="row"><span class="small muted">${txt.length}/${MAX}</span><span class="spacer"></span>
       <button type="button" class="btn ghost small" onClick=${onDone}>Annuler</button>
       <button class="btn primary small" disabled=${!t || busy || t === (row?.contenu || '').trim()}>${row ? 'Enregistrer' : 'Publier'}</button></div>
   </form>`;

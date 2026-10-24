@@ -38,6 +38,7 @@ function SeasonPage({ ctx }) {
   const openOffers = data.offers.filter(o => o.status === 'ouverte').length;
   const row = st.rows.find(r => r.n === niv);
   const canSeeNames = me.role !== 'etudiant';
+  const [detail, setDetail] = useState(false);
 
   return html`<section class="page">
     <header class="page-head">
@@ -46,13 +47,16 @@ function SeasonPage({ ctx }) {
     </header>
     <${SuiviSeg} ctx=${ctx} on="placement"/>
 
-    <div class="kpis">
-      <div class="kpi"><span class="kpi-label">Ont trouvé</span><span class="kpi-val mono"><${Num} v=${totalFound}/><small>/${totalPop}</small></span><span class="small muted">${pct(totalPop ? totalFound / totalPop : 0)} des inscrits 3A, 4A, 5A et jeunes diplômés</span></div>
-      <div class="kpi"><span class="kpi-label">Grâce à la plateforme</span><span class="kpi-val mono"><${Num} v=${st.viaTotal}/></span><span class="small muted">${pct(st.totalFound ? st.viaTotal / st.totalFound : 0)} des réussites, vérifiées des deux côtés</span></div>
-      <div class="kpi"><span class="kpi-label">À confirmer</span><span class="kpi-val mono"><${Num} v=${pendingAll}/></span><span class="small muted">recrutés, attendent la confirmation de l’étudiant</span></div>
-      <div class="kpi"><span class="kpi-label">Offres ouvertes</span><span class="kpi-val mono"><${Num} v=${openOffers}/></span><span class="small muted">publiées par ${new Set(data.offers.filter(o => o.status === 'ouverte').map(o => o.author_id)).size} lauréats</span></div>
+    <div class="kpis suivi-kpis">
+      <div class="kpi"><span class="kpi-label">Ont trouvé</span><span class="kpi-val"><${Num} v=${totalFound}/><small>/${totalPop}</small></span><span class="small muted">${pct(totalPop ? totalFound / totalPop : 0)} des inscrits 3A, 4A, 5A et jeunes diplômés</span></div>
+      <div class="kpi"><span class="kpi-label">Grâce à la plateforme</span><span class="kpi-val"><${Num} v=${st.viaTotal}/></span><span class="small muted">${pct(st.totalFound ? st.viaTotal / st.totalFound : 0)} des réussites, vérifiées des deux côtés</span></div>
+      <div class="kpi"><span class="kpi-label">À confirmer</span><span class="kpi-val"><${Num} v=${pendingAll}/></span><span class="small muted">recrutés, attendent la confirmation de l’étudiant</span></div>
+      <div class="kpi"><span class="kpi-label">Offres ouvertes</span><span class="kpi-val"><${Num} v=${openOffers}/></span><span class="small muted">publiées par ${new Set(data.offers.filter(o => o.status === 'ouverte').map(o => o.author_id)).size} lauréats</span></div>
     </div>
 
+    <details class="suivi-detail" open=${detail} onToggle=${e => setDetail(e.currentTarget.open)}>
+    <summary>${detail ? 'Masquer le détail' : 'Voir le détail'} <${Icon} name="arrow" size=${16}/></summary>
+    <div class="suivi-detail-corps">
     <div class="niv-grid">${st.rows.map(r => {
       const pace = r.elapsed; const gap = r.rate - pace;
       const tone = r.rate >= 0.999 ? 'good' : r.daysLeft < 0 ? (r.rate >= 0.9 ? 'good' : 'bad') : gap >= -0.05 ? 'good' : gap >= -0.25 ? 'warn' : 'bad';
@@ -60,7 +64,7 @@ function SeasonPage({ ctx }) {
       return html`<button class=${'niv-card' + (niv === r.n ? ' on' : '')} onClick=${() => setNiv(r.n)} aria-pressed=${niv === r.n}>
         <div class="niv-top"><span class="niv-badge">${NIVEAUX[r.n].short}</span><span class=${'status s-' + tone}><span class="sdot"></span>${toneTxt}</span></div>
         <strong class="niv-obj">${r.objectif.titre}</strong>
-        <div class="niv-num"><span class="mono big">${pct(r.rate)}</span><span class="muted small">${r.found} sur ${r.total}${r.pending ? ` · ${r.pending} à confirmer` : ''}</span></div>
+        <div class="niv-num"><span class="big">${pct(r.rate)}</span><span class="muted small">${r.found} sur ${r.total}${r.pending ? ` · ${r.pending} à confirmer` : ''}</span></div>
         <${Bar} value=${r.rate} pace=${r.daysLeft >= 0 ? pace : undefined} label=${`${pct(r.rate)} ont trouvé`}/>
         <span class="small muted">${r.daysLeft >= 0 ? `Échéance ${r.end.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })} · J-${r.daysLeft}` : `Échéance passée (${r.end.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })})`} · ${r.via} via la plateforme</span>
       </button>`;
@@ -72,7 +76,7 @@ function SeasonPage({ ctx }) {
       <div class="panel">
         <div class="section-head"><h2>Par filière</h2><span class="muted small">${NIVEAUX[niv].label} · ${row.objectif.court}</span></div>
         <table class="tbl heat"><thead><tr><th>Filière</th><th class="num">Trouvé</th><th>Progression</th></tr></thead><tbody>
-          ${row.byFiliere.map(f => html`<tr><td>${f.filiere}</td><td class="num mono">${f.found}/${f.total}</td><td class="bar-cell"><${Bar} value=${f.total ? f.found / f.total : 0}/></td></tr>`)}
+          ${row.byFiliere.map(f => html`<tr><td>${f.filiere}</td><td class="num">${f.found}/${f.total}</td><td class="bar-cell"><${Bar} value=${f.total ? f.found / f.total : 0}/></td></tr>`)}
         </tbody></table>
       </div>
       <div class="panel">
@@ -92,11 +96,12 @@ function SeasonPage({ ctx }) {
 
     <div class="two-col">
       <div class="panel"><div class="section-head"><h2>Destinations à l’étranger</h2><span class="muted small">${seasonLabel(saison)}</span></div>
-        ${st.countries.length ? html`<ol class="rank">${st.countries.slice(0, 6).map(([c, k]) => html`<li><span>${c}</span><span class="mono">${k}</span></li>`)}</ol>` : html`<p class="muted">Aucun départ à l’étranger déclaré pour l’instant.</p>`}</div>
+        ${st.countries.length ? html`<ol class="rank">${st.countries.slice(0, 6).map(([c, k]) => html`<li><span>${c}</span><span class="num">${k}</span></li>`)}</ol>` : html`<p class="muted">Aucun départ à l’étranger déclaré pour l’instant.</p>`}</div>
       <div class="panel"><div class="section-head"><h2>Entreprises qui accueillent</h2><span class="muted small">${seasonLabel(saison)}</span></div>
-        <ol class="rank">${st.companies.slice(0, 6).map(([c, k]) => html`<li><span translate="no" dir="auto">${c}</span><span class="mono">${k}</span></li>`)}</ol></div>
+        <ol class="rank">${st.companies.slice(0, 6).map(([c, k]) => html`<li><span translate="no" dir="auto">${c}</span><span class="num">${k}</span></li>`)}</ol></div>
     </div>
     ${me.role === 'admin' ? html`<${ExportBox} data=${data} saison=${saison} rows=${st.rows}/>` : null}
+    </div></details>
   </section>`;
 }
 
@@ -161,17 +166,17 @@ function PromoPage({ ctx }) {
     <div class="pr-avant">
       <button type="button" class="pr-stat" onClick=${() => go('offres')}>
         <span class="pr-stat-ico"><${Icon} name="feed" size=${18}/></span>
-        <span class="pr-stat-num mono"><${Num} v=${ouvertes}/></span>
+        <span class="pr-stat-num"><${Num} v=${ouvertes}/></span>
         <span class="pr-stat-lbl">${ouvertes > 1 ? 'offres ouvertes pour ton année' : 'offre ouverte pour ton année'}</span>
         <span class="pr-stat-go">Voir les offres <${Icon} name="arrow" size=${14}/></span>
       </button>
       ${row.via ? html`<div class="pr-stat good">
         <span class="pr-stat-ico"><${Icon} name="heart" size=${18}/></span>
-        <span class="pr-stat-num mono"><${Num} v=${row.via}/></span>
+        <span class="pr-stat-num"><${Num} v=${row.via}/></span>
         <span class="pr-stat-lbl">${row.via > 1 ? 'camarades ont trouvé grâce à un lauréat' : 'camarade a trouvé grâce à un lauréat'}</span>
       </div>` : html`<button type="button" class="pr-stat good" onClick=${() => go('mentorat')}>
         <span class="pr-stat-ico"><${Icon} name="mentor" size=${18}/></span>
-        <span class="pr-stat-num mono"><${Num} v=${aidants}/></span>
+        <span class="pr-stat-num"><${Num} v=${aidants}/></span>
         <span class="pr-stat-lbl">${aidants > 1 ? 'lauréats de ta filière dans le réseau' : 'lauréat de ta filière dans le réseau'}</span>
         <span class="pr-stat-go">Trouver un mentor <${Icon} name="arrow" size=${14}/></span>
       </button>`}
@@ -189,13 +194,13 @@ function PromoPage({ ctx }) {
 
 injectCSS('dashboard-promo', `
 .pr-avant { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; }
-.pr-stat { display: flex; flex-direction: column; align-items: flex-start; gap: .3rem; padding: 1rem 1.1rem; border-radius: var(--r-xl); border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--line)); background: linear-gradient(160deg, var(--accent-soft), var(--surface) 78%); text-align: start; font: inherit; color: inherit; min-width: 0; }
+.pr-stat { display: flex; flex-direction: column; align-items: flex-start; gap: .3rem; padding: 1rem 1.1rem; border-radius: var(--r-lg); border: 0; background: var(--surface); box-shadow: var(--sh1); text-align: start; color: inherit; font: inherit; min-width: 0; }
 button.pr-stat { cursor: pointer; transition: transform .25s var(--ease), box-shadow .25s, border-color .2s; }
-button.pr-stat:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
-.pr-stat.good { background: linear-gradient(160deg, var(--good-soft), var(--surface) 78%); border-color: color-mix(in srgb, var(--good) 24%, var(--line)); }
-.pr-stat-ico { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); color: var(--accent); margin-bottom: .2rem; }
+button.pr-stat:hover { transform: translateY(-2px); box-shadow: var(--sh2); }
+.pr-stat-ico { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--blue-text); margin-bottom: .2rem; }
+.pr-stat.good .pr-stat-ico { background: var(--good-soft); }
 .pr-stat.good .pr-stat-ico { color: var(--good); }
-.pr-stat-num { font-size: var(--fs-7); line-height: 1.05; color: var(--ink); }
+.pr-stat-num { font: 750 var(--fs-7)/1.05 var(--f-display); font-variant-numeric: tabular-nums; color: var(--ink); }
 .pr-stat-lbl { color: var(--ink-2); font-size: var(--fs-2); line-height: 1.35; }
 .pr-stat-go { margin-top: auto; padding-top: .3rem; display: inline-flex; align-items: center; gap: .3rem; font-weight: 600; font-size: var(--fs-2); color: var(--blue-text); }
 .pr-stat.good .pr-stat-go { color: var(--good); }

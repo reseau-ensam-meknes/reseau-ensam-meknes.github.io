@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { rdvALaUne, profilLaureatFait, joursAvant, annoncePour, pourPublic, petitesTaches, besoinsDeMoi, coupDeMain, etatAide, AIDE_OUVERTE,
-  manquesOffre, manquesDemande, enqueteDue, seasonOf, lignePouls, lignePresence, presenceReseau } from '../../src/logic.js';
+  manquesOffre, manquesDemande, enqueteDue, seasonOf, lignePouls, lignePresence, presenceReseau, tachePhoto, logoEntreprise, monogramme } from '../../src/logic.js';
 
 const NOW = new Date(2026, 9, 23, 10, 0);   // vendredi 23 octobre 2026, 10 h (heure de l'appareil)
 const at = (j, h = 18, mn = 30) => new Date(2026, 9, 23 + j, h, mn).toISOString();
@@ -57,6 +57,51 @@ test('petitesTaches : trois au plus, jamais ce que montre la carte, ni les aides
   assert.deepEqual(sans.map(x => x.key), ['scM2', 'mfP1', 'roO2'], 'la carte du haut et son offre ne reviennent pas dessous');
   assert.deepEqual(petitesTaches(notifs, { key: 'rdvm2', ref: 'm2', cles: ['scM2'] }).map(x => x.key), ['apO1-3', 'dmC1', 'mfP1'], 'la veille, la carte montre le rendez-vous : sa confirmation n’est pas répétée');
   assert.deepEqual(petitesTaches(notifs, { cles: ['mfP1', 'roO2', 'scM2'] }).map(x => x.key), ['apO1-3', 'dmC1', 'eq6']);
+});
+
+test('tâche photo : un lauréat sans photo, quand la base accepte les photos ; en dernier, après les vraies tâches', () => {
+  const l = { id: 'l', role: 'laureat', created_at: at(-30) };
+  const t = tachePhoto(l);
+  assert.equal(t.text, 'Ajoute une photo, les étudiants écrivent plus facilement à un visage.');
+  assert.equal(t.to, 'profil');
+  assert.ok(t.action && t.semaine && !t.geste, 'dans « Cette semaine » seulement : rien ne s’ajoute au chiffre de la cloche');
+  assert.equal(tachePhoto({ ...l, photo_path: 'l/photo.jpg' }), null, 'déjà une photo');
+  assert.equal(tachePhoto({ id: 's', role: 'etudiant', created_at: at(-3) }), null, 'pas pour un étudiant');
+  assert.equal(tachePhoto({ id: 'a', role: 'admin' }), null);
+  assert.equal(tachePhoto(l, { live: true }), null, 'en ligne, sans colonne photo : la base n’accepte pas encore les photos');
+  assert.ok(tachePhoto({ ...l, photo_path: null }, { live: true }), 'en ligne, colonne présente et vide');
+  const n = (key, x = {}) => ({ key, action: true, at: NOW.toISOString(), ...x });
+  assert.deepEqual(petitesTaches([t, n('eq6'), n('roO2')]).map(x => x.key), ['roO2', 'eq6', 'ph'], 'la photo vient après toutes les vraies tâches');
+  assert.deepEqual(petitesTaches([t, n('apO1'), n('dmC1'), n('scM2')]).map(x => x.key), ['apO1', 'dmC1', 'scM2'], 'trois vraies tâches : pas de place pour la photo');
+});
+
+test('logos d’entreprises : le vrai logo pour un nom et ses variantes, sinon un monogramme soigné', () => {
+  assert.equal(logoEntreprise('Renault Group Maroc'), 'img/logos/renault.png');
+  assert.equal(logoEntreprise('Groupe Renault'), 'img/logos/renault.png');
+  assert.equal(logoEntreprise('Safran Nacelles'), 'img/logos/safran.png');
+  assert.equal(logoEntreprise('Airbus Operations'), 'img/logos/airbus.png');
+  assert.equal(logoEntreprise('Capgemini Engineering'), 'img/logos/capgemini.png');
+  assert.equal(logoEntreprise('Hydro-Québec'), 'img/logos/hydro-quebec.png');
+  assert.equal(logoEntreprise('  schneider electric (Bouskoura) '), 'img/logos/schneider-electric.png');
+  assert.equal(logoEntreprise('Siemens Gamesa'), null, 'une filiale qui a son propre logo ne prend pas celui du groupe');
+  assert.equal(logoEntreprise('Orangina'), null, 'mot pour mot');
+  assert.equal(logoEntreprise('OCP Group'), null);
+  assert.equal(logoEntreprise(''), null);
+  assert.equal(monogramme('OCP Group'), 'OCP', 'un sigle reste entier');
+  assert.equal(monogramme('Groupe OCP'), 'OCP');
+  assert.equal(monogramme('ONEE'), 'ONEE');
+  assert.equal(monogramme('TGCC'), 'TGCC');
+  assert.equal(monogramme('Stellantis Kénitra'), 'S', 'la ville ne compte pas');
+  assert.equal(monogramme('Yazaki Morocco'), 'Y');
+  assert.equal(monogramme('Lear Corporation'), 'L');
+  assert.equal(monogramme('LafargeHolcim Maroc'), 'LH');
+  assert.equal(monogramme('Spirit AeroSystems'), 'SA');
+  assert.equal(monogramme('Siemens Gamesa'), 'SG');
+  assert.equal(monogramme('Vinci Construction'), 'VC');
+  assert.equal(monogramme('Maroc Telecom'), 'MT', 'un mot vide en tête du nom compte');
+  assert.equal(monogramme('Tanger Med'), 'TM');
+  assert.equal(monogramme('ENSAM Meknès'), 'E');
+  assert.equal(monogramme('Jorf Lasfar Energy'), 'JE');
 });
 
 const S = seasonOf(NOW);

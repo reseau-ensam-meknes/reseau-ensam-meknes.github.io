@@ -7,6 +7,7 @@ import { OfferComposer, matchesMe } from './offers.js';
 import { getLang, addAR } from './i18n.js';
 import { CvButton } from './cv.js';
 import { recherche } from './geo.js';
+import { PersonneLigne, useVoirPlus, VoirPlus, BoutonFiltres, FeuilleFiltres } from './lignes.js';
 
 const firstName = p => (p?.full_name || '').split(' ')[0];
 
@@ -25,6 +26,7 @@ export function TalentPool({ ctx }) {
   const [view, setView] = useState('tous');
   const [q, setQ] = useState(''); const [fil, setFil] = useState(''); const [niv, setNiv] = useState(''); const [cv, setCv] = useState(false);
   const [invite, setInvite] = useState(null);
+  const [feuille, setFeuille] = useState(false); const [fiche, setFiche] = useState(null);
   const saved = new Map(data.shortlists.filter(x => x.laureat_id === me.id).map(x => [x.student_id, x]));
   // Étudiants de 3A à 5A visibles, et lauréats qui cherchent un emploi
   const pool = data.profiles.filter(p => p.id !== me.id && ((p.role === 'etudiant' && p.vitrine !== false && [3, 4, 5].includes(niveauOf(p, saison))) || (p.role === 'laureat' && p.en_recherche)));
@@ -47,37 +49,52 @@ export function TalentPool({ ctx }) {
     return inv.every(i => i.status === 'declinee') ? ['', 'A décliné'] : ['s-validation', 'Invitation envoyée'];
   };
 
+  const cherche = p => (laur(p) ? 'un emploi' : CHERCHE[niveauOf(p, saison)]);
+  const etat = p => { if (searching(p)) return canRecruit ? invState(p) : null; const st = statutOf(data, p, saison); return ['s-' + st.key, st.label]; };
+  const actifs = [fil, niv].filter(Boolean).length + (cv ? 1 : 0);
+  const { vus, reste, plus } = useVoirPlus(list, 20, [view, q, fil, niv, cv].join('|'));
+  const pf = fiche ? pool.find(p => p.id === fiche) : null;
   return html`<div class="sub-page">
     <p class="muted small">Étudiants et lauréats en recherche, visibles par les lauréats.</p>
-    ${canRecruit ? html`<div class="seg" role="group"><button class=${view === 'tous' ? 'on' : ''} onClick=${() => setView('tous')}>Tous les talents</button><button class=${view === 'shortlist' ? 'on' : ''} onClick=${() => setView('shortlist')}><${Icon} name="bookmark" size=${15}/> Mis de côté${saved.size ? html` <span class="count">${saved.size}</span>` : null}</button></div>` : null}
-    <div class="filter-row">
-      <label class="search"><${Icon} name="search" size=${16}/><input id="t-q" placeholder="Compétence, ville, nom…" value=${q} onInput=${e => setQ(e.target.value)}/></label>
-      <${FiliereFiltre} id="t-fil" value=${fil} onChange=${setFil}/>
-      <select id="t-niv" value=${niv} onChange=${e => setNiv(e.target.value)} aria-label="Année"><option value="">Toutes les années</option><option value="3">3A</option><option value="4">4A</option><option value="5">5A</option><option value="L">Lauréats en recherche</option></select>
-      <button class=${'chip' + (cv ? ' on' : '')} aria-pressed=${cv} onClick=${() => setCv(!cv)}><${Icon} name="file" size=${14}/> Avec CV</button>
-    </div>
-    <div class="cards">${list.map(p => {
-      const s = saved.get(p.id); const st = statutOf(data, p, saison); const found = !searching(p); const inv = canRecruit ? invState(p) : null;
-      return html`<div class="tcard" key=${p.id}>
-        <div class="tcard-head"><${Person} p=${p} onOpen=${openProfile} size=${42}/>
-          ${canRecruit ? html`<button class=${'icon-btn save-btn' + (s ? ' on' : '')} aria-pressed=${!!s} aria-label=${s ? 'Ne plus mettre de côté' : 'Mettre de côté'} title=${s ? 'Ne plus mettre de côté' : 'Mettre de côté'} onClick=${() => toggle(p)}><${Icon} name="bookmark" size=${18}/></button>` : null}</div>
-        <p class="small">Cherche : <strong>${laur(p) ? 'un emploi' : CHERCHE[niveauOf(p, saison)]}</strong>${laur(p) ? html` <span class="muted">· Promo ${p.promo}</span>` : null}</p>
-        ${p.disponibilite || p.ville ? html`<p class="small muted tmeta">${p.disponibilite ? html`<span><${Icon} name=${laur(p) ? 'briefcase' : 'calendar'} size=${14}/> <span translate="no" dir="auto">${p.disponibilite}</span></span>` : null}${p.ville ? html`<span><${Icon} name="pin" size=${14}/> ${p.ville}</span>` : null}</p>` : null}
-        ${(p.competences || []).length ? html`<p class="chips-line">${p.competences.slice(0, 6).map(c => html`<span class=${'mini' + (trouve && trouve(c) ? ' hit' : '')}>${c}</span>`)}</p>` : null}
-        ${view === 'shortlist' && s ? html`<input class="note-in" id=${'note-' + p.id} maxlength="300" placeholder="Note pour moi (visible par moi seul)" value=${s.note || ''} onChange=${e => act(() => store.update('shortlists', s.id, { note: e.target.value.trim() }))}/>` : null}
-        <div class="row tcard-foot">
-          ${p.cv_path || p.cv_url ? html`<${CvButton} ctx=${ctx} p=${p} small/>` : html`<span class="muted small">Pas encore de CV</span>`}
-          <span class="spacer"></span>
-          ${found ? html`<span class=${'state-pill s-' + st.key}>${st.label}</span>` : inv ? html`<span class=${'state-pill ' + inv[0]}>${inv[1]}</span>` : null}
-          ${canRecruit && !found ? html`<button class="btn small primary" onClick=${() => setInvite(p)}><${Icon} name="send" size=${15}/> Inviter</button>` : null}
-        </div>
-      </div>`;
-    })}</div>
-    ${!list.length ? (view === 'shortlist' && !saved.size
+    ${canRecruit ? html`<div class="seg" role="tablist" aria-label="Talents">${[['tous', 'Tous les talents'], ['shortlist', 'Mis de côté']].map(([k, l]) => html`<button role="tab" aria-selected=${view === k} class=${view === k ? 'on' : ''} onClick=${() => setView(k)}>${k === 'shortlist' ? html`<${Icon} name="bookmark" size=${15}/> ` : null}${l}${k === 'shortlist' && saved.size ? html` <span class="count">${saved.size}</span>` : null}</button>`)}</div>` : null}
+    <div class="recherche-filtres"><label class="search"><${Icon} name="search" size=${16}/><input id="t-q" placeholder="Compétence, ville, nom…" value=${q} onInput=${e => setQ(e.target.value)}/></label>
+      <${BoutonFiltres} id="t-filtres" actifs=${actifs} onClick=${() => setFeuille(true)}/></div>
+    ${list.length ? html`<p class="liste-tete">${`${list.length} talent${list.length > 1 ? 's' : ''}`}</p>
+    <ul class="lignes talents">${vus.map(p => { const s = saved.get(p.id); const e = etat(p); return html`<li key=${p.id} class="ligne">
+      <${PersonneLigne} p=${p} onOpen=${() => setFiche(p.id)} meta=${html`${e ? html`<span class=${'ligne-etat ' + e[0]}>${e[1]}</span> · ` : null}Cherche : <strong>${cherche(p)}</strong>${laur(p) ? html` · Promo ${p.promo}` : null}${p.disponibilite ? html` · <span translate="no" dir="auto">${p.disponibilite}</span>` : null}${p.ville ? html` · <span translate="no">${p.ville}</span>` : null}`}/>
+      ${canRecruit ? html`<span class="ligne-act"><button class=${'icon-btn save-btn' + (s ? ' on' : '')} aria-pressed=${!!s} aria-label=${s ? 'Ne plus mettre de côté' : 'Mettre de côté'} title=${s ? 'Ne plus mettre de côté' : 'Mettre de côté'} onClick=${() => toggle(p)}><${Icon} name="bookmark" size=${18}/></button></span>` : null}
+    </li>`; })}</ul>
+    <${VoirPlus} reste=${reste} onPlus=${plus}/>` : view === 'shortlist' && !saved.size
       ? html`<${Empty} icon="bookmark" title="Aucun profil mis de côté">Clique sur le marque-page d’un profil pour le mettre de côté ici, avec une note pour toi.<//>`
-      : html`<${Empty} icon="spark" title="Personne ne correspond à ces critères">Essaie une autre filière ou enlève un filtre.<//>`) : null}
+      : html`<${Empty} icon="spark" title="Personne ne correspond à ces critères">Essaie une autre filière ou enlève un filtre.<//>`}
+    ${feuille ? html`<${FeuilleFiltres} total=${list.length} actifs=${actifs} onEffacer=${() => { setFil(''); setNiv(''); setCv(false); }} onClose=${() => setFeuille(false)}>
+      <${Field} label="Filière"><${FiliereFiltre} id="t-fil" value=${fil} onChange=${setFil}/><//>
+      <${Field} label="Année"><select id="t-niv" value=${niv} onChange=${e => setNiv(e.target.value)}><option value="">Toutes les années</option><option value="3">3A</option><option value="4">4A</option><option value="5">5A</option><option value="L">Lauréats en recherche</option></select><//>
+      <div class="filtres-bascules"><button type="button" class=${'chip' + (cv ? ' on' : '')} aria-pressed=${cv} onClick=${() => setCv(!cv)}><${Icon} name="file" size=${14}/> Avec CV</button></div>
+    <//>` : null}
+    ${pf ? html`<${FicheTalent} ctx=${ctx} p=${pf} s=${saved.get(pf.id)} etat=${etat(pf)} cherche=${cherche(pf)} canRecruit=${canRecruit} trouve=${trouve} enRecherche=${searching(pf)}
+      onToggle=${() => toggle(pf)} onInvite=${() => { setFiche(null); setInvite(pf); }} onClose=${() => setFiche(null)}/>` : null}
     ${invite ? html`<${InviteModal} ctx=${ctx} student=${invite} onClose=${() => setInvite(null)}/>` : null}
   </div>`;
+}
+
+// Le détail d'un talent, dans une feuille : ce qu'il cherche, ses compétences, son CV, ta note ; « Inviter à postuler » en bas
+function FicheTalent({ ctx, p, s, etat, cherche, canRecruit, trouve, enRecherche, onToggle, onInvite, onClose }) {
+  const { store, act, openProfile } = ctx;
+  const laur = p.role === 'laureat';
+  return html`<${Modal} title="Profil" onClose=${onClose} footer=${canRecruit && enRecherche ? html`<button type="button" class="btn primary" onClick=${onInvite}><${Icon} name="send" size=${16}/> Inviter à postuler</button>` : null}>
+    <div class="fiche-talent">
+      <div class="row"><${Person} p=${p} onOpen=${x => { onClose(); openProfile(x); }} size=${48}/><span class="spacer"></span>
+        ${canRecruit ? html`<button class=${'icon-btn save-btn' + (s ? ' on' : '')} aria-pressed=${!!s} aria-label=${s ? 'Ne plus mettre de côté' : 'Mettre de côté'} title=${s ? 'Ne plus mettre de côté' : 'Mettre de côté'} onClick=${onToggle}><${Icon} name="bookmark" size=${18}/></button>` : null}</div>
+      <p>Cherche : <strong>${cherche}</strong>${laur ? html` <span class="muted">· Promo ${p.promo}</span>` : null}</p>
+      ${p.disponibilite || p.ville ? html`<p class="small muted tmeta">${p.disponibilite ? html`<span><${Icon} name=${laur ? 'briefcase' : 'calendar'} size=${14}/> <span translate="no" dir="auto">${p.disponibilite}</span></span>` : null}${p.ville ? html`<span><${Icon} name="pin" size=${14}/> ${p.ville}</span>` : null}</p>` : null}
+      ${(p.competences || []).length ? html`<p class="chips-line">${p.competences.slice(0, 10).map(c => html`<span class=${'mini' + (trouve && trouve(c) ? ' hit' : '')}>${c}</span>`)}</p>` : null}
+      ${etat ? html`<p><span class=${'state-pill ' + etat[0]}>${etat[1]}</span></p>` : null}
+      ${s ? html`<input class="note-in" id=${'note-' + p.id} maxlength="300" placeholder="Note pour moi (visible par moi seul)" value=${s.note || ''} onChange=${e => act(() => store.update('shortlists', s.id, { note: e.target.value.trim() }))}/>` : null}
+      <div class="row">${p.cv_path || p.cv_url ? html`<${CvButton} ctx=${ctx} p=${p} small/>` : html`<span class="muted small">Pas encore de CV</span>`}
+        <button type="button" class="btn small ghost" onClick=${() => { onClose(); openProfile(p); }}>Voir le profil</button></div>
+    </div>
+  <//>`;
 }
 
 function InviteModal({ ctx, student, onClose }) {

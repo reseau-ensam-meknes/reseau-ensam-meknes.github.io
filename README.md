@@ -13,6 +13,7 @@ Le code est publié sous la licence [GNU AGPL-3.0](LICENSE) © 2026 Oussama Ouaf
 Ne sont pas couverts par cette licence :
 - le nom « Réseau ENSAM Meknès » et ses logos (dossier `img/`, `source/src/logo.js`) : une copie du code doit porter un autre nom et un autre logo ;
 - le logo de l'ENSAM dessiné sur le fronton de l'école (`ensamLogo` dans `source/src/scene.js`), qui appartient à l'école ;
+- les logos d'entreprises (dossier `img/logos/`, `source/src/img/logos/`), affichés seulement pour reconnaître les entreprises, sans aucun partenariat : ils restent la propriété de leurs détenteurs ;
 - les bibliothèques du dossier `vendor/` (Preact, htm, supabase-js, Leaflet, PDF.js), qui gardent chacune leur propre licence.
 
 Les données des membres ne sont jamais dans ce dépôt : elles restent dans la base, que seuls les administrateurs du réseau gèrent.

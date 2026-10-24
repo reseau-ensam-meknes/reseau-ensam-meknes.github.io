@@ -84,9 +84,11 @@ addAR({
 ]);
 
 export const TYPE_ICON = { stage: 'wrench', pfe: 'cap', etranger: 'globe', emploi: 'briefcase' };
+export const tailleIcone = s => { const n = Number(s) || 20; return n > 28 ? n : n < 18 ? 16 : n < 22 ? 20 : 24; };
 export function Icon({ name, size = 18 }) {
   const P = ICONS[name] || '';
-  return html`<svg class=${`ico ico-${name}`} width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: P }}></svg>`;
+  const t = tailleIcone(size);
+  return html`<svg class=${`ico ico-${name}`} width=${t} height=${t} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: P }}></svg>`;
 }
 
 const ICONS = {

@@ -135,7 +135,7 @@ test('coordonnées : visibles seulement après accord', async () => {
   await s.page.click('#cf-ask'); await s.page.fill('#cf-ask-msg', 'Bonjour, je suis en 3A et j’aimerais un conseil.');
   await s.page.click('#cf-ask-send'); await s.page.waitForTimeout(300); await s.fermer();
   await s.comme('Youssef'); await s.aller('accueil');
-  await s.page.locator('.cf-home li:has-text("Amine") .btn.primary').click(); await s.page.waitForTimeout(300);
+  await s.page.locator('.cf-home li:has-text("Amine") .btn.tonal').click(); await s.page.waitForTimeout(300);
   await s.comme('Amine'); await s.fiche('Youssef El Amrani');
   assert.match(await s.page.locator('#cf-contact').innerText(), /06 12 34 56 78/);
   await s.fermer();
@@ -345,14 +345,21 @@ test('signaler un profil, puis l’administration le traite', async () => {
   await s.ctx.close();
 });
 
-test('agenda de l’école : je participe, puis je me désinscris', async () => {
+test('agenda de l’école : je participe (une seule action), l’agenda proposé dans une feuille, puis je me désinscris', async () => {
   const s = await ouvrir();
   await s.comme('Salma'); await s.aller('reseau/agenda');
   const carte = s.page.locator('.ev-card').first();
-  await carte.locator('.btn.primary').click(); await s.page.waitForTimeout(300);
-  assert.match(await carte.innerText(), /Je ne viens plus/);
-  await carte.locator('button:has-text("Je ne viens plus")').click(); await s.page.waitForTimeout(300);
-  assert.match(await carte.innerText(), /Je participe/);
+  const participer = carte.locator('button.ev-participer');
+  assert.equal(await carte.locator('a[href$=".ics"], a[href*="calendar.google"]').count(), 0, 'la carte ne garde que « Je participe »');
+  assert.equal(await participer.getAttribute('aria-pressed'), 'false');
+  await participer.click(); await s.page.waitForTimeout(300);
+  assert.equal(await participer.getAttribute('aria-pressed'), 'true', 'inscrit : le bouton est sélectionné');
+  // Juste après, la feuille « Ajouter à mon agenda » : Google Agenda ou fichier .ics
+  assert.match(await s.page.locator('.modal').innerText(), /Ajouter à mon agenda[\s\S]*Google Agenda[\s\S]*Autre agenda \(\.ics\)/);
+  await s.fermer();
+  await participer.click(); await s.page.waitForTimeout(300);
+  assert.equal(await participer.getAttribute('aria-pressed'), 'false');
+  assert.match(await s.page.locator('.toast').last().innerText(), /tu n’y vas plus/);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -498,7 +505,7 @@ test('lien partagé depuis l’arabe : ?lang=ar, en arabe pour cette visite chez
 test('recherche et villes : « مكناس » trouve Meknès ; en arabe, les villes s’écrivent en arabe', async () => {
   const s = await ouvrir();
   await s.comme('Salma'); await s.aller('reseau/annuaire');
-  const nb = async q => { await s.page.fill('#d-q', q); await s.page.waitForTimeout(250); return s.page.locator('.dir > li').count(); };
+  const nb = async q => { await s.page.fill('#d-q', q); await s.page.waitForTimeout(250); return Number((await s.page.innerText('#d-total')).match(/\d+/)[0]); };
   const meknes = await nb('Meknès');
   assert.ok(meknes > 0);
   assert.equal(await nb('مكناس'), meknes);
@@ -507,9 +514,9 @@ test('recherche et villes : « مكناس » trouve Meknès ; en arabe, les vill
   const a = await ouvrir({ largeur: 390, langue: 'ar' });
   await a.comme('Salma'); await a.aller('reseau/annuaire');
   await a.page.fill('#d-q', 'مكناس'); await a.page.waitForTimeout(250);
-  assert.ok(await a.page.locator('.dir > li').count() > 0);
-  assert.match(await a.page.locator('.dir').innerText(), /مكناس/);
-  assert.doesNotMatch(await a.page.locator('.dir').innerText(), /Meknès/);
+  assert.ok(await a.page.locator('.annuaire > li').count() > 0);
+  assert.match(await a.page.locator('.annuaire').innerText(), /مكناس/);
+  assert.doesNotMatch(await a.page.locator('.annuaire').innerText(), /Meknès/);
   await a.aller('reseau/groupes');
   assert.match(await a.page.locator('.page').innerText(), /مكناس/, 'le groupe de la ville');
   assert.deepEqual(a.erreurs, []);
@@ -1510,6 +1517,39 @@ test('profil : promo effacée, le bouton le dit et mène au champ', async () => 
   await s.ctx.close();
 });
 
+test('offres : une seule rangée de puces avant la première offre ; les anciens liens ouvrent la bonne puce ; « Demandes » dit combien', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef');
+  // L'ancien onglet « Sujets PFE » : la puce PFE choisie, et « Déposer un sujet » reste le bouton plein
+  await s.aller('offres/sujets'); await s.page.waitForSelector('.offres-chips');
+  assert.equal((await s.page.locator('.offres-chips .chip[aria-pressed="true"]').innerText()).trim(), 'PFE');
+  assert.match(await s.page.locator('#of-publier.btn.primary').innerText(), /Déposer un sujet/);
+  const types = await s.page.locator('.ocard .ocard-tags > .tag:first-child').allInnerTexts();
+  assert.ok(types.length && types.every(t => /PFE/.test(t)), 'seulement des sujets de PFE');
+  // Une seule rangée de filtres ; Offres · Demandes (n) en tête, n les demandes ouvertes qu'il voit
+  assert.equal(await s.page.locator('.offres-page .chips').count(), 1);
+  const onglets = s.page.locator('.offres-seg [role="tab"]');
+  assert.equal(await onglets.count(), 2);
+  assert.equal(await onglets.nth(0).getAttribute('aria-selected'), 'true');
+  assert.match(await onglets.nth(1).innerText(), /^Demandes\s+[1-9]\d*$/);
+  // Une autre puce : l'adresse redevient celle des offres
+  await s.page.click('.offres-chips .chip:has-text("Tout")'); await s.page.waitForTimeout(250);
+  assert.equal(await s.page.evaluate(() => location.hash), '#offres');
+  assert.match(await s.page.locator('#of-publier').innerText(), /Publier une offre/);
+  // « Entre lauréats » : une puce de la même rangée, l'ancien lien y mène aussi
+  await s.aller('offres/laureats'); await s.page.waitForSelector('.offres-chips');
+  assert.equal((await s.page.locator('.offres-chips .chip[aria-pressed="true"]').innerText()).trim(), 'Entre lauréats');
+  assert.equal(await s.page.locator('.ocard').count(), await s.page.locator('.ocard .tag.entre').count());
+  // Une étudiante : ni « Entre lauréats » ni « Mes offres », aucune offre entre lauréats, pas de bouton pour publier
+  await s.comme('Salma'); await s.aller('offres'); await s.page.waitForSelector('.offres-chips');
+  assert.ok(!(await s.page.locator('.offres-chips .chip').allInnerTexts()).some(t => /Entre lauréats|Mes offres/.test(t)));
+  assert.equal(await s.page.locator('.ocard .tag.entre').count(), 0);
+  assert.equal(await s.page.locator('#of-publier').count(), 0);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('offre d’une autre année ouverte par un lien : sans offre pour son année, l’étudiant peut agir tout de suite', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Amine');
@@ -1696,8 +1736,14 @@ test('lauréat qui cherche un emploi : il le coche, voit les offres pour lui, pe
   assert.equal(await s.page.locator('.ocard:has-text("Ingénieur méthodes (CDI)") .ocard-apply').count(), 1);
   // Un lauréat qui recrute la trouve dans la Vitrine des talents
   await s.comme('Youssef'); await s.aller('reseau/talents');
+  // Les listes déroulantes vivent dans la feuille « Filtres » ; le bouton dit ensuite combien de filtres sont actifs
+  await s.page.click('#t-filtres'); await s.page.waitForSelector('.modal #t-niv');
   await s.page.selectOption('#t-niv', 'L'); await s.page.waitForTimeout(300);
-  const carte = s.page.locator('.tcard', { hasText: 'Nadia Ferhat' });
+  assert.match(await s.page.locator('.modal-foot .btn.primary').innerText(), /^Voir (\d+ résultats|1 résultat)$/);
+  await s.page.click('.modal-foot .btn.primary'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.modal').count(), 0);
+  assert.match(await s.page.innerText('#t-filtres'), /Filtres · 1/);
+  const carte = s.page.locator('.talents .ligne', { hasText: 'Nadia Ferhat' });
   assert.equal(await carte.count(), 1);
   assert.match(await carte.innerText(), /Cherche :\s*un emploi/);
   assert.match(await carte.innerText(), /Ingénieur méthodes, Casablanca/);
@@ -1850,9 +1896,9 @@ test('demande d’un étudiant : il publie (CV joint), un lauréat propose, matc
   await s.page.click('#dm-publier'); await s.page.waitForTimeout(400); await fete();
   assert.match(await carte().innerText(), /Ouverte/);
   assert.match(await carte().innerText(), /Les lauréats de ton parcours sont prévenus/);
-  // Youssef la trouve (autre parcours : « Toutes les filières »), voit le CV, propose d'encadrer
+  // Youssef la trouve (autre parcours : la puce « Proches de ma filière » relâchée), voit le CV, propose d'encadrer
   await s.comme('Youssef'); await s.aller('offres/demandes');
-  if (!(await carte().count())) await s.page.click('button:has-text("Toutes les filières")');
+  if (!(await carte().count())) await s.page.click('.dm-filtres button[aria-pressed="true"]:has-text("Proches de ma filière")');
   assert.equal(await carte().locator('button:has-text("Voir le CV")').count(), 1, 'le CV joint est visible');
   await carte().locator('.dm-aider').click(); await s.page.waitForTimeout(200);
   await s.page.click('.dm-aide-choix:has(#dm-aide-encadre)');
@@ -1913,6 +1959,31 @@ test('accueil (360 × 640) : une carte « prochaine étape » et son seul bouton
     assert.ok(r.taches <= 3, `${nom} : ${r.taches} petites choses`);
   }
   assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Cette semaine » : un lauréat sans photo voit « Ajoute une photo », en dernier, ni dans la cloche ni sur la carte ; elle ouvre Mon profil sur la carte photo', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const PHRASE = 'Ajoute une photo, les étudiants écrivent plus facilement à un visage.';
+  await s.comme('Nadia'); await s.aller('accueil');
+  if (await s.page.$('.fete-back, .modal-back')) await s.fermer();
+  const lignes = s.page.locator('.semaine .todo > li');
+  const textes = (await lignes.allInnerTexts()).map(t => t.trim());
+  const i = textes.findIndex(t => t.includes(PHRASE));
+  assert.ok(i >= 0, JSON.stringify(textes));
+  assert.equal(i, textes.length - 1, 'après les vraies tâches');
+  assert.equal(await s.page.locator('.pas', { hasText: 'Ajoute une photo' }).count(), 0, 'jamais la carte du haut');
+  await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
+  assert.equal(await s.page.locator('.modal.cloche', { hasText: 'Ajoute une photo' }).count(), 0, 'ni dans la cloche');
+  await s.fermer();
+  await lignes.nth(i).locator('button').click();
+  await s.page.waitForFunction(() => location.hash === '#profil');
+  await s.page.waitForSelector('.photo-card');
+  assert.ok(await s.page.evaluate(() => { const c = document.querySelector('.photo-card').getBoundingClientRect(); return c.top >= 0 && c.top < innerHeight; }), 'la carte photo est à l’écran');
+  // Un étudiant ne la voit pas
+  await s.comme('Salma'); await s.aller('accueil');
+  assert.equal(await s.page.locator('.semaine', { hasText: 'Ajoute une photo' }).count(), 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -2254,7 +2325,7 @@ test('Retour : ferme la feuille, puis revient à l’écran d’avant, à la mê
   assert.equal(await ici(s.page), '#accueil');
   // La liste reprend sa place
   await s.page.click('.bottom-nav a[href="#reseau"]'); await s.page.waitForTimeout(300);
-  await s.page.click('.icon-tabs button:has-text("Entraide")'); await s.page.waitForTimeout(300);
+  await s.page.click('.puces-nav [role="tab"]:has-text("Entraide")'); await s.page.waitForTimeout(300);
   const ligne = s.page.locator('.qrow').nth(4); await ligne.scrollIntoViewIfNeeded();
   const avant = await s.page.evaluate(() => scrollY); assert.ok(avant > 200);
   await ligne.click(); await s.page.waitForTimeout(300);
@@ -2308,7 +2379,7 @@ test('Retour jusqu’à une page d’avant l’appli (vérification d’attestat
   assert.equal(await ici(s.page), '#verifier/abc');
   await s.page.click('a[href="#accueil"]'); await s.page.waitForSelector('.hello');
   await s.page.click('.bottom-nav a[href="#reseau"]'); await s.page.waitForTimeout(400);
-  await s.page.click('.icon-tabs button:has-text("Entraide")'); await s.page.waitForTimeout(300);
+  await s.page.click('.puces-nav [role="tab"]:has-text("Entraide")'); await s.page.waitForTimeout(300);
   await s.page.locator('.qrow').first().click(); await s.page.waitForTimeout(400);
   await s.page.click('.bottom-nav a[href="#accueil"]'); await s.page.waitForTimeout(900);
   assert.equal(await ici(s.page), '#accueil');

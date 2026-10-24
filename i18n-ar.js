@@ -600,7 +600,49 @@ Object.assign(AR, {
   'Réponse publiée.': 'تم نشر الجواب.',
 });
 
+// Lot design · A : système visuel (boutons, sélection, typographie)
+Object.assign(AR, {
+});
+
+// Lot design · B : onglets sur une ligne, listes courtes, filtres en feuille
+Object.assign(AR, {
+  'Rubriques du réseau': 'أقسام الشبكة', 'Rubriques de l’administration': 'أقسام الإدارة',
+  'Offres ou demandes': 'العروض أو الطلبات', 'Demandes': 'الطلبات', 'Filtrer les offres': 'تصفية العروض', 'Mon offre': 'عرضي',
+  'Les 5A le trouvent sous la puce PFE des offres : décris le vrai problème de l’équipe, tu pourras encadrer l’étudiant qui le prend.': 'يجده طلبة السنة الخامسة تحت زر «مشروع نهاية الدراسة» في العروض: صف المشكلة الحقيقية للفريق، ويمكنك تأطير الطالب الذي يختاره.',
+  'Effacer': 'مسح', 'Voir 1 résultat': 'عرض نتيجة واحدة', 'Aucun résultat': 'لا توجد نتيجة', 'Période': 'الفترة',
+  'Voir le détail': 'عرض التفاصيل', 'Masquer le détail': 'إخفاء التفاصيل',
+});
+
+// Lot design · C : visages, logos, icônes, badges, bouclier « vérifié »
+Object.assign(AR, {
+  'Logos affichés pour reconnaître les entreprises, sans aucun partenariat.': 'شعارات معروضة للتعرّف على الشركات، دون أي شراكة.',
+  'Profil vérifié': 'ملف موثَّق',
+  'Profil vérifié : ce que ça veut dire': 'ملف موثَّق: ماذا يعني ذلك؟',
+  'Diplôme confirmé : nom sur la liste officielle de sa promo, confirmation par deux lauréats vérifiés de la même promo, ou par l’équipe du réseau.': 'الشهادة مؤكَّدة: الاسم في اللائحة الرسمية للدفعة، أو تأكيد من خريجَين موثَّقَين من الدفعة نفسها، أو من فريق الشبكة.',
+  'Inscription confirmée : e-mail de l’école, nom sur la liste officielle de sa promo, ou confirmation par l’équipe du réseau.': 'التسجيل مؤكَّد: البريد الإلكتروني للمدرسة، أو الاسم في اللائحة الرسمية للدفعة، أو تأكيد من فريق الشبكة.',
+  'Ajoute une photo, les étudiants écrivent plus facilement à un visage.': 'إضافة صورة: الطلبة يراسلون وجهًا بسهولة أكبر.',
+});
+
+// Lot design · D : ordinateur
+Object.assign(AR, {
+});
+
 export const AR_PATTERNS = [
+  // Lot design · A (motifs)
+  // (fin A)
+  // Lot design · B (motifs)
+  [/^Voir plus \((\d+)\)$/, n => `عرض المزيد (${n})`],
+  [/^Filtres · (\d+)$/, n => `تصفية · ${n}`],
+  [/^Voir (\d+) résultats$/, n => `عرض ${arCount(n, ['نتيجة واحدة', 'نتيجتين', 'نتائج', 'نتيجة'])}`],
+  [/^(\d+) sur (\d+) membres$/, (a, b) => `${a} من ${arCount(b, MEMBRES)}`],
+  [/^(\d+) talents?$/, n => arCount(n, ['موهبة واحدة', 'موهبتان', 'مواهب', 'موهبة'])],
+  [/^(\d+) entreprises?$/, n => arCount(n, ['شركة واحدة', 'شركتان', 'شركات', 'شركة'])],
+  [/^Voir l’entreprise : (.+)$/, x => `عرض الشركة: ${x}`],
+  // (fin B)
+  // Lot design · C (motifs)
+  // (fin C)
+  // Lot design · D (motifs)
+  // (fin D)
   // Accueil : la carte « prochaine étape » et la cloche
   [/^Premiers pas · (\d+) sur (\d+)$/, (a, b) => `الخطوات الأولى · ${a} من ${b}`],
   [/^Rendez-vous (aujourd’hui|demain) à (\d{1,2}:\d{2})$/, (d, h) => `موعد ${d === 'demain' ? 'غدًا' : 'اليوم'} على الساعة ${h}`],

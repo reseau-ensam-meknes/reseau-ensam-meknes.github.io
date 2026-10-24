@@ -7,6 +7,7 @@ import { coordsOf, canonPays, countryCentroid, PAYS_AR, recherche, villeAffichee
 import { OfferCard, matchesMe } from './offers.js';
 import { EntrepriseResume, QuestionsRecentes } from './entreprises.js';
 import { SignalerBtn } from './confiance.js';
+import { PersonneLigne, useVoirPlus, VoirPlus, BoutonFiltres, FeuilleFiltres } from './lignes.js';
 
 // Les entreprises ont leur propre onglet (Réseau > Entreprises), avec les avis et les entretiens
 const VUES = [['personnes', 'Personnes', 'people'], ['carte', 'Carte', 'pin'], ['startups', 'Startups', 'spark']];
@@ -31,6 +32,8 @@ export function AnnuairePro({ ctx }) {
 // ---------------------------------------------------------------------------
 // Personnes
 // ---------------------------------------------------------------------------
+// Une recherche et un bouton « Filtres » ; rôle, filière, secteur, promo et étranger vivent dans une feuille du bas.
+// Les lignes : visage, nom et méta, le logo de l'entreprise à droite (il ouvre sa fiche) ; 20, puis « Voir plus ».
 function Personnes({ ctx, preset = '' }) {
   const { data, scores, openProfile, me, saison } = ctx;
   const parc = parcoursOf(me.filiere)[0];
@@ -38,22 +41,33 @@ function Personnes({ ctx, preset = '' }) {
   const [fil, setFil] = useState(preset === 'ma-filiere' ? me.filiere || '' : preset === 'mon-parcours' && parc ? 'parcours:' + parc : '');
   const maPromo = me.role === 'laureat' && !!me.promo;
   const [promo, setPromo] = useState(preset === 'ma-promo');
+  const [feuille, setFeuille] = useState(false);
   const myN = me.role === 'etudiant' ? niveauOf(me, saison) : null; // un étudiant voit les lauréats et sa propre promo
   const trouve = recherche(q); // « مكناس » trouve Meknès, accents et casse ignorés
   const dir = data.profiles.filter(p => p.role !== 'admin' && (myN === null || p.role !== 'etudiant' || niveauOf(p, saison) === myN) && (!role || p.role === role) && filtreFiliere(fil, p.filiere)
     && (!sect || p.secteur === sect) && (!abroad || (p.pays && canonPays(p.pays) !== 'Maroc')) && (!promo || !maPromo || (p.promo === me.promo && p.id !== me.id))
     && (!trouve || trouve(`${p.full_name} ${p.entreprise || ''} ${p.poste || ''} ${p.secteur || ''} ${(p.competences || []).join(' ')}`, p.ville, p.pays)))
     .sort((a, b) => a.full_name.localeCompare(b.full_name));
+  const actifs = [role, fil, sect].filter(Boolean).length + (abroad ? 1 : 0) + (promo && maPromo ? 1 : 0);
+  const effacer = () => { setRole(''); setFil(''); setSect(''); setAbroad(false); setPromo(false); };
+  const { vus, reste, plus } = useVoirPlus(dir, 20, [q, role, fil, sect, abroad, promo].join('|'));
+  const lieu = p => [villeLabel(p.ville), p.pays && canonPays(p.pays) !== 'Maroc' ? paysLabel(p.pays) : ''].filter(Boolean).join(' · ');
   return html`<div class="sub-page">
-    <div class="filter-row"><label class="search"><${Icon} name="search" size=${16}/><input id="d-q" placeholder="Nom, entreprise, ville, compétence…" value=${q} onInput=${e => setQ(e.target.value)}/></label>
-      <select id="d-role" value=${role} onChange=${e => setRole(e.target.value)} aria-label="Rôle"><option value="">Tous</option><option value="laureat">Lauréats</option><option value="etudiant">${myN ? 'Mon année' : 'Étudiants'}</option></select>
-      <${FiliereFiltre} id="d-fil" value=${fil} onChange=${setFil}/>
-      <select id="d-sect" value=${sect} onChange=${e => setSect(e.target.value)} aria-label="Secteur"><option value="">Tous secteurs</option>${SECTEURS.map(f => html`<option value=${f}>${f}</option>`)}</select></div>
-    <div class="chips">${maPromo ? html`<button id="d-promo" class=${'chip' + (promo ? ' on' : '')} aria-pressed=${promo} onClick=${() => setPromo(!promo)}><${Icon} name="cap" size=${14}/> Ma promo</button>` : null}<button class=${'chip' + (abroad ? ' on' : '')} aria-pressed=${abroad} onClick=${() => setAbroad(!abroad)}><${Icon} name="globe" size=${14}/> À l’étranger</button><span class="muted small">${dir.length} membre${dir.length > 1 ? 's' : ''}</span></div>
-    <ul class="dir">${dir.slice(0, 150).map(p => html`<li key=${p.id}><${Person} p=${p} score=${scores.get(p.id)} onOpen=${openProfile} sansEntreprise=${p.role === 'laureat' && !!p.entreprise}/>
-      <span class="muted small">${[p.poste, p.secteur].filter(Boolean).join(' · ')}${(l => l ? html`${p.poste || p.secteur ? ' · ' : ''}<span translate="no">${l}</span>` : null)([villeLabel(p.ville), p.pays && canonPays(p.pays) !== 'Maroc' ? paysLabel(p.pays) : ''].filter(Boolean).join(' · '))}</span>
-      ${p.role === 'laureat' && p.entreprise ? html`<button class="linkish small ent-link" onClick=${() => ctx.openEntreprise(p.entreprise)}><${Icon} name="briefcase" size=${13}/> ${p.entreprise}</button>` : null}</li>`)}</ul>
-    ${dir.length > 150 ? html`<p class="muted small center">Affine la recherche pour voir les autres.</p>` : null}
+    <div class="recherche-filtres"><label class="search"><${Icon} name="search" size=${16}/><input id="d-q" placeholder="Nom, entreprise, ville, compétence…" value=${q} onInput=${e => setQ(e.target.value)}/></label>
+      <${BoutonFiltres} id="d-filtres" actifs=${actifs} onClick=${() => setFeuille(true)}/></div>
+    <p class="liste-tete" id="d-total">${`${dir.length} membre${dir.length > 1 ? 's' : ''}`}</p>
+    ${dir.length ? html`<ul class="lignes annuaire">${vus.map(p => html`<li key=${p.id} class="ligne">
+      <${PersonneLigne} p=${p} score=${scores.get(p.id)} onOpen=${openProfile} sansEntreprise=${p.role === 'laureat' && !!p.entreprise}
+        meta=${(p.poste || p.secteur || lieu(p)) ? html`${[p.poste, p.secteur].filter(Boolean).join(' · ')}${(l => l ? html`${p.poste || p.secteur ? ' · ' : ''}<span translate="no">${l}</span>` : null)(lieu(p))}` : null}/>
+      ${p.role === 'laureat' && p.entreprise ? html`<span class="ligne-act"><button type="button" class="ligne-logo" onClick=${() => ctx.openEntreprise(p.entreprise)} aria-label=${`Voir l’entreprise : ${p.entreprise}`} title=${p.entreprise}><${CompanyLogo} name=${p.entreprise} size=${32}/></button></span>` : null}
+    </li>`)}</ul>` : html`<${Empty} icon="network" title="Personne ne correspond à ces critères">Essaie une autre filière ou enlève un filtre.<//>`}
+    <${VoirPlus} reste=${reste} onPlus=${plus}/>
+    ${feuille ? html`<${FeuilleFiltres} total=${dir.length} actifs=${actifs} onEffacer=${effacer} onClose=${() => setFeuille(false)}>
+      <${Field} label="Rôle"><select id="d-role" value=${role} onChange=${e => setRole(e.target.value)}><option value="">Tous</option><option value="laureat">Lauréats</option><option value="etudiant">${myN ? 'Mon année' : 'Étudiants'}</option></select><//>
+      <${Field} label="Filière"><${FiliereFiltre} id="d-fil" value=${fil} onChange=${setFil}/><//>
+      <${Field} label="Secteur"><select id="d-sect" value=${sect} onChange=${e => setSect(e.target.value)}><option value="">Tous secteurs</option>${SECTEURS.map(f => html`<option value=${f}>${f}</option>`)}</select><//>
+      <div class="filtres-bascules">${maPromo ? html`<button type="button" id="d-promo" class=${'chip' + (promo ? ' on' : '')} aria-pressed=${promo} onClick=${() => setPromo(!promo)}><${Icon} name="cap" size=${14}/> Ma promo</button>` : null}<button type="button" id="d-etranger" class=${'chip' + (abroad ? ' on' : '')} aria-pressed=${abroad} onClick=${() => setAbroad(!abroad)}><${Icon} name="globe" size=${14}/> À l’étranger</button></div>
+    <//>` : null}
   </div>`;
 }
 

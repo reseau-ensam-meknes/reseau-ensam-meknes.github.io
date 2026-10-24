@@ -102,7 +102,7 @@ export function InvitationsAdmin({ ctx }) {
         <button class="btn tiny ghost" onClick=${() => setApercu(promo)} aria-pressed=${apercu === promo}><${Icon} name="eye" size=${14}/> Aperçu</button>
         <button class="btn tiny ghost" onClick=${() => copier(lien, 'Lien copié.')}><${Icon} name="link" size=${14}/> Copier le lien</button>
         <button class="btn tiny ghost" onClick=${() => copier(msg, 'Message copié : colle-le dans le groupe WhatsApp.')}><${Icon} name="copy" size=${14}/> Copier le message</button>
-        <a class="btn tiny primary" href=${'https://wa.me/?text=' + encodeURIComponent(msg)} target="_blank" rel="noopener"><${Icon} name="send" size=${14}/> Envoyer sur WhatsApp</a>
+        <a class="btn tiny tonal" href=${'https://wa.me/?text=' + encodeURIComponent(msg)} target="_blank" rel="noopener"><${Icon} name="send" size=${14}/> Envoyer sur WhatsApp</a>
       </div></li>`;
   };
   return html`<div class="panel">
@@ -127,16 +127,17 @@ injectCSS('invitation', `
 .inv-opts { justify-content: space-between; gap: .6rem; margin: .3rem 0 .6rem; }
 .inv-autre { gap: .4rem; flex-wrap: nowrap; }
 .inv-autre input { width: 8.5rem; }
-.inv-list { list-style: none; margin: .2rem 0 .8rem; padding: 0; display: flex; flex-direction: column; gap: .4rem; }
-.inv-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .8rem; padding: .6rem .75rem; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); }
-.inv-row.on { border-color: var(--accent); }
+.inv-list { list-style: none; margin: .2rem 0 .8rem; padding: 0; display: flex; flex-direction: column; }
+.inv-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .8rem; padding: .7rem .6rem; border-radius: var(--r-md); }
+.inv-row + .inv-row { border-top: 1px solid var(--line); }
+.inv-row.on { background: var(--sel-bg); box-shadow: inset 0 0 0 1px var(--sel-ring); }
+.inv-row.on, .inv-row.on + .inv-row { border-top-color: transparent; }
 .inv-row .grow { min-width: 0; flex: 1 1 220px; display: flex; flex-direction: column; gap: .15rem; }
-.inv-link { color: var(--ink-2); overflow-wrap: anywhere; }
+.inv-link { color: var(--ink-2); overflow-wrap: anywhere; font-size: var(--fs-2); }
 .inv-act { display: flex; flex-wrap: wrap; gap: .3rem; }
 a.pa-geste { text-decoration: none; }
-.promo-card { display: flex; align-items: center; gap: .9rem; flex-wrap: wrap; padding: 1rem 1.1rem; margin-block-start: .8rem; border-radius: 14px; background: linear-gradient(120deg, var(--accent-soft), var(--surface) 75%); border: 1px solid var(--line); }
-[dir="rtl"] .promo-card { background: linear-gradient(240deg, var(--accent-soft), var(--surface) 75%); }
+.promo-card { display: flex; align-items: center; gap: .9rem; flex-wrap: wrap; padding: 1rem 1.1rem; margin-block-start: .8rem; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--sh1); }
 .promo-card .grow { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; gap: .15rem; }
-.promo-ico { display: inline-grid; place-items: center; width: 46px; height: 46px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); flex: none; }
-.inv-msg { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: .9rem; line-height: 1.55; padding: .8rem .9rem; border-radius: 10px; background: var(--surface-2); color: var(--ink); }
+.promo-ico { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--tonal-bg); color: var(--tonal-ink); flex: none; }
+.inv-msg { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: var(--fs-3); line-height: 1.55; padding: .8rem .9rem; border-radius: var(--r-md); background: var(--surface-2); color: var(--ink); }
 `);

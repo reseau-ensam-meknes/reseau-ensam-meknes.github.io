@@ -569,6 +569,51 @@ export function daysUntil(dateStr, now = new Date()) { if (!dateStr) return null
 export const initials = name => (name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('');
 export const pct = x => `${Math.round(x * 100)}%`;
 
+// Logos d'entreprises : de vrais logos, gardés sur le site (img/logos/), jamais chargés chez un tiers ; aucun partenariat.
+// Nom (et variantes) → fichier. Un nom correspond s'il commence par l'une des formes, mot pour mot
+// (« Renault Group Maroc », « Safran Nacelles », « Airbus Operations », « Capgemini Engineering »).
+// Une société qui a son propre logo ne prend pas celui du groupe : « Siemens Gamesa » garde son monogramme.
+// Sources : simple-icons (abb, accenture, airbus, boeing, bosch, huawei, orange, renault, schneider-electric)
+// et l'image du compte GitHub officiel de l'entreprise (capgemini, cgi, decathlon, hydro-quebec, safran, sopra-steria).
+export const LOGOS_ENTREPRISES = [
+  ['abb', ['abb', 'abb maroc']],
+  ['accenture', ['accenture', 'accenture maroc']],
+  ['airbus', ['airbus', 'airbus group', 'groupe airbus', 'airbus operations']],
+  ['boeing', ['boeing', 'the boeing company']],
+  ['bosch', ['bosch', 'robert bosch', 'groupe bosch']],
+  ['capgemini', ['capgemini', 'groupe capgemini', 'capgemini engineering', 'capgemini technology services maroc']],
+  ['cgi', ['cgi', 'cgi maroc']],
+  ['decathlon', ['decathlon', 'decathlon maroc']],
+  ['huawei', ['huawei', 'huawei technologies', 'huawei maroc']],
+  ['hydro-quebec', ['hydro quebec']],
+  ['orange', ['orange', 'groupe orange', 'orange maroc', 'orange business']],
+  ['renault', ['renault', 'groupe renault', 'renault group', 'renault group maroc', 'renault maroc', 'renault tanger']],
+  ['safran', ['safran', 'groupe safran', 'safran nacelles']],
+  ['schneider-electric', ['schneider electric', 'schneider']],
+  ['sopra-steria', ['sopra steria', 'soprasteria', 'groupe sopra steria']],
+];
+const sansAccents = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
+const nomNormalise = s => sansAccents(s).toLowerCase().replace(/\(.*?\)/g, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
+export function logoEntreprise(nom) {
+  const n = nomNormalise(nom);
+  if (!n) return null;
+  for (const [f, formes] of LOGOS_ENTREPRISES) if (formes.some(x => n === x || n.startsWith(x + ' '))) return `img/logos/${f}.png`;
+  return null;
+}
+// Monogramme d'une entreprise sans logo : un sigle gardé entier (OCP, ONEE, TGCC), sinon les initiales des deux premiers mots.
+// « Groupe », la forme juridique, le pays et les villes ne comptent pas (Stellantis Kénitra → S), sauf en tête (Tanger Med → TM).
+const MOTS_VIDES = new Set(['de', 'du', 'des', 'd', 'la', 'le', 'les', 'l', 'et', 'and', 'of', 'the', 'group', 'groupe', 'ste', 'societe', 'company', 'corp', 'corporation', 'operations', 'international', 'holding', 'sa', 'sas', 'sarl', 'ag', 'inc', 'ltd', 'llc', 'gmbh', 'plc', 'maroc', 'morocco', 'kenitra', 'tanger', 'tangier', 'casablanca', 'rabat', 'meknes', 'fes', 'fez', 'agadir', 'jorf', 'lasfar']);
+const TETE_VIDE = new Set(['the', 'group', 'groupe', 'ste', 'societe', 'la', 'le', 'les', 'l']);
+export function monogramme(nom) {
+  const cle = m => sansAccents(m).toLowerCase();
+  const mots = String(nom || '').replace(/\(.*?\)/g, ' ').replace(/([a-zà-ÿ])([A-Z])/g, '$1 $2').split(/[\s\-–—&'’.,/]+/).filter(Boolean);
+  while (mots.length > 1 && TETE_VIDE.has(cle(mots[0]))) mots.shift();
+  const garde = mots.filter((m, i) => i === 0 || !MOTS_VIDES.has(cle(m)));
+  if (!garde.length) return '?';
+  if (/^[A-Z0-9]{2,4}$/.test(garde[0])) return garde[0];
+  return (garde.length > 1 ? [...garde[0]][0] + [...garde[1]][0] : [...garde[0]][0]).toUpperCase();
+}
+
 // ---------------------------------------------------------------------------
 // Phase 2 : annuaire pro, entreprises, groupes, défis, coupe des promos, relance douce, bilans
 // ---------------------------------------------------------------------------
@@ -1057,7 +1102,14 @@ export const annoncePour = (annonces, me, now = Date.now()) => (annonces || []).
 // Jamais ce que montre la carte du haut ; pas les demandes d'aide (md, rd, qr : « Ils ont besoin de toi »),
 // ni les coordonnées (dc : leur carte), ni le recrutement à confirmer (pa : la carte), ni les rappels de rendez-vous (rdv).
 // Une présence à confirmer (sc) y vient tant que le rendez-vous est loin ; la veille, elle passe sur la carte.
-export const TACHES = { dp: 0, ap: 0, dm: 0, rc: 0, sc: 1, in: 1, sg: 1, sf: 2, rr: 2, pm: 2, mf: 2, ev: 3, dr: 4, ro: 4, eq: 5 };
+// La photo (ph) vient en dernier : après toutes les vraies tâches.
+export const TACHES = { dp: 0, ap: 0, dm: 0, rc: 0, sc: 1, in: 1, sg: 1, sf: 2, rr: 2, pm: 2, mf: 2, ev: 3, dr: 4, ro: 4, eq: 5, ph: 6 };
+// « Ajoute une photo » : un lauréat sans photo, quand la base accepte les photos (en ligne, la colonne photo_path existe ;
+// même règle que pretPhoto dans photo.js). Seulement dans « Cette semaine » (semaine) : ni la cloche ni la carte du haut.
+export function tachePhoto(me, { live = false } = {}) {
+  if (!me || me.role !== 'laureat' || me.photo_path || (live && !('photo_path' in me))) return null;
+  return { key: 'ph', action: true, semaine: true, tone: 'accent', icon: 'camera', to: 'profil', at: me.created_at || new Date(0).toISOString(), text: 'Ajoute une photo, les étudiants écrivent plus facilement à un visage.' };
+}
 export function petitesTaches(notifs, pas = {}) {
   const deja = new Set([pas.key, ...(pas.cles || [])].filter(Boolean));
   return notifs.filter(n => n.action && !n.rdv && TACHES[(n.key || '').slice(0, 2)] !== undefined && !deja.has(n.key) && !(pas.ref && n.ref === pas.ref))

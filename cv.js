@@ -102,7 +102,7 @@ export function CvCard({ ctx }) {
         : last.status === 'rendue' ? html`<strong>${last.merci || last.note ? 'Ta dernière relecture est rendue' : 'Ta relecture est prête'}</strong><span class="small muted">${reviewer ? `Par ${reviewer.full_name} · ${timeAgo(last.rendue_at || last.created_at)}` : timeAgo(last.rendue_at || last.created_at)}</span>`
         : last.status === 'en_cours' ? html`<strong>${reviewer ? `${firstName(reviewer)} relit ton CV` : 'Ton CV est en cours de relecture'}</strong><span class="small muted">On te prévient dès que c’est fini.</span>`
         : html`<strong>CV envoyé</strong><span class="small muted">${reviewer ? `En attente de ${firstName(reviewer)} · ${timeAgo(last.created_at)}` : 'En attente d’un lauréat disponible'}</span>`}</span>
-      ${last ? html`<button class=${'btn small' + (last.status === 'rendue' && !last.merci && !last.note ? ' primary' : ' ghost')} onClick=${() => go('mentorat/cv')}>${last.status === 'rendue' && !last.merci && !last.note ? 'Lire les conseils' : 'Suivre'}</button>` : null}
+      ${last ? html`<button class=${'btn small' + (last.status === 'rendue' && !last.merci && !last.note ? ' tonal' : ' ghost')} onClick=${() => go('mentorat/cv')}>${last.status === 'rendue' && !last.merci && !last.note ? 'Lire les conseils' : 'Suivre'}</button>` : null}
       ${me.cv_path && enCours < 2 && (!last || !ACTIVES.includes(last.status)) ? html`<button id="cv-ask" class=${'btn small' + (last ? ' ghost' : ' primary')} onClick=${() => setAsk(true)}>${last ? 'Nouvelle relecture' : 'Demander une relecture'}</button>` : null}
     </div>` : null}
     ${ask ? html`<${DemandeRelecture} ctx=${ctx} onClose=${() => setAsk(false)}/>` : null}
@@ -371,7 +371,7 @@ function Retour({ ctx, r, side }) {
     <${Commentaires} ctx=${ctx} r=${r} coms=${coms}/>
     ${side === 'student' && !r.merci && !r.note ? html`<form class="merci-box" onSubmit=${e => { e.preventDefault(); act(async () => { await store.update('relectures_cv', r.id, { note, merci: merci.trim() || null }); toast(merci.trim() ? `Merci envoyé à ${firstName(reviewer)} !` : 'C’est noté, merci !', 'win'); }); }}>
       <p><${Icon} name="heart" size=${16}/> <strong>Cette relecture t’a été utile ?</strong></p>
-      <span class="stars" role="group" aria-label="Aide reçue">${[1, 2, 3, 4, 5].map(v => html`<button type="button" class=${v <= note ? 'on' : ''} aria-label=${v + ' sur 5'} onClick=${() => setNote(v)}>★</button>`)}</span>
+      <span class="stars" role="radiogroup" aria-label="Aide reçue">${[1, 2, 3, 4, 5].map(v => html`<button type="button" role="radio" aria-checked=${v === note} class=${v <= note ? 'on' : ''} aria-label=${v + ' sur 5'} onClick=${() => setNote(v)}>★</button>`)}</span>
       <textarea id=${'rv-merci-' + r.id} rows="2" maxlength="800" placeholder="Un mot de remerciement…" value=${merci} onInput=${e => setMerci(e.target.value)}></textarea>
       <div class="row-end"><button class="btn primary small">${merci.trim() ? 'Envoyer mon merci' : 'Envoyer ma note'}</button></div>
     </form>` : null}
@@ -389,29 +389,31 @@ injectCSS('cv', `
 .cv-file .grow, .cv-relu .grow { display: flex; flex-direction: column; min-width: 10rem; flex: 1; }
 .cv-ico { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); flex: none; }
 .cv-acts { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; }
-.cv-drop { display: flex; flex-direction: column; align-items: center; gap: .35rem; padding: 1.3rem 1rem; border: 2px dashed var(--line); border-radius: 14px; background: var(--surface-2); color: var(--ink); cursor: pointer; text-align: center; font: inherit; width: 100%; transition: border-color .2s, background .2s; }
-.cv-drop:hover, .cv-drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.cv-drop { display: flex; flex-direction: column; align-items: center; gap: .35rem; padding: 1.3rem 1rem; border: 1.5px dashed var(--line-strong); border-radius: var(--r-lg); background: var(--surface-2); color: var(--ink); cursor: pointer; text-align: center; font: inherit; width: 100%; transition: border-color .2s, background .2s; }
+.cv-drop:hover, .cv-drop.over { border-color: var(--accent); background: var(--sel-bg); }
 .cv-drop .cv-ico { background: var(--surface); }
 .cv-vis { display: flex; gap: .35rem; align-items: center; flex-wrap: wrap; margin: 0; }
 .cv-vis svg { flex: none; }
 .cv-relu { padding-top: .75rem; border-top: 1px solid var(--line); }
-.atelier, .rel-retour { display: flex; flex-direction: column; gap: .7rem; padding-top: .7rem; border-top: 1px dashed var(--line); }
+.atelier, .rel-retour { display: flex; flex-direction: column; gap: .7rem; padding-top: .7rem; border-top: 1px solid var(--line); }
 .atelier .row.wrap { flex-wrap: wrap; }
 .rel-coms { display: grid; gap: .55rem; }
-.rel-rub h3 { font-size: .9rem; margin: 0 0 .3rem; color: var(--ink-2); }
-.rel-rub ul { list-style: none; margin: 0; padding: 0; display: grid; gap: .3rem; }
-.rel-rub li { display: flex; gap: .45rem; align-items: flex-start; padding: .45rem .65rem; border-radius: 10px; background: var(--surface-2); font-size: .92rem; }
+.rel-rub h3 { font-size: var(--fs-3); margin: 0 0 .2rem; color: var(--ink); }
+.rel-rub ul { list-style: none; margin: 0; padding: 0; display: grid; }
+.rel-rub li { display: flex; gap: .45rem; align-items: flex-start; padding: .5rem 0; font-size: var(--fs-3); }
+.rel-rub li + li { border-top: 1px solid var(--line); }
 .rel-rub li > span[dir] { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .rel-rub li .mini { margin: 0; flex: none; }
-.rel-rub li.from-student { background: var(--accent-soft); }
+.rel-rub li.from-student { padding-inline-start: .7rem; border-inline-start: 3px solid var(--accent); }
 .rel-rub li .icon-btn { margin-inline-start: auto; flex: none; }
 .rub-chips { display: flex; flex-wrap: wrap; gap: .3rem; }
 .rel-add { display: flex; flex-direction: column; gap: .5rem; }
 .rel-add-row { display: flex; gap: .5rem; align-items: flex-end; }
 .rel-add-row textarea, .rel-add-row input { flex: 1; min-width: 0; }
-.rel-syn { padding: .7rem .9rem; border-radius: 12px; background: var(--brass-soft); }
+.rel-syn { padding-block: .15rem; padding-inline: .9rem 0; border-inline-start: 3px solid var(--brass); }
 .rel-syn p { margin: 0; }
-.rel-syn .eyebrow { color: var(--brass); margin-bottom: .25rem; display: flex; gap: .3rem; align-items: center; }
+.rel-syn .eyebrow { color: var(--ink-2); margin-bottom: .25rem; display: flex; gap: .3rem; align-items: center; }
+.rel-syn .eyebrow svg { color: var(--brass); }
 .mentor-seg button { display: inline-flex; align-items: center; gap: .35rem; }
 .apply-cv { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin: 0; }
 @media (max-width: 640px) {
