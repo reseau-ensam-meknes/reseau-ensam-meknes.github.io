@@ -60,7 +60,7 @@ else{d.dataset.entree='visiteur';setTimeout(function(){if(!window.ENSAM_ENTREE)d
 }
 /* Nuit : quatre bleus nuit, ce qui est au-dessus est plus clair (fond, cartes, éléments levés, feuilles) ; plus de fonds bruns */
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-  --bg: #0B1320; --surface: #131D2D; --surface-2: #1B2739; --raised: #24324A; --ink: #E6ECF4; --ink-2: #B3BFD0; --muted: #8C9AB0; --line: #233046; --line-strong: #34445D;
+  --bg: #0B1320; --surface: #131D2D; --surface-2: #1B2739; --raised: #24324A; --ink: #E6ECF4; --ink-2: #B3BFD0; --muted: #97A4B9; --line: #233046; --line-strong: #34445D;
   --accent: #5DB4EA; --accent-ink: #04121F; --accent-soft: #1A3450; --accent-hover: #7CC3EE; --brass: #F6A94A; --brass-soft: #2C2B31; --orange: #F6A94A; --navy: #C9D6E8;
   --brass-on-ink: #8F4800; --blue-text: #7CC3EE; --lvl1: #C8925F; --bad-ink: #2A0A0C;
   --good: #5DC991; --good-soft: #1B3338; --warn: #EEAE52; --warn-soft: #2E2E31; --bad: #F27C83; --bad-soft: #312938;
@@ -73,7 +73,7 @@ else{d.dataset.entree='visiteur';setTimeout(function(){if(!window.ENSAM_ENTREE)d
   --sel-bg: #1C3A58; --sel-ink: #9AD2F5; --sel-ring: rgb(93 180 234 / .42);
   --tonal-bg: #1A3450; --tonal-ink: #9AD2F5; --tonal-hover: #20405F; color-scheme: dark; } }
 :root[data-theme="dark"] {
-  --bg: #0B1320; --surface: #131D2D; --surface-2: #1B2739; --raised: #24324A; --ink: #E6ECF4; --ink-2: #B3BFD0; --muted: #8C9AB0; --line: #233046; --line-strong: #34445D;
+  --bg: #0B1320; --surface: #131D2D; --surface-2: #1B2739; --raised: #24324A; --ink: #E6ECF4; --ink-2: #B3BFD0; --muted: #97A4B9; --line: #233046; --line-strong: #34445D;
   --accent: #5DB4EA; --accent-ink: #04121F; --accent-soft: #1A3450; --accent-hover: #7CC3EE; --brass: #F6A94A; --brass-soft: #2C2B31; --orange: #F6A94A; --navy: #C9D6E8;
   --brass-on-ink: #8F4800; --blue-text: #7CC3EE; --lvl1: #C8925F; --bad-ink: #2A0A0C;
   --good: #5DC991; --good-soft: #1B3338; --warn: #EEAE52; --warn-soft: #2E2E31; --bad: #F27C83; --bad-soft: #312938;
@@ -170,7 +170,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .icon-btn:hover { background: var(--surface-2); color: var(--ink); }
 .icon-btn.small { width: 28px; height: 28px; }
 .icon-btn.on { color: var(--sel-ink); background: var(--sel-bg); }
-.linkish { border: 0; background: none; padding: 0; color: var(--accent); cursor: pointer; font-weight: 600; }
+.linkish { border: 0; background: none; padding: 0; color: var(--blue-text); cursor: pointer; font-weight: 600; }
 input, select, textarea { width: 100%; padding: .58rem .75rem; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); min-width: 0; transition: border-color .15s, box-shadow .15s; }
 :is(input, select, textarea):not([type="checkbox"], [type="radio"], [type="range"]):focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 :is(input, textarea)::placeholder { color: color-mix(in srgb, var(--muted) 85%, transparent); }
