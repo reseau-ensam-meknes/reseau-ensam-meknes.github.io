@@ -20,14 +20,16 @@ const OFFRES = [{ id: OFFRE, author_id: AUTEUR, type: 'pfe', titre: 'PFE Lean ma
 let site, navigateur;
 // Membres fondateurs : la réponse de fondateurs_publics() pour un test (null : la base n'a pas encore la fonction)
 let fondateursFaux = null;
+// Ambassadeurs de promo : les lignes de la table (null : la base n'a pas encore la table)
+let ambFaux = null;
 const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
 before(async () => {
   assert.ok(fs.existsSync(path.join(SITE, 'index.html')), `site introuvable : ${SITE} (lance d’abord sh build.sh)`);
-  site = await fauxSite(SITE, { offres: OFFRES, profils: PROFILS, partagees: { [OFFRE]: { type: 'pfe', audience: 'etudiants', ouverte: true }, [DISPARUE]: null, [INCONNUE]: 404 }, fondateurs: m => fondateursFaux?.(m) ?? null, photo: PIXEL });
+  site = await fauxSite(SITE, { offres: OFFRES, profils: PROFILS, partagees: { [OFFRE]: { type: 'pfe', audience: 'etudiants', ouverte: true }, [DISPARUE]: null, [INCONNUE]: 404 }, fondateurs: m => fondateursFaux?.(m) ?? null, photo: PIXEL, ambassadeurs: () => ambFaux, chiffresPromo: { inscrits: 12, nouveaux: 3, demandes: 2, demandes_mois: 1, stages: 4, stages_mois: 1 } });
   navigateur = await chromium.launch();
 });
 after(async () => { await navigateur?.close(); site?.fermer(); });
-beforeEach(() => { site.vider(); fondateursFaux = null; });
+beforeEach(() => { site.vider(); fondateursFaux = null; ambFaux = null; });
 
 // langue: null = un visiteur qui n'a jamais choisi de langue ; avant(ctx) : réseau à régler avant la première visite
 async function visiteur({ largeur = 360, hauteur = 640, langue = 'fr', hash = '', query = '', stockage = {}, avant } = {}) {
@@ -800,6 +802,44 @@ test('base pas encore à jour : l’accueil d’un membre s’ouvre, les fondate
   assert.match(await m.page.locator('.fd-accueil .fd-places').innerText(), /24 places de membre fondateur restantes sur 25/);
   assert.doesNotMatch(await m.page.locator('.fd-accueil').innerText(), /points?\b/i, 'jamais de points pour une étudiante');
   assert.equal(await m.page.locator('.modal.fd-feuille, .fete-back').count(), 0);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Ambassadeurs de promo (en ligne) : la base propose, le membre accepte ; base pas encore à jour : rien ne casse
+// ---------------------------------------------------------------------------
+test('ambassadeur de promo en ligne : la proposition sur l’accueil, « Accepter », puis le lien et les chiffres de la promo', async () => {
+  const now = new Date().toISOString();
+  ambFaux = [{ id: 'a0000000-0000-4000-8000-000000000001', promo: S + 1, filiere: 'Génie Industriel', user_id: UID, statut: 'propose', par: 'auto', propose_at: now, repondu_at: null, created_at: now }];
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  const m = await membre();
+  await m.page.waitForSelector('[data-pas^="am"], #amb-proposition', { timeout: 15000 });
+  await m.page.waitForTimeout(1500);
+  assert.ok(site.appels.some(a => a.u === '/sb/rest/v1/rpc/ambassadeurs_proposer'), 'la base est appelée à l’ouverture');
+  if (await m.page.$('.fete-back')) { await m.page.keyboard.press('Escape'); await m.page.waitForTimeout(300); }
+  assert.match(await m.page.locator('[data-pas^="am"], #amb-proposition').first().innerText(), new RegExp(`Deviens ambassadeur de ta promo \\(.+ ${S + 1}\\)`));
+  const bouton = (await m.page.$('[data-pas^="am"] .pas-go')) ? '[data-pas^="am"] .pas-go' : '#amb-accepter';
+  await m.page.click(bouton);
+  await m.page.waitForSelector('.fete-back', { timeout: 8000 });
+  assert.match(await m.page.locator('.fete').innerText(), /Merci, ambassadeur de ta promo !/);
+  assert.deepEqual(site.appels.find(a => a.u === '/sb/rest/v1/ambassadeurs' && a.m === 'PATCH')?.corps, { statut: 'accepte' });
+  await m.page.keyboard.press('Escape');
+  await m.page.waitForSelector('#amb-carte');
+  const t = await m.page.locator('#amb-carte').innerText();
+  assert.match(t, /12\s*inscrits\s*\+3 ce mois-ci/);
+  assert.match(t, /4\s*stages et emplois trouvés/);
+  assert.match(await m.page.getAttribute('#amb-wa', 'href'), /^https:\/\/wa\.me\/\?text=.*promo/);
+  assert.equal(await m.page.locator('#amb-carte .btn.primary').count(), 0, 'pas de bouton plein en plus');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('ambassadeurs, base pas encore à jour : l’accueil s’ouvre, rien de cassé', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  const m = await membre();
+  await m.page.waitForSelector('.hello', { timeout: 15000 }); await m.page.waitForTimeout(2500);
+  assert.equal(await m.page.locator('#amb-carte, #amb-proposition, [data-pas^="am"]').count(), 0);
   assert.deepEqual(m.erreurs, []);
   await m.ctx.close();
 });

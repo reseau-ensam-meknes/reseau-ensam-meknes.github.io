@@ -215,7 +215,7 @@ export function EspacePage(ctx) {
   const { data, me, store, scores, act, openProfile, openOffer } = ctx;
   const s = scores.get(me.id) || { points: 0, events: [], offres: 0, recrutes: 0, mentorats: 0, mercis: 0, reponses: 0 };
   const lvl = levelOf(s.points);
-  const mine = badgesOf(s, me, { star: ctx.starId, fondateurs: ctx.fondateurs });
+  const mine = badgesOf(s, me, { star: ctx.starId, fondateurs: ctx.fondateurs, ambassadeurs: ctx.ambassadeurs });
   const myOffers = data.offers.filter(o => o.author_id === me.id).sort((a, b) => (a.status === 'ouverte' ? 0 : 1) - (b.status === 'ouverte' ? 0 : 1) || new Date(b.created_at) - new Date(a.created_at));
   const waiting = data.placements.filter(p => p.laureat_id === me.id && p.status === 'en_attente');
   const helped = data.placements.filter(p => p.laureat_id === me.id && p.status === 'confirme');
@@ -360,7 +360,7 @@ function MesBadges({ s, mine }) {
   const has = new Set(mine.map(b => b.id));
   const next = Object.keys(VERS_BADGE).map(id => BADGES.find(b => b.id === id)).find(b => b && !has.has(b.id));
   // « Membre fondateur » ne s'obtient plus après les 25 premiers : on ne le montre qu'à ceux qui l'ont
-  const possibles = BADGES.filter(b => b.id !== 'fondateur' || has.has(b.id));
+  const possibles = BADGES.filter(b => !['fondateur', 'ambassadeur'].includes(b.id) || has.has(b.id));
   const autres = possibles.filter(b => !has.has(b.id) && b !== next);
   // Un emblème propre à chaque badge : en couleur quand il est obtenu, en contour discret sinon
   const tuile = (b, on) => html`<div class=${'badge' + (on ? ' has' : '')} title=${b.desc} key=${b.id}><span class=${'badge-medal m-' + b.id}><${Embleme} id=${b.id} size=${24}/></span><strong>${b.nom}</strong><span class="small muted">${b.desc}</span></div>`;

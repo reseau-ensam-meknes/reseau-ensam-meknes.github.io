@@ -199,7 +199,7 @@ export function ProfileModal({ ctx, p: p0, onClose, onAskMentor }) {
   const s = scores.get(p.id);
   // Un étudiant ne voit ni points ni classement : seulement les badges qui disent à qui il peut faire confiance.
   // « Vérifié » n'est pas un badge ici : c'est le bouclier, juste après le nom.
-  const badges = badgesOf(s, p, { star: ctx.starId, fondateurs: ctx.fondateurs }).filter(b => b.id !== 'verifie' && (me.role !== 'etudiant' || ['fondateur', 'mentor', 'reactif'].includes(b.id)));
+  const badges = badgesOf(s, p, { star: ctx.starId, fondateurs: ctx.fondateurs, ambassadeurs: ctx.ambassadeurs }).filter(b => b.id !== 'verifie' && (me.role !== 'etudiant' || ['fondateur', 'ambassadeur', 'mentor', 'reactif'].includes(b.id)));
   const helped = data.placements.filter(x => x.laureat_id === p.id && x.status === 'confirme').length;
   // Seulement les chiffres non nuls, accordés : un nouveau lauréat n'affiche pas une rangée de zéros
   const stats = [[s?.points, 'point'], [helped, 'recruté'], [s?.mentorats, 'mentorat'], [s?.offres, 'offre']]

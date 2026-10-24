@@ -2047,7 +2047,8 @@ test('cloche : son chiffre compte ce qui attend un geste, la feuille dit « À f
   assert.match(await s.page.locator('.modal').last().innerText(), /Réduction des rebuts[\s\S]*Candidats/, 'l’offre s’ouvre sur ses candidats');
   await s.fermer();
   const pastilles = () => s.page.$$eval('.bottom-nav a', as => as.filter(a => a.querySelector('.dotn')).map(a => a.innerText.trim().split('\n')[0]));
-  assert.deepEqual((await pastilles()).sort(), ['Espace', 'Mentorat']);
+  // Accueil : la plateforme lui propose d'être ambassadeur de sa promo (ambassadeurs.js)
+  assert.deepEqual((await pastilles()).sort(), ['Accueil', 'Espace', 'Mentorat']);
   // Mon espace commence par « À faire »
   await s.aller('espace');
   assert.ok(await s.page.evaluate(() => document.querySelector('.page-head').nextElementSibling.classList.contains('a-faire')), 'Mon espace commence par À faire');
@@ -3106,6 +3107,121 @@ test('brouillons : le message en cours revient après un rechargement, pour ce c
   assert.equal(await s.page.evaluate(() => Object.keys(localStorage).filter(k => k.startsWith('ensam-brouillon:') && k.includes(':msg:')).length), 0, 'envoyé : plus de brouillon');
   await s.page.reload(); await s.page.waitForSelector('#chat-txt');
   assert.equal(await s.page.inputValue('#chat-txt'), '');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Ambassadeurs de promo (démo) : la plateforme propose au plus actif, il accepte, il relaie ; ses camarades le remercient
+// ---------------------------------------------------------------------------
+const lignesAmb = page => page.evaluate(() => window.__demo.data.ambassadeurs.map(a => ({ ...a, nom: window.__demo.data.profiles.find(p => p.id === a.user_id)?.full_name })));
+const fermerFete = async s => { if (await s.page.$('.fete-back')) { await s.fermer(); await s.page.waitForTimeout(200); } };
+
+test('ambassadeur (démo) : la proposition au plus actif, la cloche, « Accepter », puis le lien, les réussites et les vrais chiffres', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('accueil');
+  await s.page.waitForSelector('#amb-proposition, [data-pas^="am"]', { timeout: 6000 });
+  await fermerFete(s);
+  // La même règle que la base : le membre le plus actif de sa promo et de sa filière
+  const attendu = await s.page.evaluate(async () => {
+    const L = await import(new URL('logic.js', location.href).href);
+    const d = window.__demo, me = d.me;
+    return L.candidatsAmbassadeur({ ...d.data, ambassadeurs: [] }, me.promo, me.filiere)[0]?.id === me.id;
+  });
+  assert.ok(attendu, 'Salma est la plus active de son groupe');
+  assert.equal((await lignesAmb(s.page)).filter(a => a.statut === 'propose' && a.nom.startsWith('Salma')).length, 1);
+  // La cloche : « Répondre »
+  await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
+  assert.match(await s.page.locator('.modal.cloche').innerText(), /La plateforme te propose d’être ambassadeur de ta promo \(.+ \d{4}\)\./);
+  await s.fermer();
+  assert.equal(await s.page.locator('#amb-proposition .btn.primary').count(), 0, 'la carte « prochaine étape » garde le seul bouton plein');
+  // « Pas pour moi », puis « Annuler » : la proposition revient
+  await s.page.click('#amb-refuser');
+  await s.page.locator('.toast button', { hasText: 'Annuler' }).click();
+  await s.page.waitForSelector('#amb-proposition');
+  // Accepter
+  await s.page.click('#amb-accepter');
+  await s.page.waitForSelector('.fete-back');
+  assert.match(await s.page.locator('.fete').innerText(), /Merci, ambassadeur de ta promo ![\s\S]*Ambassadeur promo \d{4}/);
+  await s.fermer();
+  await s.page.waitForSelector('#amb-carte');
+  const vrais = await s.page.evaluate(async () => {
+    const L = await import(new URL('logic.js', location.href).href);
+    const d = window.__demo, me = d.me, n = new Date();
+    return L.chiffresPromo(d.data, me.promo, me.filiere, new Date(n.getFullYear(), n.getMonth(), 1));
+  });
+  const nombres = await s.page.$$eval('#amb-carte .amb-chiffres b', bs => bs.map(b => +b.textContent));
+  assert.deepEqual(nombres, [vrais.inscrits, vrais.demandes, vrais.stages], 'les chiffres sont vrais');
+  assert.match(decodeURIComponent(await s.page.getAttribute('#amb-wa', 'href')), /Salut la promo (\d{4})[\s\S]*\/promo\/\1\//);
+  assert.match(await s.page.locator('#amb-carte').innerText(), /Réussites à partager/);
+  assert.doesNotMatch(await s.page.locator('#amb-carte').innerText(), /\bpoints?\b/i);
+  assert.ok((await s.debordement()) <= 0);
+  const salma = await s.page.evaluate(() => window.__demo.me.full_name);
+  // Un camarade de sa promo et de sa filière la remercie depuis son accueil
+  await s.page.evaluate(() => { const d = window.__demo, salma = d.data.profiles.find(p => p.full_name.startsWith('Salma') && p._persona);
+    const cam = d.data.profiles.find(p => p.id !== salma.id && p.promo === salma.promo && p.filiere === salma.filiere && ['etudiant', 'laureat'].includes(p.role));
+    d.switchTo(cam.id); });
+  await s.aller('accueil'); await fermerFete(s);
+  await s.page.waitForSelector('#amb-merci');
+  assert.match(await s.page.locator('#amb-merci').innerText(), new RegExp(`Ambassadeur de ta promo[\\s\\S]*${salma}`));
+  // Sa fiche porte le badge, vu par un camarade
+  await s.page.click('#amb-merci .amb-qui'); await s.page.waitForSelector('.modal .badge-row');
+  assert.match(await s.page.locator('.modal .badge-row').innerText(), /Ambassadeur promo \d{4}/);
+  await s.fermer();
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('ambassadeur (démo) : refus, puis le suivant ; l’administration voit, retire (avec « Annuler ») et nomme', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Salma'); await s.aller('accueil');
+  await s.page.waitForSelector('#amb-proposition, [data-pas^="am"]', { timeout: 6000 });
+  await fermerFete(s);
+  await s.page.click('#amb-refuser'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('#amb-proposition').count(), 0);
+  const groupe = await s.page.evaluate(() => [window.__demo.me.promo, window.__demo.me.filiere]);
+  // L'administration : « Proposer maintenant » passe au suivant
+  await s.comme('Admin'); await s.aller('admin/inviter');
+  await s.page.waitForSelector('#amb-admin');
+  await s.page.click('#amb-lancer'); await s.page.waitForTimeout(400);
+  const suivant = (await lignesAmb(s.page)).find(a => a.promo === groupe[0] && a.filiere === groupe[1] && a.statut === 'propose');
+  assert.ok(suivant && !suivant.nom.startsWith('Salma'), 'proposé au suivant de la promo');
+  assert.ok((await lignesAmb(s.page)).every(a => a.nom), 'jamais l’administration');
+  const n = await s.page.locator('#amb-admin .amb-liste li').count();
+  assert.ok(n > 1);
+  // Retirer, puis Annuler
+  const premier = s.page.locator('#amb-admin .amb-liste li').first();
+  const qui = await premier.locator('strong').innerText();
+  await premier.locator('.amb-retirer').click();
+  await s.page.waitForTimeout(250);
+  assert.equal(await s.page.locator('#amb-admin .amb-liste li').count(), n - 1);
+  await s.page.locator('.toast button', { hasText: 'Annuler' }).click(); await s.page.waitForTimeout(250);
+  assert.equal(await s.page.locator('#amb-admin .amb-liste li').count(), n);
+  // Nommer à la main : une proposition, que la personne acceptera depuis son accueil
+  await s.page.fill('#amb-qui', 'Nadia'); await s.page.waitForSelector('#amb-admin .amb-trouves li');
+  await s.page.locator('#amb-admin .amb-nommer-btn').first().click(); await s.page.waitForTimeout(300);
+  const nadia = (await lignesAmb(s.page)).find(a => a.nom?.startsWith('Nadia') && a.statut === 'propose');
+  assert.equal(nadia?.par, 'admin');
+  assert.match(await s.page.locator('#amb-admin').innerText(), /nommé par l’administration/);
+  assert.ok(qui);
+  await s.comme('Nadia'); await s.aller('accueil'); await fermerFete(s);
+  await s.page.waitForSelector('#amb-proposition, [data-pas^="am"]');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('ambassadeur (démo, arabe, sombre) : la proposition et la carte traduites, rien d’oublié', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar', theme: 'dark' });
+  await s.comme('Salma'); await s.aller('accueil');
+  await s.page.waitForSelector('#amb-proposition, [data-pas^="am"]', { timeout: 6000 });
+  await fermerFete(s);
+  assert.match(await s.page.locator('#amb-proposition, [data-pas^="am"]').first().innerText(), /كن سفير دفعتك/);
+  await s.page.click('#amb-accepter'); await s.page.waitForSelector('.fete-back'); await s.fermer();
+  await s.page.waitForSelector('#amb-carte');
+  const t = await s.page.locator('#amb-carte').innerText();
+  assert.match(t, /سفير دفعتك/); assert.match(t, /رابط دفعتك/); assert.doesNotMatch(t, /القدامى|inscrit|Réussites|Promo/);
+  assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /ambassad|promo|Réussite|inscrit|pourvue|WhatsApp|Merci/i.test(x))), []);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
