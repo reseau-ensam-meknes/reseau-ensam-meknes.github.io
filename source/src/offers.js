@@ -364,7 +364,7 @@ function ApplyBox({ ctx, o, form, setForm, onClose }) {
         action: { label: 'Voir mon parcours', icon: 'route', onClick: () => { onClose?.(); ctx.go('parcours'); } },
       });
       const mot = 'Candidature envoyée à ' + (auteur?.full_name || 'au lauréat') + '.';
-      if (fete) proposerPrevenir('candidature'); else if (!proposerPrevenir('candidature', mot)) toast(mot, 'win');
+      if (fete) proposerPrevenir('candidature'); else if (!proposerPrevenir('candidature', mot)) toast(mot, 'envoi');
     });
   };
   return html`${invite}<form class="apply-box form" id=${'apply-' + o.id} onSubmit=${envoyer}>
@@ -558,7 +558,7 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
           // La suite la plus utile : la faire circuler dans les groupes WhatsApp de promo
           action: neuve?.id ? { label: 'Partager sur WhatsApp', icon: 'share', onClick: () => window.open(lienWhatsApp(texteOffre(neuve)), '_blank', 'noopener') } : null,
         });
-        if (!fete) toast(entre ? 'Offre publiée. Les lauréats la voient dans « Entre lauréats ».' : 'Offre publiée. Les étudiants concernés la voient dans leurs offres.');
+        if (!fete) toast(entre ? 'Offre publiée. Les lauréats la voient dans « Entre lauréats ».' : 'Offre publiée. Les étudiants concernés la voient dans leurs offres.', 'envoi');
       }
       onClose();
     });

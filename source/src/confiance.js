@@ -147,7 +147,7 @@ function DemandeContact({ ctx, p, onClose }) {
   const { store, me, act } = ctx;
   const [msg, setMsg] = useState('');
   return html`<${Modal} title="Demander ses coordonnées" onClose=${onClose}>
-    <form class="form" onSubmit=${e => { e.preventDefault(); act(async () => { await store.insert('demandes_contact', { demandeur_id: me.id, cible_id: p.id, message: msg.trim() || null }); toast('C’est envoyé.'); onClose(); }); }}>
+    <form class="form" onSubmit=${e => { e.preventDefault(); act(async () => { await store.insert('demandes_contact', { demandeur_id: me.id, cible_id: p.id, message: msg.trim() || null }); toast('C’est envoyé.', 'envoi'); onClose(); }); }}>
       <p>${p.full_name} choisit d’accepter ou non. En cas d’accord, vous voyez les coordonnées l’un de l’autre.</p>
       <${Field} label="Un mot pour te présenter (facultatif)"><textarea id="cf-ask-msg" rows="3" maxlength="300" value=${msg} onInput=${e => setMsg(e.target.value)} placeholder=${me.role === 'etudiant' ? 'Ex. Je suis en 5A, j’aimerais vous poser deux questions sur votre métier.' : 'Ex. Même promo, ce serait un plaisir d’échanger.'}></textarea><//>
       <div class="row-end"><button type="button" class="btn ghost" onClick=${onClose}>Annuler</button><button class="btn primary" id="cf-ask-send">Demander ses coordonnées</button></div>

@@ -66,7 +66,7 @@ export function useArrivee({ store, me }) {
       t = setTimeout(async () => {
         // En ligne : les lauréats arrivés pendant que le formulaire se remplissait comptent aussi (2,5 s au plus)
         if (store.mode === 'live' && store.loadTable) await Promise.race([store.loadTable('profiles').catch(() => {}), new Promise(ok => setTimeout(ok, 2500))]);
-        if (!vivant || !arriveeEnAttente(me.id) || document.querySelector('.modal-back, .fete-back')) return;
+        if (!vivant || !arriveeEnAttente(me.id) || document.querySelector('.modal-back:not(.sortie), .fete-back:not(.sortie)')) return;
         const x = accueilArrivee(store.data, store.byId('profiles', me.id) || me);
         consommer(me.id, x?.fondateur);
         if (x) setA(x);

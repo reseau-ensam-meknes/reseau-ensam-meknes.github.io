@@ -746,7 +746,7 @@ function Home(ctx) {
     // Juste après l'inscription, la feuille d'accueil l'annonce elle-même
     if (!fondateur || arriveeEnAttente(me.id)) return;
     const t = setTimeout(() => {
-      if (arriveeEnAttente(me.id) || document.querySelector('.modal-back, .fete-back')) return;
+      if (arriveeEnAttente(me.id) || document.querySelector('.modal-back:not(.sortie), .fete-back:not(.sortie)')) return;
       celebrate({ cle: 'fondateur-' + me.id, icon: 'award', titre: 'Tu es Membre fondateur !', texte: 'Tu fais partie des 25 premiers lauréats du réseau. Ce badge restera sur ton profil.', action: { label: 'Voir mon badge', onClick: () => go('espace') } });
     }, 1200);
     return () => clearTimeout(t);

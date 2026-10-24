@@ -47,8 +47,9 @@ after(async () => { await navigateur?.close(); serveur?.close(); });
 
 // Une page neuve, dans la langue voulue, avec un relevé des erreurs
 // ua : le user-agent d'un vrai appareil (TELEPHONE) ; sinon celui de Chromium sur un ordinateur
-async function ouvrir({ largeur = 1280, langue = 'fr', sw = false, theme = 'light', ua } = {}) {
-  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: largeur > 800 ? 900 : 844 }, serviceWorkers: sw ? 'allow' : 'block', colorScheme: theme, reducedMotion: 'reduce', ...(ua ? { userAgent: ua } : {}) });
+// mouvement : les animations jouent (sinon, mouvement réduit) ; toucher : un écran tactile (événements touch, pour glisser au doigt)
+async function ouvrir({ largeur = 1280, langue = 'fr', sw = false, theme = 'light', ua, mouvement = false, toucher = false } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: largeur > 800 ? 900 : 844 }, serviceWorkers: sw ? 'allow' : 'block', colorScheme: theme, reducedMotion: mouvement ? 'no-preference' : 'reduce', hasTouch: toucher, ...(ua ? { userAgent: ua } : {}) });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
   const page = await ctx.newPage(); const erreurs = [];
   page.on('pageerror', e => erreurs.push(e.message));
@@ -2452,6 +2453,222 @@ test('clavier : lien « Aller au contenu », fenêtre qui garde le focus puis le
   await s.page.locator('.person').first().click(); await s.page.waitForTimeout(400);
   assert.equal(await s.page.locator('.modal').count(), 0, 'Échap tapé tout de suite est perdu');
   assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Lot mouvement · B : feuilles du bas au doigt, onglets qui glissent, messages du bas avec icône et « Annuler »
+// ---------------------------------------------------------------------------
+// Un vrai glisser au doigt (événements tactiles, donc aussi les pointer events), de y0 à y1 en n étapes de dt ms.
+// lacher: false : le doigt reste posé ; la fonction rendue le lève.
+async function glisserDoigt(page, x, y0, y1, { n = 10, dt = 16, lacher = true } = {}) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y: y0 }] });
+  for (let i = 1; i <= n; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: Math.round(y0 + (y1 - y0) * i / n) }] }); await page.waitForTimeout(dt); }
+  const lever = async () => { await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await cdp.detach(); };
+  if (lacher) await lever();
+  return lever;
+}
+const feuillesOuvertes = page => page.locator('.modal-back:not(.sortie)').count();
+const pageBloquee = page => page.evaluate(() => document.documentElement.classList.contains('defil-bloque'));
+
+test('feuilles du bas : on les ferme en glissant vers le bas, elles reviennent en ressort sinon, et la page derrière ne bouge plus (390 px)', async () => {
+  const s = await ouvrir({ largeur: 390, mouvement: true, toucher: true });
+  await s.comme('Youssef'); await s.aller('reseau/talents');
+  // La liste défile un peu, le bouton « Filtres » reste à l'écran (pas de défilement automatique au toucher)
+  await s.page.evaluate(() => scrollTo(0, document.querySelector('#t-filtres').getBoundingClientRect().top + scrollY - 140)); await s.page.waitForTimeout(150);
+  const y = await s.page.evaluate(() => scrollY); assert.ok(y > 150, 'la liste défile');
+  const ouvrirFiltres = async () => { await s.page.click('#t-filtres'); await s.page.waitForSelector('.modal-back:not(.sortie) .modal'); await s.page.waitForTimeout(550); };
+  await ouvrirFiltres();
+  // La page derrière ne défile plus (molette, doigt sur le voile), et n'a pas sauté
+  assert.ok(await pageBloquee(s.page));
+  assert.equal(await s.page.evaluate(() => scrollY), y, 'pas de saut à l’ouverture');
+  await s.page.mouse.move(200, 120); await s.page.mouse.wheel(0, 500); await s.page.waitForTimeout(200);
+  await glisserDoigt(s.page, 200, 300, 60);
+  await s.page.waitForTimeout(200);
+  assert.equal(await s.page.evaluate(() => scrollY), y, 'la page derrière a défilé');
+  assert.equal(await feuillesOuvertes(s.page), 1, 'un geste sur le voile ne ferme pas la feuille');
+  // Un petit glisser de la poignée : la feuille suit le doigt et le voile s'éclaircit ; lâchée, elle revient en ressort
+  const tete = await s.page.locator('.modal-head').boundingBox();
+  const lever = await glisserDoigt(s.page, 200, tete.y + 20, tete.y + 90, { lacher: false });
+  assert.match(await s.page.evaluate(() => document.querySelector('.modal').style.transform), /translate3d\(0px, (6[5-9]|7\d)/);
+  assert.ok(await s.page.evaluate(() => +getComputedStyle(document.querySelector('.modal-back')).getPropertyValue('--voile') < 1));
+  await lever(); await s.page.waitForTimeout(700);
+  assert.equal(await feuillesOuvertes(s.page), 1, 'un petit glisser ne ferme pas');
+  assert.equal(await s.page.evaluate(() => document.querySelector('.modal').style.transform), '', 'la feuille est revenue à sa place');
+  // Vers le haut, elle résiste (24 px au plus)
+  const lever2 = await glisserDoigt(s.page, 200, tete.y + 20, tete.y - 200, { lacher: false });
+  const haut = await s.page.evaluate(() => +document.querySelector('.modal').style.transform.match(/, (-?[\d.]+)px/)[1]);
+  assert.ok(haut < 0 && haut >= -24, `résistance vers le haut : ${haut}`);
+  await lever2(); await s.page.waitForTimeout(600);
+  // Plus loin que 30 % de sa hauteur : elle part ; une copie inerte finit le mouvement, puis la page se libère à sa place
+  await glisserDoigt(s.page, 200, tete.y + 20, tete.y + 420, { n: 8, dt: 20 });
+  await s.page.waitForTimeout(40);
+  assert.equal(await feuillesOuvertes(s.page), 0, 'la feuille glissée loin se ferme');
+  assert.equal(await s.page.locator('.modal-back.sortie[aria-hidden="true"]').count(), 1, 'elle s’en va en douceur, cachée aux lecteurs d’écran');
+  await s.page.waitForTimeout(700);
+  assert.equal(await s.page.locator('.sortie').count(), 0);
+  assert.ok(!(await pageBloquee(s.page)), 'la page est libérée');
+  assert.equal(await s.page.evaluate(() => scrollY), y, 'la liste est restée à sa place');
+  assert.equal(await s.page.evaluate(() => (history.state?.f || 0)), 0, 'l’entrée d’historique de la feuille est retirée');
+  assert.equal(await ici(s.page), '#reseau/talents');
+  // Un geste vif, même court, suffit
+  await ouvrirFiltres();
+  await glisserDoigt(s.page, 200, tete.y + 20, tete.y + 70, { n: 3, dt: 8 });
+  await s.page.waitForTimeout(400);
+  assert.equal(await feuillesOuvertes(s.page), 0, 'un geste vif ferme la feuille');
+  // Le contenu tiré vers le bas quand il est tout en haut : la feuille descend aussi
+  await ouvrirFiltres();
+  const corps = await s.page.locator('.modal-body').boundingBox();
+  await glisserDoigt(s.page, 200, corps.y + 30, corps.y + 430, { n: 8, dt: 20 });
+  await s.page.waitForTimeout(400);
+  assert.equal(await feuillesOuvertes(s.page), 0, 'tirée par son contenu, la feuille se ferme');
+  // Retour mène toujours à l'écran d'avant (les feuilles fermées au doigt n'ont pas laissé d'entrée)
+  await s.page.waitForTimeout(400);
+  await retour(s.page);
+  assert.notEqual(await ici(s.page), '#reseau/talents');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('feuilles empilées : la page reste bloquée tant qu’il en reste une, Échap et Retour ferment celle du dessus ; une fête monte aussi du bas', async () => {
+  const s = await ouvrir({ largeur: 390, mouvement: true, toucher: true });
+  await s.comme('Admin'); await s.aller('offres');
+  await s.page.locator('.ocard-main').first().click(); await s.page.waitForSelector('.od h2'); await s.page.waitForTimeout(300);
+  await s.page.click('[aria-label="Gérer l’offre"]'); await s.page.click('.menu-pop .danger-t'); await s.page.waitForTimeout(450);
+  assert.equal(await feuillesOuvertes(s.page), 2, 'la confirmation s’ouvre par-dessus la fiche');
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(450);
+  assert.equal(await feuillesOuvertes(s.page), 1, 'Échap ferme celle du dessus');
+  assert.ok(await pageBloquee(s.page), 'la fiche est encore ouverte : la page reste bloquée');
+  assert.ok(await s.page.evaluate(() => !!document.activeElement.closest('.modal')), 'le focus revient dans la fiche (le menu qui l’avait ouverte est fermé)');
+  await retour(s.page);
+  assert.equal(await feuillesOuvertes(s.page), 0, 'Retour ferme la fiche');
+  await s.page.waitForTimeout(500);
+  assert.ok(!(await pageBloquee(s.page)));
+  assert.equal(await s.page.locator('.sortie').count(), 0, 'les copies qui s’en vont disparaissent');
+  // Une fête : sur téléphone, une feuille du bas (poignée comprise), qu'on ferme en la glissant
+  await s.page.evaluate(() => import('./ui.js').then(m => m.celebrate({ titre: 'Bravo !', texte: 'Un moment à fêter.' })));
+  await s.page.waitForSelector('.fete'); await s.page.waitForTimeout(700);
+  const f = await s.page.locator('.fete').boundingBox();
+  assert.ok(Math.abs(f.y + f.height - 844) < 2 && f.width === 390, 'la fête est posée en bas, sur toute la largeur');
+  assert.ok(await s.page.isVisible('.fete .sheet-grip'));
+  assert.ok(await pageBloquee(s.page));
+  await glisserDoigt(s.page, 195, f.y + 8, f.y + 300, { n: 8, dt: 20 });
+  await s.page.waitForTimeout(600);
+  assert.equal(await s.page.locator('.fete').count(), 0, 'la fête se ferme en la glissant');
+  assert.ok(!(await pageBloquee(s.page)));
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('feuilles sur ordinateur : la barre de défilement garde sa place, rien ne glisse, la fenêtre s’en va en fondu', async () => {
+  const s = await ouvrir({ mouvement: true });
+  await s.comme('Youssef'); await s.aller('reseau/talents');
+  const largeur = () => s.page.evaluate(() => document.documentElement.clientWidth);
+  const l0 = await largeur();
+  await s.page.click('#t-filtres'); await s.page.waitForSelector('.modal'); await s.page.waitForTimeout(400);
+  assert.ok(await pageBloquee(s.page));
+  assert.equal(await largeur(), l0, 'la page ne bouge pas de côté à l’ouverture');
+  const tete = await s.page.locator('.modal-head').boundingBox();
+  await s.page.mouse.move(tete.x + tete.width / 2, tete.y + 20); await s.page.mouse.down();
+  await s.page.mouse.move(tete.x + tete.width / 2, tete.y + 300, { steps: 6 }); await s.page.mouse.up();
+  assert.equal(await s.page.evaluate(() => document.querySelector('.modal').style.transform), '', 'au-dessus de 760 px, la fenêtre ne se glisse pas');
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(60);
+  assert.equal(await feuillesOuvertes(s.page), 0);
+  assert.equal(await s.page.locator('.modal-back.sortie').count(), 1, 'elle s’en va en fondu');
+  await s.page.waitForTimeout(500);
+  assert.equal(await s.page.locator('.sortie').count(), 0);
+  assert.equal(await largeur(), l0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('fermer ou rouvrir sa demande d’un geste : « Annuler » dans le message du bas remet l’état d’avant ; chaque message a son icône', async () => {
+  const s = await ouvrir({ largeur: 390, mouvement: true });
+  const TITRE = 'PFE en maintenance industrielle à Meknès';
+  const carte = () => s.page.locator('.dm-card', { hasText: TITRE }).first();
+  const message = () => s.page.locator('.toast:not(.sortie)');
+  const fete = () => s.page.locator('.fete-acts .btn').last().click({ timeout: 2000 }).catch(() => {});
+  await s.comme('Salma'); await s.aller('offres/demandes');
+  await s.page.click('#dm-nouvelle'); await s.page.waitForTimeout(300);
+  await s.page.click('#dm-type-pfe');
+  await s.page.fill('#dm-titre', TITRE);
+  await s.page.fill('#dm-details', 'Je cherche un PFE de 6 mois en maintenance : GMAO, plans de maintenance préventive, analyse des pannes.');
+  await s.page.click('#dm-publier'); await s.page.waitForTimeout(600); await fete(); await s.page.waitForTimeout(400);
+  for (let i = 0; i < 2 && await feuillesOuvertes(s.page); i++) { await s.fermer(); await s.page.waitForTimeout(300); }
+  assert.match(await carte().innerText(), /Ouverte/);
+  // Fermer : pas de « Es-tu sûr ? », un message avec son icône et « Annuler »
+  await carte().locator('.dm-acts button:has-text("Fermer")').click(); await s.page.waitForTimeout(400);
+  assert.equal(await feuillesOuvertes(s.page), 0, 'pas de fenêtre de confirmation');
+  assert.match(await carte().innerText(), /Fermée/);
+  assert.match(await message().innerText(), /Demande fermée/);
+  assert.equal(await message().locator('svg.toast-ico').count(), 1, 'le message a son icône');
+  await message().locator('.toast-annuler').click(); await s.page.waitForTimeout(500);
+  assert.match(await carte().innerText(), /Ouverte/, '« Annuler » rouvre la demande');
+  assert.match(await message().innerText(), /Demande rouverte/);
+  assert.equal(await message().locator('.toast-annuler').count(), 0, 'pas d’« Annuler » sur l’annulation');
+  // Le message d'avant s'en va en douceur, caché aux lecteurs d'écran, puis disparaît
+  await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator('.toast').count(), 1);
+  // Rouvrir se fait aussi d'un geste, et s'annule de même
+  await carte().locator('.dm-acts button:has-text("Fermer")').click(); await s.page.waitForTimeout(400);
+  await carte().locator('.dm-acts button:has-text("Rouvrir")').click(); await s.page.waitForTimeout(400);
+  assert.match(await carte().innerText(), /Ouverte/);
+  await message().locator('.toast-annuler').click(); await s.page.waitForTimeout(500);
+  assert.match(await carte().innerText(), /Fermée/, '« Annuler » referme la demande');
+  // Avec « Annuler », le message reste le temps de changer d'avis (6 s), puis s'en va
+  await carte().locator('.dm-acts button:has-text("Rouvrir")').click(); await s.page.waitForTimeout(4500);
+  assert.equal(await message().locator('.toast-annuler').count(), 1, 'encore là après 4,5 s');
+  await s.page.waitForTimeout(2200);
+  assert.equal(await s.page.locator('.toast').count(), 0, 'parti après 6 s');
+  // Un envoi réussi : la coche se trace, « C’est noté »
+  await s.aller('profil');
+  await s.page.click('form .row-end .btn.primary'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast.envoi').innerText(), /C’est noté\s+Profil enregistré/);
+  assert.equal(await s.page.locator('.toast.envoi .toast-trace').count(), 1);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('onglets : la pastille suit l’onglet choisi, seul le contenu glisse, dans le sens du changement (inversé en arabe)', async () => {
+  // Le décalage de départ des blocs qui glissent sous la rangée (px, > 0 : ils viennent de la droite)
+  const glissements = page => page.evaluate(() => document.getAnimations().map(a => a.effect?.getKeyframes?.()[0]?.transform || '')
+    .filter(t => t.startsWith('translate3d')).map(t => parseFloat(t.slice(12))));
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 390, langue, mouvement: true });
+    const sens = langue === 'ar' ? -1 : 1;
+    await s.comme('Salma'); await s.aller('offres'); await s.page.waitForTimeout(600);
+    await s.page.locator('.offres-seg [role="tab"]').nth(1).click(); await s.page.waitForTimeout(80);
+    assert.ok(await s.page.evaluate(() => document.querySelector('.offres-seg').classList.contains('trait-vol')), 'la pastille glisse');
+    const g = await glissements(s.page);
+    assert.ok(g.length && g.every(x => x * sens > 0), `${langue} : le contenu arrive du côté de l’onglet choisi (${g})`);
+    assert.equal(await ici(s.page), '#offres/demandes');
+    await s.page.waitForTimeout(600);
+    assert.ok(!(await s.page.evaluate(() => document.querySelector('.offres-seg').classList.contains('trait-vol'))), 'la pastille ne reste pas après le geste');
+    await s.page.locator('.offres-seg [role="tab"]').nth(0).click(); await s.page.waitForTimeout(80);
+    const g2 = await glissements(s.page);
+    assert.ok(g2.length && g2.every(x => x * sens < 0), `${langue} : en revenant, il arrive de l’autre côté (${g2})`);
+    // Les puces du Réseau : même geste
+    await s.aller('reseau/groupes'); await s.page.waitForTimeout(600);
+    await s.page.locator('.puces-nav [role="tab"]').nth(2).click(); await s.page.waitForTimeout(80);
+    assert.ok(await s.page.evaluate(() => document.querySelector('.puces-nav').classList.contains('trait-vol')));
+    assert.ok((await glissements(s.page)).every(x => x * sens > 0));
+    // Un message du bas en arabe : tout est traduit, « Annuler » s'y dit « تراجع »
+    if (langue === 'ar') {
+      await s.page.evaluate(() => import('./ui.js').then(m => m.toast('Demande fermée.', 'envoi', 0, { annuler() {} })));
+      await s.page.waitForTimeout(200);
+      const t = await s.page.locator('.toast').innerText();
+      assert.match(t, /تم بنجاح/); assert.match(t, /تراجع/); assert.doesNotMatch(t, /[A-Za-z]/);
+    }
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+  // Mouvement réduit : rien ne glisse, l'onglet change aussitôt
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('offres');
+  await s.page.locator('.offres-seg [role="tab"]').nth(1).click(); await s.page.waitForTimeout(80);
+  assert.ok(!(await s.page.evaluate(() => document.querySelector('.offres-seg').classList.contains('trait-vol'))));
+  assert.deepEqual(await glissements(s.page), []);
   await s.ctx.close();
 });
 

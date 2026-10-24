@@ -206,7 +206,7 @@ export function DemandeRelecture({ ctx, onClose }) {
       await store.insert('relectures_cv', { student_id: me.id, cv_path: me.cv_path, reviewer_id: qui || null, message: msg.trim() || null });
       onClose();
       const mot = qui ? `CV envoyé à ${firstName(store.byId('profiles', qui))}.` : 'CV envoyé aux lauréats.';
-      if (!proposerPrevenir('relecture', mot)) toast(mot);
+      if (!proposerPrevenir('relecture', mot)) toast(mot, 'envoi');
     });
   };
   return html`<${Modal} title="Demander une relecture" onClose=${onClose}>

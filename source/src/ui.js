@@ -264,6 +264,178 @@ export function rendrePosition(y) {
   essai();
 }
 
+// ---------------------------------------------------------------------------
+// Lot mouvement · B : les feuilles du bas se manipulent au doigt.
+//  - La page derrière ne défile plus tant qu'une feuille est ouverte (sans saut : la position reste, scrollY aussi).
+//  - Sur téléphone, on la ferme en glissant la poignée (ou le contenu tout en haut) vers le bas : elle suit le doigt,
+//    résiste vers le haut ; au-delà de 30 % de sa hauteur ou d'un geste vif elle part, sinon elle revient en ressort.
+//  - Elle repart en douceur : une copie inerte finit le mouvement, le contenu (état, focus, historique) est déjà fermé.
+// ---------------------------------------------------------------------------
+export const mouvementReduit = () => { try { return matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return true; } };
+const surTelephone = () => { try { return matchMedia('(max-width: 760px)').matches; } catch { return false; } };
+const verrous = [];               // fonds des feuilles ouvertes, de bas en haut
+let doigt = null;                 // dernière position du doigt (pour le sens du geste)
+const noterDoigt = e => { const t = e.touches[0]; doigt = t ? { x: t.clientX, y: t.clientY } : null; };
+// Un geste qui ferait défiler la page derrière est retenu ; dans la feuille, ce qui peut encore défiler défile
+// (iPhone compris, où overflow: hidden ne suffit pas toujours), le pincement pour zoomer reste libre
+function retenirDoigt(e) {
+  const fond = verrous[verrous.length - 1], t = e.touches[0];
+  if (!fond || e.touches.length > 1 || !t) return;
+  const dx = doigt ? t.clientX - doigt.x : 0, dy = doigt ? t.clientY - doigt.y : 0;
+  doigt = { x: t.clientX, y: t.clientY };
+  if (!e.cancelable) return;
+  for (let el = e.target; el && el.nodeType === 1 && fond.contains(el); el = el.parentElement) {
+    if (el.matches('input, textarea, select, [contenteditable="true"], .leaflet-container')) return;
+    const st = getComputedStyle(el);
+    if (Math.abs(dx) > Math.abs(dy)) { if (/auto|scroll/.test(st.overflowX) && el.scrollWidth > el.clientWidth + 1) return; }
+    else if (/auto|scroll/.test(st.overflowY) && el.scrollHeight > el.clientHeight + 1
+      && ((dy > 0 && el.scrollTop > 0) || (dy < 0 && Math.ceil(el.scrollTop + el.clientHeight) < el.scrollHeight))) return;
+  }
+  e.preventDefault();
+}
+// Plusieurs feuilles empilées : la page ne se libère qu'à la fermeture de la dernière
+function verrouiller(fond) {
+  const de = document.documentElement;
+  if (!verrous.length) {
+    if (innerWidth - de.clientWidth > 0) de.classList.add('defil-gouttiere');   // la barre de défilement garde sa place : rien ne bouge
+    de.classList.add('defil-bloque');
+    document.addEventListener('touchstart', noterDoigt, { capture: true, passive: true });
+    document.addEventListener('touchmove', retenirDoigt, { capture: true, passive: false });
+  }
+  verrous.push(fond);
+  return () => {
+    const i = verrous.lastIndexOf(fond);
+    if (i >= 0) verrous.splice(i, 1);
+    if (verrous.length) return;
+    de.classList.remove('defil-bloque', 'defil-gouttiere');
+    document.removeEventListener('touchstart', noterDoigt, { capture: true });
+    document.removeEventListener('touchmove', retenirDoigt, { capture: true });
+  };
+}
+export const pageVerrouillee = () => verrous.length > 0;
+
+// La copie qui s'en va : mêmes classes (même allure), sans id, inerte, cachée aux lecteurs d'écran
+function sortieDouce(fond, feuille) {
+  if (!fond?.isConnected || mouvementReduit()) return;
+  const i = [...fond.children].indexOf(feuille);
+  const c = fond.cloneNode(true);
+  for (const x of [c, ...c.querySelectorAll('[id]')]) x.removeAttribute('id');
+  for (const x of c.querySelectorAll('[role="dialog"]')) { x.removeAttribute('role'); x.removeAttribute('aria-modal'); }
+  const avant = fond.querySelectorAll('input, textarea, select'), apres = c.querySelectorAll('input, textarea, select');
+  avant.forEach((x, k) => { if (apres[k] && x.type !== 'file') { try { apres[k].value = x.value; apres[k].checked = x.checked; } catch { /* */ } } });
+  c.setAttribute('aria-hidden', 'true'); c.inert = true;
+  c.classList.add('sortie');
+  document.body.appendChild(c);
+  const f = c.children[i];
+  if (f) f.scrollTop = feuille.scrollTop;
+  const fin = () => c.remove();
+  c.addEventListener('animationend', e => { if (e.target === f) fin(); });
+  setTimeout(fin, 600);
+}
+
+// Le ressort : un léger dépassement, puis la feuille se pose
+const RESSORT = 'transform .46s cubic-bezier(.22, 1.25, .36, 1)';
+function useFeuilleDuBas(ref, onClose, poignee) {
+  const fermer = useRef(onClose);
+  fermer.current = onClose;
+  useLayoutEffect(() => {
+    const feuille = ref.current;
+    if (!feuille) return;
+    const fond = feuille.parentElement;
+    const liberer = verrouiller(fond);
+    let g = null;      // geste en cours : { y0, dy, h, pts, id }
+    let cand = null;   // un toucher dans le contenu, peut-être un glisser
+    const commencer = (y, t, id) => {
+      g = { y0: y, dy: 0, h: feuille.getBoundingClientRect().height || 1, pts: [[t, y]], id };
+      feuille.style.transition = 'none';
+      feuille.classList.add('glisse');
+    };
+    const suivre = (y, t) => {
+      const dy = y - g.y0;
+      g.dy = dy;
+      g.pts.push([t, y]); while (g.pts.length > 2 && t - g.pts[0][0] > 90) g.pts.shift();
+      // Vers le haut, la feuille résiste (24 px au plus) ; vers le bas, elle suit le doigt
+      const v = dy >= 0 ? dy : -24 * (1 - Math.exp(dy / 60));
+      feuille.style.transform = `translate3d(0, ${v.toFixed(1)}px, 0)`;
+      fond.style.setProperty('--voile', Math.max(0, 1 - Math.max(0, dy) / g.h).toFixed(3));
+    };
+    const lacher = () => {
+      if (!g) return;
+      const { dy, h, pts } = g; g = null;
+      const [t0, y0] = pts[0], [t1, y1] = pts[pts.length - 1];
+      const vitesse = t1 > t0 ? (y1 - y0) / (t1 - t0) : 0;      // px/ms, vers le bas > 0
+      if (dy > h * .3 || (vitesse > .5 && dy > 12)) {
+        // Elle part à la vitesse du doigt (ni plus lente, ni brutale)
+        const d = Math.round(Math.min(300, Math.max(140, (h - dy) / Math.max(vitesse, 1.2))));
+        fond.style.setProperty('--sortie-d', d + 'ms');
+        fond.style.setProperty('--sortie-e', 'cubic-bezier(.25, .25, .6, 1)');   // part de la vitesse du doigt
+        fermer.current?.();
+        // Une feuille qui ne se ferme pas (rien à fermer, action en cours) revient à sa place
+        setTimeout(() => { if (feuille.isConnected && !g) revenir(); }, 150);
+        return;
+      }
+      revenir();
+    };
+    const revenir = () => {
+      feuille.style.transition = RESSORT + ', box-shadow .3s';
+      feuille.style.transform = '';
+      fond.style.setProperty('--voile', '1');
+      const poser = e => { if (e && e.target !== feuille) return; feuille.removeEventListener('transitionend', poser); if (!g) { feuille.style.transition = ''; feuille.classList.remove('glisse'); } };
+      feuille.addEventListener('transitionend', poser);
+      setTimeout(poser, 520);
+    };
+    // La poignée (en-tête) : souris, stylet ou doigt, avec capture du pointeur
+    const interactif = el => el.closest('button, a, input, select, textarea, label, [role="tab"], [contenteditable="true"]');
+    const pd = e => {
+      if (g || cand || !surTelephone() || (e.pointerType === 'mouse' && e.button !== 0) || !e.target.closest(poignee) || interactif(e.target)) return;
+      const y0 = e.clientY, id = e.pointerId;
+      const pm = ev => {
+        if (ev.pointerId !== id) return;
+        if (!g) { if (Math.abs(ev.clientY - y0) < 4) return; commencer(y0, ev.timeStamp, id); try { feuille.setPointerCapture(id); } catch { /* */ } }
+        suivre(ev.clientY, ev.timeStamp);
+      };
+      const pu = ev => { if (ev.pointerId !== id) return; off(); lacher(); };
+      const off = () => { feuille.removeEventListener('pointermove', pm); feuille.removeEventListener('pointerup', pu); feuille.removeEventListener('pointercancel', pu); };
+      feuille.addEventListener('pointermove', pm); feuille.addEventListener('pointerup', pu); feuille.addEventListener('pointercancel', pu);
+    };
+    // Le contenu : tiré vers le bas quand il est déjà tout en haut, la feuille descend au lieu de rebondir
+    const peutRemonter = el => { for (; el && el !== feuille; el = el.parentElement) if (el.scrollTop > 0 && /auto|scroll/.test(getComputedStyle(el).overflowY)) return true; return false; };
+    const ts = e => {
+      cand = null;
+      if (g || e.touches.length !== 1 || !surTelephone() || e.target.closest(poignee) || e.target.closest('input, textarea, select, [contenteditable="true"], .leaflet-container')) return;
+      const t = e.touches[0];
+      cand = { x: t.clientX, y: t.clientY };
+    };
+    const tm = e => {
+      const t = e.touches[0];
+      if (g && g.id === 'doigt') { if (e.cancelable) e.preventDefault(); suivre(t.clientY, e.timeStamp); return; }
+      if (!cand || !t) return;
+      const dx = t.clientX - cand.x, dy = t.clientY - cand.y;
+      if (Math.abs(dy) < 6 && Math.abs(dx) < 6) return;
+      const ok = dy > 0 && Math.abs(dy) > Math.abs(dx) && feuille.scrollTop <= 0 && !peutRemonter(e.target);
+      cand = null;
+      if (!ok || !e.cancelable) return;
+      e.preventDefault();
+      commencer(t.clientY, e.timeStamp, 'doigt');
+    };
+    const te = () => { cand = null; if (g && g.id === 'doigt') lacher(); };
+    feuille.addEventListener('pointerdown', pd);
+    feuille.addEventListener('touchstart', ts, { passive: true });
+    feuille.addEventListener('touchmove', tm, { passive: false });
+    feuille.addEventListener('touchend', te);
+    feuille.addEventListener('touchcancel', te);
+    return () => {
+      feuille.removeEventListener('pointerdown', pd);
+      feuille.removeEventListener('touchstart', ts);
+      feuille.removeEventListener('touchmove', tm);
+      feuille.removeEventListener('touchend', te);
+      feuille.removeEventListener('touchcancel', te);
+      liberer();
+      sortieDouce(fond, feuille);
+    };
+  }, []);
+}
+
 // Fenêtres ouvertes, la plus récente à la fin : seule celle du dessus réagit au clavier
 const ouvertes = [];
 const FOCUSABLES = 'a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
@@ -272,6 +444,7 @@ const FOCUSABLES = 'a[href],button:not([disabled]),input:not([disabled]):not([ty
 export function Modal({ title, onClose, children, wide, footer, cls, historique = true }) {
   const ref = useRef();
   useFeuille(onClose, historique);
+  useFeuilleDuBas(ref, onClose, '.modal-head');
   const fermer = useRef(onClose);
   fermer.current = onClose;
   // Téléphone, clavier ouvert : la feuille se loge au-dessus du clavier ; son pied (l'action principale) reste au pouce
@@ -305,7 +478,7 @@ export function Modal({ title, onClose, children, wide, footer, cls, historique 
   // Branché dès l'affichage (pas après) : un Échap tapé aussitôt la fenêtre ouverte la ferme
   useLayoutEffect(() => {
     const avant = document.activeElement;
-    const moi = {};
+    const moi = { ref };
     ouvertes.push(moi);
     const k = e => {
       if (ouvertes[ouvertes.length - 1] !== moi || !ref.current) return;
@@ -323,8 +496,9 @@ export function Modal({ title, onClose, children, wide, footer, cls, historique 
     return () => {
       document.removeEventListener('keydown', k);
       ouvertes.splice(ouvertes.indexOf(moi), 1);
-      // On rend le focus au bouton qui avait ouvert la fenêtre, s'il est toujours là
-      if (avant?.isConnected) avant.focus?.();
+      // On rend le focus au bouton qui avait ouvert la fenêtre, s'il est toujours là ; sinon à la fenêtre restée dessous
+      if (avant?.isConnected && avant !== document.body) avant.focus?.();
+      else ouvertes[ouvertes.length - 1]?.ref.current?.querySelector(FOCUSABLES)?.focus();
     };
   }, []);
   return html`<div class=${'modal-back' + (vv ? ' clavier' : '')} style=${vv ? `--vvh:${vv.h}px;--vvt:${vv.t}px` : ''} onClick=${e => { if (e.target === e.currentTarget) onClose(); }}>
@@ -336,15 +510,42 @@ export function Modal({ title, onClose, children, wide, footer, cls, historique 
   </div>`;
 }
 
-let toastSet = null;
+let toastAjout = null, nToast = 0;
 // pts : les points d'impact gagnés, en petite pastille après la phrase (jamais montrés à un étudiant)
-export function toast(msg, kind = 'ok', pts = 0) { toastSet?.({ msg, kind, pts, t: Date.now() }); }
+// kind : ok (coche), envoi (un envoi réussi : la coche se trace, « C’est noté »), win (étoile), err (point d'exclamation), info
+// annuler : une fonction ; le message montre alors « Annuler » et reste 6 s (le temps de changer d'avis)
+export function toast(msg, kind = 'ok', pts = 0, { annuler } = {}) { toastAjout?.({ msg, kind, pts, annuler, t: ++nToast }); }
+const DUREE_TOAST = 3800, DUREE_ANNULER = 6000;
+const COCHE = '<circle cx="12" cy="12" r="9"/><path class="toast-trace" pathLength="1" d="M8 12.3l2.8 2.8 5.3-5.6"/>';
+const ICO_TOAST = {
+  ok: COCHE, envoi: COCHE,
+  win: '<path d="M12 3.5l2.5 5.2 5.6.8-4 4 1 5.6-5.1-2.7-5.1 2.7 1-5.6-4-4 5.6-.8z"/>',
+  err: '<circle cx="12" cy="12" r="9"/><path d="M12 7.6v5.2M12 16.3v.2"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11.2v5.2M12 7.7v.2"/>',
+};
 export function Toaster() {
-  const [t, setT] = useState(null);
-  toastSet = setT;
-  useEffect(() => { if (!t) return; const h = setTimeout(() => setT(null), 3800); return () => clearTimeout(h); }, [t]);
+  const [liste, setListe] = useState([]);
+  // Un nouveau message pousse le précédent, qui s'en va en douceur (mouvement réduit : il laisse simplement la place)
+  toastAjout = t => setListe(l => [...(mouvementReduit() ? [] : l.filter(x => !x.sortie).map(x => ({ ...x, sortie: true }))), t]);
+  const partir = id => setListe(l => (mouvementReduit() ? l.filter(x => x.t !== id) : l.map(x => (x.t === id ? { ...x, sortie: true } : x))));
+  const retirer = id => setListe(l => l.filter(x => x.t !== id));
   // La zone reste toujours là (vide entre deux messages) pour que les lecteurs d'écran annoncent chaque message
-  return html`<div class="toast-zone" role="status" aria-live="polite">${t ? html`<div class=${'toast ' + t.kind} key=${t.t}>${t.msg}<${Pastille} n=${t.pts}/></div>` : null}</div>`;
+  return html`<div class="toast-zone" role="status" aria-live="polite">${liste.map(t => html`<${Toast} key=${t.t} t=${t} partir=${partir} retirer=${retirer}/>`)}</div>`;
+}
+function Toast({ t, partir, retirer }) {
+  // Le doigt, la souris ou le clavier dessus : le message attend
+  const [retenu, setRetenu] = useState(false);
+  useEffect(() => { if (t.sortie || retenu) return; const h = setTimeout(() => partir(t.t), t.annuler ? DUREE_ANNULER : DUREE_TOAST); return () => clearTimeout(h); }, [t.sortie, retenu]);
+  useEffect(() => { if (!t.sortie) return; const h = setTimeout(() => retirer(t.t), 260); return () => clearTimeout(h); }, [t.sortie]);
+  const fait = useRef(false);
+  const annuler = () => { if (fait.current) return; fait.current = true; partir(t.t); t.annuler(); };
+  const kind = ICO_TOAST[t.kind] ? t.kind : 'ok';
+  return html`<div class=${'toast ' + kind + (t.annuler ? ' avec-action' : '') + (t.sortie ? ' sortie' : '')} aria-hidden=${t.sortie ? 'true' : null}
+    onPointerEnter=${e => e.pointerType === 'mouse' && setRetenu(true)} onPointerLeave=${() => setRetenu(false)} onFocusIn=${() => setRetenu(true)} onFocusOut=${() => setRetenu(false)}>
+    <svg class="toast-ico" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: ICO_TOAST[kind] }}></svg>
+    <span class="toast-txt">${kind === 'envoi' ? html`<strong class="toast-titre">C’est noté</strong>` : null}<span>${t.msg}<${Pastille} n=${t.pts}/></span></span>
+    ${t.annuler ? html`<button type="button" class="toast-annuler" disabled=${t.sortie} onClick=${annuler}>${getLang() === 'ar' ? 'تراجع' : 'Annuler'}</button>` : null}
+  </div>`;
 }
 
 // Mène au premier champ à compléter : au milieu de la fenêtre (doux, sauf mouvement réduit), le curseur dedans
@@ -402,6 +603,7 @@ const COULEURS_FETE = ['var(--em-o)', 'var(--em-b)', 'var(--orange)', 'var(--acc
 function Fete({ f, onClose }) {
   const ref = useRef();
   useFeuille(onClose);   // Retour la ferme ; changer d'écran aussi
+  useFeuilleDuBas(ref, onClose, '.sheet-grip');   // Lot mouvement · B : sur téléphone, une feuille du bas qu'on glisse pour fermer
   const morceaux = useMemo(() => Array.from({ length: 34 }, (_, i) => ({ x: Math.round(Math.random() * 100), dx: Math.round(Math.random() * 120 - 60), d: (1.1 + Math.random() * .9).toFixed(2), w: (Math.random() * .35).toFixed(2), r: Math.round(Math.random() * 720 - 360), c: COULEURS_FETE[i % COULEURS_FETE.length], rond: i % 3 === 0 })), []);
   useEffect(() => {
     const avant = document.activeElement;
@@ -413,6 +615,7 @@ function Fete({ f, onClose }) {
   return html`<div class="fete-back" onClick=${e => { if (e.target === e.currentTarget) onClose(); }}>
     <div class="fete-pluie" aria-hidden="true">${morceaux.map(m => html`<i class=${m.rond ? 'rond' : ''} style=${`--x:${m.x}%;--dx:${m.dx}px;--d:${m.d}s;--w:${m.w}s;--r:${m.r}deg;--c:${m.c}`}></i>`)}</div>
     <div class="fete" role="dialog" aria-modal="true" aria-labelledby="fete-titre" ref=${ref}>
+      <span class="sheet-grip" aria-hidden="true"></span>
       <span class="fete-ico"><${Icon} name=${f.icon} size=${34}/></span>
       <h2 id="fete-titre">${f.titre}</h2>
       ${f.texte ? html`<p>${f.texte}</p>` : null}
@@ -524,6 +727,56 @@ export function Bar({ value, pace, label }) {
     <span class="bar-fill" style=${`width:${v * 100}%`}></span>
     ${pace !== undefined ? html`<span class="bar-pace" style=${`inset-inline-start:${Math.max(0, Math.min(1, pace)) * 100}%`} title="Rythme attendu à cette date"></span>` : null}
   </div>`;
+}
+
+// Lot mouvement · B : en changeant d'onglet, le trait (ou la pastille) glisse de l'ancien onglet au nouveau, et seul le
+// contenu glisse, dans le sens du changement (inversé en arabe). Un seul écouteur pour toutes les rangées : Tabs, .seg
+// (aussi les choix d'un formulaire, sans contenu qui glisse) et les puces de PucesNav. Mouvement réduit : rien ne glisse.
+const RANGEES = '.tabs, .seg, .puces-nav';
+const actifDans = l => [...l.children].find(b => b.matches('.on, [aria-selected="true"]'));
+const boite = (l, el) => (l.classList.contains('tabs') ? { x: el.offsetLeft, y: el.offsetTop + el.offsetHeight - 2, w: el.offsetWidth, h: 2 } : { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight });
+function glisserTrait(l, a, b) {
+  clearTimeout(l._trait);
+  const poser = r => { for (const [k, v] of [['--tx', r.x], ['--ty', r.y], ['--tw', r.w], ['--th', r.h]]) l.style.setProperty(k, v + 'px'); };
+  poser(a);
+  l.classList.add('trait-vol', 'trait-pose');
+  getComputedStyle(l, '::after').transform;   // la pastille part de l'ancien onglet…
+  l.classList.remove('trait-pose');
+  poser(b);                                    // …et glisse jusqu'au nouveau
+  l._trait = setTimeout(() => { l.classList.remove('trait-vol'); for (const k of ['--tx', '--ty', '--tw', '--th']) l.style.removeProperty(k); }, 420);
+}
+function glisserContenu(l, sens) {
+  let hote = l;
+  for (let k = 0; k < 3 && !hote.nextElementSibling && hote.parentElement && !hote.parentElement.matches('main, .page, .modal-body, body'); k++) hote = hote.parentElement;
+  let n = 0;
+  for (let el = hote.nextElementSibling; el && n < 6; el = el.nextElementSibling) {
+    if (el.matches('.modal-back, .fete-back, .toast-zone, script, style') || getComputedStyle(el).position === 'fixed') continue;
+    n++;
+    el.animate?.([{ opacity: .2, transform: `translate3d(${sens * 28}px, 0, 0)` }, { opacity: 1, transform: 'none' }], { duration: 320, easing: 'cubic-bezier(.2, .8, .2, 1)' });
+  }
+}
+function suivreOnglet(e) {
+  const b = e.target.closest?.('button, [role="tab"]'), l = b?.parentElement;
+  if (!l || !l.matches(RANGEES) || b.disabled || mouvementReduit()) return;
+  const avant = actifDans(l);
+  if (!avant || avant === b) return;
+  const depart = boite(l, avant), iAvant = [...l.children].indexOf(avant);
+  const onglets = l.getAttribute('role') === 'tablist' || l.classList.contains('tabs');
+  let n = 0;
+  // Le nouvel onglet s'affiche au rendu suivant (ou après un Retour simulé par l'historique) : on le guette quelques images
+  const guetter = () => {
+    if (!l.isConnected) return;
+    const apres = actifDans(l);
+    if (!apres || apres === avant) { if (++n < 30) requestAnimationFrame(guetter); return; }
+    glisserTrait(l, depart, boite(l, apres));
+    if (onglets) glisserContenu(l, ([...l.children].indexOf(apres) > iAvant ? 1 : -1) * (getComputedStyle(l).direction === 'rtl' ? -1 : 1));
+  };
+  requestAnimationFrame(guetter);
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('click', suivreOnglet, true);
+  // iPhone : sans un écouteur de toucher, :active (l'enfoncement sous le doigt) ne s'affiche pas
+  document.addEventListener('touchstart', () => {}, { passive: true });
 }
 
 export function Tabs({ tabs, value, onChange }) {

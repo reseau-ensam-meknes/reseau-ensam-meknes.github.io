@@ -246,7 +246,7 @@ export function PrevenirHote({ ctx, bloque }) {
     };
     // Un écran calme : rien d'ouvert par-dessus (toute fenêtre modale, la photo agrandie d'un message comprise), pas en train
     // d'écrire, l'onglet au premier plan, pas de demande du navigateur en attente (lancée depuis Mon profil)
-    const occupe = () => demandeEnCours || document.visibilityState !== 'visible' || !!document.querySelector('.modal-back, .fete-back, .menu-pop, [aria-modal="true"]') || ecrit(document.activeElement);
+    const occupe = () => demandeEnCours || document.visibilityState !== 'visible' || !!document.querySelector('.modal-back:not(.sortie), .fete-back:not(.sortie), .menu-pop, [aria-modal="true"]') || ecrit(document.activeElement);
     const essayer = () => {
       // Quelque chose a déjà été demandé ou répondu pendant cette visite (mémo changé) : à la visite suivante
       if (!vivant || demandee || feteOuverte() || arriveeEnAttente(me.id) || JSON.stringify(lireMemo(me.id)) !== avant || !ouvrable()) return;
@@ -292,7 +292,7 @@ export function PrevenirHote({ ctx, bloque }) {
         lancee = true;
         t = setTimeout(() => {
           const memo = lireMemo(me.id); delete memo.differe; ecrireMemo(me.id, memo);
-          if (bloque || document.querySelector('.modal-back, .fete-back')) return;
+          if (bloque || document.querySelector('.modal-back:not(.sortie), .fete-back:not(.sortie)')) return;
           const v = variante(memo0.differe, memo);
           if (v) montrer({ raison: memo0.differe, mot: null, v, t: Date.now() });
         }, 2500);

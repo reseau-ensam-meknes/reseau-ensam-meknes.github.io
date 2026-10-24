@@ -114,8 +114,14 @@ function CarteAuteur({ ctx, d, focus, onEdit }) {
   const props = (data.propositions || []).filter(x => x.demande_id === d.id);
   const envoyees = props.filter(x => x.status === 'envoyee').sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   const pause = demandeEnPause(d);
-  const fermer = () => ctx.confirm('Fermer ta demande ? Les lauréats ne la verront plus. Tu pourras la rouvrir.', () => act(async () => { await store.update('demandes', d.id, { status: 'fermee' }); toast('Demande fermée.'); }), 'Fermer la demande');
-  const rouvrir = () => act(async () => { await store.update('demandes', d.id, { status: 'ouverte' }); toast('Demande rouverte : les lauréats la voient de nouveau.'); });
+  // Fermer ou rouvrir se fait d'un geste : « Annuler » dans le message du bas remet l'état d'avant.
+  // Des propositions attendent une réponse : elles seraient closes pour de bon, alors on demande d'abord.
+  const changer = (status, mot, retour) => act(async () => { await store.update('demandes', d.id, { status }); toast(mot, 'ok', 0, retour ? { annuler: retour } : {}); });
+  const FERMEE = 'Demande fermée.', ROUVERTE = 'Demande rouverte : les lauréats la voient de nouveau.';
+  const fermer = () => (envoyees.length
+    ? ctx.confirm('Fermer ta demande ? Les lauréats ne la verront plus. Tu pourras la rouvrir.', () => changer('fermee', FERMEE), 'Fermer la demande')
+    : changer('fermee', FERMEE, () => changer('ouverte', ROUVERTE)));
+  const rouvrir = () => changer('ouverte', ROUVERTE, () => changer('fermee', FERMEE));
   const supprimer = () => ctx.confirm('Supprimer cette demande ? Elle disparaît pour tout le monde.', () => act(async () => { await store.remove('demandes', d.id); toast('Demande supprimée.'); }), 'Supprimer');
   const relancer = () => act(async () => { await store.update('demandes', d.id, { relancee_at: new Date().toISOString() }); toast('Demande relancée : les lauréats la voient de nouveau.'); });
   return html`<article class=${'dm-card st-' + d.status + (focus ? ' dm-focus' : '')} id=${'dm-' + d.id}>
@@ -230,7 +236,7 @@ function DemandeForm({ ctx, d = null, onClose }) {
       onClose();
       const mot = 'Demande publiée. Les lauréats de ton parcours sont prévenus.';
       if (celebrate({ cle: 'premiere-demande-' + me.id, icon: 'send', titre: 'Ta demande est publiée', texte: 'Les lauréats de ton parcours sont prévenus. Leurs propositions arriveront ici et dans tes messages.' })) proposerPrevenir('demande');
-      else if (!proposerPrevenir('demande', mot)) toast(mot);
+      else if (!proposerPrevenir('demande', mot)) toast(mot, 'envoi');
     });
   };
   const pied = html`<button class="btn primary" type="submit" form="dm-form" id="dm-publier">${d ? 'Enregistrer' : 'Publier ma demande'}</button>`;
@@ -413,7 +419,7 @@ export function ProposerAide({ ctx, id, onClose }) {
       else await store.insert('propositions', { demande_id: d.id, laureat_id: me.id, ...champs });
       onClose();
       const mot = mode === 'modifier' ? 'Proposition modifiée.' : `Proposition envoyée. ${p} la reçoit aussi dans ses messages.`;
-      if (mode === 'modifier' || !proposerPrevenir('proposition', mot)) toast(mot);
+      if (mode === 'modifier' || !proposerPrevenir('proposition', mot)) toast(mot, mode === 'modifier' ? 'ok' : 'envoi');
     }).finally(() => setBusy(false));
   };
   if (!d) return html`<${Modal} title="Demandes des étudiants" onClose=${onClose}><p class="dm-box"><${Icon} name="heart" size=${18}/><span>Cette demande n’attend plus d’aide : elle est pourvue ou fermée. Merci d’avoir voulu aider !</span></p><//>`;

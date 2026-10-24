@@ -260,9 +260,10 @@ textarea { resize: vertical; }
 .tbl td { padding: .55rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
 .tbl .num { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bar-cell { width: 40%; vertical-align: middle !important; }
-.toast { position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 60; background: var(--ink); color: var(--bg); padding: .75rem 1.15rem; border-radius: var(--r-md); box-shadow: var(--sh3); max-width: calc(100vw - 32px); font-weight: 500; animation: pop .25s ease; pointer-events: none; }
+/* Messages du bas : une zone fixe, chaque message y monte en fondu et repart de même (Lot mouvement · B, plus bas) */
+.toast-zone { position: fixed; inset-inline: 0; bottom: calc(84px + env(safe-area-inset-bottom, 0px)); z-index: 60; display: grid; justify-items: center; padding-inline: 16px; pointer-events: none; }
+.toast { grid-area: 1 / 1; display: flex; align-items: center; gap: .65rem; max-width: min(34rem, 100%); background: var(--ink); color: var(--bg); padding: .7rem 1.05rem; padding-inline-start: .85rem; border-radius: var(--r-md); box-shadow: var(--sh3); font-weight: 500; pointer-events: none; }
 .toast.err { background: var(--bad); color: var(--bad-ink); } .toast.win { background: var(--brass); color: var(--surface); }
-@keyframes pop { from { transform: translate(-50%, 8px); opacity: .4; } }
 .modal-back { position: fixed; inset: 0; z-index: 50; background: rgb(10 12 18 / .45); display: grid; place-items: center; padding: 16px; }
 .modal { width: min(560px, 100%); max-height: calc(100vh - 32px); overflow: auto; background: var(--surface); border-radius: var(--r-xl); box-shadow: var(--sh3); }
 .modal.wide { width: min(760px, 100%); }
@@ -1787,6 +1788,101 @@ svg.ico :is(path, circle, rect, line, polyline, polygon, ellipse) { vector-effec
   [dir="rtl"] .home-hero .hello-txt::before { inset: -1.7rem -1.9rem -1.7rem -4.5rem; background: linear-gradient(270deg, color-mix(in srgb, var(--sky-2) 95%, transparent) 72%, transparent); }
 }
 /* (fin de la partie D) */
+
+/* ===== Lot mouvement · B : feuilles au doigt, toucher natif, onglets qui glissent, messages du bas ===== */
+:root { --good-on-ink: #5DC991; --action-on-ink: #9AD2F5; --ease-out: cubic-bezier(.16, 1, .3, 1); --ease-in: cubic-bezier(.4, 0, 1, 1); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --good-on-ink: #1D7348; --action-on-ink: #135F8F; } }
+:root[data-theme="dark"] { --good-on-ink: #1D7348; --action-on-ink: #135F8F; }
+
+/* Toucher : pas de flash bleu ; ce qu'on touche s'enfonce aussitôt, puis revient en douceur */
+html { -webkit-tap-highlight-color: transparent; }
+.seg button, .tab, .puces-nav [role="tab"], button.person, .notif, .menu-pop button, .more-pop button, .bottom-nav a .bn-ico, .lang-btn, .me-btn, .type-opt, .niv-card, button.impact-strip, button.objective, button.app-row, .tcard, .gcard, .mcard, .dm-card .btn, .toast-annuler { transition-property: background, color, border-color, box-shadow, transform, opacity; transition-duration: .22s; transition-timing-function: var(--ease); }
+.seg button:active:not(:disabled), .tab:active, .puces-nav [role="tab"]:active, .lang-btn:active, .me-btn:active, .toast-annuler:active { transform: scale(.95); transition-duration: .08s; }
+button.person:active, .notif:active, button.app-row:active, .type-opt:active, .niv-card:active, button.impact-strip:active, button.objective:active, button.tcard:active, button.gcard:active, button.mcard:active { transform: scale(.985); transition-duration: .08s; }
+.btn:active:not(:disabled), .icon-btn:active, .chip:active, .act:active, .shortcut:active, .ocard-main:active, button.panel:active, .qrow:active { transition-duration: .08s; }
+.bottom-nav a:active .bn-ico { transform: scale(.88); transition-duration: .08s; }
+.menu-pop button:active, .more-pop button:active { background: var(--surface-2); transition-duration: .05s; }
+@media (hover: none) {
+  .btn, .seg button, .tab, .puces-nav [role="tab"], .bottom-nav a, .side-nav a, .chip, .icon-btn, .menu-pop button, .toast-annuler { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+}
+
+/* La page derrière une feuille ne défile plus ; la barre de défilement garde sa place (rien ne saute à droite) */
+html.defil-bloque { overflow: hidden; overscroll-behavior: none; }
+html.defil-bloque.defil-gouttiere { scrollbar-gutter: stable; }
+.modal, .fete { overscroll-behavior: contain; }
+
+/* Le voile s'éclaircit à mesure qu'on descend la feuille, puis s'efface avec elle */
+@property --voile { syntax: "<number>"; inherits: true; initial-value: 1; }
+.modal-back { background: rgb(10 12 18 / calc(.45 * var(--voile, 1))); }
+.fete-back { background: rgb(8 14 26 / calc(.5 * var(--voile, 1))); }
+@media (min-width: 761px) { .modal-back:has(> .modal.cloche) { background: rgb(10 12 18 / calc(.2 * var(--voile, 1))); } }
+/* À l'ouverture, seul le voile se fond : la feuille, elle, monte d'un bloc (sans devenir transparente) */
+@keyframes voile-in { from { --voile: 0; } }
+.modal-back, .fete-back { animation: voile-in .3s ease backwards; }
+/* Tirée vers le haut (ou en ressort), la feuille ne découvre jamais le bas de l'écran */
+.modal.glisse, .fete.glisse { box-shadow: 0 90px 0 0 var(--surface), var(--sh3); }
+
+/* Sortie : la copie inerte de la feuille repart (vers le bas sur téléphone, en fondu sur ordinateur) */
+@keyframes voile-out { to { --voile: 0; } }
+@keyframes pop-out { to { opacity: 0; transform: translateY(8px) scale(.97); } }
+@keyframes sheet-out { to { transform: translate3d(0, 100%, 0); } }
+.modal-back.sortie, .fete-back.sortie { pointer-events: none; animation: voile-out var(--sortie-d, .24s) ease forwards; }
+.modal-back.sortie > .modal, .fete-back.sortie > .fete { animation: pop-out .18s var(--ease-in) forwards; }
+.fete-back.sortie > .fete-pluie { display: none; }
+
+@media (max-width: 760px) {
+  .modal, .modal.wide { animation: sheet-in .42s var(--ease-out) backwards; }
+  .modal-head { touch-action: none; }
+  .modal-back.sortie > .modal, .fete-back.sortie > .fete { animation: sheet-out var(--sortie-d, .28s) var(--sortie-e, cubic-bezier(.32, 0, .67, 0)) forwards; }
+  /* Sur téléphone, les fêtes aussi montent du bas */
+  .fete-back { place-items: end center; padding: 0; padding-top: env(safe-area-inset-top, 0px); }
+  .fete { width: 100%; max-height: 92vh; max-height: 92dvh; overflow: auto; border-radius: var(--r-xl) var(--r-xl) 0 0; padding: 2rem 1.25rem calc(1.25rem + env(safe-area-inset-bottom, 0px)); animation: sheet-in .5s var(--ease-out) backwards; }
+  .fete > .sheet-grip { touch-action: none; }
+  .fete > .sheet-grip::after { content: ""; position: absolute; inset: -12px -64px; }
+}
+
+/* Onglets : la pastille (ou le trait) glisse de l'ancien onglet au nouveau ; elle n'existe que le temps du geste */
+.tabs, .seg, .puces-nav { position: relative; isolation: isolate; }
+.trait-vol::after { content: ""; position: absolute; left: 0; top: 0; width: var(--tw); height: var(--th); transform: translate(var(--tx), var(--ty)); transition: transform .36s var(--ease-out), width .36s var(--ease-out), height .36s var(--ease-out); pointer-events: none; }
+.trait-pose::after { transition: none !important; }
+.tabs.trait-vol::after { border-radius: 2px; background: var(--accent); z-index: 1; }
+.tabs.trait-vol > .tab.on { border-bottom-color: transparent; }
+.seg.trait-vol::after { z-index: -1; border-radius: 9px; background: var(--sel-bg); box-shadow: inset 0 0 0 1px var(--sel-ring); }
+.seg.trait-vol > .on { background: transparent !important; box-shadow: none !important; }
+.puces-nav.trait-vol::after { z-index: 1; border-radius: var(--r-pill); background: var(--sel-bg); box-shadow: inset 0 0 0 1px var(--sel-ring); }
+.puces-nav.trait-vol > * { transform: none !important; }
+.puces-nav.trait-vol > * > * { position: relative; z-index: 2; }
+.puces-nav.trait-vol > .on { background: var(--surface); border-color: var(--line-strong); box-shadow: none; }
+
+/* Messages du bas : une icône par sorte, ils montent en fondu et repartent de même ; « Annuler » quand on peut revenir en arrière */
+@keyframes toast-in { from { opacity: 0; transform: translateY(18px) scale(.96); } }
+@keyframes toast-out { to { opacity: 0; transform: translateY(10px) scale(.97); } }
+@keyframes coche-pop { from { opacity: 0; transform: scale(.4); } }
+@keyframes trace { from { stroke-dashoffset: 1; } }
+.toast { animation: toast-in .42s var(--ease-out) backwards; }
+.toast.sortie { animation: toast-out .22s var(--ease-in) forwards; }
+.toast-ico { flex: none; }
+.toast.ok .toast-ico, .toast.envoi .toast-ico { color: var(--good-on-ink); }
+.toast.info .toast-ico { color: var(--action-on-ink); }
+.toast-trace { stroke-dasharray: 1; stroke-dashoffset: 0; animation: trace .42s var(--ease) .12s backwards; }
+.toast-txt { display: flex; flex-direction: column; min-width: 0; }
+.toast-titre { font-weight: 650; }
+.toast.envoi { padding-block: .75rem; }
+.toast.envoi .toast-ico { width: 26px; height: 26px; animation: coche-pop .5s cubic-bezier(.3, 1.5, .5, 1) backwards; }
+.toast.envoi .toast-trace { animation-delay: .2s; animation-duration: .5s; }
+.toast.envoi .toast-txt > span { font-weight: 400; opacity: .88; font-size: var(--fs-2); }
+.toast.avec-action { pointer-events: auto; padding-inline-end: .35rem; }
+.toast-annuler { flex: none; min-height: 40px; margin-inline-start: .35rem; padding: .4rem .75rem; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--action-on-ink); font: 600 var(--fs-3)/1 var(--f-body); cursor: pointer; }
+.toast-annuler:hover { background: color-mix(in srgb, var(--bg) 10%, transparent); }
+.toast.err .toast-annuler, .toast.win .toast-annuler { color: inherit; text-decoration: underline; }
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes toast-in { from { opacity: 0; } }
+  @keyframes coche-pop { from { opacity: 0; } }
+  .toast-trace { animation: none !important; }
+  .trait-vol::after { display: none; }
+}
+/* (fin du lot mouvement · B) */
 
 /* Moins de mouvement demandé : on garde des fondus très courts, sans déplacement ni boucle */
 @media (prefers-reduced-motion: reduce) {

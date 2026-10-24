@@ -627,6 +627,11 @@ Object.assign(AR, {
 Object.assign(AR, {
 });
 
+// Lot mouvement · B : messages du bas (la coche d'un envoi réussi ; « Annuler » s'y lit « تراجع », voir ui.js)
+Object.assign(AR, {
+  'C’est noté': 'تم بنجاح',
+});
+
 export const AR_PATTERNS = [
   // Lot design · A (motifs)
   // (fin A)

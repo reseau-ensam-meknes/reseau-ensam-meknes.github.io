@@ -190,7 +190,7 @@ export function AskHelp({ ctx, mentor = null, besoin: b0 = '', sujet: s0 = '', o
       await store.insert('mentorships', { student_id: me.id, mentor_id: to || null, besoin, sujet: sujet.trim(), message: msg.trim() || null, creneaux: valid.map(x => new Date(x).toISOString()) });
       onClose(); go('mentorat');
       if (!proposerPrevenir('mentorat', to ? `Horaires envoyés à ${firstName(target)}.` : 'Horaires envoyés aux lauréats.'))
-        toast(to ? `Horaires envoyés à ${firstName(target)}. On te prévient dès qu’un horaire est choisi.` : 'Horaires envoyés aux lauréats. On te prévient dès qu’un horaire est choisi.', 'win');
+        toast(to ? `Horaires envoyés à ${firstName(target)}. On te prévient dès qu’un horaire est choisi.` : 'Horaires envoyés aux lauréats. On te prévient dès qu’un horaire est choisi.', 'envoi');
     });
   };
   return html`<${Modal} title=${mentor ? `Demander à ${mentor.full_name}` : 'Demander de l’aide'} onClose=${onClose}>

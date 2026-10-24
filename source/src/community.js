@@ -116,7 +116,7 @@ export function AskQuestion({ ctx, onClose, onDone, initial = {} }) {
   const fake = { entreprise: cible ? f.entreprise.trim() : '', pays: cible ? f.pays.trim() : '', author_id: me.id };
   const n = cible && (fake.entreprise || fake.pays) ? data.profiles.filter(p => routedTo(fake, p)).length : 0;
   return html`<${Modal} title="Poser une question" onClose=${onClose}>
-    <form class="form" onSubmit=${e => { e.preventDefault(); act(async () => { const row = { author_id: me.id, categorie: f.categorie, titre: f.titre.trim(), body: f.body.trim() }; if (fake.entreprise) row.entreprise = fake.entreprise; if (fake.pays) row.pays = fake.pays; const q = await store.insert('questions', row); onDone(q.id); const mot = n ? `Question envoyée à ${n} lauréat${n > 1 ? 's' : ''}.` : 'Ta question est publiée.'; if (!proposerPrevenir('question', mot) && n) toast(mot); }); }}>
+    <form class="form" onSubmit=${e => { e.preventDefault(); act(async () => { const row = { author_id: me.id, categorie: f.categorie, titre: f.titre.trim(), body: f.body.trim() }; if (fake.entreprise) row.entreprise = fake.entreprise; if (fake.pays) row.pays = fake.pays; const q = await store.insert('questions', row); onDone(q.id); const mot = n ? `Question envoyée à ${n} lauréat${n > 1 ? 's' : ''}.` : 'Ta question est publiée.'; if (!proposerPrevenir('question', mot) && n) toast(mot, 'envoi'); }); }}>
       <${Field} label="Catégorie"><select id="aq-cat" value=${f.categorie} onChange=${e => setF({ ...f, categorie: e.target.value })}>${CATEGORIES_Q.map(c => html`<option value=${c}>${c}</option>`)}</select><//>
       <${Field} label="Question"><input id="aq-titre" required value=${f.titre} onInput=${e => setF({ ...f, titre: e.target.value })} maxlength="160" placeholder="Ex. Comment obtenir un visa pour un stage au Canada ?"/><//>
       <${Field} label="Détails (facultatif)"><textarea id="aq-body" rows="4" value=${f.body} onInput=${e => setF({ ...f, body: e.target.value })} maxlength="3000"></textarea><//>
@@ -508,7 +508,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
       // Un envoi « Qui voit quoi » encore en route ne doit pas arriver en dernier : la grille voulue repart derrière lui
       if (!onboarding && enVol.current) envoyerVis(derniereG.current);
       // À l'inscription, c'est la feuille d'accueil qui souhaite la bienvenue
-      if (!onboarding) toast('Profil enregistré.');
+      if (!onboarding) toast('Profil enregistré.', 'envoi');
       onDone?.();
     });
   };
