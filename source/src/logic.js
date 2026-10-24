@@ -1277,14 +1277,49 @@ const ambExpire = (a, now) => a.statut === 'propose' && now - new Date(a.propose
 export function ambassadeurDuGroupe(data, promo, filiere, now = Date.now()) {
   return (data?.ambassadeurs || []).find(a => memeGroupe(a, promo, filiere) && (a.statut === 'accepte' || (a.statut === 'propose' && !ambExpire(a, now)))) || null;
 }
-// Les ambassadeurs acceptés, par membre (badge, merci public)
+// Qui change quoi (comme protect_ambassadeur() dans schema.sql) : le membre accepte ou refuse dans les 7 jours, se
+// retire, et annule son geste dans les 10 minutes ; l'administration retire, et n'annule son retrait que vers le statut
+// d'avant (jamais accepter à sa place) ; chacun n'annule que son propre retrait. systeme : expiration, changement de groupe.
+// Renvoie la ligne à garder (les colonnes fixes reprises de old), ou lève « Action non autorisée ».
+export const AMB_ANNULER_MS = 10 * 60e3;
+export function transitionAmbassadeur(old, r, { moi, admin = false, systeme = false, now = Date.now() } = {}) {
+  const x = { ...r };
+  for (const k of ['id', 'promo', 'filiere', 'user_id', 'par', 'propose_at', 'created_at']) x[k] = old[k];
+  const garder = () => { x.retire_par = old.retire_par ?? null; x.statut_avant = old.statut_avant ?? null; };
+  if (x.statut === old.statut) { x.repondu_at = old.repondu_at ?? null; garder(); return x; }
+  const iso = new Date(now).toISOString();
+  if (systeme) {
+    if (x.statut === 'retire' && !x.retire_par) { x.retire_par = 'systeme'; x.statut_avant = old.statut; }
+    return x;
+  }
+  garder();
+  const frais = !!old.repondu_at && now - new Date(old.repondu_at).getTime() < AMB_ANNULER_MS;
+  const ouvert = now - new Date(old.propose_at || old.created_at).getTime() < AMB_DELAI_JOURS * 864e5;
+  const de = old.statut, vers = x.statut;
+  if (moi && old.user_id === moi && ((de === 'propose' && ['accepte', 'refuse'].includes(vers) && ouvert) || (de === 'accepte' && vers === 'retire')
+    || (de === 'refuse' && vers === 'propose' && frais && ouvert) || (de === 'retire' && vers === 'accepte' && frais && old.retire_par === 'membre'))) {
+    x.repondu_at = vers === 'propose' ? null : iso;
+    if (vers === 'retire') { x.retire_par = 'membre'; x.statut_avant = de; } else { x.retire_par = null; x.statut_avant = null; }
+    return x;
+  }
+  if (admin && old.user_id !== moi) {
+    if (['propose', 'accepte'].includes(de) && vers === 'retire') return Object.assign(x, { repondu_at: iso, retire_par: 'admin', statut_avant: de });
+    if (de === 'retire' && old.retire_par === 'admin' && vers === old.statut_avant && frais) return Object.assign(x, { repondu_at: vers === 'propose' ? null : iso, retire_par: null, statut_avant: null });
+  }
+  throw new Error('Action non autorisée pour ton compte.');
+}
+// Les ambassadeurs acceptés, par membre (badge, merci public) ; seulement du groupe où le membre est encore
+// (en ligne, changer de promo ou de filière retire le rôle : trigger ambassadeur_change_groupe)
 export function ambassadeursActifs(data) {
-  return new Map((data?.ambassadeurs || []).filter(a => a.statut === 'accepte').map(a => [a.user_id, a]));
+  const profils = new Map((data?.profiles || []).map(p => [p.id, p]));
+  return new Map((data?.ambassadeurs || []).filter(a => a.statut === 'accepte' && (!profils.has(a.user_id) || memeGroupe(a, profils.get(a.user_id).promo, profils.get(a.user_id).filiere))).map(a => [a.user_id, a]));
 }
 // Activité de chaque membre du groupe qui peut être proposé, dans l'ordre (le plus actif d'abord ; égalité : le plus ancien)
 // consent_at : null = pas encore accepté les conditions (en ligne) ; absent en démo
 export function candidatsAmbassadeur(data, promo, filiere, now = Date.now()) {
-  const deja = new Set((data?.ambassadeurs || []).filter(a => memeGroupe(a, promo, filiere) && (['refuse', 'expire', 'retire'].includes(a.statut) || ambExpire(a, now))).map(a => a.user_id));
+  // Jamais deux groupes : déjà proposé (moins de 7 jours) ou ambassadeur quelque part, pas candidat ici
+  const deja = new Set((data?.ambassadeurs || []).filter(a => (memeGroupe(a, promo, filiere) && (['refuse', 'expire', 'retire'].includes(a.statut) || ambExpire(a, now)))
+    || a.statut === 'accepte' || (a.statut === 'propose' && !ambExpire(a, now))).map(a => a.user_id));
   const score = new Map();
   const groupe = (data?.profiles || []).filter(p => memeGroupe(p, promo, filiere) && ['etudiant', 'laureat'].includes(p.role) && p.consent_at !== null && !deja.has(p.id));
   for (const p of groupe) score.set(p.id, 0);

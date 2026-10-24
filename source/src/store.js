@@ -1,7 +1,7 @@
 // Couche de données : même interface en mode démo (navigateur) et en mode réel (Supabase).
 // Les données de démonstration (seed.js) ne sont chargées qu'en démo : le site réel n'en a pas besoin
 const chargerSeed = () => import('./seed.js').then(m => m.buildSeed());
-import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage } from './logic.js';
+import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage, transitionAmbassadeur } from './logic.js';
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
 const PHASE3 = ['coordonnees', 'demandes_contact', 'relectures_cv', 'relecture_commentaires', 'entretiens', 'avis_stage', 'guide_pays', 'signalements', 'enquetes_insertion', 'verifications_pairs', 'evenements', 'evenement_participants', 'retours_cv'];
@@ -73,6 +73,9 @@ class Base {
     }
     if (neuf) this.emit();
   }
+  // Fondateur : ne plus apparaître sur la page d'entrée (false : non ; null : pas encore répondu). En ligne, la photo
+  // change aussi de nom (voir SupabaseStore).
+  async masquerFondateur(valeur = false) { return this.update('profiles', this.me.id, { fondateur_public: valeur }); }
   // La photo qu'on vient de choisir s'affiche tout de suite, sans attendre de lien
   retenirPhoto(path, blob) { (this.photosUrl ||= new Map()).set(path, { url: URL.createObjectURL(blob), fin: Date.now() + 5 * 3600e3 }); }
   // Domaines de l'email de l'école (réglage de l'administration), en minuscules
@@ -153,6 +156,7 @@ class DemoStore extends Base {
     if (table === 'shortlists') { r.laureat_id = this.me?.id; if (this.data.shortlists.some(x => x.laureat_id === r.laureat_id && x.student_id === r.student_id)) return r; }
     if (table === 'kudos') { r.user_id = this.me?.id; if (this.data.kudos.some(x => x.placement_id === r.placement_id && x.user_id === r.user_id)) return r; }
     if (table === 'invitations') applyInvitationRules(this, r, null);
+    if (table === 'ambassadeurs') applyAmbassadeurInsert(this, r);
     if (MESSAGERIE.includes(table) && applyMessagerieRules(this, table, r, null) === false) return r;
     if (DEMANDES.includes(table)) applyDemandeRules(this, table, r, null);
     if (PHASE2.includes(table) && applyPhase2Rules(this, table, r, null) === false) return r;
@@ -179,6 +183,7 @@ class DemoStore extends Base {
     if (table === 'invitations') applyInvitationRules(this, r, old);
     if (table === 'mentorships') applyMentorshipRules(this, r, old);
     if (table === 'liens_rdv') applyLienRules(this, r, old);
+    if (table === 'ambassadeurs') applyAmbassadeurRules(this, r, old);
     if (table === 'annonces' && this.me?.role !== 'admin') throw new Error('Action non autorisée pour ton compte.');
     if (MESSAGERIE.includes(table)) applyMessagerieRules(this, table, r, old);
     if (DEMANDES.includes(table)) applyDemandeRules(this, table, r, old);
@@ -188,6 +193,7 @@ class DemoStore extends Base {
     if (table === 'profiles' && this.me?.role === 'admin' && old.verified && !r.verified) this.data.verifications_pairs = this.data.verifications_pairs.filter(v => v.laureat_id !== id);
     this.data[table] = this.data[table].map(x => x.id === id ? r : x);
     if (table === 'profiles' && id === this.me?.id) this.me = r;
+    if (table === 'profiles') ambassadeurChangeGroupe(this, r, old);
     if (table === 'profiles' && r.parrain_dispo && !old.parrain_dispo) demoParrains(this);
     if (DEMANDES.includes(table) || table === 'placements') suitesDemande(this, table, r, old);
     this.persist(); this.emit();
@@ -580,6 +586,30 @@ function verifierFichierChat(f) {
 }
 
 // Phase 3 : mêmes règles que les triggers de la base (protect_relecture, protect_avis, protect_guide…)
+// Ambassadeurs en démo : les mêmes règles que la base (protect_ambassadeur_insert, protect_ambassadeur, l'index
+// « un seul en cours par promo × filière » et ambassadeur_change_groupe). store.ambSysteme : la plateforme elle-même
+// (propositions et expirations), comme ensam.amb_systeme.
+const ambEnCours = a => a.statut === 'propose' || a.statut === 'accepte';
+const AMB_TROP_TARD = 'Trop tard, c’est déjà proposé à quelqu’un d’autre.';
+function applyAmbassadeurInsert(store, r) {
+  const p = store.byId('profiles', r.user_id);
+  if (!p || !['etudiant', 'laureat'].includes(p.role)) throw new Error('Seul un étudiant ou un lauréat peut être ambassadeur.');
+  if (!store.ambSysteme && !(store.me?.role === 'admin' && r.statut === 'propose' && r.par === 'admin')) throw new Error('Action non autorisée pour ton compte.');
+  if (store.data.ambassadeurs.some(a => a.user_id === r.user_id && ambEnCours(a))) throw new Error(`${p.full_name} est déjà proposé ou ambassadeur.`);
+  const now = new Date().toISOString();
+  Object.assign(r, { promo: Number(p.promo), filiere: p.filiere, propose_at: now, created_at: now, repondu_at: null, retire_par: null, statut_avant: null });
+  if (store.ambSysteme) Object.assign(r, { par: 'auto', statut: 'propose' });
+  if (store.data.ambassadeurs.some(a => Number(a.promo) === r.promo && a.filiere === r.filiere && ambEnCours(a))) throw new Error(AMB_TROP_TARD);
+}
+function applyAmbassadeurRules(store, r, old) {
+  Object.assign(r, transitionAmbassadeur(old, r, { moi: store.me?.id, admin: store.me?.role === 'admin', systeme: !!store.ambSysteme }));
+  if (ambEnCours(r) && !ambEnCours(old) && store.data.ambassadeurs.some(a => a.id !== r.id && Number(a.promo) === Number(r.promo) && a.filiere === r.filiere && ambEnCours(a))) throw new Error(AMB_TROP_TARD);
+}
+function ambassadeurChangeGroupe(store, r, old) {
+  if (String(r.promo) === String(old.promo) && r.filiere === old.filiere && r.role === old.role) return;
+  const now = new Date().toISOString();
+  store.data.ambassadeurs = store.data.ambassadeurs.map(a => a.user_id === r.id && ambEnCours(a) ? { ...a, statut: 'retire', repondu_at: now, retire_par: 'systeme', statut_avant: a.statut } : a);
+}
 function applyPhase3Rules(store, table, r, old) {
   const me = store.me; const isAdmin = me?.role === 'admin'; const now = new Date().toISOString();
   const deny = () => { throw new Error('Action non autorisée pour ton compte.'); };
@@ -1067,7 +1097,17 @@ export class SupabaseStore extends Base {
     this.deconnexionVoulue = false;
     clearTimeout(this.minuteurCache); oublierCache();
     this.session = s; this.depuisCache = false; this.enAttente = false; this.horsLigne = false;
-    await this.loadAll();
+    // Autre compte (ou plus de compte) : rien de l'ancien ne reste en mémoire, même si une table ne se charge pas
+    // (loadTable garde ce qu'il avait en cas d'échec : ce serait les lignes de l'autre compte, écrites ensuite dans
+    // la copie de l'appareil sous le nouveau)
+    this.data = Object.fromEntries(TABLES.map(t => [t, []])); this.me = null; this._pouls = null;
+    try { await this.loadAll(); }
+    catch {
+      // Réseau qui hésite : le nouveau compte avec ce qui a pu être lu, et on réessaie (comme rafraichir)
+      this.me = this.userId ? this.byId('profiles', this.userId) || null : null;
+      this.enAttente = true; this.horsLigne = true;
+      clearTimeout(this.minuteurEssai); this.minuteurEssai = setTimeout(() => { if (this.enAttente) this.rafraichir(); }, 20e3);
+    }
     this.emit();
   }
   perdreSession(s) {
@@ -1147,7 +1187,7 @@ export class SupabaseStore extends Base {
   emit() { super.emit(); if (!this.depuisCache && this.me) { clearTimeout(this.minuteurCache); this.minuteurCache = setTimeout(() => this.ecrireCacheMaintenant(), 3000); } }
   ecrireCacheMaintenant() {
     clearTimeout(this.minuteurCache);
-    if (this.depuisCache || !this.me || !this.userId || this.mode !== 'live') return;
+    if (this.depuisCache || !this.me || !this.userId || this.me.id !== this.userId || this.mode !== 'live') return;
     ecrireCache({ forme: CACHE_FORME, uid: this.userId, t: Date.now(), data: pourCache(this.data, this.userId), reglages: this.reglages, pouls: this._pouls || null }).catch?.(() => {});
   }
 
@@ -1392,6 +1432,26 @@ export class SupabaseStore extends Base {
     await this.sb.storage.from('photos').remove([ancien]).catch(() => {});
     return r;
   }
+  // Fondateur qui ne veut plus être sur la page d'entrée : un visiteur a pu obtenir un lien temporaire vers sa photo,
+  // et c'est lui qui en choisit la durée (createSignedUrl). Un tel lien ne vaut que pour ce nom de fichier : la photo est
+  // recopiée sous un nouveau nom, le profil pointe vers la copie (même mise à jour que le refus), puis l'original est
+  // supprimé ; l'ancien lien ne mène plus à rien. Copie impossible : la photo est retirée plutôt que laissée en ligne.
+  async masquerFondateur(valeur = false) {
+    const ancien = this.me?.photo_path;
+    if (!ancien || this.me?.fondateur_public !== true) return this.update('profiles', this.userId, { fondateur_public: valeur });
+    const path = `${this.userId}/photo-${Date.now()}.${ancien.split('.').pop()}`;
+    const photos = this.sb.storage.from('photos');
+    let copie = false;
+    try { copie = !(await photos.copy(ancien, path)).error; } catch { /* copie impossible */ }
+    // Réseau coupé : cette mise à jour échoue aussi, et rien n'a changé (le membre réessaie)
+    try { await this.update('profiles', this.userId, { fondateur_public: valeur, photo_path: copie ? path : null }); }
+    catch (e) { if (copie) photos.remove([path]).catch(() => {}); throw e; }
+    for (let essai = 0; essai < 2; essai++) {
+      const x = await photos.remove([ancien]).catch(e => ({ error: e }));
+      if (!x?.error) break;
+    }
+    return { photoRetiree: !copie };
+  }
   async liensPhotos(paths) {
     const out = {};
     for (let i = 0; i < paths.length; i += 100) {
@@ -1574,6 +1634,7 @@ function frError(e) {
   if (m.includes('duplicate key') && m.includes('invitations')) return 'Cet étudiant est déjà invité sur cette offre.';
   if (m.includes('duplicate key') && m.includes('propositions')) return 'Tu as déjà proposé ton aide pour cette demande.';
   if (m.includes('duplicate key') && (m.includes('cafe_participants') || m.includes('groupe_membres'))) return 'C’est déjà fait.';
+  if (m.includes('ambassadeurs_un_en_cours')) return 'Trop tard, c’est déjà proposé à quelqu’un d’autre.';
   if (m.includes('startups_site_check')) return 'Le lien doit commencer par https://';
   if (m.includes('avis_stage_un_par_saison')) return 'Tu as déjà donné ton avis sur cette entreprise pour cette année.';
   if (m.includes('guide_pays_pays_cle_section')) return 'Cette rubrique existe déjà : recharge la page pour la modifier.';

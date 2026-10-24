@@ -131,7 +131,8 @@ export function useFondateurMoi(ctx) {
 function FeuilleFondateur({ ctx, onClose }) {
   const { me, store, act } = ctx;
   const repondre = oui => act(async () => {
-    await store.update('profiles', me.id, { fondateur_public: oui });
+    // Non : la photo change aussi de nom (un lien déjà donné à un visiteur ne marche plus) ; voir masquerFondateur
+    if (oui) await store.update('profiles', me.id, { fondateur_public: true }); else await store.masquerFondateur(false);
     onClose();
     toast(oui ? 'C’est noté : ton nom apparaît en haut de la page d’entrée.' : 'C’est noté. Tu peux changer d’avis dans Mon profil.');
   });
@@ -151,8 +152,11 @@ export function FondateurPublicCase({ ctx }) {
   if (me.role !== 'laureat' || !fondateurs?.has(me.id) || (store.mode === 'live' && choix === undefined)) return null;
   return html`<h3 class="md-titre">Page d’entrée</h3>
     <label class="check"><input id="md-fondateur" type="checkbox" checked=${choix === true} onChange=${e => act(async () => {
-      await store.update('profiles', me.id, { fondateur_public: e.target.checked });
-      toast(e.target.checked ? 'C’est noté : ton nom apparaît en haut de la page d’entrée.' : 'Ton nom et ta photo ne sont plus sur la page d’entrée.');
+      const oui = e.target.checked;
+      const r = oui ? await store.update('profiles', me.id, { fondateur_public: true }) : await store.masquerFondateur(false);
+      toast(oui ? 'C’est noté : ton nom apparaît en haut de la page d’entrée.'
+        : r?.photoRetiree ? 'Ton nom n’est plus sur la page d’entrée. Ta photo a été retirée : remets-la depuis Mon profil.'
+        : 'Ton nom et ta photo ne sont plus sur la page d’entrée.');
     })}/> Montrer mon nom et ma photo de membre fondateur en haut de la page d’entrée (visible sans compte)</label>`;
 }
 
@@ -194,6 +198,7 @@ addAR({
   'Page d’entrée': 'صفحة الدخول',
   'Montrer mon nom et ma photo de membre fondateur en haut de la page d’entrée (visible sans compte)': 'إظهار اسمي وصورتي كعضو مؤسس في أعلى صفحة الدخول (مرئي دون حساب)',
   'Ton nom et ta photo ne sont plus sur la page d’entrée.': 'لم يعد اسمك وصورتك في صفحة الدخول.',
+  'Ton nom n’est plus sur la page d’entrée. Ta photo a été retirée : remets-la depuis Mon profil.': 'لم يعد اسمك في صفحة الدخول. وأُزيلت صورتك: أعد إضافتها من «ملفي الشخصي».',
   'Tu es Membre fondateur !': 'أنت عضو مؤسس!',
   [`Tu fais partie des ${NB_FONDATEURS} premiers lauréats à aider les étudiants. Merci ! Ce badge restera sur ton profil.`]: `أنت من بين أول ${NB_FONDATEURS} خريجًا ساعدوا الطلبة. شكرًا! ستبقى هذه الشارة على ملفك.`,
   'Voir mon badge': 'عرض شارتي',

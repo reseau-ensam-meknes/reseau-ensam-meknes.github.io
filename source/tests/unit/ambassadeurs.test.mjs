@@ -2,7 +2,7 @@
 // et ce qu'une réussite partagée dit (jamais un nom sans accord).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { candidatsAmbassadeur, proposerAmbassadeur, ambassadeurDuGroupe, ambassadeursActifs, chiffresPromo, reussitesDuGroupe, texteReussite, badgesOf, AMB_DELAI_JOURS } from '../../src/logic.js';
+import { candidatsAmbassadeur, proposerAmbassadeur, ambassadeurDuGroupe, ambassadeursActifs, chiffresPromo, reussitesDuGroupe, texteReussite, badgesOf, AMB_DELAI_JOURS, transitionAmbassadeur } from '../../src/logic.js';
 
 const GM = 'Génie Mécanique : Énergétique';
 const NOW = Date.parse('2026-10-24T10:00:00Z');
@@ -73,4 +73,39 @@ test('une réussite à partager : vérifiée des deux côtés ; le prénom seule
   assert.match(texteReussite({ ...l[0], partage_ok: true }, fara, 'fr', 'L'), /\nFara a décroché un PFE chez OCP/);
   const ar = texteReussite(l[0], fara, 'ar', 'L');
   assert.match(ar, /خبر سار للدفعة 2020/); assert.doesNotMatch(ar, /القدامى|Fara/);
+});
+
+// Démo : les mêmes transitions que protect_ambassadeur() (relecture : D1, D2 ; fenêtre de 10 minutes ; date de réponse)
+test('démo : qui change quoi, comme la base ; l’administration n’accepte jamais à la place du membre', () => {
+  const ligne = { id: 'l1', promo: 2020, filiere: GM, user_id: 'ali', statut: 'propose', par: 'auto', propose_at: il(1), created_at: il(1), repondu_at: null };
+  const t = (old, statut, qui, now = NOW) => transitionAmbassadeur(old, { ...old, statut }, { moi: qui, admin: qui === 'admin', now });
+  const non = (old, statut, qui, now) => assert.throws(() => t(old, statut, qui, now), /non autorisée/);
+  non(ligne, 'accepte', 'badr');
+  non(ligne, 'accepte', 'admin');
+  const accepte = t(ligne, 'accepte', 'ali');
+  assert.equal(accepte.repondu_at, new Date(NOW).toISOString(), 'date de réponse (« Ambassadeur depuis le »)');
+  non({ ...ligne, propose_at: il(8) }, 'accepte', 'ali');
+  // Retiré par l'administration : le membre ne se remet pas ; elle annule vers le statut d'avant seulement
+  const parAdmin = t(ligne, 'retire', 'admin');
+  assert.deepEqual([parAdmin.retire_par, parAdmin.statut_avant], ['admin', 'propose']);
+  non(parAdmin, 'accepte', 'admin');
+  non(parAdmin, 'accepte', 'ali');
+  assert.equal(t(parAdmin, 'propose', 'admin').statut, 'propose');
+  non(parAdmin, 'propose', 'admin', NOW + 11 * 60e3);
+  // Retiré par lui-même : lui seul annule, dans les 10 minutes
+  const parLui = t(accepte, 'retire', 'ali');
+  assert.deepEqual([parLui.retire_par, parLui.statut_avant], ['membre', 'accepte']);
+  non(parLui, 'accepte', 'admin');
+  assert.equal(t(parLui, 'accepte', 'ali').statut, 'accepte');
+  non(parLui, 'accepte', 'ali', NOW + 11 * 60e3);
+  // Refus annulé dans les 10 minutes ; ni la promo ni les dates ne bougent
+  const refus = t(ligne, 'refuse', 'ali');
+  assert.equal(t(refus, 'propose', 'ali').repondu_at, null);
+  non(refus, 'propose', 'ali', NOW + 11 * 60e3);
+  const x = transitionAmbassadeur(ligne, { ...ligne, statut: 'accepte', promo: 1999, propose_at: il(30), retire_par: 'admin' }, { moi: 'ali', now: NOW });
+  assert.deepEqual([x.promo, x.propose_at, x.retire_par], [2020, ligne.propose_at, null]);
+  // La plateforme expire et retire (changement de groupe) ; un retrait du système ne s'annule pas
+  const sys = transitionAmbassadeur(accepte, { ...accepte, statut: 'retire' }, { systeme: true, now: NOW });
+  assert.deepEqual([sys.retire_par, sys.statut_avant], ['systeme', 'accepte']);
+  non(sys, 'accepte', 'ali'); non(sys, 'accepte', 'admin');
 });

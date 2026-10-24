@@ -202,3 +202,97 @@ test('session gardée mais requête partie sans le compte (clé publique) : reno
     assert.equal(r.envoyes.length, 0);
   } finally { r.fin(); }
 });
+
+// Changement de compte sans déconnexion (autre compte connecté dans un autre onglet) : rien du premier compte ne reste
+// en mémoire ni n'est écrit dans la copie de l'appareil sous le second, même si une table ne se charge pas
+test('autre compte connecté sans déconnexion : les lignes du premier ne restent pas, ni dans la copie de l’appareil', async () => {
+  const { pourCache, TABLES } = await import('../../src/store.js');
+  const A = 'aaaa', B = 'bbbb';
+  globalThis.location ||= { hash: '#accueil', replace() {} };
+  const s = new SupabaseStore({ supabaseUrl: 'https://x.supabase.co', supabaseAnonKey: 'k' });
+  s.mode = 'live';
+  s.session = { user: { id: A } };
+  for (const t of TABLES) s.data[t] = [];
+  s.data.profiles = [{ id: A, full_name: 'Alice' }, { id: B, full_name: 'Bob' }];
+  s.data.applications = [{ id: 'cand-A', student_id: A, offer_id: 'o1', lettre: 'lettre privée d’Alice' }];
+  s.data.shortlists = [{ id: 'sl-A', owner_id: A, note: 'note privée' }];
+  s.me = s.data.profiles[0];
+  // Ce que B lit : tout répond, sauf applications et shortlists (réseau qui hésite), qui échouent deux fois
+  s.sb = {
+    from: nom => ({ select: () => ({ order: () => ({ range: async () => (['applications', 'shortlists'].includes(nom)
+      ? { data: null, error: { message: 'Failed to fetch' } }
+      : { data: nom === 'profils' ? [{ id: A, full_name: 'Alice' }, { id: B, full_name: 'Bob' }] : [], error: null }) }) }) }),
+    rpc: async () => ({ data: null, error: { message: 'x' } }),
+    channel: () => ({ on() { return this; }, subscribe() {} }),
+    auth: { getSession: async () => ({ data: { session: null } }) },
+  };
+  try {
+    await s.changementSession('SIGNED_IN', { user: { id: B } });
+    assert.equal(s.userId, B);
+    assert.equal(s.me?.id, B, 'le nouveau compte, avec ce qui a pu être lu');
+    assert.deepEqual(s.data.applications, []);
+    assert.deepEqual(s.data.shortlists, []);
+    assert.deepEqual(pourCache(s.data, s.userId).applications, []);
+    // Et si me n'est pas (encore) le compte de la session, la copie n'est jamais écrite
+    const ecrits = [];
+    s.me = { id: A };
+    const avant = globalThis.indexedDB;
+    globalThis.indexedDB = { open() { ecrits.push('open'); throw new Error('non'); } };
+    try {
+      s.ecrireCacheMaintenant();
+      assert.deepEqual(ecrits, []);
+      s.me = s.byId('profiles', B);
+      s.ecrireCacheMaintenant();
+      assert.deepEqual(ecrits, ['open'], 'avec le bon compte, la copie est écrite');
+    } finally { globalThis.indexedDB = avant; }
+  } finally { clearTimeout(s.minuteurEssai); clearTimeout(s.minuteurCache); }
+});
+
+// Fondateur qui dit non (ou plus maintenant) : un visiteur a pu garder un lien signé vers sa photo, d'une durée qu'il a
+// choisie. La photo change de nom (copie, profil, puis l'original supprimé) : l'ancien lien ne mène plus à rien.
+function magasinPhoto({ copieOk = true, majOk = true } = {}) {
+  const U = '11111111-1111-4111-8111-111111111111';
+  const s = new SupabaseStore({ supabaseUrl: 'https://x.supabase.co', supabaseAnonKey: 'k' });
+  const journal = [];
+  s.session = { user: { id: U } };
+  s.data.profiles = [{ id: U, full_name: 'Lauréat Fondateur', role: 'laureat', photo_path: `${U}/photo-1.webp`, fondateur_public: true }];
+  s.me = s.data.profiles[0];
+  s.sb = {
+    from: () => ({ update: patch => ({ eq: () => ({ select: () => ({ single: async () => {
+      journal.push(['profil', patch]);
+      return majOk ? { data: { ...s.data.profiles[0], ...patch }, error: null } : { data: null, error: { message: 'Failed to fetch' } };
+    } }) }) }) }),
+    storage: { from: b => ({
+      copy: async (de, vers) => { journal.push(['copie', b, de, vers]); return copieOk ? { data: { path: vers }, error: null } : { data: null, error: { message: 'Object not found' } }; },
+      remove: async l => { journal.push(['suppression', b, ...l]); return { data: l, error: null }; },
+    }) },
+  };
+  s.emit = () => {};
+  return { s, journal, U };
+}
+test('fondateur qui ne veut plus être sur la page d’entrée : sa photo change de nom, l’ancienne est supprimée', async () => {
+  const { s, journal, U } = magasinPhoto();
+  const r = await s.masquerFondateur(false);
+  const [copie, profil, suppression] = journal;
+  assert.equal(copie[0], 'copie'); assert.equal(copie[2], `${U}/photo-1.webp`);
+  assert.match(copie[3], new RegExp(`^${U}/photo-\\d{1,16}\\.webp$`), 'un nom accepté par profiles_photo_path_check');
+  assert.deepEqual(profil, ['profil', { fondateur_public: false, photo_path: copie[3] }], 'une seule mise à jour : le refus et la nouvelle photo');
+  assert.deepEqual(suppression, ['suppression', 'photos', `${U}/photo-1.webp`]);
+  assert.equal(s.me.photo_path, copie[3]);
+  assert.equal(r.photoRetiree, false);
+});
+test('copie impossible : la photo est retirée plutôt que laissée en ligne ; réseau coupé : rien ne change', async () => {
+  const a = magasinPhoto({ copieOk: false });
+  const r = await a.s.masquerFondateur(null);
+  assert.deepEqual(a.journal.slice(1), [['profil', { fondateur_public: null, photo_path: null }], ['suppression', 'photos', `${a.U}/photo-1.webp`]]);
+  assert.equal(r.photoRetiree, true);
+  const b = magasinPhoto({ majOk: false });
+  await assert.rejects(b.s.masquerFondateur(false), /Pas de réseau/);
+  assert.deepEqual(b.journal.map(x => x[0]), ['copie', 'profil', 'suppression']);
+  assert.notEqual(b.journal[2][2], `${b.U}/photo-1.webp`, 'seule la copie est supprimée, la photo reste');
+  assert.equal(b.s.me.photo_path, `${b.U}/photo-1.webp`);
+  // Pas sur la page d'entrée (pas encore répondu) : rien à renommer
+  const c = magasinPhoto(); c.s.me.fondateur_public = null;
+  await c.s.masquerFondateur(false);
+  assert.deepEqual(c.journal, [['profil', { fondateur_public: false }]]);
+});

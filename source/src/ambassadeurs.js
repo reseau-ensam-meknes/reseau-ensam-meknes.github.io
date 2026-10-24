@@ -43,11 +43,16 @@ async function proposer(store, me) {
   }
   let n = 0;
   const now = new Date().toISOString();
-  for (const [promo, filiere] of groupes) {
-    const { expirees, candidat } = proposerAmbassadeur(store.data, promo, filiere);
-    for (const a of expirees) { await store.update('ambassadeurs', a.id, { statut: 'expire', repondu_at: now }); n++; }
-    if (candidat) { await store.insert('ambassadeurs', { promo, filiere, user_id: candidat, statut: 'propose', par: 'auto', propose_at: now, repondu_at: null }); n++; }
-  }
+  store.ambSysteme = true; // la plateforme elle-même (comme ensam.amb_systeme dans la base)
+  try {
+    for (const [promo, filiere] of groupes) {
+      try { // un groupe qui échoue n'arrête pas les autres
+        const { expirees, candidat } = proposerAmbassadeur(store.data, promo, filiere);
+        for (const a of expirees) { await store.update('ambassadeurs', a.id, { statut: 'expire', repondu_at: now }); n++; }
+        if (candidat) { await store.insert('ambassadeurs', { promo, filiere, user_id: candidat, statut: 'propose', par: 'auto', propose_at: now, repondu_at: null }); n++; }
+      } catch { /* suivant */ }
+    }
+  } finally { store.ambSysteme = false; }
   return n;
 }
 
@@ -68,6 +73,15 @@ export function useAmbassadeurs(store, data) {
 // La proposition : la carte « prochaine étape » (un seul bouton plein, « Accepter ») et une ligne dans la cloche
 // ---------------------------------------------------------------------------
 const repondre = (ctx, a, statut) => ctx.store.update('ambassadeurs', a.id, { statut });
+// « Annuler » après un refus ou un retrait : si la plateforme a déjà proposé le rôle au suivant, la place est prise
+// (un seul en cours par promo × filière) ; on le dit calmement au lieu d'une erreur.
+const TROP_TARD = 'Trop tard, c’est déjà proposé à quelqu’un d’autre.';
+const placePrise = e => e?.code === '23505' || /duplicate key|ambassadeurs_un_en_cours|Déjà ambassadeur|^Trop tard/i.test(String(e?.message || e || ''));
+async function annuler(store, a, fn) {
+  const enCours = ambassadeurDuGroupe(store.data, a.promo, a.filiere);
+  if (enCours && enCours.id !== a.id) return toast(TROP_TARD, 'ok');
+  try { await fn(); } catch (e) { if (placePrise(e)) return toast(TROP_TARD, 'ok'); throw e; }
+}
 function accepter(ctx, a) {
   return ctx.act(async () => {
     await repondre(ctx, a, 'accepte');
@@ -79,7 +93,7 @@ function accepter(ctx, a) {
 function refuser(ctx, a) {
   return ctx.act(async () => {
     await repondre(ctx, a, 'refuse');
-    toast('C’est noté : la plateforme le proposera à quelqu’un d’autre.', 'ok', 0, { annuler: () => ctx.act(() => repondre(ctx, a, 'propose')) });
+    toast('C’est noté : la plateforme le proposera à quelqu’un d’autre.', 'ok', 0, { annuler: () => ctx.act(() => annuler(ctx.store, a, () => repondre(ctx, a, 'propose'))) });
   });
 }
 
@@ -151,7 +165,7 @@ function CarteAmbassadeur({ ctx, a }) {
   const mois = new Date();
   const retirer = () => act(async () => {
     await repondre(ctx, a, 'retire');
-    toast('C’est noté : tu n’es plus ambassadeur de ta promo.', 'ok', 0, { annuler: () => act(() => repondre(ctx, a, 'accepte')) });
+    toast('C’est noté : tu n’es plus ambassadeur de ta promo.', 'ok', 0, { annuler: () => act(() => annuler(ctx.store, a, () => repondre(ctx, a, 'accepte'))) });
   });
   const copier = async () => { try { await navigator.clipboard.writeText(lien); toast('Lien copié.'); } catch { toast('Copie impossible ici : sélectionne le texte et copie-le.', 'err'); } };
   const ligne = (n, mot, plus) => html`<li><b class="mono">${n}</b><span>${mot}</span>${plus ? html`<small>${plus}</small>` : null}</li>`;
@@ -213,7 +227,7 @@ export function AmbassadeursAdmin({ ctx }) {
   const retirer = a => act(async () => {
     const avant = a.statut;
     await store.update('ambassadeurs', a.id, { statut: 'retire' });
-    toast(`${nom(a.user_id)} n’est plus ambassadeur.`, 'ok', 0, { annuler: () => act(() => store.update('ambassadeurs', a.id, { statut: avant })) });
+    toast(`${nom(a.user_id)} n’est plus ambassadeur.`, 'ok', 0, { annuler: () => act(() => annuler(store, a, () => store.update('ambassadeurs', a.id, { statut: avant }))) });
   });
   const nommer = p => act(async () => {
     const deja = ambassadeurDuGroupe(data, p.promo, p.filiere);
@@ -301,6 +315,7 @@ addAR({
   'stage ou emploi trouvé': 'تدريب أو وظيفة', 'stages et emplois trouvés': 'تداريب ووظائف',
   'Fait venir la promo et relaie ses réussites. Merci !': 'يدعو الدفعة وينقل نجاحاتها. شكرًا!',
   'Merci': 'شكرًا',
+  'Trop tard, c’est déjà proposé à quelqu’un d’autre.': 'فات الأوان: اقتُرح الدور على شخص آخر.',
   'Ambassadeurs de promo': 'سفراء الدفعات', 'Proposer maintenant': 'اقتراح الآن', 'Retirer': 'سحب', 'Nommer': 'تعيين', 'Nommer à la main': 'تعيين يدوي',
   'Nom d’un étudiant ou d’un lauréat': 'اسم طالب أو خريج', 'Aucun ambassadeur pour l’instant.': 'لا يوجد سفراء حاليًا.',
   'Rien à proposer pour l’instant.': 'لا شيء للاقتراح حاليًا.', '1 changement : proposition faite ou expirée.': 'تغيير واحد: اقتراح جديد أو منتهٍ.',
