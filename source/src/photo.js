@@ -73,10 +73,11 @@ function usePhotoDuCV(store, me, delai = 0) {
 }
 
 // Accueil : « Photo trouvée dans ton CV : l'utiliser ? », une fois, pour les membres déjà inscrits
-export function PhotoProposee({ ctx }) {
+export function PhotoProposee({ ctx, onTrouvee }) {
   const { me, store, act, go } = ctx;
   const [trouvee, cv, oublier] = usePhotoDuCV(store, me, 1200);
   const [busy, setBusy] = useState(false);
+  useEffect(() => { onTrouvee?.(!!trouvee); }, [!!trouvee]);
   if (!trouvee) return null;
   const utiliser = () => { setBusy(true); act(async () => { await store.deposerPhoto(trouvee); oublier(); toast('Photo ajoutée.'); }).finally(() => setBusy(false)); };
   return html`<div class="photo-home"><${PhotoTrouvee} key=${cv} blob=${trouvee} busy=${busy} onUse=${utiliser} onOther=${() => go('profil')} onNo=${oublier}/></div>`;

@@ -1683,7 +1683,6 @@ svg.ico :is(path, circle, rect, line, polyline, polygon, ellipse) { vector-effec
   .side-in::-webkit-scrollbar { display: none; }
   .side .brand { flex: none; display: flex; align-items: center; gap: .65rem; min-height: 60px; border-radius: var(--r-md); }
   .top { min-height: 60px; }
-  /* « Publier » : le seul bouton plein de la barre, uni (sans dégradé ni ombre colorée) */
   /* Publier : tonal, comme « Nouveau message » des messageries, pour laisser le seul bouton plein à l'écran ouvert */
   .btn.side-pub { flex: none; background: var(--tonal-bg); border-color: transparent; color: var(--tonal-ink); box-shadow: var(--sh1); font-weight: 650; }
   .btn.side-pub:hover { background: var(--tonal-hover); border-color: transparent; box-shadow: var(--sh2); transform: none; }
@@ -1717,7 +1716,7 @@ svg.ico :is(path, circle, rect, line, polyline, polygon, ellipse) { vector-effec
   .side-foot { display: none; }
 }
 @media (min-width: 1280px) {
-  .shell { --side-w: clamp(244px, 17.5vw, 268px); }
+  .shell { --side-w: clamp(258px, 18.5vw, 276px); } /* 258 px : « Meknès · Lauréats & étudiants » tient sur une ligne */
   .side-in { gap: var(--sp-4); padding-inline: var(--sp-3); }
   .side .brand { padding-inline: var(--sp-2); }
   .side .brand-txt { min-width: 0; }

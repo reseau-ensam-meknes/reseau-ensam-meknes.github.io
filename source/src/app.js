@@ -724,8 +724,10 @@ function Home(ctx) {
   const pas = prochainPas({ ...ctx, setCompose }, notifs, enCours?.suivante || null, { plAttente, helper, besoins });
   // Juste après la « Dernière étape » : une feuille d'accueil, une fois, avec le même bouton que la carte
   const [arrivee, finArrivee] = useArrivee(ctx);
-  // « Cette semaine » : trois petites choses au plus, jamais ce que montre la carte
-  const taches = petitesTaches(notifs, pas);
+  // « Cette semaine » : trois petites choses au plus, jamais ce que montre la carte ;
+  // pas « Ajoute une photo » quand l'accueil propose déjà la photo trouvée dans le CV
+  const [photoCV, setPhotoCV] = useState(false);
+  const taches = petitesTaches(notifs, pas).filter(t => !photoCV || t.key !== 'ph');
   // Ce que l'accueil a déjà dit : les blocs suivants le sautent
   const montres = new Set([pas.ref, ...taches.flatMap(t => [t.ref, t.offer])].filter(Boolean));
   const meta = isStudent ? [NIVEAUX[n]?.label, filiereCourte(me.filiere)].filter(Boolean).join(' · ') : isLaureat ? `Promo ${me.promo}` : '';
@@ -788,7 +790,7 @@ function Home(ctx) {
         </div>
       </section>
       <${AnnonceBanner} key=${'an-' + me.id} ctx=${ctx}/>
-      <${PhotoProposee} ctx=${ctx}/>
+      <${PhotoProposee} ctx=${ctx} onTrouvee=${setPhotoCV}/>
     </div>
 
     <div class="home-grid">
