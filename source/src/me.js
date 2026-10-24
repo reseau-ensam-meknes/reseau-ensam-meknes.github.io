@@ -418,7 +418,7 @@ injectCSS('me-ux', `
 .merci-qui > span { min-width: 0; }
 .mercis-more .mercis { padding-top: .3rem; }
 
-.badge-next { display: flex; align-items: center; gap: .8rem; padding: .85rem 1rem; border-radius: var(--r-lg); border: 0; background: var(--surface-2); }
+.badge-next { display: flex; align-items: center; gap: .8rem; padding: .85rem 1rem; border-radius: var(--r-lg); border: 0; background: var(--surface); box-shadow: var(--sh1); }
 .badge-next .badge-medal { flex: none; margin: 0; background: var(--surface); color: var(--brass); border-color: color-mix(in srgb, var(--brass) 45%, var(--line-strong)); }
 .badge-next .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .15rem; }
 .badge-next .eyebrow { margin: 0; }

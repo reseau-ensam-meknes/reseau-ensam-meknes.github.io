@@ -71,14 +71,15 @@ export const hueOf = id => TEINTES[teinteDe(id)][0];
 const styleTeinte = t => { const [h, s] = TEINTES[t % TEINTES.length]; return `--h:${h};--s:${s}%;--s2:${Math.min(s + 8, 70)}%`; };
 
 // Photo de profil : le site branche ici la recherche du lien (store.photo). Sans photo, ou tant qu'elle charge, les initiales.
-// Sous 28 px, une seule lettre ; jamais de texte sous 12 px. teinte : imposée par une pile (deux voisins jamais pareils).
+// Sous 28 px (et dans une pile, où le voisin couvre le bord), une seule lettre ; jamais de texte sous 12 px.
+// teinte : imposée par une pile (deux voisins jamais pareils).
 let lienPhoto = () => null;
 export function brancherPhotos(fn) { lienPhoto = fn; }
-export function Avatar({ p, size = 36, teinte }) {
+export function Avatar({ p, size = 36, teinte, une = false }) {
   const url = p?.photo_path ? lienPhoto(p.photo_path) : null;
-  const un = size < 28;
+  const un = une || size < 28;
   const ini = initials(p?.full_name);
-  return html`<span class=${'avatar' + (url ? ' a-photo' : '')} style=${`${styleTeinte(teinte ?? teinteDe(p?.id))};width:${size}px;height:${size}px;font-size:${Math.max(12, Math.round(size * (un ? 0.5 : 0.38)))}px`} aria-hidden="true">${un ? [...ini][0] || '' : ini}${url ? html`<img src=${url} alt="" width=${size} height=${size} loading="lazy" decoding="async" onError=${e => { e.currentTarget.hidden = true; }}/>` : null}</span>`;
+  return html`<span class=${'avatar' + (url ? ' a-photo' : '')} style=${`${styleTeinte(teinte ?? teinteDe(p?.id))};width:${size}px;height:${size}px;font-size:${Math.max(12, Math.round(size * (un ? 0.5 : 0.38)))}px`} aria-hidden="true"><span class="av-ini">${[...ini][0] || ''}${!un && [...ini].length > 1 ? html`<span class="av-l2">${[...ini].slice(1).join('')}</span>` : null}</span>${url ? html`<img src=${url} alt="" width=${size} height=${size} loading="lazy" decoding="async" onError=${e => { e.currentTarget.hidden = true; }}/>` : null}</span>`;
 }
 
 // Pile de visages : trois au plus puis « +N » (N vrai : passé par reste, sinon ceux de la liste qu'on ne montre pas),
@@ -88,7 +89,7 @@ export function AvatarPile({ gens = [], size = 28, max = 3, reste, cls = '' }) {
   const plus = reste ?? Math.max(0, gens.filter(Boolean).length - vus.length);
   let avant = -1;
   const teintes = vus.map(p => { let t = teinteDe(p.id); if (t === avant) t = (t + 1) % TEINTES.length; avant = t; return t; });
-  return html`<span class=${'av-pile' + (cls ? ' ' + cls : '')} aria-hidden="true">${vus.map((p, i) => html`<${Avatar} key=${p.id} p=${p} size=${size} teinte=${teintes[i]}/>`)}${plus > 0 ? html`<span class="av-plus" style=${`height:${size}px;min-width:${size}px;font-size:${Math.max(12, Math.round(size * 0.4))}px`}>${'+' + plus}</span>` : null}</span>`;
+  return html`<span class=${'av-pile' + (cls ? ' ' + cls : '')} aria-hidden="true">${vus.map((p, i) => html`<${Avatar} key=${p.id} p=${p} size=${size} teinte=${teintes[i]} une=${size < 40}/>`)}${plus > 0 ? html`<span class="av-plus" dir="ltr" style=${`height:${size}px;min-width:${size}px;font-size:${Math.max(12, Math.round(size * 0.4))}px`}>${'+' + plus}</span>` : null}</span>`;
 }
 
 
@@ -558,10 +559,12 @@ export function Num({ v }) {
 
 // Logo d'entreprise : le vrai logo (gardé sur le site, img/logos/) sur une petite tuile blanche arrondie avec un filet,
 // sinon un monogramme sur une teinte douce, stable pour un même nom (sigle entier, villes et « Groupe » ignorés)
+// Logos en longueur (un mot écrit) : moins de marge, pour qu'ils restent lisibles à 40 px
+const LOGOS_LARGES = /\/(airbus|safran)\.png$/;
 export function CompanyLogo({ name = '', size = 44 }) {
   const src = logoEntreprise(name);
   const [rate, setRate] = useState(false);
-  if (src && !rate) return html`<span class="clogo c-img" style=${`width:${size}px;height:${size}px`} aria-hidden="true"><img src=${src} alt="" width=${size} height=${size} loading="lazy" decoding="async" onError=${() => setRate(true)}/></span>`;
+  if (src && !rate) return html`<span class=${'clogo c-img' + (LOGOS_LARGES.test(src) ? ' c-large' : '')} style=${`width:${size}px;height:${size}px`} aria-hidden="true"><img src=${src} alt="" width=${size} height=${size} onError=${() => setRate(true)}/></span>`;
   const ini = monogramme(name);
   const n = [...ini].length;
   return html`<span class="clogo" style=${`${styleTeinte(teinteDe(name))};width:${size}px;height:${size}px;font-size:${Math.max(12, Math.round(size * [0.42, 0.42, 0.36, 0.3, 0.26][Math.min(n, 4)]))}px`} aria-hidden="true">${ini}</span>`;
