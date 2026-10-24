@@ -129,25 +129,25 @@ addAR({
 
 injectCSS('enquete', `
 .enq-sits { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .55rem; }
-.enq-sit { display: flex; flex-direction: column; align-items: center; gap: .45rem; padding: .9rem .5rem; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font: 600 .88rem/1.25 var(--f-body); text-align: center; cursor: pointer; transition: transform .25s var(--ease), box-shadow .25s, border-color .2s, background .2s; }
-.enq-sit:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); border-color: var(--accent); }
-.enq-sit.on { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 1px var(--accent); }
+.enq-sit { display: flex; flex-direction: column; align-items: center; gap: .45rem; padding: .9rem .5rem; border-radius: var(--r-lg); border: 0; background: var(--surface); box-shadow: var(--sh1); color: var(--ink); font: 600 var(--fs-3)/1.25 var(--f-body); text-align: center; cursor: pointer; transition: transform .25s var(--ease), box-shadow .25s, background .2s; }
+.enq-sit:hover { transform: translateY(-2px); box-shadow: var(--sh2); }
+.enq-sit.on { background: var(--sel-bg); color: var(--sel-ink); box-shadow: inset 0 0 0 1.5px var(--sel-ring); transform: none; }
 .enq-sit .need-ico { width: 42px; height: 42px; }
-.enq-step h2 { display: flex; align-items: center; gap: .5rem; font-size: 1.05rem; margin: 0; }
-.enq-step h2 .n { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font: 600 .82rem var(--f-mono); flex: none; }
+.enq-step h2 { display: flex; align-items: center; gap: .5rem; font-size: var(--fs-4); margin: 0; }
+.enq-step h2 .n { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--tonal-bg); color: var(--tonal-ink); font: 700 var(--fs-2) var(--f-display); font-variant-numeric: tabular-nums; flex: none; }
 .enq-rate { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
-.enq-rate .lbl { font-size: .85rem; color: var(--ink-2); }
-.enq-ok { display: flex; gap: 1rem; align-items: flex-start; padding: 1.2rem; border-radius: 14px; background: linear-gradient(135deg, var(--good-soft), var(--surface) 80%); border: 1px solid var(--line); }
-.enq-ok .obj-ico { background: var(--good-soft); color: var(--good); }
+.enq-rate .lbl { font-size: var(--fs-2); color: var(--ink-2); }
+.enq-ok { display: flex; gap: 1rem; align-items: flex-start; padding: 1.2rem; border-radius: var(--r-xl); background: var(--good-soft); }
+.enq-ok .obj-ico { background: var(--surface); color: var(--good); }
 .enq-ok h2 { margin: 0 0 .2rem; }
 .enq-ok p { margin: 0; }
 .enq-answer + .enq-answer { border-top: 1px solid var(--line); padding-top: .7rem; }
 .enq-answer .eyebrow { margin: 0 0 .4rem; }
-.enq-mine { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .3rem .9rem; margin: 0; font-size: .9rem; }
+.enq-mine { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: .3rem .9rem; margin: 0; font-size: var(--fs-3); }
 .enq-mine dt { color: var(--muted); }
 .enq-mine dd { margin: 0; }
 .enq-form { gap: 1rem; }
-.ins-kpis .kpi-val { font-size: 1.7rem; }
+.ins-kpis .kpi-val { font-size: var(--fs-7); }
 .ins-kpis .bar { margin-top: .3rem; }
 @media (max-width: 760px) {
   .enq-sits { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -215,7 +215,7 @@ export function EnquetePage(ctx) {
 
 function Note({ id, value, onChange, labels, label }) {
   return html`<div class="field"><span class="field-label">${label}</span><div class="enq-rate">
-    <span class="stars" role="group" aria-label=${label} id=${id}>${[1, 2, 3, 4, 5].map(v => html`<button type="button" class=${v <= (value || 0) ? 'on' : ''} aria-label=${labels[v - 1]} title=${labels[v - 1]} onClick=${() => onChange(v === value ? null : v)}>★</button>`)}</span>
+    <span class="stars" role="radiogroup" aria-label=${label} id=${id}>${[1, 2, 3, 4, 5].map(v => html`<button type="button" role="radio" aria-checked=${v === value} class=${v <= (value || 0) ? 'on' : ''} aria-label=${labels[v - 1]} title=${labels[v - 1]} onClick=${() => onChange(v === value ? null : v)}>★</button>`)}</span>
     ${value ? html`<span class="lbl">${labels[value - 1]}</span>` : null}</div></div>`;
 }
 

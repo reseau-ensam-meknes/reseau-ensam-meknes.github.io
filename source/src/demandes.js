@@ -155,7 +155,7 @@ function PropositionRecue({ ctx, d, x }) {
     <div class="dm-prop-head"><${Person} p=${l} onOpen=${openProfile} size=${36}/><span class="spacer"></span><span class="small muted">${timeAgo(x.created_at)}</span></div>
     <${Aide} x=${x}/>
     <p class="quote" translate="no" dir="auto">${x.message}</p>
-    <div class="row dm-prop-acts"><button type="button" class="btn small primary dm-accepter" onClick=${accepter}><${Icon} name="check" size=${15}/> Accepter</button>
+    <div class="row dm-prop-acts"><button type="button" class="btn small tonal dm-accepter" onClick=${accepter}><${Icon} name="check" size=${15}/> Accepter</button>
       <${MessageBtn} ctx=${ctx} p=${l} cls="btn small ghost"/><span class="spacer"></span>
       <button type="button" class="btn small ghost" onClick=${nonMerci}>Non merci</button></div>
   </div>`;
@@ -317,7 +317,7 @@ function CarteLaureat({ ctx, d, why = [], focus = false }) {
       <${SignalerBtn} ctx=${ctx} type="demande" id=${d.id} small/>
       ${e === 'modifier' ? html`<button type="button" class="btn tiny ghost" onClick=${() => ctx.proposerAide(d.id)}><${Icon} name="edit" size=${14}/> Modifier</button><button type="button" class="btn tiny ghost" onClick=${retirer}>Retirer</button>` : null}
       ${e === 'reproposer' ? html`<button type="button" class="btn small" onClick=${() => ctx.proposerAide(d.id)}>Proposer à nouveau</button>` : null}
-      ${e === 'proposer' ? html`<button type="button" class="btn small primary dm-aider" onClick=${() => ctx.proposerAide(d.id)}><${Icon} name="heart" size=${15}/> Je peux aider</button>` : null}
+      ${e === 'proposer' ? html`<button type="button" class="btn small tonal dm-aider" onClick=${() => ctx.proposerAide(d.id)}><${Icon} name="heart" size=${15}/> Je peux aider</button>` : null}
     </div>
   </article>`;
 }
@@ -337,7 +337,7 @@ function MatchLaureat({ ctx, d, x }) {
     ${pl && pl.status === 'en_attente' ? html`<div class="dm-box"><${Icon} name="clock" size=${18}/><p>${`Démarrage déclaré chez ${pl.entreprise}. En attente de la confirmation de ${prenom(a)}.`}</p></div>`
       : html`<p class="small">${refusee ? `${prenom(a)} n’a pas confirmé. Parlez-en, puis déclare à nouveau quand c’est fait.` : `Quand ${prenom(a)} commence (stage signé, PFE lancé, contrat), dis-le ici : ${prenom(a)} confirme et la réussite est annoncée.`}</p>`}
     <div class="row dm-prop-acts"><${MessageBtn} ctx=${ctx} p=${a} cls="btn small ghost"/><span class="spacer"></span>
-      ${!pl ? html`<button type="button" class="linkish small" onClick=${retirer}>Me retirer</button><button type="button" class="btn small primary dm-demarre" onClick=${() => setDeclare(true)}><${Icon} name="check" size=${15}/> ${`${prenom(a)} a commencé`}</button>` : null}</div>
+      ${!pl ? html`<button type="button" class="linkish small" onClick=${retirer}>Me retirer</button><button type="button" class="btn small tonal dm-demarre" onClick=${() => setDeclare(true)}><${Icon} name="check" size=${15}/> ${`${prenom(a)} a commencé`}</button>` : null}</div>
     ${declare ? html`<${DeclarerDemarrage} ctx=${ctx} d=${d} x=${x} onClose=${() => setDeclare(false)}/>` : null}
   </div>`;
 }
@@ -480,7 +480,7 @@ injectCSS('demandes', `
 .dm-hero { display: flex; flex-direction: column; gap: var(--sp-3); }
 .dm-hero h2 { margin: 0; }
 .dm-hero p { margin: 0; max-width: 62ch; }
-.dm-card { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-4); border: 1px solid var(--line); border-radius: var(--r-lg, 14px); background: var(--surface); min-width: 0; }
+.dm-card { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-4); border: 0; box-shadow: var(--sh1); border-radius: var(--r-lg); background: var(--surface); min-width: 0; }
 .dm-card.st-match { border-inline-start: 4px solid var(--good, #2e7d32); }
 .dm-card.st-pourvue { border-inline-start: 4px solid var(--brass, #c58b2b); }
 .dm-card.st-fermee { opacity: .85; }
@@ -504,19 +504,18 @@ injectCSS('demandes', `
 .dm-etapes li.fait .dm-pt { background: var(--good-soft, #e8f5e9); }
 .dm-props { display: flex; flex-direction: column; gap: var(--sp-3); margin-top: var(--sp-2); }
 .dm-props > .eyebrow { margin: 0; }
-.dm-prop { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3); border-radius: var(--r-md); background: var(--accent-soft); }
+.dm-prop { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) 0 0; border-top: 1px solid var(--line); }
 .dm-prop .quote { margin: 0; }
 .dm-prop-head { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
 .dm-prop-acts { gap: var(--sp-2); flex-wrap: wrap; align-items: center; }
 .dm-aide { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; overflow-wrap: anywhere; }
-.dm-match { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3); border-radius: var(--r-md); background: var(--good-soft, #eef7ef); }
+.dm-match { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) 0 0; border-top: 1px solid var(--line); }
 .dm-match > .eyebrow { margin: 0; color: var(--good, #2e7d32); display: inline-flex; align-items: center; gap: .3rem; }
 .dm-match p { margin: 0; }
 .dm-sortie { gap: var(--sp-4); justify-content: flex-end; }
 .dm-box { display: flex; align-items: flex-start; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; padding: var(--sp-3); border-radius: var(--r-md); background: var(--surface-2); }
 .dm-box > p, .dm-box .grow p { margin: 0; flex: 1 1 14rem; }
-.dm-box.accent { background: var(--accent-soft); }
-.dm-box.good { background: var(--good-soft, #eef7ef); }
+.dm-box.accent, .dm-box.good { background: var(--surface-2); }
 .dm-box.warn { background: var(--warn-soft, #fff4e5); }
 .dm-box > .row { margin-inline-start: auto; gap: var(--sp-2); }
 .dm-attente, .dm-fin { display: flex; align-items: flex-start; gap: .4rem; margin: 0; }
@@ -530,9 +529,9 @@ injectCSS('demandes', `
 .dm-resume .dm-meta, .dm-resume .dm-details { margin: 0; }
 .dm-resume-acts { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2) var(--sp-3); }
 .dm-aides { display: flex; flex-wrap: nowrap; gap: .4rem; }
-.dm-aide-choix { position: relative; flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: .45rem .6rem; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--ink-2); font-size: .9rem; white-space: nowrap; cursor: pointer; }
+.dm-aide-choix { position: relative; flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: .45rem .6rem; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); color: var(--ink-2); font-size: .9rem; white-space: nowrap; cursor: pointer; }
 .dm-aide-choix input { position: absolute; opacity: 0; pointer-events: none; }
-.dm-aide-choix.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.dm-aide-choix.on { border-color: transparent; background: var(--sel-bg); color: var(--sel-ink); box-shadow: inset 0 0 0 1px var(--sel-ring); font-weight: 600; }
 .dm-aide-choix:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 340px) { .dm-aides { flex-wrap: wrap; } }
 .dm-chez > summary { display: flex; align-items: center; gap: .5rem; min-height: 44px; cursor: pointer; list-style: none; color: var(--ink-2); font-size: .9rem; }

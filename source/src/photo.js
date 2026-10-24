@@ -104,7 +104,7 @@ export function PhotoCard({ ctx }) {
       <p class="small muted">${a ? 'Visible par les membres connectés seulement.' : 'Un visage inspire confiance : on te reconnaît tout de suite. Visible par les membres connectés seulement.'}</p>
       <input ref=${input} id="photo-file" type="file" accept="image/*" hidden onChange=${e => choisir(e.target.files[0])}/>
       <div class="photo-acts">
-        <button type="button" class=${'btn small' + (a ? ' ghost' : ' primary')} disabled=${busy} onClick=${() => input.current?.click()}>${busy ? 'Envoi en cours…' : a ? 'Changer' : 'Choisir une photo'}</button>
+        <button type="button" class=${'btn small' + (a ? ' ghost' : ' tonal')} disabled=${busy} onClick=${() => input.current?.click()}>${busy ? 'Envoi en cours…' : a ? 'Changer' : 'Choisir une photo'}</button>
         ${a ? html`<button type="button" class="btn small ghost" disabled=${busy} onClick=${() => ctx.confirm('Retirer ta photo ? Tes initiales la remplacent.', () => act(async () => { await store.retirerPhoto(); toast('Photo retirée.'); }), 'Retirer')}>Retirer</button>` : null}
       </div>
     </div>
@@ -118,18 +118,18 @@ injectCSS('photo', `
 .photo-card > .photo-txt { flex: 1 1 12rem; }
 .photo-card > .photo-trouvee { flex: 1 1 100%; margin: 0; }
 .photo-txt { min-width: 0; display: flex; flex-direction: column; gap: .3rem; }
-.photo-txt h2 { margin: 0; font-size: 1.05rem; }
+.photo-txt h2 { margin: 0; font-size: var(--fs-4); }
 .photo-txt p { margin: 0; }
 .photo-acts { display: flex; gap: .4rem; flex-wrap: wrap; margin-top: .2rem; }
-.photo-home .photo-trouvee { margin: 0; border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent); }
-.photo-trouvee { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: .6rem .75rem; margin-top: .5rem; padding: .75rem .8rem; border-radius: 14px; background: var(--accent-soft); }
+.photo-home .photo-trouvee { margin: 0; background: var(--surface); box-shadow: var(--sh1); }
+.photo-trouvee { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: .6rem .75rem; margin-top: .5rem; padding: .8rem .9rem; border-radius: var(--r-lg); background: var(--surface-2); }
 .photo-trouvee .photo-acts { grid-column: 1 / -1; margin: 0; }
 .photo-trouvee img { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; flex: none; box-shadow: 0 0 0 3px var(--surface); }
 .photo-pick { position: relative; flex: none; padding: 0; border: 0; background: none; border-radius: 50%; cursor: pointer; }
 .photo-pick .avatar { box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--accent-soft); transition: transform .2s; }
 .photo-pick:hover .avatar { transform: scale(1.03); }
 .photo-pick.busy .avatar { opacity: .55; }
-.photo-cam { position: absolute; inset-inline-end: -2px; bottom: -2px; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: #fff; box-shadow: 0 0 0 3px var(--surface); }
+.photo-cam { position: absolute; inset-inline-end: -2px; bottom: -2px; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); box-shadow: 0 0 0 3px var(--surface); }
 @media (prefers-reduced-motion: reduce) { .photo-pick .avatar { transition: none; } }
 `);
 

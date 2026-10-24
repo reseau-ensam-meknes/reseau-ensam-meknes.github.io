@@ -135,7 +135,7 @@ test('coordonnées : visibles seulement après accord', async () => {
   await s.page.click('#cf-ask'); await s.page.fill('#cf-ask-msg', 'Bonjour, je suis en 3A et j’aimerais un conseil.');
   await s.page.click('#cf-ask-send'); await s.page.waitForTimeout(300); await s.fermer();
   await s.comme('Youssef'); await s.aller('accueil');
-  await s.page.locator('.cf-home li:has-text("Amine") .btn.primary').click(); await s.page.waitForTimeout(300);
+  await s.page.locator('.cf-home li:has-text("Amine") .btn.tonal').click(); await s.page.waitForTimeout(300);
   await s.comme('Amine'); await s.fiche('Youssef El Amrani');
   assert.match(await s.page.locator('#cf-contact').innerText(), /06 12 34 56 78/);
   await s.fermer();

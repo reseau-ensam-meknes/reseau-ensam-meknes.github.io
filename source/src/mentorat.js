@@ -59,13 +59,14 @@ function quand(iso) {
 
 const enDirect = (iso, now = Date.now()) => { const t = new Date(iso).getTime(); return now > t - 15 * 6e4 && now < t + 60 * 6e4; };
 
-// Compte à rebours doux : « Dans 25 min », « Demain · 18:30 », « Dans 3 jours »
+// Compte à rebours doux, seulement dans l'heure : « Dans 25 min », « En ce moment ».
+// Plus loin, la date n'est écrite qu'une fois, dans la carte du rendez-vous.
 function Countdown({ iso }) {
   const live = enDirect(iso);
   const min = Math.round((new Date(iso).getTime() - Date.now()) / 6e4);
-  const w = slotWhen(iso);
+  if (!live && !(min > 0 && min < 60)) return null;
   return html`<span class=${'m-countdown' + (live ? ' live' : '')}><${Icon} name=${live ? 'video' : 'clock'} size=${14}/>
-    ${live ? 'En ce moment' : min > 0 && min < 60 ? `Dans ${min} min` : w.diff <= 1 ? html`<${When} iso=${iso}/>` : `Dans ${w.diff} jours`}</span>`;
+    ${live ? 'En ce moment' : `Dans ${min} min`}</span>`;
 }
 
 const toInput = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -323,7 +324,7 @@ function AfterBox({ ctx, m }) {
   const [note, setNote] = useState(5); const [merci, setMerci] = useState('');
   return html`<form class="merci-box" onSubmit=${e => { e.preventDefault(); act(async () => { await store.update('mentorships', m.id, { status: 'terminee', note, merci: merci.trim() || null }); toast(merci.trim() ? 'Merci envoyé ! Il apparaît sur le mur des mercis.' : 'C’est noté, merci !', 'win'); }); }}>
     <p><${Icon} name="heart" size=${16}/> <strong>Comment s’est passé l’échange avec ${firstName(mentor)} ?</strong></p>
-    <span class="stars" role="group" aria-label="Aide reçue">${[1, 2, 3, 4, 5].map(v => html`<button type="button" class=${v <= note ? 'on' : ''} aria-label=${v + ' sur 5'} onClick=${() => setNote(v)}>★</button>`)}</span>
+    <span class="stars" role="radiogroup" aria-label="Aide reçue">${[1, 2, 3, 4, 5].map(v => html`<button type="button" role="radio" aria-checked=${v === note} class=${v <= note ? 'on' : ''} aria-label=${v + ' sur 5'} onClick=${() => setNote(v)}>★</button>`)}</span>
     <textarea id=${'am-merci-' + m.id} rows="2" maxlength="800" placeholder="Un mot de remerciement…" value=${merci} onInput=${e => setMerci(e.target.value)}></textarea>
     <div class="row"><button type="button" class="linkish small m-quiet" onClick=${() => act(() => store.update('mentorships', m.id, { status: 'annulee' }))}>L’échange n’a pas eu lieu</button><span class="spacer"></span><button class="btn primary small">${merci.trim() ? 'Envoyer mon merci' : 'Terminer'}</button></div>
   </form>`;
@@ -569,7 +570,7 @@ export function MentoratPage(ctx) {
         ${p.poste ? html`<p class="small"><${Icon} name="briefcase" size=${14}/> <span translate="no" dir="auto">${p.poste}</span></p>` : null}
         ${p.mentor_sujets ? html`<p class="topics"><span class="muted small">Peut t’aider sur :</span> <span translate="no" dir="auto">${p.mentor_sujets}</span></p>` : null}
         ${(m => m ? html`<blockquote class="merci mcard-merci"><p translate="no" dir="auto">« ${m.txt} »</p><${MerciDuo} ctx=${ctx} m=${m} size=${22} seul/></blockquote>` : null)(dernierMerciPour(mercis, p.id))}
-        <div class="row"><span class="why">${why.map(w => html`<span class="mini good">${w}</span>`)}</span><span class="spacer"></span><button class="btn small" onClick=${() => setAsk({ mentor: p })}>Lui demander</button></div>
+        <div class="row"><span class="why">${why.map(w => html`<span class="mini">${w}</span>`)}</span><span class="spacer"></span><button class="btn small tonal" onClick=${() => setAsk({ mentor: p })}>Lui demander</button></div>
       </div>`)}</div>` : null}
 
     ${hist.length ? html`<button class="linkish small past-toggle" onClick=${() => setPast(!past)}>${past ? 'Masquer l’historique' : `Voir l’historique (${hist.length})`}</button>
@@ -733,11 +734,11 @@ function SuiviAide({ ctx, s }) {
 // ---------------------------------------------------------------------------
 injectCSS('mentorat-ux', `
 /* Confirmation de présence, « c'est fait », refus poli */
-.m-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); margin-top: var(--sp-3); padding: var(--sp-3); border-radius: var(--r-md); background: var(--accent-soft); }
+.m-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); margin-top: var(--sp-2); padding-top: var(--sp-3); border-top: 1px solid var(--line); }
 .m-confirm p { margin: 0; flex: 1 1 16rem; }
 .m-confirm-acts { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
 .m-ok { display: flex; align-items: center; gap: .4rem; margin: var(--sp-2) 0 0; }
-.m-fini { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3); flex-wrap: wrap; margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px dashed var(--line); }
+.m-fini { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3); flex-wrap: wrap; margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--line); }
 .m-decline { margin-top: calc(-1 * var(--sp-1)); }
 .m-sub { margin: var(--sp-2) 0 0; font-size: var(--fs-3, 1rem); display: flex; align-items: center; gap: .5rem; }
 /* Sections : un titre, puis le contenu */
@@ -748,7 +749,7 @@ injectCSS('mentorat-ux', `
 .m-countdown { display: inline-flex; align-items: center; gap: .35rem; padding: .3rem .75rem; border-radius: var(--r-pill); background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: var(--fs-2); line-height: 1.3; white-space: nowrap; }
 .m-countdown.live { background: var(--good-soft); color: var(--good); }
 .m-countdown .when { gap: .25rem; }
-.mreq.m-focus-card { box-shadow: var(--shadow-lift); border-color: color-mix(in srgb, var(--brass) 28%, var(--line)); border-inline-start-color: var(--brass); }
+.mreq.m-focus-card { box-shadow: var(--sh2); }
 
 /* En-tête d'une demande : le nom garde sa ligne, l'état et « Écrire » passent dessous sur téléphone */
 .mrow-head { flex-wrap: wrap; row-gap: var(--sp-2); }
@@ -762,7 +763,7 @@ injectCSS('mentorat-ux', `
   .mstep, .mstep li { gap: .3rem; }
   .mstep li { font-size: .76rem; }
   .mstep li + li::before { width: 12px; }
-  .mstep .step-dot { width: 18px; height: 18px; font-size: .68rem; }
+  .mstep .step-dot { width: 20px; height: 20px; font-size: .75rem; }
 }
 /* Le sujet coule comme une phrase : « · il y a 2 j » suit le dernier mot au lieu de partir seul à la ligne */
 .mreq-subject { display: block; line-height: 1.5; }
@@ -799,7 +800,7 @@ injectCSS('mentorat-ux', `
 @media (max-width: 420px) {
   .need-card { padding: var(--sp-4); }
   .need-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--sp-2); }
-  .need-grid > .need-btn { grid-column: span 2; padding: .7rem .25rem .65rem; font-size: .8rem; gap: .35rem; }
+  .need-grid > .need-btn { grid-column: span 2; padding: .6rem .25rem; font-size: var(--fs-2); gap: .35rem; }
   .need-grid > .need-btn:nth-child(4) { grid-column: 2 / span 2; }
   .need-grid .need-ico { width: 38px; height: 38px; }
 }
@@ -867,7 +868,7 @@ injectCSS('mentorat-ux', `
 .besoins { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
 .besoins > .section-head { margin: 0; }
 .bs-tout { min-height: 40px; }
-.bs-liste { list-style: none; margin: 0; padding: var(--sp-1); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
+.bs-liste { list-style: none; margin: 0; padding: var(--sp-1); background: var(--surface); border: 0; box-shadow: var(--sh1); border-radius: var(--r-lg); }
 .modal .bs-liste { border: 0; padding: 0; background: none; }
 .bs-liste li + li { border-top: 1px solid var(--line); }
 .bs-ligne { display: flex; align-items: flex-start; gap: var(--sp-3); width: 100%; min-height: 56px; padding: var(--sp-3) var(--sp-2); border: 0; background: none; border-radius: var(--r-md); color: var(--ink); font: inherit; text-align: start; cursor: pointer; }
@@ -880,7 +881,7 @@ injectCSS('mentorat-ux', `
 .bs-sujet { color: var(--muted); font-size: var(--fs-2); line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Accueil (étudiant) : « Besoin d'un coup de main ? », une seule carte */
-.coup-de-main { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4); border-radius: var(--r-lg); background: var(--surface); border: 1px solid var(--line); min-width: 0; }
+.coup-de-main { display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4); border-radius: var(--r-lg); background: var(--surface); border: 0; box-shadow: var(--sh1); min-width: 0; }
 .cm-head { display: flex; align-items: flex-start; gap: var(--sp-3); }
 .cm-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .cm-titre { margin: 0; font-size: var(--fs-3, 1rem); font-weight: 650; }

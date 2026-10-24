@@ -165,7 +165,7 @@ function MerciBox({ ctx, pl, helper }) {
   return html`<form class="merci-box" onSubmit=${e => { e.preventDefault(); act(async () => { await store.update('placements', pl.id, { merci: merci.trim(), note: +note }); setEdit(false); toast('Merci envoyé ! Il apparaît sur le mur des mercis.'); }); }}>
     <p><${Icon} name="heart" size=${16}/> <strong>Dis merci à ${helper?.full_name}.</strong> C’est ce qui donne envie aux lauréats de continuer à aider.</p>
     <textarea id="merci-txt" rows="2" maxlength="800" placeholder="Merci pour…" value=${merci} onInput=${e => setMerci(e.target.value)}></textarea>
-    <div class="row"><span class="stars" role="group" aria-label="Aide reçue">${[1, 2, 3, 4, 5].map(v => html`<button type="button" class=${v <= note ? 'on' : ''} aria-label=${v + ' sur 5'} onClick=${() => setNote(v)}>★</button>`)}</span><span class="spacer"></span><button class="btn primary small" disabled=${!merci.trim()}>Envoyer mon merci</button></div>
+    <div class="row"><span class="stars" role="radiogroup" aria-label="Aide reçue">${[1, 2, 3, 4, 5].map(v => html`<button type="button" role="radio" aria-checked=${v === note} class=${v <= note ? 'on' : ''} aria-label=${v + ' sur 5'} onClick=${() => setNote(v)}>★</button>`)}</span><span class="spacer"></span><button class="btn primary small" disabled=${!merci.trim()}>Envoyer mon merci</button></div>
   </form>`;
 }
 
@@ -261,7 +261,7 @@ export function EspacePage(ctx) {
     ${waiting.length ? html`<div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="clock"/> En attente de confirmation <span class="count">${waiting.length}</span></h2></div>
       <p class="small muted">Tu as indiqué avoir recruté ces étudiants. Dès qu’ils confirment, leur réussite est vérifiée des deux côtés.</p>
       <ul class="app-list flat">${waiting.map(p => { const st = store.byId('profiles', p.student_id); return html`<li class="app-row" key=${p.id}>
-        <${Person} p=${st} onOpen=${openProfile} size=${36}/><span class="app-txt right"><span class="muted small"><span translate="no">${p.entreprise}</span> · ${timeAgo(p.created_at)}</span></span>
+        <span class="app-txt"><${Person} p=${st} onOpen=${openProfile} size=${36}/><span class="muted small app-sous"><span translate="no">${p.entreprise}</span> · ${timeAgo(p.created_at)}</span></span>
         <button class="btn small ghost" onClick=${() => annulerRecrutement(ctx, p)}>Annuler</button></li>`; })}</ul></div>` : null}
 
     ${rdv.length ? html`<button type="button" class="impact-strip clickable esp-rdv" onClick=${() => ctx.go('mentorat')}><span class="obj-ico"><${Icon} name="video" size=${20}/></span>
@@ -270,7 +270,7 @@ export function EspacePage(ctx) {
     <${Filleuls} ctx=${ctx}/>
 
     ${recrues.length ? html`<div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="briefcase"/> Recrutés grâce à toi cette année <span class="count">${recrues.length}</span></h2></div>
-      <ul class="app-list flat">${recrues.slice(0, 5).map(p => html`<li class="app-row" key=${p.id}><${Person} p=${store.byId('profiles', p.student_id)} onOpen=${openProfile} size=${36}/><span class="app-txt right"><span class="muted small"><span translate="no">${p.entreprise}</span> · ${TYPES[p.type]?.label}</span></span>
+      <ul class="app-list flat">${recrues.slice(0, 5).map(p => html`<li class="app-row" key=${p.id}><span class="app-txt"><${Person} p=${store.byId('profiles', p.student_id)} onOpen=${openProfile} size=${36}/><span class="muted small app-sous"><span translate="no">${p.entreprise}</span> · ${TYPES[p.type]?.label}</span></span>
         <button class="icon-btn small" aria-label="Partager sur LinkedIn" title="Partager sur LinkedIn" onClick=${() => setShare(p)}><${Icon} name="share" size=${16}/></button></li>`)}</ul></div>` : null}
 
     ${nouveau ? null : html`<div class="section-head"><h2>Mes offres</h2></div>
@@ -383,36 +383,39 @@ function MesBadges({ s, mine }) {
 // Passe UX de « Mon espace » et « Mon parcours »
 // ---------------------------------------------------------------------------
 injectCSS('me-ux', `
-.premiere-aide { display: flex; flex-direction: column; gap: 1rem; padding: 1.2rem; border-radius: var(--r-xl); background: linear-gradient(160deg, color-mix(in srgb, var(--em-o) 10%, var(--surface)), var(--surface) 62%); border: 1px solid color-mix(in srgb, var(--brass) 22%, var(--line)); box-shadow: var(--shadow); }
+.premiere-aide { display: flex; flex-direction: column; gap: 1rem; padding: 1.2rem; border-radius: var(--r-xl); background: var(--accent-soft); }
 .pa-head { display: flex; gap: .9rem; align-items: flex-start; }
 .pa-head > div { display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
-.pa-head .eyebrow { margin: 0; color: var(--brass); }
-.pa-head h2 { font-size: var(--fs-6); font-weight: 750; }
+.pa-head .eyebrow { margin: 0; color: var(--sel-ink); }
+.pa-head h2 { font-size: var(--fs-6); font-weight: 750; letter-spacing: -.02em; }
 .pa-head p.muted { color: var(--ink-2); max-width: 52ch; }
-.pa-ico { flex: none; width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); color: var(--em-o); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--em-o) 32%, transparent), 0 6px 18px -8px color-mix(in srgb, var(--em-o) 60%, transparent); }
-.pa-gestes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
-.pa-geste { width: 100%; height: 100%; display: flex; align-items: center; gap: .8rem; padding: .8rem .9rem; border-radius: var(--r-lg); border: 1px solid var(--line); background: var(--surface); font: inherit; color: inherit; text-align: start; cursor: pointer; transition: border-color .2s, box-shadow .25s, transform .25s var(--ease); }
-.pa-geste:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); box-shadow: var(--shadow-lift); transform: translateY(-2px); }
-.pa-geste:active { transform: scale(.985); }
-.pa-geste-ico { flex: none; width: 42px; height: 42px; border-radius: var(--r-md); display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); }
+.pa-ico { flex: none; width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); color: var(--em-o); box-shadow: var(--sh1); }
+.pa-gestes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--sh1); overflow: hidden; }
+.pa-gestes > li + li { border-top: 1px solid var(--line); }
+.pa-geste { width: 100%; height: 100%; display: flex; align-items: center; gap: .8rem; padding: .85rem .95rem; border: 0; border-radius: 0; background: none; font: inherit; color: inherit; text-align: start; cursor: pointer; transition: background .2s; }
+.pa-geste:hover { background: var(--surface-2); }
+.pa-geste:active { background: var(--sel-bg); }
+.pa-geste-ico { flex: none; width: 42px; height: 42px; border-radius: var(--r-md); display: grid; place-items: center; background: var(--tonal-bg); color: var(--tonal-ink); }
 .pa-geste-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .1rem; }
 .pa-geste-titre { display: flex; align-items: baseline; flex-wrap: wrap; gap: .15rem .5rem; }
 .pa-geste-txt strong { font-weight: 600; line-height: 1.3; }
-.pa-duree { flex: none; font: 600 var(--fs-1)/1.4 var(--f-mono); padding: .05rem .5rem; border-radius: var(--r-pill); background: var(--good-soft); color: var(--good); white-space: nowrap; }
+.pa-duree { flex: none; font: 600 var(--fs-1)/1.4 var(--f-body); font-variant-numeric: tabular-nums; padding: .05rem .5rem; border-radius: var(--r-pill); background: var(--good-soft); color: var(--good); white-space: nowrap; }
 .pa-geste-go { flex: none; color: var(--muted); transition: color .2s, transform .25s var(--ease); }
 .pa-geste:hover .pa-geste-go { color: var(--accent); transform: translateX(2px); }
 [dir="rtl"] .pa-geste:hover .pa-geste-go { transform: translateX(-2px); }
 @media (min-width: 900px) {
-  .pa-gestes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .7rem; }
-  .pa-geste { flex-direction: column; align-items: flex-start; gap: .6rem; padding: 1rem; }
+  .pa-gestes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .7rem; background: none; box-shadow: none; overflow: visible; }
+  .pa-gestes > li + li { border-top: 0; }
+  .pa-geste { flex-direction: column; align-items: flex-start; gap: .6rem; padding: 1rem; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--sh1); transition: box-shadow .25s, transform .25s var(--ease); }
+  .pa-geste:hover { background: var(--surface); box-shadow: var(--sh2); transform: translateY(-2px); }
   .pa-geste-txt { flex: 1; }
   .pa-geste-go { display: none; }
 }
 
 .mercis-top { display: flex; flex-direction: column; gap: .6rem; }
 .mercis-top .section-head { margin-top: .2rem; }
-.merci-hero { margin: 0; padding: 1.1rem 1.2rem 1rem; border-radius: var(--r-xl); background: linear-gradient(150deg, color-mix(in srgb, var(--brass) 11%, var(--surface)), var(--surface) 72%); border: 1px solid color-mix(in srgb, var(--brass) 24%, var(--line)); display: flex; flex-direction: column; gap: .7rem; }
-.merci-hero p { font-size: var(--fs-4); line-height: 1.5; font-style: italic; color: var(--ink); }
+.merci-hero { margin: 0; padding-block: .2rem; padding-inline: 1.1rem 0; border-inline-start: 3px solid var(--brass); display: flex; flex-direction: column; gap: .7rem; }
+.merci-hero p { font: 500 var(--fs-5)/1.45 var(--f-display); letter-spacing: -.01em; color: var(--ink); }
 .merci-qui { display: flex; align-items: center; gap: .5rem; }
 .merci-qui > span { min-width: 0; }
 .mercis-more .mercis { padding-top: .3rem; }
@@ -433,8 +436,7 @@ injectCSS('me-ux', `
 .ledger .events { padding: .2rem .15rem .6rem; }
 .ledger summary .ico { color: var(--brass); }
 @media (max-width: 760px) {
-  .espace .app-row > .btn, .espace .app-row > .icon-btn { margin-inline-start: auto; }
-  .espace .app-list.flat .app-txt.right { padding-inline-start: 48px; }
+  .espace .app-list.flat .app-row { flex-wrap: nowrap; }
 }
 `);
 
