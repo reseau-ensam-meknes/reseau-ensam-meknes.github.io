@@ -606,6 +606,11 @@ Object.assign(AR, {
 
 // Lot design · B : onglets sur une ligne, listes courtes, filtres en feuille
 Object.assign(AR, {
+  'Rubriques du réseau': 'أقسام الشبكة', 'Rubriques de l’administration': 'أقسام الإدارة',
+  'Offres ou demandes': 'العروض أو الطلبات', 'Demandes': 'الطلبات', 'Filtrer les offres': 'تصفية العروض', 'Mon offre': 'عرضي',
+  'Les 5A le trouvent sous la puce PFE des offres : décris le vrai problème de l’équipe, tu pourras encadrer l’étudiant qui le prend.': 'يجده طلبة السنة الخامسة تحت زر «مشروع نهاية الدراسة» في العروض: صف المشكلة الحقيقية للفريق، ويمكنك تأطير الطالب الذي يختاره.',
+  'Effacer': 'مسح', 'Voir 1 résultat': 'عرض نتيجة واحدة', 'Aucun résultat': 'لا توجد نتيجة', 'Période': 'الفترة',
+  'Voir le détail': 'عرض التفاصيل', 'Masquer le détail': 'إخفاء التفاصيل',
 });
 
 // Lot design · C : visages, logos, icônes, badges, bouclier « vérifié »
@@ -626,6 +631,13 @@ export const AR_PATTERNS = [
   // Lot design · A (motifs)
   // (fin A)
   // Lot design · B (motifs)
+  [/^Voir plus \((\d+)\)$/, n => `عرض المزيد (${n})`],
+  [/^Filtres · (\d+)$/, n => `تصفية · ${n}`],
+  [/^Voir (\d+) résultats$/, n => `عرض ${arCount(n, ['نتيجة واحدة', 'نتيجتين', 'نتائج', 'نتيجة'])}`],
+  [/^(\d+) sur (\d+) membres$/, (a, b) => `${a} من ${arCount(b, MEMBRES)}`],
+  [/^(\d+) talents?$/, n => arCount(n, ['موهبة واحدة', 'موهبتان', 'مواهب', 'موهبة'])],
+  [/^(\d+) entreprises?$/, n => arCount(n, ['شركة واحدة', 'شركتان', 'شركات', 'شركة'])],
+  [/^Voir l’entreprise : (.+)$/, x => `عرض الشركة: ${x}`],
   // (fin B)
   // Lot design · C (motifs)
   // (fin C)

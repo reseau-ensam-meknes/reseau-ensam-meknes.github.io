@@ -8,6 +8,7 @@ import { companiesOf } from './pro.js';
 import { OfferCard, matchesMe } from './offers.js';
 import { SignalerBtn } from './confiance.js';
 import { recherche, villeAffichee, PAYS_AR, canonPays } from './geo.js';
+import { useVoirPlus, VoirPlus } from './lignes.js';
 
 export const FORMATS = { presentiel: ['Sur place', 'briefcase'], visio: ['Visio', 'video'], telephone: ['Téléphone', 'phone'], test_ecrit: ['Test écrit', 'edit'], autre: ['Autre', 'more'] };
 export const RESULTATS = { retenu: 'Candidature retenue', refuse: 'Candidature non retenue', attente: 'En attente de réponse', inconnu: 'Je ne sais pas' };
@@ -110,6 +111,7 @@ function ListeEntreprises({ ctx, all, ouvrir }) {
     .filter(c => !miens || contribue(c))
     .filter(c => !trouve || trouve(`${[...c.names.keys()].join(' ')} ${c.secteurs.join(' ')}`, c.ville, c.pays))
     .sort((a, b) => poids(b) - poids(a) || a.nom.localeCompare(b.nom));
+  const { vus, reste, plus } = useVoirPlus(list, 20, [q, type, miens].join('|'));
   const nbAvis = all.reduce((s, c) => s + c.avis.length, 0), nbEnt = all.reduce((s, c) => s + c.entretiens.length, 0);
   // Le chiffre de l'en-tête n'est jamais un zéro : les avis et entretiens s'il y en a, sinon les entreprises où travaillent
   // des lauréats (le seul chiffre vrai au démarrage), sinon rien
@@ -122,21 +124,22 @@ function ListeEntreprises({ ctx, all, ouvrir }) {
         <p class="ent-hero-txt">Les questions posées en entretien et les avis sur les stages, laissés par les promos précédentes. Prépare-toi avec leur expérience.</p></div>
       ${ouvrir ? html`<div class="ent-hero-actions">
         <button class="btn primary" id="ent-btn-entretien" onClick=${() => ouvrir('entretien')}><${Icon} name="qa" size=${16}/> Partager un entretien</button>
-        <button class="btn primary" id="ent-btn-avis" onClick=${() => ouvrir('avis')}><${Icon} name="star" size=${16}/> Laisser un avis</button></div>` : null}
+        <button class="btn tonal" id="ent-btn-avis" onClick=${() => ouvrir('avis')}><${Icon} name="star" size=${16}/> Laisser un avis</button></div>` : null}
     </div>
     <label class="search"><${Icon} name="search" size=${16}/><input id="ent-q" dir="auto" placeholder="Entreprise, ville, secteur…" value=${q} onInput=${e => setQ(e.target.value)}/></label>
-    <div class="chips"><button class=${'chip' + (!type ? ' on' : '')} aria-pressed=${!type} onClick=${() => setType('')}>Toutes</button>
+    <div class="chips rangee" role="group" aria-label="Type"><button class=${'chip' + (!type ? ' on' : '')} aria-pressed=${!type} onClick=${() => setType('')}>Toutes</button>
       ${TYPE_CHIPS.map(([k, l]) => html`<button class=${'chip' + (type === k ? ' on' : '')} aria-pressed=${type === k} onClick=${() => setType(type === k ? '' : k)}><${Icon} name=${TYPE_ICON[k]} size=${14}/> ${l}</button>`)}
       ${all.some(contribue) ? html`<button class=${'chip' + (miens ? ' on' : '')} aria-pressed=${miens} onClick=${() => setMiens(!miens)}><${Icon} name="user" size=${14}/> Mes partages</button>` : null}</div>
-    <ul class="ent-list">${list.slice(0, 80).map(c => html`<li key=${c.k}><button class="ent-row clickable" onClick=${() => ctx.go('reseau/entreprises/' + encodeURIComponent(c.k))}>
+    ${list.length ? html`<p class="liste-tete">${`${list.length} entreprise${list.length > 1 ? 's' : ''}`}</p>` : null}
+    ${list.length ? html`<ul class="ent-list">${vus.map(c => html`<li key=${c.k}><button class="ent-row clickable" onClick=${() => ctx.go('reseau/entreprises/' + encodeURIComponent(c.k))}>
       <${CompanyLogo} name=${c.nom} size=${40}/>
       <span class="grow"><strong translate="no">${c.nom}</strong>
-        <span class="ent-row-sub">${c.note != null ? html`<${Etoiles} note=${c.note} size=${13}/><b class="mono">${fmtNote(c.note)}</b>` : null}${c.ville || c.pays ? html`<span class="muted small" translate="no">${lieuTxt(c.ville, c.pays)}</span>` : null}</span></span>
-      <span class="mini-stats">${c.laureats.length ? html`<span class="ent-nb"><${Icon} name="people" size=${15}/> ${pluriel(c.laureats.length, 'lauréat', 'lauréats')}</span>` : null}${c.avis.length ? html`<span title="Avis"><${Icon} name="star" size=${15}/> ${c.avis.length}</span>` : null}${c.entretiens.length ? html`<span title="Entretiens"><${Icon} name="qa" size=${15}/> ${c.entretiens.length}</span>` : null}</span>
-    </button></li>`)}</ul>
+        ${c.note != null || c.ville || c.pays ? html`<span class="ent-row-sub">${c.note != null ? html`<${Etoiles} note=${c.note} size=${13}/><b>${fmtNote(c.note)}</b>` : null}${c.ville || c.pays ? html`<span class="muted small" translate="no">${lieuTxt(c.ville, c.pays)}</span>` : null}</span>` : null}
+      <span class="mini-stats">${c.laureats.length ? html`<span class="ent-nb"><${Icon} name="people" size=${15}/> ${pluriel(c.laureats.length, 'lauréat', 'lauréats')}</span>` : null}${c.avis.length ? html`<span title="Avis"><${Icon} name="star" size=${15}/> ${c.avis.length}</span>` : null}${c.entretiens.length ? html`<span title="Entretiens"><${Icon} name="qa" size=${15}/> ${c.entretiens.length}</span>` : null}</span></span>
+    </button></li>`)}</ul>` : null}
+    <${VoirPlus} reste=${reste} onPlus=${plus}/>
     ${!list.length ? html`<${Empty} icon="briefcase" title="Aucune entreprise trouvée">${ouvrir ? 'Tu as passé un entretien ou fait un stage ? Sois le premier à partager.' : ''}<//>` : null}
-    ${list.length > 80 ? html`<p class="muted small center">Affine la recherche pour voir les autres.</p>` : null}
-    <${MentionLogos} noms=${list.slice(0, 80).map(c => c.nom)}/>
+    <${MentionLogos} noms=${vus.map(c => c.nom)}/>
   </div>`;
 }
 
@@ -161,16 +164,16 @@ function FicheEntreprise({ ctx, c, ouvrir }) {
         <div class="detail-title grow"><h2 translate="no">${c.nom}</h2>
           <p class="muted small">${c.secteurs.slice(0, 2).join(' · ')}${c.secteurs.length && lieu ? ' · ' : ''}<span translate="no">${lieu}</span></p></div></div>
       ${s.note != null ? html`<div class="ent-synth">
-        <div class="ent-big"><span class="ent-big-n mono">${fmtNote(s.note)}</span><${Etoiles} note=${s.note} size=${18}/><span class="muted small">${pluriel(s.n, 'avis', 'avis')}</span></div>
-        <div class="ent-subnotes">${NOTES.map(([k, l]) => s[k] != null ? html`<div class="ent-subnote"><span class="small">${l}</span><span class="ent-gauge" aria-hidden="true"><span style=${`width:${(s[k] / 5) * 100}%`}></span></span><b class="mono small">${fmtNote(s[k])}</b></div>` : null)}</div>
+        <div class="ent-big"><span class="ent-big-n">${fmtNote(s.note)}</span><${Etoiles} note=${s.note} size=${18}/><span class="muted small">${pluriel(s.n, 'avis', 'avis')}</span></div>
+        <div class="ent-subnotes">${NOTES.map(([k, l]) => s[k] != null ? html`<div class="ent-subnote"><span class="small">${l}</span><span class="ent-gauge" aria-hidden="true"><span style=${`width:${(s[k] / 5) * 100}%`}></span></span><b class="small">${fmtNote(s[k])}</b></div>` : null)}</div>
         ${s.recommande != null || s.gratifs.length ? html`<div class="ent-facts">
-          ${s.recommande != null ? html`<span class="ent-fact"><${Icon} name="thumb" size=${15}/> <span><b class="mono">${Math.round(s.recommande * 100)} %</b> recommandent</span></span>` : null}
+          ${s.recommande != null ? html`<span class="ent-fact"><${Icon} name="thumb" size=${15}/> <span><b>${Math.round(s.recommande * 100)} %</b> recommandent</span></span>` : null}
           ${s.gratifs.length ? html`<span class="ent-fact"><${Icon} name="briefcase" size=${15}/> <span>Gratification :</span> ${s.gratifs.map(([g, n], i) => html`${i ? ' · ' : ''}<span>${GRATIFS[g]} (${n})</span>`)}</span>` : null}
         </div>` : null}
       </div>` : s.n ? html`<p class="muted small ent-peu">${pluriel(s.n, 'avis', 'avis')} · La note s’affiche à partir de ${AVIS_POUR_NOTE} avis.</p>` : html`<p class="muted small">Pas encore d’avis sur cette entreprise.</p>`}
       ${ouvrir ? html`<div class="row ent-actions">
         <button class="btn small primary" id="ent-f-entretien" onClick=${() => ouvrir('entretien', base)}><${Icon} name="qa" size=${15}/> Partager un entretien</button>
-        <button class="btn small primary" id="ent-f-avis" onClick=${() => ouvrir('avis', base)}><${Icon} name="star" size=${15}/> Laisser un avis</button>
+        <button class="btn small tonal" id="ent-f-avis" onClick=${() => ouvrir('avis', base)}><${Icon} name="star" size=${15}/> Laisser un avis</button>
         ${c.laureats.length && !c.laureats.some(p => p.id === me.id) ? html`<button class="btn small ghost" onClick=${() => ctx.askQuestion({ entreprise: c.nom })}><${Icon} name="comment" size=${15}/> Poser une question</button>` : null}
       </div>` : null}
     </div>
@@ -219,7 +222,7 @@ function AvisCard({ ctx, a, onEdit, onDelete }) {
       ${a.recommande === true ? html`<span class="good-t small"><${Icon} name="thumb" size=${14}/> Recommande</span>` : a.recommande === false ? html`<span class="muted small">Ne recommande pas</span>` : null}
       ${a.gratification ? html`<span class="mini">Gratification : ${GRATIFS[a.gratification]}</span>` : null}</div>
     ${a.poste || a.ville ? html`<p class="small muted ent-poste" translate="no" dir="auto">${[a.poste, a.ville, a.pays && a.pays !== 'Maroc' ? a.pays : ''].filter(Boolean).join(' · ')}</p>` : null}
-    ${NOTES.some(([k]) => a[k]) ? html`<p class="ent-subline small">${NOTES.filter(([k]) => a[k]).map(([k, l]) => html`<span><span>${l}</span> <b class="mono">${a[k]}/5</b></span>`)}</p>` : null}
+    ${NOTES.some(([k]) => a[k]) ? html`<p class="ent-subline small">${NOTES.filter(([k]) => a[k]).map(([k, l]) => html`<span><span>${l}</span> <b>${a[k]}/5</b></span>`)}</p>` : null}
     ${a.conseils ? html`<p class="ent-txt" translate="no" dir="auto">${a.conseils}</p>` : null}
     <p class="muted small ent-when">${timeAgo(a.created_at)}</p>
   </article>`;
@@ -374,7 +377,7 @@ export function EntrepriseResume({ ctx, entreprise, onOpen }) {
     ctx.go(lienEntreprise(entreprise));
   };
   return html`<div class="ent-resume">
-    ${r.note != null ? html`<${Etoiles} note=${r.note} size=${14}/><b class="mono small">${fmtNote(r.note)}</b>` : html`<${Icon} name="qa" size=${15}/>`}
+    ${r.note != null ? html`<${Etoiles} note=${r.note} size=${14}/><b class="small">${fmtNote(r.note)}</b>` : html`<${Icon} name="qa" size=${15}/>`}
     <span class="small">${[r.avis ? pluriel(r.avis, 'avis', 'avis') : '', r.ent ? pluriel(r.ent, 'entretien partagé', 'entretiens partagés') : ''].filter(Boolean).join(' · ')}</span>
     <button type="button" class="linkish small" onClick=${voir}>Voir</button>
   </div>`;
@@ -437,14 +440,17 @@ export function NudgeAvis({ ctx }) {
 
 // ---------------------------------------------------------------------------
 injectCSS('entreprises', `
-.ent-hero { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; padding: 1rem 1.1rem; border-radius: 14px; background: var(--accent-soft); }
+.ent-hero { display: flex; gap: 1rem; align-items: center; flex-wrap: wrap; padding: 1rem 1.1rem; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--sh1); }
 .ent-hero .grow { flex: 1 1 280px; min-width: 0; }
 .ent-hero .eyebrow { margin: 0 0 .2rem; }
 .ent-hero-txt { margin: 0; color: var(--ink-2); font-size: .92rem; }
 .ent-hero-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
 .ent-row .grow strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ent-row-sub { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; min-height: 1.1rem; }
-.ent-row-sub b { font-size: .8rem; color: var(--ink-2); }
+.ent-row-sub b { font-size: var(--fs-2); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+/* Sous le nom, qui garde toute la largeur : la note et le lieu, puis les lauréats, les avis et les entretiens */
+.ent-row .mini-stats { font-family: var(--f-body); font-size: var(--fs-2); font-variant-numeric: tabular-nums; gap: .8rem; flex-wrap: wrap; }
+.ent-row .mini-stats .ent-nb { font-size: var(--fs-2); }
 .mini-stats .ent-nb { font: 500 .85rem var(--f-body); white-space: nowrap; }
 .ent-stars { display: inline-flex; gap: 1px; font-size: var(--s, 15px); line-height: 1; color: color-mix(in srgb, var(--brass) 25%, transparent); }
 .ent-stars .on { color: var(--brass); }
@@ -458,7 +464,7 @@ injectCSS('entreprises', `
 .ent-head .detail-title p { margin: .15rem 0 0; }
 .ent-synth { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .7rem 1.4rem; align-items: center; }
 .ent-big { display: flex; flex-direction: column; align-items: center; gap: .2rem; padding-inline-end: 1.3rem; border-inline-end: 1px solid var(--line); }
-.ent-big-n { font-size: 2.1rem; font-weight: 600; line-height: 1; color: var(--ink); }
+.ent-big-n { font: 750 2.1rem/1 var(--f-display); font-variant-numeric: tabular-nums; color: var(--ink); }
 .ent-subnotes { display: flex; flex-direction: column; gap: .4rem; min-width: 0; max-width: 420px; }
 .ent-subnote { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr) 2rem; gap: .6rem; align-items: center; }
 .ent-gauge { height: 7px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
@@ -467,7 +473,7 @@ injectCSS('entreprises', `
 .ent-fact { display: inline-flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
 .ent-fact svg { color: var(--brass); flex: none; }
 .ent-actions { flex-wrap: wrap; gap: .5rem; }
-.ent-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: .9rem 1rem; display: flex; flex-direction: column; gap: .55rem; min-width: 0; }
+.ent-card { background: var(--surface); border: 0; box-shadow: var(--sh1); border-radius: var(--r-lg); padding: .95rem 1.05rem; display: flex; flex-direction: column; gap: .55rem; min-width: 0; }
 .ent-card-top { display: flex; align-items: flex-start; gap: .5rem; }
 .ent-auteur { display: flex; align-items: center; gap: .45rem; flex-wrap: wrap; min-width: 0; }
 .ent-auteur .mini { margin: 0; }

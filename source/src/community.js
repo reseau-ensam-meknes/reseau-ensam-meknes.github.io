@@ -1,6 +1,7 @@
 // Entraide, Communauté (classement, annuaire, vitrine des talents) et profils.
 import { html, useState, useMemo, useRef, useEffect } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, toast, LevelChip, RoleLine, injectCSS, PartagerWhatsApp, lienDirect, allerAuChamp, Bouclier, Embleme } from './ui.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, toast, LevelChip, RoleLine, roleTexte, injectCSS, PartagerWhatsApp, lienDirect, allerAuChamp, Bouclier, Embleme } from './ui.js';
+import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
 import { proposerPrevenir } from './pwa.js';
 import { ChoixRole, accordIci } from './entree.js';
 import { getLang, setLang } from './i18n.js';
@@ -64,11 +65,11 @@ export function EntraidePage(ctx) {
   if (q) return html`<${QuestionView} ctx=${ctx} q=${q} onBack=${() => go('reseau/entraide', { remplacer: true })}/>`;
   return html`<div class="sub-page">
     <div class="toolbar"><p class="muted small grow">Les questions des étudiants, les réponses des lauréats.</p><button class="btn primary small" onClick=${() => setAsk(true)}><${Icon} name="plus" size=${16}/> Poser une question</button></div>
-    <div class="chips">${pourMoi.length ? html`<button class=${'chip' + (cat === 'moi' ? ' on' : '')} onClick=${() => setCat(cat === 'moi' ? '' : 'moi')}><${Icon} name="send" size=${13}/> Pour toi <span class="count">${pourMoi.length}</span></button>` : null}${['', ...CATEGORIES_Q].map(c => html`<button class=${'chip' + (cat === c ? ' on' : '')} onClick=${() => setCat(c)}>${c || 'Toutes'}</button>`)}</div>
+    <div class="chips rangee" role="group" aria-label="Catégorie">${pourMoi.length ? html`<button class=${'chip' + (cat === 'moi' ? ' on' : '')} aria-pressed=${cat === 'moi'} onClick=${() => setCat(cat === 'moi' ? '' : 'moi')}><${Icon} name="send" size=${13}/> Pour toi <span class="count">${pourMoi.length}</span></button>` : null}${['', ...CATEGORIES_Q].map(c => html`<button class=${'chip' + (cat === c ? ' on' : '')} aria-pressed=${cat === c} onClick=${() => setCat(c)}>${c || 'Toutes'}</button>`)}</div>
     <div class="list">${qs.length ? qs.map(q => {
       const ans = data.answers.filter(a => a.question_id === q.id); const au = store.byId('profiles', q.author_id);
       return html`<button class="qrow" key=${q.id} onClick=${() => open(q.id)}>
-        <span class=${'qcount' + (q.best_answer_id ? ' solved' : ans.length ? '' : ' none')}><b class="mono">${ans.length}</b><span>réponse${ans.length > 1 ? 's' : ''}</span></span>
+        <span class=${'qcount' + (q.best_answer_id ? ' solved' : ans.length ? '' : ' none')}><b>${ans.length}</b><span>réponse${ans.length > 1 ? 's' : ''}</span></span>
         <span class="qtxt"><span class="mini">${q.categorie}</span>${q.entreprise || q.pays ? html`<span class="mini hit"><${Icon} name=${q.entreprise ? 'briefcase' : 'globe'} size=${11}/> ${q.entreprise || q.pays}</span>` : null} <strong>${q.titre}</strong><span class="muted small">${au?.full_name || 'Membre'} · ${timeAgo(q.created_at)}${q.best_answer_id ? ' · Résolue' : ''}</span></span>
         <${Icon} name="arrow"/></button>`;
     }) : html`<${Empty} icon="qa" title="Pas encore de question ici">Pose la première, les lauréats sont notifiés.<//>`}</div>
@@ -145,7 +146,7 @@ export function ReseauPage(ctx) {
   const chiffre = ['annuaire', 'etranger', 'entreprises'].includes(tab) ? '' : chiffreReseau(data.profiles, me);
   return html`<section class="page">
     <header class="page-head"><div>${chiffre ? html`<p class="eyebrow">${chiffre}</p>` : null}<h1>Réseau</h1></div></header>
-    <div class="icon-tabs" role="tablist" style=${`--n:${tabs.length}`}>${tabs.map(([k, l, i]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => go('reseau/' + k, { remplacer: true })}><${Icon} name=${i} size=${20}/><span>${l}</span></button>`)}</div>
+    <${PucesNav} label="Rubriques du réseau" items=${tabs.map(([k, l, i]) => ({ k, label: l, icon: i }))} actif=${tab} onChoisir=${k => go('reseau/' + k, { remplacer: true })}/>
     ${tab === 'groupes' ? html`<${GroupesPage} ctx=${ctx}/>` : null}
     ${tab === 'agenda' ? html`<${AgendaPage} ctx=${ctx}/>` : null}
     ${tab === 'entraide' ? html`<${EntraidePage} ...${ctx}/>` : null}
@@ -160,23 +161,28 @@ export function ReseauPage(ctx) {
 function Classement({ ctx }) {
   const promos = ctx.sub2 === 'promos';
   return html`<div class="sub-page">
-    <div class="seg">${[['', 'Lauréats'], ['promos', 'Coupe des promos']].map(([k, l]) => html`<button class=${(ctx.sub2 || '') === k ? 'on' : ''} onClick=${() => ctx.go('reseau/classement' + (k ? '/' + k : ''), { remplacer: true })}>${l}</button>`)}</div>
+    <div class="seg" role="tablist" aria-label="Classement">${[['', 'Lauréats'], ['promos', 'Coupe des promos']].map(([k, l]) => html`<button role="tab" aria-selected=${(ctx.sub2 || '') === k} class=${(ctx.sub2 || '') === k ? 'on' : ''} onClick=${() => ctx.go('reseau/classement' + (k ? '/' + k : ''), { remplacer: true })}>${l}</button>`)}</div>
     ${promos ? html`<${CoupePromos} ctx=${ctx}/>` : html`<${ClassementLaureats} ctx=${ctx}/>`}
   </div>`;
 }
 
+// Une ligne par lauréat : rang (médaille pour les trois premiers), visage, nom et ce qu'il a fait, points à droite.
+// Le premier n'a plus de fond doré : sa médaille suffit.
+const FAITS = [['recrutes', 'briefcase', 'Recrutés'], ['mentorats', 'mentor', 'Mentorats'], ['offres', 'feed', 'Offres']];
 function ClassementLaureats({ ctx }) {
-  const { data, scores, saison, openProfile } = ctx;
+  const { data, scores, saison, openProfile, me } = ctx;
   const [period, setPeriod] = useState('mois');
   const periodScores = useMemo(() => period === 'tout' ? scores : computeScores(data, period === 'mois' ? new Date(Date.now() - 30 * 864e5) : new Date(saison, 8, 1)), [data, period]);
-  const board = data.profiles.filter(p => p.role === 'laureat').map(p => ({ p, pts: periodScores.get(p.id)?.points || 0 })).filter(x => x.pts > 0).sort((a, b) => b.pts - a.pts).slice(0, 20);
+  const board = data.profiles.filter(p => p.role === 'laureat').map(p => ({ p, pts: periodScores.get(p.id)?.points || 0 })).filter(x => x.pts > 0).sort((a, b) => b.pts - a.pts);
+  const { vus, reste, plus } = useVoirPlus(board, 20, period);
   return html`<div class="sub-page">
     <p class="muted small">Les lauréats qui aident le plus : offres, recrutements confirmés, mentorats, réponses.</p>
-    <div class="seg">${[['mois', '30 jours'], ['saison', `Année ${seasonLabel(saison)}`], ['tout', 'Depuis le début']].map(([k, l]) => html`<button class=${period === k ? 'on' : ''} onClick=${() => setPeriod(k)}>${l}</button>`)}</div>
-    <ol class="board">${board.map((x, i) => { const s = scores.get(x.p.id); return html`<li class=${i < 3 ? 'podium p' + (i + 1) : ''}>
-      <span class="rank-n mono">${i < 3 ? html`<span class=${'medal m' + (i + 1)}>${i + 1}</span>` : i + 1}</span><${Person} p=${x.p} score=${s} onOpen=${openProfile}/>
-      <span class="board-facts small muted"><span title="Recrutés"><${Icon} name="briefcase" size=${14}/> ${s?.recrutes || 0}</span><span title="Mentorats"><${Icon} name="mentor" size=${14}/> ${s?.mentorats || 0}</span><span title="Offres"><${Icon} name="feed" size=${14}/> ${s?.offres || 0}</span></span>
-      <span class="mono pts">${x.pts} pts</span></li>`; })}</ol>
+    <div class="chips rangee" role="group" aria-label="Période">${[['mois', '30 jours'], ['saison', `Année ${seasonLabel(saison)}`], ['tout', 'Depuis le début']].map(([k, l]) => html`<button type="button" class=${'chip' + (period === k ? ' on' : '')} aria-pressed=${period === k} onClick=${() => setPeriod(k)}>${l}</button>`)}</div>
+    ${board.length ? html`<ol class="lignes classement">${vus.map((x, i) => { const s = scores.get(x.p.id); const faits = FAITS.filter(([k]) => s?.[k] > 0); return html`<li key=${x.p.id} class=${'ligne rang' + (x.p.id === me.id ? ' me' : '')}>
+      <span class="rang-n">${i < 3 ? html`<span class=${'medal m' + (i + 1)}>${i + 1}</span>` : i + 1}</span>
+      <${Person} p=${x.p} onOpen=${openProfile} size=${40} sub=${html`<span class="rang-promo">${roleTexte(x.p, true)}</span>${faits.length ? html`<span class="rang-faits">${faits.map(([k, ic, t]) => html`<span title=${t}><${Icon} name=${ic} size=${13}/> ${s[k]}</span>`)}</span>` : null}`}/>
+      <span class="ligne-chiffre">${x.pts}<small>pts</small></span></li>`; })}</ol>` : null}
+    <${VoirPlus} reste=${reste} onPlus=${plus}/>
     ${!board.length ? html`<${Empty} icon="trophy" title="Personne n’a encore marqué de points sur cette période">Publie une offre ou réponds à une question pour ouvrir le classement.<//>` : null}
   </div>`;
 }

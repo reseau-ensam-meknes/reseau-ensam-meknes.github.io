@@ -3,6 +3,7 @@
 // liens d'invitation par promo, agenda de l'école et réglages (email de l'école).
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
 import { Icon, Field, Person, Num, Empty, Bar, Avatar, toast, injectCSS, useLocal } from './ui.js';
+import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
 import { addAR, arCount } from './i18n.js';
 import { NIVEAUX, niveauOf, timeAgo, cleNom, norm, GUIDE_SECTIONS, pct, reponses48h, parcoursInscription, compteOuvert, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible, annoncePour } from './logic.js';
 import { DefisAdmin } from './saison.js';
@@ -98,7 +99,7 @@ export function AdminPage(ctx) {
   const dot = { moderation: ouverts.length, membres: toVerify.length };
   return html`<section class="page admin">
     <header class="page-head"><div><h1>Administration</h1></div></header>
-    <div class="icon-tabs adm-tabs" role="tablist" style=${`--n:${TABS.length}`}>${TABS.map(([k, l, i]) => html`<button role="tab" id=${'adm-tab-' + (k || 'vue')} aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => go(k ? 'admin/' + k : 'admin')}><${Icon} name=${i} size=${20}/><span>${l}</span>${dot[k] ? html`<span class="adm-n mono">${dot[k]}</span>` : null}</button>`)}</div>
+    <${PucesNav} cls="adm-tabs" label="Rubriques de l’administration" idPrefix="adm-tab-" items=${TABS.map(([k, l, i]) => ({ k, label: l, icon: i, n: dot[k] }))} actif=${tab} onChoisir=${k => go(k ? 'admin/' + k : 'admin')}/>
     ${tab === '' ? html`<${VueEnsemble} ctx=${ctx} comptes=${comptes} ouverts=${ouverts} toVerify=${toVerify}/>` : null}
     ${tab === 'moderation' ? html`<${Moderation} ctx=${ctx}/>` : null}
     ${tab === 'membres' ? html`<${Membres} ctx=${ctx} comptes=${comptes} toVerify=${toVerify}/>` : null}
@@ -143,7 +144,7 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
   ].filter(Boolean);
   return html`
     ${todo.length ? html`<div class="callout today"><h2 class="h-ico"><${Icon} name="bell"/> À traiter</h2><ul class="todo">${todo.map(([i, t, r]) => html`<li><button class="notif act" onClick=${() => go(r)}><span class="n-ico accent"><${Icon} name=${i} size=${16}/></span><span>${t}</span><${Icon} name="arrow" size=${16}/></button></li>`)}</ul></div>` : null}
-    <div class="kpis">${kpis.map(([l, v, sub]) => html`<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-val mono">${typeof v === 'number' ? html`<${Num} v=${v}/>` : v}</span><span class="small muted">${sub}</span></div>`)}</div>
+    <div class="kpis">${kpis.map(([l, v, sub]) => html`<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-val">${typeof v === 'number' ? html`<${Num} v=${v}/>` : v}</span><span class="small muted">${sub}</span></div>`)}</div>
 
     <${ParcoursInscription} p=${parcours} sansSuite=${codesSansSuite(comptes, data.profiles)}/>
 
@@ -154,7 +155,7 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
     ${stale.length ? html`<div class="panel"><div class="section-head"><h2>Recrutements en attente de l’étudiant <span class="count">${stale.length}</span></h2></div>
       <p class="muted small">Le lauréat a déclaré ces recrutements. Si l’étudiant ne confirme pas, l’administration peut le faire après vérification.</p>
       <ul class="people-list">${stale.map(p => { const s = store.byId('profiles', p.student_id), l = store.byId('profiles', p.laureat_id); return html`<li key=${p.id}><${Person} p=${s} onOpen=${openProfile} sub=${`${p.entreprise} · déclaré par ${l?.full_name || '?'} · ${timeAgo(p.created_at)}`}/><span class="spacer"></span>
-        <button class="btn small ghost" onClick=${() => act(() => store.update('placements', p.id, { status: 'refuse' }))}>Refuser</button><button class="btn small primary" onClick=${() => act(() => store.update('placements', p.id, { status: 'confirme' }))}>Confirmer</button></li>`; })}</ul></div>` : null}
+        <button class="btn small ghost" onClick=${() => act(() => store.update('placements', p.id, { status: 'refuse' }))}>Refuser</button><button class="btn small tonal" onClick=${() => act(() => store.update('placements', p.id, { status: 'confirme' }))}>Confirmer</button></li>`; })}</ul></div>` : null}
 
     <div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="feed"/> Dernières offres</h2></div>
       <ul class="people-list">${offers.map(o => html`<li key=${o.id}><span class="grow"><button class="linkish strong" onClick=${() => ctx.openOffer(o.id)}>${o.titre}</button><br/><span class="muted small">${o.entreprise} · ${store.byId('profiles', o.author_id)?.full_name || ''} · ${timeAgo(o.created_at)}</span></span>
@@ -300,7 +301,6 @@ const demandeCV = p => {
 function Membres({ ctx, comptes, toVerify }) {
   const { data, store, act, openProfile, saison } = ctx;
   const [q, setQ] = useState('');
-  const [all, setAll] = useState(false);
   const liste = useListe(store, data);
   const compte = new Map((comptes || []).map(c => [c.id, c]));
   const sansProfil = (comptes || []).filter(c => !c.a_profil && compteOuvert(c));
@@ -308,7 +308,7 @@ function Membres({ ctx, comptes, toVerify }) {
   const qq = q.trim().toLowerCase();
   const list = members.filter(p => !qq || `${p.full_name} ${p.filiere} ${p.promo} ${p.entreprise || ''} ${compte.get(p.id)?.email || ''}`.toLowerCase().includes(qq))
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-  const shown = all || qq ? list.slice(0, 60) : list.slice(0, 8);
+  const { vus: shown, reste, plus } = useVoirPlus(list, 20, qq);
   const promosListe = new Set(liste.map(l => l.promo));
   const surListe = p => { const e = (compte.get(p.id)?.email || '').toLowerCase(); return liste.some(l => (l.promo === p.promo && cleNom(l.nom) === cleNom(p.full_name)) || (l.email && e && l.email === e)); };
   const pairs = p => (data.verifications_pairs || []).filter(v => v.laureat_id === p.id).map(v => store.byId('profiles', v.verificateur_id)).filter(x => x?.role === 'laureat' && x.verified && x.promo === p.promo);
@@ -328,20 +328,19 @@ function Membres({ ctx, comptes, toVerify }) {
         </span>
         <span class="verif-acts"><${CvButton} ctx=${ctx} p=${p} small/>
           ${!p.cv_path && !p.cv_url ? html`<${MessageBtn} ctx=${ctx} p=${p} cls="btn tiny ghost" label="Demander son CV" texte=${demandeCV(p)}/>` : null}</span></div>
-        <button class="btn small primary" onClick=${() => act(async () => { await store.update('profiles', p.id, { verified: true }); toast('Lauréat vérifié.'); })}><${Icon} name="shield" size=${15}/> Vérifier</button></li>`; })}</ul></div>` : null}
+        <button class="btn small tonal" onClick=${() => act(async () => { await store.update('profiles', p.id, { verified: true }); toast('Lauréat vérifié.'); })}><${Icon} name="shield" size=${15}/> Vérifier</button></li>`; })}</ul></div>` : null}
 
     <div class="panel">
       <div class="section-head"><h2 class="h-ico"><${Icon} name="people"/> Membres</h2>
         <label class="search"><${Icon} name="search" size=${16}/><input id="adm-q" placeholder="Nom, email, filière, promo…" value=${q} onInput=${e => setQ(e.target.value)}/></label></div>
       ${sansProfil.length ? html`<p class="small hint-box"><${Icon} name="user" size=${15}/> <span>${sansProfil.length} compte${sansProfil.length > 1 ? 's' : ''} créé${sansProfil.length > 1 ? 's' : ''} sans profil (inscription pas terminée) : <span class="mono" dir="ltr" translate="no">${sansProfil.slice(0, 5).map(c => c.email).join(', ')}</span></span></p>` : null}
-      <ul class="people-list member-list">${shown.map(p => { const c = compte.get(p.id); return html`<li key=${p.id}>
-        <${Person} p=${p} onOpen=${openProfile} sub=${p.role === 'etudiant' ? `${NIVEAUX[niveauOf(p, saison)]?.short || ''} · ${p.filiere} · promo ${p.promo}` : `${p.filiere} · Promo ${p.promo}`}/>
-        <span class="small muted member-meta">${c ? html`<span class="mono" dir="ltr" translate="no">${c.email}</span>` : null}<span>Inscrit ${timeAgo(p.created_at)}</span>${c?.last_sign_in_at ? html`<span>Vu ${timeAgo(c.last_sign_in_at)}</span>` : null}</span>
-        <span class="spacer"></span>
-        <select id=${'role-' + p.id} aria-label="Rôle" value=${p.role} onChange=${e => act(async () => { await store.update('profiles', p.id, { role: e.target.value }); toast('Rôle modifié.'); })}>${ROLES.map(([k, l]) => html`<option value=${k}>${l}</option>`)}</select>
-        ${p.role === 'laureat' && !p.verified ? html`<button class="btn small" onClick=${() => act(() => store.update('profiles', p.id, { verified: true }))}><${Icon} name="shield" size=${14}/> Vérifier</button>` : null}
+      <p class="liste-tete">${qq ? `${list.length} sur ${members.length} membres` : `${members.length} membre${members.length > 1 ? 's' : ''}`}</p>
+      <ul class="lignes member-list">${shown.map(p => { const c = compte.get(p.id); return html`<li key=${p.id} class="ligne">
+        <${Person} p=${p} onOpen=${openProfile} size=${40} sub=${html`<span class="ligne-sub">${p.role === 'etudiant' ? `${NIVEAUX[niveauOf(p, saison)]?.short || ''} · ${p.filiere} · promo ${p.promo}` : `${p.filiere} · Promo ${p.promo}`}</span>
+          <span class="ligne-sub member-meta">${c ? html`<span dir="ltr" translate="no">${c.email}</span> · ` : null}<span>Inscrit ${timeAgo(p.created_at)}</span>${c?.last_sign_in_at ? html` · <span>Vu ${timeAgo(c.last_sign_in_at)}</span>` : null}</span>`}/>
+        <span class="ligne-act"><select id=${'role-' + p.id} aria-label="Rôle" value=${p.role} onChange=${e => act(async () => { await store.update('profiles', p.id, { role: e.target.value }); toast('Rôle modifié.'); })}>${ROLES.map(([k, l]) => html`<option value=${k}>${l}</option>`)}</select></span>
       </li>`; })}</ul>
-      ${!qq && list.length > 8 ? html`<button class="linkish small" onClick=${() => setAll(!all)}>${all ? 'Voir moins' : `Voir tous les membres (${list.length})`}</button>` : null}
+      <${VoirPlus} reste=${reste} onPlus=${plus}/>
     </div>`;
 }
 
@@ -733,21 +732,24 @@ export function AnnonceBanner({ ctx }) {
 
 injectCSS('admin', `
 .adm-tabs { margin-bottom: .2rem; }
-.adm-tabs .adm-n { position: absolute; top: 5px; inset-inline-end: 6px; min-width: 1.25rem; height: 1.25rem; padding: 0 .3rem; border-radius: 999px; background: var(--brass); color: var(--surface); font-size: .7rem; line-height: 1.25rem; text-align: center; }
-.mod-card { display: flex; flex-direction: column; gap: .55rem; padding: .9rem 1rem; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); border-inline-start: 4px solid var(--brass); }
+.mod-card { display: flex; flex-direction: column; gap: .55rem; padding: .95rem 1.05rem; border-radius: var(--r-lg); background: var(--surface); border: 0; box-shadow: var(--sh1), inset 3px 0 0 var(--brass); }
+:root[dir="rtl"] .mod-card { box-shadow: var(--sh1), inset -3px 0 0 var(--brass); }
 .mod-head { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
 .mod-ico { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--brass-soft); color: var(--brass); flex: none; }
-.mod-cible { display: flex; flex-direction: column; gap: .25rem; padding: .6rem .75rem; border-radius: 10px; background: var(--surface-2); margin: 0; }
+.mod-cible { display: flex; flex-direction: column; gap: .25rem; padding: 0; padding-inline-start: .75rem; border-inline-start: 2px solid var(--line); margin: 0; }
 .mod-titre { font-size: .95rem; }
 .mod-texte { margin: 0; font-size: .9rem; color: var(--ink-2); overflow-wrap: anywhere; }
 .mod-reports { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .2rem; }
-.mod-act { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; padding-top: .5rem; border-top: 1px dashed var(--line); }
+.mod-act { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; padding-top: .55rem; border-top: 1px solid var(--line); }
+.member-list .ligne-act select { width: auto; padding-block: .35rem; font-size: var(--fs-2); }
 .mod-hist li { flex-wrap: nowrap; }
 .mod-hist .grow { min-width: 0; }
 .verif-list li { flex-wrap: nowrap; align-items: flex-start; }
 .verif-who { display: flex; flex-direction: column; gap: .3rem; min-width: 0; flex: 1; }
 .verif-facts { display: flex; flex-direction: column; gap: .15rem; min-width: 0; padding-inline-start: calc(36px + .6rem); }
-.verif-facts > span { display: inline-flex; align-items: center; gap: .3rem; flex-wrap: wrap; }
+/* L'icône reste devant son texte, qui passe à la ligne dessous (jamais une icône seule sur sa ligne) */
+.verif-facts > span { display: block; overflow-wrap: anywhere; }
+.verif-facts > span > svg { vertical-align: -2px; margin-inline-end: .3rem; }
 .verif-acts { display: flex; gap: .4rem; flex-wrap: wrap; padding-inline-start: calc(36px + .6rem); }
 .verif-acts:empty { display: none; }
 .mod-cible > .avatar { margin-bottom: .2rem; }
@@ -769,13 +771,13 @@ injectCSS('admin', `
 .lo-table td { padding: .3rem .5rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .lo-table tr.bad td { color: var(--bad); text-decoration: line-through; }
 .lo-couv { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: .8rem; }
-.lo-promo { display: flex; flex-direction: column; gap: .4rem; padding: .7rem .8rem; border: 1px solid var(--line); border-radius: 12px; }
+.lo-promo { display: flex; flex-direction: column; gap: .4rem; padding: .7rem 0 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; }
 .lo-fil { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .25rem; }
 .lo-fil li { display: flex; align-items: center; gap: .5rem; }
 .lo-fil .grow { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lo-mini { width: 70px; flex: none; }
 .lo-manquants { display: flex; flex-direction: column; gap: .5rem; }
-.lo-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+.lo-list { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow: auto; border-block: 1px solid var(--line); }
 .lo-list li { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1.3fr); gap: .5rem; padding: .35rem .6rem; border-bottom: 1px solid var(--line); }
 .lo-list li > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rg-sep { border: 0; border-top: 1px dashed var(--line); margin: .2rem 0; width: 100%; }
