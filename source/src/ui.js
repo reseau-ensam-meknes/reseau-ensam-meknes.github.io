@@ -1,6 +1,6 @@
 // Composants partagés de l'interface.
 import { html, useState, useEffect, useLayoutEffect, useRef, useMemo } from './vendor/preact-htm.js';
-import { initials, levelOf, NIVEAUX, niveauOf, seasonOf, PARCOURS, FILIERES_INFO, timeAgo, logoEntreprise, monogramme } from './logic.js';
+import { initials, levelOf, NIVEAUX, niveauOf, seasonOf, PARCOURS, FILIERES_INFO, timeAgo, logoEntreprise, monogramme, PREFIXE_BROUILLON } from './logic.js';
 import { Icon, Field, BrandLogo, SchoolScene, TYPE_ICON, ajouterIcones } from './entree.js';
 import { getLang } from './i18n.js';
 import { avecLangue } from './regles-entree.js';
@@ -539,6 +539,42 @@ export function useLocal(key, init) {
   const [v, setV] = useState(() => { try { const x = localStorage.getItem(key); return x == null ? init : JSON.parse(x); } catch { return init; } });
   const set = x => { setV(x); try { localStorage.setItem(key, JSON.stringify(x)); } catch { /* pas de stockage */ } };
   return [v, set];
+}
+
+// Ce qui est en train d'être écrit (message, demande, offre, question…) : gardé sur l'appareil à chaque frappe, il revient
+// après un rechargement ou une session expirée, pour ce compte seulement (cle commence par l'id du membre ; null : pas
+// de brouillon). Gardé 14 jours ; oublier() une fois envoyé. S'utilise comme useState : [valeur, changer, oublier].
+export function useBrouillon(cle, init) {
+  const k = cle ? PREFIXE_BROUILLON + cle : null;
+  const depart = useRef(null); depart.current ??= typeof init === 'function' ? init() : init;
+  const [v, setV] = useState(() => {
+    const d = depart.current;
+    try {
+      const x = k && JSON.parse(localStorage.getItem(k) || 'null');
+      if (x && Date.now() - x.t < 14 * 864e5) return d && typeof d === 'object' && !Array.isArray(d) ? { ...d, ...x.v } : x.v;
+    } catch { /* stockage indisponible */ }
+    return d;
+  });
+  const parti = useRef(false);
+  useEffect(() => {
+    if (!k) return;
+    if (parti.current) { parti.current = false; return; } // envoyé : le prochain changement (champ vidé) n'est pas un brouillon
+    try {
+      if (v === '' || JSON.stringify(v) === JSON.stringify(depart.current)) localStorage.removeItem(k);
+      else localStorage.setItem(k, JSON.stringify({ t: Date.now(), v }));
+    } catch { /* stockage plein ou indisponible : le brouillon reste à l'écran */ }
+  }, [k, v]);
+  const oublier = () => { parti.current = true; oublierBrouillon(cle); };
+  return [v, setV, oublier];
+}
+export function oublierBrouillon(cle) { try { if (cle) localStorage.removeItem(PREFIXE_BROUILLON + cle); } catch { /* */ } }
+// Lu et écrit tout de suite, même par un écran qui n'est plus affiché (un envoi qui échoue après une session perdue)
+export function lireBrouillon(cle, init) {
+  try { const x = JSON.parse(localStorage.getItem(PREFIXE_BROUILLON + cle) || 'null'); if (x && Date.now() - x.t < 14 * 864e5) return x.v; } catch { /* */ }
+  return init;
+}
+export function ecrireBrouillon(cle, v) {
+  try { if (v == null || v === '' || (Array.isArray(v) && !v.length)) localStorage.removeItem(PREFIXE_BROUILLON + cle); else localStorage.setItem(PREFIXE_BROUILLON + cle, JSON.stringify({ t: Date.now(), v })); } catch { /* */ }
 }
 
 

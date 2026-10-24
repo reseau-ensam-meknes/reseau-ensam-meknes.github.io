@@ -2477,3 +2477,71 @@ for (const [largeur, langue, theme] of [[1280, 'fr', 'light'], [390, 'ar', 'dark
     await s.ctx.close();
   });
 }
+
+// Lot mouvement · C : écrans lourds à la demande, polices gardées sur le site (l'arabe seulement en arabe), brouillons gardés
+const A_LA_DEMANDE = /\/(admin|dashboard|enquete|lire-cv|parse-offre|parse-linkedin)\.js$|\/vendor\/pdf\./;
+for (const langue of ['fr', 'ar']) {
+  test(`démarrage léger (${langue}) : ni Admin, ni Suivi, ni lecteurs de CV ; ${langue === 'fr' ? 'ni dictionnaire ni police arabes' : 'le dictionnaire et la police arabes'}`, async () => {
+    const s = await ouvrir({ largeur: 390, langue });
+    const demandes = [];
+    s.page.on('request', r => demandes.push(new URL(r.url()).pathname));
+    // Le démarrage complet (ouvrir recharge la page dans la langue choisie)
+    await s.page.reload(); await s.page.waitForSelector('.hello'); await s.page.evaluate(() => document.fonts.ready); await s.page.waitForTimeout(500);
+    assert.deepEqual(demandes.filter(u => A_LA_DEMANDE.test(u)), [], 'rien de lourd au démarrage');
+    assert.equal(demandes.some(u => /\/i18n-ar\.js$/.test(u)), langue === 'ar');
+    assert.equal(demandes.some(u => /\/polices\/arabe-/.test(u)), langue === 'ar', 'la police arabe');
+    assert.ok(demandes.some(u => /\/polices\/texte\.woff2$/.test(u)), 'la police du texte vient du site');
+    assert.ok(!demandes.some(u => /fonts\.(googleapis|gstatic)/.test(u)), 'plus de Google Fonts');
+    // Suivi et Admin arrivent quand on les ouvre
+    await s.aller('suivi'); await s.page.waitForSelector('.page:not(.page-attente)');
+    assert.ok(demandes.some(u => /\/dashboard\.js$/.test(u)));
+    await s.comme('Admin'); await s.aller('admin'); await s.page.waitForSelector('#adm-parcours');
+    assert.ok(demandes.some(u => /\/admin\.js$/.test(u)));
+    if (langue === 'ar') assert.deepEqual((await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), [], 'Suivi et Admin chargés à la demande : tout traduit');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}
+
+test('écran chargé à la demande sans réseau : la forme de la page, puis un mot calme et « Réessayer » qui le fait venir', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  let coupe = true;
+  await s.ctx.route(/\/admin\.js$/, r => (coupe ? r.abort('internetdisconnected') : r.continue()));
+  await s.comme('Admin'); await s.aller('admin');
+  await s.page.waitForSelector('.ecran-echec[role="alert"]');
+  assert.match(await s.page.locator('.ecran-echec').innerText(), /Cette page n’a pas pu se charger\. Vérifie ton réseau, puis réessaie\./);
+  assert.equal(await s.page.locator('.ecran-echec .btn').innerText(), 'Réessayer');
+  assert.equal(await s.page.locator('.ecran-echec .btn.primary, .ecran-echec .btn.danger').count(), 0, 'un bouton calme, ni plein ni rouge');
+  coupe = false;
+  // Selon le navigateur, le module revient tout de suite, ou la page se recharge (au deuxième essai) sur la même page
+  for (let i = 0; i < 3 && !(await s.page.locator('#adm-parcours').count()); i++) {
+    await s.page.locator('.ecran-echec .btn').click({ timeout: 3000 }).catch(() => {});
+    await s.page.waitForSelector('#adm-parcours', { timeout: 4000 }).catch(() => {});
+  }
+  assert.ok(await s.page.isVisible('#adm-parcours'));
+  assert.equal(await s.page.evaluate(() => location.hash), '#admin');
+  assert.deepEqual(s.erreurs.filter(e => !/admin\.js|dynamically imported module/i.test(e)), []);
+  await s.ctx.close();
+});
+
+test('brouillons : le message en cours revient après un rechargement, pour ce compte seulement, et part une fois envoyé', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const id = nom => s.profils.find(x => x[1].includes(nom))[0];
+  const youssef = id('Youssef');
+  await s.comme('Salma'); await s.aller('messages/' + youssef); await s.page.waitForSelector('#chat-txt');
+  await s.page.fill('#chat-txt', 'Bonjour, je voulais vous demander');
+  await s.page.reload(); await s.page.waitForSelector('#chat-txt');
+  assert.equal(await s.page.inputValue('#chat-txt'), 'Bonjour, je voulais vous demander', 'le brouillon revient');
+  // Un autre compte de démo, même conversation ouverte d'un autre côté : rien
+  await s.aller('accueil'); await s.comme('Youssef'); await s.aller('messages/' + id('Salma')); await s.page.waitForSelector('#chat-txt');
+  assert.equal(await s.page.inputValue('#chat-txt'), '');
+  await s.aller('accueil'); await s.comme('Salma'); await s.aller('messages/' + youssef); await s.page.waitForSelector('#chat-txt');
+  await s.page.fill('#chat-txt', 'Bonjour, je voulais vous demander un conseil.');
+  await s.page.click('.composer .send-btn'); await s.page.waitForTimeout(400);
+  assert.match(await s.page.locator('.msg.mine').last().innerText(), /un conseil/);
+  assert.equal(await s.page.evaluate(() => Object.keys(localStorage).filter(k => k.startsWith('ensam-brouillon:') && k.includes(':msg:')).length), 0, 'envoyé : plus de brouillon');
+  await s.page.reload(); await s.page.waitForSelector('#chat-txt');
+  assert.equal(await s.page.inputValue('#chat-txt'), '');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});

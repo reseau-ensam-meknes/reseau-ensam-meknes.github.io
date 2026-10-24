@@ -7,7 +7,9 @@ import { addAR, t as tr } from './i18n.js';
 import { timeAgo, niveauOf, NIVEAUX, proximiteFiliere } from './logic.js';
 import { CV_MAX } from './store.js';
 import { MessageBtn } from './messages.js';
-import { lireCVDetail, propositionCV, corrigeProfil, extraitCV, propositionSansCoordonnees, dejaSignalee } from './lire-cv.js';
+// La lecture des CV (lire-cv.js, et pdf.js derrière) n'arrive qu'au premier CV lu
+let LC = null;
+const lecture = () => import('./lire-cv.js').then(m => (LC = m));
 
 const firstName = p => (p?.full_name || '').split(' ')[0];
 const href = u => (/^https?:\/\//i.test(u) ? u : 'https://' + u);
@@ -121,6 +123,7 @@ export const libellesCV = e => [e.role ? (e.role === 'laureat' ? 'Profil lauréa
   e.telephone ? 'Téléphone' : null, e.email ? 'Email de contact' : null].filter(Boolean);
 // Le CV lu ({ cv, texte }) : le fichier qu'on vient de déposer, sinon celui gardé en ligne
 export async function lireCVDe(store, path, fichier) {
+  const { lireCVDetail } = await lecture();
   if (fichier) return lireCVDetail(fichier);
   const r = await fetch(await store.lienCV(path));
   if (!r.ok) throw new Error('CV introuvable');
@@ -136,6 +139,7 @@ export function SignalerLecture({ ctx, profil, prop, texte, path, onClose, onDon
   const send = e => {
     e.preventDefault();
     act(async () => {
+      const { propositionSansCoordonnees, extraitCV } = await lecture();
       await store.insert('retours_cv', { profil_id: profil.id, auteur_id: me.id, cv_path: path || null, proposition: propositionSansCoordonnees(prop), juste: juste.trim() || null, extrait: extraitCV(texte) || null });
       toast('Merci ! L’erreur est signalée, la lecture des CV sera corrigée.'); onDone?.(); onClose();
     });
@@ -162,6 +166,7 @@ function ControleCV({ ctx, fichier }) {
     let fini = false;
     lireCVDe(store, path, fichier).then(({ cv, texte }) => {
       if (fini) return;
+      const { propositionCV, dejaSignalee } = LC;
       const e = propositionCV(me, cv);
       // Coordonnées privées : seulement celles qui manquent
       const co = store.coordonneesDe?.(me.id) || {};
@@ -173,7 +178,7 @@ function ControleCV({ ctx, fichier }) {
     return () => { fini = true; };
   }, [path, fichier]);
   if (!prop) return null;
-  const corrige = corrigeProfil(prop);
+  const corrige = LC.corrigeProfil(prop);
   const fermer = () => { marquerCV(path); setProp(null); };
   const appliquer = () => act(async () => {
     const { telephone, email, ...profil } = prop;

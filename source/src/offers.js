@@ -1,6 +1,7 @@
 // Offres : liste compacte, fiche détaillée, candidature, gestion des candidats par le lauréat.
 import { html, useState, useMemo, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, TYPE_ICON, toast, RoleLine, celebrate, injectCSS, PartagerWhatsApp, lienWhatsApp, lienDirect, allerAuChamp, Bouclier } from './ui.js';
+import { useBrouillon } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
 import { getLang, addAR, arCount } from './i18n.js';
 import { TYPES, titreOffre, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande, manquesOffre, peutRecommander, porteApresRefus, demandesPour } from './logic.js';
@@ -324,7 +325,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
 function ApplyBox({ ctx, o, form, setForm, onClose }) {
   const { data, me, store, act, saison } = ctx;
   const app = data.applications.find(a => a.offer_id === o.id && a.student_id === me.id);
-  const [msg, setMsg] = useState('');
+  const [msg, setMsg, oublierBrouillon] = useBrouillon(me.id + ':candidature:' + o.id, '');
   const pl = placementOf(data, me.id, saison);
   // Formulaire ouvert : on l'amène sous les yeux et on place le curseur dans le message
   useEffect(() => {
@@ -357,6 +358,7 @@ function ApplyBox({ ctx, o, form, setForm, onClose }) {
     act(async () => {
       const premiere = me.role === 'etudiant' && !data.applications.some(a => a.student_id === me.id && a.offer_id);
       await store.insert('applications', { student_id: me.id, offer_id: o.id, entreprise: o.entreprise, titre: o.titre, message: msg.trim(), status: 'postule' });
+      oublierBrouillon();
       // Première candidature : un vrai moment, avec la prochaine étape. Ensuite, un simple mot en bas de l'écran.
       const fete = premiere && celebrate({
         cle: 'premiere-candidature-' + me.id, icon: 'send', titre: 'Candidature envoyée !',
@@ -505,7 +507,8 @@ const nChamps = n => `${n} champ${n > 1 ? 's' : ''}`;
 export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
   const { store, me, act, data } = ctx;
   const editing = !!offer?.id;
-  const [f, setF] = useState(() => ({
+  // Une nouvelle offre en cours d'écriture reste sur l'appareil (session expirée, rechargement)
+  const [f, setF, oublierBrouillon] = useBrouillon(editing ? null : me.id + ':offre', () => ({
     type: 'stage', titre: '', entreprise: me.entreprise || '', ville: me.ville || '', pays: me.pays || 'Maroc', filieres: [], annees: [3, 4], description: '', contact: '', lien: '', deadline: '', cooptation: false, remunere: false, duree: '', audience: 'etudiants', ...preset, ...(offer || {}),
   }));
   const [tente, setTente] = useState(false);   // rien n'est signalé avant « Publier » ou un collage
@@ -551,6 +554,7 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
       else {
         const premiere = me.role === 'laureat' && !(data || store.data).offers.some(x => x.author_id === me.id);
         const neuve = await store.insert('offers', { ...row, author_id: me.id, status: 'ouverte' });
+        oublierBrouillon();
         // Première offre d'un lauréat : on le remercie, une seule fois
         const fete = premiere && celebrate({
           cle: 'premiere-offre-' + me.id, icon: 'feed', titre: 'Ta première offre est en ligne !',

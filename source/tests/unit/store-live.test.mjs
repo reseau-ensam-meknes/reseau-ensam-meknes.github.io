@@ -113,3 +113,92 @@ test('répondre : une autre erreur ne renvoie pas le message en double', async (
   await assert.rejects(() => s.envoyerMessage({ dest: 'lui', body: 'Salut', reponse_a: 'm0' }));
   assert.equal(n, 1);
 });
+
+// Lot mouvement · C : la copie de l'accueil gardée sur l'appareil, et le jeton refusé renouvelé une fois
+import { pourCache } from '../../src/store.js';
+
+test('copie gardée sur l’appareil : rien de plus sur les autres que ce que l’écran montre déjà', () => {
+  const data = {
+    coordonnees: [{ id: 'moi', telephone: '06' }, { id: 'autre', telephone: '07' }],
+    enquetes_insertion: [{ id: 'e1', user_id: 'moi' }, { id: 'e2', user_id: 'autre' }],
+    signalements: [{ id: 's1', status: 'ouvert', created_at: 'x', motif: 'détail', cible_id: 'c' }, { id: 's2', status: 'traite' }],
+    groupe_messages: [{ id: 'g1', body: 'groupe' }],
+    messages: [
+      { id: 'm1', author_id: 'moi', dest_id: 'a', created_at: '2026-01-01', lu_at: '2026-01-01' },
+      { id: 'm2', author_id: 'a', dest_id: 'moi', created_at: '2026-01-02', lu_at: '2026-01-02' },
+      { id: 'm3', author_id: 'b', dest_id: 'moi', created_at: '2026-01-01', lu_at: null },
+      { id: 'm4', author_id: 'b', dest_id: 'moi', created_at: '2026-01-03', lu_at: null },
+      { id: 'm5', author_id: 'x', dest_id: 'y', created_at: '2026-01-03' },
+    ],
+    profiles: [{ id: 'moi' }, { id: 'autre' }],
+  };
+  const c = pourCache(data, 'moi');
+  assert.deepEqual(c.coordonnees, [{ id: 'moi', telephone: '06' }]);
+  assert.deepEqual(c.enquetes_insertion.map(e => e.id), ['e1']);
+  assert.deepEqual(c.signalements, [{ id: 's1', status: 'ouvert', created_at: 'x' }], 'seulement le nombre à traiter');
+  assert.deepEqual(c.groupe_messages, []);
+  assert.deepEqual(c.messages.map(m => m.id), ['m2', 'm3', 'm4'], 'le dernier mot de chaque conversation et les non lus');
+  assert.deepEqual(c.profiles, data.profiles);
+});
+
+function renouvelable({ reponses, nouveau = 'neuf', gardee = { user: { id: 'moi' }, refresh_token: 'r', access_token: 'vieux' } }) {
+  const s = new SupabaseStore({ supabaseAnonKey: 'cle' });
+  const envoyes = [];
+  let renouvellements = 0;
+  s.sessionGardee = () => gardee;
+  s.renouveler = async () => { renouvellements++; if (!nouveau) return null; gardee = { ...gardee, access_token: nouveau }; return { access_token: nouveau }; };
+  const vrai = globalThis.fetch;
+  globalThis.fetch = async (u, o) => { const h = new Headers(o.headers); envoyes.push(h.get('Authorization')); const [code, corps] = reponses.shift(); return new Response(JSON.stringify(corps), { status: code }); };
+  return { s, envoyes, renouvellements: () => renouvellements, fin: () => { globalThis.fetch = vrai; } };
+}
+const JWT_EXPIRE = [401, { code: 'PGRST301', message: 'JWT expired' }];
+
+test('jeton expiré refusé par la base : renouvelé, la requête refaite une seule fois avec le nouveau jeton', async () => {
+  const r = renouvelable({ reponses: [JWT_EXPIRE, [200, [{ id: 'a' }]]] });
+  try {
+    const res = await r.s.fetchRenouvele('https://x.supabase.co/rest/v1/offers', { headers: { Authorization: 'Bearer vieux' } });
+    assert.equal(res.status, 200);
+    assert.deepEqual(r.envoyes, ['Bearer vieux', 'Bearer neuf']);
+    assert.equal(r.renouvellements(), 1);
+  } finally { r.fin(); }
+});
+
+test('renouvellement impossible : la réponse refusée est rendue telle quelle, sans boucle', async () => {
+  const r = renouvelable({ reponses: [JWT_EXPIRE], nouveau: null });
+  try {
+    const res = await r.s.fetchRenouvele('https://x.supabase.co/rest/v1/offers', { headers: { Authorization: 'Bearer vieux' } });
+    assert.equal(res.status, 401);
+    assert.equal(r.envoyes.length, 1);
+  } finally { r.fin(); }
+});
+
+test('un refus qui n’est pas un jeton expiré (droits) n’est pas renouvelé', async () => {
+  const r = renouvelable({ reponses: [[403, { code: '42501', message: 'permission denied for table offers' }]] });
+  try {
+    const res = await r.s.fetchRenouvele('https://x.supabase.co/rest/v1/offers', { headers: { Authorization: 'Bearer vieux' } });
+    assert.equal(res.status, 403);
+    assert.equal(r.renouvellements(), 0);
+  } finally { r.fin(); }
+});
+
+test('une autre requête a déjà renouvelé : le nouveau jeton est repris, sans second renouvellement', async () => {
+  const r = renouvelable({ reponses: [JWT_EXPIRE, [200, []]], gardee: { user: { id: 'moi' }, refresh_token: 'r2', access_token: 'deja-neuf' } });
+  try {
+    await r.s.fetchRenouvele('https://x.supabase.co/rest/v1/offers', { headers: { Authorization: 'Bearer vieux' } });
+    assert.deepEqual(r.envoyes, ['Bearer vieux', 'Bearer deja-neuf']);
+    assert.equal(r.renouvellements(), 0);
+  } finally { r.fin(); }
+});
+
+test('session gardée mais requête partie sans le compte (clé publique) : renouvelée d’abord, sinon c’est le réseau', async () => {
+  let r = renouvelable({ reponses: [[200, []]] });
+  try {
+    await r.s.fetchRenouvele('https://x.supabase.co/rest/v1/offers', { headers: { Authorization: 'Bearer cle' } });
+    assert.deepEqual(r.envoyes, ['Bearer neuf']);
+  } finally { r.fin(); }
+  r = renouvelable({ reponses: [], nouveau: null });
+  try {
+    await assert.rejects(r.s.fetchRenouvele('https://x.supabase.co/rest/v1/offers', { headers: { Authorization: 'Bearer cle' } }), /Failed to fetch/);
+    assert.equal(r.envoyes.length, 0);
+  } finally { r.fin(); }
+});

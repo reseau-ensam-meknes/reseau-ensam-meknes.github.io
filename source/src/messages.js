@@ -4,6 +4,7 @@
 // Les règles sont dans la base (peut_discuter, protect_message) ; l'écran les reflète.
 import { html, useState, useEffect, useLayoutEffect, useRef, useMemo } from './vendor/preact-htm.js';
 import { Icon, Avatar, Empty, toast, injectCSS, roleTexte } from './ui.js';
+import { useBrouillon, oublierBrouillon, lireBrouillon, ecrireBrouillon } from './ui.js';
 import { conversations, lienAvec, mentorState, norm } from './logic.js';
 import { addAR, getLang } from './i18n.js';
 import { VOCAL_MAX, REACTIONS } from './store.js';
@@ -72,8 +73,9 @@ export function useAlerteMessages(store, me, route) {
     if (!me) return;
     const recus = (store.data.messages || []).filter(m => m.dest_id === me.id);
     // Au premier affichage, ou quand on change de compte, rien n'est « nouveau »
-    const avant = vus.current?.id === me.id ? vus.current.ids : null;
-    vus.current = { id: me.id, ids: new Set(recus.map(m => m.id)) };
+    // Ni au passage des données gardées sur l'appareil aux données fraîches (ouverture instantanée)
+    const avant = vus.current?.id === me.id && !vus.current.cache ? vus.current.ids : null;
+    vus.current = { id: me.id, ids: new Set(recus.map(m => m.id)), cache: !!store.depuisCache };
     if (!avant) return;
     const m = recus.find(x => !x.lu_at && !avant.has(x.id));
     if (!m || (route.base === 'messages' && route.sub === m.author_id)) return;
@@ -156,8 +158,13 @@ function Conversation({ ctx, autre }) {
   const lien = lienAvec(data, me, autre, x => store.byId('profiles', x));
   const ouvert = store.peutDiscuter(autre);
   const blocage = (data.blocages || []).find(b => b.user_id === me.id && b.bloque_id === autre);
-  const [envois, setEnvois] = useState([]);
-  const [txt, setTxt] = useState(() => { const b = brouillons.get(autre) || ''; brouillons.delete(autre); return b; });
+  // Le message en cours et ceux qui n'ont pas pu partir restent sur l'appareil (session expirée, réseau, rechargement) ;
+  // un mot préparé ailleurs (« Écrire » avec un texte) passe devant le brouillon
+  const cleMsg = me.id + ':msg:' + autre;
+  const cleEchecs = me.id + ':msg-echecs:' + autre;
+  const [envois, setEnvois] = useState(() => lireBrouillon(cleEchecs, []).map((a, i) => ({ id: 'echec-' + i, args: a, ...a, fichier: null, url: null, etat: 'erreur', created_at: new Date().toISOString() })));
+  const [pret] = useState(() => { const b = brouillons.get(autre) || ''; brouillons.delete(autre); if (b) oublierBrouillon(cleMsg); return b; });
+  const [txt, setTxt] = useBrouillon(cleMsg, pret);
   const [tape, setTape] = useState(0);
   const [menu, setMenu] = useState(false);
   const [sel, setSel] = useState(null);
@@ -202,8 +209,11 @@ function Conversation({ ctx, autre }) {
       const r = await store.envoyerMessage({ dest: autre, ...args });
       if (url && r?.fichier) apercus.set(r.fichier, url);
       setEnvois(x => x.filter(e => e.id !== tmp));
+      if (args.type === 'texte') { const l = lireBrouillon(cleEchecs, []), i = l.findIndex(a => a.body === args.body); if (i >= 0) ecrireBrouillon(cleEchecs, l.filter((_, j) => j !== i)); }
     } catch (e) {
       setEnvois(x => x.map(m => (m.id === tmp ? { ...m, etat: 'erreur' } : m)));
+      // Gardé sur l'appareil tout de suite : la session a pu se perdre et cet écran disparaître pendant l'envoi
+      if (args.type === 'texte') { const l = lireBrouillon(cleEchecs, []); if (!l.some(a => a.body === args.body)) ecrireBrouillon(cleEchecs, [...l, { type: 'texte', body: args.body, ...(args.reponse_a ? { reponse_a: args.reponse_a } : {}) }]); }
       toast(e.message || String(e), 'err');
     }
   };
