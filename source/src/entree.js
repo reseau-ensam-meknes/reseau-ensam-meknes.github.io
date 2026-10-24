@@ -96,9 +96,13 @@ addAR({
 // ---------------------------------------------------------------------------
 // L'icône de chaque type d'offre (page d'entrée d'un lien partagé, listes d'offres)
 export const TYPE_ICON = { stage: 'wrench', pfe: 'cap', etranger: 'globe', emploi: 'briefcase' };
+// Trois tailles seulement : toute taille demandée se range sur 16, 20 ou 24 px ; les grandes illustrations (états vides, fêtes)
+// gardent la leur. Le trait reste de 1,75 px à l'écran quelle que soit la taille (vector-effect, dans page.html).
+export const tailleIcone = s => { const n = Number(s) || 20; return n > 28 ? n : n < 18 ? 16 : n < 22 ? 20 : 24; };
 export function Icon({ name, size = 18 }) {
   const P = ICONS[name] || '';
-  return html`<svg class=${`ico ico-${name}`} width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: P }}></svg>`;
+  const t = tailleIcone(size);
+  return html`<svg class=${`ico ico-${name}`} width=${t} height=${t} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: P }}></svg>`;
 }
 
 const ICONS = {

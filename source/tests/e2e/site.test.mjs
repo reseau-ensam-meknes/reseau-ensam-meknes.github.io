@@ -1917,6 +1917,31 @@ test('accueil (360 × 640) : une carte « prochaine étape » et son seul bouton
   await s.ctx.close();
 });
 
+test('« Cette semaine » : un lauréat sans photo voit « Ajoute une photo », en dernier, ni dans la cloche ni sur la carte ; elle ouvre Mon profil sur la carte photo', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const PHRASE = 'Ajoute une photo, les étudiants écrivent plus facilement à un visage.';
+  await s.comme('Nadia'); await s.aller('accueil');
+  if (await s.page.$('.fete-back, .modal-back')) await s.fermer();
+  const lignes = s.page.locator('.semaine .todo > li');
+  const textes = (await lignes.allInnerTexts()).map(t => t.trim());
+  const i = textes.findIndex(t => t.includes(PHRASE));
+  assert.ok(i >= 0, JSON.stringify(textes));
+  assert.equal(i, textes.length - 1, 'après les vraies tâches');
+  assert.equal(await s.page.locator('.pas', { hasText: 'Ajoute une photo' }).count(), 0, 'jamais la carte du haut');
+  await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
+  assert.equal(await s.page.locator('.modal.cloche', { hasText: 'Ajoute une photo' }).count(), 0, 'ni dans la cloche');
+  await s.fermer();
+  await lignes.nth(i).locator('button').click();
+  await s.page.waitForFunction(() => location.hash === '#profil');
+  await s.page.waitForSelector('.photo-card');
+  assert.ok(await s.page.evaluate(() => { const c = document.querySelector('.photo-card').getBoundingClientRect(); return c.top >= 0 && c.top < innerHeight; }), 'la carte photo est à l’écran');
+  // Un étudiant ne la voit pas
+  await s.comme('Salma'); await s.aller('accueil');
+  assert.equal(await s.page.locator('.semaine', { hasText: 'Ajoute une photo' }).count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('candidats sur téléphone : gros boutons groupés ; « Recruter » demande une confirmation et s’annule tant que l’étudiant n’a pas confirmé, la candidature retrouve son statut', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Youssef'); await s.aller('accueil');

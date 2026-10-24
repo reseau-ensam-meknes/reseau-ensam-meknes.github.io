@@ -1,7 +1,7 @@
 // Banque d'entretiens et avis de stage, par entreprise (Phase 3) : ce que les promos précédentes
 // ont vécu chez chaque entreprise, pour que la suivante se prépare mieux.
 import { html, useState, useMemo } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, CompanyLogo, TYPE_ICON, toast, useLocal, injectCSS } from './ui.js';
+import { Icon, Modal, Field, Empty, Person, CompanyLogo, MentionLogos, TYPE_ICON, toast, useLocal, injectCSS } from './ui.js';
 import { addAR, getLang, arCount } from './i18n.js';
 import { TYPES, FOUND, entKey, sameCompany, seasonOf, seasonLabel, timeAgo, noteSiAssez, AVIS_POUR_NOTE } from './logic.js';
 import { companiesOf } from './pro.js';
@@ -136,6 +136,7 @@ function ListeEntreprises({ ctx, all, ouvrir }) {
     </button></li>`)}</ul>
     ${!list.length ? html`<${Empty} icon="briefcase" title="Aucune entreprise trouvée">${ouvrir ? 'Tu as passé un entretien ou fait un stage ? Sois le premier à partager.' : ''}<//>` : null}
     ${list.length > 80 ? html`<p class="muted small center">Affine la recherche pour voir les autres.</p>` : null}
+    <${MentionLogos} noms=${list.slice(0, 80).map(c => c.nom)}/>
   </div>`;
 }
 
@@ -186,6 +187,7 @@ function FicheEntreprise({ ctx, c, ouvrir }) {
       ${offres.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="feed"/> Offres ouvertes</h2></div><div class="offer-grid one">${offres.map(o => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} onOpen=${() => openOffer(o.id)}/>`)}</div>` : null}
       ${!c.laureats.length && !offres.length ? html`<${Empty} icon="people" title="Aucun lauréat ni offre ouverte ici pour l’instant"/>` : null}
     </div>` : null}
+    <${MentionLogos} noms=${[c.nom]}/>
   </div>`;
 }
 
