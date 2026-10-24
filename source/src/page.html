@@ -1589,7 +1589,7 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"] { display: 
   .side-foot { display: none; }
 }
 @media (min-width: 1280px) {
-  .shell { --side-w: clamp(236px, 17vw, 264px); }
+  .shell { --side-w: clamp(244px, 17.5vw, 268px); }
   .side-in { gap: var(--sp-4); padding-inline: var(--sp-3); }
   .side .brand { padding-inline: var(--sp-2); }
   .side .brand-txt { min-width: 0; }
@@ -1622,16 +1622,19 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"] { display: 
 .home-col > :nth-child(2) { animation-delay: .06s; } .home-col > :nth-child(3) { animation-delay: .12s; }
 .home-col > :nth-child(4) { animation-delay: .18s; } .home-col > :nth-child(n+5) { animation-delay: .24s; }
 .home-cols > .home-grid { animation: none; }
-.home-grid > :is(.home-main, .home-side) { animation: rise .6s var(--ease) .3s backwards; }
-.shell:not(.premier) :is(.home-col > *, .home-grid > .home-main, .home-grid > .home-side) { animation: fade-in .22s ease backwards; animation-delay: 0s; }
+.home-grid > :is(.home-main, .home-side, .home-plus) { animation: rise .6s var(--ease) .3s backwards; }
+.shell:not(.premier) :is(.home-col > *, .home-grid > .home-main, .home-grid > .home-side, .home-grid > .home-plus) { animation: fade-in .22s ease backwards; animation-delay: 0s; }
 @media (max-width: 1079px) { .home-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (min-width: 761px) and (max-width: 1079px) { .page.home { max-width: 720px; } }
 @media (min-width: 1080px) {
-  .home-cols { display: grid; grid-template-columns: minmax(0, 1fr) 340px; grid-template-rows: auto 1fr; column-gap: var(--sp-5); row-gap: var(--sp-6); align-items: start; }
+  .home-cols { display: grid; grid-template-columns: minmax(0, 1fr) clamp(320px, 26vw, 340px); grid-template-rows: auto auto 1fr; column-gap: var(--sp-5); row-gap: var(--sp-6); align-items: start; }
   .home-col { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
   .home-cols > .home-grid { display: contents; }
   .home-main { grid-column: 1; grid-row: 2; }
-  .home-side { grid-column: 2; grid-row: 1 / span 2; position: sticky; top: min(calc(var(--haut-h, 60px) + 16px), calc(100vh - var(--cote-h, 0px) - 24px)); }
+  /* « Lauréat du mois » et « L'école en ce moment » (lauréats, admin) : sous « Pour toi », pour que les colonnes finissent ensemble */
+  .home-plus { grid-column: 1; grid-row: 3; display: flex; flex-direction: column; gap: .8rem; min-width: 0; }
+  .home-plus .panel.star .small { color: var(--ink-2); }
+  .home-side { grid-column: 2; grid-row: 1 / span 3; position: sticky; top: min(calc(var(--haut-h, 60px) + 16px), calc(100vh - var(--cote-h, 0px) - 24px)); }
   /* La carte « prochaine étape » dans la colonne principale : le texte garde la place */
   .home-col .pas { grid-template-columns: minmax(0, 1fr) minmax(12rem, 15rem); column-gap: 1.25rem; }
   /* Colonne de droite (340 px) : chaque bloc se lit de haut en bas, sans mot coupé ligne par ligne */

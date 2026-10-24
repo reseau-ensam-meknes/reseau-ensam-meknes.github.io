@@ -695,6 +695,14 @@ function Home(ctx) {
     const ro = new ResizeObserver(mesurer); ro.observe(el); if (haut) ro.observe(haut);
     return () => ro.disconnect();
   }, []);
+  // 1080 px et plus : « Lauréat du mois » et « L'école en ce moment » passent sous « Pour toi » (colonnes équilibrées)
+  const [large, setLarge] = useState(() => typeof matchMedia === 'function' && matchMedia('(min-width: 1080px)').matches);
+  useEffect(() => {
+    if (typeof matchMedia !== 'function') return;
+    const m = matchMedia('(min-width: 1080px)'), f = () => setLarge(m.matches);
+    m.addEventListener?.('change', f);
+    return () => m.removeEventListener?.('change', f);
+  }, []);
   const isStudent = me.role === 'etudiant', isLaureat = me.role === 'laureat';
   const enRecherche = isLaureat && !!me.en_recherche;
   const guide = guideEtapes(ctx, setCompose);
@@ -739,6 +747,19 @@ function Home(ctx) {
   const offresBloc = dernieres.length ? html`<div class="section-head"><h3>${enRecherche ? 'Offres pour toi' : 'Dernières offres'}</h3><button class="btn tiny ghost" onClick=${() => go('offres')}>Tout voir <${Icon} name="arrow" size=${14}/></button></div>
     <div class="offer-grid one">${dernieres.map(o => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} onOpen=${() => openOffer(o.id)}/>`)}</div>` : null;
 
+  // Le réseau en chiffres (lauréats et admin) : sur ordinateur, sous « Pour toi » ; ailleurs, avec le reste du réseau
+  const ecole = isStudent ? [] : [
+    star && star.pts ? html`<div class="panel star" key="star">
+            <p class="eyebrow"><${Icon} name="trophy" size=${14}/> Lauréat du mois</p>
+            <${Person} p=${star.p} score=${scores.get(star.p.id)} onOpen=${openProfile} size=${48}/>
+            <p class="small">${starHelped > 1 ? `${starHelped} étudiants recrutés grâce à ses offres. Merci !` : starHelped === 1 ? '1 étudiant recruté grâce à ses offres. Merci !' : 'Merci pour son aide ce mois-ci.'}</p>
+          </div>` : null,
+    st.viaTotal ? html`<button class="panel pulse clickable" key="pulse" onClick=${() => go('suivi')}>
+            <div class="section-head"><h3>L’école en ce moment</h3><${Icon} name="arrow" size=${16}/></div>
+            ${st.rows.map(r => html`<div class="pulse-row"><span class="niv-badge">${NIVEAUX[r.n].short}</span><div class="pulse-bar"><div class="row small"><span>${r.objectif.court}</span><span class="spacer"></span><span class="mono">${pct(r.rate)}</span></div><${Bar} value=${r.rate}/></div></div>`)}
+            <p class="small muted">${st.viaTotal > 1 ? `${st.viaTotal} réussites vérifiées grâce aux lauréats cette année.` : '1 réussite vérifiée grâce aux lauréats cette année.'}</p>
+          </button>` : null,
+  ];
   // De haut en bas : bonjour et l'entrée de l'école, la prochaine étape, « Cette semaine », l'annonce, puis « Pour toi ».
   // Un bloc vide (réseau encore petit) disparaît avec son titre.
   return html`<section class="page home">
@@ -803,19 +824,11 @@ function Home(ctx) {
           <${NextCafe} ctx=${ctx}/>
           ${merci ? html`<${SuccessFeed} ctx=${ctx} max=${2}/>` : null}
           ${!isStudent ? html`<${DefisPanel} ctx=${ctx}/>` : null}
-          ${!isStudent && star && star.pts ? html`<div class="panel star">
-            <p class="eyebrow"><${Icon} name="trophy" size=${14}/> Lauréat du mois</p>
-            <${Person} p=${star.p} score=${scores.get(star.p.id)} onOpen=${openProfile} size=${48}/>
-            <p class="small">${starHelped > 1 ? `${starHelped} étudiants recrutés grâce à ses offres. Merci !` : starHelped === 1 ? '1 étudiant recruté grâce à ses offres. Merci !' : 'Merci pour son aide ce mois-ci.'}</p>
-          </div>` : null}
-          ${!isStudent && st.viaTotal ? html`<button class="panel pulse clickable" onClick=${() => go('suivi')}>
-            <div class="section-head"><h3>L’école en ce moment</h3><${Icon} name="arrow" size=${16}/></div>
-            ${st.rows.map(r => html`<div class="pulse-row"><span class="niv-badge">${NIVEAUX[r.n].short}</span><div class="pulse-bar"><div class="row small"><span>${r.objectif.court}</span><span class="spacer"></span><span class="mono">${pct(r.rate)}</span></div><${Bar} value=${r.rate}/></div></div>`)}
-            <p class="small muted">${st.viaTotal > 1 ? `${st.viaTotal} réussites vérifiées grâce aux lauréats cette année.` : '1 réussite vérifiée grâce aux lauréats cette année.'}</p>
-          </button>` : null}
+          ${large ? null : ecole}
           </div>
         </div>
       </div>
+      ${large && ecole.some(Boolean) ? html`<div class="home-plus">${ecole}</div>` : null}
     </div>
     </div>
     ${compose ? html`<${OfferComposer} ctx=${ctx} onClose=${() => setCompose(false)}/>` : null}
