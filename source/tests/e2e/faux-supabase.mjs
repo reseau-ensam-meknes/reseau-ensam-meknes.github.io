@@ -2,6 +2,10 @@
 // Il répond juste assez pour la page d'entrée, le code à 6 chiffres (123456 est le bon code), la « Dernière étape »,
 // le lien d'une offre partagée et l'abonnement d'un appareil aux notifications. Chaque appel est noté (appels) pour
 // vérifier ce qui part vers la base.
+// Jetons (jetons) : comme PostgREST, un jeton expiré (exp passé) est refusé (401 « JWT expired ») ; jetons.depuis
+// (secondes) périme d'un coup tous les jetons émis avant ; jetons.renouveler dit si /auth/v1/token?grant_type=refresh_token
+// rend une nouvelle session ou la refuse (400 invalid_grant, comme un jeton de renouvellement révoqué ou trop ancien).
+// tables : d'autres lignes rendues telles quelles (mentorats, propositions…).
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -11,13 +15,13 @@ export const UID = '00000000-0000-4000-8000-0000000000a1';
 
 // fondateurs : la réponse de fondateurs_publics() (absente : la base n'est pas à jour), ou (membre) => réponse ;
 // photo : l'image servie par les liens temporaires du stockage (photos des fondateurs)
-export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 19, promos: 14 }, reglages = [{ cle: 'domaines_ecole', valeur: ['ensam-umi.ac.ma'] }], offres = [], partagees = {}, profils = [], fondateurs = null, photo = null } = {}) {
-  let port; const appels = []; const meta = {}; const inscrits = [];
+export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 19, promos: 14 }, reglages = [{ cle: 'domaines_ecole', valeur: ['ensam-umi.ac.ma'] }], offres = [], partagees = {}, profils = [], fondateurs = null, photo = null, tables = {} } = {}) {
+  let port; const appels = []; const meta = {}; const inscrits = []; const jetons = { renouveler: false, depuis: 0, n: 0 };
   const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' };
   const json = (r, code, body) => { r.writeHead(code, { 'content-type': 'application/json', ...cors }); r.end(body === undefined ? '' : JSON.stringify(body)); };
   const session = email => {
     const now = Math.floor(Date.now() / 1000);
-    return { access_token: 'x.' + Buffer.from(JSON.stringify({ sub: UID, exp: now + 3600 })).toString('base64url') + '.y', token_type: 'bearer', expires_in: 3600, expires_at: now + 3600, refresh_token: 'r1',
+    return { access_token: 'x.' + Buffer.from(JSON.stringify({ sub: UID, exp: now + 3600, iat: now, n: ++jetons.n })).toString('base64url') + '.y', token_type: 'bearer', expires_in: 3600, expires_at: now + 3600, refresh_token: 'r' + jetons.n,
       user: { id: UID, aud: 'authenticated', role: 'authenticated', email, user_metadata: meta[email] || {}, app_metadata: {}, created_at: new Date().toISOString() } };
   };
   const srv = http.createServer((q, r) => {
@@ -45,7 +49,16 @@ export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 1
           return json(r, 200, session(email).user);
         }
         if (u === '/sb/auth/v1/logout') return json(r, 204);
+        if (u === '/sb/auth/v1/token' && url.searchParams.get('grant_type') === 'refresh_token') {
+          return jetons.renouveler ? json(r, 200, session(Object.keys(meta).pop() || 'membre@exemple.ma')) : json(r, 400, { code: 'refresh_token_not_found', error: 'invalid_grant', error_description: 'Invalid Refresh Token: Refresh Token Not Found' });
+        }
         if (u === '/sb/auth/v1/token') return json(r, 400, { error: 'invalid_grant', error_description: 'Invalid login credentials' });
+        // La base refuse un jeton expiré, comme PostgREST
+        if (u.startsWith('/sb/rest/v1/')) {
+          const jeton = (q.headers.authorization || '').replace(/^Bearer\s+/i, '');
+          let p = null; try { p = JSON.parse(Buffer.from(jeton.split('.')[1] || '', 'base64url').toString()); } catch { /* clé publique */ }
+          if (p && (p.exp < Date.now() / 1000 || (jetons.depuis && !(p.iat >= jetons.depuis)))) { appels[appels.length - 1].refuse = true; return json(r, 401, { code: 'PGRST301', details: null, hint: null, message: 'JWT expired' }); }
+        }
         if (u === '/sb/rest/v1/rpc/chiffres_publics') return chiffres ? json(r, 200, chiffres) : json(r, 404, { code: 'PGRST202', message: 'Could not find the function' });
         if (u === '/sb/rest/v1/rpc/offre_partagee') {
           const x = partagees[corps?.p_id];
@@ -78,6 +91,8 @@ export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 1
           inscrits.push(row);
           return json(r, 201, /vnd\.pgrst\.object/.test(q.headers.accept || '') ? row : [row]);
         }
+        const t = u.slice('/sb/rest/v1/'.length);
+        if ((q.method === 'GET' || q.method === 'HEAD') && tables[t]) return json(r, 200, tables[t]);
         if (q.method === 'GET' || q.method === 'HEAD') return json(r, 200, []);
         return json(r, 201, /vnd\.pgrst\.object/.test(q.headers.accept || '') ? (Array.isArray(corps) ? corps[0] : corps) : []);
       });
@@ -95,6 +110,6 @@ export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 1
   srv.on('upgrade', (_q, s) => s.destroy()); // temps réel : absent ici
   await new Promise(ok => srv.listen(0, '127.0.0.1', ok)); port = srv.address().port;
   // Chaque test repart d'une base vide (personne d'inscrit, aucun appel noté)
-  const vider = () => { appels.length = 0; inscrits.length = 0; for (const k of Object.keys(meta)) delete meta[k]; };
-  return { adresse: `http://127.0.0.1:${port}/`, appels, inscrits, vider, fermer: () => srv.close() };
+  const vider = () => { appels.length = 0; inscrits.length = 0; for (const k of Object.keys(meta)) delete meta[k]; for (const k of Object.keys(tables)) delete tables[k]; Object.assign(jetons, { renouveler: false, depuis: 0 }); };
+  return { adresse: `http://127.0.0.1:${port}/`, appels, inscrits, tables, jetons, vider, fermer: () => srv.close() };
 }

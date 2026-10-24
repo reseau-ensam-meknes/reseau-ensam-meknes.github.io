@@ -3,12 +3,10 @@ import { getLang, setLang, chargerAR } from './i18n.js';
 import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore, texteErreur } from './store.js';
 import { Icon, Field, Empty, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, Num, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille } from './ui.js';
-import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX } from './logic.js';
+import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
 import { ParcoursPage, EspacePage, Journey, journeyStep, confirmerRecrutement, refuserRecrutement, versMerci } from './me.js';
-import { DashboardPage } from './dashboard.js';
 import { ReseauPage, ProfileModal, ProfileForm, AskQuestion } from './community.js';
-import { AdminPage, AnnonceBanner } from './admin.js';
 import { MentoratPage, AskHelp, NextRdv, slotWhen, mentoratIgnorees, IlsOntBesoin, CoupDeMain, HoraireSheet, ICONE_BESOIN, VERBE_BESOIN, phraseBesoin, ouvrirBesoin, confirmerPresence, finirMentorat, lienVisio } from './mentorat.js';
 import { SuccessFeed, VerifyPage, MerciDuo } from './growth.js';
 import { PrivacyPage, ConsentModal, MesDonnees, DesaboPage } from './privacy.js';
@@ -20,13 +18,64 @@ import { CvCard } from './cv.js';
 import { PhotoCard, PhotoProposee } from './photo.js';
 import { NudgeAvis } from './entreprises.js';
 import { ConfianceHome } from './confiance.js';
-import { EnquetePage } from './enquete.js';
 import { NextEvent } from './agenda.js';
 import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, suiteLien, accordIci, roleAccord, oublierInvitation } from './entree.js';
 import { MessagesPage, MessagesHome, useAlerteMessages } from './messages.js';
 import { PoulsReseau, marquerArrivee, useArrivee, ArriveeSheet, arriveeEnAttente } from './pouls.js';
 import { ProposerAide } from './demandes.js';
 import { useFondateurs, FondateursBandeau, useFondateurMoi } from './fondateurs.js';
+
+// Écrans lourds et peu ouverts (Suivi, Admin, Enquête) : chargés à la demande, pas au démarrage.
+// Le temps qu'ils arrivent, la forme d'une page ; s'ils ne peuvent pas arriver (réseau), un mot calme et « Réessayer ».
+// Certains navigateurs ne redemandent jamais un module qui a échoué : au deuxième échec, « Réessayer » recharge la page
+// dès que le fichier répond (les brouillons et la page ouverte sont gardés).
+function aLaDemande(charger, nom, fichier) {
+  let Ecran = null, enCours = null, rates = 0;
+  const venir = () => (enCours ||= charger().then(m => { Ecran = m[nom]; }, e => { enCours = null; rates++; throw e; }));
+  const reessayer = async setEtat => {
+    if (rates >= 2) { try { if ((await fetch(fichier, { cache: 'no-store' })).ok) return location.reload(); } catch { /* toujours pas de réseau */ } }
+    setEtat('attente');
+  };
+  function AlaDemande(props) {
+    const [etat, setEtat] = useState(Ecran ? 'pret' : 'attente');
+    useEffect(() => {
+      if (Ecran) return;
+      let fini = false;
+      venir().then(() => { if (!fini) setEtat('pret'); }, () => { if (!fini) setEtat('echec'); });
+      return () => { fini = true; };
+    }, [etat === 'attente']);
+    if (Ecran) return html`<${Ecran} ...${props}/>`;
+    if (etat === 'echec') return html`<section class="page"><div class="panel ecran-echec" role="alert"><p>Cette page n’a pas pu se charger. Vérifie ton réseau, puis réessaie.</p><p><button type="button" class="btn" onClick=${() => reessayer(setEtat)}>Réessayer</button></p></div></section>`;
+    return html`<${PageEnChargement}/>`;
+  }
+  return AlaDemande;
+}
+// La forme d'une page qui arrive : un titre et deux blocs, sans texte ni animation qui insiste. Sans réseau, on le dit calmement.
+function PageEnChargement({ horsLigne = false }) {
+  return html`<section class="page page-attente" aria-busy=${horsLigne ? null : 'true'}>
+    ${horsLigne ? html`<p class="muted small" role="status">Pas de réseau pour l’instant : cette page s’affiche dès qu’il revient.</p>` : html`<span class="sr-only" role="status">Chargement…</span>`}
+    <div class="sq sq-titre" aria-hidden="true"></div><div class="sq sq-bloc" aria-hidden="true"></div><div class="sq sq-bloc court" aria-hidden="true"></div></section>`;
+}
+const DashboardPage = aLaDemande(() => import('./dashboard.js'), 'DashboardPage', './dashboard.js');
+const AdminPage = aLaDemande(() => import('./admin.js'), 'AdminPage', './admin.js');
+const EnquetePage = aLaDemande(() => import('./enquete.js'), 'EnquetePage', './enquete.js');
+
+// L'annonce de l'administration sur l'accueil : une ligne discrète, pour son seul public ; un appui la déplie ;
+// chacun la masque pour lui (ici et non dans admin.js, chargé seulement pour l'administration)
+function AnnonceBanner({ ctx }) {
+  const { data, me } = ctx;
+  const a = annoncePour(data.annonces, me);
+  const [off, setOff] = useLocal('annonce-off-' + me.id, '');
+  const [ouverte, setOuverte] = useState(false);
+  if (!a || off === a.id) return null;
+  const lien = a.lien && /^https:\/\//i.test(a.lien) ? a.lien : null;
+  return html`<div class=${'annonce-ligne' + (ouverte ? ' ouverte' : '')} role="note">
+    <${Icon} name="spark" size=${16}/>
+    <button type="button" class="annonce-txt" aria-expanded=${ouverte} onClick=${() => setOuverte(!ouverte)}><span dir="auto" translate="no">${a.texte}</span></button>
+    <button type="button" class="icon-btn small" aria-label="Masquer l’annonce" onClick=${() => setOff(a.id)}><${Icon} name="x" size=${15}/></button>
+    ${ouverte && lien ? html`<a class="annonce-lien" href=${lien} target="_blank" rel="noopener">En savoir plus</a>` : null}
+  </div>`;
+}
 
 // Le dernier bouton touché, pour que act le retrouve même sans focus (iPhone)
 let dernierBouton = { b: null, t: 0 };
@@ -146,11 +195,12 @@ function App({ store }) {
     const { notifs, todo, me: who } = cur;
     const keys = new Set(notifs.map(n => n.key).filter(Boolean));
     const prev = seen.current;
-    if (prev && prev.id === who.id && Date.now() - lastAct.current > 2500) {
+    // Au passage des données gardées sur l'appareil aux données fraîches, rien n'est « nouveau » : l'accueil se met à jour sans bruit
+    if (prev && prev.id === who.id && !prev.cache && Date.now() - lastAct.current > 2500) {
       const fresh = notifs.find(n => n.key && !prev.keys.has(n.key) && (n.action || n.tone === 'good'));
       if (fresh) toast(fresh.text, 'ok', fresh.pts || 0);
     }
-    seen.current = { id: who.id, keys };
+    seen.current = { id: who.id, keys, cache: !!store.depuisCache };
     const n = todo + (cur.msgs || 0);
     try { document.title = (n ? `(${n}) ` : '') + 'Réseau ENSAM Meknès'; } catch { /* */ }
   });
@@ -210,6 +260,9 @@ function App({ store }) {
   if (page === 'parcours' && me.role !== 'etudiant') page = me.role === 'laureat' ? 'espace' : 'accueil';
   if (page === 'espace' && me.role !== 'laureat') page = me.role === 'etudiant' ? 'parcours' : 'accueil';
   if (page === 'admin' && me.role !== 'admin') page = 'accueil';
+  // Ouverture depuis les données gardées sur l'appareil, mise à jour pas encore arrivée : les écrans qui ont besoin de ce
+  // qui n'y est pas gardé (conversations entières, messages des groupes, commentaires de relecture, modération) l'attendent
+  const attente = !!store.enAttente && (page === 'messages' || page === 'admin' || (page === 'reseau' && route.sub === 'groupes') || (page === 'mentorat' && route.sub === 'cv'));
   // L'accord (loi 09-08) pas encore donné : la fenêtre de l'accord, sauf sur Confidentialité et Mon profil ;
   // les feuilles de notifications attendent, quelle que soit la page
   const sansAccord = store.mode === 'live' && !me.consent_at;
@@ -276,13 +329,14 @@ function App({ store }) {
       <main class=${'content' + (plein ? ' flush' : '')} id="contenu" tabindex="-1">
         ${page === 'accueil' ? html`<${Home} key=${me.id} ...${ctx}/>` : null}
         ${page === 'offres' ? html`<${OffersPage} ...${ctx}/>` : null}
-        ${page === 'mentorat' ? html`<${MentoratPage} ...${ctx}/>` : null}
-        ${page === 'messages' ? html`<${MessagesPage} ...${ctx}/>` : null}
+        ${attente ? html`<${PageEnChargement} horsLigne=${store.horsLigne}/>` : null}
+        ${page === 'mentorat' && !attente ? html`<${MentoratPage} ...${ctx}/>` : null}
+        ${page === 'messages' && !attente ? html`<${MessagesPage} ...${ctx}/>` : null}
         ${page === 'parcours' ? html`<${ParcoursPage} ...${ctx}/>` : null}
         ${page === 'espace' ? html`<${EspacePage} ...${ctx}/>` : null}
-        ${page === 'reseau' ? html`<${ReseauPage} ...${ctx}/>` : null}
+        ${page === 'reseau' && !attente ? html`<${ReseauPage} ...${ctx}/>` : null}
         ${page === 'suivi' ? html`<${DashboardPage} ...${ctx}/>` : null}
-        ${page === 'admin' ? html`<${AdminPage} ...${ctx}/>` : null}
+        ${page === 'admin' && !attente ? html`<${AdminPage} ...${ctx}/>` : null}
         ${page === 'profil' ? html`<${MyProfile} ctx=${ctx}/>` : null}
         ${page === 'confidentialite' ? html`<${PrivacyPage}/>` : null}
         ${page === 'enquete' ? html`<${EnquetePage} ...${ctx}/>` : null}

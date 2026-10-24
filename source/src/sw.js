@@ -3,6 +3,8 @@
 // build.sh (outils/precharger.mjs) remplace la version et la liste des fichiers du site.
 const VERSION = /*VERSION*/'dev';
 const FICHIERS = /*FICHIERS*/[];
+// L'arabe (dictionnaire, police) : gardé d'avance seulement pour qui l'avait déjà, sinon au premier usage
+const FACULTATIFS = /*FACULTATIFS*/[];
 const CACHE = 'ensam-' + VERSION;
 
 // Chaque version du site est gardée en entier, d'un coup : une page n'utilise jamais un mélange
@@ -12,6 +14,13 @@ self.addEventListener('install', e => e.waitUntil((async () => {
   const c = await caches.open(CACHE);
   // no-cache : le navigateur revalide ce qu'il vient de télécharger (réponse 304, presque rien en 3G)
   await c.addAll(FICHIERS.map(f => new Request(f, { cache: 'no-cache' })));
+  const deja = [];
+  for (const k of await caches.keys()) {
+    if (k === CACHE) continue;
+    const ancien = await caches.open(k);
+    for (const f of FACULTATIFS) if (!deja.includes(f) && await ancien.match(f, { ignoreSearch: true })) deja.push(f);
+  }
+  if (deja.length) await c.addAll(deja.map(f => new Request(f, { cache: 'no-cache' }))).catch(() => {});
 })()));
 self.addEventListener('activate', e => e.waitUntil((async () => {
   for (const k of await caches.keys()) if (k !== CACHE) await caches.delete(k);

@@ -29,6 +29,8 @@ addAR({
   'Les offres de stage, de PFE et d’emploi publiées par les lauréats': 'عروض التدريب ومشاريع نهاية الدراسة والعمل التي ينشرها الخريجون',
   'Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.': 'دفعتك محدَّدة مسبقًا: أنشئ حسابك، ثم تحقق من معلوماتك.',
   'Créer mon compte': 'إنشاء حسابي', 'Se connecter': 'تسجيل الدخول', 'Nouveau mot de passe': 'كلمة مرور جديدة',
+  'Ta session a expiré. Reconnecte-toi : ce que tu étais en train d’écrire est gardé.': 'انتهت جلستك. سجّل الدخول من جديد: ما كنت تكتبه محفوظ.',
+  'Ta session a expiré. Reconnecte-toi pour continuer.': 'انتهت جلستك. سجّل الدخول من جديد للمتابعة.',
   'Email': 'البريد الإلكتروني', 'Mot de passe': 'كلمة المرور', '6 caractères minimum': '6 أحرف على الأقل',
   'Le résumé de la semaine par email': 'ملخص الأسبوع بالبريد الإلكتروني',
   'J’accepte que mes données servent au réseau (': 'أوافق على استخدام بياناتي لخدمة الشبكة (', 'Confidentialité': 'الخصوصية',
@@ -315,13 +317,15 @@ export function AuthScreen({ store }) {
     });
     return () => { vivant = false; };
   }, []);
-  const [mode, setMode] = useState(recovery ? 'nouveau' : attente ? 'code' : ['inscription', 'connexion', 'motdepasse'].includes(saisie?.mode) ? saisie.mode : lien?.k === 'aider' ? 'connexion' : invite || !dejaMembre() ? 'inscription' : 'connexion');
+  const [mode, setMode] = useState(recovery ? 'nouveau' : attente ? 'code' : ['inscription', 'connexion', 'motdepasse'].includes(saisie?.mode) ? saisie.mode : lien?.k === 'aider' || store?.sessionPerdue ? 'connexion' : invite || !dejaMembre() ? 'inscription' : 'connexion');
   const [origine, setOrigine] = useState(attente ? (attente.creer ? 'inscription' : 'connexion') : 'inscription');
   const [role, setRoleEtat] = useState(() => roleRetenu() || (invite ? roleDePromo(invite) : ''));
   // Petit écran (moins de 680 px de haut) : le titre et les chiffres suffisent, la phrase d'explication laisse la place au
   // bouton. Décidé à l'ouverture : le clavier qui s'ouvre ensuite ne fait rien bouger.
   const [court] = useState(() => innerWidth < 900 && innerHeight < 680);
-  const [email, setEmail] = useState(attente?.email || saisie?.email || ''); const [pw, setPw] = useState('');
+  // Session expirée sans l'avoir voulu : on redemande la connexion calmement, avec son adresse déjà là
+  const perdue = !!store?.sessionPerdue;
+  const [email, setEmail] = useState(attente?.email || saisie?.email || (perdue && store.emailPerdu) || ''); const [pw, setPw] = useState('');
   const [ok, setOk] = useState(!!saisie?.ok); const [mails, setMails] = useState(attente ? attente.mails !== false : saisie ? saisie.mails !== false : true);
   garderSaisie = () => sessionStorage.setItem(SAISIE, JSON.stringify({ email, mode, ok, mails, t: Date.now() }));
   useEffect(() => { if (mode === 'motdepasse' && saisie?.mode === 'motdepasse') focus('au-pw'); }, []);
@@ -408,6 +412,7 @@ export function AuthScreen({ store }) {
     </section>
     <form class="auth-card form entree-form" onSubmit=${submit} aria-label=${inscription ? 'Créer mon compte' : null}>
       ${inscription ? null : html`<h2>${{ connexion: 'Se connecter', code: 'Ton code est parti', motdepasse: 'Se connecter', nouveau: 'Nouveau mot de passe' }[mode]}</h2>`}
+      ${perdue && mode === 'connexion' ? html`<p class="auth-msg" id="au-session" role="status">${store.brouillonsGardes ? 'Ta session a expiré. Reconnecte-toi : ce que tu étais en train d’écrire est gardé.' : 'Ta session a expiré. Reconnecte-toi pour continuer.'}</p>` : null}
       ${bandeau ? html`<p class="invite-band"><${Icon} name="send" size=${18}/><span><strong>Bienvenue, promo ${invite} !</strong> Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.</span></p>` : null}
       ${inscription ? html`<${ChoixRole} value=${role} onChange=${setRole} idPrefix="au-je-" compact/>
         ${roleMsg ? html`<p id="au-role-msg" class="auth-msg err" role="alert">Choisis d’abord ta situation.</p>` : null}` : null}
@@ -507,6 +512,14 @@ export function attendreMagasin(geste = false) {
   return geste ? magasin.catch(e => magasinEchec ? attendreMagasin() : Promise.reject(e)) : magasin;
 }
 export const magasinEntree = () => magasin;
+// Membre déjà connecté : ses données partent tout de suite, pendant que l'application se télécharge (au lieu d'après).
+// Sans page d'entrée ; un échec (réseau) est repris par l'application (écran calme « Pas de connexion »).
+function magasinMembre() {
+  if (magasin) return;
+  precharger(window.ENSAM_MAGASIN);
+  magasin = import('./store.js').then(m => m.createStore());
+  magasin.catch(() => { magasin = null; });
+}
 
 let appLancee = false, appEchec = false, relance = false, connecte = false;
 function chargerApp() {
@@ -568,8 +581,9 @@ if (!window.ENSAM_ENTREE) {
   retenirLien(location.hash);
   const d = document.documentElement;
   if (!enLigne || jeton || PUBLIQUE.test(location.hash)) {
-    // Démo, membre déjà connecté, ou page publique : l'application tout de suite (le logo patiente)
+    // Démo, membre déjà connecté, ou page publique : l'application tout de suite (la forme de l'accueil, ou le logo, patiente)
     delete d.dataset.entree;
+    if (enLigne && jeton) magasinMembre();
     chargerApp();
   } else {
     d.dataset.entree = 'visiteur';

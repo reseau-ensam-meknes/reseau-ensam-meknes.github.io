@@ -539,6 +539,26 @@ export const AR = {
   'bravo reçu': 'تهنئة مستلمة', 'bravos reçus': 'تهانٍ مستلمة', 'point d’impact': 'نقطة تأثير', 'recruté grâce à toi': 'موظَّف بفضلك', 'recrutés grâce à toi': 'موظَّفون بفضلك', 'offre partagée': 'عرض منشور',
   'offres partagées': 'عروض منشورة', 'réponse donnée': 'جواب مقدَّم', 'réponses données': 'أجوبة مقدَّمة', 'filleul': 'طالب في رعايتك', 'filleuls': 'طلبة في رعايتك', 'merci reçu': 'شكر مستلم',
   'mercis reçus': 'رسائل شكر مستلمة', 'un bon début': 'بداية جيدة',
+  // Lot mouvement · C : ouverture instantanée, écrans à la demande, session renouvelée et brouillons gardés
+  'Chargement…': 'جارٍ التحميل…',
+  'Cette page n’a pas pu se charger. Vérifie ton réseau, puis réessaie.': 'تعذّر تحميل هذه الصفحة. تحقّق من شبكتك، ثم أعد المحاولة.',
+  'Pas de réseau pour l’instant : cette page s’affiche dès qu’il revient.': 'لا توجد شبكة حاليًا: ستظهر هذه الصفحة فور عودتها.',
+  'Ta session a expiré. Reconnecte-toi : ce que tu étais en train d’écrire est gardé.': 'انتهت جلستك. سجّل الدخول من جديد: ما كنت تكتبه محفوظ.',
+  'Ta session a expiré. Reconnecte-toi pour continuer.': 'انتهت جلستك. سجّل الدخول من جديد للمتابعة.',
+  'Ta connexion a expiré. Réessaie dans un instant : ce que tu as écrit est gardé.': 'انتهت صلاحية اتصالك. أعد المحاولة بعد لحظة: ما كتبته محفوظ.',
+  'Le navigateur garde ta langue, tes préférences d’affichage, ce que tu es en train d’écrire et une copie de ton accueil pour l’ouvrir tout de suite. Cette copie est effacée quand tu te déconnectes, tes brouillons aussi.': 'يحتفظ المتصفح بلغتك وتفضيلات العرض وما تكتبه حاليًا ونسخة من صفحتك الرئيسية لفتحها فورًا. تُحذف هذه النسخة عند تسجيل خروجك، وكذلك مسوّداتك.',
+  'Carte : fonds OpenStreetMap et CARTO. Notifications du téléphone : le service de ton navigateur (Google, Apple ou Mozilla), seulement si tu les actives.': 'الخريطة: خلفيات OpenStreetMap وCARTO. إشعارات الهاتف: خدمة متصفحك (Google أو Apple أو Mozilla)، فقط إن فعّلتها.',
+  // Mots des écrans chargés à la demande (Suivi, Admin, Enquête) qui s'affichent aussi ailleurs : traduits dès le démarrage
+  'Mon année': 'سنتي', '12 mois': '12 شهراً', 'Poursuite d’études': 'متابعة الدراسة', 'Agenda': 'المفكرة', 'À traiter': 'للمعالجة',
+  'Tout est à jour.': 'كل شيء محدَّث.', 'Offre': 'عرض', 'Commentaire': 'تعليق', 'Question': 'سؤال', 'Profil': 'الملف الشخصي', 'Entretien': 'مقابلة',
+  'Avis de stage': 'رأي حول تدريب', 'Guide de l’étranger': 'دليل الخارج', 'Café ENSAM': 'مقهى ENSAM', 'Startup': 'شركة ناشئة', 'Autre': 'غير ذلك',
+  'Annuler le café': 'إلغاء اللقاء', 'Voir la demande': 'عرض الطلب', 'Ouvrir': 'فتح', 'Auteur': 'الكاتب', 'Nom complet': 'الاسم الكامل',
+  'Promo': 'الدفعة', 'Filière': 'الشعبة', 'En emploi': 'في وظيفة', 'Création d’entreprise': 'إنشاء مقاولة', 'Volontariat ou VIE': 'تطوع أو VIE',
+  'Merci !': 'شكرًا!', '2 minutes pour aider les promos suivantes.': 'دقيقتان لمساعدة الدفعات القادمة.', 'Cette plateforme': 'هذه المنصة',
+  'Suite au stage ou PFE': 'بعد التدريب أو مشروع التخرج', 'Candidature spontanée': 'ترشيح تلقائي', 'Concours': 'مباراة',
+  'Moins de 6 000 DH': 'أقل من 6000 درهم', '6 000 à 10 000 DH': 'من 6000 إلى 10000 درهم', '10 000 à 15 000 DH': 'من 10000 إلى 15000 درهم',
+  '15 000 à 20 000 DH': 'من 15000 إلى 20000 درهم', '20 000 à 30 000 DH': 'من 20000 إلى 30000 درهم', 'Plus de 30 000 DH': 'أكثر من 30000 درهم',
+  'Je préfère ne pas dire': 'أفضل عدم الإفصاح',
 };
 
 // Passe UX : accueil, premiers pas, moments fêtés, messagerie dans la navigation

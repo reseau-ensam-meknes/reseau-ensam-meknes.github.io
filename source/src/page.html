@@ -12,22 +12,34 @@
 <meta property="og:locale" content="fr_FR">
 <meta name="twitter:card" content="summary_large_image">
 <script>/* Avant l'affichage : thème, langue et sens de lecture. Un visiteur sans compte attend la page d'entrée (pas le logo) ;
-   un membre déjà connecté précharge toute l'application. build.sh (outils/precharger.mjs) remplit les deux listes. */
+   un membre déjà connecté précharge toute l'application (juste après les modules de l'entrée). build.sh (outils/precharger.mjs) remplit les deux listes. */
 (function(){var d=document.documentElement,ar=false,membre=false,L,i;
 try{L=localStorage;var t=L.getItem('ensam-theme');if(t==='light'||t==='dark'){d.dataset.theme=t;document.querySelectorAll('meta[name="theme-color"]').forEach(function(m){m.content=t==='dark'?'#0B1320':'#1670A8'})}
 var g=L.getItem('ensam-lang');ar=g==='ar'||(!g&&sessionStorage.getItem('ensam-lang-visite')==='ar');for(i=0;i<L.length;i++)if(/^sb-.+-auth-token$/.test(L.key(i)))membre=true}catch(e){}
 d.lang=ar?'ar':'fr';d.dir=ar?'rtl':'ltr';
 var M=window.ENSAM_MAGASIN=/*MAGASIN*/[],A=window.ENSAM_MODULES=/*MODULES*/[];
 if(!A.length)return;
-if(membre||/^#(verifier|desabo|confidentialite)\b|access_token=|type=recovery|error_description=/.test(location.hash))M.concat(A).forEach(function(f){var l=document.createElement('link');if(/supabase\.js$/.test(f)){l.rel='preload';l.as='script'}else l.rel='modulepreload';l.href=f;document.head.appendChild(l)});
+if(membre&&!/^#(verifier|desabo)\b/.test(location.hash))d.dataset.boot='membre';
+if(membre||/^#(verifier|desabo|confidentialite)\b|access_token=|type=recovery|error_description=/.test(location.hash))d.dataset.tete='appli';
 else{d.dataset.entree='visiteur';setTimeout(function(){if(!window.ENSAM_ENTREE)delete d.dataset.entree},4000)}})()</script>
 <!--PRECHARGE-->
+<script>/* Membre connecté ou page publique : le magasin et l'application se préchargent, APRÈS les modules de l'entrée
+   (préchargés juste au-dessus) : demandés avant, ils les retardaient (0,6 à 1,5 s de plus en 3G). */
+(function(){var d=document.documentElement;if(d.dataset.tete!=='appli')return;delete d.dataset.tete;
+(window.ENSAM_MAGASIN||[]).concat(window.ENSAM_MODULES||[]).forEach(function(f){var l=document.createElement('link');if(/supabase\.js$/.test(f)){l.rel='preload';l.as='script'}else l.rel='modulepreload';l.href=f;document.head.appendChild(l)})})()</script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2264%22%20height%3D%2264%22%20viewBox%3D%220%200%20512%20512%22%20style%3D%22--lg-o%3A%23F7A11A%3B--lg-b%3A%234FA9E6%3B--lg-k%3A%23FFFFFF%3B--lg-in%3Atransparent%3B--lg-cap%3A%23FFFFFF%3B--lg-cap2%3A%23DCE6F3%3B--lg-bg%3A%231D3150%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22lg-tuile%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%2327497A%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%2316253F%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22512%22%20height%3D%22512%22%20rx%3D%22116%22%20fill%3D%22url(%23lg-tuile)%22%2F%3E%3Cg%3E%3Cpath%20d%3D%22M225.8%20104.9L233.6%2071.3L278.4%2071.3L286.2%20104.9L321.5%20116.4L347.6%2093.8L383.8%20120.1L370.4%20151.9L392.2%20182.0L426.6%20179.0L440.4%20221.6L410.9%20239.4L410.9%20276.6L440.4%20294.4L426.6%20337.0L392.2%20334.0L370.4%20364.1L383.8%20395.9L347.6%20422.2L321.5%20399.6L286.2%20411.1L278.4%20444.7L233.6%20444.7L225.8%20411.1L190.5%20399.6L164.4%20422.2L128.2%20395.9L141.6%20364.1L119.8%20334.0L85.4%20337.0L71.6%20294.4L101.1%20276.6L101.1%20239.4L71.6%20221.6L85.4%20179.0L119.8%20182.0L141.6%20151.9L128.2%20120.1L164.4%2093.8L190.5%20116.4ZM378%20258A122%20122%200%201%200%20134%20258A122%20122%200%201%200%20378%20258Z%22%20fill-rule%3D%22evenodd%22%20style%3D%22fill%3Avar(--lg-o%2C%23F39200)%22%2F%3E%3Ccircle%20cx%3D%22256%22%20cy%3D%22258%22%20r%3D%22122%22%20style%3D%22fill%3Avar(--lg-in%2C%231F3354)%22%2F%3E%3Cpath%20d%3D%22M256%20190%20358%20232%20256%20274%20154%20232Z%22%20style%3D%22fill%3Avar(--lg-cap%2C%23FFFFFF)%22%2F%3E%3Cpath%20d%3D%22M198%20252V294Q256%20326%20314%20294V252L256%20276Z%22%20style%3D%22fill%3Avar(--lg-cap2%2C%23E3EAF4)%22%2F%3E%3Cpath%20d%3D%22M256%20232%20338%20250V302%22%20fill%3D%22none%22%20stroke-width%3D%229%22%20stroke-linecap%3D%22round%22%20style%3D%22stroke%3Avar(--lg-b%2C%234FA9E6)%22%2F%3E%3Ccircle%20cx%3D%22338%22%20cy%3D%22308%22%20r%3D%2212%22%20style%3D%22fill%3Avar(--lg-b%2C%234FA9E6)%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<!-- Polices chargées sans bloquer l’affichage (3G) : le texte s’affiche tout de suite avec la police du système -->
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,750&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
-<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,750&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap"></noscript>
+<!-- Polices gardées sur le site (outils/generer-polices.py, licence OFL : polices/OFL.txt), sans bloquer l’affichage : le texte
+     s’affiche tout de suite avec la police du système. Chaque fichier ne part que si l’écran en a besoin : la police arabe, seulement en arabe.
+     Les titres : un seul fichier pour les graisses 600 et 750 (police variable), comme le faisait Google Fonts. -->
+<style>
+@font-face { font-family: "Titres ENSAM"; font-weight: 600; font-display: swap; src: url(polices/titres.woff2) format("woff2"); unicode-range: U+0020-007E, U+00A0, U+00A9, U+00AB, U+00B0, U+00B7, U+00BB, U+00C0-00FF, U+0152-0153, U+2000-200B, U+2010-2011, U+2013-2014, U+2018-2019, U+201C-201D, U+2022, U+2026, U+202F, U+2039-203A, U+20AC, U+2212; }
+@font-face { font-family: "Titres ENSAM"; font-weight: 750; font-display: swap; src: url(polices/titres.woff2) format("woff2"); unicode-range: U+0020-007E, U+00A0, U+00A9, U+00AB, U+00B0, U+00B7, U+00BB, U+00C0-00FF, U+0152-0153, U+2000-200B, U+2010-2011, U+2013-2014, U+2018-2019, U+201C-201D, U+2022, U+2026, U+202F, U+2039-203A, U+20AC, U+2212; }
+@font-face { font-family: "Texte ENSAM"; font-weight: 400 600; font-display: swap; src: url(polices/texte.woff2) format("woff2"); unicode-range: U+0020-007E, U+00A0, U+00A9, U+00AB, U+00B0, U+00B7, U+00BB, U+00C0-00FF, U+0152-0153, U+2000-200B, U+2010-2011, U+2013-2014, U+2018-2019, U+201C-201D, U+2022, U+2026, U+202F, U+2039-203A, U+20AC, U+2212; }
+@font-face { font-family: "Texte ENSAM arabe"; font-weight: 400; font-display: swap; src: url(polices/arabe-400.woff2) format("woff2"); unicode-range: U+0600-06FF, U+200C-200F, U+2066-2069; }
+@font-face { font-family: "Texte ENSAM arabe"; font-weight: 500; font-display: swap; src: url(polices/arabe-500.woff2) format("woff2"); unicode-range: U+0600-06FF, U+200C-200F, U+2066-2069; }
+@font-face { font-family: "Texte ENSAM arabe"; font-weight: 600; font-display: swap; src: url(polices/arabe-600.woff2) format("woff2"); unicode-range: U+0600-06FF, U+200C-200F, U+2066-2069; }
+@font-face { font-family: "Texte ENSAM arabe"; font-weight: 700; font-display: swap; src: url(polices/arabe-700.woff2) format("woff2"); unicode-range: U+0600-06FF, U+200C-200F, U+2066-2069; }
+</style>
 <style>
 /* Mise en page : rail de navigation (ordinateur) / barre d'onglets en bas (téléphone),
    contenu en colonne de lecture large. Identité : couleurs de l'ENSAM Meknès, bleu (actions), orange (impact), bleu nuit. */
@@ -49,8 +61,8 @@ else{d.dataset.entree='visiteur';setTimeout(function(){if(!window.ENSAM_ENTREE)d
   --sel-bg: #E2F0F9; --sel-ink: #135F8F; --sel-ring: rgb(22 112 168 / .34);
   --tonal-bg: #E2F0F9; --tonal-ink: #135F8F; --tonal-hover: #D3E8F6;
   --ease: cubic-bezier(.2, .8, .2, 1);
-  --f-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
-  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --f-display: "Titres ENSAM", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Texte ENSAM", "Segoe UI", system-ui, -apple-system, sans-serif;
   --f-mono: var(--f-body);
   /* Échelles : 12 · 13 · 15 · 17 · 20 · 24 · 28 px ; rayons 8 · 12 · 16 · 22 ; espaces 4 · 8 · 12 · 16 · 24 · 32 · 48 ; icônes 16 · 20 · 24 */
   --fs-1: .75rem; --fs-2: .8125rem; --fs-3: .9375rem; --fs-4: 1.0625rem; --fs-5: 1.25rem; --fs-6: 1.5rem; --fs-7: 1.75rem;
@@ -694,8 +706,8 @@ button.impact-strip, button.panel { font: inherit; color: inherit; text-align: s
 .lang-btn > span:first-of-type { display: none; }
 .auth-lang { position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); inset-inline-end: 16px; z-index: 50; }
 :root[dir="rtl"] {
-  --f-display: "Bricolage Grotesque", "IBM Plex Sans Arabic", "Segoe UI", system-ui, sans-serif;
-  --f-body: "IBM Plex Sans", "IBM Plex Sans Arabic", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --f-display: "Titres ENSAM", "Texte ENSAM arabe", "Segoe UI", system-ui, sans-serif;
+  --f-body: "Texte ENSAM", "Texte ENSAM arabe", "Segoe UI", system-ui, -apple-system, sans-serif;
 }
 [dir="rtl"] body { font-size: 16px; line-height: 1.7; }
 [dir="rtl"] h1, [dir="rtl"] h2, [dir="rtl"] h3 { line-height: 1.35; }
@@ -907,8 +919,39 @@ button.impact-strip, button.panel { font: inherit; color: inherit; text-align: s
 @media (prefers-reduced-motion: reduce) { .auth-chiffres { transition: none; } }
 /* Avant l'application : le visiteur attend la page d'entrée, pas le logo ; le texte du logo suit la langue */
 html[data-entree="visiteur"] #app > .boot { display: none; }
-html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"] { display: none; }
+html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"], html[lang="ar"] .squelette [lang="fr"], html[lang="fr"] .squelette [lang="ar"] { display: none; }
 #entree[hidden] { display: none; }
+/* Lot mouvement · C : au premier chargement d'un membre, la forme de l'accueil (mêmes blocs, mêmes dimensions) au lieu
+   du logo ; la même forme pour une page qui arrive (Suivi, Admin, Enquête). Clair et sombre, sens de lecture suivi. */
+.sq { display: block; border-radius: var(--r-sm); background: var(--surface-2); }
+@media (prefers-reduced-motion: no-preference) { .sq { animation: sq-pouls 1.4s ease-in-out .4s infinite alternate backwards; } }
+@keyframes sq-pouls { to { opacity: .5; } }
+.squelette { pointer-events: none; }
+.squelette .side-in { display: flex; flex-direction: column; gap: 1.2rem; }
+.squelette .brand { display: flex; align-items: center; gap: .6rem; padding: .55rem .2rem; }
+.squelette .side-nav { gap: 10px; }
+.squelette .top { min-height: 58px; }
+.sq-logo { inline-size: 38px; block-size: 38px; border-radius: 10px; flex: none; }
+.sq-icone { inline-size: 34px; block-size: 34px; border-radius: var(--r-md); flex: none; }
+.sq-avatar { inline-size: 34px; block-size: 34px; border-radius: 50%; flex: none; }
+.sq-nav { block-size: 32px; border-radius: var(--r-md); }
+.sq-bouton { block-size: 44px; border-radius: var(--r-md); }
+.sq-h1 { block-size: 2.1rem; inline-size: min(70%, 16rem); }
+.sq-h2 { block-size: 1.4rem; inline-size: 9rem; margin-block-end: .9rem; }
+.sq-ligne { block-size: .95rem; inline-size: 85%; margin-block-start: .55rem; }
+.sq-ligne.court { inline-size: 55%; }
+.sq-bloc { block-size: 168px; border-radius: var(--r-lg); }
+.sq-bloc.court { block-size: 96px; }
+.home-hero .sq { background: color-mix(in srgb, var(--surface) 70%, transparent); }
+.pas .sq { background: color-mix(in srgb, var(--surface) 65%, transparent); }
+.squelette .pas { min-block-size: 200px; }
+.squelette .bottom-nav .bn { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: .6rem 0 .5rem; }
+.sq-bn { inline-size: 22px; block-size: 22px; border-radius: 7px; }
+.sq-mini { inline-size: 2.6rem; block-size: .6rem; }
+.page-attente { gap: 1rem; }
+.page-attente .sq-titre { block-size: 1.9rem; inline-size: min(60%, 18rem); }
+.page-attente .sq-bloc { block-size: 220px; }
+@media (min-width: 761px) { .squelette .top .mobile-only { display: none; } }
 /* Sur téléphone, l'entrée dessinée est une bande basse : les oiseaux y seraient coupés au bord */
 @media (max-width: 899px) { .entree-scene .sc-birds { display: none; } }
 @media (prefers-reduced-motion: reduce) { .scene .sc-birds { display: none; } }
@@ -1926,6 +1969,9 @@ html.defil-bloque.defil-gouttiere { scrollbar-gutter: stable; }
 /* (fin du Lot mouvement · A) */
 </style>
 <div id="app"><div class="boot"><svg class="brand-logo boot-logo" width="72" height="72" viewBox="0 0 512 512" aria-hidden="true"><defs><linearGradient id="lg-tuile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#27497A"/><stop offset="1" stop-color="#16253F"/></linearGradient></defs><rect width="512" height="512" rx="116" fill="url(#lg-tuile)"/><g class="lg-glyph"><path d="M225.8 104.9L233.6 71.3L278.4 71.3L286.2 104.9L321.5 116.4L347.6 93.8L383.8 120.1L370.4 151.9L392.2 182.0L426.6 179.0L440.4 221.6L410.9 239.4L410.9 276.6L440.4 294.4L426.6 337.0L392.2 334.0L370.4 364.1L383.8 395.9L347.6 422.2L321.5 399.6L286.2 411.1L278.4 444.7L233.6 444.7L225.8 411.1L190.5 399.6L164.4 422.2L128.2 395.9L141.6 364.1L119.8 334.0L85.4 337.0L71.6 294.4L101.1 276.6L101.1 239.4L71.6 221.6L85.4 179.0L119.8 182.0L141.6 151.9L128.2 120.1L164.4 93.8L190.5 116.4ZM378 258A122 122 0 1 0 134 258A122 122 0 1 0 378 258Z" fill-rule="evenodd" style="fill:var(--lg-o,#F39200)"/><circle cx="256" cy="258" r="122" style="fill:var(--lg-in,#1F3354)"/><path d="M256 190 358 232 256 274 154 232Z" style="fill:var(--lg-cap,#FFFFFF)"/><path d="M198 252V294Q256 326 314 294V252L256 276Z" style="fill:var(--lg-cap2,#E3EAF4)"/><path d="M256 232 338 250V302" fill="none" stroke-width="9" stroke-linecap="round" style="stroke:var(--lg-b,#4FA9E6)"/><circle cx="338" cy="308" r="12" style="fill:var(--lg-b,#4FA9E6)"/></g></svg><p><span lang="fr">Chargement du réseau…</span><span lang="ar">جارٍ تحميل الشبكة…</span></p></div></div>
+<template id="squelette"><div class="shell squelette" aria-busy="true"><span class="sr-only" role="status"><span lang="fr">Chargement du réseau…</span><span lang="ar">جارٍ تحميل الشبكة…</span></span><aside class="side" aria-hidden="true"><div class="side-in"><span class="brand"><span class="sq sq-logo"></span><span class="sq sq-ligne court"></span></span><span class="sq sq-bouton"></span><div class="side-nav"><span class="sq sq-nav"></span><span class="sq sq-nav"></span><span class="sq sq-nav"></span><span class="sq sq-nav"></span><span class="sq sq-nav"></span><span class="sq sq-nav"></span></div></div></aside><div class="main" aria-hidden="true"><header class="top"><span class="sq sq-logo mobile-only"></span><span class="spacer"></span><span class="sq sq-icone"></span><span class="sq sq-icone"></span><span class="sq sq-icone"></span><span class="sq sq-avatar"></span></header><div class="content"><div class="page home"><div class="home-cols"><div class="home-col"><div class="home-hero sky"><div class="hello-txt"><span class="sq sq-h1"></span><span class="sq sq-ligne"></span><span class="sq sq-ligne court"></span></div></div><div class="pas"><div><span class="sq sq-ligne court"></span><span class="sq sq-ligne"></span><span class="sq sq-ligne"></span></div><span class="sq sq-bouton"></span></div><div class="bloc semaine"><span class="sq sq-h2"></span><span class="sq sq-bloc"></span></div></div><div class="home-grid"><div class="home-side"><div class="bloc"><span class="sq sq-h2"></span><span class="sq sq-bloc court"></span></div></div></div></div></div></div></div><nav class="bottom-nav" aria-hidden="true"><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span></nav></div></template>
+<script>/* Membre déjà connecté (script de tête) : la forme de l’accueil plutôt que le logo, le temps que l’application arrive */
+(function(){var a=document.getElementById('app'),t=document.getElementById('squelette');if(document.documentElement.dataset.boot==='membre'&&a&&t&&t.content&&a.querySelector('.boot')){a.innerHTML='';a.appendChild(t.content.cloneNode(true))}})()</script>
 <!--CONFIG-->
 <script>/* Si les fichiers gardés sur le téléphone sont abîmés ou d'une autre version, on les oublie et on recharge (une fois) */
 function ensamReprise(){try{if(sessionStorage.getItem('ensam-reprise')||!('serviceWorker' in navigator))return;sessionStorage.setItem('ensam-reprise','1');Promise.all([caches.keys().then(function(k){return Promise.all(k.map(function(x){return caches.delete(x)}))}),navigator.serviceWorker.getRegistrations().then(function(r){return Promise.all(r.map(function(x){return x.unregister()}))})]).then(function(){location.reload()})}catch(e){}}</script>

@@ -4,6 +4,7 @@
 // Les règles sont celles de la base (protect_demande, protect_proposition, protect_placement).
 import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, roleTexte, useBusy, toast, injectCSS, celebrate, TYPE_ICON, allerAuChamp } from './ui.js';
+import { useBrouillon } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
 import { addAR, arCount, t as tr } from './i18n.js';
 import { TYPES, AIDES, DEMANDES_MAX, typesDemande, demandesActives, demandeEnPause, demandesPour, niveauOf, timeAgo, fmtDate, placementOf, etatAide, AIDE_OUVERTE, manquesDemande } from './logic.js';
@@ -221,7 +222,8 @@ function ReussiteAuteur({ ctx, d }) {
 function DemandeForm({ ctx, d = null, onClose }) {
   const { me, store, act, saison } = ctx;
   const types = typesDemande(me, saison);
-  const [f, setF] = useState(() => ({ type: d?.type || types[0], titre: d?.titre || '', details: d?.details || '', lieu: d?.lieu || '', debut: d?.debut || '', duree: d?.duree || '' }));
+  // Une nouvelle demande en cours d'écriture reste sur l'appareil (session expirée, rechargement)
+  const [f, setF, oublierBrouillon] = useBrouillon(d ? null : me.id + ':demande', () => ({ type: d?.type || types[0], titre: d?.titre || '', details: d?.details || '', lieu: d?.lieu || '', debut: d?.debut || '', duree: d?.duree || '' }));
   const [busy, setBusy] = useState(false);
   const input = useRef();
   const set = k => e => setF({ ...f, [k]: e.target.value });
@@ -248,7 +250,7 @@ function DemandeForm({ ctx, d = null, onClose }) {
       const champs = { type: f.type, titre: f.titre.trim(), details: f.details.trim(), lieu: f.lieu.trim() || null, debut: f.debut || null, duree: f.duree.trim() || null };
       if (d) { await store.update('demandes', d.id, champs); toast('Demande mise à jour.'); onClose(); return; }
       await store.insert('demandes', { auteur_id: me.id, ...champs });
-      onClose();
+      oublierBrouillon(); onClose();
       const mot = 'Demande publiée. Les lauréats de ton parcours sont prévenus.';
       if (celebrate({ cle: 'premiere-demande-' + me.id, icon: 'send', titre: 'Ta demande est publiée', texte: 'Les lauréats de ton parcours sont prévenus. Leurs propositions arriveront ici et dans tes messages.' })) proposerPrevenir('demande');
       else if (!proposerPrevenir('demande', mot)) toast(mot, 'envoi');
@@ -408,7 +410,7 @@ export function ProposerAide({ ctx, id, onClose }) {
   const etat = etatAide(data, me, d);         // recalculé à chaque rendu : la demande peut se fermer pendant ce temps
   const [mode] = useState(etat);              // figé à l'ouverture : libellés du bouton et du toast
   const x = (data.propositions || []).find(y => y.demande_id === id && y.laureat_id === me.id) || null;
-  const [f, setF] = useState(() => { const aide = x?.aide || AIDE_PAR_TYPE[d?.type] || 'recommande'; return { aide, entreprise: x?.entreprise || me.entreprise || '', poste: x?.poste || '', message: x?.message || motPret(aide, p) }; });
+  const [f, setF, oublierBrouillon] = useBrouillon(x ? null : me.id + ':aide:' + id, () => { const aide = x?.aide || AIDE_PAR_TYPE[d?.type] || 'recommande'; return { aide, entreprise: x?.entreprise || me.entreprise || '', poste: x?.poste || '', message: x?.message || motPret(aide, p) }; });
   const [chezOuvert] = useState(() => !(x?.entreprise || me.entreprise || '').trim());
   const [lire, setLire] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -432,7 +434,7 @@ export function ProposerAide({ ctx, id, onClose }) {
       const champs = { aide: f.aide, entreprise: f.entreprise.trim(), poste: f.poste.trim() || null, message: f.message.trim() };
       if (x) await store.update('propositions', x.id, x.status === 'retiree' ? { ...champs, status: 'envoyee' } : champs);
       else await store.insert('propositions', { demande_id: d.id, laureat_id: me.id, ...champs });
-      onClose();
+      oublierBrouillon(); onClose();
       const mot = mode === 'modifier' ? 'Proposition modifiée.' : `Proposition envoyée. ${p} la reçoit aussi dans ses messages.`;
       if (mode === 'modifier' || !proposerPrevenir('proposition', mot)) toast(mot, mode === 'modifier' ? 'ok' : 'envoi');
     }).finally(() => setBusy(false));

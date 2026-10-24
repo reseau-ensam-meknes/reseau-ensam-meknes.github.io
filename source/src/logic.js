@@ -2,6 +2,8 @@
 
 // Cycle ingénieur : 5 parcours et 11 filières (choix en 3A). Les 1A et 2A sont en classes préparatoires intégrées.
 // En 5A, les matières communes se font en deux sections : A (électro-industriel, IA, informatique) et B (mécanique, civil).
+// Brouillons gardés sur l'appareil (ui.js useBrouillon, store.js) : « ensam-brouillon:<id du membre>:<formulaire> »
+export const PREFIXE_BROUILLON = 'ensam-brouillon:';
 export const PARCOURS = [
   { code: 'PEI', nom: 'Électro-industriel', section: 'A' },
   { code: 'PM', nom: 'Mécanique', section: 'B' },

@@ -16,6 +16,8 @@ for d in dist artifact; do cp src/*.js src/vendor/* "$d/" 2>/dev/null || true; m
 cp -r src/pwa dist/pwa
 # Logos : en-tête des emails et avatar
 cp -r src/img dist/img
+# Polices gardées sur le site (licence OFL : polices/OFL.txt)
+cp -r src/polices dist/polices; cp -r src/polices artifact/polices
 sed '/<!--CONFIG-->/d' src/page.html > artifact/index.html
 # Fichiers SQL dérivés de schema.sql (seule source à modifier)
 { printf -- '-- Installation complète du Réseau ENSAM Meknès : tables, règles de sécurité, puis deux comptes de test.\n-- Supabase > SQL Editor > New query : colle tout ce fichier, puis Run.\n\n'

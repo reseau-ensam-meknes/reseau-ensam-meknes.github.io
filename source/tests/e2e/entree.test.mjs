@@ -503,7 +503,8 @@ test('réseau coupé pendant la lecture de « Confidentialité » : la page se r
 test('panne qui dure (un fichier toujours en échec) : deux rechargements au plus, puis un écran calme', async () => {
   const ctx = await navigateur.newContext({ viewport: { width: 360, height: 640 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
-  await ctx.route(/\/parse-offre\.js$/, r => r.abort('connectionreset'));
+  // Un module de l'application chargé au démarrage (parse-offre.js, l'ancien témoin, ne se charge plus qu'à la demande)
+  await ctx.route(/\/recrutement\.js$/, r => r.abort('connectionreset'));
   await ctx.addInitScript(uid => {
     if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1');
     localStorage.setItem('ensam-lang', 'fr');
@@ -802,3 +803,185 @@ test('base pas encore à jour : l’accueil d’un membre s’ouvre, les fondate
   assert.deepEqual(m.erreurs, []);
   await m.ctx.close();
 });
+
+// Lot mouvement · C : ouverture instantanée (données gardées sur l'appareil), forme de l'accueil au tout premier
+// chargement, session qui expire (bug d'un membre sur Android 10) et brouillons gardés.
+// exp : secondes avant l'expiration écrite dans le jeton (ce que la base vérifie) ; expiresAt : celle que Supabase garde
+// sur l'appareil (une horloge de téléphone décalée les fait diverger)
+async function connecte({ hash = '', langue = 'fr', theme = 'light', exp = 7200, expiresAt = exp, avant, attendre = '.me-btn' } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block', reducedMotion: 'reduce', colorScheme: theme });
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  if (avant) await avant(ctx);
+  await ctx.addInitScript(([uid, langue, exp, expiresAt]) => {
+    if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1');
+    localStorage.setItem('ensam-lang', langue);
+    const now = Math.floor(Date.now() / 1000);
+    localStorage.setItem('sb-127-auth-token', JSON.stringify({ access_token: 'x.' + btoa(JSON.stringify({ sub: uid, exp: now + exp })) + '.y', token_type: 'bearer', expires_in: 7200, expires_at: now + expiresAt, refresh_token: 'r', user: { id: uid, aud: 'authenticated', email: 'membre@exemple.ma', user_metadata: {}, app_metadata: {} } }));
+  }, [UID, langue, exp, expiresAt]);
+  const page = await ctx.newPage(); const erreurs = [];
+  page.on('pageerror', e => erreurs.push(e.message));
+  await page.goto(site.adresse + hash);
+  if (attendre) await page.waitForSelector(attendre, { timeout: 15000 });
+  return { ctx, page, erreurs };
+}
+const ACCUEIL = '.shell:not(.squelette) .home-grid';
+const lireCacheMembre = page => page.evaluate(() => new Promise(ok => {
+  const r = indexedDB.open('ensam', 1);
+  r.onupgradeneeded = () => r.result.createObjectStore('cache');
+  r.onsuccess = () => { try { const g = r.result.transaction('cache').objectStore('cache').get('membre'); g.onsuccess = () => { ok(g.result || null); r.result.close(); }; g.onerror = () => ok(null); } catch { ok(null); } };
+  r.onerror = () => ok(null);
+}));
+const brouillons = page => page.evaluate(() => Object.keys(localStorage).filter(k => k.startsWith('ensam-brouillon:')));
+const EN_CONTACT = () => [{ id: '5c1d2e3f-4a5b-4c6d-8e7f-8a9b0c1d2e3f', student_id: UID, mentor_id: AUTEUR, status: 'acceptee', sujet: 'Préparer mon PFE', created_at: '2026-10-02T10:00:00Z' }];
+
+test('jeton refusé par la base (horloge du téléphone décalée) : renouvelé une seule fois, chaque requête refaite, l’accueil arrive', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.jetons.renouveler = true;
+  const m = await connecte({ exp: -60, expiresAt: 7200 });
+  await m.page.waitForSelector(ACCUEIL, { timeout: 15000 });
+  const renouvellements = site.appels.filter(a => a.u === '/sb/auth/v1/token');
+  assert.equal(renouvellements.length, 1, 'un seul renouvellement pour toutes les requêtes refusées');
+  const refusees = site.appels.filter(a => a.refuse);
+  assert.ok(refusees.length >= 1, 'la base a d’abord refusé le jeton');
+  for (const a of refusees) assert.ok(site.appels.some(b => b.u === a.u && b.m === a.m && !b.refuse && site.appels.indexOf(b) > site.appels.indexOf(a)), `${a.u} refaite`);
+  assert.ok(site.appels.slice(site.appels.indexOf(renouvellements[0])).every(a => !a.refuse), 'plus aucun refus après le renouvellement');
+  assert.ok(site.appels.some(a => /\/sb\/rest\/v1\/profil/.test(a.u) && !a.refuse), 'les profils sont arrivés');
+  assert.equal(await m.page.locator('#entree .entree-form').count(), 0, 'aucune page de connexion');
+  assert.notEqual(await m.page.evaluate(() => JSON.parse(localStorage.getItem('sb-127-auth-token')).refresh_token), 'r', 'la nouvelle session est gardée');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+for (const langue of ['fr', 'ar']) {
+  test(`session trop ancienne à l’ouverture (renouvellement refusé, ${langue}) : la connexion redemandée calmement, l’adresse déjà là`, async () => {
+    site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+    const m = await connecte({ langue, exp: -3600, expiresAt: -3600, attendre: '#entree #au-session' });
+    assert.equal(await m.page.locator('#au-session').innerText(), langue === 'fr' ? 'Ta session a expiré. Reconnecte-toi pour continuer.' : 'انتهت جلستك. سجّل الدخول من جديد للمتابعة.');
+    assert.equal(await m.page.inputValue('#au-email'), 'membre@exemple.ma');
+    assert.equal(await m.page.locator('#au-je-etudiant').count(), 0, 'se connecter, pas créer un compte');
+    assert.equal(await m.page.locator('.auth-msg.err').count(), 0, 'pas un message d’erreur');
+    if (langue === 'ar') {
+      assert.equal(await m.page.getAttribute('html', 'dir'), 'rtl');
+      assert.deepEqual(await m.page.evaluate(() => [...(window.__ensamMissing || [])]), []);
+    }
+    assert.deepEqual(await axe(m.page, '#entree'), []);
+    assert.deepEqual(m.erreurs, []);
+    await m.ctx.close();
+  });
+}
+
+test('session perdue en écrivant un message (Android au réveil, renouvellement refusé) : reconnexion calme, le message rendu tel quel', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.mentorships = EN_CONTACT();
+  const m = await connecte({ hash: '#messages/' + AUTEUR, attendre: '#chat-txt' });
+  await m.page.fill('#chat-txt', 'Bonjour Hajar, je voulais te demander');
+  // Le téléphone sort de veille : la session expire dans moins de deux minutes, elle est renouvelée tout de suite… et refusée
+  await m.page.evaluate(() => {
+    const k = 'sb-127-auth-token', s = JSON.parse(localStorage.getItem(k));
+    s.expires_at = Math.floor(Date.now() / 1000) + 30; localStorage.setItem(k, JSON.stringify(s));
+    dispatchEvent(new Event('focus'));
+  });
+  await m.page.waitForSelector('#entree #au-session', { timeout: 15000 });
+  assert.ok(site.appels.some(a => a.u === '/sb/auth/v1/token'), 'le renouvellement est parti au réveil');
+  assert.equal(await m.page.locator('#au-session').innerText(), 'Ta session a expiré. Reconnecte-toi : ce que tu étais en train d’écrire est gardé.');
+  assert.equal(await m.page.inputValue('#au-email'), 'membre@exemple.ma');
+  assert.equal((await brouillons(m.page)).length, 1, 'le brouillon reste sur l’appareil');
+  await m.page.click('.entree-form button.btn.primary'); await m.page.waitForSelector('#au-code');
+  await m.page.fill('#au-code', '123456');
+  await m.page.waitForSelector('#chat-txt', { timeout: 15000 });
+  assert.equal(await m.page.evaluate(() => location.hash), '#messages/' + AUTEUR);
+  assert.equal(await m.page.inputValue('#chat-txt'), 'Bonjour Hajar, je voulais te demander');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('message envoyé avec un jeton refusé et un renouvellement refusé : il reste, marqué « pas parti », et revient après la reconnexion', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.mentorships = EN_CONTACT();
+  const m = await connecte({ hash: '#messages/' + AUTEUR, attendre: '#chat-txt' });
+  site.jetons.depuis = Math.floor(Date.now() / 1000) + 1; // la base ne reconnaît plus ce jeton (révoqué, horloge…)
+  await m.page.waitForTimeout(1100);
+  await m.page.fill('#chat-txt', 'Je t’envoie mon CV ce soir.');
+  await m.page.click('.composer .send-btn');
+  await m.page.waitForSelector('#entree #au-session', { timeout: 15000 });
+  assert.ok(!site.appels.some(a => a.u === '/sb/rest/v1/messages' && a.m === 'POST' && !a.refuse), 'rien n’est parti');
+  await m.page.click('.entree-form button.btn.primary'); await m.page.waitForSelector('#au-code');
+  await m.page.fill('#au-code', '123456');
+  await m.page.waitForSelector('#chat-txt', { timeout: 15000 });
+  assert.match(await m.page.locator('.msg.mine').last().innerText(), /Je t’envoie mon CV ce soir\./, 'le message n’est pas perdu');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('membre revenu : l’accueil s’ouvre depuis l’appareil avant la réponse de la base, la mise à jour arrive sans bruit ; jamais pour un autre compte', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.coordonnees = [{ id: UID, telephone: '0612345678' }, { id: AUTEUR, telephone: '0698765432' }];
+  let tenir = false; const tenus = [];
+  const m = await connecte({ avant: ctx => ctx.route(/\/sb\/rest\/v1\//, r => (tenir ? tenus.push(r) : r.continue())) });
+  await m.page.waitForSelector(ACCUEIL);
+  let c = null;
+  for (let i = 0; i < 40 && !c; i++) { await m.page.waitForTimeout(250); c = await lireCacheMembre(m.page); }
+  assert.ok(c, 'une copie de l’accueil est gardée');
+  assert.equal(c.uid, UID);
+  assert.deepEqual(c.data.coordonnees.map(x => x.id), [UID], 'jamais les coordonnées des autres');
+  // Rechargée, la base ne répond pas encore : l'accueil est là quand même
+  tenir = true;
+  await m.page.reload();
+  await m.page.waitForSelector(ACCUEIL, { timeout: 5000 });
+  assert.ok(tenus.length > 0, 'la base n’a pas encore répondu');
+  assert.equal(await m.page.locator('#entree .entree-form').count(), 0);
+  tenir = false; for (const r of tenus.splice(0)) await r.continue();
+  await m.page.waitForTimeout(1200);
+  assert.equal(await m.page.locator('.toast').count(), 0, 'la mise à jour arrive sans message');
+  assert.ok(await m.page.isVisible(ACCUEIL));
+  // Une autre personne se connecte sur ce téléphone : la copie n'est jamais montrée, elle est effacée
+  const AUTRE = '00000000-0000-4000-8000-0000000000c3';
+  await m.page.evaluate(id => { const k = 'sb-127-auth-token', s = JSON.parse(localStorage.getItem(k)); s.user.id = id; localStorage.setItem(k, JSON.stringify(s)); }, AUTRE);
+  tenir = true;
+  await m.page.reload(); await m.page.waitForTimeout(1500);
+  assert.equal(await m.page.locator(ACCUEIL).count(), 0, 'rien de l’autre compte');
+  assert.equal(await lireCacheMembre(m.page), null, 'la copie est effacée');
+  tenir = false; for (const r of tenus.splice(0)) await r.continue();
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('se déconnecter soi-même : la copie de l’accueil et les brouillons de ce compte sont effacés', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.mentorships = EN_CONTACT();
+  const m = await connecte({ hash: '#messages/' + AUTEUR, attendre: '#chat-txt' });
+  await m.page.fill('#chat-txt', 'Un mot pas encore envoyé');
+  let c = null;
+  for (let i = 0; i < 40 && !c; i++) { await m.page.waitForTimeout(250); c = await lireCacheMembre(m.page); }
+  assert.ok(c); assert.equal((await brouillons(m.page)).length, 1);
+  await m.page.evaluate(() => { location.hash = '#accueil'; }); await m.page.waitForSelector(ACCUEIL);
+  await m.page.click('.me-btn'); await m.page.click('.menu-pop button:has-text("Se déconnecter")');
+  await m.page.waitForSelector('#entree .entree-form', { timeout: 15000 });
+  assert.equal(await m.page.locator('#au-session').count(), 0, 'déconnexion voulue : pas de « session expirée »');
+  assert.deepEqual(await brouillons(m.page), []);
+  assert.equal(await lireCacheMembre(m.page), null);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+for (const [langue, theme] of [['fr', 'light'], ['ar', 'dark']]) {
+  test(`tout premier chargement d’un membre (${langue}, ${theme}) : la forme de l’accueil à sa taille, pas le logo`, async () => {
+    site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+    let tenir = true; const tenus = [];
+    const m = await connecte({ langue, theme, attendre: '#app .shell.squelette', avant: ctx => ctx.route(/\/sb\/rest\/v1\//, r => (tenir ? tenus.push(r) : r.continue())) });
+    assert.equal(await m.page.locator('#app .boot').count(), 0, 'plus de logo qui attend');
+    assert.equal(await m.page.getAttribute('html', 'dir'), langue === 'ar' ? 'rtl' : 'ltr');
+    assert.ok(await m.page.isVisible('.shell.squelette .bottom-nav'), 'la barre du bas, à sa place');
+    assert.ok((await m.page.evaluate(() => document.documentElement.scrollWidth - innerWidth)) <= 0);
+    const fond = await m.page.evaluate(() => getComputedStyle(document.body).backgroundColor.match(/\d+/g).slice(0, 3).map(Number));
+    assert.ok(theme === 'dark' ? fond.every(x => x < 80) : fond.every(x => x > 200), `fond ${fond}`);
+    assert.equal(await m.page.locator('.shell.squelette [role="status"]').count(), 1, 'dit aux lecteurs d’écran que ça charge');
+    tenir = false; for (const r of tenus.splice(0)) await r.continue();
+    await m.page.waitForSelector(ACCUEIL, { timeout: 15000 });
+    assert.equal(await m.page.locator('.shell.squelette').count(), 0);
+    // Seuls les prénoms des membres restent tels quels
+    if (langue === 'ar') assert.deepEqual(await m.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => !['Salma', 'Hajar'].includes(x))), []);
+    assert.deepEqual(m.erreurs, []);
+    await m.ctx.close();
+  });
+}

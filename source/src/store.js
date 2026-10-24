@@ -139,7 +139,8 @@ class DemoStore extends Base {
   persist() { safeSet(DEMO_KEY, JSON.stringify({ data: this.data, meId: this.me?.id, reglages: this.reglages })); }
   personas() { const o = { etudiant: 0, laureat: 1, admin: 2 }; return this.data.profiles.filter(p => p._persona).sort((a, b) => o[a.role] - o[b.role]); }
   switchTo(id) { this.me = this.byId('profiles', id); this.persist(); this.emit(); }
-  async reset() { this.data = await chargerSeed(); for (const t of [...TABLES, 'guide_pays_historique', 'liste_officielle']) this.data[t] ||= []; this.reglages = {}; this.me = this.personas()[0]; this.persist(); this.emit(); }
+  // Démo réinitialisée : comme une déconnexion, les brouillons partent aussi
+  async reset() { oublierBrouillons(); this.data = await chargerSeed(); for (const t of [...TABLES, 'guide_pays_historique', 'liste_officielle']) this.data[t] ||= []; this.reglages = {}; this.me = this.personas()[0]; this.persist(); this.emit(); }
   async insert(table, row) {
     const r = { id: uuid(), created_at: new Date().toISOString(), ...row };
     if (table === 'placements') applyPlacementRules(this, r, null);
@@ -920,26 +921,234 @@ function demoParrains(store, onlyId = null) {
 // Une session expirée (401, PGRST301), un droit refusé (42501) ou une coupure réseau ne sont que passagers.
 const absente = e => ['42P01', 'PGRST205'].includes(e?.code) || /relation .* does not exist|could not find the table/i.test(e?.message || '');
 const SUITES = { demandes: ['propositions', 'placements'], propositions: ['demandes', 'propositions', 'placements', 'coordonnees'], placements: ['demandes', 'propositions'] };
+
+// ---------------------------------------------------------------------------
+// Ouverture instantanée : ce que le démarrage a chargé est gardé sur l'appareil (IndexedDB), pour ce compte seulement.
+// Au retour, l'accueil s'affiche tout de suite avec ces données, puis la mise à jour arrive. Jamais pour un autre compte,
+// effacé à la déconnexion, oublié si sa forme a changé (CACHE_V, liste des tables) ou s'il a plus de 30 jours.
+// Rien de plus sur les autres membres que ce que l'accueil montrait : pas de conversations entières (seulement le dernier
+// message de chacune et ceux pas encore lus), pas les coordonnées des autres, pas le détail des signalements.
+// ---------------------------------------------------------------------------
+export const CACHE_V = 1;
+const CACHE_FORME = CACHE_V + ':' + TABLES.join(',');
+const CACHE_MAX = 30 * 864e5;
+const SANS_CACHE = new Set(['groupe_messages', 'reactions_messages', 'relecture_commentaires', 'retours_cv']);
+export function pourCache(data, uid) {
+  const out = {};
+  for (const t of TABLES) {
+    const l = data[t] || [];
+    if (SANS_CACHE.has(t)) out[t] = [];
+    else if (t === 'coordonnees') out[t] = l.filter(c => c.id === uid);
+    else if (t === 'enquetes_insertion') out[t] = l.filter(e => e.user_id === uid);
+    else if (t === 'signalements') out[t] = l.filter(x => x.status === 'ouvert').map(({ id, status, created_at }) => ({ id, status, created_at }));
+    else if (t === 'messages') {
+      const derniers = new Map();
+      for (const m of l) {
+        if (m.author_id !== uid && m.dest_id !== uid) continue;
+        const autre = m.author_id === uid ? m.dest_id : m.author_id, d = derniers.get(autre);
+        if (!d || new Date(m.created_at) > new Date(d.created_at)) derniers.set(autre, m);
+      }
+      const gardes = new Set(derniers.values());
+      out[t] = l.filter(m => gardes.has(m) || (m.dest_id === uid && !m.lu_at));
+    } else out[t] = l;
+  }
+  return out;
+}
+let baseCache = null;
+function ouvrirCache() {
+  if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+  // Un vieux navigateur qui ne répond jamais n'empêche pas l'ouverture : on n'attend pas plus d'une seconde et demie
+  return baseCache ||= new Promise(ok => {
+    const t = setTimeout(() => ok(null), 1500);
+    try {
+      const r = indexedDB.open('ensam', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('cache');
+      r.onsuccess = () => { clearTimeout(t); ok(r.result); };
+      r.onerror = r.onblocked = () => { clearTimeout(t); ok(null); };
+    } catch { clearTimeout(t); ok(null); }
+  }).then(db => { if (!db) baseCache = null; return db; });
+}
+async function cacheFaire(mode, f) {
+  const db = await ouvrirCache(); if (!db) return null;
+  return new Promise(ok => {
+    try {
+      const tx = db.transaction('cache', mode), st = tx.objectStore('cache'); let res = null;
+      const r = f(st); if (r) r.onsuccess = () => { res = r.result; };
+      tx.oncomplete = () => ok(res ?? null); tx.onerror = tx.onabort = () => ok(null);
+    } catch { ok(null); }
+  });
+}
+export async function lireCache(uid) {
+  if (!uid) return null;
+  const c = await cacheFaire('readonly', st => st.get('membre'));
+  if (!c || c.forme !== CACHE_FORME || c.uid !== uid || !(Date.now() - c.t < CACHE_MAX) || !c.data) {
+    if (c) await oublierCache();
+    return null;
+  }
+  return c;
+}
+const ecrireCache = c => cacheFaire('readwrite', st => st.put(c, 'membre'));
+export const oublierCache = () => cacheFaire('readwrite', st => st.delete('membre'));
+
+// Brouillons (message en cours, demande, offre, question…) : gardés sur l'appareil pour ce compte, même si la session
+// expire ; effacés quand on se déconnecte soi-même. ui.js (useBrouillon) les lit et les écrit.
+export const PREFIXE_BROUILLON = 'ensam-brouillon:';
+export function oublierBrouillons(uid) {
+  try {
+    const cles = [];
+    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k?.startsWith(PREFIXE_BROUILLON) && (!uid || k.startsWith(PREFIXE_BROUILLON + uid + ':'))) cles.push(k); }
+    for (const k of cles) localStorage.removeItem(k);
+  } catch { /* stockage indisponible */ }
+}
+export function aDesBrouillons(uid) {
+  try { for (let i = 0; i < localStorage.length; i++) if (localStorage.key(i)?.startsWith(PREFIXE_BROUILLON + uid + ':')) return true; } catch { /* */ }
+  return false;
+}
+// Un jeton refusé par la base parce qu'il a expiré (téléphone resté en veille, horloge de l'appareil décalée…)
+async function jetonRefuse(res) {
+  if (res.ok || ![400, 401, 403].includes(res.status)) return false;
+  try { return /jwt expired|invalid jwt|pgrst30[13]|"exp" claim|token is expired|jwserror/i.test(await res.clone().text()); } catch { return false; }
+}
+
 export class SupabaseStore extends Base {
   constructor(cfg) { super(); this.mode = 'live'; this.cfg = cfg; }
   async init() {
     await new Promise((ok, ko) => { const el = document.createElement('script'); el.src = 'vendor/supabase.js'; el.onload = ok; el.onerror = () => ko(new Error('Chargement de Supabase impossible')); document.head.appendChild(el); });
     const { createClient } = window.supabase;
-    this.sb = createClient(this.cfg.supabaseUrl, this.cfg.supabaseAnonKey);
-    const { data: { session } } = await this.sb.auth.getSession();
-    this.session = session;
-    this.sb.auth.onAuthStateChange(async (_e, s) => {
-      const changed = (s?.user?.id || null) !== (this.session?.user?.id || null);
-      // Déconnexion (bouton ou session perdue) sur une question ou une offre : cette adresse n'est pas un lien
-      // partagé pour la personne qui ouvrira la page ensuite
-      if (!s && this.session && lienPartage(location.hash)) try { location.replace('#accueil'); } catch { /* */ }
-      this.session = s;
-      if (changed) { await this.loadAll(); this.emit(); }
-    });
+    // Chaque requête passe par fetchRenouvele : un jeton expiré est renouvelé, puis la requête refaite une fois
+    this.sb = createClient(this.cfg.supabaseUrl, this.cfg.supabaseAnonKey, { global: { fetch: (u, o) => this.fetchRenouvele(u, o) } });
+    this.cleSession = `sb-${new URL(this.cfg.supabaseUrl).hostname.split('.')[0]}-auth-token`;
+    // Un membre déjà venu sur cet appareil : l'accueil tout de suite avec ses dernières données, la mise à jour suit
+    const gardee = this.sessionGardee();
+    const cache = gardee ? await lireCache(gardee.user.id) : null;
+    this.brancherReveil();
+    if (cache?.data.profiles?.some(p => p.id === gardee.user.id)) {
+      this.session = gardee;
+      this.sb.auth.onAuthStateChange((e, s) => this.changementSession(e, s));
+      this.data = { ...Object.fromEntries(TABLES.map(t => [t, []])), ...cache.data };
+      this.reglages = cache.reglages || {}; this._pouls = cache.pouls || null;
+      this.me = this.byId('profiles', gardee.user.id) || null;
+      this.depuisCache = true; this.ready = true;
+      this.rafraichir();
+      return;
+    }
+    const { data: { session }, error } = await this.sb.auth.getSession();
+    // Réseau absent au réveil : la session gardée n'a pas pu être renouvelée, elle n'est pas perdue pour autant
+    // (sans réseau, l'écran calme « Pas de connexion » plutôt que la page d'entrée)
+    this.session = session || (error && this.sessionGardee()) || null;
+    // Session gardée qui n'a pas pu être renouvelée (trop ancienne, révoquée) : la connexion est redemandée calmement
+    if (!this.session && gardee) this.perdreSession(gardee);
+    this.sb.auth.onAuthStateChange((e, s) => this.changementSession(e, s));
     await this.lireReglages().catch(() => {});
-    if (session) await this.loadAll();
+    if (this.session) await this.loadAll();
     this.ready = true;
+    // La copie pour la prochaine ouverture, une fois l'accueil affiché
+    if (this.me) this.minuteurCache = setTimeout(() => this.ecrireCacheMaintenant(), 3000);
   }
+  // La session telle que Supabase la garde sur l'appareil (sans réseau, même expirée), ou null
+  sessionGardee() {
+    try { const s = JSON.parse(localStorage.getItem(this.cleSession) || 'null'); return s?.user?.id && s.refresh_token ? s : null; } catch { return null; }
+  }
+  async changementSession(e, s) {
+    // Supabase dit « pas de session » quand il n'a pas pu la renouveler faute de réseau : tant qu'elle est gardée
+    // sur l'appareil, elle n'est pas perdue (on réessaie au retour du réseau)
+    if (!s && e !== 'SIGNED_OUT' && this.sessionGardee()) return;
+    if (s) { this.sessionPerdue = false; if (this.session?.user?.id === s.user?.id) { this.session = s; return; } }
+    const changed = (s?.user?.id || null) !== (this.session?.user?.id || null);
+    if (!changed) return;
+    // Déconnexion (bouton ou session perdue) sur une question ou une offre : cette adresse n'est pas un lien
+    // partagé pour la personne qui ouvrira la page ensuite
+    if (!s && this.session && lienPartage(location.hash)) try { location.replace('#accueil'); } catch { /* */ }
+    // Session perdue sans l'avoir voulu : on redemande la connexion calmement, les brouillons restent pour ce compte
+    if (!s && this.session) { if (this.deconnexionVoulue) { this.sessionPerdue = false; this.compteParti = this.session.user.id; this.emailPerdu = ''; } else this.perdreSession(this.session); }
+    if (s && this.compteParti && this.compteParti !== s.user.id) oublierBrouillons(this.compteParti);
+    this.deconnexionVoulue = false;
+    clearTimeout(this.minuteurCache); oublierCache();
+    this.session = s; this.depuisCache = false; this.enAttente = false; this.horsLigne = false;
+    await this.loadAll();
+    this.emit();
+  }
+  perdreSession(s) {
+    this.sessionPerdue = true; this.compteParti = s.user.id; this.emailPerdu = s.user.email || '';
+    this.brouillonsGardes = aDesBrouillons(s.user.id);
+  }
+  // Données gardées sur l'appareil : la mise à jour arrive en arrière-plan, sans rien vider de ce qui est affiché
+  async rafraichir() {
+    if (this.rafraichissement) return this.rafraichissement;
+    this.enAttente = true;
+    return this.rafraichissement = (async () => {
+      try {
+        const { data: { session } } = await this.sb.auth.getSession();
+        if (!session) {
+          if (!this.sessionGardee()) return; // vraiment déconnecté : changementSession s'en charge
+          this.horsLigne = true; this.emit();
+          clearTimeout(this.minuteurEssai); this.minuteurEssai = setTimeout(() => { if (this.enAttente) this.rafraichir(); }, 20e3);
+          return;
+        }
+        this.session = session;
+        await this.lireReglages().catch(() => {});
+        await this.loadAll();
+        this.depuisCache = false; this.enAttente = false; this.horsLigne = false;
+        this.emit();
+      } catch {
+        this.horsLigne = true; this.emit();
+        clearTimeout(this.minuteurEssai); this.minuteurEssai = setTimeout(() => { if (this.enAttente) this.rafraichir(); }, 20e3);
+      } finally { this.rafraichissement = null; }
+    })();
+  }
+  // Téléphone sorti de veille, onglet rouvert, réseau revenu : les minuteries ont pu être gelées, la session est
+  // renouvelée tout de suite si elle expire bientôt, et ce qui manque est rechargé
+  brancherReveil() {
+    if (typeof window === 'undefined' || this.reveilBranche) return; this.reveilBranche = true;
+    let cache = 0;
+    const reveil = () => {
+      if (document.visibilityState === 'hidden') { cache = Date.now(); this.ecrireCacheMaintenant(); return; }
+      const s = this.sessionGardee(); if (!s) return;
+      try { this.sb.auth.startAutoRefresh(); } catch { /* */ }
+      if (!s.expires_at || s.expires_at * 1000 - Date.now() < 120e3) this.renouveler();
+      if (this.enAttente) this.rafraichir();
+      // Longtemps caché : le temps réel a pu manquer des changements
+      else if (cache && Date.now() - cache > 5 * 60e3 && this.me) { cache = 0; this.loadAll().then(() => this.emit(), () => {}); }
+    };
+    document.addEventListener('visibilitychange', reveil);
+    addEventListener('focus', reveil); addEventListener('online', reveil); addEventListener('pageshow', reveil);
+    addEventListener('pagehide', () => this.ecrireCacheMaintenant());
+  }
+  // Un seul renouvellement à la fois ; la nouvelle session, ou null si ce n'est pas possible pour l'instant
+  renouveler() {
+    return this.renouvellement ||= this.sb.auth.refreshSession()
+      .then(({ data, error }) => (error ? null : data?.session || null), () => null)
+      .finally(() => { this.renouvellement = null; });
+  }
+  async fetchRenouvele(url, o = {}) {
+    const u = String(url?.url || url);
+    if (u.includes('/auth/v1/')) return fetch(url, o);
+    const h = new Headers(o.headers || {});
+    const jeton = (h.get('Authorization') || '').replace(/^Bearer\s+/i, '');
+    // Une session gardée, mais Supabase n'a pas pu la renouveler (réseau revenu à peine) : la requête partirait sans
+    // le compte, et la base répondrait « rien » ou « non autorisé ». On renouvelle d'abord ; sinon, c'est le réseau.
+    if (this.sessionGardee() && jeton === this.cfg.supabaseAnonKey) {
+      const s = await this.renouveler();
+      if (!s) throw new TypeError('Failed to fetch');
+      h.set('Authorization', 'Bearer ' + s.access_token);
+      return fetch(url, { ...o, headers: h });
+    }
+    const res = await fetch(url, o);
+    if (!jeton || jeton === this.cfg.supabaseAnonKey || !(await jetonRefuse(res))) return res;
+    // Une autre requête l'a peut-être déjà renouvelé : on reprend le nouveau jeton, sinon on renouvelle (une fois)
+    const actuel = this.sessionGardee()?.access_token;
+    const s = actuel && actuel !== jeton ? { access_token: actuel } : await this.renouveler();
+    if (!s || s.access_token === jeton) return res;
+    h.set('Authorization', 'Bearer ' + s.access_token);
+    return fetch(url, { ...o, headers: h });
+  }
+  emit() { super.emit(); if (!this.depuisCache && this.me) { clearTimeout(this.minuteurCache); this.minuteurCache = setTimeout(() => this.ecrireCacheMaintenant(), 3000); } }
+  ecrireCacheMaintenant() {
+    clearTimeout(this.minuteurCache);
+    if (this.depuisCache || !this.me || !this.userId || this.mode !== 'live') return;
+    ecrireCache({ forme: CACHE_FORME, uid: this.userId, t: Date.now(), data: pourCache(this.data, this.userId), reglages: this.reglages, pouls: this._pouls || null }).catch?.(() => {});
+  }
+
   get userId() { return this.session?.user?.id || null; }
   async loadAll() {
     if (!this.userId) { this.data = Object.fromEntries(TABLES.map(t => [t, []])); this.me = null; return; }
@@ -1070,7 +1279,12 @@ export class SupabaseStore extends Base {
     const { error } = await this.sb.auth.updateUser({ password });
     if (error) throw new Error(frError(error));
   }
-  async signOut() { await this.sb.auth.signOut(); }
+  // Se déconnecter soi-même : les données gardées et les brouillons de ce compte partent avec la session
+  async signOut() {
+    this.deconnexionVoulue = true;
+    oublierBrouillons(this.userId); clearTimeout(this.minuteurCache); await oublierCache();
+    await this.sb.auth.signOut();
+  }
   async verifyAttestation(id) {
     const { data, error } = await this.sb.rpc('attestation_publique', { p_id: id });
     if (error) return null;
@@ -1194,7 +1408,9 @@ export class SupabaseStore extends Base {
   }
   async lireReglages() {
     const { data, error } = await this.sb.from('reglages').select('cle, valeur');
-    this.reglages = error ? {} : Object.fromEntries(data.map(x => [x.cle, x.valeur]));
+    // Coupure : les réglages déjà connus (données gardées sur l'appareil) restent
+    if (error) return (this.reglages ||= {});
+    this.reglages = Object.fromEntries(data.map(x => [x.cle, x.valeur]));
     return this.reglages;
   }
   async enregistrerReglage(cle, valeur) {
@@ -1341,7 +1557,7 @@ export class SupabaseStore extends Base {
 
 // Le message à montrer au membre pour une erreur (jamais un message technique pour une coupure réseau)
 export const texteErreur = e => frError(e);
-const SESSION_PERDUE = 'Ta connexion a expiré. Recharge la page, puis réessaie.';
+const SESSION_PERDUE = 'Ta connexion a expiré. Réessaie dans un instant : ce que tu as écrit est gardé.';
 function frError(e) {
   const m = (e?.message || String(e || '')).toLowerCase();
   if (/failed to fetch|load failed|networkerror|network request failed|fetch failed|timed? ?out/.test(m)) return 'Pas de réseau pour l’instant. Réessaie dans un instant.';

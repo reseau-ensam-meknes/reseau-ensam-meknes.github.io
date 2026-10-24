@@ -186,12 +186,12 @@ const SECTIONS = [
   ]],
   ['shield', 'Ce que nous ne faisons pas', [
     'Aucune vente ni location de données, aucune publicité, aucun traceur publicitaire.',
-    'Le navigateur garde seulement ta langue et tes préférences d’affichage.',
+    'Le navigateur garde ta langue, tes préférences d’affichage, ce que tu es en train d’écrire et une copie de ton accueil pour l’ouvrir tout de suite. Cette copie est effacée quand tu te déconnectes, tes brouillons aussi.',
   ]],
   ['globe', 'Où sont les données', [
     'Base de données, comptes et CV : Supabase, serveurs à Paris (Union européenne).',
     'Site : GitHub Pages. Emails : le compte Gmail de la plateforme (Google) et Brevo (Union européenne). Visio : Jitsi Meet, quand tu rejoins un rendez-vous.',
-    'Carte : fonds OpenStreetMap et CARTO. Polices : Google Fonts. Notifications du téléphone : le service de ton navigateur (Google, Apple ou Mozilla), seulement si tu les actives.',
+    'Carte : fonds OpenStreetMap et CARTO. Notifications du téléphone : le service de ton navigateur (Google, Apple ou Mozilla), seulement si tu les actives.',
   ]],
   ['clock', 'Combien de temps', [
     'Tant que ton compte existe. Quand tu le supprimes, ton profil, ton CV et tout ce qui t’est lié sont effacés tout de suite. Seuls restent des chiffres globaux sans nom.',
