@@ -155,7 +155,9 @@ function App({ store }) {
   useEffect(() => { if (!coque) return; const brut = (location.hash || '').slice(1); brancherHistorique(parseRoute(brut).base === 'accueil' ? 'accueil' : brut, (r, o) => versRouteAct.current(r, o)); }, [coque]);
   // Les blocs arrivent en cascade au premier affichage seulement
   const [premier, setPremier] = useState(true);
-  useEffect(() => { const t = setTimeout(() => setPremier(false), 1600); return () => clearTimeout(t); }, []);
+  // Au premier changement d'écran seulement : un minuteur rejouait le fondu sur tout l'écran déjà affiché (et une feuille ouverte pâlissait)
+  const ecranVu = useRef(null);
+  useEffect(() => { const k = route.base + '/' + route.sub; if (ecranVu.current === null) ecranVu.current = k; else if (ecranVu.current !== k) setPremier(false); }, [route.base, route.sub]);
   const [entreprise, setEntreprise] = useState(null);
   const [askQ, setAskQ] = useState(null);
   const [annee, setAnnee] = useState(null);
