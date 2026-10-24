@@ -345,14 +345,21 @@ test('signaler un profil, puis l’administration le traite', async () => {
   await s.ctx.close();
 });
 
-test('agenda de l’école : je participe, puis je me désinscris', async () => {
+test('agenda de l’école : je participe (une seule action), l’agenda proposé dans une feuille, puis je me désinscris', async () => {
   const s = await ouvrir();
   await s.comme('Salma'); await s.aller('reseau/agenda');
   const carte = s.page.locator('.ev-card').first();
-  await carte.locator('.btn.primary').click(); await s.page.waitForTimeout(300);
-  assert.match(await carte.innerText(), /Je ne viens plus/);
-  await carte.locator('button:has-text("Je ne viens plus")').click(); await s.page.waitForTimeout(300);
-  assert.match(await carte.innerText(), /Je participe/);
+  const participer = carte.locator('button.ev-participer');
+  assert.equal(await carte.locator('a[href$=".ics"], a[href*="calendar.google"]').count(), 0, 'la carte ne garde que « Je participe »');
+  assert.equal(await participer.getAttribute('aria-pressed'), 'false');
+  await participer.click(); await s.page.waitForTimeout(300);
+  assert.equal(await participer.getAttribute('aria-pressed'), 'true', 'inscrit : le bouton est sélectionné');
+  // Juste après, la feuille « Ajouter à mon agenda » : Google Agenda ou fichier .ics
+  assert.match(await s.page.locator('.modal').innerText(), /Ajouter à mon agenda[\s\S]*Google Agenda[\s\S]*Autre agenda \(\.ics\)/);
+  await s.fermer();
+  await participer.click(); await s.page.waitForTimeout(300);
+  assert.equal(await participer.getAttribute('aria-pressed'), 'false');
+  assert.match(await s.page.locator('.toast').last().innerText(), /tu n’y vas plus/);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -498,7 +505,7 @@ test('lien partagé depuis l’arabe : ?lang=ar, en arabe pour cette visite chez
 test('recherche et villes : « مكناس » trouve Meknès ; en arabe, les villes s’écrivent en arabe', async () => {
   const s = await ouvrir();
   await s.comme('Salma'); await s.aller('reseau/annuaire');
-  const nb = async q => { await s.page.fill('#d-q', q); await s.page.waitForTimeout(250); return s.page.locator('.dir > li').count(); };
+  const nb = async q => { await s.page.fill('#d-q', q); await s.page.waitForTimeout(250); return Number((await s.page.innerText('#d-total')).match(/\d+/)[0]); };
   const meknes = await nb('Meknès');
   assert.ok(meknes > 0);
   assert.equal(await nb('مكناس'), meknes);
@@ -507,9 +514,9 @@ test('recherche et villes : « مكناس » trouve Meknès ; en arabe, les vill
   const a = await ouvrir({ largeur: 390, langue: 'ar' });
   await a.comme('Salma'); await a.aller('reseau/annuaire');
   await a.page.fill('#d-q', 'مكناس'); await a.page.waitForTimeout(250);
-  assert.ok(await a.page.locator('.dir > li').count() > 0);
-  assert.match(await a.page.locator('.dir').innerText(), /مكناس/);
-  assert.doesNotMatch(await a.page.locator('.dir').innerText(), /Meknès/);
+  assert.ok(await a.page.locator('.annuaire > li').count() > 0);
+  assert.match(await a.page.locator('.annuaire').innerText(), /مكناس/);
+  assert.doesNotMatch(await a.page.locator('.annuaire').innerText(), /Meknès/);
   await a.aller('reseau/groupes');
   assert.match(await a.page.locator('.page').innerText(), /مكناس/, 'le groupe de la ville');
   assert.deepEqual(a.erreurs, []);
@@ -1696,8 +1703,14 @@ test('lauréat qui cherche un emploi : il le coche, voit les offres pour lui, pe
   assert.equal(await s.page.locator('.ocard:has-text("Ingénieur méthodes (CDI)") .ocard-apply').count(), 1);
   // Un lauréat qui recrute la trouve dans la Vitrine des talents
   await s.comme('Youssef'); await s.aller('reseau/talents');
+  // Les listes déroulantes vivent dans la feuille « Filtres » ; le bouton dit ensuite combien de filtres sont actifs
+  await s.page.click('#t-filtres'); await s.page.waitForSelector('.modal #t-niv');
   await s.page.selectOption('#t-niv', 'L'); await s.page.waitForTimeout(300);
-  const carte = s.page.locator('.tcard', { hasText: 'Nadia Ferhat' });
+  assert.match(await s.page.locator('.modal-foot .btn.primary').innerText(), /^Voir (\d+ résultats|1 résultat)$/);
+  await s.page.click('.modal-foot .btn.primary'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.modal').count(), 0);
+  assert.match(await s.page.innerText('#t-filtres'), /Filtres · 1/);
+  const carte = s.page.locator('.talents .ligne', { hasText: 'Nadia Ferhat' });
   assert.equal(await carte.count(), 1);
   assert.match(await carte.innerText(), /Cherche :\s*un emploi/);
   assert.match(await carte.innerText(), /Ingénieur méthodes, Casablanca/);
@@ -2254,7 +2267,7 @@ test('Retour : ferme la feuille, puis revient à l’écran d’avant, à la mê
   assert.equal(await ici(s.page), '#accueil');
   // La liste reprend sa place
   await s.page.click('.bottom-nav a[href="#reseau"]'); await s.page.waitForTimeout(300);
-  await s.page.click('.icon-tabs button:has-text("Entraide")'); await s.page.waitForTimeout(300);
+  await s.page.click('.puces-nav [role="tab"]:has-text("Entraide")'); await s.page.waitForTimeout(300);
   const ligne = s.page.locator('.qrow').nth(4); await ligne.scrollIntoViewIfNeeded();
   const avant = await s.page.evaluate(() => scrollY); assert.ok(avant > 200);
   await ligne.click(); await s.page.waitForTimeout(300);
@@ -2308,7 +2321,7 @@ test('Retour jusqu’à une page d’avant l’appli (vérification d’attestat
   assert.equal(await ici(s.page), '#verifier/abc');
   await s.page.click('a[href="#accueil"]'); await s.page.waitForSelector('.hello');
   await s.page.click('.bottom-nav a[href="#reseau"]'); await s.page.waitForTimeout(400);
-  await s.page.click('.icon-tabs button:has-text("Entraide")'); await s.page.waitForTimeout(300);
+  await s.page.click('.puces-nav [role="tab"]:has-text("Entraide")'); await s.page.waitForTimeout(300);
   await s.page.locator('.qrow').first().click(); await s.page.waitForTimeout(400);
   await s.page.click('.bottom-nav a[href="#accueil"]'); await s.page.waitForTimeout(900);
   assert.equal(await ici(s.page), '#accueil');

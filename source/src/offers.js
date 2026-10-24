@@ -121,12 +121,13 @@ function OfferList({ ctx, filtre, setFiltre, onPropose }) {
   const reste = avecReco ? list.filter(o => !dejaVues.has(o.id)) : list;
   // Liste vide : une phrase et une seule action pour repartir
   const versToutes = { label: 'Voir toutes les offres', icon: 'feed', onClick: () => setFiltre('tous') };
+  const conseil = { label: 'Demander un conseil', icon: 'mentor', onClick: () => go('mentorat') };
   const effacer = !plain && f !== 'sauvees' ? { label: 'Effacer les filtres', icon: 'x', onClick: () => { setQ(''); setFiltre('tous'); } } : null;
   const vide = f === 'sauvees'
     ? html`<${Empty} icon="bookmark" title="Aucune offre mise de côté" action=${versToutes}>Clique sur le marque-page d’une offre pour la mettre de côté ici.<//>`
     : f === 'laureats' ? html`<${Empty} icon="briefcase" title="Aucune offre ici">Ton équipe cherche un profil expérimenté ? Publie le poste ici : seuls les lauréats le voient.<//>`
     : f === 'pfe' && !q.trim() ? (isStudent
-      ? html`<${Empty} icon="cap" title="Aucun sujet disponible pour l’instant" action=${{ label: 'Demander un conseil', icon: 'mentor', onClick: () => go('mentorat') }}>Pas encore de sujet déposé. Un lauréat de ta filière peut déjà t’aider à choisir ton sujet, en visio.<//>`
+      ? html`<${Empty} icon="cap" title="Aucun sujet disponible pour l’instant" action=${conseil}>Pas encore de sujet déposé. Un lauréat de ta filière peut déjà t’aider à choisir ton sujet, en visio.<//>`
       : html`<${Empty} icon="cap" title="Aucun sujet disponible pour l’instant">Dépose le premier : un problème réel de ton équipe, que tu pourrais encadrer.<//>`)
     // Le réseau qui démarre : pas de promesse, une vraie action (sa demande, ou un conseil)
     : plain && isStudent ? (typesDemande(me, saison).length
