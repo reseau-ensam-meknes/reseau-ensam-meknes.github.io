@@ -274,11 +274,11 @@ function DemandesLaureat({ ctx, focusId }) {
     ${enCours.length ? html`<section class="m-section"><div class="m-head"><h2 class="h-ico"><${Icon} name="heart"/> Mes aides en cours</h2></div>
       <div class="list">${enCours.map(({ d }) => html`<${CarteLaureat} key=${d.id} ctx=${ctx} d=${d} focus=${d.id === focusId}/>`)}</div></section>` : null}
     <section class="m-section">
-      <div class="m-head"><h2 class="h-ico"><${Icon} name="send"/> Ils cherchent</h2></div>
+      ${enCours.length || seule ? html`<div class="m-head"><h2 class="h-ico"><${Icon} name="send"/> Ils cherchent</h2></div>` : null}
       ${!enCours.length && !passees.length ? html`<details class="m-how" open=${!libres.length}><summary>Comment ça marche ?</summary><${Comment} laureat/></details>` : null}
-      ${libres.length ? html`<div class="dm-filtres">
-        <div class="seg small-seg" role="group" aria-label="Filières"><button type="button" class=${proche ? 'on' : ''} aria-pressed=${proche} onClick=${() => setProche(true)}>Proches de ma filière</button><button type="button" class=${!proche ? 'on' : ''} aria-pressed=${!proche} onClick=${() => setProche(false)}>Toutes les filières</button></div>
-        ${types.length > 1 ? html`<div class="chips">${['tous', ...types].map(t => html`<button type="button" class=${'chip' + (type === t ? ' on' : '')} aria-pressed=${type === t} onClick=${() => setType(t)}>${t === 'tous' ? 'Tout' : TYPES[t].label}</button>`)}</div>` : null}
+      ${libres.length ? html`<div class="chips offres-chips dm-filtres" role="group" aria-label="Filtrer les demandes">
+        <button type="button" class=${'chip' + (proche ? ' on' : '')} aria-pressed=${proche} onClick=${() => setProche(!proche)}>${proche ? html`<${Icon} name="check" size=${15}/>` : null}Proches de ma filière</button>
+        ${types.length > 1 ? html`<span class="chips-sep" aria-hidden="true"></span>${['tous', ...types].map(t => html`<button type="button" class=${'chip' + (type === t ? ' on' : '')} aria-pressed=${type === t} onClick=${() => setType(t)}>${t === 'tous' ? 'Tout' : TYPES[t].label}</button>`)}` : null}
       </div>` : null}
       ${liste.length ? html`<div class="list">${liste.map(({ d, why }) => html`<${CarteLaureat} key=${d.id} ctx=${ctx} d=${d} why=${why} focus=${d.id === focusId}/>`)}</div>`
         : libres.length ? html`<p class="small muted">Rien de ce côté pour l’instant. <button type="button" class="linkish" onClick=${() => { setProche(false); setType('tous'); }}>Voir toutes les demandes</button></p>`
@@ -520,7 +520,7 @@ injectCSS('demandes', `
 .dm-acts { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; margin-top: var(--sp-1); }
 .dm-anciennes > summary { cursor: pointer; color: var(--muted); padding: var(--sp-2) 0; }
 .dm-anciennes .list { margin-top: var(--sp-2); }
-.dm-filtres { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); }
+.dm-filtres { margin-block: var(--sp-1); }
 .dm-form .chips { display: flex; flex-wrap: wrap; gap: .4rem; }
 .dm-resume { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3); border-radius: var(--r-md); background: var(--surface-2); min-width: 0; }
 .dm-resume .dm-titre-home { margin: 0; }

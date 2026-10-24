@@ -1896,9 +1896,9 @@ test('demande d’un étudiant : il publie (CV joint), un lauréat propose, matc
   await s.page.click('#dm-publier'); await s.page.waitForTimeout(400); await fete();
   assert.match(await carte().innerText(), /Ouverte/);
   assert.match(await carte().innerText(), /Les lauréats de ton parcours sont prévenus/);
-  // Youssef la trouve (autre parcours : « Toutes les filières »), voit le CV, propose d'encadrer
+  // Youssef la trouve (autre parcours : la puce « Proches de ma filière » relâchée), voit le CV, propose d'encadrer
   await s.comme('Youssef'); await s.aller('offres/demandes');
-  if (!(await carte().count())) await s.page.click('button:has-text("Toutes les filières")');
+  if (!(await carte().count())) await s.page.click('.dm-filtres button[aria-pressed="true"]:has-text("Proches de ma filière")');
   assert.equal(await carte().locator('button:has-text("Voir le CV")').count(), 1, 'le CV joint est visible');
   await carte().locator('.dm-aider').click(); await s.page.waitForTimeout(200);
   await s.page.click('.dm-aide-choix:has(#dm-aide-encadre)');

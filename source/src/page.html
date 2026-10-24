@@ -1098,7 +1098,7 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"] { display: 
 }
 /* ---------- Mentorat en 3 étapes, recommandations, admin ---------- */
 .how { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; }
-.how li { display: flex; align-items: center; gap: .55rem; padding: .7rem .85rem; border-radius: var(--r-lg); background: var(--surface); border: 0; box-shadow: var(--sh1); font-size: var(--fs-3); color: var(--ink-2); }
+.how li { display: flex; align-items: center; gap: .55rem; padding: .35rem 0; font-size: var(--fs-3); color: var(--ink-2); } /* des étapes à plat : jamais de carte dans la carte */
 .how li svg { color: var(--blue-text); flex: none; }
 .how-n { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent-soft); color: var(--blue-text); font: 650 var(--fs-1)/1 var(--f-body); font-variant-numeric: tabular-nums; flex: none; }
 .need-card { display: flex; flex-direction: column; gap: .8rem; padding: 1.15rem 1.2rem; border-radius: var(--r-lg); background: var(--surface); border: 0; box-shadow: var(--sh1); }
@@ -1179,7 +1179,7 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"] { display: 
 .admin .search { flex: 0 1 280px; }
 @media (max-width: 760px) {
   .how { grid-template-columns: minmax(0, 1fr); gap: .35rem; }
-  .how li { padding: .5rem .7rem; }
+  .how li { padding: .3rem 0; }
   .need-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .need-btn { padding: .75rem .35rem; font-size: .82rem; }
   .slot-inputs { grid-template-columns: minmax(0, 1fr); }
