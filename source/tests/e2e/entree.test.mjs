@@ -534,11 +534,11 @@ test('code demandé en arabe, entré dans un autre onglet : toujours en arabe', 
 
 // Un membre déjà connecté sur cet appareil (session gardée), ouvert sur « hash ». push : un navigateur qui peut recevoir
 // des notifications sans y être abonné (etatPush 'off'), comme un téléphone Android. permission : la réponse du membre
-// à la demande du navigateur ; les demandes sont comptées (window.__demandes)
-async function membre({ hash = '', push = false, permission = 'default' } = {}) {
+// à la demande du navigateur, qui arrive après « delai » millisecondes ; les demandes sont comptées (window.__demandes)
+async function membre({ hash = '', push = false, permission = 'default', delai = 0 } = {}) {
   const ctx = await navigateur.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
-  if (push) await ctx.addInitScript(permission => {
+  if (push) await ctx.addInitScript(([permission, delai]) => {
     const sub = { endpoint: 'https://push.exemple.ma/abc', toJSON: () => ({ endpoint: 'https://push.exemple.ma/abc', keys: { p256dh: 'p256', auth: 'auth' } }), unsubscribe: async () => true };
     const pm = { getSubscription: async () => null, subscribe: async () => sub };
     const reg = { waiting: null, installing: null, addEventListener() {}, pushManager: pm };
@@ -547,10 +547,14 @@ async function membre({ hash = '', push = false, permission = 'default' } = {}) 
     window.__demandes = 0;
     window.Notification = class {
       static permission = 'default';
-      static requestPermission = async () => { window.__demandes++; window.Notification.permission = permission; return permission; };
+      static requestPermission = async () => {
+        window.__demandes++;
+        if (delai) await new Promise(ok => setTimeout(ok, delai));
+        window.Notification.permission = permission; return permission;
+      };
     };
     if (!('PushManager' in window)) window.PushManager = function PushManager() {};
-  }, permission);
+  }, [permission, delai]);
   await ctx.addInitScript(uid => {
     if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1');
     localStorage.setItem('ensam-lang', 'fr');
@@ -591,7 +595,7 @@ test('Mon profil en ligne : les notifications par catégorie seulement une fois 
     assert.equal(await m.page.locator('.md-cats').count(), colonne ? 1 : 0, 'les cases par catégorie');
     assert.equal(await m.page.locator('#md-alertes').count(), colonne ? 0 : 1, 'avant la mise à jour, l’étudiant garde sa case « M’alerter… »');
     // Avant, la présentation d'avant : « M'alerter… » (le téléphone) ne se range pas sous un titre « Par email »
-    assert.equal(await m.page.locator('.md-titre').count(), colonne ? 2 : 0, 'les titres « Par email » et « Sur le téléphone »');
+    assert.equal(await m.page.locator('.md-titre').count(), colonne ? 2 : 0, 'les titres « Par email » et « Sur tes appareils »');
     assert.ok(await m.page.isChecked('#md-alertes-mail'), 'l’email des offres reste là');
     assert.deepEqual(m.erreurs, []);
     await m.ctx.close();
@@ -626,6 +630,59 @@ test('« Activer » en ligne : le toucher demande l’autorisation au navigateur
   assert.deepEqual(abonne?.corps, { p_endpoint: 'https://push.exemple.ma/abc', p_p256dh: 'p256', p_auth: 'auth' });
   assert.match(await m.page.locator('.toast').last().innerText(), /Notifications activées sur cet appareil\./);
   assert.equal(await m.page.evaluate(k => JSON.parse(localStorage.getItem(k) || '{}').fait, cle), 1);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('« Activer » puis fenêtre du navigateur fermée sans choisir : rien n’est bloqué, la demande pourra revenir', async () => {
+  const cle = 'ensam-prevenir-' + UID;
+  const lire = m => m.page.evaluate(k => JSON.parse(localStorage.getItem(k) || '{}'), cle);
+  site.vider(); site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z', notif_push: {} });
+  const m = await membre({ push: true, permission: 'default' });
+  await m.page.waitForSelector('.modal.ouverture', { timeout: 12000 });
+  await m.page.click('#ouv-oui');
+  await m.page.waitForSelector('.modal.ouverture', { state: 'detached', timeout: 5000 });
+  assert.match(await m.page.locator('.toast').last().innerText(), /Pas activées pour l’instant/);
+  assert.equal((await lire(m)).fait, undefined, 'ce n’est pas une réponse');
+  assert.equal((await lire(m)).n, 1, 'compté comme « Plus tard »');
+  // Une semaine plus tard, la feuille revient
+  await m.page.evaluate(k => { const x = JSON.parse(localStorage.getItem(k)); x.at -= 8 * 864e5; localStorage.setItem(k, JSON.stringify(x)); }, cle);
+  await m.page.reload(); await m.page.waitForSelector('.me-btn', { timeout: 15000 });
+  await m.page.waitForSelector('.modal.ouverture', { timeout: 12000 });
+  await m.page.click('#ouv-tard');
+  // Dans Mon profil, la même réponse laisse la case à toucher, sans dire que les notifications sont bloquées
+  await m.page.evaluate(() => { location.hash = '#profil'; });
+  await m.page.waitForSelector('#md-push:not([disabled])', { timeout: 15000 });
+  await m.page.click('#md-push'); await m.page.waitForTimeout(500);
+  assert.equal(await m.page.isDisabled('#md-push'), false);
+  assert.equal(await m.page.isChecked('#md-push'), false);
+  assert.doesNotMatch(await m.page.locator('.push-row').innerText(), /bloquées/);
+  assert.equal((await lire(m)).fait, undefined);
+  assert.equal(await m.page.evaluate(() => window.__demandes), 1, 'depuis le rechargement : le toucher dans Mon profil a demandé');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('Mon profil : pendant la demande du navigateur lancée par l’interrupteur, pas de feuille d’ouverture par-dessus', async () => {
+  site.vider(); site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z', notif_push: {} });
+  const m = await membre({ hash: '#profil', push: true, permission: 'granted', delai: 7000 });
+  await m.page.waitForSelector('#md-push:not([disabled])', { timeout: 15000 });
+  await m.page.click('#md-push');
+  await m.page.waitForTimeout(8500);
+  assert.equal(await m.page.locator('.modal.ouverture').count(), 0, 'une seule demande à la fois');
+  assert.ok(await m.page.isChecked('#md-push'));
+  assert.equal(await m.page.evaluate(() => window.__demandes), 1);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('Mon profil ouvert : après « Activer » sur la feuille, l’interrupteur de cet appareil suit', async () => {
+  site.vider(); site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z', notif_push: {} });
+  const m = await membre({ hash: '#profil', push: true, permission: 'denied' });
+  await m.page.waitForSelector('.modal.ouverture', { timeout: 12000 });
+  assert.equal(await m.page.isDisabled('#md-push'), false);
+  await m.page.click('#ouv-oui'); await m.page.waitForTimeout(800);
+  assert.equal(await m.page.isDisabled('#md-push'), true, 'refusée : l’interrupteur le montre');
   assert.deepEqual(m.erreurs, []);
   await m.ctx.close();
 });

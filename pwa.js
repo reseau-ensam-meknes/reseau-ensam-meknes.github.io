@@ -84,9 +84,12 @@ export async function etatPush(store) {
   if (!reg) return 'absent';
   return (await reg.pushManager.getSubscription()) ? 'on' : 'off';
 }
-// Demande l'autorisation puis abonne cet appareil : 'on' ou 'refuse' (erreur levée si la plateforme n'est pas prête)
+// Demande l'autorisation puis abonne cet appareil : 'on', 'refuse' (bloquées par le navigateur) ou 'off' (fenêtre du
+// navigateur fermée sans choisir : rien n'est bloqué, on pourra redemander). Erreur levée si la plateforme n'est pas prête.
 export async function activerPush(store) {
-  if ((await Notification.requestPermission()) !== 'granted') return 'refuse';
+  const permission = await Notification.requestPermission();
+  if (permission === 'denied') return 'refuse';
+  if (permission !== 'granted') return 'off';
   const key = await store.pushKey();
   if (!key) throw new Error('Les notifications ne sont pas encore prêtes sur la plateforme. Réessaie plus tard.');
   const reg = await swReady;
@@ -101,7 +104,10 @@ export async function activerPush(store) {
   return 'on';
 }
 
-// Interrupteur « Notifications sur ce téléphone », dans Mon profil
+// Une demande du navigateur lancée depuis Mon profil attend sa réponse : pas de feuille d'ouverture par-dessus
+let demandeEnCours = false;
+
+// Interrupteur « Notifications sur ce téléphone ou cet ordinateur », dans Mon profil
 export function PushToggle({ ctx }) {
   const { store, me } = ctx;
   // Activées ou coupées ici : c'est une réponse, ni la feuille d'ouverture ni « Me prévenir » ne reviennent la demander
@@ -121,20 +127,21 @@ export function PushToggle({ ctx }) {
   }, []);
   // Simulé : rien n'est demandé au navigateur ni à la plateforme, le reste est le même
   const turnOn = async () => {
-    setBusy(true);
+    setBusy(true); demandeEnCours = true;
     try {
       const r = simule ? 'on' : await activerPush(store);
-      setSt(r); etatConnu = r; repondu();
+      // Fenêtre du navigateur fermée sans choisir ('off') : la case reste à toucher, ce n'est pas une réponse
+      setSt(r); etatConnu = r; if (r !== 'off') repondu();
       if (r === 'on') toast(simule ? DEMO : 'Notifications activées sur cet appareil.');
-    } catch (e) { toast(e.message || String(e), 'err'); } finally { setBusy(false); }
+    } catch (e) { toast(e.message || String(e), 'err'); } finally { setBusy(false); demandeEnCours = false; }
   };
   const turnOff = async () => {
-    setBusy(true);
+    setBusy(true); demandeEnCours = true;
     try {
       const sub = simule ? null : await (await swReady)?.pushManager.getSubscription();
       if (sub) { await store.desabonnerPush(sub.endpoint).catch(() => {}); await sub.unsubscribe(); }
       setSt('off'); etatConnu = 'off'; repondu(); toast('Notifications désactivées sur cet appareil.');
-    } catch (e) { toast(e.message || String(e), 'err'); } finally { setBusy(false); }
+    } catch (e) { toast(e.message || String(e), 'err'); } finally { setBusy(false); demandeEnCours = false; }
   };
   const test = async () => { setBusy(true); try { const n = await store.testPush(); toast(n ? 'Notification de test envoyée.' : 'Aucun appareil abonné pour l’instant.'); } catch (e) { toast(e.message, 'err'); } finally { setBusy(false); } };
   const note = {
@@ -238,8 +245,8 @@ export function PrevenirHote({ ctx, bloque }) {
       return ouvertureNotif({ etat: etatConnu, memo: lireMemo(me.id), now: Date.now(), role: m.role, voulu: PUSH_CATEGORIES.some(c => pushChoix(c, m)) });
     };
     // Un écran calme : rien d'ouvert par-dessus (toute fenêtre modale, la photo agrandie d'un message comprise), pas en train
-    // d'écrire, l'onglet au premier plan
-    const occupe = () => document.visibilityState !== 'visible' || !!document.querySelector('.modal-back, .fete-back, .menu-pop, [aria-modal="true"]') || ecrit(document.activeElement);
+    // d'écrire, l'onglet au premier plan, pas de demande du navigateur en attente (lancée depuis Mon profil)
+    const occupe = () => demandeEnCours || document.visibilityState !== 'visible' || !!document.querySelector('.modal-back, .fete-back, .menu-pop, [aria-modal="true"]') || ecrit(document.activeElement);
     const essayer = () => {
       // Quelque chose a déjà été demandé ou répondu pendant cette visite (mémo changé) : à la visite suivante
       if (!vivant || demandee || feteOuverte() || arriveeEnAttente(me.id) || JSON.stringify(lireMemo(me.id)) !== avant || !ouvrable()) return;
@@ -301,14 +308,16 @@ export function PrevenirHote({ ctx, bloque }) {
 }
 
 // Le toucher sur « Me prévenir » ou « Activer » : c'est lui qui permet au navigateur de demander l'autorisation.
-// true quand la feuille peut se fermer ; false (pas de réseau) : elle reste, on peut réessayer.
+// true quand la feuille peut se fermer ; 'off' (fenêtre du navigateur fermée sans choisir) : elle se ferme comme
+// « Plus tard », et la demande pourra revenir ; false (pas de réseau) : elle reste, on peut réessayer.
 async function accepterNotif(store, me) {
   if (store.mode !== 'live') { ecrireMemo(me.id, { ...lireMemo(me.id), fait: 1 }); toast(DEMO); return true; }
   try {
     const r = await activerPush(store);
     etatConnu = r;
-    ecrireMemo(me.id, { ...lireMemo(me.id), fait: 1 });
     dispatchEvent(new Event(PUSH_CHANGE));
+    if (r === 'off') { toast(PAS_ACTIVEES); return 'off'; }
+    ecrireMemo(me.id, { ...lireMemo(me.id), fait: 1 });
     if (r === 'on') toast('Notifications activées sur cet appareil.', 'win');
     return true;
   } catch (e) {
@@ -334,7 +343,8 @@ function FeuillePrevenir({ ctx, f, onClose }) {
   const accepter = async () => {
     if (email || ios) return refuser();
     setBusy(true);
-    if (await accepterNotif(store, me)) onClose(); else setBusy(false);
+    const r = await accepterNotif(store, me);
+    if (r === 'off') refuser(); else if (r) onClose(); else setBusy(false);
   };
   const raison = f.raison === 'question' && me.role !== 'etudiant' ? 'questionMembre' : f.raison;
   const pied = html`${email || ios ? null : html`<button type="button" class="btn ghost" id="pv-tard" onClick=${refuser}>Plus tard</button>`}
@@ -409,8 +419,10 @@ function FeuilleOuverture({ ctx, onClose }) {
 }
 
 const SANS_NOTIF = 'Ce navigateur ne peut pas recevoir de notifications pour l’instant.';
+const PAS_ACTIVEES = 'Pas activées pour l’instant. Tu pourras le faire quand tu veux dans « Mon profil ».';
 addAR({
   [SANS_NOTIF]: 'لا يستطيع هذا المتصفح استقبال الإشعارات حاليًا.',
+  [PAS_ACTIVEES]: 'لم تُفعَّل الآن. يمكنك تفعيلها متى شئت من «ملفي الشخصي».',
   'Te prévenir de la réponse ?': 'هل نُعلمك عند وصول الرد؟', 'Me prévenir': 'أعلِمني', 'J’ai compris': 'فهمت', 'Plus tard': 'لاحقًا',
   'Tu ne rateras pas la réponse': 'لن تفوتك الإجابة',
   'Rien d’autre : pas de publicité, et tu l’arrêtes quand tu veux dans « Mon profil ».': 'لا شيء غير ذلك: لا إعلانات، ويمكنك إيقافه متى شئت من «ملفي الشخصي».',
