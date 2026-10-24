@@ -1517,6 +1517,39 @@ test('profil : promo effacée, le bouton le dit et mène au champ', async () => 
   await s.ctx.close();
 });
 
+test('offres : une seule rangée de puces avant la première offre ; les anciens liens ouvrent la bonne puce ; « Demandes » dit combien', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef');
+  // L'ancien onglet « Sujets PFE » : la puce PFE choisie, et « Déposer un sujet » reste le bouton plein
+  await s.aller('offres/sujets'); await s.page.waitForSelector('.offres-chips');
+  assert.equal((await s.page.locator('.offres-chips .chip[aria-pressed="true"]').innerText()).trim(), 'PFE');
+  assert.match(await s.page.locator('#of-publier.btn.primary').innerText(), /Déposer un sujet/);
+  const types = await s.page.locator('.ocard .ocard-tags > .tag:first-child').allInnerTexts();
+  assert.ok(types.length && types.every(t => /PFE/.test(t)), 'seulement des sujets de PFE');
+  // Une seule rangée de filtres ; Offres · Demandes (n) en tête, n les demandes ouvertes qu'il voit
+  assert.equal(await s.page.locator('.offres-page .chips').count(), 1);
+  const onglets = s.page.locator('.offres-seg [role="tab"]');
+  assert.equal(await onglets.count(), 2);
+  assert.equal(await onglets.nth(0).getAttribute('aria-selected'), 'true');
+  assert.match(await onglets.nth(1).innerText(), /^Demandes\s+[1-9]\d*$/);
+  // Une autre puce : l'adresse redevient celle des offres
+  await s.page.click('.offres-chips .chip:has-text("Tout")'); await s.page.waitForTimeout(250);
+  assert.equal(await s.page.evaluate(() => location.hash), '#offres');
+  assert.match(await s.page.locator('#of-publier').innerText(), /Publier une offre/);
+  // « Entre lauréats » : une puce de la même rangée, l'ancien lien y mène aussi
+  await s.aller('offres/laureats'); await s.page.waitForSelector('.offres-chips');
+  assert.equal((await s.page.locator('.offres-chips .chip[aria-pressed="true"]').innerText()).trim(), 'Entre lauréats');
+  assert.equal(await s.page.locator('.ocard').count(), await s.page.locator('.ocard .tag.entre').count());
+  // Une étudiante : ni « Entre lauréats » ni « Mes offres », aucune offre entre lauréats, pas de bouton pour publier
+  await s.comme('Salma'); await s.aller('offres'); await s.page.waitForSelector('.offres-chips');
+  assert.ok(!(await s.page.locator('.offres-chips .chip').allInnerTexts()).some(t => /Entre lauréats|Mes offres/.test(t)));
+  assert.equal(await s.page.locator('.ocard .tag.entre').count(), 0);
+  assert.equal(await s.page.locator('#of-publier').count(), 0);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('offre d’une autre année ouverte par un lien : sans offre pour son année, l’étudiant peut agir tout de suite', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Amine');
