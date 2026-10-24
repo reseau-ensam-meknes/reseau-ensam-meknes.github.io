@@ -191,33 +191,33 @@ export function ConfianceHome({ ctx }) {
     ${demandes.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="phone"/> Ils aimeraient tes coordonnées <span class="count">${demandes.length}</span></h2></div>
       <ul class="people-list cf-list">${demandes.slice(0, 4).map(({ d, p }) => html`<li key=${d.id}>
         <div class="cf-who"><${Person} p=${p} onOpen=${openProfile} size=${34}/>${d.message ? html`<p class="cf-msg small" translate="no" dir="auto">« ${d.message} »</p>` : null}</div>
-        <div class="cf-act"><button class="btn tiny ghost" onClick=${() => repondre(d, 'refusee')}>Refuser</button><button class="btn tiny primary" onClick=${() => repondre(d, 'acceptee')}><${Icon} name="check" size=${14}/> Accepter</button></div></li>`)}</ul>
+        <div class="cf-act"><button class="btn tiny ghost" onClick=${() => repondre(d, 'refusee')}>Refuser</button><button class="btn tiny tonal" onClick=${() => repondre(d, 'acceptee')}><${Icon} name="check" size=${14}/> Accepter</button></div></li>`)}</ul>
       <p class="small muted">Si tu acceptes, vous voyez les coordonnées l’un de l’autre.</p>` : null}
     ${pairs.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="shield"/> De ta promo ${me.promo} ?</h2></div>
       <p class="small muted">Confirme ceux que tu connais : avec deux confirmations, leur badge « vérifié » arrive.</p>
       <ul class="people-list cf-list">${pairs.slice(0, 3).map(p => html`<li key=${p.id}>
         <div class="cf-who"><${Person} p=${p} onOpen=${openProfile} size=${34} sub=${`${p.filiere} · ${confirmations(data, p)}/2`}/></div>
-        <div class="cf-act"><button class="btn tiny ghost" onClick=${() => setIgnores([...ignores, p.id])}>Je ne sais pas</button><button class="btn tiny primary" onClick=${() => act(async () => { await store.insert('verifications_pairs', { laureat_id: p.id, verificateur_id: me.id }); toast('Merci, ta confirmation est enregistrée.'); })}><${Icon} name="check" size=${14}/> Je confirme</button></div></li>`)}</ul>` : null}
+        <div class="cf-act"><button class="btn tiny ghost" onClick=${() => setIgnores([...ignores, p.id])}>Je ne sais pas</button><button class="btn tiny tonal" onClick=${() => act(async () => { await store.insert('verifications_pairs', { laureat_id: p.id, verificateur_id: me.id }); toast('Merci, ta confirmation est enregistrée.'); })}><${Icon} name="check" size=${14}/> Je confirme</button></div></li>`)}</ul>` : null}
   </div>`;
 }
 
 injectCSS('confiance', `
-.cf-signal { display: inline-flex; align-items: center; gap: .3rem; border: 0; background: none; color: var(--muted); font: inherit; font-size: .8rem; padding: .25rem .4rem; border-radius: 7px; cursor: pointer; }
+.cf-signal { display: inline-flex; align-items: center; gap: .3rem; border: 0; background: none; color: var(--muted); font: inherit; font-size: var(--fs-2); padding: .25rem .4rem; border-radius: var(--r-sm); cursor: pointer; }
 .cf-signal:hover, .cf-signal:focus-visible { color: var(--bad); background: var(--bad-soft); }
 .cf-signal.small { padding: .3rem; }
-.cf-signale { display: inline-flex; align-items: center; gap: .3rem; color: var(--muted); font-size: .8rem; padding: .25rem .4rem; opacity: .75; }
+.cf-signale { display: inline-flex; align-items: center; gap: .3rem; color: var(--muted); font-size: var(--fs-2); padding: .25rem .4rem; }
 .cf-motifs { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: .4rem; }
-.cf-motif { display: flex; align-items: center; gap: .5rem; padding: .55rem .7rem; border: 1px solid var(--line); border-radius: 9px; cursor: pointer; font-size: .9rem; background: var(--surface); }
+.cf-motif { display: flex; align-items: center; gap: .5rem; padding: .6rem .75rem; min-height: 44px; border: 1px solid var(--line-strong); border-radius: var(--r-md); cursor: pointer; font-size: var(--fs-3); background: var(--surface); }
 .cf-motif:hover { border-color: var(--ink-2); }
-.cf-motif.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.cf-motif.on { border-color: transparent; background: var(--sel-bg); color: var(--sel-ink); box-shadow: inset 0 0 0 1px var(--sel-ring); }
 .cf-motif input { accent-color: var(--accent); margin: 0; }
-.cf-box { border: 1px solid var(--line); border-radius: var(--r); padding: .75rem .9rem; display: flex; flex-direction: column; gap: .45rem; background: var(--surface); }
+.cf-box { border-top: 1px solid var(--line); padding: .8rem 0 0; display: flex; flex-direction: column; gap: .45rem; }
 .cf-box p { margin: 0; }
 .cf-box-head { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
-.cf-box-head h3 { margin: 0; font-size: .95rem; }
+.cf-box-head h3 { margin: 0; font-size: var(--fs-3); }
 .cf-box-head .mini { margin: 0; }
-.cf-pair { background: var(--accent-soft); border-color: transparent; }
-.cf-pair h3 { color: var(--accent); }
+.cf-pair { background: var(--accent-soft); border-top: 0; border-radius: var(--r-lg); padding: .8rem .95rem; }
+.cf-pair h3 { color: var(--sel-ink); }
 .cf-coord { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .35rem; }
 .cf-coord li { display: flex; align-items: center; gap: .5rem; min-width: 0; }
 .cf-coord li svg { flex: none; color: var(--accent); }
@@ -226,17 +226,17 @@ injectCSS('confiance', `
 .cf-msg { color: var(--ink-2); font-style: italic; margin: 0; overflow-wrap: anywhere; }
 .cf-locked { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; margin: 0; }
 .cf-locked .mini { margin: 0; }
-.cf-vis, .cf-private { border: 1px solid var(--line); border-radius: var(--r); padding: .8rem .9rem; margin: 0; display: flex; flex-direction: column; gap: .55rem; min-width: 0; }
-.cf-vis legend, .cf-private legend { padding: 0 .35rem; font-weight: 600; }
+.cf-vis, .cf-private { border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: .9rem 0 0; margin: 0; display: flex; flex-direction: column; gap: .55rem; min-width: 0; }
+.cf-vis legend, .cf-private legend { float: inline-start; width: 100%; padding: 0; margin-bottom: .1rem; font: 650 var(--fs-3)/1.3 var(--f-display); color: var(--ink); }
 .cf-vis p, .cf-private p { margin: 0; }
 .cf-vis-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .4rem .8rem; }
-.cf-vis-label { font-size: .9rem; }
+.cf-vis-label { font-size: var(--fs-3); }
 .cf-vis-seg { margin: 0; }
 .cf-vis-etat { grid-column: 1 / -1; font-weight: 500; color: var(--muted); display: inline-flex; align-items: center; gap: .2rem; animation: fade-in .2s ease; }
 .cf-vis-etat.err { color: var(--warn); }
 .cf-vis-etat.ok { color: var(--good); }
-.cf-vis-seg button { font-size: .8rem; padding: .3rem .6rem; }
-.cf-warn { background: var(--warn-soft); color: var(--ink); border-radius: var(--r); padding: .7rem .8rem; display: flex; flex-direction: column; gap: .45rem; }
+.cf-vis-seg button { font-size: var(--fs-2); padding: .35rem .65rem; }
+.cf-warn { background: var(--warn-soft); color: var(--ink); border-radius: var(--r-md); padding: .75rem .9rem; display: flex; flex-direction: column; gap: .45rem; }
 .cf-warn p { margin: 0; }
 .cf-list li { align-items: flex-start; }
 .cf-who { display: flex; flex-direction: column; gap: .25rem; min-width: 0; flex: 1 1 220px; }

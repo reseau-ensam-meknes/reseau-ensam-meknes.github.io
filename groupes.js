@@ -153,7 +153,7 @@ export function CafeCard({ ctx, c, showCity }) {
         <a class="btn tiny ghost" href=${gcalCafe(c)} target="_blank" rel="noopener"><${Icon} name="calendar" size=${14}/> Agenda</a>
         ${isOrg ? html`<button class="btn tiny ghost danger-t" onClick=${() => ctx.confirm('Annuler ce café ? Les inscrits le verront annulé.', () => act(() => store.update('cafes', c.id, { annule: true })), 'Annuler le café')}>Annuler</button>`
           : html`<button class="btn tiny ghost" onClick=${() => act(() => store.remove('cafe_participants', mineP.id))}>Je ne viens plus</button>`}`
-        : full ? html`<span class="tag done">Complet</span>` : html`<button class="btn small primary" onClick=${() => act(async () => { await store.insert('cafe_participants', { cafe_id: c.id, user_id: me.id }); toast('C’est noté ! Ajoute-le à ton agenda.'); })}>Je viens</button>`}
+        : full ? html`<span class="tag done">Complet</span>` : html`<button class="btn small tonal" onClick=${() => act(async () => { await store.insert('cafe_participants', { cafe_id: c.id, user_id: me.id }); toast('C’est noté ! Ajoute-le à ton agenda.'); })}>Je viens</button>`}
       ${!isOrg && !c.annule ? html`<${SignalerBtn} ctx=${ctx} type="cafe" id=${c.id} small/>` : null}
     </div>
   </article>`;

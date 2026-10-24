@@ -103,19 +103,36 @@ function useParticipants(ctx, e) {
   return { rows, gens: rows.map(x => store.byId('profiles', x.user_id)).filter(Boolean), mine: rows.find(x => x.user_id === me.id) };
 }
 
+// Une seule action : « Je participe » (sélectionné une fois inscrit, un second toucher désinscrit).
+// Juste après l'inscription, une feuille propose de l'ajouter à son agenda (Google Agenda ou fichier .ics).
 function Participer({ ctx, e, small }) {
   const { store, me, act } = ctx;
   const { mine } = useParticipants(ctx, e);
+  const [feuille, setFeuille] = useState(false);
   if (me.role === 'admin' || e.annule || passe(e)) return null;
-  if (mine) return html`<span class="mini good"><${Icon} name="check" size=${12}/> Tu y vas</span>
-    <button class="btn tiny ghost" onClick=${() => act(async () => { await store.remove('evenement_participants', mine.id); toast('C’est noté, tu n’y vas plus.'); })}>Je ne viens plus</button>`;
-  return html`<button class=${'btn primary ' + (small ? 'tiny' : 'small')} onClick=${() => act(async () => { await store.insert('evenement_participants', { evenement_id: e.id, user_id: me.id }); toast('C’est noté ! Ajoute-le à ton agenda.'); })}><${Icon} name="check" size=${14}/> Je participe</button>`;
+  const basculer = () => act(async () => {
+    if (mine) { await store.remove('evenement_participants', mine.id); toast('C’est noté, tu n’y vas plus.'); }
+    else { await store.insert('evenement_participants', { evenement_id: e.id, user_id: me.id }); setFeuille(true); }
+  });
+  return html`<button type="button" class=${'btn tonal ev-participer ' + (small ? 'tiny' : 'small') + (mine ? ' on' : '')} aria-pressed=${!!mine} onClick=${basculer}><${Icon} name="check" size=${14}/> Je participe</button>
+    ${feuille ? html`<${FeuilleAgenda} e=${e} onClose=${() => setFeuille(false)}/>` : null}`;
 }
 
+// Ajouter à son agenda : proposé après « Je participe » et depuis la fiche de l'événement
+function FeuilleAgenda({ e, onClose }) {
+  return html`<${Modal} title="Ajouter à mon agenda" onClose=${onClose} cls="ag-feuille">
+    <div class="ag-quoi"><strong translate="no" dir="auto">${e.titre}</strong><${Quand} e=${e}/></div>
+    <div class="ag-choix">
+      <a class="btn" href=${gcalUrl(e)} target="_blank" rel="noopener" onClick=${onClose}><${Icon} name="calendar" size=${16}/> Google Agenda</a>
+      <a class="btn" href=${icsHref(e)} download="evenement-ensam.ics" onClick=${onClose}><${Icon} name="download" size=${16}/> Autre agenda (.ics)</a>
+    </div>
+  <//>`;
+}
 function AjoutAgenda({ e }) {
+  const [feuille, setFeuille] = useState(false);
   if (e.annule || passe(e)) return null;
-  return html`<a class="btn tiny ghost" href=${gcalUrl(e)} target="_blank" rel="noopener"><${Icon} name="calendar" size=${14}/> Google Agenda</a>
-    <a class="btn tiny ghost" href=${icsHref(e)} download="evenement-ensam.ics"><${Icon} name="download" size=${14}/> Autre agenda (.ics)</a>`;
+  return html`<button type="button" class="btn small ghost" onClick=${() => setFeuille(true)}><${Icon} name="calendar" size=${15}/> Ajouter à mon agenda</button>
+    ${feuille ? html`<${FeuilleAgenda} e=${e} onClose=${() => setFeuille(false)}/>` : null}`;
 }
 
 function AdminActions({ ctx, e, onEdit, onDone }) {
@@ -156,9 +173,7 @@ function EventCard({ ctx, e, onOpen, onEdit }) {
     </div>
     ${(me.role !== 'admin' && !e.annule && !fini) || me.role === 'admin' ? html`<div class="ev-act">
       <${Participer} ctx=${ctx} e=${e}/>
-      <span class="spacer"></span>
-      <${AjoutAgenda} e=${e}/>
-      ${me.role === 'admin' ? html`<${AdminActions} ctx=${ctx} e=${e} onEdit=${() => onEdit(e)}/>` : null}
+      ${me.role === 'admin' ? html`<span class="spacer"></span><${AdminActions} ctx=${ctx} e=${e} onEdit=${() => onEdit(e)}/>` : null}
     </div>` : null}
   </article>`;
 }
@@ -243,7 +258,7 @@ export function AgendaPage({ ctx }) {
   return html`<div class="sub-page agenda">
     <div class="section-head"><div class="ag-head"><h2 class="h-ico"><${Icon} name="calendar"/> Agenda du réseau</h2><p class="small muted">Forum, conférences, portes ouvertes : ce qui se passe à l’école et en ligne.</p></div>
       ${isAdmin ? html`<button class="btn primary small" id="ev-new" onClick=${() => setEdit('new')}><${Icon} name="plus" size=${15}/> Publier un événement</button>` : null}</div>
-    ${avenir.length ? mois.map(m => html`<section class="ev-month"><h3 class="ev-month-h"><span>${MOIS[m.d.getMonth()]}</span> <span class="mono">${m.d.getFullYear()}</span></h3>
+    ${avenir.length ? mois.map(m => html`<section class="ev-month"><h3 class="ev-month-h"><span>${MOIS[m.d.getMonth()]}</span> <span>${m.d.getFullYear()}</span></h3>
       <div class="ev-list">${m.items.map(e => html`<${EventCard} key=${e.id} ctx=${ctx} e=${e} onOpen=${open} onEdit=${x => setEdit(x)}/>`)}</div></section>`)
       : html`<${Empty} icon="calendar" title="Aucun événement à venir">${isAdmin ? 'Publie le premier : tous les membres concernés sont prévenus.' : 'Les forums, conférences et portes ouvertes apparaîtront ici.'}<//>`}
     ${passes.length ? html`<button class="linkish small past-toggle" aria-expanded=${old} onClick=${() => setOld(!old)}>${`Événements passés (${passes.length})`}</button>
@@ -302,16 +317,17 @@ injectCSS('agenda', `
 .ag-head { display: flex; flex-direction: column; gap: .15rem; }
 .ag-head p { margin: 0; }
 .ev-month { display: flex; flex-direction: column; gap: .6rem; margin-top: .4rem; }
-.ev-month-h { margin: .4rem 0 0; font-size: .8rem; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 650; }
+.ev-month-h { margin: .4rem 0 0; font-size: var(--fs-2); color: var(--muted); font-weight: 600; font-family: var(--f-body); }
+.ev-month-h > span:first-child { text-transform: capitalize; }
 .ev-list { display: flex; flex-direction: column; gap: .6rem; }
-.ev-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .6rem .9rem; padding: .9rem 1rem; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); }
+.ev-card { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .6rem .9rem; padding: .95rem 1.05rem; border-radius: var(--r-lg); background: var(--surface); border: 0; box-shadow: var(--sh1); }
 .ev-card.off .ev-title button, .struck { text-decoration: line-through; color: var(--muted) !important; }
 .ev-card.off, .ev-card.past { background: color-mix(in srgb, var(--surface) 65%, var(--surface-2)); }
 .ev-card.past .ev-date, .ev-card.off .ev-date { background: var(--surface-2); color: var(--ink-2); }
-.ev-date { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 4.2rem; padding: .45rem .5rem .5rem; border-radius: 12px; background: var(--accent-soft); color: var(--accent); line-height: 1.15; align-self: start; flex: none; }
+.ev-date { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 4.2rem; padding: .45rem .5rem .5rem; border-radius: var(--r-md); background: var(--surface-2); color: var(--blue-text); line-height: 1.15; align-self: start; flex: none; }
 .ev-date .ev-wd { font-size: .7rem; font-weight: 650; text-transform: capitalize; }
-.ev-date .ev-d { font-size: 1.65rem; font-weight: 600; }
-.ev-date .ev-m { font-size: .76rem; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; }
+.ev-date .ev-d { font: 750 1.65rem/1.05 var(--f-display); font-variant-numeric: tabular-nums; }
+.ev-date .ev-m { font-size: var(--fs-1); font-weight: 650; }
 .ev-date.compact { min-width: 3.4rem; padding: .35rem .4rem; }
 .ev-date.compact .ev-d { font-size: 1.3rem; }
 .ev-main { min-width: 0; display: flex; flex-direction: column; gap: .25rem; align-items: flex-start; }
@@ -326,7 +342,11 @@ injectCSS('agenda', `
 .ev-line { display: inline-flex; align-items: center; gap: .3rem; overflow-wrap: anywhere; margin: 0; }
 .ev-desc { margin: .15rem 0 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .ev-full { white-space: pre-line; margin: 0; }
-.ev-act { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; padding-top: .55rem; border-top: 1px dashed var(--line); }
+.ev-act { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; padding-top: .6rem; border-top: 1px solid var(--line); }
+.ev-participer.on { background: var(--sel-bg); color: var(--sel-ink); box-shadow: inset 0 0 0 1px var(--sel-ring); border-color: transparent; }
+.ag-quoi { display: flex; flex-direction: column; gap: .25rem; }
+.ag-choix { display: flex; flex-direction: column; gap: .5rem; }
+.ag-choix .btn { justify-content: flex-start; min-height: 48px; }
 .ev-act .mini { margin: 0; }
 .ev-admin { display: inline-flex; flex-wrap: wrap; gap: .2rem; align-items: center; }
 .ev-type { --c: var(--accent); color: var(--c); background: color-mix(in srgb, var(--c) 12%, transparent); }
