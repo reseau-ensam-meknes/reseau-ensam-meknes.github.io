@@ -610,6 +610,12 @@ Object.assign(AR, {
 
 // Lot design · C : visages, logos, icônes, badges, bouclier « vérifié »
 Object.assign(AR, {
+  'Logos affichés pour reconnaître les entreprises, sans aucun partenariat.': 'شعارات معروضة للتعرّف على الشركات، دون أي شراكة.',
+  'Profil vérifié': 'ملف موثَّق',
+  'Profil vérifié : ce que ça veut dire': 'ملف موثَّق: ماذا يعني ذلك؟',
+  'Diplôme confirmé : nom sur la liste officielle de sa promo, confirmation par deux lauréats vérifiés de la même promo, ou par l’équipe du réseau.': 'الشهادة مؤكَّدة: الاسم في اللائحة الرسمية للدفعة، أو تأكيد من خريجَين موثَّقَين من الدفعة نفسها، أو من فريق الشبكة.',
+  'Inscription confirmée : e-mail de l’école, nom sur la liste officielle de sa promo, ou confirmation par l’équipe du réseau.': 'التسجيل مؤكَّد: البريد الإلكتروني للمدرسة، أو الاسم في اللائحة الرسمية للدفعة، أو تأكيد من فريق الشبكة.',
+  'Ajoute une photo, les étudiants écrivent plus facilement à un visage.': 'إضافة صورة: الطلبة يراسلون وجهًا بسهولة أكبر.',
 });
 
 // Lot design · D : ordinateur

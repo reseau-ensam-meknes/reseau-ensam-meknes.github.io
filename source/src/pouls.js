@@ -3,7 +3,7 @@
 // Avant, sur l'accueil seulement : qui est déjà là (« 39 lauréats sont déjà là, dont 5 de ta filière »).
 // Pas de classement, pas de comparaison ; un appui ouvre exactement les personnes annoncées.
 import { html, useState, useEffect } from './vendor/preact-htm.js';
-import { Avatar, Icon, injectCSS, Modal, ensuite } from './ui.js';
+import { AvatarPile, Icon, injectCSS, Modal, ensuite } from './ui.js';
 import { addAR, arCount } from './i18n.js';
 import { poulsReseau, presenceReseau, lignePresence, lignePouls, accueilArrivee, phrasesArrivee, NB_FONDATEURS } from './logic.js';
 
@@ -16,16 +16,21 @@ export function PoulsReseau({ ctx, onOpen, accueil = false, semaine = false }) {
   const aide = p.nbAidants > 0 && p.nbAides > 0;
   const pr = !aide && accueil ? presenceReseau(data, me) : null;
   if (!aide && !pr) return null;
-  const visages = (aide ? p.aidants : pr.visages).slice(0, 3).map(id => store.byId('profiles', id)).filter(Boolean);
+  // Trois visages au plus, puis « +N » : les autres lauréats qui ont aidé, ou les autres de la même promo, filière ou du réseau
+  const visages = (aide ? p.aidants : pr.visages).map(id => store.byId('profiles', id)).filter(Boolean);
+  const reste = aide ? undefined : resteDe(pr, me, Math.min(3, visages.length));
   const ouvrir = aide ? onOpen : () => go('reseau/annuaire/' + (VERS[pr.cle] || 'laureats'));
   const quand = aide && !(semaine && p.jours === 7) ? (p.jours === 7 ? 'Cette semaine' : 'Ce mois-ci') : null;
   const Tag = ouvrir ? 'button' : 'div';
   return html`<${Tag} type=${ouvrir ? 'button' : undefined} class=${'pouls' + (ouvrir ? ' clickable' : '')} onClick=${ouvrir}>
-    ${visages.length ? html`<span class="pouls-visages" aria-hidden="true">${visages.map(v => html`<${Avatar} key=${v.id} p=${v} size=${28}/>`)}</span>` : null}
+    ${visages.length ? html`<${AvatarPile} gens=${visages} size=${28} reste=${reste} cls="pouls-visages"/>` : null}
     <span class="pouls-txt">${quand ? html`<strong>${quand}</strong> ` : null}<span>${aide ? lignePouls(p) : lignePresence(pr)}</span>${aide && p.recrutes ? html`<span class="pouls-sep"> · </span><span>${p.recrutes > 1 ? `${p.recrutes} recrutements confirmés` : '1 recrutement confirmé'}</span>` : null}</span>
     ${ouvrir ? html`<span class="pouls-go" aria-hidden="true"><${Icon} name="arrow" size=${16}/></span>` : null}
   </${Tag}>`;
 }
+
+// Combien d'autres personnes derrière les visages montrés (les mêmes que la phrase : promo, filière, parcours, ou tous les lauréats, moi exclu)
+const resteDe = (pr, me, montres) => (pr ? Math.max(0, (pr.proches || pr.total - (me?.role === 'laureat' ? 1 : 0)) - montres) : 0);
 
 // ---------------------------------------------------------------------------
 // L'accueil juste après l'inscription : une feuille, une fois par compte, sur le premier accueil.
@@ -82,7 +87,7 @@ export function ArriveeSheet({ a, pas, me, store, onClose }) {
     : pas.href ? html`<a class="btn primary" id="arrivee-go" href=${pas.href} target="_blank" rel="noopener" onClick=${onClose}><${Icon} name="video" size=${18}/> ${pas.cta}</a>`
     : html`<button type="button" class="btn primary" id="arrivee-go" onClick=${() => { onClose(); ensuite(pas.go); }}>${pas.ici ? html`<${Icon} name="check" size=${18}/>` : null}${pas.cta}${pas.ici ? null : html`<${Icon} name="arrow" size=${18}/>`}</button>`;
   return html`<${Modal} title=${'Bienvenue, ' + (me.full_name || '').split(' ')[0]} cls="arrivee" footer=${bouton} onClose=${onClose}>
-    ${visages.length ? html`<span class="arrivee-visages" aria-hidden="true">${visages.map(v => html`<${Avatar} key=${v.id} p=${v} size=${44}/>`)}</span>` : null}
+    ${visages.length ? html`<${AvatarPile} gens=${visages} size=${44} reste=${resteDe(a.presence, me, Math.min(3, visages.length))} cls="arrivee-visages"/>` : null}
     <p class="arrivee-titre">${ph.titre}</p>
     ${ph.sous ? html`<p class="arrivee-sous">${ph.sous}</p>` : null}
     ${a.fondateur ? html`<p class="arrivee-fondateur"><${Icon} name="award" size=${16}/><span>${`Tu fais partie des ${NB_FONDATEURS} premiers lauréats : le badge « Membre fondateur » est sur ton profil.`}</span></p>` : null}
@@ -93,9 +98,7 @@ export function ArriveeSheet({ a, pas, me, store, onClose }) {
 
 injectCSS('pouls', `
 .modal.arrivee .modal-body { align-items: center; text-align: center; gap: .5rem; padding-block: 1.4rem 1rem; }
-.arrivee-visages { display: flex; justify-content: center; margin-block-end: .25rem; }
-.arrivee-visages .avatar { box-shadow: 0 0 0 3px var(--surface); }
-.arrivee-visages .avatar + .avatar { margin-inline-start: -10px; }
+.arrivee-visages { justify-content: center; margin-block-end: .25rem; }
 .arrivee-titre { margin: 0; font-family: var(--f-display); font-weight: 700; font-size: 1.3rem; line-height: 1.25; color: var(--ink); text-wrap: balance; }
 .arrivee-sous, .arrivee-fondateur { margin: 0; color: var(--ink-2); }
 .arrivee-fondateur { font-size: var(--fs-2); display: flex; gap: .4rem; align-items: flex-start; text-align: start; }
@@ -103,16 +106,13 @@ injectCSS('pouls', `
 .arrivee-pas { margin: .5rem 0 0; color: var(--muted); font-size: var(--fs-2); max-inline-size: 36ch; text-wrap: pretty; }
 .arrivee-pas-t { display: block; color: var(--ink); font-weight: 600; }
 
-.pouls { display: flex; align-items: center; gap: .7rem; padding: .55rem .8rem .55rem .6rem; border-radius: var(--r-pill); background: color-mix(in srgb, var(--good-soft) 70%, var(--surface)); border: 1px solid color-mix(in srgb, var(--good) 22%, var(--line)); color: var(--ink-2); font-size: var(--fs-2); text-align: start; width: 100%; }
-button.pouls { cursor: pointer; font: inherit; font-size: var(--fs-2); }
-button.pouls:hover { border-color: color-mix(in srgb, var(--good) 45%, var(--line)); }
-.pouls-visages { display: flex; flex: none; }
-.pouls-visages .avatar { box-shadow: 0 0 0 2px var(--surface); }
-.pouls-visages .avatar + .avatar { margin-inline-start: -5px; }
+.pouls { display: flex; align-items: center; gap: .7rem; padding: .6rem .8rem .6rem .65rem; border-radius: var(--r-lg); background: var(--surface); border: 0; box-shadow: var(--sh1); color: var(--ink-2); font-size: var(--fs-2); text-align: start; width: 100%; }
+button.pouls { cursor: pointer; font: inherit; font-size: var(--fs-2); transition: box-shadow .2s; }
+button.pouls:hover { box-shadow: var(--sh2); }
 .pouls-txt { flex: 1; min-width: 0; text-wrap: pretty; }
 .pouls-txt strong { color: var(--good); font-weight: 600; }
 .pouls-go { flex: none; display: inline-flex; align-self: center; color: var(--muted); }
-@media (max-width: 420px) { .pouls { border-radius: var(--r-lg); align-items: flex-start; } }
+@media (max-width: 420px) { .pouls { align-items: flex-start; } }
 `);
 
 // Arabe : accord du nombre (1, 2, 3-10, 11 et plus) et du verbe ; الخريجين, jamais القدامى

@@ -1,6 +1,6 @@
 // Offres : liste compacte, fiche détaillée, candidature, gestion des candidats par le lauréat.
 import { html, useState, useMemo, useEffect, useRef } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, TYPE_ICON, toast, RoleLine, celebrate, injectCSS, PartagerWhatsApp, lienWhatsApp, lienDirect, allerAuChamp } from './ui.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, TYPE_ICON, toast, RoleLine, celebrate, injectCSS, PartagerWhatsApp, lienWhatsApp, lienDirect, allerAuChamp, Bouclier } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
 import { getLang, addAR, arCount } from './i18n.js';
 import { TYPES, titreOffre, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande, manquesOffre, peutRecommander, porteApresRefus } from './logic.js';
@@ -200,7 +200,7 @@ function AuteurOffre({ ctx, o, author, candidat }) {
   const phrase = !candidat ? `Partagée par ${p}` : coopt ? `Partagée par ${p}, qui peut te recommander` : `Partagée par ${p}, qui reçoit ta candidature et te répond ici`;
   return html`<button type="button" class=${'od-author' + (coopt ? ' coopt' : '')} onClick=${() => ctx.openProfile(author)}>
     <${Avatar} p=${author} size=${40}/>
-    <span class="od-author-txt"><span class="od-author-line">${phrase}</span><${RoleLine} p=${author} score=${ctx.scores.get(author.id)}/></span>
+    <span class="od-author-txt"><span class="od-author-line">${phrase}<${Bouclier} p=${author}/></span><${RoleLine} p=${author} score=${ctx.scores.get(author.id)}/></span>
     <span class="od-author-ico" aria-hidden="true"><${Icon} name="arrow" size=${16}/></span>
   </button>`;
 }

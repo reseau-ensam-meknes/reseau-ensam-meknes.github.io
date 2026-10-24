@@ -3,7 +3,7 @@ import { getLang, setLang, chargerAR } from './i18n.js';
 import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore, texteErreur } from './store.js';
 import { Icon, Field, Empty, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, Num, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille } from './ui.js';
-import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, besoinsDeMoi, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte } from './logic.js';
+import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, fondateursOf, mentorState, requestsFor, timeAgo, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
 import { ParcoursPage, EspacePage, Journey, journeyStep, confirmerRecrutement, refuserRecrutement, versMerci } from './me.js';
 import { DashboardPage } from './dashboard.js';
@@ -321,7 +321,7 @@ function PersonaSwitch({ store, go }) {
 // ---------------------------------------------------------------------------
 function Cloche({ notifs, onGo, onClose }) {
   const faire = notifs.filter(n => n.geste);
-  const nouvelles = notifs.filter(n => !n.geste).sort((a, b) => (b.rappel ? 1 : 0) - (a.rappel ? 1 : 0) || new Date(b.at) - new Date(a.at)).slice(0, 10);
+  const nouvelles = notifs.filter(n => !n.geste && !n.semaine).sort((a, b) => (b.rappel ? 1 : 0) - (a.rappel ? 1 : 0) || new Date(b.at) - new Date(a.at)).slice(0, 10);
   return html`<${Modal} title="Notifications" cls="cloche" onClose=${onClose}>
     ${!faire.length && !nouvelles.length ? html`<p class="cl-vide"><${Icon} name="check" size=${20}/><span><strong>Tout est à jour.</strong><span class="small muted">Ce qui te concerne arrivera ici.</span></span></p>` : html`
     <section class="cl-groupe" aria-labelledby="cl-faire">
@@ -501,6 +501,9 @@ function buildNotifs({ data, me, store, saison }) {
   // Enquête d'insertion (6 et 12 mois après le diplôme) : facultative, personne ne l'attend ; datée du début de sa vague
   const due = enqueteDue(me, data.enquetes_insertion);
   if (due) out.push({ key: 'eq' + due.vague, action: true, tone: 'brass', icon: 'chart', to: 'enquete', at: due.debut.toISOString(), text: `Enquête ${due.vague} mois après le diplôme : 2 minutes pour aider les promos suivantes.` });
+  // Un lauréat sans photo : la petite tâche « Ajoute une photo » (vers Mon profil, où la carte photo vient en premier), en dernier
+  const ph = tachePhoto(me, { live: store.mode === 'live' });
+  if (ph) out.push(ph);
   // Administration : signalements à traiter
   if (me.role === 'admin') {
     const sig = (data.signalements || []).filter(x => x.status === 'ouvert');
@@ -555,7 +558,7 @@ function prochainPas(ctx, notifs, etape, { plAttente, helper, besoins = [] } = {
     const adm = store.byId('profiles', conv.autre)?.role === 'admin';
     return { key: 'msg' + conv.autre, ref: conv.autre, message: true, icon: 'chat', eyebrow: 'Un message t’attend', titre: conv.nonLus > 1 ? `${nom(conv.autre)} t’a écrit ${conv.nonLus} messages.` : `${nom(conv.autre)} t’a écrit.`, cta: adm ? 'Répondre' : `Répondre à ${prenom(conv.autre)}`, go: () => go('messages/' + conv.autre) };
   }
-  const a = notifs.find(n => n.action && !n.rdv && !n.besoin && !/^(eq|dc|md|sc|pa|dm)/.test(n.key || '') && !(role === 'etudiant' && n.icon === 'briefcase'));
+  const a = notifs.find(n => n.action && !n.rdv && !n.besoin && !/^(eq|dc|md|sc|pa|dm|ph)/.test(n.key || '') && !(role === 'etudiant' && n.icon === 'briefcase'));
   if (a) return pasNotif(ctx, a);
   // Un étudiant précis vaut mieux que l'étape « Aide un étudiant »
   const aide = role === 'laureat' && besoins[0] ? pasBesoin(ctx, besoins[0]) : null;

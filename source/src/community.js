@@ -1,6 +1,6 @@
 // Entraide, Communauté (classement, annuaire, vitrine des talents) et profils.
 import { html, useState, useMemo, useRef, useEffect } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, toast, LevelChip, RoleLine, injectCSS, PartagerWhatsApp, lienDirect, allerAuChamp } from './ui.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, toast, LevelChip, RoleLine, injectCSS, PartagerWhatsApp, lienDirect, allerAuChamp, Bouclier, Embleme } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
 import { ChoixRole, accordIci } from './entree.js';
 import { getLang, setLang } from './i18n.js';
@@ -191,8 +191,9 @@ export function ProfileModal({ ctx, p: p0, onClose, onAskMentor }) {
   const masques = groupesMasques(store, p1);
   const p = masques.length ? { ...p1, ...Object.fromEntries(masques.flatMap(g => VIS_CHAMPS[g].map(c => [c, null]))) } : p1;
   const s = scores.get(p.id);
-  // Un étudiant ne voit ni points ni classement : seulement les badges qui disent à qui il peut faire confiance
-  const badges = badgesOf(s, p, { star: ctx.starId, fondateurs: ctx.fondateurs }).filter(b => me.role !== 'etudiant' || ['verifie', 'fondateur', 'mentor', 'reactif'].includes(b.id));
+  // Un étudiant ne voit ni points ni classement : seulement les badges qui disent à qui il peut faire confiance.
+  // « Vérifié » n'est pas un badge ici : c'est le bouclier, juste après le nom.
+  const badges = badgesOf(s, p, { star: ctx.starId, fondateurs: ctx.fondateurs }).filter(b => b.id !== 'verifie' && (me.role !== 'etudiant' || ['fondateur', 'mentor', 'reactif'].includes(b.id)));
   const helped = data.placements.filter(x => x.laureat_id === p.id && x.status === 'confirme').length;
   // Seulement les chiffres non nuls, accordés : un nouveau lauréat n'affiche pas une rangée de zéros
   const stats = [[s?.points, 'point'], [helped, 'recruté'], [s?.mentorats, 'mentorat'], [s?.offres, 'offre']]
@@ -200,7 +201,7 @@ export function ProfileModal({ ctx, p: p0, onClose, onAskMentor }) {
   const st = p.role === 'etudiant' ? statutOf(data, p, saison) : null;
   return html`<${Modal} title="Profil" onClose=${onClose}>
     <div class="profile">
-      <div class="profile-head"><${Avatar} p=${p} size=${64}/><div><h2>${p.full_name}</h2><${RoleLine} p=${p} score=${s} sansEntreprise=${!!p.entreprise}/>
+      <div class="profile-head"><${Avatar} p=${p} size=${64}/><div><div class="profile-l1"><h2>${p.full_name}</h2><${Bouclier} p=${p} explique/></div><${RoleLine} p=${p} score=${s} sansEntreprise=${!!p.entreprise}/>
         <p class="small muted">${p.role === 'laureat' ? p.filiere : p.role === 'etudiant' ? `${NIVEAUX[niveauOf(p, saison)]?.label} · promo ${p.promo}` : ''}${p.ville ? html` · <span translate="no">${villeAffichee(p.ville, getLang())}</span>` : ''}${p.pays && p.pays !== 'Maroc' ? `, ${p.pays}` : ''}</p></div></div>
       ${p.poste || p.entreprise ? html`<p>${p.poste ? html`<strong>${p.poste}</strong>` : null}${p.entreprise ? html`${p.poste ? ' chez ' : ''}<button class="linkish" onClick=${() => { onClose(); ctx.openEntreprise?.(p.entreprise); }}>${p.entreprise}</button>` : null}${p.secteur ? html` <span class="mini">${p.secteur}</span>` : null}</p>` : null}
       ${st ? html`<p><span class=${'state-pill s-' + st.key}>${st.label}</span>${st.pl ? ` ${st.pl.entreprise}` : ''}</p>` : null}
@@ -209,7 +210,7 @@ export function ProfileModal({ ctx, p: p0, onClose, onAskMentor }) {
       ${p.bio ? html`<p>${p.bio}</p>` : null}
       ${(p.competences || []).length ? html`<p class="offer-target">${p.competences.map(c => html`<span class="mini">${c}</span>`)}</p>` : null}
       ${p.role !== 'etudiant' && me.role !== 'etudiant' && stats.length ? html`<div class="profile-stats">${stats.map(x => html`<span>${x}</span>`)}</div>` : null}
-      ${badges.length ? html`<div class="badge-row">${badges.map(b => html`<span class="mini badge-mini" title=${b.desc}><${Icon} name="star" size=${12}/> ${b.nom}</span>`)}</div>` : null}
+      ${badges.length ? html`<div class="badge-row">${badges.map(b => html`<span class="mini badge-mini" title=${b.desc}><${Embleme} id=${b.id} size=${16}/> ${b.nom}</span>`)}</div>` : null}
       ${(p.linkedin || p.cv_path || p.cv_url) ? html`<dl class="offer-more">${p.linkedin ? html`<div><dt>LinkedIn</dt><dd><a href=${p.linkedin.startsWith('http') ? p.linkedin : 'https://' + p.linkedin} target="_blank" rel="noopener" dir="ltr" translate="no">${p.linkedin}</a></dd></div>` : null}
         ${p.cv_path || p.cv_url ? html`<div><dt>CV</dt><dd><${CvButton} ctx=${ctx} p=${p} small/></dd></div>` : null}</dl>` : null}
       ${masques.length ? html`<p class="small muted cf-locked"><${Icon} name="lock" size=${14}/> Visible après accord : ${masques.map(g => html`<span class="mini">${VIS_LABELS[g]}</span>`)}</p>` : null}

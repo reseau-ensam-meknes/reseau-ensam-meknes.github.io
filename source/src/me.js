@@ -1,6 +1,6 @@
 // « Mon parcours » (étudiants) et « Mon espace » (lauréats).
 import { html, useState } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, Bar, toast, LevelChip, CompanyLogo, TYPE_ICON, Num, celebrate, injectCSS, LigneAFaire } from './ui.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, Bar, toast, LevelChip, CompanyLogo, TYPE_ICON, Num, celebrate, injectCSS, LigneAFaire, Embleme } from './ui.js';
 import { addAR, arCount } from './i18n.js';
 import { PoulsReseau } from './pouls.js';
 import { OBJECTIFS, NIVEAUX, TYPES, niveauOf, statutOf, typeForNiveau, seasonLabel, timeAgo, levelOf, BADGES, badgesOf, BAREME, computeScores, NIVEAUX_IMPACT, mentorState, requestsFor, demandesPour } from './logic.js';
@@ -362,13 +362,14 @@ function MesBadges({ s, mine }) {
   // « Membre fondateur » ne s'obtient plus après les 25 premiers : on ne le montre qu'à ceux qui l'ont
   const possibles = BADGES.filter(b => b.id !== 'fondateur' || has.has(b.id));
   const autres = possibles.filter(b => !has.has(b.id) && b !== next);
-  const tuile = (b, on) => html`<div class=${'badge' + (on ? ' has' : '')} title=${b.desc} key=${b.id}><span class="badge-medal"><${Icon} name=${on ? 'star' : 'spark'} size=${20}/></span><strong>${b.nom}</strong><span class="small muted">${b.desc}</span></div>`;
+  // Un emblème propre à chaque badge : en couleur quand il est obtenu, en contour discret sinon
+  const tuile = (b, on) => html`<div class=${'badge' + (on ? ' has' : '')} title=${b.desc} key=${b.id}><span class=${'badge-medal m-' + b.id}><${Embleme} id=${b.id} size=${24}/></span><strong>${b.nom}</strong><span class="small muted">${b.desc}</span></div>`;
   let prochain = null;
   if (next) {
     const [quoi, f] = VERS_BADGE[next.id];
     const [cur, goal] = f(s).map(x => Number(x) || 0);
     prochain = html`<div class="badge-next">
-      <span class="badge-medal"><${Icon} name="spark" size=${20}/></span>
+      <span class=${'badge-medal m-' + next.id}><${Embleme} id=${next.id} size=${24}/></span>
       <div class="grow">${mine.length ? html`<p class="eyebrow">Prochain badge</p>` : null}<strong>${next.nom}</strong><span class="small muted">${quoi}</span>
         ${goal > 1 ? html`<div class="bn-prog"><${Bar} value=${Math.min(1, cur / goal)} label=${`${Math.min(cur, goal)} sur ${goal}`}/><span class="small mono">${Math.min(cur, goal)} sur ${goal}</span></div>` : null}</div>
     </div>`;
@@ -417,10 +418,10 @@ injectCSS('me-ux', `
 .merci-qui > span { min-width: 0; }
 .mercis-more .mercis { padding-top: .3rem; }
 
-.badge-next { display: flex; align-items: center; gap: .8rem; padding: .85rem 1rem; border-radius: var(--r-lg); border: 1px dashed color-mix(in srgb, var(--brass) 50%, var(--line)); background: color-mix(in srgb, var(--brass-soft) 45%, var(--surface)); }
-.badge-next .badge-medal { flex: none; background: var(--surface); color: var(--brass); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brass) 35%, transparent); }
+.badge-next { display: flex; align-items: center; gap: .8rem; padding: .85rem 1rem; border-radius: var(--r-lg); border: 0; background: var(--surface-2); }
+.badge-next .badge-medal { flex: none; margin: 0; background: var(--surface); color: var(--brass); border-color: color-mix(in srgb, var(--brass) 45%, var(--line-strong)); }
 .badge-next .grow { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .15rem; }
-.badge-next .eyebrow { margin: 0; color: var(--brass); }
+.badge-next .eyebrow { margin: 0; }
 .bn-prog { display: flex; align-items: center; gap: .6rem; margin-top: .35rem; }
 .bn-prog .bar { flex: 1; }
 
