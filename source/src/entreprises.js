@@ -134,8 +134,8 @@ function ListeEntreprises({ ctx, all, ouvrir }) {
     ${list.length ? html`<ul class="ent-list">${vus.map(c => html`<li key=${c.k}><button class="ent-row clickable" onClick=${() => ctx.go('reseau/entreprises/' + encodeURIComponent(c.k))}>
       <${CompanyLogo} name=${c.nom} size=${40}/>
       <span class="grow"><strong translate="no">${c.nom}</strong>
-        <span class="ent-row-sub">${c.note != null ? html`<${Etoiles} note=${c.note} size=${13}/><b>${fmtNote(c.note)}</b>` : null}${c.ville || c.pays ? html`<span class="muted small" translate="no">${lieuTxt(c.ville, c.pays)}</span>` : null}</span></span>
-      <span class="mini-stats">${c.laureats.length ? html`<span class="ent-nb"><${Icon} name="people" size=${15}/> ${pluriel(c.laureats.length, 'lauréat', 'lauréats')}</span>` : null}${c.avis.length ? html`<span title="Avis"><${Icon} name="star" size=${15}/> ${c.avis.length}</span>` : null}${c.entretiens.length ? html`<span title="Entretiens"><${Icon} name="qa" size=${15}/> ${c.entretiens.length}</span>` : null}</span>
+        ${c.note != null || c.ville || c.pays ? html`<span class="ent-row-sub">${c.note != null ? html`<${Etoiles} note=${c.note} size=${13}/><b>${fmtNote(c.note)}</b>` : null}${c.ville || c.pays ? html`<span class="muted small" translate="no">${lieuTxt(c.ville, c.pays)}</span>` : null}</span>` : null}
+      <span class="mini-stats">${c.laureats.length ? html`<span class="ent-nb"><${Icon} name="people" size=${15}/> ${pluriel(c.laureats.length, 'lauréat', 'lauréats')}</span>` : null}${c.avis.length ? html`<span title="Avis"><${Icon} name="star" size=${15}/> ${c.avis.length}</span>` : null}${c.entretiens.length ? html`<span title="Entretiens"><${Icon} name="qa" size=${15}/> ${c.entretiens.length}</span>` : null}</span></span>
     </button></li>`)}</ul>` : null}
     <${VoirPlus} reste=${reste} onPlus=${plus}/>
     ${!list.length ? html`<${Empty} icon="briefcase" title="Aucune entreprise trouvée">${ouvrir ? 'Tu as passé un entretien ou fait un stage ? Sois le premier à partager.' : ''}<//>` : null}
@@ -446,7 +446,9 @@ injectCSS('entreprises', `
 .ent-row .grow strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ent-row-sub { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; min-height: 1.1rem; }
 .ent-row-sub b { font-size: var(--fs-2); color: var(--ink-2); font-variant-numeric: tabular-nums; }
-.ent-row .mini-stats { flex: none; }
+/* Sous le nom, qui garde toute la largeur : la note et le lieu, puis les lauréats, les avis et les entretiens */
+.ent-row .mini-stats { font-family: var(--f-body); font-size: var(--fs-2); font-variant-numeric: tabular-nums; gap: .8rem; flex-wrap: wrap; }
+.ent-row .mini-stats .ent-nb { font-size: var(--fs-2); }
 .mini-stats .ent-nb { font: 500 .85rem var(--f-body); white-space: nowrap; }
 .ent-stars { display: inline-flex; gap: 1px; font-size: var(--s, 15px); line-height: 1; color: color-mix(in srgb, var(--brass) 25%, transparent); }
 .ent-stars .on { color: var(--brass); }

@@ -747,7 +747,9 @@ injectCSS('admin', `
 .verif-list li { flex-wrap: nowrap; align-items: flex-start; }
 .verif-who { display: flex; flex-direction: column; gap: .3rem; min-width: 0; flex: 1; }
 .verif-facts { display: flex; flex-direction: column; gap: .15rem; min-width: 0; padding-inline-start: calc(36px + .6rem); }
-.verif-facts > span { display: inline-flex; align-items: center; gap: .3rem; flex-wrap: wrap; }
+/* L'icône reste devant son texte, qui passe à la ligne dessous (jamais une icône seule sur sa ligne) */
+.verif-facts > span { display: block; overflow-wrap: anywhere; }
+.verif-facts > span > svg { vertical-align: -2px; margin-inline-end: .3rem; }
 .verif-acts { display: flex; gap: .4rem; flex-wrap: wrap; padding-inline-start: calc(36px + .6rem); }
 .verif-acts:empty { display: none; }
 .mod-cible > .avatar { margin-bottom: .2rem; }

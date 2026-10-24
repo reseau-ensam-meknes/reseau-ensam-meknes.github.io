@@ -1559,7 +1559,8 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"] { display: 
 .ligne .person-txt, .ligne-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; line-height: 1.3; }
 .ligne .person-name, .ligne-nom { font-weight: 600; font-size: var(--fs-3); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ligne .role-line, .ligne-meta { font-size: var(--fs-2); color: var(--muted); min-width: 0; }
-.ligne-meta { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+/* Chaque ligne de texte tient sur une ligne (points de suspension) : toutes les lignes ont la même hauteur, le détail est dans la fiche */
+.ligne-meta { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ligne-act { flex: none; display: flex; align-items: center; gap: var(--sp-2); margin-inline-start: auto; }
 .ligne-act .icon-btn { width: 40px; height: 40px; }
 .ligne-chiffre { flex: none; margin-inline-start: auto; font: 750 var(--fs-4)/1 var(--f-display); font-variant-numeric: tabular-nums; color: var(--ink); white-space: nowrap; }
@@ -1568,7 +1569,7 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"] { display: 
 .ligne.rang { min-height: 56px; padding-block: var(--sp-2); }
 .ligne.rang.me { box-shadow: inset 3px 0 0 var(--accent); margin-inline: calc(var(--sp-4) * -1); padding-inline: var(--sp-4); }
 .rang-n { flex: none; width: 28px; text-align: center; font: 650 var(--fs-3)/1 var(--f-body); font-variant-numeric: tabular-nums; color: var(--muted); }
-.rang-faits { display: inline-flex; gap: .7rem; flex-wrap: wrap; }
+.rang-faits { flex: none; display: inline-flex; gap: .55rem; flex-wrap: nowrap; }
 .rang-faits span { display: inline-flex; align-items: center; gap: .25rem; }
 /* Au-dessus d'une liste : combien il y en a, en tout */
 .liste-tete { display: flex; align-items: center; gap: var(--sp-2); min-height: 20px; margin: 0; font-size: var(--fs-2); color: var(--muted); }
@@ -1591,8 +1592,9 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"] { display: 
 /* Suivi : quatre chiffres en tête (les .kpis), le détail replié dessous */
 .suivi-detail > summary { display: flex; align-items: center; justify-content: center; gap: .4rem; min-height: 44px; padding: .5rem 1rem; border-radius: var(--r-md); color: var(--tonal-ink); background: var(--tonal-bg); font-weight: 600; cursor: pointer; list-style: none; width: max-content; max-width: 100%; margin-inline: auto; }
 .suivi-detail > summary::-webkit-details-marker { display: none; }
-.suivi-detail > summary svg { transition: transform .2s; transform: rotate(90deg); }
-.suivi-detail[open] > summary svg { transform: rotate(-90deg); }
+/* (plus précis que le miroir arabe des flèches : vers le bas, puis vers le haut, dans les deux sens d'écriture) */
+.suivi-detail > summary svg.ico-arrow { transition: transform .2s; transform: rotate(90deg); }
+.suivi-detail[open] > summary svg.ico-arrow { transform: rotate(-90deg); }
 .suivi-detail[open] > summary { margin-bottom: var(--sp-5); }
 .suivi-detail-corps { display: flex; flex-direction: column; gap: var(--sp-5); }
 
@@ -1601,9 +1603,17 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"] { display: 
 .niv-num .big { font-family: var(--f-display); font-weight: 750; font-variant-numeric: tabular-nums; }
 .rank .num { font-weight: 600; font-variant-numeric: tabular-nums; }
 /* Détails des lignes : deux lignes de méta passées en « sub », le logo d'entreprise à droite, l'état d'un talent */
-.ligne .role-line { flex-wrap: wrap; }
-.ligne-sub { flex: 1 0 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ligne.rang .role-line { flex-direction: column; align-items: flex-start; gap: 1px; }
+.ligne .role-line { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-block: 3px; margin-block: -3px; }
+.ligne .role-line > * { vertical-align: middle; }
+/* En arabe, un nom écrit en lettres latines reste calé à droite comme le reste de la ligne */
+:root[dir="rtl"] .ligne .person-name { text-align: right; }
+.ligne .role-line > .verif, .ligne .role-line > .mini { margin-inline-start: .25rem; }
+.ligne-sub { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Une seule ligne sous le nom, pour garder 56 px : la promo, puis les faits quand la place le permet
+   (sur téléphone, la promo seule ; le détail des points est dans la fiche) */
+.ligne.rang .role-line { display: flex; flex-wrap: nowrap; align-items: center; gap: .6rem; white-space: nowrap; overflow: hidden; }
+.rang-promo { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 480px) { .ligne.rang .rang-faits { display: none; } }
 .ligne-logo { display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: var(--r-md); background: none; cursor: pointer; padding: 0; }
 .ligne-logo:hover { background: var(--surface-2); }
 .ligne .ligne-etat { background: none; padding: 0; font-weight: 600; }

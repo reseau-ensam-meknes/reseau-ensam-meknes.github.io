@@ -177,10 +177,10 @@ function ClassementLaureats({ ctx }) {
   const { vus, reste, plus } = useVoirPlus(board, 20, period);
   return html`<div class="sub-page">
     <p class="muted small">Les lauréats qui aident le plus : offres, recrutements confirmés, mentorats, réponses.</p>
-    <div class="seg" role="group" aria-label="Période">${[['mois', '30 jours'], ['saison', `Année ${seasonLabel(saison)}`], ['tout', 'Depuis le début']].map(([k, l]) => html`<button class=${period === k ? 'on' : ''} aria-pressed=${period === k} onClick=${() => setPeriod(k)}>${l}</button>`)}</div>
+    <div class="chips rangee" role="group" aria-label="Période">${[['mois', '30 jours'], ['saison', `Année ${seasonLabel(saison)}`], ['tout', 'Depuis le début']].map(([k, l]) => html`<button type="button" class=${'chip' + (period === k ? ' on' : '')} aria-pressed=${period === k} onClick=${() => setPeriod(k)}>${l}</button>`)}</div>
     ${board.length ? html`<ol class="lignes classement">${vus.map((x, i) => { const s = scores.get(x.p.id); const faits = FAITS.filter(([k]) => s?.[k] > 0); return html`<li key=${x.p.id} class=${'ligne rang' + (x.p.id === me.id ? ' me' : '')}>
       <span class="rang-n">${i < 3 ? html`<span class=${'medal m' + (i + 1)}>${i + 1}</span>` : i + 1}</span>
-      <${Person} p=${x.p} onOpen=${openProfile} size=${40} sub=${html`<span>${roleTexte(x.p)}</span>${faits.length ? html`<span class="rang-faits">${faits.map(([k, ic, t]) => html`<span title=${t}><${Icon} name=${ic} size=${13}/> ${s[k]}</span>`)}</span>` : null}`}/>
+      <${Person} p=${x.p} onOpen=${openProfile} size=${40} sub=${html`<span class="rang-promo">${roleTexte(x.p, true)}</span>${faits.length ? html`<span class="rang-faits">${faits.map(([k, ic, t]) => html`<span title=${t}><${Icon} name=${ic} size=${13}/> ${s[k]}</span>`)}</span>` : null}`}/>
       <span class="ligne-chiffre">${x.pts}<small>pts</small></span></li>`; })}</ol>` : null}
     <${VoirPlus} reste=${reste} onPlus=${plus}/>
     ${!board.length ? html`<${Empty} icon="trophy" title="Personne n’a encore marqué de points sur cette période">Publie une offre ou réponds à une question pour ouvrir le classement.<//>` : null}
