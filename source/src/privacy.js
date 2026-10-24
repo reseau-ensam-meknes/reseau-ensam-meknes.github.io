@@ -5,6 +5,7 @@ import { PushToggle } from './pwa.js';
 import { PUSH_CATEGORIES, pushChoix } from './logic.js';
 import { addAR } from './i18n.js';
 import { adresseContact } from './regles-entree.js';
+import { FondateurPublicCase } from './fondateurs.js';
 
 // Arabe : textes ajoutés en Phase 3 (le reste est dans i18n-ar.js)
 addAR({
@@ -132,6 +133,10 @@ addAR({
 });
 
 
+// Lot mouvement · D : la seule exception au « jamais public », et seulement avec l'accord du membre
+const PHRASE_FONDATEURS = 'Les membres fondateurs (les 25 premiers lauréats à aider les étudiants) peuvent apparaître en haut de la page d’entrée, visible sans compte : leur nom, leur filière, leur promo, leur photo et la date de leur première aide, seulement s’ils ont dit oui. Sans cet accord, la page n’en donne que le nombre. Tu changes d’avis quand tu veux dans « Mon profil ».';
+addAR({ [PHRASE_FONDATEURS]: 'يمكن أن يظهر الأعضاء المؤسسون (أول 25 خريجًا ساعدوا الطلبة) في أعلى صفحة الدخول، المرئية دون حساب: الاسم والشعبة والدفعة والصورة وتاريخ أول مساعدة، وذلك فقط إن وافقوا. ودون هذه الموافقة، لا تعرض الصفحة إلا عددهم. يمكنك تغيير رأيك متى شئت من «ملفي الشخصي».' });
+
 const cfg = () => (typeof window !== 'undefined' && window.ENSAM_CONFIG) || {};
 
 // Le texte est court et concret : ce qui est collecté, pourquoi, qui le voit, où il est stocké, combien de temps, les droits.
@@ -154,6 +159,7 @@ const SECTIONS = [
   ]],
   ['people', 'Qui voit quoi', [
     'Ton profil est visible par les membres connectés, jamais par le public ni par les moteurs de recherche.',
+    PHRASE_FONDATEURS,
     'Tu choisis qui voit ton entreprise, ta ville, ton LinkedIn, ta présentation et ton CV : tous les membres, seulement les lauréats, ou seulement tes contacts.',
     'Tes coordonnées ne sont visibles que par tes contacts (les membres avec qui tu les partages, l’auteur d’une offre où tu postules, la personne qu’une demande a réunie avec toi) et par l’administration. Tu peux retirer ton accord à tout moment.',
     'Ton CV en PDF est rangé dans un espace privé. Il s’ouvre par un lien valable 10 minutes, et seulement pour : les membres que tu choisis dans « Qui voit quoi », tes contacts (dont l’auteur d’une offre où tu postules), les lauréats quand tu as une demande ouverte, le lauréat qui relit ton CV (ou tous les lauréats tant que personne ne l’a pris), et l’administration.',
@@ -273,6 +279,7 @@ export function MesDonnees({ ctx }) {
     ${cats ? html`<h3 class="md-titre" id="md-notifs">Sur tes appareils</h3>` : null}
     <${PushToggle} ctx=${ctx}/>
     ${cats ? html`<${ChoixNotifs} ctx=${ctx}/>` : null}
+    <${FondateurPublicCase} ctx=${ctx}/>
     <div class="row">
       <button class="btn small" onClick=${exportData}><${Icon} name="download" size=${15}/> Télécharger mes données</button>
       <span class="spacer"></span>

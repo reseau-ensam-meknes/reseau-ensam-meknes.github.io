@@ -26,6 +26,7 @@ import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, branche
 import { MessagesPage, MessagesHome, useAlerteMessages } from './messages.js';
 import { PoulsReseau, marquerArrivee, useArrivee, ArriveeSheet, arriveeEnAttente } from './pouls.js';
 import { ProposerAide } from './demandes.js';
+import { useFondateurs, FondateursBandeau, useFondateurMoi } from './fondateurs.js';
 
 // Le dernier bouton touché, pour que act le retrouve même sans focus (iPhone)
 let dernierBouton = { b: null, t: 0 };
@@ -134,7 +135,8 @@ function App({ store }) {
   const scores = useMemo(() => computeScores(data), [data.offers, data.applications, data.comments, data.placements, data.mentorships, data.answers, data.questions, data.votes]);
   const monthScores = useMemo(() => computeScores(data, new Date(Date.now() - 30 * 864e5)), [data]);
   const star = useMemo(() => starOfMonth(data, monthScores), [data, monthScores]);
-  const fondateurs = useMemo(() => fondateursOf(data.profiles), [data]);
+  // Membres fondateurs : les 25 premiers lauréats à aider les étudiants (fondateurs.js)
+  const fondateurs = useFondateurs(store, data);
 
   // Temps réel : une nouvelle notification venue d'un autre membre s'affiche aussi en bas de l'écran
   const latest = useRef(null);
@@ -740,17 +742,8 @@ function Home(ctx) {
   const s = scores.get(me.id);
   const myApps = data.applications.filter(a => a.student_id === me.id);
   const h = new Date().getHours();
-  // Les 25 premiers lauréats : on leur dit une fois qu'ils sont membres fondateurs (pas par-dessus une autre fenêtre)
-  const fondateur = store.mode === 'live' && isLaureat && !!me.consent_at && !!ctx.fondateurs?.has(me.id);
-  useEffect(() => {
-    // Juste après l'inscription, la feuille d'accueil l'annonce elle-même
-    if (!fondateur || arriveeEnAttente(me.id)) return;
-    const t = setTimeout(() => {
-      if (arriveeEnAttente(me.id) || document.querySelector('.modal-back, .fete-back')) return;
-      celebrate({ cle: 'fondateur-' + me.id, icon: 'award', titre: 'Tu es Membre fondateur !', texte: 'Tu fais partie des 25 premiers lauréats du réseau. Ce badge restera sur ton profil.', action: { label: 'Voir mon badge', onClick: () => go('espace') } });
-    }, 1200);
-    return () => clearTimeout(t);
-  }, [fondateur]);
+  // Un lauréat devient membre fondateur par sa première aide aux étudiants : la fête, puis « Ton nom sur la page d'entrée ? »
+  const feuilleFondateur = useFondateurMoi(ctx);
   const offresBloc = dernieres.length ? html`<div class="section-head"><h3>${enRecherche ? 'Offres pour toi' : 'Dernières offres'}</h3><button class="btn tiny ghost" onClick=${() => go('offres')}>Tout voir <${Icon} name="arrow" size=${14}/></button></div>
     <div class="offer-grid one">${dernieres.map(o => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} onOpen=${() => openOffer(o.id)}/>`)}</div>` : null;
 
@@ -772,6 +765,7 @@ function Home(ctx) {
   return html`<section class="page home">
     <div class="home-cols">
     <div class="home-col">
+      <${FondateursBandeau} ctx=${ctx} onPublier=${() => setCompose(true)}/>
       <header class="hello home-hero sky">
         <div class="hello-txt">
           <h1>${MOMENT(h)} ${first}</h1>
@@ -839,6 +833,7 @@ function Home(ctx) {
     </div>
     </div>
     ${compose ? html`<${OfferComposer} ctx=${ctx} onClose=${() => setCompose(false)}/>` : null}
+    ${feuilleFondateur}
     ${arrivee ? html`<${ArriveeSheet} a=${arrivee} pas=${pas} me=${me} store=${store} onClose=${finArrivee}/>` : null}
     ${(voirEtapes || parRoute) && guide ? html`<${EtapesSheet} me=${me} g=${guide} historique=${!parRoute} onClose=${() => { setVoirEtapes(false); if (parRoute) go('accueil'); }}
       onHide=${() => { setOff(true); setVoirEtapes(false); if (parRoute) go('accueil'); toast('C’est noté. Tu retrouves les premiers pas dans ton menu : « Comment ça marche ? ».'); }}/>` : null}

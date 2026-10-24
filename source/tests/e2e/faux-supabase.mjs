@@ -9,7 +9,9 @@ import path from 'node:path';
 const TYPES = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json', '.png': 'image/png', '.jpg': 'image/jpeg' };
 export const UID = '00000000-0000-4000-8000-0000000000a1';
 
-export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 19, promos: 14 }, reglages = [{ cle: 'domaines_ecole', valeur: ['ensam-umi.ac.ma'] }], offres = [], partagees = {}, profils = [] } = {}) {
+// fondateurs : la réponse de fondateurs_publics() (absente : la base n'est pas à jour), ou (membre) => réponse ;
+// photo : l'image servie par les liens temporaires du stockage (photos des fondateurs)
+export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 19, promos: 14 }, reglages = [{ cle: 'domaines_ecole', valeur: ['ensam-umi.ac.ma'] }], offres = [], partagees = {}, profils = [], fondateurs = null, photo = null } = {}) {
   let port; const appels = []; const meta = {}; const inscrits = [];
   const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' };
   const json = (r, code, body) => { r.writeHead(code, { 'content-type': 'application/json', ...cors }); r.end(body === undefined ? '' : JSON.stringify(body)); };
@@ -20,6 +22,10 @@ export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 1
   };
   const srv = http.createServer((q, r) => {
     const url = new URL(q.url, 'http://x'); const u = decodeURIComponent(url.pathname);
+    if (u.startsWith('/sb/storage/v1/object/sign/photos/')) {
+      if (!photo) { r.writeHead(404); return r.end(); }
+      r.writeHead(200, { 'content-type': 'image/png', ...cors }); return r.end(photo);
+    }
     if (u.startsWith('/sb/')) {
       let b = ''; q.on('data', c => { b += c; }); q.on('end', () => {
         if (q.method === 'OPTIONS') return json(r, 204);
@@ -48,10 +54,25 @@ export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 1
         // Notifications : la clé publique de la plateforme, puis l'abonnement d'un appareil
         if (u === '/sb/functions/v1/notifier' && corps?.job === 'cle') return json(r, 200, { publicKey: 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U' });
         if (u === '/sb/rest/v1/rpc/abonner_push') return json(r, 204);
+        // Membres fondateurs : un membre connecté porte son jeton, un visiteur la clé publique
+        if (u === '/sb/rest/v1/rpc/fondateurs_publics') {
+          const membre = (q.headers.authorization || '') !== 'Bearer cle';
+          const x = typeof fondateurs === 'function' ? fondateurs(membre) : fondateurs;
+          return x ? json(r, 200, x) : json(r, 404, { code: 'PGRST202', message: 'Could not find the function' });
+        }
+        if (u === '/sb/storage/v1/object/sign/photos' && q.method === 'POST') return json(r, 200, (corps?.paths || []).map(x => ({ path: x, signedURL: `/object/sign/photos/${x}?token=t`, error: null })));
         if (u.startsWith('/sb/rest/v1/rpc/')) return json(r, 404, { code: 'PGRST202', message: 'Could not find the function' });
         if (u === '/sb/rest/v1/reglages') return json(r, 200, reglages);
         if (u === '/sb/rest/v1/offers' && q.method === 'GET') return json(r, 200, offres);
-        if ((u === '/sb/rest/v1/profils' || u === '/sb/rest/v1/profiles') && q.method === 'GET') return json(r, 200, [...profils, ...inscrits]);
+        if ((u === '/sb/rest/v1/profils' || u === '/sb/rest/v1/profiles') && q.method === 'GET') return json(r, 200, [...profils.filter(p => !inscrits.some(x => x.id === p.id)), ...inscrits]);
+        // Son profil modifié : la ligne entière revient, comme Supabase (select après update)
+        if (u === '/sb/rest/v1/profiles' && q.method === 'PATCH') {
+          const id = (url.searchParams.get('id') || '').replace(/^eq\./, '');
+          let row = inscrits.find(x => x.id === id);
+          if (!row) { const p = profils.find(x => x.id === id); if (p) { row = { ...p }; inscrits.push(row); } }
+          if (row) Object.assign(row, corps || {});
+          return row ? json(r, 200, /vnd\.pgrst\.object/.test(q.headers.accept || '') ? row : [row]) : json(r, 406, { code: 'PGRST116', message: 'no rows' });
+        }
         if (u === '/sb/rest/v1/profiles' && q.method === 'POST') {
           const row = { created_at: new Date().toISOString(), verified: false, ...(Array.isArray(corps) ? corps[0] : corps) };
           inscrits.push(row);

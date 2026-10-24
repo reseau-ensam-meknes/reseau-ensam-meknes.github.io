@@ -192,8 +192,8 @@ test('cette semaine dans le réseau : les phrases', () => {
   assert.equal(presenceReseau({ profiles: [profiles[0]] }, profiles[0]), null, 'personne d’autre : rien à dire');
 });
 
-test('accueil après l’inscription : le rang d’arrivée d’un lauréat, le même ordre que les membres fondateurs', async () => {
-  const { rangLaureat, ordreArrivee, fondateursOf, NB_FONDATEURS } = await import('../../src/logic.js');
+test('accueil après l’inscription : le rang d’arrivée d’un lauréat (rien à voir avec les membres fondateurs)', async () => {
+  const { rangLaureat, fondateursOf } = await import('../../src/logic.js');
   const jour = i => new Date(Date.UTC(2026, 9, 1) + i * 36e5).toISOString();
   const lau = Array.from({ length: 39 }, (_, i) => ({ id: 'l' + String(i).padStart(2, '0'), role: 'laureat', promo: 2010 + (i % 10), created_at: jour(i) }));
   const moi = { id: 'moi', role: 'laureat', promo: 2019, created_at: jour(100) };
@@ -203,7 +203,7 @@ test('accueil après l’inscription : le rang d’arrivée d’un lauréat, le 
   assert.equal(rangLaureat([{ id: 'b', role: 'laureat', created_at: jour(1) }, { id: 'a', role: 'laureat', created_at: jour(1) }], { id: 'b', role: 'laureat', created_at: jour(1) }), 2, 'même date : ordre des ids');
   assert.equal(rangLaureat(profiles, { ...moi, created_at: null }), null);
   assert.equal(rangLaureat(profiles, { id: 'etu', role: 'etudiant', created_at: jour(-4) }), null);
-  assert.deepEqual([...fondateursOf(profiles)], ordreArrivee(profiles).slice(0, NB_FONDATEURS).map(p => p.id));
+  assert.equal(fondateursOf({ profiles }).size, 0, 'arriver tôt ne fait pas un membre fondateur : aider les étudiants, si');
 });
 
 test('accueil après l’inscription : une phrase vraie par cas', async () => {
@@ -216,12 +216,11 @@ test('accueil après l’inscription : une phrase vraie par cas', async () => {
   const d = { profiles: [...promo19, ...autres, moi] };
   const a = accueilArrivee(d, moi);
   assert.deepEqual(phrasesArrivee(a), { titre: 'Te voilà 40e parmi les lauréats du réseau', sous: '3 lauréats de ta promo sont déjà là' });
-  assert.equal(a.fondateur, false);
+  assert.equal('fondateur' in a, false, 'l’arrivée ne promet plus le badge « Membre fondateur »');
   assert.ok(a.visages.length <= 5 && !a.visages.includes('l99'));
   const seul = L('l1', 2019);
   const a1 = accueilArrivee({ profiles: [seul] }, seul);
   assert.equal(phrasesArrivee(a1).titre, 'Le réseau des lauréats commence avec toi');
-  assert.equal(a1.fondateur, true);
   const deux = [L('l1', 2019), L('l2', 2019)];
   assert.deepEqual(phrasesArrivee(accueilArrivee({ profiles: deux }, deux[1])), { titre: 'Te voilà 2e parmi les lauréats du réseau', sous: '1 lauréat de ta promo est déjà là' });
   // Étudiants : la filière, sinon le parcours, sinon tout le réseau ; personne : un simple bienvenue

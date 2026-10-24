@@ -2477,3 +2477,125 @@ for (const [largeur, langue, theme] of [[1280, 'fr', 'light'], [390, 'ar', 'dark
     await s.ctx.close();
   });
 }
+
+// ---------------------------------------------------------------------------
+// Membres fondateurs (démo) : les 25 premiers lauréats à aider les étudiants, tout en haut de l'accueil
+// ---------------------------------------------------------------------------
+const classementDemo = page => page.evaluate(async () => {
+  const L = await import(new URL('logic.js', location.href).href);
+  const d = window.__demo;
+  return L.classementFondateurs(d.data).map(f => ({ ...f, nom: d.data.profiles.find(p => p.id === f.id).full_name, role: d.data.profiles.find(p => p.id === f.id).role }));
+});
+
+test('accueil (démo) : les membres fondateurs tout en haut, des chiffres vrais, jamais l’administration ni de points', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('accueil');
+  await s.page.waitForSelector('.fd-accueil .fd-carte');
+  assert.ok(await s.page.evaluate(() => document.querySelector('.home-col').firstElementChild.classList.contains('fd-accueil')), 'au-dessus du bonjour');
+  const c = await classementDemo(s.page);
+  assert.ok(c.length > 0 && c.length <= 25);
+  assert.deepEqual([...new Set(c.map(f => f.role))], ['laureat']);
+  assert.deepEqual(await s.page.$$eval('.fd-accueil .fd-nom-t', x => x.map(e => e.textContent)), c.map(f => f.nom), 'dans l’ordre de leur première aide');
+  const t = await s.page.locator('.fd-accueil').innerText();
+  assert.match(t, /Membres fondateurs[\s\S]*Lauréats du mois[\s\S]*Les premiers à aider les étudiants/);
+  assert.match(t, new RegExp(`${25 - c.length} places? de membre fondateur restantes? sur 25`));
+  assert.doesNotMatch(t, /\bpoints?\b|\bpts\b/i, 'une étudiante ne voit jamais de points');
+  assert.equal(await s.page.locator('.fd-accueil .btn.primary').count(), 0, 'pas de bouton plein');
+  assert.equal(await s.page.locator('#fd-rejoindre').count(), 0, 'l’invitation est pour les lauréats');
+  assert.ok((await s.debordement()) <= 0);
+  // « Merci » : la conversation s'ouvre, le mot déjà écrit
+  const merci = s.page.locator('.fd-merci').first();
+  assert.ok(await merci.count());
+  await merci.click(); await s.page.waitForSelector('#chat-txt');
+  assert.match(await s.page.inputValue('#chat-txt'), /Merci d’aider les étudiants de l’école !/);
+  // Une carte ouvre le profil
+  await s.aller('accueil'); await s.page.locator('.fd-accueil .fd-qui').first().click(); await s.page.waitForTimeout(300);
+  assert.ok(await s.page.locator('.modal').count(), 'la fiche du fondateur');
+  await s.fermer();
+  // Au lancement : deux lauréats ont publié les deux premières offres
+  await s.page.evaluate(() => {
+    const d = window.__demo;
+    const deux = new Set(d.data.offers.filter(o => (o.audience || 'etudiants') === 'etudiants' && d.data.profiles.find(p => p.id === o.author_id)?.role === 'laureat')
+      .sort((a, b) => a.created_at.localeCompare(b.created_at)).map(o => o.author_id).filter((x, i, l) => l.indexOf(x) === i).slice(0, 2));
+    d.data.offers = d.data.offers.filter(o => deux.has(o.author_id));
+    d.data.mentorships = d.data.mentorships.filter(m => !['acceptee', 'terminee'].includes(m.status));
+    d.data.propositions = [];
+    d.emit();
+  });
+  await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.fd-accueil .fd-carte').count(), 2);
+  assert.match(await s.page.locator('.fd-accueil .fd-places').innerText(), /^23 places de membre fondateur restantes sur 25$/);
+  assert.match(await s.page.locator('.fd-accueil .fd-carte').first().innerText(), /Promo \d{4}[\s\S]*Offre publiée le \d{1,2} \p{L}+/u);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('accueil (démo) : un lauréat pas encore fondateur est invité à publier ; un fondateur se reconnaît', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Nadia'); await s.aller('accueil');
+  await s.page.waitForSelector('#fd-rejoindre');
+  assert.match(await s.page.locator('#fd-rejoindre').innerText(), /Publie une offre ou aide un étudiant pour en faire partie/);
+  await s.page.click('#fd-rejoindre'); await s.page.waitForSelector('#of-publier');
+  await s.fermer();
+  await s.comme('Youssef'); await s.aller('accueil');
+  await s.page.waitForSelector('.fd-accueil .fd-toi');
+  assert.equal(await s.page.locator('#fd-rejoindre').count(), 0);
+  assert.equal(await s.page.locator('.fete-back').count(), 0, 'pas de fête surprise en démo');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('accueil (démo, arabe, sombre) : le bandeau traduit, rien d’oublié, rien qui dépasse', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar', theme: 'dark' });
+  for (const nom of ['Salma', 'Nadia']) {
+    await s.comme(nom); await s.aller('accueil');
+    await s.page.waitForSelector('.fd-accueil .fd-carte');
+    const t = await s.page.locator('.fd-accueil').innerText();
+    assert.match(t, /الأعضاء المؤسسون/); assert.match(t, /خريجو الشهر/); assert.match(t, /أول من ساعد الطلبة/);
+    assert.doesNotMatch(t, /القدامى|Promo|places|Offre publiée|Merci|fondateur/);
+    assert.ok((await s.debordement()) <= 0);
+  }
+  assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /fondateur|Lauréats du mois|premiers à aider|Merci|place|Publie une offre ou aide/i.test(x))), []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('membre fondateur (démo) : « Ton nom sur la page d’entrée ? » une fois, puis dans Mon profil', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef');
+  await s.page.evaluate(() => { const d = window.__demo; d.me.fondateur_public = null; d.data.profiles = d.data.profiles.map(p => p.id === d.me.id ? d.me : p); d.emit(); });
+  await s.aller('accueil');
+  await s.page.waitForSelector('.modal.fd-feuille', { timeout: 8000 });
+  assert.match(await s.page.locator('.modal.fd-feuille').innerText(), /Tu es membre fondateur\. Ton nom et ta photo peuvent apparaître en haut de la page d’entrée, pour donner envie aux autres\./);
+  assert.equal(await s.page.locator('.modal.fd-feuille .btn.primary').count(), 1);
+  await s.page.click('#fd-non'); await s.page.waitForSelector('.modal.fd-feuille', { state: 'detached' });
+  assert.equal(await s.page.evaluate(() => window.__demo.me.fondateur_public), false);
+  await s.aller('profil'); await s.page.waitForSelector('#md-fondateur');
+  assert.equal(await s.page.isChecked('#md-fondateur'), false);
+  await s.page.click('#md-fondateur'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.evaluate(() => window.__demo.me.fondateur_public), true);
+  assert.ok(await s.page.isChecked('#md-fondateur'));
+  await s.aller('accueil'); await s.page.waitForTimeout(2500);
+  assert.equal(await s.page.locator('.modal.fd-feuille').count(), 0, 'une seule fois');
+  // Une étudiante n'a pas cette case
+  await s.comme('Salma'); await s.aller('profil'); await s.page.waitForSelector('#mes-donnees');
+  assert.equal(await s.page.locator('#md-fondateur').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('accueil (démo, 360 × 640) : les fondateurs sur une ligne, un toucher les montre en grand', async () => {
+  const s = await ouvrir({ largeur: 360 });
+  await s.page.setViewportSize({ width: 360, height: 640 });
+  await s.comme('Nadia'); await s.aller('accueil');
+  await s.page.waitForSelector('.fd-accueil .fd-resume', { state: 'visible' });
+  assert.ok((await s.page.locator('.fd-accueil').boundingBox()).height <= 80, 'une ligne');
+  assert.equal(await s.page.isVisible('.fd-accueil .fd-liste'), false);
+  await s.page.click('.fd-accueil .fd-resume');
+  await s.page.waitForSelector('.fd-accueil .fd-liste', { state: 'visible' });
+  assert.ok(await s.page.isVisible('#fd-rejoindre'));
+  assert.equal(await s.page.isVisible('.fd-accueil .fd-resume'), false);
+  assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
