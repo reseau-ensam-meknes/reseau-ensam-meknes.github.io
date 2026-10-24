@@ -77,7 +77,7 @@ const CATS_NOTIF = {
     // Les offres arrivent selon le profil (offre_pour dans schema.sql) : la condition est dite, pas conseillée
     offres: ['Nouvelles offres pour moi', 'Avec « Je cherche un emploi en ce moment » coché dans ton profil : offres « Jeunes diplômés » et offres entre lauréats de ta filière. Sans cela, seulement les offres « Jeunes diplômés » l’année de ton diplôme.'],
     // Un lauréat pose aussi des questions : les réponses passent par cette case
-    reseau: ['Questions et vie du réseau', 'Réponses à tes questions, questions sur ton entreprise ou ton pays, événements de l’école, cafés de ta ville.'],
+    reseau: ['Questions et vie du réseau', 'Réponses à tes questions, questions sur ton entreprise ou ton pays, camarades de promo à confirmer, enquête d’insertion, événements de l’école, cafés de ta ville.'],
   },
   // Un lauréat qui cherche un emploi publie sa demande d'emploi et postule : ces cases couvrent aussi les siennes
   recherche: {
@@ -101,7 +101,7 @@ const NOTES_NOTIF = {
   admin: 'Les signalements arrivent toujours à l’équipe du réseau.',
 };
 addAR({
-  'Par email': 'عبر البريد الإلكتروني', 'Sur le téléphone': 'على الهاتف', 'Ce que je reçois': 'ما يصلني', 'Choix enregistré.': 'تم حفظ اختيارك.',
+  'Par email': 'عبر البريد الإلكتروني', 'Sur tes appareils': 'على أجهزتك', 'Ce que je reçois': 'ما يصلني', 'Choix enregistré.': 'تم حفظ اختيارك.',
   'Recevoir par email les nouvelles offres de mon année et de ma filière (3 au plus par jour)': 'استلام العروض الجديدة الخاصة بسنتي وشعبتي عبر البريد (3 على الأكثر في اليوم)',
   [NOTES_NOTIF.tous]: 'تسري اختياراتك على كل الأجهزة التي فُعّلت فيها الإشعارات.',
   [NOTES_NOTIF.admin]: 'تصل البلاغات دائمًا إلى فريق الشبكة.',
@@ -128,7 +128,7 @@ addAR({
   [CATS_NOTIF.recherche.candidatures[1]]: 'مآل ترشيحاتك (مقابلة، توظيف ينتظر تأكيدك) والترشيحات التي تصل إلى عروضك.',
   [CATS_NOTIF.recherche.offres[1]]: 'عروض «الخريجون الجدد» والعروض بين خريجي شعبتك، فور نشرها.',
   [CATS_NOTIF.laureat.reseau[0]]: 'الأسئلة وحياة الشبكة',
-  [CATS_NOTIF.laureat.reseau[1]]: 'الأجوبة على أسئلتك، أسئلة حول شركتك أو بلدك، أنشطة المدرسة، لقاءات المقهى في مدينتك.',
+  [CATS_NOTIF.laureat.reseau[1]]: 'الأجوبة على أسئلتك، أسئلة حول شركتك أو بلدك، زملاء دفعتك لتأكيدهم، استطلاع الإدماج المهني، أنشطة المدرسة، لقاءات المقهى في مدينتك.',
 });
 
 
@@ -258,7 +258,7 @@ export function MesDonnees({ ctx }) {
   };
   // Notifications par catégorie : en ligne, seulement une fois la base à jour (colonne notif_push). Avant, l'étudiant garde
   // sa case « M'alerter… » ; après, elle devient « Nouvelles offres pour moi » (téléphone) et la case email à part.
-  // Les titres « Par email » / « Sur le téléphone » aussi : avant, « M'alerter… » (le téléphone) se retrouverait sous « Par email ».
+  // Les titres « Par email » / « Sur tes appareils » aussi : avant, « M'alerter… » (le téléphone) se retrouverait sous « Par email ».
   const cats = store.mode !== 'live' || 'notif_push' in me;
   return html`<div class="panel" id="mes-donnees">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="shield"/> Mes données et notifications</h2><button class="btn tiny ghost" onClick=${() => go('confidentialite')}>Confidentialité <${Icon} name="arrow" size=${14}/></button></div>
@@ -270,7 +270,7 @@ export function MesDonnees({ ctx }) {
       ${me.alertes_offres !== false ? html`<label class="check sub"><input id="md-alertes-mail" type="checkbox" checked=${me.alertes_email !== false} onChange=${e => act(() => store.update('profiles', me.id, { alertes_email: e.target.checked }))}/> Aussi par email (3 au plus par jour)</label>` : null}
     </div>` : null}
     ${store.mode !== 'live' || 'emails_messages' in me ? html`<label class="check"><input id="md-msg-mail" type="checkbox" checked=${me.emails_messages !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { emails_messages: e.target.checked }); toast(e.target.checked ? 'Un email te prévient si un message attend depuis 30 minutes.' : 'Plus d’email pour les messages.'); })}/> M’envoyer un email quand un message m’attend (un toutes les 6 heures au plus)</label>` : null}
-    ${cats ? html`<h3 class="md-titre" id="md-notifs">Sur le téléphone</h3>` : null}
+    ${cats ? html`<h3 class="md-titre" id="md-notifs">Sur tes appareils</h3>` : null}
     <${PushToggle} ctx=${ctx}/>
     ${cats ? html`<${ChoixNotifs} ctx=${ctx}/>` : null}
     <div class="row">
@@ -282,7 +282,7 @@ export function MesDonnees({ ctx }) {
   </div>`;
 }
 
-// Ce que chacun reçoit sur le téléphone, par catégorie. me.notif_push ne garde que ses choix ; une case jamais touchée
+// Ce que chacun reçoit sur ses appareils, par catégorie. me.notif_push ne garde que ses choix ; une case jamais touchée
 // suit le défaut de son rôle (pushChoix, mêmes règles que la base). Les choix valent pour tous ses appareils.
 function ChoixNotifs({ ctx }) {
   const { me, store, act } = ctx;

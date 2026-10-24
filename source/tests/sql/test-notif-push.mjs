@@ -156,3 +156,34 @@ test('mise à jour relancée : les choix restent, un seul filtre', async () => {
   await pousser([[LAU, 'cafe'], [LAU, 'offre_alerte']]);
   assert.deepEqual(await file(), ['LAU:offre_alerte']);
 });
+
+test('la limite d’un envoi groupé ne compte que ceux qui veulent la notification', async () => {
+  // 6 lauréats vérifiés de la promo 2018, abonnés ; les 5 premiers ne veulent plus « Questions et vie du réseau »
+  const camarades = [0, 1, 2, 3, 4, 5].map(i => uid(320 + i));
+  for (const [i, id] of camarades.entries()) await creerCompte(db, { id, full_name: `Camarade ${i + 1}`, role: 'laureat', filiere: GI, promo: 2018 });
+  await db.query(`update public.profiles set verified = true where id = any($1::uuid[])`, [camarades]);
+  await db.query(`update public.profiles set notif_push = '{"reseau":false}' where id = any($1::uuid[])`, [camarades.slice(0, 5)]);
+  await db.query(`insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) select id, 'https://push.example/' || id, 'k', 'a' from unnest($1::uuid[]) id`, [camarades]);
+  await vider();
+  // Un nouveau lauréat 2018 : ses camarades vérifiés sont prévenus, 5 au plus
+  await creerCompte(db, { id: uid(330), full_name: 'Nouveau Camarade', role: 'laureat', filiere: GI, promo: 2018 });
+  assert.deepEqual(await file(), [`${camarades[5]}:verifier_pair`], 'le 6e, le seul qui la veut, est prévenu');
+});
+
+test('le filtre reste rapide : publier pour beaucoup d’abonnés ne ralentit pas l’action du membre', async () => {
+  // Appelée dans un bloc « exception », une fonction en sql serait réanalysée à chaque ligne (Postgres 15 à 17)
+  assert.equal((await db.query(`select l.lanname from pg_proc p join pg_language l on l.oid = p.prolang where p.proname = 'push_voulu'`)).rows[0].lanname, 'plpgsql');
+  const inserer = async () => {
+    await vider();
+    const t = performance.now();
+    await db.query(`insert into public.push_queue (user_id, kind, data) select $1, 'reponse', '{}' from generate_series(1, 2000)`, [ETU]);
+    return performance.now() - t;
+  };
+  const meilleur = async () => { let m = Infinity; for (let i = 0; i < 3; i++) m = Math.min(m, await inserer()); return m; };
+  await db.query('alter table public.push_queue disable trigger trg_push_filtre');
+  const sans = await meilleur();
+  await db.query('alter table public.push_queue enable trigger trg_push_filtre');
+  const avec = await meilleur();
+  await vider();
+  assert.ok(avec < 12 * sans + 100, `2000 notifications : ${Math.round(avec)} ms avec le filtre, ${Math.round(sans)} ms sans`);
+});

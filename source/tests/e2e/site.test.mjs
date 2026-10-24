@@ -941,6 +941,43 @@ test('à l’ouverture : jamais par-dessus une autre feuille ni la bienvenue ; r
   await s.ctx.close();
 });
 
+test('à l’ouverture : « Plus tard » puis une fête dans la même visite, le refus reste compté', async () => {
+  const s = await prevenirSur('off');
+  await attendreOuverture(s); await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).n, 1);
+  await s.page.evaluate(async () => { const ui = await import(new URL('ui.js', location.href).href); ui.celebrate({ cle: 'test-fete-' + Date.now(), titre: 'Bravo', texte: 'Une fête.' }); });
+  await s.page.waitForSelector('.fete-back'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).n, 1, '« Plus tard » reste compté');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('à l’ouverture : écran occupé plus de 30 s, la feuille attend la visite suivante', async () => {
+  const s = await prevenirSur('off', { cachee: true });
+  const plan = (etat, avance = 0) => s.page.evaluate(([e, a]) => window.__plan(e, a), [etat, avance]);
+  await plan('visible');
+  await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
+  await s.page.waitForTimeout(3500);
+  await plan('visible', 31e3);
+  await s.page.waitForTimeout(3000);
+  await s.fermer();
+  await rienALouverture(s, 'trop tard dans la visite : à la visite suivante');
+  assert.deepEqual(await s.memo(), {});
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('Mon profil : deux cases touchées coup sur coup sont enregistrées toutes les deux', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('profil');
+  await s.page.evaluate(() => { const d = window.__demo; const u = d.update.bind(d); d.update = (...a) => new Promise(ok => setTimeout(ok, 400)).then(() => u(...a)); });
+  await s.page.click('#np-reseau'); await s.page.click('#np-offres');
+  await s.page.waitForTimeout(1500);
+  assert.deepEqual(await s.page.evaluate(() => window.__demo.me.notif_push), { reseau: false, offres: false });
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('Mon profil : un choix qui n’a pas pu être enregistré n’est pas montré comme fait ; réessayé, c’est bien le sien', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Salma'); await s.aller('profil');

@@ -1577,14 +1577,19 @@ language sql immutable as $$
     else true end;
 $$;
 
--- Ce membre veut-il ce type de notification ? Son choix s'il en a fait un, sinon le défaut de son rôle
+-- Ce membre veut-il ce type de notification ? Son choix s'il en a fait un, sinon le défaut de son rôle.
+-- En plpgsql : appelée dans un bloc « exception » (push_filtre, pousser), une fonction en sql serait
+-- réanalysée à chaque ligne, et publier une offre pour beaucoup d'abonnés deviendrait lent.
 create or replace function public.push_voulu(p_user uuid, p_kind text) returns boolean
-language sql stable security definer set search_path = public as $$
-  select case when x.c = 'admin' then true else coalesce((
-    select case when jsonb_typeof(p.notif_push -> x.c) = 'boolean' then (p.notif_push ->> x.c)::boolean else public.push_defaut(x.c, p) end
-    from public.profiles p where p.id = p_user), true) end
-  from (select public.push_categorie(p_kind) as c) x;
-$$;
+language plpgsql stable security definer set search_path = public as $$
+declare c text := public.push_categorie(p_kind); p public.profiles;
+begin
+  if c = 'admin' then return true; end if;
+  select * into p from public.profiles where id = p_user;
+  if not found then return true; end if;
+  if jsonb_typeof(p.notif_push -> c) = 'boolean' then return (p.notif_push ->> c)::boolean; end if;
+  return coalesce(public.push_defaut(c, p), true);
+end $$;
 revoke all on function public.push_voulu(uuid, text) from public, anon, authenticated;
 
 -- Filtre central : couvre pousser() et les envois groupés (offres, demandes, agenda…). Dans le doute, la notification part.
