@@ -1556,7 +1556,7 @@ create or replace function public.push_categorie(p_kind text) returns text
 language sql immutable as $$
   select case
     when p_kind = 'message' then 'messages'
-    when p_kind in ('demande_nouvelle','demande_proposition','demande_match','demande_rouverte') then 'demandes'
+    when p_kind in ('demande_nouvelle','demande_proposition','demande_match','demande_rouverte','demande_reponse') then 'demandes'
     when p_kind in ('candidature','candidature_statut','invitation','recrutement_a_confirmer','recrutement_confirme','relance_offre') then 'candidatures'
     when p_kind in ('mentorat_demande','mentorat_accepte','mentorat_deplace','mentorat_annule','rappel_rdv','merci',
                     'relecture_demande','relecture_prise','relecture_rendue','contact_demande','contact_accepte','filleul','parrain') then 'mentorat'
@@ -3095,7 +3095,7 @@ create trigger trg_notif after insert on public.messages for each row execute fu
 -- Signalement d'un message privé : l'administration le voit alors (et seulement alors)
 alter table public.signalements drop constraint if exists signalements_cible_type_check;
 alter table public.signalements add constraint signalements_cible_type_check
-  check (cible_type in ('offre','commentaire','question','reponse','message','profil','entretien','avis','guide','cafe','startup','relecture','prive','demande'));
+  check (cible_type in ('offre','commentaire','question','reponse','message','profil','entretien','avis','guide','cafe','startup','relecture','prive','demande','reponse_demande'));
 
 create or replace function public.message_signale(p_id uuid) returns boolean
 language sql stable security definer set search_path = public as $$
@@ -4124,6 +4124,221 @@ do $$ begin
     execute 'alter publication supabase_realtime add table public.ambassadeurs';
   end if;
 exception when others then raise notice 'Temps réel des ambassadeurs non configuré : %', sqlerrm;
+end $$;
+
+-- ---------------------------------------------------------------------
+-- Réseau vivant : les demandes de sa promo, réactions publiques et réponses sous une demande
+--   1. Un étudiant lit aussi les demandes des étudiants de son année (même niveau) : ouvertes, en match ou
+--      pourvues. Les demandes d'emploi des lauréats qui cherchent restent aux lauréats et à l'administration.
+--      Le CV, les coordonnées et les propositions d'aide restent privés : seul leur nombre se lit (demandes.nb_aides,
+--      tenu par la base : les lauréats qui ont proposé leur aide, sauf ceux qui l'ont retirée), jamais qui ni quoi.
+--   2. Réactions publiques sur une offre ou une demande (👍 ❤️ 👏 🙏 💪) : une par membre et par élément,
+--      modifiable et retirable ; on ne réagit qu'à ce qu'on peut lire, jamais à sa propre publication. Pas de points.
+--      (La table « reactions », utile / mettre de côté, reste telle quelle.)
+--   3. Réponses sous une demande : courtes (500 caractères), lues par ceux qui lisent la demande, signalables, limitées.
+--   4. Notifications : une réaction → au plus une par élément et par heure (vie du réseau) ; une réponse → demandes.
+-- Mêmes règles dans le site (reseau-vivant.js) et la démo (store.js).
+-- ---------------------------------------------------------------------
+create or replace function public.demande_lisible_promo(p_auteur uuid, p_status text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce(p_status in ('ouverte','match','pourvue'), false) and exists (
+    select 1 from public.profiles v join public.profiles a on a.id = p_auteur
+    where v.id = auth.uid() and v.role = 'etudiant' and a.role = 'etudiant' and a.id <> v.id
+      and public.niveau_de(v.promo, public.saison_courante()) = public.niveau_de(a.promo, public.saison_courante())
+      and not exists (select 1 from public.blocages b where (b.user_id = v.id and b.bloque_id = a.id) or (b.user_id = a.id and b.bloque_id = v.id)));
+$$;
+revoke all on function public.demande_lisible_promo(uuid, text) from public, anon;
+grant execute on function public.demande_lisible_promo(uuid, text) to authenticated;
+-- S'ajoute à « lecture membres » (l'auteur, les lauréats, l'administration)
+drop policy if exists "lecture promo" on public.demandes;
+create policy "lecture promo" on public.demandes for select to authenticated using (public.demande_lisible_promo(auteur_id, status));
+
+-- Le nombre de lauréats qui ont proposé leur aide, lisible de tous ceux qui lisent la demande
+alter table public.demandes add column if not exists nb_aides int not null default 0;
+create or replace function public.demande_nb_aides_neuf() returns trigger
+language plpgsql as $$
+begin
+  new.nb_aides := 0;
+  return new;
+end $$;
+drop trigger if exists trg_nb_aides_neuf on public.demandes;
+create trigger trg_nb_aides_neuf before insert on public.demandes for each row execute function public.demande_nb_aides_neuf();
+
+create or replace function public.compter_aides() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_id uuid := case when tg_op = 'DELETE' then old.demande_id else new.demande_id end; v_n int;
+  v_avant text := coalesce(current_setting('ensam.demande_suite', true), '');
+begin
+  select count(distinct x.laureat_id) into v_n from public.propositions x where x.demande_id = v_id and x.status <> 'retiree';
+  perform set_config('ensam.demande_suite', 'on', true);
+  update public.demandes set nb_aides = v_n where id = v_id and nb_aides is distinct from v_n;
+  perform set_config('ensam.demande_suite', v_avant, true);
+  return null;
+end $$;
+drop trigger if exists trg_compter_aides on public.propositions;
+create trigger trg_compter_aides after insert or update of status or delete on public.propositions
+  for each row execute function public.compter_aides();
+-- Les demandes d'avant cette mise à jour : leur nombre, une fois (relançable)
+do $$ begin
+  perform set_config('ensam.demande_suite', 'on', true);
+  update public.demandes d set nb_aides = coalesce(x.n, 0)
+    from (select d2.id, (select count(distinct y.laureat_id)::int from public.propositions y where y.demande_id = d2.id and y.status <> 'retiree') as n from public.demandes d2) x
+    where x.id = d.id and d.nb_aides is distinct from coalesce(x.n, 0);
+  perform set_config('ensam.demande_suite', '', true);
+end $$;
+
+-- Réactions publiques
+create table if not exists public.reactions_publiques (
+  id uuid primary key default gen_random_uuid(),
+  offer_id uuid references public.offers(id) on delete cascade,
+  demande_id uuid references public.demandes(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  emoji text not null check (emoji in ('👍','❤️','👏','🙏','💪')),
+  created_at timestamptz default now(),
+  constraint reactions_publiques_une_cible check (num_nonnulls(offer_id, demande_id) = 1),
+  constraint reactions_publiques_offre_membre unique (offer_id, user_id),
+  constraint reactions_publiques_demande_membre unique (demande_id, user_id)
+);
+
+create or replace function public.protect_reaction_publique() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_auteur uuid;
+begin
+  if tg_op = 'UPDATE' then
+    -- Seul l'émoji change : jamais l'élément ni la personne
+    new.offer_id := old.offer_id; new.demande_id := old.demande_id; new.user_id := old.user_id; new.created_at := old.created_at;
+    return new;
+  end if;
+  if auth.uid() is not null then new.user_id := auth.uid(); end if;
+  new.created_at := now();
+  if auth.uid() is null then return new; end if;
+  if new.offer_id is not null then select o.author_id into v_auteur from public.offers o where o.id = new.offer_id;
+  else select d.auteur_id into v_auteur from public.demandes d where d.id = new.demande_id; end if;
+  if v_auteur = new.user_id then raise exception 'Tu ne réagis pas à ta propre publication.'; end if;
+  if exists (select 1 from public.blocages b where (b.user_id = new.user_id and b.bloque_id = v_auteur) or (b.user_id = v_auteur and b.bloque_id = new.user_id)) then
+    raise exception 'Action non autorisée pour ton compte.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_reaction_publique on public.reactions_publiques;
+create trigger trg_protect_reaction_publique before insert or update on public.reactions_publiques
+  for each row execute function public.protect_reaction_publique();
+drop trigger if exists trg_limite on public.reactions_publiques;
+create trigger trg_limite before insert on public.reactions_publiques
+  for each row execute function public.limiter('user_id', '300', '1 day');
+
+-- Une réaction sur mon offre ou ma demande : une notification au plus par élément et par heure
+-- (le téléphone remplace la précédente du même élément ; elle dit combien de réactions il y a)
+create table if not exists public.reactions_notif (
+  cible_id uuid primary key,
+  at timestamptz not null default now()
+);
+alter table public.reactions_notif enable row level security;
+create or replace function public.notif_reaction_publique() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_auteur uuid; v_titre text; v_cible uuid := coalesce(new.offer_id, new.demande_id); v_n int;
+begin
+  if new.offer_id is not null then select o.author_id, o.titre into v_auteur, v_titre from public.offers o where o.id = new.offer_id;
+  else select d.auteur_id, d.titre into v_auteur, v_titre from public.demandes d where d.id = new.demande_id; end if;
+  if v_auteur is null or v_auteur = new.user_id then return null; end if;
+  if exists (select 1 from public.reactions_notif r where r.cible_id = v_cible and r.at > now() - interval '1 hour') then return null; end if;
+  insert into public.reactions_notif (cible_id, at) values (v_cible, now()) on conflict (cible_id) do update set at = excluded.at;
+  select count(*) into v_n from public.reactions_publiques r where r.offer_id = new.offer_id or r.demande_id = new.demande_id;
+  perform public.pousser(v_auteur, 'reaction', jsonb_build_object('nom', (select full_name from public.profiles where id = new.user_id),
+    'emoji', new.emoji, 'n', v_n, 'titre', v_titre)
+    || case when new.offer_id is not null then jsonb_build_object('offre', new.offer_id) else jsonb_build_object('demande', new.demande_id) end);
+  return null;
+exception when others then return null;
+end $$;
+drop trigger if exists trg_notif on public.reactions_publiques;
+create trigger trg_notif after insert on public.reactions_publiques for each row execute function public.notif_reaction_publique();
+
+alter table public.reactions_publiques enable row level security;
+drop policy if exists "lecture membres" on public.reactions_publiques;
+drop policy if exists "ecriture proprietaire" on public.reactions_publiques;
+drop policy if exists "modif proprietaire" on public.reactions_publiques;
+drop policy if exists "suppression proprietaire" on public.reactions_publiques;
+-- Lire ou réagir : seulement ce que les règles de l'offre ou de la demande laissent lire
+create policy "lecture membres" on public.reactions_publiques for select to authenticated using (
+  (reactions_publiques.offer_id is not null and exists (select 1 from public.offers o where o.id = reactions_publiques.offer_id))
+  or (reactions_publiques.demande_id is not null and exists (select 1 from public.demandes d where d.id = reactions_publiques.demande_id)));
+create policy "ecriture proprietaire" on public.reactions_publiques for insert to authenticated with check (user_id = auth.uid() and (
+  (reactions_publiques.offer_id is not null and exists (select 1 from public.offers o where o.id = reactions_publiques.offer_id))
+  or (reactions_publiques.demande_id is not null and exists (select 1 from public.demandes d where d.id = reactions_publiques.demande_id))));
+create policy "modif proprietaire" on public.reactions_publiques for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "suppression proprietaire" on public.reactions_publiques for delete to authenticated using (user_id = auth.uid() or public.is_admin());
+
+-- Réponses sous une demande
+create table if not exists public.reponses_demandes (
+  id uuid primary key default gen_random_uuid(),
+  demande_id uuid not null references public.demandes(id) on delete cascade,
+  author_id uuid not null references public.profiles(id) on delete cascade,
+  body text not null check (char_length(btrim(body)) between 2 and 500),
+  created_at timestamptz default now()
+);
+create index if not exists reponses_demandes_demande on public.reponses_demandes (demande_id);
+
+create or replace function public.protect_reponse_demande() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_d record;
+begin
+  if tg_op = 'UPDATE' then raise exception 'Action non autorisée pour ton compte.'; end if;
+  if auth.uid() is not null then new.author_id := auth.uid(); end if;
+  new.body := btrim(new.body); new.created_at := now();
+  if auth.uid() is null or public.is_admin() then return new; end if;
+  select d.status, d.auteur_id into v_d from public.demandes d where d.id = new.demande_id;
+  if v_d.status is null or v_d.status = 'fermee' then raise exception 'Cette demande est fermée.'; end if;
+  if exists (select 1 from public.blocages b where (b.user_id = new.author_id and b.bloque_id = v_d.auteur_id) or (b.user_id = v_d.auteur_id and b.bloque_id = new.author_id)) then
+    raise exception 'Action non autorisée pour ton compte.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_reponse_demande on public.reponses_demandes;
+create trigger trg_protect_reponse_demande before insert or update on public.reponses_demandes
+  for each row execute function public.protect_reponse_demande();
+drop trigger if exists trg_limite on public.reponses_demandes;
+create trigger trg_limite before insert on public.reponses_demandes
+  for each row execute function public.limiter('author_id', '30', '1 day', 'body');
+
+-- Une réponse sous ma demande : une notification (catégorie demandes)
+create or replace function public.notif_reponse_demande() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_d record;
+begin
+  select d.id, d.auteur_id, d.titre into v_d from public.demandes d where d.id = new.demande_id;
+  if v_d.auteur_id is null or v_d.auteur_id = new.author_id then return null; end if;
+  perform public.pousser(v_d.auteur_id, 'demande_reponse', jsonb_build_object('nom', (select full_name from public.profiles where id = new.author_id),
+    'titre', v_d.titre, 'texte', left(new.body, 140), 'demande', v_d.id));
+  return null;
+exception when others then return null;
+end $$;
+drop trigger if exists trg_notif on public.reponses_demandes;
+create trigger trg_notif after insert on public.reponses_demandes for each row execute function public.notif_reponse_demande();
+
+alter table public.reponses_demandes enable row level security;
+drop policy if exists "lecture membres" on public.reponses_demandes;
+drop policy if exists "ecriture proprietaire" on public.reponses_demandes;
+drop policy if exists "suppression proprietaire" on public.reponses_demandes;
+create policy "lecture membres" on public.reponses_demandes for select to authenticated using (
+  exists (select 1 from public.demandes d where d.id = reponses_demandes.demande_id));
+create policy "ecriture proprietaire" on public.reponses_demandes for insert to authenticated with check (
+  author_id = auth.uid() and exists (select 1 from public.demandes d where d.id = reponses_demandes.demande_id));
+-- Supprimer : sa réponse, une réponse sous sa demande, ou l'administration (après un signalement)
+create policy "suppression proprietaire" on public.reponses_demandes for delete to authenticated using (
+  author_id = auth.uid() or public.is_admin()
+  or exists (select 1 from public.demandes d where d.id = reponses_demandes.demande_id and d.auteur_id = auth.uid()));
+
+do $$
+declare t text;
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    foreach t in array array['reactions_publiques','reponses_demandes'] loop
+      if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
+        execute format('alter publication supabase_realtime add table public.%I', t);
+      end if;
+    end loop;
+  end if;
+exception when others then raise notice 'Temps réel des réactions non configuré : %', sqlerrm;
 end $$;
 
 -- =====================================================================

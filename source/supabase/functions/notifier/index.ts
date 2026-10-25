@@ -371,7 +371,9 @@ async function pousserUn(a: Abonnement, n: Notif, urg: string, v: Vapid): Promis
 // ---------------------------------------------------------------------
 // Textes des notifications (fr / ar)
 // ---------------------------------------------------------------------
-type V = { nom: string; sujet: string; titre: string; entreprise: string; cible: string; ville: string; lieu: string; statut: string; date: string; heure: string; promo: string; n: number; vague: string; motif: string; texte: string; mtype: string; duree: number; aide: string; dtype: string; pour: string; origine?: string };
+type V = { nom: string; sujet: string; titre: string; entreprise: string; cible: string; ville: string; lieu: string; statut: string; date: string; heure: string; promo: string; n: number; vague: string; motif: string; texte: string; mtype: string; duree: number; aide: string; dtype: string; pour: string; origine?: string; emoji: string; quoi: string };
+// Réactions publiques : les mêmes émojis que la table reactions_publiques
+const EMOJIS_PUBLICS = ['👍', '❤️', '👏', '🙏', '💪'];
 
 // Aperçu d'un message privé : le début du texte, ou « Photo », « Message vocal (0:42) »
 const minSec = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
@@ -455,6 +457,20 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     ar: v => v.pour === 'auteur' ? ['طلبك مفتوح من جديد', `سُحب اقتراح ${v.nom} للمساعدة. يمكن لخريجين آخرين مساعدتك: ${v.titre}`]
       : v.pour === 'aidant' ? ['شكرًا على اقتراح مساعدتك', `وقع اختيار ${v.nom} على طريق آخر: ${v.titre}`]
       : ['تغيير في طلب', `انتهى الاتفاق مع ${v.nom}: ${v.titre}.`],
+  },
+  // Une réponse sous ma demande (un conseil, un contact)
+  demande_reponse: {
+    route: 'offres/demandes',
+    fr: v => ['Une réponse à ta demande', `${v.nom}${v.titre ? ` sur « ${v.titre} »` : ''} : ${v.texte}`],
+    ar: v => ['رد على طلبك', `رد من ${v.nom}${v.titre ? ` على «${v.titre}»` : ''}: ${v.texte}`],
+  },
+  // Réactions sur mon offre ou ma demande : une notification au plus par élément et par heure, le compte du moment
+  reaction: {
+    route: 'offres',
+    fr: v => [v.quoi === 'demande' ? 'Ta demande fait réagir' : 'Ton offre fait réagir',
+      v.n > 1 ? `${v.n} réactions, la dernière de ${v.nom}${v.titre ? ` : ${v.titre}` : ''}` : `${v.nom} a réagi${v.emoji ? ` ${v.emoji}` : ''}${v.titre ? ` : ${v.titre}` : ''}`],
+    ar: v => [v.quoi === 'demande' ? 'تفاعل مع طلبك' : 'تفاعل مع عرضك',
+      v.n > 1 ? `عدد التفاعلات: ${v.n}، آخرها من ${v.nom}${v.titre ? `: ${v.titre}` : ''}` : `تفاعل من ${v.nom}${v.emoji ? ` ${v.emoji}` : ''}${v.titre ? `: ${v.titre}` : ''}`],
   },
   invitation: {
     route: 'offres',
@@ -612,6 +628,7 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
     pour: ['demandeur', 'mentor', 'auteur', 'aidant'].includes(txt(d.pour)) ? txt(d.pour) : '',
     // Offre portée par un lauréat (il encadre) ou partagée (vue ailleurs) ; rien pour une offre classique
     origine: ['portee', 'partagee'].includes(txt(d.origine)) ? txt(d.origine) : '',
+    emoji: EMOJIS_PUBLICS.includes(txt(d.emoji)) ? txt(d.emoji) : '', quoi: estUuid(d.demande) ? 'demande' : 'offre',
   };
   const t = g[l](v);
   if (!t) return null;
@@ -619,10 +636,12 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
   // Une demande ouvre sa carte ; une nouvelle demande, pour un lauréat, ouvre directement « Je peux aider », prérempli
   const dem = kind.startsWith('demande_') && estUuid(d.demande) ? d.demande : null;
   const annule = kind === 'mentorat_annule' && estUuid(d.m) ? d.m : null;
-  const route = kind === 'offre_alerte' && estUuid(d.offre) ? `offre/${d.offre}` : kind === 'message' && estUuid(d.de) ? `messages/${d.de}`
+  // Une réaction ouvre l'élément : l'offre, ou la carte de la demande ; une seule notification par élément sur le téléphone
+  const rx = kind === 'reaction' ? (estUuid(d.offre) ? { route: `offre/${d.offre}`, id: d.offre } : estUuid(d.demande) ? { route: `offres/demandes/${d.demande}`, id: d.demande } : null) : null;
+  const route = rx ? rx.route : kind === 'offre_alerte' && estUuid(d.offre) ? `offre/${d.offre}` : kind === 'message' && estUuid(d.de) ? `messages/${d.de}`
     : annule && v.pour === 'demandeur' ? `mentorat/reprendre/${annule}`
     : dem ? (kind === 'demande_nouvelle' ? `aider/${dem}` : `offres/demandes/${dem}`) : g.route;
-  const tag = kind === 'offre_alerte' && estUuid(d.offre) ? `offre-${d.offre}` : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem ? `${kind}-${dem}` : annule ? `${kind}-${annule}` : kind;
+  const tag = rx ? `reaction-${rx.id}` : kind === 'offre_alerte' && estUuid(d.offre) ? `offre-${d.offre}` : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem ? `${kind}-${dem}` : annule ? `${kind}-${annule}` : kind;
   return { title: couper(t[0], 80), body: couper(t[1], 180), url: site + '#' + route, tag };
 }
 

@@ -2,6 +2,7 @@
 // Les données de démonstration (seed.js) ne sont chargées qu'en démo : le site réel n'en a pas besoin
 const chargerSeed = () => import('./seed.js').then(m => m.buildSeed());
 import { refusOrigine, estPartagee, LIMITE_PARTAGES } from './origine.js';
+import { VIVANT, regleVivant, peutSupprimerVivant, cascadeVivant, memeCible } from './reseau-vivant.js';
 import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage, transitionAmbassadeur, PREFIXE_BROUILLON } from './logic.js';
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
@@ -13,9 +14,9 @@ export const REACTIONS = ['👍', '❤️', '😂', '😮', '🙏', '👏'];
 const DEMANDES = ['demandes', 'propositions'];
 // Ambassadeurs de promo (ambassadeurs.js)
 const AMBASSADEURS = ['ambassadeurs'];
-export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS];
+export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT];
 // Tables ajoutées par supabase/mise-a-jour.sql : tant que la base n'est pas à jour, elles restent vides au lieu de bloquer le site.
-const OPTIONAL = new Set(['shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS]);
+const OPTIONAL = new Set(['shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT]);
 // Lues par une vue qui masque ce que chacun a choisi de cacher (auteur anonyme, visibilité du profil).
 // Tant que la base n'a pas ces vues, on lit la table elle-même.
 const VUES = { profiles: 'profils', entretiens: 'entretiens_publics', avis_stage: 'avis_publics' };
@@ -47,6 +48,9 @@ class Base {
   // Origine des offres (portée, partagée : origine.js) : la colonne n'existe qu'après mise-a-jour.sql. Avant, le formulaire
   // reste celui d'avant (rien n'est envoyé dans cette colonne) et les étudiants ne publient pas.
   peutOrigine() { return this.mode !== 'live' || this.origineSondee === true || (this.data.offers || []).some(o => 'origine' in o); }
+  // Réseau vivant : réactions publiques et réponses sous une demande, cachées tant que la base n'a pas leurs tables
+  peutReagirPublic() { return this.mode !== 'live' || !this.absentes?.has('reactions_publiques'); }
+  peutRepondreDemande() { return this.mode !== 'live' || !this.absentes?.has('reponses_demandes'); }
   // « Cette semaine dans le réseau » : en démo, le calcul sur toutes les données
   pouls() { return poulsReseau(this.data); }
   // En ligne, la base a déjà masqué ce qui ne doit pas être vu : ces deux aides servent surtout à la démo.
@@ -184,6 +188,7 @@ class DemoStore extends Base {
     if (table === 'ambassadeurs') applyAmbassadeurInsert(this, r);
     if (MESSAGERIE.includes(table) && applyMessagerieRules(this, table, r, null) === false) return r;
     if (DEMANDES.includes(table)) applyDemandeRules(this, table, r, null);
+    if (VIVANT.includes(table)) regleVivant(this, table, r, null);
     if (PHASE2.includes(table) && applyPhase2Rules(this, table, r, null) === false) return r;
     if (table === 'attestations') { if (this.me?.role !== 'laureat') throw new Error('Seul un lauréat peut obtenir une attestation.'); Object.assign(r, { laureat_id: this.me.id, stats: attestationStats(this.data, this.me.id) }); }
     limiteDemo(this, table, r);
@@ -214,6 +219,7 @@ class DemoStore extends Base {
     if (table === 'offers') regleOrigineDemo(this, r, old);
     if (MESSAGERIE.includes(table)) applyMessagerieRules(this, table, r, old);
     if (DEMANDES.includes(table)) applyDemandeRules(this, table, r, old);
+    if (VIVANT.includes(table)) regleVivant(this, table, r, old);
     if (PHASE2.includes(table)) applyPhase2Rules(this, table, r, old);
     if (PHASE3.includes(table)) applyPhase3Rules(this, table, r, old);
     if (table === 'profiles' && this.me?.role !== 'admin') { r.verified = r.role !== old.role ? false : old.verified; if (!r.verified && verifieAuto(this, r)) r.verified = true; }
@@ -237,6 +243,7 @@ class DemoStore extends Base {
       if (!own || row[own] !== this.me?.id) throw new Error('Action non autorisée pour ton compte.');
     }
     if (MESSAGERIE.includes(table) && row && this.me?.role !== 'admin' && row[table === 'messages' ? 'author_id' : 'user_id'] !== this.me?.id) throw new Error('Action non autorisée pour ton compte.');
+    if (VIVANT.includes(table) && row && !peutSupprimerVivant(this.data, this.me, table, row)) throw new Error('Action non autorisée pour ton compte.');
     if (DEMANDES.includes(table) && row && this.me?.role !== 'admin' && !(table === 'demandes' && row.auteur_id === this.me?.id && ['ouverte', 'fermee'].includes(row.status))) throw new Error('Action non autorisée pour ton compte.');
     if (PHASE3.includes(table) && row && this.me?.role !== 'admin') {
       const me = this.me?.id;
@@ -249,6 +256,7 @@ class DemoStore extends Base {
       if (!ok) throw new Error('Action non autorisée pour ton compte.');
     }
     this.data[table] = this.data[table].filter(x => x.id !== id);
+    cascadeVivant(this.data, table, id);
     if (table === 'demandes') { this.data.propositions = this.data.propositions.filter(x => x.demande_id !== id); this.data.placements = this.data.placements.map(p => p.demande_id === id ? { ...p, demande_id: null } : p); }
     this.persist(); this.emit();
   }
@@ -372,6 +380,12 @@ class DemoStore extends Base {
     if (!emoji || mienne?.emoji === emoji) { if (mienne) await this.remove('reactions_messages', mienne.id); return null; }
     return mienne ? this.update('reactions_messages', mienne.id, { emoji }) : this.insert('reactions_messages', { message_id: messageId, emoji });
   }
+  // Réaction publique sur une offre ({ offer_id }) ou une demande ({ demande_id }) : la même émoji la retire
+  async reagirPublic(cible, emoji) {
+    const mienne = this.data.reactions_publiques.find(r => memeCible(r, cible) && r.user_id === this.me?.id);
+    if (!emoji || mienne?.emoji === emoji) { if (mienne) await this.remove('reactions_publiques', mienne.id); return null; }
+    return mienne ? this.update('reactions_publiques', mienne.id, { emoji }) : this.insert('reactions_publiques', { ...cible, emoji });
+  }
   canal() { return { tape() {}, fermer() {} }; }
   // Liste officielle (administration)
   async importerListe(lignes, remplacer = false) {
@@ -443,6 +457,7 @@ const LIMITES = {
   entretiens: ['author_id', 10, 864e5], avis_stage: ['author_id', 10, 864e5], demandes_contact: ['demandeur_id', 5, 864e5],
   signalements: ['auteur_id', 10, 864e5], relectures_cv: ['student_id', 4, 864e5], relecture_commentaires: ['author_id', 60, 36e5],
   messages: ['author_id', 300, 864e5], demandes: ['auteur_id', 5, 864e5, 'titre'], propositions: ['laureat_id', 20, 864e5],
+  reactions_publiques: ['user_id', 300, 864e5], reponses_demandes: ['author_id', 30, 864e5, 'body'],
 };
 function limiteDemo(store, table, r) {
   const L = LIMITES[table]; const me = store.me;
@@ -1630,6 +1645,31 @@ export class SupabaseStore extends Base {
       throw new Error(frError(error));
     }
     await this.loadTable('reactions_messages').catch(() => {}); this.emit();
+    return null;
+  }
+  // Réaction publique : affichée tout de suite, puis enregistrée ; la même émoji la retire, une autre la remplace
+  async reagirPublic(cible, emoji) {
+    const lui = r => memeCible(r, cible) && r.user_id === this.userId;
+    const col = cible.offer_id ? 'offer_id' : 'demande_id', val = cible[col];
+    const avant = this.data.reactions_publiques;
+    const mienne = avant.find(lui);
+    const retirer = !emoji || mienne?.emoji === emoji;
+    const ecrite = retirer ? null : mienne ? { ...mienne, emoji } : { id: 'tmp-' + uuid(), offer_id: null, demande_id: null, [col]: val, user_id: this.userId, emoji, created_at: new Date().toISOString() };
+    this.data.reactions_publiques = retirer ? avant.filter(r => r !== mienne) : mienne ? avant.map(r => r === mienne ? ecrite : r) : [ecrite, ...avant];
+    this.emit();
+    const { error } = retirer
+      ? (mienne ? await this.sb.from('reactions_publiques').delete().eq(col, val).eq('user_id', this.userId) : { error: null })
+      : await this.sb.from('reactions_publiques').upsert({ [col]: val, user_id: this.userId, emoji }, { onConflict: col + ',user_id' });
+    if (error) {
+      // On défait seulement ce que cet appel a affiché, s'il est encore à l'écran
+      if ((this.data.reactions_publiques.find(lui) || null) === ecrite) {
+        const garder = mienne && !String(mienne.id).startsWith('tmp-') ? [mienne] : [];
+        this.data.reactions_publiques = [...garder, ...this.data.reactions_publiques.filter(r => !lui(r))];
+        this.emit();
+      }
+      throw new Error(frError(error));
+    }
+    await this.loadTable('reactions_publiques').catch(() => {}); this.emit();
     return null;
   }
   // « écrit… » : un signal éphémère entre les deux personnes de la conversation (rien n'est enregistré)
