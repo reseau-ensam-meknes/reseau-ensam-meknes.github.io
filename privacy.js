@@ -6,6 +6,7 @@ import { PUSH_CATEGORIES, pushChoix } from './logic.js';
 import { addAR } from './i18n.js';
 import { adresseContact } from './regles-entree.js';
 import { FondateurPublicCase } from './fondateurs.js';
+import { RAPPELS_NOTIF, PHRASE_VISITE, DesaboRappels } from './rappels.js';
 
 // Arabe : textes ajoutés en Phase 3 (le reste est dans i18n-ar.js)
 addAR({
@@ -68,6 +69,7 @@ const CATS_NOTIF = {
     mentorat: ['Mentorat et rendez-vous', 'Rendez-vous et rappels, relectures de CV, partage de coordonnées, parrainage.'],
     offres: ['Nouvelles offres pour moi', 'Les offres de ton année et de ta filière, dès leur publication.'],
     reseau: ['Réponses à mes questions et vie du réseau', 'Réponses à tes questions, événements de l’école, cafés de ta ville.'],
+    rappels: RAPPELS_NOTIF.etudiant,
   },
   laureat: {
     messages: ['Messages', 'Les messages qu’on t’envoie.'],
@@ -79,6 +81,7 @@ const CATS_NOTIF = {
     offres: ['Nouvelles offres pour moi', 'Avec « Je cherche un emploi en ce moment » coché dans ton profil : offres « Jeunes diplômés » et offres entre lauréats de ta filière. Sans cela, seulement les offres « Jeunes diplômés » l’année de ton diplôme.'],
     // Un lauréat pose aussi des questions : les réponses passent par cette case
     reseau: ['Questions et vie du réseau', 'Réponses à tes questions, questions sur ton entreprise ou ton pays, camarades de promo à confirmer, enquête d’insertion, événements de l’école, cafés de ta ville.'],
+    rappels: RAPPELS_NOTIF.laureat,
   },
   // Un lauréat qui cherche un emploi publie sa demande d'emploi et postule : ces cases couvrent aussi les siennes
   recherche: {
@@ -96,7 +99,10 @@ const motsNotif = me => (me.role === 'etudiant' ? CATS_NOTIF.etudiant
   : { ...CATS_NOTIF.laureat, ...(me.role === 'admin' ? CATS_NOTIF.admin : me.en_recherche ? CATS_NOTIF.recherche : {}) });
 // L'équipe du réseau ne reçoit ni les nouvelles demandes d'étudiants (réservées aux lauréats) ni d'alertes d'offres :
 // pas de case qui ne servirait à rien (les signalements, eux, arrivent toujours)
-const catsNotif = me => PUSH_CATEGORIES.filter(c => me.role !== 'admin' || (c !== 'demandes' && c !== 'offres'));
+// (ni de rappels de visite : ils ne vont qu'aux étudiants et aux lauréats)
+// Avant mise-a-jour.sql, la base refuse la clé « rappels » dans notif_push : pas de case (même migration que offers.origine)
+const catsNotif = (me, store) => PUSH_CATEGORIES.filter(c => (me.role !== 'admin' || (c !== 'demandes' && c !== 'offres' && c !== 'rappels'))
+  && (c !== 'rappels' || !store?.peutOrigine || store.peutOrigine()));
 const NOTES_NOTIF = {
   tous: 'Tes choix valent pour tous les appareils où les notifications sont activées.',
   admin: 'Les signalements arrivent toujours à l’équipe du réseau.',
@@ -152,6 +158,7 @@ const SECTIONS = [
     'Tes messages privés : textes, photos, messages vocaux et réactions échangés avec un autre membre.',
     'Ce que tu partages pour les suivants, si tu le fais : avis de stage, questions d’entretien, rubriques du guide de l’étranger, réponses à l’enquête d’insertion.',
     'Si tu les actives : l’adresse technique de ton téléphone pour les notifications, et ta langue préférée pour les emails.',
+    PHRASE_VISITE,
   ]],
   ['spark', 'Pourquoi', [
     'Mettre en relation les étudiants et les lauréats de l’ENSAM Meknès : offres, mentorat, entraide.',
@@ -312,7 +319,7 @@ function ChoixNotifs({ ctx }) {
   };
   return html`<fieldset class="md-cats" aria-describedby="md-cats-note">
     <legend>Ce que je reçois</legend>
-    ${catsNotif(me).map(cat => html`<label class="check" key=${cat}><input type="checkbox" id=${'np-' + cat} checked=${pushChoix(cat, me)} onChange=${e => changer(cat, e.target.checked)}/><span class="cat-txt"><span class="cat-t">${mots[cat][0]}</span><span class="cat-d">${mots[cat][1]}</span></span></label>`)}
+    ${catsNotif(me, store).map(cat => html`<label class="check" key=${cat}><input type="checkbox" id=${'np-' + cat} checked=${pushChoix(cat, me)} onChange=${e => changer(cat, e.target.checked)}/><span class="cat-txt"><span class="cat-t">${mots[cat][0]}</span><span class="cat-d">${mots[cat][1]}</span></span></label>`)}
     <p class="small muted" id="md-cats-note">${NOTES_NOTIF.tous}</p>
     ${me.role === 'admin' ? html`<p class="small muted">${NOTES_NOTIF.admin}</p>` : null}
   </fieldset>`;
@@ -335,8 +342,9 @@ function DeleteAccount({ ctx, onClose }) {
 
 // Lien « Se désabonner » des emails : page publique, un bouton, sans connexion.
 // quoi = 'alertes' pour les alertes d'offres (#desabo/<jeton>/alertes), 'messages' pour les emails de messages,
-// sinon le résumé de la semaine.
+// 'rappels' pour les rappels de visite, sinon le résumé de la semaine.
 export function DesaboPage({ store, token, quoi }) {
+  if (quoi === 'rappels') return html`<${DesaboRappels} store=${store} token=${token}/>`;
   return quoi === 'messages' ? html`<${DesaboMessages} store=${store} token=${token}/>` : html`<${DesaboEmails} store=${store} token=${token} alertes=${quoi === 'alertes'} key=${quoi || 'hebdo'}/>`;
 }
 function DesaboEmails({ store, token, alertes }) {

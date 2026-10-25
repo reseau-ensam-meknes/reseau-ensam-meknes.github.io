@@ -242,7 +242,7 @@ export function PrevenirHote({ ctx, bloque }) {
     // Rien de coché dans Mon profil : rien à proposer
     const ouvrable = () => {
       const m = hote?.me || me;
-      return ouvertureNotif({ etat: etatConnu, memo: lireMemo(me.id), now: Date.now(), role: m.role, voulu: PUSH_CATEGORIES.some(c => pushChoix(c, m)) });
+      return ouvertureNotif({ etat: etatConnu, memo: lireMemo(me.id), now: Date.now(), role: m.role, voulu: PUSH_CATEGORIES.some(c => c !== 'rappels' && pushChoix(c, m)) });
     };
     // Un écran calme : rien d'ouvert par-dessus (toute fenêtre modale, la photo agrandie d'un message comprise), pas en train
     // d'écrire, l'onglet au premier plan, pas de demande du navigateur en attente (lancée depuis Mon profil)

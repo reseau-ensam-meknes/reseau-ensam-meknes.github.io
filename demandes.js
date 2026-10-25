@@ -12,6 +12,8 @@ import { CV_MAX } from './store.js';
 import { CvButton, OuvrirCV } from './cv.js';
 import { MessageBtn } from './messages.js';
 import { SignalerBtn } from './confiance.js';
+import { DemandeSocial } from './reactions.js';
+import { demandesPromo, aidesProposees } from './reseau-vivant.js';
 
 const prenom = p => (p?.full_name || '').split(' ')[0] || 'L’étudiant';
 const ACTIVES = ['ouverte', 'match'];
@@ -72,6 +74,7 @@ export function DemandesTab({ ctx }) {
     ${me.role === 'admin' ? html`<${DemandesAdmin} ctx=${ctx} focusId=${focusId}/>` : null}
     ${me.role === 'laureat' ? html`<${DemandesLaureat} ctx=${ctx} focusId=${focusId}/>` : null}
     ${peutPublier ? html`<${MesDemandes} ctx=${ctx} focusId=${focusId} onNew=${() => setForm({})} onEdit=${d => setForm({ d })}/>` : null}
+    ${me.role === 'etudiant' && peutPublier ? html`<${DemandesPromo} ctx=${ctx} focusId=${focusId}/>` : null}
     ${me.role === 'etudiant' && !peutPublier ? html`<${Empty} icon="send" scene="demandes" title="Les demandes arrivent en 3e année">À partir de la 3e année, tu pourras dire aux lauréats le stage que tu cherches, CV joint. En attendant, demande-leur un conseil dans Mentorat.<//>` : null}
     ${form ? html`<${DemandeForm} ctx=${ctx} d=${form.d || null} onClose=${fermer}/>` : null}
   </div>`;
@@ -147,6 +150,7 @@ function CarteAuteur({ ctx, d, focus, onEdit }) {
       ${d.status === 'ouverte' ? html`<button type="button" class="btn tiny ghost" onClick=${fermer}><${Icon} name="x" size=${14}/> Fermer</button>` : null}
       ${d.status === 'fermee' ? html`<button type="button" class="btn tiny" onClick=${rouvrir}>Rouvrir</button><button type="button" class="btn tiny ghost" onClick=${supprimer}><${Icon} name="trash" size=${14}/> Supprimer</button>` : null}
     </div>
+    <${DemandeSocial} ctx=${ctx} d=${d} ouvrir=${focus}/>
   </article>`;
 }
 
@@ -218,6 +222,35 @@ function ReussiteAuteur({ ctx, d }) {
 }
 
 // ---------------------------------------------------------------------------
+// Côté étudiant : les demandes des étudiants de son année, en lecture (le réseau vit) : où elles en sont,
+// combien de lauréats ont proposé leur aide (jamais qui ni quoi), leurs réactions et leurs réponses. Ni CV ni « Je peux aider ».
+// ---------------------------------------------------------------------------
+function DemandesPromo({ ctx, focusId }) {
+  const { data, me, store, saison } = ctx;
+  const liste = demandesPromo(data, me, id => store.byId('profiles', id), saison);
+  return html`<section class="m-section dm-promo" aria-labelledby="dm-promo-t">
+    <div class="m-head"><h2 class="h-ico" id="dm-promo-t"><${Icon} name="people"/> Demandes de ta promo</h2>${liste.length ? html`<span class="count">${liste.length}</span>` : null}</div>
+    ${liste.length ? html`<p class="small muted">Ce que cherchent les étudiants de ton année. Encourage-les, ou laisse un conseil.</p>
+      <div class="list">${liste.map(d => html`<${CartePromo} key=${d.id} ctx=${ctx} d=${d} focus=${d.id === focusId}/>`)}</div>`
+      : html`<p class="small muted dm-attente"><${Icon} name="people" size=${15}/> <span>Pas encore de demande d’un étudiant de ton année. Elles apparaîtront ici.</span></p>`}
+  </section>`;
+}
+
+function CartePromo({ ctx, d, focus }) {
+  const { data, store, openProfile } = ctx;
+  const a = store.byId('profiles', d.auteur_id);
+  const n = aidesProposees(data, d);
+  return html`<article class=${'dm-card dm-card-promo st-' + d.status + (focus ? ' dm-focus' : '')} id=${'dm-' + d.id}>
+    <div class="dm-head"><${Person} p=${a} onOpen=${openProfile} size=${40}/><span class="spacer"></span><${TypeTag} type=${d.type}/><${Pill} d=${d}/></div>
+    <h3 class="dm-titre" translate="no" dir="auto">${d.titre}</h3>
+    <${Meta} d=${d}/>
+    ${d.status === 'ouverte' ? html`<p class="dm-details" translate="no" dir="auto">${d.details}</p>` : null}
+    ${n > 0 ? html`<p class="small dm-nb-aides"><${Icon} name="heart" size=${14}/> <span>${n > 1 ? `${n} lauréats ont proposé leur aide` : 'Un lauréat a proposé son aide'}</span></p>` : null}
+    <${DemandeSocial} ctx=${ctx} d=${d} ouvrir=${focus} fin=${html`<${SignalerBtn} ctx=${ctx} type="demande" id=${d.id} small/>`}/>
+  </article>`;
+}
+
+// ---------------------------------------------------------------------------
 // Publier ou modifier une demande : ce que je cherche, où, quand ; CV joint
 // ---------------------------------------------------------------------------
 function DemandeForm({ ctx, d = null, onClose }) {
@@ -270,7 +303,7 @@ function DemandeForm({ ctx, d = null, onClose }) {
       <input ref=${input} id="dm-cv-file" type="file" accept="application/pdf,.pdf" hidden onChange=${e => deposer(e.target.files[0])}/>
       ${me.cv_path ? html`<p class="small hint-box"><${Icon} name="file" size=${15}/> <span>Ton CV PDF est joint. Les lauréats le voient tant que ta demande est ouverte.</span> <${OuvrirCV} store=${store} path=${me.cv_path} label="Voir" cls="btn tiny ghost"/></p>`
         : html`<button type="button" id="dm-cv" class=${'cv-drop' + (tente && manques.includes('cv') ? ' manque' : '')} disabled=${busy} onClick=${() => input.current?.click()}><span class="cv-ico"><${Icon} name="upload" size=${22}/></span><strong>${busy ? 'Envoi en cours…' : 'Joins ton CV en PDF'}</strong><span class="small muted">Obligatoire : c’est la première chose que regardent les lauréats. PDF, 2 Mo maximum.</span></button>`}
-      <p class="small muted"><${Icon} name="lock" size=${14}/> Visible par les lauréats seulement. Tes coordonnées restent cachées jusqu’au match.</p>
+      <p class="small muted"><${Icon} name="lock" size=${14}/> ${me.role === 'etudiant' ? 'Les lauréats voient ta demande et ton CV ; les étudiants de ton année, ta demande seulement. Tes coordonnées restent cachées jusqu’au match.' : 'Visible par les lauréats seulement. Tes coordonnées restent cachées jusqu’au match.'}</p>
     </form>
   <//>`;
 }
@@ -343,6 +376,7 @@ function CarteLaureat({ ctx, d, why = [], focus = false }) {
       ${e === 'reproposer' ? html`<button type="button" class="btn small" onClick=${() => ctx.proposerAide(d.id)}>Proposer à nouveau</button>` : null}
       ${e === 'proposer' ? html`<button type="button" class="btn small tonal dm-aider" onClick=${() => ctx.proposerAide(d.id)}><${Icon} name="heart" size=${15}/> Je peux aider</button>` : null}
     </div>
+    <${DemandeSocial} ctx=${ctx} d=${d} ouvrir=${focus}/>
   </article>`;
 }
 
@@ -629,6 +663,10 @@ addAR({
   'Tu as déjà proposé ton aide pour cette demande.': 'سبق أن اقترحت مساعدتك لهذا الطلب.',
   'Cette demande n’est plus ouverte.': 'لم يعد هذا الطلب مفتوحًا.', 'C’est ta propre demande.': 'هذا طلبك أنت.',
   'Dis-le en une phrase : 4 caractères au moins.': 'قلها في جملة واحدة: 4 أحرف على الأقل.',
+  'Demandes de ta promo': 'طلبات دفعتك', 'Ce que cherchent les étudiants de ton année. Encourage-les, ou laisse un conseil.': 'ما يبحث عنه طلبة سنتك. شجّعهم أو اترك نصيحة.',
+  'Pas encore de demande d’un étudiant de ton année. Elles apparaîtront ici.': 'لا يوجد طلب من طلبة سنتك بعد. ستظهر الطلبات هنا.',
+  'Un lauréat a proposé son aide': 'اقترح خريج واحد مساعدته',
+  'Les lauréats voient ta demande et ton CV ; les étudiants de ton année, ta demande seulement. Tes coordonnées restent cachées jusqu’au match.': 'يرى الخريجون طلبك وسيرتك الذاتية، ويرى طلبة سنتك طلبك فقط. تبقى معلومات الاتصال بك مخفية حتى التطابق.',
   'Quelques lignes suffisent : 20 caractères au moins.': 'تكفي بضعة أسطر: 20 حرفًا على الأقل.',
 }, [
   [/^Bonjour (.+), j’ai lu ta demande et ton CV\. Je peux te proposer une place dans mon équipe\. Réponds-moi quand tu veux, on en parle\.$/, n => `مرحبًا ${n}، قرأت طلبك وسيرتك الذاتية. أستطيع أن أقترح عليك مكانًا في فريقي. يسعدني أن نتحدث في الأمر متى شئت.`],
@@ -642,6 +680,7 @@ addAR({
   [/^Tu es en (.+)$/, p => `أنت في ${p}`],
   [/^Anciennes demandes \((\d+)\)$/, n => `الطلبات السابقة (${n})`],
   [/^Mes aides passées \((\d+)\)$/, n => `مساعداتي السابقة (${n})`],
+  [/^(\d+) lauréats ont proposé leur aide$/, n => `عدد الخريجين الذين اقترحوا مساعدتهم: ${n}`],
   [/^(\d+) lauréats te proposent leur aide$/, n => `${n} خريجين يقترحون عليك مساعدتهم`],
   [/^(\d+) propositions$/, n => `${n} اقتراحات`],
   [/^Voir les (\d+)$/, n => `عرض ${n}`],
