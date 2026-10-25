@@ -28,7 +28,7 @@ insert into public.app_secrets (cle, valeur) values
   ('projet_url', 'https://VOTRE-PROJET.supabase.co'), ('anon_key', 'VOTRE_CLE_ANON')
 on conflict (cle) do update set valeur = excluded.valeur;
 ```
-Activer **pg_net** et **pg_cron** (Database > Extensions) avant de lancer `schema.sql` (sinon le relancer) : la file part tout de suite, les rappels toutes les 10 min, le résumé chaque matin (8 h UTC). Les clés VAPID sont créées seules au premier appel.
+Activer **pg_net** et **pg_cron** (Database > Extensions) avant de lancer `schema.sql` (sinon le relancer) : la file part tout de suite, les rappels toutes les 10 min, le résumé chaque matin (8 h UTC), et chaque soir à 18 h UTC (19 h au Maroc) les rappels de visite (`rappels_soir()` : la notification sur le téléphone, puis la tâche `{"job":"rappels"}` pour les emails, 150 par jour au plus). Les clés VAPID sont créées seules au premier appel.
 
 ## 4. Tester
 - Clé publique : `curl -X POST https://VOTRE-PROJET.supabase.co/functions/v1/notifier -H "Authorization: Bearer CLE_ANON" -H "Content-Type: application/json" -d '{"job":"cle"}'` donne `{"publicKey":"B…"}`.

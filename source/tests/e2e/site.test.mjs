@@ -1105,7 +1105,7 @@ test('à l’ouverture : jamais pendant qu’une nouvelle version peut recharger
 test('Mon profil : les notifications par catégorie, défauts selon le rôle, enregistrées et relues après rechargement', async () => {
   const s = await ouvrir({ largeur: 390 });
   const cases = () => s.page.$$eval('.md-cats input[type=checkbox]', xs => Object.fromEntries(xs.map(x => [x.id.replace('np-', ''), x.checked])));
-  const tout = { messages: true, demandes: true, candidatures: true, mentorat: true, offres: true, reseau: true };
+  const tout = { messages: true, demandes: true, candidatures: true, mentorat: true, offres: true, reseau: true, rappels: true };
   await s.comme('Salma'); await s.aller('profil');
   assert.deepEqual(await cases(), tout);
   const etu = await s.page.locator('.md-cats').innerText();
@@ -1160,6 +1160,60 @@ test('Mon profil : les notifications par catégorie, défauts selon le rôle, en
   assert.deepEqual(v, []);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
+});
+
+// Rappels de visite : une case à part dans Mon profil, cochée par défaut, que l'on coupe d'un geste (360 px, FR et AR)
+test('Mon profil : la case « Rappels », cochée par défaut, se coupe et reste coupée ; le lien des emails aussi (360 px)', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 360, langue, ua: TELEPHONE });
+    await s.page.setViewportSize({ width: 360, height: 640 });
+    await s.comme('Salma'); await s.aller('profil');
+    const rappels = s.page.locator('label.check:has(#np-rappels)');
+    await rappels.scrollIntoViewIfNeeded();
+    assert.equal(await s.page.isChecked('#np-rappels'), true, 'activée par défaut');
+    const texte = await rappels.innerText();
+    if (langue === 'fr') {
+      assert.match(texte, /^Rappels/);
+      assert.match(texte, /Après quelques jours sans visite, ce qui t’attend : messages, propositions d’aide, nouvelles offres\./);
+      assert.match(texte, /par email une fois par semaine au plus/);
+    } else {
+      assert.match(texte, /التذكيرات/); assert.match(texte, /بعد أيام دون زيارة/);
+      assert.deepEqual(texte.match(/[A-Za-zÀ-ÿ]{2,}/g) || [], [], 'rien d’oublié en français');
+    }
+    // La case est entière dans l'écran, au-dessus de la barre du bas, et assez grande pour le doigt
+    const boite = await rappels.boundingBox();
+    const barre = await s.page.evaluate(() => { const b = document.querySelector('.bottom-nav'); return b ? b.getBoundingClientRect().top : innerHeight; });
+    assert.ok(boite.x >= 0 && boite.x + boite.width <= 360, `case dans l’écran : ${JSON.stringify(boite)}`);
+    assert.ok(boite.y + boite.height <= barre + 1, 'pas sous la barre du bas');
+    assert.ok(boite.height >= 24);
+    await s.page.click('#np-rappels'); await s.page.waitForTimeout(250);
+    assert.match(await s.page.locator('.toast').last().innerText(), langue === 'fr' ? /Choix enregistré/ : /تم حفظ اختيارك/);
+    await s.page.reload(); await s.page.waitForSelector('#mes-donnees');
+    assert.equal(await s.page.isChecked('#np-rappels'), false, 'relue après rechargement');
+    assert.deepEqual(await s.page.evaluate(() => window.__demo.me.notif_push), { rappels: false });
+    assert.equal(await s.page.isChecked('#np-messages'), true, 'les autres cases ne changent pas');
+    assert.equal(await s.debordement(), 0);
+    if (langue === 'fr') {
+      // Lauréat : ses mots à lui ; l'équipe du réseau : pas de case
+      await s.comme('Youssef'); await s.aller('profil');
+      assert.equal(await s.page.isChecked('#np-rappels'), true);
+      assert.match(await s.page.locator('label.check:has(#np-rappels)').innerText(), /demandes d’étudiants, candidatures, mentorats qui attendent ta réponse/);
+      await s.comme('Admin'); await s.aller('profil');
+      assert.equal(await s.page.locator('#np-rappels').count(), 0);
+      // La page Confidentialité dit ce qui est noté, et pourquoi
+      await s.aller('confidentialite');
+      assert.match(await s.page.locator('body').innerText(), /La date de ta dernière visite, pour ne t’envoyer un rappel qu’après quelques jours sans visite/);
+    }
+    // Le lien « Ne plus recevoir ces rappels » d'un email : une page, un bouton, sans connexion
+    await s.page.goto(adresse + '#desabo/11111111-2222-4333-8444-555555555555/rappels'); await s.page.waitForSelector('#desabo-rappels');
+    assert.match(await s.page.locator('.desabo h1').innerText(), langue === 'fr' ? /^Rappels$/ : /التذكيرات/);
+    await s.page.click('#desabo-rappels');
+    await s.page.waitForSelector('.desabo .verify-ok');
+    assert.match(await s.page.locator('.desabo').innerText(), langue === 'fr' ? /plus de rappels, ni par email ni sur le téléphone/ : /لا تذكيرات بعد الآن/);
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
 });
 
 test('notifications en arabe : la feuille d’ouverture et les réglages, sans texte oublié', async () => {
