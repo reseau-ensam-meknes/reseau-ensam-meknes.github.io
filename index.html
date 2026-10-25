@@ -29,7 +29,7 @@
 try{L=localStorage;var t=L.getItem('ensam-theme');if(t==='light'||t==='dark'){d.dataset.theme=t;document.querySelectorAll('meta[name="theme-color"]').forEach(function(m){m.content=t==='dark'?'#0B1320':'#1670A8'})}
 var g=L.getItem('ensam-lang');ar=g==='ar'||(!g&&sessionStorage.getItem('ensam-lang-visite')==='ar');for(i=0;i<L.length;i++)if(/^sb-.+-auth-token$/.test(L.key(i)))membre=true}catch(e){}
 d.lang=ar?'ar':'fr';d.dir=ar?'rtl':'ltr';
-var M=window.ENSAM_MAGASIN=["vendor/supabase.js","store.js","logic.js"],A=window.ENSAM_MODULES=["app.js","ui.js","offers.js","pwa.js","pouls.js","recrutement.js","cv.js","messages.js","confiance.js","entreprises.js","pro.js","geo.js","lignes.js","demandes.js","me.js","growth.js","saison.js","invitation.js","community.js","groupes.js","mentorat.js","etranger.js","agenda.js","photo.js","privacy.js","fondateurs.js","fondateurs-public.js","ambassadeurs.js"];
+var M=window.ENSAM_MAGASIN=["vendor/supabase.js","store.js","origine.js","reseau-vivant.js","logic.js"],A=window.ENSAM_MODULES=["app.js","ui.js","offers.js","pwa.js","pouls.js","recrutement.js","cv.js","messages.js","confiance.js","entreprises.js","pro.js","geo.js","lignes.js","demandes.js","reactions.js","partages.js","me.js","growth.js","saison.js","invitation.js","community.js","groupes.js","mentorat.js","etranger.js","agenda.js","photo.js","privacy.js","fondateurs.js","fondateurs-public.js","rappels.js","ambassadeurs.js"];
 if(!A.length)return;
 if(membre&&!/^#(verifier|desabo)\b/.test(location.hash))d.dataset.boot='membre';
 if(membre||/^#(verifier|desabo|confidentialite)\b|access_token=|type=recovery|error_description=/.test(location.hash))d.dataset.tete='appli';

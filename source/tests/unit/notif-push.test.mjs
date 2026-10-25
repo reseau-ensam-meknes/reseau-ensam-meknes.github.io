@@ -47,6 +47,7 @@ test('catégories : messages, demandes, candidatures, mentorat, offres, vie du r
   assert.equal(pushCategorie('offre_alerte'), 'offres');
   assert.equal(pushCategorie('question_routee'), 'reseau');
   assert.equal(pushCategorie('signalement'), 'admin');
+  assert.equal(pushCategorie('rappel_visite'), 'rappels', 'rappel de visite, à ne pas confondre avec rappel_rdv (mentorat)');
   assert.equal(pushCategorie('nouveau_type'), 'reseau');
   assert.equal(pushCategorie('constructor'), 'reseau');
 });
@@ -56,12 +57,13 @@ test('catégories : messages, demandes, candidatures, mentorat, offres, vie du r
 test('chaque type est dans la catégorie annoncée', () => {
   const regle = {
     messages: ['message'],
-    demandes: ['demande_nouvelle', 'demande_proposition', 'demande_match', 'demande_rouverte'],
+    demandes: ['demande_nouvelle', 'demande_proposition', 'demande_match', 'demande_rouverte', 'demande_reponse'],
     candidatures: ['candidature', 'candidature_statut', 'invitation', 'recrutement_a_confirmer', 'recrutement_confirme', 'relance_offre'],
     mentorat: ['mentorat_demande', 'mentorat_accepte', 'mentorat_deplace', 'mentorat_annule', 'rappel_rdv', 'merci', 'relecture_demande', 'relecture_prise',
       'relecture_rendue', 'contact_demande', 'contact_accepte', 'filleul', 'parrain'],
     offres: ['offre_alerte'],
-    reseau: ['reponse', 'question_routee', 'cafe', 'evenement', 'evenement_annule', 'evenement_deplace', 'enquete', 'verification_pair', 'verifier_pair'],
+    reseau: ['reponse', 'question_routee', 'cafe', 'evenement', 'evenement_annule', 'evenement_deplace', 'enquete', 'verification_pair', 'verifier_pair', 'reaction'],
+    rappels: ['rappel_visite'],
     admin: ['signalement'],
   };
   const attendu = Object.fromEntries(Object.entries(regle).flatMap(([cat, kinds]) => kinds.map(k => [k, cat])));
@@ -96,4 +98,19 @@ test('le choix du membre l’emporte ; les signalements arrivent toujours à l�
   // Base pas encore à jour (pas de colonne notif_push) : les défauts
   assert.equal(pushVoulu('message', { role: 'etudiant' }), true);
   assert.equal(pushChoix('offres', { role: 'laureat', notif_push: { offres: 'oui' } }), false, 'une valeur qui n’est pas un booléen ne compte pas');
+});
+
+// Rappels de visite : une catégorie à part, que l'on peut couper, activée par défaut pour les étudiants et les lauréats
+test('rappels : catégorie à part, activée par défaut pour tous, coupée = rien ; la base accepte la case', () => {
+  assert.ok(PUSH_CATEGORIES.includes('rappels'));
+  assert.equal(PUSH_CATEGORIES.at(-1), 'rappels', 'dernière case de Mon profil');
+  for (const me of [{ role: 'etudiant' }, { role: 'laureat' }, { role: 'laureat', en_recherche: true }, { role: 'etudiant', alertes_offres: false }]) {
+    assert.equal(pushDefaut('rappels', me), true, JSON.stringify(me));
+    assert.equal(pushVoulu('rappel_visite', me), true);
+    assert.equal(pushVoulu('rappel_visite', { ...me, notif_push: { rappels: false } }), false);
+    assert.equal(pushVoulu('rappel_visite', { ...me, notif_push: { messages: false, reseau: false, offres: false } }), true, 'les autres cases n’y changent rien');
+    assert.equal(pushVoulu('rappel_rdv', { ...me, notif_push: { rappels: false } }), true, 'le rappel d’un rendez-vous reste dans « Mentorat »');
+  }
+  assert.match(SCHEMA, /e\.key not in \([^)]*'rappels'[^)]*\)/, 'notif_push_valide accepte la case « rappels »');
+  assert.match(SCHEMA, /when p_kind = 'rappel_visite' then 'rappels'/);
 });

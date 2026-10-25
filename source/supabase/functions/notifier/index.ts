@@ -371,7 +371,9 @@ async function pousserUn(a: Abonnement, n: Notif, urg: string, v: Vapid): Promis
 // ---------------------------------------------------------------------
 // Textes des notifications (fr / ar)
 // ---------------------------------------------------------------------
-type V = { nom: string; sujet: string; titre: string; entreprise: string; cible: string; ville: string; lieu: string; statut: string; date: string; heure: string; promo: string; n: number; vague: string; motif: string; texte: string; mtype: string; duree: number; aide: string; dtype: string; pour: string };
+type V = { nom: string; sujet: string; titre: string; entreprise: string; cible: string; ville: string; lieu: string; statut: string; date: string; heure: string; promo: string; n: number; vague: string; motif: string; texte: string; mtype: string; duree: number; aide: string; dtype: string; pour: string; origine?: string; emoji: string; quoi: string };
+// Réactions publiques : les mêmes émojis que la table reactions_publiques
+const EMOJIS_PUBLICS = ['👍', '❤️', '👏', '🙏', '💪'];
 
 // Aperçu d'un message privé : le début du texte, ou « Photo », « Message vocal (0:42) »
 const minSec = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
@@ -456,6 +458,20 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
       : v.pour === 'aidant' ? ['شكرًا على اقتراح مساعدتك', `وقع اختيار ${v.nom} على طريق آخر: ${v.titre}`]
       : ['تغيير في طلب', `انتهى الاتفاق مع ${v.nom}: ${v.titre}.`],
   },
+  // Une réponse sous ma demande (un conseil, un contact)
+  demande_reponse: {
+    route: 'offres/demandes',
+    fr: v => ['Une réponse à ta demande', `${v.nom}${v.titre ? ` sur « ${v.titre} »` : ''} : ${v.texte}`],
+    ar: v => ['رد على طلبك', `رد من ${v.nom}${v.titre ? ` على «${v.titre}»` : ''}: ${v.texte}`],
+  },
+  // Réactions sur mon offre ou ma demande : une notification au plus par élément et par heure, le compte du moment
+  reaction: {
+    route: 'offres',
+    fr: v => [v.quoi === 'demande' ? 'Ta demande fait réagir' : 'Ton offre fait réagir',
+      v.n > 1 ? `${v.n} réactions, la dernière de ${v.nom}${v.titre ? ` : ${v.titre}` : ''}` : `${v.nom} a réagi${v.emoji ? ` ${v.emoji}` : ''}${v.titre ? ` : ${v.titre}` : ''}`],
+    ar: v => [v.quoi === 'demande' ? 'تفاعل مع طلبك' : 'تفاعل مع عرضك',
+      v.n > 1 ? `عدد التفاعلات: ${v.n}، آخرها من ${v.nom}${v.titre ? `: ${v.titre}` : ''}` : `تفاعل من ${v.nom}${v.emoji ? ` ${v.emoji}` : ''}${v.titre ? `: ${v.titre}` : ''}`],
+  },
   invitation: {
     route: 'offres',
     fr: v => ['Invitation à postuler', `${v.nom} t’invite à postuler : ${v.titre}`],
@@ -496,10 +512,11 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     fr: v => ['Ton offre est-elle toujours ouverte ?', `« ${v.titre} » : un clic pour confirmer, ou la marquer pourvue.`],
     ar: v => ['هل لا يزال عرضك مفتوحًا؟', `«${v.titre}»: أكّد بنقرة أنه لا يزال مفتوحًا، أو أشر إلى أنه تم شغله.`],
   },
+  // Le texte dit d'où vient l'offre : portée par un lauréat (il encadre), ou partagée (vue ailleurs, à postuler sur le site d'origine)
   offre_alerte: {
     route: 'offres',
-    fr: v => ['Nouvelle offre pour toi', `${v.titre}${v.entreprise ? ` · ${v.entreprise}` : ''}`],
-    ar: v => ['عرض جديد لك', `${v.titre}${v.entreprise ? ` · ${v.entreprise}` : ''}`],
+    fr: v => [v.origine === 'partagee' ? 'Offre partagée pour toi' : 'Nouvelle offre pour toi', `${v.titre}${v.entreprise ? ` · ${v.entreprise}` : ''}${ORIGINE_ALERTE.fr[v.origine || ''] || ''}`],
+    ar: v => [v.origine === 'partagee' ? 'عرض تمت مشاركته معك' : 'عرض جديد لك', `${v.titre}${v.entreprise ? ` · ${v.entreprise}` : ''}${ORIGINE_ALERTE.ar[v.origine || ''] || ''}`],
   },
   contact_demande: {
     route: 'accueil',
@@ -568,11 +585,22 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     fr: v => [v.nom, apercuMessage(v, 'fr')],
     ar: v => [v.nom, apercuMessage(v, 'ar')],
   },
+  // Rappel de visite : texte écrit par notifRappel (les chiffres de chaque chose qui attend ne tiennent pas dans V)
+  rappel_visite: {
+    route: 'accueil',
+    fr: () => null,
+    ar: () => null,
+  },
   test: {
     route: 'accueil',
     fr: () => ['Notifications activées', 'Tu recevras ici les nouvelles importantes du Réseau ENSAM.'],
     ar: () => ['تم تفعيل الإشعارات', 'ستصلك هنا أهم أخبار شبكة ENSAM.'],
   },
+};
+
+const ORIGINE_ALERTE: Record<Langue, Record<string, string>> = {
+  fr: { portee: ' · portée par un lauréat, qui encadre', partagee: ' · vue ailleurs, partagée par un membre du réseau' },
+  ar: { portee: ' · يقدّمه خريج مع التأطير', partagee: ' · منشور في موقع آخر، شاركه عضو في الشبكة' },
 };
 
 const MOTIFS: Record<Langue, Record<string, string>> = {
@@ -583,6 +611,7 @@ const MOTIFS: Record<Langue, Record<string, string>> = {
 // Notification prête à envoyer : { title, body, url, tag } ; null si le type est inconnu
 export function texteNotif(kind: string, data: unknown, langue: unknown, site: string): Notif | null {
   if (!Object.prototype.hasOwnProperty.call(NOTIFS, kind)) return null;
+  if (kind === 'rappel_visite') return notifRappel(data, langue, site);
   const g = NOTIFS[kind], l = langueDe(langue);
   const d = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
   // En arabe, le contenu des membres (souvent en français) est isolé pour ne pas mélanger le sens de lecture
@@ -597,6 +626,9 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
     texte: s('texte'), mtype: txt(d.type), duree: Math.max(0, Math.min(600, Number(d.duree) || 0)),
     aide: ['recrute', 'encadre', 'recommande'].includes(txt(d.aide)) ? txt(d.aide) : '', dtype: txt(d.type),
     pour: ['demandeur', 'mentor', 'auteur', 'aidant'].includes(txt(d.pour)) ? txt(d.pour) : '',
+    // Offre portée par un lauréat (il encadre) ou partagée (vue ailleurs) ; rien pour une offre classique
+    origine: ['portee', 'partagee'].includes(txt(d.origine)) ? txt(d.origine) : '',
+    emoji: EMOJIS_PUBLICS.includes(txt(d.emoji)) ? txt(d.emoji) : '', quoi: estUuid(d.demande) ? 'demande' : 'offre',
   };
   const t = g[l](v);
   if (!t) return null;
@@ -604,10 +636,12 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
   // Une demande ouvre sa carte ; une nouvelle demande, pour un lauréat, ouvre directement « Je peux aider », prérempli
   const dem = kind.startsWith('demande_') && estUuid(d.demande) ? d.demande : null;
   const annule = kind === 'mentorat_annule' && estUuid(d.m) ? d.m : null;
-  const route = kind === 'offre_alerte' && estUuid(d.offre) ? `offre/${d.offre}` : kind === 'message' && estUuid(d.de) ? `messages/${d.de}`
+  // Une réaction ouvre l'élément : l'offre, ou la carte de la demande ; une seule notification par élément sur le téléphone
+  const rx = kind === 'reaction' ? (estUuid(d.offre) ? { route: `offre/${d.offre}`, id: d.offre } : estUuid(d.demande) ? { route: `offres/demandes/${d.demande}`, id: d.demande } : null) : null;
+  const route = rx ? rx.route : kind === 'offre_alerte' && estUuid(d.offre) ? `offre/${d.offre}` : kind === 'message' && estUuid(d.de) ? `messages/${d.de}`
     : annule && v.pour === 'demandeur' ? `mentorat/reprendre/${annule}`
     : dem ? (kind === 'demande_nouvelle' ? `aider/${dem}` : `offres/demandes/${dem}`) : g.route;
-  const tag = kind === 'offre_alerte' && estUuid(d.offre) ? `offre-${d.offre}` : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem ? `${kind}-${dem}` : annule ? `${kind}-${annule}` : kind;
+  const tag = rx ? `reaction-${rx.id}` : kind === 'offre_alerte' && estUuid(d.offre) ? `offre-${d.offre}` : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem ? `${kind}-${dem}` : annule ? `${kind}-${annule}` : kind;
   return { title: couper(t[0], 80), body: couper(t[1], 180), url: site + '#' + route, tag };
 }
 
@@ -1443,7 +1477,12 @@ ${c.liens.map(([t, u]) => `<a href="${esc(u)}" style="color:#1670A8;">${esc(t)}<
 </html>`;
 }
 
-export type OffreAlerte = { id: string; titre: string; entreprise: string; type?: string | null; ville?: string | null; pays?: string | null; deadline?: string | null };
+export type OffreAlerte = { id: string; titre: string; entreprise: string; type?: string | null; ville?: string | null; pays?: string | null; deadline?: string | null; origine?: string | null };
+// D'où vient l'offre, dans la ligne de l'alerte (rien pour une offre classique)
+const ORIGINE_EMAIL: Record<Langue, Record<string, string>> = {
+  fr: { portee: 'Portée par un lauréat, qui encadre', partagee: 'Offre partagée, vue ailleurs' },
+  ar: { portee: 'يقدّمه خريج مع التأطير', partagee: 'عرض تمت مشاركته، منشور في موقع آخر' },
+};
 const TYPES_OFFRE: Record<Langue, Record<string, string>> = {
   fr: { stage: 'Stage', pfe: 'PFE', etranger: 'Stage à l’étranger', emploi: 'Emploi' },
   ar: { stage: 'تدريب', pfe: 'مشروع نهاية الدراسة', etranger: 'تدريب بالخارج', emploi: 'وظيفة' },
@@ -1457,13 +1496,17 @@ export function rendreAlerte(offres: OffreAlerte[], langue: Langue, site: string
   const desabo = `${site}#desabo/${token}/alertes`;
   const lieu = (o: OffreAlerte) => [txt(o.ville), txt(o.pays) && txt(o.pays) !== 'Maroc' ? txt(o.pays) : ''].filter(Boolean).join(', ');
   const limite = (o: OffreAlerte) => { const q = o.deadline ? quand(o.deadline, langue) : null; return q ? (ar ? `آخر أجل: ${q.date}` : `Avant le ${q.date}`) : ''; };
-  const ligne = (o: OffreAlerte, F: Fmt) => [F.g(txt(o.titre)), F.u(txt(o.entreprise)), TYPES_OFFRE[langue][txt(o.type)] || '', F.u(lieu(o)), limite(o)].filter(Boolean).join(' · ');
+  const ligne = (o: OffreAlerte, F: Fmt) => [F.g(txt(o.titre)), F.u(txt(o.entreprise)), TYPES_OFFRE[langue][txt(o.type)] || '', F.u(lieu(o)), limite(o), ORIGINE_EMAIL[langue][txt(o.origine)] || ''].filter(Boolean).join(' · ');
   const sujet = couper(n > 1
     ? (ar ? `${arN(n, ['', 'عرضان جديدان', '{n} عروض جديدة', '{n} عرضًا جديدًا'])} لك` : `${n} nouvelles offres pour toi`) + (ar ? ' · شبكة ENSAM' : ' · Réseau ENSAM')
     : (ar ? `عرض جديد لك: ${txt(o0.titre)} · ${txt(o0.entreprise)}` : `Nouvelle offre pour toi : ${txt(o0.titre)} · ${txt(o0.entreprise)}`), 110);
+  // Un partage peut venir d'un étudiant : l'introduction ne dit « des lauréats » que si toutes les offres viennent d'eux
+  const partage = offres.some(o => txt(o.origine) === 'partagee');
   const intro = ar
-    ? (n > 1 ? 'نشر خريجو المدرسة عروضًا جديدة تناسب شعبتك وسنتك:' : 'نشر خريج من المدرسة عرضًا جديدًا يناسب شعبتك وسنتك:')
-    : (n > 1 ? 'Des lauréats de l’école viennent de publier des offres pour ta filière et ton année :' : 'Un lauréat de l’école vient de publier une offre pour ta filière et ton année :');
+    ? (partage ? (n > 1 ? 'عروض جديدة تناسب شعبتك وسنتك، نشرها أو شاركها أعضاء الشبكة:' : 'شارك عضو في الشبكة عرضًا يناسب شعبتك وسنتك:')
+      : n > 1 ? 'نشر خريجو المدرسة عروضًا جديدة تناسب شعبتك وسنتك:' : 'نشر خريج من المدرسة عرضًا جديدًا يناسب شعبتك وسنتك:')
+    : (partage ? (n > 1 ? 'De nouvelles offres pour ta filière et ton année, publiées ou partagées par des membres du réseau :' : 'Un membre du réseau vient de partager une offre pour ta filière et ton année :')
+      : n > 1 ? 'Des lauréats de l’école viennent de publier des offres pour ta filière et ton année :' : 'Un lauréat de l’école vient de publier une offre pour ta filière et ton année :');
   const lien = (o: OffreAlerte) => `${site}#offre/${o.id}`;
   const html = cadreEmail({
     langue, sujet, apercu: ligne(o0, b), sousTitre: ar ? 'تنبيه العروض' : 'Alerte offres',
@@ -1480,7 +1523,8 @@ export function rendreAlerte(offres: OffreAlerte[], langue: Langue, site: string
 }
 
 // Demandes des étudiants de son parcours (lauréats) : qui, ce qu'il cherche, et « Je peux aider »
-export type DemandeAlerte = { id: string; titre: string; type?: string | null; lieu?: string | null; prenom?: string | null; niveau?: number | null; role?: string | null };
+// large : hors de son parcours, une demande restée sans aide et ouverte à tous les lauréats (absent avec une base plus ancienne)
+export type DemandeAlerte = { id: string; titre: string; type?: string | null; lieu?: string | null; prenom?: string | null; niveau?: number | null; role?: string | null; large?: boolean | null };
 const niveauCourt = (x: DemandeAlerte, l: Langue) => x.role === 'laureat' ? (l === 'ar' ? 'خريج' : 'Lauréat')
   : Number(x.niveau) >= 6 ? (l === 'ar' ? 'خريج جديد' : 'Jeune diplômé') : Number(x.niveau) >= 3 ? `${Number(x.niveau)}A` : '';
 export function rendreDemandes(demandes: DemandeAlerte[], langue: Langue, site: string, token: string): Courriel {
@@ -1490,23 +1534,34 @@ export function rendreDemandes(demandes: DemandeAlerte[], langue: Langue, site: 
   const desabo = `${site}#desabo/${token}/alertes`;
   const qui = (x: DemandeAlerte) => txt(x.prenom) || (ar ? 'طالب' : 'Un étudiant');
   const ligne = (x: DemandeAlerte, F: Fmt) => [F.g(qui(x)), niveauCourt(x, langue), TYPES_OFFRE[langue][txt(x.type)] || '', F.u(txt(x.titre)), F.u(txt(x.lieu))].filter(Boolean).join(' · ');
+  // Toutes de son parcours (le cas d'avant) ; toutes restées sans aide ailleurs ; ou un mélange des deux
+  const larges = demandes.filter(x => x.large === true).length;
+  const cas = larges === 0 ? 'parcours' : larges === n ? 'large' : 'mixte';
   const sujet = couper(n > 1
-    ? (ar ? `${arN(n, ['', 'طلبان جديدان', '{n} طلبات جديدة', '{n} طلبًا جديدًا'])} من مسارك` : `${n} demandes d’étudiants de ton parcours`) + (ar ? ' · شبكة ENSAM' : ' · Réseau ENSAM')
+    ? (cas === 'parcours' ? (ar ? `${arN(n, ['', 'طلبان جديدان', '{n} طلبات جديدة', '{n} طلبًا جديدًا'])} من مسارك` : `${n} demandes d’étudiants de ton parcours`)
+      : cas === 'large' ? (ar ? `${arN(n, ['', 'طلبان', '{n} طلبات', '{n} طلبًا'])} من الطلبة في انتظار مساعدة` : `${n} demandes d’étudiants attendent encore une aide`)
+      : (ar ? `${arN(n, ['', 'طلبان', '{n} طلبات', '{n} طلبًا'])} من الطلبة` : `${n} demandes d’étudiants`)) + (ar ? ' · شبكة ENSAM' : ' · Réseau ENSAM')
     : (ar ? `${qui(d0)} · المطلوب: ${txt(d0.titre)}` : `${qui(d0)} cherche : ${txt(d0.titre)}`), 110);
-  const intro = ar
-    ? 'قال طلبة من مسارك ما يبحثون عنه، مع سيرهم الذاتية. إن كنت تستطيع توظيف أحدهم أو تأطيره أو التوصية به، اقترح ذلك: القرار يبقى لهم.'
-    : 'Des étudiants de ton parcours viennent de dire ce qu’ils cherchent, CV joint. Si tu peux recruter, encadrer ou recommander l’un d’eux, propose-le : c’est lui qui choisit.';
+  const appel = ar ? ' إن كنت تستطيع توظيف أحدهم أو تأطيره أو التوصية به، اقترح ذلك: القرار يبقى لهم.' : ' Si tu peux recruter, encadrer ou recommander l’un d’eux, propose-le : c’est lui qui choisit.';
+  const intro = (cas === 'parcours'
+    ? (ar ? 'قال طلبة من مسارك ما يبحثون عنه، مع سيرهم الذاتية.' : 'Des étudiants de ton parcours viennent de dire ce qu’ils cherchent, CV joint.')
+    : cas === 'large'
+      ? (ar ? 'قال طلبة من المدرسة ما يبحثون عنه، مع سيرهم الذاتية، ولم يتلقوا أي مساعدة بعد. ليسوا بالضرورة من شعبتك، لكن نصيحة أو اسمًا قد يكفي.' : 'Des étudiants de l’école ont dit ce qu’ils cherchent, CV joint, et n’ont encore reçu aucune aide. Ils ne sont pas forcément dans ta filière, mais un conseil ou un contact peut suffire.')
+      : (ar ? 'قال طلبة من المدرسة ما يبحثون عنه، مع سيرهم الذاتية: بعضهم من مسارك، وآخرون ما زالوا ينتظرون أي مساعدة.' : 'Des étudiants de l’école ont dit ce qu’ils cherchent, CV joint : certains de ton parcours, d’autres encore sans aucune aide.')) + appel;
+  const raison = cas === 'parcours'
+    ? (ar ? 'لأن الطلب من مسارك' : 'parce que la demande vient de ton parcours')
+    : (ar ? 'لأنك من خريجي المدرسة وهذه الطلبات تنتظر مساعدة' : 'parce que tu es lauréat de l’école et que ces demandes attendent une aide');
   const lien = (x: DemandeAlerte) => `${site}#aider/${x.id}`;   // « Je peux aider » ouvre la feuille préremplie
   const html = cadreEmail({
     langue, sujet, apercu: ligne(d0, b), sousTitre: ar ? 'طلبات الطلبة' : 'Demandes des étudiants',
     intro: [esc(ar ? 'مرحبًا،' : 'Bonjour,'), esc(intro)],
     blocs: demandes.map(x => ({ lignes: [`<span style="color:#F39200;">&#8226;</span>&nbsp; ${ligne(x, f)}`], bouton: { texte: ar ? 'أستطيع المساعدة' : 'Je peux aider', url: lien(x) } })),
-    pied: ar ? 'يصلك هذا البريد لأن الطلب من مسارك، مرة في اليوم على الأكثر.' : 'Tu reçois cet email parce que la demande vient de ton parcours, une fois par jour au plus.',
+    pied: ar ? `يصلك هذا البريد ${raison}، مرة في اليوم على الأكثر.` : `Tu reçois cet email ${raison}, une fois par jour au plus.`,
     liens: [[ar ? 'فتح المنصة' : 'Ouvrir la plateforme', site], [ar ? 'إيقاف تنبيهات البريد' : 'Ne plus recevoir les alertes par email', desabo]],
   });
   const texte = [`${(ar ? AR : FR).marque} · ${ar ? 'طلبات الطلبة' : 'Demandes des étudiants'}`, '', ar ? 'مرحبًا،' : 'Bonjour,', intro, '',
     ...demandes.flatMap(x => [`• ${ligne(x, b)}`, `  ${lien(x)}`]), '', '--',
-    ar ? 'يصلك هذا البريد لأن الطلب من مسارك.' : 'Tu reçois cet email parce que la demande vient de ton parcours.',
+    ar ? `يصلك هذا البريد ${raison}.` : `Tu reçois cet email ${raison}.`,
     `${ar ? 'إيقاف تنبيهات البريد' : 'Ne plus recevoir les alertes par email'}${ar ? ': ' : ' : '}${desabo}`].join('\n');
   return { sujet, html, texte, desabo };
 }
@@ -1589,6 +1644,78 @@ export function rendreRelance(langue: Langue, site: string): Courriel {
   const texte = [`${(ar ? AR : FR).marque} · ${ar ? 'تسجيلك' : 'Ton inscription'}`, '', ar ? 'مرحبًا،' : 'Bonjour,', ...lignes, '',
     `${bouton}${ar ? ': ' : ' : '}${site}`, '', '--', pied].join('\n');
   return { sujet, html, texte, desabo: '' };
+}
+
+// ---------------------------------------------------------------------
+// Rappels de visite : après quelques jours sans visite, ce qui attend vraiment le membre, avec les vrais chiffres.
+// La base choisit qui et compte (rappels_dus, rappel_contenu dans schema.sql) ; ici, seulement les mots.
+// ---------------------------------------------------------------------
+export const RAPPEL_ORDRE = ['messages', 'propositions', 'mentorats', 'candidatures', 'demandes', 'offres'] as const;
+type CleRappel = typeof RAPPEL_ORDRE[number];
+const ROUTE_RAPPEL: Record<CleRappel, string> = {
+  messages: 'messages', propositions: 'offres/demandes', mentorats: 'mentorat', candidatures: 'espace', demandes: 'offres/demandes', offres: 'offres',
+};
+// Ce qui attend, dans l'ordre où on le dit (le plus personnel d'abord) ; un chiffre douteux est ignoré
+export function comptesRappel(data: unknown): [CleRappel, number][] {
+  const o = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
+  return RAPPEL_ORDRE.map(k => [k, Number(o[k])] as [CleRappel, number]).filter(([, n]) => Number.isInteger(n) && n > 0 && n < 100000);
+}
+const MOTS_RAPPEL: Record<Langue, Record<CleRappel, (n: number) => string>> = {
+  fr: {
+    messages: n => (n > 1 ? `${n} messages non lus` : '1 message non lu'),
+    propositions: n => (n > 1 ? `${n} lauréats te proposent leur aide` : 'un lauréat te propose son aide'),
+    mentorats: n => (n > 1 ? `${n} mentorats attendent ta réponse` : '1 mentorat attend ta réponse'),
+    candidatures: n => (n > 1 ? `${n} nouvelles candidatures sur tes offres` : '1 nouvelle candidature sur tes offres'),
+    demandes: n => (n > 1 ? `${n} demandes d’étudiants depuis ta dernière visite` : '1 demande d’étudiant depuis ta dernière visite'),
+    offres: n => (n > 1 ? `${n} nouvelles offres pour toi` : '1 nouvelle offre pour toi'),
+  },
+  ar: {
+    messages: n => arN(n, ['رسالة غير مقروءة', 'رسالتان غير مقروءتين', '{n} رسائل غير مقروءة', '{n} رسالة غير مقروءة']),
+    propositions: n => arN(n, ['عرض مساعدة من خريج', 'عرضا مساعدة من الخريجين', '{n} عروض مساعدة من الخريجين', '{n} عرض مساعدة من الخريجين']),
+    mentorats: n => arN(n, ['إرشاد ينتظر ردك', 'إرشادان ينتظران ردك', '{n} إرشادات تنتظر ردك', '{n} إرشادًا ينتظر ردك']),
+    candidatures: n => arN(n, ['ترشيح جديد على عروضك', 'ترشيحان جديدان على عروضك', '{n} ترشيحات جديدة على عروضك', '{n} ترشيحًا جديدًا على عروضك']),
+    demandes: n => arN(n, ['طلب مساعدة جديد من الطلبة منذ زيارتك الأخيرة', 'طلبا مساعدة جديدان من الطلبة منذ زيارتك الأخيرة', '{n} طلبات مساعدة جديدة من الطلبة منذ زيارتك الأخيرة', '{n} طلب مساعدة جديدًا من الطلبة منذ زيارتك الأخيرة']),
+    offres: n => arN(n, ['عرض جديد يخصك', 'عرضان جديدان يخصانك', '{n} عروض جديدة تخصك', '{n} عرضًا جديدًا يخصك']),
+  },
+};
+const majuscule = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+export function phrasesRappel(data: unknown, langue: unknown): string[] {
+  const l = langueDe(langue);
+  return comptesRappel(data).map(([k, n]) => MOTS_RAPPEL[l][k](n));
+}
+
+// Notification : la chose la plus personnelle en titre, le reste dessous ; elle ouvre l'écran de la première
+export function notifRappel(data: unknown, langue: unknown, site: string): Notif | null {
+  const l = langueDe(langue), c = comptesRappel(data);
+  if (!c.length) return null;
+  const p = phrasesRappel(data, l);
+  const corps = p.length > 1 ? (l === 'ar' ? `وأيضًا: ${p.slice(1).join('، ')}.` : `Aussi : ${p.slice(1).join(' · ')}.`)
+    : (l === 'ar' ? 'ألقِ نظرة متى سمح وقتك.' : 'À voir quand tu as un moment.');
+  return { title: couper(majuscule(p[0]), 80), body: couper(corps, 180), url: `${site}#${ROUTE_RAPPEL[c[0][0]]}`, tag: 'rappel_visite' };
+}
+
+// Email (sans téléphone abonné, ou absent depuis 5 jours) : les mêmes chiffres, un bouton, le lien pour ne plus les recevoir
+export function rendreRappel(data: unknown, langue: Langue, site: string, token: string): Courriel {
+  site = siteEn(site, langue);
+  const ar = langue === 'ar', c = comptesRappel(data), p = phrasesRappel(data, langue).map(majuscule);
+  const desabo = `${site}#desabo/${token}/rappels`;
+  const url = c.length ? `${site}#${ROUTE_RAPPEL[c[0][0]]}` : site;
+  const sujet = couper(`${p[0] || (ar ? 'شبكة ENSAM مكناس' : 'Réseau ENSAM Meknès')}${ar ? ' · شبكة ENSAM' : ' · Réseau ENSAM'}`, 110);
+  const salut = ar ? 'مرحبًا،' : 'Bonjour,';
+  const intro = ar ? 'إليك ما ينتظرك على شبكة ENSAM منذ زيارتك الأخيرة:' : 'Voici ce qui t’attend sur le Réseau ENSAM depuis ta dernière visite :';
+  const bouton = ar ? 'عرض على المنصة' : 'Voir sur la plateforme';
+  const pied = ar ? 'يصلك هذا التذكير حين ينتظرك شيء بعد أيام دون زيارة، مرة في الأسبوع على الأكثر عبر البريد.'
+    : 'Tu reçois ce rappel quand quelque chose t’attend après quelques jours sans visite, une fois par semaine au plus par email.';
+  const arret = ar ? 'إيقاف هذه التذكيرات' : 'Ne plus recevoir ces rappels';
+  const html = cadreEmail({
+    langue, sujet, apercu: p.join(' · '), sousTitre: ar ? 'ما ينتظرك' : 'Ce qui t’attend',
+    intro: [esc(salut), esc(intro)],
+    blocs: [{ lignes: p.map(x => `• ${esc(x)}`), bouton: { texte: bouton, url } }],
+    pied, liens: [[ar ? 'فتح المنصة' : 'Ouvrir la plateforme', site], [arret, desabo]],
+  });
+  const texte = [`${(ar ? AR : FR).marque} · ${ar ? 'ما ينتظرك' : 'Ce qui t’attend'}`, '', salut, intro, ...p.map(x => `• ${x}`), '',
+    `${bouton}${ar ? ': ' : ' : '}${url}`, '', '--', pied, `${arret}${ar ? ': ' : ' : '}${desabo}`].join('\n');
+  return { sujet, html, texte, desabo };
 }
 
 // ---------------------------------------------------------------------
@@ -2082,7 +2209,7 @@ async function jobAlertes(env: Env): Promise<Response> {
   return json(b);
 }
 
-// Demandes des étudiants : un email aux lauréats du parcours, une fois par jour au plus (la base choisit qui)
+// Demandes des étudiants : un email aux lauréats du parcours, et à tous pour celles restées sans aide, une fois par jour au plus (la base choisit qui)
 async function jobDemandes(env: Env): Promise<Response> {
   const f = facteur(env);
   if (!f.pret) return json({ skipped: 'email' });
@@ -2188,6 +2315,37 @@ async function jobEnquetes(env: Env): Promise<Response> {
   return json(b);
 }
 
+// Rappels de visite par email : la base choisit qui (sans téléphone abonné, ou absent depuis 5 jours ; une fois par
+// semaine au plus ; « Rappels » coché ; 150 par jour pour toute la plateforme). Par sûreté, rien ne part si un autre
+// email du réseau (résumé, demandes, alertes, messages, enquête) est parti dans les dernières 24 h.
+export const RAPPELS_MAX = 150;
+async function jobRappels(env: Env): Promise<Response> {
+  const f = facteur(env);
+  if (!f.pret) return json({ skipped: 'email' });
+  const dest = (((await rpc(env, 'rappels_emails_a_envoyer', { p_max: RAPPELS_MAX })) || []) as { id: string; email: string; langue: string; token: string; contenu: unknown; dernier_email: string | null }[])
+    .slice(0, RAPPELS_MAX);
+  const b: { sent: number; skipped: number; errors: number; via?: string } = { sent: 0, skipped: 0, errors: 0 };
+  if (!dest.length) return json(b);
+  const envoyes: string[] = [];
+  const limite = Date.now() + 100_000;
+  await parallele(dest, f.paralleles, async x => {
+    if (Date.now() > limite) return;
+    if (Date.now() - temps(x.dernier_email) < JOUR || !comptesRappel(x.contenu).length) { b.skipped++; return; }
+    if (!x.email || !x.token || !estUuid(x.id)) { b.errors++; return; }
+    try {
+      if (await f.envoyer(x.email, rendreRappel(x.contenu, langueDe(x.langue), env.site, x.token))) { b.sent++; envoyes.push(x.id); }
+      else b.errors++;
+    } catch (e) {
+      b.errors++;
+      console.error('notifier : email de rappel impossible', e instanceof Error ? e.message : String(e));
+    }
+  });
+  await f.fermer();
+  b.via = f.via();
+  if (envoyes.length) await rpc(env, 'rappels_emails_envoyes', { p_ids: envoyes });
+  return json(b);
+}
+
 // ---------------------------------------------------------------------
 // Point d'entrée
 // ---------------------------------------------------------------------
@@ -2196,7 +2354,7 @@ export async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return json({ error: 'Méthode non autorisée' }, 405);
   let job: unknown;
   try { job = (await req.json())?.job; } catch { return json({ error: 'Requête invalide' }, 400); }
-  if (typeof job !== 'string' || !['cle', 'test', 'push', 'resume', 'essai_email', 'alertes', 'enquetes', 'messages', 'relances', 'demandes'].includes(job)) return json({ error: 'Tâche inconnue' }, 400);
+  if (typeof job !== 'string' || !['cle', 'test', 'push', 'resume', 'essai_email', 'alertes', 'enquetes', 'messages', 'relances', 'demandes', 'rappels'].includes(job)) return json({ error: 'Tâche inconnue' }, 400);
   const env = lireEnv();
   if (!env.url || !env.cle) {
     console.error('notifier : SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY manquant');
@@ -2212,6 +2370,7 @@ export async function handler(req: Request): Promise<Response> {
     if (job === 'messages') return await jobMessages(env);
     if (job === 'relances') return await jobRelances(env);
     if (job === 'demandes') return await jobDemandes(env);
+    if (job === 'rappels') return await jobRappels(env);
     return job === 'push' ? await jobPush(env) : await jobResume(env);
   } catch (e) {
     console.error(`notifier : échec de « ${job} »`, e instanceof Error ? e.message : String(e));

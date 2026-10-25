@@ -23,7 +23,7 @@ addAR({
   'Spam': 'رسائل مزعجة', 'Arnaque': 'احتيال', 'Inapproprié': 'غير لائق', 'Faux ou trompeur': 'خاطئ أو مضلل', 'Harcèlement': 'تحرش أو مضايقة', 'Données personnelles': 'معطيات شخصية', 'Autre': 'غير ذلك',
   'Rien à modérer': 'لا شيء للإشراف', 'Quand un membre signale un contenu, il apparaît ici. Tu décides de le retirer ou de le garder.': 'عندما يبلّغ عضو عن محتوى، يظهر هنا. تقرر حذفه أو إبقاءه.',
   'Contenu déjà supprimé': 'المحتوى حُذف من قبل', 'Clore': 'إغلاق', 'Classer sans suite': 'حفظ دون متابعة', 'Marquer traité': 'تحديد كمُعالج',
-  'Masquer l’offre': 'إخفاء العرض', 'Supprimer l’offre': 'حذف العرض', 'Supprimer le commentaire': 'حذف التعليق', 'Supprimer la question': 'حذف السؤال',
+  'Masquer l’offre': 'إخفاء العرض', 'Supprimer l’offre': 'حذف العرض', 'Supprimer le commentaire': 'حذف التعليق', 'Réponse à une demande': 'رد على طلب', 'Supprimer la question': 'حذف السؤال',
   'Supprimer la réponse': 'حذف الجواب', 'Supprimer le message': 'حذف الرسالة', 'Retirer le badge vérifié': 'سحب شارة التحقق', 'Supprimer l’entretien': 'حذف المقابلة',
   'Supprimer l’avis': 'حذف الرأي', 'Supprimer la rubrique': 'حذف القسم', 'Annuler le café': 'إلغاء اللقاء', 'Retirer la startup': 'سحب الشركة الناشئة', 'Annuler la relecture': 'إلغاء المراجعة',
   'Demande d’étudiant': 'طلب طالب', 'Voir la demande': 'عرض الطلب', '1 demande d’étudiant sans proposition depuis plus de 24 h': 'طلب طالب واحد دون اقتراح منذ أكثر من 24 ساعة',
@@ -188,7 +188,7 @@ function ParcoursInscription({ p, sansSuite = 0 }) {
 // Modération : les signalements, regroupés par contenu
 // ---------------------------------------------------------------------------
 export const MOTIFS = { spam: 'Spam', arnaque: 'Arnaque', inapproprie: 'Inapproprié', faux: 'Faux ou trompeur', harcelement: 'Harcèlement', donnees: 'Données personnelles', autre: 'Autre' };
-const TYPES_CIBLE = { offre: ['Offre', 'feed'], commentaire: ['Commentaire', 'comment'], question: ['Question', 'qa'], reponse: ['Réponse', 'qa'], message: ['Message de groupe', 'people'], profil: ['Profil', 'user'], entretien: ['Entretien', 'briefcase'], avis: ['Avis de stage', 'star'], guide: ['Guide de l’étranger', 'flag'], cafe: ['Café ENSAM', 'clap'], startup: ['Startup', 'spark'], relecture: ['Relecture de CV', 'eye'], prive: ['Message privé', 'chat'], demande: ['Demande d’étudiant', 'send'] };
+const TYPES_CIBLE = { offre: ['Offre', 'feed'], commentaire: ['Commentaire', 'comment'], question: ['Question', 'qa'], reponse: ['Réponse', 'qa'], message: ['Message de groupe', 'people'], profil: ['Profil', 'user'], entretien: ['Entretien', 'briefcase'], avis: ['Avis de stage', 'star'], guide: ['Guide de l’étranger', 'flag'], cafe: ['Café ENSAM', 'clap'], startup: ['Startup', 'spark'], relecture: ['Relecture de CV', 'eye'], prive: ['Message privé', 'chat'], demande: ['Demande d’étudiant', 'send'], reponse_demande: ['Réponse à une demande', 'comment'] };
 const court = (t, n = 220) => { const s = String(t || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
 const nomGroupe = g => String(g || '').split(':').slice(1).join(':');
 
@@ -211,6 +211,7 @@ function cible(ctx, type, id) {
     case 'cafe': { const r = by('cafes'); return r && { r, titre: `${r.ville} · ${r.lieu}`, texte: r.message, auteur: r.organisateur_id, actions: r.annule ? [] : [['Annuler le café', () => store.update('cafes', id, { annule: true }), true]] }; }
     case 'startup': { const r = by('startups'); return r && { r, titre: r.nom, texte: r.pitch, auteur: r.fondateur_id, actions: [['Retirer la startup', rm('startups'), true]] }; }
     case 'demande': { const r = by('demandes'); return r && { r, titre: r.titre, texte: r.details, auteur: r.auteur_id, voir: ['Voir la demande', () => go('offres/demandes/' + id)], actions: ['ouverte', 'match'].includes(r.status) ? [['Retirer la demande', () => store.update('demandes', id, { status: 'fermee' }), true]] : [] }; }
+    case 'reponse_demande': { const r = by('reponses_demandes'); const d = r && store.byId('demandes', r.demande_id); return r && { r, titre: d?.titre || '', texte: r.body, auteur: r.author_id, voir: d ? ['Voir la demande', () => go('offres/demandes/' + d.id)] : null, actions: [['Supprimer la réponse', rm('reponses_demandes'), true]] }; }
     case 'relecture': { const r = by('relectures_cv'); const s = r && store.byId('profiles', r.student_id); return r && { r, titre: s?.full_name || '', texte: r.synthese || r.message, auteur: r.reviewer_id, actions: r.status === 'annulee' ? [] : [['Annuler la relecture', () => store.update('relectures_cv', id, { status: 'annulee' }), true]] }; }
     case 'prive': {
       const r = by('messages'); const nom = x => store.byId('profiles', x)?.full_name || '?';

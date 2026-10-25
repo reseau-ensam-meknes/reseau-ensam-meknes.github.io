@@ -1,6 +1,8 @@
 // Couche de données : même interface en mode démo (navigateur) et en mode réel (Supabase).
 // Les données de démonstration (seed.js) ne sont chargées qu'en démo : le site réel n'en a pas besoin
 const chargerSeed = () => import('./seed.js').then(m => m.buildSeed());
+import { refusOrigine, estPartagee, LIMITE_PARTAGES } from './origine.js';
+import { VIVANT, regleVivant, peutSupprimerVivant, cascadeVivant, memeCible } from './reseau-vivant.js';
 import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage, transitionAmbassadeur, PREFIXE_BROUILLON } from './logic.js';
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
@@ -12,9 +14,9 @@ export const REACTIONS = ['👍', '❤️', '😂', '😮', '🙏', '👏'];
 const DEMANDES = ['demandes', 'propositions'];
 // Ambassadeurs de promo (ambassadeurs.js)
 const AMBASSADEURS = ['ambassadeurs'];
-export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS];
+export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT];
 // Tables ajoutées par supabase/mise-a-jour.sql : tant que la base n'est pas à jour, elles restent vides au lieu de bloquer le site.
-const OPTIONAL = new Set(['shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS]);
+const OPTIONAL = new Set(['shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT]);
 // Lues par une vue qui masque ce que chacun a choisi de cacher (auteur anonyme, visibilité du profil).
 // Tant que la base n'a pas ces vues, on lit la table elle-même.
 const VUES = { profiles: 'profils', entretiens: 'entretiens_publics', avis_stage: 'avis_publics' };
@@ -43,6 +45,12 @@ class Base {
   // Messagerie : « Répondre » et les réactions ont besoin de la base à jour (en démo, toujours)
   peutRepondre() { return this.mode !== 'live' || (this.data.messages || []).some(m => 'reponse_a' in m); }
   peutReagir() { return this.mode !== 'live' || !this.absentes?.has('reactions_messages'); }
+  // Origine des offres (portée, partagée : origine.js) : la colonne n'existe qu'après mise-a-jour.sql. Avant, le formulaire
+  // reste celui d'avant (rien n'est envoyé dans cette colonne) et les étudiants ne publient pas.
+  peutOrigine() { return this.mode !== 'live' || this.origineSondee === true || (this.data.offers || []).some(o => 'origine' in o); }
+  // Réseau vivant : réactions publiques et réponses sous une demande, cachées tant que la base n'a pas leurs tables
+  peutReagirPublic() { return this.mode !== 'live' || !this.absentes?.has('reactions_publiques'); }
+  peutRepondreDemande() { return this.mode !== 'live' || !this.absentes?.has('reponses_demandes'); }
   // « Cette semaine dans le réseau » : en démo, le calcul sur toutes les données
   pouls() { return poulsReseau(this.data); }
   // En ligne, la base a déjà masqué ce qui ne doit pas être vu : ces deux aides servent surtout à la démo.
@@ -72,6 +80,16 @@ class Base {
       this.photosDemandees.delete(p);
     }
     if (neuf) this.emit();
+  }
+  // Dernière visite (rappels de visite) : notée au plus une fois par heure et par appareil ; la base garde aussi
+  // la règle d'une heure (marquer_vu). Rien ne s'affiche, rien ne bloque : un échec attend l'heure suivante.
+  noterVisite(now = Date.now()) {
+    const id = this.me?.id; if (!id) return;
+    const cle = 'ensam-vu-' + id;
+    const avant = Math.max(Number(safeGet(cle)) || 0, this.vuLocal?.[id] || 0);
+    if (now - avant < 3600e3 && now >= avant) return;
+    (this.vuLocal ||= {})[id] = now; safeSet(cle, String(now));
+    Promise.resolve().then(() => this.marquerVu(now)).catch(() => {});
   }
   // Fondateur : ne plus apparaître sur la page d'entrée (false : non ; null : pas encore répondu). En ligne, la photo
   // change aussi de nom (voir SupabaseStore).
@@ -140,10 +158,21 @@ class DemoStore extends Base {
     const meId = saved?.meId || this.data.profiles.find(p => p.role === 'etudiant' && p._persona)?.id;
     this.me = this.byId('profiles', meId) || null;
     this.ready = true;
+    this.noterVisite();
   }
   persist() { safeSet(DEMO_KEY, JSON.stringify({ data: this.data, meId: this.me?.id, reglages: this.reglages })); }
   personas() { const o = { etudiant: 0, laureat: 1, admin: 2 }; return this.data.profiles.filter(p => p._persona).sort((a, b) => o[a.role] - o[b.role]); }
-  switchTo(id) { this.me = this.byId('profiles', id); this.persist(); this.emit(); }
+  switchTo(id) { this.me = this.byId('profiles', id); this.persist(); this.emit(); this.noterVisite(); }
+  // Comme marquer_vu() : une ligne par membre (table visites, illisible depuis le site), au plus une fois par heure
+  async marquerVu(now = Date.now()) {
+    const id = this.me?.id; if (!id || !this.byId('profiles', id)) return;
+    const v = (this.data.visites ||= []).find(x => x.user_id === id);
+    if (v && now - new Date(v.vu_at).getTime() < 3600e3) return;
+    const vu_at = new Date(now).toISOString();
+    this.data.visites = v ? this.data.visites.map(x => x.user_id === id ? { ...x, vu_at } : x) : [...this.data.visites, { user_id: id, vu_at }];
+    this.persist();
+  }
+  async seDesabonnerRappels() { return true; }
   // Démo réinitialisée : comme une déconnexion, les brouillons partent aussi
   async reset() { oublierBrouillons(); this.data = await chargerSeed(); for (const t of [...TABLES, 'guide_pays_historique', 'liste_officielle']) this.data[t] ||= []; this.reglages = {}; this.me = this.personas()[0]; this.persist(); this.emit(); }
   async insert(table, row) {
@@ -159,9 +188,11 @@ class DemoStore extends Base {
     if (table === 'ambassadeurs') applyAmbassadeurInsert(this, r);
     if (MESSAGERIE.includes(table) && applyMessagerieRules(this, table, r, null) === false) return r;
     if (DEMANDES.includes(table)) applyDemandeRules(this, table, r, null);
+    if (VIVANT.includes(table)) regleVivant(this, table, r, null);
     if (PHASE2.includes(table) && applyPhase2Rules(this, table, r, null) === false) return r;
     if (table === 'attestations') { if (this.me?.role !== 'laureat') throw new Error('Seul un lauréat peut obtenir une attestation.'); Object.assign(r, { laureat_id: this.me.id, stats: attestationStats(this.data, this.me.id) }); }
     limiteDemo(this, table, r);
+    if (table === 'offers') regleOrigineDemo(this, r, null);
     if (PHASE3.includes(table)) applyPhase3Rules(this, table, r, null);
     if (table === 'reactions' && this.data.reactions.some(x => x.offer_id === r.offer_id && x.user_id === r.user_id && x.kind === r.kind)) return r;
     if (table === 'votes' && this.data.votes.some(x => x.answer_id === r.answer_id && x.user_id === r.user_id)) return r;
@@ -185,8 +216,10 @@ class DemoStore extends Base {
     if (table === 'liens_rdv') applyLienRules(this, r, old);
     if (table === 'ambassadeurs') applyAmbassadeurRules(this, r, old);
     if (table === 'annonces' && this.me?.role !== 'admin') throw new Error('Action non autorisée pour ton compte.');
+    if (table === 'offers') regleOrigineDemo(this, r, old);
     if (MESSAGERIE.includes(table)) applyMessagerieRules(this, table, r, old);
     if (DEMANDES.includes(table)) applyDemandeRules(this, table, r, old);
+    if (VIVANT.includes(table)) regleVivant(this, table, r, old);
     if (PHASE2.includes(table)) applyPhase2Rules(this, table, r, old);
     if (PHASE3.includes(table)) applyPhase3Rules(this, table, r, old);
     if (table === 'profiles' && this.me?.role !== 'admin') { r.verified = r.role !== old.role ? false : old.verified; if (!r.verified && verifieAuto(this, r)) r.verified = true; }
@@ -210,6 +243,7 @@ class DemoStore extends Base {
       if (!own || row[own] !== this.me?.id) throw new Error('Action non autorisée pour ton compte.');
     }
     if (MESSAGERIE.includes(table) && row && this.me?.role !== 'admin' && row[table === 'messages' ? 'author_id' : 'user_id'] !== this.me?.id) throw new Error('Action non autorisée pour ton compte.');
+    if (VIVANT.includes(table) && row && !peutSupprimerVivant(this.data, this.me, table, row)) throw new Error('Action non autorisée pour ton compte.');
     if (DEMANDES.includes(table) && row && this.me?.role !== 'admin' && !(table === 'demandes' && row.auteur_id === this.me?.id && ['ouverte', 'fermee'].includes(row.status))) throw new Error('Action non autorisée pour ton compte.');
     if (PHASE3.includes(table) && row && this.me?.role !== 'admin') {
       const me = this.me?.id;
@@ -222,6 +256,7 @@ class DemoStore extends Base {
       if (!ok) throw new Error('Action non autorisée pour ton compte.');
     }
     this.data[table] = this.data[table].filter(x => x.id !== id);
+    cascadeVivant(this.data, table, id);
     if (table === 'demandes') { this.data.propositions = this.data.propositions.filter(x => x.demande_id !== id); this.data.placements = this.data.placements.map(p => p.demande_id === id ? { ...p, demande_id: null } : p); }
     this.persist(); this.emit();
   }
@@ -345,6 +380,12 @@ class DemoStore extends Base {
     if (!emoji || mienne?.emoji === emoji) { if (mienne) await this.remove('reactions_messages', mienne.id); return null; }
     return mienne ? this.update('reactions_messages', mienne.id, { emoji }) : this.insert('reactions_messages', { message_id: messageId, emoji });
   }
+  // Réaction publique sur une offre ({ offer_id }) ou une demande ({ demande_id }) : la même émoji la retire
+  async reagirPublic(cible, emoji) {
+    const mienne = this.data.reactions_publiques.find(r => memeCible(r, cible) && r.user_id === this.me?.id);
+    if (!emoji || mienne?.emoji === emoji) { if (mienne) await this.remove('reactions_publiques', mienne.id); return null; }
+    return mienne ? this.update('reactions_publiques', mienne.id, { emoji }) : this.insert('reactions_publiques', { ...cible, emoji });
+  }
   canal() { return { tape() {}, fermer() {} }; }
   // Liste officielle (administration)
   async importerListe(lignes, remplacer = false) {
@@ -416,6 +457,7 @@ const LIMITES = {
   entretiens: ['author_id', 10, 864e5], avis_stage: ['author_id', 10, 864e5], demandes_contact: ['demandeur_id', 5, 864e5],
   signalements: ['auteur_id', 10, 864e5], relectures_cv: ['student_id', 4, 864e5], relecture_commentaires: ['author_id', 60, 36e5],
   messages: ['author_id', 300, 864e5], demandes: ['auteur_id', 5, 864e5, 'titre'], propositions: ['laureat_id', 20, 864e5],
+  reactions_publiques: ['user_id', 300, 864e5], reponses_demandes: ['author_id', 30, 864e5, 'body'],
 };
 function limiteDemo(store, table, r) {
   const L = LIMITES[table]; const me = store.me;
@@ -425,6 +467,25 @@ function limiteDemo(store, table, r) {
   if (miens.filter(x => now - new Date(x.created_at) < ms).length >= max) throw new Error('Doucement : tu as beaucoup publié en peu de temps. Réessaie un peu plus tard.');
   const t = txt && String(r[txt] || '').trim().toLowerCase();
   if (t && miens.some(x => now - new Date(x.created_at) < 864e5 && String(x[txt] || '').trim().toLowerCase() === t)) throw new Error('Tu as déjà publié exactement ce texte.');
+}
+
+// Origine des offres : mêmes règles que offre_origine() et le déclencheur trg_limite_partage dans la base.
+// Un étudiant ne publie qu'un partage (lien http(s) obligatoire) ; seul un lauréat (ou l'administration) porte une offre.
+function regleOrigineDemo(store, r, old) {
+  const me = store.me;
+  if (!old && estPartagee(r) && me && me.role !== 'admin') {
+    const now = Date.now(); const lien = String(r.lien || '').trim().toLowerCase();
+    const miens = store.data.offers.filter(x => x.author_id === me.id && now - new Date(x.created_at) < 864e5);
+    if (miens.length >= LIMITE_PARTAGES) throw new Error('Doucement : tu as beaucoup publié en peu de temps. Réessaie un peu plus tard.');
+    if (lien && miens.some(x => String(x.lien || '').trim().toLowerCase() === lien)) throw new Error('Tu as déjà publié exactement ce texte.');
+  }
+  const role = store.byId('profiles', r.author_id)?.role || '';
+  const refus = refusOrigine(r, { role, admin: me?.role === 'admin' }, store.data.offers.filter(x => x.id !== r.id), old);
+  if (refus) throw new Error(refus);
+  // Le partage d'un étudiant va aux étudiants de son année (comme offre_origine dans la base)
+  const auteur = store.byId('profiles', r.author_id);
+  if (role === 'etudiant' && me?.role !== 'admin') r.annees = [niveauOf(auteur, seasonOf())];
+  if (estPartagee(r)) { r.lien = String(r.lien || '').trim(); r.cooptation = false; }
 }
 
 // Demandes des étudiants : mêmes règles que protect_demande() et protect_proposition() dans la base
@@ -801,7 +862,7 @@ function applyPlacementRules(store, r, old) {
 function applyApplicationRules(store, r, old) {
   const me = store.me; if (me?.role === 'admin') return;
   if (!old) {
-    if (r.offer_id) { const o = store.byId('offers', r.offer_id); if (o) { r.entreprise = o.entreprise; r.titre = o.titre; } r.status = 'postule'; }
+    if (r.offer_id) { const o = store.byId('offers', r.offer_id); if (o && estPartagee(o)) throw new Error('Cette offre partagée se postule sur son site d’origine.'); if (o) { r.entreprise = o.entreprise; r.titre = o.titre; } r.status = 'postule'; }
     if (r.offer_id && store.data.applications.some(a => a.offer_id === r.offer_id && a.student_id === r.student_id)) throw new Error('Tu as déjà postulé à cette offre.');
     return;
   }
@@ -1147,6 +1208,7 @@ export class SupabaseStore extends Base {
       const s = this.sessionGardee(); if (!s) return;
       try { this.sb.auth.startAutoRefresh(); } catch { /* */ }
       if (!s.expires_at || s.expires_at * 1000 - Date.now() < 120e3) this.renouveler();
+      if (this.me) this.noterVisite();
       if (this.enAttente) this.rafraichir();
       // Longtemps caché : le temps réel a pu manquer des changements
       else if (cache && Date.now() - cache > 5 * 60e3 && this.me) { cache = 0; this.loadAll().then(() => this.emit(), () => {}); }
@@ -1194,8 +1256,11 @@ export class SupabaseStore extends Base {
   async loadAll() {
     if (!this.userId) { this.data = Object.fromEntries(TABLES.map(t => [t, []])); this.me = null; return; }
     await Promise.all([...TABLES.map(t => this.loadTable(t)), this.chargerPouls().catch(() => {})]);
+    // Aucune offre lue : on demande une fois à la base si la colonne « origine » existe déjà
+    if (!this.data.offers.length && this.origineSondee === undefined) this.origineSondee = await Promise.resolve(this.sb.from('offers').select('origine').limit(1)).then(r => !r.error, () => false);
     this.me = this.byId('profiles', this.userId) || null;
     this.subscribe();
+    this.noterVisite();
   }
   // « Cette semaine dans le réseau » : la base compte tout (relectures et propositions comprises), pour que chacun voie le même chiffre
   async chargerPouls() {
@@ -1501,6 +1566,12 @@ export class SupabaseStore extends Base {
     const { data, error } = await this.sb.rpc('se_desabonner_messages', { p_token: token });
     return !error && data === true;
   }
+  async seDesabonnerRappels(token) {
+    const { data, error } = await this.sb.rpc('se_desabonner_rappels', { p_token: token });
+    return !error && data === true;
+  }
+  // Base pas encore à jour (fonction absente) : l'erreur est ignorée, rien ne change pour le membre
+  async marquerVu() { if (this.userId) await this.sb.rpc('marquer_vu'); }
   // Messagerie : le fichier part d'abord dans le stockage privé, puis le message ; s'il échoue, le fichier est retiré
   async envoyerMessage({ dest, type = 'texte', body = null, fichier: blob = null, ext = 'jpg', ...meta }) {
     let fichier = null;
@@ -1577,6 +1648,31 @@ export class SupabaseStore extends Base {
       throw new Error(frError(error));
     }
     await this.loadTable('reactions_messages').catch(() => {}); this.emit();
+    return null;
+  }
+  // Réaction publique : affichée tout de suite, puis enregistrée ; la même émoji la retire, une autre la remplace
+  async reagirPublic(cible, emoji) {
+    const lui = r => memeCible(r, cible) && r.user_id === this.userId;
+    const col = cible.offer_id ? 'offer_id' : 'demande_id', val = cible[col];
+    const avant = this.data.reactions_publiques;
+    const mienne = avant.find(lui);
+    const retirer = !emoji || mienne?.emoji === emoji;
+    const ecrite = retirer ? null : mienne ? { ...mienne, emoji } : { id: 'tmp-' + uuid(), offer_id: null, demande_id: null, [col]: val, user_id: this.userId, emoji, created_at: new Date().toISOString() };
+    this.data.reactions_publiques = retirer ? avant.filter(r => r !== mienne) : mienne ? avant.map(r => r === mienne ? ecrite : r) : [ecrite, ...avant];
+    this.emit();
+    const { error } = retirer
+      ? (mienne ? await this.sb.from('reactions_publiques').delete().eq(col, val).eq('user_id', this.userId) : { error: null })
+      : await this.sb.from('reactions_publiques').upsert({ [col]: val, user_id: this.userId, emoji }, { onConflict: col + ',user_id' });
+    if (error) {
+      // On défait seulement ce que cet appel a affiché, s'il est encore à l'écran
+      if ((this.data.reactions_publiques.find(lui) || null) === ecrite) {
+        const garder = mienne && !String(mienne.id).startsWith('tmp-') ? [mienne] : [];
+        this.data.reactions_publiques = [...garder, ...this.data.reactions_publiques.filter(r => !lui(r))];
+        this.emit();
+      }
+      throw new Error(frError(error));
+    }
+    await this.loadTable('reactions_publiques').catch(() => {}); this.emit();
     return null;
   }
   // « écrit… » : un signal éphémère entre les deux personnes de la conversation (rien n'est enregistré)
