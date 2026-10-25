@@ -1540,7 +1540,7 @@ create or replace function public.notif_push_valide(v jsonb) returns boolean
 language sql immutable as $$
   select jsonb_typeof(coalesce(v, '{}')) = 'object' and not exists (
     select 1 from jsonb_each(coalesce(v, '{}')) e
-    where e.key not in ('messages','demandes','candidatures','mentorat','offres','reseau') or jsonb_typeof(e.value) <> 'boolean');
+    where e.key not in ('messages','demandes','candidatures','mentorat','offres','reseau','rappels') or jsonb_typeof(e.value) <> 'boolean');
 $$;
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'profiles_notif_push_check') then
@@ -1558,6 +1558,7 @@ language sql immutable as $$
     when p_kind in ('mentorat_demande','mentorat_accepte','mentorat_deplace','mentorat_annule','rappel_rdv','merci',
                     'relecture_demande','relecture_prise','relecture_rendue','contact_demande','contact_accepte','filleul','parrain') then 'mentorat'
     when p_kind = 'offre_alerte' then 'offres'
+    when p_kind = 'rappel_visite' then 'rappels'
     when p_kind = 'signalement' then 'admin'
     else 'reseau' end;
 $$;
@@ -4119,6 +4120,217 @@ do $$ begin
     execute 'alter publication supabase_realtime add table public.ambassadeurs';
   end if;
 exception when others then raise notice 'Temps réel des ambassadeurs non configuré : %', sqlerrm;
+end $$;
+
+-- =====================================================================
+-- Rappels de visite : un membre absent de l'app depuis 2 jours, et que quelque chose de concret attend
+-- (messages non lus, propositions d'aide, mentorats à accepter, candidatures, demandes d'étudiants, offres),
+-- reçoit une notification avec les vrais chiffres. Puis de plus en plus espacé (4, 7, puis 14 jours entre deux
+-- rappels) ; tout repart de zéro à sa visite suivante. Sans téléphone abonné, ou absent depuis 5 jours : un email,
+-- une fois par semaine au plus, jamais le jour d'un autre email du réseau, 150 par jour pour toute la plateforme.
+-- Catégorie « rappels » de Mon profil (activée par défaut) : décochée, plus de rappel, ni notification ni email.
+-- =====================================================================
+
+-- Dernière ouverture de l'app, notée par le site au plus une fois par heure (marquer_vu).
+-- Une table à part : une mise à jour de profiles ferait recharger la liste des profils chez tous les membres.
+-- Aucune règle de lecture : seul le serveur la lit.
+create table if not exists public.visites (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  vu_at timestamptz not null default now()
+);
+alter table public.visites enable row level security;
+
+create or replace function public.marquer_vu() returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then return; end if;
+  insert into public.visites (user_id, vu_at)
+    select auth.uid(), now() where exists (select 1 from public.profiles where id = auth.uid())
+  on conflict (user_id) do update set vu_at = now() where visites.vu_at < now() - interval '1 hour';
+end $$;
+revoke all on function public.marquer_vu() from public, anon;
+grant execute on function public.marquer_vu() to authenticated;
+
+-- Mise en route des rappels : avant sa première visite notée, un membre est compté venu à cette date au plus tôt
+-- (personne n'est rappelé dans les deux jours qui suivent l'installation sans l'avoir mérité)
+insert into public.app_secrets (cle, valeur) values ('rappels_depuis', now()::text) on conflict (cle) do nothing;
+
+create or replace function public.derniere_visite(p_id uuid) returns timestamptz
+language sql stable security definer set search_path = public as $$
+  select coalesce((select v.vu_at from public.visites v where v.user_id = p_id), greatest(
+    (select u.last_sign_in_at from auth.users u where u.id = p_id),
+    (select p.created_at from public.profiles p where p.id = p_id),
+    (select s.valeur::timestamptz from public.app_secrets s where s.cle = 'rappels_depuis')));
+$$;
+revoke all on function public.derniere_visite(uuid) from public, anon, authenticated;
+
+-- Ce qui attend ce membre (seulement les chiffres non nuls ; {} = rien, pas de rappel)
+--   messages      : messages non lus (30 derniers jours, hors membres bloqués)
+--   propositions  : aides proposées sur ses demandes ouvertes, en attente de sa réponse
+--   mentorats     : demandes de mentorat qui l'attendent (lauréat)
+--   candidatures  : candidatures reçues sur ses offres depuis sa dernière visite
+--   demandes      : demandes d'étudiants ouvertes pour lui (son parcours, ou toutes après 24 h sans aide : demande_pour),
+--                   arrivées depuis sa dernière visite, où il n'a pas déjà proposé son aide (lauréat)
+--   offres        : nouvelles offres pour lui (son année et sa filière : offre_pour) depuis sa dernière visite
+create or replace function public.rappel_contenu(p public.profiles, p_depuis timestamptz) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_object_agg(k, n) filter (where n > 0), '{}'::jsonb) from (values
+    ('messages', (select count(*) from public.messages m where m.dest_id = p.id and m.lu_at is null and m.created_at > now() - interval '30 days'
+       and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = m.author_id) or (b.user_id = m.author_id and b.bloque_id = p.id)))),
+    ('propositions', (select count(*) from public.propositions x join public.demandes d on d.id = x.demande_id
+       where d.auteur_id = p.id and d.status = 'ouverte' and x.status = 'envoyee')),
+    ('mentorats', (select count(*) from public.mentorships m where m.mentor_id = p.id and m.status = 'demande' and m.created_at > now() - interval '30 days')),
+    ('candidatures', (select count(*) from public.applications a join public.offers o on o.id = a.offer_id
+       where o.author_id = p.id and a.status = 'postule' and a.created_at > p_depuis)),
+    ('demandes', case when p.role = 'laureat' then (select count(*) from public.demandes d
+       where public.demande_pour(d, p)
+         and greatest(d.relancee_at, case when public.proximite_filiere(p.filiere, (select a.filiere from public.profiles a where a.id = d.auteur_id)) >= 1
+               then d.created_at else public.demande_large_le(d) end) > p_depuis
+         and not exists (select 1 from public.propositions y where y.demande_id = d.id and y.laureat_id = p.id)) else 0 end),
+    ('offres', (select count(*) from public.offers o where o.created_at > p_depuis and public.offre_pour(o, p, public.saison_courante())))
+  ) as t(k, n);
+$$;
+revoke all on function public.rappel_contenu(public.profiles, timestamptz) from public, anon, authenticated;
+
+-- Ce qui a été envoyé : n = rappels depuis la dernière visite (remis à zéro quand le membre revient)
+create table if not exists public.rappels_visite (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  n int not null default 0,
+  dernier_at timestamptz,
+  push_at timestamptz,
+  email_at timestamptz
+);
+alter table public.rappels_visite enable row level security;
+
+-- Attente avant le rappel suivant : 2 jours après la visite, puis 4, 7, et 14 jours entre deux rappels
+-- (2 heures de marge : la tâche passe chaque soir à la même heure, à quelques secondes près)
+create or replace function public.rappel_attente(p_n int) returns interval
+language sql immutable as $$
+  select (case when p_n <= 0 then 2 when p_n = 1 then 4 when p_n = 2 then 7 else 14 end) * interval '1 day' - interval '2 hours';
+$$;
+
+-- Les membres à rappeler ce soir, avec ce qui les attend
+create or replace function public.rappels_dus()
+returns table (id uuid, langue text, vu timestamptz, n int, abonne boolean, contenu jsonb)
+language sql stable security definer set search_path = public as $$
+  with base as materialized (
+    select p.id, coalesce(p.langue, 'fr') as langue, v.vu,
+      case when r.dernier_at is null or r.dernier_at < v.vu then 0 else r.n end as n,
+      case when r.dernier_at is null or r.dernier_at < v.vu then v.vu else r.dernier_at end as depuis
+    from public.profiles p
+    left join public.rappels_visite r on r.user_id = p.id
+    cross join lateral (select public.derniere_visite(p.id) as vu) v
+    where p.role in ('etudiant','laureat') and p.created_at < now() - interval '2 days'
+  ), dus as materialized (
+    select b.* from base b
+    where b.vu < now() - public.rappel_attente(0) and b.depuis < now() - public.rappel_attente(b.n)
+      and public.push_voulu(b.id, 'rappel_visite')
+  )
+  select d.id, d.langue, d.vu, d.n, exists (select 1 from public.push_subscriptions s where s.user_id = d.id), c.contenu
+  from dus d join public.profiles p on p.id = d.id
+  cross join lateral (select public.rappel_contenu(p, d.vu) as contenu) c
+  where c.contenu <> '{}'::jsonb;
+$$;
+revoke all on function public.rappels_dus() from public, anon, authenticated;
+
+-- Chaque soir : la notification sur le téléphone (par la file, donc par le filtre des catégories), notée tout de suite
+create or replace function public.rappels_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_n int;
+begin
+  with dus as (select * from public.rappels_dus() d where d.abonne),
+  envoyes as (
+    insert into public.push_queue (user_id, kind, data)
+    select d.id, 'rappel_visite', d.contenu from dus d
+    returning user_id),
+  notes as (
+    insert into public.rappels_visite (user_id, n, dernier_at, push_at)
+      select distinct e.user_id, d.n + 1, now(), now() from envoyes e join dus d on d.id = e.user_id
+    on conflict (user_id) do update set n = excluded.n, dernier_at = now(), push_at = now()
+    returning 1)
+  select count(*) into v_n from notes;
+  return v_n;
+end $$;
+revoke all on function public.rappels_push() from public, anon, authenticated;
+
+-- Emails de rappel (lus par la fonction « notifier ») : dus ce soir sans téléphone abonné, ou absents depuis 5 jours
+-- (dus, ou rappelés sur le téléphone ce soir). Une fois par semaine au plus, résumé gardé (emails_hebdo),
+-- aucun autre email du réseau dans les dernières 24 h, 150 par jour au plus pour toute la plateforme.
+create or replace function public.rappels_emails_a_envoyer(p_max int default 150)
+returns table (id uuid, email text, langue text, token uuid, contenu jsonb, dernier_email timestamptz)
+language plpgsql security definer set search_path = public as $$
+declare v_reste int;
+begin
+  insert into public.notif_etat (user_id) select p.id from public.profiles p on conflict (user_id) do nothing;
+  select 150 - count(*) into v_reste from public.rappels_visite r where r.email_at > now() - interval '20 hours';
+  if v_reste <= 0 then return; end if;
+  return query
+    with cand as (
+      select d.id, d.langue, d.vu, d.contenu from public.rappels_dus() d where not d.abonne or d.vu < now() - interval '5 days'
+      union
+      select r.user_id, coalesce(p.langue, 'fr'), x.vu, public.rappel_contenu(p, x.vu)
+      from public.rappels_visite r join public.profiles p on p.id = r.user_id
+      cross join lateral (select public.derniere_visite(p.id) as vu) x
+      where r.push_at > now() - interval '12 hours' and x.vu < now() - interval '5 days' and x.vu < r.push_at
+    )
+    select c.id, u.email::text, c.langue, n.token, c.contenu,
+      greatest(n.resume_at, n.demandes_at, n.alerte_at, n.messages_at, n.enquete_at, n.enquete_rappel_at)
+    from cand c
+      join public.profiles p on p.id = c.id
+      join auth.users u on u.id = c.id
+      join public.notif_etat n on n.user_id = c.id
+      left join public.rappels_visite r on r.user_id = c.id
+    where p.emails_hebdo and u.email is not null and c.contenu <> '{}'::jsonb
+      and public.push_voulu(c.id, 'rappel_visite')
+      and (r.email_at is null or r.email_at < now() - interval '7 days' + interval '2 hours')
+      and coalesce(greatest(n.resume_at, n.demandes_at, n.alerte_at, n.messages_at, n.enquete_at, n.enquete_rappel_at), '-infinity'::timestamptz) < now() - interval '24 hours'
+    order by c.vu
+    limit greatest(0, least(p_max, v_reste, 150));
+end $$;
+revoke all on function public.rappels_emails_a_envoyer(int) from public, anon, authenticated;
+
+-- Après l'envoi : l'email compte comme le rappel du soir (sauf si la notification du téléphone est déjà partie)
+create or replace function public.rappels_emails_envoyes(p_ids uuid[]) returns void
+language sql security definer set search_path = public as $$
+  insert into public.rappels_visite (user_id, n, dernier_at, email_at)
+    select p.id, 1, now(), now() from public.profiles p where p.id = any(p_ids)
+  on conflict (user_id) do update set email_at = now(), dernier_at = now(),
+    n = case when rappels_visite.push_at > now() - interval '12 hours' then rappels_visite.n
+             when rappels_visite.dernier_at is null or rappels_visite.dernier_at < public.derniere_visite(rappels_visite.user_id) then 1
+             else rappels_visite.n + 1 end;
+$$;
+revoke all on function public.rappels_emails_envoyes(uuid[]) from public, anon, authenticated;
+
+-- Lien « Ne plus recevoir ces rappels » des emails : décoche la catégorie « Rappels » (téléphone et email)
+create or replace function public.se_desabonner_rappels(p_token uuid) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare v uuid;
+begin
+  select user_id into v from public.notif_etat where token = p_token;
+  if v is null then return false; end if;
+  update public.profiles set notif_push = coalesce(notif_push, '{}'::jsonb) || '{"rappels": false}'::jsonb where id = v;
+  return true;
+end $$;
+revoke all on function public.se_desabonner_rappels(uuid) from public;
+grant execute on function public.se_desabonner_rappels(uuid) to anon, authenticated;
+
+-- Chaque soir à 18 h UTC (19 h au Maroc, 18 h pendant le ramadan) : le téléphone, puis les emails
+create or replace function public.rappels_soir() returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform public.rappels_push();
+  perform public.appeler_notifier('rappels');
+end $$;
+revoke all on function public.rappels_soir() from public, anon, authenticated;
+
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.rappels_emails_a_envoyer(int) to service_role;
+    grant execute on function public.rappels_emails_envoyes(uuid[]) to service_role;
+  end if;
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.schedule('ensam-rappels-visite', '0 18 * * *', 'select public.rappels_soir()');
+  end if;
 end $$;
 
 -- =====================================================================

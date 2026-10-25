@@ -73,6 +73,16 @@ class Base {
     }
     if (neuf) this.emit();
   }
+  // Dernière visite (rappels de visite) : notée au plus une fois par heure et par appareil ; la base garde aussi
+  // la règle d'une heure (marquer_vu). Rien ne s'affiche, rien ne bloque : un échec attend l'heure suivante.
+  noterVisite(now = Date.now()) {
+    const id = this.me?.id; if (!id) return;
+    const cle = 'ensam-vu-' + id;
+    const avant = Math.max(Number(safeGet(cle)) || 0, this.vuLocal?.[id] || 0);
+    if (now - avant < 3600e3 && now >= avant) return;
+    (this.vuLocal ||= {})[id] = now; safeSet(cle, String(now));
+    Promise.resolve().then(() => this.marquerVu(now)).catch(() => {});
+  }
   // Fondateur : ne plus apparaître sur la page d'entrée (false : non ; null : pas encore répondu). En ligne, la photo
   // change aussi de nom (voir SupabaseStore).
   async masquerFondateur(valeur = false) { return this.update('profiles', this.me.id, { fondateur_public: valeur }); }
@@ -140,10 +150,21 @@ class DemoStore extends Base {
     const meId = saved?.meId || this.data.profiles.find(p => p.role === 'etudiant' && p._persona)?.id;
     this.me = this.byId('profiles', meId) || null;
     this.ready = true;
+    this.noterVisite();
   }
   persist() { safeSet(DEMO_KEY, JSON.stringify({ data: this.data, meId: this.me?.id, reglages: this.reglages })); }
   personas() { const o = { etudiant: 0, laureat: 1, admin: 2 }; return this.data.profiles.filter(p => p._persona).sort((a, b) => o[a.role] - o[b.role]); }
-  switchTo(id) { this.me = this.byId('profiles', id); this.persist(); this.emit(); }
+  switchTo(id) { this.me = this.byId('profiles', id); this.persist(); this.emit(); this.noterVisite(); }
+  // Comme marquer_vu() : une ligne par membre (table visites, illisible depuis le site), au plus une fois par heure
+  async marquerVu(now = Date.now()) {
+    const id = this.me?.id; if (!id || !this.byId('profiles', id)) return;
+    const v = (this.data.visites ||= []).find(x => x.user_id === id);
+    if (v && now - new Date(v.vu_at).getTime() < 3600e3) return;
+    const vu_at = new Date(now).toISOString();
+    this.data.visites = v ? this.data.visites.map(x => x.user_id === id ? { ...x, vu_at } : x) : [...this.data.visites, { user_id: id, vu_at }];
+    this.persist();
+  }
+  async seDesabonnerRappels() { return true; }
   // Démo réinitialisée : comme une déconnexion, les brouillons partent aussi
   async reset() { oublierBrouillons(); this.data = await chargerSeed(); for (const t of [...TABLES, 'guide_pays_historique', 'liste_officielle']) this.data[t] ||= []; this.reglages = {}; this.me = this.personas()[0]; this.persist(); this.emit(); }
   async insert(table, row) {
@@ -1147,6 +1168,7 @@ export class SupabaseStore extends Base {
       const s = this.sessionGardee(); if (!s) return;
       try { this.sb.auth.startAutoRefresh(); } catch { /* */ }
       if (!s.expires_at || s.expires_at * 1000 - Date.now() < 120e3) this.renouveler();
+      if (this.me) this.noterVisite();
       if (this.enAttente) this.rafraichir();
       // Longtemps caché : le temps réel a pu manquer des changements
       else if (cache && Date.now() - cache > 5 * 60e3 && this.me) { cache = 0; this.loadAll().then(() => this.emit(), () => {}); }
@@ -1196,6 +1218,7 @@ export class SupabaseStore extends Base {
     await Promise.all([...TABLES.map(t => this.loadTable(t)), this.chargerPouls().catch(() => {})]);
     this.me = this.byId('profiles', this.userId) || null;
     this.subscribe();
+    this.noterVisite();
   }
   // « Cette semaine dans le réseau » : la base compte tout (relectures et propositions comprises), pour que chacun voie le même chiffre
   async chargerPouls() {
@@ -1501,6 +1524,12 @@ export class SupabaseStore extends Base {
     const { data, error } = await this.sb.rpc('se_desabonner_messages', { p_token: token });
     return !error && data === true;
   }
+  async seDesabonnerRappels(token) {
+    const { data, error } = await this.sb.rpc('se_desabonner_rappels', { p_token: token });
+    return !error && data === true;
+  }
+  // Base pas encore à jour (fonction absente) : l'erreur est ignorée, rien ne change pour le membre
+  async marquerVu() { if (this.userId) await this.sb.rpc('marquer_vu'); }
   // Messagerie : le fichier part d'abord dans le stockage privé, puis le message ; s'il échoue, le fichier est retiré
   async envoyerMessage({ dest, type = 'texte', body = null, fichier: blob = null, ext = 'jpg', ...meta }) {
     let fichier = null;

@@ -568,6 +568,12 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     fr: v => [v.nom, apercuMessage(v, 'fr')],
     ar: v => [v.nom, apercuMessage(v, 'ar')],
   },
+  // Rappel de visite : texte écrit par notifRappel (les chiffres de chaque chose qui attend ne tiennent pas dans V)
+  rappel_visite: {
+    route: 'accueil',
+    fr: () => null,
+    ar: () => null,
+  },
   test: {
     route: 'accueil',
     fr: () => ['Notifications activées', 'Tu recevras ici les nouvelles importantes du Réseau ENSAM.'],
@@ -583,6 +589,7 @@ const MOTIFS: Record<Langue, Record<string, string>> = {
 // Notification prête à envoyer : { title, body, url, tag } ; null si le type est inconnu
 export function texteNotif(kind: string, data: unknown, langue: unknown, site: string): Notif | null {
   if (!Object.prototype.hasOwnProperty.call(NOTIFS, kind)) return null;
+  if (kind === 'rappel_visite') return notifRappel(data, langue, site);
   const g = NOTIFS[kind], l = langueDe(langue);
   const d = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
   // En arabe, le contenu des membres (souvent en français) est isolé pour ne pas mélanger le sens de lecture
@@ -1604,6 +1611,78 @@ export function rendreRelance(langue: Langue, site: string): Courriel {
 }
 
 // ---------------------------------------------------------------------
+// Rappels de visite : après quelques jours sans visite, ce qui attend vraiment le membre, avec les vrais chiffres.
+// La base choisit qui et compte (rappels_dus, rappel_contenu dans schema.sql) ; ici, seulement les mots.
+// ---------------------------------------------------------------------
+export const RAPPEL_ORDRE = ['messages', 'propositions', 'mentorats', 'candidatures', 'demandes', 'offres'] as const;
+type CleRappel = typeof RAPPEL_ORDRE[number];
+const ROUTE_RAPPEL: Record<CleRappel, string> = {
+  messages: 'messages', propositions: 'offres/demandes', mentorats: 'mentorat', candidatures: 'espace', demandes: 'offres/demandes', offres: 'offres',
+};
+// Ce qui attend, dans l'ordre où on le dit (le plus personnel d'abord) ; un chiffre douteux est ignoré
+export function comptesRappel(data: unknown): [CleRappel, number][] {
+  const o = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
+  return RAPPEL_ORDRE.map(k => [k, Number(o[k])] as [CleRappel, number]).filter(([, n]) => Number.isInteger(n) && n > 0 && n < 100000);
+}
+const MOTS_RAPPEL: Record<Langue, Record<CleRappel, (n: number) => string>> = {
+  fr: {
+    messages: n => (n > 1 ? `${n} messages non lus` : '1 message non lu'),
+    propositions: n => (n > 1 ? `${n} lauréats te proposent leur aide` : 'un lauréat te propose son aide'),
+    mentorats: n => (n > 1 ? `${n} mentorats attendent ta réponse` : '1 mentorat attend ta réponse'),
+    candidatures: n => (n > 1 ? `${n} nouvelles candidatures sur tes offres` : '1 nouvelle candidature sur tes offres'),
+    demandes: n => (n > 1 ? `${n} demandes d’étudiants depuis ta dernière visite` : '1 demande d’étudiant depuis ta dernière visite'),
+    offres: n => (n > 1 ? `${n} nouvelles offres pour toi` : '1 nouvelle offre pour toi'),
+  },
+  ar: {
+    messages: n => arN(n, ['رسالة غير مقروءة', 'رسالتان غير مقروءتين', '{n} رسائل غير مقروءة', '{n} رسالة غير مقروءة']),
+    propositions: n => arN(n, ['عرض مساعدة من خريج', 'عرضا مساعدة من الخريجين', '{n} عروض مساعدة من الخريجين', '{n} عرض مساعدة من الخريجين']),
+    mentorats: n => arN(n, ['إرشاد ينتظر ردك', 'إرشادان ينتظران ردك', '{n} إرشادات تنتظر ردك', '{n} إرشادًا ينتظر ردك']),
+    candidatures: n => arN(n, ['ترشيح جديد على عروضك', 'ترشيحان جديدان على عروضك', '{n} ترشيحات جديدة على عروضك', '{n} ترشيحًا جديدًا على عروضك']),
+    demandes: n => arN(n, ['طلب مساعدة جديد من الطلبة منذ زيارتك الأخيرة', 'طلبا مساعدة جديدان من الطلبة منذ زيارتك الأخيرة', '{n} طلبات مساعدة جديدة من الطلبة منذ زيارتك الأخيرة', '{n} طلب مساعدة جديدًا من الطلبة منذ زيارتك الأخيرة']),
+    offres: n => arN(n, ['عرض جديد يخصك', 'عرضان جديدان يخصانك', '{n} عروض جديدة تخصك', '{n} عرضًا جديدًا يخصك']),
+  },
+};
+const majuscule = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+export function phrasesRappel(data: unknown, langue: unknown): string[] {
+  const l = langueDe(langue);
+  return comptesRappel(data).map(([k, n]) => MOTS_RAPPEL[l][k](n));
+}
+
+// Notification : la chose la plus personnelle en titre, le reste dessous ; elle ouvre l'écran de la première
+export function notifRappel(data: unknown, langue: unknown, site: string): Notif | null {
+  const l = langueDe(langue), c = comptesRappel(data);
+  if (!c.length) return null;
+  const p = phrasesRappel(data, l);
+  const corps = p.length > 1 ? (l === 'ar' ? `وأيضًا: ${p.slice(1).join('، ')}.` : `Aussi : ${p.slice(1).join(' · ')}.`)
+    : (l === 'ar' ? 'ألقِ نظرة متى سمح وقتك.' : 'À voir quand tu as un moment.');
+  return { title: couper(majuscule(p[0]), 80), body: couper(corps, 180), url: `${site}#${ROUTE_RAPPEL[c[0][0]]}`, tag: 'rappel_visite' };
+}
+
+// Email (sans téléphone abonné, ou absent depuis 5 jours) : les mêmes chiffres, un bouton, le lien pour ne plus les recevoir
+export function rendreRappel(data: unknown, langue: Langue, site: string, token: string): Courriel {
+  site = siteEn(site, langue);
+  const ar = langue === 'ar', c = comptesRappel(data), p = phrasesRappel(data, langue).map(majuscule);
+  const desabo = `${site}#desabo/${token}/rappels`;
+  const url = c.length ? `${site}#${ROUTE_RAPPEL[c[0][0]]}` : site;
+  const sujet = couper(`${p[0] || (ar ? 'شبكة ENSAM مكناس' : 'Réseau ENSAM Meknès')}${ar ? ' · شبكة ENSAM' : ' · Réseau ENSAM'}`, 110);
+  const salut = ar ? 'مرحبًا،' : 'Bonjour,';
+  const intro = ar ? 'إليك ما ينتظرك على شبكة ENSAM منذ زيارتك الأخيرة:' : 'Voici ce qui t’attend sur le Réseau ENSAM depuis ta dernière visite :';
+  const bouton = ar ? 'عرض على المنصة' : 'Voir sur la plateforme';
+  const pied = ar ? 'يصلك هذا التذكير حين ينتظرك شيء بعد أيام دون زيارة، مرة في الأسبوع على الأكثر عبر البريد.'
+    : 'Tu reçois ce rappel quand quelque chose t’attend après quelques jours sans visite, une fois par semaine au plus par email.';
+  const arret = ar ? 'إيقاف هذه التذكيرات' : 'Ne plus recevoir ces rappels';
+  const html = cadreEmail({
+    langue, sujet, apercu: p.join(' · '), sousTitre: ar ? 'ما ينتظرك' : 'Ce qui t’attend',
+    intro: [esc(salut), esc(intro)],
+    blocs: [{ lignes: p.map(x => `• ${esc(x)}`), bouton: { texte: bouton, url } }],
+    pied, liens: [[ar ? 'فتح المنصة' : 'Ouvrir la plateforme', site], [arret, desabo]],
+  });
+  const texte = [`${(ar ? AR : FR).marque} · ${ar ? 'ما ينتظرك' : 'Ce qui t’attend'}`, '', salut, intro, ...p.map(x => `• ${x}`), '',
+    `${bouton}${ar ? ': ' : ' : '}${url}`, '', '--', pied, `${arret}${ar ? ': ' : ' : '}${desabo}`].join('\n');
+  return { sujet, html, texte, desabo };
+}
+
+// ---------------------------------------------------------------------
 // Résumé hebdomadaire : lecture de la base
 // ---------------------------------------------------------------------
 export async function chargerDonnees(env: Env, ids: string[], date: Date): Promise<Brut> {
@@ -2200,6 +2279,37 @@ async function jobEnquetes(env: Env): Promise<Response> {
   return json(b);
 }
 
+// Rappels de visite par email : la base choisit qui (sans téléphone abonné, ou absent depuis 5 jours ; une fois par
+// semaine au plus ; « Rappels » coché ; 150 par jour pour toute la plateforme). Par sûreté, rien ne part si un autre
+// email du réseau (résumé, demandes, alertes, messages, enquête) est parti dans les dernières 24 h.
+export const RAPPELS_MAX = 150;
+async function jobRappels(env: Env): Promise<Response> {
+  const f = facteur(env);
+  if (!f.pret) return json({ skipped: 'email' });
+  const dest = (((await rpc(env, 'rappels_emails_a_envoyer', { p_max: RAPPELS_MAX })) || []) as { id: string; email: string; langue: string; token: string; contenu: unknown; dernier_email: string | null }[])
+    .slice(0, RAPPELS_MAX);
+  const b: { sent: number; skipped: number; errors: number; via?: string } = { sent: 0, skipped: 0, errors: 0 };
+  if (!dest.length) return json(b);
+  const envoyes: string[] = [];
+  const limite = Date.now() + 100_000;
+  await parallele(dest, f.paralleles, async x => {
+    if (Date.now() > limite) return;
+    if (Date.now() - temps(x.dernier_email) < JOUR || !comptesRappel(x.contenu).length) { b.skipped++; return; }
+    if (!x.email || !x.token || !estUuid(x.id)) { b.errors++; return; }
+    try {
+      if (await f.envoyer(x.email, rendreRappel(x.contenu, langueDe(x.langue), env.site, x.token))) { b.sent++; envoyes.push(x.id); }
+      else b.errors++;
+    } catch (e) {
+      b.errors++;
+      console.error('notifier : email de rappel impossible', e instanceof Error ? e.message : String(e));
+    }
+  });
+  await f.fermer();
+  b.via = f.via();
+  if (envoyes.length) await rpc(env, 'rappels_emails_envoyes', { p_ids: envoyes });
+  return json(b);
+}
+
 // ---------------------------------------------------------------------
 // Point d'entrée
 // ---------------------------------------------------------------------
@@ -2208,7 +2318,7 @@ export async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return json({ error: 'Méthode non autorisée' }, 405);
   let job: unknown;
   try { job = (await req.json())?.job; } catch { return json({ error: 'Requête invalide' }, 400); }
-  if (typeof job !== 'string' || !['cle', 'test', 'push', 'resume', 'essai_email', 'alertes', 'enquetes', 'messages', 'relances', 'demandes'].includes(job)) return json({ error: 'Tâche inconnue' }, 400);
+  if (typeof job !== 'string' || !['cle', 'test', 'push', 'resume', 'essai_email', 'alertes', 'enquetes', 'messages', 'relances', 'demandes', 'rappels'].includes(job)) return json({ error: 'Tâche inconnue' }, 400);
   const env = lireEnv();
   if (!env.url || !env.cle) {
     console.error('notifier : SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY manquant');
@@ -2224,6 +2334,7 @@ export async function handler(req: Request): Promise<Response> {
     if (job === 'messages') return await jobMessages(env);
     if (job === 'relances') return await jobRelances(env);
     if (job === 'demandes') return await jobDemandes(env);
+    if (job === 'rappels') return await jobRappels(env);
     return job === 'push' ? await jobPush(env) : await jobResume(env);
   } catch (e) {
     console.error(`notifier : échec de « ${job} »`, e instanceof Error ? e.message : String(e));

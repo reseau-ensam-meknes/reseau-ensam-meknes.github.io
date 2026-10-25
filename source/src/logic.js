@@ -1235,7 +1235,8 @@ export function ouvertureNotif({ etat, memo = {}, now = Date.now(), role, voulu 
 // me.notif_push ne garde que les choix faits ({ offres: true, reseau: false }) ; une catégorie absente suit le défaut
 // de son rôle. Mêmes règles que la base (push_categorie, push_defaut, push_voulu dans schema.sql) : un test le vérifie.
 // Catégories proposées, dans l'ordre de l'écran (« admin » : signalements, toujours reçus, sans case)
-export const PUSH_CATEGORIES = ['messages', 'demandes', 'candidatures', 'mentorat', 'offres', 'reseau'];
+// « rappels » : après quelques jours sans visite, quand quelque chose attend le membre (activés par défaut, comme le reste)
+export const PUSH_CATEGORIES = ['messages', 'demandes', 'candidatures', 'mentorat', 'offres', 'reseau', 'rappels'];
 // Type de notification -> catégorie (un type inconnu : vie du réseau)
 export const PUSH_KINDS = {
   message: 'messages',
@@ -1246,6 +1247,7 @@ export const PUSH_KINDS = {
   rappel_rdv: 'mentorat', merci: 'mentorat', relecture_demande: 'mentorat', relecture_prise: 'mentorat', relecture_rendue: 'mentorat',
   contact_demande: 'mentorat', contact_accepte: 'mentorat', filleul: 'mentorat', parrain: 'mentorat',
   offre_alerte: 'offres',
+  rappel_visite: 'rappels',
   reponse: 'reseau', question_routee: 'reseau', cafe: 'reseau', evenement: 'reseau', evenement_annule: 'reseau', evenement_deplace: 'reseau',
   enquete: 'reseau', verification_pair: 'reseau', verifier_pair: 'reseau',
   signalement: 'admin',
