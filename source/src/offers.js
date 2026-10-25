@@ -4,7 +4,7 @@ import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, TYPE_ICON, toas
 import { useBrouillon } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
 import { getLang, addAR, arCount } from './i18n.js';
-import { TYPES, titreOffre, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande, manquesOffre, peutRecommander, porteApresRefus, demandesPour } from './logic.js';
+import { TYPES, titreOffre, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande, manquesOffre, peutRecommander, porteApresRefus, demandesPour, typeForNiveau } from './logic.js';
 import { RelanceBanner, PasteOffer, sujetPris } from './recrutement.js';
 import { CvButton } from './cv.js';
 import { SignalerBtn } from './confiance.js';
@@ -12,6 +12,8 @@ import { EntrepriseResume } from './entreprises.js';
 import { recherche } from './geo.js';
 import { MessageBtn } from './messages.js';
 import { DemandesTab } from './demandes.js';
+import { estPortee, estPartagee, partageExpire, trierOffres, lienValide } from './origine.js';
+import { BadgePortee, PartageCard, SectionPartages, EngagementPortee, NotePartage, PiedPartage, ChoixOrigine, CasePortee, SourcePartage } from './partages.js';
 // Le message WhatsApp d'une offre, dans la langue de l'interface : de quoi il s'agit, et le lien qui l'ouvre directement.
 // Le type n'est ajouté que si le titre ne le dit pas déjà (« Stage : Stage PFE… »), et l'auteur n'est jamais nommé.
 const TYPES_AR = { stage: 'تدريب', pfe: 'مشروع نهاية الدراسة', etranger: 'تدريب بالخارج', emploi: 'وظيفة' };
@@ -72,16 +74,19 @@ export function OffersPage(ctx) {
   const choisir = k => { setFiltre(k); if (lien) go('offres', { remplacer: true }); };
   const nDem = avecDemandes ? demandesOuvertes(data, me, store) : 0;
   const [compose, setCompose] = useState(null);
+  // Partager une offre vue ailleurs (LinkedIn…) : tout membre, étudiants compris, dès que la base le permet
+  const partager = store.peutOrigine?.() ? () => setCompose({ mode: 'partage' }) : null;
   return html`<section class="page offres-page">
     <header class="page-head">
       <div>${demandes ? null : html`<p class="eyebrow">${isStudent ? NIVEAUX[niveauOf(me, saison)]?.label || 'Pour toi' : 'Par les lauréats'}</p>`}<h1>${demandes ? (isStudent ? 'Mes demandes' : 'Demandes des étudiants') : 'Offres'}</h1></div>
       ${!isStudent && !demandes ? html`<button class=${'btn primary' + (filtre === 'pfe' ? '' : ' publier-offre')} id="of-publier" onClick=${() => setCompose(presetDe(filtre))}><${Icon} name="plus"/> ${filtre === 'pfe' ? 'Déposer un sujet' : 'Publier une offre'}</button>` : null}
+      ${isStudent && !demandes && partager ? html`<button class="btn tonal" id="of-partager" onClick=${partager}><${Icon} name="share"/> Partager une offre</button>` : null}
     </header>
     ${avecDemandes ? html`<div class="seg offres-seg" role="tablist" aria-label="Offres ou demandes">
       <button role="tab" aria-selected=${!demandes} class=${demandes ? '' : 'on'} onClick=${() => go('offres', { remplacer: true })}>Offres</button>
       <button role="tab" aria-selected=${demandes} class=${demandes ? 'on' : ''} onClick=${() => go('offres/demandes', { remplacer: true })}>Demandes${nDem ? html` <span class="count">${nDem}</span>` : null}</button>
     </div>` : null}
-    ${demandes ? html`<${DemandesTab} ctx=${isStudent ? ctx : { ...ctx, publierOffre: () => setCompose({}) }}/>` : html`<${OfferList} ctx=${ctx} filtre=${filtre} setFiltre=${choisir} onPropose=${() => setCompose(presetDe(filtre))}/>`}
+    ${demandes ? html`<${DemandesTab} ctx=${isStudent ? ctx : { ...ctx, publierOffre: () => setCompose({}) }}/>` : html`<${OfferList} ctx=${ctx} filtre=${filtre} setFiltre=${choisir} onPropose=${() => setCompose(presetDe(filtre))} onPartager=${partager}/>`}
     ${compose ? html`<${OfferComposer} ctx=${ctx} preset=${compose} onClose=${() => setCompose(null)}/>` : null}
   </section>`;
 }
@@ -93,7 +98,7 @@ const prenom = p => (p?.full_name || '').split(' ')[0];
 const Pourquoi = ({ why }) => html`<span class="why">${why.map(w => (w === 'Ta filière' ? html`<span class="mini good">${w}</span>` : html`<span class="mini" translate="no" dir="auto">${w}</span>`))}</span>`;
 const doux = () => (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
 
-function OfferList({ ctx, filtre, setFiltre, onPropose }) {
+function OfferList({ ctx, filtre, setFiltre, onPropose, onPartager }) {
   const { data, me, saison, openOffer, go } = ctx;
   const isStudent = me.role === 'etudiant';
   const niveau = niveauOf(me, saison);
@@ -104,17 +109,22 @@ function OfferList({ ctx, filtre, setFiltre, onPropose }) {
     ...(isStudent ? [['sauvees', 'Mises de côté', 'bookmark']] : [['laureats', 'Entre lauréats', 'briefcase'], ['miennes', 'Mes offres', 'user']])];
   const sep = puces.findIndex(([k]) => k === 'sauvees' || k === 'laureats');
   const f = puces.some(([k]) => k === filtre) ? filtre : 'tous';
-  const list = useMemo(() => {
+  const tout = useMemo(() => {
     const trouve = recherche(q); // « مكناس » trouve Meknès, accents et casse ignorés
     return data.offers.filter(o => {
       if (f === 'miennes') { if (o.author_id !== me.id) return false; }
+      else if (partageExpire(o)) return false; // un partage de plus de 45 jours (ou dont la date limite est passée) se ferme seul
       else if (f === 'sauvees') { if (!data.reactions.some(r => r.offer_id === o.id && r.user_id === me.id && r.kind === 'save')) return false; }
       else if (o.status !== 'ouverte' || (f === 'laureats' ? !forLaureats(o) : TYPES[f] && o.type !== f)) return false;
       if (isStudent && (forLaureats(o) || !(o.annees || []).includes(niveau))) return false; // un étudiant ne voit que les offres de son année
       if (trouve && !trouve(`${o.titre} ${o.entreprise} ${(o.filieres || []).join(' ')} ${resumeFilieres(o.filieres).join(' ')}`, o.ville, o.pays)) return false;
       return true;
-    }).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    });
   }, [data, q, f]);
+  // D'abord les offres portées par un lauréat, puis les classiques ; les partages (vus ailleurs) dans une section à part, plus bas
+  const tri = trierOffres(tout);
+  const list = tri.filter(o => !estPartagee(o));
+  const partagees = tri.filter(estPartagee);
   const plain = f === 'tous' && !q.trim();
   // Les recommandées passent en tête et ne sont pas répétées dans la liste en dessous
   const avecReco = isStudent && plain && list.length > 5;
@@ -143,8 +153,9 @@ function OfferList({ ctx, filtre, setFiltre, onPropose }) {
     ${avecReco ? html`<${RecoOffers} ctx=${ctx} reco=${reco} inOffres/>` : null}
     ${avecReco && reste.length ? html`<div class="section-head"><h2>${NIVEAUX[niveau]?.short ? `Les autres offres de ${NIVEAUX[niveau].short}` : 'Les autres offres'}</h2><span class="count">${reste.length}</span></div>` : null}
     <div class="offer-grid">
-      ${reste.length ? reste.map(o => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} sujets=${f === 'pfe'} onOpen=${() => openOffer(o.id)}/>`) : avecReco ? null : vide}
+      ${reste.length ? reste.map(o => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} sujets=${f === 'pfe'} onOpen=${() => openOffer(o.id)}/>`) : avecReco || partagees.length ? null : vide}
     </div>
+    ${f === 'sauvees' ? null : html`<${SectionPartages} ctx=${ctx} list=${partagees} onPartager=${plain ? onPartager : null}/>`}
   </div>`;
 }
 
@@ -152,8 +163,9 @@ function OfferList({ ctx, filtre, setFiltre, onPropose }) {
 function recoFor(ctx, max) {
   const { data, me, saison } = ctx;
   const n = niveauOf(me, saison);
-  return data.offers.filter(o => o.status === 'ouverte' && !forLaureats(o) && (o.annees || []).includes(n) && !data.applications.some(a => a.offer_id === o.id && a.student_id === me.id))
-    .map(o => ({ o, ...offerMatch(o, me) })).sort((a, b) => b.score - a.score || new Date(b.o.created_at) - new Date(a.o.created_at)).slice(0, max);
+  // Les partages (à postuler ailleurs) n'y sont pas ; une offre portée par un lauréat, qui encadre, passe devant
+  return data.offers.filter(o => o.status === 'ouverte' && !estPartagee(o) && !forLaureats(o) && (o.annees || []).includes(n) && !data.applications.some(a => a.offer_id === o.id && a.student_id === me.id))
+    .map(o => { const m = offerMatch(o, me); return { o, ...m, score: m.score + (estPortee(o) ? 3 : 0) }; }).sort((a, b) => b.score - a.score || new Date(b.o.created_at) - new Date(a.o.created_at)).slice(0, max);
 }
 
 export function RecoOffers({ ctx, max = 3, inOffres = false, reco, exclure }) {
@@ -169,6 +181,8 @@ export function RecoOffers({ ctx, max = 3, inOffres = false, reco, exclure }) {
 
 // Carte compacte : toute la carte ouvre la fiche. En pied, qui la partage et, s'il peut recommander, on le dit simplement.
 export function OfferCard({ o, ctx, onOpen, why, sujets = false }) {
+  // Une offre partagée (vue ailleurs) : la carte compacte, avec le lien vers le site d'origine
+  if (estPartagee(o)) return html`<${PartageCard} o=${o} ctx=${ctx} onOpen=${onOpen}/>`;
   const { data, me, store, act } = ctx;
   const author = store.byId('profiles', o.author_id);
   const saved = data.reactions.find(r => r.offer_id === o.id && r.user_id === me.id && r.kind === 'save');
@@ -183,11 +197,11 @@ export function OfferCard({ o, ctx, onOpen, why, sujets = false }) {
   // l'état de la candidature compte davantage
   const coopt = canApply && !!author && store.voitChamp(author, 'travail') && peutRecommander(o, author);
   const lieu = [o.ville, o.pays !== 'Maroc' ? o.pays : ''].filter(Boolean).join(', ');
-  return html`<article class=${'ocard' + (o.status !== 'ouverte' ? ' closed' : '')}>
+  return html`<article class=${'ocard' + (o.status !== 'ouverte' ? ' closed' : '') + (estPortee(o) ? ' portee' : '')}>
     <button class="ocard-main" onClick=${onOpen} aria-label=${`Ouvrir : ${titreOffre(o)}`}>
       <${CompanyLogo} name=${o.entreprise}/>
       <span class="ocard-txt">
-        <span class="ocard-tags"><span class=${'tag t-' + o.type}><${Icon} name=${TYPE_ICON[o.type]} size=${13}/>${TYPES[o.type]?.label}</span>
+        <span class="ocard-tags">${estPortee(o) ? html`<${BadgePortee}/>` : null}<span class=${'tag t-' + o.type}><${Icon} name=${TYPE_ICON[o.type]} size=${13}/>${TYPES[o.type]?.label}</span>
           ${o.status === 'ouverte' && dl !== null && dl >= 0 && dl <= 7 ? html`<span class="tag urgent">${dl === 0 ? 'Dernier jour' : `J-${dl}`}</span>` : null}
           ${o.status !== 'ouverte' ? html`<span class="tag done">${o.status === 'pourvue' ? 'Pourvue' : 'Fermée'}</span>` : null}
           ${forLaureats(o) ? html`<span class="tag entre">Entre lauréats</span>` : null}</span>
@@ -225,7 +239,9 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
   const o = store.byId('offers', id);
   const mine = o?.author_id === me.id;
   const isAdmin = me.role === 'admin';
-  const [tab, setTab] = useState(mine ? 'candidats' : 'offre');
+  const partage = estPartagee(o);
+  // Un partage (vu ailleurs) n'a ni candidats ni suivi ici : seulement l'offre et ses questions
+  const [tab, setTab] = useState(mine && !partage ? 'candidats' : 'offre');
   const [edit, setEdit] = useState(false);
   const [menu, setMenu] = useState(false);
   const [form, setForm] = useState(!!apply); // le formulaire de candidature est ouvert
@@ -271,6 +287,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
   // Pied collé : postuler (et garder l'offre), puis l'état de la candidature une fois envoyée
   const saveBtn = html`<button type="button" class=${'icon-btn od-save' + (saved ? ' on' : '')} aria-pressed=${!!saved} aria-label=${saved ? 'Ne plus mettre de côté' : 'Mettre de côté'} title=${saved ? 'Ne plus mettre de côté' : 'Mettre de côté'} onClick=${toggleSave}><${Icon} name="bookmark" size=${18}/></button>`;
   let footer = null;
+  if (partage && tab === 'offre') footer = html`<${PiedPartage} o=${o}/>`;
   if (candidat && tab === 'offre') {
     if (myApp) {
       const pl = myApp.status === 'retenu' ? placementOf(data, me.id, ctx.saison) : null;
@@ -284,7 +301,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
     else footer = html`<div class="od-foot">${saveBtn}<button type="button" class="btn primary" onClick=${() => setForm(true)}><${Icon} name="send" size=${16}/> Postuler</button></div>`;
   }
 
-  return html`<${Modal} title=${forLaureats(o) ? 'Offre entre lauréats' : TYPES[o.type]?.long || 'Offre'} onClose=${onClose} wide footer=${footer}>
+  return html`<${Modal} title=${partage ? 'Offre partagée' : forLaureats(o) ? 'Offre entre lauréats' : TYPES[o.type]?.long || 'Offre'} onClose=${onClose} wide footer=${footer}>
     <div class="detail od">
       <div class="detail-head">
         <${CompanyLogo} name=${o.entreprise} size=${56}/>
@@ -298,13 +315,15 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
         ${(mine || isAdmin) ? html`<div class="menu-wrap"><button class="icon-btn" aria-label="Gérer l’offre" aria-expanded=${menu} onClick=${() => setMenu(!menu)}><${Icon} name="more"/></button>
           ${menu ? html`<div class="menu-pop">
             ${mine ? html`<button onClick=${() => { setMenu(false); setEdit(true); }}><${Icon} name="edit" size=${16}/> Modifier</button>` : null}
-            <button onClick=${() => { setMenu(false); act(() => store.update('offers', o.id, { status: o.status === 'ouverte' ? 'pourvue' : 'ouverte' })); }}><${Icon} name="check" size=${16}/> ${o.status === 'ouverte' ? 'Marquer pourvue' : 'Rouvrir l’offre'}</button>
+            <button onClick=${() => { setMenu(false); act(() => store.update('offers', o.id, { status: o.status === 'ouverte' ? (partage ? 'fermee' : 'pourvue') : 'ouverte' })); }}><${Icon} name="check" size=${16}/> ${o.status === 'ouverte' ? (partage ? 'Fermer le partage' : 'Marquer pourvue') : 'Rouvrir l’offre'}</button>
             <button class="danger-t" onClick=${() => { setMenu(false); ctx.confirm('Supprimer définitivement cette offre ?', () => act(async () => { await store.remove('offers', o.id); onClose(); })); }}><${Icon} name="trash" size=${16}/> Supprimer</button>
           </div>` : null}</div>` : null}
       </div>
       ${author && !mine && tab === 'offre' ? html`<${AuteurOffre} ctx=${ctx} o=${o} author=${author} candidat=${candidat}/>` : null}
+      ${estPortee(o) && tab === 'offre' ? html`<${EngagementPortee} auteur=${author}/>` : null}
+      ${partage && tab === 'offre' ? html`<${NotePartage} o=${o} auteur=${author}/>` : null}
       <${RelanceBanner} ctx=${ctx} o=${o}/>
-      ${mine ? html`<div class="seg" role="tablist" aria-label="Mon offre">${[['candidats', `Candidats (${apps.length})`], ['offre', 'L’offre'], ['questions', `Questions (${comments.length})`]].map(([k, l]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => setTab(k)}>${l}</button>`)}</div>` : null}
+      ${mine && !partage ? html`<div class="seg" role="tablist" aria-label="Mon offre">${[['candidats', `Candidats (${apps.length})`], ['offre', 'L’offre'], ['questions', `Questions (${comments.length})`]].map(([k, l]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => setTab(k)}>${l}</button>`)}</div>` : null}
 
       ${tab === 'candidats' && mine ? html`<${Candidates} ctx=${ctx} o=${o} apps=${apps}/>` : null}
 
@@ -312,9 +331,9 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
         <dl class="od-facts">${facts.map(([k, i, v]) => html`<div class=${k === 'Date limite' && urgent ? 'urgent' : ''}><dt><${Icon} name=${i} size=${14}/> ${k}</dt><dd>${v}</dd></div>`)}</dl>
         <${EntrepriseResume} ctx=${ctx} entreprise=${o.entreprise} onOpen=${onClose}/>
         <div class="prose"><p translate="no" dir="auto">${o.description}</p></div>
-        ${o.lien ? html`<p><a href=${o.lien.startsWith('http') ? o.lien : 'https://' + o.lien} target="_blank" rel="noopener"><${Icon} name="link" size=${15}/> Voir l’annonce complète</a></p>` : null}
+        ${o.lien && !partage ? html`<p><a href=${o.lien.startsWith('http') ? o.lien : 'https://' + o.lien} target="_blank" rel="noopener"><${Icon} name="link" size=${15}/> Voir l’annonce complète</a></p>` : null}
         ${candidat ? html`<${ApplyBox} ctx=${ctx} o=${o} form=${form} setForm=${setForm} onClose=${onClose}/>` : null}
-        ${!mine ? html`<${Questions} ctx=${ctx} o=${o} comments=${comments}/>` : null}` : null}
+        ${!mine || partage ? html`<${Questions} ctx=${ctx} o=${o} comments=${comments}/>` : null}` : null}
 
       ${tab === 'questions' && mine ? html`<${Questions} ctx=${ctx} o=${o} comments=${comments}/>` : null}
     </div>
@@ -499,21 +518,30 @@ function Questions({ ctx, o, comments }) {
 // (ou avant un collage) ; ensuite, seuls les champs obligatoires encore vides le sont, et « Publier » y mène.
 const ORDRE = ['type', 'titre', 'entreprise', 'ville', 'pays', 'description', 'annees', 'filieres', 'duree', 'deadline', 'lien', 'cooptation', 'remunere'];
 const DETAILS = ['filieres', 'duree', 'deadline', 'lien', 'cooptation', 'remunere'];
-const ID_OF = { titre: 'of-titre', entreprise: 'of-ent', description: 'of-desc', annees: 'of-annees' };
+const ID_OF = { titre: 'of-titre', entreprise: 'of-ent', description: 'of-desc', annees: 'of-annees', lien: 'of-lien-p' };
 const MSG_OF = { titre: f => (f.titre.trim() ? 'Un titre de 4 caractères au moins.' : 'Donne un titre à l’offre.'),
+  lien: f => ((f.lien || '').trim() ? 'Un lien complet, qui commence par https://' : 'Colle le lien de l’offre (LinkedIn, site de l’entreprise…).'),
   entreprise: () => 'Indique l’entreprise.', description: () => 'Ajoute quelques lignes : missions, profil recherché.', annees: () => 'Choisis au moins une année.' };
 const nChamps = n => `${n} champ${n > 1 ? 's' : ''}`;
 
 export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
   const { store, me, act, data } = ctx;
   const editing = !!offer?.id;
+  // Origine (origine.js) : « une offre de mon entreprise » (case « je l'encadre » : portée) ou « une offre vue ailleurs »
+  // (partage, lien obligatoire). Un étudiant ne fait que partager, pour son année par défaut. Base pas à jour : comme avant.
+  const avecOrigine = !!store.peutOrigine?.();
+  const etudiant = me.role === 'etudiant';
+  const niv = niveauOf(me, ctx.saison);
+  const pourEtudiant = etudiant && avecOrigine && !editing ? { mode: 'partage', entreprise: '', type: typeForNiveau(niv), annees: niv >= 3 && niv <= 6 ? [niv] : [3, 4] } : {};
+  const deOffre = offer ? { mode: estPartagee(offer) ? 'partage' : 'entreprise', porte: estPortee(offer) } : {};
   // Une nouvelle offre en cours d'écriture reste sur l'appareil (session expirée, rechargement). Un brouillon par point de
   // départ (« Publier une offre », « Déposer un sujet », « Entre lauréats ») ; le public et le type choisis en ouvrant
   // passent par-dessus le brouillon : une offre ne part jamais vers un autre public que celui de l'onglet.
-  const depart = preset.audience === 'laureats' ? ':laureats' : preset.type === 'pfe' ? ':pfe' : '';
+  const depart = preset.mode === 'partage' ? ':partage' : preset.audience === 'laureats' ? ':laureats' : preset.type === 'pfe' ? ':pfe' : '';
   const [f, setF, oublierBrouillon] = useBrouillon(editing ? null : me.id + ':offre' + depart, () => ({
-    type: 'stage', titre: '', entreprise: me.entreprise || '', ville: me.ville || '', pays: me.pays || 'Maroc', filieres: [], annees: [3, 4], description: '', contact: '', lien: '', deadline: '', cooptation: false, remunere: false, duree: '', audience: 'etudiants', ...preset, ...(offer || {}),
+    type: 'stage', titre: '', entreprise: me.entreprise || '', ville: me.ville || '', pays: me.pays || 'Maroc', filieres: [], annees: [3, 4], description: '', contact: '', lien: '', deadline: '', cooptation: false, remunere: false, duree: '', audience: 'etudiants', mode: 'entreprise', porte: false, ...pourEtudiant, ...preset, ...(offer || {}), ...deOffre,
   }), preset);
+  const partage = avecOrigine && (f.mode === 'partage' || (etudiant && !editing));
   const [tente, setTente] = useState(false);   // rien n'est signalé avant « Publier » ou un collage
   const [eclat, setEclat] = useState(null);    // { keys } : ce que « Offre en 30 secondes » vient de remplir
   const plus = useRef();                       // <details> « Plus de détails »
@@ -522,14 +550,19 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
   const toggleIn = (k, v) => set(k, f[k].includes(v) ? f[k].filter(x => x !== v) : [...f[k], v]);
   const entre = f.audience === 'laureats';
   const anneesDe = t => t === 'pfe' ? [5] : t === 'emploi' ? [6] : t === 'etranger' ? [4, 5] : [3, 4];
-  const setType = t => setF({ ...f, type: t, annees: anneesDe(t) });
+  // Un étudiant garde son année quand il change le type
+  const setType = t => setF({ ...f, type: t, annees: etudiant ? f.annees : anneesDe(t) });
+  // Partage : l'offre n'est pas celle de son entreprise (le champ prérempli s'efface) ; retour : on le remet
+  const setMode = m => setF(m === 'partage' ? { ...f, mode: m, porte: false, cooptation: false, entreprise: f.entreprise === (me.entreprise || '') ? '' : f.entreprise }
+    : { ...f, mode: m, entreprise: f.entreprise || me.entreprise || '' });
+  const manquesDe = n => [...(partage && !lienValide(n.lien) ? ['lien'] : []), ...manquesOffre(n)];
   const setAudience = a => setF(a === 'laureats' ? { ...f, audience: a, type: 'emploi', annees: [] } : { ...f, audience: a, annees: f.annees.length ? f.annees : [6] });
   // Offre en 30 secondes : on remplit les champs reconnus, sans effacer ce qui n'a pas été trouvé
   const fusion = (cur, x) => {
     const n = { ...cur };
     for (const [k, v] of Object.entries(x)) if (v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && !v.length)) n[k] = v;
     // Type reconnu sans années : on prend les années habituelles de ce type
-    if (x.type && x.type !== cur.type && !(x.annees && x.annees.length)) n.annees = anneesDe(x.type);
+    if (x.type && x.type !== cur.type && !(x.annees && x.annees.length) && !etudiant) n.annees = anneesDe(x.type);
     if (cur.audience === 'laureats') { n.type = 'emploi'; n.annees = []; }
     return n;
   };
@@ -539,10 +572,10 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
     const keys = ORDRE.filter(k => found.includes(k) && !(n.audience === 'laureats' && (k === 'type' || k === 'annees')));
     setEclat({ keys }); setTente(true);
     if (keys.some(k => DETAILS.includes(k)) && plus.current) plus.current.open = true;
-    const m = manquesOffre(n).length, c = keys.length;
+    const m = manquesDe(n).length, c = keys.length;
     toast(m ? `${nChamps(c)} rempli${c > 1 ? 's' : ''}. Il reste ${nChamps(m)} à compléter.` : `${nChamps(c)} rempli${c > 1 ? 's' : ''}. Vérifie, puis publie.`);
   };
-  const manques = manquesOffre(f);
+  const manques = manquesDe(f);
   const err = k => (tente && manques.includes(k) ? MSG_OF[k](f) : null);
   const aria = k => (err(k) ? { 'aria-invalid': 'true', 'aria-describedby': ID_OF[k] + '-err' } : {});
   const r = k => (eclat?.keys.includes(k) ? ' rempli' : '');
@@ -552,10 +585,11 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
     if (manques.length) { setTente(true); allerAuChamp(ID_OF[manques[0]]); return; }
     const row = { type: f.type, titre: f.titre.trim(), entreprise: f.entreprise.trim(), ville: (f.ville || '').trim(), pays: (f.pays || '').trim() || 'Maroc', filieres: f.filieres, annees: entre ? [] : f.annees, description: f.description.trim(), contact: (f.contact || '').trim(), lien: (f.lien || '').trim(), deadline: f.deadline || null, cooptation: f.cooptation, remunere: f.remunere, duree: (f.duree || '').trim() };
     if (entre || offer?.audience) row.audience = f.audience;
+    if (avecOrigine) { row.origine = partage ? 'partagee' : f.porte ? 'portee' : null; if (partage) row.cooptation = false; }
     act(async () => {
       if (editing) { await store.update('offers', offer.id, row); toast('Offre mise à jour.'); }
       else {
-        const premiere = me.role === 'laureat' && !(data || store.data).offers.some(x => x.author_id === me.id);
+        const premiere = me.role === 'laureat' && !partage && !(data || store.data).offers.some(x => x.author_id === me.id && !estPartagee(x));
         const neuve = await store.insert('offers', { ...row, author_id: me.id, status: 'ouverte' });
         oublierBrouillon();
         // Première offre d'un lauréat : on le remercie, une seule fois
@@ -565,15 +599,18 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
           // La suite la plus utile : la faire circuler dans les groupes WhatsApp de promo
           action: neuve?.id ? { label: 'Partager sur WhatsApp', icon: 'share', onClick: () => window.open(lienWhatsApp(texteOffre(neuve)), '_blank', 'noopener') } : null,
         });
-        if (!fete) toast(entre ? 'Offre publiée. Les lauréats la voient dans « Entre lauréats ».' : 'Offre publiée. Les étudiants concernés la voient dans leurs offres.', 'envoi');
+        if (partage) toast('Offre partagée. Elle apparaît dans « Offres partagées », avec son lien.', 'envoi');
+        else if (!fete) toast(entre ? 'Offre publiée. Les lauréats la voient dans « Entre lauréats ».' : 'Offre publiée. Les étudiants concernés la voient dans leurs offres.', 'envoi');
       }
       onClose();
     });
   };
   const pied = html`<button class="btn primary" type="submit" form="of-form" id="of-publier">${editing ? 'Enregistrer' : 'Publier'}</button>`;
-  return html`<${Modal} title=${editing ? 'Modifier l’offre' : 'Publier une offre'} onClose=${onClose} wide footer=${pied}>
+  return html`<${Modal} title=${editing ? 'Modifier l’offre' : partage ? 'Partager une offre' : 'Publier une offre'} onClose=${onClose} wide footer=${pied}>
     <form class="form" id="of-form" noValidate onSubmit=${submit}>
-      ${editing ? null : html`<${PasteOffer} me=${me} onFill=${fill}/>`}
+      ${avecOrigine && !editing && !etudiant ? html`<${ChoixOrigine} value=${partage ? 'partage' : 'entreprise'} onChange=${setMode}/>` : null}
+      ${partage && etudiant && !editing ? html`<p class="small muted hint-box"><${Icon} name="share" size=${15}/> <span>Tu partages une offre vue ailleurs (LinkedIn, site d’entreprise…). Les étudiants de ton année la voient avec son lien, et postulent sur le site d’origine.</span></p>` : null}
+      ${partage ? html`<${SourcePartage} me=${me} f=${f} set=${set} onFill=${fill} err=${err('lien')} aria=${aria('lien')}/>` : editing ? null : html`<${PasteOffer} me=${me} onFill=${fill}/>`}
       ${me.role === 'etudiant' ? null : html`<div class="seg" role="group" aria-label="Pour qui">${[['etudiants', 'Pour les étudiants'], ['laureats', 'Entre lauréats']].map(([k, l]) => html`<button type="button" class=${f.audience === k ? 'on' : ''} aria-pressed=${f.audience === k} onClick=${() => setAudience(k)}>${l}</button>`)}</div>`}
       ${entre ? html`<p class="small muted hint-box"><${Icon} name="briefcase" size=${15}/> <span>Un poste pour un profil expérimenté : seuls les lauréats le voient, les étudiants non.</span></p>` : html`
       <div class="type-pick" role="group" aria-label="Type">${Object.entries(TYPES).map(([k, v]) => html`<button type="button" class=${'type-opt t-' + k + (f.type === k ? ' on' + r('type') : '')} style=${f.type === k ? ri('type') : null} aria-pressed=${f.type === k} onClick=${() => setType(k)}><${Icon} name=${TYPE_ICON[k]} size=${22}/><span>${v.label}</span></button>`)}</div>`}
@@ -587,6 +624,7 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
       ${entre ? null : html`<div class=${'field' + (err('annees') ? ' manque' : '')}><span class="field-label" id="of-annees-l">Pour quelles années ?</span>
         <div id="of-annees" class=${'chips' + r('annees')} style=${ri('annees')} role="group" aria-labelledby="of-annees-l" aria-describedby=${err('annees') ? 'of-annees-err' : null}>${ANNEES_OPTS.map(([v, l]) => html`<button type="button" class=${'chip' + (f.annees.includes(v) ? ' on' : '')} aria-pressed=${f.annees.includes(v)} onClick=${() => toggleIn('annees', v)}>${l}</button>`)}</div>
         ${err('annees') ? html`<span class="field-err" id="of-annees-err">${err('annees')}</span>` : null}</div>`}
+      ${avecOrigine && !partage && !etudiant ? html`<${CasePortee} checked=${!!f.porte} onChange=${v => set('porte', v)}/>` : null}
       <details class="more-fields" ref=${plus} open=${editing}>
         <summary>Plus de détails (facultatif)</summary>
         <div class="form">
@@ -594,14 +632,15 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
           <div class="grid3">
             <${Field} label="Durée"><input id="of-duree" class=${r('duree')} style=${ri('duree')} value=${f.duree || ''} onInput=${e => set('duree', e.target.value)} placeholder="6 mois, CDI…"/><//>
             <${Field} label="Date limite"><input id="of-dl" type="date" class=${r('deadline')} style=${ri('deadline')} value=${f.deadline || ''} onInput=${e => set('deadline', e.target.value)}/><//>
-            <${Field} label="Lien vers l’annonce"><input id="of-lien" class=${r('lien')} style=${ri('lien')} value=${f.lien || ''} onInput=${e => set('lien', e.target.value)} placeholder="https://…"/><//>
+            ${partage ? null : html`<${Field} label="Lien vers l’annonce"><input id="of-lien" class=${r('lien')} style=${ri('lien')} value=${f.lien || ''} onInput=${e => set('lien', e.target.value)} placeholder="https://…"/><//>`}
           </div>
-          <label class=${'check' + r('cooptation')} style=${ri('cooptation')}><input id="of-coopt" type="checkbox" checked=${f.cooptation} onChange=${e => set('cooptation', e.target.checked)}/> Je peux recommander (coopter) les bons profils</label>
+          ${partage ? null : html`<label class=${'check' + r('cooptation')} style=${ri('cooptation')}><input id="of-coopt" type="checkbox" checked=${f.cooptation} onChange=${e => set('cooptation', e.target.checked)}/> Je peux recommander (coopter) les bons profils</label>`}
           <label class=${'check' + r('remunere')} style=${ri('remunere')}><input id="of-rem" type="checkbox" checked=${f.remunere} onChange=${e => set('remunere', e.target.checked)}/> Rémunéré / gratifié</label>
         </div>
       </details>
-      ${f.type === 'pfe' && !entre ? html`<p class="small muted"><${Icon} name="cap" size=${14}/> Les 5A le trouvent sous la puce PFE des offres : décris le vrai problème de l’équipe, tu pourras encadrer l’étudiant qui le prend.</p>` : null}
-      <p class="small muted">Les candidatures arrivent ici, dans l’onglet « Candidats » de ton offre. Tu n’as pas besoin de donner ton email.</p>
+      ${f.type === 'pfe' && !entre && !partage ? html`<p class="small muted"><${Icon} name="cap" size=${14}/> Les 5A le trouvent sous la puce PFE des offres : décris le vrai problème de l’équipe, tu pourras encadrer l’étudiant qui le prend.</p>` : null}
+      ${partage ? html`<p class="small muted">Elle apparaît dans « Offres partagées », avec son lien. Elle se ferme seule après 45 jours, ou à sa date limite.</p>`
+        : html`<p class="small muted">Les candidatures arrivent ici, dans l’onglet « Candidats » de ton offre. Tu n’as pas besoin de donner ton email.</p>`}
     </form>
   <//>`;
 }

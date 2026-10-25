@@ -1,4 +1,5 @@
 // Règles métier : saisons, niveaux, objectifs, points d'impact, badges, statistiques.
+import { pointsOffre, POINTS_OFFRE, estPortee, estPartagee } from './origine.js';
 
 // Cycle ingénieur : 5 parcours et 11 filières (choix en 3A). Les 1A et 2A sont en classes préparatoires intégrées.
 // En 5A, les matières communes se font en deux sections : A (électro-industriel, IA, informatique) et B (mécanique, civil).
@@ -230,6 +231,8 @@ function tally(arr) {
 // ---------------------------------------------------------------------------
 export const BAREME = [
   ['Offre publiée', 10],
+  ['Offre de ton entreprise, que tu encadres', POINTS_OFFRE.portee],
+  ['Offre vue ailleurs et partagée', POINTS_OFFRE.partagee],
   ['Candidature reçue sur une offre', 2],
   ['Commentaire utile', 1],
   ['Étudiant recruté (confirmé par l’étudiant)', 50],
@@ -276,7 +279,11 @@ export function computeScores(data, since = null) {
     const s = get(id); s.points += pts; s.events.push({ pts, label, at });
   };
   const offerAuthor = new Map(data.offers.map(o => [o.id, o.author_id]));
-  for (const o of data.offers) { add(o.author_id, 10, `Offre publiée : ${o.titre}`, o.created_at); get(o.author_id).offres++; }
+  // Une offre portée (son entreprise, il encadre) compte plus ; un partage vu ailleurs, presque rien (origine.js)
+  for (const o of data.offers) {
+    add(o.author_id, pointsOffre(o), `${estPortee(o) ? 'Offre portée' : estPartagee(o) ? 'Offre partagée' : 'Offre publiée'} : ${o.titre}`, o.created_at);
+    if (!estPartagee(o)) get(o.author_id).offres++;
+  }
   for (const ap of data.applications) if (ap.offer_id) { const a = offerAuthor.get(ap.offer_id); if (a && a !== ap.student_id) { add(a, 2, 'Candidature reçue', ap.created_at); get(a).candidatures++; } }
   for (const c of data.comments) add(c.author_id, 1, 'Commentaire', c.created_at);
   for (const p of data.placements) {
@@ -328,7 +335,7 @@ export const BADGES = [
 ];
 
 // Membres fondateurs : les 25 premiers lauréats à aider les étudiants, dans l'ordre de leur première contribution :
-// une offre publiée pour les étudiants (pas une offre « entre lauréats » ; pourvue ou fermée, elle compte toujours ;
+// une offre publiée pour les étudiants (pas une offre « entre lauréats » ni un partage vu ailleurs ; pourvue ou fermée, elle compte toujours ;
 // supprimée, elle ne compte plus), une aide proposée sur la demande d'un étudiant (sauf retirée par le lauréat),
 // ou un mentorat accepté (ou terminé) avec un étudiant. Jamais l'administration ; rien fait, pas fondateur.
 // Même classement que fondateurs_classement() dans schema.sql. Égalité : le type (aide, mentorat, offre), puis l'id.
@@ -344,7 +351,7 @@ export function classementFondateurs(data, max = NB_FONDATEURS) {
     const x = premiere.get(id);
     if (!x || t < x.t || (t === x.t && type < x.type)) premiere.set(id, { id, t, type });
   };
-  for (const o of data?.offers || []) if ((o.audience || 'etudiants') === 'etudiants') noter(o.author_id, o.created_at, 'offre');
+  for (const o of data?.offers || []) if ((o.audience || 'etudiants') === 'etudiants' && !estPartagee(o)) noter(o.author_id, o.created_at, 'offre');
   for (const x of data?.propositions || []) if (x.status !== 'retiree' && role.get(auteur.get(x.demande_id)) === 'etudiant') noter(x.laureat_id, x.created_at, 'aide');
   for (const m of data?.mentorships || []) if (['acceptee', 'terminee'].includes(m.status) && role.get(m.student_id) === 'etudiant') noter(m.mentor_id, m.accepted_at || m.created_at, 'mentorat');
   return [...premiere.values()].sort((a, b) => a.t - b.t || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).slice(0, max)
@@ -454,6 +461,8 @@ export function offrePour(o, me, saison) {
 // et aux offres « Jeunes diplômés » s'il est jeune diplômé ou cherche un emploi
 export function peutPostulerA(o, me, saison) {
   if (!me || o.author_id === me.id) return false;
+  // Une offre partagée (vue ailleurs) se postule sur le site d'origine, jamais ici
+  if (estPartagee(o)) return false;
   // Un étudiant ne postule qu'aux offres de son année (comme dans la liste)
   if (me.role === 'etudiant') return o.audience !== 'laureats' && (o.annees || []).includes(niveauOf(me, saison));
   if (me.role !== 'laureat') return false;
@@ -779,7 +788,7 @@ export function offerLastActivity(data, o) {
   for (const c of data.comments) if (c.offer_id === o.id) t = Math.max(t, new Date(c.created_at).getTime());
   return t;
 }
-export const needsRelance = (data, o, now = Date.now()) => o.status === 'ouverte' && now - offerLastActivity(data, o) > RELANCE_JOURS * 864e5;
+export const needsRelance = (data, o, now = Date.now()) => o.status === 'ouverte' && !estPartagee(o) && now - offerLastActivity(data, o) > RELANCE_JOURS * 864e5;
 
 // Questions routées : celles qui visent l'entreprise ou le pays d'un lauréat
 export function routedTo(q, p) {
@@ -1278,7 +1287,7 @@ export function pushVoulu(kind, me) {
 // propose (elle voit tout, et les connexions récentes) ; ce calcul sert à la démo et aux tests.
 // ---------------------------------------------------------------------------
 export const AMB_DELAI_JOURS = 7;
-export const AMB_POIDS = { offre: 3, aide: 3, mentor: 3, reponse: 2, question: 1, mentore: 1 };
+export const AMB_POIDS = { offre: 3, partage: 1, aide: 3, mentor: 3, reponse: 2, question: 1, mentore: 1 };
 export const memeGroupe = (a, promo, filiere) => !!a && Number(a.promo) === Number(promo) && !!filiere && a.filiere === filiere;
 const ambExpire = (a, now) => a.statut === 'propose' && now - new Date(a.propose_at || a.created_at).getTime() >= AMB_DELAI_JOURS * 864e5;
 // La ligne en cours d'un groupe : proposée (moins de 7 jours) ou acceptée
@@ -1332,7 +1341,7 @@ export function candidatsAmbassadeur(data, promo, filiere, now = Date.now()) {
   const groupe = (data?.profiles || []).filter(p => memeGroupe(p, promo, filiere) && ['etudiant', 'laureat'].includes(p.role) && p.consent_at !== null && !deja.has(p.id));
   for (const p of groupe) score.set(p.id, 0);
   const plus = (id, n) => { if (score.has(id)) score.set(id, score.get(id) + n); };
-  for (const o of data?.offers || []) plus(o.author_id, AMB_POIDS.offre);
+  for (const o of data?.offers || []) plus(o.author_id, estPartagee(o) ? AMB_POIDS.partage : AMB_POIDS.offre);
   for (const x of data?.propositions || []) if (x.status !== 'retiree') plus(x.laureat_id, AMB_POIDS.aide);
   for (const m of data?.mentorships || []) if (['acceptee', 'terminee'].includes(m.status)) { plus(m.mentor_id, AMB_POIDS.mentor); plus(m.student_id, AMB_POIDS.mentore); }
   for (const a of data?.answers || []) plus(a.author_id, AMB_POIDS.reponse);

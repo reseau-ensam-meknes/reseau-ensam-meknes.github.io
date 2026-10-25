@@ -371,7 +371,7 @@ async function pousserUn(a: Abonnement, n: Notif, urg: string, v: Vapid): Promis
 // ---------------------------------------------------------------------
 // Textes des notifications (fr / ar)
 // ---------------------------------------------------------------------
-type V = { nom: string; sujet: string; titre: string; entreprise: string; cible: string; ville: string; lieu: string; statut: string; date: string; heure: string; promo: string; n: number; vague: string; motif: string; texte: string; mtype: string; duree: number; aide: string; dtype: string; pour: string };
+type V = { nom: string; sujet: string; titre: string; entreprise: string; cible: string; ville: string; lieu: string; statut: string; date: string; heure: string; promo: string; n: number; vague: string; motif: string; texte: string; mtype: string; duree: number; aide: string; dtype: string; pour: string; origine?: string };
 
 // Aperçu d'un message privé : le début du texte, ou « Photo », « Message vocal (0:42) »
 const minSec = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
@@ -496,10 +496,11 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     fr: v => ['Ton offre est-elle toujours ouverte ?', `« ${v.titre} » : un clic pour confirmer, ou la marquer pourvue.`],
     ar: v => ['هل لا يزال عرضك مفتوحًا؟', `«${v.titre}»: أكّد بنقرة أنه لا يزال مفتوحًا، أو أشر إلى أنه تم شغله.`],
   },
+  // Le texte dit d'où vient l'offre : portée par un lauréat (il encadre), ou partagée (vue ailleurs, à postuler sur le site d'origine)
   offre_alerte: {
     route: 'offres',
-    fr: v => ['Nouvelle offre pour toi', `${v.titre}${v.entreprise ? ` · ${v.entreprise}` : ''}`],
-    ar: v => ['عرض جديد لك', `${v.titre}${v.entreprise ? ` · ${v.entreprise}` : ''}`],
+    fr: v => [v.origine === 'partagee' ? 'Offre partagée pour toi' : 'Nouvelle offre pour toi', `${v.titre}${v.entreprise ? ` · ${v.entreprise}` : ''}${ORIGINE_ALERTE.fr[v.origine || ''] || ''}`],
+    ar: v => [v.origine === 'partagee' ? 'عرض تمت مشاركته معك' : 'عرض جديد لك', `${v.titre}${v.entreprise ? ` · ${v.entreprise}` : ''}${ORIGINE_ALERTE.ar[v.origine || ''] || ''}`],
   },
   contact_demande: {
     route: 'accueil',
@@ -581,6 +582,11 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
   },
 };
 
+const ORIGINE_ALERTE: Record<Langue, Record<string, string>> = {
+  fr: { portee: ' · portée par un lauréat, qui encadre', partagee: ' · vue ailleurs, partagée par un membre du réseau' },
+  ar: { portee: ' · يقدّمه خريج مع التأطير', partagee: ' · منشور في موقع آخر، شاركه عضو في الشبكة' },
+};
+
 const MOTIFS: Record<Langue, Record<string, string>> = {
   fr: { spam: 'spam', arnaque: 'arnaque', inapproprie: 'contenu inapproprié', faux: 'fausse information', harcelement: 'harcèlement', donnees: 'données personnelles', autre: 'autre' },
   ar: { spam: 'رسائل مزعجة', arnaque: 'احتيال', inapproprie: 'محتوى غير لائق', faux: 'معلومة خاطئة', harcelement: 'تحرش', donnees: 'معطيات شخصية', autre: 'سبب آخر' },
@@ -604,6 +610,8 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
     texte: s('texte'), mtype: txt(d.type), duree: Math.max(0, Math.min(600, Number(d.duree) || 0)),
     aide: ['recrute', 'encadre', 'recommande'].includes(txt(d.aide)) ? txt(d.aide) : '', dtype: txt(d.type),
     pour: ['demandeur', 'mentor', 'auteur', 'aidant'].includes(txt(d.pour)) ? txt(d.pour) : '',
+    // Offre portée par un lauréat (il encadre) ou partagée (vue ailleurs) ; rien pour une offre classique
+    origine: ['portee', 'partagee'].includes(txt(d.origine)) ? txt(d.origine) : '',
   };
   const t = g[l](v);
   if (!t) return null;
@@ -1450,7 +1458,12 @@ ${c.liens.map(([t, u]) => `<a href="${esc(u)}" style="color:#1670A8;">${esc(t)}<
 </html>`;
 }
 
-export type OffreAlerte = { id: string; titre: string; entreprise: string; type?: string | null; ville?: string | null; pays?: string | null; deadline?: string | null };
+export type OffreAlerte = { id: string; titre: string; entreprise: string; type?: string | null; ville?: string | null; pays?: string | null; deadline?: string | null; origine?: string | null };
+// D'où vient l'offre, dans la ligne de l'alerte (rien pour une offre classique)
+const ORIGINE_EMAIL: Record<Langue, Record<string, string>> = {
+  fr: { portee: 'Portée par un lauréat, qui encadre', partagee: 'Offre partagée, vue ailleurs' },
+  ar: { portee: 'يقدّمه خريج مع التأطير', partagee: 'عرض تمت مشاركته، منشور في موقع آخر' },
+};
 const TYPES_OFFRE: Record<Langue, Record<string, string>> = {
   fr: { stage: 'Stage', pfe: 'PFE', etranger: 'Stage à l’étranger', emploi: 'Emploi' },
   ar: { stage: 'تدريب', pfe: 'مشروع نهاية الدراسة', etranger: 'تدريب بالخارج', emploi: 'وظيفة' },
@@ -1464,13 +1477,17 @@ export function rendreAlerte(offres: OffreAlerte[], langue: Langue, site: string
   const desabo = `${site}#desabo/${token}/alertes`;
   const lieu = (o: OffreAlerte) => [txt(o.ville), txt(o.pays) && txt(o.pays) !== 'Maroc' ? txt(o.pays) : ''].filter(Boolean).join(', ');
   const limite = (o: OffreAlerte) => { const q = o.deadline ? quand(o.deadline, langue) : null; return q ? (ar ? `آخر أجل: ${q.date}` : `Avant le ${q.date}`) : ''; };
-  const ligne = (o: OffreAlerte, F: Fmt) => [F.g(txt(o.titre)), F.u(txt(o.entreprise)), TYPES_OFFRE[langue][txt(o.type)] || '', F.u(lieu(o)), limite(o)].filter(Boolean).join(' · ');
+  const ligne = (o: OffreAlerte, F: Fmt) => [F.g(txt(o.titre)), F.u(txt(o.entreprise)), TYPES_OFFRE[langue][txt(o.type)] || '', F.u(lieu(o)), limite(o), ORIGINE_EMAIL[langue][txt(o.origine)] || ''].filter(Boolean).join(' · ');
   const sujet = couper(n > 1
     ? (ar ? `${arN(n, ['', 'عرضان جديدان', '{n} عروض جديدة', '{n} عرضًا جديدًا'])} لك` : `${n} nouvelles offres pour toi`) + (ar ? ' · شبكة ENSAM' : ' · Réseau ENSAM')
     : (ar ? `عرض جديد لك: ${txt(o0.titre)} · ${txt(o0.entreprise)}` : `Nouvelle offre pour toi : ${txt(o0.titre)} · ${txt(o0.entreprise)}`), 110);
+  // Un partage peut venir d'un étudiant : l'introduction ne dit « des lauréats » que si toutes les offres viennent d'eux
+  const partage = offres.some(o => txt(o.origine) === 'partagee');
   const intro = ar
-    ? (n > 1 ? 'نشر خريجو المدرسة عروضًا جديدة تناسب شعبتك وسنتك:' : 'نشر خريج من المدرسة عرضًا جديدًا يناسب شعبتك وسنتك:')
-    : (n > 1 ? 'Des lauréats de l’école viennent de publier des offres pour ta filière et ton année :' : 'Un lauréat de l’école vient de publier une offre pour ta filière et ton année :');
+    ? (partage ? (n > 1 ? 'عروض جديدة تناسب شعبتك وسنتك، نشرها أو شاركها أعضاء الشبكة:' : 'شارك عضو في الشبكة عرضًا يناسب شعبتك وسنتك:')
+      : n > 1 ? 'نشر خريجو المدرسة عروضًا جديدة تناسب شعبتك وسنتك:' : 'نشر خريج من المدرسة عرضًا جديدًا يناسب شعبتك وسنتك:')
+    : (partage ? (n > 1 ? 'De nouvelles offres pour ta filière et ton année, publiées ou partagées par des membres du réseau :' : 'Un membre du réseau vient de partager une offre pour ta filière et ton année :')
+      : n > 1 ? 'Des lauréats de l’école viennent de publier des offres pour ta filière et ton année :' : 'Un lauréat de l’école vient de publier une offre pour ta filière et ton année :');
   const lien = (o: OffreAlerte) => `${site}#offre/${o.id}`;
   const html = cadreEmail({
     langue, sujet, apercu: ligne(o0, b), sousTitre: ar ? 'تنبيه العروض' : 'Alerte offres',

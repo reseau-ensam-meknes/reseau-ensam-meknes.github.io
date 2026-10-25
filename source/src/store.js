@@ -1,6 +1,7 @@
 // Couche de données : même interface en mode démo (navigateur) et en mode réel (Supabase).
 // Les données de démonstration (seed.js) ne sont chargées qu'en démo : le site réel n'en a pas besoin
 const chargerSeed = () => import('./seed.js').then(m => m.buildSeed());
+import { refusOrigine, estPartagee, LIMITE_PARTAGES } from './origine.js';
 import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage, transitionAmbassadeur, PREFIXE_BROUILLON } from './logic.js';
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
@@ -43,6 +44,9 @@ class Base {
   // Messagerie : « Répondre » et les réactions ont besoin de la base à jour (en démo, toujours)
   peutRepondre() { return this.mode !== 'live' || (this.data.messages || []).some(m => 'reponse_a' in m); }
   peutReagir() { return this.mode !== 'live' || !this.absentes?.has('reactions_messages'); }
+  // Origine des offres (portée, partagée : origine.js) : la colonne n'existe qu'après mise-a-jour.sql. Avant, le formulaire
+  // reste celui d'avant (rien n'est envoyé dans cette colonne) et les étudiants ne publient pas.
+  peutOrigine() { return this.mode !== 'live' || this.origineSondee === true || (this.data.offers || []).some(o => 'origine' in o); }
   // « Cette semaine dans le réseau » : en démo, le calcul sur toutes les données
   pouls() { return poulsReseau(this.data); }
   // En ligne, la base a déjà masqué ce qui ne doit pas être vu : ces deux aides servent surtout à la démo.
@@ -183,6 +187,7 @@ class DemoStore extends Base {
     if (PHASE2.includes(table) && applyPhase2Rules(this, table, r, null) === false) return r;
     if (table === 'attestations') { if (this.me?.role !== 'laureat') throw new Error('Seul un lauréat peut obtenir une attestation.'); Object.assign(r, { laureat_id: this.me.id, stats: attestationStats(this.data, this.me.id) }); }
     limiteDemo(this, table, r);
+    if (table === 'offers') regleOrigineDemo(this, r, null);
     if (PHASE3.includes(table)) applyPhase3Rules(this, table, r, null);
     if (table === 'reactions' && this.data.reactions.some(x => x.offer_id === r.offer_id && x.user_id === r.user_id && x.kind === r.kind)) return r;
     if (table === 'votes' && this.data.votes.some(x => x.answer_id === r.answer_id && x.user_id === r.user_id)) return r;
@@ -206,6 +211,7 @@ class DemoStore extends Base {
     if (table === 'liens_rdv') applyLienRules(this, r, old);
     if (table === 'ambassadeurs') applyAmbassadeurRules(this, r, old);
     if (table === 'annonces' && this.me?.role !== 'admin') throw new Error('Action non autorisée pour ton compte.');
+    if (table === 'offers') regleOrigineDemo(this, r, old);
     if (MESSAGERIE.includes(table)) applyMessagerieRules(this, table, r, old);
     if (DEMANDES.includes(table)) applyDemandeRules(this, table, r, old);
     if (PHASE2.includes(table)) applyPhase2Rules(this, table, r, old);
@@ -446,6 +452,22 @@ function limiteDemo(store, table, r) {
   if (miens.filter(x => now - new Date(x.created_at) < ms).length >= max) throw new Error('Doucement : tu as beaucoup publié en peu de temps. Réessaie un peu plus tard.');
   const t = txt && String(r[txt] || '').trim().toLowerCase();
   if (t && miens.some(x => now - new Date(x.created_at) < 864e5 && String(x[txt] || '').trim().toLowerCase() === t)) throw new Error('Tu as déjà publié exactement ce texte.');
+}
+
+// Origine des offres : mêmes règles que offre_origine() et le déclencheur trg_limite_partage dans la base.
+// Un étudiant ne publie qu'un partage (lien http(s) obligatoire) ; seul un lauréat (ou l'administration) porte une offre.
+function regleOrigineDemo(store, r, old) {
+  const me = store.me;
+  if (!old && estPartagee(r) && me && me.role !== 'admin') {
+    const now = Date.now(); const lien = String(r.lien || '').trim().toLowerCase();
+    const miens = store.data.offers.filter(x => x.author_id === me.id && now - new Date(x.created_at) < 864e5);
+    if (miens.length >= LIMITE_PARTAGES) throw new Error('Doucement : tu as beaucoup publié en peu de temps. Réessaie un peu plus tard.');
+    if (lien && miens.some(x => String(x.lien || '').trim().toLowerCase() === lien)) throw new Error('Tu as déjà publié exactement ce texte.');
+  }
+  const role = store.byId('profiles', r.author_id)?.role || '';
+  const refus = refusOrigine(r, { role, admin: me?.role === 'admin' }, store.data.offers.filter(x => x.id !== r.id), old);
+  if (refus) throw new Error(refus);
+  if (estPartagee(r)) { r.lien = String(r.lien || '').trim(); r.cooptation = false; }
 }
 
 // Demandes des étudiants : mêmes règles que protect_demande() et protect_proposition() dans la base
@@ -1216,6 +1238,8 @@ export class SupabaseStore extends Base {
   async loadAll() {
     if (!this.userId) { this.data = Object.fromEntries(TABLES.map(t => [t, []])); this.me = null; return; }
     await Promise.all([...TABLES.map(t => this.loadTable(t)), this.chargerPouls().catch(() => {})]);
+    // Aucune offre lue : on demande une fois à la base si la colonne « origine » existe déjà
+    if (!this.data.offers.length && this.origineSondee === undefined) this.origineSondee = await Promise.resolve(this.sb.from('offers').select('origine').limit(1)).then(r => !r.error, () => false);
     this.me = this.byId('profiles', this.userId) || null;
     this.subscribe();
     this.noterVisite();

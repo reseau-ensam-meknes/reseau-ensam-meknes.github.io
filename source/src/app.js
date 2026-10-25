@@ -5,6 +5,7 @@ import { createStore, texteErreur } from './store.js';
 import { Icon, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille, ecranLibre } from './ui.js';
 import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, demandeLargeLe, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
+import { estPortee, estPartagee, partageExpire } from './origine.js';
 import { ParcoursPage, EspacePage, Journey, journeyStep, confirmerRecrutement, refuserRecrutement, versMerci } from './me.js';
 import { ReseauPage, ProfileModal, ProfileForm, AskQuestion } from './community.js';
 import { MentoratPage, AskHelp, NextRdv, slotWhen, mentoratIgnorees, IlsOntBesoin, CoupDeMain, HoraireSheet, ICONE_BESOIN, VERBE_BESOIN, phraseBesoin, ouvrirBesoin, confirmerPresence, finirMentorat, lienVisio } from './mentorat.js';
@@ -651,7 +652,8 @@ function prochainPas(ctx, notifs, etape, { plAttente, helper, besoins = [] } = {
   let o = null;
   if (role === 'etudiant') {
     const niv = niveauOf(me, saison);
-    o = data.offers.filter(x => x.status === 'ouverte' && (x.annees || []).includes(niv) && !deja(x)).map(x => ({ x, s: offerMatch(x, me).score })).sort((p, q) => q.s - p.s || new Date(q.x.created_at) - new Date(p.x.created_at))[0]?.x;
+    // Pas un partage (à postuler ailleurs) ; une offre portée par un lauréat, qui encadre, passe devant (comme « Recommandé pour toi »)
+    o = data.offers.filter(x => x.status === 'ouverte' && !estPartagee(x) && (x.annees || []).includes(niv) && !deja(x)).map(x => ({ x, s: offerMatch(x, me).score + (estPortee(x) ? 3 : 0) })).sort((p, q) => q.s - p.s || new Date(q.x.created_at) - new Date(p.x.created_at))[0]?.x;
   }
   if (role === 'laureat' && me.en_recherche) o = data.offers.filter(x => x.status === 'ouverte' && x.author_id !== me.id && matchesMe(x, me, saison) && peutPostulerA(x, me, saison) && !deja(x)).sort((p, q) => new Date(q.created_at) - new Date(p.created_at))[0];
   if (o) return { key: 'offre' + o.id, ref: o.id, icon: 'spark', eyebrow: 'Pour toi', titre: o.titre, membre: true, detail: o.entreprise, detailMembre: true, cta: 'Voir l’offre', go: () => openOffer(o.id) };
@@ -884,7 +886,7 @@ function Home(ctx) {
   const montres = new Set([pas.ref, ...taches.flatMap(t => [t.ref, t.offer])].filter(Boolean));
   const meta = isStudent ? [NIVEAUX[n]?.label, filiereCourte(me.filiere)].filter(Boolean).join(' · ') : isLaureat ? `Promo ${me.promo}` : '';
   // Un lauréat qui cherche un emploi voit d'abord les offres faites pour lui
-  const dernieres = data.offers.filter(o => o.status === 'ouverte' && !montres.has(o.id) && (!enRecherche || matchesMe(o, me, saison))).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 2);
+  const dernieres = data.offers.filter(o => o.status === 'ouverte' && !partageExpire(o) && !montres.has(o.id) && (!enRecherche || matchesMe(o, me, saison))).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 2);
   const star = ctx.star;
   const starHelped = star ? data.placements.filter(p => p.laureat_id === star.p.id && p.status === 'confirme' && !p.demande_id).length : 0;
   const merci = mercisPublics(data)[0];

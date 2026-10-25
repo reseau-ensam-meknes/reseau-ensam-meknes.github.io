@@ -721,6 +721,9 @@ end $$;
 alter table public.offers add column if not exists audience text not null default 'etudiants';
 alter table public.offers add column if not exists verifiee_at timestamptz;
 alter table public.offers add column if not exists relance_at timestamptz;
+-- Origine d'une offre (portée par un lauréat, ou partagée) : règles dans la section « Origine des offres », en fin de fichier.
+-- La colonne est ajoutée ici parce que des fonctions plus bas la lisent (fondateurs, ambassadeurs).
+alter table public.offers add column if not exists origine text;
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'offers_audience_check') then
     alter table public.offers add constraint offers_audience_check check (audience in ('etudiants','laureats'));
@@ -1257,7 +1260,7 @@ language plpgsql security definer set search_path = public as $$
 declare r record; n int := 0;
 begin
   for r in select o.id, o.author_id, o.titre from public.offers o
-      where o.status = 'ouverte'
+      where o.status = 'ouverte' and o.origine is distinct from 'partagee'
         and greatest(o.created_at, coalesce(o.verifiee_at, o.created_at),
               coalesce((select max(a.created_at) from public.applications a where a.offer_id = o.id), o.created_at),
               coalesce((select max(c.created_at) from public.comments c where c.offer_id = o.id), o.created_at)) < now() - interval '21 days'
@@ -2669,7 +2672,7 @@ create or replace function public.alerte_offre() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
   insert into public.push_queue (user_id, kind, data)
-  select p.id, 'offre_alerte', jsonb_build_object('titre', new.titre, 'entreprise', new.entreprise, 'offre', new.id)
+  select p.id, 'offre_alerte', jsonb_build_object('titre', new.titre, 'entreprise', new.entreprise, 'offre', new.id, 'origine', new.origine)
   from public.profiles p
   -- push_voulu : le choix « Nouvelles offres » de Mon profil, sinon le défaut (case « M'alerter » pour un étudiant)
   where public.offre_pour(new, p, public.saison_courante())
@@ -2693,7 +2696,7 @@ begin
   return query
     select x.id, x.email, x.langue, x.token, x.offres from (
       select p.id, u.email::text as email, p.langue, n.token, n.alerte_at,
-        (select jsonb_agg(jsonb_build_object('id', o.id, 'titre', o.titre, 'entreprise', o.entreprise, 'type', o.type, 'ville', o.ville, 'pays', o.pays, 'deadline', o.deadline) order by o.created_at desc)
+        (select jsonb_agg(jsonb_build_object('id', o.id, 'titre', o.titre, 'entreprise', o.entreprise, 'type', o.type, 'ville', o.ville, 'pays', o.pays, 'deadline', o.deadline, 'origine', o.origine) order by o.created_at desc)
           from (select o2.* from public.offers o2
             where o2.created_at > greatest(coalesce(n.alerte_at, p.created_at), p.created_at, now() - interval '3 days')
               and public.offre_pour(o2, p, v_s)
@@ -3773,7 +3776,7 @@ grant execute on function public.offre_partagee(uuid) to anon, authenticated;
 
 -- ---------------------------------------------------------------------
 -- Membres fondateurs : les 25 premiers lauréats à aider les étudiants, dans l'ordre de leur première contribution
--- (même règle que classementFondateurs() dans logic.js) : une offre publiée pour les étudiants (pas « entre lauréats » ;
+-- (même règle que classementFondateurs() dans logic.js) : une offre publiée pour les étudiants (pas « entre lauréats » ni un partage vu ailleurs ;
 -- pourvue ou fermée, elle compte ; supprimée, elle ne compte plus), une aide proposée sur la demande d'un étudiant
 -- (sauf retirée par le lauréat), un mentorat accepté ou terminé avec un étudiant. Jamais l'administration.
 -- Égalité : le type (aide, mentorat, offre), puis l'id.
@@ -3786,7 +3789,7 @@ create or replace function public.fondateurs_classement() returns table (id uuid
 language sql stable security definer set search_path = public as $$
   with c as (
     select o.author_id as l, o.created_at as at, 'offre'::text as k from public.offers o
-      where coalesce(o.audience, 'etudiants') = 'etudiants'
+      where coalesce(o.audience, 'etudiants') = 'etudiants' and o.origine is distinct from 'partagee'
     union all select x.laureat_id, x.created_at, 'aide' from public.propositions x
       join public.demandes d on d.id = x.demande_id
       join public.profiles s on s.id = d.auteur_id and s.role = 'etudiant'
@@ -4000,7 +4003,7 @@ create trigger trg_ambassadeur_change_groupe after update of promo, filiere, rol
   for each row execute function public.ambassadeur_change_groupe();
 
 -- Les membres d'un groupe qui peuvent être proposés, du plus actif au moins actif (égalité : le plus ancien inscrit).
--- Points : offre 3, aide proposée 3, mentorat accepté ou terminé 3 (1 pour l'étudiant aidé), réponse 2, question 1,
+-- Points : offre 3 (offre partagée, vue ailleurs : 1), aide proposée 3, mentorat accepté ou terminé 3 (1 pour l'étudiant aidé), réponse 2, question 1,
 -- connexion dans les 30 derniers jours 2 (seulement pour qui a déjà agi). Rien fait, pas proposé. Déjà refusé, expiré ou retiré dans ce groupe : jamais.
 -- Déjà proposé (depuis moins de 7 jours) ou ambassadeur ailleurs : pas ici (un seul groupe à la fois).
 create or replace function public.ambassadeur_candidats(p_promo int, p_filiere text)
@@ -4009,7 +4012,8 @@ language sql stable security definer set search_path = public as $$
   select p.id, s.score, p.created_at
   from public.profiles p
   cross join lateral (select (
-      3 * (select count(*) from public.offers o where o.author_id = p.id)
+      3 * (select count(*) from public.offers o where o.author_id = p.id and o.origine is distinct from 'partagee')
+    + 1 * (select count(*) from public.offers o where o.author_id = p.id and o.origine = 'partagee')
     + 3 * (select count(*) from public.propositions x where x.laureat_id = p.id and x.status <> 'retiree')
     + 3 * (select count(*) from public.mentorships m where m.mentor_id = p.id and m.status in ('acceptee','terminee'))
     + 1 * (select count(*) from public.mentorships m where m.student_id = p.id and m.status in ('acceptee','terminee'))
@@ -4331,6 +4335,98 @@ do $$ begin
   if exists (select 1 from pg_extension where extname = 'pg_cron') then
     perform cron.schedule('ensam-rappels-visite', '0 18 * * *', 'select public.rappels_soir()');
   end if;
+end $$;
+
+-- =====================================================================
+--  Origine des offres (offers.origine) : la priorité aux offres que les lauréats apportent eux-mêmes.
+--    'portee'   : un lauréat publie une offre de son entreprise, il en est responsable et encadrera la personne
+--                 retenue (il le confirme en publiant). Seul un lauréat ou l'administration.
+--    'partagee' : une offre vue ailleurs (LinkedIn, site d'entreprise…), lien http(s) obligatoire, publiable par
+--                 tout membre, étudiants compris. Un étudiant ne publie QUE des partages. La candidature se fait sur
+--                 le site d'origine ; sans date limite, le partage se ferme seul après 45 jours.
+--    null       : offre classique (toutes les offres d'avant : rien n'est affirmé sur elles).
+--  Mêmes règles que origine.js (refusOrigine, partageExpire) et DemoStore (regleOrigineDemo) dans store.js.
+--  La colonne est ajoutée plus haut, avec les autres colonnes des offres.
+-- =====================================================================
+alter table public.offers add column if not exists origine text;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'offers_origine_check') then
+    alter table public.offers add constraint offers_origine_check check (origine in ('portee','partagee'));
+  end if;
+end $$;
+
+create or replace function public.offre_origine() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_role text; v_admin boolean := public.is_admin();
+begin
+  select role into v_role from public.profiles where id = new.author_id;
+  v_role := coalesce(v_role, '');
+  if tg_op = 'UPDATE' then
+    if new.origine is distinct from old.origine and not v_admin then
+      if old.origine = 'partagee' or new.origine = 'partagee' then
+        raise exception 'Une offre partagée reste un partage : publie plutôt une nouvelle offre.' using errcode = '42501';
+      end if;
+      if new.origine = 'portee' and v_role not in ('laureat','admin') then
+        raise exception 'Seul un lauréat peut porter une offre de son entreprise.' using errcode = '42501';
+      end if;
+    end if;
+    if new.origine = 'partagee' and new.lien is distinct from old.lien then
+      new.lien := trim(new.lien);
+      if new.lien is null or char_length(new.lien) > 500 or new.lien !~* '^https?://[^[:space:]/?#]+\.[^[:space:]]+$' then
+        raise exception 'Ajoute le lien de l’offre (https://…).' using errcode = '23514';
+      end if;
+    end if;
+    if new.origine = 'partagee' then new.cooptation := false; end if;
+    return new;
+  end if;
+  if new.origine = 'portee' and v_role not in ('laureat','admin') then
+    raise exception 'Seul un lauréat peut porter une offre de son entreprise.' using errcode = '42501';
+  end if;
+  if v_role = 'etudiant' and (new.origine is distinct from 'partagee' or coalesce(new.audience, 'etudiants') <> 'etudiants') then
+    raise exception 'Un étudiant partage une offre vue ailleurs, avec son lien.' using errcode = '42501';
+  end if;
+  if new.origine = 'partagee' then
+    new.lien := trim(new.lien);
+    if new.lien is null or char_length(new.lien) > 500 or new.lien !~* '^https?://[^[:space:]/?#]+\.[^[:space:]]+$' then
+      raise exception 'Ajoute le lien de l’offre (https://…).' using errcode = '23514';
+    end if;
+    new.cooptation := false;
+    -- Le même lien déjà partagé, encore ouvert : une seule fois sur le réseau
+    if exists (select 1 from public.offers o where o.origine = 'partagee' and o.status = 'ouverte'
+        and o.created_at > now() - interval '45 days'
+        and lower(regexp_replace(trim(o.lien), '/+$', '')) = lower(regexp_replace(new.lien, '/+$', ''))) then
+      raise exception 'Cette offre est déjà partagée sur le réseau.' using errcode = '23505';
+    end if;
+  end if;
+  return new;
+end $$;
+revoke all on function public.offre_origine() from public, anon, authenticated;
+drop trigger if exists trg_offre_origine on public.offers;
+create trigger trg_offre_origine before insert or update on public.offers
+  for each row execute function public.offre_origine();
+
+-- Anti-spam des partages (limiter, plus haut) : 5 offres par jour au plus quand on partage, et pas deux fois le même lien en 24 h
+drop trigger if exists trg_limite_partage on public.offers;
+create trigger trg_limite_partage before insert on public.offers
+  for each row when (new.origine = 'partagee') execute function public.limiter('author_id', '5', '1 day', 'lien');
+
+-- Chaque nuit : un partage sans date limite se ferme après 45 jours, un partage avec date limite une fois celle-ci passée
+create or replace function public.fermer_partages_anciens() returns int
+language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  update public.offers set status = 'fermee'
+    where origine = 'partagee' and status = 'ouverte'
+      and ((deadline is null and created_at < now() - interval '45 days') or deadline < current_date);
+  get diagnostics n = row_count;
+  return n;
+end $$;
+revoke all on function public.fermer_partages_anciens() from public, anon, authenticated;
+do $$ begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.schedule('ensam-partages', '20 3 * * *', 'select public.fermer_partages_anciens()');
+  end if;
+exception when others then raise notice 'Fermeture des partages non programmée : %', sqlerrm;
 end $$;
 
 -- =====================================================================

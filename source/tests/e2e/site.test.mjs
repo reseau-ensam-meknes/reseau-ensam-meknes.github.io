@@ -3442,3 +3442,131 @@ test('fête du match chez le lauréat : une feuille qui s’en va (copie .sortie
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
+
+// ---------------------------------------------------------------------------
+// Origine des offres : les offres portées par un lauréat d'abord (badge), puis les classiques, puis « Offres partagées »
+// ---------------------------------------------------------------------------
+const TEXTE_LINKEDIN = `🚀 Stellantis Kénitra recrute un stagiaire PFE en excellence opérationnelle
+
+Lieu : Kénitra
+Durée : 6 mois, à partir de février
+Missions : déploiement lean, VSM, animation des chantiers Kaizen.
+Profil : élève ingénieur en 5e année, Génie Industriel.
+#lean #pfe #stage`;
+const LIEN_LINKEDIN = 'https://www.linkedin.com/jobs/view/4012345678';
+
+test('offres partagées : une étudiante colle une offre LinkedIn ; la liste met les offres portées en tête, les partages à part (360 px)', async () => {
+  const s = await ouvrir({ largeur: 360 });
+  await s.page.setViewportSize({ width: 360, height: 640 });
+  await s.comme('Salma'); await fermerFete(s); await s.aller('offres');
+  // Une étudiante ne publie pas d'offre, elle en partage une vue ailleurs
+  assert.equal(await s.page.locator('.page-head #of-publier').count(), 0);
+  await s.page.click('#of-partager'); await s.page.waitForSelector('#of-lien-p');
+  assert.equal(await s.page.locator('.modal-head h2').innerText(), 'Partager une offre');
+  assert.equal(await s.page.locator('#of-mode-entreprise').count(), 0, 'pas de choix « mon entreprise » pour une étudiante');
+  assert.equal(await s.page.locator('#of-porte').count(), 0);
+  assert.deepEqual(await s.page.locator('#of-annees .chip[aria-pressed="true"]').allInnerTexts(), ['5A'], 'son année par défaut');
+  assert.ok((await s.debordement()) <= 0, 'formulaire sans débordement à 360 px');
+  // Sans lien : « Publier » mène au champ du lien
+  await s.page.fill('#of-texte-p', TEXTE_LINKEDIN);
+  await s.page.click('#of-preremplir'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.inputValue('#of-titre'), 'Stagiaire PFE en excellence opérationnelle');
+  assert.equal(await s.page.inputValue('#of-ent'), 'Stellantis', 'l’entreprise de l’annonce, pas celle du membre');
+  assert.equal(await s.page.inputValue('#of-ville'), 'Kénitra');
+  assert.deepEqual(await s.page.locator('#of-annees .chip[aria-pressed="true"]').allInnerTexts(), ['5A']);
+  await s.page.click('.modal-foot #of-publier'); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'of-lien-p');
+  assert.match(await s.page.locator('#of-lien-p-err').innerText(), /Colle le lien de l’offre/);
+  await s.page.fill('#of-lien-p', 'linkedin.com/jobs/view/1'); await s.page.waitForTimeout(100);
+  assert.match(await s.page.locator('#of-lien-p-err').innerText(), /https:\/\//);
+  await s.page.fill('#of-lien-p', LIEN_LINKEDIN);
+  await s.page.click('.modal-foot #of-publier'); await s.page.waitForTimeout(500);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Offre partagée/);
+  const partage = await s.page.evaluate(l => window.__demo.data.offers.find(o => o.lien === l), LIEN_LINKEDIN);
+  assert.equal(partage.origine, 'partagee'); assert.deepEqual(partage.annees, [5]); assert.equal(partage.cooptation, false);
+  // Dans la liste : une carte compacte, à part, sous les autres offres
+  const carte = s.page.locator('.partages .opart', { hasText: 'Stagiaire PFE en excellence opérationnelle' });
+  assert.equal(await carte.count(), 1);
+  assert.match(await carte.locator('.opart-par').innerText(), /^Partagée par Salma · vue sur LinkedIn$/);
+  assert.equal(await carte.locator('.opart-voir').getAttribute('href'), LIEN_LINKEDIN);
+  assert.equal(await carte.locator('.opart-voir').getAttribute('target'), '_blank');
+  assert.equal(await s.page.locator('.offer-grid .ocard', { hasText: 'Stagiaire PFE en excellence opérationnelle' }).count(), 0);
+  assert.ok((await s.debordement()) <= 0, 'liste sans débordement à 360 px');
+  // Le même lien une deuxième fois : déjà partagé
+  await s.page.click('#of-partager'); await s.page.waitForSelector('#of-lien-p');
+  await s.page.fill('#of-lien-p', LIEN_LINKEDIN + '/'); await s.page.fill('#of-titre', 'Encore la même offre'); await s.page.fill('#of-ent', 'Stellantis'); await s.page.fill('#of-desc', 'La même annonce.');
+  await s.page.click('.modal-foot #of-publier'); await s.page.waitForTimeout(400);
+  assert.match(await s.page.locator('.toast').last().innerText(), /déjà partagée/);
+  await s.fermer();
+
+  // Un lauréat porte une offre de son entreprise : une case claire, et l'offre passe en tête avec le badge
+  await s.comme('Youssef'); await fermerFete(s); await s.aller('offres');
+  await s.page.click('.page-head #of-publier'); await s.page.waitForSelector('#of-titre');
+  assert.equal(await s.page.getAttribute('#of-mode-entreprise', 'aria-checked'), 'true');
+  assert.equal(await s.page.isChecked('#of-porte'), false, 'décochée au départ : il le confirme lui-même');
+  await s.page.fill('#of-titre', 'PFE méthodes emboutissage, encadré par moi');
+  await s.page.fill('#of-desc', 'Réduire les temps de changement de série sur la ligne de presses.');
+  await s.page.locator('.type-opt.t-pfe').click();
+  await s.page.check('#of-porte');
+  assert.ok((await s.debordement()) <= 0);
+  await s.page.click('.modal-foot #of-publier'); await s.page.waitForTimeout(500); await fermerFete(s);
+  const porte = await s.page.evaluate(() => window.__demo.data.offers.find(o => o.titre === 'PFE méthodes emboutissage, encadré par moi'));
+  assert.equal(porte.origine, 'portee');
+  // Une offre classique publiée après : elle reste derrière l'offre portée
+  await s.page.evaluate(async () => { const d = window.__demo; await d.insert('offers', { author_id: d.me.id, type: 'pfe', titre: 'PFE classique tout récent', entreprise: 'Renault Group Maroc', description: 'Sujet.', annees: [5], filieres: [], status: 'ouverte', origine: null }); });
+  await s.aller('accueil'); await s.aller('offres');
+  const premiere = s.page.locator('.offer-grid .ocard').first();
+  assert.match(await premiere.innerText(), /PFE méthodes emboutissage, encadré par moi/);
+  assert.equal(await premiere.locator('.tag.portee').innerText(), 'Portée par un lauréat · il encadre');
+  assert.ok(await premiere.evaluate(e => e.classList.contains('portee')));
+  assert.match(await s.page.locator('.offer-grid .ocard').nth(1).innerText(), /PFE classique tout récent/);
+  // L'ordre dans la page : portées, classiques, puis la section « Offres partagées »
+  const ordre = await s.page.evaluate(() => { const g = document.querySelector('.offer-grid'), p = document.querySelector('.partages'); return !!(g && p && (g.compareDocumentPosition(p) & Node.DOCUMENT_POSITION_FOLLOWING)); });
+  assert.ok(ordre, 'les partages viennent après les autres offres');
+  assert.equal(await s.page.locator('.offer-grid .tag.portee').count(), await s.page.locator('.offer-grid .ocard.portee').count());
+  // La fiche d'un partage : le lien vers le site d'origine, pas de candidature ici ; on peut signaler
+  await s.page.locator('.partages .opart-main', { hasText: 'Stagiaire PFE en excellence opérationnelle' }).click(); await s.page.waitForSelector('.modal');
+  assert.equal(await s.page.locator('.modal-head h2').innerText(), 'Offre partagée');
+  assert.equal(await s.page.locator('#od-voir-partage').getAttribute('href'), LIEN_LINKEDIN);
+  assert.match(await s.page.locator('#od-voir-partage').innerText(), /Voir l’offre sur LinkedIn/);
+  assert.equal(await s.page.locator('.modal button:has-text("Postuler")').count(), 0);
+  assert.equal(await s.page.locator('.modal .cf-signal').count(), 1, 'signaler disponible');
+  assert.ok((await s.debordement()) <= 0);
+  await s.fermer();
+  // L'étudiante : l'offre portée de son année et de sa filière passe en tête de « Recommandé pour toi »
+  await s.page.evaluate(async id => { const d = window.__demo, salma = d.data.profiles.find(p => p.full_name === 'Salma Bennani'); await d.update('offers', id, { filieres: [salma.filiere] }); }, porte.id);
+  await s.comme('Salma'); await fermerFete(s); await s.aller('offres');
+  assert.match(await s.page.locator('.reco .ocard').first().innerText(), /PFE méthodes emboutissage, encadré par moi/);
+  assert.equal(await s.page.locator('.reco .ocard').first().locator('.tag.portee').count(), 1);
+  assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('offres portées et partagées en arabe : le badge, la section et « مشاركة من … » traduits, sans débordement (360 px)', async () => {
+  const s = await ouvrir({ largeur: 360, langue: 'ar' });
+  await s.page.setViewportSize({ width: 360, height: 640 });
+  await s.comme('Youssef'); await fermerFete(s);
+  await s.page.evaluate(async l => {
+    const d = window.__demo;
+    await d.insert('offers', { author_id: d.me.id, type: 'pfe', titre: 'PFE méthodes emboutissage', entreprise: 'Renault Group Maroc', description: 'Sujet.', annees: [5], filieres: [], status: 'ouverte', origine: 'portee' });
+    await d.insert('offers', { author_id: d.me.id, type: 'stage', titre: 'Stage qualité vu sur LinkedIn', entreprise: 'Stellantis', description: 'Annonce.', annees: [5], filieres: [], status: 'ouverte', origine: 'partagee', lien: l });
+  }, LIEN_LINKEDIN);
+  await s.page.evaluate(() => window.__ensamMissing?.clear());
+  await s.aller('accueil'); await s.aller('offres');
+  assert.equal(await s.page.locator('.offer-grid .ocard').first().locator('.tag.portee').innerText(), 'يقدّمه خريج · مع التأطير');
+  assert.equal(await s.page.locator('#partages-titre').innerText(), 'عروض تمت مشاركتها');
+  assert.match((await s.page.locator('.partages .opart-par').first().innerText()).replace(/[\u2066-\u2069]/g, ''), /^مشاركة من Youssef · منشور على LinkedIn$/);
+  await s.comme('Salma'); await fermerFete(s); await s.aller('offres');
+  await s.page.locator('.ocard.portee .ocard-main').first().click(); await s.page.waitForSelector('.od-portee');
+  assert.match(await s.page.locator('.od-portee').innerText(), /عرض يقدّمه خريج · مع التأطير/);
+  await s.fermer();
+  await s.comme('Youssef'); await fermerFete(s); await s.aller('offres');
+  await s.page.click('#of-partager-bas'); await s.page.waitForSelector('#of-lien-p');
+  assert.equal(await s.page.getAttribute('#of-mode-partage', 'aria-checked'), 'true');
+  assert.ok((await s.debordement()) <= 0);
+  const oublis = await s.page.evaluate(() => [...(window.__ensamMissing || [])].filter(x => /[a-zà-ÿ]{3}/i.test(x) && !/PFE méthodes|Renault|Stage qualité|Stellantis|LinkedIn$|^https?:/.test(x)));
+  assert.deepEqual(oublis.filter(x => !ecritParUnMembre(x)), []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
