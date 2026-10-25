@@ -181,3 +181,33 @@ test('email aux lauréats : les nouvelles demandes de leur parcours, une fois pa
   const r2 = await en(db, null, tx => tx.query('select * from public.demandes_a_signaler(50)'), { role: 'postgres' });
   assert.equal(r2.rows.some(x => [L1, L2].includes(x.id)), false);
 });
+
+test('email : une demande restée sans aide 24 h s’ouvre aux lauréats des autres parcours, une seule fois ; sans parcours, tout de suite', async () => {
+  const SANS = uid(99);
+  await creerCompte(db, { id: SANS, full_name: 'Rania Sansfiliere', role: 'etudiant', filiere: 'Autre filière', promo: S + 1 });
+  await db.query('update public.profiles set cv_path = $2 where id = $1', [SANS, cv(SANS)]);
+  await db.query(`update public.demandes set status = 'fermee' where status in ('ouverte','match')`);
+  await db.query('update public.notif_etat set demandes_at = null');
+  const vieille = await publier(AUTRE, { type: 'pfe', titre: 'PFE logistique sans réponse' });
+  const aidee = await publier(ETU, { type: 'pfe', titre: 'PFE déjà aidé' });
+  await db.query(`update public.demandes set created_at = now() - interval '25 hours', relancee_at = now() - interval '25 hours' where id = any($1)`, [[vieille.id, aidee.id]]);
+  await proposer(L1, aidee.id);
+  const sans = await publier(SANS, { type: 'pfe', titre: 'PFE sans filière' });
+  const lire = async () => new Map((await en(db, null, tx => tx.query('select * from public.demandes_a_signaler(50)'), { role: 'postgres' })).rows.map(x => [x.id, x.demandes]));
+  const r = await lire();
+  const civil = r.get(CIVIL) || [];
+  assert.deepEqual(civil.map(y => y.titre).sort(), ['PFE logistique sans réponse', 'PFE sans filière'], 'restée sans aide, ou sans parcours ; pas celle déjà aidée');
+  assert.ok(civil.every(y => y.large === true));
+  assert.equal(r.get(L2).find(y => y.id === vieille.id).large, false, 'son parcours : pas « large »');
+  assert.ok(r.get(L2).some(y => y.id === sans.id), 'sans parcours : tous les lauréats');
+  // Vu par le lauréat dans l'appli aussi (demande_pour)
+  assert.equal((await db.query('select public.demande_pour(d, p) ok from public.demandes d, public.profiles p where d.id = $1 and p.id = $2', [vieille.id, CIVIL])).rows[0].ok, true);
+  assert.equal((await db.query(`select public.demande_pour(d, p) ok from public.demandes d, public.profiles p where d.id = $1 and p.id = $2`, [aidee.id, CIVIL])).rows[0].ok, true, 'visible, mais pas envoyée par email');
+  // Envoyé : plus jamais la même, même le lendemain
+  await en(db, null, tx => tx.query('select public.demandes_signalees($1)', [[CIVIL, L2]]), { role: 'postgres' });
+  await db.query(`update public.notif_etat set demandes_at = now() - interval '2 days' where user_id = any($1)`, [[CIVIL, L2]]);
+  const r2 = await lire();
+  assert.equal(r2.has(CIVIL), false);
+  assert.equal(r2.has(L2), false);
+  assert.equal((await db.query('select count(*)::int n from public.demandes_emails where user_id = $1', [CIVIL])).rows[0].n, 2);
+});

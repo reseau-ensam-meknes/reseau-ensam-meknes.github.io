@@ -1,7 +1,7 @@
 // Accueil qui guide : la carte du haut, « Cette semaine », « Ils ont besoin de toi », « Besoin d'un coup de main ? », publier
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { rdvALaUne, profilLaureatFait, joursAvant, annoncePour, pourPublic, petitesTaches, besoinsDeMoi, coupDeMain, etatAide, AIDE_OUVERTE,
+import { demandesPour, rdvALaUne, profilLaureatFait, joursAvant, annoncePour, pourPublic, petitesTaches, besoinsDeMoi, coupDeMain, etatAide, AIDE_OUVERTE,
   manquesOffre, manquesDemande, enqueteDue, seasonOf, lignePouls, lignePresence, presenceReseau, tachePhoto, logoEntreprise, monogramme } from '../../src/logic.js';
 
 const NOW = new Date(2026, 9, 23, 10, 0);   // vendredi 23 octobre 2026, 10 h (heure de l'appareil)
@@ -127,6 +127,21 @@ test('besoinsDeMoi : ceux qui l’ont choisi d’abord, puis une sorte après l�
   // Déjà répondu à la question : elle ne revient pas
   const rep = besoinsDeMoi({ ...d, answers: [{ question_id: 'q1', author_id: 'l' }] }, lau, byId, { now: NOW.getTime() });
   assert.ok(!rep.some(x => x.id === 'q1'));
+});
+
+test('demandes hors de son parcours : ouvertes à tous les lauréats 24 h après, tout de suite sans filière', () => {
+  const profiles = [lau, etu('s5', 'Génie Civil'), etu('s6', 'Génie Civil'), etu('s7', null)];
+  const byId = id => profiles.find(p => p.id === id);
+  const d = base({ profiles, demandes: [
+    { id: 'jeune', auteur_id: 's5', status: 'ouverte', type: 'stage', titre: 'Publiée hier soir', created_at: at(-1) },
+    { id: 'vieille', auteur_id: 's6', status: 'ouverte', type: 'stage', titre: 'Publiée avant-hier', created_at: at(-2) },
+    { id: 'sans', auteur_id: 's7', status: 'ouverte', type: 'pfe', titre: 'Sans filière', created_at: at(0, 9) },
+  ] });
+  const ids = besoinsDeMoi(d, lau, byId, { now: NOW.getTime() }).map(x => x.id);
+  assert.deepEqual(ids.sort(), ['sans', 'vieille'], 'pas celle de moins de 24 h d’un autre parcours');
+  const v = demandesPour(d, lau, byId, NOW.getTime()).find(x => x.d.id === 'vieille');
+  assert.equal(v.large, true); assert.equal(v.pourMoi, true); assert.ok(v.why.includes('Ouverte à tous les lauréats'));
+  assert.equal(demandesPour(d, lau, byId, NOW.getTime()).find(x => x.d.id === 'jeune').pourMoi, false);
 });
 
 test('coupDeMain : une porte en bouton, deux au plus en liens, et ce qui est en route', () => {

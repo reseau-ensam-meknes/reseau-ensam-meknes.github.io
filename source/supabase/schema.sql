@@ -3617,16 +3617,52 @@ begin
   end if;
 end $$;
 
--- Email aux lauréats : les nouvelles demandes de leur parcours, une fois par jour au plus
+-- Email aux lauréats : les demandes de leur parcours, et celles restées sans aide ; une fois par jour au plus
 alter table public.notif_etat add column if not exists demandes_at timestamptz;
+
+-- Une demande que personne de son parcours n'a prise s'ouvre à tous les lauréats : tout de suite quand l'étudiant
+-- n'a pas encore de parcours (prépa, filière non renseignée), 24 h après sa publication sinon
+create or replace function public.demande_large_le(d public.demandes) returns timestamptz
+language sql stable security definer set search_path = public as $$
+  select case when cardinality(coalesce(public.parcours_de((select a.filiere from public.profiles a where a.id = d.auteur_id)), '{}'::text[])) = 0
+    then d.created_at else d.created_at + interval '24 hours' end;
+$$;
 
 create or replace function public.demande_pour(d public.demandes, p public.profiles) returns boolean
 language sql stable as $$
   select d.status = 'ouverte' and d.auteur_id <> p.id and p.role = 'laureat'
     and d.relancee_at > now() - interval '60 days'
-    and public.proximite_filiere(p.filiere, (select a.filiere from public.profiles a where a.id = d.auteur_id)) >= 1
+    and (public.proximite_filiere(p.filiere, (select a.filiere from public.profiles a where a.id = d.auteur_id)) >= 1
+         or public.demande_large_le(d) <= now())
     and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = d.auteur_id) or (b.user_id = d.auteur_id and b.bloque_id = p.id));
 $$;
+
+-- Ce qu'un lauréat a déjà reçu par email : une demande ne lui est envoyée qu'une fois (lu par le serveur seulement)
+create table if not exists public.demandes_emails (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  demande_id uuid not null references public.demandes(id) on delete cascade,
+  at timestamptz not null default now(),
+  primary key (user_id, demande_id)
+);
+alter table public.demandes_emails enable row level security;
+
+-- Les demandes à envoyer à un lauréat (5 au plus) : celles de son parcours publiées depuis le dernier email,
+-- puis celles des autres parcours encore sans aucune aide (large = true). Jamais deux fois la même.
+create or replace function public.demandes_email_pour(p_id uuid, p_depuis timestamptz) returns table (id uuid, large boolean)
+language sql stable security definer set search_path = public as $$
+  select d.id, x.prox = 0 as large
+  from public.profiles p
+  join public.demandes d on public.demande_pour(d, p)
+  join public.profiles a on a.id = d.auteur_id
+  cross join lateral (select public.proximite_filiere(p.filiere, a.filiere) as prox) x
+  where p.id = p_id and d.created_at > now() - interval '30 days'
+    and not exists (select 1 from public.demandes_emails e where e.user_id = p.id and e.demande_id = d.id)
+    and case when x.prox >= 1 then d.created_at > coalesce(p_depuis, '-infinity'::timestamptz)
+             else not exists (select 1 from public.propositions y where y.demande_id = d.id and y.status <> 'retiree') end
+  order by x.prox desc, d.created_at desc
+  limit 5;
+$$;
+revoke all on function public.demandes_email_pour(uuid, timestamptz) from public, anon, authenticated;
 
 create or replace function public.demandes_a_signaler(p_max int default 100)
 returns table (id uuid, email text, langue text, token uuid, demandes jsonb)
@@ -3638,11 +3674,9 @@ begin
     select x.id, x.email, x.langue, x.token, x.demandes from (
       select p.id, u.email::text as email, p.langue, n.token, n.demandes_at,
         (select jsonb_agg(jsonb_build_object('id', d.id, 'titre', d.titre, 'type', d.type, 'lieu', d.lieu,
-            'prenom', split_part(a.full_name, ' ', 1), 'niveau', public.niveau_de(a.promo, v_s), 'role', a.role, 'filiere', a.filiere) order by d.created_at desc)
-          from (select d2.* from public.demandes d2
-            where d2.created_at > greatest(coalesce(n.demandes_at, p.created_at), p.created_at, now() - interval '3 days')
-              and public.demande_pour(d2, p)
-            order by d2.created_at desc limit 5) d join public.profiles a on a.id = d.auteur_id) as demandes
+            'prenom', split_part(a.full_name, ' ', 1), 'niveau', public.niveau_de(a.promo, v_s), 'role', a.role, 'filiere', a.filiere,
+            'large', c.large) order by c.large, d.created_at desc)
+          from public.demandes_email_pour(p.id, n.demandes_at) c join public.demandes d on d.id = c.id join public.profiles a on a.id = d.auteur_id) as demandes
       from public.profiles p join auth.users u on u.id = p.id join public.notif_etat n on n.user_id = p.id
       where p.role = 'laureat' and p.alertes_email and u.email is not null
         and (n.demandes_at is null or n.demandes_at < now() - interval '20 hours')) x
@@ -3652,10 +3686,16 @@ begin
 end $$;
 revoke all on function public.demandes_a_signaler(int) from public, anon, authenticated;
 
+-- Après l'envoi : ces demandes ne repartiront plus vers ces lauréats
 create or replace function public.demandes_signalees(p_ids uuid[]) returns void
-language sql security definer set search_path = public as $$
+language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.demandes_emails (user_id, demande_id)
+    select n.user_id, c.id from public.notif_etat n cross join lateral public.demandes_email_pour(n.user_id, n.demandes_at) c
+    where n.user_id = any(p_ids)
+  on conflict do nothing;
   update public.notif_etat set demandes_at = now() where user_id = any(p_ids);
-$$;
+end $$;
 revoke all on function public.demandes_signalees(uuid[]) from public, anon, authenticated;
 
 do $$ begin

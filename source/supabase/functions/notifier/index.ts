@@ -1480,7 +1480,8 @@ export function rendreAlerte(offres: OffreAlerte[], langue: Langue, site: string
 }
 
 // Demandes des étudiants de son parcours (lauréats) : qui, ce qu'il cherche, et « Je peux aider »
-export type DemandeAlerte = { id: string; titre: string; type?: string | null; lieu?: string | null; prenom?: string | null; niveau?: number | null; role?: string | null };
+// large : hors de son parcours, une demande restée sans aide et ouverte à tous les lauréats (absent avec une base plus ancienne)
+export type DemandeAlerte = { id: string; titre: string; type?: string | null; lieu?: string | null; prenom?: string | null; niveau?: number | null; role?: string | null; large?: boolean | null };
 const niveauCourt = (x: DemandeAlerte, l: Langue) => x.role === 'laureat' ? (l === 'ar' ? 'خريج' : 'Lauréat')
   : Number(x.niveau) >= 6 ? (l === 'ar' ? 'خريج جديد' : 'Jeune diplômé') : Number(x.niveau) >= 3 ? `${Number(x.niveau)}A` : '';
 export function rendreDemandes(demandes: DemandeAlerte[], langue: Langue, site: string, token: string): Courriel {
@@ -1490,23 +1491,34 @@ export function rendreDemandes(demandes: DemandeAlerte[], langue: Langue, site: 
   const desabo = `${site}#desabo/${token}/alertes`;
   const qui = (x: DemandeAlerte) => txt(x.prenom) || (ar ? 'طالب' : 'Un étudiant');
   const ligne = (x: DemandeAlerte, F: Fmt) => [F.g(qui(x)), niveauCourt(x, langue), TYPES_OFFRE[langue][txt(x.type)] || '', F.u(txt(x.titre)), F.u(txt(x.lieu))].filter(Boolean).join(' · ');
+  // Toutes de son parcours (le cas d'avant) ; toutes restées sans aide ailleurs ; ou un mélange des deux
+  const larges = demandes.filter(x => x.large === true).length;
+  const cas = larges === 0 ? 'parcours' : larges === n ? 'large' : 'mixte';
   const sujet = couper(n > 1
-    ? (ar ? `${arN(n, ['', 'طلبان جديدان', '{n} طلبات جديدة', '{n} طلبًا جديدًا'])} من مسارك` : `${n} demandes d’étudiants de ton parcours`) + (ar ? ' · شبكة ENSAM' : ' · Réseau ENSAM')
+    ? (cas === 'parcours' ? (ar ? `${arN(n, ['', 'طلبان جديدان', '{n} طلبات جديدة', '{n} طلبًا جديدًا'])} من مسارك` : `${n} demandes d’étudiants de ton parcours`)
+      : cas === 'large' ? (ar ? `${arN(n, ['', 'طلبان', '{n} طلبات', '{n} طلبًا'])} من الطلبة في انتظار مساعدة` : `${n} demandes d’étudiants attendent encore une aide`)
+      : (ar ? `${arN(n, ['', 'طلبان', '{n} طلبات', '{n} طلبًا'])} من الطلبة` : `${n} demandes d’étudiants`)) + (ar ? ' · شبكة ENSAM' : ' · Réseau ENSAM')
     : (ar ? `${qui(d0)} · المطلوب: ${txt(d0.titre)}` : `${qui(d0)} cherche : ${txt(d0.titre)}`), 110);
-  const intro = ar
-    ? 'قال طلبة من مسارك ما يبحثون عنه، مع سيرهم الذاتية. إن كنت تستطيع توظيف أحدهم أو تأطيره أو التوصية به، اقترح ذلك: القرار يبقى لهم.'
-    : 'Des étudiants de ton parcours viennent de dire ce qu’ils cherchent, CV joint. Si tu peux recruter, encadrer ou recommander l’un d’eux, propose-le : c’est lui qui choisit.';
+  const appel = ar ? ' إن كنت تستطيع توظيف أحدهم أو تأطيره أو التوصية به، اقترح ذلك: القرار يبقى لهم.' : ' Si tu peux recruter, encadrer ou recommander l’un d’eux, propose-le : c’est lui qui choisit.';
+  const intro = (cas === 'parcours'
+    ? (ar ? 'قال طلبة من مسارك ما يبحثون عنه، مع سيرهم الذاتية.' : 'Des étudiants de ton parcours viennent de dire ce qu’ils cherchent, CV joint.')
+    : cas === 'large'
+      ? (ar ? 'قال طلبة من المدرسة ما يبحثون عنه، مع سيرهم الذاتية، ولم يتلقوا أي مساعدة بعد. ليسوا بالضرورة من شعبتك، لكن نصيحة أو اسمًا قد يكفي.' : 'Des étudiants de l’école ont dit ce qu’ils cherchent, CV joint, et n’ont encore reçu aucune aide. Ils ne sont pas forcément dans ta filière, mais un conseil ou un contact peut suffire.')
+      : (ar ? 'قال طلبة من المدرسة ما يبحثون عنه، مع سيرهم الذاتية: بعضهم من مسارك، وآخرون ما زالوا ينتظرون أي مساعدة.' : 'Des étudiants de l’école ont dit ce qu’ils cherchent, CV joint : certains de ton parcours, d’autres encore sans aucune aide.')) + appel;
+  const raison = cas === 'parcours'
+    ? (ar ? 'لأن الطلب من مسارك' : 'parce que la demande vient de ton parcours')
+    : (ar ? 'لأنك من خريجي المدرسة وهذه الطلبات تنتظر مساعدة' : 'parce que tu es lauréat de l’école et que ces demandes attendent une aide');
   const lien = (x: DemandeAlerte) => `${site}#aider/${x.id}`;   // « Je peux aider » ouvre la feuille préremplie
   const html = cadreEmail({
     langue, sujet, apercu: ligne(d0, b), sousTitre: ar ? 'طلبات الطلبة' : 'Demandes des étudiants',
     intro: [esc(ar ? 'مرحبًا،' : 'Bonjour,'), esc(intro)],
     blocs: demandes.map(x => ({ lignes: [`<span style="color:#F39200;">&#8226;</span>&nbsp; ${ligne(x, f)}`], bouton: { texte: ar ? 'أستطيع المساعدة' : 'Je peux aider', url: lien(x) } })),
-    pied: ar ? 'يصلك هذا البريد لأن الطلب من مسارك، مرة في اليوم على الأكثر.' : 'Tu reçois cet email parce que la demande vient de ton parcours, une fois par jour au plus.',
+    pied: ar ? `يصلك هذا البريد ${raison}، مرة في اليوم على الأكثر.` : `Tu reçois cet email ${raison}, une fois par jour au plus.`,
     liens: [[ar ? 'فتح المنصة' : 'Ouvrir la plateforme', site], [ar ? 'إيقاف تنبيهات البريد' : 'Ne plus recevoir les alertes par email', desabo]],
   });
   const texte = [`${(ar ? AR : FR).marque} · ${ar ? 'طلبات الطلبة' : 'Demandes des étudiants'}`, '', ar ? 'مرحبًا،' : 'Bonjour,', intro, '',
     ...demandes.flatMap(x => [`• ${ligne(x, b)}`, `  ${lien(x)}`]), '', '--',
-    ar ? 'يصلك هذا البريد لأن الطلب من مسارك.' : 'Tu reçois cet email parce que la demande vient de ton parcours.',
+    ar ? `يصلك هذا البريد ${raison}.` : `Tu reçois cet email ${raison}.`,
     `${ar ? 'إيقاف تنبيهات البريد' : 'Ne plus recevoir les alertes par email'}${ar ? ': ' : ' : '}${desabo}`].join('\n');
   return { sujet, html, texte, desabo };
 }
@@ -2082,7 +2094,7 @@ async function jobAlertes(env: Env): Promise<Response> {
   return json(b);
 }
 
-// Demandes des étudiants : un email aux lauréats du parcours, une fois par jour au plus (la base choisit qui)
+// Demandes des étudiants : un email aux lauréats du parcours, et à tous pour celles restées sans aide, une fois par jour au plus (la base choisit qui)
 async function jobDemandes(env: Env): Promise<Response> {
   const f = facteur(env);
   if (!f.pret) return json({ skipped: 'email' });

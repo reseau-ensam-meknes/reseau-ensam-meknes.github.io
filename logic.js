@@ -1089,7 +1089,12 @@ export const AIDES = {
 export const demandesActives = (data, uid) => (data.demandes || []).filter(d => d.auteur_id === uid && ['ouverte', 'match'].includes(d.status));
 // Une demande ouverte sans nouvelle depuis 60 jours se met en pause : l'étudiant la relance d'un geste
 export const demandeEnPause = (d, now = Date.now()) => d.status === 'ouverte' && now - new Date(d.relancee_at || d.created_at).getTime() > DEMANDE_PAUSE_JOURS * 864e5;
-// Demandes ouvertes qu'un lauréat peut prendre : son parcours d'abord, les plus anciennes sans réponse ensuite
+// Une demande que personne de son parcours n'a prise s'ouvre à tous les lauréats (mêmes règles que demande_large_le) :
+// tout de suite quand l'étudiant n'a pas encore de parcours (prépa, filière non renseignée), 24 h après sa publication sinon
+export const DEMANDE_LARGE_HEURES = 24;
+export const demandeLargeLe = (d, auteur) => new Date(d.created_at).getTime() + (parcoursOf(auteur?.filiere).length ? DEMANDE_LARGE_HEURES * 36e5 : 0);
+// Demandes ouvertes qu'un lauréat peut prendre : son parcours d'abord, les plus anciennes sans réponse ensuite.
+// large : hors de son parcours, mais ouverte à tous les lauréats ; pourMoi : elle lui est adressée (parcours ou large)
 export function demandesPour(data, me, byId, now = Date.now()) {
   if (me?.role !== 'laureat') return [];
   return (data.demandes || [])
@@ -1097,8 +1102,9 @@ export function demandesPour(data, me, byId, now = Date.now()) {
     .map(d => {
       // Un lauréat ne voit que ses propres aides (pas celles des autres) : le tri n'en dépend pas
       const a = byId(d.auteur_id); const prox = proximiteFiliere(me.filiere, a?.filiere);
-      const why = [prox === 2 ? 'Même filière' : prox === 1 ? 'Même parcours' : null, d.type === 'etranger' && me.pays && me.pays !== 'Maroc' ? `Tu es en ${me.pays}` : null].filter(Boolean);
-      return { d, a, prox, why, mienne: (data.propositions || []).find(x => x.demande_id === d.id && x.laureat_id === me.id) || null, score: prox * 3 + Math.min(3, Math.floor((now - new Date(d.created_at)) / 864e5)) };
+      const large = prox === 0 && now >= demandeLargeLe(d, a);
+      const why = [prox === 2 ? 'Même filière' : prox === 1 ? 'Même parcours' : large ? 'Ouverte à tous les lauréats' : null, d.type === 'etranger' && me.pays && me.pays !== 'Maroc' ? `Tu es en ${me.pays}` : null].filter(Boolean);
+      return { d, a, prox, large, pourMoi: prox >= 1 || large, why, mienne: (data.propositions || []).find(x => x.demande_id === d.id && x.laureat_id === me.id) || null, score: prox * 3 + Math.min(3, Math.floor((now - new Date(d.created_at)) / 864e5)) };
     })
     .sort((x, y) => y.score - x.score || new Date(y.d.created_at) - new Date(x.d.created_at));
 }
@@ -1158,7 +1164,7 @@ export function besoinsDeMoi(data, me, byId, { ignorees = new Set(), exclure = n
     .map(r => ({ r, prox: proximiteFiliere(byId(r.student_id)?.filiere, me.filiere) }))
     .sort((a, b) => b.prox - a.prox || new Date(a.r.created_at) - new Date(b.r.created_at))
     .forEach(({ r }) => out.push({ kind: 'cv', id: r.id, who: r.student_id, sujet: r.message || '', direct: r.reviewer_id === me.id, at: r.created_at }));
-  for (const x of demandesPour(data, me, byId, now)) if (!x.mienne && x.prox >= 1)
+  for (const x of demandesPour(data, me, byId, now)) if (!x.mienne && x.pourMoi)
     out.push({ kind: 'demande', id: x.d.id, who: x.d.auteur_id, sujet: x.d.titre, type: x.d.type, direct: false, at: x.d.created_at });
   (data.questions || []).filter(q => routedTo(q, me) && now - new Date(q.created_at) < 14 * 864e5 && !(data.answers || []).some(a => a.question_id === q.id && a.author_id === me.id))
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))

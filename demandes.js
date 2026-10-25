@@ -491,7 +491,7 @@ function DemandesAdmin({ ctx, focusId }) {
 export function demandesAFaire(data, me, store) {
   if (me.role === 'laureat') {
     const matchs = (data.propositions || []).filter(x => x.laureat_id === me.id && x.status === 'acceptee' && store.byId('demandes', x.demande_id)?.status === 'match' && !data.placements.some(p => p.demande_id === x.demande_id && p.status !== 'refuse')).length;
-    return matchs + demandesPour(data, me, id => store.byId('profiles', id)).filter(x => !x.mienne && x.prox >= 1).length;
+    return matchs + demandesPour(data, me, id => store.byId('profiles', id)).filter(x => !x.mienne && x.pourMoi).length;
   }
   const miennes = new Set(demandesActives(data, me.id).map(d => d.id));
   return (data.propositions || []).filter(x => miennes.has(x.demande_id) && x.status === 'envoyee').length

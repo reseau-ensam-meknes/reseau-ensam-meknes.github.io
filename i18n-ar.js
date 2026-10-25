@@ -589,6 +589,7 @@ Object.assign(AR, {
   'Les étudiants de ta filière pourront te demander 20 minutes de conseil.': 'سيتمكن طلبة شعبتك من طلب 20 دقيقة من النصح منك.',
   'Regarde les offres pour toi': 'اطّلع على العروض المناسبة لك', 'Les offres « Jeunes diplômés » et celles partagées entre lauréats.': 'عروض «الخريجون الجدد» والعروض المتبادلة بين الخريجين.',
   'Un étudiant de ton parcours a dit ce qu’il cherche : propose ton aide.': 'طلب جديد من مسارك: اقترح مساعدتك.',
+  'Un étudiant de l’école attend encore une réponse : propose ton aide.': 'طالب من المدرسة ما زال ينتظر جوابًا: اقترح مساعدتك.',
   'Ensuite': 'بعد ذلك', 'Ne plus afficher les premiers pas': 'عدم إظهار الخطوات الأولى مجددًا',
   'C’est noté. Tu retrouves les premiers pas dans ton menu : « Comment ça marche ? ».': 'تم ذلك. ستجد الخطوات الأولى في قائمتك: «كيف تعمل المنصة؟».',
   'Nouvelles': 'المستجدات', 'Rien à faire pour l’instant.': 'لا شيء بانتظارك الآن.', 'Rien de nouveau pour l’instant.': 'لا جديد الآن.',
@@ -654,7 +655,7 @@ Object.assign(AR, {
 
 // Lot mouvement · A : fêtes des deux côtés, carte « Fait », écrans vides illustrés
 Object.assign(AR, {
-  'Fait': 'تمّ', 'Oui, accepter': 'نعم، أقبل', 'Pas maintenant': 'ليس الآن', 'Accepter cette aide ?': 'قبول هذه المساعدة؟',
+  'Voir les demandes': 'عرض الطلبات', 'Fait': 'تمّ', 'Oui, accepter': 'نعم، أقبل', 'Pas maintenant': 'ليس الآن', 'Accepter cette aide ?': 'قبول هذه المساعدة؟',
   'Les autres propositions seront closes, et vous verrez vos coordonnées.': 'ستُغلق الاقتراحات الأخرى، وسيرى كل منكما معلومات اتصال الآخر.',
   'Un lauréat': 'خريج', 'Ton premier merci': 'أول رسالة شكر تصلك', 'Quelqu’un que tu as aidé t’a laissé ce mot :': 'كلمة شكر وصلتك ممن ساعدتهم:', 'Avec plaisir': 'بكل سرور',
 });
@@ -675,6 +676,8 @@ export const AR_PATTERNS = [
   // (fin C)
   // Lot design · D (motifs)
   // (fin D)
+  // Demandes ouvertes à tous les lauréats : le nombre sur la carte de l'accueil
+  [/^(\d+) demandes d’étudiants encore ouvertes$/, n => `طلبات مفتوحة من الطلبة: ${n}`],
   // Lot mouvement · A (motifs)
   [/^Accepter l’aide de (.+) \?$/, n => `قبول مساعدة ${n}؟`],
   [/^(.+) a accepté ton aide$/, n => `تم قبول مساعدتك من طرف ${n}`],

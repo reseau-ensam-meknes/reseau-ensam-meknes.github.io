@@ -3,7 +3,7 @@ import { getLang, setLang, chargerAR } from './i18n.js';
 import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore, texteErreur } from './store.js';
 import { Icon, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille, ecranLibre } from './ui.js';
-import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour } from './logic.js';
+import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, demandeLargeLe, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
 import { ParcoursPage, EspacePage, Journey, journeyStep, confirmerRecrutement, refuserRecrutement, versMerci } from './me.js';
 import { ReseauPage, ProfileModal, ProfileForm, AskQuestion } from './community.js';
@@ -508,7 +508,7 @@ function buildNotifs({ data, me, store, saison }) {
     if (x.laureat_id === me.id && ['declinee', 'close'].includes(x.status) && recent(x.repondu_at || x.created_at, 7)) out.push({ key: 'dx' + x.id + x.status, ref: d.id, icon: 'heart', to: 'offres/demandes/' + d.id, at: x.repondu_at || x.created_at, text: `${first(d.auteur_id)} a choisi une autre voie pour « ${d.titre} ». Merci d’avoir proposé ton aide !` });
   }
   for (const d of data.demandes || []) if (d.auteur_id === me.id && demandeEnPause(d)) out.push({ key: 'dr' + d.id, ref: d.id, action: true, geste: 'Voir ma demande', icon: 'clock', to: 'offres/demandes/' + d.id, at: d.relancee_at || d.created_at, text: `Ta demande « ${d.titre} » est en pause. Relance-la si tu cherches toujours.` });
-  if (me.role === 'laureat') for (const { d } of demandesPour(data, me, id => store.byId('profiles', id)).filter(x => !x.mienne && x.prox >= 1 && recent(x.d.created_at, 4)).slice(0, 2)) {
+  if (me.role === 'laureat') for (const { d } of demandesPour(data, me, id => store.byId('profiles', id)).filter(x => !x.mienne && x.pourMoi && recent(x.large ? new Date(demandeLargeLe(x.d, x.a)).toISOString() : x.d.created_at, 4)).slice(0, 2)) {
     out.push({ key: 'dn' + d.id, ref: d.id, besoin: true, aider: d.id, tone: 'accent', icon: 'send', to: 'offres/demandes/' + d.id, at: d.created_at, text: `${name(d.auteur_id)} cherche : ${d.titre}` });
   }
   // Bravos reçus sur sa réussite
@@ -641,9 +641,9 @@ function prochainPas(ctx, notifs, etape, { plAttente, helper, besoins = [] } = {
   }
   const a = notifs.find(n => n.action && !n.rdv && !n.besoin && !/^(eq|dc|md|sc|pa|dm|ph)/.test(n.key || '') && !(role === 'etudiant' && n.icon === 'briefcase'));
   if (a) return pasNotif(ctx, a);
-  // Un étudiant précis vaut mieux que l'étape « Aide un étudiant »
-  const aide = role === 'laureat' && besoins[0] ? pasBesoin(ctx, besoins[0]) : null;
-  if (etape && !(etape.cle === 'aide' && aide)) return { key: 'guide-' + etape.cle, guide: true, icon: etape.icon, titre: etape.titre, detail: etape.texte, cta: etape.cta, go: etape.go, ici: etape.cle === 'dispo' };
+  // Un étudiant précis qui attend passe avant toutes les étapes des premiers pas (profil, disponibilité, offre)
+  const aide = role === 'laureat' && besoins[0] ? pasBesoin(ctx, besoins[0], besoins) : null;
+  if (etape && !aide) return { key: 'guide-' + etape.cle, guide: true, icon: etape.icon, titre: etape.titre, detail: etape.texte, cta: etape.cta, go: etape.go, ici: etape.cle === 'dispo' };
   const deja = o => data.applications.some(y => y.offer_id === o.id && y.student_id === me.id);
   let o = null;
   if (role === 'etudiant') {
@@ -690,10 +690,13 @@ function pasNotif(ctx, n) {
   }
 }
 // Lauréat : le premier étudiant qui attend une aide qu'il peut donner, ouvert sur place
-function pasBesoin(ctx, b) {
+function pasBesoin(ctx, b, besoins = [b]) {
   const nom = ctx.store.byId('profiles', b.who)?.full_name || 'Un membre';
   const cta = b.kind === 'cv' ? `Relire le CV de ${nom.split(' ')[0]}` : b.kind === 'question' ? 'Répondre à la question' : VERBE_BESOIN[b.kind];
-  return { key: 'besoin-' + b.kind + b.id, ref: b.id, icon: ICONE_BESOIN[b.kind], eyebrow: 'Tu peux aider', titre: phraseBesoin(b, nom), cta, go: () => ouvrirBesoin(ctx, b) };
+  // Les autres demandes ouvertes qui lui sont adressées : leur nombre, et un lien vers la liste
+  const n = besoins.filter(x => x.kind === 'demande').length;
+  const plus = n > 1 ? { detail: `${n} demandes d’étudiants encore ouvertes`, lien: { label: 'Voir les demandes', go: () => ctx.go('offres/demandes') } } : {};
+  return { key: 'besoin-' + b.kind + b.id, ref: b.id, icon: ICONE_BESOIN[b.kind], eyebrow: 'Tu peux aider', titre: phraseBesoin(b, nom), cta, go: () => ouvrirBesoin(ctx, b), ...plus };
 }
 
 // La carte « prochaine étape » : une seule forme, un seul bouton plein qui nomme l'action, au plus deux liens dessous.
@@ -1009,7 +1012,7 @@ function guideEtapes(ctx, setCompose) {
     const byId = id => store.byId('profiles', id);
     const cherche = !!me.en_recherche;
     const aAide = data.mentorships.some(m => m.mentor_id === me.id && m.status !== 'demande') || (data.propositions || []).some(x => x.laureat_id === me.id);
-    const demandes = demandesPour(data, me, byId).filter(x => !x.mienne && AIDE_OUVERTE.includes(etatAide(data, me, x.d)));
+    const demandes = demandesPour(data, me, byId).filter(x => !x.mienne && x.pourMoi && AIDE_OUVERTE.includes(etatAide(data, me, x.d)));
     const aAider = requestsFor(data, me, byId).length || demandes.length;
     const pourMoi = data.offers.some(o => o.status === 'ouverte' && o.author_id !== me.id && matchesMe(o, me, saison) && peutPostulerA(o, me, saison));
     steps = [compte,
@@ -1017,10 +1020,11 @@ function guideEtapes(ctx, setCompose) {
       E('profil', 'user', 'Complète ton profil', cherche ? 'Le poste que tu cherches : les lauréats qui recrutent te trouvent plus vite.' : 'En poste ou en recherche d’emploi : dis-le, et le réseau te trouve plus facilement.', profilLaureatFait(me), () => go('profil'), 'Compléter mon profil'),
       E('dispo', 'mentor', 'Rends-toi disponible', 'Les étudiants de ta filière pourront te demander 20 minutes de conseil.', me.mentor_dispo,
         () => act(async () => { await store.update('profiles', me.id, { mentor_dispo: true }); toast('C’est noté : les étudiants de ta filière te verront dans Mentorat.'); }), 'Me rendre disponible'),
+      // Aider un étudiant qui attend avant de publier une offre : le geste le plus simple d'abord
+      aAide || aAider ? E('aide', 'heart', 'Aide un étudiant', demandes.length ? (demandes[0].prox >= 1 ? 'Un étudiant de ton parcours a dit ce qu’il cherche : propose ton aide.' : 'Un étudiant de l’école attend encore une réponse : propose ton aide.') : 'Clique sur un de ses horaires : la visio et l’invitation sont prêtes.', aAide,
+        demandes.length ? () => ctx.proposerAide(demandes[0].d.id) : () => go('mentorat'), demandes.length ? 'Je peux aider' : 'Voir leurs horaires') : null,
       cherche ? (aPostule || pourMoi ? E('offres', 'feed', 'Regarde les offres pour toi', 'Les offres « Jeunes diplômés » et celles partagées entre lauréats.', aPostule, () => go('offres'), 'Voir les offres pour moi') : null)
         : E('offre', 'plus', 'Publie une offre', 'Une minute suffit. Seuls les étudiants de l’année concernée la voient.', myOffers.length > 0, () => setCompose(true), 'Publier une offre'),
-      aAide || aAider ? E('aide', 'heart', 'Aide un étudiant', demandes.length ? 'Un étudiant de ton parcours a dit ce qu’il cherche : propose ton aide.' : 'Clique sur un de ses horaires : la visio et l’invitation sont prêtes.', aAide,
-        demandes.length ? () => ctx.proposerAide(demandes[0].d.id) : () => go('mentorat'), demandes.length ? 'Je peux aider' : 'Voir leurs horaires') : null,
       cherche ? null : E('recrute', 'check', 'Déclare le recrutement', 'L’étudiant confirme en un clic et peut te laisser un mot de remerciement.', data.placements.some(p => p.laureat_id === me.id && p.status === 'confirme'), null, '', true, 50),
     ];
   }

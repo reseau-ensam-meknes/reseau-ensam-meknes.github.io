@@ -60,6 +60,19 @@ test('email : les demandes du parcours, un bouton « Je peux aider » par demand
   assert.ok(ar.html.includes('أستطيع المساعدة'));
 });
 
+test('email : demandes restées sans aide hors de son parcours, sans dire « de ton parcours »', () => {
+  const c = N.rendreDemandes([dem(D1, { large: true }), dem(D2, { large: true, titre: 'Stage en BTP' })], 'fr', SITE, 'j');
+  assert.equal(c.sujet, '2 demandes d’étudiants attendent encore une aide · Réseau ENSAM');
+  assert.ok(!c.texte.includes('de ton parcours') && c.texte.includes('aucune aide'));
+  assert.ok(c.texte.includes('parce que tu es lauréat de l’école'));
+  const m = N.rendreDemandes([dem(D1), dem(D2, { large: true })], 'fr', SITE, 'j');
+  assert.equal(m.sujet, '2 demandes d’étudiants · Réseau ENSAM');
+  assert.ok(m.texte.includes('certains de ton parcours'));
+  const ar = N.rendreDemandes([dem(D1, { large: true }), dem(D2, { large: true })], 'ar', SITE, 'j');
+  assert.ok(ar.sujet.includes('في انتظار مساعدة') && !ar.texte.includes('من مسارك'));
+  assert.equal(N.rendreDemandes([dem(D1), dem(D2)], 'fr', SITE, 'j').sujet, '2 demandes d’étudiants de ton parcours · Réseau ENSAM', 'base plus ancienne : comme avant');
+});
+
 test('tâche « demandes » : un email par lauréat choisi par la base ; seuls les envois réussis sont notés', async () => {
   const b = nouveauBanc();
   configurerEnv({ BREVO_API_KEY: 'xkeysib-test', SENDER_EMAIL: 'reseau@ensam-meknes.example' });
