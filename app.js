@@ -641,9 +641,12 @@ function prochainPas(ctx, notifs, etape, { plAttente, helper, besoins = [] } = {
   }
   const a = notifs.find(n => n.action && !n.rdv && !n.besoin && !/^(eq|dc|md|sc|pa|dm|ph)/.test(n.key || '') && !(role === 'etudiant' && n.icon === 'briefcase'));
   if (a) return pasNotif(ctx, a);
-  // Un étudiant précis qui attend passe avant toutes les étapes des premiers pas (profil, disponibilité, offre)
+  // Un étudiant précis vaut mieux que l'étape « Aide un étudiant » ; une demande d'étudiant, ou ce qu'on lui demande
+  // à lui, passe même avant toutes les étapes des premiers pas (profil, disponibilité, offre)
   const aide = role === 'laureat' && besoins[0] ? pasBesoin(ctx, besoins[0], besoins) : null;
-  if (etape && !aide) return { key: 'guide-' + etape.cle, guide: true, icon: etape.icon, titre: etape.titre, detail: etape.texte, cta: etape.cta, go: etape.go, ici: etape.cle === 'dispo' };
+  const urgent = role === 'laureat' && etape ? besoins.find(b => b.direct || b.kind === 'demande') : null;
+  if (urgent) return pasBesoin(ctx, urgent, besoins);
+  if (etape && !(etape.cle === 'aide' && aide)) return { key: 'guide-' + etape.cle, guide: true, icon: etape.icon, titre: etape.titre, detail: etape.texte, cta: etape.cta, go: etape.go, ici: etape.cle === 'dispo' };
   const deja = o => data.applications.some(y => y.offer_id === o.id && y.student_id === me.id);
   let o = null;
   if (role === 'etudiant') {
@@ -693,9 +696,9 @@ function pasNotif(ctx, n) {
 function pasBesoin(ctx, b, besoins = [b]) {
   const nom = ctx.store.byId('profiles', b.who)?.full_name || 'Un membre';
   const cta = b.kind === 'cv' ? `Relire le CV de ${nom.split(' ')[0]}` : b.kind === 'question' ? 'Répondre à la question' : VERBE_BESOIN[b.kind];
-  // Les autres demandes ouvertes qui lui sont adressées : leur nombre, et un lien vers la liste
+  // Les autres demandes ouvertes qui lui sont adressées : leur nombre, dans le lien vers la liste (la carte reste courte sur téléphone)
   const n = besoins.filter(x => x.kind === 'demande').length;
-  const plus = n > 1 ? { detail: `${n} demandes d’étudiants encore ouvertes`, lien: { label: 'Voir les demandes', go: () => ctx.go('offres/demandes') } } : {};
+  const plus = n > 1 ? { lien: { label: `Voir les ${n} demandes ouvertes`, go: () => ctx.go('offres/demandes') } } : {};
   return { key: 'besoin-' + b.kind + b.id, ref: b.id, icon: ICONE_BESOIN[b.kind], eyebrow: 'Tu peux aider', titre: phraseBesoin(b, nom), cta, go: () => ouvrirBesoin(ctx, b), ...plus };
 }
 
@@ -772,7 +775,8 @@ function useEtapeFaite(me, g, pas) {
     if (s) {
       if (phase === 1 || phase === 2) return;
       setPhase(1);
-      minuteurs.current.push(setTimeout(() => setPhase(2), 1350), setTimeout(() => { vu.current = null; setPhase(3); }, 1620));
+      // Oubliée aussi sur l'appareil : la carte suivante peut ne pas être une étape (un étudiant qui attend), elle ne se recoche pas au retour
+      minuteurs.current.push(setTimeout(() => setPhase(2), 1350), setTimeout(() => { vu.current = null; ecrireLocal(k, null); setPhase(3); }, 1620));
       return;
     }
     if (vu.current !== montree) { vu.current = montree; ecrireLocal(k, montree); }

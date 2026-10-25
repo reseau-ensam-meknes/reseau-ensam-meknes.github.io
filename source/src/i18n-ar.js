@@ -655,7 +655,7 @@ Object.assign(AR, {
 
 // Lot mouvement · A : fêtes des deux côtés, carte « Fait », écrans vides illustrés
 Object.assign(AR, {
-  'Voir les demandes': 'عرض الطلبات', 'Fait': 'تمّ', 'Oui, accepter': 'نعم، أقبل', 'Pas maintenant': 'ليس الآن', 'Accepter cette aide ?': 'قبول هذه المساعدة؟',
+  'Fait': 'تمّ', 'Oui, accepter': 'نعم، أقبل', 'Pas maintenant': 'ليس الآن', 'Accepter cette aide ?': 'قبول هذه المساعدة؟',
   'Les autres propositions seront closes, et vous verrez vos coordonnées.': 'ستُغلق الاقتراحات الأخرى، وسيرى كل منكما معلومات اتصال الآخر.',
   'Un lauréat': 'خريج', 'Ton premier merci': 'أول رسالة شكر تصلك', 'Quelqu’un que tu as aidé t’a laissé ce mot :': 'كلمة شكر وصلتك ممن ساعدتهم:', 'Avec plaisir': 'بكل سرور',
 });
@@ -677,7 +677,7 @@ export const AR_PATTERNS = [
   // Lot design · D (motifs)
   // (fin D)
   // Demandes ouvertes à tous les lauréats : le nombre sur la carte de l'accueil
-  [/^(\d+) demandes d’étudiants encore ouvertes$/, n => `طلبات مفتوحة من الطلبة: ${n}`],
+  [/^Voir les (\d+) demandes ouvertes$/, n => `عرض الطلبات المفتوحة (${n})`],
   // Lot mouvement · A (motifs)
   [/^Accepter l’aide de (.+) \?$/, n => `قبول مساعدة ${n}؟`],
   [/^(.+) a accepté ton aide$/, n => `تم قبول مساعدتك من طرف ${n}`],

@@ -2066,6 +2066,12 @@ test('cloche : son chiffre compte ce qui attend un geste, la feuille dit « À f
   await s.ctx.close();
 });
 
+// Démo sans demande ouverte : les premiers pas reprennent la carte (un étudiant qui attend passe avant eux)
+async function sansDemandeOuverte(s) {
+  await s.page.evaluate(() => { const k = 'ensam-demo-v14'; const x = JSON.parse(localStorage.getItem(k)); for (const d of x.data.demandes) if (d.status === 'ouverte') d.status = 'fermee'; localStorage.setItem(k, JSON.stringify(x)); });
+  await s.page.reload(); await s.page.waitForSelector('.hello');
+}
+
 test('premiers pas fondus dans la carte : la feuille s’ouvre, se masque, et se retrouve dans le menu', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Amine'); await s.aller('accueil');
@@ -2079,8 +2085,12 @@ test('premiers pas fondus dans la carte : la feuille s’ouvre, se masque, et se
   await s.aller('accueil/etapes'); await s.page.waitForSelector('.modal .etapes');
   await s.fermer();
   assert.equal(await s.page.evaluate(() => location.hash), '#accueil');
-  // La jeune lauréate sans emploi : ses premiers pas ne demandent pas d'employeur
+  // Un étudiant qui attend passe avant les premiers pas d'une nouvelle lauréate ; ses étapes restent à un toucher
   await s.comme('Nadia'); await s.aller('accueil');
+  assert.match(await s.page.getAttribute('.pas', 'data-pas'), /^besoin-demande/);
+  assert.match(await s.page.locator('.pas').innerText(), /Tu peux aider[\s\S]*Je peux aider[\s\S]*Premiers pas · 1 sur 5/);
+  // La jeune lauréate sans emploi : ses premiers pas ne demandent pas d'employeur
+  await sansDemandeOuverte(s);
   assert.match(await s.page.locator('.pas').innerText(), /Premiers pas · 1 sur 5[\s\S]*En poste ou en recherche d’emploi/);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
@@ -2771,7 +2781,7 @@ test('premier merci reçu par un lauréat : une fête le cite en entier, une seu
 
 test('carte « Fait » : au retour sur l’accueil, l’étape accomplie se coche en vert, puis la suivante arrive ; sur place aussi ; pas par-dessus la fête de fin', async () => {
   const s = await ouvrir({ largeur: 390 });
-  await s.comme('Nadia');
+  await s.comme('Nadia'); await sansDemandeOuverte(s);
   assert.equal(await s.page.getAttribute('.pas', 'data-pas'), 'guide-profil');
   await s.aller('profil'); await s.page.fill('#pf-ent', 'OCP Group');
   await s.page.click('form .row-end .btn.primary'); await s.page.waitForTimeout(300);
@@ -3192,10 +3202,11 @@ test('ambassadeur (démo) : refus, puis le suivant ; l’administration voit, re
   // Retirer, puis Annuler
   const premier = s.page.locator('#amb-admin .amb-liste li').first();
   const qui = await premier.locator('strong').innerText();
+  const lignes = m => s.page.waitForFunction(m => document.querySelectorAll('#amb-admin .amb-liste li').length === m, m, { timeout: 3000 }).catch(() => {});
   await premier.locator('.amb-retirer').click();
-  await s.page.waitForTimeout(250);
+  await lignes(n - 1);
   assert.equal(await s.page.locator('#amb-admin .amb-liste li').count(), n - 1);
-  await s.page.locator('.toast button', { hasText: 'Annuler' }).click(); await s.page.waitForTimeout(250);
+  await s.page.locator('.toast button', { hasText: 'Annuler' }).click(); await lignes(n);
   assert.equal(await s.page.locator('#amb-admin .amb-liste li').count(), n);
   // Nommer à la main : une proposition, que la personne acceptera depuis son accueil
   await s.page.fill('#amb-qui', 'Nadia'); await s.page.waitForSelector('#amb-admin .amb-trouves li');
