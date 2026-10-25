@@ -169,6 +169,7 @@ addAR({
   'Un étudiant partage une offre vue ailleurs, avec son lien.': 'يمكن للطالب مشاركة عرض منشور في موقع آخر، مع رابطه.',
   'Ajoute le lien de l’offre (https://…).': 'أضف رابط العرض (https://…).',
   'Cette offre est déjà partagée sur le réseau.': 'تمت مشاركة هذا العرض من قبل في الشبكة.',
+  'Cette offre partagée se postule sur son site d’origine.': 'يتم الترشح لهذا العرض المشارَك في موقعه الأصلي.',
 }, [
   [/^Partagée par (.+?) · vue sur (.+)$/, (n, s) => `مشاركة من ${n} · منشور على ${s}`],
   [/^Vue sur (.+)$/, s => `منشور على ${s}`],

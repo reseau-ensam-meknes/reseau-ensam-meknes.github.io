@@ -221,6 +221,10 @@ begin
   if tg_op = 'INSERT' then
     if new.offer_id is not null then
       select author_id into v_author from public.offers where id = new.offer_id;
+      -- Une offre partagée (vue ailleurs) se postule sur son site d'origine, pas ici
+      if exists (select 1 from public.offers where id = new.offer_id and origine = 'partagee') then
+        raise exception 'Cette offre partagée se postule sur son site d’origine.' using errcode = '42501';
+      end if;
       select entreprise, titre into new.entreprise, new.titre from public.offers where id = new.offer_id;
       if auth.uid() is not null and not public.is_admin() then new.status := 'postule'; end if;
     end if;
@@ -1088,6 +1092,8 @@ begin
     where p.emails_hebdo and u.email is not null
       and (n.resume_at is null or n.resume_at < now() - interval '6 days 12 hours')
       and p.created_at < now() - interval '2 days'
+      -- Pas le lendemain d'un email de rappel (rappels_visite, plus bas) : le résumé attend un jour
+      and not exists (select 1 from public.rappels_visite r where r.user_id = p.id and r.email_at > now() - interval '24 hours')
     order by n.resume_at nulls first, p.created_at
     limit greatest(1, least(p_max, 290));
 end $$;
@@ -2676,6 +2682,8 @@ begin
   from public.profiles p
   -- push_voulu : le choix « Nouvelles offres » de Mon profil, sinon le défaut (case « M'alerter » pour un étudiant)
   where public.offre_pour(new, p, public.saison_courante())
+    -- Le partage d'un étudiant n'envoie pas de notification : il se voit dans les offres et dans l'email des alertes
+    and not exists (select 1 from public.profiles a where a.id = new.author_id and a.role = 'etudiant')
     and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'offre_alerte')
   limit 500;
   return null;
@@ -4141,7 +4149,8 @@ end $$;
 -- ---------------------------------------------------------------------
 create or replace function public.demande_lisible_promo(p_auteur uuid, p_status text) returns boolean
 language sql stable security definer set search_path = public as $$
-  select coalesce(p_status in ('ouverte','match','pourvue'), false) and exists (
+  -- Pas les demandes en match : la ligne dirait quel lauréat aide (laureat_id) avant l'annonce de la réussite
+  select coalesce(p_status in ('ouverte','pourvue'), false) and exists (
     select 1 from public.profiles v join public.profiles a on a.id = p_auteur
     where v.id = auth.uid() and v.role = 'etudiant' and a.role = 'etudiant' and a.id <> v.id
       and public.niveau_de(v.promo, public.saison_courante()) = public.niveau_de(a.promo, public.saison_courante())
@@ -4300,13 +4309,25 @@ drop trigger if exists trg_limite on public.reponses_demandes;
 create trigger trg_limite before insert on public.reponses_demandes
   for each row execute function public.limiter('author_id', '30', '1 day', 'body');
 
--- Une réponse sous ma demande : une notification (catégorie demandes)
+-- Une réponse sous ma demande : une notification (catégorie demandes), au plus une toutes les 30 minutes par
+-- demande et par personne qui répond (supprimer puis republier ne renvoie pas de notification)
+create table if not exists public.reponses_notif (
+  demande_id uuid not null references public.demandes(id) on delete cascade,
+  author_id uuid not null references public.profiles(id) on delete cascade,
+  at timestamptz not null default now(),
+  primary key (demande_id, author_id)
+);
+alter table public.reponses_notif enable row level security;
 create or replace function public.notif_reponse_demande() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare v_d record;
 begin
   select d.id, d.auteur_id, d.titre into v_d from public.demandes d where d.id = new.demande_id;
   if v_d.auteur_id is null or v_d.auteur_id = new.author_id then return null; end if;
+  if exists (select 1 from public.reponses_notif r where r.demande_id = new.demande_id and r.author_id = new.author_id
+      and r.at > now() - interval '30 minutes') then return null; end if;
+  insert into public.reponses_notif (demande_id, author_id, at) values (new.demande_id, new.author_id, now())
+    on conflict (demande_id, author_id) do update set at = excluded.at;
   perform public.pousser(v_d.auteur_id, 'demande_reponse', jsonb_build_object('nom', (select full_name from public.profiles where id = new.author_id),
     'titre', v_d.titre, 'texte', left(new.body, 140), 'demande', v_d.id));
   return null;
@@ -4572,9 +4593,9 @@ end $$;
 
 create or replace function public.offre_origine() returns trigger
 language plpgsql security definer set search_path = public as $$
-declare v_role text; v_admin boolean := public.is_admin();
+declare v_role text; v_promo int; v_niv int; v_admin boolean := public.is_admin();
 begin
-  select role into v_role from public.profiles where id = new.author_id;
+  select role, promo into v_role, v_promo from public.profiles where id = new.author_id;
   v_role := coalesce(v_role, '');
   if tg_op = 'UPDATE' then
     if new.origine is distinct from old.origine and not v_admin then
@@ -4585,10 +4606,23 @@ begin
         raise exception 'Seul un lauréat peut porter une offre de son entreprise.' using errcode = '42501';
       end if;
     end if;
+    -- Un étudiant ne change pas après coup ce que la publication lui interdit (audience, années)
+    if v_role = 'etudiant' and not v_admin then
+      if coalesce(new.audience, 'etudiants') <> 'etudiants' then
+        raise exception 'Un étudiant partage une offre vue ailleurs, avec son lien.' using errcode = '42501';
+      end if;
+      v_niv := public.niveau_de(v_promo, public.saison_courante());
+      new.annees := array[v_niv];
+    end if;
     if new.origine = 'partagee' and new.lien is distinct from old.lien then
       new.lien := trim(new.lien);
       if new.lien is null or char_length(new.lien) > 500 or new.lien !~* '^https?://[^[:space:]/?#]+\.[^[:space:]]+$' then
         raise exception 'Ajoute le lien de l’offre (https://…).' using errcode = '23514';
+      end if;
+      if exists (select 1 from public.offers o where o.id <> new.id and o.origine = 'partagee' and o.status = 'ouverte'
+          and o.created_at > now() - interval '45 days'
+          and lower(regexp_replace(trim(o.lien), '/+$', '')) = lower(regexp_replace(new.lien, '/+$', ''))) then
+        raise exception 'Cette offre est déjà partagée sur le réseau.' using errcode = '23505';
       end if;
     end if;
     if new.origine = 'partagee' then new.cooptation := false; end if;
@@ -4599,6 +4633,10 @@ begin
   end if;
   if v_role = 'etudiant' and (new.origine is distinct from 'partagee' or coalesce(new.audience, 'etudiants') <> 'etudiants') then
     raise exception 'Un étudiant partage une offre vue ailleurs, avec son lien.' using errcode = '42501';
+  end if;
+  -- Le partage d'un étudiant va aux étudiants de son année, comme le dit l'écran
+  if v_role = 'etudiant' and not v_admin then
+    new.annees := array[public.niveau_de(v_promo, public.saison_courante())];
   end if;
   if new.origine = 'partagee' then
     new.lien := trim(new.lien);

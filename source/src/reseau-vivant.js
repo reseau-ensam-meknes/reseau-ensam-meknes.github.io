@@ -8,10 +8,11 @@ import { niveauOf, seasonOf, bloque, demandeEnPause } from './logic.js';
 export const EMOJIS_PUBLICS = ['👍', '❤️', '👏', '🙏', '💪'];
 export const REPONSE_MAX = 500;
 export const VIVANT = ['reactions_publiques', 'reponses_demandes'];
-const STATUTS_PROMO = ['ouverte', 'match', 'pourvue'];
+// Pas « match » : la ligne dirait quel lauréat aide, avant l'annonce de la réussite (comme demande_lisible_promo)
+const STATUTS_PROMO = ['ouverte', 'pourvue'];
 
 // Une demande que ce membre peut lire : la sienne ; toutes pour un lauréat ou l'administration ;
-// pour un étudiant, celles des étudiants de son année (ouvertes, en match ou pourvues), sauf blocage.
+// pour un étudiant, celles des étudiants de son année (ouvertes ou pourvues), sauf blocage.
 export function peutLireDemande(data, me, d, byId, saison = seasonOf()) {
   if (!me || !d) return false;
   if (d.auteur_id === me.id || me.role === 'admin' || me.role === 'laureat') return true;

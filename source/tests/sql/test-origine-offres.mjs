@@ -8,7 +8,7 @@ import { nouvelleBase, creerCompte, en, uid } from './banc-sql.mjs';
 
 const SCHEMA = process.env.SCHEMA_SQL || new URL('../../supabase/schema.sql', import.meta.url).pathname;
 const saison = () => { const d = new Date(); return d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1; };
-let db; const LAU = uid(1101), ETU = uid(1102), ETU2 = uid(1103), ADM = uid(1104);
+let db; const LAU = uid(1101), ETU = uid(1102), ETU2 = uid(1103), ADM = uid(1104), LAU2 = uid(1191), ETU3 = uid(1192);
 
 before(async () => {
   db = await nouvelleBase(SCHEMA);
@@ -20,6 +20,8 @@ before(async () => {
   await creerCompte(db, { id: ETU2, full_name: 'Étudiante Alerte', role: 'etudiant', filiere: 'Génie Industriel', promo: s + 2 });
   await creerCompte(db, { id: ADM, full_name: 'Admin Origine', role: 'etudiant', filiere: 'Génie Industriel', promo: 2010 });
   await db.query(`update public.profiles set role = 'admin' where id = $1`, [ADM]);
+  await creerCompte(db, { id: LAU2, full_name: 'Lauréat Partage', role: 'laureat', filiere: 'Génie Industriel', promo: 2016 });
+  await creerCompte(db, { id: ETU3, full_name: 'Étudiant Relecture', role: 'etudiant', filiere: 'Génie Industriel', promo: s + 2 });
   await db.query(`insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values ($1, 'https://push.exemple/e2', 'k', 'a')`, [ETU2]);
 });
 
@@ -96,7 +98,8 @@ test('fermeture : un partage sans date limite après 45 jours, un partage dont l
 test('alerte push : l’origine de l’offre part avec la notification', async () => {
   await db.query('delete from public.push_queue');
   const p = await publier(LAU, { origine: 'portee', titre: n(400), annees: '{4}' });
-  const s = await publier(ETU, { origine: 'partagee', lien: 'https://exemple.ma/alerte', titre: n(401), annees: '{4}' });
+  // (le partage d'un lauréat ; celui d'un étudiant n'envoie pas de notification, voir « relecture » plus bas)
+  const s = await publier(LAU2, { origine: 'partagee', lien: 'https://exemple.ma/alerte', titre: n(401), annees: '{4}' });
   const q = await db.query(`select data from public.push_queue where user_id = $1 and kind = 'offre_alerte'`, [ETU2]);
   const par = Object.fromEntries(q.rows.map(r => [r.data.offre, r.data.origine]));
   assert.equal(par[p.id], 'portee'); assert.equal(par[s.id], 'partagee');
@@ -104,6 +107,22 @@ test('alerte push : l’origine de l’offre part avec la notification', async (
   await db.query(`update public.offers set created_at = now() - interval '30 days' where id = any($1)`, [[p.id, s.id]]);
   await db.query('delete from public.push_queue');
   await db.query('select public.relances_offres()');
-  const rel = await db.query(`select user_id from public.push_queue where kind = 'relance_offre'`);
-  assert.ok(!rel.rows.some(r => r.user_id === ETU), 'aucune relance pour l’étudiant qui a partagé');
+  const rel = await db.query(`select user_id, data from public.push_queue where kind = 'relance_offre'`);
+  assert.ok(!rel.rows.some(r => JSON.stringify(r.data).includes(s.id)), 'aucune relance pour un partage');
+});
+
+test('relecture : un partage d’étudiant reste pour son année, sans alerte push ; pas de candidature sur un partage', async () => {
+  const o = await publier(ETU3, { origine: 'partagee', lien: 'https://exemple.ma/relecture-1', annees: '{3,4,5,6}' });
+  assert.deepEqual(o.annees, [4], 'son année seulement, quelles que soient les années envoyées');
+  const pushs = await db.query(`select count(*)::int n from public.push_queue where kind = 'offre_alerte' and data->>'offre' = $1`, [o.id]);
+  assert.equal(pushs.rows[0].n, 0, 'le partage d’un étudiant n’envoie pas de notification');
+  // Ce que la publication interdit reste interdit après coup
+  await refus(en(db, ETU3, tx => tx.query(`update public.offers set audience = 'laureats' where id = $1`, [o.id])), /Un étudiant partage/);
+  await en(db, ETU3, tx => tx.query(`update public.offers set annees = '{3,5}' where id = $1`, [o.id]));
+  assert.deepEqual((await db.query(`select annees from public.offers where id = $1`, [o.id])).rows[0].annees, [4]);
+  // Changer le lien pour un lien déjà partagé et ouvert : refusé
+  const autre = await publier(LAU2, { origine: 'partagee', lien: 'https://exemple.ma/relecture-2' });
+  await refus(en(db, ETU3, tx => tx.query(`update public.offers set lien = 'https://exemple.ma/relecture-2/' where id = $1`, [o.id])), /déjà partagée/);
+  // Une offre partagée se postule sur son site d'origine
+  await refus(en(db, ETU2, tx => tx.query(`insert into public.applications (student_id, offer_id) values ($1, $2)`, [ETU2, autre.id])), /site d’origine/);
 });

@@ -856,7 +856,7 @@ export function tonAnnee(data, me, saison) {
     role: 'laureat', points: Math.max(0, s.points - (computeScores(data, b).get(me.id)?.points || 0)),
     mentorats: data.mentorships.filter(m => m.mentor_id === me.id && m.status === 'terminee' && inSeason(m.rdv_at || m.created_at)).length,
     recrutes: data.placements.filter(p => p.laureat_id === me.id && p.status === 'confirme' && inSeason(p.confirmed_at || p.created_at)).length,
-    offres: data.offers.filter(o => o.author_id === me.id && inSeason(o.created_at)).length,
+    offres: data.offers.filter(o => o.author_id === me.id && !estPartagee(o) && inSeason(o.created_at)).length,
     candidatures: data.applications.filter(x => inSeason(x.created_at) && data.offers.some(o => o.id === x.offer_id && o.author_id === me.id)).length,
     reponses: data.answers.filter(x => x.author_id === me.id && inSeason(x.created_at)).length,
     filleuls: data.parrainages.filter(x => x.parrain_id === me.id && x.saison === saison).length,

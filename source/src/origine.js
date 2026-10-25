@@ -51,7 +51,12 @@ export function refusOrigine(row, { role = '', admin = false } = {}, offres = []
       if (estPartagee(old) || estPartagee(row)) return 'Une offre partagée reste un partage : publie plutôt une nouvelle offre.';
       if (estPortee(row) && !['laureat', 'admin'].includes(role)) return 'Seul un lauréat peut porter une offre de son entreprise.';
     }
-    if (estPartagee(row) && row.lien !== old.lien && !lienValide(row.lien)) return 'Ajoute le lien de l’offre (https://…).';
+    if (role === 'etudiant' && !admin && (row.audience || 'etudiants') !== 'etudiants') return 'Un étudiant partage une offre vue ailleurs, avec son lien.';
+    if (estPartagee(row) && row.lien !== old.lien) {
+      if (!lienValide(row.lien)) return 'Ajoute le lien de l’offre (https://…).';
+      const k = cleLien(row.lien);
+      if (offres.some(o => estPartagee(o) && o.status === 'ouverte' && cleLien(o.lien) === k && now - new Date(o.created_at).getTime() < PARTAGE_JOURS * 864e5)) return 'Cette offre est déjà partagée sur le réseau.';
+    }
     return null;
   }
   if (estPortee(row) && !['laureat', 'admin'].includes(role)) return 'Seul un lauréat peut porter une offre de son entreprise.';

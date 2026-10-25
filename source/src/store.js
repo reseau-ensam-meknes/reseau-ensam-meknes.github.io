@@ -482,6 +482,9 @@ function regleOrigineDemo(store, r, old) {
   const role = store.byId('profiles', r.author_id)?.role || '';
   const refus = refusOrigine(r, { role, admin: me?.role === 'admin' }, store.data.offers.filter(x => x.id !== r.id), old);
   if (refus) throw new Error(refus);
+  // Le partage d'un étudiant va aux étudiants de son année (comme offre_origine dans la base)
+  const auteur = store.byId('profiles', r.author_id);
+  if (role === 'etudiant' && me?.role !== 'admin') r.annees = [niveauOf(auteur, seasonOf())];
   if (estPartagee(r)) { r.lien = String(r.lien || '').trim(); r.cooptation = false; }
 }
 
@@ -859,7 +862,7 @@ function applyPlacementRules(store, r, old) {
 function applyApplicationRules(store, r, old) {
   const me = store.me; if (me?.role === 'admin') return;
   if (!old) {
-    if (r.offer_id) { const o = store.byId('offers', r.offer_id); if (o) { r.entreprise = o.entreprise; r.titre = o.titre; } r.status = 'postule'; }
+    if (r.offer_id) { const o = store.byId('offers', r.offer_id); if (o && estPartagee(o)) throw new Error('Cette offre partagée se postule sur son site d’origine.'); if (o) { r.entreprise = o.entreprise; r.titre = o.titre; } r.status = 'postule'; }
     if (r.offer_id && store.data.applications.some(a => a.offer_id === r.offer_id && a.student_id === r.student_id)) throw new Error('Tu as déjà postulé à cette offre.');
     return;
   }

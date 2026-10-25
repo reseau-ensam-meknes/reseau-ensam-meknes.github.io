@@ -45,6 +45,10 @@ test('demandes : un étudiant lit celles de son année, pas celles d’une autre
   await q(ETU, `update public.demandes set status = 'fermee' where id = $1`, [D.id]);
   assert.equal((await q(MEME, 'select id from public.demandes')).length, 0);
   await q(ETU, `update public.demandes set status = 'ouverte' where id = $1`, [D.id]);
+  // En match : la ligne dirait quel lauréat aide, donc pas pour les camarades
+  await db.query(`update public.demandes set status = 'match' where id = $1`, [D.id]);
+  assert.equal((await q(MEME, 'select id from public.demandes')).length, 0);
+  await db.query(`update public.demandes set status = 'ouverte' where id = $1`, [D.id]);
   // Un blocage entre les deux étudiants la cache aussi
   await q(MEME, 'insert into public.blocages (user_id, bloque_id) values ($1, $2)', [MEME, ETU]);
   assert.equal((await q(MEME, 'select id from public.demandes')).length, 0);
@@ -137,12 +141,16 @@ test('réponses : lues et écrites par ceux qui lisent la demande ; l’auteur e
   // L'auteur qui répond lui-même ne se prévient pas ; il retire une réponse sous sa demande, un autre membre non
   await repondre(ETU, D.id, 'Merci beaucoup, je regarde !');
   assert.equal((await pushs('demande_reponse')).length, 2);
+  // Supprimer puis republier ne renvoie pas de notification (une toutes les 30 minutes par personne qui répond)
+  await q(L1, 'delete from public.reponses_demandes where id = $1', [r.id]);
+  const r2 = await repondre(L1, D.id);
+  assert.equal((await pushs('demande_reponse')).length, 2);
   await q(L2, 'delete from public.reponses_demandes where id = $1', [m.id]);
   assert.equal((await db.query('select count(*)::int n from public.reponses_demandes where id = $1', [m.id])).rows[0].n, 1);
   await q(ETU, 'delete from public.reponses_demandes where id = $1', [m.id]);
   assert.equal((await db.query('select count(*)::int n from public.reponses_demandes where id = $1', [m.id])).rows[0].n, 0);
   // Signaler une réponse ; pas plus de 30 réponses par jour
-  await q(L2, `insert into public.signalements (auteur_id, cible_type, cible_id, motif) values ($1, 'reponse_demande', $2, 'spam')`, [L2, r.id]);
+  await q(L2, `insert into public.signalements (auteur_id, cible_type, cible_id, motif) values ($1, 'reponse_demande', $2, 'spam')`, [L2, r2.id]);
   await db.query(`update public.reponses_demandes set created_at = now() where author_id = $1`, [L2]);
   for (let i = 0; i < 30; i++) await repondre(L2, D.id, `Conseil numéro ${i} pour ta recherche`);
   await refuse(repondre(L2, D.id, 'Encore un conseil pour ta recherche'), /Doucement/);

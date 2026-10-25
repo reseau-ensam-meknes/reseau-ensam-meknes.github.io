@@ -26,8 +26,9 @@ const donnees = () => ({
   reactions_publiques: [], reponses_demandes: [],
 });
 
-test('lire une demande : son année (ouverte, match, pourvue), pas une autre année, pas une demande d’emploi d’un lauréat', () => {
+test('lire une demande : son année (ouverte, pourvue), pas une autre année, pas une demande d’emploi d’un lauréat', () => {
   const data = donnees(); const d = id => data.demandes.find(x => x.id === id);
+  assert.equal(peutLireDemande(data, P.salma, d('d6'), byId, S), false, 'en match : on ne dit pas qui aide');
   assert.equal(peutLireDemande(data, P.salma, d('d1'), byId, S), true);
   assert.equal(peutLireDemande(data, P.salma, d('d2'), byId, S), true);
   assert.equal(peutLireDemande(data, P.salma, d('d3'), byId, S), false, 'fermée');
@@ -39,9 +40,9 @@ test('lire une demande : son année (ouverte, match, pourvue), pas une autre ann
   assert.equal(peutLireOffre(P.salma, data.offers[1]), false); assert.equal(peutLireOffre(P.youssef, data.offers[1]), true);
 });
 
-test('« Demandes de ta promo » : ouvertes, puis match, puis réussies ; ni la sienne, ni celles en pause', () => {
+test('« Demandes de ta promo » : ouvertes, puis réussies ; ni celles en match, ni la sienne, ni celles en pause', () => {
   const data = donnees();
-  assert.deepEqual(demandesPromo(data, P.salma, byId, S).map(d => d.id), ['d1', 'd6', 'd2']);
+  assert.deepEqual(demandesPromo(data, P.salma, byId, S).map(d => d.id), ['d1', 'd2']);
   assert.deepEqual(demandesPromo(data, P.hiba, byId, S).map(d => d.id), []);
   assert.deepEqual(demandesPromo(data, P.youssef, byId, S), [], 'pour les étudiants seulement');
 });

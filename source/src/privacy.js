@@ -100,7 +100,9 @@ const motsNotif = me => (me.role === 'etudiant' ? CATS_NOTIF.etudiant
 // L'équipe du réseau ne reçoit ni les nouvelles demandes d'étudiants (réservées aux lauréats) ni d'alertes d'offres :
 // pas de case qui ne servirait à rien (les signalements, eux, arrivent toujours)
 // (ni de rappels de visite : ils ne vont qu'aux étudiants et aux lauréats)
-const catsNotif = me => PUSH_CATEGORIES.filter(c => me.role !== 'admin' || (c !== 'demandes' && c !== 'offres' && c !== 'rappels'));
+// Avant mise-a-jour.sql, la base refuse la clé « rappels » dans notif_push : pas de case (même migration que offers.origine)
+const catsNotif = (me, store) => PUSH_CATEGORIES.filter(c => (me.role !== 'admin' || (c !== 'demandes' && c !== 'offres' && c !== 'rappels'))
+  && (c !== 'rappels' || !store?.peutOrigine || store.peutOrigine()));
 const NOTES_NOTIF = {
   tous: 'Tes choix valent pour tous les appareils où les notifications sont activées.',
   admin: 'Les signalements arrivent toujours à l’équipe du réseau.',
@@ -317,7 +319,7 @@ function ChoixNotifs({ ctx }) {
   };
   return html`<fieldset class="md-cats" aria-describedby="md-cats-note">
     <legend>Ce que je reçois</legend>
-    ${catsNotif(me).map(cat => html`<label class="check" key=${cat}><input type="checkbox" id=${'np-' + cat} checked=${pushChoix(cat, me)} onChange=${e => changer(cat, e.target.checked)}/><span class="cat-txt"><span class="cat-t">${mots[cat][0]}</span><span class="cat-d">${mots[cat][1]}</span></span></label>`)}
+    ${catsNotif(me, store).map(cat => html`<label class="check" key=${cat}><input type="checkbox" id=${'np-' + cat} checked=${pushChoix(cat, me)} onChange=${e => changer(cat, e.target.checked)}/><span class="cat-txt"><span class="cat-t">${mots[cat][0]}</span><span class="cat-d">${mots[cat][1]}</span></span></label>`)}
     <p class="small muted" id="md-cats-note">${NOTES_NOTIF.tous}</p>
     ${me.role === 'admin' ? html`<p class="small muted">${NOTES_NOTIF.admin}</p>` : null}
   </fieldset>`;
