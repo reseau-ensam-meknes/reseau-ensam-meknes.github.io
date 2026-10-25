@@ -211,3 +211,9 @@ test('email : une demande restée sans aide 24 h s’ouvre aux lauréats des aut
   assert.equal(r2.has(L2), false);
   assert.equal((await db.query('select count(*)::int n from public.demandes_emails where user_id = $1', [CIVIL])).rows[0].n, 2);
 });
+
+test('tâche horaire : la définition en vigueur de alertes_horaires appelle encore l’email des demandes', async () => {
+  const { rows } = await db.query(`select prosrc from pg_proc where proname = 'alertes_horaires'`);
+  assert.equal(rows.length, 1);
+  for (const job of ['alertes', 'demandes', 'messages']) assert.ok(rows[0].prosrc.includes(`appeler_notifier('${job}')`), job);
+});

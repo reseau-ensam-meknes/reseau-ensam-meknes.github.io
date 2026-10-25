@@ -3243,6 +3243,11 @@ begin
   if exists (select 1 from public.offers where created_at > now() - interval '3 hours' and status = 'ouverte') then
     perform public.appeler_notifier('alertes');
   end if;
+  -- Demandes des 3 derniers jours : chaque lauréat concerné reçoit au plus un email par jour (la base choisit qui).
+  -- Cette définition remplace celle de la section « Alertes » : elle doit garder tous les appels.
+  if exists (select 1 from public.demandes where created_at > now() - interval '3 days' and status = 'ouverte') then
+    perform public.appeler_notifier('demandes');
+  end if;
   if exists (select 1 from public.messages where lu_at is null and created_at between now() - interval '3 days' and now() - interval '30 minutes') then
     perform public.appeler_notifier('messages');
   end if;
