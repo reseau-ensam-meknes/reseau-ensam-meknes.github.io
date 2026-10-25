@@ -5,6 +5,7 @@ import { createStore, texteErreur } from './store.js';
 import { Icon, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille, ecranLibre } from './ui.js';
 import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, demandeLargeLe, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
+import { nouvellesVivant } from './reseau-vivant.js';
 import { ParcoursPage, EspacePage, Journey, journeyStep, confirmerRecrutement, refuserRecrutement, versMerci } from './me.js';
 import { ReseauPage, ProfileModal, ProfileForm, AskQuestion } from './community.js';
 import { MentoratPage, AskHelp, NextRdv, slotWhen, mentoratIgnorees, IlsOntBesoin, CoupDeMain, HoraireSheet, ICONE_BESOIN, VERBE_BESOIN, phraseBesoin, ouvrirBesoin, confirmerPresence, finirMentorat, lienVisio } from './mentorat.js';
@@ -460,6 +461,8 @@ function buildNotifs({ data, me, store, saison }) {
       text: p.merci ? `${name(p.student_id)} te remercie : son ${mot} chez ${p.entreprise} est confirmé.` : `${name(p.student_id)} a confirmé son ${mot} chez ${p.entreprise}.` });
   }
   for (const c of data.comments) if (myOffers.has(c.offer_id) && c.author_id !== me.id && recent(c.created_at, 14)) out.push({ icon: 'comment', offer: c.offer_id, at: c.created_at, text: `${name(c.author_id)} a posé une question sur ton offre : « ${c.body.slice(0, 60)}${c.body.length > 60 ? '…' : ''} »` });
+  // Réseau vivant : réactions sur mes offres et mes demandes (une ligne par élément), réponses sous mes demandes
+  out.push(...nouvellesVivant(data, me, name));
   // Mentorat : demande reçue, horaire choisi, rendez-vous proche, puis merci. Un rendez-vous = une seule ligne.
   for (const m of data.mentorships) {
     const st = mentorState(m);

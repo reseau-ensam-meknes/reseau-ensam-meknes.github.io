@@ -12,6 +12,7 @@ import { EntrepriseResume } from './entreprises.js';
 import { recherche } from './geo.js';
 import { MessageBtn } from './messages.js';
 import { DemandesTab } from './demandes.js';
+import { Reactions } from './reactions.js';
 // Le message WhatsApp d'une offre, dans la langue de l'interface : de quoi il s'agit, et le lien qui l'ouvre directement.
 // Le type n'est ajouté que si le titre ne le dit pas déjà (« Stage : Stage PFE… »), et l'auteur n'est jamais nommé.
 const TYPES_AR = { stage: 'تدريب', pfe: 'مشروع نهاية الدراسة', etranger: 'تدريب بالخارج', emploi: 'وظيفة' };
@@ -74,7 +75,7 @@ export function OffersPage(ctx) {
   const [compose, setCompose] = useState(null);
   return html`<section class="page offres-page">
     <header class="page-head">
-      <div>${demandes ? null : html`<p class="eyebrow">${isStudent ? NIVEAUX[niveauOf(me, saison)]?.label || 'Pour toi' : 'Par les lauréats'}</p>`}<h1>${demandes ? (isStudent ? 'Mes demandes' : 'Demandes des étudiants') : 'Offres'}</h1></div>
+      <div>${demandes ? null : html`<p class="eyebrow">${isStudent ? NIVEAUX[niveauOf(me, saison)]?.label || 'Pour toi' : 'Par les lauréats'}</p>`}<h1>${demandes ? (isStudent ? 'Demandes' : 'Demandes des étudiants') : 'Offres'}</h1></div>
       ${!isStudent && !demandes ? html`<button class=${'btn primary' + (filtre === 'pfe' ? '' : ' publier-offre')} id="of-publier" onClick=${() => setCompose(presetDe(filtre))}><${Icon} name="plus"/> ${filtre === 'pfe' ? 'Déposer un sujet' : 'Publier une offre'}</button>` : null}
     </header>
     ${avecDemandes ? html`<div class="seg offres-seg" role="tablist" aria-label="Offres ou demandes">
@@ -196,6 +197,7 @@ export function OfferCard({ o, ctx, onOpen, why, sujets = false }) {
         ${why?.length ? html`<${Pourquoi} why=${why}/>` : null}
       </span>
     </button>
+    <${Reactions} ctx=${ctx} cible=${{ offer_id: o.id }} compact cls="ocard-rx"/>
     <footer class="ocard-foot">
       ${author ? html`<span class=${'ocard-author' + (coopt ? ' coopt' : '')}><${Avatar} p=${author} size=${coopt ? 28 : 22}/><span class="oa-txt"><span class="oa-nom">${prenom(author)} · promo ${author.promo}</span>${coopt ? html`<span class="oa-coopt">peut te recommander</span>` : null}</span></span>` : null}
       <span class="spacer"></span>
@@ -314,6 +316,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
         <div class="prose"><p translate="no" dir="auto">${o.description}</p></div>
         ${o.lien ? html`<p><a href=${o.lien.startsWith('http') ? o.lien : 'https://' + o.lien} target="_blank" rel="noopener"><${Icon} name="link" size=${15}/> Voir l’annonce complète</a></p>` : null}
         ${candidat ? html`<${ApplyBox} ctx=${ctx} o=${o} form=${form} setForm=${setForm} onClose=${onClose}/>` : null}
+        <${Reactions} ctx=${ctx} cible=${{ offer_id: o.id }} cls="od-rx"/>
         ${!mine ? html`<${Questions} ctx=${ctx} o=${o} comments=${comments}/>` : null}` : null}
 
       ${tab === 'questions' && mine ? html`<${Questions} ctx=${ctx} o=${o} comments=${comments}/>` : null}

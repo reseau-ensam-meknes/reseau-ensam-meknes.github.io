@@ -1940,6 +1940,85 @@ test('demande d’un étudiant : il publie (CV joint), un lauréat propose, matc
   await s.ctx.close();
 });
 
+test('réseau vivant : une étudiante voit les demandes de sa promo et leurs réactions, réagit puis retire ; un lauréat répond ; réactions sur les offres ; 360 px', async () => {
+  const s = await ouvrir({ largeur: 360 });
+  await s.page.setViewportSize({ width: 360, height: 640 });
+  const TITRE = 'PFE en efficacité énergétique industrielle', REPONSE = 'Écris aussi à l’AMEE, ils accueillent des PFE en audit énergétique.';
+  const fete = () => s.page.locator('.fete-acts .btn').last().click({ timeout: 1500 }).catch(() => {});
+  // Salma (5A) : la demande d'un étudiant de son année, en lecture, avec son statut et ses réactions ; ni CV ni « Je peux aider »
+  await s.comme('Salma'); await s.aller('offres/demandes'); await fete();
+  const promo = s.page.locator('.dm-promo');
+  await promo.waitFor();
+  assert.match(await promo.locator('h2').innerText(), /Demandes de ta promo/);
+  const carte = promo.locator('.dm-card', { hasText: TITRE });
+  assert.equal(await carte.count(), 1);
+  assert.match(await carte.locator('.state-pill').innerText(), /Ouverte/);
+  assert.equal(await carte.locator('button:has-text("Voir le CV"), .dm-aider').count(), 0);
+  const pastilles = carte.locator('.rx-pill');
+  assert.ok(await pastilles.count() >= 1, 'les réactions des autres se voient');
+  // Toucher une pastille : qui a réagi
+  await pastilles.first().click(); await s.page.waitForSelector('.modal .rx-qui li');
+  assert.ok(await s.page.locator('.modal .rx-qui li').count() >= 1);
+  await s.fermer();
+  // La demande réussie de sa promo : « Réussie » et le nombre de lauréats qui ont proposé leur aide, sans dire qui
+  const reussie = promo.locator('.dm-card.st-pourvue').first();
+  assert.match(await reussie.innerText(), /Réussie/);
+  assert.match(await reussie.innerText(), /Un lauréat a proposé son aide/);
+  assert.equal(await reussie.locator('.dm-prop, .dm-aide').count(), 0);
+  // Elle réagit : la pastille apparaît tout de suite, à elle ; la même émoji la retire
+  const avant = await carte.locator('.rx-pill').count();
+  await carte.locator('.rx-ajouter').click();
+  await carte.locator('.rx-btn[aria-label="Réagir avec 👏"]').click(); await s.page.waitForTimeout(150);
+  assert.match(await carte.locator('.rx-pill.mien').innerText(), /👏\s*1/);
+  assert.equal(await carte.locator('.rx-pill').count(), avant + 1);
+  await carte.locator('.rx-ajouter').click();
+  await carte.locator('.rx-btn.on').click(); await s.page.waitForTimeout(150);
+  assert.equal(await carte.locator('.rx-pill.mien').count(), 0);
+  assert.equal(await carte.locator('.rx-pill').count(), avant);
+  // Une autre fois, puis retirée depuis « qui a réagi »
+  await carte.locator('.rx-ajouter').click(); await carte.locator('.rx-btn[aria-label="Réagir avec 💪"]').click(); await s.page.waitForTimeout(150);
+  await carte.locator('.rx-pill.mien').click(); await s.page.waitForSelector('.modal .rx-retirer');
+  await s.page.click('.modal .rx-retirer'); await s.page.waitForTimeout(250);
+  assert.equal(await carte.locator('.rx-pill.mien').count(), 0);
+  assert.equal(await s.page.locator('.modal .rx-qui').count(), 0, 'la liste se ferme une fois la réaction retirée');
+  // Les réponses : déjà une, d'un lauréat
+  await carte.locator('.dm-rep-btn').click();
+  assert.match(await carte.locator('.dm-reponses').innerText(), /audits énergétiques/);
+  assert.equal(await s.debordement(), 0);
+  // Youssef répond sous la demande
+  await s.comme('Youssef'); await s.aller('offres/demandes'); await fete();
+  const carteL = s.page.locator('.dm-card', { hasText: TITRE }).first();
+  if (!(await carteL.count())) await s.page.click('.dm-filtres button[aria-pressed="true"]:has-text("Proches de ma filière")');
+  await carteL.locator('.dm-rep-btn').click();
+  await carteL.locator('.dm-rep-form input').fill(REPONSE);
+  await carteL.locator('.dm-rep-form button[type="submit"]').click(); await s.page.waitForTimeout(250);
+  assert.match(await carteL.locator('.dm-reponses').innerText(), /l’AMEE/);
+  assert.equal(await s.debordement(), 0);
+  // L'autrice est prévenue dans la cloche ; Salma voit la réponse
+  const auteur = await s.page.evaluate(t => { const d = window.__demo.data.demandes.find(x => x.titre === t); return window.__demo.byId('profiles', d.auteur_id).full_name; }, TITRE);
+  await s.page.evaluate(nom => { const p = window.__demo.data.profiles.find(x => x.full_name === nom); window.__demo.switchTo(p.id); }, auteur); await s.page.waitForTimeout(300);
+  await s.aller('accueil'); await fete();
+  await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
+  assert.match(await s.page.locator('.modal.cloche').innerText(), /a répondu à ta demande/);
+  await s.fermer();
+  await s.comme('Salma'); await s.aller('offres/demandes'); await fete();
+  await carte.locator('.dm-rep-btn').click();
+  assert.match(await carte.locator('.dm-reponses').innerText(), /l’AMEE/);
+  // Les offres : pastilles sur les cartes, on réagit dans la fiche
+  await s.aller('offres');
+  const oc = s.page.locator('.ocard:has(.ocard-rx)').first();
+  await oc.waitFor();
+  await oc.locator('.ocard-main').click(); await s.page.waitForSelector('.modal .od-rx');
+  await s.page.click('.modal .od-rx .rx-ajouter'); await s.page.click('.modal .od-rx .rx-btn[aria-label="Réagir avec 🙏"]'); await s.page.waitForTimeout(150);
+  assert.match(await s.page.locator('.modal .od-rx .rx-pill.mien').innerText(), /🙏/);
+  assert.ok(await s.page.evaluate(() => { const m = document.querySelector('.modal'); return m.scrollWidth <= m.clientWidth + 1; }), 'la fiche ne déborde pas');
+  await s.fermer();
+  assert.match(await oc.locator('.rx-pill.mien').innerText(), /🙏/);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 // Accueil qui guide : sur un petit Android, une seule carte, un seul bouton plein, visible sans défiler
 test('accueil (360 × 640) : une carte « prochaine étape » et son seul bouton plein, visibles sans défiler ; trois petites choses au plus', async () => {
   const s = await ouvrir({ largeur: 360 });

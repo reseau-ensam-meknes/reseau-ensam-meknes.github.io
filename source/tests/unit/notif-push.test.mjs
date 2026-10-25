@@ -56,12 +56,12 @@ test('catégories : messages, demandes, candidatures, mentorat, offres, vie du r
 test('chaque type est dans la catégorie annoncée', () => {
   const regle = {
     messages: ['message'],
-    demandes: ['demande_nouvelle', 'demande_proposition', 'demande_match', 'demande_rouverte'],
+    demandes: ['demande_nouvelle', 'demande_proposition', 'demande_match', 'demande_rouverte', 'demande_reponse'],
     candidatures: ['candidature', 'candidature_statut', 'invitation', 'recrutement_a_confirmer', 'recrutement_confirme', 'relance_offre'],
     mentorat: ['mentorat_demande', 'mentorat_accepte', 'mentorat_deplace', 'mentorat_annule', 'rappel_rdv', 'merci', 'relecture_demande', 'relecture_prise',
       'relecture_rendue', 'contact_demande', 'contact_accepte', 'filleul', 'parrain'],
     offres: ['offre_alerte'],
-    reseau: ['reponse', 'question_routee', 'cafe', 'evenement', 'evenement_annule', 'evenement_deplace', 'enquete', 'verification_pair', 'verifier_pair'],
+    reseau: ['reponse', 'question_routee', 'cafe', 'evenement', 'evenement_annule', 'evenement_deplace', 'enquete', 'verification_pair', 'verifier_pair', 'reaction'],
     admin: ['signalement'],
   };
   const attendu = Object.fromEntries(Object.entries(regle).flatMap(([cat, kinds]) => kinds.map(k => [k, cat])));

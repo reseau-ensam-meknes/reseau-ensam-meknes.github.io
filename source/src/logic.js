@@ -1239,7 +1239,7 @@ export const PUSH_CATEGORIES = ['messages', 'demandes', 'candidatures', 'mentora
 // Type de notification -> catégorie (un type inconnu : vie du réseau)
 export const PUSH_KINDS = {
   message: 'messages',
-  demande_nouvelle: 'demandes', demande_proposition: 'demandes', demande_match: 'demandes', demande_rouverte: 'demandes',
+  demande_nouvelle: 'demandes', demande_proposition: 'demandes', demande_match: 'demandes', demande_rouverte: 'demandes', demande_reponse: 'demandes',
   candidature: 'candidatures', candidature_statut: 'candidatures', invitation: 'candidatures',
   recrutement_a_confirmer: 'candidatures', recrutement_confirme: 'candidatures', relance_offre: 'candidatures',
   mentorat_demande: 'mentorat', mentorat_accepte: 'mentorat', mentorat_deplace: 'mentorat', mentorat_annule: 'mentorat',
@@ -1247,7 +1247,7 @@ export const PUSH_KINDS = {
   contact_demande: 'mentorat', contact_accepte: 'mentorat', filleul: 'mentorat', parrain: 'mentorat',
   offre_alerte: 'offres',
   reponse: 'reseau', question_routee: 'reseau', cafe: 'reseau', evenement: 'reseau', evenement_annule: 'reseau', evenement_deplace: 'reseau',
-  enquete: 'reseau', verification_pair: 'reseau', verifier_pair: 'reseau',
+  enquete: 'reseau', verification_pair: 'reseau', verifier_pair: 'reseau', reaction: 'reseau',
   signalement: 'admin',
 };
 export const pushCategorie = kind => (Object.prototype.hasOwnProperty.call(PUSH_KINDS, kind) ? PUSH_KINDS[kind] : 'reseau');

@@ -48,9 +48,10 @@ test('publier : le type suit l’année, le CV est obligatoire, 2 demandes en co
   assert.equal((await pushs('demande_nouvelle'))[0].data.nom, 'Salma');
   const d2 = await publier(ETU, { type: 'etranger', titre: 'Stage d’été en Allemagne', lieu: 'Allemagne' });
   await refuse(publier(ETU, { type: 'emploi', titre: 'Pré-embauche' }), /déjà 2 demandes en cours/);
-  // Les lauréats voient les demandes ; un autre étudiant, non
+  // Les lauréats voient les demandes ; un étudiant de la même année aussi (réseau vivant), un étudiant d'une autre année, non
   assert.equal((await q(CIVIL, 'select id from public.demandes')).length, 2);
-  assert.equal((await q(AUTRE, 'select id from public.demandes')).length, 0);
+  assert.equal((await q(AUTRE, 'select id from public.demandes')).length, 2);
+  assert.equal((await q(ETU3, 'select id from public.demandes')).length, 0);
   // L'auteur la ferme, puis la rouvre ; personne d'autre ne la change
   await q(L1, `update public.demandes set status = 'fermee' where id = $1`, [d2.id]);
   assert.equal((await demande(d2.id)).status, 'ouverte');
