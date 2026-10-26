@@ -898,8 +898,8 @@ test('à l’ouverture : un lauréat voit ce qui le concerne ; « Activer » vau
   await attendreOuverture(s);
   const txt = await s.page.locator(ouverture).innerText();
   assert.match(txt, /Ce qui te concerne arrive tout de suite/);
-  // Les nouvelles offres ne sont pas activées d'office pour un lauréat qui ne cherche pas d'emploi
-  assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['messages', 'demandes', 'candidatures', 'mentorat']);
+  // Tout est activé par défaut, les nouvelles offres aussi pour un lauréat qui ne cherche pas d'emploi
+  assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['messages', 'demandes', 'offres', 'candidatures']);
   assert.match(txt, /Les nouvelles demandes d’étudiants de ta filière/);
   await s.page.click('#ouv-oui'); await s.page.waitForTimeout(300);
   assert.equal(await s.page.locator(ouverture).count(), 0);
@@ -1123,21 +1123,22 @@ test('Mon profil : les notifications par catégorie, défauts selon le rôle, en
   assert.deepEqual(await cases(), { ...tout, offres: false, reseau: false });
   assert.deepEqual(await s.page.evaluate(() => window.__demo.me.notif_push), { reseau: false, offres: false });
   assert.ok(await s.page.isChecked('#md-alertes-mail'), 'l’email ne change pas');
-  // Lauréat : les demandes de sa filière ; les offres seulement s'il cherche un emploi
+  // Lauréat : tout est coché par défaut, les nouvelles offres de sa filière aussi (qu'il cherche un emploi ou non)
   await s.comme('Youssef'); await s.aller('profil');
-  assert.deepEqual(await cases(), { ...tout, offres: false });
+  assert.deepEqual(await cases(), tout);
   const lau = await s.page.locator('.md-cats').innerText();
-  assert.match(lau, /Demandes des étudiants de ma filière/); assert.match(lau, /Candidatures reçues sur mes offres/);
+  assert.match(lau, /Demandes des étudiants/); assert.match(lau, /quand elles s’ouvrent à tous les lauréats/); assert.match(lau, /Candidatures reçues sur mes offres/);
   assert.doesNotMatch(lau, /Mes demandes : les propositions d’aide/);
   // Un lauréat pose aussi des questions : la case qui les coupe le dit
   assert.match(lau, /Questions et vie du réseau/); assert.match(lau, /Réponses à tes questions, questions sur ton entreprise ou ton pays/);
-  // Tout lauréat peut postuler ; les offres n'arrivent qu'avec « Je cherche un emploi en ce moment » : le texte le dit
+  // Tout lauréat peut postuler ; toutes les offres de sa filière arrivent, celles des étudiants pour les faire suivre
   assert.match(lau, /si tu postules, la suite de tes candidatures/);
-  assert.match(lau, /Avec « Je cherche un emploi en ce moment » coché dans ton profil/);
+  assert.match(lau, /Nouvelles offres de ma filière/); assert.match(lau, /que tu peux faire suivre/);
+  assert.match(lau, /commentaires sur tes offres, nouveaux membres et camarades de promo/);
   assert.equal(await s.page.locator('#md-alertes-mail').count(), 0);
   await s.page.click('#np-offres'); await s.page.waitForTimeout(250);
   await s.page.reload(); await s.page.waitForSelector('#mes-donnees');
-  assert.equal(await s.page.isChecked('#np-offres'), true);
+  assert.equal(await s.page.isChecked('#np-offres'), false, 'son choix reste');
   // Un lauréat qui cherche un emploi : ses demandes et ses candidatures aussi ; les offres d'office
   await s.comme('Nadia');
   await s.page.evaluate(() => window.__demo.update('profiles', window.__demo.me.id, { en_recherche: true }));
@@ -2010,8 +2011,8 @@ test('réseau vivant : une étudiante voit les demandes de sa promo et leurs ré
   assert.equal(await carte.locator('button:has-text("Voir le CV"), .dm-aider').count(), 0);
   const pastilles = carte.locator('.rx-pill');
   assert.ok(await pastilles.count() >= 1, 'les réactions des autres se voient');
-  // Toucher une pastille : qui a réagi
-  await pastilles.first().click(); await s.page.waitForSelector('.modal .rx-qui li');
+  // « Hamza et 2 autres » : qui a réagi
+  await carte.locator('.rx-total').click(); await s.page.waitForSelector('.modal .rx-qui li');
   assert.ok(await s.page.locator('.modal .rx-qui li').count() >= 1);
   await s.fermer();
   // La demande réussie de sa promo : « Réussie » et le nombre de lauréats qui ont proposé leur aide, sans dire qui
@@ -2031,7 +2032,8 @@ test('réseau vivant : une étudiante voit les demandes de sa promo et leurs ré
   assert.equal(await carte.locator('.rx-pill').count(), avant);
   // Une autre fois, puis retirée depuis « qui a réagi »
   await carte.locator('.rx-ajouter').click(); await carte.locator('.rx-btn[aria-label="Réagir avec 💪"]').click(); await s.page.waitForTimeout(150);
-  await carte.locator('.rx-pill.mien').click(); await s.page.waitForSelector('.modal .rx-retirer');
+  assert.match(await carte.locator('.rx-total').innerText(), /^Toi\b/);
+  await carte.locator('.rx-total').click(); await s.page.waitForSelector('.modal .rx-retirer');
   await s.page.click('.modal .rx-retirer'); await s.page.waitForTimeout(250);
   assert.equal(await carte.locator('.rx-pill.mien').count(), 0);
   assert.equal(await s.page.locator('.modal .rx-qui').count(), 0, 'la liste se ferme une fois la réaction retirée');
@@ -2058,16 +2060,30 @@ test('réseau vivant : une étudiante voit les demandes de sa promo et leurs ré
   await s.comme('Salma'); await s.aller('offres/demandes'); await fete();
   await carte.locator('.dm-rep-btn').click();
   assert.match(await carte.locator('.dm-reponses').innerText(), /l’AMEE/);
-  // Les offres : pastilles sur les cartes, on réagit dans la fiche
+  // Les offres : on réagit dans le fil, sans ouvrir la fiche ; la ligne ne change pas de hauteur
   await s.aller('offres');
-  const oc = s.page.locator('.ocard:has(.ocard-rx)').first();
+  const oc = s.page.locator('.ocard').first();
   await oc.waitFor();
+  const rx = oc.locator('.ocard-rx'); const h0 = (await rx.boundingBox()).height;
+  await oc.locator('.rx-ajouter').click();
+  assert.ok(Math.abs((await rx.boundingBox()).height - h0) <= 1, 'pas de saut quand le choix s’ouvre');
+  await oc.locator('.rx-btn[aria-label="Réagir avec 🙏"]').click(); await s.page.waitForTimeout(150);
+  assert.equal(await s.page.locator('.modal').count(), 0, 'la fiche ne s’ouvre pas');
+  assert.match(await oc.locator('.rx-pill.mien').innerText(), /🙏\s*1/);
+  assert.match(await oc.locator('.rx-total').innerText(), /^Toi/);
+  // Toucher sa pastille la retire ; toucher une pastille d'un autre émoji réagit avec lui
+  await oc.locator('.rx-pill.mien').click(); await s.page.waitForTimeout(150);
+  assert.equal(await oc.locator('.rx-pill.mien').count(), 0);
+  await oc.locator('.rx-ajouter').click(); await oc.locator('.rx-btn[aria-label="Réagir avec 🙏"]').click(); await s.page.waitForTimeout(150);
+  // La fiche montre la même réaction
   await oc.locator('.ocard-main').click(); await s.page.waitForSelector('.modal .od-rx');
-  await s.page.click('.modal .od-rx .rx-ajouter'); await s.page.click('.modal .od-rx .rx-btn[aria-label="Réagir avec 🙏"]'); await s.page.waitForTimeout(150);
   assert.match(await s.page.locator('.modal .od-rx .rx-pill.mien').innerText(), /🙏/);
   assert.ok(await s.page.evaluate(() => { const m = document.querySelector('.modal'); return m.scrollWidth <= m.clientWidth + 1; }), 'la fiche ne déborde pas');
   await s.fermer();
-  assert.match(await oc.locator('.rx-pill.mien').innerText(), /🙏/);
+  // Échap ferme le choix sans réagir
+  const oc2 = s.page.locator('.ocard').nth(1);
+  await oc2.locator('.rx-ajouter').click(); await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(100);
+  assert.equal(await oc2.locator('.rx-bar').count(), 0);
   assert.equal(await s.debordement(), 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
@@ -3648,4 +3664,85 @@ test('offres portées et partagées en arabe : le badge, la section et « مشا
   assert.deepEqual(oublis.filter(x => !ecritParUnMembre(x)), []);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
+});
+
+test('la pastille : « Installer l’application » d’abord, puis « Activer les notifications » ; × la range 3 jours ; en arabe sans texte oublié', async () => {
+  const s = await prevenirSur(null);
+  await s.page.waitForTimeout(2600);
+  assert.equal(await s.page.locator('.pastille').count(), 0, 'démo ordinaire : rien à installer ni à activer');
+  await s.page.evaluate(() => { localStorage.setItem('ensam-install-demo', 'android'); localStorage.setItem('ensam-prevenir-demo', 'off'); });
+  await recharger(s);
+  await s.page.locator('#ouv-tard').click({ timeout: 6000 }).catch(() => {});
+  await s.page.waitForSelector('.pastille[data-sorte="installer"]');
+  // Au-dessus de la barre du bas, sans rien déborder
+  const [p, nav] = await Promise.all(['.pastille', '.bottom-nav'].map(x => s.page.locator(x).boundingBox()));
+  assert.ok(p.y + p.height <= nav.y, 'la pastille ne couvre pas la barre du bas');
+  assert.ok((await s.page.locator('#pastille-go').boundingBox()).height >= 44);
+  assert.equal(await s.debordement(), 0);
+  // Android sans proposition du navigateur : les gestes à faire
+  await s.page.click('#pastille-go');
+  await s.page.waitForSelector('.modal:has-text("Touche le menu ⋮")');
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+  // Le navigateur propose l'installation : un toucher, puis la pastille passe aux notifications
+  await s.page.evaluate(() => localStorage.setItem('ensam-install-demo', 'prompt'));
+  await recharger(s);
+  await s.page.locator('#ouv-tard').click({ timeout: 6000 }).catch(() => {});
+  await s.page.click('.pastille[data-sorte="installer"] #pastille-go');
+  await s.page.waitForSelector('.pastille[data-sorte="activer"]');
+  // On écrit : elle se range, puis revient
+  await s.aller('offres'); await s.page.waitForTimeout(300);
+  const champ = s.page.locator('input[type="search"], input[type="text"]').first();
+  if (await champ.count()) {
+    await champ.focus(); await s.page.waitForTimeout(150);
+    assert.equal(await s.page.locator('.pastille').count(), 0, 'pas pendant qu’on écrit');
+    await champ.blur(); await s.page.waitForTimeout(150);
+    assert.equal(await s.page.locator('.pastille').count(), 1);
+  }
+  // Pas dans les messages
+  await s.aller('messages'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.pastille').count(), 0, 'pas dans les messages');
+  await s.aller('accueil'); await s.page.waitForSelector('.pastille');
+  await s.page.click('#pastille-go'); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator('.pastille').count(), 0, 'activées : plus de pastille');
+  // × : rangée 3 jours, même après rechargement
+  await s.page.evaluate(() => localStorage.setItem('ensam-install-demo', 'ios'));
+  await recharger(s);
+  await s.page.waitForSelector('.pastille[data-sorte="installer"]', { timeout: 8000 });
+  await s.page.locator('#ouv-tard').click({ timeout: 1000 }).catch(() => {});
+  await s.page.click('#pastille-go');
+  await s.page.waitForSelector('.modal:has-text("Dans Safari")');
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+  await s.page.click('#pastille-x');
+  assert.equal(await s.page.locator('.pastille').count(), 0);
+  const memo = await s.page.evaluate(() => JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k => k.startsWith('ensam-pastille-')))));
+  assert.equal(memo.n, 1); assert.ok(memo.jusqua - Date.now() > 2.9 * 864e5);
+  await recharger(s); await s.page.waitForTimeout(2600);
+  assert.equal(await s.page.locator('.pastille').count(), 0, 'rangée 3 jours');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe, côté début de ligne inversé, sans texte oublié
+  const a = await prevenirSur('off', { langue: 'ar' });
+  await a.page.locator('#ouv-tard').click({ timeout: 6000 }).catch(() => {});
+  await a.page.waitForSelector('.pastille[data-sorte="activer"]');
+  assert.deepEqual((await a.page.locator('.pastille').innerText()).match(/[A-Za-zÀ-ÿ]{2,}/g) || [], []);
+  assert.equal(await a.page.getAttribute('#pastille-x', 'aria-label'), 'إخفاء لبضعة أيام');
+  assert.ok((await a.page.locator('.pastille').boundingBox()).x < 40, 'à gauche en arabe');
+  assert.equal(await a.debordement(), 0);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
+test('la pastille « Notifications bloquées » : les gestes de cet appareil, en français et en arabe', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await prevenirSur('refuse', { langue });
+    await s.page.waitForSelector('.pastille[data-sorte="debloquer"]', { timeout: 8000 });
+    await s.page.click('#pastille-go');
+    await s.page.waitForSelector('.modal .ios-steps');
+    const t = await s.page.locator('.modal').innerText();
+    if (langue === 'fr') assert.match(t, /cadenas à gauche de l’adresse/);
+    else assert.deepEqual(t.match(/[A-Za-zÀ-ÿ]{2,}/g)?.filter(x => !['ENSAM', 'iPhone'].includes(x)) || [], []);
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
 });

@@ -2,6 +2,7 @@
 // « Offres partagées » (cartes compactes, le lien externe), et ce que le formulaire d'offre ajoute pour un partage.
 import { html, useState } from './vendor/preact-htm.js';
 import { Icon, Field, CompanyLogo, toast, injectCSS } from './ui.js';
+import { Reactions } from './reactions.js';
 import { addAR } from './i18n.js';
 import { titreOffre, timeAgo } from './logic.js';
 import { SignalerBtn } from './confiance.js';
@@ -36,6 +37,7 @@ export function PartageCard({ o, ctx, onOpen }) {
         <span class="opart-par">${lignePartage(o, auteur)}</span>
       </span>
     </button>
+    <${Reactions} ctx=${ctx} cible=${{ offer_id: o.id }} cls="opart-rx"/>
     <div class="opart-actions">
       ${o.status !== 'ouverte' ? html`<span class="tag done">Fermée</span>` : null}
       <span class="muted small nowrap">${timeAgo(o.created_at)}</span>
@@ -118,6 +120,7 @@ injectCSS('partages', `
 .opart-meta, .opart-par { font-size: var(--fs-1); color: var(--muted); overflow-wrap: anywhere; }
 .opart-par { color: var(--ink-2); }
 .opart-actions { display: flex; align-items: center; gap: .45rem; padding: .3rem .8rem .55rem; min-width: 0; }
+.opart-rx { padding: 0 .65rem; min-height: 40px; }
 .opart-actions .spacer { flex: 1; }
 .opart .opart-actions .btn { min-height: 36px; }
 [dir="rtl"] .opart-txt [dir="auto"] { text-align: right; }

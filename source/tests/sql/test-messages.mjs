@@ -177,14 +177,15 @@ test('réactions : une par personne et par message, visibles des deux seulement'
   assert.equal((await db.query('select count(*)::int n from public.reactions_messages where message_id = $1', [m.id])).rows[0].n, 0);
 });
 
-test('notification : une seule pour une rafale, et un email si le message reste non lu', async () => {
+test('notification : deux messages en moins de 20 s, le second sans sonner (le dernier reste affiché), et un email si le message reste non lu', async () => {
   await db.query(`insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values ($1, 'https://push.example/lau', 'k', 'a')`, [LAU]);
   await q(LAU, 'select public.marquer_lus($1)', [ETU]);
   await db.query('delete from public.push_queue');
   await ecrire(ETU, LAU, 'Tu as vu mon CV ?');
   await ecrire(ETU, LAU, 'Je l’ai mis à jour');
   const pushs = (await db.query(`select kind, data from public.push_queue where user_id = $1`, [LAU])).rows;
-  assert.equal(pushs.length, 1);
+  assert.equal(pushs.length, 2);
+  assert.deepEqual(pushs.map(p => p.data.calme), [false, true]);
   assert.equal(pushs[0].kind, 'message');
   assert.equal(pushs[0].data.nom, 'Salma Bennani');
   assert.equal(pushs[0].data.de, ETU);

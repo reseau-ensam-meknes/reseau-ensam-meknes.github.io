@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { seasonOf } from '../../src/logic.js';
-import { EMOJIS_PUBLICS, peutLireDemande, demandesPromo, aidesProposees, pastilles, reactionsSur, regleVivant, peutSupprimerVivant, cascadeVivant, nouvellesVivant, peutLireOffre } from '../../src/reseau-vivant.js';
+import { EMOJIS_PUBLICS, peutLireDemande, demandesPromo, aidesProposees, pastilles, reactionsSur, regleVivant, peutSupprimerVivant, cascadeVivant, nouvellesVivant, peutLireOffre, quiAReagiTexte } from '../../src/reseau-vivant.js';
 
 const S = seasonOf();
 const jour = 864e5, il = j => new Date(Date.now() - j * jour).toISOString();
@@ -103,4 +103,15 @@ test('cloche : une ligne par élément qui fait réagir, une par réponse sous m
   const etu = nouvellesVivant(data, P.hiba, nom).map(n => n.text);
   assert.deepEqual(etu, ['Salma Bennani a réagi 💪 à « Demande d1 »', 'Youssef El Amrani a répondu à ta demande : « Regarde du côté de Tanger Med. »']);
   assert.ok(nouvellesVivant(data, P.hiba, nom).every(n => !n.geste && !n.action), 'des nouvelles, rien à faire');
+});
+
+test('ligne sociale des réactions : moi d’abord, puis le plus récent ; arabe écrit à part', () => {
+  const r = (u, j) => ({ user_id: u, emoji: '👍', created_at: new Date(Date.UTC(2026, 9, j)).toISOString() });
+  const noms = { h: 'Hamza Sedki', s: 'Salma Bennani', y: 'Youssef Amrani' }; const by = id => noms[id] ? { full_name: noms[id] } : null;
+  assert.equal(quiAReagiTexte([], 'moi', by), '');
+  assert.equal(quiAReagiTexte([r('h', 1)], 'moi', by), 'Hamza');
+  assert.equal(quiAReagiTexte([r('h', 1), r('moi', 2)], 'moi', by), 'Toi et Hamza');
+  assert.equal(quiAReagiTexte([r('h', 1), r('s', 3), r('y', 2)], 'moi', by), 'Salma et 2 autres');
+  assert.equal(quiAReagiTexte([r('h', 1), r('moi', 3), r('y', 2)], 'moi', by, 'ar'), 'أنت و2 آخرون');
+  assert.equal(quiAReagiTexte([r('inconnu', 1)], 'moi', by), 'Un membre');
 });

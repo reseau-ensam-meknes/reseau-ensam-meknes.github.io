@@ -22,7 +22,7 @@ before(async () => {
   await db.query(`insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) select id, 'https://push.example/' || id, 'k', 'a' from public.profiles`);
 });
 
-test('« Je cherche un emploi » : visible des autres membres, les offres « Jeunes diplômés » et entre lauréats lui arrivent', async () => {
+test('« Je cherche un emploi » : visible des autres membres, les offres « Jeunes diplômés » et entre lauréats lui arrivent comme pour lui', async () => {
   assert.equal((await q(CHERCHE, 'select en_recherche from public.profils where id = $1', [CHERCHE]))[0].en_recherche, false);
   await q(CHERCHE, 'update public.profiles set en_recherche = true where id = $1', [CHERCHE]);
   assert.equal((await q(RECRUTEUR, 'select en_recherche from public.profils where id = $1', [CHERCHE]))[0].en_recherche, true);
@@ -31,15 +31,16 @@ test('« Je cherche un emploi » : visible des autres membres, les offres « Jeu
   await q(RECRUTEUR, `insert into public.offers (author_id, type, titre, entreprise, description, annees, filieres, audience) values ($1, 'emploi', 'Responsable qualité', 'Renault', 'desc', '{}', '{}', 'laureats')`, [RECRUTEUR]);
   await q(RECRUTEUR, `insert into public.offers (author_id, type, titre, entreprise, description, annees, filieres) values ($1, 'pfe', 'PFE Lean', 'Renault', 'desc', '{5}', '{}')`, [RECRUTEUR]);
   await q(RECRUTEUR, `insert into public.offers (author_id, type, titre, entreprise, description, annees, filieres) values ($1, 'emploi', 'Ingénieur structures', 'Vinci', 'desc', '{6}', '{"Génie Civil"}')`, [RECRUTEUR]);
-  const pour = async id => (await db.query(`select data->>'titre' t from public.push_queue where kind = 'offre_alerte' and user_id = $1 order by t`, [id])).rows.map(r => r.t);
-  assert.deepEqual(await pour(CHERCHE), ['Ingénieur méthodes junior', 'Responsable qualité']);
-  assert.deepEqual(await pour(EN_POSTE), [], 'un lauréat en poste n’est pas dérangé');
+  // Chaque lauréat reçoit toutes les offres de sa filière ; « relayer » : celles qui ne le visent pas (il peut les faire suivre)
+  const pour = async id => (await db.query(`select data->>'titre' || coalesce(' / ' || (data->>'pour'), '') t from public.push_queue where kind = 'offre_alerte' and user_id = $1 order by t`, [id])).rows.map(r => r.t);
+  assert.deepEqual(await pour(CHERCHE), ['Ingénieur méthodes junior', 'PFE Lean / relayer', 'Responsable qualité']);
+  assert.deepEqual(await pour(EN_POSTE), ['Ingénieur méthodes junior / relayer', 'PFE Lean / relayer', 'Responsable qualité / relayer'], 'un lauréat en poste les reçoit aussi, pour les faire suivre');
   assert.deepEqual(await pour(ETU), ['PFE Lean']);
-  // Emploi trouvé : il décoche, les alertes s'arrêtent
+  // Emploi trouvé : il décoche, les offres d'emploi arrivent encore, à faire suivre
   await q(CHERCHE, 'update public.profiles set en_recherche = false where id = $1', [CHERCHE]);
   await db.query('delete from public.push_queue');
   await q(RECRUTEUR, `insert into public.offers (author_id, type, titre, entreprise, description, annees, filieres) values ($1, 'emploi', 'Ingénieur maintenance', 'Renault', 'desc', '{6}', '{}')`, [RECRUTEUR]);
-  assert.deepEqual(await pour(CHERCHE), []);
+  assert.deepEqual(await pour(CHERCHE), ['Ingénieur maintenance / relayer']);
 });
 
 test('photo de profil : dans son propre dossier, vue par les membres connectés, retirée par soi ou par l’administration', async () => {

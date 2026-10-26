@@ -292,6 +292,28 @@ textarea { resize: vertical; }
 .tbl td { padding: .55rem .5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
 .tbl .num { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bar-cell { width: 40%; vertical-align: middle !important; }
+/* La pastille « Installer l'application » puis « Activer les notifications » : en bas, côté fin de ligne, au-dessus de la barre du bas */
+.pastille { position: fixed; z-index: 24; inset-inline-end: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(20px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; max-width: calc(100vw - 32px); padding: 4px; border-radius: 999px; background: var(--surface); box-shadow: var(--sh3); }
+.pastille-go { display: flex; align-items: center; gap: .6rem; min-height: 44px; min-width: 0; padding-block: 0; padding-inline: 0 .5rem; border: 0; background: none; color: var(--ink); text-align: start; cursor: pointer; border-radius: 999px; font: inherit; }
+.pastille-ico { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); }
+.pastille-txt { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.pastille-txt strong { font-size: var(--fs-3); }
+.pastille-txt span { font-size: var(--fs-1); color: var(--muted); }
+.pastille-x { flex: none; display: grid; place-items: center; width: 40px; height: 44px; border: 0; background: none; color: var(--muted); border-radius: 999px; cursor: pointer; }
+@media (hover: hover) { .pastille-go:hover, .pastille-x:hover { background: var(--tonal-hover); } }
+.ios-steps .debout svg { transform: rotate(90deg); }
+.pastille[data-sorte="debloquer"] .pastille-ico { background: var(--tonal-bg); color: var(--tonal-ink); }
+@media (max-width: 760px) {
+  .pastille { bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
+  body:has(.pastille) .content { padding-bottom: calc(148px + env(safe-area-inset-bottom, 0px)); }
+  body:has(.pastille) .toast-zone { bottom: calc(136px + env(safe-area-inset-bottom, 0px)); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .pastille { animation: pastille-in .5s var(--ease) backwards; }
+  .pastille-ico { animation: pastille-sonne 1.2s .6s var(--ease) 2 backwards; }
+  @keyframes pastille-in { from { opacity: 0; transform: translateY(18px) scale(.96); } }
+  @keyframes pastille-sonne { 0%, 100% { box-shadow: 0 0 0 0 rgb(22 112 168 / .45); } 70% { box-shadow: 0 0 0 10px rgb(22 112 168 / 0); } }
+}
 /* Messages du bas : une zone fixe, chaque message y monte en fondu et repart de même (Lot mouvement · B, plus bas) */
 .toast-zone { position: fixed; inset-inline: 0; bottom: calc(84px + env(safe-area-inset-bottom, 0px)); z-index: 60; display: grid; justify-items: center; padding-inline: 16px; pointer-events: none; }
 /* Rangée 1 : le message du moment (le suivant le remplace sur place) ; rangée 2, en dessous : celui qui porte « Annuler », jusqu'à son échéance */
