@@ -339,7 +339,7 @@ async function preparerVapid(env: Env): Promise<Vapid> {
 }
 
 type Abonnement = { id: string; user_id: string; endpoint: string; p256dh: string; auth: string };
-export type Notif = { title: string; body: string; url: string; tag: string };
+export type Notif = { title: string; body: string; url: string; tag: string; calme?: boolean };
 
 export const urgence = (kind: string) => (kind === 'rappel_rdv' || kind === 'mentorat_accepte' || kind === 'message' ? 'high' : 'normal');
 
@@ -682,7 +682,8 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
     : dem ? (kind === 'demande_nouvelle' || kind === 'demande_large' ? `aider/${dem}` : `offres/demandes/${dem}`) : g.route;
   const tag = rx ? `reaction-${rx.id}` : kind === 'offre_alerte' && estUuid(d.offre) ? `offre-${d.offre}` : com ? `${kind}-${com}`
     : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem ? `${kind}-${dem}` : annule ? `${kind}-${annule}` : kind;
-  return { title: couper(t[0], 80), body: couper(t[1], 180), url: site + '#' + route, tag };
+  // Message arrivé moins de 20 s après le précédent de la conversation : l'aperçu change sans sonner
+  return { title: couper(t[0], 80), body: couper(t[1], 180), url: site + '#' + route, tag, ...(kind === 'message' && d.calme === true ? { calme: true } : {}) };
 }
 
 // ---------------------------------------------------------------------

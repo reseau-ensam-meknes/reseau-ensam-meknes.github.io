@@ -68,18 +68,19 @@ test('messages : une notification par message (même conversation, n non lus), a
   await ecrire(ETU, LAU, 'Bonjour Youssef');
   await ecrire(ETU, LAU, 'Tu as vu mon CV ?');
   let m = await file('message');
-  assert.equal(m.length, 1, 'deux messages en 20 s : une seule notification');
-  assert.deepEqual([m[0].qui, m[0].data.de, m[0].data.texte, m[0].data.n], ['LAU', ETU, 'Bonjour Youssef', 1]);
+  assert.equal(m.length, 2, 'deux messages en 20 s : deux notifications, la seconde calme (le dernier message reste affiché)');
+  assert.deepEqual([m[0].qui, m[0].data.de, m[0].data.texte, m[0].data.n, m[0].data.calme], ['LAU', ETU, 'Bonjour Youssef', 1, false]);
+  assert.deepEqual([m[1].data.texte, m[1].data.n, m[1].data.calme], ['Tu as vu mon CV ?', 2, true]);
   // Plus de 20 s après : une notification pour le message suivant, avec le nombre de non lus et le dernier texte
   await reculer('message:%', '21 seconds');
   await ecrire(ETU, LAU, 'Je l’ai mis à jour');
   m = await file('message');
-  assert.equal(m.length, 2);
-  assert.deepEqual([m[1].data.de, m[1].data.texte, m[1].data.n], [ETU, 'Je l’ai mis à jour', 3]);
+  assert.equal(m.length, 3);
+  assert.deepEqual([m[2].data.de, m[2].data.texte, m[2].data.n, m[2].data.calme], [ETU, 'Je l’ai mis à jour', 3, false]);
   // Pas de rafale à attendre : un message seul, 20 s après, part même si les précédents ne sont pas lus (avant : 10 minutes)
   await reculer('message:%', '21 seconds');
   await ecrire(ETU, LAU, 'Merci !');
-  assert.equal((await file('message')).length, 3);
+  assert.equal((await file('message')).length, 4);
   // Lu : le compte repart de un
   await q(LAU, 'select public.marquer_lus($1)', [ETU]);
   await reculer('message:%', '21 seconds');

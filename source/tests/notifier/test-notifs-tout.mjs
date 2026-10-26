@@ -75,6 +75,10 @@ test('message : une par message, même tag pour la conversation ; plusieurs non 
   assert.match(ar.body, /^رسائل جديدة: 3 · /);
   assert.equal(ar.tag, un.tag);
   assert.equal(t('message', { nom: 'Salma', de: DE, type: 'texte', texte: 'x' }).body, 'x', 'sans compte (ancienne file) : le message seul');
+  // Moins de 20 s après la précédente : l'aperçu change sans sonner ; calme seulement pour un message
+  assert.equal(un.calme, undefined);
+  assert.equal(t('message', { nom: 'Salma', de: DE, type: 'texte', texte: 'x', n: 2, calme: true }).calme, true);
+  assert.equal(t('message', { nom: 'Salma', de: DE, type: 'texte', texte: 'x', calme: 'oui' }).calme, undefined);
   // Un autre expéditeur : une autre notification
   assert.notEqual(t('message', { nom: 'Youssef', de: uid(8104), type: 'texte', texte: 'x' }).tag, un.tag);
 });

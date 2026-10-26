@@ -3094,19 +3094,20 @@ grant execute on function public.marquer_lus(uuid) to authenticated;
 -- Notification sur le téléphone : une par message. Le notifier lui donne le même tag pour toute la conversation
 -- (message-<auteur>) : le téléphone remplace la précédente au lieu d'empiler, et sonne de nouveau. Elle montre le
 -- dernier message et, s'il y en a plusieurs non lus de cette personne, leur nombre (n).
--- Anti-spam : au plus une toutes les 20 secondes par conversation (notif_cadence, section « Notifications pour tout »).
+-- Calme : moins de 20 secondes après la précédente de la conversation (notif_cadence, section « Notifications pour
+-- tout »), elle remplace l'aperçu sans sonner ni vibrer ; le dernier message d'une rafale est donc toujours affiché.
 create or replace function public.notif_message() returns trigger
 language plpgsql security definer set search_path = public as $$
-declare v_n int;
+declare v_n int; v_calme boolean;
 begin
   if current_setting('ensam.sans_push_message', true) = 'on' then return null; end if;
   if not exists (select 1 from public.push_subscriptions where user_id = new.dest_id) then return null; end if;
-  if not public.cadence('message:' || new.author_id || ':' || new.dest_id, interval '20 seconds') then return null; end if;
+  v_calme := not public.cadence('message:' || new.author_id || ':' || new.dest_id, interval '20 seconds');
   select count(*) into v_n from public.messages m
     where m.author_id = new.author_id and m.dest_id = new.dest_id and m.lu_at is null and m.created_at > now() - interval '30 days';
   perform public.pousser(new.dest_id, 'message', jsonb_build_object(
     'nom', (select full_name from public.profiles where id = new.author_id), 'de', new.author_id,
-    'type', new.type, 'texte', left(coalesce(new.body, ''), 140), 'duree', new.duree, 'n', greatest(v_n, 1)));
+    'type', new.type, 'texte', left(coalesce(new.body, ''), 140), 'duree', new.duree, 'n', greatest(v_n, 1), 'calme', v_calme));
   return null;
 exception when others then return null;
 end $$;

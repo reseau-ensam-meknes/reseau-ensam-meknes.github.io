@@ -69,7 +69,7 @@ self.addEventListener('push', e => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch { d = { body: e.data?.text() }; }
   e.waitUntil(self.registration.showNotification(d.title || 'Réseau ENSAM Meknès', {
-    body: d.body || '', tag: d.tag || undefined, renotify: !!d.tag,
+    body: d.body || '', tag: d.tag || undefined, renotify: !!d.tag && !d.calme, silent: !!d.calme,
     icon: 'pwa/icon-192.png', badge: 'pwa/badge-96.png', data: { url: d.url || './' },
   }));
 });
