@@ -12,7 +12,7 @@ import { ReseauPage, ProfileModal, ProfileForm, AskQuestion } from './community.
 import { MentoratPage, AskHelp, NextRdv, slotWhen, mentoratIgnorees, IlsOntBesoin, CoupDeMain, HoraireSheet, ICONE_BESOIN, VERBE_BESOIN, phraseBesoin, ouvrirBesoin, confirmerPresence, finirMentorat, lienVisio } from './mentorat.js';
 import { SuccessFeed, VerifyPage, MerciDuo } from './growth.js';
 import { PrivacyPage, ConsentModal, MesDonnees, DesaboPage } from './privacy.js';
-import { useInstall, IosInstallHelp, PrevenirHote } from './pwa.js';
+import { useInstall, IosInstallHelp, PrevenirHote, PastilleApp } from './pwa.js';
 import { NextCafe } from './groupes.js';
 import { EntrepriseModal } from './pro.js';
 import { DefisPanel, DevenirParrain, TonAnnee, TonAnneeStrip } from './saison.js';
@@ -323,7 +323,7 @@ function App({ store }) {
             <button class="menu-mobile" onClick=${() => go('suivi')}><${Icon} name="chart" size=${16}/> ${me.role === 'etudiant' ? 'Mon année' : 'Suivi'}</button>
             ${me.role !== 'admin' ? html`<button onClick=${() => go('accueil/etapes')}><${Icon} name="route" size=${16}/> Comment ça marche ?</button>` : null}
             ${me.role !== 'admin' ? html`<button onClick=${() => { setPop(null); ctx.openAnnee(); }}><${Icon} name="award" size=${16}/> Ton année dans le réseau</button>` : null}
-            ${install ? html`<button onClick=${() => { setPop(null); install.ios ? setIosHelp(true) : install.prompt(); }}><${Icon} name="download" size=${16}/> Installer l’application</button>` : null}
+            ${install ? html`<button onClick=${() => { setPop(null); install.prompt ? install.prompt() : setIosHelp(install.android ? 'android' : 'ios'); }}><${Icon} name="download" size=${16}/> Installer l’application</button>` : null}
             <button onClick=${() => go('confidentialite')}><${Icon} name="shield" size=${16}/> Confidentialité</button>
             <button class="menu-theme" onClick=${() => { setTheme(themeActuel() === 'dark' ? 'light' : 'dark'); setPop(null); relang(); }}><${Icon} name=${themeActuel() === 'dark' ? 'sun' : 'moon'} size=${16}/> ${themeActuel() === 'dark' ? 'Mode clair' : 'Mode sombre'}</button>
             ${themeChoisi() ? html`<button onClick=${() => { setTheme(null); setPop(null); relang(); }}><${Icon} name="sun" size=${16}/> Thème automatique (comme l’appareil)</button>` : null}
@@ -361,7 +361,8 @@ function App({ store }) {
     ${entreprise ? html`<${EntrepriseModal} ctx=${ctx} name=${entreprise} key=${entreprise} onClose=${() => setEntreprise(null)}/>` : null}
     ${askQ ? html`<${AskQuestion} ctx=${ctx} initial=${askQ} onClose=${() => setAskQ(null)} onDone=${id => { setAskQ(null); go('reseau/entraide/' + id); }}/>` : null}
     ${annee ? html`<${TonAnnee} ctx=${ctx} saison=${annee} onClose=${() => setAnnee(null)}/>` : null}
-    ${iosHelp ? html`<${IosInstallHelp} onClose=${() => setIosHelp(false)}/>` : null}
+    ${iosHelp ? html`<${IosInstallHelp} android=${iosHelp === 'android'} onClose=${() => setIosHelp(false)}/>` : null}
+    <${PastilleApp} ctx=${ctx} cache=${plein}/>
     ${needConsent ? html`<${ConsentModal} ctx=${ctx}/>` : null}
     ${pop ? html`<${Feuille} key=${pop} onClose=${() => setPop(null)}/>` : null}
     <${Toaster}/>

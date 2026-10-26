@@ -3664,3 +3664,84 @@ test('offres portées et partagées en arabe : le badge, la section et « مشا
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
+
+test('la pastille : « Installer l’application » d’abord, puis « Activer les notifications » ; × la range 3 jours ; en arabe sans texte oublié', async () => {
+  const s = await prevenirSur(null);
+  await s.page.waitForTimeout(2600);
+  assert.equal(await s.page.locator('.pastille').count(), 0, 'démo ordinaire : rien à installer ni à activer');
+  await s.page.evaluate(() => { localStorage.setItem('ensam-install-demo', 'android'); localStorage.setItem('ensam-prevenir-demo', 'off'); });
+  await recharger(s);
+  await s.page.locator('#ouv-tard').click({ timeout: 6000 }).catch(() => {});
+  await s.page.waitForSelector('.pastille[data-sorte="installer"]');
+  // Au-dessus de la barre du bas, sans rien déborder
+  const [p, nav] = await Promise.all(['.pastille', '.bottom-nav'].map(x => s.page.locator(x).boundingBox()));
+  assert.ok(p.y + p.height <= nav.y, 'la pastille ne couvre pas la barre du bas');
+  assert.ok((await s.page.locator('#pastille-go').boundingBox()).height >= 44);
+  assert.equal(await s.debordement(), 0);
+  // Android sans proposition du navigateur : les gestes à faire
+  await s.page.click('#pastille-go');
+  await s.page.waitForSelector('.modal:has-text("Touche le menu ⋮")');
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+  // Le navigateur propose l'installation : un toucher, puis la pastille passe aux notifications
+  await s.page.evaluate(() => localStorage.setItem('ensam-install-demo', 'prompt'));
+  await recharger(s);
+  await s.page.locator('#ouv-tard').click({ timeout: 6000 }).catch(() => {});
+  await s.page.click('.pastille[data-sorte="installer"] #pastille-go');
+  await s.page.waitForSelector('.pastille[data-sorte="activer"]');
+  // On écrit : elle se range, puis revient
+  await s.aller('offres'); await s.page.waitForTimeout(300);
+  const champ = s.page.locator('input[type="search"], input[type="text"]').first();
+  if (await champ.count()) {
+    await champ.focus(); await s.page.waitForTimeout(150);
+    assert.equal(await s.page.locator('.pastille').count(), 0, 'pas pendant qu’on écrit');
+    await champ.blur(); await s.page.waitForTimeout(150);
+    assert.equal(await s.page.locator('.pastille').count(), 1);
+  }
+  // Pas dans les messages
+  await s.aller('messages'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.pastille').count(), 0, 'pas dans les messages');
+  await s.aller('accueil'); await s.page.waitForSelector('.pastille');
+  await s.page.click('#pastille-go'); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator('.pastille').count(), 0, 'activées : plus de pastille');
+  // × : rangée 3 jours, même après rechargement
+  await s.page.evaluate(() => localStorage.setItem('ensam-install-demo', 'ios'));
+  await recharger(s);
+  await s.page.waitForSelector('.pastille[data-sorte="installer"]', { timeout: 8000 });
+  await s.page.locator('#ouv-tard').click({ timeout: 1000 }).catch(() => {});
+  await s.page.click('#pastille-go');
+  await s.page.waitForSelector('.modal:has-text("Dans Safari")');
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+  await s.page.click('#pastille-x');
+  assert.equal(await s.page.locator('.pastille').count(), 0);
+  const memo = await s.page.evaluate(() => JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k => k.startsWith('ensam-pastille-')))));
+  assert.equal(memo.n, 1); assert.ok(memo.jusqua - Date.now() > 2.9 * 864e5);
+  await recharger(s); await s.page.waitForTimeout(2600);
+  assert.equal(await s.page.locator('.pastille').count(), 0, 'rangée 3 jours');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe, côté début de ligne inversé, sans texte oublié
+  const a = await prevenirSur('off', { langue: 'ar' });
+  await a.page.locator('#ouv-tard').click({ timeout: 6000 }).catch(() => {});
+  await a.page.waitForSelector('.pastille[data-sorte="activer"]');
+  assert.deepEqual((await a.page.locator('.pastille').innerText()).match(/[A-Za-zÀ-ÿ]{2,}/g) || [], []);
+  assert.equal(await a.page.getAttribute('#pastille-x', 'aria-label'), 'إخفاء لبضعة أيام');
+  assert.ok((await a.page.locator('.pastille').boundingBox()).x < 40, 'à gauche en arabe');
+  assert.equal(await a.debordement(), 0);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
+test('la pastille « Notifications bloquées » : les gestes de cet appareil, en français et en arabe', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await prevenirSur('refuse', { langue });
+    await s.page.waitForSelector('.pastille[data-sorte="debloquer"]', { timeout: 8000 });
+    await s.page.click('#pastille-go');
+    await s.page.waitForSelector('.modal .ios-steps');
+    const t = await s.page.locator('.modal').innerText();
+    if (langue === 'fr') assert.match(t, /cadenas à gauche de l’adresse/);
+    else assert.deepEqual(t.match(/[A-Za-zÀ-ÿ]{2,}/g)?.filter(x => !['ENSAM', 'iPhone'].includes(x)) || [], []);
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
