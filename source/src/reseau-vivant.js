@@ -139,3 +139,16 @@ export function nouvellesVivant(data, me, name, now = Date.now()) {
   }
   return out;
 }
+
+// La ligne sociale sous les réactions : « Toi », « Hamza », « Toi et Hamza », « Hamza et 2 autres ». Moi d'abord, puis le plus récent.
+// En arabe (lang 'ar') la même phrase, écrite ici : les prénoms ne passent pas par la traduction.
+export function quiAReagiTexte(reactions, moiId, byId, lang = 'fr') {
+  const ordre = [...reactions].sort((a, b) => (b.user_id === moiId) - (a.user_id === moiId) || new Date(b.created_at) - new Date(a.created_at));
+  if (!ordre.length) return '';
+  const ar = lang === 'ar';
+  const nom = r => r.user_id === moiId ? (ar ? 'أنت' : 'Toi') : ((byId(r.user_id)?.full_name || '').split(' ')[0] || (ar ? 'عضو' : 'Un membre'));
+  const [a, b] = ordre;
+  if (ordre.length === 1) return nom(a);
+  if (ordre.length === 2) return ar ? `${nom(a)} و${nom(b)}` : `${nom(a)} et ${nom(b)}`;
+  return ar ? `${nom(a)} و${ordre.length - 1} آخرون` : `${nom(a)} et ${ordre.length - 1} autres`;
+}

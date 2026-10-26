@@ -2010,8 +2010,8 @@ test('réseau vivant : une étudiante voit les demandes de sa promo et leurs ré
   assert.equal(await carte.locator('button:has-text("Voir le CV"), .dm-aider').count(), 0);
   const pastilles = carte.locator('.rx-pill');
   assert.ok(await pastilles.count() >= 1, 'les réactions des autres se voient');
-  // Toucher une pastille : qui a réagi
-  await pastilles.first().click(); await s.page.waitForSelector('.modal .rx-qui li');
+  // « Hamza et 2 autres » : qui a réagi
+  await carte.locator('.rx-total').click(); await s.page.waitForSelector('.modal .rx-qui li');
   assert.ok(await s.page.locator('.modal .rx-qui li').count() >= 1);
   await s.fermer();
   // La demande réussie de sa promo : « Réussie » et le nombre de lauréats qui ont proposé leur aide, sans dire qui
@@ -2031,7 +2031,8 @@ test('réseau vivant : une étudiante voit les demandes de sa promo et leurs ré
   assert.equal(await carte.locator('.rx-pill').count(), avant);
   // Une autre fois, puis retirée depuis « qui a réagi »
   await carte.locator('.rx-ajouter').click(); await carte.locator('.rx-btn[aria-label="Réagir avec 💪"]').click(); await s.page.waitForTimeout(150);
-  await carte.locator('.rx-pill.mien').click(); await s.page.waitForSelector('.modal .rx-retirer');
+  assert.match(await carte.locator('.rx-total').innerText(), /^Toi\b/);
+  await carte.locator('.rx-total').click(); await s.page.waitForSelector('.modal .rx-retirer');
   await s.page.click('.modal .rx-retirer'); await s.page.waitForTimeout(250);
   assert.equal(await carte.locator('.rx-pill.mien').count(), 0);
   assert.equal(await s.page.locator('.modal .rx-qui').count(), 0, 'la liste se ferme une fois la réaction retirée');
@@ -2058,16 +2059,30 @@ test('réseau vivant : une étudiante voit les demandes de sa promo et leurs ré
   await s.comme('Salma'); await s.aller('offres/demandes'); await fete();
   await carte.locator('.dm-rep-btn').click();
   assert.match(await carte.locator('.dm-reponses').innerText(), /l’AMEE/);
-  // Les offres : pastilles sur les cartes, on réagit dans la fiche
+  // Les offres : on réagit dans le fil, sans ouvrir la fiche ; la ligne ne change pas de hauteur
   await s.aller('offres');
-  const oc = s.page.locator('.ocard:has(.ocard-rx)').first();
+  const oc = s.page.locator('.ocard').first();
   await oc.waitFor();
+  const rx = oc.locator('.ocard-rx'); const h0 = (await rx.boundingBox()).height;
+  await oc.locator('.rx-ajouter').click();
+  assert.ok(Math.abs((await rx.boundingBox()).height - h0) <= 1, 'pas de saut quand le choix s’ouvre');
+  await oc.locator('.rx-btn[aria-label="Réagir avec 🙏"]').click(); await s.page.waitForTimeout(150);
+  assert.equal(await s.page.locator('.modal').count(), 0, 'la fiche ne s’ouvre pas');
+  assert.match(await oc.locator('.rx-pill.mien').innerText(), /🙏\s*1/);
+  assert.match(await oc.locator('.rx-total').innerText(), /^Toi/);
+  // Toucher sa pastille la retire ; toucher une pastille d'un autre émoji réagit avec lui
+  await oc.locator('.rx-pill.mien').click(); await s.page.waitForTimeout(150);
+  assert.equal(await oc.locator('.rx-pill.mien').count(), 0);
+  await oc.locator('.rx-ajouter').click(); await oc.locator('.rx-btn[aria-label="Réagir avec 🙏"]').click(); await s.page.waitForTimeout(150);
+  // La fiche montre la même réaction
   await oc.locator('.ocard-main').click(); await s.page.waitForSelector('.modal .od-rx');
-  await s.page.click('.modal .od-rx .rx-ajouter'); await s.page.click('.modal .od-rx .rx-btn[aria-label="Réagir avec 🙏"]'); await s.page.waitForTimeout(150);
   assert.match(await s.page.locator('.modal .od-rx .rx-pill.mien').innerText(), /🙏/);
   assert.ok(await s.page.evaluate(() => { const m = document.querySelector('.modal'); return m.scrollWidth <= m.clientWidth + 1; }), 'la fiche ne déborde pas');
   await s.fermer();
-  assert.match(await oc.locator('.rx-pill.mien').innerText(), /🙏/);
+  // Échap ferme le choix sans réagir
+  const oc2 = s.page.locator('.ocard').nth(1);
+  await oc2.locator('.rx-ajouter').click(); await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(100);
+  assert.equal(await oc2.locator('.rx-bar').count(), 0);
   assert.equal(await s.debordement(), 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();

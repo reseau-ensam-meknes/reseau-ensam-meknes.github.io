@@ -211,7 +211,7 @@ export function OfferCard({ o, ctx, onOpen, why, sujets = false }) {
         ${why?.length ? html`<${Pourquoi} why=${why}/>` : null}
       </span>
     </button>
-    <${Reactions} ctx=${ctx} cible=${{ offer_id: o.id }} compact cls="ocard-rx"/>
+    <${Reactions} ctx=${ctx} cible=${{ offer_id: o.id }} cls="ocard-rx"/>
     <footer class="ocard-foot">
       ${author ? html`<span class=${'ocard-author' + (coopt ? ' coopt' : '')}><${Avatar} p=${author} size=${coopt ? 28 : 22}/><span class="oa-txt"><span class="oa-nom">${prenom(author)} · promo ${author.promo}</span>${coopt ? html`<span class="oa-coopt">peut te recommander</span>` : null}</span></span>` : null}
       <span class="spacer"></span>
