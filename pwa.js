@@ -11,8 +11,13 @@ const listeners = new Set();
 const notify = () => listeners.forEach(f => f());
 if (typeof window !== 'undefined') {
   addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; notify(); });
-  addEventListener('appinstalled', () => { installEvt = null; notify(); toast('Application installée.'); });
+  addEventListener('appinstalled', () => { installEvt = null; marquerInstallee(); notify(); toast('Application installée.'); });
 }
+// Installée une fois sur cet appareil (le navigateur et l'application installée partagent ce stockage sur Android) :
+// la pastille ne la propose plus dans le navigateur
+const INSTALLEE = 'ensam-installee';
+function marquerInstallee() { try { localStorage.setItem(INSTALLEE, '1'); } catch { /* navigation privée */ } }
+const dejaInstallee = () => { try { return localStorage.getItem(INSTALLEE) === '1'; } catch { return false; } };
 
 // Enregistré au premier moment calme : son installation (tout le site gardé sur le téléphone) ne passe pas
 // devant les données du membre en 3G
@@ -47,16 +52,21 @@ function suivreMisesAJour(reg) {
 }
 
 const isStandalone = () => matchMedia?.('(display-mode: standalone)').matches || navigator.standalone === true;
+if (typeof window !== 'undefined' && isStandalone()) marquerInstallee();
 const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const hasManifest = () => !!document.querySelector('link[rel="manifest"]');
 
-// Entrée du menu « Installer l'application » : visible quand l'installation est possible
+const isAndroid = () => /android/i.test(navigator.userAgent);
+// « Installer l'application » (menu du compte et pastille) : visible quand l'installation est possible.
+// { prompt } : le navigateur installe en un toucher ; { ios } / { android } : les gestes à faire, montrés dans une feuille
+// (Android sans proposition du navigateur : Firefox, Samsung Internet, ou Chrome qui ne l'a pas encore proposée)
 export function useInstall() {
   const [, set] = useState(0);
   useEffect(() => { const f = () => set(x => x + 1); listeners.add(f); return () => listeners.delete(f); }, []);
   if (!hasManifest() || isStandalone()) return null;
   if (installEvt) return { prompt: async () => { const e = installEvt; installEvt = null; notify(); e.prompt(); await e.userChoice.catch(() => null); } };
   if (isIOS()) return { ios: true };
+  if (isAndroid() && !dejaInstallee()) return { android: true };
   return null;
 }
 
@@ -65,8 +75,14 @@ const EtapesIos = () => html`<ol class="ios-steps">
     <li><span class="g-ico"><${Icon} name="plus" size=${18}/></span> Choisis « Sur l’écran d’accueil ».</li>
     <li><span class="g-ico"><${Icon} name="check" size=${18}/></span> Ouvre le Réseau ENSAM depuis son icône, puis active les notifications dans « Mon profil ».</li>
   </ol>`;
-export function IosInstallHelp({ onClose }) {
-  return html`<${Modal} title="Installer l’application" onClose=${onClose}><${EtapesIos}/><//>`;
+const EtapesAndroid = () => html`<ol class="ios-steps">
+    <li><span class="g-ico debout"><${Icon} name="more" size=${18}/></span> Touche le menu ⋮ du navigateur, en haut à droite.</li>
+    <li><span class="g-ico"><${Icon} name="plus" size=${18}/></span> Choisis « Installer l’application » ou « Ajouter à l’écran d’accueil ».</li>
+    <li><span class="g-ico"><${Icon} name="check" size=${18}/></span> Ouvre le Réseau ENSAM depuis son icône : les notifications arrivent même quand il est fermé.</li>
+  </ol>`;
+const POURQUOI_INSTALLER = 'Une icône sur ton écran d’accueil, et les notifications qui arrivent même quand l’application est fermée.';
+export function IosInstallHelp({ onClose, android }) {
+  return html`<${Modal} title="Installer l’application" onClose=${onClose}><p>${POURQUOI_INSTALLER}</p>${android ? html`<${EtapesAndroid}/>` : html`<${EtapesIos}/>`}<//>`;
 }
 
 function b64ToBytes(b64) {
@@ -185,7 +201,7 @@ function ecrireMemo(id, m) { try { localStorage.setItem(cleMemo(id), JSON.string
 // En démo, un test peut simuler l'état d'un vrai téléphone
 function etatDemo(store) {
   if (store.mode === 'live') return null;
-  try { const e = localStorage.getItem('ensam-prevenir-demo'); return ['off', 'ios', 'absent'].includes(e) ? e : null; } catch { return null; }
+  try { const e = localStorage.getItem('ensam-prevenir-demo'); return ['off', 'ios', 'absent', 'refuse'].includes(e) ? e : null; } catch { return null; }
 }
 // La catégorie de Mon profil dont dépend la réponse attendue : décochée, « Me prévenir » ne promet pas de notification
 const CAT_RAISON = { demande: 'demandes', proposition: 'demandes', mentorat: 'mentorat', relecture: 'mentorat', candidature: 'candidatures', question: 'reseau', questionMembre: 'reseau' };
@@ -389,7 +405,7 @@ const OUV_POINTS = {
   laureat: {
     messages: 'Tes messages',
     demandes: 'Les nouvelles demandes d’étudiants de ta filière',
-    offres: 'Les nouvelles offres pour toi',
+    offres: 'Les nouvelles offres de ta filière',
     candidatures: 'Les candidatures reçues sur tes offres',
     mentorat: 'Les demandes de mentorat et tes rendez-vous',
     reseau: 'Les questions qui te sont adressées',
@@ -448,9 +464,145 @@ addAR({
   [OUV_POINTS.etudiant.mentorat]: 'مواعيد الإرشاد ومراجعات سيرتك الذاتية',
   [OUV_POINTS.etudiant.reseau]: 'الأجوبة على أسئلتك',
   [OUV_POINTS.laureat.demandes]: 'الطلبات الجديدة لطلبة شعبتك',
-  [OUV_POINTS.laureat.offres]: 'العروض الجديدة الخاصة بك',
+  [OUV_POINTS.laureat.offres]: 'العروض الجديدة في شعبتك',
   [OUV_POINTS.laureat.candidatures]: 'الترشيحات التي تصل إلى عروضك',
   [OUV_POINTS.laureat.mentorat]: 'طلبات الإرشاد ومواعيدك',
   [OUV_POINTS.laureat.reseau]: 'الأسئلة الموجّهة إليك',
   [OUV_POINTS.recherche.demandes]: 'الردود على طلب العمل الخاص بك',
+});
+
+// ---------------------------------------------------------------------------
+// La pastille, en bas de l'écran : « Installer l'application » tant qu'elle ne l'est pas, puis « Activer les notifications »
+// tant que cet appareil ne les reçoit pas (« Notifications bloquées » : comment les débloquer). Toujours là, sans rien
+// couvrir : jamais pendant qu'on écrit ni dans les messages. × la range 3 jours (10 jours après trois fois).
+// En démo, un test simule un vrai téléphone : ensam-install-demo (android | ios | prompt), ensam-prevenir-demo (off…).
+// ---------------------------------------------------------------------------
+const JOUR = 864e5;
+const clePastille = id => 'ensam-pastille-' + id;
+function lirePastille(id) { try { return JSON.parse(localStorage.getItem(clePastille(id)) || '{}') || {}; } catch { return {}; } }
+function ecrirePastille(id, m) { try { localStorage.setItem(clePastille(id), JSON.stringify(m)); } catch { /* navigation privée */ } }
+function installDemo(store) {
+  if (store.mode === 'live') return null;
+  try { const e = localStorage.getItem('ensam-install-demo'); return ['android', 'ios', 'prompt'].includes(e) ? e : null; } catch { return null; }
+}
+export const PASTILLE = {
+  installer: ['Installer l’application', 'En un toucher, avec les notifications'],
+  activer: ['Activer les notifications', 'Messages, offres, réponses : tout de suite'],
+  debloquer: ['Notifications bloquées', 'Les débloquer en trois gestes'],
+};
+const PASTILLE_ICO = { installer: 'download', activer: 'bell', debloquer: 'lock' };
+const DEMO_INSTALL = 'Sur la vraie plateforme, l’application s’installe ici en un toucher.';
+
+export function PastilleApp({ ctx, cache }) {
+  const { store, me } = ctx;
+  const vraie = useInstall();
+  const [simI, setSimI] = useState(() => installDemo(store));
+  const install = store.mode === 'live' ? vraie : simI ? { [simI]: true } : null;
+  const [push, setPush] = useState(() => etatDemo(store) || '…');
+  const [masque, setMasque] = useState(() => (lirePastille(me.id).jusqua || 0) > Date.now());
+  const [pret, setPret] = useState(false);
+  const [ecriture, setEcriture] = useState(false);
+  const [aide, setAide] = useState(null); // ios | android | debloquer
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    let vivant = true;
+    const lire = () => { const d = etatDemo(store); if (d) { setPush(d); return; } etatPush(store).then(e => { if (vivant) setPush(e); }, () => {}); };
+    lire();
+    // Revenu des réglages du téléphone (notifications débloquées) : la pastille suit
+    const vu = () => { if (document.visibilityState === 'visible') lire(); };
+    const f = () => setTimeout(() => setEcriture(ecrit(document.activeElement)), 0);
+    addEventListener(PUSH_CHANGE, lire);
+    document.addEventListener('visibilitychange', vu);
+    document.addEventListener('focusin', f); document.addEventListener('focusout', f);
+    // Quelques secondes après l'arrivée : l'écran d'abord
+    const t = setTimeout(() => setPret(true), 2000);
+    return () => { vivant = false; clearTimeout(t); removeEventListener(PUSH_CHANGE, lire); document.removeEventListener('visibilitychange', vu); document.removeEventListener('focusin', f); document.removeEventListener('focusout', f); };
+  }, [me.id]);
+  const voulu = PUSH_CATEGORIES.some(c => c !== 'rappels' && pushChoix(c, me));
+  const sorte = install ? 'installer' : !voulu ? null : push === 'off' ? 'activer' : push === 'refuse' ? 'debloquer' : null;
+  const agir = async () => {
+    if (sorte === 'debloquer') { setAide('debloquer'); return; }
+    if (sorte === 'installer') {
+      if (install.ios || install.android) { setAide(install.ios ? 'ios' : 'android'); return; }
+      if (simI) { try { localStorage.removeItem('ensam-install-demo'); } catch { /* rien */ } setSimI(null); toast(DEMO_INSTALL); return; }
+      setBusy(true); try { await install.prompt(); } finally { setBusy(false); }
+      return;
+    }
+    setBusy(true);
+    const r = await accepterNotif(store, me);
+    setBusy(false);
+    if (r === true && store.mode !== 'live') setPush('on');
+  };
+  const masquer = () => {
+    const m = lirePastille(me.id), n = (m.n || 0) + 1;
+    ecrirePastille(me.id, { n, jusqua: Date.now() + (n < 3 ? 3 : 10) * JOUR });
+    setMasque(true);
+  };
+  const fermerAide = () => setAide(null);
+  const feuille = aide === 'debloquer' ? html`<${FeuilleDebloquer} ctx=${ctx} onClose=${fermerAide}/>`
+    : aide ? html`<${IosInstallHelp} android=${aide === 'android'} onClose=${fermerAide}/>` : null;
+  if (!sorte || !pret || masque || cache || ecriture) return feuille;
+  const [titre, sous] = PASTILLE[sorte];
+  return html`<aside class="pastille" aria-label=${titre} data-sorte=${sorte}>
+      <button type="button" class="pastille-go" id="pastille-go" disabled=${busy} onClick=${agir}>
+        <span class="pastille-ico" aria-hidden="true"><${Icon} name=${PASTILLE_ICO[sorte]} size=${18}/></span>
+        <span class="pastille-txt"><strong>${titre}</strong><span>${sous}</span></span>
+      </button>
+      <button type="button" class="pastille-x" id="pastille-x" aria-label="Masquer quelques jours" onClick=${masquer}><${Icon} name="x" size=${16}/></button>
+    </aside>${feuille}`;
+}
+
+// Notifications bloquées par le navigateur : les gestes de cet appareil pour les rouvrir, puis « C'est fait »
+const DEBLOQUER = {
+  android: [['lock', 'Touche le cadenas à gauche de l’adresse du site.'], ['bell', 'Ouvre « Autorisations », puis « Notifications ».'], ['check', 'Choisis « Autoriser », puis reviens ici.']],
+  appli: [['phone', 'Appuie longuement sur l’icône du Réseau ENSAM, puis sur « Infos sur l’appli ».'], ['bell', 'Ouvre « Notifications ».'], ['check', 'Active « Afficher les notifications », puis reviens ici.']],
+  ios: [['phone', 'Ouvre les Réglages de l’iPhone, puis « Notifications ».'], ['bell', 'Choisis « Réseau ENSAM ».'], ['check', 'Active « Autoriser les notifications », puis reviens ici.']],
+  pc: [['lock', 'Clique sur le cadenas à gauche de l’adresse du site.'], ['bell', 'À la ligne « Notifications », choisis « Autoriser ».'], ['check', 'Recharge la page, puis touche « C’est fait ».']],
+};
+const DEBLOQUER_INTRO = 'Ce navigateur a bloqué les notifications du Réseau ENSAM. Pour les recevoir :';
+const TOUJOURS_BLOQUEES = 'Toujours bloquées. Suis les trois gestes, puis réessaie.';
+function FeuilleDebloquer({ ctx, onClose }) {
+  const { store, me } = ctx;
+  const [busy, setBusy] = useState(false);
+  const ou = isIOS() ? 'ios' : isAndroid() ? (isStandalone() ? 'appli' : 'android') : 'pc';
+  const fait = async () => {
+    if (store.mode === 'live' && 'Notification' in window && Notification.permission === 'denied') { toast(TOUJOURS_BLOQUEES, 'err'); return; }
+    setBusy(true);
+    const r = await accepterNotif(store, me);
+    setBusy(false);
+    if (r) onClose();
+  };
+  const pied = html`<button type="button" class="btn ghost" onClick=${onClose}>Plus tard</button>
+    <button type="button" class="btn primary" id="debloquer-ok" disabled=${busy} onClick=${fait}><${Icon} name="check" size=${16}/> C’est fait</button>`;
+  return html`<${Modal} title="Débloquer les notifications" cls="prevenir" onClose=${onClose} footer=${pied}>
+    <p>${DEBLOQUER_INTRO}</p>
+    <ol class="ios-steps">${DEBLOQUER[ou].map(([ico, txt]) => html`<li key=${txt}><span class="g-ico"><${Icon} name=${ico} size=${18}/></span> ${txt}</li>`)}</ol>
+  <//>`;
+}
+
+addAR({
+  'Touche le menu ⋮ du navigateur, en haut à droite.': 'المس قائمة ⋮ في المتصفح، أعلى اليمين.',
+  'Choisis « Installer l’application » ou « Ajouter à l’écran d’accueil ».': 'اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».',
+  'Ouvre le Réseau ENSAM depuis son icône : les notifications arrivent même quand il est fermé.': 'افتح شبكة ENSAM من أيقونتها: تصلك الإشعارات حتى وهو مغلق.',
+  [POURQUOI_INSTALLER]: 'أيقونة على شاشتك الرئيسية، وإشعارات تصلك حتى والتطبيق مغلق.',
+  [PASTILLE.installer[1]]: 'بلمسة واحدة، مع الإشعارات',
+  [PASTILLE.activer[0]]: 'فعّل الإشعارات', [PASTILLE.activer[1]]: 'الرسائل والعروض والأجوبة: فورًا',
+  [PASTILLE.debloquer[0]]: 'الإشعارات محظورة', [PASTILLE.debloquer[1]]: 'ارفع الحظر في ثلاث خطوات',
+  'Masquer quelques jours': 'إخفاء لبضعة أيام',
+  [DEMO_INSTALL]: 'على المنصة الحقيقية، يُثبَّت التطبيق هنا بلمسة واحدة.',
+  'Débloquer les notifications': 'رفع الحظر عن الإشعارات', 'C’est fait': 'تمّ',
+  [DEBLOQUER_INTRO]: 'حظر هذا المتصفح إشعارات شبكة ENSAM. لتصلك:',
+  [TOUJOURS_BLOQUEES]: 'ما زالت محظورة. اتبع الخطوات الثلاث، ثم أعد المحاولة.',
+  [DEBLOQUER.android[0][1]]: 'المس القفل على يسار عنوان الموقع.',
+  [DEBLOQUER.android[1][1]]: 'افتح «الأذونات»، ثم «الإشعارات».',
+  [DEBLOQUER.android[2][1]]: 'اختر «السماح»، ثم ارجع إلى هنا.',
+  [DEBLOQUER.appli[0][1]]: 'اضغط مطوّلًا على أيقونة شبكة ENSAM، ثم على «معلومات التطبيق».',
+  [DEBLOQUER.appli[1][1]]: 'افتح «الإشعارات».',
+  [DEBLOQUER.appli[2][1]]: 'فعّل «إظهار الإشعارات»، ثم ارجع إلى هنا.',
+  [DEBLOQUER.ios[0][1]]: 'افتح إعدادات iPhone، ثم «الإشعارات».',
+  [DEBLOQUER.ios[1][1]]: 'اختر «شبكة ENSAM».',
+  [DEBLOQUER.ios[2][1]]: 'فعّل «السماح بالإشعارات»، ثم ارجع إلى هنا.',
+  [DEBLOQUER.pc[0][1]]: 'انقر على القفل على يسار عنوان الموقع.',
+  [DEBLOQUER.pc[1][1]]: 'في سطر «الإشعارات»، اختر «السماح».',
+  [DEBLOQUER.pc[2][1]]: 'أعد تحميل الصفحة، ثم المس «تمّ».',
 });

@@ -405,7 +405,7 @@ const OUV_POINTS = {
   laureat: {
     messages: 'Tes messages',
     demandes: 'Les nouvelles demandes d’étudiants de ta filière',
-    offres: 'Les nouvelles offres pour toi',
+    offres: 'Les nouvelles offres de ta filière',
     candidatures: 'Les candidatures reçues sur tes offres',
     mentorat: 'Les demandes de mentorat et tes rendez-vous',
     reseau: 'Les questions qui te sont adressées',
@@ -464,7 +464,7 @@ addAR({
   [OUV_POINTS.etudiant.mentorat]: 'مواعيد الإرشاد ومراجعات سيرتك الذاتية',
   [OUV_POINTS.etudiant.reseau]: 'الأجوبة على أسئلتك',
   [OUV_POINTS.laureat.demandes]: 'الطلبات الجديدة لطلبة شعبتك',
-  [OUV_POINTS.laureat.offres]: 'العروض الجديدة الخاصة بك',
+  [OUV_POINTS.laureat.offres]: 'العروض الجديدة في شعبتك',
   [OUV_POINTS.laureat.candidatures]: 'الترشيحات التي تصل إلى عروضك',
   [OUV_POINTS.laureat.mentorat]: 'طلبات الإرشاد ومواعيدك',
   [OUV_POINTS.laureat.reseau]: 'الأسئلة الموجّهة إليك',
