@@ -68,31 +68,32 @@ const CATS_NOTIF = {
     candidatures: ['Mes candidatures', 'Une candidature qui avance, une invitation à postuler, un recrutement à confirmer.'],
     mentorat: ['Mentorat et rendez-vous', 'Rendez-vous et rappels, relectures de CV, partage de coordonnées, parrainage.'],
     offres: ['Nouvelles offres pour moi', 'Les offres de ton année et de ta filière, dès leur publication.'],
-    reseau: ['Réponses à mes questions et vie du réseau', 'Réponses à tes questions, événements de l’école, cafés de ta ville.'],
+    reseau: ['Réponses à mes questions et vie du réseau', 'Réponses à tes questions et sous les offres où tu as écrit, nouveaux membres de ta promo, annonces et événements de l’école, cafés de ta ville.'],
     rappels: RAPPELS_NOTIF.etudiant,
   },
   laureat: {
     messages: ['Messages', 'Les messages qu’on t’envoie.'],
-    demandes: ['Demandes des étudiants de ma filière', 'Et la suite de tes propositions d’aide.'],
+    demandes: ['Demandes des étudiants', 'Celles de ta filière dès leur publication, celles des autres filières quand elles s’ouvrent à tous les lauréats, et la suite de tes propositions d’aide.'],
     // Tout lauréat peut postuler aux offres entre lauréats
     candidatures: ['Candidatures reçues sur mes offres', 'Et les recrutements confirmés ; si tu postules, la suite de tes candidatures.'],
-    mentorat: ['Mentorat et rendez-vous', 'Mentorats à accepter, coordonnées à partager, rappels de rendez-vous, CV à relire, parrainage, mercis.'],
-    // Les offres arrivent selon le profil (offre_pour dans schema.sql) : la condition est dite, pas conseillée
-    offres: ['Nouvelles offres pour moi', 'Avec « Je cherche un emploi en ce moment » coché dans ton profil : offres « Jeunes diplômés » et offres entre lauréats de ta filière. Sans cela, seulement les offres « Jeunes diplômés » l’année de ton diplôme.'],
+    mentorat: ['Mentorat et rendez-vous', 'Mentorats à accepter ou ouverts à tous, coordonnées à partager, rappels de rendez-vous, CV à relire, parrainage, mercis.'],
+    // Toute nouvelle offre de sa filière arrive à un lauréat (alerte_offre dans schema.sql), même une offre de stage :
+    // il peut la faire suivre
+    offres: ['Nouvelles offres de ma filière', 'Toutes les offres publiées pour ta filière, dès leur publication : celles qui te visent, et celles des étudiants, que tu peux faire suivre.'],
     // Un lauréat pose aussi des questions : les réponses passent par cette case
-    reseau: ['Questions et vie du réseau', 'Réponses à tes questions, questions sur ton entreprise ou ton pays, camarades de promo à confirmer, enquête d’insertion, événements de l’école, cafés de ta ville.'],
+    reseau: ['Questions et vie du réseau', 'Réponses à tes questions, questions sur ton entreprise ou ton pays, commentaires sur tes offres, nouveaux membres et camarades de promo à confirmer, annonces et événements de l’école, enquête d’insertion, cafés de ta ville.'],
     rappels: RAPPELS_NOTIF.laureat,
   },
   // Un lauréat qui cherche un emploi publie sa demande d'emploi et postule : ces cases couvrent aussi les siennes
   recherche: {
-    demandes: ['Mes demandes et celles des étudiants', 'Les réponses à ta demande d’emploi, les étudiants de ta filière qui cherchent de l’aide, et la suite de tes propositions d’aide.'],
+    demandes: ['Mes demandes et celles des étudiants', 'Les réponses à ta demande d’emploi, les étudiants de ta filière qui cherchent de l’aide (puis ceux des autres filières, après 24 h sans aide), et la suite de tes propositions d’aide.'],
     candidatures: ['Candidatures', 'La suite des tiennes (entretien, recrutement à confirmer) et les candidatures reçues sur tes offres.'],
-    offres: ['Nouvelles offres pour moi', 'Offres « Jeunes diplômés » et offres entre lauréats de ta filière, dès leur publication.'],
+    offres: ['Nouvelles offres de ma filière', 'Offres « Jeunes diplômés », offres entre lauréats et offres des étudiants de ta filière, dès leur publication.'],
   },
   // L'équipe du réseau ne postule pas, et les questions sur une entreprise ou un pays ne vont qu'aux lauréats
   admin: {
     candidatures: ['Candidatures reçues sur mes offres', 'Et les recrutements confirmés.'],
-    reseau: ['Réponses à mes questions et vie du réseau', 'Réponses à tes questions, événements de l’école, cafés de ta ville.'],
+    reseau: ['Réponses à mes questions et vie du réseau', 'Réponses à tes questions, commentaires sur tes offres, événements de l’école, cafés de ta ville.'],
   },
 };
 const motsNotif = me => (me.role === 'etudiant' ? CATS_NOTIF.etudiant
@@ -121,21 +122,23 @@ addAR({
   [CATS_NOTIF.etudiant.offres[0]]: 'عروض جديدة تخصني',
   [CATS_NOTIF.etudiant.offres[1]]: 'عروض سنتك وشعبتك، فور نشرها.',
   [CATS_NOTIF.etudiant.reseau[0]]: 'الأجوبة على أسئلتي وحياة الشبكة',
-  [CATS_NOTIF.etudiant.reseau[1]]: 'الأجوبة على أسئلتك، أنشطة المدرسة، لقاءات المقهى في مدينتك.',
-  [CATS_NOTIF.laureat.demandes[0]]: 'طلبات الطلبة من شعبتي',
-  [CATS_NOTIF.laureat.demandes[1]]: 'ومآل اقتراحات مساعدتك.',
+  [CATS_NOTIF.etudiant.reseau[1]]: 'الأجوبة على أسئلتك وتحت العروض التي علّقت عليها، الأعضاء الجدد في دفعتك، إعلانات المدرسة وأنشطتها، لقاءات المقهى في مدينتك.',
+  [CATS_NOTIF.laureat.demandes[0]]: 'طلبات الطلبة',
+  [CATS_NOTIF.laureat.demandes[1]]: 'طلبات الطلبة من شعبتك فور نشرها، ثم طلبات الطلبة من الشعب الأخرى حين تُفتح لكل الخريجين، ومآل اقتراحات مساعدتك.',
   [CATS_NOTIF.laureat.candidatures[0]]: 'الترشيحات التي تصل إلى عروضي',
   [CATS_NOTIF.laureat.candidatures[1]]: 'والتوظيفات المؤكَّدة؛ وإن ترشحت، مآل ترشيحاتك.',
   [CATS_NOTIF.admin.candidatures[1]]: 'والتوظيفات المؤكَّدة.',
-  [CATS_NOTIF.laureat.mentorat[1]]: 'إرشادات تنتظر قبولك، معلومات اتصال للمشاركة، التذكير بالمواعيد، سير ذاتية للمراجعة، الرعاية، رسائل الشكر.',
-  [CATS_NOTIF.laureat.offres[1]]: 'إن فعّلت «أبحث عن عمل حاليًا» في ملفك الشخصي: عروض «الخريجون الجدد» والعروض بين خريجي شعبتك. وبدونه، عروض «الخريجون الجدد» في سنة تخرجك فقط.',
+  [CATS_NOTIF.laureat.mentorat[1]]: 'إرشادات تنتظر قبولك أو مفتوحة لكل الخريجين، معلومات اتصال للمشاركة، التذكير بالمواعيد، سير ذاتية للمراجعة، الرعاية، رسائل الشكر.',
+  [CATS_NOTIF.laureat.offres[0]]: 'العروض الجديدة في شعبتي',
+  [CATS_NOTIF.laureat.offres[1]]: 'كل العروض المنشورة لشعبتك، فور نشرها: العروض الموجهة إليك، وعروض الطلبة التي يمكنك إيصالها إلى غيرك.',
   [CATS_NOTIF.recherche.demandes[0]]: 'طلباتي وطلبات الطلبة',
-  [CATS_NOTIF.recherche.demandes[1]]: 'الردود على طلبك للعمل، طلبة شعبتك الذين يبحثون عن مساعدة، ومآل اقتراحات مساعدتك.',
+  [CATS_NOTIF.recherche.demandes[1]]: 'الردود على طلبك للعمل، طلبة شعبتك الذين يبحثون عن مساعدة (ثم طلبة الشعب الأخرى بعد 24 ساعة دون مساعدة)، ومآل اقتراحات مساعدتك.',
   [CATS_NOTIF.recherche.candidatures[0]]: 'الترشيحات',
   [CATS_NOTIF.recherche.candidatures[1]]: 'مآل ترشيحاتك (مقابلة، توظيف ينتظر تأكيدك) والترشيحات التي تصل إلى عروضك.',
-  [CATS_NOTIF.recherche.offres[1]]: 'عروض «الخريجون الجدد» والعروض بين خريجي شعبتك، فور نشرها.',
+  [CATS_NOTIF.recherche.offres[1]]: 'عروض «الخريجون الجدد» والعروض بين الخريجين وعروض الطلبة في شعبتك، فور نشرها.',
   [CATS_NOTIF.laureat.reseau[0]]: 'الأسئلة وحياة الشبكة',
-  [CATS_NOTIF.laureat.reseau[1]]: 'الأجوبة على أسئلتك، أسئلة حول شركتك أو بلدك، زملاء دفعتك لتأكيدهم، استطلاع الإدماج المهني، أنشطة المدرسة، لقاءات المقهى في مدينتك.',
+  [CATS_NOTIF.laureat.reseau[1]]: 'الأجوبة على أسئلتك، أسئلة حول شركتك أو بلدك، التعليقات على عروضك، الأعضاء الجدد في دفعتك وزملاء دفعتك لتأكيدهم، إعلانات المدرسة وأنشطتها، استطلاع الإدماج المهني، لقاءات المقهى في مدينتك.',
+  [CATS_NOTIF.admin.reseau[1]]: 'الأجوبة على أسئلتك، التعليقات على عروضك، أنشطة المدرسة، لقاءات المقهى في مدينتك.',
 });
 
 

@@ -1249,24 +1249,26 @@ export const PUSH_CATEGORIES = ['messages', 'demandes', 'candidatures', 'mentora
 // Type de notification -> catégorie (un type inconnu : vie du réseau)
 export const PUSH_KINDS = {
   message: 'messages',
-  demande_nouvelle: 'demandes', demande_proposition: 'demandes', demande_match: 'demandes', demande_rouverte: 'demandes', demande_reponse: 'demandes',
+  demande_nouvelle: 'demandes', demande_large: 'demandes', demande_proposition: 'demandes', demande_match: 'demandes', demande_rouverte: 'demandes', demande_reponse: 'demandes',
   candidature: 'candidatures', candidature_statut: 'candidatures', invitation: 'candidatures',
   recrutement_a_confirmer: 'candidatures', recrutement_confirme: 'candidatures', relance_offre: 'candidatures',
-  mentorat_demande: 'mentorat', mentorat_accepte: 'mentorat', mentorat_deplace: 'mentorat', mentorat_annule: 'mentorat',
+  mentorat_demande: 'mentorat', mentorat_ouvert: 'mentorat', mentorat_accepte: 'mentorat', mentorat_deplace: 'mentorat', mentorat_annule: 'mentorat',
   rappel_rdv: 'mentorat', merci: 'mentorat', relecture_demande: 'mentorat', relecture_prise: 'mentorat', relecture_rendue: 'mentorat',
   contact_demande: 'mentorat', contact_accepte: 'mentorat', filleul: 'mentorat', parrain: 'mentorat',
   offre_alerte: 'offres',
   rappel_visite: 'rappels',
   reponse: 'reseau', question_routee: 'reseau', cafe: 'reseau', evenement: 'reseau', evenement_annule: 'reseau', evenement_deplace: 'reseau',
   enquete: 'reseau', verification_pair: 'reseau', verifier_pair: 'reseau', reaction: 'reseau',
+  promo_nouveau: 'reseau', offre_commentaire: 'reseau', annonce: 'reseau',
   signalement: 'admin',
 };
 export const pushCategorie = kind => (Object.prototype.hasOwnProperty.call(PUSH_KINDS, kind) ? PUSH_KINDS[kind] : 'reseau');
-// Défaut : tout est activé, sauf les nouvelles offres pour un lauréat qui ne cherche pas d'emploi ;
-// un étudiant garde sa case « M'alerter dès qu'une offre… » (alertes_offres). L'admin a les défauts d'un lauréat.
+// Défaut : tout est activé pour tout le monde, nouvelles offres comprises (un lauréat reçoit celles de sa filière,
+// qu'il cherche un emploi ou non). Seule exception, un choix déjà fait : l'ancienne case « M'alerter dès qu'une
+// offre… » décochée (alertes_offres = false) garde les offres coupées. Les signalements : l'administration seule.
 export function pushDefaut(cat, me) {
   if (cat === 'admin') return me?.role === 'admin';
-  if (cat === 'offres') return me?.alertes_offres !== false && (me?.role === 'etudiant' || !!me?.en_recherche);
+  if (cat === 'offres') return me?.alertes_offres !== false;
   return true;
 }
 // Case cochée dans Mon profil : le choix du membre, sinon le défaut

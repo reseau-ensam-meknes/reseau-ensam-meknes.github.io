@@ -339,7 +339,7 @@ async function preparerVapid(env: Env): Promise<Vapid> {
 }
 
 type Abonnement = { id: string; user_id: string; endpoint: string; p256dh: string; auth: string };
-export type Notif = { title: string; body: string; url: string; tag: string };
+export type Notif = { title: string; body: string; url: string; tag: string; calme?: boolean };
 
 export const urgence = (kind: string) => (kind === 'rappel_rdv' || kind === 'mentorat_accepte' || kind === 'message' ? 'high' : 'normal');
 
@@ -387,6 +387,12 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     route: 'mentorat',
     fr: v => ['Des horaires à choisir', `${v.nom} te demande de l’aide : ${v.sujet}`],
     ar: v => ['توقيتات بانتظار اختيارك', `مساعدتك مطلوبة من ${v.nom}: ${v.sujet}`],
+  },
+  // Une demande de mentorat ouverte à tous (sans lauréat choisi, ou passée aux autres) : les lauréats disponibles du parcours
+  mentorat_ouvert: {
+    route: 'mentorat',
+    fr: v => ['Une demande de mentorat ouverte à tous', `${v.nom} propose ses horaires : ${v.sujet}`],
+    ar: v => ['طلب إرشاد مفتوح لكل الخريجين', `توقيتات مقترحة من ${v.nom}: ${v.sujet}`],
   },
   mentorat_accepte: {
     route: 'mentorat',
@@ -438,6 +444,12 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     route: 'offres/demandes',
     fr: v => [v.dtype === 'emploi' ? 'Quelqu’un du réseau cherche un emploi' : 'Un étudiant de ton parcours cherche', `${v.nom}${TYPES_OFFRE.fr[v.dtype] ? ` · ${TYPES_OFFRE.fr[v.dtype]}` : ''} : ${v.titre}`],
     ar: v => [v.dtype === 'emploi' ? 'شخص من الشبكة يبحث عن عمل' : 'طلب جديد من مسارك', `${v.nom}${TYPES_OFFRE.ar[v.dtype] ? ` · ${TYPES_OFFRE.ar[v.dtype]}` : ''}: ${v.titre}`],
+  },
+  // Une demande restée sans aide qui s'ouvre à tous les lauréats (24 h après) : les lauréats des autres parcours
+  demande_large: {
+    route: 'offres/demandes',
+    fr: v => ['Une demande ouverte à tous les lauréats', `${v.nom}${TYPES_OFFRE.fr[v.dtype] ? ` · ${TYPES_OFFRE.fr[v.dtype]}` : ''} : ${v.titre}`],
+    ar: v => ['طلب مفتوح لكل الخريجين', `${v.nom}${TYPES_OFFRE.ar[v.dtype] ? ` · ${TYPES_OFFRE.ar[v.dtype]}` : ''}: ${v.titre}`],
   },
   demande_proposition: {
     route: 'offres/demandes',
@@ -513,10 +525,21 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     ar: v => ['هل لا يزال عرضك مفتوحًا؟', `«${v.titre}»: أكّد بنقرة أنه لا يزال مفتوحًا، أو أشر إلى أنه تم شغله.`],
   },
   // Le texte dit d'où vient l'offre : portée par un lauréat (il encadre), ou partagée (vue ailleurs, à postuler sur le site d'origine)
+  // Un lauréat reçoit aussi les offres de sa filière qui ne le visent pas (pour = relayer) : « dans ta filière »
   offre_alerte: {
     route: 'offres',
-    fr: v => [v.origine === 'partagee' ? 'Offre partagée pour toi' : 'Nouvelle offre pour toi', `${v.titre}${v.entreprise ? ` · ${v.entreprise}` : ''}${ORIGINE_ALERTE.fr[v.origine || ''] || ''}`],
-    ar: v => [v.origine === 'partagee' ? 'عرض تمت مشاركته معك' : 'عرض جديد لك', `${v.titre}${v.entreprise ? ` · ${v.entreprise}` : ''}${ORIGINE_ALERTE.ar[v.origine || ''] || ''}`],
+    fr: v => [v.pour === 'relayer' ? (v.origine === 'partagee' ? 'Offre partagée dans ta filière' : 'Nouvelle offre dans ta filière')
+      : v.origine === 'partagee' ? 'Offre partagée pour toi' : 'Nouvelle offre pour toi', `${v.titre}${v.entreprise ? ` · ${v.entreprise}` : ''}${ORIGINE_ALERTE.fr[v.origine || ''] || ''}`],
+    ar: v => [v.pour === 'relayer' ? (v.origine === 'partagee' ? 'عرض تمت مشاركته في شعبتك' : 'عرض جديد في شعبتك')
+      : v.origine === 'partagee' ? 'عرض تمت مشاركته معك' : 'عرض جديد لك', `${v.titre}${v.entreprise ? ` · ${v.entreprise}` : ''}${ORIGINE_ALERTE.ar[v.origine || ''] || ''}`],
+  },
+  // Un commentaire sur mon offre ; la réponse de son auteur sous une offre où j'ai écrit
+  offre_commentaire: {
+    route: 'offres',
+    fr: v => v.pour === 'fil' ? ['Réponse sous une offre', `${v.nom} a répondu${v.titre ? ` sous « ${v.titre} »` : ''} : ${v.texte}`]
+      : ['Nouveau commentaire sur ton offre', `${v.nom}${v.titre ? ` sur « ${v.titre} »` : ''} : ${v.texte}`],
+    ar: v => v.pour === 'fil' ? ['رد تحت عرض', `رد من ${v.nom}${v.titre ? ` تحت «${v.titre}»` : ''}: ${v.texte}`]
+      : ['تعليق جديد على عرضك', `تعليق من ${v.nom}${v.titre ? ` على «${v.titre}»` : ''}: ${v.texte}`],
   },
   contact_demande: {
     route: 'accueil',
@@ -560,6 +583,19 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     fr: v => ['Un lauréat de ta promo', `${v.nom} vient de rejoindre le réseau${v.promo ? ` (promo ${v.promo})` : ''}. Confirme-le si tu le connais.`],
     ar: v => ['خريج من دفعتك', `انضمام جديد إلى الشبكة: ${v.nom}${v.promo ? ` (دفعة ${v.promo})` : ''}. أكّد الهوية إن كانت لك معرفة سابقة.`],
   },
+  // Nouveaux membres de ma promo : au plus une par jour, avec le nombre d'arrivées depuis la précédente
+  promo_nouveau: {
+    route: 'reseau/annuaire',
+    fr: v => [v.n > 1 ? `${v.nom} et ${v.n - 1} autre${v.n > 2 ? 's' : ''} ont rejoint ta promo` : `${v.nom} a rejoint ta promo`,
+      `${v.promo ? `Promo ${v.promo} : retrouve` : 'Retrouve'} tes camarades dans l’annuaire.`],
+    ar: v => v.n > 1 ? [`أعضاء جدد في دفعتك: ${v.n}`, `منهم ${v.nom}. تجد زملاء دفعتك${v.promo ? ` (${v.promo})` : ''} في الدليل.`]
+      : [`انضمام جديد إلى دفعتك: ${v.nom}`, `تجد زملاء دفعتك${v.promo ? ` (${v.promo})` : ''} في الدليل.`],
+  },
+  annonce: {
+    route: 'accueil',
+    fr: v => v.texte ? ['Annonce du Réseau ENSAM', v.texte] : null,
+    ar: v => v.texte ? ['إعلان من شبكة ENSAM', v.texte] : null,
+  },
   evenement: {
     route: 'reseau/agenda',
     fr: v => [`À l’agenda : ${v.titre}`, [v.date ? `${v.date} à ${v.heure}` : '', v.lieu].filter(Boolean).join(' · ') || 'Nouvel événement.'],
@@ -580,10 +616,11 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     fr: v => ['Enquête d’insertion', `${v.vague || 6} mois après ton diplôme : 2 minutes pour aider les promos suivantes.`],
     ar: v => ['استمارة الإدماج المهني', `${v.vague || 6} أشهر بعد تخرجك: دقيقتان لمساعدة الدفعات القادمة.`],
   },
+  // Une notification par message, la même pour toute la conversation (tag) : le nombre de non lus, puis le dernier
   message: {
     route: 'messages',
-    fr: v => [v.nom, apercuMessage(v, 'fr')],
-    ar: v => [v.nom, apercuMessage(v, 'ar')],
+    fr: v => [v.nom, v.n > 1 ? `${v.n} nouveaux messages · ${apercuMessage(v, 'fr')}` : apercuMessage(v, 'fr')],
+    ar: v => [v.nom, v.n > 1 ? `رسائل جديدة: ${v.n} · ${apercuMessage(v, 'ar')}` : apercuMessage(v, 'ar')],
   },
   // Rappel de visite : texte écrit par notifRappel (les chiffres de chaque chose qui attend ne tiennent pas dans V)
   rappel_visite: {
@@ -625,7 +662,7 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
     vague: txt(d.vague) === '12' ? '12' : txt(d.vague) === '6' ? '6' : '', motif: txt(d.motif),
     texte: s('texte'), mtype: txt(d.type), duree: Math.max(0, Math.min(600, Number(d.duree) || 0)),
     aide: ['recrute', 'encadre', 'recommande'].includes(txt(d.aide)) ? txt(d.aide) : '', dtype: txt(d.type),
-    pour: ['demandeur', 'mentor', 'auteur', 'aidant'].includes(txt(d.pour)) ? txt(d.pour) : '',
+    pour: ['demandeur', 'mentor', 'auteur', 'aidant', 'fil', 'relayer'].includes(txt(d.pour)) ? txt(d.pour) : '',
     // Offre portée par un lauréat (il encadre) ou partagée (vue ailleurs) ; rien pour une offre classique
     origine: ['portee', 'partagee'].includes(txt(d.origine)) ? txt(d.origine) : '',
     emoji: EMOJIS_PUBLICS.includes(txt(d.emoji)) ? txt(d.emoji) : '', quoi: estUuid(d.demande) ? 'demande' : 'offre',
@@ -638,11 +675,15 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
   const annule = kind === 'mentorat_annule' && estUuid(d.m) ? d.m : null;
   // Une réaction ouvre l'élément : l'offre, ou la carte de la demande ; une seule notification par élément sur le téléphone
   const rx = kind === 'reaction' ? (estUuid(d.offre) ? { route: `offre/${d.offre}`, id: d.offre } : estUuid(d.demande) ? { route: `offres/demandes/${d.demande}`, id: d.demande } : null) : null;
-  const route = rx ? rx.route : kind === 'offre_alerte' && estUuid(d.offre) ? `offre/${d.offre}` : kind === 'message' && estUuid(d.de) ? `messages/${d.de}`
+  // Un commentaire ouvre l'offre ; une notification par offre sur le téléphone
+  const com = kind === 'offre_commentaire' && estUuid(d.offre) ? d.offre : null;
+  const route = rx ? rx.route : kind === 'offre_alerte' && estUuid(d.offre) ? `offre/${d.offre}` : com ? `offre/${com}` : kind === 'message' && estUuid(d.de) ? `messages/${d.de}`
     : annule && v.pour === 'demandeur' ? `mentorat/reprendre/${annule}`
-    : dem ? (kind === 'demande_nouvelle' ? `aider/${dem}` : `offres/demandes/${dem}`) : g.route;
-  const tag = rx ? `reaction-${rx.id}` : kind === 'offre_alerte' && estUuid(d.offre) ? `offre-${d.offre}` : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem ? `${kind}-${dem}` : annule ? `${kind}-${annule}` : kind;
-  return { title: couper(t[0], 80), body: couper(t[1], 180), url: site + '#' + route, tag };
+    : dem ? (kind === 'demande_nouvelle' || kind === 'demande_large' ? `aider/${dem}` : `offres/demandes/${dem}`) : g.route;
+  const tag = rx ? `reaction-${rx.id}` : kind === 'offre_alerte' && estUuid(d.offre) ? `offre-${d.offre}` : com ? `${kind}-${com}`
+    : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem ? `${kind}-${dem}` : annule ? `${kind}-${annule}` : kind;
+  // Message arrivé moins de 20 s après le précédent de la conversation : l'aperçu change sans sonner
+  return { title: couper(t[0], 80), body: couper(t[1], 180), url: site + '#' + route, tag, ...(kind === 'message' && d.calme === true ? { calme: true } : {}) };
 }
 
 // ---------------------------------------------------------------------

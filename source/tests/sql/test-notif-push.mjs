@@ -45,11 +45,11 @@ test('un membre arrive sans choix : notif_push vide, le défaut de son rôle s�
   ]);
   assert.deepEqual(await file(), [
     'ETU:message', 'ETU:demande_proposition', 'ETU:candidature_statut', 'ETU:mentorat_accepte', 'ETU:offre_alerte', 'ETU:reponse',
-    'LAU:message', 'LAU:demande_nouvelle', 'LAU:candidature', 'LAU:mentorat_demande', 'LAU:question_routee',
+    'LAU:message', 'LAU:demande_nouvelle', 'LAU:candidature', 'LAU:mentorat_demande', 'LAU:offre_alerte', 'LAU:question_routee',
     'CHERCHE:offre_alerte',
-    'ADMIN:signalement', 'ADMIN:message',
+    'ADMIN:signalement', 'ADMIN:offre_alerte', 'ADMIN:message',
     'ETU:type_inconnu', 'LAU:type_inconnu',
-  ], 'lauréat : pas de nouvelles offres par défaut, sauf s’il cherche un emploi ; un type inconnu suit « vie du réseau »');
+  ], 'tout est activé par défaut, nouvelles offres comprises pour un lauréat ; un type inconnu suit « vie du réseau »');
   // Sans téléphone abonné : rien en file, comme avant
   await vider();
   await pousser([[TEST, 'message']]);
@@ -89,7 +89,8 @@ test('vraies actions : nouvelle offre et nouvelle demande prévenues selon les c
   const offre = (titre, audience = 'etudiants', annees = '{5}') => q(LAU, `insert into public.offers (author_id, type, titre, entreprise, description, annees, filieres, audience) values ($1, 'pfe', $2, 'Renault', 'desc', $3, '{}', $4) returning id`, [LAU, titre, annees, audience]);
   await offre('PFE Lean');
   await offre('Ingénieur méthodes', 'laureats', '{}');
-  assert.deepEqual((await file()).filter(x => x.endsWith(':offre_alerte')).sort(), ['CHERCHE:offre_alerte', 'ETU:offre_alerte']);
+  // CHERCHE (lauréat de la filière) : l'offre entre lauréats, et le PFE des étudiants, à faire suivre
+  assert.deepEqual((await file()).filter(x => x.endsWith(':offre_alerte')).sort(), ['CHERCHE:offre_alerte', 'CHERCHE:offre_alerte', 'ETU:offre_alerte']);
   // Ancienne case « M'alerter » décochée (elle n'est plus à l'écran), puis « Nouvelles offres pour moi » cochée :
   // une vraie offre suit le choix explicite
   await q(ETU, `update public.profiles set alertes_offres = false, notif_push = '{"offres":true}' where id = $1`, [ETU]);
