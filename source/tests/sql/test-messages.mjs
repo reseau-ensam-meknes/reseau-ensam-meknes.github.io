@@ -177,7 +177,7 @@ test('réactions : une par personne et par message, visibles des deux seulement'
   assert.equal((await db.query('select count(*)::int n from public.reactions_messages where message_id = $1', [m.id])).rows[0].n, 0);
 });
 
-test('notification : une seule pour une rafale, et un email si le message reste non lu', async () => {
+test('notification : deux messages en moins de 20 s, une seule (anti-spam), et un email si le message reste non lu', async () => {
   await db.query(`insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values ($1, 'https://push.example/lau', 'k', 'a')`, [LAU]);
   await q(LAU, 'select public.marquer_lus($1)', [ETU]);
   await db.query('delete from public.push_queue');

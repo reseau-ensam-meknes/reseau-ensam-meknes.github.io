@@ -1562,9 +1562,9 @@ create or replace function public.push_categorie(p_kind text) returns text
 language sql immutable as $$
   select case
     when p_kind = 'message' then 'messages'
-    when p_kind in ('demande_nouvelle','demande_proposition','demande_match','demande_rouverte','demande_reponse') then 'demandes'
+    when p_kind in ('demande_nouvelle','demande_large','demande_proposition','demande_match','demande_rouverte','demande_reponse') then 'demandes'
     when p_kind in ('candidature','candidature_statut','invitation','recrutement_a_confirmer','recrutement_confirme','relance_offre') then 'candidatures'
-    when p_kind in ('mentorat_demande','mentorat_accepte','mentorat_deplace','mentorat_annule','rappel_rdv','merci',
+    when p_kind in ('mentorat_demande','mentorat_ouvert','mentorat_accepte','mentorat_deplace','mentorat_annule','rappel_rdv','merci',
                     'relecture_demande','relecture_prise','relecture_rendue','contact_demande','contact_accepte','filleul','parrain') then 'mentorat'
     when p_kind = 'offre_alerte' then 'offres'
     when p_kind = 'rappel_visite' then 'rappels'
@@ -1572,13 +1572,14 @@ language sql immutable as $$
     else 'reseau' end;
 $$;
 
--- Défaut d'une catégorie selon le profil : tout est activé, sauf les nouvelles offres pour un lauréat
--- qui ne cherche pas d'emploi ; un étudiant garde sa case « M'alerter » (alertes_offres). Admin : signalements toujours.
+-- Défaut d'une catégorie selon le profil : tout est activé pour tout le monde, nouvelles offres comprises (un lauréat
+-- reçoit celles de sa filière, qu'il cherche un emploi ou non : alerte_offre). Seule exception, un choix déjà fait :
+-- l'ancienne case « M'alerter » décochée (alertes_offres = false) garde les offres coupées. Admin : signalements toujours.
 create or replace function public.push_defaut(p_cat text, p public.profiles) returns boolean
 language sql immutable as $$
   select case p_cat
     when 'admin' then p.role = 'admin'
-    when 'offres' then coalesce(p.alertes_offres, true) and (p.role = 'etudiant' or coalesce(p.en_recherche, false))
+    when 'offres' then coalesce(p.alertes_offres, true)
     else true end;
 $$;
 
@@ -2674,18 +2675,26 @@ language sql stable as $$
         or (p.role = 'laureat' and coalesce(p.en_recherche, false) and 6 = any(coalesce(o.annees, '{}'))) end;
 $$;
 
+-- Nouvelle offre (portée, classique ou partagée par un lauréat) : une notification à chacun de ceux qu'elle concerne
+-- (offre_pour : son année et sa filière ; un lauréat en recherche, les offres « Jeunes diplômés » et entre lauréats).
+-- Règle simple pour les lauréats : chaque lauréat reçoit toute nouvelle offre ouverte à sa filière (ou à toutes),
+-- qu'il cherche un emploi ou non ; quand elle ne le vise pas lui-même (une offre de stage pour les étudiants…),
+-- la notification le dit (pour = 'relayer') : il peut la faire suivre. Les lauréats peuvent lire toutes les offres.
 create or replace function public.alerte_offre() returns trigger
 language plpgsql security definer set search_path = public as $$
+declare v_s int := public.saison_courante();
 begin
   insert into public.push_queue (user_id, kind, data)
   select p.id, 'offre_alerte', jsonb_build_object('titre', new.titre, 'entreprise', new.entreprise, 'offre', new.id, 'origine', new.origine)
+    || case when x.pour_lui then '{}'::jsonb else '{"pour": "relayer"}'::jsonb end
   from public.profiles p
-  -- push_voulu : le choix « Nouvelles offres » de Mon profil, sinon le défaut (case « M'alerter » pour un étudiant)
-  where public.offre_pour(new, p, public.saison_courante())
+  cross join lateral (select coalesce(public.offre_pour(new, p, v_s), false) as pour_lui) x
+  -- push_voulu : le choix « Nouvelles offres » de Mon profil, sinon le défaut (activé pour tous)
+  where (x.pour_lui or (p.role = 'laureat' and new.status = 'ouverte' and new.author_id <> p.id and public.filiere_ok(new.filieres, p.filiere)))
     -- Le partage d'un étudiant n'envoie pas de notification : il se voit dans les offres et dans l'email des alertes
     and not exists (select 1 from public.profiles a where a.id = new.author_id and a.role = 'etudiant')
     and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'offre_alerte')
-  limit 500;
+  limit 2000;
   return null;
 exception when others then return null;
 end $$;
@@ -3082,18 +3091,22 @@ end $$;
 revoke all on function public.marquer_lus(uuid) from public, anon;
 grant execute on function public.marquer_lus(uuid) to authenticated;
 
--- Notification sur le téléphone : une seule pour une rafale de messages
+-- Notification sur le téléphone : une par message. Le notifier lui donne le même tag pour toute la conversation
+-- (message-<auteur>) : le téléphone remplace la précédente au lieu d'empiler, et sonne de nouveau. Elle montre le
+-- dernier message et, s'il y en a plusieurs non lus de cette personne, leur nombre (n).
+-- Anti-spam : au plus une toutes les 20 secondes par conversation (notif_cadence, section « Notifications pour tout »).
 create or replace function public.notif_message() returns trigger
 language plpgsql security definer set search_path = public as $$
+declare v_n int;
 begin
   if current_setting('ensam.sans_push_message', true) = 'on' then return null; end if;
-  if exists (select 1 from public.messages m where m.author_id = new.author_id and m.dest_id = new.dest_id and m.id <> new.id
-      and m.lu_at is null and m.created_at > now() - interval '10 minutes') then
-    return null;
-  end if;
+  if not exists (select 1 from public.push_subscriptions where user_id = new.dest_id) then return null; end if;
+  if not public.cadence('message:' || new.author_id || ':' || new.dest_id, interval '20 seconds') then return null; end if;
+  select count(*) into v_n from public.messages m
+    where m.author_id = new.author_id and m.dest_id = new.dest_id and m.lu_at is null and m.created_at > now() - interval '30 days';
   perform public.pousser(new.dest_id, 'message', jsonb_build_object(
     'nom', (select full_name from public.profiles where id = new.author_id), 'de', new.author_id,
-    'type', new.type, 'texte', left(coalesce(new.body, ''), 140), 'duree', new.duree));
+    'type', new.type, 'texte', left(coalesce(new.body, ''), 140), 'duree', new.duree, 'n', greatest(v_n, 1)));
   return null;
 exception when others then return null;
 end $$;
@@ -3258,6 +3271,12 @@ begin
   if exists (select 1 from public.messages where lu_at is null and created_at between now() - interval '3 days' and now() - interval '30 minutes') then
     perform public.appeler_notifier('messages');
   end if;
+  -- Demandes qui viennent de s'ouvrir à tous les lauréats : une notification aux autres lauréats, une seule fois
+  -- (section « Notifications pour tout », à la fin) ; une erreur ici n'empêche pas le reste
+  begin
+    perform public.demandes_larges_push();
+  exception when others then null;
+  end;
 end $$;
 revoke all on function public.alertes_horaires() from public, anon, authenticated;
 
@@ -4681,6 +4700,183 @@ do $$ begin
   end if;
 exception when others then raise notice 'Fermeture des partages non programmée : %', sqlerrm;
 end $$;
+
+-- =====================================================================
+--  Notifications pour tout : chaque chose qui concerne un membre lui arrive sur le téléphone.
+--    · Messages : une notification par message (notif_message, plus haut), au plus une toutes les 20 s par conversation.
+--    · Nouvelles offres : tous ceux qu'elles concernent, lauréats compris (alerte_offre, plus haut).
+--    · Défauts : toutes les catégories activées pour tout le monde (push_defaut, plus haut).
+--    · Ajoutées ici, chacune dans une catégorie existante de Mon profil (push_categorie) :
+--        demande_large    (demandes)  une demande d'étudiant qui s'ouvre à tous les lauréats, aux lauréats des autres
+--                                     parcours, une seule fois (tâche horaire alertes_horaires)
+--        promo_nouveau    (réseau)    « Prénom a rejoint ta promo » : au plus une par jour et par membre, avec le compte
+--        offre_commentaire(réseau)    un commentaire sur mon offre ; la réponse de l'auteur sous une offre où j'ai écrit
+--        annonce          (réseau)    une annonce de l'équipe du réseau, à son public
+--        mentorat_ouvert  (mentorat)  une demande de mentorat ouverte à tous, aux lauréats disponibles du parcours
+--  Toutes passent par push_queue, donc par le filtre des catégories (trg_push_filtre).
+--  Mêmes catégories que logic.js (PUSH_KINDS) ; textes FR et AR dans le notifier (NOTIFS).
+-- =====================================================================
+
+-- Anti-spam : date du dernier envoi par clé (« message:<auteur>:<dest> », « promo:<membre> », …). Lu par le serveur seulement.
+create table if not exists public.notif_cadence (
+  cle text primary key check (char_length(cle) <= 200),
+  at timestamptz not null default now()
+);
+alter table public.notif_cadence enable row level security;
+
+-- Vrai (et noté tout de suite) si rien n'est parti pour cette clé depuis p_intervalle ; faux sinon. Sans course :
+-- deux envois simultanés ne passent pas tous les deux.
+create or replace function public.cadence(p_cle text, p_intervalle interval) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare v boolean;
+begin
+  insert into public.notif_cadence as c (cle, at) values (p_cle, now())
+    on conflict (cle) do update set at = excluded.at where c.at <= now() - p_intervalle
+    returning true into v;
+  return coalesce(v, false);
+end $$;
+revoke all on function public.cadence(text, interval) from public, anon, authenticated;
+
+-- Demandes qui s'ouvrent à tous les lauréats (demande_large_le : 24 h après la publication, tout de suite pour un
+-- étudiant sans parcours) et toujours sans aucune proposition d'aide : les lauréats des autres parcours sont prévenus
+-- une fois (ceux du parcours l'ont été à la publication, notif_demande). Appelée chaque heure par alertes_horaires.
+create table if not exists public.demandes_larges_notif (
+  demande_id uuid primary key references public.demandes(id) on delete cascade,
+  at timestamptz not null default now()
+);
+alter table public.demandes_larges_notif enable row level security;
+
+create or replace function public.demandes_larges_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare d public.demandes; v_n int := 0; v_k int;
+begin
+  for d in select x.* from public.demandes x
+      where x.status = 'ouverte' and x.created_at > now() - interval '30 days'
+        and public.demande_large_le(x) <= now() and public.demande_large_le(x) > now() - interval '3 days'
+        and not exists (select 1 from public.demandes_larges_notif n where n.demande_id = x.id)
+        and not exists (select 1 from public.propositions y where y.demande_id = x.id and y.status <> 'retiree')
+      order by x.created_at limit 50 loop
+    insert into public.demandes_larges_notif (demande_id) values (d.id) on conflict do nothing;
+    insert into public.push_queue (user_id, kind, data)
+    select p.id, 'demande_large', jsonb_build_object('nom', split_part(a.full_name, ' ', 1), 'titre', d.titre, 'type', d.type, 'demande', d.id)
+    from public.profiles p join public.profiles a on a.id = d.auteur_id
+    where public.demande_pour(d, p) and public.proximite_filiere(p.filiere, a.filiere) = 0
+      and not exists (select 1 from public.propositions y where y.demande_id = d.id and y.laureat_id = p.id)
+      and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'demande_large')
+    limit 300;
+    get diagnostics v_k = row_count;
+    v_n := v_n + v_k;
+  end loop;
+  -- Ménage de l'anti-spam (une clé plus vieille qu'un mois ne bloque plus rien)
+  delete from public.notif_cadence where at < now() - interval '30 days';
+  return v_n;
+end $$;
+revoke all on function public.demandes_larges_push() from public, anon, authenticated;
+
+-- Un nouveau membre (étudiant ou lauréat) dans ma promo : « Prénom a rejoint ta promo ». Au plus une par jour et par
+-- membre prévenu ; elle dit combien sont arrivés depuis la précédente (depuis sa propre arrivée, 7 jours au plus). Un lauréat déjà prévenu pour
+-- confirmer ce camarade (verifier_pair, trigger trg_nouveau_laureat, qui passe avant) ne reçoit pas les deux.
+create or replace function public.notif_promo() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare r record; v_n int;
+begin
+  if new.role not in ('etudiant','laureat') or new.promo is null then return null; end if;
+  for r in select x.id, x.created_at as arrive, c.at as dernier from public.profiles x
+      left join public.notif_cadence c on c.cle = 'promo:' || x.id
+      where x.promo = new.promo and x.id <> new.id and x.role in ('etudiant','laureat')
+        and (c.at is null or c.at <= now() - interval '1 day')
+        and exists (select 1 from public.push_subscriptions s where s.user_id = x.id) and public.push_voulu(x.id, 'promo_nouveau')
+        and not exists (select 1 from public.push_queue q where q.user_id = x.id and q.kind = 'verifier_pair' and q.data ->> 'nom' = new.full_name)
+      limit 300 loop
+    continue when not public.cadence('promo:' || r.id, interval '1 day');
+    select count(*) into v_n from public.profiles y
+      where y.promo = new.promo and y.id <> r.id and y.role in ('etudiant','laureat')
+        and y.created_at > greatest(coalesce(r.dernier, '-infinity'::timestamptz), coalesce(r.arrive, '-infinity'::timestamptz), now() - interval '7 days');
+    perform public.pousser(r.id, 'promo_nouveau', jsonb_build_object('nom', split_part(new.full_name, ' ', 1), 'n', greatest(v_n, 1), 'promo', new.promo));
+  end loop;
+  return null;
+exception when others then return null;
+end $$;
+-- Le nom du trigger le fait passer après trg_nouveau_laureat (ordre alphabétique) : verifier_pair est déjà en file
+drop trigger if exists trg_promo_nouveau on public.profiles;
+create trigger trg_promo_nouveau after insert on public.profiles
+  for each row execute function public.notif_promo();
+
+-- Un commentaire sous une offre : l'auteur de l'offre est prévenu ; quand l'auteur répond, ceux qui ont écrit sous
+-- l'offre (60 derniers jours, 30 au plus) le sont. Au plus une toutes les 10 minutes par offre et par personne.
+create or replace function public.notif_commentaire() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_o record; v_data jsonb; r record;
+begin
+  select o.id, o.author_id, o.titre into v_o from public.offers o where o.id = new.offer_id;
+  if v_o.id is null then return null; end if;
+  v_data := jsonb_build_object('nom', (select full_name from public.profiles where id = new.author_id),
+    'titre', v_o.titre, 'texte', left(new.body, 140), 'offre', v_o.id);
+  for r in
+    select v_o.author_id as id, 'auteur' as pour where new.author_id is distinct from v_o.author_id
+    union
+    select distinct c.author_id, 'fil' from public.comments c
+      where new.author_id = v_o.author_id and c.offer_id = v_o.id and c.author_id <> v_o.author_id
+        and c.created_at > now() - interval '60 days'
+  loop
+    continue when exists (select 1 from public.blocages b
+      where (b.user_id = r.id and b.bloque_id = new.author_id) or (b.user_id = new.author_id and b.bloque_id = r.id));
+    continue when not exists (select 1 from public.push_subscriptions s where s.user_id = r.id);
+    continue when not public.cadence('commentaire:' || v_o.id || ':' || r.id, interval '10 minutes');
+    perform public.pousser(r.id, 'offre_commentaire', v_data || jsonb_build_object('pour', r.pour));
+  end loop;
+  return null;
+exception when others then return null;
+end $$;
+drop trigger if exists trg_notif_commentaire on public.comments;
+create trigger trg_notif_commentaire after insert on public.comments
+  for each row execute function public.notif_commentaire();
+
+-- Une annonce de l'équipe du réseau (bandeau de l'accueil) : une notification à son public
+create or replace function public.notif_annonce() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if not coalesce(new.active, true) then return null; end if;
+  insert into public.push_queue (user_id, kind, data)
+  select p.id, 'annonce', jsonb_build_object('texte', left(new.texte, 180))
+  from public.profiles p
+  where p.id is distinct from new.author_id
+    and (coalesce(new.public, 'tous') = 'tous' or (new.public = 'etudiants' and p.role = 'etudiant') or (new.public = 'laureats' and p.role = 'laureat'))
+    and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'annonce')
+  limit 2000;
+  return null;
+exception when others then return null;
+end $$;
+drop trigger if exists trg_notif_annonce on public.annonces;
+create trigger trg_notif_annonce after insert on public.annonces
+  for each row execute function public.notif_annonce();
+
+-- Une demande de mentorat ouverte à tous (envoyée sans lauréat choisi, ou passée aux autres par le lauréat choisi) :
+-- les lauréats disponibles pour du mentorat dans le parcours de l'étudiant (30 au plus), sauf celui qui l'a passée
+create or replace function public.notif_mentorat_ouvert() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_s record; v_ancien uuid;
+begin
+  if new.mentor_id is not null or new.status <> 'demande' then return null; end if;
+  if tg_op = 'UPDATE' then
+    if old.mentor_id is null then return null; end if;
+    v_ancien := old.mentor_id;
+  end if;
+  select full_name, filiere into v_s from public.profiles where id = new.student_id;
+  insert into public.push_queue (user_id, kind, data)
+  select l.id, 'mentorat_ouvert', jsonb_build_object('nom', v_s.full_name, 'sujet', new.sujet)
+  from public.profiles l
+  where l.role = 'laureat' and coalesce(l.mentor_dispo, false) and l.id <> new.student_id and l.id is distinct from v_ancien
+    and public.proximite_filiere(l.filiere, v_s.filiere) >= 1
+    and not exists (select 1 from public.blocages b where (b.user_id = l.id and b.bloque_id = new.student_id) or (b.user_id = new.student_id and b.bloque_id = l.id))
+    and exists (select 1 from public.push_subscriptions s where s.user_id = l.id) and public.push_voulu(l.id, 'mentorat_ouvert')
+  limit 30;
+  return null;
+exception when others then return null;
+end $$;
+drop trigger if exists trg_notif_mentorat_ouvert on public.mentorships;
+create trigger trg_notif_mentorat_ouvert after insert or update of mentor_id on public.mentorships
+  for each row execute function public.notif_mentorat_ouvert();
 
 -- =====================================================================
 -- APRÈS votre inscription sur la plateforme, devenez administrateur :

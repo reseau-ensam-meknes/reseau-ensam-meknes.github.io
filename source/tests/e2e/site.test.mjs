@@ -898,8 +898,8 @@ test('à l’ouverture : un lauréat voit ce qui le concerne ; « Activer » vau
   await attendreOuverture(s);
   const txt = await s.page.locator(ouverture).innerText();
   assert.match(txt, /Ce qui te concerne arrive tout de suite/);
-  // Les nouvelles offres ne sont pas activées d'office pour un lauréat qui ne cherche pas d'emploi
-  assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['messages', 'demandes', 'candidatures', 'mentorat']);
+  // Tout est activé par défaut, les nouvelles offres aussi pour un lauréat qui ne cherche pas d'emploi
+  assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['messages', 'demandes', 'offres', 'candidatures']);
   assert.match(txt, /Les nouvelles demandes d’étudiants de ta filière/);
   await s.page.click('#ouv-oui'); await s.page.waitForTimeout(300);
   assert.equal(await s.page.locator(ouverture).count(), 0);
@@ -1123,21 +1123,22 @@ test('Mon profil : les notifications par catégorie, défauts selon le rôle, en
   assert.deepEqual(await cases(), { ...tout, offres: false, reseau: false });
   assert.deepEqual(await s.page.evaluate(() => window.__demo.me.notif_push), { reseau: false, offres: false });
   assert.ok(await s.page.isChecked('#md-alertes-mail'), 'l’email ne change pas');
-  // Lauréat : les demandes de sa filière ; les offres seulement s'il cherche un emploi
+  // Lauréat : tout est coché par défaut, les nouvelles offres de sa filière aussi (qu'il cherche un emploi ou non)
   await s.comme('Youssef'); await s.aller('profil');
-  assert.deepEqual(await cases(), { ...tout, offres: false });
+  assert.deepEqual(await cases(), tout);
   const lau = await s.page.locator('.md-cats').innerText();
-  assert.match(lau, /Demandes des étudiants de ma filière/); assert.match(lau, /Candidatures reçues sur mes offres/);
+  assert.match(lau, /Demandes des étudiants/); assert.match(lau, /quand elles s’ouvrent à tous les lauréats/); assert.match(lau, /Candidatures reçues sur mes offres/);
   assert.doesNotMatch(lau, /Mes demandes : les propositions d’aide/);
   // Un lauréat pose aussi des questions : la case qui les coupe le dit
   assert.match(lau, /Questions et vie du réseau/); assert.match(lau, /Réponses à tes questions, questions sur ton entreprise ou ton pays/);
-  // Tout lauréat peut postuler ; les offres n'arrivent qu'avec « Je cherche un emploi en ce moment » : le texte le dit
+  // Tout lauréat peut postuler ; toutes les offres de sa filière arrivent, celles des étudiants pour les faire suivre
   assert.match(lau, /si tu postules, la suite de tes candidatures/);
-  assert.match(lau, /Avec « Je cherche un emploi en ce moment » coché dans ton profil/);
+  assert.match(lau, /Nouvelles offres de ma filière/); assert.match(lau, /que tu peux faire suivre/);
+  assert.match(lau, /commentaires sur tes offres, nouveaux membres et camarades de promo/);
   assert.equal(await s.page.locator('#md-alertes-mail').count(), 0);
   await s.page.click('#np-offres'); await s.page.waitForTimeout(250);
   await s.page.reload(); await s.page.waitForSelector('#mes-donnees');
-  assert.equal(await s.page.isChecked('#np-offres'), true);
+  assert.equal(await s.page.isChecked('#np-offres'), false, 'son choix reste');
   // Un lauréat qui cherche un emploi : ses demandes et ses candidatures aussi ; les offres d'office
   await s.comme('Nadia');
   await s.page.evaluate(() => window.__demo.update('profiles', window.__demo.me.id, { en_recherche: true }));
