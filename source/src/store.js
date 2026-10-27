@@ -3,7 +3,7 @@
 const chargerSeed = () => import('./seed.js').then(m => m.buildSeed());
 import { refusOrigine, estPartagee, LIMITE_PARTAGES } from './origine.js';
 import { VIVANT, regleVivant, peutSupprimerVivant, cascadeVivant, memeCible } from './reseau-vivant.js';
-import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage, transitionAmbassadeur, PREFIXE_BROUILLON } from './logic.js';
+import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage, transitionAmbassadeur, PREFIXE_BROUILLON, refusChoixMatch, nouveauMatch, matchEntre } from './logic.js';
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
 const PHASE3 = ['coordonnees', 'demandes_contact', 'relectures_cv', 'relecture_commentaires', 'entretiens', 'avis_stage', 'guide_pays', 'signalements', 'enquetes_insertion', 'verifications_pairs', 'evenements', 'evenement_participants', 'retours_cv'];
@@ -14,9 +14,11 @@ export const REACTIONS = ['👍', '❤️', '😂', '😮', '🙏', '👏'];
 const DEMANDES = ['demandes', 'propositions'];
 // Ambassadeurs de promo (ambassadeurs.js)
 const AMBASSADEURS = ['ambassadeurs'];
-export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT];
+// Match (match.js) : les choix « Intéressé » / « Plus tard », et les matchs faits par la base
+const MATCH = ['match_choix', 'matchs'];
+export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT, ...MATCH];
 // Tables ajoutées par supabase/mise-a-jour.sql : tant que la base n'est pas à jour, elles restent vides au lieu de bloquer le site.
-const OPTIONAL = new Set(['shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT]);
+const OPTIONAL = new Set(['shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT, ...MATCH]);
 // Lues par une vue qui masque ce que chacun a choisi de cacher (auteur anonyme, visibilité du profil).
 // Tant que la base n'a pas ces vues, on lit la table elle-même.
 const VUES = { profiles: 'profils', entretiens: 'entretiens_publics', avis_stage: 'avis_publics' };
@@ -51,6 +53,8 @@ class Base {
   // Réseau vivant : réactions publiques et réponses sous une demande, cachées tant que la base n'a pas leurs tables
   peutReagirPublic() { return this.mode !== 'live' || !this.absentes?.has('reactions_publiques'); }
   peutRepondreDemande() { return this.mode !== 'live' || !this.absentes?.has('reponses_demandes'); }
+  // Match : la page et son onglet attendent que la base ait ses tables (match_choix, matchs)
+  peutMatch() { return this.mode !== 'live' || !this.absentes?.has('match_choix'); }
   // « Cette semaine dans le réseau » : en démo, le calcul sur toutes les données
   pouls() { return poulsReseau(this.data); }
   // En ligne, la base a déjà masqué ce qui ne doit pas être vu : ces deux aides servent surtout à la démo.
@@ -125,6 +129,8 @@ export function voitChampDemo(data, me, p, champ) {
   if (a === 'laureats' && me.role === 'laureat') return true;
   // CV joint à une demande ouverte ou en cours : les lauréats le voient le temps de la demande
   if (champ === 'cv' && me.role === 'laureat' && demandesActives(data, p.id).length) return true;
+  // CV de l'étudiant : le lauréat qui a un match avec lui le lit (comme voit_champ() dans la base)
+  if (champ === 'cv' && (data.matchs || []).some(m => m.etudiant_id === p.id && m.laureat_id === me.id)) return true;
   return enRelation(data, me.id, p.id);
 }
 
@@ -386,6 +392,61 @@ class DemoStore extends Base {
     if (!emoji || mienne?.emoji === emoji) { if (mienne) await this.remove('reactions_publiques', mienne.id); return null; }
     return mienne ? this.update('reactions_publiques', mienne.id, { emoji }) : this.insert('reactions_publiques', { ...cible, emoji });
   }
+  // Match : mêmes règles que protect_match_choix(), match_apres_choix(), protect_match() et repondre_rdv() dans la base.
+  // Un choix par carte (« oui » ou « plus_tard »), changé sur place ; renvoie le match que ce geste vient de créer (à fêter).
+  async choisirMatch({ profil = null, offre = null } = {}, choix = 'oui') {
+    const me = this.me, c = offre ? { profil: null, offre } : { profil: profil || null, offre: null };
+    if (!(c.offre || c.profil) || !['oui', 'plus_tard'].includes(choix)) throw new Error('Choix invalide.');
+    const refus = refusChoixMatch(this.data, me, c);
+    if (refus) throw new Error(refus);
+    const now = new Date().toISOString();
+    const avant = this.data.match_choix.find(x => x.user_id === me.id && (x.cible_profil || null) === c.profil && (x.cible_offre || null) === c.offre) || null;
+    const row = avant ? { ...avant, choix, updated_at: now } : { id: uuid(), user_id: me.id, cible_profil: c.profil, cible_offre: c.offre, choix, created_at: now, updated_at: now };
+    this.data.match_choix = avant ? this.data.match_choix.map(x => (x.id === avant.id ? row : x)) : [row, ...this.data.match_choix];
+    const m = nouveauMatch(this.data, row, avant);
+    const match = m ? { id: uuid(), ...m, created_at: now, vu_etudiant_at: null, vu_laureat_at: null } : null;
+    if (match) this.data.matchs = [match, ...this.data.matchs];
+    this.persist(); this.emit();
+    return { match };
+  }
+  // « Revenir » : mon dernier choix est retiré (pas s'il a mené à un match) ; renvoie sa carte pour la remettre en tête
+  async revenirMatch() {
+    const me = this.me; if (!me) return null;
+    const d = this.data.match_choix.filter(x => x.user_id === me.id).sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0];
+    if (!d) return null;
+    const autre = d.cible_offre ? this.byId('offers', d.cible_offre)?.author_id : d.cible_profil;
+    if (autre && matchEntre(this.data, me.id, autre)) return null;
+    this.data.match_choix = this.data.match_choix.filter(x => x.id !== d.id);
+    this.persist(); this.emit();
+    return { profil: d.cible_profil || null, offre: d.cible_offre || null };
+  }
+  // « Retirer le match » : l'un ou l'autre ; les choix restent (la carte ne revient pas)
+  async retirerMatch(id) {
+    const m = this.byId('matchs', id); if (!m) return;
+    if (this.me?.role !== 'admin' && ![m.etudiant_id, m.laureat_id].includes(this.me?.id)) throw new Error('Action non autorisée pour ton compte.');
+    this.data.matchs = this.data.matchs.filter(x => x.id !== id);
+    this.persist(); this.emit();
+  }
+  // Le match est vu (une fois) : seulement sa propre date
+  async vuMatch(id) {
+    const m = this.byId('matchs', id), me = this.me?.id; if (!m || !me) return;
+    const k = m.etudiant_id === me ? 'vu_etudiant_at' : m.laureat_id === me ? 'vu_laureat_at' : null;
+    if (!k || m[k]) return;
+    this.data.matchs = this.data.matchs.map(x => (x.id === id ? { ...x, [k]: new Date().toISOString() } : x));
+    this.persist(); this.emit();
+  }
+  // Réponse à un entretien proposé : le destinataire, tant qu'il est à venir ; il peut changer d'avis jusque-là
+  async repondreRdv(id, reponse) {
+    if (!['oui', 'autre'].includes(reponse)) throw new Error('Réponse invalide.');
+    const m = this.byId('messages', id);
+    if (!m || m.type !== 'rdv' || m.dest_id !== this.me?.id) throw new Error('Action non autorisée pour ton compte.');
+    if (!m.rdv_at || new Date(m.rdv_at).getTime() <= Date.now()) throw new Error('Cet entretien est déjà passé.');
+    if (bloque(this.data, m.author_id, m.dest_id)) throw new Error('Vous ne pouvez plus vous écrire.');
+    const r = { ...m, rdv_reponse: reponse };
+    this.data.messages = this.data.messages.map(x => (x.id === id ? r : x));
+    this.persist(); this.emit();
+    return r;
+  }
   canal() { return { tape() {}, fermer() {} }; }
   // Liste officielle (administration)
   async importerListe(lignes, remplacer = false) {
@@ -631,8 +692,21 @@ function applyMessagerieRules(store, table, r, old) {
     r.reponse_a = cite && ((cite.author_id === me.id && cite.dest_id === r.dest_id) || (cite.author_id === r.dest_id && cite.dest_id === me.id)) ? cite.id : null;
     if (r.type === 'texte' && !r.body) throw new Error('Écris ton message.');
     if (r.body && r.body.length > 2000) throw new Error('Ton message est trop long (2 000 caractères au plus).');
-    if (r.type !== 'texte' && !r.fichier) throw new Error('Fichier manquant.');
+    if (!['texte', 'rdv'].includes(r.type) && !r.fichier) throw new Error('Fichier manquant.');
     if (r.type === 'vocal') r.body = null;
+    // Entretien : une date à venir (4 mois au plus), une durée, un lieu ou un lien ; jamais de fichier ; la réponse vient après
+    if (r.type === 'rdv') {
+      Object.assign(r, { fichier: null, duree: null, largeur: null, hauteur: null, onde: null, rdv_reponse: null });
+      r.rdv_lieu = String(r.rdv_lieu || '').trim() || null; r.rdv_lien = String(r.rdv_lien || '').trim() || null;
+      const t = new Date(r.rdv_at || NaN).getTime(), now = Date.now();
+      if (!(t > now) || t > now + 120 * 864e5) throw new Error('Choisis une date à venir, dans les 4 prochains mois.');
+      r.rdv_at = new Date(t).toISOString();
+      if (!r.rdv_duree) throw new Error('Choisis la durée de l’entretien.');
+      if (!(Number.isInteger(+r.rdv_duree) && r.rdv_duree >= 15 && r.rdv_duree <= 120)) throw new Error('La durée va de 15 à 120 minutes.');
+      if (r.rdv_lieu && r.rdv_lieu.length > 200) throw new Error('Le lieu est trop long (200 caractères au plus).');
+      if (r.rdv_lien && (!/^https:\/\/\S+$/i.test(r.rdv_lien) || r.rdv_lien.length > 300)) throw new Error('Le lien de la visio doit commencer par https://');
+      if (r.body && r.body.length > 500) throw new Error('La note est trop longue (500 caractères au plus).');
+    } else for (const k of ['rdv_at', 'rdv_duree', 'rdv_lieu', 'rdv_lien', 'rdv_reponse']) delete r[k];
     if (!peutDiscuter(store.data, me, r.dest_id, x => store.byId('profiles', x))) throw new Error('Conversation pas encore ouverte : elle s’ouvre avec un mentorat, une candidature ou des coordonnées partagées.');
     return;
   }

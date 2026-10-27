@@ -612,7 +612,7 @@ injectCSS('demandes', `
 
 addAR({
   'Indique l’entreprise où tu peux aider.': 'اذكر الشركة التي يمكنك المساعدة فيها.', 'Écris-lui quelques mots (10 caractères au moins).': 'اكتب بضع كلمات (10 أحرف على الأقل).',
-  'En pause': 'متوقف مؤقتًا', 'Match': 'تطابق', 'Réussie': 'ناجح',   'Demande publiée': 'نُشر الطلب', 'Démarrage confirmé': 'تأكيد البدء', 'Où en est la demande': 'أين وصل الطلب',
+  'En pause': 'متوقف مؤقتًا', 'Match': 'التوافق', 'Réussie': 'ناجح',   'Demande publiée': 'نُشر الطلب', 'Démarrage confirmé': 'تأكيد البدء', 'Où en est la demande': 'أين وصل الطلب',
   'Recrute': 'توظيف', 'Encadre': 'تأطير', 'Recommande': 'توصية',
   'Je recrute dans mon équipe': 'توظيف في فريقي', 'J’encadre son stage ou son PFE': 'أؤطّر التدريب أو مشروع نهاية الدراسة', 'Je recommande son profil dans mon entreprise': 'توصية داخل شركتي', 'Un nouveau poste ?': 'وظيفة جديدة؟',
   'Les demandes arrivent en 3e année': 'الطلبات تبدأ من السنة الثالثة',

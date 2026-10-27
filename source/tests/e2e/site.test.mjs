@@ -12,7 +12,7 @@ const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe
 
 const SITE = path.resolve(process.env.SITE_DIR || new URL('../../dist', import.meta.url).pathname);
 const TYPES = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
-const ECRANS = ['accueil', 'offres', 'offres/demandes', 'mentorat', 'mentorat/cv', 'messages', 'parcours', 'espace', 'reseau/groupes', 'reseau/agenda', 'reseau/entraide',
+const ECRANS = ['accueil', 'offres', 'offres/demandes', 'match', 'mentorat', 'mentorat/cv', 'messages', 'parcours', 'espace', 'reseau/groupes', 'reseau/agenda', 'reseau/entraide',
   'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'reseau/annuaire/ma-filiere', 'reseau/annuaire/ma-promo', 'reseau/classement', 'reseau/talents', 'suivi', 'profil', 'enquete',
   'confidentialite', 'admin', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda', 'admin/reglages'];
 
@@ -74,7 +74,7 @@ async function ouvrir({ largeur = 1280, langue = 'fr', sw = false, theme = 'ligh
 // ou c'est un nom propre fait de mots des graines (« Soufiane Hajji »).
 let GRAINES, MOTS_GRAINES;
 function ecritParUnMembre(x) {
-  GRAINES ??= ['seed.js', 'seed3.js', 'seed4.js'].map(f => fs.readFileSync(path.join(SITE, f), 'utf8')).join('\n');
+  GRAINES ??= ['seed.js', 'seed3.js', 'seed4.js', 'seed-match.js'].map(f => fs.readFileSync(path.join(SITE, f), 'utf8')).join('\n');
   MOTS_GRAINES ??= new Set(GRAINES.match(/\p{L}[\p{L}’-]*/gu));
   return x.split(/\s+·\s+|,\s+/).map(p => p.replace(/^·\s*/, '').trim()).filter(Boolean)
     .every(p => GRAINES.includes(p) || p.split(/\s+/).every(m => /^\p{Lu}/u.test(m) && MOTS_GRAINES.has(m)));
@@ -2196,8 +2196,10 @@ test('cloche : son chiffre compte ce qui attend un geste, la feuille dit « À f
   assert.match(await s.page.locator('.modal').last().innerText(), /Réduction des rebuts[\s\S]*Candidats/, 'l’offre s’ouvre sur ses candidats');
   await s.fermer();
   const pastilles = () => s.page.$$eval('.bottom-nav a', as => as.filter(a => a.querySelector('.dotn')).map(a => a.innerText.trim().split('\n')[0]));
-  // Accueil : la plateforme lui propose d'être ambassadeur de sa promo (ambassadeurs.js)
-  assert.deepEqual((await pastilles()).sort(), ['Accueil', 'Espace', 'Mentorat']);
+  // Accueil : la plateforme lui propose d'être ambassadeur de sa promo (ambassadeurs.js) ; sur téléphone, Mon espace est
+  // dans le menu du compte (Match a pris sa place dans la barre) : sa pastille passe sur l'avatar
+  assert.deepEqual((await pastilles()).sort(), ['Accueil', 'Mentorat']);
+  assert.equal(await s.page.locator('.me-btn .dotn').count(), 1);
   // Mon espace commence par « À faire »
   await s.aller('espace');
   assert.ok(await s.page.evaluate(() => document.querySelector('.page-head').nextElementSibling.classList.contains('a-faire')), 'Mon espace commence par À faire');
@@ -2205,6 +2207,7 @@ test('cloche : son chiffre compte ce qui attend un geste, la feuille dit « À f
   await s.comme('Amine'); await s.aller('accueil');
   assert.equal(await s.page.locator('.cloche-btn .badge-n').count(), 0);
   assert.deepEqual(await pastilles(), []);
+  assert.equal(await s.page.locator('.me-btn .dotn').count(), 0);
   await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
   assert.equal(await s.page.locator('.cloche .af-row').count(), 0);
   await s.fermer();
@@ -3907,4 +3910,243 @@ test('vitrine : la carte devient la fiche (logo et titre glissent), les cartes a
   await r.page.waitForSelector('.modal .od');
   assert.deepEqual(r.erreurs, []);
   await r.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Match : une carte à la fois, « Intéressé » ou « Plus tard » ; un oui des deux côtés ouvre la discussion
+// ---------------------------------------------------------------------------
+// Un glisser horizontal au doigt (événements tactiles, donc aussi les pointer events) de x0 à x1, à la hauteur y
+async function glisserCarte(page, x0, x1, y, { n = 10, dt = 16 } = {}) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y }] });
+  for (let i = 1; i <= n; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: Math.round(x0 + (x1 - x0) * i / n), y }] }); await page.waitForTimeout(dt); }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await cdp.detach();
+}
+const carteDessus = page => page.locator('.mx-carte.dessus h2').innerText();
+const mesChoix = page => page.evaluate(() => window.__demo.data.match_choix.filter(c => c.user_id === window.__demo.me.id).map(c => ({ profil: c.cible_profil, offre: c.cible_offre, choix: c.choix })));
+
+test('match : la barre du bas met Match au centre, Mon parcours et Mon espace passent dans le menu du compte ; pas de Match pour l’administration', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('accueil');
+  const onglets = () => s.page.$$eval('.bottom-nav a', as => as.map(a => a.innerText.trim().split('\n')[0]));
+  assert.deepEqual(await onglets(), ['Accueil', 'Offres', 'Match', 'Mentorat', 'Réseau']);
+  assert.ok(await s.page.locator('.bottom-nav a.bn-match').isVisible());
+  await s.page.click('.me-btn'); await s.page.waitForTimeout(150);
+  assert.ok(await s.page.locator('.menu-pop button', { hasText: 'Mon parcours' }).isVisible(), 'Mon parcours dans le menu du compte');
+  await s.page.locator('.menu-pop button', { hasText: 'Mon parcours' }).click(); await s.page.waitForTimeout(250);
+  assert.match(s.page.url(), /#parcours$/);
+  await s.comme('Youssef'); await s.aller('accueil');
+  await s.page.click('.me-btn'); await s.page.waitForTimeout(150);
+  assert.ok(await s.page.locator('.menu-pop button', { hasText: 'Mon espace' }).isVisible());
+  await s.fermer();
+  // L'administration : ni onglet ni page Match
+  await s.comme('Admin'); await s.aller('accueil');
+  assert.ok(!(await onglets()).includes('Match'));
+  await s.aller('match');
+  assert.equal(await s.page.locator('.mx-page').count(), 0, 'l’accueil à la place');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Sur ordinateur, la colonne garde Mon parcours, et Match y a sa place
+  const d = await ouvrir({ largeur: 1280 });
+  await d.comme('Salma'); await d.aller('accueil');
+  const colonne = await d.page.locator('.side-nav').innerText();
+  assert.match(colonne, /Match[\s\S]*Mon parcours/);
+  await d.ctx.close();
+});
+
+test('match : l’étudiante répond à la lauréate intéressée — la fête, « Écrire » ouvre la discussion et son bandeau (390 px)', async () => {
+  const s = await ouvrir({ largeur: 390, mouvement: true });
+  await s.comme('Salma'); await s.aller('accueil');
+  // L'accueil le dit seulement quand quelqu'un attend une réponse
+  const entree = s.page.locator('.mx-accueil');
+  assert.match(await entree.innerText(), /s’intéresse à ton profil/);
+  await entree.click(); await s.page.waitForTimeout(300);
+  assert.match(s.page.url(), /#match$/);
+  assert.match(await s.page.locator('.mx-carte.dessus .mx-interet > span:last-child').innerText(), /^\S+ s’intéresse à ton profil$/);
+  assert.equal(await s.page.getAttribute('.mx-carte.dessus', 'aria-labelledby'), await s.page.getAttribute('.mx-carte.dessus h2', 'id'), 'la carte porte le nom de la lauréate');
+  const avant = await s.page.locator('.mx-visage').count();
+  await s.page.click('.mx-oui');
+  await s.page.waitForSelector('.mx-fete[role="dialog"]');
+  assert.equal(await s.page.textContent('#mx-fete-t'), 'C’est un match !');
+  await s.page.waitForTimeout(400);
+  assert.equal(await s.page.evaluate(() => document.activeElement?.classList.contains('mx-fete-ecrire')), true, 'le focus va sur « Écrire »');
+  assert.ok(await s.page.locator('.mx-fete .fete-pluie i').count() > 0, 'des confettis');
+  assert.equal(await s.page.locator('.mx-fete .btn.primary').count(), 1, 'un seul bouton plein');
+  await s.page.click('.mx-fete-ecrire'); await s.page.waitForTimeout(400);
+  assert.match(s.page.url(), /#messages\/.+/);
+  await s.page.waitForSelector('.mx-bandeau');
+  assert.match(await s.page.locator('.conv-sub').innerText(), /^Match/);
+  assert.equal(await s.page.locator('.mx-etapes li[aria-current="step"]').innerText(), 'Match');
+  assert.ok(await s.page.locator('.mx-b-acts .btn', { hasText: 'Programmer un entretien' }).isVisible());
+  assert.ok(await s.page.locator('.mx-b-acts .btn', { hasText: 'Envoyer mon CV' }).isVisible());
+  // « Envoyer mon CV » : le CV arrive dans la discussion, comme une pièce
+  await s.page.locator('.mx-b-acts .btn', { hasText: 'Envoyer mon CV' }).click(); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.msg.mine .msg-cv').last().innerText(), /CV de Salma/);
+  // Le match est vu : plus de pastille ; la rangée « Tes matchs » a un visage de plus
+  await s.aller('match');
+  assert.equal(await s.page.locator('.mx-visage').count(), avant + 1);
+  assert.equal(await s.page.locator('.bottom-nav a.bn-match .dotn').count(), 0);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : glisser au doigt, au clavier, « Revenir » ; un appui ouvre le détail (390 px tactile, puis 1280 px)', async () => {
+  const s = await ouvrir({ largeur: 390, mouvement: true, toucher: true });
+  await s.comme('Youssef'); await s.aller('match');
+  const premiere = await carteDessus(s.page);
+  const b = await s.page.locator('.mx-carte.dessus').boundingBox();
+  const y = b.y + b.height / 2;
+  // Un petit glisser : la carte revient (ressort), aucun choix
+  await glisserCarte(s.page, b.x + b.width / 2, b.x + b.width / 2 - 40, y); await s.page.waitForTimeout(600);
+  assert.equal(await carteDessus(s.page), premiere);
+  assert.deepEqual((await mesChoix(s.page)).filter(c => c.choix === 'plus_tard'), []);
+  // Glissée vers la gauche, au-delà du seuil : « Plus tard »
+  await glisserCarte(s.page, b.x + b.width / 2, b.x - 120, y); await s.page.waitForTimeout(600);
+  assert.notEqual(await carteDessus(s.page), premiere);
+  assert.equal((await mesChoix(s.page)).filter(c => c.choix === 'plus_tard').length, 1);
+  // « Revenir » : la carte revient devant, le choix est effacé
+  await s.page.click('.mx-retour'); await s.page.waitForTimeout(600);
+  assert.equal(await carteDessus(s.page), premiere);
+  assert.deepEqual((await mesChoix(s.page)).filter(c => c.choix === 'plus_tard'), []);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+
+  const d = await ouvrir({ largeur: 1280, mouvement: true });
+  await d.comme('Youssef'); await d.aller('match');
+  const p1 = await carteDessus(d.page);
+  // Clavier : ← Plus tard, Z revient, → Intéressé (une étudiante qui a dit oui à son offre : c'est un match)
+  await d.page.keyboard.press('ArrowLeft'); await d.page.waitForTimeout(600);
+  assert.notEqual(await carteDessus(d.page), p1);
+  await d.page.keyboard.press('z'); await d.page.waitForTimeout(600);
+  assert.equal(await carteDessus(d.page), p1);
+  await d.page.keyboard.press('ArrowRight');
+  await d.page.waitForSelector('.mx-fete');
+  await d.page.keyboard.press('Escape'); await d.page.waitForTimeout(300);
+  assert.equal(await d.page.locator('.mx-fete').count(), 0);
+  // Ce choix a fait un match : « Revenir » le dit et ne l'efface pas
+  await d.page.click('.mx-retour'); await d.page.waitForTimeout(300);
+  assert.match(await d.page.locator('.toast').last().innerText(), /Ce choix a mené à un match/);
+  // Glisser à la souris vers la droite : « Intéressé »
+  const c = await d.page.locator('.mx-carte.dessus').boundingBox();
+  const nom = await carteDessus(d.page);
+  await d.page.mouse.move(c.x + c.width / 2, c.y + c.height / 2); await d.page.mouse.down();
+  for (let i = 1; i <= 8; i++) { await d.page.mouse.move(c.x + c.width / 2 + i * 40, c.y + c.height / 2 + i * 2); await d.page.waitForTimeout(16); }
+  await d.page.mouse.up(); await d.page.waitForTimeout(700);
+  if (await d.page.locator('.mx-fete').count()) await d.page.keyboard.press('Escape');
+  assert.notEqual(await carteDessus(d.page), nom);
+  const id = await d.page.evaluate(n => window.__demo.data.profiles.find(p => p.full_name === n)?.id, nom);
+  assert.ok((await mesChoix(d.page)).some(x => x.profil === id && x.choix === 'oui'));
+  // Un appui (sans glisser) ouvre le profil
+  await d.page.locator('.mx-carte.dessus .mx-corps').click(); await d.page.waitForTimeout(400);
+  assert.ok(await d.page.locator('.modal').count() > 0);
+  assert.deepEqual(d.erreurs, []);
+  await d.ctx.close();
+});
+
+test('match : programmer un entretien (jour, heure, durée, visio) ; l’autre répond « Je serai là » et l’étape avance', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('match');
+  await s.page.click('.mx-visage'); await s.page.waitForSelector('.mx-bandeau');
+  await s.page.locator('.mx-b-acts .btn', { hasText: 'Programmer un entretien' }).click();
+  await s.page.waitForSelector('#mx-rdv-jour');
+  const feuille = s.page.locator('.modal').last();
+  await feuille.locator('.chip', { hasText: /^Demain$/ }).click();
+  await feuille.locator('.chip', { hasText: /^15:00$/ }).click();
+  await feuille.locator('.chip', { hasText: /^45 min$/ }).click();
+  assert.match(await feuille.locator('.mx-resume').innerText(), /^Demain · 15:00 · 45 min$/);
+  await s.page.click('button[form="mx-rdv-f"]'); await s.page.waitForTimeout(400);
+  const carte = s.page.locator('.msg.mine .bulle.t-rdv').last();
+  assert.match(await carte.innerText(), /Tu proposes un entretien[\s\S]*Demain[\s\S]*15:00[\s\S]*45 min · En visio[\s\S]*meet\.jit\.si\/ReseauENSAM-[\s\S]*En attente de la réponse de/);
+  // Le lien d'agenda dit l'heure et la durée
+  await carte.locator('summary').click();
+  const g = await carte.locator('a', { hasText: 'Google Agenda' }).getAttribute('href');
+  const [, de, a] = /dates=(\d{8}T\d{6}Z?)(?:%2F|\/)(\d{8}T\d{6}Z?)/.exec(g);
+  const t = x => Date.UTC(+x.slice(0, 4), +x.slice(4, 6) - 1, +x.slice(6, 8), +x.slice(9, 11), +x.slice(11, 13));
+  assert.equal((t(a) - t(de)) / 6e4, 45);
+  // Une date passée est refusée, avec les mots de la base
+  await s.page.locator('.mx-b-acts .btn', { hasText: 'Programmer un entretien' }).click();
+  await s.page.waitForSelector('#mx-rdv-jour');
+  await s.page.fill('#mx-rdv-jour', '2020-01-10');
+  await s.page.click('button[form="mx-rdv-f"]'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.modal').last().innerText(), /Choisis une date à venir/);
+  await s.fermer();
+  // Salma a un entretien proposé par la lauréate de son match : « Je serai là »
+  await s.comme('Salma'); await s.aller('match');
+  await s.page.click('.mx-visage'); await s.page.waitForSelector('.mx-bandeau');
+  const recue = s.page.locator('.msg:not(.mine) .bulle.t-rdv').last();
+  assert.match(await recue.innerText(), /Entretien proposé[\s\S]*10:00[\s\S]*30 min · En visio/);
+  await recue.locator('.btn', { hasText: 'Je serai là' }).click(); await s.page.waitForTimeout(300);
+  assert.match(await recue.innerText(), /Tu as dit que tu serais là\./);
+  assert.equal(await s.page.locator('.mx-etapes li[aria-current="step"]').innerText(), 'Entretien');
+  // Dans la liste des conversations, l'aperçu dit « Entretien proposé »
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : « Apparaître dans Match » (Mon profil) retire la carte de l’étudiante chez les lauréats', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma');
+  const salma = await s.page.evaluate(() => window.__demo.me.id);
+  const chezNadia = () => s.page.evaluate(async id => {
+    const L = await import(new URL('logic.js', location.href).href);
+    const d = window.__demo, nadia = d.data.profiles.find(p => p._persona?.includes('Nadia'));
+    return L.deckMatch(d.data, nadia).some(c => c.profil.id === id);
+  }, salma);
+  assert.equal(await chezNadia(), true);
+  await s.aller('profil');
+  assert.equal(await s.page.isChecked('#mx-visible'), true);
+  await s.page.locator('.mx-switch').click(); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.isChecked('#mx-visible'), false);
+  assert.match(await s.page.locator('.toast').last().innerText(), /n’est plus proposée aux lauréats/);
+  assert.equal(await chezNadia(), false);
+  await s.aller('match');
+  assert.equal(await s.page.locator('.mx-visible').count(), 0, 'la page Match ne dit plus « les lauréats voient ta carte »');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : en arabe à 360 px — tout est traduit, rien ne déborde, et « يهمّني » est du côté de la lecture', async () => {
+  const s = await ouvrir({ largeur: 360, langue: 'ar' });
+  await s.page.evaluate(() => window.__ensamMissing?.clear());
+  await s.comme('Salma'); await s.aller('match');
+  assert.equal(await s.debordement(), 0);
+  // En arabe, « Intéressé » est à gauche (fin de ligne) et la flèche ← le choisit
+  const oui = await s.page.locator('.mx-oui').boundingBox(), non = await s.page.locator('.mx-non').boundingBox();
+  assert.ok(oui.x < non.x);
+  await s.page.keyboard.press('ArrowLeft');
+  await s.page.waitForSelector('.mx-fete');
+  assert.equal(await s.page.textContent('#mx-fete-t'), 'تمّ الاتفاق!');
+  await s.page.click('.mx-fete-plus'); await s.page.waitForTimeout(300);
+  await s.page.locator('.mx-visage').last().click(); await s.page.waitForSelector('.mx-bandeau');
+  assert.equal(await s.debordement(), 0);
+  await s.comme('Youssef'); await s.aller('match');
+  await s.page.click('.mx-visage'); await s.page.waitForSelector('.mx-bandeau');
+  await s.page.locator('.mx-b-acts .btn').first().click(); await s.page.waitForSelector('#mx-rdv-jour');
+  await s.page.click('button[form="mx-rdv-f"]'); await s.page.waitForTimeout(300);
+  await s.comme('Nadia'); await s.aller('match');
+  await s.aller('profil'); await s.comme('Amine'); await s.aller('match');
+  assert.equal(await s.debordement(), 0);
+  const oublis = (await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x));
+  assert.deepEqual(oublis, []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : mouvement réduit — la carte s’efface sans voler, la fête paraît sans confettis', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('match');
+  const anim = await s.page.evaluate(async () => {
+    document.querySelector('.mx-oui').click();
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return getComputedStyle(document.querySelector('.mx-carte.vol')).animationName;
+  });
+  assert.equal(anim, 'mx-fondu');
+  await s.page.waitForSelector('.mx-fete');
+  assert.equal(await s.page.locator('.mx-fete .fete-pluie').count(), 0);
+  assert.equal(await s.page.evaluate(() => getComputedStyle(document.querySelector('.mx-duo-a')).animationName), 'none');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
 });
