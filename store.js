@@ -3,7 +3,7 @@
 const chargerSeed = () => import('./seed.js').then(m => m.buildSeed());
 import { refusOrigine, estPartagee, LIMITE_PARTAGES } from './origine.js';
 import { VIVANT, regleVivant, peutSupprimerVivant, cascadeVivant, memeCible } from './reseau-vivant.js';
-import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage, transitionAmbassadeur, PREFIXE_BROUILLON } from './logic.js';
+import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage, transitionAmbassadeur, PREFIXE_BROUILLON, refusChoixMatch, nouveauMatch, matchEntre } from './logic.js';
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
 const PHASE3 = ['coordonnees', 'demandes_contact', 'relectures_cv', 'relecture_commentaires', 'entretiens', 'avis_stage', 'guide_pays', 'signalements', 'enquetes_insertion', 'verifications_pairs', 'evenements', 'evenement_participants', 'retours_cv'];
@@ -14,9 +14,11 @@ export const REACTIONS = ['👍', '❤️', '😂', '😮', '🙏', '👏'];
 const DEMANDES = ['demandes', 'propositions'];
 // Ambassadeurs de promo (ambassadeurs.js)
 const AMBASSADEURS = ['ambassadeurs'];
-export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT];
+// Match (match.js) : les choix « Intéressé » / « Plus tard », et les matchs faits par la base
+const MATCH = ['match_choix', 'matchs'];
+export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT, ...MATCH];
 // Tables ajoutées par supabase/mise-a-jour.sql : tant que la base n'est pas à jour, elles restent vides au lieu de bloquer le site.
-const OPTIONAL = new Set(['shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT]);
+const OPTIONAL = new Set(['shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT, ...MATCH]);
 // Lues par une vue qui masque ce que chacun a choisi de cacher (auteur anonyme, visibilité du profil).
 // Tant que la base n'a pas ces vues, on lit la table elle-même.
 const VUES = { profiles: 'profils', entretiens: 'entretiens_publics', avis_stage: 'avis_publics' };
@@ -51,6 +53,8 @@ class Base {
   // Réseau vivant : réactions publiques et réponses sous une demande, cachées tant que la base n'a pas leurs tables
   peutReagirPublic() { return this.mode !== 'live' || !this.absentes?.has('reactions_publiques'); }
   peutRepondreDemande() { return this.mode !== 'live' || !this.absentes?.has('reponses_demandes'); }
+  // Match : la page et son onglet attendent que la base ait ses tables (match_choix, matchs)
+  peutMatch() { return this.mode !== 'live' || !this.absentes?.has('match_choix'); }
   // « Cette semaine dans le réseau » : en démo, le calcul sur toutes les données
   pouls() { return poulsReseau(this.data); }
   // En ligne, la base a déjà masqué ce qui ne doit pas être vu : ces deux aides servent surtout à la démo.
@@ -125,6 +129,8 @@ export function voitChampDemo(data, me, p, champ) {
   if (a === 'laureats' && me.role === 'laureat') return true;
   // CV joint à une demande ouverte ou en cours : les lauréats le voient le temps de la demande
   if (champ === 'cv' && me.role === 'laureat' && demandesActives(data, p.id).length) return true;
+  // CV de l'étudiant : le lauréat qui a un match avec lui le lit (comme voit_champ() dans la base)
+  if (champ === 'cv' && (data.matchs || []).some(m => m.etudiant_id === p.id && m.laureat_id === me.id)) return true;
   return enRelation(data, me.id, p.id);
 }
 
@@ -386,6 +392,61 @@ class DemoStore extends Base {
     if (!emoji || mienne?.emoji === emoji) { if (mienne) await this.remove('reactions_publiques', mienne.id); return null; }
     return mienne ? this.update('reactions_publiques', mienne.id, { emoji }) : this.insert('reactions_publiques', { ...cible, emoji });
   }
+  // Match : mêmes règles que protect_match_choix(), match_apres_choix(), protect_match() et repondre_rdv() dans la base.
+  // Un choix par carte (« oui » ou « plus_tard »), changé sur place ; renvoie le match que ce geste vient de créer (à fêter).
+  async choisirMatch({ profil = null, offre = null } = {}, choix = 'oui') {
+    const me = this.me, c = offre ? { profil: null, offre } : { profil: profil || null, offre: null };
+    if (!(c.offre || c.profil) || !['oui', 'plus_tard'].includes(choix)) throw new Error('Choix invalide.');
+    const refus = refusChoixMatch(this.data, me, c);
+    if (refus) throw new Error(refus);
+    const now = new Date().toISOString();
+    const avant = this.data.match_choix.find(x => x.user_id === me.id && (x.cible_profil || null) === c.profil && (x.cible_offre || null) === c.offre) || null;
+    const row = avant ? { ...avant, choix, updated_at: now } : { id: uuid(), user_id: me.id, cible_profil: c.profil, cible_offre: c.offre, choix, created_at: now, updated_at: now };
+    this.data.match_choix = avant ? this.data.match_choix.map(x => (x.id === avant.id ? row : x)) : [row, ...this.data.match_choix];
+    const m = nouveauMatch(this.data, row, avant);
+    const match = m ? { id: uuid(), ...m, created_at: now, vu_etudiant_at: null, vu_laureat_at: null } : null;
+    if (match) this.data.matchs = [match, ...this.data.matchs];
+    this.persist(); this.emit();
+    return { match };
+  }
+  // « Revenir » : mon dernier choix est retiré (pas s'il a mené à un match) ; renvoie sa carte pour la remettre en tête
+  async revenirMatch() {
+    const me = this.me; if (!me) return null;
+    const d = this.data.match_choix.filter(x => x.user_id === me.id).sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))[0];
+    if (!d) return null;
+    const autre = d.cible_offre ? this.byId('offers', d.cible_offre)?.author_id : d.cible_profil;
+    if (autre && matchEntre(this.data, me.id, autre)) return null;
+    this.data.match_choix = this.data.match_choix.filter(x => x.id !== d.id);
+    this.persist(); this.emit();
+    return { profil: d.cible_profil || null, offre: d.cible_offre || null };
+  }
+  // « Retirer le match » : l'un ou l'autre ; les choix restent (la carte ne revient pas)
+  async retirerMatch(id) {
+    const m = this.byId('matchs', id); if (!m) return;
+    if (this.me?.role !== 'admin' && ![m.etudiant_id, m.laureat_id].includes(this.me?.id)) throw new Error('Action non autorisée pour ton compte.');
+    this.data.matchs = this.data.matchs.filter(x => x.id !== id);
+    this.persist(); this.emit();
+  }
+  // Le match est vu (une fois) : seulement sa propre date
+  async vuMatch(id) {
+    const m = this.byId('matchs', id), me = this.me?.id; if (!m || !me) return;
+    const k = m.etudiant_id === me ? 'vu_etudiant_at' : m.laureat_id === me ? 'vu_laureat_at' : null;
+    if (!k || m[k]) return;
+    this.data.matchs = this.data.matchs.map(x => (x.id === id ? { ...x, [k]: new Date().toISOString() } : x));
+    this.persist(); this.emit();
+  }
+  // Réponse à un entretien proposé : le destinataire, tant qu'il est à venir ; il peut changer d'avis jusque-là
+  async repondreRdv(id, reponse) {
+    if (!['oui', 'autre'].includes(reponse)) throw new Error('Réponse invalide.');
+    const m = this.byId('messages', id);
+    if (!m || m.type !== 'rdv' || m.dest_id !== this.me?.id) throw new Error('Action non autorisée pour ton compte.');
+    if (!m.rdv_at || new Date(m.rdv_at).getTime() <= Date.now()) throw new Error('Cet entretien est déjà passé.');
+    if (bloque(this.data, m.author_id, m.dest_id)) throw new Error('Vous ne pouvez plus vous écrire.');
+    const r = { ...m, rdv_reponse: reponse };
+    this.data.messages = this.data.messages.map(x => (x.id === id ? r : x));
+    this.persist(); this.emit();
+    return r;
+  }
   canal() { return { tape() {}, fermer() {} }; }
   // Liste officielle (administration)
   async importerListe(lignes, remplacer = false) {
@@ -631,8 +692,21 @@ function applyMessagerieRules(store, table, r, old) {
     r.reponse_a = cite && ((cite.author_id === me.id && cite.dest_id === r.dest_id) || (cite.author_id === r.dest_id && cite.dest_id === me.id)) ? cite.id : null;
     if (r.type === 'texte' && !r.body) throw new Error('Écris ton message.');
     if (r.body && r.body.length > 2000) throw new Error('Ton message est trop long (2 000 caractères au plus).');
-    if (r.type !== 'texte' && !r.fichier) throw new Error('Fichier manquant.');
+    if (!['texte', 'rdv'].includes(r.type) && !r.fichier) throw new Error('Fichier manquant.');
     if (r.type === 'vocal') r.body = null;
+    // Entretien : une date à venir (4 mois au plus), une durée, un lieu ou un lien ; jamais de fichier ; la réponse vient après
+    if (r.type === 'rdv') {
+      Object.assign(r, { fichier: null, duree: null, largeur: null, hauteur: null, onde: null, rdv_reponse: null });
+      r.rdv_lieu = String(r.rdv_lieu || '').trim() || null; r.rdv_lien = String(r.rdv_lien || '').trim() || null;
+      const t = new Date(r.rdv_at || NaN).getTime(), now = Date.now();
+      if (!(t > now) || t > now + 120 * 864e5) throw new Error('Choisis une date à venir, dans les 4 prochains mois.');
+      r.rdv_at = new Date(t).toISOString();
+      if (!r.rdv_duree) throw new Error('Choisis la durée de l’entretien.');
+      if (!(Number.isInteger(+r.rdv_duree) && r.rdv_duree >= 15 && r.rdv_duree <= 120)) throw new Error('La durée va de 15 à 120 minutes.');
+      if (r.rdv_lieu && r.rdv_lieu.length > 200) throw new Error('Le lieu est trop long (200 caractères au plus).');
+      if (r.rdv_lien && (!/^https:\/\/\S+$/i.test(r.rdv_lien) || r.rdv_lien.length > 300)) throw new Error('Le lien de la visio doit commencer par https://');
+      if (r.body && r.body.length > 500) throw new Error('La note est trop longue (500 caractères au plus).');
+    } else for (const k of ['rdv_at', 'rdv_duree', 'rdv_lieu', 'rdv_lien', 'rdv_reponse']) delete r[k];
     if (!peutDiscuter(store.data, me, r.dest_id, x => store.byId('profiles', x))) throw new Error('Conversation pas encore ouverte : elle s’ouvre avec un mentorat, une candidature ou des coordonnées partagées.');
     return;
   }
@@ -1296,7 +1370,8 @@ export class SupabaseStore extends Base {
     const pending = new Set(); let timer = null;
     // Un accord de contact change ce que chacun voit des coordonnées et des profils de l'autre
     // Une demande change qui voit le CV ; un match ouvre les coordonnées et la messagerie ; un démarrage confirmé la pourvoit
-    const LIES = { demandes_contact: ['coordonnees', 'profiles'], demandes: ['propositions', 'profiles'], propositions: ['demandes', 'coordonnees', 'profiles'], placements: ['demandes', 'propositions'] };
+    // Page Match : un match donne au lauréat le CV de l'étudiant (vue profils)
+    const LIES = { demandes_contact: ['coordonnees', 'profiles'], demandes: ['propositions', 'profiles'], propositions: ['demandes', 'coordonnees', 'profiles'], placements: ['demandes', 'propositions'], matchs: ['profiles'] };
     this.channel = this.sb.channel('ensam-live');
     const recharger = t => {
       pending.add(t); for (const x of LIES[t] || []) pending.add(x); clearTimeout(timer);
@@ -1674,6 +1749,69 @@ export class SupabaseStore extends Base {
     }
     await this.loadTable('reactions_publiques').catch(() => {}); this.emit();
     return null;
+  }
+  // ---------------------------------------------------------------------------
+  // Page Match : mêmes règles que la base (protect_match_choix, match_apres_choix, protect_match, repondre_rdv)
+  // et que DemoStore. Une carte : { profil } ou { offre } ; choix : 'oui' (Intéressé) ou 'plus_tard'.
+  // ---------------------------------------------------------------------------
+  // L'autre personne d'une carte : l'auteur de l'offre, ou le profil ; et la paire étudiant × lauréat qu'elle formerait
+  paireMatch({ profil = null, offre = null } = {}) {
+    const autre = offre ? this.byId('offers', offre)?.author_id || null : profil;
+    if (!autre || !this.me) return null;
+    return this.me.role === 'laureat' ? { etudiant_id: autre, laureat_id: this.userId } : { etudiant_id: this.userId, laureat_id: autre };
+  }
+  // Une ligne par carte (changer d'avis la remplace). Renvoie { match } : le match que CE geste vient de créer (la base
+  // le crée dans la même transaction : sa date est celle du choix), sinon null.
+  async choisirMatch({ profil = null, offre = null } = {}, choix = 'oui') {
+    const col = offre ? 'cible_offre' : 'cible_profil', val = offre || profil;
+    if (!val || !['oui', 'plus_tard'].includes(choix)) throw new Error('Choix invalide.');
+    const { data: ligne, error } = await this.sb.from('match_choix').upsert({ user_id: this.userId, [col]: val, choix }, { onConflict: 'user_id,' + col }).select().single();
+    if (error) throw new Error(frError(error));
+    this.data.match_choix = [ligne, ...(this.data.match_choix || []).filter(x => x.id !== ligne.id)];
+    let match = null;
+    const paire = choix === 'oui' ? this.paireMatch({ profil, offre }) : null;
+    if (paire) {
+      const { data: m } = await this.sb.from('matchs').select('*').eq('etudiant_id', paire.etudiant_id).eq('laureat_id', paire.laureat_id).maybeSingle();
+      if (m) {
+        this.data.matchs = [m, ...(this.data.matchs || []).filter(x => x.id !== m.id)];
+        if (m.created_at === ligne.updated_at || Date.parse(m.created_at) === Date.parse(ligne.updated_at)) match = m;
+        // Le CV de l'étudiant devient lisible par le lauréat (vue profils)
+        if (match) await this.loadTable('profiles').catch(() => {});
+      }
+    }
+    this.emit();
+    return { match };
+  }
+  // « Revenir » : mon dernier choix est retiré et sa carte revient en tête ; jamais celui d'une carte déjà en match
+  async revenirMatch() {
+    const mien = (this.data.match_choix || []).filter(c => c.user_id === this.userId)
+      .sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at))[0];
+    if (!mien) return null;
+    const cible = { profil: mien.cible_profil || null, offre: mien.cible_offre || null };
+    const paire = this.paireMatch(cible);
+    if (paire && (this.data.matchs || []).some(m => m.etudiant_id === paire.etudiant_id && m.laureat_id === paire.laureat_id)) return null;
+    await this.remove('match_choix', mien.id);
+    return cible;
+  }
+  // « Retirer le match » : l'un ou l'autre ; la discussion déjà écrite reste
+  async retirerMatch(id) { await this.remove('matchs', id); }
+  // Le match a été vu (l'anneau qui pulse s'arrête) : une fois, affiché tout de suite
+  async vuMatch(id) {
+    const m = (this.data.matchs || []).find(x => x.id === id);
+    const col = m?.etudiant_id === this.userId ? 'vu_etudiant_at' : m?.laureat_id === this.userId ? 'vu_laureat_at' : null;
+    if (!col || m[col]) return;
+    const now = new Date().toISOString();
+    this.data.matchs = this.data.matchs.map(x => x.id === id ? { ...x, [col]: now } : x);
+    this.emit();
+    await Promise.resolve(this.sb.from('matchs').update({ [col]: now }).eq('id', id)).catch(() => {});
+  }
+  // Entretien proposé : « Je serai là » (oui) ou « Autre horaire » (autre), par le destinataire, tant qu'il est à venir
+  async repondreRdv(id, reponse) {
+    const { data, error } = await this.sb.rpc('repondre_rdv', { p_id: id, p_reponse: reponse });
+    if (error) throw new Error(frError(error));
+    const m = Array.isArray(data) ? data[0] : data;
+    if (m?.id) { this.data.messages = this.data.messages.some(x => x.id === m.id) ? this.data.messages.map(x => x.id === m.id ? m : x) : [m, ...this.data.messages]; this.emit(); }
+    return m;
   }
   // « écrit… » : un signal éphémère entre les deux personnes de la conversation (rien n'est enregistré)
   canal(autre, onTape) {
