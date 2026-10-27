@@ -955,6 +955,8 @@ export const bloque = (data, a, b) => (data.blocages || []).some(x => entre(x, a
 // Ce qui relie deux membres, du plus utile au plus général : sert de sous-titre à la conversation
 export function lienAvec(data, me, autre, profil = () => null) {
   if (!me || !autre || me.id === autre) return null;
+  // Un match (page Match) ouvre la discussion entre l'étudiant et le lauréat, comme peut_discuter() dans la base
+  { const mt = (data.matchs || []).find(x => entre(x, me.id, autre, 'etudiant_id', 'laureat_id')); if (mt) return { type: 'match', label: 'Match', detail: (mt.offre_id && data.offers.find(o => o.id === mt.offre_id)?.titre) || null, match: mt.id }; }
   const m = data.mentorships.filter(x => x.mentor_id && ['demande', 'acceptee', 'terminee'].includes(x.status) && entre(x, me.id, autre, 'student_id', 'mentor_id'))
     .sort((a, b) => (a.status === 'acceptee' ? 0 : 1) - (b.status === 'acceptee' ? 0 : 1) || new Date(b.created_at) - new Date(a.created_at))[0];
   if (m) return { type: 'mentorat', label: 'Mentorat', detail: m.sujet, m };
@@ -1245,10 +1247,12 @@ export function ouvertureNotif({ etat, memo = {}, now = Date.now(), role, voulu 
 // de son rôle. Mêmes règles que la base (push_categorie, push_defaut, push_voulu dans schema.sql) : un test le vérifie.
 // Catégories proposées, dans l'ordre de l'écran (« admin » : signalements, toujours reçus, sans case)
 // « rappels » : après quelques jours sans visite, quand quelque chose attend le membre (activés par défaut, comme le reste)
-export const PUSH_CATEGORIES = ['messages', 'demandes', 'candidatures', 'mentorat', 'offres', 'reseau', 'rappels'];
+// « match » : la page Match (un intérêt pour soi, un match, un entretien proposé et sa réponse), activée par défaut
+export const PUSH_CATEGORIES = ['messages', 'match', 'demandes', 'candidatures', 'mentorat', 'offres', 'reseau', 'rappels'];
 // Type de notification -> catégorie (un type inconnu : vie du réseau)
 export const PUSH_KINDS = {
   message: 'messages',
+  match: 'match', match_interet: 'match', rdv_message: 'match', rdv_reponse: 'match',
   demande_nouvelle: 'demandes', demande_large: 'demandes', demande_proposition: 'demandes', demande_match: 'demandes', demande_rouverte: 'demandes', demande_reponse: 'demandes',
   candidature: 'candidatures', candidature_statut: 'candidatures', invitation: 'candidatures',
   recrutement_a_confirmer: 'candidatures', recrutement_confirme: 'candidatures', relance_offre: 'candidatures',
@@ -1263,7 +1267,7 @@ export const PUSH_KINDS = {
   signalement: 'admin',
 };
 export const pushCategorie = kind => (Object.prototype.hasOwnProperty.call(PUSH_KINDS, kind) ? PUSH_KINDS[kind] : 'reseau');
-// Défaut : tout est activé pour tout le monde, nouvelles offres comprises (un lauréat reçoit celles de sa filière,
+// Défaut : tout est activé pour tout le monde (Match compris), nouvelles offres comprises (un lauréat reçoit celles de sa filière,
 // qu'il cherche un emploi ou non). Seule exception, un choix déjà fait : l'ancienne case « M'alerter dès qu'une
 // offre… » décochée (alertes_offres = false) garde les offres coupées. Les signalements : l'administration seule.
 export function pushDefaut(cat, me) {

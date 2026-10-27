@@ -1296,7 +1296,8 @@ export class SupabaseStore extends Base {
     const pending = new Set(); let timer = null;
     // Un accord de contact change ce que chacun voit des coordonnées et des profils de l'autre
     // Une demande change qui voit le CV ; un match ouvre les coordonnées et la messagerie ; un démarrage confirmé la pourvoit
-    const LIES = { demandes_contact: ['coordonnees', 'profiles'], demandes: ['propositions', 'profiles'], propositions: ['demandes', 'coordonnees', 'profiles'], placements: ['demandes', 'propositions'] };
+    // Page Match : un match donne au lauréat le CV de l'étudiant (vue profils)
+    const LIES = { demandes_contact: ['coordonnees', 'profiles'], demandes: ['propositions', 'profiles'], propositions: ['demandes', 'coordonnees', 'profiles'], placements: ['demandes', 'propositions'], matchs: ['profiles'] };
     this.channel = this.sb.channel('ensam-live');
     const recharger = t => {
       pending.add(t); for (const x of LIES[t] || []) pending.add(x); clearTimeout(timer);
@@ -1674,6 +1675,69 @@ export class SupabaseStore extends Base {
     }
     await this.loadTable('reactions_publiques').catch(() => {}); this.emit();
     return null;
+  }
+  // ---------------------------------------------------------------------------
+  // Page Match : mêmes règles que la base (protect_match_choix, match_apres_choix, protect_match, repondre_rdv)
+  // et que DemoStore. Une carte : { profil } ou { offre } ; choix : 'oui' (Intéressé) ou 'plus_tard'.
+  // ---------------------------------------------------------------------------
+  // L'autre personne d'une carte : l'auteur de l'offre, ou le profil ; et la paire étudiant × lauréat qu'elle formerait
+  paireMatch({ profil = null, offre = null } = {}) {
+    const autre = offre ? this.byId('offers', offre)?.author_id || null : profil;
+    if (!autre || !this.me) return null;
+    return this.me.role === 'laureat' ? { etudiant_id: autre, laureat_id: this.userId } : { etudiant_id: this.userId, laureat_id: autre };
+  }
+  // Une ligne par carte (changer d'avis la remplace). Renvoie { match } : le match que CE geste vient de créer (la base
+  // le crée dans la même transaction : sa date est celle du choix), sinon null.
+  async choisirMatch({ profil = null, offre = null } = {}, choix = 'oui') {
+    const col = offre ? 'cible_offre' : 'cible_profil', val = offre || profil;
+    if (!val || !['oui', 'plus_tard'].includes(choix)) throw new Error('Choix invalide.');
+    const { data: ligne, error } = await this.sb.from('match_choix').upsert({ user_id: this.userId, [col]: val, choix }, { onConflict: 'user_id,' + col }).select().single();
+    if (error) throw new Error(frError(error));
+    this.data.match_choix = [ligne, ...(this.data.match_choix || []).filter(x => x.id !== ligne.id)];
+    let match = null;
+    const paire = choix === 'oui' ? this.paireMatch({ profil, offre }) : null;
+    if (paire) {
+      const { data: m } = await this.sb.from('matchs').select('*').eq('etudiant_id', paire.etudiant_id).eq('laureat_id', paire.laureat_id).maybeSingle();
+      if (m) {
+        this.data.matchs = [m, ...(this.data.matchs || []).filter(x => x.id !== m.id)];
+        if (m.created_at === ligne.updated_at || Date.parse(m.created_at) === Date.parse(ligne.updated_at)) match = m;
+        // Le CV de l'étudiant devient lisible par le lauréat (vue profils)
+        if (match) await this.loadTable('profiles').catch(() => {});
+      }
+    }
+    this.emit();
+    return { match };
+  }
+  // « Revenir » : mon dernier choix est retiré et sa carte revient en tête ; jamais celui d'une carte déjà en match
+  async revenirMatch() {
+    const mien = (this.data.match_choix || []).filter(c => c.user_id === this.userId)
+      .sort((a, b) => new Date(b.updated_at || b.created_at) - new Date(a.updated_at || a.created_at))[0];
+    if (!mien) return null;
+    const cible = { profil: mien.cible_profil || null, offre: mien.cible_offre || null };
+    const paire = this.paireMatch(cible);
+    if (paire && (this.data.matchs || []).some(m => m.etudiant_id === paire.etudiant_id && m.laureat_id === paire.laureat_id)) return null;
+    await this.remove('match_choix', mien.id);
+    return cible;
+  }
+  // « Retirer le match » : l'un ou l'autre ; la discussion déjà écrite reste
+  async retirerMatch(id) { await this.remove('matchs', id); }
+  // Le match a été vu (l'anneau qui pulse s'arrête) : une fois, affiché tout de suite
+  async vuMatch(id) {
+    const m = (this.data.matchs || []).find(x => x.id === id);
+    const col = m?.etudiant_id === this.userId ? 'vu_etudiant_at' : m?.laureat_id === this.userId ? 'vu_laureat_at' : null;
+    if (!col || m[col]) return;
+    const now = new Date().toISOString();
+    this.data.matchs = this.data.matchs.map(x => x.id === id ? { ...x, [col]: now } : x);
+    this.emit();
+    await Promise.resolve(this.sb.from('matchs').update({ [col]: now }).eq('id', id)).catch(() => {});
+  }
+  // Entretien proposé : « Je serai là » (oui) ou « Autre horaire » (autre), par le destinataire, tant qu'il est à venir
+  async repondreRdv(id, reponse) {
+    const { data, error } = await this.sb.rpc('repondre_rdv', { p_id: id, p_reponse: reponse });
+    if (error) throw new Error(frError(error));
+    const m = Array.isArray(data) ? data[0] : data;
+    if (m?.id) { this.data.messages = this.data.messages.some(x => x.id === m.id) ? this.data.messages.map(x => x.id === m.id ? m : x) : [m, ...this.data.messages]; this.emit(); }
+    return m;
   }
   // « écrit… » : un signal éphémère entre les deux personnes de la conversation (rien n'est enregistré)
   canal(autre, onTape) {

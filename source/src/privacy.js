@@ -64,6 +64,7 @@ addAR({
 const CATS_NOTIF = {
   etudiant: {
     messages: ['Messages', 'Les messages qu’on t’envoie.'],
+    match: ['Match', 'Un lauréat qui s’intéresse à ton profil, tes nouveaux matchs, les entretiens proposés et leurs réponses.'],
     demandes: ['Mes demandes : les propositions d’aide', 'Un lauréat te propose son aide pour ta demande.'],
     candidatures: ['Mes candidatures', 'Une candidature qui avance, une invitation à postuler, un recrutement à confirmer.'],
     mentorat: ['Mentorat et rendez-vous', 'Rendez-vous et rappels, relectures de CV, partage de coordonnées, parrainage.'],
@@ -73,6 +74,7 @@ const CATS_NOTIF = {
   },
   laureat: {
     messages: ['Messages', 'Les messages qu’on t’envoie.'],
+    match: ['Match', 'Un étudiant qui s’intéresse à ton offre, tes nouveaux matchs, les entretiens proposés et leurs réponses.'],
     demandes: ['Demandes des étudiants', 'Celles de ta filière dès leur publication, celles des autres filières quand elles s’ouvrent à tous les lauréats, et la suite de tes propositions d’aide.'],
     // Tout lauréat peut postuler aux offres entre lauréats
     candidatures: ['Candidatures reçues sur mes offres', 'Et les recrutements confirmés ; si tu postules, la suite de tes candidatures.'],
@@ -102,8 +104,11 @@ const motsNotif = me => (me.role === 'etudiant' ? CATS_NOTIF.etudiant
 // pas de case qui ne servirait à rien (les signalements, eux, arrivent toujours)
 // (ni de rappels de visite : ils ne vont qu'aux étudiants et aux lauréats)
 // Avant mise-a-jour.sql, la base refuse la clé « rappels » dans notif_push : pas de case (même migration que offers.origine)
-const catsNotif = (me, store) => PUSH_CATEGORIES.filter(c => (me.role !== 'admin' || (c !== 'demandes' && c !== 'offres' && c !== 'rappels'))
-  && (c !== 'rappels' || !store?.peutOrigine || store.peutOrigine()));
+// Match : ni pour l'équipe du réseau (elle n'y participe pas), ni avant mise-a-jour.sql (la base refuserait la clé « match » ;
+// la colonne match_visible du profil arrive avec elle)
+const matchPret = (me, store) => store?.mode !== 'live' || (!!me && 'match_visible' in me);
+const catsNotif = (me, store) => PUSH_CATEGORIES.filter(c => (me.role !== 'admin' || (c !== 'demandes' && c !== 'offres' && c !== 'rappels' && c !== 'match'))
+  && (c !== 'rappels' || !store?.peutOrigine || store.peutOrigine()) && (c !== 'match' || matchPret(me, store)));
 const NOTES_NOTIF = {
   tous: 'Tes choix valent pour tous les appareils où les notifications sont activées.',
   admin: 'Les signalements arrivent toujours à l’équipe du réseau.',
@@ -114,6 +119,8 @@ addAR({
   [NOTES_NOTIF.tous]: 'تسري اختياراتك على كل الأجهزة التي فُعّلت فيها الإشعارات.',
   [NOTES_NOTIF.admin]: 'تصل البلاغات دائمًا إلى فريق الشبكة.',
   [CATS_NOTIF.etudiant.messages[1]]: 'الرسائل التي تُرسل إليك.',
+  [CATS_NOTIF.etudiant.match[1]]: 'اهتمام أحد الخريجين بملفك، التوافقات الجديدة، المقابلات المقترحة والردود عليها.',
+  [CATS_NOTIF.laureat.match[1]]: 'اهتمام أحد الطلبة بعرضك، التوافقات الجديدة، المقابلات المقترحة والردود عليها.',
   [CATS_NOTIF.etudiant.demandes[0]]: 'طلباتي: اقتراحات المساعدة',
   [CATS_NOTIF.etudiant.demandes[1]]: 'خريج يقترح عليك مساعدته في طلبك.',
   [CATS_NOTIF.etudiant.candidatures[1]]: 'ترشيح يتقدّم، دعوة للترشح، توظيف ينتظر تأكيدك.',

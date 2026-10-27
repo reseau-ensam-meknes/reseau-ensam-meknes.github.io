@@ -860,7 +860,7 @@ test('à l’ouverture : rien de coché dans Mon profil, rien à proposer', asyn
   const s = await prevenirSur('off');
   await attendreOuverture(s); await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
   await s.aller('profil');
-  for (const c of ['messages', 'demandes', 'candidatures', 'mentorat', 'offres', 'reseau']) { await s.page.click('#np-' + c); await s.page.waitForTimeout(150); }
+  for (const c of ['messages', 'match', 'demandes', 'candidatures', 'mentorat', 'offres', 'reseau']) { await s.page.click('#np-' + c); await s.page.waitForTimeout(150); }
   await s.changerMemo('({ ...m, at: m.at - 8 * 864e5 })');
   const relire = async () => { await s.page.reload(); await s.page.waitForSelector('#mes-donnees'); };
   await relire(); await rienALouverture(s, 'rien à proposer');
@@ -1105,7 +1105,7 @@ test('à l’ouverture : jamais pendant qu’une nouvelle version peut recharger
 test('Mon profil : les notifications par catégorie, défauts selon le rôle, enregistrées et relues après rechargement', async () => {
   const s = await ouvrir({ largeur: 390 });
   const cases = () => s.page.$$eval('.md-cats input[type=checkbox]', xs => Object.fromEntries(xs.map(x => [x.id.replace('np-', ''), x.checked])));
-  const tout = { messages: true, demandes: true, candidatures: true, mentorat: true, offres: true, reseau: true, rappels: true };
+  const tout = { messages: true, match: true, demandes: true, candidatures: true, mentorat: true, offres: true, reseau: true, rappels: true };
   await s.comme('Salma'); await s.aller('profil');
   assert.deepEqual(await cases(), tout);
   const etu = await s.page.locator('.md-cats').innerText();
