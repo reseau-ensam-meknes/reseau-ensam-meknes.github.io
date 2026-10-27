@@ -609,7 +609,8 @@ export function daysUntil(dateStr, now = new Date()) { if (!dateStr) return null
 export const initials = name => (name || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('');
 export const pct = x => `${Math.round(x * 100)}%`;
 
-// Logos d'entreprises : de vrais logos, gardés sur le site (img/logos/), jamais chargés chez un tiers ; aucun partenariat.
+// Logos d'entreprises : de vrais logos, gardés sur le site (img/logos/) ; aucun partenariat. Sans logo ici, l'écran montre
+// l'icône du site de l'entreprise (vitrine-regles.js, LogoEntreprise dans ui.js), sinon le monogramme.
 // Nom (et variantes) → fichier. Un nom correspond s'il commence par l'une des formes, mot pour mot
 // (« Renault Group Maroc », « Safran Nacelles », « Airbus Operations », « Capgemini Engineering »).
 // Une société qui a son propre logo ne prend pas celui du groupe : « Siemens Gamesa » garde son monogramme.

@@ -1,6 +1,6 @@
 // Offres : liste compacte, fiche détaillée, candidature, gestion des candidats par le lauréat.
 import { html, useState, useMemo, useEffect, useRef } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, CompanyLogo, TYPE_ICON, toast, RoleLine, celebrate, injectCSS, PartagerWhatsApp, lienWhatsApp, lienDirect, allerAuChamp, Bouclier } from './ui.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, LogoEntreprise, MentionLogos, styleEntreprise, TYPE_ICON, toast, RoleLine, celebrate, injectCSS, PartagerWhatsApp, lienWhatsApp, lienDirect, allerAuChamp, Bouclier } from './ui.js';
 import { useBrouillon } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
 import { getLang, addAR, arCount } from './i18n.js';
@@ -15,6 +15,8 @@ import { DemandesTab } from './demandes.js';
 import { estPortee, estPartagee, partageExpire, trierOffres, lienValide } from './origine.js';
 import { BadgePortee, PartageCard, SectionPartages, EngagementPortee, NotePartage, PiedPartage, ChoixOrigine, CasePortee, SourcePartage } from './partages.js';
 import { Reactions } from './reactions.js';
+import { preuvesOffre, phraseSauvees, phraseCandidatures } from './vitrine-regles.js';
+import { ouvrirEnDouceur, SqCartes, lieuOffre } from './vitrine.js';
 // Le message WhatsApp d'une offre, dans la langue de l'interface : de quoi il s'agit, et le lien qui l'ouvre directement.
 // Le type n'est ajouté que si le titre ne le dit pas déjà (« Stage : Stage PFE… »), et l'auteur n'est jamais nommé.
 const TYPES_AR = { stage: 'تدريب', pfe: 'مشروع نهاية الدراسة', etranger: 'تدريب بالخارج', emploi: 'وظيفة' };
@@ -154,9 +156,11 @@ function OfferList({ ctx, filtre, setFiltre, onPropose, onPartager }) {
     ${avecReco ? html`<${RecoOffers} ctx=${ctx} reco=${reco} inOffres/>` : null}
     ${avecReco && reste.length ? html`<div class="section-head"><h2>${NIVEAUX[niveau]?.short ? `Les autres offres de ${NIVEAUX[niveau].short}` : 'Les autres offres'}</h2><span class="count">${reste.length}</span></div>` : null}
     <div class="offer-grid">
-      ${reste.length ? reste.map(o => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} sujets=${f === 'pfe'} onOpen=${() => openOffer(o.id)}/>`) : avecReco || partagees.length ? null : vide}
+      ${reste.length ? reste.map((o, i) => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} i=${i} sujets=${f === 'pfe'} onOpen=${() => openOffer(o.id)}/>`)
+        : ctx.store.enAttente && !data.offers.length ? html`<${SqCartes}/>` : avecReco || partagees.length ? null : vide}
     </div>
     ${f === 'sauvees' ? null : html`<${SectionPartages} ctx=${ctx} list=${partagees} onPartager=${plain ? onPartager : null}/>`}
+    <${MentionLogos} noms=${[...reste, ...reco.map(x => x.o), ...(f === 'sauvees' ? [] : partagees)].map(o => o.entreprise)}/>
   </div>`;
 }
 
@@ -176,14 +180,17 @@ export function RecoOffers({ ctx, max = 3, inOffres = false, reco, exclure }) {
   if (!liste.length) return null;  // rien à recommander : pas de bloc vide ni de promesse
   return html`<div class="reco">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="spark"/> Recommandé pour toi</h2>${inOffres ? null : html`<button class="btn tiny ghost" onClick=${() => go('offres')}>Toutes les offres <${Icon} name="arrow" size=${14}/></button>`}</div>
-    <div class="offer-grid one">${liste.map(({ o, why }) => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} why=${why} onOpen=${() => openOffer(o.id)}/>`)}</div>
+    <div class="offer-grid one">${liste.map(({ o, why }, i) => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} i=${i} why=${why} onOpen=${() => openOffer(o.id)}/>`)}</div>
   </div>`;
 }
 
-// Carte compacte : toute la carte ouvre la fiche. En pied, qui la partage et, s'il peut recommander, on le dit simplement.
-export function OfferCard({ o, ctx, onOpen, why, sujets = false }) {
+// Carte d'une offre : toute la carte ouvre la fiche. L'entreprise d'abord (son logo, son nom, sa ville), le poste en grand,
+// l'essentiel en puces (type, durée, rémunéré), puis ce qui est vrai autour : mises de côté, candidatures (pour son auteur),
+// réactions. En pied, le visage du lauréat qui la partage et, s'il peut recommander, on le dit simplement.
+const vientDeSauver = new Map();   // offre → moment où elle vient d'être mise de côté ici (le marque-page fait un petit bond)
+export function OfferCard({ o, ctx, onOpen, why, sujets = false, i = 0 }) {
   // Une offre partagée (vue ailleurs) : la carte compacte, avec le lien vers le site d'origine
-  if (estPartagee(o)) return html`<${PartageCard} o=${o} ctx=${ctx} onOpen=${onOpen}/>`;
+  if (estPartagee(o)) return html`<${PartageCard} o=${o} ctx=${ctx} onOpen=${onOpen} i=${i}/>`;
   const { data, me, store, act } = ctx;
   const author = store.byId('profiles', o.author_id);
   const saved = data.reactions.find(r => r.offer_id === o.id && r.user_id === me.id && r.kind === 'save');
@@ -197,28 +204,40 @@ export function OfferCard({ o, ctx, onOpen, why, sujets = false }) {
   // « peut te recommander » seulement s'il travaille dans l'entreprise de l'offre (et la montre) ; déjà postulé :
   // l'état de la candidature compte davantage
   const coopt = canApply && !!author && store.voitChamp(author, 'travail') && peutRecommander(o, author);
-  const lieu = [o.ville, o.pays !== 'Maroc' ? o.pays : ''].filter(Boolean).join(', ');
-  return html`<article class=${'ocard' + (o.status !== 'ouverte' ? ' closed' : '') + (estPortee(o) ? ' portee' : '')}>
-    <button class="ocard-main" onClick=${onOpen} aria-label=${`Ouvrir : ${titreOffre(o)}`}>
-      <${CompanyLogo} name=${o.entreprise}/>
-      <span class="ocard-txt">
-        <span class="ocard-tags">${estPortee(o) ? html`<${BadgePortee}/>` : null}<span class=${'tag t-' + o.type}><${Icon} name=${TYPE_ICON[o.type]} size=${13}/>${TYPES[o.type]?.label}</span>
-          ${o.status === 'ouverte' && dl !== null && dl >= 0 && dl <= 7 ? html`<span class="tag urgent">${dl === 0 ? 'Dernier jour' : `J-${dl}`}</span>` : null}
-          ${o.status !== 'ouverte' ? html`<span class="tag done">${o.status === 'pourvue' ? 'Pourvue' : 'Fermée'}</span>` : null}
-          ${forLaureats(o) ? html`<span class="tag entre">Entre lauréats</span>` : null}</span>
-        <strong class="ocard-title" translate="no" dir="auto">${titreOffre(o)}</strong>
-        <span class="ocard-meta" translate="no" dir="auto">${o.entreprise}${lieu ? ` · ${lieu}` : ''}</span>
-        ${why?.length ? html`<${Pourquoi} why=${why}/>` : null}
+  const lieu = lieuOffre(o);
+  const urgent = o.status === 'ouverte' && dl !== null && dl >= 0 && dl <= 7;
+  const pv = preuvesOffre(data, o, me);
+  // Une seule preuve, vraie : ses candidatures pour l'auteur (jamais « 0 »), sinon combien l'ont mise de côté (2 au moins)
+  const preuve = pv.candidatures ? ['inbox', phraseCandidatures(pv.candidatures)] : pv.sauvees ? ['bookmark', phraseSauvees(pv.sauvees, pv.public)] : null;
+  const pop = Date.now() - (vientDeSauver.get(o.id) || 0) < 900;
+  // « il y a 3 j » dit qu'elle est fraîche ; au-delà d'un mois, la date reste dans la fiche
+  const recente = Date.now() - new Date(o.created_at) < 30 * 864e5;
+  const sauver = () => { if (!saved) { vientDeSauver.set(o.id, Date.now()); try { navigator.vibrate?.(8); } catch { /* */ } } act(() => saved ? store.remove('reactions', saved.id) : store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save' })); };
+  return html`<article class=${'ocard' + (o.status !== 'ouverte' ? ' closed' : '') + (estPortee(o) ? ' portee' : '')} style=${`${styleEntreprise(o.entreprise)};--i:${i}`}>
+    <button class="ocard-main" onClick=${e => ouvrirEnDouceur(e.currentTarget.closest('.ocard'), onOpen)} aria-label=${`Ouvrir : ${titreOffre(o)}`}>
+      <span class="oc-tete">
+        <${LogoEntreprise} nom=${o.entreprise} lien=${o.lien} taille=${44}/>
+        <span class="ocard-meta" translate="no" dir="auto"><span class="oc-ent">${o.entreprise}</span>${lieu ? html`<span class="oc-lieu"><span class="oc-sep"> · </span>${lieu}</span>` : null}</span>
+        ${urgent ? html`<span class="tag urgent oc-coin">${dl === 0 ? 'Dernier jour' : `J-${dl}`}</span>` : pv.nouvelle && !myApp ? html`<span class="tag nouvelle oc-coin">Nouvelle</span>` : null}
       </span>
+      <strong class="ocard-title" translate="no" dir="auto">${titreOffre(o)}</strong>
+      <span class="ocard-tags"><span class=${'tag t-' + o.type}><${Icon} name=${TYPE_ICON[o.type]} size=${13}/>${TYPES[o.type]?.label}</span>
+        ${estPortee(o) ? html`<${BadgePortee}/>` : null}
+        ${forLaureats(o) ? html`<span class="tag entre">Entre lauréats</span>` : null}
+        ${o.duree ? html`<span class="tag neutre"><${Icon} name="clock" size=${13}/><span translate="no" dir="auto">${o.duree}</span></span>` : null}
+        ${o.remunere ? html`<span class="tag paye">Rémunéré</span>` : null}
+        ${o.status !== 'ouverte' ? html`<span class="tag done">${o.status === 'pourvue' ? 'Pourvue' : 'Fermée'}</span>` : null}</span>
+      ${why?.length ? html`<${Pourquoi} why=${why}/>` : null}
+      ${preuve ? html`<span class="oc-preuve"><${Icon} name=${preuve[0]} size=${16}/><span>${preuve[1]}</span></span>` : null}
     </button>
     <${Reactions} ctx=${ctx} cible=${{ offer_id: o.id }} cls="ocard-rx"/>
     <footer class="ocard-foot">
-      ${author ? html`<span class=${'ocard-author' + (coopt ? ' coopt' : '')}><${Avatar} p=${author} size=${coopt ? 28 : 22}/><span class="oa-txt"><span class="oa-nom">${prenom(author)} · promo ${author.promo}</span>${coopt ? html`<span class="oa-coopt">peut te recommander</span>` : null}</span></span>` : null}
+      ${author ? html`<span class=${'ocard-author' + (coopt ? ' coopt' : '')}><${Avatar} p=${author} size=${30}/><span class="oa-txt"><span class="oa-nom">${prenom(author)} · promo ${author.promo}</span>${coopt ? html`<span class="oa-coopt">peut te recommander</span>` : null}</span></span>` : null}
       <span class="spacer"></span>
-      ${myApp ? html`<span class=${'state-pill a-' + myApp.status}>${APP_STATUS[myApp.status]}</span>` : pris ? html`<span class="state-pill s-trouve">Pris</span>` : mine ? html`<span class="muted small">${apps.length} candidat${apps.length > 1 ? 's' : ''}</span>`
-        : sujets && o.type === 'pfe' && !canApply && o.status === 'ouverte' ? html`<span class="state-pill s-recherche">Disponible</span>` : canApply ? null : html`<span class="muted small nowrap">${timeAgo(o.created_at)}</span>`}
+      ${myApp ? html`<span class=${'state-pill a-' + myApp.status}>${APP_STATUS[myApp.status]}</span>` : pris ? html`<span class="state-pill s-trouve">Pris</span>`
+        : sujets && o.type === 'pfe' && !canApply && o.status === 'ouverte' && !mine ? html`<span class="state-pill s-recherche">Disponible</span>` : canApply || !recente ? null : html`<span class="muted small nowrap">${timeAgo(o.created_at)}</span>`}
       ${canApply ? html`<button class="btn tiny tonal ocard-apply" onClick=${() => ctx.openOffer(o.id, true)}>Postuler</button>` : null}
-      ${!mine ? html`<button class=${'icon-btn small' + (saved ? ' on' : '')} aria-pressed=${!!saved} aria-label=${saved ? 'Ne plus mettre de côté' : 'Mettre de côté'} onClick=${() => act(() => saved ? store.remove('reactions', saved.id) : store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save' }))}><${Icon} name="bookmark" size=${16}/></button>` : null}
+      ${!mine ? html`<button class=${'icon-btn small ocard-garder' + (saved ? ' on' : '') + (saved && pop ? ' pop' : '')} aria-pressed=${!!saved} aria-label=${saved ? 'Ne plus mettre de côté' : 'Mettre de côté'} onClick=${sauver}><${Icon} name="bookmark" size=${16}/></button>` : null}
     </footer>
   </article>`;
 }
@@ -306,7 +325,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
   return html`<${Modal} title=${partage ? 'Offre partagée' : forLaureats(o) ? 'Offre entre lauréats' : TYPES[o.type]?.long || 'Offre'} onClose=${onClose} wide footer=${footer}>
     <div class="detail od">
       <div class="detail-head">
-        <${CompanyLogo} name=${o.entreprise} size=${56}/>
+        <${LogoEntreprise} nom=${o.entreprise} lien=${o.lien} taille=${56}/>
         <div class="detail-title">
           ${o.status !== 'ouverte' ? html`<span class="tag done">${o.status === 'pourvue' ? 'Pourvue' : 'Fermée'}</span>` : null}
           <h2 translate="no" dir="auto">${titreOffre(o)}</h2>
@@ -419,7 +438,7 @@ export function annulerRecrutement(ctx, p) {
     const app = p.offer_id && data.applications.find(x => x.offer_id === p.offer_id && x.student_id === p.student_id && x.status === 'retenu');
     if (app) {
       const avant = statutAvant.lire(app.id);
-      await store.update('applications', app.id, { status: ['postule', 'entretien', 'refuse'].includes(avant) ? avant : 'postule' });
+      await store.update('applications', app.id, { status: ['postule', 'entretien', 'refuse'].includes(avant) ? avant : 'postule', updated_at: new Date().toISOString() });
       statutAvant.oublier(app.id);
     }
     toast('Recrutement annulé.');
@@ -439,7 +458,7 @@ function Candidates({ ctx, o, apps }) {
     if (existing && existing.status !== 'refuse') { toast(`${st.full_name} a déjà une réussite enregistrée cette année.`, 'err'); return; }
     const prenom = st.full_name.split(' ')[0];
     ctx.confirm(`Recruter ${prenom} ? ${prenom} recevra une demande de confirmation, et tu peux annuler tant que ce n’est pas confirmé.`, () => act(async () => {
-      if (app) { if (app.status !== 'retenu') statutAvant.garder(app.id, app.status); await store.update('applications', app.id, { status: 'retenu' }); }
+      if (app) { if (app.status !== 'retenu') statutAvant.garder(app.id, app.status); await store.update('applications', app.id, { status: 'retenu', updated_at: new Date().toISOString() }); }
       await store.insert('placements', { student_id: studentId, offer_id: o.id, laureat_id: me.id, saison, niveau: Math.min(niveauOf(st, saison), 6), type: o.type, entreprise: o.entreprise, ville: o.ville, pays: o.pays || 'Maroc', source: 'plateforme' });
       toast(`${prenom} doit maintenant confirmer. Tes 50 points arrivent dès sa confirmation.`);
     }), 'Recruter', { non: 'Pas maintenant', cls: 'btn primary' });
@@ -458,7 +477,7 @@ function Candidates({ ctx, o, apps }) {
         <div class="cand-actions"><${MessageBtn} ctx=${ctx} p=${st} cls="btn small ghost"/><${CvButton} ctx=${ctx} p=${st}/>${annulable ? html`<button type="button" class="btn small ghost cand-annuler" onClick=${() => annulerRecrutement(ctx, pl)}><${Icon} name="x" size=${15}/> Annuler le recrutement</button>` : null}</div>
         ${pl ? null : html`<div class="cand-statut">
           <div class="seg small-seg" role="group" aria-label="Statut de la candidature">
-            ${[['postule', 'Reçue'], ['entretien', 'Entretien'], ...(entre ? [['retenu', 'Retenue']] : []), ['refuse', 'Pas retenue']].map(([k, l]) => html`<button type="button" class=${a.status === k ? 'on' : ''} aria-pressed=${a.status === k ? 'true' : 'false'} onClick=${() => act(() => store.update('applications', a.id, { status: k }))}>${l}</button>`)}
+            ${[['postule', 'Reçue'], ['entretien', 'Entretien'], ...(entre ? [['retenu', 'Retenue']] : []), ['refuse', 'Pas retenue']].map(([k, l]) => html`<button type="button" class=${a.status === k ? 'on' : ''} aria-pressed=${a.status === k ? 'true' : 'false'} onClick=${() => act(() => store.update('applications', a.id, { status: k, updated_at: new Date().toISOString() }))}>${l}</button>`)}
           </div>
           ${entre ? null : html`<button type="button" class="btn small cand-recruter" onClick=${() => recruit(a.student_id, a)}><${Icon} name="check" size=${15}/> Recruter</button>`}
         </div>`}

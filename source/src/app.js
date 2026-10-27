@@ -24,6 +24,7 @@ import { NextEvent } from './agenda.js';
 import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, suiteLien, accordIci, roleAccord, oublierInvitation } from './entree.js';
 import { MessagesPage, MessagesHome, useAlerteMessages } from './messages.js';
 import { PoulsReseau, marquerArrivee, useArrivee, ArriveeSheet } from './pouls.js';
+import { CaBouge, GraceAToi } from './vitrine.js';
 import { ProposerAide } from './demandes.js';
 import { useFondateurs, FondateursBandeau, useFondateurMoi } from './fondateurs.js';
 import { useAmbassadeurs, pasAmbassadeur, notifsAmbassadeur, AmbassadeurAccueil } from './ambassadeurs.js';
@@ -935,7 +936,9 @@ function Home(ctx) {
       <section class="bloc semaine" aria-labelledby="h-semaine">
         <h2 class="h-sec" id="h-semaine">Cette semaine</h2>
         <div class="bloc-corps">
+          <${GraceAToi} ctx=${ctx}/>
           <${PoulsReseau} ctx=${ctx} accueil semaine onOpen=${() => go(isStudent || isLaureat ? 'mentorat' : 'suivi')}/>
+          <${CaBouge} ctx=${ctx}/>
           ${taches.length ? html`<ul class="todo">${taches.map(a => html`<li key=${a.key}><button type="button" class="notif act" onClick=${() => openNotif(a)}><span class=${'n-ico ' + (a.tone || '')} aria-hidden="true"><${Icon} name=${a.icon} size=${16}/></span><span>${a.text}</span><${Icon} name="arrow" size=${16}/></button></li>`)}</ul>` : null}
         </div>
       </section>

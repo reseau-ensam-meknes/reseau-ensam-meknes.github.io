@@ -1991,6 +1991,104 @@ html.defil-bloque.defil-gouttiere { scrollbar-gutter: stable; }
 @keyframes pas-part { to { opacity: 0; transform: translateX(calc(-20px * var(--sens))); } }
 @keyframes pas-arrive { from { opacity: 0; transform: translateX(calc(28px * var(--sens))); } }
 /* (fin du Lot mouvement · A) */
+/* ===== Vitrine : logos des entreprises, cartes d'offres plus parlantes, « Ça bouge », « Grâce à toi », mouvement ===== */
+/* Logo : l'icône du site de l'entreprise arrive sur la tuile blanche (.c-img, clair et sombre) ; le monogramme reste dessous tant qu'elle n'est pas là */
+.clogo.c-fav { position: relative; }
+.clogo.c-fav > img { position: absolute; inset: 0; margin: auto; width: 64%; height: 64%; object-fit: contain; opacity: 0; border-radius: 10%; }
+.clogo.c-fav-ok > img { opacity: 1; }
+.clogo.c-fav-ok > .c-mono { visibility: hidden; }
+/* Carte d'offre : l'entreprise en tête, le poste en grand, l'essentiel en puces ; une teinte très douce, celle de l'entreprise */
+.ocard { --lavis: hsl(var(--h, 205) 70% 50% / .065); background: linear-gradient(180deg, var(--lavis), transparent 6.5rem), var(--surface); }
+.ocard-main { flex-direction: column; align-items: stretch; gap: .65rem; padding: 1rem 1.05rem .6rem; }
+.oc-tete { display: flex; align-items: center; gap: .75rem; min-width: 0; }
+.ocard .ocard-meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .05rem; line-height: 1.3; color: var(--muted); }
+.oc-ent { font-size: var(--fs-3); font-weight: 650; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oc-lieu { font-size: var(--fs-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oc-sep { display: none; }
+.oc-coin { flex: none; align-self: flex-start; }
+.ocard .ocard-title { font: 700 var(--fs-5)/1.25 var(--f-display); letter-spacing: -.015em; color: var(--ink); text-wrap: balance; overflow-wrap: anywhere; }
+.ocard .ocard-tags { gap: .35rem; }
+.ocard .ocard-tags .tag { padding: .22rem .55rem; }
+.tag.neutre { background: var(--surface-2); color: var(--ink-2); font-weight: 550; }
+.tag.paye { background: var(--good-soft); color: var(--good); }
+.tag.nouvelle { background: var(--accent-soft); color: var(--blue-text); }
+.ocard .why { margin-block-start: -.15rem; }
+.oc-preuve { display: inline-flex; align-items: center; gap: .4rem; font-size: var(--fs-2); font-weight: 550; color: var(--ink-2); }
+.oc-preuve .ico { flex: none; color: var(--accent); }
+[dir="rtl"] .ocard-main [dir="auto"] { text-align: right; }
+.ocard-garder.on .ico, .od-save.on .ico { fill: currentColor; }
+article.opart { background: linear-gradient(180deg, hsl(var(--h, 205) 70% 50% / .05), transparent 4.5rem), var(--surface); }
+.pm-travail { display: flex; align-items: center; gap: .55rem; }
+.pm-travail > .clogo { border-radius: 26%; }
+:root[data-theme="dark"] .ocard { --lavis: hsl(var(--h, 205) 60% 62% / .075); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ocard { --lavis: hsl(var(--h, 205) 60% 62% / .075); } }
+/* « Cette semaine » : ce qui bouge dans le réseau (des comptes, jamais qui), et « Grâce à toi » pour un lauréat */
+.cabouge { display: flex; flex-direction: column; gap: .45rem; padding-block-start: .1rem; }
+.cabouge-titre { display: flex; align-items: center; gap: .5rem; margin: 0; font-size: var(--fs-2); font-weight: 650; color: var(--ink-2); }
+.cabouge-point { position: relative; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--good); }
+.cabouge-faits { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .45rem; }
+.cabouge-faits li { display: inline-flex; align-items: center; gap: .4rem; min-height: 34px; padding: .2rem .75rem .2rem .25rem; border-radius: var(--r-pill); background: var(--surface); box-shadow: var(--sh1); font-size: var(--fs-2); font-weight: 550; color: var(--ink-2); }
+.cb-ico { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent-soft); color: var(--blue-text); }
+.cb-reactions .cb-ico { background: var(--brass-soft); color: var(--brass); }
+.cb-reponses .cb-ico { background: color-mix(in srgb, var(--indigo) 14%, var(--surface)); color: var(--indigo); }
+.cb-membres .cb-ico { background: var(--good-soft); color: var(--good); }
+.grace { display: flex; align-items: center; gap: .85rem; width: 100%; min-height: 64px; padding: .75rem .85rem .75rem .75rem; border: 0; border-radius: var(--r-lg); background: linear-gradient(120deg, var(--good-soft), color-mix(in srgb, var(--good-soft) 35%, var(--surface)) 75%); box-shadow: var(--sh1), inset 0 0 0 1px color-mix(in srgb, var(--good) 20%, transparent); color: var(--ink); font: inherit; text-align: start; cursor: pointer; transition: box-shadow .2s, transform .2s var(--ease); }
+.grace:hover { box-shadow: var(--sh2), inset 0 0 0 1px color-mix(in srgb, var(--good) 30%, transparent); }
+.grace-visage { position: relative; flex: none; display: grid; }
+.grace-tuile { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 12px; background: var(--surface); color: var(--good); }
+.grace-coeur { position: absolute; inset-block-end: -5px; inset-inline-end: -7px; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--good); color: var(--surface); box-shadow: 0 0 0 2px var(--surface); }
+.grace-coeur .ico { width: 13px; height: 13px; fill: currentColor; }
+.grace-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .15rem; }
+.grace-txt strong { font-weight: 650; line-height: 1.3; text-wrap: pretty; }
+.grace-sous { display: flex; align-items: baseline; gap: .3rem; min-width: 0; font-size: var(--fs-2); color: var(--ink-2); }
+.grace-offre { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grace-quand { flex: none; }
+.grace-quand::before { content: "·"; margin-inline-end: .3rem; color: var(--muted); }
+.grace-go { flex: none; display: grid; color: var(--good); }
+/* La forme des cartes, le temps que les offres arrivent */
+.sq-carte { display: flex; flex-direction: column; gap: .75rem; padding: 1rem 1.05rem 1.15rem; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--sh1); }
+.sq-tete { display: flex; align-items: center; gap: .75rem; }
+.sq-carte .sq-logo { inline-size: 44px; block-size: 44px; border-radius: 28%; }
+.sq-col { flex: 1; display: flex; flex-direction: column; gap: .45rem; }
+.sq-col .sq-ligne { margin: 0; }
+.sq-ligne.mini { inline-size: 35%; }
+.sq-titre-carte { block-size: 1.4rem; inline-size: 82%; }
+.sq-puces { display: flex; gap: .4rem; }
+.sq-puce { inline-size: 4.6rem; block-size: 1.45rem; border-radius: 6px; }
+/* Mouvement (seulement si rien ne demande moins de mouvement) */
+@media (prefers-reduced-motion: no-preference) {
+  .clogo.c-fav > img { transition: opacity .35s ease; }
+  /* Les cartes arrivent l'une après l'autre, vite (45 ms d'écart, 8 au plus) */
+  .shell .offer-grid > :is(.ocard, .opart, .sq-carte), .shell .partages-liste > .opart { animation: carte-entre .5s var(--ease-out) backwards; animation-delay: calc(min(var(--i, 0), 8) * 45ms + 30ms); }
+  .ocard:has(> .ocard-main:active) { transform: scale(.99); box-shadow: var(--sh1); transition-duration: .1s; }
+  .ocard-main:active { transform: none; }
+  .ocard-garder.pop .ico { animation: marque .5s cubic-bezier(.3, 1.6, .5, 1); }
+  .cabouge-point::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--good); animation: point-vit 2.6s ease-out 1s infinite; }
+  .cabouge-faits li { animation: rise .45s var(--ease) backwards; animation-delay: calc(var(--i, 0) * 70ms + .12s); }
+  .grace-coeur { animation: coeur 1.5s ease-in-out .5s 2; }
+  .grace:active { transform: scale(.985); }
+  /* La carte devient la fiche : le logo et le titre glissent jusqu'à leur place, la page reste et la fenêtre arrive.
+     La fenêtre est alors posée à sa place (ses propres entrées durent 0 s, sans rejouer ensuite) : la transition la fait monter. */
+  .vt-offre .modal-back:not(.sortie):has(.od), .vt-offre .modal-back:not(.sortie) .modal:has(.od) { animation-duration: 0s; }
+  .vt-offre .modal-back:not(.sortie) .modal:has(.od) { view-transition-name: vt-fiche; }
+  ::view-transition-new(vt-fiche) { animation: .32s var(--ease-out) both pop-in; }
+  .vt-offre .modal-back:not(.sortie) .od .detail-head > .clogo { view-transition-name: vt-logo; }
+  .vt-offre .modal-back:not(.sortie) .od .detail-title h2 { view-transition-name: vt-titre; }
+  .vt-offre .vt-source :is(.clogo, .ocard-title, .opart-titre) { visibility: hidden; }
+  :root.vt-offre::view-transition-old(root) { animation: .22s ease both fade-out; }
+  :root.vt-offre::view-transition-new(root) { animation: none; }
+  ::view-transition-group(vt-logo), ::view-transition-group(vt-titre) { z-index: 1; animation-duration: .46s; animation-timing-function: var(--ease-out); }
+  /* Le titre voyage sans se déformer : l'ancien s'efface tout de suite, le nouveau paraît en chemin, à sa taille */
+  ::view-transition-old(vt-titre), ::view-transition-new(vt-titre) { inline-size: auto; block-size: auto; mix-blend-mode: normal; }
+  ::view-transition-old(vt-titre) { animation: .12s ease both fade-out; }
+  ::view-transition-new(vt-titre) { animation: .26s ease .12s both fade-in; }
+}
+@media (prefers-reduced-motion: no-preference) and (max-width: 760px) { ::view-transition-new(vt-fiche) { animation: .42s var(--ease-out) both sheet-in; } }
+@keyframes carte-entre { from { opacity: 0; transform: translateY(12px) scale(.985); } }
+@keyframes marque { 0% { transform: scale(.55); } 55% { transform: scale(1.22) translateY(-1px); } 100% { transform: none; } }
+@keyframes point-vit { 0% { transform: scale(1); opacity: .5; } 70%, 100% { transform: scale(2.8); opacity: 0; } }
+@keyframes coeur { 0%, 100% { transform: scale(1); } 15% { transform: scale(1.22); } 30% { transform: scale(1); } 45% { transform: scale(1.12); } }
+/* (fin de la Vitrine) */
 </style>
 <div id="app"><div class="boot"><svg class="brand-logo boot-logo" width="72" height="72" viewBox="0 0 512 512" aria-hidden="true"><defs><linearGradient id="lg-tuile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#27497A"/><stop offset="1" stop-color="#16253F"/></linearGradient></defs><rect width="512" height="512" rx="116" fill="url(#lg-tuile)"/><g class="lg-glyph"><path d="M225.8 104.9L233.6 71.3L278.4 71.3L286.2 104.9L321.5 116.4L347.6 93.8L383.8 120.1L370.4 151.9L392.2 182.0L426.6 179.0L440.4 221.6L410.9 239.4L410.9 276.6L440.4 294.4L426.6 337.0L392.2 334.0L370.4 364.1L383.8 395.9L347.6 422.2L321.5 399.6L286.2 411.1L278.4 444.7L233.6 444.7L225.8 411.1L190.5 399.6L164.4 422.2L128.2 395.9L141.6 364.1L119.8 334.0L85.4 337.0L71.6 294.4L101.1 276.6L101.1 239.4L71.6 221.6L85.4 179.0L119.8 182.0L141.6 151.9L128.2 120.1L164.4 93.8L190.5 116.4ZM378 258A122 122 0 1 0 134 258A122 122 0 1 0 378 258Z" fill-rule="evenodd" style="fill:var(--lg-o,#F39200)"/><circle cx="256" cy="258" r="122" style="fill:var(--lg-in,#1F3354)"/><path d="M256 190 358 232 256 274 154 232Z" style="fill:var(--lg-cap,#FFFFFF)"/><path d="M198 252V294Q256 326 314 294V252L256 276Z" style="fill:var(--lg-cap2,#E3EAF4)"/><path d="M256 232 338 250V302" fill="none" stroke-width="9" stroke-linecap="round" style="stroke:var(--lg-b,#4FA9E6)"/><circle cx="338" cy="308" r="12" style="fill:var(--lg-b,#4FA9E6)"/></g></svg><p><span lang="fr">Chargement du réseau…</span><span lang="ar">جارٍ تحميل الشبكة…</span></p></div></div>
 <template id="squelette"><div class="shell squelette" aria-busy="true"><span class="sr-only" role="status"><span lang="fr">Chargement du réseau…</span><span lang="ar">جارٍ تحميل الشبكة…</span></span><aside class="side" aria-hidden="true"><div class="side-in"><span class="brand"><span class="sq sq-logo"></span><span class="sq sq-ligne court"></span></span><span class="sq sq-bouton"></span><div class="side-nav"><span class="sq sq-nav"></span><span class="sq sq-nav"></span><span class="sq sq-nav"></span><span class="sq sq-nav"></span><span class="sq sq-nav"></span><span class="sq sq-nav"></span></div></div></aside><div class="main" aria-hidden="true"><header class="top"><span class="sq sq-logo mobile-only"></span><span class="spacer"></span><span class="sq sq-icone"></span><span class="sq sq-icone"></span><span class="sq sq-icone"></span><span class="sq sq-avatar"></span></header><div class="content"><div class="page home"><div class="home-cols"><div class="home-col"><div class="home-hero sky"><div class="hello-txt"><span class="sq sq-h1"></span><span class="sq sq-ligne"></span><span class="sq sq-ligne court"></span></div></div><div class="pas"><div><span class="sq sq-ligne court"></span><span class="sq sq-ligne"></span><span class="sq sq-ligne"></span></div><span class="sq sq-bouton"></span></div><div class="bloc semaine"><span class="sq sq-h2"></span><span class="sq sq-bloc"></span></div></div><div class="home-grid"><div class="home-side"><div class="bloc"><span class="sq sq-h2"></span><span class="sq sq-bloc court"></span></div></div></div></div></div></div></div><nav class="bottom-nav" aria-hidden="true"><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span></nav></div></template>
