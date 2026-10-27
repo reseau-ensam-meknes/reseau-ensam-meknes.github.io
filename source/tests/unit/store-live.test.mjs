@@ -296,3 +296,51 @@ test('copie impossible : la photo est retirée plutôt que laissée en ligne ; r
   await c.s.masquerFondateur(false);
   assert.deepEqual(c.journal, [['profil', { fondateur_public: false }]]);
 });
+
+// Notification d'un message touchée au retour de veille : le temps réel dormait, la discussion s'ouvrait sans les
+// nouveaux messages jusqu'à un rechargement de la page
+function retour() {
+  const s = new SupabaseStore({}); s.session = { user: { id: 'moi' } }; s.me = { id: 'moi' };
+  const lus = []; let ch = null; let battements = 0;
+  s.sb = {
+    from: nom => ({ select: () => ({ order: () => ({ range: async () => { lus.push(nom); return { data: nom === 'messages' ? [{ id: 'nouveau' }] : [], error: null }; } }) }) }),
+    channel: () => (ch = { on() { return this; }, subscribe(cb) { this.cb = cb; return this; } }),
+    realtime: { sendHeartbeat: () => { battements++; } },
+  };
+  let emis = 0; s.emit = () => { emis++; };
+  return { s, lus, canal: () => ch, battements: () => battements, emis: () => emis };
+}
+
+test('retour au premier plan : les messages sont relus, une seule fois même si la discussion s’ouvre aussitôt', async () => {
+  const r = retour();
+  r.s.auRetour(0);
+  assert.deepEqual(r.lus, [], 'pas caché : rien à relire');
+  r.s.auRetour(4000);
+  await r.s.rattraperMessages();
+  await r.s.rattrapage;
+  assert.deepEqual(r.lus.sort(), ['blocages', 'messages', 'reactions_messages']);
+  assert.deepEqual(r.s.data.messages, [{ id: 'nouveau' }]);
+  assert.ok(r.emis() >= 1);
+  assert.equal(r.battements(), 0, 'courte absence : la connexion n’est pas sondée');
+});
+
+test('longue veille : la connexion du temps réel est sondée (un battement, un second 5 s plus tard)', async () => {
+  const r = retour();
+  r.s.auRetour(60e3);
+  assert.equal(r.battements(), 1);
+  assert.ok(r.s.minuteurSonde);
+  clearTimeout(r.s.minuteurSonde);
+  await r.s.rattrapage;
+});
+
+test('abonnement du temps réel retrouvé après une coupure : les messages manqués sont relus', async () => {
+  const r = retour();
+  r.s.subscribe();
+  r.canal().cb('SUBSCRIBED');
+  assert.deepEqual(r.lus, [], 'premier abonnement : tout vient d’être chargé');
+  r.canal().cb('CHANNEL_ERROR');
+  assert.deepEqual(r.lus, []);
+  r.canal().cb('SUBSCRIBED');
+  await r.s.rattrapage;
+  assert.deepEqual(r.lus.sort(), ['blocages', 'messages', 'reactions_messages']);
+});
