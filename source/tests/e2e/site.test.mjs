@@ -4150,3 +4150,47 @@ test('match : mouvement réduit — la carte s’efface sans voler, la fête par
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
+
+// ---------------------------------------------------------------------------
+// L'administration regarde l'application comme un lauréat (Match, publier une offre), puis revient d'un appui
+// ---------------------------------------------------------------------------
+for (const [largeur, langue, theme] of [[390, 'fr', 'light'], [360, 'ar', 'dark']]) {
+  test(`vue lauréat de l’administration : le switch du menu, le bandeau, Match, puis le retour en admin (${largeur} px, ${langue}, ${theme})`, async () => {
+    const s = await ouvrir({ largeur, langue, theme });
+    // Le menu du compte s'ouvre et se ferme par le bouton du compte
+    const menu = async ouvert => { if ((await s.page.locator('.menu-pop').count() > 0) !== ouvert) await s.page.click('.me-btn'); await s.page.waitForTimeout(150); };
+    // Un lauréat n'a pas ce switch
+    await s.comme('Youssef'); await menu(true);
+    assert.equal(await s.page.locator('.vue-switch').count(), 0);
+    await menu(false);
+    await s.comme('Admin'); await menu(true);
+    const choix = s.page.locator('.vue-switch button');
+    assert.equal(await choix.count(), 2);
+    assert.equal(await choix.nth(0).getAttribute('aria-pressed'), 'true');
+    assert.equal(await s.page.locator('.vue-band').count(), 0);
+    await s.page.addScriptTag({ content: AXE });
+    const ax = await s.page.evaluate(async () => (await axe.run('.menu-pop', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => x.id));
+    assert.deepEqual(ax, [], 'menu du compte : axe');
+    await menu(false); await s.aller('profil'); await menu(true);
+    await choix.nth(1).click();
+    await s.page.waitForSelector('.vue-band'); await s.page.waitForTimeout(300);
+    assert.equal(await s.page.evaluate(() => location.hash), '#accueil');
+    assert.equal(await s.page.locator('.menu-pop').count(), 0);
+    // En lauréat : Match dans la barre, plus d'Administration
+    assert.ok(await s.page.locator('a[href="#match"]').first().count());
+    assert.equal(await s.page.locator('a[href="#admin"]').count(), 0);
+    assert.equal(await s.debordement(), 0);
+    if (langue === 'ar') assert.match(await s.page.textContent('.vue-band'), /كخريج/);
+    await s.aller('match'); await s.page.waitForSelector('.mx-pile, .mx-vide');
+    await menu(true);
+    assert.equal(await choix.nth(1).getAttribute('aria-pressed'), 'true');
+    await menu(false);
+    await s.page.click('.vue-band .btn');
+    await s.page.waitForSelector('.vue-band', { state: 'detached' }); await s.page.waitForTimeout(300);
+    assert.equal(await s.page.evaluate(() => location.hash), '#accueil');
+    assert.ok(await s.page.locator('a[href="#admin"]').first().count());
+    assert.equal(await s.page.locator('a[href="#match"]').count(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}

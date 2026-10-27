@@ -100,11 +100,20 @@ language sql immutable as $$
               when public.parcours_de(a) && public.parcours_de(b) then 1 else 0 end;
 $$;
 
+-- admin_ok : ce compte fait partie de l'administration, même quand il regarde l'application comme un lauréat
+-- (rôle « laureat » le temps de cette vue, puis « admin » d'un appui). Donné et retiré avec le rôle admin ; personne ne se le donne.
+alter table public.profiles add column if not exists admin_ok boolean not null default false;
+
 -- Personne ne peut s'auto-proclamer admin ou "lauréat vérifié"
 create or replace function public.protect_profile() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
   if auth.uid() is null or public.is_admin() then
+    -- Rôle admin donné : admin_ok suit. Rôle changé par quelqu'un d'autre (ou depuis l'éditeur SQL) : admin_ok part.
+    -- Un admin qui passe lui-même en vue lauréat le garde, pour revenir.
+    if new.role = 'admin' then new.admin_ok := true;
+    elsif tg_op = 'UPDATE' and new.id is distinct from auth.uid() and new.role is distinct from old.role then new.admin_ok := false;
+    end if;
     -- L'administration retire une vérification : les confirmations des camarades de promo partent aussi
     if tg_op = 'UPDATE' and old.verified and not new.verified then
       begin delete from public.verifications_pairs where laureat_id = new.id; exception when others then null; end;
@@ -125,7 +134,13 @@ begin
   if tg_op = 'INSERT' then
     if new.role = 'admin' then new.role := 'etudiant'; end if;
     new.verified := false;
+    new.admin_ok := false;
+  elsif coalesce(old.admin_ok, false) and new.role in ('admin', 'laureat') then
+    -- L'administration en vue lauréat revient en admin (ou y reste) : sa vérification ne bouge pas
+    new.admin_ok := true;
+    new.verified := old.verified;
   else
+    new.admin_ok := coalesce(old.admin_ok, false);
     new.role := case when old.role = 'admin' then 'admin'
                      when new.role = 'admin' then old.role
                      else new.role end;
@@ -148,6 +163,7 @@ end $$;
 drop trigger if exists trg_protect_profile on public.profiles;
 create trigger trg_protect_profile before insert or update on public.profiles
   for each row execute function public.protect_profile();
+update public.profiles set admin_ok = true where role = 'admin' and not admin_ok;
 
 -- ---------------------------------------------------------------------
 -- Offres publiées (surtout par les lauréats)
@@ -1777,7 +1793,7 @@ select p.id, p.full_name, p.role, p.filiere, p.promo,
   case when p.id = auth.uid() then p.emails_messages end as emails_messages,
   p.en_recherche, p.photo_path,
   case when p.id = auth.uid() then p.notif_push end as notif_push,
-  p.match_visible
+  p.match_visible, p.admin_ok
 from public.profiles p
 where auth.uid() is not null;
 revoke all on public.profils from public, anon;
@@ -3864,7 +3880,7 @@ grant execute on function public.pouls_reseau() to authenticated;
 -- « Renault » et « Renault Tanger Med » comptent pour une seule entreprise (règle de meme_entreprise) : jamais gonflé.
 create or replace function public.chiffres_publics() returns jsonb
 language sql stable security definer set search_path = public as $$
-  with l as (select promo, public.cle_entreprise(entreprise) as k from public.profiles where role = 'laureat'),
+  with l as (select promo, public.cle_entreprise(entreprise) as k from public.profiles where role = 'laureat' and not admin_ok),
   ks as (select distinct k from l where k is not null and k <> '')
   select jsonb_build_object(
     'laureats', (select count(*) from l),
@@ -3913,7 +3929,7 @@ language sql stable security definer set search_path = public as $$
       where m.mentor_id is not null and m.status in ('acceptee', 'terminee')
   ), premiere as (
     select distinct on (c.l) c.l, c.at, c.k from c
-      join public.profiles p on p.id = c.l and p.role = 'laureat'
+      join public.profiles p on p.id = c.l and p.role = 'laureat' and not p.admin_ok
       where c.at is not null
       order by c.l, c.at, c.k
   )
@@ -4137,7 +4153,7 @@ language sql stable security definer set search_path = public as $$
   -- La connexion récente départage ceux qui ont agi ; seule, elle ne suffit pas (rien fait, pas proposé)
   cross join lateral (select x.actions + case when x.actions > 0
       and (select u.last_sign_in_at from auth.users u where u.id = p.id) > now() - interval '30 days' then 2 else 0 end as score) s
-  where p.promo = p_promo and p.filiere = p_filiere and p.role in ('etudiant','laureat') and p.consent_at is not null
+  where p.promo = p_promo and p.filiere = p_filiere and p.role in ('etudiant','laureat') and not p.admin_ok and p.consent_at is not null
     and not exists (select 1 from public.ambassadeurs a where a.user_id = p.id and a.promo = p_promo and a.filiere = p_filiere
       and (a.statut in ('refuse','expire','retire') or (a.statut = 'propose' and a.propose_at <= now() - interval '7 days')))
     and not exists (select 1 from public.ambassadeurs a where a.user_id = p.id
