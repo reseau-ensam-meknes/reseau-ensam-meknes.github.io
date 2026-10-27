@@ -1,12 +1,13 @@
 // Origine des offres à l'écran (règles dans origine.js) : le badge des offres portées par un lauréat, la section
 // « Offres partagées » (cartes compactes, le lien externe), et ce que le formulaire d'offre ajoute pour un partage.
 import { html, useState } from './vendor/preact-htm.js';
-import { Icon, Field, CompanyLogo, toast, injectCSS } from './ui.js';
+import { Icon, Field, LogoEntreprise, styleEntreprise, toast, injectCSS } from './ui.js';
 import { Reactions } from './reactions.js';
 import { addAR } from './i18n.js';
 import { titreOffre, timeAgo } from './logic.js';
 import { SignalerBtn } from './confiance.js';
 import { estPortee, estPartagee, sourceDe, lienValide } from './origine.js';
+import { ouvrirEnDouceur, lieuOffre } from './vitrine.js';
 
 const lecteurOffre = () => import('./parse-offre.js');
 const prenom = p => (p?.full_name || '').split(' ')[0];
@@ -22,15 +23,15 @@ export function lignePartage(o, auteur) {
 }
 
 // Carte compacte d'une offre partagée : le titre ouvre la fiche (questions, signaler) ; « Voir l'offre » ouvre le site d'origine
-export function PartageCard({ o, ctx, onOpen }) {
+export function PartageCard({ o, ctx, onOpen, i = 0 }) {
   const { store, me } = ctx;
   const auteur = store.byId('profiles', o.author_id);
   const lien = lienSur(o.lien);
-  const lieu = [o.ville, o.pays && o.pays !== 'Maroc' ? o.pays : ''].filter(Boolean).join(', ');
+  const lieu = lieuOffre(o);
   const mine = o.author_id === me.id;
-  return html`<article class=${'opart' + (o.status !== 'ouverte' ? ' closed' : '')}>
-    <button type="button" class="opart-main" onClick=${onOpen} aria-label=${`Ouvrir : ${titreOffre(o)}`}>
-      <${CompanyLogo} name=${o.entreprise} size=${32}/>
+  return html`<article class=${'opart' + (o.status !== 'ouverte' ? ' closed' : '')} style=${`${styleEntreprise(o.entreprise)};--i:${i}`}>
+    <button type="button" class="opart-main" onClick=${e => ouvrirEnDouceur(e.currentTarget.closest('.opart'), onOpen)} aria-label=${`Ouvrir : ${titreOffre(o)}`}>
+      <${LogoEntreprise} nom=${o.entreprise} lien=${o.lien} taille=${40}/>
       <span class="opart-txt">
         <strong class="opart-titre" translate="no" dir="auto">${titreOffre(o)}</strong>
         <span class="opart-meta" translate="no" dir="auto">${o.entreprise}${lieu ? ` · ${lieu}` : ''}</span>
@@ -54,7 +55,7 @@ export function SectionPartages({ ctx, list, onPartager }) {
   return html`<section class="partages" aria-labelledby="partages-titre">
     <div class="section-head"><h2 id="partages-titre" class="h-ico"><${Icon} name="share"/> Offres partagées</h2>${list.length ? html`<span class="count">${list.length}</span>` : null}</div>
     <p class="small muted partages-note">${list.length ? 'Vues ailleurs (LinkedIn, sites d’entreprise) et partagées par des membres. La candidature se fait sur le site d’origine.' : 'Tu as vu une offre intéressante sur LinkedIn ? Partage-la ici, avec son lien.'}</p>
-    ${list.length ? html`<div class="partages-liste">${list.map(o => html`<${PartageCard} key=${o.id} o=${o} ctx=${ctx} onOpen=${() => ctx.openOffer(o.id)}/>`)}</div>` : null}
+    ${list.length ? html`<div class="partages-liste">${list.map((o, i) => html`<${PartageCard} key=${o.id} o=${o} ctx=${ctx} i=${i} onOpen=${() => ctx.openOffer(o.id)}/>`)}</div>` : null}
     ${onPartager ? html`<button type="button" class="btn small ghost partages-btn" id="of-partager-bas" onClick=${onPartager}><${Icon} name="plus" size=${15}/> Partager une offre</button>` : null}
   </section>`;
 }

@@ -97,19 +97,20 @@ function rdvTexts(m, store, lien) {
   return { m, title, details, lien };
 }
 
-function gcalUrl({ m, title, details, lien }, guest) {
-  const start = new Date(m.rdv_at); const end = new Date(start.getTime() + RDV_MIN * 6e4);
-  const q = new URLSearchParams({ action: 'TEMPLATE', text: title, dates: `${icsDate(start)}/${icsDate(end)}`, details, location: lien || '' });
+// Aussi pour un entretien proposé dans la discussion (messages.js) : sa durée (m.rdv_duree) et son lieu (lieu) s'il n'est pas en visio
+export function gcalUrl({ m, title, details, lien, lieu }, guest) {
+  const start = new Date(m.rdv_at); const end = new Date(start.getTime() + (m.rdv_duree || RDV_MIN) * 6e4);
+  const q = new URLSearchParams({ action: 'TEMPLATE', text: title, dates: `${icsDate(start)}/${icsDate(end)}`, details, location: lien || lieu || '' });
   if (guest) q.set('add', guest);
   return 'https://calendar.google.com/calendar/render?' + q.toString();
 }
 
-function icsHref({ m, title, details, lien }) {
+export function icsHref({ m, title, details, lien, lieu }) {
   const esc = t => String(t).replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/[,;]/g, x => '\\' + x);
-  const start = new Date(m.rdv_at); const end = new Date(start.getTime() + RDV_MIN * 6e4);
+  const start = new Date(m.rdv_at); const end = new Date(start.getTime() + (m.rdv_duree || RDV_MIN) * 6e4);
   const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Reseau ENSAM Meknes//Mentorat//FR', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'BEGIN:VEVENT',
     `UID:${m.id}@reseau-ensam`, `DTSTAMP:${icsDate(new Date())}`, `DTSTART:${icsDate(start)}`, `DTEND:${icsDate(end)}`,
-    `SUMMARY:${esc(title)}`, `DESCRIPTION:${esc(details)}`, lien ? `LOCATION:${esc(lien)}` : null, lien ? `URL:${lien}` : null,
+    `SUMMARY:${esc(title)}`, `DESCRIPTION:${esc(details)}`, lien || lieu ? `LOCATION:${esc(lien || lieu)}` : null, lien ? `URL:${lien}` : null,
     'BEGIN:VALARM', 'TRIGGER:-PT15M', 'ACTION:DISPLAY', `DESCRIPTION:${esc(title)}`, 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].filter(Boolean);
   return 'data:text/calendar;charset=utf-8,' + encodeURIComponent(lines.join('\r\n'));
 }

@@ -16,7 +16,8 @@ jobs:
   tests:
     # Playwright 1.56 ne gère pas encore Ubuntu 26.04 (ubuntu-latest)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # Le parcours complet du site prend près de 20 min depuis Match : de la marge
+    timeout-minutes: 35
     defaults:
       run:
         working-directory: source

@@ -341,7 +341,8 @@ async function preparerVapid(env: Env): Promise<Vapid> {
 type Abonnement = { id: string; user_id: string; endpoint: string; p256dh: string; auth: string };
 export type Notif = { title: string; body: string; url: string; tag: string; calme?: boolean };
 
-export const urgence = (kind: string) => (kind === 'rappel_rdv' || kind === 'mentorat_accepte' || kind === 'message' ? 'high' : 'normal');
+// Un entretien proposé dans une discussion et sa réponse sont des messages : même urgence
+export const urgence = (kind: string) => (['rappel_rdv', 'mentorat_accepte', 'message', 'rdv_message', 'rdv_reponse'].includes(kind) ? 'high' : 'normal');
 
 // Envoie une notification ; rend le code HTTP du service de push (0 si injoignable)
 async function pousserUn(a: Abonnement, n: Notif, urg: string, v: Vapid): Promise<number> {
@@ -371,7 +372,7 @@ async function pousserUn(a: Abonnement, n: Notif, urg: string, v: Vapid): Promis
 // ---------------------------------------------------------------------
 // Textes des notifications (fr / ar)
 // ---------------------------------------------------------------------
-type V = { nom: string; sujet: string; titre: string; entreprise: string; cible: string; ville: string; lieu: string; statut: string; date: string; heure: string; promo: string; n: number; vague: string; motif: string; texte: string; mtype: string; duree: number; aide: string; dtype: string; pour: string; origine?: string; emoji: string; quoi: string };
+type V = { nom: string; sujet: string; titre: string; entreprise: string; cible: string; ville: string; lieu: string; statut: string; date: string; heure: string; promo: string; n: number; vague: string; motif: string; texte: string; mtype: string; duree: number; aide: string; dtype: string; pour: string; origine?: string; emoji: string; quoi: string; reponse: string; sur: string };
 // Réactions publiques : les mêmes émojis que la table reactions_publiques
 const EMOJIS_PUBLICS = ['👍', '❤️', '👏', '🙏', '💪'];
 
@@ -475,6 +476,36 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     route: 'offres/demandes',
     fr: v => ['Une réponse à ta demande', `${v.nom}${v.titre ? ` sur « ${v.titre} »` : ''} : ${v.texte}`],
     ar: v => ['رد على طلبك', `رد من ${v.nom}${v.titre ? ` على «${v.titre}»` : ''}: ${v.texte}`],
+  },
+  // Page Match (catégorie « Match ») : c'est un match (aux deux, ouvre la discussion) ; un oui qui me vise (au plus un par
+  // jour pour une même paire) : sur mon offre (lauréat) ou sur mon profil (étudiant) ; un entretien proposé dans la
+  // discussion, puis la réponse (« Je serai là » / « Autre horaire »). Prénoms seulement, comme sur l'écran du match.
+  match: {
+    route: 'match',
+    fr: v => ['C’est un match !', `Toi et ${v.nom}, vous pouvez vous écrire.`],
+    ar: v => ['تمّ الاتفاق!', `يمكنك الآن مراسلة ${v.nom}.`],
+  },
+  match_interet: {
+    route: 'match',
+    fr: v => v.sur === 'offre' ? ['Nouvel intérêt pour ton offre', `${v.nom} s’intéresse à ton offre${v.titre ? ` « ${v.titre} »` : ''}. Réponds dans Match.`]
+      : ['Un lauréat s’intéresse à ton profil', `${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''} s’intéresse à ton profil. Réponds dans Match.`],
+    ar: v => v.sur === 'offre' ? ['اهتمام جديد بعرضك', `اهتمام من ${v.nom} بعرضك${v.titre ? ` «${v.titre}»` : ''}. يمكنك الرد في صفحة التوافق.`]
+      : ['أحد الخريجين مهتم بملفك', `اهتمام بملفك من ${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''}. يمكنك الرد في صفحة التوافق.`],
+  },
+  // 15 minutes : un appel ; sans lieu : en visio (le lien est dans la discussion)
+  rdv_message: {
+    route: 'messages',
+    fr: v => [`${v.duree === 15 ? 'Appel proposé' : 'Entretien proposé'}${v.date ? ` : ${v.date} à ${v.heure}` : ''}`,
+      `${v.nom} te propose ${v.duree === 15 ? 'un appel' : 'un entretien'}${v.duree ? ` de ${v.duree} min` : ''}${v.lieu ? ` · ${v.lieu}` : ' en visio'}.`],
+    ar: v => [`${v.duree === 15 ? 'مكالمة مقترحة' : 'مقابلة مقترحة'}${v.date ? `: ${v.date} على الساعة ${v.heure}` : ''}`,
+      `${v.duree === 15 ? 'اقتراح مكالمة' : 'اقتراح مقابلة'} من ${v.nom}${v.duree ? ` (${v.duree} دقيقة)` : ''}${v.lieu ? ` · ${v.lieu}` : ' عبر الفيديو'}.`],
+  },
+  rdv_reponse: {
+    route: 'messages',
+    fr: v => v.reponse === 'oui' ? [`${v.nom} sera là`, v.date ? `Entretien du ${v.date} à ${v.heure}.` : 'Ton entretien est confirmé.']
+      : v.reponse === 'autre' ? [`${v.nom} propose un autre horaire`, `${v.date ? `Pour l’entretien du ${v.date} à ${v.heure} : c` : 'C'}onvenez d’un autre moment dans la discussion.`] : null,
+    ar: v => v.reponse === 'oui' ? [`تأكيد الحضور من ${v.nom}`, v.date ? `مقابلة ${v.date} على الساعة ${v.heure}.` : 'تم تأكيد مقابلتك.']
+      : v.reponse === 'autre' ? [`طلب توقيت آخر من ${v.nom}`, `${v.date ? `بخصوص مقابلة ${v.date} على الساعة ${v.heure}: ` : ''}اتفقا على توقيت آخر في المحادثة.`] : null,
   },
   // Réactions sur mon offre ou ma demande : une notification au plus par élément et par heure, le compte du moment
   reaction: {
@@ -666,6 +697,8 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
     // Offre portée par un lauréat (il encadre) ou partagée (vue ailleurs) ; rien pour une offre classique
     origine: ['portee', 'partagee'].includes(txt(d.origine)) ? txt(d.origine) : '',
     emoji: EMOJIS_PUBLICS.includes(txt(d.emoji)) ? txt(d.emoji) : '', quoi: estUuid(d.demande) ? 'demande' : 'offre',
+    // Entretien : la réponse du destinataire ; intérêt (Match) : sur une offre, sinon sur le profil
+    reponse: ['oui', 'autre'].includes(txt(d.reponse)) ? txt(d.reponse) : '', sur: estUuid(d.offre) ? 'offre' : 'profil',
   };
   const t = g[l](v);
   if (!t) return null;
@@ -677,11 +710,15 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
   const rx = kind === 'reaction' ? (estUuid(d.offre) ? { route: `offre/${d.offre}`, id: d.offre } : estUuid(d.demande) ? { route: `offres/demandes/${d.demande}`, id: d.demande } : null) : null;
   // Un commentaire ouvre l'offre ; une notification par offre sur le téléphone
   const com = kind === 'offre_commentaire' && estUuid(d.offre) ? d.offre : null;
-  const route = rx ? rx.route : kind === 'offre_alerte' && estUuid(d.offre) ? `offre/${d.offre}` : com ? `offre/${com}` : kind === 'message' && estUuid(d.de) ? `messages/${d.de}`
+  // Match : un match et un entretien ouvrent la discussion avec l'autre personne (de) ; un intérêt, la page Match
+  const disc = (kind === 'match' || kind === 'rdv_message' || kind === 'rdv_reponse') && estUuid(d.de) ? d.de : null;
+  const mt = kind === 'match' && estUuid(d.match) ? d.match : (kind === 'rdv_message' || kind === 'rdv_reponse') && estUuid(d.m) ? d.m
+    : kind === 'match_interet' && estUuid(d.de) ? d.de : null;
+  const route = disc ? `messages/${disc}` : rx ? rx.route : kind === 'offre_alerte' && estUuid(d.offre) ? `offre/${d.offre}` : com ? `offre/${com}` : kind === 'message' && estUuid(d.de) ? `messages/${d.de}`
     : annule && v.pour === 'demandeur' ? `mentorat/reprendre/${annule}`
     : dem ? (kind === 'demande_nouvelle' || kind === 'demande_large' ? `aider/${dem}` : `offres/demandes/${dem}`) : g.route;
   const tag = rx ? `reaction-${rx.id}` : kind === 'offre_alerte' && estUuid(d.offre) ? `offre-${d.offre}` : com ? `${kind}-${com}`
-    : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem ? `${kind}-${dem}` : annule ? `${kind}-${annule}` : kind;
+    : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem ? `${kind}-${dem}` : annule ? `${kind}-${annule}` : mt ? `${kind}-${mt}` : kind;
   // Message arrivé moins de 20 s après le précédent de la conversation : l'aperçu change sans sonner
   return { title: couper(t[0], 80), body: couper(t[1], 180), url: site + '#' + route, tag, ...(kind === 'message' && d.calme === true ? { calme: true } : {}) };
 }

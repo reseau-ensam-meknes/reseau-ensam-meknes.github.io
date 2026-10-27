@@ -1,6 +1,6 @@
 // Entraide, Communauté (classement, annuaire, vitrine des talents) et profils.
 import { html, useState, useMemo, useRef, useEffect } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, toast, LevelChip, RoleLine, roleTexte, injectCSS, PartagerWhatsApp, lienDirect, allerAuChamp, Bouclier, Embleme } from './ui.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, LogoEntreprise, toast, LevelChip, RoleLine, roleTexte, injectCSS, PartagerWhatsApp, lienDirect, allerAuChamp, Bouclier, Embleme } from './ui.js';
 import { useBrouillon } from './ui.js';
 import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
 import { proposerPrevenir } from './pwa.js';
@@ -209,7 +209,7 @@ export function ProfileModal({ ctx, p: p0, onClose, onAskMentor }) {
     <div class="profile">
       <div class="profile-head"><${Avatar} p=${p} size=${64}/><div><div class="profile-l1"><h2>${p.full_name}</h2><${Bouclier} p=${p} explique/></div><${RoleLine} p=${p} score=${s} sansEntreprise=${!!p.entreprise}/>
         <p class="small muted">${p.role === 'laureat' ? p.filiere : p.role === 'etudiant' ? `${NIVEAUX[niveauOf(p, saison)]?.label} · promo ${p.promo}` : ''}${p.ville ? html` · <span translate="no">${villeAffichee(p.ville, getLang())}</span>` : ''}${p.pays && p.pays !== 'Maroc' ? `, ${p.pays}` : ''}</p></div></div>
-      ${p.poste || p.entreprise ? html`<p>${p.poste ? html`<strong>${p.poste}</strong>` : null}${p.entreprise ? html`${p.poste ? ' chez ' : ''}<button class="linkish" onClick=${() => { onClose(); ctx.openEntreprise?.(p.entreprise); }}>${p.entreprise}</button>` : null}${p.secteur ? html` <span class="mini">${p.secteur}</span>` : null}</p>` : null}
+      ${p.poste || p.entreprise ? html`<p class=${p.entreprise ? 'pm-travail' : ''}>${p.entreprise ? html`<${LogoEntreprise} nom=${p.entreprise} taille=${28}/>` : null}<span>${p.poste ? html`<strong>${p.poste}</strong>` : null}${p.entreprise ? html`${p.poste ? ' chez ' : ''}<button class="linkish" onClick=${() => { onClose(); ctx.openEntreprise?.(p.entreprise); }}>${p.entreprise}</button>` : null}${p.secteur ? html` <span class="mini">${p.secteur}</span>` : null}</span></p>` : null}
       ${st ? html`<p><span class=${'state-pill s-' + st.key}>${st.label}</span>${st.pl ? ` ${st.pl.entreprise}` : ''}</p>` : null}
       ${p.role === 'etudiant' && p.disponibilite ? html`<p class="small"><${Icon} name="calendar" size=${14}/> Disponibilité : <span translate="no" dir="auto">${p.disponibilite}</span></p>` : null}
       ${p.role === 'laureat' && p.en_recherche ? html`<p class="small"><span class="state-pill s-recherche">Cherche un emploi</span>${p.disponibilite ? html` <span translate="no" dir="auto">${p.disponibilite}</span>` : null}</p>` : null}

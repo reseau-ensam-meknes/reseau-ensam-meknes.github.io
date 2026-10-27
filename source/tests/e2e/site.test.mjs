@@ -12,7 +12,7 @@ const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe
 
 const SITE = path.resolve(process.env.SITE_DIR || new URL('../../dist', import.meta.url).pathname);
 const TYPES = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
-const ECRANS = ['accueil', 'offres', 'offres/demandes', 'mentorat', 'mentorat/cv', 'messages', 'parcours', 'espace', 'reseau/groupes', 'reseau/agenda', 'reseau/entraide',
+const ECRANS = ['accueil', 'offres', 'offres/demandes', 'match', 'mentorat', 'mentorat/cv', 'messages', 'parcours', 'espace', 'reseau/groupes', 'reseau/agenda', 'reseau/entraide',
   'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'reseau/annuaire/ma-filiere', 'reseau/annuaire/ma-promo', 'reseau/classement', 'reseau/talents', 'suivi', 'profil', 'enquete',
   'confidentialite', 'admin', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda', 'admin/reglages'];
 
@@ -74,7 +74,7 @@ async function ouvrir({ largeur = 1280, langue = 'fr', sw = false, theme = 'ligh
 // ou c'est un nom propre fait de mots des graines (« Soufiane Hajji »).
 let GRAINES, MOTS_GRAINES;
 function ecritParUnMembre(x) {
-  GRAINES ??= ['seed.js', 'seed3.js', 'seed4.js'].map(f => fs.readFileSync(path.join(SITE, f), 'utf8')).join('\n');
+  GRAINES ??= ['seed.js', 'seed3.js', 'seed4.js', 'seed-match.js'].map(f => fs.readFileSync(path.join(SITE, f), 'utf8')).join('\n');
   MOTS_GRAINES ??= new Set(GRAINES.match(/\p{L}[\p{L}’-]*/gu));
   return x.split(/\s+·\s+|,\s+/).map(p => p.replace(/^·\s*/, '').trim()).filter(Boolean)
     .every(p => GRAINES.includes(p) || p.split(/\s+/).every(m => /^\p{Lu}/u.test(m) && MOTS_GRAINES.has(m)));
@@ -860,7 +860,7 @@ test('à l’ouverture : rien de coché dans Mon profil, rien à proposer', asyn
   const s = await prevenirSur('off');
   await attendreOuverture(s); await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
   await s.aller('profil');
-  for (const c of ['messages', 'demandes', 'candidatures', 'mentorat', 'offres', 'reseau']) { await s.page.click('#np-' + c); await s.page.waitForTimeout(150); }
+  for (const c of ['messages', 'match', 'demandes', 'candidatures', 'mentorat', 'offres', 'reseau']) { await s.page.click('#np-' + c); await s.page.waitForTimeout(150); }
   await s.changerMemo('({ ...m, at: m.at - 8 * 864e5 })');
   const relire = async () => { await s.page.reload(); await s.page.waitForSelector('#mes-donnees'); };
   await relire(); await rienALouverture(s, 'rien à proposer');
@@ -1105,7 +1105,7 @@ test('à l’ouverture : jamais pendant qu’une nouvelle version peut recharger
 test('Mon profil : les notifications par catégorie, défauts selon le rôle, enregistrées et relues après rechargement', async () => {
   const s = await ouvrir({ largeur: 390 });
   const cases = () => s.page.$$eval('.md-cats input[type=checkbox]', xs => Object.fromEntries(xs.map(x => [x.id.replace('np-', ''), x.checked])));
-  const tout = { messages: true, demandes: true, candidatures: true, mentorat: true, offres: true, reseau: true, rappels: true };
+  const tout = { messages: true, match: true, demandes: true, candidatures: true, mentorat: true, offres: true, reseau: true, rappels: true };
   await s.comme('Salma'); await s.aller('profil');
   assert.deepEqual(await cases(), tout);
   const etu = await s.page.locator('.md-cats').innerText();
@@ -2196,8 +2196,10 @@ test('cloche : son chiffre compte ce qui attend un geste, la feuille dit « À f
   assert.match(await s.page.locator('.modal').last().innerText(), /Réduction des rebuts[\s\S]*Candidats/, 'l’offre s’ouvre sur ses candidats');
   await s.fermer();
   const pastilles = () => s.page.$$eval('.bottom-nav a', as => as.filter(a => a.querySelector('.dotn')).map(a => a.innerText.trim().split('\n')[0]));
-  // Accueil : la plateforme lui propose d'être ambassadeur de sa promo (ambassadeurs.js)
-  assert.deepEqual((await pastilles()).sort(), ['Accueil', 'Espace', 'Mentorat']);
+  // Accueil : la plateforme lui propose d'être ambassadeur de sa promo (ambassadeurs.js) ; sur téléphone, Mon espace est
+  // dans le menu du compte (Match a pris sa place dans la barre) : sa pastille passe sur l'avatar
+  assert.deepEqual((await pastilles()).sort(), ['Accueil', 'Mentorat']);
+  assert.equal(await s.page.locator('.me-btn .dotn').count(), 1);
   // Mon espace commence par « À faire »
   await s.aller('espace');
   assert.ok(await s.page.evaluate(() => document.querySelector('.page-head').nextElementSibling.classList.contains('a-faire')), 'Mon espace commence par À faire');
@@ -2205,6 +2207,7 @@ test('cloche : son chiffre compte ce qui attend un geste, la feuille dit « À f
   await s.comme('Amine'); await s.aller('accueil');
   assert.equal(await s.page.locator('.cloche-btn .badge-n').count(), 0);
   assert.deepEqual(await pastilles(), []);
+  assert.equal(await s.page.locator('.me-btn .dotn').count(), 0);
   await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
   assert.equal(await s.page.locator('.cloche .af-row').count(), 0);
   await s.fermer();
@@ -3745,4 +3748,405 @@ test('la pastille « Notifications bloquées » : les gestes de cet appareil, en
     assert.deepEqual(s.erreurs, []);
     await s.ctx.close();
   }
+});
+
+// ---------------------------------------------------------------------------
+// Vitrine : le logo des entreprises (l'icône de leur site, sinon le monogramme), des cartes d'offres plus parlantes et
+// vraies, « Ça bouge dans le réseau », « Grâce à toi » sur l'accueil d'un lauréat, la carte qui devient la fiche
+// ---------------------------------------------------------------------------
+const fermerFetes = async page => { for (let i = 0; i < 3; i++) { const b = page.locator('.fete-acts .btn').first(); if (!(await b.count())) break; await b.click(); await page.waitForTimeout(250); } };
+const icone = n => `<svg xmlns="http://www.w3.org/2000/svg" width="${n}" height="${n}" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#1F6FB2"/></svg>`;
+const carteDe = (page, texte) => page.locator('.offer-grid .ocard').filter({ hasText: texte }).first();
+
+test('vitrine : le logo d’une entreprise, l’icône de son site quand elle arrive, sinon son monogramme (requête coupée, icône minuscule)', async () => {
+  // Les requêtes vers l'extérieur sont coupées (comme dans tous ces tests) : le monogramme, sans image cassée
+  const s = await ouvrir({ largeur: 360 });
+  await s.comme('Salma'); await fermerFetes(s.page); await s.aller('offres');
+  const yazaki = carteDe(s.page, 'Yazaki').locator('.clogo');
+  await s.page.waitForFunction(() => { const c = [...document.querySelectorAll('.offer-grid .ocard')].find(x => x.innerText.includes('Yazaki'))?.querySelector('.clogo'); return c && !c.classList.contains('c-fav'); });
+  assert.equal(await yazaki.locator('img').count(), 0);
+  assert.equal((await yazaki.innerText()).trim(), 'Y');
+  assert.equal(await s.page.locator('.clogo.c-fav-ok').count(), 0);
+  await s.ctx.close();
+  // L'icône arrive (64 px) : la tuile blanche, demandée sans dire d'où l'on vient ; une icône de 1 px laisse le monogramme
+  const t = await ouvrir({ largeur: 360 });
+  const demandes = [];
+  await t.ctx.route(/^https:\/\/icons\.duckduckgo\.com\/ip3\//, r => {
+    const q = r.request(); demandes.push({ url: q.url(), referer: q.headers().referer || '' });
+    r.fulfill({ status: 200, contentType: 'image/svg+xml', body: icone(q.url().includes('/ocpgroup.ma.') ? 1 : 64) });
+  });
+  await t.page.reload(); await t.page.waitForSelector('.hello');
+  await t.comme('Salma'); await fermerFetes(t.page); await t.aller('offres');
+  const ok = carteDe(t.page, 'Yazaki').locator('.clogo.c-fav-ok img');
+  await ok.waitFor();
+  assert.equal(await ok.getAttribute('src'), 'https://icons.duckduckgo.com/ip3/yazaki-group.com.ico');
+  assert.equal(await ok.getAttribute('referrerpolicy'), 'no-referrer');
+  assert.equal(await ok.getAttribute('loading'), 'lazy');
+  assert.ok(demandes.length && demandes.every(d => !d.referer), 'aucune adresse de page envoyée : ' + JSON.stringify(demandes.slice(0, 3)));
+  const ocp = carteDe(t.page, 'OCP');
+  await ocp.scrollIntoViewIfNeeded();
+  await t.page.waitForFunction(() => { const c = [...document.querySelectorAll('.offer-grid .ocard')].find(x => x.innerText.includes('OCP'))?.querySelector('.clogo'); return c && !c.classList.contains('c-fav'); });
+  assert.equal(await ocp.locator('.clogo img').count(), 0, 'icône trop petite : le monogramme');
+  // La mention, sous la liste
+  assert.equal(await t.page.locator('.mention-logos').innerText(), 'Logos affichés pour reconnaître les entreprises, sans aucun partenariat.');
+  // Le profil d'un lauréat : le logo de son entreprise sur la ligne de son poste
+  const laureat = await t.page.evaluate(async () => {
+    const V = await import(new URL('vitrine-regles.js', location.href).href); const L = await import(new URL('logic.js', location.href).href);
+    return window.__demo.data.profiles.find(p => p.role === 'laureat' && p.entreprise && !L.logoEntreprise(p.entreprise) && ![null, 'ocpgroup.ma'].includes(V.domaineEntreprise(p.entreprise)))?.full_name;
+  });
+  await t.fiche(laureat);
+  await t.page.waitForSelector('.modal .pm-travail .clogo.c-fav-ok');
+  assert.deepEqual(t.erreurs, []);
+  await t.ctx.close();
+});
+
+test('vitrine : des cartes d’offres parlantes et vraies, « Ça bouge dans le réseau », « Grâce à toi » (360 px, français puis arabe sombre)', async () => {
+  const s = await ouvrir({ largeur: 360 });
+  await s.comme('Salma'); await fermerFetes(s.page);
+  // Deux autres étudiants de 5A mettent l'offre de Yazaki de côté : la carte le dit (un vrai compte), jamais de points
+  const TITRE = 'Déployer le Lean sur une ligne de câblage';
+  const n = await s.page.evaluate(async t => {
+    const L = await import(new URL('logic.js', location.href).href);
+    const d = window.__demo, salma = d.me, o = d.data.offers.find(x => L.titreOffre(x) === t);
+    const autres = d.data.profiles.filter(p => p.role === 'etudiant' && p.promo === salma.promo && p.id !== salma.id).slice(0, 2);
+    for (const p of autres) { d.switchTo(p.id); await d.insert('reactions', { offer_id: o.id, user_id: p.id, kind: 'save' }); }
+    d.switchTo(salma.id);
+    const role = new Map(d.data.profiles.map(p => [p.id, p.role]));
+    return new Set(d.data.reactions.filter(r => r.offer_id === o.id && r.kind === 'save' && r.user_id !== o.author_id && role.get(r.user_id) === 'etudiant').map(r => r.user_id)).size;
+  }, TITRE);
+  assert.ok(n >= 2);
+  await s.page.waitForTimeout(300); await fermerFetes(s.page); await s.aller('offres');
+  const carte = carteDe(s.page, TITRE);
+  const o = await s.page.evaluate(async t => { const L = await import(new URL('logic.js', location.href).href); return window.__demo.data.offers.find(x => L.titreOffre(x) === t); }, TITRE);
+  assert.equal(await carte.locator('.oc-tete .ocard-meta .oc-ent').innerText(), o.entreprise);
+  assert.equal(await carte.locator('.ocard-title').innerText(), TITRE);
+  assert.match(await carte.locator('.ocard-tags > .tag:first-child').innerText(), /PFE/);
+  assert.equal(await carte.locator('.tag.neutre').innerText(), o.duree);
+  assert.equal(await carte.locator('.tag.paye').count(), o.remunere ? 1 : 0);
+  assert.equal(await carte.locator('.oc-preuve').innerText(), `${n} étudiants l’ont mise de côté`);
+  assert.equal(await carte.locator('.ocard-foot .avatar').count(), 1, 'le visage du lauréat qui la porte');
+  assert.doesNotMatch((await s.page.locator('.offer-grid').allInnerTexts()).join('\n'), /\bpoints?\b|\bpts\b/i, 'un étudiant ne voit pas de points');
+  assert.equal(await s.page.locator('.offer-grid .ocard').count(), await s.page.locator('.offer-grid .oc-tete .clogo').count());
+  // Marque-page : l'icône se remplit
+  const garder = carteDe(s.page, 'Tableau de bord qualité').locator('.ocard-garder');
+  await garder.click(); await s.page.waitForTimeout(200);
+  assert.equal(await garder.getAttribute('aria-pressed'), 'true');
+  assert.equal(await garder.locator('svg').evaluate(e => getComputedStyle(e).fill !== 'none'), true);
+  assert.ok((await s.debordement()) <= 0);
+  // La liste qui arrive : la forme des cartes, pas « Aucune offre »
+  await s.page.evaluate(() => { const d = window.__demo; d.__offres = d.data.offers; d.enAttente = true; d.data.offers = []; d.emit(); });
+  await s.page.waitForSelector('.offer-grid .sq-carte');
+  assert.equal(await s.page.locator('.offer-grid .sq-carte').count(), 4);
+  assert.equal(await s.page.locator('.offer-grid [role="status"]').innerText(), 'Chargement des offres…');
+  assert.equal(await s.page.locator('.offer-grid .empty').count(), 0);
+  await s.page.evaluate(() => { const d = window.__demo; d.enAttente = false; d.data.offers = d.__offres; d.emit(); });
+  await s.page.waitForSelector('.offer-grid .ocard');
+  // « Ça bouge dans le réseau » : les mêmes comptes que la règle, trois au plus, des phrases entières
+  await s.aller('accueil'); await fermerFetes(s.page);
+  const attendu = await s.page.evaluate(async () => {
+    const V = await import(new URL('vitrine-regles.js', location.href).href); const L = await import(new URL('logic.js', location.href).href);
+    const d = window.__demo; const b = V.caBouge(d.data, d.me, id => d.byId('profiles', id), Date.now(), L.seasonOf());
+    return b ? b.faits.map(V.phraseBouge) : [];
+  });
+  assert.ok(attendu.length >= 1 && attendu.length <= 3, 'la démo bouge');
+  assert.deepEqual(await s.page.locator('.semaine .cabouge-faits li').allInnerTexts(), attendu);
+  assert.equal(await s.page.locator('.semaine .grace').count(), 0, '« Grâce à toi » : pour un lauréat seulement');
+  // Un lauréat : la nouvelle vraie née de ses offres, qui ouvre l'offre ; toujours un seul bouton plein
+  await s.comme('Youssef'); await fermerFetes(s.page); await s.aller('accueil'); await fermerFetes(s.page);
+  const grace = s.page.locator('.semaine .grace');
+  assert.match(await grace.locator('strong').innerText(), /^Grâce à toi, \S+ a décroché (un entretien|son PFE|son stage|son stage à l’étranger|son poste|sa place)$/);
+  assert.equal(await s.page.locator('.home .btn.primary:visible').count(), 1);
+  // Les candidatures, l'auteur les voit sur la carte de son offre (jamais « 0 »)
+  await grace.click(); await s.page.waitForSelector('.modal .od'); await s.fermer();
+  await s.aller('offres'); await s.page.locator('.offres-chips .chip', { hasText: 'Mes offres' }).click(); await s.page.waitForTimeout(300);
+  const rebuts = carteDe(s.page, 'réduction des rebuts');
+  const nApps = await s.page.evaluate(() => { const d = window.__demo; const o = d.data.offers.find(x => /réduction des rebuts/.test(x.titre) && x.author_id === d.me.id); return d.data.applications.filter(a => a.offer_id === o.id).length; });
+  assert.equal(await rebuts.locator('.oc-preuve').innerText(), nApps > 1 ? `${nApps} candidatures` : '1 candidature');
+  assert.doesNotMatch((await s.page.locator('.offer-grid').allInnerTexts()).join('\n'), /\b0 candidat/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe, sombre : tout traduit, sans débordement
+  const a = await ouvrir({ largeur: 360, langue: 'ar', theme: 'dark' });
+  await a.comme('Youssef'); await fermerFetes(a.page); await a.aller('accueil'); await fermerFetes(a.page);
+  assert.match(await a.page.locator('.semaine .grace strong').innerText(), /^بفضلك، /);
+  assert.deepEqual((await a.page.locator('.semaine .cabouge').innerText()).match(/[A-Za-zÀ-ÿ]{2,}/g) || [], []);
+  await a.aller('offres'); await a.page.waitForSelector('.offer-grid .ocard');
+  await a.comme('Salma'); await fermerFetes(a.page); await a.aller('offres'); await a.page.waitForSelector('.offer-grid .ocard');
+  assert.ok((await a.debordement()) <= 0);
+  assert.deepEqual((await a.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), []);
+  // axe sur ces écrans, clair et sombre
+  if (!(await a.page.evaluate(() => !!window.axe))) await a.page.addScriptTag({ content: AXE });
+  const audit = async page => page.evaluate(async () => { document.getAnimations().forEach(x => { try { x.finish(); } catch { /* */ } });
+    return (await axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'best-practice'] }, resultTypes: ['violations'] })).violations.map(x => `${x.id} : ${x.nodes.slice(0, 2).map(n => n.target.join(' ')).join(' ; ')}`); });
+  assert.deepEqual(await audit(a.page), []);
+  await a.comme('Youssef'); await fermerFetes(a.page); await a.aller('accueil'); await fermerFetes(a.page);
+  assert.deepEqual(await audit(a.page), []);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
+test('vitrine : la carte devient la fiche (logo et titre glissent), les cartes arrivent l’une après l’autre ; rien de tout cela si moins de mouvement', async () => {
+  const s = await ouvrir({ largeur: 1280, mouvement: true });
+  await s.comme('Salma'); await fermerFetes(s.page); await s.aller('offres'); await s.page.waitForTimeout(600);
+  assert.equal(await s.page.locator('.offer-grid .ocard').first().evaluate(e => getComputedStyle(e).animationName), 'carte-entre');
+  const vu = await s.page.evaluate(async () => {
+    const b = document.querySelector('.offer-grid .ocard-main');
+    const api = typeof document.startViewTransition === 'function';
+    b.click();
+    const pendant = document.documentElement.classList.contains('vt-offre'), nom = b.querySelector('.clogo').style.viewTransitionName;
+    await new Promise(r => setTimeout(r, 1000));
+    return { api, pendant, nom, apres: document.documentElement.classList.contains('vt-offre'), fiche: !!document.querySelector('.modal-back:not(.sortie) .od'), source: document.querySelectorAll('.vt-source').length, reste: b.querySelector('.clogo').style.viewTransitionName };
+  });
+  assert.ok(vu.api, 'Chromium connaît les View Transitions');
+  assert.deepEqual(vu, { api: true, pendant: true, nom: 'vt-logo', apres: false, fiche: true, source: 0, reste: '' });
+  assert.equal(await s.page.locator('.modal .od .detail-head > .clogo').evaluate(e => getComputedStyle(e).viewTransitionName), 'none', 'les noms s’effacent après');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Moins de mouvement : la fiche s'ouvre tout de suite, sans transition
+  const r = await ouvrir({ largeur: 1280 });
+  await r.comme('Salma'); await fermerFetes(r.page); await r.aller('offres');
+  const direct = await r.page.evaluate(() => { document.querySelector('.offer-grid .ocard-main').click(); return document.documentElement.classList.contains('vt-offre'); });
+  assert.equal(direct, false);
+  await r.page.waitForSelector('.modal .od');
+  assert.deepEqual(r.erreurs, []);
+  await r.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Match : une carte à la fois, « Intéressé » ou « Plus tard » ; un oui des deux côtés ouvre la discussion
+// ---------------------------------------------------------------------------
+// Un glisser horizontal au doigt (événements tactiles, donc aussi les pointer events) de x0 à x1, à la hauteur y
+async function glisserCarte(page, x0, x1, y, { n = 10, dt = 16 } = {}) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x0, y }] });
+  for (let i = 1; i <= n; i++) { await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: Math.round(x0 + (x1 - x0) * i / n), y }] }); await page.waitForTimeout(dt); }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] }); await cdp.detach();
+}
+const carteDessus = page => page.locator('.mx-carte.dessus h2').innerText();
+const mesChoix = page => page.evaluate(() => window.__demo.data.match_choix.filter(c => c.user_id === window.__demo.me.id).map(c => ({ profil: c.cible_profil, offre: c.cible_offre, choix: c.choix })));
+
+test('match : la barre du bas met Match au centre, Mon parcours et Mon espace passent dans le menu du compte ; pas de Match pour l’administration', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('accueil');
+  const onglets = () => s.page.$$eval('.bottom-nav a', as => as.map(a => a.innerText.trim().split('\n')[0]));
+  assert.deepEqual(await onglets(), ['Accueil', 'Offres', 'Match', 'Mentorat', 'Réseau']);
+  assert.ok(await s.page.locator('.bottom-nav a.bn-match').isVisible());
+  await s.page.click('.me-btn'); await s.page.waitForTimeout(150);
+  assert.ok(await s.page.locator('.menu-pop button', { hasText: 'Mon parcours' }).isVisible(), 'Mon parcours dans le menu du compte');
+  await s.page.locator('.menu-pop button', { hasText: 'Mon parcours' }).click(); await s.page.waitForTimeout(250);
+  assert.match(s.page.url(), /#parcours$/);
+  await s.comme('Youssef'); await s.aller('accueil');
+  await s.page.click('.me-btn'); await s.page.waitForTimeout(150);
+  assert.ok(await s.page.locator('.menu-pop button', { hasText: 'Mon espace' }).isVisible());
+  await s.fermer();
+  // L'administration : ni onglet ni page Match
+  await s.comme('Admin'); await s.aller('accueil');
+  assert.ok(!(await onglets()).includes('Match'));
+  await s.aller('match');
+  assert.equal(await s.page.locator('.mx-page').count(), 0, 'l’accueil à la place');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Sur ordinateur, la colonne garde Mon parcours, et Match y a sa place
+  const d = await ouvrir({ largeur: 1280 });
+  await d.comme('Salma'); await d.aller('accueil');
+  const colonne = await d.page.locator('.side-nav').innerText();
+  assert.match(colonne, /Match[\s\S]*Mon parcours/);
+  await d.ctx.close();
+});
+
+test('match : l’étudiante répond à la lauréate intéressée — la fête, « Écrire » ouvre la discussion et son bandeau (390 px)', async () => {
+  const s = await ouvrir({ largeur: 390, mouvement: true });
+  await s.comme('Salma'); await s.aller('accueil');
+  // L'accueil le dit seulement quand quelqu'un attend une réponse
+  const entree = s.page.locator('.mx-accueil');
+  assert.match(await entree.innerText(), /s’intéresse à ton profil/);
+  await entree.click(); await s.page.waitForTimeout(300);
+  assert.match(s.page.url(), /#match$/);
+  assert.match(await s.page.locator('.mx-carte.dessus .mx-interet > span:last-child').innerText(), /^\S+ s’intéresse à ton profil$/);
+  assert.equal(await s.page.getAttribute('.mx-carte.dessus', 'aria-labelledby'), await s.page.getAttribute('.mx-carte.dessus h2', 'id'), 'la carte porte le nom de la lauréate');
+  const avant = await s.page.locator('.mx-visage').count();
+  await s.page.click('.mx-oui');
+  await s.page.waitForSelector('.mx-fete[role="dialog"]');
+  assert.equal(await s.page.textContent('#mx-fete-t'), 'C’est un match !');
+  await s.page.waitForTimeout(400);
+  assert.equal(await s.page.evaluate(() => document.activeElement?.classList.contains('mx-fete-ecrire')), true, 'le focus va sur « Écrire »');
+  assert.ok(await s.page.locator('.mx-fete .fete-pluie i').count() > 0, 'des confettis');
+  assert.equal(await s.page.locator('.mx-fete .btn.primary').count(), 1, 'un seul bouton plein');
+  await s.page.click('.mx-fete-ecrire'); await s.page.waitForTimeout(400);
+  assert.match(s.page.url(), /#messages\/.+/);
+  await s.page.waitForSelector('.mx-bandeau');
+  assert.match(await s.page.locator('.conv-sub').innerText(), /^Match/);
+  assert.equal(await s.page.locator('.mx-etapes li[aria-current="step"]').innerText(), 'Match');
+  assert.ok(await s.page.locator('.mx-b-acts .btn', { hasText: 'Programmer un entretien' }).isVisible());
+  assert.ok(await s.page.locator('.mx-b-acts .btn', { hasText: 'Envoyer mon CV' }).isVisible());
+  // « Envoyer mon CV » : le CV arrive dans la discussion, comme une pièce
+  await s.page.locator('.mx-b-acts .btn', { hasText: 'Envoyer mon CV' }).click(); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.msg.mine .msg-cv').last().innerText(), /CV de Salma/);
+  // Le match est vu : plus de pastille ; la rangée « Tes matchs » a un visage de plus
+  await s.aller('match');
+  assert.equal(await s.page.locator('.mx-visage').count(), avant + 1);
+  assert.equal(await s.page.locator('.bottom-nav a.bn-match .dotn').count(), 0);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : glisser au doigt, au clavier, « Revenir » ; un appui ouvre le détail (390 px tactile, puis 1280 px)', async () => {
+  const s = await ouvrir({ largeur: 390, mouvement: true, toucher: true });
+  await s.comme('Youssef'); await s.aller('match');
+  const premiere = await carteDessus(s.page);
+  const b = await s.page.locator('.mx-carte.dessus').boundingBox();
+  const y = b.y + b.height / 2;
+  // Un petit glisser : la carte revient (ressort), aucun choix
+  await glisserCarte(s.page, b.x + b.width / 2, b.x + b.width / 2 - 40, y); await s.page.waitForTimeout(600);
+  assert.equal(await carteDessus(s.page), premiere);
+  assert.deepEqual((await mesChoix(s.page)).filter(c => c.choix === 'plus_tard'), []);
+  // Glissée vers la gauche, au-delà du seuil : « Plus tard »
+  await glisserCarte(s.page, b.x + b.width / 2, b.x - 120, y); await s.page.waitForTimeout(600);
+  assert.notEqual(await carteDessus(s.page), premiere);
+  assert.equal((await mesChoix(s.page)).filter(c => c.choix === 'plus_tard').length, 1);
+  // « Revenir » : la carte revient devant, le choix est effacé
+  await s.page.click('.mx-retour'); await s.page.waitForTimeout(600);
+  assert.equal(await carteDessus(s.page), premiere);
+  assert.deepEqual((await mesChoix(s.page)).filter(c => c.choix === 'plus_tard'), []);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+
+  const d = await ouvrir({ largeur: 1280, mouvement: true });
+  await d.comme('Youssef'); await d.aller('match');
+  const p1 = await carteDessus(d.page);
+  // Clavier : ← Plus tard, Z revient, → Intéressé (une étudiante qui a dit oui à son offre : c'est un match)
+  await d.page.keyboard.press('ArrowLeft'); await d.page.waitForTimeout(600);
+  assert.notEqual(await carteDessus(d.page), p1);
+  await d.page.keyboard.press('z'); await d.page.waitForTimeout(600);
+  assert.equal(await carteDessus(d.page), p1);
+  await d.page.keyboard.press('ArrowRight');
+  await d.page.waitForSelector('.mx-fete');
+  await d.page.keyboard.press('Escape'); await d.page.waitForTimeout(300);
+  assert.equal(await d.page.locator('.mx-fete').count(), 0);
+  // Ce choix a fait un match : « Revenir » le dit et ne l'efface pas
+  await d.page.click('.mx-retour'); await d.page.waitForTimeout(300);
+  assert.match(await d.page.locator('.toast').last().innerText(), /Ce choix a mené à un match/);
+  // Glisser à la souris vers la droite : « Intéressé »
+  const c = await d.page.locator('.mx-carte.dessus').boundingBox();
+  const nom = await carteDessus(d.page);
+  await d.page.mouse.move(c.x + c.width / 2, c.y + c.height / 2); await d.page.mouse.down();
+  for (let i = 1; i <= 8; i++) { await d.page.mouse.move(c.x + c.width / 2 + i * 40, c.y + c.height / 2 + i * 2); await d.page.waitForTimeout(16); }
+  await d.page.mouse.up(); await d.page.waitForTimeout(700);
+  if (await d.page.locator('.mx-fete').count()) await d.page.keyboard.press('Escape');
+  assert.notEqual(await carteDessus(d.page), nom);
+  const id = await d.page.evaluate(n => window.__demo.data.profiles.find(p => p.full_name === n)?.id, nom);
+  assert.ok((await mesChoix(d.page)).some(x => x.profil === id && x.choix === 'oui'));
+  // Un appui (sans glisser) ouvre le profil
+  await d.page.locator('.mx-carte.dessus .mx-corps').click(); await d.page.waitForTimeout(400);
+  assert.ok(await d.page.locator('.modal').count() > 0);
+  assert.deepEqual(d.erreurs, []);
+  await d.ctx.close();
+});
+
+test('match : programmer un entretien (jour, heure, durée, visio) ; l’autre répond « Je serai là » et l’étape avance', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('match');
+  await s.page.click('.mx-visage'); await s.page.waitForSelector('.mx-bandeau');
+  await s.page.locator('.mx-b-acts .btn', { hasText: 'Programmer un entretien' }).click();
+  await s.page.waitForSelector('#mx-rdv-jour');
+  const feuille = s.page.locator('.modal').last();
+  await feuille.locator('.chip', { hasText: /^Demain$/ }).click();
+  await feuille.locator('.chip', { hasText: /^15:00$/ }).click();
+  await feuille.locator('.chip', { hasText: /^45 min$/ }).click();
+  assert.match(await feuille.locator('.mx-resume').innerText(), /^Demain · 15:00 · 45 min$/);
+  await s.page.click('button[form="mx-rdv-f"]'); await s.page.waitForTimeout(400);
+  const carte = s.page.locator('.msg.mine .bulle.t-rdv').last();
+  assert.match(await carte.innerText(), /Tu proposes un entretien[\s\S]*Demain[\s\S]*15:00[\s\S]*45 min · En visio[\s\S]*meet\.jit\.si\/ReseauENSAM-[\s\S]*En attente de la réponse de/);
+  // Le lien d'agenda dit l'heure et la durée
+  await carte.locator('summary').click();
+  const g = await carte.locator('a', { hasText: 'Google Agenda' }).getAttribute('href');
+  const [, de, a] = /dates=(\d{8}T\d{6}Z?)(?:%2F|\/)(\d{8}T\d{6}Z?)/.exec(g);
+  const t = x => Date.UTC(+x.slice(0, 4), +x.slice(4, 6) - 1, +x.slice(6, 8), +x.slice(9, 11), +x.slice(11, 13));
+  assert.equal((t(a) - t(de)) / 6e4, 45);
+  // Une date passée est refusée, avec les mots de la base
+  await s.page.locator('.mx-b-acts .btn', { hasText: 'Programmer un entretien' }).click();
+  await s.page.waitForSelector('#mx-rdv-jour');
+  await s.page.fill('#mx-rdv-jour', '2020-01-10');
+  await s.page.click('button[form="mx-rdv-f"]'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.modal').last().innerText(), /Choisis une date à venir/);
+  await s.fermer();
+  // Salma a un entretien proposé par la lauréate de son match : « Je serai là »
+  await s.comme('Salma'); await s.aller('match');
+  await s.page.click('.mx-visage'); await s.page.waitForSelector('.mx-bandeau');
+  const recue = s.page.locator('.msg:not(.mine) .bulle.t-rdv').last();
+  assert.match(await recue.innerText(), /Entretien proposé[\s\S]*10:00[\s\S]*30 min · En visio/);
+  await recue.locator('.btn', { hasText: 'Je serai là' }).click(); await s.page.waitForTimeout(300);
+  assert.match(await recue.innerText(), /Tu as dit que tu serais là\./);
+  assert.equal(await s.page.locator('.mx-etapes li[aria-current="step"]').innerText(), 'Entretien');
+  // Dans la liste des conversations, l'aperçu dit « Entretien proposé »
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : « Apparaître dans Match » (Mon profil) retire la carte de l’étudiante chez les lauréats', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma');
+  const salma = await s.page.evaluate(() => window.__demo.me.id);
+  const chezNadia = () => s.page.evaluate(async id => {
+    const L = await import(new URL('logic.js', location.href).href);
+    const d = window.__demo, nadia = d.data.profiles.find(p => p._persona?.includes('Nadia'));
+    return L.deckMatch(d.data, nadia).some(c => c.profil.id === id);
+  }, salma);
+  assert.equal(await chezNadia(), true);
+  await s.aller('profil');
+  assert.equal(await s.page.isChecked('#mx-visible'), true);
+  await s.page.locator('.mx-switch').click(); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.isChecked('#mx-visible'), false);
+  assert.match(await s.page.locator('.toast').last().innerText(), /n’est plus proposée aux lauréats/);
+  assert.equal(await chezNadia(), false);
+  await s.aller('match');
+  assert.equal(await s.page.locator('.mx-visible').count(), 0, 'la page Match ne dit plus « les lauréats voient ta carte »');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : en arabe à 360 px — tout est traduit, rien ne déborde, et « يهمّني » est du côté de la lecture', async () => {
+  const s = await ouvrir({ largeur: 360, langue: 'ar' });
+  await s.page.evaluate(() => window.__ensamMissing?.clear());
+  await s.comme('Salma'); await s.aller('match');
+  assert.equal(await s.debordement(), 0);
+  // En arabe, « Intéressé » est à gauche (fin de ligne) et la flèche ← le choisit
+  const oui = await s.page.locator('.mx-oui').boundingBox(), non = await s.page.locator('.mx-non').boundingBox();
+  assert.ok(oui.x < non.x);
+  await s.page.keyboard.press('ArrowLeft');
+  await s.page.waitForSelector('.mx-fete');
+  assert.equal(await s.page.textContent('#mx-fete-t'), 'تمّ الاتفاق!');
+  await s.page.click('.mx-fete-plus'); await s.page.waitForTimeout(300);
+  await s.page.locator('.mx-visage').last().click(); await s.page.waitForSelector('.mx-bandeau');
+  assert.equal(await s.debordement(), 0);
+  await s.comme('Youssef'); await s.aller('match');
+  await s.page.click('.mx-visage'); await s.page.waitForSelector('.mx-bandeau');
+  await s.page.locator('.mx-b-acts .btn').first().click(); await s.page.waitForSelector('#mx-rdv-jour');
+  await s.page.click('button[form="mx-rdv-f"]'); await s.page.waitForTimeout(300);
+  await s.comme('Nadia'); await s.aller('match');
+  await s.aller('profil'); await s.comme('Amine'); await s.aller('match');
+  assert.equal(await s.debordement(), 0);
+  const oublis = (await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x));
+  assert.deepEqual(oublis, []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : mouvement réduit — la carte s’efface sans voler, la fête paraît sans confettis', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('match');
+  const anim = await s.page.evaluate(async () => {
+    document.querySelector('.mx-oui').click();
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    return getComputedStyle(document.querySelector('.mx-carte.vol')).animationName;
+  });
+  assert.equal(anim, 'mx-fondu');
+  await s.page.waitForSelector('.mx-fete');
+  assert.equal(await s.page.locator('.mx-fete .fete-pluie').count(), 0);
+  assert.equal(await s.page.evaluate(() => getComputedStyle(document.querySelector('.mx-duo-a')).animationName), 'none');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
 });

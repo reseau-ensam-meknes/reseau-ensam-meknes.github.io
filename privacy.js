@@ -31,7 +31,7 @@ addAR({
   'Garder la plateforme sûre : vérification des lauréats, signalements, limites contre le spam.': 'الحفاظ على أمان المنصة: التحقق من الخريجين، البلاغات، وحدود ضد الرسائل المزعجة.',
   'Tu choisis qui voit ton entreprise, ta ville, ton LinkedIn, ta présentation et ton CV : tous les membres, seulement les lauréats, ou seulement tes contacts.': 'أنت تختار من يرى شركتك ومدينتك وحساب LinkedIn ونبذتك وسيرتك الذاتية: كل الأعضاء، أو الخريجون فقط، أو جهات اتصالك فقط.',
   'Tes coordonnées ne sont visibles que par tes contacts (les membres avec qui tu les partages, l’auteur d’une offre où tu postules, la personne qu’une demande a réunie avec toi) et par l’administration. Tu peux retirer ton accord à tout moment.': 'لا يرى معلومات اتصالك إلا جهات اتصالك (الأعضاء الذين تتبادلها معهم، وصاحب عرض ترشحت له، والشخص الذي جمعك به طلب) والإدارة. ويمكنك سحب موافقتك في أي وقت.',
-  'Ton CV en PDF est rangé dans un espace privé. Il s’ouvre par un lien valable 10 minutes, et seulement pour : les membres que tu choisis dans « Qui voit quoi », tes contacts (dont l’auteur d’une offre où tu postules), les lauréats quand tu as une demande ouverte, le lauréat qui relit ton CV (ou tous les lauréats tant que personne ne l’a pris), et l’administration.': 'تُحفظ سيرتك الذاتية (PDF) في مساحة خاصة، وتُفتح برابط صالح لمدة 10 دقائق، وفقط لـ: الأعضاء الذين تختارهم في «من يرى ماذا»، وجهات اتصالك (ومنهم صاحب عرض ترشحت له)، والخريجين حين يكون لديك طلب مفتوح، والخريج الذي يراجع سيرتك (أو كل الخريجين ما دام لم يتكفل بها أحد)، والإدارة.',
+  'Ton CV en PDF est rangé dans un espace privé. Il s’ouvre par un lien valable 10 minutes, et seulement pour : les membres que tu choisis dans « Qui voit quoi », tes contacts (dont l’auteur d’une offre où tu postules), les lauréats quand tu as une demande ouverte, le lauréat qui relit ton CV (ou tous les lauréats tant que personne ne l’a pris), le lauréat avec qui tu as un match, et l’administration.': 'تُحفظ سيرتك الذاتية (PDF) في مساحة خاصة، وتُفتح برابط صالح لمدة 10 دقائق، وفقط لـ: الأعضاء الذين تختارهم في «من يرى ماذا»، وجهات اتصالك (ومنهم صاحب عرض ترشحت له)، والخريجين حين يكون لديك طلب مفتوح، والخريج الذي يراجع سيرتك (أو كل الخريجين ما دام لم يتكفل بها أحد)، والخريج الذي جمعك به توافق، والإدارة.',
   'Un avis de stage ou un entretien publié en anonyme n’affiche pas ton nom aux membres.': 'الرأي حول تدريب أو المقابلة المنشورة دون اسم لا تُظهر اسمك للأعضاء.',
   'Sécurité et modération': 'الأمان والإشراف',
   'Chacun peut signaler un contenu ou un profil. Seule l’administration voit le signalement ; la personne concernée ne sait pas qui l’a fait.': 'يمكن لكل عضو الإبلاغ عن محتوى أو ملف. الإدارة وحدها ترى البلاغ، ولا يعرف الشخص المعني من قام به.',
@@ -43,6 +43,7 @@ addAR({
   'Six mois puis douze mois après le diplôme, un court questionnaire te demande ta situation (emploi, recherche, études…).': 'بعد ستة أشهر ثم اثني عشر شهرًا من التخرج، يسألك استبيان قصير عن وضعيتك (عمل، بحث، دراسة…).',
   'Les réponses sont publiées seulement en chiffres globaux par promo et par filière, jamais en dessous de 5 réponses. Seule l’administration voit les réponses individuelles.': 'لا تُنشر الأجوبة إلا كأرقام إجمالية حسب الدفعة والشعبة، ولا تُنشر أبدًا إذا قلّت عن 5 أجوبة. الإدارة وحدها ترى الأجوبة الفردية.',
   'Répondre est facultatif.': 'الإجابة اختيارية.',
+  'Logos des entreprises : ceux gardés sur le site, sinon l’icône du site de l’entreprise, demandée à DuckDuckGo sans ton nom ni l’adresse de la page.': 'شعارات الشركات: المحفوظة على الموقع، وإلا فأيقونة موقع الشركة، تُجلب من DuckDuckGo دون اسمك ولا عنوان الصفحة.',
   'Base de données, comptes et CV : Supabase, serveurs à Paris (Union européenne).': 'قاعدة البيانات والحسابات والسير الذاتية: Supabase، خوادم في باريس (الاتحاد الأوروبي).',
   'Site : GitHub Pages. Emails : le compte Gmail de la plateforme (Google) et Brevo (Union européenne). Visio : Jitsi Meet, quand tu rejoins un rendez-vous.': 'الموقع: GitHub Pages. الرسائل: حساب Gmail الخاص بالمنصة (Google) وBrevo (الاتحاد الأوروبي). المكالمات المرئية: Jitsi Meet عند انضمامك إلى موعد.',
   'Tant que ton compte existe. Quand tu le supprimes, ton profil, ton CV et tout ce qui t’est lié sont effacés tout de suite. Seuls restent des chiffres globaux sans nom.': 'ما دام حسابك موجودًا. عند حذفه، يُمحى ملفك وسيرتك الذاتية وكل ما يرتبط بك فورًا، ولا تبقى إلا أرقام إجمالية بدون أسماء.',
@@ -63,7 +64,8 @@ addAR({
 // administration)
 const CATS_NOTIF = {
   etudiant: {
-    messages: ['Messages', 'Les messages qu’on t’envoie.'],
+    messages: ['Messages', 'Les messages qu’on t’envoie, entretiens proposés compris.'],
+    match: ['Match', 'Un lauréat qui s’intéresse à ton profil, et tes nouveaux matchs.'],
     demandes: ['Mes demandes : les propositions d’aide', 'Un lauréat te propose son aide pour ta demande.'],
     candidatures: ['Mes candidatures', 'Une candidature qui avance, une invitation à postuler, un recrutement à confirmer.'],
     mentorat: ['Mentorat et rendez-vous', 'Rendez-vous et rappels, relectures de CV, partage de coordonnées, parrainage.'],
@@ -72,7 +74,8 @@ const CATS_NOTIF = {
     rappels: RAPPELS_NOTIF.etudiant,
   },
   laureat: {
-    messages: ['Messages', 'Les messages qu’on t’envoie.'],
+    messages: ['Messages', 'Les messages qu’on t’envoie, entretiens proposés compris.'],
+    match: ['Match', 'Un étudiant qui s’intéresse à ton offre, et tes nouveaux matchs.'],
     demandes: ['Demandes des étudiants', 'Celles de ta filière dès leur publication, celles des autres filières quand elles s’ouvrent à tous les lauréats, et la suite de tes propositions d’aide.'],
     // Tout lauréat peut postuler aux offres entre lauréats
     candidatures: ['Candidatures reçues sur mes offres', 'Et les recrutements confirmés ; si tu postules, la suite de tes candidatures.'],
@@ -102,8 +105,11 @@ const motsNotif = me => (me.role === 'etudiant' ? CATS_NOTIF.etudiant
 // pas de case qui ne servirait à rien (les signalements, eux, arrivent toujours)
 // (ni de rappels de visite : ils ne vont qu'aux étudiants et aux lauréats)
 // Avant mise-a-jour.sql, la base refuse la clé « rappels » dans notif_push : pas de case (même migration que offers.origine)
-const catsNotif = (me, store) => PUSH_CATEGORIES.filter(c => (me.role !== 'admin' || (c !== 'demandes' && c !== 'offres' && c !== 'rappels'))
-  && (c !== 'rappels' || !store?.peutOrigine || store.peutOrigine()));
+// Match : ni pour l'équipe du réseau (elle n'y participe pas), ni avant mise-a-jour.sql (la base refuserait la clé « match » ;
+// la colonne match_visible du profil arrive avec elle)
+const matchPret = (me, store) => store?.mode !== 'live' || (!!me && 'match_visible' in me);
+const catsNotif = (me, store) => PUSH_CATEGORIES.filter(c => (me.role !== 'admin' || (c !== 'demandes' && c !== 'offres' && c !== 'rappels' && c !== 'match'))
+  && (c !== 'rappels' || !store?.peutOrigine || store.peutOrigine()) && (c !== 'match' || matchPret(me, store)));
 const NOTES_NOTIF = {
   tous: 'Tes choix valent pour tous les appareils où les notifications sont activées.',
   admin: 'Les signalements arrivent toujours à l’équipe du réseau.',
@@ -113,7 +119,9 @@ addAR({
   'Recevoir par email les nouvelles offres de mon année et de ma filière (3 au plus par jour)': 'استلام العروض الجديدة الخاصة بسنتي وشعبتي عبر البريد (3 على الأكثر في اليوم)',
   [NOTES_NOTIF.tous]: 'تسري اختياراتك على كل الأجهزة التي فُعّلت فيها الإشعارات.',
   [NOTES_NOTIF.admin]: 'تصل البلاغات دائمًا إلى فريق الشبكة.',
-  [CATS_NOTIF.etudiant.messages[1]]: 'الرسائل التي تُرسل إليك.',
+  [CATS_NOTIF.etudiant.messages[1]]: 'الرسائل التي تُرسل إليك، بما فيها المقابلات المقترحة.',
+  [CATS_NOTIF.etudiant.match[1]]: 'اهتمام أحد الخريجين بملفك، والتوافقات الجديدة.',
+  [CATS_NOTIF.laureat.match[1]]: 'اهتمام أحد الطلبة بعرضك، والتوافقات الجديدة.',
   [CATS_NOTIF.etudiant.demandes[0]]: 'طلباتي: اقتراحات المساعدة',
   [CATS_NOTIF.etudiant.demandes[1]]: 'خريج يقترح عليك مساعدته في طلبك.',
   [CATS_NOTIF.etudiant.candidatures[1]]: 'ترشيح يتقدّم، دعوة للترشح، توظيف ينتظر تأكيدك.',
@@ -148,6 +156,9 @@ addAR({ [PHRASE_FONDATEURS]: 'يمكن أن يظهر الأعضاء المؤسس
 // Ambassadeurs de promo : ce que la plateforme regarde pour proposer le rôle, et ce qui sort du réseau
 const PHRASE_AMBASSADEURS = 'Ambassadeurs de promo : la plateforme propose ce rôle au membre le plus actif de chaque promo et filière (offres, aides, mentorats, réponses, dernière connexion) ; tu peux refuser. Accepté, ton badge est visible des membres. Les réussites qu’un ambassadeur partage sur WhatsApp sont déjà vérifiées et annoncées dans le réseau, et ne citent le prénom que de qui a accepté d’être cité.';
 addAR({ [PHRASE_AMBASSADEURS]: 'سفراء الدفعات: تقترح المنصة هذا الدور على العضو الأكثر نشاطًا في كل دفعة وشعبة (العروض، المساعدات، الإرشاد، الأجوبة، آخر دخول)؛ ويمكنك الرفض. وعند القبول، تظهر شارتك للأعضاء. أما النجاحات التي يشاركها السفير عبر واتساب فهي مؤكَّدة ومُعلنة في الشبكة مسبقًا، ولا تذكر إلا اسم من وافق على ذكره.' });
+// Page Match : ce que les lauréats y voient d'un étudiant, le CV seulement après un match, et comment ne plus y apparaître
+const PHRASE_MATCH = 'Match : les lauréats y voient ton profil résumé (année, filière, ce que tu cherches, compétences) ; ton CV, seulement après un match. Une carte remise à plus tard reste privée ; un intérêt est vu par la personne visée. Tu peux ne plus apparaître dans Match depuis « Mon profil ».';
+addAR({ [PHRASE_MATCH]: 'التوافق (Match): يرى فيه الخريجون ملفك المختصر (السنة، الشعبة، الفرصة المنشودة، الكفاءات)؛ أما سيرتك الذاتية فلا يرونها إلا بعد حصول توافق. تبقى البطاقة المؤجلة خاصة، أما الاهتمام فيراه الشخص المعني. ويمكنك التوقف عن الظهور في Match من «ملفي الشخصي».' });
 
 const cfg = () => (typeof window !== 'undefined' && window.ENSAM_CONFIG) || {};
 
@@ -174,9 +185,10 @@ const SECTIONS = [
     'Ton profil est visible par les membres connectés, jamais par le public ni par les moteurs de recherche.',
     PHRASE_FONDATEURS,
     PHRASE_AMBASSADEURS,
+    PHRASE_MATCH,
     'Tu choisis qui voit ton entreprise, ta ville, ton LinkedIn, ta présentation et ton CV : tous les membres, seulement les lauréats, ou seulement tes contacts.',
     'Tes coordonnées ne sont visibles que par tes contacts (les membres avec qui tu les partages, l’auteur d’une offre où tu postules, la personne qu’une demande a réunie avec toi) et par l’administration. Tu peux retirer ton accord à tout moment.',
-    'Ton CV en PDF est rangé dans un espace privé. Il s’ouvre par un lien valable 10 minutes, et seulement pour : les membres que tu choisis dans « Qui voit quoi », tes contacts (dont l’auteur d’une offre où tu postules), les lauréats quand tu as une demande ouverte, le lauréat qui relit ton CV (ou tous les lauréats tant que personne ne l’a pris), et l’administration.',
+    'Ton CV en PDF est rangé dans un espace privé. Il s’ouvre par un lien valable 10 minutes, et seulement pour : les membres que tu choisis dans « Qui voit quoi », tes contacts (dont l’auteur d’une offre où tu postules), les lauréats quand tu as une demande ouverte, le lauréat qui relit ton CV (ou tous les lauréats tant que personne ne l’a pris), le lauréat avec qui tu as un match, et l’administration.',
     'Une candidature n’est visible que par toi et par le lauréat qui a publié l’offre.',
     'Un message privé n’est visible que par toi et la personne à qui tu écris. Ses photos et vocaux sont dans un espace privé et s’ouvrent par un lien temporaire. L’administration ne voit un message que si l’un de vous deux le signale.',
     'Un étudiant ne voit que les offres de son année ; les offres entre lauréats ne sont pas visibles par les étudiants.',
@@ -206,6 +218,7 @@ const SECTIONS = [
     'Base de données, comptes et CV : Supabase, serveurs à Paris (Union européenne).',
     'Site : GitHub Pages. Emails : le compte Gmail de la plateforme (Google) et Brevo (Union européenne). Visio : Jitsi Meet, quand tu rejoins un rendez-vous.',
     'Carte : fonds OpenStreetMap et CARTO. Notifications du téléphone : le service de ton navigateur (Google, Apple ou Mozilla), seulement si tu les actives.',
+    'Logos des entreprises : ceux gardés sur le site, sinon l’icône du site de l’entreprise, demandée à DuckDuckGo sans ton nom ni l’adresse de la page.',
   ]],
   ['clock', 'Combien de temps', [
     'Tant que ton compte existe. Quand tu le supprimes, ton profil, ton CV et tout ce qui t’est lié sont effacés tout de suite. Seuls restent des chiffres globaux sans nom.',

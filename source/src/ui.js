@@ -4,6 +4,7 @@ import { initials, levelOf, NIVEAUX, niveauOf, seasonOf, PARCOURS, FILIERES_INFO
 import { Icon, Field, BrandLogo, SchoolScene, TYPE_ICON, ajouterIcones } from './entree.js';
 import { getLang } from './i18n.js';
 import { avecLangue } from './regles-entree.js';
+import { domaineEntreprise, lienFavicon } from './vitrine-regles.js';
 
 export { html, Icon, Field, BrandLogo, SchoolScene, TYPE_ICON };
 
@@ -983,20 +984,40 @@ export function Num({ v }) {
   return html`<span ref=${ref}>${String(n)}</span>`;
 }
 
-// Logo d'entreprise : le vrai logo (gardé sur le site, img/logos/) sur une petite tuile blanche arrondie avec un filet,
-// sinon un monogramme sur une teinte douce, stable pour un même nom (sigle entier, villes et « Groupe » ignorés)
+// Logo d'entreprise, partout où une entreprise paraît (offres, fiche, page entreprise, profils, partages, Match) :
+//  1. le vrai logo gardé sur le site (img/logos/), sur une petite tuile blanche arrondie avec un filet ;
+//  2. sinon l'icône du site de l'entreprise (domaine connu, ou celui du lien de l'offre : vitrine-regles.js), demandée à
+//     DuckDuckGo sans rien qui dise d'où l'on vient (referrerpolicy, posé avant src), seulement quand la tuile approche de l'écran (lazy) ;
+//  3. sinon, et tant que l'icône n'est pas arrivée, un monogramme sur une teinte douce, stable pour un même nom
+//     (sigle entier, villes et « Groupe » ignorés). Une icône absente, trop petite ou refusée laisse le monogramme,
+//     et son domaine n'est plus redemandé de la visite.
 // Logos en longueur (un mot écrit) : moins de marge, pour qu'ils restent lisibles à 40 px
 const LOGOS_LARGES = /\/(airbus|safran)\.png$/;
-export function CompanyLogo({ name = '', size = 44 }) {
-  const src = logoEntreprise(name);
+const ICONES = new Map();   // domaine → 'ok' | 'ko', pour cette visite
+export function LogoEntreprise({ nom = '', lien = '', taille = 44 }) {
+  const src = logoEntreprise(nom);
   const [rate, setRate] = useState(false);
-  if (src && !rate) return html`<span class=${'clogo c-img' + (LOGOS_LARGES.test(src) ? ' c-large' : '')} style=${`width:${size}px;height:${size}px`} aria-hidden="true"><img src=${src} alt="" width=${size} height=${size} onError=${() => setRate(true)}/></span>`;
-  const ini = monogramme(name);
+  const [vu, setVu] = useState(null);   // ce que cette tuile a vu de l'icône : { domaine, etat }
+  const dim = `width:${taille}px;height:${taille}px`;
+  if (src && !rate) return html`<span class=${'clogo c-img' + (LOGOS_LARGES.test(src) ? ' c-large' : '')} style=${dim} aria-hidden="true"><img src=${src} alt="" width=${taille} height=${taille} onError=${() => setRate(true)}/></span>`;
+  const ini = monogramme(nom);
   const n = [...ini].length;
-  return html`<span class="clogo" style=${`${styleTeinte(teinteDe(name))};width:${size}px;height:${size}px;font-size:${Math.max(12, Math.round(size * [0.42, 0.42, 0.36, 0.3, 0.26][Math.min(n, 4)]))}px`} aria-hidden="true">${ini}</span>`;
+  const mono = `${styleTeinte(teinteDe(nom))};${dim};font-size:${Math.max(12, Math.round(taille * [0.42, 0.42, 0.36, 0.3, 0.26][Math.min(n, 4)]))}px`;
+  const domaine = domaineEntreprise(nom, lien);
+  const etat = !domaine ? 'ko' : (vu?.domaine === domaine && vu.etat) || ICONES.get(domaine);
+  if (etat === 'ko') return html`<span class="clogo" style=${mono} aria-hidden="true">${ini}</span>`;
+  const juger = ok => { const e = ok ? 'ok' : 'ko'; ICONES.set(domaine, e); setVu({ domaine, etat: e }); };
+  return html`<span class=${'clogo c-fav' + (etat === 'ok' ? ' c-fav-ok c-img' : '')} style=${mono} aria-hidden="true" data-domaine=${domaine}>
+    <span class="c-mono">${ini}</span>
+    <img referrerpolicy="no-referrer" loading="lazy" decoding="async" fetchpriority="low" alt="" width=${taille} height=${taille} src=${lienFavicon(domaine)}
+      onLoad=${e => { const i = e.currentTarget; juger(i.naturalWidth >= 16 && i.naturalHeight >= 16); }} onError=${() => juger(false)}/></span>`;
 }
-// La phrase discrète sous une liste où paraissent de vrais logos
-export const MentionLogos = ({ noms = [] }) => (noms.some(n => logoEntreprise(n)) ? html`<p class="mention-logos">Logos affichés pour reconnaître les entreprises, sans aucun partenariat.</p>` : null);
+// La teinte douce d'une entreprise (celle de son monogramme), pour colorer discrètement sa carte
+export const styleEntreprise = nom => styleTeinte(teinteDe(nom));
+// Le nom d'avant (name, size) : les écrans qui l'utilisent passent par le même logo
+export const CompanyLogo = ({ name = '', size = 44, lien = '' }) => html`<${LogoEntreprise} nom=${name} taille=${size} lien=${lien}/>`;
+// La phrase discrète sous une liste où paraissent de vrais logos (gardés sur le site, ou l'icône du site de l'entreprise)
+export const MentionLogos = ({ noms = [] }) => (noms.some(n => logoEntreprise(n) || domaineEntreprise(n)) ? html`<p class="mention-logos">Logos affichés pour reconnaître les entreprises, sans aucun partenariat.</p>` : null);
 
 
 // Partage sur WhatsApp : un texte et le lien direct vers la page (offre, question), pour les groupes de promo.

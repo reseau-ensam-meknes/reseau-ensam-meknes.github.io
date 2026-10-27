@@ -1549,7 +1549,7 @@ create or replace function public.notif_push_valide(v jsonb) returns boolean
 language sql immutable as $$
   select jsonb_typeof(coalesce(v, '{}')) = 'object' and not exists (
     select 1 from jsonb_each(coalesce(v, '{}')) e
-    where e.key not in ('messages','demandes','candidatures','mentorat','offres','reseau','rappels') or jsonb_typeof(e.value) <> 'boolean');
+    where e.key not in ('messages','match','demandes','candidatures','mentorat','offres','reseau','rappels') or jsonb_typeof(e.value) <> 'boolean');
 $$;
 do $$ begin
   if not exists (select 1 from pg_constraint where conname = 'profiles_notif_push_check') then
@@ -1561,7 +1561,11 @@ end $$;
 create or replace function public.push_categorie(p_kind text) returns text
 language sql immutable as $$
   select case
-    when p_kind = 'message' then 'messages'
+    -- Un entretien proposé dans une discussion (message 'rdv') et sa réponse sont des messages : couper « Match »
+    -- ne fait jamais rater un entretien
+    when p_kind in ('message','rdv_message','rdv_reponse') then 'messages'
+    -- Page Match (section « Match », en fin de fichier) : un intérêt pour soi, un match
+    when p_kind in ('match','match_interet') then 'match'
     when p_kind in ('demande_nouvelle','demande_large','demande_proposition','demande_match','demande_rouverte','demande_reponse') then 'demandes'
     when p_kind in ('candidature','candidature_statut','invitation','recrutement_a_confirmer','recrutement_confirme','relance_offre') then 'candidatures'
     when p_kind in ('mentorat_demande','mentorat_ouvert','mentorat_accepte','mentorat_deplace','mentorat_annule','rappel_rdv','merci',
@@ -1572,7 +1576,7 @@ language sql immutable as $$
     else 'reseau' end;
 $$;
 
--- Défaut d'une catégorie selon le profil : tout est activé pour tout le monde, nouvelles offres comprises (un lauréat
+-- Défaut d'une catégorie selon le profil : tout est activé pour tout le monde (Match compris), nouvelles offres comprises (un lauréat
 -- reçoit celles de sa filière, qu'il cherche un emploi ou non : alerte_offre). Seule exception, un choix déjà fait :
 -- l'ancienne case « M'alerter » décochée (alertes_offres = false) garde les offres coupées. Admin : signalements toujours.
 create or replace function public.push_defaut(p_cat text, p public.profiles) returns boolean
@@ -1720,6 +1724,10 @@ drop trigger if exists trg_coordonnees_maj on public.coordonnees;
 create trigger trg_coordonnees_maj before insert or update on public.coordonnees
   for each row execute function public.coordonnees_maj();
 
+-- Page Match (section « Match », en fin de fichier) : un étudiant choisit d'apparaître ou non dans les cartes des lauréats.
+-- Ajoutée ici parce que la vue « profils », juste en dessous, l'expose.
+alter table public.profiles add column if not exists match_visible boolean not null default true;
+
 -- ---------------------------------------------------------------------
 -- Visibilité du profil : chaque membre choisit qui voit son travail, sa ville,
 -- son LinkedIn, sa présentation et son CV. Le nom, le rôle, la filière, la promo
@@ -1738,6 +1746,9 @@ begin
   -- CV joint à une demande ouverte ou en cours : les lauréats le voient le temps de la demande
   if p_champ = 'cv' and exists (select 1 from public.demandes d where d.auteur_id = p_owner and d.status in ('ouverte','match'))
      and exists (select 1 from public.profiles where id = auth.uid() and role = 'laureat') then return true; end if;
+  -- CV de l'étudiant : le lauréat qui a un match avec lui le lit (page Match, section « Match » en fin de fichier ;
+  -- peut_voir_cv, pour le stockage « cv », passe aussi par ici)
+  if p_champ = 'cv' and exists (select 1 from public.matchs m where m.etudiant_id = p_owner and m.laureat_id = auth.uid()) then return true; end if;
   return public.en_relation(auth.uid(), p_owner);
 end $$;
 
@@ -1765,7 +1776,8 @@ select p.id, p.full_name, p.role, p.filiere, p.promo,
   case when p.id = auth.uid() then p.alertes_email end as alertes_email,
   case when p.id = auth.uid() then p.emails_messages end as emails_messages,
   p.en_recherche, p.photo_path,
-  case when p.id = auth.uid() then p.notif_push end as notif_push
+  case when p.id = auth.uid() then p.notif_push end as notif_push,
+  p.match_visible
 from public.profiles p
 where auth.uid() is not null;
 revoke all on public.profils from public, anon;
@@ -2990,6 +3002,29 @@ create index if not exists messages_paire on public.messages (author_id, dest_id
 -- Pas de clé étrangère : un message supprimé pour les deux laisse « Message supprimé » à sa place, sans garder son texte.
 alter table public.messages add column if not exists reponse_a uuid;
 
+-- Entretien proposé dans la discussion (type 'rdv', surtout après un match de la page Match) : date, durée (15 à 120 min),
+-- lieu (vide = en visio) ou lien de visio (Jitsi créé par le site, ou Meet / Teams collé), la réponse du destinataire
+-- (repondre_rdv, plus bas : « Je serai là » = oui, « Autre horaire » = autre). body = une note facultative (500 au plus).
+alter table public.messages add column if not exists rdv_at timestamptz;
+alter table public.messages add column if not exists rdv_duree int check (rdv_duree between 15 and 120);
+alter table public.messages add column if not exists rdv_lieu text check (char_length(rdv_lieu) <= 200);
+alter table public.messages add column if not exists rdv_lien text check (rdv_lien ~* '^https://[^[:space:]]+$' and char_length(rdv_lien) <= 300);
+alter table public.messages add column if not exists rdv_reponse text check (rdv_reponse in ('oui','autre'));
+alter table public.messages drop constraint if exists messages_type_check;
+alter table public.messages add constraint messages_type_check check (type in ('texte','photo','vocal','rdv'));
+-- Un entretien n'a pas de fichier : l'ancienne règle sans nom (« un fichier, sauf pour un texte ») devient messages_fichier_requis
+do $$
+declare r record;
+begin
+  for r in select c.conname from pg_constraint c where c.conrelid = 'public.messages'::regclass and c.contype = 'c'
+      and c.conname <> 'messages_fichier_requis' and pg_get_constraintdef(c.oid) ~* 'fichier is not null' loop
+    execute format('alter table public.messages drop constraint %I', r.conname);
+  end loop;
+  if not exists (select 1 from pg_constraint where conrelid = 'public.messages'::regclass and conname = 'messages_fichier_requis') then
+    alter table public.messages add constraint messages_fichier_requis check (type in ('texte','rdv') or fichier is not null);
+  end if;
+end $$;
+
 -- « Bloquer » : plus aucun message dans un sens ni dans l'autre
 create table if not exists public.blocages (
   id uuid primary key default gen_random_uuid(),
@@ -3002,6 +3037,7 @@ create table if not exists public.blocages (
 
 -- Deux membres peuvent s'écrire quand un lien existe déjà entre eux, ou quand l'autre
 -- a écrit en premier. L'administration peut écrire à tout le monde. Un blocage ferme tout.
+-- Redéfinie dans la section « Match » (fin du fichier), avec le match en plus : c'est la DERNIÈRE définition qui compte.
 create or replace function public.peut_discuter(p_moi uuid, p_autre uuid) returns boolean
 language sql stable security definer set search_path = public as $$
   select p_moi is not null and p_autre is not null and p_moi <> p_autre
@@ -3040,6 +3076,18 @@ begin
     if new.type = 'texte' then new.fichier := null; new.duree := null; new.largeur := null; new.hauteur := null; new.onde := null; end if;
     if new.type = 'photo' then new.duree := null; new.onde := null; end if;
     if new.type = 'vocal' then new.body := null; new.largeur := null; new.hauteur := null; end if;
+    -- Entretien : une date à venir (4 mois au plus), une durée, un lieu ou un lien ; jamais de fichier ; la réponse vient après
+    if new.type = 'rdv' then
+      new.fichier := null; new.duree := null; new.largeur := null; new.hauteur := null; new.onde := null; new.rdv_reponse := null;
+      new.rdv_lieu := nullif(btrim(new.rdv_lieu), ''); new.rdv_lien := nullif(btrim(new.rdv_lien), '');
+      if new.rdv_at is null or new.rdv_at <= now() or new.rdv_at > now() + interval '120 days' then
+        raise exception 'Choisis une date à venir, dans les 4 prochains mois.';
+      end if;
+      if new.rdv_duree is null then raise exception 'Choisis la durée de l’entretien.'; end if;
+      if char_length(coalesce(new.body, '')) > 500 then raise exception 'La note est trop longue (500 caractères au plus).'; end if;
+    else
+      new.rdv_at := null; new.rdv_duree := null; new.rdv_lieu := null; new.rdv_lien := null; new.rdv_reponse := null;
+    end if;
     if new.fichier is not null and new.fichier not like new.author_id::text || '/' || new.dest_id::text || '/%' then
       raise exception 'Fichier invalide.';
     end if;
@@ -3053,11 +3101,16 @@ begin
     end if;
     return new;
   end if;
-  -- Ensuite, seule la date de lecture change, et seulement par le destinataire
+  -- Ensuite, seule la date de lecture change, et seulement par le destinataire ; pour un entretien à venir, sa réponse aussi
+  -- (par repondre_rdv : la table n'a pas de règle de modification pour les membres)
   if auth.uid() is null or public.is_admin() then return new; end if;
   if auth.uid() <> old.dest_id then raise exception 'Action non autorisée pour ton compte.'; end if;
   v := old;
   v.lu_at := coalesce(old.lu_at, case when new.lu_at is not null then now() end);
+  if old.type = 'rdv' and new.rdv_reponse is distinct from old.rdv_reponse then
+    if old.rdv_at is null or old.rdv_at <= now() then raise exception 'Cet entretien est déjà passé.'; end if;
+    v.rdv_reponse := new.rdv_reponse;
+  end if;
   return v;
 end $$;
 drop trigger if exists trg_protect_message on public.messages;
@@ -3091,6 +3144,32 @@ end $$;
 revoke all on function public.marquer_lus(uuid) from public, anon;
 grant execute on function public.marquer_lus(uuid) to authenticated;
 
+-- Réponse à un entretien proposé : seulement le destinataire, seulement tant qu'il est à venir (« oui » = je serai là,
+-- « autre » = un autre horaire) ; on peut changer d'avis jusque-là. L'auteur est prévenu (catégorie « Messages »).
+create or replace function public.repondre_rdv(p_id uuid, p_reponse text) returns public.messages
+language plpgsql security definer set search_path = public as $$
+declare m public.messages; v_avant text;
+begin
+  if auth.uid() is null then raise exception 'Connecte-toi d’abord.'; end if;
+  if p_reponse is null or p_reponse not in ('oui','autre') then raise exception 'Réponse invalide.'; end if;
+  select * into m from public.messages where id = p_id and type = 'rdv';
+  if m.id is null or m.dest_id <> auth.uid() then raise exception 'Action non autorisée pour ton compte.'; end if;
+  if m.rdv_at is null or m.rdv_at <= now() then raise exception 'Cet entretien est déjà passé.'; end if;
+  if exists (select 1 from public.blocages b where (b.user_id = m.author_id and b.bloque_id = m.dest_id) or (b.user_id = m.dest_id and b.bloque_id = m.author_id)) then
+    raise exception 'Vous ne pouvez plus vous écrire.';
+  end if;
+  v_avant := m.rdv_reponse;
+  update public.messages set rdv_reponse = p_reponse where id = p_id returning * into m;
+  if v_avant is distinct from p_reponse then
+    perform public.pousser(m.author_id, 'rdv_reponse', jsonb_build_object(
+      'nom', split_part((select full_name from public.profiles where id = m.dest_id), ' ', 1), 'de', m.dest_id, 'm', m.id,
+      'reponse', p_reponse, 'rdv_at', m.rdv_at));
+  end if;
+  return m;
+end $$;
+revoke all on function public.repondre_rdv(uuid, text) from public, anon;
+grant execute on function public.repondre_rdv(uuid, text) to authenticated;
+
 -- Notification sur le téléphone : une par message. Le notifier lui donne le même tag pour toute la conversation
 -- (message-<auteur>) : le téléphone remplace la précédente au lieu d'empiler, et sonne de nouveau. Elle montre le
 -- dernier message et, s'il y en a plusieurs non lus de cette personne, leur nombre (n).
@@ -3102,6 +3181,13 @@ declare v_n int; v_calme boolean;
 begin
   if current_setting('ensam.sans_push_message', true) = 'on' then return null; end if;
   if not exists (select 1 from public.push_subscriptions where user_id = new.dest_id) then return null; end if;
+  -- Un entretien proposé : sa propre notification (catégorie « Messages »), la date et la durée, sans l'aperçu d'un message
+  if new.type = 'rdv' then
+    perform public.pousser(new.dest_id, 'rdv_message', jsonb_build_object(
+      'nom', split_part((select full_name from public.profiles where id = new.author_id), ' ', 1), 'de', new.author_id, 'm', new.id,
+      'rdv_at', new.rdv_at, 'duree', new.rdv_duree, 'lieu', new.rdv_lieu));
+    return null;
+  end if;
   v_calme := not public.cadence('message:' || new.author_id || ':' || new.dest_id, interval '20 seconds');
   select count(*) into v_n from public.messages m
     where m.author_id = new.author_id and m.dest_id = new.dest_id and m.lu_at is null and m.created_at > now() - interval '30 days';
@@ -4878,6 +4964,271 @@ end $$;
 drop trigger if exists trg_notif_mentorat_ouvert on public.mentorships;
 create trigger trg_notif_mentorat_ouvert after insert or update of mentor_id on public.mentorships
   for each row execute function public.notif_mentorat_ouvert();
+
+-- =====================================================================
+--  Match : comme les applis de rencontre, mais pour le travail. Une carte à la fois, « Intéressé » ou « Plus tard ».
+--    · L'étudiant voit des offres ouvertes à son année (et les lauréats qui s'intéressent à lui) ; le lauréat voit des
+--      étudiants (ceux qui ont dit oui à une de ses offres d'abord, puis ceux qui apparaissent dans Match).
+--    · Quand les deux disent oui, c'est un match : la discussion s'ouvre (peut_discuter), le lauréat lit le CV de
+--      l'étudiant (voit_champ, donc peut_voir_cv pour le stockage « cv »), et ils peuvent programmer un entretien
+--      (messages de type 'rdv', section « Messagerie »).
+--    · Notifications, catégorie « Match » de Mon profil (activée par défaut) : match (aux deux), match_interet (à la
+--      personne visée par un oui, une fois par jour au plus pour une même paire, jamais quand c'est déjà un match).
+--      L'entretien proposé et sa réponse (rdv_message, rdv_reponse : notif_message, repondre_rdv) sont dans
+--      « Messages » : couper Match ne fait pas rater un entretien.
+--  Mêmes règles dans la démo (DemoStore dans store.js) et dans logic.js (deckMatch, peutDiscuter).
+-- =====================================================================
+
+-- Un choix par carte : « oui » (Intéressé) ou « plus_tard » (la carte revient après 30 jours, règle du site).
+-- Une seule cible : le profil d'un membre, ou une offre. « Revenir » supprime son dernier choix (sans défaire un match).
+create table if not exists public.match_choix (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  cible_profil uuid references public.profiles(id) on delete cascade,
+  cible_offre uuid references public.offers(id) on delete cascade,
+  choix text not null check (choix in ('oui','plus_tard')),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  constraint match_choix_une_cible check (num_nonnulls(cible_profil, cible_offre) = 1),
+  constraint match_choix_profil unique (user_id, cible_profil),
+  constraint match_choix_offre unique (user_id, cible_offre)
+);
+create index if not exists match_choix_cible_profil on public.match_choix (cible_profil) where cible_profil is not null;
+create index if not exists match_choix_cible_offre on public.match_choix (cible_offre) where cible_offre is not null;
+create index if not exists match_choix_jour on public.match_choix (user_id, updated_at desc);
+
+-- Les matchs : une ligne par paire étudiant × lauréat, créée par la base seulement (match_apres_choix).
+-- offre_id : l'offre du lauréat que l'étudiant a choisie (la plus récente), sinon vide. vu_*_at : le match a été vu.
+create table if not exists public.matchs (
+  id uuid primary key default gen_random_uuid(),
+  etudiant_id uuid not null references public.profiles(id) on delete cascade,
+  laureat_id uuid not null references public.profiles(id) on delete cascade,
+  offre_id uuid references public.offers(id) on delete set null,
+  created_at timestamptz default now(),
+  vu_etudiant_at timestamptz,
+  vu_laureat_at timestamptz,
+  constraint matchs_paire unique (etudiant_id, laureat_id),
+  constraint matchs_deux check (etudiant_id <> laureat_id)
+);
+create index if not exists matchs_laureat on public.matchs (laureat_id);
+
+-- Qui peut choisir quoi (à chaque écriture, changement d'avis compris) :
+--   étudiant → une offre ouverte à son année, pour les étudiants (pas un partage dont l'auteur n'est pas lauréat) ;
+--   étudiant → le profil d'un lauréat qui a déjà dit oui à son profil (il répond à son intérêt) ;
+--   lauréat  → le profil d'un étudiant à la filière renseignée, qui apparaît dans Match (match_visible), ou qui a dit
+--              oui à une de ses offres ;
+--   l'administration : rien. Jamais soi-même ni sa propre offre ; un blocage, dans un sens ou dans l'autre, ferme tout.
+--   Anti-spam : 80 choix au plus sur 24 heures (changer d'avis sur une même carte ne compte qu'une fois).
+create or replace function public.protect_match_choix() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_moi public.profiles; v_cible public.profiles; v_o public.offers; v_autre uuid; n int;
+begin
+  if auth.uid() is null then return new; end if;
+  -- Ensuite, seul le choix change : jamais la personne ni la carte
+  if tg_op = 'UPDATE' then
+    new.user_id := old.user_id; new.cible_profil := old.cible_profil; new.cible_offre := old.cible_offre; new.created_at := old.created_at;
+  else
+    new.user_id := auth.uid(); new.created_at := now();
+  end if;
+  new.updated_at := now();
+  select * into v_moi from public.profiles where id = new.user_id;
+  if v_moi.role is null or v_moi.role not in ('etudiant','laureat') then
+    raise exception 'Match est réservé aux étudiants et aux lauréats.' using errcode = '42501';
+  end if;
+  if new.cible_offre is not null then
+    select * into v_o from public.offers where id = new.cible_offre;
+    if v_o.id is null then raise exception 'Cette offre n’existe plus.'; end if;
+    v_autre := v_o.author_id;
+    if v_autre = v_moi.id then raise exception 'C’est ta propre offre.'; end if;
+    if v_moi.role <> 'etudiant' then raise exception 'Dans Match, les offres sont proposées aux étudiants.' using errcode = '42501'; end if;
+    if v_o.status <> 'ouverte' then raise exception 'Cette offre n’est plus ouverte.'; end if;
+    -- Même règle que la liste des offres d'un étudiant : son année, les offres pour les étudiants ; un partage
+    -- (offre vue ailleurs) seulement quand un lauréat l'a apporté (le match se fait avec lui)
+    if coalesce(v_o.audience, 'etudiants') <> 'etudiants'
+       or not (public.niveau_de(v_moi.promo, public.saison_courante()) = any(coalesce(v_o.annees, '{}'::int[])))
+       or (v_o.origine = 'partagee' and not exists (select 1 from public.profiles a where a.id = v_autre and a.role = 'laureat')) then
+      raise exception 'Cette offre n’est pas proposée à ton année.' using errcode = '42501';
+    end if;
+  else
+    v_autre := new.cible_profil;
+    if v_autre = v_moi.id then raise exception 'Choisis un autre membre que toi.'; end if;
+    select * into v_cible from public.profiles where id = v_autre;
+    if v_cible.id is null then raise exception 'Ce membre n’est plus sur le réseau.'; end if;
+    if v_moi.role = 'etudiant' then
+      if v_cible.role <> 'laureat' or not exists (select 1 from public.match_choix c
+          where c.user_id = v_autre and c.cible_profil = v_moi.id and c.choix = 'oui') then
+        raise exception 'Ici, tu réponds aux lauréats qui s’intéressent à ton profil.' using errcode = '42501';
+      end if;
+    elsif v_cible.role <> 'etudiant' or coalesce(btrim(v_cible.filiere), '') = ''
+       or not (coalesce(v_cible.match_visible, true) or exists (select 1 from public.match_choix c join public.offers o on o.id = c.cible_offre
+         where c.user_id = v_autre and c.choix = 'oui' and o.author_id = v_moi.id)) then
+      raise exception 'Ce profil n’est pas proposé dans Match.' using errcode = '42501';
+    end if;
+  end if;
+  if exists (select 1 from public.blocages b where (b.user_id = v_moi.id and b.bloque_id = v_autre) or (b.user_id = v_autre and b.bloque_id = v_moi.id)) then
+    raise exception 'Action non autorisée pour ton compte.' using errcode = '42501';
+  end if;
+  select count(*) into n from public.match_choix c
+    where c.user_id = v_moi.id and c.updated_at > now() - interval '1 day'
+      and not (c.cible_profil is not distinct from new.cible_profil and c.cible_offre is not distinct from new.cible_offre);
+  if n >= 80 then raise exception 'Tu as déjà fait 80 choix aujourd’hui. La suite demain !'; end if;
+  return new;
+end $$;
+revoke all on function public.protect_match_choix() from public, anon, authenticated;
+drop trigger if exists trg_protect_match_choix on public.match_choix;
+create trigger trg_protect_match_choix before insert or update on public.match_choix
+  for each row execute function public.protect_match_choix();
+
+-- Après un oui : le match quand les deux ont dit oui (le lauréat au profil de l'étudiant ; l'étudiant à une offre de ce
+-- lauréat ou à son profil), une notification aux deux ; sinon, la personne visée apprend l'intérêt (au plus une fois
+-- par jour pour cette paire, jamais quand c'est déjà un match). Deux oui au même instant : un verrou par paire, le
+-- second voit le premier et crée le match.
+create or replace function public.match_apres_choix() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_role text; v_etu uuid; v_lau uuid; v_offre uuid; v_m public.matchs; v_l public.profiles; v_titre text;
+begin
+  if new.choix <> 'oui' or (tg_op = 'UPDATE' and old.choix = 'oui') then return null; end if;
+  select role into v_role from public.profiles where id = new.user_id;
+  if new.cible_offre is not null then
+    v_etu := new.user_id;
+    select author_id into v_lau from public.offers where id = new.cible_offre;
+  elsif v_role = 'etudiant' then
+    v_etu := new.user_id; v_lau := new.cible_profil;
+  else
+    v_lau := new.user_id; v_etu := new.cible_profil;
+  end if;
+  if not exists (select 1 from public.profiles where id = v_etu and role = 'etudiant')
+     or not exists (select 1 from public.profiles where id = v_lau and role = 'laureat') then return null; end if;
+  perform pg_advisory_xact_lock(hashtext('match:' || v_etu || ':' || v_lau));
+  if exists (select 1 from public.matchs x where x.etudiant_id = v_etu and x.laureat_id = v_lau) then return null; end if;
+  -- L'offre de ce lauréat que l'étudiant a choisie en dernier
+  select c.cible_offre into v_offre from public.match_choix c join public.offers o on o.id = c.cible_offre
+    where c.user_id = v_etu and c.choix = 'oui' and o.author_id = v_lau order by c.updated_at desc limit 1;
+  if exists (select 1 from public.match_choix c where c.user_id = v_lau and c.cible_profil = v_etu and c.choix = 'oui')
+     and (v_offre is not null or exists (select 1 from public.match_choix c where c.user_id = v_etu and c.cible_profil = v_lau and c.choix = 'oui')) then
+    insert into public.matchs (etudiant_id, laureat_id, offre_id) values (v_etu, v_lau, v_offre)
+      on conflict (etudiant_id, laureat_id) do nothing returning * into v_m;
+    if v_m.id is null then return null; end if;
+    -- « C'est un match ! » aux deux, y compris à celui qui vient de dire oui (son téléphone ouvre la discussion)
+    begin
+      v_titre := (select titre from public.offers where id = v_offre);
+      insert into public.push_queue (user_id, kind, data)
+      select p.id, 'match', jsonb_strip_nulls(jsonb_build_object('nom', split_part(a.full_name, ' ', 1), 'de', a.id, 'match', v_m.id, 'titre', v_titre))
+      from public.profiles p join public.profiles a on a.id = case when p.id = v_etu then v_lau else v_etu end
+      where p.id in (v_etu, v_lau)
+        and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'match');
+    exception when others then null;  -- une notification ne bloque jamais le match
+    end;
+    return null;
+  end if;
+  -- Pas encore de match : l'intérêt, à la personne visée
+  begin
+    if new.user_id = v_lau then
+      -- L'étudiant apprend qu'un lauréat s'intéresse à lui ; l'entreprise seulement si le lauréat la montre à tous
+      if exists (select 1 from public.push_subscriptions s where s.user_id = v_etu) then
+        if public.cadence('match_interet:' || v_etu || ':' || v_lau, interval '1 day') then
+          select * into v_l from public.profiles where id = v_lau;
+          perform public.pousser(v_etu, 'match_interet', jsonb_strip_nulls(jsonb_build_object('nom', split_part(v_l.full_name, ' ', 1), 'de', v_lau,
+            'entreprise', case when coalesce(v_l.visibilite ->> 'travail', 'tous') = 'tous' then nullif(btrim(v_l.entreprise), '') end)));
+        end if;
+      end if;
+    elsif new.cible_offre is not null then
+      -- Le lauréat apprend qu'un étudiant s'intéresse à son offre
+      if exists (select 1 from public.push_subscriptions s where s.user_id = v_lau) then
+        if public.cadence('match_interet:' || v_etu || ':' || v_lau, interval '1 day') then
+          perform public.pousser(v_lau, 'match_interet', jsonb_build_object(
+            'nom', split_part((select full_name from public.profiles where id = v_etu), ' ', 1), 'de', v_etu,
+            'titre', (select titre from public.offers where id = new.cible_offre), 'offre', new.cible_offre));
+        end if;
+      end if;
+    end if;
+  exception when others then null;
+  end;
+  return null;
+end $$;
+revoke all on function public.match_apres_choix() from public, anon, authenticated;
+drop trigger if exists trg_match_apres_choix on public.match_choix;
+create trigger trg_match_apres_choix after insert or update of choix on public.match_choix
+  for each row execute function public.match_apres_choix();
+
+-- Un match ne se crée que par la base ; ensuite chacun note seulement qu'il l'a vu (une fois), et l'un ou l'autre
+-- peut le retirer (« Retirer le match »)
+create or replace function public.protect_match() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v public.matchs;
+begin
+  if auth.uid() is null then return new; end if;
+  v := old;
+  if auth.uid() = old.etudiant_id then v.vu_etudiant_at := coalesce(old.vu_etudiant_at, case when new.vu_etudiant_at is not null then now() end); end if;
+  if auth.uid() = old.laureat_id then v.vu_laureat_at := coalesce(old.vu_laureat_at, case when new.vu_laureat_at is not null then now() end); end if;
+  return v;
+end $$;
+revoke all on function public.protect_match() from public, anon, authenticated;
+drop trigger if exists trg_protect_match on public.matchs;
+create trigger trg_protect_match before update on public.matchs
+  for each row execute function public.protect_match();
+
+-- Qui voit quoi : ses propres choix, et les « oui » qui me visent (mon profil, ou une de mes offres) ; jamais les
+-- « plus tard » des autres. Un match : les deux personnes (et l'administration).
+alter table public.match_choix enable row level security;
+alter table public.matchs enable row level security;
+drop policy if exists "lecture membres" on public.match_choix;
+drop policy if exists "ecriture proprietaire" on public.match_choix;
+drop policy if exists "modif proprietaire" on public.match_choix;
+drop policy if exists "suppression proprietaire" on public.match_choix;
+create policy "lecture membres" on public.match_choix for select to authenticated using (
+  user_id = auth.uid() or (choix = 'oui' and (cible_profil = auth.uid()
+    or exists (select 1 from public.offers o where o.id = match_choix.cible_offre and o.author_id = auth.uid()))));
+create policy "ecriture proprietaire" on public.match_choix for insert to authenticated with check (user_id = auth.uid());
+create policy "modif proprietaire" on public.match_choix for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "suppression proprietaire" on public.match_choix for delete to authenticated using (user_id = auth.uid());
+drop policy if exists "lecture membres" on public.matchs;
+drop policy if exists "modif proprietaire" on public.matchs;
+drop policy if exists "suppression proprietaire" on public.matchs;
+create policy "lecture membres" on public.matchs for select to authenticated using (
+  etudiant_id = auth.uid() or laureat_id = auth.uid() or public.is_admin());
+create policy "modif proprietaire" on public.matchs for update to authenticated using (etudiant_id = auth.uid() or laureat_id = auth.uid());
+create policy "suppression proprietaire" on public.matchs for delete to authenticated using (etudiant_id = auth.uid() or laureat_id = auth.uid());
+
+do $$
+declare t text;
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    foreach t in array array['match_choix','matchs'] loop
+      if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
+        execute format('alter publication supabase_realtime add table public.%I', t);
+      end if;
+    end loop;
+  end if;
+exception when others then raise notice 'Temps réel de Match non configuré : %', sqlerrm;
+end $$;
+
+-- La discussion : la définition de la section « Messagerie », plus le match (l'étudiant et le lauréat qui se sont
+-- choisis peuvent s'écrire). Dernière définition de peut_discuter : c'est elle qui compte (protect_message, stockage « chat »).
+create or replace function public.peut_discuter(p_moi uuid, p_autre uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select p_moi is not null and p_autre is not null and p_moi <> p_autre
+    and (auth.uid() is null or auth.uid() = p_moi)
+    and exists (select 1 from public.profiles where id = p_autre)
+    and not exists (select 1 from public.blocages b
+      where (b.user_id = p_moi and b.bloque_id = p_autre) or (b.user_id = p_autre and b.bloque_id = p_moi))
+    and (
+      exists (select 1 from public.profiles a where a.id = p_moi and a.role = 'admin')
+      or exists (select 1 from public.messages m where m.author_id = p_autre and m.dest_id = p_moi)
+      or public.en_relation(p_moi, p_autre) or public.en_relation(p_autre, p_moi)
+      or exists (select 1 from public.mentorships m where m.mentor_id is not null and m.status in ('demande','acceptee','terminee')
+        and ((m.student_id = p_moi and m.mentor_id = p_autre) or (m.student_id = p_autre and m.mentor_id = p_moi)))
+      or exists (select 1 from public.parrainages x
+        where (x.parrain_id = p_moi and x.filleul_id = p_autre) or (x.parrain_id = p_autre and x.filleul_id = p_moi))
+      or exists (select 1 from public.relectures_cv r where r.reviewer_id is not null and r.status <> 'annulee'
+        and ((r.student_id = p_moi and r.reviewer_id = p_autre) or (r.student_id = p_autre and r.reviewer_id = p_moi)))
+      or exists (select 1 from public.propositions x join public.demandes d on d.id = x.demande_id where x.status in ('envoyee','acceptee')
+        and ((d.auteur_id = p_moi and x.laureat_id = p_autre) or (d.auteur_id = p_autre and x.laureat_id = p_moi)))
+      or exists (select 1 from public.matchs x
+        where (x.etudiant_id = p_moi and x.laureat_id = p_autre) or (x.etudiant_id = p_autre and x.laureat_id = p_moi)));
+$$;
+revoke all on function public.peut_discuter(uuid, uuid) from public, anon;
+grant execute on function public.peut_discuter(uuid, uuid) to authenticated;
 
 -- =====================================================================
 -- APRÈS votre inscription sur la plateforme, devenez administrateur :
