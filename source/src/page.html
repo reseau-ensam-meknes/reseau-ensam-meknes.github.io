@@ -2044,6 +2044,8 @@ html.defil-bloque.defil-gouttiere { scrollbar-gutter: stable; }
 .mx-c-qui { display: flex; align-items: center; flex-wrap: wrap; gap: .2rem .5rem; margin: auto 0 0; font-size: var(--fs-3); font-weight: 600; color: var(--ink); }
 .mx-c-qui .muted { font-weight: 400; font-size: var(--fs-2); }
 .mx-personne { align-items: center; justify-content: safe center; text-align: center; padding-block: .2rem 1rem; }
+/* Une personne : un halo doux derrière le visage, pour que la carte ne paraisse jamais vide */
+.mx-carte:has(.mx-personne) { background: radial-gradient(130% 70% at 50% 0%, color-mix(in srgb, var(--accent-soft) 75%, var(--surface)), var(--surface) 72%) var(--surface); }
 .mx-p-tete { display: flex; flex-direction: column; align-items: center; gap: .6rem; min-width: 0; max-width: 100%; }
 .mx-p-tete > .avatar { flex: none; box-shadow: 0 0 0 4px var(--surface), 0 10px 24px -12px rgb(10 20 40 / .45); }
 .mx-p-id { display: flex; flex-direction: column; gap: .3rem; min-width: 0; }
@@ -2077,7 +2079,7 @@ html.defil-bloque.defil-gouttiere { scrollbar-gutter: stable; }
 }
 @container carte (max-height: 420px) {
   .mx-c-desc { display: none; }
-  .mx-personne { justify-content: flex-start; align-items: flex-start; text-align: start; }
+  .mx-personne { align-items: flex-start; text-align: start; }
   .mx-personne .mx-puces.centre { justify-content: flex-start; }
   .mx-p-tete { flex-direction: row; align-self: stretch; gap: .8rem; text-align: start; }
   .mx-p-tete > .avatar { zoom: .66; }
