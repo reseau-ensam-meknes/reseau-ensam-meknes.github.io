@@ -43,6 +43,7 @@ addAR({
   'Six mois puis douze mois après le diplôme, un court questionnaire te demande ta situation (emploi, recherche, études…).': 'بعد ستة أشهر ثم اثني عشر شهرًا من التخرج، يسألك استبيان قصير عن وضعيتك (عمل، بحث، دراسة…).',
   'Les réponses sont publiées seulement en chiffres globaux par promo et par filière, jamais en dessous de 5 réponses. Seule l’administration voit les réponses individuelles.': 'لا تُنشر الأجوبة إلا كأرقام إجمالية حسب الدفعة والشعبة، ولا تُنشر أبدًا إذا قلّت عن 5 أجوبة. الإدارة وحدها ترى الأجوبة الفردية.',
   'Répondre est facultatif.': 'الإجابة اختيارية.',
+  'Logos des entreprises : ceux gardés sur le site, sinon l’icône du site de l’entreprise, demandée à DuckDuckGo sans ton nom ni l’adresse de la page.': 'شعارات الشركات: المحفوظة على الموقع، وإلا فأيقونة موقع الشركة، تُطلب من DuckDuckGo دون اسمك ولا عنوان الصفحة.',
   'Base de données, comptes et CV : Supabase, serveurs à Paris (Union européenne).': 'قاعدة البيانات والحسابات والسير الذاتية: Supabase، خوادم في باريس (الاتحاد الأوروبي).',
   'Site : GitHub Pages. Emails : le compte Gmail de la plateforme (Google) et Brevo (Union européenne). Visio : Jitsi Meet, quand tu rejoins un rendez-vous.': 'الموقع: GitHub Pages. الرسائل: حساب Gmail الخاص بالمنصة (Google) وBrevo (الاتحاد الأوروبي). المكالمات المرئية: Jitsi Meet عند انضمامك إلى موعد.',
   'Tant que ton compte existe. Quand tu le supprimes, ton profil, ton CV et tout ce qui t’est lié sont effacés tout de suite. Seuls restent des chiffres globaux sans nom.': 'ما دام حسابك موجودًا. عند حذفه، يُمحى ملفك وسيرتك الذاتية وكل ما يرتبط بك فورًا، ولا تبقى إلا أرقام إجمالية بدون أسماء.',
@@ -217,6 +218,7 @@ const SECTIONS = [
     'Base de données, comptes et CV : Supabase, serveurs à Paris (Union européenne).',
     'Site : GitHub Pages. Emails : le compte Gmail de la plateforme (Google) et Brevo (Union européenne). Visio : Jitsi Meet, quand tu rejoins un rendez-vous.',
     'Carte : fonds OpenStreetMap et CARTO. Notifications du téléphone : le service de ton navigateur (Google, Apple ou Mozilla), seulement si tu les actives.',
+    'Logos des entreprises : ceux gardés sur le site, sinon l’icône du site de l’entreprise, demandée à DuckDuckGo sans ton nom ni l’adresse de la page.',
   ]],
   ['clock', 'Combien de temps', [
     'Tant que ton compte existe. Quand tu le supprimes, ton profil, ton CV et tout ce qui t’est lié sont effacés tout de suite. Seuls restent des chiffres globaux sans nom.',
