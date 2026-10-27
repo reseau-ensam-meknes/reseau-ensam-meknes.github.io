@@ -3,7 +3,7 @@ import { getLang, setLang, chargerAR } from './i18n.js';
 import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore, texteErreur } from './store.js';
 import { Icon, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille, ecranLibre } from './ui.js';
-import { seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, demandeLargeLe, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour } from './logic.js';
+import { matchsDe, seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, demandeLargeLe, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
 import { estPortee, estPartagee, partageExpire } from './origine.js';
 import { nouvellesVivant } from './reseau-vivant.js';
@@ -23,6 +23,7 @@ import { ConfianceHome } from './confiance.js';
 import { NextEvent } from './agenda.js';
 import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, suiteLien, accordIci, roleAccord, oublierInvitation } from './entree.js';
 import { MessagesPage, MessagesHome, useAlerteMessages } from './messages.js';
+import { MatchPage, MatchAccueil, MatchVisible } from './match.js';
 import { PoulsReseau, marquerArrivee, useArrivee, ArriveeSheet } from './pouls.js';
 import { ProposerAide } from './demandes.js';
 import { useFondateurs, FondateursBandeau, useFondateurMoi } from './fondateurs.js';
@@ -84,15 +85,17 @@ function AnnonceBanner({ ctx }) {
 let dernierBouton = { b: null, t: 0 };
 document.addEventListener('click', e => { dernierBouton = { b: e.target?.closest?.('button.btn') || null, t: Date.now() }; }, true);
 
-const ROUTES = ['accueil', 'offres', 'mentorat', 'messages', 'parcours', 'espace', 'reseau', 'suivi', 'profil', 'admin', 'verifier', 'confidentialite', 'desabo', 'enquete', 'offre', 'aider'];
+const ROUTES = ['accueil', 'offres', 'match', 'mentorat', 'messages', 'parcours', 'espace', 'reseau', 'suivi', 'profil', 'admin', 'verifier', 'confidentialite', 'desabo', 'enquete', 'offre', 'aider'];
 const ALIASES = { impact: 'espace', tableau: 'suivi', communaute: 'reseau', entraide: 'reseau/entraide', groupes: 'reseau/groupes', sujets: 'offres/sujets', 'reseau/mentorat': 'mentorat', 'reseau/mentorat/rdv': 'mentorat', agenda: 'reseau/agenda', entreprises: 'reseau/entreprises', etranger: 'reseau/etranger', relecture: 'mentorat/cv', cv: 'mentorat/cv', moderation: 'admin/moderation', message: 'messages', chat: 'messages' };
 
 // Libellés courts de la barre du bas et du rail (petit ordinateur) ; en arabe, le libellé entier est déjà court
 const COURT = { 'Mon parcours': 'Parcours', 'Mon espace': 'Espace', 'Mon année': 'Année' };
 const court = l => (getLang() === 'ar' ? l : COURT[l] || l);
 
-function navFor(me) {
+function navFor(me, avecMatch = me.role !== 'admin') {
   const items = [['accueil', 'Accueil', 'home'], ['offres', 'Offres', 'feed'], ['mentorat', 'Mentorat', 'mentor'], ['messages', 'Messages', 'chat']];
+  // Match (match.js) : pour les étudiants et les lauréats, juste après les offres
+  if (avecMatch) items.splice(2, 0, ['match', 'Match', 'match']);
   if (me.role === 'etudiant') items.push(['parcours', 'Mon parcours', 'route']);
   else if (me.role === 'laureat') items.push(['espace', 'Mon espace', 'star']);
   items.push(['reseau', 'Réseau', 'network'], ['suivi', me.role === 'etudiant' ? 'Mon année' : 'Suivi', 'chart']);
@@ -260,13 +263,17 @@ function App({ store }) {
   const todo = notifs.filter(n => n.geste).length;
   const msgs = store.nonLus();
   latest.current = { notifs, todo, me, msgs };
-  const nav = navFor(me);
-  // En bas sur le téléphone : cinq onglets au plus. Les messages ont leur bulle en haut, le suivi passe dans le menu.
-  const navBas = nav.filter(([k]) => k !== 'messages' && k !== 'suivi');
+  // Match : ni pour l'administration, ni en ligne tant que la base n'a pas ses tables (mise-a-jour.sql)
+  const avecMatch = me.role !== 'admin' && store.peutMatch();
+  const nav = navFor(me, avecMatch);
+  // En bas sur le téléphone : cinq onglets au plus, Match au centre. Les messages ont leur bulle en haut ; le suivi,
+  // Mon parcours et Mon espace passent dans le menu du compte (l'ordinateur garde tout dans la barre latérale).
+  const navBas = nav.filter(([k]) => k !== 'messages' && k !== 'suivi' && !(avecMatch && (k === 'parcours' || k === 'espace')));
   let page = route.base === 'offre' || route.base === 'aider' ? 'offres' : route.base;
   if (page === 'parcours' && me.role !== 'etudiant') page = me.role === 'laureat' ? 'espace' : 'accueil';
   if (page === 'espace' && me.role !== 'laureat') page = me.role === 'etudiant' ? 'parcours' : 'accueil';
   if (page === 'admin' && me.role !== 'admin') page = 'accueil';
+  if (page === 'match' && !avecMatch) page = 'accueil';
   // Ouverture depuis les données gardées sur l'appareil, mise à jour pas encore arrivée : les écrans qui ont besoin de ce
   // qui n'y est pas gardé (conversations entières, messages des groupes, commentaires de relecture, modération) l'attendent
   const attente = !!store.enAttente && (page === 'messages' || page === 'admin' || (page === 'reseau' && route.sub === 'groupes') || (page === 'mentorat' && route.sub === 'cv'));
@@ -287,7 +294,9 @@ function App({ store }) {
   const perso = me.role === 'etudiant' ? 'parcours' : me.role === 'laureat' ? 'espace' : 'accueil';
   const ongletDe = n => { const b = (n.to || '').split('/')[0]; return n.offer || n.profile || !b || b === 'parcours' || b === 'espace' ? perso : b; };
   const ouAFaire = new Set(notifs.filter(n => n.geste).map(ongletDe));
-  const dotFor = k => ouAFaire.has(k);
+  // Match : un match fait par l'autre et pas encore vu
+  const matchNeuf = avecMatch && matchsDe(data, me).some(x => x.nouveau);
+  const dotFor = k => ouAFaire.has(k) || (k === 'match' && matchNeuf);
   const neuf = x => (x > 9 ? '9+' : x);
   const plein = page === 'messages';
   // En haut de la barre latérale (ordinateur) : le formulaire de publication du rôle. Un étudiant qui ne peut pas
@@ -316,10 +325,11 @@ function App({ store }) {
         <a class=${'icon-btn chat-top mobile-only' + (page === 'messages' ? ' on' : '')} aria-current=${page === 'messages' ? 'page' : null} href="#messages" aria-label=${msgs ? `Messages (${msgs} non lus)` : 'Messages'} onClick=${e => { e.preventDefault(); go('messages', { onglet: true }); }}><${Icon} name="chat"/>${msgs ? html`<span class="badge-n" aria-hidden="true">${neuf(msgs)}</span>` : null}</a>
         <${LangToggle} onChange=${relang} store=${store} me=${me}/>
         <button class="icon-btn cloche-btn" aria-label=${todo ? `Notifications (${todo} à faire)` : 'Notifications'} aria-haspopup="dialog" onClick=${() => { setPop(null); setCloche(true); }}><${Icon} name="bell"/>${todo ? html`<span class="badge-n" aria-hidden="true">${neuf(todo)}</span>` : null}</button>
-        <div class="pop-wrap"><button class="me-btn" onClick=${() => setPop(pop === 'me' ? null : 'me')} aria-label="Mon compte" aria-expanded=${pop === 'me'}><${Avatar} p=${me} size=${34}/></button>
+        <div class="pop-wrap"><button class="me-btn" onClick=${() => setPop(pop === 'me' ? null : 'me')} aria-label="Mon compte" aria-expanded=${pop === 'me'}><${Avatar} p=${me} size=${34}/>${avecMatch && dotFor(perso) ? html`<span class="dotn mobile-only" aria-hidden="true"></span>` : null}</button>
           ${pop === 'me' ? html`<div class="menu-pop right" role="menu">
             <div class="menu-who"><strong>${me.full_name}</strong><span class="muted small">${roleTexte(me)}</span></div>
             <button onClick=${() => go('profil')}><${Icon} name="user" size=${16}/> Mon profil</button>
+            ${avecMatch ? html`<button class="menu-mobile" onClick=${() => go(perso)}><${Icon} name=${me.role === 'etudiant' ? 'route' : 'star'} size=${16}/> ${me.role === 'etudiant' ? 'Mon parcours' : 'Mon espace'}${dotFor(perso) ? html`<span class="dotn" aria-hidden="true"></span><span class="sr-only">À faire ici</span>` : null}</button>` : null}
             <button class="menu-mobile" onClick=${() => go('suivi')}><${Icon} name="chart" size=${16}/> ${me.role === 'etudiant' ? 'Mon année' : 'Suivi'}</button>
             ${me.role !== 'admin' ? html`<button onClick=${() => go('accueil/etapes')}><${Icon} name="route" size=${16}/> Comment ça marche ?</button>` : null}
             ${me.role !== 'admin' ? html`<button onClick=${() => { setPop(null); ctx.openAnnee(); }}><${Icon} name="award" size=${16}/> Ton année dans le réseau</button>` : null}
@@ -336,6 +346,7 @@ function App({ store }) {
       <main class=${'content' + (plein ? ' flush' : '')} id="contenu" tabindex="-1">
         ${page === 'accueil' ? html`<${Home} key=${me.id} ...${ctx}/>` : null}
         ${page === 'offres' ? html`<${OffersPage} ...${ctx}/>` : null}
+        ${page === 'match' ? html`<${MatchPage} ...${ctx}/>` : null}
         ${attente ? html`<${PageEnChargement} horsLigne=${store.horsLigne}/>` : null}
         ${page === 'mentorat' && !attente ? html`<${MentoratPage} ...${ctx}/>` : null}
         ${page === 'messages' && !attente ? html`<${MessagesPage} ...${ctx}/>` : null}
@@ -349,7 +360,7 @@ function App({ store }) {
         ${page === 'enquete' ? html`<${EnquetePage} ...${ctx}/>` : null}
       </main>
     </div>
-    <nav class=${'bottom-nav' + (plein && route.sub ? ' cache' : '')}>${navBas.map(([k, l, i]) => html`<a href=${'#' + k} class=${page === k ? 'on' : ''} aria-current=${page === k ? 'page' : null} onClick=${e => { e.preventDefault(); go(k, { onglet: true }); }}><span class="bn-ico"><${Icon} name=${i}/>${dotFor(k) ? html`<span class="dotn" aria-hidden="true"></span>` : null}</span><span>${court(l)}</span>${dotFor(k) ? html`<span class="sr-only">À faire ici</span>` : null}</a>`)}</nav>
+    <nav class=${'bottom-nav' + (plein && route.sub ? ' cache' : '')}>${navBas.map(([k, l, i]) => html`<a href=${'#' + k} class=${(page === k ? 'on' : '') + (k === 'match' ? ' bn-match' : '')} aria-current=${page === k ? 'page' : null} onClick=${e => { e.preventDefault(); go(k, { onglet: true }); }}><span class="bn-ico"><${Icon} name=${i}/>${dotFor(k) ? html`<span class="dotn" aria-hidden="true"></span>` : null}</span><span>${court(l)}</span>${dotFor(k) ? html`<span class="sr-only">À faire ici</span>` : null}</a>`)}</nav>
     ${cloche ? html`<${Cloche} notifs=${notifs} onGo=${openNotif} onClose=${() => setCloche(false)}/>` : null}
     ${publierOffre ? html`<${OfferComposer} ctx=${ctx} preset=${publierOffre} onClose=${() => setPublierOffre(null)}/>` : null}
     ${offerId ? html`<${OfferDetail} ctx=${ctx} id=${offerId} key=${offerId} apply=${applyNow} onClose=${() => setOfferId(null)}/>` : null}
@@ -950,6 +961,7 @@ function Home(ctx) {
         ${enRecherche ? offresBloc : null}
         <${IlsOntBesoin} ctx=${ctx} besoins=${besoins.filter(b => !montres.has(b.id))}/>
         <${NextRdv} ctx=${ctx} exclure=${montres}/>
+        <${MatchAccueil} ctx=${ctx}/>
         <${MessagesHome} ctx=${ctx} exclure=${montres}/>
         <${ConfianceHome} ctx=${ctx}/>
         <${AmbassadeurAccueil} ctx=${ctx} pasKey=${pas.key}/>
@@ -1051,6 +1063,7 @@ function MyProfile({ ctx }) {
       ${store.mode === 'live' ? html`<button class="btn ghost" onClick=${() => store.signOut()}><${Icon} name="logout"/> Se déconnecter</button>` : null}</header>
     <${PhotoCard} ctx=${ctx}/>
     <${CvCard} ctx=${ctx}/>
+    <${MatchVisible} ctx=${ctx}/>
     <${ProfileForm} ctx=${ctx} initial=${me} key=${me.id}/>
     <${MesDonnees} ctx=${ctx}/>
   </section>`;

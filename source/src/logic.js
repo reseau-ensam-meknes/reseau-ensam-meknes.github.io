@@ -1,5 +1,5 @@
 // Règles métier : saisons, niveaux, objectifs, points d'impact, badges, statistiques.
-import { pointsOffre, POINTS_OFFRE, estPortee, estPartagee } from './origine.js';
+import { pointsOffre, POINTS_OFFRE, estPortee, estPartagee, offreVisible } from './origine.js';
 
 // Cycle ingénieur : 5 parcours et 11 filières (choix en 3A). Les 1A et 2A sont en classes préparatoires intégrées.
 // En 5A, les matières communes se font en deux sections : A (électro-industriel, IA, informatique) et B (mécanique, civil).
@@ -955,6 +955,8 @@ export const bloque = (data, a, b) => (data.blocages || []).some(x => entre(x, a
 // Ce qui relie deux membres, du plus utile au plus général : sert de sous-titre à la conversation
 export function lienAvec(data, me, autre, profil = () => null) {
   if (!me || !autre || me.id === autre) return null;
+  // Un match (page Match) ouvre la discussion entre l'étudiant et le lauréat, comme peut_discuter() dans la base
+  { const mt = (data.matchs || []).find(x => entre(x, me.id, autre, 'etudiant_id', 'laureat_id')); if (mt) return { type: 'match', label: 'Match', detail: (mt.offre_id && data.offers.find(o => o.id === mt.offre_id)?.titre) || null, match: mt.id }; }
   const m = data.mentorships.filter(x => x.mentor_id && ['demande', 'acceptee', 'terminee'].includes(x.status) && entre(x, me.id, autre, 'student_id', 'mentor_id'))
     .sort((a, b) => (a.status === 'acceptee' ? 0 : 1) - (b.status === 'acceptee' ? 0 : 1) || new Date(b.created_at) - new Date(a.created_at))[0];
   if (m) return { type: 'mentorat', label: 'Mentorat', detail: m.sujet, m };
@@ -1391,4 +1393,177 @@ export function texteReussite(pl, etudiant, langue, lien) {
   }
   const qui = prenom || `Quelqu’un de la promo ${promo} (${code})`;
   return `Bonne nouvelle pour la promo ${promo} 🎉\n${qui} a décroché ${TROUVE.fr[pl.type] || TROUVE.fr.stage} chez ${pl.entreprise}${pl.laureat_id ? ', grâce à un lauréat du réseau' : ''}.\nTu cherches aussi ? Les lauréats du Réseau ENSAM Meknès aident les étudiants :\n${lien}`;
+}
+
+// ---------------------------------------------------------------------------
+// Match : comme les applis de rencontre, mais pour le travail. Une carte à la fois, « Intéressé » ou « Plus tard ».
+// L'étudiant voit des offres de lauréats (et les lauréats qui s'intéressent à lui) ; le lauréat voit des étudiants.
+// Quand les deux disent oui, c'est un match. Mêmes règles que protect_match_choix() et match_apres_choix() dans la base.
+// ---------------------------------------------------------------------------
+export const MATCH_PLUS_TARD_JOURS = 30;
+export const MATCH_PAR_JOUR = 80;
+const tms = iso => new Date(iso || 0).getTime();
+const memeCibleMatch = (x, c) => (x.cible_profil || null) === (c.profil || null) && (x.cible_offre || null) === (c.offre || null);
+// Le match entre ces deux personnes (l'étudiant et le lauréat, dans un sens ou dans l'autre), sinon null
+export const matchEntre = (data, a, b) => (data?.matchs || []).find(x => entre(x, a, b, 'etudiant_id', 'laureat_id')) || null;
+// Un étudiant a dit oui à une offre de ce lauréat
+const ouiAOffreDe = (data, etu, lau) => (data.match_choix || []).some(c => c.user_id === etu && c.choix === 'oui' && c.cible_offre && data.offers.find(o => o.id === c.cible_offre)?.author_id === lau);
+
+// Ce que la base refuserait pour ce choix (son message), sinon null. cible : { profil } ou { offre }.
+export function refusChoixMatch(data, me, cible, now = Date.now(), saison = seasonOf(new Date(now))) {
+  if (!me || !['etudiant', 'laureat'].includes(me.role)) return 'Match est réservé aux étudiants et aux lauréats.';
+  const P = id => (data.profiles || []).find(p => p.id === id);
+  let autre;
+  if (cible?.offre) {
+    const o = data.offers.find(x => x.id === cible.offre);
+    if (!o) return 'Cette offre n’existe plus.';
+    autre = o.author_id;
+    if (autre === me.id) return 'C’est ta propre offre.';
+    if (me.role !== 'etudiant') return 'Dans Match, les offres sont proposées aux étudiants.';
+    if (o.status !== 'ouverte') return 'Cette offre n’est plus ouverte.';
+    if ((o.audience || 'etudiants') !== 'etudiants' || !(o.annees || []).includes(niveauOf(me, saison)) || (estPartagee(o) && P(autre)?.role !== 'laureat')) return 'Cette offre n’est pas proposée à ton année.';
+  } else {
+    autre = cible?.profil;
+    if (autre === me.id) return 'Choisis un autre membre que toi.';
+    const c = P(autre);
+    if (!c) return 'Ce membre n’est plus sur le réseau.';
+    if (me.role === 'etudiant') {
+      if (c.role !== 'laureat' || !(data.match_choix || []).some(x => x.user_id === autre && x.cible_profil === me.id && x.choix === 'oui')) return 'Ici, tu réponds aux lauréats qui s’intéressent à ton profil.';
+    } else if (c.role !== 'etudiant' || !String(c.filiere || '').trim() || !(c.match_visible !== false || ouiAOffreDe(data, autre, me.id))) return 'Ce profil n’est pas proposé dans Match.';
+  }
+  if (bloque(data, me.id, autre)) return 'Action non autorisée pour ton compte.';
+  const n = (data.match_choix || []).filter(x => x.user_id === me.id && now - tms(x.updated_at) < 864e5 && !memeCibleMatch(x, cible)).length;
+  if (n >= MATCH_PAR_JOUR) return 'Tu as déjà fait 80 choix aujourd’hui. La suite demain !';
+  return null;
+}
+
+// Après un « oui » (row, avant : la ligne d'avant ou null) : le match que la base crée, { etudiant_id, laureat_id, offre_id }, sinon null.
+// Le lauréat a dit oui au profil de l'étudiant ET l'étudiant a dit oui à une offre de ce lauréat (la plus récente) ou à son profil.
+export function nouveauMatch(data, row, avant = null) {
+  if (row?.choix !== 'oui' || avant?.choix === 'oui') return null;
+  const P = id => (data.profiles || []).find(p => p.id === id);
+  let etu, lau;
+  if (row.cible_offre) { etu = row.user_id; lau = data.offers.find(o => o.id === row.cible_offre)?.author_id; }
+  else if (P(row.user_id)?.role === 'etudiant') { etu = row.user_id; lau = row.cible_profil; }
+  else { lau = row.user_id; etu = row.cible_profil; }
+  if (P(etu)?.role !== 'etudiant' || P(lau)?.role !== 'laureat' || matchEntre(data, etu, lau)) return null;
+  const C = data.match_choix || [];
+  const offre = C.filter(c => c.user_id === etu && c.choix === 'oui' && c.cible_offre && data.offers.find(o => o.id === c.cible_offre)?.author_id === lau)
+    .sort((a, b) => tms(b.updated_at) - tms(a.updated_at))[0]?.cible_offre || null;
+  if (C.some(c => c.user_id === lau && c.cible_profil === etu && c.choix === 'oui') && (offre || C.some(c => c.user_id === etu && c.cible_profil === lau && c.choix === 'oui')))
+    return { etudiant_id: etu, laureat_id: lau, offre_id: offre };
+  return null;
+}
+
+// Proximité d'une offre avec une filière : 2 = la filière y est, 1 = même parcours, 0 = sinon (ou ouverte à toutes)
+const proxOffre = (o, filiere) => (!filiere || !o.filieres?.length ? 0 : o.filieres.includes(filiere) ? 2 : o.filieres.some(f => proximiteFiliere(f, filiere) >= 1) ? 1 : 0);
+
+// Les cartes de « me », dans l'ordre : { cle, sorte: 'offre'|'etudiant'|'laureat', offre?, profil, interet?: { de, offre?, at }, raison }.
+//   étudiant : les lauréats qui ont dit oui à son profil, puis les offres de lauréats ouvertes à son année et à sa filière ;
+//   lauréat : les étudiants qui ont dit oui à une de ses offres, puis les étudiants qui apparaissent dans Match.
+// Jamais une carte déjà « Intéressé », ni « Plus tard » depuis moins de 30 jours (sauf un intérêt plus récent), ni une
+// personne bloquée ou déjà en match. L'administration : rien.
+export function deckMatch(data, me, now = Date.now(), saison = seasonOf(new Date(now))) {
+  if (!me || !['etudiant', 'laureat'].includes(me.role)) return [];
+  const C = data.match_choix || [], P = id => (data.profiles || []).find(p => p.id === id);
+  const miens = new Map(C.filter(c => c.user_id === me.id).map(c => [c.cible_offre ? 'o:' + c.cible_offre : 'p:' + c.cible_profil, c]));
+  const exclu = (cle, depuis) => {
+    const c = miens.get(cle); if (!c) return false;
+    if (c.choix === 'oui') return true;
+    if (depuis && tms(depuis) > tms(c.updated_at)) return false;
+    return now - tms(c.updated_at) < MATCH_PLUS_TARD_JOURS * 864e5;
+  };
+  const enMatch = new Set((data.matchs || []).filter(m => m.etudiant_id === me.id || m.laureat_id === me.id).map(m => (m.etudiant_id === me.id ? m.laureat_id : m.etudiant_id)));
+  const libre = id => id && id !== me.id && !enMatch.has(id) && !bloque(data, me.id, id);
+  const types = demandesActives(data, me.id).map(d => d.type);
+  const cartes = [];
+  if (me.role === 'etudiant') {
+    const vus = new Set();
+    for (const c of C.filter(x => x.cible_profil === me.id && x.choix === 'oui').sort((a, b) => tms(b.updated_at) - tms(a.updated_at))) {
+      const l = P(c.user_id);
+      if (!l || l.role !== 'laureat' || vus.has(l.id) || !libre(l.id) || exclu('p:' + l.id, c.updated_at)) continue;
+      vus.add(l.id);
+      // Son offre ouverte pour moi, s'il en a une : le contexte de son intérêt
+      const offre = data.offers.filter(o => o.author_id === l.id && offreMatchable(data, o, me, saison, now)).sort((a, b) => tms(b.created_at) - tms(a.created_at))[0];
+      cartes.push({ cle: 'p:' + l.id, sorte: 'laureat', profil: l, interet: { de: l.id, offre: offre || null, at: c.updated_at } });
+    }
+    const postule = new Set(data.applications.filter(a => a.student_id === me.id && a.offer_id).map(a => a.offer_id));
+    const offres = data.offers.filter(o => offreMatchable(data, o, me, saison, now) && filiereMatch(o.filieres, me.filiere) && !postule.has(o.id) && libre(o.author_id) && !vus.has(o.author_id) && !exclu('o:' + o.id))
+      .sort((a, b) => proxOffre(b, me.filiere) - proxOffre(a, me.filiere) || (types.includes(a.type) ? 0 : 1) - (types.includes(b.type) ? 0 : 1) || tms(b.created_at) - tms(a.created_at));
+    for (const o of offres) cartes.push({ cle: 'o:' + o.id, sorte: 'offre', offre: o, profil: P(o.author_id) });
+  } else {
+    const vus = new Set();
+    for (const c of C.filter(x => x.choix === 'oui' && x.cible_offre).sort((a, b) => tms(b.updated_at) - tms(a.updated_at))) {
+      const o = data.offers.find(x => x.id === c.cible_offre), e = P(c.user_id);
+      if (!o || o.author_id !== me.id || !e || e.role !== 'etudiant' || !String(e.filiere || '').trim() || vus.has(e.id) || !libre(e.id) || exclu('p:' + e.id, c.updated_at)) continue;
+      vus.add(e.id);
+      cartes.push({ cle: 'p:' + e.id, sorte: 'etudiant', profil: e, interet: { de: e.id, offre: o, at: c.updated_at } });
+    }
+    const rang = e => {
+      const px = proximiteFiliere(me.filiere, e.filiere);
+      if (px >= 1 && demandesActives(data, e.id).length) return 0;
+      return px === 2 ? 1 : px === 1 ? 2 : e.cv_path || e.cv_url ? 3 : 4;
+    };
+    const etus = (data.profiles || []).filter(e => e.role === 'etudiant' && e.match_visible !== false && String(e.filiere || '').trim() && e.filiere !== PREPA && !vus.has(e.id) && libre(e.id) && !exclu('p:' + e.id))
+      .map(e => ({ e, r: rang(e), n: niveauOf(e, saison) }))
+      .sort((a, b) => a.r - b.r || b.n - a.n || tms(b.e.created_at) - tms(a.e.created_at));
+    for (const { e } of etus) cartes.push({ cle: 'p:' + e.id, sorte: 'etudiant', profil: e });
+  }
+  return cartes.map(c => ({ ...c, raison: pourquoiCarte(c, me, data, saison) }));
+}
+// Une offre qu'un étudiant peut choisir dans Match : ouverte (pas un partage expiré), pour les étudiants de son année,
+// d'un lauréat (le match se fait avec lui), date limite pas passée
+function offreMatchable(data, o, me, saison, now) {
+  if (!offreVisible(o, now) || (o.audience || 'etudiants') !== 'etudiants' || !(o.annees || []).includes(niveauOf(me, saison))) return false;
+  if (o.deadline && new Date(o.deadline + 'T23:59:59').getTime() < now) return false;   // la date limite est passée (jusqu'au soir inclus)
+  return (data.profiles || []).find(p => p.id === o.author_id)?.role === 'laureat';
+}
+
+// Les matchs de « me », les plus récents d'abord : { m, autre (profil), offre, nouveau (pas encore vu par moi) }
+export function matchsDe(data, me) {
+  if (!me) return [];
+  return (data?.matchs || []).filter(m => m.etudiant_id === me.id || m.laureat_id === me.id).map(m => {
+    const etu = m.etudiant_id === me.id;
+    return { m, autre: (data.profiles || []).find(p => p.id === (etu ? m.laureat_id : m.etudiant_id)) || null, offre: (m.offre_id && data.offers.find(o => o.id === m.offre_id)) || null, nouveau: !(etu ? m.vu_etudiant_at : m.vu_laureat_at) };
+  }).filter(x => x.autre).sort((a, b) => tms(b.m.created_at) - tms(a.m.created_at));
+}
+
+// Où en est un match : 'match' → 'entretien' (candidature en entretien, ou entretien accepté dans la discussion) → 'retenu'
+// (candidature retenue, ou réussite déclarée entre eux) ; 'pas_retenu' si la candidature à l'offre du match n'est pas retenue.
+export function etapeMatch(data, match) {
+  if (!match) return 'match';
+  const { etudiant_id: e, laureat_id: l } = match;
+  const offresDe = new Set(data.offers.filter(o => o.author_id === l).map(o => o.id));
+  const cands = data.applications.filter(a => a.student_id === e && a.offer_id && offresDe.has(a.offer_id));
+  if ((data.placements || []).some(p => p.student_id === e && p.laureat_id === l && p.status !== 'refuse') || cands.some(a => a.status === 'retenu')) return 'retenu';
+  if (match.offre_id && cands.find(a => a.offer_id === match.offre_id)?.status === 'refuse') return 'pas_retenu';
+  if (cands.some(a => a.status === 'entretien') || (data.messages || []).some(x => x.type === 'rdv' && x.rdv_reponse === 'oui' && entre(x, e, l, 'author_id', 'dest_id'))) return 'entretien';
+  return 'match';
+}
+
+const CHERCHE = { stage: 'un stage', pfe: 'un PFE', etranger: 'un stage à l’étranger', emploi: 'un emploi' };
+// Pourquoi cette carte : une phrase courte et vraie (jamais un score)
+export function pourquoiCarte(carte, me, data = null, saison = seasonOf()) {
+  const p = carte?.profil;
+  if (carte?.sorte === 'offre') {
+    const o = carte.offre;
+    if (data && demandesActives(data, me?.id).some(d => d.type === o.type)) return 'Correspond à ta demande';
+    const px = proxOffre(o, me?.filiere);
+    return px === 2 ? 'Pour ta filière' : px === 1 ? 'Pour ton parcours' : !o.filieres?.length ? 'Ouverte à toutes les filières' : 'Pour ton année';
+  }
+  if (carte?.sorte === 'laureat') {
+    const px = proximiteFiliere(me?.filiere, p?.filiere);
+    return px === 2 ? 'Même filière que toi' : px === 1 ? 'Même parcours que toi' : p?.entreprise ? `Travaille chez ${p.entreprise}` : `Promo ${p?.promo}`;
+  }
+  const d = data ? demandesActives(data, p?.id).sort((a, b) => tms(b.created_at) - tms(a.created_at))[0] : null;
+  if (d && CHERCHE[d.type]) return `Cherche ${CHERCHE[d.type]} en ${filiereCourte(p.filiere)}`;
+  const px = proximiteFiliere(me?.filiere, p?.filiere);
+  if (px === 2) return 'Même filière que toi';
+  if (px === 1) return 'Même parcours que toi';
+  // Une compétence en commun avec le lauréat (« Lean, comme toi »)
+  const miennes = new Set((me?.competences || []).map(x => String(x).trim().toLowerCase()));
+  const commune = (p?.competences || []).find(x => miennes.has(String(x).trim().toLowerCase()));
+  if (commune) return `${commune}, comme toi`;
+  const n = niveauOf(p, saison);
+  return n >= 1 && n <= 5 ? `En ${n}A à l’école` : 'Étudiant à l’école';
 }

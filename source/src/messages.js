@@ -3,12 +3,14 @@
 // parrainage, relecture de CV) ; l'administration peut écrire à tout le monde.
 // Les règles sont dans la base (peut_discuter, protect_message) ; l'écran les reflète.
 import { html, useState, useEffect, useLayoutEffect, useRef, useMemo } from './vendor/preact-htm.js';
-import { Icon, Avatar, Empty, toast, injectCSS, roleTexte } from './ui.js';
+import { Icon, Avatar, Empty, toast, injectCSS, roleTexte, Modal, lienDirect } from './ui.js';
 import { useBrouillon, oublierBrouillon, lireBrouillon, ecrireBrouillon } from './ui.js';
-import { conversations, lienAvec, mentorState, norm } from './logic.js';
+import { conversations, lienAvec, mentorState, norm, matchEntre, etapeMatch, titreOffre, peutPostulerA } from './logic.js';
 import { addAR, getLang } from './i18n.js';
-import { VOCAL_MAX, REACTIONS } from './store.js';
+import { VOCAL_MAX, REACTIONS, jitsiLink } from './store.js';
 import { SignalerBtn } from './confiance.js';
+import { OuvrirCV } from './cv.js';
+import { gcalUrl, icsHref } from './mentorat.js';
 
 const pad = n => String(n).padStart(2, '0');
 const prenom = p => (p?.full_name || '').split(' ')[0] || 'Membre';
@@ -49,6 +51,7 @@ function Apercu({ m, me }) {
   const moi = m.author_id === me;
   return html`<span class="ci-prev apercu">${moi ? html`<span class="ci-moi ap-qui">Toi :</span>` : null}${m.type === 'photo' ? html`<span class="ci-media"><${Icon} name="image" size=${14}/> Photo</span>`
     : m.type === 'vocal' ? html`<span class="ci-media"><${Icon} name="mic" size=${14}/> Message vocal · <span class="mono">${minSec(m.duree)}</span></span>`
+    : m.type === 'rdv' ? html`<span class="ci-media"><${Icon} name="calendar" size=${14}/> Entretien proposé</span>`
     : html`<span class="ap-txt" translate="no" dir="auto">${m.body}</span>`}</span>`;
 }
 
@@ -173,6 +176,9 @@ function Conversation({ ctx, autre }) {
   const [plusBas, setPlusBas] = useState(false);
   // Répondre à un message précis : il s'affiche au-dessus de la zone d'écriture jusqu'à l'envoi
   const [cite, setCite] = useState(null);
+  // Un match (page Match) entre nous : le bandeau, et la feuille « Programmer un entretien » (ouverte : true)
+  const mt = matchEntre(data, me.id, autre);
+  const [entretien, setEntretien] = useState(false);
   const zone = useRef(); const canal = useRef(null); const enBas = useRef(true); const ouvertA = useRef(Date.now());
 
   // « écrit… » : signal éphémère de l'autre personne
@@ -221,6 +227,7 @@ function Conversation({ ctx, autre }) {
   const reessayer = e => { setEnvois(x => x.filter(m => m.id !== e.id)); envoyer(e.args); };
   const bloquer = () => ctx.confirm(`Bloquer ${prenom(p)} ? Vous ne pourrez plus vous écrire. Tu peux débloquer à tout moment.`, () => act(async () => { await store.insert('blocages', { user_id: me.id, bloque_id: autre }); toast('C’est fait. Vous ne pouvez plus vous écrire.'); }), 'Bloquer');
   const debloquer = () => act(async () => { await store.remove('blocages', blocage.id); toast('Le blocage est levé.'); });
+  const retirerMatch = () => ctx.confirm(`Retirer le match avec ${prenom(p)} ? La carte ne reviendra pas dans Match.`, () => act(async () => { await store.retirerMatch(mt.id); toast('Le match est retiré.'); }), 'Retirer le match');
   const supprimer = m => ctx.confirm('Supprimer ce message pour vous deux ?', () => act(async () => { await store.supprimerMessage(m.id); setSel(null); }), 'Supprimer');
   const copier = async m => { try { await navigator.clipboard.writeText(m.body || ''); toast('Message copié.'); } catch { toast('Copie impossible sur cet appareil.', 'err'); } setSel(null); };
   // Le focus se donne pendant le geste lui-même : iOS n'ouvre le clavier qu'à cette condition
@@ -267,11 +274,13 @@ function Conversation({ ctx, autre }) {
       <div class="pop-wrap conv-menu"><button class="icon-btn" aria-label="Options de la conversation" aria-expanded=${menu} onClick=${() => setMenu(!menu)}><${Icon} name="more"/></button>
         ${menu ? html`<div class="menu-pop right" role="menu">
           <button onClick=${() => { setMenu(false); openProfile(p); }}><${Icon} name="user" size=${16}/> Voir le profil</button>
+          ${mt ? html`<button onClick=${() => { setMenu(false); retirerMatch(); }}><${Icon} name="x" size=${16}/> Retirer le match</button>` : null}
           ${p?.role !== 'admin' && me.role !== 'admin' ? (blocage ? html`<button onClick=${() => { setMenu(false); debloquer(); }}><${Icon} name="block" size=${16}/> Débloquer</button>`
             : html`<button class="danger-t" onClick=${() => { setMenu(false); bloquer(); }}><${Icon} name="block" size=${16}/> Bloquer</button>`) : null}
         </div>` : null}
       </div>
     </header>
+    ${mt && p ? html`<${MatchBandeau} ctx=${ctx} mt=${mt} p=${p} actif=${actif} onProgrammer=${() => setEntretien(true)}/>` : null}
     ${rdv ? html`<div class="conv-rdv"><${Icon} name="video" size=${16}/><span><span>Rendez-vous</span> <span>${jourDe(rdv.rdv_at)}</span> · <span class="mono">${heure(rdv.rdv_at)}</span></span><span class="spacer"></span>
       ${lienVisio ? html`<a class="btn tiny" href=${lienVisio} target="_blank" rel="noopener"><${Icon} name="video" size=${14}/> Rejoindre</a>` : null}</div>` : null}
 
@@ -287,7 +296,7 @@ function Conversation({ ctx, autre }) {
           <${Bulle} key=${m.id} ctx=${ctx} m=${m} mine=${m.author_id === me.id} suite=${suite} neuf=${new Date(m.created_at) > ouvertA.current - 1500}
             sel=${sel === m.id} onSel=${() => setSel(sel === m.id ? null : m.id)} onVoir=${setVue} onCopier=${copier} onSupprimer=${supprimer} onReessayer=${reessayer}
             cite=${m.reponse_a ? parId.get(m.reponse_a) || 'supprime' : null} nomDe=${nomDe} onAller=${allerA} reactions=${reactions.get(m.id) || []} options=${options}
-            onRepondre=${repondre} onReagir=${reagir}/>`;
+            onRepondre=${repondre} onReagir=${reagir} onAutre=${actif ? () => setEntretien(true) : null}/>`;
       })}
       ${tape ? html`<div class="msg tape-bulle" aria-hidden="true"><div class="bulle"><span class="tape-dots"><i></i><i></i><i></i></span></div></div>` : null}
     </div>
@@ -298,19 +307,190 @@ function Conversation({ ctx, autre }) {
       : html`<${Composer} txt=${txt} setTxt=${setTxt} onEnvoyer=${envoyer} onTape=${() => canal.current?.tape()}
           cite=${cite && fil.some(m => m.id === cite.id) ? cite : null} nomDe=${nomDe} onAnnulerCite=${() => setCite(null)}/>`}
     ${vue ? html`<${Visionneuse} url=${vue} onClose=${() => setVue(null)}/>` : null}
+    ${entretien && p ? html`<${EntretienSheet} ctx=${ctx} p=${p} onClose=${() => setEntretien(false)}/>` : null}
   </section>`;
 }
 
-// Les liens écrits dans un message deviennent cliquables
-function Texte({ body }) {
+// ---------------------------------------------------------------------------
+// Match (match.js) : une discussion née d'un match a son bandeau (où en est-on, et les gestes utiles),
+// et l'on peut y proposer un entretien (message de type 'rdv' : feuille, puis carte dans la discussion)
+// ---------------------------------------------------------------------------
+const ETAPES = [['match', 'Match'], ['entretien', 'Entretien'], ['retenu', 'Retenu']];
+const jourMois = iso => { const d = new Date(iso); return `${d.getDate()} ${MOIS[d.getMonth()]}`; };
+const httpsDe = u => (/^https?:\/\//i.test(u || '') ? u : 'https://' + u);
+function MatchBandeau({ ctx, mt, p, actif, onProgrammer }) {
+  const { data, me, store, act, saison } = ctx;
+  const etape = etapeMatch(data, mt);
+  const o = mt.offre_id ? store.byId('offers', mt.offre_id) : null;
+  const etu = me.role === 'etudiant';
+  const i = ETAPES.findIndex(([k]) => k === etape);
+  // Le lauréat lit le CV de l'étudiant après le match ; l'étudiant envoie le sien, et postule à l'offre du match en un geste
+  const cvLu = !etu && store.voitChamp(p, 'cv') ? (p.cv_path ? 'path' : p.cv_url ? 'url' : null) : null;
+  const postulable = etu && actif && o && o.status === 'ouverte' && peutPostulerA(o, me, saison) && !data.applications.some(a => a.student_id === me.id && a.offer_id === o.id);
+  const envoyerCV = () => {
+    if (!me.cv_path && !me.cv_url) { toast('Dépose d’abord ton CV dans Mon profil.', 'info'); return ctx.go('profil'); }
+    act(async () => { await store.envoyerMessage({ dest: p.id, type: 'texte', body: `${getLang() === 'ar' ? 'هذه سيرتي الذاتية:' : 'Voici mon CV :'}\n${lienDirect('cv/' + me.id)}` }); toast('CV envoyé.', 'envoi'); });
+  };
+  const postuler = () => act(async () => {
+    await store.insert('applications', { student_id: me.id, offer_id: o.id, entreprise: o.entreprise, titre: o.titre, message: 'Suite à notre match sur le Réseau ENSAM, je postule à cette offre. Mon CV est sur mon profil.', status: 'postule' });
+    toast('Candidature envoyée à ' + (p.full_name || 'au lauréat') + '.', 'envoi');
+  });
+  return html`<div class="mx-bandeau" role="region" aria-label="Match">
+    <p class="mx-b-l1"><span class="mx-b-ico" aria-hidden="true"><${Icon} name="match" size=${16}/></span>
+      <span class="mx-b-quoi"><strong>Match</strong><span aria-hidden="true">·</span><span>${jourMois(mt.created_at)}</span>${o ? html`<span aria-hidden="true">·</span><span class="mx-b-offre" translate="no" dir="auto">${titreOffre(o)}</span>` : null}</span></p>
+    ${etape === 'pas_retenu' ? html`<p class="mx-b-pas small muted">Candidature pas retenue cette fois. La discussion reste ouverte.</p>`
+      : html`<ol class="mx-etapes">${ETAPES.map(([k, l], j) => html`<li key=${k} class=${j < i ? 'fait' : j === i ? 'ici' : ''} aria-current=${j === i ? 'step' : null}>
+          <span class="mx-e-pt" aria-hidden="true">${j < i || (j === i && k === 'retenu') ? html`<${Icon} name="check" size=${12}/>` : null}</span><span class="mx-e-lib">${l}</span></li>`)}</ol>`}
+    ${actif ? html`<div class="mx-b-acts">
+      <button type="button" class="btn small tonal" onClick=${onProgrammer}><${Icon} name="calendar" size=${16}/> Programmer un entretien</button>
+      ${cvLu === 'path' ? html`<${OuvrirCV} store=${store} path=${p.cv_path} cls="btn small ghost"/>` : cvLu === 'url' ? html`<a class="btn small ghost" href=${httpsDe(p.cv_url)} target="_blank" rel="noopener"><${Icon} name="file" size=${14}/> Voir le CV</a>` : null}
+      ${etu ? html`<button type="button" class="btn small ghost" onClick=${envoyerCV}><${Icon} name="file" size=${16}/> Envoyer mon CV</button>` : null}
+      ${postulable ? html`<button type="button" class="btn small ghost" onClick=${postuler}><${Icon} name="send" size=${16}/> Postuler</button>` : null}
+    </div>` : null}
+  </div>`;
+}
+
+// Le CV envoyé dans la discussion : une ligne avec « Ouvrir » pour qui peut le lire (le lauréat du match, l'auteur)
+function CvDansMessage({ ctx, id }) {
+  const { store } = ctx;
+  const p = store.byId('profiles', id);
+  if (!p) return null;
+  const voit = store.voitChamp(p, 'cv');
+  return html`<span class="msg-cv"><${Icon} name="file" size=${16}/><span class="msg-cv-nom">${`CV de ${prenom(p)}`}</span>
+    ${voit && p.cv_path ? html`<${OuvrirCV} store=${store} path=${p.cv_path} label="Ouvrir" cls="btn tiny tonal"/>`
+      : voit && p.cv_url ? html`<a class="btn tiny tonal" href=${httpsDe(p.cv_url)} target="_blank" rel="noopener">Ouvrir</a>`
+      : html`<span class="small muted">Lisible après un match</span>`}</span>`;
+}
+
+// Proposer un entretien : le jour, l'heure, la durée (15 min = un appel), en visio (lien Jitsi créé, ou un lien collé) ou sur place
+const HEURES = ['09:00', '10:00', '11:00', '14:00', '15:00', '16:00', '17:00', '18:00'];
+const DUREES = [15, 30, 45, 60];
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const dureeTexte = n => (n === 60 ? '1 h' : `${n} min`);
+function joursProposes(now = new Date()) {
+  const d0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // Six jours à partir d'aujourd'hui (de demain après 17 h), sans les dimanches
+  const l = [];
+  for (let i = now.getHours() >= 17 ? 1 : 0; l.length < 6; i++) { const d = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate() + i); if (d.getDay() !== 0) l.push(d); }
+  return l;
+}
+// « Aujourd’hui », « Demain », sinon « mardi 3 novembre »
+const jourLong = (iso, now = new Date()) => { const d = new Date(iso), diff = Math.round((jour0(d) - jour0(now)) / 864e5); return diff === 0 ? 'Aujourd’hui' : diff === 1 ? 'Demain' : maj(`${JOURS[d.getDay()]} ${d.getDate()} ${MOIS[d.getMonth()]}`); };
+const nomJour = (d, now = new Date()) => { const diff = Math.round((jour0(d) - jour0(now)) / 864e5); return diff === 0 ? 'Aujourd’hui' : diff === 1 ? 'Demain' : maj(`${JOURS[d.getDay()]} ${d.getDate()}`); };
+const maj = t => t.charAt(0).toUpperCase() + t.slice(1);
+function EntretienSheet({ ctx, p, onClose }) {
+  const { store, act } = ctx;
+  const jours = useMemo(() => joursProposes(), []);
+  const [jour, setJour] = useState(() => ymd(jours[Math.min(1, jours.length - 1)]));
+  const [h, setH] = useState('10:00');
+  const [duree, setDuree] = useState(30);
+  const [mode, setMode] = useState('visio');
+  const [lien, setLien] = useState('');
+  const [lieu, setLieu] = useState('');
+  const [note, setNote] = useState('');
+  const [err, setErr] = useState('');
+  const quand = new Date(`${jour}T${h || '00:00'}`);
+  const valide = !isNaN(quand) && quand.getTime() > Date.now() && quand.getTime() <= Date.now() + 120 * 864e5;
+  const max = ymd(new Date(Date.now() + 119 * 864e5));
+  const autreJour = !jours.some(d => ymd(d) === jour), autreHeure = !HEURES.includes(h);
+  const envoyer = e => {
+    e?.preventDefault?.();
+    const l = lien.trim(), li = lieu.trim().slice(0, 200);
+    if (!valide) return setErr('Choisis une date à venir, dans les 4 prochains mois.');
+    if (mode === 'visio' && l && !/^https:\/\/\S+$/i.test(l)) return setErr('Le lien de la visio doit commencer par https://');
+    if (mode === 'lieu' && !li) return setErr('Indique le lieu de l’entretien.');
+    setErr('');
+    act(async () => {
+      await store.envoyerMessage({ dest: p.id, type: 'rdv', body: note.trim() || null, rdv_at: quand.toISOString(), rdv_duree: duree, rdv_lieu: mode === 'lieu' ? li : null, rdv_lien: mode === 'visio' ? l || jitsiLink() : null });
+      toast(`Entretien proposé à ${prenom(p)}.`, 'envoi');
+      onClose();
+    });
+  };
+  const resume = valide ? `${jourLong(quand.toISOString())} · ${heure(quand.toISOString())} · ${duree === 15 ? 'Appel de 15 min' : dureeTexte(duree)}` : null;
+  return html`<${Modal} title="Programmer un entretien" onClose=${onClose} cls="mx-feuille" footer=${html`
+    <button type="submit" form="mx-rdv-f" class="btn primary"><${Icon} name="send" size=${18}/> Proposer l’entretien</button>`}>
+    <form id="mx-rdv-f" class="mx-rdv-form" onSubmit=${envoyer} noValidate>
+      <p class="mx-avec"><${Avatar} p=${p} size=${32}/><span>${`Entretien avec ${p.full_name}`}</span></p>
+      <fieldset class="mx-fs"><legend>Jour</legend>
+        <div class="chips">${jours.map(d => html`<button type="button" key=${ymd(d)} class=${'chip' + (ymd(d) === jour ? ' on' : '')} aria-pressed=${ymd(d) === jour} onClick=${() => setJour(ymd(d))}>${nomJour(d)}</button>`)}</div>
+        <label class=${'mx-autre' + (autreJour ? ' on' : '')}><span>Autre date</span><input type="date" id="mx-rdv-jour" min=${ymd(new Date())} max=${max} value=${jour} onInput=${e => e.target.value && setJour(e.target.value)}/></label>
+      </fieldset>
+      <fieldset class="mx-fs"><legend>Heure</legend>
+        <div class="chips">${HEURES.map(x => html`<button type="button" key=${x} class=${'chip time mono' + (x === h ? ' on' : '')} aria-pressed=${x === h} onClick=${() => setH(x)}>${x}</button>`)}</div>
+        <label class=${'mx-autre' + (autreHeure ? ' on' : '')}><span>Autre heure</span><input type="time" id="mx-rdv-heure" step="300" value=${h} onInput=${e => e.target.value && setH(e.target.value)}/></label>
+      </fieldset>
+      <fieldset class="mx-fs"><legend>Durée</legend>
+        <div class="chips">${DUREES.map(n => html`<button type="button" key=${n} class=${'chip' + (n === duree ? ' on' : '')} aria-pressed=${n === duree} onClick=${() => setDuree(n)}>${n === 15 ? '15 min · appel' : dureeTexte(n)}</button>`)}</div>
+      </fieldset>
+      <fieldset class="mx-fs"><legend>Où</legend>
+        <div class="seg" role="group"><button type="button" class=${mode === 'visio' ? 'on' : ''} aria-pressed=${mode === 'visio'} onClick=${() => setMode('visio')}><${Icon} name="video" size=${16}/> En visio</button>
+          <button type="button" class=${mode === 'lieu' ? 'on' : ''} aria-pressed=${mode === 'lieu'} onClick=${() => setMode('lieu')}><${Icon} name="pin" size=${16}/> Sur place</button></div>
+        ${mode === 'visio' ? html`<label class="field"><span class="field-label">Lien Meet ou Teams (facultatif)</span>
+            <input type="url" id="mx-rdv-lien" inputmode="url" dir="ltr" placeholder="https://…" maxlength="300" value=${lien} onInput=${e => setLien(e.target.value)}/>
+            <span class="small muted">Sans lien, une visio Jitsi est créée pour vous deux.</span></label>`
+          : html`<label class="field"><span class="field-label">Lieu</span><input type="text" id="mx-rdv-lieu" maxlength="200" placeholder="Ex. : usine de Meknès, accueil principal" value=${lieu} onInput=${e => setLieu(e.target.value)}/></label>`}
+      </fieldset>
+      <label class="field"><span class="field-label">Un mot (facultatif)</span><textarea id="mx-rdv-note" rows="2" maxlength="500" placeholder="Ex. : prépare un exemple de projet." value=${note} onInput=${e => setNote(e.target.value)}></textarea></label>
+      ${resume ? html`<p class="mx-resume"><${Icon} name="calendar" size=${16}/><span>${resume}</span></p>` : null}
+      ${err ? html`<p class="mx-err" role="alert">${err}</p>` : null}
+    </form>
+  <//>`;
+}
+
+// Un entretien proposé, dans la discussion : la date en grand, la durée, la visio ou le lieu ; le destinataire répond
+// (« Je serai là » / « Autre horaire »), chacun l'ajoute à son agenda ; « Rejoindre » paraît 10 minutes avant.
+function CarteRdv({ ctx, m, mine, onAutre }) {
+  const { store, me, act } = ctx;
+  const [, tic] = useState(0);
+  const debut = new Date(m.rdv_at).getTime(), fin = debut + (m.rdv_duree || 30) * 6e4;
+  useEffect(() => { if (Date.now() > fin) return; const t = setInterval(() => tic(x => x + 1), 30e3); return () => clearInterval(t); }, [m.rdv_at, m.rdv_duree]);
+  const now = Date.now(), passe = now > fin, direct = !passe && now >= debut - 10 * 6e4;
+  const autre = store.byId('profiles', mine ? m.dest_id : m.author_id);
+  const nom = prenom(autre);
+  const visio = !m.rdv_lieu;
+  const repondre = r => act(async () => {
+    await store.repondreRdv(m.id, r);
+    if (r === 'oui') toast(`C’est noté : ${nom} sait que tu seras là.`);
+    else { toast('Propose un autre horaire qui te convient.', 'info'); onAutre?.(); }
+  });
+  const ar = getLang() === 'ar';
+  const txt = { m, lien: m.rdv_lien, lieu: m.rdv_lieu,
+    title: ar ? `مقابلة · شبكة ENSAM مكناس: ${autre?.full_name || ''}` : `Entretien Réseau ENSAM : ${autre?.full_name || ''}`,
+    details: [ar ? `${m.rdv_duree} دقيقة` : `${m.rdv_duree} min`, m.rdv_lien ? (ar ? `الاتصال المرئي: ${m.rdv_lien}` : `Visio : ${m.rdv_lien}`) : null, m.rdv_lieu ? (ar ? `المكان: ${m.rdv_lieu}` : `Lieu : ${m.rdv_lieu}`) : null, m.body, ar ? 'شبكة ENSAM مكناس' : 'Réseau ENSAM Meknès'].filter(Boolean).join('\n') };
+  const r = m.rdv_reponse;
+  return html`<div class=${'rdv-carte' + (passe ? ' passe' : '') + (direct ? ' direct' : '')}>
+    <p class="rdv-c-oeil"><${Icon} name="calendar" size=${14}/> <span>${mine ? 'Tu proposes un entretien' : 'Entretien proposé'}</span></p>
+    <p class="rdv-c-quand"><span class="rdv-c-jour">${jourLong(m.rdv_at)}</span><span class="rdv-c-h mono">${heure(m.rdv_at)}</span></p>
+    <p class="rdv-c-quoi"><span>${m.rdv_duree === 15 ? 'Appel de 15 min' : dureeTexte(m.rdv_duree)}</span> · ${visio ? html`<span>En visio</span>` : html`<span translate="no" dir="auto">${m.rdv_lieu}</span>`}</p>
+    ${visio && m.rdv_lien ? html`<p class="rdv-c-lien mono" dir="ltr" translate="no">${m.rdv_lien.replace(/^https:\/\//, '')}</p>` : null}
+    ${m.body ? html`<p class="rdv-c-note" translate="no" dir="auto">${m.body}</p>` : null}
+    ${passe ? html`<p class="rdv-c-etat muted"><${Icon} name="clock" size=${15}/> <span>Entretien passé</span></p>`
+      : html`
+      ${direct && m.rdv_lien ? html`<a class="btn small primary rdv-c-go" href=${m.rdv_lien} target="_blank" rel="noopener"><${Icon} name="video" size=${16}/> Rejoindre</a>` : null}
+      ${r === 'oui' ? html`<p class="rdv-c-etat bon"><${Icon} name="checks" size=${15}/> <span>${mine ? `${nom} sera là` : 'Tu as dit que tu serais là.'}</span></p>`
+        : r === 'autre' ? html`<p class="rdv-c-etat"><${Icon} name="clock" size=${15}/> <span>${mine ? `${nom} propose un autre horaire` : 'Tu as demandé un autre horaire.'}</span></p>`
+        : mine ? html`<p class="rdv-c-etat muted"><${Icon} name="clock" size=${15}/> <span>${`En attente de la réponse de ${nom}`}</span></p>` : null}
+      ${!mine ? html`<div class="rdv-c-acts">
+        ${r !== 'oui' ? html`<button type="button" class="btn small tonal" onClick=${() => repondre('oui')}><${Icon} name="check" size=${16}/> Je serai là</button>` : null}
+        ${r !== 'autre' ? html`<button type="button" class="btn small ghost" onClick=${() => repondre('autre')}>Autre horaire</button>` : null}
+      </div>` : null}
+      <details class="rdv-cal mx-cal"><summary class="btn tiny ghost"><${Icon} name="calendar" size=${14}/> Ajouter à l’agenda</summary>
+        <div class="rdv-cal-body"><a class="btn tiny ghost" href=${gcalUrl(txt)} target="_blank" rel="noopener">Google Agenda</a><a class="btn tiny ghost" href=${icsHref(txt)} download="entretien-reseau-ensam.ics"><${Icon} name="download" size=${14}/> Autre agenda (.ics)</a></div></details>`}
+  </div>`;
+}
+
+// Les liens écrits dans un message deviennent cliquables ; le lien « mon CV » (#cv/<id>, bouton « Envoyer mon CV ») devient le CV lui-même
+const LIEN_CV = /#cv\/([0-9a-z-]{6,})$/i;
+function Texte({ body, ctx }) {
   const parts = String(body || '').split(/(https?:\/\/[^\s<>"]+)/g);
-  return html`<p class="msg-txt" translate="no" dir="auto">${parts.map((x, i) => (i % 2 ? html`<a href=${x} target="_blank" rel="noopener nofollow ugc">${x}</a>` : x))}</p>`;
+  return html`<p class="msg-txt" translate="no" dir="auto">${parts.map((x, i) => (i % 2 ? (ctx && LIEN_CV.test(x) ? html`<${CvDansMessage} ctx=${ctx} id=${LIEN_CV.exec(x)[1]}/>` : html`<a href=${x} target="_blank" rel="noopener nofollow ugc">${x}</a>`) : x))}</p>`;
 }
 
 // Ce que montre un message cité : sa première ligne, ou « Photo » / « Message vocal »
 function ExtraitCite({ m }) {
   const ligne = String(m.body || '').split('\n').find(x => x.trim()) || '';
   if (m.type === 'vocal') return html`<span class="cite-extrait"><${Icon} name="mic" size=${13}/> <span>Message vocal</span></span>`;
+  if (m.type === 'rdv') return html`<span class="cite-extrait"><${Icon} name="calendar" size=${13}/> <span>Entretien proposé</span></span>`;
   if (m.type === 'photo') return html`<span class="cite-extrait"><${Icon} name="image" size=${13}/> ${ligne ? html`<span translate="no" dir="auto">${ligne}</span>` : html`<span>Photo</span>`}</span>`;
   return html`<span class="cite-extrait" translate="no" dir="auto">${ligne}</span>`;
 }
@@ -346,7 +526,7 @@ function useGeste({ onRepondre, onSel }) {
   };
 }
 
-function Bulle({ ctx, m, mine, suite, neuf, sel, onSel, onVoir, onCopier, onSupprimer, onReessayer, cite, nomDe, onAller, reactions = [], options = {}, onRepondre, onReagir }) {
+function Bulle({ ctx, m, mine, suite, neuf, sel, onSel, onVoir, onCopier, onSupprimer, onReessayer, cite, nomDe, onAller, reactions = [], options = {}, onRepondre, onReagir, onAutre }) {
   const envoi = m.etat === 'envoi', erreur = m.etat === 'erreur', pret = !envoi && !erreur;
   const peutRepondre = pret && options.repondre, peutReagir = pret && options.reagir;
   const geste = useGeste({ onRepondre: peutRepondre ? () => onRepondre(m) : null, onSel: pret ? onSel : () => {} });
@@ -365,7 +545,8 @@ function Bulle({ ctx, m, mine, suite, neuf, sel, onSel, onVoir, onCopier, onSupp
         : cite ? html`<button type="button" class="msg-cite" onClick=${() => onAller(cite.id)}>${nomDe(cite.author_id)}<${ExtraitCite} m=${cite}/></button>` : null}
       ${m.type === 'photo' ? html`<${Photo} ctx=${ctx} m=${m} onVoir=${onVoir}/>` : null}
       ${m.type === 'vocal' ? html`<${Vocal} ctx=${ctx} m=${m}/>` : null}
-      ${m.body && m.type !== 'vocal' ? html`<${Texte} body=${m.body}/>` : null}
+      ${m.type === 'rdv' ? html`<${CarteRdv} ctx=${ctx} m=${m} mine=${mine} onAutre=${onAutre}/>` : null}
+      ${m.body && m.type !== 'vocal' && m.type !== 'rdv' ? html`<${Texte} body=${m.body} ctx=${ctx}/>` : null}
       <span class="msg-meta"><span class="mono">${heure(m.created_at)}</span>${mine ? html`<span class=${'msg-etat' + (m.lu_at ? ' lu' : '')} title=${erreur ? 'Non envoyé' : envoi ? 'Envoi en cours' : m.lu_at ? 'Vu' : 'Envoyé'}><span class="sr-only">${erreur ? 'Non envoyé' : envoi ? 'Envoi en cours' : m.lu_at ? 'Vu' : 'Envoyé'}</span>
         <${Icon} name=${erreur ? 'x' : envoi ? 'clock' : m.lu_at ? 'checks' : 'check'} size=${14}/></span>` : null}</span>
       ${pastilles.length ? html`<span class="msg-reacts">${pastilles.map(p => {
@@ -818,6 +999,20 @@ addAR({
   'Toi': 'أنت', 'Message supprimé': 'رسالة محذوفة', 'Annuler la réponse': 'إلغاء الرد', 'Tu réponds à ce message': 'أنت ترد على هذه الرسالة',
   'Réagir à ce message': 'التفاعل مع هذه الرسالة', 'Équipe du réseau': 'فريق الشبكة', 'Réaction inconnue.': 'تفاعل غير معروف.',
   'Tu as déjà réagi à ce message.': 'لقد تفاعلت مع هذه الرسالة من قبل.', 'Vous ne pouvez plus vous écrire.': 'لم يعد بإمكانكما المراسلة.',
+  // Match : bandeau, entretien proposé (feuille et carte), CV envoyé ; refus de la base (protect_message, repondre_rdv)
+  'Entretien proposé': 'مقابلة مقترحة', 'Tu proposes un entretien': 'تقترح مقابلة', 'Retenu': 'مقبول', 'Retirer le match': 'إلغاء التوافق', 'Le match est retiré.': 'تم إلغاء التوافق.',
+  'Candidature pas retenue cette fois. La discussion reste ouverte.': 'لم يُقبل الترشيح هذه المرة. تبقى المحادثة مفتوحة.',
+  'Programmer un entretien': 'برمجة مقابلة', 'Envoyer mon CV': 'أرسل سيرتي الذاتية', 'Dépose d’abord ton CV dans Mon profil.': 'ضع سيرتك الذاتية أولًا في ملفك.', 'CV envoyé.': 'تم إرسال السيرة الذاتية.',
+  'Lisible après un match': 'تُقرأ بعد التوافق', 'Où': 'المكان', 'Autre date': 'تاريخ آخر', 'Autre heure': 'ساعة أخرى', '15 min · appel': '15 دقيقة · مكالمة', '1 h': 'ساعة',
+  'En visio': 'عن بعد بالفيديو', 'Lien Meet ou Teams (facultatif)': 'رابط Meet أو Teams (اختياري)', 'Sans lien, une visio Jitsi est créée pour vous deux.': 'بدون رابط، يُنشأ لكما اتصال مرئي على Jitsi.',
+  'Ex. : usine de Meknès, accueil principal': 'مثال: مصنع مكناس، الاستقبال الرئيسي', 'Un mot (facultatif)': 'كلمة (اختياري)', 'Ex. : prépare un exemple de projet.': 'مثال: حضّر مثالًا عن مشروع.',
+  'Proposer l’entretien': 'اقترح المقابلة',
+  'Le lien de la visio doit commencer par https://': 'يجب أن يبدأ رابط الاتصال المرئي بـ https://', 'Indique le lieu de l’entretien.': 'حدّد مكان المقابلة.',
+  'Appel de 15 min': 'مكالمة 15 دقيقة', 'Entretien passé': 'انتهت المقابلة', 'Tu as dit que tu serais là.': 'قلت إنك ستحضر.', 'Tu as demandé un autre horaire.': 'طلبت موعدًا آخر.',
+  'Autre horaire': 'موعد آخر', 'Ajouter à l’agenda': 'أضف إلى الأجندة', 'Propose un autre horaire qui te convient.': 'اقترح موعدًا آخر يناسبك.',
+  'Choix invalide.': 'اختيار غير صالح.', 'Réponse invalide.': 'رد غير صالح.', 'Cet entretien est déjà passé.': 'هذه المقابلة انتهت.', 'Choisis la durée de l’entretien.': 'اختر مدة المقابلة.',
+  'La durée va de 15 à 120 minutes.': 'المدة من 15 إلى 120 دقيقة.', 'Le lieu est trop long (200 caractères au plus).': 'المكان طويل جدًا (200 حرف كحد أقصى).',
+  'La note est trop longue (500 caractères au plus).': 'الملاحظة طويلة جدًا (500 حرف كحد أقصى).', 'Choisis une date à venir, dans les 4 prochains mois.': 'اختر تاريخًا قادمًا خلال الأشهر الأربعة المقبلة.',
 }, [
   [/^(\d+) messages non lus$/, n => `${n} رسائل غير مقروءة`],
   [/^Conversation avec (.+)$/, x => `محادثة مع ${x}`],
@@ -832,4 +1027,16 @@ addAR({
   [/^Retirer ma réaction (.+)$/, x => `إزالة تفاعلي ${x}`],
   [/^Ta réaction (.+)$/, x => `تفاعلك ${x}`],
   [/^Réaction de (.+) : (.+)$/, (x, y) => `تفاعل ${x}: ${y}`],
+  [/^Retirer le match avec (.+) \? La carte ne reviendra pas dans Match\.$/, x => `إلغاء التوافق مع ${x}؟ لن تعود البطاقة في صفحة التوافق.`],
+  [/^Entretien avec (.+)$/, x => `مقابلة مع ${x}`],
+  [/^Entretien proposé à (.+)\.$/, x => `اقترحت المقابلة على ${x}.`],
+  [/^C’est noté : (.+) sait que tu seras là\.$/, x => `تم: وصل ردّك إلى ${x}.`],
+  [/^(.+) sera là$/, x => `حضور ${x} مؤكد`],
+  [/^(.+) propose un autre horaire$/, x => `اقتراح موعد آخر من ${x}`],
+  [/^En attente de la réponse de (.+)$/, x => `في انتظار رد ${x}`],
+  [/^CV de (.+)$/, x => `السيرة الذاتية لـ${x}`],
+  [/^(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche) (\d{1,2})$/i, (j, d) => `${JOURS_AR[j.toLowerCase()]} ${d}`],
+  [/^(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche) (\d{1,2}) (janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)$/i, (j, d, m) => `${JOURS_AR[j.toLowerCase()]} ${d} ${MOIS_AR[m]}`],
 ]);
+const JOURS_AR = { lundi: 'الإثنين', mardi: 'الثلاثاء', mercredi: 'الأربعاء', jeudi: 'الخميس', vendredi: 'الجمعة', samedi: 'السبت', dimanche: 'الأحد' };
+const MOIS_AR = { janvier: 'يناير', février: 'فبراير', mars: 'مارس', avril: 'أبريل', mai: 'ماي', juin: 'يونيو', juillet: 'يوليوز', août: 'غشت', septembre: 'شتنبر', octobre: 'أكتوبر', novembre: 'نونبر', décembre: 'دجنبر' };
