@@ -1247,12 +1247,13 @@ export function ouvertureNotif({ etat, memo = {}, now = Date.now(), role, voulu 
 // de son rôle. Mêmes règles que la base (push_categorie, push_defaut, push_voulu dans schema.sql) : un test le vérifie.
 // Catégories proposées, dans l'ordre de l'écran (« admin » : signalements, toujours reçus, sans case)
 // « rappels » : après quelques jours sans visite, quand quelque chose attend le membre (activés par défaut, comme le reste)
-// « match » : la page Match (un intérêt pour soi, un match, un entretien proposé et sa réponse), activée par défaut
+// « match » : la page Match (un intérêt pour soi, un match), activée par défaut ; l'entretien proposé reste dans « messages »
 export const PUSH_CATEGORIES = ['messages', 'match', 'demandes', 'candidatures', 'mentorat', 'offres', 'reseau', 'rappels'];
 // Type de notification -> catégorie (un type inconnu : vie du réseau)
 export const PUSH_KINDS = {
-  message: 'messages',
-  match: 'match', match_interet: 'match', rdv_message: 'match', rdv_reponse: 'match',
+  // Un entretien proposé dans une discussion et sa réponse sont des messages : couper « Match » ne fait pas rater un entretien
+  message: 'messages', rdv_message: 'messages', rdv_reponse: 'messages',
+  match: 'match', match_interet: 'match',
   demande_nouvelle: 'demandes', demande_large: 'demandes', demande_proposition: 'demandes', demande_match: 'demandes', demande_rouverte: 'demandes', demande_reponse: 'demandes',
   candidature: 'candidatures', candidature_statut: 'candidatures', invitation: 'candidatures',
   recrutement_a_confirmer: 'candidatures', recrutement_confirme: 'candidatures', relance_offre: 'candidatures',

@@ -1,5 +1,6 @@
 // Page Match : textes FR et AR des notifications (match, intérêt, entretien proposé, réponse), lien vers le bon écran,
-// regroupement sur le téléphone (tag), heure du Maroc ; chacune dans la catégorie « Match ».
+// regroupement sur le téléphone (tag), heure du Maroc. Match et intérêt : catégorie « Match » ; l'entretien proposé
+// dans une discussion et sa réponse : « Messages » (couper Match ne fait pas rater un entretien).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MODULE, SITE, uid } from './banc.mjs';
@@ -11,15 +12,16 @@ const RDV = '2026-11-03T10:00:00Z';   // mardi 3 novembre, 10:00 au Maroc (GMT d
 const t = (k, d, l = 'fr') => N.texteNotif(k, d, l, SITE);
 
 const CAS = {
-  match: [{ nom: 'Salma', de: ETU, match: MATCH, titre: 'PFE Lean' }, `messages/${ETU}`, `match-${MATCH}`],
-  match_interet: [{ nom: 'Hamza', de: LAU, entreprise: 'OCP' }, 'match', `match_interet-${LAU}`],
-  rdv_message: [{ nom: 'Youssef', de: LAU, m: MSG, rdv_at: RDV, duree: 30, lieu: null }, `messages/${LAU}`, `rdv_message-${MSG}`],
-  rdv_reponse: [{ nom: 'Salma', de: ETU, m: MSG, reponse: 'oui', rdv_at: RDV }, `messages/${ETU}`, `rdv_reponse-${MSG}`],
+  match: [{ nom: 'Salma', de: ETU, match: MATCH, titre: 'PFE Lean' }, `messages/${ETU}`, `match-${MATCH}`, 'match', 'normal'],
+  match_interet: [{ nom: 'Hamza', de: LAU, entreprise: 'OCP' }, 'match', `match_interet-${LAU}`, 'match', 'normal'],
+  rdv_message: [{ nom: 'Youssef', de: LAU, m: MSG, rdv_at: RDV, duree: 30, lieu: null }, `messages/${LAU}`, `rdv_message-${MSG}`, 'messages', 'high'],
+  rdv_reponse: [{ nom: 'Salma', de: ETU, m: MSG, reponse: 'oui', rdv_at: RDV }, `messages/${ETU}`, `rdv_reponse-${MSG}`, 'messages', 'high'],
 };
 
-test('Match : un texte en français et en arabe, le bon écran, un tag qui regroupe ; catégorie « Match »', () => {
-  for (const [kind, [data, route, tag]] of Object.entries(CAS)) {
-    assert.equal(logic.pushCategorie(kind), 'match', kind);
+test('Match : un texte en français et en arabe, le bon écran, un tag qui regroupe ; la catégorie et l’urgence de chacune', () => {
+  for (const [kind, [data, route, tag, categorie, urgence]] of Object.entries(CAS)) {
+    assert.equal(logic.pushCategorie(kind), categorie, kind);
+    assert.equal(N.urgence(kind), urgence, kind + ' : un entretien est un message, il arrive tout de suite');
     for (const langue of ['fr', 'ar']) {
       const n = t(kind, data, langue);
       assert.ok(n, `${kind} ${langue}`);

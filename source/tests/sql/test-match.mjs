@@ -287,7 +287,7 @@ test('entretien : proposé dans la discussion (date à venir, durée, lieu ou li
   assert.deepEqual([t.type, t.rdv_at, t.rdv_duree, t.rdv_reponse], ['texte', null, null, null]);
   // Sans discussion ouverte, pas d'entretien
   await refuse(q(LAU2, `insert into public.messages (author_id, dest_id, type, rdv_at, rdv_duree) values ($1, $2, 'rdv', $3, 30)`, [LAU2, ETU4, demain()]), /pas encore ouverte/);
-  // Notification au destinataire : l'entretien (catégorie Match), pas un « message » de plus
+  // Notification au destinataire : l'entretien (catégorie Messages : couper Match ne le fait pas rater), pas un « message » de plus
   const p = (await file()).filter(x => x.qui === 'ETU_RDV');
   assert.deepEqual(p.map(x => `${x.qui}:${x.kind}`), ['ETU_RDV:rdv_message', 'ETU_RDV:rdv_message']);
   assert.deepEqual({ ...p[0].data, rdv_at: undefined }, { nom: 'Youssef', de: LAU, m: m.id, duree: 30, lieu: null, rdv_at: undefined });
@@ -322,7 +322,7 @@ test('entretien : proposé dans la discussion (date à venir, durée, lieu ou li
   await q(ETU_RDV, `delete from public.blocages where bloque_id = $1`, [LAU]);
 });
 
-test('catégorie « Match » coupée dans Mon profil : ni intérêt, ni match, ni entretien ; les messages continuent', async () => {
+test('catégorie « Match » coupée dans Mon profil : ni intérêt, ni match ; les messages et les entretiens continuent', async () => {
   const choisirNotif = (u, v) => db.query('update public.profiles set notif_push = $2::jsonb where id = $1', [u, JSON.stringify(v)]);
   await choisirNotif(LAU3, { match: false }); await choisirNotif(ETU4, { match: false });
   await vider();
@@ -335,11 +335,17 @@ test('catégorie « Match » coupée dans Mon profil : ni intérêt, ni match, n
   assert.deepEqual(await file(), []);
   await q(LAU3, `insert into public.messages (author_id, dest_id, type, rdv_at, rdv_duree) values ($1, $2, 'rdv', $3, 15)`, [LAU3, ETU4, demain()]);
   await q(LAU3, `insert into public.messages (author_id, dest_id, body) values ($1, $2, 'À demain !')`, [LAU3, ETU4]);
-  assert.deepEqual((await file()).map(x => `${x.qui}:${x.kind}`), ['ETU4:message']);
+  assert.deepEqual((await file()).map(x => `${x.qui}:${x.kind}`), ['ETU4:rdv_message', 'ETU4:message'], 'un entretien proposé est un message');
+  // La case « Messages » coupée : ni message, ni entretien
+  await choisirNotif(ETU4, { match: false, messages: false });
+  await vider();
+  await q(LAU3, `insert into public.messages (author_id, dest_id, type, rdv_at, rdv_duree) values ($1, $2, 'rdv', $3, 30)`, [LAU3, ETU4, demain()]);
+  assert.deepEqual(await file(), []);
   // La base accepte la case ; une valeur qui n'est pas un booléen non
   await q(ETU4, `update public.profiles set notif_push = '{"match": true}' where id = $1`, [ETU4]);
   await refuse(q(ETU4, `update public.profiles set notif_push = '{"match": "non"}' where id = $1`, [ETU4]), /notif_push/);
   assert.equal((await db.query(`select public.push_categorie('match_interet') c`)).rows[0].c, 'match');
+  assert.deepEqual((await db.query(`select public.push_categorie('rdv_message') a, public.push_categorie('rdv_reponse') b`)).rows[0], { a: 'messages', b: 'messages' });
   assert.equal((await db.query('select public.push_voulu($1, $2) v', [ETU, 'match'])).rows[0].v, true, 'activée par défaut');
   await choisirNotif(LAU3, {}); await choisirNotif(ETU4, {});
 });

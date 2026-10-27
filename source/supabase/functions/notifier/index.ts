@@ -341,7 +341,8 @@ async function preparerVapid(env: Env): Promise<Vapid> {
 type Abonnement = { id: string; user_id: string; endpoint: string; p256dh: string; auth: string };
 export type Notif = { title: string; body: string; url: string; tag: string; calme?: boolean };
 
-export const urgence = (kind: string) => (kind === 'rappel_rdv' || kind === 'mentorat_accepte' || kind === 'message' ? 'high' : 'normal');
+// Un entretien proposé dans une discussion et sa réponse sont des messages : même urgence
+export const urgence = (kind: string) => (['rappel_rdv', 'mentorat_accepte', 'message', 'rdv_message', 'rdv_reponse'].includes(kind) ? 'high' : 'normal');
 
 // Envoie une notification ; rend le code HTTP du service de push (0 si injoignable)
 async function pousserUn(a: Abonnement, n: Notif, urg: string, v: Vapid): Promise<number> {

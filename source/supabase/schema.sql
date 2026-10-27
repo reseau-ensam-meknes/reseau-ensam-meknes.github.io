@@ -1561,9 +1561,11 @@ end $$;
 create or replace function public.push_categorie(p_kind text) returns text
 language sql immutable as $$
   select case
-    when p_kind = 'message' then 'messages'
-    -- Page Match (section « Match », en fin de fichier) : intérêt, match, entretien proposé et sa réponse
-    when p_kind in ('match','match_interet','rdv_message','rdv_reponse') then 'match'
+    -- Un entretien proposé dans une discussion (message 'rdv') et sa réponse sont des messages : couper « Match »
+    -- ne fait jamais rater un entretien
+    when p_kind in ('message','rdv_message','rdv_reponse') then 'messages'
+    -- Page Match (section « Match », en fin de fichier) : un intérêt pour soi, un match
+    when p_kind in ('match','match_interet') then 'match'
     when p_kind in ('demande_nouvelle','demande_large','demande_proposition','demande_match','demande_rouverte','demande_reponse') then 'demandes'
     when p_kind in ('candidature','candidature_statut','invitation','recrutement_a_confirmer','recrutement_confirme','relance_offre') then 'candidatures'
     when p_kind in ('mentorat_demande','mentorat_ouvert','mentorat_accepte','mentorat_deplace','mentorat_annule','rappel_rdv','merci',
@@ -3143,7 +3145,7 @@ revoke all on function public.marquer_lus(uuid) from public, anon;
 grant execute on function public.marquer_lus(uuid) to authenticated;
 
 -- Réponse à un entretien proposé : seulement le destinataire, seulement tant qu'il est à venir (« oui » = je serai là,
--- « autre » = un autre horaire) ; on peut changer d'avis jusque-là. L'auteur est prévenu (catégorie « Match »).
+-- « autre » = un autre horaire) ; on peut changer d'avis jusque-là. L'auteur est prévenu (catégorie « Messages »).
 create or replace function public.repondre_rdv(p_id uuid, p_reponse text) returns public.messages
 language plpgsql security definer set search_path = public as $$
 declare m public.messages; v_avant text;
@@ -3179,7 +3181,7 @@ declare v_n int; v_calme boolean;
 begin
   if current_setting('ensam.sans_push_message', true) = 'on' then return null; end if;
   if not exists (select 1 from public.push_subscriptions where user_id = new.dest_id) then return null; end if;
-  -- Un entretien proposé : sa propre notification (catégorie « Match »), la date et la durée, sans l'aperçu d'un message
+  -- Un entretien proposé : sa propre notification (catégorie « Messages »), la date et la durée, sans l'aperçu d'un message
   if new.type = 'rdv' then
     perform public.pousser(new.dest_id, 'rdv_message', jsonb_build_object(
       'nom', split_part((select full_name from public.profiles where id = new.author_id), ' ', 1), 'de', new.author_id, 'm', new.id,
@@ -4971,8 +4973,9 @@ create trigger trg_notif_mentorat_ouvert after insert or update of mentor_id on 
 --      l'étudiant (voit_champ, donc peut_voir_cv pour le stockage « cv »), et ils peuvent programmer un entretien
 --      (messages de type 'rdv', section « Messagerie »).
 --    · Notifications, catégorie « Match » de Mon profil (activée par défaut) : match (aux deux), match_interet (à la
---      personne visée par un oui, une fois par jour au plus pour une même paire, jamais quand c'est déjà un match),
---      rdv_message et rdv_reponse (notif_message, repondre_rdv).
+--      personne visée par un oui, une fois par jour au plus pour une même paire, jamais quand c'est déjà un match).
+--      L'entretien proposé et sa réponse (rdv_message, rdv_reponse : notif_message, repondre_rdv) sont dans
+--      « Messages » : couper Match ne fait pas rater un entretien.
 --  Mêmes règles dans la démo (DemoStore dans store.js) et dans logic.js (deckMatch, peutDiscuter).
 -- =====================================================================
 
