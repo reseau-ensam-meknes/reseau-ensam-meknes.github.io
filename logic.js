@@ -343,11 +343,12 @@ export const NB_FONDATEURS = 25;
 export const CONTRIBUTIONS = { offre: 'Offre publiée', aide: 'Aide proposée', mentorat: 'Mentorat accepté' };
 export function classementFondateurs(data, max = NB_FONDATEURS) {
   const role = new Map((data?.profiles || []).map(p => [p.id, p.role]));
+  const compte = new Map((data?.profiles || []).map(p => [p.id, laureatCompte(p)]));
   const auteur = new Map((data?.demandes || []).map(d => [d.id, d.auteur_id]));
   const premiere = new Map();
   const noter = (id, quand, type) => {
     const t = quand ? new Date(quand).getTime() : NaN;
-    if (!id || role.get(id) !== 'laureat' || !Number.isFinite(t)) return;
+    if (!id || !compte.get(id) || !Number.isFinite(t)) return;
     const x = premiere.get(id);
     if (!x || t < x.t || (t === x.t && type < x.type)) premiere.set(id, { id, t, type });
   };
@@ -363,8 +364,10 @@ export function lignePlaces(total) {
   const n = Math.max(0, NB_FONDATEURS - (total || 0));
   return !n ? `Les ${NB_FONDATEURS} places de membre fondateur sont prises` : n === 1 ? `1 place de membre fondateur restante sur ${NB_FONDATEURS}` : `${n} places de membre fondateur restantes sur ${NB_FONDATEURS}`;
 }
+// Un lauréat qui compte dans les chiffres et les classements : pas l'administration en vue lauréat (admin_ok)
+export const laureatCompte = p => p?.role === 'laureat' && !p.admin_ok;
 // Les lauréats dans l'ordre où ils ont rejoint le réseau (« Te voilà 40e parmi les lauréats », rien de plus)
-export const ordreArrivee = profiles => (profiles || []).filter(p => p.role === 'laureat' && p.created_at)
+export const ordreArrivee = profiles => (profiles || []).filter(p => laureatCompte(p) && p.created_at)
   .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.id).localeCompare(String(b.id)));
 // « Te voilà 40e parmi les lauréats du réseau » : le rang d'arrivée d'un lauréat (null pour les autres, ou sans date)
 export function rangLaureat(profiles, me) {
@@ -385,7 +388,7 @@ export function badgesOf(score, profile, extra = {}) {
 
 // Lauréat qui a eu le plus d'impact sur 30 jours (null si personne n'a de points)
 export function starOfMonth(data, monthScores = computeScores(data, new Date(Date.now() - 30 * 864e5))) {
-  const best = data.profiles.filter(p => p.role === 'laureat').map(p => ({ p, pts: monthScores.get(p.id)?.points || 0 })).sort((a, b) => b.pts - a.pts)[0];
+  const best = data.profiles.filter(laureatCompte).map(p => ({ p, pts: monthScores.get(p.id)?.points || 0 })).sort((a, b) => b.pts - a.pts)[0];
   return best && best.pts > 0 ? best : null;
 }
 
@@ -699,7 +702,7 @@ export const dernierMerciPour = (mercis, laureatId) => mercis.find(x => x.to ===
 // Le chiffre en tête du Réseau, un seul et adapté au lecteur : les lauréats ; les étudiants seulement pour un lauréat
 // ou l'administration, et à partir de 20 (« 3 étudiants » découragerait). Rien quand il n'y a encore personne.
 export function chiffreReseau(profiles, me) {
-  const l = profiles.filter(p => p.role === 'laureat').length, e = profiles.filter(p => p.role === 'etudiant').length;
+  const l = profiles.filter(laureatCompte).length, e = profiles.filter(p => p.role === 'etudiant').length;
   if (!l) return '';
   const lau = `${l} lauréat${l > 1 ? 's' : ''}`;
   return me?.role !== 'etudiant' && e >= 20 ? `${lau} · ${e} étudiants` : lau;
@@ -1033,7 +1036,7 @@ export function poulsReseau(data, now = new Date()) {
 // À froid : combien de lauréats sont là (le même total pour tout le monde) et combien me ressemblent (moi exclu).
 // « cle » = le filtre de l'annuaire qui montre exactement ces personnes.
 export function presenceReseau(data, me, { visages: nbVisages = 3 } = {}) {
-  const tous = (data.profiles || []).filter(p => p.role === 'laureat');
+  const tous = (data.profiles || []).filter(laureatCompte);
   const lau = tous.filter(p => p.id !== me?.id);
   if (!me || !lau.length) return null;
   let cle = null, proches = [];

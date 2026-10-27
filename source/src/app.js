@@ -239,6 +239,14 @@ function App({ store }) {
     lastAct.current = Date.now();
   };
   voirRangs(me.role !== 'etudiant');
+  // L'administration regarde l'application comme un lauréat (son rôle le temps de cette vue), puis revient d'un appui.
+  // Toutes les données sont relues avec les droits du nouveau rôle, puis l'accueil de ce rôle.
+  const changerVue = role => act(async () => {
+    setPop(null);
+    await store.changerVue(role);
+    go('accueil', { exact: true });
+    toast(role === 'admin' ? 'Te revoilà en admin.' : 'Tu vois l’application comme un lauréat.');
+  });
   const ctx = {
     store, data, me, saison, scores, go, act, sub: route.sub, sub2: route.sub2, star, starId: star?.p.id, fondateurs, ambassadeurs,
     openProfile: p => p && setProfile(p),
@@ -327,8 +335,10 @@ function App({ store }) {
         <${LangToggle} onChange=${relang} store=${store} me=${me}/>
         <button class="icon-btn cloche-btn" aria-label=${todo ? `Notifications (${todo} à faire)` : 'Notifications'} aria-haspopup="dialog" onClick=${() => { setPop(null); setCloche(true); }}><${Icon} name="bell"/>${todo ? html`<span class="badge-n" aria-hidden="true">${neuf(todo)}</span>` : null}</button>
         <div class="pop-wrap"><button class="me-btn" onClick=${() => setPop(pop === 'me' ? null : 'me')} aria-label="Mon compte" aria-expanded=${pop === 'me'}><${Avatar} p=${me} size=${34}/>${avecMatch && dotFor(perso) ? html`<span class="dotn mobile-only" aria-hidden="true"></span>` : null}</button>
-          ${pop === 'me' ? html`<div class="menu-pop right" role="menu">
+          ${pop === 'me' ? html`<div class="menu-pop right" role="group" aria-label="Mon compte">
             <div class="menu-who"><strong>${me.full_name}</strong><span class="muted small">${roleTexte(me)}</span></div>
+            ${me.admin_ok ? html`<div class="vue-switch" role="group" aria-label="Voir l’application comme">${[['admin', 'Admin', 'shield'], ['laureat', 'Lauréat', 'star']].map(([r, l, i]) =>
+              html`<button type="button" key=${r} class=${me.role === r ? 'on' : ''} aria-pressed=${me.role === r} onClick=${() => me.role !== r && changerVue(r)}><${Icon} name=${i} size=${15}/> ${l}</button>`)}</div>` : null}
             <button onClick=${() => go('profil')}><${Icon} name="user" size=${16}/> Mon profil</button>
             ${avecMatch ? html`<button class="menu-mobile" onClick=${() => go(perso)}><${Icon} name=${me.role === 'etudiant' ? 'route' : 'star'} size=${16}/> ${me.role === 'etudiant' ? 'Mon parcours' : 'Mon espace'}${dotFor(perso) ? html`<span class="dotn" aria-hidden="true"></span><span class="sr-only">À faire ici</span>` : null}</button>` : null}
             <button class="menu-mobile" onClick=${() => go('suivi')}><${Icon} name="chart" size=${16}/> ${me.role === 'etudiant' ? 'Mon année' : 'Suivi'}</button>
@@ -344,8 +354,9 @@ function App({ store }) {
         </div>
       </header>
       ${store.mode === 'demo' && !plein ? html`<section class="demo-band" aria-label="Démo"><${Icon} name="spark" size=${15}/><span>Démo avec des données fictives. Essaie le mentorat : <b translate="no">Salma</b> demande de l’aide, <b translate="no">Youssef</b> (lauréat) clique sur un horaire, la visio est prête. Change de rôle en haut.</span></section>` : null}
+      ${me.admin_ok && me.role !== 'admin' && !plein ? html`<section class="vue-band" aria-label="Vue lauréat"><${Icon} name="star" size=${15}/><span>Tu vois l’application comme un lauréat.</span><button type="button" class="btn tiny" onClick=${() => changerVue('admin')}><${Icon} name="shield" size=${14}/> Revenir en admin</button></section>` : null}
       <main class=${'content' + (plein ? ' flush' : '')} id="contenu" tabindex="-1">
-        ${page === 'accueil' ? html`<${Home} key=${me.id} ...${ctx}/>` : null}
+        ${page === 'accueil' ? html`<${Home} key=${me.id + me.role} ...${ctx}/>` : null}
         ${page === 'offres' ? html`<${OffersPage} ...${ctx}/>` : null}
         ${page === 'match' ? html`<${MatchPage} ...${ctx}/>` : null}
         ${attente ? html`<${PageEnChargement} horsLigne=${store.horsLigne}/>` : null}

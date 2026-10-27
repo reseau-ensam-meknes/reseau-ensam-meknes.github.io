@@ -43,6 +43,8 @@ class Base {
   constructor() { this.data = Object.fromEntries(TABLES.map(t => [t, []])); this.listeners = new Set(); this.me = null; this.reglages = {}; }
   on(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); }
   emit() { this.data = { ...this.data }; for (const fn of this.listeners) fn(); }
+  // L'administration change de vue (admin ⇄ lauréat) : son rôle change (protect_profile() le permet grâce à admin_ok)
+  async changerVue(role) { if (!this.me?.admin_ok) throw new Error('Réservé à l’administration.'); return this.update('profiles', this.me.id, { role }); }
   byId(table, id) { return this.data[table].find(r => r.id === id); }
   // Messagerie : « Répondre » et les réactions ont besoin de la base à jour (en démo, toujours)
   peutRepondre() { return this.mode !== 'live' || (this.data.messages || []).some(m => 'reponse_a' in m); }
@@ -161,6 +163,8 @@ class DemoStore extends Base {
     this.data = saved?.data || await chargerSeed();
     for (const t of [...TABLES, 'guide_pays_historique', 'liste_officielle']) this.data[t] ||= [];
     this.reglages = saved?.reglages || {};
+    // Une démo enregistrée avant la vue lauréat de l'administration : son admin reçoit admin_ok, comme la mise à jour de la base
+    for (const p of this.data.profiles) if (p.role === 'admin' && p.admin_ok === undefined) p.admin_ok = true;
     const meId = saved?.meId || this.data.profiles.find(p => p.role === 'etudiant' && p._persona)?.id;
     this.me = this.byId('profiles', meId) || null;
     this.ready = true;
@@ -228,7 +232,8 @@ class DemoStore extends Base {
     if (VIVANT.includes(table)) regleVivant(this, table, r, old);
     if (PHASE2.includes(table)) applyPhase2Rules(this, table, r, old);
     if (PHASE3.includes(table)) applyPhase3Rules(this, table, r, old);
-    if (table === 'profiles' && this.me?.role !== 'admin') { r.verified = r.role !== old.role ? false : old.verified; if (!r.verified && verifieAuto(this, r)) r.verified = true; }
+    if (table === 'profiles') regleRoleDemo(this, r, old);
+    if (table === 'profiles' && this.me?.role !== 'admin' && !(old.admin_ok && ['admin', 'laureat'].includes(r.role))) { r.verified = r.role !== old.role ? false : old.verified; if (!r.verified && verifieAuto(this, r)) r.verified = true; }
     if (table === 'profiles' && this.me?.role === 'admin' && old.verified && !r.verified) this.data.verifications_pairs = this.data.verifications_pairs.filter(v => v.laureat_id !== id);
     this.data[table] = this.data[table].map(x => x.id === id ? r : x);
     if (table === 'profiles' && id === this.me?.id) this.me = r;
@@ -504,6 +509,19 @@ const cvReference = (data, path) => data.relectures_cv.some(r => r.cv_path === p
 const cvDemo = p => [p?.full_name || 'CV', `${p?.filiere || ''} · ENSAM Meknès · promo ${p?.promo || ''}`, '', 'CV de démonstration (données fictives).', '',
   'Formation', '  Cycle ingénieur, ENSAM Meknès', '  Classes préparatoires intégrées', '', 'Expériences', '  Stage ingénieur adjoint (2 mois)', '  Stage ouvrier (1 mois)', '',
   'Compétences', '  ' + ((p?.competences || []).join(', ') || 'Lean, Python, CAO'), '', 'Langues', '  Arabe, français, anglais'];
+// Comme protect_profile() : personne ne se fait admin ; admin_ok suit le rôle admin donné ou retiré par l'administration ;
+// l'administration en vue lauréat (admin_ok) passe d'admin à lauréat et revient, sa vérification ne bouge pas.
+function regleRoleDemo(store, r, old) {
+  const me = store.me;
+  if (me?.role === 'admin') {
+    if (r.role === 'admin') r.admin_ok = true;
+    else if (r.id !== me.id && r.role !== old.role) r.admin_ok = false;
+    return;
+  }
+  if (old.admin_ok && ['admin', 'laureat'].includes(r.role)) { r.admin_ok = true; r.verified = old.verified; return; }
+  r.admin_ok = !!old.admin_ok;
+  r.role = old.role === 'admin' ? 'admin' : r.role === 'admin' ? old.role : r.role;
+}
 const pairsValides = (data, c) => data.verifications_pairs.filter(v => v.laureat_id === c.id).map(v => data.profiles.find(x => x.id === v.verificateur_id)).filter(x => x && x.role === 'laureat' && x.verified && x.promo === c.promo).length;
 const emailEcole = (store, email) => store.domainesEcole().some(d => (email || '').toLowerCase().endsWith('@' + d) || (email || '').toLowerCase().endsWith('.' + d));
 const verifieAuto = (store, p) => dansListe(store.data, p, demoEmail(p)) || (p.role === 'etudiant' && emailEcole(store, demoEmail(p))) || (p.role === 'laureat' && pairsValides(store.data, p) >= 2);
@@ -1405,6 +1423,12 @@ export class SupabaseStore extends Base {
     if (table === 'propositions') await this.loadTable('messages').catch(() => {});
     if (table === 'placements' && row.demande_id) await this.loadTable('demandes').catch(() => {});
     this.emit(); return data;
+  }
+  // En ligne, les droits changent avec le rôle : toutes les tables sont relues (l'administration voyait tout, un lauréat non)
+  async changerVue(role) {
+    await super.changerVue(role);
+    await this.loadAll(); this.me = this.byId('profiles', this.userId) || null;
+    this.emit();
   }
   async update(table, id, patch) {
     const { data, error } = await this.sb.from(table).update(patch).eq('id', id).select().single();
