@@ -142,6 +142,8 @@ const SEUIL = 0.3;          // part de la largeur à dépasser pour choisir
 const VITESSE = 0.55;       // ou un geste vif (px/ms)
 function Carte({ ctx, carte, rang, sens, onChoix, vol, revenue }) {
   const el = useRef(); const g = useRef(null);
+  // Le dernier appui fini : glissé ou long, le clic qui le suit n'ouvre pas le détail
+  const fini = useRef(null);
   const dessus = rang === 0 && !vol;
   const detail = () => (carte.offre ? ctx.openOffer(carte.offre.id) : ctx.openProfile(carte.profil));
   const poser = (dx, dy) => {
@@ -154,6 +156,7 @@ function Carte({ ctx, carte, rang, sens, onChoix, vol, revenue }) {
   const down = e => {
     if (!dessus || (e.pointerType === 'mouse' && e.button !== 0) || e.target.closest('button, a')) return;
     const r = el.current.getBoundingClientRect();
+    fini.current = null;
     g.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: performance.now(), w: r.width, dx: 0, dy: 0, bouge: false, pas: [[e.clientX, performance.now()]] };
     el.current.classList.add('tenue');
   };
@@ -164,7 +167,7 @@ function Carte({ ctx, carte, rang, sens, onChoix, vol, revenue }) {
     if (!s.bouge) {
       if (Math.hypot(s.dx, s.dy) < 7) return;
       // Un geste surtout vertical laisse défiler la page
-      if (Math.abs(s.dy) > Math.abs(s.dx) * 1.2 && e.pointerType !== 'mouse') { g.current = null; el.current.classList.remove('tenue'); return; }
+      if (Math.abs(s.dy) > Math.abs(s.dx) * 1.2 && e.pointerType !== 'mouse') { g.current = null; fini.current = { bouge: true }; el.current.classList.remove('tenue'); return; }
       s.bouge = true; try { el.current.setPointerCapture(e.pointerId); } catch { /* */ }
     }
     poser(s.dx, s.dy * 0.25);
@@ -172,7 +175,10 @@ function Carte({ ctx, carte, rang, sens, onChoix, vol, revenue }) {
   const up = e => {
     const s = g.current; if (!s || e.pointerId !== s.id) return;
     g.current = null; el.current.classList.remove('tenue');
-    if (!s.bouge) { if (e.type === 'pointerup' && performance.now() - s.t0 < 600) detail(); return; }
+    fini.current = { bouge: s.bouge, long: performance.now() - s.t0 >= 600 };
+    // Un simple appui : le détail s'ouvre au clic qui suit (voir clic), pas ici. Ouvert au relâchement, la feuille
+    // arrivait sous le doigt et le clic du téléphone tombait sur son fond, qui la refermait aussitôt.
+    if (!s.bouge) return;
     const [x1, t1] = s.pas[0]; const v = (e.clientX - x1) / Math.max(1, performance.now() - t1);
     const dir = Math.abs(s.dx) > s.w * SEUIL || (Math.abs(v) > VITESSE && Math.abs(s.dx) > 24 && Math.sign(v) === Math.sign(s.dx)) ? Math.sign(s.dx) : 0;
     if (dir && e.type === 'pointerup') { onChoix(dir * sens > 0 ? 'oui' : 'plus_tard', { dx: s.dx, dy: s.dy * 0.25, w: s.w }); return; }
@@ -181,6 +187,11 @@ function Carte({ ctx, carte, rang, sens, onChoix, vol, revenue }) {
     poser(0, 0);
     setTimeout(() => el.current?.classList.remove('ressort'), 520);
   };
+  const clic = e => {
+    const f = fini.current; fini.current = null;
+    if (!dessus || e.target.closest('button, a') || f?.bouge || f?.long) return;
+    detail();
+  };
   // La carte qui part : depuis là où le doigt l'a lâchée, vers le côté choisi
   const depart = vol ? (vol.choix === 'oui' ? 1 : -1) * sens : 0;
   const style = vol ? `--x0:${vol.from?.dx || 0}px;--y0:${vol.from?.dy || 0}px;--r0:${((vol.from?.dx || 0) / (vol.from?.w || 320)) * 9}deg;--dir:${depart};--p:${(vol.choix === 'oui' ? 1 : -1) * (vol.from ? 1 : 0.6)}` : `--rang:${rang}`;
@@ -188,7 +199,7 @@ function Carte({ ctx, carte, rang, sens, onChoix, vol, revenue }) {
   const tid = 'mx-t-' + carte.cle.replace(':', '-') + (vol ? '-vol' : '');
   return html`<article ref=${el} class=${'mx-carte' + (dessus ? ' dessus' : ' derriere') + (vol ? ' vol' : '') + (revenue && dessus ? ' revenue' : '') + (carte.interet ? ' avec-interet' : '')}
     style=${style} aria-hidden=${dessus ? null : 'true'} inert=${dessus ? null : true} aria-labelledby=${dessus ? tid : null}
-    onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerCancel=${up}>
+    onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerCancel=${up} onClick=${clic}>
     <span class="mx-tampon mx-t-oui" aria-hidden="true">Intéressé</span>
     <span class="mx-tampon mx-t-non" aria-hidden="true">Plus tard</span>
     ${carte.interet ? html`<p class="mx-interet"><${Avatar} p=${p} size=${26}/>${carte.sorte === 'laureat' ? html`<span>${`${prenom(p)} s’intéresse à ton profil`}</span>`

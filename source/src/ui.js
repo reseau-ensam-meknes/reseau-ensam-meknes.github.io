@@ -445,6 +445,9 @@ const FOCUSABLES = 'a[href],button:not([disabled]),input:not([disabled]):not([ty
 // en bas, à portée du pouce : c'est là que va l'action principale.
 export function Modal({ title, onClose, children, wide, footer, cls, historique = true }) {
   const ref = useRef();
+  // Le fond ferme la fenêtre seulement si l'appui y a aussi commencé : un clic né avant l'ouverture (le téléphone
+  // l'envoie après le relâchement) ou une sélection de texte lâchée hors de la feuille ne la ferment pas
+  const appuiFond = useRef(false);
   useFeuille(onClose, historique);
   useFeuilleDuBas(ref, onClose, '.modal-head');
   const fermer = useRef(onClose);
@@ -503,7 +506,8 @@ export function Modal({ title, onClose, children, wide, footer, cls, historique 
       else ouvertes[ouvertes.length - 1]?.ref.current?.querySelector(FOCUSABLES)?.focus();
     };
   }, []);
-  return html`<div class=${'modal-back' + (vv ? ' clavier' : '')} style=${vv ? `--vvh:${vv.h}px;--vvt:${vv.t}px` : ''} onClick=${e => { if (e.target === e.currentTarget) onClose(); }}>
+  return html`<div class=${'modal-back' + (vv ? ' clavier' : '')} style=${vv ? `--vvh:${vv.h}px;--vvt:${vv.t}px` : ''} onPointerDown=${e => { appuiFond.current = e.target === e.currentTarget; }}
+    onClick=${e => { const ok = appuiFond.current; appuiFond.current = false; if (ok && e.target === e.currentTarget) onClose(); }}>
     <div class=${'modal' + (wide ? ' wide' : '') + (footer ? ' has-foot' : '') + (cls ? ' ' + cls : '')} role="dialog" aria-modal="true" aria-label=${title} ref=${ref}>
       <header class="modal-head"><span class="sheet-grip" aria-hidden="true"></span><h2>${title}</h2><button class="icon-btn" onClick=${onClose} aria-label="Fermer"><${Icon} name="x"/></button></header>
       <div class="modal-body">${children}</div>
