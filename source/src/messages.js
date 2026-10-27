@@ -139,7 +139,7 @@ function ConvList({ ctx, convs, actif }) {
         <span class="ci-main"><span class="ci-top"><span class="ci-name" translate="no">${p?.full_name || 'Membre'}</span><span class="ci-time">${quandCourt(c.dernier.created_at)}</span></span>
           <span class="ci-bas"><${Apercu} m=${c.dernier} me=${me.id}/>${c.nonLus ? html`<span class="ci-n"><span aria-hidden="true">${c.nonLus}</span><span class="sr-only">${c.nonLus > 1 ? `${c.nonLus} messages non lus` : '1 message non lu'}</span></span>` : c.dernier.author_id === me.id && c.dernier.lu_at ? html`<span class="ci-vu"><${Icon} name="checks" size=${15}/></span>` : null}</span></span>
       </a></li>`; })}</ul>`
-    : !sugg.length && !q ? html`<div class="conv-empty"><${Empty} icon="chat" scene="messages" title="Pas encore de message">Une conversation s’ouvre avec un mentorat, une candidature, ton parrain ou des coordonnées partagées.<//>
+    : !sugg.length && !q ? html`<div class="conv-empty"><${Empty} icon="chat" scene="messages" title="Pas encore de message">Une conversation s’ouvre avec un match, un mentorat, une candidature, ton parrain ou des coordonnées partagées.<//>
         <button class="btn small" onClick=${() => go('mentorat')}><${Icon} name="mentor" size=${15}/> ${me.role === 'laureat' ? 'Voir qui a besoin d’aide' : 'Demander un conseil'}</button></div>`
     : q ? html`<p class="small muted conv-none">Aucune conversation à ce nom.</p>` : null}
     <p class="small muted conv-note"><${Icon} name="lock" size=${13}/> Une conversation n’est visible que par vous deux.</p>
@@ -269,7 +269,7 @@ function Conversation({ ctx, autre }) {
         <${Avatar} p=${p} size=${40}/>
         <span class="conv-who-txt"><strong translate="no">${p?.full_name || 'Membre'}</strong>
           <span class="conv-sub">${tape ? html`<span class="tape-txt">écrit<span class="tape-dots" aria-hidden="true"><i></i><i></i><i></i></span></span>`
-            : lien?.label ? html`<span>${lien.label}</span>${lien.detail ? html` · <span translate="no" dir="auto">${lien.detail}</span>` : null}` : html`<span>${roleTexte(p)}</span>`}</span></span>
+            : lien?.label ? html`<span>${lien.label}</span>${lien.detail && lien.type !== 'match' ? html` · <bdi translate="no">${lien.detail}</bdi>` : null}` : html`<span>${roleTexte(p)}</span>`}</span></span>
       </button>
       <div class="pop-wrap conv-menu"><button class="icon-btn" aria-label="Options de la conversation" aria-expanded=${menu} onClick=${() => setMenu(!menu)}><${Icon} name="more"/></button>
         ${menu ? html`<div class="menu-pop right" role="menu">
@@ -303,7 +303,7 @@ function Conversation({ ctx, autre }) {
     ${plusBas ? html`<div class="conv-bas-ancre"><button class="conv-bas" aria-label="Aller aux derniers messages" onClick=${versLeBas}><${Icon} name="arrow" size=${16}/></button></div>` : null}
 
     ${blocage ? html`<div class="composer ferme"><${Icon} name="block" size=${16}/><span>Tu as bloqué <span translate="no">${prenom(p)}</span>.</span><span class="spacer"></span><button class="btn small" onClick=${debloquer}>Débloquer</button></div>`
-      : !ouvert ? html`<div class="composer ferme"><${Icon} name="lock" size=${16}/><span>Vous ne pouvez pas vous écrire pour l’instant. Une conversation s’ouvre avec un mentorat, une candidature ou des coordonnées partagées.</span></div>`
+      : !ouvert ? html`<div class="composer ferme"><${Icon} name="lock" size=${16}/><span>Vous ne pouvez pas vous écrire pour l’instant. Une conversation s’ouvre avec un match, un mentorat, une candidature ou des coordonnées partagées.</span></div>`
       : html`<${Composer} txt=${txt} setTxt=${setTxt} onEnvoyer=${envoyer} onTape=${() => canal.current?.tape()}
           cite=${cite && fil.some(m => m.id === cite.id) ? cite : null} nomDe=${nomDe} onAnnulerCite=${() => setCite(null)}/>`}
     ${vue ? html`<${Visionneuse} url=${vue} onClose=${() => setVue(null)}/>` : null}
@@ -968,14 +968,14 @@ addAR({
   'Écrire': 'مراسلة', 'Message': 'الرسالة', 'Messages': 'الرسائل', 'Écrire à': 'راسل', 'Toi :': 'أنت:', 'Photo': 'صورة', 'Message vocal': 'رسالة صوتية',
   'On t’a écrit': 'وصلتك رسائل', 'Tous les messages': 'كل الرسائل', 'Conversations': 'المحادثات', 'Chercher une conversation': 'البحث عن محادثة', 'Chercher un nom': 'ابحث عن اسم',
   'Tes conversations': 'محادثاتك', 'Écris à un lauréat qui t’aide, à un étudiant qui a postulé, à ton parrain : en texte, en photo ou en message vocal.': 'راسل خريجًا يساعدك، أو طالبًا ترشّح لعرضك، أو عرّابك: كتابةً أو بصورة أو برسالة صوتية.',
-  'Pas encore de message': 'لا رسائل بعد', 'Une conversation s’ouvre avec un mentorat, une candidature, ton parrain ou des coordonnées partagées.': 'تُفتح المحادثة مع إرشاد أو ترشّح أو عرّابك أو بعد مشاركة معلومات الاتصال.',
+  'Pas encore de message': 'لا رسائل بعد', 'Une conversation s’ouvre avec un match, un mentorat, une candidature, ton parrain ou des coordonnées partagées.': 'تُفتح المحادثة بعد اتفاق في صفحة التوافق، أو مع إرشاد أو ترشّح أو عرّابك، أو بعد مشاركة معلومات الاتصال.',
   'Voir qui a besoin d’aide': 'من يحتاج مساعدتك', 'Demander un conseil': 'اطلب نصيحة', 'Aucune conversation à ce nom.': 'لا محادثة بهذا الاسم.',
   'Une conversation n’est visible que par vous deux.': 'لا يرى المحادثة غيركما.',
   'Mentorat': 'الإرشاد', 'Candidature': 'ترشيح', 'Relecture de CV': 'مراجعة السيرة الذاتية', 'Parrainage': 'العرّاب', 'Contact accepté': 'اتصال مقبول', 'Administration': 'الإدارة', 'Conversation': 'محادثة',
   'Retour aux conversations': 'العودة إلى المحادثات', 'Options de la conversation': 'خيارات المحادثة', 'Voir le profil': 'عرض الملف', 'Bloquer': 'حظر', 'Débloquer': 'إلغاء الحظر',
   'écrit': 'يكتب', 'Rendez-vous': 'الموعد', 'Rejoindre': 'انضم', 'Messages visibles seulement par vous deux. Un souci ? Signale un message en un clic.': 'لا يرى الرسائل غيركما. مشكلة؟ بلّغ عن رسالة بنقرة.',
   'Pour briser la glace :': 'لكسر الجليد:', 'Aller aux derniers messages': 'إلى آخر الرسائل',
-  'Vous ne pouvez pas vous écrire pour l’instant. Une conversation s’ouvre avec un mentorat, une candidature ou des coordonnées partagées.': 'لا يمكنكما المراسلة الآن. تُفتح المحادثة مع إرشاد أو ترشّح أو بعد مشاركة معلومات الاتصال.',
+  'Vous ne pouvez pas vous écrire pour l’instant. Une conversation s’ouvre avec un match, un mentorat, une candidature ou des coordonnées partagées.': 'لا يمكنكما المراسلة الآن. تُفتح المحادثة بعد اتفاق في صفحة التوافق، أو مع إرشاد أو ترشّح، أو بعد مشاركة معلومات الاتصال.',
   'Tu as bloqué': 'لقد حظرت', 'Non envoyé · Réessayer': 'لم تُرسل · أعد المحاولة', 'Non envoyé': 'لم تُرسل', 'Envoi en cours': 'جارٍ الإرسال', 'Vu': 'تمت المشاهدة', 'Envoyé': 'أُرسلت',
   'Actions du message': 'خيارات الرسالة', 'Copier': 'نسخ', 'Supprimer': 'حذف', 'Agrandir la photo': 'تكبير الصورة', 'Photo indisponible': 'الصورة غير متاحة',
   'Pause': 'إيقاف مؤقت', 'Écouter le message vocal': 'استمع إلى الرسالة الصوتية', 'Lecture impossible': 'تعذّر التشغيل', 'Fermer': 'إغلاق',

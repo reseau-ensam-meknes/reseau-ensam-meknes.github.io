@@ -41,7 +41,7 @@ test('c’est un match : aux deux, le prénom de l’autre, la discussion s’ou
   const n = t('match', CAS.match[0]);
   assert.deepEqual([n.title, n.body], ['C’est un match !', 'Toi et Salma, vous pouvez vous écrire.']);
   const ar = t('match', CAS.match[0], 'ar');
-  assert.equal(ar.title, 'تمّ التوافق!');
+  assert.equal(ar.title, 'تمّ الاتفاق!');
   assert.match(ar.body, /Salma/);
   // Sans l'autre personne (ancienne file) : la page Match, un tag par match
   assert.equal(t('match', { nom: 'Salma', match: MATCH }).url, SITE + '#match');

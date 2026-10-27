@@ -483,7 +483,7 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
   match: {
     route: 'match',
     fr: v => ['C’est un match !', `Toi et ${v.nom}, vous pouvez vous écrire.`],
-    ar: v => ['تمّ التوافق!', `يمكنك الآن مراسلة ${v.nom}.`],
+    ar: v => ['تمّ الاتفاق!', `يمكنك الآن مراسلة ${v.nom}.`],
   },
   match_interet: {
     route: 'match',

@@ -2025,6 +2025,8 @@ html.defil-bloque.defil-gouttiere { scrollbar-gutter: stable; }
 .mx-int-o { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-2); font-weight: 600; color: var(--ink-2); }
 .mx-corps { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: .75rem; overflow: hidden; padding-block-end: 14px; margin-block-end: -14px;
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent); }
+/* Rien ne se tasse : une ligne coupée à mi-hauteur se lit mal ; sur une carte basse, la description part d'abord (plus bas) */
+.mx-corps > * { flex-shrink: 0; }
 .mx-c-ent { display: flex; align-items: center; gap: .8rem; min-width: 0; }
 .mx-c-ent-txt { display: flex; flex-direction: column; min-width: 0; font-size: var(--fs-3); }
 .mx-c-ent-txt strong { font-size: var(--fs-4); color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2070,9 +2072,11 @@ html.defil-bloque.defil-gouttiere { scrollbar-gutter: stable; }
   .mx-p-tete > .avatar { zoom: .72; }
   .mx-c-nom, .mx-c-titre { font-size: var(--fs-5); }
   .mx-c-desc { -webkit-line-clamp: 2; }
+  .mx-c-titre { -webkit-line-clamp: 2; }
   .mx-c-pied { margin-block-start: .5rem; padding-block-start: .4rem; }
 }
 @container carte (max-height: 420px) {
+  .mx-c-desc { display: none; }
   .mx-personne { justify-content: flex-start; align-items: flex-start; text-align: start; }
   .mx-personne .mx-puces.centre { justify-content: flex-start; }
   .mx-p-tete { flex-direction: row; align-self: stretch; gap: .8rem; text-align: start; }
