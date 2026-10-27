@@ -3345,7 +3345,9 @@ test('ambassadeur (démo) : refus, puis le suivant ; l’administration voit, re
   // L'administration : « Proposer maintenant » passe au suivant
   await s.comme('Admin'); await s.aller('admin/inviter');
   await s.page.waitForSelector('#amb-admin');
-  await s.page.click('#amb-lancer'); await s.page.waitForTimeout(400);
+  // « Proposer maintenant » parcourt toutes les promos : son message dit qu'il a fini (un temps fixe ne suffit pas en CI)
+  await s.page.click('#amb-lancer');
+  await s.page.locator('.toast', { hasText: /changements? :|Rien à proposer/ }).waitFor({ timeout: 10000 });
   const suivant = (await lignesAmb(s.page)).find(a => a.promo === groupe[0] && a.filiere === groupe[1] && a.statut === 'propose');
   assert.ok(suivant && !suivant.nom.startsWith('Salma'), 'proposé au suivant de la promo');
   assert.ok((await lignesAmb(s.page)).every(a => a.nom), 'jamais l’administration');
