@@ -4009,6 +4009,14 @@ test('match : glisser au doigt, au clavier, « Revenir » ; un appui ouvre le d�
   await s.page.click('.mx-retour'); await s.page.waitForTimeout(600);
   assert.equal(await carteDessus(s.page), premiere);
   assert.deepEqual((await mesChoix(s.page)).filter(c => c.choix === 'plus_tard'), []);
+  // Un appui au doigt ouvre le profil, qui reste ouvert : le clic que le téléphone envoie après le relâchement
+  // ne tombe plus sur le fond de la feuille (avant, elle montait puis redescendait aussitôt)
+  for (const h of [0.25, 0.5]) {
+    await s.page.touchscreen.tap(b.x + b.width / 2, b.y + b.height * h); await s.page.waitForTimeout(800);
+    assert.equal(await s.page.locator('.modal').count(), 1, `la fiche reste ouverte (appui à ${h * 100} % de la carte)`);
+    await s.page.click('.modal .modal-head .icon-btn'); await s.page.waitForTimeout(500);
+    assert.equal(await s.page.locator('.modal').count(), 0);
+  }
   assert.equal(await s.debordement(), 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
@@ -4038,7 +4046,12 @@ test('match : glisser au doigt, au clavier, « Revenir » ; un appui ouvre le d�
   assert.notEqual(await carteDessus(d.page), nom);
   const id = await d.page.evaluate(n => window.__demo.data.profiles.find(p => p.full_name === n)?.id, nom);
   assert.ok((await mesChoix(d.page)).some(x => x.profil === id && x.choix === 'oui'));
-  // Un appui (sans glisser) ouvre le profil
+  // Un petit glisser à la souris (la carte revient) n'ouvre pas le profil ; un appui (sans glisser) l'ouvre
+  const c2 = await d.page.locator('.mx-carte.dessus').boundingBox();
+  await d.page.mouse.move(c2.x + c2.width / 2, c2.y + c2.height / 2); await d.page.mouse.down();
+  for (let i = 1; i <= 4; i++) { await d.page.mouse.move(c2.x + c2.width / 2 + i * 12, c2.y + c2.height / 2); await d.page.waitForTimeout(16); }
+  await d.page.mouse.up(); await d.page.waitForTimeout(600);
+  assert.equal(await d.page.locator('.modal').count(), 0, 'un glisser n’ouvre pas le profil');
   await d.page.locator('.mx-carte.dessus .mx-corps').click(); await d.page.waitForTimeout(400);
   assert.ok(await d.page.locator('.modal').count() > 0);
   assert.deepEqual(d.erreurs, []);
