@@ -2861,7 +2861,7 @@ async function demandeAvecAide(s, TITRE) {
   return fete;
 }
 
-test('match fêté des deux côtés : « Oui, accepter » avec son visage, les deux visages et le cœur ; le lauréat le vit à son retour, une fois', async () => {
+test('match fêté des deux côtés : « Oui, accepter » avec son visage, les deux visages et la coche ; le lauréat le vit à son retour, une fois', async () => {
   const s = await ouvrir({ largeur: 390 });
   const TITRE = 'PFE en maintenance industrielle à Tanger';
   const fete = await demandeAvecAide(s, TITRE);
@@ -2879,9 +2879,9 @@ test('match fêté des deux côtés : « Oui, accepter » avec son visage, les d
   assert.equal((await feuille.locator('.btn.primary').innerText()).trim(), 'Oui, accepter');
   await feuille.locator('.btn.primary').click();
   await s.page.waitForSelector('.fete.fete-match');
-  // Les deux visages (le sien, puis celui du lauréat), le cœur, des confettis bleu, orange et bleu nuit ; aucun point pour l'étudiante
+  // Les deux visages (le sien, puis celui du lauréat), la coche, des confettis bleu, orange et bleu nuit ; aucun point pour l'étudiante
   assert.equal(await s.page.locator('.fete-match .fm-duo .avatar').count(), 2);
-  assert.equal(await s.page.locator('.fete-match .fm-coeur').count(), 1);
+  assert.equal(await s.page.locator('.fete-match .fm-sceau').count(), 1);
   assert.match(await s.page.locator('#fete-titre').innerText(), /C’est un match/);
   const couleurs = await s.page.$$eval('.fete-pluie i', is => [...new Set(is.map(i => i.style.getPropertyValue('--c')))]);
   assert.deepEqual(couleurs.sort(), [...MATCH].sort());
@@ -3053,8 +3053,8 @@ test('arabe : les fêtes du match et du merci, et la carte « Fait », sont trad
   await s.page.waitForSelector('.fete-match');
   const [a, b] = await s.page.$$eval('.fm-duo .fm-v', vs => vs.map(v => v.getBoundingClientRect().left));
   assert.ok(a > b, 'en arabe, le premier visage est à droite');
-  const coeur = await s.page.$eval('.fm-coeur', c => { const r = c.getBoundingClientRect(), d = c.parentElement.getBoundingClientRect(); return Math.abs((r.left + r.right) / 2 - (d.left + d.right) / 2); });
-  assert.ok(coeur < 2, 'le cœur est entre les deux visages');
+  const coeur = await s.page.$eval('.fm-sceau', c => { const r = c.getBoundingClientRect(), d = c.parentElement.getBoundingClientRect(); return Math.abs((r.left + r.right) / 2 - (d.left + d.right) / 2); });
+  assert.ok(coeur < 2, 'la coche est entre les deux visages');
   assert.deepEqual((await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), []);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
@@ -4012,7 +4012,9 @@ test('match : glisser au doigt, au clavier, « Revenir » ; un appui ouvre le d�
   // Un appui au doigt ouvre le profil, qui reste ouvert : le clic que le téléphone envoie après le relâchement
   // ne tombe plus sur le fond de la feuille (avant, elle montait puis redescendait aussitôt)
   for (const h of [0.25, 0.5]) {
-    await s.page.touchscreen.tap(b.x + b.width / 2, b.y + b.height * h); await s.page.waitForTimeout(800);
+    // (la fermeture de la fiche peut faire défiler la page : la carte est remesurée)
+    const bt = await s.page.locator('.mx-carte.dessus').boundingBox();
+    await s.page.touchscreen.tap(bt.x + bt.width / 2, bt.y + bt.height * h); await s.page.waitForTimeout(800);
     assert.equal(await s.page.locator('.modal').count(), 1, `la fiche reste ouverte (appui à ${h * 100} % de la carte)`);
     await s.page.click('.modal .modal-head .icon-btn'); await s.page.waitForTimeout(500);
     assert.equal(await s.page.locator('.modal').count(), 0);
@@ -4056,6 +4058,71 @@ test('match : glisser au doigt, au clavier, « Revenir » ; un appui ouvre le d�
   assert.ok(await d.page.locator('.modal').count() > 0);
   assert.deepEqual(d.erreurs, []);
   await d.ctx.close();
+});
+
+test('match : le lauréat voit le CV de l’étudiant en grand, le lit page par page, puis choisit ; une coche, aucun cœur (390 px, puis arabe)', async () => {
+  const s = await ouvrir({ largeur: 390, toucher: true });
+  await s.comme('Youssef'); await s.aller('match');
+  // Aucun cœur dans Match : « Intéressé » porte une coche
+  const coeur = 'M12 20s-7-4.4-7-10';
+  assert.ok(!(await s.page.locator('.mx-page').innerHTML()).includes(coeur), 'pas de cœur sur la page');
+  // Jusqu'à la première carte avec un CV en PDF
+  for (let i = 0; i < 5 && !(await s.page.locator('.mx-carte.dessus .mx-cv-apercu').count()); i++) { await s.page.click('.mx-non'); await s.page.waitForTimeout(500); }
+  const apercu = s.page.locator('.mx-carte.dessus .mx-cv-apercu');
+  await s.page.waitForSelector('.mx-carte.dessus .mx-cv-apercu.pret img', { timeout: 15000 });
+  const nom = await carteDessus(s.page);
+  assert.equal(await apercu.locator('img').getAttribute('alt'), `Première page du CV de ${nom}`);
+  assert.ok(await apercu.locator('img').evaluate(i => i.naturalWidth > 300), 'la page est dessinée');
+  assert.equal(await apercu.locator('.mx-cv-etiquette').innerText(), '1 page');
+  // Le CV prend la place de la grande photo : toute la largeur, et la plus grande part de la carte
+  const c = await s.page.locator('.mx-carte.dessus').boundingBox(), a = await apercu.boundingBox();
+  assert.ok(a.width > c.width * 0.85 && a.height > c.height * 0.4, `aperçu ${Math.round(a.width)}×${Math.round(a.height)} dans une carte ${Math.round(c.width)}×${Math.round(c.height)}`);
+  // Un appui sur le CV ouvre la lecture (pas la fiche), page par page, avec « Plus tard » et « Intéressé » au pied
+  await s.page.touchscreen.tap(a.x + a.width / 2, a.y + a.height * 0.3);
+  await s.page.waitForSelector('.modal.mx-lecteur img.mx-lect-page', { timeout: 15000 });
+  assert.equal(await s.page.locator('.modal.mx-lecteur h2').innerText(), `CV de ${nom}`);
+  assert.equal(await s.page.locator('.mx-lect-barre .small').innerText(), '1 page');
+  const agrandir = s.page.locator('.mx-lect-outils button[aria-pressed]');
+  await agrandir.click();
+  assert.equal(await agrandir.getAttribute('aria-pressed'), 'true');
+  // Agrandie, la page déborde et se fait défiler (dans la fenêtre, pas l'écran)
+  await s.page.waitForFunction(() => { const d = document.querySelector('.mx-lect-pages'); return d.scrollWidth > d.clientWidth + 50; });
+  assert.equal(await s.debordement(), 0);
+  // Échap ferme la lecture et laisse la carte
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator('.modal').count(), 0);
+  assert.equal(await carteDessus(s.page), nom);
+  // « Lire le CV », puis « Intéressé » au pied : le choix est fait et la carte passe
+  await s.page.click('.mx-carte.dessus .mx-cv-lire');
+  await s.page.waitForSelector('.modal.mx-lecteur .mx-lect-choix');
+  await s.page.locator('.mx-lect-choix .btn.primary', { hasText: 'Intéressé' }).click(); await s.page.waitForTimeout(700);
+  if (await s.page.locator('.mx-fete').count()) {
+    // Une fête de mise en relation : une coche entre les deux visages, pas de cœur
+    assert.equal(await s.page.locator('.mx-fete .mx-duo-sceau').count(), 1);
+    assert.ok(!(await s.page.locator('.mx-fete').innerHTML()).includes(coeur));
+    await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+  }
+  assert.equal(await s.page.locator('.modal.mx-lecteur').count(), 0);
+  const id = await s.page.evaluate(n => window.__demo.data.profiles.find(p => p.full_name === n)?.id, nom);
+  assert.ok((await mesChoix(s.page)).some(x => x.profil === id && x.choix === 'oui'));
+  assert.notEqual(await carteDessus(s.page), nom);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe : la lecture se dit en arabe, et la page agrandie commence par son début (le CV est écrit de gauche à droite)
+  const r = await ouvrir({ largeur: 390, langue: 'ar' });
+  await r.comme('Youssef'); await r.aller('match');
+  for (let i = 0; i < 5 && !(await r.page.locator('.mx-carte.dessus .mx-cv-apercu').count()); i++) { await r.page.click('.mx-non'); await r.page.waitForTimeout(500); }
+  await r.page.waitForSelector('.mx-carte.dessus .mx-cv-apercu.pret img', { timeout: 15000 });
+  const [et, li] = await Promise.all(['.mx-cv-etiquette', '.mx-cv-lire'].map(q => r.page.locator('.mx-carte.dessus ' + q).boundingBox()));
+  assert.ok(et.x >= li.x + li.width || li.x >= et.x + et.width, 'le nombre de pages et « Lire le CV » côte à côte, sans chevauchement');
+  await r.page.click('.mx-carte.dessus .mx-cv-lire');
+  await r.page.waitForSelector('.modal.mx-lecteur img.mx-lect-page', { timeout: 15000 });
+  assert.match(await r.page.locator('.modal.mx-lecteur h2').innerText(), /^السيرة الذاتية لـ/);
+  await r.page.locator('.mx-lect-outils button[aria-pressed]').click();
+  await r.page.waitForFunction(() => { const d = document.querySelector('.mx-lect-pages'); return d.scrollWidth > d.clientWidth + 50; });
+  assert.ok(await r.page.locator('.mx-lect-pages').evaluate(d => Math.abs(d.querySelector('img').getBoundingClientRect().left - d.getBoundingClientRect().left) < 8), 'le bord gauche de la page est visible');
+  assert.deepEqual(r.erreurs, []);
+  await r.ctx.close();
 });
 
 test('match : programmer un entretien (jour, heure, durée, visio) ; l’autre répond « Je serai là » et l’étape avance', async () => {
