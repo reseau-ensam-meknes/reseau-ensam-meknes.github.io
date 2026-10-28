@@ -34,7 +34,7 @@ const forLaureats = o => o.audience === 'laureats';
 
 // Filières visées par une offre : un parcours entier en un geste, ou ses filières une à une.
 // Une ancienne appellation déjà choisie (offre publiée avant la nouvelle liste) reste affichée, et se retire d'un clic.
-function FilieresPick({ value, onChange, cls = '', style }) {
+export function FilieresPick({ value, onChange, cls = '', style }) {
   const has = v => value.includes(v);
   const toggle = v => onChange(has(v) ? value.filter(x => x !== v) : [...value, v]);
   const anciennes = value.filter(v => !FILIERES.includes(v));

@@ -3,10 +3,13 @@
 // leur CV en grand (apercu-cv.js), lisible en entier avant de choisir.
 // Quand les deux disent oui, c'est un match : la discussion s'ouvre (messages.js : bandeau, entretien).
 // Règles : deckMatch, matchsDe (logic.js) ; choisirMatch, revenirMatch, vuMatch (store.js, comme la base). CSS : page.html, section « Match ».
+// Cartes sponsorisées : une après chaque 10 cartes de la visite (avecSponsorises, logic.js), marquée « Sponsorisé » ; tout
+// geste la passe sans rien enregistrer, « Revenir » ne la ramène pas. La base compte seulement une vue (carte du dessus) et
+// un clic (« Voir ») par membre et par jour ; l'entreprise n'en reçoit que les totaux (admin.js, « Sponsorisés »).
 import { html, useState, useEffect, useLayoutEffect, useRef, useMemo } from './vendor/preact-htm.js';
-import { Icon, Avatar, AvatarPile, CompanyLogo, MentionLogos, toast, roleTexte, useFeuille, mouvementReduit, ecranLibre } from './ui.js';
+import { Icon, Avatar, AvatarPile, CompanyLogo, MentionLogos, toast, roleTexte, useFeuille, mouvementReduit, ecranLibre, injectCSS } from './ui.js';
 import { ajouterIcones } from './entree.js';
-import { deckMatch, matchsDe, titreOffre, resumeFilieres, filiereCourte, niveauOf, NIVEAUX, TYPES, demandesActives, typesDemande, DEMANDES_MAX } from './logic.js';
+import { deckMatch, matchsDe, titreOffre, resumeFilieres, filiereCourte, niveauOf, NIVEAUX, TYPES, demandesActives, typesDemande, DEMANDES_MAX, sponsorisesPour, avecSponsorises, decalageSponso } from './logic.js';
 import { estPortee } from './origine.js';
 import { TYPE_ICON } from './entree.js';
 import { OfferComposer } from './offers.js';
@@ -26,7 +29,10 @@ const cvPourLaureats = me => ['laureats', 'tous'].includes((me.visibilite || {})
 const vibrer = motif => { try { navigator.vibrate?.(motif); } catch { /* pas de vibreur */ } };
 // Le logo d'une entreprise : un seul point d'entrée pour toute la page. LogoEntreprise (lot vitrine) prendra sa place ici,
 // avec la même forme ({ nom, lien, taille }) ; en attendant, le logo local ou le monogramme coloré.
-const Logo = ({ nom, lien, taille = 56 }) => html`<${CompanyLogo} name=${nom} size=${taille} lien=${lien}/>`;
+// domaine : celui que l'administration a donné pour une carte sponsorisée (son icône), sinon celui que le logo devine
+const Logo = ({ nom, lien, taille = 56, domaine = null }) => html`<${CompanyLogo} name=${nom} size=${taille} lien=${lien} domaine=${domaine}/>`;
+// Le site qu'ouvre « Voir » sur une carte sponsorisée, sans « www. »
+const siteDe = lien => { try { return new URL(lien).hostname.replace(/^www\./, ''); } catch { return ''; } };
 
 // ---------------------------------------------------------------------------
 // La page
@@ -36,7 +42,11 @@ export function MatchPage(ctx) {
   const etu = me.role === 'etudiant';
   // Sens de lecture : en arabe, « Intéressé » est à gauche (le glisser et les flèches suivent)
   const sens = getLang() === 'ar' ? -1 : 1;
-  const deck = useMemo(() => deckMatch(data, me), [data.match_choix, data.matchs, data.offers, data.profiles, data.applications, data.blocages, data.demandes, me]);
+  const base = useMemo(() => deckMatch(data, me), [data.match_choix, data.matchs, data.offers, data.profiles, data.applications, data.blocages, data.demandes, me]);
+  const sponsors = useMemo(() => sponsorisesPour(data.sponsorises, me), [data.sponsorises, me]);
+  const [passees, setPassees] = useState(0);     // les cartes ordinaires passées pendant cette visite
+  const [sautes, setSautes] = useState([]);      // les cartes sponsorisées passées (leurs créneaux)
+  const deck = useMemo(() => avecSponsorises(base, sponsors, { passees, sautes, decalage: decalageSponso(me.id) }), [base, sponsors, passees, sautes, me.id]);
   const [vol, setVol] = useState(null);          // la carte qui s'en va : { c, choix, from }
   const [hist, setHist] = useState([]);          // les choix de cette visite (« Revenir »)
   const [devant, setDevant] = useState(null);    // la carte revenue reste devant
@@ -58,20 +68,24 @@ export function MatchPage(ctx) {
     setVol({ c, choix, from, t: Date.now() }); setDevant(null);
     pile.current?.style.setProperty('--avance', '0');
     vibrer(10);
+    const fin = () => setTimeout(() => setVol(v => (v?.c.cle === c.cle ? null : v)), mouvementReduit() ? 180 : 430);
+    // Une carte sponsorisée : quel que soit le geste, elle passe ; rien n'est enregistré (pas de choix, pas de « Revenir »)
+    if (c.sorte === 'sponsorise') { setSautes(l => [...l, c.creneau]); setAnnonce('Carte sponsorisée passée.'); fin(); return; }
     setAnnonce(`${choix === 'oui' ? 'Intéressé' : 'Plus tard'} : ${c.offre ? titreOffre(c.offre) : c.profil?.full_name || ''}`);
-    setHist(h => [...h, c.cle]);
+    setHist(h => [...h, c.cle]); setPassees(n => n + 1);
     store.choisirMatch(c.offre ? { offre: c.offre.id } : { profil: c.profil.id }, choix).then(r => {
       if (!r?.match) return;
       const autre = store.byId('profiles', r.match.etudiant_id === me.id ? r.match.laureat_id : r.match.etudiant_id) || c.profil;
       setTimeout(() => { vibrer([30, 60, 30]); setFete({ m: r.match, autre, offre: (r.match.offre_id && store.byId('offers', r.match.offre_id)) || null }); }, mouvementReduit() ? 0 : 260);
-    }, e => { setHist(h => h.filter(x => x !== c.cle)); setDevant(c.cle); toast(e.message || String(e), 'err'); });
-    setTimeout(() => setVol(v => (v?.c.cle === c.cle ? null : v)), mouvementReduit() ? 180 : 430);
+    }, e => { setHist(h => h.filter(x => x !== c.cle)); setPassees(n => Math.max(0, n - 1)); setDevant(c.cle); toast(e.message || String(e), 'err'); });
+    fin();
   };
   const revenir = () => {
     if (!hist.length || vol) return;
     store.revenirMatch().then(r => {
       setHist(h => h.slice(0, -1));
       if (!r) return toast('Ce choix a mené à un match : il reste.', 'info');
+      setPassees(n => Math.max(0, n - 1));
       const cle = r.offre ? 'o:' + r.offre : 'p:' + r.profil;
       setDevant(cle); setAnnonce('La carte est revenue.');
       vibrer(8);
@@ -108,6 +122,9 @@ export function MatchPage(ctx) {
     ajuste(); addEventListener('resize', ajuste);
     return () => removeEventListener('resize', ajuste);
   }, [plein]);
+  // Une carte sponsorisée devenue la carte du dessus : une vue (la base n'en compte qu'une par membre et par jour)
+  useEffect(() => { if (top?.sorte === 'sponsorise') Promise.resolve(store.vueSponsorise?.(top.sponsorise.id)).catch(() => {}); }, [top?.cle]);
+  const voir = c => Promise.resolve(store.clicSponsorise?.(c.sponsorise.id)).catch(() => {});
   const finFete = () => { if (fete) store.vuMatch(fete.m.id).catch(() => {}); setFete(null); };
   const ecrire = () => { const f = fete; finFete(); if (f?.autre) (ctx.ecrire ? ctx.ecrire(f.autre.id) : go('messages/' + f.autre.id)); };
   const logos = cartes.slice(0, 3).filter(c => c.offre).map(c => c.offre.entreprise);
@@ -121,7 +138,7 @@ export function MatchPage(ctx) {
     ${top || vol ? html`<div class="mx-zone">
       <div class="mx-pile" ref=${pile} style=${`--sens:${sens}`}>
         ${cartes.slice(0, 3).reverse().map((c, i, l) => html`<${Carte} key=${c.cle} ctx=${ctx} carte=${c} rang=${l.length - 1 - i} sens=${sens}
-          onChoix=${choisir} onLire=${() => setLire(c)} revenue=${c.cle === devant}/>`)}
+          onChoix=${choisir} onLire=${() => setLire(c)} onVoir=${() => voir(c)} revenue=${c.cle === devant}/>`)}
         ${vol ? html`<${Carte} key=${'vol-' + vol.c.cle + vol.t} ctx=${ctx} carte=${vol.c} rang=${0} sens=${sens} vol=${vol}/>` : null}
       </div>
       <div class="mx-acts" role="group" aria-label="Ton choix">
@@ -148,12 +165,14 @@ export function MatchPage(ctx) {
 // ---------------------------------------------------------------------------
 const SEUIL = 0.3;          // part de la largeur à dépasser pour choisir
 const VITESSE = 0.55;       // ou un geste vif (px/ms)
-function Carte({ ctx, carte, rang, sens, onChoix, onLire, vol, revenue }) {
+function Carte({ ctx, carte, rang, sens, onChoix, onLire, onVoir, vol, revenue }) {
   const el = useRef(); const g = useRef(null);
   // Le dernier appui fini : glissé ou long, le clic qui le suit n'ouvre pas le détail
   const fini = useRef(null);
   const dessus = rang === 0 && !vol;
-  const detail = () => (carte.offre ? ctx.openOffer(carte.offre.id) : ctx.openProfile(carte.profil));
+  const sponso = carte.sorte === 'sponsorise';
+  // Une carte sponsorisée n'a pas de détail : seul « Voir » ouvre son lien
+  const detail = () => (sponso ? null : carte.offre ? ctx.openOffer(carte.offre.id) : ctx.openProfile(carte.profil));
   const poser = (dx, dy) => {
     const e = el.current; if (!e) return;
     e.style.transform = dx || dy ? `translate3d(${dx}px, ${dy}px, 0) rotate(${(dx / (g.current?.w || 320)) * 9}deg)` : '';
@@ -205,7 +224,13 @@ function Carte({ ctx, carte, rang, sens, onChoix, onLire, vol, revenue }) {
   const depart = vol ? (vol.choix === 'oui' ? 1 : -1) * sens : 0;
   const style = vol ? `--x0:${vol.from?.dx || 0}px;--y0:${vol.from?.dy || 0}px;--r0:${((vol.from?.dx || 0) / (vol.from?.w || 320)) * 9}deg;--dir:${depart};--p:${(vol.choix === 'oui' ? 1 : -1) * (vol.from ? 1 : 0.6)}` : `--rang:${rang}`;
   const o = carte.offre, p = carte.profil;
-  const tid = 'mx-t-' + carte.cle.replace(':', '-') + (vol ? '-vol' : '');
+  const tid = 'mx-t-' + carte.cle.replace(/:/g, '-') + (vol ? '-vol' : '');
+  if (sponso) return html`<article ref=${el} class=${'mx-carte sponso' + (dessus ? ' dessus' : ' derriere') + (vol ? ' vol' : '')}
+    style=${style} aria-hidden=${dessus ? null : 'true'} inert=${dessus ? null : true} aria-labelledby=${dessus ? `${tid}-m ${tid}` : null}
+    onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerCancel=${up} onClick=${clic}>
+    <${CorpsSponsorise} s=${carte.sponsorise} tid=${tid}/>
+    <${PiedSponsorise} s=${carte.sponsorise} onVoir=${dessus ? onVoir : null}/>
+  </article>`;
   return html`<article ref=${el} class=${'mx-carte' + (dessus ? ' dessus' : ' derriere') + (vol ? ' vol' : '') + (revenue && dessus ? ' revenue' : '') + (carte.interet ? ' avec-interet' : '')}
     style=${style} aria-hidden=${dessus ? null : 'true'} inert=${dessus ? null : true} aria-labelledby=${dessus ? tid : null}
     onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerCancel=${up} onClick=${clic}>
@@ -219,6 +244,32 @@ function Carte({ ctx, carte, rang, sens, onChoix, onLire, vol, revenue }) {
       ${dessus ? html`<button type="button" class="btn tiny ghost mx-detail" onClick=${detail}>${o ? 'Voir l’offre' : 'Voir le profil'} <${Icon} name="arrow" size=${14}/></button>` : null}
     </footer>
   </article>`;
+}
+
+// Une carte sponsorisée : marquée « Sponsorisé », le logo et le nom de l'entreprise, son titre et son texte (écrits par
+// l'administration, gardés tels quels en arabe). Même allure que les autres cartes : rien qui clignote ni qui crie.
+export function CorpsSponsorise({ s, tid }) {
+  return html`<div class="mx-corps mx-sponso">
+    <p class="mx-s-marque" id=${tid ? tid + '-m' : null}>Sponsorisé</p>
+    <div class="mx-c-ent"><${Logo} nom=${s.entreprise} lien=${s.lien} domaine=${s.domaine} taille=${60}/>
+      <span class="mx-c-ent-txt"><strong translate="no" dir="auto">${s.entreprise}</strong></span></div>
+    <h2 class="mx-c-titre" id=${tid} translate="no" dir="auto">${s.titre}</h2>
+    <p class="mx-c-desc mx-s-texte" translate="no" dir="auto">${s.texte}</p>
+  </div>`;
+}
+// Son pied : le site qu'ouvre « Voir » (dans un nouvel onglet), et « Voir », sans fond plein (« Intéressé » reste le seul)
+function PiedSponsorise({ s, onVoir }) {
+  const site = siteDe(s.lien);
+  return html`<footer class="mx-c-pied">
+    <p class="mx-s-site">${site ? html`<${Icon} name="link" size=${15}/><span dir="ltr" translate="no">${site}</span>` : null}</p>
+    ${onVoir !== null ? html`<a class="btn tiny ghost mx-detail mx-s-voir" href=${s.lien} target="_blank" rel="noopener sponsored" onClick=${() => onVoir?.()}>Voir <${Icon} name="arrow" size=${14}/></a>` : null}
+  </footer>`;
+}
+// L'aperçu de l'administration (admin.js) : la carte telle qu'elle paraît dans Match, « Voir » ouvre le lien sans rien compter
+export function ApercuSponsorise({ s }) {
+  return html`<div class="mx-apercu"><article class="mx-carte sponso dessus" aria-label="Aperçu dans Match">
+    <${CorpsSponsorise} s=${s}/><${PiedSponsorise} s=${s}/>
+  </article></div>`;
 }
 
 function CorpsOffre({ ctx, carte, tid }) {
@@ -383,7 +434,23 @@ export function MatchAccueil({ ctx }) {
   </button>`;
 }
 
+injectCSS('match-sponso', `
+.mx-s-marque { align-self: flex-start; margin: 0; padding: .2rem .65rem; border-radius: var(--r-pill); background: var(--surface-2); color: var(--ink-2); font-size: var(--fs-1); font-weight: 650; line-height: 1.4; }
+.mx-sponso .mx-s-texte { -webkit-line-clamp: 7; }
+.mx-s-site { display: flex; align-items: center; gap: .35rem; margin: 0; min-width: 0; color: var(--muted); font-size: var(--fs-2); }
+.mx-s-site > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mx-s-site .ico { flex: none; }
+.mx-apercu { position: relative; block-size: 380px; max-inline-size: 420px; }
+.mx-apercu .mx-carte { cursor: default; box-shadow: var(--sh2); }
+/* Le texte de l'entreprise est tout ce que dit la carte : il garde ses lignes tant que la carte le permet */
+@container carte (max-height: 470px) { .mx-sponso .mx-s-texte { -webkit-line-clamp: 5; } }
+@container carte (max-height: 420px) { .mx-sponso .mx-s-texte { display: -webkit-box; -webkit-line-clamp: 4; } }
+@container carte (max-height: 360px) { .mx-sponso .mx-s-texte { -webkit-line-clamp: 2; } }
+`);
+
 addAR({
+  // Cartes sponsorisées
+  'Sponsorisé': 'مُموَّل', 'Carte sponsorisée passée.': 'تم تجاوز البطاقة المموَّلة.', 'Aperçu dans Match': 'معاينة في صفحة التوافق',
   'Tes matchs': 'توافقاتك', 'Ton offre l’intéresse': 'اهتمام بعرضك', 'Nouveau match': 'توافق جديد', 'Ton choix': 'اختيارك',
   'Des offres de lauréats, une carte à la fois.': 'عروض من الخريجين، بطاقة واحدة في كل مرة.',
   'Des étudiants de l’école, une carte à la fois.': 'طلبة المدرسة، بطاقة واحدة في كل مرة.',

@@ -2,7 +2,7 @@
 import { seasonOf, proximiteFiliere } from './logic.js';
 import { seedPhase3 } from './seed3.js';
 import { seedMessages, seedVivant } from './seed4.js';
-import { seedMatch } from './seed-match.js';
+import { seedMatch, seedSponsorises } from './seed-match.js';
 
 function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 
@@ -421,7 +421,7 @@ export function buildSeed(now = new Date()) {
   for (const p of profiles) p.notif_push = {};
   const msgs = seedMessages({ ...base, ...phase3 }, now);
   const dem = seedDemandes({ ...base, ...msgs }, { S, now, daysAgo, id, s5, s4, seniors: seniors.filter(x => x !== youssef && x.entreprise) });
-  return { ...base, ...phase3, ...msgs, ...dem, ...seedVivant({ ...base, ...dem }, now), ...seedMatch({ ...base, ...dem }, now) };
+  return { ...base, ...phase3, ...msgs, ...dem, ...seedVivant({ ...base, ...dem }, now), ...seedMatch({ ...base, ...dem }, now), sponsorises: seedSponsorises(base, now) };
 }
 
 // Demandes des étudiants : une qui attend une première aide, une qui a reçu une proposition, une réussie

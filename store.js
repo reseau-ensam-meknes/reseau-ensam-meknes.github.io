@@ -3,7 +3,7 @@
 const chargerSeed = () => import('./seed.js').then(m => m.buildSeed());
 import { refusOrigine, estPartagee, LIMITE_PARTAGES } from './origine.js';
 import { VIVANT, regleVivant, peutSupprimerVivant, cascadeVivant, memeCible } from './reseau-vivant.js';
-import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage, transitionAmbassadeur, PREFIXE_BROUILLON, refusChoixMatch, nouveauMatch, matchEntre } from './logic.js';
+import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage, transitionAmbassadeur, PREFIXE_BROUILLON, refusChoixMatch, nouveauMatch, matchEntre, normaliserSponsorise, refusSponsorise, sponsorisePour, jourLocal, totauxSponsorises } from './logic.js';
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
 const PHASE3 = ['coordonnees', 'demandes_contact', 'relectures_cv', 'relecture_commentaires', 'entretiens', 'avis_stage', 'guide_pays', 'signalements', 'enquetes_insertion', 'verifications_pairs', 'evenements', 'evenement_participants', 'retours_cv'];
@@ -16,9 +16,12 @@ const DEMANDES = ['demandes', 'propositions'];
 const AMBASSADEURS = ['ambassadeurs'];
 // Match (match.js) : les choix « Intéressé » / « Plus tard », et les matchs faits par la base
 const MATCH = ['match_choix', 'matchs'];
-export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT, ...MATCH];
+// Cartes sponsorisées de Match : un membre lit seulement celles en cours (règle de la base) ; les comptes de vues et de
+// clics ne sont jamais lus par le site (compter_sponsorise les écrit, bilan_sponsorises en donne les totaux à l'administration)
+const SPONSO = ['sponsorises'];
+export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT, ...MATCH, ...SPONSO];
 // Tables ajoutées par supabase/mise-a-jour.sql : tant que la base n'est pas à jour, elles restent vides au lieu de bloquer le site.
-const OPTIONAL = new Set(['shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT, ...MATCH]);
+const OPTIONAL = new Set(['shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT, ...MATCH, ...SPONSO]);
 // Lues par une vue qui masque ce que chacun a choisi de cacher (auteur anonyme, visibilité du profil).
 // Tant que la base n'a pas ces vues, on lit la table elle-même.
 const VUES = { profiles: 'profils', entretiens: 'entretiens_publics', avis_stage: 'avis_publics' };
@@ -57,6 +60,11 @@ class Base {
   peutRepondreDemande() { return this.mode !== 'live' || !this.absentes?.has('reponses_demandes'); }
   // Match : la page et son onglet attendent que la base ait ses tables (match_choix, matchs)
   peutMatch() { return this.mode !== 'live' || !this.absentes?.has('match_choix'); }
+  // Cartes sponsorisées : l'administration les gère quand la base a leur table (mise-a-jour.sql)
+  peutSponso() { return this.mode !== 'live' || !this.absentes?.has('sponsorises'); }
+  // Une carte sponsorisée devenue la carte du dessus (vue), ou son « Voir » touché (clic) : un compte par membre et par jour
+  vueSponsorise(id) { return this.compterSponsorise(id, 'vue'); }
+  clicSponsorise(id) { return this.compterSponsorise(id, 'clic'); }
   // « Cette semaine dans le réseau » : en démo, le calcul sur toutes les données
   pouls() { return poulsReseau(this.data); }
   // En ligne, la base a déjà masqué ce qui ne doit pas être vu : ces deux aides servent surtout à la démo.
@@ -182,6 +190,8 @@ class DemoStore extends Base {
     let saved = null;
     try { saved = JSON.parse(safeGet(DEMO_KEY) || 'null'); } catch { saved = null; }
     this.data = saved?.data || await chargerSeed();
+    // Une démo enregistrée avant les cartes sponsorisées : sa carte d'exemple arrive (rien d'autre ne change)
+    if (!this.data.sponsorises) this.data.sponsorises = (await import('./seed-match.js')).seedSponsorises(this.data);
     for (const t of [...TABLES, 'guide_pays_historique', 'liste_officielle']) this.data[t] ||= [];
     this.reglages = saved?.reglages || {};
     // Une démo enregistrée avant la vue lauréat de l'administration : son admin reçoit admin_ok, comme la mise à jour de la base
@@ -213,6 +223,7 @@ class DemoStore extends Base {
     if (table === 'mentorships') applyMentorshipRules(this, r, null);
     if (table === 'liens_rdv') applyLienRules(this, r, null);
     if (table === 'annonces') { if (this.me?.role !== 'admin') throw new Error('Action non autorisée pour ton compte.'); r.author_id = this.me.id; }
+    if (SPONSO.includes(table)) regleSponsoDemo(this, r, null);
     if (table === 'shortlists') { r.laureat_id = this.me?.id; if (this.data.shortlists.some(x => x.laureat_id === r.laureat_id && x.student_id === r.student_id)) return r; }
     if (table === 'kudos') { r.user_id = this.me?.id; if (this.data.kudos.some(x => x.placement_id === r.placement_id && x.user_id === r.user_id)) return r; }
     if (table === 'invitations') applyInvitationRules(this, r, null);
@@ -247,6 +258,7 @@ class DemoStore extends Base {
     if (table === 'liens_rdv') applyLienRules(this, r, old);
     if (table === 'ambassadeurs') applyAmbassadeurRules(this, r, old);
     if (table === 'annonces' && this.me?.role !== 'admin') throw new Error('Action non autorisée pour ton compte.');
+    if (SPONSO.includes(table)) regleSponsoDemo(this, r, old);
     if (table === 'offers') regleOrigineDemo(this, r, old);
     if (MESSAGERIE.includes(table)) applyMessagerieRules(this, table, r, old);
     if (DEMANDES.includes(table)) applyDemandeRules(this, table, r, old);
@@ -265,7 +277,7 @@ class DemoStore extends Base {
     return r;
   }
   async remove(table, id, { exiger, saufStatut } = {}) {
-    if (table === 'annonces' && this.me?.role !== 'admin') throw new Error('Action non autorisée pour ton compte.');
+    if ((table === 'annonces' || SPONSO.includes(table)) && this.me?.role !== 'admin') throw new Error('Action non autorisée pour ton compte.');
     const row = this.byId(table, id);
     if (saufStatut && row?.status === saufStatut) throw new Error(exiger || 'Action non autorisée pour ton compte.');
     // Comme la règle de la base : l'étudiant retire sa réussite, le lauréat seulement ce qui attend la confirmation
@@ -289,6 +301,7 @@ class DemoStore extends Base {
     }
     this.data[table] = this.data[table].filter(x => x.id !== id);
     cascadeVivant(this.data, table, id);
+    if (table === 'sponsorises') this.data.sponsorises_comptes = (this.data.sponsorises_comptes || []).filter(c => c.sponsorise_id !== id);
     if (table === 'demandes') { this.data.propositions = this.data.propositions.filter(x => x.demande_id !== id); this.data.placements = this.data.placements.map(p => p.demande_id === id ? { ...p, demande_id: null } : p); }
     this.persist(); this.emit();
   }
@@ -418,6 +431,21 @@ class DemoStore extends Base {
     if (!emoji || mienne?.emoji === emoji) { if (mienne) await this.remove('reactions_publiques', mienne.id); return null; }
     return mienne ? this.update('reactions_publiques', mienne.id, { emoji }) : this.insert('reactions_publiques', { ...cible, emoji });
   }
+  // Cartes sponsorisées : comme compter_sponsorise() dans la base. Un membre que la carte vise (en cours, son public, son
+  // année, sa filière) compte une vue ou un clic, une fois par jour ; rien d'autre n'est gardé, et rien n'est lisible
+  async compterSponsorise(id, kind) {
+    const me = this.me, jour = jourLocal(), C = this.data.sponsorises_comptes ||= [];
+    if (!['vue', 'clic'].includes(kind) || !sponsorisePour(this.byId('sponsorises', id), me)) return false;
+    if (C.some(c => c.sponsorise_id === id && c.user_id === me.id && c.jour === jour && c.kind === kind)) return false;
+    this.data.sponsorises_comptes = [...C, { sponsorise_id: id, user_id: me.id, jour, kind }];
+    this.persist();
+    return true;
+  }
+  // Les totaux de chaque carte, pour l'administration seule (comme bilan_sponsorises) : jamais qui a vu ni cliqué
+  async bilanSponsorises() {
+    if (this.me?.role !== 'admin') throw new Error('Réservé à l’administration.');
+    return totauxSponsorises(this.data.sponsorises, this.data.sponsorises_comptes);
+  }
   // Match : mêmes règles que protect_match_choix(), match_apres_choix(), protect_match() et repondre_rdv() dans la base.
   // Un choix par carte (« oui » ou « plus_tard »), changé sur place ; renvoie le match que ce geste vient de créer (à fêter).
   async choisirMatch({ profil = null, offre = null } = {}, choix = 'oui') {
@@ -513,6 +541,16 @@ class DemoStore extends Base {
     this.data.liste_officielle = this.data.liste_officielle.filter(l => promo != null && l.promo !== +promo);
     this.persist(); this.emit();
   }
+}
+
+// Cartes sponsorisées : comme les règles de la base (seule l'administration écrit ; protect_sponsorise et ses contraintes)
+function regleSponsoDemo(store, r, old) {
+  if (store.me?.role !== 'admin') throw new Error('Action non autorisée pour ton compte.');
+  Object.assign(r, normaliserSponsorise(r));
+  if (old) { r.created_by = old.created_by; r.created_at = old.created_at; }
+  else { r.created_by = store.me.id; r.actif = r.actif !== false; r.public ||= 'tous'; r.debut ||= jourLocal(); r.annees ??= null; r.filieres ??= null; r.domaine ??= null; }
+  const refus = refusSponsorise(r);
+  if (refus) throw new Error(refus);
 }
 
 function verifierPdf(file) {
@@ -1879,6 +1917,22 @@ export class SupabaseStore extends Base {
     this.data.matchs = this.data.matchs.map(x => x.id === id ? { ...x, [col]: now } : x);
     this.emit();
     await Promise.resolve(this.sb.from('matchs').update({ [col]: now }).eq('id', id)).catch(() => {});
+  }
+  // Cartes sponsorisées : la base compte (compter_sponsorise), une fois par jour et par membre ; ici, un seul appel par
+  // carte, par geste et par jour. Base pas encore à jour ou réseau absent : rien ne change pour le membre.
+  async compterSponsorise(id, kind) {
+    if (!this.userId || !['vue', 'clic'].includes(kind)) return false;
+    const cle = `${id}:${kind}:${jourLocal()}`;
+    if ((this.sponsoComptes ||= new Set()).has(cle)) return false;
+    this.sponsoComptes.add(cle);
+    const { data, error } = await Promise.resolve(this.sb.rpc('compter_sponsorise', { p_id: id, p_kind: kind })).catch(e => ({ error: e }));
+    if (error) { this.sponsoComptes.delete(cle); return false; }
+    return data === true;
+  }
+  async bilanSponsorises() {
+    const { data, error } = await this.sb.rpc('bilan_sponsorises');
+    if (error) throw new Error(frError(error));
+    return data || [];
   }
   // Entretien proposé : « Je serai là » (oui) ou « Autre horaire » (autre), par le destinataire, tant qu'il est à venir
   async repondreRdv(id, reponse) {

@@ -1,11 +1,12 @@
 // Administration, par onglets : vue d'ensemble (chiffres, annonce, défis, parrains, recrutements, offres),
 // modération des signalements, membres (rôle, vérification), liste officielle des étudiants,
-// liens d'invitation par promo, agenda de l'école et réglages (email de l'école).
+// liens d'invitation par promo, agenda de l'école, cartes sponsorisées de Match et réglages (email de l'école).
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
 import { Icon, Field, Person, Num, Empty, Bar, Avatar, toast, injectCSS } from './ui.js';
 import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
 import { addAR, arCount } from './i18n.js';
-import { NIVEAUX, niveauOf, timeAgo, cleNom, norm, GUIDE_SECTIONS, pct, reponses48h, parcoursInscription, compteOuvert, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible } from './logic.js';
+import { NIVEAUX, niveauOf, timeAgo, cleNom, norm, GUIDE_SECTIONS, pct, reponses48h, parcoursInscription, compteOuvert, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible,
+  SPONSO_PUBLICS, SPONSO_ANNEES, jourLocal, normaliserSponsorise, refusSponsorise, etatSponsorise, tauxClic, resumeFilieres } from './logic.js';
 import { DefisAdmin } from './saison.js';
 import { AgendaAdmin } from './agenda.js';
 import { InvitationsAdmin } from './invitation.js';
@@ -13,6 +14,13 @@ import { AmbassadeursAdmin } from './ambassadeurs.js';
 import { lireCVDe, libellesCV, SignalerLecture, CvButton } from './cv.js';
 import { MessageBtn } from './messages.js';
 import { propositionCV, corrigeProfil, dejaSignalee } from './lire-cv.js';
+import { ajouterIcones } from './entree.js';
+import { FilieresPick } from './offers.js';
+import { ApercuSponsorise } from './match.js';
+import { getLang } from './i18n.js';
+
+// Une étiquette : l'onglet des cartes sponsorisées
+ajouterIcones({ etiquette: '<path d="M3.5 12.3V4.5a1 1 0 0 1 1-1h7.8l8.2 8.2a1.2 1.2 0 0 1 0 1.7l-7.6 7.6a1.2 1.2 0 0 1-1.7 0z"/><circle cx="8" cy="8" r="1.4"/>' });
 
 addAR({
   'Vue d’ensemble': 'نظرة عامة', 'Modération': 'الإشراف', 'Liste officielle': 'اللائحة الرسمية', 'Réglages': 'الإعدادات', 'Agenda': 'المفكرة',
@@ -83,7 +91,7 @@ addAR({
 ]);
 
 const ROLES = [['etudiant', 'Profil étudiant'], ['laureat', 'Profil lauréat']];
-const TABS = [['', 'Vue d’ensemble', 'chart'], ['moderation', 'Modération', 'flag'], ['membres', 'Membres', 'people'], ['liste', 'Liste officielle', 'file'], ['inviter', 'Inviter', 'send'], ['agenda', 'Agenda', 'calendar'], ['reglages', 'Réglages', 'wrench']];
+const TABS = [['', 'Vue d’ensemble', 'chart'], ['moderation', 'Modération', 'flag'], ['membres', 'Membres', 'people'], ['liste', 'Liste officielle', 'file'], ['inviter', 'Inviter', 'send'], ['agenda', 'Agenda', 'calendar'], ['sponsorises', 'Sponsorisés', 'etiquette'], ['reglages', 'Réglages', 'wrench']];
 
 // Comptes (emails, dernière connexion), lus une fois pour toute la page
 function useComptes(store, n) {
@@ -108,6 +116,7 @@ export function AdminPage(ctx) {
     ${tab === 'liste' ? html`<${ListeOfficielle} ctx=${ctx}/>` : null}
     ${tab === 'inviter' ? html`<${InvitationsAdmin} ctx=${ctx}/><${AmbassadeursAdmin} ctx=${ctx}/>` : null}
     ${tab === 'agenda' ? html`<${AgendaAdmin} ctx=${ctx}/>` : null}
+    ${tab === 'sponsorises' ? html`<${SponsorisesAdmin} ctx=${ctx}/>` : null}
     ${tab === 'reglages' ? html`<${Reglages} ctx=${ctx}/>` : null}
   </section>`;
 }
@@ -718,8 +727,152 @@ function AnnonceBox({ ctx }) {
   </div>`;
 }
 
+// ---------------------------------------------------------------------------
+// Cartes sponsorisées de Match : une entreprise paie le réseau directement (pas de régie, aucun traceur). L'administration
+// écrit la carte, choisit qui la voit (public, années, filières) et quand, l'arrête ou la reprend, et suit ses totaux :
+// vues (une par membre et par jour), clics sur « Voir », membres différents. Le bilan copié ne contient que ces totaux.
+// Règles : sponsorisePour, avecSponsorises (logic.js) ; la base : sponsorises, compter_sponsorise, bilan_sponsorises.
+// ---------------------------------------------------------------------------
+const ETATS_SPONSO = { en_cours: ['En cours', 'coopt'], programmee: ['Programmée', ''], terminee: ['Terminée', 'done'], arretee: ['Arrêtée', 'done'] };
+const dateFr = d => (d ? new Date(d + 'T12:00:00').toLocaleDateString('fr-FR') : '');
+const plusJours = (j, n) => jourLocal(new Date(j + 'T12:00:00').getTime() + n * 864e5);
+const vide = () => ({ entreprise: '', titre: '', texte: '', lien: '', domaine: '', public: 'tous', annees: [], filieres: [], debut: jourLocal(), fin: plusJours(jourLocal(), 30) });
+// Pour qui, en une ligne : le public, les années, les filières (« Toutes les années », « Toutes les filières » quand rien n'est choisi)
+const cibleSponso = s => [SPONSO_PUBLICS.find(([k]) => k === (s.public || 'tous'))?.[1],
+  s.annees?.length ? s.annees.map(n => SPONSO_ANNEES.find(([k]) => k === Number(n))?.[1]).filter(Boolean).join(', ') : 'Toutes les années',
+  s.filieres?.length ? resumeFilieres(s.filieres).join(', ') : 'Toutes les filières'].join(' · ');
+// Le bilan à envoyer à l'entreprise : des totaux, jamais un nom ni un identifiant de membre (dans la langue de l'écran)
+export function bilanSponso(s, t, aujourdhui = jourLocal()) {
+  const v = t?.vues || 0, c = t?.clics || 0, m = t?.membres || 0, taux = tauxClic(c, v);
+  return getLang() === 'ar'
+    ? [`الحصيلة · شبكة ENSAM مكناس`, `البطاقة المموَّلة: «${s.titre}» (${s.entreprise})`, `الفترة: من ${dateFr(s.debut)} إلى ${dateFr(s.fin)}`,
+      `المشاهدات: ${v} (مشاهدة واحدة لكل عضو في اليوم)`, `النقرات على «عرض»: ${c}`, `نسبة النقر: ${taux}`, `الأعضاء المختلفون: ${m}`,
+      `أرقام إلى غاية ${dateFr(aujourdhui)}. مجاميع فقط: لا تنقل المنصة أبدًا من شاهد البطاقة أو نقر عليها.`].join('\n')
+    : [`Bilan · Réseau ENSAM Meknès`, `Carte sponsorisée : « ${s.titre} » (${s.entreprise})`, `Période : du ${dateFr(s.debut)} au ${dateFr(s.fin)}`,
+      `Vues : ${v} (une par membre et par jour)`, `Clics sur « Voir » : ${c}`, `Taux de clic : ${taux}`, `Membres différents : ${m}`,
+      `Chiffres au ${dateFr(aujourdhui)}. Totaux seulement : la plateforme ne transmet jamais qui a vu ou cliqué.`].join('\n');
+}
+
+function SponsorisesAdmin({ ctx }) {
+  const { data, store, act } = ctx;
+  const liste = [...(data.sponsorises || [])].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  const [totaux, setTotaux] = useState(null);   // { [id]: { vues, clics, membres } }, lus à l'ouverture
+  const [f, setF] = useState(null);             // le formulaire ouvert : { id?, ...champs }
+  const cle = liste.map(s => s.id).join(',');
+  useEffect(() => {
+    let on = true;
+    Promise.resolve(store.bilanSponsorises?.()).then(r => on && setTotaux(Object.fromEntries((r || []).map(x => [x.sponsorise_id, x]))), () => on && setTotaux({}));
+    return () => { on = false; };
+  }, [cle]);
+  if (!store.peutSponso?.()) return html`<div class="panel"><p class="muted">La base n’a pas encore les cartes sponsorisées : lance supabase/mise-a-jour.sql dans Supabase.</p></div>`;
+  const copier = async s => { try { await navigator.clipboard.writeText(bilanSponso(s, totaux?.[s.id])); toast('Bilan copié : il ne contient que des totaux.'); } catch { toast('Copie impossible ici : sélectionne le texte et copie-le.', 'err'); } };
+  const basculer = s => act(async () => { await store.update('sponsorises', s.id, { actif: !s.actif }); toast(s.actif ? 'Carte arrêtée : elle ne paraît plus dans Match.' : 'Carte reprise : elle paraît de nouveau dans Match, entre ses dates.'); });
+  const ouvrir = s => setF(s ? { id: s.id, entreprise: s.entreprise, titre: s.titre, texte: s.texte, lien: s.lien, domaine: s.domaine || '', public: s.public || 'tous', annees: s.annees || [], filieres: s.filieres || [], debut: s.debut, fin: s.fin } : vide());
+  return html`<div class="sub-page sponso-admin">
+    <div class="panel">
+      <div class="section-head"><h2 class="h-ico"><${Icon} name="etiquette"/> Cartes sponsorisées <span class="count">${liste.length}</span></h2>
+        ${f ? null : html`<button class="btn small primary" id="sp-nouvelle" onClick=${() => ouvrir(null)}><${Icon} name="plus" size=${15}/> Nouvelle carte</button>`}</div>
+      <p class="muted small">Une carte « Sponsorisé » paraît dans Match après chaque 10 cartes, seulement pour le public, les années et les filières choisis, entre ses dates. L’entreprise paie le réseau directement. Elle reçoit seulement des totaux : jamais qui a vu ou cliqué.</p>
+      ${f ? html`<${FormSponso} ctx=${ctx} f=${f} setF=${setF}/>` : null}
+      ${liste.length ? html`<ul class="sp-liste">${liste.map(s => { const t = totaux?.[s.id] || { vues: 0, clics: 0, membres: 0 }; const [el, tc] = ETATS_SPONSO[etatSponsorise(s)]; return html`<li key=${s.id} class="sp-ligne" data-id=${s.id}>
+        <div class="sp-tete"><span class="sp-noms"><strong translate="no" dir="auto">${s.titre}</strong><span class="small muted" translate="no" dir="auto">${s.entreprise}</span></span><span class=${'tag ' + tc}>${el}</span></div>
+        <p class="small muted sp-quand">${`Du ${dateFr(s.debut)} au ${dateFr(s.fin)}`}</p>
+        <p class="small sp-cible">${cibleSponso(s)}</p>
+        <dl class="sp-chiffres">
+          <div><dt>Vues</dt><dd class="sp-vues">${totaux ? t.vues : '…'}</dd></div>
+          <div><dt>Clics</dt><dd class="sp-clics">${totaux ? t.clics : '…'}</dd></div>
+          <div><dt>Taux de clic</dt><dd class="sp-taux">${totaux ? tauxClic(t.clics, t.vues) : '…'}</dd></div>
+          <div><dt>Membres différents</dt><dd class="sp-membres">${totaux ? t.membres : '…'}</dd></div>
+        </dl>
+        <div class="sp-acts">
+          <button class="btn tiny ghost sp-modifier" onClick=${() => ouvrir(s)}><${Icon} name="edit" size=${14}/> Modifier</button>
+          <button class="btn tiny ghost sp-basculer" onClick=${() => basculer(s)}>${s.actif ? 'Arrêter' : 'Reprendre'}</button>
+          <button class="btn tiny ghost sp-bilan" onClick=${() => copier(s)} disabled=${!totaux}><${Icon} name="copy" size=${14}/> Copier le bilan</button>
+        </div></li>`; })}</ul>`
+      : f ? null : html`<${Empty} icon="etiquette" title="Aucune carte sponsorisée">Quand une entreprise soutient le réseau, sa carte se prépare ici : qui la voit, quand, et ses chiffres.<//>`}
+    </div>
+  </div>`;
+}
+
+function FormSponso({ ctx, f, setF }) {
+  const { store, act } = ctx;
+  const set = (k, v) => setF({ ...f, [k]: v });
+  const entree = k => e => set(k, e.target.value);
+  const bascule = n => set('annees', f.annees.includes(n) ? f.annees.filter(x => x !== n) : [...f.annees, n]);
+  const enregistrer = e => {
+    e.preventDefault();
+    act(async () => {
+      const { id, ...champs } = f;
+      const row = normaliserSponsorise(champs);
+      const refus = refusSponsorise(row);
+      if (refus) throw new Error(refus);
+      if (id) await store.update('sponsorises', id, row); else await store.insert('sponsorises', { ...row, actif: true });
+      setF(null);
+      toast(id ? 'Carte modifiée.' : 'Carte enregistrée : elle paraît dans Match entre ses dates.', 'win');
+    });
+  };
+  const apercu = { entreprise: f.entreprise.trim() || 'Entreprise', titre: f.titre.trim() || 'Titre de la carte', texte: f.texte.trim() || 'Deux ou trois phrases claires sur ce que l’entreprise propose aux membres.', lien: f.lien.trim() || 'https://', domaine: f.domaine.trim() || null };
+  return html`<form class="form sp-form" onSubmit=${enregistrer} aria-labelledby="sp-form-t">
+    <h3 id="sp-form-t">${f.id ? 'Modifier la carte' : 'Nouvelle carte sponsorisée'}</h3>
+    <div class="grid2"><${Field} label="Entreprise"><input id="sp-ent" maxlength="80" value=${f.entreprise} onInput=${entree('entreprise')} placeholder="Ex. un centre de langues"/><//>
+      <${Field} label="Titre"><input id="sp-titre" maxlength="90" value=${f.titre} onInput=${entree('titre')}/><//></div>
+    <${Field} label="Texte" hint="280 caractères au plus. Des faits simples : ce que l’entreprise propose, pour qui, à quel prix s’il y en a un."><textarea id="sp-texte" rows="3" maxlength="280" value=${f.texte} onInput=${entree('texte')}></textarea><//>
+    <div class="grid2"><${Field} label="Lien" hint="« Voir » l’ouvre dans un nouvel onglet."><input id="sp-lien" dir="ltr" type="url" maxlength="500" value=${f.lien} onInput=${entree('lien')} placeholder="https://…"/><//>
+      <${Field} label="Site pour le logo (facultatif)" hint="Son icône sert de logo ; sinon, les initiales."><input id="sp-domaine" dir="ltr" maxlength="120" value=${f.domaine} onInput=${entree('domaine')} placeholder="exemple.ma"/><//></div>
+    <div class="field"><span class="field-label" id="sp-pub-l">Pour qui ?</span><div class="seg" role="radiogroup" aria-labelledby="sp-pub-l">${SPONSO_PUBLICS.map(([k, l]) => html`<button type="button" role="radio" id=${'sp-pub-' + k} aria-checked=${f.public === k} class=${f.public === k ? 'on' : ''} onClick=${() => set('public', k)}>${l}</button>`)}</div></div>
+    <div class="field"><span class="field-label" id="sp-annees-l">Années</span><div id="sp-annees" class="chips" role="group" aria-labelledby="sp-annees-l">${SPONSO_ANNEES.map(([n, l]) => html`<button type="button" class=${'chip' + (f.annees.includes(n) ? ' on' : '')} aria-pressed=${f.annees.includes(n)} onClick=${() => bascule(n)}>${l}</button>`)}</div><span class="field-hint">Aucune année choisie = toutes les années.</span></div>
+    <div class="field"><span class="field-label" id="sp-fil-l">Filières</span><div role="group" aria-labelledby="sp-fil-l"><${FilieresPick} value=${f.filieres} onChange=${v => set('filieres', v)}/></div><span class="field-hint">Aucune sélection = toutes les filières. Une ancienne appellation suit son parcours.</span></div>
+    <div class="grid2"><${Field} label="Début"><input id="sp-debut" type="date" required value=${f.debut} onInput=${entree('debut')}/><//><${Field} label="Fin"><input id="sp-fin" type="date" required min=${f.debut} value=${f.fin} onInput=${entree('fin')}/><//></div>
+    <div class="field"><span class="field-label">Aperçu dans Match</span><${ApercuSponsorise} s=${apercu}/></div>
+    <div class="row-end"><button type="button" class="btn ghost" onClick=${() => setF(null)}>Annuler</button><button class="btn primary" id="sp-enregistrer">Enregistrer</button></div>
+  </form>`;
+}
+
+addAR({
+  'Sponsorisés': 'المموَّلة', 'Cartes sponsorisées': 'البطاقات المموَّلة', 'Nouvelle carte': 'بطاقة جديدة', 'Nouvelle carte sponsorisée': 'بطاقة مموَّلة جديدة', 'Modifier la carte': 'تعديل البطاقة',
+  'Une carte « Sponsorisé » paraît dans Match après chaque 10 cartes, seulement pour le public, les années et les filières choisis, entre ses dates. L’entreprise paie le réseau directement. Elle reçoit seulement des totaux : jamais qui a vu ou cliqué.': 'تظهر بطاقة «مُموَّل» في صفحة التوافق بعد كل 10 بطاقات، فقط للفئة والسنوات والشعب المختارة، وبين تاريخَي بدايتها ونهايتها. تدفع الشركة للشبكة مباشرة. ولا تتلقى إلا المجاميع: أبدًا من شاهد أو نقر.',
+  'Aucune carte sponsorisée': 'لا توجد بطاقة مموَّلة', 'Quand une entreprise soutient le réseau, sa carte se prépare ici : qui la voit, quand, et ses chiffres.': 'عندما تدعم شركة الشبكة، تُحضَّر بطاقتها هنا: من يراها، ومتى، وأرقامها.',
+  'La base n’a pas encore les cartes sponsorisées : lance supabase/mise-a-jour.sql dans Supabase.': 'قاعدة البيانات لا تضم البطاقات المموَّلة بعد: شغّل supabase/mise-a-jour.sql في Supabase.',
+  'En cours': 'قيد الإنجاز', 'Programmée': 'مبرمجة', 'Arrêtée': 'متوقفة', 'Arrêter': 'إيقاف', 'Reprendre': 'استئناف',
+  'Vues': 'المشاهدات', 'Clics': 'النقرات', 'Taux de clic': 'نسبة النقر', 'Membres différents': 'الأعضاء المختلفون', 'Copier le bilan': 'نسخ الحصيلة',
+  'Bilan copié : il ne contient que des totaux.': 'نُسخت الحصيلة: لا تضم إلا المجاميع.',
+  'Carte arrêtée : elle ne paraît plus dans Match.': 'أُوقفت البطاقة: لم تعد تظهر في صفحة التوافق.',
+  'Carte reprise : elle paraît de nouveau dans Match, entre ses dates.': 'استُؤنفت البطاقة: تظهر من جديد في صفحة التوافق، بين تاريخَي بدايتها ونهايتها.',
+  'Carte modifiée.': 'عُدّلت البطاقة.', 'Carte enregistrée : elle paraît dans Match entre ses dates.': 'حُفظت البطاقة: تظهر في صفحة التوافق بين تاريخَي بدايتها ونهايتها.',
+  'Ex. un centre de langues': 'مثال: مركز للغات', 'Texte': 'النص', 'Lien': 'الرابط',
+  '280 caractères au plus. Des faits simples : ce que l’entreprise propose, pour qui, à quel prix s’il y en a un.': '280 حرفًا على الأكثر. معلومات بسيطة: ما تقترحه الشركة، ولمن، وبأي ثمن إن وُجد.',
+  '« Voir » l’ouvre dans un nouvel onglet.': 'يفتحه زر «عرض» في علامة تبويب جديدة.',
+  'Site pour le logo (facultatif)': 'موقع للشعار (اختياري)', 'Son icône sert de logo ; sinon, les initiales.': 'تُستعمل أيقونته شعارًا؛ وإلا فالحروف الأولى.',
+  'Années': 'السنوات', 'Aucune année choisie = toutes les années.': 'عدم اختيار أي سنة = كل السنوات.',
+  'Aucune sélection = toutes les filières. Une ancienne appellation suit son parcours.': 'عدم الاختيار = كل الشعب. التسمية القديمة تتبع مسارها.',
+  'Étudiants et lauréats': 'الطلبة والخريجون', 'Toutes les années': 'كل السنوات', 'Toutes les filières': 'كل الشعب',
+  'Entreprise': 'الشركة', 'Titre de la carte': 'عنوان البطاقة', 'Deux ou trois phrases claires sur ce que l’entreprise propose aux membres.': 'جملتان أو ثلاث جمل واضحة عما تقترحه الشركة على الأعضاء.',
+  // Refus (refusSponsorise, mêmes règles que la base)
+  'Indique l’entreprise (80 caractères au plus).': 'أدخل اسم الشركة (80 حرفًا على الأكثر).', 'Le titre fait de 3 à 90 caractères.': 'يتكون العنوان من 3 إلى 90 حرفًا.',
+  'Le texte fait de 10 à 280 caractères.': 'يتكون النص من 10 إلى 280 حرفًا.', 'Le domaine du logo s’écrit sans https:// (ex. exemple.ma).': 'يُكتب نطاق الشعار دون https:// (مثال: exemple.ma).',
+  'Choisis un public.': 'اختر الفئة المعنية.', 'Choisis des années de la liste.': 'اختر سنوات من اللائحة.', 'Choisis les dates de début et de fin.': 'اختر تاريخَي البداية والنهاية.',
+  'La fin vient après le début.': 'يأتي تاريخ النهاية بعد البداية.',
+}, [
+  [/^Du (\S+) au (\S+)$/, (a, b) => `من ${a} إلى ${b}`],
+]);
+
 injectCSS('admin', `
 .adm-tabs { margin-bottom: .2rem; }
+/* Cartes sponsorisées : une ligne par carte, ses totaux en quatre chiffres, puis ses gestes */
+.sp-liste { list-style: none; margin: .4rem 0 0; padding: 0; display: flex; flex-direction: column; gap: .6rem; }
+.sp-ligne { display: flex; flex-direction: column; gap: .35rem; padding: .85rem .95rem; border-radius: var(--r-lg); background: var(--surface-2); }
+.sp-tete { display: flex; align-items: flex-start; justify-content: space-between; gap: .6rem; }
+.sp-noms { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.sp-tete .tag { flex: none; margin: 0; }
+.sp-quand, .sp-cible { margin: 0; }
+.sp-chiffres { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .4rem; margin: .2rem 0; }
+.sp-chiffres > div { display: flex; flex-direction: column; gap: .1rem; padding: .45rem .55rem; border-radius: var(--r-md); background: var(--surface); }
+.sp-chiffres dt { font-size: var(--fs-1); color: var(--muted); }
+.sp-chiffres dd { margin: 0; font: 700 var(--fs-5)/1.2 var(--f-display); font-variant-numeric: tabular-nums; }
+@media (max-width: 520px) { .sp-chiffres { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.sp-acts { display: flex; flex-wrap: wrap; gap: .3rem; }
+.sp-form { margin: .4rem 0 .8rem; padding: .9rem 1rem; border-radius: var(--r-lg); background: var(--surface-2); }
+.sp-form h3 { margin: 0; font-size: var(--fs-4); }
 .mod-card { display: flex; flex-direction: column; gap: .55rem; padding: .95rem 1.05rem; border-radius: var(--r-lg); background: var(--surface); border: 0; box-shadow: var(--sh1), inset 3px 0 0 var(--brass); }
 :root[dir="rtl"] .mod-card { box-shadow: var(--sh1), inset -3px 0 0 var(--brass); }
 /* L'annonce en cours (Vue d'ensemble) : sa date reste lisible sur le fond teinté, de nuit aussi */

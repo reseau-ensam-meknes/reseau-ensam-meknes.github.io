@@ -5259,6 +5259,127 @@ revoke all on function public.peut_discuter(uuid, uuid) from public, anon;
 grant execute on function public.peut_discuter(uuid, uuid) to authenticated;
 
 -- =====================================================================
+--  Cartes sponsorisées dans Match : une entreprise (recruteur, centre de langues, formation, préparation au départ…)
+--  paie le réseau directement, sans régie publicitaire ni traceur.
+--    · L'administration écrit la carte (entreprise, titre, texte, lien https, domaine du logo facultatif) et choisit qui
+--      la voit : public (étudiants, lauréats, tous), années (niveau_de ; vide = toutes), filières (filiere_ok, comme
+--      les offres ; vide = toutes), dates de début et de fin. Elle l'arrête et la reprend (actif).
+--    · Un membre connecté lit seulement les cartes en cours (actives, entre leurs dates) ; l'administration lit tout.
+--    · Le site place une carte après chaque 10 cartes de Match (logic.js : avecSponsorises). Passer la carte n'écrit
+--      rien dans match_choix.
+--    · Comptes : un membre que la carte vise compte une vue (carte du dessus) et un clic (« Voir »), une fois par jour
+--      chacun, seulement par compter_sponsorise(). Personne ne lit ces lignes ; l'administration en lit les totaux par
+--      carte (bilan_sponsorises : vues, clics, membres différents), jamais qui. L'entreprise reçoit ces totaux.
+--  Mêmes règles dans logic.js (sponsorisePour, refusSponsorise) et dans la démo (DemoStore dans store.js).
+-- =====================================================================
+create table if not exists public.sponsorises (
+  id uuid primary key default gen_random_uuid(),
+  entreprise text not null check (char_length(btrim(entreprise)) between 2 and 80),
+  titre text not null check (char_length(btrim(titre)) between 3 and 90),
+  texte text not null check (char_length(btrim(texte)) between 10 and 280),
+  lien text not null constraint sponsorises_lien_check check (char_length(lien) <= 500 and lien ~* '^https://[^\s/?#]+\.[^\s/?#]+([/?#]\S*)?$'),
+  domaine text constraint sponsorises_domaine_check check (domaine is null or domaine ~ '^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$'),
+  public text not null default 'tous' check (public in ('etudiants','laureats','tous')),
+  annees int[] constraint sponsorises_annees_check check (annees is null or annees <@ array[1,2,3,4,5,6,7]),
+  filieres text[],
+  debut date not null default current_date,
+  fin date not null,
+  actif boolean not null default true,
+  created_by uuid default auth.uid() references public.profiles(id) on delete set null,
+  created_at timestamptz default now(),
+  constraint sponsorises_dates check (fin >= debut)
+);
+create index if not exists sponsorises_en_cours on public.sponsorises (debut, fin) where actif;
+
+-- Écrite par l'administration seulement ; la base garde l'auteur et la date, et nettoie la carte comme le site
+-- (normaliserSponsorise) : textes sans espaces autour, listes vides = tout le monde, domaine sans « https:// » ni « www. »
+create or replace function public.protect_sponsorise() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is not null and not public.is_admin() then
+    raise exception 'Action non autorisée pour ton compte.' using errcode = '42501';
+  end if;
+  if tg_op = 'UPDATE' then
+    new.id := old.id; new.created_by := old.created_by; new.created_at := old.created_at;
+  else
+    new.created_by := coalesce(auth.uid(), new.created_by); new.created_at := now();
+  end if;
+  new.entreprise := btrim(new.entreprise); new.titre := btrim(new.titre); new.texte := btrim(new.texte); new.lien := btrim(new.lien);
+  new.domaine := nullif(regexp_replace(regexp_replace(lower(btrim(coalesce(new.domaine, ''))), '^https?://(www\.)?', ''), '/.*$', ''), '');
+  if cardinality(coalesce(new.annees, '{}')) = 0 then new.annees := null; end if;
+  if cardinality(coalesce(new.filieres, '{}')) = 0 then new.filieres := null; end if;
+  return new;
+end $$;
+revoke all on function public.protect_sponsorise() from public, anon, authenticated;
+drop trigger if exists trg_protect_sponsorise on public.sponsorises;
+create trigger trg_protect_sponsorise before insert or update on public.sponsorises
+  for each row execute function public.protect_sponsorise();
+
+alter table public.sponsorises enable row level security;
+revoke all on public.sponsorises from anon;
+drop policy if exists "lecture membres" on public.sponsorises;
+drop policy if exists "ecriture admin" on public.sponsorises;
+drop policy if exists "modif admin" on public.sponsorises;
+drop policy if exists "suppression admin" on public.sponsorises;
+create policy "lecture membres" on public.sponsorises for select to authenticated using (
+  public.is_admin() or (actif and current_date between debut and fin));
+create policy "ecriture admin" on public.sponsorises for insert to authenticated with check (public.is_admin());
+create policy "modif admin" on public.sponsorises for update to authenticated using (public.is_admin()) with check (public.is_admin());
+create policy "suppression admin" on public.sponsorises for delete to authenticated using (public.is_admin());
+
+-- Une ligne par carte, membre, jour et geste ('vue' ou 'clic') : un membre compte une fois par jour pour chacun.
+-- Aucune règle de lecture ni d'écriture : seules compter_sponsorise() et bilan_sponsorises() y touchent.
+-- Le compte d'un membre part avec lui (suppression du compte), celui d'une carte avec elle.
+create table if not exists public.sponsorises_comptes (
+  sponsorise_id uuid not null references public.sponsorises(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  jour date not null default current_date,
+  kind text not null check (kind in ('vue','clic')),
+  primary key (sponsorise_id, user_id, jour, kind)
+);
+alter table public.sponsorises_comptes enable row level security;
+revoke all on public.sponsorises_comptes from public, anon, authenticated;
+
+-- La carte vise-t-elle ce membre ? En cours, son public, son année, sa filière ; jamais l'administration (ni en vue lauréat)
+create or replace function public.sponsorise_pour(s public.sponsorises, p public.profiles) returns boolean
+language sql stable set search_path = public as $$
+  select s.id is not null and p.id is not null and s.actif and current_date between s.debut and s.fin
+    and p.role in ('etudiant','laureat') and not coalesce(p.admin_ok, false)
+    and (s.public = 'tous' or (s.public = 'etudiants' and p.role = 'etudiant') or (s.public = 'laureats' and p.role = 'laureat'))
+    and (cardinality(coalesce(s.annees, '{}')) = 0 or public.niveau_de(p.promo, public.saison_courante()) = any(s.annees))
+    and public.filiere_ok(s.filieres, p.filiere);
+$$;
+
+-- Le membre connecté compte une vue ou un clic sur une carte qui le vise ; vrai si c'est le premier du jour
+create or replace function public.compter_sponsorise(p_id uuid, p_kind text) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare v_moi public.profiles; v_s public.sponsorises;
+begin
+  if auth.uid() is null or p_kind is null or p_kind not in ('vue','clic') then return false; end if;
+  select * into v_moi from public.profiles where id = auth.uid();
+  select * into v_s from public.sponsorises where id = p_id;
+  if not coalesce(public.sponsorise_pour(v_s, v_moi), false) then return false; end if;
+  insert into public.sponsorises_comptes (sponsorise_id, user_id, jour, kind) values (v_s.id, v_moi.id, current_date, p_kind)
+    on conflict do nothing;
+  return found;
+end $$;
+revoke all on function public.compter_sponsorise(uuid, text) from public, anon;
+grant execute on function public.compter_sponsorise(uuid, text) to authenticated;
+
+-- Les totaux de chaque carte, pour l'administration seule : vues, clics, membres différents. Jamais un nom ni un identifiant.
+create or replace function public.bilan_sponsorises() returns table (sponsorise_id uuid, vues int, clics int, membres int)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.is_admin() then raise exception 'Réservé à l’administration.' using errcode = '42501'; end if;
+  return query
+    select s.id, (count(c.kind) filter (where c.kind = 'vue'))::int, (count(c.kind) filter (where c.kind = 'clic'))::int, (count(distinct c.user_id))::int
+    from public.sponsorises s left join public.sponsorises_comptes c on c.sponsorise_id = s.id
+    group by s.id;
+end $$;
+revoke all on function public.bilan_sponsorises() from public, anon;
+grant execute on function public.bilan_sponsorises() to authenticated;
+
+-- =====================================================================
 --  Durées de conservation (page Confidentialité, déclaration à la CNDP), appliquées chaque jour par taches_quotidiennes :
 --    • un compte sans connexion pendant 3 ans est supprimé avec tout ce qui lui est lié, comme s'il l'avait supprimé
 --      lui-même ; un email le prévient 30 jours avant (tâche « inactifs » de la fonction notifier) et une seule visite

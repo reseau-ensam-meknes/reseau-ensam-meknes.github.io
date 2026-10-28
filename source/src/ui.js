@@ -1032,7 +1032,8 @@ export function Num({ v }) {
 // Logos en longueur (un mot écrit) : moins de marge, pour qu'ils restent lisibles à 40 px
 const LOGOS_LARGES = /\/(airbus|safran)\.png$/;
 const ICONES = new Map();   // domaine → 'ok' | 'ko', pour cette visite
-export function LogoEntreprise({ nom = '', lien = '', taille = 44 }) {
+// domaine : imposé (carte sponsorisée : celui que l'administration a donné), sinon deviné du nom ou du lien
+export function LogoEntreprise({ nom = '', lien = '', taille = 44, domaine: impose = null }) {
   const src = logoEntreprise(nom);
   const [rate, setRate] = useState(false);
   const [vu, setVu] = useState(null);   // ce que cette tuile a vu de l'icône : { domaine, etat }
@@ -1041,7 +1042,7 @@ export function LogoEntreprise({ nom = '', lien = '', taille = 44 }) {
   const ini = monogramme(nom);
   const n = [...ini].length;
   const mono = `${styleTeinte(teinteDe(nom))};${dim};font-size:${Math.max(12, Math.round(taille * [0.42, 0.42, 0.36, 0.3, 0.26][Math.min(n, 4)]))}px`;
-  const domaine = domaineEntreprise(nom, lien);
+  const domaine = (impose && /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(impose) ? impose : null) || domaineEntreprise(nom, lien);
   const etat = !domaine ? 'ko' : (vu?.domaine === domaine && vu.etat) || ICONES.get(domaine);
   if (etat === 'ko') return html`<span class="clogo" style=${mono} aria-hidden="true">${ini}</span>`;
   const juger = ok => { const e = ok ? 'ok' : 'ko'; ICONES.set(domaine, e); setVu({ domaine, etat: e }); };
@@ -1053,7 +1054,7 @@ export function LogoEntreprise({ nom = '', lien = '', taille = 44 }) {
 // La teinte douce d'une entreprise (celle de son monogramme), pour colorer discrètement sa carte
 export const styleEntreprise = nom => styleTeinte(teinteDe(nom));
 // Le nom d'avant (name, size) : les écrans qui l'utilisent passent par le même logo
-export const CompanyLogo = ({ name = '', size = 44, lien = '' }) => html`<${LogoEntreprise} nom=${name} taille=${size} lien=${lien}/>`;
+export const CompanyLogo = ({ name = '', size = 44, lien = '', domaine = null }) => html`<${LogoEntreprise} nom=${name} taille=${size} lien=${lien} domaine=${domaine}/>`;
 // La phrase discrète sous une liste où paraissent de vrais logos (gardés sur le site, ou l'icône du site de l'entreprise)
 export const MentionLogos = ({ noms = [] }) => (noms.some(n => logoEntreprise(n) || domaineEntreprise(n)) ? html`<p class="mention-logos">Logos affichés pour reconnaître les entreprises, sans aucun partenariat.</p>` : null);
 
