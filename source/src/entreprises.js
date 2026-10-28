@@ -1,6 +1,6 @@
 // Banque d'entretiens et avis de stage, par entreprise (Phase 3) : ce que les promos précédentes
 // ont vécu chez chaque entreprise, pour que la suivante se prépare mieux.
-import { html, useState, useMemo } from './vendor/preact-htm.js';
+import { html, useState, useMemo, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, CompanyLogo, MentionLogos, TYPE_ICON, toast, useLocal, injectCSS } from './ui.js';
 import { addAR, getLang, arCount } from './i18n.js';
 import { TYPES, FOUND, entKey, sameCompany, seasonOf, seasonLabel, timeAgo, noteSiAssez, AVIS_POUR_NOTE } from './logic.js';
@@ -391,51 +391,72 @@ export function QuestionsRecentes({ ctx, entreprise, max = 3 }) {
 }
 
 // ---------------------------------------------------------------------------
-// Accueil : une invitation à la fois (avis sur son stage, ou questions de son entretien)
+// Accueil : une invitation à la fois (avis sur son stage, ou questions de son entretien). Une ligne dans « À faire »
+// et dans la cloche (notifsPartage) ; un toucher ouvre la feuille, qui se ferme d'elle-même quand il n'y a plus rien.
 // ---------------------------------------------------------------------------
-export function NudgeAvis({ ctx }) {
+const CLE_PLUS_TARD = id => 'nudge-avis-' + id;
+const lirePlusTard = id => { try { const x = JSON.parse(localStorage.getItem(CLE_PLUS_TARD(id)) || '[]'); return Array.isArray(x) ? x : []; } catch { return []; } };
+// off : les invitations remises à plus tard (« Plus tard »), gardées dans ce navigateur
+export function partageAFaire(data, me, byId, off = lirePlusTard(me.id), now = Date.now()) {
+  if (!me || me.role === 'admin') return null;
+  const S = seasonOf();
+  const mesAvis = (data.avis_stage || []).filter(a => a.author_id === me.id);
+  const mesEnt = (data.entretiens || []).filter(e => e.author_id === me.id);
+  const out = [];
+  // Stage (ou premier emploi) terminé ou bien avancé, sans avis
+  for (const p of data.placements) {
+    if (p.student_id !== me.id || !FOUND.has(p.status) || !p.entreprise) continue;
+    const depuis = new Date(p.confirmed_at || p.created_at).getTime();
+    if (!(p.saison < S || now - depuis > 42 * 864e5)) continue;
+    if (mesAvis.some(a => a.saison === p.saison && sameCompany(a.entreprise, p.entreprise))) continue;
+    out.push({ key: 'av' + p.id, kind: 'avis', at: depuis, ent: p.entreprise, emploi: p.type === 'emploi', initial: { entreprise: p.entreprise, ville: p.ville || '', pays: p.pays || 'Maroc', type: p.type, saison: p.saison, placement_id: p.id } });
+  }
+  // Entretien passé ce mois-ci, sans questions partagées
+  if (me.role === 'etudiant') for (const a of data.applications) {
+    if (a.student_id !== me.id || !['entretien', 'retenu', 'refuse'].includes(a.status)) continue;
+    const quand = new Date(a.updated_at || a.created_at).getTime();
+    if (now - quand > 30 * 864e5) continue;
+    const o = a.offer_id ? byId('offers', a.offer_id) : null;
+    const ent = o?.entreprise || a.entreprise; if (!ent) continue;
+    if (mesEnt.some(e => sameCompany(e.entreprise, ent)) || out.some(x => x.kind === 'entretien' && sameCompany(x.ent, ent))) continue;
+    out.push({ key: 'en' + a.id, kind: 'entretien', at: quand, ent, initial: { entreprise: ent, poste: o?.titre || a.titre || '', type: o?.type || 'stage', saison: S, offer_id: a.offer_id || null, resultat: a.status === 'retenu' ? 'retenu' : a.status === 'refuse' ? 'refuse' : 'attente' } });
+  }
+  return out.filter(x => !off.includes(x.key)).sort((a, b) => b.at - a.at)[0] || null;
+}
+const phrasePartage = x => x.kind === 'entretien' ? `Partage les questions de ton entretien chez ${x.ent}`
+  : x.emploi ? `Comment se passent tes débuts chez ${x.ent} ?` : `Comment s’est passé ton stage chez ${x.ent} ?`;
+
+// La cloche (app.js) : une chose à faire, qui ouvre la feuille ; sansToast : elle ne vient pas d'un autre membre
+export function notifsPartage({ data, me, store }) {
+  const x = partageAFaire(data, me, (t, id) => store.byId(t, id));
+  if (!x) return [];
+  return [{ key: 'na' + x.key, ref: x.key, action: true, sansToast: true, geste: x.kind === 'avis' ? 'Donner mon avis' : 'Partager mes questions', tone: 'brass', icon: x.kind === 'avis' ? 'star' : 'qa',
+    to: 'accueil', feuille: 'partage', at: new Date(x.at).toISOString(), text: phrasePartage(x) }];
+}
+
+// La carte d'avant, dans une feuille : « Plus tard » ou le formulaire (par-dessus la feuille)
+export function PartageFeuille({ ctx, onClose }) {
   const { data, me, store } = ctx;
-  const [off, setOff] = useLocal('nudge-avis-' + me.id, []);
+  const [off, setOff] = useLocal(CLE_PLUS_TARD(me.id), []);
   const [form, setForm] = useState(null);
-  const item = useMemo(() => {
-    if (me.role === 'admin') return null;
-    const S = seasonOf(); const now = Date.now();
-    const mesAvis = (data.avis_stage || []).filter(a => a.author_id === me.id);
-    const mesEnt = (data.entretiens || []).filter(e => e.author_id === me.id);
-    const out = [];
-    // Stage (ou premier emploi) terminé ou bien avancé, sans avis
-    for (const p of data.placements) {
-      if (p.student_id !== me.id || !FOUND.has(p.status) || !p.entreprise) continue;
-      const depuis = new Date(p.confirmed_at || p.created_at).getTime();
-      if (!(p.saison < S || now - depuis > 42 * 864e5)) continue;
-      if (mesAvis.some(a => a.saison === p.saison && sameCompany(a.entreprise, p.entreprise))) continue;
-      out.push({ key: 'av' + p.id, kind: 'avis', at: depuis, ent: p.entreprise, emploi: p.type === 'emploi', initial: { entreprise: p.entreprise, ville: p.ville || '', pays: p.pays || 'Maroc', type: p.type, saison: p.saison, placement_id: p.id } });
-    }
-    // Entretien passé ce mois-ci, sans questions partagées
-    if (me.role === 'etudiant') for (const a of data.applications) {
-      if (a.student_id !== me.id || !['entretien', 'retenu', 'refuse'].includes(a.status)) continue;
-      const quand = new Date(a.updated_at || a.created_at).getTime();
-      if (now - quand > 30 * 864e5) continue;
-      const o = a.offer_id ? store.byId('offers', a.offer_id) : null;
-      const ent = o?.entreprise || a.entreprise; if (!ent) continue;
-      if (mesEnt.some(e => sameCompany(e.entreprise, ent)) || out.some(x => x.kind === 'entretien' && sameCompany(x.ent, ent))) continue;
-      out.push({ key: 'en' + a.id, kind: 'entretien', at: quand, ent, initial: { entreprise: ent, poste: o?.titre || a.titre || '', type: o?.type || 'stage', saison: S, offer_id: a.offer_id || null, resultat: a.status === 'retenu' ? 'retenu' : a.status === 'refuse' ? 'refuse' : 'attente' } });
-    }
-    return out.filter(x => !off.includes(x.key)).sort((a, b) => b.at - a.at)[0] || null;
-  }, [data.placements, data.applications, data.avis_stage, data.entretiens, off, me.id]);
-  if (!item && !form) return null;
-  return html`<div class="ent-nudge-wrap">
+  const item = useMemo(() => partageAFaire(data, me, (t, id) => store.byId(t, id), Array.isArray(off) ? off : []), [data.placements, data.applications, data.avis_stage, data.entretiens, off, me.id]);
+  const fini = !item && !form;
+  useEffect(() => { if (fini) onClose(); }, [fini]);
+  if (fini) return null;
+  // La cloche et l'accueil relisent ce choix gardé dans le navigateur
+  const plusTard = () => { setOff([...(Array.isArray(off) ? off : []), item.key]); store.emit(); };
+  return html`<${Modal} title="Pour la promo suivante" cls="ent-feuille" onClose=${onClose}>
     ${item ? html`<div class="help-cta ent-nudge">
       <span class="obj-ico brass"><${Icon} name=${item.kind === 'avis' ? 'star' : 'qa'} size=${20}/></span>
       <div class="grow">${item.kind === 'avis'
         ? html`<strong>${item.emploi ? 'Comment se passent tes débuts chez' : 'Comment s’est passé ton stage chez'} <span translate="no">${item.ent}</span> ?</strong><span class="small muted">Ton avis, anonyme si tu veux, aide la promo suivante à choisir.</span>`
         : html`<strong>Partage les questions de ton entretien chez <span translate="no">${item.ent}</span></strong><span class="small muted">Même trois questions suffisent pour aider ceux qui passent après toi.</span>`}</div>
-      <div class="ent-nudge-btns"><button class="btn ghost small" onClick=${() => setOff([...off, item.key])}>Plus tard</button>
+      <div class="ent-nudge-btns"><button class="btn ghost small" id="nudge-ent-tard" onClick=${plusTard}>Plus tard</button>
         <button class="btn small" id="nudge-ent-go" onClick=${() => setForm(item)}>${item.kind === 'avis' ? 'Donner mon avis' : 'Partager mes questions'}</button></div>
     </div>` : null}
     ${form?.kind === 'avis' ? html`<${AvisForm} ctx=${ctx} initial=${form.initial} onClose=${() => setForm(null)}/>` : null}
     ${form?.kind === 'entretien' ? html`<${EntretienForm} ctx=${ctx} initial=${form.initial} onClose=${() => setForm(null)}/>` : null}
-  </div>`;
+  <//>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -583,10 +604,14 @@ addAR({
   'Partage les questions de ton entretien chez': 'شارك أسئلة مقابلتك في',
   'Ton avis, anonyme si tu veux, aide la promo suivante à choisir.': 'رأيك، دون ذكر اسمك إن أردت، يساعد الدفعة القادمة على الاختيار.',
   'Même trois questions suffisent pour aider ceux qui passent après toi.': 'حتى ثلاثة أسئلة تكفي لمساعدة من يأتي بعدك.',
-  'Donner mon avis': 'أعط رأيي',
+  'Donner mon avis': 'أعط رأيي', 'Pour la promo suivante': 'من أجل الدفعة القادمة',
   'Tu as déjà donné ton avis sur cette entreprise pour cette année.': 'سبق أن أعطيت رأيك في هذه الشركة لهذه السنة.',
   'Ajoute au moins une question.': 'أضف سؤالا واحدا على الأقل.',
 }, [
+  // Accueil (« À faire ») et cloche : une seule phrase, l'entreprise isolée
+  [/^Partage les questions de ton entretien chez (.+)$/, e => `شارك أسئلة مقابلتك في ${e}`],
+  [/^Comment s’est passé ton stage chez (.+) \?$/, e => `كيف مر تدريبك في ${e}؟`],
+  [/^Comment se passent tes débuts chez (.+) \?$/, e => `كيف تسير بداياتك في ${e}؟`],
   [/^(\d+) avis$/, n => `${n} رأي`],
   [/^(\d+) entreprises? où travaillent nos lauréats$/, n => `${arCount(n, ['شركة واحدة', 'شركتان', 'شركات', 'شركة'])} يعمل فيها خريجونا`],
   [/^(\d+) avis · La note s’affiche à partir de (\d+) avis\.$/, (n, m) => `${arCount(n, ['رأي واحد', 'رأيان', 'آراء', 'رأيًا'])} · يظهر التقييم ابتداءً من ${m} آراء.`],

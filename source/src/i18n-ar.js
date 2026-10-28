@@ -931,6 +931,12 @@ export const AR_PATTERNS = [
   [/^(.+), (.+) et 1 autre t’ont écrit$/, (a, b) => `رسائل من ${a} و${b} وشخص آخر`],
   [/^(.+) et (.+) t’ont écrit$/, (a, b) => `رسائل من ${a} و${b}`],
   [/^(.+) t’a écrit$/, x => `رسالة من ${x}`],
+  // « À faire » : ce qui s'ouvre dans une feuille (coordonnées demandées, lauréats de la promo à confirmer)
+  [/^(.+) et (\d+) autres aimeraient tes coordonnées$/, (a, n) => `طلب من ${a} و${arCount(n, ['شخص آخر', 'شخصين آخرين', 'أشخاص آخرين', 'شخصًا آخر'])} للحصول على معلومات الاتصال بك`],
+  [/^(.+) et (.+) aimeraient tes coordonnées$/, (a, b) => `طلب من ${a} و${b} للحصول على معلومات الاتصال بك`],
+  [/^(.+) aimerait tes coordonnées$/, x => `طلب من ${x} للحصول على معلومات الاتصال بك`],
+  [/^(\d+) lauréats de ta promo (\d{4}) à confirmer$/, (n, y) => `${arCount(n, LAU)} من دفعتك ${y} في انتظار تأكيدك`],
+  [/^(.+) est de ta promo (\d{4}) \?$/, (x, y) => `هل ${x} من دفعتك ${y}؟`],
   [/^(\d+) offres pour toi$/, n => `${arCount(n, ['عرض واحد', 'عرضان', 'عروض', 'عرضًا'])} لك`],
   [/^Dont (\d+) nouvelles cette semaine$/, n => `منها ${arCount(n, ['عرض جديد', 'عرضان جديدان', 'عروض جديدة', 'عرضًا جديدًا'])} هذا الأسبوع`],
 ].filter(([, f]) => f);

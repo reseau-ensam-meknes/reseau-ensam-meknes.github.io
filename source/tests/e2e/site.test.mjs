@@ -80,6 +80,18 @@ function ecritParUnMembre(x) {
     .every(p => GRAINES.includes(p) || p.split(/\s+/).every(m => /^\p{Lu}/u.test(m) && MOTS_GRAINES.has(m)));
 }
 
+// Ce qui se règle dans une feuille (coordonnées, promo, ambassadeur, entretien) : sa ligne de « À faire » si l'accueil la montre,
+// sinon sa ligne de la cloche ; cle : le début de la clé de la notification (dc, vp, am, na)
+async function ouvrirFeuille(s, cle, feuille) {
+  const ligne = s.page.locator(`.af-accueil .todo > li[data-cle^="${cle}"] button`);
+  if (await ligne.count()) await ligne.first().click();
+  else {
+    await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
+    await s.page.locator(`.cloche .af-row[data-cle^="${cle}"] button`).first().click();
+  }
+  await s.page.waitForSelector(feuille);
+}
+
 for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
   test(`tous les écrans, tous les profils : sans erreur ni débordement${langue === 'ar' ? ', sans texte oublié en français' : ''} (${largeur} px, ${langue})`, async () => {
     const s = await ouvrir({ largeur, langue });
@@ -135,8 +147,10 @@ test('coordonnées : visibles seulement après accord', async () => {
   assert.ok(!(await s.page.locator('.modal').innerText()).includes('06 12 34 56 78'));
   await s.page.click('#cf-ask'); await s.page.fill('#cf-ask-msg', 'Bonjour, je suis en 3A et j’aimerais un conseil.');
   await s.page.click('#cf-ask-send'); await s.page.waitForTimeout(300); await s.fermer();
+  // Youssef répond depuis la cloche (ou la ligne de « À faire ») : la feuille des demandes reçues
   await s.comme('Youssef'); await s.aller('accueil');
-  await s.page.locator('.cf-home li:has-text("Amine") .btn.tonal').click(); await s.page.waitForTimeout(300);
+  await ouvrirFeuille(s, 'dc', '.modal.cf-feuille');
+  await s.page.locator('.modal.cf-feuille li:has-text("Amine") .btn.tonal').click(); await s.page.waitForTimeout(300);
   await s.comme('Amine'); await s.fiche('Youssef El Amrani');
   assert.match(await s.page.locator('#cf-contact').innerText(), /06 12 34 56 78/);
   await s.fermer();
@@ -2300,6 +2314,119 @@ test('accueil rangé : bonjour, étape, où j’en suis, « À faire » (message
   await a.ctx.close();
 });
 
+// Les grandes cartes de tâches (coordonnées, promo à confirmer, ambassadeur, entretien) sont devenues des lignes de « À faire » :
+// la ligne et la cloche ouvrent la même feuille, qui se ferme d'elle-même quand il n'y a plus rien à répondre
+test('« À faire » : coordonnées, promo à confirmer, ambassadeur et entretien en une ligne ; la ligne et la cloche ouvrent la même feuille, fermée une fois tout répondu', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const chiffre = () => s.page.evaluate(() => Number(document.querySelector('.cloche-btn .badge-n')?.textContent || 0));
+  const lignes = () => s.page.locator('.af-accueil .todo > li').allInnerTexts();
+  for (const nom of ['Salma', 'Youssef']) {
+    await s.comme(nom); await s.aller('accueil'); await s.page.waitForTimeout(1500);   // la proposition d'ambassadeur naît à l'ouverture
+    if (await s.page.$('.fete-back, .modal-back:not(.sortie)')) await s.fermer();
+    assert.equal(await s.page.locator('.home :is(.cf-home, .cf-list, #amb-proposition, .amb-proposition, .ent-nudge, .ent-nudge-wrap)').count(), 0, `${nom} : plus de grande carte de tâche sur l’accueil`);
+    assert.ok((await lignes()).length <= 3);
+  }
+  // Amine n'a rien à faire ; Youssef lui demande ses coordonnées : une ligne, la cloche compte 1, pas de « Tout voir »
+  await s.comme('Amine'); await s.aller('accueil');
+  assert.equal(await chiffre(), 0);
+  await s.page.evaluate(() => { const d = window.__demo, y = d.data.profiles.find(p => p.full_name === 'Youssef El Amrani');
+    d.data.demandes_contact.push({ id: 'dc-test', demandeur_id: y.id, cible_id: d.me.id, message: 'Bonjour Amine, on peut échanger ?', status: 'envoyee', created_at: new Date().toISOString(), repondu_at: null }); d.emit(); });
+  await s.page.waitForSelector('.af-accueil .todo > li[data-cle^="dc"]');
+  assert.deepEqual((await lignes()).map(t => t.trim()), ['Youssef aimerait tes coordonnées']);
+  assert.equal(await chiffre(), 1);
+  assert.equal(await s.page.locator('.af-tout').count(), 0);
+  // La ligne ouvre la feuille (le contenu de la carte d'avant) ; « Accepter » : plus rien à répondre, elle se ferme
+  await s.page.locator('.af-accueil .todo > li[data-cle^="dc"] button').click();
+  await s.page.waitForSelector('.modal-back:not(.sortie) .modal.cf-feuille');
+  assert.match(await s.page.locator('.modal.cf-feuille').innerText(), /Ils aimeraient tes coordonnées[\s\S]*Youssef El Amrani[\s\S]*Bonjour Amine, on peut échanger \?[\s\S]*Si tu acceptes/);
+  assert.equal(await s.page.locator('.modal.cf-feuille .btn.primary').count(), 0, 'des boutons doux, comme la carte d’avant');
+  await s.page.locator('.modal.cf-feuille .btn.tonal').click();
+  await s.page.waitForSelector('.modal-back:not(.sortie) .modal.cf-feuille', { state: 'detached', timeout: 3000 });
+  assert.equal(await s.page.locator('.af-accueil .todo > li').count(), 0);
+  assert.equal(await chiffre(), 0);
+  // Une deuxième, puis une troisième demande : toujours une seule ligne, avec le vrai nombre ; la cloche, une par demande
+  await s.page.evaluate(() => { const d = window.__demo, now = Date.now(), autres = d.data.profiles.filter(p => p.role === 'laureat' && !p._persona).slice(0, 3);
+    autres.forEach((p, i) => d.data.demandes_contact.push({ id: 'dc-test' + i, demandeur_id: p.id, cible_id: d.me.id, message: null, status: 'envoyee', created_at: new Date(now - i * 6e4).toISOString(), repondu_at: null })); d.emit(); });
+  await s.page.waitForSelector('.af-accueil .todo > li[data-cle^="dc"]');
+  const premier = await s.page.evaluate(() => window.__demo.data.profiles.filter(p => p.role === 'laureat' && !p._persona)[0].full_name.split(' ')[0]);
+  assert.deepEqual((await lignes()).map(t => t.trim()), [`${premier} et 2 autres aimeraient tes coordonnées`]);
+  assert.equal(await chiffre(), 3);
+  assert.match(await s.page.locator('.af-tout').innerText(), /^Tout voir \(3\)$/);
+  // La cloche ouvre la même feuille ; elle reste ouverte tant qu'il reste une demande
+  await ouvrirFeuille(s, 'dc', '.modal-back:not(.sortie) .modal.cf-feuille');
+  for (let i = 3; i > 0; i--) {
+    assert.equal(await s.page.locator('.modal.cf-feuille .cf-list > li').count(), i);
+    await s.page.locator('.modal.cf-feuille .cf-list > li').first().locator('.btn.ghost').click(); await s.page.waitForTimeout(250);
+  }
+  await s.page.waitForSelector('.modal-back:not(.sortie) .modal.cf-feuille', { state: 'detached', timeout: 3000 });
+  assert.equal(await chiffre(), 0);
+  // Youssef : les lauréats de sa promo à confirmer, une chose à faire de la cloche ; « Je ne sais pas » les retire du chiffre
+  await s.comme('Youssef'); await s.aller('accueil'); await s.page.waitForTimeout(300);
+  if (await s.page.$('.fete-back, .modal-back:not(.sortie)')) await s.fermer();
+  const avant = await chiffre();
+  const promo = await s.page.evaluate(() => window.__demo.me.promo);
+  await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
+  assert.equal(String(await s.page.locator('.cloche .af-row').count()), String(avant), 'le chiffre de la cloche compte ses lignes « À faire »');
+  assert.match(await s.page.locator('.cloche .af-row[data-cle^="vp"]').innerText(), /attend(ent)? ta vérification/);
+  await s.fermer();
+  await ouvrirFeuille(s, 'vp', '.modal-back:not(.sortie) .modal.cf-feuille');
+  assert.match(await s.page.locator('.modal.cf-feuille').innerText(), new RegExp(`De ta promo ${promo} \\?[\\s\\S]*Confirme ceux que tu connais`));
+  while (await s.page.locator('.modal-back:not(.sortie) .modal.cf-feuille').count()) {
+    await s.page.locator('.modal.cf-feuille .cf-list > li').first().locator('.btn.ghost').click(); await s.page.waitForTimeout(250);
+  }
+  assert.equal(await chiffre(), avant - 1, 'plus rien à confirmer : une chose de moins');
+  // Salma : les questions de son entretien, dans la cloche ; « Plus tard » ferme la feuille quand il n'y a rien d'autre
+  await s.comme('Salma'); await s.aller('accueil'); await s.page.waitForTimeout(300);
+  if (await s.page.$('.fete-back, .modal-back:not(.sortie)')) await s.fermer();
+  const n0 = await chiffre();
+  await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
+  const phrase = (await s.page.locator('.cloche .af-row[data-cle^="na"] .af-txt').innerText()).trim();
+  assert.match(phrase, /^Partage les questions de ton entretien chez \S.*$/);
+  await s.fermer();
+  await ouvrirFeuille(s, 'na', '.modal-back:not(.sortie) .modal.ent-feuille');
+  assert.match(await s.page.locator('.modal.ent-feuille').innerText(), new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  // « Partager mes questions » : le formulaire s'ouvre par-dessus, prérempli ; l'annuler ramène à la feuille
+  await s.page.click('#nudge-ent-go'); await s.page.waitForSelector('#en-ent');
+  assert.equal(await s.page.inputValue('#en-ent'), phrase.replace(/^Partage les questions de ton entretien chez /, ''));
+  await s.fermer();
+  assert.equal(await s.page.locator('.modal-back:not(.sortie) .modal.ent-feuille').count(), 1);
+  const reste = await s.page.evaluate(async () => { const E = await import('./entreprises.js'), d = window.__demo; let off = [], n = 0;
+    for (let x = E.partageAFaire(d.data, d.me, (t, id) => d.byId(t, id), off); x; x = E.partageAFaire(d.data, d.me, (t, id) => d.byId(t, id), off)) { off = [...off, x.key]; n++; } return n; });
+  for (let i = 0; i < reste; i++) { await s.page.click('#nudge-ent-tard'); await s.page.waitForTimeout(250); }
+  await s.page.waitForSelector('.modal-back:not(.sortie) .modal.ent-feuille', { state: 'detached', timeout: 3000 });
+  assert.equal(await chiffre(), n0 - 1, '« Plus tard » : la cloche le compte aussitôt');
+  assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe : la ligne, la feuille et la cloche traduites
+  const a = await ouvrir({ largeur: 390, langue: 'ar', theme: 'dark' });
+  await a.comme('Amine'); await a.aller('accueil');
+  await a.page.evaluate(() => { const d = window.__demo, y = d.data.profiles.find(p => p.full_name === 'Youssef El Amrani');
+    d.data.demandes_contact.push({ id: 'dc-test', demandeur_id: y.id, cible_id: d.me.id, message: null, status: 'envoyee', created_at: new Date().toISOString(), repondu_at: null }); d.emit(); });
+  await a.page.waitForSelector('.af-accueil .todo > li[data-cle^="dc"]');
+  assert.match(await a.page.locator('.af-accueil .todo > li').first().innerText(), /طلب من .*Youssef.* للحصول على معلومات الاتصال بك/);
+  await a.page.locator('.af-accueil .todo > li[data-cle^="dc"] button').click(); await a.page.waitForSelector('.modal.cf-feuille');
+  assert.match(await a.page.locator('.modal.cf-feuille h2').innerText(), /يودّون معلومات الاتصال بك/);
+  await a.fermer();
+  await a.comme('Youssef'); await a.aller('accueil'); await a.page.waitForTimeout(300);
+  if (await a.page.$('.fete-back, .modal-back:not(.sortie)')) await a.fermer();
+  await ouvrirFeuille(a, 'vp', '.modal.cf-feuille');
+  assert.match(await a.page.locator('.modal.cf-feuille h2').innerText(), /من دفعتك \d{4}؟/);
+  await a.fermer();
+  await a.comme('Salma'); await a.aller('accueil'); await a.page.waitForTimeout(300);
+  if (await a.page.$('.fete-back, .modal-back:not(.sortie)')) await a.fermer();
+  await ouvrirFeuille(a, 'na', '.modal.ent-feuille');
+  assert.match(await a.page.locator('.modal.ent-feuille').innerText(), /من أجل الدفعة القادمة[\s\S]*شارك أسئلة مقابلتك في/);
+  await a.fermer();
+  await a.page.click('.cloche-btn'); await a.page.waitForSelector('.modal.cloche');
+  assert.match(await a.page.locator('.cloche .af-row[data-cle^="na"] .af-txt').innerText(), /^شارك أسئلة مقابلتك في /);
+  await a.fermer();
+  assert.ok((await a.debordement()) <= 0);
+  assert.deepEqual((await a.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), []);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
 test('« À faire » : un lauréat sans photo voit « Ajoute une photo », en dernier, ni dans la cloche ni sur la carte ; elle ouvre Mon profil sur la carte photo', async () => {
   const s = await ouvrir({ largeur: 390 });
   const PHRASE = 'Ajoute une photo, les étudiants écrivent plus facilement à un visage.';
@@ -3580,11 +3707,17 @@ test('brouillons : le message en cours revient après un rechargement, pour ce c
 // ---------------------------------------------------------------------------
 const lignesAmb = page => page.evaluate(() => window.__demo.data.ambassadeurs.map(a => ({ ...a, nom: window.__demo.data.profiles.find(p => p.id === a.user_id)?.full_name })));
 const fermerFete = async s => { if (await s.page.$('.fete-back')) { await s.fermer(); await s.page.waitForTimeout(200); } };
+// La proposition naît à l'ouverture (1,2 s) : dans les données, puis dans la cloche ; plus de grande carte sur l'accueil
+const propositionArrivee = async s => {
+  await s.page.waitForFunction(() => window.__demo.data.ambassadeurs.some(a => a.statut === 'propose' && a.user_id === window.__demo.me.id), null, { timeout: 6000 });
+  await s.page.waitForTimeout(200);
+};
+const feuilleAmbOuverte = '.modal-back:not(.sortie) .modal.amb-feuille';
 
 test('ambassadeur (démo) : la proposition au plus actif, la cloche, « Accepter », puis le lien, les réussites et les vrais chiffres', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Salma'); await s.aller('accueil');
-  await s.page.waitForSelector('#amb-proposition, [data-pas^="am"]', { timeout: 6000 });
+  await propositionArrivee(s);
   await fermerFete(s);
   // La même règle que la base : le membre le plus actif de sa promo et de sa filière
   const attendu = await s.page.evaluate(async () => {
@@ -3594,18 +3727,23 @@ test('ambassadeur (démo) : la proposition au plus actif, la cloche, « Accepter
   });
   assert.ok(attendu, 'Salma est la plus active de son groupe');
   assert.equal((await lignesAmb(s.page)).filter(a => a.statut === 'propose' && a.nom.startsWith('Salma')).length, 1);
-  // La cloche : « Répondre »
+  // Plus de grande carte dans « Pour toi » : une ligne de la cloche, « Répondre », ouvre la feuille de la proposition
+  assert.equal(await s.page.locator('.home #amb-proposition').count(), 0, 'pas de carte sur l’accueil');
   await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
   assert.match(await s.page.locator('.modal.cloche').innerText(), /La plateforme te propose d’être ambassadeur de ta promo \(.+ \d{4}\)\./);
-  await s.fermer();
-  assert.equal(await s.page.locator('#amb-proposition .btn.primary').count(), 0, 'la carte « prochaine étape » garde le seul bouton plein');
-  // « Pas pour moi », puis « Annuler » : la proposition revient
+  await s.page.locator('.cloche .af-row[data-cle^="am"] button').click();
+  await s.page.waitForSelector(feuilleAmbOuverte + ' #amb-proposition');
+  assert.equal(await s.page.locator('.modal.cloche').count(), 0, 'la cloche laisse la place à la feuille');
+  assert.equal(await s.page.locator('#amb-proposition .btn.primary').count(), 0, 'les boutons doux de la carte d’avant');
+  // « Pas pour moi » : la feuille se ferme d'elle-même ; « Annuler » : la proposition revient
   await s.page.click('#amb-refuser');
+  await s.page.waitForSelector(feuilleAmbOuverte, { state: 'detached' });
   await s.page.locator('.toast button', { hasText: 'Annuler' }).click();
-  await s.page.waitForSelector('#amb-proposition');
-  // Accepter
+  await ouvrirFeuille(s, 'am', feuilleAmbOuverte + ' #amb-proposition');
+  // Accepter : la fête ; la feuille, sans plus rien à répondre, s'est fermée
   await s.page.click('#amb-accepter');
   await s.page.waitForSelector('.fete-back');
+  await s.page.waitForSelector(feuilleAmbOuverte, { state: 'detached', timeout: 3000 });
   assert.match(await s.page.locator('.fete').innerText(), /Merci, ambassadeur de ta promo ![\s\S]*Ambassadeur promo \d{4}/);
   await s.fermer();
   await s.page.waitForSelector('#amb-carte');
@@ -3639,8 +3777,9 @@ test('ambassadeur (démo) : la proposition au plus actif, la cloche, « Accepter
 test('ambassadeur (démo) : refus, puis le suivant ; l’administration voit, retire (avec « Annuler ») et nomme', async () => {
   const s = await ouvrir({ largeur: 1280 });
   await s.comme('Salma'); await s.aller('accueil');
-  await s.page.waitForSelector('#amb-proposition, [data-pas^="am"]', { timeout: 6000 });
+  await propositionArrivee(s);
   await fermerFete(s);
+  await ouvrirFeuille(s, 'am', feuilleAmbOuverte + ' #amb-proposition');
   await s.page.click('#amb-refuser'); await s.page.waitForTimeout(300);
   assert.equal(await s.page.locator('#amb-proposition').count(), 0);
   const groupe = await s.page.evaluate(() => [window.__demo.me.promo, window.__demo.me.filiere]);
@@ -3672,7 +3811,9 @@ test('ambassadeur (démo) : refus, puis le suivant ; l’administration voit, re
   assert.match(await s.page.locator('#amb-admin').innerText(), /nommé par l’administration/);
   assert.ok(qui);
   await s.comme('Nadia'); await s.aller('accueil'); await fermerFete(s);
-  await s.page.waitForSelector('#amb-proposition, [data-pas^="am"]');
+  // Sur la carte « prochaine étape », ou une ligne de « À faire » qui ouvre la feuille
+  await s.page.waitForSelector('[data-pas^="am"], .af-accueil .todo > li[data-cle^="am"]');
+  if (!(await s.page.$('[data-pas^="am"]'))) await ouvrirFeuille(s, 'am', feuilleAmbOuverte + ' #amb-proposition');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -3680,9 +3821,10 @@ test('ambassadeur (démo) : refus, puis le suivant ; l’administration voit, re
 test('ambassadeur (démo, arabe, sombre) : la proposition et la carte traduites, rien d’oublié', async () => {
   const s = await ouvrir({ largeur: 390, langue: 'ar', theme: 'dark' });
   await s.comme('Salma'); await s.aller('accueil');
-  await s.page.waitForSelector('#amb-proposition, [data-pas^="am"]', { timeout: 6000 });
+  await propositionArrivee(s);
   await fermerFete(s);
-  assert.match(await s.page.locator('#amb-proposition, [data-pas^="am"]').first().innerText(), /كن سفير دفعتك/);
+  await ouvrirFeuille(s, 'am', feuilleAmbOuverte + ' #amb-proposition');
+  assert.match(await s.page.locator(feuilleAmbOuverte).innerText(), /سفير دفعتك[\s\S]*كن سفير دفعتك/);
   await s.page.click('#amb-accepter'); await s.page.waitForSelector('.fete-back'); await s.fermer();
   await s.page.waitForSelector('#amb-carte');
   const t = await s.page.locator('#amb-carte').innerText();

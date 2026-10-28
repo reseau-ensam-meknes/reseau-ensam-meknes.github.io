@@ -18,8 +18,8 @@ import { EntrepriseModal } from './pro.js';
 import { DefisPanel, DevenirParrain, TonAnnee, TonAnneeStrip } from './saison.js';
 import { CvCard } from './cv.js';
 import { PhotoCard, PhotoProposee } from './photo.js';
-import { NudgeAvis } from './entreprises.js';
-import { ConfianceHome } from './confiance.js';
+import { notifsPartage, PartageFeuille } from './entreprises.js';
+import { ConfianceFeuille, demandesRecues, pairsAConfirmer } from './confiance.js';
 import { NextEvent } from './agenda.js';
 import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, suiteLien, accordIci, roleAccord, oublierInvitation } from './entree.js';
 import { MessagesPage, useAlerteMessages } from './messages.js';
@@ -28,7 +28,7 @@ import { PoulsReseau, marquerArrivee, useArrivee, ArriveeSheet } from './pouls.j
 import { CaBouge, GraceAToi } from './vitrine.js';
 import { ProposerAide } from './demandes.js';
 import { useFondateurs, FondateursBandeau, useFondateurMoi } from './fondateurs.js';
-import { useAmbassadeurs, pasAmbassadeur, notifsAmbassadeur, AmbassadeurAccueil } from './ambassadeurs.js';
+import { useAmbassadeurs, pasAmbassadeur, notifsAmbassadeur, AmbassadeurAccueil, AmbassadeurFeuille } from './ambassadeurs.js';
 
 // Écrans lourds et peu ouverts (Suivi, Admin, Enquête) : chargés à la demande, pas au démarrage.
 // Le temps qu'ils arrivent, la forme d'une page ; s'ils ne peuvent pas arriver (réseau), un mot calme et « Réessayer ».
@@ -138,6 +138,9 @@ function App({ store }) {
   const [aide, setAide] = useState(null);
   // « Publier une offre » ouvert depuis la barre latérale (ordinateur), sur place : null ou les champs déjà remplis
   const [publierOffre, setPublierOffre] = useState(null);
+  // Ce qui se règle dans une feuille, ouverte depuis la cloche ou une ligne de « À faire » (la même feuille) :
+  // 'coordonnees', 'promo' (confiance.js), 'ambassadeur' (ambassadeurs.js), 'partage' (entreprises.js)
+  const [feuille, setFeuille] = useState(null);
   const seen = useRef(null); const lastAct = useRef(0);
   useEffect(() => store.on(() => setTick(t => t + 1)), []);
   // Pages publiques (attestation, désabonnement) : le lien « #… » suffit. Dans la coque, l'historique s'en charge (ui.js).
@@ -294,6 +297,7 @@ function App({ store }) {
   const needConsent = sansAccord && !['confidentialite', 'profil'].includes(page);
   const openNotif = n => {
     setPop(null); setCloche(false);
+    if (n.feuille) return setFeuille(n.feuille);
     if (n.redemander) return ctx.redemander(n.redemander);
     if (n.conseil) { go('mentorat'); return ctx.askHelp(); }
     if (n.aider) return ctx.proposerAide(n.aider);
@@ -376,6 +380,9 @@ function App({ store }) {
     </div>
     <nav class=${'bottom-nav' + (plein && route.sub ? ' cache' : '')}>${navBas.map(([k, l, i]) => html`<a href=${'#' + k} class=${(page === k ? 'on' : '') + (k === 'match' ? ' bn-match' : '')} aria-current=${page === k ? 'page' : null} onClick=${e => { e.preventDefault(); go(k, { onglet: true }); }}><span class="bn-ico"><${Icon} name=${i}/>${dotFor(k) ? html`<span class="dotn" aria-hidden="true"></span>` : null}</span><span>${court(l)}</span>${dotFor(k) ? html`<span class="sr-only">À faire ici</span>` : null}</a>`)}</nav>
     ${cloche ? html`<${Cloche} notifs=${notifs} onGo=${openNotif} onClose=${() => setCloche(false)}/>` : null}
+    ${feuille === 'coordonnees' || feuille === 'promo' ? html`<${ConfianceFeuille} ctx=${ctx} quoi=${feuille} key=${feuille + me.id} onClose=${() => setFeuille(null)}/>` : null}
+    ${feuille === 'ambassadeur' ? html`<${AmbassadeurFeuille} ctx=${ctx} key=${feuille + me.id} onClose=${() => setFeuille(null)}/>` : null}
+    ${feuille === 'partage' ? html`<${PartageFeuille} ctx=${ctx} key=${feuille + me.id} onClose=${() => setFeuille(null)}/>` : null}
     ${publierOffre ? html`<${OfferComposer} ctx=${ctx} preset=${publierOffre} onClose=${() => setPublierOffre(null)}/>` : null}
     ${offerId ? html`<${OfferDetail} ctx=${ctx} id=${offerId} key=${offerId} apply=${applyNow} onClose=${() => setOfferId(null)}/>` : null}
     ${aide?.demande ? html`<${ProposerAide} ctx=${ctx} id=${aide.demande} key=${'aide-' + aide.demande} onClose=${() => setAide(null)}/>` : null}
@@ -569,9 +576,13 @@ function buildNotifs({ data, me, store, saison }) {
     const w = new Date(c.date_at);
     out.push({ key: 'cf' + c.id, icon: 'clap', tone: 'good', to: 'reseau/groupes/' + encodeURIComponent(g), at: c.created_at, text: `Café ENSAM à ${c.ville} le ${w.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })} : inscris-toi en un clic.` });
   }
-  // Coordonnées : demandes reçues, puis réponse à mes demandes
+  // Coordonnées : demandes reçues, une par une dans la cloche, en une seule ligne sur l'accueil (ligne, la plus récente d'abord) ;
+  // toutes ouvrent la même feuille (confiance.js). Puis la réponse à mes demandes.
+  const dcRecues = demandesRecues(data, me).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  const qui = dcRecues.map(d => store.byId('profiles', d.demandeur_id)?.full_name?.split(' ')[0] || 'Un membre');
+  const ligneDc = qui.length > 2 ? `${qui[0]} et ${qui.length - 1} autres aimeraient tes coordonnées` : qui.length === 2 ? `${qui[0]} et ${qui[1]} aimeraient tes coordonnées` : `${qui[0]} aimerait tes coordonnées`;
+  for (const d of dcRecues) out.push({ key: 'dc' + d.id, ref: d.id, action: true, geste: 'Répondre', tone: 'accent', icon: 'phone', to: 'accueil', feuille: 'coordonnees', groupe: 'dc', ligne: ligneDc, at: d.created_at, text: `${name(d.demandeur_id)} aimerait avoir tes coordonnées.` });
   for (const d of data.demandes_contact || []) {
-    if (d.cible_id === me.id && d.status === 'envoyee') out.push({ key: 'dc' + d.id, ref: d.id, action: true, geste: 'Répondre', tone: 'accent', icon: 'phone', profile: d.demandeur_id, to: 'accueil', at: d.created_at, text: `${name(d.demandeur_id)} aimerait avoir tes coordonnées.` });
     if (d.demandeur_id === me.id && d.status === 'acceptee' && recent(d.repondu_at || d.created_at, 14)) out.push({ key: 'da' + d.id, tone: 'good', icon: 'phone', profile: d.cible_id, at: d.repondu_at || d.created_at, text: `${name(d.cible_id)} a accepté : ses coordonnées sont sur son profil.` });
   }
   // Relecture de CV
@@ -587,11 +598,14 @@ function buildNotifs({ data, me, store, saison }) {
     const ouvertes = (data.relectures_cv || []).filter(r => r.status === 'demandee' && !r.reviewer_id && r.student_id !== me.id);
     if (ouvertes.length) out.push({ key: 'rq' + ouvertes.length, besoin: true, tone: 'accent', icon: 'eye', to: 'mentorat/cv', at: ouvertes.reduce((m, r) => (r.created_at > m ? r.created_at : m), ''), text: `${ouvertes.length} CV attend${ouvertes.length > 1 ? 'ent' : ''} une relecture.` });
   }
-  // Vérification par deux lauréats de la même promo
+  // Vérification par deux lauréats de la même promo : ceux qu'il peut confirmer, moins ceux dont il a dit « Je ne sais pas »
+  // (gardés dans ce navigateur) ; la cloche et la ligne de l'accueil ouvrent la même feuille (confiance.js)
   const pairs = data.verifications_pairs || [];
   if (me.role === 'laureat' && me.verified) {
-    const attente = data.profiles.filter(p => p.role === 'laureat' && !p.verified && p.promo === me.promo && p.id !== me.id && !pairs.some(v => v.laureat_id === p.id && v.verificateur_id === me.id));
-    if (attente.length) out.push({ key: 'vp' + attente.map(p => p.id).join(''), tone: 'accent', icon: 'shield', to: 'accueil', at: attente.reduce((m, p) => (p.created_at > m ? p.created_at : m), ''), text: attente.length > 1 ? `${attente.length} lauréats de ta promo attendent ta vérification.` : `${attente[0].full_name} (promo ${me.promo}) attend ta vérification.` });
+    const attente = pairsAConfirmer(data, me);
+    if (attente.length) out.push({ key: 'vp' + attente.map(p => p.id).join(''), action: true, geste: 'Répondre', sansToast: true, tone: 'accent', icon: 'shield', to: 'accueil', feuille: 'promo', at: attente.reduce((m, p) => (p.created_at > m ? p.created_at : m), ''),
+      text: attente.length > 1 ? `${attente.length} lauréats de ta promo attendent ta vérification.` : `${attente[0].full_name} (promo ${me.promo}) attend ta vérification.`,
+      ligne: attente.length > 1 ? `${attente.length} lauréats de ta promo ${me.promo} à confirmer` : `${attente[0].full_name.split(' ')[0]} est de ta promo ${me.promo} ?` });
   }
   if (me.role === 'laureat') for (const v of pairs) if (v.laureat_id === me.id && recent(v.created_at, 14)) out.push({ key: 'vv' + v.id, tone: 'good', icon: 'shield', profile: v.verificateur_id, at: v.created_at, text: me.verified ? `${name(v.verificateur_id)} a confirmé que tu es de la promo ${me.promo}.` : `${name(v.verificateur_id)} a confirmé que tu es de la promo ${me.promo}. Encore un lauréat et ton badge arrive.` });
   // Agenda de l'école : nouvel événement, puis rappel la veille et le jour même
@@ -618,6 +632,8 @@ function buildNotifs({ data, me, store, saison }) {
   }
   // Ambassadeur de promo : la proposition attend une réponse
   out.push(...notifsAmbassadeur({ data, me }));
+  // Les questions d'un entretien passé, ou l'avis sur un stage fini : une invitation à la fois (entreprises.js)
+  out.push(...notifsPartage({ data, me, store }));
   return out.sort((a, b) => (b.geste ? 1 : 0) - (a.geste ? 1 : 0) || (b.action ? 1 : 0) - (a.action ? 1 : 0) || new Date(b.at) - new Date(a.at));
 }
 
@@ -669,7 +685,8 @@ function prochainPas(ctx, notifs, etape, { plAttente, helper, besoins = [] } = {
     const adm = store.byId('profiles', conv.autre)?.role === 'admin';
     return { key: 'msg' + conv.autre, ref: conv.autre, message: true, icon: 'chat', eyebrow: 'Un message t’attend', titre: conv.nonLus > 1 ? `${nom(conv.autre)} t’a écrit ${conv.nonLus} messages.` : `${nom(conv.autre)} t’a écrit.`, cta: adm ? 'Répondre' : `Répondre à ${prenom(conv.autre)}`, go: () => go('messages/' + conv.autre) };
   }
-  const a = notifs.find(n => n.action && !n.rdv && !n.besoin && !/^(eq|dc|md|sc|pa|dm|ph)/.test(n.key || '') && !(role === 'etudiant' && n.icon === 'briefcase'));
+  // Ce qui se règle dans une feuille (dc, vp, na) reste une ligne de « À faire »
+  const a = notifs.find(n => n.action && !n.rdv && !n.besoin && !/^(eq|dc|md|sc|pa|dm|ph|vp|na)/.test(n.key || '') && !(role === 'etudiant' && n.icon === 'briefcase'));
   if (a) return pasNotif(ctx, a);
   // Un étudiant précis vaut mieux que l'étape « Aide un étudiant » ; une demande d'étudiant, ou ce qu'on lui demande
   // à lui, passe même avant toutes les étapes des premiers pas (profil, disponibilité, offre)
@@ -931,8 +948,9 @@ function Home(ctx) {
   useFetesLaureat(ctx);
   // Juste après la « Dernière étape » : une feuille d'accueil, une fois, avec le même bouton que la carte
   const [arrivee, finArrivee] = useArrivee(ctx);
-  // « À faire » : les messages qui attendent une réponse (une ligne), puis les petites tâches, trois lignes au plus,
-  // jamais ce que montre la carte ; pas « Ajoute une photo » quand l'accueil propose déjà la photo trouvée dans le CV
+  // « À faire » : les messages qui attendent une réponse (une ligne), puis les petites tâches, puis ce qui se règle dans
+  // une feuille (coordonnées, promo à confirmer, ambassadeur, entretien), trois lignes au plus, jamais ce que montre la carte ;
+  // pas « Ajoute une photo » quand l'accueil propose déjà la photo trouvée dans le CV
   const [photoCV, setPhotoCV] = useState(false);
   const taches = petitesTaches(notifs, pas).filter(t => !photoCV || t.key !== 'ph');
   const lignes = [ligneMessages(ctx, new Set([pas.ref].filter(Boolean))), ...taches].filter(Boolean).slice(0, 3);
@@ -989,7 +1007,7 @@ function Home(ctx) {
       ${isLaureat && s && s.recrutes + s.mentorats ? html`<button class="impact-strip clickable avancement" onClick=${() => go('espace')}><span class="obj-ico brass"><${Icon} name="heart" size=${20}/></span><span class="grow" style="min-width:0">${s.recrutes + s.mentorats > 1 ? `Tu as aidé ${s.recrutes + s.mentorats} étudiants` : 'Tu as aidé 1 étudiant'}</span><${LevelChip} points=${s.points}/><${Icon} name="arrow" size=${18}/></button>` : null}
       <section class="bloc af-accueil" aria-labelledby="h-afaire">
         <h2 class="h-sec" id="h-afaire">À faire</h2>
-        <div class="bloc-corps">${lignes.length ? html`<ul class="todo">${lignes.map(a => html`<li key=${a.key}><button type="button" class="notif act" onClick=${a.onClick || (() => openNotif(a))}><span class=${'n-ico ' + (a.tone || '')} aria-hidden="true"><${Icon} name=${a.icon} size=${16}/></span><span>${a.text}</span>${a.n ? html`<span class="af-n" aria-hidden="true">${a.n}</span>` : null}<${Icon} name="arrow" size=${16}/></button></li>`)}</ul>
+        <div class="bloc-corps">${lignes.length ? html`<ul class="todo">${lignes.map(a => html`<li key=${a.key} data-cle=${a.key}><button type="button" class="notif act" aria-haspopup=${a.feuille ? 'dialog' : undefined} onClick=${a.onClick || (() => openNotif(a))}><span class=${'n-ico ' + (a.tone || '')} aria-hidden="true"><${Icon} name=${a.icon} size=${16}/></span><span>${a.ligne || a.text}</span>${a.n ? html`<span class="af-n" aria-hidden="true">${a.n}</span>` : null}<${Icon} name="arrow" size=${16}/></button></li>`)}</ul>
           ${ctx.todo > lignes.length ? html`<button type="button" class="linkish af-tout" aria-haspopup="dialog" onClick=${ctx.ouvrirCloche}>${`Tout voir (${ctx.todo})`}</button>` : null}` : null}</div>
       </section>
       <${AnnonceBanner} key=${'an-' + me.id} ctx=${ctx}/>
@@ -1005,12 +1023,10 @@ function Home(ctx) {
         <${IlsOntBesoin} ctx=${ctx} besoins=${besoins.filter(b => !montres.has(b.id))}/>
         <${NextRdv} ctx=${ctx} exclure=${montres}/>
         <${MatchAccueil} ctx=${ctx}/>
-        <${ConfianceHome} ctx=${ctx}/>
-        <${AmbassadeurAccueil} ctx=${ctx} pasKey=${pas.key}/>
+        <${AmbassadeurAccueil} ctx=${ctx}/>
         <${CoupDeMain} ctx=${ctx} exclure=${montres} cle=${{ 'guide-demande': 'demande', 'guide-conseil': 'conseil' }[pas.key] || null}/>
         <${OffresPourToi} ctx=${ctx} offres=${pourToi} jeunes=${enRecherche}/>
         <${TonAnneeStrip} ctx=${ctx} onOpen=${ctx.openAnnee}/>
-        <${NudgeAvis} ctx=${ctx}/>
         <${DevenirParrain} ctx=${ctx}/>
         </div>
       </div>

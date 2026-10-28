@@ -769,7 +769,7 @@ test('un lauréat devenu membre fondateur : le bandeau, la fête, puis « Ton no
     return f.parentElement.classList.contains('home-col') && apres(document.querySelector('.home .hello'), f) && apres(f, document.querySelector('.home-main'));
   }), 'sous le bonjour et « À faire », avant « Pour toi »');
   assert.equal(await m.page.locator('.fd-accueil .fd-carte').count(), 2);
-  assert.match(await m.page.locator('.fd-accueil .fd-carte').first().innerText(), /Abderrahman Hajeb[\s\S]*C’est toi/);
+  assert.match(await m.page.locator('.fd-accueil .fd-carte').first().innerText(), /Abderrahman Hajeb[\s\S]*\bToi\b/);
   assert.match(await m.page.locator('.fd-accueil .fd-places').innerText(), /23 places de membre fondateur restantes sur 25/);
   assert.equal(await m.page.locator('.fd-accueil .btn.primary').count(), 0);
   // La fête, puis la question
@@ -817,10 +817,12 @@ test('ambassadeur de promo en ligne : la proposition sur l’accueil, « Accepte
   ambFaux = [{ id: 'a0000000-0000-4000-8000-000000000001', promo: S + 1, filiere: 'Génie Industriel', user_id: UID, statut: 'propose', par: 'auto', propose_at: now, repondu_at: null, created_at: now }];
   site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
   const m = await membre();
-  await m.page.waitForSelector('[data-pas^="am"], #amb-proposition', { timeout: 15000 });
+  await m.page.waitForSelector('[data-pas^="am"], .af-accueil .todo > li[data-cle^="am"]', { timeout: 15000 });
   await m.page.waitForTimeout(1500);
   assert.ok(site.appels.some(a => a.u === '/sb/rest/v1/rpc/ambassadeurs_proposer'), 'la base est appelée à l’ouverture');
   if (await m.page.$('.fete-back')) { await m.page.keyboard.press('Escape'); await m.page.waitForTimeout(300); }
+  // Sur la carte « prochaine étape » ; sinon la ligne de « À faire » ouvre la feuille de la proposition
+  if (!(await m.page.$('[data-pas^="am"]'))) { await m.page.click('.af-accueil .todo > li[data-cle^="am"] button'); await m.page.waitForSelector('.modal.amb-feuille #amb-proposition'); }
   assert.match(await m.page.locator('[data-pas^="am"], #amb-proposition').first().innerText(), new RegExp(`Deviens ambassadeur de ta promo \\(.+ ${S + 1}\\)`));
   const bouton = (await m.page.$('[data-pas^="am"] .pas-go')) ? '[data-pas^="am"] .pas-go' : '#amb-accepter';
   await m.page.click(bouton);
@@ -842,7 +844,7 @@ test('ambassadeurs, base pas encore à jour : l’accueil s’ouvre, rien de cas
   site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
   const m = await membre();
   await m.page.waitForSelector('.hello', { timeout: 15000 }); await m.page.waitForTimeout(2500);
-  assert.equal(await m.page.locator('#amb-carte, #amb-proposition, [data-pas^="am"]').count(), 0);
+  assert.equal(await m.page.locator('#amb-carte, #amb-proposition, [data-pas^="am"], [data-cle^="am"]').count(), 0);
   assert.deepEqual(m.erreurs, []);
   await m.ctx.close();
 });
