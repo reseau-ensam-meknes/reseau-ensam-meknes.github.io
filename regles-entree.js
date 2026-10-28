@@ -42,6 +42,8 @@ export function casErreurAuth(e) {
 }
 
 export const adresseContact = (cfg = (typeof window !== 'undefined' && window.ENSAM_CONFIG) || {}) => cfg.contactEmail || 'reseau.ensam.meknes@gmail.com';
+export const responsableTraitement = (cfg = (typeof window !== 'undefined' && window.ENSAM_CONFIG) || {}) => cfg.responsable || 'Oussama Ouafik';
+export const VERSION_ACCORD = '2026-10-28';
 
 const FORME_LIEN = /^(offre|reseau\/entraide|aider)\/([\w-]{1,64})$/;
 export function lienPartage(r) {
