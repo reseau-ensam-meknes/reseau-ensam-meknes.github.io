@@ -1317,18 +1317,43 @@ export class SupabaseStore extends Base {
     if (typeof window === 'undefined' || this.reveilBranche) return; this.reveilBranche = true;
     let cache = 0;
     const reveil = () => {
-      if (document.visibilityState === 'hidden') { cache = Date.now(); this.ecrireCacheMaintenant(); return; }
+      if (document.visibilityState === 'hidden') { cache ||= Date.now(); this.ecrireCacheMaintenant(); return; }
       const s = this.sessionGardee(); if (!s) return;
       try { this.sb.auth.startAutoRefresh(); } catch { /* */ }
       if (!s.expires_at || s.expires_at * 1000 - Date.now() < 120e3) this.renouveler();
       if (this.me) this.noterVisite();
+      const absent = cache ? Date.now() - cache : 0; cache = 0;
       if (this.enAttente) this.rafraichir();
-      // Longtemps caché : le temps réel a pu manquer des changements
-      else if (cache && Date.now() - cache > 5 * 60e3 && this.me) { cache = 0; this.loadAll().then(() => this.emit(), () => {}); }
+      else if (this.me) this.auRetour(absent);
     };
     document.addEventListener('visibilitychange', reveil);
     addEventListener('focus', reveil); addEventListener('online', reveil); addEventListener('pageshow', reveil);
     addEventListener('pagehide', () => this.ecrireCacheMaintenant());
+  }
+  // Retour au premier plan après `absent` ms cachée (notification touchée, application rouverte). Pendant la veille du
+  // téléphone, le temps réel dort : les messages arrivés entre-temps manquaient dans la discussion jusqu'au rechargement.
+  auRetour(absent) {
+    if (absent > 5 * 60e3) this.loadAll().then(() => this.emit(), () => {});
+    else if (absent > 1500) this.rattraperMessages();
+    if (absent > 20e3) this.sonderTempsReel();
+  }
+  // Les messages (et leurs réactions) relus d'un coup ; un seul rattrapage à la fois, pas plus d'un toutes les 3 s
+  rattraperMessages() {
+    if (!this.me || this.mode !== 'live') return Promise.resolve();
+    if (this.rattrapage) return this.rattrapage;
+    if (Date.now() - (this.dernierRattrapage || 0) < 3000) return Promise.resolve();
+    this.dernierRattrapage = Date.now();
+    return this.rattrapage = Promise.all(MESSAGERIE.map(t => this.loadTable(t).catch(() => {})))
+      .then(() => this.emit()).finally(() => { this.rattrapage = null; });
+  }
+  // Après une longue veille, la connexion du temps réel peut sembler ouverte sans plus rien recevoir. Un battement tout
+  // de suite, un second 5 s plus tard : le premier resté sans réponse, la bibliothèque rouvre la connexion, et
+  // l'abonnement retrouvé rattrape les messages (voir subscribe)
+  sonderTempsReel() {
+    const rt = this.sb?.realtime; if (!rt?.sendHeartbeat) return;
+    try { rt.sendHeartbeat(); } catch { /* */ }
+    clearTimeout(this.minuteurSonde);
+    this.minuteurSonde = setTimeout(() => { try { rt.sendHeartbeat(); } catch { /* */ } }, 5000);
   }
   // Un seul renouvellement à la fois ; la nouvelle session, ou null si ce n'est pas possible pour l'instant
   renouveler() {
@@ -1432,7 +1457,12 @@ export class SupabaseStore extends Base {
     // Les vues (profils, entretiens, avis) n'ont pas de temps réel : la base signale leurs changements ici
     this.channel.on('postgres_changes', { event: '*', schema: 'public', table: 'maj_tables' }, e => { const t = e.new?.cle; if (TABLES.includes(t)) recharger(t); });
     this.channel.on('postgres_changes', { event: '*', schema: 'public', table: 'reglages' }, () => this.lireReglages().then(() => this.emit()).catch(() => {}));
-    this.channel.subscribe();
+    // Abonnement retrouvé après une coupure (veille, réseau) : ce qui est arrivé pendant n'a pas été envoyé, on le relit
+    this.channel.subscribe(statut => {
+      if (statut !== 'SUBSCRIBED') return;
+      if (this.abonneUneFois) { this.dernierRattrapage = 0; this.rattraperMessages(); }
+      this.abonneUneFois = true;
+    });
   }
   async insert(table, row) {
     const { data, error } = await this.sb.from(table).insert(row).select().single();
