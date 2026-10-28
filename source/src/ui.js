@@ -669,7 +669,7 @@ const CSS_SCENES = `
 // ---------------------------------------------------------------------------
 let feteSet = null, feteActive = false;
 const surFete = new Set();
-// visages = [p1, p2] : la fête « match », les deux visages glissent l'un vers l'autre et se rejoignent sous un cœur.
+// visages = [p1, p2] : la fête « match », les deux visages glissent l'un vers l'autre et se rejoignent sous une coche.
 // citation = { txt, de } : un merci cité en entier, avec le visage et le prénom de qui l'a écrit. ok : le libellé du bouton seul.
 export function celebrate({ cle, titre, texte, action, icon = 'trophy', pts = 0, visages, citation, ok }) {
   if (cle) { try { if (localStorage.getItem('fete-' + cle)) return false; localStorage.setItem('fete-' + cle, '1'); } catch { /* pas de stockage : on fête quand même */ } }
@@ -691,9 +691,10 @@ export function Celebration() {
   return f ? html`<${Fete} f=${f} key=${f.t} onClose=${() => { feteActive = false; setF(null); }}/>` : null;
 }
 const COULEURS_FETE = ['var(--em-o)', 'var(--em-b)', 'var(--orange)', 'var(--accent)', 'var(--good)', '#FFD166'];
-// Le match : les couleurs de l'école seulement (bleu, orange, bleu nuit), et la pluie part quand le cœur apparaît
+// Le match : les couleurs de l'école seulement (bleu, orange, bleu nuit), et la pluie part quand la coche apparaît
 const COULEURS_MATCH = ['var(--accent)', 'var(--orange)', 'var(--navy)'];
-const COEUR = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 20.7l-1.2-1.1C6.4 15.6 3.5 13 3.5 9.7A4.7 4.7 0 0 1 8.3 5c1.5 0 2.9.7 3.7 1.8A4.7 4.7 0 0 1 15.7 5a4.7 4.7 0 0 1 4.8 4.7c0 3.3-2.9 5.9-7.3 9.9z"/></svg>';
+// Entre les deux visages, une coche : la mise en relation est faite (pas de cœur : c'est du travail)
+const SCEAU = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5.5 12.5 4.2 4.2 8.8-9.2"/></svg>';
 function Fete({ f, onClose }) {
   const ref = useRef();
   useFeuille(onClose);   // Retour la ferme ; changer d'écran aussi
@@ -713,7 +714,7 @@ function Fete({ f, onClose }) {
     <div class="fete-pluie" aria-hidden="true">${morceaux.map(m => html`<i class=${m.rond ? 'rond' : ''} style=${`--x:${m.x}%;--dx:${m.dx}px;--d:${m.d}s;--w:${m.w}s;--r:${m.r}deg;--c:${m.c}`}></i>`)}</div>
     <div class=${'fete' + (match ? ' fete-match' : '') + (cite ? ' fete-merci' : '')} role="dialog" aria-modal="true" aria-labelledby="fete-titre" ref=${ref}>
       <span class="sheet-grip" aria-hidden="true"></span>
-      ${match ? html`<div class="fm-duo" aria-hidden="true"><span class="fm-v fm-a"><${Avatar} p=${f.visages[0]} size=${76}/></span><span class="fm-coeur" dangerouslySetInnerHTML=${{ __html: COEUR }}></span><span class="fm-v fm-b"><${Avatar} p=${f.visages[1]} size=${76}/></span></div>`
+      ${match ? html`<div class="fm-duo" aria-hidden="true"><span class="fm-v fm-a"><${Avatar} p=${f.visages[0]} size=${76}/></span><span class="fm-sceau" dangerouslySetInnerHTML=${{ __html: SCEAU }}></span><span class="fm-v fm-b"><${Avatar} p=${f.visages[1]} size=${76}/></span></div>`
         : html`<span class="fete-ico"><${Icon} name=${f.icon} size=${34}/></span>`}
       <h2 id="fete-titre">${f.titre}</h2>
       ${f.texte ? html`<p>${f.texte}</p>` : null}
@@ -727,7 +728,7 @@ function Fete({ f, onClose }) {
     </div>
   </div>`;
 }
-// Les deux visages partent chacun de son côté, glissent l'un vers l'autre et se touchent ; le cœur naît à leur rencontre.
+// Les deux visages partent chacun de son côté, glissent l'un vers l'autre et se touchent ; la coche naît à leur rencontre.
 // --sens suit le sens de lecture (en arabe, le premier visage est à droite).
 const CSS_FETE_MATCH = `
 .fm-duo { --sens: 1; position: relative; display: flex; align-items: center; justify-content: center; padding-block: .3rem .55rem; margin-block-end: .15rem; }
@@ -735,17 +736,17 @@ const CSS_FETE_MATCH = `
 .fm-v { position: relative; display: block; border-radius: 50%; box-shadow: 0 0 0 4px var(--surface), 0 10px 24px -10px rgb(10 20 40 / .45); }
 .fm-a { z-index: 1; margin-inline-end: -12px; } .fm-b { margin-inline-start: -12px; }
 .fm-v .avatar { display: grid; }
-.fm-coeur { position: absolute; z-index: 2; inset-block-end: -2px; inset-inline-start: 50%; translate: calc(-50% * var(--sens)) 0; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%;
-  background: var(--surface); color: var(--em-o); box-shadow: 0 6px 16px -6px rgb(243 146 0 / .6), inset 0 0 0 2px color-mix(in srgb, var(--em-o) 28%, transparent); }
+.fm-sceau { position: absolute; z-index: 2; inset-block-end: -2px; inset-inline-start: 50%; translate: calc(-50% * var(--sens)) 0; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%;
+  background: var(--accent); color: var(--accent-ink); box-shadow: 0 0 0 3px var(--surface), 0 6px 16px -6px color-mix(in srgb, var(--accent) 70%, transparent); }
 @media (prefers-reduced-motion: no-preference) {
   .fm-a { animation: fm-a .62s cubic-bezier(.2, .85, .25, 1) .12s backwards; }
   .fm-b { animation: fm-b .62s cubic-bezier(.2, .85, .25, 1) .12s backwards; }
-  .fm-coeur { animation: fm-coeur .5s cubic-bezier(.3, 1.5, .5, 1) .62s backwards; }
-  .fm-coeur::after { content: ""; position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 2px var(--em-o); opacity: 0; animation: fm-onde .7s ease-out .8s 1; }
+  .fm-sceau { animation: fm-sceau .5s cubic-bezier(.3, 1.5, .5, 1) .62s backwards; }
+  .fm-sceau::after { content: ""; position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 2px var(--accent); opacity: 0; animation: fm-onde .7s ease-out .8s 1; }
 }
 @keyframes fm-a { from { opacity: 0; transform: translateX(calc(-46px * var(--sens))) rotate(calc(-8deg * var(--sens))); } 60% { opacity: 1; } }
 @keyframes fm-b { from { opacity: 0; transform: translateX(calc(46px * var(--sens))) rotate(calc(8deg * var(--sens))); } 60% { opacity: 1; } }
-@keyframes fm-coeur { from { opacity: 0; transform: scale(.2); } }
+@keyframes fm-sceau { from { opacity: 0; transform: scale(.2); } }
 @keyframes fm-onde { from { opacity: .7; transform: scale(1); } to { opacity: 0; transform: scale(1.7); } }
 .fete-cite { margin: .2rem 0 .1rem; padding: .8rem .95rem .7rem; inline-size: 100%; border-radius: var(--r-lg); background: color-mix(in srgb, var(--em-o) 9%, var(--surface)); text-align: start; }
 .fete .fete-cite p { margin: 0; max-width: none; color: var(--ink); font-size: var(--fs-4); line-height: 1.5; overflow-wrap: anywhere; white-space: pre-line; }

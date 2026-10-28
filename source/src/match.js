@@ -1,6 +1,7 @@
-// Page « Match » : comme les applis de rencontre, mais pour le travail. Une carte à la fois : « Plus tard » ou « Intéressé ».
-// L'étudiant voit des offres de lauréats (et les lauréats qui s'intéressent à lui) ; le lauréat voit des étudiants.
-// Quand les deux disent oui, c'est un match : la fête, puis la discussion (messages.js : bandeau, entretien).
+// Page « Match » : la mise en relation entre étudiants et lauréats, une carte à la fois : « Plus tard » ou « Intéressé ».
+// L'étudiant voit des offres de lauréats (et les lauréats qui s'intéressent à lui) ; le lauréat voit des étudiants,
+// leur CV en grand (apercu-cv.js), lisible en entier avant de choisir.
+// Quand les deux disent oui, c'est un match : la discussion s'ouvre (messages.js : bandeau, entretien).
 // Règles : deckMatch, matchsDe (logic.js) ; choisirMatch, revenirMatch, vuMatch (store.js, comme la base). CSS : page.html, section « Match ».
 import { html, useState, useEffect, useLayoutEffect, useRef, useMemo } from './vendor/preact-htm.js';
 import { Icon, Avatar, AvatarPile, CompanyLogo, MentionLogos, toast, roleTexte, useFeuille, mouvementReduit, ecranLibre } from './ui.js';
@@ -10,14 +11,17 @@ import { estPortee } from './origine.js';
 import { TYPE_ICON } from './entree.js';
 import { OfferComposer } from './offers.js';
 import { addAR, getLang } from './i18n.js';
+import { ApercuCV, LecteurCV } from './apercu-cv.js';
 
 ajouterIcones({
-  // Deux cartes l'une sur l'autre, un cœur sur celle de devant
-  match: '<rect x="8" y="3" width="12.5" height="16" rx="2.5"/><path d="M4.5 7.5v11A2.5 2.5 0 0 0 7 21h8.5"/><path d="M14.25 14.2s-2.6-1.6-2.6-3.5a1.4 1.4 0 0 1 2.6-.7 1.4 1.4 0 0 1 2.6.7c0 1.9-2.6 3.5-2.6 3.5z"/>',
+  // Deux cartes l'une sur l'autre, une coche sur celle de devant
+  match: '<rect x="8" y="3" width="12.5" height="16" rx="2.5"/><path d="M4.5 7.5v11A2.5 2.5 0 0 0 7 21h8.5"/><path d="m11.4 11.3 2 2 3.7-3.9"/>',
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
 });
 
 const prenom = p => (p?.full_name || '').split(' ')[0] || '';
+// Le CV de l'étudiant s'affiche-t-il aux lauréats avant le match ? Son réglage « CV » (lauréats par défaut, ou tous)
+const cvPourLaureats = me => ['laureats', 'tous'].includes((me.visibilite || {}).cv || 'laureats');
 // Retour au toucher, si l'appareil sait vibrer
 const vibrer = motif => { try { navigator.vibrate?.(motif); } catch { /* pas de vibreur */ } };
 // Le logo d'une entreprise : un seul point d'entrée pour toute la page. LogoEntreprise (lot vitrine) prendra sa place ici,
@@ -38,6 +42,7 @@ export function MatchPage(ctx) {
   const [devant, setDevant] = useState(null);    // la carte revenue reste devant
   const [fete, setFete] = useState(null);
   const [compose, setCompose] = useState(false);
+  const [lire, setLire] = useState(null);        // le CV ouvert en grand (la carte du dessus)
   const [annonce, setAnnonce] = useState('');
   const pile = useRef();
   const cartes = useMemo(() => {
@@ -75,7 +80,7 @@ export function MatchPage(ctx) {
   // Clavier : ← → choisissent (dans le sens de lecture), Z ou Retour arrière reviennent. Jamais dans un champ ni sous une fenêtre.
   useLayoutEffect(() => {
     const k = e => {
-      if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || fete || compose) return;
+      if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey || fete || compose || lire) return;
       if (e.target?.closest?.('input, textarea, select, [contenteditable="true"]') || !ecranLibre()) return;
       if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
         if (!top) return;
@@ -116,21 +121,24 @@ export function MatchPage(ctx) {
     ${top || vol ? html`<div class="mx-zone">
       <div class="mx-pile" ref=${pile} style=${`--sens:${sens}`}>
         ${cartes.slice(0, 3).reverse().map((c, i, l) => html`<${Carte} key=${c.cle} ctx=${ctx} carte=${c} rang=${l.length - 1 - i} sens=${sens}
-          onChoix=${choisir} revenue=${c.cle === devant}/>`)}
+          onChoix=${choisir} onLire=${() => setLire(c)} revenue=${c.cle === devant}/>`)}
         ${vol ? html`<${Carte} key=${'vol-' + vol.c.cle + vol.t} ctx=${ctx} carte=${vol.c} rang=${0} sens=${sens} vol=${vol}/>` : null}
       </div>
       <div class="mx-acts" role="group" aria-label="Ton choix">
         <button type="button" class="mx-rond mx-non" onClick=${() => choisir('plus_tard')} disabled=${!top}><span class="mx-rond-ico"><${Icon} name="x" size=${26}/></span><span class="mx-rond-lib">Plus tard</span></button>
         <button type="button" class="mx-rond mx-retour" onClick=${revenir} disabled=${!hist.length}><span class="mx-rond-ico"><${Icon} name="undo" size=${20}/></span><span class="mx-rond-lib">Revenir</span></button>
-        <button type="button" class="mx-rond mx-oui" onClick=${() => choisir('oui')} disabled=${!top}><span class="mx-rond-ico"><${Icon} name="heart" size=${28}/></span><span class="mx-rond-lib">Intéressé</span></button>
+        <button type="button" class="mx-rond mx-oui" onClick=${() => choisir('oui')} disabled=${!top}><span class="mx-rond-ico"><${Icon} name="check" size=${30}/></span><span class="mx-rond-lib">Intéressé</span></button>
       </div>
       <p class="mx-aide muted small">Si c’est oui des deux côtés, c’est un match : vous pouvez vous écrire.</p>
       <p class="mx-clavier muted small" aria-hidden="true">${sens > 0 ? 'Clavier : ← Plus tard · → Intéressé · Z pour revenir' : 'Clavier : → Plus tard · ← Intéressé · Z pour revenir'}</p>
       <${MentionLogos} noms=${logos}/>
     </div>` : html`<${PileVide} ctx=${ctx} onPublier=${() => setCompose(true)} revenir=${hist.length ? revenir : null}/>`}
-    ${etu && me.match_visible !== false ? html`<p class="mx-visible small muted"><${Icon} name="eye" size=${15}/> <span>Les lauréats voient aussi ta carte.</span> <button type="button" class="linkish small" onClick=${() => go('profil')}>Modifier</button></p>` : null}
+    ${etu && me.match_visible !== false ? html`<p class="mx-visible small muted"><${Icon} name="eye" size=${15}/> <span>${!me.cv_path ? 'Les lauréats voient aussi ta carte. Ajoute ton CV : il s’affiche en grand, et les cartes avec CV passent en premier.'
+      : cvPourLaureats(me) ? 'Les lauréats voient aussi ta carte, avec ton CV en grand.' : 'Les lauréats voient aussi ta carte. Ton CV reste privé jusqu’au match.'}</span> <button type="button" class="linkish small" onClick=${() => go('profil')}>${me.cv_path ? 'Modifier' : 'Ajouter mon CV'}</button></p>` : null}
     <p class="sr-only" aria-live="polite">${annonce}</p>
     ${fete ? html`<${FeteMatch} f=${fete} me=${me} onEcrire=${ecrire} onClose=${finFete}/>` : null}
+    ${lire ? html`<${LecteurCV} store=${store} p=${lire.profil} path=${lire.profil.cv_path} onClose=${() => setLire(null)}
+      onChoix=${top?.cle === lire.cle ? c => { setLire(null); choisir(c); } : null}/>` : null}
     ${compose ? html`<${OfferComposer} ctx=${ctx} onClose=${() => setCompose(false)}/>` : null}
   </section>`;
 }
@@ -140,7 +148,7 @@ export function MatchPage(ctx) {
 // ---------------------------------------------------------------------------
 const SEUIL = 0.3;          // part de la largeur à dépasser pour choisir
 const VITESSE = 0.55;       // ou un geste vif (px/ms)
-function Carte({ ctx, carte, rang, sens, onChoix, vol, revenue }) {
+function Carte({ ctx, carte, rang, sens, onChoix, onLire, vol, revenue }) {
   const el = useRef(); const g = useRef(null);
   // Le dernier appui fini : glissé ou long, le clic qui le suit n'ouvre pas le détail
   const fini = useRef(null);
@@ -190,7 +198,8 @@ function Carte({ ctx, carte, rang, sens, onChoix, vol, revenue }) {
   const clic = e => {
     const f = fini.current; fini.current = null;
     if (!dessus || e.target.closest('button, a') || f?.bouge || f?.long) return;
-    detail();
+    // Un appui sur l'aperçu du CV l'ouvre en grand ; ailleurs, le profil
+    if (e.target.closest('[data-lire]') && onLire) onLire(); else detail();
   };
   // La carte qui part : depuis là où le doigt l'a lâchée, vers le côté choisi
   const depart = vol ? (vol.choix === 'oui' ? 1 : -1) * sens : 0;
@@ -204,7 +213,7 @@ function Carte({ ctx, carte, rang, sens, onChoix, vol, revenue }) {
     <span class="mx-tampon mx-t-non" aria-hidden="true">Plus tard</span>
     ${carte.interet ? html`<p class="mx-interet"><${Avatar} p=${p} size=${26}/>${carte.sorte === 'laureat' ? html`<span>${`${prenom(p)} s’intéresse à ton profil`}</span>`
       : html`<span class="mx-int-txt"><span>Ton offre l’intéresse</span><span class="mx-int-o" translate="no" dir="auto">${titreOffre(carte.interet.offre)}</span></span>`}</p>` : null}
-    ${carte.sorte === 'offre' ? html`<${CorpsOffre} ctx=${ctx} carte=${carte} tid=${tid}/>` : carte.sorte === 'etudiant' ? html`<${CorpsEtudiant} ctx=${ctx} carte=${carte} tid=${tid}/>` : html`<${CorpsLaureat} ctx=${ctx} carte=${carte} tid=${tid}/>`}
+    ${carte.sorte === 'offre' ? html`<${CorpsOffre} ctx=${ctx} carte=${carte} tid=${tid}/>` : carte.sorte === 'etudiant' ? html`<${CorpsEtudiant} ctx=${ctx} carte=${carte} tid=${tid} onLire=${dessus ? onLire : null}/>` : html`<${CorpsLaureat} ctx=${ctx} carte=${carte} tid=${tid}/>`}
     <footer class="mx-c-pied">
       <p class="mx-raison"><${Icon} name="spark" size=${16}/><span>${carte.raison}</span></p>
       ${dessus ? html`<button type="button" class="btn tiny ghost mx-detail" onClick=${detail}>${o ? 'Voir l’offre' : 'Voir le profil'} <${Icon} name="arrow" size=${14}/></button>` : null}
@@ -231,23 +240,35 @@ function CorpsOffre({ ctx, carte, tid }) {
   </div>`;
 }
 
-function CorpsEtudiant({ ctx, carte, tid }) {
+// L'étudiant vu par un lauréat : son CV en grand quand il le partage (la place de la grande photo), puis qui il est,
+// ce qu'il cherche et ses compétences. Sans CV partagé, son visage et un encadré sobre.
+function CorpsEtudiant({ ctx, carte, tid, onLire }) {
   const { data, store, saison } = ctx; const p = carte.profil;
   const n = niveauOf(p, saison);
   const voit = c => store.voitChamp?.(p, c) ?? true;
   const d = demandesActives(data, p.id).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
   const comp = voit('presentation') ? (p.competences || []).slice(0, 5) : [];
-  const cv = voit('cv') && (p.cv_path || p.cv_url);
+  const pdf = voit('cv') ? p.cv_path : null;
+  const lien = !pdf && voit('cv') ? p.cv_url : null;
+  const meta = html`<p class="mx-c-meta"><span>${NIVEAUX[n]?.short || ''}</span> · <span title=${p.filiere}>${filiereCourte(p.filiere)}</span>${voit('lieu') && p.ville ? html` · <span translate="no">${p.ville}</span>` : null}</p>`;
+  const cherche = d ? html`<div class="mx-cherche"><p class="eyebrow">Sa recherche</p>
+      <p><span class=${'mx-puce fort t-' + d.type}><${Icon} name=${TYPE_ICON[d.type] || 'briefcase'} size=${16}/> ${TYPES[d.type]?.label || d.type}</span> <span class="mx-cherche-t" translate="no" dir="auto">${d.titre}</span></p></div>` : null;
+  if (pdf) return html`<div class="mx-corps mx-personne avec-cv">
+    <${ApercuCV} store=${store} path=${pdf} nom=${p.full_name} onLire=${onLire}/>
+    <div class="mx-p-ligne"><${Avatar} p=${p} size=${44}/><div class="mx-p-id">
+      <h2 class="mx-c-nom" id=${tid} translate="no">${p.full_name}</h2>${meta}</div></div>
+    ${cherche}
+    ${comp.length ? html`<div class="mx-puces mx-une-ligne">${comp.map(c => html`<span class="mx-puce" translate="no" dir="auto">${c}</span>`)}</div>` : null}
+  </div>`;
   return html`<div class="mx-corps mx-personne">
     <div class="mx-p-tete"><${Avatar} p=${p} size=${84}/><div class="mx-p-id">
-      <h2 class="mx-c-nom" id=${tid} translate="no">${p.full_name}</h2>
-      <p class="mx-c-meta"><span>${NIVEAUX[n]?.short || ''}</span> · <span title=${p.filiere}>${filiereCourte(p.filiere)}</span>${voit('lieu') && p.ville ? html` · <span translate="no">${p.ville}</span>` : null}</p>
+      <h2 class="mx-c-nom" id=${tid} translate="no">${p.full_name}</h2>${meta}
     </div></div>
-    ${d ? html`<div class="mx-cherche"><p class="eyebrow">Sa recherche</p>
-      <p><span class=${'mx-puce fort t-' + d.type}><${Icon} name=${TYPE_ICON[d.type] || 'briefcase'} size=${16}/> ${TYPES[d.type]?.label || d.type}</span> <span class="mx-cherche-t" translate="no" dir="auto">${d.titre}</span></p></div>` : null}
+    ${cherche}
     ${comp.length ? html`<div class="mx-puces centre">${comp.map(c => html`<span class="mx-puce" translate="no" dir="auto">${c}</span>`)}</div>` : null}
     ${voit('presentation') && p.bio ? html`<p class="mx-c-desc" translate="no" dir="auto">${p.bio}</p>` : null}
-    ${cv ? html`<p class="mx-cv"><${Icon} name="file" size=${16}/><span>CV déposé · tu le lis après le match</span></p>` : null}
+    ${lien ? html`<a class="mx-cv-absent lien" href=${/^https?:\/\//i.test(lien) ? lien : 'https://' + lien} target="_blank" rel="noopener"><${Icon} name="file" size=${16}/><span>Voir son CV (lien)</span></a>`
+      : html`<p class="mx-cv-absent"><${Icon} name="file" size=${16}/><span>CV pas encore partagé</span></p>`}
   </div>`;
 }
 
@@ -305,12 +326,13 @@ function PileVide({ ctx, onPublier, revenir }) {
 // La fête du match, plein écran : les deux visages se rejoignent, « C'est un match ! », une seule action pleine
 // ---------------------------------------------------------------------------
 const COULEURS = ['var(--accent)', 'var(--orange)', 'var(--em-b)', 'var(--good)'];
-const COEUR = '<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path fill="currentColor" d="M12 20.7l-1.2-1.1C6.4 15.6 3.5 13 3.5 9.7A4.7 4.7 0 0 1 8.3 5c1.5 0 2.9.7 3.7 1.8A4.7 4.7 0 0 1 15.7 5a4.7 4.7 0 0 1 4.8 4.7c0 3.3-2.9 5.9-7.3 9.9z"/></svg>';
+// Entre les deux visages, une coche : la mise en relation est faite
+const SCEAU = '<svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m5.5 12.5 4.2 4.2 8.8-9.2"/></svg>';
 function FeteMatch({ f, me, onEcrire, onClose }) {
   const ref = useRef();
   useFeuille(onClose);
   const calme = mouvementReduit();
-  const morceaux = useMemo(() => Array.from({ length: 42 }, (_, i) => ({ x: Math.round(Math.random() * 100), dx: Math.round(Math.random() * 140 - 70), d: (1.3 + Math.random() * 1.1).toFixed(2), w: (0.45 + Math.random() * 0.5).toFixed(2), r: Math.round(Math.random() * 720 - 360), c: COULEURS[i % COULEURS.length], rond: i % 3 === 0 })), []);
+  const morceaux = useMemo(() => Array.from({ length: 26 }, (_, i) => ({ x: Math.round(Math.random() * 100), dx: Math.round(Math.random() * 140 - 70), d: (1.3 + Math.random() * 1.1).toFixed(2), w: (0.45 + Math.random() * 0.5).toFixed(2), r: Math.round(Math.random() * 720 - 360), c: COULEURS[i % COULEURS.length], rond: i % 3 === 0 })), []);
   useLayoutEffect(() => {
     const avant = document.activeElement;
     ref.current?.querySelector('.mx-fete-ecrire')?.focus();
@@ -329,7 +351,7 @@ function FeteMatch({ f, me, onEcrire, onClose }) {
     <div class="mx-fete-in">
       <div class="mx-duo" aria-hidden="true">
         <span class="mx-duo-v mx-duo-a"><${Avatar} p=${me} size=${104}/></span>
-        <span class="mx-duo-coeur" dangerouslySetInnerHTML=${{ __html: COEUR }}></span>
+        <span class="mx-duo-sceau" dangerouslySetInnerHTML=${{ __html: SCEAU }}></span>
         <span class="mx-duo-v mx-duo-b"><${Avatar} p=${f.autre} size=${104}/></span>
       </div>
       <h2 id="mx-fete-t">C’est un match !</h2>
@@ -368,7 +390,8 @@ export function MatchVisible({ ctx }) {
   const changer = e => { const v = e.target.checked; act(async () => { await store.update('profiles', me.id, { match_visible: v }); toast(v ? 'Ta carte est de nouveau visible dans Match.' : 'Ta carte n’est plus proposée aux lauréats.'); }); };
   return html`<section class="panel mx-reglage" aria-labelledby="mx-h-visible">
     <div class="mx-reg-txt"><h2 id="mx-h-visible"><${Icon} name="match" size=${20}/> Apparaître dans Match</h2>
-      <p class="small muted">Les lauréats voient ta carte (année, filière, compétences, ce que tu cherches) et peuvent dire qu’ils sont intéressés. Ton CV reste privé jusqu’au match.</p></div>
+      <p class="small muted">${cvPourLaureats(me) ? 'Les lauréats voient ta carte (ton CV en grand, ton année, ta filière, tes compétences, ce que tu cherches) et peuvent dire qu’ils sont intéressés.'
+        : 'Les lauréats voient ta carte (année, filière, compétences, ce que tu cherches) et peuvent dire qu’ils sont intéressés. Ton CV reste privé jusqu’au match.'}</p></div>
     <label class="mx-switch"><input type="checkbox" role="switch" id="mx-visible" checked=${on} onChange=${changer}/><span class="mx-switch-piste" aria-hidden="true"></span><span class="sr-only">Apparaître dans Match</span></label>
   </section>`;
 }
@@ -382,7 +405,12 @@ addAR({
   'Clavier : ← Plus tard · → Intéressé · Z pour revenir': 'لوحة المفاتيح: ← لاحقًا · → يهمّني · Z للتراجع',
   'Clavier : → Plus tard · ← Intéressé · Z pour revenir': 'لوحة المفاتيح: → لاحقًا · ← يهمّني · Z للتراجع',
   'Les lauréats voient aussi ta carte.': 'يرى الخريجون بطاقتك أيضًا.', 'Rémunéré': 'مدفوع الأجر',
-  'Sa recherche': 'الطلب الحالي', 'CV déposé · tu le lis après le match': 'السيرة الذاتية متاحة · تقرؤها بعد التوافق', 'Son offre': 'العرض',
+  'Sa recherche': 'الطلب الحالي', 'Son offre': 'العرض',
+  'CV pas encore partagé': 'لم تتم مشاركة السيرة الذاتية بعد', 'Voir son CV (lien)': 'عرض سيرته الذاتية (رابط)', 'Ajouter mon CV': 'إضافة سيرتي الذاتية',
+  'Les lauréats voient aussi ta carte. Ajoute ton CV : il s’affiche en grand, et les cartes avec CV passent en premier.': 'يرى الخريجون بطاقتك أيضًا. أضف سيرتك الذاتية: تظهر بحجم كبير، والبطاقات التي فيها سيرة ذاتية تُعرض أولًا.',
+  'Les lauréats voient aussi ta carte, avec ton CV en grand.': 'يرى الخريجون بطاقتك أيضًا، مع سيرتك الذاتية بحجم كبير.',
+  'Les lauréats voient aussi ta carte. Ton CV reste privé jusqu’au match.': 'يرى الخريجون بطاقتك أيضًا. تبقى سيرتك الذاتية خاصة حتى التوافق.',
+  'Les lauréats voient ta carte (ton CV en grand, ton année, ta filière, tes compétences, ce que tu cherches) et peuvent dire qu’ils sont intéressés.': 'يرى الخريجون بطاقتك (سيرتك الذاتية بحجم كبير، سنتك، شعبتك، مهاراتك، ما تبحث عنه) ويمكنهم إبداء اهتمامهم.',
   'Ce choix a mené à un match : il reste.': 'أدى هذا الاختيار إلى توافق: يبقى كما هو.', 'La carte est revenue.': 'عادت البطاقة.',
   'Tu as tout vu pour l’instant': 'شاهدت كل شيء حاليًا',
   'Les nouvelles offres de lauréats arriveront ici. Dis ce que tu cherches : les lauréats viennent aussi vers toi.': 'ستصل هنا العروض الجديدة للخريجين. قل ما تبحث عنه: الخريجون يأتون إليك أيضًا.',

@@ -29,7 +29,7 @@
 try{L=localStorage;var t=L.getItem('ensam-theme');if(t==='light'||t==='dark'){d.dataset.theme=t;document.querySelectorAll('meta[name="theme-color"]').forEach(function(m){m.content=t==='dark'?'#0B1320':'#1670A8'})}
 var g=L.getItem('ensam-lang');ar=g==='ar'||(!g&&sessionStorage.getItem('ensam-lang-visite')==='ar');for(i=0;i<L.length;i++)if(/^sb-.+-auth-token$/.test(L.key(i)))membre=true}catch(e){}
 d.lang=ar?'ar':'fr';d.dir=ar?'rtl':'ltr';
-var M=window.ENSAM_MAGASIN=["vendor/supabase.js","store.js","origine.js","reseau-vivant.js","logic.js"],A=window.ENSAM_MODULES=["app.js","ui.js","vitrine-regles.js","offers.js","pwa.js","pouls.js","recrutement.js","cv.js","messages.js","confiance.js","mentorat.js","growth.js","geo.js","lignes.js","entreprises.js","pro.js","demandes.js","reactions.js","partages.js","vitrine.js","me.js","saison.js","invitation.js","community.js","groupes.js","etranger.js","agenda.js","photo.js","privacy.js","fondateurs.js","fondateurs-public.js","rappels.js","match.js","ambassadeurs.js"];
+var M=window.ENSAM_MAGASIN=["vendor/supabase.js","store.js","origine.js","reseau-vivant.js","logic.js"],A=window.ENSAM_MODULES=["app.js","ui.js","vitrine-regles.js","offers.js","pwa.js","pouls.js","recrutement.js","cv.js","messages.js","confiance.js","mentorat.js","growth.js","geo.js","lignes.js","entreprises.js","pro.js","demandes.js","reactions.js","partages.js","vitrine.js","me.js","saison.js","invitation.js","community.js","groupes.js","etranger.js","agenda.js","photo.js","privacy.js","fondateurs.js","fondateurs-public.js","rappels.js","match.js","apercu-cv.js","ambassadeurs.js"];
 if(!A.length)return;
 if(membre&&!/^#(verifier|desabo)\b/.test(location.hash))d.dataset.boot='membre';
 if(membre||/^#(verifier|desabo|confidentialite)\b|access_token=|type=recovery|error_description=/.test(location.hash))d.dataset.tete='appli';
@@ -2085,7 +2085,63 @@ html.defil-bloque.defil-gouttiere { scrollbar-gutter: stable; }
 .mx-cherche .eyebrow { margin: 0 0 .3rem; }
 .mx-cherche p:last-child { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; font-size: var(--fs-3); font-weight: 600; color: var(--ink); }
 .mx-cherche-t { min-width: 0; overflow-wrap: anywhere; }
-.mx-cv { display: inline-flex; align-items: center; gap: .4rem; margin: 0; color: var(--good); font-size: var(--fs-2); font-weight: 600; }
+/* L'étudiant et son CV : la première page en grand (la place de la grande photo), puis qui il est et ce qu'il cherche */
+.mx-personne.avec-cv { align-items: stretch; justify-content: flex-start; text-align: start; gap: .65rem; padding-block: 0 .6rem; }
+.mx-carte:has(.avec-cv) { background: var(--surface); }
+.mx-corps > .mx-cv-apercu { flex: 1 1 auto; }
+.mx-cv-apercu { position: relative; min-height: 150px; overflow: hidden; border-radius: var(--r-lg); background: #fff; cursor: zoom-in;
+  box-shadow: 0 0 0 1px var(--line), 0 12px 26px -18px rgb(10 20 40 / .55); }
+.mx-cv-apercu img { position: absolute; inset: 0; inline-size: 100%; block-size: 100%; object-fit: cover; object-position: 50% 0; pointer-events: none; -webkit-user-drag: none; }
+.mx-cv-apercu::after { content: ""; position: absolute; inset: auto 0 0; block-size: 34%; pointer-events: none; background: linear-gradient(to bottom, transparent, rgb(13 27 51 / .38)); }
+/* En bas de l'aperçu, sur le dégradé : le nombre de pages d'un côté, « Lire le CV » de l'autre, sans jamais se chevaucher */
+.mx-cv-bas { position: absolute; z-index: 1; inset: auto .6rem .6rem; display: flex; align-items: center; justify-content: space-between; gap: .5rem; pointer-events: none; }
+.mx-cv-etiquette { display: inline-flex; align-items: center; gap: .3rem; min-width: 0; padding: .28rem .6rem; border-radius: var(--r-pill);
+  background: rgb(13 27 51 / .8); color: #fff; font-size: var(--fs-1); font-weight: 650; line-height: 1.2; white-space: nowrap; }
+.mx-cv-etiquette > span { overflow: hidden; text-overflow: ellipsis; }
+.mx-cv-lire { flex: none; margin-inline-start: auto; display: inline-flex; align-items: center; gap: .35rem; min-height: 44px; padding: .45rem .95rem; border: 0; border-radius: var(--r-pill); pointer-events: auto;
+  background: #fff; color: #0d3f78; font: 650 var(--fs-2)/1 var(--f-body); box-shadow: 0 6px 18px -6px rgb(0 0 0 / .5); cursor: pointer; }
+.mx-cv-lire:focus-visible { outline: 3px solid var(--sel-ring); outline-offset: 2px; }
+.mx-cv-attente { position: absolute; inset: 0; display: flex; flex-direction: column; gap: .7rem; padding: 1.3rem 1.2rem; }
+.mx-cv-attente i { display: block; inline-size: 88%; block-size: .62rem; border-radius: 4px; background: #e6ecf3; }
+.mx-cv-attente i:nth-child(1) { inline-size: 52%; block-size: 1.05rem; background: #dbe3ee; }
+.mx-cv-attente i:nth-child(2) { inline-size: 36%; }
+.mx-cv-attente i:nth-child(3) { margin-block-start: .7rem; inline-size: 94%; }
+.mx-cv-attente i:nth-child(6) { inline-size: 62%; }
+.mx-cv-apercu.rate { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .7rem; padding: 1rem; background: var(--surface-2); cursor: default; }
+.mx-cv-apercu.rate::after { content: none; }
+.mx-cv-rate { display: flex; flex-direction: column; align-items: center; gap: .4rem; margin: 0; color: var(--ink-2); font-size: var(--fs-3); text-align: center; }
+@media (prefers-reduced-motion: no-preference) {
+  .mx-cv-apercu.pret img { animation: mx-cv-arrive .35s ease backwards; }
+  .mx-cv-attente i { animation: mx-cv-respire 1.4s ease-in-out infinite alternate; }
+}
+@keyframes mx-cv-arrive { from { opacity: 0; } }
+@keyframes mx-cv-respire { to { opacity: .45; } }
+.mx-p-ligne { display: flex; align-items: center; gap: .7rem; min-width: 0; }
+.mx-p-ligne > .avatar { flex: none; }
+.mx-p-ligne .mx-c-nom { font-size: var(--fs-5); }
+.avec-cv .mx-cherche { padding: .5rem .7rem; }
+.avec-cv .mx-cherche .eyebrow { display: none; }
+.avec-cv .mx-cherche p:last-child { flex-wrap: nowrap; min-width: 0; }
+.avec-cv .mx-cherche .mx-puce { flex: none; }
+.avec-cv .mx-cherche-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mx-puces.mx-une-ligne { flex-wrap: nowrap; overflow: hidden; -webkit-mask-image: linear-gradient(to var(--fin, right), #000 82%, transparent); mask-image: linear-gradient(to var(--fin, right), #000 82%, transparent); }
+[dir="rtl"] .mx-une-ligne { --fin: left; }
+.mx-une-ligne .mx-puce { flex: none; }
+/* Pas de CV partagé : un encadré sobre (ou le lien vers son CV) */
+.mx-cv-absent { display: inline-flex; align-items: center; gap: .45rem; margin: 0; padding: .45rem .8rem; border: 1.5px dashed var(--line-strong); border-radius: var(--r-md); color: var(--muted); font-size: var(--fs-2); font-weight: 600; }
+a.mx-cv-absent.lien { min-height: 44px; border-style: solid; color: var(--blue-text); text-decoration: none; }
+/* La lecture du CV : les pages l'une sous l'autre, comme sur papier ; « Agrandir » double la largeur (défilement de côté) */
+.modal.mx-lecteur { width: min(860px, 100%); }
+@media (max-width: 760px) { .modal.mx-lecteur { block-size: calc(100dvh - 10px); } }
+.mx-lect-barre { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; }
+.mx-lect-outils { display: inline-flex; flex-wrap: wrap; gap: .4rem; }
+.mx-lect-pages { display: flex; flex-direction: column; align-items: center; gap: .8rem; min-width: 0; overflow-x: auto; padding: 2px 2px .4rem; direction: ltr; }
+.mx-lect-page { display: block; inline-size: 100%; max-inline-size: 760px; block-size: auto; border-radius: 6px; background: #fff; box-shadow: 0 0 0 1px var(--line), 0 10px 24px -16px rgb(10 20 40 / .5); }
+.mx-lect-pages.grand { align-items: flex-start; }
+.mx-lect-pages.grand .mx-lect-page { inline-size: 200%; max-inline-size: none; }
+.mx-lect-attente { inline-size: 100%; max-inline-size: 760px; aspect-ratio: 1 / 1.414; border-radius: 6px; background: #fff; box-shadow: 0 0 0 1px var(--line); }
+.mx-lect-choix { display: flex; gap: .6rem; inline-size: 100%; }
+.mx-lect-choix .btn { flex: 1; min-height: 48px; }
 .mx-son-offre { display: flex; align-items: center; gap: .6rem; inline-size: 100%; padding: .6rem .75rem; border-radius: var(--r-md); background: var(--surface-2); text-align: start; }
 .mx-son-offre > span:last-child { display: flex; flex-direction: column; min-width: 0; }
 .mx-son-offre .eyebrow { margin: 0; }
@@ -2099,6 +2155,8 @@ html.defil-bloque.defil-gouttiere { scrollbar-gutter: stable; }
 /* Une carte basse (petit écran) : tout se resserre pour que l'essentiel reste visible */
 @container carte (max-height: 470px) {
   .mx-corps { gap: .5rem; }
+  .mx-cv-apercu { min-height: 120px; }
+  .avec-cv .mx-une-ligne { display: none; }
   .mx-interet { margin-block-end: .6rem; padding-block: .35rem; }
   .mx-p-tete > .avatar { zoom: .72; }
   .mx-c-nom, .mx-c-titre { font-size: var(--fs-5); }
@@ -2170,8 +2228,8 @@ html.mx-fige { overflow: hidden; }
 .mx-duo-a { z-index: 1; margin-inline-end: -10px; rotate: calc(var(--sens) * -4deg); }
 .mx-duo-b { margin-inline-start: -10px; rotate: calc(var(--sens) * 4deg); }
 .mx-duo-v .avatar { display: grid; }
-.mx-duo-coeur { position: absolute; z-index: 2; inset-block-end: -4px; inset-inline-start: 50%; translate: calc(-50% * var(--sens)) 0; display: grid; place-items: center; inline-size: 46px; block-size: 46px; border-radius: 50%;
-  background: var(--surface); color: var(--em-o); box-shadow: 0 8px 18px -8px color-mix(in srgb, var(--em-o) 70%, transparent), inset 0 0 0 2px color-mix(in srgb, var(--em-o) 30%, transparent); }
+.mx-duo-sceau { position: absolute; z-index: 2; inset-block-end: -4px; inset-inline-start: 50%; translate: calc(-50% * var(--sens)) 0; display: grid; place-items: center; inline-size: 46px; block-size: 46px; border-radius: 50%;
+  background: var(--accent); color: var(--accent-ink); box-shadow: 0 0 0 4px var(--surface), 0 8px 18px -8px color-mix(in srgb, var(--accent) 70%, transparent); }
 .mx-fete .fete-pluie { z-index: 0; }
 @keyframes mx-fete-voile { from { opacity: 0; } }
 @media (prefers-reduced-motion: no-preference) {
@@ -2179,13 +2237,13 @@ html.mx-fige { overflow: hidden; }
   .mx-fete-in > .mx-fete-acts { animation-delay: .7s; }
   .mx-duo-a { animation: mx-duo-a .75s cubic-bezier(.22, 1.35, .4, 1) .1s backwards; }
   .mx-duo-b { animation: mx-duo-b .75s cubic-bezier(.22, 1.35, .4, 1) .1s backwards; }
-  .mx-duo-coeur { animation: mx-coeur .55s cubic-bezier(.3, 1.6, .5, 1) .62s backwards; }
-  .mx-duo-coeur::after { content: ""; position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 2px var(--em-o); opacity: 0; animation: mx-onde .8s ease-out .85s 1; }
+  .mx-duo-sceau { animation: mx-sceau .55s cubic-bezier(.3, 1.6, .5, 1) .62s backwards; }
+  .mx-duo-sceau::after { content: ""; position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 2px var(--accent); opacity: 0; animation: mx-onde .8s ease-out .85s 1; }
   .mx-visage.nouveau .mx-anneau { animation: mx-respire 2.4s ease-in-out infinite; }
 }
 @keyframes mx-duo-a { from { opacity: 0; transform: translateX(calc(-90px * var(--sens))) rotate(calc(var(--sens) * -14deg)); } 55% { opacity: 1; } }
 @keyframes mx-duo-b { from { opacity: 0; transform: translateX(calc(90px * var(--sens))) rotate(calc(var(--sens) * 14deg)); } 55% { opacity: 1; } }
-@keyframes mx-coeur { from { opacity: 0; transform: scale(.2); } }
+@keyframes mx-sceau { from { opacity: 0; transform: scale(.2); } }
 @keyframes mx-onde { from { opacity: .7; transform: scale(1); } to { opacity: 0; transform: scale(1.8); } }
 @keyframes mx-monte { from { opacity: 0; transform: translateY(10px); } }
 @keyframes mx-respire { 50% { box-shadow: 0 0 0 2.5px var(--orange), 0 0 0 7px color-mix(in srgb, var(--orange) 24%, transparent); } }

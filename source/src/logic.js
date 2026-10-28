@@ -1509,11 +1509,14 @@ export function deckMatch(data, me, now = Date.now(), saison = seasonOf(new Date
     const rang = e => {
       const px = proximiteFiliere(me.filiere, e.filiere);
       if (px >= 1 && demandesActives(data, e.id).length) return 0;
-      return px === 2 ? 1 : px === 1 ? 2 : e.cv_path || e.cv_url ? 3 : 4;
+      return px === 2 ? 1 : px === 1 ? 2 : 3;
     };
+    // Le CV décide : un CV en PDF montré aux lauréats (affiché en grand) d'abord, puis un CV en lien, puis pas de CV
+    // (en ligne, la base ne donne cv_path que s'il est visible ; en démo, le réglage « CV » de l'étudiant le dit)
+    const avecCv = e => !(['laureats', 'tous'].includes((e.visibilite || {}).cv || 'laureats') || demandesActives(data, e.id).length) ? 2 : e.cv_path ? 0 : e.cv_url ? 1 : 2;
     const etus = (data.profiles || []).filter(e => e.role === 'etudiant' && e.match_visible !== false && String(e.filiere || '').trim() && e.filiere !== PREPA && !vus.has(e.id) && libre(e.id) && !exclu('p:' + e.id))
-      .map(e => ({ e, r: rang(e), n: niveauOf(e, saison) }))
-      .sort((a, b) => a.r - b.r || b.n - a.n || tms(b.e.created_at) - tms(a.e.created_at));
+      .map(e => ({ e, c: avecCv(e), r: rang(e), n: niveauOf(e, saison) }))
+      .sort((a, b) => a.c - b.c || a.r - b.r || b.n - a.n || tms(b.e.created_at) - tms(a.e.created_at));
     for (const { e } of etus) cartes.push({ cle: 'p:' + e.id, sorte: 'etudiant', profil: e });
   }
   return cartes.map(c => ({ ...c, raison: pourquoiCarte(c, me, data, saison) }));

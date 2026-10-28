@@ -846,7 +846,7 @@ function useFetesLaureat(ctx) {
       if (!ecranLibre()) return; // le même test que les fêtes des fondateurs : une feuille qui s'en va ne compte pas
       if (nouveau) {
         const e = store.byId('profiles', nouveau.d.auteur_id), p = e?.full_name?.split(' ')[0] || 'Un étudiant';
-        if (celebrate({ cle: `match-${me.id}-${nouveau.x.id}`, icon: 'heart', visages: [me, e], titre: `${p} a accepté ton aide`, texte: `C’est un match pour « ${nouveau.d.titre} ». Écris-lui pour la suite, et déclare son démarrage dès qu’il a lieu.`,
+        if (celebrate({ cle: `match-${me.id}-${nouveau.x.id}`, icon: 'check', visages: [me, e], titre: `${p} a accepté ton aide`, texte: `C’est un match pour « ${nouveau.d.titre} ». Écris-lui pour la suite, et déclare son démarrage dès qu’il a lieu.`,
           action: e ? { label: `Écrire à ${p}`, icon: 'chat', onClick: () => go('messages/' + e.id) } : null })) ecrireLocal(kM, [...vus, nouveau.x.id]);
         return;
       }

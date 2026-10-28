@@ -139,6 +139,31 @@ export async function photoDuCV(source) {
   } finally { tache.destroy(); }
 }
 
+// Un CV ouvert pour être lu (aperçu de la carte Match, lecture plein écran) : pdf.js dessine une page à la largeur voulue
+// (en pixels de l'écran) et la rend en image JPEG. Le PDF reçu reste intact (pdf.js en prend une copie).
+export async function ouvrirPdf(source) {
+  const lib = await chargerPdf();
+  const data = new Uint8Array(source instanceof ArrayBuffer ? source.slice(0) : await source.arrayBuffer());
+  const tache = lib.getDocument({ data, isEvalSupported: false });
+  const doc = await tache.promise;
+  return {
+    pages: doc.numPages,
+    async image(n, largeur) {
+      const page = await doc.getPage(n);
+      const vp = page.getViewport({ scale: largeur / page.getViewport({ scale: 1 }).width });
+      const c = toile(Math.round(vp.width), Math.round(vp.height)), g = c.getContext('2d');
+      g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvasContext: g, viewport: vp }).promise;
+      page.cleanup();
+      const b = await new Promise(ok => c.toBlob(ok, 'image/jpeg', 0.86));
+      c.width = c.height = 0;
+      if (!b) throw new Error('Aperçu impossible');
+      return { url: URL.createObjectURL(b), w: Math.round(vp.width), h: Math.round(vp.height) };
+    },
+    fermer() { tache.destroy(); },
+  };
+}
+
 // Le profil décrit par un CV ; {} si le PDF n'a pas de texte (CV scanné en image)
 export async function lireCVDetail(source, now = new Date()) {
   const texte = await texteDuCV(source);

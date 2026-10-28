@@ -100,9 +100,12 @@ test('cartes : jamais déjà « Intéressé », « Plus tard » revient après 3
   assert.deepEqual(cles(base({ matchs: [{ id: 'x', etudiant_id: 's', laureat_id: 'l' }] }), P.s), ['o:o3'], 'déjà en match avec Youssef');
 });
 
-test('cartes du lauréat : les étudiants qui ont dit oui à ses offres, puis les visibles, les plus proches d’abord (jamais la prépa)', () => {
-  // Même filière (la 5A avant la 4A), puis même parcours, puis le reste ; ni l'invisible, ni la prépa
-  assert.deepEqual(cles(base(), P.l), ['p:s', 'p:w', 'p:u', 'p:t']);
+test('cartes du lauréat : les étudiants qui ont dit oui à ses offres, puis ceux qui montrent leur CV, puis les plus proches (jamais la prépa)', () => {
+  // Ilham montre son CV : elle passe d'abord ; puis même filière (la 5A avant la 4A), même parcours, le reste ; ni l'invisible, ni la prépa
+  assert.deepEqual(cles(base(), P.l), ['p:u', 'p:s', 'p:w', 'p:t']);
+  // Son CV réservé à ses contacts : il ne compte plus, l'ordre des filières revient
+  const prive = base({ profiles: Object.values(P).map(x => (x.id === 'u' ? { ...x, visibilite: { cv: 'contacts' } } : x)) });
+  assert.deepEqual(cles(prive, P.l), ['p:s', 'p:w', 'p:u', 'p:t']);
   // Un intérêt pour son offre passe devant, même d’un étudiant invisible ; et la carte dit pour quelle offre
   const d = base({ match_choix: [choix('t', { offre: 'o' }), choix('v', { offre: 'o' }, 'oui', 0)] });
   const deck = deckMatch(d, P.l, NOW, SAISON);
