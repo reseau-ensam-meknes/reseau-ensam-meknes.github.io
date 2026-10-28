@@ -116,7 +116,8 @@ export class Banc {
     this.journal = [];                // toutes les requêtes
     this.push = [];                   // requêtes reçues par les services de push
     this.brevo = [];                  // corps reçus par Brevo
-    this.lenteur = 0;                 // ms ajoutées aux lectures (courses)
+    this.rendezVous = 0;              // courses : les N premières lectures s'attendent, puis repartent ensemble
+    this.enAttente = [];
     this.panne = null;                // message d'erreur PostgREST forcé
     this.appelsRpc = { prendre_push: 0, destinataires_resume: 0 };
   }
@@ -165,7 +166,10 @@ export class Banc {
     const filtres = p.filter(([k]) => !['select', 'order', 'limit', 'offset', 'on_conflict'].includes(k));
     const garder = r => filtres.every(([k, v]) => condition(r[k], v));
     if (methode === 'GET') {
-      if (this.lenteur) await pause(this.lenteur);
+      if (this.rendezVous) await new Promise(ok => {
+        this.enAttente.push(ok);
+        if (this.enAttente.length >= this.rendezVous) { this.rendezVous = 0; for (const f of this.enAttente.splice(0)) f(); }
+      });
       let l = table.filter(garder);
       const ordre = url.searchParams.get('order');
       if (ordre) { const col = ordre.split('.')[0]; l = [...l].sort((a, b) => comparer(a[col], b[col])); }

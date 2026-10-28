@@ -73,7 +73,7 @@ test('cle : crée la paire VAPID une fois, puis la relit', async () => {
 
 test('cle : deux premiers appels simultanés donnent la même clé', async () => {
   const b = nouveauBanc();
-  b.lenteur = 15;   // les deux lisent « vide » avant que l'un n'écrive
+  b.rendezVous = 2;   // les deux lisent « vide » avant que l'un n'écrive, quelle que soit la vitesse de la machine
   const [a, c] = await Promise.all([appel({ job: 'cle' }), appel({ job: 'cle' })]);
   const ka = (await corpsDe(a)).publicKey, kc = (await corpsDe(c)).publicKey;
   assert.equal(ka, kc);
