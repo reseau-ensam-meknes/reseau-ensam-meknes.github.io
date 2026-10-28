@@ -407,7 +407,7 @@ injectCSS('pf-onglets', `
 /* « Visible par les lauréats » : un seul interrupteur pour Match et la Vitrine des talents */
 .pf-visible { display: flex; align-items: center; gap: 1rem; padding: 1rem 1.1rem; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--sh1); }
 .pf-visible-txt { flex: 1; min-width: 0; }
-.pf-visible-txt h3 { display: flex; align-items: center; gap: .45rem; margin: 0 0 .25rem; font: 650 var(--fs-4)/1.3 var(--f-body); }
+.pf-visible-txt h2 { display: flex; align-items: center; gap: .45rem; margin: 0 0 .25rem; font: 650 var(--fs-4)/1.3 var(--f-body); }
 .pf-visible-txt p { margin: 0; }
 /* Page d'entrée (membres fondateurs) : un bloc comme les autres réglages de l'onglet */
 .pf-fondateur { display: flex; flex-direction: column; gap: .55rem; border-top: 1px solid var(--line); padding-top: .9rem; }
@@ -720,7 +720,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
 // « Visible par les lauréats » : un interrupteur, ce qu'il change en une phrase
 function VisibleLaureats({ on, onChange }) {
   return html`<div class="pf-visible">
-    <div class="pf-visible-txt"><h3 id="pf-h-visible"><${Icon} name="eye" size=${19}/> Visible par les lauréats</h3>
+    <div class="pf-visible-txt"><h2 id="pf-h-visible"><${Icon} name="eye" size=${19}/> Visible par les lauréats</h2>
       <p class="small muted" id="pf-visible-d">Les lauréats te trouvent dans Match et dans la Vitrine des talents : ils voient ton année, ta filière, tes compétences et ce que tu cherches.</p></div>
     <label class="mx-switch"><input type="checkbox" role="switch" id="pf-visible" checked=${on} aria-labelledby="pf-h-visible" aria-describedby="pf-visible-d" onChange=${e => onChange(e.target.checked)}/><span class="mx-switch-piste" aria-hidden="true"></span></label>
   </div>`;

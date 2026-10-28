@@ -1130,7 +1130,7 @@ function MyProfile({ ctx }) {
         <${PhotoCard} ctx=${ctx}/>
         <${CvCard} ctx=${ctx}/>
       </div>
-      <${ProfileForm} ctx=${ctx} initial=${me} key=${me.id} onglet=${onglet} versOnglet=${versOnglet} apresVisibilite=${html`<${FondateurPublicCase} ctx=${ctx}/>`}/>
+      <${ProfileForm} ctx=${ctx} initial=${me} key=${me.id} onglet=${onglet} versOnglet=${versOnglet} apresVisibilite=${html`<${FondateurPublicCase} ctx=${ctx} niveau=${2}/>`}/>
       <div class="pf-partie" id="profil-notifications" hidden=${onglet !== 'notifications'}><${MesNotifications} ctx=${ctx}/></div>
       <div class="pf-partie" id="profil-donnees" hidden=${onglet !== 'donnees'}><${MesDonnees} ctx=${ctx}/></div>
     </div>

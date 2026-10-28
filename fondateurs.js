@@ -146,11 +146,11 @@ function FeuilleFondateur({ ctx, onClose }) {
 }
 
 // « Mon profil » (Mes données) : la même question, à changer quand on veut. Seulement pour un fondateur, base à jour.
-export function FondateurPublicCase({ ctx }) {
+export function FondateurPublicCase({ ctx, niveau = 3 }) {
   const { me, store, act, fondateurs } = ctx;
   const choix = choixDe(store, me);
   if (me.role !== 'laureat' || !fondateurs?.has(me.id) || (store.mode === 'live' && choix === undefined)) return null;
-  return html`<h3 class="md-titre">Page d’entrée</h3>
+  return html`<${niveau === 2 ? 'h2' : 'h3'} class="md-titre">Page d’entrée<//>
     <label class="check"><input id="md-fondateur" type="checkbox" checked=${choix === true} onChange=${e => act(async () => {
       const oui = e.target.checked;
       const r = oui ? await store.update('profiles', me.id, { fondateur_public: true }) : await store.masquerFondateur(false);
