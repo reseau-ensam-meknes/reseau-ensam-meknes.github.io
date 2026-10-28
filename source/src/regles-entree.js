@@ -55,6 +55,10 @@ export function casErreurAuth(e) {
 
 // Adresse de contact du réseau (pied de la page d'entrée, page Confidentialité) : config.js peut la changer
 export const adresseContact = (cfg = (typeof window !== 'undefined' && window.ENSAM_CONFIG) || {}) => cfg.contactEmail || 'reseau.ensam.meknes@gmail.com';
+// Responsable du traitement (loi 09-08), nommé sur la page Confidentialité ; config.js peut le changer
+export const responsableTraitement = (cfg = (typeof window !== 'undefined' && window.ENSAM_CONFIG) || {}) => cfg.responsable || 'Oussama Ouafik';
+// Version du texte de la case d'accord à l'inscription, gardée avec la date dans le compte
+export const VERSION_ACCORD = '2026-10-28';
 
 // Lien partagé (offre, question, « Je peux aider ») : gardé pendant l'inscription, puis ouvert.
 // Seules ces trois formes sont reconnues : jamais une route libre.
