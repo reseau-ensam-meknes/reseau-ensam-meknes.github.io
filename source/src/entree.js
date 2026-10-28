@@ -33,7 +33,7 @@ addAR({
   'Ta session a expiré. Reconnecte-toi pour continuer.': 'انتهت جلستك. سجّل الدخول من جديد للمتابعة.',
   'Email': 'البريد الإلكتروني', 'Mot de passe': 'كلمة المرور', '6 caractères minimum': '6 أحرف على الأقل',
   'Le résumé de la semaine par email': 'ملخص الأسبوع بالبريد الإلكتروني',
-  'J’ai 18 ans ou plus et j’accepte que mes données servent au réseau, y compris leur envoi aux États-Unis pour les emails et les notifications (': 'عمري 18 سنة أو أكثر، وأوافق على استخدام بياناتي لخدمة الشبكة، بما في ذلك إرسالها إلى الولايات المتحدة من أجل الرسائل الإلكترونية والإشعارات (', 'Confidentialité': 'الخصوصية',
+  'J’ai 18 ans ou plus et j’accepte la': 'عمري 18 سنة أو أكثر وأوافق على', ', y compris l’envoi de mes données aux États-Unis (emails, notifications)': '، بما فيها إرسال بياناتي إلى الولايات المتحدة (الرسائل والإشعارات)', 'Confidentialité': 'الخصوصية',
   'Recevoir mon code': 'إرسال الرمز', 'Continuer': 'متابعة', 'Connexion…': 'جارٍ الدخول…', 'Enregistrer': 'حفظ',
   'Pas de mot de passe : on t’envoie un code à 6 chiffres par email.': 'بدون كلمة مرور: نرسل إليك رمزًا من 6 أرقام عبر البريد الإلكتروني.',
   'Email de l’école reconnu : ton profil étudiant sera vérifié tout de suite.': 'تم التعرّف على بريد المدرسة: سيُوثَّق ملفك كطالب فورًا.',
@@ -423,7 +423,7 @@ export function AuthScreen({ store }) {
       : mode === 'nouveau' ? null : champEmail}
       ${mode === 'motdepasse' || mode === 'nouveau' ? html`<${Field} label=${mode === 'nouveau' ? 'Nouveau mot de passe' : 'Mot de passe'} hint=${mode === 'nouveau' ? '6 caractères minimum' : ''}><input id="au-pw" type="password" required minlength="6" autocomplete=${mode === 'nouveau' ? 'new-password' : 'current-password'} value=${pw} onInput=${e => setPw(e.target.value)}/><//>` : null}
       ${inscription ? html`<label class="check small"><input id="au-mail" type="checkbox" checked=${mails} onChange=${e => setMails(e.target.checked)}/> Le résumé de la semaine par email</label>
-        <label class="check small"><input id="au-ok" type="checkbox" required checked=${ok} onChange=${e => setOk(e.target.checked)}/> <span>J’ai 18 ans ou plus et j’accepte que mes données servent au réseau, y compris leur envoi aux États-Unis pour les emails et les notifications (<a href="#confidentialite">Confidentialité</a>)</span></label>` : null}
+        <label class="check small"><input id="au-ok" type="checkbox" required checked=${ok} onChange=${e => setOk(e.target.checked)}/> <span>J’ai 18 ans ou plus et j’accepte la <a href="#confidentialite">Confidentialité</a>, y compris l’envoi de mes données aux États-Unis (emails, notifications)</span></label>` : null}
       ${msg ? html`<p class=${'auth-msg' + (msg.err ? ' err' : '')} role="alert">${msg.t}</p>` : null}
       <button class="btn primary wide" aria-busy=${busy || entre ? 'true' : null} disabled=${entre}>${entre ? 'Connexion…' : { inscription: 'Recevoir mon code', connexion: 'Recevoir mon code', code: 'Continuer', motdepasse: 'Se connecter', nouveau: 'Enregistrer' }[mode]}</button>
       ${inscription || mode === 'connexion' ? pourquoiCode : null}
