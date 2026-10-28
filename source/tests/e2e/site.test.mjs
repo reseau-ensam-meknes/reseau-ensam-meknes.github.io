@@ -2255,9 +2255,10 @@ test('cloche : son chiffre compte ce qui attend un geste, la feuille dit « À f
   // dans le menu du compte (Match a pris sa place dans la barre) : sa pastille passe sur l'avatar
   assert.deepEqual((await pastilles()).sort(), ['Accueil', 'Mentorat']);
   assert.equal(await s.page.locator('.me-btn .dotn').count(), 1);
-  // Mon espace commence par « À faire »
+  // Mon espace ne répète pas la cloche : aucune de ses lignes (elles sont dans la cloche et sur l'accueil)
   await s.aller('espace');
-  assert.ok(await s.page.evaluate(() => document.querySelector('.page-head').nextElementSibling.classList.contains('a-faire')), 'Mon espace commence par À faire');
+  assert.equal(await s.page.locator('.page .af-row').count(), 0, 'Mon espace ne répète pas les lignes de la cloche');
+  assert.doesNotMatch(await s.page.locator('.page').innerText(), /nouvelles candidatures|te demande de l’aide/);
   // Un étudiant sans rien à faire : ni chiffre ni pastille, et la cloche le dit calmement
   await s.comme('Amine'); await s.aller('accueil');
   assert.equal(await s.page.locator('.cloche-btn .badge-n').count(), 0);
@@ -2266,9 +2267,120 @@ test('cloche : son chiffre compte ce qui attend un geste, la feuille dit « À f
   await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
   assert.equal(await s.page.locator('.cloche .af-row').count(), 0);
   await s.fermer();
-  // Salma : Mon parcours commence aussi par « À faire »
+  // Salma : Mon parcours non plus (sa cloche a des choses à faire, son parcours n'a rien à confirmer ici)
   await s.comme('Salma'); await s.aller('parcours');
-  assert.ok(await s.page.evaluate(() => document.querySelector('.page-head').nextElementSibling.classList.contains('a-faire')), 'Mon parcours commence par À faire');
+  assert.equal(await s.page.locator('.page .af-row').count(), 0, 'Mon parcours ne répète pas les lignes de la cloche');
+  assert.equal(await s.page.locator('.page .a-faire').count(), 0, 'rien à confirmer ni à remercier : rien ne s’affiche');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('Mon parcours : seulement ce qui se fait sur place (confirmer, puis dire merci), en tête ; plus rien ensuite', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  // Youssef déclare le recrutement de Salma
+  await s.comme('Youssef'); await s.aller('accueil');
+  await s.page.evaluate(async () => {
+    const d = window.__demo, { seasonOf } = await import('./logic.js');
+    const salma = d.data.profiles.find(p => p.full_name.startsWith('Salma'));
+    await d.insert('placements', { student_id: salma.id, saison: seasonOf(), niveau: 5, type: 'pfe', entreprise: 'Renault Group Maroc', ville: 'Tanger', pays: 'Maroc' });
+  });
+  await s.comme('Salma'); await s.aller('parcours');
+  const enTete = () => s.page.evaluate(() => document.querySelector('.page-head').nextElementSibling?.className || '');
+  assert.match(await enTete(), /a-faire/, 'la carte à confirmer vient en premier');
+  assert.equal(await s.page.locator('.a-faire .confirm-card').count(), 1);
+  assert.equal(await s.page.locator('.page .af-row').count(), 0, 'pas les lignes de la cloche');
+  assert.match(await s.page.locator('.a-faire').innerText(), /À confirmer[\s\S]*Youssef El Amrani déclare ton recrutement chez Renault Group Maroc/);
+  // Elle confirme : la carte laisse place au merci, sur place aussi
+  await s.page.click('.a-faire .confirm-card .btn.primary'); await s.page.waitForTimeout(400);
+  await s.page.locator('.fete-acts .btn').last().click({ timeout: 2000 }).catch(() => {});
+  await s.page.waitForSelector('.a-faire #merci-txt');
+  assert.equal(await s.page.locator('.a-faire .confirm-card').count(), 0);
+  await s.page.fill('#merci-txt', 'Merci pour ton aide !');
+  await s.page.click('.a-faire .merci-box .btn.primary'); await s.page.waitForTimeout(400);
+  // Plus rien à faire ici : la section disparaît, le merci reste visible sous l'objectif
+  assert.equal(await s.page.locator('.page .a-faire').count(), 0);
+  assert.equal(await s.page.locator('.merci-done').count(), 1);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('Mon espace : ce qui l’attend d’abord, puis « Mon impact » en une carte (trois chiffres vrais, niveau, prochain badge), le détail replié ; aucun pouls hors de l’accueil', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('espace');
+  // L'ordre : en attente de confirmation, rendez-vous, Mon impact, Mes offres, Mes documents, puis le détail replié
+  const ordre = await s.page.evaluate(() => ['.esp-attente', '.esp-rdv', '.impact-card', '.esp-offres', '.esp-docs', 'details.esp-badges', 'details.ledger']
+    .map(sel => [...document.querySelectorAll('.page > *')].findIndex(e => e.matches(sel))));
+  assert.ok(ordre.every(i => i >= 0), `chaque bloc est là : ${ordre}`);
+  assert.deepEqual(ordre, [...ordre].sort((a, b) => a - b), 'dans l’ordre');
+  assert.equal(await s.page.locator('.impact-hero, .impact-facts').count(), 0, 'plus de mur de chiffres');
+  // Trois chiffres, et ce sont les vrais
+  const vrais = await s.page.evaluate(() => {
+    const d = window.__demo, me = d.me;
+    const aides = d.data.placements.filter(p => p.laureat_id === me.id && p.status === 'confirme');
+    const mentorats = d.data.mentorships.filter(m => m.mentor_id === me.id && m.status === 'terminee').length;
+    const mercis = aides.filter(p => p.merci).length + d.data.mentorships.filter(m => m.mentor_id === me.id && m.merci).length;
+    return [aides.length, mentorats, mercis].map(String);
+  });
+  assert.deepEqual(await s.page.$$eval('.impact-nums .impact-n', x => x.map(e => e.textContent.trim())), vrais);
+  assert.match(await s.page.locator('.impact-nums').innerText(), /recrutés? grâce à toi[\s\S]*mentorats? terminés?[\s\S]*mercis? reçus?/);
+  // Le niveau avec sa barre, le barème, le prochain badge
+  assert.equal(await s.page.locator('.impact-card .impact-niveau .lvl').count(), 1);
+  assert.equal(await s.page.locator('.impact-card .impact-niveau .bar').count(), 1);
+  assert.match(await s.page.locator('.impact-card .impact-niveau').innerText(), /\d+ points d’impact[\s\S]*(encore \d+ pour|Niveau maximum)/);
+  assert.equal(await s.page.locator('.impact-card .badge-next').count(), 1);
+  await s.page.click('.impact-card button:has-text("Comment gagner des points")'); await s.page.waitForSelector('.modal .tbl'); await s.fermer();
+  // Les offres partagées : le chiffre du titre ; chaque offre dit son état en couleur
+  const nOffres = await s.page.evaluate(() => window.__demo.data.offers.filter(o => o.author_id === window.__demo.me.id).length);
+  assert.equal((await s.page.locator('.esp-offres h2 .count').innerText()).trim(), String(nOffres));
+  assert.equal(await s.page.locator('.esp-offres .app-row .state-pill').count(), Math.min(10, nOffres));
+  // Badges et historique repliés, avec leur compte
+  assert.match(await s.page.locator('details.esp-badges summary').innerText(), /Mes badges · \d+ sur \d+/);
+  assert.equal(await s.page.locator('details.esp-badges[open], details.ledger[open]').count(), 0, 'repliés');
+  assert.equal(await s.page.locator('.esp-docs .attest-card').count(), 2, 'attestation et bilan côte à côte');
+  // Un seul bouton plein à l'écran
+  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1, 'un seul bouton plein');
+  assert.equal(await s.page.locator('.pouls').count(), 0);
+  // Le pouls du réseau n'est plus que sur l'accueil
+  await s.aller('mentorat'); assert.equal(await s.page.locator('.pouls').count(), 0, 'pas sur Mentorat (lauréat)');
+  await s.aller('suivi'); assert.equal(await s.page.locator('.pouls').count(), 0, 'pas sur Suivi (lauréat)');
+  await s.comme('Nadia'); await s.aller('espace');
+  assert.equal(await s.page.locator('.premiere-aide').count(), 1);
+  assert.equal(await s.page.locator('.pouls, .impact-card').count(), 0, 'nouvelle lauréate : la première aide, sans pouls ni tableau');
+  await s.comme('Salma');
+  for (const e of ['mentorat', 'suivi', 'parcours']) { await s.aller(e); assert.equal(await s.page.locator('.pouls').count(), 0, `pas sur ${e} (étudiante)`); }
+  await s.aller('accueil'); assert.equal(await s.page.locator('.pouls').count(), 1, 'toujours sur l’accueil');
+  assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('Mon année (étudiante) : les offres de l’année avec la part pour sa filière, les camarades qui ont trouvé en barre ; des chiffres vrais, dits une fois', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('suivi');
+  const v = await s.page.evaluate(async () => {
+    const d = window.__demo, me = d.me, L = await import('./logic.js'), S = L.seasonOf(), n = L.niveauOf(me, S);
+    const pourAnnee = d.data.offers.filter(o => o.status === 'ouverte' && o.audience !== 'laureats' && (o.annees || []).includes(n));
+    const row = L.seasonStats(d.data, S).rows.find(r => r.n === n);
+    return { ouvertes: pourAnnee.length, fil: pourAnnee.filter(o => o.filieres?.length && L.filiereMatch(o.filieres, me.filiere)).length, trouve: row.found, total: row.total, via: row.via, attente: row.pending };
+  });
+  assert.equal((await s.page.locator('.pr-offres .pr-stat-num').innerText()).trim(), String(v.ouvertes));
+  assert.ok(v.fil > 0, 'la démo a des offres pour sa filière');
+  assert.equal(await s.page.locator('.pr-offres .bar').count(), 1);
+  // « … ciblent ta filière » : une seule fois sur la page
+  const fil = new RegExp(v.fil > 1 ? `${v.fil} offres ciblent ta filière` : "1 offre cible ta filière", "g");
+  assert.equal(((await s.page.locator('.page').innerText()).match(fil) || []).length, 1);
+  // Camarades : le nombre, sur les inscrits de l'année, et la barre par état (vert : trouvé, gris : à confirmer)
+  assert.equal((await s.page.locator('.pr-trouve .pr-stat-num').innerText()).trim(), String(v.trouve));
+  assert.match(await s.page.locator('.pr-trouve .pr-stat-lbl').innerText(), new RegExp(`sur ${v.total} inscrits de ton année`));
+  assert.equal(await s.page.locator('.pr-trouve .tr-barre[role="img"]').count(), 1);
+  const legende = await s.page.locator('.pr-trouve .tr-legende').innerText();
+  if (v.via) assert.match(legende, new RegExp(`${v.via} grâce à un lauréat`));
+  if (v.attente) assert.match(legende, new RegExp(`${v.attente} à confirmer`));
+  assert.equal(await s.page.locator('.pr-trouve .tr-attente').count(), v.attente ? 2 : 0, 'le gris des confirmations en attente, barre et légende');
+  // Où vont-ils : une barre proportionnelle par entreprise ; jamais de pouls
+  assert.equal(await s.page.locator('.pr-entreprises .pr-ent-bar').count(), await s.page.locator('.pr-entreprises li').count());
+  assert.equal(await s.page.locator('.pouls').count(), 0);
+  assert.ok((await s.debordement()) <= 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
