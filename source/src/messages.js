@@ -181,6 +181,8 @@ function Conversation({ ctx, autre }) {
   const [entretien, setEntretien] = useState(false);
   const zone = useRef(); const canal = useRef(null); const enBas = useRef(true); const ouvertA = useRef(Date.now());
 
+  // Discussion ouverte (souvent depuis une notification) : les messages sont relus, au cas où le temps réel en aurait manqué
+  useEffect(() => { store.rattraperMessages?.(); }, [autre]);
   // « écrit… » : signal éphémère de l'autre personne
   useEffect(() => { canal.current = store.canal(autre, () => setTape(Date.now())); return () => canal.current?.fermer(); }, [autre]);
   useEffect(() => { if (!tape) return; const t = setTimeout(() => setTape(0), 4000); return () => clearTimeout(t); }, [tape]);
