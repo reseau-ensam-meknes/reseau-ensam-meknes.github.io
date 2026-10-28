@@ -45,6 +45,7 @@ addAR({
   // Liste officielle
   'Importer la liste': 'استيراد اللائحة', 'Fichier Excel (.xlsx) ou CSV exporté de la scolarité : une ligne par étudiant, avec au moins le nom et la promo.': 'ملف Excel (.xlsx) أو CSV من مصلحة الشؤون الطلابية: سطر لكل طالب، مع الاسم والدفعة على الأقل.',
   'Les inscrits qui figurent sur la liste (même nom et même promo, ou même email) sont vérifiés automatiquement.': 'المسجلون الموجودون في اللائحة (نفس الاسم ونفس الدفعة، أو نفس البريد) يتم التحقق منهم تلقائيًا.',
+  'La liste est effacée chaque 1er septembre, à la fin de l’année universitaire : importe celle de la nouvelle année à la rentrée.': 'تُمحى اللائحة كل فاتح شتنبر، عند نهاية السنة الجامعية: استورد لائحة السنة الجديدة عند الدخول الجامعي.',
   'Choisir un fichier': 'اختيار ملف', 'Modèle CSV': 'نموذج CSV', 'Colonnes': 'الأعمدة', 'Nom complet': 'الاسم الكامل', 'Nom de famille': 'الاسم العائلي', 'Prénom': 'الاسم الشخصي',
   'Email': 'البريد الإلكتروني', 'Promo': 'الدفعة', 'Filière': 'الشعبة', 'Matricule': 'رقم التسجيل', '(aucune)': '(لا شيء)',
   'Promo pour toutes les lignes': 'الدفعة لكل الأسطر', 'Si le fichier n’a pas de colonne promo (un fichier par promo).': 'إذا لم يكن في الملف عمود للدفعة (ملف لكل دفعة).',
@@ -606,6 +607,7 @@ function ListeOfficielle({ ctx }) {
         <button class="btn tiny ghost" onClick=${() => telecharger('modele-liste-officielle.csv', [['nom', 'prenom', 'email', 'promo', 'filiere', 'matricule'], ['EL AMRANI', 'Salma', 'salma.elamrani@exemple.ma', new Date().getFullYear() + 1, 'Génie Industriel', 'M0001']])}><${Icon} name="download" size=${14}/> Modèle CSV</button></div>
       <p class="small muted">Fichier Excel (.xlsx) ou CSV exporté de la scolarité : une ligne par étudiant, avec au moins le nom et la promo.</p>
       <p class="small muted">Les inscrits qui figurent sur la liste (même nom et même promo, ou même email) sont vérifiés automatiquement.</p>
+      <p class="small muted">La liste est effacée chaque 1er septembre, à la fin de l’année universitaire : importe celle de la nouvelle année à la rentrée.</p>
       <label class="btn small file-btn"><${Icon} name="file" size=${15}/> Choisir un fichier<input id="lo-file" type="file" accept=".xlsx,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange=${charger}/></label>
       ${erreur ? html`<p class="auth-msg err" role="alert">${erreur}</p>` : null}
       ${res ? html`<p class="hint-box good-box small" role="status"><${Icon} name="check" size=${15}/> <span>${`${res.importes} importée${res.importes > 1 ? 's' : ''}, ${res.rejetes} rejetée${res.rejetes > 1 ? 's' : ''}, ${res.verifies} compte${res.verifies > 1 ? 's' : ''} vérifié${res.verifies > 1 ? 's' : ''}`}</span></p>` : null}

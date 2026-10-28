@@ -4,7 +4,7 @@ import { Icon, Modal, BrandLogo, toast } from './ui.js';
 import { PushToggle } from './pwa.js';
 import { PUSH_CATEGORIES, pushChoix } from './logic.js';
 import { addAR } from './i18n.js';
-import { adresseContact } from './regles-entree.js';
+import { adresseContact, responsableTraitement } from './regles-entree.js';
 import { FondateurPublicCase } from './fondateurs.js';
 import { RAPPELS_NOTIF, PHRASE_VISITE, DesaboRappels } from './rappels.js';
 
@@ -45,8 +45,12 @@ addAR({
   'Répondre est facultatif.': 'الإجابة اختيارية.',
   'Logos des entreprises : ceux gardés sur le site, sinon l’icône du site de l’entreprise, demandée à DuckDuckGo sans ton nom ni l’adresse de la page.': 'شعارات الشركات: المحفوظة على الموقع، وإلا فأيقونة موقع الشركة، تُجلب من DuckDuckGo دون اسمك ولا عنوان الصفحة.',
   'Base de données, comptes et CV : Supabase, serveurs à Paris (Union européenne).': 'قاعدة البيانات والحسابات والسير الذاتية: Supabase، خوادم في باريس (الاتحاد الأوروبي).',
-  'Site : GitHub Pages. Emails : le compte Gmail de la plateforme (Google) et Brevo (Union européenne). Visio : Jitsi Meet, quand tu rejoins un rendez-vous.': 'الموقع: GitHub Pages. الرسائل: حساب Gmail الخاص بالمنصة (Google) وBrevo (الاتحاد الأوروبي). المكالمات المرئية: Jitsi Meet عند انضمامك إلى موعد.',
+  'Site : GitHub Pages (États-Unis). Emails : le compte Gmail de la plateforme (Google, États-Unis) et Brevo (France). Visio : Jitsi Meet, quand tu rejoins un rendez-vous.': 'الموقع: GitHub Pages (الولايات المتحدة). الرسائل: حساب Gmail الخاص بالمنصة (Google، الولايات المتحدة) وBrevo (فرنسا). المكالمات المرئية: Jitsi Meet عند انضمامك إلى موعد.',
+  'Chaque semaine, une copie chiffrée de la base est gardée 90 jours (GitHub, États-Unis). Personne ne peut la lire sans la clé.': 'كل أسبوع، تُحفظ نسخة مشفّرة من قاعدة البيانات لمدة 90 يومًا (GitHub، الولايات المتحدة). لا يمكن لأحد قراءتها دون المفتاح.',
   'Tant que ton compte existe. Quand tu le supprimes, ton profil, ton CV et tout ce qui t’est lié sont effacés tout de suite. Seuls restent des chiffres globaux sans nom.': 'ما دام حسابك موجودًا. عند حذفه، يُمحى ملفك وسيرتك الذاتية وكل ما يرتبط بك فورًا، ولا تبقى إلا أرقام إجمالية بدون أسماء.',
+  'Sans connexion pendant 3 ans, ton compte est supprimé de la même façon. Un email te prévient 30 jours avant : il suffit d’ouvrir la plateforme pour le garder.': 'إذا بقي حسابك 3 سنوات دون اتصال، يُحذف بالطريقة نفسها. تصلك رسالة قبل ذلك بـ 30 يومًا، ويكفي أن تفتح المنصة للاحتفاظ به.',
+  'Tes réponses à l’enquête d’insertion sont détachées de ton compte 3 ans après ton diplôme : il n’en reste que des chiffres globaux, sans entreprise, ville ni commentaire.': 'تُفصل إجاباتك على استطلاع الإدماج المهني عن حسابك بعد 3 سنوات من تخرجك، ولا يبقى منها إلا أرقام إجمالية، بدون الشركة أو المدينة أو التعليق.',
+  'La liste officielle des étudiants est effacée chaque année le 1er septembre, à la fin de l’année universitaire.': 'تُمحى اللائحة الرسمية للطلبة كل سنة في فاتح شتنبر، عند نهاية السنة الجامعية.',
   'Quand tu remplaces ou retires ton CV, l’ancien fichier est effacé, sauf s’il est encore lié à une relecture.': 'عندما تستبدل سيرتك الذاتية أو تحذفها، يُمحى الملف القديم، إلا إذا كان مرتبطًا بمراجعة.',
   'Opposition : désactive les emails, les alertes d’offres ou les notifications en un clic. Le résumé et les alertes par email ont chacun un lien pour se désabonner.': 'الاعتراض: أوقف الرسائل أو تنبيهات العروض أو الإشعارات بنقرة واحدة. ويحتوي الملخص وتنبيهات البريد على رابط لإلغاء الاشتراك.',
   'M’alerter dès qu’une offre de mon année et de ma filière est publiée': 'نبّهني فور نشر عرض يخص سنتي وشعبتي',
@@ -156,9 +160,9 @@ addAR({ [PHRASE_FONDATEURS]: 'يمكن أن يظهر الأعضاء المؤسس
 // Ambassadeurs de promo : ce que la plateforme regarde pour proposer le rôle, et ce qui sort du réseau
 const PHRASE_AMBASSADEURS = 'Ambassadeurs de promo : la plateforme propose ce rôle au membre le plus actif de chaque promo et filière (offres, aides, mentorats, réponses, dernière connexion) ; tu peux refuser. Accepté, ton badge est visible des membres. Les réussites qu’un ambassadeur partage sur WhatsApp sont déjà vérifiées et annoncées dans le réseau, et ne citent le prénom que de qui a accepté d’être cité.';
 addAR({ [PHRASE_AMBASSADEURS]: 'سفراء الدفعات: تقترح المنصة هذا الدور على العضو الأكثر نشاطًا في كل دفعة وشعبة (العروض، المساعدات، الإرشاد، الأجوبة، آخر دخول)؛ ويمكنك الرفض. وعند القبول، تظهر شارتك للأعضاء. أما النجاحات التي يشاركها السفير عبر واتساب فهي مؤكَّدة ومُعلنة في الشبكة مسبقًا، ولا تذكر إلا اسم من وافق على ذكره.' });
-// Page Match : ce que les lauréats y voient d'un étudiant, le CV seulement après un match, et comment ne plus y apparaître
-const PHRASE_MATCH = 'Match : les lauréats y voient ton profil résumé (année, filière, ce que tu cherches, compétences) ; ton CV, seulement après un match. Une carte remise à plus tard reste privée ; un intérêt est vu par la personne visée. Tu peux ne plus apparaître dans Match depuis « Mon profil ».';
-addAR({ [PHRASE_MATCH]: 'التوافق (Match): يرى فيه الخريجون ملفك المختصر (السنة، الشعبة، الفرصة المنشودة، الكفاءات)؛ أما سيرتك الذاتية فلا يرونها إلا بعد حصول توافق. تبقى البطاقة المؤجلة خاصة، أما الاهتمام فيراه الشخص المعني. ويمكنك التوقف عن الظهور في Match من «ملفي الشخصي».' });
+// Page Match : ce que les lauréats y voient d'un étudiant (le CV selon son réglage « CV »), et comment ne plus y apparaître
+const PHRASE_MATCH = 'Match : les lauréats y voient ton profil résumé (année, filière, ce que tu cherches, compétences), et ton CV si ton réglage « CV » le leur permet (c’est le réglage de départ). Une carte remise à plus tard reste privée ; un intérêt est vu par la personne visée. Tu peux ne plus apparaître dans Match depuis « Mon profil ».';
+addAR({ [PHRASE_MATCH]: 'التوافق (Match): يرى فيه الخريجون ملفك المختصر (السنة، الشعبة، الفرصة المنشودة، الكفاءات)، وسيرتك الذاتية إذا كان إعداد «السيرة الذاتية» يسمح لهم بذلك (وهو الإعداد الأصلي). تبقى البطاقة المؤجلة خاصة، أما الاهتمام فيراه الشخص المعني. ويمكنك التوقف عن الظهور في Match من «ملفي الشخصي».' });
 // Cartes sponsorisées de Match : marquées, et l'entreprise ne reçoit que des totaux
 const PHRASE_SPONSO = 'Certaines cartes de Match sont sponsorisées par une entreprise et marquées « Sponsorisé » ; l’entreprise reçoit seulement des totaux (vues, clics), jamais qui a vu ou cliqué.';
 addAR({ [PHRASE_SPONSO]: 'بعض بطاقات صفحة التوافق (Match) تموّلها شركة وتحمل علامة «مُموَّل»؛ ولا تتلقى الشركة إلا المجاميع (المشاهدات، النقرات)، ولا تعرف أبدًا من شاهد أو نقر.' });
@@ -220,12 +224,16 @@ const SECTIONS = [
   ]],
   ['globe', 'Où sont les données', [
     'Base de données, comptes et CV : Supabase, serveurs à Paris (Union européenne).',
-    'Site : GitHub Pages. Emails : le compte Gmail de la plateforme (Google) et Brevo (Union européenne). Visio : Jitsi Meet, quand tu rejoins un rendez-vous.',
-    'Carte : fonds OpenStreetMap et CARTO. Notifications du téléphone : le service de ton navigateur (Google, Apple ou Mozilla), seulement si tu les actives.',
+    'Site : GitHub Pages (États-Unis). Emails : le compte Gmail de la plateforme (Google, États-Unis) et Brevo (France). Visio : Jitsi Meet, quand tu rejoins un rendez-vous.',
+    'Carte : fonds OpenStreetMap et CARTO. Notifications du téléphone : le service de ton navigateur (Google, Apple ou Mozilla, aux États-Unis), seulement si tu les actives.',
+    'Chaque semaine, une copie chiffrée de la base est gardée 90 jours (GitHub, États-Unis). Personne ne peut la lire sans la clé.',
     'Logos des entreprises : ceux gardés sur le site, sinon l’icône du site de l’entreprise, demandée à DuckDuckGo sans ton nom ni l’adresse de la page.',
   ]],
   ['clock', 'Combien de temps', [
     'Tant que ton compte existe. Quand tu le supprimes, ton profil, ton CV et tout ce qui t’est lié sont effacés tout de suite. Seuls restent des chiffres globaux sans nom.',
+    'Sans connexion pendant 3 ans, ton compte est supprimé de la même façon. Un email te prévient 30 jours avant : il suffit d’ouvrir la plateforme pour le garder.',
+    'Tes réponses à l’enquête d’insertion sont détachées de ton compte 3 ans après ton diplôme : il n’en reste que des chiffres globaux, sans entreprise, ville ni commentaire.',
+    'La liste officielle des étudiants est effacée chaque année le 1er septembre, à la fin de l’année universitaire.',
     'Quand tu remplaces ou retires ton CV, l’ancien fichier est effacé, sauf s’il est encore lié à une relecture.',
     'Les notifications en attente sont effacées dès leur envoi.',
     'Un message que tu supprimes est effacé pour vous deux, avec sa photo ou son vocal et ses réactions.',
@@ -247,7 +255,7 @@ export function PrivacyPage({ onBack }) {
     <p class="lead">Cette plateforme est faite par et pour la communauté de l’ENSAM Meknès. Tes données servent à une seule chose : t’aider à trouver ou à aider.</p>
     ${SECTIONS.map(([ic, h, items]) => html`<div class="panel priv-sec"><h2 class="h-ico"><${Icon} name=${ic}/> ${h}</h2><ul>${items.map(t => html`<li>${t}</li>`)}</ul></div>`)}
     <div class="panel priv-sec"><h2 class="h-ico"><${Icon} name="inbox"/> Contact</h2>
-      <p>Responsable du traitement : l’équipe qui administre le Réseau ENSAM Meknès.</p>
+      <p>Responsable du traitement : <strong translate="no">${responsableTraitement(c)}</strong>, qui administre le Réseau ENSAM Meknès.</p>
       ${adresseContact(c) ? html`<p>Pour toute question sur tes données : <a href=${'mailto:' + adresseContact(c)} dir="ltr" translate="no">${adresseContact(c)}</a></p>` : html`<p>Pour toute question sur tes données, écris à l’administration depuis la plateforme (Entraide ou profil d’un administrateur).</p>`}
       ${c.cndp ? html`<p class="small muted">Déclaration CNDP : <span dir="ltr" translate="no">${c.cndp}</span></p>` : null}
     </div>
@@ -267,7 +275,7 @@ export function ConsentModal({ ctx }) {
     <div class="modal-body form">
       <p>Nous avons écrit une page « Confidentialité » : ce que la plateforme garde sur toi, qui le voit, et comment tout supprimer. Lis-la et donne ton accord pour continuer.</p>
       <button class="linkish" onClick=${() => go('confidentialite')}><${Icon} name="shield" size=${15}/> Lire la page Confidentialité</button>
-      <label class="check"><input id="cs-ok" type="checkbox" checked=${ok} onChange=${e => setOk(e.target.checked)}/> J’ai lu la page Confidentialité et j’accepte que mes données servent au réseau.</label>
+      <label class="check"><input id="cs-ok" type="checkbox" checked=${ok} onChange=${e => setOk(e.target.checked)}/> J’ai 18 ans ou plus, j’ai lu la page Confidentialité et j’accepte que mes données servent au réseau, y compris leur envoi aux États-Unis pour les emails et les notifications.</label>
       <label class="check"><input id="cs-mail" type="checkbox" checked=${mails} onChange=${e => setMails(e.target.checked)}/> Recevoir un résumé par email chaque semaine</label>
       <div class="row-end"><button class="btn ghost" onClick=${() => go('profil/donnees')}>Supprimer mon compte</button>
         <button class="btn primary" disabled=${!ok} onClick=${() => act(async () => { await store.update('profiles', me.id, { consent_at: new Date().toISOString(), emails_hebdo: mails }); toast('Merci, c’est enregistré.'); })}>Continuer</button></div>

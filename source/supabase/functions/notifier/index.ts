@@ -1724,6 +1724,32 @@ export function rendreRelance(langue: Langue, site: string): Courriel {
   return { sujet, html, texte, desabo: '' };
 }
 
+// Compte sans connexion depuis 3 ans (moins 30 jours) : prévenu une fois avant sa suppression (purger_comptes_inactifs).
+// Pas de lien de désabonnement : c'est une information sur le compte, pas une lettre du réseau.
+export function rendreInactif(langue: Langue, site: string): Courriel {
+  site = siteEn(site, langue);
+  const ar = langue === 'ar';
+  const sujet = ar ? 'سيُحذف حسابك على شبكة ENSAM مكناس بعد 30 يومًا' : 'Ton compte sur le Réseau ENSAM Meknès sera supprimé dans 30 jours';
+  const lignes = ar ? [
+    'لم تفتح شبكة ENSAM مكناس منذ ما يقارب 3 سنوات. كما تقول صفحة الخصوصية، يُحذف الحساب الذي لا يُفتح طيلة 3 سنوات، مع كل ما يرتبط به: ملفك وسيرتك الذاتية ورسائلك وعروضك.',
+    'للاحتفاظ بحسابك، يكفي أن تفتح المنصة مرة واحدة خلال 30 يومًا. وإلا سيُحذف نهائيًا.',
+  ] : [
+    'Tu n’as pas ouvert le Réseau ENSAM Meknès depuis près de 3 ans. Comme le dit la page Confidentialité, un compte resté 3 ans sans connexion est supprimé avec tout ce qui lui est lié : ton profil, ton CV, tes messages et tes offres.',
+    'Pour garder ton compte, il suffit d’ouvrir la plateforme une fois dans les 30 jours. Sinon, il sera supprimé définitivement.',
+  ];
+  const bouton = ar ? 'الاحتفاظ بحسابي' : 'Garder mon compte';
+  const pied = ar ? 'يصلك هذا البريد لأن عنوانك مرتبط بحساب على شبكة ENSAM مكناس.' : 'Tu reçois cet email parce que ton adresse est liée à un compte du Réseau ENSAM Meknès.';
+  const html = cadreEmail({
+    langue, sujet, apercu: lignes[1], sousTitre: ar ? 'حسابك' : 'Ton compte',
+    intro: [esc(ar ? 'مرحبًا،' : 'Bonjour,')],
+    blocs: [{ lignes: lignes.map(esc), bouton: { texte: bouton, url: site } }],
+    pied, liens: [[ar ? 'فتح المنصة' : 'Ouvrir la plateforme', site]],
+  });
+  const texte = [`${(ar ? AR : FR).marque} · ${ar ? 'حسابك' : 'Ton compte'}`, '', ar ? 'مرحبًا،' : 'Bonjour,', ...lignes, '',
+    `${bouton}${ar ? ': ' : ' : '}${site}`, '', '--', pied].join('\n');
+  return { sujet, html, texte, desabo: '' };
+}
+
 // ---------------------------------------------------------------------
 // Rappels de visite : après quelques jours sans visite, ce qui attend vraiment le membre, avec les vrais chiffres.
 // La base choisit qui et compte (rappels_dus, rappel_contenu dans schema.sql) ; ici, seulement les mots.
@@ -2366,6 +2392,33 @@ async function jobRelances(env: Env): Promise<Response> {
   return json(b);
 }
 
+// Comptes bientôt supprimés faute de connexion : un email chacun ; seuls les envois réussis sont notés,
+// et la suppression n'arrive que 30 jours après un email parti
+async function jobInactifs(env: Env): Promise<Response> {
+  const f = facteur(env);
+  if (!f.pret) return json({ skipped: 'email' });
+  const dest = ((await rpc(env, 'comptes_inactifs_a_prevenir', { p_max: 100 })) || []) as { id: string; email: string; langue: string }[];
+  const b: { sent: number; errors: number; via?: string } = { sent: 0, errors: 0 };
+  if (!dest.length) return json(b);
+  const envoyes: string[] = [];
+  const limite = Date.now() + 100_000;
+  await parallele(dest, f.paralleles, async x => {
+    if (Date.now() > limite) return;
+    if (!x.email || !estUuid(x.id)) { b.errors++; return; }
+    try {
+      if (await f.envoyer(x.email, rendreInactif(langueDe(x.langue), env.site))) { b.sent++; envoyes.push(x.id); }
+      else b.errors++;
+    } catch (e) {
+      b.errors++;
+      console.error('notifier : email de compte inactif impossible', e instanceof Error ? e.message : String(e));
+    }
+  });
+  await f.fermer();
+  b.via = f.via();
+  if (envoyes.length) await rpc(env, 'comptes_inactifs_prevenus', { p_ids: envoyes });
+  return json(b);
+}
+
 // Enquête d'insertion : invitation à l'ouverture de la vague, puis un rappel ; la notification
 // sur le téléphone part avec enquetes_invitees, même sans email
 async function jobEnquetes(env: Env): Promise<Response> {
@@ -2432,7 +2485,7 @@ export async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return json({ error: 'Méthode non autorisée' }, 405);
   let job: unknown;
   try { job = (await req.json())?.job; } catch { return json({ error: 'Requête invalide' }, 400); }
-  if (typeof job !== 'string' || !['cle', 'test', 'push', 'resume', 'essai_email', 'alertes', 'enquetes', 'messages', 'relances', 'demandes', 'rappels'].includes(job)) return json({ error: 'Tâche inconnue' }, 400);
+  if (typeof job !== 'string' || !['cle', 'test', 'push', 'resume', 'essai_email', 'alertes', 'enquetes', 'messages', 'relances', 'demandes', 'rappels', 'inactifs'].includes(job)) return json({ error: 'Tâche inconnue' }, 400);
   const env = lireEnv();
   if (!env.url || !env.cle) {
     console.error('notifier : SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY manquant');
@@ -2449,6 +2502,7 @@ export async function handler(req: Request): Promise<Response> {
     if (job === 'relances') return await jobRelances(env);
     if (job === 'demandes') return await jobDemandes(env);
     if (job === 'rappels') return await jobRappels(env);
+    if (job === 'inactifs') return await jobInactifs(env);
     return job === 'push' ? await jobPush(env) : await jobResume(env);
   } catch (e) {
     console.error(`notifier : échec de « ${job} »`, e instanceof Error ? e.message : String(e));
