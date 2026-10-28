@@ -2101,7 +2101,7 @@ test('accueil (360 × 640) : une carte « prochaine étape » et son seul bouton
       const go = document.querySelector('.pas .pas-go'), fond = go && getComputedStyle(go).backgroundColor;
       return { cartes: document.querySelectorAll('.home .pas').length, bas: go && go.getBoundingClientRect().bottom, nav: document.querySelector('.bottom-nav').getBoundingClientRect().top,
         pleins: [...document.querySelectorAll('.home .btn.primary')].filter(b => b.offsetParent && getComputedStyle(b).backgroundColor === fond).length,
-        taches: document.querySelectorAll('.semaine .todo > li').length };
+        taches: document.querySelectorAll('.af-accueil .todo > li').length };
     });
     assert.equal(r.cartes, 1, `${nom} : une seule carte`);
     assert.ok(r.bas && r.bas < r.nav, `${nom} : le bouton de la carte est sous la barre du bas (${r.bas} ≥ ${r.nav})`);
@@ -2113,12 +2113,67 @@ test('accueil (360 × 640) : une carte « prochaine étape » et son seul bouton
   await s.ctx.close();
 });
 
-test('« Cette semaine » : un lauréat sans photo voit « Ajoute une photo », en dernier, ni dans la cloche ni sur la carte ; elle ouvre Mon profil sur la carte photo', async () => {
+// Accueil rangé : chaque chose à sa place, rien de dit deux fois
+test('accueil rangé : bonjour, étape, où j’en suis, « À faire » (messages en une ligne, le reste dans la cloche), fondateurs, « Pour toi », « Dans le réseau »', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('accueil');
+  if (await s.page.$('.fete-back, .modal-back:not(.sortie)')) await s.fermer();
+  await s.page.waitForSelector('.af-accueil .todo');
+  const ordre = await s.page.evaluate(() => [...document.querySelectorAll('.home .hello, .home .pas, .home .avancement, .home .af-accueil, .home .fd-accueil, .home .home-main, .home .reseau-semaine')].map(e => e.classList.contains('hello') ? 'bonjour' : e.classList.contains('pas') ? 'etape' : e.classList.contains('avancement') ? 'avancement' : e.classList.contains('af-accueil') ? 'afaire' : e.classList.contains('fd-accueil') ? 'fondateurs' : e.classList.contains('home-main') ? 'pourtoi' : 'reseau'));
+  assert.deepEqual(ordre, ['bonjour', 'etape', 'avancement', 'afaire', 'fondateurs', 'pourtoi', 'reseau']);
+  // Une seule fois : le pouls du réseau, l'objectif de l'année ; plus de bloc « On t'a écrit » ni d'offres en double avec Offres
+  const n = await s.page.evaluate(() => ({ pouls: document.querySelectorAll('.home .pouls').length, objectif: document.querySelectorAll('.home .objective').length, msg: document.querySelectorAll('.home .msg-home').length, reco: document.querySelectorAll('.home .reco, .home .ocard').length }));
+  assert.deepEqual(n, { pouls: 1, objectif: 1, msg: 0, reco: 0 });
+  // Les messages qui attendent : une ligne, avec le nombre de non lus, qui ouvre les messages
+  const att = await s.page.evaluate(async () => {
+    const L = await import(new URL('logic.js', location.href).href); const d = window.__demo;
+    return L.conversations(d.data, d.me.id).filter(c => c.nonLus).map(c => ({ prenom: d.byId('profiles', c.autre).full_name.split(' ')[0], n: c.nonLus }));
+  });
+  assert.ok(att.length >= 2, 'la démo a deux conversations non lues');
+  const ligne = s.page.locator('.af-accueil .todo > li').first();
+  assert.match(await ligne.innerText(), new RegExp(`^${att[0].prenom} et ${att[1].prenom} t’ont écrit`));
+  assert.equal(await ligne.locator('.af-n').innerText(), String(att.reduce((t, c) => t + c.n, 0)));
+  assert.ok((await s.page.locator('.af-accueil .todo > li').count()) <= 3);
+  // « Tout voir (n) » : le nombre de la cloche, et il l'ouvre
+  // (la proposition d'ambassadeur naît à l'ouverture : on attend que le chiffre de la cloche ne bouge plus)
+  await s.page.waitForFunction(() => { const b = document.querySelector('.cloche-btn .badge-n')?.textContent, t = document.querySelector('.af-tout')?.textContent; return b && t === `Tout voir (${b})`; }, null, { timeout: 5000 });
+  const cloche = await s.page.locator('.cloche-btn .badge-n').innerText();
+  await s.page.locator('.af-tout').click(); await s.page.waitForSelector('.modal.cloche');
+  assert.match(await s.page.locator('.modal.cloche #cl-faire').innerText(), new RegExp(`À faire\\s*${cloche}`));
+  await s.fermer();
+  // « N offres pour toi » : le vrai nombre (mon année, pas encore postulé), les logos, et la liste dans Offres
+  const pto = s.page.locator('.home .pto');
+  assert.match(await pto.locator('strong').innerText(), /^\d+ offres? pour toi$/);
+  assert.ok((await pto.locator('.pto-logos > *').count()) >= 1);
+  await pto.click(); await s.page.waitForFunction(() => location.hash === '#offres');
+  await s.aller('accueil');
+  await ligne.locator('button').click(); await s.page.waitForFunction(() => location.hash === '#messages');
+  // Un lauréat : où il en est (« Tu as aidé… ») sous l'étape, pas de « Dernières offres » des autres
+  await s.comme('Youssef'); await s.aller('accueil');
+  if (await s.page.$('.fete-back, .modal-back:not(.sortie)')) await s.fermer();
+  assert.match(await s.page.locator('.home-col .avancement').innerText(), /Tu as aidé \d+ étudiants?/);
+  assert.equal(await s.page.locator('.home .ocard, .home .pto').count(), 0);
+  assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe, sombre, 360 px : traduit, sans débordement
+  const a = await ouvrir({ largeur: 360, langue: 'ar', theme: 'dark' });
+  await a.comme('Salma'); await a.aller('accueil');
+  if (await a.page.$('.fete-back, .modal-back:not(.sortie)')) await a.fermer();
+  assert.match(await a.page.locator('.af-accueil .todo > li').first().innerText(), /^رسائل من /);
+  assert.deepEqual((await a.page.locator('.home .pto-txt').innerText()).match(/[A-Za-zÀ-ÿ]{2,}/g) || [], []);
+  assert.deepEqual((await a.page.locator('.af-tout').innerText()).match(/[A-Za-zÀ-ÿ]{2,}/g) || [], []);
+  assert.ok((await a.debordement()) <= 0);
+  assert.deepEqual((await a.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), []);
+  await a.ctx.close();
+});
+
+test('« À faire » : un lauréat sans photo voit « Ajoute une photo », en dernier, ni dans la cloche ni sur la carte ; elle ouvre Mon profil sur la carte photo', async () => {
   const s = await ouvrir({ largeur: 390 });
   const PHRASE = 'Ajoute une photo, les étudiants écrivent plus facilement à un visage.';
   await s.comme('Nadia'); await s.aller('accueil');
   if (await s.page.$('.fete-back, .modal-back')) await s.fermer();
-  const lignes = s.page.locator('.semaine .todo > li');
+  const lignes = s.page.locator('.af-accueil .todo > li');
   const textes = (await lignes.allInnerTexts()).map(t => t.trim());
   const i = textes.findIndex(t => t.includes(PHRASE));
   assert.ok(i >= 0, JSON.stringify(textes));
@@ -2133,7 +2188,7 @@ test('« Cette semaine » : un lauréat sans photo voit « Ajoute une photo », 
   assert.ok(await s.page.evaluate(() => { const c = document.querySelector('.photo-card').getBoundingClientRect(); return c.top >= 0 && c.top < innerHeight; }), 'la carte photo est à l’écran');
   // Un étudiant ne la voit pas
   await s.comme('Salma'); await s.aller('accueil');
-  assert.equal(await s.page.locator('.semaine', { hasText: 'Ajoute une photo' }).count(), 0);
+  assert.equal(await s.page.locator('.af-accueil', { hasText: 'Ajoute une photo' }).count(), 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -2395,12 +2450,12 @@ test('un rendez-vous ne prend la carte que la veille ; Mentorat calme propose «
   if (await s.page.$('.fete-back')) await s.fermer();
   assert.match(await s.page.locator('.pas').getAttribute('data-pas'), /^sc/);
   assert.match(await s.page.locator('.pas .pas-go').innerText(), /Je serai là/);
-  // Dans quatre jours : une ligne de « Cette semaine », la carte passe à autre chose
+  // Dans quatre jours : une ligne de « À faire », la carte passe à autre chose
   await demo(`const salma = d.profiles.find(p => p.full_name.startsWith('Salma'));
     d.mentorships.find(m => m.student_id === salma.id && m.status === 'acceptee' && !m.confirme_at && new Date(m.rdv_at) > Date.now()).rdv_at = new Date(Date.now() + 4 * 864e5).toISOString();`);
   await recharger();
   assert.doesNotMatch(await s.page.locator('.pas').getAttribute('data-pas'), /^sc|^rdv/);
-  assert.match(await s.page.locator('.semaine .todo').innerText(), /Confirme ta présence/);
+  assert.match(await s.page.locator('.af-accueil .todo').innerText(), /Confirme ta présence/);
   // Une lauréate encore invisible, sans demande : une seule action
   await s.comme('Nadia');
   await demo(`d.mentorships = d.mentorships.filter(m => m.status !== 'demande');`);
@@ -3096,7 +3151,10 @@ test('accueil (démo) : les membres fondateurs tout en haut, des chiffres vrais,
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Salma'); await s.aller('accueil');
   await s.page.waitForSelector('.fd-accueil .fd-carte');
-  assert.ok(await s.page.evaluate(() => document.querySelector('.home-col').firstElementChild.classList.contains('fd-accueil')), 'au-dessus du bonjour');
+  assert.ok(await s.page.evaluate(() => {
+    const f = document.querySelector('.fd-accueil'), col = f.parentElement, apres = (a, b) => !!a && !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    return col.classList.contains('home-col') && apres(col.querySelector('.pas'), f) && apres(col.querySelector('.af-accueil'), f) && apres(f, document.querySelector('.home-main'));
+  }), 'après la prochaine étape et « À faire », avant « Pour toi »');
   const c = await classementDemo(s.page);
   assert.ok(c.length > 0 && c.length <= 25);
   assert.deepEqual([...new Set(c.map(f => f.role))], ['laureat']);
@@ -3754,7 +3812,7 @@ test('la pastille « Notifications bloquées » : les gestes de cet appareil, en
 
 // ---------------------------------------------------------------------------
 // Vitrine : le logo des entreprises (l'icône de leur site, sinon le monogramme), des cartes d'offres plus parlantes et
-// vraies, « Ça bouge dans le réseau », « Grâce à toi » sur l'accueil d'un lauréat, la carte qui devient la fiche
+// vraies, « Ça bouge cette semaine », « Grâce à toi » sur l'accueil d'un lauréat, la carte qui devient la fiche
 // ---------------------------------------------------------------------------
 const fermerFetes = async page => { for (let i = 0; i < 3; i++) { const b = page.locator('.fete-acts .btn').first(); if (!(await b.count())) break; await b.click(); await page.waitForTimeout(250); } };
 const icone = n => `<svg xmlns="http://www.w3.org/2000/svg" width="${n}" height="${n}" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#1F6FB2"/></svg>`;
@@ -3802,7 +3860,7 @@ test('vitrine : le logo d’une entreprise, l’icône de son site quand elle ar
   await t.ctx.close();
 });
 
-test('vitrine : des cartes d’offres parlantes et vraies, « Ça bouge dans le réseau », « Grâce à toi » (360 px, français puis arabe sombre)', async () => {
+test('vitrine : des cartes d’offres parlantes et vraies, « Ça bouge cette semaine », « Grâce à toi » (360 px, français puis arabe sombre)', async () => {
   const s = await ouvrir({ largeur: 360 });
   await s.comme('Salma'); await fermerFetes(s.page);
   // Deux autres étudiants de 5A mettent l'offre de Yazaki de côté : la carte le dit (un vrai compte), jamais de points
@@ -3843,7 +3901,7 @@ test('vitrine : des cartes d’offres parlantes et vraies, « Ça bouge dans le 
   assert.equal(await s.page.locator('.offer-grid .empty').count(), 0);
   await s.page.evaluate(() => { const d = window.__demo; d.enAttente = false; d.data.offers = d.__offres; d.emit(); });
   await s.page.waitForSelector('.offer-grid .ocard');
-  // « Ça bouge dans le réseau » : les mêmes comptes que la règle, trois au plus, des phrases entières
+  // « Ça bouge cette semaine » (dans « Dans le réseau ») : les mêmes comptes que la règle, trois au plus, des phrases entières
   await s.aller('accueil'); await fermerFetes(s.page);
   const attendu = await s.page.evaluate(async () => {
     const V = await import(new URL('vitrine-regles.js', location.href).href); const L = await import(new URL('logic.js', location.href).href);
@@ -3851,11 +3909,12 @@ test('vitrine : des cartes d’offres parlantes et vraies, « Ça bouge dans le 
     return b ? b.faits.map(V.phraseBouge) : [];
   });
   assert.ok(attendu.length >= 1 && attendu.length <= 3, 'la démo bouge');
-  assert.deepEqual(await s.page.locator('.semaine .cabouge-faits li').allInnerTexts(), attendu);
-  assert.equal(await s.page.locator('.semaine .grace').count(), 0, '« Grâce à toi » : pour un lauréat seulement');
+  assert.deepEqual(await s.page.locator('.reseau-semaine .cabouge-faits li').allInnerTexts(), attendu);
+  assert.doesNotMatch(attendu.join(' '), /réaction/, 'les réactions ne sont pas un chiffre montré');
+  assert.equal(await s.page.locator('.home .grace').count(), 0, '« Grâce à toi » : pour un lauréat seulement');
   // Un lauréat : la nouvelle vraie née de ses offres, qui ouvre l'offre ; toujours un seul bouton plein
   await s.comme('Youssef'); await fermerFetes(s.page); await s.aller('accueil'); await fermerFetes(s.page);
-  const grace = s.page.locator('.semaine .grace');
+  const grace = s.page.locator('.home-main .grace');
   assert.match(await grace.locator('strong').innerText(), /^Grâce à toi, \S+ a décroché (un entretien|son PFE|son stage|son stage à l’étranger|son poste|sa place)$/);
   assert.equal(await s.page.locator('.home .btn.primary:visible').count(), 1);
   // Les candidatures, l'auteur les voit sur la carte de son offre (jamais « 0 »)
@@ -3870,8 +3929,8 @@ test('vitrine : des cartes d’offres parlantes et vraies, « Ça bouge dans le 
   // En arabe, sombre : tout traduit, sans débordement
   const a = await ouvrir({ largeur: 360, langue: 'ar', theme: 'dark' });
   await a.comme('Youssef'); await fermerFetes(a.page); await a.aller('accueil'); await fermerFetes(a.page);
-  assert.match(await a.page.locator('.semaine .grace strong').innerText(), /^بفضلك، /);
-  assert.deepEqual((await a.page.locator('.semaine .cabouge').innerText()).match(/[A-Za-zÀ-ÿ]{2,}/g) || [], []);
+  assert.match(await a.page.locator('.home-main .grace strong').innerText(), /^بفضلك، /);
+  assert.deepEqual((await a.page.locator('.reseau-semaine .cabouge').innerText()).match(/[A-Za-zÀ-ÿ]{2,}/g) || [], []);
   await a.aller('offres'); await a.page.waitForSelector('.offer-grid .ocard');
   await a.comme('Salma'); await fermerFetes(a.page); await a.aller('offres'); await a.page.waitForSelector('.offer-grid .ocard');
   assert.ok((await a.debordement()) <= 0);

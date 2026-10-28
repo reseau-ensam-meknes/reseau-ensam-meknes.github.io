@@ -764,7 +764,10 @@ test('un lauréat devenu membre fondateur : le bandeau, la fête, puis « Ton no
   site.inscrits.push({ id: UID, full_name: 'Abderrahman Hajeb', role: 'laureat', filiere: 'Génie Mécanique', promo: 2024, created_at: '2026-10-20T10:00:00Z', verified: true, consent_at: '2026-10-20T10:00:00Z', emails_hebdo: true });
   const m = await membre();
   await m.page.waitForSelector('.fd-accueil .fd-carte', { timeout: 15000 });
-  assert.ok(await m.page.evaluate(() => document.querySelector('.home-col').firstElementChild.classList.contains('fd-accueil')), 'tout en haut de l’accueil');
+  assert.ok(await m.page.evaluate(() => {
+    const f = document.querySelector('.fd-accueil'), apres = (a, b) => !!a && !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+    return f.parentElement.classList.contains('home-col') && apres(document.querySelector('.home .hello'), f) && apres(f, document.querySelector('.home-main'));
+  }), 'sous le bonjour et « À faire », avant « Pour toi »');
   assert.equal(await m.page.locator('.fd-accueil .fd-carte').count(), 2);
   assert.match(await m.page.locator('.fd-accueil .fd-carte').first().innerText(), /Abderrahman Hajeb[\s\S]*C’est toi/);
   assert.match(await m.page.locator('.fd-accueil .fd-places').innerText(), /23 places de membre fondateur restantes sur 25/);

@@ -165,7 +165,7 @@ function OfferList({ ctx, filtre, setFiltre, onPropose, onPartager }) {
 }
 
 // Offres recommandées à un étudiant : sa filière, ses compétences retrouvées dans l'offre, sa ville
-function recoFor(ctx, max) {
+export function recoFor(ctx, max) {
   const { data, me, saison } = ctx;
   const n = niveauOf(me, saison);
   // Les partages (à postuler ailleurs) n'y sont pas ; une offre portée par un lauréat, qui encadre, passe devant
