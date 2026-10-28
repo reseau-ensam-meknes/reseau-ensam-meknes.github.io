@@ -5,7 +5,7 @@
 // En ligne, la base décide (ambassadeurs_proposer, schema.sql) ; en démo, le même calcul (logic.js). Base pas encore à
 // jour : la table manque, rien ne s'affiche.
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
-import { Icon, Avatar, Bouclier, Embleme, toast, celebrate, injectCSS, lienWhatsApp } from './ui.js';
+import { Icon, Avatar, Bouclier, Embleme, Modal, toast, celebrate, injectCSS, lienWhatsApp } from './ui.js';
 import { ambassadeurDuGroupe, ambassadeursActifs, proposerAmbassadeur, chiffresPromo, reussitesDuGroupe, texteReussite, filiereCourte, AMB_DELAI_JOURS, timeAgo } from './logic.js';
 import { addAR, getLang } from './i18n.js';
 import { MessageBtn } from './messages.js';
@@ -108,23 +108,32 @@ export function pasAmbassadeur(ctx) {
 export function notifsAmbassadeur({ data, me }) {
   const a = maLigne(data, me);
   if (!a || a.statut !== 'propose') return [];
-  // sansToast : la proposition naît à l'ouverture de l'appli (pas venue d'un autre membre) ; la carte et la cloche suffisent
-  return [{ key: 'am' + a.id, ref: a.id, action: true, sansToast: true, geste: 'Répondre', tone: 'brass', icon: 'people', to: 'accueil', at: a.propose_at || a.created_at,
-    text: `La plateforme te propose d’être ambassadeur de ta promo (${groupeTxt(a.promo, a.filiere)}).` }];
+  // sansToast : la proposition naît à l'ouverture de l'appli (pas venue d'un autre membre) ; la carte et la cloche suffisent.
+  // feuille : la cloche et la ligne de « À faire » ouvrent la même feuille (AmbassadeurFeuille, app.js)
+  return [{ key: 'am' + a.id, ref: a.id, action: true, sansToast: true, geste: 'Répondre', tone: 'brass', icon: 'people', to: 'accueil', feuille: 'ambassadeur', at: a.propose_at || a.created_at,
+    text: `La plateforme te propose d’être ambassadeur de ta promo (${groupeTxt(a.promo, a.filiere)}).`, ligne: 'Deviens ambassadeur de ta promo' }];
 }
 
 // ---------------------------------------------------------------------------
-// Sur l'accueil : la carte de l'ambassadeur (lien, réussites, chiffres), ou le merci à l'ambassadeur de sa promo
+// Sur l'accueil : la carte de l'ambassadeur (lien, réussites, chiffres), ou le merci à l'ambassadeur de sa promo.
+// La proposition, elle, est une ligne de « À faire » (ou la carte « prochaine étape ») qui ouvre AmbassadeurFeuille.
 // ---------------------------------------------------------------------------
-// pasKey : la carte « prochaine étape » de l'accueil. Si elle montre autre chose de plus pressé, la proposition attend
-// ici, en carte tonale (sans bouton plein : l'écran garde le sien).
-export function AmbassadeurAccueil({ ctx, pasKey }) {
+export function AmbassadeurAccueil({ ctx }) {
   const { data, me } = ctx;
   if (!me || !MEMBRES.includes(me.role)) return null;
   const a = ambassadeurDuGroupe(data, me.promo, me.filiere);
-  if (!a) return null;
-  if (a.statut === 'propose') return a.user_id === me.id && pasKey !== 'am' + a.id ? html`<${PropositionCarte} ctx=${ctx} a=${a}/>` : null;
+  if (!a || a.statut === 'propose') return null;
   return a.user_id === me.id ? html`<${CarteAmbassadeur} ctx=${ctx} a=${a}/>` : html`<${MerciAmbassadeur} ctx=${ctx} a=${a}/>`;
+}
+
+// La proposition dans une feuille : la carte d'avant telle quelle (« Accepter », « Pas pour moi ») ; une fois répondu,
+// la feuille se ferme d'elle-même
+export function AmbassadeurFeuille({ ctx, onClose }) {
+  const a = maLigne(ctx.data, ctx.me);
+  const ouverte = a?.statut === 'propose';
+  useEffect(() => { if (!ouverte) onClose(); }, [ouverte]);
+  if (!ouverte) return null;
+  return html`<${Modal} title="Ambassadeur de ta promo" cls="amb-feuille" onClose=${onClose}><${PropositionCarte} ctx=${ctx} a=${a}/><//>`;
 }
 
 function PropositionCarte({ ctx, a }) {
@@ -299,7 +308,7 @@ injectCSS('ambassadeurs', `
 // Arabe : « سفير الدفعة » est le nom du rôle (comme « عضو مؤسس ») ; خريجين pour les lauréats ; jamais القدامى
 const AR_MOIS = { janvier: 'يناير', février: 'فبراير', mars: 'مارس', avril: 'أبريل', mai: 'ماي', juin: 'يونيو', juillet: 'يوليوز', août: 'غشت', septembre: 'شتنبر', octobre: 'أكتوبر', novembre: 'نونبر', décembre: 'دجنبر' };
 addAR({
-  'Ta promo': 'دفعتك', 'Accepter': 'قبول', 'Pas pour moi': 'ليس لي', 'Répondre': 'أجب',
+  'Ta promo': 'دفعتك', 'Accepter': 'قبول', 'Deviens ambassadeur de ta promo': 'كن سفير دفعتك', 'Pas pour moi': 'ليس لي', 'Répondre': 'أجب',
   'Tu es parmi les membres les plus actifs de ta promo. Partage son lien d’inscription et ses réussites dans votre groupe WhatsApp ; chaque mois, tu reçois ses chiffres.': 'أنت من أكثر أعضاء دفعتك نشاطًا. شارك رابط التسجيل ونجاحات الدفعة في مجموعة واتساب الخاصة بكم؛ وتصلك أرقامها كل شهر.',
   'Merci, ambassadeur de ta promo !': 'شكرًا، أنت الآن سفير دفعتك!',
   'Merci ! Tu es ambassadeur de ta promo.': 'شكرًا! أنت الآن سفير دفعتك.',

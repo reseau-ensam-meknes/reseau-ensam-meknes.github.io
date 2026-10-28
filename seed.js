@@ -292,7 +292,7 @@ export function buildSeed(now = new Date()) {
 
   const hex = () => Array.from({ length: 12 }, () => '0123456789abcdef'[Math.floor(r2() * 16)]).join('');
   const liens_rdv = mentorships.filter(m => m.status === 'acceptee' || m.status === 'terminee').map(m => ({ id: m.id, lien: `https://meet.jit.si/ReseauENSAM-${hex()}`, created_at: m.accepted_at || m.created_at }));
-  const annonces = [{ id: id('an'), author_id: admin.id, texte: 'Nouveau : besoin d’un conseil ? Demande l’aide d’un lauréat en une minute. Dès qu’il accepte, le rendez-vous en visio et l’invitation agenda sont prêts.', lien: null, active: true, public: 'etudiants', created_at: daysAgo(1) }];
+  const annonces = [{ id: id('an'), author_id: admin.id, texte: 'Période d’examens : la bibliothèque de l’école reste ouverte jusqu’à 22 h, du lundi au samedi.', lien: null, active: true, public: 'etudiants', created_at: daysAgo(1) }];
 
   const shortlists = [
     { id: id('sh'), laureat_id: youssef.id, student_id: s5[10].id, note: 'Profil lean, à rappeler en janvier', created_at: daysAgo(5) },

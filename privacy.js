@@ -115,7 +115,7 @@ const NOTES_NOTIF = {
   admin: 'Les signalements arrivent toujours à l’équipe du réseau.',
 };
 addAR({
-  'Par email': 'عبر البريد الإلكتروني', 'Sur tes appareils': 'على أجهزتك', 'Ce que je reçois': 'ما يصلني', 'Choix enregistré.': 'تم حفظ اختيارك.',
+  'Par email': 'عبر البريد الإلكتروني', 'Ce que je reçois': 'ما يصلني', 'Choix enregistré.': 'تم حفظ اختيارك.',
   'Recevoir par email les nouvelles offres de mon année et de ma filière (3 au plus par jour)': 'استلام العروض الجديدة الخاصة بسنتي وشعبتي عبر البريد (3 على الأكثر في اليوم)',
   [NOTES_NOTIF.tous]: 'تسري اختياراتك على كل الأجهزة التي فُعّلت فيها الإشعارات.',
   [NOTES_NOTIF.admin]: 'تصل البلاغات دائمًا إلى فريق الشبكة.',
@@ -265,15 +265,38 @@ export function ConsentModal({ ctx }) {
       <button class="linkish" onClick=${() => go('confidentialite')}><${Icon} name="shield" size=${15}/> Lire la page Confidentialité</button>
       <label class="check"><input id="cs-ok" type="checkbox" checked=${ok} onChange=${e => setOk(e.target.checked)}/> J’ai lu la page Confidentialité et j’accepte que mes données servent au réseau.</label>
       <label class="check"><input id="cs-mail" type="checkbox" checked=${mails} onChange=${e => setMails(e.target.checked)}/> Recevoir un résumé par email chaque semaine</label>
-      <div class="row-end"><button class="btn ghost" onClick=${() => go('profil')}>Supprimer mon compte</button>
+      <div class="row-end"><button class="btn ghost" onClick=${() => go('profil/donnees')}>Supprimer mon compte</button>
         <button class="btn primary" disabled=${!ok} onClick=${() => act(async () => { await store.update('profiles', me.id, { consent_at: new Date().toISOString(), emails_hebdo: mails }); toast('Merci, c’est enregistré.'); })}>Continuer</button></div>
     </div>
   </div></div>`;
 }
 
-// « Mes données » dans Mon profil : emails, notifications, téléchargement, suppression
+// « Mon profil › Notifications » : d'abord cet appareil (activer, tester, couper) et ce que je reçois sur mes appareils,
+// puis les emails. Notifications par catégorie : en ligne, seulement une fois la base à jour (colonne notif_push). Avant,
+// l'étudiant garde sa case « M'alerter… » (le téléphone et l'email) avec les emails, sans titre « Par email ».
+export function MesNotifications({ ctx }) {
+  const { me, store, act } = ctx;
+  const cats = store.mode !== 'live' || 'notif_push' in me;
+  return html`<section class="panel md-push" id="md-push" aria-labelledby="md-push-h">
+      <h2 class="h-ico" id="md-push-h"><${Icon} name="bell"/> Notifications sur ce téléphone ou cet ordinateur</h2>
+      <${PushToggle} ctx=${ctx}/>
+      ${cats ? html`<${ChoixNotifs} ctx=${ctx}/>` : null}
+    </section>
+    <section class="panel md-emails" id="md-emails" aria-labelledby=${cats ? 'md-titre-mail' : null} aria-label=${cats ? null : 'Emails et alertes'}>
+      ${cats ? html`<h2 class="h-ico md-titre" id="md-titre-mail"><${Icon} name="mail"/> Par email</h2>` : null}
+      <label class="check"><input id="md-mail" type="checkbox" checked=${me.emails_hebdo !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { emails_hebdo: e.target.checked }); toast(e.target.checked ? 'Tu recevras un résumé chaque semaine.' : 'Plus de résumé par email.'); })}/> Recevoir un résumé par email chaque semaine</label>
+      ${me.role === 'etudiant' && cats && (store.mode !== 'live' || 'alertes_email' in me) ? html`<label class="check"><input id="md-alertes-mail" type="checkbox" checked=${me.alertes_email !== false} onChange=${e => act(() => store.update('profiles', me.id, { alertes_email: e.target.checked }))}/> Recevoir par email les nouvelles offres de mon année et de ma filière (3 au plus par jour)</label>` : null}
+      ${me.role === 'etudiant' && !cats && (store.mode !== 'live' || 'alertes_offres' in me) ? html`<div class="cf-alertes">
+        <label class="check"><input id="md-alertes" type="checkbox" checked=${me.alertes_offres !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { alertes_offres: e.target.checked }); toast(e.target.checked ? 'On t’alerte dès qu’une offre pour toi est publiée.' : 'Plus d’alertes d’offres.'); })}/> M’alerter dès qu’une offre de mon année et de ma filière est publiée</label>
+        ${me.alertes_offres !== false ? html`<label class="check sub"><input id="md-alertes-mail" type="checkbox" checked=${me.alertes_email !== false} onChange=${e => act(() => store.update('profiles', me.id, { alertes_email: e.target.checked }))}/> Aussi par email (3 au plus par jour)</label>` : null}
+      </div>` : null}
+      ${store.mode !== 'live' || 'emails_messages' in me ? html`<label class="check"><input id="md-msg-mail" type="checkbox" checked=${me.emails_messages !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { emails_messages: e.target.checked }); toast(e.target.checked ? 'Un email te prévient si un message attend depuis 30 minutes.' : 'Plus d’email pour les messages.'); })}/> M’envoyer un email quand un message m’attend (un toutes les 6 heures au plus)</label>` : null}
+    </section>`;
+}
+
+// « Mon profil › Données » : télécharger tout ce que la plateforme garde sur moi, ou supprimer mon compte
 export function MesDonnees({ ctx }) {
-  const { me, store, act, go, data } = ctx;
+  const { me, store, go, data } = ctx;
   const [del, setDel] = useState(false);
   const exportData = () => {
     const mine = {};
@@ -289,32 +312,25 @@ export function MesDonnees({ ctx }) {
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   };
-  // Notifications par catégorie : en ligne, seulement une fois la base à jour (colonne notif_push). Avant, l'étudiant garde
-  // sa case « M'alerter… » ; après, elle devient « Nouvelles offres pour moi » (téléphone) et la case email à part.
-  // Les titres « Par email » / « Sur tes appareils » aussi : avant, « M'alerter… » (le téléphone) se retrouverait sous « Par email ».
-  const cats = store.mode !== 'live' || 'notif_push' in me;
-  return html`<div class="panel" id="mes-donnees">
-    <div class="section-head"><h2 class="h-ico"><${Icon} name="shield"/> Mes données et notifications</h2><button class="btn tiny ghost" onClick=${() => go('confidentialite')}>Confidentialité <${Icon} name="arrow" size=${14}/></button></div>
-    ${cats ? html`<h3 class="md-titre">Par email</h3>` : null}
-    <label class="check"><input id="md-mail" type="checkbox" checked=${me.emails_hebdo !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { emails_hebdo: e.target.checked }); toast(e.target.checked ? 'Tu recevras un résumé chaque semaine.' : 'Plus de résumé par email.'); })}/> Recevoir un résumé par email chaque semaine</label>
-    ${me.role === 'etudiant' && cats && (store.mode !== 'live' || 'alertes_email' in me) ? html`<label class="check"><input id="md-alertes-mail" type="checkbox" checked=${me.alertes_email !== false} onChange=${e => act(() => store.update('profiles', me.id, { alertes_email: e.target.checked }))}/> Recevoir par email les nouvelles offres de mon année et de ma filière (3 au plus par jour)</label>` : null}
-    ${me.role === 'etudiant' && !cats && (store.mode !== 'live' || 'alertes_offres' in me) ? html`<div class="cf-alertes">
-      <label class="check"><input id="md-alertes" type="checkbox" checked=${me.alertes_offres !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { alertes_offres: e.target.checked }); toast(e.target.checked ? 'On t’alerte dès qu’une offre pour toi est publiée.' : 'Plus d’alertes d’offres.'); })}/> M’alerter dès qu’une offre de mon année et de ma filière est publiée</label>
-      ${me.alertes_offres !== false ? html`<label class="check sub"><input id="md-alertes-mail" type="checkbox" checked=${me.alertes_email !== false} onChange=${e => act(() => store.update('profiles', me.id, { alertes_email: e.target.checked }))}/> Aussi par email (3 au plus par jour)</label>` : null}
-    </div>` : null}
-    ${store.mode !== 'live' || 'emails_messages' in me ? html`<label class="check"><input id="md-msg-mail" type="checkbox" checked=${me.emails_messages !== false} onChange=${e => act(async () => { await store.update('profiles', me.id, { emails_messages: e.target.checked }); toast(e.target.checked ? 'Un email te prévient si un message attend depuis 30 minutes.' : 'Plus d’email pour les messages.'); })}/> M’envoyer un email quand un message m’attend (un toutes les 6 heures au plus)</label>` : null}
-    ${cats ? html`<h3 class="md-titre" id="md-notifs">Sur tes appareils</h3>` : null}
-    <${PushToggle} ctx=${ctx}/>
-    ${cats ? html`<${ChoixNotifs} ctx=${ctx}/>` : null}
-    <${FondateurPublicCase} ctx=${ctx}/>
-    <div class="row" id="profil-donnees">
-      <button class="btn small" onClick=${exportData}><${Icon} name="download" size=${15}/> Télécharger mes données</button>
-      <span class="spacer"></span>
-      <button class="btn small ghost danger-t" onClick=${() => setDel(true)}><${Icon} name="trash" size=${15}/> Supprimer mon compte</button>
-    </div>
+  return html`<section class="panel md-donnees" id="mes-donnees" aria-labelledby="md-donnees-h">
+    <div class="section-head"><h2 class="h-ico" id="md-donnees-h"><${Icon} name="shield"/> Mes données</h2><button class="btn tiny ghost" onClick=${() => go('confidentialite')}>Confidentialité <${Icon} name="arrow" size=${14}/></button></div>
+    <p class="small muted">${DONNEES_INTRO}</p>
+    <div class="md-ligne"><div class="md-ligne-txt"><strong>Télécharger mes données</strong><span class="small muted">${DONNEES_EXPORT}</span></div>
+      <button class="btn small" id="md-export" onClick=${exportData}><${Icon} name="download" size=${15}/> Télécharger</button></div>
+    <div class="md-ligne"><div class="md-ligne-txt"><strong>Supprimer mon compte</strong><span class="small muted">${DONNEES_SUPPR}</span></div>
+      <button class="btn small ghost danger-t" id="md-supprimer" onClick=${() => setDel(true)}><${Icon} name="trash" size=${15}/> Supprimer</button></div>
     ${del ? html`<${DeleteAccount} ctx=${ctx} onClose=${() => setDel(false)}/>` : null}
-  </div>`;
+  </section>`;
 }
+const DONNEES_INTRO = 'Ce que la plateforme garde sur toi, qui le voit, et comment tout supprimer : la page Confidentialité l’explique.';
+const DONNEES_EXPORT = 'Un fichier avec tout ce que tu as mis sur la plateforme : profil, offres, candidatures, messages.';
+const DONNEES_SUPPR = 'Ton profil, tes offres, tes candidatures et tes messages sont effacés tout de suite. C’est définitif.';
+addAR({
+  'Emails et alertes': 'الرسائل الإلكترونية والتنبيهات', 'Télécharger': 'تحميل',
+  [DONNEES_INTRO]: 'ما تحتفظ به المنصة عنك، ومن يراه، وكيف تحذف كل شيء: تشرحه صفحة الخصوصية.',
+  [DONNEES_EXPORT]: 'ملف يضم كل ما وضعته على المنصة: الملف الشخصي، العروض، الترشيحات، الرسائل.',
+  [DONNEES_SUPPR]: 'يُحذف ملفك وعروضك وترشيحاتك ورسائلك فورًا. ولا رجعة في ذلك.',
+});
 
 // Ce que chacun reçoit sur ses appareils, par catégorie. me.notif_push ne garde que ses choix ; une case jamais touchée
 // suit le défaut de son rôle (pushChoix, mêmes règles que la base). Les choix valent pour tous ses appareils.
