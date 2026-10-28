@@ -60,3 +60,16 @@ export function seedMatch(base, now = new Date()) {
   }
   return { match_choix, matchs, messages };
 }
+
+// Une carte sponsorisée d'exemple (entreprise inventée, lien example.com réservé aux exemples) : elle paraît dans Match
+// après la 10e carte, pour les étudiants et les lauréats, pendant 60 jours. Pas de domaine : le monogramme, aucune icône demandée.
+export function seedSponsorises(base, now = new Date()) {
+  const jour = d => { const x = new Date(now.getTime() + d * 864e5); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+  const admin = (base.profiles || []).find(p => p.role === 'admin');
+  return [{
+    id: 'sp-demo-0001', entreprise: 'Exemplia Langues (fictive)', titre: 'Anglais et allemand pour ingénieurs, le soir en ligne',
+    texte: 'Petits groupes du niveau A1 au niveau C1, préparation au TOEIC et au Goethe. Entreprise inventée pour la démonstration.',
+    lien: 'https://example.com/langues', domaine: null, public: 'tous', annees: null, filieres: null,
+    debut: jour(-7), fin: jour(53), actif: true, created_by: admin?.id || null, created_at: new Date(now.getTime() - 7 * 864e5).toISOString(),
+  }];
+}

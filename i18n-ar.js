@@ -425,7 +425,7 @@ export const AR = {
   'Un étudiant ne voit que les offres de son année ; les offres entre lauréats ne sont pas visibles par les étudiants.': 'لا يرى الطالب إلا عروض سنته، والعروض بين الخريجين لا يراها الطلبة.',
   'L’administration voit les emails des comptes, seulement pour vérifier les lauréats et aider en cas de problème.': 'ترى الإدارة عناوين البريد الإلكتروني للحسابات، فقط للتحقق من الخريجين والمساعدة عند وجود مشكلة.',
   'Une attestation de lauréat peut être vérifiée par un lien que son titulaire choisit de partager.': 'يمكن التحقق من شهادة الخريج عبر رابط يختار صاحبها مشاركته.', 'Ce que nous ne faisons pas': 'ما لا نفعله',
-  'Aucune vente ni location de données, aucune publicité, aucun traceur publicitaire.': 'لا بيع ولا كراء للبيانات، ولا إشهار، ولا أدوات تتبع إشهارية.',
+  'Aucune vente ni location de données, aucune régie publicitaire, aucun traceur publicitaire.': 'لا بيع ولا كراء للبيانات، ولا وكالات إشهار، ولا أدوات تتبع إشهارية.',
   'Le navigateur garde seulement ta langue et tes préférences d’affichage.': 'لا يحتفظ المتصفح إلا بلغتك وتفضيلات العرض.', 'Où sont les données': 'أين توجد البيانات',
   'Base de données et comptes : Supabase, serveurs à Paris (Union européenne).': 'قاعدة البيانات والحسابات: Supabase، خوادم في باريس (الاتحاد الأوروبي).',
   'Site : GitHub Pages. Emails : Brevo (Union européenne). Visio : Jitsi Meet, quand tu rejoins un rendez-vous.': 'الموقع: GitHub Pages. الرسائل الإلكترونية: Brevo (الاتحاد الأوروبي). الاتصال المرئي: Jitsi Meet، عند انضمامك إلى موعد.',
