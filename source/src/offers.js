@@ -77,7 +77,8 @@ export function OffersPage(ctx) {
   const choisir = k => { setFiltre(k); if (lien) go('offres', { remplacer: true }); };
   const nDem = avecDemandes ? demandesOuvertes(data, me, store) : 0;
   const [compose, setCompose] = useState(null);
-  // Partager une offre vue ailleurs (LinkedIn…) : tout membre, étudiants compris, dès que la base le permet
+  // Partager une offre vue ailleurs (LinkedIn…) : tout membre, étudiants compris, dès que la base le permet.
+  // Un étudiant a le bouton en haut de la page : la section « Offres partagées » ne le répète pas en bas.
   const partager = store.peutOrigine?.() ? () => setCompose({ mode: 'partage' }) : null;
   return html`<section class="page offres-page">
     <header class="page-head">
@@ -89,7 +90,7 @@ export function OffersPage(ctx) {
       <button role="tab" aria-selected=${!demandes} class=${demandes ? '' : 'on'} onClick=${() => go('offres', { remplacer: true })}>Offres</button>
       <button role="tab" aria-selected=${demandes} class=${demandes ? 'on' : ''} onClick=${() => go('offres/demandes', { remplacer: true })}>Demandes${nDem ? html` <span class="count">${nDem}</span>` : null}</button>
     </div>` : null}
-    ${demandes ? html`<${DemandesTab} ctx=${isStudent ? ctx : { ...ctx, publierOffre: () => setCompose({}) }}/>` : html`<${OfferList} ctx=${ctx} filtre=${filtre} setFiltre=${choisir} onPropose=${() => setCompose(presetDe(filtre))} onPartager=${partager}/>`}
+    ${demandes ? html`<${DemandesTab} ctx=${isStudent ? ctx : { ...ctx, publierOffre: () => setCompose({}) }}/>` : html`<${OfferList} ctx=${ctx} filtre=${filtre} setFiltre=${choisir} onPropose=${() => setCompose(presetDe(filtre))} onPartager=${isStudent ? null : partager}/>`}
     ${compose ? html`<${OfferComposer} ctx=${ctx} preset=${compose} onClose=${() => setCompose(null)}/>` : null}
   </section>`;
 }
@@ -185,8 +186,9 @@ export function RecoOffers({ ctx, max = 3, inOffres = false, reco, exclure }) {
 }
 
 // Carte d'une offre : toute la carte ouvre la fiche. L'entreprise d'abord (son logo, son nom, sa ville), le poste en grand,
-// l'essentiel en puces (type, durée, rémunéré), puis ce qui est vrai autour : mises de côté, candidatures (pour son auteur),
-// réactions. En pied, le visage du lauréat qui la partage et, s'il peut recommander, on le dit simplement.
+// l'essentiel en puces (type, durée, rémunéré), puis ce qui est vrai autour : mises de côté, candidatures (pour son auteur).
+// S'il peut recommander, on le dit simplement, en vert. Un seul pied : le visage du lauréat qui la partage, les réactions,
+// Postuler, le marque-page.
 const vientDeSauver = new Map();   // offre → moment où elle vient d'être mise de côté ici (le marque-page fait un petit bond)
 export function OfferCard({ o, ctx, onOpen, why, sujets = false, i = 0 }) {
   // Une offre partagée (vue ailleurs) : la carte compacte, avec le lien vers le site d'origine
@@ -213,6 +215,11 @@ export function OfferCard({ o, ctx, onOpen, why, sujets = false, i = 0 }) {
   // « il y a 3 j » dit qu'elle est fraîche ; au-delà d'un mois, la date reste dans la fiche
   const recente = Date.now() - new Date(o.created_at) < 30 * 864e5;
   const sauver = () => { if (!saved) { vientDeSauver.set(o.id, Date.now()); try { navigator.vibrate?.(8); } catch { /* */ } } act(() => saved ? store.remove('reactions', saved.id) : store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save' })); };
+  // Où en est-on (sa candidature, un sujet pris ou libre) ; sinon, quand il n'y a rien à faire, depuis quand elle est là,
+  // écrit sous le prénom de l'auteur (la ligne du pied garde la place pour les réactions et le marque-page)
+  const etat = myApp ? html`<span class=${'state-pill a-' + myApp.status}>${APP_STATUS[myApp.status]}</span>` : pris ? html`<span class="state-pill s-trouve">Pris</span>`
+    : sujets && o.type === 'pfe' && !canApply && o.status === 'ouverte' && !mine ? html`<span class="state-pill s-recherche">Disponible</span>` : null;
+  const quand = !etat && !canApply && recente ? timeAgo(o.created_at) : null;
   return html`<article class=${'ocard' + (o.status !== 'ouverte' ? ' closed' : '') + (estPortee(o) ? ' portee' : '')} style=${`${styleEntreprise(o.entreprise)};--i:${i}`}>
     <button class="ocard-main" onClick=${e => ouvrirEnDouceur(e.currentTarget.closest('.ocard'), onOpen)} aria-label=${`Ouvrir : ${titreOffre(o)}`}>
       <span class="oc-tete">
@@ -228,14 +235,14 @@ export function OfferCard({ o, ctx, onOpen, why, sujets = false, i = 0 }) {
         ${o.remunere ? html`<span class="tag paye">Rémunéré</span>` : null}
         ${o.status !== 'ouverte' ? html`<span class="tag done">${o.status === 'pourvue' ? 'Pourvue' : 'Fermée'}</span>` : null}</span>
       ${why?.length ? html`<${Pourquoi} why=${why}/>` : null}
+      ${coopt ? html`<span class="oc-preuve oa-coopt"><${Icon} name="thumb" size=${16}/><span>${`${prenom(author)} peut te recommander`}</span></span>` : null}
       ${preuve ? html`<span class="oc-preuve"><${Icon} name=${preuve[0]} size=${16}/><span>${preuve[1]}</span></span>` : null}
     </button>
-    <${Reactions} ctx=${ctx} cible=${{ offer_id: o.id }} cls="ocard-rx"/>
     <footer class="ocard-foot">
-      ${author ? html`<span class=${'ocard-author' + (coopt ? ' coopt' : '')}><${Avatar} p=${author} size=${30}/><span class="oa-txt"><span class="oa-nom">${prenom(author)} · promo ${author.promo}</span>${coopt ? html`<span class="oa-coopt">peut te recommander</span>` : null}</span></span>` : null}
-      <span class="spacer"></span>
-      ${myApp ? html`<span class=${'state-pill a-' + myApp.status}>${APP_STATUS[myApp.status]}</span>` : pris ? html`<span class="state-pill s-trouve">Pris</span>`
-        : sujets && o.type === 'pfe' && !canApply && o.status === 'ouverte' && !mine ? html`<span class="state-pill s-recherche">Disponible</span>` : canApply || !recente ? null : html`<span class="muted small nowrap">${timeAgo(o.created_at)}</span>`}
+      ${author ? html`<span class=${'ocard-author' + (coopt ? ' coopt' : '')}><${Avatar} p=${author} size=${30}/><span class="oa-txt"><span class="oa-nom"><span translate="no" dir="auto">${prenom(author)}</span><span class="oa-promo">${`promo ${author.promo}`}</span></span>${quand ? html`<span class="oa-quand">${quand}</span>` : null}</span></span>` : null}
+      ${author ? null : html`<span class="spacer"></span>`}
+      <${Reactions} ctx=${ctx} cible=${{ offer_id: o.id }} cls="ocard-rx" court/>
+      ${etat || (quand && !author ? html`<span class="muted small nowrap">${quand}</span>` : null)}
       ${canApply ? html`<button class="btn tiny tonal ocard-apply" onClick=${() => ctx.openOffer(o.id, true)}>Postuler</button>` : null}
       ${!mine ? html`<button class=${'icon-btn small ocard-garder' + (saved ? ' on' : '') + (saved && pop ? ' pop' : '')} aria-pressed=${!!saved} aria-label=${saved ? 'Ne plus mettre de côté' : 'Mettre de côté'} onClick=${sauver}><${Icon} name="bookmark" size=${16}/></button>` : null}
     </footer>
@@ -691,11 +698,22 @@ injectCSS('offres-ux', `
 .chips-sep { flex: none; width: 1px; height: 22px; background: var(--line); margin-inline: .15rem; }
 @media (max-width: 760px) { .offres-chips { margin-inline: -16px; padding-inline: 16px; scroll-padding-inline: 16px; } }
 
-.ocard-foot { gap: .45rem; }
-.ocard-author { min-width: 0; }
-.ocard-author .oa-txt { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+/* « Nour peut te recommander » : une ligne verte dans la carte, au-dessus des autres preuves */
+.oc-preuve.oa-coopt { color: var(--good); font-weight: 600; }
+.oc-preuve.oa-coopt .ico { color: currentColor; }
+/* Le pied d'une carte, une seule ligne : le lauréat qui la partage (prénom et promo ; dessous, depuis quand elle est là),
+   puis les réactions, l'état ou « Postuler », et le marque-page. Rien ne passe à la ligne : s'il manque de la place,
+   la promo s'efface d'un bloc (elle est dans la fiche), puis le prénom se resserre ; trop étroit, le visage reste seul. */
+.ocard-foot { gap: .35rem; padding-inline: 1.05rem .55rem; padding-block: .45rem; }
+.ocard-foot > :not(.ocard-author):not(.spacer) { flex: none; }
+.ocard-foot > .ocard-author { flex: 1 1 0; min-width: 0; }
+.ocard-author .oa-txt { flex: 1 1 0; display: flex; flex-direction: column; min-width: 0; line-height: 1.25; container-type: inline-size; }
+@container (max-width: 3.5rem) { .oa-txt > * { display: none; } }
 .ocard-author .oa-txt > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ocard-author .oa-coopt { color: var(--good); font-weight: 600; font-size: var(--fs-1); }
+.ocard-author .oa-txt > .oa-nom { display: flex; flex-wrap: wrap; column-gap: .3em; height: 1.25em; }
+.oa-nom > span { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.oa-promo::before { content: "· "; }
+.ocard-author .oa-quand { color: var(--muted); font-size: var(--fs-1); }
 [dir="rtl"] .ocard-txt [dir="auto"], [dir="rtl"] .od .detail-title [dir="auto"] { text-align: right; }
 
 .od .detail-head { gap: .8rem; }
@@ -792,6 +810,7 @@ addAR({
   [/^Voici celles de ta (.+)\.$/, a => `إليك عروض ${a}.`],
   [/^Les autres offres de (.+)$/, a => `عروض أخرى لـ${a}`],
   [/^Partagée par ([^,]+), qui peut te recommander$/, n => `عرض من ${n}، مع إمكانية التزكية`],
+  [/^([^,·]+) peut te recommander$/, n => `تزكية ممكنة من ${n}`],
   [/^Partagée par ([^,]+), qui reçoit ta candidature et te répond ici$/, n => `عرض من ${n}، يصله ترشيحك ويأتيك الجواب هنا`],
   [/^Partagée par ([^,]+)$/, n => `عرض من ${n}`],
   [/^([^,]+) te répond ici$/, n => `الجواب من ${n} هنا`],

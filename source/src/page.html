@@ -1718,6 +1718,14 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"], html[lang=
 .chips.rangee .chip { flex: none; white-space: nowrap; min-height: 36px; }
 .chips.rangee .chip.on { background: var(--sel-bg); color: var(--sel-ink); border-color: transparent; box-shadow: inset 0 0 0 1px var(--sel-ring); font-weight: 600; }
 @media (max-width: 760px) { .chips.rangee { margin-inline: -16px; padding-inline: 16px; scroll-padding-inline: 16px; } }
+/* Une rangée qui défile (puces, onglets, segments) : le bord où il reste à voir s'estompe, et seulement tant qu'il reste
+   à voir. Les classes sont posées par ui.js (bordsRangee) ; le début est à droite en arabe. */
+.fondu-debut, .fondu-fin { --fondu-d: 0px; --fondu-f: 0px; --fondu-sens: to right;
+  -webkit-mask-image: linear-gradient(var(--fondu-sens), transparent 0, #000 var(--fondu-d), #000 calc(100% - var(--fondu-f)), transparent 100%);
+  mask-image: linear-gradient(var(--fondu-sens), transparent 0, #000 var(--fondu-d), #000 calc(100% - var(--fondu-f)), transparent 100%); }
+.fondu-debut { --fondu-d: 2.25rem; }
+.fondu-fin { --fondu-f: 2.25rem; }
+[dir="rtl"] :is(.fondu-debut, .fondu-fin) { --fondu-sens: to left; }
 /* (fin de la partie B) */
 
 /* ===== Lot design · C : visages, logos, icônes, badges, bouclier « vérifié » ===== */
@@ -2267,9 +2275,8 @@ html.mx-fige { overflow: hidden; }
 .mx-etapes li.ici { color: var(--ink); }
 .mx-etapes li.ici .mx-e-pt { box-shadow: inset 0 0 0 5px var(--accent); }
 .mx-e-lib { white-space: nowrap; }
-.mx-b-acts { display: flex; gap: .4rem; margin-inline: -.9rem; padding-inline: .9rem 2rem; overflow-x: auto; scrollbar-width: none;
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2rem), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 2rem), transparent); }
-[dir="rtl"] .mx-b-acts { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 2rem), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 2rem), transparent); }
+/* Le fondu au bord vient de .fondu-debut / .fondu-fin (ui.js), seulement quand des boutons restent cachés */
+.mx-b-acts { display: flex; gap: .4rem; margin-inline: -.9rem; padding-inline: .9rem 2rem; overflow-x: auto; scrollbar-width: none; }
 .mx-b-acts::-webkit-scrollbar { display: none; }
 .mx-b-acts > .btn { flex: none; min-height: 40px; }
 @media (max-width: 760px) { .mx-b-acts > .btn { min-height: 44px; } }

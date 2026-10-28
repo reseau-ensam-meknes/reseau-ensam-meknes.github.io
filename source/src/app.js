@@ -1093,11 +1093,15 @@ function guideEtapes(ctx, setCompose) {
   return { steps, done, total, fini, suivante: fini ? null : comptees.find(s => !s.fait && s.go) || null };
 }
 
+// Sous le titre, les puces qui mènent à chaque partie (photo et CV, infos, coordonnées, qui voit quoi, notifications, données)
+// (import gardé ici, avec Mon profil : le haut du fichier appartient à l'accueil)
+import { SautsProfil } from './community.js';
 function MyProfile({ ctx }) {
   const { me, store } = ctx;
   return html`<section class="page narrow">
     <header class="page-head"><div><p class="eyebrow">Jamais public</p><h1>Mon profil</h1></div>
       ${store.mode === 'live' ? html`<button class="btn ghost" onClick=${() => store.signOut()}><${Icon} name="logout"/> Se déconnecter</button>` : null}</header>
+    <${SautsProfil} key=${me.id}/>
     <${PhotoCard} ctx=${ctx}/>
     <${CvCard} ctx=${ctx}/>
     <${MatchVisible} ctx=${ctx}/>
