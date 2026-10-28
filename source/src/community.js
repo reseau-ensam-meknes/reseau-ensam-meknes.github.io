@@ -1,5 +1,5 @@
 // Entraide, Communauté (classement, annuaire, vitrine des talents) et profils.
-import { html, useState, useMemo, useRef, useEffect, useLayoutEffect } from './vendor/preact-htm.js';
+import { html, useState, useMemo, useRef, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, LogoEntreprise, toast, LevelChip, RoleLine, roleTexte, injectCSS, PartagerWhatsApp, lienDirect, allerAuChamp, Bouclier, Embleme } from './ui.js';
 import { useBrouillon } from './ui.js';
 import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
@@ -25,8 +25,14 @@ import { photoPreteDuCV, PhotoTrouvee } from './photo.js';
 
 // Arabe : textes du profil ajoutés en Phase 3
 addAR({
-  // Les puces sous le titre de « Mon profil »
-  'Parties du profil': 'أقسام الملف', 'Photo et CV': 'الصورة والسيرة الذاتية', 'Mes infos': 'معلوماتي', 'Mes données': 'بياناتي',
+  // Les onglets de « Mon profil » (Profil et Notifications sont déjà traduits ailleurs)
+  'Parties du profil': 'أقسام الملف', 'Mes infos': 'معلوماتي', 'Mes données': 'بياناتي', 'Visibilité': 'الظهور', 'Données': 'البيانات',
+  // Un seul réglage pour Match et la Vitrine des talents
+  'Visible par les lauréats': 'ظاهر للخريجين',
+  'Les lauréats te trouvent dans Match et dans la Vitrine des talents : ils voient ton année, ta filière, tes compétences et ce que tu cherches.':
+    'يجدك الخريجون في صفحة التوافق وفي واجهة المواهب: يرون سنتك وشعبتك ومهاراتك وما تبحث عنه.',
+  'Les lauréats te voient de nouveau dans Match et dans la Vitrine des talents.': 'يراك الخريجون من جديد في صفحة التوافق وفي واجهة المواهب.',
+  'Les lauréats ne te voient plus dans Match ni dans la Vitrine des talents.': 'لم يعد الخريجون يرونك في صفحة التوافق ولا في واجهة المواهب.',
   // Profil en une minute depuis LinkedIn
   'Remplir depuis LinkedIn': 'الملء من LinkedIn', 'Remplir mon profil': 'املأ ملفي', 'Bio': 'نبذة',
   'Sur LinkedIn (ordinateur), ouvre ton profil, puis « Plus » › « Enregistrer au format PDF ».': 'على LinkedIn (من الحاسوب)، افتح ملفك، ثم «المزيد» › «حفظ بصيغة PDF».',
@@ -359,100 +365,62 @@ const MANQUE = {
 };
 const ERR = { nom: 'Écris ton nom complet.', promo: 'Indique l’année de ton diplôme.', filiere: 'Choisis ta filière dans la liste.', aide: 'Choisis l’une des deux réponses.' };
 
-// « Mon profil » est long (photo, CV, formulaire, coordonnées, qui voit quoi, notifications, données) : sous le titre, une
-// rangée de puces mène à chaque partie d'un geste (saut direct si le mouvement est réduit). Elle reste collée sous la barre
-// du haut ; la puce de la partie à l'écran est marquée (aria-current, couleurs de sélection) et ramenée dans sa rangée.
-// Une partie absente (pas de « Qui voit quoi » pour l'administration…) n'a pas de puce.
-const PARTIES_PROFIL = [['photo', 'Photo et CV', ['profil-photo', 'profil-cv']], ['infos', 'Mes infos', ['profil-infos']], ['coordonnees', 'Coordonnées', ['profil-coordonnees']],
-  ['visibilite', 'Qui voit quoi', ['profil-visibilite']], ['notifications', 'Notifications', ['mes-donnees']], ['donnees', 'Mes données', ['profil-donnees']]];
-const partieEl = ids => ids.map(id => document.getElementById(id)).find(Boolean) || null;
-export function SautsProfil() {
-  const ref = useRef(null);
-  const [parties, setParties] = useState(PARTIES_PROFIL.map(p => p[0]));
-  const [actif, setActif] = useState('photo');
-  const vise = useRef(null);       // la partie choisie d'une puce : elle reste marquée le temps que la page y glisse
-  const actifRef = useRef(actif);
-  // La ligne de lecture : sous la barre du haut et sous cette rangée, toutes deux collées en haut
-  const ligne = () => (document.querySelector('.top')?.getBoundingClientRect().bottom || 0) + (ref.current?.offsetHeight || 0) + 12;
-  const marquer = k => {
-    if (k === actifRef.current) return;
-    actifRef.current = k; setActif(k);
+// « Mon profil » en quatre onglets, une seule partie à l'écran : Profil (photo, CV, mes infos), Visibilité (coordonnées,
+// qui voit quoi, visible par les lauréats), Notifications (cet appareil, ce que je reçois, emails), Données (télécharger,
+// supprimer). L'onglet est dans l'adresse (#profil, #profil/visibilite, #profil/notifications, #profil/donnees) : un lien
+// ouvre le bon onglet, et Retour quitte la page (changer d'onglet remplace l'entrée, comme les onglets du Suivi).
+// Les quatre tiennent sur une ligne à 360 px, en français et en arabe : rien de coupé, rien qui défile.
+export const ONGLETS_PROFIL = [['profil', 'Profil'], ['visibilite', 'Visibilité'], ['notifications', 'Notifications'], ['donnees', 'Données']];
+export const ongletProfil = sub => (ONGLETS_PROFIL.some(([k]) => k === sub) ? sub : 'profil');
+export const routeOnglet = k => (k === 'profil' ? 'profil' : 'profil/' + k);
+export function OngletsProfil({ onglet, onChange }) {
+  // Clavier : flèches (dans le sens de lecture), Début et Fin passent d'un onglet à l'autre
+  const clavier = e => {
+    const n = ONGLETS_PROFIL.length, i = ONGLETS_PROFIL.findIndex(([k]) => k === onglet);
+    const rtl = getComputedStyle(e.currentTarget).direction === 'rtl';
+    const j = { ArrowRight: i + (rtl ? -1 : 1), ArrowLeft: i + (rtl ? 1 : -1), Home: 0, End: n - 1 }[e.key];
+    if (j === undefined) return;
+    e.preventDefault();
+    const k = ONGLETS_PROFIL[(j + n) % n][0];
+    if (k !== onglet) onChange(k);
+    requestAnimationFrame(() => document.getElementById('pf-onglet-' + k)?.focus());
   };
-  // Les parties présentes (après chaque rendu : changer de rôle en fait apparaître ou disparaître)
-  useLayoutEffect(() => {
-    const la = PARTIES_PROFIL.filter(([, , ids]) => partieEl(ids)).map(p => p[0]);
-    if (la.join() !== parties.join()) setParties(la);
-  });
-  // La puce marquée reste visible dans sa rangée, sans jamais faire défiler la page en hauteur
-  useLayoutEffect(() => {
-    const r = ref.current?.querySelector('.rangee'), b = r?.querySelector('[aria-current]');
-    if (!r || !b || r.scrollWidth <= r.clientWidth + 1) return;
-    const a = r.getBoundingClientRect(), e = b.getBoundingClientRect();
-    if (e.left < a.left + 24 || e.right > a.right - 24) r.scrollBy({ left: e.left + e.width / 2 - (a.left + a.width / 2), behavior: 'auto' });
-  }, [actif]);
-  const relancer = useRef(null);  // relit la page (après un saut, ou au défilement)
-  const finSaut = useRef(0);
-  useEffect(() => {
-    const nav = ref.current;
-    if (!nav) return;
-    // Collée juste sous la barre du haut, quelle que soit sa hauteur (langue, taille du texte)
-    const haut = document.querySelector('.top');
-    const mesurer = () => nav.style.setProperty('--haut-h', (haut?.offsetHeight || 0) + 'px');
-    mesurer();
-    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(mesurer) : null;
-    if (haut) ro?.observe(haut);
-    let prevu = 0;
-    const suivre = () => {
-      prevu = 0;
-      nav.classList.toggle('colle', scrollY > 0 && nav.getBoundingClientRect().top <= (haut?.getBoundingClientRect().bottom || 0) + 1);
-      if (vise.current) return;
-      const y = ligne(), auBout = innerHeight + scrollY >= document.documentElement.scrollHeight - 4;
-      let k = null;
-      for (const [cle, , ids] of PARTIES_PROFIL) { const el = partieEl(ids); if (el && (k === null || el.getBoundingClientRect().top <= y + 1)) k = cle; }
-      if (auBout) k = [...PARTIES_PROFIL].reverse().find(([, , ids]) => partieEl(ids))?.[0] || k;
-      if (k) marquer(k);
-    };
-    const auDefilement = () => { prevu ||= requestAnimationFrame(suivre); };
-    relancer.current = auDefilement;
-    // Fin d'un saut demandé : la page s'est arrêtée (scrollend) ; sinon le délai posé par aller()
-    const arrive = () => { if (!vise.current) return; clearTimeout(finSaut.current); vise.current = null; auDefilement(); };
-    addEventListener('scroll', auDefilement, { passive: true });
-    addEventListener('scrollend', arrive);
-    suivre();
-    return () => { removeEventListener('scroll', auDefilement); removeEventListener('scrollend', arrive); cancelAnimationFrame(prevu); clearTimeout(finSaut.current); ro?.disconnect(); relancer.current = null; };
-  }, []);
-  const aller = k => {
-    const el = partieEl(PARTIES_PROFIL.find(p => p[0] === k)[2]);
-    if (!el) return;
-    marquer(k);
-    const doux = !matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const haut = k === 'photo' ? 0 : Math.max(0, el.getBoundingClientRect().top + scrollY - ligne() + 4);
-    if (Math.abs(haut - scrollY) > 2) {
-      vise.current = k; clearTimeout(finSaut.current);
-      finSaut.current = setTimeout(() => { vise.current = null; relancer.current?.(); }, doux ? 1200 : 150);
-    }
-    scrollTo({ top: haut, behavior: doux ? 'smooth' : 'auto' });
-    // Le clavier et les lecteurs d'écran continuent dans la partie choisie
-    if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1');
-    el.focus({ preventScroll: true });
-  };
-  return html`<nav class="pf-sauts" aria-label="Parties du profil" ref=${ref}>
-    <div class="chips rangee">${PARTIES_PROFIL.filter(([k]) => parties.includes(k)).map(([k, l]) => html`<button type="button" key=${k} class=${'chip' + (actif === k ? ' on' : '')} aria-current=${actif === k ? 'true' : undefined} onClick=${() => aller(k)}>${l}</button>`)}</div>
-  </nav>`;
+  return html`<div class="seg pf-onglets" role="tablist" aria-label="Parties du profil" onKeyDown=${clavier}>
+    ${ONGLETS_PROFIL.map(([k, l]) => html`<button type="button" role="tab" key=${k} id=${'pf-onglet-' + k} class=${onglet === k ? 'on' : ''} aria-selected=${onglet === k ? 'true' : 'false'}
+      aria-controls="pf-panneau" tabindex=${onglet === k ? 0 : -1} onClick=${() => { if (k !== onglet) onChange(k); }}>${l}</button>`)}
+  </div>`;
 }
-injectCSS('pf-sauts', `
-/* Collée sous la barre du haut (sa hauteur est mesurée), sur le fond de la page ; un filet dès qu'elle est collée */
-.pf-sauts { position: sticky; top: calc(env(safe-area-inset-top, 0px) + var(--haut-h, 60px)); z-index: 15; margin-block: -.5rem; padding-block: .4rem; background: var(--bg); box-shadow: 0 1px 0 transparent; transition: box-shadow .2s; }
-.pf-sauts.colle { box-shadow: 0 1px 0 var(--line); }
-@media (max-width: 760px) { .pf-sauts { margin-inline: -16px; padding-inline: 16px; } }
-/* Le champ où arrive le focus (Tab) n'est jamais caché sous la barre ni sous les puces */
-html:has(.pf-sauts) { scroll-padding-top: calc(env(safe-area-inset-top, 0px) + 8rem); }
-[tabindex="-1"]:is(#profil-photo, #profil-cv, #profil-infos, #profil-coordonnees, #profil-visibilite, #mes-donnees, #profil-donnees):focus { outline: none; }
-@media (prefers-reduced-motion: reduce) { .pf-sauts { transition: none; } }
+injectCSS('pf-onglets', `
+/* La rangée de segments de l'appli ; sur téléphone, toute la largeur, chaque onglet entier (jamais rétréci sous son texte) */
+.pf-onglets button { min-height: 40px; }
+@media (max-width: 560px) {
+  .pf-onglets { align-self: stretch; }
+  .pf-onglets button { flex: 1 1 auto; min-height: 44px; padding-inline: .45rem; font-size: var(--fs-2); }
+}
+/* Une seule partie à l'écran : les autres restent montées (ce qui est tapé et pas encore enregistré survit au changement) */
+.pf-page [hidden] { display: none !important; }
+.pf-panneau { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
+.pf-partie { display: contents; }
+.pf-titre { margin: .25rem 0 0; font-size: var(--fs-4); }
+/* Visibilité : pas de filet au-dessus du premier bloc, ni sous la carte « Visible par les lauréats » */
+.pf-vis > :is(.cf-private, .cf-vis):first-child, .pf-visible + :is(.cf-private, .cf-vis) { border-top: 0; padding-top: 0; }
+/* « Visible par les lauréats » : un seul interrupteur pour Match et la Vitrine des talents */
+.pf-visible { display: flex; align-items: center; gap: 1rem; padding: 1rem 1.1rem; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--sh1); }
+.pf-visible-txt { flex: 1; min-width: 0; }
+.pf-visible-txt h3 { display: flex; align-items: center; gap: .45rem; margin: 0 0 .25rem; font: 650 var(--fs-4)/1.3 var(--f-body); }
+.pf-visible-txt p { margin: 0; }
+/* Page d'entrée (membres fondateurs) : un bloc comme les autres réglages de l'onglet */
+.pf-fondateur { display: flex; flex-direction: column; gap: .55rem; border-top: 1px solid var(--line); padding-top: .9rem; }
+.pf-fondateur:empty { display: none; }
+.pf-fondateur .md-titre { margin: 0; font: 650 var(--fs-3)/1.3 var(--f-display); }
 `);
 
-export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboarding }) {
+// Dans « Mon profil », onglet dit la partie à l'écran ('profil' ou 'visibilite' ; une autre cache tout le formulaire) :
+// les autres parties restent montées, rien de tapé ne se perd en changeant d'onglet. versOnglet(k) change d'onglet ;
+// apresVisibilite s'affiche au bas de l'onglet Visibilité. À l'inscription (onboarding), tout est sur une seule page.
+export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboarding, onglet, versOnglet, apresVisibilite }) {
   const { store, act } = ctx;
+  const voir = k => onboarding || !onglet || onglet === k;
   const S = ctx.saison ?? seasonOf(), an = new Date().getFullYear();
   // À l'inscription, rien n'est choisi d'avance (promo, filière, aide) : un « 2027 » ou une filière qu'on ne remarque pas mènerait à la mauvaise année
   const [f, setF] = useState(() => ({ ...DEFAUTS_PROFIL, role: onboarding ? '' : 'etudiant', ...(onboarding ? { filiere: '', mentor_dispo: null, promo: '' } : { promo: an + 1 }), ...sansVides(preset), ...sansVides(initial) }));
@@ -468,6 +436,22 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
   const v3 = store.mode !== 'live' || 'visibilite' in (initial || store.data.profiles[0] || {});
   // « Je cherche un emploi » (lauréat) : envoyé seulement quand la base connaît la colonne
   const rechOk = store.mode !== 'live' || 'en_recherche' in (initial || store.data.profiles[0] || {});
+  // Match (colonne match_visible) : en ligne, seulement quand la base la connaît (mise-a-jour.sql)
+  const matchOk = store.mode !== 'live' || 'match_visible' in (initial || store.data.profiles[0] || {});
+  // « Visible par les lauréats » (étudiant) : un seul réglage pour la Vitrine des talents (vitrine) et Match (match_visible),
+  // allumé si l'un des deux l'est. Dans « Mon profil », il s'enregistre dès le geste et écrit les deux ; le choix reste
+  // affiché le temps de l'envoi (pas enregistré : il revient à ce qui l'est). À l'inscription, il part avec le profil.
+  const [visibleVoulu, setVisibleVoulu] = useState(null);
+  const visible = onboarding || !initial ? f.vitrine !== false
+    : visibleVoulu ?? (initial.vitrine !== false || (matchOk && initial.match_visible !== false));
+  const changerVisible = v => {
+    if (onboarding || !initial) return set('vitrine', v);
+    setVisibleVoulu(v);
+    act(async () => {
+      try { await store.update('profiles', initial.id, { vitrine: v, ...(matchOk ? { match_visible: v } : {}) }); } finally { setVisibleVoulu(null); }
+      toast(v ? 'Les lauréats te voient de nouveau dans Match et dans la Vitrine des talents.' : 'Les lauréats ne te voient plus dans Match ni dans la Vitrine des talents.');
+    });
+  };
   const coord0 = (initial && store.coordonneesDe(initial.id)) || {};
   const [co, setCo] = useState(() => ({ telephone: coord0.telephone || '', email: coord0.email || '', contact: coord0.contact || (v3 && initial?.contact) || '' }));
   const setC = (k, v) => { toucher('co.' + k); setCo(x => ({ ...x, [k]: v })); };
@@ -564,15 +548,24 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
   const err = k => (tente && manques.includes(k) ? ERR[k] : null);
   const aria = k => (err(k) ? { 'aria-invalid': 'true', 'aria-describedby': 'pf-err-' + k } : {});
   const libelle = manques.length ? MANQUE[manques[0]][0] : onboarding ? 'Rejoindre la communauté' : 'Enregistrer';
+  // Ce qui manque est toujours dans l'onglet Profil : « Enregistrer » touché depuis l'onglet Visibilité y ramène d'abord,
+  // puis mène au champ une fois l'onglet à l'écran
+  const viser = useRef(null);
+  useEffect(() => { const id = viser.current; if (id && voir('profil')) { viser.current = null; allerAuChamp(id); } }, [onglet]);
   const submit = e => {
     e.preventDefault();
     if (manques.length) {
       setTente(true);
       const m = manques[0];
-      allerAuChamp(m === 'coherence' && incoherent === 'loin' ? 'pf-promo' : MANQUE[m][1]);
+      const id = m === 'coherence' && incoherent === 'loin' ? 'pf-promo' : MANQUE[m][1];
+      if (voir('profil') || !versOnglet) allerAuChamp(id);
+      else { viser.current = id; versOnglet('profil'); }
       return;
     }
-    const row = { full_name: f.full_name.trim(), role: f.role === 'admin' ? 'admin' : f.role, filiere, promo: promoN, entreprise: f.entreprise.trim() || null, poste: f.poste.trim() || null, ville: f.ville.trim() || null, pays: f.pays.trim() || 'Maroc', bio: f.bio.trim() || null, competences: listeComp(comp), linkedin: f.linkedin.trim() || null, cv_url: f.cv_url.trim() || null, mentor_dispo: !!f.mentor_dispo, mentor_sujets: (f.mentor_sujets || '').trim() || null, vitrine: !!f.vitrine };
+    const row = { full_name: f.full_name.trim(), role: f.role === 'admin' ? 'admin' : f.role, filiere, promo: promoN, entreprise: f.entreprise.trim() || null, poste: f.poste.trim() || null, ville: f.ville.trim() || null, pays: f.pays.trim() || 'Maroc', bio: f.bio.trim() || null, competences: listeComp(comp), linkedin: f.linkedin.trim() || null, cv_url: f.cv_url.trim() || null, mentor_dispo: !!f.mentor_dispo, mentor_sujets: (f.mentor_sujets || '').trim() || null };
+    // « Visible par les lauréats » : à l'inscription, il part avec le profil (Match seulement s'il est coupé, la base
+    // l'allume d'office) ; dans « Mon profil », l'interrupteur l'a déjà enregistré
+    if (onboarding || !initial) { row.vitrine = f.vitrine !== false; if (matchOk && !row.vitrine && f.role === 'etudiant') row.match_visible = false; }
     if (!v3) row.contact = (f.contact || '').trim() || null;
     if (f.role === 'laureat') { row.secteur = f.secteur || null; row.parrain_dispo = !!f.parrain_dispo; }
     if (rechOk && (f.role === 'laureat' || initial?.en_recherche)) row.en_recherche = f.role === 'laureat' && !!f.en_recherche;
@@ -655,7 +648,41 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
   const n = !isStudent && initial && !initial.verified ? confirmations(store.data, initial) : 0;
   const aide = html`<${ChoixAide} value=${f.mentor_dispo} onChange=${v => set('mentor_dispo', v)} err=${err('aide')}/>`;
   const bouton = html`<button class="btn primary" data-manque=${manques[0] || null}>${libelle}</button>`;
-  return html`<form class="form" id=${onboarding ? undefined : 'profil-infos'} onSubmit=${submit}>
+  // Le reste du profil (replié sous « Facultatif » à l'inscription)
+  const plusProfil = html`
+    ${onboarding && f.role !== 'admin' ? html`<${LinkedinBox} onFill=${remplir}/>` : null}
+    ${f.role === 'laureat' && rechOk ? html`<label class="check"><input id="pf-recherche" type="checkbox" checked=${!!f.en_recherche} onChange=${e => set('en_recherche', e.target.checked)}/> Je cherche un emploi en ce moment</label>
+      ${f.en_recherche ? html`<p class="small muted">Les lauréats qui recrutent te verront dans la Vitrine des talents, et tu recevras les offres « Jeunes diplômés » et entre lauréats de ta filière. Ton expérience de PFE aide déjà les étudiants.</p>` : null}` : null}
+    ${!isStudent ? html`<div class="grid3"><${Field} label="Entreprise"><input id="pf-ent" value=${f.entreprise || ''} onInput=${e => set('entreprise', e.target.value)}/><//><${Field} label="Poste"><input id="pf-poste" value=${f.poste || ''} onInput=${e => set('poste', e.target.value)}/><//>
+      <${Field} label="Secteur"><select id="pf-sect" value=${f.secteur || ''} onChange=${e => set('secteur', e.target.value)}><option value="">—</option>${SECTEURS.map(x => html`<option value=${x}>${x}</option>`)}</select><//></div>` : null}
+    <div class="grid2"><${Field} label="Ville"><input id="pf-ville" value=${f.ville || ''} onInput=${e => set('ville', e.target.value)}/><//><${Field} label="Pays"><input id="pf-pays" value=${f.pays || ''} onInput=${e => set('pays', e.target.value)}/><//></div>
+    <${Field} label="Bio courte"><textarea id="pf-bio" rows="3" maxlength="600" value=${f.bio || ''} onInput=${e => set('bio', e.target.value)} placeholder=${isStudent ? 'Ce que tu cherches, tes projets…' : 'Ton parcours, comment tu peux aider…'}></textarea><//>
+    <${Field} label="Compétences" hint="Séparées par des virgules"><input id="pf-comp" value=${comp} onInput=${e => { toucher('competences'); setComp(e.target.value); }} placeholder="Lean, CATIA, Python…"/><//>
+    ${isStudent ? html`<div class="grid2"><${Field} label="LinkedIn"><input id="pf-li" value=${f.linkedin || ''} onInput=${e => set('linkedin', e.target.value)} placeholder="linkedin.com/in/…"/><//>
+      <${Field} label="Disponibilité"><input id="pf-dispo" maxlength="80" value=${f.disponibilite || ''} onInput=${e => set('disponibilite', e.target.value)} placeholder="Ex. dès février, 6 mois"/><//></div>
+      <${Field} label="Ou un lien vers ton CV (facultatif)" hint="Google Drive ou autre, si tu n’as pas déposé de PDF."><input id="pf-cv" value=${f.cv_url || ''} onInput=${e => set('cv_url', e.target.value)} placeholder="https://…"/><//>`
+    : html`<${Field} label="LinkedIn"><input id="pf-li" value=${f.linkedin || ''} onInput=${e => set('linkedin', e.target.value)} placeholder="linkedin.com/in/…"/><//>
+      ${f.role === 'laureat' && f.en_recherche ? html`<${Field} label="Le poste que je cherche"><input id="pf-dispo" maxlength="80" value=${f.disponibilite || ''} onInput=${e => set('disponibilite', e.target.value)} placeholder="Ex. ingénieur méthodes, Casablanca ou Tanger"/><//>` : null}
+      ${onboarding ? null : aide}
+      ${f.mentor_dispo ? html`<${Field} label="Sujets sur lesquels je peux aider"><input id="pf-msuj" value=${f.mentor_sujets || ''} onInput=${e => set('mentor_sujets', e.target.value)} placeholder="Stages à l’étranger, entretiens, automobile…"/><//>` : null}
+      ${f.role === 'laureat' ? html`<label class="check"><input id="pf-parrain" type="checkbox" checked=${f.parrain_dispo} onChange=${e => set('parrain_dispo', e.target.checked)}/> Je veux bien parrainer un à trois étudiants de 3A de ma filière</label>` : null}`}
+    ${f.role === 'laureat' && !initial?.verified ? html`<p class="small muted">${v3 ? 'Ton badge « Lauréat vérifié » arrive quand l’équipe du réseau, ou deux lauréats vérifiés de ta promo, confirment ton profil.' : 'Ton badge « Lauréat vérifié » sera ajouté par l’équipe du réseau.'}${n ? html` <b>${n}/2</b>` : null}</p>` : null}`;
+  // Qui me voit et comment me joindre (l'onglet Visibilité de « Mon profil »)
+  const partieVis = html`
+    ${isStudent ? html`<${VisibleLaureats} on=${visible} onChange=${changerVisible}/>` : null}
+    ${!v3 ? html`<${Field} label="Contact visible par les membres"><input id="pf-contact" value=${f.contact || ''} onInput=${e => set('contact', e.target.value)} placeholder="Email ou téléphone"/><//>` : null}
+    ${v3 ? html`<fieldset class="cf-private" id="profil-coordonnees">
+      <legend class="h-ico"><${Icon} name="lock" size=${17}/> Mes coordonnées (privées)</legend>
+      <p class="small muted">Visibles seulement par les membres que tu acceptes, et par le lauréat à qui tu envoies une candidature.</p>
+      <div class="grid2"><${Field} label="Téléphone"><input id="pf-tel" type="tel" maxlength="30" dir="ltr" value=${co.telephone} onInput=${e => setC('telephone', e.target.value)} placeholder="06 …"/><//>
+        <${Field} label="Email de contact"><input id="pf-mail" type="email" maxlength="120" dir="ltr" value=${co.email} onInput=${e => setC('email', e.target.value)} placeholder="prenom.nom@…"/><//></div>
+      <${Field} label="Autre (facultatif)"><input id="pf-contact" maxlength="200" value=${co.contact} onInput=${e => setC('contact', e.target.value)} placeholder="Ex. WhatsApp, plutôt le soir"/><//>
+    </fieldset>
+    <${VisibiliteFields} role=${f.role} value=${vis} onChange=${choisirVis} etat=${onboarding ? undefined : visOk} id="profil-visibilite"/>` : null}
+    ${onboarding || !apresVisibilite ? null : html`<div class="pf-fondateur">${apresVisibilite}</div>`}`;
+  return html`<form class="form" id=${onboarding ? undefined : 'profil-infos'} hidden=${!voir('profil') && !voir('visibilite')} onSubmit=${submit}>
+    <div class="pf-partie pf-infos" hidden=${!voir('profil')}>
+    ${onboarding ? null : html`<h2 class="pf-titre">Mes infos</h2>`}
     ${onboarding ? (voirRole || !f.role ? html`<${ChoixRole} value=${f.role} onChange=${choisirRole}/>`
       : html`<div class="pf-role"><p class="small" id="pf-role-rappel">${f.role === 'laureat' ? 'Tu t’inscris côté lauréats.' : 'Tu t’inscris côté étudiants.'}</p><button type="button" class="linkish small" id="pf-role-changer" onClick=${changerRole}>Changer</button></div>`)
     : f.role !== 'admin' ? html`<div class="seg" role="group" aria-label="Ta situation"><button type="button" class=${isStudent ? 'on' : ''} onClick=${() => choisirRole('etudiant')}>Je suis à l’école</button><button type="button" class=${!isStudent ? 'on' : ''} onClick=${() => choisirRole('laureat')}>J’ai mon diplôme</button></div>` : null}
@@ -680,39 +707,23 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
       ${groupesFil.map(g => html`<optgroup label=${g.label}>${g.options.map(x => html`<option value=${x}>${x}</option>`)}</optgroup>`)}</select><//>
     ${onboarding && f.role === 'laureat' ? aide : null}
     ${onboarding ? html`<button type="button" class="pf-facultatif" id="pf-plus" aria-expanded=${details ? 'true' : 'false'} aria-controls="pf-facultatif" onClick=${() => setDetails(d => !d)}>
-      <strong>Facultatif</strong><span class="small muted">${isStudent ? 'ville, LinkedIn, compétences…' : 'entreprise, poste, ville, LinkedIn…'}</span><span class="chev"><${Icon} name="plus" size=${16}/></span></button>` : null}
-    ${(reste => (onboarding ? html`<div id="pf-facultatif">${reste}</div>` : reste))(plus ? html`
-    ${onboarding && f.role !== 'admin' ? html`<${LinkedinBox} onFill=${remplir}/>` : null}
-    ${f.role === 'laureat' && rechOk ? html`<label class="check"><input id="pf-recherche" type="checkbox" checked=${!!f.en_recherche} onChange=${e => set('en_recherche', e.target.checked)}/> Je cherche un emploi en ce moment</label>
-      ${f.en_recherche ? html`<p class="small muted">Les lauréats qui recrutent te verront dans la Vitrine des talents, et tu recevras les offres « Jeunes diplômés » et entre lauréats de ta filière. Ton expérience de PFE aide déjà les étudiants.</p>` : null}` : null}
-    ${!isStudent ? html`<div class="grid3"><${Field} label="Entreprise"><input id="pf-ent" value=${f.entreprise || ''} onInput=${e => set('entreprise', e.target.value)}/><//><${Field} label="Poste"><input id="pf-poste" value=${f.poste || ''} onInput=${e => set('poste', e.target.value)}/><//>
-      <${Field} label="Secteur"><select id="pf-sect" value=${f.secteur || ''} onChange=${e => set('secteur', e.target.value)}><option value="">—</option>${SECTEURS.map(x => html`<option value=${x}>${x}</option>`)}</select><//></div>` : null}
-    <div class="grid2"><${Field} label="Ville"><input id="pf-ville" value=${f.ville || ''} onInput=${e => set('ville', e.target.value)}/><//><${Field} label="Pays"><input id="pf-pays" value=${f.pays || ''} onInput=${e => set('pays', e.target.value)}/><//></div>
-    <${Field} label="Bio courte"><textarea id="pf-bio" rows="3" maxlength="600" value=${f.bio || ''} onInput=${e => set('bio', e.target.value)} placeholder=${isStudent ? 'Ce que tu cherches, tes projets…' : 'Ton parcours, comment tu peux aider…'}></textarea><//>
-    <${Field} label="Compétences" hint="Séparées par des virgules"><input id="pf-comp" value=${comp} onInput=${e => { toucher('competences'); setComp(e.target.value); }} placeholder="Lean, CATIA, Python…"/><//>
-    ${isStudent ? html`<div class="grid2"><${Field} label="LinkedIn"><input id="pf-li" value=${f.linkedin || ''} onInput=${e => set('linkedin', e.target.value)} placeholder="linkedin.com/in/…"/><//>
-      <${Field} label="Disponibilité"><input id="pf-dispo" maxlength="80" value=${f.disponibilite || ''} onInput=${e => set('disponibilite', e.target.value)} placeholder="Ex. dès février, 6 mois"/><//></div>
-      <${Field} label="Ou un lien vers ton CV (facultatif)" hint="Google Drive ou autre, si tu n’as pas déposé de PDF."><input id="pf-cv" value=${f.cv_url || ''} onInput=${e => set('cv_url', e.target.value)} placeholder="https://…"/><//>`
-    : html`<${Field} label="LinkedIn"><input id="pf-li" value=${f.linkedin || ''} onInput=${e => set('linkedin', e.target.value)} placeholder="linkedin.com/in/…"/><//>
-      ${f.role === 'laureat' && f.en_recherche ? html`<${Field} label="Le poste que je cherche"><input id="pf-dispo" maxlength="80" value=${f.disponibilite || ''} onInput=${e => set('disponibilite', e.target.value)} placeholder="Ex. ingénieur méthodes, Casablanca ou Tanger"/><//>` : null}`}
-    ${!v3 ? html`<${Field} label="Contact visible par les membres"><input id="pf-contact" value=${f.contact || ''} onInput=${e => set('contact', e.target.value)} placeholder="Email ou téléphone"/><//>` : null}
-    ${isStudent ? html`<label class="check"><input id="pf-vit" type="checkbox" checked=${f.vitrine} onChange=${e => set('vitrine', e.target.checked)}/> Apparaître dans la Vitrine des talents quand je cherche (visible par les lauréats)</label>` : html`
-      ${onboarding ? null : aide}
-      ${f.mentor_dispo ? html`<${Field} label="Sujets sur lesquels je peux aider"><input id="pf-msuj" value=${f.mentor_sujets || ''} onInput=${e => set('mentor_sujets', e.target.value)} placeholder="Stages à l’étranger, entretiens, automobile…"/><//>` : null}
-      ${f.role === 'laureat' ? html`<label class="check"><input id="pf-parrain" type="checkbox" checked=${f.parrain_dispo} onChange=${e => set('parrain_dispo', e.target.checked)}/> Je veux bien parrainer un à trois étudiants de 3A de ma filière</label>` : null}`}
-    ${v3 ? html`<fieldset class="cf-private" id="profil-coordonnees">
-      <legend class="h-ico"><${Icon} name="lock" size=${17}/> Mes coordonnées (privées)</legend>
-      <p class="small muted">Visibles seulement par les membres que tu acceptes, et par le lauréat à qui tu envoies une candidature.</p>
-      <div class="grid2"><${Field} label="Téléphone"><input id="pf-tel" type="tel" maxlength="30" dir="ltr" value=${co.telephone} onInput=${e => setC('telephone', e.target.value)} placeholder="06 …"/><//>
-        <${Field} label="Email de contact"><input id="pf-mail" type="email" maxlength="120" dir="ltr" value=${co.email} onInput=${e => setC('email', e.target.value)} placeholder="prenom.nom@…"/><//></div>
-      <${Field} label="Autre (facultatif)"><input id="pf-contact" maxlength="200" value=${co.contact} onInput=${e => setC('contact', e.target.value)} placeholder="Ex. WhatsApp, plutôt le soir"/><//>
-    </fieldset>
-    <${VisibiliteFields} role=${f.role} value=${vis} onChange=${choisirVis} etat=${onboarding ? undefined : visOk} id="profil-visibilite"/>` : null}
-    ${f.role === 'laureat' && !initial?.verified ? html`<p class="small muted">${v3 ? 'Ton badge « Lauréat vérifié » arrive quand l’équipe du réseau, ou deux lauréats vérifiés de ta promo, confirment ton profil.' : 'Ton badge « Lauréat vérifié » sera ajouté par l’équipe du réseau.'}${n ? html` <b>${n}/2</b>` : null}</p>` : null}` : null)}`}
+      <strong>Facultatif</strong><span class="small muted">${isStudent ? 'ville, LinkedIn, compétences…' : 'entreprise, poste, ville, LinkedIn…'}</span><span class="chev"><${Icon} name="plus" size=${16}/></span></button>
+      <div id="pf-facultatif">${plus ? html`${plusProfil}${partieVis}` : null}</div>` : plusProfil}`}
+    </div>
+    ${onboarding || !f.role ? null : html`<div class="pf-partie pf-vis" hidden=${!voir('visibilite')}>${partieVis}</div>`}
     ${onboarding ? html`<div class="row-end pf-pied">${bouton}</div>`
       : differe() ? html`<div class="row-end pf-collant" role="status"><span class="small">Modifications pas encore enregistrées</span>${bouton}</div>`
       : html`<div class="row-end">${bouton}</div>`}
   </form>`;
+}
+
+// « Visible par les lauréats » : un interrupteur, ce qu'il change en une phrase
+function VisibleLaureats({ on, onChange }) {
+  return html`<div class="pf-visible">
+    <div class="pf-visible-txt"><h3 id="pf-h-visible"><${Icon} name="eye" size=${19}/> Visible par les lauréats</h3>
+      <p class="small muted" id="pf-visible-d">Les lauréats te trouvent dans Match et dans la Vitrine des talents : ils voient ton année, ta filière, tes compétences et ce que tu cherches.</p></div>
+    <label class="mx-switch"><input type="checkbox" role="switch" id="pf-visible" checked=${on} aria-labelledby="pf-h-visible" aria-describedby="pf-visible-d" onChange=${e => onChange(e.target.checked)}/><span class="mx-switch-piste" aria-hidden="true"></span></label>
+  </div>`;
 }
 
 // « Dernière étape » courte : rôle rappelé, bouton qui dit ce qui manque, choix « aider », réglages « Qui voit quoi » ligne par ligne

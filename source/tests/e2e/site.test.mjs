@@ -13,7 +13,7 @@ const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe
 const SITE = path.resolve(process.env.SITE_DIR || new URL('../../dist', import.meta.url).pathname);
 const TYPES = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const ECRANS = ['accueil', 'offres', 'offres/demandes', 'match', 'mentorat', 'mentorat/cv', 'messages', 'parcours', 'espace', 'reseau/groupes', 'reseau/agenda', 'reseau/entraide',
-  'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'reseau/annuaire/ma-filiere', 'reseau/annuaire/ma-promo', 'reseau/classement', 'reseau/talents', 'suivi', 'profil', 'enquete',
+  'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'reseau/annuaire/ma-filiere', 'reseau/annuaire/ma-promo', 'reseau/classement', 'reseau/talents', 'suivi', 'profil', 'profil/visibilite', 'profil/notifications', 'profil/donnees', 'enquete',
   'confidentialite', 'admin', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda', 'admin/reglages'];
 
 let serveur, adresse, navigateur;
@@ -116,6 +116,9 @@ for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
     await s.ctx.close();
   });
 }
+
+// « Mon profil » est en onglets (Profil, Visibilité, Notifications, Données) : un toucher sur l'onglet voulu
+async function ongletProfil(s, k) { await s.page.click(`#pf-onglet-${k}`); await s.page.waitForTimeout(200); }
 
 test('profil : s’enregistre même avec des champs vides ; rôle et promo cohérents', async () => {
   const s = await ouvrir({ largeur: 390 });
@@ -266,19 +269,26 @@ test('messagerie : répondre à un message précis, réagir ; sous le nom, qui e
 
 test('profil : « Qui voit quoi » s’enregistre dès le choix ; une mise à jour venue d’ailleurs n’efface pas ce qu’on est en train d’écrire', async () => {
   const s = await ouvrir({ largeur: 390 });
-  await s.comme('Youssef'); await s.aller('profil'); await s.page.waitForTimeout(300);
+  await s.comme('Youssef'); await s.aller('profil/visibilite'); await s.page.waitForTimeout(300);
   await s.page.click('#vis-lieu-contacts'); await s.page.waitForTimeout(250);
   assert.match(await s.page.locator('#vis-etat').innerText(), /Enregistré/);
   assert.equal(await s.page.locator('.pf-collant').count(), 0, 'rien d’autre à enregistrer');
-  await s.page.reload(); await s.page.waitForSelector('#persona'); await s.comme('Youssef'); await s.aller('profil'); await s.page.waitForTimeout(300);
+  await s.page.reload(); await s.page.waitForSelector('#persona'); await s.comme('Youssef'); await s.aller('profil/visibilite'); await s.page.waitForTimeout(300);
   assert.equal(await s.page.getAttribute('#vis-lieu-contacts', 'aria-checked'), 'true');
   // Il écrit sa bio sans enregistrer ; son CV met à jour son poste ailleurs : la bio reste, le poste suit
+  await ongletProfil(s, 'profil');
+  assert.equal(await s.page.evaluate(() => location.hash), '#profil');
   await s.page.fill('#pf-bio', 'Bio en cours d’écriture');
   assert.equal(await s.page.locator('.pf-collant').count(), 1);
   await s.page.evaluate(() => window.__demo.update('profiles', window.__demo.me.id, { poste: 'Directeur méthodes' })); await s.page.waitForTimeout(250);
   assert.equal(await s.page.inputValue('#pf-bio'), 'Bio en cours d’écriture');
   assert.equal(await s.page.inputValue('#pf-poste'), 'Directeur méthodes');
+  // Il passe à l'onglet Visibilité sans enregistrer : la barre « Enregistrer » le suit, et sa bio reste
+  await ongletProfil(s, 'visibilite');
+  assert.equal(await s.page.evaluate(() => location.hash), '#profil/visibilite');
+  assert.ok(await s.page.isVisible('.pf-collant .btn.primary'), 'Enregistrer sur l’onglet Visibilité aussi');
   await s.page.click('#vis-presentation-laureats'); await s.page.waitForTimeout(250);
+  await ongletProfil(s, 'notifications'); await ongletProfil(s, 'profil');
   assert.equal(await s.page.inputValue('#pf-bio'), 'Bio en cours d’écriture');
   await s.page.locator('.pf-collant .btn.primary').click(); await s.page.waitForTimeout(300);
   assert.equal(await s.page.locator('.pf-collant').count(), 0);
@@ -291,6 +301,7 @@ test('profil : « Qui voit quoi » s’enregistre dès le choix ; une mise à jo
   await s.page.fill('#pf-ville', ville);
   assert.equal(await s.page.locator('.pf-collant').count(), 0, 'la barre part quand rien ne diffère');
   // Un choix qui ne part pas (réseau coupé) reste affiché, et part avec « Enregistrer »
+  await ongletProfil(s, 'visibilite');
   await s.page.evaluate(() => { const d = window.__demo, u = d.update; d.update = async () => { d.update = u; throw new Error('Pas de réseau pour l’instant.'); }; });
   await s.page.click('#vis-cv-contacts'); await s.page.waitForTimeout(250);
   assert.equal(await s.page.getAttribute('#vis-cv-contacts', 'aria-checked'), 'true');
@@ -698,7 +709,7 @@ test('« Me prévenir » : après une demande de mentorat, la feuille remplace l
 
 test('« Me prévenir » : la catégorie de la réponse décochée dans Mon profil, pas de notification promise ; le petit mot reste', async () => {
   const s = await prevenirSur('off');
-  await s.comme('Amine'); await s.aller('profil');
+  await s.comme('Amine'); await s.aller('profil/notifications');
   await s.page.click('#np-mentorat'); await s.page.waitForTimeout(250);
   await attendreOuverture(s); await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
   await s.changerMemo('({ ...m, at: m.at - 15 * 864e5 })');
@@ -706,7 +717,7 @@ test('« Me prévenir » : la catégorie de la réponse décochée dans Mon prof
   assert.equal(await s.page.locator('.modal.prevenir').count(), 0, 'mentorat décoché : pas de feuille');
   assert.match(await s.page.locator('.toast').last().innerText(), /Horaires envoyés à Youssef/);
   // Recochée : la feuille revient
-  await s.aller('profil'); await s.page.click('#np-mentorat'); await s.page.waitForTimeout(250);
+  await s.aller('profil/notifications'); await s.page.click('#np-mentorat'); await s.page.waitForTimeout(250);
   await s.mentorat('Préparer mon entretien');
   await s.page.waitForSelector('.modal.prevenir');
   assert.match(await s.page.locator('.modal.prevenir').innerText(), /choisit un horaire/);
@@ -873,10 +884,10 @@ test('à l’ouverture : jamais par-dessus une fête ; une fête qui arrive rang
 test('à l’ouverture : rien de coché dans Mon profil, rien à proposer', async () => {
   const s = await prevenirSur('off');
   await attendreOuverture(s); await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
-  await s.aller('profil');
+  await s.aller('profil/notifications');
   for (const c of ['messages', 'match', 'demandes', 'candidatures', 'mentorat', 'offres', 'reseau']) { await s.page.click('#np-' + c); await s.page.waitForTimeout(150); }
   await s.changerMemo('({ ...m, at: m.at - 8 * 864e5 })');
-  const relire = async () => { await s.page.reload(); await s.page.waitForSelector('#mes-donnees'); };
+  const relire = async () => { await s.page.reload(); await s.page.waitForSelector('#md-push'); };
   await relire(); await rienALouverture(s, 'rien à proposer');
   // Une case recochée : la feuille revient, avec ce seul point
   await s.page.click('#np-messages'); await s.page.waitForTimeout(250);
@@ -890,18 +901,25 @@ test('Mon profil : activer ou couper les notifications ici est une réponse, plu
   const s = await prevenirSur('off');
   await attendreOuverture(s); await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
   await s.changerMemo('({ ...m, at: m.at - 8 * 864e5 })');
-  await s.aller('profil');
-  assert.equal(await s.page.isDisabled('#md-push'), false);
-  await s.page.check('#md-push'); await s.page.waitForTimeout(250);
+  await s.aller('profil/notifications');
+  // Coupées : une phrase et un seul bouton « Activer »
+  assert.match(await s.page.locator('#md-push .push-etat').innerText(), /arrive tout de suite, même quand l’application est fermée/);
+  assert.equal(await s.page.isDisabled('#md-push-oui'), false);
+  await s.page.click('#md-push-oui'); await s.page.waitForTimeout(250);
   assert.equal((await s.memo()).fait, 1, 'activées ici');
   assert.match(await s.page.locator('.toast').last().innerText(), /Sur la vraie plateforme/);
-  assert.equal(await s.page.locator('.push-row button').count(), 0, 'rien à tester en démo');
+  // Activées : dit calmement, avec de quoi les couper ; le clavier reste dans la carte
+  assert.match(await s.page.locator('#md-push-ok').innerText(), /Activées sur cet appareil/);
+  assert.equal(await s.page.locator('#md-push-oui').count(), 0);
+  assert.equal(await s.page.locator('#md-push-test').count(), 0, 'rien à tester en démo');
+  assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'md-push-non');
   await s.changerMemo('({ ...m, fait: undefined })');
-  await s.page.uncheck('#md-push'); await s.page.waitForTimeout(250);
+  await s.page.click('#md-push-non'); await s.page.waitForTimeout(250);
   assert.equal((await s.memo()).fait, 1, 'coupées ici');
-  await s.page.reload(); await s.page.waitForSelector('#mes-donnees');
+  assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'md-push-oui');
+  await s.page.reload(); await s.page.waitForSelector('#md-push');
   await rienALouverture(s, 'coupées dans Mon profil : plus de demande');
-  assert.equal(await s.page.isChecked('#md-push'), false);
+  assert.ok(await s.page.isVisible('#md-push-oui'));
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -991,7 +1009,7 @@ test('à l’ouverture : écran occupé plus de 30 s, la feuille attend la visit
 
 test('Mon profil : deux cases touchées coup sur coup sont enregistrées toutes les deux', async () => {
   const s = await ouvrir({ largeur: 390 });
-  await s.comme('Salma'); await s.aller('profil');
+  await s.comme('Salma'); await s.aller('profil/notifications');
   await s.page.evaluate(() => { const d = window.__demo; const u = d.update.bind(d); d.update = (...a) => new Promise(ok => setTimeout(ok, 400)).then(() => u(...a)); });
   await s.page.click('#np-reseau'); await s.page.click('#np-offres');
   await s.page.waitForTimeout(1500);
@@ -1002,7 +1020,7 @@ test('Mon profil : deux cases touchées coup sur coup sont enregistrées toutes 
 
 test('Mon profil : un choix qui n’a pas pu être enregistré n’est pas montré comme fait ; réessayé, c’est bien le sien', async () => {
   const s = await ouvrir({ largeur: 390 });
-  await s.comme('Salma'); await s.aller('profil');
+  await s.comme('Salma'); await s.aller('profil/notifications');
   assert.equal(await s.page.isChecked('#np-reseau'), true);
   await s.page.evaluate(() => { const d = window.__demo; d.__update = d.update; d.update = async () => { throw new Error('Pas de réseau pour l’instant. Réessaie dans un instant.'); }; });
   await s.page.click('#np-reseau'); await s.page.waitForTimeout(300);
@@ -1120,7 +1138,7 @@ test('Mon profil : les notifications par catégorie, défauts selon le rôle, en
   const s = await ouvrir({ largeur: 390 });
   const cases = () => s.page.$$eval('.md-cats input[type=checkbox]', xs => Object.fromEntries(xs.map(x => [x.id.replace('np-', ''), x.checked])));
   const tout = { messages: true, match: true, demandes: true, candidatures: true, mentorat: true, offres: true, reseau: true, rappels: true };
-  await s.comme('Salma'); await s.aller('profil');
+  await s.comme('Salma'); await s.aller('profil/notifications');
   assert.deepEqual(await cases(), tout);
   const etu = await s.page.locator('.md-cats').innerText();
   assert.match(etu, /Mes demandes : les propositions d’aide/); assert.match(etu, /Nouvelles offres pour moi/);
@@ -1131,14 +1149,14 @@ test('Mon profil : les notifications par catégorie, défauts selon le rôle, en
   await s.page.click('#np-reseau'); await s.page.waitForTimeout(250);
   assert.match(await s.page.locator('.toast').last().innerText(), /Choix enregistré/);
   // Visite suivante : le choix d'avant est gardé quand une autre case change
-  await s.page.reload(); await s.page.waitForSelector('#mes-donnees');
+  await s.page.reload(); await s.page.waitForSelector('#md-push');
   await s.page.click('#np-offres'); await s.page.waitForTimeout(250);
-  await s.page.reload(); await s.page.waitForSelector('#mes-donnees');
+  await s.page.reload(); await s.page.waitForSelector('#md-push');
   assert.deepEqual(await cases(), { ...tout, offres: false, reseau: false });
   assert.deepEqual(await s.page.evaluate(() => window.__demo.me.notif_push), { reseau: false, offres: false });
   assert.ok(await s.page.isChecked('#md-alertes-mail'), 'l’email ne change pas');
   // Lauréat : tout est coché par défaut, les nouvelles offres de sa filière aussi (qu'il cherche un emploi ou non)
-  await s.comme('Youssef'); await s.aller('profil');
+  await s.comme('Youssef'); await s.aller('profil/notifications');
   assert.deepEqual(await cases(), tout);
   const lau = await s.page.locator('.md-cats').innerText();
   assert.match(lau, /Demandes des étudiants/); assert.match(lau, /quand elles s’ouvrent à tous les lauréats/); assert.match(lau, /Candidatures reçues sur mes offres/);
@@ -1151,18 +1169,18 @@ test('Mon profil : les notifications par catégorie, défauts selon le rôle, en
   assert.match(lau, /commentaires sur tes offres, nouveaux membres et camarades de promo/);
   assert.equal(await s.page.locator('#md-alertes-mail').count(), 0);
   await s.page.click('#np-offres'); await s.page.waitForTimeout(250);
-  await s.page.reload(); await s.page.waitForSelector('#mes-donnees');
+  await s.page.reload(); await s.page.waitForSelector('#md-push');
   assert.equal(await s.page.isChecked('#np-offres'), false, 'son choix reste');
   // Un lauréat qui cherche un emploi : ses demandes et ses candidatures aussi ; les offres d'office
   await s.comme('Nadia');
   await s.page.evaluate(() => window.__demo.update('profiles', window.__demo.me.id, { en_recherche: true }));
-  await s.aller('profil');
+  await s.aller('profil/notifications');
   const rech = await s.page.locator('.md-cats').innerText();
   assert.match(rech, /Les réponses à ta demande d’emploi/); assert.match(rech, /La suite des tiennes \(entretien, recrutement à confirmer\)/);
   assert.doesNotMatch(rech, /Candidatures reçues sur mes offres/);
   assert.equal(await s.page.isChecked('#np-offres'), true);
   // L'équipe du réseau : les signalements arrivent toujours (pas de case) ; ni nouvelles demandes ni offres, qui ne lui arrivent jamais
-  await s.comme('Admin'); await s.aller('profil');
+  await s.comme('Admin'); await s.aller('profil/notifications');
   const adm = await s.page.locator('.md-cats').innerText();
   assert.match(adm, /Les signalements arrivent toujours à l’équipe du réseau\./);
   // Les questions sur une entreprise ou un pays ne vont qu'aux lauréats : l'admin reçoit les réponses aux siennes
@@ -1171,7 +1189,7 @@ test('Mon profil : les notifications par catégorie, défauts selon le rôle, en
   assert.deepEqual(await cases(), { messages: true, candidatures: true, mentorat: true, reseau: true });
   assert.equal(await s.debordement(), 0);
   await s.page.addScriptTag({ content: AXE });
-  const v = await s.page.evaluate(async () => (await axe.run('#mes-donnees', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => x.id));
+  const v = await s.page.evaluate(async () => (await axe.run('#profil-notifications', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => x.id));
   assert.deepEqual(v, []);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
@@ -1182,7 +1200,7 @@ test('Mon profil : la case « Rappels », cochée par défaut, se coupe et reste
   for (const langue of ['fr', 'ar']) {
     const s = await ouvrir({ largeur: 360, langue, ua: TELEPHONE });
     await s.page.setViewportSize({ width: 360, height: 640 });
-    await s.comme('Salma'); await s.aller('profil');
+    await s.comme('Salma'); await s.aller('profil/notifications');
     const rappels = s.page.locator('label.check:has(#np-rappels)');
     await rappels.scrollIntoViewIfNeeded();
     assert.equal(await s.page.isChecked('#np-rappels'), true, 'activée par défaut');
@@ -1203,17 +1221,17 @@ test('Mon profil : la case « Rappels », cochée par défaut, se coupe et reste
     assert.ok(boite.height >= 24);
     await s.page.click('#np-rappels'); await s.page.waitForTimeout(250);
     assert.match(await s.page.locator('.toast').last().innerText(), langue === 'fr' ? /Choix enregistré/ : /تم حفظ اختيارك/);
-    await s.page.reload(); await s.page.waitForSelector('#mes-donnees');
+    await s.page.reload(); await s.page.waitForSelector('#md-push');
     assert.equal(await s.page.isChecked('#np-rappels'), false, 'relue après rechargement');
     assert.deepEqual(await s.page.evaluate(() => window.__demo.me.notif_push), { rappels: false });
     assert.equal(await s.page.isChecked('#np-messages'), true, 'les autres cases ne changent pas');
     assert.equal(await s.debordement(), 0);
     if (langue === 'fr') {
       // Lauréat : ses mots à lui ; l'équipe du réseau : pas de case
-      await s.comme('Youssef'); await s.aller('profil');
+      await s.comme('Youssef'); await s.aller('profil/notifications');
       assert.equal(await s.page.isChecked('#np-rappels'), true);
       assert.match(await s.page.locator('label.check:has(#np-rappels)').innerText(), /demandes d’étudiants, candidatures, mentorats qui attendent ta réponse/);
-      await s.comme('Admin'); await s.aller('profil');
+      await s.comme('Admin'); await s.aller('profil/notifications');
       assert.equal(await s.page.locator('#np-rappels').count(), 0);
       // La page Confidentialité dit ce qui est noté, et pourquoi
       await s.aller('confidentialite');
@@ -1250,9 +1268,12 @@ test('notifications en arabe : la feuille d’ouverture et les réglages, sans t
   assert.deepEqual(await latin(ouverture), [], 'lauréat qui cherche un emploi');
   await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
   for (const nom of ['Salma', 'Youssef', 'Nadia', 'Admin']) {
-    await s.comme(nom); await s.aller('profil');
+    await s.comme(nom); await s.aller('profil/notifications');
     await s.page.waitForSelector('.md-cats');
     assert.deepEqual(await latin('.md-cats'), [], nom);
+    assert.deepEqual((await latin('#profil-notifications')).filter(x => x !== 'ENSAM'), [], nom);
+    assert.equal(await s.debordement(), 0);
+    await s.aller('profil/donnees'); await s.page.waitForSelector('#mes-donnees');
     assert.deepEqual((await latin('#mes-donnees')).filter(x => x !== 'ENSAM'), [], nom);
     assert.equal(await s.debordement(), 0);
   }
@@ -1478,7 +1499,7 @@ test('inscription d’un étudiant : la promo part vide, puis dit l’année ; c
 
 test('profil : deux choix « Qui voit quoi » coup sur coup, le premier lent : « Enregistré » seulement quand le dernier est parti, et des mots exacts', async () => {
   const s = await ouvrir({ largeur: 390 });
-  await s.comme('Youssef'); await s.aller('profil'); await s.page.waitForTimeout(300);
+  await s.comme('Youssef'); await s.aller('profil/visibilite'); await s.page.waitForTimeout(300);
   await s.page.evaluate(() => {
     const d = window.__demo, vrai = d.update.bind(d);
     d.update = (t, id, patch) => (patch.visibilite && Object.keys(patch).length === 1 ? new Promise(ok => setTimeout(ok, 1000)).then(() => vrai(t, id, patch)) : vrai(t, id, patch));
@@ -1507,9 +1528,11 @@ test('profil : deux choix « Qui voit quoi » coup sur coup, le premier lent : �
     };
   });
   await s.page.click('#vis-lieu-tous');
+  await ongletProfil(s, 'profil');
   await s.page.fill('#pf-ville', 'Rabat');
   await s.page.click('.pf-collant .btn.primary');
   await s.page.waitForTimeout(2500);
+  await ongletProfil(s, 'visibilite');
   assert.doesNotMatch(await s.page.locator('.cf-vis').innerText(), /Pas encore enregistré/);
   assert.equal(await s.page.evaluate(() => window.__demo.me.visibilite.lieu), 'tous');
   assert.equal(await s.page.locator('.pf-collant').count(), 0);
@@ -1520,16 +1543,18 @@ test('profil : deux choix « Qui voit quoi » coup sur coup, le premier lent : �
     d.update = (t, id, patch) => (patch.visibilite && Object.keys(patch).length === 1 ? new Promise((_, ko) => setTimeout(() => ko(new Error('Pas de réseau pour l’instant. Réessaie dans un instant.')), 1500)) : vrai(t, id, patch));
   });
   await s.page.click('#vis-lieu-contacts');
+  await ongletProfil(s, 'profil');
   await s.page.fill('#pf-ville', 'Fès');
   await s.page.click('.pf-collant .btn.primary');
   await s.page.waitForTimeout(4000);
+  await ongletProfil(s, 'visibilite');
   assert.doesNotMatch(await s.page.locator('.cf-vis').innerText(), /Pas encore enregistré/);
   assert.match(await s.page.locator('#vis-etat').innerText(), /^Enregistré/);
   assert.equal(await s.page.evaluate(() => window.__demo.me.visibilite.lieu), 'contacts');
   assert.equal(await s.page.locator('.pf-collant').count(), 0);
   await s.page.evaluate(() => { delete window.__demo.update; });
   // Le CV d'un étudiant reste visible des lauréats pendant une demande ouverte
-  await s.comme('Salma'); await s.aller('profil'); await s.page.waitForTimeout(300);
+  await s.comme('Salma'); await s.aller('profil/visibilite'); await s.page.waitForTimeout(300);
   await s.page.click('#vis-cv-contacts');
   await s.page.waitForFunction(() => /^Enregistré/.test(document.getElementById('vis-etat')?.textContent.trim() || ''), null, { timeout: 4000 });
   assert.equal(await s.page.locator('#vis-etat').innerText(), 'Enregistré : tes contacts le voient ; les lauréats aussi quand tu as une demande ouverte.');
@@ -1539,7 +1564,7 @@ test('profil : deux choix « Qui voit quoi » coup sur coup, le premier lent : �
 
 test('profil : un choix « Qui voit quoi » défait pendant qu’un envoi traîne : au bout de 20 s, la ligne dit que rien n’est sûr', async () => {
   const s = await ouvrir({ largeur: 390 });
-  await s.comme('Youssef'); await s.aller('profil'); await s.page.waitForTimeout(300);
+  await s.comme('Youssef'); await s.aller('profil/visibilite'); await s.page.waitForTimeout(300);
   const garde = await s.page.evaluate(() => window.__demo.me.visibilite?.lieu || 'tous');
   const autre = garde === 'tous' ? 'contacts' : 'tous';
   // Les envois de « Qui voit quoi » ne reviennent jamais (le premier peut encore arriver au serveur)
@@ -1557,7 +1582,7 @@ test('profil : un choix « Qui voit quoi » défait pendant qu’un envoi traîn
 
 test('profil : un réglage « Qui voit quoi » qui ne part pas reste affiché, et part avec « Enregistrer »', async () => {
   const s = await ouvrir({ largeur: 390 });
-  await s.comme('Youssef'); await s.aller('profil'); await s.page.waitForTimeout(300);
+  await s.comme('Youssef'); await s.aller('profil/visibilite'); await s.page.waitForTimeout(300);
   await s.page.evaluate(() => {
     const d = window.__demo, vrai = d.update.bind(d);
     d.update = (t, id, patch) => (patch.visibilite && Object.keys(patch).length === 1 ? Promise.reject(new Error('Pas de réseau pour l’instant. Réessaie dans un instant.')) : vrai(t, id, patch));
@@ -1574,7 +1599,7 @@ test('profil : un réglage « Qui voit quoi » qui ne part pas reste affiché, e
   await s.ctx.close();
 });
 
-test('profil : promo effacée, le bouton le dit et mène au champ', async () => {
+test('profil : promo effacée, le bouton le dit et mène au champ, depuis l’onglet Visibilité aussi', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Nadia'); await s.aller('profil');
   await s.page.fill('#pf-promo', ''); await s.page.waitForTimeout(150);
@@ -1583,6 +1608,15 @@ test('profil : promo effacée, le bouton le dit et mène au champ', async () => 
   assert.match(await s.page.locator(bouton).innerText(), /Ajoute ta promo/);
   await s.page.click(bouton); await s.page.waitForTimeout(400);
   assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'pf-promo');
+  // Touché depuis l'onglet Visibilité : le bouton ramène à l'onglet Profil, sur le champ à remplir
+  await ongletProfil(s, 'visibilite');
+  assert.equal(await s.page.isVisible('#pf-promo'), false);
+  assert.match(await s.page.locator(bouton).innerText(), /Ajoute ta promo/);
+  await s.page.click(bouton); await s.page.waitForTimeout(500);
+  assert.equal(await s.page.evaluate(() => location.hash), '#profil');
+  assert.equal(await s.page.getAttribute('#pf-onglet-profil', 'aria-selected'), 'true');
+  assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'pf-promo');
+  assert.ok(await s.page.isVisible('#pf-err-promo'), 'l’erreur est dite sous le champ');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -2203,36 +2237,88 @@ test('rangées de puces : un fondu au bord qui cache encore quelque chose, seule
   await s.ctx.close();
 });
 
-// « Mon profil » est long : des puces sous le titre mènent à chaque partie, et la partie à l'écran est marquée
-test('mon profil : des puces mènent à chaque partie (Notifications comprises) ; la puce marquée suit ; la rangée reste sous la barre du haut (390 px)', async () => {
-  const s = await ouvrir({ largeur: 390 });
-  await s.comme('Salma'); await s.aller('profil');
-  const puces = s.page.locator('.pf-sauts .chip');
-  assert.deepEqual((await puces.allInnerTexts()).map(x => x.trim()), ['Photo et CV', 'Mes infos', 'Coordonnées', 'Qui voit quoi', 'Notifications', 'Mes données']);
-  const marquee = () => s.page.locator('.pf-sauts .chip[aria-current="true"]').innerText();
-  assert.equal(await marquee(), 'Photo et CV');
-  await puces.filter({ hasText: 'Notifications' }).click(); await s.page.waitForTimeout(300);
-  const m = await s.page.evaluate(() => {
-    const nav = document.querySelector('.pf-sauts').getBoundingClientRect(), haut = document.querySelector('.top').getBoundingClientRect();
-    return { nav: nav.top, navBas: nav.bottom, haut: haut.bottom, cible: document.getElementById('mes-donnees').getBoundingClientRect().top, mail: document.getElementById('md-mail').getBoundingClientRect().bottom, focus: document.activeElement?.id };
-  });
-  assert.ok(Math.abs(m.nav - m.haut) <= 1, 'les puces restent collées juste sous la barre du haut');
-  assert.ok(m.cible >= m.navBas - 1 && m.cible <= m.navBas + 40, `les réglages commencent sous les puces (${Math.round(m.cible)} / ${Math.round(m.navBas)})`);
-  assert.ok(m.mail < 640, 'la première case des emails est à l’écran');
-  assert.equal(m.focus, 'mes-donnees', 'le clavier continue dans la partie choisie');
-  assert.equal(await marquee(), 'Notifications');
-  // En défilant à la main, la puce marquée suit la partie à l'écran
-  await s.page.evaluate(() => scrollTo(0, document.getElementById('profil-coordonnees').getBoundingClientRect().top + scrollY - 100)); await s.page.waitForTimeout(200);
-  assert.equal(await marquee(), 'Coordonnées');
-  await puces.filter({ hasText: 'Photo et CV' }).click(); await s.page.waitForTimeout(200);
-  assert.equal(await s.page.evaluate(() => scrollY), 0);
-  assert.equal(await marquee(), 'Photo et CV');
-  assert.equal(await s.debordement(), 0);
-  // L'administration n'a pas « Qui voit quoi » : pas de puce pour une partie absente
-  await s.comme('Admin'); await s.aller('profil'); await s.page.waitForSelector('.pf-sauts .chip');
-  assert.ok(!(await puces.allInnerTexts()).some(x => x.includes('Qui voit quoi')));
-  assert.deepEqual(s.erreurs, []);
-  await s.ctx.close();
+// « Mon profil » en quatre onglets : une seule partie à l'écran, l'onglet dans l'adresse (liens, rechargement, retour arrière)
+test('mon profil : quatre onglets sur une ligne à 360 px (FR et AR), une partie à la fois, l’onglet dans l’adresse ; « Visible par les lauréats » écrit Match et la Vitrine', async () => {
+  const LIBELLES = { fr: ['Profil', 'Visibilité', 'Notifications', 'Données'], ar: ['الملف الشخصي', 'الظهور', 'الإشعارات', 'البيانات'] };
+  // Ce qui marque chaque partie : à l'écran sur son onglet, caché sur les autres
+  const PARTIES = { profil: ['#profil-photo', '#profil-cv', '#pf-promo'], visibilite: ['#pf-visible', '#profil-coordonnees', '#profil-visibilite'], notifications: ['#md-push', '#md-emails'], donnees: ['#mes-donnees'] };
+  const AVEC_FORMULAIRE = ['profil', 'visibilite'];
+  for (const langue of ['fr', 'ar']) {
+    // Un téléphone de 360 px, notifications coupées sur cet appareil (Salma, étudiante)
+    const s = await prevenirSur('off', { langue });
+    await attendreOuverture(s); await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
+    await s.page.evaluate(() => window.__ensamMissing?.clear());
+    // Un lien vers #profil/notifications ouvre l'onglet Notifications : en haut, la carte de cet appareil et son bouton « Activer »
+    await s.aller('profil/notifications'); await s.page.waitForSelector('#md-push-oui');
+    await s.page.evaluate(() => document.fonts.ready);
+    assert.equal(await s.page.getAttribute('#pf-onglet-notifications', 'aria-selected'), 'true');
+    assert.equal((await s.page.locator('#md-push-oui').innerText()).trim(), langue === 'fr' ? 'Activer' : 'تفعيل');
+    assert.ok(await s.page.evaluate(() => document.querySelector('#md-push').getBoundingClientRect().top < document.querySelector('#md-emails').getBoundingClientRect().top), 'l’appareil d’abord, les emails dessous');
+    // Les quatre onglets tiennent sur une ligne : aucun ne défile ni n'est coupé, la rangée non plus
+    const rangee = await s.page.evaluate(() => {
+      const r = document.querySelector('.pf-onglets'), b = r.getBoundingClientRect();
+      return { sw: r.scrollWidth, cw: r.clientWidth, gauche: b.left, droite: b.right, largeur: innerWidth,
+        onglets: [...r.querySelectorAll('[role="tab"]')].map(t => ({ texte: t.textContent.trim(), sw: t.scrollWidth, cw: t.clientWidth, sh: t.scrollHeight, ch: t.clientHeight, haut: Math.round(t.getBoundingClientRect().top) })) };
+    });
+    assert.deepEqual(rangee.onglets.map(t => t.texte), LIBELLES[langue]);
+    assert.ok(rangee.sw <= rangee.cw, `${langue} : la rangée ne défile pas (${rangee.sw} > ${rangee.cw})`);
+    assert.ok(rangee.gauche >= 0 && rangee.droite <= rangee.largeur, `${langue} : la rangée est dans l’écran`);
+    for (const t of rangee.onglets) {
+      assert.ok(t.sw <= t.cw && t.sh <= t.ch, `${langue} : « ${t.texte} » entier (${t.sw} / ${t.cw})`);
+      assert.equal(t.haut, rangee.onglets[0].haut, `${langue} : « ${t.texte} » sur la même ligne`);
+    }
+    // Une partie à la fois ; « Enregistrer » sur les onglets du formulaire ; un bouton plein au plus
+    for (const k of ['notifications', 'profil', 'visibilite', 'donnees']) {
+      if (k !== 'notifications') await ongletProfil(s, k);
+      assert.equal(await s.page.evaluate(() => location.hash), k === 'profil' ? '#profil' : '#profil/' + k);
+      assert.deepEqual(await s.page.$$eval('.pf-onglets [aria-selected="true"]', ts => ts.map(t => t.id)), ['pf-onglet-' + k]);
+      const vus = await s.page.evaluate(P => Object.fromEntries(Object.entries(P).map(([p, sels]) => [p, sels.map(x => { const e = document.querySelector(x); return !!e && e.getClientRects().length > 0; })])), PARTIES);
+      for (const [p, xs] of Object.entries(vus)) assert.deepEqual(xs, xs.map(() => p === k), `${langue} · onglet ${k} : partie ${p}`);
+      assert.equal(await s.page.isVisible('#profil-infos .row-end .btn.primary'), AVEC_FORMULAIRE.includes(k), `${langue} · onglet ${k} : Enregistrer`);
+      const pleins = await s.page.$$eval('.pf-page .btn.primary', bs => bs.filter(b => b.getClientRects().length).map(b => b.textContent.trim()));
+      assert.ok(pleins.length <= 1, `${langue} · onglet ${k} : un bouton plein au plus (${pleins.join(', ')})`);
+      assert.equal(await s.debordement(), 0, `${langue} · onglet ${k}`);
+    }
+    // Rechargée, l'adresse rouvre le même onglet
+    await s.page.reload(); await s.page.waitForSelector('#mes-donnees', { state: 'visible' });
+    assert.equal(await s.page.getAttribute('#pf-onglet-donnees', 'aria-selected'), 'true');
+    // Clavier : Début, Fin et les flèches dans le sens de lecture
+    await s.page.focus('#pf-onglet-donnees');
+    await s.page.keyboard.press('Home'); await s.page.waitForTimeout(250);
+    assert.deepEqual(await s.page.evaluate(() => [location.hash, document.activeElement?.id]), ['#profil', 'pf-onglet-profil']);
+    await s.page.keyboard.press(langue === 'ar' ? 'ArrowLeft' : 'ArrowRight'); await s.page.waitForTimeout(250);
+    assert.deepEqual(await s.page.evaluate(() => [location.hash, document.activeElement?.id]), ['#profil/visibilite', 'pf-onglet-visibilite']);
+    // « Visible par les lauréats » : un seul interrupteur, allumé si Match ou la Vitrine l'est, qui écrit les deux
+    const moi = () => s.page.evaluate(() => { const m = window.__demo.byId('profiles', window.__demo.me.id); return { vitrine: m.vitrine, match_visible: m.match_visible }; });
+    await s.page.evaluate(() => window.__demo.update('profiles', window.__demo.me.id, { vitrine: false, match_visible: true })); await s.page.waitForTimeout(250);
+    assert.equal(await s.page.isChecked('#pf-visible'), true, 'allumé : Match l’est encore');
+    await s.page.locator('.pf-visible .mx-switch').click(); await s.page.waitForTimeout(300);
+    assert.equal(await s.page.isChecked('#pf-visible'), false);
+    assert.deepEqual(await moi(), { vitrine: false, match_visible: false });
+    if (langue === 'fr') assert.match(await s.page.locator('.toast').last().innerText(), /Les lauréats ne te voient plus dans Match ni dans la Vitrine des talents\./);
+    await s.page.locator('.pf-visible .mx-switch').click(); await s.page.waitForTimeout(300);
+    assert.equal(await s.page.isChecked('#pf-visible'), true);
+    assert.deepEqual(await moi(), { vitrine: true, match_visible: true });
+    if (langue === 'fr') {
+      assert.match(await s.page.locator('.toast').last().innerText(), /Les lauréats te voient de nouveau dans Match et dans la Vitrine des talents\./);
+      assert.match(await s.page.locator('.pf-visible').innerText(), /Visible par les lauréats[\s\S]*Match[\s\S]*Vitrine des talents/);
+      await s.page.addScriptTag({ content: AXE });
+      const v = await s.page.evaluate(async () => (await axe.run({ include: [['.pf-onglets'], ['.pf-visible']] }, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => x.id));
+      assert.deepEqual(v, []);
+    }
+    // L'onglet remplace l'adresse (comme dans Suivi) : le retour arrière quitte « Mon profil », l'avant y ramène sur le même onglet
+    await s.aller('accueil'); await s.aller('profil'); await ongletProfil(s, 'donnees'); await ongletProfil(s, 'visibilite');
+    await s.page.goBack(); await s.page.waitForTimeout(300);
+    assert.equal(await s.page.evaluate(() => location.hash), '#accueil');
+    await s.page.goForward(); await s.page.waitForSelector('#pf-visible', { state: 'attached' }); await s.page.waitForTimeout(300);
+    assert.equal(await s.page.getAttribute('#pf-onglet-visibilite', 'aria-selected'), 'true');
+    if (langue === 'ar') {
+      const oublis = (await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x));
+      assert.deepEqual(oublis, [], 'rien d’oublié en français');
+    }
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
 });
 
 // Accueil qui guide : sur un petit Android, une seule carte, un seul bouton plein, visible sans défiler
@@ -3604,7 +3690,7 @@ test('membre fondateur (démo) : « Ton nom sur la page d’entrée ? » une foi
   assert.equal(await s.page.locator('.modal.fd-feuille .btn.primary').count(), 1);
   await s.page.click('#fd-non'); await s.page.waitForSelector('.modal.fd-feuille', { state: 'detached' });
   assert.equal(await s.page.evaluate(() => window.__demo.me.fondateur_public), false);
-  await s.aller('profil'); await s.page.waitForSelector('#md-fondateur');
+  await s.aller('profil/visibilite'); await s.page.waitForSelector('#md-fondateur');
   assert.equal(await s.page.isChecked('#md-fondateur'), false);
   await s.page.click('#md-fondateur'); await s.page.waitForTimeout(300);
   assert.equal(await s.page.evaluate(() => window.__demo.me.fondateur_public), true);
@@ -3612,7 +3698,7 @@ test('membre fondateur (démo) : « Ton nom sur la page d’entrée ? » une foi
   await s.aller('accueil'); await s.page.waitForTimeout(2500);
   assert.equal(await s.page.locator('.modal.fd-feuille').count(), 0, 'une seule fois');
   // Une étudiante n'a pas cette case
-  await s.comme('Salma'); await s.aller('profil'); await s.page.waitForSelector('#mes-donnees');
+  await s.comme('Salma'); await s.aller('profil/visibilite'); await s.page.waitForSelector('#pf-visible');
   assert.equal(await s.page.locator('#md-fondateur').count(), 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
@@ -4613,7 +4699,7 @@ test('match : programmer un entretien (jour, heure, durée, visio) ; l’autre r
   await s.ctx.close();
 });
 
-test('match : « Apparaître dans Match » (Mon profil) retire la carte de l’étudiante chez les lauréats', async () => {
+test('match : « Visible par les lauréats » (Mon profil › Visibilité) retire la carte de l’étudiante chez les lauréats, et la remet', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Salma');
   const salma = await s.page.evaluate(() => window.__demo.me.id);
@@ -4623,14 +4709,20 @@ test('match : « Apparaître dans Match » (Mon profil) retire la carte de l’�
     return L.deckMatch(d.data, nadia).some(c => c.profil.id === id);
   }, salma);
   assert.equal(await chezNadia(), true);
-  await s.aller('profil');
-  assert.equal(await s.page.isChecked('#mx-visible'), true);
-  await s.page.locator('.mx-switch').click(); await s.page.waitForTimeout(300);
-  assert.equal(await s.page.isChecked('#mx-visible'), false);
-  assert.match(await s.page.locator('.toast').last().innerText(), /n’est plus proposée aux lauréats/);
+  await s.aller('profil/visibilite');
+  assert.equal(await s.page.isChecked('#pf-visible'), true);
+  await s.page.locator('.pf-visible .mx-switch').click(); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.isChecked('#pf-visible'), false);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Les lauréats ne te voient plus dans Match ni dans la Vitrine des talents\./);
+  assert.deepEqual(await s.page.evaluate(() => { const m = window.__demo.me; return [m.vitrine, m.match_visible]; }), [false, false]);
   assert.equal(await chezNadia(), false);
   await s.aller('match');
   assert.equal(await s.page.locator('.mx-visible').count(), 0, 'la page Match ne dit plus « les lauréats voient ta carte »');
+  // Rallumé : la carte revient chez les lauréats
+  await s.aller('profil/visibilite');
+  await s.page.locator('.pf-visible .mx-switch').click(); await s.page.waitForTimeout(300);
+  assert.deepEqual(await s.page.evaluate(() => { const m = window.__demo.me; return [m.vitrine, m.match_visible]; }), [true, true]);
+  assert.equal(await chezNadia(), true);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });

@@ -23,7 +23,7 @@ import { ConfianceFeuille, demandesRecues, pairsAConfirmer } from './confiance.j
 import { NextEvent } from './agenda.js';
 import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, suiteLien, accordIci, roleAccord, oublierInvitation } from './entree.js';
 import { MessagesPage, useAlerteMessages } from './messages.js';
-import { MatchPage, MatchAccueil, MatchVisible } from './match.js';
+import { MatchPage, MatchAccueil } from './match.js';
 import { PoulsReseau, marquerArrivee, useArrivee, ArriveeSheet } from './pouls.js';
 import { CaBouge, GraceAToi } from './vitrine.js';
 import { ProposerAide } from './demandes.js';
@@ -1109,20 +1109,31 @@ function guideEtapes(ctx, setCompose) {
   return { steps, done, total, fini, suivante: fini ? null : comptees.find(s => !s.fait && s.go) || null };
 }
 
-// Sous le titre, les puces qui mènent à chaque partie (photo et CV, infos, coordonnées, qui voit quoi, notifications, données)
-// (import gardé ici, avec Mon profil : le haut du fichier appartient à l'accueil)
-import { SautsProfil } from './community.js';
+// En quatre onglets, une seule partie à l'écran : Profil (photo, CV, mes infos), Visibilité (visible par les lauréats,
+// coordonnées, qui voit quoi), Notifications (cet appareil, ce que je reçois, emails), Données. L'onglet est dans
+// l'adresse (#profil/visibilite…). Tout reste monté : ce qui est tapé dans le formulaire survit au changement d'onglet.
+// (imports gardés ici, avec Mon profil : le haut du fichier appartient à l'accueil)
+import { OngletsProfil, ongletProfil, routeOnglet } from './community.js';
+import { MesNotifications } from './privacy.js';
+import { FondateurPublicCase } from './fondateurs.js';
 function MyProfile({ ctx }) {
-  const { me, store } = ctx;
-  return html`<section class="page narrow">
+  const { me, store, go } = ctx;
+  const onglet = ongletProfil(ctx.sub);
+  // Un onglet de la même page : il remplace l'entrée d'historique (Retour quitte « Mon profil »)
+  const versOnglet = k => go(routeOnglet(k), { remplacer: true });
+  return html`<section class="page narrow pf-page">
     <header class="page-head"><div><p class="eyebrow">Jamais public</p><h1>Mon profil</h1></div>
       ${store.mode === 'live' ? html`<button class="btn ghost" onClick=${() => store.signOut()}><${Icon} name="logout"/> Se déconnecter</button>` : null}</header>
-    <${SautsProfil} key=${me.id}/>
-    <${PhotoCard} ctx=${ctx}/>
-    <${CvCard} ctx=${ctx}/>
-    <${MatchVisible} ctx=${ctx}/>
-    <${ProfileForm} ctx=${ctx} initial=${me} key=${me.id}/>
-    <${MesDonnees} ctx=${ctx}/>
+    <${OngletsProfil} onglet=${onglet} onChange=${versOnglet}/>
+    <div class="pf-panneau" id="pf-panneau" role="tabpanel" aria-labelledby=${'pf-onglet-' + onglet}>
+      <div class="pf-partie" hidden=${onglet !== 'profil'}>
+        <${PhotoCard} ctx=${ctx}/>
+        <${CvCard} ctx=${ctx}/>
+      </div>
+      <${ProfileForm} ctx=${ctx} initial=${me} key=${me.id} onglet=${onglet} versOnglet=${versOnglet} apresVisibilite=${html`<${FondateurPublicCase} ctx=${ctx}/>`}/>
+      <div class="pf-partie" id="profil-notifications" hidden=${onglet !== 'notifications'}><${MesNotifications} ctx=${ctx}/></div>
+      <div class="pf-partie" id="profil-donnees" hidden=${onglet !== 'donnees'}><${MesDonnees} ctx=${ctx}/></div>
+    </div>
   </section>`;
 }
 

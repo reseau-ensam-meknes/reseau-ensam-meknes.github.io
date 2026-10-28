@@ -96,7 +96,7 @@ export function CvCard({ ctx }) {
         <span class="small muted">ou clique pour choisir un fichier · PDF, 2 Mo maximum</span>
       </button>
       ${me.cv_url ? html`<p class="small muted">Tu as déjà un lien vers ton CV dans ton profil. Le PDF est plus simple pour les lauréats.</p>` : null}`}
-    <p class="small muted cv-vis"><${Icon} name="lock" size=${14}/><span>${QUI_VOIT[vis] || QUI_VOIT.laureats}</span><span>Choisis qui le voit plus bas.</span></p>
+    <p class="small muted cv-vis"><${Icon} name="lock" size=${14}/><span>${QUI_VOIT[vis] || QUI_VOIT.laureats}</span><button type="button" class="linkish small" id="cv-qui-voit" onClick=${() => go('profil/visibilite', { remplacer: true })}>Choisir qui le voit</button></p>
 
     ${!admin && (me.cv_path || last) ? html`<div class="cv-relu">
       <span class="obj-ico"><${Icon} name="eye" size=${18}/></span>
@@ -105,7 +105,7 @@ export function CvCard({ ctx }) {
         : last.status === 'en_cours' ? html`<strong>${reviewer ? `${firstName(reviewer)} relit ton CV` : 'Ton CV est en cours de relecture'}</strong><span class="small muted">On te prévient dès que c’est fini.</span>`
         : html`<strong>CV envoyé</strong><span class="small muted">${reviewer ? `En attente de ${firstName(reviewer)} · ${timeAgo(last.created_at)}` : 'En attente d’un lauréat disponible'}</span>`}</span>
       ${last ? html`<button class=${'btn small' + (last.status === 'rendue' && !last.merci && !last.note ? ' tonal' : ' ghost')} onClick=${() => go('mentorat/cv')}>${last.status === 'rendue' && !last.merci && !last.note ? 'Lire les conseils' : 'Suivre'}</button>` : null}
-      ${me.cv_path && enCours < 2 && (!last || !ACTIVES.includes(last.status)) ? html`<button id="cv-ask" class=${'btn small' + (last ? ' ghost' : ' primary')} onClick=${() => setAsk(true)}>${last ? 'Nouvelle relecture' : 'Demander une relecture'}</button>` : null}
+      ${me.cv_path && enCours < 2 && (!last || !ACTIVES.includes(last.status)) ? html`<button id="cv-ask" class=${'btn small' + (last ? ' ghost' : ' tonal')} onClick=${() => setAsk(true)}>${last ? 'Nouvelle relecture' : 'Demander une relecture'}</button>` : null}
     </div>` : null}
     ${ask ? html`<${DemandeRelecture} ctx=${ctx} onClose=${() => setAsk(false)}/>` : null}
   </div>`;
@@ -437,7 +437,7 @@ addAR({
   'Tous les membres connectés peuvent l’ouvrir.': 'يمكن لكل الأعضاء المسجلين فتحها.',
   'Les lauréats et tes contacts peuvent l’ouvrir.': 'يمكن للخريجين ولجهات اتصالك فتحها.',
   'Tes contacts peuvent l’ouvrir, et les lauréats quand tu as une demande ouverte.': 'يمكن لجهات اتصالك فتحها، وللخريجين أيضًا حين يكون لديك طلب مفتوح.',
-  'Choisis qui le voit plus bas.': 'اختر من يراها في الأسفل.',
+  'Choisir qui le voit': 'اختيار من يراها',
   'Fais relire ton CV par un lauréat': 'اطلب من خريج مراجعة سيرتك الذاتية', 'Il commente rubrique par rubrique et te donne ses conseils.': 'يعلّق قسمًا بقسم ويقدّم لك نصائحه.',
   'Ta relecture est prête': 'مراجعتك جاهزة', 'Ta dernière relecture est rendue': 'آخر مراجعة لك جاهزة', 'Ton CV est en cours de relecture': 'سيرتك الذاتية قيد المراجعة',
   'On te prévient dès que c’est fini.': 'سيصلك إشعار عند الانتهاء.', 'CV envoyé': 'أُرسلت سيرتك الذاتية', 'En attente d’un lauréat disponible': 'في انتظار خريج متاح',

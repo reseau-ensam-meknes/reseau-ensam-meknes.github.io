@@ -366,7 +366,8 @@ function FeteMatch({ f, me, onEcrire, onClose }) {
 }
 
 // ---------------------------------------------------------------------------
-// Ailleurs sur le site : l'entrée de l'accueil (seulement quand quelqu'un attend une réponse) et l'interrupteur de Mon profil
+// Ailleurs sur le site : l'entrée de l'accueil (seulement quand quelqu'un attend une réponse). Apparaître dans Match se
+// règle dans Mon profil › Visibilité (« Visible par les lauréats », community.js), avec la Vitrine des talents.
 // ---------------------------------------------------------------------------
 export function MatchAccueil({ ctx }) {
   const { data, me, go } = ctx;
@@ -380,20 +381,6 @@ export function MatchAccueil({ ctx }) {
     <span class="mx-acc-txt"><strong>${titre}</strong><span class="small muted">Réponds dans Match : si c’est oui des deux côtés, vous pouvez vous écrire.</span></span>
     <${Icon} name="arrow" size=${18}/>
   </button>`;
-}
-
-export function MatchVisible({ ctx }) {
-  const { me, store, act } = ctx;
-  // En ligne, seulement quand la base connaît le réglage (mise à jour faite)
-  if (me.role !== 'etudiant' || (store.mode === 'live' && !('match_visible' in me))) return null;
-  const on = me.match_visible !== false;
-  const changer = e => { const v = e.target.checked; act(async () => { await store.update('profiles', me.id, { match_visible: v }); toast(v ? 'Ta carte est de nouveau visible dans Match.' : 'Ta carte n’est plus proposée aux lauréats.'); }); };
-  return html`<section class="panel mx-reglage" aria-labelledby="mx-h-visible">
-    <div class="mx-reg-txt"><h2 id="mx-h-visible"><${Icon} name="match" size=${20}/> Apparaître dans Match</h2>
-      <p class="small muted">${cvPourLaureats(me) ? 'Les lauréats voient ta carte (ton CV en grand, ton année, ta filière, tes compétences, ce que tu cherches) et peuvent dire qu’ils sont intéressés.'
-        : 'Les lauréats voient ta carte (année, filière, compétences, ce que tu cherches) et peuvent dire qu’ils sont intéressés. Ton CV reste privé jusqu’au match.'}</p></div>
-    <label class="mx-switch"><input type="checkbox" role="switch" id="mx-visible" checked=${on} onChange=${changer}/><span class="mx-switch-piste" aria-hidden="true"></span><span class="sr-only">Apparaître dans Match</span></label>
-  </section>`;
 }
 
 addAR({
@@ -410,7 +397,6 @@ addAR({
   'Les lauréats voient aussi ta carte. Ajoute ton CV : il s’affiche en grand, et les cartes avec CV passent en premier.': 'يرى الخريجون بطاقتك أيضًا. أضف سيرتك الذاتية: تظهر بحجم كبير، والبطاقات التي فيها سيرة ذاتية تُعرض أولًا.',
   'Les lauréats voient aussi ta carte, avec ton CV en grand.': 'يرى الخريجون بطاقتك أيضًا، مع سيرتك الذاتية بحجم كبير.',
   'Les lauréats voient aussi ta carte. Ton CV reste privé jusqu’au match.': 'يرى الخريجون بطاقتك أيضًا. تبقى سيرتك الذاتية خاصة حتى التوافق.',
-  'Les lauréats voient ta carte (ton CV en grand, ton année, ta filière, tes compétences, ce que tu cherches) et peuvent dire qu’ils sont intéressés.': 'يرى الخريجون بطاقتك (سيرتك الذاتية بحجم كبير، سنتك، شعبتك، مهاراتك، ما تبحث عنه) ويمكنهم إبداء اهتمامهم.',
   'Ce choix a mené à un match : il reste.': 'أدى هذا الاختيار إلى توافق: يبقى كما هو.', 'La carte est revenue.': 'عادت البطاقة.',
   'Tu as tout vu pour l’instant': 'شاهدت كل شيء حاليًا',
   'Les nouvelles offres de lauréats arriveront ici. Dis ce que tu cherches : les lauréats viennent aussi vers toi.': 'ستصل هنا العروض الجديدة للخريجين. قل ما تبحث عنه: الخريجون يأتون إليك أيضًا.',
@@ -418,9 +404,6 @@ addAR({
   'Revenir sur mon dernier choix': 'التراجع عن آخر اختيار',
   'C’est un match !': 'تمّ الاتفاق!',
   'Réponds dans Match : si c’est oui des deux côtés, vous pouvez vous écrire.': 'أجب في صفحة التوافق: إذا قال الطرفان نعم، يمكنكما المراسلة.',
-  'Apparaître dans Match': 'الظهور في صفحة التوافق',
-  'Les lauréats voient ta carte (année, filière, compétences, ce que tu cherches) et peuvent dire qu’ils sont intéressés. Ton CV reste privé jusqu’au match.': 'يرى الخريجون بطاقتك (السنة، الشعبة، المهارات، ما تبحث عنه) ويمكنهم إبداء اهتمامهم. تبقى سيرتك الذاتية خاصة حتى التوافق.',
-  'Ta carte est de nouveau visible dans Match.': 'بطاقتك ظاهرة من جديد في صفحة التوافق.', 'Ta carte n’est plus proposée aux lauréats.': 'لم تعد بطاقتك معروضة على الخريجين.',
   // Pourquoi cette carte (pourquoiCarte, logic.js)
   'Pour ta filière': 'لشعبتك', 'Pour ton parcours': 'لمسارك', 'Pour ton année': 'لسنتك', 'Ouverte à toutes les filières': 'مفتوح لكل الشعب', 'Correspond à ta demande': 'يوافق طلبك',
   'Même filière que toi': 'نفس شعبتك', 'Même parcours que toi': 'نفس مسارك', 'Étudiant à l’école': 'بالمدرسة حاليًا',
