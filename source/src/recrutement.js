@@ -64,11 +64,12 @@ function printSheet() {
   try { window.print(); } catch { off(); toast('Utilise Ctrl+P, ou Partager puis Imprimer sur téléphone.', 'err'); }
 }
 
+// Dans « Mon espace » (Mes documents), à côté de l'attestation
 export function BilanCard({ ctx }) {
   const [open, setOpen] = useState(false);
   return html`<div class="attest-card">
     <span class="attest-ico"><${Icon} name="briefcase" size=${24}/></span>
-    <div class="grow"><strong>Bilan de cooptation</strong><span class="small muted">Tes offres, les candidatures reçues et les recrues confirmées, sur une page à montrer à ta RH ou à ton manager.</span></div>
+    <div class="grow"><strong>Bilan de cooptation</strong><span class="small muted">Pour ta RH ou ton manager : tes offres, candidatures et recrues.</span></div>
     <button class="btn small" onClick=${() => setOpen(true)}>Voir mon bilan</button>
     ${open ? html`<${BilanModal} ctx=${ctx} onClose=${() => setOpen(false)}/>` : null}
   </div>`;

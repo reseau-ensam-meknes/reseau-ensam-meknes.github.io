@@ -1,9 +1,8 @@
 // « Mon parcours » (étudiants) et « Mon espace » (lauréats).
 import { html, useState } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, Bar, toast, LevelChip, CompanyLogo, TYPE_ICON, Num, celebrate, injectCSS, LigneAFaire, Embleme } from './ui.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, Bar, toast, LevelChip, CompanyLogo, TYPE_ICON, Num, celebrate, injectCSS, Embleme } from './ui.js';
 import { addAR, arCount } from './i18n.js';
-import { PoulsReseau } from './pouls.js';
-import { OBJECTIFS, NIVEAUX, TYPES, niveauOf, statutOf, typeForNiveau, seasonLabel, timeAgo, levelOf, BADGES, badgesOf, BAREME, computeScores, NIVEAUX_IMPACT, mentorState, requestsFor, demandesPour } from './logic.js';
+import { OBJECTIFS, NIVEAUX, TYPES, niveauOf, statutOf, typeForNiveau, seasonLabel, timeAgo, levelOf, BADGES, badgesOf, BAREME, NIVEAUX_IMPACT, mentorState, requestsFor, demandesPour } from './logic.js';
 import { APP_STATUS, OfferComposer, annulerRecrutement } from './offers.js';
 import { AttestationCard, ShareModal } from './growth.js';
 import { Filleuls, ParrainCard } from './saison.js';
@@ -135,24 +134,18 @@ export function versMerci(ctx) {
   }, 450);
 }
 
-// « À faire » en tête de Mon parcours et de Mon espace : les mêmes choses que la cloche, au même nombre.
-// Ce qui se fait ici même (confirmer, dire merci) s'affiche en carte ; le reste en lignes avec leur bouton. Rien à faire : rien ne s'affiche.
-export function AFaire({ ctx, max = 3 }) {
-  const { data, me, store, notifs = [], openNotif } = ctx;
+// En tête de Mon parcours et de Mon espace : seulement ce qui se fait ici même (confirmer un recrutement, dire merci).
+// Les autres gestes (candidatures, rendez-vous, CV relu…) sont dans la cloche et sur l'accueil : on ne les répète pas ici.
+// Rien à confirmer ni à remercier : rien ne s'affiche.
+export function AFaire({ ctx }) {
+  const { data, me, store } = ctx;
   const helper = p => store.byId('profiles', p.laureat_id);
   const aConfirmer = data.placements.filter(p => p.student_id === me.id && p.status === 'en_attente');
   const aRemercier = data.placements.filter(p => p.student_id === me.id && p.status === 'confirme' && p.laureat_id && !p.merci);
-  const lignes = notifs.filter(n => n.geste && !/^(pa|pm)/.test(n.key || ''));
-  const total = aConfirmer.length + aRemercier.length + lignes.length;
-  if (!total) return null;
-  const vues = lignes.length > max + 1 ? lignes.slice(0, max) : lignes, reste = lignes.slice(vues.length);
-  const liste = xs => html`<ul class="af-liste">${xs.map(n => html`<${LigneAFaire} key=${n.key} n=${n} onGo=${openNotif}/>`)}</ul>`;
-  return html`<section class="a-faire" aria-labelledby="af-titre">
-    <div class="section-head"><h2 id="af-titre">À faire <span class="count">${total}</span></h2></div>
+  if (!aConfirmer.length && !aRemercier.length) return null;
+  return html`<section class="a-faire" aria-label=${aConfirmer.length ? 'À confirmer' : 'Dis merci'}>
     ${aConfirmer.map(p => html`<${ConfirmRecruit} key=${p.id} ctx=${ctx} pl=${p} helper=${helper(p)}/>`)}
     ${aRemercier.map(p => html`<${MerciBox} key=${p.id} ctx=${ctx} pl=${p} helper=${helper(p)}/>`)}
-    ${vues.length ? liste(vues) : null}
-    ${reste.length ? html`<details class="af-plus"><summary>${`Voir les ${reste.length} autres`}</summary>${liste(reste)}</details>` : null}
   </section>`;
 }
 
@@ -208,13 +201,16 @@ function AppModal({ ctx, onClose }) {
 }
 
 // ---------------------------------------------------------------------------
-// Espace lauréat : d'abord merci, puis ce qu'il y a à traiter, puis ce qu'il a apporté.
-// Un lauréat qui arrive n'a rien à rattraper : on lui propose une première aide facile, pas un tableau de zéros.
+// Espace lauréat, dans l'ordre où il sert : d'abord ce qui l'attend (à confirmer, en attente, rendez-vous),
+// puis « Mon impact » (trois chiffres, le niveau, le prochain badge), puis ses offres, ses filleuls, ses recrues et ses mercis.
+// Le détail (badges, historique des points) est replié en bas. Un lauréat qui arrive n'a rien à rattraper :
+// on lui propose une première aide facile, pas un tableau de zéros.
 // ---------------------------------------------------------------------------
+const STATUT_OFFRE = { ouverte: ['Ouverte', 'of-ouverte'], pourvue: ['Pourvue', 's-trouve'] };
+
 export function EspacePage(ctx) {
-  const { data, me, store, scores, act, openProfile, openOffer } = ctx;
+  const { data, me, store, scores, openProfile, openOffer } = ctx;
   const s = scores.get(me.id) || { points: 0, events: [], offres: 0, recrutes: 0, mentorats: 0, mercis: 0, reponses: 0 };
-  const lvl = levelOf(s.points);
   const mine = badgesOf(s, me, { star: ctx.starId, fondateurs: ctx.fondateurs, ambassadeurs: ctx.ambassadeurs });
   const myOffers = data.offers.filter(o => o.author_id === me.id).sort((a, b) => (a.status === 'ouverte' ? 0 : 1) - (b.status === 'ouverte' ? 0 : 1) || new Date(b.created_at) - new Date(a.created_at));
   const waiting = data.placements.filter(p => p.laureat_id === me.id && p.status === 'en_attente');
@@ -223,7 +219,6 @@ export function EspacePage(ctx) {
     ...helped.filter(p => p.merci).map(p => ({ who: p.student_id, txt: p.merci, at: p.confirmed_at || p.created_at, ctx: p.entreprise })),
     ...data.mentorships.filter(m => m.mentor_id === me.id && m.merci).map(m => ({ who: m.student_id, txt: m.merci, at: m.created_at, ctx: m.sujet })),
   ].sort((a, b) => new Date(b.at) - new Date(a.at));
-  const month = computeScores(data, new Date(Date.now() - 30 * 864e5)).get(me.id)?.points || 0;
   const [bareme, setBareme] = useState(false);
   const [compose, setCompose] = useState(false);
   const [share, setShare] = useState(null);
@@ -231,34 +226,17 @@ export function EspacePage(ctx) {
   const recrues = helped.filter(p => p.saison === ctx.saison).sort((a, b) => new Date(b.confirmed_at || b.created_at) - new Date(a.confirmed_at || a.created_at));
   const events = [...(s.events || [])].sort((a, b) => new Date(b.at) - new Date(a.at));
   const nouveau = !s.points && !myOffers.length && !helped.length && !waiting.length && !rdv.length && !mercis.length;
-  // Une seule action principale : si « À faire » montre une carte avec son bouton plein, « Publier une offre » se fait discret
+  // Une seule action principale : si une carte à confirmer (ou un merci) montre son bouton plein, « Publier une offre » passe en tonal
   const carteAFaire = data.placements.some(p => p.student_id === me.id && (p.status === 'en_attente' || (p.status === 'confirme' && p.laureat_id && !p.merci)));
 
   return html`<section class="page espace">
     <header class="page-head"><div><p class="eyebrow">Promo ${me.promo}${me.entreprise ? ' · ' + me.entreprise : ''}</p><h1>Mon espace</h1></div>
-      ${nouveau ? null : html`<button class=${'btn publier-offre' + (carteAFaire ? '' : ' primary')} onClick=${() => setCompose(true)}><${Icon} name="plus"/> Publier une offre</button>`}</header>
+      ${nouveau ? null : html`<button class=${'btn publier-offre ' + (carteAFaire ? 'tonal' : 'primary')} onClick=${() => setCompose(true)}><${Icon} name="plus"/> Publier une offre</button>`}</header>
 
     <${AFaire} ctx=${ctx}/>
+    ${nouveau ? html`<${PremiereAide} ctx=${ctx} onPublier=${() => setCompose(true)}/>` : null}
 
-    ${nouveau ? html`<${PremiereAide} ctx=${ctx} onPublier=${() => setCompose(true)}/>` : html`<div class="impact-hero">
-      <div class="impact-score">
-        <span class="row"><${Icon} name="star" size=${20}/><span class="muted">Points d’impact</span></span>
-        <span class="big mono"><${Num} v=${s.points}/></span>
-        <div class="lvl-row"><${LevelChip} points=${s.points}/>${lvl.next ? html`<span class="muted small">encore ${lvl.next.min - s.points} pour ${lvl.next.nom}</span>` : html`<span class="muted small">Niveau maximum</span>`}</div>
-        <${Bar} value=${lvl.progress} label="Progression vers le niveau suivant"/>
-        <span class="row small muted">+${month} ces 30 jours<span class="spacer"></span><button class="linkish small on-dark" onClick=${() => setBareme(true)}>Comment gagner des points ?</button></span>
-      </div>
-      <div class="impact-facts">
-        <div><span class="fact-ico"><${Icon} name="briefcase" size=${18}/></span><span class="big mono"><${Num} v=${helped.length}/></span><span>recruté${helped.length > 1 ? 's' : ''} grâce à toi</span></div>
-        <div><span class="fact-ico"><${Icon} name="feed" size=${18}/></span><span class="big mono"><${Num} v=${myOffers.length}/></span><span>offre${myOffers.length > 1 ? 's' : ''} partagée${myOffers.length > 1 ? 's' : ''}</span></div>
-        <div><span class="fact-ico"><${Icon} name="mentor" size=${18}/></span><span class="big mono"><${Num} v=${s.mentorats}/></span><span>mentorat${s.mentorats > 1 ? 's' : ''} terminé${s.mentorats > 1 ? 's' : ''}</span></div>
-        <div><span class="fact-ico"><${Icon} name="heart" size=${18}/></span><span class="big mono"><${Num} v=${mercis.length}/></span><span>merci${mercis.length > 1 ? 's' : ''} reçu${mercis.length > 1 ? 's' : ''}</span></div>
-      </div>
-    </div>`}
-
-    ${mercis.length ? html`<${MesMercis} ctx=${ctx} mercis=${mercis}/>` : null}
-
-    ${waiting.length ? html`<div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="clock"/> En attente de confirmation <span class="count">${waiting.length}</span></h2></div>
+    ${waiting.length ? html`<div class="panel esp-attente"><div class="section-head"><h2 class="h-ico"><${Icon} name="clock"/> En attente de confirmation <span class="count">${waiting.length}</span></h2></div>
       <p class="small muted">Tu as indiqué avoir recruté ces étudiants. Dès qu’ils confirment, leur réussite est vérifiée des deux côtés.</p>
       <ul class="app-list flat">${waiting.map(p => { const st = store.byId('profiles', p.student_id); return html`<li class="app-row" key=${p.id}>
         <span class="app-txt"><${Person} p=${st} onOpen=${openProfile} size=${36}/><span class="muted small app-sous"><span translate="no">${p.entreprise}</span> · ${timeAgo(p.created_at)}</span></span>
@@ -267,27 +245,34 @@ export function EspacePage(ctx) {
     ${rdv.length ? html`<button type="button" class="impact-strip clickable esp-rdv" onClick=${() => ctx.go('mentorat')}><span class="obj-ico"><${Icon} name="video" size=${20}/></span>
       <span class="grow"><strong>${rdv.length > 1 ? `${rdv.length} rendez-vous à venir` : '1 rendez-vous à venir'}</strong></span><${Icon} name="arrow" size=${18}/></button>` : null}
 
+    ${nouveau ? html`<${ProchainBadge} s=${s} mine=${mine}/>` : html`<${MonImpact} s=${s} mine=${mine} recrutes=${helped.length} mercis=${mercis.length} onBareme=${() => setBareme(true)}/>`}
+
+    ${nouveau ? null : html`<section class="esp-offres" aria-labelledby="esp-offres-titre"><div class="section-head"><h2 id="esp-offres-titre">Mes offres${myOffers.length ? html` <span class="count">${myOffers.length}</span>` : null}</h2></div>
+    ${myOffers.length ? html`<ul class="app-list">${myOffers.slice(0, 10).map(o => {
+      const nApps = data.applications.filter(a => a.offer_id === o.id).length;
+      const nRec = data.placements.filter(p => p.offer_id === o.id && p.status === 'confirme').length;
+      const [statut, cls] = STATUT_OFFRE[o.status] || ['Fermée', 'of-fermee'];
+      return html`<li key=${o.id}><button class="app-row clickable" onClick=${() => openOffer(o.id)}>
+        <span class=${'type-ico t-' + o.type}><${Icon} name=${TYPE_ICON[o.type]} size=${18}/></span>
+        <span class="app-txt"><strong translate="no" dir="auto">${o.titre}</strong><span class="muted small">${o.audience === 'laureats' ? `Entre lauréats · ${timeAgo(o.created_at)}` : timeAgo(o.created_at)}</span></span>
+        <span class=${'state-pill ' + cls}>${statut}</span>
+        <span class="mini-stats"><span title="Candidats"><${Icon} name="inbox" size=${15}/> ${nApps}</span><span title="Recrutés confirmés" class=${nRec ? 'ms-ok' : ''}><${Icon} name="check" size=${15}/> ${nRec}</span></span></button></li>`;
+    })}</ul>` : html`<${Empty} icon="feed" title="Aucune offre publiée">Une offre partagée peut lancer une carrière : les étudiants concernés la voient tout de suite.<//>`}</section>`}
+
     <${Filleuls} ctx=${ctx}/>
 
     ${recrues.length ? html`<div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="briefcase"/> Recrutés grâce à toi cette année <span class="count">${recrues.length}</span></h2></div>
       <ul class="app-list flat">${recrues.slice(0, 5).map(p => html`<li class="app-row" key=${p.id}><span class="app-txt"><${Person} p=${store.byId('profiles', p.student_id)} onOpen=${openProfile} size=${36}/><span class="muted small app-sous"><span translate="no">${p.entreprise}</span> · ${TYPES[p.type]?.label}</span></span>
         <button class="icon-btn small" aria-label="Partager sur LinkedIn" title="Partager sur LinkedIn" onClick=${() => setShare(p)}><${Icon} name="share" size=${16}/></button></li>`)}</ul></div>` : null}
 
-    ${nouveau ? null : html`<div class="section-head"><h2>Mes offres</h2></div>
-    ${myOffers.length ? html`<ul class="app-list">${myOffers.slice(0, 10).map(o => {
-      const nApps = data.applications.filter(a => a.offer_id === o.id).length;
-      const nRec = data.placements.filter(p => p.offer_id === o.id && p.status === 'confirme').length;
-      return html`<li key=${o.id}><button class="app-row clickable" onClick=${() => openOffer(o.id)}>
-        <span class=${'type-ico t-' + o.type}><${Icon} name=${TYPE_ICON[o.type]} size=${18}/></span>
-        <span class="app-txt"><strong translate="no" dir="auto">${o.titre}</strong><span class="muted small">${o.status === 'ouverte' ? 'Ouverte' : o.status === 'pourvue' ? 'Pourvue' : 'Fermée'}${o.audience === 'laureats' ? ' · Entre lauréats' : ''} · ${timeAgo(o.created_at)}</span></span>
-        <span class="mini-stats"><span title="Candidats"><${Icon} name="inbox" size=${15}/> ${nApps}</span><span title="Recrutés confirmés"><${Icon} name="check" size=${15}/> ${nRec}</span></span></button></li>`;
-    })}</ul>` : html`<${Empty} icon="feed" title="Aucune offre publiée">Une offre partagée peut lancer une carrière : les étudiants concernés la voient tout de suite.<//>`}`}
+    ${mercis.length ? html`<${MesMercis} ctx=${ctx} mercis=${mercis}/>` : null}
 
-    ${nouveau ? null : html`<${FaisVenirPromo} ctx=${ctx}/>`}
-    <${MesBadges} s=${s} mine=${mine}/>
-    ${nouveau ? null : html`<${AttestationCard} ctx=${ctx}/><${BilanCard} ctx=${ctx}/>`}
+    ${nouveau ? null : html`<${FaisVenirPromo} ctx=${ctx}/>
+      <section class="esp-docs" aria-labelledby="esp-docs-titre"><div class="section-head"><h2 id="esp-docs-titre">Mes documents</h2></div>
+        <div class="esp-docs-paire"><${AttestationCard} ctx=${ctx}/><${BilanCard} ctx=${ctx}/></div></section>`}
 
-    ${events.length ? html`<details class="ledger">
+    ${nouveau ? null : html`<${MesBadges} mine=${mine}/>`}
+    ${events.length ? html`<details class="ledger esp-plie">
       <summary><${Icon} name="star" size=${16}/> Historique de mes points <span class="count">${events.length}</span></summary>
       <ul class="events">${events.slice(0, 12).map(e => html`<li><span class="mono pts">+${e.pts}</span> ${e.label} <span class="muted small">${timeAgo(e.at)}</span></li>`)}</ul>
     </details>` : null}
@@ -297,6 +282,26 @@ export function EspacePage(ctx) {
     <//>` : null}
     ${compose ? html`<${OfferComposer} ctx=${ctx} onClose=${() => setCompose(false)}/>` : null}
     ${share ? html`<${ShareModal} ctx=${ctx} pl=${share} onClose=${() => setShare(null)}/>` : null}
+  </section>`;
+}
+
+// « Mon impact » : trois chiffres qui comptent pour les étudiants, puis le niveau et ce qu'il reste pour le suivant, puis le prochain badge
+function MonImpact({ s, mine, recrutes, mercis, onBareme }) {
+  const lvl = levelOf(s.points);
+  const faits = [
+    ['briefcase', recrutes, 'recruté grâce à toi', 'recrutés grâce à toi'],
+    ['mentor', Number(s.mentorats) || 0, 'mentorat terminé', 'mentorats terminés'],
+    ['heart', mercis, 'merci reçu', 'mercis reçus'],
+  ];
+  return html`<section class="impact-card" aria-labelledby="impact-titre">
+    <div class="section-head"><h2 id="impact-titre" class="h-ico"><${Icon} name="star"/> Mon impact</h2><button type="button" class="linkish small" onClick=${onBareme}>Comment gagner des points ?</button></div>
+    <ul class="impact-nums">${faits.map(([ic, n, un, plus]) => html`<li key=${ic} class=${n ? '' : 'zero'}>
+      <span class="fact-ico"><${Icon} name=${ic} size=${18}/></span><span class="impact-n"><${Num} v=${n}/></span><span class="impact-l">${n > 1 ? plus : un}</span></li>`)}</ul>
+    <div class="impact-niveau">
+      <div class="lvl-row"><${LevelChip} points=${s.points}/><span class="impact-pts">${`${s.points} point${s.points > 1 ? 's' : ''} d’impact`}</span><span class="spacer"></span><span class="muted small">${lvl.next ? `encore ${lvl.next.min - s.points} pour ${lvl.next.nom}` : 'Niveau maximum'}</span></div>
+      <${Bar} value=${lvl.progress} label="Progression vers le niveau suivant"/>
+    </div>
+    <${ProchainBadge} s=${s} mine=${mine} dedans/>
   </section>`;
 }
 
@@ -323,11 +328,10 @@ function PremiereAide({ ctx, onPublier }) {
       <span class="pa-geste-ico"><${Icon} name=${ic} size=${20}/></span>
       <span class="pa-geste-txt"><span class="pa-geste-titre"><strong>${t}</strong><span class="pa-duree">${d}</span></span><span class="small muted">${sub}</span></span>
       <span class="pa-geste-go" aria-hidden="true"><${Icon} name="arrow" size=${16}/></span></button></li>`)}<li key="promo"><${FaisVenirPromo} ctx=${ctx} geste/></li></ul>
-    <${PoulsReseau} ctx=${ctx}/>
   </div>`;
 }
 
-// Les mercis en haut de l'espace : le plus récent en grand, les autres repliés
+// Les mercis : le plus récent en grand, les autres repliés
 function MerciQui({ ctx, m, size }) {
   const p = ctx.store.byId('profiles', m.who);
   return html`<footer class="merci-qui"><${Avatar} p=${p} size=${size}/><span><button class="linkish" onClick=${() => ctx.openProfile(p)}>${p ? html`<span translate="no" dir="auto">${p.full_name}</span>` : 'Un étudiant'}</button> <span class="muted small">· <span translate="no" dir="auto">${m.ctx}</span> · <span class="nowrap">${timeAgo(m.at)}</span></span></span></footer>`;
@@ -355,29 +359,33 @@ const VERS_BADGE = {
   faiseur: ['Aide 10 étudiants à être recrutés', s => [s.recrutes, 10]],
   top: ['Atteins 300 points d’impact', s => [s.points, 300]],
 };
+// « Membre fondateur » ne s'obtient plus après les 25 premiers : on ne le montre qu'à ceux qui l'ont
+const badgesPossibles = has => BADGES.filter(b => !['fondateur', 'ambassadeur'].includes(b.id) || has.has(b.id));
 
-function MesBadges({ s, mine }) {
+// Une ligne : le prochain badge, ce qu'il demande, où on en est. Dans « Mon impact » (dedans) ou seul pour un nouveau lauréat
+function ProchainBadge({ s, mine, dedans = false }) {
   const has = new Set(mine.map(b => b.id));
   const next = Object.keys(VERS_BADGE).map(id => BADGES.find(b => b.id === id)).find(b => b && !has.has(b.id));
-  // « Membre fondateur » ne s'obtient plus après les 25 premiers : on ne le montre qu'à ceux qui l'ont
-  const possibles = BADGES.filter(b => !['fondateur', 'ambassadeur'].includes(b.id) || has.has(b.id));
-  const autres = possibles.filter(b => !has.has(b.id) && b !== next);
-  // Un emblème propre à chaque badge : en couleur quand il est obtenu, en contour discret sinon
+  if (!next) return null;
+  const [quoi, f] = VERS_BADGE[next.id];
+  const [cur, goal] = f(s).map(x => Number(x) || 0);
+  return html`<div class=${'badge-next' + (dedans ? ' dedans' : '')}>
+    <span class=${'badge-medal m-' + next.id}><${Embleme} id=${next.id} size=${22}/></span>
+    <div class="grow"><p class="eyebrow">${mine.length ? 'Prochain badge' : 'Ton premier badge'}</p><strong>${next.nom}</strong><span class="small muted">${quoi}</span>
+      ${goal > 1 ? html`<div class="bn-prog"><${Bar} value=${Math.min(1, cur / goal)} label=${`${Math.min(cur, goal)} sur ${goal}`}/><span class="small mono">${Math.min(cur, goal)} sur ${goal}</span></div>` : null}</div>
+  </div>`;
+}
+
+// Tous les badges, repliés : ceux obtenus en couleur, les autres en contour discret
+function MesBadges({ mine }) {
+  if (!mine.length) return null;
+  const has = new Set(mine.map(b => b.id));
+  const possibles = badgesPossibles(has);
   const tuile = (b, on) => html`<div class=${'badge' + (on ? ' has' : '')} title=${b.desc} key=${b.id}><span class=${'badge-medal m-' + b.id}><${Embleme} id=${b.id} size=${24}/></span><strong>${b.nom}</strong><span class="small muted">${b.desc}</span></div>`;
-  let prochain = null;
-  if (next) {
-    const [quoi, f] = VERS_BADGE[next.id];
-    const [cur, goal] = f(s).map(x => Number(x) || 0);
-    prochain = html`<div class="badge-next">
-      <span class=${'badge-medal m-' + next.id}><${Embleme} id=${next.id} size=${24}/></span>
-      <div class="grow">${mine.length ? html`<p class="eyebrow">Prochain badge</p>` : null}<strong>${next.nom}</strong><span class="small muted">${quoi}</span>
-        ${goal > 1 ? html`<div class="bn-prog"><${Bar} value=${Math.min(1, cur / goal)} label=${`${Math.min(cur, goal)} sur ${goal}`}/><span class="small mono">${Math.min(cur, goal)} sur ${goal}</span></div>` : null}</div>
-    </div>`;
-  }
-  return html`<div class="section-head"><h2>${mine.length ? 'Mes badges' : 'Ton premier badge'}</h2>${mine.length ? html`<span class="muted small">${mine.length} sur ${possibles.length}</span>` : null}</div>
-    ${mine.length ? html`<div class="badges">${mine.map(b => tuile(b, true))}</div>` : null}
-    ${prochain}
-    ${autres.length && mine.length ? html`<details class="badges-more"><summary>${autres.length > 1 ? `Voir les ${autres.length} autres badges` : 'Voir l’autre badge'}</summary><div class="badges">${autres.map(b => tuile(b, false))}</div></details>` : null}`;
+  return html`<details class="esp-plie esp-badges">
+    <summary><${Icon} name="award" size=${16}/> ${`Mes badges · ${mine.length} sur ${possibles.length}`}</summary>
+    <div class="badges">${mine.map(b => tuile(b, true))}${possibles.filter(b => !has.has(b.id)).map(b => tuile(b, false))}</div>
+  </details>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -428,14 +436,53 @@ injectCSS('me-ux', `
 .bn-prog { display: flex; align-items: center; gap: .6rem; margin-top: .35rem; }
 .bn-prog .bar { flex: 1; }
 
+/* « Mon impact » : une carte claire, trois chiffres, le niveau et le prochain badge */
+.impact-card { display: flex; flex-direction: column; gap: .9rem; padding: 1.1rem 1.15rem; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--sh1); min-width: 0; }
+.impact-card > .section-head { margin-top: 0; }
+.impact-card h2 .ico { color: var(--brass); }
+.impact-nums { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .6rem; }
+.impact-nums li { display: flex; flex-direction: column; align-items: flex-start; gap: .25rem; padding: .75rem .8rem; border-radius: var(--r-md); background: var(--surface-2); min-width: 0; }
+.impact-n { font: 750 var(--fs-7)/1.05 var(--f-display); font-variant-numeric: tabular-nums; color: var(--ink); }
+.impact-l { font-size: var(--fs-2); line-height: 1.3; color: var(--ink-2); }
+.impact-nums li.zero .impact-n { color: var(--muted); }
+.impact-niveau { display: flex; flex-direction: column; gap: .5rem; }
+.impact-pts { font-size: var(--fs-2); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink); }
+.impact-niveau .bar-fill { background: var(--brass); }
+.badge-next.dedans { padding: .85rem 0 0; border-radius: 0; background: none; box-shadow: none; border-top: 1px solid var(--line); }
+@media (max-width: 520px) {
+  .impact-nums { gap: .45rem; }
+  .impact-nums li { padding: .65rem .6rem; }
+  .impact-n { font-size: var(--fs-6); }
+}
+
+/* En attente de confirmation : le gris de l'attente, comme partout */
+.esp-attente h2 .ico { color: var(--muted); }
+
+/* Mes offres : l'état en couleur (ouverte, pourvue, fermée), candidats et recrues en petits compteurs */
+.state-pill.of-ouverte { background: var(--accent-soft); color: var(--blue-text); }
+.state-pill.of-fermee { background: var(--surface-2); color: var(--muted); }
+.esp-offres { display: flex; flex-direction: column; gap: .6rem; }
+.esp-offres .mini-stats .ms-ok { color: var(--good); font-weight: 600; }
+
+/* Mes documents : attestation et bilan côte à côte, une phrase chacun */
+.esp-docs { display: flex; flex-direction: column; gap: .6rem; }
+.esp-docs-paire { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: .7rem; }
+.esp-docs .attest-card { margin-top: 0; align-items: flex-start; align-content: space-between; gap: .5rem .8rem; padding: .9rem 1rem; }
+.esp-docs .attest-ico { width: 40px; height: 40px; }
+.esp-docs .attest-card .grow { flex: 1 1 calc(100% - 40px - .8rem); min-width: 0; }
+.esp-docs .attest-card > .btn { margin-inline-start: calc(40px + .8rem); }
+
 .espace details > summary { display: flex; align-items: center; gap: .45rem; cursor: pointer; list-style: none; font-weight: 600; font-size: var(--fs-2); color: var(--ink-2); padding: .5rem .15rem; min-height: 40px; border-radius: var(--r-sm); }
 .espace details > summary::-webkit-details-marker { display: none; }
 .espace details > summary::after { content: ""; width: 7px; height: 7px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: translateY(-2px) rotate(45deg); margin-inline-start: .25rem; transition: transform .2s var(--ease); }
 .espace details[open] > summary::after { transform: translateY(2px) rotate(-135deg); }
 .espace details > summary:hover { color: var(--accent); }
-.ledger { border-top: 1px solid var(--line); padding-top: .3rem; margin-top: .4rem; }
+/* Le détail replié en bas : badges, historique des points */
+.esp-plie { border-top: 1px solid var(--line); padding-top: .3rem; }
+.esp-plie + .esp-plie { margin-top: -.5rem; }
+.esp-plie summary .ico { color: var(--brass); }
+.esp-badges .badges { padding: .5rem .15rem .9rem; }
 .ledger .events { padding: .2rem .15rem .6rem; }
-.ledger summary .ico { color: var(--brass); }
 @media (max-width: 760px) {
   .espace .app-list.flat .app-row { flex-wrap: nowrap; }
 }
@@ -446,6 +493,10 @@ addAR({
   'Tu as indiqué avoir recruté ces étudiants. Dès qu’ils confirment, leur réussite est vérifiée des deux côtés.': 'أشرت إلى أنك وظّفت هؤلاء الطلبة. بمجرد تأكيدهم، يصبح نجاحهم مؤكَّدًا من الطرفين.',
   'Une offre partagée peut lancer une carrière : les étudiants concernés la voient tout de suite.': 'عرض واحد قد يطلق مسارًا مهنيًا: يراه الطلبة المعنيون فورًا.',
   'Historique de mes points': 'سجل نقاطي',
+  'Dis merci': 'قل شكرًا', 'Mon impact': 'أثري', 'Mes documents': 'وثائقي',
+  // Les deux cartes de « Mes documents » (growth.js, recrutement.js)
+  'Pour ton CV et LinkedIn, avec un lien de vérification.': 'لسيرتك الذاتية وحسابك على LinkedIn، مع رابط للتحقق.',
+  'Pour ta RH ou ton manager : tes offres, candidatures et recrues.': 'لمصلحة الموارد البشرية أو لمديرك: عروضك والترشيحات ومن وظّفتهم.',
   'Ta première aide': 'أول مساعدة لك',
   'Merci d’être là. Choisis ce qui te prend le moins de temps : un seul geste peut changer l’année d’un étudiant.': 'شكرًا لوجودك. اختر ما يأخذ منك أقل وقت: خطوة واحدة قد تغيّر سنة طالب.',
   'Relire un CV': 'مراجعة سيرة ذاتية',
@@ -458,7 +509,6 @@ addAR({
   'Mes badges': 'شاراتي',
   'Ton premier badge': 'شارتك الأولى',
   'Prochain badge': 'الشارة التالية',
-  'Voir l’autre badge': 'عرض الشارة الأخرى',
   'Publie une première offre': 'انشر عرضك الأول',
   'Termine 3 mentorats': 'أنهِ 3 جلسات إرشاد',
   'Aide 3 étudiants à être recrutés': 'ساعد 3 طلبة على التوظيف',
@@ -488,5 +538,4 @@ addAR({
   [/^Bienvenue, (.+)$/, n => `مرحبًا ${n}`],
   [/^(\d+) min$/, n => arCount(n, ['دقيقة', 'دقيقتان', 'دقائق', 'دقيقة'])],
   [/^Lire les (\d+) autres mercis$/, n => `قراءة ${arCount(n, ['رسالة شكر أخرى', 'رسالتي شكر أخريين', 'رسائل شكر أخرى', 'رسالة شكر أخرى'])}`],
-  [/^Voir les (\d+) autres badges$/, n => `عرض ${arCount(n, ['شارة أخرى', 'شارتين أخريين', 'شارات أخرى', 'شارة أخرى'])}`],
 ]);

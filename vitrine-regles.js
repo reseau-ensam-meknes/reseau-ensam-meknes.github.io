@@ -1,6 +1,6 @@
 // Vitrine : règles pures (sans DOM), testées dans tests/unit/vitrine.test.mjs.
 //  - Logo d'une entreprise : le domaine de son site, pour en montrer l'icône (le vrai logo gardé sur le site passe avant).
-//  - Preuve sociale d'une offre, « Ça bouge dans le réseau », « Grâce à toi » : des chiffres vrais, comptés seulement
+//  - Preuve sociale d'une offre, « Ça bouge cette semaine », « Grâce à toi » : des chiffres vrais, comptés seulement
 //    dans ce que le membre peut lire (mêmes règles que la base), jamais un nom ou un détail privé.
 import { niveauOf, seasonOf } from './logic.js';
 import { peutLireCible, peutLireDemande } from './reseau-vivant.js';
@@ -199,10 +199,11 @@ export const phraseSauvees = (n, publicVise) => (publicVise === 'laureat' ? `${n
 export const phraseCandidatures = n => (n > 1 ? `${n} candidatures` : '1 candidature');
 
 // ---------------------------------------------------------------------------
-// « Ça bouge dans le réseau » : des comptes, jamais qui. Sur 7 jours s'il s'y passe assez (3 gestes au moins),
+// « Ça bouge cette semaine » : des comptes, jamais qui. Sur 7 jours s'il s'y passe assez (3 gestes au moins),
 // sinon sur 30 jours ; rien du tout si le réseau est calme (pas de « 0 »). Trois faits au plus, toujours dans cet ordre.
-// Chaque fait se compte dans ce que le membre peut lire : les offres de son année (étudiant), les réactions et réponses
+// Chaque fait se compte dans ce que le membre peut lire : les offres de son année (étudiant), les réponses
 // sur ce qu'il peut lire (règles de reseau-vivant.js, comme la base), les membres de l'annuaire.
+// Les réactions disent que le réseau vit (elles comptent pour choisir 7 ou 30 jours) mais ne sont pas un fait à montrer.
 // ---------------------------------------------------------------------------
 export function caBouge(data, me, byId, now = Date.now(), saison = seasonOf()) {
   if (!me) return null;
@@ -221,11 +222,11 @@ export function caBouge(data, me, byId, now = Date.now(), saison = seasonOf()) {
         + (data.answers || []).filter(a => dans(a.created_at)).length,
       membres: (data.profiles || []).filter(p => p.id !== me.id && ['laureat', 'etudiant'].includes(p.role) && dans(p.created_at)).length,
     };
-    const faits = ['offres', 'reactions', 'reponses', 'membres'].filter(k => n[k] > 0).slice(0, 3).map(k => ({ cle: k, n: n[k] }));
+    const faits = ['offres', 'reponses', 'membres'].filter(k => n[k] > 0).map(k => ({ cle: k, n: n[k] }));
     return { jours, faits, total: Object.values(n).reduce((a, b) => a + b, 0) };
   };
   const semaine = calc(7);
-  if (semaine.total >= 3) return semaine;
+  if (semaine.total >= 3 && semaine.faits.length) return semaine;
   const mois = calc(30);
   return mois.faits.length ? mois : null;
 }

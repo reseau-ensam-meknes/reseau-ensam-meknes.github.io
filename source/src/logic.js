@@ -415,7 +415,7 @@ export function mentorState(m, now = new Date()) {
 // Jours de calendrier (ceux de l'appareil) d'aujourd'hui à cette date : 0 aujourd'hui, 1 demain
 export const joursAvant = (iso, now = new Date()) => { const j = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); return Math.round((j(new Date(iso)) - j(now)) / 864e5); };
 // Un rendez-vous ne prend la carte « prochaine étape » que s'il commence, la veille ou le jour même.
-// L'étudiant qui n'a pas encore confirmé le fait alors sur la carte ; avant, c'est une ligne de « Cette semaine ».
+// L'étudiant qui n'a pas encore confirmé le fait alors sur la carte ; avant, c'est une ligne de « À faire ».
 export function rdvALaUne(m, meId, now = new Date()) {
   if (!m?.rdv_at || (m.student_id !== meId && m.mentor_id !== meId) || mentorState(m, now) !== 'rdv') return null;
   if (now.getTime() > new Date(m.rdv_at).getTime() - 15 * 6e4) return 'direct';
@@ -1149,14 +1149,14 @@ export const annonceVisible = (a, now = Date.now()) => !!a?.active && now - new 
 export const annoncePour = (annonces, me, now = Date.now()) => (annonces || []).filter(a => annonceVisible(a, now) && pourPublic(a.public, me?.role))
   .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0] || null;
 
-// « Cette semaine » : trois petites choses au plus que seul le membre peut boucler.
+// « À faire » sur l'accueil : trois petites choses au plus que seul le membre peut boucler (les messages non lus en premier, app.js).
 // Jamais ce que montre la carte du haut ; pas les demandes d'aide (md, rd, qr : « Ils ont besoin de toi »),
 // ni les coordonnées (dc : leur carte), ni le recrutement à confirmer (pa : la carte), ni les rappels de rendez-vous (rdv).
 // Une présence à confirmer (sc) y vient tant que le rendez-vous est loin ; la veille, elle passe sur la carte.
 // La photo (ph) vient en dernier : après toutes les vraies tâches.
 export const TACHES = { dp: 0, ap: 0, dm: 0, rc: 0, sc: 1, in: 1, sg: 1, sf: 2, rr: 2, pm: 2, mf: 2, ev: 3, dr: 4, ro: 4, eq: 5, ph: 6 };
 // « Ajoute une photo » : un lauréat sans photo, quand la base accepte les photos (en ligne, la colonne photo_path existe ;
-// même règle que pretPhoto dans photo.js). Seulement dans « Cette semaine » (semaine) : ni la cloche ni la carte du haut.
+// même règle que pretPhoto dans photo.js). Seulement dans « À faire » de l'accueil (semaine) : ni la cloche ni la carte du haut.
 export function tachePhoto(me, { live = false } = {}) {
   if (!me || me.role !== 'laureat' || me.photo_path || (live && !('photo_path' in me))) return null;
   return { key: 'ph', action: true, semaine: true, tone: 'accent', icon: 'camera', to: 'profil', at: me.created_at || new Date(0).toISOString(), text: 'Ajoute une photo, les étudiants écrivent plus facilement à un visage.' };

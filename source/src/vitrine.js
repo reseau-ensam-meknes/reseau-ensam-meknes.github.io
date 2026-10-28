@@ -1,5 +1,5 @@
 // Vitrine : ce qui montre que le réseau vit (règles pures et testées dans vitrine-regles.js).
-//  - « Ça bouge dans le réseau » : des comptes vrais (offres, réactions, réponses, nouveaux membres), jamais qui ;
+//  - « Ça bouge cette semaine » : des comptes vrais (offres, réponses, nouveaux membres), jamais qui ;
 //  - « Grâce à toi » : sur l'accueil d'un lauréat, la plus belle nouvelle vraie née de ses offres ;
 //  - la carte qui s'ouvre en fiche : le logo et le titre glissent jusqu'à leur place (View Transitions), sinon un fondu ;
 //  - la forme des cartes tant que les offres arrivent.
@@ -11,16 +11,16 @@ import { timeAgo, titreOffre } from './logic.js';
 import { caBouge, phraseBouge, graceAToi, phraseGrace } from './vitrine-regles.js';
 
 // ---------------------------------------------------------------------------
-// « Ça bouge dans le réseau » : une bande calme sous le pouls de « Cette semaine ». Rien à toucher, rien de privé.
+// « Ça bouge cette semaine » : une bande calme sous le pouls, dans « Dans le réseau ». Rien à toucher, rien de privé.
 // ---------------------------------------------------------------------------
-const ICONES_BOUGE = { offres: 'feed', reactions: 'heart', reponses: 'comment', membres: 'people' };
+const ICONES_BOUGE = { offres: 'feed', reponses: 'comment', membres: 'people' };
 export function CaBouge({ ctx }) {
   const { data, me, store, saison } = ctx;
   const b = useMemo(() => caBouge(data, me, id => store.byId('profiles', id), Date.now(), saison),
     [data.offers, data.reactions_publiques, data.reponses_demandes, data.answers, data.profiles, data.demandes, me.id, saison]);
   if (!b) return null;
   return html`<div class="cabouge" role="group" aria-labelledby="cabouge-titre">
-    <p class="cabouge-titre" id="cabouge-titre"><span class="cabouge-point" aria-hidden="true"></span><span>${b.jours === 7 ? 'Ça bouge dans le réseau' : 'Ça bouge ce mois-ci'}</span></p>
+    <p class="cabouge-titre" id="cabouge-titre"><span class="cabouge-point" aria-hidden="true"></span><span>${b.jours === 7 ? 'Ça bouge cette semaine' : 'Ça bouge ce mois-ci'}</span></p>
     <ul class="cabouge-faits">${b.faits.map((f, i) => html`<li key=${f.cle} class=${'cb-' + f.cle} style=${`--i:${i}`}><span class="cb-ico" aria-hidden="true"><${Icon} name=${ICONES_BOUGE[f.cle]} size=${16}/></span><span>${phraseBouge(f)}</span></li>`)}</ul>
   </div>`;
 }
@@ -84,7 +84,7 @@ const ETUDIANTS = ['طالب واحد', 'طالبان', 'طلاب', 'طالبً�
 const LAU = ['خريج واحد', 'خريجان', 'خريجين', 'خريجًا'];
 const DECROCHE_AR = { 'son stage': 'في التدريب', 'son PFE': 'في مشروع نهاية الدراسة', 'son stage à l’étranger': 'في التدريب بالخارج', 'son poste': 'في الوظيفة' };
 addAR({
-  'Ça bouge dans le réseau': 'الشبكة في حركة', 'Ça bouge ce mois-ci': 'الشبكة في حركة هذا الشهر',
+  'Ça bouge cette semaine': 'الشبكة في حركة هذا الأسبوع', 'Ça bouge ce mois-ci': 'الشبكة في حركة هذا الشهر',
   '1 nouvelle offre': 'عرض جديد', '1 réponse': 'رد واحد', '1 nouveau membre': 'عضو جديد', '1 candidature': 'ترشيح واحد',
   'Nouvelle': 'جديد', 'Rémunéré': 'مدفوع الأجر', 'Chargement des offres…': 'جارٍ تحميل العروض…',
 }, [

@@ -102,11 +102,15 @@ test('« Ça bouge » : des comptes vrais et lisibles, sur 7 jours, sinon 30, si
   });
   const salma = caBouge(data, P.salma, byId, NOW, S);
   assert.equal(salma.jours, 7);
-  // Salma (5A) : l'offre de son année (pas celle de 3A, ni celle entre lauréats), la réaction sur l'offre qu'elle lit,
-  // la réponse sous la demande de sa promo (pas celle d'Amine) ; trois faits au plus, dans l'ordre
-  assert.deepEqual(salma.faits, [{ cle: 'offres', n: 1 }, { cle: 'reactions', n: 1 }, { cle: 'reponses', n: 1 }]);
+  // Salma (5A) : l'offre de son année (pas celle de 3A, ni celle entre lauréats), la réponse sous la demande de sa promo
+  // (pas celle d'Amine), les nouveaux membres ; la réaction sur l'offre qu'elle lit compte pour les 7 jours sans être dite
+  assert.deepEqual(salma.faits, [{ cle: 'offres', n: 1 }, { cle: 'reponses', n: 1 }, { cle: 'membres', n: 2 }]);
+  assert.ok(!salma.faits.some(f => f.cle === 'reactions'), 'les réactions ne sont pas un chiffre à montrer');
   const youssef = caBouge(data, P.youssef, byId, NOW, S);
-  assert.deepEqual(youssef.faits, [{ cle: 'offres', n: 3 }, { cle: 'reactions', n: 2 }, { cle: 'reponses', n: 2 }], 'un lauréat lit tout');
+  assert.deepEqual(youssef.faits.slice(0, 2), [{ cle: 'offres', n: 3 }, { cle: 'reponses', n: 2 }], 'un lauréat lit tout');
+  // Rien que des réactions : le réseau vit, mais aucun fait à montrer sur 7 jours, donc 30 jours (ou rien)
+  const rx = Array.from({ length: 3 }, (_, i) => ({ id: 'rx' + i, offer_id: 'o1', user_id: 'hiba', emoji: '👍', created_at: il(1) }));
+  assert.equal(caBouge(reseau({ offers: [offre('o1', { created_at: il(200) })], reactions_publiques: rx, profiles: Object.values(P).map(p => ({ ...p, created_at: il(300) })) }), P.youssef, byId, NOW, S), null);
   // Le réseau calme : 30 jours, puis rien (jamais « 0 »)
   const calme = reseau({ offers: [offre('o1', { created_at: il(20) })], profiles: Object.values(P).map(p => ({ ...p, created_at: il(300) })) });
   assert.deepEqual(caBouge(calme, P.salma, byId, NOW, S), { jours: 30, faits: [{ cle: 'offres', n: 1 }], total: 1 });

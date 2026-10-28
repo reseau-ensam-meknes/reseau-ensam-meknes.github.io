@@ -13,17 +13,26 @@ import { EMOJIS_PUBLICS, REPONSE_MAX, reactionsSur, pastilles, auteurCible, quiA
 // Toucher une pastille = réagir avec cette émoji (ou la retirer si c'est la mienne) ; le bouton souriant ouvre les cinq
 // émojis à la place de la ligne (rien ne bouge autour, rien n'est coupé par la carte) ; « N réactions » montre qui.
 // Sur sa propre publication : on voit les pastilles et qui a réagi, sans réagir.
-export function Reactions({ ctx, cible, cls = '' }) {
+// court (pied des cartes, une seule ligne) : le résumé « 👏❤️ 3 » ouvre qui a réagi, puis le bouton souriant (ou sa
+// propre émoji, en couleur de sélection) ouvre les cinq émojis, qui couvrent toute la ligne du pied.
+export function Reactions({ ctx, cible, cls = '', court = false }) {
   const { data, me, store } = ctx;
   const [barre, setBarre] = useState(false);
   const [qui, setQui] = useState(null);
   const ref = useRef(null);
+  // Fermé au clavier (Échap, « Fermer », une émoji choisie) : le focus revient sur le bouton qui l'avait ouvert
+  const revenir = useRef(false);
+  useLayoutEffect(() => {
+    if (barre || !revenir.current) return;
+    revenir.current = false;
+    ref.current?.querySelector('.rx-ajouter')?.focus({ preventScroll: true });
+  }, [barre]);
   // Le choix se ferme en touchant ailleurs ou avec Échap (useLayoutEffect : écouté dès l'ouverture) ; le focus va sur une émoji
   useLayoutEffect(() => {
     if (!barre) return;
     ref.current?.querySelector('.rx-btn.on, .rx-btn')?.focus({ preventScroll: true });
     const dehors = e => { if (ref.current && !ref.current.contains(e.target)) setBarre(false); };
-    const echap = e => { if (e.key === 'Escape') { e.stopPropagation(); setBarre(false); } };
+    const echap = e => { if (e.key === 'Escape') { e.stopPropagation(); revenir.current = true; setBarre(false); } };
     document.addEventListener('pointerdown', dehors, true); document.addEventListener('keydown', echap, true);
     return () => { document.removeEventListener('pointerdown', dehors, true); document.removeEventListener('keydown', echap, true); };
   }, [barre]);
@@ -34,17 +43,29 @@ export function Reactions({ ctx, cible, cls = '' }) {
   const mienne = liste.find(r => r.user_id === me.id)?.emoji || null;
   if (!ps.length && !peut) return null;
   const reagir = e => {
+    if (barre) revenir.current = true;
     setBarre(false);
     try { if (e && navigator.vibrate) navigator.vibrate(8); } catch {}
     store.reagirPublic(cible, e).catch(err => toast(err.message || String(err), 'err'));
   };
   const total = liste.length;
   const stop = e => e.stopPropagation();
-  if (barre) return html`<div ref=${ref} class=${'rx rx-choix' + (cls ? ' ' + cls : '')} role="group" aria-label="Choisir une réaction" onClick=${stop}>
+  const choix = cl => html`<div ref=${court ? null : ref} class=${cl} role="group" aria-label="Choisir une réaction" onClick=${stop}>
     <div class="rx-bar">${EMOJIS_PUBLICS.map((e, i) => html`<button type="button" key=${e} class=${'rx-btn' + (mienne === e ? ' on' : '')} style=${`--i:${i}`}
       aria-pressed=${mienne === e} aria-label=${(mienne === e ? 'Retirer ma réaction ' : 'Réagir avec ') + e} onClick=${() => reagir(mienne === e ? null : e)}>${e}</button>`)}</div>
-    <button type="button" class="icon-btn small rx-fermer" aria-label="Fermer" onClick=${() => setBarre(false)}><${Icon} name="x" size=${16}/></button>
+    <button type="button" class="icon-btn small rx-fermer" aria-label="Fermer" onClick=${() => { revenir.current = true; setBarre(false); }}><${Icon} name="x" size=${16}/></button>
   </div>`;
+  const voirQui = total ? (total === 1 ? '1 réaction : voir qui' : `${total} réactions : voir qui`) : '';
+  // Version courte : la ligne reste en place (cachée) sous le choix ouvert, qui la recouvre avec tout le pied
+  if (court) return html`<div ref=${ref} class=${'rx rx-court' + (barre ? ' ouvert' : '') + (cls ? ' ' + cls : '')} role="group" aria-label="Réactions" onClick=${stop}>
+    ${total ? html`<button type="button" key="resume" class="rx-resume" aria-label=${voirQui} onClick=${() => setQui(mienne || ps[0].emoji)}>
+      <span class="rx-pile" aria-hidden="true">${ps.slice(0, 2).map(p => html`<span key=${p.emoji}>${p.emoji}</span>`)}</span><span class="rx-n">${total}</span></button>` : null}
+    ${peut ? html`<button type="button" key="ajouter" class=${'rx-ajouter' + (mienne ? ' on' : '')} aria-expanded=${barre ? 'true' : 'false'} aria-label=${mienne ? `Changer ma réaction ${mienne}` : 'Réagir'} onClick=${() => setBarre(true)}>
+      ${mienne ? html`<span class="rx-mienne" aria-hidden="true">${mienne}</span>` : html`<${Icon} name="smile" size=${18}/><span class="rx-plus" aria-hidden="true">+</span>`}</button>` : null}
+    ${barre ? choix('rx-choix') : null}
+    ${qui ? html`<${QuiAReagi} ctx=${ctx} liste=${liste} premier=${qui} onRetirer=${() => { setQui(null); reagir(null); }} onClose=${() => setQui(null)}/>` : null}
+  </div>`;
+  if (barre) return choix('rx rx-choix' + (cls ? ' ' + cls : ''));
   return html`<div ref=${ref} class=${'rx' + (cls ? ' ' + cls : '')} role="group" aria-label="Réactions" onClick=${stop}>
     ${ps.map(p => {
       const moi = p.emoji === mienne;
@@ -55,7 +76,7 @@ export function Reactions({ ctx, cible, cls = '' }) {
     })}
     ${peut ? html`<button type="button" class=${'rx-ajouter' + (ps.length ? ' seul' : '')} aria-expanded="false" aria-label="Réagir" onClick=${() => setBarre(true)}>
       <${Icon} name="smile" size=${17}/>${ps.length ? html`<span class="rx-plus" aria-hidden="true">+</span>` : html`<span>Réagir</span>`}</button>` : null}
-    ${total ? html`<button type="button" class="linkish rx-total" aria-label=${total === 1 ? '1 réaction : voir qui' : `${total} réactions : voir qui`}
+    ${total ? html`<button type="button" class="linkish rx-total" aria-label=${voirQui}
       onClick=${() => setQui(mienne || ps[0].emoji)}><span translate="no" dir="auto">${quiAReagiTexte(liste, me.id, id => store.byId('profiles', id), getLang())}</span></button>` : null}
     ${qui ? html`<${QuiAReagi} ctx=${ctx} liste=${liste} premier=${qui} onRetirer=${() => { setQui(null); reagir(null); }} onClose=${() => setQui(null)}/>` : null}
   </div>`;
@@ -94,7 +115,7 @@ export function DemandeSocial({ ctx, d, ouvrir = false, fin = null }) {
   const [ouvert, setOuvert] = useState(ouvrir);
   const n = (data.reponses_demandes || []).filter(r => r.demande_id === d.id).length;
   const avecRep = store.peutRepondreDemande?.() && (n > 0 || d.status !== 'fermee');
-  const rx = html`<${Reactions} ctx=${ctx} cible=${{ demande_id: d.id }}/>`;
+  const rx = html`<${Reactions} ctx=${ctx} cible=${{ demande_id: d.id }} court/>`;
   return html`<div class="dm-social">${rx}<span class="spacer"></span>
       <span class="dm-social-fin">${avecRep ? html`<button type="button" class="btn tiny ghost dm-rep-btn" aria-expanded=${ouvert} onClick=${() => setOuvert(!ouvert)}><${Icon} name="comment" size=${14}/> ${n ? `Réponses (${n})` : 'Répondre'}</button>` : null}${fin}</span></div>
     ${ouvert && avecRep ? html`<${Reponses} ctx=${ctx} d=${d}/>` : null}`;
@@ -161,7 +182,21 @@ injectCSS('reactions', `
 @keyframes rx-pop { 0% { transform: scale(.5); opacity: 0; } 70% { transform: scale(1.12); } 100% { transform: none; opacity: 1; } }
 @keyframes rx-in { from { opacity: 0; transform: scale(.92); } }
 @keyframes rx-btn { from { opacity: 0; transform: translateY(6px) scale(.7); } }
-.ocard-rx { padding: 0 .8rem; margin-bottom: .2rem; }
+/* Version courte, dans le pied d'une carte : le résumé (qui a réagi) puis sa réaction, sur une seule ligne qui ne passe
+   jamais à la ligne. Le choix des cinq émojis s'ouvre par-dessus tout le pied : rien ne bouge autour. */
+.rx-court { flex: none; flex-wrap: nowrap; gap: .15rem; min-height: 40px; }
+.rx-resume { display: inline-flex; align-items: center; gap: .3rem; min-height: 36px; min-width: 44px; justify-content: center; padding: 0 .55rem; border: 0; border-radius: 999px;
+  background: var(--surface-2); color: var(--ink); font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.rx-resume:hover { background: var(--tonal-hover, var(--surface-2)); }
+.rx-pile { display: inline-flex; gap: 1px; font-size: .95rem; line-height: 1; }
+.rx-court .rx-ajouter { width: 40px; min-width: 40px; padding: 0; gap: 0; }
+.rx-ajouter.on { background: var(--sel-bg); color: var(--sel-ink); box-shadow: inset 0 0 0 1px var(--sel-ring); }
+.rx-mienne { font-size: 1.15rem; line-height: 1; }
+.ocard-foot, .opart-actions, .dm-social { position: relative; }
+.rx-court > .rx-choix { position: absolute; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: .3rem; padding-inline: .5rem; background: var(--surface); border-radius: inherit; }
+.rx-court.ouvert > :not(.rx-choix), :is(.ocard-foot, .opart-actions, .dm-social):has(> .rx-court.ouvert) > :not(.rx-court) { visibility: hidden; }
+/* Le choix fermé, le bouton se montre tout de suite (le focus y revient) : pas de transition sur visibility */
+.rx-court > button { transition-property: transform, background-color, color, box-shadow; }
 .od-rx { margin-block: var(--sp-2, .5rem); }
 .rx-qui { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
 .rx-qui li { display: flex; align-items: center; gap: .6rem; min-height: 44px; min-width: 0; }
@@ -179,7 +214,7 @@ injectCSS('reactions', `
 `);
 
 addAR({
-  'Réactions': 'التفاعلات', 'Réagir': 'تفاعل', 'Choisir une réaction': 'اختيار تفاعل', '1 réaction': 'تفاعل واحد',
+  'Réactions': 'التفاعلات', 'Réagir': 'تفاعل', 'Choisir une réaction': 'اختيار تفاعل', '1 réaction': 'تفاعل واحد', '1 réaction : voir qui': 'تفاعل واحد: عرض من تفاعل',
   'Auteur de la demande': 'صاحب الطلب',
   'Pas encore de réponse. Les lauréats et les étudiants de ton année peuvent t’en laisser une.': 'لا يوجد رد بعد. يمكن للخريجين ولطلبة سنتك ترك رد لك.',
   'Pas encore de réponse. Un conseil, un contact : tout le monde la verra.': 'لا يوجد رد بعد. نصيحة أو جهة اتصال: سيراها الجميع.',
@@ -191,6 +226,7 @@ addAR({
   [/^(\d+) réactions : voir qui$/, n => `التفاعلات: ${n}، عرض من تفاعل`],
   [/^Réagir avec (\S+) \((\d+)\)$/, (e, n) => `التفاعل بـ ${e} (${n})`],
   [/^Retirer ma réaction (\S+) \((\d+)\)$/, (e, n) => `سحب تفاعلي ${e} (${n})`],
+  [/^Changer ma réaction (\S+)$/, e => `تغيير تفاعلي ${e}`],
   [/^Réponses \((\d+)\)$/, n => `الردود (${n})`],
   [/^(\d+) réactions sur « (.+) »$/, (n, t) => `عدد التفاعلات: ${n} على «${t}»`],
   [/^(.+?) a réagi (\S+) à « (.+) »$/, (x, e, t) => `تفاعل ${e} من ${x} مع «${t}»`],

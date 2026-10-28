@@ -35,14 +35,13 @@ export function PartageCard({ o, ctx, onOpen, i = 0 }) {
       <span class="opart-txt">
         <strong class="opart-titre" translate="no" dir="auto">${titreOffre(o)}</strong>
         <span class="opart-meta" translate="no" dir="auto">${o.entreprise}${lieu ? ` · ${lieu}` : ''}</span>
-        <span class="opart-par">${lignePartage(o, auteur)}</span>
+        <span class="opart-ligne"><span class="opart-par">${lignePartage(o, auteur)}</span><span class="opart-quand">${timeAgo(o.created_at)}</span></span>
       </span>
     </button>
-    <${Reactions} ctx=${ctx} cible=${{ offer_id: o.id }} cls="opart-rx"/>
     <div class="opart-actions">
       ${o.status !== 'ouverte' ? html`<span class="tag done">Fermée</span>` : null}
-      <span class="muted small nowrap">${timeAgo(o.created_at)}</span>
       <span class="spacer"></span>
+      <${Reactions} ctx=${ctx} cible=${{ offer_id: o.id }} cls="opart-rx" court/>
       ${!mine ? html`<${SignalerBtn} ctx=${ctx} type="offre" id=${o.id} small/>` : null}
       ${lien ? html`<a class="btn small tonal opart-voir" href=${lien} target="_blank" rel="noopener noreferrer"><${Icon} name="link" size=${15}/> Voir l’offre</a>` : null}
     </div>
@@ -118,10 +117,13 @@ injectCSS('partages', `
 .opart-main { display: flex; gap: .65rem; align-items: flex-start; padding: .7rem .8rem .45rem; border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; min-width: 0; border-radius: var(--r-md) var(--r-md) 0 0; }
 .opart-txt { display: flex; flex-direction: column; gap: .12rem; min-width: 0; }
 .opart-titre { font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
-.opart-meta, .opart-par { font-size: var(--fs-1); color: var(--muted); overflow-wrap: anywhere; }
+.opart-meta, .opart-ligne { font-size: var(--fs-1); color: var(--muted); overflow-wrap: anywhere; }
 .opart-par { color: var(--ink-2); }
-.opart-actions { display: flex; align-items: center; gap: .45rem; padding: .3rem .8rem .55rem; min-width: 0; }
-.opart-rx { padding: 0 .65rem; min-height: 40px; }
+.opart-quand { white-space: nowrap; }
+.opart-quand::before { content: " · "; white-space: normal; }   /* espace insécable : à la ligne, le point reste au bout de la phrase */
+/* Un seul pied, sur une ligne : les réactions, Signaler et « Voir l'offre » (depuis quand : sous « Partagée par… ») */
+.opart-actions { display: flex; align-items: center; gap: .35rem; padding: .3rem .6rem .5rem .8rem; min-width: 0; }
+.opart-actions > :not(.spacer) { flex: none; }
 .opart-actions .spacer { flex: 1; }
 .opart .opart-actions .btn { min-height: 36px; }
 [dir="rtl"] .opart-txt [dir="auto"] { text-align: right; }

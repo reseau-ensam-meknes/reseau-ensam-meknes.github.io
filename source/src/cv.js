@@ -78,7 +78,7 @@ export function CvCard({ ctx }) {
   const enCours = mine.filter(r => ACTIVES.includes(r.status)).length;
   const reviewer = last?.reviewer_id ? store.byId('profiles', last.reviewer_id) : null;
 
-  return html`<div class="panel cv-card">
+  return html`<div class="panel cv-card" id="profil-cv">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="file"/> Mon CV</h2>${me.cv_path ? html`<span class="small muted">Mis à jour ${timeAgo(me.cv_maj || me.created_at)}</span>` : null}</div>
     ${me.cv_path ? html`<${ControleCV} ctx=${ctx} fichier=${dernier}/>` : null}
     <input ref=${input} id="cv-file" type="file" accept="application/pdf,.pdf" hidden onChange=${e => deposer(e.target.files[0])}/>

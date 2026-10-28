@@ -568,6 +568,7 @@ Object.assign(AR, {
   'Ta prochaine étape': 'خطوتك التالية', 'Y aller': 'اذهب', 'Premiers pas': 'الخطوات الأولى', 'Voir l’offre': 'عرض التفاصيل',
   'Quand tu as 20 minutes': 'حين يكون لديك 20 دقيقة', 'Un étudiant aimerait un conseil.': 'طالب يودّ نصيحة.', 'Voir qui': 'من هم',
   'Tout est à jour.': 'كل شيء محدَّث.', 'Merci pour ce que tu fais pour les étudiants.': 'شكرًا على كل ما تقدّمه للطلبة.', 'Rien ne presse : avance à ton rythme.': 'لا شيء مستعجل: تقدّم بإيقاعك.',
+  '1 offre pour toi': 'عرض واحد لك', 'Dont 1 nouvelle cette semaine': 'منها عرض جديد هذا الأسبوع', 'Faites pour les jeunes diplômés': 'موجهة للخريجين الجدد', 'Tu n’y as pas encore postulé': 'لم تترشح لها بعد',
   'Quand tu as 5 minutes': 'حين يكون لديك 5 دقائق', 'Pour avancer': 'لتتقدّم', 'Pour toi': 'لك', 'Dans le réseau': 'في الشبكة', 'Un merci récent': 'شكر حديث',
   'Tu as aidé 1 étudiant': 'ساعدت طالبًا واحدًا', 'Ton espace et tes mercis': 'فضاؤك وكلمات الشكر', '1 étudiant recruté grâce à ses offres. Merci !': 'طالب واحد وُظّف عبر العروض المنشورة. شكرًا!',
   'Merci pour son aide ce mois-ci.': 'شكرًا على المساعدة هذا الشهر.',
@@ -925,4 +926,11 @@ export const AR_PATTERNS = [
     (ty, t, j, d, m) => `${{ Forum: 'منتدى', Conférence: 'محاضرة', 'Portes ouvertes': 'أبواب مفتوحة', Atelier: 'ورشة', Soutenances: 'مناقشات', Événement: 'نشاط' }[ty]} في أجندة الشبكة: ${t}، ${{ lundi: 'الاثنين', mardi: 'الثلاثاء', mercredi: 'الأربعاء', jeudi: 'الخميس', vendredi: 'الجمعة', samedi: 'السبت', dimanche: 'الأحد' }[j]} ${d} ${{ janvier: 'يناير', février: 'فبراير', mars: 'مارس', avril: 'أبريل', mai: 'ماي', juin: 'يونيو', juillet: 'يوليوز', août: 'غشت', septembre: 'شتنبر', octobre: 'أكتوبر', novembre: 'نونبر', décembre: 'دجنبر' }[m]}.`],
   [/^Enquête (6|12) mois après le diplôme : 2 minutes pour aider les promos suivantes\.$/, (v) => `استمارة الإدماج ${v === '12' ? 'بعد 12 شهرًا' : 'بعد 6 أشهر'} من التخرج: دقيقتان لمساعدة الدفعات القادمة.`],
   [/^(\d+) signalements? à traiter\.$/, (n) => `${arCount(n, ['تبليغ واحد', 'تبليغان', 'تبليغات', 'تبليغًا'])} في انتظار المعالجة.`],
+  // Accueil rangé : « À faire » (messages en une ligne) et « N offres pour toi »
+  [/^(.+), (.+) et (\d+) autres t’ont écrit$/, (a, b, n) => `رسائل من ${a} و${b} و${arCount(n, ['شخص آخر', 'شخصين آخرين', 'أشخاص آخرين', 'شخصًا آخر'])}`],
+  [/^(.+), (.+) et 1 autre t’ont écrit$/, (a, b) => `رسائل من ${a} و${b} وشخص آخر`],
+  [/^(.+) et (.+) t’ont écrit$/, (a, b) => `رسائل من ${a} و${b}`],
+  [/^(.+) t’a écrit$/, x => `رسالة من ${x}`],
+  [/^(\d+) offres pour toi$/, n => `${arCount(n, ['عرض واحد', 'عرضان', 'عروض', 'عرضًا'])} لك`],
+  [/^Dont (\d+) nouvelles cette semaine$/, n => `منها ${arCount(n, ['عرض جديد', 'عرضان جديدان', 'عروض جديدة', 'عرضًا جديدًا'])} هذا الأسبوع`],
 ].filter(([, f]) => f);

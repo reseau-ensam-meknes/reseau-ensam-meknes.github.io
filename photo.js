@@ -97,7 +97,7 @@ export function PhotoCard({ ctx }) {
       .finally(() => { setBusy(false); if (input.current) input.current.value = ''; });
   };
   const choisir = file => { if (file) envoyer(preparerPhoto(file), a ? 'Photo changée.' : 'Photo ajoutée.'); };
-  return html`<div class="panel photo-card">
+  return html`<div class="panel photo-card" id="profil-photo">
     <button type="button" class=${'photo-pick' + (busy ? ' busy' : '')} disabled=${busy} aria-label=${a ? 'Changer ma photo' : 'Ajouter une photo'} onClick=${() => input.current?.click()}>
       <${Avatar} p=${me} size=${84}/><span class="photo-cam"><${Icon} name="camera" size=${15}/></span></button>
     <div class="photo-txt">
