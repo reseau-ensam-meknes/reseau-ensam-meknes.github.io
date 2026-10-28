@@ -159,6 +159,9 @@ addAR({ [PHRASE_AMBASSADEURS]: 'سفراء الدفعات: تقترح المنص
 // Page Match : ce que les lauréats y voient d'un étudiant, le CV seulement après un match, et comment ne plus y apparaître
 const PHRASE_MATCH = 'Match : les lauréats y voient ton profil résumé (année, filière, ce que tu cherches, compétences) ; ton CV, seulement après un match. Une carte remise à plus tard reste privée ; un intérêt est vu par la personne visée. Tu peux ne plus apparaître dans Match depuis « Mon profil ».';
 addAR({ [PHRASE_MATCH]: 'التوافق (Match): يرى فيه الخريجون ملفك المختصر (السنة، الشعبة، الفرصة المنشودة، الكفاءات)؛ أما سيرتك الذاتية فلا يرونها إلا بعد حصول توافق. تبقى البطاقة المؤجلة خاصة، أما الاهتمام فيراه الشخص المعني. ويمكنك التوقف عن الظهور في Match من «ملفي الشخصي».' });
+// Cartes sponsorisées de Match : marquées, et l'entreprise ne reçoit que des totaux
+const PHRASE_SPONSO = 'Certaines cartes de Match sont sponsorisées par une entreprise et marquées « Sponsorisé » ; l’entreprise reçoit seulement des totaux (vues, clics), jamais qui a vu ou cliqué.';
+addAR({ [PHRASE_SPONSO]: 'بعض بطاقات صفحة التوافق (Match) تموّلها شركة وتحمل علامة «مُموَّل»؛ ولا تتلقى الشركة إلا المجاميع (المشاهدات، النقرات)، ولا تعرف أبدًا من شاهد أو نقر.' });
 
 const cfg = () => (typeof window !== 'undefined' && window.ENSAM_CONFIG) || {};
 
@@ -186,6 +189,7 @@ const SECTIONS = [
     PHRASE_FONDATEURS,
     PHRASE_AMBASSADEURS,
     PHRASE_MATCH,
+    PHRASE_SPONSO,
     'Tu choisis qui voit ton entreprise, ta ville, ton LinkedIn, ta présentation et ton CV : tous les membres, seulement les lauréats, ou seulement tes contacts.',
     'Tes coordonnées ne sont visibles que par tes contacts (les membres avec qui tu les partages, l’auteur d’une offre où tu postules, la personne qu’une demande a réunie avec toi) et par l’administration. Tu peux retirer ton accord à tout moment.',
     'Ton CV en PDF est rangé dans un espace privé. Il s’ouvre par un lien valable 10 minutes, et seulement pour : les membres que tu choisis dans « Qui voit quoi », tes contacts (dont l’auteur d’une offre où tu postules), les lauréats quand tu as une demande ouverte, le lauréat qui relit ton CV (ou tous les lauréats tant que personne ne l’a pris), le lauréat avec qui tu as un match, et l’administration.',
@@ -211,7 +215,7 @@ const SECTIONS = [
     'Répondre est facultatif.',
   ]],
   ['shield', 'Ce que nous ne faisons pas', [
-    'Aucune vente ni location de données, aucune publicité, aucun traceur publicitaire.',
+    'Aucune vente ni location de données, aucune régie publicitaire, aucun traceur publicitaire.',
     'Le navigateur garde ta langue, tes préférences d’affichage, ce que tu es en train d’écrire et une copie de ton accueil pour l’ouvrir tout de suite. Cette copie est effacée quand tu te déconnectes, tes brouillons aussi.',
   ]],
   ['globe', 'Où sont les données', [

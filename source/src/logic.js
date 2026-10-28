@@ -1582,3 +1582,94 @@ export function pourquoiCarte(carte, me, data = null, saison = seasonOf()) {
   const n = niveauOf(p, saison);
   return n >= 1 && n <= 5 ? `En ${n}A à l’école` : 'Étudiant à l’école';
 }
+
+// ---------------------------------------------------------------------------
+// Cartes sponsorisées dans Match : une entreprise (recruteur, centre de langues, formation, préparation au départ…)
+// paie le réseau directement, sans régie ni traceur. Une carte « Sponsorisé » après chaque 10 cartes de la visite
+// (jamais la première, aucune sous 10 cartes), choisie parmi celles qui visent le public, l'année et la filière du membre,
+// à tour de rôle. Elle se passe d'un geste, sans choix enregistré ; « Revenir » ne la ramène pas.
+// Mêmes règles que la base (sponsorise_pour, compter_sponsorise, bilan_sponsorises) et que DemoStore (store.js).
+// ---------------------------------------------------------------------------
+export const SPONSO_PAS = 10;
+export const SPONSO_PUBLICS = [['tous', 'Étudiants et lauréats'], ['etudiants', 'Étudiants'], ['laureats', 'Lauréats']];
+// Les années visées (niveauOf) : 1A à 5A, jeunes diplômés (6), lauréats plus anciens (7)
+export const SPONSO_ANNEES = [[1, '1A'], [2, '2A'], [3, '3A'], [4, '4A'], [5, '5A'], [6, 'Jeunes diplômés'], [7, 'Lauréats']];
+const deux = n => String(n).padStart(2, '0');
+// La date du jour sur l'appareil, « 2026-10-28 » (les dates de début et de fin d'une carte sont des jours entiers)
+export const jourLocal = (now = Date.now()) => { const d = new Date(now); return `${d.getFullYear()}-${deux(d.getMonth() + 1)}-${deux(d.getDate())}`; };
+export const lienSponsoValide = l => { const s = String(l || '').trim(); return s.length <= 500 && /^https:\/\/[^\s/?#]+\.[^\s/?#]+(?:[/?#]\S*)?$/i.test(s); };
+export const domaineSponsoValide = d => !d || /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(d);
+// Une carte écrite par l'administration, nettoyée comme le fait la base (protect_sponsorise) : textes sans espaces autour,
+// listes vides = tout le monde (null), domaine en minuscules sans « https:// » ni « www. »
+export function normaliserSponsorise(r) {
+  const out = { ...r };
+  for (const k of ['entreprise', 'titre', 'texte', 'lien']) if (typeof out[k] === 'string') out[k] = out[k].trim();
+  if ('domaine' in out) out.domaine = String(out.domaine || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '') || null;
+  if ('annees' in out) out.annees = out.annees?.length ? [...new Set(out.annees.map(Number))].sort((a, b) => a - b) : null;
+  if ('filieres' in out) out.filieres = out.filieres?.length ? [...new Set(out.filieres)] : null;
+  return out;
+}
+// Ce que la base refuserait pour cette carte (son message), sinon null
+export function refusSponsorise(r) {
+  const long = k => String(r?.[k] || '').trim().length;
+  if (long('entreprise') < 2 || long('entreprise') > 80) return 'Indique l’entreprise (80 caractères au plus).';
+  if (long('titre') < 3 || long('titre') > 90) return 'Le titre fait de 3 à 90 caractères.';
+  if (long('texte') < 10 || long('texte') > 280) return 'Le texte fait de 10 à 280 caractères.';
+  if (!lienSponsoValide(r.lien)) return 'Le lien doit commencer par https://';
+  if (!domaineSponsoValide(r.domaine)) return 'Le domaine du logo s’écrit sans https:// (ex. exemple.ma).';
+  if (!SPONSO_PUBLICS.some(([k]) => k === (r.public || 'tous'))) return 'Choisis un public.';
+  if ((r.annees || []).some(n => !SPONSO_ANNEES.some(([k]) => k === Number(n)))) return 'Choisis des années de la liste.';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(r.debut || '') || !/^\d{4}-\d{2}-\d{2}$/.test(r.fin || '')) return 'Choisis les dates de début et de fin.';
+  if (r.fin < r.debut) return 'La fin vient après le début.';
+  return null;
+}
+// En cours : active et entre ses dates (ce que tout membre connecté peut lire)
+export const sponsoEnCours = (s, now = Date.now()) => { const j = jourLocal(now); return !!s?.actif && !!s.debut && s.debut <= j && (!s.fin || j <= s.fin); };
+// L'état d'une carte pour l'administration
+export const etatSponsorise = (s, now = Date.now()) => (!s.actif ? 'arretee' : s.debut > jourLocal(now) ? 'programmee' : s.fin && s.fin < jourLocal(now) ? 'terminee' : 'en_cours');
+// La carte vise-t-elle ce membre ? Son public, son année (niveauOf), sa filière (filiereMatch : une ancienne appellation
+// suit son parcours). Ni l'administration, ni l'administration qui regarde l'application comme un lauréat (admin_ok).
+export function sponsorisePour(s, me, now = Date.now(), saison = seasonOf(new Date(now))) {
+  if (!me || !['etudiant', 'laureat'].includes(me.role) || me.admin_ok || !sponsoEnCours(s, now)) return false;
+  const pub = s.public || 'tous';
+  if (!(pub === 'tous' || (pub === 'etudiants' && me.role === 'etudiant') || (pub === 'laureats' && me.role === 'laureat'))) return false;
+  if (s.annees?.length && !s.annees.map(Number).includes(niveauOf(me, saison))) return false;
+  return filiereMatch(s.filieres, me.filiere);
+}
+// Les cartes de ce membre, dans un ordre stable (la plus ancienne d'abord)
+export const sponsorisesPour = (liste, me, now = Date.now(), saison = seasonOf(new Date(now))) => (liste || []).filter(s => sponsorisePour(s, me, now, saison))
+  .sort((a, b) => tms(a.created_at) - tms(b.created_at) || String(a.id).localeCompare(String(b.id)));
+// Le tour de rôle : une autre carte en tête chaque jour, et pas la même pour tous les membres le même jour
+export function decalageSponso(meId, now = Date.now()) {
+  const d = new Date(now), jour = Math.round(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 864e5);
+  let h = 0; for (const c of String(meId || '')) h = (h * 31 + c.charCodeAt(0)) % 1000003;
+  return (jour + h) % 1000003;
+}
+// La pile avec ses cartes sponsorisées. cartes : les cartes restantes (deckMatch) ; passees : les cartes ordinaires déjà
+// passées pendant la visite ; sautes : les créneaux sponsorisés déjà passés. Le créneau k vient après la (k × pas)-ième
+// carte ordinaire de la visite : il ne recule pas quand une carte part, et jamais en tête au début de la visite.
+export function avecSponsorises(cartes, sponsors, { pas = SPONSO_PAS, passees = 0, sautes = [], decalage = 0 } = {}) {
+  if (!sponsors?.length || !(pas > 0)) return cartes;
+  const faits = new Set(sautes), total = passees + cartes.length, places = [];
+  for (let k = 1; k * pas <= total; k++) if (!faits.has(k)) places.push(k);
+  if (!places.length) return cartes;
+  const out = []; let i = 0;
+  for (const k of places) {
+    const avant = Math.max(0, k * pas - passees);
+    while (i < avant && i < cartes.length) out.push(cartes[i++]);
+    const s = sponsors[(decalage + k - 1) % sponsors.length];
+    out.push({ cle: `s:${s.id}:${k}`, sorte: 'sponsorise', sponsorise: s, creneau: k });
+  }
+  while (i < cartes.length) out.push(cartes[i++]);
+  return out;
+}
+// Les totaux de chaque carte : vues (un membre compte une fois par jour), clics sur « Voir », membres différents touchés.
+// Jamais qui : seulement des nombres (comme bilan_sponsorises dans la base).
+export function totauxSponsorises(sponsors, comptes) {
+  return (sponsors || []).map(s => {
+    const l = (comptes || []).filter(c => c.sponsorise_id === s.id);
+    return { sponsorise_id: s.id, vues: l.filter(c => c.kind === 'vue').length, clics: l.filter(c => c.kind === 'clic').length, membres: new Set(l.map(c => c.user_id)).size };
+  });
+}
+// Le taux de clic, « 4 % », ou « – » sans vue
+export const tauxClic = (clics, vues) => (vues > 0 ? pct(clics / vues) : '–');

@@ -14,7 +14,7 @@ const SITE = path.resolve(process.env.SITE_DIR || new URL('../../dist', import.m
 const TYPES = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const ECRANS = ['accueil', 'offres', 'offres/demandes', 'match', 'mentorat', 'mentorat/cv', 'messages', 'parcours', 'espace', 'reseau/groupes', 'reseau/agenda', 'reseau/entraide',
   'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'reseau/annuaire/ma-filiere', 'reseau/annuaire/ma-promo', 'reseau/classement', 'reseau/talents', 'suivi', 'profil', 'profil/visibilite', 'profil/notifications', 'profil/donnees', 'enquete',
-  'confidentialite', 'admin', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda', 'admin/reglages'];
+  'confidentialite', 'admin', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda', 'admin/sponsorises', 'admin/reglages'];
 
 let serveur, adresse, navigateur;
 // Une nouvelle version du site publiée pendant un test : sw.js change de VERSION, et les fichiers que le service worker
@@ -4766,6 +4766,242 @@ test('match : mouvement réduit — la carte s’efface sans voler, la fête par
   await s.page.waitForSelector('.mx-fete');
   assert.equal(await s.page.locator('.mx-fete .fete-pluie').count(), 0);
   assert.equal(await s.page.evaluate(() => getComputedStyle(document.querySelector('.mx-duo-a')).animationName), 'none');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Cartes sponsorisées : une après chaque 10 cartes de la visite, marquée « Sponsorisé » ; tout geste la passe sans choix
+// enregistré, « Revenir » la saute ; une vue (carte du dessus) et un clic (« Voir ») par membre et par jour
+// ---------------------------------------------------------------------------
+const SPONSO_DEMO = 'Anglais et allemand pour ingénieurs, le soir en ligne';
+// Les offres ouvertes aux étudiants visent aussi les 5A de toutes les filières : Salma a plus de 10 cartes dans Match
+const elargirPourSalma = page => page.evaluate(() => {
+  const d = window.__demo;
+  d.data.offers = d.data.offers.map(o => (o.status === 'ouverte' && o.audience === 'etudiants' ? { ...o, annees: [5], filieres: [] } : o));
+  d.persist(); d.emit();
+});
+const comptesSponso = page => page.evaluate(() => (window.__demo.data.sponsorises_comptes || []).filter(c => c.user_id === window.__demo.me.id).map(c => `${c.sponsorise_id}:${c.kind}`).sort());
+const estSponso = page => page.locator('.mx-carte.dessus.sponso').count().then(n => n > 0);
+// Passe n cartes ordinaires d'un geste (« Plus tard », ou une touche) ; renvoie le titre de la dernière
+async function passerCartes(page, n, geste = () => page.click('.mx-non')) {
+  let titre = null;
+  for (let i = 0; i < n; i++) {
+    assert.equal(await estSponso(page), false, `la carte ${i + 1} de la visite n’est pas sponsorisée`);
+    titre = await carteDessus(page);
+    await geste(); await page.waitForTimeout(260);
+  }
+  return titre;
+}
+
+test('match : une étudiante de 5A arrive à la 11e carte, « Sponsorisé » ; « Voir » compte un clic ; la passer n’écrit aucun choix, « Revenir » la saute (390 px tactile)', async () => {
+  const s = await ouvrir({ largeur: 390, toucher: true });
+  await s.comme('Salma'); await elargirPourSalma(s.page); await s.aller('match');
+  await s.page.waitForSelector('.mx-carte.dessus');
+  const choixAvant = (await mesChoix(s.page)).length;
+  const dixieme = await passerCartes(s.page, 10);
+  assert.equal((await mesChoix(s.page)).length, choixAvant + 10, 'dix « Plus tard »');
+  // La 11e carte : marquée « Sponsorisé », le logo, l'entreprise, le titre, le texte et un seul « Voir »
+  await s.page.waitForSelector('.mx-carte.dessus.sponso');
+  const carte = s.page.locator('.mx-carte.dessus');
+  assert.equal(await carte.locator('.mx-s-marque').innerText(), 'Sponsorisé');
+  assert.equal(await carteDessus(s.page), SPONSO_DEMO);
+  assert.match(await carte.innerText(), /Exemplia Langues \(fictive\)/);
+  assert.match(await carte.innerText(), /Entreprise inventée pour la démonstration/);
+  assert.equal(await carte.locator('.clogo').count(), 1, 'le logo de l’entreprise (ses initiales ici)');
+  assert.equal(await carte.locator('a, button').count(), 1, 'un seul bouton : « Voir »');
+  assert.equal(await carte.locator('.btn.primary').count(), 0, '« Voir » n’est pas un bouton plein');
+  assert.equal(await s.page.locator('.page .btn.primary:visible, .mx-zone .btn.primary:visible').count(), 0);
+  assert.match(await carte.getAttribute('aria-labelledby'), /-m /, 'lue « Sponsorisé » puis son titre');
+  // Une vue, comptée quand elle devient la carte du dessus
+  await s.page.waitForTimeout(150);
+  assert.deepEqual(await comptesSponso(s.page), ['sp-demo-0001:vue']);
+  // « Voir » : un nouvel onglet (noopener) et un clic, une seule fois par jour ; la carte reste
+  const voir = carte.locator('.mx-s-voir');
+  assert.equal(await voir.innerText(), 'Voir');
+  assert.equal(await voir.getAttribute('href'), 'https://example.com/langues');
+  assert.equal(await voir.getAttribute('target'), '_blank');
+  assert.match(await voir.getAttribute('rel'), /(^|\s)noopener(\s|$)/);
+  for (let i = 0; i < 2; i++) {
+    const [onglet] = await Promise.all([s.ctx.waitForEvent('page'), voir.click()]);
+    await onglet.close(); await s.page.waitForTimeout(150);
+  }
+  assert.deepEqual(await comptesSponso(s.page), ['sp-demo-0001:clic', 'sp-demo-0001:vue']);
+  assert.equal(await carteDessus(s.page), SPONSO_DEMO, '« Voir » ne passe pas la carte');
+  assert.equal(await s.page.locator('.modal').count(), 0, 'pas de détail ouvert');
+  // Glissée vers « Intéressé » : elle passe, rien n'est enregistré, pas de fête
+  const b = await carte.boundingBox();
+  await glisserCarte(s.page, b.x + b.width / 2, b.x + b.width + 120, b.y + b.height / 2); await s.page.waitForTimeout(500);
+  assert.equal(await estSponso(s.page), false);
+  assert.notEqual(await carteDessus(s.page), SPONSO_DEMO);
+  assert.equal((await mesChoix(s.page)).length, choixAvant + 10, 'aucun choix pour la carte sponsorisée');
+  assert.equal(await s.page.locator('.mx-fete').count(), 0);
+  // « Revenir » : la 10e carte ordinaire revient devant, pas la sponsorisée ; passée de nouveau, la sponsorisée ne revient pas
+  await s.page.click('.mx-retour'); await s.page.waitForTimeout(400);
+  assert.equal(await carteDessus(s.page), dixieme);
+  assert.equal((await mesChoix(s.page)).length, choixAvant + 9);
+  await s.page.click('.mx-non'); await s.page.waitForTimeout(300);
+  assert.equal(await estSponso(s.page), false, 'passée, elle ne revient pas dans cette visite');
+  assert.deepEqual(await comptesSponso(s.page), ['sp-demo-0001:clic', 'sp-demo-0001:vue']);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : au clavier et à la souris, la carte sponsorisée passe sans choix ; la 22e carte en est une autre fois ; une vue par jour (1280 px)', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Youssef'); await s.aller('match');
+  await s.page.waitForSelector('.mx-carte.dessus');
+  const choixAvant = (await mesChoix(s.page)).length;
+  await passerCartes(s.page, 10, () => s.page.keyboard.press('ArrowLeft'));
+  assert.equal(await estSponso(s.page), true, 'la 11e carte');
+  // → (« Intéressé ») la passe seulement
+  await s.page.keyboard.press('ArrowRight'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.mx-fete').count(), 0);
+  assert.equal((await mesChoix(s.page)).length, choixAvant + 10);
+  await passerCartes(s.page, 10, () => s.page.keyboard.press('ArrowLeft'));
+  assert.equal(await estSponso(s.page), true, 'la 22e carte');
+  // Glissée à la souris vers « Plus tard »
+  const c = await s.page.locator('.mx-carte.dessus').boundingBox();
+  await s.page.mouse.move(c.x + c.width / 2, c.y + c.height / 2); await s.page.mouse.down();
+  for (let i = 1; i <= 8; i++) { await s.page.mouse.move(c.x + c.width / 2 - i * 40, c.y + c.height / 2); await s.page.waitForTimeout(16); }
+  await s.page.mouse.up(); await s.page.waitForTimeout(500);
+  assert.equal(await estSponso(s.page), false);
+  assert.equal((await mesChoix(s.page)).length, choixAvant + 20, 'vingt choix : aucun pour les cartes sponsorisées');
+  assert.ok(!(await s.page.evaluate(() => window.__demo.data.match_choix.some(x => /^sp-/.test(x.cible_offre || x.cible_profil || '')))));
+  assert.deepEqual(await comptesSponso(s.page), ['sp-demo-0001:vue'], 'vue deux fois le même jour : une seule vue');
+  // « Revenir » ramène la dernière carte ordinaire
+  await s.page.keyboard.press('z'); await s.page.waitForTimeout(400);
+  assert.equal(await estSponso(s.page), false);
+  assert.equal((await mesChoix(s.page)).length, choixAvant + 19);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : l’administration n’a pas Match ; un étudiant avec moins de 10 cartes ne voit aucune carte sponsorisée', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Amine'); await s.aller('match');
+  await s.page.waitForSelector('.mx-carte.dessus, .mx-vide');
+  for (let i = 0; i < 12 && await s.page.locator('.mx-carte.dessus').count(); i++) {
+    assert.equal(await estSponso(s.page), false);
+    await s.page.click('.mx-non'); await s.page.waitForTimeout(260);
+  }
+  assert.deepEqual(await comptesSponso(s.page), []);
+  await s.comme('Admin'); await s.aller('match');
+  assert.equal(await s.page.locator('.mx-carte').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('administration : « Sponsorisés » — créer une carte ciblée, la modifier, l’arrêter et la reprendre ; ses vues, clics et taux ; le bilan copié ne dit que des totaux', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await s.comme('Admin'); await s.aller('admin/sponsorises');
+  await s.page.waitForSelector('.sp-ligne');
+  assert.equal(await s.page.getAttribute('#adm-tab-sponsorises', 'aria-selected'), 'true', 'un onglet « Sponsorisés »');
+  const ex = s.page.locator('.sp-ligne[data-id="sp-demo-0001"]');
+  assert.match(await ex.innerText(), /En cours/);
+  assert.match(await ex.locator('.sp-cible').innerText(), /^Étudiants et lauréats · Toutes les années · Toutes les filières$/);
+  assert.deepEqual(await ex.locator('dd').allInnerTexts(), ['0', '0', '–', '0']);
+  assert.equal(await s.page.locator('.page .btn.primary:visible, main .btn.primary:visible').count(), 1, 'un seul bouton plein : « Nouvelle carte »');
+  // L'exemple arrêté : la nouvelle carte sera la seule dans Match
+  await ex.locator('.sp-basculer').click(); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Carte arrêtée/);
+  assert.match(await ex.innerText(), /Arrêtée/);
+  assert.equal(await ex.locator('.sp-basculer').innerText(), 'Reprendre');
+
+  // Nouvelle carte : pour les étudiants de 5A en GI-EO
+  await s.page.click('#sp-nouvelle'); await s.page.waitForSelector('.sp-form');
+  assert.equal(await s.page.locator('#sp-nouvelle').count(), 0, 'le formulaire ouvert, « Enregistrer » est le seul bouton plein');
+  assert.equal(await s.page.locator('.page .btn.primary:visible, main .btn.primary:visible').count(), 1);
+  await s.page.fill('#sp-ent', 'Atelier Exemple');
+  await s.page.fill('#sp-titre', 'Préparer son départ en Allemagne');
+  assert.equal(await s.page.locator('.sp-form .mx-apercu h2').innerText(), 'Préparer son départ en Allemagne', 'l’aperçu suit la saisie');
+  await s.page.fill('#sp-texte', 'Visa, logement et premiers pas : un accompagnement pour les élèves ingénieurs.');
+  await s.page.fill('#sp-lien', 'http://example.org/depart');
+  await s.page.click('#sp-pub-etudiants');
+  await s.page.locator('#sp-annees button', { hasText: '5A' }).click();
+  await s.page.click('.sp-form .fil-pick button[title="Génie Industriel : Excellence Opérationnelle"]');
+  await s.page.click('#sp-enregistrer'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Le lien doit commencer par https:\/\//);
+  assert.equal(await s.page.locator('.sp-ligne').count(), 1, 'rien d’enregistré');
+  await s.page.fill('#sp-lien', 'https://example.org/depart');
+  await s.page.click('#sp-enregistrer'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Carte enregistrée/);
+  const id = await s.page.evaluate(() => window.__demo.data.sponsorises.find(x => x.entreprise === 'Atelier Exemple')?.id);
+  assert.ok(id);
+  const ligne = s.page.locator(`.sp-ligne[data-id="${id}"]`);
+  assert.match(await ligne.innerText(), /En cours/);
+  assert.match(await ligne.locator('.sp-cible').innerText(), /^Étudiants · 5A · /);
+  // La modifier
+  await ligne.locator('.sp-modifier').click(); await s.page.waitForSelector('.sp-form');
+  assert.equal(await s.page.inputValue('#sp-titre'), 'Préparer son départ en Allemagne');
+  assert.equal(await s.page.getAttribute('#sp-pub-etudiants', 'aria-checked'), 'true');
+  await s.page.fill('#sp-titre', 'Partir travailler en Allemagne');
+  await s.page.click('#sp-enregistrer'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Carte modifiée/);
+  assert.match(await ligne.innerText(), /Partir travailler en Allemagne/);
+  assert.equal(await s.page.evaluate(() => window.__demo.data.sponsorises.length), 2);
+
+  // Salma (5A, GI-EO) la voit à la 11e carte et touche « Voir » ; Youssef (lauréat) ne la voit pas
+  await s.comme('Salma'); await elargirPourSalma(s.page); await s.aller('match');
+  await s.page.waitForSelector('.mx-carte.dessus');
+  await passerCartes(s.page, 10);
+  assert.equal(await carteDessus(s.page), 'Partir travailler en Allemagne');
+  const [onglet] = await Promise.all([s.ctx.waitForEvent('page'), s.page.click('.mx-carte.dessus .mx-s-voir')]);
+  await onglet.close();
+  await s.comme('Youssef'); await s.aller('match');
+  await s.page.waitForSelector('.mx-carte.dessus');
+  await passerCartes(s.page, 10, () => s.page.keyboard.press('ArrowLeft'));
+  assert.equal(await estSponso(s.page), false, 'une carte pour les étudiants de 5A : pas pour un lauréat, et l’exemple est arrêté');
+
+  // L'administration voit ses chiffres ; le bilan copié : des totaux, aucun nom
+  await s.comme('Admin'); await s.aller('admin/sponsorises');
+  await s.page.waitForSelector(`.sp-ligne[data-id="${id}"]`); await s.page.waitForTimeout(200);
+  assert.deepEqual(await ligne.locator('dd').allInnerTexts(), ['1', '1', '100%', '1']);
+  assert.deepEqual(await ex.locator('dd').allInnerTexts(), ['0', '0', '–', '0']);
+  await ligne.locator('.sp-bilan').click(); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Bilan copié : il ne contient que des totaux/);
+  const bilan = await s.page.evaluate(() => navigator.clipboard.readText());
+  assert.match(bilan, /« Partir travailler en Allemagne » \(Atelier Exemple\)/);
+  for (const l of ['Vues : 1 (une par membre et par jour)', 'Clics sur « Voir » : 1', 'Taux de clic : 100%', 'Membres différents : 1']) assert.ok(bilan.includes(l), l);
+  const salma = await s.page.evaluate(() => window.__demo.data.profiles.find(p => p.full_name === 'Salma Bennani'));
+  for (const x of ['Salma', 'Bennani', salma.id, '@']) assert.ok(!bilan.includes(x), `le bilan ne dit pas « ${x} »`);
+  // Reprendre l'exemple
+  await ex.locator('.sp-basculer').click(); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Carte reprise/);
+  assert.match(await ex.innerText(), /En cours/);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('cartes sponsorisées en arabe (390 px) : la carte de Match, l’administration et la confidentialité, sans texte oublié ni débordement', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  await s.page.evaluate(() => window.__ensamMissing?.clear());
+  await s.comme('Youssef'); await s.aller('match');
+  await s.page.waitForSelector('.mx-carte.dessus');
+  await passerCartes(s.page, 10);
+  assert.equal(await estSponso(s.page), true);
+  assert.equal(await s.page.locator('.mx-carte.dessus .mx-s-marque').innerText(), 'مُموَّل');
+  assert.equal(await carteDessus(s.page), SPONSO_DEMO, 'le texte de l’entreprise reste tel quel');
+  assert.doesNotMatch(await s.page.locator('.mx-carte.dessus .mx-s-voir').innerText(), /Voir/);
+  assert.equal(await s.debordement(), 0);
+  await s.page.click('.mx-non'); await s.page.waitForTimeout(300);
+  await s.comme('Admin'); await s.aller('admin/sponsorises');
+  await s.page.waitForSelector('.sp-ligne');
+  assert.equal(await s.debordement(), 0);
+  await s.page.locator('.sp-ligne .sp-modifier').first().click(); await s.page.waitForSelector('.sp-form');
+  assert.equal(await s.debordement(), 0);
+  await s.page.click('.sp-form .row-end .btn.ghost'); await s.page.waitForTimeout(200);
+  await s.page.click('#sp-nouvelle'); await s.page.waitForSelector('.sp-form');
+  await s.page.fill('#sp-titre', 'x'); await s.page.click('#sp-enregistrer'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /\p{Script=Arabic}/u, 'le refus en arabe');
+  assert.equal(await s.debordement(), 0);
+  await s.aller('confidentialite');
+  assert.match(await s.page.textContent('body'), /تحمل علامة «مُموَّل»/);
+  const oublis = (await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x));
+  assert.deepEqual(oublis, []);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
