@@ -9,7 +9,6 @@ import { BESOINS, RDV_MIN, mentorState, futureSlots, requestsFor, mentorsFor, ti
 import { getLang, addAR, arCount, t as tr } from './i18n.js';
 import { RelecturesPage, DemandeRelecture } from './cv.js';
 import { MessageBtn } from './messages.js';
-import { PoulsReseau } from './pouls.js';
 import { MerciDuo } from './growth.js';
 
 const firstName = p => (p?.full_name || '').split(' ')[0];
@@ -539,7 +538,7 @@ export function MentoratPage(ctx) {
       ${isLaureat ? html`<label class="switch"><input id="mentor-dispo" type="checkbox" checked=${!!me.mentor_dispo} onChange=${e => act(() => store.update('profiles', me.id, { mentor_dispo: e.target.checked }))}/> Disponible pour aider</label>` : null}</header>
     <${MentorSeg} ctx=${ctx}/>
 
-    ${nouveau ? html`<${PoulsReseau} ctx=${ctx}/><${HowItWorks} role=${role}/>` : null}
+    ${nouveau ? html`<${HowItWorks} role=${role}/>` : null}
 
     ${next ? html`<section class="m-section m-next" aria-labelledby="m-next-h">
       <div class="m-head"><h2 id="m-next-h" class="h-ico"><${Icon} name="video"/> Ton prochain rendez-vous</h2><${Countdown} iso=${next.m.rdv_at}/></div>
@@ -550,8 +549,6 @@ export function MentoratPage(ctx) {
       <div class="m-head"><h2>${titreAutres} <span class="count">${autres.length}</span></h2></div>
       <div class="list">${autres.map(({ m, side }) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side=${side}/>`)}</div>
     </section>` : null}
-
-    ${!nouveau ? html`<${PoulsReseau} ctx=${ctx}/>` : null}
 
     ${!isLaureat ? html`<div class="need-card">
       <h2>${mine.length ? 'Besoin d’un autre conseil ?' : 'De quoi as-tu besoin ?'}</h2>

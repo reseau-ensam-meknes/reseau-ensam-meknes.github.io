@@ -171,11 +171,12 @@ export function Certificate({ p, a, code, url }) {
   </div>`;
 }
 
+// Dans « Mon espace » (Mes documents), à côté du bilan : une phrase qui dit à quoi elle sert
 export function AttestationCard({ ctx }) {
   const [open, setOpen] = useState(false);
   return html`<div class="attest-card">
     <span class="attest-ico"><${Icon} name="award" size=${24}/></span>
-    <div class="grow"><strong>Attestation de contribution</strong><span class="small muted">Tes mentorats et recrutements confirmés, dans un document à imprimer en PDF ou à ajouter sur LinkedIn, avec un lien de vérification.</span></div>
+    <div class="grow"><strong>Attestation de contribution</strong><span class="small muted">Pour ton CV et LinkedIn, avec un lien de vérification.</span></div>
     <button class="btn small" onClick=${() => setOpen(true)}>Voir mon attestation</button>
     ${open ? html`<${AttestationModal} ctx=${ctx} onClose=${() => setOpen(false)}/>` : null}
   </div>`;

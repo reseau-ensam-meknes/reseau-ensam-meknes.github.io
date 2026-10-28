@@ -5,7 +5,6 @@ import { Icon, Bar, Person, Tabs, Num, injectCSS, toast } from './ui.js';
 import { seasonStats, monthlyActivity, seasonLabel, NIVEAUX, pct, OBJECTIFS, statutOf, FOUND, niveauOf, enqueteDue, SITUATIONS, SALAIRES, CANAUX, proximiteFiliere, filiereMatch } from './logic.js';
 import { CompanyLogo } from './ui.js';
 import { addAR, arCount } from './i18n.js';
-import { PoulsReseau } from './pouls.js';
 import { SuccessFeed } from './growth.js';
 import { useStatsInsertion, tauxInsertion, KpisInsertion, virgule } from './enquete.js';
 
@@ -48,8 +47,8 @@ function SeasonPage({ ctx }) {
     <${SuiviSeg} ctx=${ctx} on="placement"/>
 
     <div class="kpis suivi-kpis">
-      <div class="kpi"><span class="kpi-label">Ont trouvé</span><span class="kpi-val"><${Num} v=${totalFound}/><small>/${totalPop}</small></span><span class="small muted">${pct(totalPop ? totalFound / totalPop : 0)} des inscrits 3A, 4A, 5A et jeunes diplômés</span></div>
-      <div class="kpi"><span class="kpi-label">Grâce à la plateforme</span><span class="kpi-val"><${Num} v=${st.viaTotal}/></span><span class="small muted">${pct(st.totalFound ? st.viaTotal / st.totalFound : 0)} des réussites, vérifiées des deux côtés</span></div>
+      <div class="kpi"><span class="kpi-label">Ont trouvé</span><span class="kpi-val"><${Num} v=${totalFound}/><small>/${totalPop}</small></span><${Bar} value=${totalPop ? totalFound / totalPop : 0} label=${`${pct(totalPop ? totalFound / totalPop : 0)} ont trouvé`}/><span class="small muted">${pct(totalPop ? totalFound / totalPop : 0)} des inscrits 3A, 4A, 5A et jeunes diplômés</span></div>
+      <div class="kpi"><span class="kpi-label">Grâce à la plateforme</span><span class="kpi-val"><${Num} v=${st.viaTotal}/></span><${Bar} value=${st.totalFound ? st.viaTotal / st.totalFound : 0} label=${`${pct(st.totalFound ? st.viaTotal / st.totalFound : 0)} des réussites`}/><span class="small muted">${pct(st.totalFound ? st.viaTotal / st.totalFound : 0)} des réussites, vérifiées des deux côtés</span></div>
       <div class="kpi"><span class="kpi-label">À confirmer</span><span class="kpi-val"><${Num} v=${pendingAll}/></span><span class="small muted">recrutés, attendent la confirmation de l’étudiant</span></div>
       <div class="kpi"><span class="kpi-label">Offres ouvertes</span><span class="kpi-val"><${Num} v=${openOffers}/></span><span class="small muted">publiées par ${new Set(data.offers.filter(o => o.status === 'ouverte').map(o => o.author_id)).size} lauréats</span></div>
     </div>
@@ -141,8 +140,18 @@ function ExportBox({ data, saison, rows }) {
   </div>`;
 }
 
-// Vue étudiant : seulement sa propre promo, tournée vers ce qui vient (offres ouvertes, lauréats qui aident).
+// Vue étudiant : seulement sa propre promo, tournée vers ce qui vient (offres ouvertes, camarades qui ont trouvé).
 // Pas d'échéance, pas de rythme attendu, pas de barre vide : encourager plutôt que comparer.
+// Un fait à un seul endroit : les offres de l'année (dont celles qui ciblent sa filière), puis qui a trouvé (et comment).
+// Couleurs d'état partout pareilles : vert = trouvé, gris = en attente de confirmation.
+
+// Barre empilée : grâce à un lauréat (vert), hors plateforme (vert clair), à confirmer (gris), sur tous les inscrits de l'année
+function BarreTrouves({ via, autres, attente, total }) {
+  const parts = [['tr-via', via, `${via} grâce à un lauréat`], ['tr-autre', autres, `${autres} hors plateforme`], ['tr-attente', attente, `${attente} à confirmer`]].filter(x => x[1] > 0);
+  if (!total || !parts.length) return null;
+  return html`<div class="tr-barre" role="img" aria-label=${parts.map(x => x[2]).join(' · ')}>${parts.map(([c, n]) => html`<span class=${c} style=${`width:${(n / total) * 100}%`}></span>`)}</div>
+    <ul class="tr-legende">${parts.map(([c, , l]) => html`<li><span class=${'tr-dot ' + c} aria-hidden="true"></span>${l}</li>`)}</ul>`;
+}
 
 function PromoPage({ ctx }) {
   const { data, saison, me, go } = ctx;
@@ -155,75 +164,92 @@ function PromoPage({ ctx }) {
   const companies = new Map();
   for (const pl of row.foundList) companies.set(pl.entreprise, (companies.get(pl.entreprise) || 0) + 1);
   const comp = [...companies.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const maxComp = comp[0]?.[1] || 1;
   const mine = row.byFiliere.find(f => f.filiere === me.filiere);
-  // Les mêmes offres que dans « Offres » : ouvertes, pour les étudiants de cette année
-  const ouvertes = data.offers.filter(o => o.status === 'ouverte' && o.audience !== 'laureats' && (o.annees || []).includes(n)).length;
+  // Les mêmes offres que dans « Offres » : ouvertes, pour les étudiants de cette année ; celles qui ciblent sa filière en part de ce total
+  const pourAnnee = data.offers.filter(o => o.status === 'ouverte' && o.audience !== 'laureats' && (o.annees || []).includes(n));
+  const ouvertes = pourAnnee.length;
+  const pourFiliere = pourAnnee.filter(o => o.filieres?.length && filiereMatch(o.filieres, me.filiere)).length;
   const aidants = data.profiles.filter(p => p.role === 'laureat' && proximiteFiliere(p.filiere, me.filiere) > 0).length;
-  const pourFiliere = data.offers.filter(o => o.status === 'ouverte' && o.audience !== 'laureats' && (o.annees || []).includes(n) && o.filieres?.length && filiereMatch(o.filieres, me.filiere)).length;
+  const phraseFil = pourFiliere > 1 ? `${pourFiliere} offres ciblent ta filière` : '1 offre cible ta filière';
+  const tete = (id, ic, titre) => html`<div class="pr-tete"><span class="pr-stat-ico" aria-hidden="true"><${Icon} name=${ic} size=${18}/></span><h2 id=${id}>${titre}</h2></div>`;
   return html`<section class="page promo">
     <header class="page-head"><div><p class="eyebrow">${seasonLabel(saison)} · ${NIVEAUX[n].label}</p><h1>Mon année</h1></div></header>
     <${SuiviSeg} ctx=${ctx} on="placement"/>
     <div class="pr-avant">
-      <button type="button" class="pr-stat" onClick=${() => go('offres')}>
-        <span class="pr-stat-ico"><${Icon} name="feed" size=${18}/></span>
-        <span class="pr-stat-num"><${Num} v=${ouvertes}/></span>
-        <span class="pr-stat-lbl">${ouvertes > 1 ? 'offres ouvertes pour ton année' : 'offre ouverte pour ton année'}</span>
-        <span class="pr-stat-go">Voir les offres <${Icon} name="arrow" size=${14}/></span>
-      </button>
-      ${row.via ? html`<div class="pr-stat good">
-        <span class="pr-stat-ico"><${Icon} name="heart" size=${18}/></span>
-        <span class="pr-stat-num"><${Num} v=${row.via}/></span>
-        <span class="pr-stat-lbl">${row.via > 1 ? 'camarades ont trouvé grâce à un lauréat' : 'camarade a trouvé grâce à un lauréat'}</span>
-      </div>` : html`<button type="button" class="pr-stat good" onClick=${() => go('mentorat')}>
-        <span class="pr-stat-ico"><${Icon} name="mentor" size=${18}/></span>
-        <span class="pr-stat-num"><${Num} v=${aidants}/></span>
-        <span class="pr-stat-lbl">${aidants > 1 ? 'lauréats de ta filière dans le réseau' : 'lauréat de ta filière dans le réseau'}</span>
-        <span class="pr-stat-go">Trouver un mentor <${Icon} name="arrow" size=${14}/></span>
-      </button>`}
+      <section class="pr-stat pr-offres" aria-labelledby="pr-offres-t">
+        ${tete('pr-offres-t', 'feed', 'Offres pour ton année')}
+        <p class="pr-chiffre"><span class="pr-stat-num"><${Num} v=${ouvertes}/></span><span class="pr-stat-lbl">${ouvertes > 1 ? 'ouvertes en ce moment' : 'ouverte en ce moment'}</span></p>
+        ${pourFiliere ? html`<${Bar} value=${pourFiliere / ouvertes} label=${phraseFil}/>
+          <ul class="tr-legende"><li><span class="tr-dot tr-fil" aria-hidden="true"></span>${phraseFil}</li></ul>` : null}
+        <button type="button" class="linkish small pr-stat-go" onClick=${() => go('offres')}>Voir les offres <${Icon} name="arrow" size=${14}/></button>
+      </section>
+      ${row.found ? html`<section class="pr-stat good pr-trouve" aria-labelledby="pr-trouve-t">
+        ${tete('pr-trouve-t', 'check', 'Camarades qui ont trouvé')}
+        <p class="pr-chiffre"><span class="pr-stat-num"><${Num} v=${row.found}/></span><span class="pr-stat-lbl">${`sur ${row.total} inscrits de ton année`}</span></p>
+        <${BarreTrouves} via=${row.via} autres=${row.found - row.via} attente=${row.pending} total=${row.total}/>
+        ${mine?.found ? html`<div class="pr-fil"><span class="pr-fil-l" title=${me.filiere}>Ta filière</span><${Bar} value=${mine.found / mine.total} label=${`${mine.found} sur ${mine.total}`}/><span class="small mono">${mine.found} sur ${mine.total}</span></div>` : null}
+        <p class="small muted pr-calme">Chacun avance à son rythme : les lauréats publient toute l’année.</p>
+      </section>` : html`<section class="pr-stat good" aria-labelledby="pr-aide-t">
+        ${tete('pr-aide-t', 'mentor', 'Des lauréats pour t’aider')}
+        <p class="pr-chiffre"><span class="pr-stat-num"><${Num} v=${aidants}/></span><span class="pr-stat-lbl">${aidants > 1 ? 'lauréats de ta filière dans le réseau' : 'lauréat de ta filière dans le réseau'}</span></p>
+        <button type="button" class="linkish small pr-stat-go" onClick=${() => go('mentorat')}>Trouver un mentor <${Icon} name="arrow" size=${14}/></button>
+      </section>`}
     </div>
-    <${PoulsReseau} ctx=${ctx}/>
-    ${mine ? html`<div class="panel pr-fil"><div class="section-head"><h2>${me.filiere}</h2>${mine.found ? html`<span class="muted small">${mine.found > 1 ? `${mine.found} camarades ont trouvé` : '1 camarade a trouvé'}</span>` : null}</div>
-      ${mine.found ? html`<${Bar} value=${mine.total ? mine.found / mine.total : 0} label=${mine.found > 1 ? `${mine.found} camarades ont trouvé` : '1 camarade a trouvé'}/>` : null}
-      <p class="small muted">Chacun avance à son rythme : les lauréats publient toute l’année.</p>
-      ${pourFiliere ? html`<button type="button" class="linkish small pr-fil-go" onClick=${() => go('offres')}>${pourFiliere > 1 ? `${pourFiliere} offres ciblent ta filière` : '1 offre cible ta filière'} <${Icon} name="arrow" size=${13}/></button>` : null}</div>` : null}
     <${SuccessFeed} ctx=${ctx} max=${3} lien=${false}/>
     ${comp.length ? html`<div class="panel"><div class="section-head"><h2>Où vont les étudiants de ton année</h2></div>
-      <ul class="company-cloud">${comp.map(([c, k]) => html`<li><${CompanyLogo} name=${c} size=${34}/><span translate="no" dir="auto">${c}</span><span class="count">${k}</span></li>`)}</ul></div>` : null}
+      <ul class="company-cloud pr-entreprises">${comp.map(([c, k]) => html`<li><${CompanyLogo} name=${c} size=${34}/><span class="pr-ent"><span translate="no" dir="auto">${c}</span><span class="pr-ent-bar" aria-hidden="true" style=${`width:${(k / maxComp) * 100}%`}></span></span><span class="count">${k}</span></li>`)}</ul></div>` : null}
   </section>`;
 }
 
 injectCSS('dashboard-promo', `
-.pr-avant { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; }
-.pr-stat { display: flex; flex-direction: column; align-items: flex-start; gap: .3rem; padding: 1rem 1.1rem; border-radius: var(--r-lg); border: 0; background: var(--surface); box-shadow: var(--sh1); text-align: start; color: inherit; font: inherit; min-width: 0; }
-button.pr-stat { cursor: pointer; transition: transform .25s var(--ease), box-shadow .25s, border-color .2s; }
-button.pr-stat:hover { transform: translateY(-2px); box-shadow: var(--sh2); }
-.pr-stat-ico { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--blue-text); margin-bottom: .2rem; }
-.pr-stat.good .pr-stat-ico { background: var(--good-soft); }
-.pr-stat.good .pr-stat-ico { color: var(--good); }
+.pr-avant { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; align-items: stretch; }
+.pr-stat { display: flex; flex-direction: column; gap: .55rem; padding: 1rem 1.1rem; border-radius: var(--r-lg); border: 0; background: var(--surface); box-shadow: var(--sh1); min-width: 0; }
+.pr-tete { display: flex; align-items: center; gap: .6rem; }
+.pr-tete h2 { margin: 0; font-size: var(--fs-3); font-weight: 650; color: var(--ink); line-height: 1.3; }
+.pr-stat-ico { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--blue-text); }
+.pr-stat.good .pr-stat-ico { background: var(--good-soft); color: var(--good); }
+.pr-chiffre { margin: 0; display: flex; align-items: baseline; flex-wrap: wrap; gap: .2rem .5rem; }
 .pr-stat-num { font: 750 var(--fs-7)/1.05 var(--f-display); font-variant-numeric: tabular-nums; color: var(--ink); }
 .pr-stat-lbl { color: var(--ink-2); font-size: var(--fs-2); line-height: 1.35; }
-.pr-stat-go { margin-top: auto; padding-top: .3rem; display: inline-flex; align-items: center; gap: .3rem; font-weight: 600; font-size: var(--fs-2); color: var(--blue-text); }
-.pr-stat.good .pr-stat-go { color: var(--good); }
+.pr-stat-go { margin-top: auto; align-self: flex-start; display: inline-flex; align-items: center; gap: .3rem; font-weight: 600; }
+.pr-calme { margin: auto 0 0; }
+.tr-barre { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--surface-2); }
+.tr-barre span { height: 100%; }
+.tr-via { background: var(--good); }
+.tr-autre { background: color-mix(in srgb, var(--good) 45%, var(--surface)); }
+.tr-attente { background: var(--muted); }
+.tr-fil { background: var(--accent); }
+.tr-legende { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .25rem .9rem; font-size: var(--fs-2); color: var(--ink-2); }
+.tr-legende li { display: inline-flex; align-items: center; gap: .4rem; }
+.tr-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; }
+.pr-fil { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .6rem; font-size: var(--fs-2); color: var(--ink-2); padding-top: .5rem; border-top: 1px solid var(--line); }
 .pr-fil .bar-fill { background: var(--good); }
-.pr-fil-go { align-self: flex-start; display: inline-flex; align-items: center; gap: .3rem; font-weight: 600; }
-@media (max-width: 420px) { .pr-avant { gap: .55rem; } .pr-stat { padding: .9rem .85rem; } .pr-stat-num { font-size: var(--fs-6); } }
+.pr-ent { display: flex; flex-direction: column; gap: .3rem; min-width: 0; }
+.company-cloud .pr-ent > .pr-ent-bar { flex: none; display: block; height: 4px; border-radius: 2px; background: var(--good); min-width: 4px; }
+@media (max-width: 640px) { .pr-avant { grid-template-columns: minmax(0, 1fr); } }
+/* Lauréats et administration : la part en un coup d'œil, en vert comme tout ce qui est trouvé */
+.suivi-kpis .bar { margin-block: .25rem .1rem; }
+.suivi-kpis .bar-fill { background: var(--good); }
+@media (max-width: 420px) { .pr-stat { padding: .9rem .85rem; } .pr-stat-num { font-size: var(--fs-6); } }
 `);
 
 addAR({
-  'offres ouvertes pour ton année': 'عروض مفتوحة لسنتك',
-  'offre ouverte pour ton année': 'عرض مفتوح لسنتك',
   'Mon année': 'سنتي', 'Année terminée': 'انتهت السنة', 'Où vont les étudiants de ton année': 'أين يتجه طلبة سنتك',
   'Liste complète de l’année (une ligne par étudiant), à ouvrir dans Excel.': 'اللائحة الكاملة للسنة (سطر لكل طالب)، تُفتح في Excel.',
-  'camarades ont trouvé grâce à un lauréat': 'زملاء وجدوا فرصتهم بفضل خريج',
-  'camarade a trouvé grâce à un lauréat': 'زميل وجد فرصته بفضل خريج',
+  'Offres pour ton année': 'عروض لسنتك', 'ouvertes en ce moment': 'مفتوحة حاليًا', 'ouverte en ce moment': 'مفتوح حاليًا',
+  'Camarades qui ont trouvé': 'زملاء وجدوا فرصتهم', 'Des lauréats pour t’aider': 'خريجون لمساعدتك',
+  'vérifiées des deux côtés': 'موثّقة من الطرفين',
   'lauréats de ta filière dans le réseau': 'خريجون من شعبتك في الشبكة',
   'lauréat de ta filière dans le réseau': 'خريج من شعبتك في الشبكة',
-  '1 camarade a trouvé': 'زميل واحد وجد فرصته',
   '1 offre cible ta filière': 'عرض واحد يستهدف شعبتك',
   'Chacun avance à son rythme : les lauréats publient toute l’année.': 'كل واحد يتقدم بإيقاعه: ينشر الخريجون العروض طوال السنة.',
 }, [
   [/^(\d+) offres ciblent ta filière$/, k => `${arCount(k, ['عرض واحد', 'عرضان', 'عروض', 'عرضًا'])} تستهدف شعبتك`],
-  [/^(\d+) camarades ont trouvé$/, k => `${arCount(k, ['زميل واحد', 'زميلان', 'زملاء', 'زميلًا'])} وجدوا فرصتهم`],
+  [/^sur (\d+) inscrits? de ton année$/, k => `من أصل ${arCount(k, ['مسجَّل واحد', 'مسجَّلَين', 'مسجَّلين', 'مسجَّلًا'])} في سنتك`],
+  [/^(\d+) grâce à un lauréat$/, k => `${k} بفضل خريج`],
+  [/^(\d+) hors plateforme$/, k => `${k} خارج المنصة`],
+  [/^(\d+(?:[.,]\d+)?)\s?% des réussites$/, k => `${k}% من النجاحات`],
 ]);
 
 // ---------------------------------------------------------------------------
