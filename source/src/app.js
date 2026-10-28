@@ -864,7 +864,8 @@ function useFetesLaureat(ctx) {
 function ligneMessages({ data, me, store, go }, exclure) {
   const att = conversations(data, me.id).filter(c => c.nonLus && !exclure.has(c.autre));
   if (!att.length) return null;
-  const p = c => (store.byId('profiles', c.autre)?.full_name || 'Un membre').split(' ')[0];
+  // Le prénom d'un membre ; l'administration de l'école garde son nom entier (« Bureau des relations entreprises »)
+  const p = c => { const x = store.byId('profiles', c.autre); return !x?.full_name ? 'Un membre' : x.role === 'admin' ? x.full_name : x.full_name.split(' ')[0]; };
   const reste = att.length - 2;
   const text = att.length === 1 ? `${p(att[0])} t’a écrit` : att.length === 2 ? `${p(att[0])} et ${p(att[1])} t’ont écrit` : `${p(att[0])}, ${p(att[1])} et ${reste > 1 ? `${reste} autres` : '1 autre'} t’ont écrit`;
   return { key: 'msgs', icon: 'chat', tone: 'accent', text, n: att.reduce((t, c) => t + c.nonLus, 0), onClick: () => go(att.length === 1 ? 'messages/' + att[0].autre : 'messages') };
