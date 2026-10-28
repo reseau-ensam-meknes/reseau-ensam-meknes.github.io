@@ -906,6 +906,39 @@ if (typeof document !== 'undefined') {
   document.addEventListener('touchstart', () => {}, { passive: true });
 }
 
+// Une rangée qui défile en largeur (puces, onglets, segments) : un fondu doux sur le bord qui cache encore quelque chose,
+// seulement tant qu'il reste à voir (au début, à la fin, ou les deux ; le début est à droite en arabe). Tout tient : rien.
+// Un seul écouteur de défilement pour toutes les rangées ; leur taille et celle de leurs puces sont suivies par un
+// ResizeObserver, et les rangées nouvelles sont repérées une fois par image après un rendu.
+const DEFILANTES = '.puces-nav, .offres-chips, .chips.rangee, .seg, .tabs, .sugg-row, .mx-rangee, .mx-b-acts';
+export function bordsRangee(l) {
+  const max = l.scrollWidth - l.clientWidth, x = Math.abs(l.scrollLeft);   // en arabe, scrollLeft va de 0 à -max
+  const debut = max > 2 && x > 2, fin = max > 2 && x < max - 2;
+  if (l.classList.contains('fondu-debut') !== debut) l.classList.toggle('fondu-debut', debut);
+  if (l.classList.contains('fondu-fin') !== fin) l.classList.toggle('fondu-fin', fin);
+}
+if (typeof document !== 'undefined' && document.body && typeof MutationObserver === 'function' && typeof ResizeObserver === 'function') {
+  const suivies = new WeakSet();
+  const ro = new ResizeObserver(es => {
+    for (const { target: t } of es) {
+      if (!t.isConnected) { ro.unobserve(t); suivies.delete(t); continue; }
+      const l = t.matches(DEFILANTES) ? t : t.parentElement;
+      if (l?.matches(DEFILANTES)) bordsRangee(l);
+    }
+  });
+  let prevu = 0;
+  const reperer = () => {
+    prevu = 0;
+    for (const l of document.querySelectorAll(DEFILANTES)) {
+      for (const el of [l, ...l.children]) if (!suivies.has(el)) { suivies.add(el); ro.observe(el); }
+      bordsRangee(l);
+    }
+  };
+  new MutationObserver(() => { prevu ||= requestAnimationFrame(reperer); }).observe(document.body, { childList: true, subtree: true });
+  document.addEventListener('scroll', e => { const l = e.target; if (l.nodeType === 1 && l.matches(DEFILANTES)) bordsRangee(l); }, { capture: true, passive: true });
+  document.fonts?.ready.then(() => requestAnimationFrame(reperer));
+}
+
 export function Tabs({ tabs, value, onChange }) {
   return html`<div class="tabs" role="tablist">${tabs.map(([k, l, c]) => html`<button role="tab" aria-selected=${value === k} class=${'tab' + (value === k ? ' on' : '')} onClick=${() => onChange(k)}>${l}${c ? html` <span class="count">${c}</span>` : null}</button>`)}</div>`;
 }

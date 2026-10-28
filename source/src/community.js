@@ -1,5 +1,5 @@
 // Entraide, Communauté (classement, annuaire, vitrine des talents) et profils.
-import { html, useState, useMemo, useRef, useEffect } from './vendor/preact-htm.js';
+import { html, useState, useMemo, useRef, useEffect, useLayoutEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, LogoEntreprise, toast, LevelChip, RoleLine, roleTexte, injectCSS, PartagerWhatsApp, lienDirect, allerAuChamp, Bouclier, Embleme } from './ui.js';
 import { useBrouillon } from './ui.js';
 import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
@@ -25,6 +25,8 @@ import { photoPreteDuCV, PhotoTrouvee } from './photo.js';
 
 // Arabe : textes du profil ajoutés en Phase 3
 addAR({
+  // Les puces sous le titre de « Mon profil »
+  'Parties du profil': 'أقسام الملف', 'Photo et CV': 'الصورة والسيرة الذاتية', 'Mes infos': 'معلوماتي', 'Mes données': 'بياناتي',
   // Profil en une minute depuis LinkedIn
   'Remplir depuis LinkedIn': 'الملء من LinkedIn', 'Remplir mon profil': 'املأ ملفي', 'Bio': 'نبذة',
   'Sur LinkedIn (ordinateur), ouvre ton profil, puis « Plus » › « Enregistrer au format PDF ».': 'على LinkedIn (من الحاسوب)، افتح ملفك، ثم «المزيد» › «حفظ بصيغة PDF».',
@@ -357,6 +359,98 @@ const MANQUE = {
 };
 const ERR = { nom: 'Écris ton nom complet.', promo: 'Indique l’année de ton diplôme.', filiere: 'Choisis ta filière dans la liste.', aide: 'Choisis l’une des deux réponses.' };
 
+// « Mon profil » est long (photo, CV, formulaire, coordonnées, qui voit quoi, notifications, données) : sous le titre, une
+// rangée de puces mène à chaque partie d'un geste (saut direct si le mouvement est réduit). Elle reste collée sous la barre
+// du haut ; la puce de la partie à l'écran est marquée (aria-current, couleurs de sélection) et ramenée dans sa rangée.
+// Une partie absente (pas de « Qui voit quoi » pour l'administration…) n'a pas de puce.
+const PARTIES_PROFIL = [['photo', 'Photo et CV', ['profil-photo', 'profil-cv']], ['infos', 'Mes infos', ['profil-infos']], ['coordonnees', 'Coordonnées', ['profil-coordonnees']],
+  ['visibilite', 'Qui voit quoi', ['profil-visibilite']], ['notifications', 'Notifications', ['mes-donnees']], ['donnees', 'Mes données', ['profil-donnees']]];
+const partieEl = ids => ids.map(id => document.getElementById(id)).find(Boolean) || null;
+export function SautsProfil() {
+  const ref = useRef(null);
+  const [parties, setParties] = useState(PARTIES_PROFIL.map(p => p[0]));
+  const [actif, setActif] = useState('photo');
+  const vise = useRef(null);       // la partie choisie d'une puce : elle reste marquée le temps que la page y glisse
+  const actifRef = useRef(actif);
+  // La ligne de lecture : sous la barre du haut et sous cette rangée, toutes deux collées en haut
+  const ligne = () => (document.querySelector('.top')?.getBoundingClientRect().bottom || 0) + (ref.current?.offsetHeight || 0) + 12;
+  const marquer = k => {
+    if (k === actifRef.current) return;
+    actifRef.current = k; setActif(k);
+  };
+  // Les parties présentes (après chaque rendu : changer de rôle en fait apparaître ou disparaître)
+  useLayoutEffect(() => {
+    const la = PARTIES_PROFIL.filter(([, , ids]) => partieEl(ids)).map(p => p[0]);
+    if (la.join() !== parties.join()) setParties(la);
+  });
+  // La puce marquée reste visible dans sa rangée, sans jamais faire défiler la page en hauteur
+  useLayoutEffect(() => {
+    const r = ref.current?.querySelector('.rangee'), b = r?.querySelector('[aria-current]');
+    if (!r || !b || r.scrollWidth <= r.clientWidth + 1) return;
+    const a = r.getBoundingClientRect(), e = b.getBoundingClientRect();
+    if (e.left < a.left + 24 || e.right > a.right - 24) r.scrollBy({ left: e.left + e.width / 2 - (a.left + a.width / 2), behavior: 'auto' });
+  }, [actif]);
+  const relancer = useRef(null);  // relit la page (après un saut, ou au défilement)
+  const finSaut = useRef(0);
+  useEffect(() => {
+    const nav = ref.current;
+    if (!nav) return;
+    // Collée juste sous la barre du haut, quelle que soit sa hauteur (langue, taille du texte)
+    const haut = document.querySelector('.top');
+    const mesurer = () => nav.style.setProperty('--haut-h', (haut?.offsetHeight || 0) + 'px');
+    mesurer();
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(mesurer) : null;
+    if (haut) ro?.observe(haut);
+    let prevu = 0;
+    const suivre = () => {
+      prevu = 0;
+      nav.classList.toggle('colle', scrollY > 0 && nav.getBoundingClientRect().top <= (haut?.getBoundingClientRect().bottom || 0) + 1);
+      if (vise.current) return;
+      const y = ligne(), auBout = innerHeight + scrollY >= document.documentElement.scrollHeight - 4;
+      let k = null;
+      for (const [cle, , ids] of PARTIES_PROFIL) { const el = partieEl(ids); if (el && (k === null || el.getBoundingClientRect().top <= y + 1)) k = cle; }
+      if (auBout) k = [...PARTIES_PROFIL].reverse().find(([, , ids]) => partieEl(ids))?.[0] || k;
+      if (k) marquer(k);
+    };
+    const auDefilement = () => { prevu ||= requestAnimationFrame(suivre); };
+    relancer.current = auDefilement;
+    // Fin d'un saut demandé : la page s'est arrêtée (scrollend) ; sinon le délai posé par aller()
+    const arrive = () => { if (!vise.current) return; clearTimeout(finSaut.current); vise.current = null; auDefilement(); };
+    addEventListener('scroll', auDefilement, { passive: true });
+    addEventListener('scrollend', arrive);
+    suivre();
+    return () => { removeEventListener('scroll', auDefilement); removeEventListener('scrollend', arrive); cancelAnimationFrame(prevu); clearTimeout(finSaut.current); ro?.disconnect(); relancer.current = null; };
+  }, []);
+  const aller = k => {
+    const el = partieEl(PARTIES_PROFIL.find(p => p[0] === k)[2]);
+    if (!el) return;
+    marquer(k);
+    const doux = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const haut = k === 'photo' ? 0 : Math.max(0, el.getBoundingClientRect().top + scrollY - ligne() + 4);
+    if (Math.abs(haut - scrollY) > 2) {
+      vise.current = k; clearTimeout(finSaut.current);
+      finSaut.current = setTimeout(() => { vise.current = null; relancer.current?.(); }, doux ? 1200 : 150);
+    }
+    scrollTo({ top: haut, behavior: doux ? 'smooth' : 'auto' });
+    // Le clavier et les lecteurs d'écran continuent dans la partie choisie
+    if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1');
+    el.focus({ preventScroll: true });
+  };
+  return html`<nav class="pf-sauts" aria-label="Parties du profil" ref=${ref}>
+    <div class="chips rangee">${PARTIES_PROFIL.filter(([k]) => parties.includes(k)).map(([k, l]) => html`<button type="button" key=${k} class=${'chip' + (actif === k ? ' on' : '')} aria-current=${actif === k ? 'true' : undefined} onClick=${() => aller(k)}>${l}</button>`)}</div>
+  </nav>`;
+}
+injectCSS('pf-sauts', `
+/* Collée sous la barre du haut (sa hauteur est mesurée), sur le fond de la page ; un filet dès qu'elle est collée */
+.pf-sauts { position: sticky; top: calc(env(safe-area-inset-top, 0px) + var(--haut-h, 60px)); z-index: 15; margin-block: -.5rem; padding-block: .4rem; background: var(--bg); box-shadow: 0 1px 0 transparent; transition: box-shadow .2s; }
+.pf-sauts.colle { box-shadow: 0 1px 0 var(--line); }
+@media (max-width: 760px) { .pf-sauts { margin-inline: -16px; padding-inline: 16px; } }
+/* Le champ où arrive le focus (Tab) n'est jamais caché sous la barre ni sous les puces */
+html:has(.pf-sauts) { scroll-padding-top: calc(env(safe-area-inset-top, 0px) + 8rem); }
+[tabindex="-1"]:is(#profil-photo, #profil-cv, #profil-infos, #profil-coordonnees, #profil-visibilite, #mes-donnees, #profil-donnees):focus { outline: none; }
+@media (prefers-reduced-motion: reduce) { .pf-sauts { transition: none; } }
+`);
+
 export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboarding }) {
   const { store, act } = ctx;
   const S = ctx.saison ?? seasonOf(), an = new Date().getFullYear();
@@ -561,7 +655,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
   const n = !isStudent && initial && !initial.verified ? confirmations(store.data, initial) : 0;
   const aide = html`<${ChoixAide} value=${f.mentor_dispo} onChange=${v => set('mentor_dispo', v)} err=${err('aide')}/>`;
   const bouton = html`<button class="btn primary" data-manque=${manques[0] || null}>${libelle}</button>`;
-  return html`<form class="form" onSubmit=${submit}>
+  return html`<form class="form" id=${onboarding ? undefined : 'profil-infos'} onSubmit=${submit}>
     ${onboarding ? (voirRole || !f.role ? html`<${ChoixRole} value=${f.role} onChange=${choisirRole}/>`
       : html`<div class="pf-role"><p class="small" id="pf-role-rappel">${f.role === 'laureat' ? 'Tu t’inscris côté lauréats.' : 'Tu t’inscris côté étudiants.'}</p><button type="button" class="linkish small" id="pf-role-changer" onClick=${changerRole}>Changer</button></div>`)
     : f.role !== 'admin' ? html`<div class="seg" role="group" aria-label="Ta situation"><button type="button" class=${isStudent ? 'on' : ''} onClick=${() => choisirRole('etudiant')}>Je suis à l’école</button><button type="button" class=${!isStudent ? 'on' : ''} onClick=${() => choisirRole('laureat')}>J’ai mon diplôme</button></div>` : null}
@@ -606,14 +700,14 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
       ${onboarding ? null : aide}
       ${f.mentor_dispo ? html`<${Field} label="Sujets sur lesquels je peux aider"><input id="pf-msuj" value=${f.mentor_sujets || ''} onInput=${e => set('mentor_sujets', e.target.value)} placeholder="Stages à l’étranger, entretiens, automobile…"/><//>` : null}
       ${f.role === 'laureat' ? html`<label class="check"><input id="pf-parrain" type="checkbox" checked=${f.parrain_dispo} onChange=${e => set('parrain_dispo', e.target.checked)}/> Je veux bien parrainer un à trois étudiants de 3A de ma filière</label>` : null}`}
-    ${v3 ? html`<fieldset class="cf-private">
+    ${v3 ? html`<fieldset class="cf-private" id="profil-coordonnees">
       <legend class="h-ico"><${Icon} name="lock" size=${17}/> Mes coordonnées (privées)</legend>
       <p class="small muted">Visibles seulement par les membres que tu acceptes, et par le lauréat à qui tu envoies une candidature.</p>
       <div class="grid2"><${Field} label="Téléphone"><input id="pf-tel" type="tel" maxlength="30" dir="ltr" value=${co.telephone} onInput=${e => setC('telephone', e.target.value)} placeholder="06 …"/><//>
         <${Field} label="Email de contact"><input id="pf-mail" type="email" maxlength="120" dir="ltr" value=${co.email} onInput=${e => setC('email', e.target.value)} placeholder="prenom.nom@…"/><//></div>
       <${Field} label="Autre (facultatif)"><input id="pf-contact" maxlength="200" value=${co.contact} onInput=${e => setC('contact', e.target.value)} placeholder="Ex. WhatsApp, plutôt le soir"/><//>
     </fieldset>
-    <${VisibiliteFields} role=${f.role} value=${vis} onChange=${choisirVis} etat=${onboarding ? undefined : visOk}/>` : null}
+    <${VisibiliteFields} role=${f.role} value=${vis} onChange=${choisirVis} etat=${onboarding ? undefined : visOk} id="profil-visibilite"/>` : null}
     ${f.role === 'laureat' && !initial?.verified ? html`<p class="small muted">${v3 ? 'Ton badge « Lauréat vérifié » arrive quand l’équipe du réseau, ou deux lauréats vérifiés de ta promo, confirment ton profil.' : 'Ton badge « Lauréat vérifié » sera ajouté par l’équipe du réseau.'}${n ? html` <b>${n}/2</b>` : null}</p>` : null}` : null)}`}
     ${onboarding ? html`<div class="row-end pf-pied">${bouton}</div>`
       : differe() ? html`<div class="row-end pf-collant" role="status"><span class="small">Modifications pas encore enregistrées</span>${bouton}</div>`

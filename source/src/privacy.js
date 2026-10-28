@@ -307,7 +307,7 @@ export function MesDonnees({ ctx }) {
     <${PushToggle} ctx=${ctx}/>
     ${cats ? html`<${ChoixNotifs} ctx=${ctx}/>` : null}
     <${FondateurPublicCase} ctx=${ctx}/>
-    <div class="row">
+    <div class="row" id="profil-donnees">
       <button class="btn small" onClick=${exportData}><${Icon} name="download" size=${15}/> Télécharger mes données</button>
       <span class="spacer"></span>
       <button class="btn small ghost danger-t" onClick=${() => setDel(true)}><${Icon} name="trash" size=${15}/> Supprimer mon compte</button>
