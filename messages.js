@@ -55,21 +55,6 @@ function Apercu({ m, me }) {
     : html`<span class="ap-txt" translate="no" dir="auto">${m.body}</span>`}</span>`;
 }
 
-// Sur l'accueil : les messages qui attendent une réponse
-export function MessagesHome({ ctx, exclure }) {
-  const { data, me, store, go } = ctx;
-  // La conversation déjà mise en avant plus haut (prochaine étape) n'est pas redite
-  const att = conversations(data, me.id).filter(c => c.nonLus && !exclure?.has(c.autre)).slice(0, 3);
-  if (!att.length) return null;
-  return html`<div class="panel msg-home">
-    <div class="section-head"><h2 class="h-ico"><${Icon} name="chat"/> On t’a écrit</h2><button class="btn tiny ghost" onClick=${() => go('messages')}>Tous les messages <${Icon} name="arrow" size=${14}/></button></div>
-    <ul class="convs">${att.map(c => { const p = store.byId('profiles', c.autre); return html`<li key=${c.autre}>
-      <a class="conv-item unread" href=${'#messages/' + c.autre} onClick=${e => { e.preventDefault(); go('messages/' + c.autre); }}>
-        <${Avatar} p=${p} size=${40}/><span class="ci-main"><span class="ci-top"><span class="ci-name" translate="no">${p?.full_name || 'Membre'}</span><span class="ci-time">${quandCourt(c.dernier.created_at)}</span></span>
-        <${Apercu} m=${c.dernier} me=${me.id}/></span><span class="ci-n">${c.nonLus}</span></a></li>`; })}</ul>
-  </div>`;
-}
-
 // Un nouveau message pendant qu'on est ailleurs sur le site : un petit mot en bas de l'écran
 export function useAlerteMessages(store, me, route) {
   const vus = useRef(null);
@@ -941,7 +926,6 @@ button.react-pill { cursor: pointer; font-family: inherit; }
 .visionneuse img { max-width: 100%; max-height: 100%; border-radius: 8px; }
 .visionneuse .icon-btn { position: absolute; top: calc(.8rem + env(safe-area-inset-top, 0px)); inset-inline-end: .8rem; color: #fff; background: rgb(255 255 255 / .12); }
 
-.msg-home .convs { padding: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .chat-top.mobile-only, .menu-pop .menu-mobile { display: none; }
 .chat-top.on { color: var(--accent); }

@@ -374,17 +374,9 @@ textarea { resize: vertical; }
 .kcard { background: var(--surface); border-radius: var(--r-md); padding: .7rem; display: flex; flex-direction: column; gap: .3rem; box-shadow: var(--sh1); }
 .kcard select { font-size: var(--fs-2); padding: .25rem .4rem; }
 .timeline { margin: 0; padding-inline-start: 1.1rem; display: flex; flex-direction: column; gap: .4rem; }
-.impact-hero { display: grid; grid-template-columns: minmax(240px, 1fr) 2fr; gap: 1rem; }
-.impact-score { display: flex; flex-direction: column; gap: .5rem; padding: 1.2rem; border-radius: var(--r-lg); background: var(--ink); color: var(--bg); }
-.impact-score .muted { color: color-mix(in srgb, var(--bg) 70%, var(--ink)); }
-.impact-score .bar { background: color-mix(in srgb, var(--bg) 18%, var(--ink)); } .impact-score .bar-fill { background: var(--brass); }
-.impact-score .lvl { color: var(--brass-on-ink); background: transparent; }
 /* Gros chiffres : police des titres, chiffres alignés */
 .big { font-family: var(--f-display); font-size: 2.2rem; font-weight: 750; line-height: 1; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .lvl-row { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
-.impact-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; }
-.impact-facts > div { background: var(--surface); border: 0; box-shadow: var(--sh1); border-radius: var(--r-lg); padding: .95rem 1rem; display: flex; flex-direction: column; gap: .3rem; }
-.impact-facts .big { font-size: 1.8rem; color: var(--ink); }
 .confirm-row { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; background: var(--surface); border-radius: var(--r-md); padding: .6rem .7rem; box-shadow: var(--sh1); }
 .badges { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--sp-4) var(--sp-3); }
 .badge { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1); color: var(--muted); font-size: var(--fs-2); }
@@ -662,9 +654,6 @@ button.app-row:hover { box-shadow: var(--sh2); }
 .merci-box p { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
 .merci-box textarea { background: var(--surface); }
 .accent-panel { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent), var(--sh1); }
-.impact-score > .row { color: var(--brass-on-ink); }
-.linkish.on-dark { color: var(--brass-on-ink); }
-.impact-facts > div { position: relative; }
 .fact-ico { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: var(--r-md); background: var(--brass-soft); color: var(--brass); }
 
 /* Réseau */
@@ -705,7 +694,7 @@ button.impact-strip, button.panel { font: inherit; color: inherit; text-align: s
 
 @media (max-width: 1000px) {
   .kpis, .niv-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .home-grid, .impact-hero { grid-template-columns: minmax(0, 1fr); }
+  .home-grid { grid-template-columns: minmax(0, 1fr); }
   .kanban { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .shortcuts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
@@ -729,7 +718,6 @@ button.impact-strip, button.panel { font: inherit; color: inherit; text-align: s
   .kpi-val { font-size: 1.5rem; }
   .niv-grid { grid-template-columns: minmax(0, 1fr); }
   .kanban { grid-template-columns: minmax(0, 1fr); }
-  .impact-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .auth { grid-template-columns: minmax(0, 1fr); }
   .board-facts { text-align: start; flex-basis: 100%; order: 3; }
   .two-col { grid-template-columns: minmax(0, 1fr); }
@@ -1589,13 +1577,24 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"], html[lang=
 /* Accueil : un seul bouton plein, celui de la carte « prochaine étape » ; ailleurs sur l'accueil, des boutons tonals */
 .home :is(.home-grid, .photo-trouvee) .btn.primary:not(.modal .btn) { background: var(--tonal-bg); border-color: transparent; color: var(--tonal-ink); box-shadow: none; }
 .home :is(.home-grid, .photo-trouvee) .btn.primary:not(.modal .btn):hover { background: var(--tonal-hover); }
-/* « Cette semaine » : la vie du réseau, puis trois petites choses au plus */
-.semaine > .bloc-corps { gap: .5rem; }
-.semaine .todo { background: var(--surface); border: 0; box-shadow: var(--sh1); border-radius: var(--r-lg); padding: .2rem .25rem; }
-.semaine .todo li + li { border-block-start: 1px solid var(--line); }
-.semaine .notif { min-height: 52px; align-items: center; gap: .65rem; padding: .5rem .55rem; }
-.semaine .notif > span:nth-child(2) { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35; }
-.semaine .n-ico { width: 28px; height: 28px; }
+/* « À faire » : trois lignes au plus, le reste dans la cloche ; « Dans le réseau » : la vie de tout le réseau */
+:is(.af-accueil, .reseau-semaine) > .bloc-corps { gap: .5rem; }
+.af-accueil .todo { background: var(--surface); border: 0; box-shadow: var(--sh1); border-radius: var(--r-lg); padding: .2rem .25rem; }
+.af-accueil .todo li + li { border-block-start: 1px solid var(--line); }
+.af-accueil .notif { min-height: 52px; align-items: center; gap: .65rem; padding: .5rem .55rem; }
+.af-accueil .notif > span:nth-child(2) { flex: 1; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.35; }
+.af-accueil .n-ico { width: 28px; height: 28px; }
+.af-accueil .notif > .af-n { flex: none; display: grid; place-items: center; min-width: 22px; height: 22px; padding-inline: .35rem; border-radius: var(--r-pill); background: var(--accent); color: var(--accent-ink); font-size: var(--fs-1); font-weight: 700; font-variant-numeric: tabular-nums; }
+.af-tout { align-self: flex-start; margin-inline-start: .6rem; font-size: var(--fs-2); font-weight: 600; }
+/* Où j'en suis : l'objectif de l'étudiant ou l'aide du lauréat, juste sous la prochaine étape */
+.home-col > .avancement { margin: 0; }
+/* « N offres pour toi » : les logos des premières, le nombre, ce qui est nouveau */
+.pto { flex-wrap: nowrap; }
+.pto-logos { flex: none; display: flex; }
+.pto-logos > * { box-shadow: 0 0 0 2px var(--surface); border-radius: 28%; }
+.pto-logos > * + * { margin-inline-start: -10px; }
+.pto-txt { display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
+.pto-txt strong { font-weight: 650; }
 .merci-une .merci { background: none; }
 /* Accueil en trois blocs : un bloc sans contenu disparaît avec son titre (réseau encore petit, début de saison) */
 .bloc, .bloc-corps { display: flex; flex-direction: column; gap: .8rem; min-width: 0; }
@@ -1738,6 +1737,14 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"], html[lang=
 .chips.rangee .chip { flex: none; white-space: nowrap; min-height: 36px; }
 .chips.rangee .chip.on { background: var(--sel-bg); color: var(--sel-ink); border-color: transparent; box-shadow: inset 0 0 0 1px var(--sel-ring); font-weight: 600; }
 @media (max-width: 760px) { .chips.rangee { margin-inline: -16px; padding-inline: 16px; scroll-padding-inline: 16px; } }
+/* Une rangée qui défile (puces, onglets, segments) : le bord où il reste à voir s'estompe, et seulement tant qu'il reste
+   à voir. Les classes sont posées par ui.js (bordsRangee) ; le début est à droite en arabe. */
+.fondu-debut, .fondu-fin { --fondu-d: 0px; --fondu-f: 0px; --fondu-sens: to right;
+  -webkit-mask-image: linear-gradient(var(--fondu-sens), transparent 0, #000 var(--fondu-d), #000 calc(100% - var(--fondu-f)), transparent 100%);
+  mask-image: linear-gradient(var(--fondu-sens), transparent 0, #000 var(--fondu-d), #000 calc(100% - var(--fondu-f)), transparent 100%); }
+.fondu-debut { --fondu-d: 2.25rem; }
+.fondu-fin { --fondu-f: 2.25rem; }
+[dir="rtl"] :is(.fondu-debut, .fondu-fin) { --fondu-sens: to left; }
 /* (fin de la partie B) */
 
 /* ===== Lot design · C : visages, logos, icônes, badges, bouclier « vérifié » ===== */
@@ -2287,9 +2294,8 @@ html.mx-fige { overflow: hidden; }
 .mx-etapes li.ici { color: var(--ink); }
 .mx-etapes li.ici .mx-e-pt { box-shadow: inset 0 0 0 5px var(--accent); }
 .mx-e-lib { white-space: nowrap; }
-.mx-b-acts { display: flex; gap: .4rem; margin-inline: -.9rem; padding-inline: .9rem 2rem; overflow-x: auto; scrollbar-width: none;
-  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 2rem), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 2rem), transparent); }
-[dir="rtl"] .mx-b-acts { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 2rem), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 2rem), transparent); }
+/* Le fondu au bord vient de .fondu-debut / .fondu-fin (ui.js), seulement quand des boutons restent cachés */
+.mx-b-acts { display: flex; gap: .4rem; margin-inline: -.9rem; padding-inline: .9rem 2rem; overflow-x: auto; scrollbar-width: none; }
 .mx-b-acts::-webkit-scrollbar { display: none; }
 .mx-b-acts > .btn { flex: none; min-height: 40px; }
 @media (max-width: 760px) { .mx-b-acts > .btn { min-height: 44px; } }
@@ -2424,14 +2430,13 @@ article.opart { background: linear-gradient(180deg, hsl(var(--h, 205) 70% 50% / 
 .pm-travail > .clogo { border-radius: 26%; }
 :root[data-theme="dark"] .ocard { --lavis: hsl(var(--h, 205) 60% 62% / .075); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ocard { --lavis: hsl(var(--h, 205) 60% 62% / .075); } }
-/* « Cette semaine » : ce qui bouge dans le réseau (des comptes, jamais qui), et « Grâce à toi » pour un lauréat */
+/* « Dans le réseau » : ce qui bouge (des comptes, jamais qui) ; « Grâce à toi » pour un lauréat, dans « Pour toi » */
 .cabouge { display: flex; flex-direction: column; gap: .45rem; padding-block-start: .1rem; }
 .cabouge-titre { display: flex; align-items: center; gap: .5rem; margin: 0; font-size: var(--fs-2); font-weight: 650; color: var(--ink-2); }
 .cabouge-point { position: relative; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--good); }
 .cabouge-faits { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: .45rem; }
 .cabouge-faits li { display: inline-flex; align-items: center; gap: .4rem; min-height: 34px; padding: .2rem .75rem .2rem .25rem; border-radius: var(--r-pill); background: var(--surface); box-shadow: var(--sh1); font-size: var(--fs-2); font-weight: 550; color: var(--ink-2); }
 .cb-ico { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent-soft); color: var(--blue-text); }
-.cb-reactions .cb-ico { background: var(--brass-soft); color: var(--brass); }
 .cb-reponses .cb-ico { background: color-mix(in srgb, var(--indigo) 14%, var(--surface)); color: var(--indigo); }
 .cb-membres .cb-ico { background: var(--good-soft); color: var(--good); }
 .grace { display: flex; align-items: center; gap: .85rem; width: 100%; min-height: 64px; padding: .75rem .85rem .75rem .75rem; border: 0; border-radius: var(--r-lg); background: linear-gradient(120deg, var(--good-soft), color-mix(in srgb, var(--good-soft) 35%, var(--surface)) 75%); box-shadow: var(--sh1), inset 0 0 0 1px color-mix(in srgb, var(--good) 20%, transparent); color: var(--ink); font: inherit; text-align: start; cursor: pointer; transition: box-shadow .2s, transform .2s var(--ease); }
@@ -2495,7 +2500,7 @@ article.opart { background: linear-gradient(180deg, hsl(var(--h, 205) 70% 50% / 
 </head>
 <body>
 <div id="app"><div class="boot"><svg class="brand-logo boot-logo" width="72" height="72" viewBox="0 0 512 512" aria-hidden="true"><defs><linearGradient id="lg-tuile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#27497A"/><stop offset="1" stop-color="#16253F"/></linearGradient></defs><rect width="512" height="512" rx="116" fill="url(#lg-tuile)"/><g class="lg-glyph"><path d="M225.8 104.9L233.6 71.3L278.4 71.3L286.2 104.9L321.5 116.4L347.6 93.8L383.8 120.1L370.4 151.9L392.2 182.0L426.6 179.0L440.4 221.6L410.9 239.4L410.9 276.6L440.4 294.4L426.6 337.0L392.2 334.0L370.4 364.1L383.8 395.9L347.6 422.2L321.5 399.6L286.2 411.1L278.4 444.7L233.6 444.7L225.8 411.1L190.5 399.6L164.4 422.2L128.2 395.9L141.6 364.1L119.8 334.0L85.4 337.0L71.6 294.4L101.1 276.6L101.1 239.4L71.6 221.6L85.4 179.0L119.8 182.0L141.6 151.9L128.2 120.1L164.4 93.8L190.5 116.4ZM378 258A122 122 0 1 0 134 258A122 122 0 1 0 378 258Z" fill-rule="evenodd" style="fill:var(--lg-o,#F39200)"/><circle cx="256" cy="258" r="122" style="fill:var(--lg-in,#1F3354)"/><path d="M256 190 358 232 256 274 154 232Z" style="fill:var(--lg-cap,#FFFFFF)"/><path d="M198 252V294Q256 326 314 294V252L256 276Z" style="fill:var(--lg-cap2,#E3EAF4)"/><path d="M256 232 338 250V302" fill="none" stroke-width="9" stroke-linecap="round" style="stroke:var(--lg-b,#4FA9E6)"/><circle cx="338" cy="308" r="12" style="fill:var(--lg-b,#4FA9E6)"/></g></svg><p><span lang="fr">Chargement du réseau…</span><span lang="ar">جارٍ تحميل الشبكة…</span></p></div></div>
-<template id="squelette"><div class="shell squelette" aria-busy="true"><span class="sr-only" role="status"><span lang="fr">Chargement du réseau…</span><span lang="ar">جارٍ تحميل الشبكة…</span></span><aside class="side" aria-hidden="true"><div class="side-in"><span class="brand"><span class="sq sq-logo"></span><span class="sq sq-ligne court"></span></span><span class="sq sq-bouton"></span><div class="side-nav"><span class="sq sq-nav"></span><span class="sq sq-nav"></span><span class="sq sq-nav"></span><span class="sq sq-nav"></span><span class="sq sq-nav"></span><span class="sq sq-nav"></span></div></div></aside><div class="main" aria-hidden="true"><header class="top"><span class="sq sq-logo mobile-only"></span><span class="spacer"></span><span class="sq sq-icone"></span><span class="sq sq-icone"></span><span class="sq sq-icone"></span><span class="sq sq-avatar"></span></header><div class="content"><div class="page home"><div class="home-cols"><div class="home-col"><div class="home-hero sky"><div class="hello-txt"><span class="sq sq-h1"></span><span class="sq sq-ligne"></span><span class="sq sq-ligne court"></span></div></div><div class="pas"><div><span class="sq sq-ligne court"></span><span class="sq sq-ligne"></span><span class="sq sq-ligne"></span></div><span class="sq sq-bouton"></span></div><div class="bloc semaine"><span class="sq sq-h2"></span><span class="sq sq-bloc"></span></div></div><div class="home-grid"><div class="home-side"><div class="bloc"><span class="sq sq-h2"></span><span class="sq sq-bloc court"></span></div></div></div></div></div></div></div><nav class="bottom-nav" aria-hidden="true"><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span></nav></div></template>
+<template id="squelette"><div class="shell squelette" aria-busy="true"><span class="sr-only" role="status"><span lang="fr">Chargement du réseau…</span><span lang="ar">جارٍ تحميل الشبكة…</span></span><aside class="side" aria-hidden="true"><div class="side-in"><span class="brand"><span class="sq sq-logo"></span><span class="sq sq-ligne court"></span></span><span class="sq sq-bouton"></span><div class="side-nav"><span class="sq sq-nav"></span><span class="sq sq-nav"></span><span class="sq sq-nav"></span><span class="sq sq-nav"></span><span class="sq sq-nav"></span><span class="sq sq-nav"></span></div></div></aside><div class="main" aria-hidden="true"><header class="top"><span class="sq sq-logo mobile-only"></span><span class="spacer"></span><span class="sq sq-icone"></span><span class="sq sq-icone"></span><span class="sq sq-icone"></span><span class="sq sq-avatar"></span></header><div class="content"><div class="page home"><div class="home-cols"><div class="home-col"><div class="home-hero sky"><div class="hello-txt"><span class="sq sq-h1"></span><span class="sq sq-ligne"></span><span class="sq sq-ligne court"></span></div></div><div class="pas"><div><span class="sq sq-ligne court"></span><span class="sq sq-ligne"></span><span class="sq sq-ligne"></span></div><span class="sq sq-bouton"></span></div><div class="bloc af-accueil"><span class="sq sq-h2"></span><span class="sq sq-bloc"></span></div></div><div class="home-grid"><div class="home-side"><div class="bloc"><span class="sq sq-h2"></span><span class="sq sq-bloc court"></span></div></div></div></div></div></div></div><nav class="bottom-nav" aria-hidden="true"><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span><span class="bn"><span class="sq sq-bn"></span><span class="sq sq-mini"></span></span></nav></div></template>
 <script>/* Membre déjà connecté (script de tête) : la forme de l’accueil plutôt que le logo, le temps que l’application arrive */
 (function(){var a=document.getElementById('app'),t=document.getElementById('squelette');if(document.documentElement.dataset.boot==='membre'&&a&&t&&t.content&&a.querySelector('.boot')){a.innerHTML='';a.appendChild(t.content.cloneNode(true))}})()</script>
 <script src="config.js"></script>

@@ -2,9 +2,9 @@
 import { getLang, setLang, chargerAR } from './i18n.js';
 import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore, texteErreur } from './store.js';
-import { Icon, Person, Avatar, Bar, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille, ecranLibre } from './ui.js';
+import { Icon, Person, Avatar, Bar, CompanyLogo, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille, ecranLibre } from './ui.js';
 import { matchsDe, seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, demandeLargeLe, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour } from './logic.js';
-import { OffersPage, OfferCard, OfferDetail, OfferComposer, RecoOffers, matchesMe, APP_STATUS } from './offers.js';
+import { OffersPage, OfferCard, OfferDetail, OfferComposer, recoFor, matchesMe, APP_STATUS } from './offers.js';
 import { estPortee, estPartagee, partageExpire } from './origine.js';
 import { nouvellesVivant } from './reseau-vivant.js';
 import { ParcoursPage, EspacePage, Journey, journeyStep, confirmerRecrutement, refuserRecrutement, versMerci } from './me.js';
@@ -22,7 +22,7 @@ import { NudgeAvis } from './entreprises.js';
 import { ConfianceHome } from './confiance.js';
 import { NextEvent } from './agenda.js';
 import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, suiteLien, accordIci, roleAccord, oublierInvitation } from './entree.js';
-import { MessagesPage, MessagesHome, useAlerteMessages } from './messages.js';
+import { MessagesPage, useAlerteMessages } from './messages.js';
 import { MatchPage, MatchAccueil, MatchVisible } from './match.js';
 import { PoulsReseau, marquerArrivee, useArrivee, ArriveeSheet } from './pouls.js';
 import { CaBouge, GraceAToi } from './vitrine.js';
@@ -258,6 +258,7 @@ function App({ store }) {
     // Un rendez-vous annulé : proposer d'autres horaires au même lauréat, avec le même besoin et le même sujet
     redemander: id => { const m = store.byId('mentorships', id); if (!m) return go('mentorat'); setAskMentor({ p: store.byId('profiles', m.mentor_id) || null, besoin: m.besoin || '', sujet: m.sujet || '' }); },
     openAnnee: s => setAnnee(s || saison),
+    ouvrirCloche: () => { setPop(null); setCloche(true); },
     ecrire: id => { setProfile(null); setOfferId(null); setPop(null); go('messages/' + id); },
     // Un geste, sans changer d'écran ; si la demande n'attend plus d'aide, sa carte dit pourquoi
     proposerAide: id => { setPop(null); setCloche(false); AIDE_OUVERTE.includes(etatAide(data, me, (data.demandes || []).find(d => d.id === id))) ? setAide({ demande: id }) : go('offres/demandes/' + id); },
@@ -270,6 +271,7 @@ function App({ store }) {
   const notifs = buildNotifs(ctx);
   // La cloche ne compte que ce qui attend un geste du membre (et disparaît une fois fait)
   const todo = notifs.filter(n => n.geste).length;
+  ctx.todo = todo;
   const msgs = store.nonLus();
   latest.current = { notifs, todo, me, msgs };
   // Match : ni pour l'administration, ni en ligne tant que la base n'a pas ses tables (mise-a-jour.sql)
@@ -620,7 +622,7 @@ function buildNotifs({ data, me, store, saison }) {
 }
 
 // ---------------------------------------------------------------------------
-// Accueil : « Bonsoir Salma », une seule carte « prochaine étape », « Cette semaine », puis « Pour toi ».
+// Accueil : « Bonsoir Salma », une seule carte « prochaine étape », où j'en suis, « À faire », puis « Pour toi » et « Dans le réseau ».
 // Chaque chose n'y est dite qu'une fois (montres). Le ton reste doux : pas de comparaison qui stresse.
 // ---------------------------------------------------------------------------
 const MOMENT = h => (h < 5 ? 'Bonsoir' : h < 18 ? 'Bonjour' : 'Bonsoir');
@@ -857,6 +859,30 @@ function useFetesLaureat(ctx) {
   }, [matchs.map(y => y.x.id).join(), mercis.length]);
 }
 
+// « À faire » sur l'accueil : une seule ligne pour les messages qui attendent une réponse
+// (la conversation déjà sur la carte du haut n'est pas redite) ; le nombre de messages non lus en pastille
+function ligneMessages({ data, me, store, go }, exclure) {
+  const att = conversations(data, me.id).filter(c => c.nonLus && !exclure.has(c.autre));
+  if (!att.length) return null;
+  // Le prénom d'un membre ; l'administration de l'école garde son nom entier (« Bureau des relations entreprises »)
+  const p = c => { const x = store.byId('profiles', c.autre); return !x?.full_name ? 'Un membre' : x.role === 'admin' ? x.full_name : x.full_name.split(' ')[0]; };
+  const reste = att.length - 2;
+  const text = att.length === 1 ? `${p(att[0])} t’a écrit` : att.length === 2 ? `${p(att[0])} et ${p(att[1])} t’ont écrit` : `${p(att[0])}, ${p(att[1])} et ${reste > 1 ? `${reste} autres` : '1 autre'} t’ont écrit`;
+  return { key: 'msgs', icon: 'chat', tone: 'accent', text, n: att.reduce((t, c) => t + c.nonLus, 0), onClick: () => go(att.length === 1 ? 'messages/' + att[0].autre : 'messages') };
+}
+
+// « Pour toi » : combien d'offres m'attendent, avec les logos des premières ; les offres elles-mêmes sont dans Offres
+function OffresPourToi({ ctx, offres, jeunes }) {
+  if (!offres.length) return null;
+  const n = offres.length, neuves = offres.filter(o => Date.now() - new Date(o.created_at) < 7 * 864e5).length;
+  const noms = [...new Set(offres.map(o => o.entreprise).filter(Boolean))].slice(0, 3);
+  return html`<button type="button" class="impact-strip clickable pto" onClick=${() => ctx.go('offres')}>
+    <span class="pto-logos" aria-hidden="true">${noms.map(e => html`<${CompanyLogo} key=${e} name=${e} size=${34}/>`)}</span>
+    <span class="grow pto-txt"><strong>${n > 1 ? `${n} offres pour toi` : '1 offre pour toi'}</strong>
+      <span class="small muted">${neuves ? (neuves > 1 ? `Dont ${neuves} nouvelles cette semaine` : 'Dont 1 nouvelle cette semaine') : jeunes ? 'Faites pour les jeunes diplômés' : 'Tu n’y as pas encore postulé'}</span></span>
+    <${Icon} name="arrow" size=${18}/></button>`;
+}
+
 function Home(ctx) {
   const { data, me, saison, scores, store, go, openProfile, openOffer, notifs = [], openNotif } = ctx;
   const n = niveauOf(me, saison);
@@ -905,15 +931,16 @@ function Home(ctx) {
   useFetesLaureat(ctx);
   // Juste après la « Dernière étape » : une feuille d'accueil, une fois, avec le même bouton que la carte
   const [arrivee, finArrivee] = useArrivee(ctx);
-  // « Cette semaine » : trois petites choses au plus, jamais ce que montre la carte ;
-  // pas « Ajoute une photo » quand l'accueil propose déjà la photo trouvée dans le CV
+  // « À faire » : les messages qui attendent une réponse (une ligne), puis les petites tâches, trois lignes au plus,
+  // jamais ce que montre la carte ; pas « Ajoute une photo » quand l'accueil propose déjà la photo trouvée dans le CV
   const [photoCV, setPhotoCV] = useState(false);
   const taches = petitesTaches(notifs, pas).filter(t => !photoCV || t.key !== 'ph');
+  const lignes = [ligneMessages(ctx, new Set([pas.ref].filter(Boolean))), ...taches].filter(Boolean).slice(0, 3);
   // Ce que l'accueil a déjà dit : les blocs suivants le sautent
-  const montres = new Set([pas.ref, ...taches.flatMap(t => [t.ref, t.offer])].filter(Boolean));
+  const montres = new Set([pas.ref, ...lignes.flatMap(t => [t.ref, t.offer])].filter(Boolean));
   const meta = isStudent ? [NIVEAUX[n]?.label, filiereCourte(me.filiere)].filter(Boolean).join(' · ') : isLaureat ? `Promo ${me.promo}` : '';
-  // Un lauréat qui cherche un emploi voit d'abord les offres faites pour lui
-  const dernieres = data.offers.filter(o => o.status === 'ouverte' && !partageExpire(o) && !montres.has(o.id) && (!enRecherche || matchesMe(o, me, saison))).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 2);
+  // « Pour toi » : les offres de mon année où je n'ai pas postulé (étudiant), ou faites pour moi (lauréat qui cherche un emploi)
+  const pourToi = isStudent ? recoFor(ctx, 99).map(x => x.o) : enRecherche ? data.offers.filter(o => o.status === 'ouverte' && !partageExpire(o) && matchesMe(o, me, saison)).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)) : [];
   const star = ctx.star;
   const starHelped = star ? data.placements.filter(p => p.laureat_id === star.p.id && p.status === 'confirme' && !p.demande_id).length : 0;
   const merci = mercisPublics(data)[0];
@@ -923,8 +950,6 @@ function Home(ctx) {
   const h = new Date().getHours();
   // Un lauréat devient membre fondateur par sa première aide aux étudiants : la fête, puis « Ton nom sur la page d'entrée ? »
   const feuilleFondateur = useFondateurMoi(ctx);
-  const offresBloc = dernieres.length ? html`<div class="section-head"><h3>${enRecherche ? 'Offres pour toi' : 'Dernières offres'}</h3><button class="btn tiny ghost" onClick=${() => go('offres')}>Tout voir <${Icon} name="arrow" size=${14}/></button></div>
-    <div class="offer-grid one">${dernieres.map(o => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} onOpen=${() => openOffer(o.id)}/>`)}</div>` : null;
 
   // Le réseau en chiffres (lauréats et admin) : sur ordinateur, sous « Pour toi » ; ailleurs, avec le reste du réseau
   const ecole = isStudent ? [] : [
@@ -939,12 +964,12 @@ function Home(ctx) {
             <p class="small muted">${st.viaTotal > 1 ? `${st.viaTotal} réussites vérifiées grâce aux lauréats cette année.` : '1 réussite vérifiée grâce aux lauréats cette année.'}</p>
           </button>` : null,
   ];
-  // De haut en bas : bonjour et l'entrée de l'école, la prochaine étape, « Cette semaine », l'annonce, puis « Pour toi ».
-  // Un bloc vide (réseau encore petit) disparaît avec son titre.
+  // Chaque chose à sa place, de haut en bas : bonjour, la prochaine étape, où j'en suis, « À faire » (ce qui m'attend,
+  // trois lignes au plus, le reste dans la cloche), les fondateurs, « Pour toi » (ce qui me concerne), puis « Dans le réseau »
+  // (ce qui se passe pour tout le monde). Rien n'est dit deux fois ; un bloc vide disparaît avec son titre.
   return html`<section class="page home">
     <div class="home-cols">
     <div class="home-col">
-      <${FondateursBandeau} ctx=${ctx} onPublier=${() => setCompose(true)}/>
       <header class="hello home-hero sky">
         <div class="hello-txt">
           <h1>${MOMENT(h)} ${first}</h1>
@@ -955,52 +980,50 @@ function Home(ctx) {
       </header>
 
       <${ProchainPas} pas=${pas} progres=${enCours} faite=${faite} onEtapes=${() => setVoirEtapes(true)}/>
-      <section class="bloc semaine" aria-labelledby="h-semaine">
-        <h2 class="h-sec" id="h-semaine">Cette semaine</h2>
-        <div class="bloc-corps">
-          <${GraceAToi} ctx=${ctx}/>
-          <${PoulsReseau} ctx=${ctx} accueil semaine onOpen=${() => go(isStudent || isLaureat ? 'mentorat' : 'suivi')}/>
-          <${CaBouge} ctx=${ctx}/>
-          ${taches.length ? html`<ul class="todo">${taches.map(a => html`<li key=${a.key}><button type="button" class="notif act" onClick=${() => openNotif(a)}><span class=${'n-ico ' + (a.tone || '')} aria-hidden="true"><${Icon} name=${a.icon} size=${16}/></span><span>${a.text}</span><${Icon} name="arrow" size=${16}/></button></li>`)}</ul>` : null}
-        </div>
+      ${isStudent && obj ? html`<button class=${'objective compact clickable avancement st-' + stu.key} onClick=${() => go('parcours')}>
+        <div class="objective-top"><span class="obj-ico"><${Icon} name="route" size=${22}/></span>
+          <div class="objective-main"><p class="eyebrow">Mon objectif de l’année</p><h2>${obj.titre}</h2></div>
+          <span class=${'state-pill s-' + stu.key}>${stu.label}</span></div>
+        <${Journey} step=${journeyStep(stu, myApps)}/>
+      </button>` : null}
+      ${isLaureat && s && s.recrutes + s.mentorats ? html`<button class="impact-strip clickable avancement" onClick=${() => go('espace')}><span class="obj-ico brass"><${Icon} name="heart" size=${20}/></span><span class="grow" style="min-width:0">${s.recrutes + s.mentorats > 1 ? `Tu as aidé ${s.recrutes + s.mentorats} étudiants` : 'Tu as aidé 1 étudiant'}</span><${LevelChip} points=${s.points}/><${Icon} name="arrow" size=${18}/></button>` : null}
+      <section class="bloc af-accueil" aria-labelledby="h-afaire">
+        <h2 class="h-sec" id="h-afaire">À faire</h2>
+        <div class="bloc-corps">${lignes.length ? html`<ul class="todo">${lignes.map(a => html`<li key=${a.key}><button type="button" class="notif act" onClick=${a.onClick || (() => openNotif(a))}><span class=${'n-ico ' + (a.tone || '')} aria-hidden="true"><${Icon} name=${a.icon} size=${16}/></span><span>${a.text}</span>${a.n ? html`<span class="af-n" aria-hidden="true">${a.n}</span>` : null}<${Icon} name="arrow" size=${16}/></button></li>`)}</ul>
+          ${ctx.todo > lignes.length ? html`<button type="button" class="linkish af-tout" aria-haspopup="dialog" onClick=${ctx.ouvrirCloche}>${`Tout voir (${ctx.todo})`}</button>` : null}` : null}</div>
       </section>
       <${AnnonceBanner} key=${'an-' + me.id} ctx=${ctx}/>
-      <${PhotoProposee} ctx=${ctx} onTrouvee=${setPhotoCV}/>
+      <${FondateursBandeau} ctx=${ctx} onPublier=${() => setCompose(true)}/>
     </div>
 
     <div class="home-grid">
       <div class="home-main bloc">
         <h2 class="h-sec">Pour toi</h2>
         <div class="bloc-corps">
-        ${enRecherche ? offresBloc : null}
+        <${GraceAToi} ctx=${ctx}/>
+        <${PhotoProposee} ctx=${ctx} onTrouvee=${setPhotoCV}/>
         <${IlsOntBesoin} ctx=${ctx} besoins=${besoins.filter(b => !montres.has(b.id))}/>
         <${NextRdv} ctx=${ctx} exclure=${montres}/>
         <${MatchAccueil} ctx=${ctx}/>
-        <${MessagesHome} ctx=${ctx} exclure=${montres}/>
         <${ConfianceHome} ctx=${ctx}/>
         <${AmbassadeurAccueil} ctx=${ctx} pasKey=${pas.key}/>
-        ${isStudent && obj ? html`<button class=${'objective compact clickable st-' + stu.key} onClick=${() => go('parcours')}>
-          <div class="objective-top"><span class="obj-ico"><${Icon} name="route" size=${22}/></span>
-            <div class="objective-main"><p class="eyebrow">Mon objectif de l’année</p><h2>${obj.titre}</h2></div>
-            <span class=${'state-pill s-' + stu.key}>${stu.label}</span></div>
-          <${Journey} step=${journeyStep(stu, myApps)}/>
-        </button>` : null}
         <${CoupDeMain} ctx=${ctx} exclure=${montres} cle=${{ 'guide-demande': 'demande', 'guide-conseil': 'conseil' }[pas.key] || null}/>
+        <${OffresPourToi} ctx=${ctx} offres=${pourToi} jeunes=${enRecherche}/>
         <${TonAnneeStrip} ctx=${ctx} onOpen=${ctx.openAnnee}/>
-        ${isStudent ? html`<${RecoOffers} ctx=${ctx} max=${2} exclure=${montres}/>` : enRecherche ? null : offresBloc}
         <${NudgeAvis} ctx=${ctx}/>
         <${DevenirParrain} ctx=${ctx}/>
         </div>
       </div>
       <div class="home-side" ref=${cote}>
-        <div class="bloc">
-          <h2 class="h-sec">Une réussite</h2>
+        <section class="bloc reseau-semaine" aria-labelledby="h-reseau">
+          <h2 class="h-sec" id="h-reseau">Dans le réseau</h2>
           <div class="bloc-corps">
+          <${PoulsReseau} ctx=${ctx} accueil onOpen=${() => go(isStudent || isLaureat ? 'mentorat' : 'suivi')}/>
+          <${CaBouge} ctx=${ctx}/>
           ${merci ? html`<div class="panel merci-une"><p class="eyebrow"><${Icon} name="heart" size=${13}/> Un merci récent</p>
             <blockquote class="merci"><p translate="no" dir="auto">« ${merci.txt} »</p><${MerciDuo} ctx=${ctx} m=${merci}/></blockquote></div>` : html`<${SuccessFeed} ctx=${ctx} max=${1}/>`}
-          ${isLaureat && s && s.recrutes + s.mentorats ? html`<button class="impact-strip clickable" onClick=${() => go('espace')}><span class="obj-ico brass"><${Icon} name="heart" size=${20}/></span><span class="grow" style="min-width:0">${s.recrutes + s.mentorats > 1 ? `Tu as aidé ${s.recrutes + s.mentorats} étudiants` : 'Tu as aidé 1 étudiant'}</span><${LevelChip} points=${s.points}/><${Icon} name="arrow" size=${18}/></button>` : null}
           </div>
-        </div>
+        </section>
         <div class=${'bloc plus' + (plus ? ' ouvert' : '')}>
           <button type="button" class="btn ghost plus-reseau" aria-expanded=${plus} onClick=${() => setPlus(!plus)}>${plus ? 'Moins' : 'Plus du réseau'} <${Icon} name=${plus ? 'x' : 'plus'} size=${15}/></button>
           <div class="en-plus bloc-corps">
@@ -1070,11 +1093,15 @@ function guideEtapes(ctx, setCompose) {
   return { steps, done, total, fini, suivante: fini ? null : comptees.find(s => !s.fait && s.go) || null };
 }
 
+// Sous le titre, les puces qui mènent à chaque partie (photo et CV, infos, coordonnées, qui voit quoi, notifications, données)
+// (import gardé ici, avec Mon profil : le haut du fichier appartient à l'accueil)
+import { SautsProfil } from './community.js';
 function MyProfile({ ctx }) {
   const { me, store } = ctx;
   return html`<section class="page narrow">
     <header class="page-head"><div><p class="eyebrow">Jamais public</p><h1>Mon profil</h1></div>
       ${store.mode === 'live' ? html`<button class="btn ghost" onClick=${() => store.signOut()}><${Icon} name="logout"/> Se déconnecter</button>` : null}</header>
+    <${SautsProfil} key=${me.id}/>
     <${PhotoCard} ctx=${ctx}/>
     <${CvCard} ctx=${ctx}/>
     <${MatchVisible} ctx=${ctx}/>

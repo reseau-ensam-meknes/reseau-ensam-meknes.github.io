@@ -65,7 +65,7 @@ export const groupesMasques = (store, p) => Object.keys(VIS_LABELS).filter(g => 
 const VIS_OK = { tous: 'Enregistré : tous les membres le voient.', laureats: 'Enregistré : les lauréats et tes contacts le voient.', contacts: 'Enregistré : seuls tes contacts le voient.' };
 const VIS_OK_CV = 'Enregistré : tes contacts le voient ; les lauréats aussi quand tu as une demande ouverte.';
 const texteOk = (g, v) => g === 'cv' && v === 'contacts' ? VIS_OK_CV : VIS_OK[v];
-export function VisibiliteFields({ role, value = {}, onChange, etat }) {
+export function VisibiliteFields({ role, value = {}, onChange, etat, id }) {
   const groupes = visGroupes(role);
   if (!groupes.length) return null;
   const ligneEtat = g => {
@@ -74,7 +74,7 @@ export function VisibiliteFields({ role, value = {}, onChange, etat }) {
     return html`<span class=${'cf-vis-etat small' + (etat.etat === 'ok' ? ' ok' : etat.etat === 'erreur' ? ' err' : '')} role="status" id="vis-etat">${etat.etat === 'ok' ? html`<${Icon} name="check" size=${14}/> <span>${texteOk(g, v)}</span>`
       : etat.etat === 'erreur' ? html`<span>Pas encore enregistré : touche « Enregistrer ».</span>` : html`<span>Enregistrement…</span>`}</span>`;
   };
-  return html`<fieldset class="cf-vis">
+  return html`<fieldset class="cf-vis" id=${id}>
     <legend class="h-ico"><${Icon} name="eye" size=${17}/> Qui voit quoi</legend>
     <p class="small muted">Ton profil n’est jamais public. « Mes contacts » : les membres avec qui tu partages tes coordonnées, l’auteur d’une offre où tu postules, et la personne qu’une demande a réunie avec toi.</p>
     ${etat !== undefined ? html`<p class="small muted">Sur ta propre fiche, tu vois toujours tout.</p>` : null}
