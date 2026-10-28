@@ -177,28 +177,40 @@ export function PairVerify({ ctx, p }) {
 }
 
 // ---------------------------------------------------------------------------
-// Accueil : demandes de coordonnées reçues, lauréats de ma promo à confirmer
+// Accueil : demandes de coordonnées reçues, lauréats de ma promo à confirmer. Une ligne chacune dans « À faire » et dans
+// la cloche (app.js) ; un toucher ouvre la feuille, qui se ferme d'elle-même quand il n'y a plus rien à répondre.
 // ---------------------------------------------------------------------------
-export function ConfianceHome({ ctx }) {
+export const demandesRecues = (data, me) => (data.demandes_contact || []).filter(d => d.cible_id === me.id && d.status === 'envoyee');
+// « Je ne sais pas » : gardé dans ce navigateur, pour ce membre ; la cloche et l'accueil le lisent aussi
+const CLE_IGNORES = id => 'cf-ignore-' + id;
+const lireIgnores = id => { try { const x = JSON.parse(localStorage.getItem(CLE_IGNORES(id)) || '[]'); return Array.isArray(x) ? x : []; } catch { return []; } };
+export const pairsAConfirmer = (data, me, ignores = lireIgnores(me.id)) => data.profiles.filter(p => peutConfirmer(me, p) && !ignores.includes(p.id)
+  && !(data.verifications_pairs || []).some(v => v.laureat_id === p.id && v.verificateur_id === me.id));
+
+// quoi : 'coordonnees' (les demandes reçues) ou 'promo' (les lauréats de ma promo à confirmer)
+export function ConfianceFeuille({ ctx, quoi, onClose }) {
   const { data, me, store, act, openProfile } = ctx;
-  const [ignores, setIgnores] = useLocal('cf-ignore-' + me.id, []);
-  const demandes = (data.demandes_contact || []).filter(d => d.cible_id === me.id && d.status === 'envoyee')
-    .map(d => ({ d, p: store.byId('profiles', d.demandeur_id) })).filter(x => x.p).sort((a, b) => new Date(b.d.created_at) - new Date(a.d.created_at));
-  const pairs = data.profiles.filter(p => peutConfirmer(me, p) && !ignores.includes(p.id) && !(data.verifications_pairs || []).some(v => v.laureat_id === p.id && v.verificateur_id === me.id));
-  if (!demandes.length && !pairs.length) return null;
+  const [ignores, setIgnores] = useLocal(CLE_IGNORES(me.id), []);
+  const demandes = quoi === 'coordonnees' ? demandesRecues(data, me).map(d => ({ d, p: store.byId('profiles', d.demandeur_id) })).sort((a, b) => new Date(b.d.created_at) - new Date(a.d.created_at)) : [];
+  const pairs = quoi === 'promo' ? pairsAConfirmer(data, me, Array.isArray(ignores) ? ignores : []) : [];
+  const vide = !demandes.length && !pairs.length;
+  useEffect(() => { if (vide) onClose(); }, [vide]);
+  if (vide) return null;
   const repondre = (d, status) => act(async () => { await store.update('demandes_contact', d.id, { status }); toast(status === 'acceptee' ? 'Accepté : vous voyez maintenant vos coordonnées.' : 'C’est noté.'); });
-  return html`<div class="panel cf-home">
-    ${demandes.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="phone"/> Ils aimeraient tes coordonnées <span class="count">${demandes.length}</span></h2></div>
-      <ul class="people-list cf-list">${demandes.slice(0, 4).map(({ d, p }) => html`<li key=${d.id}>
-        <div class="cf-who"><${Person} p=${p} onOpen=${openProfile} size=${34}/>${d.message ? html`<p class="cf-msg small" translate="no" dir="auto">« ${d.message} »</p>` : null}</div>
-        <div class="cf-act"><button class="btn tiny ghost" onClick=${() => repondre(d, 'refusee')}>Refuser</button><button class="btn tiny tonal" onClick=${() => repondre(d, 'acceptee')}><${Icon} name="check" size=${14}/> Accepter</button></div></li>`)}</ul>
-      <p class="small muted">Si tu acceptes, vous voyez les coordonnées l’un de l’autre.</p>` : null}
-    ${pairs.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="shield"/> De ta promo ${me.promo} ?</h2></div>
-      <p class="small muted">Confirme ceux que tu connais : avec deux confirmations, leur badge « vérifié » arrive.</p>
-      <ul class="people-list cf-list">${pairs.slice(0, 3).map(p => html`<li key=${p.id}>
-        <div class="cf-who"><${Person} p=${p} onOpen=${openProfile} size=${34} sub=${`${p.filiere} · ${confirmations(data, p)}/2`}/></div>
-        <div class="cf-act"><button class="btn tiny ghost" onClick=${() => setIgnores([...ignores, p.id])}>Je ne sais pas</button><button class="btn tiny tonal" onClick=${() => act(async () => { await store.insert('verifications_pairs', { laureat_id: p.id, verificateur_id: me.id }); toast('Merci, ta confirmation est enregistrée.'); })}><${Icon} name="check" size=${14}/> Je confirme</button></div></li>`)}</ul>` : null}
-  </div>`;
+  // La cloche et l'accueil relisent ce choix gardé dans le navigateur
+  const ignorer = p => { setIgnores([...(Array.isArray(ignores) ? ignores : []), p.id]); store.emit(); };
+  if (demandes.length) return html`<${Modal} title="Ils aimeraient tes coordonnées" cls="cf-feuille" onClose=${onClose}>
+    <ul class="people-list cf-list">${demandes.slice(0, 4).map(({ d, p }) => html`<li key=${d.id}>
+      <div class="cf-who">${p ? html`<${Person} p=${p} onOpen=${openProfile} size=${34}/>` : html`<strong>Un membre</strong>`}${d.message ? html`<p class="cf-msg small" translate="no" dir="auto">« ${d.message} »</p>` : null}</div>
+      <div class="cf-act"><button class="btn tiny ghost" onClick=${() => repondre(d, 'refusee')}>Refuser</button><button class="btn tiny tonal" onClick=${() => repondre(d, 'acceptee')}><${Icon} name="check" size=${14}/> Accepter</button></div></li>`)}</ul>
+    <p class="small muted">Si tu acceptes, vous voyez les coordonnées l’un de l’autre.</p>
+  <//>`;
+  return html`<${Modal} title=${`De ta promo ${me.promo} ?`} cls="cf-feuille" onClose=${onClose}>
+    <p class="small muted">Confirme ceux que tu connais : avec deux confirmations, leur badge « vérifié » arrive.</p>
+    <ul class="people-list cf-list">${pairs.slice(0, 3).map(p => html`<li key=${p.id}>
+      <div class="cf-who"><${Person} p=${p} onOpen=${openProfile} size=${34} sub=${`${p.filiere} · ${confirmations(data, p)}/2`}/></div>
+      <div class="cf-act"><button class="btn tiny ghost" onClick=${() => ignorer(p)}>Je ne sais pas</button><button class="btn tiny tonal" onClick=${() => act(async () => { await store.insert('verifications_pairs', { laureat_id: p.id, verificateur_id: me.id }); toast('Merci, ta confirmation est enregistrée.'); })}><${Icon} name="check" size=${14}/> Je confirme</button></div></li>`)}</ul>
+  <//>`;
 }
 
 injectCSS('confiance', `
@@ -239,6 +251,7 @@ injectCSS('confiance', `
 .cf-warn { background: var(--warn-soft); color: var(--ink); border-radius: var(--r-md); padding: .75rem .9rem; display: flex; flex-direction: column; gap: .45rem; }
 .cf-warn p { margin: 0; }
 .cf-list li { align-items: flex-start; }
+.cf-feuille .modal-body > p { margin: 0; }
 .cf-who { display: flex; flex-direction: column; gap: .25rem; min-width: 0; flex: 1 1 220px; }
 .cf-act { display: flex; gap: .35rem; align-items: center; margin-inline-start: auto; }
 .profile-foot { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }

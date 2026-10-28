@@ -86,7 +86,7 @@ export function FondateursBandeau({ ctx, onPublier }) {
     <${TeteFondateurs} id="fd-titre"/>
     ${cartes.length ? html`<ul class="fd-liste" role="list">${cartes.map(({ f, p }) => html`<${CarteFondateur} key=${f.id} f=${f}
       visage=${html`<${Avatar} p=${p} size=${72}/>`} apresNom=${html`<${Bouclier} p=${p}/>`} onOpen=${() => openProfile(p)}
-      pied=${f.id !== me.id ? html`<${MessageBtn} ctx=${ctx} p=${f.id} label="Merci" cls="btn tiny ghost fd-merci" icone="heart" compte=${false} texte=${'Merci d’aider les étudiants de l’école !'}/>` : html`<span class="fd-toi">C’est toi</span>`}/>`)}</ul>` : null}
+      pied=${f.id !== me.id ? html`<${MessageBtn} ctx=${ctx} p=${f.id} label="" aria="Merci" cls="fd-merci" icone="heart" compte=${false} texte=${'Merci d’aider les étudiants de l’école !'}/>` : html`<span class="fd-toi">Toi</span>`}/>`)}</ul>` : null}
     <p class="fd-places"><span class="fd-jauge" aria-hidden="true"><i style=${`inline-size:${remplie}%`}></i></span><span>${lignePlaces(liste.length)}</span></p>
     ${lau && !moi && places > 0 ? html`<button type="button" class="linkish fd-cta" id="fd-rejoindre" onClick=${onPublier}><span>Publie une offre ou aide un étudiant pour en faire partie</span><${Icon} name="arrow" size=${16}/></button>` : null}
   </section>`;
@@ -146,11 +146,11 @@ function FeuilleFondateur({ ctx, onClose }) {
 }
 
 // « Mon profil » (Mes données) : la même question, à changer quand on veut. Seulement pour un fondateur, base à jour.
-export function FondateurPublicCase({ ctx }) {
+export function FondateurPublicCase({ ctx, niveau = 3 }) {
   const { me, store, act, fondateurs } = ctx;
   const choix = choixDe(store, me);
   if (me.role !== 'laureat' || !fondateurs?.has(me.id) || (store.mode === 'live' && choix === undefined)) return null;
-  return html`<h3 class="md-titre">Page d’entrée</h3>
+  return html`<${niveau === 2 ? 'h2' : 'h3'} class="md-titre">Page d’entrée<//>
     <label class="check"><input id="md-fondateur" type="checkbox" checked=${choix === true} onChange=${e => act(async () => {
       const oui = e.target.checked;
       const r = oui ? await store.update('profiles', me.id, { fondateur_public: true }) : await store.masquerFondateur(false);
@@ -175,7 +175,15 @@ injectCSS('fondateurs-membres', `
   .fd-resume-t span { color: var(--brass); font-size: var(--fs-1); font-weight: 600; }
   .fd-resume > .ico { flex: none; color: var(--muted); transform: rotate(90deg); }
 }
-.fd-toi { margin-block-start: auto; color: var(--muted); font-size: var(--fs-1); font-weight: 600; }
+/* « Merci » et « Toi » dans le coin de la photo, hors du flux : une carte qui les porte n'est pas plus haute que les autres
+   (la liste défile de côté, et chaque carte prend la hauteur de la plus haute : sinon un vide sous les cartes visibles) */
+.fd-accueil .fd-liste { padding-block-start: 6px; }
+.fd-accueil .fd-carte { position: relative; }
+.fd-accueil .fd-toi { position: absolute; inset-block-start: 0; inset-inline-start: 0; padding: 2px 8px; border-radius: var(--r-pill); background: var(--surface); box-shadow: var(--sh1); color: var(--ink-2); font-size: var(--fs-1); font-weight: 650; line-height: 1.4; }
+.fd-accueil .fd-merci { position: absolute; inset-block-start: 0; inset-inline-start: 0; margin: 0; display: grid; place-items: center; inline-size: 30px; block-size: 30px; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: var(--surface); color: var(--brass); box-shadow: var(--sh1); cursor: pointer; }
+/* Une cible de 40 px pour le doigt (30 px à l’écran) : -6 px autour de sa boîte intérieure (28 px, la bordure en moins) */
+.fd-accueil .fd-merci::before { content: ""; position: absolute; inset: -6px; border-radius: 50%; }
+.fd-accueil .fd-merci:hover { background: color-mix(in srgb, var(--brass) 10%, var(--surface)); }
 .fd-merci .ico { color: var(--brass); }
 .modal.fd-feuille .modal-body { align-items: center; text-align: center; gap: var(--sp-2); padding-block: var(--sp-5) var(--sp-4); }
 .fd-photo-feuille { margin-block-end: var(--sp-1); }
@@ -187,7 +195,7 @@ injectCSS('fondateurs-membres', `
 const PLACES = ['مكان واحد متبقٍّ', 'مكانان متبقيان', 'أماكن متبقية', 'مكانًا متبقيًا'];
 addAR({
   'Publie une offre ou aide un étudiant pour en faire partie': 'انشر عرضًا أو ساعد طالبًا للانضمام إليهم',
-  'C’est toi': 'هذا أنت',
+  'C’est toi': 'هذا أنت', 'Toi': 'أنت',
   'Merci': 'شكرًا',
   'Membre fondateur': 'عضو مؤسس',
   'Tu es membre fondateur. Ton nom et ta photo peuvent apparaître en haut de la page d’entrée, pour donner envie aux autres.': 'أنت من الأعضاء المؤسسين. يمكن أن يظهر اسمك وصورتك في أعلى صفحة الدخول، لتشجيع الآخرين.',

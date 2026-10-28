@@ -570,7 +570,7 @@ export function allerAuChamp(id) {
 
 // Une chose à faire : le fait, puis UN bouton qui y mène, et depuis quand. Même ligne dans la cloche, Mon espace, Mon parcours.
 export function LigneAFaire({ n, onGo }) {
-  return html`<li class="af-row">
+  return html`<li class="af-row" data-cle=${n.key}>
     <span class=${'n-ico ' + (n.tone || 'accent')} aria-hidden="true"><${Icon} name=${n.icon} size=${16}/></span>
     <span class="af-txt">${n.text}</span>
     <span class="af-bas"><button type="button" class="btn small af-go" onClick=${() => onGo(n)}>${n.geste}</button><span class="muted small">${timeAgo(n.at)}</span></span>

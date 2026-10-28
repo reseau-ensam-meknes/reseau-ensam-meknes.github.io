@@ -123,7 +123,9 @@ export async function activerPush(store) {
 // Une demande du navigateur lancée depuis Mon profil attend sa réponse : pas de feuille d'ouverture par-dessus
 let demandeEnCours = false;
 
-// Interrupteur « Notifications sur ce téléphone ou cet ordinateur », dans Mon profil
+// « Notifications sur ce téléphone ou cet ordinateur », dans Mon profil (onglet Notifications) : coupées, une phrase et
+// un bouton « Activer » ; activées, « Activées sur cet appareil », « Tester » (pas en démo) et « Désactiver ». Ce que
+// l'appareil ne permet pas (navigateur, iPhone sans l'application, notifications bloquées) est dit en une phrase.
 export function PushToggle({ ctx }) {
   const { store, me } = ctx;
   // Activées ou coupées ici : c'est une réponse, ni la feuille d'ouverture ni « Me prévenir » ne reviennent la demander
@@ -133,6 +135,14 @@ export function PushToggle({ ctx }) {
   const [st, setSt] = useState(simule || '…'); // … | absent | demo | ios | refuse | off | on
   const [busy, setBusy] = useState(false);
   const [help, setHelp] = useState(false);
+  const [debloquer, setDebloquer] = useState(false);
+  // Le bouton touché disparaît avec l'état qu'il change : le clavier continue sur le premier bouton du nouvel état
+  const ici = useRef(null), garderFocus = useRef(false);
+  useEffect(() => {
+    if (!garderFocus.current) return;
+    garderFocus.current = false;
+    if (!ici.current?.contains(document.activeElement)) ici.current?.querySelector('button')?.focus({ preventScroll: true });
+  }, [st]);
   useEffect(() => {
     if (simule) return undefined;
     const lire = () => etatPush(store).then(setSt, () => setSt('absent'));
@@ -165,14 +175,24 @@ export function PushToggle({ ctx }) {
     absent: 'Ce navigateur ne permet pas les notifications. Essaie Chrome, Edge, Firefox ou Safari récent.',
     refuse: 'Les notifications sont bloquées pour ce site. Autorise-les dans les réglages du navigateur, puis reviens ici.',
   }[st];
-  return html`<div class="push-row">
-    <label class="check"><input id="md-push" type="checkbox" checked=${st === 'on'} disabled=${busy || !['on', 'off'].includes(st)} onChange=${e => (e.target.checked ? turnOn() : turnOff())}/> Notifications sur ce téléphone ou cet ordinateur</label>
-    ${st === 'on' && !simule ? html`<button class="btn tiny ghost" disabled=${busy} onClick=${test}>Tester</button>` : null}
+  return html`<div class="push-etat" data-etat=${st} ref=${ici}>
+    ${st === 'on' ? html`<p class="verify-ok push-ok" id="md-push-ok"><${Icon} name="check" size=${18}/> Activées sur cet appareil</p>
+      <div class="push-acts">${simule ? null : html`<button type="button" class="btn small" id="md-push-test" disabled=${busy} onClick=${test}>Tester</button>`}
+        <button type="button" class="btn small ghost" id="md-push-non" disabled=${busy} onClick=${() => { garderFocus.current = true; turnOff(); }}>Désactiver</button></div>`
+    : st === 'off' ? html`<p class="small muted">${PUSH_POURQUOI}</p>
+      <div class="push-acts"><button type="button" class="btn primary" id="md-push-oui" disabled=${busy} onClick=${() => { garderFocus.current = true; turnOn(); }}><${Icon} name="bell" size=${16}/> Activer</button></div>` : null}
     ${note ? html`<p class="small muted">${note}</p>` : null}
+    ${st === 'refuse' ? html`<p class="small"><button type="button" class="linkish" id="md-push-debloquer" onClick=${() => setDebloquer(true)}>Comment les débloquer ?</button></p>` : null}
     ${st === 'ios' ? html`<p class="small muted">Sur iPhone, installe d’abord l’application sur l’écran d’accueil. <button class="linkish" onClick=${() => setHelp(true)}>Comment faire ?</button></p>` : null}
     ${help ? html`<${IosInstallHelp} onClose=${() => setHelp(false)}/>` : null}
+    ${debloquer ? html`<${FeuilleDebloquer} ctx=${ctx} onClose=${() => setDebloquer(false)}/>` : null}
   </div>`;
 }
+const PUSH_POURQUOI = 'Messages, réponses, rendez-vous : ce qui te concerne arrive tout de suite, même quand l’application est fermée.';
+addAR({
+  [PUSH_POURQUOI]: 'الرسائل والأجوبة والمواعيد: ما يخصك يصلك فورًا، حتى والتطبيق مغلق.',
+  'Activées sur cet appareil': 'مفعّلة على هذا الجهاز', 'Comment les débloquer ?': 'كيف ترفع الحظر عنها؟',
+});
 
 // ---------------------------------------------------------------------------
 // « Me prévenir » : après une action qui attend une réponse (demande, mentorat, candidature, question…), une feuille

@@ -1151,21 +1151,26 @@ export const annoncePour = (annonces, me, now = Date.now()) => (annonces || []).
 
 // « À faire » sur l'accueil : trois petites choses au plus que seul le membre peut boucler (les messages non lus en premier, app.js).
 // Jamais ce que montre la carte du haut ; pas les demandes d'aide (md, rd, qr : « Ils ont besoin de toi »),
-// ni les coordonnées (dc : leur carte), ni le recrutement à confirmer (pa : la carte), ni les rappels de rendez-vous (rdv).
+// ni le recrutement à confirmer (pa : la carte), ni les rappels de rendez-vous (rdv).
 // Une présence à confirmer (sc) y vient tant que le rendez-vous est loin ; la veille, elle passe sur la carte.
-// La photo (ph) vient en dernier : après toutes les vraies tâches.
-export const TACHES = { dp: 0, ap: 0, dm: 0, rc: 0, sc: 1, in: 1, sg: 1, sf: 2, rr: 2, pm: 2, mf: 2, ev: 3, dr: 4, ro: 4, eq: 5, ph: 6 };
+// Ensuite, ce qui se règle dans une feuille (app.js) : les coordonnées demandées (dc, une seule ligne pour toutes),
+// les lauréats de sa promo à confirmer (vp), la proposition d'ambassadeur (am), les questions d'un entretien ou l'avis
+// sur un stage (na). La photo (ph) vient en dernier : après toutes les vraies tâches.
+export const TACHES = { dp: 0, ap: 0, dm: 0, rc: 0, sc: 1, in: 1, sg: 1, sf: 2, rr: 2, pm: 2, mf: 2, ev: 3, dr: 4, ro: 4, eq: 5, dc: 6, vp: 6, am: 6, na: 6, ph: 7 };
 // « Ajoute une photo » : un lauréat sans photo, quand la base accepte les photos (en ligne, la colonne photo_path existe ;
 // même règle que pretPhoto dans photo.js). Seulement dans « À faire » de l'accueil (semaine) : ni la cloche ni la carte du haut.
 export function tachePhoto(me, { live = false } = {}) {
   if (!me || me.role !== 'laureat' || me.photo_path || (live && !('photo_path' in me))) return null;
   return { key: 'ph', action: true, semaine: true, tone: 'accent', icon: 'camera', to: 'profil', at: me.created_at || new Date(0).toISOString(), text: 'Ajoute une photo, les étudiants écrivent plus facilement à un visage.' };
 }
+// groupe : plusieurs notifications de la cloche, une seule ligne ici (la plus récente, qui porte la phrase de toutes : ligne)
 export function petitesTaches(notifs, pas = {}) {
   const deja = new Set([pas.key, ...(pas.cles || [])].filter(Boolean));
+  const vus = new Set();
   return notifs.filter(n => n.action && !n.rdv && TACHES[(n.key || '').slice(0, 2)] !== undefined && !deja.has(n.key) && !(pas.ref && n.ref === pas.ref))
     .map(n => ({ ...n, rang: TACHES[n.key.slice(0, 2)] }))
-    .sort((a, b) => a.rang - b.rang || new Date(b.at) - new Date(a.at)).slice(0, 3);
+    .sort((a, b) => a.rang - b.rang || new Date(b.at) - new Date(a.at))
+    .filter(n => !n.groupe || (!vus.has(n.groupe) && vus.add(n.groupe))).slice(0, 3);
 }
 
 // « Ils ont besoin de toi » : ce que des étudiants attendent de ce lauréat. Ceux qui l'ont choisi d'abord, puis une sorte après l'autre.

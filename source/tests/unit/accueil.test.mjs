@@ -52,11 +52,22 @@ test('petitesTaches : trois au plus, jamais ce que montre la carte, ni les aides
   const notifs = [n('apO1-3', { ref: 'o1' }), n('mdM1', { besoin: true }), n('srM3', { rdv: true, rappel: true }), n('mfP1'), n('roO2'), n('dmC1'), n('eq6'), n('dcX'), n('paY'), n('zzz'), { key: 'sfA', at: NOW.toISOString() }, n('scM2', { ref: 'm2' })];
   const t = petitesTaches(notifs);
   assert.deepEqual(t.map(x => x.key), ['apO1-3', 'dmC1', 'scM2'], 'les candidatures, les matchs, puis une présence à confirmer ; trois au plus');
-  assert.ok(!t.some(x => ['md', 'sr', 'dc', 'pa', 'zz', 'sf'].includes(x.key.slice(0, 2))));
+  assert.ok(!t.some(x => ['md', 'sr', 'dc', 'pa', 'zz', 'sf'].includes(x.key.slice(0, 2))), 'les coordonnées attendent derrière les petites tâches');
   const sans = petitesTaches(notifs, { key: 'dmC1', ref: 'o1' });
   assert.deepEqual(sans.map(x => x.key), ['scM2', 'mfP1', 'roO2'], 'la carte du haut et son offre ne reviennent pas dessous');
   assert.deepEqual(petitesTaches(notifs, { key: 'rdvm2', ref: 'm2', cles: ['scM2'] }).map(x => x.key), ['apO1-3', 'dmC1', 'mfP1'], 'la veille, la carte montre le rendez-vous : sa confirmation n’est pas répétée');
   assert.deepEqual(petitesTaches(notifs, { cles: ['mfP1', 'roO2', 'scM2'] }).map(x => x.key), ['apO1-3', 'dmC1', 'eq6']);
+});
+
+test('petitesTaches : ce qui s’ouvre dans une feuille (coordonnées, promo, ambassadeur, entretien) vient après les petites tâches, avant la photo ; les coordonnées en une seule ligne', () => {
+  const n = (key, x = {}) => ({ key, action: true, at: NOW.toISOString(), ...x });
+  const plusTot = h => new Date(NOW.getTime() - h * 36e5).toISOString();
+  const dc = [n('dcA', { groupe: 'dc', ligne: 'Sara et 2 autres aimeraient tes coordonnées', at: plusTot(1) }), n('dcB', { groupe: 'dc', ligne: 'Sara et 2 autres aimeraient tes coordonnées', at: plusTot(5) }), n('dcC', { groupe: 'dc', ligne: 'Sara et 2 autres aimeraient tes coordonnées', at: plusTot(9) })];
+  const ph = { key: 'ph', action: true, semaine: true, at: plusTot(100) };
+  assert.deepEqual(petitesTaches([ph, ...dc, n('vpX'), n('roO2')]).map(x => x.key), ['roO2', 'vpX', 'dcA'], 'une ligne pour trois demandes (la plus récente), après les petites tâches ; la photo n’a plus de place');
+  assert.deepEqual(petitesTaches([ph, ...dc, n('amA', { at: plusTot(2) })]).map(x => x.key), ['dcA', 'amA', 'ph'], 'la photo reste la dernière');
+  assert.deepEqual(petitesTaches([n('naenX'), n('amA')], { key: 'amA', ref: 'a1' }).map(x => x.key), ['naenX'], 'la proposition déjà sur la carte n’est pas redite');
+  assert.equal(petitesTaches(dc)[0].ligne, 'Sara et 2 autres aimeraient tes coordonnées');
 });
 
 test('tâche photo : un lauréat sans photo, quand la base accepte les photos ; en dernier, après les vraies tâches', () => {

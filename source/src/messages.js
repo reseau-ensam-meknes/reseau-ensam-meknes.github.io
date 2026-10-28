@@ -39,12 +39,13 @@ const apercus = new Map();
 // Message préparé (ex. l'administration demande un CV) : repris une seule fois à l'ouverture de la conversation
 const brouillons = new Map();
 // icone, compte : le « Merci » des membres fondateurs (accueil) a son cœur et ne compte pas les messages non lus
-export function MessageBtn({ ctx, p, label = 'Écrire', cls = 'btn small', texte = '', icone = 'chat', compte = true }) {
+// aria : le nom du bouton quand il n'a pas de libellé à l'écran (label vide : l'icône seule)
+export function MessageBtn({ ctx, p, label = 'Écrire', cls = 'btn small', texte = '', icone = 'chat', compte = true, aria }) {
   const id = p?.id || p;
   if (!id || !ctx.store.peutDiscuter?.(id)) return null;
   const n = compte ? (ctx.data.messages || []).filter(m => m.author_id === id && m.dest_id === ctx.me.id && !m.lu_at).length : 0;
-  return html`<button type="button" class=${cls + ' msg-btn'} onClick=${e => { e.stopPropagation(); if (texte) brouillons.set(id, texte); ctx.ecrire ? ctx.ecrire(id) : ctx.go('messages/' + id); }}>
-    <${Icon} name=${icone} size=${15}/> ${label}${n ? html` <span class="count">${n}</span>` : null}</button>`;
+  return html`<button type="button" class=${cls + ' msg-btn'} aria-label=${aria} title=${aria} onClick=${e => { e.stopPropagation(); if (texte) brouillons.set(id, texte); ctx.ecrire ? ctx.ecrire(id) : ctx.go('messages/' + id); }}>
+    <${Icon} name=${icone} size=${15}/>${label ? ` ${label}` : null}${n ? html` <span class="count">${n}</span>` : null}</button>`;
 }
 
 function Apercu({ m, me }) {
