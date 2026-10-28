@@ -596,12 +596,12 @@ test('accord pas encore donné (loi 09-08) : jamais de demande de notifications,
 test('Mon profil en ligne : les notifications par catégorie seulement une fois la base à jour (colonne notif_push)', async () => {
   for (const colonne of [false, true]) {
     site.vider(); site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z', ...(colonne ? { notif_push: {} } : {}) });
-    const m = await membre({ hash: '#profil' });
-    await m.page.waitForSelector('#mes-donnees', { timeout: 15000 });
+    const m = await membre({ hash: '#profil/notifications' });
+    await m.page.waitForSelector('#md-push', { timeout: 15000 });
     assert.equal(await m.page.locator('.md-cats').count(), colonne ? 1 : 0, 'les cases par catégorie');
     assert.equal(await m.page.locator('#md-alertes').count(), colonne ? 0 : 1, 'avant la mise à jour, l’étudiant garde sa case « M’alerter… »');
     // Avant, la présentation d'avant : « M'alerter… » (le téléphone) ne se range pas sous un titre « Par email »
-    assert.equal(await m.page.locator('.md-titre').count(), colonne ? 2 : 0, 'les titres « Par email » et « Sur tes appareils »');
+    assert.equal(await m.page.locator('#profil-notifications .md-titre').count(), colonne ? 1 : 0, 'le titre « Par email »');
     assert.ok(await m.page.isChecked('#md-alertes-mail'), 'l’email des offres reste là');
     assert.deepEqual(m.erreurs, []);
     await m.ctx.close();
@@ -656,41 +656,61 @@ test('« Activer » puis fenêtre du navigateur fermée sans choisir : rien n’
   await m.page.reload(); await m.page.waitForSelector('.me-btn', { timeout: 15000 });
   await m.page.waitForSelector('.modal.ouverture', { timeout: 12000 });
   await m.page.click('#ouv-tard');
-  // Dans Mon profil, la même réponse laisse la case à toucher, sans dire que les notifications sont bloquées
-  await m.page.evaluate(() => { location.hash = '#profil'; });
-  await m.page.waitForSelector('#md-push:not([disabled])', { timeout: 15000 });
-  await m.page.click('#md-push'); await m.page.waitForTimeout(500);
-  assert.equal(await m.page.isDisabled('#md-push'), false);
-  assert.equal(await m.page.isChecked('#md-push'), false);
-  assert.doesNotMatch(await m.page.locator('.push-row').innerText(), /bloquées/);
+  // Dans Mon profil, la même réponse laisse « Activer » à toucher, sans dire que les notifications sont bloquées
+  await m.page.evaluate(() => { location.hash = '#profil/notifications'; });
+  await m.page.waitForSelector('#md-push-oui:not([disabled])', { timeout: 15000 });
+  await m.page.click('#md-push-oui'); await m.page.waitForTimeout(500);
+  assert.equal(await m.page.isDisabled('#md-push-oui'), false);
+  assert.equal(await m.page.locator('#md-push-ok').count(), 0);
+  assert.doesNotMatch(await m.page.locator('#md-push .push-etat').innerText(), /bloquées/);
   assert.equal((await lire(m)).fait, undefined);
   assert.equal(await m.page.evaluate(() => window.__demandes), 1, 'depuis le rechargement : le toucher dans Mon profil a demandé');
   assert.deepEqual(m.erreurs, []);
   await m.ctx.close();
 });
 
-test('Mon profil : pendant la demande du navigateur lancée par l’interrupteur, pas de feuille d’ouverture par-dessus', async () => {
+test('Mon profil : pendant la demande du navigateur lancée par « Activer », pas de feuille d’ouverture par-dessus', async () => {
   site.vider(); site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z', notif_push: {} });
-  const m = await membre({ hash: '#profil', push: true, permission: 'granted', delai: 7000 });
-  await m.page.waitForSelector('#md-push:not([disabled])', { timeout: 15000 });
-  await m.page.click('#md-push');
+  const m = await membre({ hash: '#profil/notifications', push: true, permission: 'granted', delai: 7000 });
+  await m.page.waitForSelector('#md-push-oui:not([disabled])', { timeout: 15000 });
+  await m.page.click('#md-push-oui');
   await m.page.waitForTimeout(8500);
   assert.equal(await m.page.locator('.modal.ouverture').count(), 0, 'une seule demande à la fois');
-  assert.ok(await m.page.isChecked('#md-push'));
+  assert.match(await m.page.locator('#md-push-ok').innerText(), /Activées sur cet appareil/);
+  assert.ok(await m.page.isVisible('#md-push-test'), '« Tester » une fois activées');
+  assert.ok(await m.page.isVisible('#md-push-non'));
   assert.equal(await m.page.evaluate(() => window.__demandes), 1);
   assert.deepEqual(m.erreurs, []);
   await m.ctx.close();
 });
 
-test('Mon profil ouvert : après « Activer » sur la feuille, l’interrupteur de cet appareil suit', async () => {
+test('Mon profil ouvert : après « Activer » sur la feuille, la carte de cet appareil suit', async () => {
   site.vider(); site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z', notif_push: {} });
-  const m = await membre({ hash: '#profil', push: true, permission: 'denied' });
+  const m = await membre({ hash: '#profil/notifications', push: true, permission: 'denied' });
   await m.page.waitForSelector('.modal.ouverture', { timeout: 12000 });
-  assert.equal(await m.page.isDisabled('#md-push'), false);
+  assert.equal(await m.page.isDisabled('#md-push-oui'), false);
   await m.page.click('#ouv-oui'); await m.page.waitForTimeout(800);
-  assert.equal(await m.page.isDisabled('#md-push'), true, 'refusée : l’interrupteur le montre');
+  assert.equal(await m.page.locator('#md-push-oui').count(), 0, 'refusée : plus de bouton « Activer »');
+  assert.match(await m.page.locator('#md-push .push-etat').innerText(), /bloquées pour ce site/, 'refusée : la carte le dit');
+  assert.ok(await m.page.isVisible('#md-push-debloquer'), 'et dit comment les débloquer');
   assert.deepEqual(m.erreurs, []);
   await m.ctx.close();
+});
+
+test('Mon profil en ligne : « Visible par les lauréats » écrit la Vitrine, et Match seulement quand la base a la colonne match_visible', async () => {
+  for (const colonne of [false, true]) {
+    site.vider(); site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z', notif_push: {}, vitrine: false, ...(colonne ? { match_visible: true } : {}) });
+    const m = await membre({ hash: '#profil/visibilite' });
+    await m.page.waitForSelector('#pf-visible', { state: 'attached', timeout: 15000 });
+    // Allumé si l'un des deux l'est : avec la colonne, Match l'est encore
+    assert.equal(await m.page.isChecked('#pf-visible'), colonne);
+    await m.page.locator('.pf-visible .mx-switch').click(); await m.page.waitForTimeout(600);
+    const envoi = site.appels.filter(a => a.u === '/sb/rest/v1/profiles' && a.m === 'PATCH').at(-1);
+    assert.deepEqual(envoi?.corps, colonne ? { vitrine: false, match_visible: false } : { vitrine: true });
+    assert.equal(await m.page.isChecked('#pf-visible'), !colonne);
+    assert.deepEqual(m.erreurs, []);
+    await m.ctx.close();
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -783,7 +803,7 @@ test('un lauréat devenu membre fondateur : le bandeau, la fête, puis « Ton no
   const envoi = site.appels.find(a => a.u === '/sb/rest/v1/profiles' && a.m === 'PATCH');
   assert.deepEqual(envoi?.corps, { fondateur_public: true });
   // Mon profil : la même question, à changer quand on veut
-  await m.page.evaluate(() => { location.hash = 'profil'; });
+  await m.page.evaluate(() => { location.hash = 'profil/visibilite'; });
   await m.page.waitForSelector('#md-fondateur');
   assert.ok(await m.page.isChecked('#md-fondateur'));
   await m.page.click('#md-fondateur'); await m.page.waitForTimeout(400);
