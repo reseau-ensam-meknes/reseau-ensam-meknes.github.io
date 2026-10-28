@@ -2367,9 +2367,12 @@ language plpgsql security definer set search_path = public as $$
 begin
   perform public.relances_offres();
   perform public.attribuer_parrains();
+  -- Durées de conservation : un échec ne bloque pas les emails du jour
+  begin perform public.conservation_quotidienne(); exception when others then raise warning 'Conservation : %', sqlerrm; end;
   perform public.appeler_notifier('resume');
   perform public.appeler_notifier('enquetes');
   perform public.appeler_notifier('relances');
+  perform public.appeler_notifier('inactifs');
 end $$;
 revoke all on function public.taches_quotidiennes() from public, anon, authenticated;
 
@@ -2554,7 +2557,11 @@ create or replace function public.protect_enquete() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare p public.profiles%rowtype;
 begin
-  if tg_op = 'UPDATE' then new.user_id := old.user_id; new.vague := old.vague; new.created_at := old.created_at; end if;
+  -- Seul le serveur (aucun membre connecté) détache une réponse de son compte : voir anonymiser_enquetes
+  if tg_op = 'UPDATE' then
+    if auth.uid() is not null or new.user_id is not null then new.user_id := old.user_id; end if;
+    new.vague := old.vague; new.created_at := old.created_at;
+  end if;
   if auth.uid() is not null and not public.is_admin() then
     if tg_op = 'INSERT' then new.user_id := auth.uid(); new.created_at := now(); end if;
     select * into p from public.profiles where id = new.user_id;
@@ -5250,6 +5257,119 @@ language sql stable security definer set search_path = public as $$
 $$;
 revoke all on function public.peut_discuter(uuid, uuid) from public, anon;
 grant execute on function public.peut_discuter(uuid, uuid) to authenticated;
+
+-- =====================================================================
+--  Durées de conservation (page Confidentialité, déclaration à la CNDP), appliquées chaque jour par taches_quotidiennes :
+--    • un compte sans connexion pendant 3 ans est supprimé avec tout ce qui lui est lié, comme s'il l'avait supprimé
+--      lui-même ; un email le prévient 30 jours avant (tâche « inactifs » de la fonction notifier) et une seule visite
+--      le garde. Un compte qu'on n'a pas pu prévenir n'est jamais supprimé ; l'administration n'est jamais concernée ;
+--    • les réponses à l'enquête d'insertion sont détachées du compte 3 ans après le diplôme (le 1er septembre de
+--      promo + 3) : il ne reste que ce qui sert aux chiffres globaux (ni entreprise, ni ville, ni commentaire) ;
+--    • la liste officielle des étudiants est effacée le 1er septembre, à la fin de l'année universitaire.
+-- =====================================================================
+create table if not exists public.comptes_prevenus (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  prevenu_at timestamptz not null default now()
+);
+alter table public.comptes_prevenus enable row level security;
+revoke all on public.comptes_prevenus from anon, authenticated;
+
+-- Dernière présence d'un compte : sa dernière visite notée (marquer_vu), sa dernière connexion, ou sa création
+create or replace function public.derniere_presence(p_id uuid) returns timestamptz
+language sql stable security definer set search_path = public as $$
+  select greatest((select v.vu_at from public.visites v where v.user_id = u.id), u.last_sign_in_at, u.created_at)
+  from auth.users u where u.id = p_id;
+$$;
+revoke all on function public.derniere_presence(uuid) from public, anon, authenticated;
+
+-- Les comptes à prévenir : absents depuis 3 ans moins 30 jours, pas encore prévenus depuis leur dernière visite
+create or replace function public.comptes_inactifs_a_prevenir(p_max int default 100)
+returns table (id uuid, email text, langue text)
+language sql stable security definer set search_path = public as $$
+  select u.id, u.email::text, case when coalesce(p.langue, u.raw_user_meta_data->>'langue') = 'ar' then 'ar' else 'fr' end
+  from auth.users u
+    left join public.profiles p on p.id = u.id
+    left join public.comptes_prevenus c on c.user_id = u.id
+    cross join lateral (select public.derniere_presence(u.id) as vu) x
+  where u.email is not null and p.role is distinct from 'admin'
+    and x.vu < now() - interval '3 years' + interval '30 days'
+    and (c.prevenu_at is null or c.prevenu_at < x.vu)
+  order by x.vu
+  limit greatest(0, least(p_max, 200));
+$$;
+revoke all on function public.comptes_inactifs_a_prevenir(int) from public, anon, authenticated;
+
+-- Après l'envoi : seuls les emails partis comptent (un échec est retenté le lendemain)
+create or replace function public.comptes_inactifs_prevenus(p_ids uuid[]) returns void
+language sql security definer set search_path = public as $$
+  insert into public.comptes_prevenus (user_id)
+    select u.id from auth.users u where u.id = any(p_ids)
+  on conflict (user_id) do update set prevenu_at = now();
+$$;
+revoke all on function public.comptes_inactifs_prevenus(uuid[]) from public, anon, authenticated;
+
+-- Prévenus depuis plus de 30 jours et jamais revenus : supprimés (50 par jour au plus, par prudence)
+create or replace function public.purger_comptes_inactifs(p_max int default 50) returns int
+language plpgsql security definer set search_path = public as $$
+declare r record; n int := 0;
+begin
+  for r in
+    select c.user_id from public.comptes_prevenus c
+      join auth.users u on u.id = c.user_id
+      left join public.profiles p on p.id = u.id
+      cross join lateral (select public.derniere_presence(u.id) as vu) x
+    where c.prevenu_at < now() - interval '30 days' and p.role is distinct from 'admin'
+      and x.vu < c.prevenu_at and x.vu < now() - interval '3 years'
+    order by c.prevenu_at
+    limit greatest(0, least(p_max, 200))
+  loop
+    delete from public.profiles where id = r.user_id;
+    delete from auth.users where id = r.user_id;
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+revoke all on function public.purger_comptes_inactifs(int) from public, anon, authenticated;
+
+-- Enquête d'insertion : 3 ans après le diplôme, la réponse n'appartient plus à personne
+alter table public.enquetes_insertion alter column user_id drop not null;
+create or replace function public.anonymiser_enquetes() returns int
+language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  update public.enquetes_insertion set user_id = null, entreprise = null, ville = null, commentaire = null
+  where user_id is not null and make_date(promo + 3, 9, 1) <= current_date;
+  get diagnostics n = row_count;
+  return n;
+end $$;
+revoke all on function public.anonymiser_enquetes() from public, anon, authenticated;
+
+-- Liste officielle : ce qui a été importé avant le dernier 1er septembre est effacé
+create or replace function public.effacer_liste_officielle() returns int
+language plpgsql security definer set search_path = public as $$
+declare n int;
+  v_rentree date := make_date(extract(year from current_date)::int - (extract(month from current_date) < 9)::int, 9, 1);
+begin
+  delete from public.liste_officielle where created_at < v_rentree;
+  get diagnostics n = row_count;
+  return n;
+end $$;
+revoke all on function public.effacer_liste_officielle() from public, anon, authenticated;
+
+create or replace function public.conservation_quotidienne() returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  return jsonb_build_object('comptes', public.purger_comptes_inactifs(), 'enquetes', public.anonymiser_enquetes(),
+    'liste', public.effacer_liste_officielle());
+end $$;
+revoke all on function public.conservation_quotidienne() from public, anon, authenticated;
+
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.comptes_inactifs_a_prevenir(int) to service_role;
+    grant execute on function public.comptes_inactifs_prevenus(uuid[]) to service_role;
+  end if;
+end $$;
 
 -- =====================================================================
 -- APRÈS votre inscription sur la plateforme, devenez administrateur :
