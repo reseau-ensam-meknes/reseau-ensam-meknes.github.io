@@ -57,7 +57,7 @@ test('catégories : messages, demandes, candidatures, mentorat, offres, vie du r
 // (sql/test-notif-push.mjs vérifie que push_categorie donne la même chose que pushCategorie)
 test('chaque type est dans la catégorie annoncée', () => {
   const regle = {
-    messages: ['message', 'rdv_message', 'rdv_reponse'],
+    messages: ['message', 'rdv_message', 'rdv_reponse', 'rappel_entretien'],
     match: ['match', 'match_interet'],
     demandes: ['demande_nouvelle', 'demande_large', 'demande_proposition', 'demande_match', 'demande_rouverte', 'demande_reponse'],
     candidatures: ['candidature', 'candidature_statut', 'invitation', 'recrutement_a_confirmer', 'recrutement_confirme', 'relance_offre'],
@@ -130,7 +130,7 @@ test('rappels : catégorie à part, activée par défaut pour tous, coupée = ri
 test('match : catégorie à part, activée par défaut pour les étudiants et les lauréats, coupée = rien ; un entretien reste un message', () => {
   assert.ok(PUSH_CATEGORIES.includes('match'));
   for (const k of ['match', 'match_interet']) assert.equal(pushCategorie(k), 'match', k);
-  for (const k of ['rdv_message', 'rdv_reponse']) assert.equal(pushCategorie(k), 'messages', k);
+  for (const k of ['rdv_message', 'rdv_reponse', 'rappel_entretien']) assert.equal(pushCategorie(k), 'messages', k);
   for (const me of [{ role: 'etudiant' }, { role: 'laureat' }, { role: 'laureat', en_recherche: true }, { role: 'etudiant', alertes_offres: false }]) {
     assert.equal(pushDefaut('match', me), true, JSON.stringify(me));
     for (const k of ['match', 'match_interet']) {
@@ -144,6 +144,6 @@ test('match : catégorie à part, activée par défaut pour les étudiants et le
     }
   }
   assert.match(SCHEMA, /e\.key not in \([^)]*'match'[^)]*\)/, 'notif_push_valide accepte la case « match »');
-  assert.match(SCHEMA, /when p_kind in \('message','rdv_message','rdv_reponse'\) then 'messages'/);
+  assert.match(SCHEMA, /when p_kind in \('message','rdv_message','rdv_reponse','rappel_entretien'\) then 'messages'/);
   assert.match(SCHEMA, /when p_kind in \('match','match_interet'\) then 'match'/);
 });

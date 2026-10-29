@@ -1053,6 +1053,10 @@ create table if not exists public.push_queue (
   data jsonb not null default '{}',
   created_at timestamptz default now()
 );
+-- Une notification reste en file jusqu'à ce que la fonction confirme son envoi (push_faits) : prise (pris_at), elle n'est
+-- reprise qu'après 2 minutes sans confirmation, 3 essais au plus (relancer_push, section « Notifications qui arrivent »)
+alter table public.push_queue add column if not exists pris_at timestamptz;
+alter table public.push_queue add column if not exists essais int not null default 0;
 
 -- Réglages internes : adresse du projet, clé publique, secret d'appel de la fonction, clés VAPID
 create table if not exists public.app_secrets (
@@ -1076,14 +1080,17 @@ create table if not exists public.rappels_envoyes (
   created_at timestamptz default now()
 );
 
--- S'abonner depuis un téléphone (un même téléphone ne sert qu'un compte à la fois)
+-- S'abonner depuis un téléphone (un même téléphone ne sert qu'un compte à la fois). Le site le refait à chaque
+-- ouverture (resynchroniserPush, pwa.js) : un abonnement oublié par la base revient, sans rien changer s'il y est déjà.
 create or replace function public.abonner_push(p_endpoint text, p_p256dh text, p_auth text) returns void
 language plpgsql security definer set search_path = public as $$
 begin
   if auth.uid() is null then raise exception 'Connecte-toi d’abord.'; end if;
   if p_endpoint !~* '^https://' then raise exception 'Abonnement invalide.'; end if;
-  delete from public.push_subscriptions where endpoint = p_endpoint;
-  insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values (auth.uid(), p_endpoint, p_p256dh, p_auth);
+  insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values (auth.uid(), p_endpoint, p_p256dh, p_auth)
+    on conflict (endpoint) do update set user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth,
+      created_at = case when push_subscriptions.user_id = excluded.user_id then push_subscriptions.created_at else now() end
+    where (push_subscriptions.user_id, push_subscriptions.p256dh, push_subscriptions.auth) is distinct from (excluded.user_id, excluded.p256dh, excluded.auth);
 end $$;
 revoke all on function public.abonner_push(text, text, text) from public, anon;
 grant execute on function public.abonner_push(text, text, text) to authenticated;
@@ -1129,10 +1136,19 @@ begin
   select valeur into v_key from public.app_secrets where cle = 'anon_key';
   select valeur into v_secret from public.app_secrets where cle = 'notifier_secret';
   if v_url is null or v_key is null then return; end if;
-  perform net.http_post(
-    url := v_url || '/functions/v1/notifier',
-    body := jsonb_build_object('job', p_job),
-    headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || v_key, 'x-notifier', v_secret));
+  -- 60 s d'attente : envoyer des emails prend plus que les 5 s par défaut de pg_net, qui coupait l'appel
+  begin
+    perform net.http_post(
+      url := v_url || '/functions/v1/notifier',
+      body := jsonb_build_object('job', p_job),
+      headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || v_key, 'x-notifier', v_secret),
+      timeout_milliseconds := 60000);
+  exception when undefined_function then  -- pg_net ancien, sans délai réglable
+    perform net.http_post(
+      url := v_url || '/functions/v1/notifier',
+      body := jsonb_build_object('job', p_job),
+      headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || v_key, 'x-notifier', v_secret));
+  end;
 exception when others then null;  -- pas de pg_net, ou fonction pas encore déployée : rien n'est bloqué
 end $$;
 revoke all on function public.appeler_notifier(text) from public, anon, authenticated;
@@ -1165,16 +1181,28 @@ drop trigger if exists trg_push_queue on public.push_queue;
 create trigger trg_push_queue after insert on public.push_queue
   for each statement execute function public.push_queue_envoi();
 
--- La fonction « notifier » prend les notifications en attente (sans doublon si deux envois se croisent)
+-- La fonction « notifier » prend les notifications en attente (sans doublon si deux envois se croisent). Elles restent
+-- en file, marquées prises : la fonction confirme celles qui sont parties (push_faits) ; les autres sont reprises après
+-- 2 minutes (une panne du service de push, un appel coupé), 3 essais au plus.
 create or replace function public.prendre_push(p_max int default 300)
 returns table (id bigint, user_id uuid, kind text, data jsonb, langue text)
 language sql security definer set search_path = public as $$
   with pris as (
-    delete from public.push_queue q where q.id in (select x.id from public.push_queue x order by x.id limit p_max for update skip locked)
+    update public.push_queue q set pris_at = now(), essais = q.essais + 1
+    where q.id in (select x.id from public.push_queue x
+        where x.essais < 3 and (x.pris_at is null or x.pris_at < now() - interval '2 minutes')
+        order by x.id limit p_max for update skip locked)
     returning q.*)
   select pris.id, pris.user_id, pris.kind, pris.data, coalesce(p.langue, 'fr') from pris left join public.profiles p on p.id = pris.user_id order by pris.id;
 $$;
 revoke all on function public.prendre_push(int) from public, anon, authenticated;
+
+-- Envoyées (ou sans espoir : plus de téléphone, type inconnu) : retirées de la file
+create or replace function public.push_faits(p_ids bigint[]) returns void
+language sql security definer set search_path = public as $$
+  delete from public.push_queue where id = any(coalesce(p_ids, '{}'::bigint[]));
+$$;
+revoke all on function public.push_faits(bigint[]) from public, anon, authenticated;
 
 -- Ce qui déclenche une notification sur le téléphone
 create or replace function public.notif_evenements() returns trigger
@@ -1264,22 +1292,7 @@ create trigger trg_notif after insert on public.questions for each row execute f
 create trigger trg_notif after insert on public.parrainages for each row execute function public.notif_evenements();
 create trigger trg_notif after insert on public.cafes for each row execute function public.notif_evenements();
 
--- Rappel une heure avant chaque rendez-vous de mentorat (toutes les 10 minutes)
-create or replace function public.rappels_rdv() returns int
-language plpgsql security definer set search_path = public as $$
-declare r record; n int := 0;
-begin
-  for r in select m.id, m.student_id, m.mentor_id, m.sujet, m.rdv_at from public.mentorships m
-      where m.status = 'acceptee' and m.rdv_at between now() + interval '5 minutes' and now() + interval '65 minutes'
-        and not exists (select 1 from public.rappels_envoyes x where x.id = m.id and x.rdv_at = m.rdv_at) loop
-    insert into public.rappels_envoyes (id, rdv_at) values (r.id, r.rdv_at) on conflict (id) do update set rdv_at = excluded.rdv_at, created_at = now();
-    perform public.pousser(r.student_id, 'rappel_rdv', jsonb_build_object('nom', (select full_name from public.profiles where id = r.mentor_id), 'sujet', r.sujet, 'rdv_at', r.rdv_at));
-    perform public.pousser(r.mentor_id, 'rappel_rdv', jsonb_build_object('nom', (select full_name from public.profiles where id = r.student_id), 'sujet', r.sujet, 'rdv_at', r.rdv_at));
-    n := n + 1;
-  end loop;
-  return n;
-end $$;
-revoke all on function public.rappels_rdv() from public, anon, authenticated;
+-- Rappel avant chaque rendez-vous : rappels_rdv, section « Rappels 15 minutes avant un rendez-vous », à la fin
 
 -- Relance douce : « Ton offre est-elle toujours ouverte ? » après 3 semaines sans activité
 create or replace function public.relances_offres() returns int
@@ -1313,6 +1326,7 @@ do $$ begin
   if exists (select 1 from pg_roles where rolname = 'service_role') then
     grant execute on function public.destinataires_resume(int) to service_role;
     grant execute on function public.prendre_push(int) to service_role;
+    grant execute on function public.push_faits(bigint[]) to service_role;
   end if;
 end $$;
 
@@ -1508,7 +1522,7 @@ end $$;
 
 -- ---------------------------------------------------------------------
 -- Tâches automatiques (Supabase : extensions pg_net et pg_cron)
---   toutes les 10 min : rappel une heure avant chaque rendez-vous
+--   chaque minute     : rappel 15 min avant chaque rendez-vous, notifications restées en file (taches_minute, à la fin)
 --   chaque matin      : relance douce des offres, parrains des 3A, résumé hebdomadaire par email
 -- Sans ces extensions, la plateforme marche normalement, sans ces envois.
 -- ---------------------------------------------------------------------
@@ -1516,7 +1530,7 @@ do $$ begin
   begin create extension if not exists pg_net; exception when others then raise notice 'pg_net indisponible : %', sqlerrm; end;
   begin create extension if not exists pg_cron; exception when others then raise notice 'pg_cron indisponible : %', sqlerrm; end;
   if exists (select 1 from pg_extension where extname = 'pg_cron') then
-    perform cron.schedule('ensam-rappels', '*/10 * * * *', 'select public.rappels_rdv()');
+    perform cron.schedule('ensam-rappels', '* * * * *', 'select public.taches_minute()');
     perform cron.schedule('ensam-quotidien', '0 8 * * *', 'select public.taches_quotidiennes()');
   end if;
 end $$;
@@ -1582,9 +1596,9 @@ end $$;
 create or replace function public.push_categorie(p_kind text) returns text
 language sql immutable as $$
   select case
-    -- Un entretien proposé dans une discussion (message 'rdv') et sa réponse sont des messages : couper « Match »
-    -- ne fait jamais rater un entretien
-    when p_kind in ('message','rdv_message','rdv_reponse') then 'messages'
+    -- Un entretien proposé dans une discussion (message 'rdv'), sa réponse et son rappel sont des messages : couper
+    -- « Match » ne fait jamais rater un entretien
+    when p_kind in ('message','rdv_message','rdv_reponse','rappel_entretien') then 'messages'
     -- Page Match (section « Match », en fin de fichier) : un intérêt pour soi, un match
     when p_kind in ('match','match_interet') then 'match'
     when p_kind in ('demande_nouvelle','demande_large','demande_proposition','demande_match','demande_rouverte','demande_reponse') then 'demandes'
@@ -2369,6 +2383,9 @@ begin
   perform public.attribuer_parrains();
   -- Durées de conservation : un échec ne bloque pas les emails du jour
   begin perform public.conservation_quotidienne(); exception when others then raise warning 'Conservation : %', sqlerrm; end;
+  -- Journal des notifications (push_journal, à la fin) et historique des tâches de pg_cron : 7 jours
+  begin delete from public.push_journal where at < now() - interval '7 days'; exception when others then null; end;
+  begin delete from cron.job_run_details where end_time < now() - interval '7 days'; exception when others then null; end;
   perform public.appeler_notifier('resume');
   perform public.appeler_notifier('enquetes');
   perform public.appeler_notifier('relances');
@@ -5489,6 +5506,166 @@ do $$ begin
   if exists (select 1 from pg_roles where rolname = 'service_role') then
     grant execute on function public.comptes_inactifs_a_prevenir(int) to service_role;
     grant execute on function public.comptes_inactifs_prevenus(uuid[]) to service_role;
+  end if;
+end $$;
+
+-- =====================================================================
+--  Notifications qui arrivent, et rappel 15 minutes avant un rendez-vous
+--    · File : une notification reste en file tant que la fonction n'a pas confirmé son envoi (prendre_push,
+--      push_faits, plus haut). Chaque minute, relancer_push rappelle la fonction pour ce qui attend encore : un appel
+--      perdu ne fait plus attendre une notification jusqu'à la suivante.
+--    · Journal (push_journal) : ce que la fonction a fait de chaque notification, 7 jours (taches_quotidiennes).
+--    · Rappel : 15 minutes avant un rendez-vous de mentorat ou un entretien proposé dans une discussion, une
+--      notification aux deux personnes ; un email à celle qui n'a de notifications sur aucun appareil.
+-- =====================================================================
+
+-- code : réponse du service de push pour le meilleur des téléphones (201 reçue), 404 ou 410 téléphone parti,
+-- 0 service injoignable, -1 aucun téléphone. Lu par l'administration dans l'éditeur SQL, jamais par le site.
+create table if not exists public.push_journal (
+  id bigint generated always as identity primary key,
+  user_id uuid references public.profiles(id) on delete cascade,
+  kind text not null,
+  code int not null,
+  at timestamptz not null default now()
+);
+create index if not exists push_journal_user on public.push_journal (user_id, at desc);
+alter table public.push_journal enable row level security;
+
+-- Entretiens proposés dans une discussion déjà rappelés, avec leur horaire
+create table if not exists public.rappels_entretiens (
+  id uuid primary key references public.messages(id) on delete cascade,
+  rdv_at timestamptz,
+  created_at timestamptz default now()
+);
+alter table public.rappels_entretiens enable row level security;
+create index if not exists messages_rdv_at on public.messages (rdv_at) where type = 'rdv';
+
+-- Rappels par email, pour qui n'a de notifications sur aucun appareil (la fonction « notifier », tâche rappels_rdv).
+-- data garde le lien de la visio : seule la fonction lit cette table, et la ligne part dès l'email envoyé.
+create table if not exists public.rappels_emails (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  kind text not null check (kind in ('rappel_rdv', 'rappel_entretien')),
+  data jsonb not null default '{}',
+  rdv_at timestamptz not null,
+  pris_at timestamptz,
+  essais int not null default 0,
+  created_at timestamptz default now()
+);
+alter table public.rappels_emails enable row level security;
+
+-- Un rappel pour un membre : sur ses téléphones (selon ses réglages), sinon par email. Vrai si un email attend.
+create or replace function public.rappeler(p_user uuid, p_kind text, p_data jsonb, p_lien text) returns boolean
+language plpgsql security definer set search_path = public as $$
+begin
+  if p_user is null then return false; end if;
+  if exists (select 1 from public.push_subscriptions where user_id = p_user) then
+    perform public.pousser(p_user, p_kind, p_data);
+    return false;
+  end if;
+  insert into public.rappels_emails (user_id, kind, data, rdv_at)
+    select p_user, p_kind, p_data || jsonb_strip_nulls(jsonb_build_object('lien', p_lien)), (p_data ->> 'rdv_at')::timestamptz
+    where exists (select 1 from auth.users u where u.id = p_user and u.email is not null);
+  return found;
+exception when others then return false;  -- un rappel ne bloque jamais les autres
+end $$;
+revoke all on function public.rappeler(uuid, text, jsonb, text) from public, anon, authenticated;
+
+-- Chaque minute (taches_minute) : les rendez-vous qui commencent dans 15 minutes au plus, une seule fois par horaire
+create or replace function public.rappels_rdv() returns int
+language plpgsql security definer set search_path = public as $$
+declare r record; n int := 0; v_email boolean := false;
+begin
+  -- Mentorat : le rendez-vous fixé, et sa salle de visio
+  for r in select m.id, m.student_id, m.mentor_id, m.sujet, m.rdv_at, l.lien from public.mentorships m
+      left join public.liens_rdv l on l.id = m.id
+      where m.status = 'acceptee' and m.rdv_at > now() + interval '1 minute' and m.rdv_at <= now() + interval '15 minutes'
+        and not exists (select 1 from public.rappels_envoyes x where x.id = m.id and x.rdv_at = m.rdv_at) loop
+    insert into public.rappels_envoyes (id, rdv_at) values (r.id, r.rdv_at) on conflict (id) do update set rdv_at = excluded.rdv_at, created_at = now();
+    if public.rappeler(r.student_id, 'rappel_rdv', jsonb_build_object('nom', (select full_name from public.profiles where id = r.mentor_id), 'sujet', r.sujet, 'rdv_at', r.rdv_at), r.lien) then v_email := true; end if;
+    if public.rappeler(r.mentor_id, 'rappel_rdv', jsonb_build_object('nom', (select full_name from public.profiles where id = r.student_id), 'sujet', r.sujet, 'rdv_at', r.rdv_at), r.lien) then v_email := true; end if;
+    n := n + 1;
+  end loop;
+  -- Entretien proposé dans une discussion : accepté, ou sans réponse ; pas s'il a été refusé (« Autre horaire »),
+  -- remplacé par un horaire proposé depuis dans la même discussion, ou si l'un a bloqué l'autre
+  for r in select m.id, m.author_id, m.dest_id, m.rdv_at, m.rdv_duree, m.rdv_lieu, m.rdv_lien from public.messages m
+      where m.type = 'rdv' and m.rdv_at > now() + interval '1 minute' and m.rdv_at <= now() + interval '15 minutes'
+        and m.rdv_reponse is distinct from 'autre'
+        and not exists (select 1 from public.messages y where y.type = 'rdv' and y.created_at > m.created_at
+          and ((y.author_id = m.author_id and y.dest_id = m.dest_id) or (y.author_id = m.dest_id and y.dest_id = m.author_id)))
+        and not exists (select 1 from public.blocages b
+          where (b.user_id = m.author_id and b.bloque_id = m.dest_id) or (b.user_id = m.dest_id and b.bloque_id = m.author_id))
+        and not exists (select 1 from public.rappels_entretiens x where x.id = m.id and x.rdv_at = m.rdv_at) loop
+    insert into public.rappels_entretiens (id, rdv_at) values (r.id, r.rdv_at) on conflict (id) do update set rdv_at = excluded.rdv_at, created_at = now();
+    if public.rappeler(r.author_id, 'rappel_entretien', jsonb_build_object('nom', split_part((select full_name from public.profiles where id = r.dest_id), ' ', 1),
+        'de', r.dest_id, 'm', r.id, 'rdv_at', r.rdv_at, 'duree', r.rdv_duree, 'lieu', r.rdv_lieu), r.rdv_lien) then v_email := true; end if;
+    if public.rappeler(r.dest_id, 'rappel_entretien', jsonb_build_object('nom', split_part((select full_name from public.profiles where id = r.author_id), ' ', 1),
+        'de', r.author_id, 'm', r.id, 'rdv_at', r.rdv_at, 'duree', r.rdv_duree, 'lieu', r.rdv_lieu), r.rdv_lien) then v_email := true; end if;
+    n := n + 1;
+  end loop;
+  if v_email then perform public.appeler_notifier('rappels_rdv'); end if;
+  return n;
+end $$;
+revoke all on function public.rappels_rdv() from public, anon, authenticated;
+
+-- La fonction « notifier » prend les rappels par email à envoyer ; ils restent jusqu'à confirmation (rappels_rdv_envoyes),
+-- repris après 2 minutes, 3 essais au plus, jamais après le début du rendez-vous
+create or replace function public.rappels_rdv_a_envoyer(p_max int default 100)
+returns table (id bigint, email text, langue text, kind text, data jsonb)
+language sql security definer set search_path = public as $$
+  with pris as (
+    update public.rappels_emails r set pris_at = now(), essais = r.essais + 1
+    where r.id in (select x.id from public.rappels_emails x
+        where x.essais < 3 and x.rdv_at > now() and (x.pris_at is null or x.pris_at < now() - interval '2 minutes')
+        order by x.rdv_at, x.id limit greatest(0, least(p_max, 200)) for update skip locked)
+    returning r.*)
+  select pris.id, u.email::text, coalesce(p.langue, u.raw_user_meta_data ->> 'langue', 'fr'), pris.kind, pris.data
+  from pris join auth.users u on u.id = pris.user_id left join public.profiles p on p.id = pris.user_id
+  order by pris.rdv_at, pris.id;
+$$;
+revoke all on function public.rappels_rdv_a_envoyer(int) from public, anon, authenticated;
+
+create or replace function public.rappels_rdv_envoyes(p_ids bigint[]) returns void
+language sql security definer set search_path = public as $$
+  delete from public.rappels_emails where id = any(coalesce(p_ids, '{}'::bigint[]));
+$$;
+revoke all on function public.rappels_rdv_envoyes(bigint[]) from public, anon, authenticated;
+
+-- Ce qui attend encore : la fonction est rappelée (vrai si elle l'est). Abandonné : une notification de plus d'un jour
+-- (le service de push ne la garderait pas), un rappel dont l'heure est passée, 3 essais sans succès.
+create or replace function public.relancer_push() returns boolean
+language plpgsql security definer set search_path = public as $$
+declare v boolean := false;
+begin
+  delete from public.push_queue where created_at < now() - interval '1 day' or (essais >= 3 and pris_at < now() - interval '2 minutes');
+  delete from public.rappels_emails where rdv_at < now() or (essais >= 3 and pris_at < now() - interval '2 minutes');
+  if exists (select 1 from public.push_queue where essais < 3
+      and ((pris_at is null and created_at < now() - interval '1 minute') or pris_at < now() - interval '2 minutes')) then
+    perform public.appeler_notifier('push');
+    v := true;
+  end if;
+  if exists (select 1 from public.rappels_emails where essais < 3
+      and ((pris_at is null and created_at < now() - interval '1 minute') or pris_at < now() - interval '2 minutes')) then
+    perform public.appeler_notifier('rappels_rdv');
+    v := true;
+  end if;
+  return v;
+end $$;
+revoke all on function public.relancer_push() from public, anon, authenticated;
+
+-- Chaque minute (pg_cron, « ensam-rappels ») : les rappels, puis ce qui attend dans les files
+create or replace function public.taches_minute() returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  begin perform public.rappels_rdv(); exception when others then raise warning 'Rappels : %', sqlerrm; end;
+  begin perform public.relancer_push(); exception when others then raise warning 'Notifications en file : %', sqlerrm; end;
+end $$;
+revoke all on function public.taches_minute() from public, anon, authenticated;
+
+do $$ begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    grant execute on function public.rappels_rdv_a_envoyer(int) to service_role;
+    grant execute on function public.rappels_rdv_envoyes(bigint[]) to service_role;
   end if;
 end $$;
 

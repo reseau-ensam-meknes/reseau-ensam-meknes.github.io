@@ -1260,8 +1260,8 @@ export function ouvertureNotif({ etat, memo = {}, now = Date.now(), role, voulu 
 export const PUSH_CATEGORIES = ['messages', 'match', 'demandes', 'candidatures', 'mentorat', 'offres', 'reseau', 'rappels'];
 // Type de notification -> catégorie (un type inconnu : vie du réseau)
 export const PUSH_KINDS = {
-  // Un entretien proposé dans une discussion et sa réponse sont des messages : couper « Match » ne fait pas rater un entretien
-  message: 'messages', rdv_message: 'messages', rdv_reponse: 'messages',
+  // Un entretien proposé dans une discussion, sa réponse et son rappel sont des messages : couper « Match » ne fait pas rater un entretien
+  message: 'messages', rdv_message: 'messages', rdv_reponse: 'messages', rappel_entretien: 'messages',
   match: 'match', match_interet: 'match',
   demande_nouvelle: 'demandes', demande_large: 'demandes', demande_proposition: 'demandes', demande_match: 'demandes', demande_rouverte: 'demandes', demande_reponse: 'demandes',
   candidature: 'candidatures', candidature_statut: 'candidatures', invitation: 'candidatures',

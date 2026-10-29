@@ -341,11 +341,13 @@ async function preparerVapid(env: Env): Promise<Vapid> {
 type Abonnement = { id: string; user_id: string; endpoint: string; p256dh: string; auth: string };
 export type Notif = { title: string; body: string; url: string; tag: string; calme?: boolean };
 
-// Un entretien proposé dans une discussion et sa réponse sont des messages : même urgence
-export const urgence = (kind: string) => (['rappel_rdv', 'mentorat_accepte', 'message', 'rdv_message', 'rdv_reponse'].includes(kind) ? 'high' : 'normal');
+// Un entretien proposé dans une discussion, sa réponse et son rappel sont des messages : même urgence
+export const urgence = (kind: string) => (['rappel_rdv', 'rappel_entretien', 'mentorat_accepte', 'message', 'rdv_message', 'rdv_reponse'].includes(kind) ? 'high' : 'normal');
+// Durée de vie chez le service de push (téléphone éteint) : un jour ; un rappel ne sert plus une fois le rendez-vous commencé
+export const dureeVie = (kind: string) => (kind === 'rappel_rdv' || kind === 'rappel_entretien' ? 900 : 86400);
 
 // Envoie une notification ; rend le code HTTP du service de push (0 si injoignable)
-async function pousserUn(a: Abonnement, n: Notif, urg: string, v: Vapid): Promise<number> {
+async function pousserUn(a: Abonnement, n: Notif, urg: string, v: Vapid, ttl = 86400): Promise<number> {
   try {
     const aud = new URL(a.endpoint).origin;
     let j = v.jetons.get(aud);
@@ -354,7 +356,7 @@ async function pousserUn(a: Abonnement, n: Notif, urg: string, v: Vapid): Promis
     const r = await fetch(a.endpoint, {
       method: 'POST',
       headers: {
-        TTL: '86400', 'Content-Encoding': 'aes128gcm', 'Content-Type': 'application/octet-stream',
+        TTL: String(ttl), 'Content-Encoding': 'aes128gcm', 'Content-Type': 'application/octet-stream',
         Urgency: urg, Authorization: `vapid t=${await j}, k=${v.publique}`,
       },
       body: bs(corps),
@@ -550,6 +552,14 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     fr: v => ['Rendez-vous bientôt', `Avec ${v.nom}${v.heure ? ` à ${v.heure}` : ''} : ${v.sujet}`],
     ar: v => ['موعدك قريبًا', `مع ${v.nom}${v.heure ? ` على الساعة ${v.heure}` : ''}: ${v.sujet}`],
   },
+  // 15 minutes avant un entretien proposé dans une discussion (rappels_rdv) : l'heure, avec qui, où ; ouvre la discussion
+  rappel_entretien: {
+    route: 'messages',
+    fr: v => [`${v.duree === 15 ? 'Appel' : 'Entretien'}${v.heure ? ` à ${v.heure}` : ' bientôt'}`,
+      `Avec ${v.nom}${v.duree ? ` · ${v.duree} min` : ''}${v.lieu ? ` · ${v.lieu}.` : ' en visio. Le lien est dans votre discussion.'}`],
+    ar: v => [`${v.duree === 15 ? 'مكالمة' : 'مقابلة'}${v.heure ? ` على الساعة ${v.heure}` : ' قريبًا'}`,
+      `مع ${v.nom}${v.duree ? ` · ${v.duree} دقيقة` : ''}${v.lieu ? ` · ${v.lieu}.` : ' عبر الفيديو. الرابط في محادثتكما.'}`],
+  },
   relance_offre: {
     route: 'offres',
     fr: v => ['Ton offre est-elle toujours ouverte ?', `« ${v.titre} » : un clic pour confirmer, ou la marquer pourvue.`],
@@ -710,9 +720,11 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
   const rx = kind === 'reaction' ? (estUuid(d.offre) ? { route: `offre/${d.offre}`, id: d.offre } : estUuid(d.demande) ? { route: `offres/demandes/${d.demande}`, id: d.demande } : null) : null;
   // Un commentaire ouvre l'offre ; une notification par offre sur le téléphone
   const com = kind === 'offre_commentaire' && estUuid(d.offre) ? d.offre : null;
-  // Match : un match et un entretien ouvrent la discussion avec l'autre personne (de) ; un intérêt, la page Match
-  const disc = (kind === 'match' || kind === 'rdv_message' || kind === 'rdv_reponse') && estUuid(d.de) ? d.de : null;
-  const mt = kind === 'match' && estUuid(d.match) ? d.match : (kind === 'rdv_message' || kind === 'rdv_reponse') && estUuid(d.m) ? d.m
+  // Match : un match et un entretien (proposé, sa réponse, son rappel) ouvrent la discussion avec l'autre personne (de) ;
+  // un intérêt, la page Match
+  const entretien = kind === 'rdv_message' || kind === 'rdv_reponse' || kind === 'rappel_entretien';
+  const disc = (kind === 'match' || entretien) && estUuid(d.de) ? d.de : null;
+  const mt = kind === 'match' && estUuid(d.match) ? d.match : entretien && estUuid(d.m) ? d.m
     : kind === 'match_interet' && estUuid(d.de) ? d.de : null;
   const route = disc ? `messages/${disc}` : rx ? rx.route : kind === 'offre_alerte' && estUuid(d.offre) ? `offre/${d.offre}` : com ? `offre/${com}` : kind === 'message' && estUuid(d.de) ? `messages/${d.de}`
     : annule && v.pour === 'demandeur' ? `mentorat/reprendre/${annule}`
@@ -1671,6 +1683,48 @@ export function rendreMessages(n: number, noms: string[], langue: Langue, site: 
   return { sujet, html, texte, desabo };
 }
 
+// Rappel 15 minutes avant un rendez-vous (rappels_rdv dans schema.sql), pour qui n'a de notifications sur aucun appareil :
+// avec qui, à quelle heure, où ; le bouton ouvre la visio quand il y en a une, sinon la discussion ou le mentorat.
+// Pas de lien de désabonnement : un seul email, pour un rendez-vous pris par le membre ou proposé à lui.
+export function rendreRappelRdv(kind: string, data: unknown, langue: Langue, site: string): Courriel | null {
+  const d = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
+  const q = quand(d.rdv_at, langue);
+  if (!q || (kind !== 'rappel_rdv' && kind !== 'rappel_entretien')) return null;
+  site = siteEn(site, langue);
+  const ar = langue === 'ar', f = ar ? HTML_AR : HTML, b = ar ? BRUT_AR : BRUT;
+  const nom = couper(txt(d.nom), 80) || (ar ? 'عضو في الشبكة' : 'un membre');
+  const sujetRdv = couper(txt(d.sujet), 140), lieu = couper(txt(d.lieu), 200);
+  const duree = Math.max(0, Math.min(120, Number(d.duree) || 0));
+  const lien = /^https:\/\/[^\s]+$/i.test(txt(d.lien)) ? txt(d.lien) : '';
+  const mentorat = kind === 'rappel_rdv';
+  const ici = mentorat ? `${site}#mentorat` : estUuid(d.de) ? `${site}#messages/${d.de}` : `${site}#messages`;
+  // « ton rendez-vous », « ton appel » (15 min), « ton entretien » ; en arabe, موعد est masculin, مكالمة et مقابلة féminins
+  const quoi = mentorat ? 'rendez-vous' : duree === 15 ? 'appel' : 'entretien';
+  const quoiAr = mentorat ? 'موعدك' : duree === 15 ? 'مكالمتك' : 'مقابلتك';
+  const sujet = couper(ar ? `تذكير: ${quoiAr} مع ${nom} على الساعة ${q.heure}` : `Rappel : ton ${quoi} avec ${nom} à ${q.heure}`, 110);
+  const debut = (F: Fmt) => ar
+    ? `${quoiAr} مع ${F.g(nom)} ${mentorat ? 'يبدأ' : 'تبدأ'} على الساعة ${F.g(q.heure)} (${q.date})${duree ? `، لمدة ${duree} دقيقة` : ''}.`
+    : `Ton ${quoi} avec ${F.g(nom)} commence à ${F.g(q.heure)} (${q.date})${duree ? `, pour ${duree} min` : ''}.`;
+  const ou = (F: Fmt) => lieu ? (ar ? `المكان: ${F.u(lieu)}.` : `Lieu : ${F.u(lieu)}.`)
+    : lien ? (ar ? 'يجري عبر الفيديو: الزر أسفله يفتح القاعة.' : 'Il se passe en visio : le bouton ci-dessous ouvre la salle.')
+    : mentorat ? (ar ? 'يجري عبر الفيديو: الرابط في صفحة المواكبة.' : 'Il se passe en visio : le lien est dans ton espace Mentorat.')
+    : (ar ? 'يجري عبر الفيديو: الرابط في محادثتكما.' : 'Il se passe en visio : le lien est dans votre discussion.');
+  const lignes = (F: Fmt) => [debut(F), ...(sujetRdv ? [ar ? `الموضوع: ${F.u(sujetRdv)}.` : `Sujet : ${F.u(sujetRdv)}.`] : []), ou(F)];
+  const ouvrir = mentorat ? (ar ? 'فتح المواكبة' : 'Ouvrir le mentorat') : (ar ? 'فتح المحادثة' : 'Ouvrir la discussion');
+  const bouton = lien && !lieu ? { texte: ar ? 'الانضمام إلى الفيديو' : 'Rejoindre la visio', url: lien } : { texte: ouvrir, url: ici };
+  const pied = ar ? 'يصلك هذا البريد لأن لديك موعدًا على شبكة ENSAM مكناس ولم تفعّل الإشعارات على أي جهاز. فعّلها في «ملفي» لتصلك هذه التذكيرات على هاتفك.'
+    : 'Tu reçois cet email parce que tu as un rendez-vous sur le Réseau ENSAM Meknès et que les notifications ne sont activées sur aucun de tes appareils. Active-les dans Mon profil pour recevoir ces rappels sur ton téléphone.';
+  const html = cadreEmail({
+    langue, sujet, apercu: lignes(b).join(' '), sousTitre: ar ? 'تذكير' : 'Rappel',
+    intro: [esc(ar ? 'مرحبًا،' : 'Bonjour,')],
+    blocs: [{ lignes: lignes(f), bouton }],
+    pied, liens: bouton.url === ici ? [[ar ? 'فتح المنصة' : 'Ouvrir la plateforme', site]] : [[ouvrir, ici]],
+  });
+  const texte = [`${(ar ? AR : FR).marque} · ${ar ? 'تذكير' : 'Rappel'}`, '', ar ? 'مرحبًا،' : 'Bonjour,', ...lignes(b), '',
+    `${bouton.texte}${ar ? ': ' : ' : '}${bouton.url}`, ...(bouton.url === ici ? [] : [`${ouvrir}${ar ? ': ' : ' : '}${ici}`]), '', '--', pied].join('\n');
+  return { sujet, html, texte, desabo: '' };
+}
+
 // Enquête d'insertion : invitation, ou rappel trois semaines après
 export function rendreEnquete(vague: number, rappel: boolean, langue: Langue, site: string, token: string): Courriel {
   site = siteEn(site, langue);
@@ -1904,18 +1958,29 @@ async function jobCle(env: Env): Promise<Response> {
   return json({ publicKey: k.publique });
 }
 
-type Bilan = { sent: number; failed: number; removed: number };
+type Bilan = { sent: number; failed: number; removed: number; retry?: number };
+type AEnvoyer = { n: Notif; urg: string; ttl?: number; r?: Resultat };
+// Ce qu'est devenue une notification de la file, tous téléphones du membre confondus : code du meilleur envoi
+// (-1 : aucun téléphone), reçue quelque part, ou à reprendre (service injoignable, saturé ou en panne)
+type Resultat = { code: number; recue: boolean; reprendre: boolean };
+const passager = (st: number) => st === 0 || st === 429 || st >= 500;
 
 // Envoie à un téléphone les notifications de son membre, dans l'ordre ; s'arrête s'il n'existe plus
-async function envoyerA(a: Abonnement, notifs: { n: Notif; urg: string }[], v: Vapid, b: Bilan, morts: string[]) {
+async function envoyerA(a: Abonnement, notifs: AEnvoyer[], v: Vapid, b: Bilan, morts: string[]) {
   for (const x of notifs) {
-    const st = await pousserUn(a, x.n, x.urg, v);
+    const st = await pousserUn(a, x.n, x.urg, v, x.ttl);
+    if (x.r && !x.r.recue) {
+      x.r.code = st;
+      if (ok(st)) x.r.recue = true; else if (passager(st)) x.r.reprendre = true;
+    }
     if (ok(st)) b.sent++;
     else if (st === 404 || st === 410) { b.removed++; morts.push(a.id); return; }
     else b.failed++;
   }
 }
 
+// Une notification prise dans la file y reste jusqu'à push_faits : reçue par un téléphone, ou sans espoir (plus de
+// téléphone, type inconnu, refus définitif). Les autres sont reprises par la base après 2 minutes (relancer_push).
 async function jobPush(env: Env): Promise<Response> {
   const b: Bilan = { sent: 0, failed: 0, removed: 0 };
   let v: Vapid | null = null;
@@ -1927,20 +1992,44 @@ async function jobPush(env: Env): Promise<Response> {
     if (!lignes?.length) break;
     v = v || (await preparerVapid(env));
     // Les notifications de chaque membre, puis ses téléphones (une seule lecture par tour)
-    const parMembre = new Map<string, { n: Notif; urg: string }[]>();
+    const parMembre = new Map<string, AEnvoyer[]>();
+    const suivi: { id: number; user_id: string; kind: string; r: Resultat }[] = [];
+    const ignorees: number[] = [];
     for (const l of lignes) {
       const n = texteNotif(l.kind, l.data, l.langue, env.site);
-      if (!n) { console.error('notifier : notification ignorée (type ou statut inconnu)', l.kind); continue; }
+      if (!n) { console.error('notifier : notification ignorée (type ou statut inconnu)', l.kind); ignorees.push(l.id); continue; }
+      const r: Resultat = { code: -1, recue: false, reprendre: false };
+      suivi.push({ id: l.id, user_id: l.user_id, kind: l.kind, r });
+      const x = { n, urg: urgence(l.kind), ttl: dureeVie(l.kind), r };
       const liste = parMembre.get(l.user_id);
-      if (liste) liste.push({ n, urg: urgence(l.kind) }); else parMembre.set(l.user_id, [{ n, urg: urgence(l.kind) }]);
+      if (liste) liste.push(x); else parMembre.set(l.user_id, [x]);
     }
     const abos = await parIds<Abonnement>(env, 'push_subscriptions', 'select=id,user_id,endpoint,p256dh,auth', 'user_id', [...parMembre.keys()]);
     const morts: string[] = [];
     const vv = v;
     await parallele(abos, 10, a => envoyerA(a, parMembre.get(a.user_id) || [], vv, b, morts));
     await supprimer(env, 'push_subscriptions', morts);
+    const reprises = suivi.filter(x => !x.r.recue && x.r.reprendre).length;
+    if (reprises) b.retry = (b.retry || 0) + reprises;
+    await confirmerPush(env, [...ignorees, ...suivi.filter(x => x.r.recue || !x.r.reprendre).map(x => x.id)]);
+    await journaliser(env, suivi.map(x => ({ user_id: x.user_id, kind: x.kind, code: x.r.code })));
   }
   return json(b);
+}
+
+// Retire de la file ce qui est fait. Une base pas encore mise à jour (sans push_faits) a déjà retiré ce qu'elle a donné.
+async function confirmerPush(env: Env, ids: number[]): Promise<void> {
+  if (!ids.length) return;
+  try { await rpc(env, 'push_faits', { p_ids: ids }); }
+  catch (e) { console.error('notifier : confirmation des notifications impossible', e instanceof Error ? e.message : String(e)); }
+}
+
+// Journal des notifications (push_journal) : ne bloque jamais l'envoi
+async function journaliser(env: Env, lignes: { user_id: string; kind: string; code: number }[]): Promise<void> {
+  const l = lignes.filter(x => estUuid(x.user_id));
+  if (!l.length) return;
+  try { await db(env, 'push_journal', { method: 'POST', body: JSON.stringify(l), headers: { Prefer: 'return=minimal' } }); }
+  catch (e) { console.error('notifier : journal des notifications impossible', e instanceof Error ? e.message : String(e)); }
 }
 
 async function jobTest(env: Env, req: Request): Promise<Response> {
@@ -2419,6 +2508,35 @@ async function jobInactifs(env: Env): Promise<Response> {
   return json(b);
 }
 
+// Rappels de rendez-vous par email (rappels_rdv_a_envoyer) : seuls les envois réussis sont retirés de la file, les autres
+// sont repris par la base (relancer_push) tant que le rendez-vous n'a pas commencé
+async function jobRappelsRdv(env: Env): Promise<Response> {
+  const f = facteur(env);
+  if (!f.pret) return json({ skipped: 'email' });
+  const dest = ((await rpc(env, 'rappels_rdv_a_envoyer', { p_max: 100 })) || []) as { id: number; email: string; langue: string; kind: string; data: unknown }[];
+  const b: { sent: number; errors: number; via?: string } = { sent: 0, errors: 0 };
+  if (!dest.length) return json(b);
+  const envoyes: number[] = [];
+  const limite = Date.now() + 100_000;
+  await parallele(dest, f.paralleles, async x => {
+    if (Date.now() > limite) return;
+    const c = x.email ? rendreRappelRdv(x.kind, x.data, langueDe(x.langue), env.site) : null;
+    // Rien d'utile à envoyer (adresse ou date absente) : retiré, pour ne pas le reprendre
+    if (!c) { b.errors++; envoyes.push(x.id); return; }
+    try {
+      if (await f.envoyer(x.email, c)) { b.sent++; envoyes.push(x.id); }
+      else b.errors++;
+    } catch (e) {
+      b.errors++;
+      console.error('notifier : email de rappel de rendez-vous impossible', e instanceof Error ? e.message : String(e));
+    }
+  });
+  await f.fermer();
+  b.via = f.via();
+  if (envoyes.length) await rpc(env, 'rappels_rdv_envoyes', { p_ids: envoyes });
+  return json(b);
+}
+
 // Enquête d'insertion : invitation à l'ouverture de la vague, puis un rappel ; la notification
 // sur le téléphone part avec enquetes_invitees, même sans email
 async function jobEnquetes(env: Env): Promise<Response> {
@@ -2485,7 +2603,7 @@ export async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return json({ error: 'Méthode non autorisée' }, 405);
   let job: unknown;
   try { job = (await req.json())?.job; } catch { return json({ error: 'Requête invalide' }, 400); }
-  if (typeof job !== 'string' || !['cle', 'test', 'push', 'resume', 'essai_email', 'alertes', 'enquetes', 'messages', 'relances', 'demandes', 'rappels', 'inactifs'].includes(job)) return json({ error: 'Tâche inconnue' }, 400);
+  if (typeof job !== 'string' || !['cle', 'test', 'push', 'resume', 'essai_email', 'alertes', 'enquetes', 'messages', 'relances', 'demandes', 'rappels', 'inactifs', 'rappels_rdv'].includes(job)) return json({ error: 'Tâche inconnue' }, 400);
   const env = lireEnv();
   if (!env.url || !env.cle) {
     console.error('notifier : SUPABASE_URL ou SUPABASE_SERVICE_ROLE_KEY manquant');
@@ -2503,6 +2621,7 @@ export async function handler(req: Request): Promise<Response> {
     if (job === 'demandes') return await jobDemandes(env);
     if (job === 'rappels') return await jobRappels(env);
     if (job === 'inactifs') return await jobInactifs(env);
+    if (job === 'rappels_rdv') return await jobRappelsRdv(env);
     return job === 'push' ? await jobPush(env) : await jobResume(env);
   } catch (e) {
     console.error(`notifier : échec de « ${job} »`, e instanceof Error ? e.message : String(e));
