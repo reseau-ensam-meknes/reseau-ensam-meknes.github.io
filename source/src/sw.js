@@ -74,6 +74,14 @@ self.addEventListener('push', e => {
   }));
 });
 
+// Abonnement renouvelé par le navigateur : l'appareil se réabonne tout de suite, et la page redonne le nouvel abonnement
+// à la base à la prochaine ouverture (resynchroniserPush, pwa.js)
+self.addEventListener('pushsubscriptionchange', e => {
+  const cle = e.oldSubscription?.options?.applicationServerKey;
+  if (e.newSubscription || !cle) return;
+  e.waitUntil(self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: cle }).catch(() => {}));
+});
+
 self.addEventListener('notificationclick', e => {
   e.notification.close();
   const url = new URL(e.notification.data?.url || './', self.registration.scope).href;

@@ -12,7 +12,7 @@ import { ReseauPage, ProfileModal, ProfileForm, AskQuestion } from './community.
 import { MentoratPage, AskHelp, NextRdv, slotWhen, mentoratIgnorees, IlsOntBesoin, CoupDeMain, HoraireSheet, ICONE_BESOIN, VERBE_BESOIN, phraseBesoin, ouvrirBesoin, confirmerPresence, finirMentorat, lienVisio } from './mentorat.js';
 import { SuccessFeed, VerifyPage, MerciDuo } from './growth.js';
 import { PrivacyPage, ConsentModal, MesDonnees, DesaboPage } from './privacy.js';
-import { useInstall, IosInstallHelp, PrevenirHote, PastilleApp } from './pwa.js';
+import { useInstall, IosInstallHelp, PrevenirHote, PastilleApp, resynchroniserPush } from './pwa.js';
 import { NextCafe } from './groupes.js';
 import { EntrepriseModal } from './pro.js';
 import { DefisPanel, DevenirParrain, TonAnnee, TonAnneeStrip } from './saison.js';
@@ -178,6 +178,8 @@ function App({ store }) {
   // Un membre avec son profil : une invitation de promo gardée ici ne sert plus (après une déconnexion, « Se connecter » d'abord).
   // La démo n'a pas d'inscription : rien à oublier
   useEffect(() => { if (coque && store.mode === 'live') oublierInvitation(); }, [coque]);
+  // Notifications : l'abonnement de cet appareil redonné à la base à chaque ouverture (pwa.js)
+  useEffect(() => { if (coque) resynchroniserPush(store); }, [coque, store.me?.id]);
   // Lien direct vers une offre (WhatsApp, alertes par email, notifications) : sans compte, l'adresse garde #offre/<id>
   useEffect(() => { if (coque && route.base === 'offre' && route.sub) { setOfferId(route.sub); setApplyNow(false); go('offres', { exact: true }); } }, [route.base, route.sub, coque]);
   // Lien direct « Je peux aider » (notification sur le téléphone, email) : #aider/<id> ouvre la feuille devant la demande

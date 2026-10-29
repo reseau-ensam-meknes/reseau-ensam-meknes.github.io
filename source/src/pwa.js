@@ -90,6 +90,33 @@ function b64ToBytes(b64) {
   return Uint8Array.from(s, c => c.charCodeAt(0));
 }
 
+// À chaque ouverture, une fois par compte : l'abonnement de cet appareil est redonné à la base. Elle a pu l'oublier (le
+// téléphone a servi un autre compte, le service de push l'a refusé une fois) : Mon profil disait « Activées » alors que
+// plus rien n'arrivait. Rien n'est demandé au membre. Si la clé de la plateforme a changé, l'appareil se réabonne avec elle.
+const resynchronises = new Set();
+const memeCle = (cle, b64) => {
+  if (!cle) return true;
+  const a = new Uint8Array(cle), b = b64ToBytes(b64);
+  return a.length === b.length && a.every((x, i) => x === b[i]);
+};
+export async function resynchroniserPush(store) {
+  const id = store.me?.id;
+  if (store.mode !== 'live' || !id || resynchronises.has(id)) return;
+  resynchronises.add(id);
+  try {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    const reg = await swReady;
+    let sub = await reg?.pushManager?.getSubscription();
+    if (!sub) return;
+    const key = await store.pushKey();
+    if (key && !memeCle(sub.options?.applicationServerKey, key)) {
+      await sub.unsubscribe().catch(() => {});
+      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
+    }
+    await store.abonnerPush(sub);
+  } catch { /* hors ligne, ou navigateur qui veut un geste : à la prochaine ouverture */ }
+}
+
 const PUSH_CHANGE = 'ensam-push';
 // Les notifications sur cet appareil : demo | absent | ios | refuse | off | on
 export async function etatPush(store) {

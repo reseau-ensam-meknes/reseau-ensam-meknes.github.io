@@ -235,7 +235,7 @@ const SECTIONS = [
     'Tes réponses à l’enquête d’insertion sont détachées de ton compte 3 ans après ton diplôme : il n’en reste que des chiffres globaux, sans entreprise, ville ni commentaire.',
     'La liste officielle des étudiants est effacée chaque année le 1er septembre, à la fin de l’année universitaire.',
     'Quand tu remplaces ou retires ton CV, l’ancien fichier est effacé, sauf s’il est encore lié à une relecture.',
-    'Les notifications en attente sont effacées dès leur envoi.',
+    'Les notifications en attente sont effacées dès leur envoi, au plus tard après un jour. Un journal de leur envoi, sans leur contenu, est gardé 7 jours.',
     'Un message que tu supprimes est effacé pour vous deux, avec sa photo ou son vocal et ses réactions.',
   ]],
   ['check', 'Tes droits (loi 09-08)', [

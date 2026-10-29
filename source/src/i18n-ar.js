@@ -432,7 +432,7 @@ export const AR = {
   'Carte : fonds OpenStreetMap et CARTO. Polices : Google Fonts. Notifications du téléphone : le service de ton navigateur (Google, Apple ou Mozilla), seulement si tu les actives.': 'الخريطة: خلفيات OpenStreetMap وCARTO. الخطوط: Google Fonts. إشعارات الهاتف: خدمة متصفحك (Google أو Apple أو Mozilla)، فقط إن فعّلتها.',
   'Combien de temps': 'إلى متى',
   'Tant que ton compte existe. Quand tu le supprimes, ton profil et tout ce qui t’est lié sont effacés tout de suite. Seuls restent des chiffres globaux sans nom.': 'ما دام حسابك موجودًا. عند حذفه، يُمحى ملفك وكل ما يرتبط بك فورًا. لا تبقى إلا أرقام إجمالية بلا أسماء.',
-  'Les notifications en attente sont effacées dès leur envoi.': 'تُمحى الإشعارات المنتظرة بمجرد إرسالها.', 'Tes droits (loi 09-08)': 'حقوقك (القانون 09-08)',
+  'Les notifications en attente sont effacées dès leur envoi, au plus tard après un jour. Un journal de leur envoi, sans leur contenu, est gardé 7 jours.': 'تُمحى الإشعارات المنتظرة بمجرد إرسالها، وبعد يوم واحد على الأكثر. ويُحتفظ بسجل إرسالها، دون محتواها، لمدة 7 أيام.', 'Tes droits (loi 09-08)': 'حقوقك (القانون 09-08)',
   'Accès : télécharge toutes tes données depuis « Mon profil ».': 'الاطلاع: حمّل كل بياناتك من «ملفي الشخصي».', 'Rectification : modifie ton profil à tout moment.': 'التصحيح: عدّل ملفك في أي وقت.',
   'Opposition : désactive les emails ou les notifications en un clic.': 'الاعتراض: أوقف الرسائل الإلكترونية أو الإشعارات بنقرة واحدة.',
   'Suppression : supprime ton compte depuis « Mon profil », sans rien demander à personne.': 'الحذف: احذف حسابك من «ملفي الشخصي» دون أن تطلب ذلك من أحد.',

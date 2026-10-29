@@ -106,7 +106,7 @@ export class Banc {
   constructor() {
     this.tables = {
       profiles: [], offers: [], applications: [], invitations: [], mentorships: [], questions: [], answers: [],
-      parrainages: [], cafes: [], placements: [], push_subscriptions: [], push_queue: [], app_secrets: [], notif_etat: [],
+      parrainages: [], cafes: [], placements: [], push_subscriptions: [], push_queue: [], push_journal: [], app_secrets: [], notif_etat: [],
     };
     this.emails = new Map();          // id -> email (auth.users)
     this.jetons = new Map();          // jeton utilisateur -> id
@@ -184,7 +184,7 @@ export class Banc {
       const ignorer = /resolution=ignore-duplicates/.test(entetes.get('prefer') || '');
       for (const l of lignes) {
         const cle = chemin === 'app_secrets' ? 'cle' : 'id';
-        if (table.some(x => x[cle] === l[cle])) { if (ignorer) continue; return this.json({ message: 'doublon' }, 409); }
+        if (l[cle] !== undefined && table.some(x => x[cle] === l[cle])) { if (ignorer) continue; return this.json({ message: 'doublon' }, 409); }
         table.push({ ...l });
       }
       return new Response(null, { status: 201 });
@@ -207,10 +207,19 @@ export class Banc {
     this.appelsRpc[fn] = (this.appelsRpc[fn] || 0) + 1;
     // Fonctions SQL simulées par un test : this.rpcs[fn] = args => résultat
     if (this.rpcs?.[fn]) { (this.argsRpc ||= {})[fn] = [...(this.argsRpc[fn] || []), args]; const r = this.rpcs[fn](args); return r === undefined ? new Response(null, { status: 204 }) : this.json(r); }
+    // Comme la fonction SQL : les notifications restent en file, marquées prises, jusqu'à push_faits ;
+    // reprises après 2 minutes, 3 essais au plus
     if (fn === 'prendre_push') {
-      const q = this.tables.push_queue.sort((a, b) => a.id - b.id);
-      const pris = q.splice(0, args.p_max ?? 300);
+      const libre = x => (x.essais ?? 0) < 3 && (!x.pris_at || Date.parse(x.pris_at) < Date.now() - 120e3);
+      const pris = this.tables.push_queue.filter(libre).sort((a, b) => a.id - b.id).slice(0, args.p_max ?? 300);
+      for (const x of pris) { x.pris_at = new Date().toISOString(); x.essais = (x.essais ?? 0) + 1; }
       return this.json(pris.map(x => ({ id: x.id, user_id: x.user_id, kind: x.kind, data: x.data, langue: this.tables.profiles.find(p => p.id === x.user_id)?.langue || 'fr' })));
+    }
+    if (fn === 'push_faits') {
+      (this.argsRpc ||= {})[fn] = [...(this.argsRpc[fn] || []), args];
+      const faits = new Set((args.p_ids || []).map(Number));
+      this.tables.push_queue = this.tables.push_queue.filter(x => !faits.has(Number(x.id)));
+      return new Response(null, { status: 204 });
     }
     if (fn === 'destinataires_resume') {
       // Comme la fonction SQL : une fois par semaine, comptes de plus de 2 jours, emails_hebdo

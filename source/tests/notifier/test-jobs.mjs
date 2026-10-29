@@ -206,9 +206,11 @@ test('push : erreurs du service (500, réseau) comptées, 404 supprimé', async 
   b.recepteurs.delete(d.endpoint);   // hôte injoignable
   b.tables.push_queue.push({ id: 1, user_id: u, kind: 'test', data: {} });
   const r = await corpsDe(await appel({ job: 'push' }, { 'x-notifier': SECRET }));
-  assert.deepEqual(r, { sent: 0, failed: 2, removed: 1 });
+  assert.deepEqual(r, { sent: 0, failed: 2, removed: 1, retry: 1 });
   assert.deepEqual(b.tables.push_subscriptions.map(x => x.id).sort(), [a.id, d.id].sort());
   assert.ok(erreurs.some(e => e.includes('push refusé') && e.includes('500')));
+  // Reçue nulle part, à cause de pannes passagères : elle reste en file pour un nouvel essai
+  assert.deepEqual(b.tables.push_queue.map(x => [x.id, x.essais]), [[1, 1]]);
 });
 
 // ---------------------------------------------------------------------------
