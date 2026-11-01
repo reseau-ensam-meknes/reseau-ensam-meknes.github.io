@@ -6029,3 +6029,31 @@ test('administration · Contenus : retirer une demande se confirme (un match en 
     await s.ctx.close();
   }
 });
+
+test('administration · sur ordinateur, aucun filtre ne se cache au bout de sa rangée (À traiter, Membres, Contenus) ; sur téléphone, chaque cible de l’objectif a toute la largeur', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Admin');
+  for (const [route, rangee] of [['admin/traiter', '.tt-filtres'], ['admin/membres', '.cs-puces'], ['admin/contenus/mentorats', '.cnt-filtres']]) {
+    await s.aller(route); await s.page.waitForSelector(rangee);
+    const r = await s.page.locator(rangee).evaluate(l => { const b = l.getBoundingClientRect(); return { defile: l.scrollWidth > l.clientWidth + 1, caches: [...l.children].filter(c => { const x = c.getBoundingClientRect(); return x.left < b.left - 1 || x.right > b.right + 1; }).length }; });
+    assert.deepEqual(r, { defile: false, caches: 0 }, `${route} : toutes les puces se voient`);
+  }
+  // Les lauréats proposés pour une demande : chaque « Écrire » dit à qui
+  await s.aller('admin/traiter/demandes');
+  await s.page.locator('.tt-item[data-cat="demandes"] .tt-ouvrir').first().click(); await s.page.waitForTimeout(200);
+  const n = await s.page.locator('.tt-aidants > li').count();
+  assert.equal(await s.page.locator('.tt-detail .tt-sous-t').innerText(), ['Un lauréat qui peut aider', 'Deux lauréats qui peuvent aider', 'Trois lauréats qui peuvent aider'][n - 1]);
+  for (const li of await s.page.locator('.tt-aidants > li').all()) {
+    const prenom = (await li.locator('.person-name').innerText()).split(' ')[0];
+    assert.equal(await li.locator('.msg-btn').getAttribute('aria-label'), `Écrire à ${prenom}`);
+  }
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  const t = await ouvrir({ largeur: 390 });
+  await t.comme('Admin'); await t.aller('admin'); await t.page.waitForSelector('#adm-objectif .cs-obj li');
+  const lignes = await t.page.locator('#adm-objectif .cs-obj').evaluate(u => { const w = u.getBoundingClientRect().width; return [...u.children].map(li => Math.round(li.getBoundingClientRect().width - w) === 0 && li.querySelector('.cs-obj-bar').getBoundingClientRect().width > w - 2); });
+  assert.ok(lignes.length === 4 && lignes.every(Boolean), 'quatre cibles, chacune et sa barre sur toute la largeur');
+  assert.equal(await t.debordement(), 0);
+  assert.deepEqual(t.erreurs, []);
+  await t.ctx.close();
+});

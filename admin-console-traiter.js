@@ -24,6 +24,7 @@ addAR({
   'Ouvrir la modération': 'فتح الإشراف', 'Voir dans Membres': 'عرض في الأعضاء',
   'Le lauréat a déclaré ce recrutement. Si l’étudiant ne confirme pas, l’administration peut le faire après vérification.': 'صرّح الخريج بهذا التوظيف. إذا لم يؤكده الطالب، يمكن للإدارة فعل ذلك بعد التحقق.',
   'Recrutement confirmé.': 'تم تأكيد التوظيف.', 'Recrutement refusé.': 'تم رفض التوظيف.',
+  'Un lauréat qui peut aider': 'خريج واحد يمكنه المساعدة', 'Deux lauréats qui peuvent aider': 'خريجان يمكنهما المساعدة',
   'Trois lauréats qui peuvent aider': 'ثلاثة خريجين يمكنهم المساعدة', 'Un message prêt, dans sa langue : relis-le avant de l’envoyer.': 'رسالة جاهزة بلغته: راجعها قبل إرسالها.',
   'Aucun lauréat proche pour l’instant : partage la demande dans les groupes de sa filière.': 'لا خريج قريب حاليًا: شارك الطلب في مجموعات شعبته.',
   'L’étudiant attend qu’un lauréat choisisse un de ses horaires.': 'ينتظر الطالب أن يختار خريج أحد توقيتاته.', 'Voir les mentorats': 'عرض الإرشاد',
@@ -65,6 +66,8 @@ export function CalloutATraiter({ items, go }) {
 
 const lienDemande = id => `${location.origin}${location.pathname}#offres/demandes/${id}`;
 const prenomDe = p => (p?.full_name || '').split(' ')[0];
+// Le titre au-dessus des lauréats proposés pour une demande (laureatsPourDemande en rend trois au plus)
+const AIDANTS = ['Un lauréat qui peut aider', 'Deux lauréats qui peuvent aider', 'Trois lauréats qui peuvent aider'];
 
 // Ce que montre chaque ligne : sorte, titre, détail court, gestes sur place, et ce qui s'ouvre
 function vue(ctx, it, comptes) {
@@ -120,10 +123,10 @@ function vue(ctx, it, comptes) {
         detail: () => {
           const l = laureatsPourDemande(ctx.data, d, 3);
           return html`${d.details ? html`<p class="tt-cite" translate="no" dir="auto">${court(d.details, 280)}</p>` : null}
-            ${l.length ? html`<p class="tt-sous-t">Trois lauréats qui peuvent aider</p>
+            ${l.length ? html`<p class="tt-sous-t">${AIDANTS[l.length - 1]}</p>
               <ul class="people-list tt-aidants">${l.map(({ p, why }) => html`<li key=${p.id}><${Person} p=${p} onOpen=${openProfile} sub=${`${p.filiere || ''} · Promo ${p.promo}`}/>
                 <span class="tt-why">${why.map(w => html`<span class="mini">${w}</span>`)}</span>
-                <${MessageBtn} ctx=${ctx} p=${p} cls="btn small tonal" texte=${messagePourDemande(p, etu, d, lienDemande(d.id), saison)}/></li>`)}</ul>
+                <${MessageBtn} ctx=${ctx} p=${p} cls="btn small tonal" aria=${`Écrire à ${prenomDe(p)}`} texte=${messagePourDemande(p, etu, d, lienDemande(d.id), saison)}/></li>`)}</ul>
               <p class="small muted">Un message prêt, dans sa langue : relis-le avant de l’envoyer.</p>`
             : html`<p class="small muted">Aucun lauréat proche pour l’instant : partage la demande dans les groupes de sa filière.</p>`}`;
         },
