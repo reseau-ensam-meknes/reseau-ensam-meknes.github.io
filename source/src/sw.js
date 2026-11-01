@@ -68,11 +68,21 @@ async function reseauDabord(req) {
 self.addEventListener('push', e => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch { d = { body: e.data?.text() }; }
-  e.waitUntil(self.registration.showNotification(d.title || 'Réseau ENSAM Meknès', {
+  e.waitUntil(Promise.all([self.registration.showNotification(d.title || 'Réseau ENSAM Meknès', {
     body: d.body || '', tag: d.tag || undefined, renotify: !!d.tag && !d.calme, silent: !!d.calme,
+    vibrate: d.calme ? undefined : [120, 60, 120], timestamp: Date.now(),
     icon: 'pwa/icon-192.png', badge: 'pwa/badge-96.png', data: { url: d.url || './' },
-  }));
+  }), signalerRecu(d.ack)]));
 });
+
+// La preuve de réception : la base (push_recu) et la page ouverte (« Tester », Mon profil). Une erreur ne touche pas la notification.
+async function signalerRecu(ack) {
+  try {
+    for (const c of await self.clients.matchAll({ type: 'window', includeUncontrolled: true })) c.postMessage('push-recu');
+    const sub = ack && await self.registration.pushManager.getSubscription();
+    if (sub) await fetch(ack.u, { method: 'POST', headers: { apikey: ack.k, Authorization: 'Bearer ' + ack.k, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_endpoint: sub.endpoint }) });
+  } catch { /* hors ligne : la notification est là quand même */ }
+}
 
 // Abonnement renouvelé par le navigateur : l'appareil se réabonne tout de suite, et la page redonne le nouvel abonnement
 // à la base à la prochaine ouverture (resynchroniserPush, pwa.js)

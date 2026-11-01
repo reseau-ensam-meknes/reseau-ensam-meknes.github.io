@@ -1600,7 +1600,7 @@ language sql immutable as $$
     -- « Match » ne fait jamais rater un entretien
     when p_kind in ('message','rdv_message','rdv_reponse','rappel_entretien') then 'messages'
     -- Page Match (section « Match », en fin de fichier) : un intérêt pour soi, un match
-    when p_kind in ('match','match_interet') then 'match'
+    when p_kind in ('match','match_interet','match_jour') then 'match'
     when p_kind in ('demande_nouvelle','demande_large','demande_proposition','demande_match','demande_rouverte','demande_reponse') then 'demandes'
     when p_kind in ('candidature','candidature_statut','invitation','recrutement_a_confirmer','recrutement_confirme','relance_offre') then 'candidatures'
     when p_kind in ('mentorat_demande','mentorat_ouvert','mentorat_accepte','mentorat_deplace','mentorat_annule','rappel_rdv','merci',
@@ -4710,6 +4710,7 @@ create or replace function public.rappels_soir() returns void
 language plpgsql security definer set search_path = public as $$
 begin
   perform public.rappels_push();
+  begin perform public.match_jour_push(); exception when others then raise warning 'Match du jour : %', sqlerrm; end;
   perform public.appeler_notifier('rappels');
 end $$;
 revoke all on function public.rappels_soir() from public, anon, authenticated;
@@ -5652,6 +5653,56 @@ begin
   return v;
 end $$;
 revoke all on function public.relancer_push() from public, anon, authenticated;
+
+-- =====================================================================
+--  Notifications : la preuve de réception, et le tour Match du jour
+--    · push_subscriptions.recu_at : la dernière fois que ce téléphone a vraiment reçu une notification. Le service de push
+--      répond 201 dès qu'il l'accepte, même si elle n'arrive jamais ; le service worker, lui, le dit à la réception.
+--      L'adresse d'abonnement sert de preuve : elle n'est connue que de l'appareil et de la plateforme.
+--    · Match du jour : chaque soir, à qui a des cartes à voir (catégorie « Match » de Mon profil).
+-- =====================================================================
+alter table public.push_subscriptions add column if not exists recu_at timestamptz;
+
+create or replace function public.push_recu(p_endpoint text) returns void
+language sql security definer set search_path = public as $$
+  update public.push_subscriptions set recu_at = now() where endpoint = p_endpoint;
+$$;
+revoke all on function public.push_recu(text) from public;
+grant execute on function public.push_recu(text) to anon, authenticated;
+
+-- Compte un peu moins de cartes que deckMatch (logic.js), jamais plus : personne n'est envoyé vers une pile vide.
+-- Rien pour qui vient de recevoir le rappel de visite du même soir.
+create or replace function public.match_jour_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_n int;
+begin
+  insert into public.push_queue (user_id, kind, data)
+  select x.id, 'match_jour', jsonb_build_object('n', least(x.n, 5), 'type', x.role)
+  from (
+    select p.id, p.role, case when p.role = 'laureat' then (
+        select count(*) from public.profiles e
+        where e.role = 'etudiant' and e.match_visible and coalesce(btrim(e.filiere), '') <> '' and e.filiere = p.filiere
+          and not exists (select 1 from public.match_choix c where c.user_id = p.id and c.cible_profil = e.id)
+          and not exists (select 1 from public.matchs m where m.laureat_id = p.id and m.etudiant_id = e.id))
+      else (
+        select count(*) from public.offers o join public.profiles a on a.id = o.author_id
+        where o.status = 'ouverte' and a.role = 'laureat' and o.author_id <> p.id and coalesce(o.audience, 'etudiants') = 'etudiants'
+          and public.niveau_de(p.promo, public.saison_courante()) = any(coalesce(o.annees, '{}'::int[]))
+          and (cardinality(coalesce(o.filieres, '{}')) = 0 or p.filiere = any(o.filieres))
+          and not exists (select 1 from public.match_choix c where c.user_id = p.id and c.cible_offre = o.id)
+          and not exists (select 1 from public.applications y where y.student_id = p.id and y.offer_id = o.id)
+          and not exists (select 1 from public.matchs m where m.etudiant_id = p.id and m.laureat_id = o.author_id))
+      end as n
+    from public.profiles p
+    where p.role in ('etudiant','laureat') and coalesce(btrim(p.filiere), '') <> ''
+      and exists (select 1 from public.push_subscriptions s where s.user_id = p.id)
+      and public.push_voulu(p.id, 'match_jour')
+      and not exists (select 1 from public.rappels_visite r where r.user_id = p.id and r.push_at > now() - interval '1 hour')
+  ) x where x.n > 0;
+  get diagnostics v_n = row_count;
+  return v_n;
+end $$;
+revoke all on function public.match_jour_push() from public, anon, authenticated;
 
 -- Chaque minute (pg_cron, « ensam-rappels ») : les rappels, puis ce qui attend dans les files
 create or replace function public.taches_minute() returns void
