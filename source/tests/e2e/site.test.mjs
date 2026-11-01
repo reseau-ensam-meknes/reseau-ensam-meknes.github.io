@@ -2598,16 +2598,17 @@ test('cloche : son chiffre compte ce qui attend un geste, la feuille dit « À f
   const pastilles = () => s.page.$$eval('.bottom-nav a', as => as.filter(a => a.querySelector('.dotn')).map(a => a.innerText.trim().split('\n')[0]));
   // Accueil : la plateforme lui propose d'être ambassadeur de sa promo (ambassadeurs.js) ; sur téléphone, Mon espace est
   // dans le menu du compte (Match a pris sa place dans la barre) : sa pastille passe sur l'avatar
-  assert.deepEqual((await pastilles()).sort(), ['Accueil', 'Mentorat']);
+  // Match : Khadija s'est intéressée à son offre et attend une réponse
+  assert.deepEqual((await pastilles()).sort(), ['Accueil', 'Match', 'Mentorat']);
   assert.equal(await s.page.locator('.me-btn .dotn').count(), 1);
   // Mon espace ne répète pas la cloche : aucune de ses lignes (elles sont dans la cloche et sur l'accueil)
   await s.aller('espace');
   assert.equal(await s.page.locator('.page .af-row').count(), 0, 'Mon espace ne répète pas les lignes de la cloche');
   assert.doesNotMatch(await s.page.locator('.page').innerText(), /nouvelles candidatures|te demande de l’aide/);
-  // Un étudiant sans rien à faire : ni chiffre ni pastille, et la cloche le dit calmement
+  // Un étudiant sans rien à faire : ni chiffre ni pastille, et la cloche le dit calmement (seul Match s'allume : Youssef s'intéresse à son profil)
   await s.comme('Amine'); await s.aller('accueil');
   assert.equal(await s.page.locator('.cloche-btn .badge-n').count(), 0);
-  assert.deepEqual(await pastilles(), []);
+  assert.deepEqual(await pastilles(), ['Match']);
   assert.equal(await s.page.locator('.me-btn .dotn').count(), 0);
   await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
   assert.equal(await s.page.locator('.cloche .af-row').count(), 0);
@@ -5079,5 +5080,17 @@ test('Match : le geste montré une fois, sans gêner la carte', async () => {
   await s.page.waitForSelector('.mx-guide', { state: 'detached' });
   await s.page.reload(); await s.page.waitForSelector('.mx-carte');
   assert.equal(await s.page.locator('.mx-guide').count(), 0, 'pas deux fois');
+  await s.ctx.close();
+});
+
+test('Match : l’anneau du tour du jour avance à chaque carte et garde son compte', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('match');
+  await s.page.waitForSelector('.mx-tour');
+  assert.equal((await s.page.locator('.mx-tour-n').innerText()).trim(), '0');
+  await s.page.locator('.mx-non').click();
+  await s.page.waitForFunction(() => document.querySelector('.mx-tour-n').textContent.trim() === '1');
+  await s.page.reload(); await s.page.waitForSelector('.mx-tour');
+  assert.equal((await s.page.locator('.mx-tour-n').innerText()).trim(), '1', 'le compte du jour reste après un rechargement');
   await s.ctx.close();
 });

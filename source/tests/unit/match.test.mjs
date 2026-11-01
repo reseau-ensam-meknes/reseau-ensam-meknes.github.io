@@ -2,7 +2,7 @@
 // puis la démo (DemoStore) qui suit les mêmes règles que protect_match_choix() et match_apres_choix().
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { refusChoixMatch, nouveauMatch, deckMatch, matchsDe, etapeMatch, pourquoiCarte, matchEntre, lienAvec, peutDiscuter, MATCH_PAR_JOUR, PREPA } from '../../src/logic.js';
+import { refusChoixMatch, nouveauMatch, deckMatch, matchsDe, etapeMatch, pourquoiCarte, matchEntre, lienAvec, peutDiscuter, MATCH_PAR_JOUR, PREPA, TOUR_JOUR, etatTour, avancerTour } from '../../src/logic.js';
 
 const NOW = new Date(2026, 9, 27, 10, 0).getTime();     // mardi 27 octobre 2026 : saison 2026-2027
 const SAISON = 2026;
@@ -242,4 +242,18 @@ test('démo : l’entretien proposé — le destinataire répond, les champs son
   // Un message ordinaire ne garde aucun champ d'entretien
   const t = await s.envoyerMessage({ dest, type: 'texte', body: 'Bonjour', rdv_at: demain, rdv_duree: 30 });
   assert.equal('rdv_at' in t || 'rdv_duree' in t, false);
+});
+
+test('tour du jour : cinq cartes, les jours de suite, et une reprise sans reproche après un jour sans', () => {
+  let t = null;
+  for (let i = 1; i <= TOUR_JOUR; i++) { t = avancerTour(t, '2026-10-30'); assert.equal(t.n, i); assert.equal(t.fini, i === TOUR_JOUR); }
+  assert.equal(t.serie, 1);
+  t = avancerTour(t, '2026-10-30'); assert.equal(t.fini, false, 'une carte de plus ne refait pas la fête'); assert.equal(t.serie, 1);
+  assert.equal(etatTour(t, '2026-10-31').n, 0, 'un nouveau jour repart de zéro');
+  assert.equal(etatTour(t, '2026-10-31').serie, 1, 'la veille compte encore');
+  for (let i = 0; i < TOUR_JOUR; i++) t = avancerTour(t, '2026-10-31');
+  assert.equal(t.serie, 2);
+  for (let i = 0; i < TOUR_JOUR; i++) t = avancerTour(t, '2026-11-01');
+  assert.equal(t.serie, 3, 'le changement de mois ne casse pas la série');
+  assert.equal(etatTour(t, '2026-11-03').serie, 0, 'un jour sans : la série repart de zéro');
 });

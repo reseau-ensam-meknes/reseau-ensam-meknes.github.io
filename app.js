@@ -3,7 +3,7 @@ import { getLang, setLang, chargerAR } from './i18n.js';
 import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore, texteErreur } from './store.js';
 import { Icon, Person, Avatar, Bar, CompanyLogo, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille, ecranLibre } from './ui.js';
-import { matchsDe, seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, demandeLargeLe, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour } from './logic.js';
+import { deckMatch, matchsDe, seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, demandeLargeLe, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, recoFor, matchesMe, APP_STATUS } from './offers.js';
 import { estPortee, estPartagee, partageExpire } from './origine.js';
 import { nouvellesVivant } from './reseau-vivant.js';
@@ -313,7 +313,8 @@ function App({ store }) {
   const ongletDe = n => { const b = (n.to || '').split('/')[0]; return n.offer || n.profile || !b || b === 'parcours' || b === 'espace' ? perso : b; };
   const ouAFaire = new Set(notifs.filter(n => n.geste).map(ongletDe));
   // Match : un match fait par l'autre et pas encore vu
-  const matchNeuf = avecMatch && matchsDe(data, me).some(x => x.nouveau);
+  // ou quelqu'un qui s'est intéressé et attend une réponse
+  const matchNeuf = avecMatch && (matchsDe(data, me).some(x => x.nouveau) || (page !== 'match' && deckMatch(data, me).some(c => c.interet)));
   const dotFor = k => ouAFaire.has(k) || (k === 'match' && matchNeuf);
   const neuf = x => (x > 9 ? '9+' : x);
   const plein = page === 'messages';
