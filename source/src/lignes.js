@@ -3,7 +3,7 @@
 //  - useVoirPlus / VoirPlus : une longue liste s'arrête à 20, « Voir plus (n) » montre la suite
 //  - BoutonFiltres / FeuilleFiltres : « Filtres · 2 » ouvre une feuille du bas ; « Effacer » et « Voir N résultats »
 import { html, useState, useLayoutEffect, useRef } from './vendor/preact-htm.js';
-import { Icon, Modal, Avatar, RoleLine } from './ui.js';
+import { Icon, Modal, Avatar, RoleLine, injectCSS } from './ui.js';
 import { ajouterIcones } from './entree.js';
 
 // Réglages (le bouton « Filtres »)
@@ -36,10 +36,12 @@ export function PucesNav({ items, actif, onChoisir, label, cls = '', idPrefix = 
 
 // La ligne d'une personne : visage 40 px, nom, sa ligne habituelle (année, promo, vérifié) et une ligne de plus (meta).
 // Même balisage que Person (bouton .person) : tout le texte ouvre la fiche, l'action de la ligne reste à côté.
-export function PersonneLigne({ p, score, onOpen, meta, sub, sansEntreprise }) {
+// badge : un badge court à côté du nom (« Pionnier » dans l'annuaire) ; le nom se raccourcit avant lui, le badge jamais.
+export function PersonneLigne({ p, score, onOpen, meta, sub, sansEntreprise, badge }) {
+  const nom = p?.full_name ? html`<span class="person-name" translate="no" dir="auto">${p.full_name}</span>` : html`<span class="person-name">Membre</span>`;
   return html`<button type="button" class="person ligne-main" onClick=${() => onOpen?.(p)}>
     <${Avatar} p=${p} size=${40}/>
-    <span class="person-txt">${p?.full_name ? html`<span class="person-name" translate="no" dir="auto">${p.full_name}</span>` : html`<span class="person-name">Membre</span>`}
+    <span class="person-txt">${badge ? html`<span class="person-l1 ligne-l1">${nom}${badge}</span>` : nom}
       ${sub !== undefined ? html`<span class="role-line">${sub}</span>` : html`<${RoleLine} p=${p} score=${score} sansEntreprise=${sansEntreprise}/>`}
       ${meta ? html`<span class="ligne-meta">${meta}</span>` : null}</span>
   </button>`;
@@ -69,3 +71,8 @@ export function FeuilleFiltres({ titre = 'Filtres', total, actifs, onEffacer, on
     <div class="filtres-corps">${children}</div>
   <//>`;
 }
+
+injectCSS('ligne-badge', `
+.ligne-l1 { gap: var(--sp-2); }
+.ligne-l1 > .ligne-badge { flex: none; margin: 0; padding-block: 1px; }
+`);

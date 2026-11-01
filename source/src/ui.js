@@ -856,6 +856,7 @@ const EMBLEMES = {
   top: '<path d="M8 4h8v5a4 4 0 0 1-8 0z"/><path d="M8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8.5 20.5h7M10 17h4"/>',
   ambassadeur: '<path d="M4 10.5v3a1 1 0 0 0 1 1h2.5L13 19V5L7.5 9.5H5a1 1 0 0 0-1 1z"/><path d="M16.5 9a4 4 0 0 1 0 6M19 6.5a7.5 7.5 0 0 1 0 11"/>',
   mois: '<rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M8 3v4M16 3v4"/><path d="M12 11.6l1 2 2.2.3-1.6 1.5.4 2.2-2-1-2 1 .4-2.2-1.6-1.5 2.2-.3z"/>',
+  pionnier: '<path d="M12 21v-9"/><path d="M12 12c-4.4 0-7-2.6-7-6.5 4.4 0 7 2.6 7 6.5z"/><path d="M12 10.5c0-3.9 2.6-6.5 7-6.5 0 3.9-2.6 6.5-7 6.5z"/><path d="M8 21h8"/>',
 };
 export function Embleme({ id, size = 20 }) {
   return html`<svg class=${'ico embleme em-' + id} width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: EMBLEMES[id] || EMBLEMES.premier }}></svg>`;

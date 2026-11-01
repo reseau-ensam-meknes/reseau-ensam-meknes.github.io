@@ -1,8 +1,8 @@
 // Annuaire pro : personnes (entreprise, ville, pays, secteur), carte des lauréats, entreprises, startups.
 import { html, useState, useMemo, useEffect, useRef } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, CompanyLogo, toast, FiliereFiltre } from './ui.js';
+import { Icon, Modal, Field, Empty, Person, CompanyLogo, toast, FiliereFiltre, Embleme } from './ui.js';
 import { getLang } from './i18n.js';
-import { SECTEURS, TYPES, niveauOf, entKey, sameCompany, seasonLabel, filtreFiliere, parcoursOf } from './logic.js';
+import { SECTEURS, TYPES, niveauOf, entKey, sameCompany, seasonLabel, filtreFiliere, parcoursOf, pionniersOf } from './logic.js';
 import { coordsOf, canonPays, countryCentroid, PAYS_AR, recherche, villeAffichee } from './geo.js';
 import { OfferCard, matchesMe } from './offers.js';
 import { EntrepriseResume, QuestionsRecentes } from './entreprises.js';
@@ -52,12 +52,15 @@ function Personnes({ ctx, preset = '' }) {
   const effacer = () => { setRole(''); setFil(''); setSect(''); setAbroad(false); setPromo(false); };
   const { vus, reste, plus } = useVoirPlus(dir, 20, [q, role, fil, sect, abroad, promo].join('|'));
   const lieu = p => [villeLabel(p.ville), p.pays && canonPays(p.pays) !== 'Maroc' ? paysLabel(p.pays) : ''].filter(Boolean).join(' · ');
+  // « Pionnier de sa promo » : le badge, à côté du nom (comme sur sa fiche)
+  const pionniers = pionniersOf(data.profiles);
   return html`<div class="sub-page">
     <div class="recherche-filtres"><label class="search"><${Icon} name="search" size=${16}/><input id="d-q" placeholder="Nom, entreprise, ville, compétence…" value=${q} onInput=${e => setQ(e.target.value)}/></label>
       <${BoutonFiltres} id="d-filtres" actifs=${actifs} onClick=${() => setFeuille(true)}/></div>
     <p class="liste-tete" id="d-total">${`${dir.length} membre${dir.length > 1 ? 's' : ''}`}</p>
     ${dir.length ? html`<ul class="lignes annuaire">${vus.map(p => html`<li key=${p.id} class="ligne">
       <${PersonneLigne} p=${p} score=${scores.get(p.id)} onOpen=${openProfile} sansEntreprise=${p.role === 'laureat' && !!p.entreprise}
+        badge=${pionniers.has(p.id) ? html`<span class="mini badge-mini ligne-badge" title="Pionnier de sa promo : parmi les 3 premiers lauréats de sa promo à rejoindre le réseau"><${Embleme} id="pionnier" size=${14}/> Pionnier</span>` : null}
         meta=${(p.poste || p.secteur || lieu(p)) ? html`${[p.poste, p.secteur].filter(Boolean).join(' · ')}${(l => l ? html`${p.poste || p.secteur ? ' · ' : ''}<span translate="no">${l}</span>` : null)(lieu(p))}` : null}/>
       ${p.role === 'laureat' && p.entreprise ? html`<span class="ligne-act"><button type="button" class="ligne-logo" onClick=${() => ctx.openEntreprise(p.entreprise)} aria-label=${`Voir l’entreprise : ${p.entreprise}`} title=${p.entreprise}><${CompanyLogo} name=${p.entreprise} size=${32}/></button></span>` : null}
     </li>`)}</ul>` : html`<${Empty} icon="network" title="Personne ne correspond à ces critères">Essaie une autre filière ou enlève un filtre.<//>`}
