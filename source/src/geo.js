@@ -290,6 +290,8 @@ export const PAYS_AR = Object.fromEntries(PAYS.map(p => [p[1], p[2]]));
 export function paysOf(s) { return byPays.get(normGeo(s))?.[1] || null; }
 // Nom canonique (français) d'un pays, ou la saisie nettoyée si le pays est inconnu
 export function canonPays(s) { return paysOf(s) || String(s ?? '').trim(); }
+// Code à deux lettres d'un pays connu (« Canada », « USA », « فرنسا »…), sinon null : le drapeau du guide de l'étranger
+export function codePays(s) { return byPays.get(normGeo(s))?.[0] || null; }
 export function countryCentroid(pays) { const p = byPays.get(normGeo(pays)); return p ? [p[3], p[4]] : null; }
 
 const villeRow = v => v && { ville: v[0], pays: CODE.get(v[3])[1], coords: [v[1], v[2]] };
