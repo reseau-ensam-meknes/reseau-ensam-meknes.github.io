@@ -1,7 +1,7 @@
 // Service worker du Réseau ENSAM : l'application s'ouvre depuis le téléphone, même sans réseau
 // ou en 3G, et affiche les notifications envoyées par la fonction « notifier ».
 // build.sh (outils/precharger.mjs) remplace la version et la liste des fichiers du site.
-const VERSION = 'a5ad65f62f8a';
+const VERSION = 'e62056c2702d';
 const FICHIERS = ["./","admin.js","agenda.js","ambassadeurs.js","apercu-cv.js","app.js","community.js","confiance.js","config.js","cv.js","dashboard.js","demandes.js","enquete.js","entree.js","entreprises.js","etranger.js","fondateurs-public.js","fondateurs.js","geo.js","groupes.js","growth.js","i18n.js","invitation.js","lignes.js","lire-cv.js","logic.js","logo.js","match.js","me.js","mentorat.js","messages.js","offers.js","origine.js","parse-linkedin.js","parse-offre.js","partages.js","pdf-compat.js","pdf-worker.js","photo.js","polices/texte.woff2","polices/titres.woff2","pouls.js","privacy.js","pro.js","pwa.js","pwa/badge-96.png","pwa/icon-192.png","pwa/manifest.webmanifest","rappels.js","reactions.js","recrutement.js","regles-entree.js","reseau-vivant.js","reussites.js","saison.js","scene.js","store.js","ui.js","vendor/591.supabase.js","vendor/preact-htm.js","vendor/supabase.js","vitrine-regles.js","vitrine.js"];
 // L'arabe (dictionnaire, police) : gardé d'avance seulement pour qui l'avait déjà, sinon au premier usage
 const FACULTATIFS = ["i18n-ar.js","polices/arabe-400.woff2","polices/arabe-500.woff2","polices/arabe-600.woff2","polices/arabe-700.woff2"];
@@ -68,11 +68,21 @@ async function reseauDabord(req) {
 self.addEventListener('push', e => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch { d = { body: e.data?.text() }; }
-  e.waitUntil(self.registration.showNotification(d.title || 'Réseau ENSAM Meknès', {
+  e.waitUntil(Promise.all([self.registration.showNotification(d.title || 'Réseau ENSAM Meknès', {
     body: d.body || '', tag: d.tag || undefined, renotify: !!d.tag && !d.calme, silent: !!d.calme,
+    vibrate: d.calme ? undefined : [120, 60, 120], timestamp: Date.now(),
     icon: 'pwa/icon-192.png', badge: 'pwa/badge-96.png', data: { url: d.url || './' },
-  }));
+  }), signalerRecu(d.ack)]));
 });
+
+// La preuve de réception : la base (push_recu) et la page ouverte (« Tester », Mon profil). Une erreur ne touche pas la notification.
+async function signalerRecu(ack) {
+  try {
+    for (const c of await self.clients.matchAll({ type: 'window', includeUncontrolled: true })) c.postMessage('push-recu');
+    const sub = ack && await self.registration.pushManager.getSubscription();
+    if (sub) await fetch(ack.u, { method: 'POST', headers: { apikey: ack.k, Authorization: 'Bearer ' + ack.k, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_endpoint: sub.endpoint }) });
+  } catch { /* hors ligne : la notification est là quand même */ }
+}
 
 // Abonnement renouvelé par le navigateur : l'appareil se réabonne tout de suite, et la page redonne le nouvel abonnement
 // à la base à la prochaine ouverture (resynchroniserPush, pwa.js)

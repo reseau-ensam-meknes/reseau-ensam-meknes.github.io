@@ -135,7 +135,7 @@ test('push : regroupé par membre, chiffré, VAPID, 410 supprimé, file vidée',
     title: 'Rendez-vous fixé', body: 'Youssef Alami a choisi un de tes horaires : Mon CV, mercredi 21 octobre à 17:30', url: SITE + '#mentorat', tag: 'mentorat_accepte',
   });
   assert.equal(recu1[0].entetes.urgency, 'high');
-  assert.equal(recu1[1].entetes.urgency, 'normal');
+  assert.equal(recu1[1].entetes.urgency, 'high');
   // En arabe pour u2
   const recu3 = b.push.find(x => x.endpoint === s3.endpoint);
   assert.equal(recu3.message.title, 'ترشيح جديد');

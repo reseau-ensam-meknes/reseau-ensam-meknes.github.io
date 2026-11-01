@@ -1,9 +1,9 @@
 // Application installable (écran d'accueil du téléphone) et notifications sur le téléphone.
 // Le service worker n'est enregistré que sur le vrai site (dist/), qui déclare un manifeste.
 import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
-import { Icon, Modal, toast, ensuite, feteOuverte, quandFete } from './ui.js';
+import { Icon, Modal, toast, ensuite, feteOuverte, quandFete, injectCSS } from './ui.js';
 import { addAR } from './i18n.js';
-import { prevenirVariante, ouvertureNotif, pushChoix, PUSH_CATEGORIES } from './logic.js';
+import { prevenirVariante, ouvertureNotif, bandeauPush, pushChoix, PUSH_CATEGORIES } from './logic.js';
 import { arriveeEnAttente } from './pouls.js';
 
 let installEvt = null;
@@ -107,15 +107,36 @@ export async function resynchroniserPush(store) {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
     const reg = await swReady;
     let sub = await reg?.pushManager?.getSubscription();
-    if (!sub) return;
     const key = await store.pushKey();
-    if (key && !memeCle(sub.options?.applicationServerKey, key)) {
+    // Autorisées sur cet appareil mais plus d'abonnement (réinstallation, données effacées) : il se réabonne, sans rien demander
+    if (!sub) {
+      if (!key || lireMemo(id).coupe) return;
+      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
+    } else if (key && !memeCle(sub.options?.applicationServerKey, key)) {
       await sub.unsubscribe().catch(() => {});
       sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
     }
     await store.abonnerPush(sub);
   } catch { /* hors ligne, ou navigateur qui veut un geste : à la prochaine ouverture */ }
 }
+
+// Rien n'arrive malgré l'abonnement : le jeton du service de push est refait
+async function reparerPush(store) {
+  const reg = await swReady, key = await store.pushKey(), ancien = await reg?.pushManager?.getSubscription();
+  if (!key || !ancien) return;
+  await store.desabonnerPush(ancien.endpoint).catch(() => {});
+  await ancien.unsubscribe().catch(() => {});
+  await store.abonnerPush(await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) }));
+}
+// Le service worker de cet appareil a-t-il reçu quelque chose dans le délai ?
+const attendreRecu = ms => new Promise(ok => {
+  const sw = navigator.serviceWorker;
+  if (!sw) return ok(false);
+  const fin = v => { clearTimeout(t); sw.removeEventListener('message', f); ok(v); };
+  const f = e => { if (e.data === 'push-recu') fin(true); };
+  const t = setTimeout(() => fin(false), ms);
+  sw.addEventListener('message', f);
+});
 
 const PUSH_CHANGE = 'ensam-push';
 // Les notifications sur cet appareil : demo | absent | ios | refuse | off | on
@@ -163,6 +184,7 @@ export function PushToggle({ ctx }) {
   const [busy, setBusy] = useState(false);
   const [help, setHelp] = useState(false);
   const [debloquer, setDebloquer] = useState(false);
+  const [diag, setDiag] = useState(null);   // après « Tester » : recue | perdue
   // Le bouton touché disparaît avec l'état qu'il change : le clavier continue sur le premier bouton du nouvel état
   const ici = useRef(null), garderFocus = useRef(false);
   useEffect(() => {
@@ -185,6 +207,7 @@ export function PushToggle({ ctx }) {
       const r = simule ? 'on' : await activerPush(store);
       // Fenêtre du navigateur fermée sans choisir ('off') : la case reste à toucher, ce n'est pas une réponse
       setSt(r); etatConnu = r; if (r !== 'off') repondu();
+      if (r === 'on' && me?.id) { const { coupe, ...m } = lireMemo(me.id); ecrireMemo(me.id, m); }
       if (r === 'on') toast(simule ? DEMO : 'Notifications activées sur cet appareil.');
     } catch (e) { toast(e.message || String(e), 'err'); } finally { setBusy(false); demandeEnCours = false; }
   };
@@ -193,10 +216,21 @@ export function PushToggle({ ctx }) {
     try {
       const sub = simule ? null : await (await swReady)?.pushManager.getSubscription();
       if (sub) { await store.desabonnerPush(sub.endpoint).catch(() => {}); await sub.unsubscribe(); }
-      setSt('off'); etatConnu = 'off'; repondu(); toast('Notifications désactivées sur cet appareil.');
+      setSt('off'); etatConnu = 'off'; ecrireMemo(me.id, { ...lireMemo(me.id), fait: 1, coupe: 1 }); toast('Notifications désactivées sur cet appareil.');
     } catch (e) { toast(e.message || String(e), 'err'); } finally { setBusy(false); demandeEnCours = false; }
   };
-  const test = async () => { setBusy(true); try { const n = await store.testPush(); toast(n ? 'Notification de test envoyée.' : 'Aucun appareil abonné pour l’instant.'); } catch (e) { toast(e.message, 'err'); } finally { setBusy(false); } };
+  const test = async () => {
+    setBusy(true); setDiag(null);
+    try {
+      const recu = attendreRecu(ATTENTE_TEST);
+      const n = await store.testPush();
+      if (!n) { toast('Aucun appareil abonné pour l’instant.'); return; }
+      toast('Notification de test envoyée.');
+      if (await recu) { setDiag('recue'); return; }
+      await reparerPush(store).catch(() => {});
+      setDiag('perdue');
+    } catch (e) { toast(e.message, 'err'); } finally { setBusy(false); }
+  };
   const note = {
     demo: 'Sur la vraie plateforme : candidature reçue, rendez-vous, réponse à ta question… arrivent directement sur ton téléphone.',
     absent: 'Ce navigateur ne permet pas les notifications. Essaie Chrome, Edge, Firefox ou Safari récent.',
@@ -209,22 +243,83 @@ export function PushToggle({ ctx }) {
     : st === 'off' ? html`<p class="small muted">${PUSH_POURQUOI}</p>
       <div class="push-acts"><button type="button" class="btn primary" id="md-push-oui" disabled=${busy} onClick=${() => { garderFocus.current = true; turnOn(); }}><${Icon} name="bell" size=${16}/> Activer</button></div>` : null}
     ${note ? html`<p class="small muted">${note}</p>` : null}
+    ${st === 'on' && diag ? html`<p class="small muted" id="md-push-diag">${diag === 'recue' ? DIAG_RECUE : DIAG_PERDUE}</p>` : null}
     ${st === 'refuse' ? html`<p class="small"><button type="button" class="linkish" id="md-push-debloquer" onClick=${() => setDebloquer(true)}>Comment les débloquer ?</button></p>` : null}
     ${st === 'ios' ? html`<p class="small muted">Sur iPhone, installe d’abord l’application sur l’écran d’accueil. <button class="linkish" onClick=${() => setHelp(true)}>Comment faire ?</button></p>` : null}
     ${help ? html`<${IosInstallHelp} onClose=${() => setHelp(false)}/>` : null}
     ${debloquer ? html`<${FeuilleDebloquer} ctx=${ctx} onClose=${() => setDebloquer(false)}/>` : null}
   </div>`;
 }
+const ATTENTE_TEST = 20000;
+const DIAG_RECUE = 'Reçue par cet appareil. Rien dans la barre de notifications ? Dans les réglages du téléphone, autorise les notifications de ton navigateur et retire-le de l’économie de batterie.';
+const DIAG_PERDUE = 'Pas arrivée. L’abonnement de cet appareil vient d’être refait : touche « Tester » de nouveau.';
 const PUSH_POURQUOI = 'Messages, réponses, rendez-vous : ce qui te concerne arrive tout de suite, même quand l’application est fermée.';
 addAR({
   [PUSH_POURQUOI]: 'الرسائل والأجوبة والمواعيد: ما يخصك يصلك فورًا، حتى والتطبيق مغلق.',
+  [DIAG_RECUE]: 'وصل الإشعار إلى هذا الجهاز. لا يظهر شيء في شريط الإشعارات؟ من إعدادات الهاتف، اسمح بإشعارات المتصفح وأزله من توفير البطارية.',
+  [DIAG_PERDUE]: 'لم يصل الإشعار. أعدنا تسجيل هذا الجهاز: اضغط على « Tester » مرة أخرى.',
   'Activées sur cet appareil': 'مفعّلة على هذا الجهاز', 'Comment les débloquer ?': 'كيف ترفع الحظر عنها؟',
 });
 
 // ---------------------------------------------------------------------------
+// Bandeau de l'accueil : cet appareil ne reçoit rien. Une phrase, un bouton, et « plus tard » pour trois jours (bandeauPush, logic.js).
+// ---------------------------------------------------------------------------
+const BANDEAU = {
+  off: ['Active tes notifications', 'Sans elles, tu rates tes matchs, tes messages et les réponses des lauréats.', 'Activer'],
+  ios: ['Ajoute l’application à ton écran d’accueil', 'Sur iPhone, c’est la seule façon de recevoir tes matchs et tes messages.', 'Comment faire ?'],
+  refuse: ['Tes notifications sont bloquées', 'Tes matchs et tes messages n’arrivent pas sur cet appareil.', 'Les débloquer'],
+};
+export function BandeauPush({ ctx }) {
+  const { store, me } = ctx;
+  const [etat, setEtat] = useState('…');
+  const [, relire] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [help, setHelp] = useState(false);
+  const [debloquer, setDebloquer] = useState(false);
+  useEffect(() => {
+    const lire = () => { const d = etatDemo(store); return d ? setEtat(d) : etatPush(store).then(setEtat, () => {}); };
+    lire();
+    addEventListener(PUSH_CHANGE, lire);
+    return () => removeEventListener(PUSH_CHANGE, lire);
+  }, []);
+  const v = bandeauPush({ etat, memo: lireMemo(me.id), role: me.role, voulu: PUSH_CATEGORIES.some(c => c !== 'rappels' && pushChoix(c, me)) });
+  const feuilles = html`${help ? html`<${IosInstallHelp} onClose=${() => setHelp(false)}/>` : null}${debloquer ? html`<${FeuilleDebloquer} ctx=${ctx} onClose=${() => setDebloquer(false)}/>` : null}`;
+  if (!v) return feuilles;
+  const [titre, texte, action] = BANDEAU[v];
+  const agir = async () => {
+    if (v === 'ios') return setHelp(true);
+    if (v === 'refuse') return setDebloquer(true);
+    setBusy(true); await accepterNotif(store, me); setBusy(false); relire(x => x + 1);
+  };
+  const plusTard = () => { ecrireMemo(me.id, { ...lireMemo(me.id), bandeau: Date.now() }); relire(x => x + 1); };
+  return html`<section class="push-bandeau" aria-label=${titre}>
+    <span class="push-b-ico" aria-hidden="true"><${Icon} name="bell" size=${22}/></span>
+    <div class="push-b-txt"><strong>${titre}</strong><span>${texte}</span>
+      <div class="push-b-acts"><button type="button" class="btn small primary" id="push-b-oui" disabled=${busy} onClick=${agir}>${action}</button>
+        <button type="button" class="linkish small" id="push-b-tard" onClick=${plusTard}>Plus tard</button></div></div>
+    ${feuilles}
+  </section>`;
+}
+injectCSS('push-bandeau', `
+.push-bandeau { display: flex; gap: .8rem; padding: .95rem 1rem; border-radius: var(--r-3, 16px); background: var(--orange); color: #2a1300; box-shadow: var(--sh1); }
+.push-b-ico { flex: none; inline-size: 42px; block-size: 42px; display: grid; place-items: center; border-radius: 50%; background: rgba(255, 255, 255, .42); animation: push-b-son 2.6s ease-in-out infinite; transform-origin: 50% 20%; }
+.push-b-txt { display: grid; gap: .2rem; min-width: 0; font-size: var(--fs-2); line-height: 1.4; }
+.push-b-txt strong { font-size: var(--fs-3); }
+.push-b-acts { display: flex; align-items: center; gap: .9rem; margin-block-start: .45rem; }
+.push-b-acts .linkish { color: inherit; }
+@keyframes push-b-son { 0%, 82%, 100% { transform: rotate(0); } 86% { transform: rotate(10deg); } 90% { transform: rotate(-9deg); } 94% { transform: rotate(5deg); } }
+@media (prefers-reduced-motion: reduce) { .push-b-ico { animation: none; } }
+`);
+addAR({
+  [BANDEAU.off[0]]: 'فعّل إشعاراتك', [BANDEAU.off[1]]: 'بدونها تفوتك التوافقات والرسائل وأجوبة الخريجين.', [BANDEAU.off[2]]: 'تفعيل',
+  [BANDEAU.ios[0]]: 'أضف التطبيق إلى شاشتك الرئيسية', [BANDEAU.ios[1]]: 'على iPhone، هذه هي الطريقة الوحيدة لتلقي التوافقات والرسائل.', [BANDEAU.ios[2]]: 'كيف أفعل ذلك؟',
+  [BANDEAU.refuse[0]]: 'إشعاراتك محظورة', [BANDEAU.refuse[1]]: 'توافقاتك ورسائلك لا تصل إلى هذا الجهاز.', [BANDEAU.refuse[2]]: 'رفع الحظر',
+});
+
+// ---------------------------------------------------------------------------
 // « Me prévenir » : après une action qui attend une réponse (demande, mentorat, candidature, question…), une feuille
-// propose une seule fois les notifications sur cet appareil, à la place du petit mot en bas de l'écran.
-// Deux refus au plus, à 14 jours d'écart. Jamais par-dessus une fête : elle attend alors la prochaine visite.
+// propose les notifications sur cet appareil, à la place du petit mot en bas de l'écran.
+// Elle revient 3 jours après un refus. Jamais par-dessus une fête : elle attend alors la prochaine visite.
 // ---------------------------------------------------------------------------
 const NOTIF_RAISON = {
   demande: 'Dès qu’un lauréat te propose son aide, une notification arrive sur cet appareil.',
