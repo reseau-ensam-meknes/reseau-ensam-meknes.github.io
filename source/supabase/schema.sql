@@ -958,7 +958,7 @@ begin
   select parrain_id into v_parrain from public.parrainages where filleul_id = p_etudiant and saison = v_s;
   if v_parrain is not null then return v_parrain; end if;
   select l.id into v_parrain from public.profiles l
-    where l.role = 'laureat' and l.parrain_dispo and public.proximite_filiere(l.filiere, v_p.filiere) > 0
+    where l.role = 'laureat' and l.ecole = v_p.ecole and l.parrain_dispo and public.proximite_filiere(l.filiere, v_p.filiere) > 0
       and (select count(*) from public.parrainages x where x.parrain_id = l.id and x.saison = v_s) < 3
     order by public.proximite_filiere(l.filiere, v_p.filiere) desc, l.verified desc, (select count(*) from public.parrainages x where x.parrain_id = l.id and x.saison = v_s), random()
     limit 1;
@@ -1002,7 +1002,7 @@ begin
     perform public.donner_parrain(new.id);
   elsif new.role = 'laureat' and new.parrain_dispo and (tg_op = 'INSERT' or not coalesce(old.parrain_dispo, false)) then
     perform public.donner_parrain(p.id) from public.profiles p
-      where p.role = 'etudiant' and public.proximite_filiere(p.filiere, new.filiere) > 0 and p.promo = public.saison_courante() + 3
+      where p.role = 'etudiant' and p.ecole = new.ecole and public.proximite_filiere(p.filiere, new.filiere) > 0 and p.promo = public.saison_courante() + 3
         and not exists (select 1 from public.parrainages x where x.filleul_id = p.id and x.saison = public.saison_courante());
   end if;
   return null;
@@ -1637,6 +1637,9 @@ create or replace function public.push_filtre() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
   if public.push_voulu(new.user_id, new.kind) is false then return null; end if;
+  -- Écoles : ce que fait un membre ne notifie que son école (l'administration reçoit tout, comme les signalements)
+  if auth.uid() is not null and exists (select 1 from public.profiles d where d.id = new.user_id and d.role <> 'admin'
+      and d.ecole is distinct from (select e.ecole from public.profiles e where e.id = auth.uid())) then return null; end if;
   return new;
 exception when others then return new;
 end $$;
@@ -1782,6 +1785,50 @@ begin
   return public.en_relation(auth.uid(), p_owner);
 end $$;
 
+-- =====================================================================
+--  Écoles : chaque école a son réseau, dans la même base (première partie, la seconde est à la fin du fichier).
+--  ecoles.ouverte : false tant que l'administration ne l'a pas ouverte ; personne ne peut y entrer de lui-même.
+--  ENSAM Meknès est l'école de tous les membres et de toutes les données d'avant.
+-- =====================================================================
+create table if not exists public.ecoles (
+  slug text primary key check (slug ~ '^[a-z0-9-]{2,40}$'),
+  nom text not null check (char_length(nom) between 2 and 120),
+  ouverte boolean not null default false,
+  created_at timestamptz not null default now()
+);
+insert into public.ecoles (slug, nom, ouverte) values ('ensam-meknes', 'ENSAM Meknès', true) on conflict (slug) do nothing;
+alter table public.ecoles enable row level security;
+drop policy if exists "lecture" on public.ecoles;
+create policy "lecture" on public.ecoles for select to anon, authenticated using (ouverte or public.is_admin());
+drop policy if exists "administration" on public.ecoles;
+create policy "administration" on public.ecoles for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+alter table public.profiles add column if not exists ecole text not null default 'ensam-meknes' references public.ecoles(slug);
+create index if not exists profiles_ecole on public.profiles (ecole);
+
+create or replace function public.mon_ecole() returns text
+language sql stable security definer set search_path = public as $$
+  select ecole from public.profiles where id = auth.uid();
+$$;
+revoke all on function public.mon_ecole() from public, anon;
+grant execute on function public.mon_ecole() to authenticated, service_role;
+
+-- L'école d'un membre ne se choisit qu'à l'inscription, parmi les écoles ouvertes ; ensuite seule l'administration la change
+create or replace function public.protect_ecole() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null or public.is_admin() then return new; end if;
+  if tg_op = 'UPDATE' then
+    if new.ecole is distinct from old.ecole then raise exception 'L’école d’un compte ne se change pas.' using errcode = '42501'; end if;
+  elsif not exists (select 1 from public.ecoles e where e.slug = new.ecole and e.ouverte) then
+    raise exception 'Le réseau de cette école n’est pas encore ouvert.' using errcode = '42501';
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_ecole on public.profiles;
+create trigger trg_protect_ecole before insert or update of ecole on public.profiles
+  for each row execute function public.protect_ecole();
+
 create or replace view public.profils with (security_barrier = true) as
 select p.id, p.full_name, p.role, p.filiere, p.promo,
   case when public.voit_champ(p.id, p.visibilite, 'travail') then p.entreprise end as entreprise,
@@ -1807,9 +1854,9 @@ select p.id, p.full_name, p.role, p.filiere, p.promo,
   case when p.id = auth.uid() then p.emails_messages end as emails_messages,
   p.en_recherche, p.photo_path,
   case when p.id = auth.uid() then p.notif_push end as notif_push,
-  p.match_visible, p.admin_ok
+  p.match_visible, p.admin_ok, p.ecole
 from public.profiles p
-where auth.uid() is not null;
+where auth.uid() is not null and (p.ecole = (select public.mon_ecole()) or (select public.is_admin()));
 revoke all on public.profils from public, anon;
 grant select on public.profils to authenticated;
 
@@ -1939,6 +1986,7 @@ begin
   if auth.uid() is null then return false; end if;
   begin v_owner := split_part(p_name, '/', 1)::uuid; exception when others then return false; end;
   if v_owner = auth.uid() or public.is_admin() then return true; end if;
+  if (select ecole from public.profiles where id = v_owner) is distinct from public.mon_ecole() then return false; end if;
   if exists (select 1 from public.relectures_cv r where r.cv_path = p_name and r.status <> 'annulee'
       and (r.reviewer_id = auth.uid() or (r.reviewer_id is null and r.status = 'demandee'
         and exists (select 1 from public.profiles l where l.id = auth.uid() and l.role = 'laureat')))) then
@@ -2048,6 +2096,8 @@ drop trigger if exists trg_protect_avis on public.avis_stage;
 create trigger trg_protect_avis before insert or update on public.avis_stage
   for each row execute function public.protect_avis();
 
+alter table public.entretiens add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug);
+alter table public.avis_stage add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug);
 create or replace view public.entretiens_publics with (security_barrier = true) as
 select e.id,
   case when e.anonyme and e.author_id is distinct from auth.uid() and not public.is_admin() then null else e.author_id end as author_id,
@@ -2055,7 +2105,7 @@ select e.id,
   case when e.anonyme and e.author_id is distinct from auth.uid() and not public.is_admin() then null else e.offer_id end as offer_id,
   e.created_at
 from public.entretiens e
-where auth.uid() is not null;
+where auth.uid() is not null and (e.ecole = (select public.mon_ecole()) or (select public.is_admin()));
 revoke all on public.entretiens_publics from public, anon;
 grant select on public.entretiens_publics to authenticated;
 
@@ -2067,7 +2117,7 @@ select a.id,
   case when a.anonyme and a.author_id is distinct from auth.uid() and not public.is_admin() then null else a.placement_id end as placement_id,
   a.verifie, a.created_at
 from public.avis_stage a
-where auth.uid() is not null;
+where auth.uid() is not null and (a.ecole = (select public.mon_ecole()) or (select public.is_admin()));
 revoke all on public.avis_publics from public, anon;
 grant select on public.avis_publics to authenticated;
 
@@ -2716,10 +2766,11 @@ alter table public.notif_etat add column if not exists alerte_at timestamptz;
 alter table public.notif_etat add column if not exists alertes_n int not null default 0;
 alter table public.notif_etat add column if not exists alertes_jour date;
 
+alter table public.offers add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug);
 create or replace function public.offre_pour(o public.offers, p public.profiles, p_saison int) returns boolean
 language sql stable as $$
   -- Un lauréat en recherche d'emploi reçoit aussi les offres « Jeunes diplômés » et celles entre lauréats
-  select o.status = 'ouverte' and o.author_id <> p.id
+  select o.status = 'ouverte' and o.author_id <> p.id and o.ecole = p.ecole
     and p.role in ('etudiant','laureat')
     and public.filiere_ok(o.filieres, p.filiere)
     and case when coalesce(o.audience, 'etudiants') = 'laureats' then p.role = 'laureat' and coalesce(p.en_recherche, false)
@@ -2742,7 +2793,7 @@ begin
   from public.profiles p
   cross join lateral (select coalesce(public.offre_pour(new, p, v_s), false) as pour_lui) x
   -- push_voulu : le choix « Nouvelles offres » de Mon profil, sinon le défaut (activé pour tous)
-  where (x.pour_lui or (p.role = 'laureat' and new.status = 'ouverte' and new.author_id <> p.id and public.filiere_ok(new.filieres, p.filiere)))
+  where (x.pour_lui or (p.role = 'laureat' and p.ecole = new.ecole and new.status = 'ouverte' and new.author_id <> p.id and public.filiere_ok(new.filieres, p.filiere)))
     -- Le partage d'un étudiant n'envoie pas de notification : il se voit dans les offres et dans l'email des alertes
     and not exists (select 1 from public.profiles a where a.id = new.author_id and a.role = 'etudiant')
     and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'offre_alerte')
@@ -3791,9 +3842,10 @@ language sql stable security definer set search_path = public as $$
     then d.created_at else d.created_at + interval '24 hours' end;
 $$;
 
+alter table public.demandes add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug);
 create or replace function public.demande_pour(d public.demandes, p public.profiles) returns boolean
 language sql stable as $$
-  select d.status = 'ouverte' and d.auteur_id <> p.id and p.role = 'laureat'
+  select d.status = 'ouverte' and d.auteur_id <> p.id and p.role = 'laureat' and d.ecole = p.ecole
     and d.relancee_at > now() - interval '60 days'
     and (public.proximite_filiere(p.filiere, (select a.filiere from public.profiles a where a.id = d.auteur_id)) >= 1
          or public.demande_large_le(d) <= now())
@@ -4911,14 +4963,14 @@ begin
   if new.role not in ('etudiant','laureat') or new.promo is null then return null; end if;
   for r in select x.id, x.created_at as arrive, c.at as dernier from public.profiles x
       left join public.notif_cadence c on c.cle = 'promo:' || x.id
-      where x.promo = new.promo and x.id <> new.id and x.role in ('etudiant','laureat')
+      where x.promo = new.promo and x.ecole = new.ecole and x.id <> new.id and x.role in ('etudiant','laureat')
         and (c.at is null or c.at <= now() - interval '1 day')
         and exists (select 1 from public.push_subscriptions s where s.user_id = x.id) and public.push_voulu(x.id, 'promo_nouveau')
         and not exists (select 1 from public.push_queue q where q.user_id = x.id and q.kind = 'verifier_pair' and q.data ->> 'nom' = new.full_name)
       limit 300 loop
     continue when not public.cadence('promo:' || r.id, interval '1 day');
     select count(*) into v_n from public.profiles y
-      where y.promo = new.promo and y.id <> r.id and y.role in ('etudiant','laureat')
+      where y.promo = new.promo and y.ecole = new.ecole and y.id <> r.id and y.role in ('etudiant','laureat')
         and y.created_at > greatest(coalesce(r.dernier, '-infinity'::timestamptz), coalesce(r.arrive, '-infinity'::timestamptz), now() - interval '7 days');
     perform public.pousser(r.id, 'promo_nouveau', jsonb_build_object('nom', split_part(new.full_name, ' ', 1), 'n', greatest(v_n, 1), 'promo', new.promo));
   end loop;
@@ -5676,12 +5728,12 @@ begin
   from (
     select p.id, p.role, case when p.role = 'laureat' then (
         select count(*) from public.profiles e
-        where e.role = 'etudiant' and e.match_visible and coalesce(btrim(e.filiere), '') <> '' and e.filiere = p.filiere
+        where e.role = 'etudiant' and e.ecole = p.ecole and e.match_visible and coalesce(btrim(e.filiere), '') <> '' and e.filiere = p.filiere
           and not exists (select 1 from public.match_choix c where c.user_id = p.id and c.cible_profil = e.id)
           and not exists (select 1 from public.matchs m where m.laureat_id = p.id and m.etudiant_id = e.id))
       else (
         select count(*) from public.offers o join public.profiles a on a.id = o.author_id
-        where o.status = 'ouverte' and a.role = 'laureat' and o.author_id <> p.id and coalesce(o.audience, 'etudiants') = 'etudiants'
+        where o.status = 'ouverte' and o.ecole = p.ecole and a.role = 'laureat' and o.author_id <> p.id and coalesce(o.audience, 'etudiants') = 'etudiants'
           and public.niveau_de(p.promo, public.saison_courante()) = any(coalesce(o.annees, '{}'::int[]))
           and (cardinality(coalesce(o.filieres, '{}')) = 0 or p.filiere = any(o.filieres))
           and not exists (select 1 from public.match_choix c where c.user_id = p.id and c.cible_offre = o.id)
@@ -5698,6 +5750,64 @@ begin
   return v_n;
 end $$;
 revoke all on function public.match_jour_push() from public, anon, authenticated;
+
+-- =====================================================================
+--  Écoles (seconde partie) : le contenu de chaque réseau. Une règle restrictive s'ajoute à celles de chaque table, sans
+--  les toucher : un membre ne lit et n'écrit que ce qui est de son école. garde_ecole() refuse ensuite toute action qui
+--  vise la personne ou le contenu d'une autre école par son identifiant, même depuis une fonction de la base.
+--  Tant qu'une seule école est ouverte, rien ne change pour personne.
+-- =====================================================================
+do $$
+declare t text;
+begin
+  foreach t in array array['offers','questions','demandes','annonces','cafes','startups','evenements',
+      'placements','mentorships','answers','groupe_messages','groupe_membres','relectures_cv','verifications_pairs','defis','ambassadeurs',
+      'votes','reactions','kudos','cafe_participants','evenement_participants','shortlists'] loop
+    execute format($f$alter table public.%I add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug)$f$, t);
+    execute format('create index if not exists %I on public.%I (ecole)', t || '_ecole', t);
+    execute format('drop policy if exists "reseau de l''ecole" on public.%I', t);
+    execute format($f$create policy "reseau de l'ecole" on public.%I as restrictive for all to authenticated
+      using (ecole = (select public.mon_ecole()) or (select public.is_admin()))
+      with check (ecole = (select public.mon_ecole()) or (select public.is_admin()))$f$, t);
+  end loop;
+end $$;
+
+-- Arguments du déclencheur : « colonne:table » ; la table citée a un id et une école. Sans membre connecté
+-- (tâches de la base) ni pour l'administration, rien à vérifier.
+create or replace function public.garde_ecole() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare i int; v text; e text; m text := public.mon_ecole();
+begin
+  if auth.uid() is null or public.is_admin() then return new; end if;
+  for i in 0 .. tg_nargs - 1 loop
+    v := to_jsonb(new) ->> split_part(tg_argv[i], ':', 1);
+    continue when v is null;
+    execute format('select ecole from public.%I where id = $1', split_part(tg_argv[i], ':', 2)) into e using v::uuid;
+    if e is distinct from m then raise exception 'Cette personne ou ce contenu n’est pas dans ton réseau.' using errcode = '42501'; end if;
+  end loop;
+  return new;
+end $$;
+revoke all on function public.garde_ecole() from public, anon, authenticated;
+
+do $$
+declare r record;
+begin
+  for r in select * from (values
+    ('mentorships', array['student_id:profiles','mentor_id:profiles']), ('relectures_cv', array['student_id:profiles','reviewer_id:profiles']),
+    ('invitations', array['student_id:profiles','offer_id:offers']), ('placements', array['student_id:profiles','laureat_id:profiles','offer_id:offers']),
+    ('demandes_contact', array['cible_id:profiles']), ('match_choix', array['cible_profil:profiles','cible_offre:offers']),
+    ('propositions', array['demande_id:demandes']), ('reponses_demandes', array['demande_id:demandes']),
+    ('applications', array['offer_id:offers']), ('messages', array['dest_id:profiles']), ('comments', array['offer_id:offers']),
+    ('answers', array['question_id:questions']), ('votes', array['answer_id:answers']), ('kudos', array['placement_id:placements']),
+    ('reactions', array['offer_id:offers']), ('reactions_publiques', array['offer_id:offers','demande_id:demandes']),
+    ('cafe_participants', array['cafe_id:cafes']), ('evenement_participants', array['evenement_id:evenements']),
+    ('verifications_pairs', array['laureat_id:profiles']), ('shortlists', array['student_id:profiles'])
+  ) as x(t, a) loop
+    execute format('drop trigger if exists aa_garde_ecole on public.%I', r.t);
+    execute format('create trigger aa_garde_ecole before insert or update on public.%I for each row execute function public.garde_ecole(%s)',
+      r.t, (select string_agg(quote_literal(c), ', ') from unnest(r.a) c));
+  end loop;
+end $$;
 
 -- Chaque minute (pg_cron, « ensam-rappels ») : les rappels, puis ce qui attend dans les files
 create or replace function public.taches_minute() returns void
