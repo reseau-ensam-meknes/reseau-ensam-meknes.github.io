@@ -113,7 +113,7 @@ addAR({
   [PARTAGER.autre]: 'المس «مشاركة»، في شريط العنوان أو في قائمة المتصفح.',
   [ETAPES_IOS[0][1]]: 'اختر «إضافة إلى الشاشة الرئيسية»، واترك «فتح كتطبيق ويب» مفعّلًا، ثم المس «إضافة».',
   [ETAPES_IOS[1][1]]: 'افتح شبكة ENSAM من أيقونتها الجديدة، وسجّل الدخول مرة واحدة، ثم المس «تفعيل».',
-  [ETAPES_ANDROID[0][1]]: 'المس قائمة ⋮ في المتصفح، أعلى اليمين.',
+  [ETAPES_ANDROID[0][1]]: 'المس قائمة ⋮ في المتصفح، أعلى الشاشة.',
   [ETAPES_ANDROID[1][1]]: 'اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».',
   [ETAPES_ANDROID[2][1]]: 'افتح شبكة ENSAM من أيقونتها، ثم المس «فعّل الإشعارات» إن لم يتمّ ذلك بعد.',
   [POURQUOI_INSTALLER.android]: 'أيقونة على شاشتك الرئيسية: تُفتح شبكة ENSAM بلمسة واحدة، مثل تطبيق.',
@@ -252,7 +252,8 @@ function apresEchec(me, e) {
     const { echecs, arret } = e.plateforme ? { echecs: memo.echecs, arret: true } : noterEchecPush(memo);
     if (arret) {
       etatConnu = 'absent';
-      ecrireMemo(me.id, { ...memo, ...(echecs ? { echecs } : {}), fait: 1 });
+      // sans : la pastille et le bandeau ne proposent plus « Activer » sur ce navigateur (une activation réussie l'efface)
+      ecrireMemo(me.id, { ...memo, ...(echecs ? { echecs } : {}), fait: 1, sans: 1 });
       toast(SANS_NOTIF, 'err');
       return true;
     }
@@ -342,7 +343,7 @@ export function PushToggle({ ctx }) {
       const r = simule ? 'on' : await activerPush(store);
       // Fenêtre du navigateur fermée sans choisir ('off') : la case reste à toucher, ce n'est pas une réponse
       setSt(r); etatConnu = r; if (r !== 'off') repondu();
-      if (r === 'on' && me?.id) { const { coupe, echecs, ...m } = lireMemo(me.id); ecrireMemo(me.id, m); }
+      if (r === 'on' && me?.id) { const { coupe, echecs, sans, ...m } = lireMemo(me.id); ecrireMemo(me.id, m); }
       // La pastille et le bandeau suivent (« Activer » n'y reste pas)
       annoncer();
       if (r === 'on') { toast(simule ? DEMO : 'Notifications activées sur cet appareil.'); setDiag(null); premiereNotif(store, setDiag); }
@@ -502,7 +503,8 @@ const ETAPES_APPLI = {
 };
 const DEMO_CHROME = 'Sur la vraie plateforme, ce bouton rouvre la page dans Chrome, où les notifications arrivent.';
 // Le lien « Ouvrir dans Chrome » : la page où l'on est (relue au toucher), la feuille d'activation en arrivant
-const lienIci = () => lienChrome(location.href, (location.hash || '').slice(1));
+// La langue de la page suit dans Chrome (l'arabe choisi ici, Chrome ne le connaît pas)
+const lienIci = () => lienChrome(location.href, (location.hash || '').slice(1), { lang: getLang() });
 function OuvrirChrome({ store, cls = 'btn primary', id, onOuvert, children }) {
   const clic = e => {
     if (store.mode !== 'live') { e.preventDefault(); toast(DEMO_CHROME); } else e.currentTarget.href = lienIci();
@@ -676,7 +678,10 @@ export function PrevenirHote({ ctx, bloque }) {
       const etat = etatDemo(store) || (store.mode === 'live' ? await etatPush(store).catch(() => 'absent') : 'demo');
       if (!vivant) return;
       etatConnu = etat;
-      const sorte = etat === 'appli' ? 'appli' : l.depuis === 'ancienne' && !isStandalone() ? 'ancienne'
+      // Le navigateur d'une application : sa feuille une fois par visite, même quand le lien revient. « Ouvrir dans Chrome »
+      // sur un téléphone sans Chrome rouvre la même adresse (?notifs=1) ici même : la même feuille tournerait en boucle.
+      // l.vu : la feuille était déjà à l'écran quand une nouvelle version a rechargé la page : elle revient, comptée une fois.
+      const sorte = etat === 'appli' ? (appliVue() && !l.vu ? null : 'appli') : l.depuis === 'ancienne' && !isStandalone() ? 'ancienne'
         : l.notifs ? sorteLienNotifs({ etat, memo: lireMemo(me.id) }) : null;
       if (!['push', 'ios', 'appli', 'ancienne', 'debloquer'].includes(sorte)) {
         oublierLienAppareil();
@@ -687,7 +692,8 @@ export function PrevenirHote({ ctx, bloque }) {
       lienVu.current = true;
       // La feuille de l'ancienne adresse demande aussi l'activation (ou montre les gestes de l'iPhone) : comptée comme elles
       const compte = sorte !== 'ancienne' ? sorte : etat === 'ios' ? 'ios' : etat === 'off' ? 'push' : null;
-      if (compte) compterOuverture(me.id, compte);
+      if (compte && !l.vu) compterOuverture(me.id, compte);
+      lienAffiche(l);
       setOuv({ t: Date.now(), sorte, etat, lien: true });
     };
     t = setTimeout(tenter, LIEN_DELAI);
@@ -816,6 +822,8 @@ const CLE_LIEN_APPAREIL = 'ensam-lien-appareil', CLE_APPLI_VUE = 'ensam-appli-vu
 const LIEN_DELAI = 900, LIEN_FIN = 60000;
 const lienAppareil = () => { try { return JSON.parse(sessionStorage.getItem(CLE_LIEN_APPAREIL) || 'null'); } catch { return null; } };
 const oublierLienAppareil = () => { try { sessionStorage.removeItem(CLE_LIEN_APPAREIL); } catch { /* */ } };
+// Sa feuille à l'écran (vu) : une nouvelle version qui recharge la page la remontre aussitôt, sans la compter une deuxième fois
+const lienAffiche = l => { try { sessionStorage.setItem(CLE_LIEN_APPAREIL, JSON.stringify({ ...l, vu: 1 })); } catch { /* */ } };
 export function retenirLienAppareil({ notifs = false, depuis = '' } = {}) {
   if (!notifs && !depuis) return;
   const avant = lienAppareil() || {};
@@ -840,8 +848,8 @@ async function accepterNotif(store, me) {
     dispatchEvent(new Event(PUSH_CHANGE));
     if (r === 'off') { toast(PAS_ACTIVEES); return 'off'; }
     // Activées (même après les avoir coupées dans Mon profil : le membre a changé d'avis) : les échecs d'avant sont oubliés
-    const { coupe, echecs, ...m } = lireMemo(me.id);
-    ecrireMemo(me.id, r === 'on' ? { ...m, fait: 1 } : { ...m, ...(coupe ? { coupe } : {}), ...(echecs ? { echecs } : {}), fait: 1 });
+    const { coupe, echecs, sans, ...m } = lireMemo(me.id);
+    ecrireMemo(me.id, r === 'on' ? { ...m, fait: 1 } : { ...m, ...(coupe ? { coupe } : {}), ...(echecs ? { echecs } : {}), ...(sans ? { sans } : {}), fait: 1 });
     if (r === 'on') { toast('Notifications activées sur cet appareil.', 'win'); premiereNotif(store); }
     return true;
   } catch (e) {
@@ -1257,8 +1265,10 @@ export function PastilleApp({ ctx, cache }) {
     return () => { vivant = false; clearTimeout(t); removeEventListener(PUSH_CHANGE, lire); document.removeEventListener('visibilitychange', vu); document.removeEventListener('focusin', f); document.removeEventListener('focusout', f); };
   }, [me.id]);
   // L'administration reçoit toujours les signalements ; coupées dans Mon profil : la pastille ne les redemande pas
-  const voulu = (me.role === 'admin' || PUSH_CATEGORIES.some(c => c !== 'rappels' && pushChoix(c, me))) && !lireMemo(me.id).coupe;
-  const notif = !voulu ? null : push === 'off' ? 'activer' : push === 'refuse' ? 'debloquer' : null;
+  const memo = lireMemo(me.id);
+  const voulu = (me.role === 'admin' || PUSH_CATEGORIES.some(c => c !== 'rappels' && pushChoix(c, me))) && !memo.coupe;
+  // L'abonnement a déjà échoué pour de bon sur ce navigateur (memo.sans) : « Activer » n'y servirait à rien
+  const notif = !voulu ? null : push === 'off' ? (memo.sans ? null : 'activer') : push === 'refuse' ? 'debloquer' : null;
   // Installer ne suffit pas à recevoir les notifications (il faut toucher « Activer ») : elles passent d'abord, sauf sur
   // iPhone dans Safari où l'icône de l'écran d'accueil est le seul chemin vers elles
   const sorte = push === 'appli' ? (voulu ? 'appli' : null) : install?.ios ? 'installer' : notif || (install ? 'installer' : null);
@@ -1289,7 +1299,8 @@ export function PastilleApp({ ctx, cache }) {
     : aide ? html`<${IosInstallHelp} android=${aide === 'android'} onClose=${fermerAide}/>` : null;
   if (!sorte || !pret || masque || cache || ecriture) return feuille;
   const titre = sorte === 'appli' ? PASTILLE_APPLI[sys] : PASTILLE[sorte][0];
-  const sous = sorte === 'installer' && install.ios ? PASTILLE_IOS : PASTILLE[sorte][1];
+  // « Pour recevoir tes notifications » : seulement à qui les veut (coupées dans Mon profil, ou rien de coché : une icône, sans promesse)
+  const sous = sorte === 'installer' && install.ios && voulu ? PASTILLE_IOS : PASTILLE[sorte][1];
   const dedans = html`<span class="pastille-ico" aria-hidden="true"><${Icon} name=${PASTILLE_ICO[sorte]} size=${18}/></span>
     <span class="pastille-txt"><strong>${titre}</strong><span>${sous}</span></span>`;
   // Sur Android, le navigateur d'une application : le lien rouvre la page dans Chrome, en un toucher
@@ -1347,7 +1358,7 @@ addAR({
   [DEBLOQUER_INTRO]: 'حظر هذا المتصفح إشعارات شبكة ENSAM. لتصلك:',
   [TOUJOURS_BLOQUEES]: 'ما زالت محظورة. اتبع الخطوات الثلاث، ثم أعد المحاولة.',
   [DEBLOQUER_PLUS]: 'ما زال لا شيء؟ إعدادات الهاتف › التطبيقات › Chrome › الإشعارات: اسمح بها.',
-  [DEBLOQUER.android[0][1]]: 'المس الأيقونة على يسار العنوان (القفل أو الإعدادات).',
+  [DEBLOQUER.android[0][1]]: 'المس الأيقونة بجانب عنوان الموقع (القفل أو الإعدادات).',
   [DEBLOQUER.android[1][1]]: 'افتح «الأذونات»، ثم «الإشعارات».',
   [DEBLOQUER.android[2][1]]: 'اختر «السماح»، ثم ارجع إلى هنا.',
   [DEBLOQUER.appli[0][1]]: 'اضغط مطوّلًا على أيقونة شبكة ENSAM، ثم على «معلومات التطبيق».',
@@ -1356,7 +1367,7 @@ addAR({
   [DEBLOQUER.ios[0][1]]: 'افتح إعدادات iPhone، ثم «الإشعارات».',
   [DEBLOQUER.ios[1][1]]: 'اختر «شبكة ENSAM».',
   [DEBLOQUER.ios[2][1]]: 'فعّل «السماح بالإشعارات»، ثم ارجع إلى هنا.',
-  [DEBLOQUER.pc[0][1]]: 'انقر على القفل على يسار عنوان الموقع.',
+  [DEBLOQUER.pc[0][1]]: 'انقر على القفل بجانب عنوان الموقع.',
   [DEBLOQUER.pc[1][1]]: 'في سطر «الإشعارات»، اختر «السماح».',
   [DEBLOQUER.pc[2][1]]: 'أعد تحميل الصفحة، ثم المس «تمّ».',
 });
