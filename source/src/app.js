@@ -149,12 +149,20 @@ const readRoute = () => parseRoute((location.hash || '').slice(1));
 })();
 
 // Le chiffre sur l'icône de l'application installée : ce qui attend le membre, comme le titre de l'onglet (0 : effacé).
-// Le service worker met le sien quand une notification arrive (celles de la barre) ; la page ouverte le remplace.
-let badgePose = -1;
+// Tant que la page est visible, c'est elle qui le tient ; cachée ou fermée, le service worker met le sien quand une
+// notification arrive (celles de la barre), et la page remet le sien dès qu'on revient (visibilitychange).
+let badgePose = -1, badgeVoulu = null;
 // Déconnexion : store.signOut efface le chiffre ; le compte suivant pose le sien, même s'il a le même nombre
-addEventListener('ensam-deconnexion', () => { badgePose = -1; });
+addEventListener('ensam-deconnexion', () => { badgePose = -1; badgeVoulu = null; });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !badgeVoulu) return;
+  badgePose = -1; poserBadge(badgeVoulu.store, badgeVoulu.n);
+});
 function poserBadge(store, n) {
-  if (store.mode !== 'live' || n === badgePose || typeof navigator === 'undefined' || !('setAppBadge' in navigator)) return;
+  // Pendant la déconnexion, le chiffre de l'ancien compte ne revient pas
+  if (store.mode !== 'live' || store.deconnexionVoulue || typeof navigator === 'undefined' || !('setAppBadge' in navigator)) return;
+  badgeVoulu = { store, n };
+  if (n === badgePose) return;
   badgePose = n;
   Promise.resolve(n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
 }
