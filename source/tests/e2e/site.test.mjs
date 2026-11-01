@@ -5049,3 +5049,35 @@ for (const [largeur, langue, theme] of [[390, 'fr', 'light'], [360, 'ar', 'dark'
     await s.ctx.close();
   });
 }
+
+// Rangée « Réussites » : des réussites vérifiées, ouvertes en plein écran, sans rien inventer
+test('accueil : la rangée Réussites s’ouvre en grand, on dit bravo, et une réussite vue éteint son anneau', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('accueil');
+  await s.page.waitForSelector('.rs-visage');
+  const n = await s.page.locator('.rs-visage').count();
+  assert.ok(n >= 1 && n <= 12, 'douze visages au plus');
+  await s.page.locator('.rs-visage').first().click();
+  await s.page.waitForSelector('.rs-histoire');
+  const t = await s.page.locator('.rs-histoire').innerText();
+  assert.match(t, /a décroché/); assert.match(t, /Vérifié des deux côtés/);
+  const avant = await s.page.locator('.rs-bravo.on').count();
+  await s.page.locator('.rs-bravo').click();
+  await s.page.waitForFunction(a => document.querySelectorAll('.rs-bravo.on').length !== a, avant);
+  await s.page.keyboard.press('Escape');
+  await s.page.waitForSelector('.rs-histoire', { state: 'detached' });
+  assert.ok(await s.page.locator('.rs-visage.vue').count() >= 1, 'la réussite vue passe après les autres, anneau éteint');
+  await s.ctx.close();
+});
+
+test('Match : le geste montré une fois, sans gêner la carte', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('match');
+  await s.page.waitForSelector('.mx-guide');
+  assert.equal(await s.page.locator('.mx-guide').evaluate(e => getComputedStyle(e).pointerEvents), 'none');
+  await s.page.locator('.mx-non').click();
+  await s.page.waitForSelector('.mx-guide', { state: 'detached' });
+  await s.page.reload(); await s.page.waitForSelector('.mx-carte');
+  assert.equal(await s.page.locator('.mx-guide').count(), 0, 'pas deux fois');
+  await s.ctx.close();
+});
