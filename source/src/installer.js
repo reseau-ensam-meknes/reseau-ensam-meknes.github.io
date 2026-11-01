@@ -112,7 +112,7 @@ injectCSS('installer', `
 /* Le téléphone : son cadre, l'île en haut, le bas de l'écran qui s'estompe */
 .ins-tel { --cadre: #16253F; position: relative; flex: none; width: 92px; height: 132px; padding: 4px 4px 0; border-radius: 18px 18px 0 0; background: var(--cadre); overflow: hidden;
   -webkit-mask-image: linear-gradient(#000 62%, transparent); mask-image: linear-gradient(#000 62%, transparent); }
-.ins-tel::before { content: ""; position: absolute; top: 7px; left: 50%; width: 24px; height: 7px; margin-left: -12px; border-radius: 4px; background: var(--cadre); }
+.ins-tel::before { content: ""; position: absolute; top: 7px; inset-inline: 0; width: 24px; height: 7px; margin-inline: auto; border-radius: 4px; background: var(--cadre); }
 .ins-tel img { display: block; width: 100%; height: auto; border-radius: 14px 14px 0 0; background: var(--surface-2); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .ins-tel { --cadre: #3B4D6B; } }
 :root[data-theme="dark"] .ins-tel { --cadre: #3B4D6B; }

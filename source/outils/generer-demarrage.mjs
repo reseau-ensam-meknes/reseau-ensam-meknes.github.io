@@ -90,10 +90,11 @@ async function accueil({ largeur, hauteur, densite, langue = 'fr' }) {
 async function capture(nom, o, clip) {
   const { ctx, page } = await accueil(o);
   const f = path.join(dossierCaptures, nom);
-  await page.screenshot({ path: f, type: 'jpeg', quality: o.qualite || 80, ...(clip ? { clip } : {}) });
+  await page.screenshot({ path: f, type: 'jpeg', quality: o.qualite || 70, ...(clip ? { clip } : {}) });
   console.log(`${nom} : ${Math.round(fs.statSync(f).size / 1024)} Ko`);
   await ctx.close();
 }
+// Les captures du manifeste, assez nettes pour la fenêtre d'installation et légères (le dépôt les garde deux fois)
 await capture('telephone.jpg', { largeur: 360, hauteur: 640, densite: 3 });
 await capture('ordinateur.jpg', { largeur: 1280, hauteur: 720, densite: 1.5 });
 for (const langue of ['fr', 'ar']) await capture(`accueil-${langue}.jpg`, { largeur: 390, hauteur: 844, densite: 1, langue, qualite: 78 }, { x: 0, y: 0, width: 390, height: 600 });
