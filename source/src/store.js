@@ -1566,11 +1566,27 @@ export class SupabaseStore extends Base {
     const { error } = await this.sb.auth.updateUser({ password });
     if (error) throw new Error(frError(error));
   }
-  // Se déconnecter soi-même : les données gardées et les brouillons de ce compte partent avec la session
+  // Se déconnecter soi-même : les données gardées et les brouillons de ce compte partent avec la session.
+  // Cet appareil ne reçoit plus les notifications de ce compte : son abonnement est retiré de la base d'abord (il faut encore
+  // la session pour l'effacer) ; celui du navigateur reste, le prochain compte connecté ici le reprend (resynchroniserPush).
   async signOut() {
     this.deconnexionVoulue = true;
+    await this.retirerCetAppareil();
     oublierBrouillons(this.userId); clearTimeout(this.minuteurCache); await oublierCache();
+    try { navigator.clearAppBadge?.()?.catch?.(() => {}); dispatchEvent(new Event('ensam-deconnexion')); } catch { /* */ }
     await this.sb.auth.signOut();
+  }
+  // Quelques secondes au plus : hors ligne, la déconnexion n'attend pas (la base garde l'abonnement jusqu'au prochain compte
+  // connecté sur cet appareil, abonner_push)
+  async retirerCetAppareil() {
+    const delai = ms => new Promise(ok => setTimeout(ok, ms));
+    try {
+      const sw = typeof navigator !== 'undefined' ? navigator.serviceWorker : null;
+      if (!sw) return;
+      const reg = await Promise.race([sw.getRegistration ? sw.getRegistration() : sw.ready, delai(1500)]);
+      const sub = await reg?.pushManager?.getSubscription?.();
+      if (sub?.endpoint) await Promise.race([this.desabonnerPush(sub.endpoint), delai(3000)]);
+    } catch { /* rien à retirer */ }
   }
   async verifyAttestation(id) {
     const { data, error } = await this.sb.rpc('attestation_publique', { p_id: id });
@@ -1618,9 +1634,15 @@ export class SupabaseStore extends Base {
     return !error && data === true;
   }
   // Notifications sur le téléphone : clé publique de la fonction « notifier », abonnement, test
-  async pushKey() {
-    const { data, error } = await this.sb.functions.invoke('notifier', { body: { job: 'cle' } });
-    return error ? null : data?.publicKey || null;
+  // La clé est gardée pour la visite : demandée dès qu'une feuille propose « Activer », elle est là au toucher (un échec
+  // n'est pas gardé : redemandée la fois suivante)
+  pushKey() {
+    if (!this.clePush) {
+      this.clePush = this.sb.functions.invoke('notifier', { body: { job: 'cle' } })
+        .then(({ data, error }) => (error ? null : data?.publicKey || null), () => null)
+        .then(k => { if (!k) this.clePush = null; return k; });
+    }
+    return this.clePush;
   }
   async abonnerPush(sub) {
     const j = sub.toJSON();
