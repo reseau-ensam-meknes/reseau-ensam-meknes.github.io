@@ -372,14 +372,18 @@ function variante(raison, memo) {
 // Une fête à l'écran : la feuille vient juste après elle (apresLaFete). Une ligne « Me prévenir » déjà montrée pendant cette
 // visite : c'était sa demande, pas de feuille. delai : la feuille est décidée tout de suite (aucune ligne ne vient entre-temps)
 // et montrée un peu après (Match : la carte finit de partir).
+// Une feuille déjà à l'écran, ou décidée et sur le point de venir : pas une deuxième qui la remplacerait sous le doigt
+// (Match sur un réseau lent : la réponse du premier « Intéressé » arrive après le second).
+let feuilleLa = false, prevue = 0;
+const PREVUE_MAX = 5000;
 export function proposerPrevenir(raison, mot, delai = 0) {
   const me = hote?.me;
-  if (!me || !montrer || dansLaVisite(visite.ligne)) return false;
+  if (!me || !montrer || dansLaVisite(visite.ligne) || feuilleLa || Date.now() - prevue < PREVUE_MAX) return false;
   const v = variante(raison, lireMemo(me.id));
   if (feteOuverte()) { if (v) { visite.feuille = Date.now(); apresLaFete(me.id, raison); } return true; }
   if (!v) return false;
-  visite.feuille = Date.now();
-  const voir = () => montrer?.({ raison, mot, v, t: Date.now() });
+  visite.feuille = prevue = Date.now();
+  const voir = () => { prevue = 0; if (!feuilleLa) montrer?.({ raison, mot, v, t: Date.now() }); };
   ensuite(() => (delai > 0 ? setTimeout(voir, delai) : voir()));
   return true;
 }
@@ -404,6 +408,8 @@ function reprendre(id, raison) {
   if (ecrit(document.activeElement)) return;
   const { differe, ...reste } = m;
   ecrireMemo(id, reste);
+  // Une autre feuille « Me prévenir » déjà là, ou décidée entre-temps : c'est la demande de cette visite, pas une deuxième
+  if (feuilleLa || Date.now() - prevue < PREVUE_MAX) return;
   const v = variante(raison, reste);
   if (v) montrer({ raison, mot: null, v, t: Date.now() });
 }
@@ -540,8 +546,9 @@ function FeuillePrevenir({ ctx, f, onClose }) {
   const { store, me } = ctx;
   const [busy, setBusy] = useState(false);
   const email = f.v === 'email', ios = f.v === 'ios';
-  // À l'écran, quelle que soit la réponse : c'est la demande de cette visite (pas de ligne « Me prévenir » après elle)
-  useEffect(() => { visite.feuille = Date.now(); }, []);
+  // À l'écran, quelle que soit la réponse : c'est la demande de cette visite (pas de ligne « Me prévenir » après elle), et
+  // aucune autre feuille « Me prévenir » ne vient la remplacer tant qu'elle est là
+  useEffect(() => { visite.feuille = Date.now(); feuilleLa = true; return () => { feuilleLa = false; }; }, []);
   // Fermer sans accepter (Plus tard, ×, Retour, toucher à côté) compte comme un refus ; la variante email est déjà notée
   const refuser = () => { if (!email) { const m = lireMemo(me.id); ecrireMemo(me.id, { ...m, n: (m.n || 0) + 1, at: Date.now() }); } onClose(); };
   const accepter = async () => {

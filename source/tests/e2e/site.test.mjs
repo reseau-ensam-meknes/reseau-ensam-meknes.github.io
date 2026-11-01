@@ -1158,6 +1158,27 @@ test('« Me prévenir » : la ligne se lit et se touche — axe de jour et de nu
   await n.ctx.close();
 });
 
+test('« Me prévenir » dans Match, réseau lent : deux « Intéressé » de suite, une seule feuille, qui ne se refait pas sous le doigt', async () => {
+  const s = await prevenirSur('off');
+  await s.comme('Youssef'); await ouvertureRangee(s);
+  await s.aller('match'); await s.page.waitForSelector('.mx-carte.dessus');
+  // La base répond 1,2 s après chaque choix : la réponse du premier « Intéressé » arrive après le second
+  await s.page.evaluate(() => { const st = window.__demo, f = st.choisirMatch.bind(st); st.choisirMatch = (...a) => new Promise(ok => setTimeout(ok, 1200)).then(() => f(...a)); });
+  const libre = async () => { for (let i = 0; i < 6 && await s.page.locator('.mx-carte.dessus .mx-interet').count(); i++) { await s.page.click('.mx-non'); await s.page.waitForTimeout(450); } };
+  await libre(); await s.page.click('.mx-oui'); await s.page.waitForTimeout(450);
+  await libre(); await s.page.click('.mx-oui');
+  await s.page.waitForSelector('.modal.prevenir', { timeout: 5000 });
+  await s.page.evaluate(() => { document.querySelector('.modal.prevenir').dataset.premiere = '1'; });
+  await s.page.waitForTimeout(2000);
+  assert.equal(await s.page.locator('.modal-back:not(.sortie) .modal.prevenir').count(), 1, 'une seule feuille');
+  assert.equal(await s.page.locator('.modal.prevenir[data-premiere]').count(), 1, 'la même feuille, pas remplacée sous le doigt');
+  await s.page.click('#pv-tard'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.equal((await s.memo()).n, 2, 'un seul refus compté');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 // À l'ouverture : « Reçois l'essentiel sur ton téléphone », quelques secondes après l'arrivée, sur un écran calme
 test('à l’ouverture : la feuille des notifications selon le rôle ; « Plus tard » la range 2 jours, tant que rien n’est activé', async () => {
   const s = await prevenirSur('off');
