@@ -31,6 +31,10 @@ import { useFondateurs, FondateursBandeau, useFondateurMoi } from './fondateurs.
 import { ReussitesRail } from './reussites.js';
 import { useAmbassadeurs, pasAmbassadeur, notifsAmbassadeur, AmbassadeurAccueil, AmbassadeurFeuille } from './ambassadeurs.js';
 
+// Les calques posés au-dessus de tout (position fixe) qui peuvent arriver avec une page : feuilles et fenêtres, fêtes,
+// visionneuse de photo, histoire d'une réussite, conversation plein écran du téléphone. Le contenu ne glisse pas sous eux.
+const CALQUES_FIXES = '.modal-back, .fete-back, .mx-fete, .visionneuse, .rs-histoire, .conv';
+
 // Coque v3 : le bandeau de la démo tient sur une ligne, son mode d'emploi se déplie
 addAR({ 'Démo avec des données fictives.': 'نسخة تجريبية ببيانات وهمية.', 'Essaie le mentorat :': 'جرّب الإرشاد:', 'Comment essayer': 'كيف تجرّب', 'Replier': 'طيّ' },
   [[/^Profil rempli à (\d+)\s?%$/, n => `الملف مكتمل بنسبة ${n}%`]]);
@@ -168,9 +172,21 @@ function App({ store }) {
   useLayoutEffect(() => { const y = aRendre.current; if (y == null) return; aRendre.current = null; rendrePosition(y); });
   useLayoutEffect(() => {
     const s = vtSens.current; vtSens.current = null;
-    if (s == null || mouvementReduit()) return;
+    const contenu = document.getElementById('contenu');
+    if (s == null || mouvementReduit() || !contenu?.animate) return;
+    // Une feuille, une fête ou une conversation plein écran arrive avec la page (« Publier un événement », « Écrire ») :
+    // elle a sa propre entrée, et un calque fixé suivrait le contenu qui glisse (décalé, sous les barres) avant de sauter
+    // à sa place. Rien ne glisse alors ; et si elle n'arrive qu'au rendu suivant (ouverte par un effet de la page), le
+    // glissement s'arrête net à ce moment-là.
+    const calque = () => [...contenu.querySelectorAll(CALQUES_FIXES)].some(e => getComputedStyle(e).position === 'fixed');
+    if (calque()) return;
     const sens = s * (document.documentElement.dir === 'rtl' ? -1 : 1);
-    document.getElementById('contenu')?.animate?.([{ opacity: 0, translate: `${sens * 14}px 0` }, { opacity: 1, translate: '0 0' }], { duration: 200, easing: 'cubic-bezier(.16, 1, .3, 1)' });
+    const a = contenu.animate([{ opacity: 0, translate: `${sens * 14}px 0` }, { opacity: 1, translate: '0 0' }], { duration: 200, easing: 'cubic-bezier(.16, 1, .3, 1)' });
+    const guet = new MutationObserver(() => { if (calque()) { a.cancel(); guet.disconnect(); } });
+    guet.observe(contenu, { childList: true, subtree: true });
+    const fin = () => guet.disconnect();
+    a.finished.then(fin, fin);
+    return fin;
   }, [route.base]);
   // La barre du haut prend son filet dès que la page défile (rien tant qu'on est tout en haut)
   useEffect(() => {

@@ -372,6 +372,9 @@ injectCSS('pf-court', `
 .pf-facultatif[aria-expanded="true"] .chev { transform: rotate(45deg); }
 #pf-facultatif:empty { display: none; }
 #pf-facultatif { display: flex; flex-direction: column; gap: .9rem; }
+/* « Remplir depuis LinkedIn » : tout le cadre pointillé se touche (44 px au moins), pas seulement ses mots */
+.li-box > summary { min-height: 44px; margin: -.55rem -.8rem; padding-inline: .8rem; border-radius: inherit; }
+.li-box[open] > summary { margin-bottom: 0; }
 .pf-pied { position: sticky; bottom: 0; z-index: 5; padding-block: .6rem calc(.6rem + env(safe-area-inset-bottom, 0px)); background: linear-gradient(to bottom, transparent, var(--pied, var(--surface)) 35%); }
 .pf-pied .btn { width: 100%; justify-content: center; min-height: 48px; }
 html:has(.pf-pied) { scroll-padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px)); }

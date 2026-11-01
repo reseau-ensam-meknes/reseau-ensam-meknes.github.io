@@ -1,5 +1,5 @@
 // Groupes (filière, ville, à l'étranger) et Cafés ENSAM : on se retrouve, en ligne puis en vrai.
-import { html, useState } from './vendor/preact-htm.js';
+import { html, useState, useRef } from './vendor/preact-htm.js';
 import { getLang, addAR } from './i18n.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, toast, Rangee, injectCSS, vibrer, Coche } from './ui.js';
 import { myGroups, groupMembers, groupLabel, groupKey, autoGroups, timeAgo } from './logic.js';
@@ -156,6 +156,9 @@ export function CafeCard({ ctx, c, showCity }) {
   const { data, me, store, act, openProfile } = ctx;
   const parts = data.cafe_participants.filter(x => x.cafe_id === c.id).map(x => store.byId('profiles', x.user_id)).filter(Boolean);
   const mineP = data.cafe_participants.find(x => x.cafe_id === c.id && x.user_id === me.id);
+  // Inscrit avant d'ouvrir la page : la coche est posée ; elle ne se dessine que pour un « Je viens » touché ici
+  const dejaInscrit = useRef(!!mineP);
+  if (!mineP) dejaInscrit.current = false;
   const org = store.byId('profiles', c.organisateur_id);
   const isOrg = c.organisateur_id === me.id;
   const full = c.places && parts.length >= c.places;
@@ -173,7 +176,7 @@ export function CafeCard({ ctx, c, showCity }) {
     </div>
     <div class="cafe-act">
       ${c.annule ? html`<span class="tag done">Annulé</span>` : past ? html`<span class="tag done">Terminé</span>` : mineP ? html`
-        <span class="mini good cafe-ok"><${Coche} taille=${16}/> Tu y vas</span>
+        <span class="mini good cafe-ok"><${Coche} taille=${16} pose=${dejaInscrit.current}/> Tu y vas</span>
         <a class="btn tiny ghost" href=${gcalCafe(c)} target="_blank" rel="noopener"><${Icon} name="calendar" size=${14}/> Agenda</a>
         ${isOrg ? html`<button class="btn tiny ghost danger-t" onClick=${() => ctx.confirm('Annuler ce café ? Les inscrits le verront annulé.', () => act(() => store.update('cafes', c.id, { annule: true })), 'Annuler le café')}>Annuler</button>`
           : html`<button class="btn tiny ghost" onClick=${() => act(() => store.remove('cafe_participants', mineP.id))}>Je ne viens plus</button>`}`

@@ -135,7 +135,7 @@ function ListeEntreprises({ ctx, all, ouvrir }) {
       <${CompanyLogo} name=${c.nom} size=${40}/>
       <span class="grow"><strong translate="no">${c.nom}</strong>
         ${c.note != null || c.ville || c.pays ? html`<span class="ent-row-sub">${c.note != null ? html`<${Etoiles} note=${c.note} size=${13}/><b>${fmtNote(c.note)}</b>` : null}${c.ville || c.pays ? html`<span class="muted small" translate="no">${lieuTxt(c.ville, c.pays)}</span>` : null}</span>` : null}
-      <span class="mini-stats">${c.laureats.length ? html`<span class="ent-nb"><${Icon} name="people" size=${15}/> ${pluriel(c.laureats.length, 'lauréat', 'lauréats')}</span>` : null}${c.avis.length ? html`<span title="Avis"><${Icon} name="star" size=${15}/> ${c.avis.length}</span>` : null}${c.entretiens.length ? html`<span title="Entretiens"><${Icon} name="qa" size=${15}/> ${c.entretiens.length}</span>` : null}</span></span>
+      <span class="mini-stats">${c.laureats.length ? html`<span class="ent-nb"><${Icon} name="people" size=${15}/> ${pluriel(c.laureats.length, 'lauréat', 'lauréats')}</span>` : null}${c.avis.length ? html`<span><${Icon} name="star" size=${15}/> ${pluriel(c.avis.length, 'avis', 'avis')}</span>` : null}${c.entretiens.length ? html`<span><${Icon} name="qa" size=${15}/> ${pluriel(c.entretiens.length, 'entretien', 'entretiens')}</span>` : null}</span></span>
     </button></li>`)}</ul>` : null}
     <${VoirPlus} reste=${reste} onPlus=${plus}/>
     ${!list.length ? html`<${Empty} icon="briefcase" title="Aucune entreprise trouvée">${ouvrir ? 'Tu as passé un entretien ou fait un stage ? Sois le premier à partager.' : ''}<//>` : null}
@@ -472,6 +472,8 @@ injectCSS('entreprises', `
 /* Sous le nom, qui garde toute la largeur : la note et le lieu, puis les lauréats, les avis et les entretiens */
 .ent-row .mini-stats { font-family: var(--f-body); font-size: var(--fs-2); font-variant-numeric: tabular-nums; gap: .8rem; flex-wrap: wrap; }
 .ent-row .mini-stats .ent-nb { font-size: var(--fs-2); }
+/* Petit téléphone : « 3 avis · 2 entretiens » se lisent sans leur icône, la ligne garde sa hauteur */
+@media (max-width: 380px) { .ent-row .mini-stats > span:not(.ent-nb) > .ico { display: none; } }
 .mini-stats .ent-nb { font: 500 .85rem var(--f-body); white-space: nowrap; }
 .ent-stars { display: inline-flex; gap: 1px; font-size: var(--s, 15px); line-height: 1; color: color-mix(in srgb, var(--brass) 25%, transparent); }
 .ent-stars .on { color: var(--brass); }
@@ -612,7 +614,10 @@ addAR({
   [/^Partage les questions de ton entretien chez (.+)$/, e => `شارك أسئلة مقابلتك في ${e}`],
   [/^Comment s’est passé ton stage chez (.+) \?$/, e => `كيف مر تدريبك في ${e}؟`],
   [/^Comment se passent tes débuts chez (.+) \?$/, e => `كيف تسير بداياتك في ${e}؟`],
-  [/^(\d+) avis$/, n => `${n} رأي`],
+  // Un nombre suivi de son mot (« 3 avis », « 1 entretien ») : sur la ligne d'une entreprise, une étoile seule et un chiffre
+  // se liraient comme une note
+  [/^(\d+) avis$/, n => arCount(n, ['رأي واحد', 'رأيان', 'آراء', 'رأيًا'])],
+  [/^(\d+) entretiens?$/, n => arCount(n, ['مقابلة واحدة', 'مقابلتان', 'مقابلات', 'مقابلة'])],
   [/^(\d+) entreprises? où travaillent nos lauréats$/, n => `${arCount(n, ['شركة واحدة', 'شركتان', 'شركات', 'شركة'])} يعمل فيها خريجونا`],
   [/^(\d+) avis · La note s’affiche à partir de (\d+) avis\.$/, (n, m) => `${arCount(n, ['رأي واحد', 'رأيان', 'آراء', 'رأيًا'])} · يظهر التقييم ابتداءً من ${m} آراء.`],
   [/^(\d+) entretiens? partagés?$/, n => `${n} مقابلة مشتركة`],

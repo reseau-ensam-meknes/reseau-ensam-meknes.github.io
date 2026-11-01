@@ -1117,6 +1117,12 @@ export function Compteur({ v, duree = 400, format, cls = '' }) {
   const n = Math.round(Number(v) || 0);
   duree = Math.max(150, Math.min(400, Number(duree) || 400));
   const f = x => (format ? format(x) : String(x));
+  const texte = f(n);
+  // Le texte voulu et la mise en forme du dernier rendu : un comptage interrompu (valeur qui change pendant qu'il compte,
+  // page quittée) se pose sur la valeur d'aujourd'hui, jamais sur celle d'avant (Preact a déjà écrit la nouvelle quand
+  // le nettoyage de l'ancien comptage passe)
+  const final = useRef(texte), fmt = useRef(f);
+  final.current = texte; fmt.current = f;
   const ref = useRef(); const vu = useRef(false);
   useLayoutEffect(() => {
     const t = ref.current?.firstChild;
@@ -1125,8 +1131,8 @@ export function Compteur({ v, duree = 400, format, cls = '' }) {
     const lancer = () => {
       vu.current = true;
       let t0 = 0;
-      const pas = now => { t0 ||= now; const k = Math.min(1, (now - t0) / duree); t.data = f(Math.round(n * (1 - (1 - k) ** 3))); if (k < 1) raf = requestAnimationFrame(pas); };
-      t.data = f(0); raf = requestAnimationFrame(pas);
+      const pas = now => { t0 ||= now; const k = Math.min(1, (now - t0) / duree); t.data = k < 1 ? fmt.current(Math.round(n * (1 - (1 - k) ** 3))) : final.current; raf = k < 1 ? requestAnimationFrame(pas) : 0; };
+      t.data = fmt.current(0); raf = requestAnimationFrame(pas);
     };
     const r = ref.current.getBoundingClientRect();
     if (r.width && r.bottom > 0 && r.top < innerHeight) lancer();
@@ -1134,9 +1140,9 @@ export function Compteur({ v, duree = 400, format, cls = '' }) {
       io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) { io.disconnect(); io = null; lancer(); } }, { threshold: .5 });
       io.observe(ref.current);
     }
-    return () => { cancelAnimationFrame(raf); io?.disconnect(); if (t.isConnected) t.data = f(n); };
+    return () => { cancelAnimationFrame(raf); io?.disconnect(); if (t.isConnected) t.data = final.current; };
   }, [n]);
-  return html`<span class=${'compteur' + (cls ? ' ' + cls : '')} ref=${ref}>${f(n)}</span>`;
+  return html`<span class=${'compteur' + (cls ? ' ' + cls : '')} ref=${ref}>${texte}</span>`;
 }
 
 // Anneau de progression (SVG) qui se remplit de 0 à sa valeur à sa première apparition (0,4 s) ; immobile en mouvement réduit.
@@ -1211,8 +1217,9 @@ export function vibrer(ms = 10) {
 // La coche du succès : un rond vert qui « pop », puis le trait qui se dessine (0,4 s en tout) ; posée d'emblée en
 // mouvement réduit. label : ce qu'elle dit aux lecteurs d'écran (sinon décorative).
 //   <${Coche} taille=${48} label="Envoyé"/>
-export function Coche({ taille = 40, label }) {
-  return html`<span class="coche" style=${`--taille:${taille}px`} role=${label ? 'img' : null} aria-label=${label || null} aria-hidden=${label ? null : 'true'}>
+// pose : c'était déjà fait en arrivant sur la page (un café où l'on va déjà) : la coche est là, sans se rejouer à chaque visite.
+export function Coche({ taille = 40, label, pose = false }) {
+  return html`<span class=${'coche' + (pose ? ' posee' : '')} style=${`--taille:${taille}px`} role=${label ? 'img' : null} aria-label=${label || null} aria-hidden=${label ? null : 'true'}>
     <svg viewBox="0 0 24 24" width=${Math.round(taille * .56)} height=${Math.round(taille * .56)} fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path pathLength="1" d="M5.5 12.6l4.1 4.1 8.9-9.3"/></svg>
   </span>`;
 }
@@ -1291,6 +1298,7 @@ const CSS_BRIQUES = `
   .coche { animation: coche-rond .34s cubic-bezier(.3, 1.5, .5, 1) backwards; }
   .coche path { animation: coche-trait .26s ease-out .14s backwards; }
 }
+.coche.posee, .coche.posee path { animation: none; }
 @keyframes coche-rond { from { opacity: 0; transform: scale(.35); } }
 @keyframes coche-trait { from { stroke-dashoffset: 1; } }
 

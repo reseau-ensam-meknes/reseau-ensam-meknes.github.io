@@ -84,11 +84,14 @@ function DateBloc({ iso, compact }) {
   </span>`;
 }
 
-function Quand({ e, court }) {
+// tuile : la tuile de date (DateBloc, muette pour les lecteurs d'écran) est à côté et dit déjà le jour ; la ligne ne montre
+// que l'heure, le jour reste dit aux lecteurs d'écran
+function Quand({ e, court, tuile }) {
   const d = new Date(e.debut); const f = e.fin ? new Date(e.fin) : null;
   const h = html`<span class="mono" dir="ltr">${heure(d)}${f && memeJour(d, f) ? ` – ${heure(f)}` : ''}</span>`;
+  const jour = html`<span>${JOURS[d.getDay()]}</span> <span>${`${d.getDate()} ${MOIS[d.getMonth()]}`}</span>`;
   return html`<span class="ev-when"><${Icon} name="clock" size=${14}/>
-    ${court ? h : html`<span>${JOURS[d.getDay()]}</span> <span class="nowrap"><span>${`${d.getDate()} ${MOIS[d.getMonth()]}`}</span> ·</span> <span class="nowrap">${h}</span>`}
+    ${court ? h : tuile ? html`<span class="sr-only">${jour}</span> <span class="nowrap">${h}</span>` : html`<span>${JOURS[d.getDay()]}</span> <span class="nowrap"><span>${`${d.getDate()} ${MOIS[d.getMonth()]}`}</span> ·</span> <span class="nowrap">${h}</span>`}
     ${f && !memeJour(d, f) ? html` · <span>${`jusqu’au ${f.getDate()} ${MOIS[f.getMonth()]}`}</span>` : null}</span>`;
 }
 
@@ -165,7 +168,7 @@ function EventCard({ ctx, e, onOpen, onEdit }) {
     <div class="ev-main">
       <div class="ev-tags"><${TypeTag} type=${e.type}/><${PublicTag} e=${e}/><${Etat} e=${e}/></div>
       <h3 class="ev-title"><button class="linkish strong" onClick=${() => onOpen(e)} translate="no" dir="auto">${e.titre}</button></h3>
-      <${Quand} e=${e}/>
+      <${Quand} e=${e} tuile/>
       ${e.lieu ? html`<span class="ev-line small"><${Icon} name="pin" size=${14}/> <span translate="no" dir="auto">${e.lieu}</span></span>` : null}
       ${e.lien && !e.annule && !fini ? html`<span class="ev-line small"><${Icon} name="video" size=${14}/> <a href=${e.lien} target="_blank" rel="noopener">${e.lieu ? 'Rejoindre en ligne' : 'En ligne'}</a></span>` : null}
       ${e.description ? html`<p class="ev-desc small muted" translate="no" dir="auto">${e.description}</p>` : null}
@@ -187,7 +190,7 @@ function EventDetail({ ctx, e, onClose, onEdit }) {
       <div class="row"><${DateBloc} iso=${e.debut}/><div class="grow ev-main">
         <div class="ev-tags"><${TypeTag} type=${e.type}/><${PublicTag} e=${e}/><${Etat} e=${e}/></div>
         <h3 class=${'ev-title' + (e.annule ? ' struck' : '')} translate="no" dir="auto">${e.titre}</h3>
-        <${Quand} e=${e}/>
+        <${Quand} e=${e} tuile/>
       </div></div>
       ${e.lieu ? html`<p class="ev-line"><${Icon} name="pin" size=${15}/> <span translate="no" dir="auto">${e.lieu}</span></p>` : null}
       ${e.lien && !e.annule ? html`<p class="ev-line"><${Icon} name="video" size=${15}/> <a href=${e.lien} target="_blank" rel="noopener" dir="ltr" translate="no">${e.lien.replace(/^https:\/\//, '').slice(0, 60)}</a></p>` : null}
@@ -341,6 +344,13 @@ injectCSS('agenda', `
 .ev-when .nowrap { white-space: nowrap; }
 .ev-when svg, .ev-line svg { color: var(--muted); flex: none; }
 .ev-line { display: inline-flex; align-items: center; gap: .3rem; overflow-wrap: anywhere; margin: 0; }
+/* Un lien ou un lieu sur deux lignes : l'icône reste en face de la première */
+@supports (min-height: 1lh) { .ev-line > svg { align-self: flex-start; min-height: 1lh; } }
+/* Au doigt, le lien « En ligne » se touche sur 44 px de haut (une zone invisible le prolonge, le texte ne bouge pas) */
+@media (pointer: coarse) {
+  .ev-line > a { position: relative; }
+  .ev-line > a::before { content: ""; position: absolute; inset-block: min(-7px, calc(50% - 22px)); inset-inline: -4px; }
+}
 .ev-desc { margin: .15rem 0 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .ev-full { white-space: pre-line; margin: 0; }
 .ev-act { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; padding-top: .6rem; border-top: 1px solid var(--line); }
