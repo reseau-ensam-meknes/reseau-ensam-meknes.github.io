@@ -6,7 +6,7 @@ import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
 import { proposerPrevenir } from './pwa.js';
 import { ChoixRole, accordIci } from './entree.js';
 import { getLang, setLang } from './i18n.js';
-import { laureatCompte, FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole, chiffreReseau } from './logic.js';
+import { laureatCompte, FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole, chiffreReseau, pionniersOf, PIONNIER_MOI } from './logic.js';
 import { villeAffichee } from './geo.js';
 import { TalentPool } from './growth.js';
 import { GroupesPage } from './groupes.js';
@@ -17,7 +17,7 @@ import { EtrangerPage } from './etranger.js';
 import { AgendaPage } from './agenda.js';
 import { MessageBtn } from './messages.js';
 import { CvButton } from './cv.js';
-import { SignalerBtn, ContactBlock, PairVerify, VisibiliteFields, groupesMasques, confirmations, VIS_LABELS, VIS_CHOIX } from './confiance.js';
+import { SignalerBtn, ContactBlock, PairVerify, VisibiliteFields, groupesMasques, confirmations, VIS_LABELS, VIS_CHOIX, VitrinePubliqueCase } from './confiance.js';
 import { VIS_CHAMPS, VIS_DEFAUT, CV_MAX } from './store.js';
 import { addAR, arCount } from './i18n.js';
 import { oublierInvitation } from './invitation.js';
@@ -239,7 +239,7 @@ export function ProfileModal({ ctx, p: p0, onClose, onAskMentor }) {
   const s = scores.get(p.id);
   // Un étudiant ne voit ni points ni classement : seulement les badges qui disent à qui il peut faire confiance.
   // « Vérifié » n'est pas un badge ici : c'est le bouclier, juste après le nom.
-  const badges = badgesOf(s, p, { star: ctx.starId, fondateurs: ctx.fondateurs, ambassadeurs: ctx.ambassadeurs }).filter(b => b.id !== 'verifie' && (me.role !== 'etudiant' || ['fondateur', 'ambassadeur', 'mentor', 'reactif'].includes(b.id)));
+  const badges = badgesOf(s, p, { star: ctx.starId, fondateurs: ctx.fondateurs, ambassadeurs: ctx.ambassadeurs, pionniers: pionniersOf(data.profiles) }).filter(b => b.id !== 'verifie' && (me.role !== 'etudiant' || ['fondateur', 'ambassadeur', 'pionnier', 'mentor', 'reactif'].includes(b.id))).map(b => (b.id === 'pionnier' && p.id === me.id ? { ...b, ...PIONNIER_MOI } : b));
   const helped = data.placements.filter(x => x.laureat_id === p.id && x.status === 'confirme').length;
   // Seulement les chiffres non nuls, accordés : un nouveau lauréat n'affiche pas une rangée de zéros
   const stats = [[s?.points, 'point'], [helped, 'recruté'], [s?.mentorats, 'mentorat'], [s?.offres, 'offre']]
@@ -714,7 +714,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
       <${Field} label="Autre (facultatif)"><input id="pf-contact" maxlength="200" value=${co.contact} onInput=${e => setC('contact', e.target.value)} placeholder="Ex. WhatsApp, plutôt le soir"/><//>
     </fieldset>
     <${VisibiliteFields} role=${f.role} value=${vis} onChange=${choisirVis} etat=${onboarding ? undefined : visOk} id="profil-visibilite"/>` : null}
-    ${onboarding || !apresVisibilite ? null : html`<div class="pf-fondateur">${apresVisibilite}</div>`}`;
+    ${onboarding || !apresVisibilite ? null : html`<div class="pf-fondateur">${apresVisibilite}<${VitrinePubliqueCase} ctx=${ctx}/></div>`}`;
   return html`<form class="form" id=${onboarding ? undefined : 'profil-infos'} hidden=${!voir('profil') && !voir('visibilite')} onSubmit=${submit}>
     <div class="pf-partie pf-infos" hidden=${!voir('profil')}>
     ${onboarding ? null : html`<h2 class="pf-titre">Mes infos</h2>`}
