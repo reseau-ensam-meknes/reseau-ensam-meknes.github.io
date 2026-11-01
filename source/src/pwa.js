@@ -598,6 +598,10 @@ export function PrevenirHote({ ctx, bloque }) {
     const tenter = async () => {
       const l = lienAppareil();
       if (!vivant || !l) return;
+      // Une nouvelle version peut encore recharger la page : la feuille attend, sinon elle disparaîtrait sous les yeux du
+      // membre (et serait comptée deux fois)
+      const maj = attenteMaj();
+      if (maj > 0) { t = setTimeout(tenter, maj); return; }
       if (feteOuverte() || arriveeEnAttente(me.id) || occupe()) {
         if (Date.now() - debut < LIEN_FIN) t = setTimeout(tenter, OUV_ESSAI); else oublierLienAppareil();
         return;
@@ -605,7 +609,9 @@ export function PrevenirHote({ ctx, bloque }) {
       const etat = etatDemo(store) || (store.mode === 'live' ? await etatPush(store).catch(() => 'absent') : 'demo');
       if (!vivant) return;
       etatConnu = etat;
-      const sorte = etat === 'appli' ? 'appli' : l.depuis === 'ancienne' && !isStandalone() ? 'ancienne'
+      // Le navigateur d'une application : sa feuille une fois par visite, même quand le lien revient. « Ouvrir dans Chrome »
+      // sur un téléphone sans Chrome rouvre la même adresse (?notifs=1) ici même : la même feuille tournerait en boucle.
+      const sorte = etat === 'appli' ? (appliVue() ? null : 'appli') : l.depuis === 'ancienne' && !isStandalone() ? 'ancienne'
         : l.notifs ? sorteLienNotifs({ etat, memo: lireMemo(me.id) }) : null;
       if (!['push', 'ios', 'appli', 'ancienne', 'debloquer'].includes(sorte)) {
         oublierLienAppareil();

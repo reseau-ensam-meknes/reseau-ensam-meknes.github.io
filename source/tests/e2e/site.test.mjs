@@ -1148,6 +1148,24 @@ test('navigateur d’une application (Instagram) : « Ouvrir dans Chrome » à l
   await a.ctx.close();
 });
 
+test('navigateur d’une application sans Chrome : « Ouvrir dans Chrome » rouvre la même adresse ici (?notifs=1) sans remontrer la feuille', async () => {
+  const s = await ouvrir({ largeur: 360, ua: INSTAGRAM });
+  await s.page.setViewportSize({ width: 360, height: 640 });
+  await s.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  await s.page.click('#appli-chrome'); await s.page.waitForTimeout(400);
+  // Pas de Chrome sur ce téléphone : l'application ouvre l'adresse de secours ici même, à chaque toucher
+  for (let i = 0; i < 2; i++) {
+    await s.page.goto(adresse + '?notifs=1'); await s.page.waitForSelector('.hello');
+    await s.page.waitForTimeout(4500);
+    assert.equal(await s.page.locator('.modal.appli').count(), 0, 'la même feuille ne tourne pas en boucle');
+    assert.equal(await s.page.evaluate(() => sessionStorage.getItem('ensam-lien-appareil')), null, 'le lien est lu');
+  }
+  // La pastille reste là pour qui veut revoir les gestes
+  await s.page.waitForSelector('.pastille[data-sorte="appli"]');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('à l’ouverture : « Plus tard » puis une fête dans la même visite, le refus reste compté', async () => {
   const s = await prevenirSur('off');
   await attendreOuverture(s); await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
