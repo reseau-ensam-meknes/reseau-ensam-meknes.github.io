@@ -1,12 +1,12 @@
 // Administration, par onglets : vue d'ensemble (chiffres, annonce, défis, parrains, recrutements, offres),
 // modération des signalements, membres (rôle, vérification), liste officielle des étudiants,
 // liens d'invitation par promo, agenda de l'école, cartes sponsorisées de Match et réglages (email de l'école).
-import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
-import { Icon, Field, Person, Num, Empty, Bar, Avatar, toast, injectCSS } from './ui.js';
+import { html, useState, useEffect, useMemo, useRef } from './vendor/preact-htm.js';
+import { Icon, Field, Person, Empty, Bar, Avatar, toast, injectCSS, EnTetePage, Compteur } from './ui.js';
 import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
 import { addAR, arCount } from './i18n.js';
 import { NIVEAUX, niveauOf, timeAgo, cleNom, norm, GUIDE_SECTIONS, pct, reponses48h, parcoursInscription, compteOuvert, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible,
-  SPONSO_PUBLICS, SPONSO_ANNEES, jourLocal, normaliserSponsorise, refusSponsorise, etatSponsorise, tauxClic, resumeFilieres } from './logic.js';
+  SPONSO_PUBLICS, SPONSO_ANNEES, jourLocal, normaliserSponsorise, refusSponsorise, etatSponsorise, tauxClic, resumeFilieres, seasonLabel } from './logic.js';
 import { DefisAdmin } from './saison.js';
 import { AgendaAdmin } from './agenda.js';
 import { InvitationsAdmin } from './invitation.js';
@@ -29,7 +29,7 @@ addAR({
   'Offre': 'عرض', 'Commentaire': 'تعليق', 'Question': 'سؤال', 'Réponse': 'جواب', 'Message de groupe': 'رسالة في مجموعة', 'Message privé': 'رسالة خاصة', 'Voir la photo': 'عرض الصورة', 'Fichier indisponible.': 'الملف غير متاح.', 'Profil': 'الملف الشخصي',
   'Entretien': 'مقابلة', 'Avis de stage': 'رأي حول تدريب', 'Guide de l’étranger': 'دليل الخارج', 'Café ENSAM': 'مقهى ENSAM', 'Startup': 'شركة ناشئة', 'Relecture de CV': 'مراجعة السيرة الذاتية',
   'Spam': 'رسائل مزعجة', 'Arnaque': 'احتيال', 'Inapproprié': 'غير لائق', 'Faux ou trompeur': 'خاطئ أو مضلل', 'Harcèlement': 'تحرش أو مضايقة', 'Données personnelles': 'معطيات شخصية', 'Autre': 'غير ذلك',
-  'Rien à modérer': 'لا شيء للإشراف', 'Quand un membre signale un contenu, il apparaît ici. Tu décides de le retirer ou de le garder.': 'عندما يبلّغ عضو عن محتوى، يظهر هنا. تقرر حذفه أو إبقاءه.',
+  'Aucun signalement': 'لا توجد تبليغات', 'Quand un membre signale un contenu, il apparaît ici. Tu décides de le retirer ou de le garder.': 'عندما يبلّغ عضو عن محتوى، يظهر هنا. تقرر حذفه أو إبقاءه.',
   'Contenu déjà supprimé': 'المحتوى حُذف من قبل', 'Clore': 'إغلاق', 'Classer sans suite': 'حفظ دون متابعة', 'Marquer traité': 'تحديد كمُعالج',
   'Masquer l’offre': 'إخفاء العرض', 'Supprimer l’offre': 'حذف العرض', 'Supprimer le commentaire': 'حذف التعليق', 'Réponse à une demande': 'رد على طلب', 'Supprimer la question': 'حذف السؤال',
   'Supprimer la réponse': 'حذف الجواب', 'Supprimer le message': 'حذف الرسالة', 'Retirer le badge vérifié': 'سحب شارة التحقق', 'Supprimer l’entretien': 'حذف المقابلة',
@@ -90,7 +90,8 @@ addAR({
   [/^Vider la liste de la promo (\d{4}) \? Les comptes déjà vérifiés le restent\.$/, y => `إفراغ لائحة دفعة ${y}؟ تبقى الحسابات المتحقق منها كما هي.`],
 ]);
 
-const ROLES = [['etudiant', 'Profil étudiant'], ['laureat', 'Profil lauréat']];
+// Le menu du rôle (étiqueté « Rôle ») dit le rôle en un mot : sur téléphone, le nom du membre garde la place de se lire
+const ROLES = [['etudiant', 'Étudiant'], ['laureat', 'Lauréat']];
 const TABS = [['', 'Vue d’ensemble', 'chart'], ['moderation', 'Modération', 'flag'], ['membres', 'Membres', 'people'], ['liste', 'Liste officielle', 'file'], ['inviter', 'Inviter', 'send'], ['agenda', 'Agenda', 'calendar'], ['sponsorises', 'Sponsorisés', 'etiquette'], ['reglages', 'Réglages', 'wrench']];
 
 // Comptes (emails, dernière connexion), lus une fois pour toute la page
@@ -108,8 +109,9 @@ export function AdminPage(ctx) {
   const toVerify = data.profiles.filter(p => p.role === 'laureat' && !p.verified);
   const dot = { moderation: ouverts.length, membres: toVerify.length };
   return html`<section class="page admin">
-    <header class="page-head"><div><h1>Administration</h1></div></header>
-    <${PucesNav} cls="adm-tabs" label="Rubriques de l’administration" idPrefix="adm-tab-" items=${TABS.map(([k, l, i]) => ({ k, label: l, icon: i, n: dot[k] }))} actif=${tab} onChoisir=${k => go(k ? 'admin/' + k : 'admin')}/>
+    <${EnTetePage} surTitre=${ctx.saison ? `Année ${seasonLabel(ctx.saison)}` : null} titre="Administration">
+      <${PucesNav} cls="adm-tabs" label="Rubriques de l’administration" idPrefix="adm-tab-" items=${TABS.map(([k, l, i]) => ({ k, label: l, icon: i, n: dot[k] }))} actif=${tab} onChoisir=${k => go(k ? 'admin/' + k : 'admin')}/>
+    <//>
     ${tab === '' ? html`<${VueEnsemble} ctx=${ctx} comptes=${comptes} ouverts=${ouverts} toVerify=${toVerify}/>` : null}
     ${tab === 'moderation' ? html`<${Moderation} ctx=${ctx}/>` : null}
     ${tab === 'membres' ? html`<${Membres} ctx=${ctx} comptes=${comptes} toVerify=${toVerify}/>` : null}
@@ -144,7 +146,6 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
   ];
   const lecturesFausses = (data.retours_cv || []).filter(r => r.status === 'ouvert');
   const stale = data.placements.filter(p => p.status === 'en_attente').sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-  const offers = [...data.offers].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 8);
   const todo = [
     ouverts.length ? ['flag', `${ouverts.length} signalement${ouverts.length > 1 ? 's' : ''} à traiter`, 'admin/moderation'] : null,
     toVerify.length ? ['shield', `${toVerify.length} lauréat${toVerify.length > 1 ? 's' : ''} à vérifier`, 'admin/membres'] : null,
@@ -155,7 +156,7 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
   ].filter(Boolean);
   return html`
     ${todo.length ? html`<div class="callout today"><h2 class="h-ico"><${Icon} name="bell"/> À traiter</h2><ul class="todo">${todo.map(([i, t, r]) => html`<li><button class="notif act" onClick=${() => go(r)}><span class="n-ico accent"><${Icon} name=${i} size=${16}/></span><span>${t}</span><${Icon} name="arrow" size=${16}/></button></li>`)}</ul></div>` : null}
-    <div class="kpis">${kpis.map(([l, v, sub]) => html`<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-val">${typeof v === 'number' ? html`<${Num} v=${v}/>` : v}</span><span class="small muted">${sub}</span></div>`)}</div>
+    <div class="kpis">${kpis.map(([l, v, sub]) => html`<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-val">${typeof v === 'number' ? html`<${Compteur} v=${v}/>` : v}</span><span class="small muted">${sub}</span></div>`)}</div>
 
     <${ParcoursInscription} p=${parcours} sansSuite=${codesSansSuite(comptes, data.profiles)}/>
 
@@ -163,16 +164,11 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
     <${DefisAdmin} ctx=${ctx}/>
     <${ParrainsAdmin} ctx=${ctx}/>
 
-    ${stale.length ? html`<div class="panel"><div class="section-head"><h2>Recrutements en attente de l’étudiant <span class="count">${stale.length}</span></h2></div>
+    ${stale.length ? html`<div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="briefcase"/> <span>Recrutements en attente de l’étudiant <span class="count">${stale.length}</span></span></h2></div>
       <p class="muted small">Le lauréat a déclaré ces recrutements. Si l’étudiant ne confirme pas, l’administration peut le faire après vérification.</p>
-      <ul class="people-list">${stale.map(p => { const s = store.byId('profiles', p.student_id), l = store.byId('profiles', p.laureat_id); return html`<li key=${p.id}><${Person} p=${s} onOpen=${openProfile} sub=${`${p.entreprise} · déclaré par ${l?.full_name || '?'} · ${timeAgo(p.created_at)}`}/><span class="spacer"></span>
+      <ul class="people-list adm-gestes">${stale.map(p => { const s = store.byId('profiles', p.student_id), l = store.byId('profiles', p.laureat_id); return html`<li key=${p.id}><${Person} p=${s} onOpen=${openProfile} sub=${`${p.entreprise} · déclaré par ${l?.full_name || '?'} · ${timeAgo(p.created_at)}`}/><span class="spacer"></span>
         <button class="btn small ghost" onClick=${() => act(() => store.update('placements', p.id, { status: 'refuse' }))}>Refuser</button><button class="btn small tonal" onClick=${() => act(() => store.update('placements', p.id, { status: 'confirme' }))}>Confirmer</button></li>`; })}</ul></div>` : null}
-
-    <div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="feed"/> Dernières offres</h2></div>
-      <ul class="people-list">${offers.map(o => html`<li key=${o.id}><span class="grow"><button class="linkish strong" onClick=${() => ctx.openOffer(o.id)}>${o.titre}</button><br/><span class="muted small">${o.entreprise} · ${store.byId('profiles', o.author_id)?.full_name || ''} · ${timeAgo(o.created_at)}</span></span>
-        ${o.status !== 'ouverte' ? html`<span class="tag done">${o.status === 'pourvue' ? 'Pourvue' : 'Fermée'}</span>` : null}
-        <button class="btn tiny ghost" onClick=${() => act(() => store.update('offers', o.id, { status: o.status === 'ouverte' ? 'fermee' : 'ouverte' }))}>${o.status === 'ouverte' ? 'Masquer' : 'Rouvrir'}</button>
-        <button class="btn tiny ghost danger-t" onClick=${() => ctx.confirm('Supprimer cette offre ?', () => act(() => store.remove('offers', o.id)))}>Supprimer</button></li>`)}</ul></div>`;
+  `;
 }
 
 // Où les inscriptions s'arrêtent : compte créé → profil rempli → première action
@@ -245,14 +241,28 @@ function Moderation({ ctx }) {
   const traites = all.filter(x => x.status !== 'ouvert').sort((a, b) => new Date(b.traite_at || b.created_at) - new Date(a.traite_at || a.created_at));
   return html`<div class="sub-page moderation">
     ${groupes.length ? html`<div class="list">${groupes.map(g => html`<${Signale} key=${g[0].cible_type + g[0].cible_id} ctx=${ctx} g=${g}/>`)}</div>`
-      : html`<${Empty} icon="flag" title="Rien à modérer">Quand un membre signale un contenu, il apparaît ici. Tu décides de le retirer ou de le garder.<//>`}
+      : html`<${Empty} icon="flag" title="Aucun signalement">Quand un membre signale un contenu, il apparaît ici. Tu décides de le retirer ou de le garder.<//>`}
     ${traites.length ? html`<button class="linkish small past-toggle" aria-expanded=${hist} onClick=${() => setHist(!hist)}>Historique <span class="count">${traites.length}</span></button>
       ${hist ? html`<ul class="people-list mod-hist">${traites.slice(0, 30).map(s => { const c = cible(ctx, s.cible_type, s.cible_id); const [tl, ti] = TYPES_CIBLE[s.cible_type] || ['', 'flag']; return html`<li key=${s.id}>
         <span class="mod-ico"><${Icon} name=${ti} size=${15}/></span>
         <span class="grow"><strong class="small">${tl}</strong>${c ? html` <span class="small muted" translate="no" dir="auto">${court(c.titre, 70)}</span>` : html` <span class="small muted">Contenu déjà supprimé</span>`}<br/>
           <span class="small muted">${MOTIFS[s.motif] || s.motif}</span> <span class="small muted">· ${timeAgo(s.traite_at || s.created_at)}</span></span>
         <span class=${'tag ' + (s.status === 'traite' ? 'coopt' : 'done')}>${s.status === 'traite' ? 'Traité' : 'Sans suite'}</span></li>`; })}</ul>` : null}` : null}
+    <${DernieresOffres} ctx=${ctx}/>
   </div>`;
+}
+
+// Les dernières offres publiées, à relire d'un coup d'œil : les masquer ou les supprimer est de la modération
+// (sans attendre un signalement), pas un chiffre de la Vue d'ensemble
+function DernieresOffres({ ctx }) {
+  const { data, store, act } = ctx;
+  const offers = [...data.offers].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5);
+  if (!offers.length) return null;
+  return html`<div class="panel" id="adm-offres"><div class="section-head"><h2 class="h-ico"><${Icon} name="feed"/> Dernières offres</h2></div>
+      <ul class="people-list adm-gestes">${offers.map(o => html`<li key=${o.id}><span class="grow"><button class="linkish strong" onClick=${() => ctx.openOffer(o.id)}>${o.titre}</button><br/><span class="muted small">${o.entreprise} · ${store.byId('profiles', o.author_id)?.full_name || ''} · ${timeAgo(o.created_at)}</span></span>
+        ${o.status !== 'ouverte' ? html`<span class="tag done">${o.status === 'pourvue' ? 'Pourvue' : 'Fermée'}</span>` : null}
+        <button class="btn tiny ghost" onClick=${() => act(() => store.update('offers', o.id, { status: o.status === 'ouverte' ? 'fermee' : 'ouverte' }))}>${o.status === 'ouverte' ? 'Masquer' : 'Rouvrir'}</button>
+        <button class="btn tiny ghost danger-t" onClick=${() => ctx.confirm('Supprimer cette offre ?', () => act(() => store.remove('offers', o.id)))}>Supprimer</button></li>`)}</ul></div>`;
 }
 
 function Signale({ ctx, g }) {
@@ -275,14 +285,16 @@ function Signale({ ctx, g }) {
       ${c.titre ? html`<strong class="mod-titre" translate="no" dir="auto">${court(c.titre, 120)}</strong>` : null}
       ${c.texte ? html`<p class="mod-texte" translate="no" dir="auto">${court(c.texte)}</p>` : null}
       ${auteur ? html`<span class="small muted">Auteur : <button class="linkish" onClick=${() => openProfile(auteur)} translate="no">${auteur.full_name}</button></span>` : c.auteur === null && s0.cible_type !== 'profil' ? html`<span class="small muted">Un membre anonyme</span>` : null}
+      ${c.voir ? html`<button type="button" class="linkish small mod-voir" onClick=${c.voir[1]}><${Icon} name="eye" size=${15}/> ${c.voir[0]}</button>` : null}
     </div>` : html`<p class="small muted mod-cible">Contenu déjà supprimé</p>`}
-    <ul class="mod-reports">${g.map(s => { const a = store.byId('profiles', s.auteur_id); return html`<li class="small"><span class="muted">Signalé par</span> ${a ? html`<button class="linkish" onClick=${() => openProfile(a)} translate="no">${a.full_name}</button>` : '?'} · <span class="muted">${MOTIFS[s.motif] || s.motif}</span>${s.details ? html` : <span translate="no" dir="auto">« ${s.details} »</span>` : null}</li>`; })}</ul>
+    <ul class="mod-reports">${g.map(s => { const a = store.byId('profiles', s.auteur_id); return html`<li class="small"><span class="muted">Signalé par</span> ${a ? html`<button class="linkish" onClick=${() => openProfile(a)} translate="no">${a.full_name}</button>` : '?'} · <span class="muted">${MOTIFS[s.motif] || s.motif}</span>${s.details ? html`<span class="mod-details" translate="no" dir="auto">« ${s.details} »</span>` : null}</li>`; })}</ul>
     <div class="mod-act">
-      ${c?.voir ? html`<button class="btn tiny ghost" onClick=${c.voir[1]}><${Icon} name="eye" size=${14}/> ${c.voir[0]}</button>` : null}
-      <span class="spacer"></span>
-      ${c ? c.actions.map(a => html`<button class=${'btn small ' + (a[2] ? 'danger' : '')} onClick=${() => agir(a)}>${a[0]}</button>`) : html`<button class="btn small primary" onClick=${() => act(async () => { await clore('traite'); toast('Signalement marqué traité.'); })}>Clore</button>`}
-      ${c ? html`<button class="btn small ghost" onClick=${() => act(async () => { await clore('traite'); toast('Signalement marqué traité.'); })}>Marquer traité</button>` : null}
-      <button class="btn small ghost" onClick=${() => act(async () => { await clore('rejete'); toast('Signalement classé sans suite.'); })}>Classer sans suite</button>
+      ${c?.actions.length ? html`<span class="mod-decider">${c.actions.map(a => html`<button class=${'btn small tonal' + (a[2] ? ' danger' : '')} onClick=${() => agir(a)}>${a[0]}</button>`)}</span>` : null}
+      <span class="mod-clore">
+        ${c ? html`<button class="btn small ghost" onClick=${() => act(async () => { await clore('traite'); toast('Signalement marqué traité.'); })}>Marquer traité</button>`
+          : html`<button class="btn small tonal" onClick=${() => act(async () => { await clore('traite'); toast('Signalement marqué traité.'); })}>Clore</button>`}
+        <button class="btn small ghost" onClick=${() => act(async () => { await clore('rejete'); toast('Signalement classé sans suite.'); })}>Classer sans suite</button>
+      </span>
     </div>
   </article>`;
 }
@@ -702,6 +714,16 @@ function AnnonceBox({ ctx }) {
   const { data, store, me, act } = ctx;
   const visibles = data.annonces.filter(a => annonceVisible(a)).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   const [texte, setTexte] = useState(''); const [lien, setLien] = useState(''); const [pour, setPour] = useState('tous');
+  // Une annonce en cours : le formulaire se range derrière « Nouvelle annonce », sous elle, et s'ouvre à sa place
+  // (la Vue d'ensemble reste courte) ; aucune annonce, ou un brouillon commencé : il reste ouvert
+  const [ecrire, setEcrire] = useState(false);
+  const ouvert = ecrire || !visibles.length || !!texte.trim();
+  // Le focus suit le geste : dans le champ à l'ouverture, sur « Nouvelle annonce » une fois rangé (publiée ou annulée)
+  const focusApres = useRef(null);
+  // (attendu jusqu'au rendu qui montre l'élément : celui d'une mise à jour des données peut passer avant)
+  useEffect(() => { const el = focusApres.current && document.getElementById(focusApres.current); if (el) { focusApres.current = null; el.focus(); } });
+  const ouvrir = () => { focusApres.current = 'ann-txt'; setEcrire(true); };
+  const ranger = () => { focusApres.current = 'ann-nouvelle'; setEcrire(false); setTexte(''); setLien(''); setPour('tous'); };
   // Une nouvelle annonce remplace celles de son public (« Tout le monde » : toutes) ; les autres restent pour leur public
   const remplacee = (x, pour) => pour === 'tous' || x === pour;
   const publish = e => {
@@ -712,18 +734,19 @@ function AnnonceBox({ ctx }) {
       const anciennes = data.annonces.filter(x => x.active && remplacee(x.public || 'tous', pour));
       await store.insert('annonces', { author_id: me.id, texte: texte.trim(), lien: lien.trim() || null, active: true, ...(pour === 'tous' ? {} : { public: pour }) });
       for (const a of anciennes) await store.update('annonces', a.id, { active: false });
-      setTexte(''); setLien('');
+      ranger();
       toast(pour === 'etudiants' ? 'Annonce publiée sur l’accueil des étudiants.' : pour === 'laureats' ? 'Annonce publiée sur l’accueil des lauréats.' : 'Annonce publiée sur l’accueil de tous les membres.', 'win');
     });
   };
   return html`<div class="panel">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="bell"/> Annonce sur l’accueil</h2></div>
     ${visibles.length ? visibles.map(a => html`<div class="annonce preview" key=${a.id}><${Icon} name="bell" size=${18}/><span class="grow"><span dir="auto" translate="no">${a.texte}</span><span class="annonce-meta"><span class="mini">${POUR_LABEL[a.public] || 'Tout le monde'}</span> <span class="small muted">${`Jusqu’au ${finAnnonce(a)}`}</span></span></span><button class="btn tiny ghost" onClick=${() => act(() => store.update('annonces', a.id, { active: false }))}>Retirer</button></div>`) : html`<p class="small muted">Aucune annonce en ce moment.</p>`}
-    <form class="form" onSubmit=${publish}>
+    ${ouvert ? html`<form class="form" id="ann-form" onSubmit=${publish}>
       <${Field} label="Nouvelle annonce" hint="280 caractères au plus. Elle s’affiche sur une ligne, sur l’accueil des membres choisis, pendant 14 jours, et remplace l’annonce en cours pour eux."><textarea id="ann-txt" rows="2" maxlength="280" value=${texte} onInput=${e => setTexte(e.target.value)} placeholder="Ex. Forum entreprises jeudi à l’école : les lauréats sont les bienvenus."></textarea><//>
       <div class="field"><span class="field-label" id="ann-pour-l">Pour qui ?</span><div class="seg" role="radiogroup" aria-labelledby="ann-pour-l">${PUBLICS.map(([k, l]) => html`<button type="button" role="radio" id=${'ann-pour-' + k} aria-checked=${pour === k} class=${pour === k ? 'on' : ''} onClick=${() => setPour(k)}>${l}</button>`)}</div></div>
-      <div class="row"><input id="ann-lien" class="grow" dir="ltr" value=${lien} onInput=${e => setLien(e.target.value)} placeholder="Lien (facultatif) : https://…"/><button class="btn primary" disabled=${texte.trim().length < 3}>Publier</button></div>
-    </form>
+      <input id="ann-lien" dir="ltr" value=${lien} onInput=${e => setLien(e.target.value)} placeholder="Lien (facultatif) : https://…" aria-label="Lien (facultatif)"/>
+      <div class="row ann-actions">${visibles.length ? html`<button type="button" class="btn ghost" onClick=${ranger}>Annuler</button>` : null}<button class="btn primary" disabled=${texte.trim().length < 3}>Publier</button></div>
+    </form>` : html`<button type="button" class="btn small ann-nouvelle" id="ann-nouvelle" onClick=${ouvrir}><${Icon} name="plus" size=${15}/> Nouvelle annonce</button>`}
   </div>`;
 }
 
@@ -858,6 +881,13 @@ addAR({
 
 injectCSS('admin', `
 .adm-tabs { margin-bottom: .2rem; }
+/* Téléphone : dans les listes à gestes (recrutements en attente, dernières offres), le texte garde toute la largeur et les gestes passent dessous */
+@media (max-width: 640px) {
+  .people-list.adm-gestes li { flex-wrap: wrap; row-gap: .35rem; padding-block: .7rem; }
+  .people-list.adm-gestes li > :is(.person, .grow) { flex: 1 1 100%; }
+  .people-list.adm-gestes li > .spacer { display: none; }
+  .people-list.adm-gestes li > .btn:first-of-type { margin-inline-start: auto; }
+}
 /* Cartes sponsorisées : une ligne par carte, ses totaux en quatre chiffres, puis ses gestes */
 .sp-liste { list-style: none; margin: .4rem 0 0; padding: 0; display: flex; flex-direction: column; gap: .6rem; }
 .sp-ligne { display: flex; flex-direction: column; gap: .35rem; padding: .85rem .95rem; border-radius: var(--r-lg); background: var(--surface-2); }
@@ -876,15 +906,31 @@ injectCSS('admin', `
 .mod-card { display: flex; flex-direction: column; gap: .55rem; padding: .95rem 1.05rem; border-radius: var(--r-lg); background: var(--surface); border: 0; box-shadow: var(--sh1), inset 3px 0 0 var(--brass); }
 :root[dir="rtl"] .mod-card { box-shadow: var(--sh1), inset -3px 0 0 var(--brass); }
 /* L'annonce en cours (Vue d'ensemble) : sa date reste lisible sur le fond teinté, de nuit aussi */
+.annonce.preview { background: var(--surface-2); box-shadow: none; border-radius: var(--r-md); }
+.annonce.preview .mini { background: var(--surface); }
 .annonce.preview .annonce-meta .muted { color: var(--ink-2); }
+/* « Nouvelle annonce » sous l'annonce en cours : le formulaire s'ouvre à sa place */
+.ann-nouvelle { align-self: flex-start; }
+/* Annuler et Publier sous le lien, au bout de la ligne : le champ du lien garde toute sa largeur, à 360 aussi */
+.ann-actions { justify-content: flex-end; }
 .mod-head { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
 .mod-ico { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--brass-soft); color: var(--brass); flex: none; }
 .mod-cible { display: flex; flex-direction: column; gap: .25rem; padding: 0; padding-inline-start: .75rem; border-inline-start: 2px solid var(--line); margin: 0; }
 .mod-titre { font-size: .95rem; }
 .mod-texte { margin: 0; font-size: .9rem; color: var(--ink-2); overflow-wrap: anywhere; }
 .mod-reports { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .2rem; }
-.mod-act { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; padding-top: .55rem; border-top: 1px solid var(--line); }
+/* Les mots du membre qui signale, sur leur propre ligne : une citation qui ne se mêle pas au motif (ni à l'arabe) */
+.mod-details { display: block; margin-top: .1rem; color: var(--ink-2); overflow-wrap: anywhere; }
+.mod-act { display: flex; flex-wrap: wrap; gap: .5rem .8rem; align-items: center; justify-content: space-between; padding-top: .6rem; border-top: 1px solid var(--line); }
+/* Ce qu'on fait du contenu (tonal ; rouge pour le retirer), puis ce qu'on fait du signalement (discret, au bout) :
+   sur une ligne quand il y a la place, sinon l'un sous l'autre ; aucun aplat, la carte se répète */
+.mod-decider, .mod-clore { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.mod-clore { margin-inline-start: auto; }
+.mod-voir { display: inline-flex; align-items: center; gap: .3rem; align-self: flex-start; margin-top: .1rem; }
 .member-list .ligne-act select { width: auto; padding-block: .35rem; font-size: var(--fs-2); }
+/* L'e-mail et les dates sont dans le texte du membre, sous sa ligne : alignés sur elle (l'ancien retrait de la largeur
+   du visage, prévu quand ils passaient sous toute la ligne, les décalait) */
+.member-list .person .member-meta { margin-inline-start: 0; }
 .mod-hist li { flex-wrap: nowrap; }
 .mod-hist .grow { min-width: 0; }
 .verif-list li { flex-wrap: nowrap; align-items: flex-start; }
@@ -904,6 +950,10 @@ injectCSS('admin', `
 .good-box { background: var(--good-soft); color: var(--good); }
 .file-btn { position: relative; overflow: hidden; align-self: flex-start; }
 .file-btn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+/* Au doigt, le champ invisible déborde du bouton jusqu'à 44 px de haut : c'est lui qu'on touche (le bouton ne grandit pas) */
+@media (pointer: coarse) { .file-btn { overflow: visible; } .file-btn input { inset-block: min(0px, calc(50% - 22px)); } }
+/* Au clavier, le focus est sur le champ invisible : c'est le bouton qui le montre */
+.file-btn:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .lo-import { display: flex; flex-direction: column; gap: .8rem; padding-top: .6rem; border-top: 1px dashed var(--line); }
 .lo-import p { margin: 0; }
 .lo-map { display: flex; flex-direction: column; gap: .4rem; }

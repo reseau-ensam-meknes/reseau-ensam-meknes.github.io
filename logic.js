@@ -1598,12 +1598,13 @@ const deux = n => String(n).padStart(2, '0');
 // La date du jour sur l'appareil, « 2026-10-28 » (les dates de début et de fin d'une carte sont des jours entiers)
 export const jourLocal = (now = Date.now()) => { const d = new Date(now); return `${d.getFullYear()}-${deux(d.getMonth() + 1)}-${deux(d.getDate())}`; };
 // Match, le tour du jour : TOUR_JOUR cartes par jour, gardées dans ce navigateur. Rien ne bloque au-delà ; les jours de suite
-// comptent les tours terminés et repartent sans reproche après un jour sans.
+// comptent les tours terminés et repartent sans reproche après un jour sans. Quand la pile du jour est plus courte que le tour,
+// l'objectif est la pile (objectif) : tout voir, c'est aussi un tour fait. Un tour fait ne se refait pas le même jour.
 export const TOUR_JOUR = 5;
 const veille = jour => { const [a, m, j] = jour.split('-').map(Number); return jourLocal(new Date(a, m - 1, j - 1, 12).getTime()); };
 export const etatTour = (t, jour) => ({ n: t?.jour === jour ? t.n : 0, serie: t?.fait === jour || t?.fait === veille(jour) ? t.serie || 0 : 0, fait: t?.fait || null });
-export function avancerTour(t, jour) {
-  const e = etatTour(t, jour), n = e.n + 1, fini = n === TOUR_JOUR;
+export function avancerTour(t, jour, objectif = TOUR_JOUR) {
+  const e = etatTour(t, jour), n = e.n + 1, fini = e.fait !== jour && n >= Math.max(1, Math.min(TOUR_JOUR, objectif));
   const serie = fini ? e.serie + 1 : e.serie;
   return { jour, n, serie, fait: fini ? jour : e.fait, fini };
 }

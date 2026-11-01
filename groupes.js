@@ -1,7 +1,7 @@
 // Groupes (filière, ville, à l'étranger) et Cafés ENSAM : on se retrouve, en ligne puis en vrai.
-import { html, useState } from './vendor/preact-htm.js';
-import { getLang } from './i18n.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, toast } from './ui.js';
+import { html, useState, useRef } from './vendor/preact-htm.js';
+import { getLang, addAR } from './i18n.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, toast, Rangee, injectCSS, vibrer, Coche } from './ui.js';
 import { myGroups, groupMembers, groupLabel, groupKey, autoGroups, timeAgo } from './logic.js';
 import { SlotDate } from './mentorat.js';
 import { SignalerBtn } from './confiance.js';
@@ -28,6 +28,29 @@ export function GroupesPage({ ctx }) {
   return html`<${GroupList} ctx=${ctx}/>`;
 }
 
+addAR({ 'Tes groupes': 'مجموعاتك' });
+
+// Les groupes en rangée : des cartes de même hauteur, une teinte douce par sorte de groupe (parcours, ville, étranger) ;
+// les cafés : la date en tête, les gestes en bas de la carte
+const CSS_GROUPES = `
+.rangee-groupes { --rangee-l: min(80%, 17.5rem); }
+.rangee-groupes .gcard { height: 100%; flex-direction: column; gap: .7rem; padding: 1rem; }
+.rangee-groupes .gcard-txt { width: 100%; }
+.rangee-groupes .gcard-last { margin-top: auto; }
+.rangee-cafes { --rangee-l: min(86%, 20.5rem); --rangee-min: 330px; }
+.cafe-ok { display: inline-flex; align-items: center; gap: .3rem; }
+.cafe-ok .coche { box-shadow: none; }
+.rangee-cafes .cafe { height: 100%; align-content: start; }
+.rangee-cafes .cafe-act { align-self: end; }
+@media (max-width: 760px) { .rangee-cafes .cafe { grid-template-rows: auto 1fr auto; } }
+@media (min-width: 761px) {
+  .rangee-groupes .gcard { flex-direction: row; gap: .85rem; }
+  .rangee-cafes .cafe { grid-template-rows: 1fr auto; }
+}
+`;
+// Dès le chargement du module : la carte d'un café sert aussi ailleurs (fiche d'un groupe)
+injectCSS('groupes-v3', CSS_GROUPES);
+
 function GroupList({ ctx }) {
   const { data, me, store, act } = ctx;
   const [cafe, setCafe] = useState(false);
@@ -41,15 +64,16 @@ function GroupList({ ctx }) {
   const villes = others('ville').slice(0, 8);
   const cafes = data.cafes.filter(upcoming).sort((a, b) => new Date(a.date_at) - new Date(b.date_at));
   const near = cafes.filter(c => mine.all.includes(groupKey('ville', c.ville)) || mine.all.includes(groupKey('pays', c.pays)));
-  const follow = k => act(async () => { await store.insert('groupe_membres', { groupe: k, user_id: me.id }); toast(`Tu suis maintenant le groupe ${groupLabel(data, k)}.`); });
-  return html`<div class="sub-page">
+  const follow = k => act(async () => { await store.insert('groupe_membres', { groupe: k, user_id: me.id }); vibrer(); toast(`Tu suis maintenant le groupe ${groupLabel(data, k)}.`); });
+  // Téléphone : les groupes puis les cafés en rangées qui défilent (la page tient en un écran et demi) ; ordinateur : en grille
+  return html`<div class="sub-page groupes">
     <p class="muted small">Tu es dans les groupes de ton parcours et de ta ville.</p>
-    <div class="group-grid">${mine.all.map(k => html`<${GroupCard} ctx=${ctx} gkey=${k} key=${k}/>`)}</div>
+    <${Rangee} cls="rangee-groupes" grille label="Tes groupes">${mine.all.map(k => html`<${GroupCard} ctx=${ctx} gkey=${k} key=${k}/>`)}<//>
 
-    <div class="section-head"><h2 class="h-ico"><${Icon} name="clap"/> Cafés ENSAM</h2><button class="btn small" onClick=${() => setCafe(true)}><${Icon} name="plus" size=${15}/> Organiser un café</button></div>
-    <p class="muted small">Une heure autour d’un café, avec les membres de ta ville.</p>
-    ${cafes.length ? html`<div class="cafe-list">${[...near, ...cafes.filter(c => !near.includes(c))].slice(0, 6).map(c => html`<${CafeCard} ctx=${ctx} c=${c} key=${c.id} showCity/>`)}</div>`
-      : html`<${Empty} icon="clap" title="Aucun café prévu pour l’instant">Lance le premier dans ta ville : les membres de ta ville sont prévenus.<//>`}
+    <${Rangee} cls="rangee-cafes" grille titre=${html`<span class="h-ico"><${Icon} name="clap"/> Cafés ENSAM</span>`} sousTitre="Une heure autour d’un café, avec les membres de ta ville."
+      action=${html`<button class="btn small" onClick=${() => setCafe(true)}><${Icon} name="plus" size=${15}/> Organiser un café</button>`}
+      vide=${html`<${Empty} icon="clap" title="Aucun café prévu pour l’instant">Lance le premier dans ta ville : les membres de ta ville sont prévenus.<//>`}>
+      ${[...near, ...cafes.filter(c => !near.includes(c))].slice(0, 6).map(c => html`<${CafeCard} ctx=${ctx} c=${c} key=${c.id} showCity/>`)}<//>
 
     ${abroad.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="globe"/> Lauréats à l’étranger</h2></div>
       <ul class="group-follow">${abroad.map(([k, n]) => html`<li key=${k}><button class="linkish strong" onClick=${() => go2(ctx, k)}>${groupLabel(data, k)}</button><span class="muted small">${n} membre${n > 1 ? 's' : ''}</span><span class="spacer"></span><button class="btn tiny" onClick=${() => follow(k)}>Suivre</button></li>`)}</ul>` : null}
@@ -66,7 +90,7 @@ function GroupCard({ ctx, gkey }) {
   const n = groupMembers(data, gkey).length;
   const last = data.groupe_messages.filter(m => m.groupe === gkey).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
   const nc = cafesOf(data, gkey).filter(upcoming).length;
-  return html`<button class="gcard clickable" onClick=${() => go2(ctx, gkey)}>
+  return html`<button class="gcard clickable carte-touche" onClick=${() => go2(ctx, gkey)}>
     <span class=${'g-badge k-' + kind}><${Icon} name=${ico} size=${20}/></span>
     <span class="gcard-txt"><span class="eyebrow">${lbl}</span><strong>${nomGroupe(data, gkey)}</strong>
       <span class="muted small">${n} membre${n > 1 ? 's' : ''}${nc ? html` · <span class="good-t">${nc} café${nc > 1 ? 's' : ''} prévu${nc > 1 ? 's' : ''}</span>` : null}</span>
@@ -132,6 +156,9 @@ export function CafeCard({ ctx, c, showCity }) {
   const { data, me, store, act, openProfile } = ctx;
   const parts = data.cafe_participants.filter(x => x.cafe_id === c.id).map(x => store.byId('profiles', x.user_id)).filter(Boolean);
   const mineP = data.cafe_participants.find(x => x.cafe_id === c.id && x.user_id === me.id);
+  // Inscrit avant d'ouvrir la page : la coche est posée ; elle ne se dessine que pour un « Je viens » touché ici
+  const dejaInscrit = useRef(!!mineP);
+  if (!mineP) dejaInscrit.current = false;
   const org = store.byId('profiles', c.organisateur_id);
   const isOrg = c.organisateur_id === me.id;
   const full = c.places && parts.length >= c.places;
@@ -149,11 +176,11 @@ export function CafeCard({ ctx, c, showCity }) {
     </div>
     <div class="cafe-act">
       ${c.annule ? html`<span class="tag done">Annulé</span>` : past ? html`<span class="tag done">Terminé</span>` : mineP ? html`
-        <span class="mini good"><${Icon} name="check" size=${12}/> Tu y vas</span>
+        <span class="mini good cafe-ok"><${Coche} taille=${16} pose=${dejaInscrit.current}/> Tu y vas</span>
         <a class="btn tiny ghost" href=${gcalCafe(c)} target="_blank" rel="noopener"><${Icon} name="calendar" size=${14}/> Agenda</a>
         ${isOrg ? html`<button class="btn tiny ghost danger-t" onClick=${() => ctx.confirm('Annuler ce café ? Les inscrits le verront annulé.', () => act(() => store.update('cafes', c.id, { annule: true })), 'Annuler le café')}>Annuler</button>`
           : html`<button class="btn tiny ghost" onClick=${() => act(() => store.remove('cafe_participants', mineP.id))}>Je ne viens plus</button>`}`
-        : full ? html`<span class="tag done">Complet</span>` : html`<button class="btn small tonal" onClick=${() => act(async () => { await store.insert('cafe_participants', { cafe_id: c.id, user_id: me.id }); toast('C’est noté ! Ajoute-le à ton agenda.'); })}>Je viens</button>`}
+        : full ? html`<span class="tag done">Complet</span>` : html`<button class="btn small tonal" onClick=${() => act(async () => { await store.insert('cafe_participants', { cafe_id: c.id, user_id: me.id }); vibrer(); toast('C’est noté ! Ajoute-le à ton agenda.'); })}>Je viens</button>`}
       ${!isOrg && !c.annule ? html`<${SignalerBtn} ctx=${ctx} type="cafe" id=${c.id} small/>` : null}
     </div>
   </article>`;
