@@ -52,6 +52,31 @@ test('les écoles fermées ne se voient pas', async () => {
   await assert.rejects(q(MEK, `update public.ecoles set ouverte = true where slug = 'fermee' returning slug`).then(x => { if (!x.length) throw new Error('refusé'); return x; }));
 });
 
+const refuse = p => assert.rejects(p, /pas dans ton réseau|row-level security/);
+test('aucune action vers une autre école par identifiant : message, mentorat, match, candidature, commentaire, invitation', async () => {
+  const o = (await db.query(`select id from public.offers where titre = 'PFE Autre'`)).rows[0].id;
+  await refuse(q(MEK, `insert into public.messages (author_id, dest_id, body) values ($1, $2, 'Salut')`, [MEK, AUTRE]));
+  await refuse(q(MEK, `insert into public.mentorships (student_id, mentor_id, sujet) values ($1, $2, 'CV')`, [MEK, AUTRE]));
+  await refuse(q(MEK, `insert into public.match_choix (cible_profil, choix) values ($1, 'oui')`, [AUTRE]));
+  await refuse(q(MEK, `insert into public.match_choix (cible_offre, choix) values ($1, 'oui')`, [o]));
+  await refuse(q(MEK, `insert into public.applications (student_id, offer_id) values ($1, $2)`, [MEK, o]));
+  await refuse(q(MEK, `insert into public.comments (author_id, offer_id, body) values ($1, $2, 'Hop')`, [MEK, o]));
+  await refuse(q(MEK2, `insert into public.invitations (laureat_id, student_id) values ($1, $2)`, [MEK2, AUTRE]));
+});
+
+test('notifications et listes : rien ne passe d’une école à l’autre', async () => {
+  await db.query(`insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) select id, 'https://p/' || id, 'k', 'a' from public.profiles on conflict do nothing`);
+  await db.query('delete from public.push_queue');
+  await q(ADMIN, `insert into public.annonces (texte) values ('Forum')`);
+  const dest = (await db.query(`select user_id from public.push_queue where kind = 'annonce'`)).rows.map(r => r.user_id);
+  assert.ok(!dest.includes(AUTRE), 'l’annonce reste dans l’école de qui la publie');
+  const [o] = await q(MEK2, `select row_to_json(x) j from public.offers x where titre = 'PFE Meknès'`);
+  assert.ok(o, 'offre visible');
+  const pour = await db.query(`select public.offre_pour(o, p, public.saison_courante()) v from public.offers o, public.profiles p where o.titre = 'PFE Autre' and p.id = $1`, [MEK]);
+  assert.equal(pour.rows[0].v, false);
+  await db.query('delete from public.push_queue');
+});
+
 test('relancée, la mise à jour ne perd rien', async () => {
   const sql = (await import('node:fs')).readFileSync(SCHEMA, 'utf8').replace(/^create extension if not exists pgcrypto;$/m, '');
   await db.exec(sql);
