@@ -1782,6 +1782,50 @@ begin
   return public.en_relation(auth.uid(), p_owner);
 end $$;
 
+-- =====================================================================
+--  Écoles : chaque école a son réseau, dans la même base (première partie, la seconde est à la fin du fichier).
+--  ecoles.ouverte : false tant que l'administration ne l'a pas ouverte ; personne ne peut y entrer de lui-même.
+--  ENSAM Meknès est l'école de tous les membres et de toutes les données d'avant.
+-- =====================================================================
+create table if not exists public.ecoles (
+  slug text primary key check (slug ~ '^[a-z0-9-]{2,40}$'),
+  nom text not null check (char_length(nom) between 2 and 120),
+  ouverte boolean not null default false,
+  created_at timestamptz not null default now()
+);
+insert into public.ecoles (slug, nom, ouverte) values ('ensam-meknes', 'ENSAM Meknès', true) on conflict (slug) do nothing;
+alter table public.ecoles enable row level security;
+drop policy if exists "lecture" on public.ecoles;
+create policy "lecture" on public.ecoles for select to anon, authenticated using (ouverte or public.is_admin());
+drop policy if exists "administration" on public.ecoles;
+create policy "administration" on public.ecoles for all to authenticated using (public.is_admin()) with check (public.is_admin());
+
+alter table public.profiles add column if not exists ecole text not null default 'ensam-meknes' references public.ecoles(slug);
+create index if not exists profiles_ecole on public.profiles (ecole);
+
+create or replace function public.mon_ecole() returns text
+language sql stable security definer set search_path = public as $$
+  select ecole from public.profiles where id = auth.uid();
+$$;
+revoke all on function public.mon_ecole() from public, anon;
+grant execute on function public.mon_ecole() to authenticated, service_role;
+
+-- L'école d'un membre ne se choisit qu'à l'inscription, parmi les écoles ouvertes ; ensuite seule l'administration la change
+create or replace function public.protect_ecole() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null or public.is_admin() then return new; end if;
+  if tg_op = 'UPDATE' then
+    if new.ecole is distinct from old.ecole then raise exception 'L’école d’un compte ne se change pas.' using errcode = '42501'; end if;
+  elsif not exists (select 1 from public.ecoles e where e.slug = new.ecole and e.ouverte) then
+    raise exception 'Le réseau de cette école n’est pas encore ouvert.' using errcode = '42501';
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_ecole on public.profiles;
+create trigger trg_protect_ecole before insert or update of ecole on public.profiles
+  for each row execute function public.protect_ecole();
+
 create or replace view public.profils with (security_barrier = true) as
 select p.id, p.full_name, p.role, p.filiere, p.promo,
   case when public.voit_champ(p.id, p.visibilite, 'travail') then p.entreprise end as entreprise,
@@ -1807,9 +1851,9 @@ select p.id, p.full_name, p.role, p.filiere, p.promo,
   case when p.id = auth.uid() then p.emails_messages end as emails_messages,
   p.en_recherche, p.photo_path,
   case when p.id = auth.uid() then p.notif_push end as notif_push,
-  p.match_visible, p.admin_ok
+  p.match_visible, p.admin_ok, p.ecole
 from public.profiles p
-where auth.uid() is not null;
+where auth.uid() is not null and (p.ecole = (select public.mon_ecole()) or (select public.is_admin()));
 revoke all on public.profils from public, anon;
 grant select on public.profils to authenticated;
 
@@ -5698,6 +5742,25 @@ begin
   return v_n;
 end $$;
 revoke all on function public.match_jour_push() from public, anon, authenticated;
+
+-- =====================================================================
+--  Écoles (seconde partie) : le contenu de chaque réseau. Une règle restrictive s'ajoute à celles de chaque table, sans
+--  les toucher : un membre ne lit et n'écrit que ce qui est de son école. Le contenu qui dépend d'une offre, d'une demande
+--  ou d'une personne (commentaires, candidatures, messages) suit, puisque celle-ci reste invisible.
+--  Tant qu'une seule école est ouverte, rien ne change pour personne.
+-- =====================================================================
+do $$
+declare t text;
+begin
+  foreach t in array array['offers','questions','demandes','annonces','cafes','startups','evenements'] loop
+    execute format($f$alter table public.%I add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug)$f$, t);
+    execute format('create index if not exists %I on public.%I (ecole)', t || '_ecole', t);
+    execute format('drop policy if exists "reseau de l''ecole" on public.%I', t);
+    execute format($f$create policy "reseau de l'ecole" on public.%I as restrictive for all to authenticated
+      using (ecole = (select public.mon_ecole()) or (select public.is_admin()))
+      with check (ecole = (select public.mon_ecole()) or (select public.is_admin()))$f$, t);
+  end loop;
+end $$;
 
 -- Chaque minute (pg_cron, « ensam-rappels ») : les rappels, puis ce qui attend dans les files
 create or replace function public.taches_minute() returns void
