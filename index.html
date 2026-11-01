@@ -10,6 +10,18 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Réseau ENSAM">
+<link rel="apple-touch-startup-image" media="(device-width: 320px) and (device-height: 568px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="pwa/demarrage/iphone-320x568-2x.png">
+<link rel="apple-touch-startup-image" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="pwa/demarrage/iphone-375x667-2x.png">
+<link rel="apple-touch-startup-image" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="pwa/demarrage/iphone-375x812-3x.png">
+<link rel="apple-touch-startup-image" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="pwa/demarrage/iphone-390x844-3x.png">
+<link rel="apple-touch-startup-image" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="pwa/demarrage/iphone-393x852-3x.png">
+<link rel="apple-touch-startup-image" media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="pwa/demarrage/iphone-402x874-3x.png">
+<link rel="apple-touch-startup-image" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait)" href="pwa/demarrage/iphone-414x896-2x.png">
+<link rel="apple-touch-startup-image" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="pwa/demarrage/iphone-414x896-3x.png">
+<link rel="apple-touch-startup-image" media="(device-width: 420px) and (device-height: 912px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="pwa/demarrage/iphone-420x912-3x.png">
+<link rel="apple-touch-startup-image" media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="pwa/demarrage/iphone-428x926-3x.png">
+<link rel="apple-touch-startup-image" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="pwa/demarrage/iphone-430x932-3x.png">
+<link rel="apple-touch-startup-image" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait)" href="pwa/demarrage/iphone-440x956-3x.png">
 <title>Réseau ENSAM Meknès</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <meta name="description" content="Plateforme des lauréats et étudiants de l'ENSAM Meknès : offres de stages, PFE et emplois, mentorat, entraide et suivi de placement.">
@@ -29,7 +41,7 @@
 try{L=localStorage;var t=L.getItem('ensam-theme');if(t==='light'||t==='dark'){d.dataset.theme=t;document.querySelectorAll('meta[name="theme-color"]').forEach(function(m){m.content=t==='dark'?'#0B1320':'#1670A8'})}
 var g=L.getItem('ensam-lang');ar=g==='ar'||(!g&&sessionStorage.getItem('ensam-lang-visite')==='ar');for(i=0;i<L.length;i++)if(/^sb-.+-auth-token$/.test(L.key(i)))membre=true}catch(e){}
 d.lang=ar?'ar':'fr';d.dir=ar?'rtl':'ltr';
-var M=window.ENSAM_MAGASIN=["vendor/supabase.js","store.js","origine.js","reseau-vivant.js","logic.js"],A=window.ENSAM_MODULES=["app.js","ui.js","vitrine-regles.js","offers.js","pwa.js","pouls.js","recrutement.js","cv.js","messages.js","confiance.js","mentorat.js","growth.js","geo.js","lignes.js","entreprises.js","pro.js","demandes.js","reactions.js","partages.js","vitrine.js","me.js","saison.js","invitation.js","community.js","groupes.js","etranger.js","agenda.js","photo.js","privacy.js","fondateurs.js","fondateurs-public.js","rappels.js","moi.js","match.js","apercu-cv.js","reussites.js","ambassadeurs.js"];
+var M=window.ENSAM_MAGASIN=["vendor/supabase.js","store.js","origine.js","reseau-vivant.js","logic.js"],A=window.ENSAM_MODULES=["app.js","ui.js","vitrine-regles.js","offers.js","pwa.js","pouls.js","installer.js","recrutement.js","cv.js","messages.js","confiance.js","mentorat.js","growth.js","geo.js","lignes.js","entreprises.js","pro.js","demandes.js","reactions.js","partages.js","vitrine.js","me.js","saison.js","invitation.js","community.js","groupes.js","etranger.js","agenda.js","photo.js","privacy.js","fondateurs.js","fondateurs-public.js","rappels.js","moi.js","match.js","apercu-cv.js","reussites.js","ambassadeurs.js"];
 if(!A.length)return;
 if(membre&&!/^#(verifier|desabo)\b/.test(location.hash))d.dataset.boot='membre';
 if(membre||/^#(verifier|desabo|confidentialite)\b|access_token=|type=recovery|error_description=/.test(location.hash))d.dataset.tete='appli';

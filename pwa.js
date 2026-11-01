@@ -5,6 +5,7 @@ import { Icon, Modal, toast, ensuite, feteOuverte, quandFete, apresFete, injectC
 import { addAR, getLang } from './i18n.js';
 import { prevenirVariante, lignePrevenir, sansLigne, ouvertureSorte, sorteLienNotifs, bandeauPush, pushChoix, PUSH_CATEGORIES, navigateurIntegre, lienChrome, noterEchecPush, echecDefinitif } from './logic.js';
 import { arriveeEnAttente } from './pouls.js';
+import { IosInstallHelp } from './installer.js';
 
 let installEvt = null;
 const listeners = new Set();
@@ -100,14 +101,8 @@ const ETAPES_ANDROID = [
   ['plus', 'Choisis « Installer l’application » ou « Ajouter à l’écran d’accueil ».'],
   ['bell', 'Ouvre le Réseau ENSAM depuis son icône, puis touche « Activer les notifications » si ce n’est pas déjà fait.'],
 ];
-const EtapesAndroid = () => html`<${Etapes} liste=${ETAPES_ANDROID}/>`;
-const POURQUOI_INSTALLER = {
-  android: 'Une icône sur ton écran d’accueil : le Réseau ENSAM s’ouvre en un toucher, comme une application.',
-  ios: 'Sur iPhone, les notifications n’arrivent que dans l’application ajoutée à l’écran d’accueil. Trois gestes :',
-};
-export function IosInstallHelp({ onClose, android }) {
-  return html`<${Modal} title="Installer l’application" cls="installer" onClose=${onClose}><p>${fr(android ? POURQUOI_INSTALLER.android : POURQUOI_INSTALLER.ios)}</p>${android ? html`<${EtapesAndroid}/>` : html`<${EtapesIos}/>`}<//>`;
-}
+// La fiche « Installer l'application » (gestes illustrés, iPhone et Android) : installer.js
+export { IosInstallHelp };
 addAR({
   [PARTAGER.safari]: 'في Safari، المس «مشاركة»: أسفل الشاشة، أو في قائمة •••.',
   [PARTAGER.autre]: 'المس «مشاركة»، في شريط العنوان أو في قائمة المتصفح.',
@@ -116,8 +111,6 @@ addAR({
   [ETAPES_ANDROID[0][1]]: 'المس قائمة ⋮ في المتصفح، أعلى اليمين.',
   [ETAPES_ANDROID[1][1]]: 'اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».',
   [ETAPES_ANDROID[2][1]]: 'افتح شبكة ENSAM من أيقونتها، ثم المس «فعّل الإشعارات» إن لم يتمّ ذلك بعد.',
-  [POURQUOI_INSTALLER.android]: 'أيقونة على شاشتك الرئيسية: تُفتح شبكة ENSAM بلمسة واحدة، مثل تطبيق.',
-  [POURQUOI_INSTALLER.ios]: 'على iPhone، لا تصل الإشعارات إلا داخل التطبيق المضاف إلى الشاشة الرئيسية. ثلاث خطوات:',
 });
 
 function b64ToBytes(b64) {
