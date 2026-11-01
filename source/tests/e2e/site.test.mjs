@@ -6597,3 +6597,64 @@ for (const [ua, android] of [[IPHONE_SAFARI, false], [TELEPHONE, true]]) {
     }
   });
 }
+
+// ---------------------------------------------------------------------------
+// Revue · Plan · confort : sur iPhone dans Chrome (ou Firefox, Edge), Partager est en haut, dans la barre d'adresse : le
+// dessin du premier geste le montre là, pas dans la barre du bas de Safari ; le choix Admin | Lauréat de « Moi » se touche
+// sur 44 px au téléphone
+// ---------------------------------------------------------------------------
+test('Installer l’application (iPhone, Chrome) : le premier geste dessine Partager dans la barre d’adresse ; Safari garde sa barre du bas ; « Moi » : Admin | Lauréat sur 44 px', async () => {
+  const CHROME_IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/131.0.6778.73 Mobile/15E148 Safari/604.1';
+  for (const [ua, enHaut] of [[CHROME_IPHONE, true], [IPHONE_SAFARI, false]]) {
+    const s = await ouvrir({ largeur: 390, ua });
+    await s.comme('Salma');
+    await s.page.click('.me-btn'); await s.page.waitForSelector('.modal.moi');
+    await s.page.locator('.modal.moi .moi-ligne:has(.ico-download)').click();
+    await s.page.waitForSelector('.modal.installer');
+    const premier = s.page.locator('.modal.installer .ins-etapes li').first();
+    assert.equal(await premier.locator('.ins-svg .m-champ').count(), enHaut ? 1 : 0, 'la barre d’adresse en haut');
+    assert.equal(await premier.locator('.ins-svg .m-barre').count(), 1);
+    assert.match(await premier.innerText(), enHaut ? /dans la barre d’adresse/ : /Dans Safari, touche Partager/);
+    assert.equal(await s.page.locator('.modal.installer .ins-etapes li').count(), 3);
+    assert.equal(await s.debordement(), 0);
+    await s.fermer();
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+  const s = await ouvrir({ largeur: 390, toucher: true });
+  await s.comme('Admin');
+  await s.page.click('.me-btn'); await s.page.waitForSelector('.modal.moi .moi-vue');
+  const hauteurs = await s.page.locator('.modal.moi .moi-vue button').evaluateAll(bs => bs.map(b => b.offsetHeight));
+  assert.equal(hauteurs.length, 2);
+  for (const h of hauteurs) assert.ok(h >= 44, `Admin | Lauréat : ${h} px`);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// Revue · Plan · confort : le menu du compte est devenu « Moi » ; le petit mot qui suit « Ne plus afficher les premiers pas »
+// y renvoie (plus de « ton menu »), en français et en arabe, et « Comment ça marche ? » est bien dans « Moi »
+test('premiers pas masqués : le petit mot renvoie à « Moi », où « Comment ça marche ? » les rouvre (390 px, fr puis ar)', async () => {
+  // Le petit mot met des espaces insécables autour de « » et devant : ? (d'où \s)
+  const MOTS = {
+    fr: { voir: 'Voir les étapes', masquer: 'Ne plus afficher les premiers pas', comment: 'Comment ça marche ?', mot: /dans\s«\sMoi\s»,\sen\shaut\s:\s«\sComment\sça\smarche\s\?\s»/ },
+    ar: { voir: 'عرض الخطوات', masquer: 'عدم إظهار الخطوات الأولى مجددًا', comment: 'كيف تعمل المنصة؟', mot: /في\s«أنا»،\sفي\sالأعلى:\s«كيف\sتعمل\sالمنصة؟»/ },
+  };
+  for (const langue of ['fr', 'ar']) {
+    const m = MOTS[langue];
+    const s = await ouvrir({ largeur: 390, langue });
+    await s.comme('Amine'); await s.aller('accueil');
+    await s.page.locator('.pas').getByText(m.voir).click();
+    await s.page.waitForSelector('.modal .etapes');
+    await s.page.getByText(m.masquer).click();
+    await s.page.waitForSelector('.toast');
+    const petitMot = await s.page.locator('.toast').last().innerText();
+    assert.match(petitMot, m.mot);
+    assert.doesNotMatch(petitMot, /ton menu|قائمتك/);
+    await s.page.waitForSelector('.modal .etapes', { state: 'detached' });
+    await s.page.click('.me-btn'); await s.page.waitForSelector('.modal.moi');
+    await s.page.locator('.modal.moi .moi-ligne', { hasText: m.comment }).click();
+    await s.page.waitForSelector('.modal .etapes');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
