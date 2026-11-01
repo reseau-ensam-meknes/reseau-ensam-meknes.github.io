@@ -1040,6 +1040,12 @@ create table if not exists public.push_subscriptions (
   created_at timestamptz default now()
 );
 create index if not exists push_subscriptions_user_idx on public.push_subscriptions (user_id);
+-- La santé de chaque abonnement, tenue par la fonction « notifier » (push_resultats, plus bas) : la dernière réponse de son
+-- service de push et quand, et ses refus définitifs d'affilée (400, 401, 403 ; un envoi accepté remet le compte à zéro)
+alter table public.push_subscriptions add column if not exists dernier_code int;
+alter table public.push_subscriptions add column if not exists dernier_envoi_at timestamptz;
+alter table public.push_subscriptions add column if not exists refus int not null default 0;
+alter table public.push_subscriptions add column if not exists refus_at timestamptz;
 
 create table if not exists public.push_queue (
   id bigint generated always as identity primary key,
@@ -1052,6 +1058,41 @@ create table if not exists public.push_queue (
 -- reprise qu'après 2 minutes sans confirmation, 3 essais au plus (relancer_push, section « Notifications qui arrivent »)
 alter table public.push_queue add column if not exists pris_at timestamptz;
 alter table public.push_queue add column if not exists essais int not null default 0;
+
+-- Journal des notifications (7 jours, taches_quotidiennes) : ce qu'est devenue chacune, jamais son contenu.
+-- code : la réponse du service de push pour le meilleur des téléphones du membre (201 acceptée), 404 ou 410 téléphone
+-- parti, 400 / 401 / 403 refus définitif, 413 trop longue, 0 / 429 / 5xx service injoignable (nouvel essai) ;
+-- et ce qui n'est jamais parti : -1 aucun téléphone abonné, -2 catégorie coupée par le membre (Mon profil),
+-- -3 abandonnée (1 jour ou 3 essais sans succès), -4 jetée par la fonction (type inconnu, rien à dire).
+-- L'administration n'en lit que des totaux (admin_sante_notifs, section « Santé des notifications », à la fin).
+create table if not exists public.push_journal (
+  id bigint generated always as identity primary key,
+  user_id uuid references public.profiles(id) on delete cascade,
+  kind text not null,
+  code int not null,
+  at timestamptz not null default now()
+);
+create index if not exists push_journal_user on public.push_journal (user_id, at desc);
+alter table public.push_journal enable row level security;
+
+-- Une ligne au journal : n'échoue jamais (une notification perdue ne bloque pas, son trou dans le journal non plus)
+create or replace function public.noter_push(p_user uuid, p_kind text, p_code int) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if p_user is null or coalesce(p_kind, '') = '' or p_code is null then return; end if;
+  insert into public.push_journal (user_id, kind, code) values (p_user, left(p_kind, 40), p_code);
+exception when others then raise warning 'noter_push : %', sqlerrm;
+end $$;
+revoke all on function public.noter_push(uuid, text, int) from public, anon, authenticated;
+
+-- Adresses d'abonnement mortes : téléphone parti (404, 410) ou trois refus définitifs d'affilée. Un appareil qui redonne
+-- l'une d'elles n'est pas réinscrit (abonner_push répond 'mort') : il se réabonne, avec une adresse neuve.
+-- Gardées 90 jours (taches_quotidiennes). Aucune règle de lecture : seuls la base et la fonction y touchent.
+create table if not exists public.push_morts (
+  endpoint text primary key,
+  at timestamptz not null default now()
+);
+alter table public.push_morts enable row level security;
 
 -- Réglages internes : adresse du projet, clé publique, secret d'appel de la fonction, clés VAPID
 create table if not exists public.app_secrets (
@@ -1077,15 +1118,21 @@ create table if not exists public.rappels_envoyes (
 
 -- S'abonner depuis un téléphone (un même téléphone ne sert qu'un compte à la fois). Le site le refait à chaque
 -- ouverture (resynchroniserPush, pwa.js) : un abonnement oublié par la base revient, sans rien changer s'il y est déjà.
-create or replace function public.abonner_push(p_endpoint text, p_p256dh text, p_auth text) returns void
+-- Réponse : 'ok' ; 'mort' si le service de push a refusé cette adresse pour de bon (push_morts) : elle n'est pas
+-- réinscrite, l'appareil doit se réabonner (unsubscribe puis subscribe donnent une adresse neuve).
+-- Le type de retour a changé (void avant) : la fonction est retirée puis recréée, avec les mêmes droits.
+drop function if exists public.abonner_push(text, text, text);
+create function public.abonner_push(p_endpoint text, p_p256dh text, p_auth text) returns text
 language plpgsql security definer set search_path = public as $$
 begin
   if auth.uid() is null then raise exception 'Connecte-toi d’abord.'; end if;
   if p_endpoint !~* '^https://' then raise exception 'Abonnement invalide.'; end if;
+  if exists (select 1 from public.push_morts where endpoint = p_endpoint) then return 'mort'; end if;
   insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values (auth.uid(), p_endpoint, p_p256dh, p_auth)
     on conflict (endpoint) do update set user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth,
       created_at = case when push_subscriptions.user_id = excluded.user_id then push_subscriptions.created_at else now() end
     where (push_subscriptions.user_id, push_subscriptions.p256dh, push_subscriptions.auth) is distinct from (excluded.user_id, excluded.p256dh, excluded.auth);
+  return 'ok';
 end $$;
 revoke all on function public.abonner_push(text, text, text) from public, anon;
 grant execute on function public.abonner_push(text, text, text) to authenticated;
@@ -1122,42 +1169,47 @@ begin
 end $$;
 revoke all on function public.destinataires_resume(int) from public, anon, authenticated;
 
--- Appel de la fonction « notifier » (si l'extension pg_net et l'adresse du projet sont là)
+-- Appel de la fonction « notifier » (si l'extension pg_net et l'adresse du projet sont là). La clé publique part aussi en
+-- apikey : la passerelle de Supabase l'attend avec les nouvelles clés (sb_publishable_…), qui ne sont pas des jetons.
+-- Rien n'est bloqué si l'appel échoue, mais l'erreur se lit dans Logs > Postgres (« appeler_notifier : … »).
 create or replace function public.appeler_notifier(p_job text) returns void
 language plpgsql security definer set search_path = public as $$
-declare v_url text; v_key text; v_secret text;
+declare v_url text; v_key text; v_secret text; v_entetes jsonb;
 begin
   select valeur into v_url from public.app_secrets where cle = 'projet_url';
   select valeur into v_key from public.app_secrets where cle = 'anon_key';
   select valeur into v_secret from public.app_secrets where cle = 'notifier_secret';
-  if v_url is null or v_key is null then return; end if;
+  if v_url is null or v_key is null then
+    raise warning 'appeler_notifier : projet_url ou anon_key absent de app_secrets (« % » non appelé)', p_job;
+    return;
+  end if;
+  v_entetes := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || v_key, 'apikey', v_key, 'x-notifier', v_secret);
   -- 60 s d'attente : envoyer des emails prend plus que les 5 s par défaut de pg_net, qui coupait l'appel
   begin
-    perform net.http_post(
-      url := v_url || '/functions/v1/notifier',
-      body := jsonb_build_object('job', p_job),
-      headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || v_key, 'x-notifier', v_secret),
-      timeout_milliseconds := 60000);
+    perform net.http_post(url := v_url || '/functions/v1/notifier', body := jsonb_build_object('job', p_job),
+      headers := v_entetes, timeout_milliseconds := 60000);
   exception when undefined_function then  -- pg_net ancien, sans délai réglable
-    perform net.http_post(
-      url := v_url || '/functions/v1/notifier',
-      body := jsonb_build_object('job', p_job),
-      headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || v_key, 'x-notifier', v_secret));
+    perform net.http_post(url := v_url || '/functions/v1/notifier', body := jsonb_build_object('job', p_job), headers := v_entetes);
   end;
-exception when others then null;  -- pas de pg_net, ou fonction pas encore déployée : rien n'est bloqué
+exception when others then raise warning 'appeler_notifier : %', sqlerrm;  -- pas de pg_net, ou fonction pas encore déployée
 end $$;
 revoke all on function public.appeler_notifier(text) from public, anon, authenticated;
 
 -- Met une notification en file pour un membre, seulement s'il l'a activée sur un téléphone
--- et qu'il veut ce type de notification (push_voulu, plus bas : son choix dans Mon profil, sinon le défaut de son rôle)
+-- et qu'il veut ce type de notification (push_voulu, plus bas : son choix dans Mon profil, sinon le défaut de son rôle).
+-- Sinon rien ne part, mais le journal dit pourquoi : -1 aucun téléphone abonné, -2 catégorie coupée.
 create or replace function public.pousser(p_user uuid, p_kind text, p_data jsonb default '{}') returns void
 language plpgsql security definer set search_path = public as $$
 begin
   if p_user is null or p_user = auth.uid() then return; end if;
-  if exists (select 1 from public.push_subscriptions where user_id = p_user) and public.push_voulu(p_user, p_kind) then
+  if not exists (select 1 from public.push_subscriptions where user_id = p_user) then
+    perform public.noter_push(p_user, p_kind, -1);
+  elsif public.push_voulu(p_user, p_kind) then
     insert into public.push_queue (user_id, kind, data) values (p_user, p_kind, coalesce(p_data, '{}'));
+  else
+    perform public.noter_push(p_user, p_kind, -2);
   end if;
-exception when others then null;  -- une notification ne doit jamais bloquer l'action du membre
+exception when others then raise warning 'pousser : %', sqlerrm;  -- une notification ne doit jamais bloquer l'action du membre
 end $$;
 revoke all on function public.pousser(uuid, text, jsonb) from public, anon, authenticated;
 
@@ -1198,6 +1250,35 @@ language sql security definer set search_path = public as $$
   delete from public.push_queue where id = any(coalesce(p_ids, '{}'::bigint[]));
 $$;
 revoke all on function public.push_faits(bigint[]) from public, anon, authenticated;
+
+-- Après chaque tour d'envoi, la fonction dit ce que chaque téléphone a répondu : p = [{ id, code, recu, refus }]
+-- (code : sa dernière réponse ; recu : au moins une notification acceptée ; refus : un refus définitif 400, 401 ou 403,
+-- sans rien d'accepté). Accepté : le compte des refus repart de zéro. Téléphone parti (404, 410) ou troisième refus
+-- définitif d'affilée : l'abonnement est retiré et son adresse notée (push_morts). Rend les abonnements retirés.
+-- 413 (notification trop longue) n'est pas la faute de l'abonnement : rien n'est compté.
+create or replace function public.push_resultats(p jsonb) returns uuid[]
+language plpgsql security definer set search_path = public as $$
+declare v_l jsonb := case when jsonb_typeof(p) = 'array' then p else '[]'::jsonb end; v uuid[];
+begin
+  update public.push_subscriptions s set dernier_code = r.code, dernier_envoi_at = now(),
+      refus = case when coalesce(r.recu, false) then 0 when coalesce(r.refus, false) then s.refus + 1 else s.refus end,
+      refus_at = case when coalesce(r.refus, false) and not coalesce(r.recu, false) then now() else s.refus_at end
+    from jsonb_to_recordset(v_l) as r(id uuid, code int, recu boolean, refus boolean)
+    where s.id = r.id;
+  with morts as (
+    select distinct s.id, s.endpoint from public.push_subscriptions s
+      join jsonb_to_recordset(v_l) as r(id uuid, code int, recu boolean, refus boolean) on r.id = s.id
+    where r.code in (404, 410) or s.refus >= 3
+  ), notees as (
+    insert into public.push_morts (endpoint) select endpoint from morts
+      on conflict (endpoint) do update set at = now()
+  ), retirees as (
+    delete from public.push_subscriptions s using morts m where s.id = m.id returning s.id
+  )
+  select coalesce(array_agg(id), '{}') into v from retirees;
+  return v;
+end $$;
+revoke all on function public.push_resultats(jsonb) from public, anon, authenticated;
 
 -- Ce qui déclenche une notification sur le téléphone
 create or replace function public.notif_evenements() returns trigger
@@ -1268,7 +1349,7 @@ begin
     limit 200;
   end if;
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_evenements : %', sqlerrm; return null;
 end $$;
 
 do $$
@@ -1322,6 +1403,7 @@ do $$ begin
     grant execute on function public.destinataires_resume(int) to service_role;
     grant execute on function public.prendre_push(int) to service_role;
     grant execute on function public.push_faits(bigint[]) to service_role;
+    grant execute on function public.push_resultats(jsonb) to service_role;
   end if;
 end $$;
 
@@ -1633,12 +1715,16 @@ end $$;
 revoke all on function public.push_voulu(uuid, text) from public, anon, authenticated;
 
 -- Filtre central : couvre pousser() et les envois groupés (offres, demandes, agenda…). Dans le doute, la notification part.
+-- Une notification retirée parce que le membre a coupé sa catégorie est notée au journal (-2).
 create or replace function public.push_filtre() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
-  if public.push_voulu(new.user_id, new.kind) is false then return null; end if;
+  if public.push_voulu(new.user_id, new.kind) is false then
+    perform public.noter_push(new.user_id, new.kind, -2);
+    return null;
+  end if;
   return new;
-exception when others then return new;
+exception when others then raise warning 'push_filtre : %', sqlerrm; return new;  -- dans le doute, la notification part
 end $$;
 drop trigger if exists trg_push_filtre on public.push_queue;
 create trigger trg_push_filtre before insert on public.push_queue
@@ -2245,7 +2331,7 @@ begin
     limit 5;
   end if;
   return null;
-exception when others then return null;
+exception when others then raise warning 'nouveau_laureat : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_nouveau_laureat on public.profiles;
 create trigger trg_nouveau_laureat after insert on public.profiles
@@ -2311,7 +2397,7 @@ begin
     limit 2000;
   end if;
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_evenement : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_notif on public.evenements;
 create trigger trg_notif after insert or update on public.evenements for each row execute function public.notif_evenement();
@@ -2378,8 +2464,10 @@ begin
   perform public.attribuer_parrains();
   -- Durées de conservation : un échec ne bloque pas les emails du jour
   begin perform public.conservation_quotidienne(); exception when others then raise warning 'Conservation : %', sqlerrm; end;
-  -- Journal des notifications (push_journal, à la fin) et historique des tâches de pg_cron : 7 jours
-  begin delete from public.push_journal where at < now() - interval '7 days'; exception when others then null; end;
+  -- Journal des notifications (push_journal, section « Notifications sur le téléphone ») et historique des tâches de
+  -- pg_cron : 7 jours ; adresses d'abonnement mortes (push_morts) : 90 jours
+  begin delete from public.push_journal where at < now() - interval '7 days'; exception when others then raise warning 'push_journal : %', sqlerrm; end;
+  begin delete from public.push_morts where at < now() - interval '90 days'; exception when others then raise warning 'push_morts : %', sqlerrm; end;
   begin delete from cron.job_run_details where end_time < now() - interval '7 days'; exception when others then null; end;
   perform public.appeler_notifier('resume');
   perform public.appeler_notifier('enquetes');
@@ -2748,7 +2836,7 @@ begin
     and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'offre_alerte')
   limit 2000;
   return null;
-exception when others then return null;
+exception when others then raise warning 'alerte_offre : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_alerte_offre on public.offers;
 create trigger trg_alerte_offre after insert on public.offers
@@ -2861,7 +2949,7 @@ begin
     limit 10;
   end if;
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_phase3 : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_notif on public.demandes_contact;
 create trigger trg_notif after insert or update on public.demandes_contact for each row execute function public.notif_phase3();
@@ -3220,7 +3308,11 @@ language plpgsql security definer set search_path = public as $$
 declare v_n int; v_calme boolean;
 begin
   if current_setting('ensam.sans_push_message', true) = 'on' then return null; end if;
-  if not exists (select 1 from public.push_subscriptions where user_id = new.dest_id) then return null; end if;
+  -- Personne à prévenir sur un téléphone : rien ne part, le journal le dit (-1)
+  if not exists (select 1 from public.push_subscriptions where user_id = new.dest_id) then
+    perform public.noter_push(new.dest_id, case when new.type = 'rdv' then 'rdv_message' else 'message' end, -1);
+    return null;
+  end if;
   -- Un entretien proposé : sa propre notification (catégorie « Messages »), la date et la durée, sans l'aperçu d'un message
   if new.type = 'rdv' then
     perform public.pousser(new.dest_id, 'rdv_message', jsonb_build_object(
@@ -3235,7 +3327,7 @@ begin
     'nom', (select full_name from public.profiles where id = new.author_id), 'de', new.author_id,
     'type', new.type, 'texte', left(coalesce(new.body, ''), 140), 'duree', new.duree, 'n', greatest(v_n, 1), 'calme', v_calme));
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_message : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_notif on public.messages;
 create trigger trg_notif after insert on public.messages for each row execute function public.notif_message();
@@ -3402,7 +3494,7 @@ begin
   -- (section « Notifications pour tout », à la fin) ; une erreur ici n'empêche pas le reste
   begin
     perform public.demandes_larges_push();
-  exception when others then null;
+  exception when others then raise warning 'demandes_larges_push : %', sqlerrm;
   end;
 end $$;
 revoke all on function public.alertes_horaires() from public, anon, authenticated;
@@ -3735,7 +3827,7 @@ begin
     and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = new.auteur_id) or (b.user_id = new.auteur_id and b.bloque_id = p.id))
   limit 60;
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_demande : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_notif on public.demandes;
 create trigger trg_notif after insert on public.demandes for each row execute function public.notif_demande();
@@ -4403,7 +4495,7 @@ begin
     'emoji', new.emoji, 'n', v_n, 'titre', v_titre)
     || case when new.offer_id is not null then jsonb_build_object('offre', new.offer_id) else jsonb_build_object('demande', new.demande_id) end);
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_reaction_publique : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_notif on public.reactions_publiques;
 create trigger trg_notif after insert on public.reactions_publiques for each row execute function public.notif_reaction_publique();
@@ -4477,7 +4569,7 @@ begin
   perform public.pousser(v_d.auteur_id, 'demande_reponse', jsonb_build_object('nom', (select full_name from public.profiles where id = new.author_id),
     'titre', v_d.titre, 'texte', left(new.body, 140), 'demande', v_d.id));
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_reponse_demande : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_notif on public.reponses_demandes;
 create trigger trg_notif after insert on public.reponses_demandes for each row execute function public.notif_reponse_demande();
@@ -4700,7 +4792,7 @@ end $$;
 revoke all on function public.se_desabonner_rappels(uuid) from public;
 grant execute on function public.se_desabonner_rappels(uuid) to anon, authenticated;
 
--- Chaque soir à 18 h UTC (19 h au Maroc, 18 h pendant le ramadan) : le téléphone, puis les emails
+-- Chaque soir à 18 h UTC (18 h au Maroc depuis le retour à l'heure GMT, le 20 septembre 2026) : le téléphone, puis les emails
 create or replace function public.rappels_soir() returns void
 language plpgsql security definer set search_path = public as $$
 begin
@@ -4923,7 +5015,7 @@ begin
     perform public.pousser(r.id, 'promo_nouveau', jsonb_build_object('nom', split_part(new.full_name, ' ', 1), 'n', greatest(v_n, 1), 'promo', new.promo));
   end loop;
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_promo : %', sqlerrm; return null;
 end $$;
 -- Le nom du trigger le fait passer après trg_nouveau_laureat (ordre alphabétique) : verifier_pair est déjà en file
 drop trigger if exists trg_promo_nouveau on public.profiles;
@@ -4954,7 +5046,7 @@ begin
     perform public.pousser(r.id, 'offre_commentaire', v_data || jsonb_build_object('pour', r.pour));
   end loop;
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_commentaire : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_notif_commentaire on public.comments;
 create trigger trg_notif_commentaire after insert on public.comments
@@ -4973,7 +5065,7 @@ begin
     and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'annonce')
   limit 2000;
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_annonce : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_notif_annonce on public.annonces;
 create trigger trg_notif_annonce after insert on public.annonces
@@ -5000,7 +5092,7 @@ begin
     and exists (select 1 from public.push_subscriptions s where s.user_id = l.id) and public.push_voulu(l.id, 'mentorat_ouvert')
   limit 30;
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_mentorat_ouvert : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_notif_mentorat_ouvert on public.mentorships;
 create trigger trg_notif_mentorat_ouvert after insert or update of mentor_id on public.mentorships
@@ -5150,19 +5242,22 @@ begin
     insert into public.matchs (etudiant_id, laureat_id, offre_id) values (v_etu, v_lau, v_offre)
       on conflict (etudiant_id, laureat_id) do nothing returning * into v_m;
     if v_m.id is null then return null; end if;
-    -- « C'est un match ! » aux deux, y compris à celui qui vient de dire oui (son téléphone ouvre la discussion)
+    -- « C'est un match ! » aux deux, y compris à celui qui vient de dire oui (son téléphone ouvre la discussion).
+    -- Le filtre de la file retire (et note, -2) un côté qui a coupé Match ; un côté sans téléphone abonné est noté (-1).
     begin
       v_titre := (select titre from public.offers where id = v_offre);
       insert into public.push_queue (user_id, kind, data)
       select p.id, 'match', jsonb_strip_nulls(jsonb_build_object('nom', split_part(a.full_name, ' ', 1), 'de', a.id, 'match', v_m.id, 'titre', v_titre))
       from public.profiles p join public.profiles a on a.id = case when p.id = v_etu then v_lau else v_etu end
       where p.id in (v_etu, v_lau)
-        and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'match');
-    exception when others then null;  -- une notification ne bloque jamais le match
+        and exists (select 1 from public.push_subscriptions s where s.user_id = p.id);
+      perform public.noter_push(x.id, 'match', -1) from unnest(array[v_etu, v_lau]) as x(id)
+        where not exists (select 1 from public.push_subscriptions s where s.user_id = x.id);
+    exception when others then raise warning 'match_apres_choix : %', sqlerrm;  -- une notification ne bloque jamais le match
     end;
     return null;
   end if;
-  -- Pas encore de match : l'intérêt, à la personne visée
+  -- Pas encore de match : l'intérêt, à la personne visée (sans téléphone abonné : noté au journal, -1)
   begin
     if new.user_id = v_lau then
       -- L'étudiant apprend qu'un lauréat s'intéresse à lui ; l'entreprise seulement si le lauréat la montre à tous
@@ -5172,6 +5267,8 @@ begin
           perform public.pousser(v_etu, 'match_interet', jsonb_strip_nulls(jsonb_build_object('nom', split_part(v_l.full_name, ' ', 1), 'de', v_lau,
             'entreprise', case when coalesce(v_l.visibilite ->> 'travail', 'tous') = 'tous' then nullif(btrim(v_l.entreprise), '') end)));
         end if;
+      else
+        perform public.noter_push(v_etu, 'match_interet', -1);
       end if;
     elsif new.cible_offre is not null then
       -- Le lauréat apprend qu'un étudiant s'intéresse à son offre
@@ -5181,9 +5278,11 @@ begin
             'nom', split_part((select full_name from public.profiles where id = v_etu), ' ', 1), 'de', v_etu,
             'titre', (select titre from public.offers where id = new.cible_offre), 'offre', new.cible_offre));
         end if;
+      else
+        perform public.noter_push(v_lau, 'match_interet', -1);
       end if;
     end if;
-  exception when others then null;
+  exception when others then raise warning 'match_apres_choix : %', sqlerrm;
   end;
   return null;
 end $$;
@@ -5515,17 +5614,7 @@ end $$;
 --      notification aux deux personnes ; un email à celle qui n'a de notifications sur aucun appareil.
 -- =====================================================================
 
--- code : réponse du service de push pour le meilleur des téléphones (201 reçue), 404 ou 410 téléphone parti,
--- 0 service injoignable, -1 aucun téléphone. Lu par l'administration dans l'éditeur SQL, jamais par le site.
-create table if not exists public.push_journal (
-  id bigint generated always as identity primary key,
-  user_id uuid references public.profiles(id) on delete cascade,
-  kind text not null,
-  code int not null,
-  at timestamptz not null default now()
-);
-create index if not exists push_journal_user on public.push_journal (user_id, at desc);
-alter table public.push_journal enable row level security;
+-- Le journal (push_journal) et ses codes : section « Notifications sur le téléphone », au début, près de la file.
 
 -- Entretiens proposés dans une discussion déjà rappelés, avec leur horaire
 create table if not exists public.rappels_entretiens (
@@ -5563,7 +5652,7 @@ begin
     select p_user, p_kind, p_data || jsonb_strip_nulls(jsonb_build_object('lien', p_lien)), (p_data ->> 'rdv_at')::timestamptz
     where exists (select 1 from auth.users u where u.id = p_user and u.email is not null);
   return found;
-exception when others then return false;  -- un rappel ne bloque jamais les autres
+exception when others then raise warning 'rappeler : %', sqlerrm; return false;  -- un rappel ne bloque jamais les autres
 end $$;
 revoke all on function public.rappeler(uuid, text, jsonb, text) from public, anon, authenticated;
 
@@ -5628,12 +5717,21 @@ $$;
 revoke all on function public.rappels_rdv_envoyes(bigint[]) from public, anon, authenticated;
 
 -- Ce qui attend encore : la fonction est rappelée (vrai si elle l'est). Abandonné : une notification de plus d'un jour
--- (le service de push ne la garderait pas), un rappel dont l'heure est passée, 3 essais sans succès.
+-- (le service de push ne la garderait pas), un rappel dont l'heure est passée, 3 essais sans succès. Une notification
+-- abandonnée laisse sa trace au journal (-3) : rien ne disparaît sans qu'on le sache.
 create or replace function public.relancer_push() returns boolean
 language plpgsql security definer set search_path = public as $$
 declare v boolean := false;
 begin
-  delete from public.push_queue where created_at < now() - interval '1 day' or (essais >= 3 and pris_at < now() - interval '2 minutes');
+  begin
+    with abandon as (
+      delete from public.push_queue where created_at < now() - interval '1 day' or (essais >= 3 and pris_at < now() - interval '2 minutes')
+      returning user_id, kind)
+    insert into public.push_journal (user_id, kind, code) select user_id, left(kind, 40), -3 from abandon;
+  exception when others then
+    raise warning 'relancer_push (journal) : %', sqlerrm;
+    delete from public.push_queue where created_at < now() - interval '1 day' or (essais >= 3 and pris_at < now() - interval '2 minutes');
+  end;
   delete from public.rappels_emails where rdv_at < now() or (essais >= 3 and pris_at < now() - interval '2 minutes');
   if exists (select 1 from public.push_queue where essais < 3
       and ((pris_at is null and created_at < now() - interval '1 minute') or pris_at < now() - interval '2 minutes')) then
@@ -5714,6 +5812,119 @@ do $$ begin
     grant execute on function public.rappels_rdv_envoyes(bigint[]) to service_role;
   end if;
 end $$;
+
+-- =====================================================================
+--  Santé des notifications (panneau de l'administration, Vue d'ensemble) : des totaux seulement, jamais un nom, un
+--  identifiant ni le contenu d'une notification. Les jours sont ceux de l'heure UTC (l'heure du Maroc depuis le
+--  20 septembre 2026).
+--    · membres, et membres qui ont activé les notifications sur au moins un téléphone, par rôle ;
+--    · téléphones abonnés : combien ont confirmé une réception (push_recu) en 24 h et en 7 jours, combien acceptent les
+--      notifications sans jamais confirmer (service de push d'accord, rien d'affiché), combien ont été retirés ;
+--    · leur service de push (Chrome et Android : fcm ; iPhone et Mac : apple ; Firefox : mozilla ; Edge : windows) ;
+--    · le journal (push_journal) des 7 derniers jours, par jour et par type (les 12 plus fréquents) ;
+--    · la file d'attente, le dernier passage de la tâche de chaque minute (pg_cron « ensam-rappels ») et la dernière
+--      réponse à l'appel de la fonction « notifier » (pg_net), quand la base les laisse lire (sinon null).
+-- =====================================================================
+create or replace function public.service_push(p_endpoint text) returns text
+language sql immutable set search_path = public as $$
+  select case
+    when h = 'fcm.googleapis.com' or h like '%.googleapis.com' then 'fcm'
+    when h = 'web.push.apple.com' or h like '%.push.apple.com' then 'apple'
+    when h like '%.mozilla.com' or h like '%.mozilla.org' or h like '%.mozaws.net' then 'mozilla'
+    when h like '%.windows.com' then 'windows'
+    else 'autre' end
+  from (select lower(split_part(split_part(coalesce(p_endpoint, ''), '/', 3), ':', 1)) as h) x;
+$$;
+revoke all on function public.service_push(text) from public, anon, authenticated;
+
+create or replace function public.admin_sante_notifs() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare
+  v_jour date := (now() at time zone 'UTC')::date;
+  v_debut timestamptz := ((now() at time zone 'UTC')::date - 6)::timestamp at time zone 'UTC';
+  v_cron jsonb; v_http jsonb; v_r jsonb;
+begin
+  if not public.is_admin() then raise exception 'Réservé à l’administration.' using errcode = '42501'; end if;
+  -- pg_cron et pg_net ne sont pas toujours là, ni lisibles : alors null, sans erreur
+  begin
+    select jsonb_build_object('existe', true, 'at', d.start_time, 'statut', d.status) into v_cron
+    from cron.job j left join lateral (
+      select x.start_time, x.status from cron.job_run_details x where x.jobid = j.jobid order by x.start_time desc nulls last limit 1
+    ) d on true
+    where j.jobname = 'ensam-rappels' limit 1;
+    if v_cron is null then v_cron := jsonb_build_object('existe', false); end if;
+  exception when others then v_cron := null;
+  end;
+  begin
+    select to_jsonb(r) into v_r from net._http_response r order by r.id desc limit 1;
+    if v_r is not null then
+      v_http := jsonb_build_object('code', v_r->'status_code', 'at', v_r->'created',
+        'delai', coalesce((v_r->>'timed_out')::boolean, false), 'erreur', coalesce(v_r->>'error_msg', '') <> '');
+    end if;
+  exception when others then v_http := null;
+  end;
+  return jsonb_build_object(
+    'at', now(),
+    'roles', coalesce((
+      select jsonb_agg(jsonb_build_object('role', x.role, 'membres', x.membres, 'avec_tel', x.avec_tel) order by x.role)
+      from (select p.role, count(*)::int as membres,
+          (count(*) filter (where exists (select 1 from public.push_subscriptions s where s.user_id = p.id)))::int as avec_tel
+        from public.profiles p group by p.role) x), '[]'::jsonb),
+    'telephones', (
+      select jsonb_build_object(
+        'total', count(*)::int,
+        'recus_24h', (count(*) filter (where s.recu_at > now() - interval '24 hours'))::int,
+        'recus_7j', (count(*) filter (where s.recu_at > now() - interval '7 days'))::int,
+        -- Accepté par le service de push il y a plus d'une heure, et rien de reçu depuis (à 10 minutes près : le téléphone
+        -- peut confirmer avant que la fonction ait noté l'envoi)
+        'muets', (count(*) filter (where s.dernier_code between 200 and 299
+            and s.dernier_envoi_at > now() - interval '7 days' and s.dernier_envoi_at < now() - interval '1 hour'
+            and (s.recu_at is null or s.recu_at < s.dernier_envoi_at - interval '10 minutes')))::int,
+        'en_refus', (count(*) filter (where s.refus > 0))::int,
+        'retires_7j', (select count(*)::int from public.push_morts m where m.at > now() - interval '7 days'))
+      from public.push_subscriptions s),
+    'services', (
+      select jsonb_build_object(
+        'fcm', (count(*) filter (where x.srv = 'fcm'))::int, 'apple', (count(*) filter (where x.srv = 'apple'))::int,
+        'mozilla', (count(*) filter (where x.srv = 'mozilla'))::int, 'windows', (count(*) filter (where x.srv = 'windows'))::int,
+        'autre', (count(*) filter (where x.srv = 'autre'))::int)
+      from (select public.service_push(s.endpoint) as srv from public.push_subscriptions s) x),
+    'jours', (
+      select jsonb_agg(jsonb_build_object('jour', to_char(g.jour::timestamp, 'YYYY-MM-DD'),
+          'envoyees', coalesce(t.envoyees, 0), 'refusees', coalesce(t.refusees, 0), 'echecs', coalesce(t.echecs, 0),
+          'sans_tel', coalesce(t.sans_tel, 0), 'coupees', coalesce(t.coupees, 0), 'abandonnees', coalesce(t.abandonnees, 0),
+          'jetees', coalesce(t.jetees, 0)) order by g.jour)
+      from (select v_jour - 6 + i as jour from generate_series(0, 6) as i) g
+      left join (
+        select (j.at at time zone 'UTC')::date as jour,
+          (count(*) filter (where j.code between 200 and 299))::int as envoyees,
+          (count(*) filter (where j.code between 400 and 499 and j.code <> 429))::int as refusees,
+          (count(*) filter (where j.code = 0 or j.code = 429 or j.code >= 500))::int as echecs,
+          (count(*) filter (where j.code = -1))::int as sans_tel,
+          (count(*) filter (where j.code = -2))::int as coupees,
+          (count(*) filter (where j.code = -3))::int as abandonnees,
+          (count(*) filter (where j.code = -4))::int as jetees
+        from public.push_journal j where j.at >= v_debut group by 1
+      ) t on t.jour = g.jour),
+    'types', coalesce((
+      select jsonb_agg(jsonb_build_object('kind', y.kind, 'total', y.total, 'envoyees', y.envoyees, 'perdues', y.perdues,
+          'coupees', y.coupees, 'echecs', y.echecs) order by y.total desc, y.kind)
+      from (
+        select j.kind, count(*)::int as total,
+          (count(*) filter (where j.code between 200 and 299))::int as envoyees,
+          (count(*) filter (where j.code in (-1, -3, -4) or (j.code between 400 and 499 and j.code <> 429)))::int as perdues,
+          (count(*) filter (where j.code = -2))::int as coupees,
+          (count(*) filter (where j.code = 0 or j.code = 429 or j.code >= 500))::int as echecs
+        from public.push_journal j where j.at >= v_debut
+        group by j.kind order by count(*) desc, j.kind limit 12
+      ) y), '[]'::jsonb),
+    'file', (select jsonb_build_object('n', count(*)::int,
+        'age_s', coalesce(floor(extract(epoch from now() - min(q.created_at)))::int, 0)) from public.push_queue q),
+    'cron', v_cron,
+    'http', v_http);
+end $$;
+revoke all on function public.admin_sante_notifs() from public, anon;
+grant execute on function public.admin_sante_notifs() to authenticated;
 
 -- =====================================================================
 -- APRÈS votre inscription sur la plateforme, devenez administrateur :
