@@ -1692,3 +1692,24 @@ export function totauxSponsorises(sponsors, comptes) {
 }
 // Le taux de clic, « 4 % », ou « – » sans vue
 export const tauxClic = (clics, vues) => (vues > 0 ? pct(clics / vues) : '–');
+
+// « 3 lauréats peuvent t'aider » : pour une Demande d'étudiant, les lauréats les mieux placés (même filière, puis même parcours ;
+// le sujet dans leur poste ou leurs compétences ; un lauréat à l'étranger pour une demande « étranger » ; vérifié, disponible pour
+// le mentorat, une entreprise renseignée). Jamais l'auteur, l'administration ni un lauréat qui a déjà proposé son aide sur cette demande.
+// Sert à l'étudiant (sous sa demande) et à l'administration (demande qui attend depuis 24 h : à qui écrire).
+const BESOIN_DE_DEMANDE = { stage: 'stage', pfe: 'stage', etranger: 'etranger', emploi: 'carriere' };
+export function laureatsPourDemande(data, d, n = 3, now = new Date()) {
+  const etu = (data.profiles || []).find(p => p.id === d?.auteur_id);
+  if (!etu) return [];
+  const deja = new Set((data.propositions || []).filter(x => x.demande_id === d.id).map(x => x.laureat_id));
+  return (data.profiles || [])
+    .filter(p => p.role === 'laureat' && !p.admin_ok && p.id !== etu.id && !deja.has(p.id) && (p.ecole || 'ensam-meknes') === (etu.ecole || 'ensam-meknes'))
+    .map(p => {
+      // mentor_id : une demande adressée, l'ancienneté ne compte pas ; seule la proximité (filière, sujet, pays) rend pertinent
+      const { score, why } = helpMatch({ besoin: BESOIN_DE_DEMANDE[d.type], mentor_id: p.id }, p, etu, now);
+      return { p, why, pertinent: score >= 2, score: score + (p.verified ? 1 : 0) + (p.mentor_dispo ? 1 : 0) + (p.entreprise ? 0.5 : 0) };
+    })
+    .filter(x => x.pertinent)
+    .sort((a, b) => b.score - a.score || new Date(a.p.created_at) - new Date(b.p.created_at))
+    .slice(0, n);
+}
