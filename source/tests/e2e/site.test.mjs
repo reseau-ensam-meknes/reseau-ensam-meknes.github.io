@@ -743,7 +743,7 @@ test('« Me prévenir » sur iPhone, en arabe : les étapes pour ajouter le Rés
   await s.ctx.close();
 });
 
-test('« Me prévenir » : une fête qui s’ouvre pendant la feuille passe devant ; la feuille revient plus tard, sans compter de refus', async () => {
+test('« Me prévenir » : une fête qui s’ouvre pendant la feuille passe devant ; la feuille revient juste après elle, dans la même visite, sans compter de refus', async () => {
   const s = await prevenirSur('off');
   await s.comme('Amine'); await s.mentorat('Choisir mon stage de 3A');
   await s.page.waitForSelector('.modal.prevenir');
@@ -756,12 +756,20 @@ test('« Me prévenir » : une fête qui s’ouvre pendant la feuille passe deva
   assert.equal(await s.page.locator('.modal.prevenir').count(), 0, 'jamais deux fenêtres l’une sur l’autre');
   const m = await s.memo();
   assert.ok(!m.n, 'pas un refus');
-  assert.ok(m.differe, 'gardée pour la visite suivante');
+  assert.ok(m.differe, 'gardée le temps de la fête');
+  // La fête fermée : la feuille revient un instant après, dans la même visite, sans le petit mot
+  await s.page.locator('.fete-back .fete-acts .btn').last().click();
+  await s.page.waitForSelector('.modal.prevenir', { timeout: 3000 });
+  assert.equal(await s.page.locator('.fete-back:not(.sortie)').count(), 0);
+  assert.equal(await s.page.locator('.prevenir .verify-ok').count(), 0);
+  assert.match(await s.page.locator('.modal.prevenir').innerText(), /choisit un horaire/);
+  const apres = await s.memo();
+  assert.ok(!apres.n && !apres.differe, JSON.stringify(apres));
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
 
-test('« Me prévenir » n’arrive jamais par-dessus une fête : il attend la visite suivante ; accepté, il ne revient plus', async () => {
+test('« Me prévenir » n’arrive jamais par-dessus une fête : l’application fermée pendant la fête, il attend la visite suivante ; accepté, il ne revient plus', async () => {
   const s = await prevenirSur('off');
   await s.comme('Salma'); await s.aller('offres/demandes');
   await s.page.click('#dm-nouvelle'); await s.page.waitForTimeout(200);
@@ -783,6 +791,425 @@ test('« Me prévenir » n’arrive jamais par-dessus une fête : il attend la v
   assert.equal((await s.memo()).fait, 1);
   await s.mentorat('Préparer mes entretiens');
   assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// « Demander au bon moment » : juste après la fête, après un « Intéressé », une offre publiée, des coordonnées demandées ;
+// dans Messages et à la fin de la pile Match, une ligne au lieu d'une feuille
+test('« Me prévenir » juste après la fête, dans la même visite : la première demande publiée, la fête, puis la feuille', async () => {
+  const s = await prevenirSur('off');
+  await s.comme('Salma'); await s.aller('offres/demandes');
+  await s.page.click('#dm-nouvelle'); await s.page.waitForTimeout(200);
+  await s.page.click('#dm-type-pfe');
+  await s.page.fill('#dm-titre', 'PFE en maintenance prédictive');
+  await s.page.fill('#dm-details', 'Je cherche un PFE de 6 mois en maintenance prédictive, à Casablanca ou à Kénitra.');
+  await s.page.click('#dm-publier'); await s.page.waitForTimeout(500);
+  assert.ok(await s.page.locator('.fete-back').isVisible());
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0, 'jamais par-dessus la fête');
+  assert.equal((await s.memo()).differe, 'demande');
+  await s.page.locator('.fete-back .fete-acts .btn').last().click();
+  await s.page.waitForSelector('.modal.prevenir', { timeout: 3000 });
+  assert.equal(await s.page.locator('.fete-back:not(.sortie)').count(), 0, 'la fête est partie');
+  assert.equal(await s.page.locator('.prevenir .verify-ok').count(), 0, 'la fête a déjà dit que c’était publié');
+  assert.match(await s.page.locator('.modal.prevenir').innerText(), /te propose son aide/);
+  assert.equal((await s.memo()).differe, undefined, 'montrée : plus rien ne l’attend à la visite suivante');
+  await s.page.click('#pv-tard'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).n, 1);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// Une feuille d'ouverture rangée il y a quatre jours : les feuilles « Me prévenir » peuvent venir à cette visite
+const ouvertureRangee = async s => { await attendreOuverture(s); await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300); await s.changerMemo('({ ...m, at: m.at - 4 * 864e5 })'); };
+// Match : « Intéressé » sur une carte où personne ne s'est encore intéressé à soi (pas de match tout de suite)
+async function interesseSansMatch(s) {
+  for (let i = 0; i < 6 && await s.page.locator('.mx-carte.dessus .mx-interet').count(); i++) { await s.page.click('.mx-non'); await s.page.waitForTimeout(450); }
+  await s.page.click('.mx-oui'); await s.page.waitForTimeout(1000);
+  assert.equal(await s.page.locator('.mx-fete').count(), 0, 'pas un match');
+}
+
+test('« Me prévenir » après un « Intéressé » qui ne fait pas de match : « Te prévenir en cas de match ? » ; pas avant 3 jours ; acceptée, plus jamais', async () => {
+  const s = await prevenirSur('off');
+  await s.comme('Youssef'); await ouvertureRangee(s);
+  await s.aller('match'); await s.page.waitForSelector('.mx-carte.dessus');
+  await interesseSansMatch(s);
+  await s.page.waitForSelector('.modal.prevenir');
+  assert.equal(await s.page.locator('.prevenir .modal-head h2').innerText(), 'Te prévenir en cas de match ?');
+  assert.match(await s.page.locator('.modal.prevenir').innerText(), /Si l’intérêt est réciproque, une notification arrive sur cet appareil\./);
+  assert.equal(await s.page.locator('.prevenir .verify-ok').count(), 0, 'pas de petit mot : la carte partie l’a dit');
+  assert.ok(await s.page.evaluate(() => document.querySelector('.prevenir .modal-foot').getBoundingClientRect().bottom <= innerHeight + .5));
+  assert.equal(await s.debordement(), 0);
+  await s.page.click('#pv-tard'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).n, 2);
+  // Un autre « Intéressé » : pas une deuxième fois avant 3 jours (ni pendant cette visite)
+  await interesseSansMatch(s);
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  // 3 jours plus tard, elle revient ; acceptée, plus jamais (en démo, rien n'est abonné)
+  await s.changerMemo('({ ...m, at: m.at - 3 * 864e5 })');
+  await interesseSansMatch(s);
+  await s.page.waitForSelector('.modal.prevenir');
+  await s.page.click('#pv-oui'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Sur la vraie plateforme/);
+  assert.equal((await s.memo()).fait, 1);
+  await interesseSansMatch(s);
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Démo ordinaire (l'état de l'appareil n'est pas simulé) : rien
+  const d = await prevenirSur(null);
+  await d.comme('Youssef'); await d.aller('match'); await d.page.waitForSelector('.mx-carte.dessus');
+  await interesseSansMatch(d);
+  assert.equal(await d.page.locator('.modal.prevenir').count(), 0);
+  assert.deepEqual(d.erreurs, []);
+  await d.ctx.close();
+});
+
+test('« Me prévenir » après une offre publiée : « Te prévenir des candidatures ? » ; la première offre, juste après sa fête', async () => {
+  const s = await prevenirSur('off');
+  const publier = async titre => {
+    await s.aller('offres'); await s.page.click('.page-head #of-publier'); await s.page.waitForSelector('#of-titre');
+    await s.page.fill('#of-titre', titre); await s.page.fill('#of-desc', 'Réduire les temps de changement de série sur la ligne de presses.');
+    if (!(await s.page.inputValue('#of-ent'))) await s.page.fill('#of-ent', 'Renault Group Maroc');
+    await s.page.click('.modal-foot #of-publier'); await s.page.waitForTimeout(700);
+  };
+  await s.comme('Youssef'); await ouvertureRangee(s);
+  await publier('Stage méthodes emboutissage');
+  await s.page.waitForSelector('.modal.prevenir');
+  assert.equal(await s.page.locator('.prevenir .modal-head h2').innerText(), 'Te prévenir des candidatures ?');
+  assert.match(await s.page.locator('.prevenir .verify-ok').innerText(), /Offre publiée\. Les étudiants concernés la voient dans leurs offres\./);
+  assert.match(await s.page.locator('.modal.prevenir').innerText(), /Dès qu’un étudiant postule ou s’intéresse à ton offre, une notification arrive sur cet appareil\./);
+  assert.equal(await s.page.locator('#of-titre').count(), 0, 'la fenêtre de l’offre est fermée dessous');
+  assert.equal(await s.page.locator('.toast').count(), 0, 'pas de petit mot sous la feuille');
+  await s.page.click('#pv-tard'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).n, 2);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Nadia publie sa première offre : la fête d'abord, la feuille juste après elle
+  const n = await prevenirSur('off');
+  await n.comme('Nadia'); await ouvertureRangee(n);
+  await n.aller('offres'); await n.page.click('.page-head #of-publier'); await n.page.waitForSelector('#of-titre');
+  await n.page.fill('#of-titre', 'Stage qualité fournisseurs'); await n.page.fill('#of-desc', 'Suivre les audits fournisseurs et les plans d’action.');
+  if (!(await n.page.inputValue('#of-ent'))) await n.page.fill('#of-ent', 'Yazaki Morocco');
+  await n.page.click('.modal-foot #of-publier'); await n.page.waitForTimeout(700);
+  assert.ok(await n.page.locator('.fete-back').isVisible(), 'la fête de la première offre');
+  assert.equal(await n.page.locator('.modal.prevenir').count(), 0);
+  assert.equal((await n.memo()).differe, 'offre');
+  await n.page.locator('.fete-back .fete-acts .btn').last().click();
+  await n.page.waitForSelector('.modal.prevenir', { timeout: 3000 });
+  assert.equal(await n.page.locator('.prevenir .verify-ok').count(), 0);
+  assert.match(await n.page.locator('.modal.prevenir').innerText(), /postule ou s’intéresse à ton offre/);
+  assert.equal((await n.memo()).differe, undefined);
+  assert.deepEqual(n.erreurs, []);
+  await n.ctx.close();
+});
+
+test('« Me prévenir » après une demande de coordonnées : la feuille remplace « C’est envoyé. »', async () => {
+  const s = await prevenirSur('off');
+  await s.comme('Amine'); await ouvertureRangee(s);
+  await s.fiche('Youssef El Amrani');
+  await s.page.click('#cf-ask'); await s.page.fill('#cf-ask-msg', 'Bonjour, je suis en 3A et j’aimerais un conseil.');
+  await s.page.click('#cf-ask-send');
+  await s.page.waitForSelector('.modal.prevenir');
+  assert.equal(await s.page.locator('.prevenir .modal-head h2').innerText(), 'Te prévenir de la réponse ?');
+  assert.match(await s.page.locator('.prevenir .verify-ok').innerText(), /C’est envoyé\./);
+  assert.match(await s.page.locator('.modal.prevenir').innerText(), /Si la personne accepte de partager ses coordonnées, une notification arrive sur cet appareil\./);
+  assert.equal(await s.page.locator('#cf-ask-msg').count(), 0, 'la demande est partie, sa fenêtre fermée');
+  assert.equal(await s.page.locator('.toast').count(), 0);
+  assert.equal(await s.debordement(), 0);
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).n, 2);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// Une feuille refusée hier : pas de feuille d'ouverture à cette visite, pas de feuille « Me prévenir » avant 3 jours ;
+// la ligne, elle, n'attend pas
+const refuseeHier = async (s, nom) => {
+  const id = s.profils.find(x => x[1].includes(nom))[0];
+  await s.page.evaluate(id => localStorage.setItem('ensam-prevenir-' + id, JSON.stringify({ n: 1, at: Date.now() - 864e5 })), id);
+  await s.comme(nom);
+};
+const ecrireA = async (s, autre, texte) => { await s.aller('messages/' + autre); await s.page.waitForTimeout(300); await s.page.fill('#chat-txt', texte); await s.page.click('.composer .send-btn'); };
+
+test('« Me prévenir » dans Messages : une ligne au-dessus du champ, jamais une feuille, après un premier message resté sans réponse ; son × vaut pour cette conversation', async () => {
+  const s = await prevenirSur('off');
+  // Des conversations ouvertes (mentorat, candidature…) où personne n'a encore écrit
+  const rania = 'u-0006', nour = 'u-000a', khadija = 'u-000e';
+  await refuseeHier(s, 'Youssef');
+  await s.aller('messages/' + rania); await s.page.waitForTimeout(1200);
+  assert.equal(await s.page.locator('.pv-ligne').count(), 0, 'rien tant qu’il n’a pas écrit');
+  await ecrireA(s, rania, 'Bonjour Rania, tu cherches toujours un stage pour cet été ?');
+  await s.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+  const ligne = s.page.locator('.pv-ligne');
+  assert.equal(await ligne.locator('.pv-l-txt').innerText(), 'Sa réponse peut arriver sur ce téléphone, même application fermée · Activer');
+  assert.equal(await s.page.locator('.modal').count(), 0, 'pas de feuille sur la conversation');
+  const [l, c] = [await ligne.boundingBox(), await s.page.locator('.composer').boundingBox()];
+  assert.ok(l.y + l.height <= c.y + .5, 'au-dessus du champ d’écriture, sans le couvrir');
+  assert.equal(await s.page.getAttribute('#pv-ligne-x', 'aria-label'), 'Ne plus le proposer dans cette conversation');
+  assert.equal(await s.debordement(), 0);
+  // Son × : rangée pour cette conversation (dans le mémo), sans compter comme un refus de feuille
+  await s.page.click('#pv-ligne-x'); await s.page.waitForTimeout(200);
+  assert.equal(await ligne.count(), 0);
+  let m = await s.memo();
+  assert.deepEqual(m.lignes, [rania]);
+  assert.equal(m.n, 1);
+  await s.aller('messages'); await s.aller('messages/' + rania); await s.page.waitForTimeout(1300);
+  assert.equal(await ligne.count(), 0, 'plus dans cette conversation');
+  // Une autre conversation qui attend sa réponse : la ligne y vient ; « Activer » (en démo, rien n'est abonné)
+  await ecrireA(s, nour, 'Bonjour Nour, as-tu trouvé ton PFE ?');
+  await s.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+  await s.page.click('#pv-ligne-go'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Sur la vraie plateforme/);
+  assert.equal(await ligne.count(), 0);
+  m = await s.memo();
+  assert.equal(m.fait, 1);
+  assert.equal(m.n, 1, 'accepté : pas un refus');
+  // Activées sur cet appareil : plus de ligne, dans aucune conversation
+  await ecrireA(s, khadija, 'Bonjour Khadija, un mot sur ton stage ?');
+  await s.page.waitForTimeout(1500);
+  assert.equal(await ligne.count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Me prévenir » dans Messages : la ligne après un entretien proposé qui attend sa réponse ; rien pour l’administration ni en démo ordinaire', async () => {
+  const s = await prevenirSur('off');
+  const id = nom => s.profils.find(x => x[1].includes(nom))[0];
+  await refuseeHier(s, 'Youssef');
+  const salma = id('Salma'), youssef = id('Youssef');
+  // Une conversation où l'autre a écrit en dernier : la ligne ne vient pas ; un entretien proposé, à venir, sans réponse : elle vient
+  await s.comme('Salma'); await ecrireA(s, youssef, 'Bonjour, merci pour votre aide !'); await s.page.waitForTimeout(300);
+  await s.aller('accueil'); await s.comme('Youssef');
+  await s.aller('messages/' + salma); await s.page.waitForTimeout(1300);
+  assert.equal(await s.page.locator('.pv-ligne').count(), 0, 'la conversation a sa réponse');
+  await s.page.evaluate(dest => window.__demo.envoyerMessage({ dest, type: 'rdv', rdv_at: new Date(Date.now() + 2 * 864e5).toISOString(), rdv_duree: 30, rdv_lien: 'https://meet.jit.si/reseau-ensam-test' }), salma);
+  await s.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+  assert.match(await s.page.locator('.pv-ligne').innerText(), /Sa réponse peut arriver sur ce téléphone/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // L'administration écrit à tout le monde : jamais de ligne
+  const a = await prevenirSur('off');
+  await a.comme('Admin');
+  await ecrireA(a, a.profils.find(x => x[1].includes('Salma'))[0], 'Bienvenue sur le réseau !');
+  await a.page.waitForTimeout(1500);
+  assert.equal(await a.page.locator('.pv-ligne').count(), 0);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+  // Démo ordinaire : rien
+  const d = await prevenirSur(null);
+  await refuseeHier(d, 'Youssef');
+  await ecrireA(d, 'u-0006', 'Bonjour Rania !');
+  await d.page.waitForTimeout(1500);
+  assert.equal(await d.page.locator('.pv-ligne').count(), 0);
+  assert.deepEqual(d.erreurs, []);
+  await d.ctx.close();
+});
+
+test('« Me prévenir » dans Messages : sur iPhone hors écran d’accueil, « Comment faire » ; bloquées, « Débloquer » et ses gestes ; en arabe', async () => {
+  const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+  const s = await prevenirSur('ios', { ua: IPHONE });
+  await s.comme('Youssef');
+  await ecrireA(s, 'u-0006', 'Bonjour Rania, tu cherches toujours un stage ?');
+  await s.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+  assert.equal(await s.page.locator('.pv-l-txt').innerText(), 'Sa réponse peut arriver sur ce téléphone, même application fermée · Comment faire');
+  await s.page.click('#pv-ligne-go');
+  await s.page.waitForSelector('.modal .ios-steps');
+  assert.equal(await s.page.locator('.modal-head h2').innerText(), 'Installer l’application');
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.pv-ligne').count(), 1, 'toujours là : rien n’est encore installé');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  const b = await prevenirSur('refuse', { langue: 'ar' });
+  await b.comme('Youssef');
+  await ecrireA(b, 'u-0006', 'Bonjour Rania !');
+  await b.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+  assert.equal(await b.page.getAttribute('html', 'dir'), 'rtl');
+  assert.equal(await b.page.locator('.pv-l-txt').innerText(), 'قد يصلك الرد على هذا الهاتف، حتى والتطبيق مغلق · إلغاء الحظر');
+  assert.equal(await b.page.getAttribute('#pv-ligne-x', 'aria-label'), 'عدم اقتراح ذلك مجددًا في هذه المحادثة');
+  assert.equal(await b.debordement(), 0);
+  await b.page.click('#pv-ligne-go');
+  await b.page.waitForSelector('#debloquer-ok');
+  assert.equal(await b.page.locator('.modal .ios-steps li').count(), 3);
+  // « C'est fait » (en démo, rien n'est vérifié) : la ligne a eu sa réponse pour cette visite
+  await b.page.click('#debloquer-ok'); await b.page.waitForTimeout(400);
+  assert.equal(await b.page.locator('.pv-ligne').count(), 0);
+  assert.deepEqual(await b.page.evaluate(() => [...window.__ensamMissing].filter(t => /prévenir|réponse|Activer|Débloquer|Comment faire|conversation/i.test(t))), []);
+  assert.deepEqual(b.erreurs, []);
+  await b.ctx.close();
+});
+
+test('« Me prévenir » : une seule demande par visite — après une feuille, pas de ligne ; après une ligne, pas de feuille', async () => {
+  const s = await prevenirSur('off');
+  const rania = 'u-0006';
+  await s.comme('Youssef'); await ouvertureRangee(s);
+  // La feuille d'abord (un « Intéressé »), refusée : pas de ligne dans Messages pendant cette visite
+  await s.aller('match'); await s.page.waitForSelector('.mx-carte.dessus');
+  await interesseSansMatch(s);
+  await s.page.waitForSelector('.modal.prevenir'); await s.page.click('#pv-tard'); await s.page.waitForTimeout(300);
+  await ecrireA(s, rania, 'Bonjour Rania, tu cherches toujours un stage ?');
+  await s.page.waitForTimeout(1500);
+  assert.equal(await s.page.locator('.pv-ligne').count(), 0, 'déjà demandé pendant cette visite');
+  // La visite suivante : la ligne n'attend pas les 3 jours des feuilles
+  await s.page.goto(adresse); await s.page.waitForSelector('.hello'); await s.comme('Youssef'); await s.aller('messages/' + rania);
+  await s.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+  // La ligne montrée, c'est la demande de cette visite : pas de feuille après une action (le petit mot à sa place),
+  // ni de feuille d'ouverture
+  await s.changerMemo('({ ...m, at: m.at - 4 * 864e5 })');
+  await s.aller('match'); await s.page.waitForSelector('.mx-carte.dessus');
+  await interesseSansMatch(s);
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  await s.page.waitForTimeout(3000);
+  assert.equal(await s.page.locator(ouverture).count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Me prévenir » à la fin de la pile Match : après des « Intéressé », une ligne sous le bilan ; la fin tient au-dessus de la barre du bas ; son × la range', async () => {
+  const s = await prevenirSur('off');
+  await s.page.setViewportSize({ width: 390, height: 844 });
+  await refuseeHier(s, 'Salma');
+  await s.aller('match'); await s.page.waitForSelector('.mx-carte.dessus');
+  let oui = 0;
+  for (let pas = 0; await s.page.locator('.mx-carte.dessus').count(); pas++) {
+    assert.ok(pas < 20, 'la pile finit');
+    if (await s.page.locator('.mx-carte.dessus .mx-interet').count()) await s.page.click('.mx-non'); else { await s.page.click('.mx-oui'); oui++; }
+    await s.page.waitForTimeout(450);
+    if (await s.page.locator('.mx-fete').count()) { await s.page.click('.mx-fete-plus'); await s.page.waitForTimeout(200); }
+    assert.equal(await s.page.locator('.modal.prevenir').count(), 0, 'refusée hier : pas de feuille avant 3 jours');
+  }
+  assert.ok(oui > 0);
+  await s.page.waitForSelector('.mx-vide');
+  await s.page.waitForSelector('.mx-vide .pv-ligne', { timeout: 5000 });
+  assert.equal(await s.page.locator('.mx-vide .pv-l-txt').innerText(), 'Une notification arrive dès qu’un intérêt est réciproque · Activer');
+  assert.equal(await s.page.getAttribute('#pv-ligne-x', 'aria-label'), 'Ne plus le proposer ici');
+  // Sous le bilan de la visite, et la fin tient toujours au-dessus de la barre du bas
+  assert.ok(await s.page.evaluate(() => document.querySelector('.mx-bilan').compareDocumentPosition(document.querySelector('.pv-ligne')) & Node.DOCUMENT_POSITION_FOLLOWING));
+  await s.page.evaluate(() => scrollTo(0, 0)); await s.page.waitForTimeout(100);
+  const { fin, barre } = await s.page.evaluate(() => ({ fin: document.querySelector('.mx-vide').getBoundingClientRect().bottom, barre: document.querySelector('.bottom-nav').getBoundingClientRect().top }));
+  assert.ok(fin <= barre, `la fin (${Math.round(fin)} px) tient au-dessus de la barre du bas (${Math.round(barre)} px)`);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(await axeLigne(s), [], 'fin de la pile : axe');
+  // Une seule demande à l'écran : la pastille « Activer les notifications » s'efface devant la ligne (elle flottait aussi sur
+  // la fin de la pile), et revient quand la ligne s'en va
+  assert.equal(await s.page.locator('.pastille').count(), 1, 'la pastille est là, cachée');
+  assert.equal(await s.page.locator('.pastille').isVisible(), false, 'pas la pastille en même temps que la ligne');
+  await s.page.click('#pv-ligne-x'); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator('.pv-ligne').count(), 0);
+  assert.ok(await s.page.locator('.pastille').isVisible(), 'la ligne partie, la pastille revient');
+  const m = await s.memo();
+  assert.deepEqual(m.lignes, ['match']);
+  assert.equal(m.n, 1, 'le × ne compte pas comme un refus de feuille');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Rien que des « Plus tard » : rien à attendre, pas de ligne
+  const t = await prevenirSur('off');
+  await refuseeHier(t, 'Amine');
+  await t.aller('match'); await t.page.waitForSelector('.mx-carte.dessus');
+  for (let pas = 0; await t.page.locator('.mx-carte.dessus').count() && pas < 20; pas++) { await t.page.click('.mx-non'); await t.page.waitForTimeout(450); }
+  assert.equal(await t.page.locator('.mx-bl-oui .mx-compte').innerText(), '0');
+  await t.page.waitForSelector('.mx-vide'); await t.page.waitForTimeout(1300);
+  assert.equal(await t.page.locator('.pv-ligne').count(), 0);
+  assert.deepEqual(t.erreurs, []);
+  await t.ctx.close();
+});
+
+// La ligne « Me prévenir » : axe (contrastes, noms), les animations d'arrivée terminées
+async function axeLigne(s) {
+  if (!(await s.page.evaluate(() => !!window.axe))) await s.page.addScriptTag({ content: AXE });
+  await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* animation sans fin */ } }));
+  return s.page.evaluate(async () => (await axe.run('.pv-ligne', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] }))
+    .violations.map(x => `${x.id} : ${x.nodes.map(n => n.target.join(' ')).join(' ; ')}`));
+}
+// Hauteur touchable : la boîte, ou la zone invisible (::before / ::after) qui la prolonge (comme le test du socle)
+const hauteurTouchable = (s, sel) => s.page.$eval(sel, el => {
+  const zone = pseudo => { const cs = getComputedStyle(el, pseudo); if (cs.content === 'none' || cs.position !== 'absolute') return 0; const h = parseFloat(cs.top), b = parseFloat(cs.bottom); return Math.max(0, -(isNaN(h) ? 0 : h)) + Math.max(0, -(isNaN(b) ? 0 : b)); };
+  return el.getBoundingClientRect().height + Math.max(zone('::before'), zone('::after'));
+});
+
+test('« Me prévenir » : la ligne se lit et se touche — axe de jour et de nuit, 44 px au doigt, au clavier le focus passe à la suite sans ouvrir le clavier', async () => {
+  for (const theme of ['light', 'dark']) {
+    const s = await prevenirSur('off', { theme, toucher: true });
+    await refuseeHier(s, 'Youssef');
+    await ecrireA(s, 'u-0006', 'Bonjour Rania, tu cherches toujours un stage ?');
+    await s.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+    assert.deepEqual(await axeLigne(s), [], `ligne de Messages : axe (${theme})`);
+    for (const sel of ['#pv-ligne-go', '#pv-ligne-x']) { const h = await hauteurTouchable(s, sel); assert.ok(h >= 43.5, `${sel} : ${Math.round(h)} px au doigt (${theme})`); }
+    // Au clavier : le × range la ligne, le focus passe à ce qui la suit, jamais au champ d'écriture
+    await s.page.evaluate(() => document.activeElement?.blur());
+    await s.page.focus('#pv-ligne-x'); await s.page.keyboard.press('Enter'); await s.page.waitForTimeout(250);
+    assert.equal(await s.page.locator('.pv-ligne').count(), 0);
+    const focus = await s.page.evaluate(() => [document.activeElement?.tagName, !!document.activeElement?.closest('.composer')]);
+    assert.ok(focus[0] === 'BUTTON' && focus[1], `le focus reste dans la conversation, sur un bouton : ${focus}`);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+  // De nuit, la fin de la pile Match
+  const n = await prevenirSur('off', { theme: 'dark', toucher: true });
+  await refuseeHier(n, 'Salma');
+  await n.aller('match'); await n.page.waitForSelector('.mx-carte.dessus');
+  // Un « Intéressé » (sur une carte où personne ne s'est encore intéressé à elle), le reste à plus tard
+  for (let pas = 0, oui = 0; await n.page.locator('.mx-carte.dessus').count() && pas < 20; pas++) {
+    const libre = !oui && !(await n.page.locator('.mx-carte.dessus .mx-interet').count());
+    await n.page.click(libre ? '.mx-oui' : '.mx-non'); if (libre) oui++;
+    await n.page.waitForTimeout(450);
+  }
+  await n.page.waitForSelector('.mx-vide .pv-ligne', { timeout: 5000 });
+  assert.deepEqual(await axeLigne(n), [], 'fin de la pile : axe (nuit)');
+  for (const sel of ['#pv-ligne-go', '#pv-ligne-x']) { const h = await hauteurTouchable(n, sel); assert.ok(h >= 43.5, `${sel} : ${Math.round(h)} px au doigt (fin de la pile)`); }
+  assert.equal(await n.debordement(), 0);
+  assert.deepEqual(n.erreurs, []);
+  await n.ctx.close();
+});
+
+test('« Me prévenir » dans Match, réseau lent : deux « Intéressé » de suite, une seule feuille, qui ne se refait pas sous le doigt', async () => {
+  const s = await prevenirSur('off');
+  await s.comme('Youssef'); await ouvertureRangee(s);
+  await s.aller('match'); await s.page.waitForSelector('.mx-carte.dessus');
+  // La base répond 1,2 s après chaque choix : la réponse du premier « Intéressé » arrive après le second
+  await s.page.evaluate(() => { const st = window.__demo, f = st.choisirMatch.bind(st); st.choisirMatch = (...a) => new Promise(ok => setTimeout(ok, 1200)).then(() => f(...a)); });
+  const libre = async () => { for (let i = 0; i < 6 && await s.page.locator('.mx-carte.dessus .mx-interet').count(); i++) { await s.page.click('.mx-non'); await s.page.waitForTimeout(450); } };
+  await libre(); await s.page.click('.mx-oui'); await s.page.waitForTimeout(450);
+  await libre(); await s.page.click('.mx-oui');
+  await s.page.waitForSelector('.modal.prevenir', { timeout: 5000 });
+  await s.page.evaluate(() => { document.querySelector('.modal.prevenir').dataset.premiere = '1'; });
+  await s.page.waitForTimeout(2000);
+  assert.equal(await s.page.locator('.modal-back:not(.sortie) .modal.prevenir').count(), 1, 'une seule feuille');
+  assert.equal(await s.page.locator('.modal.prevenir[data-premiere]').count(), 1, 'la même feuille, pas remplacée sous le doigt');
+  await s.page.click('#pv-tard'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.equal((await s.memo()).n, 2, 'un seul refus compté');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Me prévenir » dans Messages : la ligne qui arrive laisse la conversation en bas — l’entretien proposé reste entier au-dessus d’elle', async () => {
+  const s = await prevenirSur('off');
+  const id = nom => s.profils.find(x => x[1].includes(nom))[0];
+  const salma = id('Salma'), youssef = id('Youssef');
+  await refuseeHier(s, 'Youssef');
+  // Une longue conversation où Salma a écrit (elle a sa réponse), puis Youssef propose un entretien, qui attend la sienne
+  await s.comme('Salma');
+  for (let i = 0; i < 12; i++) await s.page.evaluate(([d, i]) => window.__demo.envoyerMessage({ dest: d, type: 'texte', body: `Question ${i + 1} sur le stage : les dates, le lieu et l’équipe.` }), [youssef, i]);
+  await s.comme('Youssef'); await s.aller('messages/' + salma); await s.page.waitForTimeout(600);
+  await s.page.evaluate(d => window.__demo.envoyerMessage({ dest: d, type: 'rdv', rdv_at: new Date(Date.now() + 2 * 864e5).toISOString(), rdv_duree: 30, rdv_lien: 'https://meet.jit.si/reseau-ensam-test' }), salma);
+  await s.page.waitForSelector('.pv-ligne', { timeout: 5000 }); await s.page.waitForTimeout(400);
+  const { dernier, fil } = await s.page.evaluate(() => ({ dernier: [...document.querySelectorAll('.conv-fil .msg')].pop().getBoundingClientRect().bottom, fil: document.querySelector('.conv-fil').getBoundingClientRect().bottom }));
+  assert.ok(dernier <= fil + .5, `l’entretien proposé (bas à ${Math.round(dernier)} px) reste entier au-dessus de la ligne (${Math.round(fil)} px)`);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Me prévenir » dans Messages : bloquées par une réponse donnée sur cet appareil, la ligne ne demande pas de les débloquer', async () => {
+  const s = await prevenirSur('refuse');
+  const youssef = s.profils.find(x => x[1].includes('Youssef'))[0];
+  // « Bloquer » choisi ici dans la fenêtre du navigateur (le mémo garde la réponse) : le refus est respecté
+  await s.page.evaluate(id => localStorage.setItem('ensam-prevenir-' + id, JSON.stringify({ fait: 1 })), youssef);
+  await s.comme('Youssef');
+  await ecrireA(s, 'u-0006', 'Bonjour Rania, tu cherches toujours un stage ?');
+  await s.page.waitForTimeout(1500);
+  assert.equal(await s.page.locator('.pv-ligne').count(), 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });

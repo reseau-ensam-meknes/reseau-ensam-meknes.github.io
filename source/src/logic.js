@@ -1239,6 +1239,43 @@ export function prevenirVariante({ etat, raison, memo = {}, now = Date.now(), ro
   return null;
 }
 
+// La ligne « Me prévenir », non modale, là où l'on attend une réponse : au-dessus du champ d'écriture (Messages), à la fin de
+// la pile (Match). Ce n'est pas une feuille : elle ne compte pas dans leur budget (3 jours après « Plus tard »), et son × la
+// range pour ce fil seulement (memo.lignes : l'id de la conversation, ou 'match'). attente : le membre attend vraiment une
+// réponse ici. Rien pour l'admin ; rien quand cet appareil reçoit déjà ('on'), ne peut rien recevoir ('absent'), n'est pas
+// encore connu ('…', démo ordinaire) ; rien pour qui a coupé ici (memo.coupe) ou décoché la catégorie ; rien une fois la
+// demande acceptée sur cet appareil (memo.fait). Une seule demande par visite : rien quand une feuille a été vue ou refusée
+// depuis le début de la visite (depuis ; memo.at, écrit par la feuille d'ouverture et par chaque refus), ni quand une feuille
+// « Me prévenir » y a été demandée ou que la fenêtre du navigateur y a eu sa réponse (deja).
+// Bloquées : « Débloquer » seulement si ce blocage n'est pas une réponse donnée sur cet appareil. Avec memo.fait, le membre a
+// répondu ici (« Bloquer » dans la fenêtre du navigateur ouverte par une feuille, une ligne, la pastille ; ou bloquées dans les
+// réglages après les avoir activées) : son refus est respecté, la ligne ne le lui redemande pas à chaque visite.
+// 'activer' (son toucher ouvre la fenêtre du navigateur), 'ios' (« Comment faire »), 'debloquer' (« Débloquer »), ou null.
+export function lignePrevenir({ etat, memo = {}, role, voulu = true, attente = true, fil = null, depuis = 0, deja = false }) {
+  if (role === 'admin' || !voulu || !attente || memo.coupe || deja) return null;
+  if (fil && Array.isArray(memo.lignes) && memo.lignes.includes(fil)) return null;
+  if (depuis && memo.at && memo.at >= depuis) return null;
+  if (etat === 'off') return memo.fait ? null : 'activer';
+  if (etat === 'ios') return 'ios';
+  if (etat === 'refuse') return memo.fait ? null : 'debloquer';
+  return null;
+}
+// Le × d'une ligne : ce fil s'ajoute à memo.lignes (les plus récents d'abord, LIGNES_MAX au plus)
+export const LIGNES_MAX = 40;
+export function sansLigne(memo = {}, fil) {
+  const avant = Array.isArray(memo.lignes) ? memo.lignes.filter(x => x !== fil) : [];
+  return { ...memo, lignes: [fil, ...avant].slice(0, LIGNES_MAX) };
+}
+// Une conversation qui attend la réponse de l'autre : un entretien que j'ai proposé, à venir, sans sa réponse ; ou bien j'ai
+// écrit et l'autre n'a encore rien écrit ni répondu à un entretien. Sans message de moi, elle n'attend rien (la ligne ne vient
+// jamais avant).
+export function attendReponse(fil = [], moi, now = Date.now()) {
+  const miens = fil.filter(m => m.author_id === moi);
+  if (!miens.length) return false;
+  if (miens.some(m => m.type === 'rdv' && !m.rdv_reponse && !!m.rdv_at && Date.parse(m.rdv_at) > now)) return true;
+  return !fil.some(m => m.author_id !== moi) && !miens.some(m => m.rdv_reponse);
+}
+
 // À l'ouverture, « Reçois l'essentiel sur ton téléphone » : pour un membre dont l'appareil peut recevoir des notifications
 // sans y être abonné (etat 'off' ; jamais sur iPhone hors écran d'accueil, ni sans notifications possibles). Même mémo que
 // « Me prévenir » : chaque affichage sans « Activer » (« Plus tard », fermer, quitter l'application) la ramène 2 jours

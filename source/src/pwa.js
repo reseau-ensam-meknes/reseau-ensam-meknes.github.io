@@ -1,9 +1,9 @@
 // Application installable (écran d'accueil du téléphone) et notifications sur le téléphone.
 // Le service worker n'est enregistré que sur le vrai site (dist/), qui déclare un manifeste.
 import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
-import { Icon, Modal, toast, ensuite, feteOuverte, quandFete, injectCSS } from './ui.js';
+import { Icon, Modal, toast, ensuite, feteOuverte, quandFete, apresFete, injectCSS } from './ui.js';
 import { addAR } from './i18n.js';
-import { prevenirVariante, ouvertureNotif, bandeauPush, pushChoix, PUSH_CATEGORIES } from './logic.js';
+import { prevenirVariante, lignePrevenir, sansLigne, ouvertureNotif, bandeauPush, pushChoix, PUSH_CATEGORIES } from './logic.js';
 import { arriveeEnAttente } from './pouls.js';
 
 let installEvt = null;
@@ -317,9 +317,11 @@ addAR({
 });
 
 // ---------------------------------------------------------------------------
-// « Me prévenir » : après une action qui attend une réponse (demande, mentorat, candidature, question…), une feuille
-// propose les notifications sur cet appareil, à la place du petit mot en bas de l'écran.
-// Elle revient 3 jours après un refus. Jamais par-dessus une fête : elle attend alors la prochaine visite.
+// « Me prévenir » : après une action qui attend une réponse (demande, mentorat, candidature, question, premier « Intéressé »
+// dans Match, offre publiée, demande de coordonnées…), une feuille propose les notifications sur cet appareil, à la place du
+// petit mot en bas de l'écran. Elle revient 3 jours après un refus ; une seule demande par visite. Jamais par-dessus une fête :
+// elle vient juste après elle, dans la même visite. Dans Messages (et à la fin de la pile Match), une ligne, pas une feuille :
+// LignePrevenir, plus bas.
 // ---------------------------------------------------------------------------
 const NOTIF_RAISON = {
   demande: 'Dès qu’un lauréat te propose son aide, une notification arrive sur cet appareil.',
@@ -329,7 +331,17 @@ const NOTIF_RAISON = {
   question: 'Dès qu’un lauréat répond à ta question, une notification arrive sur cet appareil.',
   questionMembre: 'Dès qu’un membre du réseau répond à ta question, une notification arrive sur cet appareil.',
   relecture: 'Dès qu’un lauréat relit ton CV, une notification arrive sur cet appareil.',
+  // Match : un « Intéressé » qui n'a pas fait de match tout de suite
+  match: 'Si l’intérêt est réciproque, une notification arrive sur cet appareil.',
+  // Une offre publiée par un lauréat ; sans la catégorie Match, l'intérêt d'un étudiant n'arrive pas : seulement les candidatures
+  offre: 'Dès qu’un étudiant postule ou s’intéresse à ton offre, une notification arrive sur cet appareil.',
+  offreCandidatures: 'Dès qu’un étudiant postule à ton offre, une notification arrive sur cet appareil.',
+  offreLaureats: 'Dès qu’un lauréat postule à ton offre, une notification arrive sur cet appareil.',
+  contact: 'Si la personne accepte de partager ses coordonnées, une notification arrive sur cet appareil.',
 };
+// Le titre de la feuille : « la réponse », sauf là où l'on attend autre chose
+const TITRE_PREVENIR = 'Te prévenir de la réponse ?';
+const TITRE_RAISON = { match: 'Te prévenir en cas de match ?', offre: 'Te prévenir des candidatures ?', offreLaureats: 'Te prévenir des candidatures ?' };
 const PAR_EMAIL = {
   demande: 'Ce navigateur ne peut pas te notifier pour l’instant. Chaque proposition arrive aussi dans tes messages, et un email te prévient si tu ne l’as pas lue.',
   question: 'Ce navigateur ne peut pas te notifier pour l’instant. Les réponses à ta question figurent dans ton résumé de la semaine, par email.',
@@ -346,7 +358,9 @@ function etatDemo(store) {
   try { const e = localStorage.getItem('ensam-prevenir-demo'); return ['off', 'ios', 'absent', 'refuse'].includes(e) ? e : null; } catch { return null; }
 }
 // La catégorie de Mon profil dont dépend la réponse attendue : décochée, « Me prévenir » ne promet pas de notification
-const CAT_RAISON = { demande: 'demandes', proposition: 'demandes', mentorat: 'mentorat', relecture: 'mentorat', candidature: 'candidatures', question: 'reseau', questionMembre: 'reseau' };
+// (un intérêt et un match : « Match » ; une offre : les candidatures ; des coordonnées acceptées : « Mentorat », comme la base)
+const CAT_RAISON = { demande: 'demandes', proposition: 'demandes', mentorat: 'mentorat', relecture: 'mentorat', candidature: 'candidatures', question: 'reseau', questionMembre: 'reseau',
+  match: 'match', offre: 'candidatures', offreLaureats: 'candidatures', contact: 'mentorat', message: 'messages' };
 function variante(raison, memo) {
   const me = hote?.me;
   if (!me) return null;
@@ -354,16 +368,50 @@ function variante(raison, memo) {
     emailsMessages: me.emails_messages !== false && 'emails_messages' in me, emailsHebdo: me.emails_hebdo !== false });
 }
 
-// Après l'action : true si la feuille s'en charge (ou la fête déjà à l'écran), false si l'appelant montre son petit mot
-export function proposerPrevenir(raison, mot) {
+// Après l'action : true si la feuille s'en charge (ou la fête déjà à l'écran), false si l'appelant montre son petit mot.
+// Une fête à l'écran : la feuille vient juste après elle (apresLaFete). Une ligne « Me prévenir » déjà montrée pendant cette
+// visite : c'était sa demande, pas de feuille. delai : la feuille est décidée tout de suite (aucune ligne ne vient entre-temps)
+// et montrée un peu après (Match : la carte finit de partir).
+// Une feuille déjà à l'écran, ou décidée et sur le point de venir : pas une deuxième qui la remplacerait sous le doigt
+// (Match sur un réseau lent : la réponse du premier « Intéressé » arrive après le second).
+let feuilleLa = false, prevue = 0;
+const PREVUE_MAX = 5000;
+export function proposerPrevenir(raison, mot, delai = 0) {
   const me = hote?.me;
-  if (!me || !montrer) return false;
-  const memo = lireMemo(me.id);
-  const v = variante(raison, memo);
-  if (feteOuverte()) { if (v) ecrireMemo(me.id, { ...memo, differe: raison }); return true; }
+  if (!me || !montrer || dansLaVisite(visite.ligne) || feuilleLa || Date.now() - prevue < PREVUE_MAX) return false;
+  const v = variante(raison, lireMemo(me.id));
+  if (feteOuverte()) { if (v) { visite.feuille = Date.now(); apresLaFete(me.id, raison); } return true; }
   if (!v) return false;
-  ensuite(() => montrer({ raison, mot, v, t: Date.now() }));
+  visite.feuille = prevue = Date.now();
+  const voir = () => { prevue = 0; if (!feuilleLa) montrer?.({ raison, mot, v, t: Date.now() }); };
+  ensuite(() => (delai > 0 ? setTimeout(voir, delai) : voir()));
   return true;
+}
+// La feuille attend la fin de la fête, puis vient dans la même visite, sans le petit mot (la fête vient de le dire). Le mémo la
+// garde le temps de la fête (differe) : l'application fermée avant la fin, elle vient à la visite suivante (PrevenirHote) ;
+// cachée, elle vient au retour du membre.
+function apresLaFete(id, raison) {
+  ecrireMemo(id, { ...lireMemo(id), differe: raison });
+  apresFete(() => reprendre(id, raison));
+}
+function reprendre(id, raison) {
+  const m = lireMemo(id);
+  // Déjà montrée ou remplacée, plus d'hôte (déconnexion), un autre compte : rien ici, le mémo la garde s'il le faut
+  if (m.differe !== raison || !montrer || hote?.me?.id !== id) return;
+  if (document.visibilityState !== 'visible') {
+    const vu = () => { if (document.visibilityState !== 'visible') return; document.removeEventListener('visibilitychange', vu); reprendre(id, raison); };
+    document.addEventListener('visibilitychange', vu);
+    return;
+  }
+  // En train d'écrire (l'action de la fête a ouvert une conversation) : jamais par-dessus le clavier, le mémo la garde pour la
+  // visite suivante
+  if (ecrit(document.activeElement)) return;
+  const { differe, ...reste } = m;
+  ecrireMemo(id, reste);
+  // Une autre feuille « Me prévenir » déjà là, ou décidée entre-temps : c'est la demande de cette visite, pas une deuxième
+  if (feuilleLa || Date.now() - prevue < PREVUE_MAX) return;
+  const v = variante(raison, reste);
+  if (v) montrer({ raison, mot: null, v, t: Date.now() });
 }
 
 export function PrevenirHote({ ctx, bloque }) {
@@ -376,8 +424,8 @@ export function PrevenirHote({ ctx, bloque }) {
   useEffect(() => {
     // Une feuille « Me prévenir » ou une fête dans cette visite : pas de feuille d'ouverture en plus
     let demandee = false;
-    // Une fête ouverte entre-temps : la feuille attend la prochaine visite
-    const remettre = raison => { if (variante(raison, lireMemo(me.id))) ecrireMemo(me.id, { ...lireMemo(me.id), differe: raison }); };
+    // Une fête ouverte entre-temps : la feuille revient juste après elle, dans la même visite (apresLaFete)
+    const remettre = raison => { if (variante(raison, lireMemo(me.id))) apresLaFete(me.id, raison); };
     // La feuille d'ouverture rangée par une fête ou remplacée par « Me prévenir » : ce n'était pas une vraie présentation,
     // le compte d'avant revient (le reste du mémo, écrit entre-temps, est gardé)
     const rendre = () => {
@@ -387,7 +435,7 @@ export function PrevenirHote({ ctx, bloque }) {
       ecrireMemo(me.id, { ...reste, ...(v.n ? { n: v.n } : {}), ...(v.at ? { at: v.at } : {}) });
     };
     montrer = x => { if (feteOuverte()) { remettre(x.raison); return; } demandee = true; rendre(); setOuv(null); if (x.v === 'email') ecrireMemo(me.id, { ...lireMemo(me.id), mail: 1 }); setF(x); };
-    // Une fête qui s'ouvre après la feuille passe devant : la feuille se range sans compter de refus
+    // Une fête qui s'ouvre après la feuille passe devant : la feuille se range sans compter de refus, et revient après elle
     const sansFete = quandFete(() => { demandee = true; setF(x => { if (x) remettre(x.raison); return null; }); rendre(); setOuv(null); });
     let vivant = true, pret = false, lancee = false, t = 0;
     const lire = () => { const d = etatDemo(store); if (d) { etatConnu = d; return Promise.resolve(); } return etatPush(store).then(e => { if (vivant) etatConnu = e; }, () => {}); };
@@ -445,12 +493,14 @@ export function PrevenirHote({ ctx, bloque }) {
     lire().then(() => {
       if (!vivant) return;
       pret = true;
-      // Une feuille remise à plus tard (une fête était à l'écran) : à la visite suivante, quand rien d'autre n'est ouvert
+      // Une feuille qui attendait la fin d'une fête quand l'application a été fermée : à la visite suivante, quand rien
+      // d'autre n'est ouvert
       if (memo0.differe) {
         lancee = true;
         t = setTimeout(() => {
           const memo = lireMemo(me.id); delete memo.differe; ecrireMemo(me.id, memo);
-          if (bloque || document.querySelector('.modal-back:not(.sortie), .fete-back:not(.sortie)')) return;
+          // Une ligne « Me prévenir » déjà montrée (la demande de cette visite), une fenêtre ouverte, un champ où l'on écrit : rien
+          if (bloque || dansLaVisite(visite.ligne) || ecrit(document.activeElement) || document.querySelector('.modal-back:not(.sortie), .fete-back:not(.sortie)')) return;
           const v = variante(memo0.differe, memo);
           if (v) montrer({ raison: memo0.differe, mot: null, v, t: Date.now() });
         }, 2500);
@@ -496,6 +546,9 @@ function FeuillePrevenir({ ctx, f, onClose }) {
   const { store, me } = ctx;
   const [busy, setBusy] = useState(false);
   const email = f.v === 'email', ios = f.v === 'ios';
+  // À l'écran, quelle que soit la réponse : c'est la demande de cette visite (pas de ligne « Me prévenir » après elle), et
+  // aucune autre feuille « Me prévenir » ne vient la remplacer tant qu'elle est là
+  useEffect(() => { visite.feuille = Date.now(); feuilleLa = true; return () => { feuilleLa = false; }; }, []);
   // Fermer sans accepter (Plus tard, ×, Retour, toucher à côté) compte comme un refus ; la variante email est déjà notée
   const refuser = () => { if (!email) { const m = lireMemo(me.id); ecrireMemo(me.id, { ...m, n: (m.n || 0) + 1, at: Date.now() }); } onClose(); };
   const accepter = async () => {
@@ -504,16 +557,171 @@ function FeuillePrevenir({ ctx, f, onClose }) {
     const r = await accepterNotif(store, me);
     if (r === 'off') refuser(); else if (r) onClose(); else setBusy(false);
   };
-  const raison = f.raison === 'question' && me.role !== 'etudiant' ? 'questionMembre' : f.raison;
+  // La phrase vraie pour ce membre : une question d'un lauréat attend « un membre du réseau » ; l'intérêt pour une offre
+  // n'arrive qu'avec la catégorie Match
+  const raison = f.raison === 'question' && me.role !== 'etudiant' ? 'questionMembre' : f.raison === 'offre' && !pushChoix('match', me) ? 'offreCandidatures' : f.raison;
   const pied = html`${email || ios ? null : html`<button type="button" class="btn ghost" id="pv-tard" onClick=${refuser}>Plus tard</button>`}
     <button type="button" class="btn primary" id="pv-oui" disabled=${busy} onClick=${accepter}>${email || ios ? 'J’ai compris' : html`<${Icon} name="bell" size=${16}/> Me prévenir`}</button>`;
-  return html`<${Modal} title=${email ? 'Tu ne rateras pas la réponse' : 'Te prévenir de la réponse ?'} cls="prevenir" onClose=${refuser} footer=${pied}>
+  return html`<${Modal} title=${email ? 'Tu ne rateras pas la réponse' : TITRE_RAISON[f.raison] || TITRE_PREVENIR} cls="prevenir" onClose=${refuser} footer=${pied}>
     ${f.mot ? html`<p class="verify-ok"><${Icon} name="check" size=${16}/> ${f.mot}</p>` : null}
     ${email ? html`<p>${PAR_EMAIL[f.raison]}</p>` : html`<p>${NOTIF_RAISON[raison]}</p>`}
     ${ios ? html`<p class="small muted">Sur iPhone, les notifications arrivent une fois le Réseau ENSAM ajouté à l’écran d’accueil :</p><${EtapesIos}/>`
       : email ? null : html`<p class="small muted">Rien d’autre : pas de publicité, et tu l’arrêtes quand tu veux dans « Mon profil ».</p>`}
   <//>`;
 }
+
+// ---------------------------------------------------------------------------
+// La ligne « Me prévenir », non modale : là où l'on attend une réponse et où une feuille n'a pas sa place. Au-dessus du champ
+// d'écriture dans Messages (jamais de feuille par-dessus le clavier), après un premier message resté sans réponse ou un
+// entretien proposé ; à la fin de la pile Match, après des « Intéressé ». Une phrase, puis « Activer » (son toucher ouvre la
+// fenêtre du navigateur), « Comment faire » (iPhone, hors écran d'accueil) ou « Débloquer » (bloquées), avec les feuilles de la
+// pastille. Son × la range pour ce fil, dans le mémo. Règle : lignePrevenir (logic.js). Elle ne compte pas dans le budget des
+// feuilles, mais c'est une demande : une seule par visite, feuille ou ligne.
+// ---------------------------------------------------------------------------
+// La visite (revenir après une heure ou plus en commence une autre, comme pour la feuille d'ouverture) : quand une feuille
+// « Me prévenir » y a été demandée ou montrée, quand une ligne s'y est montrée, quand une ligne y a eu sa réponse
+const visite = { debut: Date.now(), cachee: 0, feuille: 0, ligne: 0, repondu: 0 };
+const dansLaVisite = t => !!t && t >= visite.debut;
+if (typeof document !== 'undefined') {
+  if (document.visibilityState !== 'visible') visite.cachee = visite.debut;
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') { visite.cachee = visite.cachee || Date.now(); return; }
+    if (visite.cachee && Date.now() - visite.cachee >= OUV_ABSENCE) visite.debut = Date.now();
+    visite.cachee = 0;
+  });
+}
+// La phrase vraie pour ce fil (sur un ordinateur, c'est lui qu'« Activer » abonne), puis le geste
+const LIGNE = {
+  message: { tel: 'Sa réponse peut arriver sur ce téléphone, même application fermée', pc: 'Sa réponse peut arriver sur cet ordinateur, même onglet fermé' },
+  match: { tel: 'Une notification arrive dès qu’un intérêt est réciproque', pc: 'Une notification arrive dès qu’un intérêt est réciproque' },
+};
+const LIGNE_GESTE = { activer: 'Activer', ios: 'Comment faire', debloquer: 'Débloquer' };
+const LIGNE_X = { message: 'Ne plus le proposer dans cette conversation', match: 'Ne plus le proposer ici' };
+// Un instant après que la ligne est due : l'écran d'abord (le message parti, la fin de la pile posée) ; une feuille demandée
+// juste avant (le dernier « Intéressé ») passe devant
+const LIGNE_DELAI = 900;
+
+// Le toucher sur « Activer » de la ligne : la fenêtre du navigateur (accepterNotif). Une réponse, quelle qu'elle soit : la
+// ligne ne revient pas pendant cette visite. Fermée sans choisir ('off') : comptée comme un « Plus tard » de feuille (les
+// feuilles attendent 3 jours ; un navigateur bloque le site qui redemande trop souvent).
+export async function activerLigne(store, me) {
+  const r = await accepterNotif(store, me);
+  if (r) visite.repondu = Date.now();
+  if (r === 'off') { const m = lireMemo(me.id); ecrireMemo(me.id, { ...m, n: (m.n || 0) + 1, at: Date.now() }); }
+  return r;
+}
+
+// raison : message | match (la phrase et la catégorie de Mon profil) ; fil : ce que son × range (l'autre de la conversation,
+// ou 'match') ; attente : le membre attend vraiment une réponse ici
+export function LignePrevenir({ ctx, raison = 'message', fil = null, attente = true }) {
+  const { store, me } = ctx;
+  const simule = etatDemo(store);
+  const [etat, setEtat] = useState(() => simule || (store.mode === 'live' ? etatConnu : '…'));
+  const [due, setDue] = useState(false);
+  const [aide, setAide] = useState(null);   // ios | debloquer
+  const [busy, setBusy] = useState(false);
+  const [, redessiner] = useState(0);
+  const ici = useRef(null), faitAvant = useRef(false);
+  useEffect(() => {
+    if (simule) return undefined;
+    let vivant = true;
+    const lire = () => etatPush(store).then(e => { if (vivant) setEtat(e); }, () => {});
+    lire();
+    // Activées ailleurs (Mon profil, une feuille), débloquées dans les réglages du téléphone : la ligne suit
+    const vu = () => { if (document.visibilityState === 'visible') lire(); };
+    addEventListener(PUSH_CHANGE, lire);
+    document.addEventListener('visibilitychange', vu);
+    return () => { vivant = false; removeEventListener(PUSH_CHANGE, lire); document.removeEventListener('visibilitychange', vu); };
+  }, [me.id]);
+  useEffect(() => {
+    if (!attente) { setDue(false); return undefined; }
+    const t = setTimeout(() => setDue(true), LIGNE_DELAI);
+    return () => clearTimeout(t);
+  }, [attente]);
+  const sorte = due ? lignePrevenir({ etat, memo: lireMemo(me.id), role: me.role, voulu: pushChoix(CAT_RAISON[raison] || 'messages', me), attente, fil,
+    depuis: visite.debut, deja: dansLaVisite(visite.feuille) || dansLaVisite(visite.repondu) }) : null;
+  // Montrée : c'est la demande de cette visite (le mémo change : la feuille d'ouverture attend la visite suivante)
+  useEffect(() => {
+    if (!sorte || dansLaVisite(visite.ligne)) return;
+    visite.ligne = Date.now();
+    ecrireMemo(me.id, { ...lireMemo(me.id), ligne: visite.ligne });
+  }, [sorte]);
+  // Posée au-dessus du champ d'écriture, elle raccourcit la liste des messages : la liste qui était en bas y reste (le message
+  // qui vient de partir, l'entretien proposé, ne passe pas à moitié sous la ligne)
+  const vue = !!sorte;
+  useEffect(() => {
+    const l = ici.current, z = l?.parentElement?.querySelector('.conv-fil');
+    if (!vue || !z) return;
+    if (z.scrollHeight - z.scrollTop - z.clientHeight <= l.offsetHeight + 100) z.scrollTop = z.scrollHeight;
+  }, [vue]);
+  // La ligne s'en va sous le doigt : au clavier, le focus passe à ce qui la suit (jamais un champ : pas de clavier qui s'ouvre)
+  const apres = () => {
+    const l = ici.current; if (!l) return;
+    const suivant = [...document.querySelectorAll('button:not([disabled]), a[href], [role="tab"]')]
+      .find(x => !l.contains(x) && (l.compareDocumentPosition(x) & Node.DOCUMENT_POSITION_FOLLOWING) && x.getClientRects().length);
+    requestAnimationFrame(() => suivant?.focus({ preventScroll: true }));
+  };
+  const masquer = e => { ecrireMemo(me.id, sansLigne(lireMemo(me.id), fil || raison)); if (e.detail === 0) apres(); redessiner(x => x + 1); };
+  const agir = async e => {
+    if (sorte === 'ios' || sorte === 'debloquer') { faitAvant.current = !!lireMemo(me.id).fait; setAide(sorte); return; }
+    const clavier = e.detail === 0;
+    setBusy(true);
+    const r = await activerLigne(store, me);
+    setBusy(false);
+    if (r && clavier) apres();
+    redessiner(x => x + 1);
+  };
+  // « C'est fait » réussi depuis la feuille des réglages : la ligne a eu sa réponse
+  const fermerAide = () => {
+    setAide(null);
+    if (!faitAvant.current && lireMemo(me.id).fait) { visite.repondu = Date.now(); apres(); }
+    redessiner(x => x + 1);
+  };
+  const feuille = aide === 'debloquer' ? html`<${FeuilleDebloquer} ctx=${ctx} onClose=${fermerAide}/>`
+    : aide === 'ios' ? html`<${IosInstallHelp} onClose=${fermerAide}/>` : null;
+  if (!sorte) return feuille;
+  const txt = LIGNE[raison] || LIGNE.message;
+  return html`<div class="pv-ligne" ref=${ici} data-sorte=${sorte} data-raison=${raison}>
+      <span class="pv-l-ico" aria-hidden="true"><${Icon} name=${sorte === 'debloquer' ? 'lock' : 'bell'} size=${16}/></span>
+      <p class="pv-l-txt">${surTelephone() ? txt.tel : txt.pc}<span aria-hidden="true"> · </span><button type="button" class="linkish pv-l-go" id="pv-ligne-go" disabled=${busy} onClick=${agir}>${LIGNE_GESTE[sorte]}</button></p>
+      <button type="button" class="icon-btn small pv-l-x" id="pv-ligne-x" aria-label=${LIGNE_X[raison] || LIGNE_X.message} onClick=${masquer}><${Icon} name="x" size=${15}/></button>
+    </div>${feuille}`;
+}
+injectCSS('prevenir-ligne', `
+.pv-ligne { display: flex; align-items: center; gap: .55rem; margin: 0; padding-block: .15rem; padding-inline: .8rem .3rem; border-radius: var(--r-lg); background: var(--tonal-bg); color: var(--ink); font-size: .875rem; line-height: 1.4; }
+.pv-l-ico { flex: none; display: grid; color: var(--tonal-ink); }
+.pv-l-txt { flex: 1 1 auto; min-width: 0; margin: 0; padding-block: .5rem; text-wrap: pretty; overflow-wrap: anywhere; }
+/* Un lien dans la phrase : jamais un bloc qui agrandit la ligne (la zone de 44 px au doigt est invisible, page.html) */
+.pv-ligne .pv-l-go.linkish { display: inline; min-height: 0; color: var(--tonal-ink); font-size: inherit; line-height: inherit; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: .2em; }
+.pv-ligne .pv-l-go:hover { text-decoration-thickness: 2px; }
+.pv-ligne .pv-l-go:disabled { opacity: .6; cursor: default; }
+.pv-l-x { flex: none; color: var(--ink-2); }
+@media (prefers-reduced-motion: no-preference) { .pv-ligne { animation: pv-l-in .26s var(--ease) backwards; } }
+@keyframes pv-l-in { from { opacity: 0; transform: translateY(4px); } }
+/* Messages : posée au-dessus du champ d'écriture, comme les notes de la conversation */
+.conv > .pv-ligne { flex: none; margin: 0 clamp(.6rem, 3vw, 2rem) .5rem; background: var(--surface); box-shadow: var(--sh1); }
+/* Match : sous le bilan de la visite, serrée (la fin de la pile tient au-dessus de la barre du bas, sans défiler) */
+.mx-vide .pv-ligne { inline-size: 100%; max-inline-size: 38ch; margin-block: -.2rem; padding-block: 0; text-align: start; font-size: var(--fs-2); line-height: 1.35; }
+.mx-vide .pv-l-txt { padding-block: .45rem; }
+/* Une seule demande à l'écran : la ligne, qui dit pourquoi, prend la place de la pastille « Activer les notifications »
+   (fin de la pile Match ; elle flottait aussi sur la fin de la pile). La pastille revient quand la ligne s'en va. */
+body:has(.pv-ligne) .pastille { display: none; }
+`);
+addAR({
+  [NOTIF_RAISON.match]: 'إذا كان الاهتمام متبادلًا، يصلك إشعار على هذا الجهاز.',
+  [NOTIF_RAISON.offre]: 'بمجرد أن يترشّح طالب لعرضك أو يهتمّ به، يصلك إشعار على هذا الجهاز.',
+  [NOTIF_RAISON.offreCandidatures]: 'بمجرد أن يترشّح طالب لعرضك، يصلك إشعار على هذا الجهاز.',
+  [NOTIF_RAISON.offreLaureats]: 'بمجرد أن يترشّح أحد الخريجين لعرضك، يصلك إشعار على هذا الجهاز.',
+  [NOTIF_RAISON.contact]: 'إذا قبل الشخص مشاركة معلومات الاتصال، يصلك إشعار على هذا الجهاز.',
+  [TITRE_RAISON.match]: 'هل نُعلمك عند حدوث توافق؟',
+  [TITRE_RAISON.offre]: 'هل نُعلمك بالترشيحات؟',
+  [LIGNE.message.tel]: 'قد يصلك الرد على هذا الهاتف، حتى والتطبيق مغلق',
+  [LIGNE.message.pc]: 'قد يصلك الرد على هذا الحاسوب، حتى وعلامة التبويب مغلقة',
+  [LIGNE.match.tel]: 'يصلك إشعار بمجرد أن يكون الاهتمام متبادلًا',
+  'Comment faire': 'كيف أفعل ذلك', 'Débloquer': 'إلغاء الحظر',
+  [LIGNE_X.message]: 'عدم اقتراح ذلك مجددًا في هذه المحادثة',
+  [LIGNE_X.match]: 'عدم اقتراح ذلك هنا مجددًا',
+});
 
 // ---------------------------------------------------------------------------
 // À l'ouverture : « Reçois l'essentiel sur ton téléphone » (« sur cet ordinateur » sur un ordinateur), pour un membre dont
