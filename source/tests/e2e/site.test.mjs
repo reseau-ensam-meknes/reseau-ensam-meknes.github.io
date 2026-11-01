@@ -5081,3 +5081,141 @@ test('Match : le geste montré une fois, sans gêner la carte', async () => {
   assert.equal(await s.page.locator('.mx-guide').count(), 0, 'pas deux fois');
   await s.ctx.close();
 });
+
+test('match : « 1 sur N » avance d’un pas à chaque choix ; la fin de la pile dit le vrai bilan de la visite, ce qui revient et quand, avec une seule action (390 px)', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('match');
+  await s.page.waitForSelector('.mx-carte.dessus');
+  const ou = async () => { const m = (await s.page.getAttribute('.mx-progres', 'aria-label')).match(/^Carte (\d+) sur (\d+)$/); return { pos: +m[1], total: +m[2] }; };
+  // Le total : les cartes de la visite (deckMatch, logic.js), un point par carte
+  const cartes = await s.page.evaluate(async () => (await import('./logic.js')).deckMatch(window.__demo.data, window.__demo.me).length);
+  assert.deepEqual(await ou(), { pos: 1, total: cartes });
+  assert.equal(await s.page.locator('.mx-progres').innerText(), `1 sur ${cartes}`);
+  assert.equal(await s.page.locator('.mx-pr-pts i').count(), cartes);
+  assert.equal(await s.page.locator('.mx-pr-pts i.ici').count(), 1);
+  // Chaque choix avance d'un pas ; le total peut grandir (« Plus tard » sur la lauréate intéressée fait venir son offre), jamais baisser
+  let oui = 0, tard = 0;
+  for (let pas = 0; await s.page.locator('.mx-carte.dessus').count(); pas++) {
+    assert.ok(pas < 30, 'la pile finit');
+    const avant = await ou();
+    if (pas === 1) { await s.page.click('.mx-oui'); oui++; } else { await s.page.click('.mx-non'); tard++; }
+    await s.page.waitForTimeout(260);
+    if (await s.page.locator('.mx-fete').count()) { await s.page.click('.mx-fete-plus'); await s.page.waitForTimeout(200); }
+    if (await s.page.locator('.mx-progres').count()) {
+      const apres = await ou();
+      assert.equal(apres.pos, avant.pos + 1);
+      assert.ok(apres.total >= avant.total);
+      assert.equal(await s.page.locator('.mx-pr-pts i.fait').count(), apres.pos - 1);
+    }
+  }
+  // La fin : « Tu as tout vu », le bilan vrai de cette visite, la suite avec le vrai délai, une seule action pleine
+  await s.page.waitForSelector('.mx-vide');
+  assert.equal(await s.page.locator('#mx-vide-t').innerText(), 'Tu as tout vu');
+  assert.equal(await s.page.locator('.mx-bl-oui .mx-compte').innerText(), String(oui));
+  assert.equal(await s.page.locator('.mx-bl-tard .mx-compte').innerText(), String(tard));
+  const jours = await s.page.evaluate(async () => (await import('./logic.js')).MATCH_PLUS_TARD_JOURS);
+  assert.match(await s.page.locator('.mx-suite').innerText(), new RegExp(`Les cartes « Plus tard » reviennent ${jours} jours après ton choix\\.`));
+  assert.equal(await s.page.locator('.mx-progres').count(), 0);
+  assert.equal(await s.page.locator('.mx-page .btn.primary').count(), 1, 'une seule action pleine');
+  assert.ok(await s.page.locator('.mx-vide .btn.primary').isVisible());
+  // Tes matchs restent à portée ; « Revenir sur mon dernier choix » ramène la dernière carte
+  assert.ok(await s.page.locator('.mx-vide .mx-matchs.grand .mx-visage').count() >= 1);
+  await s.page.locator('.mx-vide .linkish', { hasText: 'Revenir sur mon dernier choix' }).click(); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator('.mx-carte.dessus').count(), 1);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : « Pourquoi toi » ne dit que du vrai — la filière, les compétences du profil que l’offre cite, jamais un score (1280 px)', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Salma'); await s.aller('match');
+  await s.page.waitForSelector('.mx-carte.dessus');
+  const vues = [];
+  for (let i = 0; i < 8 && await s.page.locator('.mx-carte.dessus').count(); i++) {
+    vues.push(await s.page.evaluate(() => {
+      const c = document.querySelector('.mx-carte.dessus');
+      return { titre: c.querySelector('h2').textContent, raisons: [...c.querySelectorAll('.mx-pq li')].map(li => li.textContent.trim()) };
+    }));
+    await s.page.click('.mx-non'); await s.page.waitForTimeout(260);
+  }
+  const me = await s.page.evaluate(() => ({ comp: window.__demo.me.competences, offres: window.__demo.data.offers.map(o => ({ texte: `${o.titre} ${o.description || ''}` })) }));
+  const plat = x => x.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  for (const v of vues) {
+    assert.ok(v.raisons.length >= 1 && v.raisons.length <= 3, `${v.titre} : de une à trois raisons`);
+    for (const r of v.raisons) {
+      assert.doesNotMatch(r, /\d\s?%|score|compatib/i, `${v.titre} : pas de score (« ${r} »)`);
+      // « Lean et VSM, dans ton profil » : chaque compétence est dans le profil, et l'offre (ou l'offre de la lauréate) la cite
+      const m = r.match(/^(.+), dans ton profil$/); if (!m) continue;
+      for (const c of m[1].split(/, | et /)) {
+        assert.ok(me.comp.includes(c), `${v.titre} : ${c} est dans le profil`);
+        assert.ok(me.offres.some(o => plat(o.texte).includes(plat(c))), `${v.titre} : une offre cite ${c}`);
+      }
+    }
+  }
+  // Le sujet de Yazaki (Lean, VSM) et celui de la lauréate d'OCP (Power BI) le disent
+  assert.ok(vues.some(v => /Lean sur une ligne de câblage/.test(v.titre) && v.raisons.includes('Lean et VSM, dans ton profil') && v.raisons.includes('Pour ta filière')), JSON.stringify(vues));
+  assert.ok(vues.some(v => v.raisons.includes('Power BI, dans ton profil')), JSON.stringify(vues));
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : le CV de démonstration est une vraie page, que l’application relit comme le profil (rôle, promo, filière), avec son pied « données fictives »', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Nadia'); await s.aller('match');
+  await s.page.waitForSelector('.mx-carte.dessus .mx-cv-apercu.pret img', { timeout: 15000 });
+  const r = await s.page.evaluate(async () => {
+    const d = window.__demo, L = await import('./lire-cv.js'), logic = await import('./logic.js'), { pdfCvDemo } = await import('./seed-cv.js');
+    const now = new Date(), S = logic.seasonOf(now);
+    // Le CV de la carte du dessus, tel que la carte le montre (lienCV)
+    const p0 = d.data.profiles.find(p => p.full_name === document.querySelector('.mx-carte.dessus h2').textContent);
+    const lu = await L.lireCVDetail(await (await fetch(await d.lienCV(p0.cv_path))).arrayBuffer(), now);
+    // Les élèves qui ont un CV, et ceux du cycle ingénieur sans CV : relus, aucun écart avec le profil
+    const eleves = d.data.profiles.filter(p => p.role === 'etudiant' && (p.cv_path || [3, 4, 5].includes(logic.niveauOf(p, S)))).slice(0, 30);
+    const ecarts = [];
+    for (const p of eleves) {
+      const demande = logic.demandesActives(d.data, p.id).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0] || null;
+      const { cv } = await L.lireCVDetail(await pdfCvDemo(p, { demande }).arrayBuffer(), now);
+      const e = L.ecartsCV(p, cv, now); if (Object.keys(e).length) ecarts.push([p.full_name, e]);
+    }
+    return { pied: lu.texte.includes('CV de démonstration — données fictives'), role: lu.cv.role, promo: Number(lu.cv.promo), filiere: lu.cv.filiere, attendu: { promo: Number(p0.promo), filiere: p0.filiere }, n: eleves.length, avecCv: eleves.filter(p => p.cv_path).length, ecarts };
+  });
+  assert.ok(r.pied, 'le pied « CV de démonstration — données fictives »');
+  assert.deepEqual({ role: r.role, promo: r.promo, filiere: r.filiere }, { role: 'etudiant', ...r.attendu });
+  assert.ok(r.n >= 20 && r.avecCv >= 3, `${r.n} élèves relus, dont ${r.avecCv} avec un CV`);
+  assert.deepEqual(r.ecarts, []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : un voile assez haut met le visage au centre, comme l’en-tête d’un profil ; trop bas, à côté du nom ; la carte penchée par le geste n’y change rien', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('match');
+  const voile = s.page.locator('.mx-carte.dessus .mx-v-perso');
+  await voile.waitFor();
+  const mise = () => voile.evaluate(v => {
+    const r = v.getBoundingClientRect(), f = v.querySelector('.mx-v-visage').getBoundingClientRect(), t = v.querySelector('.mx-v-txt').getBoundingClientRect();
+    return { haut: v.classList.contains('haut'), centre: Math.abs((f.left + f.right) / 2 - (r.left + r.right) / 2) < 2 && t.top >= f.bottom,
+      cote: t.left >= f.right || t.right <= f.left, dedans: t.top >= r.top && t.bottom <= r.bottom };
+  });
+  assert.deepEqual(await mise(), { haut: true, centre: true, cote: false, dedans: true });
+  // Pendant le geste, la carte penche ; une nouvelle mesure (forcée ici, comme quand la police finit de charger) garde le visage au centre
+  const c = await s.page.locator('.mx-carte.dessus').boundingBox();
+  await s.page.mouse.move(c.x + c.width / 2, c.y + c.height / 2); await s.page.mouse.down();
+  for (let i = 1; i <= 8; i++) { await s.page.mouse.move(c.x + c.width / 2 + i * 16, c.y + c.height / 2 + i); await s.page.waitForTimeout(16); }
+  assert.notEqual(await s.page.locator('.mx-carte.dessus').evaluate(e => getComputedStyle(e).transform), 'none', 'la carte suit le doigt');
+  await voile.evaluate(v => new Promise(fin => {
+    const e = v.querySelector('.mx-v-ent'), image = f => requestAnimationFrame(() => requestAnimationFrame(f));
+    e.style.minHeight = e.offsetHeight + 1 + 'px'; image(() => { e.style.minHeight = ''; image(fin); });
+  }));
+  assert.equal(await voile.evaluate(v => v.classList.contains('haut')), true, 'toujours au centre pendant le geste');
+  await s.page.mouse.move(c.x + c.width / 2, c.y + c.height / 2); await s.page.mouse.up(); await s.page.waitForTimeout(300);
+  // Un écran bas : le voile n'a plus la place, le visage passe à côté du nom, rien ne sort du voile ; puis l'inverse
+  await s.page.setViewportSize({ width: 360, height: 640 }); await s.page.waitForTimeout(400);
+  assert.deepEqual(await mise(), { haut: false, centre: false, cote: true, dedans: true });
+  await s.page.setViewportSize({ width: 390, height: 844 }); await s.page.waitForTimeout(400);
+  assert.deepEqual(await mise(), { haut: true, centre: true, cote: false, dedans: true });
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
