@@ -5762,3 +5762,216 @@ test('accueil : le bandeau dit ce qui empêche les notifications, se range trois
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
+
+// ---------------------------------------------------------------------------
+// Console d'administration : rubriques Animer, Écoles, Partenaires, Affiches et rapport
+// (routes admin/animer, admin/ecoles, admin/partenaires, admin/outils, branchées par la console)
+// ---------------------------------------------------------------------------
+const RUBRIQUES_ADMIN = [['admin/animer', '#adm-resume'], ['admin/ecoles', '#ec-suivi'], ['admin/partenaires', '#pa-suivi'], ['admin/outils', '#ou-affiche .af-qr svg']];
+
+for (const [largeur, langue, theme] of [[1280, 'fr', 'light'], [390, 'ar', 'dark']]) {
+  test(`console · Animer, Écoles, Partenaires, Affiches et rapport : sans erreur, débordement ni problème relevé par axe${langue === 'ar' ? ', sans texte oublié en français' : ''} (${largeur} px, ${langue}, ${theme})`, async () => {
+    const s = await ouvrir({ largeur, langue, theme });
+    await s.comme('Admin');
+    const problemes = [], oublis = new Map();
+    const lireOublis = async ou => { for (const x of await s.page.evaluate(() => { const m = [...(window.__ensamMissing || [])]; window.__ensamMissing?.clear(); return m; })) if (!oublis.has(x)) oublis.set(x, ou); };
+    // Le même audit axe que pour les autres écrans (les fondus terminés avant de mesurer les contrastes)
+    const auditer = async ou => {
+      if (!(await s.page.evaluate(() => !!window.axe))) await s.page.addScriptTag({ content: AXE });
+      await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* animation sans fin */ } }));
+      const v = await s.page.evaluate(async () => (await axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'best-practice'] }, resultTypes: ['violations'] }))
+        .violations.map(x => `${x.id} : ${x.nodes.slice(0, 2).map(n => n.target.join(' ')).join(' ; ')}`));
+      for (const x of v) problemes.push(`${ou} · ${x}`);
+    };
+    const verifier = async ou => {
+      const d = await s.debordement(); if (d > 0) problemes.push(`${ou} : ${d} px de trop en largeur`);
+      if (langue === 'ar') await lireOublis(ou);
+      await auditer(ou);
+    };
+    for (const [route, pret] of RUBRIQUES_ADMIN) { await s.aller(route); await s.page.waitForSelector(pret); await s.page.waitForTimeout(150); await verifier(route); }
+    // Ce qui s'ouvre : la fiche du suivi (école, partenaire), la création d'une école, le mode événement
+    await s.aller('admin/ecoles'); await s.page.click('#ec-suivi-ajouter'); await s.page.waitForSelector('#sv-nom'); await verifier('fiche école'); await s.fermer();
+    await s.page.click('#ec-creer'); await s.page.waitForSelector('#ec-nom'); await verifier('créer une école'); await s.fermer();
+    await s.aller('admin/partenaires'); await s.page.click('#pa-suivi-ajouter'); await s.page.waitForSelector('#sv-formule'); await verifier('fiche partenaire'); await s.fermer();
+    await s.aller('admin/outils'); await s.page.waitForSelector('#ou-ev-ouvrir:not([disabled])');
+    await s.page.click('#ou-ev-ouvrir'); await s.page.waitForSelector('#ou-ev-ecran'); await verifier('mode événement');
+    await s.page.keyboard.press('Escape'); await s.page.waitForSelector('#ou-ev-ecran', { state: 'detached' });
+    if (langue === 'ar') for (const [x, ou] of oublis) if (!ecritParUnMembre(x)) problemes.push(`${ou} : texte non traduit ${JSON.stringify(x)}`);
+    assert.deepEqual([...s.erreurs, ...problemes], []);
+    await s.ctx.close();
+  });
+}
+
+test('console · Animer : « Copier » met le message dans le presse-papiers, WhatsApp s’ouvre à part ; le merci ne cite que les prénoms cochés, gardés pour la semaine', async () => {
+  const s = await ouvrir();
+  await s.ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await s.comme('Admin'); await s.aller('admin/animer'); await s.page.waitForSelector('#adm-resume');
+  // Le résumé pour une promo d'étudiants : copié tel qu'affiché
+  await s.page.locator('#adm-resume-pour .chip').nth(1).click(); await s.page.waitForTimeout(150);
+  const texte = await s.page.inputValue('#adm-resume textarea');
+  assert.match(texte, /^✅ Cette semaine pour la promo \d{4} \(5A\)/);
+  await s.page.click('#adm-resume .adm-copier'); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.evaluate(() => navigator.clipboard.readText()), texte);
+  const wa = s.page.locator('#adm-resume .adm-wa');
+  assert.equal(await wa.getAttribute('href'), 'https://wa.me/?text=' + encodeURIComponent(texte));
+  assert.equal(await wa.getAttribute('target'), '_blank');
+  assert.match(await wa.getAttribute('rel'), /noopener/);
+  // En arabe, le texte arabe
+  await s.page.locator('#adm-resume-langue button[lang="ar"]').click(); await s.page.waitForTimeout(150);
+  assert.match(await s.page.inputValue('#adm-resume textarea'), /هذا الأسبوع/);
+  // Merci : rien de coché, pas de prénom ; une case cochée, son prénom seulement ; la case reste cochée après un rechargement
+  const merci = () => s.page.inputValue('#adm-merci textarea');
+  assert.match(await merci(), /^🙏 Merci aux lauréats qui ont aidé cette semaine !/);
+  const ligne = s.page.locator('#adm-merci-liste li').first();
+  const prenom = (await ligne.locator('.person-name').innerText()).trim().split(/\s+/)[0];
+  await ligne.locator('.adm-ok input').check(); await s.page.waitForTimeout(150);
+  assert.match(await merci(), new RegExp(`^🙏 Merci à ${prenom} !`));
+  await s.page.reload(); await s.page.waitForSelector('#persona'); await s.comme('Admin'); await s.aller('admin/animer'); await s.page.waitForSelector('#adm-merci-liste');
+  assert.equal(await s.page.locator('#adm-merci-liste li').first().locator('.adm-ok input').isChecked(), true);
+  assert.match(await merci(), new RegExp(`^🙏 Merci à ${prenom} !`));
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('console · Écoles : « Ouvrir le réseau » reste grisé tant que les trois conditions du suivi ne sont pas cochées ; l’ouverture et la fermeture se confirment', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin'); await s.aller('admin/ecoles'); await s.page.waitForSelector('#ec-reseaux');
+  // Le réseau d'origine ne se ferme pas
+  assert.equal(await s.page.locator('.ec-reseau[data-slug="ensam-meknes"] .ec-fermer').count(), 0);
+  // Créer l'école (fermée) : l'identifiant vient du nom
+  await s.page.click('#ec-creer'); await s.page.fill('#ec-nom', 'Institut exemple');
+  assert.equal(await s.page.inputValue('#ec-slug'), 'institut-exemple');
+  await s.page.click('#ec-creer-ok');
+  const carte = s.page.locator('.ec-reseau[data-slug="institut-exemple"]');
+  await carte.waitFor();
+  assert.match(await carte.innerText(), /Fermé/);
+  const ouvrirBtn = s.page.locator('#ec-ouvrir-institut-exemple');
+  assert.equal(await ouvrirBtn.isDisabled(), true);
+  assert.equal(await s.page.locator('#ec-manque-institut-exemple li.ok').count(), 2, 'deux conditions sur trois dans la démo');
+  // La troisième condition (dossier CNDP), cochée dans le suivi de l'école
+  const suivi = s.page.locator('#ec-suivi .sv-carte', { hasText: 'Institut exemple' }).first();
+  const cndp = suivi.locator('.sv-check').nth(2);
+  assert.equal(await cndp.getAttribute('aria-checked'), 'false');
+  await cndp.click(); await s.page.waitForTimeout(200);
+  assert.equal(await suivi.locator('.sv-check').nth(2).getAttribute('aria-checked'), 'true');
+  assert.equal(await ouvrirBtn.isDisabled(), false);
+  // Ouvrir : une confirmation, puis « Ouvert » ; le suivi passe à « Réseau ouvert »
+  await ouvrirBtn.click(); await s.page.waitForSelector('.modal-back:not(.sortie) .modal .row-end');
+  assert.match(await s.page.locator('.modal-back:not(.sortie) .modal').innerText(), /Ouvrir le réseau « Institut exemple » \?/);
+  await s.page.locator('.modal-back:not(.sortie) .modal .row-end .btn.primary').click(); await s.page.waitForTimeout(300);
+  assert.match(await carte.innerText(), /Ouvert/);
+  assert.equal(await s.page.locator('#ec-suivi .sv-col[data-etape="ouvert"] .sv-carte', { hasText: 'Institut exemple' }).count(), 1);
+  assert.match(await s.page.locator('#ec-suivi .sv-col[data-etape="ouvert"] .sv-col-t').innerText(), /Réseau ouvert/);
+  // Fermer : les membres gardent leur compte (le texte le dit), seules les nouvelles inscriptions sont bloquées
+  await carte.locator('.ec-fermer').click(); await s.page.waitForSelector('.modal-back:not(.sortie) .modal .row-end');
+  assert.match(await s.page.locator('.modal-back:not(.sortie) .modal').innerText(), /nouvelles inscriptions sont bloquées ; les membres déjà inscrits gardent leur compte/);
+  await s.page.locator('.modal-back:not(.sortie) .modal .row-end .btn:not(.ghost)').click(); await s.page.waitForTimeout(300);
+  assert.match(await carte.innerText(), /Fermé/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('console · Partenaires : la formule choisie remplit le montant ; le message à une entreprise se copie avec les vrais chiffres', async () => {
+  const s = await ouvrir();
+  await s.ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await s.comme('Admin'); await s.aller('admin/partenaires'); await s.page.waitForSelector('#pa-suivi');
+  await s.page.click('#pa-suivi-ajouter'); await s.page.waitForSelector('#sv-formule');
+  await s.page.fill('#sv-nom', 'Entreprise essai');
+  await s.page.selectOption('#sv-formule', 'partenaire'); await s.page.waitForTimeout(100);
+  assert.equal(await s.page.inputValue('#sv-montant'), '2500');
+  await s.page.click('#sv-ok'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('#pa-suivi .sv-carte', { hasText: 'Entreprise essai' }).count(), 1);
+  // Les formules, avec leurs prix de départ ; jamais « saison » à l'écran
+  assert.match(await s.page.locator('#pa-formules').innerText(), /Campagne PFE[\s\S]*5\s000\sDH la campagne/);
+  assert.doesNotMatch(await s.page.locator('.adm-partenaires').innerText(), /saison/i);
+  await s.page.click('#pa-message .adm-copier'); await s.page.waitForTimeout(200);
+  const copie = await s.page.evaluate(() => navigator.clipboard.readText());
+  assert.equal(copie, await s.page.inputValue('#pa-message textarea'));
+  assert.match(copie, /label « Sponsorisé »/);
+  assert.match(copie, /une carte sponsorisée au plus toutes les 10 cartes/);
+  assert.match(copie, /\d+ lauréats et \d+ étudiants de 3e, 4e et 5e année/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('console · Affiches et rapport : l’affiche et le rapport s’impriment seuls sur une page A4 ; le mode événement plein écran se ferme avec Échap', async () => {
+  const s = await ouvrir();
+  await s.ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await s.comme('Admin'); await s.aller('admin/outils'); await s.page.waitForSelector('#ou-affiche .af-qr svg');
+  // Le lien de l'affiche : la page de la promo
+  await s.page.click('#ou-affiche-lien'); await s.page.waitForTimeout(150);
+  assert.match(await s.page.evaluate(() => navigator.clipboard.readText()), /^http:\/\/127\.0\.0\.1:\d+\/promo\/\d{4}\/$/);
+  assert.match(await s.page.locator('#ou-affiche .af-url').innerText(), /^127\.0\.0\.1:\d+\/promo\/\d{4}$/);
+  // Impression : window.print est remplacé pour garder la copie en place, puis la page imprimée est vérifiée
+  await s.page.evaluate(() => { window.print = () => { window.__imprime = (window.__imprime || 0) + 1; }; });
+  const pagesPDF = async () => { const pdf = (await s.page.pdf({ preferCSSPageSize: true, printBackground: true })).toString('latin1'); return { pages: (pdf.match(/\/Type\s*\/Page[^s]/g) || []).length, a4: /\/MediaBox\s*\[\s*0 0 59[45]\.\d+ 84[12]\.\d+\s*\]/.test(pdf) }; };
+  await s.page.click('#ou-affiche-imprimer');
+  assert.equal(await s.page.evaluate(() => window.__imprime), 1);
+  await s.page.emulateMedia({ media: 'print' });
+  const affiche = await s.page.evaluate(() => ({
+    classe: document.body.classList.contains('print-affiche'), app: getComputedStyle(document.getElementById('app')).display,
+    copies: document.querySelectorAll('.adm-impression').length, qr: !!document.querySelector('.adm-impression .af-qr svg path'),
+    largeur: Math.round(document.querySelector('.adm-impression .affiche').getBoundingClientRect().width), ids: document.querySelectorAll('.adm-impression [id]').length,
+  }));
+  assert.deepEqual(affiche, { classe: true, app: 'none', copies: 1, qr: true, largeur: 794, ids: 0 });
+  assert.deepEqual(await pagesPDF(), { pages: 1, a4: true });
+  await s.page.emulateMedia({ media: null }); // (« screen » ferait imprimer le PDF suivant avec le style de l'écran)
+  // Le rapport : une seule copie à la fois, une page A4, sans aucun nom de membre
+  await s.page.click('#ou-rapport-imprimer');
+  assert.equal(await s.page.locator('.adm-impression').count(), 1);
+  assert.equal(await s.page.locator('.adm-impression .rp-feuille').count(), 1);
+  const rapport = await s.page.locator('.adm-impression .rp-feuille').evaluate(x => x.textContent);
+  const noms = await s.page.evaluate(() => window.__demo.data.profiles.map(p => p.full_name));
+  assert.deepEqual(noms.filter(n => rapport.includes(n)), []);
+  assert.match(rapport, /Initiative de lauréats, indépendante de l’administration de l’école\./);
+  assert.deepEqual(await pagesPDF(), { pages: 1, a4: true });
+  // Après l'impression (afterprint), la copie s'en va
+  await s.page.waitForSelector('.adm-impression', { state: 'detached' });
+  assert.equal(await s.page.evaluate(() => document.body.classList.contains('print-adm')), false);
+  // Le graphique : une série, un titre par semaine, le tableau des valeurs pour les lecteurs d'écran
+  assert.equal(await s.page.locator('#ou-rapport .rp-colonnes').first().getAttribute('role'), 'img');
+  assert.equal(await s.page.locator('#ou-rapport .rp-graphe').first().locator('title').count(), 12);
+  assert.equal(await s.page.locator('#ou-rapport .rp-graphe').first().locator('table.sr-only tbody tr').count(), 12);
+  // Mode événement : plein écran, focus sur « Fermer », Échap rend la main au bouton
+  await s.page.click('#ou-ev-ouvrir'); await s.page.waitForSelector('#ou-ev-ecran .ev-qr svg');
+  assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'ou-ev-fermer');
+  assert.match(await s.page.locator('#ou-ev-ecran .ev-n').innerText(), /^\d+$/);
+  await s.page.keyboard.press('Escape'); await s.page.waitForSelector('#ou-ev-ecran', { state: 'detached' });
+  await s.page.waitForTimeout(100);
+  assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'ou-ev-ouvrir');
+  // En quittant la rubrique, une copie restée là (impression annulée sans afterprint) disparaît aussi
+  await s.page.click('#ou-rapport-imprimer');
+  assert.equal(await s.page.locator('.adm-impression').count(), 1);
+  await s.aller('admin/animer');
+  assert.equal(await s.page.locator('.adm-impression').count(), 0);
+  assert.equal(await s.page.evaluate(() => document.body.classList.contains('print-adm')), false);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('console · Visuels des réussites : téléchargement seulement après l’accord des deux, image PNG aux bonnes dimensions', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin'); await s.aller('admin/outils'); await s.page.waitForSelector('#ou-visuels .ou-vis-toile');
+  const boutons = s.page.locator('#ou-visuels .ou-vis-dl');
+  assert.equal(await boutons.count(), 2);
+  for (let i = 0; i < 2; i++) assert.equal(await boutons.nth(i).isDisabled(), true);
+  const cases = s.page.locator('#ou-vis-accords .adm-ok input');
+  const n = await cases.count();
+  assert.ok(n >= 1 && n <= 2);
+  await cases.first().check(); await s.page.waitForTimeout(100);
+  if (n === 2) assert.equal(await boutons.first().isDisabled(), true, 'un seul accord ne suffit pas');
+  for (let i = 0; i < n; i++) await cases.nth(i).check();
+  await s.page.waitForFunction(() => [...document.querySelectorAll('#ou-visuels .ou-vis-dl')].every(b => !b.disabled));
+  for (const [format, w, h] of [['carre', 1080, 1080], ['paysage', 1200, 627]]) {
+    const [dl] = await Promise.all([s.page.waitForEvent('download'), s.page.click(`#ou-visuels .ou-vis-${format} .ou-vis-dl`)]);
+    assert.match(dl.suggestedFilename(), new RegExp(`^reussite-[a-z0-9-]+-${w}x${h}\\.png$`));
+    const png = fs.readFileSync(await dl.path());
+    assert.equal(png.toString('latin1', 1, 4), 'PNG');
+    assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [w, h]);
+  }
+  // Les cases restent cochées pour ce recrutement (gardées sur l'appareil)
+  await s.aller('admin/animer'); await s.aller('admin/outils'); await s.page.waitForSelector('#ou-vis-accords');
+  assert.equal(await s.page.locator('#ou-vis-accords .adm-ok input:checked').count(), n);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
