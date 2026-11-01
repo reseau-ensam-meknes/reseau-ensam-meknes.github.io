@@ -28,8 +28,9 @@ test('tags : une notification par événement ; ce qui remplace garde son tag ; 
   assert.equal(t('candidature', { nom: 'Salma', titre: 'Stage' }, 12), 'candidature-12');
   assert.equal(t('reponse', { nom: 'Nadia', titre: 'Entretien chez Renault ?' }, '13'), 'reponse-13');
   assert.equal(t('candidature', { nom: 'Salma', titre: 'Stage' }), 'candidature', 'sans identifiant de file : le type');
-  // Ce qui remplace la précédente : un seul rappel du soir, un seul Match du jour, un seul essai, une seule enquête
-  assert.deepEqual(N.SE_REMPLACENT, ['rappel_visite', 'match_jour', 'test', 'enquete']);
+  // Ce qui remplace la précédente : un seul rappel du soir, un seul Match du jour, un seul essai, une seule enquête ;
+  // la vérification par les pairs, la nouvelle date d'un événement ou d'un rendez-vous de mentorat
+  assert.deepEqual(N.SE_REMPLACENT, ['rappel_visite', 'match_jour', 'test', 'enquete', 'verification_pair', 'evenement_deplace', 'mentorat_deplace']);
   assert.equal(t('rappel_visite', { messages: 2 }, 14), 'rappel_visite');
   assert.equal(t('match_jour', { n: 3, type: 'etudiant' }, 15), 'match_jour');
   assert.equal(t('test', {}, 16), 'test');
@@ -49,6 +50,48 @@ test('tags : une notification par événement ; ce qui remplace garde son tag ; 
   enFile(b, u, 'match_jour', { n: 2, type: 'laureat' });
   assert.deepEqual(await corpsDe(await appel({ job: 'push' })), { sent: 3, failed: 0, removed: 0 });
   assert.deepEqual(b.push.map(x => x.message.tag), [`candidature-${a1}`, `candidature-${a2}`, 'match_jour']);
+});
+
+test('tags : la vérification par les pairs et une nouvelle date remplacent la précédente (l’ancienne ne reste pas affichée)', () => {
+  const t = (kind, data, id) => N.texteNotif(kind, data, 'fr', SITE, id);
+  const v1 = t('verification_pair', { nom: 'Youssef', n: 1 }, 101), v2 = t('verification_pair', { nom: 'Nadia', n: 2 }, 102);
+  assert.match(v1.body, /Encore un lauréat et ton badge arrive/);
+  assert.equal(v2.title, 'Ton profil est vérifié');
+  assert.equal(v1.tag, v2.tag, 'avant : deux lignes, la première disait « encore un lauréat » après le badge');
+  assert.equal(v2.tag, 'verification_pair');
+  const e1 = t('evenement_deplace', { titre: 'Forum', debut: '2026-11-12T09:00:00Z' }, 301), e2 = t('evenement_deplace', { titre: 'Forum', debut: '2026-11-19T09:00:00Z' }, 302);
+  assert.equal(e1.tag, e2.tag, 'avant : la première gardait l’ancienne date');
+  const m1 = t('mentorat_deplace', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-12T17:00:00Z' }, 303), m2 = t('mentorat_deplace', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-13T17:00:00Z' }, 304);
+  assert.equal(m1.tag, m2.tag);
+  // Ce qui reste une notification par événement : chacun dit quelque chose de différent et de toujours vrai
+  for (const k of ['promo_nouveau', 'filleul', 'parrain', 'evenement', 'evenement_annule', 'candidature_statut', 'merci']) {
+    const x = t(k, { nom: 'A', n: 2, promo: '2024', titre: 'X', statut: 'entretien', debut: '2026-11-12T09:00:00Z' }, 7);
+    const y = t(k, { nom: 'B', n: 2, promo: '2024', titre: 'Y', statut: 'retenu', debut: '2026-11-13T09:00:00Z' }, 8);
+    assert.ok(x && y, k);
+    assert.notEqual(x.tag, y.tag, k);
+  }
+});
+
+test('tags : sur une même demande, chaque lauréat qui propose son aide et chaque réponse ont leur notification ; regroupées quand la base les compte', () => {
+  const dem = uid(700);
+  const t = (kind, data, id) => N.texteNotif(kind, data, 'fr', SITE, id);
+  const a = t('demande_proposition', { nom: 'Youssef', entreprise: 'OCP', titre: 'Stage', demande: dem }, 201);
+  const c = t('demande_proposition', { nom: 'Karim', entreprise: 'Renault', titre: 'Stage', demande: dem }, 202);
+  assert.notEqual(a.tag, c.tag, 'avant : la proposition de Karim effaçait celle de Youssef, et son nom');
+  assert.equal(a.tag, 'demande_proposition-201');
+  const r1 = t('demande_reponse', { nom: 'Salma', titre: 'Stage', texte: 'Contacte X', demande: dem }, 203);
+  const r2 = t('demande_reponse', { nom: 'Amine', titre: 'Stage', texte: 'Essaie Y', demande: dem }, 204);
+  assert.notEqual(r1.tag, r2.tag);
+  // Toutes ouvrent la carte de la demande
+  for (const n of [a, c, r1, r2]) assert.equal(n.url, `${SITE}#offres/demandes/${dem}`);
+  // La base compte (n) : une seule notification pour la demande, qui se met à jour
+  assert.equal(t('demande_proposition', { nom: 'Karim', titre: 'Stage', demande: dem, n: 2 }, 205).tag, `demande_proposition-${dem}`);
+  // Sans ligne de file (appel direct, ancien code) : par demande, comme avant
+  assert.equal(t('demande_reponse', { nom: 'Salma', titre: 'Stage', texte: 'X', demande: dem }).tag, `demande_reponse-${dem}`);
+  // Les autres notifications d'une demande restent une par demande (un seul état vrai à la fois)
+  for (const k of ['demande_nouvelle', 'demande_large', 'demande_match', 'demande_rouverte']) {
+    assert.equal(t(k, { nom: 'Salma', titre: 'Stage', demande: dem, pour: 'auteur' }, 206).tag, `${k}-${dem}`, k);
+  }
 });
 
 test('refus définitifs : au troisième d’affilée l’abonnement est retiré et son adresse notée, quand le même service accepte un autre téléphone ; un envoi accepté remet le compte à zéro', async () => {

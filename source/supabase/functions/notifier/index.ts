@@ -696,9 +696,14 @@ const MOTIFS: Record<Langue, Record<string, string>> = {
 };
 
 // Ce qui remplace la précédente du même type dans la barre de notifications : un seul rappel du soir, un seul Match du
-// jour, un seul essai, une seule enquête. Le reste, sans élément qui le regroupe (conversation, match, offre…), garde
-// une notification par événement : son tag porte l'identifiant de sa ligne dans la file (id).
-export const SE_REMPLACENT = ['rappel_visite', 'match_jour', 'test', 'enquete'];
+// jour, un seul essai, une seule enquête ; et ce qui rend la précédente fausse : la vérification par les pairs (« encore
+// un lauréat » puis « ton badge est là »), la nouvelle date d'un événement ou d'un rendez-vous de mentorat (l'ancienne
+// date ne doit pas rester affichée). Le reste, sans élément qui le regroupe (conversation, match, offre…), garde une
+// notification par événement : son tag porte l'identifiant de sa ligne dans la file (id).
+export const SE_REMPLACENT = ['rappel_visite', 'match_jour', 'test', 'enquete', 'verification_pair', 'evenement_deplace', 'mentorat_deplace'];
+// Sur une même demande, chaque lauréat qui propose son aide, chaque réponse, est une personne de plus : une notification
+// chacune (sinon la deuxième efface la première, et son nom). Regroupées seulement quand la base les compte (n ≥ 1).
+const PAR_PERSONNE = ['demande_proposition', 'demande_reponse'];
 
 // Notification prête à envoyer : { title, body, url, tag } ; null si le type est inconnu
 export function texteNotif(kind: string, data: unknown, langue: unknown, site: string, id?: number | string | null): Notif | null {
@@ -729,6 +734,8 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
   // Une alerte ouvre directement l'offre, un message sa conversation (une notification par personne)
   // Une demande ouvre sa carte ; une nouvelle demande, pour un lauréat, ouvre directement « Je peux aider », prérempli
   const dem = kind.startsWith('demande_') && estUuid(d.demande) ? d.demande : null;
+  const ligneDeFile = id != null && String(id) !== '';
+  const demParPersonne = dem && PAR_PERSONNE.includes(kind) && !(Number(d.n) >= 1) && ligneDeFile;
   const annule = kind === 'mentorat_annule' && estUuid(d.m) ? d.m : null;
   // Une réaction ouvre l'élément : l'offre, ou la carte de la demande ; une seule notification par élément sur le téléphone
   const rx = kind === 'reaction' ? (estUuid(d.offre) ? { route: `offre/${d.offre}`, id: d.offre } : estUuid(d.demande) ? { route: `offres/demandes/${d.demande}`, id: d.demande } : null) : null;
@@ -744,8 +751,8 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
     : annule && v.pour === 'demandeur' ? `mentorat/reprendre/${annule}`
     : dem ? (kind === 'demande_nouvelle' || kind === 'demande_large' ? `aider/${dem}` : `offres/demandes/${dem}`) : g.route;
   const tag = rx ? `reaction-${rx.id}` : kind === 'offre_alerte' && estUuid(d.offre) ? `offre-${d.offre}` : com ? `${kind}-${com}`
-    : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem ? `${kind}-${dem}` : annule ? `${kind}-${annule}` : mt ? `${kind}-${mt}`
-    : id != null && String(id) !== '' && !SE_REMPLACENT.includes(kind) ? `${kind}-${id}` : kind;
+    : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem && !demParPersonne ? `${kind}-${dem}` : annule ? `${kind}-${annule}` : mt ? `${kind}-${mt}`
+    : ligneDeFile && !SE_REMPLACENT.includes(kind) ? `${kind}-${id}` : kind;
   // Message arrivé moins de 20 s après le précédent de la conversation : l'aperçu change sans sonner
   return { title: couper(t[0], 80), body: couper(t[1], 180), url: site + '#' + route, tag, ...(kind === 'message' && d.calme === true ? { calme: true } : {}) };
 }
