@@ -5,7 +5,7 @@ import { html, useState, useEffect, useMemo, useRef } from './vendor/preact-htm.
 import { Icon, Field, Person, Empty, Bar, Avatar, toast, injectCSS, EnTetePage, Compteur } from './ui.js';
 import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
 import { addAR, arCount } from './i18n.js';
-import { NIVEAUX, niveauOf, timeAgo, cleNom, norm, GUIDE_SECTIONS, pct, reponses48h, parcoursInscription, compteOuvert, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible,
+import { NIVEAUX, niveauOf, timeAgo, cleNom, ecoleDe, norm, GUIDE_SECTIONS, pct, reponses48h, parcoursInscription, compteOuvert, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible,
   SPONSO_PUBLICS, SPONSO_ANNEES, jourLocal, normaliserSponsorise, refusSponsorise, etatSponsorise, tauxClic, resumeFilieres, seasonLabel } from './logic.js';
 import { DefisAdmin } from './saison.js';
 import { AgendaAdmin } from './agenda.js';
@@ -308,7 +308,7 @@ function useListe(store, data) {
   useEffect(() => {
     if (Array.isArray(data.liste_officielle)) return;
     let on = true;
-    Promise.resolve(store.sb?.from('liste_officielle').select('nom, promo, email').limit(10000)).then(r => on && setRows(r?.data || []), () => on && setRows([]));
+    Promise.resolve(store.sb?.from('liste_officielle').select('nom, promo, email, ecole').limit(10000)).then(r => on && setRows(r?.data || []), () => on && setRows([]));
     return () => { on = false; };
   }, []);
   return Array.isArray(data.liste_officielle) ? data.liste_officielle : rows || [];
@@ -333,8 +333,8 @@ function Membres({ ctx, comptes, toVerify }) {
   const list = members.filter(p => !qq || `${p.full_name} ${p.filiere} ${p.promo} ${p.entreprise || ''} ${compte.get(p.id)?.email || ''}`.toLowerCase().includes(qq))
     .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   const { vus: shown, reste, plus } = useVoirPlus(list, 20, qq);
-  const promosListe = new Set(liste.map(l => l.promo));
-  const surListe = p => { const e = (compte.get(p.id)?.email || '').toLowerCase(); return liste.some(l => (l.promo === p.promo && cleNom(l.nom) === cleNom(p.full_name)) || (l.email && e && l.email === e)); };
+  const promosListe = new Set(liste.map(l => ecoleDe(l) + '|' + l.promo));
+  const surListe = p => { const e = (compte.get(p.id)?.email || '').toLowerCase(); return liste.some(l => ecoleDe(l) === ecoleDe(p) && ((l.promo === p.promo && cleNom(l.nom) === cleNom(p.full_name)) || (l.email && e && l.email === e))); };
   const pairs = p => (data.verifications_pairs || []).filter(v => v.laureat_id === p.id).map(v => store.byId('profiles', v.verificateur_id)).filter(x => x?.role === 'laureat' && x.verified && x.promo === p.promo);
 
   return html`
@@ -346,7 +346,7 @@ function Membres({ ctx, comptes, toVerify }) {
         <span class="verif-facts small">
           ${compte.get(p.id) ? html`<span class="mono muted" dir="ltr" translate="no">${compte.get(p.id).email}</span>` : null}
           <span class=${pr.length ? 'good-t' : 'muted'}><${Icon} name="people" size=${13}/> ${pr.length ? `${pr.length}/2 lauréats de sa promo ont confirmé` : 'Aucune confirmation de sa promo'}${pr.length ? html` <span translate="no">(${pr.map(x => x.full_name).join(', ')})</span>` : null}</span>
-          ${promosListe.has(p.promo) ? html`<span class=${surListe(p) ? 'good-t' : 'warn-t'}><${Icon} name="file" size=${13}/> ${surListe(p) ? 'Sur la liste officielle' : 'Pas trouvé sur la liste officielle de sa promo'}</span>` : null}
+          ${promosListe.has(ecoleDe(p) + '|' + p.promo) ? html`<span class=${surListe(p) ? 'good-t' : 'warn-t'}><${Icon} name="file" size=${13}/> ${surListe(p) ? 'Sur la liste officielle' : 'Pas trouvé sur la liste officielle de sa promo'}</span>` : null}
           <span class=${p.cv_path || p.cv_url ? 'good-t' : 'muted'}><${Icon} name="file" size=${13}/> ${p.cv_path || p.cv_url ? 'CV déposé' : 'Pas de CV déposé'}</span>
           ${p.linkedin ? html`<span><${Icon} name="link" size=${13}/> <a href=${p.linkedin.startsWith('http') ? p.linkedin : 'https://' + p.linkedin} target="_blank" rel="noopener">Son profil LinkedIn</a></span>` : html`<span class="muted"><${Icon} name="link" size=${13}/> Pas de LinkedIn</span>`}
         </span>
