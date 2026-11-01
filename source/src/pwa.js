@@ -646,6 +646,14 @@ export function LignePrevenir({ ctx, raison = 'message', fil = null, attente = t
     visite.ligne = Date.now();
     ecrireMemo(me.id, { ...lireMemo(me.id), ligne: visite.ligne });
   }, [sorte]);
+  // Posée au-dessus du champ d'écriture, elle raccourcit la liste des messages : la liste qui était en bas y reste (le message
+  // qui vient de partir, l'entretien proposé, ne passe pas à moitié sous la ligne)
+  const vue = !!sorte;
+  useEffect(() => {
+    const l = ici.current, z = l?.parentElement?.querySelector('.conv-fil');
+    if (!vue || !z) return;
+    if (z.scrollHeight - z.scrollTop - z.clientHeight <= l.offsetHeight + 100) z.scrollTop = z.scrollHeight;
+  }, [vue]);
   // La ligne s'en va sous le doigt : au clavier, le focus passe à ce qui la suit (jamais un champ : pas de clavier qui s'ouvre)
   const apres = () => {
     const l = ici.current; if (!l) return;

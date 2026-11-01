@@ -1179,6 +1179,23 @@ test('« Me prévenir » dans Match, réseau lent : deux « Intéressé » de su
   await s.ctx.close();
 });
 
+test('« Me prévenir » dans Messages : la ligne qui arrive laisse la conversation en bas — l’entretien proposé reste entier au-dessus d’elle', async () => {
+  const s = await prevenirSur('off');
+  const id = nom => s.profils.find(x => x[1].includes(nom))[0];
+  const salma = id('Salma'), youssef = id('Youssef');
+  await refuseeHier(s, 'Youssef');
+  // Une longue conversation où Salma a écrit (elle a sa réponse), puis Youssef propose un entretien, qui attend la sienne
+  await s.comme('Salma');
+  for (let i = 0; i < 12; i++) await s.page.evaluate(([d, i]) => window.__demo.envoyerMessage({ dest: d, type: 'texte', body: `Question ${i + 1} sur le stage : les dates, le lieu et l’équipe.` }), [youssef, i]);
+  await s.comme('Youssef'); await s.aller('messages/' + salma); await s.page.waitForTimeout(600);
+  await s.page.evaluate(d => window.__demo.envoyerMessage({ dest: d, type: 'rdv', rdv_at: new Date(Date.now() + 2 * 864e5).toISOString(), rdv_duree: 30, rdv_lien: 'https://meet.jit.si/reseau-ensam-test' }), salma);
+  await s.page.waitForSelector('.pv-ligne', { timeout: 5000 }); await s.page.waitForTimeout(400);
+  const { dernier, fil } = await s.page.evaluate(() => ({ dernier: [...document.querySelectorAll('.conv-fil .msg')].pop().getBoundingClientRect().bottom, fil: document.querySelector('.conv-fil').getBoundingClientRect().bottom }));
+  assert.ok(dernier <= fil + .5, `l’entretien proposé (bas à ${Math.round(dernier)} px) reste entier au-dessus de la ligne (${Math.round(fil)} px)`);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 // À l'ouverture : « Reçois l'essentiel sur ton téléphone », quelques secondes après l'arrivée, sur un écran calme
 test('à l’ouverture : la feuille des notifications selon le rôle ; « Plus tard » la range 2 jours, tant que rien n’est activé', async () => {
   const s = await prevenirSur('off');
