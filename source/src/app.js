@@ -1,8 +1,8 @@
 // Point d'entrée : coque de l'application, connexion, accueil, notifications.
-import { getLang, setLang, chargerAR } from './i18n.js';
+import { getLang, setLang, chargerAR, addAR } from './i18n.js';
 import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore, texteErreur } from './store.js';
-import { Icon, Person, Avatar, Bar, CompanyLogo, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille, ecranLibre } from './ui.js';
+import { Icon, Person, Avatar, Bar, CompanyLogo, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille, ecranLibre, mouvementReduit, EnTetePage, Anneau, Squelette } from './ui.js';
 import { matchsDe, seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, demandeLargeLe, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, recoFor, matchesMe, APP_STATUS } from './offers.js';
 import { estPortee, estPartagee, partageExpire } from './origine.js';
@@ -30,6 +30,14 @@ import { ProposerAide } from './demandes.js';
 import { useFondateurs, FondateursBandeau, useFondateurMoi } from './fondateurs.js';
 import { ReussitesRail } from './reussites.js';
 import { useAmbassadeurs, pasAmbassadeur, notifsAmbassadeur, AmbassadeurAccueil, AmbassadeurFeuille } from './ambassadeurs.js';
+
+// Les calques posés au-dessus de tout (position fixe) qui peuvent arriver avec une page : feuilles et fenêtres, fêtes,
+// visionneuse de photo, histoire d'une réussite, conversation plein écran du téléphone. Le contenu ne glisse pas sous eux.
+const CALQUES_FIXES = '.modal-back, .fete-back, .mx-fete, .visionneuse, .rs-histoire, .conv';
+
+// Coque v3 : le bandeau de la démo tient sur une ligne, son mode d'emploi se déplie
+addAR({ 'Démo avec des données fictives.': 'نسخة تجريبية ببيانات وهمية.', 'Essaie le mentorat :': 'جرّب الإرشاد:', 'Comment essayer': 'كيف تجرّب', 'Replier': 'طيّ' },
+  [[/^Profil rempli à (\d+)\s?%$/, n => `الملف مكتمل بنسبة ${n}%`]]);
 
 // Écrans lourds et peu ouverts (Suivi, Admin, Enquête) : chargés à la demande, pas au démarrage.
 // Le temps qu'ils arrivent, la forme d'une page ; s'ils ne peuvent pas arriver (réseau), un mot calme et « Réessayer ».
@@ -60,7 +68,7 @@ function aLaDemande(charger, nom, fichier) {
 function PageEnChargement({ horsLigne = false }) {
   return html`<section class="page page-attente" aria-busy=${horsLigne ? null : 'true'}>
     ${horsLigne ? html`<p class="muted small" role="status">Pas de réseau pour l’instant : cette page s’affiche dès qu’il revient.</p>` : html`<span class="sr-only" role="status">Chargement…</span>`}
-    <div class="sq sq-titre" aria-hidden="true"></div><div class="sq sq-bloc" aria-hidden="true"></div><div class="sq sq-bloc court" aria-hidden="true"></div></section>`;
+    <div class="sq sq-titre" aria-hidden="true"></div><div class="sq-liste" aria-hidden="true">${[0, 1, 2].map(i => html`<${Squelette} key=${i} avatar lignes=${2}/>`)}</div><div class="sq sq-bloc court" aria-hidden="true"></div></section>`;
 }
 const DashboardPage = aLaDemande(() => import('./dashboard.js'), 'DashboardPage', './dashboard.js');
 const AdminPage = aLaDemande(() => import('./admin.js'), 'AdminPage', './admin.js');
@@ -147,17 +155,50 @@ function App({ store }) {
   // Pages publiques (attestation, désabonnement) : le lien « #… » suffit. Dans la coque, l'historique s'en charge (ui.js).
   useEffect(() => { const f = () => { if (!historiqueBranche()) setRoute(readRoute()); }; addEventListener('hashchange', f); return () => removeEventListener('hashchange', f); }, []);
   useEffect(() => { if (!pop) return; const f = e => { if (!e.target.closest('.pop-wrap')) setPop(null); }; document.addEventListener('click', f); return () => document.removeEventListener('click', f); }, [pop]);
-  // Changement d'écran. En avançant : un fondu court (View Transitions) là où le navigateur le permet.
-  // Au Retour : pas de fondu (l'iPhone anime déjà son geste), et la page reprend sa place (y).
+  // Changement d'écran. En avançant : seul le contenu arrive (voir plus bas), la coque reste immobile.
+  // Au Retour : rien ne glisse (l'iPhone anime déjà son geste), et la page reprend sa place (y).
   const routeAct = useRef(route); routeAct.current = route;
   const aRendre = useRef(null);
+  // En avançant vers une autre page (onglet de la barre, lien) : seul le contenu arrive, en fondu, avec un léger glissement
+  // venu du côté de l'onglet choisi (inversé en arabe) ; la coque ne bouge pas, la pastille de la barre glisse. Au Retour : rien.
+  const ordreNav = useRef([]);
+  const vtSens = useRef(null);
   const versRoute = (r, { y = 0, doux = false } = {}) => {
-    const changer = () => { setRoute(parseRoute(r)); setPop(null); setCloche(false); aRendre.current = y; };
-    if (doux && document.startViewTransition && !matchMedia('(prefers-reduced-motion: reduce)').matches && parseRoute(r).base !== routeAct.current.base) document.startViewTransition(() => new Promise(ok => { changer(); setTimeout(ok, 0); }));
-    else changer();
+    const b = parseRoute(r).base, b0 = routeAct.current.base;
+    if (doux && b !== b0) { const o = ordreNav.current, i0 = o.indexOf(b0), i1 = o.indexOf(b); vtSens.current = i0 >= 0 && i1 >= 0 ? Math.sign(i1 - i0) : 0; }
+    setRoute(parseRoute(r)); setPop(null); setCloche(false); aRendre.current = y;
   };
   const versRouteAct = useRef(versRoute); versRouteAct.current = versRoute;
   useLayoutEffect(() => { const y = aRendre.current; if (y == null) return; aRendre.current = null; rendrePosition(y); });
+  useLayoutEffect(() => {
+    const s = vtSens.current; vtSens.current = null;
+    const contenu = document.getElementById('contenu');
+    if (s == null || mouvementReduit() || !contenu?.animate) return;
+    // Une feuille, une fête ou une conversation plein écran arrive avec la page (« Publier un événement », « Écrire ») :
+    // elle a sa propre entrée, et un calque fixé suivrait le contenu qui glisse (décalé, sous les barres) avant de sauter
+    // à sa place. Rien ne glisse alors ; et si elle n'arrive qu'au rendu suivant (ouverte par un effet de la page), le
+    // glissement s'arrête net à ce moment-là.
+    const calque = () => [...contenu.querySelectorAll(CALQUES_FIXES)].some(e => getComputedStyle(e).position === 'fixed');
+    if (calque()) return;
+    const sens = s * (document.documentElement.dir === 'rtl' ? -1 : 1);
+    const a = contenu.animate([{ opacity: 0, translate: `${sens * 14}px 0` }, { opacity: 1, translate: '0 0' }], { duration: 200, easing: 'cubic-bezier(.16, 1, .3, 1)' });
+    const guet = new MutationObserver(() => { if (calque()) { a.cancel(); guet.disconnect(); } });
+    guet.observe(contenu, { childList: true, subtree: true });
+    const fin = () => guet.disconnect();
+    a.finished.then(fin, fin);
+    return fin;
+  }, [route.base]);
+  // La barre du haut prend son filet dès que la page défile (rien tant qu'on est tout en haut)
+  useEffect(() => {
+    let f = 0;
+    const maj = () => { f = 0; document.documentElement.classList.toggle('defile', scrollY > 4); };
+    const sur = () => { f ||= requestAnimationFrame(maj); };
+    addEventListener('scroll', sur, { passive: true }); maj();
+    return () => { removeEventListener('scroll', sur); cancelAnimationFrame(f); };
+  }, []);
+  // Le mode d'emploi de la démo : replié par défaut, déplié pour cette visite seulement
+  const [demoOuverte, setDemoOuverte] = useState(() => { try { return sessionStorage.getItem('ensam-demo-ouverte') === '1'; } catch { return false; } });
+  const basculerDemo = () => { const v = !demoOuverte; setDemoOuverte(v); try { sessionStorage.setItem('ensam-demo-ouverte', v ? '1' : '0'); } catch { /* */ } };
   // go(r) : un écran de plus. go(r, { remplacer: true }) : onglet d'une page, « ← Tous les … ».
   // go(r, { onglet: true }) : la barre du bas ou de côté. go(r, { exact: true }) : un lien direct normalisé, une redirection.
   const go = (r, o) => { if (!aller(r, o)) { try { history.replaceState(null, '', '#' + r); } catch { /* cadre */ } versRoute(r); } };
@@ -286,11 +327,14 @@ function App({ store }) {
   // En bas sur le téléphone : cinq onglets au plus, Match au centre. Les messages ont leur bulle en haut ; le suivi,
   // Mon parcours et Mon espace passent dans le menu du compte (l'ordinateur garde tout dans la barre latérale).
   const navBas = nav.filter(([k]) => k !== 'messages' && k !== 'suivi' && !(avecMatch && (k === 'parcours' || k === 'espace')));
+  ordreNav.current = nav.map(([k]) => k);
   let page = route.base === 'offre' || route.base === 'aider' ? 'offres' : route.base;
   if (page === 'parcours' && me.role !== 'etudiant') page = me.role === 'laureat' ? 'espace' : 'accueil';
   if (page === 'espace' && me.role !== 'laureat') page = me.role === 'etudiant' ? 'parcours' : 'accueil';
   if (page === 'admin' && me.role !== 'admin') page = 'accueil';
   if (page === 'match' && !avecMatch) page = 'accueil';
+  // La pastille de la barre du bas : sous l'onglet de la page (aucune si la page n'y est pas : profil, messages…)
+  const iBas = navBas.findIndex(([k]) => k === page);
   // Ouverture depuis les données gardées sur l'appareil, mise à jour pas encore arrivée : les écrans qui ont besoin de ce
   // qui n'y est pas gardé (conversations entières, messages des groupes, commentaires de relecture, modération) l'attendent
   const attente = !!store.enAttente && (page === 'messages' || page === 'admin' || (page === 'reseau' && route.sub === 'groupes') || (page === 'mentorat' && route.sub === 'cv'));
@@ -362,7 +406,10 @@ function App({ store }) {
           </div>` : null}
         </div>
       </header>
-      ${store.mode === 'demo' && !plein ? html`<section class="demo-band" aria-label="Démo"><${Icon} name="spark" size=${15}/><span>Démo avec des données fictives. Essaie le mentorat : <b translate="no">Salma</b> demande de l’aide, <b translate="no">Youssef</b> (lauréat) clique sur un horaire, la visio est prête. Change de rôle en haut.</span></section>` : null}
+      ${store.mode === 'demo' && !plein ? html`<section class=${'demo-band' + (demoOuverte ? ' ouverte' : '')} aria-label="Démo">
+        <span class="demo-point" aria-hidden="true"></span>
+        <p class="demo-txt" id="demo-txt"><b class="demo-tete">Démo avec des données fictives.</b>${demoOuverte ? html` <span>Essaie le mentorat : <b translate="no">Salma</b> demande de l’aide, <b translate="no">Youssef</b> (lauréat) clique sur un horaire, la visio est prête. Change de rôle en haut.</span>` : null}</p>
+        <button type="button" class="demo-plus" aria-expanded=${demoOuverte} aria-controls="demo-txt" onClick=${basculerDemo}><span>${demoOuverte ? 'Replier' : 'Comment essayer'}</span><${Icon} name="chevron" size=${15}/></button></section>` : null}
       ${me.admin_ok && me.role !== 'admin' && !plein ? html`<section class="vue-band" aria-label="Vue lauréat"><${Icon} name="star" size=${15}/><span>Tu vois l’application comme un lauréat.</span><button type="button" class="btn tiny" onClick=${() => changerVue('admin')}><${Icon} name="shield" size=${14}/> Revenir en admin</button></section>` : null}
       <main class=${'content' + (plein ? ' flush' : '')} id="contenu" tabindex="-1">
         ${page === 'accueil' ? html`<${Home} key=${me.id + me.role} ...${ctx}/>` : null}
@@ -381,7 +428,7 @@ function App({ store }) {
         ${page === 'enquete' ? html`<${EnquetePage} ...${ctx}/>` : null}
       </main>
     </div>
-    <nav class=${'bottom-nav' + (plein && route.sub ? ' cache' : '')}>${navBas.map(([k, l, i]) => html`<a href=${'#' + k} class=${(page === k ? 'on' : '') + (k === 'match' ? ' bn-match' : '')} aria-current=${page === k ? 'page' : null} onClick=${e => { e.preventDefault(); go(k, { onglet: true }); }}><span class="bn-ico"><${Icon} name=${i}/>${dotFor(k) ? html`<span class="dotn" aria-hidden="true"></span>` : null}</span><span>${court(l)}</span>${dotFor(k) ? html`<span class="sr-only">À faire ici</span>` : null}</a>`)}</nav>
+    <nav class=${'bottom-nav a-indic' + (iBas < 0 ? ' sans-indic' : '') + (plein && route.sub ? ' cache' : '')} style=${`--n:${navBas.length};--i:${Math.max(0, iBas)}`}><span class="bn-indic" aria-hidden="true"></span>${navBas.map(([k, l, i]) => html`<a href=${'#' + k} class=${(page === k ? 'on' : '') + (k === 'match' ? ' bn-match' : '')} aria-current=${page === k ? 'page' : null} onClick=${e => { e.preventDefault(); go(k, { onglet: true }); }}><span class="bn-ico"><${Icon} name=${i}/>${dotFor(k) ? html`<span class="dotn" aria-hidden="true"></span>` : null}</span><span>${court(l)}</span>${dotFor(k) ? html`<span class="sr-only">À faire ici</span>` : null}</a>`)}</nav>
     ${cloche ? html`<${Cloche} notifs=${notifs} onGo=${openNotif} onClose=${() => setCloche(false)}/>` : null}
     ${feuille === 'coordonnees' || feuille === 'promo' ? html`<${ConfianceFeuille} ctx=${ctx} quoi=${feuille} key=${feuille + me.id} onClose=${() => setFeuille(null)}/>` : null}
     ${feuille === 'ambassadeur' ? html`<${AmbassadeurFeuille} ctx=${ctx} key=${feuille + me.id} onClose=${() => setFeuille(null)}/>` : null}
@@ -423,10 +470,14 @@ function ThemeToggle({ onChange }) {
 }
 
 
+// Démo : « Voir en tant que », une pastille calme (le prénom seul sur téléphone) ; le vrai menu du système est posé
+// dessus, invisible, pour garder le choix natif (roue sur téléphone, clavier, lecteurs d'écran)
 function PersonaSwitch({ store, go }) {
   const ps = store.personas();
-  return html`<label class="persona"><span class="small muted">Voir en tant que</span>
-    <select id="persona" aria-label="Voir en tant que" value=${store.me?.id} onChange=${e => { store.switchTo(e.target.value); go('accueil'); }}>${ps.map(p => html`<option value=${p.id}>${p._persona}</option>`)}</select></label>`;
+  const lib = ps.find(p => p.id === store.me?.id)?._persona || '';
+  return html`<label class="persona"><span class="small muted persona-lib">Voir en tant que</span>
+    <span class="persona-pilule"><span class="persona-long" aria-hidden="true">${lib}</span>${lib.includes(' · ') ? html`<span class="persona-court" aria-hidden="true" translate="no">${lib.split(' · ').pop()}</span>` : html`<span class="persona-court" aria-hidden="true">${lib.split(' ')[0]}</span>`}<${Icon} name="chevron" size=${15}/>
+    <select id="persona" aria-label="Voir en tant que" value=${store.me?.id} onChange=${e => { store.switchTo(e.target.value); go('accueil'); }}>${ps.map(p => html`<option value=${p.id}>${p._persona}</option>`)}</select></span></label>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1120,14 +1171,25 @@ function guideEtapes(ctx, setCompose) {
 import { OngletsProfil, ongletProfil, routeOnglet } from './community.js';
 import { MesNotifications } from './privacy.js';
 import { FondateurPublicCase } from './fondateurs.js';
+// Ce qui rend un profil utile aux autres, compté pour de vrai (rien d'inventé) : la photo, le CV (étudiant) ou le poste
+// (lauréat), une bio de quelques mots, des compétences, LinkedIn et la ville. L'administration n'a pas d'anneau.
+function remplissageProfil(me) {
+  if (!me || me.role === 'admin') return null;
+  const points = [!!me.photo_path, me.role === 'etudiant' ? !!(me.cv_path || me.cv_url) : profilLaureatFait(me), (me.bio || '').trim().length >= 20,
+    (me.competences || []).length > 0, !!(me.linkedin || '').trim(), !!(me.ville || '').trim()];
+  return { fait: points.filter(Boolean).length, total: points.length };
+}
+
 function MyProfile({ ctx }) {
   const { me, store, go } = ctx;
   const onglet = ongletProfil(ctx.sub);
   // Un onglet de la même page : il remplace l'entrée d'historique (Retour quitte « Mon profil »)
   const versOnglet = k => go(routeOnglet(k), { remplacer: true });
+  // L'anneau du profil : il se remplit à l'arrivée, puis avance à chaque champ ajouté (une photo, une bio…)
+  const r = remplissageProfil(me), p = r ? Math.round(r.fait / r.total * 100) : 0;
+  const anneau = r ? html`<${Anneau} valeur=${p} max=${100} taille=${56} epaisseur=${5} ton=${p === 100 ? 'bien' : 'accent'} label=${`Profil rempli à ${p} %`}><b class="pf-pct" dir="ltr">${p}${html`<small>%</small>`}</b><//>` : null;
   return html`<section class="page narrow pf-page">
-    <header class="page-head"><div><p class="eyebrow">Jamais public</p><h1>Mon profil</h1></div>
-      ${store.mode === 'live' ? html`<button class="btn ghost" onClick=${() => store.signOut()}><${Icon} name="logout"/> Se déconnecter</button>` : null}</header>
+    <${EnTetePage} surTitre="Jamais public" titre="Mon profil" action=${anneau || store.mode === 'live' ? html`${anneau}${store.mode === 'live' ? html`<button class="btn ghost" onClick=${() => store.signOut()}><${Icon} name="logout"/> Se déconnecter</button>` : null}` : null}/>
     <${OngletsProfil} onglet=${onglet} onChange=${versOnglet}/>
     <div class="pf-panneau" id="pf-panneau" role="tabpanel" aria-labelledby=${'pf-onglet-' + onglet}>
       <div class="pf-partie" hidden=${onglet !== 'profil'}>
