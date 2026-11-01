@@ -33,14 +33,24 @@ const ROUTES = {
   rappel_rdv: 'mentorat', relance_offre: 'offres', test: 'accueil',
 };
 
+// Tag attendu par type, sans identifiant dans data (file d'une base plus ancienne) : le type lui-même, comme avant
+// (le chantier serveur y ajoute ensuite l'id de la ligne de file, sauf pour TAGS_FIXES)
+const TAGS = {
+  mentorat_demande: 'mentorat_demande', mentorat_accepte: 'mentorat_accepte', mentorat_deplace: 'mentorat_deplace', mentorat_annule: 'mentorat_annule',
+  merci: 'merci', candidature: 'candidature', candidature_statut: 'candidature_statut', recrutement_a_confirmer: 'recrutement_a_confirmer',
+  recrutement_confirme: 'recrutement_confirme', invitation: 'invitation', reponse: 'reponse', question_routee: 'question_routee', filleul: 'filleul',
+  parrain: 'parrain', cafe: 'cafe', rappel_rdv: 'rappel_rdv', relance_offre: 'relance_offre', test: 'test',
+};
+
 test('chaque type de notification existe en français et en arabe', () => {
   assert.equal(Object.keys(DONNEES).length, 18);
+  assert.deepEqual(Object.keys(TAGS).sort(), Object.keys(DONNEES).sort());
   for (const [kind, data] of Object.entries(DONNEES)) {
     for (const langue of ['fr', 'ar']) {
       const n = N.texteNotif(kind, data, langue, SITE);
       assert.ok(n, `${kind} ${langue}`);
       assert.equal(n.url, SITE + '#' + ROUTES[kind], kind);
-      assert.equal(n.tag, kind);
+      assert.equal(n.tag, TAGS[kind], kind);
       assert.ok(n.title.length > 3 && n.body.length > 3, kind);
       assert.doesNotMatch(n.title + n.body, /undefined|null|NaN|\$\{/, kind);
       if (langue === 'ar') assert.match(n.title + n.body, /[؀-ۿ]/, kind + ' en arabe');
@@ -98,7 +108,7 @@ test('rendez-vous annulé : qui annule est nommé ; l’étudiant peut proposer 
   const e = N.texteNotif('mentorat_annule', { sujet: 'Relire mon CV', m: M, nom: 'Youssef Alami', pour: 'demandeur' }, 'fr', SITE);
   assert.deepEqual([e.title, e.body], ['Rendez-vous annulé : Relire mon CV', 'Youssef Alami a annulé. Tu peux lui proposer d’autres horaires.']);
   assert.equal(e.url, SITE + '#mentorat/reprendre/' + M);
-  assert.equal(e.tag, 'mentorat_annule-' + M);
+  assert.equal(e.tag, 'mentorat-' + M, 'toute la vie du mentorat sur une seule ligne de la barre');
   const l = N.texteNotif('mentorat_annule', { sujet: 'Relire mon CV', m: M, nom: 'Salma Idrissi', pour: 'mentor' }, 'fr', SITE);
   assert.deepEqual([l.body, l.url], ['Salma Idrissi a annulé le rendez-vous.', SITE + '#mentorat']);
   const a = N.texteNotif('mentorat_annule', { sujet: 'Relire mon CV', m: M, nom: 'Youssef Alami', pour: 'demandeur' }, 'ar', SITE);
@@ -130,6 +140,23 @@ test('urgence haute pour tout, sauf ce qui peut attendre', () => {
   assert.equal(N.urgence('mentorat_accepte'), 'high');
   for (const k of ['mentorat_demande', 'merci', 'cafe', 'match', 'test']) assert.equal(N.urgence(k), 'high');
   for (const k of ['rappel_visite', 'enquete']) assert.equal(N.urgence(k), 'normal');
+  // Type par type : seules les nouvelles douces sans heure attendent le réveil du téléphone
+  const NORMAL = ['rappel_visite', 'enquete', 'semaine', 'demande_pause', 'groupe_jour'];
+  for (const k of [...Object.keys(logic.PUSH_KINDS), 'test']) assert.equal(N.urgence(k), NORMAL.includes(k) ? 'normal' : 'high', k);
+  for (const k of ['match_jour', 'match_attente', 'rdv_demain', 'entretien_demain', 'agenda_demain', 'apres_rdv', 'offre_bientot', 'demande_attente',
+    'reponse_utile', 'bravo', 'mentorat_presence']) assert.equal(N.urgence(k), 'high', k);
+});
+
+test('durée de vie chez le service de push : un jour, moins pour ce qui ne sert plus après', () => {
+  const H = 3600;
+  const VIE = {
+    rappel_rdv: 900, rappel_entretien: 900, rdv_demain: 4 * H, entretien_demain: 4 * H, agenda_demain: 4 * H, match_jour: 6 * H,
+    match_attente: 12 * H, offre_bientot: 12 * H, semaine: 12 * H, groupe_jour: 12 * H,
+    apres_rdv: 24 * H, demande_attente: 24 * H, reponse_utile: 24 * H, bravo: 24 * H, demande_pause: 24 * H, mentorat_presence: 24 * H,
+  };
+  for (const k of [...Object.keys(logic.PUSH_KINDS), 'test']) assert.equal(N.dureeVie(k), VIE[k] ?? 86400, k);
+  assert.equal(N.dureeVie('constructor'), 86400);
+  assert.equal(N.dureeVie('inconnu'), 86400);
 });
 
 test('saison à l’heure de Casablanca (septembre → août)', () => {

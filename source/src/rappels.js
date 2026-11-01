@@ -5,17 +5,20 @@ import { html, useState } from './vendor/preact-htm.js';
 import { Icon, BrandLogo } from './ui.js';
 import { addAR } from './i18n.js';
 
-const FIN = 'De plus en plus espacés ; sans notifications activées, par email une fois par semaine au plus.';
+// La case couvre aussi le résumé du dimanche (notification « semaine ») : ta semaine en une ligne, avec les vrais chiffres
+const FIN = 'De plus en plus espacés ; sans notifications activées, par email une fois par semaine au plus. Le dimanche matin, ta semaine en une ligne.';
+const TITRE = 'Rappels et résumé du dimanche';
 export const RAPPELS_NOTIF = {
-  etudiant: ['Rappels', `Après quelques jours sans visite, ce qui t’attend : messages, propositions d’aide, nouvelles offres. ${FIN}`],
-  laureat: ['Rappels', `Après quelques jours sans visite, ce qui t’attend : messages, demandes d’étudiants, candidatures, mentorats qui attendent ta réponse. ${FIN}`],
+  etudiant: [TITRE, `Après quelques jours sans visite, ce qui t’attend : messages, Match, propositions d’aide, réponses à tes questions, événements, nouvelles offres. ${FIN}`],
+  laureat: [TITRE, `Après quelques jours sans visite, ce qui t’attend : messages, Match, réponses à tes questions, événements, demandes d’étudiants, candidatures, mentorats qui attendent ta réponse. ${FIN}`],
 };
 export const PHRASE_VISITE = 'La date de ta dernière visite, pour ne t’envoyer un rappel qu’après quelques jours sans visite, et seulement si quelque chose t’attend.';
 
 addAR({
   Rappels: 'التذكيرات',
-  [RAPPELS_NOTIF.etudiant[1]]: 'بعد أيام دون زيارة، ما ينتظرك: الرسائل، عروض المساعدة، العروض الجديدة. تتباعد شيئًا فشيئًا؛ وإن لم تفعّل الإشعارات، عبر البريد مرة في الأسبوع على الأكثر.',
-  [RAPPELS_NOTIF.laureat[1]]: 'بعد أيام دون زيارة، ما ينتظرك: الرسائل، طلبات الطلبة، الترشيحات، الإرشادات التي تنتظر ردك. تتباعد شيئًا فشيئًا؛ وإن لم تفعّل الإشعارات، عبر البريد مرة في الأسبوع على الأكثر.',
+  [TITRE]: 'التذكيرات وملخص الأحد',
+  [RAPPELS_NOTIF.etudiant[1]]: 'بعد أيام دون زيارة، ما ينتظرك: الرسائل، التوافق، عروض المساعدة، الأجوبة على أسئلتك، الأنشطة، العروض الجديدة. تتباعد شيئًا فشيئًا؛ وإن لم تفعّل الإشعارات، عبر البريد مرة في الأسبوع على الأكثر. وصباح كل أحد، أسبوعك في سطر واحد.',
+  [RAPPELS_NOTIF.laureat[1]]: 'بعد أيام دون زيارة، ما ينتظرك: الرسائل، التوافق، الأجوبة على أسئلتك، الأنشطة، طلبات الطلبة، الترشيحات، الإرشادات التي تنتظر ردك. تتباعد شيئًا فشيئًا؛ وإن لم تفعّل الإشعارات، عبر البريد مرة في الأسبوع على الأكثر. وصباح كل أحد، أسبوعك في سطر واحد.',
   [PHRASE_VISITE]: 'تاريخ زيارتك الأخيرة، كي لا يصلك تذكير إلا بعد أيام دون زيارة، وفقط إن كان شيء ينتظرك.',
   'Tu ne veux plus recevoir de rappels quand quelque chose t’attend ?': 'لا تريد تلقي تذكيرات عندما ينتظرك شيء؟',
   'C’est fait : plus de rappels, ni par email ni sur le téléphone.': 'تم: لا تذكيرات بعد الآن، لا عبر البريد ولا على الهاتف.',
