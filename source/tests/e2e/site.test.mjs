@@ -4607,8 +4607,8 @@ test('offres partagées : une étudiante colle une offre LinkedIn ; la liste met
   // L'étudiante : l'offre portée de son année et de sa filière passe en tête de « Recommandé pour toi »
   await s.page.evaluate(async id => { const d = window.__demo, salma = d.data.profiles.find(p => p.full_name === 'Salma Bennani'); await d.update('offers', id, { filieres: [salma.filiere] }); }, porte.id);
   await s.comme('Salma'); await fermerFete(s); await s.aller('offres');
-  assert.match(await s.page.locator('.reco .ocard').first().innerText(), /PFE méthodes emboutissage, encadré par moi/);
-  assert.equal(await s.page.locator('.reco .ocard').first().locator('.tag.portee').count(), 1);
+  assert.match(await s.page.locator('.reco .pt-carte').first().innerText(), /PFE méthodes emboutissage, encadré par moi/);
+  assert.equal(await s.page.locator('.reco .pt-carte').first().locator('.tag.portee').count(), 1);
   assert.ok((await s.debordement()) <= 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
@@ -4629,7 +4629,8 @@ test('offres portées et partagées en arabe : le badge, la section et « مشا
   assert.equal(await s.page.locator('#partages-titre').innerText(), 'عروض تمت مشاركتها');
   assert.match((await s.page.locator('.partages .opart-par').first().innerText()).replace(/[\u2066-\u2069]/g, ''), /^مشاركة من Youssef · منشور على LinkedIn$/);
   await s.comme('Salma'); await fermerFete(s); await s.aller('offres');
-  await s.page.locator('.ocard.portee .ocard-main').first().click(); await s.page.waitForSelector('.od-portee');
+  // L'offre portée de son année passe dans « Pour toi » (grandes cartes) quand elle y a sa place, sinon dans la liste
+  await s.page.locator('.ocard.portee .ocard-main, .pt-carte.portee .pt-main').first().click(); await s.page.waitForSelector('.od-portee');
   assert.match(await s.page.locator('.od-portee').innerText(), /عرض يقدّمه خريج · مع التأطير/);
   await s.fermer();
   await s.comme('Youssef'); await fermerFete(s); await s.aller('offres');
@@ -4729,14 +4730,15 @@ test('la pastille « Notifications bloquées » : les gestes de cet appareil, en
 // ---------------------------------------------------------------------------
 const fermerFetes = async page => { for (let i = 0; i < 3; i++) { const b = page.locator('.fete-acts .btn').first(); if (!(await b.count())) break; await b.click(); await page.waitForTimeout(250); } };
 const icone = n => `<svg xmlns="http://www.w3.org/2000/svg" width="${n}" height="${n}" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#1F6FB2"/></svg>`;
-const carteDe = (page, texte) => page.locator('.offer-grid .ocard').filter({ hasText: texte }).first();
+// Une offre de la page : une carte de la liste, ou une grande carte de « Pour toi » (ses offres n'y sont pas répétées)
+const carteDe = (page, texte) => page.locator('.offer-grid .ocard, .reco .pt-carte').filter({ hasText: texte }).first();
 
 test('vitrine : le logo d’une entreprise, l’icône de son site quand elle arrive, sinon son monogramme (requête coupée, icône minuscule)', async () => {
   // Les requêtes vers l'extérieur sont coupées (comme dans tous ces tests) : le monogramme, sans image cassée
   const s = await ouvrir({ largeur: 360 });
   await s.comme('Salma'); await fermerFetes(s.page); await s.aller('offres');
   const yazaki = carteDe(s.page, 'Yazaki').locator('.clogo');
-  await s.page.waitForFunction(() => { const c = [...document.querySelectorAll('.offer-grid .ocard')].find(x => x.innerText.includes('Yazaki'))?.querySelector('.clogo'); return c && !c.classList.contains('c-fav'); });
+  await s.page.waitForFunction(() => { const c = [...document.querySelectorAll('.offer-grid .ocard, .reco .pt-carte')].find(x => x.innerText.includes('Yazaki'))?.querySelector('.clogo'); return c && !c.classList.contains('c-fav'); });
   assert.equal(await yazaki.locator('img').count(), 0);
   assert.equal((await yazaki.innerText()).trim(), 'Y');
   assert.equal(await s.page.locator('.clogo.c-fav-ok').count(), 0);
@@ -4758,7 +4760,7 @@ test('vitrine : le logo d’une entreprise, l’icône de son site quand elle ar
   assert.ok(demandes.length && demandes.every(d => !d.referer), 'aucune adresse de page envoyée : ' + JSON.stringify(demandes.slice(0, 3)));
   const ocp = carteDe(t.page, 'OCP');
   await ocp.scrollIntoViewIfNeeded();
-  await t.page.waitForFunction(() => { const c = [...document.querySelectorAll('.offer-grid .ocard')].find(x => x.innerText.includes('OCP'))?.querySelector('.clogo'); return c && !c.classList.contains('c-fav'); });
+  await t.page.waitForFunction(() => { const c = [...document.querySelectorAll('.offer-grid .ocard, .reco .pt-carte')].find(x => x.innerText.includes('OCP'))?.querySelector('.clogo'); return c && !c.classList.contains('c-fav'); });
   assert.equal(await ocp.locator('.clogo img').count(), 0, 'icône trop petite : le monogramme');
   // La mention, sous la liste
   assert.equal(await t.page.locator('.mention-logos').innerText(), 'Logos affichés pour reconnaître les entreprises, sans aucun partenariat.');
@@ -4791,13 +4793,13 @@ test('vitrine : des cartes d’offres parlantes et vraies, « Ça bouge cette se
   await s.page.waitForTimeout(300); await fermerFetes(s.page); await s.aller('offres');
   const carte = carteDe(s.page, TITRE);
   const o = await s.page.evaluate(async t => { const L = await import(new URL('logic.js', location.href).href); return window.__demo.data.offers.find(x => L.titreOffre(x) === t); }, TITRE);
-  assert.equal(await carte.locator('.oc-tete .ocard-meta .oc-ent').innerText(), o.entreprise);
+  assert.equal(await carte.locator('.ocard-meta .oc-ent').innerText(), o.entreprise);
   assert.equal(await carte.locator('.ocard-title').innerText(), TITRE);
   assert.match(await carte.locator('.ocard-tags > .tag:first-child').innerText(), /PFE/);
   assert.equal(await carte.locator('.tag.neutre').innerText(), o.duree);
   assert.equal(await carte.locator('.tag.paye').count(), o.remunere ? 1 : 0);
   assert.equal(await carte.locator('.oc-preuve').innerText(), `${n} étudiants l’ont mise de côté`);
-  assert.equal(await carte.locator('.ocard-foot .avatar').count(), 1, 'le visage du lauréat qui la porte');
+  assert.equal(await carte.locator(':is(.ocard-foot, .pt-visage) .avatar').count(), 1, 'le visage du lauréat qui la porte');
   assert.doesNotMatch((await s.page.locator('.offer-grid').allInnerTexts()).join('\n'), /\bpoints?\b|\bpts\b/i, 'un étudiant ne voit pas de points');
   assert.equal(await s.page.locator('.offer-grid .ocard').count(), await s.page.locator('.offer-grid .oc-tete .clogo').count());
   // Marque-page : l'icône se remplit
@@ -4884,6 +4886,171 @@ test('vitrine : la carte devient la fiche (logo et titre glissent), les cartes a
   await r.page.waitForSelector('.modal .od');
   assert.deepEqual(r.erreurs, []);
   await r.ctx.close();
+});
+
+// Une rangée de puces qui déborde : la puce coupée au bord ne montre que son amorce (14 px), jamais un mot coupé en deux.
+// Rend l'écart entre le masque posé (--of-cache-f) et celui attendu pour la première puce coupée en fin de rangée (zéro quand
+// il en paraît déjà moins de 14 px : le fondu du bord suffit).
+const puceCoupee = (page, sel) => page.evaluate(sel => {
+  const r = document.querySelector(sel), W = r.clientWidth, b = r.getBoundingClientRect(), rtl = getComputedStyle(r).direction === 'rtl';
+  const puces = [...r.children].filter(e => !e.matches('.chips-sep')).map(e => { const x = e.getBoundingClientRect(); const d = rtl ? b.right - x.right : x.left - b.left; return { d, f: d + x.width }; });
+  const c = puces.find(x => x.f > W + .5 && x.d < W);
+  const cache = parseFloat(getComputedStyle(r).getPropertyValue('--of-cache-f')) || 0;
+  return c ? { coupee: true, ecart: Math.abs(cache - Math.max(0, W - (c.d + 14))), fondu: r.classList.contains('fondu-fin') } : { coupee: false, ecart: cache, fondu: r.classList.contains('fondu-fin') };
+}, sel);
+
+// Offres : « Pour toi » en grandes cartes (pas répétées dans la liste), « Nouveau » depuis la dernière visite (par membre, sur
+// cet appareil ; rien à la première), puis le reste. La rangée de filtres se colle sous la barre du haut.
+test('offres : « Pour toi » (3 à 6 grandes cartes), « Nouveau » depuis la dernière visite, rangée de filtres collée qui ne coupe aucune puce (390 px, français et arabe)', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 390, langue });
+    await s.comme('Salma'); await fermerFetes(s.page); await s.aller('offres'); await s.page.waitForSelector('.offer-grid .ocard');
+    const reco = await s.page.locator('.reco .pt-carte .ocard-title').allInnerTexts();
+    assert.ok(reco.length >= 3 && reco.length <= 6, `${langue} : ${reco.length} cartes « Pour toi »`);
+    const liste = await s.page.locator('.offer-grid .ocard .ocard-title').allInnerTexts();
+    assert.deepEqual(reco.filter(t => liste.includes(t)), [], 'une offre de « Pour toi » ne revient pas dans la liste');
+    assert.ok(await s.page.locator('.reco .pt-carte .pt-signal').count() >= 1, '« Ta filière » : une vraie raison, sur la carte');
+    assert.equal(await s.page.locator('.of-nouveau').count(), 0, 'première visite : rien n’est « Nouveau »');
+    // Une offre arrive après cette visite : à la suivante, elle est « Nouveau » ; la fois d'après, elle a été vue
+    const TITRE = 'PFE jumeau numérique de la ligne de peinture';
+    await s.aller('accueil');
+    await s.page.evaluate(async t => { const d = window.__demo, y = d.data.profiles.find(p => p.full_name === 'Youssef El Amrani');
+      await d.insert('offers', { author_id: y.id, type: 'pfe', titre: t, entreprise: 'Renault Group Maroc', ville: 'Tanger', description: 'Sujet de PFE.', annees: [5], filieres: [], status: 'ouverte' }); }, TITRE);
+    await s.aller('offres'); await s.page.waitForSelector('.of-nouveau');
+    assert.match(await s.page.locator('.of-nouveau + .offer-grid').innerText(), new RegExp(TITRE));
+    await s.aller('accueil'); await s.aller('offres'); await s.page.waitForSelector('.offer-grid .ocard');
+    assert.doesNotMatch((await s.page.locator('.of-nouveau + .offer-grid').allInnerTexts()).join('\n'), new RegExp(TITRE), 'vue : elle n’est plus « Nouveau »');
+    assert.match((await s.page.locator('.offer-grid').allInnerTexts()).join('\n'), new RegExp(TITRE), 'elle reste dans la liste');
+    // La rangée de filtres : une puce coupée au bord ne montre que son amorce
+    await s.page.waitForTimeout(300);
+    const p = await puceCoupee(s.page, '.offres-chips');
+    if (p.coupee) assert.ok(p.ecart <= 1.5 && p.fondu, `${langue} : la puce coupée ne montre que son amorce (écart ${p.ecart} px)`);
+    // Collée sous la barre du haut quand on descend
+    await s.page.evaluate(() => scrollTo(0, 1500)); await s.page.waitForTimeout(300);
+    assert.equal(await s.page.locator('.of-filtres.colle').count(), 1);
+    const ecart = await s.page.evaluate(() => Math.abs(document.querySelector('.of-filtres').getBoundingClientRect().top - document.querySelector('.top').getBoundingClientRect().bottom));
+    assert.ok(ecart <= 1, `la rangée se colle sous la barre (${ecart} px)`);
+    // Une puce choisie, rangée collée : la liste repart juste sous la rangée
+    await s.page.locator('.offres-chips .chip').nth(1).click(); await s.page.waitForTimeout(400);
+    const sous = await s.page.evaluate(() => { const b = document.querySelector('.of-filtres').getBoundingClientRect().bottom, c = document.querySelector('.offer-grid .ocard, .offres-page .empty')?.getBoundingClientRect().top; return c - b; });
+    assert.ok(sous >= 0 && sous <= 40, `la liste repart sous la rangée (${sous} px)`);
+    assert.equal(await s.debordement(), 0);
+    if (langue === 'ar') assert.deepEqual((await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x) && !/jumeau numérique/.test(x)), []);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+// La fiche d'une offre : un haut fort (logo, titre, entreprise), les faits en tuiles, qui la propose ; « Postuler » ouvre le
+// formulaire (le même toucher n'envoie rien), la coche paraît une fois la candidature partie. Sur ordinateur, un panneau à côté.
+test('fiche d’une offre : haut aux couleurs de l’entreprise, faits en tuiles, « Proposée par » ; « Postuler » n’envoie rien tout seul, la coche après l’envoi ; panneau sur ordinateur (390 et 1280 px, arabe sombre)', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await fermerFetes(s.page); await s.aller('offres'); await s.page.waitForSelector('.offer-grid .ocard');
+  await s.page.locator('.offer-grid .ocard:has(.ocard-apply) .ocard-main').first().click(); await s.page.waitForSelector('.modal.fiche-offre .od-hero');
+  assert.equal(await s.page.locator('.od h2').count(), 1, 'un seul titre dans la fiche');
+  assert.equal(await s.page.locator('.od-hero h2').count(), 1);
+  assert.equal(Math.round((await s.page.locator('.od-hero .detail-head > .clogo').boundingBox()).width), 64);
+  const faits = await s.page.locator('.od-facts dt').allInnerTexts();
+  assert.ok(faits.includes('Type') && faits.includes('Pour'), faits.join(', '));
+  assert.equal(await s.page.locator('.od-par h3').innerText(), 'Proposée par');
+  assert.equal(await s.page.locator('.od-par .od-author .avatar').count(), 1);
+  // Le titre de la fenêtre flotte sur le voile, puis se pose en verre quand la fiche défile
+  assert.equal(await s.page.locator('.modal.fiche-offre.defile').count(), 0);
+  await s.page.evaluate(() => { document.querySelector('.modal.fiche-offre').scrollTop = 300; }); await s.page.waitForTimeout(150);
+  assert.equal(await s.page.locator('.modal.fiche-offre.defile').count(), 1);
+  const mesCandidatures = () => s.page.evaluate(() => window.__demo.data.applications.filter(a => a.student_id === window.__demo.me.id).length);
+  const avant = await mesCandidatures();
+  await s.page.click('.modal.fiche-offre .od-postuler'); await s.page.waitForSelector('#ap-msg'); await s.page.waitForTimeout(300);
+  assert.equal(await mesCandidatures(), avant, 'toucher « Postuler » ouvre le formulaire, sans rien envoyer');
+  assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'ap-msg');
+  await s.page.fill('#ap-msg', 'Bonjour, je suis en 5A Génie Industriel et ce sujet me parle.');
+  await s.page.click('.modal.fiche-offre .modal-foot button[type="submit"]'); await s.page.waitForTimeout(400); await fermerFetes(s.page);
+  assert.equal(await mesCandidatures(), avant + 1);
+  assert.equal(await s.page.locator('.modal.fiche-offre .modal-foot .od-envoyee .coche').count(), 1);
+  assert.match(await s.page.locator('.modal.fiche-offre .modal-foot').innerText(), /Candidature envoyée/);
+  assert.equal(await s.debordement(), 0);
+  await s.fermer();
+  // Le marque-page de la fiche se pose
+  await s.page.locator('.offer-grid .ocard:has(.ocard-apply) .ocard-main').first().click(); await s.page.waitForSelector('.modal.fiche-offre .od-save');
+  const pose = await s.page.getAttribute('.modal.fiche-offre .od-save', 'aria-pressed');
+  await s.page.click('.modal.fiche-offre .od-save'); await s.page.waitForTimeout(200);
+  assert.notEqual(await s.page.getAttribute('.modal.fiche-offre .od-save', 'aria-pressed'), pose);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Ordinateur : un panneau sur toute la hauteur, à droite ; la liste reste visible à gauche
+  const d = await ouvrir({ largeur: 1280 });
+  await d.comme('Salma'); await fermerFetes(d.page); await d.aller('offres'); await d.page.waitForSelector('.offer-grid .ocard');
+  await d.page.locator('.offer-grid .ocard-main').first().click(); await d.page.waitForSelector('.modal.fiche-offre .od-hero'); await d.page.waitForTimeout(300);
+  const b = await d.page.locator('.modal.fiche-offre').boundingBox();
+  assert.ok(Math.abs(b.x + b.width - (1280 - 12)) <= 2 && b.x > 560, `le panneau à droite : ${JSON.stringify(b)}`);
+  assert.ok(b.height >= 900 - 24 - 2, `sur toute la hauteur : ${b.height}`);
+  assert.deepEqual(d.erreurs, []);
+  await d.ctx.close();
+  // En arabe, sombre : le panneau à gauche, tout traduit
+  const a = await ouvrir({ largeur: 1280, langue: 'ar', theme: 'dark' });
+  await a.comme('Salma'); await fermerFetes(a.page); await a.aller('offres'); await a.page.waitForSelector('.offer-grid .ocard');
+  await a.page.evaluate(() => window.__ensamMissing?.clear());
+  await a.page.locator('.offer-grid .ocard-main').first().click(); await a.page.waitForSelector('.modal.fiche-offre .od-hero'); await a.page.waitForTimeout(300);
+  const g = await a.page.locator('.modal.fiche-offre').boundingBox();
+  assert.ok(Math.abs(g.x - 12) <= 2, `le panneau à gauche en arabe : ${JSON.stringify(g)}`);
+  assert.deepEqual((await a.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), []);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
+// Lauréat : le chiffre du haut mène à ce qu'il compte ; les candidats en gros boutons, le statut choisi dans sa couleur
+test('lauréat : « N candidatures à traiter » ouvre ses candidats ; onglets de la fiche sur toute la largeur (390 px)', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await fermerFetes(s.page); await s.aller('offres'); await s.page.waitForSelector('.of-chiffre');
+  assert.match(await s.page.locator('.of-chiffre').innerText(), /^\d+ candidatures? à traiter$/);
+  await s.page.click('.of-chiffre'); await s.page.waitForSelector('.modal.fiche-offre .cands');
+  assert.match(await s.page.locator('.od-onglets [aria-selected="true"]').innerText(), /^Candidats/);
+  const largeurs = await s.page.locator('.od-onglets > button').evaluateAll(bs => bs.map(b => Math.round(b.getBoundingClientRect().width)));
+  assert.ok(Math.max(...largeurs) - Math.min(...largeurs) <= 1, `onglets égaux : ${largeurs}`);
+  assert.ok(await s.page.locator('.cand-statut .seg > button[data-s].on').count() >= 1);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// Demandes : qui demande (visage, statut), ce qu'il cherche au-dessus du titre, ses mots dans une bulle ; « Je peux aider » au pouce
+test('demandes : le visage et le statut en haut, le type au-dessus du titre ; « Je peux aider » de 44 px ; filtres sans puce coupée (390 px)', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await fermerFetes(s.page); await s.aller('offres/demandes'); await s.page.waitForSelector('.dm-laureat .dm-card');
+  const carte = s.page.locator('.dm-laureat .dm-card').first();
+  assert.equal(await carte.locator('.dm-head .dm-type').count(), 0, 'le type n’est plus dans la ligne du visage');
+  assert.equal(await carte.locator('.dm-sur + .dm-titre').count(), 1);
+  const h = (await carte.locator('.dm-aider').boundingBox()).height;
+  assert.ok(h >= 44, `« Je peux aider » : ${h} px`);
+  await s.page.waitForTimeout(300);
+  const p = await puceCoupee(s.page, '.dm-filtres');
+  if (p.coupee) assert.ok(p.ecart <= 1.5 && p.fondu, `la puce coupée ne montre que son amorce (écart ${p.ecart} px)`);
+  await s.comme('Salma'); await fermerFetes(s.page); await s.aller('offres/demandes'); await s.page.waitForSelector('.dm-promo .dm-card');
+  assert.equal(await s.page.locator('.dm-promo .dm-card').first().locator('.dm-head > .state-pill').count(), 1);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// Le pied d'une carte : la feuille « Réactions » (qui a réagi) est en position fixe ; une carte soulevée au survol
+// (transformée) l'enfermerait dans la carte. Elle doit couvrir l'écran, carte survolée. À 360 px, les prénoms restent entiers.
+test('cartes d’offre : la feuille « Réactions » ouverte depuis le pied couvre tout l’écran, carte survolée ; prénoms entiers à 360 px', async () => {
+  for (const largeur of [1280, 360]) {
+    const s = await ouvrir({ largeur });
+    await s.comme('Salma'); await fermerFetes(s.page); await s.aller('offres'); await s.page.waitForSelector('.offer-grid .ocard');
+    if (largeur === 360) {
+      const coupes = await s.page.evaluate(() => [...document.querySelectorAll('.offer-grid .ocard-foot .oa-nom > span:first-child')]
+        .filter(e => e.getBoundingClientRect().width > 0 && e.scrollWidth > e.clientWidth + 1).map(e => e.textContent));
+      assert.deepEqual(coupes, [], 'à 360 px, les prénoms du pied restent entiers');
+    }
+    const resume = s.page.locator('.offer-grid .ocard-foot .rx-resume').first();
+    await resume.scrollIntoViewIfNeeded(); await resume.hover(); await resume.click(); await s.page.waitForSelector('.rx-feuille');
+    await s.page.waitForTimeout(250);
+    const r = await s.page.evaluate(() => { const b = document.querySelector('.rx-feuille').closest('.modal-back').getBoundingClientRect(); return { x: b.x, y: b.y, l: b.width, h: b.height, L: innerWidth, H: innerHeight }; });
+    assert.ok(Math.abs(r.x) < 1 && Math.abs(r.y) < 1 && Math.abs(r.l - r.L) < 1 && Math.abs(r.h - r.H) < 1, `${largeur} px : la feuille couvre l’écran (${JSON.stringify(r)})`);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
 });
 
 // ---------------------------------------------------------------------------

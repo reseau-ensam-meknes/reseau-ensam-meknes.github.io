@@ -1,9 +1,9 @@
 // Offres : liste compacte, fiche détaillée, candidature, gestion des candidats par le lauréat.
 import { html, useState, useMemo, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, LogoEntreprise, MentionLogos, styleEntreprise, TYPE_ICON, toast, RoleLine, celebrate, injectCSS, PartagerWhatsApp, lienWhatsApp, lienDirect, allerAuChamp, Bouclier } from './ui.js';
-import { useBrouillon } from './ui.js';
+import { useBrouillon, EnTetePage, Compteur, Rangee, vibrer, Coche, mouvementReduit } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
-import { getLang, addAR, arCount } from './i18n.js';
+import { getLang, addAR, arCount, t as tr } from './i18n.js';
 import { TYPES, titreOffre, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande, manquesOffre, peutRecommander, porteApresRefus, demandesPour, typeForNiveau } from './logic.js';
 import { RelanceBanner, PasteOffer, sujetPris } from './recrutement.js';
 import { CvButton } from './cv.js';
@@ -11,12 +11,13 @@ import { SignalerBtn } from './confiance.js';
 import { EntrepriseResume } from './entreprises.js';
 import { recherche } from './geo.js';
 import { MessageBtn } from './messages.js';
-import { DemandesTab } from './demandes.js';
+import { DemandesTab, usePucesEntieres } from './demandes.js';
 import { estPortee, estPartagee, partageExpire, trierOffres, lienValide } from './origine.js';
 import { BadgePortee, PartageCard, SectionPartages, EngagementPortee, NotePartage, PiedPartage, ChoixOrigine, CasePortee, SourcePartage } from './partages.js';
 import { Reactions } from './reactions.js';
 import { preuvesOffre, phraseSauvees, phraseCandidatures } from './vitrine-regles.js';
 import { ouvrirEnDouceur, SqCartes, lieuOffre } from './vitrine.js';
+import { ajouterIcones } from './entree.js';
 // Le message WhatsApp d'une offre, dans la langue de l'interface : de quoi il s'agit, et le lien qui l'ouvre directement.
 // Le type n'est ajouté que si le titre ne le dit pas déjà (« Stage : Stage PFE… »), et l'auteur n'est jamais nommé.
 const TYPES_AR = { stage: 'تدريب', pfe: 'مشروع نهاية الدراسة', etranger: 'تدريب بالخارج', emploi: 'وظيفة' };
@@ -55,8 +56,10 @@ injectCSS('fil-pick', `
 .chip.fil-parc { font-weight: 650; }
 `);
 
-// Un seul segment « Offres · Demandes (n) » ; sous les offres, une seule rangée de puces : les types, la banque de sujets
-// (puce PFE), « Entre lauréats » et « Mes offres » pour les lauréats, « Mises de côté » pour les étudiants.
+// En-tête compact (EnTetePage du Socle) : un seul chiffre en sur-titre, le titre et le seul bouton plein sur une ligne
+// (« Publier une offre » pour un lauréat, « Partager une offre » pour un étudiant), le segment Offres · Demandes (n) dessous.
+// Sous les offres, une seule rangée de puces, collée en haut en défilant : les types, la banque de sujets (puce PFE),
+// « Entre lauréats » et « Mes offres » pour les lauréats, « Mises de côté » pour les étudiants.
 // Les anciennes adresses ouvrent le bon filtre : #offres/sujets la puce PFE, #offres/laureats « Entre lauréats ».
 const LIENS = { sujets: 'pfe', laureats: 'laureats' };
 const presetDe = f => (f === 'laureats' ? { audience: 'laureats', type: 'emploi', annees: [] } : f === 'pfe' ? { type: 'pfe', annees: [5] } : {});
@@ -64,6 +67,57 @@ const presetDe = f => (f === 'laureats' ? { audience: 'laureats', type: 'emploi'
 function demandesOuvertes(data, me, store) {
   if (me.role === 'laureat') return demandesPour(data, me, id => store.byId('profiles', id)).length;
   return (data.demandes || []).filter(d => d.status === 'ouverte' && (me.role === 'admin' || d.auteur_id === me.id)).length;
+}
+// Le chiffre du sur-titre, un seul et vrai : pour un étudiant, les offres ouvertes de son année ; pour un lauréat, les
+// candidatures qui attendent sa réponse sur ses offres, sinon les offres ouvertes du réseau. Rien plutôt que « 0 ».
+const pl = (n, un, plus) => (n > 1 ? plus : un);
+function chiffreOffres({ data, me, saison }) {
+  const ouvertes = data.offers.filter(o => o.status === 'ouverte' && !partageExpire(o));
+  if (me.role === 'etudiant') {
+    const n = niveauOf(me, saison), court = NIVEAUX[n]?.short;
+    const k = ouvertes.filter(o => !forLaureats(o) && (o.annees || []).includes(n)).length;
+    return k ? { v: k, f: x => tr(`${x} ${pl(x, 'offre', 'offres')} ${court ? `pour ta ${court}` : 'pour toi'}`) } : null;
+  }
+  if (me.role === 'laureat') {
+    const miennes = new Set(data.offers.filter(o => o.author_id === me.id && o.status === 'ouverte').map(o => o.id));
+    const attente = data.applications.filter(a => miennes.has(a.offer_id) && a.status === 'postule');
+    const offres = [...new Set(attente.map(a => a.offer_id))];
+    // Le chiffre mène aux candidatures : la fiche de l'offre s'il n'y en a qu'une, sinon « Mes offres »
+    if (attente.length) return { v: attente.length, f: x => tr(`${x} ${pl(x, 'candidature', 'candidatures')} à traiter`), vers: offres.length === 1 ? { offre: offres[0] } : { filtre: 'miennes' } };
+  }
+  return ouvertes.length ? { v: ouvertes.length, f: x => tr(`${x} ${pl(x, 'offre ouverte', 'offres ouvertes')}`) } : null;
+}
+
+// La dernière visite de la page Offres, gardée par membre sur cet appareil : ce qui est arrivé depuis est « Nouveau ».
+// Lue une fois par membre (au premier affichage de la page), réécrite en arrivant et en repartant. Passer aux demandes
+// et revenir ne la remet pas à zéro : elle vit avec la page, pas avec la liste.
+const CLE_VU = 'offres-vu:';
+const lireVu = id => { try { return Number(localStorage.getItem(CLE_VU + id)) || 0; } catch { return 0; } };
+const ecrireVu = id => { try { localStorage.setItem(CLE_VU + id, String(Date.now())); } catch { /* stockage refusé */ } };
+function useDerniereVisite(id) {
+  const vu = useMemo(() => lireVu(id), [id]);
+  useEffect(() => { ecrireVu(id); return () => ecrireVu(id); }, [id]);
+  return vu;
+}
+
+// La rangée de filtres collée sous la barre du haut : on mesure la barre, et l'on sait quand la rangée s'y colle
+// (son fond de verre paraît alors, et la loupe qui ramène à la recherche)
+function useCollee(ref) {
+  const [colle, setColle] = useState(false);
+  useEffect(() => {
+    const el = ref.current; if (!el) return;
+    const haut = document.querySelector('.top');
+    let raf = 0;
+    const mesurer = () => el.style.setProperty('--of-haut', (haut?.offsetHeight || 56) + 'px');
+    const voir = () => { raf = 0; const pos = parseFloat(getComputedStyle(el).top) || 0; setColle(scrollY > 4 && el.getBoundingClientRect().top <= pos + .5); };
+    const plusTard = () => { raf ||= requestAnimationFrame(voir); };
+    mesurer(); voir();
+    addEventListener('scroll', plusTard, { passive: true });
+    const ro = haut && typeof ResizeObserver === 'function' ? new ResizeObserver(() => { mesurer(); plusTard(); }) : null;
+    ro?.observe(haut);
+    return () => { removeEventListener('scroll', plusTard); ro?.disconnect(); cancelAnimationFrame(raf); };
+  }, []);
+  return colle;
 }
 
 export function OffersPage(ctx) {
@@ -77,20 +131,26 @@ export function OffersPage(ctx) {
   const choisir = k => { setFiltre(k); if (lien) go('offres', { remplacer: true }); };
   const nDem = avecDemandes ? demandesOuvertes(data, me, store) : 0;
   const [compose, setCompose] = useState(null);
+  const vu = useDerniereVisite(me.id);
   // Partager une offre vue ailleurs (LinkedIn…) : tout membre, étudiants compris, dès que la base le permet.
   // Un étudiant a le bouton en haut de la page : la section « Offres partagées » ne le répète pas en bas.
   const partager = store.peutOrigine?.() ? () => setCompose({ mode: 'partage' }) : null;
+  const chiffre = demandes ? null : chiffreOffres(ctx);
+  const bouton = demandes ? null
+    : !isStudent ? html`<button class=${'btn primary' + (filtre === 'pfe' ? '' : ' publier-offre')} id="of-publier" onClick=${() => setCompose(presetDe(filtre))}><${Icon} name="plus"/> ${filtre === 'pfe' ? 'Déposer un sujet' : 'Publier une offre'}</button>`
+    : partager ? html`<button class="btn primary" id="of-partager" onClick=${partager}><${Icon} name="share"/> Partager une offre</button>` : null;
+  // Le titre ne bouge pas d'un onglet à l'autre : la place du sur-titre et celle du bouton restent gardées
   return html`<section class="page offres-page">
-    <header class="page-head">
-      <div>${demandes ? null : html`<p class="eyebrow">${isStudent ? NIVEAUX[niveauOf(me, saison)]?.label || 'Pour toi' : 'Par les lauréats'}</p>`}<h1>${demandes ? (isStudent ? 'Demandes' : 'Demandes des étudiants') : 'Offres'}</h1></div>
-      ${!isStudent && !demandes ? html`<button class=${'btn primary' + (filtre === 'pfe' ? '' : ' publier-offre')} id="of-publier" onClick=${() => setCompose(presetDe(filtre))}><${Icon} name="plus"/> ${filtre === 'pfe' ? 'Déposer un sujet' : 'Publier une offre'}</button>` : null}
-      ${isStudent && !demandes && partager ? html`<button class="btn tonal" id="of-partager" onClick=${partager}><${Icon} name="share"/> Partager une offre</button>` : null}
-    </header>
-    ${avecDemandes ? html`<div class="seg offres-seg" role="tablist" aria-label="Offres ou demandes">
-      <button role="tab" aria-selected=${!demandes} class=${demandes ? '' : 'on'} onClick=${() => go('offres', { remplacer: true })}>Offres</button>
-      <button role="tab" aria-selected=${demandes} class=${demandes ? 'on' : ''} onClick=${() => go('offres/demandes', { remplacer: true })}>Demandes${nDem ? html` <span class="count">${nDem}</span>` : null}</button>
-    </div>` : null}
-    ${demandes ? html`<${DemandesTab} ctx=${isStudent ? ctx : { ...ctx, publierOffre: () => setCompose({}) }}/>` : html`<${OfferList} ctx=${ctx} filtre=${filtre} setFiltre=${choisir} onPropose=${() => setCompose(presetDe(filtre))} onPartager=${isStudent ? null : partager}/>`}
+    <${EnTetePage} garderPlace titre=${demandes ? 'Demandes' : 'Offres'}
+      surTitre=${chiffre ? (chiffre.vers ? html`<button type="button" class="of-chiffre" onClick=${() => (chiffre.vers.offre ? ctx.openOffer(chiffre.vers.offre) : choisir(chiffre.vers.filtre))}><${Compteur} v=${chiffre.v} format=${chiffre.f}/><${Icon} name="arrow" size=${14}/></button>`
+        : html`<${Compteur} v=${chiffre.v} format=${chiffre.f}/>`) : demandes && !isStudent ? 'Par les étudiants' : null}
+      action=${bouton || html`<span class="of-place" aria-hidden="true"></span>`}>
+      ${avecDemandes ? html`<div class="of-onglets"><div class="seg offres-seg" role="tablist" aria-label="Offres ou demandes">
+        <button role="tab" aria-selected=${!demandes} class=${demandes ? '' : 'on'} onClick=${() => go('offres', { remplacer: true })}>Offres</button>
+        <button role="tab" aria-selected=${demandes} class=${demandes ? 'on' : ''} onClick=${() => go('offres/demandes', { remplacer: true })}>Demandes${nDem ? html` <span class="count">${nDem}</span>` : null}</button>
+      </div></div>` : null}
+    <//>
+    ${demandes ? html`<${DemandesTab} ctx=${isStudent ? ctx : { ...ctx, publierOffre: () => setCompose({}) }}/>` : html`<${OfferList} ctx=${ctx} vu=${vu} filtre=${filtre} setFiltre=${choisir} onPropose=${() => setCompose(presetDe(filtre))} onPartager=${isStudent ? null : partager}/>`}
     ${compose ? html`<${OfferComposer} ctx=${ctx} preset=${compose} onClose=${() => setCompose(null)}/>` : null}
   </section>`;
 }
@@ -101,13 +161,18 @@ const prenom = p => (p?.full_name || '').split(' ')[0];
 // Une seule raison en couleur (la filière) ; les autres restent neutres
 const Pourquoi = ({ why }) => html`<span class="why">${why.map(w => (w === 'Ta filière' ? html`<span class="mini good">${w}</span>` : html`<span class="mini" translate="no" dir="auto">${w}</span>`))}</span>`;
 const doux = () => (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
+// Une offre arrivée depuis la dernière visite : ouverte, d'un autre membre, publiée après
+const arriveeDepuis = (o, me, vu) => !!vu && o.status === 'ouverte' && o.author_id !== me.id && new Date(o.created_at).getTime() > vu;
 
-function OfferList({ ctx, filtre, setFiltre, onPropose, onPartager }) {
+function OfferList({ ctx, vu, filtre, setFiltre, onPropose, onPartager }) {
   const { data, me, saison, openOffer, go } = ctx;
   const isStudent = me.role === 'etudiant';
   const niveau = niveauOf(me, saison);
   const myTypes = isStudent ? (OBJECTIFS[niveau]?.types || []) : Object.keys(TYPES);
   const [q, setQ] = useState('');
+  const barre = useRef(), rangee = useRef();
+  const colle = useCollee(barre);
+  usePucesEntieres(rangee);
   // Une puce à la fois : Tout, les types de l'année, puis ce qui est propre à chacun
   const puces = [['tous', 'Tout'], ...(myTypes.length > 1 ? myTypes.map(k => [k, TYPES[k].label, TYPE_ICON[k]]) : []),
     ...(isStudent ? [['sauvees', 'Mises de côté', 'bookmark']] : [['laureats', 'Entre lauréats', 'briefcase'], ['miennes', 'Mes offres', 'user']])];
@@ -130,11 +195,15 @@ function OfferList({ ctx, filtre, setFiltre, onPropose, onPartager }) {
   const list = tri.filter(o => !estPartagee(o));
   const partagees = tri.filter(estPartagee);
   const plain = f === 'tous' && !q.trim();
-  // Les recommandées passent en tête et ne sont pas répétées dans la liste en dessous
+  // « Pour toi » passe en tête (3 à 6 grandes cartes) ; ses offres ne sont pas répétées dans la liste en dessous
   const avecReco = isStudent && plain && list.length > 5;
-  const reco = avecReco ? recoFor(ctx, 3) : [];
+  const reco = avecReco ? choisirPourToi(recoFor(ctx, 6)) : [];
   const dejaVues = new Set(reco.map(x => x.o.id));
   const reste = avecReco ? list.filter(o => !dejaVues.has(o.id)) : list;
+  // « Nouveau » : ce qui est arrivé depuis la dernière visite, puis le reste
+  const nouveaux = f === 'miennes' || f === 'sauvees' ? [] : reste.filter(o => arriveeDepuis(o, me, vu));
+  const anciens = nouveaux.length ? reste.filter(o => !nouveaux.includes(o)) : reste;
+  const titreReste = avecReco && NIVEAUX[niveau]?.short ? `Les autres offres de ${NIVEAUX[niveau].short}` : 'Les autres offres';
   // Liste vide : une phrase et une seule action pour repartir
   const versToutes = { label: 'Voir toutes les offres', icon: 'feed', onClick: () => setFiltre('tous') };
   const conseil = { label: 'Demander un conseil', icon: 'mentor', onClick: () => go('mentorat') };
@@ -150,15 +219,39 @@ function OfferList({ ctx, filtre, setFiltre, onPropose, onPartager }) {
       ? html`<${Empty} icon="feed" title=${NIVEAUX[niveau]?.short ? `Pas encore d’offre pour ta ${NIVEAUX[niveau].short}` : 'Pas encore d’offre pour ton année'} action=${{ label: 'Publier ma demande', icon: 'send', onClick: () => go('offres/demandes/nouvelle') }}>Le réseau vient d’ouvrir. Dis aux lauréats ce que tu cherches : ils te répondent ici.<//>`
       : html`<${Empty} icon="feed" title=${NIVEAUX[niveau]?.short ? `Pas encore d’offre pour ta ${NIVEAUX[niveau].short}` : 'Pas encore d’offre pour ton année'} action=${{ label: 'Demander un conseil', icon: 'mentor', onClick: () => go('mentorat') }}>Le réseau vient d’ouvrir. Un lauréat peut déjà te conseiller en visio.<//>`)
     : html`<${Empty} icon="feed" title="Aucune offre ici" action=${effacer}>${plain ? 'Le réseau vient d’ouvrir : la première offre peut être la tienne.' : 'Change la recherche ou les filtres.'}<//>`;
+  // La loupe de la rangée collée : retour en haut, le curseur dans la recherche
+  // Une puce choisie : elle reste en vue dans sa rangée ; si la rangée est collée, la liste repart juste sous elle
+  const filtrer = k => {
+    setFiltre(k);
+    requestAnimationFrame(() => {
+      const r = rangee.current, b = barre.current, on = r?.querySelector('.chip.on');
+      if (r && on) {
+        const rr = r.getBoundingClientRect(), ro = on.getBoundingClientRect();
+        if (ro.left < rr.left + 24 || ro.right > rr.right - 24) r.scrollBy({ left: (ro.left + ro.width / 2) - (rr.left + rr.width / 2), behavior: doux() });
+      }
+      const ancre = b?.previousElementSibling;
+      if (b?.classList.contains('colle') && ancre) {
+        const ecart = parseFloat(getComputedStyle(b.parentElement).rowGap) || 0, haut = parseFloat(getComputedStyle(b).top) || 0;
+        scrollTo({ top: Math.max(0, scrollY + ancre.getBoundingClientRect().bottom + ecart - haut), behavior: doux() });
+      }
+    });
+  };
+  const chercher = () => { const c = document.getElementById('f-q'); if (!c) return; c.focus({ preventScroll: true }); scrollTo({ top: 0, behavior: doux() }); };
+  const carte = (o, i) => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} i=${i} sujets=${f === 'pfe'} onOpen=${() => openOffer(o.id)}/>`;
 
   return html`<div class="sub-page">
-    <label class="search"><${Icon} name="search" size=${16}/><input id="f-q" placeholder="Entreprise, ville, filière…" value=${q} onInput=${e => setQ(e.target.value)}/></label>
-    ${puces.length > 1 ? html`<div class="chips offres-chips" role="group" aria-label="Filtrer les offres">${puces.map(([k, l, ic], i) => html`${i === sep && sep > 1 ? html`<span class="chips-sep" aria-hidden="true"></span>` : null}<button class=${'chip' + (TYPES[k] ? ' t-' + k : '') + (f === k ? ' on' : '')} aria-pressed=${f === k} onClick=${() => setFiltre(f === k && k !== 'tous' ? 'tous' : k)}>${ic ? html`<${Icon} name=${ic} size=${15}/>` : null}${l}</button>`)}</div>` : null}
-    ${avecReco ? html`<${RecoOffers} ctx=${ctx} reco=${reco} inOffres/>` : null}
-    ${avecReco && reste.length ? html`<div class="section-head"><h2>${NIVEAUX[niveau]?.short ? `Les autres offres de ${NIVEAUX[niveau].short}` : 'Les autres offres'}</h2><span class="count">${reste.length}</span></div>` : null}
+    <label class="search"><${Icon} name="search" size=${16}/><input id="f-q" type="search" enterkeyhint="search" placeholder="Entreprise, ville, filière…" aria-label="Rechercher une offre" value=${q} onInput=${e => setQ(e.target.value)}/></label>
+    ${puces.length > 1 ? html`<div class=${'of-filtres' + (colle ? ' colle' : '')} ref=${barre}>
+      <button type="button" class="of-loupe" aria-label="Rechercher une offre" onClick=${chercher}><${Icon} name="search" size=${18}/></button>
+      <div class="chips offres-chips" role="group" aria-label="Filtrer les offres" ref=${rangee}>${puces.map(([k, l, ic], i) => html`${i === sep && sep > 1 ? html`<span class="chips-sep" aria-hidden="true"></span>` : null}<button class=${'chip' + (TYPES[k] ? ' t-' + k : '') + (f === k ? ' on' : '')} aria-pressed=${f === k} onClick=${() => filtrer(f === k && k !== 'tous' ? 'tous' : k)}>${ic ? html`<${Icon} name=${ic} size=${15}/>` : null}${l}</button>`)}</div>
+    </div>` : null}
+    ${reco.length ? html`<${PourToi} ctx=${ctx} reco=${reco} vu=${vu}/>` : null}
+    ${nouveaux.length ? html`<div class="section-head of-nouveau"><h2>Nouveau <span class="of-depuis">depuis ta dernière visite</span></h2><span class="count">${nouveaux.length}</span></div>
+      <div class="offer-grid">${nouveaux.map(carte)}</div>` : null}
+    ${(avecReco || nouveaux.length) && anciens.length ? html`<div class="section-head"><h2>${titreReste}</h2><span class="count">${anciens.length}</span></div>` : null}
     <div class="offer-grid">
-      ${reste.length ? reste.map((o, i) => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} i=${i} sujets=${f === 'pfe'} onOpen=${() => openOffer(o.id)}/>`)
-        : ctx.store.enAttente && !data.offers.length ? html`<${SqCartes}/>` : avecReco || partagees.length ? null : vide}
+      ${anciens.length ? anciens.map((o, i) => carte(o, i + nouveaux.length))
+        : nouveaux.length ? null : ctx.store.enAttente && !data.offers.length ? html`<${SqCartes}/>` : avecReco || partagees.length ? null : vide}
     </div>
     ${f === 'sauvees' ? null : html`<${SectionPartages} ctx=${ctx} list=${partagees} onPartager=${plain ? onPartager : null}/>`}
     <${MentionLogos} noms=${[...reste, ...reco.map(x => x.o), ...(f === 'sauvees' ? [] : partagees)].map(o => o.entreprise)}/>
@@ -173,27 +266,78 @@ export function recoFor(ctx, max) {
   return data.offers.filter(o => o.status === 'ouverte' && !estPartagee(o) && !forLaureats(o) && (o.annees || []).includes(n) && !data.applications.some(a => a.offer_id === o.id && a.student_id === me.id))
     .map(o => { const m = offerMatch(o, me); return { o, ...m, score: m.score + (estPortee(o) ? 3 : 0) }; }).sort((a, b) => b.score - a.score || new Date(b.o.created_at) - new Date(a.o.created_at)).slice(0, max);
 }
+// « Pour toi » : de 3 à 6 offres. Celles qui ont une vraie raison (sa filière, une compétence, sa ville, un lauréat qui
+// encadre) ; s'il y en a moins de trois, les trois premières du classement.
+const choisirPourToi = r => { const fortes = r.filter(x => x.why.length || estPortee(x.o)); return fortes.length >= 3 ? fortes : r.slice(0, 3); };
 
-export function RecoOffers({ ctx, max = 3, inOffres = false, reco, exclure }) {
-  const { openOffer, go } = ctx;
-  // Une offre déjà montrée plus haut (prochaine étape, « Cette semaine ») n'est pas redite ici
-  const liste = reco || recoFor(ctx, max + (exclure?.size || 0)).filter(x => !exclure?.has(x.o.id)).slice(0, max);
-  if (!liste.length) return null;  // rien à recommander : pas de bloc vide ni de promesse
-  return html`<div class="reco">
-    <div class="section-head"><h2 class="h-ico"><${Icon} name="spark"/> Recommandé pour toi</h2>${inOffres ? null : html`<button class="btn tiny ghost" onClick=${() => go('offres')}>Toutes les offres <${Icon} name="arrow" size=${14}/></button>`}</div>
-    <div class="offer-grid one">${liste.map(({ o, why }, i) => html`<${OfferCard} key=${o.id} o=${o} ctx=${ctx} i=${i} why=${why} onOpen=${() => openOffer(o.id)}/>`)}</div>
-  </div>`;
+// « Pour toi » : une rangée de grandes cartes qui défile (Rangee du Socle), aimantée, flèches à la souris
+function PourToi({ ctx, reco, vu }) {
+  return html`<${Rangee} titre="Pour toi" sousTitre="Choisies d’après ta filière et ton profil" cls="reco pt-rangee">
+    ${reco.map(({ o, why }, i) => html`<${CartePourToi} key=${o.id} o=${o} why=${why} ctx=${ctx} i=${i} nouveau=${arriveeDepuis(o, ctx.me, vu)}/>`)}
+  <//>`;
 }
 
-// Carte d'une offre : toute la carte ouvre la fiche. L'entreprise d'abord (son logo, son nom, sa ville), le poste en grand,
-// l'essentiel en puces (type, durée, rémunéré), puis ce qui est vrai autour : mises de côté, candidatures (pour son auteur).
-// S'il peut recommander, on le dit simplement, en vert. Un seul pied : le visage du lauréat qui la partage, les réactions,
-// Postuler, le marque-page.
-const vientDeSauver = new Map();   // offre → moment où elle vient d'être mise de côté ici (le marque-page fait un petit bond)
+// Une grande carte « Pour toi » : le logo en grand sur un voile aux couleurs de l'entreprise,
+// le poste, l'entreprise et la ville, trois puces au plus, la raison vraie (« Ta filière »), puis qui la propose.
+// Toute la carte ouvre la fiche (le logo et le titre y glissent) ; le marque-page reste à part, en haut.
+function CartePourToi({ o, why, ctx, i, nouveau }) {
+  const { data, me, store } = ctx;
+  const author = store.byId('profiles', o.author_id);
+  const saved = data.reactions.find(r => r.offer_id === o.id && r.user_id === me.id && r.kind === 'save');
+  const dl = daysUntil(o.deadline);
+  const urgent = o.status === 'ouverte' && dl !== null && dl >= 0 && dl <= 7;
+  const lieu = lieuOffre(o);
+  const coopt = peutPostulerA(o, me, ctx.saison) && !sujetPris(data, o) && !!author && store.voitChamp(author, 'travail') && peutRecommander(o, author);
+  const pv = preuvesOffre(data, o, me);
+  const tags = pucesOffre(o).slice(0, 3);
+  const pop = Date.now() - (vientDeSauver.get(o.id) || 0) < 900;
+  return html`<article class=${'pt-carte' + (estPortee(o) ? ' portee' : '')} style=${`${styleEntreprise(o.entreprise)};--i:${i}`}>
+    <button type="button" class="pt-main" onClick=${e => ouvrirEnDouceur(e.currentTarget.closest('.pt-carte'), () => ctx.openOffer(o.id))} aria-label=${`Ouvrir : ${titreOffre(o)}`}>
+      <span class="pt-voile" aria-hidden="true"></span>
+      <span class="pt-corps">
+        <span class="pt-tete"><${LogoEntreprise} nom=${o.entreprise} lien=${o.lien} taille=${60}/>${why.includes('Ta filière') ? html`<span class="pt-signal"><${Icon} name="check" size=${14}/>Ta filière</span>` : null}</span>
+        <strong class="ocard-title" translate="no" dir="auto">${titreOffre(o)}</strong>
+        <span class="ocard-meta"><span class="oc-ent"><bdi translate="no">${o.entreprise}</bdi></span>${lieu ? html`<span class="oc-lieu"><bdi translate="no">${lieu}</bdi></span>` : null}</span>
+        <span class="ocard-tags">${tags}</span>
+        <span class="pt-bas">
+          ${pv.sauvees ? html`<span class="oc-preuve"><${Icon} name="bookmark" size=${16}/><span>${phraseSauvees(pv.sauvees, pv.public)}</span></span>` : null}
+          ${author ? html`<span class=${'pt-visage' + (coopt ? ' coopt' : '')}><${Avatar} p=${author} size=${24}/>${coopt ? html`<span class="pt-qui">${`${prenom(author)} peut te recommander`}</span>` : html`<span class="pt-qui"><span>Proposée par</span> <span translate="no" dir="auto">${prenom(author)}</span></span>`}</span>` : null}
+        </span>
+      </span>
+    </button>
+    ${urgent ? html`<span class="tag urgent pt-coin">${dl === 0 ? 'Dernier jour' : `J-${dl}`}</span>` : nouveau ? html`<span class="tag nouvelle pt-coin">Nouveau</span>` : null}
+    ${o.author_id !== me.id ? html`<${Garder} ctx=${ctx} o=${o} saved=${saved} pop=${pop} cls="pt-garder" taille=${18}/>` : null}
+  </article>`;
+}
+
+// Les puces d'une offre, dans l'ordre : le type (toujours en tête), fermée, portée, entre lauréats, durée, rémunéré
+function pucesOffre(o) {
+  return [
+    html`<span class=${'tag t-' + o.type} key="t"><${Icon} name=${TYPE_ICON[o.type]} size=${13}/>${TYPES[o.type]?.label}</span>`,
+    o.status !== 'ouverte' ? html`<span class="tag done" key="d">${o.status === 'pourvue' ? 'Pourvue' : 'Fermée'}</span>` : null,
+    estPortee(o) ? html`<${BadgePortee} key="p"/>` : null,
+    forLaureats(o) ? html`<span class="tag entre" key="e">Entre lauréats</span>` : null,
+    o.duree ? html`<span class="tag neutre" key="u"><${Icon} name="clock" size=${13}/><span translate="no" dir="auto">${o.duree}</span></span>` : null,
+    o.remunere ? html`<span class="tag paye" key="r">Rémunéré</span>` : null,
+  ].filter(Boolean);
+}
+
+// Le marque-page : il se remplit et fait un petit bond, avec une vibration légère (si l'appareil le permet)
+const vientDeSauver = new Map();   // offre → moment où elle vient d'être mise de côté ici
+function Garder({ ctx, o, saved, pop, cls = '', taille = 16 }) {
+  const { me, store, act } = ctx;
+  const sauver = () => { if (!saved) { vientDeSauver.set(o.id, Date.now()); vibrer(10); } act(() => saved ? store.remove('reactions', saved.id) : store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save' })); };
+  return html`<button type="button" class=${'icon-btn small ocard-garder ' + cls + (saved ? ' on' : '') + (saved && pop ? ' pop' : '')} aria-pressed=${!!saved} aria-label=${saved ? 'Ne plus mettre de côté' : 'Mettre de côté'} onClick=${sauver}><${Icon} name="bookmark" size=${taille}/></button>`;
+}
+
+// Carte d'une offre, compacte : toute la carte ouvre la fiche. Le logo, le poste (deux lignes au plus), puis
+// « Entreprise · Ville · il y a 3 j » sur une ligne, trois puces sobres au plus, et ce qui est vrai autour (il peut te
+// recommander, en vert ; mises de côté, candidatures pour son auteur). Un seul pied, sur une ligne : le visage du
+// lauréat qui la partage, les réactions, Postuler (ou l'état), le marque-page.
 export function OfferCard({ o, ctx, onOpen, why, sujets = false, i = 0 }) {
   // Une offre partagée (vue ailleurs) : la carte compacte, avec le lien vers le site d'origine
   if (estPartagee(o)) return html`<${PartageCard} o=${o} ctx=${ctx} onOpen=${onOpen} i=${i}/>`;
-  const { data, me, store, act } = ctx;
+  const { data, me, store } = ctx;
   const author = store.byId('profiles', o.author_id);
   const saved = data.reactions.find(r => r.offer_id === o.id && r.user_id === me.id && r.kind === 'save');
   const apps = data.applications.filter(a => a.offer_id === o.id);
@@ -213,55 +357,69 @@ export function OfferCard({ o, ctx, onOpen, why, sujets = false, i = 0 }) {
   const preuve = pv.candidatures ? ['inbox', phraseCandidatures(pv.candidatures)] : pv.sauvees ? ['bookmark', phraseSauvees(pv.sauvees, pv.public)] : null;
   const pop = Date.now() - (vientDeSauver.get(o.id) || 0) < 900;
   // « il y a 3 j » dit qu'elle est fraîche ; au-delà d'un mois, la date reste dans la fiche
-  const recente = Date.now() - new Date(o.created_at) < 30 * 864e5;
-  const sauver = () => { if (!saved) { vientDeSauver.set(o.id, Date.now()); try { navigator.vibrate?.(8); } catch { /* */ } } act(() => saved ? store.remove('reactions', saved.id) : store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save' })); };
-  // Où en est-on (sa candidature, un sujet pris ou libre) ; sinon, quand il n'y a rien à faire, depuis quand elle est là,
-  // écrit sous le prénom de l'auteur (la ligne du pied garde la place pour les réactions et le marque-page)
+  const quand = Date.now() - new Date(o.created_at) < 30 * 864e5 ? timeAgo(o.created_at) : null;
+  // Où en est-on : sa candidature, un sujet pris ou libre
   const etat = myApp ? html`<span class=${'state-pill a-' + myApp.status}>${APP_STATUS[myApp.status]}</span>` : pris ? html`<span class="state-pill s-trouve">Pris</span>`
     : sujets && o.type === 'pfe' && !canApply && o.status === 'ouverte' && !mine ? html`<span class="state-pill s-recherche">Disponible</span>` : null;
-  const quand = !etat && !canApply && recente ? timeAgo(o.created_at) : null;
   return html`<article class=${'ocard' + (o.status !== 'ouverte' ? ' closed' : '') + (estPortee(o) ? ' portee' : '')} style=${`${styleEntreprise(o.entreprise)};--i:${i}`}>
     <button class="ocard-main" onClick=${e => ouvrirEnDouceur(e.currentTarget.closest('.ocard'), onOpen)} aria-label=${`Ouvrir : ${titreOffre(o)}`}>
       <span class="oc-tete">
         <${LogoEntreprise} nom=${o.entreprise} lien=${o.lien} taille=${44}/>
-        <span class="ocard-meta" translate="no" dir="auto"><span class="oc-ent">${o.entreprise}</span>${lieu ? html`<span class="oc-lieu"><span class="oc-sep"> · </span>${lieu}</span>` : null}</span>
-        ${urgent ? html`<span class="tag urgent oc-coin">${dl === 0 ? 'Dernier jour' : `J-${dl}`}</span>` : pv.nouvelle && !myApp ? html`<span class="tag nouvelle oc-coin">Nouvelle</span>` : null}
+        <span class="oc-corps">
+          <strong class="ocard-title" translate="no" dir="auto">${titreOffre(o)}</strong>
+          <span class="ocard-meta"><span class="oc-ent"><bdi translate="no">${o.entreprise}</bdi></span>${lieu ? html`<span class="oc-lieu"><bdi translate="no">${lieu}</bdi></span>` : null}${quand ? html`<span class="oc-quand">${quand}</span>` : null}</span>
+        </span>
+        ${urgent ? html`<span class="tag urgent oc-coin">${dl === 0 ? 'Dernier jour' : `J-${dl}`}</span>` : null}
       </span>
-      <strong class="ocard-title" translate="no" dir="auto">${titreOffre(o)}</strong>
-      <span class="ocard-tags"><span class=${'tag t-' + o.type}><${Icon} name=${TYPE_ICON[o.type]} size=${13}/>${TYPES[o.type]?.label}</span>
-        ${estPortee(o) ? html`<${BadgePortee}/>` : null}
-        ${forLaureats(o) ? html`<span class="tag entre">Entre lauréats</span>` : null}
-        ${o.duree ? html`<span class="tag neutre"><${Icon} name="clock" size=${13}/><span translate="no" dir="auto">${o.duree}</span></span>` : null}
-        ${o.remunere ? html`<span class="tag paye">Rémunéré</span>` : null}
-        ${o.status !== 'ouverte' ? html`<span class="tag done">${o.status === 'pourvue' ? 'Pourvue' : 'Fermée'}</span>` : null}</span>
+      <span class="ocard-tags">${pucesOffre(o).slice(0, 3)}</span>
       ${why?.length ? html`<${Pourquoi} why=${why}/>` : null}
       ${coopt ? html`<span class="oc-preuve oa-coopt"><${Icon} name="thumb" size=${16}/><span>${`${prenom(author)} peut te recommander`}</span></span>` : null}
       ${preuve ? html`<span class="oc-preuve"><${Icon} name=${preuve[0]} size=${16}/><span>${preuve[1]}</span></span>` : null}
     </button>
     <footer class="ocard-foot">
-      ${author ? html`<span class=${'ocard-author' + (coopt ? ' coopt' : '')}><${Avatar} p=${author} size=${30}/><span class="oa-txt"><span class="oa-nom"><span translate="no" dir="auto">${prenom(author)}</span><span class="oa-promo">${`promo ${author.promo}`}</span></span>${quand ? html`<span class="oa-quand">${quand}</span>` : null}</span></span>` : null}
-      ${author ? null : html`<span class="spacer"></span>`}
+      ${author ? html`<span class=${'ocard-author' + (coopt ? ' coopt' : '')}><${Avatar} p=${author} size=${28}/><span class="oa-txt"><span class="oa-nom"><span translate="no" dir="auto">${prenom(author)}</span><span class="oa-promo">${`promo ${author.promo}`}</span></span></span></span>` : html`<span class="spacer"></span>`}
       <${Reactions} ctx=${ctx} cible=${{ offer_id: o.id }} cls="ocard-rx" court/>
-      ${etat || (quand && !author ? html`<span class="muted small nowrap">${quand}</span>` : null)}
+      ${etat}
       ${canApply ? html`<button class="btn tiny tonal ocard-apply" onClick=${() => ctx.openOffer(o.id, true)}>Postuler</button>` : null}
-      ${!mine ? html`<button class=${'icon-btn small ocard-garder' + (saved ? ' on' : '') + (saved && pop ? ' pop' : '')} aria-pressed=${!!saved} aria-label=${saved ? 'Ne plus mettre de côté' : 'Mettre de côté'} onClick=${sauver}><${Icon} name="bookmark" size=${16}/></button>` : null}
+      ${!mine ? html`<${Garder} ctx=${ctx} o=${o} saved=${saved} pop=${pop}/>` : null}
     </footer>
   </article>`;
 }
 
-// Qui partage l'offre, juste sous le titre : c'est souvent la vraie raison de postuler
+// « Proposée par » : le visage, le nom, ce qu'il fait ; puis ce qui compte pour qui postule (il répond ici, ou il peut recommander)
 function AuteurOffre({ ctx, o, author, candidat }) {
-  const p = prenom(author);
   const coopt = candidat && o.status === 'ouverte' && ctx.store.voitChamp(author, 'travail') && peutRecommander(o, author);
-  const phrase = !candidat ? `Partagée par ${p}` : coopt ? `Partagée par ${p}, qui peut te recommander` : `Partagée par ${p}, qui reçoit ta candidature et te répond ici`;
+  const note = !candidat ? null : coopt ? `${prenom(author)} peut te recommander` : 'Reçoit ta candidature et te répond ici';
   return html`<button type="button" class=${'od-author' + (coopt ? ' coopt' : '')} onClick=${() => ctx.openProfile(author)}>
-    <${Avatar} p=${author} size=${40}/>
-    <span class="od-author-txt"><span class="od-author-line">${phrase}<${Bouclier} p=${author}/></span><${RoleLine} p=${author} score=${ctx.scores.get(author.id)}/></span>
+    <${Avatar} p=${author} size=${52}/>
+    <span class="od-author-txt">
+      <span class="od-author-line"><span translate="no" dir="auto">${author.full_name}</span><${Bouclier} p=${author}/></span>
+      <${RoleLine} p=${author} score=${ctx.scores.get(author.id)}/>
+      ${note ? html`<span class="od-author-note"><${Icon} name=${coopt ? 'check' : 'chat'} size=${14}/><span>${note}</span></span>` : null}
+    </span>
     <span class="od-author-ico" aria-hidden="true"><${Icon} name="arrow" size=${16}/></span>
   </button>`;
 }
 
-// Fiche complète d'une offre. Sur téléphone, une feuille qui monte du bas ; l'action principale reste collée en bas.
+// Le titre de la fenêtre flotte sur les couleurs de l'entreprise, puis se pose en verre dès que la fiche défile
+function useHautEnVerre(ref, deps) {
+  useEffect(() => {
+    const m = ref.current?.closest('.modal');
+    if (!m) return;
+    let raf = 0;
+    const regler = () => { raf = 0; m.classList.toggle('defile', m.scrollTop > 6); };
+    const bientot = () => { raf ||= requestAnimationFrame(regler); };
+    m.addEventListener('scroll', bientot, { passive: true });
+    regler();
+    return () => { cancelAnimationFrame(raf); m.removeEventListener('scroll', bientot); };
+  }, deps);
+}
+
+const TITRE_DESC = { pfe: 'Le sujet', emploi: 'Le poste' };
+
+// Fiche complète d'une offre. Téléphone : une feuille qui monte du bas ; grand écran : un panneau à côté de la liste.
+// En haut, les couleurs de l'entreprise derrière le logo, le poste et l'entreprise ; puis les faits en tuiles, la
+// description, qui la propose. « Postuler » reste collé en bas, et devient une coche quand la candidature part.
 export function OfferDetail({ ctx, id, onClose, apply }) {
   const { data, me, store, act } = ctx;
   const o = store.byId('offers', id);
@@ -273,6 +431,10 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
   const [edit, setEdit] = useState(false);
   const [menu, setMenu] = useState(false);
   const [form, setForm] = useState(!!apply); // le formulaire de candidature est ouvert
+  const [envoyee, setEnvoyee] = useState(false); // la candidature vient de partir d'ici : la coche se dessine
+  const [pop, setPop] = useState(false); // le marque-page vient d'être posé : il fait un petit bond
+  const racine = useRef();
+  useHautEnVerre(racine, [!!o, edit]);
   const versOffres = label => html`<div class="row-end"><button class="btn primary" onClick=${() => { onClose(); ctx.go('offres'); }}>${label}</button></div>`;
   if (!o) return html`<${Modal} title="Offre" onClose=${onClose}><p>Cette offre n’est plus disponible, ou elle ne t’est pas destinée.</p>${versOffres('Voir les offres')}<//>`;
   if (edit) return html`<${OfferComposer} ctx=${ctx} offer=${o} onClose=${() => setEdit(false)}/>`;
@@ -298,22 +460,38 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
   const candidat = peutPostulerA(o, me, ctx.saison);
   const myApp = candidat ? apps.find(a => a.student_id === me.id) : null;
   const saved = data.reactions.find(r => r.offer_id === o.id && r.user_id === me.id && r.kind === 'save');
-  const toggleSave = () => act(() => saved ? store.remove('reactions', saved.id) : store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save' }));
+  const toggleSave = () => {
+    if (!saved) { setPop(true); vibrer(10); }
+    act(() => saved ? store.remove('reactions', saved.id) : store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save' }));
+  };
   const dl = o.deadline ? new Date(o.deadline + 'T12:00:00') : null;
   const jours = daysUntil(o.deadline);
   const urgent = o.status === 'ouverte' && jours !== null && jours >= 0 && jours <= 7;
   const dateTxt = dl ? dl.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', ...(dl.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}) }) : '';
-  // Les faits en petites tuiles (2 par ligne) ; le type est déjà dans le titre de la fenêtre
-  const facts = [
-    ['Lieu', 'pin', html`<span translate="no" dir="auto">${o.ville || ''}</span>${o.pays ? `${o.ville ? ', ' : ''}${o.pays}` : ''}`],
-    o.duree ? ['Durée', 'clock', html`<span translate="no" dir="auto">${o.duree}</span>${o.remunere ? ' · rémunéré' : ''}`] : null,
-    dl ? ['Date limite', 'calendar', html`${dateTxt}${urgent ? html` <span class="tag urgent">${jours === 0 ? 'Dernier jour' : `J-${jours}`}</span>` : null}`] : null,
-    ['Pour', 'people', forLaureats(o) ? 'Lauréats' : [...(o.annees || []).map(a => NIVEAUX[a]?.short), ...(o.filieres?.length ? resumeFilieres(o.filieres) : ['toutes filières'])].join(' · ')],
+  const lieu = lieuOffre(o);
+  // À qui elle s'adresse : chaque morceau reste entier (« GE-MCI » ne se coupe pas), la ligne ne commence jamais par « · »
+  const pour = forLaureats(o) ? ['Lauréats'] : [...(o.annees || []).map(a => NIVEAUX[a]?.short).filter(Boolean), ...(o.filieres?.length ? resumeFilieres(o.filieres) : ['toutes filières'])];
+  // Les faits en tuiles : ce qu'on regarde d'abord (type, durée, lieu, rémunéré, date limite), puis à qui elle s'adresse
+  const faits = [
+    ['Type', TYPE_ICON[o.type] || 'briefcase', TYPES[o.type]?.label || 'Offre'],
+    o.duree ? ['Durée', 'clock', html`<span translate="no" dir="auto">${o.duree}</span>`] : null,
+    lieu ? ['Lieu', 'pin', html`<span translate="no" dir="auto">${lieu}</span>`] : null,
+    o.remunere ? ['Rémunéré', 'remunere', 'Oui'] : null,
+    dl ? ['Date limite', 'calendar', dateTxt, urgent] : null,
+    ['Pour', 'people', html`${pour.map((x, i) => html`${i ? '\u00a0· ' : ''}<span class="od-insecable">${x}</span>`)}`],
+  ].filter(Boolean);
+  // Sous le titre, seulement ce qui est vrai et utile : fermée, l'échéance proche, sa filière, un lauréat qui encadre
+  const saFiliere = candidat && o.status === 'ouverte' && !forLaureats(o) && offerMatch(o, me).why.includes('Ta filière');
+  const signaux = [
+    o.status !== 'ouverte' ? html`<span class="tag done" key="s">${o.status === 'pourvue' ? 'Pourvue' : 'Fermée'}</span>` : null,
+    urgent ? html`<span class="tag urgent" key="u"><${Icon} name="clock" size=${13}/>${jours === 0 ? 'Dernier jour' : `J-${jours}`}</span>` : null,
+    saFiliere ? html`<span class="od-signal" key="f"><${Icon} name="check" size=${14}/>Ta filière</span>` : null,
+    estPortee(o) ? html`<${BadgePortee} key="p"/>` : null,
   ].filter(Boolean);
   const auteurNom = prenom(author) || 'Le lauréat';
 
-  // Pied collé : postuler (et garder l'offre), puis l'état de la candidature une fois envoyée
-  const saveBtn = html`<button type="button" class=${'icon-btn od-save' + (saved ? ' on' : '')} aria-pressed=${!!saved} aria-label=${saved ? 'Ne plus mettre de côté' : 'Mettre de côté'} title=${saved ? 'Ne plus mettre de côté' : 'Mettre de côté'} onClick=${toggleSave}><${Icon} name="bookmark" size=${18}/></button>`;
+  // Pied collé : garder l'offre et postuler ; une fois la candidature partie, une coche et la suite
+  const saveBtn = html`<button type="button" key="garder" class=${'icon-btn od-save' + (saved ? ' on' : '') + (pop ? ' pop' : '')} aria-pressed=${!!saved} aria-label=${saved ? 'Ne plus mettre de côté' : 'Mettre de côté'} title=${saved ? 'Ne plus mettre de côté' : 'Mettre de côté'} onClick=${toggleSave} onAnimationEnd=${() => setPop(false)}><${Icon} name="bookmark" size=${20}/></button>`;
   let footer = null;
   if (partage && tab === 'offre') footer = html`<${PiedPartage} o=${o}/>`;
   if (candidat && tab === 'offre') {
@@ -321,46 +499,60 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
       const pl = myApp.status === 'retenu' ? placementOf(data, me.id, ctx.saison) : null;
       const suite = { postule: `${auteurNom} te répond ici`, entretien: 'Bonne préparation pour l’entretien !', retenu: pl?.status === 'en_attente' ? 'Confirme ton recrutement dans « Mon parcours ».' : 'Bravo !' }[myApp.status];
       const porte = myApp.status === 'refuse' ? porteApresRefus(data, me, ctx.saison) : null;
-      footer = html`<div class="od-foot"><span class=${'state-pill a-' + myApp.status}>${APP_STATUS[myApp.status]}</span><span class="small muted od-foot-txt">${porte ? porte.phrase : suite}</span>
+      footer = myApp.status === 'postule'
+        ? html`<div class=${'od-foot od-envoyee' + (envoyee ? ' vient' : '')}><${Coche} taille=${38} pose=${!envoyee}/><span class="od-foot-txt"><strong>Candidature envoyée</strong><span class="small muted">${suite}</span></span></div>`
+        : html`<div class="od-foot"><span class=${'state-pill a-' + myApp.status}>${APP_STATUS[myApp.status]}</span><span class="small muted od-foot-txt">${porte ? porte.phrase : suite}</span>
         ${myApp.status === 'retenu' && pl?.status === 'en_attente' ? html`<button type="button" class="btn small" onClick=${() => { onClose(); ctx.go('parcours'); }}>Mon parcours</button>` : null}
         ${porte ? html`<button type="button" id="od-porte" class="btn small" onClick=${() => { onClose(); if (porte.conseil) ctx.askHelp(); else ctx.go(porte.to); }}>${porte.cta}</button>` : null}</div>`;
     } else if (o.status !== 'ouverte') footer = html`<div class="od-foot"><span class="small muted od-foot-txt">Cette offre n’accepte plus de candidatures.</span>${saveBtn}</div>`;
-    else if (form) footer = html`<div class="od-foot"><button type="button" class="btn ghost" onClick=${() => setForm(false)}>Annuler</button><button class="btn primary" type="submit" form=${'apply-' + o.id}><${Icon} name="send" size=${16}/> Envoyer ma candidature</button></div>`;
-    else footer = html`<div class="od-foot">${saveBtn}<button type="button" class="btn primary" onClick=${() => setForm(true)}><${Icon} name="send" size=${16}/> Postuler</button></div>`;
+    // Des clés distinctes : « Envoyer » est un nouveau bouton, jamais « Postuler » recyclé (le même clic l'enverrait aussitôt)
+    else if (form) footer = html`<div class="od-foot"><button type="button" key="annuler" class="btn ghost" onClick=${() => setForm(false)}>Annuler</button><button key="envoyer" class="btn primary" type="submit" form=${'apply-' + o.id}><${Icon} name="send" size=${16}/> Envoyer ma candidature</button></div>`;
+    else footer = html`<div class="od-foot">${saveBtn}<button type="button" key="postuler" class="btn primary od-postuler" onClick=${() => setForm(true)}><${Icon} name="send" size=${16}/> Postuler</button></div>`;
   }
 
-  return html`<${Modal} title=${partage ? 'Offre partagée' : forLaureats(o) ? 'Offre entre lauréats' : TYPES[o.type]?.long || 'Offre'} onClose=${onClose} wide footer=${footer}>
-    <div class="detail od">
-      <div class="detail-head">
-        <${LogoEntreprise} nom=${o.entreprise} lien=${o.lien} taille=${56}/>
-        <div class="detail-title">
-          ${o.status !== 'ouverte' ? html`<span class="tag done">${o.status === 'pourvue' ? 'Pourvue' : 'Fermée'}</span>` : null}
-          <h2 translate="no" dir="auto">${titreOffre(o)}</h2>
-          <p class="od-sub"><button type="button" class="linkish od-ent" onClick=${() => { onClose(); ctx.openEntreprise?.(o.entreprise); }}><span translate="no" dir="auto">${o.entreprise}</span></button><span class="od-dot" aria-hidden="true">·</span><span class="muted">Publiée ${timeAgo(o.created_at)}</span></p>
+  return html`<${Modal} title=${partage ? 'Offre partagée' : forLaureats(o) ? 'Offre entre lauréats' : TYPES[o.type]?.long || 'Offre'} onClose=${onClose} wide cls="fiche-offre" footer=${footer}>
+    <div class="detail od" ref=${racine} style=${styleEntreprise(o.entreprise)}>
+      <div class="od-hero">
+        <span class="od-voile" aria-hidden="true"></span>
+        <div class="detail-head">
+          <${LogoEntreprise} nom=${o.entreprise} lien=${o.lien} taille=${64}/>
+          <span class="od-outils">
+            ${o.status === 'ouverte' ? html`<${PartagerWhatsApp} id="od-partage" texte=${texteOffre(o)}/>` : null}
+            ${!mine && !isAdmin ? html`<${SignalerBtn} ctx=${ctx} type="offre" id=${o.id} small/>` : null}
+            ${(mine || isAdmin) ? html`<div class="menu-wrap"><button class="icon-btn" aria-label="Gérer l’offre" aria-expanded=${menu} onClick=${() => setMenu(!menu)}><${Icon} name="more"/></button>
+              ${menu ? html`<div class="menu-pop">
+                ${mine ? html`<button onClick=${() => { setMenu(false); setEdit(true); }}><${Icon} name="edit" size=${16}/> Modifier</button>` : null}
+                <button onClick=${() => { setMenu(false); act(() => store.update('offers', o.id, { status: o.status === 'ouverte' ? (partage ? 'fermee' : 'pourvue') : 'ouverte' })); }}><${Icon} name="check" size=${16}/> ${o.status === 'ouverte' ? (partage ? 'Fermer le partage' : 'Marquer pourvue') : 'Rouvrir l’offre'}</button>
+                <button class="danger-t" onClick=${() => { setMenu(false); ctx.confirm('Supprimer définitivement cette offre ?', () => act(async () => { await store.remove('offers', o.id); onClose(); })); }}><${Icon} name="trash" size=${16}/> Supprimer</button>
+              </div>` : null}</div>` : null}
+          </span>
         </div>
-        ${o.status === 'ouverte' ? html`<${PartagerWhatsApp} id="od-partage" texte=${texteOffre(o)}/>` : null}
-        ${!mine && !isAdmin ? html`<${SignalerBtn} ctx=${ctx} type="offre" id=${o.id} small/>` : null}
-        ${(mine || isAdmin) ? html`<div class="menu-wrap"><button class="icon-btn" aria-label="Gérer l’offre" aria-expanded=${menu} onClick=${() => setMenu(!menu)}><${Icon} name="more"/></button>
-          ${menu ? html`<div class="menu-pop">
-            ${mine ? html`<button onClick=${() => { setMenu(false); setEdit(true); }}><${Icon} name="edit" size=${16}/> Modifier</button>` : null}
-            <button onClick=${() => { setMenu(false); act(() => store.update('offers', o.id, { status: o.status === 'ouverte' ? (partage ? 'fermee' : 'pourvue') : 'ouverte' })); }}><${Icon} name="check" size=${16}/> ${o.status === 'ouverte' ? (partage ? 'Fermer le partage' : 'Marquer pourvue') : 'Rouvrir l’offre'}</button>
-            <button class="danger-t" onClick=${() => { setMenu(false); ctx.confirm('Supprimer définitivement cette offre ?', () => act(async () => { await store.remove('offers', o.id); onClose(); })); }}><${Icon} name="trash" size=${16}/> Supprimer</button>
-          </div>` : null}</div>` : null}
+        <div class="detail-title">
+          <h2 translate="no" dir="auto">${titreOffre(o)}</h2>
+          <p class="od-sub"><button type="button" class="linkish od-ent" onClick=${() => { onClose(); ctx.openEntreprise?.(o.entreprise); }}><span translate="no" dir="auto">${o.entreprise}</span></button><span class="od-dot" aria-hidden="true">·</span><span class="od-quand">Publiée ${timeAgo(o.created_at)}</span></p>
+        </div>
+        ${signaux.length ? html`<div class="od-signaux">${signaux}</div>` : null}
       </div>
-      ${author && !mine && tab === 'offre' ? html`<${AuteurOffre} ctx=${ctx} o=${o} author=${author} candidat=${candidat}/>` : null}
-      ${estPortee(o) && tab === 'offre' ? html`<${EngagementPortee} auteur=${author}/>` : null}
       ${partage && tab === 'offre' ? html`<${NotePartage} o=${o} auteur=${author}/>` : null}
       <${RelanceBanner} ctx=${ctx} o=${o}/>
-      ${mine && !partage ? html`<div class="seg" role="tablist" aria-label="Mon offre">${[['candidats', `Candidats (${apps.length})`], ['offre', 'L’offre'], ['questions', `Questions (${comments.length})`]].map(([k, l]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => setTab(k)}>${l}</button>`)}</div>` : null}
+      ${mine && !partage ? html`<div class="seg od-onglets" role="tablist" aria-label="Mon offre">${[['candidats', `Candidats (${apps.length})`], ['offre', 'L’offre'], ['questions', `Questions (${comments.length})`]].map(([k, l]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => setTab(k)}>${l}</button>`)}</div>` : null}
 
       ${tab === 'candidats' && mine ? html`<${Candidates} ctx=${ctx} o=${o} apps=${apps}/>` : null}
 
       ${tab === 'offre' ? html`
-        <dl class="od-facts">${facts.map(([k, i, v]) => html`<div class=${k === 'Date limite' && urgent ? 'urgent' : ''}><dt><${Icon} name=${i} size=${14}/> ${k}</dt><dd>${v}</dd></div>`)}</dl>
+        <dl class="od-facts">${faits.map(([k, i, v, chaud]) => html`<div class=${chaud ? 'urgent' : ''}><dt><span class="od-fait-ico" aria-hidden="true"><${Icon} name=${i} size=${17}/></span>${k}</dt><dd>${v}</dd></div>`)}</dl>
         <${EntrepriseResume} ctx=${ctx} entreprise=${o.entreprise} onOpen=${onClose}/>
-        <div class="prose"><p translate="no" dir="auto">${o.description}</p></div>
-        ${o.lien && !partage ? html`<p><a href=${o.lien.startsWith('http') ? o.lien : 'https://' + o.lien} target="_blank" rel="noopener"><${Icon} name="link" size=${15}/> Voir l’annonce complète</a></p>` : null}
-        ${candidat ? html`<${ApplyBox} ctx=${ctx} o=${o} form=${form} setForm=${setForm} onClose=${onClose}/>` : null}
+        <div class="od-bloc od-desc">
+          <h3>${partage ? 'L’annonce' : TITRE_DESC[o.type] || 'La mission'}</h3>
+          <div class="prose"><p translate="no" dir="auto">${o.description}</p></div>
+          ${o.lien && !partage ? html`<a class="od-lien" href=${o.lien.startsWith('http') ? o.lien : 'https://' + o.lien} target="_blank" rel="noopener"><${Icon} name="link" size=${15}/> Voir l’annonce complète</a>` : null}
+        </div>
+        ${author && !mine ? html`<div class="od-bloc od-par">
+          <h3>${partage ? 'Partagée par' : 'Proposée par'}</h3>
+          <${AuteurOffre} ctx=${ctx} o=${o} author=${author} candidat=${candidat}/>
+          ${estPortee(o) ? html`<${EngagementPortee} auteur=${author}/>` : null}
+        </div>` : estPortee(o) ? html`<${EngagementPortee} auteur=${author}/>` : null}
+        ${candidat ? html`<${ApplyBox} ctx=${ctx} o=${o} form=${form} setForm=${setForm} onClose=${onClose} onEnvoyee=${() => { setEnvoyee(true); vibrer(12); }}/>` : null}
         <${Reactions} ctx=${ctx} cible=${{ offer_id: o.id }} cls="od-rx"/>
         ${!mine || partage ? html`<${Questions} ctx=${ctx} o=${o} comments=${comments}/>` : null}` : null}
 
@@ -370,7 +562,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
 }
 
 // Côté étudiant : écrire sa candidature (le bouton d'envoi est dans le pied de la fiche), puis suivre le statut
-function ApplyBox({ ctx, o, form, setForm, onClose }) {
+function ApplyBox({ ctx, o, form, setForm, onClose, onEnvoyee }) {
   const { data, me, store, act, saison } = ctx;
   const app = data.applications.find(a => a.offer_id === o.id && a.student_id === me.id);
   const [msg, setMsg, oublierBrouillon] = useBrouillon(me.id + ':candidature:' + o.id, '');
@@ -407,6 +599,7 @@ function ApplyBox({ ctx, o, form, setForm, onClose }) {
       const premiere = me.role === 'etudiant' && !data.applications.some(a => a.student_id === me.id && a.offer_id);
       await store.insert('applications', { student_id: me.id, offer_id: o.id, entreprise: o.entreprise, titre: o.titre, message: msg.trim(), status: 'postule' });
       oublierBrouillon();
+      onEnvoyee?.();
       // Première candidature : un vrai moment, avec la prochaine étape. Ensuite, un simple mot en bas de l'écran.
       const fete = premiere && celebrate({
         cle: 'premiere-candidature-' + me.id, icon: 'send', titre: 'Candidature envoyée !',
@@ -484,7 +677,7 @@ function Candidates({ ctx, o, apps }) {
         <div class="cand-actions"><${MessageBtn} ctx=${ctx} p=${st} cls="btn small ghost"/><${CvButton} ctx=${ctx} p=${st}/>${annulable ? html`<button type="button" class="btn small ghost cand-annuler" onClick=${() => annulerRecrutement(ctx, pl)}><${Icon} name="x" size=${15}/> Annuler le recrutement</button>` : null}</div>
         ${pl ? null : html`<div class="cand-statut">
           <div class="seg small-seg" role="group" aria-label="Statut de la candidature">
-            ${[['postule', 'Reçue'], ['entretien', 'Entretien'], ...(entre ? [['retenu', 'Retenue']] : []), ['refuse', 'Pas retenue']].map(([k, l]) => html`<button type="button" class=${a.status === k ? 'on' : ''} aria-pressed=${a.status === k ? 'true' : 'false'} onClick=${() => act(() => store.update('applications', a.id, { status: k, updated_at: new Date().toISOString() }))}>${l}</button>`)}
+            ${[['postule', 'Reçue'], ['entretien', 'Entretien'], ...(entre ? [['retenu', 'Retenue']] : []), ['refuse', 'Pas retenue']].map(([k, l]) => html`<button type="button" data-s=${k} class=${a.status === k ? 'on' : ''} aria-pressed=${a.status === k ? 'true' : 'false'} onClick=${() => act(() => store.update('applications', a.id, { status: k, updated_at: new Date().toISOString() }))}>${l}</button>`)}
           </div>
           ${entre ? null : html`<button type="button" class="btn small cand-recruter" onClick=${() => recruit(a.student_id, a)}><${Icon} name="check" size=${15}/> Recruter</button>`}
         </div>`}
@@ -678,33 +871,144 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
 // Passe UX des offres : liste calme (un seul bouton plein, dans la fiche), filtres sur une rangée,
 // fiche en feuille avec l'action collée en bas, l'auteur juste sous le titre.
 // ---------------------------------------------------------------------------
-injectCSS('offres-ux', `
-/* En-tête : le titre et « Publier une offre » (plein, l'action qui remplit la plateforme) sur la même ligne */
-.offres-page .page-head { flex-wrap: nowrap; align-items: flex-end; }
-.offres-page .page-head > div { min-width: 0; }
-.offres-page .page-head .btn.primary { flex: none; width: auto; }
-/* Offres · Demandes : un segment à deux choix, sur une ligne */
+injectCSS('offres-liste', `
+/* ---------- En-tête : un chiffre en sur-titre, le titre et le seul bouton plein sur une ligne, le segment dessous ---------- */
+.offres-page .en-tete { row-gap: .85rem; }
+.offres-page .en-tete-txt { flex: 1 1 0; }
+.offres-page .en-tete-act { min-height: 44px; }
+.offres-page .en-tete-act .btn { flex: none; width: auto; min-height: 44px; }
+.of-chiffre { display: inline-flex; align-items: center; gap: .3rem; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; text-align: start; }
+.of-chiffre > svg { flex: none; transition: transform .2s var(--ease); }
+.of-chiffre:hover { text-decoration: underline; text-underline-offset: 3px; }
+.of-chiffre:hover > svg { transform: translateX(2px); }
+[dir="rtl"] .of-chiffre > svg { transform: scaleX(-1); }
+[dir="rtl"] .of-chiffre:hover > svg { transform: scaleX(-1) translateX(2px); }
+@media (pointer: coarse) { .of-chiffre { position: relative; } .of-chiffre::after { content: ""; position: absolute; inset: -12px -8px; } }
+.of-place { display: block; width: 0; height: 44px; }
 .offres-seg { display: flex; width: min(100%, 22rem); }
-.offres-seg button { flex: 1 1 0; }
+.offres-seg button { flex: 1 1 0; min-height: 38px; }
 .offres-seg button.on, .offres-chips .chip.on { background: var(--sel-bg); color: var(--sel-ink); border-color: transparent; box-shadow: inset 0 0 0 1px var(--sel-ring); font-weight: 600; }
 .offres-seg .count { margin-inline-start: .15rem; }
 .offres-seg button.on .count { background: color-mix(in srgb, var(--sel-ink) 14%, transparent); color: var(--sel-ink); }
 @media (max-width: 760px) { .offres-seg { width: 100%; } }
-/* Une seule rangée de filtres avant la première offre */
+
+/* ---------- Recherche : une pastille douce, l'anneau de focus autour de toute la pastille ---------- */
+.offres-page .sub-page > .search { min-height: 46px; padding-inline: 1rem .5rem; border-radius: var(--r-pill); border-color: transparent; background: var(--surface); box-shadow: var(--sh1); }
+.offres-page .sub-page > .search:focus-within { border-color: var(--accent); box-shadow: var(--anneau-focus); }
+.offres-page .sub-page > .search input { min-height: 44px; border: 0; box-shadow: none; background: transparent; }
+
+/* ---------- Une seule rangée de puces, collée sous la barre du haut en défilant (fond de verre une fois collée) ---------- */
 .offres-chips { flex-wrap: nowrap; align-items: center; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; padding-block: 3px; }
 .offres-chips::-webkit-scrollbar { display: none; }
 .offres-chips .chip { flex: none; white-space: nowrap; min-height: 36px; }
 .offres-chips .chip.on svg { color: var(--c, currentColor); }
 .chips-sep { flex: none; width: 1px; height: 22px; background: var(--line); margin-inline: .15rem; }
 @media (max-width: 760px) { .offres-chips { margin-inline: -16px; padding-inline: 16px; scroll-padding-inline: 16px; } }
+/* Jamais un mot coupé : le fondu se pose sur la puce coupée (usePucesEntieres, demandes.js) ; sans mesure, celui du Socle */
+.offres-chips:is(.fondu-debut, .fondu-fin) { --m-cd: 0px; --m-rd: 0px; --m-cf: 0px; --m-rf: 0px;
+  -webkit-mask-image: linear-gradient(var(--fondu-sens), transparent 0, transparent var(--m-cd), #000 calc(var(--m-cd) + var(--m-rd)), #000 calc(100% - var(--m-cf) - var(--m-rf)), transparent calc(100% - var(--m-cf)), transparent 100%);
+  mask-image: linear-gradient(var(--fondu-sens), transparent 0, transparent var(--m-cd), #000 calc(var(--m-cd) + var(--m-rd)), #000 calc(100% - var(--m-cf) - var(--m-rf)), transparent calc(100% - var(--m-cf)), transparent 100%); }
+.offres-chips.fondu-debut { --m-cd: var(--of-cache-d, 0px); --m-rd: var(--of-rampe-d, 2.25rem); }
+.offres-chips.fondu-fin { --m-cf: var(--of-cache-f, 0px); --m-rf: var(--of-rampe-f, 2.25rem); }
+.of-filtres { position: sticky; top: calc(env(safe-area-inset-top, 0px) + var(--of-haut, 56px)); z-index: 6; display: flex; align-items: center; isolation: isolate; margin-block: -.4rem; padding-block: .4rem; }
+.of-filtres::before { content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: 0; transition: opacity .2s ease;
+  background: var(--verre); -webkit-backdrop-filter: saturate(1.6) blur(16px); backdrop-filter: saturate(1.6) blur(16px); box-shadow: 0 1px 0 var(--filet-verre); }
+.of-filtres.colle::before { opacity: 1; }
+.of-filtres > .offres-chips { flex: 1 1 auto; min-width: 0; }
+/* La loupe paraît quand la rangée se colle : elle ramène à la recherche */
+.of-loupe { position: relative; flex: none; display: grid; place-items: center; width: 0; height: 38px; margin: 0; padding: 0; border: 0; border-radius: 50%; overflow: hidden;
+  background: var(--surface); box-shadow: var(--sh1); color: var(--ink-2); cursor: pointer; opacity: 0; visibility: hidden;
+  transition: width .24s var(--ease), margin .24s var(--ease), opacity .16s ease, visibility 0s linear .24s; }
+.of-filtres.colle .of-loupe { width: 38px; overflow: visible; opacity: 1; visibility: visible; transition: width .24s var(--ease), margin .24s var(--ease), opacity .2s ease .06s, visibility 0s; }
+.of-loupe:hover { color: var(--ink); box-shadow: var(--sh2); }
+.of-loupe:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (pointer: coarse) { .of-loupe::after { content: ""; position: absolute; inset: -4px; } }
+@media (max-width: 760px) {
+  .of-filtres { margin-inline: -16px; }
+  .of-filtres > .offres-chips { margin-inline: 0; }
+  .of-filtres.colle .of-loupe { margin-inline-start: 16px; }
+  .of-filtres.colle > .offres-chips { padding-inline-start: 8px; scroll-padding-inline-start: 8px; }
+}
+@media (min-width: 761px) {
+  .of-filtres { top: calc(env(safe-area-inset-top, 0px) + var(--of-haut, 60px) + 8px); margin-inline: -10px; padding-inline: 10px; }
+  .of-filtres::before { border-radius: var(--r-pill); background: color-mix(in srgb, var(--surface) 86%, transparent); box-shadow: var(--sh2); }
+  .of-filtres.colle .of-loupe { margin-inline-end: 8px; }
+}
+@media (prefers-reduced-motion: reduce) { .of-filtres::before, .of-loupe, .of-filtres.colle .of-loupe { transition: none; } }
 
+/* ---------- Titres des parties : « Pour toi », « Nouveau depuis ta dernière visite », « Les autres offres de 5A » ---------- */
+.offres-page .sub-page > .section-head h2 { font: 750 var(--fs-5)/1.25 var(--f-display); letter-spacing: -.015em; }
+.of-nouveau h2 { display: flex; align-items: baseline; flex-wrap: wrap; gap: .1rem .5rem; }
+.of-nouveau h2::before { content: ""; align-self: center; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.of-depuis { font: 500 var(--fs-2)/1.3 var(--f-body); letter-spacing: 0; color: var(--muted); }
+.offres-page .offer-grid + .section-head { margin-top: 1rem; }
+
+/* ---------- « Pour toi » : de grandes cartes qui défilent ---------- */
+.pt-rangee { --rangee-l: min(84%, 19.5rem); --rangee-gap: .8rem; }
+.pt-rangee .rangee-cartes { padding-block: 4px 16px; margin-block: -4px -16px; }
+/* Le voile : trois lueurs douces de la teinte de l'entreprise (et de ses voisines) sur un fond clair, plus sombres la nuit */
+.pt-carte { position: relative; display: flex; min-width: 0; border-radius: var(--r-xl); background: var(--surface); box-shadow: var(--sh1); overflow: hidden; isolation: isolate;
+  --v-fond: hsl(var(--h, 205) calc(var(--s, 50%) * .8) 95%); --v-1: hsl(var(--h, 205) calc(var(--s, 50%) + 14%) 81%);
+  --v-2: hsl(calc(var(--h, 205) + 38) calc(var(--s, 50%) + 6%) 86%); --v-3: hsl(calc(var(--h, 205) - 28) var(--s, 50%) 88%); }
+:root[data-theme="dark"] .pt-carte { --v-fond: hsl(var(--h, 205) 22% 15%); --v-1: hsl(var(--h, 205) 42% 30%); --v-2: hsl(calc(var(--h, 205) + 38) 34% 25%); --v-3: hsl(calc(var(--h, 205) - 28) 32% 21%); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .pt-carte { --v-fond: hsl(var(--h, 205) 22% 15%); --v-1: hsl(var(--h, 205) 42% 30%); --v-2: hsl(calc(var(--h, 205) + 38) 34% 25%); --v-3: hsl(calc(var(--h, 205) - 28) 32% 21%); } }
+.pt-main { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 0; border: 0; border-radius: inherit; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.pt-main:focus-visible { outline: none; }
+.pt-carte:has(> .pt-main:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pt-voile { position: relative; display: block; flex: none; height: 96px; overflow: hidden;
+  background: radial-gradient(65% 95% at 14% 12%, var(--v-1), transparent 72%), radial-gradient(55% 110% at 90% 0%, var(--v-2), transparent 70%),
+    radial-gradient(70% 90% at 62% 125%, var(--v-3), transparent 72%), var(--v-fond); }
+[dir="rtl"] .pt-voile { transform: scaleX(-1); }
+.pt-corps { flex: 1; display: flex; flex-direction: column; gap: .35rem; min-width: 0; padding: 0 1.05rem 1rem; }
+.pt-tete { display: flex; align-items: flex-end; justify-content: space-between; gap: .6rem; min-width: 0; margin: -32px 0 .3rem; }
+.pt-tete > .clogo { position: relative; border-radius: 18px; box-shadow: 0 0 0 3px var(--surface), 0 8px 18px -8px rgb(10 20 40 / .35); }
+.pt-signal { display: inline-flex; align-items: center; gap: .3rem; flex: none; min-height: 26px; padding: 0 .6rem 0 .45rem; border-radius: var(--r-pill); background: var(--good-soft); color: var(--good); font-size: var(--fs-2); font-weight: 650; }
+.pt-carte .ocard-title { font: 700 var(--fs-5)/1.25 var(--f-display); letter-spacing: -.015em; color: var(--ink); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; text-wrap: balance; }
+.pt-carte .ocard-tags { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .25rem; }
+.pt-carte .ocard-tags { margin-bottom: .45rem; }
+.pt-bas { margin-top: auto; display: flex; flex-direction: column; gap: .45rem; }
+.pt-bas:not(:empty) { padding-top: .7rem; border-top: 1px solid var(--line); }
+.pt-visage { display: flex; align-items: center; gap: .45rem; min-width: 0; font-size: var(--fs-2); color: var(--ink-2); }
+.pt-visage .avatar { flex: none; }
+.pt-visage.coopt { color: var(--good); font-weight: 600; }
+.pt-qui { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pt-coin { position: absolute; top: .75rem; inset-inline-start: .8rem; z-index: 1; box-shadow: 0 1px 2px rgb(16 32 64 / .08); }
+.pt-carte .pt-garder { position: absolute; top: .55rem; inset-inline-end: .55rem; z-index: 1; width: 40px; height: 40px; border-radius: 50%; color: var(--ink-2);
+  background: color-mix(in srgb, var(--surface) 80%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); box-shadow: 0 1px 3px rgb(16 32 64 / .1); }
+.pt-carte .pt-garder:hover { color: var(--ink); background: var(--surface); }
+.pt-carte .pt-garder.on { color: var(--sel-ink); background: var(--sel-bg); }
+.pt-carte { transition: transform .22s var(--ease), box-shadow .22s ease; }
+.pt-carte:has(> .pt-main:active) { transform: scale(.985); transition-duration: .08s; }
+@media (hover: hover) and (pointer: fine) { .pt-carte:hover { transform: translateY(-2px); box-shadow: var(--sh2); } }
+@media (prefers-reduced-motion: reduce) { .pt-carte, .pt-carte:hover, .pt-carte:has(> .pt-main:active) { transform: none; transition: none; } }
+
+/* ---------- La liste : des cartes compactes ---------- */
+.offer-grid { gap: .65rem; }
+.ocard-main { gap: .5rem; padding: .85rem .9rem .55rem; }
+.ocard .oc-tete { align-items: flex-start; gap: .75rem; }
+.oc-corps { flex: 1; display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
+.ocard .ocard-title { font: 700 var(--fs-4)/1.3 var(--f-display); letter-spacing: -.01em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-wrap: pretty; }
+/* L'entreprise et le lieu en entier (« Airbus Operations · Toulouse, France ») : la ligne passe à la suivante
+   plutôt que de couper un nom. Chaque morceau porte son point devant lui et la ligne commence 1em plus tôt,
+   dans une marge masquée : aucune ligne ne commence par « · ». Le nom, isolé (bdi), garde son sens de lecture. */
+:is(.ocard, .pt-carte) .ocard-meta { display: flex; flex-flow: row wrap; align-items: baseline; gap: 0; min-width: 0; margin-inline-start: -1em;
+  clip-path: inset(-3px -3px -3px 1em); font-size: var(--fs-2); line-height: 1.35; color: var(--muted); }
+[dir="rtl"] :is(.ocard, .pt-carte) .ocard-meta { clip-path: inset(-3px 1em -3px -3px); }
+.ocard-meta > * { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ocard-meta > .oc-ent { flex: 0 1 auto; font-size: inherit; font-weight: 600; color: var(--ink-2); }
+.ocard-meta > .oc-lieu { flex: 0 1 auto; font-size: inherit; }
+.ocard-meta > .oc-quand { flex: none; }
+:is(.ocard, .pt-carte) .ocard-meta > *::before { content: "·"; display: inline-block; width: 1em; text-align: center; font-weight: 400; color: var(--muted); }
+.ocard .ocard-tags { gap: .3rem; }
+.ocard .ocard-tags .tag, .pt-carte .ocard-tags .tag { padding: .2rem .5rem; }
+.ocard .oc-preuve { font-size: var(--fs-2); }
 /* « Nour peut te recommander » : une ligne verte dans la carte, au-dessus des autres preuves */
 .oc-preuve.oa-coopt { color: var(--good); font-weight: 600; }
 .oc-preuve.oa-coopt .ico { color: currentColor; }
-/* Le pied d'une carte, une seule ligne : le lauréat qui la partage (prénom et promo ; dessous, depuis quand elle est là),
-   puis les réactions, l'état ou « Postuler », et le marque-page. Rien ne passe à la ligne : s'il manque de la place,
-   la promo s'efface d'un bloc (elle est dans la fiche), puis le prénom se resserre ; trop étroit, le visage reste seul. */
-.ocard-foot { gap: .35rem; padding-inline: 1.05rem .55rem; padding-block: .45rem; }
+/* Le pied, une seule ligne : le lauréat qui la partage (prénom et promo), les réactions, l'état ou « Postuler », le
+   marque-page. Rien ne passe à la ligne : s'il manque de la place, la promo s'efface d'un bloc (elle est dans la fiche),
+   puis le prénom se resserre ; trop étroit, le visage reste seul. */
+.ocard-foot { gap: .35rem; padding: .25rem .5rem .25rem .9rem; min-height: 46px; }
 .ocard-foot > :not(.ocard-author):not(.spacer) { flex: none; }
 .ocard-foot > .ocard-author { flex: 1 1 0; min-width: 0; }
 .ocard-author .oa-txt { flex: 1 1 0; display: flex; flex-direction: column; min-width: 0; line-height: 1.25; container-type: inline-size; }
@@ -713,46 +1017,160 @@ injectCSS('offres-ux', `
 .ocard-author .oa-txt > .oa-nom { display: flex; flex-wrap: wrap; column-gap: .3em; height: 1.25em; }
 .oa-nom > span { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .oa-promo::before { content: "· "; }
-.ocard-author .oa-quand { color: var(--muted); font-size: var(--fs-1); }
-[dir="rtl"] .ocard-txt [dir="auto"], [dir="rtl"] .od .detail-title [dir="auto"] { text-align: right; }
-
-.od .detail-head { gap: .8rem; }
-.od .detail-title { gap: .3rem; }
-.od .detail-title h2 { font-size: var(--fs-5); line-height: 1.22; }
-.od-sub { display: flex; align-items: center; flex-wrap: wrap; gap: .1rem .4rem; font-size: var(--fs-2); }
-.od-ent { font-weight: 600; color: var(--ink-2); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--ink-2) 35%, transparent); text-underline-offset: 3px; }
-.od-ent:hover { color: var(--accent); }
-.od-dot { color: var(--muted); }
-.od-author { display: flex; align-items: center; gap: .75rem; width: 100%; padding: .7rem 0; border-radius: 0; border: 0; border-block: 1px solid var(--line); background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; transition: border-color .2s, background .2s; }
-.od-author:hover .od-author-line { color: var(--accent); }
-.od-author.coopt .od-author-line { color: var(--good); }
-.od-author-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .15rem; }
-.od-author-line { font-weight: 600; color: var(--ink); line-height: 1.35; }
-.od-author .role-line { font-size: var(--fs-1); }
-.od-author-ico { flex: none; display: grid; place-items: center; color: var(--muted); }
-.od-author:hover .od-author-ico { color: var(--accent); }
-.od-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 1rem; margin: 0; }
-.od-facts > div { padding: .55rem 0 .6rem; border-top: 1px solid var(--line); min-width: 0; }
-.od-facts > div:last-child:nth-child(odd) { grid-column: 1 / -1; }
-.od-facts dt { display: flex; align-items: center; gap: .3rem; font-size: var(--fs-1); color: var(--muted); font-weight: 600; }
-[dir="rtl"] .od-facts dt { font-size: var(--fs-2); }
-.od-facts dd { margin: .1rem 0 0; font-weight: 500; font-size: var(--fs-2); line-height: 1.4; overflow-wrap: anywhere; }
-.od-facts dd .tag { margin-inline-start: .2rem; vertical-align: 1px; }
-@media (min-width: 761px) {
-  .od-facts { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
-  .od-facts > div:last-child:nth-child(odd) { grid-column: auto; }
+.oa-promo { color: var(--muted); }
+/* Une feuille ouverte depuis une carte (« Réactions » : qui a réagi) est en position fixe : tant qu'elle est là, la carte
+   ne porte aucune transformation (l'élévation au survol l'enfermerait dans la carte). Au doigt, pas d'élévation
+   « au survol » qui resterait collée après un toucher. */
+.ocard:has(.modal-back) { transform: none !important; transition: none; }
+@media (hover: none), (pointer: coarse) { .ocard:hover { transform: none; box-shadow: var(--sh1); } }
+/* Pied étroit (moins de 320 px utiles : téléphone de 360 px, deux colonnes juste au-dessus de 760 px) : le résumé des
+   réactions garde un seul émoji et tout se resserre d'un cran, pour que le prénom reste entier plutôt que « You… ».
+   Une requête d'écran, pas de conteneur : un conteneur enfermerait la feuille « Réactions » (position fixe) dans le pied. */
+@media (max-width: 374px), (min-width: 761px) and (max-width: 815px) {
+  .ocard-foot .rx-pile > span + span { display: none; }
+  .ocard-foot .rx-resume { gap: .2rem; padding-inline: .45rem; }
+  .ocard-foot > .ocard-author { gap: .3rem; }
 }
-
-.modal-foot > .od-foot { flex: 1; min-width: 0; display: flex; align-items: center; gap: .6rem; }
-.od-foot .btn.primary { flex: 1; min-height: 46px; }
-.od-foot .btn.ghost { min-height: 46px; }
-.od-save { flex: none; width: 46px; height: 46px; border: 1px solid var(--line-strong); border-radius: var(--r-md); }
-.od-save.on { background: var(--sel-bg); color: var(--sel-ink); border-color: transparent; box-shadow: inset 0 0 0 1px var(--sel-ring); }
-.od-foot-txt { flex: 1; min-width: 0; }
-@media (min-width: 761px) { .od-foot .btn.primary { flex: 0 0 auto; min-width: 15rem; margin-inline-start: auto; } }
+[dir="rtl"] .ocard-txt [dir="auto"], [dir="rtl"] .od .detail-title [dir="auto"], [dir="rtl"] .pt-main [dir="auto"] { text-align: right; }
+/* Ordinateur : deux colonnes de cartes */
+@media (min-width: 761px) { .offres-page .offer-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 `);
 
+injectCSS('offres-ux', `
+/* ===== Fiche d'une offre : le haut aux couleurs de l'entreprise, les faits en tuiles, « Postuler » collé ===== */
+.od { --v-fond: hsl(var(--h, 205) calc(var(--s, 50%) * .8) 95%); --v-1: hsl(var(--h, 205) calc(var(--s, 50%) + 14%) 82%);
+  --v-2: hsl(calc(var(--h, 205) + 38) calc(var(--s, 50%) + 6%) 87%); --v-3: hsl(calc(var(--h, 205) - 28) var(--s, 50%) 89%);
+  --f-fond: hsl(var(--h, 205) calc(var(--s, 50%) * .9) 93%); --f-ink: hsl(var(--h, 205) 50% 30%); }
+:root[data-theme="dark"] .od { --v-fond: hsl(var(--h, 205) 24% 16%); --v-1: hsl(var(--h, 205) 42% 29%); --v-2: hsl(calc(var(--h, 205) + 38) 34% 24%); --v-3: hsl(calc(var(--h, 205) - 28) 32% 21%); --f-fond: hsl(var(--h, 205) 26% 21%); --f-ink: hsl(var(--h, 205) 62% 80%); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .od { --v-fond: hsl(var(--h, 205) 24% 16%); --v-1: hsl(var(--h, 205) 42% 29%); --v-2: hsl(calc(var(--h, 205) + 38) 34% 24%); --v-3: hsl(calc(var(--h, 205) - 28) 32% 21%); --f-fond: hsl(var(--h, 205) 26% 21%); --f-ink: hsl(var(--h, 205) 62% 80%); } }
+
+/* La fenêtre : son titre flotte sur le voile, puis se pose en verre dès que la fiche défile */
+.modal.fiche-offre > .modal-body { --od-px: 1.2rem; padding: 0 var(--od-px) 1.6rem; }
+.modal.fiche-offre:not(.has-foot) > .modal-body { padding-bottom: calc(1.6rem + env(safe-area-inset-bottom, 0px)); }
+.modal.fiche-offre > .modal-head { background: transparent; border-bottom-color: transparent; transition: background-color .25s ease, border-color .25s ease; }
+.modal.fiche-offre > .modal-head h2 { min-width: 0; font: 650 var(--fs-3)/1.3 var(--f-body); letter-spacing: 0; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.modal.fiche-offre > .modal-head .icon-btn { background: color-mix(in srgb, var(--surface) 72%, transparent); box-shadow: 0 1px 3px rgb(10 20 40 / .12); }
+.modal.fiche-offre.defile > .modal-head { background: color-mix(in srgb, var(--surface) 84%, transparent); -webkit-backdrop-filter: blur(18px) saturate(1.6); backdrop-filter: blur(18px) saturate(1.6); border-bottom-color: var(--line); }
+.modal.fiche-offre.defile > .modal-head .icon-btn { box-shadow: none; background: color-mix(in srgb, var(--ink) 5%, transparent); }
+
+.od.detail { gap: 1.15rem; }
+.od-hero { position: relative; display: flex; flex-direction: column; gap: .7rem; margin: calc(-1 * var(--tete, 0px)) calc(-1 * var(--od-px, 1.2rem)) 0; padding: calc(var(--tete, 0px) + .4rem) var(--od-px, 1.2rem) .6rem; }
+.od-insecable { white-space: nowrap; }
+.od-hero > :not(.od-voile) { position: relative; }
+.od-voile { position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(70% 75% at 10% 6%, var(--v-1), transparent 70%), radial-gradient(60% 85% at 94% 0%, var(--v-2), transparent 70%),
+    radial-gradient(80% 70% at 62% 100%, var(--v-3), transparent 75%), var(--v-fond);
+  -webkit-mask-image: linear-gradient(to bottom, #000 52%, transparent); mask-image: linear-gradient(to bottom, #000 52%, transparent); }
+[dir="rtl"] .od-voile { transform: scaleX(-1); }
+.od-hero .detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .6rem; }
+.od-hero .detail-head > .clogo { width: 64px !important; height: 64px !important; border-radius: 20px; box-shadow: 0 0 0 4px var(--surface), 0 14px 30px -14px rgb(10 20 40 / .5); }
+.od-outils { display: flex; align-items: center; gap: .4rem; margin-inline-start: auto; }
+.od-outils > :is(.icon-btn, .cf-signal, .cf-signale), .od-outils .menu-wrap > .icon-btn { display: inline-grid; place-items: center; width: 40px; height: 40px; padding: 0; border-radius: 50%; color: var(--ink-2); background: color-mix(in srgb, var(--surface) 70%, transparent); box-shadow: 0 1px 3px rgb(10 20 40 / .1); }
+.od-outils > :is(.icon-btn, .cf-signal):hover, .od-outils .menu-wrap > .icon-btn:hover { background: var(--surface); color: var(--ink); }
+.od-outils > .cf-signal:hover { color: var(--bad); }
+.od-hero .detail-title { gap: .4rem; }
+.od-hero .detail-title h2 { font: 760 var(--fs-6)/1.18 var(--f-display); letter-spacing: -.02em; color: var(--ink); text-wrap: balance; overflow-wrap: anywhere; }
+.od-sub { display: flex; align-items: baseline; flex-wrap: wrap; gap: .1rem .45rem; margin: 0; font-size: var(--fs-3); color: var(--ink-2); }
+.od-ent { font-weight: 650; color: var(--ink); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--ink) 30%, transparent); text-underline-offset: 3px; }
+.od-ent:hover { color: var(--accent); }
+.od-dot { color: var(--muted); }
+.od-quand { color: var(--muted); font-size: var(--fs-2); }
+.od-signaux { display: flex; flex-wrap: wrap; gap: .4rem; }
+.od-signaux .tag { min-height: 28px; padding: .25rem .6rem; font-size: var(--fs-2); }
+.od-signal { display: inline-flex; align-items: center; gap: .3rem; min-height: 28px; padding: 0 .65rem 0 .5rem; border-radius: var(--r-pill); background: var(--good-soft); color: var(--good); font-size: var(--fs-2); font-weight: 650; }
+
+/* Les faits : des tuiles, l'icône dans la couleur de l'entreprise ; la dernière tuile seule prend toute la ligne */
+.od-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; margin: 0; }
+.od-facts > div { position: relative; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: .1rem; min-height: 60px; padding: .6rem .75rem; padding-inline-start: calc(.75rem + 36px + .65rem); border-radius: var(--r-lg); background: var(--surface-2); }
+.od-facts > div:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.od-facts dt { font-size: var(--fs-1); font-weight: 600; color: var(--muted); line-height: 1.3; }
+[dir="rtl"] .od-facts dt { font-size: var(--fs-2); }
+.od-facts dd { margin: 0; font-size: var(--fs-3); font-weight: 650; color: var(--ink); line-height: 1.3; overflow-wrap: anywhere; }
+.od-fait-ico { position: absolute; inset-inline-start: .75rem; top: 50%; translate: 0 -50%; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 12px; background: var(--f-fond); color: var(--f-ink); }
+.od-facts > .urgent { background: var(--brass-soft); }
+.od-facts > .urgent .od-fait-ico { background: color-mix(in srgb, var(--brass) 16%, var(--surface)); color: var(--brass); }
+.od-facts > .urgent dd { color: var(--brass); }
+/* Trois colonnes sur grand écran : la dernière tuile prend la place qui reste sur sa ligne (pas de trou à droite) */
+@media (min-width: 761px) { .od-facts { grid-template-columns: repeat(3, minmax(0, 1fr)); } .od-facts > div:last-child:nth-child(odd) { grid-column: auto; }
+  .od-facts > div:last-child:nth-child(3n + 1) { grid-column: 1 / -1; } .od-facts > div:last-child:nth-child(3n + 2) { grid-column: span 2; } }
+
+/* La description, aérée ; puis qui la propose, avec son visage */
+.od-bloc { display: flex; flex-direction: column; gap: .6rem; padding-top: 1.05rem; border-top: 1px solid var(--line); }
+.od-bloc > h3 { margin: 0; font: 700 var(--fs-4)/1.3 var(--f-display); letter-spacing: -.01em; color: var(--ink); }
+.od-desc .prose { max-width: 62ch; font-size: var(--fs-4); line-height: 1.68; color: var(--ink-2); }
+.od-desc .prose p { margin: 0; }
+.od-lien { align-self: flex-start; display: inline-flex; align-items: center; gap: .4rem; min-height: 40px; padding: 0 .9rem; border-radius: var(--r-pill); background: var(--tonal-bg); color: var(--tonal-ink); font-weight: 600; font-size: var(--fs-2); text-decoration: none; }
+.od-lien:hover { background: var(--tonal-hover); }
+.od-author { display: flex; align-items: center; gap: .85rem; width: 100%; padding: .85rem .9rem; border: 0; border-radius: var(--r-lg); background: var(--surface-2); color: inherit; font: inherit; text-align: start; cursor: pointer; transition: background-color .2s ease, transform .15s var(--ease); }
+.od-author:hover { background: color-mix(in srgb, var(--surface-2) 70%, var(--line)); }
+.od-author:active { transform: scale(.99); }
+.od-author-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .15rem; }
+.od-author-line { display: flex; align-items: center; gap: .3rem; min-width: 0; font: 700 var(--fs-4)/1.3 var(--f-display); color: var(--ink); }
+.od-author-line > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.od-author .role-line { font-size: var(--fs-2); }
+.od-author-note { display: flex; align-items: center; gap: .35rem; margin-top: .2rem; font-size: var(--fs-2); font-weight: 600; color: var(--ink-2); }
+.od-author-note > svg { flex: none; color: var(--muted); }
+.od-author.coopt .od-author-note { color: var(--good); }
+.od-author.coopt .od-author-note > svg { color: var(--good); }
+.od-author-ico { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; color: var(--muted); }
+.od-author:hover .od-author-ico { color: var(--accent); }
+[dir="rtl"] .od-author-ico svg { transform: scaleX(-1); }
+.od-onglets { align-self: stretch; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
+.od-onglets > button { min-height: 40px; }
+/* Candidats : le statut choisi prend sa couleur (reçue en bleu, entretien en laiton, pas retenue en gris) */
+.cand-statut .seg > button.on[data-s="entretien"] { background: var(--brass-soft); color: var(--brass); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brass) 35%, transparent); }
+.cand-statut .seg > button.on[data-s="refuse"] { background: var(--surface); color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.cand-statut .seg > button.on[data-s="retenu"] { background: var(--good-soft); color: var(--good); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--good) 35%, transparent); }
+/* La candidature : l'icône à côté de sa phrase (jamais seule sur une ligne), le bouton sous la phrase ; les réactions plus près */
+.apply-box .apply-cv { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: .35rem .5rem; }
+.apply-box .apply-cv > svg { margin-top: .1rem; }
+.apply-box .apply-cv > :not(svg):not(span) { grid-column: 2; justify-self: start; }
+.od > .od-rx { margin-block: -.4rem; }
+
+/* Le pied collé : le marque-page (qui fait un petit bond), « Postuler » ; puis la coche de la candidature envoyée */
+.modal-foot > .od-foot { flex: 1; min-width: 0; display: flex; align-items: center; gap: .6rem; }
+.od-foot .btn.primary { flex: 1; min-height: 48px; font-size: var(--fs-4); }
+.od-foot .btn.ghost { min-height: 48px; }
+.od-save { flex: none; width: 48px; height: 48px; border: 1px solid var(--line-strong); border-radius: var(--r-md); }
+.od-save.on { background: var(--sel-bg); color: var(--sel-ink); border-color: transparent; box-shadow: inset 0 0 0 1px var(--sel-ring); }
+.od-foot-txt { flex: 1; min-width: 0; }
+.od-envoyee { min-height: 48px; }
+.od-envoyee .od-foot-txt { display: flex; flex-direction: column; gap: .05rem; }
+.od-envoyee strong { font: 700 var(--fs-4)/1.25 var(--f-display); color: var(--ink); }
+@media (prefers-reduced-motion: no-preference) {
+  .od-save.pop .ico { animation: marque .5s cubic-bezier(.3, 1.6, .5, 1); }
+  .od-envoyee.vient .od-foot-txt { animation: od-envoi .4s var(--ease-out) .12s backwards; }
+}
+@keyframes od-envoi { from { opacity: 0; transform: translateX(-10px); } }
+[dir="rtl"] .od-envoyee.vient .od-foot-txt { animation-name: od-envoi-rtl; }
+@keyframes od-envoi-rtl { from { opacity: 0; transform: translateX(10px); } }
+@media (min-width: 761px) { .od-foot .btn.primary { flex: 0 0 auto; min-width: 15rem; margin-inline-start: auto; } }
+
+/* Grand écran : la fiche s'ouvre en panneau à côté de la liste, qui reste visible derrière un voile léger */
+@media (min-width: 1100px) {
+  .modal-back:has(> .modal.fiche-offre) { place-items: stretch end; padding: 12px; background: rgb(10 12 18 / calc(.26 * var(--voile, 1))); }
+  .modal.fiche-offre, .modal.fiche-offre.wide { width: min(640px, 50vw); max-height: none; border-radius: var(--r-xl); animation: od-panneau .4s var(--ease-out) backwards; }
+  [dir="rtl"] .modal.fiche-offre { animation-name: od-panneau-rtl; }
+  .modal-back.sortie > .modal.fiche-offre { animation: od-panneau-part .22s var(--ease-in) forwards; }
+  [dir="rtl"] .modal-back.sortie > .modal.fiche-offre { animation-name: od-panneau-part-rtl; }
+  .modal.fiche-offre > .modal-body { --od-px: 1.6rem; }
+  .modal.fiche-offre .modal-foot { padding-inline: 1.6rem; }
+}
+@media (prefers-reduced-motion: no-preference) and (min-width: 1100px) {
+  ::view-transition-new(vt-fiche) { animation: .42s var(--ease-out) both od-panneau; }
+  html[dir="rtl"]::view-transition-new(vt-fiche) { animation-name: od-panneau-rtl; }
+}
+@keyframes od-panneau { from { transform: translateX(calc(100% + 24px)); } }
+@keyframes od-panneau-rtl { from { transform: translateX(calc(-100% - 24px)); } }
+@keyframes od-panneau-part { to { transform: translateX(calc(100% + 24px)); } }
+@keyframes od-panneau-part-rtl { to { transform: translateX(calc(-100% - 24px)); } }
+@media (prefers-reduced-motion: reduce) { .modal.fiche-offre, .modal.fiche-offre.wide { animation-name: fade-in; } .modal-back.sortie > .modal.fiche-offre { animation-name: fade-out; } }
+`);
+
+ajouterIcones({ remunere: '<rect x="2.5" y="6" width="19" height="12" rx="2.5"/><circle cx="12" cy="12" r="2.6"/><path d="M6 9.5v5M18 9.5v5"/>' });
+
 const OFFRES_AR = ['عرض آخر', 'عرضان آخران', 'عروض أخرى', 'عرضًا آخر'];
+const OFFRES_N = ['عرض واحد', 'عرضان', 'عروض', 'عرضًا'];
 const PORTE_DEMANDE = 'Dis aux lauréats ce que tu cherches : ils peuvent te proposer leur aide.';
 const porteAR = p => p === 'Une autre offre t’attend.' ? 'عرض آخر في انتظارك.'
   : /^(\d+) autres offres t’attendent\.$/.test(p) ? `${arCount(+p.match(/^\d+/)[0], OFFRES_AR)} في انتظارك.`
@@ -799,7 +1217,18 @@ addAR({
   'Une autre offre t’attend.': 'عرض آخر في انتظارك.', [PORTE_DEMANDE]: 'يمكنك نشر طلب يصف بحثك، ويمكن للخريجين أن يقترحوا مساعدتهم.',
   'Un lauréat peut te conseiller en visio.': 'يمكن لخريج أن ينصحك عبر الفيديو.',
   'Entreprise, ville, filière…': 'الشركة، المدينة، الشعبة…', 'Le lauréat': 'الخريج', 'Cette offre est pour les autres années.': 'هذا العرض موجّه لسنوات أخرى.',
+  // La page des offres : en-tête, rangée collée, « Pour toi », « Nouveau »
+  'Par les étudiants': 'من الطلبة', 'Rechercher une offre': 'ابحث عن عرض', 'Filtrer les offres': 'تصفية العروض', 'Offres ou demandes': 'عروض أو طلبات',
+  'Choisies d’après ta filière et ton profil': 'مختارة حسب شعبتك وملفك', 'Nouveau': 'جديد', 'depuis ta dernière visite': 'منذ زيارتك الأخيرة',
+  'Proposée par': 'مقترح من',
+  // La fiche : les titres des blocs, la candidature envoyée
+  'Partagée par': 'مشاركة من', 'Le sujet': 'الموضوع', 'Le poste': 'المنصب', 'La mission': 'المهمة', 'L’annonce': 'الإعلان',
+  'Candidature envoyée': 'تم إرسال ترشيحك', 'Reçoit ta candidature et te répond ici': 'يستقبل ترشيحك ويجيبك هنا',
 }, [
+  [/^(\d+) offres? pour ta (.+)$/, (n, a) => `${arCount(n, OFFRES_N)} لـ${a}`],
+  [/^(\d+) offres? pour toi$/, n => `${arCount(n, OFFRES_N)} لك`],
+  [/^(\d+) candidatures? à traiter$/, n => `${arCount(n, ['ترشيح واحد', 'ترشيحان', 'ترشيحات', 'ترشيحًا'])} في انتظار ردك`],
+  [/^(\d+) offres? ouvertes?$/, n => arCount(n, ['عرض واحد مفتوح', 'عرضان مفتوحان', 'عروض مفتوحة', 'عرضًا مفتوحًا'])],
   [/^(\d+) autres offres t’attendent\.$/, n => porteAR(`${n} autres offres t’attendent.`)],
   [/^Ta candidature « (.+) » : pas retenue cette fois\. (.+)$/, (t, p) => `لم يُقبل ترشيحك «${t}» هذه المرة. ${porteAR(p) || p}`],
   [/^(.+?) a déjà une réussite enregistrée cette année\.$/, n => `لدى ${n} نجاح مسجّل هذه السنة.`],
