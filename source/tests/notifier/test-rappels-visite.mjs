@@ -42,6 +42,40 @@ test('notification : la chose la plus personnelle en titre, les autres dessous, 
   }
 });
 
+// Match, réponses à ses questions, événements où l'on est inscrit : le rappel du soir les dit aussi, dans cet ordre
+test('notification : Match (matchs pas vus, intérêts reçus), réponses et événements, avec leur écran ; FR et AR accordés', () => {
+  assert.deepEqual([...N.RAPPEL_ORDRE], ['messages', 'matchs', 'interets', 'propositions', 'mentorats', 'candidatures', 'reponses', 'evenements', 'demandes', 'offres']);
+  const ECRAN = { matchs: 'match', interets: 'match', reponses: 'reseau/entraide', evenements: 'reseau/agenda' };
+  for (const [k, ecran] of Object.entries(ECRAN)) assert.equal(N.texteNotif('rappel_visite', { [k]: 1 }, 'fr', SITE).url, `${SITE}#${ecran}`, k);
+  const MOTS = {
+    fr: {
+      matchs: ['1 nouveau match à découvrir', '2 nouveaux matchs à découvrir', '12 nouveaux matchs à découvrir'],
+      interets: ['1 intérêt t’attend dans Match', '2 intérêts t’attendent dans Match', '12 intérêts t’attendent dans Match'],
+      reponses: ['1 nouvelle réponse à tes questions', '2 nouvelles réponses à tes questions', '12 nouvelles réponses à tes questions'],
+      evenements: ['1 événement de ton agenda dans les 2 jours', '2 événements de ton agenda dans les 2 jours', '12 événements de ton agenda dans les 2 jours'],
+    },
+    ar: {
+      matchs: ['توافق جديد في انتظارك', 'توافقان جديدان في انتظارك', '12 توافقًا جديدًا في انتظارك'],
+      interets: ['اهتمام ينتظر ردك في صفحة التوافق', 'اهتمامان ينتظران ردك في صفحة التوافق', '12 اهتمامًا ينتظر ردك في صفحة التوافق'],
+      reponses: ['جواب جديد على أسئلتك', 'جوابان جديدان على أسئلتك', '12 جوابًا جديدًا على أسئلتك'],
+      evenements: ['نشاط واحد في أجندتك خلال يومين', 'نشاطان في أجندتك خلال يومين', '12 نشاطًا في أجندتك خلال يومين'],
+    },
+  };
+  for (const [l, cles] of Object.entries(MOTS)) for (const [k, textes] of Object.entries(cles)) [1, 2, 12].forEach((c, i) => {
+    assert.equal(N.texteNotif('rappel_visite', { [k]: c }, l, SITE).title, l === 'fr' ? textes[i].charAt(0).toUpperCase() + textes[i].slice(1) : textes[i], `${l} ${k} ${c}`);
+  });
+  assert.equal(N.texteNotif('rappel_visite', { interets: 5 }, 'ar', SITE).title, '5 اهتمامات تنتظر ردك في صفحة التوافق');
+  // Le plus personnel d'abord : un message, puis Match, avant les propositions et les offres
+  const n = N.texteNotif('rappel_visite', { offres: 3, evenements: 1, interets: 2, messages: 1, reponses: 2 }, 'fr', SITE);
+  assert.deepEqual([n.title, n.body, n.url], ['1 message non lu', 'Aussi : 2 intérêts t’attendent dans Match · 2 nouvelles réponses à tes questions · 1 événement de ton agenda dans les 2 jours · 3 nouvelles offres pour toi.', `${SITE}#messages`]);
+  const m = N.texteNotif('rappel_visite', { matchs: 1, interets: 1 }, 'ar', SITE);
+  assert.deepEqual([m.title, m.body, m.url], ['توافق جديد في انتظارك', 'وأيضًا: اهتمام ينتظر ردك في صفحة التوافق.', `${SITE}#match`]);
+  // L'email dit les mêmes choses
+  const e = N.rendreRappel({ matchs: 2, evenements: 1 }, 'fr', SITE, TOKEN);
+  assert.equal(e.sujet, '2 nouveaux matchs à découvrir · Réseau ENSAM');
+  assert.ok(e.texte.includes('• 1 événement de ton agenda dans les 2 jours') && e.html.includes(`href="${SITE}#match"`));
+});
+
 test('notification : rien de concret, rien n’est écrit ; un chiffre douteux est ignoré', () => {
   for (const d of [{}, null, { messages: 0 }, { messages: -2 }, { messages: '3' }, { messages: 1.5 }, { inconnu: 4 }]) {
     const x = N.texteNotif('rappel_visite', d, 'fr', SITE);

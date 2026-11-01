@@ -57,16 +57,16 @@ test('catégories : messages, demandes, candidatures, mentorat, offres, vie du r
 // (sql/test-notif-push.mjs vérifie que push_categorie donne la même chose que pushCategorie)
 test('chaque type est dans la catégorie annoncée', () => {
   const regle = {
-    messages: ['message', 'rdv_message', 'rdv_reponse', 'rappel_entretien'],
-    match: ['match', 'match_interet', 'match_jour'],
-    demandes: ['demande_nouvelle', 'demande_large', 'demande_proposition', 'demande_match', 'demande_rouverte', 'demande_reponse'],
+    messages: ['message', 'rdv_message', 'rdv_reponse', 'rappel_entretien', 'entretien_demain'],
+    match: ['match', 'match_interet', 'match_jour', 'match_attente'],
+    demandes: ['demande_nouvelle', 'demande_large', 'demande_proposition', 'demande_match', 'demande_rouverte', 'demande_reponse', 'demande_attente', 'demande_pause'],
     candidatures: ['candidature', 'candidature_statut', 'invitation', 'recrutement_a_confirmer', 'recrutement_confirme', 'relance_offre'],
     mentorat: ['mentorat_demande', 'mentorat_ouvert', 'mentorat_accepte', 'mentorat_deplace', 'mentorat_annule', 'rappel_rdv', 'merci', 'relecture_demande', 'relecture_prise',
-      'relecture_rendue', 'contact_demande', 'contact_accepte', 'filleul', 'parrain'],
-    offres: ['offre_alerte'],
+      'relecture_rendue', 'contact_demande', 'contact_accepte', 'filleul', 'parrain', 'rdv_demain', 'mentorat_presence', 'apres_rdv'],
+    offres: ['offre_alerte', 'offre_bientot'],
     reseau: ['reponse', 'question_routee', 'cafe', 'evenement', 'evenement_annule', 'evenement_deplace', 'enquete', 'verification_pair', 'verifier_pair', 'reaction',
-      'promo_nouveau', 'offre_commentaire', 'annonce'],
-    rappels: ['rappel_visite'],
+      'promo_nouveau', 'offre_commentaire', 'annonce', 'agenda_demain', 'reponse_utile', 'bravo', 'groupe_jour'],
+    rappels: ['rappel_visite', 'semaine'],
     admin: ['signalement'],
   };
   const attendu = Object.fromEntries(Object.entries(regle).flatMap(([cat, kinds]) => kinds.map(k => [k, cat])));
@@ -122,7 +122,12 @@ test('rappels : catégorie à part, activée par défaut pour tous, coupée = ri
     assert.equal(pushVoulu('rappel_rdv', { ...me, notif_push: { rappels: false } }), true, 'le rappel d’un rendez-vous reste dans « Mentorat »');
   }
   assert.match(SCHEMA, /e\.key not in \([^)]*'rappels'[^)]*\)/, 'notif_push_valide accepte la case « rappels »');
-  assert.match(SCHEMA, /when p_kind = 'rappel_visite' then 'rappels'/);
+  // La base peut ranger d'autres types dans la même case (le résumé du dimanche) : la règle reste vraie
+  assert.match(SCHEMA, /when p_kind (?:= 'rappel_visite'|in \([^)]*'rappel_visite'[^)]*\)) then 'rappels'/);
+  // Le résumé du dimanche suit la même case : coupée, plus de résumé
+  assert.equal(pushVoulu('semaine', { role: 'etudiant' }), true);
+  assert.equal(pushVoulu('semaine', { role: 'laureat', notif_push: { rappels: false } }), false);
+  assert.equal(pushVoulu('semaine', { role: 'etudiant', notif_push: { reseau: false, offres: false } }), true);
 });
 
 // Page Match : une catégorie à part (un intérêt pour soi, un match), activée par défaut, que l'on peut couper ;
@@ -144,6 +149,35 @@ test('match : catégorie à part, activée par défaut pour les étudiants et le
     }
   }
   assert.match(SCHEMA, /e\.key not in \([^)]*'match'[^)]*\)/, 'notif_push_valide accepte la case « match »');
-  assert.match(SCHEMA, /when p_kind in \('message','rdv_message','rdv_reponse','rappel_entretien'\) then 'messages'/);
-  assert.match(SCHEMA, /when p_kind in \('match','match_interet','match_jour'\) then 'match'/);
+  // La base peut ajouter des types à ces listes (la veille d'un entretien, les intérêts qui attendent) : la règle reste vraie
+  assert.match(SCHEMA, /when p_kind in \('message','rdv_message','rdv_reponse','rappel_entretien'[^)]*\) then 'messages'/);
+  assert.match(SCHEMA, /when p_kind in \('match','match_interet','match_jour'[^)]*\) then 'match'/);
+  // La veille d'un entretien reste un message ; les intérêts qui attendent suivent la case « Match »
+  for (const me of [{ role: 'etudiant' }, { role: 'laureat' }]) {
+    assert.equal(pushVoulu('entretien_demain', { ...me, notif_push: { match: false } }), true, 'couper Match ne fait pas rater la veille d’un entretien');
+    assert.equal(pushVoulu('entretien_demain', { ...me, notif_push: { messages: false } }), false);
+    assert.equal(pushVoulu('match_attente', { ...me, notif_push: { match: false } }), false);
+    assert.equal(pushVoulu('match_attente', { ...me, notif_push: { messages: false } }), true);
+  }
+});
+
+// Lot « Nouvelles notifications » : la case de chaque nouveau type, comme le contrat SQL ⇄ notifier (push_categorie le suit)
+test('nouveaux types : chacun dans sa case de Mon profil, coupé avec elle, jamais dans une autre', () => {
+  const CASE = {
+    match_attente: 'match', rdv_demain: 'mentorat', entretien_demain: 'messages', agenda_demain: 'reseau', apres_rdv: 'mentorat', offre_bientot: 'offres',
+    demande_attente: 'demandes', semaine: 'rappels', reponse_utile: 'reseau', bravo: 'reseau', demande_pause: 'demandes', mentorat_presence: 'mentorat',
+    groupe_jour: 'reseau', match_jour: 'match',
+  };
+  for (const [k, cat] of Object.entries(CASE)) {
+    assert.equal(pushCategorie(k), cat, k);
+    for (const me of [{ role: 'etudiant' }, { role: 'laureat' }, { role: 'laureat', en_recherche: true }]) {
+      assert.equal(pushVoulu(k, me), true, `${k} : activé par défaut`);
+      assert.equal(pushVoulu(k, { ...me, notif_push: { [cat]: false } }), false, `${k} : sa case le coupe`);
+      const autres = Object.fromEntries(PUSH_CATEGORIES.filter(c => c !== cat).map(c => [c, false]));
+      assert.equal(pushVoulu(k, { ...me, notif_push: autres }), true, `${k} : les autres cases n’y changent rien`);
+    }
+  }
+  // Chaque nouveau type a son texte dans le notifier
+  const notifier = typesDuNotifier();
+  for (const k of Object.keys(CASE)) assert.ok(notifier.has(k), `${k} sans texte dans le notifier`);
 });
