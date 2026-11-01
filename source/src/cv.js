@@ -242,7 +242,7 @@ export function RelecturesPage({ ctx }) {
     return html`<div class="sub-page">
       <div class="kpis">${[['CV en attente', ouv.length, 'pas encore pris en charge'], ['En cours', cours.length, 'un lauréat relit'], ['Relectures rendues', rendues.length, 'depuis le début'],
         ['Note moyenne', notes.length ? (notes.reduce((a, b) => a + b, 0) / notes.length).toFixed(1) : '–', notes.length ? 'donnée par les étudiants' : 'pas encore de note']].map(([l, v, s]) => html`<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-val mono">${v}</span><span class="small muted">${s}</span></div>`)}</div>
-      ${vieilles.length ? html`<div class="section-head"><h2>En attente depuis plus d’une semaine <span class="count">${vieilles.length}</span></h2></div>
+      ${vieilles.length ? html`<div class="section-head"><h2 class="titre-sec">En attente depuis plus d’une semaine <span class="count">${vieilles.length}</span></h2></div>
         <ul class="people-list">${vieilles.map(r => html`<li key=${r.id}><${Person} p=${store.byId('profiles', r.student_id)} onOpen=${ctx.openProfile} size=${32}/><span class="spacer"></span><span class="small muted">${timeAgo(r.created_at)}</span></li>`)}</ul>` : null}
     </div>`;
   }
@@ -267,14 +267,14 @@ export function RelecturesPage({ ctx }) {
   return html`<div class="sub-page relectures">
     ${connu ? null : how}
 
-    ${toMe.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="edit"/> CV que je relis <span class="count">${toMe.length}</span></h2></div>
+    ${toMe.length ? html`<div class="section-head"><h2 class="titre-sec">CV que je relis <span class="count">${toMe.length}</span></h2></div>
       <div class="list">${toMe.map(r => html`<${RelectureCard} key=${r.id} ctx=${ctx} r=${r} side="reviewer"/>`)}</div>` : null}
 
-    ${isLaureat ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="eye"/> CV à relire <span class="count">${queue.length}</span></h2>${queue.length > 1 ? html`<span class="small muted">Ceux de ta filière d’abord</span>` : null}</div>
+    ${isLaureat ? html`<div class="section-head"><h2 class="titre-sec">CV à relire <span class="count">${queue.length}</span></h2>${queue.length > 1 ? html`<span class="small muted">Ceux de ta filière d’abord</span>` : null}</div>
       <div class="list">${queue.length ? queue.slice(0, more ? 20 : 3).map(({ r }) => html`<${RelectureCard} key=${r.id} ctx=${ctx} r=${r} side="queue"/>`) : html`<${Empty} icon="eye" title="Aucun CV n’attend de relecture">On te prévient dès qu’un étudiant en demande une.<//>`}</div>
       ${queue.length > 3 ? html`<button class="linkish small past-toggle" onClick=${() => setMore(!more)}>${more ? 'Voir moins' : `Voir les autres CV (${queue.length - 3})`}</button>` : null}` : null}
 
-    ${!isLaureat || mineActive.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="file"/> Mes relectures${mineActive.length ? html` <span class="count">${mineActive.length}</span>` : null}</h2>
+    ${!isLaureat || mineActive.length ? html`<div class="section-head"><h2 class="titre-sec">Mes relectures${mineActive.length ? html` <span class="count">${mineActive.length}</span>` : null}</h2>
         ${canAsk ? html`<button id="rv-new" class="btn small primary" onClick=${() => setAsk(true)}><${Icon} name="plus" size=${15}/> Demander une relecture</button>` : null}</div>
       ${mineActive.length ? html`<div class="list">${mineActive.map(r => html`<${RelectureCard} key=${r.id} ctx=${ctx} r=${r} side="student"/>`)}</div>`
         : !me.cv_path ? html`<div class="help-cta"><span class="obj-ico"><${Icon} name="upload" size=${22}/></span><div class="grow"><strong>Dépose d’abord ton CV en PDF</strong><span class="small muted">Dans « Mon profil ». Ensuite, un lauréat peut le relire.</span></div><button class="btn primary small" onClick=${() => go('profil')}>Mon profil</button></div>`

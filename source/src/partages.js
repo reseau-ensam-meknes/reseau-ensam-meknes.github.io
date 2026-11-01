@@ -53,7 +53,7 @@ export function PartageCard({ o, ctx, onOpen, i = 0 }) {
 export function SectionPartages({ ctx, list, onPartager }) {
   if (!list.length && !onPartager) return null;
   return html`<section class="partages" aria-labelledby="partages-titre">
-    <div class="section-head"><h2 id="partages-titre" class="h-ico"><${Icon} name="share"/> Offres partagées</h2>${list.length ? html`<span class="count">${list.length}</span>` : null}</div>
+    <div class="section-head"><h2 id="partages-titre" class="titre-sec">Offres partagées</h2>${list.length ? html`<span class="count">${list.length}</span>` : null}</div>
     <p class="small muted partages-note">${list.length ? 'Vues ailleurs (LinkedIn, sites d’entreprise) et partagées par des membres. La candidature se fait sur le site d’origine.' : 'Tu as vu une offre intéressante sur LinkedIn ? Partage-la ici, avec son lien.'}</p>
     ${list.length ? html`<div class="partages-liste">${list.map((o, i) => html`<${PartageCard} key=${o.id} o=${o} ctx=${ctx} i=${i} onOpen=${() => ctx.openOffer(o.id)}/>`)}</div>` : null}
     ${onPartager ? html`<button type="button" class="btn small ghost partages-btn" id="of-partager-bas" onClick=${onPartager}><${Icon} name="plus" size=${15}/> Partager une offre</button>` : null}

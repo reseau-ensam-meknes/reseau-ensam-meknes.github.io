@@ -22,11 +22,12 @@ const VUES_SUIVI = ['placement', 'insertion'];
 function SuiviSeg({ ctx, on }) {
   const etu = ctx.me.role === 'etudiant';
   const aller = k => ctx.go(k === 'insertion' ? 'suivi/insertion' : 'suivi', { remplacer: true });
-  const onglet = (k, ic, l) => html`<button type="button" role="tab" id=${'suivi-onglet-' + k} aria-selected=${on === k ? 'true' : 'false'} aria-controls="suivi-vue" tabindex=${on === k ? 0 : -1}
-    class=${on === k ? 'on' : ''} onClick=${() => { if (k !== on) aller(k); }}><${Icon} name=${ic} size=${15}/> ${l}</button>`;
-  return html`<div class="suivi-onglets ins-noprint"><div class="seg suivi-seg" role="tablist" aria-label="Vue du suivi" onKeyDown=${clavierOnglets(VUES_SUIVI, on, aller, k => 'suivi-onglet-' + k)}>
-    ${onglet('placement', etu ? 'people' : 'chart', etu ? 'Mon année' : 'Placement')}
-    ${onglet('insertion', 'briefcase', etu ? 'Après le diplôme' : 'Insertion des diplômés')}
+  // Le segment commun des onglets de page (.seg-page) : du texte, comme Offres | Demandes ou Mon profil
+  const onglet = (k, l) => html`<button type="button" role="tab" id=${'suivi-onglet-' + k} aria-selected=${on === k ? 'true' : 'false'} aria-controls="suivi-vue" tabindex=${on === k ? 0 : -1}
+    class=${on === k ? 'on' : ''} onClick=${() => { if (k !== on) aller(k); }}>${l}</button>`;
+  return html`<div class="suivi-onglets en-tete-onglets ins-noprint"><div class="seg seg-page suivi-seg" role="tablist" aria-label="Vue du suivi" onKeyDown=${clavierOnglets(VUES_SUIVI, on, aller, k => 'suivi-onglet-' + k)}>
+    ${onglet('placement', etu ? 'Mon année' : 'Placement')}
+    ${onglet('insertion', etu ? 'Après le diplôme' : 'Insertion des diplômés')}
   </div></div>`;
 }
 const VueSuivi = ({ on, children }) => html`<div class="suivi-vue" id="suivi-vue" role="tabpanel" aria-labelledby=${'suivi-onglet-' + on}>${children}</div>`;
@@ -69,9 +70,9 @@ function SeasonPage({ ctx }) {
   const cherchent = tousCherchent ? row.searching : row.searching.slice(0, CHERCHENT_N);
 
   return html`<section class="page suivi-page">
-    <${EnTetePage} surTitre="Suivi de placement" titre="Tableau de bord"
-      action=${html`<label class="season-pick">Année <select id="dash-season" value=${saison} onChange=${e => setSaison(+e.target.value)}>${seasons.map(x => html`<option value=${x}>${seasonLabel(x)}${x === cur ? ' (en cours)' : ''}</option>`)}</select></label>`}>
+    <${EnTetePage} surTitre="Suivi de placement" titre="Tableau de bord">
       <${SuiviSeg} ctx=${ctx} on="placement"/>
+      <div class="ins-pick ins-noprint"><label class="season-pick">Année <select id="dash-season" value=${saison} onChange=${e => setSaison(+e.target.value)}>${seasons.map(x => html`<option value=${x}>${seasonLabel(x)}${x === cur ? ' (en cours)' : ''}</option>`)}</select></label></div>
     <//>
 
     <${VueSuivi} on="placement">
@@ -281,7 +282,7 @@ injectCSS('dashboard-promo', `
 .pr-avant { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .7rem; align-items: stretch; }
 .pr-stat { display: flex; flex-direction: column; gap: .55rem; padding: 1rem 1.1rem; border-radius: var(--r-lg); border: 0; background: var(--surface); box-shadow: var(--sh1); min-width: 0; }
 .pr-tete { display: flex; align-items: center; gap: .6rem; }
-.pr-tete h2 { margin: 0; font-size: var(--fs-3); font-weight: 650; color: var(--ink); line-height: 1.3; }
+.pr-tete h2 { margin: 0; color: var(--ink); line-height: 1.3; }
 .pr-stat-ico { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--blue-text); }
 .pr-stat.good .pr-stat-ico { background: var(--good-soft); color: var(--good); }
 .pr-chiffre { margin: 0; display: flex; align-items: baseline; flex-wrap: wrap; gap: .2rem .5rem; }
@@ -319,21 +320,16 @@ injectCSS('dashboard-promo', `
 @media (prefers-reduced-motion: no-preference) { .tr-barre { animation: grow-x .4s var(--ease) .1s backwards; } }
 
 /* ===== Placement | Insertion : la rangée d'onglets sous le titre, puis le panneau de l'onglet ===== */
-.suivi-seg button { display: inline-flex; align-items: center; justify-content: center; gap: .35rem; }
-@media (max-width: 560px) {
-  .suivi-seg { display: flex; }
-  .suivi-seg button { flex: 1 1 auto; min-height: 44px; padding-inline: .5rem; }
-}
+/* (le dessin des onglets : .seg-page, commun à toutes les pages, ui.js) */
 /* Le panneau garde l'arrivée des blocs d'une page (l'un après l'autre ; un simple fondu en mouvement réduit) */
 .suivi-vue { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
-.suivi-page > .suivi-vue { gap: 1.5rem; }
 .page > div.suivi-vue { animation: none; }
 .suivi-vue > * { animation: rise .4s var(--ease) backwards; }
 .suivi-vue > :nth-child(1) { animation-delay: .04s; } .suivi-vue > :nth-child(2) { animation-delay: .08s; }
 .suivi-vue > :nth-child(3) { animation-delay: .12s; } .suivi-vue > :nth-child(n+4) { animation-delay: .16s; }
 
 /* ===== Tableau de bord (lauréats, administration) : un anneau, trois faits, puis chaque année d'études en barre ===== */
-.suivi-page { gap: 1.5rem; }
+/* Le rythme des pages (.page, 1,25rem entre les blocs) : le même que partout */
 .suivi-page .en-tete-txt { flex-basis: 12rem; }
 .suivi-page .season-pick select { min-height: 44px; }
 .suivi-hero { display: flex; align-items: center; gap: 1.25rem; padding: 1.2rem 1.2rem 1.25rem; border-radius: var(--r-xl); background: var(--surface); box-shadow: var(--sh1); min-width: 0; }

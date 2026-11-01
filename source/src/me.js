@@ -1,6 +1,6 @@
 // « Mon parcours » (étudiants) et « Mon espace » (lauréats).
 import { html, useState } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, Bar, toast, LevelChip, CompanyLogo, TYPE_ICON, celebrate, injectCSS, Embleme, EnTetePage, Compteur, Anneau, Rangee, vibrer } from './ui.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, Bar, toast, LevelChip, CompanyLogo, TYPE_ICON, celebrate, injectCSS, Embleme, EnTetePage, Compteur, Anneau, Rangee, vibrer, clavierOnglets } from './ui.js';
 import { addAR, arCount } from './i18n.js';
 import { OBJECTIFS, NIVEAUX, TYPES, niveauOf, statutOf, typeForNiveau, seasonLabel, timeAgo, levelOf, BADGES, badgesOf, BAREME, NIVEAUX_IMPACT, mentorState, requestsFor, demandesPour } from './logic.js';
 import { APP_STATUS, OfferComposer, annulerRecrutement } from './offers.js';
@@ -364,23 +364,13 @@ function MonImpact({ s, mine, recrutes, mercis, onBareme }) {
   </section>`;
 }
 
-// Une rangée d'onglets au clavier (Mon espace, Suivi) : les flèches dans le sens de lecture, Début et Fin ; l'onglet atteint
-// est choisi et prend le focus (un seul arrêt de tabulation dans la rangée)
-export const clavierOnglets = (cles, actuel, choisir, idDe) => e => {
-  const n = cles.length, i = cles.indexOf(actuel);
-  const rtl = getComputedStyle(e.currentTarget).direction === 'rtl';
-  const j = { ArrowRight: i + (rtl ? -1 : 1), ArrowLeft: i + (rtl ? 1 : -1), Home: 0, End: n - 1 }[e.key];
-  if (j === undefined) return;
-  e.preventDefault();
-  const k = cles[(j + n) % n];
-  if (k !== actuel) choisir(k);
-  requestAnimationFrame(() => document.getElementById(idDe(k))?.focus());
-};
+// Une rangée d'onglets au clavier (Mon espace, Suivi, Mentorat) : la brique commune de ui.js
+export { clavierOnglets };
 
 // Les trois parties de Mon espace : la rangée de segments de l'appli (la pastille glisse d'un onglet à l'autre, le contenu suit)
 function OngletsEspace({ onglet, nOffres, onChange }) {
   const clavier = clavierOnglets(ONGLETS_ESPACE.map(([k]) => k), onglet, onChange, k => 'esp-onglet-' + k);
-  return html`<div class="seg esp-onglets" role="tablist" aria-label="Parties de mon espace" onKeyDown=${clavier}>
+  return html`<div class="seg seg-page esp-onglets" role="tablist" aria-label="Parties de mon espace" onKeyDown=${clavier}>
     ${ONGLETS_ESPACE.map(([k, l]) => html`<button type="button" role="tab" key=${k} id=${'esp-onglet-' + k} class=${onglet === k ? 'on' : ''} aria-selected=${onglet === k ? 'true' : 'false'}
       aria-controls="esp-panneau" tabindex=${onglet === k ? 0 : -1} onClick=${() => { if (k !== onglet) onChange(k); }}>${l}${k === 'offres' && nOffres ? html` <span class="count">${nOffres}</span>` : null}</button>`)}
   </div>`;
@@ -443,7 +433,7 @@ function PanneauOffres({ ctx, offres }) {
       return html`<li key=${o.id}><button type="button" class="app-row esp-ligne esp-offre" onClick=${() => openOffer(o.id)}>
         <span class=${'type-ico t-' + o.type}><${Icon} name=${TYPE_ICON[o.type]} size=${20}/></span>
         <span class="esp-ligne-txt"><strong class="esp-titre" translate="no" dir="auto">${o.titre}</strong>
-          <span class="esp-sous"><span class=${'state-pill ' + cls}>${statut}</span><span class="esp-chiffres"><span class=${nApps ? '' : 'zero'}>${`${nApps} candidat${nApps > 1 ? 's' : ''}`}</span>${nRec ? html` · <span class="ok">${`${nRec} recruté${nRec > 1 ? 's' : ''}`}</span>` : null}</span></span></span>
+          <span class="esp-sous"><span class=${'state-pill ' + cls}>${statut}</span><span class="esp-chiffres"><span class=${nApps ? '' : 'zero'}>${nApps ? `${nApps} candidat${nApps > 1 ? 's' : ''}` : 'Pas encore de candidat'}</span>${nRec ? html` · <span class="ok">${`${nRec} recruté${nRec > 1 ? 's' : ''}`}</span>` : null}</span></span></span>
         <span class="esp-go" aria-hidden="true"><${Icon} name="arrow" size=${18}/></span></button></li>`;
     })}</ul>` : html`<${Empty} icon="feed" scene="offres" title="Aucune offre publiée">Une offre partagée peut lancer une carrière : les étudiants concernés la voient tout de suite.<//>`}
   </section>`;
@@ -543,7 +533,7 @@ function MesBadges({ mine }) {
 // Quatre tailles de texte : le titre de page (et les grands chiffres), le titre de section, le texte, la méta.
 // ---------------------------------------------------------------------------
 injectCSS('me-espace', `
-.esp-page { gap: 1.5rem; }
+/* Le rythme des pages (.page, 1,25rem entre les blocs) : le même que partout */
 /* En-tête : le titre garde sa ligne ; « Publier une offre » devient « Publier » sur un petit téléphone (sur ordinateur, la barre latérale l'a déjà) */
 .esp-page .en-tete-txt { flex-basis: 11rem; }
 .esp-page .en-tete .btn.publier-offre { width: auto; min-height: 44px; padding-inline: 1rem 1.1rem; gap: .4rem; }
@@ -665,13 +655,7 @@ injectCSS('me-espace', `
   .ic-ondes { inset-block-start: -240px; inset-inline-end: -160px; inline-size: 560px; block-size: 560px; }
 }
 
-/* Les onglets : la rangée de segments de l'appli ; sur téléphone, toute la largeur, chaque onglet entier */
-.esp-onglets button { min-height: 40px; gap: .4rem; }
-.esp-onglets .count { background: color-mix(in srgb, currentColor 12%, transparent); color: inherit; }
-@media (max-width: 560px) {
-  .esp-onglets { align-self: stretch; }
-  .esp-onglets button { flex: 1 1 auto; min-height: 44px; padding-inline: .45rem; font-size: var(--fs-2); }
-}
+/* Les onglets : le segment commun des onglets de page (.seg-page, ui.js), toute la largeur sur téléphone */
 .esp-panneau { display: flex; flex-direction: column; gap: 1.5rem; min-width: 0; margin-top: -.25rem; }
 @media (min-width: 900px) {
   .esp-panneau:has(> .esp-recrues):has(> .esp-filleuls) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
@@ -781,7 +765,7 @@ a.pa-geste { text-decoration: none; }
 // Mon parcours : l'objectif en un chemin (étapes reliées, la ligne qui se remplit), la prochaine chose, les candidatures
 // ---------------------------------------------------------------------------
 injectCSS('me-parcours', `
-.pc-page { gap: 1.5rem; }
+/* Le rythme des pages (.page, 1,25rem entre les blocs) : le même que partout */
 .pc-objectif { display: flex; flex-direction: column; gap: 1.15rem; padding: 1.15rem 1.15rem 1.2rem; border-radius: var(--r-xl); background: var(--surface); box-shadow: var(--sh1); min-width: 0; }
 .pc-obj-tete { display: flex; align-items: flex-start; gap: .85rem; min-width: 0; }
 .pc-obj-ico { flex: none; display: grid; place-items: center; inline-size: 44px; block-size: 44px; border-radius: var(--r-md); background: var(--accent-soft); color: var(--blue-text); }

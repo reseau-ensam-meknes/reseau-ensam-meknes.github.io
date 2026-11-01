@@ -3,8 +3,7 @@
 // Ce qui compte d'abord : le prochain rendez-vous en haut, le mode d'emploi seulement pour qui découvre.
 import { html, useState, useEffect, useLayoutEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, toast, celebrate, useLocal, injectCSS, roleTexte } from './ui.js';
-import { useBrouillon, EnTetePage, Rangee, Coche, vibrer, mouvementReduit } from './ui.js';
-import { PucesNav } from './lignes.js';
+import { useBrouillon, EnTetePage, Rangee, Coche, vibrer, mouvementReduit, clavierOnglets } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
 import { BESOINS, RDV_MIN, mentorState, futureSlots, requestsFor, mentorsFor, timeAgo, helpMatch, niveauOf, coupDeMain, alerteTalents, mercisPublics, dernierMerciPour, nouvelleDemandeApres, joursAvant } from './logic.js';
 import { getLang, addAR, arCount, t as tr } from './i18n.js';
@@ -542,8 +541,16 @@ function MentorOnglets({ ctx }) {
   const { data, me, sub, go } = ctx;
   const R = data.relectures_cv || [];
   const aFaire = R.filter(r => (r.reviewer_id === me.id && ['demandee', 'en_cours'].includes(r.status)) || (r.student_id === me.id && r.status === 'rendue' && !r.merci && !r.note)).length;
-  return html`<${PucesNav} label="Mentorat" actif=${sub === 'cv' ? 'cv' : 'rdv'} onChoisir=${k => go(k === 'cv' ? 'mentorat/cv' : 'mentorat', { remplacer: true })}
-    items=${[{ k: 'rdv', label: 'Rendez-vous', icon: 'video' }, { k: 'cv', label: 'Relecture de CV', icon: 'file', n: aFaire }]}/>`;
+  // Deux vues qui tiennent sur une ligne : le segment commun des onglets de page (comme Offres | Demandes), au clavier
+  // flèches, Début et Fin ; le chiffre dit ce qui attend un geste dans les relectures
+  const actif = sub === 'cv' ? 'cv' : 'rdv';
+  const choisir = k => go(k === 'cv' ? 'mentorat/cv' : 'mentorat', { remplacer: true });
+  const ONGLETS = [['rdv', 'Rendez-vous'], ['cv', 'Relecture de CV', aFaire]];
+  const clavier = clavierOnglets(ONGLETS.map(([k]) => k), actif, choisir, k => 'm-onglet-' + k);
+  return html`<div class="en-tete-onglets"><div class="seg seg-page m-onglets" role="tablist" aria-label="Mentorat" onKeyDown=${clavier}>
+    ${ONGLETS.map(([k, l, n]) => html`<button type="button" role="tab" key=${k} id=${'m-onglet-' + k} class=${actif === k ? 'on' : ''} aria-selected=${actif === k ? 'true' : 'false'}
+      tabindex=${actif === k ? 0 : -1} onClick=${() => { if (k !== actif) choisir(k); }}>${l}${n ? html` <span class="count">${n}</span>` : null}</button>`)}
+  </div></div>`;
 }
 
 // « Comment ça marche ? » replié, pour celles et ceux qui connaissent déjà
@@ -572,7 +579,7 @@ function Dispo({ ctx }) {
 const SOUS_BESOIN = { cv: 'Un regard neuf avant d’envoyer', stage: 'Où chercher, comment postuler', entretien: 'S’entraîner avec un lauréat', etranger: 'Les étapes, pas à pas', carriere: 'Choisir sa voie, sereinement' };
 function TuilesBesoin({ titre, onChoisir }) {
   return html`<section class="m-section m-besoins" aria-labelledby="m-besoins-h">
-    <div class="m-head"><h2 id="m-besoins-h">${titre}</h2></div>
+    <div class="m-head"><h2 id="m-besoins-h" class="titre-sec">${titre}</h2></div>
     <div class="need-tuiles">${Object.entries(BESOINS).map(([k, v]) => html`<button type="button" class=${'need-tuile nt-' + k} onClick=${() => onChoisir(k)}>
       <span class="nt-ico"><${Icon} name=${v.icon} size=${20}/></span><span class="nt-txt"><strong>${v.label}</strong><span class="nt-sous">${SOUS_BESOIN[k]}</span></span></button>`)}</div>
   </section>`;
@@ -669,11 +676,11 @@ export function MentoratPage(ctx) {
     const soon = data.mentorships.filter(m => mentorState(m) === 'rdv' && m.rdv_at && !miens.has(m.id)).sort(byRdv);
     return html`<section class="page mentorat">
       ${entete}
-      ${rdvs.length ? html`<section class="m-section"><div class="m-head"><h2 class="h-ico"><${Icon} name="video"/> Tes rendez-vous</h2></div>
+      ${rdvs.length ? html`<section class="m-section"><div class="m-head"><h2 class="titre-sec">Tes rendez-vous</h2></div>
         <div class="list">${rdvs.map((m, i) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="mentor" focus=${i === 0}/>`)}</div></section>` : null}
-      ${need.length ? html`<section class="m-section"><div class="m-head"><h2 class="h-ico"><${Icon} name="heart"/> Ils aimeraient ton avis <span class="count">${need.length}</span></h2></div>
+      ${need.length ? html`<section class="m-section"><div class="m-head"><h2 class="titre-sec">Ils aimeraient ton avis <span class="count">${need.length}</span></h2></div>
         <div class="list">${need.map(({ m, why }) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="mentor" why=${why}/>`)}</div></section>` : null}
-      <section class="m-section m-suivi"><div class="m-head"><h2 class="h-ico"><${Icon} name="chart"/> Suivi de l’école</h2></div>
+      <section class="m-section m-suivi"><div class="m-head"><h2 class="titre-sec">Suivi de l’école</h2></div>
         ${soon.length ? html`<h3 class="m-sub">Rendez-vous à venir <span class="count">${soon.length}</span></h3>
           <${Rangee} label="Rendez-vous à venir" grille cls="m-cartes">${soon.map(m => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="admin"/>`)}<//>` : null}
         <h3 class="m-sub">En attente d’un horaire <span class="count">${open.length}</span></h3>
@@ -701,7 +708,7 @@ export function MentoratPage(ctx) {
   const pleine = [next, ...autres].find(x => x && aUnPlein(x)) || null;
   const hist = isLaureat ? done : minePast;
   const enCours = autres.length ? html`<section class="m-section m-autres">
-      <div class="m-head"><h2>${titreAutres} <span class="count">${autres.length}</span></h2></div>
+      <div class="m-head"><h2 class="titre-sec">${titreAutres} <span class="count">${autres.length}</span></h2></div>
       <div class="list">${autres.map(x => html`<${RequestCard} key=${x.m.id} ctx=${ctx} m=${x.m} side=${x.side} now=${now} calme=${x !== pleine}/>`)}</div>
     </section>` : null;
 
@@ -711,7 +718,7 @@ export function MentoratPage(ctx) {
     ${nouveau ? html`<${HowItWorks} role=${role}/>` : null}
 
     ${next ? html`<section class="m-section m-next" aria-labelledby="m-next-h">
-      <div class="m-head"><h2 id="m-next-h">Ton prochain rendez-vous</h2></div>
+      <div class="m-head"><h2 id="m-next-h" class="titre-sec">Ton prochain rendez-vous</h2></div>
       <${RequestCard} key=${next.m.id} ctx=${ctx} m=${next.m} side=${next.side} focus now=${now} calme=${!!pleine && pleine !== next}/>
     </section>` : null}
 
@@ -719,7 +726,7 @@ export function MentoratPage(ctx) {
     ${!isLaureat ? html`<${TuilesBesoin} titre=${mine.length ? 'Besoin d’un autre conseil ?' : 'Besoin d’un conseil ?'} onChoisir=${k => setAsk({ besoin: k })}/>` : null}
 
     ${isLaureat ? html`<section class="m-section m-avis" aria-labelledby="m-avis-h">
-      <div class="m-head"><h2 id="m-avis-h" class="h-ico"><${Icon} name="heart"/> Ils aimeraient ton avis${need.length ? html` <span class="count">${need.length}</span>` : null}</h2></div>
+      <div class="m-head"><h2 id="m-avis-h" class="titre-sec">Ils aimeraient ton avis${need.length ? html` <span class="count">${need.length}</span>` : null}</h2></div>
       ${need.length ? html`<p class="small muted m-invite">Choisis l’étudiant que tu peux aider, à ton rythme. Les autres lauréats s’occupent du reste.</p>` : null}
       ${need.length ? html`<${Rangee} label="Ils aimeraient ton avis" grille cls="m-cartes m-avis-liste">${(more ? need : need.slice(0, 2)).map(({ m, why, direct }) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="mentor" why=${why} onIgnore=${direct ? null : () => ignorer(m)}/>`)}<//>`
         : html`<div class="list">${!me.mentor_dispo
@@ -981,8 +988,6 @@ injectCSS('mentorat-ux', `
 .mentorat .mreq-body > .row { flex-wrap: wrap; gap: .2rem .6rem; }
 .mrow-acts > .m-more { margin-inline-start: -.1rem; }
 
-/* Les deux onglets tiennent à 360 px, pastille comprise (sans leurs pictogrammes, sous le fondu sinon) */
-@media (max-width: 380px) { .mentorat > .page-head .puces-nav [role="tab"] > .ico { display: none; } }
 
 /* Les demandes, côte à côte : une carte par étudiant, on glisse de l'un à l'autre (en grille sur ordinateur) */
 .m-cartes .rangee-cartes { --rangee-l: min(88%, 22rem); --rangee-min: 330px; }

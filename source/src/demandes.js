@@ -264,7 +264,7 @@ function DemandesPromo({ ctx, focusId }) {
   const { data, me, store, saison } = ctx;
   const liste = demandesPromo(data, me, id => store.byId('profiles', id), saison);
   return html`<section class="m-section dm-promo" aria-labelledby="dm-promo-t">
-    <div class="m-head"><h2 class="h-ico" id="dm-promo-t"><${Icon} name="people"/> Demandes de ta promo</h2>${liste.length ? html`<span class="count">${liste.length}</span>` : null}</div>
+    <div class="m-head"><h2 class="titre-sec" id="dm-promo-t">Demandes de ta promo${liste.length ? html` <span class="count">${liste.length}</span>` : null}</h2></div>
     ${liste.length ? html`<p class="small muted">Ce que cherchent les étudiants de ton année. Encourage-les, ou laisse un conseil.</p>
       <div class="list">${liste.map(d => html`<${CartePromo} key=${d.id} ctx=${ctx} d=${d} focus=${d.id === focusId}/>`)}</div>`
       : html`<p class="small muted dm-attente"><${Icon} name="people" size=${15}/> <span>Pas encore de demande d’un étudiant de ton année. Elles apparaîtront ici.</span></p>`}

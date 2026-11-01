@@ -2001,9 +2001,11 @@ html.defil-bloque.defil-gouttiere { scrollbar-gutter: stable; }
 .menu-pop .menu-mobile .dotn { margin-inline-start: auto; }
 
 .mx-page { max-width: 500px; gap: var(--sp-4); }
-/* L'en-tête : le titre et où l'on en est (« 3 sur 8 ») au début, « Tes matchs » à la fin (les visages défilent si besoin) */
-.mx-tete { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-width: 0; }
-.mx-tete-txt { flex: none; display: flex; flex-direction: column; gap: .35rem; min-width: 0; max-width: 100%; }
+/* L'en-tête : où l'on en est (« 3 sur 8 ») en sur-titre, puis le titre, comme l'en-tête commun des pages (même place du
+   titre d'un onglet à l'autre) ; « Tes matchs » à la fin (les visages défilent si besoin) */
+.mx-tete { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; min-width: 0; }
+.mx-tete-txt { flex: none; display: flex; flex-direction: column; gap: .2rem; min-width: 0; max-width: 100%; padding-block-start: .15rem; }
+.mx-tete .mx-matchs { align-self: center; }
 /* Le titre : celui de toutes les pages (Socle : h1, --fs-titre, même graisse), sur une ligne serrée en arabe aussi */
 .mx-tete h1 { margin: 0; line-height: 1.15; }
 .mx-tete .mx-sous { margin: 0; font-size: var(--fs-3); }
@@ -2620,7 +2622,8 @@ input, select, textarea { border-radius: var(--r-md); border-color: var(--line-s
 
 /* --- Pages du Socle : les rubriques sous le titre (Réseau, Admin), l'anneau de Mon profil --- */
 .en-tete > .puces-nav { margin-top: .3rem; }
-.pf-page .en-tete-act { align-self: center; }
+/* L'anneau de Mon profil (56 px) se centre sur le titre sans grandir l'en-tête : le titre reste à la même hauteur que sur les autres pages */
+.pf-page .en-tete-act { align-self: center; margin-block: -4px; }
 .pf-pct { display: inline-flex; align-items: baseline; font: 750 var(--fs-3)/1 var(--f-display); letter-spacing: -.01em; color: var(--ink); }
 .pf-pct small { font-size: .68em; font-weight: 650; margin-inline-start: 1px; color: var(--ink-2); }
 /* Sans flou derrière (vieux navigateurs, économie d'énergie) : les barres sont pleines */

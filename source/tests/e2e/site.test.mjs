@@ -530,7 +530,8 @@ test('mentorat : à 360 px les deux onglets tiennent, pastille comprise ; en ara
   await s.page.setViewportSize({ width: 360, height: 740 });
   await s.comme('Salma'); await s.aller('mentorat'); await s.page.waitForTimeout(1300);
   await s.page.locator('.fete-acts .btn').last().click({ timeout: 1500 }).catch(() => {});
-  const onglets = await s.page.evaluate(() => { const n = document.querySelector('.mentorat .puces-nav'), r = n.getBoundingClientRect(), p = n.querySelector('.puce-n').getBoundingClientRect(); return { defile: n.scrollWidth > n.clientWidth + 1, pastille: p.left >= r.left && p.right <= r.right }; });
+  // Les onglets de page (segments) : rien ne défile ni ne déborde, aucun libellé coupé, la pastille dans son onglet
+  const onglets = await s.page.evaluate(() => { const n = document.querySelector('.mentorat .m-onglets'), r = n.getBoundingClientRect(), p = n.querySelector('.count').getBoundingClientRect(); return { defile: n.scrollWidth > n.clientWidth + 1 || [...n.querySelectorAll('[role="tab"]')].some(b => b.scrollWidth > b.clientWidth + 1), pastille: p.left >= r.left && p.right <= r.right }; });
   assert.deepEqual(onglets, { defile: false, pastille: true });
   // « دفعة 2012 · Renault Group Maroc » : jamais coupé en « … » (en arabe, la coupure mangerait le début du nom latin)
   const ligne = await s.page.evaluate(() => { const l = document.querySelector('.billet-qui .role-line'); return { txt: l.textContent, coupe: l.scrollWidth > l.clientWidth + 1 || getComputedStyle(l).textOverflow === 'ellipsis' && getComputedStyle(l).whiteSpace === 'nowrap' }; });

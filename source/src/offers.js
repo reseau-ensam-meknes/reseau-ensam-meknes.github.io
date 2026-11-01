@@ -149,7 +149,7 @@ export function OffersPage(ctx) {
       surTitre=${chiffre ? (chiffre.vers ? html`<button type="button" class="of-chiffre" onClick=${() => (chiffre.vers.offre ? ctx.openOffer(chiffre.vers.offre) : choisir(chiffre.vers.filtre))}><${Compteur} v=${chiffre.v} format=${chiffre.f}/><${Icon} name="arrow" size=${14}/></button>`
         : html`<${Compteur} v=${chiffre.v} format=${chiffre.f}/>`) : demandes && !isStudent ? 'Par les étudiants' : null}
       action=${bouton || html`<span class="of-place" aria-hidden="true"></span>`}>
-      ${avecDemandes ? html`<div class="of-onglets"><div class="seg offres-seg" role="tablist" aria-label="Offres ou demandes">
+      ${avecDemandes ? html`<div class="of-onglets en-tete-onglets"><div class="seg seg-page offres-seg" role="tablist" aria-label="Offres ou demandes">
         <button role="tab" aria-selected=${!demandes} class=${demandes ? '' : 'on'} onClick=${() => go('offres', { remplacer: true })}>Offres</button>
         <button role="tab" aria-selected=${demandes} class=${demandes ? 'on' : ''} onClick=${() => go('offres/demandes', { remplacer: true })}>Demandes${nDem ? html` <span class="count">${nDem}</span>` : null}</button>
       </div></div>` : null}
@@ -908,12 +908,8 @@ injectCSS('offres-liste', `
 @media (pointer: coarse) { .of-chiffre { position: relative; } .of-chiffre::after { content: ""; position: absolute; inset: -14px -8px; } }
 @media (prefers-reduced-motion: reduce) { .of-chiffre > svg { transition: none; } }
 .of-place { display: block; width: 0; height: 44px; }
-.offres-seg { display: flex; width: min(100%, 22rem); }
-.offres-seg button { flex: 1 1 0; min-height: 38px; }
-.offres-seg button.on, .offres-chips .chip.on { background: var(--sel-bg); color: var(--sel-ink); border-color: transparent; box-shadow: inset 0 0 0 1px var(--sel-ring); font-weight: 600; }
-.offres-seg .count { margin-inline-start: .15rem; }
-.offres-seg button.on .count { background: color-mix(in srgb, var(--sel-ink) 14%, transparent); color: var(--sel-ink); }
-@media (max-width: 760px) { .offres-seg { width: 100%; } }
+/* Le segment Offres | Demandes : le dessin commun des onglets de page (.seg-page, ui.js) */
+.offres-chips .chip.on { background: var(--sel-bg); color: var(--sel-ink); border-color: transparent; box-shadow: inset 0 0 0 1px var(--sel-ring); font-weight: 600; }
 
 /* ---------- Recherche : une pastille douce, l'anneau de focus autour de toute la pastille ---------- */
 .offres-page .sub-page > .search { min-height: 46px; padding-inline: 1rem .5rem; border-radius: var(--r-pill); border-color: transparent; background: var(--surface); box-shadow: var(--sh1); }

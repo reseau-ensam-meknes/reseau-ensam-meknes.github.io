@@ -314,9 +314,10 @@ export function MatchPage(ctx) {
 
   return html`<section class=${'page mx-page' + (plein ? '' : ' fini')}>
     <header class="mx-tete">
-      <div class="mx-tete-txt"><h1>Match</h1>
+      <div class="mx-tete-txt">
+        ${tourFait || (plein && objectif > 0) ? html`<${TourDuJour} n=${Math.min(tour.n, objectif)} objectif=${objectif} fait=${tourFait} serie=${tour.serie}/>` : html`<span class="en-tete-place" aria-hidden="true"></span>`}
+        <h1>Match</h1>
         <p class="muted mx-sous">${etu ? 'Des offres de lauréats, une carte à la fois.' : 'Des étudiants de l’école, une carte à la fois.'}</p>
-        ${tourFait || (plein && objectif > 0) ? html`<${TourDuJour} n=${Math.min(tour.n, objectif)} objectif=${objectif} fait=${tourFait} serie=${tour.serie}/>` : null}
       </div>
       <${MesMatchs} ctx=${ctx}/>
     </header>
@@ -996,6 +997,13 @@ injectCSS('match-page', `
 .mx-tour-serie::before { content: "·"; margin-inline-end: .45rem; }
 @keyframes mx-tour-pop { from { transform: scale(.94); opacity: .5; } }
 @media (prefers-reduced-motion: reduce) { .mx-tour-pts i { transition: none; } .mx-tour.fini { animation: none; } }
+/* Dans l'en-tête, le tour du jour tient la place du sur-titre des autres pages : même hauteur de ligne, même bleu,
+   pour que « Match » tombe à la hauteur des autres titres ; vert une fois le tour fait */
+.mx-tete .mx-tour { block-size: calc(var(--fs-2) * 1.35); line-height: 1.35; color: var(--blue-text); font-weight: 600; }
+.mx-tete .mx-tour-n { color: inherit; }
+.mx-tete .mx-tour.fini { color: var(--good); font-weight: 650; }
+.mx-tete .mx-tour-coche { inline-size: 16px; block-size: 16px; }
+[dir="rtl"] .mx-tete .mx-tour:not(.fini) { font-weight: 500; }
 
 /* Plus de carte : trois cartes posées (la dernière coche se dessine), le bilan vrai de la visite, la suite, l'action */
 /* Tout tient au-dessus de la barre du bas d'un téléphone (390 × 844 comme 360 px de large), sans défiler ; la carte va
