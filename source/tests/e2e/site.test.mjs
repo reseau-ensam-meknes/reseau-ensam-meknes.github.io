@@ -5081,3 +5081,15 @@ test('Match : le geste montré une fois, sans gêner la carte', async () => {
   assert.equal(await s.page.locator('.mx-guide').count(), 0, 'pas deux fois');
   await s.ctx.close();
 });
+
+test('Match : l’anneau du tour du jour avance à chaque carte et garde son compte', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('match');
+  await s.page.waitForSelector('.mx-tour');
+  assert.equal((await s.page.locator('.mx-tour-n').innerText()).trim(), '0');
+  await s.page.locator('.mx-non').click();
+  await s.page.waitForFunction(() => document.querySelector('.mx-tour-n').textContent.trim() === '1');
+  await s.page.reload(); await s.page.waitForSelector('.mx-tour');
+  assert.equal((await s.page.locator('.mx-tour-n').innerText()).trim(), '1', 'le compte du jour reste après un rechargement');
+  await s.ctx.close();
+});

@@ -1597,6 +1597,16 @@ export const SPONSO_ANNEES = [[1, '1A'], [2, '2A'], [3, '3A'], [4, '4A'], [5, '5
 const deux = n => String(n).padStart(2, '0');
 // La date du jour sur l'appareil, « 2026-10-28 » (les dates de début et de fin d'une carte sont des jours entiers)
 export const jourLocal = (now = Date.now()) => { const d = new Date(now); return `${d.getFullYear()}-${deux(d.getMonth() + 1)}-${deux(d.getDate())}`; };
+// Match, le tour du jour : TOUR_JOUR cartes par jour, gardées dans ce navigateur. Rien ne bloque au-delà ; les jours de suite
+// comptent les tours terminés et repartent sans reproche après un jour sans.
+export const TOUR_JOUR = 5;
+const veille = jour => { const [a, m, j] = jour.split('-').map(Number); return jourLocal(new Date(a, m - 1, j - 1, 12).getTime()); };
+export const etatTour = (t, jour) => ({ n: t?.jour === jour ? t.n : 0, serie: t?.fait === jour || t?.fait === veille(jour) ? t.serie || 0 : 0, fait: t?.fait || null });
+export function avancerTour(t, jour) {
+  const e = etatTour(t, jour), n = e.n + 1, fini = n === TOUR_JOUR;
+  const serie = fini ? e.serie + 1 : e.serie;
+  return { jour, n, serie, fait: fini ? jour : e.fait, fini };
+}
 export const lienSponsoValide = l => { const s = String(l || '').trim(); return s.length <= 500 && /^https:\/\/[^\s/?#]+\.[^\s/?#]+(?:[/?#]\S*)?$/i.test(s); };
 export const domaineSponsoValide = d => !d || /^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(d);
 // Une carte écrite par l'administration, nettoyée comme le fait la base (protect_sponsorise) : textes sans espaces autour,
