@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { navigateurIntegre, lienChrome, ouvertureSorte, OUVERTURE_IOS_ECART, ouvertureNotif, sorteLienNotifs, parametresLien, noterEchecPush, echecDefinitif, bandeauPush } from '../../src/logic.js';
 import { SupabaseStore } from '../../src/store.js';
+import { langueDuLien } from '../../src/regles-entree.js';
 
 const NOW = Date.UTC(2026, 10, 1, 12);
 const J = 864e5;
@@ -207,4 +208,15 @@ test('clé publique de la plateforme : demandée une fois pour la visite, même 
   assert.deepEqual(await Promise.all([s.pushKey(), s.pushKey()]), ['BEl62', 'BEl62']);
   assert.equal(await s.pushKey(), 'BEl62');
   assert.equal(n, 2, 'redemandée après l’échec, puis gardée');
+});
+
+test('« Ouvrir dans Chrome » en arabe : la langue de la page suit (?lang=ar, lue pour la visite) ; en français, Chrome garde son choix', () => {
+  const ar = lienChrome('https://reseau-ensam-meknes.github.io/#mentorat', 'mentorat', { lang: 'ar' });
+  assert.match(ar, /^intent:\/\/reseau-ensam-meknes\.github\.io\/\?lang=ar&r=mentorat&notifs=1#Intent;scheme=https;package=com\.android\.chrome;/);
+  const secours = new URL(decodeURIComponent(ar.match(/S\.browser_fallback_url=([^;]+);/)[1]));
+  assert.equal(langueDuLien(secours.search, null), 'ar', 'Chrome ouvre la page en arabe');
+  assert.deepEqual(parametresLien(secours.search), { r: 'mentorat', notifs: true, depuis: '', search: '?lang=ar', aucun: false }, 'la langue reste dans l’adresse');
+  // Un ?lang=ar resté dans l'adresse d'une page lue en français ne fait pas passer Chrome à l'arabe
+  assert.match(lienChrome('https://reseau-ensam-meknes.github.io/?lang=ar', '', { lang: 'fr' }), /^intent:\/\/reseau-ensam-meknes\.github\.io\/\?notifs=1#Intent;/);
+  assert.match(lienChrome('https://reseau-ensam-meknes.github.io/?promo=2019', '', { lang: 'fr' }), /\?promo=2019&notifs=1#Intent;/);
 });

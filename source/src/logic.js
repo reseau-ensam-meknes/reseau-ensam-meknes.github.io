@@ -1311,10 +1311,13 @@ export function navigateurIntegre(ua = '') {
 // « Ouvrir dans Chrome » depuis le navigateur d'une application Android : un lien intent:// vers la même page, que Chrome
 // ouvre (sinon la même adresse, browser_fallback_url). La route passe en ?r=… (le # sert à l'intent) et notifs=1 ouvre
 // tout de suite la feuille d'activation : c'est pour elle que le membre change de navigateur. app.js lit puis efface les deux.
-export function lienChrome(adresse, route = '') {
+// lang : la langue de la page ; Chrome ne connaît pas le choix fait ici, l'arabe passe donc par l'adresse (?lang=ar, gardé
+// pour la visite, i18n.js), le français laisse Chrome à son propre choix. Sans lang : l'adresse garde le sien.
+export function lienChrome(adresse, route = '', { lang } = {}) {
   const u = new URL(adresse);
   u.hash = '';
   for (const k of ['r', 'notifs', 'depuis']) u.searchParams.delete(k);
+  if (lang === 'ar') u.searchParams.set('lang', 'ar'); else if (lang) u.searchParams.delete('lang');
   const r = String(route || '').replace(/^#/, '');
   if (r && r !== 'accueil') u.searchParams.set('r', r);
   u.searchParams.set('notifs', '1');

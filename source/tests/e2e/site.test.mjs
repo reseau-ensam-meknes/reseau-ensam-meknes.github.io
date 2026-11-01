@@ -1148,7 +1148,7 @@ test('navigateur d’une application (Instagram) : « Ouvrir dans Chrome » à l
   await a.ctx.close();
 });
 
-test('navigateur d’une application sans Chrome : « Ouvrir dans Chrome » rouvre la même adresse ici (?notifs=1) sans remontrer la feuille', async () => {
+test('navigateur d’une application sans Chrome : « Ouvrir dans Chrome » rouvre la même adresse ici (?notifs=1) sans remontrer la feuille ; en arabe, la langue suit dans le lien', async () => {
   const s = await ouvrir({ largeur: 360, ua: INSTAGRAM });
   await s.page.setViewportSize({ width: 360, height: 640 });
   await s.page.waitForSelector('.modal.appli', { timeout: 8000 });
@@ -1164,6 +1164,12 @@ test('navigateur d’une application sans Chrome : « Ouvrir dans Chrome » rouv
   await s.page.waitForSelector('.pastille[data-sorte="appli"]');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
+  // En arabe : Chrome ne connaît pas le choix fait ici, l'adresse le lui dit
+  const a = await ouvrir({ largeur: 360, ua: INSTAGRAM, langue: 'ar' });
+  await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  assert.match(await a.page.getAttribute('#appli-chrome', 'href'), /^intent:\/\/127\.0\.0\.1:\d+\/\?lang=ar&notifs=1#Intent;.*S\.browser_fallback_url=http%3A%2F%2F127\.0\.0\.1%3A\d+%2F%3Flang%3Dar%26notifs%3D1;end$/);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
 });
 
 test('à l’ouverture : « Plus tard » puis une fête dans la même visite, le refus reste compté', async () => {
