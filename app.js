@@ -3,7 +3,7 @@ import { getLang, setLang, chargerAR, addAR } from './i18n.js';
 import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore, texteErreur } from './store.js';
 import { Icon, Person, Avatar, Bar, CompanyLogo, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille, ecranLibre, mouvementReduit, EnTetePage, Anneau, Squelette } from './ui.js';
-import { deckMatch, matchsDe, seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, demandeLargeLe, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour } from './logic.js';
+import { deckMatch, matchsDe, seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, demandeLargeLe, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour, parametresLien } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, recoFor, matchesMe, APP_STATUS } from './offers.js';
 import { estPortee, estPartagee, partageExpire } from './origine.js';
 import { nouvellesVivant } from './reseau-vivant.js';
@@ -12,7 +12,7 @@ import { ReseauPage, ProfileModal, ProfileForm, AskQuestion } from './community.
 import { MentoratPage, AskHelp, NextRdv, slotWhen, mentoratIgnorees, IlsOntBesoin, CoupDeMain, HoraireSheet, ICONE_BESOIN, VERBE_BESOIN, phraseBesoin, ouvrirBesoin, confirmerPresence, finirMentorat, lienVisio } from './mentorat.js';
 import { SuccessFeed, VerifyPage, MerciDuo } from './growth.js';
 import { PrivacyPage, ConsentModal, MesDonnees, DesaboPage } from './privacy.js';
-import { useInstall, IosInstallHelp, PrevenirHote, PastilleApp, resynchroniserPush, BandeauPush } from './pwa.js';
+import { useInstall, IosInstallHelp, PrevenirHote, PastilleApp, resynchroniserPush, BandeauPush, retenirLienAppareil } from './pwa.js';
 import { NextCafe } from './groupes.js';
 import { EntrepriseModal } from './pro.js';
 import { DefisPanel, DevenirParrain, TonAnnee, TonAnneeStrip } from './saison.js';
@@ -21,7 +21,7 @@ import { PhotoCard, PhotoProposee } from './photo.js';
 import { notifsPartage, PartageFeuille } from './entreprises.js';
 import { ConfianceFeuille, demandesRecues, pairsAConfirmer } from './confiance.js';
 import { NextEvent } from './agenda.js';
-import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, suiteLien, accordIci, roleAccord, oublierInvitation } from './entree.js';
+import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, retenirLien, suiteLien, accordIci, roleAccord, oublierInvitation } from './entree.js';
 import { MessagesPage, useAlerteMessages } from './messages.js';
 import { MatchPage, MatchAccueil } from './match.js';
 import { PoulsReseau, marquerArrivee, useArrivee, ArriveeSheet } from './pouls.js';
@@ -132,6 +132,32 @@ function parseRoute(r) {
   return ROUTES.includes(base) ? { base, sub: sub || '', sub2: sub2 || '' } : { base: 'accueil', sub: '', sub2: '' };
 }
 const readRoute = () => parseRoute((location.hash || '').slice(1));
+
+// Liens d'appareil (parametresLien) : ?r= (la route, venue d'un autre navigateur par « Ouvrir dans Chrome »), ?notifs=1
+// (« Active tes notifications ») et ?depuis=ancienne (arrivée par l'ancienne adresse), lus une fois avant le premier écran,
+// gardés pour la feuille qu'ils ouvrent (pwa.js), puis retirés de l'adresse : un rechargement ou un partage ne les rejoue pas.
+// Une route passée par ?r= attend aussi la fin d'une inscription, comme un lien partagé.
+(() => {
+  try {
+    const l = parametresLien(location.search);
+    if (l.aucun) return;
+    const hash = l.r ? '#' + l.r : location.hash;
+    history.replaceState(history.state, '', location.pathname + l.search + hash);
+    if (l.r) retenirLien(hash);
+    retenirLienAppareil(l);
+  } catch { /* historique indisponible : le lien ouvre seulement la page */ }
+})();
+
+// Le chiffre sur l'icône de l'application installée : ce qui attend le membre, comme le titre de l'onglet (0 : effacé).
+// Le service worker met le sien quand une notification arrive (celles de la barre) ; la page ouverte le remplace.
+let badgePose = -1;
+// Déconnexion : store.signOut efface le chiffre ; le compte suivant pose le sien, même s'il a le même nombre
+addEventListener('ensam-deconnexion', () => { badgePose = -1; });
+function poserBadge(store, n) {
+  if (store.mode !== 'live' || n === badgePose || typeof navigator === 'undefined' || !('setAppBadge' in navigator)) return;
+  badgePose = n;
+  Promise.resolve(n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
+}
 
 function App({ store }) {
   const [, setTick] = useState(0);
@@ -261,6 +287,7 @@ function App({ store }) {
     seen.current = { id: who.id, keys, cache: !!store.depuisCache };
     const n = todo + (cur.msgs || 0);
     try { document.title = (n ? `(${n}) ` : '') + 'Réseau ENSAM Meknès'; } catch { /* */ }
+    poserBadge(store, n);
   });
 
   // Un message reçu pendant qu'on est ailleurs : un petit mot en bas de l'écran
@@ -450,7 +477,7 @@ function App({ store }) {
     ${pop ? html`<${Feuille} key=${pop} onClose=${() => setPop(null)}/>` : null}
     <${Toaster}/>
     <${Celebration}/>
-    ${me.role === 'admin' ? null : html`<${PrevenirHote} ctx=${ctx} bloque=${sansAccord}/>`}
+    <${PrevenirHote} ctx=${ctx} bloque=${sansAccord}/>
   </div>`;
 }
 
