@@ -2598,7 +2598,8 @@ test('cloche : son chiffre compte ce qui attend un geste, la feuille dit « À f
   const pastilles = () => s.page.$$eval('.bottom-nav a', as => as.filter(a => a.querySelector('.dotn')).map(a => a.innerText.trim().split('\n')[0]));
   // Accueil : la plateforme lui propose d'être ambassadeur de sa promo (ambassadeurs.js) ; sur téléphone, Mon espace est
   // dans le menu du compte (Match a pris sa place dans la barre) : sa pastille passe sur l'avatar
-  assert.deepEqual((await pastilles()).sort(), ['Accueil', 'Mentorat']);
+  // Match : Khadija s'est intéressée à son offre et attend une réponse
+  assert.deepEqual((await pastilles()).sort(), ['Accueil', 'Match', 'Mentorat']);
   assert.equal(await s.page.locator('.me-btn .dotn').count(), 1);
   // Mon espace ne répète pas la cloche : aucune de ses lignes (elles sont dans la cloche et sur l'accueil)
   await s.aller('espace');
