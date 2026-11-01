@@ -75,6 +75,25 @@ export function ChoixLangue({ value, onChange, id, label = 'Langue du message' }
   </div>`;
 }
 
+// La zone du message prend la hauteur de son texte, longues lignes comprises : tout le message se lit avant de le copier,
+// sans défiler dans la zone. Le CSS s'en charge (field-sizing: content) ; sinon (Firefox, anciens Safari), on la mesure
+// quand le texte ou la largeur de la fenêtre change, sans faire sauter la page.
+const HAUTEUR_CSS = typeof CSS !== 'undefined' && !!CSS.supports?.('field-sizing', 'content');
+function useHauteurTexte(zone, txt) {
+  useEffect(() => {
+    if (!zone || HAUTEUR_CSS) return undefined;
+    const ajuster = () => {
+      const y = scrollY;
+      zone.style.height = 'auto';
+      zone.style.height = `${zone.scrollHeight + zone.offsetHeight - zone.clientHeight}px`;
+      if (scrollY !== y) scrollTo(scrollX, y);
+    };
+    ajuster();
+    addEventListener('resize', ajuster);
+    return () => removeEventListener('resize', ajuster);
+  }, [zone, txt]);
+}
+
 // Une carte de message : titre, une ligne qui dit à quoi il sert, des choix (children), le texte en lecture seule dans la
 // langue choisie, puis « Copier » et « Partager sur WhatsApp ». email : { a, sujet } ajoute « Email » (mailto, sujet compris).
 // textes : { fr, ar } ou une fonction de la langue ; actions : des boutons de plus, à la fin
@@ -83,6 +102,7 @@ export function CarteMessage({ id, titre, icone = 'send', aide, textes, children
   const [zone, setZone] = useState(null);
   const t = typeof textes === 'function' ? textes(langue) : textes;
   const txt = (langue === 'ar' ? t?.ar : t?.fr) || '';
+  useHauteurTexte(zone, txt);
   const sujet = email ? (typeof email.sujet === 'object' ? email.sujet?.[langue] : email.sujet) || '' : '';
   const mailto = email ? `mailto:${email.a || ''}?subject=${encodeURIComponent(sujet)}&body=${encodeURIComponent(txt)}` : null;
   return html`<section class="panel adm-carte" id=${id} aria-labelledby=${id + '-t'}>
@@ -275,7 +295,7 @@ injectCSS('admin-animer', `
 .adm-carte-t { font-size: var(--fs-4); margin: 0; min-width: 0; }
 .adm-carte-t > span { min-width: 0; overflow-wrap: anywhere; }
 /* Chaque ligne prend le sens de son premier mot, comme dans WhatsApp (un titre d'offre en français dans un message arabe) */
-.adm-msg { width: 100%; min-height: 8rem; font-size: var(--fs-2); line-height: 1.55; background: var(--surface-2); border-color: var(--line); white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext; }
+.adm-msg { width: 100%; min-height: 8rem; field-sizing: content; resize: none; font-size: var(--fs-2); line-height: 1.55; background: var(--surface-2); border-color: var(--line); white-space: pre-wrap; overflow-wrap: anywhere; unicode-bidi: plaintext; }
 .adm-msg-act { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; }
 .adm-msg-act .btn { min-height: 44px; }
 .adm-puces .chip { min-height: 38px; }
