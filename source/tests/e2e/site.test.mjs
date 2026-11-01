@@ -676,7 +676,7 @@ test('« Me prévenir » : rien en démo ordinaire, le petit mot reste', async (
   await s.ctx.close();
 });
 
-test('« Me prévenir » : après une demande de mentorat, la feuille remplace le petit mot ; deux refus au plus, à 14 jours d’écart', async () => {
+test('« Me prévenir » : après une demande de mentorat, la feuille remplace le petit mot ; après « Plus tard », elle revient 3 jours après, sans plafond', async () => {
   const s = await prevenirSur('off');
   await s.comme('Amine'); await s.mentorat('Choisir mon stage de 3A');
   await s.page.waitForSelector('.modal.prevenir');
@@ -694,15 +694,26 @@ test('« Me prévenir » : après une demande de mentorat, la feuille remplace l
   await s.mentorat('Préparer mon entretien');
   assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
   assert.match(await s.page.locator('.toast').last().innerText(), /Horaires envoyés à Youssef/);
-  // 15 jours plus tard : une dernière fois
-  await s.changerMemo('({ ...m, at: m.at - 15 * 864e5 })');
+  // Deux jours plus tard : toujours le petit mot
+  await s.changerMemo('({ ...m, at: m.at - 2 * 864e5 })');
   await s.mentorat('Relire mon rapport');
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0, 'pas avant 3 jours');
+  assert.match(await s.page.locator('.toast').last().innerText(), /Horaires envoyés à Youssef/);
+  // Trois demandes attendent un horaire, le plus permis à la fois : une est annulée avant chaque nouvelle demande
+  const annulerUne = () => s.page.evaluate(() => { const d = window.__demo, m = d.data.mentorships.find(x => x.student_id === d.me.id && x.status === 'demande'); return d.update('mentorships', m.id, { status: 'annulee' }); });
+  // 3 jours après « Plus tard » : elle revient
+  await s.changerMemo('({ ...m, at: m.at - 864e5 })');
+  await annulerUne(); await s.mentorat('Choisir une option');
   await s.page.waitForSelector('.modal.prevenir');
   await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
   assert.equal((await s.memo()).n, 2);
-  await s.changerMemo('({ ...m, at: m.at - 30 * 864e5 })');
-  await s.mentorat('Choisir une option');
-  assert.equal(await s.page.locator('.modal.prevenir').count(), 0, 'plus jamais après deux refus');
+  // Pas de plafond : 3 jours après ce deuxième refus, elle revient encore
+  await s.changerMemo('({ ...m, at: m.at - 3 * 864e5 })');
+  await annulerUne(); await s.mentorat('Préparer ma soutenance');
+  await s.page.waitForSelector('.modal.prevenir');
+  assert.match(await s.page.locator('.prevenir .verify-ok').innerText(), /Horaires envoyés à Youssef\./);
+  await s.page.click('#pv-tard'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).n, 3);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
