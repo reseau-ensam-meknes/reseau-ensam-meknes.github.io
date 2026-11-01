@@ -40,16 +40,18 @@ export function ParcoursPage(ctx) {
   const history = data.placements.filter(p => p.student_id === me.id && p.saison !== saison && p.status !== 'refuse').sort((a, b) => b.saison - a.saison);
   const helper = pl?.laureat_id ? store.byId('profiles', pl.laureat_id) : null;
   const step = journeyStep(st, apps);
-  // Une seule action principale : la carte à confirmer (ou le merci) et la carte du parrain (3A) passent avant la prochaine étape
-  const parrain = me.role === 'etudiant' && n === 3 && data.parrainages?.some(x => x.filleul_id === me.id && x.saison === saison);
-  const aFaire = data.placements.some(p => p.student_id === me.id && (p.status === 'en_attente' || (p.status === 'confirme' && p.laureat_id && !p.merci)));
+  // Une seule action principale, dans cet ordre : la carte à confirmer (ou le merci), sinon « Lui écrire » du parrain (3A),
+  // sinon la prochaine étape ; les autres passent en tonal. La carte du parrain ne compte que si elle s'affiche (parrain connu)
+  const pr = me.role === 'etudiant' && n === 3 ? data.parrainages?.find(x => x.filleul_id === me.id && x.saison === saison) : null;
+  const parrain = !!(pr && store.byId('profiles', pr.parrain_id));
+  const aFaire = aFaireIci(data, me);
   const plein = !aFaire && !parrain;
 
   return html`<section class="page parcours pc-page">
     <${EnTetePage} surTitre=${NIVEAUX[n]?.label} titre="Mon parcours"/>
 
     <${AFaire} ctx=${ctx}/>
-    <${ParrainCard} ctx=${ctx}/>
+    <${ParrainCard} ctx=${ctx} plein=${!aFaire}/>
 
     <section class=${'objective pc-objectif st-' + st.key} aria-labelledby="pc-objectif-titre">
       <div class="pc-obj-tete">
@@ -176,7 +178,8 @@ export function versMerci(ctx) {
 
 // En tête de Mon parcours et de Mon espace : seulement ce qui se fait ici même (confirmer un recrutement, dire merci).
 // Les autres gestes (candidatures, rendez-vous, CV relu…) sont dans la cloche et sur l'accueil : on ne les répète pas ici.
-// Rien à confirmer ni à remercier : rien ne s'affiche.
+// Rien à confirmer ni à remercier : rien ne s'affiche. Sinon, la carte porte le bouton plein de la page.
+const aFaireIci = (data, me) => data.placements.some(p => p.student_id === me.id && (p.status === 'en_attente' || (p.status === 'confirme' && p.laureat_id && !p.merci)));
 export function AFaire({ ctx }) {
   const { data, me, store } = ctx;
   const helper = p => store.byId('profiles', p.laureat_id);
@@ -272,8 +275,9 @@ export function EspacePage(ctx) {
   const recrues = helped.filter(p => p.saison === ctx.saison).sort((a, b) => new Date(b.confirmed_at || b.created_at) - new Date(a.confirmed_at || a.created_at));
   const events = [...(s.events || [])].sort((a, b) => new Date(b.at) - new Date(a.at));
   const nouveau = !s.points && !myOffers.length && !helped.length && !waiting.length && !rdv.length && !mercis.length;
-  // Une seule action principale : si une carte à confirmer (ou un merci) montre son bouton plein, « Publier une offre » passe en tonal
-  const carteAFaire = data.placements.some(p => p.student_id === me.id && (p.status === 'en_attente' || (p.status === 'confirme' && p.laureat_id && !p.merci)));
+  // Une seule action principale : si une carte à confirmer (ou un merci) montre son bouton plein, « Publier une offre »
+  // et le geste de la première aide passent en tonal
+  const carteAFaire = aFaireIci(data, me);
   const onglet = ongletEspace(ctx.sub);
   // Sur ordinateur, « Publier une offre » est dans la barre latérale (le bouton de la page se cache) ; sur un petit écran, « Publier »
   const publier = nouveau ? null : html`<button type="button" class=${'btn publier-offre ' + (carteAFaire ? 'tonal' : 'primary')} onClick=${() => setCompose(true)}>
@@ -283,7 +287,7 @@ export function EspacePage(ctx) {
     <${EnTetePage} surTitre=${`Promo ${me.promo}${me.entreprise ? ' · ' + me.entreprise : ''}`} titre="Mon espace" action=${publier}/>
 
     <${AFaire} ctx=${ctx}/>
-    ${nouveau ? html`<${PremiereAide} ctx=${ctx} onPublier=${() => setCompose(true)}/>
+    ${nouveau ? html`<${PremiereAide} ctx=${ctx} plein=${!carteAFaire} onPublier=${() => setCompose(true)}/>
       <${ProchainBadge} s=${s} mine=${mine}/>` : html`
       <${CeQuiTAttend} ctx=${ctx} waiting=${waiting} rdv=${rdv}/>
       <${MonImpact} s=${s} mine=${mine} recrutes=${helped.length} mercis=${mercis.length} onBareme=${() => setBareme(true)}/>
@@ -328,7 +332,7 @@ function CeQuiTAttend({ ctx, waiting, rdv }) {
           <${Avatar} p=${st} size=${44}/>
           <span class="esp-ligne-txt"><button type="button" class="linkish esp-nom" onClick=${() => openProfile(st)}>${st ? html`<span translate="no" dir="auto">${st.full_name}</span>` : 'Un étudiant'}</button>
             <span class="esp-sous"><span class="esp-attente-pt" aria-hidden="true"></span><span>Confirmation attendue</span> · <span class="nowrap" translate="no" dir="auto">${p.entreprise}</span></span></span>
-          <button type="button" class="btn tiny ghost" onClick=${() => annulerRecrutement(ctx, p)}>Annuler</button></div></li>`;
+          <button type="button" class="btn tiny ghost" aria-label=${`Annuler le recrutement déclaré pour ${st ? st.full_name : 'un étudiant'}`} onClick=${() => annulerRecrutement(ctx, p)}>Annuler</button></div></li>`;
       })}
     </ul>
   </section>`;
@@ -360,19 +364,22 @@ function MonImpact({ s, mine, recrutes, mercis, onBareme }) {
   </section>`;
 }
 
-// Les trois parties de Mon espace : la rangée de segments de l'appli (la pastille glisse d'un onglet à l'autre, le contenu suit),
-// au clavier les flèches (dans le sens de lecture), Début et Fin
+// Une rangée d'onglets au clavier (Mon espace, Suivi) : les flèches dans le sens de lecture, Début et Fin ; l'onglet atteint
+// est choisi et prend le focus (un seul arrêt de tabulation dans la rangée)
+export const clavierOnglets = (cles, actuel, choisir, idDe) => e => {
+  const n = cles.length, i = cles.indexOf(actuel);
+  const rtl = getComputedStyle(e.currentTarget).direction === 'rtl';
+  const j = { ArrowRight: i + (rtl ? -1 : 1), ArrowLeft: i + (rtl ? 1 : -1), Home: 0, End: n - 1 }[e.key];
+  if (j === undefined) return;
+  e.preventDefault();
+  const k = cles[(j + n) % n];
+  if (k !== actuel) choisir(k);
+  requestAnimationFrame(() => document.getElementById(idDe(k))?.focus());
+};
+
+// Les trois parties de Mon espace : la rangée de segments de l'appli (la pastille glisse d'un onglet à l'autre, le contenu suit)
 function OngletsEspace({ onglet, nOffres, onChange }) {
-  const clavier = e => {
-    const n = ONGLETS_ESPACE.length, i = ONGLETS_ESPACE.findIndex(([k]) => k === onglet);
-    const rtl = getComputedStyle(e.currentTarget).direction === 'rtl';
-    const j = { ArrowRight: i + (rtl ? -1 : 1), ArrowLeft: i + (rtl ? 1 : -1), Home: 0, End: n - 1 }[e.key];
-    if (j === undefined) return;
-    e.preventDefault();
-    const k = ONGLETS_ESPACE[(j + n) % n][0];
-    if (k !== onglet) onChange(k);
-    requestAnimationFrame(() => document.getElementById('esp-onglet-' + k)?.focus());
-  };
+  const clavier = clavierOnglets(ONGLETS_ESPACE.map(([k]) => k), onglet, onChange, k => 'esp-onglet-' + k);
   return html`<div class="seg esp-onglets" role="tablist" aria-label="Parties de mon espace" onKeyDown=${clavier}>
     ${ONGLETS_ESPACE.map(([k, l]) => html`<button type="button" role="tab" key=${k} id=${'esp-onglet-' + k} class=${onglet === k ? 'on' : ''} aria-selected=${onglet === k ? 'true' : 'false'}
       aria-controls="esp-panneau" tabindex=${onglet === k ? 0 : -1} onClick=${() => { if (k !== onglet) onChange(k); }}>${l}${k === 'offres' && nOffres ? html` <span class="count">${nOffres}</span>` : null}</button>`)}
@@ -396,11 +403,21 @@ function PanneauImpact({ ctx, mercis, recrues, mine, events, onShare }) {
     ${vide ? html`<${Empty} icon="heart" title="Les mercis des étudiants arriveront ici">Un CV relu, un conseil, une offre : chaque aide compte, et l’étudiant peut te dire merci.<//>` : null}
     <div class="esp-plis">
       <${MesBadges} mine=${mine}/>
-      ${events.length ? html`<details class="ledger esp-plie">
-        <summary><span class="esp-plie-ico" aria-hidden="true"><${Icon} name="star" size=${16}/></span><span class="grow">Historique de mes points</span><span class="count">${events.length}</span></summary>
-        <ul class="events">${events.slice(0, 12).map(e => html`<li><span class="mono pts">+${e.pts}</span> <span class="grow">${e.label}</span> <span class="muted small nowrap">${timeAgo(e.at)}</span></li>`)}</ul>
-      </details>` : null}
+      <${HistoriquePoints} events=${events}/>
     </div>`;
+}
+
+// L'historique des points, replié : le compte du résumé dit le total ; les 12 derniers, puis les plus anciens à la demande
+const HISTO_N = 12;
+function HistoriquePoints({ events }) {
+  const [tout, setTout] = useState(false);
+  if (!events.length) return null;
+  const reste = events.length - HISTO_N;
+  return html`<details class="ledger esp-plie">
+    <summary><span class="esp-plie-ico" aria-hidden="true"><${Icon} name="star" size=${16}/></span><span class="grow">Historique de mes points</span><span class="count">${events.length}</span></summary>
+    <ul class="events" id="esp-histo">${(tout ? events : events.slice(0, HISTO_N)).map((e, i) => html`<li key=${i}><span class="mono pts">+${e.pts}</span> <span class="grow">${e.label}</span> <span class="muted small nowrap">${timeAgo(e.at)}</span></li>`)}</ul>
+    ${reste > 0 ? html`<button type="button" class="linkish esp-plus" aria-controls="esp-histo" aria-expanded=${tout ? 'true' : 'false'} onClick=${() => setTout(!tout)}>${tout ? 'Voir moins' : `Voir les ${reste} plus anciens`}</button>` : null}
+  </details>`;
 }
 
 // Un merci : la phrase de l'étudiant en grand, qui il est, pour quoi, quand
@@ -443,7 +460,7 @@ function PanneauDocuments({ ctx }) {
 // Première visite d'un lauréat : un geste mis en avant (le plus utile aujourd'hui), les autres en lignes, avec le temps
 // qu'ils prennent. Aucun n'est obligatoire. Seulement des gestes possibles aujourd'hui : un étudiant qui cherche,
 // un CV à relire, un horaire à choisir, sinon se rendre disponible ; publier une offre est toujours possible.
-function PremiereAide({ ctx, onPublier }) {
+function PremiereAide({ ctx, onPublier, plein = true }) {
   const { data, me, go, store, act } = ctx;
   const byId = id => store.byId('profiles', id);
   const cvs = (data.relectures_cv || []).filter(r => !r.reviewer_id && r.status === 'demandee' && r.student_id !== me.id);
@@ -467,7 +484,7 @@ function PremiereAide({ ctx, onPublier }) {
     <div class="pa-une">
       <span class="pa-une-ico" aria-hidden="true"><${Icon} name=${ic} size=${24}/></span>
       <div class="pa-une-txt"><span class="pa-geste-titre"><strong>${titre}</strong><span class="pa-duree">${duree}</span></span><span class="esp-sous">${sous}</span></div>
-      <button type="button" class="btn primary pa-une-btn" onClick=${faire}>${cta}<${Icon} name="arrow" size=${18}/></button>
+      <button type="button" class=${'btn pa-une-btn ' + (plein ? 'primary' : 'tonal')} onClick=${faire}>${cta}<${Icon} name="arrow" size=${18}/></button>
     </div>
     <p class="pa-ou">Ou bien</p>
     <ul class="pa-gestes">${autres.map(([ic2, t, sub, d, fn]) => html`<li key=${ic2}><button type="button" class="pa-geste" onClick=${fn}>
@@ -550,7 +567,12 @@ injectCSS('me-espace', `
 .esp-lignes button.esp-ligne:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .esp-ligne-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .1rem; }
 .esp-ligne-txt > strong, .esp-titre { font-weight: 650; line-height: 1.35; color: var(--ink); }
-.esp-titre { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Un titre (offre, candidature) tient sur deux lignes au plus, sans couper un mot trop long hors de la carte.
+   La boîte épouse le texte et se cale au début de la ligne : en arabe, un titre en lettres latines reste à droite
+   comme le reste de la ligne (aligner le texte lui-même à droite pousserait les points de suspension hors de la boîte) */
+.esp-titre { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; align-self: flex-start; max-width: 100%; }
+/* Un sujet sur une ligne, en lettres latines : calé à droite en arabe, comme les noms */
+:root[dir="rtl"] .esp-sujet { text-align: right; }
 .esp-ligne .person { flex: 1 1 auto; min-width: 0; gap: .85rem; }
 .esp-ligne .person .person-txt { min-width: 0; }
 .esp-ligne .person .role-line { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-2); color: var(--muted); }
@@ -677,8 +699,9 @@ injectCSS('me-espace', `
 /* Le détail replié : badges et historique des points, deux lignes d'une même carte */
 .esp-plis { display: flex; flex-direction: column; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--sh1); overflow: hidden; }
 .esp-plis:empty { display: none; }
-.esp-plie + .esp-plie { border-top: 1px solid var(--line); }
-.esp-plie > summary { display: flex; align-items: center; gap: .75rem; min-height: 60px; padding: .6rem 1rem; cursor: pointer; list-style: none; font-weight: 650; color: var(--ink); -webkit-tap-highlight-color: transparent; transition: background-color .2s; }
+/* Le filet entre deux lignes repliées part après l'icône, comme dans les listes */
+.esp-plie + .esp-plie > summary::before { content: ""; position: absolute; top: 0; inset-inline: calc(1rem + 36px + .75rem) 0; height: 1px; background: var(--line); }
+.esp-plie > summary { position: relative; display: flex; align-items: center; gap: .75rem; min-height: 60px; padding: .6rem 1rem; cursor: pointer; list-style: none; font-weight: 650; color: var(--ink); -webkit-tap-highlight-color: transparent; transition: background-color .2s; }
 .esp-plie > summary::-webkit-details-marker { display: none; }
 .esp-plie > summary:hover { background: var(--surface-2); }
 .esp-plie > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -694,6 +717,7 @@ injectCSS('me-espace', `
 .ledger .events { padding: .1rem 1rem 1rem; gap: .5rem; }
 .ledger .events li { display: flex; align-items: baseline; gap: .6rem; }
 .ledger .events .pts { flex: none; min-width: 2.6rem; font-variant-numeric: tabular-nums; }
+.ledger .esp-plus { display: inline-flex; align-items: center; min-height: 44px; margin: -.6rem 1rem .4rem; font-size: var(--fs-2); }
 @media (max-width: 420px) { .esp-medailles { display: none; } }
 
 /* Mes offres : l'état en couleur, les candidats et les recrues en clair, sous le titre */
@@ -813,8 +837,7 @@ injectCSS('me-parcours', `
 .pc-tete { display: flex; align-items: center; justify-content: space-between; gap: .5rem 1rem; flex-wrap: wrap; }
 .pc-tete .btn { min-height: 40px; }
 .pc-cand .state-pill { flex: none; }
-/* Le titre tient sur deux lignes au plus ; l'entreprise s'abrège avant la date, qui reste entière */
-.pc-cand .esp-titre { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+/* Sous le titre (deux lignes au plus), l'entreprise s'abrège avant la date, qui reste entière */
 .pc-sous { display: flex; min-width: 0; }
 .pc-ent { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pc-quand { flex: none; white-space: pre; }
@@ -896,4 +919,7 @@ addAR({
   [/^Dire merci à (.+)$/, p => `قل شكرًا لـ${p}`],
   [/^Bienvenue, (.+)$/, n => `مرحبًا ${n}`],
   [/^(\d+) min$/, n => arCount(n, ['دقيقة', 'دقيقتان', 'دقائق', 'دقيقة'])],
+  // Mon espace : l'historique des points (les plus anciens à la demande), « Annuler » d'un recrutement en attente
+  [/^Voir les (\d+) plus anciens$/, n => `عرض الأقدم (${n})`],
+  [/^Annuler le recrutement déclaré pour (.+)$/, n => `إلغاء التوظيف المصرَّح به (${n === 'un étudiant' ? 'طالب' : n})`],
 ]);

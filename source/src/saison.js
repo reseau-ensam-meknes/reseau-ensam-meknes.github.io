@@ -90,7 +90,7 @@ export function CoupePromos({ ctx, compact = false }) {
 // ---------------------------------------------------------------------------
 // Parrainage : chaque 3A a un lauréat de sa filière pour l'année
 // ---------------------------------------------------------------------------
-export function ParrainCard({ ctx }) {
+export function ParrainCard({ ctx, plein = true }) {
   const { data, me, saison, store, openProfile } = ctx;
   const n = niveauOf(me, saison);
   const pr = data.parrainages.find(x => x.filleul_id === me.id && x.saison === saison);
@@ -99,13 +99,14 @@ export function ParrainCard({ ctx }) {
   if (me.role !== 'etudiant' || n !== 3 || !pr) return null;
   const p = store.byId('profiles', pr.parrain_id);
   if (!p) return null;
-  // Une carte : qui il est, pourquoi lui écrire, deux gestes (lui écrire d'abord, le bouton plein de la page)
+  // Une carte : qui il est, pourquoi lui écrire, deux gestes. « Lui écrire » est le bouton plein de la page,
+  // sauf si une carte à confirmer (ou un merci) l'a déjà au-dessus : il passe alors en tonal, le conseil en discret.
   return html`<section class="parrain-card" aria-label="Ton parrain">
     <p class="eyebrow"><${Icon} name="heart" size=${14}/> Ton parrain</p>
     <${Person} p=${p} onOpen=${openProfile} size=${48}/>
     <p class="parrain-txt">De ta filière, avec quelques années d’avance. Pose-lui tes questions sur les stages, la 4A, la vie après l’école.</p>
-    <div class="parrain-acts"><${MessageBtn} ctx=${ctx} p=${p} label="Lui écrire" cls="btn primary"/>
-      <button type="button" class="btn tonal" onClick=${() => ctx.askHelp(p)}><${Icon} name="mentor" size=${16}/> Lui demander un conseil</button></div>
+    <div class="parrain-acts"><${MessageBtn} ctx=${ctx} p=${p} label="Lui écrire" cls=${plein ? 'btn primary' : 'btn tonal'}/>
+      <button type="button" class=${plein ? 'btn tonal' : 'btn ghost'} onClick=${() => ctx.askHelp(p)}><${Icon} name="mentor" size=${16}/> Lui demander un conseil</button></div>
   </section>`;
 }
 
