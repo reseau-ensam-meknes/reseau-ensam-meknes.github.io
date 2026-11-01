@@ -5866,12 +5866,19 @@ end $$;
 --  identifiant ni le contenu d'une notification. Les jours sont ceux de l'heure UTC (l'heure du Maroc depuis le
 --  20 septembre 2026).
 --    · membres, et membres qui ont activé les notifications sur au moins un téléphone, par rôle ;
---    · téléphones abonnés : combien ont confirmé une réception (push_recu) en 24 h et en 7 jours, combien acceptent les
---      notifications sans jamais confirmer (service de push d'accord, rien d'affiché), combien ont été retirés ;
---    · leur service de push (Chrome et Android : fcm ; iPhone et Mac : apple ; Firefox : mozilla ; Edge : windows) ;
---    · le journal (push_journal) des 7 derniers jours, par jour et par type (les 12 plus fréquents) ;
---    · la file d'attente, le dernier passage de la tâche de chaque minute (pg_cron « ensam-rappels ») et la dernière
---      réponse à l'appel de la fonction « notifier » (pg_net), quand la base les laisse lire (sinon null).
+--    · téléphones abonnés : combien ont confirmé une réception (push_recu) en 24 h et en 7 jours, combien ont reçu un
+--      envoi en 7 jours (servis), combien acceptent les notifications sans jamais confirmer (service de push d'accord,
+--      rien d'affiché), combien refusent, combien ont été retirés ;
+--    · leur service de push (Chrome et Android : fcm ; iPhone et Mac : apple ; Firefox : mozilla ; Edge : windows), avec,
+--      d'après la dernière réponse de chacun en 7 jours, ceux qu'il accepte (2xx) et ceux qu'il refuse (400, 401, 403), et
+--      combien de membres distincts refusent : tous refusés et aucun accepté, la clé de la plateforme est en cause, pas les
+--      téléphones ;
+--    · le journal (push_journal) des 7 derniers jours, par jour et par type (les 12 plus fréquents) : envoyées (2xx) ;
+--      perdues : parties (404, 410), refusées (autres 4xx sauf 413 et 429), trop longues (413), abandonnées (-3),
+--      expirées sans essai (-5), jetées (-4) ; à part, sans téléphone (-1), coupées (-2), échecs passagers (0, 429, 5xx) ;
+--    · la file d'attente, le dernier passage de la tâche de chaque minute (pg_cron « ensam-rappels »), la dernière
+--      réponse à l'appel de la fonction « notifier » (pg_net, qui ne garde ses réponses que 6 h : { vide } quand il n'en
+--      a plus aucune), quand la base les laisse lire (sinon null), et la dernière notification traitée par la fonction.
 -- =====================================================================
 create or replace function public.service_push(p_endpoint text) returns text
 language sql immutable set search_path = public as $$
@@ -5908,6 +5915,8 @@ begin
     if v_r is not null then
       v_http := jsonb_build_object('code', v_r->'status_code', 'at', v_r->'created',
         'delai', coalesce((v_r->>'timed_out')::boolean, false), 'erreur', coalesce(v_r->>'error_msg', '') <> '');
+    else
+      v_http := jsonb_build_object('vide', true);   -- lisible, mais aucune réponse gardée (6 h au plus)
     end if;
   exception when others then v_http := null;
   end;
@@ -5923,6 +5932,8 @@ begin
         'total', count(*)::int,
         'recus_24h', (count(*) filter (where s.recu_at > now() - interval '24 hours'))::int,
         'recus_7j', (count(*) filter (where s.recu_at > now() - interval '7 days'))::int,
+        -- Ceux à qui quelque chose est parti cette semaine (ou qui ont confirmé une réception)
+        'servis_7j', (count(*) filter (where s.dernier_envoi_at > now() - interval '7 days' or s.recu_at > now() - interval '7 days'))::int,
         -- Accepté par le service de push il y a plus d'une heure, et rien de reçu depuis (à 10 minutes près : le téléphone
         -- peut confirmer avant que la fonction ait noté l'envoi)
         'muets', (count(*) filter (where s.dernier_code between 200 and 299
@@ -5932,35 +5943,46 @@ begin
         'retires_7j', (select count(*)::int from public.push_morts m where m.at > now() - interval '7 days'))
       from public.push_subscriptions s),
     'services', (
-      select jsonb_build_object(
-        'fcm', (count(*) filter (where x.srv = 'fcm'))::int, 'apple', (count(*) filter (where x.srv = 'apple'))::int,
-        'mozilla', (count(*) filter (where x.srv = 'mozilla'))::int, 'windows', (count(*) filter (where x.srv = 'windows'))::int,
-        'autre', (count(*) filter (where x.srv = 'autre'))::int)
-      from (select public.service_push(s.endpoint) as srv from public.push_subscriptions s) x),
+      select jsonb_object_agg(z.srv, jsonb_build_object('n', z.n, 'ok', z.ok, 'refus', z.refus, 'refus_membres', z.refus_membres))
+      from (
+        select k.srv, count(x.srv)::int as n,
+          (count(x.srv) filter (where x.dernier_code between 200 and 299 and x.dernier_envoi_at > now() - interval '7 days'))::int as ok,
+          (count(x.srv) filter (where x.dernier_code in (400, 401, 403) and x.dernier_envoi_at > now() - interval '7 days'))::int as refus,
+          -- Des membres distincts, comme le garde-fou de la fonction (un membre et ses vieux abonnements ne font pas un service)
+          (count(distinct x.user_id) filter (where x.dernier_code in (400, 401, 403) and x.dernier_envoi_at > now() - interval '7 days'))::int as refus_membres
+        from (values ('fcm'), ('apple'), ('mozilla'), ('windows'), ('autre')) as k(srv)
+        left join (select public.service_push(s.endpoint) as srv, s.user_id, s.dernier_code, s.dernier_envoi_at
+          from public.push_subscriptions s) x on x.srv = k.srv
+        group by k.srv) z),
     'jours', (
       select jsonb_agg(jsonb_build_object('jour', to_char(g.jour::timestamp, 'YYYY-MM-DD'),
-          'envoyees', coalesce(t.envoyees, 0), 'refusees', coalesce(t.refusees, 0), 'echecs', coalesce(t.echecs, 0),
-          'sans_tel', coalesce(t.sans_tel, 0), 'coupees', coalesce(t.coupees, 0), 'abandonnees', coalesce(t.abandonnees, 0),
+          'envoyees', coalesce(t.envoyees, 0), 'parties', coalesce(t.parties, 0), 'refusees', coalesce(t.refusees, 0),
+          'trop_longues', coalesce(t.trop_longues, 0), 'echecs', coalesce(t.echecs, 0), 'sans_tel', coalesce(t.sans_tel, 0),
+          'coupees', coalesce(t.coupees, 0), 'abandonnees', coalesce(t.abandonnees, 0), 'expirees', coalesce(t.expirees, 0),
           'jetees', coalesce(t.jetees, 0)) order by g.jour)
       from (select v_jour - 6 + i as jour from generate_series(0, 6) as i) g
       left join (
         select (j.at at time zone 'UTC')::date as jour,
           (count(*) filter (where j.code between 200 and 299))::int as envoyees,
-          (count(*) filter (where j.code between 400 and 499 and j.code <> 429))::int as refusees,
+          (count(*) filter (where j.code in (404, 410)))::int as parties,
+          (count(*) filter (where j.code between 400 and 499 and j.code not in (404, 410, 413, 429)))::int as refusees,
+          (count(*) filter (where j.code = 413))::int as trop_longues,
           (count(*) filter (where j.code = 0 or j.code = 429 or j.code >= 500))::int as echecs,
           (count(*) filter (where j.code = -1))::int as sans_tel,
           (count(*) filter (where j.code = -2))::int as coupees,
           (count(*) filter (where j.code = -3))::int as abandonnees,
+          (count(*) filter (where j.code = -5))::int as expirees,
           (count(*) filter (where j.code = -4))::int as jetees
         from public.push_journal j where j.at >= v_debut group by 1
       ) t on t.jour = g.jour),
     'types', coalesce((
       select jsonb_agg(jsonb_build_object('kind', y.kind, 'total', y.total, 'envoyees', y.envoyees, 'perdues', y.perdues,
-          'coupees', y.coupees, 'echecs', y.echecs) order by y.total desc, y.kind)
+          'sans_tel', y.sans_tel, 'coupees', y.coupees, 'echecs', y.echecs) order by y.total desc, y.kind)
       from (
         select j.kind, count(*)::int as total,
           (count(*) filter (where j.code between 200 and 299))::int as envoyees,
-          (count(*) filter (where j.code in (-1, -3, -4) or (j.code between 400 and 499 and j.code <> 429)))::int as perdues,
+          (count(*) filter (where j.code in (-3, -4, -5) or (j.code between 400 and 499 and j.code <> 429)))::int as perdues,
+          (count(*) filter (where j.code = -1))::int as sans_tel,
           (count(*) filter (where j.code = -2))::int as coupees,
           (count(*) filter (where j.code = 0 or j.code = 429 or j.code >= 500))::int as echecs
         from public.push_journal j where j.at >= v_debut
@@ -5968,6 +5990,8 @@ begin
       ) y), '[]'::jsonb),
     'file', (select jsonb_build_object('n', count(*)::int,
         'age_s', coalesce(floor(extract(epoch from now() - min(q.created_at)))::int, 0)) from public.push_queue q),
+    -- La dernière notification traitée par la fonction (une réponse de service de push, ou jetée), même au-delà des 6 h de pg_net
+    'envoi_at', (select max(j.at) from public.push_journal j where j.code >= 0 or j.code = -4),
     'cron', v_cron,
     'http', v_http);
 end $$;

@@ -325,7 +325,7 @@ test('un producteur en erreur : un avertissement, l’action du membre passe', a
   }
 });
 
-test('admin_sante_notifs : réservée à l’administration, des totaux seulement', async () => {
+test('admin_sante_notifs : réservée à l’administration, des totaux seulement ; envoyées, perdues par raison, sans téléphone à part ; chaque service dit s’il accepte', async () => {
   const b = await nouvelleBase(SCHEMA);
   const ADMIN = uid(1501), E1 = uid(1502), E2 = uid(1503), L1 = uid(1504), L2 = uid(1505), L3 = uid(1506);
   await creerCompte(b, { id: ADMIN, full_name: 'Admin École', role: 'etudiant', filiere: GI, promo: 2010 });
@@ -333,18 +333,18 @@ test('admin_sante_notifs : réservée à l’administration, des totaux seulemen
   for (const [id, role, nom] of [[E1, 'etudiant', 'Salma Idrissi'], [E2, 'etudiant', 'Amine Tazi'], [L1, 'laureat', 'Youssef Alami'], [L2, 'laureat', 'Nadia Berrada'], [L3, 'laureat', 'Karim Fassi']]) {
     await creerCompte(b, { id, full_name: nom, role, filiere: GI, promo: role === 'etudiant' ? S + 1 : 2015 });
   }
-  await b.query(`insert into public.push_subscriptions (user_id, endpoint, p256dh, auth, recu_at, dernier_code, dernier_envoi_at, refus) values
-    ($1, 'https://fcm.googleapis.com/fcm/send/e1', 'k', 'a', now() - interval '1 hour', 201, now() - interval '1 hour', 0),
-    ($1, 'https://push.exemple.ma/e1', 'k', 'a', null, null, null, 0),
-    ($2, 'https://web.push.apple.com/l1', 'k', 'a', now() - interval '3 days', 201, now() - interval '3 days', 0),
-    ($2, 'https://updates.push.services.mozilla.com/wpush/v2/l1', 'k', 'a', null, 201, now() - interval '2 hours', 0),
-    ($3, 'https://wns2-par02p.notify.windows.com/w/?token=l2', 'k', 'a', now() - interval '9 days', 403, now() - interval '1 day', 1)`, [E1, L1, L2]);
+  await b.query(`insert into public.push_subscriptions (user_id, endpoint, p256dh, auth, recu_at, dernier_code, dernier_envoi_at, refus, refus_at) values
+    ($1, 'https://fcm.googleapis.com/fcm/send/e1', 'k', 'a', now() - interval '1 hour', 201, now() - interval '1 hour', 0, null),
+    ($1, 'https://push.exemple.ma/e1', 'k', 'a', null, null, null, 0, null),
+    ($2, 'https://web.push.apple.com/l1', 'k', 'a', now() - interval '3 days', 201, now() - interval '3 days', 0, null),
+    ($2, 'https://updates.push.services.mozilla.com/wpush/v2/l1', 'k', 'a', null, 201, now() - interval '2 hours', 0, null),
+    ($3, 'https://wns2-par02p.notify.windows.com/w/?token=l2', 'k', 'a', now() - interval '9 days', 403, now() - interval '1 day', 1, now() - interval '1 day')`, [E1, L1, L2]);
   await b.query(`insert into public.push_morts (endpoint, at) values ('https://exemple.ma/m1', now() - interval '1 day'), ('https://exemple.ma/m2', now() - interval '6 days'), ('https://exemple.ma/m3', now() - interval '8 days')`);
   // Le journal : aujourd'hui, avant-hier, il y a 6 jours (premier jour du panneau), il y a 8 jours (hors du panneau)
   const lignes = [
     [E1, 'message', 201, 0], [E1, 'message', 201, 0], [L1, 'message', 201, 0], [L1, 'message', 410, 0], [E1, 'match', 0, 0],
-    [E2, 'message', -1, 0], [L2, 'offre_alerte', -2, 0], [E1, 'message', -3, 0], [E1, 'inconnu', -4, 0],
-    [L1, 'match', 201, 2], [L1, 'match', 201, 2], [L2, 'match', 403, 2], [L2, 'match', 429, 2],
+    [E2, 'message', -1, 0], [L2, 'offre_alerte', -2, 0], [E1, 'message', -3, 0], [E1, 'inconnu', -4, 0], [E2, 'merci', -5, 0],
+    [L1, 'match', 201, 2], [L1, 'match', 201, 2], [L2, 'match', 403, 2], [L2, 'match', 429, 2], [L2, 'message', 404, 2],
     [E1, 'test', 201, 6], [L1, 'offre_alerte', 413, 6], [E1, 'message', 201, 8], [E1, 'message', 201, 8],
   ];
   for (const [u, kind, code, jours] of lignes) {
@@ -356,26 +356,53 @@ test('admin_sante_notifs : réservée à l’administration, des totaux seulemen
   await assert.rejects(lire(null, 'anon'), /permission denied/);
   const s = await lire(ADMIN);
   assert.deepEqual(s.roles, [{ role: 'admin', membres: 1, avec_tel: 0 }, { role: 'etudiant', membres: 2, avec_tel: 1 }, { role: 'laureat', membres: 3, avec_tel: 2 }]);
-  assert.deepEqual(s.telephones, { total: 5, recus_24h: 1, recus_7j: 2, muets: 1, en_refus: 1, retires_7j: 2 });
-  assert.deepEqual(s.services, { fcm: 1, apple: 1, mozilla: 1, windows: 1, autre: 1 });
+  // servis : quelque chose leur est parti en 7 jours (ou ils ont confirmé une réception) ; 4 des 5
+  assert.deepEqual(s.telephones, { total: 5, recus_24h: 1, recus_7j: 2, servis_7j: 4, muets: 1, en_refus: 1, retires_7j: 2 });
+  // Par service : combien, combien acceptent (2xx en 7 jours), combien refusent (refus en 7 jours), et chez combien de membres
+  assert.deepEqual(s.services, { fcm: { n: 1, ok: 1, refus: 0, refus_membres: 0 }, apple: { n: 1, ok: 1, refus: 0, refus_membres: 0 },
+    mozilla: { n: 1, ok: 1, refus: 0, refus_membres: 0 }, windows: { n: 1, ok: 0, refus: 1, refus_membres: 1 }, autre: { n: 1, ok: 0, refus: 0, refus_membres: 0 } });
+  // D'après la dernière réponse : un refus que la fonction n'a pas compté (refus en masse) reste un refus de ce service
+  await b.query(`update public.push_subscriptions set refus = 0 where endpoint like '%windows%'`);
+  assert.deepEqual((await lire(ADMIN)).services.windows, { n: 1, ok: 0, refus: 1, refus_membres: 1 });
+  await b.query(`update public.push_subscriptions set refus = 1 where endpoint like '%windows%'`);
+  // Un seul membre et ses vieux abonnements refusés : trois téléphones, mais un membre (le panneau n'accuse pas la clé)
+  await b.query(`insert into public.push_subscriptions (user_id, endpoint, p256dh, auth, dernier_code, dernier_envoi_at, refus) values
+    ($1, 'https://wns2-par02p.notify.windows.com/w/?token=l2b', 'k', 'a', 403, now() - interval '1 day', 1),
+    ($1, 'https://wns2-par02p.notify.windows.com/w/?token=l2c', 'k', 'a', 401, now() - interval '2 days', 2)`, [L2]);
+  assert.deepEqual((await lire(ADMIN)).services.windows, { n: 3, ok: 0, refus: 3, refus_membres: 1 });
+  await b.query(`delete from public.push_subscriptions where endpoint like '%token=l2_'`);
   assert.equal(s.jours.length, 7);
   const jour = n => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
   assert.deepEqual(s.jours.map(j => j.jour), [6, 5, 4, 3, 2, 1, 0].map(jour));
-  const vide = { envoyees: 0, refusees: 0, echecs: 0, sans_tel: 0, coupees: 0, abandonnees: 0, jetees: 0 };
-  assert.deepEqual(s.jours[6], { jour: jour(0), envoyees: 3, refusees: 1, echecs: 1, sans_tel: 1, coupees: 1, abandonnees: 1, jetees: 1 });
-  assert.deepEqual(s.jours[4], { jour: jour(2), ...vide, envoyees: 2, refusees: 1, echecs: 1 });
-  assert.deepEqual(s.jours[0], { jour: jour(6), ...vide, envoyees: 1, refusees: 1 });
+  // Chaque raison à part : parties (404, 410), refusées (autres 4xx), trop longues (413), expirées sans essai (-5)
+  const vide = { envoyees: 0, parties: 0, refusees: 0, trop_longues: 0, echecs: 0, sans_tel: 0, coupees: 0, abandonnees: 0, expirees: 0, jetees: 0 };
+  assert.deepEqual(s.jours[6], { jour: jour(0), envoyees: 3, parties: 1, refusees: 0, trop_longues: 0, echecs: 1, sans_tel: 1, coupees: 1,
+    abandonnees: 1, expirees: 1, jetees: 1 });
+  assert.deepEqual(s.jours[4], { jour: jour(2), ...vide, envoyees: 2, parties: 1, refusees: 1, echecs: 1 });
+  assert.deepEqual(s.jours[0], { jour: jour(6), ...vide, envoyees: 1, trop_longues: 1 });
   assert.deepEqual(s.jours[1], { jour: jour(5), ...vide });
+  // Par type : sans téléphone n'est pas une perte de la plateforme, il est compté à part
   assert.deepEqual(s.types, [
-    { kind: 'message', total: 6, envoyees: 3, perdues: 3, coupees: 0, echecs: 0 },
-    { kind: 'match', total: 5, envoyees: 2, perdues: 1, coupees: 0, echecs: 2 },
-    { kind: 'offre_alerte', total: 2, envoyees: 0, perdues: 1, coupees: 1, echecs: 0 },
-    { kind: 'inconnu', total: 1, envoyees: 0, perdues: 1, coupees: 0, echecs: 0 },
-    { kind: 'test', total: 1, envoyees: 1, perdues: 0, coupees: 0, echecs: 0 },
+    { kind: 'message', total: 7, envoyees: 3, perdues: 3, sans_tel: 1, coupees: 0, echecs: 0 },
+    { kind: 'match', total: 5, envoyees: 2, perdues: 1, sans_tel: 0, coupees: 0, echecs: 2 },
+    { kind: 'offre_alerte', total: 2, envoyees: 0, perdues: 1, sans_tel: 0, coupees: 1, echecs: 0 },
+    { kind: 'inconnu', total: 1, envoyees: 0, perdues: 1, sans_tel: 0, coupees: 0, echecs: 0 },
+    { kind: 'merci', total: 1, envoyees: 0, perdues: 1, sans_tel: 0, coupees: 0, echecs: 0 },
+    { kind: 'test', total: 1, envoyees: 1, perdues: 0, sans_tel: 0, coupees: 0, echecs: 0 },
   ]);
+  // La dernière notification traitée par la fonction (la jetée, ici) ; ni l'expirée ni « sans téléphone » ne comptent
+  const [{ at }] = (await b.query(`select to_jsonb(at) at from public.push_journal where kind = 'inconnu'`)).rows;
+  assert.equal(s.envoi_at, at);
   assert.equal(s.file.n, 2); assert.ok(s.file.age_s >= 95 && s.file.age_s < 200, `âge de la plus ancienne : ${s.file.age_s}`);
   // Ni pg_cron ni pg_net ici : null, sans erreur
   assert.equal(s.cron, null); assert.equal(s.http, null);
+  // Les 12 types les plus fréquents seulement
+  for (let i = 0; i < 12; i++) await b.query(`insert into public.push_journal (user_id, kind, code) values ($1, $2, 201)`, [E1, 'type_' + String(i).padStart(2, '0')]);
+  const s12 = await lire(ADMIN);
+  assert.equal(s12.types.length, 12);
+  assert.deepEqual(s12.types.slice(0, 3).map(t => t.kind), ['message', 'match', 'offre_alerte']);
+  assert.ok(!s12.types.some(t => t.kind === 'type_11'), 'le treizième (et au-delà) n’est pas rendu');
+  await b.query(`delete from public.push_journal where kind like 'type_%'`);
   // Des totaux seulement : aucun identifiant, aucune adresse
   const texte = JSON.stringify(s);
   for (const id of [ADMIN, E1, E2, L1, L2, L3]) assert.ok(!texte.includes(id), 'aucun identifiant');
@@ -399,6 +426,9 @@ test('admin_sante_notifs : réservée à l’administration, des totaux seulemen
   const s3 = await lire(ADMIN);
   assert.equal(s3.cron.existe, true); assert.equal(s3.cron.statut, 'succeeded'); assert.ok(s3.cron.at);
   assert.deepEqual({ code: s3.http.code, delai: s3.http.delai, erreur: s3.http.erreur }, { code: null, delai: true, erreur: true });
+  // pg_net ne garde ses réponses que 6 heures : lisible mais vide, c'est dit (et pas « jamais appelée »)
+  await b.exec('delete from net._http_response');
+  assert.deepEqual((await lire(ADMIN)).http, { vide: true });
   await b.close();
 });
 
