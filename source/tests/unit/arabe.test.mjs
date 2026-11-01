@@ -75,6 +75,46 @@ test('une seule traduction par texte français : un module ne remplace pas en si
   assert.deepEqual(conflits, []);
 });
 
+// Mon profil > Notifications : ce que couvre chaque case, pour chaque rôle (étudiant, lauréat, lauréat qui cherche un emploi,
+// équipe), et la case des rappels. Chaque titre et chaque texte a sa traduction, sans mot latin oublié, avec les mots du réseau.
+test('Mon profil, notifications : chaque case a sa traduction, sans mot latin, خريجين pour les lauréats, الطلبة pour les étudiants', () => {
+  const p = fs.readFileSync(new URL('privacy.js', SRC), 'utf8'), r = fs.readFileSync(new URL('rappels.js', SRC), 'utf8');
+  const debut = p.indexOf('const CATS_NOTIF = {'), bloc = p.slice(debut, p.indexOf('\n};', debut));
+  const cases = [];
+  let role = null;
+  for (const ligne of bloc.split('\n')) {
+    const r1 = ligne.match(/^  ([a-z]+): \{/);
+    if (r1) { role = r1[1]; continue; }
+    const c = ligne.match(/^    ([a-z]+): \['((?:[^'\\]|\\.)*)', '((?:[^'\\]|\\.)*)'\],/);
+    if (c) cases.push([role, c[1], c[2], c[3]]);
+  }
+  assert.ok(cases.length >= 19, `cases lues : ${cases.length}`); // 7 étudiant, 7 lauréat, 3 recherche d’emploi, 2 équipe
+  // Traductions : clés écrites en toutes lettres (tous les modules), ou [CATS_NOTIF.rôle.case[i]] de privacy.js
+  const litterales = new Map();
+  for (const f of fichiers) for (const b of blocs(fs.readFileSync(new URL(f, SRC), 'utf8'))) for (const [, cle, val] of b.matchAll(PAIRE)) litterales.set(cle, val);
+  const calculees = new Map();
+  for (const [, ro, ca, i, val] of p.matchAll(/\[CATS_NOTIF\.(\w+)\.(\w+)\[(\d)\]\]: '((?:[^'\\]|\\.)*)'/g)) {
+    const c = cases.find(x => x[0] === ro && x[1] === ca);
+    assert.ok(c, `traduction d’une case qui n’existe pas : ${ro}.${ca}`);
+    calculees.set(c[2 + Number(i)], val);
+  }
+  const manquantes = [], fautes = [];
+  for (const [ro, ca, ...textes] of cases) for (const fr of textes) {
+    const ar = calculees.get(fr) ?? litterales.get(fr);
+    if (!ar) { manquantes.push(`${ro}.${ca} : ${fr}`); continue; }
+    if (/[A-Za-zÀ-ÿ]{2,}/.test(ar)) fautes.push(`${ro}.${ca} : mot latin dans « ${ar} »`);
+    if (/lauréat/i.test(fr) && !/خريج/.test(ar)) fautes.push(`${ro}.${ca} : les lauréats sont des خريجين dans « ${ar} »`);
+    if (/étudiant/i.test(fr) && !/الطلبة|طلبة|طالب/.test(ar)) fautes.push(`${ro}.${ca} : les étudiants sont des الطلبة dans « ${ar} »`);
+    if (/القدامى|متدرب/.test(ar)) fautes.push(`${ro}.${ca} : « ${ar} »`);
+  }
+  assert.deepEqual(manquantes, []);
+  assert.deepEqual(fautes, []);
+  // La case des rappels : son titre et ses deux textes (étudiant, lauréat)
+  const rappels = [...r.matchAll(/\[(TITRE|RAPPELS_NOTIF\.(?:etudiant|laureat)\[1\])\]: '((?:[^'\\]|\\.)*)'/g)];
+  assert.deepEqual(rappels.map(x => x[1]), ['TITRE', 'RAPPELS_NOTIF.etudiant[1]', 'RAPPELS_NOTIF.laureat[1]']);
+  for (const [, , ar] of rappels) assert.doesNotMatch(ar, /[A-Za-zÀ-ÿ]{2,}/);
+});
+
 test('« Français » sur le bouton de langue, « Nom » d’une startup n’est pas un nom de famille', () => {
   const entree = fs.readFileSync(new URL('entree.js', SRC), 'utf8');
   assert.match(entree, /<span class="lang-long" translate="no">\$\{ar \? 'Français'/);

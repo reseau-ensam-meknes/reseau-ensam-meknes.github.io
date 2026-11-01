@@ -1200,9 +1200,9 @@ test('Mon profil : la case « Rappels », cochée par défaut, se coupe et reste
     assert.equal(await s.page.isChecked('#np-rappels'), true, 'activée par défaut');
     const texte = await rappels.innerText();
     if (langue === 'fr') {
-      assert.match(texte, /^Rappels/);
-      assert.match(texte, /Après quelques jours sans visite, ce qui t’attend : messages, propositions d’aide, nouvelles offres\./);
-      assert.match(texte, /par email une fois par semaine au plus/);
+      assert.match(texte, /^Rappels et résumé du dimanche/);
+      assert.match(texte, /Après quelques jours sans visite, ce qui t’attend : messages, Match, propositions d’aide, réponses à tes questions, événements, nouvelles offres\./);
+      assert.match(texte, /par email une fois par semaine au plus\. Le dimanche matin, ta semaine en une ligne\./);
     } else {
       assert.match(texte, /التذكيرات/); assert.match(texte, /بعد أيام دون زيارة/);
       assert.deepEqual(texte.match(/[A-Za-zÀ-ÿ]{2,}/g) || [], [], 'rien d’oublié en français');
