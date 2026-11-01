@@ -2605,10 +2605,10 @@ test('cloche : son chiffre compte ce qui attend un geste, la feuille dit « À f
   await s.aller('espace');
   assert.equal(await s.page.locator('.page .af-row').count(), 0, 'Mon espace ne répète pas les lignes de la cloche');
   assert.doesNotMatch(await s.page.locator('.page').innerText(), /nouvelles candidatures|te demande de l’aide/);
-  // Un étudiant sans rien à faire : ni chiffre ni pastille, et la cloche le dit calmement
+  // Un étudiant sans rien à faire : ni chiffre ni pastille, et la cloche le dit calmement (seul Match s'allume : Youssef s'intéresse à son profil)
   await s.comme('Amine'); await s.aller('accueil');
   assert.equal(await s.page.locator('.cloche-btn .badge-n').count(), 0);
-  assert.deepEqual(await pastilles(), []);
+  assert.deepEqual(await pastilles(), ['Match']);
   assert.equal(await s.page.locator('.me-btn .dotn').count(), 0);
   await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
   assert.equal(await s.page.locator('.cloche .af-row').count(), 0);
