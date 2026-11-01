@@ -54,6 +54,8 @@ export function MatchPage(ctx) {
   const [compose, setCompose] = useState(false);
   const [lire, setLire] = useState(null);        // le CV ouvert en grand (la carte du dessus)
   const [annonce, setAnnonce] = useState('');
+  // Le premier passage : le geste montré une fois, cinq secondes, sans rien bloquer (par membre, dans ce navigateur)
+  const [guide, setGuide] = useState(() => { try { return !localStorage.getItem('match-guide-' + me.id); } catch { return false; } });
   const pile = useRef();
   const cartes = useMemo(() => {
     const l = deck.filter(c => c.cle !== vol?.c.cle);
@@ -64,6 +66,7 @@ export function MatchPage(ctx) {
 
   const choisir = (choix, from = null) => {
     if (!top || vol) return;
+    setGuide(false);
     const c = top;
     setVol({ c, choix, from, t: Date.now() }); setDevant(null);
     pile.current?.style.setProperty('--avance', '0');
@@ -128,6 +131,12 @@ export function MatchPage(ctx) {
   const finFete = () => { if (fete) store.vuMatch(fete.m.id).catch(() => {}); setFete(null); };
   const ecrire = () => { const f = fete; finFete(); if (f?.autre) (ctx.ecrire ? ctx.ecrire(f.autre.id) : go('messages/' + f.autre.id)); };
   const logos = cartes.slice(0, 3).filter(c => c.offre).map(c => c.offre.entreprise);
+  useEffect(() => {
+    if (!guide || !top) return;
+    try { localStorage.setItem('match-guide-' + me.id, '1'); } catch { /* stockage indisponible */ }
+    const t = setTimeout(() => setGuide(false), 5000);
+    return () => clearTimeout(t);
+  }, [guide, !!top]);
 
   return html`<section class="page mx-page">
     <header class="mx-tete">
@@ -140,6 +149,7 @@ export function MatchPage(ctx) {
         ${cartes.slice(0, 3).reverse().map((c, i, l) => html`<${Carte} key=${c.cle} ctx=${ctx} carte=${c} rang=${l.length - 1 - i} sens=${sens}
           onChoix=${choisir} onLire=${() => setLire(c)} onVoir=${() => voir(c)} revenue=${c.cle === devant}/>`)}
         ${vol ? html`<${Carte} key=${'vol-' + vol.c.cle + vol.t} ctx=${ctx} carte=${vol.c} rang=${0} sens=${sens} vol=${vol}/>` : null}
+        ${guide && top && !vol ? html`<p class="mx-guide" role="status"><span class="mx-guide-doigt" aria-hidden="true"></span><span>${sens > 0 ? 'À droite : Intéressé · À gauche : Plus tard' : 'إلى اليسار: مهتم · إلى اليمين: لاحقًا'}</span></p>` : null}
       </div>
       <div class="mx-acts" role="group" aria-label="Ton choix">
         <button type="button" class="mx-rond mx-non" onClick=${() => choisir('plus_tard')} disabled=${!top}><span class="mx-rond-ico"><${Icon} name="x" size=${26}/></span><span class="mx-rond-lib">Plus tard</span></button>
@@ -448,7 +458,16 @@ injectCSS('match-sponso', `
 @container carte (max-height: 360px) { .mx-sponso .mx-s-texte { -webkit-line-clamp: 2; } }
 `);
 
+injectCSS('match-guide', `
+.mx-guide { position: absolute; inset-inline: 12px; inset-block-end: 12px; z-index: 6; margin: 0; padding: .7rem .9rem; display: flex; align-items: center; gap: .7rem; border-radius: 14px; background: rgba(6, 18, 42, .86); color: #fff; font-size: var(--fs-2); font-weight: 600; pointer-events: none; animation: mx-guide-in .3s ease both; }
+.mx-guide-doigt { position: relative; flex: none; inline-size: 44px; block-size: 18px; border-radius: 9px; background: rgba(255,255,255,.18); }
+.mx-guide-doigt::after { content: ""; position: absolute; inset-block-start: 1px; inset-inline-start: 13px; inline-size: 16px; block-size: 16px; border-radius: 50%; background: #fff; animation: mx-guide-va 1.7s ease-in-out infinite; }
+@keyframes mx-guide-in { from { opacity: 0; transform: translateY(8px); } }
+@keyframes mx-guide-va { 0%, 100% { transform: translateX(-11px); } 50% { transform: translateX(11px); } }
+@media (prefers-reduced-motion: reduce) { .mx-guide, .mx-guide-doigt::after { animation: none; } }
+`);
 addAR({
+  'À droite : Intéressé · À gauche : Plus tard': 'إلى اليمين: مهتم · إلى اليسار: لاحقًا',
   // Cartes sponsorisées
   'Sponsorisé': 'مُموَّل', 'Carte sponsorisée passée.': 'تم تجاوز البطاقة المموَّلة.', 'Aperçu dans Match': 'معاينة في صفحة التوافق',
   'Tes matchs': 'توافقاتك', 'Ton offre l’intéresse': 'اهتمام بعرضك', 'Nouveau match': 'توافق جديد', 'Ton choix': 'اختيارك',

@@ -28,6 +28,7 @@ import { PoulsReseau, marquerArrivee, useArrivee, ArriveeSheet } from './pouls.j
 import { CaBouge, GraceAToi } from './vitrine.js';
 import { ProposerAide } from './demandes.js';
 import { useFondateurs, FondateursBandeau, useFondateurMoi } from './fondateurs.js';
+import { ReussitesRail } from './reussites.js';
 import { useAmbassadeurs, pasAmbassadeur, notifsAmbassadeur, AmbassadeurAccueil, AmbassadeurFeuille } from './ambassadeurs.js';
 
 // Écrans lourds et peu ouverts (Suivi, Admin, Enquête) : chargés à la demande, pas au démarrage.
@@ -1000,6 +1001,7 @@ function Home(ctx) {
       </header>
 
       <${ProchainPas} pas=${pas} progres=${enCours} faite=${faite} onEtapes=${() => setVoirEtapes(true)}/>
+      <${ReussitesRail} ctx=${ctx}/>
       ${isStudent && obj ? html`<button class=${'objective compact clickable avancement st-' + stu.key} onClick=${() => go('parcours')}>
         <div class="objective-top"><span class="obj-ico"><${Icon} name="route" size=${22}/></span>
           <div class="objective-main"><p class="eyebrow">Mon objectif de l’année</p><h2>${obj.titre}</h2></div>
