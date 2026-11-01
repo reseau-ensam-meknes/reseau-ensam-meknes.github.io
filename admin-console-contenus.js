@@ -147,6 +147,8 @@ function Liste({ ctx, sorte }) {
   const tag = k => { const s = STATUTS[sorte].find(x => x[0] === k); return s ? html`<span class=${'tag ' + s[2]}>${s[1]}</span>` : null; };
   const titre = l => (l.ouvrir ? html`<button type="button" class="linkish cnt-titre" translate="no" dir="auto" onClick=${l.ouvrir}>${l.titre}</button>` : html`<span class="cnt-titre" translate="no" dir="auto">${l.titre}</span>`);
   const id = sorte === 'offres' ? 'adm-offres' : 'adm-' + sorte;
+  // Sur une carte (sans en-têtes de colonnes), un nombre dit ce qu'il compte ; un mentorat dit qui est l'étudiant, qui est le lauréat
+  const libelle = k => (k === 'n' || (sorte === 'mentorats' && k !== 'date') ? COLONNES[sorte].find(c => c[0] === k)?.[1] : null);
   return html`<div class="panel cnt-panel">
     <div class="cnt-outils">
       <div class="chips rangee cnt-filtres" role="group" aria-label="Filtrer par statut">
@@ -168,7 +170,7 @@ function Liste({ ctx, sorte }) {
     : html`<ul class="cnt-cartes" id=${id}>${vus.map(l => html`<li key=${l.id} class="cnt-ligne" data-id=${l.id} data-statut=${l.statut}>
         <div class="cnt-tete">${titre(l)}${tag(l.statut)}</div>
         ${l.sous ? html`<span class="cnt-sous">${l.sous}</span>` : null}
-        <p class="cnt-faits small">${l.cellules.map(([k, v], i) => html`<span key=${k} class=${'k-' + k}>${i ? html`<span aria-hidden="true"> · </span>` : null}${k === 'n' ? html`<span>${COLONNES[sorte].find(c => c[0] === 'n')[1]}</span> <strong>${v}</strong>` : v}</span>`)}</p>
+        <p class="cnt-faits small">${l.cellules.map(([k, v], i) => html`<span key=${k} class=${'k-' + k}>${i ? html`<span aria-hidden="true"> · </span>` : null}${libelle(k) ? html`<span>${libelle(k)}</span> ${k === 'n' ? html`<strong>${v}</strong>` : v}` : v}</span>`)}</p>
         <div class="cnt-gestes">${l.gestes}</div>
       </li>`)}</ul>`}
     <${VoirPlus} reste=${reste} onPlus=${plus}/>
