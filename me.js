@@ -329,8 +329,9 @@ function useHausses(id, chiffres) {
   }, [id]);
   return haussesDepuisVisite(vus, chiffres);
 }
+// La pastille dit tout haut ce qu'elle compte : sur un téléphone, pas de survol pour lire un « title »
 function Hausse({ n }) {
-  return html`<span class="impact-hausse" title="Depuis ta dernière visite"><span aria-hidden="true">${`+${n}`}</span><span class="sr-only">${`+${n} depuis ta dernière visite`}</span></span>`;
+  return html`<span class="impact-hausse">${`+${n} depuis ta dernière visite`}</span>`;
 }
 
 // « Peut être montré sur la page d'entrée » : sous un recrutement confirmé, l'étudiant et le lauréat cochent chacun leur case
@@ -492,8 +493,8 @@ injectCSS('me-ux', `
 .impact-n { font: 750 var(--fs-7)/1.05 var(--f-display); font-variant-numeric: tabular-nums; color: var(--ink); }
 .impact-l { font-size: var(--fs-2); line-height: 1.3; color: var(--ink-2); }
 .impact-nums li.zero .impact-n { color: var(--muted); }
-/* « +1 depuis ta dernière visite » : une pastille calme, verte, sous le chiffre */
-.impact-hausse { display: inline-flex; align-items: center; padding: .05rem .5rem; border-radius: var(--r-pill); background: var(--good-soft); color: var(--good); font: 650 var(--fs-1)/1.4 var(--f-body); font-variant-numeric: tabular-nums; }
+/* « +1 depuis ta dernière visite » : une pastille calme, verte, sous le chiffre ; dans une colonne étroite, elle passe à la ligne */
+.impact-hausse { display: inline-block; max-width: 100%; padding: .1rem .5rem; border-radius: var(--r-sm); background: var(--good-soft); color: var(--good); font: 650 var(--fs-1)/1.35 var(--f-body); font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; text-wrap: balance; }
 /* Réussite montrée sur la page d'entrée : la case et sa phrase ; sous une recrue, sur toute la largeur */
 .pl-public { display: flex; flex-direction: column; gap: .2rem; }
 .pl-public .consent { margin-top: 0; }
@@ -586,7 +587,6 @@ addAR({
   'Pionnier de ta promo': 'من روّاد دفعتك', 'Parmi les 3 premiers lauréats de ta promo à rejoindre le réseau': 'من بين أول 3 خريجين من دفعتك انضموا إلى الشبكة',
   'Pionnier de sa promo': 'من روّاد الدفعة', 'Parmi les 3 premiers lauréats de sa promo à rejoindre le réseau': 'من بين أول 3 خريجين من دفعته انضموا إلى الشبكة',
   'Pionnier': 'من الروّاد', 'Pionnier de sa promo : parmi les 3 premiers lauréats de sa promo à rejoindre le réseau': 'من روّاد الدفعة: من بين أول 3 خريجين من دفعته انضموا إلى الشبكة',
-  'Depuis ta dernière visite': 'منذ زيارتك الأخيرة',
   'Peut être montré sur la page d’entrée': 'يمكن عرضه في صفحة الدخول',
   'C’est noté : cette réussite n’est pas sur la page d’entrée.': 'تم الحفظ: هذا النجاح غير معروض في صفحة الدخول.',
   'C’est noté : cette réussite est maintenant sur la page d’entrée.': 'تم الحفظ: هذا النجاح معروض الآن في صفحة الدخول.',

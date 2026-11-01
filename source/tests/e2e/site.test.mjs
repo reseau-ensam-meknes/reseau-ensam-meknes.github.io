@@ -6468,8 +6468,9 @@ test('« +1 depuis ta dernière visite » sur Mon espace : rien la première foi
   assert.ok(montes >= 1, JSON.stringify(vus));
   await s.page.evaluate(v => localStorage.setItem('espace-vus-u-0002', JSON.stringify(Object.fromEntries(Object.entries(v).map(([k, x]) => [k, Math.max(0, x - 1)])))), vus);
   await s.aller('espace');
-  assert.deepEqual(await s.page.$$eval('.impact-hausse [aria-hidden="true"]', x => x.map(e => e.textContent)), Array(montes).fill('+1'));
-  assert.equal(await s.page.locator('.impact-hausse .sr-only').first().textContent(), '+1 depuis ta dernière visite');
+  // La pastille dit tout haut ce qu'elle compte (pas de survol sur un téléphone), et reste dans sa colonne
+  assert.deepEqual(await s.page.$$eval('.impact-hausse', x => x.map(e => e.textContent)), Array(montes).fill('+1 depuis ta dernière visite'));
+  assert.ok(await s.page.$$eval('.impact-hausse', x => x.every(e => { const a = e.getBoundingClientRect(), b = e.closest('li').getBoundingClientRect(); return a.left >= b.left - 1 && a.right <= b.right + 1; })), 'la pastille reste dans sa colonne');
   assert.doesNotMatch(await s.page.locator('.impact-nums').innerText(), /point|classement|rang/i);
   assert.equal(await s.debordement(), 0);
   // La visite suivante : plus de pastille ; un autre membre a ses propres chiffres (première visite : rien)
