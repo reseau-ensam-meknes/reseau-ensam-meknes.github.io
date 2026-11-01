@@ -916,13 +916,26 @@ export const GUIDE_SECTIONS = [
   ['logement', 'Logement', 'home'], ['budget', 'Budget et coût de la vie', 'briefcase'], ['stage', 'Trouver un stage ou un emploi', 'feed'], ['vie', 'Vie sur place', 'heart'],
 ];
 
+// L'école d'un membre ou d'une ligne : tout ce qui date d'avant les écoles est à ENSAM Meknès (même défaut que la base)
+export const ECOLE_DEFAUT = 'ensam-meknes';
+export const ecoleDe = x => x?.ecole || ECOLE_DEFAUT;
+// Administration > Membres : null si la liste officielle de son école n'a aucune ligne de sa promo, sinon true ou false
+// selon qu'il y figure (même nom et même promo, ou même email) ; les lignes d'une autre école ne comptent jamais
+export function surListeOfficielle(liste, p, email) {
+  const lignes = (liste || []).filter(l => ecoleDe(l) === ecoleDe(p)); const e = (email || '').toLowerCase();
+  if (!lignes.some(l => l.promo === p.promo)) return null;
+  return lignes.some(l => (l.promo === p.promo && cleNom(l.nom) === cleNom(p.full_name)) || (!!l.email && !!e && l.email === e));
+}
+
 // Taux d'insertion par promo, filière et vague (même calcul que rapport_insertion() dans la base) :
 // le taux exclut ceux qui poursuivent leurs études ; le taux de réponse se rapporte à la liste officielle si elle est importée.
-export function rapportInsertion(data, now = new Date()) {
+// ecole : une seule école (inscrits, réponses et liste de cette école), comme p_ecole dans la base.
+export function rapportInsertion(data, now = new Date(), ecole = null) {
   const an = now.getFullYear(); const enPoste = e => ['emploi', 'entrepreneur', 'volontariat'].includes(e.situation);
+  const ici = x => !ecole || ecoleDe(x) === ecole;
   const cohortes = new Map();
-  for (const p of data.profiles) if (p.role !== 'admin' && p.promo <= an && p.promo >= an - 6) { const k = p.promo + '|' + p.filiere; cohortes.set(k, (cohortes.get(k) || 0) + 1); }
-  const liste = data.liste_officielle || []; const enq = data.enquetes_insertion || [];
+  for (const p of data.profiles) if (p.role !== 'admin' && ici(p) && p.promo <= an && p.promo >= an - 6) { const k = p.promo + '|' + p.filiere; cohortes.set(k, (cohortes.get(k) || 0) + 1); }
+  const liste = (data.liste_officielle || []).filter(ici); const enq = (data.enquetes_insertion || []).filter(ici);
   const mediane = v => { if (!v.length) return null; const s = [...v].sort((a, b) => a - b); const m = (s.length - 1) / 2; return (s[Math.floor(m)] + s[Math.ceil(m)]) / 2; };
   const moy = v => v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length * 10) / 10 : null;
   const rows = [];

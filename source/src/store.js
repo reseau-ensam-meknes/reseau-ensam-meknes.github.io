@@ -3,7 +3,7 @@
 const chargerSeed = () => import('./seed.js').then(m => m.buildSeed());
 import { refusOrigine, estPartagee, LIMITE_PARTAGES } from './origine.js';
 import { VIVANT, regleVivant, peutSupprimerVivant, cascadeVivant, memeCible } from './reseau-vivant.js';
-import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage, transitionAmbassadeur, PREFIXE_BROUILLON, refusChoixMatch, nouveauMatch, matchEntre, normaliserSponsorise, refusSponsorise, sponsorisePour, jourLocal, totauxSponsorises } from './logic.js';
+import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, ecoleDe, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage, transitionAmbassadeur, PREFIXE_BROUILLON, refusChoixMatch, nouveauMatch, matchEntre, normaliserSponsorise, refusSponsorise, sponsorisePour, jourLocal, totauxSponsorises } from './logic.js';
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
 const PHASE3 = ['coordonnees', 'demandes_contact', 'relectures_cv', 'relecture_commentaires', 'entretiens', 'avis_stage', 'guide_pays', 'signalements', 'enquetes_insertion', 'verifications_pairs', 'evenements', 'evenement_participants', 'retours_cv'];
@@ -380,12 +380,18 @@ class DemoStore extends Base {
     if (this.me?.role !== 'admin') throw new Error('Réservé à l’administration.');
     this.reglages = { ...this.reglages, [cle]: valeur }; this.persist(); this.emit();
   }
-  async rapportInsertion() {
+  // L'école visée, comme ecole_visee() dans la base : l'administration peut en choisir une, un membre reste dans la sienne
+  ecoleVisee(ecole) {
+    if (!ecole || this.me?.role !== 'admin') return ecoleDe(this.me);
+    if (ecole !== ecoleDe(null) && !(this.data.ecoles || []).some(e => e.slug === ecole)) throw new Error(`École inconnue : ${ecole}.`);
+    return ecole;
+  }
+  async rapportInsertion(ecole) {
     if (this.me?.role !== 'admin') throw new Error('Réservé à l’administration.');
-    return rapportInsertion(this.data);
+    return rapportInsertion(this.data, new Date(), this.ecoleVisee(ecole));
   }
   async historiqueGuide(guideId) { return this.data.guide_pays_historique.filter(h => h.guide_id === guideId).sort((a, b) => new Date(b.created_at) - new Date(a.created_at)); }
-  async statsInsertion() { return statsInsertion(this.data.enquetes_insertion).filter(g => this.me?.role === 'admin' || g.n >= 5); }
+  async statsInsertion(ecole) { const ici = this.ecoleVisee(ecole); return statsInsertion(this.data.enquetes_insertion.filter(e => ecoleDe(e) === ici)).filter(g => this.me?.role === 'admin' || g.n >= 5); }
   async seDesabonnerAlertes() { return true; }
   async seDesabonnerMessages() { return true; }
   // Messagerie : en démo, les photos et vocaux restent dans l'onglet (pas de stockage réel)
@@ -499,43 +505,48 @@ class DemoStore extends Base {
   }
   canal() { return { tape() {}, fermer() {} }; }
   // Liste officielle (administration)
-  async importerListe(lignes, remplacer = false) {
+  async importerListe(lignes, remplacer = false, ecole) {
     if (this.me?.role !== 'admin') throw new Error('Réservé à l’administration.');
+    const ici = this.ecoleVisee(ecole);
     let L = this.data.liste_officielle; let importes = 0, rejetes = 0;
-    if (remplacer) { const promos = new Set(lignes.map(x => +x.promo).filter(Boolean)); L = L.filter(x => !promos.has(x.promo)); }
+    if (remplacer) { const promos = new Set(lignes.map(x => +x.promo).filter(Boolean)); L = L.filter(x => ecoleDe(x) !== ici || !promos.has(x.promo)); }
     for (const x of lignes) {
       const nom = String(x.nom || '').trim().replace(/\s+/g, ' ').slice(0, 120); const promo = /^\d{4}$/.test(String(x.promo ?? '')) ? +x.promo : null;
       let email = String(x.email || '').trim().toLowerCase() || null; if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) email = null;
       if (nom.length < 2 || !cleNom(nom) || !promo || promo < 1990 || promo > 2040) { rejetes++; continue; }
-      const old = L.find(l => l.promo === promo && cleNom(l.nom) === cleNom(nom));
+      const old = L.find(l => ecoleDe(l) === ici && l.promo === promo && cleNom(l.nom) === cleNom(nom));
       const champs = { email, filiere: String(x.filiere || '').trim() || null, matricule: String(x.matricule || '').trim() || null };
-      if (old) { for (const [k, v] of Object.entries(champs)) if (v) old[k] = v; } else L = [...L, { id: uuid(), nom, promo, ...champs, created_at: new Date().toISOString() }];
+      if (old) { for (const [k, v] of Object.entries(champs)) if (v) old[k] = v; } else L = [...L, { id: uuid(), ecole: ici, nom, promo, ...champs, created_at: new Date().toISOString() }];
       importes++;
     }
     this.data.liste_officielle = L;
     let verifies = 0;
-    this.data.profiles = this.data.profiles.map(p => { if (p.verified || p.role === 'admin' || !dansListe(this.data, p, demoEmail(p))) return p; verifies++; return { ...p, verified: true }; });
+    this.data.profiles = this.data.profiles.map(p => { if (p.verified || p.role === 'admin' || ecoleDe(p) !== ici || !dansListe(this.data, p, demoEmail(p))) return p; verifies++; return { ...p, verified: true }; });
     this.me = this.byId('profiles', this.me.id);
     this.persist(); this.emit();
     return { importes, rejetes, verifies };
   }
-  async couvertureListe() {
+  async couvertureListe(ecole) {
     if (this.me?.role !== 'admin') throw new Error('Réservé à l’administration.');
-    const g = new Map();
-    for (const l of this.data.liste_officielle) {
+    const ici = this.ecoleVisee(ecole); const g = new Map();
+    for (const l of this.data.liste_officielle.filter(x => ecoleDe(x) === ici)) {
       const k = l.promo + '|' + (l.filiere || ''); const x = g.get(k) || { promo: l.promo, filiere: l.filiere || '', total: 0, inscrits: 0 };
       x.total++; if (inscritDeListe(this.data, l)) x.inscrits++; g.set(k, x);
     }
     return [...g.values()].sort((a, b) => b.promo - a.promo || a.filiere.localeCompare(b.filiere));
   }
-  async manquantsListe(promo) {
+  async manquantsListe(promo, ecole) {
     if (this.me?.role !== 'admin') throw new Error('Réservé à l’administration.');
-    return this.data.liste_officielle.filter(l => l.promo === +promo && !inscritDeListe(this.data, l)).map(({ nom, email, filiere }) => ({ nom, email, filiere }));
+    const ici = this.ecoleVisee(ecole);
+    return this.data.liste_officielle.filter(l => ecoleDe(l) === ici && l.promo === +promo && !inscritDeListe(this.data, l)).map(({ nom, email, filiere }) => ({ nom, email, filiere }));
   }
-  async viderListe(promo) {
+  async viderListe(promo, ecole) {
     if (this.me?.role !== 'admin') throw new Error('Réservé à l’administration.');
-    this.data.liste_officielle = this.data.liste_officielle.filter(l => promo != null && l.promo !== +promo);
+    if (promo == null || promo === '') throw new Error('Choisis une promo.');
+    const ici = this.ecoleVisee(ecole); const avant = this.data.liste_officielle.length;
+    this.data.liste_officielle = this.data.liste_officielle.filter(l => ecoleDe(l) !== ici || l.promo !== +promo);
     this.persist(); this.emit();
+    return avant - this.data.liste_officielle.length;
   }
 }
 
@@ -577,8 +588,9 @@ function regleRoleDemo(store, r, old) {
 const pairsValides = (data, c) => data.verifications_pairs.filter(v => v.laureat_id === c.id).map(v => data.profiles.find(x => x.id === v.verificateur_id)).filter(x => x && x.role === 'laureat' && x.verified && x.promo === c.promo).length;
 const emailEcole = (store, email) => store.domainesEcole().some(d => (email || '').toLowerCase().endsWith('@' + d) || (email || '').toLowerCase().endsWith('.' + d));
 const verifieAuto = (store, p) => dansListe(store.data, p, demoEmail(p)) || (p.role === 'etudiant' && emailEcole(store, demoEmail(p))) || (p.role === 'laureat' && pairsValides(store.data, p) >= 2);
-const dansListe = (data, p, email) => data.liste_officielle.some(l => (l.promo === p.promo && cleNom(l.nom) === cleNom(p.full_name)) || (l.email && l.email === (email || '').toLowerCase()));
-const inscritDeListe = (data, l) => data.profiles.some(p => (l.email && demoEmail(p) === l.email) || (p.promo === l.promo && cleNom(p.full_name) === cleNom(l.nom)));
+// Liste officielle : une ligne ne vaut que pour les membres de son école (comme dans_liste(), couverture_liste() et manquants_liste())
+const dansListe = (data, p, email) => data.liste_officielle.some(l => ecoleDe(l) === ecoleDe(p) && ((l.promo === p.promo && cleNom(l.nom) === cleNom(p.full_name)) || (l.email && l.email === (email || '').toLowerCase())));
+const inscritDeListe = (data, l) => data.profiles.some(p => ecoleDe(p) === ecoleDe(l) && ((l.email && demoEmail(p) === l.email) || (p.promo === l.promo && cleNom(p.full_name) === cleNom(l.nom))));
 
 // Limites anti-spam : mêmes chiffres que limiter() dans la base
 const LIMITES = {
@@ -965,6 +977,8 @@ function applyPhase3Rules(store, table, r, old) {
       r.promo = p.promo; r.filiere = p.filiere;
       if (!old && store.data.enquetes_insertion.some(e => e.user_id === r.user_id && e.vague === r.vague)) throw new Error('Tu as déjà répondu à cette enquête.');
     }
+    // L'école de la réponse : celle du compte (comme protect_enquete), gardée une fois la réponse détachée du compte
+    { const p = r.user_id ? store.byId('profiles', r.user_id) : null; r.ecole = p ? ecoleDe(p) : old ? ecoleDe(old) : ecoleDe(r); }
     r.updated_at = now;
   }
 }
@@ -1747,8 +1761,8 @@ export class SupabaseStore extends Base {
     if (error) throw new Error(frError(error));
     this.reglages = { ...this.reglages, [cle]: valeur }; this.emit();
   }
-  async rapportInsertion() {
-    const { data, error } = await this.sb.rpc('rapport_insertion');
+  async rapportInsertion(ecole) {
+    const { data, error } = await this.sb.rpc('rapport_insertion', ecole ? { p_ecole: ecole } : {});
     if (error) throw new Error(frError(error));
     return data || [];
   }
@@ -1756,8 +1770,8 @@ export class SupabaseStore extends Base {
     const { data, error } = await this.sb.from('guide_pays_historique').select('*').eq('guide_id', guideId).order('created_at', { ascending: false }).limit(20);
     return error ? [] : data;
   }
-  async statsInsertion() {
-    const { data, error } = await this.sb.rpc('stats_insertion');
+  async statsInsertion(ecole) {
+    const { data, error } = await this.sb.rpc('stats_insertion', ecole ? { p_ecole: ecole } : {});
     if (error) throw new Error(frError(error));
     return data || [];
   }
@@ -1967,25 +1981,31 @@ export class SupabaseStore extends Base {
       fermer: () => { this.sb.removeChannel(ch).catch(() => {}); },
     };
   }
-  async importerListe(lignes, remplacer = false) {
-    const { data, error } = await this.sb.rpc('importer_liste', { p_lignes: lignes, p_remplacer: remplacer });
+  async importerListe(lignes, remplacer = false, ecole) {
+    const { data, error } = await this.sb.rpc('importer_liste', { p_lignes: lignes, p_remplacer: remplacer, ...(ecole ? { p_ecole: ecole } : {}) });
     if (error) throw new Error(frError(error));
     await this.loadTable('profiles'); this.me = this.byId('profiles', this.userId); this.emit();
     return data;
   }
-  async couvertureListe() {
-    const { data, error } = await this.sb.rpc('couverture_liste');
+  async couvertureListe(ecole) {
+    const { data, error } = await this.sb.rpc('couverture_liste', ecole ? { p_ecole: ecole } : {});
     if (error) throw new Error(frError(error));
     return data || [];
   }
-  async manquantsListe(promo) {
-    const { data, error } = await this.sb.rpc('manquants_liste', { p_promo: +promo });
+  async manquantsListe(promo, ecole) {
+    const { data, error } = await this.sb.rpc('manquants_liste', { p_promo: +promo, ...(ecole ? { p_ecole: ecole } : {}) });
     if (error) throw new Error(frError(error));
     return data || [];
   }
-  async viderListe(promo) {
-    const { error } = await this.sb.from('liste_officielle').delete().eq('promo', +promo);
+  // Une seule école (vider_liste() dans la base) : l'administration passe toutes les règles de la table, un delete direct viderait
+  // cette promo dans toutes les écoles
+  async viderListe(promo, ecole) {
+    let { data, error } = await this.sb.rpc('vider_liste', { p_promo: +promo, ...(ecole ? { p_ecole: ecole } : {}) });
+    // Base pas encore mise à jour (vider_liste absente) : sa liste n'est que celle de l'école de l'administrateur (l'ancien
+    // importer_liste n'écrivait que là), l'ancien delete fait donc la même chose ; le site marche avant la mise à jour
+    if (error && !ecole && (error.code === 'PGRST202' || /could not find the function/i.test(error.message || ''))) ({ data, error } = await this.sb.from('liste_officielle').delete().eq('promo', +promo));
     if (error) throw new Error(frError(error));
+    return data;
   }
   async testPush() {
     const { data, error } = await this.sb.functions.invoke('notifier', { body: { job: 'test' } });

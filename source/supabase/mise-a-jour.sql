@@ -156,7 +156,7 @@ begin
   -- étudiant inscrit avec l'email de l'école, ou lauréat confirmé par deux lauréats vérifiés de sa promo.
   -- Jamais pour un « lauréat » d'une promo pas encore diplômée (un étudiant qui s'est trompé de rôle).
   begin
-    if not new.verified and (new.role <> 'laureat' or new.promo <= extract(year from now())::int) and (public.dans_liste(new.id, new.full_name, new.promo)
+    if not new.verified and (new.role <> 'laureat' or new.promo <= extract(year from now())::int) and (public.dans_liste(new.id, new.full_name, new.promo, new.ecole)
         or (new.role = 'etudiant' and public.email_ecole(new.id))
         or (new.role = 'laureat' and public.pairs_valides(new.id, new.promo) >= 2)) then
       new.verified := true;
@@ -2466,17 +2466,32 @@ end $$;
 -- Taux d'insertion par promo et filière, pour les rapports officiels et l'accréditation
 -- (administration seulement) : effectif de la liste officielle, inscrits, répondants à l'enquête,
 -- en poste, en recherche, en études, à l'étranger, délai médian, satisfaction.
+-- Une école à la fois : celle de l'administrateur, ou celle qu'il choisit (p_ecole).
 -- ---------------------------------------------------------------------
-create or replace function public.rapport_insertion()
+-- L'école visée par une fonction de l'administration : celle demandée (elle doit exister), sinon la sienne.
+-- Un membre reste toujours dans la sienne, quoi qu'il demande.
+create or replace function public.ecole_visee(p_ecole text default null) returns text
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if p_ecole is null or not public.is_admin() then return coalesce(public.mon_ecole(), 'ensam-meknes'); end if;
+  if not exists (select 1 from public.ecoles e where e.slug = p_ecole) then raise exception 'École inconnue : %.', p_ecole; end if;
+  return p_ecole;
+end $$;
+revoke all on function public.ecole_visee(text) from public, anon, authenticated;
+
+drop function if exists public.rapport_insertion();
+create or replace function public.rapport_insertion(p_ecole text default null)
 returns table (promo int, filiere text, vague int, effectif int, inscrits int, repondants int, en_poste int, recherche int, etudes int, etranger int,
   taux_insertion numeric, taux_reponse numeric, delai_median numeric, satisfaction numeric, lien_formation numeric)
 language plpgsql stable security definer set search_path = public as $$
+declare v_ecole text;
 begin
   if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
+  v_ecole := public.ecole_visee(p_ecole);
   return query
   with cohortes as (
     select p.promo, p.filiere, count(*)::int as inscrits from public.profiles p
-    where p.role <> 'admin' and p.promo <= extract(year from now())::int and p.promo >= extract(year from now())::int - 6
+    where p.role <> 'admin' and p.ecole = v_ecole and p.promo <= extract(year from now())::int and p.promo >= extract(year from now())::int - 6
     group by p.promo, p.filiere),
   vagues as (select c.*, v.vague from cohortes c cross join (values (6), (12)) v(vague)),
   rep as (
@@ -2487,8 +2502,8 @@ begin
       count(*) filter (where e.situation in ('emploi','entrepreneur','volontariat') and public.cle_lieu(e.pays) is not null and public.cle_lieu(e.pays) <> 'maroc')::int etr,
       (percentile_cont(0.5) within group (order by e.delai_mois))::numeric med,
       round(avg(e.satisfaction)::numeric, 1) sat, round(avg(e.lien_formation)::numeric, 1) lf
-    from public.enquetes_insertion e group by e.promo, e.filiere, e.vague),
-  liste as (select l.promo, public.cle_lieu(l.filiere) f, count(*)::int n from public.liste_officielle l group by l.promo, public.cle_lieu(l.filiere))
+    from public.enquetes_insertion e where e.ecole = v_ecole group by e.promo, e.filiere, e.vague),
+  liste as (select l.promo, public.cle_lieu(l.filiere) f, count(*)::int n from public.liste_officielle l where l.ecole = v_ecole group by l.promo, public.cle_lieu(l.filiere))
   select v.promo, v.filiere, v.vague, li.n, v.inscrits, coalesce(r.n, 0), coalesce(r.ep, 0), coalesce(r.rch, 0), coalesce(r.etu, 0), coalesce(r.etr, 0),
     case when coalesce(r.n, 0) - coalesce(r.etu, 0) > 0 then round(r.ep::numeric / (r.n - r.etu), 3) end,
     case when coalesce(li.n, v.inscrits) > 0 then round(coalesce(r.n, 0)::numeric / coalesce(li.n, v.inscrits), 3) end,
@@ -2499,8 +2514,8 @@ begin
   where r.n is not null or v.promo <= extract(year from now())::int - 1
   order by v.promo desc, v.filiere, v.vague;
 end $$;
-revoke all on function public.rapport_insertion() from public, anon;
-grant execute on function public.rapport_insertion() to authenticated;
+revoke all on function public.rapport_insertion(text) from public, anon;
+grant execute on function public.rapport_insertion(text) to authenticated;
 
 -- ---------------------------------------------------------------------
 -- Sécurité ligne par ligne (suite)
@@ -2632,7 +2647,9 @@ create table if not exists public.enquetes_insertion (
   unique (user_id, vague)
 );
 
+-- L'école de la réponse, celle de la personne (protect_enquete) : elle reste quand la réponse est anonymisée (user_id vide)
 alter table public.enquetes_insertion add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug);
+create index if not exists enquetes_insertion_ecole on public.enquetes_insertion (ecole, promo, vague);
 create or replace function public.protect_enquete() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare p public.profiles%rowtype;
@@ -2641,6 +2658,9 @@ begin
   if tg_op = 'UPDATE' then
     if auth.uid() is not null or new.user_id is not null then new.user_id := old.user_id; end if;
     new.vague := old.vague; new.created_at := old.created_at;
+    -- L'école suit le compte tant que la réponse y est attachée (seule l'administration change l'école d'un compte),
+    -- et ne bouge plus une fois la réponse anonymisée
+    new.ecole := coalesce((select x.ecole from public.profiles x where x.id = new.user_id), old.ecole);
   end if;
   if auth.uid() is not null and not public.is_admin() then
     if tg_op = 'INSERT' then new.user_id := auth.uid(); new.created_at := now(); end if;
@@ -2648,6 +2668,7 @@ begin
     if p.role is distinct from 'laureat' and public.niveau_de(p.promo, public.saison_courante()) < 6 then raise exception 'L’enquête s’adresse aux lauréats.'; end if;
     new.promo := p.promo; new.filiere := p.filiere;
   end if;
+  if tg_op = 'INSERT' then new.ecole := coalesce((select x.ecole from public.profiles x where x.id = new.user_id), new.ecole, 'ensam-meknes'); end if;
   new.updated_at := now();
   return new;
 end $$;
@@ -2655,12 +2676,14 @@ drop trigger if exists trg_protect_enquete on public.enquetes_insertion;
 create trigger trg_protect_enquete before insert or update on public.enquetes_insertion
   for each row execute function public.protect_enquete();
 
-create or replace function public.stats_insertion() returns jsonb
+drop function if exists public.stats_insertion();
+create or replace function public.stats_insertion(p_ecole text default null) returns jsonb
 language plpgsql stable security definer set search_path = public as $$
-declare r jsonb; m int := case when public.is_admin() then 1 else 5 end;
+declare r jsonb; m int := case when public.is_admin() then 1 else 5 end; v_ecole text;
 begin
   if auth.uid() is null then raise exception 'Connecte-toi d’abord.'; end if;
-  with e as (select * from public.enquetes_insertion where ecole = public.mon_ecole()),
+  v_ecole := public.ecole_visee(p_ecole);
+  with e as (select * from public.enquetes_insertion x where x.ecole = v_ecole),
   g as (
     select e.promo, e.vague, count(*) as n,
       count(*) filter (where situation in ('emploi','entrepreneur','volontariat')) as en_poste,
@@ -2674,18 +2697,18 @@ begin
   select coalesce(jsonb_agg(jsonb_build_object(
       'promo', g.promo, 'vague', g.vague, 'n', g.n, 'en_poste', g.en_poste, 'recherche', g.recherche, 'etudes', g.etudes,
       'etranger', g.etranger, 'delai_median', g.delai_median, 'lien_formation', g.lien_formation, 'satisfaction', g.satisfaction,
-      'canaux', (select jsonb_object_agg(c, k) from (select canal c, count(*) k from public.enquetes_insertion x where x.promo = g.promo and x.vague = g.vague and canal is not null group by canal) t),
-      'secteurs', case when g.n >= m then (select jsonb_object_agg(s, k) from (select secteur s, count(*) k from public.enquetes_insertion x where x.promo = g.promo and x.vague = g.vague and secteur is not null group by secteur having count(*) >= least(m, 2)) t) end,
-      'salaires', case when g.n >= m then (select jsonb_object_agg(s, k) from (select salaire s, count(*) k from public.enquetes_insertion x where x.promo = g.promo and x.vague = g.vague and salaire is not null and salaire <> 'nsp' group by salaire) t) end,
+      'canaux', (select jsonb_object_agg(c, k) from (select canal c, count(*) k from e x where x.promo = g.promo and x.vague = g.vague and canal is not null group by canal) t),
+      'secteurs', case when g.n >= m then (select jsonb_object_agg(s, k) from (select secteur s, count(*) k from e x where x.promo = g.promo and x.vague = g.vague and secteur is not null group by secteur having count(*) >= least(m, 2)) t) end,
+      'salaires', case when g.n >= m then (select jsonb_object_agg(s, k) from (select salaire s, count(*) k from e x where x.promo = g.promo and x.vague = g.vague and salaire is not null and salaire <> 'nsp' group by salaire) t) end,
       'filieres', (select jsonb_object_agg(f, jsonb_build_object('n', k, 'en_poste', ep)) from (
           select filiere f, count(*) k, count(*) filter (where situation in ('emploi','entrepreneur','volontariat')) ep
-          from public.enquetes_insertion x where x.promo = g.promo and x.vague = g.vague and filiere is not null group by filiere having count(*) >= m) t)
+          from e x where x.promo = g.promo and x.vague = g.vague and filiere is not null group by filiere having count(*) >= m) t)
     ) order by g.promo desc, g.vague), '[]'::jsonb) into r
   from g where g.n >= m;  -- en dessous de 5 réponses, seuls les chiffres de l'administration existent
   return r;
 end $$;
-revoke all on function public.stats_insertion() from public, anon;
-grant execute on function public.stats_insertion() to authenticated;
+revoke all on function public.stats_insertion(text) from public, anon;
+grant execute on function public.stats_insertion(text) to authenticated;
 
 -- ---------------------------------------------------------------------
 -- Liste officielle des étudiants (fournie par l'école, importée par l'administration).
@@ -2705,20 +2728,25 @@ drop index if exists public.liste_officielle_nom_promo;
 create unique index if not exists liste_officielle_ecole_nom_promo on public.liste_officielle (ecole, (public.cle_nom(nom)), promo);
 create index if not exists liste_officielle_email on public.liste_officielle (email);
 
-create or replace function public.dans_liste(p_id uuid, p_nom text, p_promo int) returns boolean
+-- p_ecole : l'école du compte, passée par qui appelle. À l'inscription (protect_profile, avant l'insert), la ligne du profil
+-- n'existe pas encore : sans elle, l'inscrit d'une autre école serait comparé à la liste d'ENSAM Meknès.
+drop function if exists public.dans_liste(uuid, text, int);
+create or replace function public.dans_liste(p_id uuid, p_nom text, p_promo int, p_ecole text default null) returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.liste_officielle l
-    where l.ecole = coalesce((select p.ecole from public.profiles p where p.id = p_id), 'ensam-meknes')
+    where l.ecole = coalesce(p_ecole, (select p.ecole from public.profiles p where p.id = p_id), 'ensam-meknes')
       and ((l.promo = p_promo and public.cle_nom(l.nom) = public.cle_nom(p_nom))
        or (l.email is not null and l.email = (select lower(u.email) from auth.users u where u.id = p_id))));
 $$;
-revoke all on function public.dans_liste(uuid, text, int) from public, anon, authenticated;
+revoke all on function public.dans_liste(uuid, text, int, text) from public, anon, authenticated;
 
-create or replace function public.importer_liste(p_lignes jsonb, p_remplacer boolean default false) returns jsonb
+drop function if exists public.importer_liste(jsonb, boolean);
+create or replace function public.importer_liste(p_lignes jsonb, p_remplacer boolean default false, p_ecole text default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare x jsonb; v_nom text; v_promo int; v_email text; n_ok int := 0; n_rej int := 0; n_verif int := 0; v_promos int[] := '{}'; v_ecole text := public.mon_ecole();
+declare x jsonb; v_nom text; v_promo int; v_email text; n_ok int := 0; n_rej int := 0; n_verif int := 0; v_promos int[] := '{}'; v_ecole text;
 begin
   if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
+  v_ecole := public.ecole_visee(p_ecole);
   if jsonb_typeof(p_lignes) <> 'array' or jsonb_array_length(p_lignes) > 5000 then raise exception 'Liste invalide (5000 lignes au plus).'; end if;
   if p_remplacer then
     select coalesce(array_agg(distinct (e ->> 'promo')::int), '{}') into v_promos from jsonb_array_elements(p_lignes) e where (e ->> 'promo') ~ '^\d{4}$';
@@ -2739,44 +2767,64 @@ begin
     n_ok := n_ok + 1;
   end loop;
   update public.profiles p set verified = true
-    where not p.verified and p.role <> 'admin' and public.dans_liste(p.id, p.full_name, p.promo);
+    where not p.verified and p.role <> 'admin' and p.ecole = v_ecole and public.dans_liste(p.id, p.full_name, p.promo, p.ecole);
   get diagnostics n_verif = row_count;
   return jsonb_build_object('importes', n_ok, 'rejetes', n_rej, 'verifies', n_verif);
 end $$;
-revoke all on function public.importer_liste(jsonb, boolean) from public, anon;
-grant execute on function public.importer_liste(jsonb, boolean) to authenticated;
+revoke all on function public.importer_liste(jsonb, boolean, text) from public, anon;
+grant execute on function public.importer_liste(jsonb, boolean, text) to authenticated;
 
--- Couverture : combien d'étudiants de la liste sont inscrits, par promo et filière
-create or replace function public.couverture_liste() returns jsonb
+-- Couverture : combien d'étudiants de la liste sont inscrits, par promo et filière (une école : la sienne, ou p_ecole)
+drop function if exists public.couverture_liste();
+create or replace function public.couverture_liste(p_ecole text default null) returns jsonb
 language plpgsql stable security definer set search_path = public as $$
-declare r jsonb;
+declare r jsonb; v_ecole text;
 begin
   if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
+  v_ecole := public.ecole_visee(p_ecole);
   with m as (
     select l.promo, coalesce(l.filiere, '') as filiere, exists (
       select 1 from public.profiles p left join auth.users u on u.id = p.id
-      where (l.email is not null and lower(u.email) = l.email) or (p.promo = l.promo and public.cle_nom(p.full_name) = public.cle_nom(l.nom))) as inscrit
-    from public.liste_officielle l)
+      where p.ecole = l.ecole and ((l.email is not null and lower(u.email) = l.email) or (p.promo = l.promo and public.cle_nom(p.full_name) = public.cle_nom(l.nom)))) as inscrit
+    from public.liste_officielle l where l.ecole = v_ecole)
   select coalesce(jsonb_agg(jsonb_build_object('promo', promo, 'filiere', filiere, 'total', total, 'inscrits', inscrits) order by promo desc, filiere), '[]'::jsonb) into r
   from (select promo, filiere, count(*) total, count(*) filter (where inscrit) inscrits from m group by promo, filiere) t;
   return r;
 end $$;
-revoke all on function public.couverture_liste() from public, anon;
-grant execute on function public.couverture_liste() to authenticated;
+revoke all on function public.couverture_liste(text) from public, anon;
+grant execute on function public.couverture_liste(text) to authenticated;
 
 -- Qui manque encore (pour que les ambassadeurs de promo les invitent)
-create or replace function public.manquants_liste(p_promo int) returns table (nom text, email text, filiere text)
+drop function if exists public.manquants_liste(int);
+create or replace function public.manquants_liste(p_promo int, p_ecole text default null) returns table (nom text, email text, filiere text)
 language plpgsql stable security definer set search_path = public as $$
+declare v_ecole text;
 begin
   if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
+  v_ecole := public.ecole_visee(p_ecole);
   return query select l.nom, l.email, l.filiere from public.liste_officielle l
-    where l.promo = p_promo and not exists (
+    where l.ecole = v_ecole and l.promo = p_promo and not exists (
       select 1 from public.profiles p left join auth.users u on u.id = p.id
-      where (l.email is not null and lower(u.email) = l.email) or (p.promo = l.promo and public.cle_nom(p.full_name) = public.cle_nom(l.nom)))
+      where p.ecole = l.ecole and ((l.email is not null and lower(u.email) = l.email) or (p.promo = l.promo and public.cle_nom(p.full_name) = public.cle_nom(l.nom))))
     order by l.filiere nulls last, l.nom;
 end $$;
-revoke all on function public.manquants_liste(int) from public, anon;
-grant execute on function public.manquants_liste(int) to authenticated;
+revoke all on function public.manquants_liste(int, text) from public, anon;
+grant execute on function public.manquants_liste(int, text) to authenticated;
+
+-- Vider la liste d'une promo, dans une seule école (la sienne, ou p_ecole) ; les comptes déjà vérifiés le restent
+create or replace function public.vider_liste(p_promo int, p_ecole text default null) returns int
+language plpgsql security definer set search_path = public as $$
+declare v_ecole text; n int;
+begin
+  if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
+  if p_promo is null then raise exception 'Choisis une promo.'; end if;
+  v_ecole := public.ecole_visee(p_ecole);
+  delete from public.liste_officielle where ecole = v_ecole and promo = p_promo;
+  get diagnostics n = row_count;
+  return n;
+end $$;
+revoke all on function public.vider_liste(int, text) from public, anon;
+grant execute on function public.vider_liste(int, text) to authenticated;
 
 -- ---------------------------------------------------------------------
 -- Alertes d'offres : dès qu'une offre de son année et de sa filière est publiée,
