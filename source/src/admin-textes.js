@@ -39,6 +39,7 @@ export function aidesEntre(data, debut, fin) {
 // Ce que chaque lauréat a fait pour les étudiants ces 7 derniers jours (le merci de la semaine) : aides proposées sur une Demande,
 // mentorats acceptés ou terminés, relectures de CV rendues, réponses aux questions, offres publiées pour les étudiants,
 // recrutements confirmés. Le plus récent d'abord ; etudiants : les ids des étudiants aidés (comptés, jamais nommés).
+// Seulement entre membres de l'école (le message dit « de l'ENSAM Meknès »), comme le résumé de la semaine.
 export const GESTES = {
   aide: ['aide proposée sur une Demande', 'aides proposées sur des Demandes'],
   mentorat: ['mentorat', 'mentorats'],
@@ -47,7 +48,8 @@ export const GESTES = {
   offre: ['offre publiée', 'offres publiées'],
   recrute: ['recrutement confirmé', 'recrutements confirmés'],
 };
-export function aidantsSemaine(data, now = Date.now()) {
+export function aidantsSemaine(data0, now = Date.now(), ecole = ECOLE_DEFAUT) {
+  const data = vueEcole(data0, ecole);
   const debut = now - 7 * J;
   const prof = new Map((data.profiles || []).map(p => [p.id, p]));
   const lau = id => (laureatCompte(prof.get(id)) ? prof.get(id) : null);
@@ -260,11 +262,12 @@ export function textePromoDemande(promo, { saison = seasonOf(), lien = '' } = {}
 }
 
 // ---------------------------------------------------------------------------
-// e) « Une offre de ta boîte » : les lauréats qui ont une entreprise et n'ont encore publié aucune offre
+// e) « Une offre de ta boîte » : les lauréats de l'école (le message parle de ses étudiants) qui ont une entreprise
+// et n'ont encore publié aucune offre
 // ---------------------------------------------------------------------------
-export function laureatsSansOffre(data) {
+export function laureatsSansOffre(data, ecole = ECOLE_DEFAUT) {
   const auteurs = new Set((data.offers || []).map(o => o.author_id));
-  return membresDe(data).filter(p => p.role === 'laureat' && String(p.entreprise || '').trim() && !auteurs.has(p.id))
+  return membresDe(vueEcole(data, ecole)).filter(p => p.role === 'laureat' && String(p.entreprise || '').trim() && !auteurs.has(p.id))
     .sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'fr'));
 }
 export const messageOffreBoite = (p, lien = '', langue = p?.langue) => (langue === 'ar'

@@ -7,7 +7,7 @@ import { buildSeed } from '../../src/seed.js';
 import { seasonOf, NB_FONDATEURS } from '../../src/logic.js';
 import { ETAPES, etapeVoisine, retardJours, actionCetteSemaine, grouperSuivi, pretAOuvrir, suiviDe, slugEcole, slugValide, FORMULES, formule, dh,
   resumePartenaires, lienContact, nomEtape } from '../../src/admin-donnees.js';
-import { resumeSemaine, aidantsSemaine, texteMerci, messageAccordMerci, texteFondateurs, textePromoDemande, rendezVousDuMois, semaineISO, parSemaine,
+import { resumeSemaine, aidantsSemaine, texteMerci, messageAccordMerci, texteFondateurs, textePromoDemande, rendezVousDuMois, semaineISO, parSemaine, laureatsSansOffre,
   chiffresRapport, chiffresReseau, offresRecentes, texteOffresBRE, texteVisuel, consentementsDonnes, messageAccordVisuel, nomFichierVisuel, inscritsDepuis,
   adresseCourte, texteAffiche, messageEcole, messageEntreprise, prenomDe } from '../../src/admin-textes.js';
 
@@ -58,6 +58,16 @@ test('merci de la semaine : seulement les prénoms cochés, jamais un nom de fam
   assert.match(messageAccordMerci({ ...a, langue: 'fr' }), /Es-tu d’accord/);
   assert.match(messageAccordMerci({ ...a, langue: 'ar' }), /هل توافق/);
   PROPRE(r.fr); PROPRE(r.ar);
+  // Le merci et « Une offre de ta boîte » parlent de l'ENSAM Meknès : un lauréat ou un étudiant d'une autre école n'y compte pas
+  const autre = p => ({ ...p, ecole: 'ecole-exemple' });
+  const ailleurs = { ...seed, profiles: seed.profiles.map(p => (p.id === a.id || a.etudiants.includes(p.id) ? autre(p) : p)) };
+  assert.ok(!aidantsSemaine(ailleurs, NOW).some(x => x.id === a.id));
+  assert.ok(aidantsSemaine(ailleurs, NOW, null).some(x => x.id === a.id), 'sans école : tout le réseau');
+  const sansOffre = laureatsSansOffre(seed);
+  assert.ok(sansOffre.length > 0);
+  const [x0] = sansOffre;
+  const l2 = laureatsSansOffre({ ...seed, profiles: seed.profiles.map(p => (p.id === x0.id ? autre(p) : p)) });
+  assert.ok(!l2.some(x => x.id === x0.id) && l2.length === sansOffre.length - 1);
 });
 
 test('membres fondateurs : ceux qui ont dit non ne sont pas cités', () => {
