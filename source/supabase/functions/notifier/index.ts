@@ -1469,8 +1469,13 @@ export const TELEPHONE: Record<Langue, { phrase: string; lien: string }> = {
   fr: { phrase: 'Reçois tes matchs et tes messages directement sur ton téléphone', lien: 'Activer les notifications' },
   ar: { phrase: 'استقبل توافقاتك ورسائلك مباشرة على هاتفك', lien: 'تفعيل الإشعارات' },
 };
-function blocTelephone(site: string, langue: Langue): string {
-  const debut = langue === 'ar' ? 'right' : 'left', t = TELEPHONE[langue];
+// Le rappel d'un rendez-vous par email ne part qu'à qui n'a de notifications sur aucun appareil : sa ligne parle de ces rappels
+export const TELEPHONE_RAPPEL: Record<Langue, string> = {
+  fr: 'Reçois ces rappels directement sur ton téléphone, 15 minutes avant chaque rendez-vous',
+  ar: 'استقبل هذه التذكيرات مباشرة على هاتفك، 15 دقيقة قبل كل موعد',
+};
+function blocTelephone(site: string, langue: Langue, phrase = TELEPHONE[langue].phrase): string {
+  const debut = langue === 'ar' ? 'right' : 'left', t = { ...TELEPHONE[langue], phrase };
   const police = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Tahoma,Helvetica,Arial,sans-serif;";
   return `
 <tr><td style="padding:24px 28px 0;">
@@ -1480,7 +1485,7 @@ ${esc(t.phrase)}<br><a href="${esc(lienNotifs(site))}" style="color:#1670A8;font
 </td></tr></table>
 </td></tr>`;
 }
-const ligneTelephone = (site: string, langue: Langue) => `${TELEPHONE[langue].phrase}${langue === 'ar' ? ': ' : ' : '}${lienNotifs(site)}`;
+const ligneTelephone = (site: string, langue: Langue, phrase = TELEPHONE[langue].phrase) => `${phrase}${langue === 'ar' ? ': ' : ' : '}${lienNotifs(site)}`;
 
 // desabo vide : email envoyé une seule fois, sans lien de désabonnement
 export type Courriel = { sujet: string; html: string; texte: string; desabo: string };
@@ -1559,8 +1564,9 @@ ${esc(L.pied)}<br>
 // Emails courts (alerte d'offre, enquête d'insertion) : même présentation que le résumé
 // ---------------------------------------------------------------------
 type Bloc = { lignes: string[]; bouton?: { texte: string; url: string } };
-// telephone : l'adresse du site, pour la ligne d'un membre sans téléphone abonné
-type Cadre = { langue: Langue; sujet: string; apercu: string; sousTitre: string; intro: string[]; blocs: Bloc[]; pied: string; liens: [string, string][]; telephone?: string };
+// telephone : l'adresse du site, pour la ligne d'un membre sans téléphone abonné (telephonePhrase : sa phrase, si ce
+// n'est pas celle de tous les emails)
+type Cadre = { langue: Langue; sujet: string; apercu: string; sousTitre: string; intro: string[]; blocs: Bloc[]; pied: string; liens: [string, string][]; telephone?: string; telephonePhrase?: string };
 
 function cadreEmail(c: Cadre): string {
   const ar = c.langue === 'ar', debut = ar ? 'right' : 'left', dir = ar ? 'rtl' : 'ltr';
@@ -1599,7 +1605,7 @@ ${b.lignes.map(l => `<p style="margin:0 0 8px;">${l}</p>`).join('\n')}
 </td></tr>
 <tr><td style="padding:24px 28px 0;text-align:${debut};${police}font-size:15px;line-height:22px;color:#2B2F36;">
 ${c.intro.map((l, i) => `<p style="margin:0 0 6px;${i === 0 ? 'font-weight:600;' : ''}">${l}</p>`).join('\n')}
-</td></tr>${blocs}${c.telephone ? blocTelephone(c.telephone, c.langue) : ''}
+</td></tr>${blocs}${c.telephone ? blocTelephone(c.telephone, c.langue, c.telephonePhrase) : ''}
 <tr><td style="padding:26px 28px 0;"><div style="border-top:1px solid #E3E7ED;height:1px;line-height:1px;font-size:1px;">&nbsp;</div></td></tr>
 <tr><td style="padding:14px 28px 26px;text-align:${debut};${police}font-size:12px;line-height:18px;color:#6B7280;">
 ${esc(c.pied)}<br>
@@ -1733,8 +1739,9 @@ export function rendreMessages(n: number, noms: string[], langue: Langue, site: 
 
 // Rappel 15 minutes avant un rendez-vous (rappels_rdv dans schema.sql), pour qui n'a de notifications sur aucun appareil :
 // avec qui, à quelle heure, où ; le bouton ouvre la visio quand il y en a une, sinon la discussion ou le mentorat.
-// Pas de lien de désabonnement : un seul email, pour un rendez-vous pris par le membre ou proposé à lui.
-export function rendreRappelRdv(kind: string, data: unknown, langue: Langue, site: string): Courriel | null {
+// Pas de lien de désabonnement : un seul email, pour un rendez-vous pris par le membre ou proposé à lui. La base ne le
+// prépare que pour qui n'a aucun téléphone abonné (rappeler) : la ligne pour les activer y est donc toujours (sansTel).
+export function rendreRappelRdv(kind: string, data: unknown, langue: Langue, site: string, sansTel = true): Courriel | null {
   const d = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
   const q = quand(d.rdv_at, langue);
   if (!q || (kind !== 'rappel_rdv' && kind !== 'rappel_entretien')) return null;
@@ -1760,21 +1767,26 @@ export function rendreRappelRdv(kind: string, data: unknown, langue: Langue, sit
   const lignes = (F: Fmt) => [debut(F), ...(sujetRdv ? [ar ? `الموضوع: ${F.u(sujetRdv)}.` : `Sujet : ${F.u(sujetRdv)}.`] : []), ou(F)];
   const ouvrir = mentorat ? (ar ? 'فتح المواكبة' : 'Ouvrir le mentorat') : (ar ? 'فتح المحادثة' : 'Ouvrir la discussion');
   const bouton = lien && !lieu ? { texte: ar ? 'الانضمام إلى الفيديو' : 'Rejoindre la visio', url: lien } : { texte: ouvrir, url: ici };
-  const pied = ar ? 'يصلك هذا البريد لأن لديك موعدًا على شبكة ENSAM مكناس ولم تفعّل الإشعارات على أي جهاز. فعّلها في «ملفي» لتصلك هذه التذكيرات على هاتفك.'
-    : 'Tu reçois cet email parce que tu as un rendez-vous sur le Réseau ENSAM Meknès et que les notifications ne sont activées sur aucun de tes appareils. Active-les dans Mon profil pour recevoir ces rappels sur ton téléphone.';
+  // La ligne au-dessus dit comment les activer : le pied dit seulement pourquoi cet email
+  const pied = ar ? (sansTel ? 'يصلك هذا البريد لأن لديك موعدًا على شبكة ENSAM مكناس ولم تفعّل الإشعارات على أي جهاز.'
+      : 'يصلك هذا البريد لأن لديك موعدًا على شبكة ENSAM مكناس.')
+    : sansTel ? 'Tu reçois cet email parce que tu as un rendez-vous sur le Réseau ENSAM Meknès et que les notifications ne sont activées sur aucun de tes appareils.'
+      : 'Tu reçois cet email parce que tu as un rendez-vous sur le Réseau ENSAM Meknès.';
   const html = cadreEmail({
     langue, sujet, apercu: lignes(b).join(' '), sousTitre: ar ? 'تذكير' : 'Rappel',
     intro: [esc(ar ? 'مرحبًا،' : 'Bonjour,')],
     blocs: [{ lignes: lignes(f), bouton }],
+    ...(sansTel ? { telephone: site, telephonePhrase: TELEPHONE_RAPPEL[langue] } : {}),
     pied, liens: bouton.url === ici ? [[ar ? 'فتح المنصة' : 'Ouvrir la plateforme', site]] : [[ouvrir, ici]],
   });
   const texte = [`${(ar ? AR : FR).marque} · ${ar ? 'تذكير' : 'Rappel'}`, '', ar ? 'مرحبًا،' : 'Bonjour,', ...lignes(b), '',
-    `${bouton.texte}${ar ? ': ' : ' : '}${bouton.url}`, ...(bouton.url === ici ? [] : [`${ouvrir}${ar ? ': ' : ' : '}${ici}`]), '', '--', pied].join('\n');
+    `${bouton.texte}${ar ? ': ' : ' : '}${bouton.url}`, ...(bouton.url === ici ? [] : [`${ouvrir}${ar ? ': ' : ' : '}${ici}`]), '',
+    ...(sansTel ? [ligneTelephone(site, langue, TELEPHONE_RAPPEL[langue]), ''] : []), '--', pied].join('\n');
   return { sujet, html, texte, desabo: '' };
 }
 
-// Enquête d'insertion : invitation, ou rappel trois semaines après
-export function rendreEnquete(vague: number, rappel: boolean, langue: Langue, site: string, token: string): Courriel {
+// Enquête d'insertion : invitation, ou rappel trois semaines après ; la ligne du téléphone pour qui n'en a aucun abonné
+export function rendreEnquete(vague: number, rappel: boolean, langue: Langue, site: string, token: string, sansTel = false): Courriel {
   site = siteEn(site, langue);
   const ar = langue === 'ar', v = vague === 12 ? 12 : 6;
   const desabo = `${site}#desabo/${token}`;
@@ -1793,11 +1805,13 @@ export function rendreEnquete(vague: number, rappel: boolean, langue: Langue, si
     langue, sujet, apercu: lignes[0], sousTitre: ar ? 'استمارة الإدماج المهني' : 'Enquête d’insertion',
     intro: [esc(ar ? 'مرحبًا،' : 'Bonjour,')],
     blocs: [{ lignes: lignes.map(esc), bouton: { texte: ar ? 'الإجابة على الاستمارة' : 'Répondre à l’enquête', url } }],
+    ...(sansTel ? { telephone: site } : {}),
     pied: ar ? 'يصلك هذا البريد مرة عند فتح الاستمارة، وتذكير واحد إن لم تجب.' : 'Tu reçois cet email une fois à l’ouverture de l’enquête, et un seul rappel si tu n’as pas répondu.',
     liens: [[ar ? 'فتح المنصة' : 'Ouvrir la plateforme', site], [ar ? 'إلغاء الاشتراك' : 'Se désabonner', desabo]],
   });
   const texte = [`${(ar ? AR : FR).marque} · ${ar ? 'استمارة الإدماج المهني' : 'Enquête d’insertion'}`, '', ar ? 'مرحبًا،' : 'Bonjour,', ...lignes, '',
-    `${ar ? 'الإجابة على الاستمارة' : 'Répondre à l’enquête'}${ar ? ': ' : ' : '}${url}`, '', '--', `${ar ? 'إلغاء الاشتراك' : 'Se désabonner'}${ar ? ': ' : ' : '}${desabo}`].join('\n');
+    `${ar ? 'الإجابة على الاستمارة' : 'Répondre à l’enquête'}${ar ? ': ' : ' : '}${url}`, '', ...(sansTel ? [ligneTelephone(site, langue), ''] : []), '--',
+    `${ar ? 'إلغاء الاشتراك' : 'Se désabonner'}${ar ? ': ' : ' : '}${desabo}`].join('\n');
   return { sujet, html, texte, desabo };
 }
 
@@ -2732,12 +2746,13 @@ async function jobEnquetes(env: Env): Promise<Response> {
   const f = facteur(env);
   const faits: { id: string; vague: number; rappel: boolean }[] = [];
   const limite = Date.now() + 100_000;
+  const sansTel = f.pret ? await sansTelephone(env, dest.filter(x => x.email_ok && x.email).map(x => x.id)) : new Set<string>();
   await parallele(dest, f.paralleles, async x => {
     if (Date.now() > limite || !estUuid(x.id) || (x.vague !== 6 && x.vague !== 12)) return;
     const ligne = { id: x.id, vague: x.vague, rappel: !!x.rappel };
     if (!x.email_ok || !x.email || !x.token || !f.pret) { b.push++; faits.push(ligne); return; }
     try {
-      if (await f.envoyer(x.email, rendreEnquete(x.vague, !!x.rappel, langueDe(x.langue), env.site, x.token))) { b.sent++; faits.push(ligne); }
+      if (await f.envoyer(x.email, rendreEnquete(x.vague, !!x.rappel, langueDe(x.langue), env.site, x.token, sansTel.has(x.id)))) { b.sent++; faits.push(ligne); }
       else b.errors++;
     } catch (e) {
       b.errors++;

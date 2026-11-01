@@ -1,7 +1,8 @@
 // Santé des notifications, côté fonction : une notification par événement dans la barre (sauf ce qui remplace),
-// les abonnements morts retirés (404, 410, trois refus définitifs d'affilée), 413 au journal seulement, une base pas
-// encore mise à jour servie comme avant, l'heure limite de 45 s, le détail de « Tester », et la ligne des emails
-// pour qui n'a de notifications sur aucun téléphone.
+// les abonnements morts retirés (404, 410 ; trois refus définitifs d'affilée quand le même service accepte d'autres
+// téléphones), un refus en masse qui ne retire personne, 413 au journal seulement, une base pas encore mise à jour
+// servie comme avant, l'heure limite de 45 s, le détail de « Tester » (dont les refus ne comptent pas), et la ligne des
+// emails pour qui n'a de notifications sur aucun téléphone.
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { MODULE, Banc, installer, configurerEnv, requete, uid, SITE } from './banc.mjs';
@@ -412,4 +413,38 @@ test('emails : la ligne va seulement à qui n’a aucun téléphone abonné (ni 
   assert.deepEqual(await corpsDe(await appel({ job: 'messages' })), { sent: 1, errors: 0, via: 'brevo' });
   assert.ok(!corps(2).htmlContent.includes(PHRASE));
   assert.ok(erreurs.some(e => e.includes('téléphones des destinataires illisibles')));
+});
+
+test('emails : le rappel de rendez-vous (qui ne part qu’à qui n’a aucun téléphone) et l’enquête portent la ligne pour activer les notifications', () => {
+  const RDV = { nom: 'Youssef Alami', sujet: 'Mon CV', rdv_at: '2026-11-02T17:30:00Z', lien: 'https://meet.example/x' };
+  const PHRASE_RDV = 'Reçois ces rappels directement sur ton téléphone, 15 minutes avant chaque rendez-vous';
+  assert.equal(N.TELEPHONE_RAPPEL.fr, PHRASE_RDV);
+  const fr = N.rendreRappelRdv('rappel_rdv', RDV, 'fr', SITE);
+  assert.ok(fr.html.includes(PHRASE_RDV) && fr.html.includes(`href="${SITE}?notifs=1"`), 'avant : aucune ligne, alors que c’est justement à eux qu’il part');
+  assert.ok(fr.texte.includes(`${PHRASE_RDV} : ${SITE}?notifs=1`));
+  assert.ok(!fr.html.includes('Active-les dans Mon profil'), 'le pied ne répète plus ce que la ligne dit');
+  assert.match(fr.html, /les notifications ne sont activées sur aucun de tes appareils\./);
+  const ar = N.rendreRappelRdv('rappel_entretien', { ...RDV, de: uid(20) }, 'ar', SITE);
+  assert.ok(ar.html.includes(N.TELEPHONE_RAPPEL.ar) && ar.html.includes(`href="${SITE}?lang=ar&amp;notifs=1"`));
+  assert.ok(ar.texte.includes(`${N.TELEPHONE_RAPPEL.ar}: ${SITE}?lang=ar&notifs=1`));
+  assert.ok(!N.rendreRappelRdv('rappel_rdv', RDV, 'fr', SITE, false).html.includes(PHRASE_RDV));
+  // L'enquête : la ligne de tous les emails, seulement sans téléphone
+  const e = N.rendreEnquete(6, false, 'fr', SITE, TOKEN, true);
+  assert.ok(e.html.includes(PHRASE) && e.texte.includes(`${PHRASE} : ${SITE}?notifs=1`));
+  assert.ok(N.rendreEnquete(12, true, 'ar', SITE, TOKEN, true).html.includes(PHRASE_AR));
+  assert.ok(!N.rendreEnquete(6, false, 'fr', SITE, TOKEN).html.includes(PHRASE));
+});
+
+test('emails : l’invitation à l’enquête porte la ligne seulement pour qui n’a aucun téléphone abonné', async () => {
+  const b = nouveauBanc();
+  configurerEnv({ BREVO_API_KEY: 'xkeysib-test', SENDER_EMAIL: 'reseau@ensam-meknes.example' });
+  const avec = uid(14), sans = uid(15);
+  b.tables.profiles.push(profil(avec, { role: 'laureat' }), profil(sans, { role: 'laureat' }));
+  b.abonner(avec, 1);
+  const L = (id, n) => ({ id, email: `e${n}@exemple.ma`, langue: 'fr', token: `00000000-0000-4000-9000-00000000001${n}`, vague: 6, rappel: false, email_ok: true });
+  b.rpcs = { enquetes_a_inviter: () => [L(avec, 1), L(sans, 2)], enquetes_invitees: () => 2 };
+  assert.deepEqual(await corpsDe(await appel({ job: 'enquetes' })), { sent: 2, push: 0, errors: 0, via: 'brevo' });
+  const corps = n => b.brevo.find(x => x.corps.to[0].email === `e${n}@exemple.ma`).corps;
+  assert.ok(!corps(1).htmlContent.includes(PHRASE), 'un téléphone abonné : rien');
+  assert.ok(corps(2).htmlContent.includes(PHRASE) && corps(2).textContent.includes(`${SITE}?notifs=1`));
 });
