@@ -918,7 +918,9 @@ a.mx-cv-absent.lien { min-height: 44px; border-style: solid; color: var(--blue-t
   .mx-pq li:nth-child(n+3) { display: none; }
   .mx-voile { min-block-size: 100px; padding-block: .8rem; }
 }
-@container carte (max-height: 440px) {
+/* Jusqu'à 480 px (la carte d'un téléphone de 390 × 844 avec le bandeau de démo, sous la coque compacte du Socle) : le texte
+   reste court pour que le voile d'une personne garde la place de son visage au centre ; plus haute, la carte dit davantage */
+@container carte (max-height: 480px) {
   .mx-pq-t { display: none; }
   .mx-c-desc { -webkit-line-clamp: 2; }
   .mx-c-titre { -webkit-line-clamp: 2; font-size: var(--fs-5); }
