@@ -302,7 +302,7 @@ injectCSS('admin-animer', `
 .adm-lignes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .adm-ligne { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .7rem; padding: .45rem 0; border-bottom: 1px solid var(--line); min-width: 0; }
 .adm-ligne:last-child { border-bottom: 0; }
-.adm-ligne > .person { flex: 1 1 200px; min-width: 0; }
+.adm-ligne > .person { flex: 1 1 200px; min-width: 0; min-height: 44px; }
 .adm-ligne > .person .person-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .adm-ligne-act { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .6rem; margin-inline-start: auto; }
 .adm-ligne-act .btn { min-height: 38px; }

@@ -374,6 +374,7 @@ injectCSS('admin-ecoles', `
 .sv-nom { font-size: var(--fs-3); overflow-wrap: anywhere; text-align: start; min-height: 0; }
 .sv-contact { display: flex; flex-direction: column; gap: .05rem; color: var(--ink-2); min-width: 0; overflow-wrap: anywhere; }
 .sv-lien { color: var(--blue-text); text-decoration: none; font-weight: 600; overflow-wrap: anywhere; }
+@media (pointer: coarse) { .sv-lien { display: inline-flex; align-items: center; min-height: 44px; } }
 .sv-formule { display: flex; flex-wrap: wrap; gap: .3rem .5rem; align-items: center; }
 .tag.sv-tag { background: var(--accent-soft); color: var(--sel-ink); }
 .sv-action { display: flex; gap: .35rem; align-items: flex-start; color: var(--ink-2); }
@@ -386,13 +387,14 @@ injectCSS('admin-ecoles', `
 .sv-check { display: flex; align-items: center; gap: .45rem; min-height: 32px; padding: .15rem .3rem; border: 0; border-radius: var(--r-sm); background: transparent; color: var(--ink-2); font-size: var(--fs-2); text-align: start; cursor: pointer; }
 .sv-check:hover { background: color-mix(in srgb, var(--surface-2) 70%, transparent); }
 .sv-check.ok { color: var(--good); }
-.sv-carte:not(.compact) .sv-check { min-height: 40px; }
+/* Hors du tableau (téléphone, liste) : des cibles de 44 px au doigt */
+.sv-carte:not(.compact) .sv-check { min-height: 44px; }
 .sv-notes { white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .sv-act { display: flex; justify-content: space-between; align-items: center; gap: .2rem; margin-top: .1rem; }
 .sv-carte:not(.compact) .sv-act .icon-btn { width: 44px; height: 44px; }
 .sv-act .icon-btn:disabled { opacity: .35; cursor: default; }
 .sv-hors { border-top: 1px solid var(--line); padding-top: .6rem; }
-.sv-hors > summary { cursor: pointer; display: flex; align-items: center; gap: .4rem; min-height: 40px; }
+.sv-hors > summary { cursor: pointer; display: flex; align-items: center; gap: .4rem; min-height: 44px; }
 .sv-hors-l { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: .5rem; margin-top: .5rem; }
 .sv-hors-i { display: flex; flex-direction: column; gap: .3rem; align-items: flex-start; }
 .sv-hors-i > .sv-carte { align-self: stretch; }
