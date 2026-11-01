@@ -110,6 +110,8 @@ injectCSS('admin-membres', `
 .cs-promo { flex: none; width: auto; }
 @media (pointer: fine) { .cs-promo { min-height: 38px; padding-block: .35rem; } }
 @container cs (max-width: 620px) { .cs-filtres { flex-wrap: wrap; } .cs-puces { flex-basis: 100%; } }
+/* Sur ordinateur, les filtres passent à la ligne : à la souris, une rangée qui défile cache ceux du bout */
+@container cs (min-width: 621px) { .cs-puces.chips.rangee { flex-wrap: wrap; overflow: visible; } }
 .cs-barre { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem .5rem; }
 .cs-barre .liste-tete { margin: 0; }
 /* Le tableau : en-têtes qui trient, une case par ligne ; les colonnes moins utiles passent sous le nom quand la place manque */

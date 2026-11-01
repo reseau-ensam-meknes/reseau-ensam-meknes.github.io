@@ -209,6 +209,8 @@ injectCSS('admin-traiter', `
 .cs-todo { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 1rem; }
 @container cs (min-width: 760px) { .cs-todo { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .a-traiter { display: flex; flex-direction: column; gap: .9rem; }
+/* Sur ordinateur, les filtres passent à la ligne : à la souris, une rangée qui défile cache ceux du bout */
+@container cs (min-width: 621px) { .tt-filtres.chips.rangee { flex-wrap: wrap; overflow: visible; } }
 .tt-liste { list-style: none; margin: 0; padding: 0 var(--sp-4); background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--sh1); }
 .tt-item { border-top: 1px solid var(--line); }
 .tt-item:first-child { border-top: 0; }

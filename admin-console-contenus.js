@@ -183,6 +183,8 @@ injectCSS('admin-contenus', `
 .cnt-filtres { flex: 1 1 auto; min-width: 0; }
 .cnt-q { flex: 0 1 17rem; min-width: 12rem; }
 @container cs (max-width: 700px) { .cnt-outils { flex-wrap: wrap; } .cnt-filtres, .cnt-q { flex-basis: 100%; } }
+/* Sur ordinateur, les statuts passent à la ligne : à la souris, une rangée qui défile cache ceux du bout */
+@container cs (min-width: 621px) { .cnt-filtres.chips.rangee { flex-wrap: wrap; overflow: visible; } }
 /* Le tableau : le titre (il ouvre le contenu) et sa ligne de détail, puis les colonnes, le statut et les gestes au bout */
 .cnt-tab { min-width: 0; overflow-x: auto; }
 .cs-contenus { font-size: var(--fs-2); }
