@@ -243,11 +243,31 @@ test('« Tester » : le détail de chaque téléphone, au journal sous « test �
   const tester = jeton => N.handler(requete({ job: 'test' }, { Authorization: `Bearer ${jeton}` })).then(corpsDe);
   assert.deepEqual(await tester('jeton-u'), { sent: 1, failed: 2, removed: 0, codes: [201, 403, 0], abonnements: 3 });
   assert.equal(b.push.find(p => p.endpoint === a.endpoint).entetes.urgency, 'high', 'le membre attend cette notification');
-  assert.equal(b.tables.push_subscriptions.find(x => x.id === c.id).refus, 1, 'un refus du test compte comme les autres');
+  assert.equal(b.tables.push_subscriptions.find(x => x.id === c.id).refus, 0, 'un refus du test ne compte pas contre le téléphone');
+  assert.equal(b.tables.push_subscriptions.find(x => x.id === c.id).dernier_code, 403, 'mais sa réponse est notée');
   assert.deepEqual(journal(b), [['test', 201]]);
   // Aucun téléphone : la réponse le dit, le journal le note
   assert.deepEqual(await tester('jeton-sans'), { sent: 0, failed: 0, removed: 0, codes: [], abonnements: 0 });
   assert.deepEqual(b.tables.push_journal.at(-1), { user_id: sans, kind: 'test', code: -1 });
+});
+
+test('« Tester » appuyé quatre fois sur un téléphone que le service refuse : jamais retiré, toujours essayé', async () => {
+  const b = nouveauBanc();
+  const u = uid(51), autre = uid(52);
+  b.tables.profiles.push(profil(u), profil(autre));
+  b.jetons.set('jeton-membre', u);
+  const s = b.abonner(u, 1, 'https://fcm.googleapis.com');
+  b.abonner(autre, 1, 'https://fcm.googleapis.com');
+  enFile(b, autre, 'merci', { nom: 'Y' }); await appel({ job: 'push' });   // Google accepte un autre téléphone
+  b.statutsPush.set(s.endpoint, 403);
+  const tester = () => N.handler(requete({ job: 'test' }, { Authorization: 'Bearer jeton-membre' })).then(corpsDe);
+  for (let i = 0; i < 4; i++) assert.deepEqual(await tester(), { sent: 0, failed: 1, removed: 0, codes: [403], abonnements: 1 }, `essai ${i + 1}`);
+  assert.equal(b.tables.push_subscriptions.find(x => x.id === s.id).refus, 0, 'avant : retiré au troisième appui, et son adresse bannie');
+  assert.deepEqual(b.tables.push_morts, []);
+  // Un téléphone parti (410) l'est toujours, même pendant un essai
+  b.statutsPush.set(s.endpoint, 410);
+  assert.deepEqual(await tester(), { sent: 0, failed: 0, removed: 1, codes: [410], abonnements: 1 });
+  assert.equal(b.tables.push_subscriptions.find(x => x.id === s.id), undefined);
 });
 
 const NOW = new Date('2026-10-20T09:00:00Z');

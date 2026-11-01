@@ -2164,7 +2164,9 @@ async function journaliser(env: Env, lignes: { user_id: string; kind: string; co
 
 // « Tester » (Mon profil) : une notification d'essai sur chaque téléphone du membre connecté. Rend ce que chacun a
 // répondu, pour dire la vraie raison d'un échec : { sent, failed, removed, codes (un par téléphone, dans l'ordre de
-// leur inscription), abonnements (téléphones inscrits avant l'essai) }. Au journal sous « test ».
+// leur inscription), abonnements (téléphones inscrits avant l'essai) }. Au journal sous « test ». Ses refus ne comptent
+// pas contre le téléphone : trois appuis d'affilée ne doivent pas retirer l'abonnement qu'on essaie de réparer (un
+// téléphone parti, 404 ou 410, l'est toujours).
 async function jobTest(env: Env, req: Request): Promise<Response> {
   const jeton = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
   if (!jeton) return refus();
@@ -2188,7 +2190,7 @@ async function jobTest(env: Env, req: Request): Promise<Response> {
   const etats: EtatAbo[] = [];
   await parallele(abos, 5, async a => {
     const e = await envoyerA(a, [{ n, urg: urgence('test'), ttl: dureeVie('test'), r: res }], v, b, morts);
-    if (e) etats.push(e);
+    if (e) etats.push({ ...e, refus: false });
   });
   const retires = await rendreCompte(env, etats, morts, abos);
   b.removed += retires.filter(id => !morts.includes(id)).length;
