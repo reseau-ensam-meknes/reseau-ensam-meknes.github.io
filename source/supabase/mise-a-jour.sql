@@ -1834,6 +1834,18 @@ drop trigger if exists trg_protect_ecole on public.profiles;
 create trigger trg_protect_ecole before insert or update of ecole on public.profiles
   for each row execute function public.protect_ecole();
 
+-- Une photo est rangée dans le dossier de son propriétaire (son id)
+create or replace function public.photo_de_mon_ecole(p_name text) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare v uuid;
+begin
+  if public.is_admin() then return true; end if;
+  begin v := split_part(p_name, '/', 1)::uuid; exception when others then return false; end;
+  return (select ecole from public.profiles where id = v) is not distinct from public.mon_ecole();
+end $$;
+revoke all on function public.photo_de_mon_ecole(text) from public, anon;
+grant execute on function public.photo_de_mon_ecole(text) to authenticated;
+
 create or replace view public.profils with (security_barrier = true) as
 select p.id, p.full_name, p.role, p.filiere, p.promo,
   case when public.voit_champ(p.id, p.visibilite, 'travail') then p.entreprise end as entreprise,
@@ -2687,26 +2699,29 @@ create table if not exists public.liste_officielle (
   matricule text check (char_length(matricule) <= 40),
   created_at timestamptz default now()
 );
-create unique index if not exists liste_officielle_nom_promo on public.liste_officielle ((public.cle_nom(nom)), promo);
+alter table public.liste_officielle add column if not exists ecole text not null default 'ensam-meknes' references public.ecoles(slug);
+drop index if exists public.liste_officielle_nom_promo;
+create unique index if not exists liste_officielle_ecole_nom_promo on public.liste_officielle (ecole, (public.cle_nom(nom)), promo);
 create index if not exists liste_officielle_email on public.liste_officielle (email);
 
 create or replace function public.dans_liste(p_id uuid, p_nom text, p_promo int) returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.liste_officielle l
-    where (l.promo = p_promo and public.cle_nom(l.nom) = public.cle_nom(p_nom))
-       or (l.email is not null and l.email = (select lower(u.email) from auth.users u where u.id = p_id)));
+    where l.ecole = coalesce((select p.ecole from public.profiles p where p.id = p_id), 'ensam-meknes')
+      and ((l.promo = p_promo and public.cle_nom(l.nom) = public.cle_nom(p_nom))
+       or (l.email is not null and l.email = (select lower(u.email) from auth.users u where u.id = p_id))));
 $$;
 revoke all on function public.dans_liste(uuid, text, int) from public, anon, authenticated;
 
 create or replace function public.importer_liste(p_lignes jsonb, p_remplacer boolean default false) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare x jsonb; v_nom text; v_promo int; v_email text; n_ok int := 0; n_rej int := 0; n_verif int := 0; v_promos int[] := '{}';
+declare x jsonb; v_nom text; v_promo int; v_email text; n_ok int := 0; n_rej int := 0; n_verif int := 0; v_promos int[] := '{}'; v_ecole text := public.mon_ecole();
 begin
   if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
   if jsonb_typeof(p_lignes) <> 'array' or jsonb_array_length(p_lignes) > 5000 then raise exception 'Liste invalide (5000 lignes au plus).'; end if;
   if p_remplacer then
     select coalesce(array_agg(distinct (e ->> 'promo')::int), '{}') into v_promos from jsonb_array_elements(p_lignes) e where (e ->> 'promo') ~ '^\d{4}$';
-    delete from public.liste_officielle where promo = any(v_promos);
+    delete from public.liste_officielle where promo = any(v_promos) and ecole = v_ecole;
   end if;
   for x in select * from jsonb_array_elements(p_lignes) loop
     v_nom := left(regexp_replace(trim(coalesce(x ->> 'nom', '')), '\s+', ' ', 'g'), 120);
@@ -2714,9 +2729,9 @@ begin
     v_email := nullif(lower(trim(coalesce(x ->> 'email', ''))), '');
     if v_email is not null and v_email !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' then v_email := null; end if;
     if char_length(v_nom) < 2 or public.cle_nom(v_nom) is null or v_promo is null or v_promo not between 1990 and 2040 then n_rej := n_rej + 1; continue; end if;
-    insert into public.liste_officielle (nom, email, promo, filiere, matricule)
-      values (v_nom, left(v_email, 160), v_promo, nullif(left(trim(coalesce(x ->> 'filiere', '')), 80), ''), nullif(left(trim(coalesce(x ->> 'matricule', '')), 40), ''))
-      on conflict ((public.cle_nom(nom)), promo) do update set
+    insert into public.liste_officielle (ecole, nom, email, promo, filiere, matricule)
+      values (v_ecole, v_nom, left(v_email, 160), v_promo, nullif(left(trim(coalesce(x ->> 'filiere', '')), 80), ''), nullif(left(trim(coalesce(x ->> 'matricule', '')), 40), ''))
+      on conflict (ecole, (public.cle_nom(nom)), promo) do update set
         email = coalesce(excluded.email, liste_officielle.email),
         filiere = coalesce(excluded.filiere, liste_officielle.filiere),
         matricule = coalesce(excluded.matricule, liste_officielle.matricule);
@@ -3039,7 +3054,7 @@ do $$ begin
   drop policy if exists "photos lecture" on storage.objects;
   drop policy if exists "photos depot" on storage.objects;
   drop policy if exists "photos suppression" on storage.objects;
-  create policy "photos lecture" on storage.objects for select to authenticated using (bucket_id = 'photos');
+  create policy "photos lecture" on storage.objects for select to authenticated using (bucket_id = 'photos' and public.photo_de_mon_ecole(name));
   create policy "photos depot" on storage.objects for insert to authenticated with check (
     bucket_id = 'photos' and (storage.foldername(name))[1] = auth.uid()::text and lower(storage.extension(name)) in ('webp','jpg','png'));
   create policy "photos suppression" on storage.objects for delete to authenticated using (
@@ -3941,7 +3956,7 @@ language sql stable security definer set search_path = public as $$
     select b.* from brut b
       join public.profiles pl on pl.id = b.l and pl.role = 'laureat'
       join public.profiles ps on ps.id = b.s and ps.role = 'etudiant'
-    where b.at <= now() and b.at >= now() - interval '30 days'
+    where b.at <= now() and b.at >= now() - interval '30 days' and pl.ecole = public.mon_ecole() and ps.ecole = public.mon_ecole()
   ), fenetre as (
     select case when (select count(distinct l) from aides where at >= now() - interval '7 days') >= 2 then 7 else 30 end as jours
   ), f as (select a.* from aides a, fenetre w where a.at >= now() - make_interval(days => w.jours))
@@ -3961,7 +3976,8 @@ grant execute on function public.pouls_reseau() to authenticated;
 -- « Renault » et « Renault Tanger Med » comptent pour une seule entreprise (règle de meme_entreprise) : jamais gonflé.
 create or replace function public.chiffres_publics() returns jsonb
 language sql stable security definer set search_path = public as $$
-  with l as (select promo, public.cle_entreprise(entreprise) as k from public.profiles where role = 'laureat' and not admin_ok),
+  with l as (select promo, public.cle_entreprise(entreprise) as k from public.profiles
+    where role = 'laureat' and not admin_ok and ecole = coalesce(public.mon_ecole(), 'ensam-meknes')),
   ks as (select distinct k from l where k is not null and k <> '')
   select jsonb_build_object(
     'laureats', (select count(*) from l),
@@ -4010,7 +4026,7 @@ language sql stable security definer set search_path = public as $$
       where m.mentor_id is not null and m.status in ('acceptee', 'terminee')
   ), premiere as (
     select distinct on (c.l) c.l, c.at, c.k from c
-      join public.profiles p on p.id = c.l and p.role = 'laureat' and not p.admin_ok
+      join public.profiles p on p.id = c.l and p.role = 'laureat' and not p.admin_ok and p.ecole = coalesce(public.mon_ecole(), 'ensam-meknes')
       where c.at is not null
       order by c.l, c.at, c.k
   )
