@@ -1261,7 +1261,7 @@ begin
       insert into public.push_queue (user_id, kind, data)
       select p.id, 'question_routee', jsonb_build_object('cible', coalesce(nullif(new.entreprise, ''), new.pays), 'titre', new.titre, 'q', new.id)
       from public.profiles p
-      where p.role = 'laureat' and p.id <> new.author_id
+      where p.role = 'laureat' and p.id <> new.author_id and p.ecole = new.ecole
         and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'question_routee')
         and ((coalesce(new.entreprise, '') <> '' and public.meme_entreprise(p.entreprise, new.entreprise))
           or (public.cle_lieu(new.pays) <> 'maroc' and public.cle_lieu(p.pays) = public.cle_lieu(new.pays)))
@@ -1276,7 +1276,8 @@ begin
     insert into public.push_queue (user_id, kind, data)
     select p.id, 'cafe', jsonb_build_object('ville', new.ville, 'lieu', new.lieu, 'date_at', new.date_at, 'id', new.id)
     from public.profiles p
-    where p.id <> new.organisateur_id and public.cle_lieu(p.ville) = public.cle_lieu(new.ville)
+    -- Écoles : celle du café (l'administration reçoit tout, comme dans push_filtre)
+    where p.id <> new.organisateur_id and (p.ecole = new.ecole or p.role = 'admin') and public.cle_lieu(p.ville) = public.cle_lieu(new.ville)
       and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'cafe')
     order by public.derniere_visite(p.id) desc nulls last
     limit 200;
@@ -2450,7 +2451,7 @@ begin
     insert into public.push_queue (user_id, kind, data)
     select x.id, 'verifier_pair', jsonb_build_object('nom', new.full_name, 'promo', new.promo, 'de', new.id)
     from public.profiles x
-    where x.role = 'laureat' and x.verified and x.promo = new.promo and x.id <> new.id
+    where x.role = 'laureat' and x.verified and x.promo = new.promo and x.ecole = new.ecole and x.id <> new.id
       and exists (select 1 from public.push_subscriptions s where s.user_id = x.id) and public.push_voulu(x.id, 'verifier_pair')
     order by public.derniere_visite(x.id) desc nulls last
     limit 5;
@@ -2515,7 +2516,8 @@ begin
     select p.id, v_kind,
       jsonb_build_object('titre', new.titre, 'debut', new.debut, 'lieu', new.lieu, 'id', new.id)
     from public.profiles p
-    where p.id is distinct from new.author_id
+    -- Écoles : celle de l'événement (l'administration reçoit tout, comme dans push_filtre)
+    where p.id is distinct from new.author_id and (p.ecole = new.ecole or p.role = 'admin')
       and (new.public = 'tous' or (new.public = 'etudiants' and p.role = 'etudiant') or (new.public = 'laureats' and p.role = 'laureat'))
       and (tg_op = 'INSERT' or exists (select 1 from public.evenement_participants x where x.evenement_id = new.id and x.user_id = p.id))
       and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, v_kind)
@@ -3058,7 +3060,7 @@ begin
         insert into public.push_queue (user_id, kind, data)
         select l.id, 'relecture_demande', jsonb_build_object('nom', v_nom, 'r', new.id)
         from public.profiles l, public.profiles s
-        where s.id = new.student_id and l.role = 'laureat' and l.mentor_dispo and public.proximite_filiere(l.filiere, s.filiere) > 0 and l.id <> new.student_id
+        where s.id = new.student_id and l.role = 'laureat' and l.ecole = new.ecole and l.mentor_dispo and public.proximite_filiere(l.filiere, s.filiere) > 0 and l.id <> new.student_id
           and exists (select 1 from public.push_subscriptions x where x.user_id = l.id) and public.push_voulu(l.id, 'relecture_demande')
         order by public.proximite_filiere(l.filiere, s.filiere) desc, public.derniere_visite(l.id) desc nulls last
         limit 10;
@@ -3955,7 +3957,7 @@ begin
   insert into public.push_queue (user_id, kind, data)
   select p.id, 'demande_nouvelle', jsonb_build_object('nom', split_part(v_a.full_name, ' ', 1), 'titre', new.titre, 'type', new.type, 'demande', new.id)
   from public.profiles p
-  where p.role = 'laureat' and p.id <> new.auteur_id and public.proximite_filiere(p.filiere, v_a.filiere) >= 1
+  where p.role = 'laureat' and p.id <> new.auteur_id and p.ecole = new.ecole and public.proximite_filiere(p.filiere, v_a.filiere) >= 1
     and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'demande_nouvelle')
     and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = new.auteur_id) or (b.user_id = new.auteur_id and b.bloque_id = p.id))
   order by public.proximite_filiere(p.filiere, v_a.filiere) desc, public.derniere_visite(p.id) desc nulls last
@@ -4808,17 +4810,18 @@ begin
                then d.created_at else public.demande_large_le(d) end) > p_depuis
          and not exists (select 1 from public.propositions y where y.demande_id = d.id and y.laureat_id = p.id)) else 0 end),
     ('offres', (select count(*) from public.offers o where o.created_at > p_depuis and public.offre_pour(o, p, public.saison_courante()))),
+    -- Nouvelles clés : dans l'école du membre (une tâche de pg_cron n'a pas de membre connecté pour push_filtre)
     ('matchs', case
-       when p.role = 'etudiant' then (select count(*) from public.matchs m
-         where m.etudiant_id = p.id and m.vu_etudiant_at is null and m.created_at > now() - interval '30 days'
+       when p.role = 'etudiant' then (select count(*) from public.matchs m join public.profiles o on o.id = m.laureat_id
+         where m.etudiant_id = p.id and m.vu_etudiant_at is null and m.created_at > now() - interval '30 days' and o.ecole = p.ecole
            and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = m.laureat_id) or (b.user_id = m.laureat_id and b.bloque_id = p.id)))
-       when p.role = 'laureat' then (select count(*) from public.matchs m
-         where m.laureat_id = p.id and m.vu_laureat_at is null and m.created_at > now() - interval '30 days'
+       when p.role = 'laureat' then (select count(*) from public.matchs m join public.profiles o on o.id = m.etudiant_id
+         where m.laureat_id = p.id and m.vu_laureat_at is null and m.created_at > now() - interval '30 days' and o.ecole = p.ecole
            and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = m.etudiant_id) or (b.user_id = m.etudiant_id and b.bloque_id = p.id)))
        else 0 end),
     ('interets', case
        when p.role = 'etudiant' then (select count(distinct c.user_id) from public.match_choix c join public.profiles l on l.id = c.user_id
-         where c.cible_profil = p.id and c.choix = 'oui' and c.updated_at > now() - interval '7 days' and l.role = 'laureat'
+         where c.cible_profil = p.id and c.choix = 'oui' and c.updated_at > now() - interval '7 days' and l.role = 'laureat' and l.ecole = p.ecole
            and not exists (select 1 from public.match_choix r where r.user_id = p.id and r.cible_profil = c.user_id
                              and (r.choix = 'oui' or r.updated_at >= c.updated_at))
            and not exists (select 1 from public.matchs m where m.etudiant_id = p.id and m.laureat_id = c.user_id)
@@ -4826,19 +4829,21 @@ begin
        when p.role = 'laureat' then (select count(distinct c.user_id) from public.offers o
          join public.match_choix c on c.cible_offre = o.id join public.profiles e on e.id = c.user_id
          where o.author_id = p.id and c.choix = 'oui' and c.updated_at > now() - interval '7 days'
-           and e.role = 'etudiant' and coalesce(btrim(e.filiere), '') <> ''
+           and e.role = 'etudiant' and coalesce(btrim(e.filiere), '') <> '' and o.ecole = p.ecole and e.ecole = p.ecole
            and not exists (select 1 from public.match_choix r where r.user_id = p.id and r.cible_profil = c.user_id
                              and (r.choix = 'oui' or r.updated_at >= c.updated_at))
            and not exists (select 1 from public.matchs m where m.laureat_id = p.id and m.etudiant_id = c.user_id)
            and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = c.user_id) or (b.user_id = c.user_id and b.bloque_id = p.id)))
        else 0 end),
-    ('reponses', (select count(*) from public.questions q join public.answers a on a.question_id = q.id
-       where q.author_id = p.id and a.author_id <> p.id and a.created_at > p_depuis
+    ('reponses', (select count(*) from public.questions q join public.answers a on a.question_id = q.id join public.profiles r on r.id = a.author_id
+       where q.author_id = p.id and a.author_id <> p.id and a.created_at > p_depuis and r.ecole = p.ecole
          and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = a.author_id) or (b.user_id = a.author_id and b.bloque_id = p.id)))),
     ('evenements', (select count(*) from public.evenement_participants x join public.evenements e on e.id = x.evenement_id
-         where x.user_id = p.id and not e.annule and e.debut > now() and e.debut < now() + interval '2 days' and e.author_id is distinct from p.id)
+         where x.user_id = p.id and not e.annule and e.debut > now() and e.debut < now() + interval '2 days' and e.author_id is distinct from p.id
+           and e.ecole = p.ecole)
        + (select count(*) from public.cafe_participants x join public.cafes c on c.id = x.cafe_id
-         where x.user_id = p.id and not c.annule and c.date_at > now() and c.date_at < now() + interval '2 days' and c.organisateur_id <> p.id))
+         where x.user_id = p.id and not c.annule and c.date_at > now() and c.date_at < now() + interval '2 days' and c.organisateur_id <> p.id
+           and c.ecole = p.ecole))
   ) as t(k, n));
 end $$;
 revoke all on function public.rappel_contenu(public.profiles, timestamptz) from public, anon, authenticated;
@@ -5242,7 +5247,8 @@ begin
   insert into public.push_queue (user_id, kind, data)
   select p.id, 'annonce', jsonb_build_object('texte', left(new.texte, 180), 'id', new.id)
   from public.profiles p
-  where p.id is distinct from new.author_id
+  -- Écoles : celle de l'annonce (l'administration reçoit tout, comme dans push_filtre)
+  where p.id is distinct from new.author_id and (p.ecole = new.ecole or p.role = 'admin')
     and (coalesce(new.public, 'tous') = 'tous' or (new.public = 'etudiants' and p.role = 'etudiant') or (new.public = 'laureats' and p.role = 'laureat'))
     and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'annonce')
   order by public.derniere_visite(p.id) desc nulls last
@@ -5269,7 +5275,7 @@ begin
   insert into public.push_queue (user_id, kind, data)
   select l.id, 'mentorat_ouvert', jsonb_build_object('nom', v_s.full_name, 'sujet', new.sujet, 'm', new.id)
   from public.profiles l
-  where l.role = 'laureat' and coalesce(l.mentor_dispo, false) and l.id <> new.student_id and l.id is distinct from v_ancien
+  where l.role = 'laureat' and l.ecole = new.ecole and coalesce(l.mentor_dispo, false) and l.id <> new.student_id and l.id is distinct from v_ancien
     and public.proximite_filiere(l.filiere, v_s.filiere) >= 1
     and not exists (select 1 from public.blocages b where (b.user_id = l.id and b.bloque_id = new.student_id) or (b.user_id = new.student_id and b.bloque_id = l.id))
     and exists (select 1 from public.push_subscriptions s where s.user_id = l.id) and public.push_voulu(l.id, 'mentorat_ouvert')
@@ -6123,6 +6129,9 @@ end $$;
 --    · Entre personnes, tout de suite : reponse_utile (un vote, la meilleure réponse), bravo, mentorat_presence.
 --    · Chaque producteur filtre d'abord (abonné, push_voulu, conditions), puis appelle programme_place sur ce qui reste,
 --      dans une CTE matérialisée ; chaque envoi est noté pour ne jamais partir deux fois.
+--    · Écoles : une tâche de pg_cron n'a pas de membre connecté (auth.uid() vide), push_filtre ne filtre donc pas l'école
+--      pour elle. Chaque producteur programmé choisit lui-même ses destinataires, ses chiffres et ses noms dans l'école
+--      du membre : rien ne passe d'une école à l'autre.
 --  Mêmes catégories que logic.js (PUSH_KINDS) ; textes FR et AR dans le notifier (NOTIFS).
 -- =====================================================================
 
@@ -6141,7 +6150,8 @@ create index if not exists mentorships_rdv on public.mentorships (rdv_at) where 
 -- ---------------------------------------------------------------------
 -- match_attente (12:30) : un « Intéressé » qui attend une réponse depuis la veille. La personne visée (l'étudiant pour un
 -- oui à son profil, le lauréat pour un oui à son offre) l'apprend une fois, tous ses intérêts en attente regroupés :
--- un oui donné il y a 20 h à 7 jours, sans réponse de sa part (aucun choix sur cette personne), sans match ni blocage.
+-- un oui donné il y a 20 h à 7 jours, sans réponse de sa part (aucun choix sur cette personne), sans match ni blocage,
+-- entre deux membres de la même école.
 -- Rien si un match_interet lui est parti dans les 20 h ; au plus un par jour. DURE : une personne attend.
 -- ---------------------------------------------------------------------
 create table if not exists public.match_attente_notif (
@@ -6160,7 +6170,7 @@ begin
     from public.match_choix c join public.profiles l on l.id = c.user_id join public.profiles e on e.id = c.cible_profil
     where c.choix = 'oui' and c.cible_profil is not null
       and c.updated_at <= now() - interval '20 hours' and c.updated_at > now() - interval '7 days'
-      and l.role = 'laureat' and e.role = 'etudiant'
+      and l.role = 'laureat' and e.role = 'etudiant' and l.ecole = e.ecole
     union all
     -- Un étudiant dit oui à l'offre d'un lauréat : le lauréat est visé
     select c.id, o.author_id, c.user_id, o.id, c.updated_at
@@ -6169,6 +6179,7 @@ begin
     where c.choix = 'oui' and c.cible_offre is not null
       and c.updated_at <= now() - interval '20 hours' and c.updated_at > now() - interval '7 days'
       and e.role = 'etudiant' and coalesce(btrim(e.filiere), '') <> '' and l.role = 'laureat'
+      and l.ecole = e.ecole and o.ecole = e.ecole
   ),
   attente as materialized (
     select o.*, exists (select 1 from public.match_attente_notif n where n.choix_id = o.choix_id) as deja
@@ -6243,6 +6254,8 @@ begin
     where x.status = 'acceptee' and x.mentor_id is not null
       and x.rdv_at >= v_demain and x.rdv_at < v_demain + interval '1 day'
       and not exists (select 1 from public.veilles_envoyees v where v.quoi = 'rdv' and v.id = x.id and v.rdv_at = x.rdv_at)
+      -- Écoles : l'étudiant et le lauréat sont de la même école
+      and exists (select 1 from public.profiles se join public.profiles me on me.id = x.mentor_id where se.id = x.student_id and se.ecole = me.ecole)
   ),
   dest as materialized (
     select t.* from (
@@ -6285,6 +6298,8 @@ begin
       and not exists (select 1 from public.blocages b
         where (b.user_id = x.author_id and b.bloque_id = x.dest_id) or (b.user_id = x.dest_id and b.bloque_id = x.author_id))
       and not exists (select 1 from public.veilles_envoyees v where v.quoi = 'entretien' and v.id = x.id and v.rdv_at = x.rdv_at)
+      -- Écoles : les deux personnes de la discussion sont de la même école
+      and exists (select 1 from public.profiles pa join public.profiles pd on pd.id = x.dest_id where pa.id = x.author_id and pa.ecole = pd.ecole)
   ),
   dest as materialized (
     select t.* from (
@@ -6312,30 +6327,34 @@ end $$;
 revoke all on function public.entretien_demain_push() from public, anon, authenticated;
 
 -- agenda_demain : inscrit à un événement ou à un café non annulé qui a lieu demain (pas celui qu'il organise). Plusieurs :
--- une seule notification, le premier en détail (n). inscrits : le vrai nombre d'inscrits. DURE.
+-- une seule notification, le premier en détail (n). inscrits : le vrai nombre d'inscrits (de son école). DURE.
 create or replace function public.agenda_demain_push() returns int
 language plpgsql security definer set search_path = public as $$
 declare v_demain timestamptz := (date_trunc('day', public.horloge() at time zone 'UTC') + interval '1 day') at time zone 'UTC'; v_n int;
 begin
   with items as materialized (
     select 'evenement'::text as type, e.id as item, e.titre, e.debut, e.lieu, null::text as ville,
-      (select count(*) from public.evenement_participants y where y.evenement_id = e.id) as inscrits, e.author_id as organisateur
+      (select count(*) from public.evenement_participants y join public.profiles u on u.id = y.user_id
+        where y.evenement_id = e.id and u.ecole = e.ecole) as inscrits, e.author_id as organisateur, e.ecole
     from public.evenements e
     where not e.annule and e.debut >= v_demain and e.debut < v_demain + interval '1 day'
       and not exists (select 1 from public.veilles_envoyees v where v.quoi = 'agenda' and v.id = e.id and v.rdv_at = e.debut)
     union all
     select 'cafe', c.id, null, c.date_at, c.lieu, c.ville,
-      (select count(*) from public.cafe_participants y where y.cafe_id = c.id), c.organisateur_id
+      (select count(*) from public.cafe_participants y join public.profiles u on u.id = y.user_id
+        where y.cafe_id = c.id and u.ecole = c.ecole), c.organisateur_id, c.ecole
     from public.cafes c
     where not c.annule and c.date_at >= v_demain and c.date_at < v_demain + interval '1 day'
       and not exists (select 1 from public.veilles_envoyees v where v.quoi = 'agenda' and v.id = c.id and v.rdv_at = c.date_at)
   ),
   inscrits as materialized (
     select x.user_id as id, i.* from items i join public.evenement_participants x on x.evenement_id = i.item
-      where i.type = 'evenement' and x.user_id is distinct from i.organisateur
+      join public.profiles u on u.id = x.user_id
+      where i.type = 'evenement' and x.user_id is distinct from i.organisateur and u.ecole = i.ecole
     union all
     select x.user_id, i.* from items i join public.cafe_participants x on x.cafe_id = i.item
-      where i.type = 'cafe' and x.user_id is distinct from i.organisateur
+      join public.profiles u on u.id = x.user_id
+      where i.type = 'cafe' and x.user_id is distinct from i.organisateur and u.ecole = i.ecole
   ),
   dest as materialized (
     select t.* from (
@@ -6372,6 +6391,8 @@ begin
     where x.status = 'acceptee' and x.mentor_id is not null
       and x.rdv_at >= now() - interval '30 hours' and x.rdv_at <= now() - interval '1 hour'
       and not exists (select 1 from public.veilles_envoyees v where v.quoi = 'apres' and v.id = x.id and v.rdv_at = x.rdv_at)
+      -- Écoles : l'étudiant et le lauréat sont de la même école
+      and exists (select 1 from public.profiles se join public.profiles me on me.id = x.mentor_id where se.id = x.student_id and se.ecole = me.ecole)
   ),
   dest as materialized (
     select y.* from (
@@ -6566,19 +6587,21 @@ begin
   ),
   demandes as materialized (select d from public.demandes d where d.status = 'ouverte' and d.created_at > now() - interval '7 days'),
   nouveaux as materialized (
-    select x.id, x.role, x.promo, x.filiere from public.profiles x
+    select x.id, x.role, x.promo, x.filiere, x.ecole from public.profiles x
     where x.created_at > now() - interval '7 days' and x.role in ('etudiant','laureat')
   ),
   agenda as materialized (
-    select e.public from public.evenements e where not e.annule and e.debut > now() and e.debut < now() + interval '7 days'
+    select e.public, e.ecole from public.evenements e where not e.annule and e.debut > now() and e.debut < now() + interval '7 days'
   ),
   membres as materialized (
     select p.id, p.role,
       (select count(*) from offres x where public.offre_pour(x.o, p, v_s)) as offres_pour,
-      (select count(*) from offres x where (x.o).author_id <> p.id and public.filiere_ok((x.o).filieres, p.filiere)) as offres_filiere,
-      (select count(*) from nouveaux n where n.role = 'laureat' and n.id <> p.id and public.filiere_ok(array[n.filiere], p.filiere)) as laureats,
-      (select count(*) from nouveaux n where n.promo = p.promo and n.id <> p.id) as promo,
-      (select count(*) from agenda e where e.public = 'tous' or (e.public = 'etudiants' and p.role = 'etudiant') or (e.public = 'laureats' and p.role = 'laureat')) as evenements,
+      -- Écoles : chaque compte dans l'école du membre (offre_pour et demande_pour la vérifient déjà)
+      (select count(*) from offres x where (x.o).ecole = p.ecole and (x.o).author_id <> p.id and public.filiere_ok((x.o).filieres, p.filiere)) as offres_filiere,
+      (select count(*) from nouveaux n where n.ecole = p.ecole and n.role = 'laureat' and n.id <> p.id and public.filiere_ok(array[n.filiere], p.filiere)) as laureats,
+      (select count(*) from nouveaux n where n.ecole = p.ecole and n.promo = p.promo and n.id <> p.id) as promo,
+      (select count(*) from agenda e where e.ecole = p.ecole
+         and (e.public = 'tous' or (e.public = 'etudiants' and p.role = 'etudiant') or (e.public = 'laureats' and p.role = 'laureat'))) as evenements,
       case when p.role = 'laureat' then (select count(*) from demandes x where public.demande_pour(x.d, p)
         and not exists (select 1 from public.propositions y where y.demande_id = (x.d).id and y.laureat_id = p.id)) else 0 end as demandes
     from public.profiles p
@@ -6631,8 +6654,9 @@ $$;
 revoke all on function public.groupes_auto(text, text, text) from public, anon, authenticated;
 
 -- Nom affiché d'un groupe (comme groupLabel de logic.js) : le nom du parcours, sinon l'écriture la plus courante parmi les
--- profils du groupe
-create or replace function public.nom_groupe(p_cle text) returns text
+-- profils du groupe dans cette école (le site ne voit que les profils de son école)
+drop function if exists public.nom_groupe(text);
+create or replace function public.nom_groupe(p_cle text, p_ecole text) returns text
 language sql stable security definer set search_path = public as $$
   select case p_cle
     when 'filiere:electro-industriel' then 'Électro-industriel' when 'filiere:mecanique' then 'Mécanique'
@@ -6642,29 +6666,30 @@ language sql stable security definer set search_path = public as $$
       select x.v from (
         select btrim(case split_part(p_cle, ':', 1) when 'ville' then p.ville when 'pays' then p.pays else p.filiere end) as v
         from public.profiles p
-        where case split_part(p_cle, ':', 1)
+        where p.ecole = p_ecole and case split_part(p_cle, ':', 1)
           when 'ville' then 'ville:' || public.cle_lieu(p.ville) = p_cle
           when 'pays' then 'pays:' || public.cle_lieu(p.pays) = p_cle
           else left('filiere:' || public.cle_lieu(p.filiere), 80) = p_cle end) x
       where x.v <> '' group by x.v order by count(*) desc, x.v limit 1),
       initcap(substr(p_cle, strpos(p_cle, ':') + 1))) end;
 $$;
-revoke all on function public.nom_groupe(text) from public, anon, authenticated;
+revoke all on function public.nom_groupe(text, text) from public, anon, authenticated;
 
 create or replace function public.groupe_jour_push() returns int
 language plpgsql security definer set search_path = public as $$
 declare v_debut timestamptz := date_trunc('day', public.horloge() at time zone 'UTC') at time zone 'UTC'; v_n int;
 begin
+  -- Écoles : un groupe (même clé) est à part dans chaque école ; messages, comptes et nom dans l'école du membre
   with actifs as materialized (
-    select distinct g.groupe from public.groupe_messages g where g.created_at > now() - interval '24 hours'
+    select distinct g.groupe, g.ecole from public.groupe_messages g where g.created_at > now() - interval '24 hours'
   ),
   membres as materialized (
-    select p.id, a.groupe from public.profiles p
+    select p.id, a.groupe, p.ecole from public.profiles p
     cross join lateral unnest(public.groupes_auto(p.filiere, p.ville, p.pays)) a(groupe)
-    where p.role in ('etudiant','laureat') and a.groupe in (select x.groupe from actifs x)
+    where p.role in ('etudiant','laureat') and (a.groupe, p.ecole) in (select x.groupe, x.ecole from actifs x)
     union
-    select m.user_id, m.groupe from public.groupe_membres m join public.profiles p on p.id = m.user_id
-    where p.role in ('etudiant','laureat') and m.groupe in (select x.groupe from actifs x)
+    select m.user_id, m.groupe, p.ecole from public.groupe_membres m join public.profiles p on p.id = m.user_id
+    where p.role in ('etudiant','laureat') and (m.groupe, p.ecole) in (select x.groupe, x.ecole from actifs x)
   ),
   abonnes as materialized (
     select x.id, public.derniere_visite(x.id) as vu from (select distinct m.id from membres m) x
@@ -6674,23 +6699,24 @@ begin
                         and n.at >= v_debut and n.at < v_debut + interval '1 day')
   ),
   comptes as materialized (
-    select m.id, m.groupe, count(*) as n
+    select m.id, m.groupe, m.ecole, count(*) as n
     from membres m join abonnes a on a.id = m.id
-    join public.groupe_messages g on g.groupe = m.groupe
+    join public.groupe_messages g on g.groupe = m.groupe and g.ecole = m.ecole
     where g.created_at > greatest(a.vu + interval '1 hour', now() - interval '24 hours') and g.author_id <> m.id
       and not exists (select 1 from public.blocages b where (b.user_id = m.id and b.bloque_id = g.author_id) or (b.user_id = g.author_id and b.bloque_id = m.id))
-    group by m.id, m.groupe
+    group by m.id, m.groupe, m.ecole
   ),
   choisis as materialized (
-    select distinct on (c.id) c.id, c.groupe, c.n, (select count(*) from comptes y where y.id = c.id) - 1 as autres
+    select distinct on (c.id) c.id, c.groupe, c.ecole, c.n, (select count(*) from comptes y where y.id = c.id) - 1 as autres
     from comptes c order by c.id, c.n desc, c.groupe
   ),
   places as materialized (select x.* from choisis x where public.programme_place(x.id, 'groupe_jour')),
-  noms as materialized (select g.groupe, public.nom_groupe(g.groupe) as nom from (select distinct p.groupe from places p) g),
+  noms as materialized (
+    select g.groupe, g.ecole, public.nom_groupe(g.groupe, g.ecole) as nom from (select distinct p.groupe, p.ecole from places p) g),
   envoi as (
     insert into public.push_queue (user_id, kind, data)
     select x.id, 'groupe_jour', jsonb_build_object('n', x.n, 'groupe', n.nom, 'gkey', x.groupe, 'autres', x.autres)
-    from places x join noms n on n.groupe = x.groupe
+    from places x join noms n on n.groupe = x.groupe and n.ecole = x.ecole
     returning 1)
   select count(*) into v_n from envoi;
   return v_n;

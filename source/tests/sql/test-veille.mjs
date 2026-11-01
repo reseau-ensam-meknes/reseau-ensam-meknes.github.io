@@ -197,7 +197,7 @@ test('P11d les groupes de la base sont ceux de l’application (autoGroups, grou
   }
   const data = { profiles: profils };
   for (const k of ['filiere:electro-industriel', 'filiere:civil', 'ville:casablanca', 'ville:rabat', 'pays:france', 'ville:inconnue']) {
-    assert.equal((await un('select public.nom_groupe($1) n', [k])).n, groupLabel(data, k), k);
+    assert.equal((await un(`select public.nom_groupe($1, 'ensam-meknes') n`, [k])).n, groupLabel(data, k), k);
   }
 });
 
