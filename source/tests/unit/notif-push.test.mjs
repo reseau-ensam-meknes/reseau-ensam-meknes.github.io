@@ -31,7 +31,10 @@ test('chaque type de notification de la base et du notifier a sa catégorie, et 
   for (const c of Object.values(PUSH_KINDS)) assert.ok(PUSH_CATEGORIES.includes(c) || c === 'admin', c);
   for (const c of PUSH_CATEGORIES) assert.ok(Object.values(PUSH_KINDS).includes(c), `catégorie vide : ${c}`);
   for (const k of ['evenement', 'evenement_annule', 'evenement_deplace', 'question_routee', 'offre_alerte', 'demande_nouvelle', 'verifier_pair', 'cafe', 'signalement',
-    'demande_large', 'promo_nouveau', 'offre_commentaire', 'annonce', 'mentorat_ouvert', 'match', 'match_interet', 'match_jour', 'rdv_message', 'rdv_reponse'])
+    'demande_large', 'promo_nouveau', 'offre_commentaire', 'annonce', 'mentorat_ouvert', 'match', 'match_interet', 'match_jour', 'rdv_message', 'rdv_reponse',
+    // Les nouveaux types : envois entre personnes (pousser) et tâches programmées (insertions groupées)
+    'match_attente', 'rdv_demain', 'entretien_demain', 'agenda_demain', 'apres_rdv', 'offre_bientot', 'demande_attente', 'semaine', 'reponse_utile', 'bravo',
+    'demande_pause', 'mentorat_presence', 'groupe_jour', 'rappel_visite'])
     assert.ok(base.has(k), `lecture de la base incomplète : ${k}`);
 });
 

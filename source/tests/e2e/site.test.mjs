@@ -1885,9 +1885,12 @@ test('Mon profil : la case « Rappels », cochée par défaut, se coupe et reste
     // Le lien « Ne plus recevoir ces rappels » d'un email : une page, un bouton, sans connexion
     await s.page.goto(adresse + '#desabo/11111111-2222-4333-8444-555555555555/rappels'); await s.page.waitForSelector('#desabo-rappels');
     assert.match(await s.page.locator('.desabo h1').innerText(), langue === 'fr' ? /^Rappels$/ : /التذكيرات/);
+    // Le lien décoche toute la case « Rappels et résumé du dimanche » : la page le dit avant le clic, et après
+    assert.match(await s.page.locator('.desabo').innerText(), langue === 'fr' ? /Le résumé du dimanche sur le téléphone s’arrêtera aussi/ : /سيتوقف أيضًا ملخص الأحد على الهاتف/);
     await s.page.click('#desabo-rappels');
     await s.page.waitForSelector('.desabo .verify-ok');
     assert.match(await s.page.locator('.desabo').innerText(), langue === 'fr' ? /plus de rappels, ni par email ni sur le téléphone/ : /لا تذكيرات بعد الآن/);
+    assert.match(await s.page.locator('.desabo').innerText(), langue === 'fr' ? /s’arrête aussi ; les autres emails et notifications ne changent pas/ : /يتوقف أيضًا ملخص الأحد على الهاتف، ولا تتغير الرسائل والإشعارات الأخرى/);
     assert.equal(await s.debordement(), 0);
     assert.deepEqual(s.erreurs, []);
     await s.ctx.close();
