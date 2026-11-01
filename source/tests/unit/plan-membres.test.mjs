@@ -15,7 +15,7 @@ import { buildSeed } from '../../src/seed.js';
 import { SupabaseStore } from '../../src/store.js';
 
 const jour = j => new Date(Date.UTC(2026, 9, j, 9)).toISOString();
-const L = (id, promo, j, x = {}) => ({ id, role: 'laureat', full_name: `${id} Nom`, promo, filiere: 'Génie Mécanique', created_at: jour(j), ...x });
+const L = (id, promo, j, x = {}) => ({ id, role: 'laureat', full_name: `${id} Nom`, promo, filiere: 'Génie Mécanique', created_at: jour(j), verified: true, ...x });
 
 test('Pionnier : les 3 premiers lauréats de chaque promo et de chaque école, jamais l’administration ni un étudiant', () => {
   const profiles = [
@@ -84,6 +84,8 @@ test('page d’entrée : seulement les lauréats qui ont dit oui, de l’école 
     L('adm', 2019, 1, { full_name: 'Admin Vue', vitrine_publique: true, admin_ok: true }),
     { id: 'etu', role: 'etudiant', full_name: 'Etu Diant', vitrine_publique: true },
     L('fes', 2019, 1, { full_name: 'Fes Lau', vitrine_publique: true, ecole: 'ensa-fes' }),
+    // Pas encore vérifié : son oui attend la vérification (un compte pourrait prendre le nom et la photo d'un autre)
+    L('pas-verifie', 2019, 1, { full_name: 'Nadia Ferhat', vitrine_publique: true, verified: false, photo_path: 'faux/p.webp' }),
   ];
   assert.deepEqual(visagesPublics(profiles), [
     { nom: 'Nadia F.', promo: 2020, entreprise: null, photo: 'photo/p.webp' },

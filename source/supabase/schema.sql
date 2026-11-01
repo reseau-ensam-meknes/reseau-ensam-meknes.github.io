@@ -5994,16 +5994,17 @@ create trigger trg_protect_vitrine_publique before update of vitrine_publique on
   for each row execute function public.protect_vitrine_publique();
 
 -- 24 lauréats au plus, ceux qui ont une photo d'abord, dans l'ordre d'arrivée. Pas d'id ; le chemin de la photo
--- (photos/<id>/…) n'est donné que pour qui a dit oui. Jamais l'administration.
+-- (photos/<id>/…) n'est donné que pour qui a dit oui. Jamais l'administration. Seulement un lauréat vérifié : un compte
+-- qui prendrait le nom et la photo de quelqu'un d'autre ne le met pas sur une page que tout le monde voit.
 create or replace function public.visages_publics() returns jsonb
 language sql stable security definer set search_path = public as $$
   select coalesce(jsonb_agg(jsonb_build_object('nom', x.nom, 'promo', x.promo, 'entreprise', x.entreprise, 'photo', x.photo_path) order by x.rang), '[]'::jsonb)
   from (
-    select btrim(split_part(btrim(p.full_name), ' ', 1) || ' ' || coalesce(upper(left(nullif(split_part(btrim(p.full_name), ' ', 2), ''), 1)) || '.', '')) as nom,
+    select m[1] || coalesce(' ' || upper(left(nullif(m[2], ''), 1)) || '.', '') as nom,
       p.promo, nullif(btrim(p.entreprise), '') as entreprise, p.photo_path,
       row_number() over (order by p.photo_path is null, p.created_at, p.id) as rang
-    from public.profiles p
-    where p.vitrine_publique and p.role = 'laureat' and not p.admin_ok and p.ecole = coalesce(public.mon_ecole(), 'ensam-meknes')
+    from public.profiles p, lateral (select regexp_split_to_array(btrim(p.full_name), '\s+') as m) n
+    where p.vitrine_publique and p.verified and p.role = 'laureat' and not p.admin_ok and p.ecole = coalesce(public.mon_ecole(), 'ensam-meknes')
     order by p.photo_path is null, p.created_at, p.id
     limit 24
   ) x;
@@ -6012,10 +6013,10 @@ revoke all on function public.visages_publics() from public;
 grant execute on function public.visages_publics() to anon, authenticated;
 
 -- Le stockage « photos » reste privé : un visiteur obtient seulement un lien temporaire vers la photo actuelle d'un lauréat
--- de l'école qui a dit oui. Un oui retiré : l'application change le nom du fichier, l'ancien lien ne mène plus à rien.
+-- vérifié de l'école qui a dit oui. Un oui retiré : l'application change le nom du fichier, l'ancien lien ne mène plus à rien.
 create or replace function public.photo_visage_publique(p_name text) returns boolean
 language sql stable security definer set search_path = public as $$
-  select exists (select 1 from public.profiles p where p.photo_path = p_name and p.vitrine_publique and p.role = 'laureat'
+  select exists (select 1 from public.profiles p where p.photo_path = p_name and p.vitrine_publique and p.verified and p.role = 'laureat'
     and not p.admin_ok and p.ecole = coalesce(public.mon_ecole(), 'ensam-meknes'));
 $$;
 revoke all on function public.photo_visage_publique(text) from public;

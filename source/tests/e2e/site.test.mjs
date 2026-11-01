@@ -6548,6 +6548,7 @@ test('Mon profil > Visibilité : « Montrer ma photo… sur la page d’entrée 
   await s.page.waitForSelector('#pf-vitrine');
   assert.equal(await s.page.isChecked('#pf-vitrine'), false, 'jamais coché d’avance');
   assert.equal(await s.page.locator('#pf-vitrine-sens').innerText(), 'La page d’entrée est publique : n’importe qui peut la voir. Tu peux l’enlever à tout moment.');
+  assert.equal(await s.page.locator('#pf-vitrine-verif').count(), 0, 'Youssef est vérifié');
   const accord = () => lirePM(s, `return d.profiles.find(p => p.id === 'u-0002').vitrine_publique`);
   await s.page.check('#pf-vitrine'); await s.page.waitForTimeout(300);
   assert.match(await s.page.locator('.toast').last().innerText(), /ta photo, ton prénom, ta promo et ton entreprise sont sur la page d’entrée/);
@@ -6559,12 +6560,21 @@ test('Mon profil > Visibilité : « Montrer ma photo… sur la page d’entrée 
   assert.match(await s.page.locator('.toast').last().innerText(), /^Tu n’es plus sur la page d’entrée\./);
   assert.equal(await accord(), false);
   assert.equal(await s.debordement(), 0);
+  // Nadia, pas encore vérifiée : elle le sait avant de cocher ; son oui attend la vérification (rien de public avant)
+  await s.comme('Nadia'); await s.aller('profil/visibilite');
+  await s.page.waitForSelector('#pf-vitrine');
+  assert.equal(await s.page.locator('#pf-vitrine-verif').innerText(), 'Seuls les profils vérifiés y apparaissent : tu y seras dès que le tien le sera.');
+  await s.page.check('#pf-vitrine'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /tu seras sur la page d’entrée dès que ton profil sera vérifié/);
+  assert.equal(await lirePM(s, `return d.profiles.find(p => p.full_name === 'Nadia Ferhat').vitrine_publique`), true);
+  assert.equal(await s.debordement(), 0);
   // Un étudiant : la question ne lui est pas posée
   await s.comme('Salma'); await s.aller('profil/visibilite'); await s.page.waitForTimeout(200);
   assert.equal(await s.page.locator('#pf-vitrine').count(), 0);
   await s.aller('confidentialite');
   const conf = await s.page.locator('.page').first().innerText();
-  assert.match(conf, /un lauréat qui l’accepte dans « Mon profil » \(Visibilité\) y apparaît dans « Ils sont déjà dans le réseau »/);
+  assert.match(conf, /un lauréat vérifié qui l’accepte dans « Mon profil » \(Visibilité\) y apparaît dans « Ils sont déjà dans le réseau »/);
+  assert.match(conf, /Qui ouvre ce lien voit sur la page d’entrée ton prénom et ta promo ; s’il s’inscrit[\s\S]*écris-nous \(Contact, plus bas\) : ton code est changé\./);
   assert.match(conf, /que si l’étudiant et le lauréat ont tous les deux coché « Peut être montré sur la page d’entrée »/);
   assert.match(conf, /Invitation nommée : le lien de promo que tu partages porte un code/);
   assert.deepEqual(s.erreurs, []);

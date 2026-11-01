@@ -37,6 +37,8 @@ before(async () => {
     await db.query('update public.profiles set photo_path = $2 where id = $1', [id, `${id}/photo-${n}.webp`]);
   }
   await db.query(`insert into storage.objects (bucket_id, name) values ('cv', $1)`, [`${NADIA}/cv.pdf`]);
+  // Des lauréats vérifiés (liste de l'école ou deux camarades de promo) : la page d'entrée ne montre qu'eux
+  await db.query('update public.profiles set verified = true where id = any($1)', [[NADIA, YOUSSEF, KARIM, AILLEURS]]);
 });
 
 test('le code d’invitation : créé à la demande, 8 caractères, stable ; personne ne le choisit ni ne le change', async () => {
@@ -149,6 +151,20 @@ test('visages de la page d’entrée : seulement les lauréats qui ont dit oui, 
   ], 'avec photo d’abord ; jamais un autre réseau ; pas d’id');
   assert.deepEqual(await photosVisiteur(), [`${NADIA}/photo-1.webp`], 'jamais le CV, ni la photo de qui n’a rien dit, ni celle d’une autre école');
   assert.deepEqual((await visages(AILLEURS)).map(v => v.nom), ['Omar A.'], 'un membre de l’autre école voit les siens');
+  // Un compte pas encore vérifié qui dit oui (il pourrait porter le nom et la photo de quelqu'un d'autre) : rien de public
+  const FAUX = uid(640);
+  await creerCompte(db, { id: FAUX, full_name: 'Nadia  El Fassi', role: 'laureat', filiere: 'Génie Industriel', promo: 2019, entreprise: 'OCP' });
+  await db.query(`insert into storage.objects (bucket_id, name) values ('photos', $1)`, [`${FAUX}/photo-9.webp`]);
+  await q(FAUX, 'update public.profiles set photo_path = $2, vitrine_publique = true where id = $1', [FAUX, `${FAUX}/photo-9.webp`]);
+  assert.equal((await ligne(FAUX)).vitrine_publique, true, 'son oui est gardé pour quand il sera vérifié');
+  assert.deepEqual((await visages(null)).map(v => v.nom), ['Nadia E.', 'Karim B.']);
+  assert.deepEqual(await photosVisiteur(), [`${NADIA}/photo-1.webp`]);
+  // Vérifié : il apparaît (deux espaces dans le nom n'enlèvent pas l'initiale), puis son profil est retiré pour la suite
+  await db.query('update public.profiles set verified = true where id = $1', [FAUX]);
+  assert.deepEqual((await visages(null)).map(v => v.nom), ['Nadia E.', 'Nadia E.', 'Karim B.']);
+  assert.deepEqual(await photosVisiteur(), [`${NADIA}/photo-1.webp`, `${FAUX}/photo-9.webp`]);
+  await db.query('delete from auth.users where id = $1', [FAUX]);
+  await db.query(`delete from storage.objects where name = $1`, [`${FAUX}/photo-9.webp`]);
   // Une nouvelle photo : l'ancienne n'est plus lisible
   await db.query(`insert into storage.objects (bucket_id, name) values ('photos', $1)`, [`${NADIA}/photo-11.webp`]);
   await q(NADIA, 'update public.profiles set photo_path = $2 where id = $1', [NADIA, `${NADIA}/photo-11.webp`]);
@@ -180,7 +196,7 @@ test('le oui vient du lauréat lui-même : ni l’administration, ni un autre me
   for (let i = 0; i < 30; i++) {
     const id = uid(700 + i);
     await db.query('insert into auth.users (id, email) values ($1, $2)', [id, `v${i}@exemple.ma`]);
-    await db.query(`insert into public.profiles (id, full_name, role, filiere, promo, vitrine_publique) values ($1, $2, 'laureat', 'Génie Civil', 2015, true)`, [id, `Lauréat${i} Test`]);
+    await db.query(`insert into public.profiles (id, full_name, role, filiere, promo, vitrine_publique, verified) values ($1, $2, 'laureat', 'Génie Civil', 2015, true, true)`, [id, `Lauréat${i} Test`]);
   }
   await db.exec('set session_replication_role = origin');
   assert.equal((await visages(null)).length, 24);

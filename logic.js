@@ -1902,13 +1902,14 @@ export function invitesDe(profiles, id) {
 }
 
 // Page d'entrée. Un visage : le prénom et l'initiale du nom (« Nadia E. »), la promo, l'entreprise, la photo.
-// Seulement les lauréats qui ont dit oui (vitrine_publique), de l'école du visiteur, 24 au plus, avec photo d'abord.
+// Seulement les lauréats vérifiés qui ont dit oui (vitrine_publique), de l'école du visiteur, 24 au plus, avec photo d'abord.
+// (Vérifié : un compte qui prendrait le nom et la photo de quelqu'un d'autre ne le met pas sur la page publique.)
 export function nomCourt(full) {
   const [prenom = '', nom = ''] = String(full || '').trim().split(/\s+/);
   return nom ? `${prenom} ${[...nom][0].toUpperCase()}.` : prenom;
 }
 export function visagesPublics(profiles, ecole = 'ensam-meknes', max = 24) {
-  return (profiles || []).filter(p => p.vitrine_publique === true && laureatCompte(p) && (p.ecole || 'ensam-meknes') === ecole)
+  return (profiles || []).filter(p => p.vitrine_publique === true && p.verified === true && laureatCompte(p) && (p.ecole || 'ensam-meknes') === ecole)
     .sort((a, b) => (a.photo_path ? 0 : 1) - (b.photo_path ? 0 : 1) || new Date(a.created_at) - new Date(b.created_at) || String(a.id).localeCompare(String(b.id)))
     .slice(0, max)
     .map(p => ({ nom: nomCourt(p.full_name), promo: p.promo, entreprise: String(p.entreprise || '').trim() || null, photo: p.photo_path || null }));
