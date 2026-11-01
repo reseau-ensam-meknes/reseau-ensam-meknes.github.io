@@ -1,12 +1,13 @@
 // Tableau de bord de suivi : qui a trouvé quoi, par niveau, filière et saison,
 // puis l'insertion des diplômés (enquête à 6 et 12 mois) avec le rapport exportable de l'administration.
-import { html, useState, useMemo, useEffect } from './vendor/preact-htm.js';
-import { Icon, Bar, Person, Tabs, Num, injectCSS, toast } from './ui.js';
-import { seasonStats, monthlyActivity, seasonLabel, NIVEAUX, pct, OBJECTIFS, statutOf, FOUND, niveauOf, enqueteDue, SITUATIONS, SALAIRES, CANAUX, proximiteFiliere, filiereMatch } from './logic.js';
+import { html, useState, useMemo, useEffect, useRef } from './vendor/preact-htm.js';
+import { Icon, Bar, Person, injectCSS, toast, EnTetePage, Compteur, Anneau } from './ui.js';
+import { seasonStats, monthlyActivity, seasonLabel, NIVEAUX, pct, OBJECTIFS, statutOf, FOUND, niveauOf, enqueteDue, SITUATIONS, SALAIRES, CANAUX, proximiteFiliere, filiereMatch, filiereCourte } from './logic.js';
 import { CompanyLogo } from './ui.js';
 import { addAR, arCount } from './i18n.js';
 import { SuccessFeed } from './growth.js';
 import { useStatsInsertion, tauxInsertion, KpisInsertion, virgule } from './enquete.js';
+import { clavierOnglets } from './me.js';
 
 export function DashboardPage(ctx) {
   if (ctx.sub === 'insertion') return html`<${InsertionPage} ctx=${ctx}/>`;
@@ -14,13 +15,28 @@ export function DashboardPage(ctx) {
   return html`<${SeasonPage} ctx=${ctx}/>`;
 }
 
-// Placement / Insertion : deux vues du même onglet
+// Placement / Insertion : deux vues du même onglet, dans l'adresse (#suivi, #suivi/insertion). La pastille glisse (Socle) ;
+// au clavier, les flèches (dans le sens de lecture), Début et Fin. Sous l'en-tête, le panneau de l'onglet choisi (VueSuivi).
+// La rangée a sa ligne sous le titre et garde sa largeur sur ordinateur ; sur téléphone, les deux onglets se partagent la largeur.
+const VUES_SUIVI = ['placement', 'insertion'];
 function SuiviSeg({ ctx, on }) {
   const etu = ctx.me.role === 'etudiant';
-  return html`<div class="seg suivi-seg ins-noprint" role="tablist">
-    <button role="tab" aria-selected=${on === 'placement'} class=${on === 'placement' ? 'on' : ''} onClick=${() => ctx.go('suivi', { remplacer: true })}><${Icon} name=${etu ? 'people' : 'chart'} size=${15}/> ${etu ? 'Mon année' : 'Placement'}</button>
-    <button role="tab" aria-selected=${on === 'insertion'} class=${on === 'insertion' ? 'on' : ''} onClick=${() => ctx.go('suivi/insertion', { remplacer: true })}><${Icon} name="briefcase" size=${15}/> ${etu ? 'Après le diplôme' : 'Insertion des diplômés'}</button>
-  </div>`;
+  const aller = k => ctx.go(k === 'insertion' ? 'suivi/insertion' : 'suivi', { remplacer: true });
+  const onglet = (k, ic, l) => html`<button type="button" role="tab" id=${'suivi-onglet-' + k} aria-selected=${on === k ? 'true' : 'false'} aria-controls="suivi-vue" tabindex=${on === k ? 0 : -1}
+    class=${on === k ? 'on' : ''} onClick=${() => { if (k !== on) aller(k); }}><${Icon} name=${ic} size=${15}/> ${l}</button>`;
+  return html`<div class="suivi-onglets ins-noprint"><div class="seg suivi-seg" role="tablist" aria-label="Vue du suivi" onKeyDown=${clavierOnglets(VUES_SUIVI, on, aller, k => 'suivi-onglet-' + k)}>
+    ${onglet('placement', etu ? 'people' : 'chart', etu ? 'Mon année' : 'Placement')}
+    ${onglet('insertion', 'briefcase', etu ? 'Après le diplôme' : 'Insertion des diplômés')}
+  </div></div>`;
+}
+const VueSuivi = ({ on, children }) => html`<div class="suivi-vue" id="suivi-vue" role="tabpanel" aria-labelledby=${'suivi-onglet-' + on}>${children}</div>`;
+
+// L'état d'une année d'études par rapport au temps écoulé vers l'échéance (vert, ambre, rouge, comme partout)
+function tonAnnee(r) {
+  const gap = r.rate - r.elapsed;
+  const tone = r.rate >= 0.999 ? 'good' : r.daysLeft < 0 ? (r.rate >= 0.9 ? 'good' : 'bad') : gap >= -0.05 ? 'good' : gap >= -0.25 ? 'warn' : 'bad';
+  const txt = r.rate >= 0.999 ? 'Objectif atteint' : r.daysLeft < 0 ? 'Année terminée' : tone === 'good' ? 'Dans les temps' : tone === 'warn' ? 'À surveiller' : 'En retard';
+  return [tone, txt];
 }
 
 function SeasonPage({ ctx }) {
@@ -34,62 +50,100 @@ function SeasonPage({ ctx }) {
   const totalPop = st.rows.reduce((a, r) => a + r.total, 0);
   const totalFound = st.rows.reduce((a, r) => a + r.found, 0);
   const pendingAll = st.rows.reduce((a, r) => a + r.pending, 0);
-  const openOffers = data.offers.filter(o => o.status === 'ouverte').length;
+  const ouvertes = data.offers.filter(o => o.status === 'ouverte');
+  const auteurs = new Set(ouvertes.map(o => o.author_id)).size;
   const row = st.rows.find(r => r.n === niv);
-  const canSeeNames = me.role !== 'etudiant';
   const [detail, setDetail] = useState(false);
+  const [tousCherchent, setTousCherchent] = useState(false);
+  const part = totalPop ? totalFound / totalPop : 0;
+  const partVia = st.totalFound ? st.viaTotal / st.totalFound : 0;
+  // Une année touchée : son détail (filières, qui cherche encore) s'ouvre juste dessous ; s'il tombe sous l'écran,
+  // la page y glisse (sans glisser en mouvement réduit), pour que le toucher ait un effet visible
+  const voirAnnee = n => {
+    setNiv(n); setDetail(true); setTousCherchent(false);
+    requestAnimationFrame(() => {
+      const d = document.getElementById('suivi-detail');
+      if (d && d.getBoundingClientRect().top > innerHeight * .7) d.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    });
+  };
+  const cherchent = tousCherchent ? row.searching : row.searching.slice(0, CHERCHENT_N);
 
-  return html`<section class="page">
-    <header class="page-head">
-      <div><p class="eyebrow">Suivi de placement</p><h1>Tableau de bord</h1></div>
-      <label class="season-pick">Année <select id="dash-season" value=${saison} onChange=${e => setSaison(+e.target.value)}>${seasons.map(s => html`<option value=${s}>${seasonLabel(s)}${s === cur ? ' (en cours)' : ''}</option>`)}</select></label>
-    </header>
-    <${SuiviSeg} ctx=${ctx} on="placement"/>
+  return html`<section class="page suivi-page">
+    <${EnTetePage} surTitre="Suivi de placement" titre="Tableau de bord"
+      action=${html`<label class="season-pick">Année <select id="dash-season" value=${saison} onChange=${e => setSaison(+e.target.value)}>${seasons.map(x => html`<option value=${x}>${seasonLabel(x)}${x === cur ? ' (en cours)' : ''}</option>`)}</select></label>`}>
+      <${SuiviSeg} ctx=${ctx} on="placement"/>
+    <//>
 
-    <div class="kpis suivi-kpis">
-      <div class="kpi"><span class="kpi-label">Ont trouvé</span><span class="kpi-val"><${Num} v=${totalFound}/><small>/${totalPop}</small></span><${Bar} value=${totalPop ? totalFound / totalPop : 0} label=${`${pct(totalPop ? totalFound / totalPop : 0)} ont trouvé`}/><span class="small muted">${pct(totalPop ? totalFound / totalPop : 0)} des inscrits 3A, 4A, 5A et jeunes diplômés</span></div>
-      <div class="kpi"><span class="kpi-label">Grâce à la plateforme</span><span class="kpi-val"><${Num} v=${st.viaTotal}/></span><${Bar} value=${st.totalFound ? st.viaTotal / st.totalFound : 0} label=${`${pct(st.totalFound ? st.viaTotal / st.totalFound : 0)} des réussites`}/><span class="small muted">${pct(st.totalFound ? st.viaTotal / st.totalFound : 0)} des réussites, vérifiées des deux côtés</span></div>
-      <div class="kpi"><span class="kpi-label">À confirmer</span><span class="kpi-val"><${Num} v=${pendingAll}/></span><span class="small muted">recrutés, attendent la confirmation de l’étudiant</span></div>
-      <div class="kpi"><span class="kpi-label">Offres ouvertes</span><span class="kpi-val"><${Num} v=${openOffers}/></span><span class="small muted">publiées par ${new Set(data.offers.filter(o => o.status === 'ouverte').map(o => o.author_id)).size} lauréats</span></div>
-    </div>
+    <${VueSuivi} on="placement">
+    <section class="suivi-hero" aria-labelledby="suivi-hero-titre">
+      <${Anneau} valeur=${totalFound} max=${totalPop || 1} taille=${116} epaisseur=${10} ton="bien" label=${`${pct(part)} ont trouvé`}>
+        <span class="sh-pct"><${Compteur} v=${Math.round(part * 100)} format=${x => x + '%'}/></span><span class="sh-pct-l">ont trouvé</span><//>
+      <div class="sh-txt">
+        <h2 id="suivi-hero-titre"><span class="sh-n"><${Compteur} v=${totalFound}/></span> <span class="sh-sur">${`sur ${totalPop} inscrits`}</span></h2>
+        <p class="sh-qui"><span>3A, 4A, 5A et jeunes diplômés</span> · <span>${seasonLabel(saison)}</span></p>
+        <ul class="sh-faits">
+          <li><span class="sh-pt bien" aria-hidden="true"></span><span><strong><${Compteur} v=${st.viaTotal}/></strong> <span>${`grâce à la plateforme (${pct(partVia)} des réussites)`}</span></span></li>
+          <li><span class="sh-pt attente" aria-hidden="true"></span><span><strong><${Compteur} v=${pendingAll}/></strong> <span>à confirmer par l’étudiant</span></span></li>
+          <li><span class="sh-pt offres" aria-hidden="true"></span><span><strong><${Compteur} v=${ouvertes.length}/></strong> <span>${`offres ouvertes, publiées par ${auteurs} lauréat${auteurs > 1 ? 's' : ''}`}</span></span></li>
+        </ul>
+      </div>
+    </section>
 
-    <details class="suivi-detail" open=${detail} onToggle=${e => setDetail(e.currentTarget.open)}>
+    <section class="esp-bloc suivi-annees" aria-labelledby="suivi-annees-titre">
+      <h2 class="esp-h" id="suivi-annees-titre">Par année d’études</h2>
+      <ul class="esp-lignes">${st.rows.map(r => {
+        const [tone, toneTxt] = tonAnnee(r);
+        const choisie = detail && niv === r.n;
+        const fin = r.end.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', ...(r.daysLeft >= 0 ? {} : { year: 'numeric' }) });
+        return html`<li key=${r.n}><button type="button" class=${'esp-ligne sa-ligne' + (choisie ? ' on' : '')} aria-controls="suivi-detail" aria-pressed=${choisie ? 'true' : 'false'} onClick=${() => voirAnnee(r.n)}>
+          <span class="sa-niv" aria-hidden="true">${r.n === 6 ? html`<${Icon} name="cap" size=${22}/>` : NIVEAUX[r.n].short}</span>
+          <span class="sa-corps">
+            <span class="sa-l1"><span class="sr-only">${NIVEAUX[r.n].label}</span> <strong class="sa-obj">${r.objectif.titre}</strong><span class="sa-pct">${pct(r.rate)}</span></span>
+            <${Bar} value=${r.rate} pace=${r.daysLeft >= 0 ? r.elapsed : undefined} label=${`${pct(r.rate)} ont trouvé`}/>
+            <span class="esp-sous sa-faits"><span class="sa-faits-in"><span class=${'sa-ton t-' + tone}><span class="sa-ton-pt" aria-hidden="true"></span>${toneTxt}</span><span>${`${r.found} sur ${r.total}`}</span>${r.pending ? html`<span>${`${r.pending} à confirmer`}</span>` : null}<span>${r.daysLeft >= 0 ? `Échéance ${fin}` : `Échéance passée (${fin})`}</span></span></span>
+          </span></button></li>`;
+      })}</ul>
+      <ul class="sa-legende">
+        <li><span class="sa-lg-plein" aria-hidden="true"></span>part des étudiants qui ont trouvé</li>
+        <li><span class="sa-lg-trait" aria-hidden="true"></span>rythme attendu à cette date (temps écoulé vers l’échéance)</li>
+      </ul>
+    </section>
+
+    <details class="suivi-detail" id="suivi-detail" open=${detail} onToggle=${e => setDetail(e.currentTarget.open)}>
     <summary>${detail ? 'Masquer le détail' : 'Voir le détail'} <${Icon} name="arrow" size=${16}/></summary>
     <div class="suivi-detail-corps">
-    <div class="niv-grid">${st.rows.map(r => {
-      const pace = r.elapsed; const gap = r.rate - pace;
-      const tone = r.rate >= 0.999 ? 'good' : r.daysLeft < 0 ? (r.rate >= 0.9 ? 'good' : 'bad') : gap >= -0.05 ? 'good' : gap >= -0.25 ? 'warn' : 'bad';
-      const toneTxt = r.rate >= 0.999 ? 'Objectif atteint' : r.daysLeft < 0 ? 'Année terminée' : tone === 'good' ? 'Dans les temps' : tone === 'warn' ? 'À surveiller' : 'En retard';
-      return html`<button class=${'niv-card' + (niv === r.n ? ' on' : '')} onClick=${() => setNiv(r.n)} aria-pressed=${niv === r.n}>
-        <div class="niv-top"><span class="niv-badge">${NIVEAUX[r.n].short}</span><span class=${'status s-' + tone}><span class="sdot"></span>${toneTxt}</span></div>
-        <strong class="niv-obj">${r.objectif.titre}</strong>
-        <div class="niv-num"><span class="big">${pct(r.rate)}</span><span class="muted small">${r.found} sur ${r.total}${r.pending ? ` · ${r.pending} à confirmer` : ''}</span></div>
-        <${Bar} value=${r.rate} pace=${r.daysLeft >= 0 ? pace : undefined} label=${`${pct(r.rate)} ont trouvé`}/>
-        <span class="small muted">${r.daysLeft >= 0 ? `Échéance ${r.end.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })} · J-${r.daysLeft}` : `Échéance passée (${r.end.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric' })})`} · ${r.via} via la plateforme</span>
-      </button>`;
-    })}</div>
-    <p class="legend small muted"><span class="lg-fill"></span> part des étudiants qui ont trouvé <span class="lg-pace"></span> rythme attendu à cette date (temps écoulé vers l’échéance)</p>
-    <${SuccessFeed} ctx=${ctx} max=${5} lien=${false}/>
-
-    <div class="two-col">
-      <div class="panel">
-        <div class="section-head"><h2>Par filière</h2><span class="muted small">${NIVEAUX[niv].label} · ${row.objectif.court}</span></div>
-        <table class="tbl heat"><thead><tr><th>Filière</th><th class="num">Trouvé</th><th>Progression</th></tr></thead><tbody>
-          ${row.byFiliere.map(f => html`<tr><td>${f.filiere}</td><td class="num">${f.found}/${f.total}</td><td class="bar-cell"><${Bar} value=${f.total ? f.found / f.total : 0}/></td></tr>`)}
-        </tbody></table>
-      </div>
-      <div class="panel">
-        <div class="section-head"><h2>Encore en recherche</h2><span class="muted small">${row.searching.length} · ${NIVEAUX[niv].short}</span></div>
-        ${canSeeNames ? html`<p class="muted small">Un message ou une offre ciblée peut tout changer pour eux.</p>
-          <ul class="people-list">${row.searching.slice(0, 12).map(p => { const s = statutOf(data, p, saison); return html`<li><${Person} p=${p} onOpen=${openProfile} size=${30}/><span class=${'state-pill s-' + s.key}>${s.label}</span></li>`; })}</ul>
-          ${row.searching.length > 12 ? html`<p class="small muted">et ${row.searching.length - 12} autres (voir la Vitrine des talents dans Communauté).</p>` : null}`
-        : html`<p class="muted">${row.searching.length} étudiant${row.searching.length > 1 ? 's' : ''} de ${NIVEAUX[niv].short} cherchent encore. Les lauréats voient la liste des profils ouverts dans la Vitrine des talents pour leur proposer des offres.</p>`}
-      </div>
+    <h2 class="esp-h suivi-detail-titre">${`${NIVEAUX[niv].label} · ${row.objectif.court}`}</h2>
+    <div class="sd-paire">
+      <section class="esp-bloc sd-filieres" aria-labelledby="sd-fil-titre">
+        <h2 class="esp-h" id="sd-fil-titre">Par filière</h2>
+        <ul class="esp-lignes">${row.byFiliere.map(f => {
+          const code = filiereCourte(f.filiere);
+          return html`<li key=${f.filiere}><div class="esp-ligne sd-fil">
+            <strong class="sd-fil-code" translate="no">${code}</strong>
+            <${Bar} value=${f.total ? f.found / f.total : 0} label=${`${f.found} sur ${f.total}`}/>
+            <span class="sd-fil-n">${`${f.found} sur ${f.total}`}</span>
+            ${code !== f.filiere ? html`<span class="esp-sous sd-fil-nom">${f.filiere}</span>` : null}
+          </div></li>`;
+        })}</ul>
+      </section>
+      <section class="esp-bloc sd-cherche" aria-labelledby="sd-cherche-titre">
+        <h2 class="esp-h" id="sd-cherche-titre">Encore en recherche <span class="count">${row.searching.length}</span></h2>
+        ${row.searching.length ? html`<p class="esp-sous sd-note">Un message ou une offre ciblée peut tout changer pour eux.</p>
+          <ul class="esp-lignes" id="sd-cherche-liste">${cherchent.map(p => {
+            const s = statutOf(data, p, saison);
+            return html`<li key=${p.id}><div class="esp-ligne"><${Person} p=${p} onOpen=${openProfile} size=${40}
+              sub=${html`<span translate="no">${filiereCourte(p.filiere)}</span> · <span class=${'sd-etat s-' + s.key}>${s.label}</span>`}/></div></li>`;
+          })}</ul>
+          ${row.searching.length > CHERCHENT_N ? html`<button type="button" class="linkish sd-plus" aria-controls="sd-cherche-liste" aria-expanded=${tousCherchent ? 'true' : 'false'}
+            onClick=${() => setTousCherchent(!tousCherchent)}>${tousCherchent ? 'Voir moins' : `Voir les ${row.searching.length - CHERCHENT_N} autres`}</button>` : null}`
+        : html`<p class="esp-sous sd-note">Plus personne ne cherche dans cette année.</p>`}
+      </section>
     </div>
+    <${SuccessFeed} ctx=${ctx} max=${3} lien=${false}/>
 
     <div class="panel">
       <div class="section-head"><h2>Activité des 12 derniers mois</h2>
-        <span class="legend small"><span class="sw s1"></span> Offres publiées <span class="sw s2"></span> Réussites confirmées par un lauréat</span></div>
+        <span class="legend small"><span class="lg-item"><span class="sw s1"></span>Offres publiées</span><span class="lg-item"><span class="sw s2"></span>Réussites confirmées par un lauréat</span></span></div>
       <${MonthChart} months=${months}/>
     </div>
 
@@ -101,19 +155,39 @@ function SeasonPage({ ctx }) {
     </div>
     ${me.role === 'admin' ? html`<${ExportBox} data=${data} saison=${saison} rows=${st.rows}/>` : null}
     </div></details>
+    <//>
   </section>`;
 }
+// Encore en recherche : les premiers, puis tous à la demande (le compte du titre dit le total)
+const CHERCHENT_N = 6;
 
+// Sur téléphone, le graphique défile en largeur : il s'ouvre sur les mois les plus récents, au bout à droite
+// (en arabe, le défilement part déjà de là), la première fois qu'il paraît (le détail est replié au départ) ;
+// l'échelle se répète à ce bout-là, pour lire les barres sans revenir au début
 function MonthChart({ months }) {
-  const W = 720, H = 220, L = 34, B = 26, T = 12;
+  const wrap = useRef(null);
+  useEffect(() => {
+    const el = wrap.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(([e]) => {
+      if (!e.isIntersecting) return;
+      io.disconnect();
+      if (getComputedStyle(el).direction !== 'rtl') el.scrollLeft = el.scrollWidth;
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  // L : l'échelle au début ; R : la même échelle au bout, montrée seulement quand le graphique défile (téléphone)
+  const W = 720, H = 220, L = 34, R = 30, B = 26, T = 12;
   const max = Math.max(4, ...months.flatMap(m => [m.offres, m.placements]));
   const step = max <= 8 ? 2 : max <= 20 ? 5 : 10;
   const top = Math.ceil(max / step) * step;
   const y = v => T + (H - T - B) * (1 - v / top);
-  const gw = (W - L) / months.length, bw = Math.min(16, gw / 3.2);
+  const gw = (W - L - R) / months.length, bw = Math.min(16, gw / 3.2);
   const ticks = []; for (let v = 0; v <= top; v += step) ticks.push(v);
-  return html`<div class="chart-wrap" tabindex="0" role="region" aria-label="Graphique : offres et réussites par mois"><svg viewBox=${`0 0 ${W} ${H}`} class="chart" role="img" aria-label="Offres publiées et réussites confirmées par mois">
-    ${ticks.map(v => html`<g><line x1=${L} x2=${W} y1=${y(v)} y2=${y(v)} class="grid"/><text x=${L - 6} y=${y(v) + 4} class="axis" text-anchor="end">${v}</text></g>`)}
+  return html`<div class="chart-wrap" ref=${wrap} tabindex="0" role="region" aria-label="Graphique : offres et réussites par mois"><svg viewBox=${`0 0 ${W} ${H}`} class="chart" role="img" aria-label="Offres publiées et réussites confirmées par mois">
+    ${ticks.map(v => html`<g><line x1=${L} x2=${W - R} y1=${y(v)} y2=${y(v)} class="grid"/><text x=${L - 6} y=${y(v) + 4} class="axis" text-anchor="end">${v}</text>
+      <text x=${W - R + 6} y=${y(v) + 4} class="axis axis-fin" text-anchor="start" aria-hidden="true">${v}</text></g>`)}
     ${months.map((m, i) => { const x = L + i * gw + gw / 2; return html`<g>
       <rect x=${x - bw - 1} y=${y(m.offres)} width=${bw} height=${Math.max(0, y(0) - y(m.offres))} rx="3" class="s1"><title>${m.label} : ${m.offres} offres publiées</title></rect>
       <rect x=${x + 1} y=${y(m.placements)} width=${bw} height=${Math.max(0, y(0) - y(m.placements))} rx="3" class="s2"><title>${m.label} : ${m.placements} réussites confirmées</title></rect>
@@ -158,9 +232,9 @@ function PromoPage({ ctx }) {
   const n = niveauOf(me, saison);
   const st = useMemo(() => seasonStats(data, saison), [data, saison]);
   const row = st.rows.find(r => r.n === n);
-  if (!row) return html`<section class="page"><header class="page-head"><div><p class="eyebrow">${seasonLabel(saison)}</p><h1>Mon année</h1></div></header>
-    <${SuiviSeg} ctx=${ctx} on="placement"/>
-    <div class="panel"><p>Le suivi commence en 3e année. En attendant, profite de l’Entraide et du mentorat pour découvrir les métiers des lauréats.</p></div></section>`;
+  if (!row) return html`<section class="page">
+    <${EnTetePage} surTitre=${seasonLabel(saison)} titre="Mon année"><${SuiviSeg} ctx=${ctx} on="placement"/><//>
+    <${VueSuivi} on="placement"><div class="panel"><p>Le suivi commence en 3e année. En attendant, profite de l’Entraide et du mentorat pour découvrir les métiers des lauréats.</p></div><//></section>`;
   const companies = new Map();
   for (const pl of row.foundList) companies.set(pl.entreprise, (companies.get(pl.entreprise) || 0) + 1);
   const comp = [...companies.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
@@ -174,31 +248,32 @@ function PromoPage({ ctx }) {
   const phraseFil = pourFiliere > 1 ? `${pourFiliere} offres ciblent ta filière` : '1 offre cible ta filière';
   const tete = (id, ic, titre) => html`<div class="pr-tete"><span class="pr-stat-ico" aria-hidden="true"><${Icon} name=${ic} size=${18}/></span><h2 id=${id}>${titre}</h2></div>`;
   return html`<section class="page promo">
-    <header class="page-head"><div><p class="eyebrow">${seasonLabel(saison)} · ${NIVEAUX[n].label}</p><h1>Mon année</h1></div></header>
-    <${SuiviSeg} ctx=${ctx} on="placement"/>
+    <${EnTetePage} surTitre=${`${seasonLabel(saison)} · ${NIVEAUX[n].label}`} titre="Mon année"><${SuiviSeg} ctx=${ctx} on="placement"/><//>
+    <${VueSuivi} on="placement">
     <div class="pr-avant">
       <section class="pr-stat pr-offres" aria-labelledby="pr-offres-t">
         ${tete('pr-offres-t', 'feed', 'Offres pour ton année')}
-        <p class="pr-chiffre"><span class="pr-stat-num"><${Num} v=${ouvertes}/></span><span class="pr-stat-lbl">${ouvertes > 1 ? 'ouvertes en ce moment' : 'ouverte en ce moment'}</span></p>
+        <p class="pr-chiffre"><span class="pr-stat-num"><${Compteur} v=${ouvertes}/></span><span class="pr-stat-lbl">${ouvertes > 1 ? 'ouvertes en ce moment' : 'ouverte en ce moment'}</span></p>
         ${pourFiliere ? html`<${Bar} value=${pourFiliere / ouvertes} label=${phraseFil}/>
           <ul class="tr-legende"><li><span class="tr-dot tr-fil" aria-hidden="true"></span>${phraseFil}</li></ul>` : null}
         <button type="button" class="linkish small pr-stat-go" onClick=${() => go('offres')}>Voir les offres <${Icon} name="arrow" size=${14}/></button>
       </section>
       ${row.found ? html`<section class="pr-stat good pr-trouve" aria-labelledby="pr-trouve-t">
         ${tete('pr-trouve-t', 'check', 'Camarades qui ont trouvé')}
-        <p class="pr-chiffre"><span class="pr-stat-num"><${Num} v=${row.found}/></span><span class="pr-stat-lbl">${`sur ${row.total} inscrits de ton année`}</span></p>
+        <p class="pr-chiffre"><span class="pr-stat-num"><${Compteur} v=${row.found}/></span><span class="pr-stat-lbl">${`sur ${row.total} inscrits de ton année`}</span></p>
         <${BarreTrouves} via=${row.via} autres=${row.found - row.via} attente=${row.pending} total=${row.total}/>
         ${mine?.found ? html`<div class="pr-fil"><span class="pr-fil-l" title=${me.filiere}>Ta filière</span><${Bar} value=${mine.found / mine.total} label=${`${mine.found} sur ${mine.total}`}/><span class="small mono">${mine.found} sur ${mine.total}</span></div>` : null}
         <p class="small muted pr-calme">Chacun avance à son rythme : les lauréats publient toute l’année.</p>
       </section>` : html`<section class="pr-stat good" aria-labelledby="pr-aide-t">
         ${tete('pr-aide-t', 'mentor', 'Des lauréats pour t’aider')}
-        <p class="pr-chiffre"><span class="pr-stat-num"><${Num} v=${aidants}/></span><span class="pr-stat-lbl">${aidants > 1 ? 'lauréats de ta filière dans le réseau' : 'lauréat de ta filière dans le réseau'}</span></p>
+        <p class="pr-chiffre"><span class="pr-stat-num"><${Compteur} v=${aidants}/></span><span class="pr-stat-lbl">${aidants > 1 ? 'lauréats de ta filière dans le réseau' : 'lauréat de ta filière dans le réseau'}</span></p>
         <button type="button" class="linkish small pr-stat-go" onClick=${() => go('mentorat')}>Trouver un mentor <${Icon} name="arrow" size=${14}/></button>
       </section>`}
     </div>
     <${SuccessFeed} ctx=${ctx} max=${3} lien=${false}/>
-    ${comp.length ? html`<div class="panel"><div class="section-head"><h2>Où vont les étudiants de ton année</h2></div>
-      <ul class="company-cloud pr-entreprises">${comp.map(([c, k]) => html`<li><${CompanyLogo} name=${c} size=${34}/><span class="pr-ent"><span translate="no" dir="auto">${c}</span><span class="pr-ent-bar" aria-hidden="true" style=${`width:${(k / maxComp) * 100}%`}></span></span><span class="count">${k}</span></li>`)}</ul></div>` : null}
+    ${comp.length ? html`<section class="esp-bloc" aria-labelledby="pr-ent-titre"><h2 class="esp-h" id="pr-ent-titre">Où vont les étudiants de ton année</h2>
+      <ul class="esp-lignes pr-entreprises">${comp.map(([c, k]) => html`<li key=${c}><div class="esp-ligne"><${CompanyLogo} name=${c} size=${40}/><span class="pr-ent"><span class="pr-ent-nom" translate="no" dir="auto">${c}</span><span class="pr-ent-piste" aria-hidden="true"><span class="pr-ent-bar" style=${`width:${(k / maxComp) * 100}%`}></span></span></span><span class="pr-ent-n">${k}</span></div></li>`)}</ul></section>` : null}
+    <//>
   </section>`;
 }
 
@@ -225,13 +300,113 @@ injectCSS('dashboard-promo', `
 .tr-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; }
 .pr-fil { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: .6rem; font-size: var(--fs-2); color: var(--ink-2); padding-top: .5rem; border-top: 1px solid var(--line); }
 .pr-fil .bar-fill { background: var(--good); }
-.pr-ent { display: flex; flex-direction: column; gap: .3rem; min-width: 0; }
-.company-cloud .pr-ent > .pr-ent-bar { flex: none; display: block; height: 4px; border-radius: 2px; background: var(--good); min-width: 4px; }
 @media (max-width: 640px) { .pr-avant { grid-template-columns: minmax(0, 1fr); } }
-/* Lauréats et administration : la part en un coup d'œil, en vert comme tout ce qui est trouvé */
-.suivi-kpis .bar { margin-block: .25rem .1rem; }
-.suivi-kpis .bar-fill { background: var(--good); }
 @media (max-width: 420px) { .pr-stat { padding: .9rem .85rem; } .pr-stat-num { font-size: var(--fs-6); } }
+/* Où vont les étudiants de ton année : une ligne par entreprise, la barre en vert sous le nom, le nombre au bout */
+.pr-entreprises .esp-ligne { min-height: 60px; padding-block: .6rem; }
+.pr-ent { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .35rem; }
+.pr-ent-nom { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* En arabe, un nom d'entreprise en lettres latines reste calé à droite, au-dessus de sa barre */
+:root[dir="rtl"] .pr-ent-nom { text-align: right; }
+.pr-ent-piste { display: block; block-size: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.pr-entreprises .pr-ent-bar { display: block; block-size: 100%; min-width: 6px; border-radius: 3px; background: var(--good); transform-origin: left center; }
+[dir="rtl"] .pr-entreprises .pr-ent-bar { transform-origin: right center; }
+@media (prefers-reduced-motion: no-preference) { .pr-entreprises .pr-ent-bar { animation: grow-x .4s var(--ease) .1s backwards; } }
+.pr-ent-n { flex: none; min-width: 2ch; text-align: end; font: 750 var(--fs-5)/1 var(--f-display); font-variant-numeric: tabular-nums; color: var(--ink); }
+/* La barre empilée de « Mon année » se remplit à l'arrivée, comme les autres */
+.tr-barre { transform-origin: left center; }
+[dir="rtl"] .tr-barre { transform-origin: right center; }
+@media (prefers-reduced-motion: no-preference) { .tr-barre { animation: grow-x .4s var(--ease) .1s backwards; } }
+
+/* ===== Placement | Insertion : la rangée d'onglets sous le titre, puis le panneau de l'onglet ===== */
+.suivi-seg button { display: inline-flex; align-items: center; justify-content: center; gap: .35rem; }
+@media (max-width: 560px) {
+  .suivi-seg { display: flex; }
+  .suivi-seg button { flex: 1 1 auto; min-height: 44px; padding-inline: .5rem; }
+}
+/* Le panneau garde l'arrivée des blocs d'une page (l'un après l'autre ; un simple fondu en mouvement réduit) */
+.suivi-vue { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
+.suivi-page > .suivi-vue { gap: 1.5rem; }
+.page > div.suivi-vue { animation: none; }
+.suivi-vue > * { animation: rise .4s var(--ease) backwards; }
+.suivi-vue > :nth-child(1) { animation-delay: .04s; } .suivi-vue > :nth-child(2) { animation-delay: .08s; }
+.suivi-vue > :nth-child(3) { animation-delay: .12s; } .suivi-vue > :nth-child(n+4) { animation-delay: .16s; }
+
+/* ===== Tableau de bord (lauréats, administration) : un anneau, trois faits, puis chaque année d'études en barre ===== */
+.suivi-page { gap: 1.5rem; }
+.suivi-page .en-tete-txt { flex-basis: 12rem; }
+.suivi-page .season-pick select { min-height: 44px; }
+.suivi-hero { display: flex; align-items: center; gap: 1.25rem; padding: 1.2rem 1.2rem 1.25rem; border-radius: var(--r-xl); background: var(--surface); box-shadow: var(--sh1); min-width: 0; }
+.suivi-hero .anneau { --trait: var(--good); }
+.suivi-hero .anneau-centre { display: flex; flex-direction: column; align-items: center; gap: .1rem; }
+.sh-pct { font: 750 var(--fs-6)/1 var(--f-display); letter-spacing: -.02em; color: var(--ink); }
+.sh-pct-l { font: 500 var(--fs-1)/1.2 var(--f-body); color: var(--muted); }
+.sh-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .3rem; }
+.sh-txt h2 { margin: 0; display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 .4rem; }
+.sh-n { font: 750 var(--fs-titre)/1.05 var(--f-display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; color: var(--ink); }
+.sh-sur { font: 600 var(--fs-3)/1.3 var(--f-body); color: var(--ink-2); }
+.sh-qui { margin: 0; font-size: var(--fs-2); color: var(--muted); }
+.sh-faits { list-style: none; margin: .45rem 0 0; padding: .65rem 0 0; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: .4rem; }
+.sh-faits li { display: flex; align-items: baseline; gap: .55rem; font-size: var(--fs-2); line-height: 1.4; color: var(--ink-2); }
+.sh-faits strong { font-size: var(--fs-3); font-weight: 750; font-variant-numeric: tabular-nums; color: var(--ink); }
+.sh-pt { flex: none; inline-size: 8px; block-size: 8px; border-radius: 50%; transform: translateY(-1px); }
+.sh-pt.bien { background: var(--good); } .sh-pt.attente { background: var(--muted); } .sh-pt.offres { background: var(--accent); }
+@media (max-width: 480px) {
+  /* L'anneau à gauche du chiffre, les trois faits en dessous sur toute la largeur */
+  .suivi-hero { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 1rem; row-gap: .9rem; padding: 1rem; }
+  .suivi-hero .sh-txt { display: contents; }
+  .suivi-hero > .anneau { grid-row: 1 / span 2; }
+  .suivi-hero .sh-txt h2 { grid-column: 2; align-self: end; }
+  .suivi-hero .sh-qui { grid-column: 2; align-self: start; }
+  .sh-faits { grid-column: 1 / -1; margin-top: 0; }
+}
+/* Chaque année d'études : son objectif et sa part en %, la barre qui se remplit (et le trait du rythme attendu),
+   puis la lecture (dans les temps, à surveiller…) et les chiffres, coupés seulement entre deux faits */
+.suivi-annees .esp-lignes > li + li::before { inset-inline-start: calc(1rem + 44px + .85rem); }
+.suivi-annees .sa-ligne { align-items: flex-start; padding-block: .85rem; }
+.sa-ligne.on { background: var(--sel-bg); }
+.sa-niv { flex: none; display: grid; place-items: center; inline-size: 44px; block-size: 44px; border-radius: var(--r-md); background: var(--accent-soft); color: var(--blue-text); font: 750 var(--fs-3)/1 var(--f-display); }
+.sa-corps { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .5rem; }
+.sa-l1 { display: flex; align-items: baseline; gap: .75rem; }
+.sa-obj { flex: 1; min-width: 0; font-weight: 650; line-height: 1.3; color: var(--ink); }
+.sa-pct { flex: none; font: 750 var(--fs-5)/1 var(--f-display); font-variant-numeric: tabular-nums; color: var(--ink); }
+.sa-corps > .bar { height: 8px; }
+.sa-corps > .bar .bar-fill { background: var(--good); }
+/* Les faits passent à la ligne entre deux faits seulement ; le point qui les sépare tombe hors champ en début de ligne */
+.sa-faits { display: block; overflow: hidden; line-height: 1.45; }
+.sa-faits-in { display: flex; flex-wrap: wrap; margin-inline-start: -1.1em; }
+.sa-faits-in > span { white-space: nowrap; }
+.sa-faits-in > span::before { content: "·"; content: "·" / ""; display: inline-block; inline-size: 1.1em; text-align: center; color: var(--muted); font-weight: 400; }
+.sa-ton { font-weight: 650; }
+.sa-ton-pt { display: inline-block; inline-size: 8px; block-size: 8px; border-radius: 50%; background: currentColor; margin-inline-end: .35rem; transform: translateY(-1px); }
+.sa-ton.t-good { color: var(--good); } .sa-ton.t-warn { color: var(--warn); } .sa-ton.t-bad { color: var(--bad); }
+.sa-legende { list-style: none; margin: 0; padding: 0 .25rem; display: flex; flex-wrap: wrap; gap: .3rem 1.1rem; font-size: var(--fs-2); line-height: 1.4; color: var(--muted); }
+.sa-legende li { display: inline-flex; align-items: center; gap: .5rem; }
+.sa-lg-plein { flex: none; inline-size: 18px; block-size: 8px; border-radius: 4px; background: var(--good); }
+.sa-lg-trait { flex: none; inline-size: 2px; block-size: 14px; border-radius: 1px; background: var(--ink); margin-inline: 8px; }
+.suivi-detail-titre { margin: 0; }
+/* Une année touchée : la page glisse jusqu'au détail, qui s'arrête sous la barre du haut */
+.suivi-detail { scroll-margin-top: 80px; }
+/* Le détail d'une année : chaque filière sur deux lignes (le code, la barre verte, la part ; puis son nom en clair),
+   les barres alignées d'une filière à l'autre ; puis ceux qui cherchent encore */
+.sd-paire { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.5rem; align-items: start; }
+.sd-filieres .esp-lignes > li + li::before { inset-inline-start: 1rem; }
+.sd-filieres .esp-lignes .sd-fil { display: grid; grid-template-columns: 5.25rem minmax(0, 1fr) minmax(4.5rem, auto); align-items: center; gap: .15rem .75rem; min-height: 0; padding-block: .7rem; }
+.sd-fil-code { min-width: 0; font-weight: 650; color: var(--ink); overflow-wrap: anywhere; }
+.sd-fil-n { font-size: var(--fs-2); font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink-2); text-align: end; white-space: nowrap; }
+.sd-fil-nom { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sd-fil .bar { margin: 0; }
+.sd-fil .bar-fill { background: var(--good); }
+.sd-note { margin: 0; }
+.sd-plus { align-self: flex-start; display: inline-flex; align-items: center; min-height: 44px; margin-top: -.5rem; font-size: var(--fs-2); }
+.sd-etat { font-weight: 600; background: none; }
+.sd-etat::before { content: ""; display: inline-block; inline-size: 7px; block-size: 7px; border-radius: 50%; background: currentColor; margin-inline-end: .3rem; transform: translateY(-1px); }
+.sd-etat.s-entretiens { color: var(--blue-text); } .sd-etat.s-validation { color: var(--brass); } .sd-etat.s-candidatures, .sd-etat.s-recherche { color: var(--ink-2); }
+@media (min-width: 900px) { .sd-paire { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 900px) {
+  .suivi-hero { padding: 1.5rem 1.75rem; gap: 2rem; }
+  .sh-faits { flex-direction: row; flex-wrap: wrap; gap: .4rem 1.75rem; }
+}
 `);
 
 addAR({
@@ -244,7 +419,14 @@ addAR({
   'lauréat de ta filière dans le réseau': 'خريج من شعبتك في الشبكة',
   '1 offre cible ta filière': 'عرض واحد يستهدف شعبتك',
   'Chacun avance à son rythme : les lauréats publient toute l’année.': 'كل واحد يتقدم بإيقاعه: ينشر الخريجون العروض طوال السنة.',
+  // Tableau de bord : l'anneau, les trois faits, les années d'études
+  'Vue du suivi': 'عرض المتابعة', 'ont trouvé': 'وجدوا فرصتهم', 'Par année d’études': 'حسب سنة الدراسة',
+  '3A, 4A, 5A et jeunes diplômés': '3A و4A و5A والخريجون الجدد', 'à confirmer par l’étudiant': 'في انتظار تأكيد الطالب',
+  'Plus personne ne cherche dans cette année.': 'لم يعد أحد يبحث في هذه السنة.',
 }, [
+  [/^Voir les (\d+) autres$/, n => `عرض الآخرين (${n})`],
+  [/^sur (\d+) inscrits?$/, k => `من أصل ${arCount(k, ['مسجَّل واحد', 'مسجَّلَين', 'مسجَّلين', 'مسجَّلًا'])}`],
+  [/^grâce à la plateforme \((\d+(?:[.,]\d+)?)\s?% des réussites\)$/, k => `بفضل المنصة (${k}% من النجاحات)`],
   [/^(\d+) offres ciblent ta filière$/, k => `${arCount(k, ['عرض واحد', 'عرضان', 'عروض', 'عرضًا'])} تستهدف شعبتك`],
   [/^sur (\d+) inscrits? de ton année$/, k => `من أصل ${arCount(k, ['مسجَّل واحد', 'مسجَّلَين', 'مسجَّلين', 'مسجَّلًا'])} في سنتك`],
   [/^(\d+) grâce à un lauréat$/, k => `${k} بفضل خريج`],
@@ -311,15 +493,12 @@ addAR({
   [/^(\d+) groupes? \(promo et vague\) ont encore moins de 5 réponses : leurs résultats s’afficheront plus tard\.$/, n => `${n} ${+n === 1 ? 'مجموعة' : 'مجموعات'} (دفعة وموجة) لها أقل من 5 أجوبة بعد: ستظهر نتائجها لاحقاً.`],
   [/^Total (6|12) mois$/, v => `المجموع ${v === '12' ? '12 شهراً' : '6 أشهر'}`],
   [/^Généré le (.+)$/, d => `أُنجز في ${d}`],
-  [/^et (\d+) autres \(voir la Vitrine des talents dans Communauté\)\.$/, n => `و${arCount(n, ['طالب آخر', 'طالبان آخران', 'طلبة آخرون', 'طالبًا آخر'])} (انظر واجهة المواهب في الشبكة).`],
   [/^Promo (\d{4}) · (6|12) mois$/, (p, v) => `دفعة ${p} · ${v === '12' ? '12 شهراً' : '6 أشهر'}`],
   [/^(\d+) lignes?$/, n => `${n} ${+n === 1 ? 'سطر' : 'أسطر'}`],
   [/^En poste (\d+), En recherche (\d+), Poursuite d’études (\d+), Autre situation (\d+)$/, (a, b, c, d) => `يعملون ${a}، في طور البحث ${b}، متابعة الدراسة ${c}، وضعية أخرى ${d}`],
 ]);
 
 injectCSS('dashboard-insertion', `
-.suivi-seg { align-self: flex-start; }
-.suivi-seg button { display: inline-flex; align-items: center; gap: .35rem; }
 .ins-pick { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
 .ins-pick select { min-width: 7.5rem; }
 .ins-stats { display: flex; flex-direction: column; gap: 1.1rem; }
@@ -335,6 +514,8 @@ injectCSS('dashboard-insertion', `
 .ins-bars li > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ins-bars .v { text-align: end; }
 .tbl-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+/* Le tableau qui défile se prend au clavier (flèches), avec un contour visible */
+.tbl-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm, 6px); }
 .tbl tr.click { cursor: pointer; }
 .tbl tr.click:hover td { background: var(--surface-2); }
 .tbl tr.sel td { background: var(--accent-soft); }
@@ -358,11 +539,12 @@ injectCSS('dashboard-insertion', `
 @media print {
   body.print-ins { --ink: #000; --ink-2: #222; --muted: #555; --line: #bbb; --surface: #fff; --surface-2: #eef2f6; --bg: #fff; background: #fff !important; color: #000 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   body.print-ins::before { display: none !important; }
-  body.print-ins .side, body.print-ins .top, body.print-ins .bottom-nav, body.print-ins .demo-band, body.print-ins .ins-noprint, body.print-ins .toast { display: none !important; }
+  body.print-ins .side, body.print-ins .top, body.print-ins .bottom-nav, body.print-ins .demo-band, body.print-ins .ins-noprint, body.print-ins .toast, body.print-ins .insertion > .en-tete { display: none !important; }
   body.print-ins .shell { display: block !important; }
   body.print-ins .content { padding: 0 !important; }
   body.print-ins .page { max-width: none !important; gap: .4rem !important; }
-  body.print-ins .page > * { animation: none !important; }
+  body.print-ins .page > *, body.print-ins .suivi-vue > * { animation: none !important; }
+  body.print-ins .suivi-vue { gap: .4rem !important; }
   body.print-ins .ins-print-head { display: block !important; margin-bottom: 6mm; }
   body.print-ins .ins-print-head h1 { font-size: 16pt; margin: 0 0 2mm; }
   body.print-ins .ins-print-head p { margin: 0 0 1mm; font-size: 9pt; }
@@ -395,13 +577,14 @@ function InsertionPage({ ctx }) {
   const due = enqueteDue(me, data.enquetes_insertion || []);
 
   return html`<section class="page insertion">
-    <header class="page-head ins-noprint"><div><p class="eyebrow">Enquête d’insertion</p><h1>${etu ? 'Après le diplôme' : 'Insertion des diplômés'}</h1></div>
-      ${promos.length ? html`<div class="ins-pick">
+    <${EnTetePage} surTitre="Enquête d’insertion" titre=${etu ? 'Après le diplôme' : 'Insertion des diplômés'}>
+      <${SuiviSeg} ctx=${ctx} on="insertion"/>
+      ${promos.length ? html`<div class="ins-pick ins-noprint">
         <label class="season-pick">Promotion <select id="ins-promo" value=${p} onChange=${e => { setPromo(+e.target.value); setVague(null); }}>${promos.map(x => html`<option value=${x}>${x}</option>`)}</select></label>
-        ${vagues.length > 1 ? html`<div class="seg small-seg" role="group" aria-label="Vague">${vagues.map(x => html`<button class=${x === v ? 'on' : ''} aria-pressed=${x === v} onClick=${() => setVague(x)}>${x} mois</button>`)}</div>` : null}
+        ${vagues.length > 1 ? html`<div class="seg small-seg" role="group" aria-label="Vague">${vagues.map(x => html`<button type="button" class=${x === v ? 'on' : ''} aria-pressed=${x === v} onClick=${() => setVague(x)}>${x} mois</button>`)}</div>` : null}
       </div>` : null}
-    </header>
-    <${SuiviSeg} ctx=${ctx} on="insertion"/>
+    <//>
+    <${VueSuivi} on="insertion">
     ${due ? html`<div class="hint-box ins-noprint"><${Icon} name="chart" size=${16}/><span class="grow">Ta réponse compte : elle aide les promos suivantes.</span><button class="btn small primary" onClick=${() => go('enquete')}>Répondre</button></div>` : null}
 
     <div class="ins-stats ins-noprint">
@@ -432,6 +615,7 @@ function InsertionPage({ ctx }) {
       ${caches && !admin ? html`<p class="small muted">${caches} groupe${caches > 1 ? 's' : ''} (promo et vague) ont encore moins de 5 réponses : leurs résultats s’afficheront plus tard.</p>` : null}
     </div>
     ${admin ? html`<${RapportPanel} ctx=${ctx} stats=${rows}/>` : null}
+    <//>
   </section>`;
 }
 
@@ -528,7 +712,7 @@ function RapportPanel({ ctx, stats }) {
       <div class="seg small-seg" role="group" aria-label="Vague">${[[0, 'Les deux vagues'], [6, '6 mois'], [12, '12 mois']].map(([k, l]) => html`<button class=${vague === k ? 'on' : ''} aria-pressed=${vague === k} onClick=${() => setVague(k)}>${l}</button>`)}</div>
       <span class="small muted">${list.length} ligne${list.length > 1 ? 's' : ''}</span>
     </div>
-    ${rows === null ? html`<p class="muted">Chargement…</p>` : !list.length ? html`<p class="muted">Aucune ligne pour ces filtres.</p>` : html`<div class="tbl-scroll"><table class="tbl ins-rapport">
+    ${rows === null ? html`<p class="muted">Chargement…</p>` : !list.length ? html`<p class="muted">Aucune ligne pour ces filtres.</p>` : html`<div class="tbl-scroll" tabindex="0" role="region" aria-label="Rapport d’insertion"><table class="tbl ins-rapport">
       <thead><tr>${COLS.map(([k, l, t]) => html`<th class=${CLS[t] === 'num mono' ? 'num' : ''}>${l}</th>`)}</tr></thead>
       <tbody>${list.map(r => html`<tr>${COLS.map(c => html`<td class=${CLS[c[2]]}>${cell(r, c)}</td>`)}</tr>`)}
         ${tots.map(r => html`<tr class="tot">${COLS.map(c => html`<td class=${CLS[c[2]]}>${c[0] === 'vague' ? `Total ${r.vague} mois` : cell(r, c)}</td>`)}</tr>`)}</tbody>
