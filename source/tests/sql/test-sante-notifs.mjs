@@ -118,6 +118,32 @@ test('Match : chaque côté sans téléphone est noté (-1), l’intérêt aussi
   await db.query('delete from public.push_queue');
 });
 
+test('Match : un « oui » repris après « Plus tard » ne renvoie pas l’intérêt, et ne le renote pas sans téléphone (une fois par jour et par paire)', async () => {
+  const choisir = (u, profil, choix = 'oui') => q(u, `insert into public.match_choix (cible_profil, choix) values ($1, $2)
+    on conflict (user_id, cible_profil) do update set choix = excluded.choix, updated_at = now()`, [profil, choix]);
+  const interets = async u => (await journal(u)).filter(l => l.kind === 'match_interet');
+  // Youssef (téléphone) s'intéresse à Rayan (sans téléphone) : noté une fois (-1)
+  await choisir(LAU, SANS);
+  assert.deepEqual(await interets(SANS), [{ kind: 'match_interet', code: -1 }]);
+  // « Plus tard », puis « oui » encore, deux fois : rien de plus au journal (avant : un -1 à chaque « oui »)
+  for (let i = 0; i < 2; i++) { await choisir(LAU, SANS, 'plus_tard'); await choisir(LAU, SANS); }
+  assert.deepEqual(await interets(SANS), [{ kind: 'match_interet', code: -1 }]);
+  // Retiré puis refait : pareil
+  await q(LAU, 'delete from public.match_choix where cible_profil = $1', [SANS]); await choisir(LAU, SANS);
+  assert.deepEqual(await interets(SANS), [{ kind: 'match_interet', code: -1 }]);
+  // Avec un téléphone : une seule notification en file, et rien au journal avant son envoi
+  await choisir(COUPE, ETU);
+  for (let i = 0; i < 2; i++) { await choisir(COUPE, ETU, 'plus_tard'); await choisir(COUPE, ETU); }
+  assert.deepEqual(await file(ETU), ['match_interet']);
+  assert.deepEqual(await interets(ETU), []);
+  // Le lendemain, la même paire peut de nouveau prévenir
+  await db.query(`update public.notif_cadence set at = now() - interval '25 hours' where cle = $1`, ['match_interet:' + SANS + ':' + LAU]);
+  await choisir(LAU, SANS, 'plus_tard'); await choisir(LAU, SANS);
+  assert.deepEqual(await interets(SANS), [{ kind: 'match_interet', code: -1 }, { kind: 'match_interet', code: -1 }]);
+  await db.query('delete from public.match_choix where user_id in ($1, $2)', [LAU, COUPE]);
+  await db.query('delete from public.push_queue');
+});
+
 test('push_resultats : accepté remet à zéro ; 404, 410, ou 3 refus définitifs d’affilée quand le service accepte un autre téléphone, retirent l’abonnement et notent son adresse ; 413 ne compte pas', async () => {
   const ep = n => `https://fcm.googleapis.com/fcm/send/res-${n}`;
   const ids = {};

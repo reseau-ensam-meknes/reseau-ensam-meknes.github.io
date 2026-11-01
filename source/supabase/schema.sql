@@ -5303,29 +5303,23 @@ begin
     end;
     return null;
   end if;
-  -- Pas encore de match : l'intérêt, à la personne visée (sans téléphone abonné : noté au journal, -1)
+  -- Pas encore de match : l'intérêt, à la personne visée, une fois par jour au plus pour une même paire (un « oui » repris
+  -- après « Plus tard » ne repart pas), avec ou sans téléphone : pousser le met en file, ou le note au journal (-1 sans
+  -- téléphone abonné, -2 Match coupé), une fois comme il serait parti
   begin
     if new.user_id = v_lau then
       -- L'étudiant apprend qu'un lauréat s'intéresse à lui ; l'entreprise seulement si le lauréat la montre à tous
-      if exists (select 1 from public.push_subscriptions s where s.user_id = v_etu) then
-        if public.cadence('match_interet:' || v_etu || ':' || v_lau, interval '1 day') then
-          select * into v_l from public.profiles where id = v_lau;
-          perform public.pousser(v_etu, 'match_interet', jsonb_strip_nulls(jsonb_build_object('nom', split_part(v_l.full_name, ' ', 1), 'de', v_lau,
-            'entreprise', case when coalesce(v_l.visibilite ->> 'travail', 'tous') = 'tous' then nullif(btrim(v_l.entreprise), '') end)));
-        end if;
-      else
-        perform public.noter_push(v_etu, 'match_interet', -1);
+      if public.cadence('match_interet:' || v_etu || ':' || v_lau, interval '1 day') then
+        select * into v_l from public.profiles where id = v_lau;
+        perform public.pousser(v_etu, 'match_interet', jsonb_strip_nulls(jsonb_build_object('nom', split_part(v_l.full_name, ' ', 1), 'de', v_lau,
+          'entreprise', case when coalesce(v_l.visibilite ->> 'travail', 'tous') = 'tous' then nullif(btrim(v_l.entreprise), '') end)));
       end if;
     elsif new.cible_offre is not null then
       -- Le lauréat apprend qu'un étudiant s'intéresse à son offre
-      if exists (select 1 from public.push_subscriptions s where s.user_id = v_lau) then
-        if public.cadence('match_interet:' || v_etu || ':' || v_lau, interval '1 day') then
-          perform public.pousser(v_lau, 'match_interet', jsonb_build_object(
-            'nom', split_part((select full_name from public.profiles where id = v_etu), ' ', 1), 'de', v_etu,
-            'titre', (select titre from public.offers where id = new.cible_offre), 'offre', new.cible_offre));
-        end if;
-      else
-        perform public.noter_push(v_lau, 'match_interet', -1);
+      if public.cadence('match_interet:' || v_etu || ':' || v_lau, interval '1 day') then
+        perform public.pousser(v_lau, 'match_interet', jsonb_build_object(
+          'nom', split_part((select full_name from public.profiles where id = v_etu), ' ', 1), 'de', v_etu,
+          'titre', (select titre from public.offers where id = new.cible_offre), 'offre', new.cible_offre));
       end if;
     end if;
   exception when others then raise warning 'match_apres_choix : %', sqlerrm;
