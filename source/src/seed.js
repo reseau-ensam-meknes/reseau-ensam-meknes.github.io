@@ -421,7 +421,26 @@ export function buildSeed(now = new Date()) {
   for (const p of profiles) p.notif_push = {};
   const msgs = seedMessages({ ...base, ...phase3 }, now);
   const dem = seedDemandes({ ...base, ...msgs }, { S, now, daysAgo, id, s5, s4, seniors: seniors.filter(x => x !== youssef && x.entreprise) });
-  return { ...base, ...phase3, ...msgs, ...dem, ...seedVivant({ ...base, ...dem }, now), ...seedMatch({ ...base, ...dem }, now), sponsorises: seedSponsorises(base, now) };
+  const tout = { ...base, ...phase3, ...msgs, ...dem, ...seedVivant({ ...base, ...dem }, now), ...seedMatch({ ...base, ...dem }, now), sponsorises: seedSponsorises(base, now) };
+  seedPlanMembres(tout, { youssef, S });
+  return tout;
+}
+
+// Plan · partie membres (sans tirage au hasard : le reste des données ne bouge pas). Un code d'invitation par persona ;
+// deux lauréats arrivés par le lien de Youssef ; quelques lauréats qui ont dit oui pour la page d'entrée ; trois réussites
+// montrées avec l'accord des deux côtés. Les recrues de Youssef restent à cocher : on l'essaie soi-même.
+const CODES_PERSONAS = { 'Salma Bennani': 'salma5a2', 'Youssef El Amrani': 'youssef6', 'Bureau des relations entreprises': 'bureau27', 'Amine Talbi': 'amine3a4', 'Nadia Ferhat': 'nadia219', 'Hajar Lamrani': 'hajar5a7' };
+function seedPlanMembres(data, { youssef, S }) {
+  const { profiles, placements } = data;
+  for (const p of profiles) if (p._persona) p.code_invitation = CODES_PERSONAS[p.full_name] || null;
+  for (const p of profiles) { p.code_invitation ??= null; p.invite_par ??= null; p.vitrine_publique ??= null; }
+  const apres = profiles.filter(p => p.role === 'laureat' && !p._persona && p.created_at > youssef.created_at)
+    .sort((a, b) => (a.promo === youssef.promo ? 0 : 1) - (b.promo === youssef.promo ? 0 : 1) || b.created_at.localeCompare(a.created_at));
+  for (const p of apres.slice(0, 2)) p.invite_par = youssef.id;
+  profiles.filter(p => p.role === 'laureat' && !p._persona && p.entreprise && p.verified).slice(0, 6).forEach(p => { p.vitrine_publique = true; });
+  for (const pl of placements) { pl.public_etudiant ??= false; pl.public_laureat ??= false; }
+  placements.filter(pl => pl.status === 'confirme' && pl.saison === S && pl.laureat_id && pl.laureat_id !== youssef.id).slice(0, 3)
+    .forEach(pl => { pl.public_etudiant = true; pl.public_laureat = true; });
 }
 
 // Demandes des étudiants : une qui attend une première aide, une qui a reçu une proposition, une réussie

@@ -3,7 +3,7 @@
 const chargerSeed = () => import('./seed.js').then(m => m.buildSeed());
 import { refusOrigine, estPartagee, LIMITE_PARTAGES } from './origine.js';
 import { VIVANT, regleVivant, peutSupprimerVivant, cascadeVivant, memeCible } from './reseau-vivant.js';
-import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage, transitionAmbassadeur, PREFIXE_BROUILLON, refusChoixMatch, nouveauMatch, matchEntre, normaliserSponsorise, refusSponsorise, sponsorisePour, jourLocal, totauxSponsorises } from './logic.js';
+import { attestationStats, seasonOf, niveauOf, sameCompany, entKey, norm, statsInsertion, rapportInsertion, cleNom, peutDiscuter, nonLus, proximiteFiliere, typesDemande, demandesActives, DEMANDES_MAX, bloque, poulsReseau, casErreurAuth, lienPartage, transitionAmbassadeur, PREFIXE_BROUILLON, refusChoixMatch, nouveauMatch, matchEntre, normaliserSponsorise, refusSponsorise, sponsorisePour, jourLocal, totauxSponsorises, codeInvitationValide, invitesDe, visagesPublics, reussitesPubliques } from './logic.js';
 
 const PHASE2 = ['groupe_messages', 'groupe_membres', 'cafes', 'cafe_participants', 'startups', 'defis', 'parrainages'];
 const PHASE3 = ['coordonnees', 'demandes_contact', 'relectures_cv', 'relecture_commentaires', 'entretiens', 'avis_stage', 'guide_pays', 'signalements', 'enquetes_insertion', 'verifications_pairs', 'evenements', 'evenement_participants', 'retours_cv'];
@@ -108,6 +108,12 @@ class Base {
   // Fondateur : ne plus apparaître sur la page d'entrée (false : non ; null : pas encore répondu). En ligne, la photo
   // change aussi de nom (voir SupabaseStore).
   async masquerFondateur(valeur = false) { return this.update('profiles', this.me.id, { fondateur_public: valeur }); }
+  // Plan · partie membres. Un oui retiré pour la page d'entrée (champ : fondateur_public, vitrine_publique) ;
+  // en ligne, la photo change aussi de nom (voir SupabaseStore.masquerPublic)
+  async masquerPublic(champ, valeur = false) { return this.update('profiles', this.me.id, { [champ]: valeur }); }
+  // « Montrer ma photo, mon prénom, ma promo et mon entreprise sur la page d'entrée » (lauréats) : oui, ou non à tout moment.
+  // etaitOui : le choix d'avant, s'il est connu (la vue des profils ne le porte pas)
+  async changerVitrine(oui, etaitOui) { return oui ? this.update('profiles', this.me.id, { vitrine_publique: true }) : this.masquerPublic('vitrine_publique', false, etaitOui); }
   // La photo qu'on vient de choisir s'affiche tout de suite, sans attendre de lien
   retenirPhoto(path, blob) { (this.photosUrl ||= new Map()).set(path, { url: URL.createObjectURL(blob), fin: Date.now() + 5 * 3600e3 }); }
   // Domaines de l'email de l'école (réglage de l'administration), en minuscules
@@ -212,11 +218,43 @@ class DemoStore extends Base {
     this.persist();
   }
   async seDesabonnerRappels() { return true; }
+  // Invitation nommée : le code de chaque persona est dans les données de démo ; un autre membre reçoit le sien la première fois
+  async monCodeInvitation() {
+    const me = this.me; if (!me) return null;
+    if (codeInvitationValide(me.code_invitation)) return me.code_invitation;
+    let code; do code = codeAuHasard(); while (this.data.profiles.some(p => p.code_invitation === code));
+    const r = { ...me, code_invitation: code };
+    this.data.profiles = this.data.profiles.map(p => p.id === me.id ? r : p); this.me = r;
+    this.persist(); this.emit();
+    return code;
+  }
+  // Comme invitation_de() : le prénom, la promo et le rôle de qui invite, dans la même école ; null sinon
+  async invitationDe(code, ecole = this.me?.ecole || 'ensam-meknes') {
+    const p = codeInvitationValide(code) ? this.data.profiles.find(x => x.code_invitation === code && (x.ecole || 'ensam-meknes') === ecole) : null;
+    return p ? { prenom: String(p.full_name || '').trim().split(/\s+/)[0], promo: p.promo, role: p.role } : null;
+  }
+  async mesInvites() { return this.me ? invitesDe(this.data.profiles, this.me.id) : null; }
+  async monAccordVitrine() { return this.me ? this.me.vitrine_publique ?? null : undefined; }
+  // Comme visages_publics() et reussites_publiques() : ce que la page d'entrée montrerait
+  async visagesPublics() { return visagesPublics(this.data.profiles, this.me?.ecole || 'ensam-meknes'); }
+  async reussitesPubliques() { return reussitesPubliques(this.data, this.me?.ecole || 'ensam-meknes'); }
+  // Comme montrer_reussite() : l'étudiant ou le lauréat d'une réussite coche sa case, et seulement la sienne
+  async montrerReussite(id, oui) {
+    const pl = this.byId('placements', id); const me = this.me;
+    const cote = pl && me ? (pl.student_id === me.id ? 'etudiant' : pl.laureat_id === me.id ? 'laureat' : null) : null;
+    if (!cote) throw new Error('Ce choix revient à l’étudiant et au lauréat de cette réussite.');
+    if (oui && pl.status !== 'confirme') throw new Error('Seule une réussite confirmée des deux côtés peut être montrée.');
+    const r = { ...pl, public_etudiant: !!pl.public_etudiant, public_laureat: !!pl.public_laureat, ['public_' + cote]: !!oui };
+    this.data.placements = this.data.placements.map(x => x.id === id ? r : x);
+    this.persist(); this.emit();
+    return { public_etudiant: r.public_etudiant, public_laureat: r.public_laureat };
+  }
   // Démo réinitialisée : comme une déconnexion, les brouillons partent aussi
   async reset() { oublierBrouillons(); this.data = await chargerSeed(); for (const t of [...TABLES, ...TABLES_ADMIN_DEMO]) this.data[t] ||= []; this.reglages = {}; this.me = this.personas()[0]; this.persist(); this.emit(); }
   async insert(table, row) {
     const r = { id: uuid(), created_at: new Date().toISOString(), ...row };
-    if (table === 'placements') applyPlacementRules(this, r, null);
+    if (table === 'placements') { applyPlacementRules(this, r, null); r.public_etudiant = false; r.public_laureat = false; }
+    if (table === 'profiles' && this.me?.role !== 'admin') { r.code_invitation = null; r.invite_par = null; }
     if (table === 'applications') applyApplicationRules(this, r, null);
     if (table === 'mentorships') applyMentorshipRules(this, r, null);
     if (table === 'liens_rdv') applyLienRules(this, r, null);
@@ -264,6 +302,8 @@ class DemoStore extends Base {
     if (PHASE2.includes(table)) applyPhase2Rules(this, table, r, old);
     if (PHASE3.includes(table)) applyPhase3Rules(this, table, r, old);
     if (table === 'profiles') regleRoleDemo(this, r, old);
+    if (table === 'profiles') regleAccordsDemo(this, r, old);
+    if (table === 'placements') regleReussiteDemo(r, old);
     if (table === 'profiles' && this.me?.role !== 'admin' && !(old.admin_ok && ['admin', 'laureat'].includes(r.role))) { r.verified = r.role !== old.role ? false : old.verified; if (!r.verified && verifieAuto(this, r)) r.verified = true; }
     if (table === 'profiles' && this.me?.role === 'admin' && old.verified && !r.verified) this.data.verifications_pairs = this.data.verifications_pairs.filter(v => v.laureat_id !== id);
     this.data[table] = this.data[table].map(x => x.id === id ? r : x);
@@ -576,6 +616,19 @@ function regleRoleDemo(store, r, old) {
   r.admin_ok = !!old.admin_ok;
   r.role = old.role === 'admin' ? 'admin' : r.role === 'admin' ? old.role : r.role;
 }
+// Plan · partie membres, comme la base : personne ne choisit son code ni qui l'a invité (l'administration peut) ;
+// seul le lauréat lui-même dit oui pour la page d'entrée, l'administration peut seulement le retirer
+function regleAccordsDemo(store, r, old) {
+  if (store.me?.role !== 'admin') for (const k of ['code_invitation', 'invite_par']) if (r[k] !== old[k]) r[k] = old[k];
+  if (r.vitrine_publique === true && old.vitrine_publique !== true && (r.id !== store.me?.id || r.role !== 'laureat')) r.vitrine_publique = old.vitrine_publique ?? null;
+}
+// Une réussite montrée : chaque case ne se coche que par montrerReussite() ; décochée par l'administration, elle le reste
+function regleReussiteDemo(r, old) {
+  for (const k of ['public_etudiant', 'public_laureat']) if (r[k] === true && old[k] !== true) r[k] = old[k] ?? false;
+}
+// Un code d'invitation : 8 caractères faciles à lire (ni l, ni o, ni 0, ni 1)
+const ALPHABET_CODE = 'abcdefghijkmnpqrstuvwxyz23456789';
+const codeAuHasard = () => { const b = new Uint8Array(8); crypto.getRandomValues(b); return [...b].map(x => ALPHABET_CODE[x % 32]).join(''); };
 const pairsValides = (data, c) => data.verifications_pairs.filter(v => v.laureat_id === c.id).map(v => data.profiles.find(x => x.id === v.verificateur_id)).filter(x => x && x.role === 'laureat' && x.verified && x.promo === c.promo).length;
 const emailEcole = (store, email) => store.domainesEcole().some(d => (email || '').toLowerCase().endsWith('@' + d) || (email || '').toLowerCase().endsWith('.' + d));
 const verifieAuto = (store, p) => dansListe(store.data, p, demoEmail(p)) || (p.role === 'etudiant' && emailEcole(store, demoEmail(p))) || (p.role === 'laureat' && pairsValides(store.data, p) >= 2);
@@ -1705,21 +1758,57 @@ export class SupabaseStore extends Base {
   // et c'est lui qui en choisit la durée (createSignedUrl). Un tel lien ne vaut que pour ce nom de fichier : la photo est
   // recopiée sous un nouveau nom, le profil pointe vers la copie (même mise à jour que le refus), puis l'original est
   // supprimé ; l'ancien lien ne mène plus à rien. Copie impossible : la photo est retirée plutôt que laissée en ligne.
-  async masquerFondateur(valeur = false) {
+  // Le même geste pour tout oui retiré de la page d'entrée (fondateur_public, vitrine_publique). etaitOui : le oui d'avant
+  // (le profil le porte après un changement ; sinon l'écran le donne, lu dans la base)
+  async masquerFondateur(valeur = false) { return this.masquerPublic('fondateur_public', valeur); }
+  async masquerPublic(champ, valeur = false, etaitOui = this.me?.[champ] === true) {
     const ancien = this.me?.photo_path;
-    if (!ancien || this.me?.fondateur_public !== true) return this.update('profiles', this.userId, { fondateur_public: valeur });
+    if (!ancien || !etaitOui) return this.update('profiles', this.userId, { [champ]: valeur });
     const path = `${this.userId}/photo-${Date.now()}.${ancien.split('.').pop()}`;
     const photos = this.sb.storage.from('photos');
     let copie = false;
     try { copie = !(await photos.copy(ancien, path)).error; } catch { /* copie impossible */ }
     // Réseau coupé : cette mise à jour échoue aussi, et rien n'a changé (le membre réessaie)
-    try { await this.update('profiles', this.userId, { fondateur_public: valeur, photo_path: copie ? path : null }); }
+    try { await this.update('profiles', this.userId, { [champ]: valeur, photo_path: copie ? path : null }); }
     catch (e) { if (copie) photos.remove([path]).catch(() => {}); throw e; }
     for (let essai = 0; essai < 2; essai++) {
       const x = await photos.remove([ancien]).catch(e => ({ error: e }));
       if (!x?.error) break;
     }
     return { photoRetiree: !copie };
+  }
+  // Plan · partie membres. Le code d'invitation du membre (mon_code_invitation le crée la première fois), gardé pour la visite ;
+  // base pas encore à jour ou pas de réseau : null, le lien de la promo part sans code, et on réessaie dans 10 minutes
+  async monCodeInvitation() {
+    const uid = this.userId; if (!uid) return null;
+    const c = this.codeInvitation;
+    if (c?.uid === uid && (c.code || Date.now() - c.t < 600e3)) return c.code || (await c.p);
+    const p = Promise.resolve(this.sb.rpc('mon_code_invitation')).then(({ data, error }) => (!error && codeInvitationValide(data) ? data : null), () => null);
+    this.codeInvitation = { uid, p, t: Date.now(), code: null };
+    const code = await p;
+    if (this.codeInvitation?.uid === uid) this.codeInvitation.code = code;
+    return code;
+  }
+  async mesInvites() {
+    if (!this.userId) return null;
+    const { data, error } = await Promise.resolve(this.sb.rpc('mes_invites')).catch(e => ({ error: e }));
+    if (error || !data) return null;
+    return { n: Math.max(0, Number(data.n) || 0), prenoms: Array.isArray(data.prenoms) ? data.prenoms.filter(x => typeof x === 'string') : [] };
+  }
+  // Le oui du lauréat pour la page d'entrée : la vue des profils ne le porte pas, il est lu sur sa propre ligne.
+  // undefined : on ne sait pas (base pas encore à jour, réseau) ; l'écran ne pose alors pas la question.
+  async monAccordVitrine() {
+    if (!this.userId) return undefined;
+    if (this.me && 'vitrine_publique' in this.me) return this.me.vitrine_publique ?? null;
+    const { data, error } = await Promise.resolve(this.sb.from('profiles').select('vitrine_publique').eq('id', this.userId).maybeSingle()).catch(e => ({ error: e }));
+    return error || !data ? undefined : data.vitrine_publique ?? null;
+  }
+  async montrerReussite(id, oui) {
+    const { data, error } = await this.sb.rpc('montrer_reussite', { p_id: id, p_oui: !!oui });
+    if (error) throw new Error(frError(error));
+    const x = { public_etudiant: !!data?.public_etudiant, public_laureat: !!data?.public_laureat };
+    this.data.placements = this.data.placements.map(p => p.id === id ? { ...p, ...x } : p);
+    this.emit(); return x;
   }
   async liensPhotos(paths) {
     const out = {};
