@@ -38,10 +38,10 @@ test('prevenirVariante : sans notifications possibles, l’email une seule fois,
 // À l'ouverture : « Reçois l'essentiel sur ton téléphone »
 const o = x => ouvertureNotif({ etat: 'off', role: 'etudiant', now: NOW, ...x });
 
-test('ouvertureNotif : seulement un appareil qui peut recevoir sans être abonné, jamais pour l’admin', () => {
+test('ouvertureNotif : seulement un appareil qui peut recevoir sans être abonné, l’admin aussi (ses signalements)', () => {
   assert.equal(o({}), true);
   assert.equal(o({ role: 'laureat' }), true);
-  assert.equal(o({ role: 'admin' }), false);
+  assert.equal(o({ role: 'admin' }), true);
   for (const etat of ['on', 'ios', 'absent', 'refuse', 'demo', '…']) assert.equal(o({ etat }), false, etat);
 });
 
