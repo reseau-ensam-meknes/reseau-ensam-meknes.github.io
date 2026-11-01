@@ -140,9 +140,12 @@ test('lignePrevenir : rien pour l’admin, pour qui a coupé ou décoché la cat
   assert.equal(l({ etat: 'refuse', memo: { coupe: 1 } }), null);
   assert.equal(l({ voulu: false }), null);
   assert.equal(l({ attente: false }), null);
-  // Acceptée sur cet appareil : plus d'« Activer » ; bloquée ensuite, « Débloquer » reste possible
+  // Une réponse donnée sur cet appareil (memo.fait) : plus d'« Activer » ; et un blocage qui est cette réponse (« Bloquer »
+  // dans la fenêtre du navigateur, ou bloquées dans les réglages après les avoir activées) est respecté : pas de « Débloquer »
+  // à chaque visite. Un blocage qui ne vient pas d'une réponse ici (plus ancien, ou d'un autre compte) : « Débloquer ».
   assert.equal(l({ memo: { fait: 1 } }), null);
-  assert.equal(l({ etat: 'refuse', memo: { fait: 1 } }), 'debloquer');
+  assert.equal(l({ etat: 'refuse', memo: { fait: 1 } }), null);
+  assert.equal(l({ etat: 'refuse', memo: { n: 1, at: NOW - 4 * J } }), 'debloquer');
 });
 
 test('lignePrevenir : son × la range pour ce fil seulement ; elle ne compte pas dans le budget des feuilles', () => {

@@ -1247,6 +1247,9 @@ export function prevenirVariante({ etat, raison, memo = {}, now = Date.now(), ro
 // demande acceptée sur cet appareil (memo.fait). Une seule demande par visite : rien quand une feuille a été vue ou refusée
 // depuis le début de la visite (depuis ; memo.at, écrit par la feuille d'ouverture et par chaque refus), ni quand une feuille
 // « Me prévenir » y a été demandée ou que la fenêtre du navigateur y a eu sa réponse (deja).
+// Bloquées : « Débloquer » seulement si ce blocage n'est pas une réponse donnée sur cet appareil. Avec memo.fait, le membre a
+// répondu ici (« Bloquer » dans la fenêtre du navigateur ouverte par une feuille, une ligne, la pastille ; ou bloquées dans les
+// réglages après les avoir activées) : son refus est respecté, la ligne ne le lui redemande pas à chaque visite.
 // 'activer' (son toucher ouvre la fenêtre du navigateur), 'ios' (« Comment faire »), 'debloquer' (« Débloquer »), ou null.
 export function lignePrevenir({ etat, memo = {}, role, voulu = true, attente = true, fil = null, depuis = 0, deja = false }) {
   if (role === 'admin' || !voulu || !attente || memo.coupe || deja) return null;
@@ -1254,7 +1257,7 @@ export function lignePrevenir({ etat, memo = {}, role, voulu = true, attente = t
   if (depuis && memo.at && memo.at >= depuis) return null;
   if (etat === 'off') return memo.fait ? null : 'activer';
   if (etat === 'ios') return 'ios';
-  if (etat === 'refuse') return 'debloquer';
+  if (etat === 'refuse') return memo.fait ? null : 'debloquer';
   return null;
 }
 // Le × d'une ligne : ce fil s'ajoute à memo.lignes (les plus récents d'abord, LIGNES_MAX au plus)

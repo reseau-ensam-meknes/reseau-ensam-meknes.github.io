@@ -1201,6 +1201,19 @@ test('« Me prévenir » dans Messages : la ligne qui arrive laisse la conversat
   await s.ctx.close();
 });
 
+test('« Me prévenir » dans Messages : bloquées par une réponse donnée sur cet appareil, la ligne ne demande pas de les débloquer', async () => {
+  const s = await prevenirSur('refuse');
+  const youssef = s.profils.find(x => x[1].includes('Youssef'))[0];
+  // « Bloquer » choisi ici dans la fenêtre du navigateur (le mémo garde la réponse) : le refus est respecté
+  await s.page.evaluate(id => localStorage.setItem('ensam-prevenir-' + id, JSON.stringify({ fait: 1 })), youssef);
+  await s.comme('Youssef');
+  await ecrireA(s, 'u-0006', 'Bonjour Rania, tu cherches toujours un stage ?');
+  await s.page.waitForTimeout(1500);
+  assert.equal(await s.page.locator('.pv-ligne').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 // À l'ouverture : « Reçois l'essentiel sur ton téléphone », quelques secondes après l'arrivée, sur un écran calme
 test('à l’ouverture : la feuille des notifications selon le rôle ; « Plus tard » la range 2 jours, tant que rien n’est activé', async () => {
   const s = await prevenirSur('off');
