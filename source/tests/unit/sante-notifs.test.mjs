@@ -1,6 +1,7 @@
 // Santé des notifications : « Tester » mis en forme (bilanTestPush, raisonTestPush), le panneau de l'administration
 // (santeResume, raisonsNotifs : des phrases simples avec les vrais nombres, la plus urgente d'abord), la démo (des totaux
-// plausibles, jamais un nom) et le store réel (abonner_push qui répond 'ok' ou 'mort', admin_sante_notifs absente).
+// plausibles, jamais un nom) et le store réel (abonner_push_etat qui répond 'ok' ou 'mort', avec repli sur abonner_push
+// pour une base d'avant ; admin_sante_notifs absente).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { bilanTestPush, raisonTestPush, testPushARefaire, dureeAttente, jourNotif, nomTypeNotif, NOMS_NOTIF, santeResume, raisonsNotifs,
@@ -223,16 +224,27 @@ function magasin({ rpc = {}, invoke = null } = {}) {
 }
 const SUB = { toJSON: () => ({ endpoint: 'https://fcm.googleapis.com/fcm/send/abc', keys: { p256dh: 'P', auth: 'A' } }) };
 
-test('store réel : abonnerPush rend « ok » ou « mort » (base à jour), null avant la mise à jour ; une erreur est dite en français', async () => {
-  let m = magasin({ rpc: { abonner_push: { data: 'ok', error: null } } });
+test('store réel : abonnerPush demande abonner_push_etat (« ok » ou « mort ») ; une base d’avant (fonction absente) : abonner_push, puis plus jamais abonner_push_etat ; une erreur est dite en français', async () => {
+  const ARGS = { p_endpoint: 'https://fcm.googleapis.com/fcm/send/abc', p_p256dh: 'P', p_auth: 'A' };
+  let m = magasin({ rpc: { abonner_push_etat: { data: 'ok', error: null } } });
   assert.equal(await m.s.abonnerPush(SUB), 'ok');
-  assert.deepEqual(m.appels, [['rpc', 'abonner_push', { p_endpoint: 'https://fcm.googleapis.com/fcm/send/abc', p_p256dh: 'P', p_auth: 'A' }]]);
-  m = magasin({ rpc: { abonner_push: { data: 'mort', error: null } } });
+  assert.deepEqual(m.appels, [['rpc', 'abonner_push_etat', ARGS]]);
+  m = magasin({ rpc: { abonner_push_etat: { data: 'mort', error: null } } });
   assert.equal(await m.s.abonnerPush(SUB), 'mort');
-  m = magasin({ rpc: { abonner_push: { data: null, error: null } } });
-  assert.equal(await m.s.abonnerPush(SUB), null, 'ancienne base : abonner_push ne rend rien');
-  m = magasin({ rpc: { abonner_push: { data: null, error: { message: 'Failed to fetch' } } } });
+  // Base d'avant : abonner_push_etat n'existe pas, abonner_push (sans réponse) abonne comme avant
+  for (const error of [{ code: 'PGRST202', message: 'Could not find the function public.abonner_push_etat(p_auth, p_endpoint, p_p256dh) in the schema cache' },
+    { code: '42883', message: 'function public.abonner_push_etat(text, text, text) does not exist' }]) {
+    m = magasin({ rpc: { abonner_push_etat: { data: null, error }, abonner_push: { data: null, error: null } } });
+    assert.equal(await m.s.abonnerPush(SUB), null, error.code);
+    assert.equal(await m.s.abonnerPush(SUB), null);
+    assert.deepEqual(m.appels, [['rpc', 'abonner_push_etat', ARGS], ['rpc', 'abonner_push', ARGS], ['rpc', 'abonner_push', ARGS]], 'l’absence est retenue');
+  }
+  m = magasin({ rpc: { abonner_push_etat: { data: null, error: { code: 'PGRST202', message: 'Could not find the function' } }, abonner_push: { data: null, error: { message: 'Failed to fetch' } } } });
   await assert.rejects(m.s.abonnerPush(SUB), { message: 'Pas de réseau pour l’instant. Réessaie dans un instant.' });
+  // Une vraie erreur d'abonner_push_etat n'est pas prise pour une base d'avant
+  m = magasin({ rpc: { abonner_push_etat: { data: null, error: { message: 'Failed to fetch' } } } });
+  await assert.rejects(m.s.abonnerPush(SUB), { message: 'Pas de réseau pour l’instant. Réessaie dans un instant.' });
+  assert.deepEqual(m.appels.map(a => a[1]), ['abonner_push_etat']);
 });
 
 test('store réel : testPushDetails dit ce que chaque téléphone a répondu ; testPush garde son contrat (le nombre envoyé)', async () => {

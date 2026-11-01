@@ -1206,6 +1206,8 @@ function demoSanteNotifs(profiles, now = Date.now()) {
 // Une table ou une vue qui n'existe pas encore (mise à jour de la base pas encore faite).
 // Une session expirée (401, PGRST301), un droit refusé (42501) ou une coupure réseau ne sont que passagers.
 const absente = e => ['42P01', 'PGRST205'].includes(e?.code) || /relation .* does not exist|could not find the table/i.test(e?.message || '');
+// Une fonction de la base qui n'existe pas encore (PostgREST : PGRST202 ; Postgres : 42883)
+const fonctionAbsente = e => ['PGRST202', '42883'].includes(e?.code) || /could not find the function|function .* does not exist/i.test(e?.message || '');
 const SUITES = { demandes: ['propositions', 'placements'], propositions: ['demandes', 'propositions', 'placements', 'coordonnees'], placements: ['demandes', 'propositions'] };
 
 // ---------------------------------------------------------------------------
@@ -1671,13 +1673,21 @@ export class SupabaseStore extends Base {
     const { data, error } = await this.sb.functions.invoke('notifier', { body: { job: 'cle' } });
     return error ? null : data?.publicKey || null;
   }
-  // Renvoie 'ok', ou 'mort' : cette adresse a été retirée (téléphone parti, ou refusé trois fois de suite) et n'est pas
-  // reprise ; l'appareil doit se réabonner avec une adresse neuve. null : base pas encore à jour (elle ne répond rien).
+  // Renvoie 'ok', ou 'mort' : cette adresse a été retirée pour de bon (téléphone parti, ou refusé trois fois de suite alors
+  // que son service accepte d'autres téléphones) et n'est pas reprise ; l'appareil doit se réabonner avec une adresse neuve.
+  // null : base pas encore à jour. abonner_push_etat y manque : l'abonnement passe alors par abonner_push, qui ne répond
+  // rien (et le reste pour l'ancien site), et on ne redemande plus abonner_push_etat jusqu'au prochain chargement.
   async abonnerPush(sub) {
-    const j = sub.toJSON();
-    const { data, error } = await this.sb.rpc('abonner_push', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth });
+    const j = sub.toJSON(), args = { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth };
+    if (!this.sansAbonnerEtat) {
+      const { data, error } = await this.sb.rpc('abonner_push_etat', args);
+      if (!error) return data === 'ok' || data === 'mort' ? data : null;
+      if (!fonctionAbsente(error)) throw new Error(frError(error));
+      this.sansAbonnerEtat = true;
+    }
+    const { error } = await this.sb.rpc('abonner_push', args);
     if (error) throw new Error(frError(error));
-    return data === 'ok' || data === 'mort' ? data : null;
+    return null;
   }
   async desabonnerPush(endpoint) { await this.sb.from('push_subscriptions').delete().eq('endpoint', endpoint); }
   // Phase 3
@@ -2031,7 +2041,7 @@ export class SupabaseStore extends Base {
   async santeNotifs() {
     const { data, error } = await this.sb.rpc('admin_sante_notifs');
     if (error) {
-      if (['PGRST202', '42883'].includes(error.code) || /could not find the function|function .*admin_sante_notifs.* does not exist/i.test(error.message || '')) return null;
+      if (fonctionAbsente(error)) return null;
       throw new Error(frError(error));
     }
     return data && typeof data === 'object' ? data : null;
