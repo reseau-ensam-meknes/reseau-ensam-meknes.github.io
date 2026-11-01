@@ -67,6 +67,16 @@ test('membres fondateurs : ceux qui ont dit non ne sont pas cités', () => {
   assert.match(r.fr, /Déjà : Youssef, Karim et 1 autre\./);
   assert.ok(!r.fr.includes('Nadia') && !r.ar.includes('Nadia') && !r.fr.includes('Alami'));
   assert.equal(r.reste, NB_FONDATEURS - 3);
+  // En ligne, les profils (vue profils) n'ont pas fondateur_public : la réponse vient de la table (accords) ;
+  // tant qu'elle n'est pas là, personne n'est cité
+  const enLigne = { profiles: data.profiles.map(({ fondateur_public, ...p }) => p) };
+  const r2 = texteFondateurs(enLigne, { liste, lien: 'L', accords: new Map([['l1', true], ['l2', false], ['l3', null]]) });
+  assert.match(r2.fr, /Déjà : Youssef, Karim et 1 autre\./);
+  assert.ok(!r2.fr.includes('Nadia') && !r2.ar.includes('Nadia'));
+  const r3 = texteFondateurs(enLigne, { liste, lien: 'L', accords: new Map() });
+  assert.doesNotMatch(r3.fr, /Déjà|Youssef|Karim|Nadia/);
+  assert.doesNotMatch(r3.ar, /Youssef|Karim|Nadia/);
+  assert.equal(r3.reste, NB_FONDATEURS - 3);
 });
 
 test('Demande avec CV par promo, rendez-vous du mois : les bons mots et le bon niveau', () => {

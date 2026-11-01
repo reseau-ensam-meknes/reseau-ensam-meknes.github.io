@@ -215,10 +215,13 @@ export const messageAccordMerci = (a, langue = a?.langue) => (langue === 'ar'
 // ---------------------------------------------------------------------------
 // c) Membres fondateurs : les prénoms de ceux qui acceptent d'être montrés, et les places qui restent
 // ---------------------------------------------------------------------------
-export function texteFondateurs(data, { liste = classementFondateurs(data), lien = '', max = 6 } = {}) {
+// accords : en ligne, l'id → fondateur_public lu dans la table profiles (la vue des profils ne le donne pas) ; un fondateur
+// qui n'y est pas encore n'est pas cité. Sans accords (démo), le profil le porte. Un « non » écarte toujours le prénom.
+export function texteFondateurs(data, { liste = classementFondateurs(data), lien = '', max = 6, accords = null } = {}) {
   const prof = new Map((data.profiles || []).map(p => [p.id, p]));
   const tous = liste.map(f => prof.get(f.id)).filter(Boolean);
-  const montres = tous.filter(p => p.fondateur_public !== false).map(prenomDe).filter(Boolean).slice(0, max);
+  const cite = p => (accords ? accords.has(p.id) && accords.get(p.id) !== false : p.fondateur_public !== false);
+  const montres = tous.filter(cite).map(prenomDe).filter(Boolean).slice(0, max);
   const autres = tous.length - montres.length, reste = Math.max(0, NB_FONDATEURS - liste.length);
   const fr = [
     '⭐ Membres fondateurs du Réseau ENSAM Meknès',

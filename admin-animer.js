@@ -181,11 +181,30 @@ function Merci({ ctx, now }) {
   <//>`;
 }
 
+// En ligne, la vue profils ne donne pas fondateur_public (le « non » du fondateur) : l'administration le lit dans la table
+// profiles, que sa politique de lecture lui ouvre. Tant que la réponse n'est pas là, ou si elle échoue, aucun prénom n'est cité.
+// En démo : null, le profil porte la réponse.
+function useAccordsFondateurs(store, liste) {
+  const live = store?.mode === 'live' && !!store.sb;
+  const ids = liste.map(f => f.id).filter(Boolean).join(',');
+  const [accords, setAccords] = useState(() => new Map());
+  useEffect(() => {
+    if (!live || !ids) return undefined;
+    let on = true;
+    Promise.resolve(store.sb.from('profiles').select('id, fondateur_public').in('id', ids.split(','))).then(r => {
+      if (on && !r?.error) setAccords(new Map((r?.data || []).map(p => [p.id, p.fondateur_public])));
+    }, () => {});
+    return () => { on = false; };
+  }, [live, ids]);
+  return live ? accords : null;
+}
+
 // c) Les membres fondateurs : le classement du site (useFondateurs, déjà dans ctx), sinon le calcul sur les données
 function Fondateurs({ ctx }) {
-  const { data, fondateurs } = ctx;
+  const { data, fondateurs, store } = ctx;
   const liste = fondateurs?.liste || classementFondateurs(data);
-  const textes = l => texteFondateurs(data, { liste, lien: lienSite(l) });
+  const accords = useAccordsFondateurs(store, liste);
+  const textes = l => texteFondateurs(data, { liste, lien: lienSite(l), accords });
   return html`<${CarteMessage} id="adm-fondateurs" titre="Membres fondateurs" icone="star" textes=${l => ({ [l]: textes(l)[l] })}
     aide="Pour donner envie aux lauréats : les prénoms des fondateurs qui acceptent d’être montrés, et les places qui restent.">
     <p class="small strong adm-places">${lignePlaces(liste.length)}</p>
