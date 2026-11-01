@@ -485,7 +485,37 @@ function App({ store }) {
 const THEME_KEY = 'ensam-theme';
 const themeChoisi = () => { try { const t = localStorage.getItem(THEME_KEY); return t === 'light' || t === 'dark' ? t : null; } catch { return null; } };
 const themeActuel = () => themeChoisi() || (matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-function setTheme(t) {
+// Le nouveau thème s'ouvre en cercle depuis le bouton touché (View Transitions, 450 ms). Tout de suite sans l'API, quand
+// l'appareil demande moins de mouvement, ou quand rien ne change à l'écran (thème automatique déjà pareil).
+// origin : { x, y } ou l'évènement du clic ; sans lui, le dernier toucher (moins d'1,5 s) ou l'élément qui a le focus (clavier).
+let dernierToucher = null;
+if (typeof addEventListener === 'function') addEventListener('pointerdown', e => { dernierToucher = { x: e.clientX, y: e.clientY, t: performance.now() }; }, { capture: true, passive: true });
+function origineTheme(o) {
+  const x = o?.clientX ?? o?.x, y = o?.clientY ?? o?.y;
+  if (Number.isFinite(x) && Number.isFinite(y) && !(o?.type === 'click' && o.detail === 0)) return { x, y };
+  if (dernierToucher && performance.now() - dernierToucher.t < 1500) return dernierToucher;
+  const f = document.activeElement, r = f && f !== document.body ? f.getBoundingClientRect() : null;
+  return r?.width ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+}
+function themeEnCercle(t, origin) {
+  const o = origin === false ? null : origineTheme(origin);
+  const apres = t || (matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  if (!o || typeof document.startViewTransition !== 'function' || mouvementReduit() || apres === themeActuel()) return false;
+  const racine = document.documentElement, rayon = Math.hypot(Math.max(o.x, innerWidth - o.x), Math.max(o.y, innerHeight - o.y));
+  // Le choix est gardé tout de suite : ce qui se redessine avant la fin du cercle montre déjà le bon bouton
+  try { if (t) localStorage.setItem(THEME_KEY, t); else localStorage.removeItem(THEME_KEY); } catch { /* stockage indisponible */ }
+  racine.classList.add('vt-theme');
+  const fin = () => racine.classList.remove('vt-theme');
+  try {
+    const vt = document.startViewTransition(() => setTheme(t, false));
+    vt.ready.then(() => racine.animate({ clipPath: [`circle(0px at ${o.x}px ${o.y}px)`, `circle(${rayon}px at ${o.x}px ${o.y}px)`] },
+      { duration: 450, easing: 'ease-out', pseudoElement: '::view-transition-new(root)' })).catch(() => {});
+    vt.finished.then(fin, fin);
+  } catch { fin(); return false; }
+  return true;
+}
+function setTheme(t, origin) {
+  if (themeEnCercle(t, origin)) return;
   try { if (t) localStorage.setItem(THEME_KEY, t); else localStorage.removeItem(THEME_KEY); } catch { /* stockage indisponible */ }
   const root = document.documentElement;
   if (t) root.dataset.theme = t; else delete root.dataset.theme;
