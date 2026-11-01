@@ -629,7 +629,15 @@ export function OfferComposer({ ctx, offer, onClose, preset = {} }) {
           action: neuve?.id ? { label: 'Partager sur WhatsApp', icon: 'share', onClick: () => window.open(lienWhatsApp(texteOffre(neuve)), '_blank', 'noopener') } : null,
         });
         if (partage) toast('Offre partagée. Elle apparaît dans « Offres partagées », avec son lien.', 'envoi');
-        else if (!fete) toast(entre ? 'Offre publiée. Les lauréats la voient dans « Entre lauréats ».' : 'Offre publiée. Les étudiants concernés la voient dans leurs offres.', 'envoi');
+        else {
+          // L'offre d'un lauréat attend ses candidatures (et l'intérêt des étudiants, dans Match) : « Me prévenir » remplace le
+          // petit mot, juste après la fête s'il y en a une ; la fenêtre se ferme d'abord
+          const mot = entre ? 'Offre publiée. Les lauréats la voient dans « Entre lauréats ».' : 'Offre publiée. Les étudiants concernés la voient dans leurs offres.';
+          const raison = me.role === 'laureat' ? (entre ? 'offreLaureats' : 'offre') : null;
+          onClose();
+          if (fete) { if (raison) proposerPrevenir(raison); } else if (!raison || !proposerPrevenir(raison, mot)) toast(mot, 'envoi');
+          return;
+        }
       }
       onClose();
     });
