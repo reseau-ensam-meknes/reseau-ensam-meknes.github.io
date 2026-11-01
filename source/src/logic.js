@@ -1761,6 +1761,12 @@ export const NOMS_NOTIF = {
   reponse: 'Réponse à une question', question_routee: 'Question à toi', cafe: 'Café ENSAM', evenement: 'Événement', evenement_annule: 'Événement annulé',
   evenement_deplace: 'Événement déplacé', enquete: 'Enquête d’insertion', verification_pair: 'Vérification par la promo', verifier_pair: 'Camarade à confirmer',
   reaction: 'Réaction', promo_nouveau: 'Nouveau de la promo', offre_commentaire: 'Commentaire sur une offre', annonce: 'Annonce', signalement: 'Signalement',
+  // Les notifications programmées et les nouvelles notifications entre personnes (chantier « nouvelles notifications ») :
+  // nommées ici pour que le tableau les dise en clair dès la fusion
+  rdv_demain: 'Rendez-vous demain', entretien_demain: 'Entretien demain', agenda_demain: 'Événement ou café demain', apres_rdv: 'Après un rendez-vous',
+  mentorat_presence: 'Présence confirmée', match_attente: 'Intérêts en attente', offre_bientot: 'Offre qui ferme bientôt',
+  demande_attente: 'Demande toujours ouverte', demande_pause: 'Demande en pause', semaine: 'Résumé de la semaine', reponse_utile: 'Réponse utile',
+  bravo: 'Bravo reçu', groupe_jour: 'Messages des groupes',
   test: 'Essai (Tester)',
 };
 export const NOMS_CATEGORIES_NOTIF = { messages: 'Messages', match: 'Match', demandes: 'Demandes', candidatures: 'Candidatures', mentorat: 'Mentorat',

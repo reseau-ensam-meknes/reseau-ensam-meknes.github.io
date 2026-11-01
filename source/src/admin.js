@@ -413,6 +413,10 @@ addAR({
   'Événement annulé': 'حدث ملغى', 'Événement déplacé': 'حدث بموعد جديد',
   'Vérification par la promo': 'تحقق من طرف الدفعة', 'Camarade à confirmer': 'زميل في انتظار التأكيد', 'Réaction': 'تفاعل', 'Nouveau de la promo': 'عضو جديد في الدفعة',
   'Commentaire sur une offre': 'تعليق على عرض', 'Annonce': 'إعلان', 'Signalement': 'تبليغ', 'Essai (Tester)': 'تجربة (زر «تجربة»)',
+  'Rendez-vous demain': 'موعد غدًا', 'Entretien demain': 'مقابلة غدًا', 'Événement ou café demain': 'حدث أو مقهى غدًا', 'Après un rendez-vous': 'بعد موعد',
+  'Présence confirmée': 'الحضور مؤكَّد', 'Intérêts en attente': 'اهتمامات في الانتظار', 'Offre qui ferme bientôt': 'عرض يُغلق قريبًا',
+  'Demande toujours ouverte': 'طلب لا يزال مفتوحًا', 'Demande en pause': 'طلب متوقف مؤقتًا', 'Résumé de la semaine': 'ملخص الأسبوع', 'Réponse utile': 'جواب مفيد',
+  'Bravo reçu': 'تهنئة واردة', 'Messages des groupes': 'رسائل المجموعات',
   'Candidatures': 'الترشيحات', 'Vie du réseau': 'حياة الشبكة', 'Rappels': 'التذكيرات',
 }, [
   [/^(\d+)\s?% des membres ont activé les notifications$/, x => `${x}% من الأعضاء فعّلوا الإشعارات`],

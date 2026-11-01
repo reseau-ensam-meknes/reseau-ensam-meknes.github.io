@@ -54,6 +54,11 @@ test('dureeAttente, jourNotif, nomTypeNotif', () => {
   assert.deepEqual(nomTypeNotif('test'), { nom: 'Essai (Tester)', connu: true });
   assert.deepEqual(nomTypeNotif('un_type_futur'), { nom: 'Vie du réseau', connu: false }, 'un type inconnu : le nom de sa catégorie');
   assert.ok(Object.values(NOMS_NOTIF).every(n => typeof n === 'string' && n.length > 2));
+  // Les types des nouvelles notifications (programmées, et entre personnes) ont leur nom, pas celui de leur catégorie
+  for (const k of ['rdv_demain', 'entretien_demain', 'agenda_demain', 'apres_rdv', 'mentorat_presence', 'match_attente', 'offre_bientot',
+    'demande_attente', 'demande_pause', 'semaine', 'reponse_utile', 'bravo', 'groupe_jour']) assert.equal(nomTypeNotif(k).connu, true, k);
+  assert.equal(nomTypeNotif('rdv_demain').nom, 'Rendez-vous demain');
+  assert.equal(new Set(Object.values(NOMS_NOTIF)).size, Object.keys(NOMS_NOTIF).length, 'deux types, deux noms');
 });
 
 // ---------------------------------------------------------------------------
