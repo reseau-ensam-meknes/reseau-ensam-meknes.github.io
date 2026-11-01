@@ -5874,6 +5874,225 @@ drop trigger if exists trg_admin_suivi_maj on public.admin_suivi;
 create trigger trg_admin_suivi_maj before update on public.admin_suivi for each row execute function public.admin_suivi_maj();
 
 -- =====================================================================
+--  Plan · partie membres : l'invitation nommée, la vitrine de la page d'entrée, les réussites montrées.
+--  Rien n'apparaît sans compte sans le oui du membre lui-même ; chacun le retire quand il veut ; chaque fonction
+--  ouverte aux visiteurs ne rend que des lignes de l'école du visiteur (sans compte : ENSAM Meknès).
+-- =====================================================================
+
+-- Invitation nommée. code_invitation : 8 caractères (a-z, 0-9), créé à la demande par mon_code_invitation(), stable ensuite.
+-- invite_par : le membre dont le code était dans le lien d'inscription (métadonnée « invite_par » du compte), de la même
+-- école, posé une seule fois, à la création du profil. Un membre ne choisit ni l'un ni l'autre ; l'administration peut.
+alter table public.profiles add column if not exists code_invitation text;
+alter table public.profiles add column if not exists invite_par uuid references public.profiles(id) on delete set null;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'profiles_code_invitation_format') then
+    alter table public.profiles add constraint profiles_code_invitation_format check (code_invitation ~ '^[a-z0-9]{8}$');
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'profiles_invite_par_autre') then
+    alter table public.profiles add constraint profiles_invite_par_autre check (invite_par is distinct from id);
+  end if;
+end $$;
+create unique index if not exists profiles_code_invitation on public.profiles (code_invitation);
+create index if not exists profiles_invite_par on public.profiles (invite_par) where invite_par is not null;
+
+create or replace function public.protect_invitation() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_code text; v_par uuid;
+begin
+  if tg_op = 'UPDATE' then
+    if auth.uid() is null or public.is_admin() then return new; end if;
+    new.invite_par := old.invite_par;
+    if coalesce(current_setting('ensam.code_invitation', true), '') <> 'on' then new.code_invitation := old.code_invitation; end if;
+    return new;
+  end if;
+  if auth.uid() is not null then new.code_invitation := null; new.invite_par := null; end if;
+  if new.invite_par is null then
+    begin
+      select lower(btrim(u.raw_user_meta_data ->> 'invite_par')) into v_code from auth.users u where u.id = new.id;
+      if v_code ~ '^[a-z0-9]{8}$' then
+        select p.id into v_par from public.profiles p where p.code_invitation = v_code and p.id <> new.id and p.ecole = new.ecole;
+        new.invite_par := v_par;
+      end if;
+    exception when others then new.invite_par := null;
+    end;
+  end if;
+  return new;
+end $$;
+revoke all on function public.protect_invitation() from public, anon, authenticated;
+drop trigger if exists trg_protect_invitation on public.profiles;
+create trigger trg_protect_invitation before insert or update of code_invitation, invite_par on public.profiles
+  for each row execute function public.protect_invitation();
+
+-- Le code du membre connecté, créé la première fois (lettres et chiffres faciles à lire : ni l, ni o, ni 0, ni 1)
+create or replace function public.mon_code_invitation() returns text
+language plpgsql security definer set search_path = public as $$
+declare v text; n int := 0;
+begin
+  if auth.uid() is null then return null; end if;
+  select code_invitation into v from public.profiles where id = auth.uid();
+  if not found then return null; end if;
+  if v is not null then return v; end if;
+  perform set_config('ensam.code_invitation', 'on', true);
+  loop
+    select string_agg(substr('abcdefghijkmnpqrstuvwxyz23456789', 1 + get_byte(b, i) % 32, 1), '' order by k) into v
+      from (select uuid_send(gen_random_uuid()) b) x, unnest(array[0, 1, 2, 3, 4, 5, 10, 11]) with ordinality t(i, k);
+    begin
+      update public.profiles set code_invitation = v where id = auth.uid() and code_invitation is null;
+      exit;
+    exception when unique_violation then
+      n := n + 1;
+      if n > 8 then perform set_config('ensam.code_invitation', '', true); raise; end if;
+    end;
+  end loop;
+  perform set_config('ensam.code_invitation', '', true);
+  return (select code_invitation from public.profiles where id = auth.uid());
+end $$;
+revoke all on function public.mon_code_invitation() from public, anon;
+grant execute on function public.mon_code_invitation() to authenticated;
+
+-- La page d'entrée ouverte avec un code : le prénom, la promo et le rôle de qui invite, rien d'autre. null sinon.
+create or replace function public.invitation_de(p_code text) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('prenom', split_part(btrim(p.full_name), ' ', 1), 'promo', p.promo, 'role', p.role)
+  from public.profiles p
+  where p_code ~ '^[a-z0-9]{8}$' and p.code_invitation = p_code and p.ecole = coalesce(public.mon_ecole(), 'ensam-meknes')
+  limit 1;
+$$;
+revoke all on function public.invitation_de(text) from public;
+grant execute on function public.invitation_de(text) to anon, authenticated;
+
+-- Les camarades arrivés grâce au membre connecté : combien, et les prénoms des 20 derniers
+create or replace function public.mes_invites() returns jsonb
+language sql stable security definer set search_path = public as $$
+  with i as (
+    select split_part(btrim(p.full_name), ' ', 1) as prenom, p.created_at, p.id from public.profiles p
+    where auth.uid() is not null and p.invite_par = auth.uid() and p.ecole = public.mon_ecole()
+  )
+  select jsonb_build_object('n', (select count(*) from i),
+    'prenoms', coalesce((select jsonb_agg(x.prenom order by x.created_at desc, x.id) from (select * from i order by created_at desc, id limit 20) x), '[]'::jsonb));
+$$;
+revoke all on function public.mes_invites() from public, anon;
+grant execute on function public.mes_invites() to authenticated;
+
+-- Visages de la page d'entrée. vitrine_publique : le lauréat accepte que sa photo, son prénom (et l'initiale du nom), sa promo
+-- et son entreprise soient sur la page d'entrée (null = pas encore demandé). Seul le membre lui-même dit oui ;
+-- l'administration peut le retirer, jamais le donner. Un étudiant ne le donne pas (la question n'est posée qu'aux lauréats).
+alter table public.profiles add column if not exists vitrine_publique boolean;
+create index if not exists profiles_photo_visage on public.profiles (photo_path) where vitrine_publique;
+
+create or replace function public.protect_vitrine_publique() returns trigger
+language plpgsql as $$
+begin
+  if auth.uid() is not null and new.vitrine_publique is true and old.vitrine_publique is distinct from true
+     and (new.id is distinct from auth.uid() or new.role <> 'laureat') then
+    new.vitrine_publique := old.vitrine_publique;
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_protect_vitrine_publique on public.profiles;
+create trigger trg_protect_vitrine_publique before update of vitrine_publique on public.profiles
+  for each row execute function public.protect_vitrine_publique();
+
+-- 24 lauréats au plus, ceux qui ont une photo d'abord, dans l'ordre d'arrivée. Pas d'id ; le chemin de la photo
+-- (photos/<id>/…) n'est donné que pour qui a dit oui. Jamais l'administration.
+create or replace function public.visages_publics() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('nom', x.nom, 'promo', x.promo, 'entreprise', x.entreprise, 'photo', x.photo_path) order by x.rang), '[]'::jsonb)
+  from (
+    select btrim(split_part(btrim(p.full_name), ' ', 1) || ' ' || coalesce(upper(left(nullif(split_part(btrim(p.full_name), ' ', 2), ''), 1)) || '.', '')) as nom,
+      p.promo, nullif(btrim(p.entreprise), '') as entreprise, p.photo_path,
+      row_number() over (order by p.photo_path is null, p.created_at, p.id) as rang
+    from public.profiles p
+    where p.vitrine_publique and p.role = 'laureat' and not p.admin_ok and p.ecole = coalesce(public.mon_ecole(), 'ensam-meknes')
+    order by p.photo_path is null, p.created_at, p.id
+    limit 24
+  ) x;
+$$;
+revoke all on function public.visages_publics() from public;
+grant execute on function public.visages_publics() to anon, authenticated;
+
+-- Le stockage « photos » reste privé : un visiteur obtient seulement un lien temporaire vers la photo actuelle d'un lauréat
+-- de l'école qui a dit oui. Un oui retiré : l'application change le nom du fichier, l'ancien lien ne mène plus à rien.
+create or replace function public.photo_visage_publique(p_name text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles p where p.photo_path = p_name and p.vitrine_publique and p.role = 'laureat'
+    and not p.admin_ok and p.ecole = coalesce(public.mon_ecole(), 'ensam-meknes'));
+$$;
+revoke all on function public.photo_visage_publique(text) from public;
+grant execute on function public.photo_visage_publique(text) to anon;
+do $$ begin
+  drop policy if exists "photos visages publics" on storage.objects;
+  create policy "photos visages publics" on storage.objects for select to anon using (bucket_id = 'photos' and public.photo_visage_publique(name));
+exception when others then raise notice 'Photos de la page d’entrée non configurées : %', sqlerrm;
+end $$;
+
+-- Réussites montrées : un recrutement confirmé apparaît sur la page d'entrée quand l'étudiant ET le lauréat l'acceptent.
+-- Chacun ne coche que sa case, par montrer_reussite() : oui seulement pour une réussite confirmée, non à tout moment.
+-- protect_placement remet la ligne telle quelle pour un membre ; ce déclencheur passe après lui (ordre alphabétique).
+alter table public.placements add column if not exists public_etudiant boolean not null default false;
+alter table public.placements add column if not exists public_laureat boolean not null default false;
+
+create or replace function public.garde_reussite_publique() returns trigger
+language plpgsql as $$
+declare g text := coalesce(current_setting('ensam.reussite_publique', true), '');
+begin
+  if tg_op = 'INSERT' then
+    if auth.uid() is not null then new.public_etudiant := false; new.public_laureat := false; end if;
+    return new;
+  end if;
+  if g <> '' and split_part(g, '/', 1) = new.id::text then
+    new.public_etudiant := case when split_part(g, '/', 2) = 'etudiant' then split_part(g, '/', 3) = 'oui' else old.public_etudiant end;
+    new.public_laureat := case when split_part(g, '/', 2) = 'laureat' then split_part(g, '/', 3) = 'oui' else old.public_laureat end;
+    return new;
+  end if;
+  if auth.uid() is null then return new; end if;
+  -- Personne ne dit oui à la place d'un autre : l'administration peut retirer, jamais montrer
+  if new.public_etudiant and not old.public_etudiant then new.public_etudiant := false; end if;
+  if new.public_laureat and not old.public_laureat then new.public_laureat := false; end if;
+  return new;
+end $$;
+drop trigger if exists zz_reussite_publique on public.placements;
+create trigger zz_reussite_publique before insert or update on public.placements
+  for each row execute function public.garde_reussite_publique();
+
+create or replace function public.montrer_reussite(p_id uuid, p_oui boolean) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare v record; v_cote text;
+begin
+  select id, student_id, laureat_id, status into v from public.placements where id = p_id;
+  v_cote := case when auth.uid() is null or v.id is null then null when v.student_id = auth.uid() then 'etudiant' when v.laureat_id = auth.uid() then 'laureat' end;
+  if v_cote is null then raise exception 'Ce choix revient à l’étudiant et au lauréat de cette réussite.' using errcode = '42501'; end if;
+  if coalesce(p_oui, false) and v.status <> 'confirme' then
+    raise exception 'Seule une réussite confirmée des deux côtés peut être montrée.' using errcode = '42501';
+  end if;
+  perform set_config('ensam.reussite_publique', p_id::text || '/' || v_cote || '/' || case when coalesce(p_oui, false) then 'oui' else 'non' end, true);
+  update public.placements set public_etudiant = public_etudiant where id = p_id;
+  perform set_config('ensam.reussite_publique', '', true);
+  return (select jsonb_build_object('public_etudiant', public_etudiant, 'public_laureat', public_laureat) from public.placements where id = p_id);
+end $$;
+revoke all on function public.montrer_reussite(uuid, boolean) from public, anon;
+grant execute on function public.montrer_reussite(uuid, boolean) to authenticated;
+
+-- Les 12 dernières réussites montrées de l'école : l'entreprise, le prénom de l'étudiant, le prénom et la promo du lauréat, le mois
+create or replace function public.reussites_publiques() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(jsonb_build_object('entreprise', x.entreprise, 'etudiant', x.etudiant, 'laureat', x.laureat, 'promo', x.promo, 'mois', x.mois) order by x.at desc, x.id), '[]'::jsonb)
+  from (
+    select pl.id, btrim(pl.entreprise) as entreprise, split_part(btrim(s.full_name), ' ', 1) as etudiant, split_part(btrim(l.full_name), ' ', 1) as laureat,
+      l.promo, to_char(coalesce(pl.confirmed_at, pl.created_at), 'YYYY-MM') as mois, coalesce(pl.confirmed_at, pl.created_at) as at
+    from public.placements pl
+    join public.profiles s on s.id = pl.student_id
+    join public.profiles l on l.id = pl.laureat_id
+    where pl.status = 'confirme' and pl.public_etudiant and pl.public_laureat
+      and pl.ecole = coalesce(public.mon_ecole(), 'ensam-meknes') and s.ecole = pl.ecole and l.ecole = pl.ecole
+    order by coalesce(pl.confirmed_at, pl.created_at) desc, pl.id
+    limit 12
+  ) x;
+$$;
+revoke all on function public.reussites_publiques() from public;
+grant execute on function public.reussites_publiques() to anon, authenticated;
+
+-- =====================================================================
 -- APRÈS votre inscription sur la plateforme, devenez administrateur :
 --   update public.profiles set role = 'admin', verified = true
 --   where id = (select id from auth.users where email = 'VOTRE_EMAIL');
