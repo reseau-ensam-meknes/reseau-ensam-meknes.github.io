@@ -4736,7 +4736,7 @@ revoke all on function public.derniere_visite(uuid) from public, anon, authentic
 --   offres        : nouvelles offres pour lui (son année et sa filière : offre_pour) depuis sa dernière visite
 --   matchs        : matchs des 30 derniers jours qu'il n'a pas encore vus (hors membres bloqués)
 --   interets      : personnes qui lui ont dit « Intéressé » ces 7 derniers jours (son profil ; une de ses offres pour un
---                   lauréat), sans réponse de sa part, sans match ni blocage
+--                   lauréat), sans réponse de sa part depuis (comme deckMatch), sans match ni blocage
 --   reponses      : réponses des autres à ses questions depuis sa dernière visite
 --   evenements    : événements et cafés où il est inscrit, non annulés, dans les 2 jours (pas ceux qu'il organise)
 -- En plpgsql : elle lit les tables de Match, créées plus bas (une fonction en sql les voudrait déjà là).
@@ -4768,14 +4768,16 @@ begin
     ('interets', case
        when p.role = 'etudiant' then (select count(distinct c.user_id) from public.match_choix c join public.profiles l on l.id = c.user_id
          where c.cible_profil = p.id and c.choix = 'oui' and c.updated_at > now() - interval '7 days' and l.role = 'laureat'
-           and not exists (select 1 from public.match_choix r where r.user_id = p.id and r.cible_profil = c.user_id)
+           and not exists (select 1 from public.match_choix r where r.user_id = p.id and r.cible_profil = c.user_id
+                             and (r.choix = 'oui' or r.updated_at >= c.updated_at))
            and not exists (select 1 from public.matchs m where m.etudiant_id = p.id and m.laureat_id = c.user_id)
            and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = c.user_id) or (b.user_id = c.user_id and b.bloque_id = p.id)))
        when p.role = 'laureat' then (select count(distinct c.user_id) from public.offers o
          join public.match_choix c on c.cible_offre = o.id join public.profiles e on e.id = c.user_id
          where o.author_id = p.id and c.choix = 'oui' and c.updated_at > now() - interval '7 days'
            and e.role = 'etudiant' and coalesce(btrim(e.filiere), '') <> ''
-           and not exists (select 1 from public.match_choix r where r.user_id = p.id and r.cible_profil = c.user_id)
+           and not exists (select 1 from public.match_choix r where r.user_id = p.id and r.cible_profil = c.user_id
+                             and (r.choix = 'oui' or r.updated_at >= c.updated_at))
            and not exists (select 1 from public.matchs m where m.laureat_id = p.id and m.etudiant_id = c.user_id)
            and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = c.user_id) or (b.user_id = c.user_id and b.bloque_id = p.id)))
        else 0 end),
@@ -6062,7 +6064,10 @@ begin
   attente as materialized (
     select o.*, exists (select 1 from public.match_attente_notif n where n.choix_id = o.choix_id) as deja
     from ouis o
-    where not exists (select 1 from public.match_choix r where r.user_id = o.dest and r.cible_profil = o.de)
+    -- Sans réponse : aucun choix de sa part sur cette personne depuis l'intérêt (un « Plus tard » plus ancien ne compte pas,
+    -- comme dans deckMatch : la carte revient)
+    where not exists (select 1 from public.match_choix r where r.user_id = o.dest and r.cible_profil = o.de
+                        and (r.choix = 'oui' or r.updated_at >= o.updated_at))
       and not exists (select 1 from public.matchs m where (m.etudiant_id = o.dest and m.laureat_id = o.de) or (m.etudiant_id = o.de and m.laureat_id = o.dest))
       and not exists (select 1 from public.blocages b where (b.user_id = o.dest and b.bloque_id = o.de) or (b.user_id = o.de and b.bloque_id = o.dest))
   ),
