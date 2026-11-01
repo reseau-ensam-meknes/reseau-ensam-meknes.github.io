@@ -2042,10 +2042,10 @@ html.defil-bloque.defil-gouttiere { scrollbar-gutter: stable; }
 /* L'en-tête : le titre et où l'on en est (« 3 sur 8 ») au début, « Tes matchs » à la fin (les visages défilent si besoin) */
 .mx-tete { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-width: 0; }
 .mx-tete-txt { flex: none; display: flex; flex-direction: column; gap: .35rem; min-width: 0; max-width: 100%; }
-.mx-tete h1 { margin: 0; font: 700 var(--fs-7)/1.15 var(--f-display); letter-spacing: -.01em; }
+/* Le titre : celui de toutes les pages (Socle : h1, --fs-titre, même graisse), sur une ligne serrée en arabe aussi */
+.mx-tete h1 { margin: 0; line-height: 1.15; }
 .mx-tete .mx-sous { margin: 0; font-size: var(--fs-3); }
 @media (max-width: 760px) {
-  .mx-tete h1 { font-size: var(--fs-6); }
   .mx-tete .mx-sous { display: none; }
 }
 
