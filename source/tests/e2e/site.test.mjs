@@ -788,7 +788,7 @@ test('« Me prévenir » n’arrive jamais par-dessus une fête : il attend la v
 });
 
 // À l'ouverture : « Reçois l'essentiel sur ton téléphone », quelques secondes après l'arrivée, sur un écran calme
-test('à l’ouverture : la feuille des notifications selon le rôle ; « Plus tard » la range 7 jours, deux fois au plus', async () => {
+test('à l’ouverture : la feuille des notifications selon le rôle ; « Plus tard » la range 2 jours, tant que rien n’est activé', async () => {
   const s = await prevenirSur('off');
   // Pas tout de suite : quelques secondes après l'arrivée
   assert.equal(await s.page.locator(ouverture).count(), 0);
@@ -806,20 +806,16 @@ test('à l’ouverture : la feuille des notifications selon le rôle ; « Plus t
   await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
   assert.equal(await s.page.locator(ouverture).count(), 0);
   assert.equal((await s.memo()).n, 1);
-  // 6 jours plus tard : pas encore
-  await s.changerMemo('({ ...m, at: m.at - 6 * 864e5 })');
-  await recharger(s); await rienALouverture(s, 'pas avant 7 jours');
-  // 8 jours après : une dernière fois (fermer compte comme « Plus tard »)
+  // Un jour plus tard : pas encore
+  await s.changerMemo('({ ...m, at: m.at - 864e5 })');
+  await recharger(s); await rienALouverture(s, 'pas avant 2 jours');
+  // 3 jours après : de nouveau (fermer compte comme « Plus tard »)
   await s.changerMemo('({ ...m, at: m.at - 2 * 864e5 })');
   await recharger(s); await attendreOuverture(s);
   await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
   assert.equal((await s.memo()).n, 2);
-  await s.changerMemo('({ ...m, at: m.at - 30 * 864e5 })');
-  await recharger(s); await rienALouverture(s, 'plus jamais après deux refus');
-  // « Me prévenir » partage le mémo et le plafond : pas de feuille non plus après une demande, le petit mot reste
-  await s.mentorat('Choisir mon stage');
-  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
-  assert.match(await s.page.locator('.toast').last().innerText(), /Horaires envoyés à Youssef/);
+  await s.changerMemo('({ ...m, at: m.at - 3 * 864e5 })');
+  await recharger(s); await attendreOuverture(s);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -827,13 +823,11 @@ test('à l’ouverture : la feuille des notifications selon le rôle ; « Plus t
 test('à l’ouverture : affichée puis laissée sans réponse (application quittée), elle compte comme « Plus tard »', async () => {
   const s = await prevenirSur('off');
   await attendreOuverture(s);
-  await recharger(s); await rienALouverture(s, 'pas à chaque visite : rien avant 7 jours');
+  await recharger(s); await rienALouverture(s, 'pas à chaque visite : rien avant 2 jours');
   assert.equal((await s.memo()).n, 1);
-  await s.changerMemo('({ ...m, at: m.at - 8 * 864e5 })');
+  await s.changerMemo('({ ...m, at: m.at - 3 * 864e5 })');
   await recharger(s); await attendreOuverture(s);
   await recharger(s);
-  await s.changerMemo('({ ...m, at: m.at - 30 * 864e5 })');
-  await recharger(s); await rienALouverture(s, 'deux fois au plus en tout');
   assert.equal((await s.memo()).n, 2);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
@@ -5751,5 +5745,20 @@ test('Match : le tour du jour avance à chaque carte et garde son compte', async
   await s.page.waitForFunction(() => document.querySelector('.mx-tour-n').textContent.trim() === '1');
   await s.page.reload(); await s.page.waitForSelector('.mx-tour');
   assert.equal((await s.page.locator('.mx-tour-n').innerText()).trim(), '1', 'le compte du jour reste après un rechargement');
+  await s.ctx.close();
+});
+
+test('accueil : le bandeau dit ce qui empêche les notifications, se range trois jours, et disparaît pour qui les a coupées', async () => {
+  const s = await prevenirSur('refuse');
+  await s.page.waitForSelector('.push-bandeau');
+  assert.match(await s.page.locator('.push-bandeau').innerText(), /Tes notifications sont bloquées/);
+  await s.page.click('#push-b-tard');
+  await s.page.waitForSelector('.push-bandeau', { state: 'detached' });
+  await s.changerMemo('({ ...m, bandeau: Date.now() - 4 * 864e5 })');
+  await recharger(s); await s.page.waitForSelector('.push-bandeau');
+  await s.changerMemo('({ ...m, coupe: 1 })');
+  await recharger(s); await s.page.waitForTimeout(800);
+  assert.equal(await s.page.locator('.push-bandeau').count(), 0);
+  assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });

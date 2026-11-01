@@ -12,7 +12,7 @@ import { ReseauPage, ProfileModal, ProfileForm, AskQuestion } from './community.
 import { MentoratPage, AskHelp, NextRdv, slotWhen, mentoratIgnorees, IlsOntBesoin, CoupDeMain, HoraireSheet, ICONE_BESOIN, VERBE_BESOIN, phraseBesoin, ouvrirBesoin, confirmerPresence, finirMentorat, lienVisio } from './mentorat.js';
 import { SuccessFeed, VerifyPage, MerciDuo } from './growth.js';
 import { PrivacyPage, ConsentModal, MesDonnees, DesaboPage } from './privacy.js';
-import { useInstall, IosInstallHelp, PrevenirHote, PastilleApp, resynchroniserPush } from './pwa.js';
+import { useInstall, IosInstallHelp, PrevenirHote, PastilleApp, resynchroniserPush, BandeauPush } from './pwa.js';
 import { NextCafe } from './groupes.js';
 import { EntrepriseModal } from './pro.js';
 import { DefisPanel, DevenirParrain, TonAnnee, TonAnneeStrip } from './saison.js';
@@ -1052,6 +1052,7 @@ function Home(ctx) {
         <${SchoolScene} align=${getLang() === 'ar' ? 'xMinYMax' : 'xMaxYMax'} pose=${10000}/>
       </header>
 
+      <${BandeauPush} ctx=${ctx}/>
       <${ProchainPas} pas=${pas} progres=${enCours} faite=${faite} onEtapes=${() => setVoirEtapes(true)}/>
       <${ReussitesRail} ctx=${ctx}/>
       ${isStudent && obj ? html`<button class=${'objective compact clickable avancement st-' + stu.key} onClick=${() => go('parcours')}>

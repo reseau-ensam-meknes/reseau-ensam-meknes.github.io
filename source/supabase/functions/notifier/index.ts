@@ -34,7 +34,7 @@ type Json = any;
 // ---------------------------------------------------------------------
 export type Env = {
   url: string; cle: string; brevo: string; expediteur: string; nomExpediteur: string; site: string;
-  gmail: string; gmailMdp: string;
+  gmail: string; gmailMdp: string; anon?: string;
 };
 
 function variable(nom: string): string {
@@ -61,6 +61,7 @@ export function lireEnv(): Env {
   return {
     url: variable('SUPABASE_URL').replace(/\/+$/, ''),
     cle: variable('SUPABASE_SERVICE_ROLE_KEY'),
+    anon: variable('SUPABASE_ANON_KEY'),
     brevo: variable('BREVO_API_KEY'),
     expediteur: variable('SENDER_EMAIL'),
     nomExpediteur: variable('SENDER_NAME') || NOM_DEFAUT,
@@ -329,20 +330,21 @@ async function clesVapid(env: Env): Promise<{ publique: string; prive: string } 
   return k.publique && k.prive ? k : null;
 }
 
-type Vapid = { publique: string; cle: CryptoKey; sub: string; jetons: Map<string, Promise<string>> };
+type Vapid = { publique: string; cle: CryptoKey; sub: string; jetons: Map<string, Promise<string>>; ack?: { u: string; k: string } };
 
 async function preparerVapid(env: Env): Promise<Vapid> {
   const k = await clesVapid(env);
   if (!k) throw new Error('clés VAPID indisponibles');
   const cle = await crypto.subtle.importKey('jwk', JSON.parse(k.prive), { name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
-  return { publique: k.publique, cle, sub: env.site, jetons: new Map() };
+  return { publique: k.publique, cle, sub: env.site, jetons: new Map(), ack: env.anon ? { u: env.url + '/rest/v1/rpc/push_recu', k: env.anon } : undefined };
 }
 
 type Abonnement = { id: string; user_id: string; endpoint: string; p256dh: string; auth: string };
 export type Notif = { title: string; body: string; url: string; tag: string; calme?: boolean };
 
-// Un entretien proposé dans une discussion, sa réponse et son rappel sont des messages : même urgence
-export const urgence = (kind: string) => (['rappel_rdv', 'rappel_entretien', 'mentorat_accepte', 'message', 'rdv_message', 'rdv_reponse'].includes(kind) ? 'high' : 'normal');
+// Tout arrive tout de suite : en urgence « normal », un Android en veille garde la notification jusqu'à son prochain réveil.
+// Seuls les rappels de visite et les enquêtes peuvent attendre.
+export const urgence = (kind: string) => (['rappel_visite', 'enquete'].includes(kind) ? 'normal' : 'high');
 // Durée de vie chez le service de push (téléphone éteint) : un jour ; un rappel ne sert plus une fois le rendez-vous commencé
 export const dureeVie = (kind: string) => (kind === 'rappel_rdv' || kind === 'rappel_entretien' ? 900 : 86400);
 
@@ -352,7 +354,8 @@ async function pousserUn(a: Abonnement, n: Notif, urg: string, v: Vapid, ttl = 8
     const aud = new URL(a.endpoint).origin;
     let j = v.jetons.get(aud);
     if (!j) { j = jetonVapid(aud, v.sub, v.cle); v.jetons.set(aud, j); }
-    const corps = await chiffrer(enc.encode(JSON.stringify(n)), a.p256dh, a.auth);
+    // ack : où le service worker dit qu'il a bien reçu (push_recu)
+    const corps = await chiffrer(enc.encode(JSON.stringify(v.ack ? { ...n, ack: v.ack } : n)), a.p256dh, a.auth);
     const r = await fetch(a.endpoint, {
       method: 'POST',
       headers: {
@@ -486,6 +489,12 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     route: 'match',
     fr: v => ['C’est un match !', `Toi et ${v.nom}, vous pouvez vous écrire.`],
     ar: v => ['تمّ الاتفاق!', `يمكنك الآن مراسلة ${v.nom}.`],
+  },
+  // Le soir : le tour du jour (match_jour_push). n : 5 au plus ; type : le rôle de qui le reçoit
+  match_jour: {
+    route: 'match',
+    fr: v => ['Ton tour Match du jour', `${v.n > 1 ? `${v.n} ${v.dtype === 'laureat' ? 'étudiants' : 'offres'} à découvrir` : v.dtype === 'laureat' ? '1 étudiant à découvrir' : '1 offre à découvrir'} : une minute suffit.`],
+    ar: v => ['جولتك اليومية في التوافق', `${v.dtype === 'laureat' ? `طلبة جدد للاكتشاف: ${v.n}` : `عروض جديدة للاكتشاف: ${v.n}`}. دقيقة واحدة تكفي.`],
   },
   match_interet: {
     route: 'match',
