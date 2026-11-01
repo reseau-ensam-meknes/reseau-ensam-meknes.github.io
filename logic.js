@@ -1932,13 +1932,16 @@ export { BESOIN_DE_DEMANDE };
 // Un lauréat déjà sollicité par cet étudiant (conseil en attente ou en cours, ou demandé depuis la demande) : il n'est plus proposé
 export const dejaSollicite = (data, moiId, laureatId, d) => (data?.mentorships || []).some(m => m.student_id === moiId && m.mentor_id === laureatId
   && (['demande', 'acceptee'].includes(m.status) || (d?.created_at && new Date(m.created_at) >= new Date(d.created_at))));
-// Sous chaque demande ouverte (pas en pause) d'un étudiant : jusqu'à 3 lauréats, jamais deux fois le même d'une demande à l'autre
+// Sous chaque demande ouverte (pas en pause) d'un étudiant : jusqu'à 3 lauréats, jamais deux fois le même d'une demande à l'autre.
+// « Lui demander un conseil » lui envoie des horaires : seulement un lauréat disponible pour aider (comme mentorsFor et sa fiche),
+// jamais quelqu'un que l'étudiant a bloqué.
 export function laureatsPourMesDemandes(data, me, demandes, n = 3, now = new Date()) {
   const vus = new Set(); const out = new Map();
   if (me?.role !== 'etudiant') return out;
   for (const d of demandes || []) {
     if (d.status !== 'ouverte' || d.auteur_id !== me.id || demandeEnPause(d, now)) continue;
-    const l = laureatsPourDemande(data, d, n + 12, now).filter(x => !vus.has(x.p.id) && !dejaSollicite(data, me.id, x.p.id, d)).slice(0, n);
+    const l = laureatsPourDemande(data, d, Infinity, now)
+      .filter(x => x.p.mentor_dispo && !vus.has(x.p.id) && !bloque(data, me.id, x.p.id) && !dejaSollicite(data, me.id, x.p.id, d)).slice(0, n);
     for (const x of l) vus.add(x.p.id);
     out.set(d.id, l);
   }

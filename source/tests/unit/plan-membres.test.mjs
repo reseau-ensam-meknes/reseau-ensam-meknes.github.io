@@ -126,11 +126,18 @@ test('« 3 lauréats peuvent t’aider » : sous chaque demande ouverte d’un �
   assert.deepEqual(a.filter(id => b.includes(id)), [], 'jamais deux fois le même');
   for (const x of [...r.get(ouverte.id), ...r.get(deux.id)]) {
     assert.equal(x.p.role, 'laureat'); assert.ok(!x.p.admin_ok); assert.ok(Array.isArray(x.why));
+    assert.equal(x.p.mentor_dispo, true, '« Lui demander un conseil » : seulement un lauréat disponible pour aider');
   }
   // Un lauréat déjà sollicité (conseil en attente) laisse sa place au suivant
   const premier = r.get(ouverte.id)[0].p;
   const avec = { ...data, mentorships: [...data.mentorships, { id: 'm-x', student_id: etu.id, mentor_id: premier.id, status: 'demande', created_at: new Date().toISOString() }] };
   assert.ok(!laureatsPourMesDemandes(avec, etu, [ouverte]).get(ouverte.id).some(x => x.p.id === premier.id));
+  // Pas disponible pour aider (il ne reçoit pas d'horaires directement), ou bloqué par l'étudiant : jamais proposé
+  const indispo = { ...data, profiles: data.profiles.map(p => (p.id === premier.id ? { ...p, mentor_dispo: false } : p)) };
+  assert.ok(laureatsPourDemande(indispo, ouverte, Infinity).some(x => x.p.id === premier.id), 'toujours pertinent pour l’administration');
+  assert.ok(!laureatsPourMesDemandes(indispo, etu, [ouverte]).get(ouverte.id).some(x => x.p.id === premier.id));
+  const bloque = { ...data, blocages: [...(data.blocages || []), { id: 'b-x', user_id: etu.id, bloque_id: premier.id, created_at: new Date().toISOString() }] };
+  assert.ok(!laureatsPourMesDemandes(bloque, etu, [ouverte]).get(ouverte.id).some(x => x.p.id === premier.id));
   // Moins de 3 : ceux qui existent ; aucun : rien
   const seul = { ...data, profiles: data.profiles.filter(p => p.role !== 'laureat' || p.id === premier.id) };
   assert.ok(laureatsPourMesDemandes(seul, etu, [ouverte]).get(ouverte.id).length <= 1);
