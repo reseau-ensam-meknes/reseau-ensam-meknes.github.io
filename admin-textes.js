@@ -410,8 +410,9 @@ export function chiffresRapport(data0, now = Date.now(), saison = seasonOf(new D
 // ---------------------------------------------------------------------------
 // Les offres ouvertes des 14 derniers jours, pour le bureau des relations entreprises de l'école
 // ---------------------------------------------------------------------------
+// Seulement les offres pour les étudiants : une offre « Entre lauréats » ne s'ouvre pas pour eux (politique de lecture des offres)
 export function offresRecentes(data, now = Date.now(), ecole = ECOLE_DEFAUT) {
-  return (data.offers || []).filter(o => ouverte(o, now) && dans(o.created_at, now - 14 * J, now) && (!ecole || ecoleDe(o) === ecole))
+  return (data.offers || []).filter(o => (o.audience || 'etudiants') === 'etudiants' && ouverte(o, now) && dans(o.created_at, now - 14 * J, now) && (!ecole || ecoleDe(o) === ecole))
     .sort((a, b) => t(b.created_at) - t(a.created_at));
 }
 export function texteOffresBRE(offres, { base = '' } = {}) {

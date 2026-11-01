@@ -205,9 +205,16 @@ test('rapport pour l’école : 30 jours de chiffres, aucun nom', () => {
   for (const p of seed.profiles) assert.ok(!tout.includes(p.full_name), `${p.full_name} dans le rapport`);
 });
 
-test('offres pour le bureau des relations entreprises : 14 jours, ouvertes, un lien chacune', () => {
+test('offres pour le bureau des relations entreprises : 14 jours, ouvertes, pour les étudiants, un lien chacune', () => {
   const o = offresRecentes(seed, NOW);
+  assert.ok(o.length > 0);
   assert.ok(o.every(x => x.status === 'ouverte' && NOW - new Date(x.created_at) <= 14 * J));
+  // Une offre « Entre lauréats » ne s'ouvre pas pour un étudiant : elle n'est jamais dans la liste
+  const entre = seed.offers.filter(x => x.audience === 'laureats' && x.status === 'ouverte' && NOW - new Date(x.created_at) <= 14 * J);
+  assert.ok(entre.length > 0, 'la démo a des offres entre lauréats récentes');
+  assert.ok(o.every(x => (x.audience || 'etudiants') === 'etudiants'));
+  const recente = { id: 'oL', audience: 'laureats', status: 'ouverte', titre: 'Poste entre lauréats', entreprise: 'Entreprise exemple', created_at: iso(NOW - J) };
+  assert.deepEqual(offresRecentes({ offers: [recente, { ...recente, id: 'oE', audience: undefined }] }, NOW).map(x => x.id), ['oE']);
   const t = texteOffresBRE(o, { base: 'https://exemple.ma/' });
   if (o.length) {
     assert.match(t.fr, new RegExp(`ces 14 derniers jours \\(${o.length}\\) :`));
