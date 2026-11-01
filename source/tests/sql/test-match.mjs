@@ -388,3 +388,28 @@ test('mise à jour relancée : rien de perdu, un seul déclencheur, l’ancienne
   // Une photo sans fichier reste refusée
   await refuse(q(ETU, `insert into public.messages (author_id, dest_id, type) values ($1, $2, 'photo')`, [ETU, LAU]), /messages_fichier_requis/);
 });
+
+test('le tour Match du jour : seulement à qui a des cartes, jamais vers une pile vide ; catégorie coupée : rien', async () => {
+  await vider();
+  const n = await db.query('select public.match_jour_push() as n');
+  const dus = await file('match_jour');
+  assert.equal(dus.length, n.rows[0].n);
+  const lau = dus.find(x => x.qui === 'LAU3'), etu = dus.find(x => x.qui === 'ETU_CV');
+  assert.equal(lau?.data.type, 'laureat'); assert.ok(lau.data.n >= 1 && lau.data.n <= 5, 'cinq au plus');
+  assert.equal(etu?.data.type, 'etudiant'); assert.ok(etu.data.n >= 1 && etu.data.n <= 5);
+  assert.ok(!dus.some(x => x.qui === 'ADMIN' || x.qui === 'SANS'), 'ni l’administration, ni sans filière');
+  await vider();
+  await db.query(`update public.profiles set notif_push = '{"match": false}' where id = $1`, [LAU3]);
+  await db.query('select public.match_jour_push()');
+  assert.ok(!(await file('match_jour')).some(x => x.qui === 'LAU3'));
+  await db.query(`update public.profiles set notif_push = '{}' where id = $1`, [LAU3]);
+  await vider();
+});
+
+test('preuve de réception : le téléphone se déclare avec son adresse d’abonnement, sans rien lire', async () => {
+  await db.query('select public.push_recu($1)', ['https://push.example/' + ETU_CV]);
+  const r = await db.query('select count(*)::int as n from public.push_subscriptions where recu_at is not null');
+  assert.equal(r.rows[0].n, 1, 'seul cet abonnement');
+  await db.query('select public.push_recu($1)', ['https://push.example/inconnu']);
+  assert.equal((await db.query('select count(*)::int as n from public.push_subscriptions where recu_at is not null')).rows[0].n, 1);
+});

@@ -12,8 +12,8 @@ const RDV = '2026-11-03T10:00:00Z';   // mardi 3 novembre, 10:00 au Maroc (GMT d
 const t = (k, d, l = 'fr') => N.texteNotif(k, d, l, SITE);
 
 const CAS = {
-  match: [{ nom: 'Salma', de: ETU, match: MATCH, titre: 'PFE Lean' }, `messages/${ETU}`, `match-${MATCH}`, 'match', 'normal'],
-  match_interet: [{ nom: 'Hamza', de: LAU, entreprise: 'OCP' }, 'match', `match_interet-${LAU}`, 'match', 'normal'],
+  match: [{ nom: 'Salma', de: ETU, match: MATCH, titre: 'PFE Lean' }, `messages/${ETU}`, `match-${MATCH}`, 'match', 'high'],
+  match_interet: [{ nom: 'Hamza', de: LAU, entreprise: 'OCP' }, 'match', `match_interet-${LAU}`, 'match', 'high'],
   rdv_message: [{ nom: 'Youssef', de: LAU, m: MSG, rdv_at: RDV, duree: 30, lieu: null }, `messages/${LAU}`, `rdv_message-${MSG}`, 'messages', 'high'],
   rdv_reponse: [{ nom: 'Salma', de: ETU, m: MSG, reponse: 'oui', rdv_at: RDV }, `messages/${ETU}`, `rdv_reponse-${MSG}`, 'messages', 'high'],
 };

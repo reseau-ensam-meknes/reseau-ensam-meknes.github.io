@@ -125,10 +125,11 @@ test('points d’un recrutement : même barème que pointsRecrutement de logic.j
   for (const p of [{}, { pays: 'Maroc' }, { pays: 'France' }, { type: 'etranger' }, { type: 'stage', pays: null }]) assert.equal(N.pointsRecrutement(p), logic.pointsRecrutement(p), JSON.stringify(p));
 });
 
-test('urgence haute pour les rendez-vous seulement', () => {
+test('urgence haute pour tout, sauf ce qui peut attendre', () => {
   assert.equal(N.urgence('rappel_rdv'), 'high');
   assert.equal(N.urgence('mentorat_accepte'), 'high');
-  for (const k of ['mentorat_demande', 'merci', 'cafe', 'test']) assert.equal(N.urgence(k), 'normal');
+  for (const k of ['mentorat_demande', 'merci', 'cafe', 'match', 'test']) assert.equal(N.urgence(k), 'high');
+  for (const k of ['rappel_visite', 'enquete']) assert.equal(N.urgence(k), 'normal');
 });
 
 test('saison à l’heure de Casablanca (septembre → août)', () => {
