@@ -154,7 +154,8 @@ export const codeWinAnsi = c => { const k = c.charCodeAt(0); return WINANSI[c] ?
 export const echapPdf = t => Array.from(String(t)).map(c => { const k = codeWinAnsi(c); if (c === '(' || c === ')' || c === '\\') return '\\' + c; if (k < 32) return ' '; if (k < 127) return String.fromCharCode(k); return '\\' + k.toString(8).padStart(3, '0'); }).join('');
 // Un PDF d'une page A4 à partir de son flux de dessin ; titre : celui que montre la visionneuse (onglet, propriétés)
 export function pdfUnePage(flux, { titre = null } = {}) {
-  const utf16 = t => '<FEFF' + Array.from(String(t), c => c.charCodeAt(0).toString(16).padStart(4, '0')).join('').toUpperCase() + '>';
+  // UTF-16BE, unité par unité (split('') garde les deux moitiés d'un caractère hors du plan de base, un émoji par exemple)
+  const utf16 = t => '<FEFF' + String(t).split('').map(c => c.charCodeAt(0).toString(16).padStart(4, '0')).join('').toUpperCase() + '>';
   const objets = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 6 0 R >> >> /Contents 5 0 R >>',
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',

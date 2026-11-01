@@ -390,8 +390,9 @@ export function contenuCv(p, { demande = null, now = new Date() } = {}) {
       if (stages[0]) experiences.push({ ...stages[0], droite: ete(P - 1), duree: '2 mois' });
       if (ouv) experiences.push({ ...ouv, droite: `Juillet ${P - 2}`, duree: '1 mois' });
       projets.push(...melanger(fam.projets, r).slice(0, 2).map((x, i) => ({ ...x, titre: (i ? 'Projet — ' : 'PFA — ') + x.titre, droite: String(P - 1 - i) })));
-      const s1 = stages[0]?.e.secteur || 'l’industrie', s2 = ouv?.e.secteur || 'l’industrie';
-      profil = a(`{Élève ingénieur|Élève ingénieure} en dernière année à l’ENSAM Meknès, ${passion}. ${s1 === s2 ? `Deux stages dans ${s1}` : `Deux stages, dans ${s1} puis ${s2}`}, avec des résultats mesurés sur le terrain. ${qualites}`);
+      // Dans l'ordre où ils ont eu lieu : le stage ouvrier (juillet P − 2), puis celui d'ingénieur adjoint (été P − 1)
+      const avant = ouv?.e.secteur || 'l’industrie', apres = stages[0]?.e.secteur || 'l’industrie';
+      profil = a(`{Élève ingénieur|Élève ingénieure} en dernière année à l’ENSAM Meknès, ${passion}. ${avant === apres ? `Deux stages dans ${apres}` : `Deux stages, dans ${avant} puis ${apres}`}, avec des résultats mesurés sur le terrain. ${qualites}`);
     } else if (niv === 4) {
       if (ouvriers[0]) experiences.push({ ...ouvriers[0], droite: `Juillet ${P - 2}`, duree: '1 mois' });
       projets.push(...melanger(fam.projets, r).slice(0, 2).map((x, i) => ({ ...x, titre: (i ? 'Projet — ' : 'PFA en cours — ') + x.titre, droite: i ? String(P - 2) : `${P - 2} – ${P - 1}` })));
@@ -413,7 +414,9 @@ export function contenuCv(p, { demande = null, now = new Date() } = {}) {
     titre = p?.poste ? String(p.poste) : a(`{Ingénieur|Ingénieure} d’État en ${fam.metier}`);
     objectif = [p?.entreprise ? `${p.poste ? '' : 'En poste · '}${p.entreprise}` : `Promo ${P} · ENSAM Meknès`, p?.ville || ''].filter(Boolean);
     formation.push(cycle('Diplôme d’ingénieur d’État'), prepa);
-    if (p?.entreprise) experiences.push({ poste: p.poste || 'Ingénieur', e: { nom: p.entreprise, ville: p.ville || '' }, droite: `Depuis ${Math.max(P, S - 1)}`, puces: [] });
+    // Son poste actuel : daté seulement pour un jeune diplômé (depuis sa sortie) ; pour un ancien, on ne sait pas depuis quand
+    // (« Depuis 2025 » pour la promo 2016 inventait une date et un trou de neuf ans)
+    if (p?.entreprise) experiences.push({ poste: p.poste || 'Ingénieur', e: { nom: p.entreprise, ville: p.ville || '' }, droite: P >= S - 1 ? `Depuis ${P}` : 'Poste actuel', puces: [] });
     if (stages[0]) experiences.push({ ...stages[0], poste: stages[0].poste.replace(/^Stage ingénieur adjoint/, 'Projet de fin d’études'), droite: `Févr. – juin ${P}`, duree: '5 mois' });
     profil = a(`{Ingénieur|Ingénieure} ${fam.metier} {diplômé|diplômée} de l’ENSAM Meknès (promo ${P}), ${passion}. ${qualites}`);
   }

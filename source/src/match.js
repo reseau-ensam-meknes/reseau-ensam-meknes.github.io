@@ -29,6 +29,8 @@ ajouterIcones({
 });
 
 const prenom = p => (p?.full_name || '').split(' ')[0] || '';
+// La demande en cours la plus récente d'un étudiant : celle que disent sa carte, « En bref » et son CV de démonstration (store.js)
+const derniereDemande = (data, id) => demandesActives(data, id).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0] || null;
 // Ce que cherche un étudiant (sa demande en cours), dit sur sa carte
 const CHERCHE = { stage: 'Cherche un stage', pfe: 'Cherche un PFE', etranger: 'Cherche un stage à l’étranger', emploi: 'Cherche un emploi' };
 // Le CV de l'étudiant s'affiche-t-il aux lauréats avant le match ? Son réglage « CV » (lauréats par défaut, ou tous)
@@ -212,6 +214,12 @@ export function MatchPage(ctx) {
 
   const choisir = (choix, from = null) => {
     if (!top || vol) return;
+    // Choisi au bouton ou au clavier pendant le geste montré : la carte part d'où elle penche, sans sauter au centre
+    if (!from && guide) {
+      const e = pile.current?.querySelector('.mx-carte.dessus'), t = e ? getComputedStyle(e).transform : 'none';
+      const m = t && t !== 'none' ? new DOMMatrixReadOnly(t) : null;
+      if (m && Math.abs(m.e) > 1) from = { dx: m.e, dy: m.f, w: e.offsetWidth };
+    }
     setGuide(false);
     const c = top;
     setVol({ c, choix, from, t: Date.now() }); setDevant(null);
@@ -297,12 +305,13 @@ export function MatchPage(ctx) {
         <p class="muted mx-sous">${etu ? 'Des offres de lauréats, une carte à la fois.' : 'Des étudiants de l’école, une carte à la fois.'}</p>
         ${plein && total ? html`<${Progres} pos=${pos} total=${total}/>` : null}
       </div>
-      ${plein ? html`<${MesMatchs} ctx=${ctx}/>` : null}
+      <${MesMatchs} ctx=${ctx}/>
     </header>
     ${plein ? html`<div class="mx-zone">
-      <div class="mx-pile" ref=${pile} style=${`--sens:${sens}`}>
+      <div class=${'mx-pile' + (guide && top && !vol ? ' montre' : '')} ref=${pile} style=${`--sens:${sens}`}>
         ${cartes.slice(0, 3).reverse().map((c, i, l) => html`<${Carte} key=${c.cle} ctx=${ctx} carte=${c} rang=${l.length - 1 - i} sens=${sens}
-          onChoix=${choisir} onLire=${() => setLire(c)} onVoir=${() => voir(c)} revenue=${c.cle === devant}/>`)}
+          onChoix=${choisir} onLire=${() => setLire(c)} onVoir=${() => voir(c)} revenue=${c.cle === devant}
+          onTouche=${guide ? () => setGuide(false) : null}/>`)}
         ${vol ? html`<${Carte} key=${'vol-' + vol.c.cle + vol.t} ctx=${ctx} carte=${vol.c} rang=${0} sens=${sens} vol=${vol}/>` : null}
         ${guide && top && !vol ? html`<${Guide} sens=${sens}/>` : null}
       </div>
@@ -330,7 +339,8 @@ export function MatchPage(ctx) {
 // Où l'on en est : « 3 sur 8 », et un point par carte (une barre fine au-delà de 12 cartes)
 function Progres({ pos, total }) {
   const points = total <= 12;
-  return html`<p class="mx-progres" aria-label=${`Carte ${pos} sur ${total}`}>
+  // Une image pour les lecteurs d'écran (aria-label n'est pas permis sur un simple paragraphe) : « Carte 3 sur 8 »
+  return html`<p class="mx-progres" role="img" aria-label=${`Carte ${pos} sur ${total}`}>
     <span class="mx-pr-n" aria-hidden="true"><strong>${pos}</strong> sur ${total}</span>
     ${points ? html`<span class="mx-pr-pts" aria-hidden="true">${Array.from({ length: total }, (_, i) => html`<i class=${i < pos - 1 ? 'fait' : i === pos - 1 ? 'ici' : ''}></i>`)}</span>`
       : html`<span class="mx-pr-barre" aria-hidden="true"><i style=${`inline-size:${Math.round(((pos - 1) / total) * 1000) / 10}%`}></i></span>`}
@@ -352,12 +362,27 @@ function Guide({ sens }) {
 // ---------------------------------------------------------------------------
 const SEUIL = 0.3;          // part de la largeur à dépasser pour choisir
 const VITESSE = 0.55;       // ou un geste vif (px/ms)
-function Carte({ ctx, carte, rang, sens, onChoix, onLire, onVoir, vol, revenue }) {
+// Un titre resté en français est aligné à droite en arabe ; coupé à deux ou trois lignes, Chrome placerait ses points de
+// suspension hors de la ligne. On marque donc les titres coupés (data-coupe) : ils gardent l'alignement du français et
+// leurs points de suspension (voir « match-cartes »). Remesuré quand leur place change (écran, carte, voile centré).
+const COUPABLES = '.mx-c-titre, .mx-so-t, .mx-v-txt > [dir="auto"]';
+function useCoupes(ref, cle) {
+  useLayoutEffect(() => {
+    const el = ref.current; if (!el || typeof ResizeObserver !== 'function') return;
+    const l = [...el.querySelectorAll(COUPABLES)];
+    const ro = new ResizeObserver(() => l.forEach(e => e.toggleAttribute('data-coupe', e.scrollHeight > e.clientHeight + 1)));
+    l.forEach(e => ro.observe(e));
+    return () => ro.disconnect();
+  }, [cle]);
+}
+function Carte({ ctx, carte, rang, sens, onChoix, onLire, onVoir, vol, revenue, onTouche }) {
   const el = useRef(); const g = useRef(null);
   // Le dernier appui fini : glissé ou long, le clic qui le suit n'ouvre pas le détail
   const fini = useRef(null);
+  useCoupes(el, carte.cle);
   const dessus = rang === 0 && !vol;
   const sponso = carte.sorte === 'sponsorise';
+  const cls = 'mx-carte' + (sponso ? ' sponso' : '') + (dessus ? ' dessus' : ' derriere') + (vol ? ' vol' : '');
   // Une carte sponsorisée n'a pas de détail : seul « Voir » ouvre son lien
   const detail = () => (sponso ? null : carte.offre ? ctx.openOffer(carte.offre.id) : ctx.openProfile(carte.profil));
   const poser = (dx, dy) => {
@@ -372,12 +397,26 @@ function Carte({ ctx, carte, rang, sens, onChoix, onLire, onVoir, vol, revenue }
     if (arme && arme !== s.arme) vibrer(8);
     s.arme = arme;
   };
+  // La carte revient au centre, avec un léger rebond
+  const ramener = () => {
+    const e = el.current; if (!e) return;
+    e.classList.add('ressort'); poser(0, 0);
+    setTimeout(() => el.current?.classList.remove('ressort'), 400);
+  };
   const down = e => {
     if (!dessus || (e.pointerType === 'mouse' && e.button !== 0) || e.target.closest('button, a')) return;
-    const r = el.current.getBoundingClientRect();
+    const c = el.current;
+    // Prise pendant le geste montré (onTouche, voir « match-guide ») : elle reste où elle penchait, le doigt la reprend de
+    // là (ox). Lu avant « tenue », qui arrête la démonstration ; la largeur sans la rotation, comme au repos.
+    const t = onTouche ? getComputedStyle(c).transform : 'none';
+    const ox = t && t !== 'none' ? new DOMMatrixReadOnly(t).e : 0;
     fini.current = null;
-    g.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: performance.now(), w: r.width, dx: 0, dy: 0, bouge: false, arme: 0, pas: [[e.clientX, performance.now()]] };
-    el.current.classList.add('tenue');
+    g.current = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: performance.now(), w: c.offsetWidth, ox, dx: 0, dy: 0, bouge: false, arme: 0, pas: [[e.clientX, performance.now()]] };
+    c.classList.add('tenue');
+    if (ox) poser(ox, 0);
+    // La carte est à toi dès que tu la touches : le geste montré au premier passage s'arrête (glissé, appui ou défilement).
+    // Le nouveau rendu ne touche qu'à la pile : la classe de la carte (et « tenue ») ne change pas.
+    onTouche?.();
   };
   const move = e => {
     const s = g.current; if (!s || e.pointerId !== s.id) return;
@@ -386,10 +425,10 @@ function Carte({ ctx, carte, rang, sens, onChoix, onLire, onVoir, vol, revenue }
     if (!s.bouge) {
       if (Math.hypot(s.dx, s.dy) < 7) return;
       // Un geste surtout vertical laisse défiler la page
-      if (Math.abs(s.dy) > Math.abs(s.dx) * 1.2 && e.pointerType !== 'mouse') { g.current = null; fini.current = { bouge: true }; el.current.classList.remove('tenue'); return; }
+      if (Math.abs(s.dy) > Math.abs(s.dx) * 1.2 && e.pointerType !== 'mouse') { g.current = null; fini.current = { bouge: true }; el.current.classList.remove('tenue'); if (s.ox) ramener(); return; }
       s.bouge = true; try { el.current.setPointerCapture(e.pointerId); } catch { /* */ }
     }
-    poser(s.dx, s.dy * 0.25);
+    poser(s.ox + s.dx, s.dy * 0.25);
   };
   const up = e => {
     const s = g.current; if (!s || e.pointerId !== s.id) return;
@@ -397,14 +436,14 @@ function Carte({ ctx, carte, rang, sens, onChoix, onLire, onVoir, vol, revenue }
     fini.current = { bouge: s.bouge, long: performance.now() - s.t0 >= 600 };
     // Un simple appui : le détail s'ouvre au clic qui suit (voir clic), pas ici. Ouvert au relâchement, la feuille
     // arrivait sous le doigt et le clic du téléphone tombait sur son fond, qui la refermait aussitôt.
-    if (!s.bouge) return;
+    if (!s.bouge) { if (s.ox) ramener(); return; }
     const [x1, t1] = s.pas[0]; const v = (e.clientX - x1) / Math.max(1, performance.now() - t1);
-    const dir = Math.abs(s.dx) > s.w * SEUIL || (Math.abs(v) > VITESSE && Math.abs(s.dx) > 24 && Math.sign(v) === Math.sign(s.dx)) ? Math.sign(s.dx) : 0;
-    if (dir && e.type === 'pointerup') { onChoix(dir * sens > 0 ? 'oui' : 'plus_tard', { dx: s.dx, dy: s.dy * 0.25, w: s.w }); return; }
-    // Pas assez loin : la carte revient au centre, avec un léger rebond
-    el.current.classList.add('ressort');
-    poser(0, 0);
-    setTimeout(() => el.current?.classList.remove('ressort'), 400);
+    // Où est la carte (prise en route, elle partait de ox) ; un geste vif compte dans le sens du doigt
+    const dx = s.ox + s.dx;
+    const dir = Math.abs(dx) > s.w * SEUIL ? Math.sign(dx) : Math.abs(v) > VITESSE && Math.abs(s.dx) > 24 && Math.sign(v) === Math.sign(s.dx) ? Math.sign(s.dx) : 0;
+    if (dir && e.type === 'pointerup') { onChoix(dir * sens > 0 ? 'oui' : 'plus_tard', { dx, dy: s.dy * 0.25, w: s.w }); return; }
+    // Pas assez loin : la carte revient au centre
+    ramener();
   };
   const clic = e => {
     const f = fini.current; fini.current = null;
@@ -417,7 +456,7 @@ function Carte({ ctx, carte, rang, sens, onChoix, onLire, onVoir, vol, revenue }
   const style = vol ? `--x0:${vol.from?.dx || 0}px;--y0:${vol.from?.dy || 0}px;--r0:${((vol.from?.dx || 0) / (vol.from?.w || 320)) * 9}deg;--dir:${depart};--p:${(vol.choix === 'oui' ? 1 : -1) * (vol.from ? 1 : 0.6)}` : `--rang:${rang}`;
   const o = carte.offre, p = carte.profil;
   const tid = 'mx-t-' + carte.cle.replace(/:/g, '-') + (vol ? '-vol' : '');
-  if (sponso) return html`<article ref=${el} class=${'mx-carte sponso' + (dessus ? ' dessus' : ' derriere') + (vol ? ' vol' : '')}
+  if (sponso) return html`<article ref=${el} class=${cls}
     style=${style} aria-hidden=${dessus ? null : 'true'} inert=${dessus ? null : true} aria-labelledby=${dessus ? `${tid}-m ${tid}` : null}
     onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerCancel=${up} onClick=${clic}>
     <${Tampons}/>
@@ -425,7 +464,7 @@ function Carte({ ctx, carte, rang, sens, onChoix, onLire, onVoir, vol, revenue }
     <${PiedSponsorise} s=${carte.sponsorise} onVoir=${dessus ? onVoir : null}/>
   </article>`;
   const cv = carte.sorte === 'etudiant' && p?.cv_path && (ctx.store.voitChamp?.(p, 'cv') ?? true);
-  return html`<article ref=${el} class=${'mx-carte' + (dessus ? ' dessus' : ' derriere') + (vol ? ' vol' : '') + (revenue && dessus ? ' revenue' : '') + (carte.interet ? ' avec-interet' : '') + (cv ? ' avec-cv' : '')}
+  return html`<article ref=${el} class=${cls + (revenue && dessus ? ' revenue' : '') + (carte.interet ? ' avec-interet' : '') + (cv ? ' avec-cv' : '')}
     style=${style} aria-hidden=${dessus ? null : 'true'} inert=${dessus ? null : true} aria-labelledby=${dessus ? tid : null}
     onPointerDown=${down} onPointerMove=${move} onPointerUp=${up} onPointerCancel=${up} onClick=${clic}>
     <${Tampons}/>
@@ -477,7 +516,8 @@ function PiedSponsorise({ s, onVoir }) {
 }
 // L'aperçu de l'administration (admin.js) : la carte telle qu'elle paraît dans Match, « Voir » ouvre le lien sans rien compter
 export function ApercuSponsorise({ s }) {
-  return html`<div class="mx-apercu"><article class="mx-carte sponso dessus" aria-label="Aperçu dans Match">
+  const ref = useRef(); useCoupes(ref, s);
+  return html`<div class="mx-apercu" ref=${ref}><article class="mx-carte sponso dessus" aria-label="Aperçu dans Match">
     <${CorpsSponsorise} s=${s}/><${PiedSponsorise} s=${s}/>
   </article></div>`;
 }
@@ -513,7 +553,7 @@ function CorpsEtudiant({ ctx, carte, tid, onLire }) {
   const { data, store, saison } = ctx; const p = carte.profil;
   const n = niveauOf(p, saison);
   const voit = c => store.voitChamp?.(p, c) ?? true;
-  const d = demandesActives(data, p.id).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+  const d = derniereDemande(data, p.id);
   const comp = voit('presentation') ? (p.competences || []).slice(0, 3) : [];
   const pdf = voit('cv') ? p.cv_path : null;
   const lien = !pdf && voit('cv') ? p.cv_url : null;
@@ -550,7 +590,8 @@ function CorpsLaureat({ ctx, carte, tid }) {
   const { store } = ctx; const p = carte.profil; const o = carte.interet?.offre;
   const voit = c => store.voitChamp?.(p, c) ?? true;
   const ent = voit('travail') ? p.entreprise : '';
-  const travail = voit('travail') ? [p.poste, p.entreprise].filter(Boolean).join(' · ') : '';
+  // Une espace insécable avant le point : sur deux lignes, le point reste à la fin de la première, jamais en tête de la seconde
+  const travail = voit('travail') ? [p.poste, p.entreprise].filter(Boolean).join('\u00a0· ') : '';
   const comp = voit('presentation') ? (p.competences || []).slice(0, 3) : [];
   const offreLieu = o ? [o.ville, o.duree].filter(Boolean).join(' · ') : '';
   return html`<div class="mx-corps mx-personne">
@@ -591,11 +632,11 @@ function EnBref({ ctx, carte, onDetail }) {
     const o = carte.offre;
     corps = html`${o.description ? html`<p class="mx-bref-texte" translate="no" dir="auto">${o.description}</p>` : null}${fiche(o)}`;
   } else {
-    const d = carte.sorte === 'etudiant' ? demandesActives(data, p.id).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0] : null;
+    const d = carte.sorte === 'etudiant' ? derniereDemande(data, p.id) : null;
     const o = carte.interet?.offre;
     corps = html`${d ? html`<div class="mx-bref-bloc"><p class="mx-bref-l">Sa recherche</p><p class="mx-bref-fort" translate="no" dir="auto">${d.titre}</p>
         ${d.details ? html`<p class="mx-bref-texte" translate="no" dir="auto">${d.details}</p>` : null}
-        ${d.lieu || d.duree ? html`<p class="mx-bref-meta" translate="no" dir="auto">${[d.lieu, d.duree].filter(Boolean).join(' · ')}</p>` : null}</div>` : null}
+        ${d.lieu || d.duree ? html`<p class="mx-bref-meta" translate="no" dir="auto">${[d.lieu, d.duree].filter(Boolean).join('\u00a0· ')}</p>` : null}</div>` : null}
       ${carte.sorte === 'laureat' && o ? html`<div class="mx-bref-bloc"><p class="mx-bref-l">Son offre</p><p class="mx-bref-fort" translate="no" dir="auto">${titreOffre(o)}</p>
         ${o.description ? html`<p class="mx-bref-texte" translate="no" dir="auto">${o.description}</p>` : null}</div>${fiche(o)}` : null}
       ${voit('presentation') && p.bio ? html`<div class="mx-bref-bloc"><p class="mx-bref-l">Présentation</p><p class="mx-bref-texte" translate="no" dir="auto">${p.bio}</p></div>` : null}
@@ -614,19 +655,19 @@ function EnBref({ ctx, carte, onDetail }) {
 }
 
 // ---------------------------------------------------------------------------
-// « Tes matchs » : les visages, le plus récent d'abord ; un anneau qui respire (trois fois) sur un match pas encore vu.
-// grand : à la fin de la pile, la rangée devient le cœur de l'écran
+// « Tes matchs » : les visages, le plus récent d'abord, toujours au même endroit (l'en-tête, avec ou sans cartes) ; un
+// anneau orange sur un match pas encore vu, qui s'annonce une fois en arrivant.
 // ---------------------------------------------------------------------------
-export function MesMatchs({ ctx, grand = false }) {
+export function MesMatchs({ ctx }) {
   const { data, me, store, go } = ctx;
   const ms = matchsDe(data, me);
   if (!ms.length) return null;
   const ouvrir = x => { if (x.nouveau) store.vuMatch(x.m.id).catch(() => {}); ctx.ecrire ? ctx.ecrire(x.autre.id) : go('messages/' + x.autre.id); };
-  return html`<section class=${'mx-matchs' + (grand ? ' grand' : '')} aria-labelledby="mx-h-matchs">
+  return html`<section class="mx-matchs" aria-labelledby="mx-h-matchs">
     <h2 class="mx-h" id="mx-h-matchs">Tes matchs <span class="count">${ms.length}</span></h2>
     <ul class="mx-rangee">${ms.map(x => html`<li key=${x.m.id}>
       <button type="button" class=${'mx-visage' + (x.nouveau ? ' nouveau' : '')} onClick=${() => ouvrir(x)}>
-        <span class="mx-anneau"><${Avatar} p=${x.autre} size=${grand ? 52 : 42}/></span>
+        <span class="mx-anneau"><${Avatar} p=${x.autre} size=${42}/></span>
         <span class="mx-v-nom" translate="no">${prenom(x.autre)}</span>
         ${x.nouveau ? html`<span class="sr-only">Nouveau match</span>` : null}
       </button></li>`)}</ul>
@@ -634,11 +675,28 @@ export function MesMatchs({ ctx, grand = false }) {
 }
 
 // ---------------------------------------------------------------------------
-// Plus de carte : « Tu as tout vu », le bilan vrai de la visite, ce qui va arriver (et quand), une seule action, puis tes matchs
+// Plus de carte : « Tu as tout vu », le bilan vrai de la visite, ce qui va arriver (et quand), une seule action. Tes matchs
+// restent dans l'en-tête, là où ils étaient pendant la pile : la fin tient dans l'écran, sans défiler.
 // ---------------------------------------------------------------------------
 function PileVide({ ctx, bilan, onPublier, revenir }) {
   const { me, data, saison, go } = ctx;
   const etu = me.role === 'etudiant';
+  // Sur téléphone, la fin prend la place de la pile : jusqu'au-dessus de la barre du bas, son contenu au milieu ; ce qui
+  // suit (« Les lauréats voient aussi ta carte ») commence sous la barre, jamais à moitié caché derrière
+  const ref = useRef();
+  useLayoutEffect(() => {
+    const v = ref.current; if (!v) return;
+    const ajuste = () => {
+      const bas = document.querySelector('.bottom-nav')?.offsetHeight || 0;
+      if (!bas) return v.style.removeProperty('--h-fin');
+      let haut = 0; for (let e = v; e; e = e.offsetParent) haut += e.offsetTop;
+      const ecart = parseFloat(getComputedStyle(v.parentElement).rowGap) || 16;
+      v.style.setProperty('--h-fin', Math.round(innerHeight - haut - bas - ecart) + 'px');
+    };
+    ajuste(); addEventListener('resize', ajuste);
+    let vivant = true; document.fonts?.ready.then(() => vivant && ajuste());
+    return () => { vivant = false; removeEventListener('resize', ajuste); };
+  }, []);
   const demande = etu && typesDemande(me, saison).length && demandesActives(data, me.id).length < DEMANDES_MAX;
   const oui = bilan.filter(x => x.choix === 'oui').length, tard = bilan.length - oui;
   const suite = [
@@ -646,12 +704,12 @@ function PileVide({ ctx, bilan, onPublier, revenir }) {
     ['spark', etu ? 'Chaque nouvelle offre de lauréat pour ton année arrive ici.' : 'Chaque nouvel étudiant du cycle ingénieur arrive ici dès son inscription.'],
     ['check', etu ? 'Un lauréat qui s’intéresse à ton profil passe avant tout le reste.' : 'Une offre publiée fait venir les étudiants : ceux qui disent oui passent en premier.'],
   ];
-  return html`<section class="mx-vide" aria-labelledby="mx-vide-t">
-    <div class="mx-vide-scene" aria-hidden="true"><span></span><span></span><span><svg viewBox="0 0 24 24" width="34" height="34"><path class="mx-trait" d="m5.5 12.5 4.2 4.2 8.8-9.2"/></svg></span></div>
+  return html`<section class="mx-vide" ref=${ref} aria-labelledby="mx-vide-t">
+    <div class="mx-vide-scene" aria-hidden="true"><span></span><span></span><span><svg viewBox="0 0 24 24" width="32" height="32"><path class="mx-trait" d="m5.5 12.5 4.2 4.2 8.8-9.2"/></svg></span></div>
     <h2 id="mx-vide-t">Tu as tout vu</h2>
     ${bilan.length ? html`<div class="mx-bilan" role="group" aria-label="Cette visite">
       <p class="mx-bl-t">Cette visite</p>
-      <p class="mx-bl-n"><span class="mx-bl-oui"><${Compte} n=${oui}/><span>Intéressé</span></span><span class="mx-bl-tard"><${Compte} n=${tard}/><span>Plus tard</span></span></p>
+      <p class="mx-bl-n"><span class=${'mx-bl-oui' + (oui ? ' vif' : '')}><${Compte} n=${oui}/><span>Intéressé</span></span><span class="mx-bl-tard"><${Compte} n=${tard}/><span>Plus tard</span></span></p>
     </div>` : null}
     <ul class="mx-suite">${suite.map(([i, t]) => html`<li><span class="mx-s-ico"><${Icon} name=${i} size=${16}/></span><span>${t}</span></li>`)}</ul>
     <div class="mx-vide-acts">
@@ -660,7 +718,6 @@ function PileVide({ ctx, bilan, onPublier, revenir }) {
         : html`<button type="button" class="btn primary" onClick=${onPublier}><${Icon} name="plus" size=${18}/> Publier une offre</button>`}
       ${revenir ? html`<button type="button" class="linkish small" onClick=${revenir}><${Icon} name="undo" size=${15}/> Revenir sur mon dernier choix</button>` : null}
     </div>
-    <${MesMatchs} ctx=${ctx} grand/>
   </section>`;
 }
 
@@ -758,6 +815,8 @@ injectCSS('match-cartes', `
 .mx-v-badge > .clogo { box-shadow: 0 0 0 2.5px var(--surface); }
 /* Un poste long (« Ingénieure maintenance · OCP Group ») passe à la ligne plutôt que d'être coupé */
 .mx-v-perso .mx-v-txt > span:not(.mx-v-promo) { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.3; }
+/* Un titre sur deux ou trois lignes : des lignes de longueur voisine, jamais un mot seul en dessous */
+.mx-c-titre, .mx-so-t, .mx-c-nom, .mx-v-txt > strong, .mx-v-perso .mx-v-txt > span:not(.mx-v-promo) { text-wrap: balance; }
 /* Quelqu'un attend ta réponse : un bandeau d'un bord à l'autre, au-dessus de tout */
 .mx-interet { flex: none; display: flex; align-items: center; gap: .5rem; margin: 0; padding: .55rem 1.15rem; background: var(--brass-soft); color: var(--brass); font-size: var(--fs-3); font-weight: 650; line-height: 1.3;
   border-block-end: 1px solid color-mix(in srgb, var(--brass) 22%, transparent); }
@@ -827,11 +886,13 @@ a.mx-cv-absent.lien { min-height: 44px; border-style: solid; color: var(--blue-t
 .mx-v-perso.haut .mx-v-txt { align-items: center; }
 /* Sur le voile d'une personne, le petit cercle descend dans le coin, sous le visage : loin du texte qu'il barrerait sinon */
 .mx-v-perso::after { inset-inline-end: auto; inset-inline-start: -64px; inset-block-end: -74px; }
-/* En arabe, un texte resté en français (dir="auto") : court, il rejoint le bord droit avec le reste de la carte ; long, il
-   garde l'alignement du français et ses points de suspension (Chrome les perd sur une ligne coupée alignée à droite).
-   Au centre sur un voile centré. De même dans « En bref ». */
-[dir="rtl"] :is(.mx-txt, .mx-v-txt, .mx-ch-txt, .mx-int-txt, .mx-son-offre > span:last-child, .mx-bref, .mx-bref-bloc, .mx-bref-dl > div) > [dir="auto"] { margin-left: auto; max-width: 100%; }
-[dir="rtl"] .mx-v-perso.haut .mx-v-txt > [dir="auto"] { margin-right: auto; }
+/* En arabe, un texte resté en français (dir="auto") garde son sens (la ponctuation à sa place) et rejoint le bord droit
+   avec le reste de la carte, sur une ou deux lignes comme sur trois. Deux exceptions gardent l'alignement du français :
+   un paragraphe (la description, plus lisible ainsi sur plusieurs lignes), et un titre trop long, coupé (data-coupe,
+   voir useCoupes) — Chrome perd les points de suspension d'une ligne coupée alignée à droite. Au centre sur un voile
+   centré. De même dans « En bref ». */
+[dir="rtl"] :is(.mx-carte, .mx-bref) [dir="auto"]:not(.mx-c-desc, .mx-bref-texte, [data-coupe]) { text-align: right; }
+[dir="rtl"] .mx-v-perso.haut .mx-v-txt > [dir="auto"] { text-align: center; }
 /* Une carte basse (petit écran) : tout se resserre pour que l'essentiel reste visible */
 @container carte (max-height: 560px) { .avec-cv .mx-puces { display: none; } }
 @container carte (max-height: 500px) {
@@ -867,22 +928,36 @@ injectCSS('match-sponso', `
 @container carte (max-height: 360px) { .mx-sponso .mx-s-texte { -webkit-line-clamp: 2; } }
 `);
 
-// Le premier passage : « Plus tard » d'un côté, « Intéressé » de l'autre, la pastille qui glisse vers « Intéressé » (trois fois)
+// Le premier passage : la carte du dessus montre le geste elle-même — elle penche vers « Intéressé » et son tampon paraît,
+// puis vers « Plus tard », puis revient (chaque mouvement 0,4 s au plus, une seule fois, rien sans mouvement) ; en bas,
+// une étiquette pleine (jamais transparente sur le texte) dit les deux côtés, et sa pastille suit la carte.
+// Ses couleurs sont celles de la page inversées : foncée le jour, claire la nuit (comme une infobulle).
+// La pile bouge exactement comme sous le doigt (voir poser) : --mx-montre est la part du seuil (30 % de la largeur), d'où
+// le penché (× 9° par largeur), le tampon (--p) et les cartes de derrière qui avancent (--avance). Touchée en route, la
+// carte reste donc où elle est (voir down), et choisie au bouton, elle part de là (voir choisir).
 injectCSS('match-guide', `
-.mx-guide { position: absolute; inset-inline: 12px; inset-block-end: 14px; z-index: 6; margin: 0; padding: .65rem .85rem; display: flex; align-items: center; justify-content: space-between; gap: .7rem;
-  border-radius: 16px; background: rgb(6 18 42 / .88); color: #fff; font-size: var(--fs-2); font-weight: 650; pointer-events: none; box-shadow: 0 14px 30px -16px rgb(0 0 0 / .7);
-  animation: mx-guide-in .3s ease both; }
+@property --mx-montre { syntax: '<number>'; inherits: true; initial-value: 0; }
+/* Sans transition pendant ce temps : elle traînerait derrière le geste (Chrome la relance à chaque image) */
+.mx-pile.montre { --avance: max(var(--mx-montre), -1 * var(--mx-montre)); }
+.mx-pile.montre > .mx-carte { transition: none; }
+.mx-pile.montre > .mx-carte.dessus:not(.tenue) { --p: var(--mx-montre);
+  transform: translateX(calc(var(--mx-montre) * var(--sens, 1) * 30%)) rotate(calc(var(--mx-montre) * var(--sens, 1) * 2.7deg)); }
+.mx-pile.montre .mx-guide-doigt::after { translate: calc(var(--mx-montre) * var(--sens, 1) * 43px); }
+@keyframes mx-montre { 0% { --mx-montre: 0; } 19%, 40% { --mx-montre: .7; } 61%, 80% { --mx-montre: -.7; } 100% { --mx-montre: 0; } }
+@media (prefers-reduced-motion: no-preference) { .mx-pile.montre { animation: mx-montre 1.9s cubic-bezier(.45, 0, .25, 1) .7s both; } }
+.mx-guide { position: absolute; inset-inline: 14px; inset-block-end: 14px; z-index: 6; margin: 0; padding: .6rem .85rem; display: flex; align-items: center; justify-content: space-between; gap: .7rem;
+  border-radius: 16px; background: var(--ink); color: var(--surface); font-size: var(--fs-2); font-weight: 650; pointer-events: none;
+  box-shadow: 0 16px 34px -14px rgb(0 0 0 / .55), 0 0 0 1px color-mix(in srgb, var(--surface) 10%, transparent); animation: mx-guide-in .3s ease both; }
 .mx-g-cote { display: inline-flex; align-items: center; gap: .3rem; white-space: nowrap; }
-.mx-g-non { opacity: .8; }
-.mx-g-oui { color: color-mix(in srgb, var(--good) 35%, #fff); }
+.mx-g-non { color: color-mix(in srgb, var(--surface) 82%, var(--ink)); }
+.mx-g-oui { color: color-mix(in srgb, var(--good) 36%, var(--surface)); }
 .mx-g-non .ico { transform: scaleX(-1); }
 [dir="rtl"] .mx-g-non .ico { transform: none; }
 [dir="rtl"] .mx-g-oui .ico { transform: scaleX(-1); }
-.mx-guide-doigt { position: relative; flex: 1; max-inline-size: 104px; block-size: 20px; border-radius: 10px; background: rgb(255 255 255 / .16); }
-.mx-guide-doigt::after { content: ""; position: absolute; inset-block-start: 2px; inset-inline-start: calc(50% - 8px); inline-size: 16px; block-size: 16px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 4px rgb(255 255 255 / .2); }
+.mx-guide-doigt { position: relative; flex: 1; max-inline-size: 104px; block-size: 20px; border-radius: 10px; background: color-mix(in srgb, var(--surface) 18%, transparent); }
+.mx-guide-doigt::after { content: ""; position: absolute; inset-block-start: 2px; inset-inline-start: calc(50% - 8px); inline-size: 16px; block-size: 16px; border-radius: 50%;
+  background: var(--surface); box-shadow: 0 0 0 4px color-mix(in srgb, var(--surface) 22%, transparent); }
 @keyframes mx-guide-in { from { opacity: 0; transform: translateY(8px); } }
-@keyframes mx-guide-va { 0%, 100% { transform: translateX(0); } 40%, 62% { transform: translateX(calc(var(--sens, 1) * 32px)); } }
-@media (prefers-reduced-motion: no-preference) { .mx-guide-doigt::after { animation: mx-guide-va 1.5s cubic-bezier(.45, 0, .3, 1) .35s 3; } }
 @media (prefers-reduced-motion: reduce) { .mx-guide { animation: none; } }
 `);
 
@@ -898,13 +973,16 @@ injectCSS('match-page', `
 .mx-pr-barre i { position: absolute; inset-block: 0; inset-inline-start: 0; border-radius: inherit; background: var(--accent); transition: inline-size .3s var(--ease); }
 @media (prefers-reduced-motion: reduce) { .mx-pr-pts i, .mx-pr-barre i { transition: none; } }
 
-/* Plus de carte : trois cartes posées (la dernière coche se dessine), le bilan vrai de la visite, la suite, tes matchs */
-.mx-vide { display: flex; flex-direction: column; align-items: center; gap: .85rem; padding: 1.8rem 1.4rem 1.4rem; text-align: center; border-radius: var(--r-xl); background: var(--surface); box-shadow: var(--sh1); }
-.mx-vide > h2 { margin: .2rem 0 0; color: var(--ink); font: 700 var(--fs-6)/1.25 var(--f-display); }
-.mx-vide-scene { position: relative; inline-size: 136px; block-size: 104px; }
-.mx-vide-scene > span { position: absolute; inset-block-start: 8px; inset-inline-start: 34px; inline-size: 68px; block-size: 92px; border-radius: 14px; background: var(--surface-2); box-shadow: var(--sh1); }
-.mx-vide-scene > span:nth-child(1) { rotate: -13deg; translate: -20px 4px; }
-.mx-vide-scene > span:nth-child(2) { rotate: 10deg; translate: 20px 2px; background: var(--brass-soft); }
+/* Plus de carte : trois cartes posées (la dernière coche se dessine), le bilan vrai de la visite, la suite, l'action */
+/* Tout tient au-dessus de la barre du bas d'un téléphone (390 × 844 comme 360 px de large), sans défiler ; la carte va
+   jusqu'à la barre (--h-fin, PileVide), son contenu au milieu */
+.mx-vide { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .75rem; min-block-size: var(--h-fin, auto); padding: 1.5rem 1.25rem 1.1rem;
+  text-align: center; border-radius: var(--r-xl); background: var(--surface); box-shadow: var(--sh1); }
+.mx-vide > h2 { margin: 0; color: var(--ink); font: 700 var(--fs-6)/1.25 var(--f-display); text-wrap: balance; }
+.mx-vide-scene { position: relative; inline-size: 124px; block-size: 92px; }
+.mx-vide-scene > span { position: absolute; inset-block-start: 6px; inset-inline-start: 31px; inline-size: 62px; block-size: 82px; border-radius: 13px; background: var(--surface-2); box-shadow: var(--sh1); }
+.mx-vide-scene > span:nth-child(1) { rotate: -13deg; translate: -18px 4px; }
+.mx-vide-scene > span:nth-child(2) { rotate: 10deg; translate: 18px 2px; background: var(--brass-soft); }
 .mx-vide-scene > span:nth-child(3) { display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); box-shadow: var(--sh2); }
 .mx-vide-scene svg { fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
 @media (prefers-reduced-motion: no-preference) {
@@ -918,14 +996,12 @@ injectCSS('match-page', `
 .mx-bl-n { display: flex; gap: 2.4rem; margin: 0; }
 .mx-bl-n > span { display: flex; flex-direction: column; align-items: center; gap: .15rem; color: var(--ink-2); font-size: var(--fs-2); font-weight: 600; }
 .mx-compte { color: var(--ink); font: 700 var(--fs-7)/1 var(--f-display); font-variant-numeric: tabular-nums; }
-.mx-bl-oui .mx-compte { color: var(--blue-text); }
-.mx-suite { list-style: none; margin: .2rem 0 0; padding: 0; display: flex; flex-direction: column; gap: .6rem; inline-size: 100%; max-inline-size: 38ch; text-align: start; }
-.mx-suite li { display: flex; align-items: flex-start; gap: .65rem; color: var(--ink-2); font-size: var(--fs-3); line-height: 1.45; }
+/* « Intéressé » en couleur seulement s'il y en a eu : un zéro reste neutre */
+.mx-bl-oui.vif .mx-compte { color: var(--blue-text); }
+.mx-suite { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .55rem; inline-size: 100%; max-inline-size: 38ch; text-align: start; }
+.mx-suite li { display: flex; align-items: flex-start; gap: .65rem; color: var(--ink-2); font-size: var(--fs-3); line-height: 1.45; text-wrap: pretty; }
 .mx-s-ico { flex: none; display: grid; place-items: center; inline-size: 28px; block-size: 28px; margin-block-start: -.15rem; border-radius: 50%; background: var(--accent-soft); color: var(--blue-text); }
-.mx-matchs.grand { align-items: center; inline-size: 100%; gap: .5rem; padding-block-start: 1rem; border-block-start: 1px solid var(--line); }
-.mx-matchs.grand .mx-h { position: static; inline-size: auto; block-size: auto; overflow: visible; clip-path: none; white-space: normal; padding: 0; font: 650 var(--fs-3)/1.3 var(--f-body); color: var(--ink-2); }
-.mx-matchs.grand .mx-rangee { justify-content: safe center; }
-.mx-vide-acts { display: flex; flex-direction: column; align-items: center; gap: .3rem; margin-block-start: .2rem; }
+.mx-vide-acts { display: flex; flex-direction: column; align-items: center; gap: .2rem; }
 .mx-vide .linkish { min-height: 44px; display: inline-flex; align-items: center; gap: .3rem; }
 
 /* « En bref », à côté de la pile, sur grand écran seulement */

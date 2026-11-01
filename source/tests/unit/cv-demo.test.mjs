@@ -118,3 +118,28 @@ test('CV de démo : le même profil donne le même CV ; deux profils de la même
   assert.equal(await lu(a), await lu(a));
   if (b) assert.notEqual((await lu(a)).replace(a.full_name, ''), (await lu(b)).replace(b.full_name, ''));
 });
+
+test('CV de démo : en 5e année, le profil dit les deux stages dans l’ordre où ils ont eu lieu (le stage ouvrier, puis celui d’ingénieur adjoint)', () => {
+  let vus = 0;
+  for (const p of PROFILS.filter(x => x.role === 'etudiant' && niveauOf(x, S) === 5)) {
+    const c = contenuCv(p, { now: NOW, demande: demandeDe(p) });
+    // Les expériences vont de la plus récente à la plus ancienne (l'usage d'un CV)
+    const [recent, ancien] = c.experiences;
+    assert.ok(Number(recent.droite.match(/\d{4}/)[0]) > Number(ancien.droite.match(/\d{4}/)[0]), `${p.full_name} : la plus récente d’abord`);
+    const m = c.profil.match(/Deux stages, dans (.+?) puis (.+?), avec/);
+    if (!m) { assert.match(c.profil, new RegExp(`Deux stages dans ${recent.e.secteur}`), p.full_name); continue; }
+    assert.deepEqual([m[1], m[2]], [ancien.e.secteur, recent.e.secteur], p.full_name);
+    vus++;
+  }
+  assert.ok(vus >= 3, `${vus} profils de 5e année avec deux secteurs`);
+});
+
+test('CV de démo : le poste actuel d’un lauréat n’invente pas de date (daté seulement pour un jeune diplômé, depuis sa sortie)', () => {
+  const laureats = PROFILS.filter(x => x.role === 'laureat' && x.entreprise);
+  assert.ok(laureats.some(p => Number(p.promo) < S - 1), 'au moins un ancien');
+  for (const p of laureats) {
+    const P = Number(p.promo), [poste] = contenuCv(p, { now: NOW }).experiences;
+    assert.equal(poste.e.nom, p.entreprise, p.full_name);
+    assert.equal(poste.droite, P >= S - 1 ? `Depuis ${P}` : 'Poste actuel', p.full_name);
+  }
+});

@@ -2139,8 +2139,8 @@ html.mx-fige { overflow: hidden; }
   background: radial-gradient(120% 80% at 50% 28%, color-mix(in srgb, var(--accent) 26%, var(--surface)) 0%, color-mix(in srgb, var(--accent) 8%, var(--bg)) 55%, var(--bg) 100%);
   animation: mx-fete-voile .3s ease backwards; }
 .mx-fete-in { position: relative; z-index: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: .7rem; inline-size: min(420px, 100%); text-align: center; }
-.mx-fete h2 { margin: .6rem 0 0; color: var(--ink); font: 800 clamp(2rem, 9vw, 2.6rem)/1.1 var(--f-display); letter-spacing: -.02em; }
-.mx-fete p { margin: 0; color: var(--ink-2); font-size: var(--fs-4); max-width: 30ch; }
+.mx-fete h2 { margin: .6rem 0 0; color: var(--ink); font: 800 clamp(2rem, 9vw, 2.6rem)/1.1 var(--f-display); letter-spacing: -.02em; text-wrap: balance; }
+.mx-fete p { margin: 0; color: var(--ink-2); font-size: var(--fs-4); max-width: 30ch; text-wrap: balance; }
 .mx-fete-offre { display: inline-flex; align-items: center; gap: .5rem; padding: .4rem .8rem .4rem .45rem; border-radius: var(--r-pill); background: var(--surface); box-shadow: var(--sh1); font-weight: 600; color: var(--ink) !important; font-size: var(--fs-3) !important; max-width: 100% !important; }
 .mx-fete-offre > span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mx-fete-acts { display: flex; flex-direction: column; align-items: stretch; gap: .4rem; inline-size: min(320px, 100%); margin-block-start: 1rem; }
@@ -2168,7 +2168,8 @@ html.mx-fige { overflow: hidden; }
   .mx-duo-sceau { animation: mx-sceau .26s cubic-bezier(.3, 1.6, .5, 1) .36s backwards; }
   .mx-duo-sceau .mx-trait { stroke-dasharray: 20; stroke-dashoffset: 20; animation: mx-trait .3s cubic-bezier(.6, 0, .3, 1) .52s forwards; }
   .mx-duo-sceau::after { content: ""; position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 2px var(--accent); opacity: 0; animation: mx-onde .4s ease-out .62s 1; }
-  .mx-visage.nouveau .mx-anneau { animation: mx-respire 2.4s ease-in-out 3; }
+  /* Un match pas encore vu s'annonce une fois en arrivant : une onde orange part de son anneau, puis l'anneau reste */
+  .mx-visage.nouveau .mx-anneau { animation: mx-ping .4s ease-out .5s backwards; }
 }
 @keyframes mx-duo-a { from { opacity: 0; transform: translateX(calc(-80px * var(--sens))) rotate(calc(var(--sens) * -12deg)); } 60% { opacity: 1; } }
 @keyframes mx-duo-b { from { opacity: 0; transform: translateX(calc(80px * var(--sens))) rotate(calc(var(--sens) * 12deg)); } 60% { opacity: 1; } }
@@ -2177,7 +2178,8 @@ html.mx-fige { overflow: hidden; }
 @keyframes mx-trait { to { stroke-dashoffset: 0; } }
 @keyframes mx-onde { from { opacity: .7; transform: scale(1); } to { opacity: 0; transform: scale(1.8); } }
 @keyframes mx-monte { from { opacity: 0; transform: translateY(10px); } }
-@keyframes mx-respire { 50% { box-shadow: 0 0 0 2.5px var(--orange), 0 0 0 7px color-mix(in srgb, var(--orange) 24%, transparent); } }
+@keyframes mx-ping { from { box-shadow: 0 0 0 2.5px var(--orange), 0 0 0 2.5px color-mix(in srgb, var(--orange) 55%, transparent); }
+  to { box-shadow: 0 0 0 2.5px var(--orange), 0 0 0 12px transparent; } }
 
 /* L'entrée de l'accueil (pas un bouton plein : l'accueil garde le sien) */
 .mx-accueil { flex-direction: row; align-items: center; gap: .8rem; background: color-mix(in srgb, var(--brass-soft) 55%, var(--surface)); }

@@ -5075,10 +5075,79 @@ test('Match : le geste montré une fois, sans gêner la carte', async () => {
   await s.comme('Salma'); await s.aller('match');
   await s.page.waitForSelector('.mx-guide');
   assert.equal(await s.page.locator('.mx-guide').evaluate(e => getComputedStyle(e).pointerEvents), 'none');
+  // Sans mouvement (réglage du système), la carte ne bouge pas toute seule (ni rien de la pile) : l'étiquette suffit
+  assert.deepEqual(await s.page.evaluate(() => document.getAnimations().map(a => a.animationName).filter(n => n === 'mx-montre')), []);
+  assert.equal(await s.page.locator('.mx-carte.dessus').evaluate(c => new DOMMatrixReadOnly(getComputedStyle(c).transform).e), 0);
   await s.page.locator('.mx-non').click();
   await s.page.waitForSelector('.mx-guide', { state: 'detached' });
   await s.page.reload(); await s.page.waitForSelector('.mx-carte');
   assert.equal(await s.page.locator('.mx-guide').count(), 0, 'pas deux fois');
+  await s.ctx.close();
+});
+
+test('Match : au premier passage, la carte du dessus montre elle-même le geste, une seule fois ; l’étiquette a un fond plein ; toucher la carte arrête tout', async () => {
+  const s = await ouvrir({ largeur: 390, mouvement: true });
+  await s.comme('Salma'); await s.aller('match');
+  await s.page.waitForSelector('.mx-pile.montre .mx-guide');
+  // Une seule démonstration de 1,9 s (vers « Intéressé », puis « Plus tard », puis retour), jamais en boucle
+  const montre = () => s.page.evaluate(() => document.getAnimations().filter(a => a.animationName === 'mx-montre')
+    .map(a => { const t = a.effect.getComputedTiming(); return { fois: t.iterations, duree: t.duration }; }));
+  assert.deepEqual(await montre(), [{ fois: 1, duree: 1900 }]);
+  // L'étiquette ne laisse pas voir la carte au travers (un fond plein, jour comme nuit)
+  const fond = await s.page.locator('.mx-guide').evaluate(e => getComputedStyle(e).backgroundColor);
+  assert.match(fond, /^rgb\(/, `fond plein : ${fond}`);
+  // Penchée vers « Intéressé » comme sous le doigt : 70 % du seuil (30 % de la largeur), le tampon d'autant, la suivante avance
+  await s.page.waitForFunction(() => parseFloat(getComputedStyle(document.querySelector('.mx-pile')).getPropertyValue('--mx-montre')) > .69);
+  const penche = () => s.page.locator('.mx-carte.dessus').evaluate(c => ({ x: new DOMMatrixReadOnly(getComputedStyle(c).transform).e / c.offsetWidth, p: parseFloat(getComputedStyle(c).getPropertyValue('--p')) }));
+  const avant = await penche();
+  assert.ok(Math.abs(avant.x - .21) < .015 && avant.p > .69, `penchée : ${JSON.stringify(avant)}`);
+  // La carte est à toi dès qu'on la touche : prise en route, elle reste où elle penchait (pas de saut au centre)…
+  const c = await s.page.locator('.mx-carte.dessus').boundingBox();
+  await s.page.mouse.move(c.x + c.width / 2, c.y + c.height / 2); await s.page.mouse.down();
+  const prise = await penche();
+  assert.ok(Math.abs(prise.x - avant.x) < .02, `prise là où elle penchait : ${JSON.stringify({ avant, prise })}`);
+  // … et un petit glissé (vers « Plus tard », sans choisir) arrête la démonstration et l'étiquette ; lâchée, elle revient
+  for (let i = 1; i <= 4; i++) { await s.page.mouse.move(c.x + c.width / 2 - i * 8, c.y + c.height / 2); await s.page.waitForTimeout(16); }
+  await s.page.mouse.up();
+  await s.page.waitForSelector('.mx-guide', { state: 'detached' });
+  assert.equal(await s.page.locator('.mx-pile.montre').count(), 0);
+  assert.deepEqual(await montre(), []);
+  await s.page.waitForFunction(() => { const c = document.querySelector('.mx-carte.dessus'); return c && !c.classList.contains('ressort') && Math.abs(new DOMMatrixReadOnly(getComputedStyle(c).transform).e) < .5; });
+  assert.equal(await s.page.locator('.modal').count(), 0, 'un glissé n’ouvre pas le détail');
+  assert.equal(await s.page.locator('.mx-carte.vol').count(), 0, 'rien n’est choisi');
+  assert.equal(await s.page.locator('.mx-pr-n strong').innerText(), '1', 'toujours la première carte');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : en arabe, un titre resté en français rejoint le bord droit de la carte, sur deux lignes aussi ; la description garde le sens du français ; un titre trop long, coupé, garde ses points de suspension (390 px)', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  await s.comme('Salma'); await s.aller('match');
+  const titre = s.page.locator('.mx-carte.dessus .mx-so-t');
+  await titre.waitFor();
+  // Chaque ligne d'un texte (ses morceaux à la même hauteur) : son écart au bord droit et au bord gauche de la colonne
+  const lignes = sel => s.page.locator(sel).evaluate(e => {
+    const r = document.createRange(); r.selectNodeContents(e);
+    const b = e.getBoundingClientRect(), par = new Map();
+    for (const x of r.getClientRects()) { const k = Math.round(x.bottom); const v = par.get(k) || [Infinity, -Infinity]; par.set(k, [Math.min(v[0], x.left), Math.max(v[1], x.right)]); }
+    const l = [...par.values()];
+    return { n: l.length, droite: Math.max(...l.map(([, d]) => Math.abs(b.right - d))), gauche: Math.max(...l.map(([g]) => Math.abs(g - b.left))), coupe: e.hasAttribute('data-coupe') };
+  });
+  // « Tableau de bord qualité en temps réel » (l'offre de Zineb pour Salma) : deux lignes, chacune au bord droit
+  const t = await lignes('.mx-carte.dessus .mx-so-t');
+  assert.ok(t.n === 2 && t.droite < 1.5 && !t.coupe, JSON.stringify(t));
+  // Sa description, un paragraphe : au bord gauche, comme on lit le français
+  const d = await lignes('.mx-carte.dessus .mx-c-desc');
+  assert.ok(d.n >= 2 && d.gauche < 1.5, JSON.stringify(d));
+  // Le même titre, trop long pour deux lignes : coupé, il garde l'alignement du français et ses points de suspension
+  await s.aller('accueil');
+  await s.page.evaluate(() => { const o = window.__demo.data.offers.find(o => /tableau de bord qualité en temps réel$/i.test(o.titre)); o.titre += ' et alertes de production sur les trois lignes du site'; });
+  await s.aller('match'); await titre.waitFor();
+  const c = await lignes('.mx-carte.dessus .mx-so-t');
+  assert.ok(c.coupe && c.gauche < 1.5, JSON.stringify(c));
+  assert.equal(await titre.evaluate(e => getComputedStyle(e).textAlign), 'start');
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
 
@@ -5090,6 +5159,7 @@ test('match : « 1 sur N » avance d’un pas à chaque choix ; la fin de la pil
   // Le total : les cartes de la visite (deckMatch, logic.js), un point par carte
   const cartes = await s.page.evaluate(async () => (await import('./logic.js')).deckMatch(window.__demo.data, window.__demo.me).length);
   assert.deepEqual(await ou(), { pos: 1, total: cartes });
+  assert.equal(await s.page.getAttribute('.mx-progres', 'role'), 'img', 'aria-label lu : une image, pas un simple paragraphe');
   assert.equal(await s.page.locator('.mx-progres').innerText(), `1 sur ${cartes}`);
   assert.equal(await s.page.locator('.mx-pr-pts i').count(), cartes);
   assert.equal(await s.page.locator('.mx-pr-pts i.ici').count(), 1);
@@ -5118,8 +5188,13 @@ test('match : « 1 sur N » avance d’un pas à chaque choix ; la fin de la pil
   assert.equal(await s.page.locator('.mx-progres').count(), 0);
   assert.equal(await s.page.locator('.mx-page .btn.primary').count(), 1, 'une seule action pleine');
   assert.ok(await s.page.locator('.mx-vide .btn.primary').isVisible());
-  // Tes matchs restent à portée ; « Revenir sur mon dernier choix » ramène la dernière carte
-  assert.ok(await s.page.locator('.mx-vide .mx-matchs.grand .mx-visage').count() >= 1);
+  // Tes matchs restent à portée, à la même place que pendant la pile (l'en-tête), une seule fois ; la fin tient au-dessus
+  // de la barre du bas, sans défiler. « Revenir sur mon dernier choix » ramène la dernière carte
+  assert.ok(await s.page.locator('.mx-tete .mx-matchs .mx-visage').count() >= 1);
+  assert.equal(await s.page.locator('.mx-matchs').count(), 1);
+  await s.page.evaluate(() => scrollTo(0, 0)); await s.page.waitForTimeout(100);
+  const { fin, barre } = await s.page.evaluate(() => ({ fin: document.querySelector('.mx-vide').getBoundingClientRect().bottom, barre: document.querySelector('.bottom-nav').getBoundingClientRect().top }));
+  assert.ok(fin <= barre, `la fin (${Math.round(fin)} px) tient au-dessus de la barre du bas (${Math.round(barre)} px)`);
   await s.page.locator('.mx-vide .linkish', { hasText: 'Revenir sur mon dernier choix' }).click(); await s.page.waitForTimeout(400);
   assert.equal(await s.page.locator('.mx-carte.dessus').count(), 1);
   assert.equal(await s.debordement(), 0);
