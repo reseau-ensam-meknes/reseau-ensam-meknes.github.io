@@ -12,8 +12,8 @@ const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe
 
 const SITE = path.resolve(process.env.SITE_DIR || new URL('../../dist', import.meta.url).pathname);
 const TYPES = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
-const ECRANS = ['accueil', 'offres', 'offres/demandes', 'match', 'mentorat', 'mentorat/cv', 'messages', 'parcours', 'espace', 'reseau/groupes', 'reseau/agenda', 'reseau/entraide',
-  'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'reseau/annuaire/ma-filiere', 'reseau/annuaire/ma-promo', 'reseau/classement', 'reseau/talents', 'suivi', 'profil', 'profil/visibilite', 'profil/notifications', 'profil/donnees', 'enquete',
+const ECRANS = ['accueil', 'offres', 'offres/demandes', 'match', 'mentorat', 'mentorat/cv', 'messages', 'parcours', 'espace', 'espace/offres', 'espace/documents', 'reseau/groupes', 'reseau/agenda', 'reseau/entraide',
+  'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'reseau/annuaire/ma-filiere', 'reseau/annuaire/ma-promo', 'reseau/classement', 'reseau/talents', 'suivi', 'suivi/insertion', 'profil', 'profil/visibilite', 'profil/notifications', 'profil/donnees', 'enquete',
   'confidentialite', 'admin', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda', 'admin/sponsorises', 'admin/reglages'];
 
 let serveur, adresse, navigateur;
@@ -2650,14 +2650,16 @@ test('Mon parcours : seulement ce qui se fait sur place (confirmer, puis dire me
   await s.ctx.close();
 });
 
-test('Mon espace : ce qui l’attend d’abord, puis « Mon impact » en une carte (trois chiffres vrais, niveau, prochain badge), le détail replié ; aucun pouls hors de l’accueil', async () => {
+test('Mon espace : ce qui l’attend d’abord, puis « Mon impact » en une carte (trois chiffres vrais, niveau, anneau du prochain badge), puis Impact | Mes offres | Documents en onglets gardés dans l’adresse ; aucun pouls hors de l’accueil', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Youssef'); await s.aller('espace');
-  // L'ordre : en attente de confirmation, rendez-vous, Mon impact, Mes offres, Mes documents, puis le détail replié
-  const ordre = await s.page.evaluate(() => ['.esp-attente', '.esp-rdv', '.impact-card', '.esp-offres', '.esp-docs', 'details.esp-badges', 'details.ledger']
+  // L'ordre : ce qui l'attend (rendez-vous, recrutement à confirmer), Mon impact, les onglets, puis le panneau de l'onglet
+  const ordre = await s.page.evaluate(() => ['.esp-attend', '.impact-card', '.esp-onglets', '#esp-panneau']
     .map(sel => [...document.querySelectorAll('.page > *')].findIndex(e => e.matches(sel))));
   assert.ok(ordre.every(i => i >= 0), `chaque bloc est là : ${ordre}`);
   assert.deepEqual(ordre, [...ordre].sort((a, b) => a - b), 'dans l’ordre');
+  assert.equal(await s.page.locator('.esp-attend .esp-rdv').count(), 1, 'le prochain rendez-vous');
+  assert.ok(await s.page.locator('.esp-attend .esp-attente').count() >= 1, 'le recrutement qui attend la confirmation de l’étudiant');
   assert.equal(await s.page.locator('.impact-hero, .impact-facts').count(), 0, 'plus de mur de chiffres');
   // Trois chiffres, et ce sont les vrais
   const vrais = await s.page.evaluate(() => {
@@ -2669,32 +2671,89 @@ test('Mon espace : ce qui l’attend d’abord, puis « Mon impact » en une car
   });
   assert.deepEqual(await s.page.$$eval('.impact-nums .impact-n', x => x.map(e => e.textContent.trim())), vrais);
   assert.match(await s.page.locator('.impact-nums').innerText(), /recrutés? grâce à toi[\s\S]*mentorats? terminés?[\s\S]*mercis? reçus?/);
-  // Le niveau avec sa barre, le barème, le prochain badge
+  // Le niveau avec sa barre, le barème, le prochain badge et son anneau
   assert.equal(await s.page.locator('.impact-card .impact-niveau .lvl').count(), 1);
   assert.equal(await s.page.locator('.impact-card .impact-niveau .bar').count(), 1);
   assert.match(await s.page.locator('.impact-card .impact-niveau').innerText(), /\d+ points d’impact[\s\S]*(encore \d+ pour|Niveau maximum)/);
   assert.equal(await s.page.locator('.impact-card .badge-next').count(), 1);
+  assert.equal(await s.page.locator('.impact-card .badge-next [role="progressbar"]').count(), 1, 'l’anneau du prochain badge');
   await s.page.click('.impact-card button:has-text("Comment gagner des points")'); await s.page.waitForSelector('.modal .tbl'); await s.fermer();
-  // Les offres partagées : le chiffre du titre ; chaque offre dit son état en couleur
+  // Les onglets : Impact d'abord, avec les badges et l'historique repliés (et leur compte)
+  assert.equal(await s.page.locator('.esp-onglets[role="tablist"] [role="tab"]').count(), 3);
+  assert.equal(await s.page.getAttribute('#esp-onglet-impact', 'aria-selected'), 'true');
+  assert.match(await s.page.locator('#esp-panneau details.esp-badges summary').innerText(), /Mes badges · \d+ sur \d+/);
+  assert.equal(await s.page.locator('#esp-panneau details.ledger').count(), 1);
+  assert.equal(await s.page.locator('details.esp-badges[open], details.ledger[open]').count(), 0, 'repliés');
+  // Un seul bouton plein à l'écran
+  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1, 'un seul bouton plein');
+  // Mes offres : l'onglet change l'adresse ; le chiffre du titre ; chaque offre dit son état en couleur
+  await s.page.click('#esp-onglet-offres'); await s.page.waitForSelector('#esp-panneau .esp-offres');
+  assert.equal(await s.page.evaluate(() => location.hash), '#espace/offres');
+  assert.equal(await s.page.getAttribute('#esp-onglet-offres', 'aria-selected'), 'true');
   const nOffres = await s.page.evaluate(() => window.__demo.data.offers.filter(o => o.author_id === window.__demo.me.id).length);
   assert.equal((await s.page.locator('.esp-offres h2 .count').innerText()).trim(), String(nOffres));
   assert.equal(await s.page.locator('.esp-offres .app-row .state-pill').count(), Math.min(10, nOffres));
-  // Badges et historique repliés, avec leur compte
-  assert.match(await s.page.locator('details.esp-badges summary').innerText(), /Mes badges · \d+ sur \d+/);
-  assert.equal(await s.page.locator('details.esp-badges[open], details.ledger[open]').count(), 0, 'repliés');
+  // Documents : l'attestation et le bilan côte à côte
+  await s.page.click('#esp-onglet-documents'); await s.page.waitForSelector('#esp-panneau .esp-docs');
+  assert.equal(await s.page.evaluate(() => location.hash), '#espace/documents');
   assert.equal(await s.page.locator('.esp-docs .attest-card').count(), 2, 'attestation et bilan côte à côte');
-  // Un seul bouton plein à l'écran
-  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1, 'un seul bouton plein');
+  // Au clavier : la flèche (dans le sens de lecture) passe à l'onglet voisin ; l'adresse et le focus suivent
+  await s.page.focus('#esp-onglet-documents'); await s.page.keyboard.press('ArrowLeft');
+  await s.page.waitForSelector('#esp-panneau .esp-offres');
+  assert.equal(await s.page.evaluate(() => location.hash), '#espace/offres');
+  await s.page.waitForFunction(() => document.activeElement?.id === 'esp-onglet-offres');
+  assert.equal(await s.page.getAttribute('#esp-onglet-offres', 'tabindex'), '0');
+  assert.equal(await s.page.getAttribute('#esp-onglet-impact', 'tabindex'), '-1', 'un seul arrêt de tabulation dans les onglets');
+  // L'adresse ouvre l'onglet ; « espace » seul revient à Impact
+  await s.aller('espace/documents'); assert.equal(await s.page.locator('#esp-panneau .esp-docs .attest-card').count(), 2);
+  await s.aller('espace'); assert.equal(await s.page.getAttribute('#esp-onglet-impact', 'aria-selected'), 'true');
   assert.equal(await s.page.locator('.pouls').count(), 0);
   // Le pouls du réseau n'est plus que sur l'accueil
   await s.aller('mentorat'); assert.equal(await s.page.locator('.pouls').count(), 0, 'pas sur Mentorat (lauréat)');
   await s.aller('suivi'); assert.equal(await s.page.locator('.pouls').count(), 0, 'pas sur Suivi (lauréat)');
   await s.comme('Nadia'); await s.aller('espace');
   assert.equal(await s.page.locator('.premiere-aide').count(), 1);
-  assert.equal(await s.page.locator('.pouls, .impact-card').count(), 0, 'nouvelle lauréate : la première aide, sans pouls ni tableau');
+  assert.equal(await s.page.locator('.pouls, .impact-card, .esp-onglets').count(), 0, 'nouvelle lauréate : la première aide, sans pouls, ni tableau, ni onglets');
+  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1, 'la première aide : un seul bouton plein');
   await s.comme('Salma');
   for (const e of ['mentorat', 'suivi', 'parcours']) { await s.aller(e); assert.equal(await s.page.locator('.pouls').count(), 0, `pas sur ${e} (étudiante)`); }
   await s.aller('accueil'); assert.equal(await s.page.locator('.pouls').count(), 1, 'toujours sur l’accueil');
+  assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('Mon parcours : l’objectif en un chemin (étapes reliées, la sienne mise en avant, la ligne remplie jusqu’à elle), la prochaine chose à faire en un seul bouton plein, puis ses candidatures et leur statut', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('parcours');
+  const v = await s.page.evaluate(async () => {
+    const d = window.__demo, me = d.me, L = await import('./logic.js'), S = L.seasonOf();
+    const apps = d.data.applications.filter(a => a.student_id === me.id);
+    return { apps: apps.length, plateforme: apps.filter(a => a.offer_id).length, entretien: apps.some(a => a.status === 'entretien'), cle: L.statutOf(d.data, me, S).key };
+  });
+  assert.ok(v.entretien && !['trouve', 'validation'].includes(v.cle), 'la démo : un entretien en cours, pas encore recrutée');
+  // Quatre étapes : les deux premières franchies, la troisième en cours (elle seule), la ligne pleine jusqu'à elle
+  assert.deepEqual(await s.page.$$eval('.chemin-etapes > li', x => x.map(e => e.className)), ['ch-fait', 'ch-fait', 'ch-ici', 'ch-apres']);
+  assert.equal(await s.page.locator('.chemin [aria-current="step"]').count(), 1);
+  assert.match(await s.page.locator('.chemin [aria-current="step"]').innerText(), /Recrutement/);
+  assert.equal(await s.page.locator('.chemin .ch-fait .sr-only').count(), 2, 'les étapes franchies le disent aux lecteurs d’écran');
+  const vers = await s.page.evaluate(() => parseFloat(getComputedStyle(document.querySelector('.chemin')).getPropertyValue('--vers')));
+  assert.ok(Math.abs(vers - 2 / 3) < 0.01, `la ligne va jusqu’à l’étape en cours : ${vers}`);
+  // La prochaine chose à faire : une phrase et le seul bouton plein de la page
+  assert.match(await s.page.locator('.pc-suite').innerText(), /Prochaine étape[\s\S]*entretien/);
+  assert.equal(await s.page.locator('.pc-suite .btn.primary').count(), 1);
+  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1, 'un seul bouton plein');
+  // Ses candidatures, chacune avec son statut : celles de la plateforme ouvrent l'offre, les autres se mettent à jour ici
+  assert.equal((await s.page.locator('.pc-cands h2 .count').innerText()).trim(), String(v.apps));
+  assert.equal(await s.page.locator('.pc-cand').count(), v.apps);
+  assert.equal(await s.page.locator('.pc-cand:not(.hors) button.esp-ligne .state-pill').count(), v.plateforme);
+  assert.equal(await s.page.locator('.pc-cand.hors select').count(), v.apps - v.plateforme);
+  // Amine (3A), sans candidature : le chemin commence à « Je postule » ; son parrain passe devant, la prochaine étape est en tonal
+  await s.comme('Amine'); await s.aller('parcours');
+  assert.deepEqual(await s.page.$$eval('.chemin-etapes > li', x => x.map(e => e.className)), ['ch-ici', 'ch-apres', 'ch-apres', 'ch-apres']);
+  assert.match(await s.page.locator('.pc-suite').innerText(), /Postule à une offre de ton année/);
+  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1, 'un seul bouton plein');
+  if (await s.page.locator('.parrain-card').count()) assert.equal(await s.page.locator('.pc-suite .btn.primary').count(), 0, 'le parrain d’abord');
   assert.ok((await s.debordement()) <= 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
@@ -2736,6 +2795,57 @@ async function sansDemandeOuverte(s) {
   await s.page.evaluate(() => { const k = 'ensam-demo-v14'; const x = JSON.parse(localStorage.getItem(k)); for (const d of x.data.demandes) if (d.status === 'ouverte') d.status = 'fermee'; localStorage.setItem(k, JSON.stringify(x)); });
   await s.page.reload(); await s.page.waitForSelector('.hello');
 }
+
+
+test('Tableau de bord : un anneau et trois faits (les vrais chiffres), chaque année d’études en ligne avec sa barre et sa lecture ; une année touchée ouvre son détail ; Placement | Insertion en onglets dans l’adresse', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('suivi'); await s.page.waitForSelector('.suivi-hero');
+  const v = await s.page.evaluate(async () => {
+    const d = window.__demo, L = await import('./logic.js'), S = L.seasonOf();
+    const st = L.seasonStats(d.data, S, new Date());
+    const somme = k => st.rows.reduce((a, r) => a + r[k], 0);
+    return { total: somme('total'), found: somme('found'), pending: somme('pending'), via: st.viaTotal, ouvertes: d.data.offers.filter(o => o.status === 'ouverte').length,
+      rows: st.rows.map(r => ({ found: r.found, total: r.total, pct: L.pct(r.rate), pace: r.daysLeft >= 0 })) };
+  });
+  // L'anneau dit la part qui a trouvé ; le chiffre, sur les inscrits ; puis les trois faits
+  const anneau = s.page.locator('.suivi-hero [role="progressbar"]');
+  assert.equal(await anneau.getAttribute('aria-valuenow'), String(v.found));
+  assert.equal(await anneau.getAttribute('aria-valuemax'), String(v.total));
+  assert.equal((await s.page.locator('.sh-n').innerText()).trim(), String(v.found));
+  assert.match(await s.page.locator('.sh-sur').innerText(), new RegExp(`sur ${v.total} inscrits`));
+  const faits = await s.page.locator('.sh-faits li').allInnerTexts();
+  assert.equal(faits.length, 3);
+  assert.match(faits[0], new RegExp(`^${v.via} grâce à la plateforme`));
+  assert.match(faits[1], new RegExp(`^${v.pending} à confirmer par l’étudiant`));
+  assert.match(faits[2], new RegExp(`^${v.ouvertes} offres ouvertes`));
+  // Une ligne par année d'études : la part, la barre (le trait du rythme tant que l'échéance court), la lecture, les chiffres
+  const lignes = s.page.locator('.suivi-annees .sa-ligne');
+  assert.equal(await lignes.count(), v.rows.length);
+  for (let i = 0; i < v.rows.length; i++) {
+    const r = v.rows[i], l = lignes.nth(i);
+    assert.match(await l.innerText(), new RegExp(`${r.pct}[\\s\\S]*${r.found} sur ${r.total}`));
+    assert.equal(await l.locator('.bar[role="img"]').count(), 1);
+    assert.equal(await l.locator('.bar-pace').count(), r.pace ? 1 : 0);
+    assert.match(await l.locator('.sa-ton').innerText(), /^(Dans les temps|À surveiller|En retard|Objectif atteint|Année terminée)$/);
+  }
+  // Une année touchée : son détail s'ouvre dessous (par filière, encore en recherche), la ligne le dit
+  assert.equal(await s.page.locator('details.suivi-detail[open]').count(), 0, 'replié d’abord');
+  await lignes.nth(2).click();
+  await s.page.waitForSelector('details.suivi-detail[open]');
+  assert.equal(await lignes.nth(2).getAttribute('aria-pressed'), 'true');
+  assert.match(await s.page.locator('.suivi-detail-titre').innerText(), /^5e année/);
+  assert.ok(await s.page.locator('.sd-filieres li .bar').count() > 0, 'une barre par filière');
+  // Placement | Insertion : des onglets, la vue dans l'adresse ; au clavier aussi
+  assert.equal(await s.page.getAttribute('#suivi-onglet-placement', 'aria-selected'), 'true');
+  await s.page.focus('#suivi-onglet-placement'); await s.page.keyboard.press('ArrowRight');
+  await s.page.waitForFunction(() => location.hash === '#suivi/insertion');
+  await s.page.waitForSelector('#suivi-onglet-insertion[aria-selected="true"]');
+  await s.page.waitForFunction(() => document.activeElement?.id === 'suivi-onglet-insertion');
+  assert.equal(await s.page.locator('.pouls').count(), 0);
+  assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
 
 test('premiers pas fondus dans la carte : la feuille s’ouvre, se masque, et se retrouve dans le menu', async () => {
   const s = await ouvrir({ largeur: 390 });

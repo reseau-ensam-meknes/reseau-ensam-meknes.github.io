@@ -3,7 +3,7 @@ import { html, useState, useMemo, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Bar, Num, toast, useLocal } from './ui.js';
 import { getLang, t as tr } from './i18n.js';
 import { MessageBtn } from './messages.js';
-import { MESURES, defiProgress, activeDefis, coupeDesPromos, computeScores, tonAnnee, niveauOf, seasonLabel, NIVEAUX, proximiteFiliere } from './logic.js';
+import { MESURES, defiProgress, activeDefis, coupeDesPromos, computeScores, tonAnnee, niveauOf, seasonLabel, NIVEAUX, proximiteFiliere, filiereCourte } from './logic.js';
 
 const NIV_OPTS = [['', 'Toutes les années'], [3, '3A'], [4, '4A'], [5, '5A'], [6, 'Jeunes diplômés']];
 const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -99,14 +99,14 @@ export function ParrainCard({ ctx }) {
   if (me.role !== 'etudiant' || n !== 3 || !pr) return null;
   const p = store.byId('profiles', pr.parrain_id);
   if (!p) return null;
-  return html`<div class="parrain-card">
-    <span class="obj-ico brass"><${Icon} name="heart" size=${20}/></span>
-    <div class="grow"><p class="eyebrow">Ton parrain</p>
-      <${Person} p=${p} onOpen=${openProfile} size=${40}/>
-      <p class="small muted">De ta filière, avec quelques années d’avance. Pose-lui tes questions sur les stages, la 4A, la vie après l’école.</p></div>
-    <div class="parrain-acts"><${MessageBtn} ctx=${ctx} p=${p} label="Lui écrire" cls="btn small primary"/>
-      <button class="btn small" onClick=${() => ctx.askHelp(p)}><${Icon} name="mentor" size=${15}/> Lui demander un conseil</button></div>
-  </div>`;
+  // Une carte : qui il est, pourquoi lui écrire, deux gestes (lui écrire d'abord, le bouton plein de la page)
+  return html`<section class="parrain-card" aria-label="Ton parrain">
+    <p class="eyebrow"><${Icon} name="heart" size=${14}/> Ton parrain</p>
+    <${Person} p=${p} onOpen=${openProfile} size=${48}/>
+    <p class="parrain-txt">De ta filière, avec quelques années d’avance. Pose-lui tes questions sur les stages, la 4A, la vie après l’école.</p>
+    <div class="parrain-acts"><${MessageBtn} ctx=${ctx} p=${p} label="Lui écrire" cls="btn primary"/>
+      <button type="button" class="btn tonal" onClick=${() => ctx.askHelp(p)}><${Icon} name="mentor" size=${16}/> Lui demander un conseil</button></div>
+  </section>`;
 }
 
 export function DevenirParrain({ ctx }) {
@@ -125,12 +125,15 @@ export function Filleuls({ ctx }) {
   if (me.role !== 'laureat') return null;
   const list = data.parrainages.filter(x => x.parrain_id === me.id && x.saison === saison).map(x => store.byId('profiles', x.filleul_id)).filter(Boolean);
   if (!list.length && !me.parrain_dispo) return null;
-  return html`<div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="heart"/> Mes filleuls <span class="count">${list.length}</span></h2>
-    ${me.parrain_dispo ? html`<button class="btn tiny ghost" onClick=${() => act(async () => { await store.update('profiles', me.id, { parrain_dispo: false }); toast('Tu ne recevras plus de nouveaux filleuls.'); })}>Plus de nouveaux filleuls</button>` : null}</div>
-    ${list.length ? html`<ul class="people-list">${list.map(p => html`<li key=${p.id}><${Person} p=${p} onOpen=${openProfile} size=${34}/><span class="spacer"></span><${MessageBtn} ctx=${ctx} p=${p} cls="btn tiny tonal"/></li>`)}</ul>
-      <p class="small muted">Envoie-leur un mot de bienvenue : c’est souvent le seul lauréat qu’ils connaissent.</p>`
-      : html`<p class="small muted">Tu es parrain disponible. Dès qu’un 3A de ton parcours s’inscrit, il te sera confié.</p>`}
-  </div>`;
+  // Mon espace > Impact : les filleuls en lignes compactes (année et filière en code court), un mot de bienvenue à portée de main
+  const stop = me.parrain_dispo ? html`<button type="button" class="linkish esp-note-act" onClick=${() => act(async () => { await store.update('profiles', me.id, { parrain_dispo: false }); toast('Tu ne recevras plus de nouveaux filleuls.'); })}>Plus de nouveaux filleuls</button>` : null;
+  return html`<section class="esp-bloc esp-filleuls" aria-labelledby="esp-filleuls-titre">
+    <h2 class="esp-h" id="esp-filleuls-titre">Mes filleuls${list.length ? html` <span class="count">${list.length}</span>` : null}</h2>
+    ${list.length ? html`<ul class="esp-lignes">${list.map(p => html`<li key=${p.id}><div class="esp-ligne">
+      <${Person} p=${p} onOpen=${openProfile} size=${44} sub=${html`<span>${NIVEAUX[niveauOf(p, saison)]?.short || ''}</span> · <span translate="no">${filiereCourte(p.filiere)}</span>`}/>
+      <${MessageBtn} ctx=${ctx} p=${p} cls="btn tiny tonal"/></div></li>`)}</ul>` : null}
+    <div class="esp-note"><p>${list.length ? 'Envoie-leur un mot de bienvenue : c’est souvent le seul lauréat qu’ils connaissent.' : 'Tu es parrain disponible. Dès qu’un 3A de ton parcours s’inscrit, il te sera confié.'}</p>${stop}</div>
+  </section>`;
 }
 
 // ---------------------------------------------------------------------------
