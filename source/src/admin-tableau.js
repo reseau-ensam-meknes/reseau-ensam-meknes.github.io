@@ -239,7 +239,7 @@ injectCSS('admin-tableau', `
 .cs-obj-reste { font-size: var(--fs-2); color: var(--muted); }
 /* Étroit : chaque cible sur trois lignes (le libellé et n / cible, la barre, ce qui reste) */
 @container cs (max-width: 560px) {
-  .cs-obj { display: flex; flex-direction: column; gap: .85rem; }
+  .cs-obj { display: flex; flex-direction: column; align-items: stretch; gap: .85rem; }
   .cs-obj li { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "l n" "b b" "r r"; gap: .3rem .8rem; align-items: baseline; }
   .cs-obj-l { grid-area: l; } .cs-obj-n { grid-area: n; } .cs-obj-bar { grid-area: b; } :is(.cs-obj-ok, .cs-obj-reste) { grid-area: r; }
 }
