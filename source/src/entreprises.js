@@ -111,7 +111,7 @@ function ListeEntreprises({ ctx, all, ouvrir }) {
     .filter(c => !miens || contribue(c))
     .filter(c => !trouve || trouve(`${[...c.names.keys()].join(' ')} ${c.secteurs.join(' ')}`, c.ville, c.pays))
     .sort((a, b) => poids(b) - poids(a) || a.nom.localeCompare(b.nom));
-  const { vus, reste, plus } = useVoirPlus(list, 20, [q, type, miens].join('|'));
+  const { vus, reste, plus } = useVoirPlus(list, 12, [q, type, miens].join('|'));
   const nbAvis = all.reduce((s, c) => s + c.avis.length, 0), nbEnt = all.reduce((s, c) => s + c.entretiens.length, 0);
   // Le chiffre de l'en-tête n'est jamais un zéro : les avis et entretiens s'il y en a, sinon les entreprises où travaillent
   // des lauréats (le seul chiffre vrai au démarrage), sinon rien

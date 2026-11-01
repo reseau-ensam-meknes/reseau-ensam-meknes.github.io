@@ -1,7 +1,7 @@
 // Entraide, Communauté (classement, annuaire, vitrine des talents) et profils.
 import { html, useState, useMemo, useRef, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, LogoEntreprise, toast, LevelChip, RoleLine, roleTexte, injectCSS, PartagerWhatsApp, lienDirect, allerAuChamp, Bouclier, Embleme } from './ui.js';
-import { useBrouillon } from './ui.js';
+import { useBrouillon, EnTetePage, vibrer } from './ui.js';
 import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
 import { proposerPrevenir } from './pwa.js';
 import { ChoixRole, accordIci } from './entree.js';
@@ -61,6 +61,34 @@ addAR({
 // ---------------------------------------------------------------------------
 // Entraide (questions / réponses)
 // ---------------------------------------------------------------------------
+// Entraide (Socle v3) : les questions groupées sur une seule carte, une ligne chacune (réponses, sujet, titre sur deux lignes au plus)
+injectCSS('entraide-v3', `
+.clt-tete { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem .8rem; }
+.clt-tete > p { flex: 1 1 16rem; margin: 0; }
+.choix-pilule { position: relative; flex: none; display: inline-flex; align-items: center; gap: .35rem; min-height: 40px; padding-inline: .8rem .5rem; border-radius: var(--r-pill);
+  background: var(--surface); box-shadow: var(--sh1); color: var(--muted); font: 600 var(--fs-2)/1 var(--f-body); cursor: pointer; }
+.choix-pilule:hover { box-shadow: var(--sh2); }
+.choix-lib { color: var(--ink); white-space: nowrap; }
+.choix-pilule > .ico-chevron { color: var(--muted); }
+.choix-pilule select { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; margin: 0; padding: 0; border: 0; border-radius: inherit; opacity: 0; cursor: pointer; font-size: 16px; }
+.choix-pilule:has(select:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (pointer: coarse) { .choix-pilule { min-height: 44px; } }
+.q-liste { gap: 0; padding: 0 var(--sp-4); background: var(--surface); border-radius: var(--r-lg); box-shadow: var(--sh1); }
+.q-liste > .qrow { align-items: flex-start; gap: .85rem; padding: .9rem 0; border-radius: 0; background: none; box-shadow: none; border-top: 1px solid var(--line); }
+.q-liste > .qrow:first-child { border-top: 0; }
+.q-liste > .qrow:hover { transform: none; box-shadow: none; }
+.q-liste > .qrow:hover .qtxt strong { color: var(--accent); }
+.q-liste > .qrow:active { transform: none; }
+.q-liste .qcount { flex: none; width: 4rem; min-width: 0; padding: .35rem .2rem; margin-top: .1rem; }
+.q-liste .qcount b { font-size: 1.05rem; }
+.q-liste .qcount.none { background: color-mix(in srgb, var(--surface-2) 70%, transparent); }
+.q-liste .qtxt { gap: .2rem; }
+.q-liste .qtxt strong { font-size: var(--fs-3); line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; transition: color .15s; }
+.q-liste > .qrow > .ico:last-child { align-self: center; flex: none; color: var(--muted); }
+.q-tags { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; }
+.q-tags .mini { margin: 0; }
+`);
+
 export function EntraidePage(ctx) {
   const { data, store, me, go } = ctx;
   const [cat, setCat] = useState('');
@@ -73,11 +101,11 @@ export function EntraidePage(ctx) {
   return html`<div class="sub-page">
     <div class="toolbar"><p class="muted small grow">Les questions des étudiants, les réponses des lauréats.</p><button class="btn primary small" onClick=${() => setAsk(true)}><${Icon} name="plus" size=${16}/> Poser une question</button></div>
     <div class="chips rangee" role="group" aria-label="Catégorie">${pourMoi.length ? html`<button class=${'chip' + (cat === 'moi' ? ' on' : '')} aria-pressed=${cat === 'moi'} onClick=${() => setCat(cat === 'moi' ? '' : 'moi')}><${Icon} name="send" size=${13}/> Pour toi <span class="count">${pourMoi.length}</span></button>` : null}${['', ...CATEGORIES_Q].map(c => html`<button class=${'chip' + (cat === c ? ' on' : '')} aria-pressed=${cat === c} onClick=${() => setCat(c)}>${c || 'Toutes'}</button>`)}</div>
-    <div class="list">${qs.length ? qs.map(q => {
+    <div class=${qs.length ? 'list q-liste' : 'list'}>${qs.length ? qs.map(q => {
       const ans = data.answers.filter(a => a.question_id === q.id); const au = store.byId('profiles', q.author_id);
       return html`<button class="qrow" key=${q.id} onClick=${() => open(q.id)}>
         <span class=${'qcount' + (q.best_answer_id ? ' solved' : ans.length ? '' : ' none')}><b>${ans.length}</b><span>réponse${ans.length > 1 ? 's' : ''}</span></span>
-        <span class="qtxt"><span class="mini">${q.categorie}</span>${q.entreprise || q.pays ? html`<span class="mini hit"><${Icon} name=${q.entreprise ? 'briefcase' : 'globe'} size=${11}/> ${q.entreprise || q.pays}</span>` : null} <strong>${q.titre}</strong><span class="muted small">${au?.full_name || 'Membre'} · ${timeAgo(q.created_at)}${q.best_answer_id ? ' · Résolue' : ''}</span></span>
+        <span class="qtxt"><span class="q-tags"><span class="mini">${q.categorie}</span>${q.entreprise || q.pays ? html`<span class="mini hit"><${Icon} name=${q.entreprise ? 'briefcase' : 'globe'} size=${11}/> ${q.entreprise || q.pays}</span>` : null}</span><strong>${q.titre}</strong><span class="muted small">${au?.full_name || 'Membre'} · ${timeAgo(q.created_at)}${q.best_answer_id ? ' · Résolue' : ''}</span></span>
         <${Icon} name="arrow"/></button>`;
     }) : html`<${Empty} icon="qa" title="Pas encore de question ici">Pose la première, les lauréats sont notifiés.<//>`}</div>
     ${ask ? html`<${AskQuestion} ctx=${ctx} onClose=${() => setAsk(false)} onDone=${id => { setAsk(false); open(id); }}/>` : null}
@@ -152,9 +180,11 @@ export function ReseauPage(ctx) {
   const tab = tabs.some(([k]) => k === sub) ? sub : 'groupes';
   // Un seul chiffre par écran : l'annuaire, l'étranger et les entreprises ont déjà le leur
   const chiffre = ['annuaire', 'etranger', 'entreprises'].includes(tab) ? '' : chiffreReseau(data.profiles, me);
-  return html`<section class="page">
-    <header class="page-head"><div>${chiffre ? html`<p class="eyebrow">${chiffre}</p>` : null}<h1>Réseau</h1></div></header>
-    <${PucesNav} label="Rubriques du réseau" items=${tabs.map(([k, l, i]) => ({ k, label: l, icon: i }))} actif=${tab} onChoisir=${k => go('reseau/' + k, { remplacer: true })}/>
+  // En-tête compact commun (EnTetePage) : le chiffre du réseau en sur-titre, le titre, puis les rubriques
+  return html`<section class="page reseau-page">
+    <${EnTetePage} surTitre=${chiffre || null} garderPlace titre="Réseau">
+      <${PucesNav} label="Rubriques du réseau" items=${tabs.map(([k, l, i]) => ({ k, label: l, icon: i }))} actif=${tab} onChoisir=${k => go('reseau/' + k, { remplacer: true })}/>
+    <//>
     ${tab === 'groupes' ? html`<${GroupesPage} ctx=${ctx}/>` : null}
     ${tab === 'agenda' ? html`<${AgendaPage} ctx=${ctx}/>` : null}
     ${tab === 'entraide' ? html`<${EntraidePage} ...${ctx}/>` : null}
@@ -183,9 +213,11 @@ function ClassementLaureats({ ctx }) {
   const periodScores = useMemo(() => period === 'tout' ? scores : computeScores(data, period === 'mois' ? new Date(Date.now() - 30 * 864e5) : new Date(saison, 8, 1)), [data, period]);
   const board = data.profiles.filter(laureatCompte).map(p => ({ p, pts: periodScores.get(p.id)?.points || 0 })).filter(x => x.pts > 0).sort((a, b) => b.pts - a.pts);
   const { vus, reste, plus } = useVoirPlus(board, 20, period);
+  const periodes = [['mois', '30 jours'], ['saison', `Année ${seasonLabel(saison)}`], ['tout', 'Depuis le début']];
   return html`<div class="sub-page">
-    <p class="muted small">Les lauréats qui aident le plus : offres, recrutements confirmés, mentorats, réponses.</p>
-    <div class="chips rangee" role="group" aria-label="Période">${[['mois', '30 jours'], ['saison', `Année ${seasonLabel(saison)}`], ['tout', 'Depuis le début']].map(([k, l]) => html`<button type="button" class=${'chip' + (period === k ? ' on' : '')} aria-pressed=${period === k} onClick=${() => setPeriod(k)}>${l}</button>`)}</div>
+    <div class="clt-tete"><p class="muted small">Les lauréats qui aident le plus : offres, recrutements confirmés, mentorats, réponses.</p>
+      <label class="choix-pilule"><${Icon} name="calendar" size=${15}/><span class="choix-lib" aria-hidden="true">${periodes.find(([k]) => k === period)[1]}</span><${Icon} name="chevron" size=${15}/>
+        <select id="clt-periode" aria-label="Période" value=${period} onChange=${e => setPeriod(e.target.value)}>${periodes.map(([k, l]) => html`<option value=${k}>${l}</option>`)}</select></label></div>
     ${board.length ? html`<ol class="lignes classement">${vus.map((x, i) => { const s = scores.get(x.p.id); const faits = FAITS.filter(([k]) => s?.[k] > 0); return html`<li key=${x.p.id} class=${'ligne rang' + (x.p.id === me.id ? ' me' : '')}>
       <span class="rang-n">${i < 3 ? html`<span class=${'medal m' + (i + 1)}>${i + 1}</span>` : i + 1}</span>
       <${Person} p=${x.p} onOpen=${openProfile} size=${40} sub=${html`<span class="rang-promo">${roleTexte(x.p, true)}</span>${faits.length ? html`<span class="rang-faits">${faits.map(([k, ic, t]) => html`<span title=${t}><${Icon} name=${ic} size=${13}/> ${s[k]}</span>`)}</span>` : null}`}/>
@@ -601,7 +633,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
       // Un envoi « Qui voit quoi » encore en route ne doit pas arriver en dernier : la grille voulue repart derrière lui
       if (!onboarding && enVol.current) envoyerVis(derniereG.current);
       // À l'inscription, c'est la feuille d'accueil qui souhaite la bienvenue
-      if (!onboarding) toast('Profil enregistré.', 'envoi');
+      if (!onboarding) { vibrer(12); toast('Profil enregistré.', 'envoi'); }
       onDone?.();
     });
   };

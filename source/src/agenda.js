@@ -1,7 +1,7 @@
 // Agenda de l'école : forum, conférences, portes ouvertes. L'administration publie,
 // chacun indique s'il vient et l'ajoute à son agenda (Google Agenda ou fichier .ics).
 import { html, useState, useEffect } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Avatar, Person, toast, injectCSS } from './ui.js';
+import { Icon, Modal, Field, Empty, Avatar, Person, toast, injectCSS, vibrer } from './ui.js';
 import { addAR, getLang } from './i18n.js';
 import { TYPES_EVENEMENT, PUBLICS, pourPublic } from './logic.js';
 
@@ -88,7 +88,7 @@ function Quand({ e, court }) {
   const d = new Date(e.debut); const f = e.fin ? new Date(e.fin) : null;
   const h = html`<span class="mono" dir="ltr">${heure(d)}${f && memeJour(d, f) ? ` – ${heure(f)}` : ''}</span>`;
   return html`<span class="ev-when"><${Icon} name="clock" size=${14}/>
-    ${court ? h : html`<span>${JOURS[d.getDay()]}</span> <span>${`${d.getDate()} ${MOIS[d.getMonth()]}`}</span> <span class="nowrap">· ${h}</span>`}
+    ${court ? h : html`<span>${JOURS[d.getDay()]}</span> <span class="nowrap"><span>${`${d.getDate()} ${MOIS[d.getMonth()]}`}</span> ·</span> <span class="nowrap">${h}</span>`}
     ${f && !memeJour(d, f) ? html` · <span>${`jusqu’au ${f.getDate()} ${MOIS[f.getMonth()]}`}</span>` : null}</span>`;
 }
 
@@ -112,7 +112,7 @@ function Participer({ ctx, e, small }) {
   if (me.role === 'admin' || e.annule || passe(e)) return null;
   const basculer = () => act(async () => {
     if (mine) { await store.remove('evenement_participants', mine.id); toast('C’est noté, tu n’y vas plus.'); }
-    else { await store.insert('evenement_participants', { evenement_id: e.id, user_id: me.id }); setFeuille(true); }
+    else { await store.insert('evenement_participants', { evenement_id: e.id, user_id: me.id }); vibrer(); setFeuille(true); }
   });
   return html`<button type="button" class=${'btn tonal ev-participer ' + (small ? 'tiny' : 'small') + (mine ? ' on' : '')} aria-pressed=${!!mine} onClick=${basculer}><${Icon} name="check" size=${14}/> Je participe</button>
     ${feuille ? html`<${FeuilleAgenda} e=${e} onClose=${() => setFeuille(false)}/>` : null}`;
@@ -256,7 +256,8 @@ export function AgendaPage({ ctx }) {
   for (const e of avenir) { const d = new Date(e.debut); const k = d.getFullYear() * 12 + d.getMonth(); const last = mois[mois.length - 1]; if (last?.k === k) last.items.push(e); else mois.push({ k, d, items: [e] }); }
   const open = e => go('reseau/agenda/' + e.id);
   return html`<div class="sub-page agenda">
-    <div class="section-head"><div class="ag-head"><h2 class="h-ico"><${Icon} name="calendar"/> Agenda du réseau</h2><p class="small muted">Forum, conférences, portes ouvertes : ce qui se passe à l’école et en ligne.</p></div>
+    <h2 class="sr-only">Agenda du réseau</h2>
+    <div class="toolbar ag-tete"><p class="small muted grow">Forum, conférences, portes ouvertes : ce qui se passe à l’école et en ligne.</p>
       ${isAdmin ? html`<button class="btn primary small" id="ev-new" onClick=${() => setEdit('new')}><${Icon} name="plus" size=${15}/> Publier un événement</button>` : null}</div>
     ${avenir.length ? mois.map(m => html`<section class="ev-month"><h3 class="ev-month-h"><span>${MOIS[m.d.getMonth()]}</span> <span>${m.d.getFullYear()}</span></h3>
       <div class="ev-list">${m.items.map(e => html`<${EventCard} key=${e.id} ctx=${ctx} e=${e} onOpen=${open} onEdit=${x => setEdit(x)}/>`)}</div></section>`)
@@ -324,7 +325,7 @@ injectCSS('agenda', `
 .ev-card.off .ev-title button, .struck { text-decoration: line-through; color: var(--muted) !important; }
 .ev-card.off, .ev-card.past { background: color-mix(in srgb, var(--surface) 65%, var(--surface-2)); }
 .ev-card.past .ev-date, .ev-card.off .ev-date { background: var(--surface-2); color: var(--ink-2); }
-.ev-date { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 4.2rem; padding: .45rem .5rem .5rem; border-radius: var(--r-md); background: var(--surface-2); color: var(--blue-text); line-height: 1.15; align-self: start; flex: none; }
+.ev-date { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; min-width: 4.2rem; padding: .45rem .5rem .5rem; border-radius: var(--r-md); background: var(--accent-soft); color: var(--blue-text); line-height: 1.15; align-self: start; flex: none; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 10%, transparent); }
 .ev-date .ev-wd { font-size: .7rem; font-weight: 650; text-transform: capitalize; }
 .ev-date .ev-d { font: 750 1.65rem/1.05 var(--f-display); font-variant-numeric: tabular-nums; }
 .ev-date .ev-m { font-size: var(--fs-1); font-weight: 650; }
@@ -360,10 +361,14 @@ injectCSS('agenda', `
 .ev-admin-list li.dim .ev-date { background: var(--surface-2); color: var(--ink-2); }
 .ev-admin-list .grow { min-width: 0; flex: 1 1 200px; display: flex; flex-direction: column; gap: .2rem; align-items: flex-start; }
 .ev-admin-list li > .btn { margin-inline-start: auto; }
+.ag-tete { align-items: center; }
+.ag-tete p { margin: 0; flex: 1 1 14rem; }
 @media (max-width: 640px) {
-  .ev-card { grid-template-columns: minmax(0, 1fr); padding: .8rem; }
-  .ev-card > .ev-date { flex-direction: row; gap: .4rem; justify-self: start; align-items: baseline; padding: .3rem .65rem; }
-  .ev-card > .ev-date .ev-d { font-size: 1.15rem; }
+  /* Téléphone : la date reste une petite tuile de calendrier à côté du texte (la carte ne s'allonge pas) */
+  .ev-card { grid-template-columns: auto minmax(0, 1fr); gap: .55rem .8rem; padding: .85rem .9rem; }
+  .ev-card > .ev-date { width: 4rem; min-width: 0; padding: .4rem .2rem .45rem; }
+  .ev-card > .ev-date .ev-wd { font-size: .6875rem; }
+  .ev-card > .ev-date .ev-d { font-size: 1.35rem; }
   .ev-act .spacer { display: none; }
   .ev-admin-list li { flex-wrap: wrap; }
 }

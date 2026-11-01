@@ -2,11 +2,11 @@
 // modération des signalements, membres (rôle, vérification), liste officielle des étudiants,
 // liens d'invitation par promo, agenda de l'école, cartes sponsorisées de Match et réglages (email de l'école).
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
-import { Icon, Field, Person, Num, Empty, Bar, Avatar, toast, injectCSS } from './ui.js';
+import { Icon, Field, Person, Empty, Bar, Avatar, toast, injectCSS, EnTetePage, Compteur } from './ui.js';
 import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
 import { addAR, arCount } from './i18n.js';
 import { NIVEAUX, niveauOf, timeAgo, cleNom, norm, GUIDE_SECTIONS, pct, reponses48h, parcoursInscription, compteOuvert, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible,
-  SPONSO_PUBLICS, SPONSO_ANNEES, jourLocal, normaliserSponsorise, refusSponsorise, etatSponsorise, tauxClic, resumeFilieres } from './logic.js';
+  SPONSO_PUBLICS, SPONSO_ANNEES, jourLocal, normaliserSponsorise, refusSponsorise, etatSponsorise, tauxClic, resumeFilieres, seasonLabel } from './logic.js';
 import { DefisAdmin } from './saison.js';
 import { AgendaAdmin } from './agenda.js';
 import { InvitationsAdmin } from './invitation.js';
@@ -108,8 +108,9 @@ export function AdminPage(ctx) {
   const toVerify = data.profiles.filter(p => p.role === 'laureat' && !p.verified);
   const dot = { moderation: ouverts.length, membres: toVerify.length };
   return html`<section class="page admin">
-    <header class="page-head"><div><h1>Administration</h1></div></header>
-    <${PucesNav} cls="adm-tabs" label="Rubriques de l’administration" idPrefix="adm-tab-" items=${TABS.map(([k, l, i]) => ({ k, label: l, icon: i, n: dot[k] }))} actif=${tab} onChoisir=${k => go(k ? 'admin/' + k : 'admin')}/>
+    <${EnTetePage} surTitre=${ctx.saison ? `Année ${seasonLabel(ctx.saison)}` : null} titre="Administration">
+      <${PucesNav} cls="adm-tabs" label="Rubriques de l’administration" idPrefix="adm-tab-" items=${TABS.map(([k, l, i]) => ({ k, label: l, icon: i, n: dot[k] }))} actif=${tab} onChoisir=${k => go(k ? 'admin/' + k : 'admin')}/>
+    <//>
     ${tab === '' ? html`<${VueEnsemble} ctx=${ctx} comptes=${comptes} ouverts=${ouverts} toVerify=${toVerify}/>` : null}
     ${tab === 'moderation' ? html`<${Moderation} ctx=${ctx}/>` : null}
     ${tab === 'membres' ? html`<${Membres} ctx=${ctx} comptes=${comptes} toVerify=${toVerify}/>` : null}
@@ -144,7 +145,7 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
   ];
   const lecturesFausses = (data.retours_cv || []).filter(r => r.status === 'ouvert');
   const stale = data.placements.filter(p => p.status === 'en_attente').sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-  const offers = [...data.offers].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 8);
+  const offers = [...data.offers].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5);
   const todo = [
     ouverts.length ? ['flag', `${ouverts.length} signalement${ouverts.length > 1 ? 's' : ''} à traiter`, 'admin/moderation'] : null,
     toVerify.length ? ['shield', `${toVerify.length} lauréat${toVerify.length > 1 ? 's' : ''} à vérifier`, 'admin/membres'] : null,
@@ -155,7 +156,7 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
   ].filter(Boolean);
   return html`
     ${todo.length ? html`<div class="callout today"><h2 class="h-ico"><${Icon} name="bell"/> À traiter</h2><ul class="todo">${todo.map(([i, t, r]) => html`<li><button class="notif act" onClick=${() => go(r)}><span class="n-ico accent"><${Icon} name=${i} size=${16}/></span><span>${t}</span><${Icon} name="arrow" size=${16}/></button></li>`)}</ul></div>` : null}
-    <div class="kpis">${kpis.map(([l, v, sub]) => html`<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-val">${typeof v === 'number' ? html`<${Num} v=${v}/>` : v}</span><span class="small muted">${sub}</span></div>`)}</div>
+    <div class="kpis">${kpis.map(([l, v, sub]) => html`<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-val">${typeof v === 'number' ? html`<${Compteur} v=${v}/>` : v}</span><span class="small muted">${sub}</span></div>`)}</div>
 
     <${ParcoursInscription} p=${parcours} sansSuite=${codesSansSuite(comptes, data.profiles)}/>
 
@@ -165,11 +166,11 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
 
     ${stale.length ? html`<div class="panel"><div class="section-head"><h2>Recrutements en attente de l’étudiant <span class="count">${stale.length}</span></h2></div>
       <p class="muted small">Le lauréat a déclaré ces recrutements. Si l’étudiant ne confirme pas, l’administration peut le faire après vérification.</p>
-      <ul class="people-list">${stale.map(p => { const s = store.byId('profiles', p.student_id), l = store.byId('profiles', p.laureat_id); return html`<li key=${p.id}><${Person} p=${s} onOpen=${openProfile} sub=${`${p.entreprise} · déclaré par ${l?.full_name || '?'} · ${timeAgo(p.created_at)}`}/><span class="spacer"></span>
+      <ul class="people-list adm-gestes">${stale.map(p => { const s = store.byId('profiles', p.student_id), l = store.byId('profiles', p.laureat_id); return html`<li key=${p.id}><${Person} p=${s} onOpen=${openProfile} sub=${`${p.entreprise} · déclaré par ${l?.full_name || '?'} · ${timeAgo(p.created_at)}`}/><span class="spacer"></span>
         <button class="btn small ghost" onClick=${() => act(() => store.update('placements', p.id, { status: 'refuse' }))}>Refuser</button><button class="btn small tonal" onClick=${() => act(() => store.update('placements', p.id, { status: 'confirme' }))}>Confirmer</button></li>`; })}</ul></div>` : null}
 
     <div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="feed"/> Dernières offres</h2></div>
-      <ul class="people-list">${offers.map(o => html`<li key=${o.id}><span class="grow"><button class="linkish strong" onClick=${() => ctx.openOffer(o.id)}>${o.titre}</button><br/><span class="muted small">${o.entreprise} · ${store.byId('profiles', o.author_id)?.full_name || ''} · ${timeAgo(o.created_at)}</span></span>
+      <ul class="people-list adm-gestes">${offers.map(o => html`<li key=${o.id}><span class="grow"><button class="linkish strong" onClick=${() => ctx.openOffer(o.id)}>${o.titre}</button><br/><span class="muted small">${o.entreprise} · ${store.byId('profiles', o.author_id)?.full_name || ''} · ${timeAgo(o.created_at)}</span></span>
         ${o.status !== 'ouverte' ? html`<span class="tag done">${o.status === 'pourvue' ? 'Pourvue' : 'Fermée'}</span>` : null}
         <button class="btn tiny ghost" onClick=${() => act(() => store.update('offers', o.id, { status: o.status === 'ouverte' ? 'fermee' : 'ouverte' }))}>${o.status === 'ouverte' ? 'Masquer' : 'Rouvrir'}</button>
         <button class="btn tiny ghost danger-t" onClick=${() => ctx.confirm('Supprimer cette offre ?', () => act(() => store.remove('offers', o.id)))}>Supprimer</button></li>`)}</ul></div>`;
@@ -858,6 +859,13 @@ addAR({
 
 injectCSS('admin', `
 .adm-tabs { margin-bottom: .2rem; }
+/* Téléphone : dans les listes à gestes (recrutements en attente, dernières offres), le texte garde toute la largeur et les gestes passent dessous */
+@media (max-width: 640px) {
+  .people-list.adm-gestes li { flex-wrap: wrap; row-gap: .35rem; padding-block: .7rem; }
+  .people-list.adm-gestes li > :is(.person, .grow) { flex: 1 1 100%; }
+  .people-list.adm-gestes li > .spacer { display: none; }
+  .people-list.adm-gestes li > .btn:first-of-type { margin-inline-start: auto; }
+}
 /* Cartes sponsorisées : une ligne par carte, ses totaux en quatre chiffres, puis ses gestes */
 .sp-liste { list-style: none; margin: .4rem 0 0; padding: 0; display: flex; flex-direction: column; gap: .6rem; }
 .sp-ligne { display: flex; flex-direction: column; gap: .35rem; padding: .85rem .95rem; border-radius: var(--r-lg); background: var(--surface-2); }
@@ -876,6 +884,8 @@ injectCSS('admin', `
 .mod-card { display: flex; flex-direction: column; gap: .55rem; padding: .95rem 1.05rem; border-radius: var(--r-lg); background: var(--surface); border: 0; box-shadow: var(--sh1), inset 3px 0 0 var(--brass); }
 :root[dir="rtl"] .mod-card { box-shadow: var(--sh1), inset -3px 0 0 var(--brass); }
 /* L'annonce en cours (Vue d'ensemble) : sa date reste lisible sur le fond teinté, de nuit aussi */
+.annonce.preview { background: var(--surface-2); box-shadow: none; border-radius: var(--r-md); }
+.annonce.preview .mini { background: var(--surface); }
 .annonce.preview .annonce-meta .muted { color: var(--ink-2); }
 .mod-head { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
 .mod-ico { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--brass-soft); color: var(--brass); flex: none; }

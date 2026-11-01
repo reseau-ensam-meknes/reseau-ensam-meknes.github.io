@@ -3004,13 +3004,14 @@ test('Retour : ferme la feuille, puis revient à l’écran d’avant, à la mê
   // La liste reprend sa place
   await s.page.click('.bottom-nav a[href="#reseau"]'); await s.page.waitForTimeout(300);
   await s.page.click('.puces-nav [role="tab"]:has-text("Entraide")'); await s.page.waitForTimeout(300);
-  const ligne = s.page.locator('.qrow').nth(4); await ligne.scrollIntoViewIfNeeded();
+  // Une question assez bas dans la liste (l'en-tête compact en montre déjà cinq sans défiler)
+  const ligne = s.page.locator('.qrow').nth(6); await ligne.scrollIntoViewIfNeeded();
   const avant = await s.page.evaluate(() => scrollY); assert.ok(avant > 200);
   await ligne.click(); await s.page.waitForTimeout(300);
   await retour(s.page);
   assert.ok(Math.abs(await s.page.evaluate(() => scrollY) - avant) <= 2, 'même place dans la liste');
   // « ← Toutes les questions » fait comme Retour, sans empiler
-  await s.page.locator('.qrow').nth(4).click(); await s.page.waitForTimeout(300);
+  await s.page.locator('.qrow').nth(6).click(); await s.page.waitForTimeout(300);
   await s.page.click('button.back'); await s.page.waitForTimeout(350);
   assert.ok(Math.abs(await s.page.evaluate(() => scrollY) - avant) <= 2);
   await retour(s.page);
@@ -3347,6 +3348,168 @@ test('onglets : la pastille suit l’onglet choisi, seul le contenu glisse, dans
   assert.ok(!(await s.page.evaluate(() => document.querySelector('.offres-seg').classList.contains('trait-vol'))));
   assert.deepEqual(await glissements(s.page), []);
   await s.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Socle v3 : la coque (barre du bas, bandeau de démo, arrivée d'un écran) et les briques communes (en-tête, rangées, anneau, coche)
+// ---------------------------------------------------------------------------
+test('socle : la barre du bas montre l’onglet actif par un repère sous son icône (miroir en arabe) ; aucun repère pour une page hors de la barre', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 390, langue });
+    await s.comme('Salma');
+    for (const route of ['accueil', 'offres', 'match', 'mentorat', 'reseau/groupes']) {
+      await s.aller(route);
+      const r = await s.page.evaluate(() => {
+        const nav = document.querySelector('.bottom-nav'), ind = nav.querySelector('.bn-indic'), on = nav.querySelector('a[aria-current="page"]');
+        const a = ind.getBoundingClientRect(), b = on.getBoundingClientRect();
+        return { sans: nav.classList.contains('sans-indic'), muet: ind.getAttribute('aria-hidden'), centre: a.left + a.width / 2, gauche: b.left, droite: b.right, n: nav.querySelectorAll('a[aria-current="page"]').length };
+      });
+      assert.equal(r.n, 1, `${langue} · ${route} : un seul onglet actif`);
+      assert.equal(r.sans, false);
+      assert.equal(r.muet, 'true', 'le repère est décoratif : l’onglet actif est dit par aria-current');
+      assert.ok(r.centre > r.gauche && r.centre < r.droite, `${langue} · ${route} : le repère est sous l’onglet actif (${JSON.stringify(r)})`);
+    }
+    // Mon profil n'est pas dans la barre : aucun onglet allumé, aucun repère
+    await s.aller('profil');
+    assert.equal(await s.page.locator('.bottom-nav a[aria-current="page"]').count(), 0);
+    assert.equal(await s.page.locator('.bottom-nav.sans-indic').count(), 1);
+    assert.equal(await s.page.locator('.bottom-nav .bn-indic').isVisible(), false);
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('socle : un onglet de la barre du bas — seul le contenu arrive (200 ms), du côté de l’onglet choisi (inversé en arabe) ; rien au Retour ni en mouvement réduit', async () => {
+  // Chaque arrivée du contenu (#contenu) : son décalage de départ en px (> 0 : il vient de la droite) et sa durée
+  const espion = page => page.evaluate(() => {
+    window.__arrivees = [];
+    const animer = Element.prototype.animate;
+    Element.prototype.animate = function (k, o) {
+      if (this.id === 'contenu') window.__arrivees.push({ de: parseFloat(k[0]?.translate || '0'), duree: typeof o === 'number' ? o : o?.duration, autre: this.closest('.bottom-nav, .topbar') != null });
+      return animer.call(this, k, o);
+    };
+  });
+  const arrivees = page => page.evaluate(() => window.__arrivees.splice(0));
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 390, langue, mouvement: true });
+    const sens = langue === 'ar' ? -1 : 1;
+    await s.comme('Salma'); await s.aller('offres'); await s.page.waitForTimeout(300);
+    await espion(s.page);
+    await s.page.click('.bottom-nav a[href="#reseau"]'); await s.page.waitForTimeout(300);
+    const a = await arrivees(s.page);
+    assert.equal(a.length, 1, `${langue} : une seule arrivée`);
+    assert.ok(a[0].de * sens > 0, `${langue} : Offres → Réseau, le contenu vient du côté de Réseau (${a[0].de})`);
+    assert.ok(a[0].duree >= 150 && a[0].duree <= 400, `durée ${a[0].duree} ms`);
+    await s.page.click('.bottom-nav a[href="#mentorat"]'); await s.page.waitForTimeout(300);
+    const b = await arrivees(s.page);
+    assert.ok(b.length === 1 && b[0].de * sens < 0, `${langue} : Réseau → Mentorat, il vient de l’autre côté (${JSON.stringify(b)})`);
+    // Retour : l'écran d'avant revient à sa place, sans glisser
+    await s.page.goBack(); await s.page.waitForTimeout(300);
+    assert.notEqual(await ici(s.page), '#mentorat');
+    assert.deepEqual(await arrivees(s.page), [], 'rien au Retour');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('offres');
+  await espion(s.page);
+  await s.page.click('.bottom-nav a[href="#reseau"]'); await s.page.waitForTimeout(300);
+  assert.deepEqual(await arrivees(s.page), [], 'mouvement réduit : l’écran change aussitôt');
+  await s.ctx.close();
+});
+
+test('socle : le bandeau de démo tient sur une ligne (360 px, le bouton garde son nom), s’ouvre au toucher et le reste pendant la visite', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 360, langue });
+    await s.comme('Salma'); await s.aller('reseau/groupes');
+    assert.ok((await s.page.locator('.demo-band').boundingBox()).height <= 44, 'une seule ligne');
+    const bouton = s.page.getByRole('button', { name: langue === 'ar' ? 'كيف تجرّب' : 'Comment essayer' });
+    assert.equal(await bouton.count(), 1, 'le nom du bouton reste lu, même caché à l’œil sur un petit écran');
+    assert.equal(await bouton.getAttribute('aria-expanded'), 'false');
+    assert.equal(await bouton.getAttribute('aria-controls'), 'demo-txt');
+    await bouton.click(); await s.page.waitForTimeout(150);
+    assert.equal(await s.page.getAttribute('.demo-plus', 'aria-expanded'), 'true');
+    if (langue === 'fr') assert.match(await s.page.locator('#demo-txt').innerText(), /Essaie le mentorat/);
+    await s.aller('offres');
+    assert.equal(await s.page.getAttribute('.demo-plus', 'aria-expanded'), 'true', 'ouvert, il le reste d’un écran à l’autre');
+    await s.page.click('.demo-plus'); await s.page.waitForTimeout(150);
+    assert.equal(await s.page.getAttribute('.demo-plus', 'aria-expanded'), 'false');
+    if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...window.__ensamMissing].filter(t => /démo|essai|mentorat|Replier|rôle/i.test(t))), []);
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('socle : en-tête compact — titre et rubriques du Réseau immobiles d’un onglet à l’autre ; Mon profil montre son remplissage dans un anneau lisible, qui suit le profil', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 390, langue });
+    await s.comme('Salma');
+    const position = () => s.page.evaluate(() => ({ titre: document.querySelector('.en-tete h1').getBoundingClientRect().top, puces: document.querySelector('.en-tete .puces-nav').getBoundingClientRect().top }));
+    await s.aller('reseau/groupes'); const avec = await position();
+    assert.equal(await s.page.locator('.page-head .eyebrow').count(), 1);
+    for (const r of ['reseau/etranger', 'reseau/entreprises']) {
+      await s.aller(r); const sans = await position();
+      assert.equal(await s.page.locator('.page-head .eyebrow').count(), 0, 'toujours un seul chiffre par écran');
+      assert.ok(Math.abs(avec.titre - sans.titre) <= 1 && Math.abs(avec.puces - sans.puces) <= 1, `${langue} · ${r} : rien ne saute (${JSON.stringify([avec, sans])})`);
+    }
+    // Mon profil : l'anneau est une vraie barre de progression ; son chiffre se lit « 83 % » (jamais « %83 » en arabe)
+    await s.aller('profil');
+    const anneau = s.page.locator('.page-head .anneau[role="progressbar"]');
+    assert.equal(await anneau.count(), 1);
+    const v = Number(await anneau.getAttribute('aria-valuenow'));
+    assert.ok(v > 0 && v < 100, `rempli à ${v} %`);
+    assert.equal(await anneau.getAttribute('aria-valuemin'), '0');
+    assert.equal(await anneau.getAttribute('aria-valuemax'), '100');
+    assert.match(await anneau.getAttribute('aria-label'), langue === 'ar' ? /\d/ : new RegExp(`Profil rempli à ${v} %`));
+    assert.equal((await s.page.locator('.page-head .pf-pct').innerText()).replace(/\s/g, ''), `${v}%`);
+    const pct = await s.page.locator('.page-head .pf-pct').boundingBox(), chiffre = await s.page.locator('.page-head .pf-pct small').boundingBox();
+    assert.ok(chiffre.x > pct.x, 'le signe % reste après le nombre, en arabe aussi');
+    // Un champ retiré puis remis : l'anneau suit, pour de vrai
+    if (langue === 'fr') {
+      const li = await s.page.inputValue('#pf-li');
+      await s.page.fill('#pf-li', ''); await s.page.click('form .row-end .btn.primary'); await s.page.waitForTimeout(300);
+      const moins = Number(await anneau.getAttribute('aria-valuenow'));
+      assert.ok(moins < v, `sans LinkedIn : ${moins} % < ${v} %`);
+      await s.page.fill('#pf-li', li); await s.page.press('#pf-li', 'Enter'); await s.page.waitForTimeout(300);
+      assert.equal(Number(await anneau.getAttribute('aria-valuenow')), v);
+    }
+    // L'administration n'a pas d'anneau
+    await s.comme('Admin'); await s.aller('profil');
+    assert.equal(await s.page.locator('.page-head .anneau').count(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('socle : groupes et cafés en rangées (390 px : elles défilent d’un geste ; 1280 px : en grille, rien de caché) ; « Je viens » coche et vibre une fois, légèrement', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('reseau/groupes');
+  const rangees = s.page.locator('.rangee-bloc > .rangee-cartes');
+  assert.ok(await rangees.count() >= 2, 'tes groupes, puis les cafés');
+  const g = await rangees.first().evaluate(e => ({ sw: e.scrollWidth, cw: e.clientWidth, snap: getComputedStyle(e).scrollSnapType }));
+  assert.ok(g.sw > g.cw, 'la rangée de groupes défile');
+  assert.match(g.snap, /x/);
+  assert.equal(await s.page.locator('.rangee-fleches').first().isVisible(), false, 'pas de flèches sur un téléphone');
+  // « Je viens » : la coche se dessine dans « Tu y vas », une vibration de 8 à 15 ms
+  await s.page.evaluate(() => { window.__vib = []; Object.defineProperty(navigator, 'vibrate', { configurable: true, value: ms => { window.__vib.push(ms); return true; } }); });
+  const cafe = s.page.locator('article.cafe', { hasText: 'Casablanca' }).first();
+  await cafe.locator('button', { hasText: 'Je viens' }).click(); await s.page.waitForTimeout(300);
+  assert.equal(await cafe.locator('.cafe-ok .coche').count(), 1);
+  const vib = await s.page.evaluate(() => window.__vib);
+  assert.equal(vib.length, 1); assert.ok(vib[0] >= 8 && vib[0] <= 15);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  const d = await ouvrir({ largeur: 1280 });
+  await d.comme('Salma'); await d.aller('reseau/groupes');
+  for (const e of await d.page.locator('.rangee-bloc.en-grille > .rangee-cartes').all()) {
+    const t = await e.evaluate(x => ({ sw: x.scrollWidth, cw: x.clientWidth }));
+    assert.ok(t.sw <= t.cw + 1, `sur ordinateur, tout se voit (${JSON.stringify(t)})`);
+  }
+  assert.deepEqual(d.erreurs, []);
+  await d.ctx.close();
 });
 
 // ---------------------------------------------------------------------------

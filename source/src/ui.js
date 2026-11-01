@@ -62,6 +62,9 @@ ajouterIcones({
   block: '<circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/>',
   checks: '<path d="M2.5 12.5 7 17l9.5-9.5"/><path d="M12.5 16.5l.5.5 9-9"/>',
   reply: '<path d="M9 7l-5 5 5 5"/><path d="M4 12h10a6 6 0 0 1 6 6v1"/>',
+  chevron: '<path d="m6 9 6 6 6-6"/>',
+  prec: '<path d="m15 6-6 6 6 6"/>',
+  suiv: '<path d="m9 6 6 6-6 6"/>',
 });
 
 // Neuf teintes douces accordées au bleu, à l'orange et au bleu nuit de l'école (pas un arc-en-ciel) : [teinte, saturation].
@@ -910,7 +913,7 @@ if (typeof document !== 'undefined') {
 // seulement tant qu'il reste à voir (au début, à la fin, ou les deux ; le début est à droite en arabe). Tout tient : rien.
 // Un seul écouteur de défilement pour toutes les rangées ; leur taille et celle de leurs puces sont suivies par un
 // ResizeObserver, et les rangées nouvelles sont repérées une fois par image après un rendu.
-const DEFILANTES = '.puces-nav, .offres-chips, .chips.rangee, .seg, .tabs, .sugg-row, .mx-rangee, .mx-b-acts';
+const DEFILANTES = '.puces-nav, .offres-chips, .chips.rangee, .seg, .tabs, .sugg-row, .mx-rangee, .mx-b-acts, .rangee-cartes';
 export function bordsRangee(l) {
   const max = l.scrollWidth - l.clientWidth, x = Math.abs(l.scrollLeft);   // en arabe, scrollLeft va de 0 à -max
   const debut = max > 2 && x > 2, fin = max > 2 && x < max - 2;
@@ -1083,3 +1086,221 @@ export function FiliereFiltre({ id, value, onChange }) {
       return html`<optgroup label=${`Parcours ${p.nom}`}>${fs.length > 1 ? html`<option value=${'parcours:' + p.code}>${`Tout le parcours ${p.nom}`}</option>` : null}${fs.map(f => html`<option value=${f.nom}>${f.nom}</option>`)}</optgroup>`;
     })}</select>`;
 }
+
+
+// ===========================================================================
+// Socle v3 : les briques partagées de toutes les pages (« calme premium, vivant »).
+// Chacune est autonome (sa CSS arrive avec ui.js, bloc « socle-briques ») et suit les règles du réseau :
+// mouvement court et qui a un sens, rien en mouvement réduit, jour et nuit, arabe (sens de lecture), cibles de 44 px.
+// ===========================================================================
+
+// En-tête compact commun aux pages : sur-titre (une ligne), titre de page, au plus une ligne d'explication, une action.
+// Un léger voile de marque (bleu côté titre, soupçon d'orange de l'autre côté) colore le haut de la page, jour et nuit.
+// Garde la classe .page-head (Publier sur ordinateur, tests). children : ce qui suit sur toute la largeur (puces, rangée).
+// garderPlace : sans sur-titre, sa ligne reste réservée (vide, muette) pour que le titre et les puces ne sautent pas
+// d'un onglet à l'autre quand certains onglets n'ont pas de chiffre.
+//   <${EnTetePage} surTitre="45 lauréats" titre="Réseau" sousTitre="Groupes, agenda, entraide…" action=${html`<button class="btn tonal">…</button>`}/>
+export function EnTetePage({ surTitre, titre, sousTitre, action, children, id, garderPlace = false }) {
+  return html`<header class="page-head en-tete" id=${id}>
+    <div class="en-tete-txt">${surTitre ? html`<p class="eyebrow">${surTitre}</p>` : garderPlace ? html`<span class="en-tete-place" aria-hidden="true"></span>` : null}<h1>${titre}</h1>${sousTitre ? html`<p class="en-tete-sous">${sousTitre}</p>` : null}</div>
+    ${action ? html`<div class="en-tete-act">${action}</div>` : null}
+    ${children}
+  </header>`;
+}
+
+// Un nombre qui compte jusqu'à sa valeur la première fois qu'il paraît à l'écran (IntersectionObserver), en décélérant.
+// Mouvement réduit, valeur nulle ou déjà vue : immobile. Une valeur qui change ensuite s'affiche simplement.
+// Le texte final est déjà là au départ (lu tel quel hors de l'écran) ; aucune annonce pendant le comptage.
+// duree : 150 à 400 ms (la règle du mouvement), 400 par défaut.
+//   <${Compteur} v=${45}/>   <${Compteur} v=${93} duree=${300} format=${n => n + ' %'}/>
+export function Compteur({ v, duree = 400, format, cls = '' }) {
+  const n = Math.round(Number(v) || 0);
+  duree = Math.max(150, Math.min(400, Number(duree) || 400));
+  const f = x => (format ? format(x) : String(x));
+  const ref = useRef(); const vu = useRef(false);
+  useLayoutEffect(() => {
+    const t = ref.current?.firstChild;
+    if (!t || vu.current || n <= 0 || mouvementReduit()) { vu.current = vu.current || n > 0; return; }
+    let raf = 0, io = null;
+    const lancer = () => {
+      vu.current = true;
+      let t0 = 0;
+      const pas = now => { t0 ||= now; const k = Math.min(1, (now - t0) / duree); t.data = f(Math.round(n * (1 - (1 - k) ** 3))); if (k < 1) raf = requestAnimationFrame(pas); };
+      t.data = f(0); raf = requestAnimationFrame(pas);
+    };
+    const r = ref.current.getBoundingClientRect();
+    if (r.width && r.bottom > 0 && r.top < innerHeight) lancer();
+    else if (typeof IntersectionObserver === 'function') {
+      io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) { io.disconnect(); io = null; lancer(); } }, { threshold: .5 });
+      io.observe(ref.current);
+    }
+    return () => { cancelAnimationFrame(raf); io?.disconnect(); if (t.isConnected) t.data = f(n); };
+  }, [n]);
+  return html`<span class=${'compteur' + (cls ? ' ' + cls : '')} ref=${ref}>${f(n)}</span>`;
+}
+
+// Anneau de progression (SVG) qui se remplit de 0 à sa valeur à sa première apparition (0,4 s) ; immobile en mouvement réduit.
+// Accessible : role="progressbar", aria-valuenow / min / max et un nom (label, obligatoire pour les lecteurs d'écran).
+// ton : 'accent' (bleu, par défaut), 'impact' (orange) ou 'bien' (vert). children : au centre (chiffre, icône).
+// decoratif : le texte à côté dit déjà la valeur (« 5 rubriques écrites sur 7 ») ; l'anneau est alors caché aux lecteurs d'écran.
+//   <${Anneau} valeur=${4} max=${5} label="Profil rempli à 80 %"><b>80 %</b><//>
+export function Anneau({ valeur = 0, max = 100, taille = 56, epaisseur = 6, label, ton = 'accent', decoratif = false, children }) {
+  const p = max > 0 ? Math.max(0, Math.min(1, (Number(valeur) || 0) / max)) : 0;
+  const r = (taille - epaisseur) / 2, c = taille / 2;
+  const ref = useRef();
+  const [plein, setPlein] = useState(() => mouvementReduit());
+  useEffect(() => {
+    if (plein) return;
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver !== 'function') { setPlein(true); return; }
+    const io = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) { io.disconnect(); requestAnimationFrame(() => setPlein(true)); } }, { threshold: .4 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  const aria = decoratif ? { 'aria-hidden': 'true' } : { role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': max, 'aria-valuenow': valeur, 'aria-label': label };
+  return html`<span class=${'anneau t-' + ton} ref=${ref} ...${aria} style=${`--taille:${taille}px`}>
+    <svg width=${taille} height=${taille} viewBox=${`0 0 ${taille} ${taille}`} aria-hidden="true" focusable="false">
+      <circle class="anneau-fond" cx=${c} cy=${c} r=${r} stroke-width=${epaisseur}/>
+      <circle class=${'anneau-trait' + (p > 0 ? '' : ' vide')} cx=${c} cy=${c} r=${r} stroke-width=${epaisseur} pathLength="100" stroke-dasharray="100" stroke-dashoffset=${plein ? 100 - p * 100 : 100}/>
+    </svg>
+    ${children ? html`<span class="anneau-centre">${children}</span>` : null}
+  </span>`;
+}
+
+// Une rangée horizontale qui défile (cartes, visages…) : aimantée carte par carte, le bord où il reste à voir s'estompe
+// (bordsRangee, comme les puces), deux petites flèches à la souris sur ordinateur, « Voir tout » si onTout.
+// Largeur d'une carte : --rangee-l (par défaut min(82 %, 18.5rem)) ; tout ce qui tient s'aligne sans défiler.
+// titre : le titre de section (h2) ; sousTitre : une ligne discrète dessous ; action : un bouton à côté du titre ;
+// grille : sur ordinateur (761 px et plus), les cartes se rangent en grille (colonnes d'au moins --rangee-min, 260 px) ;
+// vide : ce qui s'affiche à la place des cartes quand il n'y en a aucune (un écran vide) ; label : le nom sans titre.
+//   <${Rangee} titre="Cafés ENSAM" sousTitre="Une heure autour d’un café" action=${bouton} grille vide=${html`<${Empty} …/>`}>${cafes.map(…)}<//>
+let nRangee = 0;
+export function Rangee({ titre, sousTitre, action, lienTout = 'Voir tout', onTout, grille = false, vide = null, cls = '', style, label, children }) {
+  const ref = useRef(), id = useRef('');
+  if (!id.current) id.current = 'rangee-' + (++nRangee);
+  const defiler = s => { const l = ref.current; if (!l) return; const rtl = getComputedStyle(l).direction === 'rtl'; l.scrollBy({ left: s * (rtl ? -1 : 1) * Math.max(160, l.clientWidth * .82), behavior: mouvementReduit() ? 'auto' : 'smooth' }); };
+  const cartes = [].concat(children ?? []).flat().filter(x => x != null && x !== false);
+  const tete = titre || onTout || action;
+  return html`<section class=${'rangee-bloc' + (grille ? ' en-grille' : '') + (cls ? ' ' + cls : '')} style=${style} aria-labelledby=${titre ? id.current : null} aria-label=${!titre ? label : null}>
+    ${tete ? html`<div class="rangee-tete">${titre ? html`<h2 class="rangee-titre" id=${id.current}>${titre}</h2>` : html`<span class="spacer"></span>`}
+      ${cartes.length ? html`<span class="rangee-fleches" aria-hidden="true"><button type="button" tabindex="-1" class="rangee-fl prec" onClick=${() => defiler(-1)}><${Icon} name="prec" size=${18}/></button><button type="button" tabindex="-1" class="rangee-fl suiv" onClick=${() => defiler(1)}><${Icon} name="suiv" size=${18}/></button></span>` : null}
+      ${action ? html`<span class="rangee-act">${action}</span>` : null}
+      ${onTout ? html`<button type="button" class="rangee-tout" onClick=${onTout}><span>${lienTout}</span><${Icon} name="arrow" size=${15}/></button>` : null}</div>` : null}
+    ${sousTitre ? html`<p class="rangee-sous">${sousTitre}</p>` : null}
+    ${cartes.length ? html`<div class="rangee-cartes" ref=${ref}>${cartes}</div>` : vide}
+  </section>`;
+}
+
+// La forme de ce qui arrive (une ligne de liste, une carte) : des barres douces qui miroitent, immobiles en mouvement réduit.
+// lignes : nombre de lignes de texte ; avatar : un rond au début ; hauteur : une seule plaque de cette hauteur (px).
+// Invisible pour les lecteurs d'écran : le conteneur porte aria-busy et un mot « Chargement… » (sr-only).
+//   <${Squelette} avatar lignes=${2}/>   <${Squelette} hauteur=${160}/>
+const LARGEURS_SQ = [92, 74, 58, 84, 66];
+export function Squelette({ lignes = 3, avatar = false, hauteur, cls = '' }) {
+  return html`<div class=${'squelette sq-brique' + (cls ? ' ' + cls : '')} aria-hidden="true">
+    ${hauteur ? html`<span class="sq sq-plaque" style=${`block-size:${hauteur}px`}></span>`
+      : html`${avatar ? html`<span class="sq sq-rond"></span>` : null}<span class="sq-lignes">${Array.from({ length: Math.max(1, lignes) }, (_, i) => html`<span class="sq sq-l" style=${`inline-size:${LARGEURS_SQ[i % LARGEURS_SQ.length]}%`}></span>`)}</span>`}
+  </div>`;
+}
+
+// Une petite vibration sur un vrai succès ou un geste validé (8 à 15 ms), protégée : sans vibreur ni permission, rien.
+export function vibrer(ms = 10) {
+  try { if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') navigator.vibrate(Math.max(8, Math.min(15, Number(ms) || 10))); } catch { /* pas de vibreur */ }
+}
+
+// La coche du succès : un rond vert qui « pop », puis le trait qui se dessine (0,4 s en tout) ; posée d'emblée en
+// mouvement réduit. label : ce qu'elle dit aux lecteurs d'écran (sinon décorative).
+//   <${Coche} taille=${48} label="Envoyé"/>
+export function Coche({ taille = 40, label }) {
+  return html`<span class="coche" style=${`--taille:${taille}px`} role=${label ? 'img' : null} aria-label=${label || null} aria-hidden=${label ? null : 'true'}>
+    <svg viewBox="0 0 24 24" width=${Math.round(taille * .56)} height=${Math.round(taille * .56)} fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path pathLength="1" d="M5.5 12.6l4.1 4.1 8.9-9.3"/></svg>
+  </span>`;
+}
+
+const CSS_BRIQUES = `
+/* En-tête de page : compact, un voile de marque derrière le haut de la page (jour et nuit, miroir en arabe) */
+.main:has(> .content > .page > .en-tete) { background-image: var(--voile-marque); background-repeat: no-repeat; background-size: 100% 420px; background-position: top; }
+[dir="rtl"] .main:has(> .content > .page > .en-tete) { background-image: var(--voile-marque-rtl); }
+.en-tete { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: .75rem 1rem; padding-block: .15rem 0; }
+.en-tete-txt { display: flex; flex-direction: column; gap: .2rem; min-width: 0; flex: 1 1 15rem; }
+.en-tete .eyebrow { margin: 0; color: var(--blue-text); font-weight: 600; }
+.en-tete-place { display: block; height: calc(var(--fs-2) * 1.35); }
+[dir="rtl"] .en-tete-place { height: calc(.8125rem * 1.35); }
+.en-tete h1 { font-size: var(--fs-titre); }
+.en-tete-sous { margin: .15rem 0 0; color: var(--ink-2); font-size: var(--fs-3); line-height: 1.45; max-width: 58ch; text-wrap: pretty; }
+.en-tete-act { flex: none; display: flex; align-items: center; gap: .5rem; }
+.en-tete > :not(.en-tete-txt):not(.en-tete-act) { flex-basis: 100%; min-width: 0; }
+
+/* Compteur : chiffres alignés, la largeur ne danse pas pendant qu'il compte */
+.compteur { font-variant-numeric: tabular-nums; }
+
+/* Anneau de progression */
+.anneau { position: relative; display: inline-grid; place-items: center; inline-size: var(--taille); block-size: var(--taille); flex: none; --trait: var(--accent); }
+.anneau.t-impact { --trait: var(--orange); } .anneau.t-bien { --trait: var(--good); }
+.anneau > svg { position: absolute; inset: 0; transform: rotate(-90deg); overflow: visible; }
+[dir="rtl"] .anneau > svg { transform: rotate(-90deg) scaleY(-1); }
+.anneau > svg circle { fill: none; }
+.anneau-fond { stroke: color-mix(in srgb, var(--trait) 16%, transparent); }
+.anneau-trait { stroke: var(--trait); stroke-linecap: round; transition: stroke-dashoffset .4s var(--ease-out); }
+.anneau-trait.vide { opacity: 0; }
+.anneau-centre { position: relative; display: grid; place-items: center; text-align: center; font: 700 var(--fs-2)/1.1 var(--f-display); font-variant-numeric: tabular-nums; color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { .anneau-trait { transition: none; } }
+
+/* Rangée qui défile : aimantée, fondu au bord (bordsRangee), flèches à la souris sur ordinateur */
+.rangee-bloc { display: flex; flex-direction: column; gap: .6rem; min-width: 0; }
+.rangee-tete { display: flex; align-items: center; gap: .5rem; min-height: 32px; }
+.rangee-titre { flex: 1; min-width: 0; font: 750 var(--fs-5)/1.25 var(--f-display); letter-spacing: -.015em; }
+.rangee-tout { display: inline-flex; align-items: center; gap: .3rem; min-height: 40px; padding: 0 .25rem; margin-inline-end: -.25rem; border: 0; background: none; color: var(--blue-text); font: 600 var(--fs-2)/1 var(--f-body); cursor: pointer; border-radius: var(--r-sm); }
+.rangee-tout:hover { text-decoration: underline; text-underline-offset: 3px; }
+[dir="rtl"] .rangee-tout .ico { transform: scaleX(-1); }
+.rangee-fleches { display: none; gap: .25rem; }
+.rangee-fl { display: grid; place-items: center; inline-size: 32px; block-size: 32px; border: 0; border-radius: 50%; background: var(--surface); box-shadow: var(--sh1); color: var(--ink-2); cursor: pointer; transition: opacity .2s, background .2s; }
+.rangee-fl:hover { background: var(--surface-2); color: var(--ink); }
+[dir="rtl"] .rangee-fl .ico { transform: scaleX(-1); }
+@media (hover: hover) and (pointer: fine) and (min-width: 761px) {
+  .rangee-bloc:has(> .rangee-cartes:is(.fondu-debut, .fondu-fin)) .rangee-fleches { display: inline-flex; }
+  .rangee-bloc:has(> .rangee-cartes:not(.fondu-debut)) .rangee-fl.prec, .rangee-bloc:has(> .rangee-cartes:not(.fondu-fin)) .rangee-fl.suiv { opacity: .35; pointer-events: none; }
+}
+.rangee-cartes { display: grid; grid-auto-flow: column; grid-auto-columns: var(--rangee-l, min(82%, 18.5rem)); gap: var(--rangee-gap, .75rem); align-items: stretch;
+  overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scrollbar-width: none; padding: 3px 2px 10px; margin: -3px -2px -10px; }
+.rangee-cartes::-webkit-scrollbar { display: none; }
+.rangee-cartes > * { scroll-snap-align: start; min-width: 0; }
+@media (max-width: 760px) { .rangee-cartes { margin-inline: -16px; padding-inline: 16px; scroll-padding-inline: 16px; } }
+@media (prefers-reduced-motion: no-preference) { .rangee-cartes { scroll-behavior: smooth; } }
+.rangee-sous { margin: -.3rem 0 .1rem; color: var(--muted); font-size: var(--fs-2); line-height: 1.45; }
+.rangee-act { flex: none; display: flex; align-items: center; gap: .4rem; }
+@media (min-width: 761px) {
+  .rangee-bloc.en-grille > .rangee-cartes { grid-auto-flow: row; grid-auto-columns: auto; grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--rangee-min, 260px)), 1fr));
+    overflow: visible; scroll-snap-type: none; padding: 0; margin: 0; -webkit-mask-image: none; mask-image: none; }
+  .rangee-bloc.en-grille .rangee-fleches { display: none !important; }
+}
+
+/* Squelette : des barres douces qui miroitent (un chargement : la seule boucle permise), immobiles en mouvement réduit */
+.squelette.sq-brique { display: flex; align-items: center; gap: .85rem; padding: .85rem 0; min-width: 0; }
+.sq-brique .sq-rond { inline-size: 40px; block-size: 40px; border-radius: 50%; flex: none; }
+.sq-brique .sq-lignes { flex: 1; display: flex; flex-direction: column; gap: .5rem; min-width: 0; }
+.sq-brique .sq-l { block-size: .8rem; border-radius: 6px; }
+.sq-brique .sq-l:first-child { block-size: .95rem; }
+.sq-brique .sq-plaque { flex: 1; border-radius: var(--r-lg); }
+
+/* Coche du succès */
+.coche { display: inline-grid; place-items: center; inline-size: var(--taille); block-size: var(--taille); flex: none; border-radius: 50%; background: var(--good); color: var(--good-soft);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--good) 16%, transparent); }
+.coche path { stroke-dasharray: 1; stroke-dashoffset: 0; }
+@media (prefers-reduced-motion: no-preference) {
+  .coche { animation: coche-rond .34s cubic-bezier(.3, 1.5, .5, 1) backwards; }
+  .coche path { animation: coche-trait .26s ease-out .14s backwards; }
+}
+@keyframes coche-rond { from { opacity: 0; transform: scale(.35); } }
+@keyframes coche-trait { from { stroke-dashoffset: 1; } }
+
+/* Carte cliquable : elle s'enfonce sous le doigt ; à la souris, elle se lève un peu */
+.carte-touche { cursor: pointer; -webkit-tap-highlight-color: transparent; transition: transform .22s var(--ease), box-shadow .22s ease, background-color .2s; }
+.carte-touche:active { transform: scale(.985); transition-duration: .08s; }
+@media (hover: hover) and (pointer: fine) {
+  .carte-touche:hover { transform: translateY(-2px); box-shadow: var(--sh2); }
+  .carte-touche:active { transform: translateY(0) scale(.99); }
+}
+@media (prefers-reduced-motion: reduce) { .carte-touche:hover, .carte-touche:active { transform: none; } }
+`;
+injectCSS('socle-briques', CSS_BRIQUES);
