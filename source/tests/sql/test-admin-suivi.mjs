@@ -30,7 +30,7 @@ test('l’administration ajoute, lit, modifie et supprime une ligne de suivi ; l
   const [m] = await q(ADMIN, `update public.admin_suivi set etape = 'contacte', referent_ok = true where id = $1 returning *`, [r.id]);
   assert.equal(m.etape, 'contacte'); assert.equal(m.referent_ok, true);
   assert.ok(new Date(m.updated_at) >= new Date(r.updated_at));
-  const p = await ligne(ADMIN, { type: 'partenaire', nom: 'Entreprise exemple', etape: 'proposition', formule: 'visibilite', montant_dh: 2500 });
+  const p = await ligne(ADMIN, { type: 'partenaire', nom: 'Entreprise exemple', etape: 'proposition', formule: 'partenaire', montant_dh: 2500 });
   assert.equal(p.montant_dh, 2500);
   assert.equal((await q(ADMIN, 'select * from public.admin_suivi')).length, 2);
   await q(ADMIN, 'delete from public.admin_suivi where id = $1', [p.id]);

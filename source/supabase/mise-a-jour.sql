@@ -5738,7 +5738,7 @@ create table if not exists public.admin_suivi (
   etape text not null default 'a_contacter' check (etape in ('a_contacter', 'contacte', 'interesse', 'rdv', 'proposition', 'accord', 'pret', 'ouvert', 'signe', 'paye', 'pause', 'refus')),
   prochaine_action text check (char_length(prochaine_action) <= 200),
   prochaine_le date,
-  formule text check (formule in ('decouverte', 'visibilite', 'partenaire')),
+  formule text check (formule in ('visibilite', 'partenaire', 'saison_pfe')),
   montant_dh int check (montant_dh between 0 and 1000000),
   referent_ok boolean not null default false,
   accord_nom boolean not null default false,
