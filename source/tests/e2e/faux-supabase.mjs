@@ -6,6 +6,8 @@
 // (secondes) périme d'un coup tous les jetons émis avant ; jetons.renouveler dit si /auth/v1/token?grant_type=refresh_token
 // rend une nouvelle session ou la refuse (400 invalid_grant, comme un jeton de renouvellement révoqué ou trop ancien).
 // tables : d'autres lignes rendues telles quelles (mentorats, propositions…).
+// rpc : d'autres fonctions de la base, par nom : (corps, membre) => réponse (undefined : la base n'a pas la fonction) ;
+// membre dit si l'appel porte le jeton d'un membre connecté plutôt que la clé publique. Vidé avant chaque test, comme tables.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,7 +17,7 @@ export const UID = '00000000-0000-4000-8000-0000000000a1';
 
 // fondateurs : la réponse de fondateurs_publics() (absente : la base n'est pas à jour), ou (membre) => réponse ;
 // photo : l'image servie par les liens temporaires du stockage (photos des fondateurs)
-export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 19, promos: 14 }, reglages = [{ cle: 'domaines_ecole', valeur: ['ensam-umi.ac.ma'] }], offres = [], partagees = {}, profils = [], fondateurs = null, photo = null, ambassadeurs = null, chiffresPromo = null, tables = {} } = {}) {
+export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 19, promos: 14 }, reglages = [{ cle: 'domaines_ecole', valeur: ['ensam-umi.ac.ma'] }], offres = [], partagees = {}, profils = [], fondateurs = null, photo = null, ambassadeurs = null, chiffresPromo = null, tables = {}, rpc = {} } = {}) {
   let port; const appels = []; const meta = {}; const inscrits = []; const jetons = { renouveler: false, depuis: 0, n: 0 };
   const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' };
   const json = (r, code, body) => { r.writeHead(code, { 'content-type': 'application/json', ...cors }); r.end(body === undefined ? '' : JSON.stringify(body)); };
@@ -89,6 +91,11 @@ export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 1
             return row ? json(r, 200, /vnd\.pgrst\.object/.test(q.headers.accept || '') ? row : [row]) : json(r, 406, { code: 'PGRST116', message: 'no rows' });
           }
         }
+        const fn = u.startsWith('/sb/rest/v1/rpc/') ? rpc[u.slice('/sb/rest/v1/rpc/'.length)] : null;
+        if (typeof fn === 'function') {
+          const x = fn(corps, (q.headers.authorization || '') !== 'Bearer cle');
+          return x === undefined ? json(r, 404, { code: 'PGRST202', message: 'Could not find the function' }) : json(r, 200, x);
+        }
         if (u.startsWith('/sb/rest/v1/rpc/')) return json(r, 404, { code: 'PGRST202', message: 'Could not find the function' });
         if (u === '/sb/rest/v1/reglages') return json(r, 200, reglages);
         if (u === '/sb/rest/v1/offers' && q.method === 'GET') return json(r, 200, offres);
@@ -125,6 +132,6 @@ export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 1
   srv.on('upgrade', (_q, s) => s.destroy()); // temps réel : absent ici
   await new Promise(ok => srv.listen(0, '127.0.0.1', ok)); port = srv.address().port;
   // Chaque test repart d'une base vide (personne d'inscrit, aucun appel noté)
-  const vider = () => { appels.length = 0; inscrits.length = 0; for (const k of Object.keys(meta)) delete meta[k]; for (const k of Object.keys(tables)) delete tables[k]; Object.assign(jetons, { renouveler: false, depuis: 0 }); };
-  return { adresse: `http://127.0.0.1:${port}/`, appels, inscrits, tables, jetons, vider, fermer: () => srv.close() };
+  const vider = () => { appels.length = 0; inscrits.length = 0; for (const k of Object.keys(meta)) delete meta[k]; for (const k of Object.keys(tables)) delete tables[k]; for (const k of Object.keys(rpc)) delete rpc[k]; Object.assign(jetons, { renouveler: false, depuis: 0 }); };
+  return { adresse: `http://127.0.0.1:${port}/`, appels, inscrits, tables, rpc, jetons, vider, fermer: () => srv.close() };
 }

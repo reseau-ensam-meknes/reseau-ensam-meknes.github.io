@@ -6370,3 +6370,221 @@ test('accueil : le bandeau dit ce qui empêche les notifications, se range trois
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
+
+// ---------------------------------------------------------------------------
+// Plan · partie membres : « 3 lauréats peuvent t'aider », « Pionnier de ta promo », « +1 depuis ta dernière visite »,
+// l'invitation nommée, et ce qui va sur la page d'entrée avec l'accord de chacun (visages, réussites)
+// ---------------------------------------------------------------------------
+// Les données de la démo, lues ou changées directement (d : st.data) ; f : le corps d'une fonction
+const demoPM = (s, f) => s.page.evaluate(f => { const k = 'ensam-demo-v14', st = JSON.parse(localStorage.getItem(k)); const r = new Function('d', f)(st.data); localStorage.setItem(k, JSON.stringify(st)); return r; }, f);
+const lirePM = (s, f) => s.page.evaluate(f => new Function('d', f)(JSON.parse(localStorage.getItem('ensam-demo-v14')).data), f);
+
+test('« 3 lauréats peuvent t’aider » sous chaque demande ouverte : un conseil demandé d’un toucher, jamais deux fois le même, plus rien une fois fermée', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const fete = () => s.page.locator('.fete-acts .btn').last().click({ timeout: 2000 }).catch(() => {});
+  const carte = t => s.page.locator('.dm-card', { hasText: t }).first();
+  const noms = t => carte(t).locator('.dm-reco .dm-reco-qui strong').allInnerTexts();
+  const publier = async (type, titre, details) => {
+    await s.page.click('#dm-nouvelle'); await s.page.waitForTimeout(200);
+    await s.page.click('#dm-type-' + type);
+    await s.page.fill('#dm-titre', titre); await s.page.fill('#dm-details', details);
+    await s.page.click('#dm-publier'); await s.page.waitForTimeout(400); await fete();
+  };
+  const PFE = 'PFE en lean manufacturing à Tanger', ETR = 'Master en génie industriel en Allemagne';
+  await s.comme('Salma'); await s.aller('offres/demandes');
+  await publier('pfe', PFE, 'Je cherche un PFE de 6 mois en lean : VSM, SMED, chantiers 5S. Mobile à Tanger et Kénitra.');
+  const reco = carte(PFE).locator('.dm-reco');
+  await reco.waitFor({ timeout: 3000 });
+  const n = await reco.locator('.dm-reco-l').count();
+  assert.ok(n >= 1 && n <= 3, `${n} lauréats`);
+  assert.equal(await reco.locator('.eyebrow').innerText(), n > 1 ? `${n} lauréats peuvent t’aider` : 'Un lauréat peut t’aider');
+  assert.match(await reco.locator('.dm-reco-l').first().innerText(), /Promo \d{4}/);
+  // « Lui demander un conseil » : ce lauréat, « Stage ou PFE » et le sujet de la demande, déjà remplis
+  const [premier] = await noms(PFE);
+  await reco.locator('.dm-reco-demander').first().click();
+  await s.page.waitForSelector('.modal .need-pick');
+  assert.match(await s.page.locator('.modal').innerText(), new RegExp(`Demander à ${premier}`));
+  assert.equal(await s.page.inputValue('#ah-sujet'), PFE);
+  assert.match(await s.page.locator('.need-pick .chip[aria-pressed="true"]').innerText(), /Stage ou PFE/);
+  await s.fermer();
+  await reco.locator('.dm-reco-profil').first().click(); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.modal .profile h2').innerText(), premier, '« Voir son profil »');
+  await s.fermer();
+  // Une deuxième demande : d'autres lauréats, jamais le même sous deux demandes
+  await publier('etranger', ETR, 'Je prépare un départ en master en Allemagne l’an prochain, en génie industriel ou en logistique.');
+  await carte(ETR).locator('.dm-reco').waitFor({ timeout: 3000 });
+  const a = await noms(PFE), b = await noms(ETR);
+  assert.ok(a.length && b.length, `${a} / ${b}`);
+  assert.deepEqual(a.filter(x => b.includes(x)), [], `${a} / ${b}`);
+  await carte(ETR).locator('.dm-reco-demander').first().click();
+  await s.page.waitForSelector('.modal .need-pick');
+  assert.match(await s.page.locator('.need-pick .chip[aria-pressed="true"]').innerText(), /Partir à l’étranger/);
+  // Les horaires envoyés : ce lauréat laisse sa place au suivant
+  await s.page.click('.modal .row-end .btn.primary'); await s.page.waitForTimeout(500);
+  await s.aller('offres/demandes');
+  assert.ok(![...(await noms(PFE)), ...(await noms(ETR))].includes(b[0]), `${b[0]} déjà sollicité`);
+  assert.equal(await s.debordement(), 0);
+  // Fermée : plus de liste
+  await carte(PFE).locator('.dm-acts button', { hasText: 'Fermer' }).click(); await s.page.waitForTimeout(300);
+  assert.equal(await carte(PFE).locator('.dm-reco').count(), 0);
+  assert.ok(await carte(ETR).locator('.dm-reco').count(), 'l’autre demande garde la sienne');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Pionnier de ta promo » : Mon espace, sa fiche et l’annuaire ; jamais un étudiant, ni places ni compte à rebours', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('espace');
+  const tuile = s.page.locator('.esp-badges .badge.has', { hasText: 'Pionnier de ta promo' });
+  assert.equal(await tuile.count(), 1);
+  assert.equal((await tuile.textContent()).trim(), 'Pionnier de ta promoParmi les 3 premiers lauréats de ta promo à rejoindre le réseau');
+  // Sur sa fiche, vue par une étudiante
+  await s.comme('Salma'); await s.fiche('Hamid Squalli');
+  assert.match(await s.page.locator('.modal .badge-row').innerText(), /Pionnier de sa promo/);
+  await s.fermer();
+  // Dans l'annuaire, à côté du nom ; un étudiant ne l'a jamais
+  await s.aller('reseau/annuaire'); await s.page.fill('#d-q', 'Squalli'); await s.page.waitForTimeout(300);
+  const badge = s.page.locator('.ligne', { hasText: 'Hamid Squalli' }).locator('.ligne-badge');
+  assert.equal((await badge.innerText()).trim(), 'Pionnier');
+  assert.match(await badge.getAttribute('title'), /^Pionnier de sa promo : parmi les 3 premiers lauréats de sa promo à rejoindre le réseau$/);
+  await s.page.fill('#d-q', 'Douae'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.ligne', { hasText: 'Douae' }).count() > 0, true);
+  assert.equal(await s.page.locator('.ligne-badge').count(), 0);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« +1 depuis ta dernière visite » sur Mon espace : rien la première fois, la pastille quand un chiffre a monté, puis plus rien', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('espace');
+  await s.page.waitForSelector('.impact-card');
+  assert.equal(await s.page.locator('.impact-hausse').count(), 0, 'première visite : rien');
+  await s.aller('accueil');
+  const vus = await s.page.evaluate(() => JSON.parse(localStorage.getItem('espace-vus-u-0002')));
+  assert.deepEqual(Object.keys(vus || {}).sort(), ['mentorats', 'mercis', 'recrutes'], 'les chiffres vus, gardés en quittant Mon espace');
+  // Les chiffres vus la dernière fois, un de moins : chaque chiffre non nul a monté de 1
+  const montes = Object.values(vus).filter(x => x >= 1).length;
+  assert.ok(montes >= 1, JSON.stringify(vus));
+  await s.page.evaluate(v => localStorage.setItem('espace-vus-u-0002', JSON.stringify(Object.fromEntries(Object.entries(v).map(([k, x]) => [k, Math.max(0, x - 1)])))), vus);
+  await s.aller('espace');
+  assert.deepEqual(await s.page.$$eval('.impact-hausse [aria-hidden="true"]', x => x.map(e => e.textContent)), Array(montes).fill('+1'));
+  assert.equal(await s.page.locator('.impact-hausse .sr-only').first().textContent(), '+1 depuis ta dernière visite');
+  assert.doesNotMatch(await s.page.locator('.impact-nums').innerText(), /point|classement|rang/i);
+  assert.equal(await s.debordement(), 0);
+  // La visite suivante : plus de pastille ; un autre membre a ses propres chiffres (première visite : rien)
+  await s.aller('accueil'); await s.aller('espace');
+  assert.equal(await s.page.locator('.impact-hausse').count(), 0);
+  await s.comme('Nadia'); await s.aller('espace');
+  assert.equal(await s.page.locator('.impact-hausse').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('réussite sur la page d’entrée : chacun coche sa case, montrée seulement quand les deux ont coché, retirée d’un geste', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const fermerFete = async () => { await s.page.waitForTimeout(300); if (await s.page.$('.fete-back')) await s.fermer(); };
+  // Youssef, dans « Recrutés grâce à toi »
+  await s.comme('Youssef'); await s.aller('espace');
+  const ligne = s.page.locator('.esp-recrue').first();
+  const id = (await ligne.locator('.pl-public-case').getAttribute('id')).slice('pl-public-'.length);
+  assert.equal(await ligne.locator('.pl-public-case').isChecked(), false, 'jamais coché d’avance');
+  assert.match(await ligne.locator('.pl-public-sens').innerText(), /seulement si vous cochez tous les deux\. Tu peux décocher à tout moment\./);
+  await ligne.locator('.pl-public-case').check(); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /quand l’autre personne aura coché aussi/);
+  const etat = () => lirePM(s, `const p = d.placements.find(x => x.id === ${JSON.stringify(id)}); return [p.public_laureat, p.public_etudiant];`);
+  assert.deepEqual(await etat(), [true, false]);
+  await ligne.locator('.pl-public-case').uncheck(); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /cette réussite n’est pas sur la page d’entrée/);
+  assert.deepEqual(await etat(), [false, false]);
+  assert.equal(await s.debordement(), 0);
+  // Salma : sa réussite confirmée avec Youssef, que Youssef a déjà cochée
+  await demoPM(s, `const S = new Date().getMonth() >= 8 ? new Date().getFullYear() : new Date().getFullYear() - 1, now = new Date().toISOString();
+    d.placements = d.placements.filter(p => !(p.student_id === 'u-0001' && p.saison === S));
+    d.placements.push({ id: 'p-pm-salma', student_id: 'u-0001', laureat_id: 'u-0002', offer_id: null, demande_id: null, source: 'plateforme', status: 'confirme', saison: S, niveau: 5, type: 'pfe', entreprise: 'Renault Group Maroc', ville: 'Tanger', pays: 'Maroc', merci: null, partage_ok: false, created_at: now, confirmed_at: now, public_etudiant: false, public_laureat: true });`);
+  await s.aller('accueil'); await s.page.reload(); await s.page.waitForSelector('.hello'); await fermerFete();
+  await s.comme('Salma'); await fermerFete(); await s.aller('parcours');
+  const caseSalma = s.page.locator('#pl-public-p-pm-salma');
+  assert.equal(await caseSalma.isChecked(), false);
+  await caseSalma.check(); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /cette réussite est maintenant sur la page d’entrée/);
+  assert.deepEqual(await lirePM(s, `const p = d.placements.find(x => x.id === 'p-pm-salma'); return [p.public_laureat, p.public_etudiant];`), [true, true]);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+for (const langue of ['fr', 'ar']) test(`invitation nommée en démo (${langue}) : le lien de la promo porte le code du membre ; les camarades arrivés grâce à lui`, async () => {
+  const s = await ouvrir({ largeur: 390, langue });
+  const texte = async sel => decodeURIComponent((await s.page.getAttribute(sel, 'href')).split('text=')[1]);
+  const ar = langue === 'ar' ? 'ar/' : '';
+  await s.comme('Youssef'); await s.aller('espace');
+  await s.page.waitForSelector('#promo-invites');
+  assert.ok((await texte('#promo-wa')).includes(`${adresse}promo/2016/${ar}?de=youssef6`), await texte('#promo-wa'));
+  assert.match(await s.page.locator('#promo-invites').innerText(), langue === 'fr' ? /^2 camarades sont arrivés grâce à toi/ : /^انضمّ بفضلك زميلان/);
+  assert.doesNotMatch(await s.page.locator('#promo-card').innerText(), /point|classement|نقط|ترتيب/i);
+  assert.equal(await s.debordement(), 0);
+  // Nadia : son code dans « Ta première aide »
+  await s.comme('Nadia'); await s.aller('espace');
+  assert.ok((await texte('#pa-promo')).includes(`${adresse}promo/2019/${ar}?de=nadia219`));
+  if (langue === 'fr') {
+    // Salma n'avait pas de code : il est créé une fois, puis c'est toujours le même
+    await s.comme('Salma'); await s.aller('parcours');
+    await s.page.waitForFunction(() => /%3Fde%3D[a-z0-9]{8}/.test(document.getElementById('promo-wa')?.href || ''));
+    const code = (await texte('#promo-wa')).match(/promo\/\d{4}\/\?de=([a-z0-9]{8})/)?.[1];
+    assert.ok(code);
+    await s.aller('accueil'); await s.page.reload(); await s.page.waitForSelector('.hello'); await s.aller('parcours');
+    await s.page.waitForFunction(() => /%3Fde%3D[a-z0-9]{8}/.test(document.getElementById('promo-wa')?.href || ''));
+    assert.ok((await texte('#promo-wa')).includes(`?de=${code}`), 'le même code');
+    assert.equal(await s.page.locator('#promo-invites').count(), 0, 'personne encore : rien');
+  }
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('Mon profil > Visibilité : « Montrer ma photo… sur la page d’entrée », pour les lauréats seulement, retiré d’un geste ; Confidentialité l’explique', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('profil/visibilite');
+  await s.page.waitForSelector('#pf-vitrine');
+  assert.equal(await s.page.isChecked('#pf-vitrine'), false, 'jamais coché d’avance');
+  assert.equal(await s.page.locator('#pf-vitrine-sens').innerText(), 'La page d’entrée est publique : n’importe qui peut la voir. Tu peux l’enlever à tout moment.');
+  const accord = () => lirePM(s, `return d.profiles.find(p => p.id === 'u-0002').vitrine_publique`);
+  await s.page.check('#pf-vitrine'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /ta photo, ton prénom, ta promo et ton entreprise sont sur la page d’entrée/);
+  assert.equal(await accord(), true);
+  await s.aller('accueil'); await s.aller('profil/visibilite');
+  await s.page.waitForSelector('#pf-vitrine');
+  assert.equal(await s.page.isChecked('#pf-vitrine'), true, 'gardé');
+  await s.page.uncheck('#pf-vitrine'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /^Tu n’es plus sur la page d’entrée\./);
+  assert.equal(await accord(), false);
+  assert.equal(await s.debordement(), 0);
+  // Un étudiant : la question ne lui est pas posée
+  await s.comme('Salma'); await s.aller('profil/visibilite'); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator('#pf-vitrine').count(), 0);
+  await s.aller('confidentialite');
+  const conf = await s.page.locator('.page').first().innerText();
+  assert.match(conf, /un lauréat qui l’accepte dans « Mon profil » \(Visibilité\) y apparaît dans « Ils sont déjà dans le réseau »/);
+  assert.match(conf, /que si l’étudiant et le lauréat ont tous les deux coché « Peut être montré sur la page d’entrée »/);
+  assert.match(conf, /Invitation nommée : le lien de promo que tu partages porte un code/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('lien de promo avec le code de qui invite, service worker actif : le code suit jusqu’à l’entrée, l’adresse reste propre', async () => {
+  const s = await ouvrir({ sw: true });
+  await s.page.waitForFunction(() => navigator.serviceWorker.getRegistration().then(r => !!r?.active), null, { timeout: 30000 });
+  await s.page.reload(); await s.page.waitForSelector('.hello');
+  await s.page.goto(adresse + 'promo/2019/?de=nadia219'); await s.page.waitForSelector('.hello');
+  assert.ok(await s.page.evaluate(() => !!navigator.serviceWorker.controller));
+  assert.equal(await s.page.evaluate(() => location.pathname + location.search), '/');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-promo')), '2019');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-de')), 'nadia219');
+  // Un code mal formé ne suit pas
+  await s.page.evaluate(() => localStorage.removeItem('ensam-invite-de'));
+  await s.page.goto(adresse + 'promo/2019/ar/?de=..%2Fx'); await s.page.waitForSelector('.hello');
+  assert.equal(await s.page.evaluate(() => location.pathname + location.search), '/');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-de')), null);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});

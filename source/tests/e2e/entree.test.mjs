@@ -1052,3 +1052,159 @@ for (const [langue, theme] of [['fr', 'light'], ['ar', 'dark']]) {
     await m.ctx.close();
   });
 }
+
+// ---------------------------------------------------------------------------
+// Plan · partie membres : l'invitation nommée (&de=, le code du membre qui envoie le lien), et ce que la page d'entrée
+// montre avec l'accord des membres (« Ils sont déjà dans le réseau », « Réussites »)
+// ---------------------------------------------------------------------------
+const NADIA = c => (c?.p_code === 'nadia219' ? { prenom: 'Nadia', promo: 2019, role: 'laureat' } : null);
+
+test('invitation nommée : « Invitation de Nadia · promo 2019 », le code part avec la demande de code, puis il est oublié', async () => {
+  site.rpc.invitation_de = NADIA;
+  const s = await visiteur({ largeur: 390, hauteur: 844, query: '?promo=2019&de=nadia219' });
+  await s.page.waitForSelector('#au-invite-de', { timeout: 8000 });
+  assert.equal(await s.page.locator('#au-invite-de').innerText(), 'Invitation de Nadia · promo 2019');
+  assert.match(await s.page.locator('.invite-band').innerText(), /Bienvenue, promo 2019 !/);
+  assert.equal(await s.page.evaluate(() => location.search), '', 'adresse nettoyée');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-de')), 'nadia219');
+  assert.deepEqual(site.appels.filter(a => a.u === '/sb/rest/v1/rpc/invitation_de').map(a => a.corps), [{ p_code: 'nadia219' }]);
+  assert.equal(await s.page.getAttribute('#au-je-laureat', 'aria-pressed'), 'true', 'promo 2019 : côté lauréats');
+  assert.ok((await basBouton(s.page)) <= 844);
+  assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(await axe(s.page, '#entree'), []);
+  await s.page.fill('#au-email', 'karim@gmail.com'); await s.page.check('#au-ok');
+  await s.page.click('.entree-form button.btn.primary');
+  await s.page.waitForSelector('#au-code');
+  const otp = site.appels.filter(a => a.u === '/sb/auth/v1/otp').pop();
+  assert.equal(otp.corps.data.invite_par, 'nadia219', 'la base retrouvera Nadia (même école) en créant le profil');
+  assert.equal(otp.corps.data.role_choisi, 'laureat');
+  await s.page.fill('#au-code', '123456');
+  await s.page.waitForSelector('.auth-card.wide.onb', { timeout: 15000 });
+  assert.equal(await s.page.inputValue('#pf-promo'), '2019');
+  await s.page.fill('#pf-name', 'Karim Bennani');
+  await s.page.selectOption('#pf-fil', { index: 1 }); await s.page.click('#pf-aide-oui');
+  await s.page.click('.pf-pied .btn');
+  await s.page.waitForFunction(() => !document.querySelector('.auth-card.wide.onb'), null, { timeout: 15000 });
+  const p = site.inscrits.find(x => x.id === UID);
+  assert.equal(p.promo, 2019);
+  assert.equal('invite_par' in p, false, 'le profil envoyé ne dit pas qui invite : la base le lit dans le compte');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-de')), null, 'oublié une fois le profil créé');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('invitation nommée : en arabe, depuis la page de la promo, code inconnu, code mal formé, base pas encore à jour', async () => {
+  site.rpc.invitation_de = NADIA;
+  // Le lien de « Fais venir ta promo » : la page de la promo (aperçu WhatsApp) renvoie vers l'entrée en gardant le code
+  let s = await visiteur({ langue: 'ar', query: 'promo/2019/?de=nadia219' });
+  await s.page.waitForSelector('#au-invite-de', { timeout: 8000 });
+  assert.equal(await s.page.locator('#au-invite-de').innerText(), 'دعوة من ⁨Nadia⁩ · دفعة 2019', 'le prénom tel qu’il est écrit');
+  assert.match(await s.page.locator('.invite-band').innerText(), /دفعة 2019/);
+  assert.equal(await s.page.evaluate(() => location.pathname + location.search), '/');
+  await s.app();
+  assert.ok(await s.page.isVisible('#au-invite-de'), 'l’application reprend la ligne');
+  assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])]), []);
+  assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Un code qu'aucun membre de l'école ne porte : rien n'est dit, le code est oublié et ne part pas
+  s = await visiteur({ query: '?de=zzzzzzzz' });
+  await s.page.waitForFunction(() => localStorage.getItem('ensam-invite-de') === null, null, { timeout: 8000 });
+  assert.ok(site.appels.some(a => a.u === '/sb/rest/v1/rpc/invitation_de' && a.corps?.p_code === 'zzzzzzzz'));
+  assert.equal(await s.page.locator('#au-invite-de').count(), 0);
+  await sInscrire(s.page, { email: 'imane@ensam-umi.ac.ma' });
+  assert.equal('invite_par' in site.appels.filter(a => a.u === '/sb/auth/v1/otp').pop().corps.data, false);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Mal formé : rien n'est gardé ni demandé, l'adresse est nettoyée
+  site.vider(); site.rpc.invitation_de = NADIA;
+  s = await visiteur({ query: '?de=Nadia%3Cb%3E' });
+  await s.page.waitForTimeout(300);
+  assert.equal(await s.page.evaluate(() => location.search), '');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-de')), null);
+  assert.equal(site.appels.filter(a => a.u === '/sb/rest/v1/rpc/invitation_de').length, 0);
+  await s.ctx.close();
+  // Base pas encore à jour : pas de ligne, le code est gardé pour l'inscription
+  site.vider();
+  s = await visiteur({ query: '?de=nadia219' });
+  await s.app(); await s.page.waitForTimeout(300);
+  assert.ok(site.appels.some(a => a.u === '/sb/rest/v1/rpc/invitation_de'), 'demandé');
+  assert.equal(await s.page.locator('#au-invite-de').count(), 0);
+  assert.equal(await s.page.locator('.invite-band').count(), 0);
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-invite-de')), 'nadia219');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+const VISAGES = [{ nom: 'Nadia B.', promo: 2019, entreprise: 'Renault Tanger', photo: UID + '/photo-3.webp' }, { nom: 'Youssef E.', promo: 2016, entreprise: 'OCP', photo: null }];
+const REUSSITES = [{ entreprise: 'Lear Corporation', etudiant: 'Salma', laureat: 'Youssef', promo: 2016, mois: '2026-10' }];
+for (const langue of ['fr', 'ar']) test(`entrée (${langue}) : « Ils sont déjà dans le réseau » et « Réussites », seulement ce que les membres ont accepté`, async () => {
+  site.rpc.visages_publics = () => VISAGES; site.rpc.reussites_publiques = () => REUSSITES;
+  const s = await visiteur({ langue });
+  await s.page.waitForSelector('.ev-visages .ev-visage', { timeout: 8000 });
+  assert.deepEqual(await s.page.$$eval('.ev-visage .ev-nom', x => x.map(e => e.textContent)), ['Nadia B.', 'Youssef E.']);
+  assert.deepEqual(await s.page.$$eval('.ev-visage .ev-ent', x => x.map(e => e.textContent)), ['Renault Tanger', 'OCP']);
+  await s.page.waitForFunction(() => document.querySelector('.ev-visages img')?.naturalWidth > 0);
+  assert.equal(await s.page.locator('.ev-visages img').count(), 1, 'une photo (l’autre : ses initiales)');
+  assert.deepEqual(site.appels.find(a => a.u === '/sb/storage/v1/object/sign/photos')?.corps, { expiresIn: 3600, paths: [UID + '/photo-3.webp'] }, 'un lien temporaire, seulement pour la photo montrée');
+  const t = await s.page.locator('.ev').innerText();
+  if (langue === 'fr') {
+    assert.match(t, /Ils sont déjà dans le réseau[\s\S]*Promo 2019[\s\S]*Réussites[\s\S]*Lear Corporation[\s\S]*Salma, avec l’aide de Youssef \(promo 2016\)[\s\S]*octobre 2026/);
+  } else {
+    assert.match(t, /هم بالفعل في الشبكة[\s\S]*دفعة 2019[\s\S]*النجاحات[\s\S]*Lear Corporation[\s\S]*بمساعدة[\s\S]*أكتوبر 2026/);
+    assert.doesNotMatch(t, /Promo|promo|octobre|avec l’aide/);
+  }
+  assert.ok(await s.page.evaluate(() => !!(document.querySelector('.entree-form').compareDocumentPosition(document.querySelector('.ev')) & Node.DOCUMENT_POSITION_FOLLOWING)), 'sous le formulaire');
+  assert.ok((await basBouton(s.page)) <= 640, 'le bouton « Recevoir mon code » se voit sans défiler');
+  assert.ok((await s.debordement()) <= 0);
+  await s.app();
+  assert.ok(await s.page.isVisible('.ev-visages'), 'l’application reprend les deux rangées');
+  if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])]), []);
+  assert.deepEqual(await axe(s.page, '#entree'), []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('entrée : base pas encore à jour, ou personne n’a encore dit oui : ni visages ni réussites, sans erreur', async () => {
+  let s = await visiteur();
+  await s.app(); await s.page.waitForTimeout(400);
+  assert.ok(site.appels.some(a => a.u === '/sb/rest/v1/rpc/visages_publics') && site.appels.some(a => a.u === '/sb/rest/v1/rpc/reussites_publiques'), 'demandés');
+  assert.equal(await s.page.locator('.ev').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  site.vider(); site.rpc.visages_publics = () => []; site.rpc.reussites_publiques = () => [];
+  s = await visiteur();
+  await s.app(); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator('.ev').count(), 0);
+  assert.equal(site.appels.filter(a => a.u.startsWith('/sb/storage/')).length, 0, 'aucune photo demandée');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Des réussites, aucun visage : la rangée des réussites seule
+  site.rpc.reussites_publiques = () => REUSSITES;
+  s = await visiteur();
+  await s.page.waitForSelector('.ev-reussites', { timeout: 8000 });
+  assert.equal(await s.page.locator('.ev-visages').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('membre en ligne : le lien de « Fais venir ta promo » porte son code ; « 2 camarades sont arrivés grâce à toi »', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.rpc.mon_code_invitation = (_c, m) => (m ? 'salma234' : undefined);
+  site.rpc.mes_invites = (_c, m) => (m ? { n: 2, prenoms: ['Imane', 'Omar'] } : undefined);
+  let m = await membre({ hash: '#parcours' });
+  await m.page.waitForSelector('#promo-invites', { timeout: 15000 });
+  assert.match(await m.page.locator('#promo-invites').innerText(), /^2 camarades sont arrivés grâce à toi\s*Imane, Omar$/);
+  await m.page.waitForFunction(() => /promo%2F\d{4}%2F%3Fde%3Dsalma234/.test(document.getElementById('promo-wa')?.href || ''), null, { timeout: 8000 });
+  assert.ok(site.appels.some(a => a.u === '/sb/rest/v1/rpc/mon_code_invitation'));
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+  // Base pas encore à jour : le lien simple de la promo, pas de ligne
+  delete site.rpc.mon_code_invitation; delete site.rpc.mes_invites;
+  m = await membre({ hash: '#parcours' });
+  await m.page.waitForSelector('#promo-wa', { timeout: 15000 }); await m.page.waitForTimeout(400);
+  assert.doesNotMatch(await m.page.getAttribute('#promo-wa', 'href'), /de%3D/);
+  assert.equal(await m.page.locator('#promo-invites').count(), 0);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
