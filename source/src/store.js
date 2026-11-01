@@ -190,6 +190,8 @@ class DemoStore extends Base {
     this.data = saved?.data || await chargerSeed();
     // Une démo enregistrée avant les cartes sponsorisées : sa carte d'exemple arrive (rien d'autre ne change)
     if (!this.data.sponsorises) this.data.sponsorises = (await import('./seed-match.js')).seedSponsorises(this.data);
+    // Une démo enregistrée avant le suivi des écoles et des partenaires : ses exemples arrivent (rien d'autre ne change)
+    if (!this.data.admin_suivi) this.data.admin_suivi = (await import('./seed4.js')).seedSuiviAdmin().admin_suivi;
     for (const t of [...TABLES, ...TABLES_ADMIN_DEMO]) this.data[t] ||= [];
     this.reglages = saved?.reglages || {};
     // Une démo enregistrée avant la vue lauréat de l'administration : son admin reçoit admin_ok, comme la mise à jour de la base

@@ -53,3 +53,22 @@ export function seedVivant(base, now = new Date()) {
   if (reussie) reagir({ demande_id: reussie.id }, reussie.auteur_id, [...lau.slice(5, 7), ...etu.slice(9, 10)], ['👏', '❤️'], 5);
   return { reactions_publiques, reponses_demandes };
 }
+
+// Console d'administration (données fictives) : le suivi de deux écoles et de deux entreprises, pour voir les tableaux remplis.
+// Des noms d'exemple : aucune vraie école ni entreprise, aucune vraie personne.
+export function seedSuiviAdmin(now = new Date()) {
+  const jour = d => { const x = new Date(now.getTime() + d * 864e5); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`; };
+  const ago = d => new Date(now.getTime() - d * 864e5).toISOString();
+  const base = { ecole_slug: null, ville: null, contact_nom: null, contact_role: null, contact: null, prochaine_action: null, prochaine_le: null,
+    formule: null, montant_dh: null, referent_ok: false, accord_nom: false, cndp_ok: false, notes: null, created_by: null };
+  return { admin_suivi: [
+    { ...base, id: 'suivi-0001', type: 'ecole', nom: 'École exemple', ecole_slug: 'ecole-exemple', ville: 'Fès', contact_nom: 'Contact exemple', contact_role: 'Président de l’association des étudiants',
+      contact: 'contact@ecole.example', etape: 'contacte', prochaine_action: 'Relancer par WhatsApp', prochaine_le: jour(-3), notes: 'Premier message envoyé, pas encore de réponse.', created_at: ago(12), updated_at: ago(5) },
+    { ...base, id: 'suivi-0002', type: 'ecole', nom: 'Institut exemple', ecole_slug: 'institut-exemple', ville: 'Rabat', contact_nom: 'Référente exemple', contact_role: 'Lauréate, membre de l’association des lauréats',
+      contact: '0600000000', etape: 'accord', prochaine_action: 'Ajouter l’école au dossier CNDP', prochaine_le: jour(4), referent_ok: true, accord_nom: true, notes: 'Accord écrit reçu par email.', created_at: ago(30), updated_at: ago(2) },
+    { ...base, id: 'suivi-0003', type: 'partenaire', nom: 'Entreprise exemple Industrie', ville: 'Casablanca', contact_nom: 'Responsable RH exemple', contact_role: 'Responsable du recrutement',
+      contact: 'rh@entreprise.example', etape: 'proposition', prochaine_action: 'Envoyer la proposition', prochaine_le: jour(2), formule: 'partenaire', montant_dh: 2500, created_at: ago(20), updated_at: ago(1) },
+    { ...base, id: 'suivi-0004', type: 'partenaire', nom: 'Exemple Conseil', ville: 'Rabat', contact_nom: 'Contact exemple', contact_role: 'Directrice marketing',
+      contact: 'contact@conseil.example', etape: 'signe', prochaine_action: 'Créer sa carte sponsorisée', prochaine_le: jour(1), formule: 'visibilite', montant_dh: 1000, created_at: ago(40), updated_at: ago(3) },
+  ] };
+}

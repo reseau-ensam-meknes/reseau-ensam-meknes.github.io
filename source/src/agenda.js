@@ -207,11 +207,24 @@ function EventDetail({ ctx, e, onClose, onEdit }) {
 // Formulaire de l'administration
 // ---------------------------------------------------------------------------
 function dansUneSemaine(h) { const d = new Date(); d.setDate(d.getDate() + 7); d.setHours(h, 0, 0, 0); return d; }
+// Un événement prérempli (Administration > Animer : « Rendez-vous du mois ») : le prochain formulaire « Publier un événement »
+// part de ces valeurs (titre, type, debut, fin, lieu, lien, description, public), une seule fois
+let preRempli = null;
+export function preparerEvenement(e) { preRempli = e || null; }
+function nouveauFormulaire() {
+  const p = preRempli; preRempli = null;
+  const f = { titre: '', type: 'conference', debut: toInput(dansUneSemaine(10)), fin: toInput(dansUneSemaine(12)), lieu: '', lien: '', description: '', public: 'tous' };
+  if (!p) return f;
+  for (const k of ['titre', 'type', 'lieu', 'lien', 'description', 'public']) if (typeof p[k] === 'string') f[k] = p[k];
+  if (p.debut) f.debut = toInput(new Date(p.debut));
+  if (p.fin) f.fin = toInput(new Date(p.fin));
+  return f;
+}
 
 function EventForm({ ctx, e, onClose }) {
   const { store, act } = ctx;
   const [f, setF] = useState(() => e ? { titre: e.titre, type: e.type, debut: toInput(new Date(e.debut)), fin: e.fin ? toInput(new Date(e.fin)) : '', lieu: e.lieu || '', lien: e.lien || '', description: e.description || '', public: e.public }
-    : { titre: '', type: 'conference', debut: toInput(dansUneSemaine(10)), fin: toInput(dansUneSemaine(12)), lieu: '', lien: '', description: '', public: 'tous' });
+    : nouveauFormulaire());
   const set = (k, v) => setF({ ...f, [k]: v });
   const lienOk = !f.lien.trim() || /^https:\/\/\S+$/i.test(f.lien.trim());
   const finOk = !f.fin || !f.debut || new Date(f.fin) >= new Date(f.debut);
