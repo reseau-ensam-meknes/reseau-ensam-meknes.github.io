@@ -1858,3 +1858,133 @@ export function laureatsPourDemande(data, d, n = 3, now = new Date()) {
     .sort((a, b) => b.score - a.score || new Date(a.p.created_at) - new Date(b.p.created_at))
     .slice(0, n);
 }
+
+// ---------------------------------------------------------------------------
+// Console d'administration : le pilotage. L'objectif du plan, les semaines (nouveaux, actifs, demandes, offres, matchs, aides),
+// ce qui s'est passé, qui aide le plus, où sont les membres. Des calculs sur les données, rien d'autre (admin-tableau.js les montre).
+// ---------------------------------------------------------------------------
+// L'objectif du plan d'ici au 22 novembre 2026, compté depuis le lancement : 40 demandes, 50 offres, 20 matchs, 10 aides acceptées.
+// Une aide acceptée : une proposition d'un lauréat que l'étudiant a acceptée (status « acceptee », comme dans poulsReseau).
+export const OBJECTIF_PLAN = { fin: '2026-11-22', cibles: [['demandes', 40], ['offres', 50], ['matchs', 20], ['aides', 10]] };
+export function objectifPlan(data, now = new Date(), objectif = OBJECTIF_PLAN) {
+  const n = {
+    demandes: (data.demandes || []).length,
+    offres: (data.offers || []).length,
+    matchs: (data.matchs || []).length,
+    aides: (data.propositions || []).filter(x => x.status === 'acceptee').length,
+  };
+  const jours = daysUntil(objectif.fin, now);
+  return {
+    fin: objectif.fin, jours: Math.max(0, jours), fini: jours <= 0,
+    lignes: objectif.cibles.map(([k, cible]) => ({ k, n: n[k] || 0, cible, atteint: (n[k] || 0) >= cible, reste: Math.max(0, cible - (n[k] || 0)) })),
+  };
+}
+
+// Combien par semaine sur n semaines glissantes qui finissent maintenant, la plus ancienne d'abord :
+// la dernière case est ]maintenant − 7 j, maintenant], celle d'avant les 7 jours d'avant, etc. Une date à venir ne compte pas.
+const SEMAINE = 7 * 864e5;
+export function serieHebdo(dates, now = new Date(), n = 8) {
+  const fin = now.getTime(), out = Array(n).fill(0);
+  for (const d of dates || []) {
+    const t = d ? new Date(d).getTime() : NaN;
+    if (!(t <= fin)) continue;
+    const k = Math.floor((fin - t) / SEMAINE);
+    if (k < n) out[n - 1 - k]++;
+  }
+  return out;
+}
+// Cette semaine, la semaine d'avant et l'écart (signé)
+export function ecartHebdo(serie) {
+  const n = serie?.length ? serie[serie.length - 1] : 0, avant = serie?.length > 1 ? serie[serie.length - 2] : 0;
+  return { n, avant, delta: n - avant };
+}
+// Les membres actifs de chaque semaine (même notion que parcoursInscription : une action, hors administration ;
+// la dernière semaine donne le même chiffre que parcoursInscription().actifs, une date à venir y compte)
+export function actifsParSemaine(data, now = new Date(), n = 8) {
+  const admins = new Set((data.profiles || []).filter(p => p.role === 'admin').map(p => p.id));
+  const fin = now.getTime(), gens = Array.from({ length: n }, () => new Set());
+  const noter = (id, at) => {
+    const t = at ? new Date(at).getTime() : NaN;
+    if (!id || admins.has(id) || Number.isNaN(t)) return;
+    const k = t > fin ? 0 : Math.floor((fin - t) / SEMAINE);
+    if (k < n) gens[n - 1 - k].add(id);
+  };
+  for (const [table, col] of ACTIONS) for (const r of data[table] || []) noter(r[col], r.created_at);
+  for (const r of data.mentorships || []) if (r.mentor_id && r.accepted_at) noter(r.mentor_id, r.accepted_at);
+  return gens.map(g => g.size);
+}
+// Les aides du réseau, une par geste (même notion que poulsReseau) : rendez-vous de mentorat terminé, relecture rendue,
+// recrutement confirmé, proposition acceptée ; toujours d'un lauréat vers un étudiant qui ont un profil.
+export function aidesDuReseau(data) {
+  const role = new Map((data.profiles || []).map(p => [p.id, p.role]));
+  const out = [];
+  const aide = (laureat, etudiant, at, sorte) => { if (laureat && etudiant && role.get(laureat) === 'laureat' && role.get(etudiant) === 'etudiant') out.push({ laureat, etudiant, at, sorte }); };
+  for (const m of data.mentorships || []) if (m.status === 'terminee') aide(m.mentor_id, m.student_id, m.rdv_at || m.accepted_at, 'rdv');
+  for (const r of data.relectures_cv || []) if (r.status === 'rendue') aide(r.reviewer_id, r.student_id, r.rendue_at, 'cv');
+  for (const p of data.placements || []) if (p.status === 'confirme') aide(p.laureat_id, p.student_id, p.confirmed_at, 'recrute');
+  const auteur = new Map((data.demandes || []).map(d => [d.id, d.auteur_id]));
+  for (const x of data.propositions || []) if (x.status === 'acceptee') aide(x.laureat_id, auteur.get(x.demande_id), x.repondu_at, 'match');
+  return out;
+}
+// Les lauréats qui ont le plus aidé ces derniers jours (pour l'administration seule) : nombre d'aides, d'étudiants aidés,
+// la plus récente ; à égalité, la plus récente d'abord
+export function topAidants(data, now = new Date(), jours = 30, n = 8) {
+  const fin = now.getTime(), debut = fin - jours * 864e5, m = new Map();
+  for (const a of aidesDuReseau(data)) {
+    const t = a.at ? new Date(a.at).getTime() : NaN;
+    if (!(t >= debut && t <= fin)) continue;
+    const x = m.get(a.laureat) || { id: a.laureat, aides: 0, gens: new Set(), derniere: 0 };
+    x.aides++; x.gens.add(a.etudiant); x.derniere = Math.max(x.derniere, t); m.set(a.laureat, x);
+  }
+  return [...m.values()].sort((a, b) => b.aides - a.aides || b.derniere - a.derniere).slice(0, n)
+    .map(x => ({ id: x.id, aides: x.aides, etudiants: x.gens.size, derniere: x.derniere }));
+}
+// Ce qui s'est passé dans le réseau, le plus récent d'abord : arrivée d'un membre, offre, demande, aide proposée,
+// conseil demandé, match, recrutement confirmé, événement publié. qui : le membre qui agit ; avec : l'autre membre.
+export function evenementsReseau(data, n = 15) {
+  const out = [];
+  const ajouter = (sorte, at, champs) => { const t = at ? new Date(at).getTime() : NaN; if (!Number.isNaN(t)) out.push({ sorte, at, t, ...champs }); };
+  for (const p of data.profiles || []) if (p.role !== 'admin' && !p.admin_ok) ajouter('membre', p.created_at, { id: p.id, qui: p.id });
+  for (const o of data.offers || []) ajouter('offre', o.created_at, { id: o.id, qui: o.author_id, titre: o.titre });
+  const demande = new Map((data.demandes || []).map(d => [d.id, d]));
+  for (const d of data.demandes || []) ajouter('demande', d.created_at, { id: d.id, qui: d.auteur_id, titre: d.titre });
+  for (const x of data.propositions || []) ajouter('aide', x.created_at, { id: x.demande_id, qui: x.laureat_id, avec: demande.get(x.demande_id)?.auteur_id || null, titre: demande.get(x.demande_id)?.titre || '' });
+  for (const m of data.mentorships || []) ajouter('mentorat', m.created_at, { id: m.id, qui: m.student_id, avec: m.mentor_id || null, titre: m.sujet || '' });
+  for (const m of data.matchs || []) ajouter('match', m.created_at, { id: m.id, qui: m.etudiant_id, avec: m.laureat_id });
+  for (const p of data.placements || []) if (p.status === 'confirme') ajouter('recrutement', p.confirmed_at, { id: p.id, qui: p.student_id, avec: p.laureat_id, titre: p.entreprise || '' });
+  for (const e of data.evenements || []) if (!e.annule) ajouter('evenement', e.created_at, { id: e.id, qui: e.author_id, titre: e.titre });
+  return out.sort((a, b) => b.t - a.t).slice(0, n);
+}
+// Où sont les membres : une ligne par promo d'étudiants (5A d'abord), puis les lauréats par tranches de 5 promos ;
+// une colonne par parcours (une ancienne appellation suit son premier parcours), puis la prépa et « Autre » s'il y en a.
+// L'administration, et l'administration en vue lauréat, ne comptent pas.
+export function repartitionMembres(profiles, saison = seasonOf()) {
+  const codes = [...PARCOURS.map(p => p.code), 'PREPA', 'AUTRE'];
+  const colonne = p => (p.filiere === PREPA ? 'PREPA' : parcoursOf(p.filiere)[0] || 'AUTRE');
+  const lignes = new Map();
+  const ligne = (cle, groupe, ordre, etiquette) => {
+    if (!lignes.has(cle)) lignes.set(cle, { cle, groupe, ordre, etiquette, n: Object.fromEntries(codes.map(c => [c, 0])), total: 0 });
+    return lignes.get(cle);
+  };
+  for (const p of profiles || []) {
+    let l = null;
+    if (p.role === 'etudiant') {
+      const promo = Number(p.promo);
+      l = Number.isInteger(promo) && promo > 1900 ? ligne('e' + promo, 'etudiants', promo, `${NIVEAUX[niveauOf(p, saison)]?.short || ''} · promo ${promo}`) : ligne('e?', 'etudiants', 9999, 'Sans promo');
+    } else if (laureatCompte(p)) {
+      const promo = Number(p.promo);
+      if (!Number.isInteger(promo) || promo < 1900) l = ligne('l?', 'laureats', 9999, 'Sans promo');
+      else {
+        const k = Math.max(0, Math.floor((saison - promo) / 5));
+        l = k >= 3 ? ligne('l3', 'laureats', 3, `Avant ${saison - 14}`) : ligne('l' + k, 'laureats', k, `Promos ${saison - 5 * k - 4}–${saison - 5 * k}`);
+      }
+    }
+    if (!l) continue;
+    l.n[colonne(p)]++; l.total++;
+  }
+  const toutes = [...lignes.values()].sort((a, b) => (a.groupe === b.groupe ? a.ordre - b.ordre : a.groupe === 'etudiants' ? -1 : 1));
+  const colonnes = codes.filter(c => PARCOURS.some(p => p.code === c) || toutes.some(l => l.n[c] > 0))
+    .map(c => ({ code: c, nom: c === 'PREPA' ? 'Prépa' : c === 'AUTRE' ? 'Autre' : parcoursNom(c) }));
+  const max = Math.max(0, ...toutes.flatMap(l => colonnes.map(c => l.n[c.code])));
+  return { colonnes, lignes: toutes.map(l => ({ ...l, n: colonnes.map(c => l.n[c.code]) })), max };
+}

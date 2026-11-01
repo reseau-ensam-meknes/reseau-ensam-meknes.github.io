@@ -1,11 +1,12 @@
-// Administration, par onglets : vue d'ensemble (chiffres, annonce, défis, parrains, recrutements, offres),
-// modération des signalements, membres (rôle, vérification), liste officielle des étudiants,
-// liens d'invitation par promo, agenda de l'école, cartes sponsorisées de Match et réglages (email de l'école).
+// Administration : la console. Sur ordinateur, les rubriques dans une colonne en groupes (Piloter, Animer, Gérer, Grandir) ;
+// sur téléphone, une rangée de puces. Le tableau de bord (objectif du plan, chiffres, annonce, défis, parrains), ce qui est
+// à traiter, l'animation du réseau, l'agenda, les invitations, les membres, les contenus, la modération des signalements,
+// la liste officielle des étudiants, les écoles, les partenaires, les cartes sponsorisées de Match, les affiches et le rapport,
+// et les réglages (email de l'école). Le cadre et les rubriques nouvelles sont dans admin-console*.js et admin-tableau.js.
 import { html, useState, useEffect, useMemo, useRef } from './vendor/preact-htm.js';
-import { Icon, Field, Person, Empty, Bar, Avatar, toast, injectCSS, EnTetePage, Compteur } from './ui.js';
-import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
+import { Icon, Field, Person, Empty, Bar, Avatar, toast, injectCSS, EnTetePage, useLocal } from './ui.js';
 import { addAR, arCount } from './i18n.js';
-import { NIVEAUX, niveauOf, timeAgo, cleNom, surListeOfficielle, norm, GUIDE_SECTIONS, pct, reponses48h, parcoursInscription, compteOuvert, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible,
+import { niveauOf, timeAgo, cleNom, surListeOfficielle, norm, pct, parcoursInscription, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible,
   SPONSO_PUBLICS, SPONSO_ANNEES, jourLocal, normaliserSponsorise, refusSponsorise, etatSponsorise, tauxClic, resumeFilieres, seasonLabel } from './logic.js';
 import { DefisAdmin } from './saison.js';
 import { AgendaAdmin } from './agenda.js';
@@ -18,6 +19,19 @@ import { ajouterIcones } from './entree.js';
 import { FilieresPick } from './offers.js';
 import { ApercuSponsorise } from './match.js';
 import { getLang } from './i18n.js';
+import { useEcoles } from './admin-donnees.js';
+import { RUBRIQUES, useLarge, MenuConsole, PucesConsole, ChoixEcole, RechercheConsole, telecharger } from './admin-console.js';
+// Les règles sans écran, importées d'ici aussi : le navigateur les découvre avec le reste (un aller-retour de moins au premier chargement)
+import { donneesDeLEcole, elementsATraiter } from './admin-console-regles.js';
+import { MOTIFS, TYPES_CIBLE, court, cible, demandeCV } from './admin-console-cibles.js';
+import { ObjectifPlan, KpisPilotage, OuSontLesMembres, CeuxQuiAident, CeQuiSestPasse } from './admin-tableau.js';
+import { CalloutATraiter, ATraiter } from './admin-console-traiter.js';
+import { TableMembres } from './admin-console-membres.js';
+import { Contenus } from './admin-console-contenus.js';
+import { AnimerAdmin } from './admin-animer.js';
+import { EcolesAdmin } from './admin-ecoles.js';
+import { PartenairesAdmin } from './admin-partenaires.js';
+import { OutilsAdmin } from './admin-outils.js';
 
 // Une étiquette : l'onglet des cartes sponsorisées
 ajouterIcones({ etiquette: '<path d="M3.5 12.3V4.5a1 1 0 0 1 1-1h7.8l8.2 8.2a1.2 1.2 0 0 1 0 1.7l-7.6 7.6a1.2 1.2 0 0 1-1.7 0z"/><circle cx="8" cy="8" r="1.4"/>' });
@@ -90,10 +104,6 @@ addAR({
   [/^Vider la liste de la promo (\d{4}) \? Les comptes déjà vérifiés le restent\.$/, y => `إفراغ لائحة دفعة ${y}؟ تبقى الحسابات المتحقق منها كما هي.`],
 ]);
 
-// Le menu du rôle (étiqueté « Rôle ») dit le rôle en un mot : sur téléphone, le nom du membre garde la place de se lire
-const ROLES = [['etudiant', 'Étudiant'], ['laureat', 'Lauréat']];
-const TABS = [['', 'Vue d’ensemble', 'chart'], ['moderation', 'Modération', 'flag'], ['membres', 'Membres', 'people'], ['liste', 'Liste officielle', 'file'], ['inviter', 'Inviter', 'send'], ['agenda', 'Agenda', 'calendar'], ['sponsorises', 'Sponsorisés', 'etiquette'], ['reglages', 'Réglages', 'wrench']];
-
 // Comptes (emails, dernière connexion), lus une fois pour toute la page
 function useComptes(store, n) {
   const [comptes, setComptes] = useState(null);
@@ -102,72 +112,69 @@ function useComptes(store, n) {
 }
 
 export function AdminPage(ctx) {
-  const { data, store, sub, go } = ctx;
-  const comptes = useComptes(store, data.profiles.length);
-  const tab = TABS.some(([k]) => k === sub) ? sub : '';
-  const ouverts = (data.signalements || []).filter(s => s.status === 'ouvert');
-  const toVerify = data.profiles.filter(p => p.role === 'laureat' && !p.verified);
-  const dot = { moderation: ouverts.length, membres: toVerify.length };
+  const { data, store, me, sub, go } = ctx;
+  const large = useLarge();
+  const comptesTous = useComptes(store, data.profiles.length);
+  // L'école regardée (seulement quand le réseau en compte au moins deux), gardée sur l'appareil pour cet admin
+  const { ecoles, recharger: relireEcoles } = useEcoles(ctx);
+  // La rubrique Écoles lit la table de son côté : en la quittant, la liste des écoles se relit (en ligne ; la démo suit déjà)
+  const rubriqueAvant = useRef(sub);
+  useEffect(() => { if (rubriqueAvant.current === 'ecoles' && sub !== 'ecoles') relireEcoles(); rubriqueAvant.current = sub; }, [sub]);
+  const [choixEcole, setChoixEcole] = useLocal('ensam-admin-ecole:' + (me?.id || ''), '');
+  const ecole = ecoles.length > 1 && ecoles.some(e => e.slug === choixEcole) ? choixEcole : '';
+  const vue = donneesDeLEcole(data, ecole);
+  const c = ecole ? { ...ctx, data: vue } : ctx;
+  const ids = ecole ? new Set(vue.profiles.map(p => p.id)) : null;
+  const comptes = ids && comptesTous ? comptesTous.filter(x => ids.has(x.id)) : comptesTous;
+  const rubrique = RUBRIQUES.some(([k]) => k === sub) ? sub : '';
+  const items = elementsATraiter(vue, comptes);
+  const compte = {
+    traiter: items.length,
+    moderation: (vue.signalements || []).filter(s => s.status === 'ouvert').length,
+    membres: vue.profiles.filter(p => p.role === 'laureat' && !p.verified).length,
+  };
+  const outils = html`<div class="cs-outils"><${ChoixEcole} ecoles=${ecoles} valeur=${ecole} onChange=${setChoixEcole}/><${RechercheConsole} ctx=${c} comptes=${comptes}/></div>`;
   return html`<section class="page admin">
-    <${EnTetePage} surTitre=${ctx.saison ? `Année ${seasonLabel(ctx.saison)}` : null} titre="Administration">
-      <${PucesNav} cls="adm-tabs" label="Rubriques de l’administration" idPrefix="adm-tab-" items=${TABS.map(([k, l, i]) => ({ k, label: l, icon: i, n: dot[k] }))} actif=${tab} onChoisir=${k => go(k ? 'admin/' + k : 'admin')}/>
+    <${EnTetePage} surTitre=${ctx.saison ? `Année ${seasonLabel(ctx.saison)}` : null} titre="Administration" action=${large ? outils : null}>
+      ${large ? null : html`${outils}<${PucesConsole} actif=${rubrique} compte=${compte} go=${go}/>`}
     <//>
-    ${tab === '' ? html`<${VueEnsemble} ctx=${ctx} comptes=${comptes} ouverts=${ouverts} toVerify=${toVerify}/>` : null}
-    ${tab === 'moderation' ? html`<${Moderation} ctx=${ctx}/>` : null}
-    ${tab === 'membres' ? html`<${Membres} ctx=${ctx} comptes=${comptes} toVerify=${toVerify}/>` : null}
-    ${tab === 'liste' ? html`<${ListeOfficielle} ctx=${ctx}/>` : null}
-    ${tab === 'inviter' ? html`<${InvitationsAdmin} ctx=${ctx}/><${AmbassadeursAdmin} ctx=${ctx}/>` : null}
-    ${tab === 'agenda' ? html`<${AgendaAdmin} ctx=${ctx}/>` : null}
-    ${tab === 'sponsorises' ? html`<${SponsorisesAdmin} ctx=${ctx}/>` : null}
-    ${tab === 'reglages' ? html`<${Reglages} ctx=${ctx}/>` : null}
+    <div class="cs-corps">
+      ${large ? html`<${MenuConsole} actif=${rubrique} compte=${compte} go=${go}/>` : null}
+      <div class="cs-main">
+        ${rubrique === '' ? html`<${TableauDeBord} ctx=${c} comptes=${comptes} items=${items}/>` : null}
+        ${rubrique === 'traiter' ? html`<${ATraiter} ctx=${c} items=${items} comptes=${comptes}/>` : null}
+        ${rubrique === 'animer' ? html`<${AnimerAdmin} ctx=${c}/>` : null}
+        ${rubrique === 'agenda' ? html`<${AgendaAdmin} ctx=${c}/>` : null}
+        ${rubrique === 'inviter' ? html`<${InvitationsAdmin} ctx=${c}/><${AmbassadeursAdmin} ctx=${c}/>` : null}
+        ${rubrique === 'membres' ? html`<${Membres} ctx=${c} comptes=${comptes}/>` : null}
+        ${rubrique === 'contenus' ? html`<${Contenus} ctx=${c}/>` : null}
+        ${rubrique === 'moderation' ? html`<${Moderation} ctx=${c}/>` : null}
+        ${rubrique === 'liste' ? html`<${ListeOfficielle} ctx=${c}/>` : null}
+        ${rubrique === 'ecoles' ? html`<${EcolesAdmin} ctx=${c}/>` : null}
+        ${rubrique === 'partenaires' ? html`<${PartenairesAdmin} ctx=${c}/>` : null}
+        ${rubrique === 'sponsorises' ? html`<${SponsorisesAdmin} ctx=${c}/>` : null}
+        ${rubrique === 'outils' ? html`<${OutilsAdmin} ctx=${c}/>` : null}
+        ${rubrique === 'reglages' ? html`<${Reglages} ctx=${c}/>` : null}
+      </div>
+    </div>
   </section>`;
 }
 
 // ---------------------------------------------------------------------------
-// Vue d'ensemble
+// Tableau de bord : ce qui attend, l'objectif du plan, les chiffres de la semaine, puis l'animation (annonce, défis, parrains)
 // ---------------------------------------------------------------------------
-function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
-  const { data, store, act, openProfile, saison, go } = ctx;
-  const sansProfil = (comptes || []).filter(c => !c.a_profil && compteOuvert(c));
-  const week = Date.now() - 7 * 864e5;
-  const members = data.profiles.filter(p => p.role !== 'admin');
-  const nouveaux = members.filter(p => new Date(p.created_at) > week);
-  const confirmes = data.placements.filter(p => p.saison === saison && p.status === 'confirme').length;
-  // Le chiffre à suivre : chaque demande d'étudiant a une réponse d'un lauréat en moins de 48 h
-  const r48 = reponses48h(data);
-  const attenteM = r48.attente.filter(d => d.type === 'mentorat'), attenteQ = r48.attente.filter(d => d.type === 'question'), attenteD = r48.attente.filter(d => d.type === 'demande');
-  const parcours = parcoursInscription(comptes, data);
-  const dm = r48.parType.demande;
-  const kpis = [
-    ['Demandes aidées en 48 h', dm.taux === null ? '–' : pct(dm.taux), dm.total ? `${dm.a48} sur ${dm.total} en 30 jours · objectif 8 sur 10${r48.total > dm.total ? ` · toutes aides : ${pct(r48.taux)}` : ''}` : r48.total ? `Pas encore de demande d’étudiant ce mois-ci · toutes aides : ${pct(r48.taux)}` : 'Pas encore de demande d’étudiant ce mois-ci'],
-    ['Membres', members.length, `${members.filter(p => p.role === 'etudiant').length} étudiants · ${members.filter(p => p.role === 'laureat').length} lauréats`],
-    ['Actifs cette semaine', parcours.actifs, `${nouveaux.length} nouveau${nouveaux.length > 1 ? 'x' : ''} inscrit${nouveaux.length > 1 ? 's' : ''}${sansProfil.length ? ` · ${sansProfil.length} sans profil` : ''}`],
-    ['Recrutés et confirmés', confirmes, 'cette année, via la plateforme'],
-  ];
-  const lecturesFausses = (data.retours_cv || []).filter(r => r.status === 'ouvert');
-  const stale = data.placements.filter(p => p.status === 'en_attente').sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-  const todo = [
-    ouverts.length ? ['flag', `${ouverts.length} signalement${ouverts.length > 1 ? 's' : ''} à traiter`, 'admin/moderation'] : null,
-    toVerify.length ? ['shield', `${toVerify.length} lauréat${toVerify.length > 1 ? 's' : ''} à vérifier`, 'admin/membres'] : null,
-    attenteM.length ? ['clock', attenteM.length > 1 ? `${attenteM.length} étudiants attendent un horaire depuis plus de 24 h` : '1 étudiant attend un horaire depuis plus de 24 h', 'mentorat'] : null,
-    attenteD.length ? ['send', attenteD.length > 1 ? `${attenteD.length} demandes d’étudiants sans proposition depuis plus de 24 h` : '1 demande d’étudiant sans proposition depuis plus de 24 h', 'offres/demandes/' + attenteD[0].id] : null,
-    attenteQ.length ? ['qa', attenteQ.length > 1 ? `${attenteQ.length} questions d’étudiants sans réponse depuis plus de 24 h` : '1 question d’étudiant sans réponse depuis plus de 24 h', 'reseau/entraide/' + attenteQ[0].id] : null,
-    lecturesFausses.length ? ['file', lecturesFausses.length > 1 ? `${lecturesFausses.length} erreurs de lecture de CV signalées` : '1 erreur de lecture de CV signalée', 'admin/membres'] : null,
-  ].filter(Boolean);
+function TableauDeBord({ ctx, comptes, items }) {
+  const { data, go } = ctx;
   return html`
-    ${todo.length ? html`<div class="callout today"><h2 class="h-ico"><${Icon} name="bell"/> À traiter</h2><ul class="todo">${todo.map(([i, t, r]) => html`<li><button class="notif act" onClick=${() => go(r)}><span class="n-ico accent"><${Icon} name=${i} size=${16}/></span><span>${t}</span><${Icon} name="arrow" size=${16}/></button></li>`)}</ul></div>` : null}
-    <div class="kpis">${kpis.map(([l, v, sub]) => html`<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-val">${typeof v === 'number' ? html`<${Compteur} v=${v}/>` : v}</span><span class="small muted">${sub}</span></div>`)}</div>
-
-    <${ParcoursInscription} p=${parcours} sansSuite=${codesSansSuite(comptes, data.profiles)}/>
-
+    <${CalloutATraiter} items=${items} go=${go}/>
+    <${ObjectifPlan} data=${data}/>
+    <${KpisPilotage} ctx=${ctx} comptes=${comptes}/>
+    <${OuSontLesMembres} ctx=${ctx}/>
+    <div class="cs-deux"><${CeQuiSestPasse} ctx=${ctx}/><${CeuxQuiAident} ctx=${ctx}/></div>
+    <${ParcoursInscription} p=${parcoursInscription(comptes, data)} sansSuite=${codesSansSuite(comptes, data.profiles)}/>
     <${AnnonceBox} ctx=${ctx}/>
     <${DefisAdmin} ctx=${ctx}/>
     <${ParrainsAdmin} ctx=${ctx}/>
-
-    ${stale.length ? html`<div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="briefcase"/> <span>Recrutements en attente de l’étudiant <span class="count">${stale.length}</span></span></h2></div>
-      <p class="muted small">Le lauréat a déclaré ces recrutements. Si l’étudiant ne confirme pas, l’administration peut le faire après vérification.</p>
-      <ul class="people-list adm-gestes">${stale.map(p => { const s = store.byId('profiles', p.student_id), l = store.byId('profiles', p.laureat_id); return html`<li key=${p.id}><${Person} p=${s} onOpen=${openProfile} sub=${`${p.entreprise} · déclaré par ${l?.full_name || '?'} · ${timeAgo(p.created_at)}`}/><span class="spacer"></span>
-        <button class="btn small ghost" onClick=${() => act(() => store.update('placements', p.id, { status: 'refuse' }))}>Refuser</button><button class="btn small tonal" onClick=${() => act(() => store.update('placements', p.id, { status: 'confirme' }))}>Confirmer</button></li>`; })}</ul></div>` : null}
   `;
 }
 
@@ -193,41 +200,8 @@ function ParcoursInscription({ p, sansSuite = 0 }) {
 // ---------------------------------------------------------------------------
 // Modération : les signalements, regroupés par contenu
 // ---------------------------------------------------------------------------
-export const MOTIFS = { spam: 'Spam', arnaque: 'Arnaque', inapproprie: 'Inapproprié', faux: 'Faux ou trompeur', harcelement: 'Harcèlement', donnees: 'Données personnelles', autre: 'Autre' };
-const TYPES_CIBLE = { offre: ['Offre', 'feed'], commentaire: ['Commentaire', 'comment'], question: ['Question', 'qa'], reponse: ['Réponse', 'qa'], message: ['Message de groupe', 'people'], profil: ['Profil', 'user'], entretien: ['Entretien', 'briefcase'], avis: ['Avis de stage', 'star'], guide: ['Guide de l’étranger', 'flag'], cafe: ['Café ENSAM', 'clap'], startup: ['Startup', 'spark'], relecture: ['Relecture de CV', 'eye'], prive: ['Message privé', 'chat'], demande: ['Demande d’étudiant', 'send'], reponse_demande: ['Réponse à une demande', 'comment'] };
-const court = (t, n = 220) => { const s = String(t || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
-const nomGroupe = g => String(g || '').split(':').slice(1).join(':');
-
-// Ce que l'administration voit du contenu signalé, et ce qu'elle peut en faire (selon les règles de la base)
-function cible(ctx, type, id) {
-  const { store, openOffer, openProfile, go } = ctx;
-  const by = t => store.byId(t, id);
-  const rm = t => () => store.remove(t, id);
-  switch (type) {
-    case 'offre': { const r = by('offers'); return r && { r, titre: `${r.titre} · ${r.entreprise}`, texte: r.description, auteur: r.author_id, voir: ['Ouvrir', () => openOffer(id)], actions: [r.status === 'ouverte' ? ['Masquer l’offre', () => store.update('offers', id, { status: 'fermee' })] : null, ['Supprimer l’offre', rm('offers'), true]].filter(Boolean) }; }
-    case 'commentaire': { const r = by('comments'); const o = r && store.byId('offers', r.offer_id); return r && { r, titre: o ? `${o.titre} · ${o.entreprise}` : '', texte: r.body, auteur: r.author_id, voir: o ? ['Ouvrir', () => openOffer(o.id)] : null, actions: [['Supprimer le commentaire', rm('comments'), true]] }; }
-    case 'question': { const r = by('questions'); return r && { r, titre: r.titre, texte: r.body, auteur: r.author_id, voir: ['Voir la question', () => go('reseau/entraide/' + id)], actions: [['Supprimer la question', rm('questions'), true]] }; }
-    case 'reponse': { const r = by('answers'); const q = r && store.byId('questions', r.question_id); return r && { r, titre: q?.titre || '', texte: r.body, auteur: r.author_id, voir: q ? ['Voir la question', () => go('reseau/entraide/' + q.id)] : null, actions: [['Supprimer la réponse', rm('answers'), true]] }; }
-    case 'message': { const r = by('groupe_messages'); return r && { r, titre: nomGroupe(r.groupe), texte: r.body, auteur: r.author_id, actions: [['Supprimer le message', rm('groupe_messages'), true]] }; }
-    case 'profil': { const r = by('profiles'); return r && { r, photo: r.photo_path ? r : null, titre: r.full_name, texte: [r.role === 'laureat' ? `Promo ${r.promo}` : r.filiere, r.entreprise, r.bio].filter(Boolean).join(' · '), auteur: null, voir: ['Voir le profil', () => openProfile(r)],
-      actions: [...(r.photo_path ? [['Retirer la photo', () => store.retirerPhoto(r), true]] : []), ...(r.role === 'laureat' && r.verified ? [['Retirer le badge vérifié', () => store.update('profiles', id, { verified: false }), true]] : [])] }; }
-    case 'entretien': { const r = by('entretiens'); return r && { r, titre: [r.entreprise, r.poste].filter(Boolean).join(' · '), texte: [...(r.questions || []), r.deroulement, r.conseils].filter(Boolean).join(' · '), auteur: r.author_id, actions: [['Supprimer l’entretien', rm('entretiens'), true]] }; }
-    case 'avis': { const r = by('avis_stage'); return r && { r, titre: [r.entreprise, r.ville].filter(Boolean).join(' · '), texte: r.conseils, auteur: r.author_id, actions: [['Supprimer l’avis', rm('avis_stage'), true]] }; }
-    case 'guide': { const r = by('guide_pays'); const s = r && GUIDE_SECTIONS.find(x => x[0] === r.section); return r && { r, titre: `${r.pays}${s ? ' · ' + s[1] : ''}`, texte: r.contenu, auteur: r.updated_by, actions: [['Supprimer la rubrique', rm('guide_pays'), true]] }; }
-    case 'cafe': { const r = by('cafes'); return r && { r, titre: `${r.ville} · ${r.lieu}`, texte: r.message, auteur: r.organisateur_id, actions: r.annule ? [] : [['Annuler le café', () => store.update('cafes', id, { annule: true }), true]] }; }
-    case 'startup': { const r = by('startups'); return r && { r, titre: r.nom, texte: r.pitch, auteur: r.fondateur_id, actions: [['Retirer la startup', rm('startups'), true]] }; }
-    case 'demande': { const r = by('demandes'); return r && { r, titre: r.titre, texte: r.details, auteur: r.auteur_id, voir: ['Voir la demande', () => go('offres/demandes/' + id)], actions: ['ouverte', 'match'].includes(r.status) ? [['Retirer la demande', () => store.update('demandes', id, { status: 'fermee' }), true]] : [] }; }
-    case 'reponse_demande': { const r = by('reponses_demandes'); const d = r && store.byId('demandes', r.demande_id); return r && { r, titre: d?.titre || '', texte: r.body, auteur: r.author_id, voir: d ? ['Voir la demande', () => go('offres/demandes/' + d.id)] : null, actions: [['Supprimer la réponse', rm('reponses_demandes'), true]] }; }
-    case 'relecture': { const r = by('relectures_cv'); const s = r && store.byId('profiles', r.student_id); return r && { r, titre: s?.full_name || '', texte: r.synthese || r.message, auteur: r.reviewer_id, actions: r.status === 'annulee' ? [] : [['Annuler la relecture', () => store.update('relectures_cv', id, { status: 'annulee' }), true]] }; }
-    case 'prive': {
-      const r = by('messages'); const nom = x => store.byId('profiles', x)?.full_name || '?';
-      // L'onglet s'ouvre tout de suite (sinon le navigateur le bloque), le lien temporaire arrive ensuite
-      const ouvrir = async () => { const w = window.open('', '_blank'); if (w) w.opener = null; const u = await store.lienChat(r.fichier).catch(() => null); if (u && w) w.location.href = u; else { w?.close(); toast('Fichier indisponible.', 'err'); } };
-      return r && { r, titre: `${nom(r.author_id)} → ${nom(r.dest_id)}`, texte: r.body, auteur: r.author_id, voir: r.fichier ? [r.type === 'vocal' ? 'Écouter le message vocal' : 'Voir la photo', ouvrir] : null, actions: [['Supprimer le message', () => store.supprimerMessage(id), true]] };
-    }
-    default: return null;
-  }
-}
+// Ce que l'administration voit du contenu signalé, et ce qu'elle peut en faire : admin-console-cibles.js (partagé avec « À traiter »)
+export { MOTIFS };
 
 function Moderation({ ctx }) {
   const { data } = ctx;
@@ -248,21 +222,7 @@ function Moderation({ ctx }) {
         <span class="grow"><strong class="small">${tl}</strong>${c ? html` <span class="small muted" translate="no" dir="auto">${court(c.titre, 70)}</span>` : html` <span class="small muted">Contenu déjà supprimé</span>`}<br/>
           <span class="small muted">${MOTIFS[s.motif] || s.motif}</span> <span class="small muted">· ${timeAgo(s.traite_at || s.created_at)}</span></span>
         <span class=${'tag ' + (s.status === 'traite' ? 'coopt' : 'done')}>${s.status === 'traite' ? 'Traité' : 'Sans suite'}</span></li>`; })}</ul>` : null}` : null}
-    <${DernieresOffres} ctx=${ctx}/>
   </div>`;
-}
-
-// Les dernières offres publiées, à relire d'un coup d'œil : les masquer ou les supprimer est de la modération
-// (sans attendre un signalement), pas un chiffre de la Vue d'ensemble
-function DernieresOffres({ ctx }) {
-  const { data, store, act } = ctx;
-  const offers = [...data.offers].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5);
-  if (!offers.length) return null;
-  return html`<div class="panel" id="adm-offres"><div class="section-head"><h2 class="h-ico"><${Icon} name="feed"/> Dernières offres</h2></div>
-      <ul class="people-list adm-gestes">${offers.map(o => html`<li key=${o.id}><span class="grow"><button class="linkish strong" onClick=${() => ctx.openOffer(o.id)}>${o.titre}</button><br/><span class="muted small">${o.entreprise} · ${store.byId('profiles', o.author_id)?.full_name || ''} · ${timeAgo(o.created_at)}</span></span>
-        ${o.status !== 'ouverte' ? html`<span class="tag done">${o.status === 'pourvue' ? 'Pourvue' : 'Fermée'}</span>` : null}
-        <button class="btn tiny ghost" onClick=${() => act(() => store.update('offers', o.id, { status: o.status === 'ouverte' ? 'fermee' : 'ouverte' }))}>${o.status === 'ouverte' ? 'Masquer' : 'Rouvrir'}</button>
-        <button class="btn tiny ghost danger-t" onClick=${() => ctx.confirm('Supprimer cette offre ?', () => act(() => store.remove('offers', o.id)))}>Supprimer</button></li>`)}</ul></div>`;
 }
 
 function Signale({ ctx, g }) {
@@ -314,25 +274,14 @@ function useListe(store, data) {
   return Array.isArray(data.liste_officielle) ? data.liste_officielle : rows || [];
 }
 
-// Message prêt à envoyer au lauréat sans CV, dans sa langue ; l'administration le relit avant d'envoyer
-const demandeCV = p => {
-  const prenom = (p.full_name || '').split(' ')[0];
-  return p.langue === 'ar'
-    ? `مرحبًا ${prenom}، أهلًا بك في شبكة ENSAM مكناس! للتحقق من ملفك، هل يمكنك رفع سيرتك الذاتية بصيغة PDF في « ملفي » (أو إضافة رابط LinkedIn)؟ لن يستغرق ذلك سوى دقيقة. شكرًا!`
-    : `Bonjour ${prenom}, bienvenue sur le Réseau ENSAM Meknès ! Pour vérifier ton profil, peux-tu déposer ton CV en PDF dans « Mon profil » (ou ajouter ton lien LinkedIn) ? Ça prend une minute. Merci !`;
-};
-
-function Membres({ ctx, comptes, toVerify }) {
-  const { data, store, act, openProfile, saison } = ctx;
-  const [q, setQ] = useState('');
+// Membres : profils à revoir, erreurs de lecture des CV, lauréats à vérifier, puis le tableau de tous les membres
+// (admin-console-membres.js : filtres, tri, sélection, emails, CSV ; sur téléphone, la liste habituelle)
+function Membres({ ctx, comptes }) {
+  const { data, store, act, openProfile } = ctx;
+  const toVerify = data.profiles.filter(p => p.role === 'laureat' && !p.verified);
   const liste = useListe(store, data);
   const compte = new Map((comptes || []).map(c => [c.id, c]));
-  const sansProfil = (comptes || []).filter(c => !c.a_profil && compteOuvert(c));
   const members = data.profiles.filter(p => p.role !== 'admin');
-  const qq = q.trim().toLowerCase();
-  const list = members.filter(p => !qq || `${p.full_name} ${p.filiere} ${p.promo} ${p.entreprise || ''} ${compte.get(p.id)?.email || ''}`.toLowerCase().includes(qq))
-    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-  const { vus: shown, reste, plus } = useVoirPlus(list, 20, qq);
   const surListe = p => surListeOfficielle(liste, p, compte.get(p.id)?.email);
   const pairs = p => (data.verifications_pairs || []).filter(v => v.laureat_id === p.id).map(v => store.byId('profiles', v.verificateur_id)).filter(x => x?.role === 'laureat' && x.verified && x.promo === p.promo);
 
@@ -353,18 +302,7 @@ function Membres({ ctx, comptes, toVerify }) {
           ${!p.cv_path && !p.cv_url ? html`<${MessageBtn} ctx=${ctx} p=${p} cls="btn tiny ghost" label="Demander son CV" texte=${demandeCV(p)}/>` : null}</span></div>
         <button class="btn small tonal" onClick=${() => act(async () => { await store.update('profiles', p.id, { verified: true }); toast('Lauréat vérifié.'); })}><${Icon} name="shield" size=${15}/> Vérifier</button></li>`; })}</ul></div>` : null}
 
-    <div class="panel">
-      <div class="section-head"><h2 class="h-ico"><${Icon} name="people"/> Membres</h2>
-        <label class="search"><${Icon} name="search" size=${16}/><input id="adm-q" placeholder="Nom, email, filière, promo…" value=${q} onInput=${e => setQ(e.target.value)}/></label></div>
-      ${sansProfil.length ? html`<p class="small hint-box"><${Icon} name="user" size=${15}/> <span>${sansProfil.length} compte${sansProfil.length > 1 ? 's' : ''} créé${sansProfil.length > 1 ? 's' : ''} sans profil (inscription pas terminée) : <span class="mono" dir="ltr" translate="no">${sansProfil.slice(0, 5).map(c => c.email).join(', ')}</span></span></p>` : null}
-      <p class="liste-tete">${qq ? `${list.length} sur ${members.length} membres` : `${members.length} membre${members.length > 1 ? 's' : ''}`}</p>
-      <ul class="lignes member-list">${shown.map(p => { const c = compte.get(p.id); return html`<li key=${p.id} class="ligne">
-        <${Person} p=${p} onOpen=${openProfile} size=${40} sub=${html`<span class="ligne-sub">${p.role === 'etudiant' ? `${NIVEAUX[niveauOf(p, saison)]?.short || ''} · ${p.filiere} · promo ${p.promo}` : `${p.filiere} · Promo ${p.promo}`}</span>
-          <span class="ligne-sub member-meta">${c ? html`<span dir="ltr" translate="no">${c.email}</span> · ` : null}<span>Inscrit ${timeAgo(p.created_at)}</span>${c?.last_sign_in_at ? html` · <span>Vu ${timeAgo(c.last_sign_in_at)}</span>` : null}</span>`}/>
-        <span class="ligne-act"><select id=${'role-' + p.id} aria-label="Rôle" value=${p.role} onChange=${e => act(async () => { await store.update('profiles', p.id, { role: e.target.value }); toast('Rôle modifié.'); })}>${ROLES.map(([k, l]) => html`<option value=${k}>${l}</option>`)}</select></span>
-      </li>`; })}</ul>
-      <${VoirPlus} reste=${reste} onPlus=${plus}/>
-    </div>`;
+    <${TableMembres} ctx=${ctx} comptes=${comptes}/>`;
 }
 
 // Profils à revoir : rôle et promo qui ne vont pas ensemble (ex. « lauréat » de la promo 2027), et profils que leur CV
@@ -567,13 +505,6 @@ function lignesDe(rows, aEntete, map, promoDefaut) {
   }));
 }
 const valide = l => l.nom.length >= 2 && !!cleNom(l.nom) && l.promo >= 1990 && l.promo <= 2040;
-
-function telecharger(nom, lignes) {
-  const q = v => (/[";\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? ''));
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob(['﻿' + lignes.map(r => r.map(q).join(';')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
-  a.download = nom; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-}
 
 function ListeOfficielle({ ctx }) {
   const { store, act, confirm, data } = ctx;

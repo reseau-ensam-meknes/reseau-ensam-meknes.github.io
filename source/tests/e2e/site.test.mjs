@@ -14,7 +14,8 @@ const SITE = path.resolve(process.env.SITE_DIR || new URL('../../dist', import.m
 const TYPES = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const ECRANS = ['accueil', 'offres', 'offres/demandes', 'match', 'mentorat', 'mentorat/cv', 'messages', 'parcours', 'espace', 'reseau/groupes', 'reseau/agenda', 'reseau/entraide',
   'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'reseau/annuaire/ma-filiere', 'reseau/annuaire/ma-promo', 'reseau/classement', 'reseau/talents', 'suivi', 'profil', 'profil/visibilite', 'profil/notifications', 'profil/donnees', 'enquete',
-  'confidentialite', 'admin', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda', 'admin/sponsorises', 'admin/reglages'];
+  'confidentialite', 'admin', 'admin/traiter', 'admin/animer', 'admin/contenus', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda',
+  'admin/ecoles', 'admin/partenaires', 'admin/sponsorises', 'admin/outils', 'admin/reglages'];
 
 let serveur, adresse, navigateur;
 // Une nouvelle version du site publiée pendant un test : sw.js change de VERSION, et les fichiers que le service worker
@@ -4217,7 +4218,10 @@ test('socle : un chiffre qui compte se pose sur la valeur du moment — une conf
   const chiffre = () => s.page.evaluate(() => [...document.querySelectorAll('.kpi')].find(k => /Recrutés et confirmés/.test(k.textContent)).querySelector('.kpi-val').textContent.trim());
   const avant = Number(await chiffre());
   assert.ok(avant > 0, `le chiffre a fini de compter (${avant})`);
-  await s.page.locator('.people-list.adm-gestes button', { hasText: 'Confirmer' }).first().click(); await s.page.waitForTimeout(700);
+  // Les recrutements déclarés se confirment dans « À traiter » ; le tableau de bord montre ensuite le nouveau chiffre
+  await s.aller('admin/traiter/recrutements');
+  await s.page.locator('.tt-item[data-cat="recrutements"] .tt-gestes button', { hasText: 'Confirmer' }).first().click(); await s.page.waitForTimeout(300);
+  await s.aller('admin'); await s.page.waitForTimeout(700);
   assert.equal(Number(await chiffre()), avant + 1, 'le nouveau chiffre, pas celui d’avant');
   // Et c'est bien celui que la page montre en y revenant
   await s.aller('admin/membres'); await s.aller('admin'); await s.page.waitForTimeout(700);
@@ -4291,11 +4295,11 @@ test('socle : au doigt, chaque cible du Réseau, de Mon profil et de l’adminis
   }
 });
 
-test('administration : la modération — retirer depuis une carte est tonal (rouge), jamais en aplat ; « Ouvrir » sous le contenu, les mots du membre sur leur ligne ; les dernières offres se relisent ici, plus dans la Vue d’ensemble', async () => {
+test('administration : la modération — retirer depuis une carte est tonal (rouge), jamais en aplat ; « Ouvrir » sous le contenu, les mots du membre sur leur ligne ; les offres se relisent dans Contenus, plus dans le tableau de bord', async () => {
   for (const [largeur, langue] of [[390, 'fr'], [360, 'ar']]) {
     const s = await ouvrir({ largeur, langue });
     await s.comme('Admin'); await s.aller('admin');
-    assert.equal(await s.page.locator('#adm-offres').count(), 0, 'la Vue d’ensemble ne relit plus les offres');
+    assert.equal(await s.page.locator('#adm-offres').count(), 0, 'le tableau de bord ne relit pas les offres');
     assert.equal(await s.page.locator('h2', { hasText: langue === 'ar' ? 'آخر العروض' : 'Dernières offres' }).count(), 0);
     await s.aller('admin/moderation');
     const cartes = s.page.locator('.mod-card');
@@ -4322,7 +4326,8 @@ test('administration : la modération — retirer depuis une carte est tonal (ro
     await offre.locator('.mod-voir').click(); await s.page.waitForSelector('.modal .od h2');
     assert.match(await s.page.locator('.modal .od h2').innerText(), /rebuts/);
     await s.fermer();
-    // Les dernières offres se relisent ici : une offre masquée se voit tout de suite
+    // Les offres se relisent dans Contenus : une offre masquée se voit tout de suite
+    await s.aller('admin/contenus');
     const ligne = s.page.locator('#adm-offres li').first();
     await ligne.locator('button', { hasText: langue === 'ar' ? 'إخفاء' : 'Masquer' }).click(); await s.page.waitForTimeout(300);
     assert.equal(await ligne.locator('.tag.done').count(), 1, 'l’offre masquée est dite fermée');
@@ -4663,6 +4668,8 @@ for (const [largeur, langue, theme] of [[1280, 'fr', 'light'], [390, 'ar', 'dark
       await s.page.selectOption('#persona', id); await s.page.waitForTimeout(250);
       for (const e of ECRANS) {
         await s.aller(e);
+        // Une page chargée à la demande (l'administration, le suivi) : l'audit lit la page, pas sa silhouette d'attente
+        await s.page.waitForFunction(() => !document.querySelector('.page-attente'));
         if (!(await s.page.evaluate(() => !!window.axe))) await s.page.addScriptTag({ content: AXE });
         // Les fondus d'arrivée (même courts) faussent la mesure des contrastes : on les termine avant l'audit
         await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* animation sans fin */ } }));
@@ -6028,7 +6035,7 @@ test('administration : « Sponsorisés » — créer une carte ciblée, la modif
   await s.ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
   await s.comme('Admin'); await s.aller('admin/sponsorises');
   await s.page.waitForSelector('.sp-ligne');
-  assert.equal(await s.page.getAttribute('#adm-tab-sponsorises', 'aria-selected'), 'true', 'un onglet « Sponsorisés »');
+  assert.equal(await s.page.getAttribute('#adm-tab-sponsorises', 'aria-current'), 'page', 'une rubrique « Sponsorisés »');
   const ex = s.page.locator('.sp-ligne[data-id="sp-demo-0001"]');
   assert.match(await ex.innerText(), /En cours/);
   assert.match(await ex.locator('.sp-cible').innerText(), /^Étudiants et lauréats · Toutes les années · Toutes les filières$/);
@@ -6456,4 +6463,292 @@ test('accueil : le bandeau dit ce qui empêche les notifications, se range trois
   assert.equal(await s.page.locator('.push-bandeau').count(), 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Console d'administration : les rubriques en colonne (ordinateur) ou en puces (téléphone), « À traiter », Membres, Contenus
+// ---------------------------------------------------------------------------
+const RUBRIQUES_ADMIN = ['admin', 'admin/traiter', 'admin/animer', 'admin/agenda', 'admin/inviter', 'admin/membres', 'admin/contenus', 'admin/moderation', 'admin/liste',
+  'admin/ecoles', 'admin/partenaires', 'admin/sponsorises', 'admin/outils', 'admin/reglages'];
+
+test('console d’administration (ordinateur) : les rubriques en colonne, par groupes ; chacune s’ouvre ; un seul choix d’école, donc pas de menu d’école ; la recherche ouvre une fiche ou une offre', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Admin'); await s.aller('admin');
+  await s.page.waitForSelector('nav.cs-menu');
+  assert.equal(await s.page.locator('.adm-tabs').count(), 0, 'pas de puces sur ordinateur : la colonne');
+  assert.equal(await s.page.locator('nav.cs-menu').evaluate(n => getComputedStyle(n).position), 'sticky', 'la colonne reste en vue');
+  assert.deepEqual(await s.page.locator('.cs-menu .cs-g-titre').evaluateAll(es => es.map(e => e.textContent.trim())), ['Piloter', 'Animer', 'Gérer', 'Grandir']);
+  assert.deepEqual(await s.page.locator('.cs-menu a').evaluateAll(as => as.map(a => a.getAttribute('href'))), RUBRIQUES_ADMIN.map(r => '#' + r));
+  assert.equal(await s.page.locator('#cs-ecole').count(), 0, 'une seule école : pas de choix');
+  assert.equal(await s.page.locator('h1').count(), 1);
+  assert.equal(await s.page.locator('h1').innerText(), 'Administration');
+  // Chaque rubrique s'ouvre depuis la colonne, la sienne marquée (aria-current), sans rien qui dépasse
+  for (const r of RUBRIQUES_ADMIN) {
+    await s.page.locator(`.cs-menu a[href="#${r}"]`).click(); await s.page.waitForTimeout(200);
+    assert.equal(await s.page.evaluate(() => location.hash), '#' + r);
+    assert.deepEqual(await s.page.locator('.cs-menu a[aria-current="page"]').evaluateAll(as => as.map(a => a.getAttribute('href'))), ['#' + r]);
+    assert.ok((await s.page.locator('.cs-main').innerText()).trim().length > 10, `${r} : la rubrique s’affiche`);
+    assert.equal(await s.debordement(), 0, `${r} : rien ne dépasse`);
+  }
+  // Les pastilles disent ce qui attend : « À traiter » compte ses lignes, Modération ses contenus signalés, Membres ses lauréats à vérifier
+  const pastille = async k => Number((await s.page.locator(`#adm-tab-${k} .cs-n`).innerText()).trim());
+  await s.aller('admin/traiter');
+  assert.equal(await pastille('traiter'), await s.page.locator('.tt-item').count());
+  assert.equal(await pastille('moderation'), 2);
+  assert.equal(await pastille('membres'), 6);
+  // La recherche : « / » y met le curseur ; les flèches et Entrée ouvrent la fiche
+  await s.page.locator('h1').click();
+  await s.page.keyboard.press('/');
+  assert.equal(await s.page.evaluate(() => document.activeElement.id), 'cs-q');
+  await s.page.keyboard.type('youssef el');
+  await s.page.waitForSelector('#cs-res:not([hidden]) [role="option"]');
+  assert.equal(await s.page.getAttribute('#cs-q', 'aria-expanded'), 'true');
+  assert.match(await s.page.locator('#cs-opt-0').innerText(), /Youssef El Amrani/);
+  assert.equal(await s.page.getAttribute('#cs-q', 'aria-activedescendant'), 'cs-opt-0');
+  await s.page.keyboard.press('Enter');
+  await s.page.waitForSelector('.modal');
+  assert.match(await s.page.locator('.modal').innerText(), /Youssef El Amrani/);
+  await s.fermer();
+  // Ctrl+K aussi ; une offre par son titre ; Échap vide la recherche
+  await s.page.keyboard.press('Control+k');
+  assert.equal(await s.page.evaluate(() => document.activeElement.id), 'cs-q');
+  await s.page.keyboard.type('emboutissage');
+  await s.page.waitForSelector('#cs-res [role="option"]');
+  const offre = s.page.locator('#cs-res [role="option"]', { hasText: 'rebuts' }).first();
+  assert.match(await offre.innerText(), /Offre/);
+  await s.page.keyboard.press('Escape');
+  assert.equal(await s.page.inputValue('#cs-q'), '');
+  assert.equal(await s.page.locator('#cs-res').isHidden(), true);
+  await s.page.fill('#cs-q', 'emboutissage'); await s.page.waitForSelector('#cs-res [role="option"]');
+  await s.page.locator('#cs-res [role="option"]', { hasText: 'rebuts' }).first().click();
+  await s.page.waitForSelector('.modal .od h2');
+  assert.match(await s.page.locator('.modal .od h2').innerText(), /rebuts/);
+  await s.fermer();
+  // Par e-mail aussi (les comptes ne sont lus que par l'administration)
+  await s.page.fill('#cs-q', 'salma.bennani@'); await s.page.waitForSelector('#cs-res [role="option"]');
+  assert.match(await s.page.locator('#cs-opt-0').innerText(), /Salma Bennani/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('console d’administration (téléphone) : les rubriques sur une seule rangée de puces, la sienne choisie ; rien ne dépasse, en français comme en arabe', async () => {
+  const autres = ['admin/animer', 'admin/ecoles', 'admin/partenaires', 'admin/outils']; // remplies par un autre chantier : leurs mots sont vérifiés par la visite de tous les écrans
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 390, langue });
+    await s.comme('Admin');
+    const oublis = [];
+    for (const r of [...RUBRIQUES_ADMIN, 'admin/contenus/demandes', 'admin/contenus/questions', 'admin/contenus/mentorats', 'admin/contenus/evenements', 'admin/traiter/demandes']) {
+      await s.aller(r);
+      assert.equal(await s.page.locator('nav.cs-menu').count(), 0, 'pas de colonne sur téléphone');
+      const puces = s.page.locator('.adm-tabs [role="tab"]');
+      assert.equal(await puces.count(), 14, `${r} : toutes les rubriques`);
+      assert.deepEqual(await s.page.locator('.adm-tabs [aria-selected="true"]').evaluateAll(b => b.map(x => x.id)), ['adm-tab-' + (r.split('/')[1] || 'vue')], `${r} : la sienne choisie`);
+      assert.equal(new Set(await puces.evaluateAll(b => b.map(x => Math.round(x.getBoundingClientRect().top)))).size, 1, `${r} : une seule rangée`);
+      assert.equal(await s.debordement(), 0, `${langue} · ${r} : rien ne dépasse`);
+      if (langue === 'ar') for (const x of await s.page.evaluate(() => { const m = [...(window.__ensamMissing || [])]; window.__ensamMissing?.clear(); return m; })) if (!autres.includes(r) && !ecritParUnMembre(x)) oublis.push(`${r} : ${x}`);
+    }
+    assert.deepEqual(oublis, [], 'tout traduit');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('administration · À traiter : une demande sans proposition propose trois lauréats, chacun avec un message prêt dans sa langue ; un lauréat se vérifie sur place', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Admin'); await s.aller('admin');
+  // L'encadré du tableau de bord ouvre « À traiter » sur la bonne sorte
+  await s.page.locator('.cs-a-traiter .cs-todo button', { hasText: 'demande d’étudiant sans proposition' }).click(); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.evaluate(() => location.hash), '#admin/traiter/demandes');
+  assert.deepEqual([...new Set(await s.page.locator('.tt-item').evaluateAll(l => l.map(x => x.dataset.cat)))], ['demandes']);
+  const ligne = s.page.locator('.tt-item[data-cat="demandes"]').first();
+  assert.match(await ligne.locator('.tt-titre').innerText(), /PFE en efficacité énergétique industrielle/);
+  await ligne.locator('.tt-ouvrir').click();
+  assert.equal(await ligne.locator('.tt-ouvrir').getAttribute('aria-expanded'), 'true');
+  const aidants = ligne.locator('.tt-aidants > li');
+  assert.equal(await aidants.count(), 3, 'trois lauréats');
+  // Le premier : un message prêt dans la messagerie, à relire
+  const prenom = (await aidants.first().locator('.person-name').innerText()).split(' ')[0];
+  await aidants.first().locator('.msg-btn').click(); await s.page.waitForTimeout(400);
+  const brouillon = await s.page.inputValue('#chat-txt');
+  assert.ok(brouillon.startsWith(`Bonjour ${prenom}, `), brouillon);
+  assert.match(brouillon, /\(5A · GME24\) cherche un PFE : « PFE en efficacité énergétique industrielle »\. Tu pourrais jeter un œil à sa demande \? \S+#offres\/demandes\/dm-00gx Merci !$/);
+  // Un lauréat qui lit en arabe reçoit le message en arabe
+  await s.aller('admin/traiter/demandes');
+  const second = s.page.locator('.tt-item[data-cat="demandes"]').first();
+  await second.locator('.tt-ouvrir').click();
+  const id = await second.locator('.tt-aidants > li').nth(1).evaluate(li => li.querySelector('.person-name').textContent.trim())
+    .then(nom => s.page.evaluate(nom => window.__demo.data.profiles.find(p => p.full_name === nom).id, nom));
+  await s.page.evaluate(id => window.__demo.update('profiles', id, { langue: 'ar' }), id); await s.page.waitForTimeout(200);
+  await second.locator('.tt-aidants > li').nth(1).locator('.msg-btn').click(); await s.page.waitForTimeout(400);
+  assert.match(await s.page.inputValue('#chat-txt'), /^مرحبًا .+« PFE en efficacité énergétique industrielle ».+#offres\/demandes\/dm-00gx شكرًا!$/);
+  // Un lauréat se vérifie sans quitter la liste ; la pastille suit
+  await s.aller('admin/traiter/laureats');
+  const avant = await s.page.locator('.tt-item[data-cat="laureats"]').count();
+  const badge = Number(await s.page.locator('#adm-tab-traiter .cs-n').innerText());
+  await s.page.locator('.tt-item[data-cat="laureats"] .tt-gestes button', { hasText: 'Vérifier' }).first().click(); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Lauréat vérifié/);
+  assert.equal(await s.page.locator('.tt-item[data-cat="laureats"]').count(), avant - 1);
+  assert.equal(Number(await s.page.locator('#adm-tab-traiter .cs-n').innerText()), badge - 1);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('administration · Membres (ordinateur) : filtrer les lauréats, trier par promo, cocher deux membres et exporter leur fichier CSV', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Admin'); await s.aller('admin/membres');
+  await s.page.click('#mb-f-laureats');
+  assert.equal(await s.page.getAttribute('#mb-f-laureats', 'aria-pressed'), 'true');
+  const lignes = s.page.locator('tr.mb-ligne');
+  assert.equal(await lignes.count(), 45, 'les 45 lauréats de la démo');
+  assert.deepEqual([...new Set(await s.page.locator('tr.mb-ligne .c-role select').evaluateAll(l => l.map(x => x.value)))], ['laureat']);
+  // Trier par promo : croissant, puis décroissant ; l'en-tête le dit (aria-sort)
+  const promos = () => s.page.locator('tr.mb-ligne td.c-promo').evaluateAll(l => l.map(td => parseInt(td.textContent, 10)));
+  await s.page.click('#mb-tri-promo');
+  assert.equal(await s.page.getAttribute('th.c-promo', 'aria-sort'), 'ascending');
+  let p = await promos(); assert.deepEqual(p, [...p].sort((a, b) => a - b));
+  await s.page.click('#mb-tri-promo');
+  assert.equal(await s.page.getAttribute('th.c-promo', 'aria-sort'), 'descending');
+  p = await promos(); assert.deepEqual(p, [...p].sort((a, b) => b - a));
+  assert.equal(await s.page.locator('th[aria-sort]').count(), 1, 'une seule colonne triée');
+  // Deux membres cochés : l'export ne contient qu'eux
+  const noms = [await lignes.nth(0).locator('.person-name').innerText(), await lignes.nth(1).locator('.person-name').innerText()];
+  await lignes.nth(0).locator('input[type="checkbox"]').check(); await lignes.nth(1).locator('input[type="checkbox"]').check();
+  assert.equal(await s.page.locator('#mb-n').innerText(), '2 sélectionnés');
+  assert.equal(await s.page.locator('th.c-coche input').evaluate(c => c.indeterminate), true, 'la case de l’en-tête : en partie');
+  const [fichier] = await Promise.all([s.page.waitForEvent('download'), s.page.click('#mb-csv')]);
+  assert.match(fichier.suggestedFilename(), /^membres-reseau-ensam-\d{4}-\d{2}-\d{2}\.csv$/);
+  const csv = fs.readFileSync(await fichier.path(), 'utf8');
+  assert.ok(csv.startsWith('﻿'), 'avec BOM : Excel lit les accents');
+  const rangs = csv.slice(1).split('\r\n');
+  assert.equal(rangs[0], 'Nom;Rôle;Promo;Filière;Entreprise;Poste;Ville;Email;Inscrit le;Vu le;Vérifié;CV;Photo');
+  assert.equal(rangs.length, 3);
+  assert.deepEqual(rangs.slice(1).map(r => r.split(';')[0]), noms);
+  assert.ok(rangs.slice(1).every(r => r.split(';')[1] === 'Lauréat' && /@/.test(r.split(';')[7])), 'leur rôle et leur e-mail');
+  // Tout cocher : toutes les lignes visibles
+  await s.page.locator('th.c-coche input').check();
+  assert.equal(await s.page.locator('#mb-n').innerText(), '45 sélectionnés');
+  assert.equal(await s.page.locator('tr.mb-ligne.on').count(), 45);
+  // Les filtres se combinent : une promo, une recherche
+  await s.page.locator('button', { hasText: 'Tout désélectionner' }).click();
+  await s.page.click('#mb-f-tous');
+  await s.page.fill('#adm-q', 'Soufiane');
+  assert.ok((await s.page.locator('tr.mb-ligne').allInnerTexts()).every(t => /Soufiane/.test(t)));
+  assert.match(await s.page.locator('.cs-barre .liste-tete').innerText(), /^\d+ sur 105 membres$/);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('administration · Contenus : masquer une offre puis la rouvrir sans quitter le tableau ; les demandes, questions, mentorats et événements en onglets', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Admin'); await s.aller('admin/contenus');
+  assert.equal(await s.page.getAttribute('#cnt-tab-offres', 'aria-selected'), 'true', 'les offres d’abord');
+  const id = await s.page.locator('#adm-offres .cnt-ligne[data-statut="ouverte"]').first().getAttribute('data-id');
+  const ligne = s.page.locator(`#adm-offres .cnt-ligne[data-id="${id}"]`);
+  await ligne.locator('button', { hasText: 'Masquer' }).click(); await s.page.waitForTimeout(300);
+  assert.equal(await ligne.getAttribute('data-statut'), 'fermee');
+  assert.equal(await ligne.locator('.tag').innerText(), 'Fermée');
+  assert.match(await s.page.locator('.toast').last().innerText(), /Offre masquée/);
+  assert.equal(await s.page.evaluate(id => window.__demo.byId('offers', id).status, id), 'fermee');
+  await ligne.locator('button', { hasText: 'Rouvrir' }).click(); await s.page.waitForTimeout(300);
+  assert.equal(await ligne.getAttribute('data-statut'), 'ouverte');
+  assert.equal(await ligne.locator('.tag').innerText(), 'Ouverte');
+  // Les statuts en puces, la recherche
+  await s.page.locator('.cnt-filtres .chip', { hasText: 'Pourvue' }).click();
+  assert.deepEqual([...new Set(await s.page.locator('#adm-offres .cnt-ligne').evaluateAll(l => l.map(x => x.dataset.statut)))], ['pourvue']);
+  await s.page.locator('.cnt-filtres .chip', { hasText: 'Tous' }).click();
+  await s.page.fill('#cnt-q', 'emboutissage');
+  assert.ok((await s.page.locator('#adm-offres .cnt-ligne').allInnerTexts()).every(t => /emboutissage/i.test(t)));
+  // Supprimer demande confirmation ; « Annuler » garde l'offre
+  await s.page.locator('#adm-offres .cnt-ligne .cnt-suppr').first().click();
+  await s.page.waitForSelector('.modal');
+  assert.match(await s.page.locator('.modal').innerText(), /Supprimer cette offre \?/);
+  await s.page.locator('.modal button', { hasText: 'Annuler' }).click(); await s.page.waitForTimeout(200);
+  assert.ok(await s.page.locator('#adm-offres .cnt-ligne').count() >= 1);
+  // Les autres sortes : un onglet chacune, son adresse, ses lignes
+  for (const k of ['demandes', 'questions', 'mentorats', 'evenements']) {
+    await s.page.click('#cnt-tab-' + k); await s.page.waitForTimeout(150);
+    assert.equal(await s.page.evaluate(() => location.hash), '#admin/contenus/' + k);
+    assert.equal(await s.page.getAttribute('#cnt-tab-' + k, 'aria-selected'), 'true');
+    assert.ok(await s.page.locator(`#adm-${k} .cnt-ligne`).count() >= 1, `${k} : des lignes`);
+  }
+  // Un événement à venir s'annule (les inscrits sont prévenus) et se rétablit
+  const ev = s.page.locator('#adm-evenements .cnt-ligne[data-statut="avenir"]').first();
+  const evId = await ev.getAttribute('data-id');
+  await ev.locator('button', { hasText: 'Annuler l’événement' }).click();
+  await s.page.locator('.modal button', { hasText: 'Annuler l’événement' }).click(); await s.page.waitForTimeout(300);
+  const evLigne = s.page.locator(`#adm-evenements .cnt-ligne[data-id="${evId}"]`);
+  assert.equal(await evLigne.getAttribute('data-statut'), 'annule');
+  await evLigne.locator('button', { hasText: 'Rétablir' }).click(); await s.page.waitForTimeout(300);
+  assert.equal(await evLigne.getAttribute('data-statut'), 'avenir');
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('administration · Contenus : retirer une demande se confirme (un match en cours s’arrête, et c’est dit) et ne se rouvre pas d’ici ; « En pause » : sans relance depuis 60 jours', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 1280, langue });
+    await s.comme('Admin'); await s.aller('admin/contenus/demandes'); await s.page.waitForSelector('#adm-demandes');
+    // Une demande sans relance depuis 70 jours ; une autre en match (le lauréat a proposé, l'étudiante a accepté)
+    const prop = await s.page.evaluate(async vieux => {
+      const d = window.__demo;
+      await d.update('demandes', 'dm-00gy', { created_at: vieux, relancee_at: vieux });
+      const l = d.data.profiles.find(p => p.role === 'laureat' && p.verified);
+      const x = await d.insert('propositions', { demande_id: 'dm-00gx', laureat_id: l.id, message: 'Je peux t’aider.', status: 'envoyee' });
+      await d.update('propositions', x.id, { status: 'acceptee' });
+      return x.id;
+    }, new Date(Date.now() - 70 * 864e5).toISOString());
+    await s.page.waitForTimeout(300);
+    const ligne = id => s.page.locator(`#adm-demandes .cnt-ligne[data-id="${id}"]`);
+    assert.equal(await ligne('dm-00gy').getAttribute('data-statut'), 'pause', 'ouverte, mais sans relance depuis 60 jours');
+    assert.equal(await ligne('dm-00gx').getAttribute('data-statut'), 'match');
+    if (langue === 'fr') assert.deepEqual(await s.page.locator('.cnt-filtres .chip').allInnerTexts().then(l => l.map(t => t.replace(/\s+/g, ' '))), ['Tous 3', 'En pause 1', 'Match 1', 'Réussie 1']);
+    // Retirer le match : la fenêtre le dit, puis la demande est fermée, l'aide acceptée close, et rien ne la rouvre d'ici
+    await ligne('dm-00gx').locator('.k-gestes .btn.tonal').click(); await s.page.waitForSelector('.modal');
+    assert.match(await s.page.locator('.modal p').innerText(), langue === 'fr'
+      ? /^Retirer la demande « PFE en efficacité énergétique industrielle » \? Elle ne sera plus proposée aux lauréats, et le match en cours s’arrête\.$/
+      : /^سحب الطلب «.*PFE en efficacité énergétique industrielle.*»؟ لن يُقترح على الخريجين بعد الآن، وسيتوقف التوافق الجاري\.$/);
+    await s.page.locator('.modal .btn.danger').click(); await s.page.waitForTimeout(300);
+    assert.match(await s.page.locator('.toast').last().innerText(), langue === 'fr' ? /Demande retirée\./ : /سُحب الطلب\./);
+    assert.equal(await ligne('dm-00gx').getAttribute('data-statut'), 'fermee');
+    assert.equal(await ligne('dm-00gx').locator('.k-gestes .btn.tonal').count(), 0, 'pas de « Rouvrir » : seul l’auteur rouvre sa demande');
+    assert.deepEqual(await s.page.evaluate(id => [window.__demo.byId('demandes', 'dm-00gx').status, window.__demo.byId('propositions', id).status], prop), ['fermee', 'close']);
+    // La demande en pause se retire aussi ; « Annuler » la garde
+    await ligne('dm-00gy').locator('.k-gestes .btn.tonal').click(); await s.page.waitForSelector('.modal');
+    if (langue === 'fr') assert.match(await s.page.locator('.modal p').innerText(), /^Retirer la demande « Stage d’été de 4A en productio.* » \? Elle ne sera plus proposée aux lauréats\.$/);
+    await s.page.locator('.modal .btn.ghost').click(); await s.page.waitForTimeout(200);
+    assert.equal(await ligne('dm-00gy').getAttribute('data-statut'), 'pause');
+    if (langue === 'ar') assert.deepEqual((await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), [], 'tout traduit');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('administration · sur ordinateur, aucun filtre ne se cache au bout de sa rangée (À traiter, Membres, Contenus) ; sur téléphone, chaque cible de l’objectif a toute la largeur', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Admin');
+  for (const [route, rangee] of [['admin/traiter', '.tt-filtres'], ['admin/membres', '.cs-puces'], ['admin/contenus/mentorats', '.cnt-filtres']]) {
+    await s.aller(route); await s.page.waitForSelector(rangee);
+    const r = await s.page.locator(rangee).evaluate(l => { const b = l.getBoundingClientRect(); return { defile: l.scrollWidth > l.clientWidth + 1, caches: [...l.children].filter(c => { const x = c.getBoundingClientRect(); return x.left < b.left - 1 || x.right > b.right + 1; }).length }; });
+    assert.deepEqual(r, { defile: false, caches: 0 }, `${route} : toutes les puces se voient`);
+  }
+  // Les lauréats proposés pour une demande : chaque « Écrire » dit à qui
+  await s.aller('admin/traiter/demandes');
+  await s.page.locator('.tt-item[data-cat="demandes"] .tt-ouvrir').first().click(); await s.page.waitForTimeout(200);
+  const n = await s.page.locator('.tt-aidants > li').count();
+  assert.equal(await s.page.locator('.tt-detail .tt-sous-t').innerText(), ['Un lauréat qui peut aider', 'Deux lauréats qui peuvent aider', 'Trois lauréats qui peuvent aider'][n - 1]);
+  for (const li of await s.page.locator('.tt-aidants > li').all()) {
+    const prenom = (await li.locator('.person-name').innerText()).split(' ')[0];
+    assert.equal(await li.locator('.msg-btn').getAttribute('aria-label'), `Écrire à ${prenom}`);
+  }
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  const t = await ouvrir({ largeur: 390 });
+  await t.comme('Admin'); await t.aller('admin'); await t.page.waitForSelector('#adm-objectif .cs-obj li');
+  const lignes = await t.page.locator('#adm-objectif .cs-obj').evaluate(u => { const w = u.getBoundingClientRect().width; return [...u.children].map(li => Math.round(li.getBoundingClientRect().width - w) === 0 && li.querySelector('.cs-obj-bar').getBoundingClientRect().width > w - 2); });
+  assert.ok(lignes.length === 4 && lignes.every(Boolean), 'quatre cibles, chacune et sa barre sur toute la largeur');
+  assert.equal(await t.debordement(), 0);
+  assert.deepEqual(t.erreurs, []);
+  await t.ctx.close();
 });
