@@ -1,4 +1,4 @@
-// Rappels de visite : qui est choisi (absent depuis 2 jours ET quelque chose de concret l'attend), avec quels chiffres,
+// Rappels de visite : qui est choisi (absent depuis un jour ET quelque chose de concret l'attend), avec quels chiffres,
 // l'espacement croissant remis à zéro à la visite suivante, la catégorie « Rappels » coupée = rien,
 // et les emails (sans téléphone ou absent depuis 5 jours, une fois par semaine, jamais le jour d'un autre email).
 import { test, before } from 'node:test';
@@ -19,9 +19,10 @@ const file = async () => (await db.query(`select user_id, data from public.push_
 const push = async () => (await db.query('select public.rappels_push() n')).rows[0].n;
 const dus = async () => Object.fromEntries((await db.query('select id, n, abonne, contenu from public.rappels_dus()')).rows.map(r => [nom(r.id), r]));
 const emails = async (max = 150) => (await db.query('select id, email, langue, contenu from public.rappels_emails_a_envoyer($1)', [max])).rows.map(r => nom(r.id)).sort();
-// Le temps passe : tout ce qui est noté recule de j jours (visites, rappels, emails du réseau)
+// Le temps passe : tout ce qui est noté recule de j jours (visites, rappels, emails du réseau, budget du jour)
 const reculer = async j => {
   await db.query(`update public.visites set vu_at = vu_at - $1 * interval '1 day'`, [j]);
+  await db.query(`update public.notif_programme set at = at - $1 * interval '1 day'`, [j]);
   await db.query(`update public.rappels_visite set dernier_at = dernier_at - $1 * interval '1 day', push_at = push_at - $1 * interval '1 day', email_at = email_at - $1 * interval '1 day'`, [j]);
   for (const t of ['messages', 'offers', 'applications', 'propositions']) await db.query(`update public.${t} set created_at = created_at - $1 * interval '1 day'`, [j]);
   await db.query(`update public.demandes set created_at = created_at - $1 * interval '1 day', relancee_at = relancee_at - $1 * interval '1 day'`, [j]);
@@ -70,9 +71,9 @@ test('à l’installation, personne n’est rappelé tout de suite (date de mise
   await db.query('delete from public.messages');
 });
 
-test('qui est choisi : absent depuis 2 jours ET quelque chose de concret l’attend, avec les vrais chiffres', async () => {
+test('qui est choisi : absent depuis un jour ET quelque chose de concret l’attend, avec les vrais chiffres', async () => {
   for (const u of Object.keys(NOMS)) await visite(u, 3);
-  await visite(LAU_AUTRE, 1);   // venu hier : pas de rappel, même s'il y a quelque chose
+  await visite(LAU_AUTRE, 0.5);   // venu il y a 12 heures : pas de rappel, même s'il y a quelque chose
   assert.deepEqual(await dus(), {}, 'absents, mais rien ne les attend : pas de rappel');
   // Une demande de Salma (GI) : les lauréats de son parcours tout de suite, les autres 24 h après sans aide
   const [d] = await q(ETU, `insert into public.demandes (auteur_id, type, titre, details, lieu) values ($1, 'pfe', 'PFE en amélioration continue', 'Lean, VSM et Power BI : je cherche un PFE en usine, de février à juin.', 'Casablanca') returning id`, [ETU]);
@@ -112,33 +113,37 @@ test('le soir : une notification par membre abonné, par la file et son filtre, 
   assert.deepEqual(await file(), []);
 });
 
-test('espacement : 2 jours, puis 4, 7, et 14 jours entre deux rappels ; tout repart de zéro à la visite suivante', async () => {
+test('espacement : 1 jour après la visite, puis 2, 3, 5 et 7 jours entre deux rappels (J+1, J+3, J+6, J+11, J+18) ; tout repart de zéro à la visite suivante', async () => {
   const un = async () => { await vider(); await push(); return (await file()).some(([n]) => n === 'LAU'); };
-  await reculer(3);
-  assert.equal(await un(), false, '3 jours après le 1er rappel : trop tôt (4)');
   await reculer(1);
-  assert.equal(await un(), true, '4 jours après : 2e rappel');
+  assert.equal(await un(), false, '1 jour après le 1er rappel : trop tôt (2)');
+  await reculer(1);
+  assert.equal(await un(), true, '2 jours après : 2e rappel');
   assert.equal(await etat(LAU), 2);
+  await reculer(2);
+  assert.equal(await un(), false, '2 jours après le 2e : trop tôt (3)');
+  await reculer(1);
+  assert.equal(await un(), true, '3 jours après : 3e rappel');
+  await reculer(4);
+  assert.equal(await un(), false, '4 jours après le 3e : trop tôt (5)');
+  await reculer(1);
+  assert.equal(await un(), true, '5 jours après : 4e rappel');
   await reculer(6);
-  assert.equal(await un(), false, '6 jours après le 2e : trop tôt (7)');
+  assert.equal(await un(), false, '6 jours après le 4e : trop tôt (7)');
   await reculer(1);
-  assert.equal(await un(), true, '7 jours après : 3e rappel');
-  await reculer(13);
-  assert.equal(await un(), false);
-  await reculer(1);
-  assert.equal(await un(), true, '14 jours après : 4e rappel');
-  await reculer(14);
-  assert.equal(await un(), true, 'ensuite tous les 14 jours, au plus');
-  assert.equal(await etat(LAU), 5);
-  // Il revient : rien ce soir ; deux jours plus tard, la série repart du début
+  assert.equal(await un(), true, '7 jours après : 5e rappel');
+  await reculer(7);
+  assert.equal(await un(), true, 'ensuite un par semaine, au plus');
+  assert.equal(await etat(LAU), 6);
+  // Il revient : rien ce soir ; le lendemain, la série repart du début
   await q(LAU, 'select public.marquer_vu()');
   assert.equal(await un(), false, 'venu aujourd’hui');
   // La demande n'est plus nouvelle pour lui : il faut quelque chose de neuf (une candidature sur son offre)
   await q(LAU, `insert into public.offers (author_id, type, titre, entreprise, description, annees, filieres) values ($1, 'stage', 'Stage méthodes', 'Renault', 'desc', '{5}', '{}')`, [LAU]);
   const [o] = (await db.query(`select id from public.offers where titre = 'Stage méthodes'`)).rows;
-  await reculer(2);
+  await reculer(1);
   await q(ETU, `insert into public.applications (student_id, offer_id, entreprise, titre) values ($1, $2, 'Renault', 'Stage méthodes')`, [ETU, o.id]);
-  assert.equal(await un(), true, '2 jours après sa visite');
+  assert.equal(await un(), true, '1 jour après sa visite');
   assert.equal(await etat(LAU), 1, 'la série est remise à zéro');
   assert.deepEqual((await file()).find(([n]) => n === 'LAU')[1], { candidatures: 1 }, 'la demande déjà là à sa visite n’est plus comptée');
 });
