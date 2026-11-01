@@ -592,7 +592,7 @@ Object.assign(AR, {
   'Un étudiant de ton parcours a dit ce qu’il cherche : propose ton aide.': 'طلب جديد من مسارك: اقترح مساعدتك.',
   'Un étudiant de l’école attend encore une réponse : propose ton aide.': 'طالب من المدرسة ما زال ينتظر جوابًا: اقترح مساعدتك.',
   'Ensuite': 'بعد ذلك', 'Ne plus afficher les premiers pas': 'عدم إظهار الخطوات الأولى مجددًا',
-  'C’est noté. Tu retrouves les premiers pas dans ton menu : « Comment ça marche ? ».': 'تم ذلك. ستجد الخطوات الأولى في قائمتك: «كيف تعمل المنصة؟».',
+  'C’est noté. Tu retrouves les premiers pas dans « Moi », en haut : « Comment ça marche ? ».': 'تم ذلك. ستجد الخطوات الأولى في «أنا»، في الأعلى: «كيف تعمل المنصة؟».',
   'Nouvelles': 'المستجدات', 'Rien à faire pour l’instant.': 'لا شيء بانتظارك الآن.', 'Rien de nouveau pour l’instant.': 'لا جديد الآن.',
   'Ce qui te concerne arrivera ici.': 'كل ما يخصّك سيصل إلى هنا.', 'À faire ici': 'بانتظارك هنا',
 

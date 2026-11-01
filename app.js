@@ -1122,7 +1122,7 @@ function Home(ctx) {
     ${feuilleFondateur}
     ${arrivee ? html`<${ArriveeSheet} a=${arrivee} pas=${pas} me=${me} store=${store} onClose=${finArrivee}/>` : null}
     ${(voirEtapes || parRoute) && guide ? html`<${EtapesSheet} me=${me} g=${guide} historique=${!parRoute} onClose=${() => { setVoirEtapes(false); if (parRoute) go('accueil'); }}
-      onHide=${() => { setOff(true); setVoirEtapes(false); if (parRoute) go('accueil'); toast('C’est noté. Tu retrouves les premiers pas dans ton menu : « Comment ça marche ? ».'); }}/>` : null}
+      onHide=${() => { setOff(true); setVoirEtapes(false); if (parRoute) go('accueil'); toast('C’est noté. Tu retrouves les premiers pas dans « Moi », en haut : « Comment ça marche ? ».'); }}/>` : null}
   </section>`;
 }
 
