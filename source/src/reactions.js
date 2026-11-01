@@ -3,7 +3,7 @@
 // Mise à jour tout de suite (store.reagirPublic), comme les réactions des messages. Pas de points pour une réaction.
 // Les règles (qui lit, qui réagit, qui répond) sont dans reseau-vivant.js et dans la base.
 import { html, useState, useEffect, useLayoutEffect, useRef } from './vendor/preact-htm.js';
-import { Icon, Modal, Avatar, toast, injectCSS } from './ui.js';
+import { Icon, Modal, Avatar, toast, injectCSS, vibrer } from './ui.js';
 import { addAR, getLang } from './i18n.js';
 import { timeAgo } from './logic.js';
 import { SignalerBtn } from './confiance.js';
@@ -13,8 +13,9 @@ import { EMOJIS_PUBLICS, REPONSE_MAX, reactionsSur, pastilles, auteurCible, quiA
 // Toucher une pastille = réagir avec cette émoji (ou la retirer si c'est la mienne) ; le bouton souriant ouvre les cinq
 // émojis à la place de la ligne (rien ne bouge autour, rien n'est coupé par la carte) ; « N réactions » montre qui.
 // Sur sa propre publication : on voit les pastilles et qui a réagi, sans réagir.
-// court (pied des cartes, une seule ligne) : le résumé « 👏❤️ 3 » ouvre qui a réagi, puis le bouton souriant (ou sa
-// propre émoji, en couleur de sélection) ouvre les cinq émojis, qui couvrent toute la ligne du pied.
+// court (pied des cartes et fiche d'une offre, une seule ligne) : le résumé « 👏❤️ » (les réactions des autres) ouvre qui a
+// réagi, puis le bouton souriant (ou sa propre émoji, en couleur de sélection) ouvre les cinq émojis, qui couvrent toute
+// la ligne. Les réactions ne s'y affichent jamais en nombre (règle du réseau) : les émojis disent qu'on a réagi, la liste dit qui.
 export function Reactions({ ctx, cible, cls = '', court = false }) {
   const { data, me, store } = ctx;
   const [barre, setBarre] = useState(false);
@@ -42,11 +43,12 @@ export function Reactions({ ctx, cible, cls = '', court = false }) {
   const peut = auteurCible(data, cible) !== me.id;
   const mienne = liste.find(r => r.user_id === me.id)?.emoji || null;
   if (!ps.length && !peut) return null;
+  // L'émoji s'affiche tout de suite ; la vibration légère (8 ms, Socle) attend que la réaction soit vraiment enregistrée :
+  // jamais pour un échec (l'émoji repart, un message le dit), ni pour un retrait
   const reagir = e => {
     if (barre) revenir.current = true;
     setBarre(false);
-    try { if (e && navigator.vibrate) navigator.vibrate(8); } catch {}
-    store.reagirPublic(cible, e).catch(err => toast(err.message || String(err), 'err'));
+    store.reagirPublic(cible, e).then(() => { if (e) vibrer(8); }, err => toast(err.message || String(err), 'err'));
   };
   const total = liste.length;
   const stop = e => e.stopPropagation();
@@ -56,10 +58,12 @@ export function Reactions({ ctx, cible, cls = '', court = false }) {
     <button type="button" class="icon-btn small rx-fermer" aria-label="Fermer" onClick=${() => { revenir.current = true; setBarre(false); }}><${Icon} name="x" size=${16}/></button>
   </div>`;
   const voirQui = total ? (total === 1 ? '1 réaction : voir qui' : `${total} réactions : voir qui`) : '';
-  // Version courte : la ligne reste en place (cachée) sous le choix ouvert, qui la recouvre avec tout le pied
+  // Version courte : la ligne reste en place (cachée) sous le choix ouvert, qui la recouvre avec tout le pied.
+  // Le résumé montre les réactions des autres : la sienne est déjà sur son bouton (jamais « 🙏 🙏 » pour une seule réaction)
+  const autres = court ? pastilles(liste.filter(r => r.user_id !== me.id)) : [];
   if (court) return html`<div ref=${ref} class=${'rx rx-court' + (barre ? ' ouvert' : '') + (cls ? ' ' + cls : '')} role="group" aria-label="Réactions" onClick=${stop}>
-    ${total ? html`<button type="button" key="resume" class="rx-resume" aria-label=${voirQui} onClick=${() => setQui(mienne || ps[0].emoji)}>
-      <span class="rx-pile" aria-hidden="true">${ps.slice(0, 2).map(p => html`<span key=${p.emoji}>${p.emoji}</span>`)}</span><span class="rx-n">${total}</span></button>` : null}
+    ${autres.length ? html`<button type="button" key="resume" class="rx-resume" aria-label="Voir qui a réagi" onClick=${() => setQui(mienne || autres[0].emoji)}>
+      <span class="rx-pile" aria-hidden="true">${autres.slice(0, 2).map(p => html`<span key=${p.emoji}>${p.emoji}</span>`)}</span></button>` : null}
     ${peut ? html`<button type="button" key="ajouter" class=${'rx-ajouter' + (mienne ? ' on' : '')} aria-expanded=${barre ? 'true' : 'false'} aria-label=${mienne ? `Changer ma réaction ${mienne}` : 'Réagir'} onClick=${() => setBarre(true)}>
       ${mienne ? html`<span class="rx-mienne" aria-hidden="true">${mienne}</span>` : html`<${Icon} name="smile" size=${18}/><span class="rx-plus" aria-hidden="true">+</span>`}</button>` : null}
     ${barre ? choix('rx-choix') : null}
@@ -133,6 +137,7 @@ export function Reponses({ ctx, d }) {
     const t = txt.trim(); if (t.length < 2) return;
     act(async () => { await store.insert('reponses_demandes', { demande_id: d.id, author_id: me.id, body: t }); setTxt(''); });
   };
+  // L'invite du champ reste courte, entière à 360 px : que la réponse est publique, la phrase « Pas encore de réponse… » le dit
   return html`<div class="comments dm-reponses">
     ${liste.length ? null : html`<p class="small muted">${auteur ? 'Pas encore de réponse. Les lauréats et les étudiants de ton année peuvent t’en laisser une.' : 'Pas encore de réponse. Un conseil, un contact : tout le monde la verra.'}</p>`}
     ${liste.map(r => {
@@ -145,7 +150,7 @@ export function Reponses({ ctx, d }) {
       </div>`;
     })}
     ${peut ? html`<form class="comment-form dm-rep-form" onSubmit=${envoyer}>
-      <input id=${'rep-txt-' + d.id} aria-label="Ta réponse" placeholder=${auteur ? 'Répondre…' : 'Un conseil, un contact ? Tout le monde verra ta réponse.'} value=${txt} onInput=${e => setTxt(e.target.value)} maxlength=${REPONSE_MAX}/>
+      <input id=${'rep-txt-' + d.id} aria-label="Ta réponse" placeholder=${auteur ? 'Répondre…' : 'Un conseil, un contact…'} value=${txt} onInput=${e => setTxt(e.target.value)} maxlength=${REPONSE_MAX}/>
       <button class="btn small" type="submit" disabled=${txt.trim().length < 2}>Envoyer</button>
     </form>` : null}
   </div>`;
@@ -214,11 +219,11 @@ injectCSS('reactions', `
 `);
 
 addAR({
-  'Réactions': 'التفاعلات', 'Réagir': 'تفاعل', 'Choisir une réaction': 'اختيار تفاعل', '1 réaction': 'تفاعل واحد', '1 réaction : voir qui': 'تفاعل واحد: عرض من تفاعل',
+  'Réactions': 'التفاعلات', 'Réagir': 'تفاعل', 'Voir qui a réagi': 'عرض من تفاعل', 'Choisir une réaction': 'اختيار تفاعل', '1 réaction': 'تفاعل واحد', '1 réaction : voir qui': 'تفاعل واحد: عرض من تفاعل',
   'Auteur de la demande': 'صاحب الطلب',
   'Pas encore de réponse. Les lauréats et les étudiants de ton année peuvent t’en laisser une.': 'لا يوجد رد بعد. يمكن للخريجين ولطلبة سنتك ترك رد لك.',
   'Pas encore de réponse. Un conseil, un contact : tout le monde la verra.': 'لا يوجد رد بعد. نصيحة أو جهة اتصال: سيراها الجميع.',
-  'Un conseil, un contact ? Tout le monde verra ta réponse.': 'نصيحة أو جهة اتصال؟ سيرى الجميع ردك.',
+  'Un conseil, un contact…': 'نصيحة، جهة اتصال…',
   'Ta réponse fait entre 2 et 500 caractères.': 'يتراوح ردك بين حرفين و500 حرف.', 'Cette demande est fermée.': 'هذا الطلب مغلق.',
   'Tu ne réagis pas à ta propre publication.': 'لا يمكنك التفاعل مع منشورك.', 'Tu as déjà réagi.': 'سبق أن تفاعلت.',
 }, [

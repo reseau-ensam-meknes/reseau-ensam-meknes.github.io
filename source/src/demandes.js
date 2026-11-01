@@ -4,7 +4,7 @@
 // Les règles sont celles de la base (protect_demande, protect_proposition, protect_placement).
 import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, roleTexte, useBusy, toast, injectCSS, celebrate, TYPE_ICON, allerAuChamp } from './ui.js';
-import { useBrouillon } from './ui.js';
+import { useBrouillon, mouvementReduit } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
 import { addAR, arCount, t as tr } from './i18n.js';
 import { TYPES, AIDES, DEMANDES_MAX, typesDemande, demandesActives, demandeEnPause, demandesPour, niveauOf, timeAgo, fmtDate, placementOf, etatAide, AIDE_OUVERTE, manquesDemande } from './logic.js';
@@ -26,7 +26,7 @@ const EXEMPLES = {
   etranger: 'Ex. Stage de 4 à 6 mois en France ou au Canada',
   emploi: 'Ex. Premier poste en méthodes, qualité ou data',
 };
-const doux = () => (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
+const doux = () => (mouvementReduit() ? 'auto' : 'smooth');   // défilement doux, sauf en mouvement réduit (Socle)
 
 // Une rangée de puces qui défile (les filtres des offres et des demandes) : jamais un mot coupé à moitié au bord.
 // Le fondu du Socle (.fondu-debut / .fondu-fin, ui.js) se pose sur la puce coupée : on n'en laisse paraître que le
@@ -198,7 +198,7 @@ function PropositionRecue({ ctx, d, x }) {
   const accepter = () => act(async () => {
     await store.update('propositions', x.id, { status: 'acceptee' });
     setOui(false);
-    if (!celebrate({ cle: 'match-' + x.id, icon: 'heart', visages: [me, l], titre: 'C’est un match !', texte: `Parle avec ${prenom(l)} de la suite. Quand tu commences, ${prenom(l)} le déclare et tu confirmes : ta réussite sera annoncée.`, action: { label: `Écrire à ${prenom(l)}`, icon: 'chat', onClick: () => ctx.ecrire?.(x.laureat_id) } })) toast('C’est un match ! Écris-lui pour la suite.', 'win');
+    if (!celebrate({ cle: 'match-' + x.id, icon: 'check', visages: [me, l], titre: 'C’est un match !', texte: `Parle avec ${prenom(l)} de la suite. Quand tu commences, ${prenom(l)} le déclare et tu confirmes : ta réussite sera annoncée.`, action: { label: `Écrire à ${prenom(l)}`, icon: 'chat', onClick: () => ctx.ecrire?.(x.laureat_id) } })) toast('C’est un match ! Écris-lui pour la suite.', 'win');
   });
   const nonMerci = () => act(async () => { await store.update('propositions', x.id, { status: 'declinee' }); toast('C’est noté. Merci pour ta réponse.'); });
   return html`<div class="dm-prop">
@@ -219,7 +219,7 @@ function AccepterAide({ l, x, onYes, onClose }) {
   return html`<${Modal} title=${l ? `Accepter l’aide de ${prenom(l)} ?` : 'Accepter cette aide ?'} onClose=${onClose} cls="dm-oui-feuille">
     <div class="dm-oui-qui"><${Avatar} p=${l} size=${72}/><strong translate="no" dir="auto">${nom}</strong>${l ? html`<span class="small muted">${roleTexte(l, true)}</span>` : null}<${Aide} x=${x}/></div>
     <p class="dm-oui-txt">Les autres propositions seront closes, et vous verrez vos coordonnées.</p>
-    <div class="row-end"><button type="button" class="btn ghost" onClick=${onClose}>Pas maintenant</button><button type="button" class="btn primary dm-oui" aria-busy=${busy ? 'true' : undefined} disabled=${busy} onClick=${run(onYes)}><${Icon} name="heart" size=${16}/> Oui, accepter</button></div>
+    <div class="row-end"><button type="button" class="btn ghost" onClick=${onClose}>Pas maintenant</button><button type="button" class="btn primary dm-oui" aria-busy=${busy ? 'true' : undefined} disabled=${busy} onClick=${run(onYes)}><${Icon} name="check" size=${16}/> Oui, accepter</button></div>
   <//>`;
 }
 
@@ -237,7 +237,7 @@ function MatchAuteur({ ctx, d }) {
     if (!celebrate({ cle: 'demande-reussie-' + d.id, icon: 'trophy', titre: 'Félicitations, c’est officiel !', texte: `Ta réussite chez ${pl.entreprise} est vérifiée des deux côtés et annoncée dans le réseau. Un petit merci fera plaisir à ${prenom(l)}.`, action: { label: `Dire merci à ${prenom(l)}`, icon: 'heart', onClick: () => ctx.go('parcours') } })) toast('Félicitations ! Ta réussite est confirmée.', 'win');
   });
   return html`<div class="dm-match">
-    <p class="eyebrow"><${Icon} name="heart" size=${13}/> C’est un match</p>
+    <p class="eyebrow"><${Icon} name="check" size=${13}/> C’est un match</p>
     <div class="dm-prop-head"><${Person} p=${l} onOpen=${openProfile} size=${40}/><span class="spacer"></span><${MessageBtn} ctx=${ctx} p=${l} cls="btn small"/></div>
     ${x ? html`<${Aide} x=${x}/>` : null}
     ${pl && pl.status === 'en_attente' ? html`<div class="dm-box accent"><${Icon} name="briefcase" size=${18}/><p><strong>${`${prenom(l)} indique que tu as commencé chez ${pl.entreprise}.`}</strong> <span class="small">Une fois confirmé, ta réussite est vérifiée des deux côtés et annoncée.</span></p>
@@ -428,7 +428,7 @@ function MatchLaureat({ ctx, d, x }) {
   const [declare, setDeclare] = useState(false);
   const retirer = () => ctx.confirm(`Te retirer ? La demande de ${prenom(a)} se rouvre pour les autres lauréats.`, () => act(async () => { await store.update('propositions', x.id, { status: 'retiree' }); toast('C’est noté, tu ne l’accompagnes plus. Merci de l’avoir dit.'); }), 'Me retirer');
   return html`<div class="dm-match">
-    <p class="eyebrow"><${Icon} name="heart" size=${13}/> ${`C’est un match avec ${prenom(a)}`}</p>
+    <p class="eyebrow"><${Icon} name="check" size=${13}/> ${`C’est un match avec ${prenom(a)}`}</p>
     <${Etapes} d=${d}/>
     <${Aide} x=${x}/>
     ${pl && pl.status === 'en_attente' ? html`<div class="dm-box"><${Icon} name="clock" size=${18}/><p>${`Démarrage déclaré chez ${pl.entreprise}. En attente de la confirmation de ${prenom(a)}.`}</p></div>`
@@ -548,11 +548,12 @@ function DemandesAdmin({ ctx, focusId }) {
   const retirer = d => ctx.confirm(`Retirer la demande « ${d.titre} » ? Elle ne sera plus proposée aux lauréats.`, () => act(async () => { await store.update('demandes', d.id, { status: 'fermee' }); toast('Demande retirée.'); }), 'Retirer la demande');
   return html`<section class="m-section">
     <div class="m-head"><h2 class="h-ico"><${Icon} name="send"/> Demandes en cours</h2></div>
-    <p class="small muted">${`${n('ouverte')} ouvertes · ${n('match')} en match · ${n('pourvue')} réussies`}</p>
+    <p class="small muted">${`${n('ouverte')} ${n('ouverte') > 1 ? 'ouvertes' : 'ouverte'} · ${n('match')} en match · ${n('pourvue')} ${n('pourvue') > 1 ? 'réussies' : 'réussie'}`}</p>
     ${actives.length ? html`<div class="list">${actives.map(d => {
       const props = (data.propositions || []).filter(x => x.demande_id === d.id && ['envoyee', 'acceptee'].includes(x.status)).length;
       return html`<article class=${'dm-card' + (d.id === focusId ? ' dm-focus' : '')} id=${'dm-' + d.id} key=${d.id}>
-        <div class="dm-head"><${Person} p=${store.byId('profiles', d.auteur_id)} onOpen=${openProfile} size=${36}/><span class="spacer"></span><${TypeTag} type=${d.type}/><${Pill} d=${d}/></div>
+        <div class="dm-head"><${Person} p=${store.byId('profiles', d.auteur_id)} onOpen=${openProfile} size=${44}/><${Pill} d=${d}/></div>
+        <${Sur} d=${d}/>
         <h3 class="dm-titre" translate="no" dir="auto">${d.titre}</h3><${Meta} d=${d}/>
         <div class="dm-acts"><span class="small muted">${props > 1 ? `${props} propositions` : props ? '1 proposition' : 'Pas encore de proposition'}</span><span class="spacer"></span><button type="button" class="btn tiny ghost" onClick=${() => retirer(d)}><${Icon} name="x" size=${14}/> Retirer la demande</button></div>
       </article>`;
@@ -612,7 +613,7 @@ injectCSS('demandes', `
 .dm-oui-feuille .row-end { margin-block-start: var(--sp-4); }
 .dm-oui-feuille .row-end .btn { min-height: 46px; }
 .dm-oui-feuille .row-end .btn.primary { flex: 1 1 12rem; }
-@media (prefers-reduced-motion: no-preference) { .dm-oui-qui .avatar { animation: dm-oui-av .45s var(--ease) .08s backwards; } }
+@media (prefers-reduced-motion: no-preference) { .dm-oui-qui .avatar { animation: dm-oui-av .4s var(--ease) .08s backwards; } }
 @keyframes dm-oui-av { from { opacity: 0; transform: scale(.85); } }
 .dm-aide { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; overflow-wrap: anywhere; }
 .dm-match { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) 0 0; border-top: 1px solid var(--line); }
@@ -663,7 +664,6 @@ injectCSS('demandes', `
 .dm-card .why { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; }
 .dm-acts { gap: .5rem; }
 .dm-acts .btn.dm-aider { min-height: 44px; padding-inline: 1.05rem; font-weight: 650; }
-.dm-acts .btn.dm-aider .ico { color: var(--bad); }
 .dm-card .dm-social { margin-top: .1rem; }
 @media (max-width: 420px) { .dm-acts .btn.dm-aider { flex: 1 1 auto; justify-content: center; } }
 /* Grand écran : deux colonnes de demandes, comme les offres */
@@ -745,7 +745,7 @@ addAR({
   [/^(\d+) propositions$/, n => `${n} اقتراحات`],
   [/^Voir les (\d+)$/, n => `عرض ${n}`],
   [/^Je cherche : (.+)$/, t => `أبحث عن: ${({ Stage: 'تدريب', PFE: 'مشروع نهاية الدراسة', 'Stage à l’étranger': 'تدريب بالخارج', Emploi: 'عمل' })[t] || t}`],
-  [/^(\d+) ouvertes · (\d+) en match · (\d+) réussies$/, (a, b, c) => `${a} مفتوحة · ${b} في تطابق · ${c} ناجحة`],
+  [/^(\d+) ouvertes? · (\d+) en match · (\d+) réussies?$/, (a, b, c) => `${a} مفتوحة · ${b} في تطابق · ${c} ناجحة`],
   [/^Aider (.+)$/, n => `مساعدة ${n}`],
   [/^Ton mot à (.+)$/, n => `كلمتك إلى ${n}`],
   [/^Bonjour (.+), j’ai lu ta demande et ton CV…$/, n => `مرحبًا ${n}، قرأت طلبك وسيرتك الذاتية…`],

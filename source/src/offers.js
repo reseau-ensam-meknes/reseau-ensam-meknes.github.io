@@ -56,8 +56,9 @@ injectCSS('fil-pick', `
 .chip.fil-parc { font-weight: 650; }
 `);
 
-// En-tête compact (EnTetePage du Socle) : un seul chiffre en sur-titre, le titre et le seul bouton plein sur une ligne
-// (« Publier une offre » pour un lauréat, « Partager une offre » pour un étudiant), le segment Offres · Demandes (n) dessous.
+// En-tête compact (EnTetePage du Socle) : un seul chiffre en sur-titre, le titre et son bouton sur une ligne, le segment
+// Offres · Demandes (n) dessous. Un lauréat : « Publier une offre », le seul bouton plein de l'écran. Un étudiant vient
+// trouver et postuler : « Partager une offre » reste tonal (« Postuler », dans la fiche, garde le seul bouton plein).
 // Sous les offres, une seule rangée de puces, collée en haut en défilant : les types, la banque de sujets (puce PFE),
 // « Entre lauréats » et « Mes offres » pour les lauréats, « Mises de côté » pour les étudiants.
 // Les anciennes adresses ouvrent le bon filtre : #offres/sujets la puce PFE, #offres/laureats « Entre lauréats ».
@@ -136,9 +137,12 @@ export function OffersPage(ctx) {
   // Un étudiant a le bouton en haut de la page : la section « Offres partagées » ne le répète pas en bas.
   const partager = store.peutOrigine?.() ? () => setCompose({ mode: 'partage' }) : null;
   const chiffre = demandes ? null : chiffreOffres(ctx);
+  // Jusqu'à 410 px, le libellé se resserre (« Publier ») : le chiffre du sur-titre reste entier à côté ; le nom pour les
+  // lecteurs d'écran reste le libellé complet, qui commence par le mot visible
+  const pub = filtre === 'pfe' ? ['Déposer un sujet', 'Déposer'] : ['Publier une offre', 'Publier'];
   const bouton = demandes ? null
-    : !isStudent ? html`<button class=${'btn primary' + (filtre === 'pfe' ? '' : ' publier-offre')} id="of-publier" onClick=${() => setCompose(presetDe(filtre))}><${Icon} name="plus"/> ${filtre === 'pfe' ? 'Déposer un sujet' : 'Publier une offre'}</button>`
-    : partager ? html`<button class="btn primary" id="of-partager" onClick=${partager}><${Icon} name="share"/> Partager une offre</button>` : null;
+    : !isStudent ? html`<button class=${'btn primary' + (filtre === 'pfe' ? '' : ' publier-offre')} id="of-publier" aria-label=${pub[0]} onClick=${() => setCompose(presetDe(filtre))}><${Icon} name="plus"/> <span class="of-long">${pub[0]}</span><span class="of-court" aria-hidden="true">${pub[1]}</span></button>`
+    : partager ? html`<button class="btn tonal" id="of-partager" onClick=${partager}><${Icon} name="share"/> Partager une offre</button>` : null;
   // Le titre ne bouge pas d'un onglet à l'autre : la place du sur-titre et celle du bouton restent gardées
   return html`<section class="page offres-page">
     <${EnTetePage} garderPlace titre=${demandes ? 'Demandes' : 'Offres'}
@@ -160,7 +164,7 @@ const prenom = p => (p?.full_name || '').split(' ')[0];
 // Raisons d'une recommandation : « Ta filière » est un texte de l'interface, le reste vient du profil (compétence, ville)
 // Une seule raison en couleur (la filière) ; les autres restent neutres
 const Pourquoi = ({ why }) => html`<span class="why">${why.map(w => (w === 'Ta filière' ? html`<span class="mini good">${w}</span>` : html`<span class="mini" translate="no" dir="auto">${w}</span>`))}</span>`;
-const doux = () => (matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth');
+const doux = () => (mouvementReduit() ? 'auto' : 'smooth');   // défilement doux, sauf en mouvement réduit (Socle)
 // Une offre arrivée depuis la dernière visite : ouverte, d'un autre membre, publiée après
 const arriveeDepuis = (o, me, vu) => !!vu && o.status === 'ouverte' && o.author_id !== me.id && new Date(o.created_at).getTime() > vu;
 
@@ -326,14 +330,19 @@ function pucesOffre(o) {
 const vientDeSauver = new Map();   // offre → moment où elle vient d'être mise de côté ici
 function Garder({ ctx, o, saved, pop, cls = '', taille = 16 }) {
   const { me, store, act } = ctx;
-  const sauver = () => { if (!saved) { vientDeSauver.set(o.id, Date.now()); vibrer(10); } act(() => saved ? store.remove('reactions', saved.id) : store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save' })); };
+  // La vibration attend que l'offre soit vraiment mise de côté (un vrai succès, jamais un échec)
+  const sauver = () => {
+    if (!saved) vientDeSauver.set(o.id, Date.now());
+    act(async () => { if (saved) await store.remove('reactions', saved.id); else { await store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save' }); vibrer(10); } });
+  };
   return html`<button type="button" class=${'icon-btn small ocard-garder ' + cls + (saved ? ' on' : '') + (saved && pop ? ' pop' : '')} aria-pressed=${!!saved} aria-label=${saved ? 'Ne plus mettre de côté' : 'Mettre de côté'} onClick=${sauver}><${Icon} name="bookmark" size=${taille}/></button>`;
 }
 
-// Carte d'une offre, compacte : toute la carte ouvre la fiche. Le logo, le poste (deux lignes au plus), puis
+// Carte d'une offre, compacte : toute la carte ouvre la fiche. Le logo, le poste (trois lignes au plus : un titre long
+// reste lisible sur 360 px, « autoconsommation solaire » n'est pas coupé), puis
 // « Entreprise · Ville · il y a 3 j » sur une ligne, trois puces sobres au plus, et ce qui est vrai autour (il peut te
 // recommander, en vert ; mises de côté, candidatures pour son auteur). Un seul pied, sur une ligne : le visage du
-// lauréat qui la partage, les réactions, Postuler (ou l'état), le marque-page.
+// lauréat qui la partage (« Ton offre » pour la sienne), les réactions, Postuler (ou l'état), le marque-page.
 export function OfferCard({ o, ctx, onOpen, why, sujets = false, i = 0 }) {
   // Une offre partagée (vue ailleurs) : la carte compacte, avec le lien vers le site d'origine
   if (estPartagee(o)) return html`<${PartageCard} o=${o} ctx=${ctx} onOpen=${onOpen} i=${i}/>`;
@@ -377,7 +386,7 @@ export function OfferCard({ o, ctx, onOpen, why, sujets = false, i = 0 }) {
       ${preuve ? html`<span class="oc-preuve"><${Icon} name=${preuve[0]} size=${16}/><span>${preuve[1]}</span></span>` : null}
     </button>
     <footer class="ocard-foot">
-      ${author ? html`<span class=${'ocard-author' + (coopt ? ' coopt' : '')}><${Avatar} p=${author} size=${28}/><span class="oa-txt"><span class="oa-nom"><span translate="no" dir="auto">${prenom(author)}</span><span class="oa-promo">${`promo ${author.promo}`}</span></span></span></span>` : html`<span class="spacer"></span>`}
+      ${author ? html`<span class=${'ocard-author' + (coopt ? ' coopt' : '')}><${Avatar} p=${author} size=${28}/><span class="oa-txt"><span class="oa-nom">${mine ? html`<span>Ton offre</span>` : html`<span translate="no" dir="auto">${prenom(author)}</span><span class="oa-promo">${`promo ${author.promo}`}</span>`}</span></span></span>` : html`<span class="spacer"></span>`}
       <${Reactions} ctx=${ctx} cible=${{ offer_id: o.id }} cls="ocard-rx" court/>
       ${etat}
       ${canApply ? html`<button class="btn tiny tonal ocard-apply" onClick=${() => ctx.openOffer(o.id, true)}>Postuler</button>` : null}
@@ -461,24 +470,28 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
   const myApp = candidat ? apps.find(a => a.student_id === me.id) : null;
   const saved = data.reactions.find(r => r.offer_id === o.id && r.user_id === me.id && r.kind === 'save');
   const toggleSave = () => {
-    if (!saved) { setPop(true); vibrer(10); }
-    act(() => saved ? store.remove('reactions', saved.id) : store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save' }));
+    if (!saved) setPop(true);
+    act(async () => { if (saved) await store.remove('reactions', saved.id); else { await store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save' }); vibrer(10); } });
   };
   const dl = o.deadline ? new Date(o.deadline + 'T12:00:00') : null;
   const jours = daysUntil(o.deadline);
   const urgent = o.status === 'ouverte' && jours !== null && jours >= 0 && jours <= 7;
   const dateTxt = dl ? dl.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', ...(dl.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}) }) : '';
   const lieu = lieuOffre(o);
-  // À qui elle s'adresse : chaque morceau reste entier (« GE-MCI » ne se coupe pas), la ligne ne commence jamais par « · »
+  // À qui elle s'adresse : chaque morceau reste entier (« GE-MCI » ne se coupe pas) ; le point qui les sépare est porté par
+  // le morceau suivant, dans une marge masquée : aucune ligne ne commence ni ne finit par « · » (comme la méta des cartes)
   const pour = forLaureats(o) ? ['Lauréats'] : [...(o.annees || []).map(a => NIVEAUX[a]?.short).filter(Boolean), ...(o.filieres?.length ? resumeFilieres(o.filieres) : ['toutes filières'])];
-  // Les faits en tuiles : ce qu'on regarde d'abord (type, durée, lieu, rémunéré, date limite), puis à qui elle s'adresse
+  // Les faits en tuiles : ce qu'on regarde d'abord (durée, lieu, rémunéré, date limite), puis à qui elle s'adresse.
+  // Le type n'a sa tuile que si le titre de la fenêtre ne le dit pas déjà (« Projet de fin d'études », « Stage à l'étranger »…) :
+  // une offre partagée ou entre lauréats.
+  const titreDitType = !partage && !forLaureats(o) && !!TYPES[o.type]?.long;
   const faits = [
-    ['Type', TYPE_ICON[o.type] || 'briefcase', TYPES[o.type]?.label || 'Offre'],
+    titreDitType ? null : ['Type', TYPE_ICON[o.type] || 'briefcase', TYPES[o.type]?.label || 'Offre'],
     o.duree ? ['Durée', 'clock', html`<span translate="no" dir="auto">${o.duree}</span>`] : null,
     lieu ? ['Lieu', 'pin', html`<span translate="no" dir="auto">${lieu}</span>`] : null,
     o.remunere ? ['Rémunéré', 'remunere', 'Oui'] : null,
     dl ? ['Date limite', 'calendar', dateTxt, urgent] : null,
-    ['Pour', 'people', html`${pour.map((x, i) => html`${i ? '\u00a0· ' : ''}<span class="od-insecable">${x}</span>`)}`],
+    ['Pour', 'people', html`<span class="od-pour">${pour.map(x => html`<span key=${x} class=${/\s/.test(x) ? null : 'od-entier'}>${x}</span>`)}</span>`],
   ].filter(Boolean);
   // Sous le titre, seulement ce qui est vrai et utile : fermée, l'échéance proche, sa filière, un lauréat qui encadre
   const saFiliere = candidat && o.status === 'ouverte' && !forLaureats(o) && offerMatch(o, me).why.includes('Ta filière');
@@ -533,7 +546,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
         </div>
         ${signaux.length ? html`<div class="od-signaux">${signaux}</div>` : null}
       </div>
-      ${partage && tab === 'offre' ? html`<${NotePartage} o=${o} auteur=${author}/>` : null}
+      ${partage && tab === 'offre' ? html`<${NotePartage} o=${o} auteur=${author} moi=${mine}/>` : null}
       <${RelanceBanner} ctx=${ctx} o=${o}/>
       ${mine && !partage ? html`<div class="seg od-onglets" role="tablist" aria-label="Mon offre">${[['candidats', `Candidats (${apps.length})`], ['offre', 'L’offre'], ['questions', `Questions (${comments.length})`]].map(([k, l]) => html`<button role="tab" aria-selected=${tab === k} class=${tab === k ? 'on' : ''} onClick=${() => setTab(k)}>${l}</button>`)}</div>` : null}
 
@@ -553,7 +566,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
           ${estPortee(o) ? html`<${EngagementPortee} auteur=${author}/>` : null}
         </div>` : estPortee(o) ? html`<${EngagementPortee} auteur=${author}/>` : null}
         ${candidat ? html`<${ApplyBox} ctx=${ctx} o=${o} form=${form} setForm=${setForm} onClose=${onClose} onEnvoyee=${() => { setEnvoyee(true); vibrer(12); }}/>` : null}
-        <${Reactions} ctx=${ctx} cible=${{ offer_id: o.id }} cls="od-rx"/>
+        <${Reactions} ctx=${ctx} cible=${{ offer_id: o.id }} cls="od-rx" court/>
         ${!mine || partage ? html`<${Questions} ctx=${ctx} o=${o} comments=${comments}/>` : null}` : null}
 
       ${tab === 'questions' && mine ? html`<${Questions} ctx=${ctx} o=${o} comments=${comments}/>` : null}
@@ -701,9 +714,10 @@ function Matching({ ctx, o }) {
     await store.insert('invitations', { laureat_id: me.id, student_id: p.id, offer_id: o.id, message: msg });
     toast(`Invitation envoyée à ${p.full_name.split(' ')[0]}.`);
   });
-  return html`<div class="matching"><p class="small"><${Icon} name="spark" size=${14}/> <strong>Profils qui correspondent à ton offre</strong></p>
-    <ul class="people-list">${list.map(({ p, why }) => html`<li key=${p.id}><${Person} p=${p} onOpen=${openProfile} size=${32}/><${Pourquoi} why=${why}/><span class="spacer"></span>
-      ${invited(p.id) ? html`<span class="state-pill s-validation">Invitation envoyée</span>` : html`<button class="btn small" onClick=${() => invite(p)}><${Icon} name="send" size=${14}/> Inviter à postuler</button>`}</li>`)}</ul></div>`;
+  // Une ligne par profil : le visage et le nom en entier, puis la raison et l'invitation (tonale : elle se répète)
+  return html`<section class="matching" aria-labelledby=${'match-' + o.id}><h3 id=${'match-' + o.id} class="matching-titre"><${Icon} name="spark" size=${16}/> Profils qui correspondent à ton offre</h3>
+    <ul class="people-list">${list.map(({ p, why }) => html`<li key=${p.id}><${Person} p=${p} onOpen=${openProfile} size=${40}/>${why.length ? html`<${Pourquoi} why=${why}/>` : html`<span class="spacer"></span>`}
+      ${invited(p.id) ? html`<span class="state-pill s-validation">Invitation envoyée</span>` : html`<button type="button" class="btn small tonal" onClick=${() => invite(p)}><${Icon} name="send" size=${14}/> Inviter à postuler</button>`}</li>`)}</ul></section>`;
 }
 
 function PickStudent({ ctx, onClose, onPick }) {
@@ -718,6 +732,7 @@ function PickStudent({ ctx, onClose, onPick }) {
   <//>`;
 }
 
+// Questions publiques : le titre dit déjà que tout le monde les voit ; le champ garde une invite courte, entière à 360 px
 function Questions({ ctx, o, comments }) {
   const { store, me, act, openProfile } = ctx;
   const [txt, setTxt] = useState('');
@@ -726,11 +741,11 @@ function Questions({ ctx, o, comments }) {
     <h3>Questions publiques <span class="count">${comments.length}</span></h3>
     ${sorted.map(c => { const a = store.byId('profiles', c.author_id); return html`<div class="comment" key=${c.id}>
       <${Avatar} p=${a} size=${28}/>
-      <div class="comment-body"><button class="linkish" onClick=${() => openProfile(a)}>${a ? html`<span translate="no" dir="auto">${a.full_name}</span>` : 'Membre'}</button>${a?.id === o.author_id ? html` <span class="mini">Auteur de l’offre</span>` : null} <span class="muted small">${timeAgo(c.created_at)}</span><p translate="no" dir="auto">${c.body}</p></div>
+      <div class="comment-body"><button class="linkish" onClick=${() => openProfile(a)}>${a ? html`<span translate="no" dir="auto">${a.full_name}</span>` : 'Membre'}</button>${a?.id === o.author_id ? html` <span class="mini">Auteur de l’offre</span>` : null} <span class="muted small q-quand">${timeAgo(c.created_at)}</span><p translate="no" dir="auto">${c.body}</p></div>
       ${(c.author_id === me.id || me.role === 'admin') ? html`<button class="icon-btn small" aria-label="Supprimer" onClick=${() => act(() => store.remove('comments', c.id))}><${Icon} name="x" size=${14}/></button>` : html`<${SignalerBtn} ctx=${ctx} type="commentaire" id=${c.id} small/>`}
     </div>`; })}
     <form class="comment-form" onSubmit=${e => { e.preventDefault(); if (!txt.trim()) return; act(async () => { await store.insert('comments', { offer_id: o.id, author_id: me.id, body: txt.trim() }); setTxt(''); }); }}>
-      <input id=${'c-' + o.id} placeholder=${o.author_id === me.id ? 'Répondre…' : 'Une question sur l’offre ? Tout le monde verra la réponse.'} value=${txt} onInput=${e => setTxt(e.target.value)} maxlength="1500"/>
+      <input id=${'c-' + o.id} aria-label=${o.author_id === me.id ? 'Ta réponse' : 'Ta question sur l’offre'} placeholder=${o.author_id === me.id ? 'Répondre…' : 'Pose ta question…'} value=${txt} onInput=${e => setTxt(e.target.value)} maxlength="1500"/>
       <button class="btn small" type="submit" disabled=${!txt.trim()}>Envoyer</button>
     </form>
   </div>`;
@@ -877,13 +892,21 @@ injectCSS('offres-liste', `
 .offres-page .en-tete-txt { flex: 1 1 0; }
 .offres-page .en-tete-act { min-height: 44px; }
 .offres-page .en-tete-act .btn { flex: none; width: auto; min-height: 44px; }
-.of-chiffre { display: inline-flex; align-items: center; gap: .3rem; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; text-align: start; }
+/* Le libellé court du bouton (« Publier ») sur un téléphone : le chiffre du sur-titre (« 12 candidatures à traiter → »)
+   garde sa place, entier, jusqu'à 410 px ; au-delà, le libellé complet */
+.offres-page .of-court { display: none; }
+@media (max-width: 410px) { .offres-page .of-long { display: none; } .offres-page .of-court { display: inline; } }
+/* Le chiffre est un lien vers les candidatures : rien ne rogne ni son texte ni sa cible au doigt (44 px de haut) */
+.offres-page .en-tete .eyebrow:has(> .of-chiffre) { overflow: visible; }
+.of-chiffre { display: inline-flex; align-items: center; gap: .3rem; max-width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; text-align: start; }
+.of-chiffre > .compteur { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .of-chiffre > svg { flex: none; transition: transform .2s var(--ease); }
 .of-chiffre:hover { text-decoration: underline; text-underline-offset: 3px; }
 .of-chiffre:hover > svg { transform: translateX(2px); }
 [dir="rtl"] .of-chiffre > svg { transform: scaleX(-1); }
 [dir="rtl"] .of-chiffre:hover > svg { transform: scaleX(-1) translateX(2px); }
-@media (pointer: coarse) { .of-chiffre { position: relative; } .of-chiffre::after { content: ""; position: absolute; inset: -12px -8px; } }
+@media (pointer: coarse) { .of-chiffre { position: relative; } .of-chiffre::after { content: ""; position: absolute; inset: -14px -8px; } }
+@media (prefers-reduced-motion: reduce) { .of-chiffre > svg { transition: none; } }
 .of-place { display: block; width: 0; height: 44px; }
 .offres-seg { display: flex; width: min(100%, 22rem); }
 .offres-seg button { flex: 1 1 0; min-height: 38px; }
@@ -963,7 +986,7 @@ injectCSS('offres-liste', `
 .pt-tete { display: flex; align-items: flex-end; justify-content: space-between; gap: .6rem; min-width: 0; margin: -32px 0 .3rem; }
 .pt-tete > .clogo { position: relative; border-radius: 18px; box-shadow: 0 0 0 3px var(--surface), 0 8px 18px -8px rgb(10 20 40 / .35); }
 .pt-signal { display: inline-flex; align-items: center; gap: .3rem; flex: none; min-height: 26px; padding: 0 .6rem 0 .45rem; border-radius: var(--r-pill); background: var(--good-soft); color: var(--good); font-size: var(--fs-2); font-weight: 650; }
-.pt-carte .ocard-title { font: 700 var(--fs-5)/1.25 var(--f-display); letter-spacing: -.015em; color: var(--ink); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; text-wrap: balance; }
+.pt-carte .ocard-title { font: 700 var(--fs-5)/1.25 var(--f-display); letter-spacing: -.015em; color: var(--ink); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; text-wrap: balance; }
 .pt-carte .ocard-tags { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .25rem; }
 .pt-carte .ocard-tags { margin-bottom: .45rem; }
 .pt-bas { margin-top: auto; display: flex; flex-direction: column; gap: .45rem; }
@@ -987,7 +1010,7 @@ injectCSS('offres-liste', `
 .ocard-main { gap: .5rem; padding: .85rem .9rem .55rem; }
 .ocard .oc-tete { align-items: flex-start; gap: .75rem; }
 .oc-corps { flex: 1; display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
-.ocard .ocard-title { font: 700 var(--fs-4)/1.3 var(--f-display); letter-spacing: -.01em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-wrap: pretty; }
+.ocard .ocard-title { font: 700 var(--fs-4)/1.3 var(--f-display); letter-spacing: -.01em; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; text-wrap: pretty; }
 /* L'entreprise et le lieu en entier (« Airbus Operations · Toulouse, France ») : la ligne passe à la suivante
    plutôt que de couper un nom. Chaque morceau porte son point devant lui et la ligne commence 1em plus tôt,
    dans une marge masquée : aucune ligne ne commence par « · ». Le nom, isolé (bdi), garde son sens de lecture. */
@@ -1055,7 +1078,12 @@ injectCSS('offres-ux', `
 
 .od.detail { gap: 1.15rem; }
 .od-hero { position: relative; display: flex; flex-direction: column; gap: .7rem; margin: calc(-1 * var(--tete, 0px)) calc(-1 * var(--od-px, 1.2rem)) 0; padding: calc(var(--tete, 0px) + .4rem) var(--od-px, 1.2rem) .6rem; }
-.od-insecable { white-space: nowrap; }
+.od-pour { display: flex; flex-wrap: wrap; margin-inline-start: -1em; clip-path: inset(-3px -3px -3px 1em); }
+[dir="rtl"] .od-pour { clip-path: inset(-3px 1em -3px -3px); }
+/* Le point pend devant chaque morceau, hors de sa boîte : un morceau qui passe à la ligne (« toutes / filières ») reste aligné */
+.od-pour > span { position: relative; min-width: 0; margin-inline-start: 1em; }
+.od-pour > .od-entier { white-space: nowrap; }   /* un code (« GE-MCI ») reste entier ; « toutes filières » peut passer à la ligne */
+.od-pour > span::before { content: "·"; position: absolute; inset-inline-start: -1em; width: 1em; text-align: center; font-weight: 400; color: var(--muted); }
 .od-hero > :not(.od-voile) { position: relative; }
 .od-voile { position: absolute; inset: 0; pointer-events: none;
   background: radial-gradient(70% 75% at 10% 6%, var(--v-1), transparent 70%), radial-gradient(60% 85% at 94% 0%, var(--v-2), transparent 70%),
@@ -1121,11 +1149,34 @@ injectCSS('offres-ux', `
 .cand-statut .seg > button.on[data-s="entretien"] { background: var(--brass-soft); color: var(--brass); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brass) 35%, transparent); }
 .cand-statut .seg > button.on[data-s="refuse"] { background: var(--surface); color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .cand-statut .seg > button.on[data-s="retenu"] { background: var(--good-soft); color: var(--good); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--good) 35%, transparent); }
+/* Profils qui correspondent : un titre comme les autres blocs ; par profil, le visage et le nom en entier, puis la raison
+   et « Inviter à postuler » dessous (la raison n'est jamais écrasée lettre par lettre). Assez large : une seule ligne. */
+.matching { display: flex; flex-direction: column; gap: .2rem; margin-top: .5rem; }
+.matching-titre { display: flex; align-items: center; gap: .45rem; margin: 0; font: 700 var(--fs-4)/1.3 var(--f-display); letter-spacing: -.01em; color: var(--ink); }
+.matching-titre > svg { flex: none; color: var(--accent); }
+.matching .people-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .5rem .75rem; padding-block: .75rem; }
+.matching .people-list li > .person { grid-column: 1 / -1; }
+.matching .people-list li > :is(.why, .spacer) { min-width: 0; overflow-wrap: normal; }
+.matching .people-list li > :is(.btn, .state-pill) { justify-self: end; }
+.matching .people-list li > .btn { min-height: 40px; }
+@media (min-width: 600px) {
+  .matching .people-list li { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .matching .people-list li > .person { grid-column: auto; }
+}
+/* Les questions : « il y a 9 j » ne se coupe jamais en deux lignes */
+.comments .q-quand { white-space: nowrap; }
 /* La candidature : l'icône à côté de sa phrase (jamais seule sur une ligne), le bouton sous la phrase ; les réactions plus près */
 .apply-box .apply-cv { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: .35rem .5rem; }
 .apply-box .apply-cv > svg { margin-top: .1rem; }
 .apply-box .apply-cv > :not(svg):not(span) { grid-column: 2; justify-self: start; }
-.od > .od-rx { margin-block: -.4rem; }
+/* Les réactions de la fiche, comme sur les cartes : jamais un nombre (le résumé ouvre qui a réagi) ; le choix des cinq
+   émojis s'ouvre par-dessus la ligne, rien ne bouge autour */
+.od > .od-rx { position: relative; margin-block: -.4rem; }
+/* Tant qu'on n'a pas réagi, le bouton dit « Réagir » en toutes lettres (son nom, déjà traduit) : seul sur sa ligne, une
+   icône ne suffirait pas à dire l'action */
+.od > .od-rx .rx-ajouter:not(.on) { width: auto; padding-inline: .6rem .8rem; gap: .35rem; }
+.od > .od-rx .rx-ajouter:not(.on) .rx-plus { display: none; }
+.od > .od-rx .rx-ajouter:not(.on)::after { content: attr(aria-label); }
 
 /* Le pied collé : le marque-page (qui fait un petit bond), « Postuler » ; puis la coche de la candidature envoyée */
 .modal-foot > .od-foot { flex: 1; min-width: 0; display: flex; align-items: center; gap: .6rem; }
@@ -1138,7 +1189,7 @@ injectCSS('offres-ux', `
 .od-envoyee .od-foot-txt { display: flex; flex-direction: column; gap: .05rem; }
 .od-envoyee strong { font: 700 var(--fs-4)/1.25 var(--f-display); color: var(--ink); }
 @media (prefers-reduced-motion: no-preference) {
-  .od-save.pop .ico { animation: marque .5s cubic-bezier(.3, 1.6, .5, 1); }
+  .od-save.pop .ico { animation: marque .4s cubic-bezier(.3, 1.6, .5, 1); }
   .od-envoyee.vient .od-foot-txt { animation: od-envoi .4s var(--ease-out) .12s backwards; }
 }
 @keyframes od-envoi { from { opacity: 0; transform: translateX(-10px); } }
@@ -1157,14 +1208,15 @@ injectCSS('offres-ux', `
   .modal.fiche-offre .modal-foot { padding-inline: 1.6rem; }
 }
 @media (prefers-reduced-motion: no-preference) and (min-width: 1100px) {
-  ::view-transition-new(vt-fiche) { animation: .42s var(--ease-out) both od-panneau; }
+  ::view-transition-new(vt-fiche) { animation: .4s var(--ease-out) both od-panneau; }
   html[dir="rtl"]::view-transition-new(vt-fiche) { animation-name: od-panneau-rtl; }
 }
 @keyframes od-panneau { from { transform: translateX(calc(100% + 24px)); } }
 @keyframes od-panneau-rtl { from { transform: translateX(calc(-100% - 24px)); } }
 @keyframes od-panneau-part { to { transform: translateX(calc(100% + 24px)); } }
 @keyframes od-panneau-part-rtl { to { transform: translateX(calc(-100% - 24px)); } }
-@media (prefers-reduced-motion: reduce) { .modal.fiche-offre, .modal.fiche-offre.wide { animation-name: fade-in; } .modal-back.sortie > .modal.fiche-offre { animation-name: fade-out; } }
+@media (prefers-reduced-motion: reduce) { .modal.fiche-offre, .modal.fiche-offre.wide { animation-name: fade-in; } .modal-back.sortie > .modal.fiche-offre { animation-name: fade-out; }
+  .od-author { transition: background-color .2s ease; } .od-author:active { transform: none; } }
 `);
 
 ajouterIcones({ remunere: '<rect x="2.5" y="6" width="19" height="12" rx="2.5"/><circle cx="12" cy="12" r="2.6"/><path d="M6 9.5v5M18 9.5v5"/>' });
@@ -1220,7 +1272,7 @@ addAR({
   // La page des offres : en-tête, rangée collée, « Pour toi », « Nouveau »
   'Par les étudiants': 'من الطلبة', 'Rechercher une offre': 'ابحث عن عرض', 'Filtrer les offres': 'تصفية العروض', 'Offres ou demandes': 'عروض أو طلبات',
   'Choisies d’après ta filière et ton profil': 'مختارة حسب شعبتك وملفك', 'Nouveau': 'جديد', 'depuis ta dernière visite': 'منذ زيارتك الأخيرة',
-  'Proposée par': 'مقترح من',
+  'Proposée par': 'مقترح من', 'Ton offre': 'عرضك', 'Déposer': 'اقتراح', 'Pose ta question…': 'اطرح سؤالك…', 'Ta question sur l’offre': 'سؤالك حول العرض',
   // La fiche : les titres des blocs, la candidature envoyée
   'Partagée par': 'مشاركة من', 'Le sujet': 'الموضوع', 'Le poste': 'المنصب', 'La mission': 'المهمة', 'L’annonce': 'الإعلان',
   'Candidature envoyée': 'تم إرسال ترشيحك', 'Reçoit ta candidature et te répond ici': 'يستقبل ترشيحك ويجيبك هنا',
