@@ -178,15 +178,23 @@ export function LangToggle({ onChange, store, me, aussitot = false }) {
 // La promo et le rôle choisi sont gardés dans ce navigateur jusqu'à la fin de l'inscription, puis oubliés.
 // ---------------------------------------------------------------------------
 const CLE = 'ensam-invite-promo', CLE_ROLE = 'ensam-role-choisi';
+// Invitation nommée : &de=… est le code du membre qui a envoyé le lien (8 caractères), gardé comme la promo
+const CLE_DE = 'ensam-invite-de', CODE_DE = /^[a-z0-9]{8}$/;
 const valide = promoValide;
 const lire = k => { try { return localStorage.getItem(k); } catch { return null; } };
 const ecrire = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* navigation privée */ } };
 
-// Au chargement : lit ?promo= (et &lang=ar) dans l'adresse, garde la promo (sauf pour un membre connecté),
+// Au chargement : lit ?promo= (et &lang=ar, et &de= : le code de qui invite) dans l'adresse, garde la promo et le code,
 // puis les enlève de la barre d'adresse. Renvoie 'ar' pour un lien arabe, sauf si ce navigateur a déjà choisi sa langue.
 export function lireInvitation() {
   try {
     const u = new URL(location.href);
+    const de = u.searchParams.get('de');
+    if (de !== null) {
+      if (CODE_DE.test(de)) ecrire(CLE_DE, de);
+      u.searchParams.delete('de');
+      if (!u.searchParams.has('promo')) history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+    }
     if (!u.searchParams.has('promo')) return null;
     const n = Number(u.searchParams.get('promo'));
     if (valide(n)) localStorage.setItem(CLE, String(n));
@@ -199,7 +207,8 @@ export function lireInvitation() {
 export function promoInvitee() { const n = Number(lire(CLE)); return valide(n) ? n : null; }
 export const retenirRole = r => ecrire(CLE_ROLE, r === 'etudiant' || r === 'laureat' ? r : null);
 export const roleRetenu = () => { const r = lire(CLE_ROLE); return r === 'etudiant' || r === 'laureat' ? r : null; };
-export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); }
+export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); ecrire(CLE_DE, null); }
+const codeInvite = () => { const c = lire(CLE_DE); return c && CODE_DE.test(c) ? c : null; };
 
 // L'accord donné sur CET appareil (case cochée à l'inscription), pour cette adresse. Un compte créé par la demande de
 // code de quelqu'un d'autre (adresse mal tapée) ne reprend jamais l'accord ni le rôle de cette personne-là.
@@ -260,6 +269,20 @@ export async function offrePartagee(id, cfg = window.ENSAM_CONFIG || {}) {
   return ['stage', 'pfe', 'etranger', 'emploi'].includes(x?.type) ? { type: x.type, audience: x.audience === 'laureats' ? 'laureats' : 'etudiants', ouverte: x.ouverte !== false } : undefined;
 }
 
+// L'invitation nommée : le prénom (tel qu'écrit par le membre), la promo et le rôle de qui a envoyé le lien, rien d'autre
+// (invitation_de, même école). null : code inconnu ; undefined : on ne sait pas (démo, base pas encore à jour, réseau)
+export async function invitationDe(code, cfg = window.ENSAM_CONFIG || {}) {
+  if (!CODE_DE.test(code || '') || !enLigneCfg(cfg)) return undefined;
+  const { ok, x } = await appelPublic('invitation_de', { p_code: code }, cfg);
+  if (!ok) return undefined;
+  const prenom = typeof x?.prenom === 'string' ? x.prenom.trim().slice(0, 40) : '';
+  return prenom ? { prenom, promo: promoValide(Number(x.promo)) ? Number(x.promo) : null } : null;
+}
+// « Invitation de Nadia · promo 2019 » : le prénom reste tel qu'il est écrit, même en arabe (il peut l'être en lettres arabes)
+export const ligneInvitation = (x, ar = getLang() === 'ar') => (!x ? '' : ar
+  ? `دعوة من \u2068${x.prenom}\u2069${x.promo ? ` · دفعة ${x.promo}` : ''}`
+  : `Invitation de ${x.prenom}${x.promo ? ` · promo ${x.promo}` : ''}`);
+
 // ---------------------------------------------------------------------------
 // L'écran d'entrée : choisir son rôle, donner son email, taper le code à 6 chiffres reçu. Pas de mot de passe à inventer.
 // Les comptes qui ont un mot de passe peuvent toujours s'en servir (« J'ai un mot de passe »).
@@ -292,6 +315,13 @@ const POUR = {
 function Fondateurs() {
   const [M, setM] = useState(null);
   useEffect(() => { import('./fondateurs-public.js').then(m => setM(() => m.FondateursPublics), () => {}); }, []);
+  return M ? html`<${M}/>` : null;
+}
+// Plan · partie membres : « Ils sont déjà dans le réseau » et « Réussites », ce que les membres ont accepté de montrer.
+// Même chargement à part ; sans base à jour, sans réseau ou sans accord, rien ne s'affiche.
+function Vitrine() {
+  const [M, setM] = useState(null);
+  useEffect(() => { import('./entree-vitrine.js').then(m => setM(() => m.VitrineEntree), () => {}); }, []);
   return M ? html`<${M}/>` : null;
 }
 
@@ -335,6 +365,14 @@ export function AuthScreen({ store }) {
   const [busy, setBusy] = useState(false); const [entre, setEntre] = useState(false);
   const [lignes, setLignes] = useState(null);
   useEffect(() => { let vivant = true; chiffresPublics().then(c => { if (vivant) setLignes(lignesChiffres(c)); }); return () => { vivant = false; }; }, []);
+  // Le lien venait d'un membre : qui invite (un code inconnu de cette école est oublié)
+  const [deQui, setDeQui] = useState(null);
+  useEffect(() => {
+    const c = codeInvite(); if (!c) return;
+    let vivant = true;
+    invitationDe(c).then(x => { if (!vivant) return; if (x === null) ecrire(CLE_DE, null); else if (x) setDeQui(x); });
+    return () => { vivant = false; };
+  }, []);
   const setRole = r => { setRoleEtat(r); retenirRole(r); setRoleMsg(false); };
   // Un seul envoi à la fois, même pour deux touchers dans le même instant (l'écran n'a pas encore grisé le bouton)
   const occupe = useRef(false);
@@ -346,7 +384,8 @@ export function AuthScreen({ store }) {
   };
   const ecole = store?.domainesEcole?.() || [];
   const deLEcole = estEmailEcole(email, ecole);
-  const meta = () => ({ consent_at: new Date().toISOString(), consent_version: VERSION_ACCORD, emails_hebdo: mails, langue: getLang(), ...(role ? { role_choisi: role } : {}) });
+  // invite_par : le code de qui invite ; la base retrouve le membre (même école) en créant le profil
+  const meta = () => { const de = codeInvite(); return { consent_at: new Date().toISOString(), consent_version: VERSION_ACCORD, emails_hebdo: mails, langue: getLang(), ...(role ? { role_choisi: role } : {}), ...(de ? { invite_par: de } : {}) }; };
   const vers = (m, cible = m === 'motdepasse' ? 'au-pw' : m === 'inscription' && !role ? 'au-je-etudiant' : 'au-email') => { setMode(m); setMsg(null); setRoleMsg(false); focus(cible); };
 
   // Demander un code : creer = la personne s'inscrit (un email déjà connu est simplement connecté)
@@ -413,7 +452,7 @@ export function AuthScreen({ store }) {
     <form class="auth-card form entree-form" onSubmit=${submit} aria-label=${inscription ? 'Créer mon compte' : null}>
       ${inscription ? null : html`<h2>${{ connexion: 'Se connecter', code: 'Ton code est parti', motdepasse: 'Se connecter', nouveau: 'Nouveau mot de passe' }[mode]}</h2>`}
       ${perdue && mode === 'connexion' ? html`<p class="auth-msg" id="au-session" role="status">${store.brouillonsGardes ? 'Ta session a expiré. Reconnecte-toi : ce que tu étais en train d’écrire est gardé.' : 'Ta session a expiré. Reconnecte-toi pour continuer.'}</p>` : null}
-      ${bandeau ? html`<p class="invite-band"><${Icon} name="send" size=${18}/><span><strong>Bienvenue, promo ${invite} !</strong> Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.</span></p>` : null}
+      ${bandeau || (deQui && inscription) ? html`<p class="invite-band"><${Icon} name="send" size=${18}/><span>${deQui && inscription ? html`<span id="au-invite-de" style="display:block;font-weight:650">${ligneInvitation(deQui)}</span>` : null}${bandeau ? html`<strong>Bienvenue, promo ${invite} !</strong> Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.` : null}</span></p>` : null}
       ${inscription ? html`<${ChoixRole} value=${role} onChange=${setRole} idPrefix="au-je-" compact/>
         ${roleMsg ? html`<p id="au-role-msg" class="auth-msg err" role="alert">Choisis d’abord ta situation.</p>` : null}` : null}
       ${mode === 'code' ? html`
@@ -434,7 +473,7 @@ export function AuthScreen({ store }) {
         ${mode === 'motdepasse' ? html`<button type="button" class="linkish" onClick=${() => vers('connexion')}>Recevoir un code à la place</button>` : null}
       </div>
     </form>
-    <div class="auth-pour">${pour.map(([t, items]) => html`<section><h2 class="eyebrow">${t}</h2><ul class="auth-points">${items.map(([i, x]) => html`<li><span class="sc-ico"><${Icon} name=${i}/></span> ${x}</li>`)}</ul></section>`)}</div>
+    <div class="auth-pour">${pour.map(([t, items]) => html`<section><h2 class="eyebrow">${t}</h2><ul class="auth-points">${items.map(([i, x]) => html`<li><span class="sc-ico"><${Icon} name=${i}/></span> ${x}</li>`)}</ul></section>`)}<${Vitrine}/></div>
     <div class="entree-scene sky"><${SchoolScene} fit="slice"/></div>
     <footer class="auth-pied small"><span>Initiative de lauréats, indépendante de l’administration de l’école</span><span class="auth-pied-liens"><a href=${'mailto:' + adresseContact()}>Contact</a><a href="#confidentialite">Confidentialité</a></span></footer>
   </main>`;

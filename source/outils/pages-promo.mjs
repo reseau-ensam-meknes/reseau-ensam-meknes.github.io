@@ -1,8 +1,9 @@
 // Après build.sh : une petite page par promo, dist/promo/AAAA/ (français) et dist/promo/AAAA/ar/ (arabe).
 // WhatsApp, LinkedIn et Facebook lisent ses balises og sans exécuter de JavaScript : l'aperçu nomme la promo et
 // montre l'entrée dessinée (img/apercu-promo.jpg, outils/generer-apercu.mjs). Une personne, elle, est envoyée
-// tout de suite vers l'application avec ?promo=AAAA (et &lang=ar). Les promos sont celles qu'accepte le lien
-// d'invitation (regles-entree.js) : la sortie ne dépend pas de la date, la CI compare dist/ et la racine.
+// tout de suite vers l'application avec ?promo=AAAA (et &lang=ar, et &de=… : le code de qui invite, invitation nommée).
+// Les promos sont celles qu'accepte le lien d'invitation (regles-entree.js) : la sortie ne dépend pas de la date,
+// la CI compare dist/ et la racine.
 // Pas de meta refresh : certains robots le suivent et montreraient l'aperçu de la page d'accueil.
 // L'image montre l'entrée de l'école : la description commence donc par dire que le Réseau est indépendant de l'école
 // (WhatsApp n'en montre que le début).
@@ -29,7 +30,7 @@ function html(a, l) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<script>location.replace(${JSON.stringify(vers)}+location.hash)</script>
+<script>var d=/[?&]de=([a-z0-9]{8})(?:&|$)/.exec(location.search);location.replace(${JSON.stringify(vers)}+(d?"&de="+d[1]:"")+location.hash)</script>
 <title>${esc(t.titre(a))}</title>
 <meta name="description" content="${esc(t.desc)}">
 <meta name="robots" content="noindex">
