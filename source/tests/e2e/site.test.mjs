@@ -1091,8 +1091,13 @@ test('« Me prévenir » à la fin de la pile Match : après des « Intéressé 
   assert.ok(fin <= barre, `la fin (${Math.round(fin)} px) tient au-dessus de la barre du bas (${Math.round(barre)} px)`);
   assert.equal(await s.debordement(), 0);
   assert.deepEqual(await axeLigne(s), [], 'fin de la pile : axe');
+  // Une seule demande à l'écran : la pastille « Activer les notifications » s'efface devant la ligne (elle flottait aussi sur
+  // la fin de la pile), et revient quand la ligne s'en va
+  assert.equal(await s.page.locator('.pastille').count(), 1, 'la pastille est là, cachée');
+  assert.equal(await s.page.locator('.pastille').isVisible(), false, 'pas la pastille en même temps que la ligne');
   await s.page.click('#pv-ligne-x'); await s.page.waitForTimeout(200);
   assert.equal(await s.page.locator('.pv-ligne').count(), 0);
+  assert.ok(await s.page.locator('.pastille').isVisible(), 'la ligne partie, la pastille revient');
   const m = await s.memo();
   assert.deepEqual(m.lignes, ['match']);
   assert.equal(m.n, 1, 'le × ne compte pas comme un refus de feuille');

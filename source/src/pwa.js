@@ -703,6 +703,9 @@ injectCSS('prevenir-ligne', `
 /* Match : sous le bilan de la visite, serrée (la fin de la pile tient au-dessus de la barre du bas, sans défiler) */
 .mx-vide .pv-ligne { inline-size: 100%; max-inline-size: 38ch; margin-block: -.2rem; padding-block: 0; text-align: start; font-size: var(--fs-2); line-height: 1.35; }
 .mx-vide .pv-l-txt { padding-block: .45rem; }
+/* Une seule demande à l'écran : la ligne, qui dit pourquoi, prend la place de la pastille « Activer les notifications »
+   (fin de la pile Match ; elle flottait aussi sur la fin de la pile). La pastille revient quand la ligne s'en va. */
+body:has(.pv-ligne) .pastille { display: none; }
 `);
 addAR({
   [NOTIF_RAISON.match]: 'إذا كان الاهتمام متبادلًا، يصلك إشعار على هذا الجهاز.',
