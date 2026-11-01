@@ -1228,6 +1228,11 @@ export async function lireCache(uid) {
 }
 const ecrireCache = c => cacheFaire('readwrite', st => st.put(c, 'membre'));
 export const oublierCache = () => cacheFaire('readwrite', st => st.delete('membre'));
+// Photos de profil : les liens déjà obtenus (valables 6 h, gardés 5 h) vont avec la copie de ce compte ; au retour, les
+// visages s'affichent tout de suite (le service worker rend l'image gardée) au lieu d'attendre de nouveaux liens.
+// Les images elles-mêmes (cache « photos-v1 » de sw.js) sont effacées quand on se déconnecte soi-même.
+export const photosPourCache = (m, maintenant = Date.now()) => [...(m || [])].filter(([p, v]) => p && v?.url && v.fin > maintenant + 300e3).slice(-400);
+const oublierPhotos = () => { try { globalThis.caches?.delete('photos-v1').catch(() => {}); } catch { /* stockage indisponible */ } };
 
 // Brouillons (message en cours, demande, offre, question…) : gardés sur l'appareil pour ce compte, même si la session
 // expire ; effacés quand on se déconnecte soi-même. ui.js (useBrouillon) les lit et les écrit.
@@ -1265,6 +1270,7 @@ export class SupabaseStore extends Base {
       this.sb.auth.onAuthStateChange((e, s) => this.changementSession(e, s));
       this.data = { ...Object.fromEntries(TABLES.map(t => [t, []])), ...cache.data };
       this.reglages = cache.reglages || {}; this._pouls = cache.pouls || null;
+      this.photosUrl = new Map(photosPourCache(cache.photos));
       this.me = this.byId('profiles', gardee.user.id) || null;
       this.depuisCache = true; this.ready = true;
       this.rafraichir();
@@ -1307,6 +1313,7 @@ export class SupabaseStore extends Base {
     // (loadTable garde ce qu'il avait en cas d'échec : ce serait les lignes de l'autre compte, écrites ensuite dans
     // la copie de l'appareil sous le nouveau)
     this.data = Object.fromEntries(TABLES.map(t => [t, []])); this.me = null; this._pouls = null;
+    this.photosUrl = new Map(); this.photosDemandees = new Set();
     try { await this.loadAll(); }
     catch {
       // Réseau qui hésite : le nouveau compte avec ce qui a pu être lu, et on réessaie (comme rafraichir)
@@ -1420,7 +1427,7 @@ export class SupabaseStore extends Base {
   ecrireCacheMaintenant() {
     clearTimeout(this.minuteurCache);
     if (this.depuisCache || !this.me || !this.userId || this.me.id !== this.userId || this.mode !== 'live') return;
-    ecrireCache({ forme: CACHE_FORME, uid: this.userId, t: Date.now(), data: pourCache(this.data, this.userId), reglages: this.reglages, pouls: this._pouls || null }).catch?.(() => {});
+    ecrireCache({ forme: CACHE_FORME, uid: this.userId, t: Date.now(), data: pourCache(this.data, this.userId), reglages: this.reglages, pouls: this._pouls || null, photos: photosPourCache(this.photosUrl) }).catch?.(() => {});
   }
 
   get userId() { return this.session?.user?.id || null; }
@@ -1574,7 +1581,7 @@ export class SupabaseStore extends Base {
   async signOut() {
     this.deconnexionVoulue = true;
     await this.retirerCetAppareil();
-    oublierBrouillons(this.userId); clearTimeout(this.minuteurCache); await oublierCache();
+    oublierBrouillons(this.userId); clearTimeout(this.minuteurCache); await oublierCache(); oublierPhotos();
     try { navigator.clearAppBadge?.()?.catch?.(() => {}); dispatchEvent(new Event('ensam-deconnexion')); } catch { /* */ }
     await this.sb.auth.signOut();
   }

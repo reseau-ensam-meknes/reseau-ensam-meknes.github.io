@@ -104,3 +104,55 @@ test('ciel du soir : seulement en thème clair ; le thème sombre garde sa nuit 
   // Le soir vient avant les règles sombres (même poids : la dernière l'emporte)
   assert.ok(page.indexOf(':root[data-ciel="soir"] .sky') < page.indexOf(':root[data-theme="dark"] .sky'));
 });
+
+// ---------------------------------------------------------------------------
+// Photos de profil gardées par le service worker (sw.js : clePhoto, taillerPhotos) et liens gardés avec la copie du compte
+// ---------------------------------------------------------------------------
+const SW = (() => {
+  const ecoutes = {};
+  const ctx = { self: { addEventListener: (t, f) => { (ecoutes[t] ||= []).push(f); }, registration: { scope: 'https://site.ma/' } }, location: new URL('https://site.ma/'), URL, caches: {} };
+  vm.runInNewContext(lireSrc('sw.js'), ctx);
+  return { ...ctx, ecoutes };
+})();
+
+test('photos : la clé du cache est l’adresse sans le jeton, seulement pour le stockage « photos »', () => {
+  const sb = 'https://abc.supabase.co/storage/v1/object/sign/';
+  assert.equal(SW.clePhoto(sb + 'photos/u1/photo-1.jpg?token=eyJ.a.b'), 'https://abc.supabase.co/storage/v1/object/sign/photos/u1/photo-1.jpg');
+  assert.equal(SW.clePhoto(sb + 'photos/u1/photo-1.jpg?token=autre'), SW.clePhoto(sb + 'photos/u1/photo-1.jpg?token=eyJ.a.b'));
+  assert.notEqual(SW.clePhoto(sb + 'photos/u1/photo-2.jpg?token=x'), SW.clePhoto(sb + 'photos/u1/photo-1.jpg?token=x'));
+  // Jamais les CV, la messagerie, les fichiers publics ni le site lui-même
+  for (const u of [sb + 'cv/u1/cv.pdf?token=x', sb + 'chat/a/b.jpg?token=x', 'https://abc.supabase.co/storage/v1/object/public/photos/u1/p.jpg',
+    'https://abc.supabase.co/rest/v1/profiles?select=*', 'https://site.ma/img/logo.png', sb + 'photos/', 'pas une adresse']) assert.equal(SW.clePhoto(u), null, u);
+  // Le service worker écoute toujours ses évènements (installation, activation, messages, deux « fetch », notifications)
+  assert.equal(SW.ecoutes.fetch.length, 2);
+  for (const t of ['install', 'activate', 'message', 'push', 'notificationclick']) assert.ok(SW.ecoutes[t]?.length, t);
+});
+
+test('photos : le service worker ne répond qu’aux photos demandées en GET, et garde les 300 dernières', async () => {
+  const [photos, site] = SW.ecoutes.fetch;
+  const repondu = req => { let r = null; photos({ request: req, respondWith: p => { r = p; } }); return r; };
+  assert.equal(repondu({ method: 'GET', url: 'https://abc.supabase.co/storage/v1/object/sign/cv/u/cv.pdf?token=x' }), null);
+  assert.equal(repondu({ method: 'POST', url: 'https://abc.supabase.co/storage/v1/object/sign/photos/u/p.jpg?token=x' }), null);
+  // Le cache : 305 photos gardées dans l'ordre d'arrivée, il en reste 300, les plus récentes
+  const cles = Array.from({ length: 305 }, (_, i) => `https://abc.supabase.co/storage/v1/object/sign/photos/u/${i}.jpg`);
+  const cache = { liste: [...cles], keys: async () => [...cache.liste], delete: async k => { cache.liste = cache.liste.filter(x => x !== k); return true; } };
+  await SW.taillerPhotos(cache);
+  assert.equal(cache.liste.length, 300);
+  assert.deepEqual(cache.liste, cles.slice(5));
+  await SW.taillerPhotos(cache);
+  assert.equal(cache.liste.length, 300);
+  assert.equal(typeof site, 'function');
+});
+
+test('photos : les liens déjà obtenus partent avec la copie du compte, jamais ceux qui expirent bientôt ni les échecs', async () => {
+  const { photosPourCache } = await import('../../src/store.js');
+  const t = Date.UTC(2026, 10, 1, 12);
+  const m = new Map([['u1/a.jpg', { url: 'https://x/a?token=1', fin: t + 4 * 3600e3 }], ['u2/b.jpg', { url: 'https://x/b?token=2', fin: t + 120e3 }],
+    ['u3/c.jpg', { url: null, fin: t + 600e3 }], ['', { url: 'https://x/vide', fin: t + 3600e3 }]]);
+  assert.deepEqual(photosPourCache(m, t), [['u1/a.jpg', { url: 'https://x/a?token=1', fin: t + 4 * 3600e3 }]]);
+  assert.deepEqual(photosPourCache(undefined, t), []);
+  assert.deepEqual(photosPourCache([['u1/a.jpg', { url: 'https://x/a', fin: t + 3600e3 }]], t).length, 1);
+  const beaucoup = new Map(Array.from({ length: 450 }, (_, i) => [`u/${i}.jpg`, { url: `https://x/${i}`, fin: t + 3600e3 }]));
+  const gardes = photosPourCache(beaucoup, t);
+  assert.equal(gardes.length, 400); assert.equal(gardes[0][0], 'u/50.jpg');
+});

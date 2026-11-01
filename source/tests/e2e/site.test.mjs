@@ -6370,3 +6370,43 @@ test('accueil : le bandeau dit ce qui empêche les notifications, se range trois
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
+
+// ===========================================================================
+// Plan · vitesse et ambiance : photos gardées par le service worker, ciel du soir, passage jour/nuit en cercle,
+// titres arabes dans leur police
+// ===========================================================================
+// Un faux stockage Supabase sur un autre port (autre origine, comme le vrai) : il compte les images qu'il envoie
+async function fauxStockage() {
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const envois = {};
+  const srv = http.createServer((q, r) => {
+    const u = new URL(q.url, 'http://x').pathname; envois[u] = (envois[u] || 0) + 1;
+    r.writeHead(200, { 'content-type': 'image/png', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); r.end(PNG);
+  });
+  await new Promise(ok => srv.listen(0, '127.0.0.1', ok));
+  return { adresse: `http://127.0.0.1:${srv.address().port}`, envois, fermer: () => srv.close() };
+}
+
+test('photos de profil : gardées par le service worker sous leur adresse sans jeton, rendues sans retéléchargement ; jamais un CV', async () => {
+  const st = await fauxStockage();
+  const s = await ouvrir({ sw: true });
+  await s.page.waitForFunction(() => navigator.serviceWorker.getRegistration().then(r => !!r?.active), null, { timeout: 30000 });
+  await s.page.reload(); await s.page.waitForSelector('.hello');
+  assert.ok(await s.page.evaluate(() => !!navigator.serviceWorker.controller));
+  const image = src => s.page.evaluate(src => new Promise(ok => { const i = new Image(); i.onload = () => ok(i.naturalWidth); i.onerror = () => ok(0); i.src = src; }), src);
+  const photo = '/storage/v1/object/sign/photos/u1/photo-1.png', cv = '/storage/v1/object/sign/cv/u1/cv.png';
+  assert.equal(await image(st.adresse + photo + '?token=premier'), 1);
+  await s.page.waitForFunction(() => caches.open('photos-v1').then(c => c.keys()).then(k => k.length === 1));
+  // Un nouveau lien (autre jeton, comme à chaque visite) : l'image vient du téléphone
+  assert.equal(await image(st.adresse + photo + '?token=second'), 1);
+  assert.equal(await image(st.adresse + photo + '?token=troisieme'), 1);
+  assert.equal(st.envois[photo], 1, 'une seule fois sur le réseau');
+  assert.deepEqual(await s.page.evaluate(() => caches.open('photos-v1').then(c => c.keys()).then(k => k.map(r => r.url))), [st.adresse + photo]);
+  // Un CV n'est jamais gardé
+  await image(st.adresse + cv + '?token=1'); await image(st.adresse + cv + '?token=2');
+  assert.equal(st.envois[cv], 2);
+  // Une nouvelle version du site ne vide pas les photos gardées (seulement les anciennes copies du site)
+  assert.ok((await s.page.evaluate(() => caches.keys())).includes('photos-v1'));
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close(); st.fermer();
+});
