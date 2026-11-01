@@ -1212,13 +1212,13 @@ begin
   if tg_table_name = 'mentorships' then
     if tg_op = 'INSERT' then
       if new.mentor_id is not null then
-        perform public.pousser(new.mentor_id, 'mentorat_demande', jsonb_build_object('nom', (select full_name from public.profiles where id = new.student_id), 'sujet', new.sujet));
+        perform public.pousser(new.mentor_id, 'mentorat_demande', jsonb_build_object('nom', (select full_name from public.profiles where id = new.student_id), 'sujet', new.sujet, 'm', new.id));
       end if;
     else
       if old.status = 'demande' and new.status = 'acceptee' then
-        perform public.pousser(new.student_id, 'mentorat_accepte', jsonb_build_object('nom', (select full_name from public.profiles where id = new.mentor_id), 'sujet', new.sujet, 'rdv_at', new.rdv_at));
+        perform public.pousser(new.student_id, 'mentorat_accepte', jsonb_build_object('nom', (select full_name from public.profiles where id = new.mentor_id), 'sujet', new.sujet, 'rdv_at', new.rdv_at, 'm', new.id));
       elsif old.status = 'acceptee' and new.status = 'acceptee' and new.rdv_at is distinct from old.rdv_at then
-        perform public.pousser(new.student_id, 'mentorat_deplace', jsonb_build_object('nom', (select full_name from public.profiles where id = new.mentor_id), 'sujet', new.sujet, 'rdv_at', new.rdv_at));
+        perform public.pousser(new.student_id, 'mentorat_deplace', jsonb_build_object('nom', (select full_name from public.profiles where id = new.mentor_id), 'sujet', new.sujet, 'rdv_at', new.rdv_at, 'm', new.id));
       elsif old.status = 'acceptee' and new.status = 'annulee' then
         -- Qui annule est nommé ; si c'est le lauréat, l'étudiant reçoit un lien pour proposer d'autres horaires
         perform public.pousser(case when auth.uid() = new.student_id then new.mentor_id else new.student_id end, 'mentorat_annule',
@@ -1227,38 +1227,51 @@ begin
             'pour', case when auth.uid() = new.mentor_id then 'demandeur' when auth.uid() = new.student_id then 'mentor' end)));
       end if;
       if old.merci is null and new.merci is not null and new.mentor_id is not null then
-        perform public.pousser(new.mentor_id, 'merci', jsonb_build_object('nom', (select full_name from public.profiles where id = new.student_id)));
+        perform public.pousser(new.mentor_id, 'merci', jsonb_build_object('nom', (select full_name from public.profiles where id = new.student_id), 'm', new.id));
+      end if;
+      -- « Je serai là » : l'étudiant confirme sa présence au rendez-vous fixé, le lauréat le sait (mentorships.confirme_at)
+      if old.confirme_at is null and new.confirme_at is not null and new.status = 'acceptee' and new.mentor_id is not null then
+        perform public.pousser(new.mentor_id, 'mentorat_presence', jsonb_build_object(
+          'nom', split_part((select full_name from public.profiles where id = new.student_id), ' ', 1), 'sujet', new.sujet, 'rdv_at', new.rdv_at, 'm', new.id));
       end if;
     end if;
   elsif tg_table_name = 'applications' then
     if tg_op = 'INSERT' and new.offer_id is not null then
       select author_id into v_auteur from public.offers where id = new.offer_id;
-      perform public.pousser(v_auteur, 'candidature', jsonb_build_object('nom', (select full_name from public.profiles where id = new.student_id), 'titre', new.titre));
+      perform public.pousser(v_auteur, 'candidature', jsonb_build_object('nom', (select full_name from public.profiles where id = new.student_id), 'titre', new.titre,
+        'offre', new.offer_id, 'n', (select count(*) from public.applications a where a.offer_id = new.offer_id and a.status = 'postule')));
     elsif tg_op = 'UPDATE' and new.status is distinct from old.status and new.status in ('entretien', 'retenu')
       and not (old.status = 'retenu' and new.status = 'entretien') then
       -- Retour de « retenu » à « entretien » : un recrutement annulé, pas un nouvel entretien
-      perform public.pousser(new.student_id, 'candidature_statut', jsonb_build_object('titre', new.titre, 'statut', new.status));
+      perform public.pousser(new.student_id, 'candidature_statut', jsonb_strip_nulls(jsonb_build_object('titre', new.titre, 'statut', new.status, 'offre', new.offer_id)));
     end if;
   elsif tg_table_name = 'placements' then
     if tg_op = 'INSERT' and new.status = 'en_attente' then
-      perform public.pousser(new.student_id, 'recrutement_a_confirmer', jsonb_build_object('nom', (select full_name from public.profiles where id = new.laureat_id), 'entreprise', new.entreprise, 'aide', new.aide));
+      perform public.pousser(new.student_id, 'recrutement_a_confirmer', jsonb_build_object('nom', (select full_name from public.profiles where id = new.laureat_id), 'entreprise', new.entreprise, 'aide', new.aide, 'p', new.id));
     elsif tg_op = 'UPDATE' and old.status = 'en_attente' and new.status = 'confirme' then
-      perform public.pousser(new.laureat_id, 'recrutement_confirme', jsonb_build_object('nom', (select full_name from public.profiles where id = new.student_id), 'entreprise', new.entreprise, 'aide', new.aide));
+      perform public.pousser(new.laureat_id, 'recrutement_confirme', jsonb_build_object('nom', (select full_name from public.profiles where id = new.student_id), 'entreprise', new.entreprise, 'aide', new.aide, 'p', new.id));
     end if;
   elsif tg_table_name = 'invitations' then
-    perform public.pousser(new.student_id, 'invitation', jsonb_build_object('nom', (select full_name from public.profiles where id = new.laureat_id), 'titre', (select titre from public.offers where id = new.offer_id)));
+    perform public.pousser(new.student_id, 'invitation', jsonb_build_object('nom', (select full_name from public.profiles where id = new.laureat_id), 'titre', (select titre from public.offers where id = new.offer_id), 'offre', new.offer_id));
   elsif tg_table_name = 'answers' then
     select author_id, titre into v_auteur, v_titre from public.questions where id = new.question_id;
-    perform public.pousser(v_auteur, 'reponse', jsonb_build_object('nom', (select full_name from public.profiles where id = new.author_id), 'titre', v_titre));
+    -- Jamais pour son propre geste (même depuis l'éditeur SQL, où auth.uid() est vide)
+    if v_auteur is distinct from new.author_id then
+      perform public.pousser(v_auteur, 'reponse', jsonb_build_object('nom', (select full_name from public.profiles where id = new.author_id), 'titre', v_titre,
+        'q', new.question_id, 'n', greatest(1, (select count(*) from public.answers a where a.question_id = new.question_id
+          and a.author_id <> v_auteur and a.created_at > public.derniere_visite(v_auteur)))));
+    end if;
   elsif tg_table_name = 'questions' then
     if coalesce(new.entreprise, '') <> '' or coalesce(new.pays, '') <> '' then
       insert into public.push_queue (user_id, kind, data)
-      select p.id, 'question_routee', jsonb_build_object('cible', coalesce(nullif(new.entreprise, ''), new.pays), 'titre', new.titre)
+      select p.id, 'question_routee', jsonb_build_object('cible', coalesce(nullif(new.entreprise, ''), new.pays), 'titre', new.titre, 'q', new.id)
       from public.profiles p
       where p.role = 'laureat' and p.id <> new.author_id
         and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'question_routee')
         and ((coalesce(new.entreprise, '') <> '' and public.meme_entreprise(p.entreprise, new.entreprise))
           or (public.cle_lieu(new.pays) <> 'maroc' and public.cle_lieu(p.pays) = public.cle_lieu(new.pays)))
+      order by public.proximite_filiere(p.filiere, (select a.filiere from public.profiles a where a.id = new.author_id)) desc,
+        public.derniere_visite(p.id) desc nulls last
       limit 40;
     end if;
   elsif tg_table_name = 'parrainages' then
@@ -1266,10 +1279,11 @@ begin
     perform public.pousser(new.filleul_id, 'parrain', jsonb_build_object('nom', (select full_name from public.profiles where id = new.parrain_id)));
   elsif tg_table_name = 'cafes' then
     insert into public.push_queue (user_id, kind, data)
-    select p.id, 'cafe', jsonb_build_object('ville', new.ville, 'lieu', new.lieu, 'date_at', new.date_at)
+    select p.id, 'cafe', jsonb_build_object('ville', new.ville, 'lieu', new.lieu, 'date_at', new.date_at, 'id', new.id)
     from public.profiles p
     where p.id <> new.organisateur_id and public.cle_lieu(p.ville) = public.cle_lieu(new.ville)
       and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'cafe')
+    order by public.derniere_visite(p.id) desc nulls last
     limit 200;
   end if;
   return null;
@@ -1306,7 +1320,7 @@ begin
               coalesce((select max(c.created_at) from public.comments c where c.offer_id = o.id), o.created_at)) < now() - interval '21 days'
         and (o.relance_at is null or o.relance_at < now() - interval '21 days') loop
     update public.offers set relance_at = now() where id = r.id;
-    perform public.pousser(r.author_id, 'relance_offre', jsonb_build_object('titre', r.titre));
+    perform public.pousser(r.author_id, 'relance_offre', jsonb_build_object('titre', r.titre, 'offre', r.id));
     n := n + 1;
   end loop;
   return n;
@@ -1599,15 +1613,29 @@ language sql immutable as $$
     -- Un entretien proposé dans une discussion (message 'rdv'), sa réponse et son rappel sont des messages : couper
     -- « Match » ne fait jamais rater un entretien
     when p_kind in ('message','rdv_message','rdv_reponse','rappel_entretien') then 'messages'
+    -- La veille d'un entretien proposé dans une discussion (section « Nouvelles notifications », en fin de fichier)
+    when p_kind = 'entretien_demain' then 'messages'
     -- Page Match (section « Match », en fin de fichier) : un intérêt pour soi, un match
     when p_kind in ('match','match_interet','match_jour') then 'match'
+    -- Un intérêt qui attend une réponse depuis la veille
+    when p_kind = 'match_attente' then 'match'
     when p_kind in ('demande_nouvelle','demande_large','demande_proposition','demande_match','demande_rouverte','demande_reponse') then 'demandes'
+    -- Une demande du parcours toujours sans aide ; sa propre demande mise en pause après 60 jours
+    when p_kind in ('demande_attente','demande_pause') then 'demandes'
     when p_kind in ('candidature','candidature_statut','invitation','recrutement_a_confirmer','recrutement_confirme','relance_offre') then 'candidatures'
     when p_kind in ('mentorat_demande','mentorat_ouvert','mentorat_accepte','mentorat_deplace','mentorat_annule','rappel_rdv','merci',
                     'relecture_demande','relecture_prise','relecture_rendue','contact_demande','contact_accepte','filleul','parrain') then 'mentorat'
+    -- Le rendez-vous de demain, l'échange qui vient d'avoir lieu, la présence confirmée par l'étudiant
+    when p_kind in ('rdv_demain','apres_rdv','mentorat_presence') then 'mentorat'
     when p_kind = 'offre_alerte' then 'offres'
+    -- Une offre mise de côté qui ferme bientôt
+    when p_kind = 'offre_bientot' then 'offres'
     when p_kind = 'rappel_visite' then 'rappels'
+    -- Le résumé du dimanche
+    when p_kind = 'semaine' then 'rappels'
     when p_kind = 'signalement' then 'admin'
+    -- Vie du réseau, dites ici pour qu'on les retrouve : l'agenda de demain, une réponse utile, un bravo, les groupes du jour
+    when p_kind in ('agenda_demain','reponse_utile','bravo','groupe_jour') then 'reseau'
     else 'reseau' end;
 $$;
 
@@ -1648,6 +1676,134 @@ end $$;
 drop trigger if exists trg_push_filtre on public.push_queue;
 create trigger trg_push_filtre before insert on public.push_queue
   for each row execute function public.push_filtre();
+
+-- ---------------------------------------------------------------------
+-- Nouvelles notifications (1/2) : l'heure, la nuit calme et le budget du jour (suite en fin de fichier)
+--   · Heures UTC = heure du Maroc (depuis le 20/09/2026) ; les tâches pg_cron sont en UTC.
+--   · horloge() : l'heure qui décide du calendrier (heure du jour, date du jour, lundi). En ligne, c'est now() ; le banc
+--     d'essai la fixe (réglage ensam.horloge) pour que les tests ne dépendent pas de l'heure où ils tournent. Les durées
+--     écoulées (20 h, 7 jours…) se mesurent toujours avec now(), comme les dates des lignes.
+--   · Nuit calme, de 21:30 à 08:00 : rien de programmé, et un envoi à beaucoup publié le soir attend 08:00 (push_nuit).
+--     Les notifications entre personnes (message, match, candidature, réponse, bravo…) partent toujours tout de suite.
+--   · Budget : au plus 3 notifications programmées par membre et par jour (jour UTC). Les DURES (un engagement, une
+--     personne qui attend) partent toujours mais comptent ; les DOUCES partent s'il reste de la place, jamais la nuit.
+-- ---------------------------------------------------------------------
+create or replace function public.horloge() returns timestamptz
+language sql stable as $$
+  select coalesce(nullif(current_setting('ensam.horloge', true), '')::timestamptz, now());
+$$;
+revoke all on function public.horloge() from public, anon, authenticated;
+
+create or replace function public.heure_calme(p_at timestamptz default null) returns boolean
+language sql stable as $$
+  select (coalesce(p_at, public.horloge()) at time zone 'UTC')::time >= time '21:30'
+      or (coalesce(p_at, public.horloge()) at time zone 'UTC')::time < time '08:00';
+$$;
+revoke all on function public.heure_calme(timestamptz) from public, anon, authenticated;
+
+-- Ce qui a été programmé pour chaque membre (une ligne par notification programmée). Lu par le serveur seulement ;
+-- purgé après 8 jours (matin_push).
+create table if not exists public.notif_programme (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  kind text not null,
+  at timestamptz not null default now()
+);
+create index if not exists notif_programme_user_at on public.notif_programme (user_id, at);
+alter table public.notif_programme enable row level security;
+
+-- DURES : un engagement (rendez-vous, entretien, événement de demain, échange qui vient d'avoir lieu) ou une personne
+-- qui attend (match_attente). Tout le reste, un type inconnu compris : DOUCE.
+create or replace function public.programme_classe(p_kind text) returns text
+language sql immutable as $$
+  select case when p_kind in ('rdv_demain','entretien_demain','agenda_demain','apres_rdv','match_attente') then 'dure' else 'douce' end;
+$$;
+
+-- Vrai (et noté) si ce membre peut recevoir maintenant cette notification programmée ; faux sinon, et toujours faux pour
+-- l'administration. Un verrou par membre : deux tâches simultanées ne dépassent pas le budget. Elle écrit : à n'appeler
+-- que sur les lignes déjà retenues par les autres conditions (CTE matérialisée), jamais dans un filtre qui en écarte.
+create or replace function public.programme_place(p_user uuid, p_kind text) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare v_debut timestamptz := date_trunc('day', public.horloge() at time zone 'UTC') at time zone 'UTC';
+begin
+  if p_user is null or p_kind is null then return false; end if;
+  if not exists (select 1 from public.profiles p where p.id = p_user and p.role in ('etudiant','laureat')) then return false; end if;
+  perform pg_advisory_xact_lock(hashtext('programme:' || p_user::text));
+  if public.programme_classe(p_kind) = 'douce' then
+    if public.heure_calme() then return false; end if;
+    if (select count(*) from public.notif_programme n
+        where n.user_id = p_user and n.at >= v_debut and n.at < v_debut + interval '1 day') >= 3 then
+      return false;
+    end if;
+  end if;
+  insert into public.notif_programme (user_id, kind, at) values (p_user, p_kind, public.horloge());
+  return true;
+end $$;
+revoke all on function public.programme_place(uuid, text) from public, anon, authenticated;
+
+-- Envois à beaucoup publiés la nuit : rangés ici au lieu de la file, remis dans la file à 08:00 (liberer_nuit)
+create table if not exists public.push_nuit (
+  id bigint generated always as identity primary key,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  kind text not null,
+  data jsonb not null default '{}',
+  created_at timestamptz default now()
+);
+alter table public.push_nuit enable row level security;
+
+-- Après trg_push_filtre (ordre alphabétique des noms) : ne reste que ce que le membre veut. Une relecture demandée à un
+-- relecteur choisi est entre deux personnes : elle part tout de suite. Le jour, rien ne change ; dans le doute, elle part.
+create or replace function public.push_nuit_filtre() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.heure_calme() then return new; end if;
+  begin
+    if new.kind = 'relecture_demande' and coalesce(new.data ->> 'r', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
+      if exists (select 1 from public.relectures_cv r where r.id = (new.data ->> 'r')::uuid and r.reviewer_id = new.user_id) then
+        return new;
+      end if;
+    end if;
+    insert into public.push_nuit (user_id, kind, data) values (new.user_id, new.kind, new.data);
+    return null;
+  exception when others then return new;
+  end;
+end $$;
+revoke all on function public.push_nuit_filtre() from public, anon, authenticated;
+drop trigger if exists trg_push_nuit on public.push_queue;
+create trigger trg_push_nuit before insert on public.push_queue
+  for each row when (new.kind in ('offre_alerte','annonce','evenement','evenement_annule','evenement_deplace','cafe','promo_nouveau',
+    'mentorat_ouvert','question_routee','demande_nouvelle','demande_large','relecture_demande','verifier_pair','enquete'))
+  execute function public.push_nuit_filtre();
+
+-- À 08:00 (matin_push) : les envois de la nuit reprennent la file, dans leur ordre, et repassent par le filtre des
+-- catégories. Ce qui n'est plus vrai le matin ne part pas : offre fermée, demande fermée ou prise, événement ou café
+-- annulé, mentorat ou relecture déjà pris, camarade déjà vérifié, question ou annonce retirée. Plus d'un jour : abandonné.
+create or replace function public.liberer_nuit() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_n int;
+begin
+  if public.heure_calme() then return 0; end if;
+  delete from public.push_nuit where created_at < now() - interval '1 day';
+  with partis as (delete from public.push_nuit returning *)
+  insert into public.push_queue (user_id, kind, data)
+  select x.user_id, x.kind, x.data from partis x
+  where case x.kind
+      when 'offre_alerte' then coalesce((select o.status = 'ouverte' from public.offers o where o.id = (x.data ->> 'offre')::uuid), x.data ->> 'offre' is null)
+      when 'demande_nouvelle' then coalesce((select d.status = 'ouverte' from public.demandes d where d.id = (x.data ->> 'demande')::uuid), x.data ->> 'demande' is null)
+      when 'demande_large' then coalesce((select d.status = 'ouverte' from public.demandes d where d.id = (x.data ->> 'demande')::uuid), x.data ->> 'demande' is null)
+      when 'evenement' then coalesce((select not e.annule from public.evenements e where e.id = (x.data ->> 'id')::uuid), x.data ->> 'id' is null)
+      when 'evenement_deplace' then coalesce((select not e.annule from public.evenements e where e.id = (x.data ->> 'id')::uuid), x.data ->> 'id' is null)
+      when 'cafe' then coalesce((select not c.annule from public.cafes c where c.id = (x.data ->> 'id')::uuid), x.data ->> 'id' is null)
+      when 'mentorat_ouvert' then coalesce((select m.status = 'demande' and m.mentor_id is null from public.mentorships m where m.id = (x.data ->> 'm')::uuid), x.data ->> 'm' is null)
+      when 'relecture_demande' then coalesce((select r.status = 'demandee' from public.relectures_cv r where r.id = (x.data ->> 'r')::uuid), x.data ->> 'r' is null)
+      when 'verifier_pair' then coalesce((select not l.verified from public.profiles l where l.id = (x.data ->> 'de')::uuid), x.data ->> 'de' is null)
+      when 'question_routee' then coalesce((select true from public.questions q where q.id = (x.data ->> 'q')::uuid), x.data ->> 'q' is null)
+      when 'annonce' then coalesce((select coalesce(a.active, true) from public.annonces a where a.id = (x.data ->> 'id')::uuid), x.data ->> 'id' is null)
+      else true end
+  order by x.id;
+  get diagnostics v_n = row_count;
+  return v_n;
+end $$;
+revoke all on function public.liberer_nuit() from public, anon, authenticated;
 
 -- Niveau d'un membre (même calcul que le site : 3, 4, 5 ; 6 = jeune diplômé ; 7 = plus ancien)
 create or replace function public.niveau_de(p_promo int, p_saison int) returns int
@@ -2243,10 +2399,11 @@ language plpgsql security definer set search_path = public as $$
 begin
   if new.role = 'laureat' and not new.verified then
     insert into public.push_queue (user_id, kind, data)
-    select x.id, 'verifier_pair', jsonb_build_object('nom', new.full_name, 'promo', new.promo)
+    select x.id, 'verifier_pair', jsonb_build_object('nom', new.full_name, 'promo', new.promo, 'de', new.id)
     from public.profiles x
     where x.role = 'laureat' and x.verified and x.promo = new.promo and x.id <> new.id
       and exists (select 1 from public.push_subscriptions s where s.user_id = x.id) and public.push_voulu(x.id, 'verifier_pair')
+    order by public.derniere_visite(x.id) desc nulls last
     limit 5;
   end if;
   return null;
@@ -2307,12 +2464,13 @@ begin
     v_kind := case when tg_op = 'INSERT' then 'evenement' when new.annule then 'evenement_annule' else 'evenement_deplace' end;
     insert into public.push_queue (user_id, kind, data)
     select p.id, v_kind,
-      jsonb_build_object('titre', new.titre, 'debut', new.debut, 'lieu', new.lieu)
+      jsonb_build_object('titre', new.titre, 'debut', new.debut, 'lieu', new.lieu, 'id', new.id)
     from public.profiles p
     where p.id is distinct from new.author_id
       and (new.public = 'tous' or (new.public = 'etudiants' and p.role = 'etudiant') or (new.public = 'laureats' and p.role = 'laureat'))
       and (tg_op = 'INSERT' or exists (select 1 from public.evenement_participants x where x.evenement_id = new.id and x.user_id = p.id))
       and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, v_kind)
+    order by public.derniere_visite(p.id) desc nulls last
     limit 2000;
   end if;
   return null;
@@ -2751,6 +2909,7 @@ begin
     -- Le partage d'un étudiant n'envoie pas de notification : il se voit dans les offres et dans l'email des alertes
     and not exists (select 1 from public.profiles a where a.id = new.author_id and a.role = 'etudiant')
     and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'offre_alerte')
+  order by x.pour_lui desc, public.derniere_visite(p.id) desc nulls last
   limit 2000;
   return null;
 exception when others then return null;
@@ -2835,34 +2994,37 @@ declare v_nom text;
 begin
   if tg_table_name = 'demandes_contact' then
     if tg_op = 'INSERT' then
-      perform public.pousser(new.cible_id, 'contact_demande', jsonb_build_object('nom', (select full_name from public.profiles where id = new.demandeur_id)));
+      perform public.pousser(new.cible_id, 'contact_demande', jsonb_build_object('nom', (select full_name from public.profiles where id = new.demandeur_id), 'c', new.id));
     elsif old.status <> 'acceptee' and new.status = 'acceptee' then
-      perform public.pousser(new.demandeur_id, 'contact_accepte', jsonb_build_object('nom', (select full_name from public.profiles where id = new.cible_id)));
+      perform public.pousser(new.demandeur_id, 'contact_accepte', jsonb_build_object('nom', (select full_name from public.profiles where id = new.cible_id), 'c', new.id));
     end if;
   elsif tg_table_name = 'relectures_cv' then
     v_nom := (select full_name from public.profiles where id = new.student_id);
     if tg_op = 'INSERT' then
       if new.reviewer_id is not null then
-        perform public.pousser(new.reviewer_id, 'relecture_demande', jsonb_build_object('nom', v_nom));
+        perform public.pousser(new.reviewer_id, 'relecture_demande', jsonb_build_object('nom', v_nom, 'r', new.id));
       else
+        -- Les plus proches de sa filière, puis les plus actifs
         insert into public.push_queue (user_id, kind, data)
-        select l.id, 'relecture_demande', jsonb_build_object('nom', v_nom)
+        select l.id, 'relecture_demande', jsonb_build_object('nom', v_nom, 'r', new.id)
         from public.profiles l, public.profiles s
         where s.id = new.student_id and l.role = 'laureat' and l.mentor_dispo and public.proximite_filiere(l.filiere, s.filiere) > 0 and l.id <> new.student_id
           and exists (select 1 from public.push_subscriptions x where x.user_id = l.id) and public.push_voulu(l.id, 'relecture_demande')
+        order by public.proximite_filiere(l.filiere, s.filiere) desc, public.derniere_visite(l.id) desc nulls last
         limit 10;
       end if;
     elsif old.status = 'demandee' and new.status = 'en_cours' then
-      perform public.pousser(new.student_id, 'relecture_prise', jsonb_build_object('nom', (select full_name from public.profiles where id = new.reviewer_id)));
+      perform public.pousser(new.student_id, 'relecture_prise', jsonb_build_object('nom', (select full_name from public.profiles where id = new.reviewer_id), 'r', new.id));
     elsif old.status <> 'rendue' and new.status = 'rendue' then
-      perform public.pousser(new.student_id, 'relecture_rendue', jsonb_build_object('nom', (select full_name from public.profiles where id = new.reviewer_id)));
+      perform public.pousser(new.student_id, 'relecture_rendue', jsonb_build_object('nom', (select full_name from public.profiles where id = new.reviewer_id), 'r', new.id));
     elsif old.merci is null and new.merci is not null and new.reviewer_id is not null then
-      perform public.pousser(new.reviewer_id, 'merci', jsonb_build_object('nom', v_nom));
+      perform public.pousser(new.reviewer_id, 'merci', jsonb_build_object('nom', v_nom, 'r', new.id));
     end if;
   elsif tg_table_name = 'signalements' then
     insert into public.push_queue (user_id, kind, data)
-    select a.id, 'signalement', jsonb_build_object('motif', new.motif)
+    select a.id, 'signalement', jsonb_build_object('motif', new.motif, 'id', new.id)
     from public.profiles a where a.role = 'admin' and exists (select 1 from public.push_subscriptions x where x.user_id = a.id)
+    order by public.derniere_visite(a.id) desc nulls last
     limit 10;
   end if;
   return null;
@@ -3409,6 +3571,12 @@ begin
     perform public.demandes_larges_push();
   exception when others then null;
   end;
+  -- Au même passage : une demande du parcours toujours sans aide après un jour (demande_attente_push, section
+  -- « Nouvelles notifications », à la fin). Toutes deux ne font rien hors de 8 h – 21 h.
+  begin
+    perform public.demande_attente_push();
+  exception when others then raise warning 'Demandes sans aide : %', sqlerrm;
+  end;
 end $$;
 revoke all on function public.alertes_horaires() from public, anon, authenticated;
 
@@ -3664,7 +3832,8 @@ begin
     exception when others then null;
     end;
     perform set_config('ensam.sans_push_message', v_push, true);
-    perform public.pousser(v_d.auteur_id, 'demande_proposition', jsonb_build_object('nom', (select full_name from public.profiles where id = new.laureat_id), 'titre', v_d.titre, 'entreprise', new.entreprise, 'demande', v_d.id));
+    perform public.pousser(v_d.auteur_id, 'demande_proposition', jsonb_build_object('nom', (select full_name from public.profiles where id = new.laureat_id), 'titre', v_d.titre, 'entreprise', new.entreprise, 'demande', v_d.id,
+      'n', (select count(*) from public.propositions y where y.demande_id = v_d.id and y.status = 'envoyee')));
     return null;
   end if;
   if new.status = old.status then return null; end if;
@@ -3726,7 +3895,8 @@ drop trigger if exists trg_demande_reussie on public.placements;
 create trigger trg_demande_reussie after insert or update on public.placements
   for each row execute function public.demande_reussie();
 
--- Nouvelle demande : les lauréats du même parcours qui ont activé les notifications sont prévenus
+-- Nouvelle demande : les lauréats du même parcours qui ont activé les notifications sont prévenus (150 au plus : même
+-- filière d'abord, puis les plus actifs ; les autres la retrouvent dans le rappel du soir et dans demande_attente)
 create or replace function public.notif_demande() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare v_a record;
@@ -3738,7 +3908,8 @@ begin
   where p.role = 'laureat' and p.id <> new.auteur_id and public.proximite_filiere(p.filiere, v_a.filiere) >= 1
     and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'demande_nouvelle')
     and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = new.auteur_id) or (b.user_id = new.auteur_id and b.bloque_id = p.id))
-  limit 60;
+  order by public.proximite_filiere(p.filiere, v_a.filiere) desc, public.derniere_visite(p.id) desc nulls last
+  limit 150;
   return null;
 exception when others then return null;
 end $$;
@@ -4543,7 +4714,7 @@ revoke all on function public.marquer_vu() from public, anon;
 grant execute on function public.marquer_vu() to authenticated;
 
 -- Mise en route des rappels : avant sa première visite notée, un membre est compté venu à cette date au plus tôt
--- (personne n'est rappelé dans les deux jours qui suivent l'installation sans l'avoir mérité)
+-- (personne n'est rappelé le jour qui suit l'installation sans l'avoir mérité)
 insert into public.app_secrets (cle, valeur) values ('rappels_depuis', now()::text) on conflict (cle) do nothing;
 
 create or replace function public.derniere_visite(p_id uuid) returns timestamptz
@@ -4563,9 +4734,16 @@ revoke all on function public.derniere_visite(uuid) from public, anon, authentic
 --   demandes      : demandes d'étudiants ouvertes pour lui (son parcours, ou toutes après 24 h sans aide : demande_pour),
 --                   arrivées depuis sa dernière visite, où il n'a pas déjà proposé son aide (lauréat)
 --   offres        : nouvelles offres pour lui (son année et sa filière : offre_pour) depuis sa dernière visite
+--   matchs        : matchs des 30 derniers jours qu'il n'a pas encore vus (hors membres bloqués)
+--   interets      : personnes qui lui ont dit « Intéressé » ces 7 derniers jours (son profil ; une de ses offres pour un
+--                   lauréat), sans réponse de sa part, sans match ni blocage
+--   reponses      : réponses des autres à ses questions depuis sa dernière visite
+--   evenements    : événements et cafés où il est inscrit, non annulés, dans les 2 jours (pas ceux qu'il organise)
+-- En plpgsql : elle lit les tables de Match, créées plus bas (une fonction en sql les voudrait déjà là).
 create or replace function public.rappel_contenu(p public.profiles, p_depuis timestamptz) returns jsonb
-language sql stable security definer set search_path = public as $$
-  select coalesce(jsonb_object_agg(k, n) filter (where n > 0), '{}'::jsonb) from (values
+language plpgsql stable security definer set search_path = public as $$
+begin
+  return (select coalesce(jsonb_object_agg(t.k, t.n) filter (where t.n > 0), '{}'::jsonb) from (values
     ('messages', (select count(*) from public.messages m where m.dest_id = p.id and m.lu_at is null and m.created_at > now() - interval '30 days'
        and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = m.author_id) or (b.user_id = m.author_id and b.bloque_id = p.id)))),
     ('propositions', (select count(*) from public.propositions x join public.demandes d on d.id = x.demande_id
@@ -4578,9 +4756,38 @@ language sql stable security definer set search_path = public as $$
          and greatest(d.relancee_at, case when public.proximite_filiere(p.filiere, (select a.filiere from public.profiles a where a.id = d.auteur_id)) >= 1
                then d.created_at else public.demande_large_le(d) end) > p_depuis
          and not exists (select 1 from public.propositions y where y.demande_id = d.id and y.laureat_id = p.id)) else 0 end),
-    ('offres', (select count(*) from public.offers o where o.created_at > p_depuis and public.offre_pour(o, p, public.saison_courante())))
-  ) as t(k, n);
-$$;
+    ('offres', (select count(*) from public.offers o where o.created_at > p_depuis and public.offre_pour(o, p, public.saison_courante()))),
+    ('matchs', case
+       when p.role = 'etudiant' then (select count(*) from public.matchs m
+         where m.etudiant_id = p.id and m.vu_etudiant_at is null and m.created_at > now() - interval '30 days'
+           and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = m.laureat_id) or (b.user_id = m.laureat_id and b.bloque_id = p.id)))
+       when p.role = 'laureat' then (select count(*) from public.matchs m
+         where m.laureat_id = p.id and m.vu_laureat_at is null and m.created_at > now() - interval '30 days'
+           and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = m.etudiant_id) or (b.user_id = m.etudiant_id and b.bloque_id = p.id)))
+       else 0 end),
+    ('interets', case
+       when p.role = 'etudiant' then (select count(distinct c.user_id) from public.match_choix c join public.profiles l on l.id = c.user_id
+         where c.cible_profil = p.id and c.choix = 'oui' and c.updated_at > now() - interval '7 days' and l.role = 'laureat'
+           and not exists (select 1 from public.match_choix r where r.user_id = p.id and r.cible_profil = c.user_id)
+           and not exists (select 1 from public.matchs m where m.etudiant_id = p.id and m.laureat_id = c.user_id)
+           and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = c.user_id) or (b.user_id = c.user_id and b.bloque_id = p.id)))
+       when p.role = 'laureat' then (select count(distinct c.user_id) from public.offers o
+         join public.match_choix c on c.cible_offre = o.id join public.profiles e on e.id = c.user_id
+         where o.author_id = p.id and c.choix = 'oui' and c.updated_at > now() - interval '7 days'
+           and e.role = 'etudiant' and coalesce(btrim(e.filiere), '') <> ''
+           and not exists (select 1 from public.match_choix r where r.user_id = p.id and r.cible_profil = c.user_id)
+           and not exists (select 1 from public.matchs m where m.laureat_id = p.id and m.etudiant_id = c.user_id)
+           and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = c.user_id) or (b.user_id = c.user_id and b.bloque_id = p.id)))
+       else 0 end),
+    ('reponses', (select count(*) from public.questions q join public.answers a on a.question_id = q.id
+       where q.author_id = p.id and a.author_id <> p.id and a.created_at > p_depuis
+         and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = a.author_id) or (b.user_id = a.author_id and b.bloque_id = p.id)))),
+    ('evenements', (select count(*) from public.evenement_participants x join public.evenements e on e.id = x.evenement_id
+         where x.user_id = p.id and not e.annule and e.debut > now() and e.debut < now() + interval '2 days' and e.author_id is distinct from p.id)
+       + (select count(*) from public.cafe_participants x join public.cafes c on c.id = x.cafe_id
+         where x.user_id = p.id and not c.annule and c.date_at > now() and c.date_at < now() + interval '2 days' and c.organisateur_id <> p.id))
+  ) as t(k, n));
+end $$;
 revoke all on function public.rappel_contenu(public.profiles, timestamptz) from public, anon, authenticated;
 
 -- Ce qui a été envoyé : n = rappels depuis la dernière visite (remis à zéro quand le membre revient)
@@ -4593,11 +4800,12 @@ create table if not exists public.rappels_visite (
 );
 alter table public.rappels_visite enable row level security;
 
--- Attente avant le rappel suivant : 2 jours après la visite, puis 4, 7, et 14 jours entre deux rappels
+-- Attente avant le rappel suivant : 1 jour après la visite, puis 2, 3, 5, et 7 jours entre deux rappels, soit J+1, J+3,
+-- J+6, J+11, J+18, puis un par semaine ; toujours seulement avec quelque chose de réel (rappels_dus)
 -- (2 heures de marge : la tâche passe chaque soir à la même heure, à quelques secondes près)
 create or replace function public.rappel_attente(p_n int) returns interval
 language sql immutable as $$
-  select (case when p_n <= 0 then 2 when p_n = 1 then 4 when p_n = 2 then 7 else 14 end) * interval '1 day' - interval '2 hours';
+  select (case when p_n <= 0 then 1 when p_n = 1 then 2 when p_n = 2 then 3 when p_n = 3 then 5 else 7 end) * interval '1 day' - interval '2 hours';
 $$;
 
 -- Les membres à rappeler ce soir, avec ce qui les attend
@@ -4611,7 +4819,7 @@ language sql stable security definer set search_path = public as $$
     from public.profiles p
     left join public.rappels_visite r on r.user_id = p.id
     cross join lateral (select public.derniere_visite(p.id) as vu) v
-    where p.role in ('etudiant','laureat') and p.created_at < now() - interval '2 days'
+    where p.role in ('etudiant','laureat') and p.created_at < now() - interval '1 day'
   ), dus as materialized (
     select b.* from base b
     where b.vu < now() - public.rappel_attente(0) and b.depuis < now() - public.rappel_attente(b.n)
@@ -4624,19 +4832,22 @@ language sql stable security definer set search_path = public as $$
 $$;
 revoke all on function public.rappels_dus() from public, anon, authenticated;
 
--- Chaque soir : la notification sur le téléphone (par la file, donc par le filtre des catégories), notée tout de suite
+-- Chaque soir : la notification sur le téléphone (par la file, donc par le filtre des catégories), notée tout de suite.
+-- Une notification programmée DOUCE : seulement s'il reste de la place dans le budget du jour (programme_place, appelée
+-- sur les seuls membres dus et abonnés)
 create or replace function public.rappels_push() returns int
 language plpgsql security definer set search_path = public as $$
 declare v_n int;
 begin
-  with dus as (select * from public.rappels_dus() d where d.abonne),
+  with dus as materialized (select * from public.rappels_dus() d where d.abonne),
+  places as materialized (select d.* from dus d where public.programme_place(d.id, 'rappel_visite')),
   envoyes as (
     insert into public.push_queue (user_id, kind, data)
-    select d.id, 'rappel_visite', d.contenu from dus d
+    select d.id, 'rappel_visite', d.contenu from places d
     returning user_id),
   notes as (
     insert into public.rappels_visite (user_id, n, dernier_at, push_at)
-      select distinct e.user_id, d.n + 1, now(), now() from envoyes e join dus d on d.id = e.user_id
+      select distinct e.user_id, d.n + 1, now(), now() from envoyes e join places d on d.id = e.user_id
     on conflict (user_id) do update set n = excluded.n, dernier_at = now(), push_at = now()
     returning 1)
   select count(*) into v_n from notes;
@@ -4705,12 +4916,12 @@ end $$;
 revoke all on function public.se_desabonner_rappels(uuid) from public;
 grant execute on function public.se_desabonner_rappels(uuid) to anon, authenticated;
 
--- Chaque soir à 18 h UTC (19 h au Maroc, 18 h pendant le ramadan) : le téléphone, puis les emails
+-- Chaque soir à 18 h UTC (18 h au Maroc, à l'heure GMT depuis le 20/09/2026) : le téléphone, puis les emails.
+-- Le tour Match du jour part à midi (midi_push, section « Nouvelles notifications », à la fin).
 create or replace function public.rappels_soir() returns void
 language plpgsql security definer set search_path = public as $$
 begin
   perform public.rappels_push();
-  begin perform public.match_jour_push(); exception when others then raise warning 'Match du jour : %', sqlerrm; end;
   perform public.appeler_notifier('rappels');
 end $$;
 revoke all on function public.rappels_soir() from public, anon, authenticated;
@@ -4883,6 +5094,8 @@ create or replace function public.demandes_larges_push() returns int
 language plpgsql security definer set search_path = public as $$
 declare d public.demandes; v_n int := 0; v_k int;
 begin
+  -- Un envoi à beaucoup : rien la nuit (de 22 h à 7 h 59) ; la fenêtre de 3 jours rattrape ces demandes à 08:05
+  if extract(hour from public.horloge() at time zone 'UTC') not between 8 and 21 then return 0; end if;
   for d in select x.* from public.demandes x
       where x.status = 'ouverte' and x.created_at > now() - interval '30 days'
         and public.demande_large_le(x) <= now() and public.demande_large_le(x) > now() - interval '3 days'
@@ -4896,6 +5109,7 @@ begin
     where public.demande_pour(d, p) and public.proximite_filiere(p.filiere, a.filiere) = 0
       and not exists (select 1 from public.propositions y where y.demande_id = d.id and y.laureat_id = p.id)
       and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'demande_large')
+    order by public.derniere_visite(p.id) desc nulls last
     limit 300;
     get diagnostics v_k = row_count;
     v_n := v_n + v_k;
@@ -4920,6 +5134,8 @@ begin
         and (c.at is null or c.at <= now() - interval '1 day')
         and exists (select 1 from public.push_subscriptions s where s.user_id = x.id) and public.push_voulu(x.id, 'promo_nouveau')
         and not exists (select 1 from public.push_queue q where q.user_id = x.id and q.kind = 'verifier_pair' and q.data ->> 'nom' = new.full_name)
+        and not exists (select 1 from public.push_nuit q where q.user_id = x.id and q.kind = 'verifier_pair' and q.data ->> 'nom' = new.full_name)
+      order by public.derniere_visite(x.id) desc nulls last
       limit 300 loop
     continue when not public.cadence('promo:' || r.id, interval '1 day');
     select count(*) into v_n from public.profiles y
@@ -4971,11 +5187,12 @@ language plpgsql security definer set search_path = public as $$
 begin
   if not coalesce(new.active, true) then return null; end if;
   insert into public.push_queue (user_id, kind, data)
-  select p.id, 'annonce', jsonb_build_object('texte', left(new.texte, 180))
+  select p.id, 'annonce', jsonb_build_object('texte', left(new.texte, 180), 'id', new.id)
   from public.profiles p
   where p.id is distinct from new.author_id
     and (coalesce(new.public, 'tous') = 'tous' or (new.public = 'etudiants' and p.role = 'etudiant') or (new.public = 'laureats' and p.role = 'laureat'))
     and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'annonce')
+  order by public.derniere_visite(p.id) desc nulls last
   limit 2000;
   return null;
 exception when others then return null;
@@ -4997,12 +5214,13 @@ begin
   end if;
   select full_name, filiere into v_s from public.profiles where id = new.student_id;
   insert into public.push_queue (user_id, kind, data)
-  select l.id, 'mentorat_ouvert', jsonb_build_object('nom', v_s.full_name, 'sujet', new.sujet)
+  select l.id, 'mentorat_ouvert', jsonb_build_object('nom', v_s.full_name, 'sujet', new.sujet, 'm', new.id)
   from public.profiles l
   where l.role = 'laureat' and coalesce(l.mentor_dispo, false) and l.id <> new.student_id and l.id is distinct from v_ancien
     and public.proximite_filiere(l.filiere, v_s.filiere) >= 1
     and not exists (select 1 from public.blocages b where (b.user_id = l.id and b.bloque_id = new.student_id) or (b.user_id = new.student_id and b.bloque_id = l.id))
     and exists (select 1 from public.push_subscriptions s where s.user_id = l.id) and public.push_voulu(l.id, 'mentorat_ouvert')
+  order by public.proximite_filiere(l.filiere, v_s.filiere) desc, public.derniere_visite(l.id) desc nulls last
   limit 30;
   return null;
 exception when others then return null;
@@ -5583,8 +5801,8 @@ begin
       where m.status = 'acceptee' and m.rdv_at > now() + interval '1 minute' and m.rdv_at <= now() + interval '15 minutes'
         and not exists (select 1 from public.rappels_envoyes x where x.id = m.id and x.rdv_at = m.rdv_at) loop
     insert into public.rappels_envoyes (id, rdv_at) values (r.id, r.rdv_at) on conflict (id) do update set rdv_at = excluded.rdv_at, created_at = now();
-    if public.rappeler(r.student_id, 'rappel_rdv', jsonb_build_object('nom', (select full_name from public.profiles where id = r.mentor_id), 'sujet', r.sujet, 'rdv_at', r.rdv_at), r.lien) then v_email := true; end if;
-    if public.rappeler(r.mentor_id, 'rappel_rdv', jsonb_build_object('nom', (select full_name from public.profiles where id = r.student_id), 'sujet', r.sujet, 'rdv_at', r.rdv_at), r.lien) then v_email := true; end if;
+    if public.rappeler(r.student_id, 'rappel_rdv', jsonb_build_object('nom', (select full_name from public.profiles where id = r.mentor_id), 'sujet', r.sujet, 'rdv_at', r.rdv_at, 'm', r.id), r.lien) then v_email := true; end if;
+    if public.rappeler(r.mentor_id, 'rappel_rdv', jsonb_build_object('nom', (select full_name from public.profiles where id = r.student_id), 'sujet', r.sujet, 'rdv_at', r.rdv_at, 'm', r.id), r.lien) then v_email := true; end if;
     n := n + 1;
   end loop;
   -- Entretien proposé dans une discussion : accepté, ou sans réponse ; pas s'il a été refusé (« Autre horaire »),
@@ -5659,7 +5877,8 @@ revoke all on function public.relancer_push() from public, anon, authenticated;
 --    · push_subscriptions.recu_at : la dernière fois que ce téléphone a vraiment reçu une notification. Le service de push
 --      répond 201 dès qu'il l'accepte, même si elle n'arrive jamais ; le service worker, lui, le dit à la réception.
 --      L'adresse d'abonnement sert de preuve : elle n'est connue que de l'appareil et de la plateforme.
---    · Match du jour : chaque soir, à qui a des cartes à voir (catégorie « Match » de Mon profil).
+--    · Match du jour : à midi (midi_push, section « Nouvelles notifications »), à qui a des cartes à voir
+--      (catégorie « Match » de Mon profil)
 -- =====================================================================
 alter table public.push_subscriptions add column if not exists recu_at timestamptz;
 
@@ -5670,36 +5889,99 @@ $$;
 revoke all on function public.push_recu(text) from public;
 grant execute on function public.push_recu(text) to anon, authenticated;
 
--- Compte un peu moins de cartes que deckMatch (logic.js), jamais plus : personne n'est envoyé vers une pile vide.
--- Rien pour qui vient de recevoir le rappel de visite du même soir.
+-- Le tour Match du jour, à midi (midi_push, après match_attente_push) : « Ton tour du jour est prêt », à qui a de vraies cartes
+-- dont au moins une arrivée depuis le dernier envoi. Le compte ne dépasse jamais ce que deckMatch (logic.js) montrerait :
+-- l'étudiant compte les offres de lauréats que Match lui proposerait (mêmes règles) ; le lauréat, les étudiants de son
+-- parcours arrivés depuis sa dernière visite (sous-ensemble de sa pile).
+--   · Jamais pour l'administration ; rien le jour d'un choix dans Match, ni le jour où un intérêt lui a été rappelé.
+--   · Au plus un par jour (20 h) ; chaque jour pour qui a joué ces 14 derniers jours, sinon le lundi seulement ;
+--     3 envois sans aucun choix : le lundi seulement ; 4 lundis sans choix : plus rien jusqu'au prochain choix.
+--   · DOUCE : seulement s'il reste de la place dans le budget du jour (programme_place).
+-- match_jour_notif : envois (n) et lundis depuis le dernier choix. Un choix plus récent que le dernier envoi remet à zéro.
+create table if not exists public.match_jour_notif (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  n int not null default 0,
+  lundis int not null default 0,
+  dernier_at timestamptz
+);
+alter table public.match_jour_notif enable row level security;
+
 create or replace function public.match_jour_push() returns int
 language plpgsql security definer set search_path = public as $$
-declare v_n int;
+declare v_s int := public.saison_courante();
+  v_debut timestamptz := date_trunc('day', public.horloge() at time zone 'UTC') at time zone 'UTC';
+  v_jour date := (public.horloge() at time zone 'UTC')::date;
+  v_lundi boolean := extract(isodow from public.horloge() at time zone 'UTC') = 1;
+  v_n int;
 begin
-  insert into public.push_queue (user_id, kind, data)
-  select x.id, 'match_jour', jsonb_build_object('n', least(x.n, 5), 'type', x.role)
-  from (
-    select p.id, p.role, case when p.role = 'laureat' then (
-        select count(*) from public.profiles e
-        where e.role = 'etudiant' and e.match_visible and coalesce(btrim(e.filiere), '') <> '' and e.filiere = p.filiere
-          and not exists (select 1 from public.match_choix c where c.user_id = p.id and c.cible_profil = e.id)
-          and not exists (select 1 from public.matchs m where m.laureat_id = p.id and m.etudiant_id = e.id))
-      else (
-        select count(*) from public.offers o join public.profiles a on a.id = o.author_id
-        where o.status = 'ouverte' and a.role = 'laureat' and o.author_id <> p.id and coalesce(o.audience, 'etudiants') = 'etudiants'
-          and public.niveau_de(p.promo, public.saison_courante()) = any(coalesce(o.annees, '{}'::int[]))
-          and (cardinality(coalesce(o.filieres, '{}')) = 0 or p.filiere = any(o.filieres))
-          and not exists (select 1 from public.match_choix c where c.user_id = p.id and c.cible_offre = o.id)
-          and not exists (select 1 from public.applications y where y.student_id = p.id and y.offer_id = o.id)
-          and not exists (select 1 from public.matchs m where m.etudiant_id = p.id and m.laureat_id = o.author_id))
-      end as n
+  with membres as materialized (
+    select p.id, p.role, p.promo, p.filiere, j.dernier_at,
+      case when p.role = 'laureat' then public.derniere_visite(p.id) end as vu,
+      case when c.dernier > coalesce(j.dernier_at, '-infinity'::timestamptz) then 0 else coalesce(j.n, 0) end as envois,
+      case when c.dernier > coalesce(j.dernier_at, '-infinity'::timestamptz) then 0 else coalesce(j.lundis, 0) end as lundis,
+      coalesce(c.dernier > now() - interval '14 days', false) as actif
     from public.profiles p
+    left join public.match_jour_notif j on j.user_id = p.id
+    cross join lateral (select max(x.updated_at) as dernier from public.match_choix x where x.user_id = p.id) c
     where p.role in ('etudiant','laureat') and coalesce(btrim(p.filiere), '') <> ''
+      and (j.dernier_at is null or j.dernier_at < now() - interval '20 hours')
+      and not exists (select 1 from public.match_choix x where x.user_id = p.id and x.updated_at >= v_debut and x.updated_at < v_debut + interval '1 day')
+      and not exists (select 1 from public.notif_programme n where n.user_id = p.id and n.kind = 'match_attente'
+                        and n.at >= v_debut and n.at < v_debut + interval '1 day')
       and exists (select 1 from public.push_subscriptions s where s.user_id = p.id)
       and public.push_voulu(p.id, 'match_jour')
-      and not exists (select 1 from public.rappels_visite r where r.user_id = p.id and r.push_at > now() - interval '1 hour')
-  ) x where x.n > 0;
-  get diagnostics v_n = row_count;
+  ),
+  dus as materialized (
+    select m.*, case when m.actif and m.envois < 3 then 'jour' when v_lundi and m.lundis < 4 then 'lundi' end as rythme
+    from membres m
+  ),
+  comptes as materialized (
+    select d.id, d.role, d.rythme, d.envois, d.lundis, k.n
+    from dus d
+    cross join lateral (
+      select count(*) as n, count(*) filter (where x.arrivee > coalesce(d.dernier_at, '-infinity'::timestamptz)) as neuves
+      from (
+        -- Étudiant : les offres de lauréats que Match lui montrerait (deckMatch, offreMatchable)
+        select o.created_at as arrivee from public.offers o join public.profiles a on a.id = o.author_id
+        where d.role = 'etudiant' and o.status = 'ouverte' and a.role = 'laureat' and o.author_id <> d.id
+          and coalesce(o.audience, 'etudiants') = 'etudiants'
+          and public.niveau_de(d.promo, v_s) = any(coalesce(o.annees, '{}'::int[]))
+          and public.filiere_ok(o.filieres, d.filiere)
+          and (o.deadline is null or o.deadline >= v_jour)
+          and (o.origine is distinct from 'partagee' or o.deadline is not null or o.created_at >= now() - interval '45 days')
+          and not exists (select 1 from public.applications y where y.student_id = d.id and y.offer_id = o.id)
+          and not exists (select 1 from public.match_choix c where c.user_id = d.id and c.cible_offre = o.id
+                            and (c.choix = 'oui' or c.updated_at > now() - interval '30 days'))
+          and not exists (select 1 from public.matchs m where m.etudiant_id = d.id and m.laureat_id = o.author_id)
+          and not exists (select 1 from public.blocages b where (b.user_id = d.id and b.bloque_id = o.author_id) or (b.user_id = o.author_id and b.bloque_id = d.id))
+          -- Un lauréat qui s'intéresse déjà à lui : Match montre son profil, pas ses offres
+          and not exists (select 1 from public.match_choix c where c.user_id = o.author_id and c.cible_profil = d.id and c.choix = 'oui')
+        union all
+        -- Lauréat : les étudiants de son parcours arrivés depuis sa dernière visite, que Match lui montrerait
+        select e.created_at from public.profiles e
+        where d.role = 'laureat' and e.role = 'etudiant' and e.created_at > d.vu and e.match_visible
+          and coalesce(btrim(e.filiere), '') <> '' and e.filiere <> 'Classes préparatoires intégrées'
+          and public.proximite_filiere(d.filiere, e.filiere) >= 1
+          and not exists (select 1 from public.match_choix c where c.user_id = d.id and c.cible_profil = e.id
+                            and (c.choix = 'oui' or c.updated_at > now() - interval '30 days'))
+          and not exists (select 1 from public.matchs m where m.laureat_id = d.id and m.etudiant_id = e.id)
+          and not exists (select 1 from public.blocages b where (b.user_id = d.id and b.bloque_id = e.id) or (b.user_id = e.id and b.bloque_id = d.id))
+      ) x
+    ) k
+    where d.rythme is not null and k.n > 0 and k.neuves > 0
+  ),
+  places as materialized (select c.* from comptes c where public.programme_place(c.id, 'match_jour')),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'match_jour', jsonb_build_object('n', least(x.n, 5), 'type', x.role) from places x
+    returning user_id),
+  notes as (
+    insert into public.match_jour_notif (user_id, n, lundis, dernier_at)
+      select x.id, x.envois + 1, x.lundis + case when x.rythme = 'lundi' then 1 else 0 end, now()
+      from places x join envoi e on e.user_id = x.id
+    on conflict (user_id) do update set n = excluded.n, lundis = excluded.lundis, dernier_at = excluded.dernier_at
+    returning 1)
+  select count(*) into v_n from notes;
   return v_n;
 end $$;
 revoke all on function public.match_jour_push() from public, anon, authenticated;
@@ -5718,6 +6000,721 @@ do $$ begin
     grant execute on function public.rappels_rdv_a_envoyer(int) to service_role;
     grant execute on function public.rappels_rdv_envoyes(bigint[]) to service_role;
   end if;
+end $$;
+
+-- =====================================================================
+--  Nouvelles notifications (2/2) : ce qui remplit la barre de notifications de choses vraies et utiles.
+--  (1/2, plus haut après push_filtre : horloge, nuit calme, budget du jour.)
+--    · Programmées, dans le budget de 3 par jour (programme_place) :
+--        DURES   rdv_demain, entretien_demain, agenda_demain (la veille, 19:30), apres_rdv (19:30), match_attente (12:30)
+--        DOUCES  match_jour (12:30), offre_bientot (09:00), demande_attente (chaque heure de 8 h à 21 h), demande_pause
+--                (08:00), rappel_visite (18:00), semaine (dimanche 10:00), groupe_jour (19:30)
+--    · Entre personnes, tout de suite : reponse_utile (un vote, la meilleure réponse), bravo, mentorat_presence.
+--    · Chaque producteur filtre d'abord (abonné, push_voulu, conditions), puis appelle programme_place sur ce qui reste,
+--      dans une CTE matérialisée ; chaque envoi est noté pour ne jamais partir deux fois.
+--  Mêmes catégories que logic.js (PUSH_KINDS) ; textes FR et AR dans le notifier (NOTIFS).
+-- =====================================================================
+
+-- Index des lectures de cette section (et du rappel du soir)
+create index if not exists applications_offre on public.applications (offer_id) where offer_id is not null;
+create index if not exists answers_question on public.answers (question_id);
+create index if not exists evenement_participants_membre on public.evenement_participants (user_id);
+create index if not exists cafe_participants_membre on public.cafe_participants (user_id);
+create index if not exists cafes_date on public.cafes (date_at);
+create index if not exists match_choix_oui_at on public.match_choix (updated_at) where choix = 'oui';
+create index if not exists profiles_arrivee on public.profiles (created_at);
+create index if not exists offers_arrivee on public.offers (created_at);
+create index if not exists groupe_messages_at on public.groupe_messages (created_at);
+create index if not exists mentorships_rdv on public.mentorships (rdv_at) where status = 'acceptee';
+
+-- ---------------------------------------------------------------------
+-- match_attente (12:30) : un « Intéressé » qui attend une réponse depuis la veille. La personne visée (l'étudiant pour un
+-- oui à son profil, le lauréat pour un oui à son offre) l'apprend une fois, tous ses intérêts en attente regroupés :
+-- un oui donné il y a 20 h à 7 jours, sans réponse de sa part (aucun choix sur cette personne), sans match ni blocage.
+-- Rien si un match_interet lui est parti dans les 20 h ; au plus un par jour. DURE : une personne attend.
+-- ---------------------------------------------------------------------
+create table if not exists public.match_attente_notif (
+  choix_id uuid primary key references public.match_choix(id) on delete cascade,
+  at timestamptz not null default now()
+);
+alter table public.match_attente_notif enable row level security;
+
+create or replace function public.match_attente_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_debut timestamptz := date_trunc('day', public.horloge() at time zone 'UTC') at time zone 'UTC'; v_n int;
+begin
+  with ouis as materialized (
+    -- Un lauréat dit oui au profil d'un étudiant : l'étudiant est visé
+    select c.id as choix_id, c.cible_profil as dest, c.user_id as de, null::uuid as offre, c.updated_at
+    from public.match_choix c join public.profiles l on l.id = c.user_id join public.profiles e on e.id = c.cible_profil
+    where c.choix = 'oui' and c.cible_profil is not null
+      and c.updated_at <= now() - interval '20 hours' and c.updated_at > now() - interval '7 days'
+      and l.role = 'laureat' and e.role = 'etudiant'
+    union all
+    -- Un étudiant dit oui à l'offre d'un lauréat : le lauréat est visé
+    select c.id, o.author_id, c.user_id, o.id, c.updated_at
+    from public.match_choix c join public.offers o on o.id = c.cible_offre
+      join public.profiles e on e.id = c.user_id join public.profiles l on l.id = o.author_id
+    where c.choix = 'oui' and c.cible_offre is not null
+      and c.updated_at <= now() - interval '20 hours' and c.updated_at > now() - interval '7 days'
+      and e.role = 'etudiant' and coalesce(btrim(e.filiere), '') <> '' and l.role = 'laureat'
+  ),
+  attente as materialized (
+    select o.*, exists (select 1 from public.match_attente_notif n where n.choix_id = o.choix_id) as deja
+    from ouis o
+    where not exists (select 1 from public.match_choix r where r.user_id = o.dest and r.cible_profil = o.de)
+      and not exists (select 1 from public.matchs m where (m.etudiant_id = o.dest and m.laureat_id = o.de) or (m.etudiant_id = o.de and m.laureat_id = o.dest))
+      and not exists (select 1 from public.blocages b where (b.user_id = o.dest and b.bloque_id = o.de) or (b.user_id = o.de and b.bloque_id = o.dest))
+  ),
+  dest as materialized (
+    select d.id, p.role from (select distinct a.dest as id from attente a where not a.deja) d join public.profiles p on p.id = d.id
+    where p.role in ('etudiant','laureat')
+      and exists (select 1 from public.push_subscriptions s where s.user_id = d.id)
+      and public.push_voulu(d.id, 'match_attente')
+      and not exists (select 1 from public.push_journal j where j.user_id = d.id and j.kind = 'match_interet' and j.at > now() - interval '20 hours')
+      and not exists (select 1 from public.push_queue q where q.user_id = d.id and q.kind = 'match_interet')
+      and not exists (select 1 from public.notif_programme n where n.user_id = d.id and n.kind = 'match_attente'
+                        and n.at >= v_debut and n.at < v_debut + interval '1 day')
+  ),
+  -- Le premier nommé : l'intérêt le plus récent jamais rappelé ; n : toutes les personnes qui attendent une réponse
+  premier as materialized (
+    select distinct on (a.dest) a.dest as id, d.role, a.de, a.offre, (select count(distinct y.de) from attente y where y.dest = a.dest) as n
+    from attente a join dest d on d.id = a.dest
+    where not a.deja
+    order by a.dest, a.updated_at desc, a.choix_id
+  ),
+  places as materialized (select x.* from premier x where public.programme_place(x.id, 'match_attente')),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'match_attente', jsonb_strip_nulls(jsonb_build_object(
+      'n', x.n, 'nom', split_part(f.full_name, ' ', 1), 'de', x.de, 'type', x.role,
+      -- L'entreprise du lauréat seulement s'il la montre à tous (comme match_interet) ; vide sinon
+      'entreprise', case when x.role = 'etudiant' and coalesce(f.visibilite ->> 'travail', 'tous') = 'tous' then coalesce(btrim(f.entreprise), '') else '' end,
+      'titre', case when x.role = 'laureat' then (select o.titre from public.offers o where o.id = x.offre) end,
+      'offre', x.offre))
+    from places x join public.profiles f on f.id = x.de
+    returning user_id),
+  notes as (
+    insert into public.match_attente_notif (choix_id)
+      select a.choix_id from attente a join places x on x.id = a.dest where not a.deja
+    on conflict do nothing
+    returning 1)
+  select count(*) into v_n from envoi;
+  return v_n;
+end $$;
+revoke all on function public.match_attente_push() from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- La veille (19:30) et le lendemain d'un engagement. veilles_envoyees : ce qui est déjà parti, avec son horaire (un rendez-vous
+-- déplacé est annoncé de nouveau). quoi : 'rdv' (mentorat, la veille), 'entretien' (message 'rdv', la veille), 'agenda'
+-- (événement ou café, la veille), 'apres' (mentorat, le lendemain).
+-- ---------------------------------------------------------------------
+create table if not exists public.veilles_envoyees (
+  quoi text not null check (quoi in ('rdv','entretien','agenda','apres')),
+  id uuid not null,
+  rdv_at timestamptz,
+  created_at timestamptz default now(),
+  primary key (quoi, id)
+);
+alter table public.veilles_envoyees enable row level security;
+
+-- rdv_demain : rendez-vous de mentorat fixé demain, à l'étudiant et au lauréat. Plusieurs le même jour : une seule
+-- notification, le premier en détail (n). DURE.
+create or replace function public.rdv_demain_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_demain timestamptz := (date_trunc('day', public.horloge() at time zone 'UTC') + interval '1 day') at time zone 'UTC'; v_n int;
+begin
+  with r as materialized (
+    select x.id as m, x.student_id, x.mentor_id, x.sujet, x.rdv_at from public.mentorships x
+    where x.status = 'acceptee' and x.mentor_id is not null
+      and x.rdv_at >= v_demain and x.rdv_at < v_demain + interval '1 day'
+      and not exists (select 1 from public.veilles_envoyees v where v.quoi = 'rdv' and v.id = x.id and v.rdv_at = x.rdv_at)
+  ),
+  dest as materialized (
+    select t.* from (
+      select y.*, count(*) over (partition by y.id) as n, row_number() over (partition by y.id order by y.rdv_at, y.m) as rang
+      from (select r.student_id as id, r.mentor_id as autre, r.m, r.sujet, r.rdv_at from r
+            union all select r.mentor_id, r.student_id, r.m, r.sujet, r.rdv_at from r) y) t
+    where t.rang = 1
+      and exists (select 1 from public.push_subscriptions s where s.user_id = t.id)
+      and public.push_voulu(t.id, 'rdv_demain')
+  ),
+  places as materialized (select d.* from dest d where public.programme_place(d.id, 'rdv_demain')),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'rdv_demain', jsonb_build_object('nom', a.full_name, 'sujet', x.sujet, 'rdv_at', x.rdv_at, 'm', x.m, 'n', x.n)
+    from places x join public.profiles a on a.id = x.autre
+    returning 1),
+  notes as (
+    insert into public.veilles_envoyees (quoi, id, rdv_at) select 'rdv', r.m, r.rdv_at from r
+    on conflict (quoi, id) do update set rdv_at = excluded.rdv_at, created_at = now()
+    returning 1)
+  select count(*) into v_n from envoi;
+  return v_n;
+end $$;
+revoke all on function public.rdv_demain_push() from public, anon, authenticated;
+
+-- entretien_demain : entretien proposé dans une discussion (message 'rdv') prévu demain, aux deux personnes ; mêmes
+-- filtres que le rappel de 15 minutes (rappels_rdv) : pas refusé, pas remplacé par un horaire plus récent, sans blocage.
+-- DURE.
+create or replace function public.entretien_demain_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_demain timestamptz := (date_trunc('day', public.horloge() at time zone 'UTC') + interval '1 day') at time zone 'UTC'; v_n int;
+begin
+  with r as materialized (
+    select x.id as m, x.author_id, x.dest_id, x.rdv_at, x.rdv_duree, x.rdv_lieu, coalesce(btrim(x.rdv_lien), '') <> '' as visio
+    from public.messages x
+    where x.type = 'rdv' and x.rdv_at >= v_demain and x.rdv_at < v_demain + interval '1 day'
+      and x.rdv_reponse is distinct from 'autre'
+      and not exists (select 1 from public.messages y where y.type = 'rdv' and y.created_at > x.created_at
+        and ((y.author_id = x.author_id and y.dest_id = x.dest_id) or (y.author_id = x.dest_id and y.dest_id = x.author_id)))
+      and not exists (select 1 from public.blocages b
+        where (b.user_id = x.author_id and b.bloque_id = x.dest_id) or (b.user_id = x.dest_id and b.bloque_id = x.author_id))
+      and not exists (select 1 from public.veilles_envoyees v where v.quoi = 'entretien' and v.id = x.id and v.rdv_at = x.rdv_at)
+  ),
+  dest as materialized (
+    select t.* from (
+      select y.*, count(*) over (partition by y.id) as n, row_number() over (partition by y.id order by y.rdv_at, y.m) as rang
+      from (select r.author_id as id, r.dest_id as de, r.m, r.rdv_at, r.rdv_duree, r.rdv_lieu, r.visio from r
+            union all select r.dest_id, r.author_id, r.m, r.rdv_at, r.rdv_duree, r.rdv_lieu, r.visio from r) y) t
+    where t.rang = 1
+      and exists (select 1 from public.push_subscriptions s where s.user_id = t.id)
+      and public.push_voulu(t.id, 'entretien_demain')
+  ),
+  places as materialized (select d.* from dest d where public.programme_place(d.id, 'entretien_demain')),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'entretien_demain', jsonb_strip_nulls(jsonb_build_object('nom', split_part(a.full_name, ' ', 1), 'rdv_at', x.rdv_at,
+      'duree', x.rdv_duree, 'lieu', x.rdv_lieu, 'visio', x.visio, 'm', x.m, 'de', x.de, 'n', x.n))
+    from places x join public.profiles a on a.id = x.de
+    returning 1),
+  notes as (
+    insert into public.veilles_envoyees (quoi, id, rdv_at) select 'entretien', r.m, r.rdv_at from r
+    on conflict (quoi, id) do update set rdv_at = excluded.rdv_at, created_at = now()
+    returning 1)
+  select count(*) into v_n from envoi;
+  return v_n;
+end $$;
+revoke all on function public.entretien_demain_push() from public, anon, authenticated;
+
+-- agenda_demain : inscrit à un événement ou à un café non annulé qui a lieu demain (pas celui qu'il organise). Plusieurs :
+-- une seule notification, le premier en détail (n). inscrits : le vrai nombre d'inscrits. DURE.
+create or replace function public.agenda_demain_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_demain timestamptz := (date_trunc('day', public.horloge() at time zone 'UTC') + interval '1 day') at time zone 'UTC'; v_n int;
+begin
+  with items as materialized (
+    select 'evenement'::text as type, e.id as item, e.titre, e.debut, e.lieu, null::text as ville,
+      (select count(*) from public.evenement_participants y where y.evenement_id = e.id) as inscrits, e.author_id as organisateur
+    from public.evenements e
+    where not e.annule and e.debut >= v_demain and e.debut < v_demain + interval '1 day'
+      and not exists (select 1 from public.veilles_envoyees v where v.quoi = 'agenda' and v.id = e.id and v.rdv_at = e.debut)
+    union all
+    select 'cafe', c.id, null, c.date_at, c.lieu, c.ville,
+      (select count(*) from public.cafe_participants y where y.cafe_id = c.id), c.organisateur_id
+    from public.cafes c
+    where not c.annule and c.date_at >= v_demain and c.date_at < v_demain + interval '1 day'
+      and not exists (select 1 from public.veilles_envoyees v where v.quoi = 'agenda' and v.id = c.id and v.rdv_at = c.date_at)
+  ),
+  inscrits as materialized (
+    select x.user_id as id, i.* from items i join public.evenement_participants x on x.evenement_id = i.item
+      where i.type = 'evenement' and x.user_id is distinct from i.organisateur
+    union all
+    select x.user_id, i.* from items i join public.cafe_participants x on x.cafe_id = i.item
+      where i.type = 'cafe' and x.user_id is distinct from i.organisateur
+  ),
+  dest as materialized (
+    select t.* from (
+      select y.*, count(*) over (partition by y.id) as n, row_number() over (partition by y.id order by y.debut, y.type, y.titre) as rang
+      from inscrits y) t
+    where t.rang = 1
+      and exists (select 1 from public.push_subscriptions s where s.user_id = t.id)
+      and public.push_voulu(t.id, 'agenda_demain')
+  ),
+  places as materialized (select d.* from dest d where public.programme_place(d.id, 'agenda_demain')),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'agenda_demain', jsonb_strip_nulls(jsonb_build_object('type', x.type, 'titre', x.titre, 'debut', x.debut,
+      'lieu', x.lieu, 'ville', x.ville, 'inscrits', x.inscrits, 'id', x.item, 'n', x.n))
+    from places x
+    returning 1),
+  notes as (
+    insert into public.veilles_envoyees (quoi, id, rdv_at) select 'agenda', i.item, i.debut from items i
+    on conflict (quoi, id) do update set rdv_at = excluded.rdv_at, created_at = now()
+    returning 1)
+  select count(*) into v_n from envoi;
+  return v_n;
+end $$;
+revoke all on function public.agenda_demain_push() from public, anon, authenticated;
+
+-- apres_rdv : le rendez-vous de mentorat a eu lieu (il y a 1 à 30 h, toujours « acceptée ») : l'étudiant qui n'a pas encore
+-- remercié (pour = 'demandeur'), et le lauréat tant que le mentorat n'est pas marqué terminé (pour = 'mentor'). DURE.
+create or replace function public.apres_rdv_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_n int;
+begin
+  with r as materialized (
+    select x.id as m, x.student_id, x.mentor_id, x.sujet, x.rdv_at, x.merci from public.mentorships x
+    where x.status = 'acceptee' and x.mentor_id is not null
+      and x.rdv_at >= now() - interval '30 hours' and x.rdv_at <= now() - interval '1 hour'
+      and not exists (select 1 from public.veilles_envoyees v where v.quoi = 'apres' and v.id = x.id and v.rdv_at = x.rdv_at)
+  ),
+  dest as materialized (
+    select y.* from (
+      select r.student_id as id, r.mentor_id as autre, 'demandeur'::text as pour, r.m, r.sujet from r where r.merci is null
+      union all select r.mentor_id, r.student_id, 'mentor', r.m, r.sujet from r) y
+    where exists (select 1 from public.push_subscriptions s where s.user_id = y.id)
+      and public.push_voulu(y.id, 'apres_rdv')
+  ),
+  places as materialized (select d.* from dest d where public.programme_place(d.id, 'apres_rdv')),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'apres_rdv', jsonb_build_object('nom', split_part(a.full_name, ' ', 1), 'sujet', x.sujet, 'm', x.m, 'pour', x.pour)
+    from places x join public.profiles a on a.id = x.autre
+    returning 1),
+  notes as (
+    insert into public.veilles_envoyees (quoi, id, rdv_at) select 'apres', r.m, r.rdv_at from r
+    on conflict (quoi, id) do update set rdv_at = excluded.rdv_at, created_at = now()
+    returning 1)
+  select count(*) into v_n from envoi;
+  return v_n;
+end $$;
+revoke all on function public.apres_rdv_push() from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- offre_bientot (09:00) : une offre mise de côté (reactions 'save') ferme dans 2 jours ou demain (rattrapage), encore ouverte,
+-- pour son année (offre_pour), sans candidature de sa part, pas la sienne. Une offre partagée sans date limite ferme
+-- 45 jours après sa publication (fermer_partages_anciens). Une fois par offre et par membre ; 2 par jour au plus,
+-- au-delà une seule notification groupée (n, groupe). DOUCE.
+-- ---------------------------------------------------------------------
+create table if not exists public.offres_bientot_notif (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  offer_id uuid not null references public.offers(id) on delete cascade,
+  at timestamptz not null default now(),
+  primary key (user_id, offer_id)
+);
+alter table public.offres_bientot_notif enable row level security;
+
+create or replace function public.offres_bientot_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_s int := public.saison_courante(); v_jour date := (public.horloge() at time zone 'UTC')::date;
+  v_debut timestamptz := date_trunc('day', public.horloge() at time zone 'UTC') at time zone 'UTC'; v_n int;
+begin
+  with offres as materialized (
+    select o.id, l.limite from public.offers o
+    cross join lateral (select coalesce(o.deadline, case when o.origine = 'partagee'
+      then ((o.created_at + interval '45 days') at time zone 'UTC')::date end) as limite) l
+    where o.status = 'ouverte' and l.limite - v_jour in (1, 2)
+  ),
+  c as materialized (
+    select p.id, o.id as offre, o.titre, o.entreprise, f.limite, f.limite - v_jour as jours
+    from offres f
+    join public.offers o on o.id = f.id
+    join public.reactions r on r.offer_id = o.id and r.kind = 'save'
+    join public.profiles p on p.id = r.user_id
+    where p.role in ('etudiant','laureat') and o.author_id <> p.id
+      and public.offre_pour(o, p, v_s)
+      and not exists (select 1 from public.applications y where y.student_id = p.id and y.offer_id = o.id)
+      and not exists (select 1 from public.offres_bientot_notif n where n.user_id = p.id and n.offer_id = o.id)
+      and exists (select 1 from public.push_subscriptions s where s.user_id = p.id)
+      and public.push_voulu(p.id, 'offre_bientot')
+      and not exists (select 1 from public.notif_programme n where n.user_id = p.id and n.kind = 'offre_bientot'
+                        and n.at >= v_debut and n.at < v_debut + interval '1 day')
+  ),
+  g as materialized (
+    select c.*, count(*) over (partition by c.id) as k, row_number() over (partition by c.id order by c.limite, c.titre, c.offre) as rang from c
+  ),
+  lignes as materialized (
+    select g.id, g.offre, g.k, g.rang,
+      case when g.k >= 3 then jsonb_build_object('n', g.k, 'groupe', true)
+           else jsonb_build_object('titre', g.titre, 'entreprise', g.entreprise, 'date_limite', g.limite, 'offre', g.offre, 'jours', g.jours) end as data
+    from g where g.k <= 2 or g.rang = 1
+  ),
+  places as materialized (select l.* from lignes l where public.programme_place(l.id, 'offre_bientot')),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'offre_bientot', x.data from places x order by x.id, x.rang
+    returning 1),
+  notes as (
+    insert into public.offres_bientot_notif (user_id, offer_id)
+      select g.id, g.offre from g join places x on x.id = g.id and (x.k >= 3 or x.offre = g.offre)
+    on conflict do nothing
+    returning 1)
+  select count(*) into v_n from envoi;
+  return v_n;
+end $$;
+revoke all on function public.offres_bientot_push() from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- demande_attente (alertes_horaires, chaque heure de 8 h à 21 h) : une demande publiée il y a 24 à 72 h, toujours ouverte
+-- et sans aucune aide proposée. Les lauréats de son parcours (demande_pour, proximité ≥ 1) sans proposition, une fois par
+-- demande, 150 au plus : d'abord ceux que l'annonce de la demande n'a pas atteints (pas de demande_nouvelle dans le
+-- journal), puis les plus actifs. Au plus une par jour et par lauréat. DOUCE.
+-- ---------------------------------------------------------------------
+create table if not exists public.demandes_attente_notif (
+  demande_id uuid primary key references public.demandes(id) on delete cascade,
+  at timestamptz not null default now()
+);
+alter table public.demandes_attente_notif enable row level security;
+
+create or replace function public.demande_attente_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare d public.demandes; v_a record; v_n int := 0; v_k int;
+  v_debut timestamptz := date_trunc('day', public.horloge() at time zone 'UTC') at time zone 'UTC';
+begin
+  if extract(hour from public.horloge() at time zone 'UTC') not between 8 and 21 then return 0; end if;
+  for d in select x.* from public.demandes x
+      where x.status = 'ouverte' and x.created_at <= now() - interval '24 hours' and x.created_at > now() - interval '72 hours'
+        and not exists (select 1 from public.demandes_attente_notif n where n.demande_id = x.id)
+        and not exists (select 1 from public.propositions y where y.demande_id = x.id and y.status <> 'retiree')
+      order by x.created_at limit 50 loop
+    insert into public.demandes_attente_notif (demande_id) values (d.id) on conflict do nothing;
+    select split_part(full_name, ' ', 1) as prenom, filiere into v_a from public.profiles where id = d.auteur_id;
+    with dest as materialized (
+      select p.id from public.profiles p
+      where p.role = 'laureat' and public.proximite_filiere(p.filiere, v_a.filiere) >= 1
+        and public.demande_pour(d, p)
+        and not exists (select 1 from public.propositions y where y.demande_id = d.id and y.laureat_id = p.id)
+        and exists (select 1 from public.push_subscriptions s where s.user_id = p.id)
+        and public.push_voulu(p.id, 'demande_attente')
+        and not exists (select 1 from public.notif_programme n where n.user_id = p.id and n.kind = 'demande_attente'
+                          and n.at >= v_debut and n.at < v_debut + interval '1 day')
+      order by exists (select 1 from public.push_journal j where j.user_id = p.id and j.kind = 'demande_nouvelle'
+                         and j.at >= d.created_at and j.at < d.created_at + interval '15 minutes'),
+        public.derniere_visite(p.id) desc nulls last
+      limit 150
+    ),
+    places as materialized (select x.id from dest x where public.programme_place(x.id, 'demande_attente'))
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'demande_attente', jsonb_build_object('nom', v_a.prenom, 'type', d.type, 'titre', d.titre, 'demande', d.id)
+    from places x;
+    get diagnostics v_k = row_count;
+    v_n := v_n + v_k;
+  end loop;
+  return v_n;
+end $$;
+revoke all on function public.demande_attente_push() from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- demande_pause (08:00) : sa demande ouverte sans nouvelle depuis 60 jours se met en pause (demande_pour la cache aux
+-- lauréats ; logic.js : demandeEnPause) : l'auteur peut la relancer. Une fois par pause (relancee_at) ; rattrapage 7 jours.
+-- DOUCE.
+-- ---------------------------------------------------------------------
+create table if not exists public.demandes_pause_notif (
+  demande_id uuid primary key references public.demandes(id) on delete cascade,
+  relancee_at timestamptz,
+  at timestamptz not null default now()
+);
+alter table public.demandes_pause_notif enable row level security;
+
+create or replace function public.demande_pause_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_n int;
+begin
+  with c as materialized (
+    select d.auteur_id as id, d.id as demande, d.titre, d.relancee_at
+    from public.demandes d join public.profiles p on p.id = d.auteur_id
+    where d.status = 'ouverte' and d.relancee_at <= now() - interval '60 days' and d.relancee_at > now() - interval '67 days'
+      and p.role in ('etudiant','laureat')
+      and not exists (select 1 from public.demandes_pause_notif n where n.demande_id = d.id and n.relancee_at = d.relancee_at)
+      and exists (select 1 from public.push_subscriptions s where s.user_id = d.auteur_id)
+      and public.push_voulu(d.auteur_id, 'demande_pause')
+  ),
+  places as materialized (select c.* from c where public.programme_place(c.id, 'demande_pause')),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'demande_pause', jsonb_build_object('titre', x.titre, 'demande', x.demande) from places x
+    returning 1),
+  notes as (
+    insert into public.demandes_pause_notif (demande_id, relancee_at) select x.demande, x.relancee_at from places x
+    on conflict (demande_id) do update set relancee_at = excluded.relancee_at, at = now()
+    returning 1)
+  select count(*) into v_n from envoi;
+  return v_n;
+end $$;
+revoke all on function public.demande_pause_push() from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- semaine (dimanche 10:00) : le résumé de l'email en une ligne. Les vrais comptes des 7 derniers jours, jamais un zéro,
+-- 3 au plus, dans cet ordre :
+--   étudiant : offres pour lui (offre_pour), nouveaux lauréats de sa filière, nouveaux membres de sa promo, événements à
+--              venir dans les 7 jours pour son public ;
+--   lauréat  : demandes d'étudiants pour lui (demande_pour), nouvelles offres de sa filière, nouveaux membres de sa promo,
+--              événements.
+-- Rien si tout est à zéro, si un rappel du soir lui est parti dans les 24 h, ou un résumé dans les 6 jours. DOUCE.
+-- ---------------------------------------------------------------------
+create or replace function public.semaine_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_s int := public.saison_courante(); v_n int;
+begin
+  with offres as materialized (
+    select o from public.offers o where o.status = 'ouverte' and o.created_at > now() - interval '7 days'
+  ),
+  demandes as materialized (select d from public.demandes d where d.status = 'ouverte' and d.created_at > now() - interval '7 days'),
+  nouveaux as materialized (
+    select x.id, x.role, x.promo, x.filiere from public.profiles x
+    where x.created_at > now() - interval '7 days' and x.role in ('etudiant','laureat')
+  ),
+  agenda as materialized (
+    select e.public from public.evenements e where not e.annule and e.debut > now() and e.debut < now() + interval '7 days'
+  ),
+  membres as materialized (
+    select p.id, p.role,
+      (select count(*) from offres x where public.offre_pour(x.o, p, v_s)) as offres_pour,
+      (select count(*) from offres x where (x.o).author_id <> p.id and public.filiere_ok((x.o).filieres, p.filiere)) as offres_filiere,
+      (select count(*) from nouveaux n where n.role = 'laureat' and n.id <> p.id and public.filiere_ok(array[n.filiere], p.filiere)) as laureats,
+      (select count(*) from nouveaux n where n.promo = p.promo and n.id <> p.id) as promo,
+      (select count(*) from agenda e where e.public = 'tous' or (e.public = 'etudiants' and p.role = 'etudiant') or (e.public = 'laureats' and p.role = 'laureat')) as evenements,
+      case when p.role = 'laureat' then (select count(*) from demandes x where public.demande_pour(x.d, p)
+        and not exists (select 1 from public.propositions y where y.demande_id = (x.d).id and y.laureat_id = p.id)) else 0 end as demandes
+    from public.profiles p
+    where p.role in ('etudiant','laureat')
+      and exists (select 1 from public.push_subscriptions s where s.user_id = p.id)
+      and public.push_voulu(p.id, 'semaine')
+      and not exists (select 1 from public.rappels_visite r where r.user_id = p.id and r.push_at > now() - interval '24 hours')
+      and not exists (select 1 from public.notif_programme n where n.user_id = p.id and n.kind = 'semaine' and n.at > public.horloge() - interval '6 days')
+  ),
+  resumes as materialized (
+    select m.id, m.role, (
+      select jsonb_object_agg(z.k, z.v) from (
+        select t.k, t.v from unnest(
+          case when m.role = 'etudiant' then array['offres','laureats','promo','evenements'] else array['demandes','offres','promo','evenements'] end,
+          case when m.role = 'etudiant' then array[m.offres_pour, m.laureats, m.promo, m.evenements]
+               else array[m.demandes, m.offres_filiere, m.promo, m.evenements] end) with ordinality t(k, v, i)
+        where t.v > 0 order by t.i limit 3) z) as compte
+    from membres m
+  ),
+  places as materialized (select r.* from resumes r where r.compte is not null and public.programme_place(r.id, 'semaine')),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'semaine', jsonb_build_object('type', x.role) || x.compte from places x
+    returning 1)
+  select count(*) into v_n from envoi;
+  return v_n;
+end $$;
+revoke all on function public.semaine_push() from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- groupe_jour (19:30, après la veille) : les messages de ses groupes (ceux de son profil : parcours, ville, pays, comme
+-- autoGroups de logic.js ; et ceux qu'il suit) écrits par d'autres depuis sa dernière visite (la base n'a pas de repère
+-- « lu » par groupe : une heure de marge après la visite, 24 h au plus). Le groupe le plus actif en détail, autres = ses
+-- autres groupes qui ont du nouveau. Au plus un par jour. DOUCE.
+-- ---------------------------------------------------------------------
+-- Clés des groupes d'un profil (mêmes clés que groupKey / groupeFiliere / autoGroups de logic.js)
+create or replace function public.groupes_auto(p_filiere text, p_ville text, p_pays text) returns text[]
+language sql immutable as $$
+  select array_remove(array[
+    case when cardinality(public.parcours_de(p_filiere)) > 0 then 'filiere:' || case (public.parcours_de(p_filiere))[1]
+           when 'PEI' then 'electro-industriel' when 'PM' then 'mecanique' when 'CIVIL' then 'civil'
+           when 'IA' then 'intelligence artificielle' when 'INFO' then 'informatique' end
+         when public.cle_lieu(p_filiere) is not null then left('filiere:' || public.cle_lieu(p_filiere), 80) end,
+    case when public.cle_lieu(p_ville) is not null then 'ville:' || public.cle_lieu(p_ville) end,
+    case when public.cle_lieu(p_pays) is not null and public.cle_lieu(p_pays) <> 'maroc' then 'pays:' || public.cle_lieu(p_pays) end
+  ], null);
+$$;
+
+-- Nom affiché d'un groupe (comme groupLabel de logic.js) : le nom du parcours, sinon l'écriture la plus courante parmi les
+-- profils du groupe
+create or replace function public.nom_groupe(p_cle text) returns text
+language sql stable security definer set search_path = public as $$
+  select case p_cle
+    when 'filiere:electro-industriel' then 'Électro-industriel' when 'filiere:mecanique' then 'Mécanique'
+    when 'filiere:civil' then 'Civil' when 'filiere:intelligence artificielle' then 'Intelligence artificielle'
+    when 'filiere:informatique' then 'Informatique'
+    else coalesce((
+      select x.v from (
+        select btrim(case split_part(p_cle, ':', 1) when 'ville' then p.ville when 'pays' then p.pays else p.filiere end) as v
+        from public.profiles p
+        where case split_part(p_cle, ':', 1)
+          when 'ville' then 'ville:' || public.cle_lieu(p.ville) = p_cle
+          when 'pays' then 'pays:' || public.cle_lieu(p.pays) = p_cle
+          else left('filiere:' || public.cle_lieu(p.filiere), 80) = p_cle end) x
+      where x.v <> '' group by x.v order by count(*) desc, x.v limit 1),
+      initcap(substr(p_cle, strpos(p_cle, ':') + 1))) end;
+$$;
+revoke all on function public.nom_groupe(text) from public, anon, authenticated;
+
+create or replace function public.groupe_jour_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_debut timestamptz := date_trunc('day', public.horloge() at time zone 'UTC') at time zone 'UTC'; v_n int;
+begin
+  with actifs as materialized (
+    select distinct g.groupe from public.groupe_messages g where g.created_at > now() - interval '24 hours'
+  ),
+  membres as materialized (
+    select p.id, a.groupe from public.profiles p
+    cross join lateral unnest(public.groupes_auto(p.filiere, p.ville, p.pays)) a(groupe)
+    where p.role in ('etudiant','laureat') and a.groupe in (select x.groupe from actifs x)
+    union
+    select m.user_id, m.groupe from public.groupe_membres m join public.profiles p on p.id = m.user_id
+    where p.role in ('etudiant','laureat') and m.groupe in (select x.groupe from actifs x)
+  ),
+  abonnes as materialized (
+    select x.id, public.derniere_visite(x.id) as vu from (select distinct m.id from membres m) x
+    where exists (select 1 from public.push_subscriptions s where s.user_id = x.id)
+      and public.push_voulu(x.id, 'groupe_jour')
+      and not exists (select 1 from public.notif_programme n where n.user_id = x.id and n.kind = 'groupe_jour'
+                        and n.at >= v_debut and n.at < v_debut + interval '1 day')
+  ),
+  comptes as materialized (
+    select m.id, m.groupe, count(*) as n
+    from membres m join abonnes a on a.id = m.id
+    join public.groupe_messages g on g.groupe = m.groupe
+    where g.created_at > greatest(a.vu + interval '1 hour', now() - interval '24 hours') and g.author_id <> m.id
+      and not exists (select 1 from public.blocages b where (b.user_id = m.id and b.bloque_id = g.author_id) or (b.user_id = g.author_id and b.bloque_id = m.id))
+    group by m.id, m.groupe
+  ),
+  choisis as materialized (
+    select distinct on (c.id) c.id, c.groupe, c.n, (select count(*) from comptes y where y.id = c.id) - 1 as autres
+    from comptes c order by c.id, c.n desc, c.groupe
+  ),
+  places as materialized (select x.* from choisis x where public.programme_place(x.id, 'groupe_jour')),
+  noms as materialized (select g.groupe, public.nom_groupe(g.groupe) as nom from (select distinct p.groupe from places p) g),
+  envoi as (
+    insert into public.push_queue (user_id, kind, data)
+    select x.id, 'groupe_jour', jsonb_build_object('n', x.n, 'groupe', n.nom, 'gkey', x.groupe, 'autres', x.autres)
+    from places x join noms n on n.groupe = x.groupe
+    returning 1)
+  select count(*) into v_n from envoi;
+  return v_n;
+end $$;
+revoke all on function public.groupe_jour_push() from public, anon, authenticated;
+
+-- ---------------------------------------------------------------------
+-- Entre personnes, tout de suite
+--   reponse_utile : un vote sur ma réponse (au plus un par jour et par réponse, avec le nombre de votes) ; ma réponse
+--                   choisie comme meilleure par l'auteur de la question (une fois par question)
+--   bravo         : un bravo sur ma réussite (déclarée ou confirmée), au plus un par heure, avec le nombre de bravos
+-- Jamais pour son propre geste, jamais entre membres bloqués.
+-- ---------------------------------------------------------------------
+create or replace function public.notif_vote() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_a record;
+begin
+  select a.id, a.author_id, a.question_id, q.titre into v_a
+    from public.answers a join public.questions q on q.id = a.question_id where a.id = new.answer_id;
+  if v_a.id is null or v_a.author_id = new.user_id then return null; end if;
+  if exists (select 1 from public.blocages b where (b.user_id = v_a.author_id and b.bloque_id = new.user_id) or (b.user_id = new.user_id and b.bloque_id = v_a.author_id)) then
+    return null;
+  end if;
+  if not exists (select 1 from public.push_subscriptions s where s.user_id = v_a.author_id) then return null; end if;
+  if not public.cadence('vote:' || new.answer_id, interval '1 day') then return null; end if;
+  perform public.pousser(v_a.author_id, 'reponse_utile', jsonb_build_object(
+    'nom', split_part((select full_name from public.profiles where id = new.user_id), ' ', 1),
+    'titre', v_a.titre, 'q', v_a.question_id, 'answer', v_a.id,
+    'n', (select count(*) from public.votes v where v.answer_id = v_a.id), 'best', false));
+  return null;
+exception when others then return null;
+end $$;
+revoke all on function public.notif_vote() from public, anon, authenticated;
+drop trigger if exists trg_notif_vote on public.votes;
+create trigger trg_notif_vote after insert on public.votes
+  for each row execute function public.notif_vote();
+
+create or replace function public.notif_meilleure_reponse() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_a record;
+begin
+  if new.best_answer_id is null or new.best_answer_id is not distinct from old.best_answer_id then return null; end if;
+  select a.id, a.author_id into v_a from public.answers a where a.id = new.best_answer_id and a.question_id = new.id;
+  if v_a.id is null or v_a.author_id = new.author_id then return null; end if;
+  if exists (select 1 from public.blocages b where (b.user_id = v_a.author_id and b.bloque_id = new.author_id) or (b.user_id = new.author_id and b.bloque_id = v_a.author_id)) then
+    return null;
+  end if;
+  if not exists (select 1 from public.push_subscriptions s where s.user_id = v_a.author_id) then return null; end if;
+  if not public.cadence('meilleure:' || new.id, interval '30 days') then return null; end if;
+  -- n seulement s'il y a des votes (jamais « 0 »)
+  perform public.pousser(v_a.author_id, 'reponse_utile', jsonb_strip_nulls(jsonb_build_object(
+    'nom', split_part((select full_name from public.profiles where id = new.author_id), ' ', 1),
+    'titre', new.titre, 'q', new.id, 'answer', v_a.id,
+    'n', nullif((select count(*) from public.votes v where v.answer_id = v_a.id), 0), 'best', true)));
+  return null;
+exception when others then return null;
+end $$;
+revoke all on function public.notif_meilleure_reponse() from public, anon, authenticated;
+drop trigger if exists trg_notif_meilleure on public.questions;
+create trigger trg_notif_meilleure after update of best_answer_id on public.questions
+  for each row execute function public.notif_meilleure_reponse();
+
+create or replace function public.notif_bravo() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_p record;
+begin
+  select pl.id, pl.student_id, pl.entreprise, pl.status into v_p from public.placements pl where pl.id = new.placement_id;
+  if v_p.id is null or v_p.status not in ('declare','confirme') or v_p.student_id = new.user_id then return null; end if;
+  if exists (select 1 from public.blocages b where (b.user_id = v_p.student_id and b.bloque_id = new.user_id) or (b.user_id = new.user_id and b.bloque_id = v_p.student_id)) then
+    return null;
+  end if;
+  if not exists (select 1 from public.push_subscriptions s where s.user_id = v_p.student_id) then return null; end if;
+  if not public.cadence('bravo:' || v_p.id, interval '1 hour') then return null; end if;
+  perform public.pousser(v_p.student_id, 'bravo', jsonb_build_object(
+    'nom', split_part((select full_name from public.profiles where id = new.user_id), ' ', 1),
+    'entreprise', v_p.entreprise, 'placement', v_p.id,
+    'n', (select count(*) from public.kudos k where k.placement_id = v_p.id)));
+  return null;
+exception when others then return null;
+end $$;
+revoke all on function public.notif_bravo() from public, anon, authenticated;
+drop trigger if exists trg_notif_bravo on public.kudos;
+create trigger trg_notif_bravo after insert on public.kudos
+  for each row execute function public.notif_bravo();
+
+-- ---------------------------------------------------------------------
+-- Les tâches programmées (pg_cron, heures UTC = heure du Maroc). Chaque enveloppe appelle ses parties dans des blocs à
+-- part (une partie en panne n'empêche pas les autres) et rend le nombre de notifications mises en file.
+-- ---------------------------------------------------------------------
+-- 08:00 : les envois de la nuit, les demandes en pause, le ménage
+create or replace function public.matin_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_n int := 0; v int;
+begin
+  begin v := public.liberer_nuit(); v_n := v_n + v; exception when others then raise warning 'Envois de la nuit : %', sqlerrm; end;
+  begin v := public.demande_pause_push(); v_n := v_n + v; exception when others then raise warning 'Demandes en pause : %', sqlerrm; end;
+  begin
+    delete from public.notif_programme where at < public.horloge() - interval '8 days';
+    delete from public.veilles_envoyees where created_at < now() - interval '30 days';
+    delete from public.match_attente_notif where at < now() - interval '30 days';
+    delete from public.offres_bientot_notif where at < now() - interval '60 days';
+  exception when others then raise warning 'Ménage des notifications programmées : %', sqlerrm;
+  end;
+  return v_n;
+end $$;
+revoke all on function public.matin_push() from public, anon, authenticated;
+
+-- 12:30 : les intérêts qui attendent une réponse, puis le tour Match du jour
+create or replace function public.midi_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_n int := 0; v int;
+begin
+  begin v := public.match_attente_push(); v_n := v_n + v; exception when others then raise warning 'Intérêts en attente : %', sqlerrm; end;
+  begin v := public.match_jour_push(); v_n := v_n + v; exception when others then raise warning 'Match du jour : %', sqlerrm; end;
+  return v_n;
+end $$;
+revoke all on function public.midi_push() from public, anon, authenticated;
+
+-- 19:30 : la veille (rendez-vous, entretien, agenda), le lendemain d'un rendez-vous, puis les groupes du jour
+create or replace function public.veille_push() returns int
+language plpgsql security definer set search_path = public as $$
+declare v_n int := 0; v int;
+begin
+  begin v := public.rdv_demain_push(); v_n := v_n + v; exception when others then raise warning 'Rendez-vous de demain : %', sqlerrm; end;
+  begin v := public.entretien_demain_push(); v_n := v_n + v; exception when others then raise warning 'Entretiens de demain : %', sqlerrm; end;
+  begin v := public.agenda_demain_push(); v_n := v_n + v; exception when others then raise warning 'Agenda de demain : %', sqlerrm; end;
+  begin v := public.apres_rdv_push(); v_n := v_n + v; exception when others then raise warning 'Après un rendez-vous : %', sqlerrm; end;
+  begin v := public.groupe_jour_push(); v_n := v_n + v; exception when others then raise warning 'Groupes du jour : %', sqlerrm; end;
+  return v_n;
+end $$;
+revoke all on function public.veille_push() from public, anon, authenticated;
+
+do $$ begin
+  if exists (select 1 from pg_extension where extname = 'pg_cron') then
+    perform cron.schedule('ensam-matin', '0 8 * * *', 'select public.matin_push()');
+    perform cron.schedule('ensam-offres-bientot', '0 9 * * *', 'select public.offres_bientot_push()');
+    perform cron.schedule('ensam-midi', '30 12 * * *', 'select public.midi_push()');
+    perform cron.schedule('ensam-veille', '30 19 * * *', 'select public.veille_push()');
+    perform cron.schedule('ensam-semaine', '0 10 * * 0', 'select public.semaine_push()');
+  end if;
+exception when others then raise notice 'Notifications programmées non planifiées : %', sqlerrm;
 end $$;
 
 -- =====================================================================
