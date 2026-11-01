@@ -1283,8 +1283,11 @@ export function sorteLienNotifs({ etat, memo = {} }) {
 // Bandeau de l'accueil : tant que cet appareil ne reçoit rien (coupées par le navigateur, iPhone sans l'application, jamais
 // activées, navigateur d'une application), il le dit, sauf à qui les a coupées lui-même (memo.coupe) ; « plus tard » le range 3 jours.
 export const BANDEAU_PUSH_ECART = 3 * 864e5;
+// memo.sans : l'abonnement a déjà échoué pour de bon sur ce navigateur (apresEchec, pwa.js) : « Activer » n'y servirait à
+// rien, le bouton de Mon profil reste là pour réessayer.
 export function bandeauPush({ etat, memo = {}, now = Date.now(), role, voulu = true }) {
   if (role === 'admin' || !voulu || memo.coupe || !['off', 'ios', 'refuse', 'appli'].includes(etat)) return null;
+  if (etat === 'off' && memo.sans) return null;
   return memo.bandeau && now - memo.bandeau < BANDEAU_PUSH_ECART ? null : etat;
 }
 

@@ -4922,6 +4922,42 @@ test('la pastille « Notifications bloquées » : les gestes de cet appareil, en
   }
 });
 
+test('la pastille ne promet rien à qui n’en veut pas ou ne peut pas : coupées (iPhone : l’icône, sans promesse) ; abonnement impossible ici (ni « Activer » ni bandeau)', async () => {
+  const s = await prevenirSur('off');
+  const id = await s.page.$eval('#persona', e => e.value);
+  const poser = m => s.page.evaluate(([id, m]) => localStorage.setItem('ensam-prevenir-' + id, JSON.stringify(m)), [id, m]);
+  const pastille = async sorte => { await s.page.waitForSelector(`.pastille[data-sorte="${sorte}"]`, { timeout: 8000 }); return s.page.locator('.pastille').innerText(); };
+  // iPhone dans Safari, notifications coupées dans Mon profil : l'icône de l'écran d'accueil, sans parler de notifications
+  await s.page.evaluate(() => localStorage.setItem('ensam-install-demo', 'ios'));
+  await poser({ fait: 1, coupe: 1 });
+  await recharger(s);
+  const ios = await pastille('installer');
+  assert.match(ios, /Une icône sur ton écran d’accueil/);
+  assert.doesNotMatch(ios, /notifications/i);
+  // Android, abonnement déjà impossible pour de bon sur ce navigateur (Brave, téléphone sans services Google) :
+  // « Activer » n'y servirait à rien, ni dans la pastille ni dans le bandeau de l'accueil
+  await s.page.evaluate(() => localStorage.removeItem('ensam-install-demo'));
+  await poser({ fait: 1, sans: 1 });
+  await recharger(s); await s.page.waitForTimeout(2600);
+  assert.equal(await s.page.locator('.pastille').count(), 0);
+  assert.equal(await s.page.locator('.push-bandeau').count(), 0);
+  // L'installation reste proposée, sans promesse
+  await s.page.evaluate(() => localStorage.setItem('ensam-install-demo', 'android'));
+  await recharger(s);
+  assert.match(await pastille('installer'), /Une icône sur ton écran d’accueil/);
+  // Activées puis perdues sans échec : « Activer » revient, avec le bandeau
+  await s.page.evaluate(() => localStorage.removeItem('ensam-install-demo'));
+  await poser({ fait: 1 });
+  await recharger(s);
+  await pastille('activer');
+  await s.page.waitForSelector('.push-bandeau[data-etat="off"]');
+  // Mon profil garde le bouton pour réessayer
+  await poser({ fait: 1, sans: 1 });
+  await s.aller('profil/notifications'); await s.page.waitForSelector('#md-push-oui');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 // ---------------------------------------------------------------------------
 // Vitrine : le logo des entreprises (l'icône de leur site, sinon le monogramme), des cartes d'offres plus parlantes et
 // vraies, « Ça bouge cette semaine », « Grâce à toi » sur l'accueil d'un lauréat, la carte qui devient la fiche

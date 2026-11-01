@@ -243,7 +243,8 @@ function apresEchec(me, e) {
     const { echecs, arret } = e.plateforme ? { echecs: memo.echecs, arret: true } : noterEchecPush(memo);
     if (arret) {
       etatConnu = 'absent';
-      ecrireMemo(me.id, { ...memo, ...(echecs ? { echecs } : {}), fait: 1 });
+      // sans : la pastille et le bandeau ne proposent plus « Activer » sur ce navigateur (une activation réussie l'efface)
+      ecrireMemo(me.id, { ...memo, ...(echecs ? { echecs } : {}), fait: 1, sans: 1 });
       toast(SANS_NOTIF, 'err');
       return true;
     }
@@ -327,7 +328,7 @@ export function PushToggle({ ctx }) {
       const r = simule ? 'on' : await activerPush(store);
       // Fenêtre du navigateur fermée sans choisir ('off') : la case reste à toucher, ce n'est pas une réponse
       setSt(r); etatConnu = r; if (r !== 'off') repondu();
-      if (r === 'on' && me?.id) { const { coupe, echecs, ...m } = lireMemo(me.id); ecrireMemo(me.id, m); }
+      if (r === 'on' && me?.id) { const { coupe, echecs, sans, ...m } = lireMemo(me.id); ecrireMemo(me.id, m); }
       // La pastille et le bandeau suivent (« Activer » n'y reste pas)
       annoncer();
       if (r === 'on') { toast(simule ? DEMO : 'Notifications activées sur cet appareil.'); setDiag(null); premiereNotif(store, setDiag); }
@@ -774,8 +775,8 @@ async function accepterNotif(store, me) {
     dispatchEvent(new Event(PUSH_CHANGE));
     if (r === 'off') { toast(PAS_ACTIVEES); return 'off'; }
     // Activées (même après les avoir coupées dans Mon profil : le membre a changé d'avis) : les échecs d'avant sont oubliés
-    const { coupe, echecs, ...m } = lireMemo(me.id);
-    ecrireMemo(me.id, r === 'on' ? { ...m, fait: 1 } : { ...m, ...(coupe ? { coupe } : {}), ...(echecs ? { echecs } : {}), fait: 1 });
+    const { coupe, echecs, sans, ...m } = lireMemo(me.id);
+    ecrireMemo(me.id, r === 'on' ? { ...m, fait: 1 } : { ...m, ...(coupe ? { coupe } : {}), ...(echecs ? { echecs } : {}), ...(sans ? { sans } : {}), fait: 1 });
     if (r === 'on') { toast('Notifications activées sur cet appareil.', 'win'); premiereNotif(store); }
     return true;
   } catch (e) {
@@ -1033,8 +1034,10 @@ export function PastilleApp({ ctx, cache }) {
     return () => { vivant = false; clearTimeout(t); removeEventListener(PUSH_CHANGE, lire); document.removeEventListener('visibilitychange', vu); document.removeEventListener('focusin', f); document.removeEventListener('focusout', f); };
   }, [me.id]);
   // L'administration reçoit toujours les signalements ; coupées dans Mon profil : la pastille ne les redemande pas
-  const voulu = (me.role === 'admin' || PUSH_CATEGORIES.some(c => c !== 'rappels' && pushChoix(c, me))) && !lireMemo(me.id).coupe;
-  const notif = !voulu ? null : push === 'off' ? 'activer' : push === 'refuse' ? 'debloquer' : null;
+  const memo = lireMemo(me.id);
+  const voulu = (me.role === 'admin' || PUSH_CATEGORIES.some(c => c !== 'rappels' && pushChoix(c, me))) && !memo.coupe;
+  // L'abonnement a déjà échoué pour de bon sur ce navigateur (memo.sans) : « Activer » n'y servirait à rien
+  const notif = !voulu ? null : push === 'off' ? (memo.sans ? null : 'activer') : push === 'refuse' ? 'debloquer' : null;
   // Installer ne suffit pas à recevoir les notifications (il faut toucher « Activer ») : elles passent d'abord, sauf sur
   // iPhone dans Safari où l'icône de l'écran d'accueil est le seul chemin vers elles
   const sorte = push === 'appli' ? (voulu ? 'appli' : null) : install?.ios ? 'installer' : notif || (install ? 'installer' : null);
@@ -1065,7 +1068,8 @@ export function PastilleApp({ ctx, cache }) {
     : aide ? html`<${IosInstallHelp} android=${aide === 'android'} onClose=${fermerAide}/>` : null;
   if (!sorte || !pret || masque || cache || ecriture) return feuille;
   const titre = sorte === 'appli' ? PASTILLE_APPLI[sys] : PASTILLE[sorte][0];
-  const sous = sorte === 'installer' && install.ios ? PASTILLE_IOS : PASTILLE[sorte][1];
+  // « Pour recevoir tes notifications » : seulement à qui les veut (coupées dans Mon profil, ou rien de coché : une icône, sans promesse)
+  const sous = sorte === 'installer' && install.ios && voulu ? PASTILLE_IOS : PASTILLE[sorte][1];
   const dedans = html`<span class="pastille-ico" aria-hidden="true"><${Icon} name=${PASTILLE_ICO[sorte]} size=${18}/></span>
     <span class="pastille-txt"><strong>${titre}</strong><span>${sous}</span></span>`;
   // Sur Android, le navigateur d'une application : le lien rouvre la page dans Chrome, en un toucher

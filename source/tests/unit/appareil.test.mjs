@@ -220,3 +220,13 @@ test('« Ouvrir dans Chrome » en arabe : la langue de la page suit (?lang=ar, l
   assert.match(lienChrome('https://reseau-ensam-meknes.github.io/?lang=ar', '', { lang: 'fr' }), /^intent:\/\/reseau-ensam-meknes\.github\.io\/\?notifs=1#Intent;/);
   assert.match(lienChrome('https://reseau-ensam-meknes.github.io/?promo=2019', '', { lang: 'fr' }), /\?promo=2019&notifs=1#Intent;/);
 });
+
+test('abonnement impossible pour de bon sur ce navigateur (memo.sans) : ni bandeau ni feuille d’ouverture ; le lien touché exprès réessaie', () => {
+  const sans = { fait: 1, sans: 1 };
+  assert.equal(bandeauPush({ etat: 'off', role: 'etudiant', now: NOW, memo: sans }), null);
+  assert.equal(bandeauPush({ etat: 'off', role: 'etudiant', now: NOW, memo: { fait: 1 } }), 'off', 'activées puis perdues : le bandeau le redit');
+  assert.equal(bandeauPush({ etat: 'refuse', role: 'etudiant', now: NOW, memo: sans }), 'refuse', 'bloquées depuis : les gestes pour débloquer');
+  assert.equal(bandeauPush({ etat: 'appli', role: 'etudiant', now: NOW, memo: sans }), 'appli');
+  assert.equal(s({ memo: sans }), null);
+  assert.equal(sorteLienNotifs({ etat: 'off', memo: sans }), 'push');
+});
