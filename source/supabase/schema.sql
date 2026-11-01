@@ -151,7 +151,7 @@ begin
   -- étudiant inscrit avec l'email de l'école, ou lauréat confirmé par deux lauréats vérifiés de sa promo.
   -- Jamais pour un « lauréat » d'une promo pas encore diplômée (un étudiant qui s'est trompé de rôle).
   begin
-    if not new.verified and (new.role <> 'laureat' or new.promo <= extract(year from now())::int) and (public.dans_liste(new.id, new.full_name, new.promo)
+    if not new.verified and (new.role <> 'laureat' or new.promo <= extract(year from now())::int) and (public.dans_liste(new.id, new.full_name, new.promo, new.ecole)
         or (new.role = 'etudiant' and public.email_ecole(new.id))
         or (new.role = 'laureat' and public.pairs_valides(new.id, new.promo) >= 2)) then
       new.verified := true;
@@ -2652,7 +2652,10 @@ begin
   -- Seul le serveur (aucun membre connecté) détache une réponse de son compte : voir anonymiser_enquetes
   if tg_op = 'UPDATE' then
     if auth.uid() is not null or new.user_id is not null then new.user_id := old.user_id; end if;
-    new.vague := old.vague; new.created_at := old.created_at; new.ecole := old.ecole;
+    new.vague := old.vague; new.created_at := old.created_at;
+    -- L'école suit le compte tant que la réponse y est attachée (seule l'administration change l'école d'un compte),
+    -- et ne bouge plus une fois la réponse anonymisée
+    new.ecole := coalesce((select x.ecole from public.profiles x where x.id = new.user_id), old.ecole);
   end if;
   if auth.uid() is not null and not public.is_admin() then
     if tg_op = 'INSERT' then new.user_id := auth.uid(); new.created_at := now(); end if;
@@ -2720,14 +2723,17 @@ drop index if exists public.liste_officielle_nom_promo;
 create unique index if not exists liste_officielle_ecole_nom_promo on public.liste_officielle (ecole, (public.cle_nom(nom)), promo);
 create index if not exists liste_officielle_email on public.liste_officielle (email);
 
-create or replace function public.dans_liste(p_id uuid, p_nom text, p_promo int) returns boolean
+-- p_ecole : l'école du compte, passée par qui appelle. À l'inscription (protect_profile, avant l'insert), la ligne du profil
+-- n'existe pas encore : sans elle, l'inscrit d'une autre école serait comparé à la liste d'ENSAM Meknès.
+drop function if exists public.dans_liste(uuid, text, int);
+create or replace function public.dans_liste(p_id uuid, p_nom text, p_promo int, p_ecole text default null) returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.liste_officielle l
-    where l.ecole = coalesce((select p.ecole from public.profiles p where p.id = p_id), 'ensam-meknes')
+    where l.ecole = coalesce(p_ecole, (select p.ecole from public.profiles p where p.id = p_id), 'ensam-meknes')
       and ((l.promo = p_promo and public.cle_nom(l.nom) = public.cle_nom(p_nom))
        or (l.email is not null and l.email = (select lower(u.email) from auth.users u where u.id = p_id))));
 $$;
-revoke all on function public.dans_liste(uuid, text, int) from public, anon, authenticated;
+revoke all on function public.dans_liste(uuid, text, int, text) from public, anon, authenticated;
 
 drop function if exists public.importer_liste(jsonb, boolean);
 create or replace function public.importer_liste(p_lignes jsonb, p_remplacer boolean default false, p_ecole text default null) returns jsonb
@@ -2756,7 +2762,7 @@ begin
     n_ok := n_ok + 1;
   end loop;
   update public.profiles p set verified = true
-    where not p.verified and p.role <> 'admin' and p.ecole = v_ecole and public.dans_liste(p.id, p.full_name, p.promo);
+    where not p.verified and p.role <> 'admin' and p.ecole = v_ecole and public.dans_liste(p.id, p.full_name, p.promo, p.ecole);
   get diagnostics n_verif = row_count;
   return jsonb_build_object('importes', n_ok, 'rejetes', n_rej, 'verifies', n_verif);
 end $$;

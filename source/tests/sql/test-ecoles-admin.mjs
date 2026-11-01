@@ -40,6 +40,10 @@ test('importer la liste : dans l’école de l’administrateur, ou dans celle q
   assert.equal(r2.importes, 4);
   assert.deepEqual(await liste('autre-ecole'), [`Karim Alaoui ${AN + 1}`, `Nora Idrissi ${AN + 1}`, `Salma Bennani ${AN + 1}`, `Yassir Kabbaj ${AN + 1}`]);
   assert.equal((await liste('ensam-meknes')).length, 2, 'la liste de Meknès ne bouge pas');
+  // Remplacer la même promo dans l'autre école ne touche pas celle de Meknès
+  await q(ADMIN, `select public.importer_liste($1::jsonb, true, 'autre-ecole')`, [lignes(autre)]);
+  assert.equal((await liste('autre-ecole')).length, 4);
+  assert.deepEqual(await liste('ensam-meknes'), [`Omar Tazi ${AN + 1}`, `Salma Bennani ${AN + 1}`], 'remplacer dans une école garde la même promo des autres');
   assert.equal(await verifie(KARIM), true, 'Karim est sur la liste de son école');
   assert.equal(await verifie(NORA), false, 'Nora n’est que sur la liste d’une autre école : pas vérifiée');
   // Une école encore fermée se prépare avant d'ouvrir ; une école inconnue est refusée
@@ -80,17 +84,19 @@ test('vider la liste d’une promo : une seule école, et les comptes vérifiés
 });
 
 test('rapport et chiffres d’insertion : chaque école les siens, même après l’anonymisation', async () => {
-  const repondre = (u, situation) => q(u, `insert into public.enquetes_insertion (vague, promo, situation) values (6, $1, $2) returning ecole`, [AN - 1, situation]);
-  assert.equal((await repondre(LAUREAT_MEK, 'emploi'))[0].ecole, 'ensam-meknes');
-  for (const id of LAUREATS_AUTRE) assert.equal((await repondre(id, 'recherche'))[0].ecole, 'autre-ecole', 'la réponse prend l’école de qui répond');
+  const repondre = (u, situation, canal) => q(u, `insert into public.enquetes_insertion (vague, promo, situation, canal) values (6, $1, $2, $3) returning ecole`, [AN - 1, situation, canal]);
+  assert.equal((await repondre(LAUREAT_MEK, 'emploi', 'linkedin'))[0].ecole, 'ensam-meknes');
+  for (const id of LAUREATS_AUTRE) assert.equal((await repondre(id, 'recherche', 'reseau_ensam'))[0].ecole, 'autre-ecole', 'la réponse prend l’école de qui répond');
+  // La liste officielle de la promo, seulement dans l'autre école : l'effectif du rapport de Meknès reste vide
+  await q(ADMIN, `select public.importer_liste($1::jsonb, false, 'autre-ecole')`, [lignes(['Amal', 'Badr', 'Chama', 'Driss', 'Eya', 'Fouad'].map(n => ({ nom: `${n} Diplome`, promo: AN - 1, filiere: 'GI' })))]);
   await assert.rejects(q(LAUREATS_AUTRE[0], `update public.enquetes_insertion set ecole = 'ensam-meknes' where user_id = $1 returning ecole`, [LAUREATS_AUTRE[0]])
     .then(r => { if (r[0]?.ecole === 'ensam-meknes') return; throw new Error('gardée'); }), /gardée/);
   // Rapport de l'administration
   const ligne = rows => rows.find(r => r.promo === AN - 1 && r.filiere === 'GI' && r.vague === 6);
   const mek = ligne(await q(ADMIN, 'select * from public.rapport_insertion()'));
-  assert.equal(mek.inscrits, 1); assert.equal(mek.repondants, 1); assert.equal(mek.en_poste, 1);
+  assert.deepEqual([mek.inscrits, mek.repondants, mek.en_poste, mek.effectif, Number(mek.taux_reponse)], [1, 1, 1, null, 1]);
   const autre = ligne(await q(ADMIN, `select * from public.rapport_insertion('autre-ecole')`));
-  assert.equal(autre.inscrits, 5); assert.equal(autre.repondants, 5); assert.equal(autre.recherche, 5); assert.equal(autre.en_poste, 0);
+  assert.deepEqual([autre.inscrits, autre.repondants, autre.recherche, autre.en_poste, autre.effectif, Number(autre.taux_reponse)], [5, 5, 5, 0, 6, 0.833]);
   await assert.rejects(q(KARIM, `select * from public.rapport_insertion('autre-ecole')`), /Réservé/);
   // Chiffres des membres : sous 5 réponses rien ne s'affiche ; une autre école ne se voit jamais
   const stats = async (u, ...a) => (await q(u, `select public.stats_insertion(${a.map((_, i) => '$' + (i + 1)).join(',')}) s`, a))[0].s;
@@ -98,12 +104,33 @@ test('rapport et chiffres d’insertion : chaque école les siens, même après 
   assert.deepEqual((await stats(ADMIN, 'autre-ecole')).map(g => g.n), [5]);
   assert.deepEqual(await stats(LAUREAT_MEK), [], 'les 5 réponses de l’autre école ne comptent pas à Meknès');
   assert.deepEqual(await stats(LAUREAT_MEK, 'autre-ecole'), [], 'un membre ne choisit pas une autre école');
-  assert.deepEqual((await stats(KARIM)).map(g => [g.n, g.recherche]), [[5, 5]]);
-  // Anonymisée (user_id vide), une réponse reste dans son école
+  const [deKarim] = await stats(KARIM);
+  assert.deepEqual([deKarim.n, deKarim.recherche, deKarim.canaux, deKarim.filieres], [5, 5, { reseau_ensam: 5 }, { GI: { n: 5, en_poste: 0 } }], 'canaux et filières : rien de Meknès');
+  assert.deepEqual((await stats(ADMIN))[0].canaux, { linkedin: 1 });
+  // L'administration corrige l'école d'un compte : sa réponse suit à la mise à jour suivante
+  await q(ADMIN, `update public.profiles set ecole = 'autre-ecole' where id = $1`, [LAUREAT_MEK]);
+  assert.equal((await q(LAUREAT_MEK, `update public.enquetes_insertion set satisfaction = 4 where user_id = $1 returning ecole`, [LAUREAT_MEK]))[0].ecole, 'autre-ecole');
+  await q(ADMIN, `update public.profiles set ecole = 'ensam-meknes' where id = $1`, [LAUREAT_MEK]);
+  assert.equal((await q(LAUREAT_MEK, `update public.enquetes_insertion set satisfaction = 5 where user_id = $1 returning ecole`, [LAUREAT_MEK]))[0].ecole, 'ensam-meknes');
+  // Anonymisée (user_id vide), une réponse reste dans son école, et ne bouge plus
   await db.query('update public.enquetes_insertion set user_id = null where user_id = any($1::uuid[])', [LAUREATS_AUTRE]);
+  assert.deepEqual((await db.query('select distinct ecole from public.enquetes_insertion where user_id is null')).rows.map(r => r.ecole), ['autre-ecole']);
+  await db.query(`update public.enquetes_insertion set ecole = 'ensam-meknes', satisfaction = 3 where user_id is null`);
   assert.deepEqual((await db.query('select distinct ecole from public.enquetes_insertion where user_id is null')).rows.map(r => r.ecole), ['autre-ecole']);
   assert.deepEqual((await stats(KARIM)).map(g => g.n), [5]);
   assert.deepEqual(await stats(LAUREAT_MEK), []);
+});
+
+test('à l’inscription, seule la liste de son école vérifie le compte', async () => {
+  const INES = uid(921), OMAR = uid(922), OMAR_MEK = uid(923);
+  await q(ADMIN, 'select public.importer_liste($1::jsonb)', [lignes([{ nom: 'Omar Tazi', promo: AN + 1 }])]);
+  await q(ADMIN, `select public.importer_liste($1::jsonb, false, 'autre-ecole')`, [lignes([{ nom: 'Ines Berrada', promo: AN + 1 }])]);
+  await creerCompte(db, { id: INES, full_name: 'Ines Berrada', role: 'etudiant', filiere: 'GI', promo: AN + 1, ecole: 'autre-ecole' });
+  assert.equal(await verifie(INES), true, 'sur la liste de son école : vérifiée dès l’inscription');
+  await creerCompte(db, { id: OMAR, full_name: 'Omar Tazi', role: 'etudiant', filiere: 'GI', promo: AN + 1, ecole: 'autre-ecole' });
+  assert.equal(await verifie(OMAR), false, 'homonyme d’une ligne de Meknès, inscrit dans une autre école : pas vérifié');
+  await creerCompte(db, { id: OMAR_MEK, full_name: 'Omar Tazi', role: 'etudiant', filiere: 'GI', promo: AN + 1 });
+  assert.equal(await verifie(OMAR_MEK), true, 'à Meknès, la liste de Meknès vérifie toujours');
 });
 
 test('relancée, la mise à jour ne garde qu’une version de chaque fonction, et rien ne se perd', async () => {
@@ -112,17 +139,19 @@ test('relancée, la mise à jour ne garde qu’une version de chaque fonction, e
     create or replace function public.couverture_liste() returns jsonb language sql as $$ select '[]'::jsonb $$;
     create or replace function public.manquants_liste(p_promo int) returns table (nom text, email text, filiere text) language sql as $$ select null::text, null::text, null::text where false $$;
     create or replace function public.importer_liste(p_lignes jsonb, p_remplacer boolean default false) returns jsonb language sql as $$ select '{}'::jsonb $$;
-    create or replace function public.stats_insertion() returns jsonb language sql as $$ select '[]'::jsonb $$;`);
+    create or replace function public.stats_insertion() returns jsonb language sql as $$ select '[]'::jsonb $$;
+    create or replace function public.dans_liste(p_id uuid, p_nom text, p_promo int) returns boolean language sql as $$ select false $$;`);
   const sql = fs.readFileSync(SCHEMA, 'utf8').replace(/^create extension if not exists pgcrypto;$/m, '');
   await db.exec(sql); await db.exec(sql);
   const versions = (await db.query(`select proname, pronargs from pg_proc where pronamespace = 'public'::regnamespace
-    and proname in ('rapport_insertion', 'stats_insertion', 'importer_liste', 'couverture_liste', 'manquants_liste', 'vider_liste', 'ecole_visee') order by proname`)).rows;
-  assert.deepEqual(versions.map(v => `${v.proname}/${v.pronargs}`), ['couverture_liste/1', 'ecole_visee/1', 'importer_liste/3', 'manquants_liste/2', 'rapport_insertion/1', 'stats_insertion/1', 'vider_liste/2']);
+    and proname in ('rapport_insertion', 'stats_insertion', 'importer_liste', 'couverture_liste', 'manquants_liste', 'vider_liste', 'ecole_visee', 'dans_liste') order by proname`)).rows;
+  assert.deepEqual(versions.map(v => `${v.proname}/${v.pronargs}`), ['couverture_liste/1', 'dans_liste/4', 'ecole_visee/1', 'importer_liste/3', 'manquants_liste/2', 'rapport_insertion/1', 'stats_insertion/1', 'vider_liste/2']);
   assert.deepEqual((await db.query('select ecole, count(*)::int n from public.enquetes_insertion group by ecole order by ecole')).rows, [{ ecole: 'autre-ecole', n: 5 }, { ecole: 'ensam-meknes', n: 1 }]);
   // Sans argument, chaque fonction reste appelable comme avant (le site en ligne pendant la mise à jour)
   await q(ADMIN, 'select public.couverture_liste(), public.stats_insertion()');
   await q(ADMIN, 'select * from public.rapport_insertion()');
   await q(ADMIN, 'select * from public.manquants_liste($1)', [AN + 1]);
   await q(ADMIN, `select public.importer_liste('[]'::jsonb)`);
-  assert.equal((await db.query(`select has_function_privilege('anon', 'public.vider_liste(int, text)', 'execute') a, has_function_privilege('authenticated', 'public.ecole_visee(text)', 'execute') b`)).rows[0].a, false);
+  assert.deepEqual((await db.query(`select has_function_privilege('anon', 'public.vider_liste(int, text)', 'execute') a, has_function_privilege('authenticated', 'public.ecole_visee(text)', 'execute') b,
+    has_function_privilege('authenticated', 'public.dans_liste(uuid, text, int, text)', 'execute') c`)).rows[0], { a: false, b: false, c: false });
 });

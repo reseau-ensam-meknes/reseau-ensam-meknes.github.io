@@ -383,7 +383,7 @@ class DemoStore extends Base {
   // L'école visée, comme ecole_visee() dans la base : l'administration peut en choisir une, un membre reste dans la sienne
   ecoleVisee(ecole) {
     if (!ecole || this.me?.role !== 'admin') return ecoleDe(this.me);
-    if (Array.isArray(this.data.ecoles) && this.data.ecoles.length && !this.data.ecoles.some(e => e.slug === ecole) && ecole !== ecoleDe(null)) throw new Error(`École inconnue : ${ecole}.`);
+    if (ecole !== ecoleDe(null) && !(this.data.ecoles || []).some(e => e.slug === ecole)) throw new Error(`École inconnue : ${ecole}.`);
     return ecole;
   }
   async rapportInsertion(ecole) {
@@ -977,6 +977,8 @@ function applyPhase3Rules(store, table, r, old) {
       r.promo = p.promo; r.filiere = p.filiere;
       if (!old && store.data.enquetes_insertion.some(e => e.user_id === r.user_id && e.vague === r.vague)) throw new Error('Tu as déjà répondu à cette enquête.');
     }
+    // L'école de la réponse : celle du compte (comme protect_enquete), gardée une fois la réponse détachée du compte
+    { const p = r.user_id ? store.byId('profiles', r.user_id) : null; r.ecole = p ? ecoleDe(p) : old ? ecoleDe(old) : ecoleDe(r); }
     r.updated_at = now;
   }
 }
@@ -1998,7 +2000,10 @@ export class SupabaseStore extends Base {
   // Une seule école (vider_liste() dans la base) : l'administration passe toutes les règles de la table, un delete direct viderait
   // cette promo dans toutes les écoles
   async viderListe(promo, ecole) {
-    const { data, error } = await this.sb.rpc('vider_liste', { p_promo: +promo, ...(ecole ? { p_ecole: ecole } : {}) });
+    let { data, error } = await this.sb.rpc('vider_liste', { p_promo: +promo, ...(ecole ? { p_ecole: ecole } : {}) });
+    // Base pas encore mise à jour (vider_liste absente) : sa liste n'est que celle de l'école de l'administrateur (l'ancien
+    // importer_liste n'écrivait que là), l'ancien delete fait donc la même chose ; le site marche avant la mise à jour
+    if (error && !ecole && (error.code === 'PGRST202' || /could not find the function/i.test(error.message || ''))) ({ data, error } = await this.sb.from('liste_officielle').delete().eq('promo', +promo));
     if (error) throw new Error(frError(error));
     return data;
   }

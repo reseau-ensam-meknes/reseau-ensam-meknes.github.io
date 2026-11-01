@@ -919,6 +919,13 @@ export const GUIDE_SECTIONS = [
 // L'école d'un membre ou d'une ligne : tout ce qui date d'avant les écoles est à ENSAM Meknès (même défaut que la base)
 export const ECOLE_DEFAUT = 'ensam-meknes';
 export const ecoleDe = x => x?.ecole || ECOLE_DEFAUT;
+// Administration > Membres : null si la liste officielle de son école n'a aucune ligne de sa promo, sinon true ou false
+// selon qu'il y figure (même nom et même promo, ou même email) ; les lignes d'une autre école ne comptent jamais
+export function surListeOfficielle(liste, p, email) {
+  const lignes = (liste || []).filter(l => ecoleDe(l) === ecoleDe(p)); const e = (email || '').toLowerCase();
+  if (!lignes.some(l => l.promo === p.promo)) return null;
+  return lignes.some(l => (l.promo === p.promo && cleNom(l.nom) === cleNom(p.full_name)) || (!!l.email && !!e && l.email === e));
+}
 
 // Taux d'insertion par promo, filière et vague (même calcul que rapport_insertion() dans la base) :
 // le taux exclut ceux qui poursuivent leurs études ; le taux de réponse se rapporte à la liste officielle si elle est importée.

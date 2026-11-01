@@ -2,7 +2,7 @@
 // vider_liste() et rapport_insertion() de la base (une école à la fois), et le mode réel n'envoie p_ecole que si une école est choisie.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ecoleDe, ECOLE_DEFAUT, rapportInsertion } from '../../src/logic.js';
+import { ecoleDe, ECOLE_DEFAUT, rapportInsertion, surListeOfficielle } from '../../src/logic.js';
 import { SupabaseStore } from '../../src/store.js';
 
 test('l’école d’une ligne : ENSAM Meknès par défaut, comme dans la base', () => {
@@ -27,6 +27,16 @@ test('rapport d’insertion : une école à la fois (inscrits, réponses et list
   assert.equal(ligne(rapportInsertion(data, now)).inscrits, 3, 'sans école : tout (usage interne)');
 });
 
+test('« Sur la liste officielle » (Membres) : seules les lignes de son école comptent, par nom et promo ou par email', () => {
+  const salma = { full_name: 'Salma Bennani', promo: 2027 }; const karim = { full_name: 'Karim Alaoui', promo: 2027, ecole: 'autre-ecole' };
+  const liste = [{ nom: 'BENNANI Salma', promo: 2027, ecole: 'autre-ecole' }, { nom: 'Yassir Kabbaj', promo: 2027, email: 'salma@exemple.ma', ecole: 'autre-ecole' }];
+  assert.equal(surListeOfficielle(liste, salma, 'salma@exemple.ma'), null, 'aucune ligne de sa promo dans son école : pas de badge');
+  assert.equal(surListeOfficielle(liste, karim, 'karim@exemple.ma'), false, 'la liste de son école a sa promo, sans lui');
+  assert.equal(surListeOfficielle([...liste, { nom: 'Omar Tazi', promo: 2027 }], salma, 'salma@exemple.ma'), false, 'homonyme et email trouvés dans une autre école seulement');
+  assert.equal(surListeOfficielle([...liste, { nom: 'Salma BENNANI', promo: 2027 }], salma, ''), true);
+  assert.equal(surListeOfficielle([{ nom: 'Autre Nom', promo: 2027 }, { nom: 'X Y', promo: 2020, email: 'salma@exemple.ma' }], salma, 'Salma@Exemple.ma'), true, 'même email');
+});
+
 async function demo() {
   globalThis.window ??= {};
   window.ENSAM_CONFIG = {};
@@ -39,6 +49,9 @@ async function demo() {
 test('démo : la liste officielle d’une autre école ne touche ni la liste ni les membres de Meknès', async () => {
   const { s, comme } = await demo();
   comme('Admin');
+  s.data.ecoles = [{ slug: 'autre-ecole', nom: 'Autre École', ouverte: true }];
+  await assert.rejects(s.couvertureListe('inconnue'), /École inconnue/);
+  await assert.rejects(s.importerListe([{ nom: 'Fantome Test', promo: 2027 }], false, 'ensam-meknés'), /École inconnue/);
   const etu = s.data.profiles.find(p => p.role === 'etudiant' && !p.verified && p.promo && p.full_name);
   assert.ok(etu, 'un étudiant non vérifié dans la démo');
   const avant = s.data.liste_officielle.length;
@@ -49,6 +62,10 @@ test('démo : la liste officielle d’une autre école ne touche ni la liste ni 
   assert.equal(r.verifies, 0, 'personne de Meknès n’est vérifié par la liste d’une autre école');
   assert.equal(s.byId('profiles', etu.id).verified, false);
   assert.deepEqual(s.data.liste_officielle.slice(avant).map(l => l.ecole), ['autre-ecole', 'autre-ecole']);
+  // Enregistrer son profil ne le vérifie pas non plus par la liste d'une autre école (dansListe)
+  s.switchTo(etu.id); await s.update('profiles', etu.id, { bio: 'Étudiant en génie industriel.' });
+  assert.equal(s.byId('profiles', etu.id).verified, false);
+  comme('Admin');
   assert.deepEqual(await s.couvertureListe(), couvAvant, 'la couverture de Meknès ne bouge pas');
   assert.deepEqual(await s.couvertureListe('autre-ecole'), [{ promo: etu.promo, filiere: '', total: 2, inscrits: 0 }], 'un inscrit de Meknès ne compte pas pour une autre école');
   assert.deepEqual((await s.manquantsListe(etu.promo, 'autre-ecole')).map(x => x.nom).sort(), [etu.full_name, 'Inconnu Autre'].sort());
@@ -67,6 +84,28 @@ test('démo : la liste officielle d’une autre école ne touche ni la liste ni 
   assert.equal(s.ecoleVisee('autre-ecole'), 'ensam-meknes');
   await assert.rejects(s.couvertureListe('autre-ecole'), /Réservé/);
   await assert.rejects(s.viderListe(etu.promo, 'autre-ecole'), /Réservé/);
+});
+
+test('démo : rapport et chiffres d’insertion d’une école ; la réponse prend l’école de qui répond', async () => {
+  const { s, comme } = await demo();
+  s.data.ecoles = [{ slug: 'autre-ecole', nom: 'Autre École', ouverte: true }];
+  const an = new Date().getFullYear();
+  const l = s.data.profiles.find(p => p.role === 'laureat' && p.filiere && p.promo <= an - 1 && p.promo >= an - 6);
+  assert.ok(l, 'une cohorte de lauréats dans la démo');
+  comme('Admin');
+  const rapportAvant = await s.rapportInsertion(); const statsAvant = await s.statsInsertion();
+  // Une réponse d'une autre école, dans la même promo, filière et vague qu'une cohorte de Meknès
+  s.data.enquetes_insertion.push({ id: 'enq-autre', user_id: null, vague: 6, promo: l.promo, filiere: l.filiere, situation: 'recherche', canal: 'linkedin', ecole: 'autre-ecole' });
+  assert.deepEqual(await s.rapportInsertion(), rapportAvant, 'le rapport de Meknès ne bouge pas');
+  assert.deepEqual(await s.statsInsertion(), statsAvant, 'les chiffres de Meknès ne bougent pas');
+  assert.deepEqual((await s.statsInsertion('autre-ecole')).map(g => [g.promo, g.n]), [[l.promo, 1]]);
+  comme('Salma');
+  assert.deepEqual(await s.statsInsertion('autre-ecole'), await s.statsInsertion(), 'un membre ne choisit pas une autre école');
+  // La règle de démo d'enquetes_insertion : l'école du compte qui répond, quoi qu'il envoie
+  const laureat = s.data.profiles.find(p => p.role === 'laureat' && !p._persona && !s.data.enquetes_insertion.some(e => e.user_id === p.id && e.vague === 12));
+  s.switchTo(laureat.id);
+  await s.insert('enquetes_insertion', { vague: 12, promo: laureat.promo, situation: 'emploi', ecole: 'autre-ecole' });
+  assert.equal(s.data.enquetes_insertion.find(e => e.user_id === laureat.id && e.vague === 12).ecole, 'ensam-meknes');
 });
 
 test('mode réel : p_ecole seulement quand une école est choisie ; vider passe par vider_liste()', async () => {
@@ -88,4 +127,19 @@ test('mode réel : p_ecole seulement quand une école est choisie ; vider passe 
     ['rapport_insertion', {}], ['rapport_insertion', { p_ecole: 'autre-ecole' }],
     ['stats_insertion', {}],
   ]);
+});
+
+test('mode réel, base pas encore mise à jour : « Vider la liste » marche encore (ancien delete, l’école de l’administrateur)', async () => {
+  const s = new SupabaseStore({});
+  const appels = [];
+  s.sb = {
+    rpc: async (fn, args) => { appels.push(['rpc', fn, args]); return { data: null, error: { code: 'PGRST202', message: 'Could not find the function public.vider_liste(p_promo) in the schema cache' } }; },
+    from: t => ({ delete: () => ({ eq: async (k, v) => { appels.push(['delete', t, k, v]); return { data: null, error: null }; } }) }),
+  };
+  await s.viderListe('2027');
+  assert.deepEqual(appels, [['rpc', 'vider_liste', { p_promo: 2027 }], ['delete', 'liste_officielle', 'promo', 2027]]);
+  // Une autre école demandée : jamais l'ancien delete (il viderait la promo partout)
+  appels.length = 0;
+  await assert.rejects(s.viderListe(2027, 'autre-ecole'));
+  assert.deepEqual(appels.map(a => a[0]), ['rpc']);
 });
