@@ -1092,8 +1092,9 @@ exception when others then raise warning 'noter_push : %', sqlerrm;
 end $$;
 revoke all on function public.noter_push(uuid, text, int) from public, anon, authenticated;
 
--- Adresses d'abonnement mortes : téléphone parti (404, 410) ou trois refus définitifs d'affilée. Un appareil qui redonne
--- l'une d'elles n'est pas réinscrit (abonner_push répond 'mort') : il se réabonne, avec une adresse neuve.
+-- Adresses d'abonnement mortes : téléphone parti (404, 410), ou trois refus définitifs d'affilée alors que le même service
+-- de push accepte les autres (push_resultats). Un appareil qui redonne l'une d'elles n'est pas réinscrit
+-- (abonner_push_etat répond 'mort') : il se réabonne, avec une adresse neuve.
 -- Gardées 90 jours (taches_quotidiennes). Aucune règle de lecture : seuls la base et la fonction y touchent.
 create table if not exists public.push_morts (
   endpoint text primary key,
@@ -1125,11 +1126,9 @@ create table if not exists public.rappels_envoyes (
 
 -- S'abonner depuis un téléphone (un même téléphone ne sert qu'un compte à la fois). Le site le refait à chaque
 -- ouverture (resynchroniserPush, pwa.js) : un abonnement oublié par la base revient, sans rien changer s'il y est déjà.
--- Réponse : 'ok' ; 'mort' si le service de push a refusé cette adresse pour de bon (push_morts) : elle n'est pas
--- réinscrite, l'appareil doit se réabonner (unsubscribe puis subscribe donnent une adresse neuve).
--- Le type de retour a changé (void avant) : la fonction est retirée puis recréée, avec les mêmes droits.
-drop function if exists public.abonner_push(text, text, text);
-create function public.abonner_push(p_endpoint text, p_p256dh text, p_auth text) returns text
+-- abonner_push_etat répond 'ok', ou 'mort' si le service de push a refusé cette adresse pour de bon (push_morts) : elle
+-- n'est pas réinscrite, l'appareil doit se réabonner (unsubscribe puis subscribe donnent une adresse neuve).
+create or replace function public.abonner_push_etat(p_endpoint text, p_p256dh text, p_auth text) returns text
 language plpgsql security definer set search_path = public as $$
 begin
   if auth.uid() is null then raise exception 'Connecte-toi d’abord.'; end if;
@@ -1140,6 +1139,21 @@ begin
       created_at = case when push_subscriptions.user_id = excluded.user_id then push_subscriptions.created_at else now() end
     where (push_subscriptions.user_id, push_subscriptions.p256dh, push_subscriptions.auth) is distinct from (excluded.user_id, excluded.p256dh, excluded.auth);
   return 'ok';
+end $$;
+revoke all on function public.abonner_push_etat(text, text, text) from public, anon;
+grant execute on function public.abonner_push_etat(text, text, text) to authenticated;
+-- abonner_push, sans réponse comme avant (l'ancien site, et les mise-a-jour.sql d'autres branches qui la redéfinissent) :
+-- la même chose, une adresse morte n'est simplement pas réinscrite. Une base qui a reçu la première version de ce chantier
+-- (abonner_push rendait du texte) la voit retirée puis recréée, avec les mêmes droits.
+do $$ begin
+  if exists (select 1 from pg_proc where oid = to_regprocedure('public.abonner_push(text,text,text)') and prorettype <> 'void'::regtype) then
+    drop function public.abonner_push(text, text, text);
+  end if;
+end $$;
+create or replace function public.abonner_push(p_endpoint text, p_p256dh text, p_auth text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform public.abonner_push_etat(p_endpoint, p_p256dh, p_auth);
 end $$;
 revoke all on function public.abonner_push(text, text, text) from public, anon;
 grant execute on function public.abonner_push(text, text, text) to authenticated;

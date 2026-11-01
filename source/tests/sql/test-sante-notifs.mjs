@@ -46,17 +46,29 @@ before(async () => {
   await db.query(`update public.profiles set notif_push = '{"match": false}' where id = $1`, [LAU3]);
 });
 
-test('abonner_push : « ok », puis « mort » pour une adresse refusée pour de bon, qui n’est pas réinscrite', async () => {
-  const neuve = 'https://fcm.googleapis.com/fcm/send/etu3-neuve', morte = 'https://fcm.googleapis.com/fcm/send/etu3-morte';
-  assert.deepEqual(await q(ETU3, 'select public.abonner_push($1, $2, $3) r', [neuve, 'k', 'a']), [{ r: 'ok' }]);
-  assert.deepEqual(await q(ETU3, 'select public.abonner_push($1, $2, $3) r', [neuve, 'k', 'a']), [{ r: 'ok' }], 'déjà là : rien ne change');
+test('abonner_push_etat : « ok », puis « mort » pour une adresse refusée pour de bon, qui n’est pas réinscrite ; abonner_push (sans réponse) fait pareil', async () => {
+  const neuve = 'https://fcm.googleapis.com/fcm/send/etu3-neuve', morte = 'https://fcm.googleapis.com/fcm/send/etu3-morte',
+    autre = 'https://fcm.googleapis.com/fcm/send/etu3-autre';
+  assert.deepEqual(await q(ETU3, 'select public.abonner_push_etat($1, $2, $3) r', [neuve, 'k', 'a']), [{ r: 'ok' }]);
+  assert.deepEqual(await q(ETU3, 'select public.abonner_push_etat($1, $2, $3) r', [neuve, 'k', 'a']), [{ r: 'ok' }], 'déjà là : rien ne change');
   await db.query('insert into public.push_morts (endpoint) values ($1)', [morte]);
-  assert.deepEqual(await q(ETU3, 'select public.abonner_push($1, $2, $3) r', [morte, 'k', 'a']), [{ r: 'mort' }]);
-  assert.deepEqual((await db.query('select endpoint from public.push_subscriptions where user_id = $1', [ETU3])).rows, [{ endpoint: neuve }]);
+  assert.deepEqual(await q(ETU3, 'select public.abonner_push_etat($1, $2, $3) r', [morte, 'k', 'a']), [{ r: 'mort' }]);
+  // abonner_push, celle de l'ancien site et des autres branches : ne répond rien, n'inscrit pas non plus l'adresse morte
+  await q(ETU3, 'select public.abonner_push($1, $2, $3)', [morte, 'k', 'a']);
+  await q(ETU3, 'select public.abonner_push($1, $2, $3)', [autre, 'k', 'a']);
+  assert.deepEqual((await db.query('select endpoint from public.push_subscriptions where user_id = $1 order by endpoint', [ETU3])).rows.map(r => r.endpoint),
+    [autre, neuve]);
+  const resultat = async f => (await db.query(`select pg_get_function_result($1::regprocedure) t`, [f])).rows[0].t;
+  assert.equal(await resultat('public.abonner_push(text,text,text)'), 'void', 'le type de retour d’avant : un autre mise-a-jour.sql peut la redéfinir');
+  assert.equal(await resultat('public.abonner_push_etat(text,text,text)'), 'text');
   // Mêmes droits qu'avant : les membres connectés seulement
-  const [{ anon, membre }] = (await db.query(`select has_function_privilege('anon', 'public.abonner_push(text,text,text)', 'execute') anon,
-    has_function_privilege('authenticated', 'public.abonner_push(text,text,text)', 'execute') membre`)).rows;
-  assert.equal(anon, false); assert.equal(membre, true);
+  for (const f of ['public.abonner_push(text,text,text)', 'public.abonner_push_etat(text,text,text)']) {
+    const [{ anon, membre }] = (await db.query(`select has_function_privilege('anon', $1, 'execute') anon,
+      has_function_privilege('authenticated', $1, 'execute') membre`, [f])).rows;
+    assert.equal(anon, false, f); assert.equal(membre, true, f);
+  }
+  await assert.rejects(q(null, 'select public.abonner_push_etat($1, $2, $3)', [neuve, 'k', 'a']), /Connecte-toi d’abord/);
+  await assert.rejects(q(ETU3, 'select public.abonner_push_etat($1, $2, $3)', ['http://exemple.ma/x', 'k', 'a']), /Abonnement invalide/);
   // push_morts : illisible depuis le site
   const [{ rls, regles }] = (await db.query(`select relrowsecurity rls, (select count(*)::int from pg_policies where tablename = 'push_morts') regles
     from pg_class where oid = 'public.push_morts'::regclass`)).rows;
@@ -137,7 +149,7 @@ test('push_resultats : accepté remet à zéro ; 404, 410, ou 3 refus définitif
   assert.equal(await etat('refus'), undefined);
   assert.deepEqual(await morts(), [ep('parti'), ep('perdu'), ep('refus')]);
   // L'appareil qui redonne une adresse morte doit se réabonner
-  assert.deepEqual(await q(RES, 'select public.abonner_push($1, $2, $3) r', [ep('refus'), 'k', 'a']), [{ r: 'mort' }]);
+  assert.deepEqual(await q(RES, 'select public.abonner_push_etat($1, $2, $3) r', [ep('refus'), 'k', 'a']), [{ r: 'mort' }]);
   // Une liste vide, ou rien de lisible : rien ne bouge
   assert.deepEqual(await tour([]), []);
   assert.deepEqual((await service(`select public.push_resultats('{"pas":"une liste"}'::jsonb) r`))[0].r, []);
@@ -367,9 +379,10 @@ test('mise à jour sur une base d’avant (abonner_push sans réponse, sans push
   await b.query(`update public.profiles set role = 'admin' where id = $1`, [B]);
   // La base telle qu'avant ce chantier
   await b.exec(`drop function public.admin_sante_notifs(); drop function public.service_push(text); drop function public.push_resultats(jsonb);
-    drop function public.noter_push(uuid, text, int); drop table public.push_morts;
-    alter table public.push_subscriptions drop column dernier_code, drop column dernier_envoi_at, drop column refus, drop column refus_at;
-    drop function public.abonner_push(text, text, text);
+    drop function public.noter_push(uuid, text, int); drop table public.push_morts; drop function public.push_rendues(bigint[]);
+    alter table public.push_subscriptions drop column dernier_code, drop column dernier_envoi_at, drop column refus, drop column refus_at,
+      drop column refus_depuis;
+    drop function public.abonner_push(text, text, text); drop function public.abonner_push_etat(text, text, text);
     create function public.abonner_push(p_endpoint text, p_p256dh text, p_auth text) returns void
     language plpgsql security definer set search_path = public as $$
     begin
@@ -387,21 +400,84 @@ test('mise à jour sur une base d’avant (abonner_push sans réponse, sans push
   assert.deepEqual((await b.query('select endpoint, refus, dernier_code from public.push_subscriptions')).rows,
     [{ endpoint: 'https://fcm.googleapis.com/fcm/send/avant', refus: 0, dernier_code: null }]);
   assert.equal((await b.query('select count(*)::int n from public.push_journal')).rows[0].n, 1);
-  // abonner_push répond, avec les mêmes droits
-  assert.equal((await b.query(`select pg_get_function_result('public.abonner_push(text,text,text)'::regprocedure) t`)).rows[0].t, 'text');
+  // abonner_push garde son type (sans réponse) et ses droits ; abonner_push_etat répond, avec les mêmes droits
+  const resultat = async f => (await b.query(`select pg_get_function_result($1::regprocedure) t`, [f])).rows[0].t;
+  assert.equal(await resultat('public.abonner_push(text,text,text)'), 'void');
+  assert.equal(await resultat('public.abonner_push_etat(text,text,text)'), 'text');
   const droit = async (role, f) => (await b.query(`select has_function_privilege($1, $2, 'execute') d`, [role, f])).rows[0].d;
   assert.equal(await droit('authenticated', 'public.abonner_push(text,text,text)'), true);
   assert.equal(await droit('anon', 'public.abonner_push(text,text,text)'), false);
+  assert.equal(await droit('authenticated', 'public.abonner_push_etat(text,text,text)'), true);
+  assert.equal(await droit('anon', 'public.abonner_push_etat(text,text,text)'), false);
+  assert.equal(await droit('service_role', 'public.push_rendues(bigint[])'), true);
+  assert.equal(await droit('authenticated', 'public.push_rendues(bigint[])'), false);
   assert.equal(await droit('service_role', 'public.push_resultats(jsonb)'), true);
   assert.equal(await droit('authenticated', 'public.push_resultats(jsonb)'), false);
   assert.equal(await droit('authenticated', 'public.noter_push(uuid,text,integer)'), false);
   assert.equal(await droit('authenticated', 'public.admin_sante_notifs()'), true);
   assert.equal(await droit('anon', 'public.admin_sante_notifs()'), false);
-  assert.deepEqual((await en(b, A, tx => tx.query(`select public.abonner_push('https://fcm.googleapis.com/fcm/send/avant', 'k2', 'a2') r`))).rows, [{ r: 'ok' }]);
+  assert.deepEqual((await en(b, A, tx => tx.query(`select public.abonner_push_etat('https://fcm.googleapis.com/fcm/send/avant', 'k2', 'a2') r`))).rows, [{ r: 'ok' }]);
   await b.query(`insert into public.push_morts (endpoint) values ('https://fcm.googleapis.com/fcm/send/morte')`);
-  assert.deepEqual((await en(b, A, tx => tx.query(`select public.abonner_push('https://fcm.googleapis.com/fcm/send/morte', 'k', 'a') r`))).rows, [{ r: 'mort' }]);
+  assert.deepEqual((await en(b, A, tx => tx.query(`select public.abonner_push_etat('https://fcm.googleapis.com/fcm/send/morte', 'k', 'a') r`))).rows, [{ r: 'mort' }]);
+  assert.equal((await b.query(`select count(*)::int n from information_schema.columns where table_name = 'push_subscriptions' and column_name = 'refus_depuis'`)).rows[0].n, 1);
   // Le panneau répond tout de suite
   const s = (await en(b, B, tx => tx.query('select public.admin_sante_notifs() s'))).rows[0].s;
   assert.equal(s.telephones.total, 1); assert.equal(s.jours.at(-1).envoyees, 1);
+  await b.close();
+});
+
+// abonner_push telle que la définit le mise-a-jour.sql de main (#44 à #50) et des branches parties de lui : sans réponse
+const ABONNER_PUSH_MAIN = `create or replace function public.abonner_push(p_endpoint text, p_p256dh text, p_auth text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then raise exception 'Connecte-toi d’abord.'; end if;
+  if p_endpoint !~* '^https://' then raise exception 'Abonnement invalide.'; end if;
+  insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values (auth.uid(), p_endpoint, p_p256dh, p_auth)
+    on conflict (endpoint) do update set user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth,
+      created_at = case when push_subscriptions.user_id = excluded.user_id then push_subscriptions.created_at else now() end
+    where (push_subscriptions.user_id, push_subscriptions.p256dh, push_subscriptions.auth) is distinct from (excluded.user_id, excluded.p256dh, excluded.auth);
+end $$;
+revoke all on function public.abonner_push(text, text, text) from public, anon;
+grant execute on function public.abonner_push(text, text, text) to authenticated;`;
+
+test('base passée par la première version de ce chantier (abonner_push rendait du texte) : la mise à jour la remet sans réponse, et le mise-a-jour.sql d’une autre branche passe ensuite', async () => {
+  const b = await nouvelleBase(SCHEMA);
+  const A = uid(1701);
+  await creerCompte(b, { id: A, full_name: 'Salma Version', role: 'etudiant', filiere: GI, promo: S + 1 });
+  // La base après la première version : abonner_push rendait 'ok' ou 'mort' ; ni abonner_push_etat, ni push_rendues, ni refus_depuis
+  await b.exec(`drop function public.abonner_push_etat(text, text, text); drop function public.push_rendues(bigint[]);
+    alter table public.push_subscriptions drop column refus_depuis;
+    drop function public.abonner_push(text, text, text);
+    create function public.abonner_push(p_endpoint text, p_p256dh text, p_auth text) returns text
+    language plpgsql security definer set search_path = public as $$
+    begin
+      if exists (select 1 from public.push_morts where endpoint = p_endpoint) then return 'mort'; end if;
+      insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values (auth.uid(), p_endpoint, p_p256dh, p_auth)
+        on conflict (endpoint) do update set user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth;
+      return 'ok';
+    end $$;
+    revoke all on function public.abonner_push(text, text, text) from public, anon;
+    grant execute on function public.abonner_push(text, text, text) to authenticated;`);
+  // Avant : le mise-a-jour.sql d'une autre branche échouait ici (cannot change return type of existing function)
+  await assert.rejects(b.exec(ABONNER_PUSH_MAIN), /cannot change return type/);
+  const maj = sql(MAJ);
+  await b.exec(maj);
+  await b.exec(maj);
+  const resultat = async f => (await b.query(`select pg_get_function_result($1::regprocedure) t`, [f])).rows[0].t;
+  assert.equal(await resultat('public.abonner_push(text,text,text)'), 'void');
+  assert.equal(await resultat('public.abonner_push_etat(text,text,text)'), 'text');
+  const droit = async (role, f) => (await b.query(`select has_function_privilege($1, $2, 'execute') d`, [role, f])).rows[0].d;
+  for (const f of ['public.abonner_push(text,text,text)', 'public.abonner_push_etat(text,text,text)']) {
+    assert.equal(await droit('authenticated', f), true, f); assert.equal(await droit('anon', f), false, f);
+  }
+  // Maintenant, l'autre branche passe (elle remet son abonner_push, sans la vérification des adresses mortes)…
+  await b.exec(ABONNER_PUSH_MAIN);
+  assert.equal(await resultat('public.abonner_push(text,text,text)'), 'void');
+  // … et cette mise à jour relancée remet la sienne : une adresse morte n'est pas réinscrite
+  await b.exec(maj);
+  await b.query(`insert into public.push_morts (endpoint) values ('https://fcm.googleapis.com/fcm/send/morte-v1')`);
+  await en(b, A, tx => tx.query(`select public.abonner_push('https://fcm.googleapis.com/fcm/send/morte-v1', 'k', 'a')`));
+  assert.equal((await b.query('select count(*)::int n from public.push_subscriptions')).rows[0].n, 0);
+  assert.deepEqual((await en(b, A, tx => tx.query(`select public.abonner_push_etat('https://fcm.googleapis.com/fcm/send/neuve-v1', 'k', 'a') r`))).rows, [{ r: 'ok' }]);
   await b.close();
 });
