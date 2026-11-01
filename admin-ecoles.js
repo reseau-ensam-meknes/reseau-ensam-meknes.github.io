@@ -5,7 +5,7 @@
 // SuiviTableau et FicheSuivi servent aussi aux partenaires (admin-partenaires.js) : même table admin_suivi, autre type.
 import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, toast, injectCSS } from './ui.js';
-import { addAR, arCount } from './i18n.js';
+import { addAR, arCount, getLang } from './i18n.js';
 import { ajouterIcones } from './entree.js';
 import { timeAgo } from './logic.js';
 import { useTableAdmin, useEcoles, ecoleDe, ECOLE_DEFAUT, ETAPES, ETAPES_HORS, nomEtape, etapeVoisine, retardJours, grouperSuivi, CONDITIONS_ECOLE,
@@ -85,7 +85,8 @@ export function useLarge(q = '(min-width: 1100px)') {
 // ---------------------------------------------------------------------------
 // Le suivi : tableau par étapes (écoles ou partenaires)
 // ---------------------------------------------------------------------------
-// La prochaine action : « Relancer par WhatsApp », sa date, et le retard en orange doux (jamais en rouge)
+// La prochaine action : « Relancer par WhatsApp », sa date (dans la langue de l'écran : « 1er novembre » ne se traduit pas
+// tout seul), et le retard en orange doux (jamais en rouge)
 function ProchaineAction({ l, now }) {
   if (!l.prochaine_action && !l.prochaine_le) return null;
   const r = retardJours(l, now);
@@ -93,7 +94,7 @@ function ProchaineAction({ l, now }) {
   return html`<p class=${'sv-action small' + (r ? ' retard' : '')}>
     <${Icon} name="clock" size=${14}/>
     <span class="sv-action-txt">${l.prochaine_action ? html`<span translate="no" dir="auto">${l.prochaine_action}</span>` : null}
-      ${l.prochaine_le ? html`<span class="sv-date">${auj ? 'Aujourd’hui' : dateLongue(l.prochaine_le + 'T12:00:00', 'fr')}</span>` : null}
+      ${l.prochaine_le ? html`<span class="sv-date">${auj ? 'Aujourd’hui' : dateLongue(l.prochaine_le + 'T12:00:00', getLang() === 'ar' ? 'ar' : 'fr')}</span>` : null}
       ${r ? html`<span class="sv-retard">${`en retard de ${r} jour${r > 1 ? 's' : ''}`}</span>` : null}</span>
   </p>`;
 }
