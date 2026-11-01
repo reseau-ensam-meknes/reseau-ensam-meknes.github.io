@@ -51,6 +51,12 @@ const DESSINS = {
     <path class="m-ico" d="M80.5 59.5h7a1.5 1.5 0 0 1 1.5 1.5v8h-7a1.5 1.5 0 0 0-1.5 1.5zM100.5 61h7v7h-7zM103 58.5h6.5v6.5"/>
     ${cible(html`<circle class="m-cible" cx="60" cy="64" r="10"/>`, html`<circle cx="60" cy="64" r="10"/>`)}
     <path class="m-ico fort" d="M56 62.5v6.5h8v-6.5M60 56.5v8.5M57 59.5l3-3 3 3"/>`,
+  // Chrome, Firefox ou Edge sur iPhone : Partager au bout de la barre d'adresse, en haut (pas dans une barre du bas)
+  partagerHaut: () => html`${ecran()}<path class="m-barre" d="M.75 10.75A10 10 0 0 1 10.75.75h98.5a10 10 0 0 1 10 10V26H.75z"/>
+    <rect class="m-champ" x="7" y="7" width="106" height="13" rx="6.5"/><path class="m-ico" d="M12.5 13.5h4v3.5h-4zM13.25 13.5v-1.25a1.25 1.25 0 0 1 2.5 0v1.25"/><rect class="m-trait" x="21" y="11.75" width="44" height="3.5" rx="1.75"/>
+    ${cible(html`<circle class="m-cible" cx="104" cy="13.5" r="8"/>`, html`<circle cx="104" cy="13.5" r="8"/>`)}
+    <path class="m-ico fort" d="M101.2 12.4v4.6h5.6v-4.6M104 8.3v6M101.9 10.4l2.1-2.1 2.1 2.1"/>
+    ${traits(12, 36, [70, 96, 84, 58])}`,
   // La feuille de partage : « Sur l'écran d'accueil » (un plus dans un carré)
   accueil: () => html`${ecran()}${traits(12, 10, [70])}<rect class="m-voile" x=".75" y=".75" width="118.5" height="78.5" rx="10"/>
     <path class="m-feuille" d="M.75 30A10 10 0 0 1 10.75 20h98.5a10 10 0 0 1 10 10v39.5a9.75 9.75 0 0 1-9.75 9.75h-99A9.75 9.75 0 0 1 .75 69.5z"/>
@@ -97,7 +103,9 @@ function Telephone() {
 
 export function IosInstallHelp({ onClose, android }) {
   const sys = android ? 'android' : 'ios';
-  const etapes = android ? ANDROID : IOS.map(([k, t]) => [k, t || (autreNavigateurIos() ? PARTAGER.autre : PARTAGER.safari)]);
+  // Chrome, Firefox ou Edge sur iPhone : Partager est en haut, le dessin le montre là (pas la barre du bas de Safari)
+  const autre = !android && autreNavigateurIos();
+  const etapes = android ? ANDROID : IOS.map(([k, t]) => (k === 'partager' ? [autre ? 'partagerHaut' : k, autre ? PARTAGER.autre : PARTAGER.safari] : [k, t]));
   return html`<${Modal} title="Installer l’application" cls="installer" onClose=${onClose}>
     <div class="ins-tete"><${Telephone}/><p class="ins-pourquoi">${fr(POURQUOI[sys])}</p></div>
     <ol class="ios-steps ins-etapes">${etapes.map(([k, t], i) => html`<li key=${k}>
