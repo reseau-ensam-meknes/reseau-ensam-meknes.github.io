@@ -15,7 +15,7 @@ import { html, useState, useEffect, useLayoutEffect, useRef, useMemo } from './v
 import { Icon, Avatar, AvatarPile, CompanyLogo, MentionLogos, toast, roleTexte, useFeuille, mouvementReduit, ecranLibre, injectCSS, styleEntreprise } from './ui.js';
 import { ajouterIcones } from './entree.js';
 import { deckMatch, matchsDe, titreOffre, resumeFilieres, filiereCourte, niveauOf, NIVEAUX, TYPES, demandesActives, typesDemande, DEMANDES_MAX, sponsorisesPour, avecSponsorises, decalageSponso,
-  proximiteFiliere, logoEntreprise, MATCH_PLUS_TARD_JOURS, fmtDate } from './logic.js';
+  proximiteFiliere, logoEntreprise, MATCH_PLUS_TARD_JOURS, fmtDate, TOUR_JOUR, etatTour, avancerTour, jourLocal } from './logic.js';
 import { estPortee } from './origine.js';
 import { TYPE_ICON } from './entree.js';
 import { OfferComposer } from './offers.js';
@@ -181,6 +181,11 @@ function Compte({ n }) {
 // ---------------------------------------------------------------------------
 // La page
 // ---------------------------------------------------------------------------
+// Le tour du jour, par membre et dans ce navigateur (logic.js : avancerTour)
+const cleTour = id => 'match-tour-' + id;
+const lireTour = id => { try { return JSON.parse(localStorage.getItem(cleTour(id)) || 'null'); } catch { return null; } };
+const noterTour = (id, t) => { try { localStorage.setItem(cleTour(id), JSON.stringify(t)); } catch { /* stockage indisponible */ } };
+
 export function MatchPage(ctx) {
   const { data, me, store, go } = ctx;
   const etu = me.role === 'etudiant';
@@ -199,6 +204,7 @@ export function MatchPage(ctx) {
   const [compose, setCompose] = useState(false);
   const [lire, setLire] = useState(null);        // le CV ouvert en grand (la carte du dessus)
   const [annonce, setAnnonce] = useState('');
+  const [tour, setTour] = useState(() => etatTour(lireTour(me.id), jourLocal()));
   // Le premier passage : le geste montré une fois, cinq secondes, sans rien bloquer (par membre, dans ce navigateur)
   const [guide, setGuide] = useState(() => { try { return !localStorage.getItem('match-guide-' + me.id); } catch { return false; } });
   const pile = useRef();
@@ -208,9 +214,11 @@ export function MatchPage(ctx) {
     return i > 0 ? [l[i], ...l.slice(0, i), ...l.slice(i + 1)] : l;
   }, [deck, vol, devant]);
   const top = cartes[0] || null;
-  // La progression de la visite : les cartes ordinaires passées sur toutes celles de la visite (les sponsorisées ne comptent pas)
+  // Les cartes ordinaires qui restent (les sponsorisées ne comptent pas)
   const restantes = base.filter(c => !hist.includes(c.cle)).length;
-  const total = passees + restantes, pos = Math.min(total, passees + 1);
+  // Le tour du jour : TOUR_JOUR cartes, ou moins quand la pile est plus courte (une pile finie, c'est un tour fait)
+  const jour = jourLocal(), tourFait = tour.fait === jour;
+  const objectif = Math.min(TOUR_JOUR, tour.n + restantes);
 
   const choisir = (choix, from = null) => {
     if (!top || vol) return;
@@ -230,6 +238,11 @@ export function MatchPage(ctx) {
     if (c.sorte === 'sponsorise') { setSautes(l => [...l, c.creneau]); setAnnonce('Carte sponsorisée passée.'); fin(); return; }
     setAnnonce(`${choix === 'oui' ? 'Intéressé' : 'Plus tard'} : ${c.offre ? titreOffre(c.offre) : c.profil?.full_name || ''}`);
     setHist(h => [...h, c.cle]); setPassees(n => n + 1); setBilan(b => [...b, { cle: c.cle, choix }]);
+    // Le tour du jour avance (logic.js : avancerTour) ; une pile plus courte que le tour le termine aussi
+    const jour = jourLocal(), avant = lireTour(me.id);
+    const t = avancerTour(avant, jour, Math.min(TOUR_JOUR, etatTour(avant, jour).n + restantes));
+    noterTour(me.id, t); setTour(t);
+    if (t.fini) { vibrer([12, 40, 12]); toast(t.serie > 1 ? `Tour du jour fait : ${t.serie} jours de suite` : 'Tour du jour fait', 'win'); }
     store.choisirMatch(c.offre ? { offre: c.offre.id } : { profil: c.profil.id }, choix).then(r => {
       if (!r?.match) return;
       const autre = store.byId('profiles', r.match.etudiant_id === me.id ? r.match.laureat_id : r.match.etudiant_id) || c.profil;
@@ -303,7 +316,7 @@ export function MatchPage(ctx) {
     <header class="mx-tete">
       <div class="mx-tete-txt"><h1>Match</h1>
         <p class="muted mx-sous">${etu ? 'Des offres de lauréats, une carte à la fois.' : 'Des étudiants de l’école, une carte à la fois.'}</p>
-        ${plein && total ? html`<${Progres} pos=${pos} total=${total}/>` : null}
+        ${tourFait || (plein && objectif > 0) ? html`<${TourDuJour} n=${Math.min(tour.n, objectif)} objectif=${objectif} fait=${tourFait} serie=${tour.serie}/>` : null}
       </div>
       <${MesMatchs} ctx=${ctx}/>
     </header>
@@ -336,14 +349,20 @@ export function MatchPage(ctx) {
   </section>`;
 }
 
-// Où l'on en est : « 3 sur 8 », et un point par carte (une barre fine au-delà de 12 cartes)
-function Progres({ pos, total }) {
-  const points = total <= 12;
-  // Une image pour les lecteurs d'écran (aria-label n'est pas permis sur un simple paragraphe) : « Carte 3 sur 8 »
-  return html`<p class="mx-progres" role="img" aria-label=${`Carte ${pos} sur ${total}`}>
-    <span class="mx-pr-n" aria-hidden="true"><strong>${pos}</strong> sur ${total}</span>
-    ${points ? html`<span class="mx-pr-pts" aria-hidden="true">${Array.from({ length: total }, (_, i) => html`<i class=${i < pos - 1 ? 'fait' : i === pos - 1 ? 'ici' : ''}></i>`)}</span>`
-      : html`<span class="mx-pr-barre" aria-hidden="true"><i style=${`inline-size:${Math.round(((pos - 1) / total) * 1000) / 10}%`}></i></span>`}
+// Le tour du jour : « 2 sur 5 aujourd’hui » et un point par carte (le point en cours est plus long). Fait : une coche,
+// et les jours de suite quand il y en a plusieurs ; jamais de série perdue affichée ni de reproche.
+function TourDuJour({ n, objectif, fait, serie }) {
+  if (fait) {
+    const texte = serie > 1 ? `Tour du jour fait · ${serie} jours de suite` : 'Tour du jour fait';
+    return html`<p class="mx-tour fini" role="img" aria-label=${texte}>
+      <span class="mx-tour-coche" aria-hidden="true"><${Icon} name="check" size=${13}/></span><span aria-hidden="true">Tour du jour fait</span>
+      ${serie > 1 ? html`<span class="mx-tour-serie" aria-hidden="true">${serie} jours de suite</span>` : null}
+    </p>`;
+  }
+  // Une image pour les lecteurs d'écran (aria-label n'est pas permis sur un simple paragraphe)
+  return html`<p class="mx-tour" role="img" aria-label=${`Tour du jour : ${n} sur ${objectif}`}>
+    <span class="mx-tour-txt" aria-hidden="true"><strong class="mx-tour-n">${n}</strong> sur ${objectif} aujourd’hui</span>
+    <span class="mx-tour-pts" aria-hidden="true">${Array.from({ length: objectif }, (_, i) => html`<i class=${i < n ? 'fait' : i === n ? 'ici' : ''}></i>`)}</span>
   </p>`;
 }
 
@@ -963,15 +982,18 @@ injectCSS('match-guide', `
 
 // La progression, la fin de la pile, « En bref » et la mise en page des grands écrans
 injectCSS('match-page', `
-.mx-progres { display: flex; align-items: center; gap: .6rem; margin: 0; color: var(--muted); font-size: var(--fs-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.mx-pr-n strong { color: var(--ink); font-weight: 700; }
-.mx-pr-pts { display: inline-flex; align-items: center; gap: 4px; }
-.mx-pr-pts i { inline-size: 6px; block-size: 6px; border-radius: 3px; background: var(--line-strong); transition: inline-size .25s var(--ease), background-color .25s; }
-.mx-pr-pts i.fait { background: color-mix(in srgb, var(--accent) 50%, var(--surface)); }
-.mx-pr-pts i.ici { inline-size: 16px; background: var(--accent); }
-.mx-pr-barre { position: relative; display: block; inline-size: 84px; block-size: 4px; border-radius: 2px; background: var(--line); overflow: hidden; }
-.mx-pr-barre i { position: absolute; inset-block: 0; inset-inline-start: 0; border-radius: inherit; background: var(--accent); transition: inline-size .3s var(--ease); }
-@media (prefers-reduced-motion: reduce) { .mx-pr-pts i, .mx-pr-barre i { transition: none; } }
+.mx-tour { display: flex; align-items: center; gap: .6rem; margin: 0; color: var(--muted); font-size: var(--fs-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mx-tour-n { color: var(--ink); font-weight: 700; }
+.mx-tour-pts { display: inline-flex; align-items: center; gap: 4px; }
+.mx-tour-pts i { inline-size: 6px; block-size: 6px; border-radius: 3px; background: var(--line-strong); transition: inline-size .25s var(--ease), background-color .25s; }
+.mx-tour-pts i.fait { background: color-mix(in srgb, var(--accent) 50%, var(--surface)); }
+.mx-tour-pts i.ici { inline-size: 16px; background: var(--accent); }
+.mx-tour.fini { gap: .45rem; color: var(--good); font-weight: 650; animation: mx-tour-pop .4s cubic-bezier(.34, 1.56, .64, 1) both; }
+.mx-tour-coche { display: inline-grid; place-items: center; inline-size: 20px; block-size: 20px; border-radius: 50%; background: var(--good); color: var(--surface); }
+.mx-tour-serie { color: var(--muted); font-weight: 500; }
+.mx-tour-serie::before { content: "·"; margin-inline-end: .45rem; }
+@keyframes mx-tour-pop { from { transform: scale(.94); opacity: .5; } }
+@media (prefers-reduced-motion: reduce) { .mx-tour-pts i { transition: none; } .mx-tour.fini { animation: none; } }
 
 /* Plus de carte : trois cartes posées (la dernière coche se dessine), le bilan vrai de la visite, la suite, l'action */
 /* Tout tient au-dessus de la barre du bas d'un téléphone (390 × 844 comme 360 px de large), sans défiler ; la carte va
@@ -1027,6 +1049,7 @@ injectCSS('match-page', `
 `);
 
 addAR({
+  'Tour du jour fait': 'تمت جولة اليوم', 'aujourd’hui': 'اليوم',
   'À droite : Intéressé · À gauche : Plus tard': 'إلى اليمين: يهمّني · إلى اليسار: لاحقًا',
   'À gauche : Intéressé · À droite : Plus tard': 'إلى اليسار: يهمّني · إلى اليمين: لاحقًا',
   // Cartes sponsorisées
@@ -1094,7 +1117,11 @@ addAR({
   [/^Cherche un stage en (.+)$/, x => `البحث عن تدريب في ${x}`],
   [/^Cherche un stage à l’étranger en (.+)$/, x => `البحث عن تدريب بالخارج في ${x}`],
   [/^Cherche un emploi en (.+)$/, x => `البحث عن وظيفة في ${x}`],
+  [/^(\d+) jours de suite$/, n => `${n} أيام متتالية`],
+  [/^Tour du jour fait : (\d+) jours de suite$/, n => `تمت جولة اليوم: ${n} أيام متتالية`],
+  [/^(\d+) sur (\d+) aujourd’hui$/, (a, b) => `${a} من ${b} اليوم`],
   [/^(Intéressé|Plus tard) : (.+)$/, (c, x) => `${c === 'Intéressé' ? 'يهمّني' : 'لاحقًا'}: ${x}`],
-  [/^Carte (\d+) sur (\d+)$/, (a, b) => `البطاقة ${a} من ${b}`],
+  [/^Tour du jour : (\d+) sur (\d+)$/, (a, b) => `جولة اليوم: ${a} من ${b}`],
+  [/^Tour du jour fait · (\d+) jours de suite$/, n => `تمت جولة اليوم · ${n} أيام متتالية`],
   [/^Les cartes « Plus tard » reviennent (\d+) jours après ton choix\.$/, n => `تعود بطاقات «لاحقًا» بعد ${n} يومًا من اختيارك.`],
 ]);

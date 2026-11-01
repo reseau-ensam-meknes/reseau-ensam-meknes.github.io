@@ -2598,16 +2598,17 @@ test('cloche : son chiffre compte ce qui attend un geste, la feuille dit « À f
   const pastilles = () => s.page.$$eval('.bottom-nav a', as => as.filter(a => a.querySelector('.dotn')).map(a => a.innerText.trim().split('\n')[0]));
   // Accueil : la plateforme lui propose d'être ambassadeur de sa promo (ambassadeurs.js) ; sur téléphone, Mon espace est
   // dans le menu du compte (Match a pris sa place dans la barre) : sa pastille passe sur l'avatar
-  assert.deepEqual((await pastilles()).sort(), ['Accueil', 'Mentorat']);
+  // Match : Khadija s'est intéressée à son offre et attend une réponse
+  assert.deepEqual((await pastilles()).sort(), ['Accueil', 'Match', 'Mentorat']);
   assert.equal(await s.page.locator('.me-btn .dotn').count(), 1);
   // Mon espace ne répète pas la cloche : aucune de ses lignes (elles sont dans la cloche et sur l'accueil)
   await s.aller('espace');
   assert.equal(await s.page.locator('.page .af-row').count(), 0, 'Mon espace ne répète pas les lignes de la cloche');
   assert.doesNotMatch(await s.page.locator('.page').innerText(), /nouvelles candidatures|te demande de l’aide/);
-  // Un étudiant sans rien à faire : ni chiffre ni pastille, et la cloche le dit calmement
+  // Un étudiant sans rien à faire : ni chiffre ni pastille, et la cloche le dit calmement (seul Match s'allume : Youssef s'intéresse à son profil)
   await s.comme('Amine'); await s.aller('accueil');
   assert.equal(await s.page.locator('.cloche-btn .badge-n').count(), 0);
-  assert.deepEqual(await pastilles(), []);
+  assert.deepEqual(await pastilles(), ['Match']);
   assert.equal(await s.page.locator('.me-btn .dotn').count(), 0);
   await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
   assert.equal(await s.page.locator('.cloche .af-row').count(), 0);
@@ -5115,7 +5116,7 @@ test('Match : au premier passage, la carte du dessus montre elle-même le geste,
   await s.page.waitForFunction(() => { const c = document.querySelector('.mx-carte.dessus'); return c && !c.classList.contains('ressort') && Math.abs(new DOMMatrixReadOnly(getComputedStyle(c).transform).e) < .5; });
   assert.equal(await s.page.locator('.modal').count(), 0, 'un glissé n’ouvre pas le détail');
   assert.equal(await s.page.locator('.mx-carte.vol').count(), 0, 'rien n’est choisi');
-  assert.equal(await s.page.locator('.mx-pr-n strong').innerText(), '1', 'toujours la première carte');
+  assert.equal(await s.page.locator('.mx-tour-n').innerText(), '0', 'rien n’est choisi : le tour du jour n’a pas bougé');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -5151,33 +5152,36 @@ test('match : en arabe, un titre resté en français rejoint le bord droit de la
   await s.ctx.close();
 });
 
-test('match : « 1 sur N » avance d’un pas à chaque choix ; la fin de la pile dit le vrai bilan de la visite, ce qui revient et quand, avec une seule action (390 px)', async () => {
+test('match : le tour du jour avance d’un point à chaque choix (TOUR_JOUR cartes, ou toute la pile si elle est plus courte) puis se coche ; la fin de la pile dit le vrai bilan de la visite, ce qui revient et quand, avec une seule action (390 px)', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Salma'); await s.aller('match');
   await s.page.waitForSelector('.mx-carte.dessus');
-  const ou = async () => { const m = (await s.page.getAttribute('.mx-progres', 'aria-label')).match(/^Carte (\d+) sur (\d+)$/); return { pos: +m[1], total: +m[2] }; };
-  // Le total : les cartes de la visite (deckMatch, logic.js), un point par carte
-  const cartes = await s.page.evaluate(async () => (await import('./logic.js')).deckMatch(window.__demo.data, window.__demo.me).length);
-  assert.deepEqual(await ou(), { pos: 1, total: cartes });
-  assert.equal(await s.page.getAttribute('.mx-progres', 'role'), 'img', 'aria-label lu : une image, pas un simple paragraphe');
-  assert.equal(await s.page.locator('.mx-progres').innerText(), `1 sur ${cartes}`);
-  assert.equal(await s.page.locator('.mx-pr-pts i').count(), cartes);
-  assert.equal(await s.page.locator('.mx-pr-pts i.ici').count(), 1);
-  // Chaque choix avance d'un pas ; le total peut grandir (« Plus tard » sur la lauréate intéressée fait venir son offre), jamais baisser
-  let oui = 0, tard = 0;
+  const ou = async () => { const m = (await s.page.getAttribute('.mx-tour', 'aria-label')).match(/^Tour du jour : (\d+) sur (\d+)$/); return { n: +m[1], objectif: +m[2] }; };
+  // L'objectif : TOUR_JOUR cartes, ou toute la pile du jour (deckMatch, logic.js) quand elle est plus courte ; un point par carte
+  const { cartes, tourJour } = await s.page.evaluate(async () => { const l = await import('./logic.js'); return { cartes: l.deckMatch(window.__demo.data, window.__demo.me).length, tourJour: l.TOUR_JOUR }; });
+  const objectif = Math.min(tourJour, cartes);
+  assert.deepEqual(await ou(), { n: 0, objectif });
+  assert.equal(await s.page.getAttribute('.mx-tour', 'role'), 'img', 'aria-label lu : une image, pas un simple paragraphe');
+  assert.equal(await s.page.locator('.mx-tour').innerText(), `0 sur ${objectif} aujourd’hui`);
+  assert.equal(await s.page.locator('.mx-tour-pts i').count(), objectif);
+  assert.equal(await s.page.locator('.mx-tour-pts i.ici').count(), 1);
+  // Chaque choix avance d'un point ; l'objectif ne dépasse jamais TOUR_JOUR (il peut grandir : « Plus tard » sur la lauréate
+  // intéressée fait venir son offre) ; atteint, le tour se coche une fois, au dernier point et pas avant
+  let oui = 0, tard = 0, fait = false;
   for (let pas = 0; await s.page.locator('.mx-carte.dessus').count(); pas++) {
     assert.ok(pas < 30, 'la pile finit');
-    const avant = await ou();
+    const avant = fait ? null : await ou();
     if (pas === 1) { await s.page.click('.mx-oui'); oui++; } else { await s.page.click('.mx-non'); tard++; }
     await s.page.waitForTimeout(260);
     if (await s.page.locator('.mx-fete').count()) { await s.page.click('.mx-fete-plus'); await s.page.waitForTimeout(200); }
-    if (await s.page.locator('.mx-progres').count()) {
-      const apres = await ou();
-      assert.equal(apres.pos, avant.pos + 1);
-      assert.ok(apres.total >= avant.total);
-      assert.equal(await s.page.locator('.mx-pr-pts i.fait').count(), apres.pos - 1);
-    }
+    if (fait) continue;
+    if (await s.page.locator('.mx-tour.fini').count()) { fait = true; assert.equal(avant.n + 1, avant.objectif, 'coché au dernier point'); continue; }
+    const apres = await ou();
+    assert.equal(apres.n, avant.n + 1);
+    assert.ok(apres.objectif >= apres.n && apres.objectif <= tourJour);
+    assert.equal(await s.page.locator('.mx-tour-pts i.fait').count(), apres.n);
   }
+  assert.ok(fait, 'toute la pile vue : le tour du jour est fait');
   // La fin : « Tu as tout vu », le bilan vrai de cette visite, la suite avec le vrai délai, une seule action pleine
   await s.page.waitForSelector('.mx-vide');
   assert.equal(await s.page.locator('#mx-vide-t').innerText(), 'Tu as tout vu');
@@ -5185,7 +5189,10 @@ test('match : « 1 sur N » avance d’un pas à chaque choix ; la fin de la pil
   assert.equal(await s.page.locator('.mx-bl-tard .mx-compte').innerText(), String(tard));
   const jours = await s.page.evaluate(async () => (await import('./logic.js')).MATCH_PLUS_TARD_JOURS);
   assert.match(await s.page.locator('.mx-suite').innerText(), new RegExp(`Les cartes « Plus tard » reviennent ${jours} jours après ton choix\\.`));
-  assert.equal(await s.page.locator('.mx-progres').count(), 0);
+  // L'en-tête garde le tour coché, une fois, sans points
+  assert.equal(await s.page.locator('.mx-tour.fini').count(), 1);
+  assert.match(await s.page.locator('.mx-tour').innerText(), /^Tour du jour fait/);
+  assert.equal(await s.page.locator('.mx-tour-pts').count(), 0);
   assert.equal(await s.page.locator('.mx-page .btn.primary').count(), 1, 'une seule action pleine');
   assert.ok(await s.page.locator('.mx-vide .btn.primary').isVisible());
   // Tes matchs restent à portée, à la même place que pendant la pile (l'en-tête), une seule fois ; la fin tient au-dessus
@@ -5292,5 +5299,17 @@ test('match : un voile assez haut met le visage au centre, comme l’en-tête d�
   assert.deepEqual(await mise(), { haut: true, centre: true, cote: false, dedans: true });
   assert.equal(await s.debordement(), 0);
   assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('Match : le tour du jour avance à chaque carte et garde son compte', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('match');
+  await s.page.waitForSelector('.mx-tour');
+  assert.equal((await s.page.locator('.mx-tour-n').innerText()).trim(), '0');
+  await s.page.locator('.mx-non').click();
+  await s.page.waitForFunction(() => document.querySelector('.mx-tour-n').textContent.trim() === '1');
+  await s.page.reload(); await s.page.waitForSelector('.mx-tour');
+  assert.equal((await s.page.locator('.mx-tour-n').innerText()).trim(), '1', 'le compte du jour reste après un rechargement');
   await s.ctx.close();
 });
