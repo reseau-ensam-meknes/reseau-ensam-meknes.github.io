@@ -85,6 +85,29 @@ test('refus définitifs : au troisième d’affilée l’abonnement est retiré 
   assert.equal(b.tables.push_subscriptions.find(x => x.id === s2.id).refus, 1);
 });
 
+test('refus en masse : tous les téléphones d’un service refusent et aucun n’accepte (clé de la plateforme ?) : rien n’est compté, c’est dit dans les Logs', async () => {
+  const b = nouveauBanc();
+  const us = [uid(21), uid(22), uid(23)];
+  for (const u of us) b.tables.profiles.push(profil(u));
+  const fcm = us.map(u => b.abonner(u, 1, 'https://fcm.googleapis.com'));
+  const ailleurs = b.abonner(us[0], 2);   // un autre service, qui accepte : il ne change rien pour Google
+  for (const s of fcm) b.statutsPush.set(s.endpoint, 403);
+  const tour = async (qui = us) => { for (const u of qui) enFile(b, u, 'merci', { nom: 'Salma' }); return corpsDe(await appel({ job: 'push' })); };
+  const refus = () => fcm.map(s => b.tables.push_subscriptions.find(x => x.id === s.id)?.refus);
+  for (let i = 0; i < 3; i++) assert.deepEqual(await tour(), { sent: 1, failed: 3, removed: 0 });
+  assert.deepEqual(refus(), [0, 0, 0], 'trois tours de refus en masse : personne n’est retiré');
+  assert.deepEqual(b.tables.push_morts, []);
+  assert.equal(b.tables.push_subscriptions.find(x => x.id === ailleurs.id).refus, 0);
+  assert.ok(erreurs.some(e => e.includes('tous les téléphones de ce service refusent') && e.includes('https://fcm.googleapis.com')), 'Logs : le service est nommé');
+  assert.ok(erreurs.every(e => !us.some(u => e.includes(u)) && !fcm.some(s => e.includes(s.endpoint))), 'Logs : ni membre ni adresse');
+  // Deux téléphones seulement refusent : ce sont eux, leurs refus comptent
+  b.statutsPush.delete(fcm[2].endpoint);
+  await tour();
+  assert.deepEqual(refus(), [1, 1, 0], 'un téléphone du même service accepte : les refus des autres comptent');
+  assert.deepEqual(N.refusEnMasse([{ id: 'a', code: 403, recu: false, refus: true }, { id: 'b', code: 401, recu: false, refus: true }], () => 'x'), [], 'moins de 3 : comptés');
+  assert.equal(N.REFUS_EN_MASSE, 3);
+});
+
 test('413 : notification trop longue, notée au journal, pas reprise ; rien n’est compté contre le téléphone', async () => {
   const b = nouveauBanc();
   const u = uid(3);
