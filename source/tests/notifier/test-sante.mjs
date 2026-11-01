@@ -274,6 +274,48 @@ test('heure limite : aucun envoi ne commence après 45 s ; la suite reste en fil
   assert.deepEqual(b.push.map(x => x.message.body), Array.from({ length: 8 }, (_, i) => `N${i} te remercie pour ton aide.`));
 });
 
+test('45 s : un tour ne commence pas à moins de 10 s de la fin ; ce qui a été pris sans être essayé revient tout de suite dans la file, sans essai compté', async () => {
+  const b = nouveauBanc();
+  const u = uid(81), w = uid(82);
+  b.tables.profiles.push(profil(u), profil(w));
+  b.abonner(u, 1); b.abonner(w, 1);
+  enFile(b, u, 'merci', { nom: 'premier' });
+  const vrai = Date.now;
+  let decalage = 0, n = 0;
+  Date.now = () => vrai() + decalage;
+  // Le premier envoi dure 44 s ; pendant ce temps, 6 notifications arrivent pour w
+  b.surPush = () => { n++; if (n === 1) { decalage += 44_000; for (let i = 0; i < 6; i++) enFile(b, w, 'merci', { nom: 'suite' + i }); } else decalage += 1_500; };
+  try {
+    assert.equal(N.MARGE_TOUR, 10_000);
+    assert.deepEqual(await corpsDe(await appel({ job: 'push' })), { sent: 1, failed: 0, removed: 0 });
+  } finally { Date.now = vrai; b.surPush = null; }
+  assert.equal(b.appelsRpc.prendre_push, 1, 'pas de second tour à 1 s de la fin');
+  assert.deepEqual(b.tables.push_queue.map(x => [x.essais ?? 0, !!x.pris_at]), Array(6).fill([0, false]), 'avant : 6 notifications prises, un essai compté, bloquées 2 minutes');
+  // L'appel suivant (une minute plus tard au plus) les envoie toutes
+  assert.deepEqual(await corpsDe(await appel({ job: 'push' })), { sent: 6, failed: 0, removed: 0 });
+  // Prises dans un tour mais pas essayées (plus le temps) : rendues à la file (push_rendues)
+  for (let i = 0; i < 4; i++) enFile(b, u, 'merci', { nom: 'R' + i });
+  decalage = 0;
+  Date.now = () => vrai() + decalage;
+  b.surPush = () => { decalage += 20_000; };   // chaque envoi prend 20 s : deux partent, deux attendent
+  try {
+    assert.deepEqual(await corpsDe(await appel({ job: 'push' })), { sent: 3, failed: 0, removed: 0, retry: 1 });
+  } finally { Date.now = vrai; b.surPush = null; }
+  assert.deepEqual(b.argsRpc.push_rendues.at(-1).p_ids.length, 1);
+  assert.deepEqual(b.tables.push_queue.map(x => [x.essais, !!x.pris_at]), [[0, false]], 'rendue : aucun essai compté, libre tout de suite');
+  assert.deepEqual(await corpsDe(await appel({ job: 'push' })), { sent: 1, failed: 0, removed: 0 }, 'repartie sans attendre 2 minutes');
+  assert.deepEqual(journal(b).filter(([k]) => k === 'merci').length, 11, 'chacune une fois au journal, à son envoi');
+  // Une base sans push_rendues : reprise après 2 minutes, comme avant, et les Logs le disent
+  b.absentes.add('push_rendues');
+  for (let i = 0; i < 4; i++) enFile(b, u, 'merci', { nom: 'S' + i });
+  decalage = 0;
+  Date.now = () => vrai() + decalage;
+  b.surPush = () => { decalage += 20_000; };
+  try { await appel({ job: 'push' }); } finally { Date.now = vrai; b.surPush = null; }
+  assert.deepEqual(b.tables.push_queue.map(x => [x.essais, !!x.pris_at]), [[1, true]]);
+  assert.ok(erreurs.some(e => e.includes('push_rendues')));
+});
+
 test('« Tester » : le détail de chaque téléphone, au journal sous « test » ; en urgence haute', async () => {
   const b = nouveauBanc();
   const u = uid(7), sans = uid(8);

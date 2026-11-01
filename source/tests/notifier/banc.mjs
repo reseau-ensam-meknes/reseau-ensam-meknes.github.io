@@ -262,6 +262,15 @@ export class Banc {
       this.tables.push_subscriptions = this.tables.push_subscriptions.filter(x => !morts.includes(x));
       return this.json(morts.map(s => s.id));
     }
+    // Comme la fonction SQL : prises sans avoir été essayées, rendues à la file sans essai compté
+    if (fn === 'push_rendues') {
+      (this.argsRpc ||= {})[fn] = [...(this.argsRpc[fn] || []), args];
+      const ids = new Set((args.p_ids || []).map(Number));
+      for (const x of this.tables.push_queue) {
+        if (ids.has(Number(x.id)) && x.pris_at) { x.pris_at = null; x.essais = Math.max((x.essais ?? 0) - 1, 0); }
+      }
+      return new Response(null, { status: 204 });
+    }
     if (fn === 'destinataires_resume') {
       // Comme la fonction SQL : une fois par semaine, comptes de plus de 2 jours, emails_hebdo
       (this.argsRpc ||= {})[fn] = [...(this.argsRpc[fn] || []), args];

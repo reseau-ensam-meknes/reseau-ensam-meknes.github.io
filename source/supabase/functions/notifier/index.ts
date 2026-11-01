@@ -2102,21 +2102,24 @@ async function rendreCompte(env: Env, etats: EtatAbo[], morts: string[], abos: A
   catch (e) { console.error('notifier : abonnements partis non retirés', e instanceof Error ? e.message : String(e)); return []; }
 }
 
-// pg_net attend la réponse 60 s (appeler_notifier) : aucun envoi ne commence après 45 s. La suite reste en file, la base
-// rappelle la fonction chaque minute (relancer_push).
+// pg_net attend la réponse 60 s (appeler_notifier) : aucun envoi ne commence après 45 s, et aucun tour à moins de 10 s
+// de cette heure (il prendrait 300 notifications sans le temps de les envoyer). La suite reste en file, la base rappelle
+// la fonction chaque minute (relancer_push).
 export const DUREE_PUSH = 45_000;
+export const MARGE_TOUR = 10_000;
 
 // Une notification prise dans la file y reste jusqu'à push_faits : reçue par un téléphone, ou sans espoir (plus de
-// téléphone, type inconnu, refus définitif). Les autres sont reprises par la base après 2 minutes (relancer_push).
-// Au journal (push_journal) : chacune, avec la réponse de son meilleur téléphone ; -1 sans téléphone ; -4 jetée (type
-// inconnu, rien à dire) ; rien pour celle qui attend sans avoir été essayée (plus le temps).
+// téléphone, type inconnu, refus définitif). Les autres sont reprises par la base après 2 minutes (relancer_push) ;
+// celles qui n'ont pas été essayées du tout (plus le temps) lui sont rendues tout de suite, sans essai compté
+// (push_rendues). Au journal (push_journal) : chacune, avec la réponse de son meilleur téléphone ; -1 sans téléphone ;
+// -4 jetée (type inconnu, rien à dire) ; rien pour celle qui attend sans avoir été essayée.
 async function jobPush(env: Env): Promise<Response> {
   const b: Bilan = { sent: 0, failed: 0, removed: 0 };
   let v: Vapid | null = null;
   const fin = Date.now() + DUREE_PUSH;
   for (let tour = 0; tour < 5; tour++) {
     // Garde-fous : 2 s de CPU (900 envois), et la réponse avant que pg_net ne cesse d'attendre
-    if (b.sent + b.failed + b.removed >= 900 || Date.now() >= fin) break;
+    if (b.sent + b.failed + b.removed >= 900 || fin - Date.now() < MARGE_TOUR) break;
     const lignes = (await rpc(env, 'prendre_push', { p_max: 300 })) as { id: number; user_id: string; kind: string; data: unknown; langue: string }[];
     if (!lignes?.length) break;
     v = v || (await preparerVapid(env));
@@ -2146,6 +2149,7 @@ async function jobPush(env: Env): Promise<Response> {
     const reprises = suivi.filter(x => !x.r.recue && x.r.reprendre).length;
     if (reprises) b.retry = (b.retry || 0) + reprises;
     await confirmerPush(env, [...jetees.map(x => x.id), ...suivi.filter(x => x.r.recue || !x.r.reprendre).map(x => x.id)]);
+    await rendrePush(env, suivi.filter(x => !x.r.essayee && !x.r.recue && x.r.reprendre).map(x => x.id));
     await journaliser(env, [
       ...suivi.filter(x => x.r.essayee || x.r.recue || !x.r.reprendre).map(x => ({ user_id: x.user_id, kind: x.kind, code: x.r.code })),
       ...jetees.map(x => ({ user_id: x.user_id, kind: x.kind, code: -4 })),
@@ -2159,6 +2163,14 @@ async function confirmerPush(env: Env, ids: number[]): Promise<void> {
   if (!ids.length) return;
   try { await rpc(env, 'push_faits', { p_ids: ids }); }
   catch (e) { console.error('notifier : confirmation des notifications impossible', e instanceof Error ? e.message : String(e)); }
+}
+
+// Rend à la file ce qui a été pris sans être essayé (push_rendues). Une base pas encore mise à jour : repris après
+// 2 minutes, comme avant.
+async function rendrePush(env: Env, ids: number[]): Promise<void> {
+  if (!ids.length) return;
+  try { await rpc(env, 'push_rendues', { p_ids: ids }); }
+  catch (e) { console.error('notifier : notifications non rendues à la file (push_rendues ; base à mettre à jour ?)', e instanceof Error ? e.message : String(e)); }
 }
 
 // Journal des notifications (push_journal) : ne bloque jamais l'envoi
