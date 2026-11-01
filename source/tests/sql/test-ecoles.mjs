@@ -77,6 +77,18 @@ test('notifications et listes : rien ne passe d’une école à l’autre', asyn
   await db.query('delete from public.push_queue');
 });
 
+test('chiffres, fondateurs et liste officielle : chaque école les siens', async () => {
+  const f = async u => (await q(u, 'select public.fondateurs_publics() j'))[0].j.fondateurs.map(z => z.nom);
+  assert.ok((await f(MEK2)).includes('Youssef Meknes'));
+  assert.ok(!(await f(MEK2)).includes('Karim Autre'));
+  assert.deepEqual(await f(AUTRE), ['Karim Autre'], 'la première offre de l’école donne la première place de cette école');
+  await db.query(`insert into public.liste_officielle (ecole, nom, promo) values ('autre-ecole', 'Salma Meknes', 2027)`);
+  assert.equal((await db.query('select public.dans_liste($1, $2, $3) v', [MEK, 'Salma Meknes', 2027])).rows[0].v, false, 'sur la liste d’une autre école : pas vérifié ici');
+  assert.equal((await db.query('select public.dans_liste($1, $2, $3) v', [AUTRE, 'Salma Meknes', 2027])).rows[0].v, true);
+  await db.query(`insert into public.liste_officielle (nom, promo) values ('Salma Meknes', 2027)`);
+  assert.equal((await db.query(`select count(*)::int n from public.liste_officielle where nom = 'Salma Meknes'`)).rows[0].n, 2, 'même nom, même promo, deux écoles');
+});
+
 test('relancée, la mise à jour ne perd rien', async () => {
   const sql = (await import('node:fs')).readFileSync(SCHEMA, 'utf8').replace(/^create extension if not exists pgcrypto;$/m, '');
   await db.exec(sql);
