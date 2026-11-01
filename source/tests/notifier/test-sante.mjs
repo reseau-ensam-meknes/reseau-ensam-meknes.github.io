@@ -51,12 +51,13 @@ test('tags : une notification par événement ; ce qui remplace garde son tag ; 
   assert.deepEqual(b.push.map(x => x.message.tag), [`candidature-${a1}`, `candidature-${a2}`, 'match_jour']);
 });
 
-test('refus définitifs : au troisième d’affilée l’abonnement est retiré et son adresse notée ; un envoi accepté remet le compte à zéro', async () => {
+test('refus définitifs : au troisième d’affilée l’abonnement est retiré et son adresse notée, quand le même service accepte un autre téléphone ; un envoi accepté remet le compte à zéro', async () => {
   const b = nouveauBanc();
-  const u = uid(2);
-  b.tables.profiles.push(profil(u));
+  const u = uid(2), autre = uid(9);
+  b.tables.profiles.push(profil(u), profil(autre));
   const s = b.abonner(u, 1, 'https://fcm.googleapis.com');
-  const envoi = async () => { enFile(b, u, 'merci', { nom: 'Salma' }); return corpsDe(await appel({ job: 'push' })); };
+  b.abonner(autre, 1, 'https://fcm.googleapis.com');   // un autre membre, que Google accepte
+  const envoi = async (qui = u) => { enFile(b, qui, 'merci', { nom: 'Salma' }); return corpsDe(await appel({ job: 'push' })); };
   const abo = () => b.tables.push_subscriptions.find(x => x.id === s.id);
   b.statutsPush.set(s.endpoint, 403);
   assert.deepEqual(await envoi(), { sent: 0, failed: 1, removed: 0 });
@@ -67,6 +68,8 @@ test('refus définitifs : au troisième d’affilée l’abonnement est retiré 
   assert.equal(abo().refus, 0, 'accepté : le compte repart de zéro');
   b.statutsPush.set(s.endpoint, 401);
   await envoi();
+  // Pendant la série, Google accepte le téléphone d'un autre membre : c'est bien celui-ci qu'il refuse
+  assert.deepEqual(await envoi(autre), { sent: 1, failed: 0, removed: 0 });
   b.statutsPush.set(s.endpoint, 400);
   await envoi();
   assert.equal(abo().refus, 2);
@@ -76,7 +79,8 @@ test('refus définitifs : au troisième d’affilée l’abonnement est retiré 
   assert.deepEqual(b.tables.push_morts.map(x => x.endpoint), [s.endpoint]);
   // Un refus définitif n'est pas repris : chaque notification sort de la file, avec sa réponse au journal
   assert.deepEqual(b.tables.push_queue, []);
-  assert.deepEqual(journal(b), [['merci', 403], ['merci', 201], ['merci', 401], ['merci', 400], ['merci', 403]]);
+  assert.deepEqual(b.tables.push_journal.filter(x => x.user_id === u).map(x => [x.kind, x.code]),
+    [['merci', 403], ['merci', 201], ['merci', 401], ['merci', 400], ['merci', 403]]);
   // Plusieurs refus dans un même tour ne comptent qu'une fois
   const s2 = b.abonner(u, 2);
   b.statutsPush.set(s2.endpoint, 403);
@@ -98,7 +102,7 @@ test('refus en masse : tous les téléphones d’un service refusent et aucun n�
   assert.deepEqual(refus(), [0, 0, 0], 'trois tours de refus en masse : personne n’est retiré');
   assert.deepEqual(b.tables.push_morts, []);
   assert.equal(b.tables.push_subscriptions.find(x => x.id === ailleurs.id).refus, 0);
-  assert.ok(erreurs.some(e => e.includes('tous les téléphones de ce service refusent') && e.includes('https://fcm.googleapis.com')), 'Logs : le service est nommé');
+  assert.ok(erreurs.some(e => e.includes('tous les téléphones de ce service refusent') && e.endsWith(' fcm')), 'Logs : le service est nommé, comme dans la base');
   assert.ok(erreurs.every(e => !us.some(u => e.includes(u)) && !fcm.some(s => e.includes(s.endpoint))), 'Logs : ni membre ni adresse');
   // Deux téléphones seulement refusent : ce sont eux, leurs refus comptent
   b.statutsPush.delete(fcm[2].endpoint);
@@ -106,6 +110,49 @@ test('refus en masse : tous les téléphones d’un service refusent et aucun n�
   assert.deepEqual(refus(), [1, 1, 0], 'un téléphone du même service accepte : les refus des autres comptent');
   assert.deepEqual(N.refusEnMasse([{ id: 'a', code: 403, recu: false, refus: true }, { id: 'b', code: 401, recu: false, refus: true }], () => 'x'), [], 'moins de 3 : comptés');
   assert.equal(N.REFUS_EN_MASSE, 3);
+});
+
+test('refus en masse, un téléphone par tour (le cas courant) : Google refuse les quatre membres, trois messages chacun : personne n’est retiré', async () => {
+  const b = nouveauBanc();
+  const us = [uid(31), uid(32), uid(33), uid(34)];
+  for (const u of us) b.tables.profiles.push(profil(u));
+  const fcm = us.map(u => b.abonner(u, 1, 'https://fcm.googleapis.com'));
+  for (const s of fcm) b.statutsPush.set(s.endpoint, 403);
+  // Chaque message déclenche son propre appel, un destinataire à la fois : le garde-fou d'un tour ne voit qu'un téléphone
+  for (let i = 0; i < 3; i++) for (const u of us) { enFile(b, u, 'merci', { nom: 'Salma' }); await appel({ job: 'push' }); }
+  assert.equal(b.tables.push_subscriptions.length, 4, 'aucun téléphone retiré (avant : les quatre)');
+  assert.deepEqual(b.tables.push_morts, [], 'aucune adresse bannie');
+  assert.deepEqual(b.tables.push_subscriptions.map(x => x.refus), [3, 3, 3, 3], 'les refus sont comptés, la base attend une preuve');
+  assert.equal(b.avertissements.length, 4, 'la base le dit une fois par téléphone');
+  // La clé de la plateforme réparée : tout repart, le compte des refus revient à zéro
+  for (const s of fcm) b.statutsPush.delete(s.endpoint);
+  enFile(b, us[0], 'merci', { nom: 'Amine' });
+  assert.deepEqual(await corpsDe(await appel({ job: 'push' })), { sent: 1, failed: 0, removed: 0 });
+  assert.equal(b.tables.push_subscriptions.find(x => x.id === fcm[0].id).refus, 0);
+});
+
+test('refus en masse compté par membre : un membre seul avec trois vieux abonnements refusés : ses refus comptent, sans fausse alerte ; retirés dès que Google accepte un autre téléphone', async () => {
+  const b = nouveauBanc();
+  const u = uid(91), autre = uid(92);
+  b.tables.profiles.push(profil(u), profil(autre));
+  const vieux = [1, 2, 3].map(i => b.abonner(u, i, 'https://fcm.googleapis.com'));
+  for (const s of vieux) b.statutsPush.set(s.endpoint, 403);
+  for (let i = 0; i < 3; i++) { enFile(b, u, 'merci', { nom: 'X' + i }); await appel({ job: 'push' }); }
+  assert.deepEqual(b.tables.push_subscriptions.map(x => x.refus), [3, 3, 3], 'comptés (avant : jamais, ils restaient pour toujours)');
+  assert.ok(!erreurs.some(e => e.includes('tous les téléphones de ce service refusent')), 'Logs : pas d’alerte « clé de la plateforme » pour un seul membre');
+  assert.deepEqual(N.refusEnMasse(vieux.map(s => ({ id: s.id, code: 403, recu: false, refus: true })), () => 'fcm', () => u), [], 'un membre : pas un refus en masse');
+  assert.deepEqual(N.refusEnMasse([1, 2, 3].map(i => ({ id: 'a' + i, code: 403, recu: false, refus: true })), () => 'fcm', id => id), ['fcm'], 'trois membres : oui');
+  // Google accepte le téléphone d'un autre membre : au refus suivant, les trois vieux abonnements sont retirés
+  b.abonner(autre, 1, 'https://fcm.googleapis.com');
+  enFile(b, autre, 'merci', { nom: 'Y' }); await appel({ job: 'push' });
+  enFile(b, u, 'merci', { nom: 'Z' });
+  assert.deepEqual(await corpsDe(await appel({ job: 'push' })), { sent: 0, failed: 3, removed: 3 });
+  assert.deepEqual(b.tables.push_subscriptions.map(x => x.user_id), [autre]);
+  assert.equal(b.tables.push_morts.length, 3);
+  // Le service est nommé comme dans la base (service_push)
+  assert.deepEqual(['https://fcm.googleapis.com/fcm/send/x', 'https://web.push.apple.com/x', 'https://updates.push.services.mozilla.com/wpush/v2/x',
+    'https://wns2-par02p.notify.windows.com/w/?token=x', 'https://push.exemple.ma/x', 'pas une adresse'].map(N.servicePush),
+  ['fcm', 'apple', 'mozilla', 'windows', 'autre', 'autre']);
 });
 
 test('413 : notification trop longue, notée au journal, pas reprise ; rien n’est compté contre le téléphone', async () => {

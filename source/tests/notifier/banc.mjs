@@ -8,6 +8,13 @@ export const CLE_SERVICE = 'cle-service-de-test';
 export const SITE = 'https://reseau-ensam-meknes.github.io/';
 
 export const uid = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+// Le service de push d'une adresse, comme service_push dans schema.sql
+export function servicePush(endpoint) {
+  let h = '';
+  try { h = new URL(endpoint).hostname.toLowerCase(); } catch { return 'autre'; }
+  return h === 'fcm.googleapis.com' || h.endsWith('.googleapis.com') ? 'fcm' : h === 'web.push.apple.com' || h.endsWith('.push.apple.com') ? 'apple'
+    : /\.(mozilla\.com|mozilla\.org|mozaws\.net)$/.test(h) ? 'mozilla' : h.endsWith('.windows.com') ? 'windows' : 'autre';
+}
 const pause = ms => new Promise(r => setTimeout(r, ms));
 
 // Colonnes de chaque table, lues dans schema.sql : comme le vrai PostgREST, le faux refuse une colonne
@@ -223,26 +230,37 @@ export class Banc {
       this.tables.push_queue = this.tables.push_queue.filter(x => !faits.has(Number(x.id)));
       return new Response(null, { status: 204 });
     }
-    // Comme la fonction SQL : la santé de chaque abonnement ; 404, 410 ou un troisième refus définitif d'affilée le retirent
-    // et notent son adresse (push_morts). Rend les abonnements retirés.
+    // Comme la fonction SQL : la santé de chaque abonnement, puis 404 ou 410 le retirent et notent son adresse
+    // (push_morts) ; un troisième refus définitif d'affilée aussi, seulement si le même service a accepté un autre
+    // téléphone depuis le premier refus de la série (sinon : gardé, et un avertissement à son troisième refus).
+    // Rend les abonnements retirés.
     if (fn === 'push_resultats') {
       (this.argsRpc ||= {})[fn] = [...(this.argsRpc[fn] || []), args];
       const l = Array.isArray(args.p) ? args.p : [];
-      const retires = [];
+      const maintenant = new Date().toISOString();
+      const lus = [];
       for (const r of l) {
         const s = this.tables.push_subscriptions.find(x => x.id === r.id);
         if (!s) continue;
-        Object.assign(s, { dernier_code: r.code, dernier_envoi_at: new Date().toISOString() });
-        s.refus = r.recu ? 0 : r.refus ? (s.refus || 0) + 1 : (s.refus || 0);
-        if (r.refus && !r.recu) s.refus_at = new Date().toISOString();
-        if (r.code === 404 || r.code === 410 || s.refus >= 3) {
-          this.tables.push_morts = this.tables.push_morts.filter(m => m.endpoint !== s.endpoint);
-          this.tables.push_morts.push({ endpoint: s.endpoint, at: new Date().toISOString() });
-          this.tables.push_subscriptions = this.tables.push_subscriptions.filter(x => x.id !== s.id);
-          retires.push(s.id);
-        }
+        const avant = s.refus || 0;
+        Object.assign(s, { dernier_code: r.code, dernier_envoi_at: maintenant });
+        s.refus = r.recu ? 0 : r.refus ? avant + 1 : avant;
+        s.refus_depuis = r.recu ? null : r.refus ? (avant === 0 ? maintenant : s.refus_depuis || s.refus_at || maintenant) : (s.refus_depuis ?? null);
+        if (r.refus && !r.recu) s.refus_at = maintenant;
+        lus.push({ s, r });
       }
-      return this.json(retires);
+      const preuve = s => this.tables.push_subscriptions.some(o => o.id !== s.id && o.dernier_code >= 200 && o.dernier_code <= 299
+        && o.dernier_envoi_at >= s.refus_depuis && servicePush(o.endpoint) === servicePush(s.endpoint));
+      const morts = lus.filter(({ s, r }) => r.code === 404 || r.code === 410 || (s.refus >= 3 && preuve(s))).map(x => x.s);
+      for (const { s, r } of lus) {
+        if (r.refus && !r.recu && s.refus === 3 && !morts.includes(s)) (this.avertissements ||= []).push(`push_resultats : gardé (${servicePush(s.endpoint)})`);
+      }
+      for (const s of morts) {
+        this.tables.push_morts = this.tables.push_morts.filter(m => m.endpoint !== s.endpoint);
+        this.tables.push_morts.push({ endpoint: s.endpoint, at: maintenant });
+      }
+      this.tables.push_subscriptions = this.tables.push_subscriptions.filter(x => !morts.includes(x));
+      return this.json(morts.map(s => s.id));
     }
     if (fn === 'destinataires_resume') {
       // Comme la fonction SQL : une fois par semaine, comptes de plus de 2 jours, emails_hebdo

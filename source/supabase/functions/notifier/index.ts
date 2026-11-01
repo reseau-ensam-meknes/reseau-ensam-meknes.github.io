@@ -2013,28 +2013,41 @@ const passager = (st: number) => st === 0 || st === 429 || st >= 500;
 // Refus définitif (abonnement invalide, clé refusée) : au troisième d'affilée, la base retire l'abonnement (push_resultats).
 // 413 (notification trop longue) n'est pas la faute du téléphone : seulement au journal.
 const refusDefinitif = (st: number) => st === 400 || st === 401 || st === 403;
-// Pendant un tour, tous les téléphones d'un même service de push refusent et aucun n'accepte : c'est sans doute la
-// plateforme (clé VAPID, signature), pas les téléphones. Ces refus ne comptent pas, sinon trois tours suffiraient à
-// retirer tout le monde. À partir de 3 téléphones refusés du même service ; rend les services concernés (pour les Logs).
+// Pendant un tour, les téléphones d'au moins 3 membres différents, sur un même service de push, refusent et aucun
+// n'accepte : c'est sans doute la plateforme (clé VAPID, signature), pas les téléphones. Ces refus ne comptent pas, et
+// c'est dit dans les Logs ; rend les services concernés. Compté par membre : un membre seul avec trois vieux abonnements
+// refusés, ce sont bien eux (comptés, puis retirés quand le service accepte d'autres téléphones). Sur plusieurs tours
+// (un téléphone par tour, le cas courant), c'est la base qui protège : push_resultats ne retire un abonnement au
+// troisième refus que si le même service a accepté un autre téléphone depuis le premier.
 export const REFUS_EN_MASSE = 3;
-export function refusEnMasse(etats: EtatAbo[], serviceDe: (id: string) => string): string[] {
-  const groupes = new Map<string, { refus: EtatAbo[]; recu: boolean }>();
+export function refusEnMasse(etats: EtatAbo[], serviceDe: (id: string) => string, membreDe: (id: string) => string = id => id): string[] {
+  const groupes = new Map<string, { refus: EtatAbo[]; membres: Set<string>; recu: boolean }>();
   for (const e of etats) {
     const s = serviceDe(e.id);
-    const g = groupes.get(s) || { refus: [], recu: false };
+    const g = groupes.get(s) || { refus: [], membres: new Set<string>(), recu: false };
     groupes.set(s, g);
     if (e.recu) g.recu = true;
-    else if (e.refus) g.refus.push(e);
+    else if (e.refus) { g.refus.push(e); g.membres.add(membreDe(e.id)); }
   }
   const services: string[] = [];
   for (const [s, g] of groupes) {
-    if (g.recu || g.refus.length < REFUS_EN_MASSE) continue;
+    if (g.recu || g.membres.size < REFUS_EN_MASSE) continue;
     for (const e of g.refus) e.refus = false;
     services.push(s);
   }
   return services;
 }
-const serviceDeLAdresse = (endpoint: string) => { try { return new URL(endpoint).origin; } catch { return ''; } };
+// Le service de push d'un abonnement, nommé comme dans la base (service_push) : fcm (Chrome, Android), apple (iPhone,
+// Mac), mozilla (Firefox), windows (Edge), autre
+export function servicePush(endpoint: string): string {
+  let h = '';
+  try { h = new URL(endpoint).hostname.toLowerCase(); } catch { return 'autre'; }
+  if (h === 'fcm.googleapis.com' || h.endsWith('.googleapis.com')) return 'fcm';
+  if (h === 'web.push.apple.com' || h.endsWith('.push.apple.com')) return 'apple';
+  if (/\.(mozilla\.com|mozilla\.org|mozaws\.net)$/.test(h)) return 'mozilla';
+  if (h.endsWith('.windows.com')) return 'windows';
+  return 'autre';
+}
 
 // Envoie à un téléphone les notifications de son membre, dans l'ordre ; s'arrête s'il n'existe plus. Passé l'heure
 // limite (fin), ce qui n'est pas parti reste en file pour l'appel suivant. Rend ce que le téléphone a répondu.
@@ -2062,13 +2075,14 @@ async function envoyerA(a: Abonnement, notifs: AEnvoyer[], v: Vapid, b: Bilan, m
 }
 
 // Ce que chaque téléphone a répondu (push_resultats) : la base tient la santé des abonnements, retire les morts (404,
-// 410, trois refus définitifs d'affilée) et note leur adresse (push_morts). Rend les abonnements retirés. Une base pas
-// encore mise à jour (sans push_resultats) : les téléphones partis sont retirés comme avant. Ne bloque jamais l'envoi.
-// Un refus en masse (refusEnMasse) n'est pas compté, et c'est dit dans les Logs.
+// 410 ; trois refus définitifs d'affilée quand le même service accepte d'autres téléphones) et note leur adresse
+// (push_morts). Rend les abonnements retirés. Une base pas encore mise à jour (sans push_resultats) : les téléphones
+// partis sont retirés comme avant. Ne bloque jamais l'envoi. Un refus en masse (refusEnMasse) n'est pas compté, et c'est
+// dit dans les Logs.
 async function rendreCompte(env: Env, etats: EtatAbo[], morts: string[], abos: Abonnement[]): Promise<string[]> {
   if (!etats.length) return [];
-  const service = new Map(abos.map(a => [a.id, serviceDeLAdresse(a.endpoint)]));
-  for (const s of refusEnMasse(etats, id => service.get(id) || '')) {
+  const abo = new Map(abos.map(a => [a.id, a]));
+  for (const s of refusEnMasse(etats, id => servicePush(abo.get(id)?.endpoint || ''), id => abo.get(id)?.user_id || id)) {
     console.error('notifier : tous les téléphones de ce service refusent les envois (clé VAPID ou signature ?) ; refus non comptés', s);
   }
   try {
