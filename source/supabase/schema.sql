@@ -5716,6 +5716,49 @@ do $$ begin
 end $$;
 
 -- =====================================================================
+--  Console d'administration : le suivi des écoles à contacter et des partenaires (entreprises qui sponsorisent).
+--  L'administration seule lit et écrit. Aucune donnée de membre : le nom d'une école ou d'une entreprise,
+--  la personne à qui l'on parle, l'étape, la prochaine action. Pour une école, trois cases gardent les deux règles :
+--  une personne de l'école porte le réseau, l'école a donné son accord écrit pour son nom, elle est ajoutée au dossier CNDP.
+-- =====================================================================
+create table if not exists public.admin_suivi (
+  id uuid primary key default gen_random_uuid(),
+  type text not null check (type in ('ecole', 'partenaire')),
+  nom text not null check (char_length(btrim(nom)) between 2 and 120),
+  ecole_slug text check (ecole_slug ~ '^[a-z0-9-]{2,40}$'),
+  ville text check (char_length(ville) <= 80),
+  contact_nom text check (char_length(contact_nom) <= 120),
+  contact_role text check (char_length(contact_role) <= 120),
+  contact text check (char_length(contact) <= 200),
+  etape text not null default 'a_contacter' check (etape in ('a_contacter', 'contacte', 'interesse', 'rdv', 'proposition', 'accord', 'pret', 'ouvert', 'signe', 'paye', 'pause', 'refus')),
+  prochaine_action text check (char_length(prochaine_action) <= 200),
+  prochaine_le date,
+  formule text check (formule in ('decouverte', 'visibilite', 'partenaire')),
+  montant_dh int check (montant_dh between 0 and 1000000),
+  referent_ok boolean not null default false,
+  accord_nom boolean not null default false,
+  cndp_ok boolean not null default false,
+  notes text check (char_length(notes) <= 2000),
+  created_by uuid default auth.uid() references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists admin_suivi_type on public.admin_suivi (type, etape);
+alter table public.admin_suivi enable row level security;
+drop policy if exists "administration" on public.admin_suivi;
+create policy "administration" on public.admin_suivi for all to authenticated using (public.is_admin()) with check (public.is_admin());
+revoke all on public.admin_suivi from anon;
+
+create or replace function public.admin_suivi_maj() returns trigger
+language plpgsql as $$
+begin
+  new.updated_at := now();
+  return new;
+end $$;
+drop trigger if exists trg_admin_suivi_maj on public.admin_suivi;
+create trigger trg_admin_suivi_maj before update on public.admin_suivi for each row execute function public.admin_suivi_maj();
+
+-- =====================================================================
 -- APRÈS votre inscription sur la plateforme, devenez administrateur :
 --   update public.profiles set role = 'admin', verified = true
 --   where id = (select id from auth.users where email = 'VOTRE_EMAIL');
