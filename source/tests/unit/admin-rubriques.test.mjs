@@ -198,6 +198,12 @@ test('messages aux écoles et aux entreprises : les vrais chiffres, les règles,
   assert.match(m.fr, /aucune donnée personnelle/);
   assert.match(m.fr, /jamais des membres/);
   assert.match(m.fr, new RegExp(`${c.laureats} lauréats`));
+  // Les étudiants année par année : 3A, 4A et 5A
+  assert.equal(c.parAnnee[3] + c.parAnnee[4] + c.parAnnee[5], c.etudiants345);
+  assert.ok(m.fr.includes(`(${c.parAnnee[3]} en 3A, ${c.parAnnee[4]} en 4A, ${c.parAnnee[5]} en 5A)`), m.fr);
+  assert.ok(m.ar.includes(`(${c.parAnnee[3]} في السنة الثالثة، ${c.parAnnee[4]} في الرابعة، ${c.parAnnee[5]} في الخامسة)`), m.ar);
+  const vide = messageEntreprise({ ...c, etudiants345: 0, parAnnee: { 3: 0, 4: 0, 5: 0 } }, { lien: 'L' });
+  assert.ok(!vide.fr.includes('en 3A') && !vide.ar.includes('في السنة الثالثة'));
   assert.ok(m.fr.includes(dh(2500)) && m.ar.includes(dh(5000)));
   for (const x of [e.fr, e.ar, m.fr, m.ar]) PROPRE(x);
 });

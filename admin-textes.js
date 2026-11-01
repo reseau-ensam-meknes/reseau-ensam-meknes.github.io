@@ -290,9 +290,10 @@ export function rendezVousDuMois(now = Date.now(), langue = 'fr') {
 export function chiffresReseau(data0, now = Date.now(), saison = seasonOf(new Date(now)), ecole = ECOLE_DEFAUT) {
   const data = vueEcole(data0, ecole);
   const m = membresDe(data), lau = m.filter(p => p.role === 'laureat'), etu = m.filter(p => p.role === 'etudiant');
+  const parAnnee = Object.fromEntries([3, 4, 5].map(n => [n, etu.filter(p => niveauOf(p, saison) === n).length]));
   return {
     membres: m.length, laureats: lau.length, etudiants: etu.length,
-    etudiants345: etu.filter(p => [3, 4, 5].includes(niveauOf(p, saison))).length,
+    etudiants345: parAnnee[3] + parAnnee[4] + parAnnee[5], parAnnee,
     entreprises: new Set(lau.map(p => entKey(p.entreprise)).filter(Boolean)).size,
     aides30: aidesEntre(data, now - 30 * J, now).length,
   };
@@ -331,17 +332,19 @@ export function messageEcole(c, { ecole = '', a = 'etudiants', signature = '', l
   return { fr, ar: arTxt, sujet: { fr: `Un réseau entre étudiants et lauréats pour ${nom === 'votre école' ? nom : lEcoleNom(nom)}`, ar: `شبكة بين الطلبة والخريجين لـ${nomAr}` } };
 }
 
-// Message pour une entreprise : les vrais chiffres, les règles (label, une carte sur 10, aucune donnée personnelle,
+// Message pour une entreprise : les vrais chiffres (dont les étudiants de 3A, 4A et 5A), les règles (label, une carte sur 10, aucune donnée personnelle,
 // l'argent vient des entreprises seulement) et les trois formules
 export function messageEntreprise(c, { contact = '', signature = '', lien = '' } = {}) {
   const [v, p, s] = ['visibilite', 'partenaire', 'saison_pfe'].map(k => FORMULES.find(f => f.k === k));
   const sign = [signature, `Réseau ENSAM Meknès · ${lien}`].filter(Boolean).join('\n');
   const signAr = [signature, `شبكة ENSAM مكناس · ${lien}`].filter(Boolean).join('\n');
   const qui = String(contact || '').trim();
+  // Les étudiants année par année (3A, 4A, 5A), dès qu'il y en a
+  const parAn = c.etudiants345 && c.parAnnee ? c.parAnnee : null;
   const fr = [
     qui ? `Bonjour ${qui},` : 'Bonjour,', '',
     'Je vous écris pour le Réseau ENSAM Meknès, la plateforme gratuite qui relie les étudiants et les lauréats de l’ENSAM Meknès. C’est une initiative de lauréats, indépendante de l’administration de l’école.', '',
-    `Aujourd’hui : ${pl(c.laureats, 'lauréat', 'lauréats')} et ${pl(c.etudiants345, 'étudiant', 'étudiants')} de 3e, 4e et 5e année, qui cherchent stages, PFE et premier emploi ; des lauréats dans ${pl(c.entreprises, 'entreprise', 'entreprises')} ; ${pl(c.aides30, 'aide donnée', 'aides données')} ces 30 derniers jours.`, '',
+    `Aujourd’hui : ${pl(c.laureats, 'lauréat', 'lauréats')} et ${pl(c.etudiants345, 'étudiant', 'étudiants')} de 3e, 4e et 5e année${parAn ? ` (${parAn[3]} en 3A, ${parAn[4]} en 4A, ${parAn[5]} en 5A)` : ''}, qui cherchent stages, PFE et premier emploi ; des lauréats dans ${pl(c.entreprises, 'entreprise', 'entreprises')} ; ${pl(c.aides30, 'aide donnée', 'aides données')} ces 30 derniers jours.`, '',
     'Nous proposons aux entreprises de se faire connaître de ces étudiants, avec des règles claires :',
     '• tout ce qui est payé porte le label « Sponsorisé » ;',
     '• dans Match, une carte sponsorisée au plus toutes les 10 cartes ;',
@@ -357,7 +360,7 @@ export function messageEntreprise(c, { contact = '', signature = '', lien = '' }
   const arTxt = [
     qui ? `السلام عليكم ${qui}،` : 'السلام عليكم،', '',
     'أكتب إليكم باسم «شبكة ENSAM مكناس»، المنصة المجانية التي تربط طلبة وخريجي ENSAM مكناس. إنها مبادرة من الخريجين، مستقلة عن إدارة المدرسة.', '',
-    `اليوم: ${ar(c.laureats, 'laureat')} و${ar(c.etudiants345, 'etudiant')} من السنوات الثالثة والرابعة والخامسة يبحثون عن تداريب ومشاريع نهاية الدراسة وأول عمل؛ وخريجون في ${ar(c.entreprises, 'entreprise')}؛ و${ar(c.aides30, 'aide')} خلال الثلاثين يومًا الماضية.`, '',
+    `اليوم: ${ar(c.laureats, 'laureat')} و${ar(c.etudiants345, 'etudiant')} من السنوات الثالثة والرابعة والخامسة${parAn ? ` (${parAn[3]} في السنة الثالثة، ${parAn[4]} في الرابعة، ${parAn[5]} في الخامسة)` : ''} يبحثون عن تداريب ومشاريع نهاية الدراسة وأول عمل؛ وخريجون في ${ar(c.entreprises, 'entreprise')}؛ و${ar(c.aides30, 'aide')} خلال الثلاثين يومًا الماضية.`, '',
     'نقترح على المقاولات أن تعرّف بنفسها لدى هؤلاء الطلبة، بقواعد واضحة:',
     '• كل ما هو مدفوع يحمل علامة «مُموَّل»؛',
     '• في التوافق، بطاقة مُموَّلة واحدة على الأكثر كل 10 بطاقات؛',
