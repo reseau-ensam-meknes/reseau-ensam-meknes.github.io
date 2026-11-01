@@ -116,7 +116,10 @@ export function AdminPage(ctx) {
   const large = useLarge();
   const comptesTous = useComptes(store, data.profiles.length);
   // L'école regardée (seulement quand le réseau en compte au moins deux), gardée sur l'appareil pour cet admin
-  const { ecoles } = useEcoles(ctx);
+  const { ecoles, recharger: relireEcoles } = useEcoles(ctx);
+  // La rubrique Écoles lit la table de son côté : en la quittant, la liste des écoles se relit (en ligne ; la démo suit déjà)
+  const rubriqueAvant = useRef(sub);
+  useEffect(() => { if (rubriqueAvant.current === 'ecoles' && sub !== 'ecoles') relireEcoles(); rubriqueAvant.current = sub; }, [sub]);
   const [choixEcole, setChoixEcole] = useLocal('ensam-admin-ecole:' + (me?.id || ''), '');
   const ecole = ecoles.length > 1 && ecoles.some(e => e.slug === choixEcole) ? choixEcole : '';
   const vue = donneesDeLEcole(data, ecole);
