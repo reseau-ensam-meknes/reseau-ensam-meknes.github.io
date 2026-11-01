@@ -439,7 +439,7 @@ test('déconnexion en lisant une question : l’entrée ne prétend pas qu’on 
   await page.evaluate(() => { location.hash = '#reseau/entraide/' + '7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d'; });
   await page.waitForTimeout(300);
   await page.keyboard.press('Escape');
-  await page.click('.me-btn'); await page.click('.menu-pop button:has-text("Se déconnecter")');
+  await page.click('.me-btn'); await page.click('.modal.moi button:has-text("Se déconnecter")');
   await page.waitForSelector('#entree .entree-form', { timeout: 15000 });
   assert.equal(await page.locator('#au-lien').count(), 0);
   assert.ok(await page.isVisible('.entree-sous'));
@@ -1022,7 +1022,7 @@ test('se déconnecter soi-même : la copie de l’accueil et les brouillons de c
   for (let i = 0; i < 40 && !c; i++) { await m.page.waitForTimeout(250); c = await lireCacheMembre(m.page); }
   assert.ok(c); assert.equal((await brouillons(m.page)).length, 1);
   await m.page.evaluate(() => { location.hash = '#accueil'; }); await m.page.waitForSelector(ACCUEIL);
-  await m.page.click('.me-btn'); await m.page.click('.menu-pop button:has-text("Se déconnecter")');
+  await m.page.click('.me-btn'); await m.page.click('.modal.moi button:has-text("Se déconnecter")');
   await m.page.waitForSelector('#entree .entree-form', { timeout: 15000 });
   assert.equal(await m.page.locator('#au-session').count(), 0, 'déconnexion voulue : pas de « session expirée »');
   assert.deepEqual(await brouillons(m.page), []);

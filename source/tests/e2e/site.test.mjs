@@ -393,9 +393,12 @@ test('agenda de l’école : je participe (une seule action), l’agenda propos�
 test('mode sombre : le choix est gardé', async () => {
   const s = await ouvrir();
   const avant = await s.page.getAttribute('html', 'data-theme');
-  await s.page.click('.top .theme-btn'); await s.page.waitForTimeout(200);
+  // Le thème se choisit dans « Moi » (l'avatar) : Sombre
+  await s.page.click('.me-btn'); await s.page.waitForSelector('.modal.moi');
+  await s.page.click('.moi-theme button:has-text("Sombre")'); await s.page.waitForTimeout(200);
   const apres = await s.page.getAttribute('html', 'data-theme');
   assert.notEqual(apres, avant);
+  assert.equal(apres, 'dark');
   await s.page.reload(); await s.page.waitForSelector('.hello');
   assert.equal(await s.page.getAttribute('html', 'data-theme'), apres);
   await s.ctx.close();
@@ -1666,10 +1669,10 @@ test('à l’ouverture : jamais pendant que le membre écrit ni sur un menu ouve
   await attendreOuverture(s);
   await s.ctx.close();
   s = await prevenirSur('off');
-  await s.page.click('.me-btn'); await s.page.waitForSelector('.menu-pop');
+  await s.page.click('.me-btn'); await s.page.waitForSelector('.modal.moi');
   await rienALouverture(s, 'pas sur un menu ouvert');
-  await s.page.click('.me-btn'); await s.page.waitForTimeout(200);
-  assert.equal(await s.page.locator('.menu-pop').count(), 0);
+  await s.fermer();
+  assert.equal(await s.page.locator('.modal.moi').count(), 0);
   await attendreOuverture(s);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
@@ -3697,13 +3700,13 @@ test('Retour : la cloche et « Je peux aider » se ferment sur l’accueil ; les
   assert.equal(await ici(s.page), '#accueil');
   // « Comment ça marche ? » depuis le menu, sur Offres : Retour ferme la feuille et ramène sur Offres
   await s.comme('Amine'); await s.aller('offres');
-  await s.page.click('.me-btn'); await s.page.click('.menu-pop button:has-text("Comment ça marche ?")');
+  await s.page.click('.me-btn'); await s.page.click('.modal.moi button:has-text("Comment ça marche ?")');
   await s.page.waitForSelector('.modal .etapes');
   await retour(s.page);
   assert.equal(await s.page.locator('.modal').count(), 0, 'Retour ferme les premiers pas');
   assert.equal(await ici(s.page), '#offres');
   // Une étape qui ouvre une feuille (« Demander un conseil ») : elle s'ouvre sur l'accueil et y reste
-  await s.page.click('.me-btn'); await s.page.click('.menu-pop button:has-text("Comment ça marche ?")');
+  await s.page.click('.me-btn'); await s.page.click('.modal.moi button:has-text("Comment ça marche ?")');
   await s.page.waitForSelector('.modal .etapes');
   await s.page.locator('.modal .etapes button', { hasText: 'Demander un conseil' }).click(); await s.page.waitForTimeout(900);
   assert.equal(await ici(s.page), '#accueil');
@@ -5510,12 +5513,12 @@ test('match : la barre du bas met Match au centre, Mon parcours et Mon espace pa
   assert.deepEqual(await onglets(), ['Accueil', 'Offres', 'Match', 'Mentorat', 'Réseau']);
   assert.ok(await s.page.locator('.bottom-nav a.bn-match').isVisible());
   await s.page.click('.me-btn'); await s.page.waitForTimeout(150);
-  assert.ok(await s.page.locator('.menu-pop button', { hasText: 'Mon parcours' }).isVisible(), 'Mon parcours dans le menu du compte');
-  await s.page.locator('.menu-pop button', { hasText: 'Mon parcours' }).click(); await s.page.waitForTimeout(250);
+  assert.ok(await s.page.locator('.modal.moi button', { hasText: 'Mon parcours' }).isVisible(), 'Mon parcours dans « Moi »');
+  await s.page.locator('.modal.moi button', { hasText: 'Mon parcours' }).click(); await s.page.waitForTimeout(250);
   assert.match(s.page.url(), /#parcours$/);
   await s.comme('Youssef'); await s.aller('accueil');
   await s.page.click('.me-btn'); await s.page.waitForTimeout(150);
-  assert.ok(await s.page.locator('.menu-pop button', { hasText: 'Mon espace' }).isVisible());
+  assert.ok(await s.page.locator('.modal.moi button', { hasText: 'Mon espace' }).isVisible());
   await s.fermer();
   // L'administration : ni onglet ni page Match
   await s.comme('Admin'); await s.aller('accueil');
@@ -6057,8 +6060,8 @@ test('cartes sponsorisées en arabe (390 px) : la carte de Match, l’administra
 for (const [largeur, langue, theme] of [[390, 'fr', 'light'], [360, 'ar', 'dark']]) {
   test(`vue lauréat de l’administration : le switch du menu, le bandeau, Match, puis le retour en admin (${largeur} px, ${langue}, ${theme})`, async () => {
     const s = await ouvrir({ largeur, langue, theme });
-    // Le menu du compte s'ouvre et se ferme par le bouton du compte
-    const menu = async ouvert => { if ((await s.page.locator('.menu-pop').count() > 0) !== ouvert) await s.page.click('.me-btn'); await s.page.waitForTimeout(150); };
+    // « Moi » s'ouvre par l'avatar et se ferme par Échap
+    const menu = async ouvert => { if ((await s.page.locator('.modal.moi').count() > 0) !== ouvert) await (ouvert ? s.page.click('.me-btn') : s.page.keyboard.press('Escape')); await s.page.waitForTimeout(250); };
     // Un lauréat n'a pas ce switch
     await s.comme('Youssef'); await menu(true);
     assert.equal(await s.page.locator('.vue-switch').count(), 0);
@@ -6069,13 +6072,13 @@ for (const [largeur, langue, theme] of [[390, 'fr', 'light'], [360, 'ar', 'dark'
     assert.equal(await choix.nth(0).getAttribute('aria-pressed'), 'true');
     assert.equal(await s.page.locator('.vue-band').count(), 0);
     await s.page.addScriptTag({ content: AXE });
-    const ax = await s.page.evaluate(async () => (await axe.run('.menu-pop', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => x.id));
+    const ax = await s.page.evaluate(async () => (await axe.run('.modal.moi', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => x.id));
     assert.deepEqual(ax, [], 'menu du compte : axe');
     await menu(false); await s.aller('profil'); await menu(true);
     await choix.nth(1).click();
     await s.page.waitForSelector('.vue-band'); await s.page.waitForTimeout(300);
     assert.equal(await s.page.evaluate(() => location.hash), '#accueil');
-    assert.equal(await s.page.locator('.menu-pop').count(), 0);
+    assert.equal(await s.page.locator('.modal.moi').count(), 0);
     // En lauréat : Match dans la barre, plus d'Administration
     assert.ok(await s.page.locator('a[href="#match"]').first().count());
     assert.equal(await s.page.locator('a[href="#admin"]').count(), 0);
