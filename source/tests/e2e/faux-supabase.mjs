@@ -66,6 +66,8 @@ export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 1
         }
         // Notifications : la clé publique de la plateforme, puis l'abonnement d'un appareil
         if (u === '/sb/functions/v1/notifier' && corps?.job === 'cle') return json(r, 200, { publicKey: 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U' });
+        // La notification d'essai, envoyée toute seule juste après une activation (comme « Tester ») : un appareil servi
+        if (u === '/sb/functions/v1/notifier' && corps?.job === 'test') return json(r, 200, { sent: 1 });
         if (u === '/sb/rest/v1/rpc/abonner_push') return json(r, 204);
         // Membres fondateurs : un membre connecté porte son jeton, un visiteur la clé publique
         if (u === '/sb/rest/v1/rpc/fondateurs_publics') {

@@ -125,3 +125,12 @@ test('la file : une notification « rappel_visite » part comme les autres, et u
   const n = N.texteNotif('rappel_visite', { candidatures: 1 }, 'fr', SITE);
   assert.deepEqual([n.title, n.url], ['1 nouvelle candidature sur tes offres', `${SITE}#espace`]);
 });
+
+test('invitation aux notifications : seulement pour qui n’en a sur aucun appareil, dans les deux langues', () => {
+  const sans = N.rendreRappel({ messages: 1 }, 'fr', SITE, TOKEN);
+  assert.doesNotMatch(sans.html, /Active tes notifications/);
+  const avec = N.rendreRappel({ messages: 1 }, 'fr', SITE, TOKEN, true);
+  assert.match(avec.html, /Active tes notifications/);
+  assert.ok(avec.html.includes('#profil/notifications')); assert.ok(avec.texte.includes('#profil/notifications'));
+  assert.match(N.rendreRappel({ messages: 1 }, 'ar', SITE, TOKEN, true).html, /فعّل إشعاراتك/);
+});
