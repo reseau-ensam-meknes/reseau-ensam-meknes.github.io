@@ -146,6 +146,32 @@ test('push_resultats : accepté remet à zéro ; 404, 410 ou 3 refus définitifs
   await db.query('delete from public.push_subscriptions where user_id = $1', [RES]);
 });
 
+test('push_rendues : une notification prise mais pas essayée revient tout de suite dans la file, sans essai compté', async () => {
+  await db.query('delete from public.push_queue');
+  await db.query(`insert into public.push_queue (user_id, kind) values ($1, 'message'), ($1, 'cafe'), ($1, 'merci')`, [ETU]);
+  const pris = await service('select id, kind from public.prendre_push(2)');
+  assert.deepEqual(pris.map(r => r.kind), ['message', 'cafe']);
+  // Plus le temps d'essayer « cafe » (la fonction ne commence plus d'envoi après 45 s) : rendue ; un id inconnu ne gêne pas
+  await service('select public.push_rendues($1::bigint[])', [[pris[1].id, 999999999]]);
+  const lignes = async () => (await db.query('select kind, essais, pris_at is not null pris from public.push_queue order by id')).rows;
+  assert.deepEqual(await lignes(), [{ kind: 'message', essais: 1, pris: true }, { kind: 'cafe', essais: 0, pris: false }, { kind: 'merci', essais: 0, pris: false }]);
+  // Reprise à l'appel suivant, sans attendre les 2 minutes d'une notification prise
+  assert.deepEqual((await service('select kind from public.prendre_push(10)')).map(r => r.kind), ['cafe', 'merci']);
+  // Rendue deux fois, ou pas prise : rien de plus ; jamais d'essais négatifs
+  const cafe = pris[1].id;
+  await service('select public.push_rendues($1::bigint[])', [[cafe]]);
+  await service('select public.push_rendues($1::bigint[])', [[cafe]]);
+  await db.query('update public.push_queue set pris_at = now(), essais = 0 where id = $1', [cafe]);
+  await service('select public.push_rendues($1::bigint[])', [[cafe]]);
+  assert.deepEqual((await lignes())[1], { kind: 'cafe', essais: 0, pris: false });
+  await service('select public.push_rendues(null)');
+  await service(`select public.push_rendues('{}'::bigint[])`);
+  // Réservée à la fonction (clé de service)
+  await assert.rejects(q(ETU, `select public.push_rendues('{1}'::bigint[])`), /permission denied/);
+  assert.equal((await db.query(`select has_function_privilege('service_role', 'public.push_rendues(bigint[])', 'execute') d`)).rows[0].d, true);
+  await db.query('delete from public.push_queue');
+});
+
 test('nettoyage quotidien : les adresses mortes sont gardées 90 jours', async () => {
   await db.query(`insert into public.push_morts (endpoint, at) values ('https://exemple.ma/vieille', now() - interval '91 days'), ('https://exemple.ma/recente', now() - interval '10 days')`);
   await service('select public.taches_quotidiennes()');

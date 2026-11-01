@@ -1285,6 +1285,15 @@ begin
 end $$;
 revoke all on function public.push_resultats(jsonb) from public, anon, authenticated;
 
+-- Prises par la fonction mais pas essayées (plus le temps : aucun envoi ne commence après 45 s) : rendues à la file tout de
+-- suite, sans leur compter d'essai, pour l'appel suivant
+create or replace function public.push_rendues(p_ids bigint[]) returns void
+language sql security definer set search_path = public as $$
+  update public.push_queue set pris_at = null, essais = greatest(essais - 1, 0)
+  where id = any(coalesce(p_ids, '{}'::bigint[])) and pris_at is not null;
+$$;
+revoke all on function public.push_rendues(bigint[]) from public, anon, authenticated;
+
 -- Ce qui déclenche une notification sur le téléphone
 create or replace function public.notif_evenements() returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -1409,6 +1418,7 @@ do $$ begin
     grant execute on function public.prendre_push(int) to service_role;
     grant execute on function public.push_faits(bigint[]) to service_role;
     grant execute on function public.push_resultats(jsonb) to service_role;
+    grant execute on function public.push_rendues(bigint[]) to service_role;
   end if;
 end $$;
 
