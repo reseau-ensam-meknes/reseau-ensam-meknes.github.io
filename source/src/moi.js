@@ -62,7 +62,7 @@ injectCSS('moi', `
 .moi-qui { display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
 .moi-qui strong { font-size: var(--fs-4); line-height: 1.25; overflow-wrap: anywhere; }
 .moi-vue { margin: 0 0 .35rem; }
-.moi-vue button { display: inline-flex; align-items: center; justify-content: center; gap: .35rem; min-height: 40px; padding: .45rem .5rem; border: 0; border-radius: calc(var(--r-md) - 3px); background: transparent; font: inherit; font-weight: 600; color: var(--ink-2); cursor: pointer; }
+.moi-vue button { display: inline-flex; align-items: center; justify-content: center; gap: .35rem; min-height: 44px; padding: .45rem .5rem; border: 0; border-radius: calc(var(--r-md) - 3px); background: transparent; font: inherit; font-weight: 600; color: var(--ink-2); cursor: pointer; }
 .moi-vue button.on { background: var(--raised); color: var(--ink); box-shadow: var(--sh1); }
 .moi-groupe { display: flex; flex-direction: column; padding-top: .5rem; border-top: 1px solid var(--line); }
 .moi-ligne { display: flex; align-items: center; gap: .75rem; min-height: 44px; padding: .5rem .6rem; margin-inline: -.6rem; border: 0; border-radius: var(--r-sm); background: none; color: var(--ink); font: inherit; font-weight: 500; text-align: start; cursor: pointer; }
