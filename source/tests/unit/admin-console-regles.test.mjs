@@ -206,4 +206,7 @@ test('fichier CSV des membres : une colonne par en-tête, oui/non, dates du jour
   // Point-virgule, guillemets doublés, BOM en tête, lignes Windows
   const txt = texteCSV([['Nom', 'Note'], ['Salma; « la pro »', 'dit "oui"'], ['Hiba', null], ['Deux\nlignes', 0]]);
   assert.equal(txt, '﻿Nom;Note\r\n"Salma; « la pro »";"dit ""oui"""\r\nHiba;\r\n"Deux\nlignes";0');
+  // Un nom ou un poste écrit comme une formule reste du texte dans Excel ; les nombres et le reste ne bougent pas
+  assert.equal(texteCSV([['=HYPERLINK("https://x.test";"ici")', '+212 600', '-1', '@SOMME(A1)', '\tcaché', 'Salma = pro', -3, 2016]]),
+    '﻿"\'=HYPERLINK(""https://x.test"";""ici"")";\'+212 600;\'-1;\'@SOMME(A1);\'\tcaché;Salma = pro;-3;2016');
 });
