@@ -183,6 +183,9 @@ test('messagerie : écrire, être lu, bloquer ; pas de conversation sans lien', 
   await s.aller('messages/' + salma); await s.page.waitForTimeout(300);
   await s.aller('accueil'); await s.comme('Salma'); await s.aller('messages/' + youssef); await s.page.waitForTimeout(300);
   assert.equal(await dernier().locator('.msg-etat').getAttribute('title'), 'Vu');
+  // « Vu » se lit aussi sous le dernier message, une seule fois, avec l'heure de lecture (la donnée existe)
+  assert.equal(await s.page.locator('.msg-vu').count(), 1);
+  assert.match(await s.page.locator('.msg-vu').innerText(), /^Vu\s*·\s*\d\d:\d\d$/);
   // Salma bloque : plus personne ne peut écrire
   await s.page.click('.conv-menu > .icon-btn'); await s.page.click('.conv-menu .danger-t');
   await s.page.locator('.modal .btn.danger').click(); await s.page.waitForTimeout(300);
@@ -195,6 +198,44 @@ test('messagerie : écrire, être lu, bloquer ; pas de conversation sans lien', 
   assert.equal(await s.page.locator('.composer.ferme').count(), 1);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
+});
+
+test('messagerie : réponses rapides au début d’une conversation ou quand une question attend ; elles remplissent le champ, rien ne part (FR et AR)', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 390, langue });
+    await s.comme('Admin'); const admin = await s.page.evaluate(() => window.__demo.me.id);
+    // Nadia n'a encore rien répondu au mot de bienvenue : trois puces au-dessus du champ
+    await s.aller('accueil'); await s.comme('Nadia'); await s.aller('messages/' + admin); await s.page.waitForSelector('#chat-txt');
+    const puces = s.page.locator('.composer .comp-rapides .chip.rapide');
+    assert.equal(await puces.count(), 3);
+    assert.equal(await s.page.getAttribute('.comp-rapides', 'role'), 'group');
+    const nb = () => s.page.evaluate(() => window.__demo.data.messages.length);
+    const avant = await nb();
+    await puces.nth(1).click(); await s.page.waitForTimeout(200);
+    const attendu = langue === 'ar' ? 'سألقي نظرة وأعود إليك' : 'Je regarde et je reviens vers toi';
+    assert.equal(await s.page.inputValue('#chat-txt'), attendu, 'la puce remplit le champ, dans la langue de l’écran');
+    assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'chat-txt');
+    assert.equal(await nb(), avant, 'rien ne part tout seul');
+    assert.equal(await puces.count(), 0, 'les puces s’effacent quand le champ a du texte');
+    // Champ vidé : elles reviennent ; envoyé : elles partent (la question n'attend plus)
+    await s.page.fill('#chat-txt', ''); await s.page.waitForTimeout(100);
+    assert.equal(await puces.count(), 3);
+    await puces.first().click(); await s.page.click('.composer .send-btn'); await s.page.waitForTimeout(400);
+    assert.equal(await nb(), avant + 1);
+    assert.equal(await puces.count(), 0);
+    assert.equal(await s.debordement(), 0);
+    if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])].filter(t => ['Merci !', 'Je regarde et je reviens vers toi', 'On en parle en visio ?', 'Réponses rapides'].includes(t))), []);
+    // Une conversation déjà lancée où rien n'attend de question : pas de puces
+    await s.aller('accueil'); await s.comme('Salma'); const youssef = s.profils.find(x => x[1].includes('Youssef'))[0];
+    await s.aller('messages/' + youssef); await s.page.waitForSelector('#chat-txt');
+    assert.equal(await s.page.locator('.comp-rapides').count(), 0);
+    // Youssef pose une question : elles reviennent chez Salma
+    await s.page.evaluate(id => { const d = window.__demo, me = d.me.id; d.data.messages.push({ id: 'q-' + Date.now(), author_id: id, dest_id: me, type: 'texte', body: 'Tu as pu préparer ton exemple 5S ?', lu_at: null, created_at: new Date().toISOString() }); }, youssef);
+    await s.aller('accueil'); await s.aller('messages/' + youssef); await s.page.waitForSelector('#chat-txt');
+    assert.equal(await s.page.locator('.comp-rapides .chip.rapide').count(), 3);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
 });
 
 test('messagerie : répondre à un message précis, réagir ; sous le nom, qui est la personne (jamais « Administration »)', async () => {
@@ -350,6 +391,52 @@ test('mentorat : demander, fixer l’horaire, confirmer sa présence, ignorer un
   await s.page.click('.modal .btn.danger'); await s.page.waitForTimeout(300);
   assert.match(await s.page.locator('.toast').last().innerText(), /C’est retiré/);
   assert.equal(await enAttente.count(), n - 1);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('mentorat : le prochain rendez-vous en billet (date, vrai compte à rebours, agenda) ; « Disponible pour aider » en interrupteur', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('mentorat'); await s.page.waitForTimeout(1300);
+  await s.page.locator('.fete-acts .btn').last().click({ timeout: 2000 }).catch(() => {});
+  const billet = s.page.locator('.m-next .billet');
+  assert.equal(await billet.count(), 1);
+  // Le talon : le jour, la date, le mois et l'heure du rendez-vous (vrais), et le compte à rebours qui en découle
+  const rdv = await s.page.evaluate(() => { const d = window.__demo, me = d.me.id; return d.data.mentorships.filter(m => m.student_id === me && m.status === 'acceptee' && new Date(m.rdv_at) > Date.now()).sort((a, b) => new Date(a.rdv_at) - new Date(b.rdv_at))[0].rdv_at; });
+  const d = new Date(rdv);
+  assert.equal(await billet.locator('.bt-num').innerText(), String(d.getDate()));
+  assert.equal(await billet.locator('.bt-heure').innerText(), `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+  const h = Math.floor((d - Date.now()) / 36e5);
+  assert.match(await billet.locator('.m-rebours').innerText(), h >= 24 ? /^Dans \d+ jours$|^Demain$/ : /^Dans \d+ (h|min)/);
+  // Avant de confirmer : une seule action pleine (« Je serai là ») ; la visio attend
+  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1);
+  assert.match(await billet.locator('.btn.primary').innerText(), /Je serai là/);
+  // L'agenda s'ouvre dans une feuille : Google et un fichier .ics, avec le sujet et l'heure
+  await billet.locator('.bt-agenda').click();
+  const feuille = s.page.locator('.modal.m-agenda');
+  await feuille.waitFor();
+  assert.match(await feuille.locator('a[href^="https://calendar.google.com"]').first().getAttribute('href'), /action=TEMPLATE/);
+  assert.match(await feuille.locator('a[download$=".ics"]').getAttribute('href'), /^data:text\/calendar/);
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(200);
+  assert.equal(await feuille.count(), 0);
+  // Youssef : « Disponible pour aider » est un interrupteur accessible, et il dit ce que cela change
+  await s.aller('accueil'); await s.comme('Youssef'); await s.aller('mentorat');
+  const inter = s.page.locator('#mentor-dispo');
+  assert.equal(await inter.getAttribute('role'), 'switch');
+  assert.equal(await inter.isChecked(), true);
+  assert.match(await s.page.locator('#mentor-dispo-aide').innerText(), /peuvent te proposer leurs horaires/);
+  await s.page.click('.m-dispo .mx-switch'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.evaluate(() => window.__demo.me.mentor_dispo), false);
+  assert.match(await s.page.locator('#mentor-dispo-aide').innerText(), /ne te voient pas encore/);
+  await s.page.click('.m-dispo .mx-switch'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.evaluate(() => window.__demo.me.mentor_dispo), true);
+  // Les demandes en cartes compactes, rangées côte à côte : la page reste courte
+  assert.ok(await s.page.locator('.m-avis-liste .mreq').count() >= 1);
+  assert.ok(await s.page.evaluate(() => document.documentElement.scrollHeight) < 2400, 'la page du lauréat reste courte');
+  assert.equal(await s.debordement(), 0);
+  await s.page.addScriptTag({ content: AXE });
+  const v = await s.page.evaluate(async () => (await axe.run('.page', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => `${x.id} : ${x.nodes[0].target.join(' ')}`));
+  assert.deepEqual(v, []);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -562,7 +649,8 @@ test('preuves : dernier merci sur la carte du mentor, deux visages sur le merci 
     return { merci: m[0]?.[0], ent: p.entreprise };
   }, 'Ismail Sebti');
   const ismail = cartes.filter({ hasText: 'Ismail Sebti' });
-  assert.equal(await ismail.locator('.mcard-merci p').innerText(), `« ${attendu.merci} »`);
+  // Les guillemets tiennent au texte par des espaces insécables (typographie française) : on les lit comme des espaces
+  assert.equal((await ismail.locator('.mcard-merci p').innerText()).replace(/\u00a0/g, ' '), `« ${attendu.merci} »`);
   assert.equal(await ismail.locator('.mcard-merci .avatar').count(), 1, 'le visage de l’étudiant');
   assert.match(await ismail.locator('.mcard-merci .merci-duo').innerText(), /·\s*(\dA|Promo \d{4})/, 'son année ou sa promo');
   assert.equal(await cartes.filter({ hasText: 'Hiba Rahmouni' }).locator('.mcard-merci').count(), 0);
