@@ -257,3 +257,12 @@ test('tour du jour : cinq cartes, les jours de suite, et une reprise sans reproc
   assert.equal(t.serie, 3, 'le changement de mois ne casse pas la série');
   assert.equal(etatTour(t, '2026-11-03').serie, 0, 'un jour sans : la série repart de zéro');
 });
+
+test('tour du jour : une pile plus courte que le tour le termine, et un tour fait ne se refait pas le même jour', () => {
+  let t = avancerTour(null, '2026-11-02', 3);
+  assert.equal(t.fini, false);
+  t = avancerTour(t, '2026-11-02', 2); assert.equal(t.fini, true, 'deux cartes, la pile entière : le tour est fait'); assert.equal(t.serie, 1);
+  t = avancerTour(t, '2026-11-02', 5); assert.equal(t.fini, false, 'une carte arrivée ensuite ne refait pas la fête'); assert.equal(t.serie, 1);
+  assert.equal(avancerTour(null, '2026-11-03', 0).fini, true, 'un objectif nul compte comme une carte');
+  t = avancerTour(t, '2026-11-03', 1); assert.equal(t.serie, 2, 'le lendemain, une pile d’une carte prolonge la série');
+});

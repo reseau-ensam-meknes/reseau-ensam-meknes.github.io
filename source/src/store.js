@@ -144,41 +144,37 @@ export function voitChampDemo(data, me, p, champ) {
   return enRelation(data, me.id, p.id);
 }
 
-// Petit PDF d'exemple (une page de texte) pour les CV de la démo
-const echapPdf = t => Array.from(String(t)).map(c => { const k = c.charCodeAt(0); if (c === '(' || c === ')' || c === '\\') return '\\' + c; if (k < 32) return ' '; if (k < 127) return c; const w = { '’': 146, '–': 150, '—': 151, '…': 133, 'œ': 156, '€': 128 }[c] ?? (k < 256 ? k : 63); return '\\' + w.toString(8).padStart(3, '0'); }).join('');
-// Un PDF d'une page A4 : le flux de dessin, Helvetica (F1) et Helvetica gras (F2)
-function pdfUnePage(flux) {
+// PDF écrits à la main pour la démo (CV d'exemple, seed-cv.js) : une page A4, Helvetica (F1) et Helvetica gras (F2),
+// codage WinAnsi. Les caractères hors Latin-1 que WinAnsi sait écrire ; le reste devient « ? ».
+const WINANSI = { '€': 128, '‚': 130, 'ƒ': 131, '„': 132, '…': 133, '†': 134, '‡': 135, 'ˆ': 136, '‰': 137, 'Š': 138, '‹': 139, 'Œ': 140, 'Ž': 142,
+  '‘': 145, '’': 146, '“': 147, '”': 148, '•': 149, '–': 150, '—': 151, '˜': 152, '™': 153, 'š': 154, '›': 155, 'œ': 156, 'ž': 158, 'Ÿ': 159,
+  ' ': 160, ' ': 32, '−': 150, '‑': 45, '‐': 45 };
+// Le code WinAnsi d'un caractère (sert aussi à mesurer le texte avec les largeurs des glyphes)
+export const codeWinAnsi = c => { const k = c.charCodeAt(0); return WINANSI[c] ?? (k < 127 || (k >= 160 && k < 256) ? k : 63); };
+export const echapPdf = t => Array.from(String(t)).map(c => { const k = codeWinAnsi(c); if (c === '(' || c === ')' || c === '\\') return '\\' + c; if (k < 32) return ' '; if (k < 127) return String.fromCharCode(k); return '\\' + k.toString(8).padStart(3, '0'); }).join('');
+// Un PDF d'une page A4 à partir de son flux de dessin ; titre : celui que montre la visionneuse (onglet, propriétés)
+export function pdfUnePage(flux, { titre = null } = {}) {
+  // UTF-16BE, unité par unité (split('') garde les deux moitiés d'un caractère hors du plan de base, un émoji par exemple)
+  const utf16 = t => '<FEFF' + String(t).split('').map(c => c.charCodeAt(0).toString(16).padStart(4, '0')).join('').toUpperCase() + '>';
   const objets = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 6 0 R >> >> /Contents 5 0 R >>',
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>',
     `<< /Length ${flux.length} >>\nstream\n${flux}\nendstream`,
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>'];
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>',
+    ...(titre ? [`<< /Title ${utf16(titre)} /Producer ${utf16('Réseau ENSAM Meknès (démonstration)')} >>`] : [])];
   let out = '%PDF-1.4\n'; const pos = [];
   objets.forEach((o, i) => { pos.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
   const xref = out.length;
-  out += `xref\n0 ${objets.length + 1}\n0000000000 65535 f \n` + pos.map(p => String(p).padStart(10, '0') + ' 00000 n \n').join('') + `trailer\n<< /Size ${objets.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  out += `xref\n0 ${objets.length + 1}\n0000000000 65535 f \n` + pos.map(p => String(p).padStart(10, '0') + ' 00000 n \n').join('')
+    + `trailer\n<< /Size ${objets.length + 1} /Root 1 0 R${titre ? ' /Info 7 0 R' : ''} >>\nstartxref\n${xref}\n%%EOF`;
   return new Blob([Uint8Array.from(out, c => c.charCodeAt(0) & 255)], { type: 'application/pdf' });
 }
 export function pdfSimple(lignes) {
   return pdfUnePage(['BT', '/F1 11 Tf', '14 TL', '56 780 Td', ...lignes.flatMap((l, i) => [i === 0 ? '/F1 18 Tf' : i === 1 ? '/F1 11 Tf' : '', `(${echapPdf(l)}) Tj T*`]).filter(Boolean), 'ET'].join('\n'));
 }
-// Un CV de démonstration mis en page comme un vrai (les mêmes lignes, dans le même ordre) : bandeau bleu nuit avec le nom,
-// filet orange, rubriques en bleu soulignées, texte gris foncé. Sert à l'aperçu de la carte Match.
-export function pdfCv(lignes) {
-  const f = [], txt = (police, taille, couleur, x, y, t) => f.push(`BT /${police} ${taille} Tf ${couleur} rg ${x} ${y} Td (${echapPdf(t)}) Tj ET`);
-  f.push('0.051 0.247 0.471 rg 0 736 595 106 re f', '0.953 0.573 0 rg 0 732 595 4 re f');
-  txt('F2', 24, '1 1 1', 48, 790, lignes[0] || 'CV');
-  txt('F1', 11, '0.82 0.89 0.97', 48, 766, lignes[1] || '');
-  let y = 700;
-  for (const l of lignes.slice(2)) {
-    if (!l.trim()) { y -= 8; continue; }
-    if (/^\s/.test(l)) { txt('F1', 10.5, '0.2 0.25 0.33', 62, y, l.trim()); y -= 17; continue; }
-    if (/^CV de démonstration/.test(l)) { txt('F1', 9, '0.45 0.5 0.58', 48, y, l); y -= 14; continue; }
-    y -= 10; txt('F2', 12.5, '0.086 0.439 0.659', 48, y, l);
-    f.push(`0.84 0.88 0.93 RG 0.8 w 48 ${y - 7} m 547 ${y - 7} l S`); y -= 25;
-  }
-  return pdfUnePage(f.join('\n'));
-}
+// Le CV de démonstration d'un membre (seed-cv.js, chargé au premier CV montré) : une vraie page de CV tirée de son profil,
+// avec sa recherche en cours s'il en a publié une
+const cvExemple = (p, data) => import('./seed-cv.js').then(m => m.pdfCvDemo(p, { demande: p ? demandesActives(data, p.id).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0] || null : null }));
 
 // ---------------------------------------------------------------------------
 // Démo : données d'exemple, gardées dans le navigateur du visiteur
@@ -358,7 +354,7 @@ class DemoStore extends Base {
     const owner = this.byId('profiles', path.split('/')[0]);
     const relu = this.data.relectures_cv.some(r => r.cv_path === path && r.status !== 'annulee' && (r.reviewer_id === this.me?.id || (!r.reviewer_id && r.status === 'demandee' && this.me?.role === 'laureat')));
     if (!relu && !(owner && owner.cv_path === path && this.voitChamp(owner, 'cv'))) throw new Error('Ce CV n’est pas visible pour ton compte.');
-    const f = this.fichiers.get(path) || pdfCv(cvDemo(owner));
+    const f = this.fichiers.get(path) || await cvExemple(owner, this.data);
     return URL.createObjectURL(f);
   }
   // Photo de profil : en démo, elle reste dans l'onglet (pas de stockage réel)
@@ -565,9 +561,6 @@ function verifierPhoto(blob) {
 }
 // Un ancien CV reste gardé tant qu'une relecture en cours ou rendue s'y rapporte
 const cvReference = (data, path) => data.relectures_cv.some(r => r.cv_path === path && r.status !== 'annulee');
-const cvDemo = p => [p?.full_name || 'CV', `${p?.filiere || ''} · ENSAM Meknès · promo ${p?.promo || ''}`, '', 'CV de démonstration (données fictives).', '',
-  'Formation', '  Cycle ingénieur, ENSAM Meknès', '  Classes préparatoires intégrées', '', 'Expériences', '  Stage ingénieur adjoint (2 mois)', '  Stage ouvrier (1 mois)', '',
-  'Compétences', '  ' + ((p?.competences || []).join(', ') || 'Lean, Python, CAO'), '', 'Langues', '  Arabe, français, anglais'];
 // Comme protect_profile() : personne ne se fait admin ; admin_ok suit le rôle admin donné ou retiré par l'administration ;
 // l'administration en vue lauréat (admin_ok) passe d'admin à lauréat et revient, sa vérification ne bouge pas.
 function regleRoleDemo(store, r, old) {

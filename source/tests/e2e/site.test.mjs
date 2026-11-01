@@ -2815,8 +2815,10 @@ test('feuilles : le pied « Publier » ne cache jamais le champ suivi ; « Je pe
 test('annonce : sur une ligne, seulement pour son public', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Admin'); await s.aller('admin');
+  await s.page.click('#ann-nouvelle');
   await s.page.fill('#ann-txt', 'Forum entreprises mardi pour tout le réseau');
   await s.page.locator('form:has(#ann-txt) button.primary').click(); await s.page.waitForTimeout(300);
+  await s.page.click('#ann-nouvelle');
   await s.page.fill('#ann-txt', 'Afterwork des lauréats jeudi soir à l’école');
   await s.page.click('#ann-pour-laureats');
   await s.page.locator('form:has(#ann-txt) button.primary').click(); await s.page.waitForTimeout(300);
@@ -2999,13 +3001,14 @@ test('Retour : ferme la feuille, puis revient à l’écran d’avant, à la mê
   // La liste reprend sa place
   await s.page.click('.bottom-nav a[href="#reseau"]'); await s.page.waitForTimeout(300);
   await s.page.click('.puces-nav [role="tab"]:has-text("Entraide")'); await s.page.waitForTimeout(300);
-  const ligne = s.page.locator('.qrow').nth(4); await ligne.scrollIntoViewIfNeeded();
+  // Une question assez bas dans la liste (l'en-tête compact en montre déjà cinq sans défiler)
+  const ligne = s.page.locator('.qrow').nth(6); await ligne.scrollIntoViewIfNeeded();
   const avant = await s.page.evaluate(() => scrollY); assert.ok(avant > 200);
   await ligne.click(); await s.page.waitForTimeout(300);
   await retour(s.page);
   assert.ok(Math.abs(await s.page.evaluate(() => scrollY) - avant) <= 2, 'même place dans la liste');
   // « ← Toutes les questions » fait comme Retour, sans empiler
-  await s.page.locator('.qrow').nth(4).click(); await s.page.waitForTimeout(300);
+  await s.page.locator('.qrow').nth(6).click(); await s.page.waitForTimeout(300);
   await s.page.click('button.back'); await s.page.waitForTimeout(350);
   assert.ok(Math.abs(await s.page.evaluate(() => scrollY) - avant) <= 2);
   await retour(s.page);
@@ -3342,6 +3345,439 @@ test('onglets : la pastille suit l’onglet choisi, seul le contenu glisse, dans
   assert.ok(!(await s.page.evaluate(() => document.querySelector('.offres-seg').classList.contains('trait-vol'))));
   assert.deepEqual(await glissements(s.page), []);
   await s.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Socle v3 : la coque (barre du bas, bandeau de démo, arrivée d'un écran) et les briques communes (en-tête, rangées, anneau, coche)
+// ---------------------------------------------------------------------------
+test('socle : la barre du bas montre l’onglet actif par un repère sous son icône (miroir en arabe) ; aucun repère pour une page hors de la barre', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 390, langue });
+    await s.comme('Salma');
+    for (const route of ['accueil', 'offres', 'match', 'mentorat', 'reseau/groupes']) {
+      await s.aller(route);
+      const r = await s.page.evaluate(() => {
+        const nav = document.querySelector('.bottom-nav'), ind = nav.querySelector('.bn-indic'), on = nav.querySelector('a[aria-current="page"]');
+        const a = ind.getBoundingClientRect(), b = on.getBoundingClientRect();
+        return { sans: nav.classList.contains('sans-indic'), muet: ind.getAttribute('aria-hidden'), centre: a.left + a.width / 2, gauche: b.left, droite: b.right, n: nav.querySelectorAll('a[aria-current="page"]').length };
+      });
+      assert.equal(r.n, 1, `${langue} · ${route} : un seul onglet actif`);
+      assert.equal(r.sans, false);
+      assert.equal(r.muet, 'true', 'le repère est décoratif : l’onglet actif est dit par aria-current');
+      assert.ok(r.centre > r.gauche && r.centre < r.droite, `${langue} · ${route} : le repère est sous l’onglet actif (${JSON.stringify(r)})`);
+    }
+    // Mon profil n'est pas dans la barre : aucun onglet allumé, aucun repère
+    await s.aller('profil');
+    assert.equal(await s.page.locator('.bottom-nav a[aria-current="page"]').count(), 0);
+    assert.equal(await s.page.locator('.bottom-nav.sans-indic').count(), 1);
+    assert.equal(await s.page.locator('.bottom-nav .bn-indic').isVisible(), false);
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('socle : un onglet de la barre du bas — seul le contenu arrive (200 ms), du côté de l’onglet choisi (inversé en arabe) ; rien au Retour ni en mouvement réduit', async () => {
+  // Chaque arrivée du contenu (#contenu) : son décalage de départ en px (> 0 : il vient de la droite) et sa durée
+  const espion = page => page.evaluate(() => {
+    window.__arrivees = [];
+    const animer = Element.prototype.animate;
+    Element.prototype.animate = function (k, o) {
+      if (this.id === 'contenu') window.__arrivees.push({ de: parseFloat(k[0]?.translate || '0'), duree: typeof o === 'number' ? o : o?.duration, autre: this.closest('.bottom-nav, .topbar') != null });
+      return animer.call(this, k, o);
+    };
+  });
+  const arrivees = page => page.evaluate(() => window.__arrivees.splice(0));
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 390, langue, mouvement: true });
+    const sens = langue === 'ar' ? -1 : 1;
+    await s.comme('Salma'); await s.aller('offres'); await s.page.waitForTimeout(300);
+    await espion(s.page);
+    await s.page.click('.bottom-nav a[href="#reseau"]'); await s.page.waitForTimeout(300);
+    const a = await arrivees(s.page);
+    assert.equal(a.length, 1, `${langue} : une seule arrivée`);
+    assert.ok(a[0].de * sens > 0, `${langue} : Offres → Réseau, le contenu vient du côté de Réseau (${a[0].de})`);
+    assert.ok(a[0].duree >= 150 && a[0].duree <= 400, `durée ${a[0].duree} ms`);
+    await s.page.click('.bottom-nav a[href="#mentorat"]'); await s.page.waitForTimeout(300);
+    const b = await arrivees(s.page);
+    assert.ok(b.length === 1 && b[0].de * sens < 0, `${langue} : Réseau → Mentorat, il vient de l’autre côté (${JSON.stringify(b)})`);
+    // Retour : l'écran d'avant revient à sa place, sans glisser
+    await s.page.goBack(); await s.page.waitForTimeout(300);
+    assert.notEqual(await ici(s.page), '#mentorat');
+    assert.deepEqual(await arrivees(s.page), [], 'rien au Retour');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('offres');
+  await espion(s.page);
+  await s.page.click('.bottom-nav a[href="#reseau"]'); await s.page.waitForTimeout(300);
+  assert.deepEqual(await arrivees(s.page), [], 'mouvement réduit : l’écran change aussitôt');
+  await s.ctx.close();
+});
+
+test('socle : le bandeau de démo tient sur une ligne (360 px, le bouton garde son nom), s’ouvre au toucher et le reste pendant la visite', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 360, langue });
+    await s.comme('Salma'); await s.aller('reseau/groupes');
+    assert.ok((await s.page.locator('.demo-band').boundingBox()).height <= 44, 'une seule ligne');
+    const bouton = s.page.getByRole('button', { name: langue === 'ar' ? 'كيف تجرّب' : 'Comment essayer' });
+    assert.equal(await bouton.count(), 1, 'le nom du bouton reste lu, même caché à l’œil sur un petit écran');
+    assert.equal(await bouton.getAttribute('aria-expanded'), 'false');
+    assert.equal(await bouton.getAttribute('aria-controls'), 'demo-txt');
+    await bouton.click(); await s.page.waitForTimeout(150);
+    assert.equal(await s.page.getAttribute('.demo-plus', 'aria-expanded'), 'true');
+    if (langue === 'fr') assert.match(await s.page.locator('#demo-txt').innerText(), /Essaie le mentorat/);
+    await s.aller('offres');
+    assert.equal(await s.page.getAttribute('.demo-plus', 'aria-expanded'), 'true', 'ouvert, il le reste d’un écran à l’autre');
+    await s.page.click('.demo-plus'); await s.page.waitForTimeout(150);
+    assert.equal(await s.page.getAttribute('.demo-plus', 'aria-expanded'), 'false');
+    if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...window.__ensamMissing].filter(t => /démo|essai|mentorat|Replier|rôle/i.test(t))), []);
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('socle : en-tête compact — titre et rubriques du Réseau immobiles d’un onglet à l’autre ; Mon profil montre son remplissage dans un anneau lisible, qui suit le profil', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 390, langue });
+    await s.comme('Salma');
+    const position = () => s.page.evaluate(() => ({ titre: document.querySelector('.en-tete h1').getBoundingClientRect().top, puces: document.querySelector('.en-tete .puces-nav').getBoundingClientRect().top }));
+    await s.aller('reseau/groupes'); const avec = await position();
+    assert.equal(await s.page.locator('.page-head .eyebrow').count(), 1);
+    for (const r of ['reseau/etranger', 'reseau/entreprises']) {
+      await s.aller(r); const sans = await position();
+      assert.equal(await s.page.locator('.page-head .eyebrow').count(), 0, 'toujours un seul chiffre par écran');
+      assert.ok(Math.abs(avec.titre - sans.titre) <= 1 && Math.abs(avec.puces - sans.puces) <= 1, `${langue} · ${r} : rien ne saute (${JSON.stringify([avec, sans])})`);
+    }
+    // Mon profil : l'anneau est une vraie barre de progression ; son chiffre se lit « 83 % » (jamais « %83 » en arabe)
+    await s.aller('profil');
+    const anneau = s.page.locator('.page-head .anneau[role="progressbar"]');
+    assert.equal(await anneau.count(), 1);
+    const v = Number(await anneau.getAttribute('aria-valuenow'));
+    assert.ok(v > 0 && v < 100, `rempli à ${v} %`);
+    assert.equal(await anneau.getAttribute('aria-valuemin'), '0');
+    assert.equal(await anneau.getAttribute('aria-valuemax'), '100');
+    assert.match(await anneau.getAttribute('aria-label'), langue === 'ar' ? /\d/ : new RegExp(`Profil rempli à ${v} %`));
+    assert.equal((await s.page.locator('.page-head .pf-pct').innerText()).replace(/\s/g, ''), `${v}%`);
+    const pct = await s.page.locator('.page-head .pf-pct').boundingBox(), chiffre = await s.page.locator('.page-head .pf-pct small').boundingBox();
+    assert.ok(chiffre.x > pct.x, 'le signe % reste après le nombre, en arabe aussi');
+    // Un champ retiré puis remis : l'anneau suit, pour de vrai
+    if (langue === 'fr') {
+      const li = await s.page.inputValue('#pf-li');
+      await s.page.fill('#pf-li', ''); await s.page.click('form .row-end .btn.primary'); await s.page.waitForTimeout(300);
+      const moins = Number(await anneau.getAttribute('aria-valuenow'));
+      assert.ok(moins < v, `sans LinkedIn : ${moins} % < ${v} %`);
+      await s.page.fill('#pf-li', li); await s.page.press('#pf-li', 'Enter'); await s.page.waitForTimeout(300);
+      assert.equal(Number(await anneau.getAttribute('aria-valuenow')), v);
+    }
+    // L'administration n'a pas d'anneau
+    await s.comme('Admin'); await s.aller('profil');
+    assert.equal(await s.page.locator('.page-head .anneau').count(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('socle : groupes et cafés en rangées (390 px : elles défilent d’un geste ; 1280 px : en grille, rien de caché) ; « Je viens » coche et vibre une fois, légèrement', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('reseau/groupes');
+  const rangees = s.page.locator('.rangee-bloc > .rangee-cartes');
+  assert.ok(await rangees.count() >= 2, 'tes groupes, puis les cafés');
+  const g = await rangees.first().evaluate(e => ({ sw: e.scrollWidth, cw: e.clientWidth, snap: getComputedStyle(e).scrollSnapType }));
+  assert.ok(g.sw > g.cw, 'la rangée de groupes défile');
+  assert.match(g.snap, /x/);
+  assert.equal(await s.page.locator('.rangee-fleches').first().isVisible(), false, 'pas de flèches sur un téléphone');
+  // « Je viens » : la coche se dessine dans « Tu y vas », une vibration de 8 à 15 ms
+  await s.page.evaluate(() => { window.__vib = []; Object.defineProperty(navigator, 'vibrate', { configurable: true, value: ms => { window.__vib.push(ms); return true; } }); });
+  const cafe = s.page.locator('article.cafe', { hasText: 'Casablanca' }).first();
+  await cafe.locator('button', { hasText: 'Je viens' }).click(); await s.page.waitForTimeout(300);
+  assert.equal(await cafe.locator('.cafe-ok .coche').count(), 1);
+  const vib = await s.page.evaluate(() => window.__vib);
+  assert.equal(vib.length, 1); assert.ok(vib[0] >= 8 && vib[0] <= 15);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  const d = await ouvrir({ largeur: 1280 });
+  await d.comme('Salma'); await d.aller('reseau/groupes');
+  for (const e of await d.page.locator('.rangee-bloc.en-grille > .rangee-cartes').all()) {
+    const t = await e.evaluate(x => ({ sw: x.scrollWidth, cw: x.clientWidth }));
+    assert.ok(t.sw <= t.cw + 1, `sur ordinateur, tout se voit (${JSON.stringify(t)})`);
+  }
+  assert.deepEqual(d.erreurs, []);
+  await d.ctx.close();
+});
+
+test('socle : une feuille ou une conversation qui arrive avec la page reste collée à l’écran (le contenu ne glisse pas dessous)', async () => {
+  // Position du calque à chaque image pendant l'arrivée : fixé à l'écran, il doit rester en (0, 0) du premier instant au dernier.
+  // La fenêtre (600 ms) part de la première image où il est là, pas du clic : un clic plus lent ne la raccourcit pas.
+  const suivre = (page, sel) => page.evaluate(sel => {
+    window.__pos = []; window.__fini = false; let vu = null; const t0 = performance.now();
+    const f = () => {
+      const e = document.querySelector(sel), t = performance.now();
+      if (e) { if (vu === null) vu = t; const r = e.getBoundingClientRect(); window.__pos.push([Math.round(r.top), Math.round(r.left)]); }
+      if (vu === null ? t - t0 < 3000 : t - vu < 600) requestAnimationFrame(f); else window.__fini = true;
+    };
+    requestAnimationFrame(f);
+  }, sel);
+  const positions = async page => { await page.waitForFunction(() => window.__fini, null, { timeout: 5000 }); return page.evaluate(() => window.__pos); };
+  // Chaque glissement du contenu, gardé pour savoir à la fin s'il a été arrêté net (idle) ou mené à son terme
+  const espion = page => page.evaluate(() => {
+    window.__glisse = [];
+    const animer = Element.prototype.animate;
+    Element.prototype.animate = function (k, o) { const a = animer.call(this, k, o); if (this.id === 'contenu') window.__glisse.push(a); return a; };
+  });
+  const glissements = page => page.evaluate(() => window.__glisse.splice(0).map(a => a.playState));
+  // Ordinateur : « Publier un événement » (barre latérale) ouvre l'agenda, dont la feuille s'ouvre un rendu plus tard
+  const d = await ouvrir({ largeur: 1280, mouvement: true });
+  await d.comme('Admin'); await d.aller('accueil'); await d.page.waitForTimeout(300);
+  await d.page.evaluate(() => scrollTo(0, 300));
+  await espion(d.page); await suivre(d.page, '.modal-back');
+  await d.page.click('.side-pub'); await d.page.waitForTimeout(700);
+  const p = await positions(d.page);
+  assert.ok(p.length > 3, 'la feuille est là pendant l’arrivée');
+  assert.ok(p.every(([t, l]) => t === 0 && l === 0), `la feuille ne bouge pas : ${JSON.stringify(p.slice(0, 8))}`);
+  const g = await glissements(d.page);
+  assert.ok(g.every(e => e === 'idle'), `le glissement du contenu s’arrête dès que la feuille arrive (${g})`);
+  assert.deepEqual(d.erreurs, []);
+  await d.ctx.close();
+  // Téléphone : une conversation ouverte d'ailleurs (plein écran) ; un onglet ordinaire, lui, arrive toujours en glissant
+  const s = await ouvrir({ largeur: 390, mouvement: true });
+  await s.comme('Salma'); await s.aller('reseau/annuaire'); await s.page.waitForTimeout(300);
+  await espion(s.page); await suivre(s.page, '.conv');
+  await s.page.evaluate(() => import('./ui.js').then(m => m.aller('messages/u-0002')));
+  await s.page.waitForTimeout(700);
+  const c = await positions(s.page);
+  assert.ok(c.length > 3 && c.every(([t, l]) => t === 0 && l === 0), `la conversation ne bouge pas : ${JSON.stringify(c.slice(0, 8))}`);
+  assert.ok((await glissements(s.page)).every(e => e === 'idle'));
+  await s.page.goBack(); await s.page.waitForTimeout(300);
+  await glissements(s.page);
+  await s.page.click('.bottom-nav a[href="#offres"]');
+  await s.page.waitForFunction(() => window.__glisse.length && window.__glisse.every(a => a.playState !== 'running'), null, { timeout: 3000 });
+  assert.deepEqual(await glissements(s.page), ['finished'], 'un onglet sans calque glisse comme avant, jusqu’au bout');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('socle : un chiffre qui compte se pose sur la valeur du moment — une confirmation de recrutement se voit tout de suite dans le chiffre', async () => {
+  const s = await ouvrir({ largeur: 1280, mouvement: true });
+  await s.comme('Admin'); await s.aller('admin'); await s.page.waitForTimeout(700);
+  const chiffre = () => s.page.evaluate(() => [...document.querySelectorAll('.kpi')].find(k => /Recrutés et confirmés/.test(k.textContent)).querySelector('.kpi-val').textContent.trim());
+  const avant = Number(await chiffre());
+  assert.ok(avant > 0, `le chiffre a fini de compter (${avant})`);
+  await s.page.locator('.people-list.adm-gestes button', { hasText: 'Confirmer' }).first().click(); await s.page.waitForTimeout(700);
+  assert.equal(Number(await chiffre()), avant + 1, 'le nouveau chiffre, pas celui d’avant');
+  // Et c'est bien celui que la page montre en y revenant
+  await s.aller('admin/membres'); await s.aller('admin'); await s.page.waitForTimeout(700);
+  assert.equal(Number(await chiffre()), avant + 1);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('socle : l’annonce de l’administration — une annonce en cours, le formulaire attend derrière « Nouvelle annonce » ; le focus suit ; aucune annonce, il est ouvert', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 360, langue });
+    await s.comme('Admin'); await s.aller('admin');
+    assert.equal(await s.page.locator('.annonce.preview').count(), 1, 'une annonce en cours (démo)');
+    assert.equal(await s.page.locator('#ann-txt').count(), 0, 'rangé : la Vue d’ensemble reste courte');
+    await s.page.click('#ann-nouvelle'); await s.page.waitForTimeout(100);
+    assert.equal(await s.page.evaluate(() => document.activeElement.id), 'ann-txt', 'le focus va dans le champ');
+    // Le champ du lien garde sa largeur à 360 px : Annuler et Publier passent dessous
+    const lien = await s.page.locator('#ann-lien').boundingBox(), txt = await s.page.locator('#ann-txt').boundingBox();
+    assert.ok(Math.abs(lien.width - txt.width) <= 1, `lien aussi large que le texte (${lien.width} / ${txt.width})`);
+    await s.page.fill('#ann-txt', 'Brouillon à ranger');
+    await s.page.locator('#ann-form button[type="button"]', { hasText: langue === 'ar' ? 'إلغاء' : 'Annuler' }).click(); await s.page.waitForTimeout(100);
+    assert.equal(await s.page.locator('#ann-txt').count(), 0, 'Annuler range le formulaire');
+    assert.equal(await s.page.evaluate(() => document.activeElement.id), 'ann-nouvelle', 'le focus revient sur « Nouvelle annonce »');
+    await s.page.click('#ann-nouvelle');
+    assert.equal(await s.page.inputValue('#ann-txt'), '', 'le brouillon annulé ne revient pas');
+    await s.page.fill('#ann-txt', 'Forum entreprises mardi pour tout le réseau');
+    await s.page.locator('#ann-form button.primary').click(); await s.page.waitForTimeout(400);
+    assert.equal(await s.page.locator('#ann-txt').count(), 0, 'publiée : le formulaire se range');
+    assert.equal(await s.page.evaluate(() => document.activeElement.id), 'ann-nouvelle', 'le focus reste dans la carte');
+    // Plus aucune annonce : le formulaire est ouvert d'office, sans « Annuler »
+    await s.page.locator('.annonce.preview .btn').first().click(); await s.page.waitForTimeout(400);
+    assert.equal(await s.page.locator('.annonce.preview').count(), 0);
+    assert.equal(await s.page.locator('#ann-txt').count(), 1);
+    assert.equal(await s.page.locator('#ann-form button', { hasText: langue === 'ar' ? 'إلغاء' : 'Annuler' }).count(), 0, 'rien à ranger : pas d’« Annuler »');
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('socle : au doigt, chaque cible du Réseau, de Mon profil et de l’administration se touche sur 44 px de haut au moins (une zone invisible prolonge les petites, le dessin ne bouge pas)', async () => {
+  // Hauteur touchable de chaque élément actif visible : sa boîte, ou la zone invisible (::before / ::after) qui la prolonge
+  const petites = page => page.evaluate(() => {
+    const zone = (el, pseudo) => { const cs = getComputedStyle(el, pseudo); if (cs.content === 'none' || cs.position !== 'absolute') return 0; const h = parseFloat(cs.top), b = parseFloat(cs.bottom); return Math.max(0, -(isNaN(h) ? 0 : h)) + Math.max(0, -(isNaN(b) ? 0 : b)); };
+    const out = [];
+    for (const el of document.querySelectorAll('#contenu :is(button, a[href], [role="tab"], select, summary, input:not([type="hidden"]), textarea)')) {
+      const r = el.getBoundingClientRect(); if (!r.width || !r.height) continue;
+      const cs = getComputedStyle(el); if (cs.visibility === 'hidden' || el.closest('[hidden], [inert], .sr-only')) continue;
+      if (el.tagName === 'SELECT' && cs.opacity === '0') continue;   // menu natif posé sur une pastille : on touche la pastille
+      if (el.tagName === 'INPUT' && /checkbox|radio/.test(el.type)) continue;   // une case dans son label : on touche le label
+      const h = r.height + Math.max(zone(el, '::before'), zone(el, '::after'));
+      if (h < 43.5) out.push(`${el.tagName.toLowerCase()}.${String(el.className?.baseVal ?? el.className).trim().replace(/\s+/g, '.')} « ${(el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 24)} » ${Math.round(h)} px`);
+    }
+    return out;
+  });
+  const ECRANS_SOCLE = [['Salma', ['reseau/groupes', 'reseau/agenda', 'reseau/entraide', 'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'profil', 'profil/visibilite', 'profil/notifications', 'profil/donnees']],
+    ['Youssef', ['reseau/classement']], ['Admin', ['admin', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda', 'admin/reglages']]];
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 390, langue, toucher: true });
+    assert.ok(await s.page.evaluate(() => matchMedia('(pointer: coarse)').matches), 'un écran tactile');
+    const trop = [];
+    for (const [qui, ecrans] of ECRANS_SOCLE) {
+      await s.comme(qui);
+      for (const e of langue === 'fr' ? ecrans : ecrans.slice(0, 2)) { await s.aller(e); await s.page.waitForTimeout(250); for (const x of await petites(s.page)) trop.push(`${qui} · ${e} : ${x}`); }
+    }
+    assert.deepEqual(trop, [], 'des cibles trop petites au doigt');
+    // La zone ne déplace rien : les puces du Réseau gardent leur place d'un écran à l'autre, sans rien qui dépasse
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('administration : la modération — retirer depuis une carte est tonal (rouge), jamais en aplat ; « Ouvrir » sous le contenu, les mots du membre sur leur ligne ; les dernières offres se relisent ici, plus dans la Vue d’ensemble', async () => {
+  for (const [largeur, langue] of [[390, 'fr'], [360, 'ar']]) {
+    const s = await ouvrir({ largeur, langue });
+    await s.comme('Admin'); await s.aller('admin');
+    assert.equal(await s.page.locator('#adm-offres').count(), 0, 'la Vue d’ensemble ne relit plus les offres');
+    assert.equal(await s.page.locator('h2', { hasText: langue === 'ar' ? 'آخر العروض' : 'Dernières offres' }).count(), 0);
+    await s.aller('admin/moderation');
+    const cartes = s.page.locator('.mod-card');
+    assert.ok(await cartes.count() >= 2, 'des signalements en démo');
+    // Aucun aplat dans une carte qui se répète : l'action qui retire le contenu est tonale, en rouge
+    const couleurs = await s.page.evaluate(() => {
+      const sonde = c => { const d = document.createElement('i'); d.style.color = `var(${c})`; document.body.append(d); const v = getComputedStyle(d).color; d.remove(); return v; };
+      const [acc, bad, badSoft] = ['--accent', '--bad', '--bad-soft'].map(sonde);
+      const fonds = [...document.querySelectorAll('.mod-card button')].map(b => getComputedStyle(b).backgroundColor);
+      const retirer = [...document.querySelectorAll('.mod-card .btn.danger')].map(b => [getComputedStyle(b).backgroundColor, getComputedStyle(b).color]);
+      return { aplats: fonds.filter(f => f === acc || f === bad).length, retirer, bad, badSoft };
+    });
+    assert.equal(couleurs.aplats, 0, 'aucun bouton plein dans les cartes');
+    assert.ok(couleurs.retirer.length >= 2 && couleurs.retirer.every(([f, c]) => f === couleurs.badSoft && c === couleurs.bad), `retirer : fond rouge pâle, texte rouge (${JSON.stringify(couleurs)})`);
+    // Ce qu'on fait du contenu, puis du signalement : deux groupes ; à 360 px, rien ne dépasse d'une carte
+    const offre = cartes.filter({ has: s.page.locator('.mod-voir') }).first();
+    assert.equal(await offre.locator('.mod-decider .btn').count(), 2, 'masquer, supprimer');
+    assert.equal(await offre.locator('.mod-clore .btn').count(), 2, 'marquer traité, classer sans suite');
+    assert.ok(await s.page.evaluate(() => [...document.querySelectorAll('.mod-card')].every(c => c.scrollWidth <= c.clientWidth + 1)), 'rien ne dépasse');
+    // Les mots du membre qui signale : sous le motif, sur leur propre ligne
+    const mots = await offre.evaluate(c => { const d = c.querySelector('.mod-details'), li = d.closest('li'); return { bloc: getComputedStyle(d).display, dessous: d.getBoundingClientRect().top >= li.firstElementChild.getBoundingClientRect().bottom - 1 }; });
+    assert.deepEqual(mots, { bloc: 'block', dessous: true });
+    // « Ouvrir », sous le contenu, ouvre l'offre signalée
+    await offre.locator('.mod-voir').click(); await s.page.waitForSelector('.modal .od h2');
+    assert.match(await s.page.locator('.modal .od h2').innerText(), /rebuts/);
+    await s.fermer();
+    // Les dernières offres se relisent ici : une offre masquée se voit tout de suite
+    const ligne = s.page.locator('#adm-offres li').first();
+    await ligne.locator('button', { hasText: langue === 'ar' ? 'إخفاء' : 'Masquer' }).click(); await s.page.waitForTimeout(300);
+    assert.equal(await ligne.locator('.tag.done').count(), 1, 'l’offre masquée est dite fermée');
+    assert.equal(await s.debordement(), 0);
+    if (langue === 'ar') assert.deepEqual((await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), [], 'tout traduit');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('administration : sur téléphone, la liste des membres se lit — le rôle en un mot (menu « Rôle »), le nom en entier, l’e-mail aligné sous lui', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 390, langue });
+    await s.comme('Admin'); await s.aller('admin/membres');
+    const ligne = s.page.locator('.member-list li', { hasText: 'Soufiane Ziani' }).first();
+    assert.deepEqual(await ligne.locator('select').evaluate(x => [...x.options].map(o => o.textContent.trim())), langue === 'ar' ? ['طالب', 'خريج'] : ['Étudiant', 'Lauréat']);
+    if (langue === 'fr') assert.equal(await ligne.locator('select').getAttribute('aria-label'), 'Rôle', 'le menu dit ce qu’il règle');
+    const m = await ligne.evaluate(li => {
+      const nom = li.querySelector('.person-name'), meta = li.querySelector('.member-meta'), sous = li.querySelector('.role-line .ligne-sub');
+      const bord = e => { const r = e.getBoundingClientRect(); return document.documentElement.dir === 'rtl' ? Math.round(r.right) : Math.round(r.left); };
+      return { entier: nom.scrollWidth <= nom.clientWidth + 1, nom: bord(nom), sous: bord(sous), meta: bord(meta) };
+    });
+    assert.ok(m.entier, 'le nom se lit en entier');
+    assert.ok(Math.abs(m.meta - m.nom) <= 1 && Math.abs(m.sous - m.nom) <= 1, `l’e-mail et la promo sont alignés sur le nom (${JSON.stringify(m)})`);
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('socle : la coche d’un café où l’on va déjà est posée (elle ne se rejoue pas à chaque visite), elle se dessine après « Je viens » ; sur ordinateur, les villes à suivre en colonnes', async () => {
+  const s = await ouvrir({ largeur: 390, mouvement: true });
+  await s.comme('Salma'); await s.aller('reseau/groupes');
+  const animations = () => s.page.locator('.cafe-ok .coche').evaluateAll(es => es.map(e => getComputedStyle(e).animationName));
+  assert.deepEqual(await animations(), ['none'], 'déjà inscrite avant la visite : la coche est là, immobile');
+  const cafe = s.page.locator('article.cafe', { hasText: 'Casablanca' }).first();
+  await cafe.locator('button', { hasText: 'Je viens' }).click(); await s.page.waitForTimeout(100);
+  assert.equal(await cafe.locator('.cafe-ok .coche').evaluate(e => getComputedStyle(e).animationName), 'coche-rond', 'un vrai « Je viens » : elle se dessine');
+  await s.aller('reseau/agenda'); await s.aller('reseau/groupes');
+  assert.deepEqual(await animations(), ['none', 'none'], 'à la visite suivante, les deux sont posées');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  const d = await ouvrir({ largeur: 1280 });
+  await d.comme('Salma'); await d.aller('reseau/groupes');
+  const colonnes = await d.page.locator('.group-follow').last().evaluate(u => getComputedStyle(u).gridTemplateColumns.split(' ').filter(x => parseFloat(x) > 0).length);
+  assert.ok(colonnes >= 2, `les villes à suivre se rangent en ${colonnes} colonnes`);
+  assert.equal(await d.debordement(), 0);
+  assert.deepEqual(d.erreurs, []);
+  await d.ctx.close();
+});
+
+test('socle : un titre à icône qui passe sur deux lignes garde son icône en face de la première ligne', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 360, langue });
+    await s.comme('Salma'); await s.aller('profil/notifications');
+    const titres = await s.page.evaluate(() => [...document.querySelectorAll('.h-ico')].filter(h => h.offsetParent).map(h => {
+      const ico = h.querySelector(':scope > .ico'), t = [...h.childNodes].find(n => n.nodeType === 3 && n.textContent.trim());
+      if (!ico || !t) return null;
+      const r = document.createRange(); r.selectNodeContents(t);
+      const lignes = r.getClientRects(), l = lignes[0], i = ico.getBoundingClientRect();
+      return { titre: h.textContent.trim(), lignes: lignes.length, ecart: Math.abs((i.top + i.height / 2) - (l.top + l.height / 2)) };
+    }).filter(Boolean));
+    if (langue === 'fr') assert.ok(titres.some(x => x.lignes > 1), 'au moins un titre sur deux lignes à 360 px');
+    for (const x of titres) assert.ok(x.ecart <= 2.5, `${langue} · ${x.titre} : icône à ${x.ecart.toFixed(1)} px du milieu de la première ligne`);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('agenda : la carte d’un événement dit son jour une fois (la tuile), l’heure sur sa ligne ; le jour reste dit aux lecteurs d’écran', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 390, langue });
+    await s.comme('Salma'); await s.aller('reseau/agenda');
+    const ligne = el => el.evaluate(e => {
+      const cache = e.querySelector('.sr-only');
+      return { cache: cache ? cache.textContent.replace(/\s+/g, ' ').trim() : null, vu: [...e.childNodes].filter(n => n !== cache).map(n => n.textContent).join(' ').replace(/\s+/g, ' ').trim() };
+    });
+    const carte = s.page.locator('.ev-card').first();
+    assert.equal(await carte.locator('.ev-date').count(), 1, 'la tuile du jour');
+    const c = await ligne(carte.locator('.ev-when'));
+    assert.match(c.vu, /^\d{1,2}:\d{2}/, `${langue} : la ligne commence par l’heure (${c.vu})`);
+    assert.match(c.cache || '', /\d/, 'le jour et la date restent lus');
+    // La fiche : même tuile, même ligne
+    await carte.locator('.ev-title button').click(); await s.page.waitForSelector('.modal .ev-when');
+    const f = await ligne(s.page.locator('.modal .ev-when').first());
+    assert.match(f.vu, /^\d{1,2}:\d{2}/);
+    assert.match(f.cache || '', /\d/);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('entreprises : la ligne d’une entreprise dit « 3 avis », « 2 entretiens » en toutes lettres (une étoile seule et un chiffre se liraient comme une note) et tient sur une ligne à 360 px', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 360, langue });
+    await s.comme('Salma'); await s.aller('reseau/entreprises');
+    const stats = await s.page.locator('.ent-row .mini-stats').evaluateAll(es => es.map(e => ({ t: [...e.children].map(c => c.textContent.trim()), h: Math.round(e.getBoundingClientRect().height) })));
+    assert.ok(stats.length >= 10);
+    for (const x of stats) for (const t of x.t) assert.match(t, langue === 'ar' ? /\p{L}/u : /^\d+ (lauréats?|avis|entretiens?)$/u, `${langue} : « ${t} »`);
+    assert.ok(stats.some(x => x.t.length === 3), 'une entreprise avec lauréats, avis et entretiens');
+    assert.equal(new Set(stats.map(x => x.h)).size, 1, `${langue} : chaque ligne tient sur une ligne (${[...new Set(stats.map(x => x.h))]})`);
+    assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])].filter(t => /avis|entretien/.test(t))), []);
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -3865,7 +4301,11 @@ test('ambassadeur (démo) : refus, puis le suivant ; l’administration voit, re
   assert.equal(await s.page.locator('#amb-proposition').count(), 0);
   const groupe = await s.page.evaluate(() => [window.__demo.me.promo, window.__demo.me.filiere]);
   // L'administration : « Proposer maintenant » passe au suivant
-  await s.comme('Admin'); await s.aller('admin/inviter');
+  await s.comme('Admin');
+  // La plateforme fait sa proposition de la visite 1,2 s après l'arrivée (useAmbassadeurs) : on la laisse passer, sinon elle
+  // peut tomber au milieu des gestes ci-dessous et remettre une ligne à la place de celle qu'on retire
+  await s.page.waitForTimeout(1500);
+  await s.aller('admin/inviter');
   await s.page.waitForSelector('#amb-admin');
   // « Proposer maintenant » parcourt toutes les promos : son message dit qu'il a fini (un temps fixe ne suffit pas en CI)
   await s.page.click('#amb-lancer');
@@ -5070,6 +5510,9 @@ test('Match : le geste montré une fois, sans gêner la carte', async () => {
   await s.comme('Salma'); await s.aller('match');
   await s.page.waitForSelector('.mx-guide');
   assert.equal(await s.page.locator('.mx-guide').evaluate(e => getComputedStyle(e).pointerEvents), 'none');
+  // Sans mouvement (réglage du système), la carte ne bouge pas toute seule (ni rien de la pile) : l'étiquette suffit
+  assert.deepEqual(await s.page.evaluate(() => document.getAnimations().map(a => a.animationName).filter(n => n === 'mx-montre')), []);
+  assert.equal(await s.page.locator('.mx-carte.dessus').evaluate(c => new DOMMatrixReadOnly(getComputedStyle(c).transform).e), 0);
   await s.page.locator('.mx-non').click();
   await s.page.waitForSelector('.mx-guide', { state: 'detached' });
   await s.page.reload(); await s.page.waitForSelector('.mx-carte');
@@ -5077,7 +5520,223 @@ test('Match : le geste montré une fois, sans gêner la carte', async () => {
   await s.ctx.close();
 });
 
-test('Match : l’anneau du tour du jour avance à chaque carte et garde son compte', async () => {
+test('Match : au premier passage, la carte du dessus montre elle-même le geste, une seule fois ; l’étiquette a un fond plein ; toucher la carte arrête tout', async () => {
+  const s = await ouvrir({ largeur: 390, mouvement: true });
+  await s.comme('Salma'); await s.aller('match');
+  await s.page.waitForSelector('.mx-pile.montre .mx-guide');
+  // Une seule démonstration de 1,9 s (vers « Intéressé », puis « Plus tard », puis retour), jamais en boucle
+  const montre = () => s.page.evaluate(() => document.getAnimations().filter(a => a.animationName === 'mx-montre')
+    .map(a => { const t = a.effect.getComputedTiming(); return { fois: t.iterations, duree: t.duration }; }));
+  assert.deepEqual(await montre(), [{ fois: 1, duree: 1900 }]);
+  // L'étiquette ne laisse pas voir la carte au travers (un fond plein, jour comme nuit)
+  const fond = await s.page.locator('.mx-guide').evaluate(e => getComputedStyle(e).backgroundColor);
+  assert.match(fond, /^rgb\(/, `fond plein : ${fond}`);
+  // Penchée vers « Intéressé » comme sous le doigt : 70 % du seuil (30 % de la largeur), le tampon d'autant, la suivante avance
+  await s.page.waitForFunction(() => parseFloat(getComputedStyle(document.querySelector('.mx-pile')).getPropertyValue('--mx-montre')) > .69);
+  const penche = () => s.page.locator('.mx-carte.dessus').evaluate(c => ({ x: new DOMMatrixReadOnly(getComputedStyle(c).transform).e / c.offsetWidth, p: parseFloat(getComputedStyle(c).getPropertyValue('--p')) }));
+  const avant = await penche();
+  assert.ok(Math.abs(avant.x - .21) < .015 && avant.p > .69, `penchée : ${JSON.stringify(avant)}`);
+  // La carte est à toi dès qu'on la touche : prise en route, elle reste où elle penchait (pas de saut au centre)…
+  const c = await s.page.locator('.mx-carte.dessus').boundingBox();
+  await s.page.mouse.move(c.x + c.width / 2, c.y + c.height / 2); await s.page.mouse.down();
+  const prise = await penche();
+  assert.ok(Math.abs(prise.x - avant.x) < .02, `prise là où elle penchait : ${JSON.stringify({ avant, prise })}`);
+  // … et un petit glissé (vers « Plus tard », sans choisir) arrête la démonstration et l'étiquette ; lâchée, elle revient
+  for (let i = 1; i <= 4; i++) { await s.page.mouse.move(c.x + c.width / 2 - i * 8, c.y + c.height / 2); await s.page.waitForTimeout(16); }
+  await s.page.mouse.up();
+  await s.page.waitForSelector('.mx-guide', { state: 'detached' });
+  assert.equal(await s.page.locator('.mx-pile.montre').count(), 0);
+  assert.deepEqual(await montre(), []);
+  await s.page.waitForFunction(() => { const c = document.querySelector('.mx-carte.dessus'); return c && !c.classList.contains('ressort') && Math.abs(new DOMMatrixReadOnly(getComputedStyle(c).transform).e) < .5; });
+  assert.equal(await s.page.locator('.modal').count(), 0, 'un glissé n’ouvre pas le détail');
+  assert.equal(await s.page.locator('.mx-carte.vol').count(), 0, 'rien n’est choisi');
+  assert.equal(await s.page.locator('.mx-tour-n').innerText(), '0', 'rien n’est choisi : le tour du jour n’a pas bougé');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : en arabe, un titre resté en français rejoint le bord droit de la carte, sur deux lignes aussi ; la description garde le sens du français ; un titre trop long, coupé, garde ses points de suspension (390 px)', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  await s.comme('Salma'); await s.aller('match');
+  const titre = s.page.locator('.mx-carte.dessus .mx-so-t');
+  await titre.waitFor();
+  // Chaque ligne d'un texte (ses morceaux à la même hauteur) : son écart au bord droit et au bord gauche de la colonne
+  const lignes = sel => s.page.locator(sel).evaluate(e => {
+    const r = document.createRange(); r.selectNodeContents(e);
+    const b = e.getBoundingClientRect(), par = new Map();
+    for (const x of r.getClientRects()) { const k = Math.round(x.bottom); const v = par.get(k) || [Infinity, -Infinity]; par.set(k, [Math.min(v[0], x.left), Math.max(v[1], x.right)]); }
+    const l = [...par.values()];
+    return { n: l.length, droite: Math.max(...l.map(([, d]) => Math.abs(b.right - d))), gauche: Math.max(...l.map(([g]) => Math.abs(g - b.left))), coupe: e.hasAttribute('data-coupe') };
+  });
+  // « Tableau de bord qualité en temps réel » (l'offre de Zineb pour Salma) : deux lignes, chacune au bord droit
+  const t = await lignes('.mx-carte.dessus .mx-so-t');
+  assert.ok(t.n === 2 && t.droite < 1.5 && !t.coupe, JSON.stringify(t));
+  // Sa description, un paragraphe : au bord gauche, comme on lit le français
+  const d = await lignes('.mx-carte.dessus .mx-c-desc');
+  assert.ok(d.n >= 2 && d.gauche < 1.5, JSON.stringify(d));
+  // Le même titre, trop long pour deux lignes : coupé, il garde l'alignement du français et ses points de suspension
+  await s.aller('accueil');
+  await s.page.evaluate(() => { const o = window.__demo.data.offers.find(o => /tableau de bord qualité en temps réel$/i.test(o.titre)); o.titre += ' et alertes de production sur les trois lignes du site'; });
+  await s.aller('match'); await titre.waitFor();
+  const c = await lignes('.mx-carte.dessus .mx-so-t');
+  assert.ok(c.coupe && c.gauche < 1.5, JSON.stringify(c));
+  assert.equal(await titre.evaluate(e => getComputedStyle(e).textAlign), 'start');
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : le tour du jour avance d’un point à chaque choix (TOUR_JOUR cartes, ou toute la pile si elle est plus courte) puis se coche ; la fin de la pile dit le vrai bilan de la visite, ce qui revient et quand, avec une seule action (390 px)', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('match');
+  await s.page.waitForSelector('.mx-carte.dessus');
+  const ou = async () => { const m = (await s.page.getAttribute('.mx-tour', 'aria-label')).match(/^Tour du jour : (\d+) sur (\d+)$/); return { n: +m[1], objectif: +m[2] }; };
+  // L'objectif : TOUR_JOUR cartes, ou toute la pile du jour (deckMatch, logic.js) quand elle est plus courte ; un point par carte
+  const { cartes, tourJour } = await s.page.evaluate(async () => { const l = await import('./logic.js'); return { cartes: l.deckMatch(window.__demo.data, window.__demo.me).length, tourJour: l.TOUR_JOUR }; });
+  const objectif = Math.min(tourJour, cartes);
+  assert.deepEqual(await ou(), { n: 0, objectif });
+  assert.equal(await s.page.getAttribute('.mx-tour', 'role'), 'img', 'aria-label lu : une image, pas un simple paragraphe');
+  assert.equal(await s.page.locator('.mx-tour').innerText(), `0 sur ${objectif} aujourd’hui`);
+  assert.equal(await s.page.locator('.mx-tour-pts i').count(), objectif);
+  assert.equal(await s.page.locator('.mx-tour-pts i.ici').count(), 1);
+  // Chaque choix avance d'un point ; l'objectif ne dépasse jamais TOUR_JOUR (il peut grandir : « Plus tard » sur la lauréate
+  // intéressée fait venir son offre) ; atteint, le tour se coche une fois, au dernier point et pas avant
+  let oui = 0, tard = 0, fait = false;
+  for (let pas = 0; await s.page.locator('.mx-carte.dessus').count(); pas++) {
+    assert.ok(pas < 30, 'la pile finit');
+    const avant = fait ? null : await ou();
+    if (pas === 1) { await s.page.click('.mx-oui'); oui++; } else { await s.page.click('.mx-non'); tard++; }
+    await s.page.waitForTimeout(260);
+    if (await s.page.locator('.mx-fete').count()) { await s.page.click('.mx-fete-plus'); await s.page.waitForTimeout(200); }
+    if (fait) continue;
+    if (await s.page.locator('.mx-tour.fini').count()) { fait = true; assert.equal(avant.n + 1, avant.objectif, 'coché au dernier point'); continue; }
+    const apres = await ou();
+    assert.equal(apres.n, avant.n + 1);
+    assert.ok(apres.objectif >= apres.n && apres.objectif <= tourJour);
+    assert.equal(await s.page.locator('.mx-tour-pts i.fait').count(), apres.n);
+  }
+  assert.ok(fait, 'toute la pile vue : le tour du jour est fait');
+  // La fin : « Tu as tout vu », le bilan vrai de cette visite, la suite avec le vrai délai, une seule action pleine
+  await s.page.waitForSelector('.mx-vide');
+  assert.equal(await s.page.locator('#mx-vide-t').innerText(), 'Tu as tout vu');
+  assert.equal(await s.page.locator('.mx-bl-oui .mx-compte').innerText(), String(oui));
+  assert.equal(await s.page.locator('.mx-bl-tard .mx-compte').innerText(), String(tard));
+  const jours = await s.page.evaluate(async () => (await import('./logic.js')).MATCH_PLUS_TARD_JOURS);
+  assert.match(await s.page.locator('.mx-suite').innerText(), new RegExp(`Les cartes « Plus tard » reviennent ${jours} jours après ton choix\\.`));
+  // L'en-tête garde le tour coché, une fois, sans points
+  assert.equal(await s.page.locator('.mx-tour.fini').count(), 1);
+  assert.match(await s.page.locator('.mx-tour').innerText(), /^Tour du jour fait/);
+  assert.equal(await s.page.locator('.mx-tour-pts').count(), 0);
+  assert.equal(await s.page.locator('.mx-page .btn.primary').count(), 1, 'une seule action pleine');
+  assert.ok(await s.page.locator('.mx-vide .btn.primary').isVisible());
+  // Tes matchs restent à portée, à la même place que pendant la pile (l'en-tête), une seule fois ; la fin tient au-dessus
+  // de la barre du bas, sans défiler. « Revenir sur mon dernier choix » ramène la dernière carte
+  assert.ok(await s.page.locator('.mx-tete .mx-matchs .mx-visage').count() >= 1);
+  assert.equal(await s.page.locator('.mx-matchs').count(), 1);
+  await s.page.evaluate(() => scrollTo(0, 0)); await s.page.waitForTimeout(100);
+  const { fin, barre } = await s.page.evaluate(() => ({ fin: document.querySelector('.mx-vide').getBoundingClientRect().bottom, barre: document.querySelector('.bottom-nav').getBoundingClientRect().top }));
+  assert.ok(fin <= barre, `la fin (${Math.round(fin)} px) tient au-dessus de la barre du bas (${Math.round(barre)} px)`);
+  await s.page.locator('.mx-vide .linkish', { hasText: 'Revenir sur mon dernier choix' }).click(); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator('.mx-carte.dessus').count(), 1);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : « Pourquoi toi » ne dit que du vrai — la filière, les compétences du profil que l’offre cite, jamais un score (1280 px)', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Salma'); await s.aller('match');
+  await s.page.waitForSelector('.mx-carte.dessus');
+  const vues = [];
+  for (let i = 0; i < 8 && await s.page.locator('.mx-carte.dessus').count(); i++) {
+    vues.push(await s.page.evaluate(() => {
+      const c = document.querySelector('.mx-carte.dessus');
+      return { titre: c.querySelector('h2').textContent, raisons: [...c.querySelectorAll('.mx-pq li')].map(li => li.textContent.trim()) };
+    }));
+    await s.page.click('.mx-non'); await s.page.waitForTimeout(260);
+  }
+  const me = await s.page.evaluate(() => ({ comp: window.__demo.me.competences, offres: window.__demo.data.offers.map(o => ({ texte: `${o.titre} ${o.description || ''}` })) }));
+  const plat = x => x.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  for (const v of vues) {
+    assert.ok(v.raisons.length >= 1 && v.raisons.length <= 3, `${v.titre} : de une à trois raisons`);
+    for (const r of v.raisons) {
+      assert.doesNotMatch(r, /\d\s?%|score|compatib/i, `${v.titre} : pas de score (« ${r} »)`);
+      // « Lean et VSM, dans ton profil » : chaque compétence est dans le profil, et l'offre (ou l'offre de la lauréate) la cite
+      const m = r.match(/^(.+), dans ton profil$/); if (!m) continue;
+      for (const c of m[1].split(/, | et /)) {
+        assert.ok(me.comp.includes(c), `${v.titre} : ${c} est dans le profil`);
+        assert.ok(me.offres.some(o => plat(o.texte).includes(plat(c))), `${v.titre} : une offre cite ${c}`);
+      }
+    }
+  }
+  // Le sujet de Yazaki (Lean, VSM) et celui de la lauréate d'OCP (Power BI) le disent
+  assert.ok(vues.some(v => /Lean sur une ligne de câblage/.test(v.titre) && v.raisons.includes('Lean et VSM, dans ton profil') && v.raisons.includes('Pour ta filière')), JSON.stringify(vues));
+  assert.ok(vues.some(v => v.raisons.includes('Power BI, dans ton profil')), JSON.stringify(vues));
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : le CV de démonstration est une vraie page, que l’application relit comme le profil (rôle, promo, filière), avec son pied « données fictives »', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Nadia'); await s.aller('match');
+  await s.page.waitForSelector('.mx-carte.dessus .mx-cv-apercu.pret img', { timeout: 15000 });
+  const r = await s.page.evaluate(async () => {
+    const d = window.__demo, L = await import('./lire-cv.js'), logic = await import('./logic.js'), { pdfCvDemo } = await import('./seed-cv.js');
+    const now = new Date(), S = logic.seasonOf(now);
+    // Le CV de la carte du dessus, tel que la carte le montre (lienCV)
+    const p0 = d.data.profiles.find(p => p.full_name === document.querySelector('.mx-carte.dessus h2').textContent);
+    const lu = await L.lireCVDetail(await (await fetch(await d.lienCV(p0.cv_path))).arrayBuffer(), now);
+    // Les élèves qui ont un CV, et ceux du cycle ingénieur sans CV : relus, aucun écart avec le profil
+    const eleves = d.data.profiles.filter(p => p.role === 'etudiant' && (p.cv_path || [3, 4, 5].includes(logic.niveauOf(p, S)))).slice(0, 30);
+    const ecarts = [];
+    for (const p of eleves) {
+      const demande = logic.demandesActives(d.data, p.id).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0] || null;
+      const { cv } = await L.lireCVDetail(await pdfCvDemo(p, { demande }).arrayBuffer(), now);
+      const e = L.ecartsCV(p, cv, now); if (Object.keys(e).length) ecarts.push([p.full_name, e]);
+    }
+    return { pied: lu.texte.includes('CV de démonstration — données fictives'), role: lu.cv.role, promo: Number(lu.cv.promo), filiere: lu.cv.filiere, attendu: { promo: Number(p0.promo), filiere: p0.filiere }, n: eleves.length, avecCv: eleves.filter(p => p.cv_path).length, ecarts };
+  });
+  assert.ok(r.pied, 'le pied « CV de démonstration — données fictives »');
+  assert.deepEqual({ role: r.role, promo: r.promo, filiere: r.filiere }, { role: 'etudiant', ...r.attendu });
+  assert.ok(r.n >= 20 && r.avecCv >= 3, `${r.n} élèves relus, dont ${r.avecCv} avec un CV`);
+  assert.deepEqual(r.ecarts, []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : un voile assez haut met le visage au centre, comme l’en-tête d’un profil ; trop bas, à côté du nom ; la carte penchée par le geste n’y change rien', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('match');
+  const voile = s.page.locator('.mx-carte.dessus .mx-v-perso');
+  await voile.waitFor();
+  const mise = () => voile.evaluate(v => {
+    const r = v.getBoundingClientRect(), f = v.querySelector('.mx-v-visage').getBoundingClientRect(), t = v.querySelector('.mx-v-txt').getBoundingClientRect();
+    return { haut: v.classList.contains('haut'), centre: Math.abs((f.left + f.right) / 2 - (r.left + r.right) / 2) < 2 && t.top >= f.bottom,
+      cote: t.left >= f.right || t.right <= f.left, dedans: t.top >= r.top && t.bottom <= r.bottom };
+  });
+  assert.deepEqual(await mise(), { haut: true, centre: true, cote: false, dedans: true });
+  // Pendant le geste, la carte penche ; une nouvelle mesure (forcée ici, comme quand la police finit de charger) garde le visage au centre
+  const c = await s.page.locator('.mx-carte.dessus').boundingBox();
+  await s.page.mouse.move(c.x + c.width / 2, c.y + c.height / 2); await s.page.mouse.down();
+  for (let i = 1; i <= 8; i++) { await s.page.mouse.move(c.x + c.width / 2 + i * 16, c.y + c.height / 2 + i); await s.page.waitForTimeout(16); }
+  assert.notEqual(await s.page.locator('.mx-carte.dessus').evaluate(e => getComputedStyle(e).transform), 'none', 'la carte suit le doigt');
+  await voile.evaluate(v => new Promise(fin => {
+    const e = v.querySelector('.mx-v-ent'), image = f => requestAnimationFrame(() => requestAnimationFrame(f));
+    e.style.minHeight = e.offsetHeight + 1 + 'px'; image(() => { e.style.minHeight = ''; image(fin); });
+  }));
+  assert.equal(await voile.evaluate(v => v.classList.contains('haut')), true, 'toujours au centre pendant le geste');
+  await s.page.mouse.move(c.x + c.width / 2, c.y + c.height / 2); await s.page.mouse.up(); await s.page.waitForTimeout(300);
+  // Un écran bas : le voile n'a plus la place, le visage passe à côté du nom, rien ne sort du voile ; puis l'inverse
+  await s.page.setViewportSize({ width: 360, height: 640 }); await s.page.waitForTimeout(400);
+  assert.deepEqual(await mise(), { haut: false, centre: false, cote: true, dedans: true });
+  await s.page.setViewportSize({ width: 390, height: 844 }); await s.page.waitForTimeout(400);
+  assert.deepEqual(await mise(), { haut: true, centre: true, cote: false, dedans: true });
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('Match : le tour du jour avance à chaque carte et garde son compte', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Salma'); await s.aller('match');
   await s.page.waitForSelector('.mx-tour');

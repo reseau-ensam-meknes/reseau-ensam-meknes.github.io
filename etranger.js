@@ -1,7 +1,7 @@
 // Guide de l'étranger par pays, tenu par les lauréats qui y vivent : visa, convention, logement, budget…
 // Seuls les lauréats dont le profil indique ce pays (et l'administration) écrivent, comme protect_guide() dans la base.
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, Bar, toast, useLocal, injectCSS } from './ui.js';
+import { Icon, Modal, Field, Empty, Person, Bar, toast, useLocal, injectCSS, Anneau } from './ui.js';
 import { GUIDE_SECTIONS, niveauOf, timeAgo, groupKey } from './logic.js';
 import { canonPays, PAYS_AR, recherche, villeAffichee } from './geo.js';
 import { getLang, addAR } from './i18n.js';
@@ -76,18 +76,18 @@ function PaysList({ ctx }) {
   const monPays = me.role === 'laureat' && me.pays && paysKey(me.pays) !== 'maroc' ? idx.get(paysKey(me.pays)) : null;
   const reste = monPays ? total - ecrites(monPays) : 0;
   return html`<div class="sub-page etranger">
-    <div class="callout gp-intro"><h2 class="h-ico"><${Icon} name="globe"/> Partir en stage ou en PFE à l’étranger</h2>
-      <p>Ce que les lauréats sur place conseillent : admission, visa, convention, logement, budget. Chaque pays est tenu par ceux qui y vivent.</p></div>
+    <h2 class="sr-only">Partir en stage ou en PFE à l’étranger</h2>
+    <p class="small muted gp-intro">Ce que les lauréats sur place conseillent : admission, visa, convention, logement, budget. Chaque pays est tenu par ceux qui y vivent.</p>
     ${monPays ? html`<div class="hint-box gp-mine"><${Icon} name="flag" size=${16}/><span class="grow">Tu vis en <b translate="no">${paysLabel(monPays.nom)}</b> : ton expérience aide les étudiants. ${reste ? `Il reste ${reste} rubrique${reste > 1 ? 's' : ''} à écrire.` : 'Le guide est complet, merci !'}</span>
       <button class="btn tiny primary" onClick=${() => goPays(ctx, monPays.key)}>Ouvrir le guide</button></div>` : null}
     <label class="search"><${Icon} name="search" size=${16}/><input id="gp-q" placeholder="Chercher un pays…" value=${q} onInput=${e => setQ(e.target.value)}/></label>
-    ${list.length ? html`<div class="group-grid gp-grid">${list.map(e => { const n = ecrites(e); return html`<button class="gcard gp-card" key=${e.key} onClick=${() => goPays(ctx, e.key)}>
-      <span class="g-badge k-pays"><${Icon} name="flag" size=${20}/></span>
-      <span class="gcard-txt"><strong translate="no">${paysLabel(e.nom)}</strong>
-        ${e.laureats.length || e.offres.length ? html`<span class="small muted gp-facts">${e.laureats.length ? html`<span><${Icon} name="people" size=${13}/> ${e.laureats.length} lauréat${e.laureats.length > 1 ? 's' : ''} sur place</span>` : null}${e.offres.length ? html`<span><${Icon} name="feed" size=${13}/> ${e.offres.length} offre${e.offres.length > 1 ? 's' : ''}</span>` : null}</span>` : null}
-        ${n ? html`<span class="gp-prog"><${Bar} value=${n / total} label=${`${n}/${total}`}/></span>` : null}
-        <span class="small muted">${n ? `${n} rubrique${n > 1 ? 's' : ''} écrite${n > 1 ? 's' : ''} sur ${total}` : 'Guide pas encore commencé'}</span></span>
-    </button>`; })}</div>`
+    ${list.length ? html`<ul class="lignes gp-grid">${list.map(e => { const n = ecrites(e); return html`<li class="ligne gp-ligne" key=${e.key}><button type="button" class="ligne-main gp-card" onClick=${() => goPays(ctx, e.key)}>
+      <${Anneau} valeur=${n} max=${total} taille=${48} epaisseur=${4} ton="impact" decoratif><${Icon} name="flag" size=${18}/><//>
+      <span class="ligne-txt"><span class="ligne-nom" translate="no">${paysLabel(e.nom)}</span>
+        ${e.laureats.length || e.offres.length ? html`<span class="ligne-meta gp-facts">${e.laureats.length ? html`<span><${Icon} name="people" size=${13}/> ${e.laureats.length} lauréat${e.laureats.length > 1 ? 's' : ''} sur place</span>` : null}${e.offres.length ? html`<span><${Icon} name="feed" size=${13}/> ${e.offres.length} offre${e.offres.length > 1 ? 's' : ''}</span>` : null}</span>` : null}
+        <span class=${'ligne-meta gp-guide' + (n === total ? ' complet' : '')}>${n ? `${n} rubrique${n > 1 ? 's' : ''} écrite${n > 1 ? 's' : ''} sur ${total}` : 'Guide pas encore commencé'}</span></span>
+      <${Icon} name="arrow" size=${16}/>
+    </button></li>`; })}</ul>`
       : html`<${Empty} icon="globe" title=${q ? 'Aucun pays ne correspond' : 'Aucun lauréat à l’étranger pour l’instant'}>${q ? 'Essaie un autre nom.' : 'Dès qu’un lauréat indique un pays étranger sur son profil, son pays apparaît ici.'}<//>`}
   </div>`;
 }
@@ -252,6 +252,17 @@ const CSS = `
 .gp-facts { display: flex; flex-wrap: wrap; gap: .2rem .8rem; }
 .gp-facts span { display: inline-flex; align-items: center; gap: .25rem; }
 .gp-prog { display: flex; align-items: center; gap: .5rem; margin-top: .35rem; }
+/* La liste des pays : une carte, une ligne par pays ; l'anneau orange autour du drapeau, c'est le guide qui se remplit */
+.etranger .gp-intro { margin: 0; }
+.gp-ligne { padding-block: .7rem; }
+.gp-ligne .gp-card { gap: var(--sp-3); }
+.gp-ligne .anneau { color: var(--brass); }
+.gp-ligne .anneau-centre { color: var(--brass); }
+.gp-ligne .ligne-txt { flex: 1; }
+.gp-ligne .gp-facts { display: flex; flex-wrap: nowrap; gap: .2rem .7rem; overflow: hidden; }
+.gp-ligne .gp-facts span { white-space: nowrap; }
+.gp-ligne .gp-guide.complet { color: var(--good); font-weight: 600; }
+.gp-card > .ico:last-child { flex: none; color: var(--muted); }
 .gp-prog .bar { flex: 1; height: 6px; }
 .gp-prog .bar-fill { background: var(--brass); }
 .gp-head h2 { margin: 0; }
