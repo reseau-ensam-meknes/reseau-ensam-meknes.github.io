@@ -1172,6 +1172,33 @@ test('navigateur d’une application sans Chrome : « Ouvrir dans Chrome » rouv
   await a.ctx.close();
 });
 
+test('lien d’appareil : une nouvelle version recharge la page sous sa feuille, elle revient aussitôt, comptée une fois', async () => {
+  const s = await prevenirSur('off');
+  const id = await s.page.$eval('#persona', e => e.value);
+  await s.page.evaluate(id => localStorage.setItem('ensam-prevenir-' + id, JSON.stringify({ n: 1, at: Date.now() - 864e5 })), id);
+  await s.page.goto(adresse + '?notifs=1'); await s.page.waitForSelector(ouverture, { timeout: 8000 });
+  assert.equal((await s.memo()).n, 2);
+  // Rechargée sous la feuille (nouvelle version) : la même feuille tout de suite, pas un deuxième refus
+  await s.page.reload(); await s.page.waitForSelector(ouverture, { timeout: 8000 });
+  assert.equal((await s.memo()).n, 2, 'comptée une fois');
+  await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
+  await recharger(s); await rienALouverture(s, 'fermée : le lien est lu');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Le navigateur d'une application : sa feuille revient aussi tant qu'elle n'est pas fermée ; fermée, le lien ne la ramène plus
+  const a = await ouvrir({ largeur: 360, ua: INSTAGRAM });
+  await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  await a.page.keyboard.press('Escape'); await a.page.waitForTimeout(300);
+  await a.page.evaluate(() => sessionStorage.clear());
+  await a.page.goto(adresse + '?notifs=1'); await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  await a.page.reload(); await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  await a.page.keyboard.press('Escape'); await a.page.waitForTimeout(300);
+  await a.page.goto(adresse + '?notifs=1'); await a.page.waitForSelector('.hello'); await a.page.waitForTimeout(4500);
+  assert.equal(await a.page.locator('.modal.appli').count(), 0);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
 test('à l’ouverture : « Plus tard » puis une fête dans la même visite, le refus reste compté', async () => {
   const s = await prevenirSur('off');
   await attendreOuverture(s); await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);

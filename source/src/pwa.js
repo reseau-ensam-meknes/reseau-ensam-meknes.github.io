@@ -600,10 +600,6 @@ export function PrevenirHote({ ctx, bloque }) {
     const tenter = async () => {
       const l = lienAppareil();
       if (!vivant || !l) return;
-      // Une nouvelle version peut encore recharger la page : la feuille attend, sinon elle disparaîtrait sous les yeux du
-      // membre (et serait comptée deux fois)
-      const maj = attenteMaj();
-      if (maj > 0) { t = setTimeout(tenter, maj); return; }
       if (feteOuverte() || arriveeEnAttente(me.id) || occupe()) {
         if (Date.now() - debut < LIEN_FIN) t = setTimeout(tenter, OUV_ESSAI); else oublierLienAppareil();
         return;
@@ -613,7 +609,8 @@ export function PrevenirHote({ ctx, bloque }) {
       etatConnu = etat;
       // Le navigateur d'une application : sa feuille une fois par visite, même quand le lien revient. « Ouvrir dans Chrome »
       // sur un téléphone sans Chrome rouvre la même adresse (?notifs=1) ici même : la même feuille tournerait en boucle.
-      const sorte = etat === 'appli' ? (appliVue() ? null : 'appli') : l.depuis === 'ancienne' && !isStandalone() ? 'ancienne'
+      // l.vu : la feuille était déjà à l'écran quand une nouvelle version a rechargé la page : elle revient, comptée une fois.
+      const sorte = etat === 'appli' ? (appliVue() && !l.vu ? null : 'appli') : l.depuis === 'ancienne' && !isStandalone() ? 'ancienne'
         : l.notifs ? sorteLienNotifs({ etat, memo: lireMemo(me.id) }) : null;
       if (!['push', 'ios', 'appli', 'ancienne', 'debloquer'].includes(sorte)) {
         oublierLienAppareil();
@@ -624,7 +621,8 @@ export function PrevenirHote({ ctx, bloque }) {
       lienVu.current = true;
       // La feuille de l'ancienne adresse demande aussi l'activation (ou montre les gestes de l'iPhone) : comptée comme elles
       const compte = sorte !== 'ancienne' ? sorte : etat === 'ios' ? 'ios' : etat === 'off' ? 'push' : null;
-      if (compte) compterOuverture(me.id, compte);
+      if (compte && !l.vu) compterOuverture(me.id, compte);
+      lienAffiche(l);
       setOuv({ t: Date.now(), sorte, etat, lien: true });
     };
     t = setTimeout(tenter, LIEN_DELAI);
@@ -751,6 +749,8 @@ const CLE_LIEN_APPAREIL = 'ensam-lien-appareil', CLE_APPLI_VUE = 'ensam-appli-vu
 const LIEN_DELAI = 900, LIEN_FIN = 60000;
 const lienAppareil = () => { try { return JSON.parse(sessionStorage.getItem(CLE_LIEN_APPAREIL) || 'null'); } catch { return null; } };
 const oublierLienAppareil = () => { try { sessionStorage.removeItem(CLE_LIEN_APPAREIL); } catch { /* */ } };
+// Sa feuille à l'écran (vu) : une nouvelle version qui recharge la page la remontre aussitôt, sans la compter une deuxième fois
+const lienAffiche = l => { try { sessionStorage.setItem(CLE_LIEN_APPAREIL, JSON.stringify({ ...l, vu: 1 })); } catch { /* */ } };
 export function retenirLienAppareil({ notifs = false, depuis = '' } = {}) {
   if (!notifs && !depuis) return;
   const avant = lienAppareil() || {};
