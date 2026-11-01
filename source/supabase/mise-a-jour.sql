@@ -1720,15 +1720,18 @@ $$;
 revoke all on function public.programme_classe(text) from public, anon, authenticated;
 
 -- Vrai (et noté) si ce membre peut recevoir maintenant cette notification programmée ; faux sinon, et toujours faux pour
--- l'administration. Un verrou par membre : deux tâches simultanées ne dépassent pas le budget. Elle écrit : à n'appeler
--- que sur les lignes déjà retenues par les autres conditions (CTE matérialisée), jamais dans un filtre qui en écarte.
+-- l'administration. Un seul verrou pour toutes les tâches, gardé jusqu'à la fin de la transaction : deux tâches
+-- simultanées ne dépassent pas le budget. Pas un verrou par membre : une tâche qui passe sur des milliers de membres en
+-- garderait des milliers (table des verrous pleine pour toute la base) et deux tâches pourraient s'interbloquer.
+-- Elle écrit : à n'appeler que sur les lignes déjà retenues par les autres conditions (CTE matérialisée), jamais dans un
+-- filtre qui en écarte.
 create or replace function public.programme_place(p_user uuid, p_kind text) returns boolean
 language plpgsql security definer set search_path = public as $$
 declare v_debut timestamptz := date_trunc('day', public.horloge() at time zone 'UTC') at time zone 'UTC';
 begin
   if p_user is null or p_kind is null then return false; end if;
   if not exists (select 1 from public.profiles p where p.id = p_user and p.role in ('etudiant','laureat')) then return false; end if;
-  perform pg_advisory_xact_lock(hashtext('programme:' || p_user::text));
+  perform pg_advisory_xact_lock(hashtext('ensam:programme_place'));
   if public.programme_classe(p_kind) = 'douce' then
     if public.heure_calme() then return false; end if;
     if (select count(*) from public.notif_programme n

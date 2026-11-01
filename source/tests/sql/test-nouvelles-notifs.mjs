@@ -72,6 +72,21 @@ test('budget : 3 notifications programmées par jour ; une DURE part toujours et
   await db.query('delete from public.notif_programme');
 });
 
+test('budget : une tâche qui passe sur beaucoup de membres ne garde qu’un verrou (pas un par membre)', async () => {
+  const membres = (await un(`select count(*)::int n from public.profiles where role in ('etudiant','laureat')`)).n;
+  assert.ok(membres >= 5, 'plusieurs membres');
+  const { notes, verrous } = await db.transaction(async tx => ({
+    notes: (await tx.query(`select count(*) filter (where x.ok)::int n from (
+      select public.programme_place(p.id, 'rdv_demain') ok from public.profiles p where p.role in ('etudiant','laureat') order by p.id) x`)).rows[0].n,
+    // PGlite n'a qu'une session (pg_locks sans pid) : tous les verrous consultatifs sont ceux de cette transaction
+    verrous: (await tx.query(`select count(*)::int n from pg_locks where locktype = 'advisory'`)).rows[0].n,
+  }));
+  assert.equal(notes, membres, 'chacun noté');
+  assert.equal(verrous, 1, 'un seul verrou, gardé jusqu’à la fin de la transaction');
+  assert.equal((await un(`select count(*)::int n from pg_locks where locktype = 'advisory'`)).n, 0, 'rendu à la fin');
+  await db.query('delete from public.notif_programme');
+});
+
 test('nuit calme : de 21:30 à 08:00, aucune DOUCE ; une DURE oui ; 08:00 pile, c’est le jour', async () => {
   const calme = async h => (await un('select public.heure_calme($1::timestamptz) c', [h])).c;
   assert.equal(await calme(aujourdhuiA(21, 29)), false);
