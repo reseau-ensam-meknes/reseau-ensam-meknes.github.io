@@ -5,6 +5,8 @@ Polices de ce dossier : versions modifiées (sous-ensembles allégés, outils/ge
     → texte.woff2 (nom : « Texte ENSAM »)
   - IBM Plex Sans Arabic — Copyright © 2017 IBM Corp. with Reserved Font Name "Plex"
     → arabe-400.woff2, arabe-500.woff2, arabe-600.woff2, arabe-700.woff2 (nom : « Texte ENSAM arabe »)
+  - Readex Pro — Copyright 2019 The Readex Pro Project Authors (https://github.com/ThomasJockin/readexpro)
+    → arabe-titres-600.woff2, arabe-titres-700.woff2 (nom : « Titres ENSAM arabe »)
 Ces versions modifiées ne portent pas le nom réservé « Plex ». Elles restent sous la licence ci-dessous.
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.

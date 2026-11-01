@@ -50,6 +50,7 @@ else{d.dataset.entree='visiteur';setTimeout(function(){if(!window.ENSAM_ENTREE)d
 <!-- Polices gardées sur le site (outils/generer-polices.py, licence OFL : polices/OFL.txt), sans bloquer l’affichage : le texte
      s’affiche tout de suite avec la police du système. Chaque fichier ne part que si l’écran en a besoin : la police arabe, seulement en arabe.
      Les titres : un seul fichier pour les graisses 600 et 750 (police variable), comme le faisait Google Fonts.
+     Les titres en arabe ont leur propre police (Readex Pro, 600 et 700, 9 Ko chacune) : elle ne part que quand un titre arabe s’affiche.
      Jamais les isolants bidi (U+2066-2069) dans la plage arabe : un nom latin isolé deux fois y était rendu à 0 px. -->
 <style>
 @font-face { font-family: "Titres ENSAM"; font-weight: 600; font-display: swap; src: url(polices/titres.woff2) format("woff2"); unicode-range: U+0020-007E, U+00A0, U+00A9, U+00AB, U+00B0, U+00B7, U+00BB, U+00C0-00FF, U+0152-0153, U+2000-200B, U+2010-2011, U+2013-2014, U+2018-2019, U+201C-201D, U+2022, U+2026, U+202F, U+2039-203A, U+20AC, U+2212; }
@@ -59,6 +60,8 @@ else{d.dataset.entree='visiteur';setTimeout(function(){if(!window.ENSAM_ENTREE)d
 @font-face { font-family: "Texte ENSAM arabe"; font-weight: 500; font-display: swap; src: url(polices/arabe-500.woff2) format("woff2"); unicode-range: U+0600-06FF, U+200C-200F; }
 @font-face { font-family: "Texte ENSAM arabe"; font-weight: 600; font-display: swap; src: url(polices/arabe-600.woff2) format("woff2"); unicode-range: U+0600-06FF, U+200C-200F; }
 @font-face { font-family: "Texte ENSAM arabe"; font-weight: 700; font-display: swap; src: url(polices/arabe-700.woff2) format("woff2"); unicode-range: U+0600-06FF, U+200C-200F; }
+@font-face { font-family: "Titres ENSAM arabe"; font-weight: 600; font-display: swap; src: url(polices/arabe-titres-600.woff2) format("woff2"); unicode-range: U+0600-06FF, U+0750-077F, U+FB50-FDFF, U+FE70-FEFF, U+200C-200F; }
+@font-face { font-family: "Titres ENSAM arabe"; font-weight: 700; font-display: swap; src: url(polices/arabe-titres-700.woff2) format("woff2"); unicode-range: U+0600-06FF, U+0750-077F, U+FB50-FDFF, U+FE70-FEFF, U+200C-200F; }
 </style>
 <style>
 /* Mise en page : rail de navigation (ordinateur) / barre d'onglets en bas (téléphone),
@@ -770,12 +773,15 @@ button.impact-strip, button.panel { font: inherit; color: inherit; text-align: s
 .lang-btn:hover { border-color: var(--accent); color: var(--accent); }
 .lang-btn > span:first-of-type { display: none; }
 .auth-lang { position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); inset-inline-end: 16px; z-index: 50; }
+/* Les titres en arabe (h1 à h3, titres de page, de section, de fête, la marque) : « Titres ENSAM arabe », plus ronde que le texte ;
+   les lettres latines et les chiffres d'un titre gardent ceux des titres français (« Titres ENSAM », en premier) */
 :root[dir="rtl"] {
-  --f-display: "Titres ENSAM", "Texte ENSAM arabe", "Segoe UI", system-ui, sans-serif;
+  --f-display: "Titres ENSAM", "Titres ENSAM arabe", "Texte ENSAM arabe", "Segoe UI", system-ui, sans-serif;
   --f-body: "Texte ENSAM", "Texte ENSAM arabe", "Segoe UI", system-ui, -apple-system, sans-serif;
 }
 [dir="rtl"] body { font-size: 16px; line-height: 1.7; }
 [dir="rtl"] h1, [dir="rtl"] h2, [dir="rtl"] h3 { line-height: 1.35; }
+[dir="rtl"] h3 { font-family: var(--f-display); }
 [dir="rtl"] *, [dir="rtl"] *::before, [dir="rtl"] *::after { letter-spacing: 0 !important; }
 /* Le texte des membres (souvent en français) s'aligne selon sa propre langue (dir="auto") ; un champ vide garde le sens de l'interface pour son exemple */
 [dir="rtl"] :is(input, textarea)[dir="auto"]:placeholder-shown { direction: rtl; }
