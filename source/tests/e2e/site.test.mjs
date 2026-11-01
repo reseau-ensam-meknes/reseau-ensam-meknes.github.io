@@ -5990,3 +5990,42 @@ test('administration · Contenus : masquer une offre puis la rouvrir sans quitte
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
+
+test('administration · Contenus : retirer une demande se confirme (un match en cours s’arrête, et c’est dit) et ne se rouvre pas d’ici ; « En pause » : sans relance depuis 60 jours', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 1280, langue });
+    await s.comme('Admin'); await s.aller('admin/contenus/demandes'); await s.page.waitForSelector('#adm-demandes');
+    // Une demande sans relance depuis 70 jours ; une autre en match (le lauréat a proposé, l'étudiante a accepté)
+    const prop = await s.page.evaluate(async vieux => {
+      const d = window.__demo;
+      await d.update('demandes', 'dm-00gy', { created_at: vieux, relancee_at: vieux });
+      const l = d.data.profiles.find(p => p.role === 'laureat' && p.verified);
+      const x = await d.insert('propositions', { demande_id: 'dm-00gx', laureat_id: l.id, message: 'Je peux t’aider.', status: 'envoyee' });
+      await d.update('propositions', x.id, { status: 'acceptee' });
+      return x.id;
+    }, new Date(Date.now() - 70 * 864e5).toISOString());
+    await s.page.waitForTimeout(300);
+    const ligne = id => s.page.locator(`#adm-demandes .cnt-ligne[data-id="${id}"]`);
+    assert.equal(await ligne('dm-00gy').getAttribute('data-statut'), 'pause', 'ouverte, mais sans relance depuis 60 jours');
+    assert.equal(await ligne('dm-00gx').getAttribute('data-statut'), 'match');
+    if (langue === 'fr') assert.deepEqual(await s.page.locator('.cnt-filtres .chip').allInnerTexts().then(l => l.map(t => t.replace(/\s+/g, ' '))), ['Tous 3', 'En pause 1', 'Match 1', 'Réussie 1']);
+    // Retirer le match : la fenêtre le dit, puis la demande est fermée, l'aide acceptée close, et rien ne la rouvre d'ici
+    await ligne('dm-00gx').locator('.k-gestes .btn.tonal').click(); await s.page.waitForSelector('.modal');
+    assert.match(await s.page.locator('.modal p').innerText(), langue === 'fr'
+      ? /^Retirer la demande « PFE en efficacité énergétique industrielle » \? Elle ne sera plus proposée aux lauréats, et le match en cours s’arrête\.$/
+      : /^سحب الطلب «.*PFE en efficacité énergétique industrielle.*»؟ لن يُقترح على الخريجين بعد الآن، وسيتوقف التوافق الجاري\.$/);
+    await s.page.locator('.modal .btn.danger').click(); await s.page.waitForTimeout(300);
+    assert.match(await s.page.locator('.toast').last().innerText(), langue === 'fr' ? /Demande retirée\./ : /سُحب الطلب\./);
+    assert.equal(await ligne('dm-00gx').getAttribute('data-statut'), 'fermee');
+    assert.equal(await ligne('dm-00gx').locator('.k-gestes .btn.tonal').count(), 0, 'pas de « Rouvrir » : seul l’auteur rouvre sa demande');
+    assert.deepEqual(await s.page.evaluate(id => [window.__demo.byId('demandes', 'dm-00gx').status, window.__demo.byId('propositions', id).status], prop), ['fermee', 'close']);
+    // La demande en pause se retire aussi ; « Annuler » la garde
+    await ligne('dm-00gy').locator('.k-gestes .btn.tonal').click(); await s.page.waitForSelector('.modal');
+    if (langue === 'fr') assert.match(await s.page.locator('.modal p').innerText(), /^Retirer la demande « Stage d’été de 4A en productio.* » \? Elle ne sera plus proposée aux lauréats\.$/);
+    await s.page.locator('.modal .btn.ghost').click(); await s.page.waitForTimeout(200);
+    assert.equal(await ligne('dm-00gy').getAttribute('data-statut'), 'pause');
+    if (langue === 'ar') assert.deepEqual((await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), [], 'tout traduit');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});

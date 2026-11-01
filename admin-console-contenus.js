@@ -1,12 +1,13 @@
 // Console d'administration · Contenus : ce que les membres publient, par sorte (offres, demandes, questions, mentorats,
 // événements), le plus récent d'abord. Les statuts en puces, une recherche, et les gestes que la base permet à l'administration :
-// ouvrir, masquer ou rouvrir, annuler, supprimer. Sur ordinateur un tableau, sur téléphone une carte par contenu.
+// ouvrir, masquer ou rouvrir une offre, retirer une demande, annuler, supprimer. Sur ordinateur un tableau, sur téléphone une carte par contenu.
+// (Une demande retirée ne se rouvre pas d'ici : seul son auteur la rouvre, et la base vérifie alors sa limite de demandes en cours.)
 // (Relire et masquer une offre sans attendre un signalement est de la modération : les « Dernières offres » sont ici.)
 import { html, useState } from './vendor/preact-htm.js';
 import { Icon, toast, injectCSS } from './ui.js';
 import { useVoirPlus, VoirPlus } from './lignes.js';
 import { addAR } from './i18n.js';
-import { TYPES, TYPES_EVENEMENT, BESOINS, timeAgo, norm } from './logic.js';
+import { TYPES, TYPES_EVENEMENT, BESOINS, timeAgo, norm, demandeEnPause } from './logic.js';
 import { passe } from './agenda.js';
 import { useLarge } from './admin-console.js';
 
@@ -17,12 +18,14 @@ addAR({
   'Candidatures': 'الترشيحات', 'Aides proposées': 'المساعدات المقترحة', 'Date': 'التاريخ', 'Réponses': 'الأجوبة',
   'Rien ici pour l’instant.': 'لا شيء هنا حاليًا.', 'Aucun contenu ne correspond à cette recherche.': 'لا محتوى يطابق هذا البحث.',
   'Offre masquée.': 'أُخفي العرض.', 'Offre rouverte.': 'أُعيد فتح العرض.', 'Offre supprimée.': 'حُذف العرض.',
-  'Demande masquée.': 'أُخفي الطلب.', 'Demande rouverte.': 'أُعيد فتح الطلب.', 'Demande supprimée.': 'تم حذف الطلب.',
+  'Demande supprimée.': 'تم حذف الطلب.',
   'Supprimer cette demande ? Les aides proposées partent avec elle.': 'حذف هذا الطلب؟ ستُحذف معه المساعدات المقترحة.',
   'Supprimer cette question ? Ses réponses partent avec elle.': 'حذف هذا السؤال؟ ستُحذف أجوبته معه.', 'Question supprimée.': 'حُذف السؤال.',
   'Annuler ce mentorat ? L’étudiant et le lauréat le verront annulé.': 'إلغاء هذا الإرشاد؟ سيراه الطالب والخريج ملغى.', 'Mentorat annulé.': 'أُلغي الإرشاد.', 'Annuler le mentorat': 'إلغاء الإرشاد',
   'Supprimer ce mentorat ? Il disparaît pour l’étudiant et le lauréat.': 'حذف هذا الإرشاد؟ سيختفي لدى الطالب والخريج.', 'Mentorat supprimé.': 'حُذف الإرشاد.',
-});
+}, [
+  [/^Retirer la demande « (.+) » \? Elle ne sera plus proposée aux lauréats, et le match en cours s’arrête\.$/, t => `سحب الطلب «${t}»؟ لن يُقترح على الخريجين بعد الآن، وسيتوقف التوافق الجاري.`],
+]);
 
 export const ONGLETS_CONTENUS = [['offres', 'Offres', 'feed'], ['demandes', 'Demandes', 'send'], ['questions', 'Questions', 'qa'], ['mentorats', 'Mentorats', 'mentor'], ['evenements', 'Événements', 'calendar']];
 const ms = d => (d ? new Date(d).getTime() || 0 : 0);
@@ -67,12 +70,15 @@ function lignesDe(sorte, ctx) {
     }
     case 'demandes': {
       const aides = compter(data.propositions, 'demande_id');
+      // Retirer arrête aussi un match en cours (la base clôt l'aide acceptée et prévient le lauréat) : on demande d'abord
+      const retirer = d => confirm(d.status === 'match' ? `Retirer la demande « ${d.titre} » ? Elle ne sera plus proposée aux lauréats, et le match en cours s’arrête.`
+        : `Retirer la demande « ${d.titre} » ? Elle ne sera plus proposée aux lauréats.`, () => act(async () => { await store.update('demandes', d.id, { status: 'fermee' }); toast('Demande retirée.'); }), 'Retirer la demande');
       return (data.demandes || []).map(d => ({
-        id: d.id, statut: d.status, at: ms(d.created_at), cherche: [d.titre, nomTexte(d.auteur_id)],
+        // « En pause » n'est pas un statut de la base : une demande ouverte sans relance depuis 60 jours (demandeEnPause)
+        id: d.id, statut: demandeEnPause(d) ? 'pause' : d.status, at: ms(d.created_at), cherche: [d.titre, nomTexte(d.auteur_id)],
         titre: d.titre, ouvrir: () => go('offres/demandes/' + d.id), sous: TYPES[d.type]?.label || '',
         cellules: [['auteur', qui(d.auteur_id)], ['date', timeAgo(d.created_at)], ['n', aides.get(d.id) || 0, true]],
-        gestes: html`${['ouverte', 'pause', 'match'].includes(d.status) ? geste('Masquer', () => store.update('demandes', d.id, { status: 'fermee' }), 'Demande masquée.')
-          : d.status === 'fermee' ? geste('Rouvrir', () => store.update('demandes', d.id, { status: 'ouverte' }), 'Demande rouverte.') : null}
+        gestes: html`${['ouverte', 'match'].includes(d.status) ? html`<button type="button" class="btn small tonal" onClick=${() => retirer(d)}>Retirer</button>` : null}
           ${suppr('Supprimer cette demande ? Les aides proposées partent avec elle.', 'demandes', d.id, 'Demande supprimée.')}`,
       }));
     }
