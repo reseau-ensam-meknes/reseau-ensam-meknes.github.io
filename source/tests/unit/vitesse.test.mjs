@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import zlib from 'node:zlib';
 import { COUCHER, soirDe, coucherDu, minutesSoleil } from '../../src/scene.js';
 
 const SRC = new URL('../../src/', import.meta.url);
@@ -155,4 +156,201 @@ test('photos : les liens déjà obtenus partent avec la copie du compte, jamais 
   const beaucoup = new Map(Array.from({ length: 450 }, (_, i) => [`u/${i}.jpg`, { url: `https://x/${i}`, fin: t + 3600e3 }]));
   const gardes = photosPourCache(beaucoup, t);
   assert.equal(gardes.length, 400); assert.equal(gardes[0][0], 'u/50.jpg');
+});
+
+// ---------------------------------------------------------------------------
+// Données écran par écran (store.js) : d'abord l'accueil et la navigation, le reste juste après ; un écran qui lit
+// une table pas encore arrivée l'attend, puis tout est là comme avant
+// ---------------------------------------------------------------------------
+const STORE = await import('../../src/store.js');
+
+test('données écran par écran : PREMIERES et ENSUITE couvrent toutes les tables, chacune une seule fois', () => {
+  const { TABLES, PREMIERES, ENSUITE, tablesEcran, pourCache } = STORE;
+  assert.equal(new Set(TABLES).size, TABLES.length, 'TABLES sans doublon');
+  assert.ok(ENSUITE.length > 0 && PREMIERES.length > 0);
+  for (const t of ENSUITE) assert.ok(TABLES.includes(t), t);
+  assert.deepEqual([...PREMIERES, ...ENSUITE].sort(), [...TABLES].sort());
+  assert.equal(PREMIERES.filter(t => ENSUITE.includes(t)).length, 0);
+  // Ce qui arrive en second n'est jamais gardé sur l'appareil : la copie de l'appareil n'a rien de moins qu'avant
+  const pleine = Object.fromEntries(TABLES.map(t => [t, [{ id: t + '-1', author_id: 'moi', user_id: 'moi', student_id: 'moi', laureat_id: 'moi', created_at: '2026-10-01T10:00:00Z' }]]));
+  const copie = pourCache(pleine, 'moi');
+  for (const t of ENSUITE) assert.deepEqual(copie[t], [], `${t} n'est pas gardée sur l'appareil`);
+  // Les écrans qui lisent ces tables, et seulement eux
+  const cas = [
+    [['reseau', ''], ['groupe_messages']], [['reseau', 'groupes'], ['groupe_messages']], [['reseau', 'inconnue'], ['groupe_messages']],
+    [['reseau', 'annuaire'], []], [['reseau', 'agenda'], []], [['reseau', 'entreprises'], []], [['reseau', 'etranger'], []],
+    [['messages', ''], ['reactions_messages']], [['messages', 'abc'], ['reactions_messages']],
+    [['mentorat', 'cv'], ['relecture_commentaires']], [['mentorat', ''], []],
+    [['admin', ''], ENSUITE], [['admin', 'membres'], ENSUITE], [['profil', 'donnees'], ENSUITE], [['profil', ''], []],
+    [['accueil', ''], []], [['offres', ''], []], [['parcours', ''], []], [['espace', ''], []], [['suivi', ''], []], [['match', ''], []], [['confidentialite', ''], []],
+  ];
+  for (const [[page, sub], attendu] of cas) {
+    const ts = tablesEcran(page, sub);
+    assert.deepEqual(ts, attendu, `${page}/${sub}`);
+    for (const t of ts) assert.ok(ENSUITE.includes(t), t);
+  }
+});
+
+// Un faux client Supabase dont les lectures des tables d'ENSUITE attendent qu'on les lâche
+function magasinEnDeux({ retenir = STORE.ENSUITE } = {}) {
+  const s = new STORE.SupabaseStore({}); s.session = { user: { id: 'moi' } };
+  const lus = [], tenues = new Map();
+  const ligne = nom => (nom === 'profils' ? [{ id: 'moi', role: 'laureat', full_name: 'Moi' }] : nom === 'offers' ? [{ id: 'o1' }] : [{ id: nom + '-1', created_at: '2026-10-01T10:00:00Z' }]);
+  s.sb = {
+    from: nom => ({
+      select: () => ({
+        order: () => ({ range: () => {
+          lus.push(nom);
+          const rep = { data: ligne(nom), error: null };
+          if (!retenir.includes(nom)) return Promise.resolve(rep);
+          return new Promise(ok => tenues.set(nom, [...(tenues.get(nom) || []), (r = rep) => ok(r)]));
+        } }),
+        limit: async () => ({ error: null }),
+      }),
+    }),
+    rpc: async () => ({ data: null, error: { message: 'pas dans ce test' } }),
+    channel: () => { const c = { on: () => c, subscribe: () => c }; return c; },
+  };
+  let emis = 0; s.emit = () => { emis++; };
+  // La plus ancienne lecture en attente (ou la plus récente)
+  const lacher = (nom, r, { recente = false } = {}) => { const l = tenues.get(nom) || [], f = recente ? l.pop() : l.shift(); assert.ok(f, `lecture de ${nom} en attente`); f(r); };
+  return { s, lus, lacher, emis: () => emis };
+}
+const tick = (ms = 0) => new Promise(ok => setTimeout(ok, ms));
+
+test('données écran par écran : l’accueil n’attend pas les messages des groupes ; le Réseau les attend, puis tout est là', async () => {
+  const { ENSUITE, PREMIERES } = STORE;
+  const { s, lus, lacher, emis } = magasinEnDeux();
+  // loadAll se termine sans les tables d'ENSUITE (l'accueil s'affiche)
+  await s.loadAll();
+  assert.equal(s.me?.id, 'moi');
+  for (const t of PREMIERES) assert.ok(s.charges.has(t), t);
+  for (const t of ENSUITE) { assert.equal(s.charges.has(t), false, t); assert.deepEqual(s.data[t], [], t); }
+  assert.equal(s.ecranEnAttente('accueil', ''), false);
+  assert.equal(s.ecranEnAttente('reseau', 'annuaire'), false);
+  // Le Réseau ouvert tout de suite : il attend, et sa table part aussitôt (une seule lecture, même redessiné)
+  assert.equal(s.ecranEnAttente('reseau', 'groupes'), true);
+  assert.equal(s.ecranEnAttente('reseau', ''), true);
+  assert.equal(lus.filter(n => n === 'groupe_messages').length, 1);
+  // Le reste part de lui-même juste après (sans requestIdleCallback : 200 ms), sans relire ce qui est en route
+  await tick(260);
+  for (const t of ENSUITE) assert.equal(lus.filter(n => n === t).length, 1, t);
+  const avant = emis();
+  lacher('groupe_messages');
+  await tick();
+  assert.equal(s.ecranEnAttente('reseau', 'groupes'), false);
+  assert.deepEqual(s.data.groupe_messages.map(m => m.id), ['groupe_messages-1']);
+  assert.ok(emis() > avant, 'l’écran est redessiné à l’arrivée');
+  assert.equal(s.ecranEnAttente('messages', ''), true);
+  lacher('reactions_messages'); lacher('relecture_commentaires');
+  await tick();
+  for (const t of ENSUITE) assert.ok(s.charges.has(t), t);
+  for (const [page, sub] of [['messages', ''], ['mentorat', 'cv'], ['admin', ''], ['profil', 'donnees']]) assert.equal(s.ecranEnAttente(page, sub), false, page);
+  // Rien n'est relu ensuite pour un écran déjà servi
+  const n = lus.length; s.ecranEnAttente('reseau', 'groupes'); s.ecranEnAttente('admin', ''); assert.equal(lus.length, n);
+});
+
+test('données écran par écran : changement de vue (tout), ouverture depuis l’appareil, compte changé, démo', async () => {
+  const { ENSUITE } = STORE;
+  // tout : loadAll attend aussi le reste (l'administration change de vue)
+  {
+    const { s, lacher } = magasinEnDeux();
+    let fini = false;
+    const p = s.loadAll({ tout: true }).then(() => { fini = true; });
+    await tick(260);
+    assert.equal(fini, false);
+    for (const t of ENSUITE) lacher(t);
+    await p;
+    for (const t of ENSUITE) assert.ok(s.charges.has(t), t);
+  }
+  // Ouverture depuis la copie de l'appareil, mise à jour pas arrivée (enAttente) : l'écran attend, rien n'est demandé
+  {
+    const { s, lus } = magasinEnDeux();
+    s.enAttente = true;
+    assert.equal(s.ecranEnAttente('reseau', 'groupes'), true);
+    assert.equal(lus.length, 0);
+  }
+  // Compte changé pendant la lecture : les lignes de l'ancien compte ne sont jamais écrites
+  {
+    const { s, lacher } = magasinEnDeux();
+    await s.loadAll();
+    assert.equal(s.ecranEnAttente('reseau', 'groupes'), true);
+    s.generation = (s.generation || 0) + 1; s.charges = new Set();
+    lacher('groupe_messages');
+    await tick();
+    assert.deepEqual(s.data.groupe_messages, []);
+    assert.equal(s.charges.has('groupe_messages'), false);
+  }
+  // La démo a tout tout de suite
+  globalThis.window ??= {};
+  window.ENSAM_CONFIG = {};
+  const demo = await STORE.createStore();
+  assert.equal(demo.mode, 'demo');
+  for (const [page, sub] of [['reseau', 'groupes'], ['messages', ''], ['mentorat', 'cv'], ['admin', ''], ['profil', 'donnees']]) assert.equal(demo.ecranEnAttente(page, sub), false);
+  await demo.charger(ENSUITE);
+});
+
+test('données écran par écran : deux lectures de la même table en même temps, la plus récente reste (temps réel)', async () => {
+  const { s, lacher } = magasinEnDeux({ retenir: ['groupe_messages'] });
+  // La lecture d'ENSUITE est en route quand un message est posté : le temps réel relit la table (plus récente)
+  const ancienne = s.loadTable('groupe_messages'), recente = s.loadTable('groupe_messages');
+  await tick();
+  // La plus récente répond d'abord (avec le nouveau message), l'ancienne ensuite (sans lui) : elle n'efface rien
+  lacher('groupe_messages', { data: [{ id: 'g2' }, { id: 'g1' }], error: null }, { recente: true });
+  await recente;
+  lacher('groupe_messages', { data: [{ id: 'g1' }], error: null });
+  await ancienne;
+  assert.deepEqual(s.data.groupe_messages.map(m => m.id), ['g2', 'g1']);
+  assert.ok(s.charges.has('groupe_messages'));
+  // Dans l'ordre : l'ancienne d'abord, puis la plus récente, qui reste
+  const a = s.loadTable('groupe_messages'), r = s.loadTable('groupe_messages');
+  await tick();
+  lacher('groupe_messages', { data: [{ id: 'g2' }], error: null });
+  await a;
+  assert.deepEqual(s.data.groupe_messages.map(m => m.id), ['g2']);
+  lacher('groupe_messages', { data: [{ id: 'g3' }, { id: 'g2' }], error: null });
+  await r;
+  assert.deepEqual(s.data.groupe_messages.map(m => m.id), ['g3', 'g2']);
+});
+
+// ---------------------------------------------------------------------------
+// Page d'entrée plus légère : le CSS de page.html raccourci au build (outils/minifier-css.mjs, appelé par precharger.mjs)
+// ---------------------------------------------------------------------------
+test('CSS raccourci : sans commentaires ni espaces inutiles ; chaînes, url(), « a :hover », calc() et conditions intacts', async () => {
+  const { minifierCss } = await import('../../outils/minifier-css.mjs');
+  const m = minifierCss;
+  assert.equal(m('a  { color : red ; }\n\n/* note */ b , c > d { margin: 0 auto; }'), 'a{color : red}b,c>d{margin: 0 auto}');
+  // Les espaces qui comptent restent : descendant + pseudo-classe, calc(), « and ( » des requêtes média, valeurs à plusieurs mots
+  assert.equal(m('.x :hover { inline-size: calc(100% - 2px); }'), '.x :hover{inline-size: calc(100% - 2px)}');
+  assert.equal(m('@media (max-width: 760px) and (min-width: 1px) { .a { padding: 0 .55rem; } }'), '@media (max-width: 760px) and (min-width: 1px){.a{padding: 0 .55rem}}');
+  assert.equal(m('.p:has(> :nth-child(2)) { gap: 1rem 2rem }'), '.p:has(>:nth-child(2)){gap: 1rem 2rem}');
+  // Chaînes et url() telles quelles, même avec { } ; , > ou /* dedans, guillemets échappés compris
+  assert.equal(m('a::after { content: "a  { b } ; c , > /* d */"; }'), 'a::after{content: "a  { b } ; c , > /* d */"}');
+  assert.equal(m(`b::before { content: 'l\\'été  ,  ici'; }`), `b::before{content: 'l\\'été  ,  ici'}`);
+  assert.equal(m('i { background: url( img/a  b.png ) no-repeat , url("x ; y.svg"); }'), 'i{background: url(img/a  b.png) no-repeat,url("x ; y.svg")}');
+  assert.equal(m('@font-face { src: url(polices/t.woff2) format("woff2"); unicode-range: U+0600-06FF, U+FE70-FEFF; }'),
+    '@font-face{src: url(polices/t.woff2) format("woff2");unicode-range: U+0600-06FF,U+FE70-FEFF}');
+  // Un commentaire collé des deux côtés garde la séparation (« a/**/b » n'est pas « ab »)
+  assert.equal(m('a/**/b{x:1}'), 'a/**/b{x:1}');
+  assert.equal(m('a /* x */ b{x:1}'), 'a b{x:1}');
+  assert.equal(m('--x: 1px; --y:2px'), '--x: 1px;--y:2px');
+  // Mal fermé : le build s'arrête plutôt que de casser la page
+  assert.throws(() => m('a { x: 1 } /* jamais fermé'), /commentaire/);
+  assert.throws(() => m('a::after { content: "pas fermé }'), /chaîne/);
+  assert.throws(() => m('a { content: "deux\nlignes" }'), /chaîne/);
+  assert.throws(() => m('a { background: url(sans-fin }'), /url/);
+  // Le CSS du site : toujours le même résultat, stable si on le refait, et nettement plus court
+  const page = lireSrc('page.html');
+  const styles = [...page.matchAll(/<style>([\s\S]*?)<\/style>/g)].map(x => x[1]);
+  assert.ok(styles.length >= 1);
+  for (const css of styles) {
+    const court = m(css);
+    assert.equal(m(court), court, 'refaire ne change rien');
+    assert.equal(m(css), court, 'même résultat à chaque build');
+    assert.equal(court.includes('/*'), css.includes('/**/') && /\S\/\*\*\/\S/.test(css), 'plus de commentaires');
+  }
+  // Compressé comme sur GitHub Pages (gzip) : au moins un cinquième de moins (environ 54 → 40 Ko aujourd'hui)
+  const gz = t => zlib.gzipSync(t).length;
+  const avant = gz(styles.join('')), apres = gz(styles.map(m).join(''));
+  assert.ok(apres < avant * 0.8, `CSS compressé ${avant} → ${apres} octets`);
 });

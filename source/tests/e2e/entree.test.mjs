@@ -1052,3 +1052,134 @@ for (const [langue, theme] of [['fr', 'light'], ['ar', 'dark']]) {
     await m.ctx.close();
   });
 }
+
+// ---------------------------------------------------------------------------
+// Plan · vitesse et ambiance (lot plan-vitesse) : page d'entrée plus légère (le magasin et l'application partent au
+// premier geste ou une fois la page calme, l'illustration juste après le formulaire, le CSS raccourci au build), et les
+// données écran par écran (l'accueil d'abord, les messages des groupes, les réactions et les commentaires de relecture
+// juste après ; un écran qui les lit les attend)
+// ---------------------------------------------------------------------------
+const { autoGroups } = await import('../../src/logic.js');
+
+test('page d’entrée plus légère : avant un geste, rien du magasin ni de l’application ; au premier toucher, ils partent', async () => {
+  const js = [], polices = [];
+  const v = await visiteur({ largeur: 390, hauteur: 844, avant: async ctx => {
+    ctx.on('request', q => { const u = new URL(q.url()); if (/\.m?js$/.test(u.pathname)) js.push(u.pathname.slice(1)); });
+    // Polices retenues : la page n'est jamais « calme », seul un geste fait partir le magasin (ou 12 s)
+    await ctx.route(/\.woff2$/, r => { polices.push(r); });
+  } });
+  await v.page.waitForTimeout(2500);
+  const { magasin, modules } = await v.page.evaluate(() => ({ magasin: window.ENSAM_MAGASIN || [], modules: window.ENSAM_MODULES || [] }));
+  assert.ok(magasin.includes('store.js') && modules.includes('app.js'), 'les listes du magasin et de l’application (site construit)');
+  // Seuls les modules de l'entrée (préchargés), config.js, l'illustration et la rangée des fondateurs ; jamais le magasin
+  // ni l'application (fondateurs-public.js et scene.js servent aussi à l'application, ils sont chargés à part)
+  const avantGeste = [...js];
+  const deTrop = avantGeste.filter(f => [...magasin, ...modules].includes(f) && !['scene.js', 'fondateurs-public.js'].includes(f));
+  assert.deepEqual(deTrop, [], `avant un geste : ${avantGeste.join(', ')}`);
+  assert.ok(avantGeste.length <= 10, `${avantGeste.length} fichiers JS avant un geste : ${avantGeste.join(', ')}`);
+  assert.ok(avantGeste.includes('scene.js'), 'l’illustration arrive juste après le formulaire');
+  assert.ok(await v.page.locator('#entree .entree-scene .scene svg').count() > 0, 'l’école est dessinée');
+  assert.equal(await v.page.evaluate(() => typeof window.ENSAM_APP), 'undefined');
+  // Premier geste : le magasin part aussitôt, puis l'application ; la page marche comme avant
+  await v.page.click('#au-je-etudiant');
+  await v.page.waitForFunction(() => performance.getEntriesByType('resource').some(e => /\/store\.js$/.test(e.name)), null, { timeout: 5000 });
+  for (const r of polices.splice(0)) await r.continue().catch(() => {});
+  await v.app();
+  // Le toucher qui a fait partir le magasin a aussi fait son travail : le rôle est choisi
+  assert.equal(await v.page.getAttribute('#au-je-etudiant', 'aria-pressed'), 'true');
+  assert.ok(await v.debordement() <= 0);
+  assert.deepEqual(v.erreurs, []);
+  await v.ctx.close();
+});
+
+test('page d’entrée plus légère : sans geste, le magasin part une fois la page chargée et calme ; un lien d’appareil le fait partir tout de suite', async () => {
+  let v = await visiteur({ largeur: 390, hauteur: 844 });
+  await v.app();
+  const t = await v.page.evaluate(() => ({ charge: performance.getEntriesByType('navigation')[0].loadEventEnd, magasin: performance.getEntriesByType('resource').find(e => /\/store\.js$/.test(e.name))?.startTime }));
+  assert.ok(t.magasin >= t.charge + 800, `le magasin après la page calme (chargée à ${Math.round(t.charge)} ms, magasin à ${Math.round(t.magasin)} ms)`);
+  assert.deepEqual(v.erreurs, []);
+  await v.ctx.close();
+  // ?notifs=1 (lien d'une notification) : l'application lit l'adresse, le magasin part tout de suite
+  const polices = [];
+  v = await visiteur({ largeur: 390, hauteur: 844, query: '?notifs=1', avant: ctx => ctx.route(/\.woff2$/, r => { polices.push(r); }) });
+  await v.page.waitForFunction(() => performance.getEntriesByType('resource').some(e => /\/store\.js$/.test(e.name)), null, { timeout: 4000 });
+  for (const r of polices.splice(0)) await r.continue().catch(() => {});
+  assert.deepEqual(v.erreurs, []);
+  await v.ctx.close();
+});
+
+test('page d’entrée plus légère : le CSS raccourci au build donne au navigateur exactement les mêmes règles que page.html', async () => {
+  const styles = h => [...h.matchAll(/<style>([\s\S]*?)<\/style>/g)].map(m => m[1]);
+  const src = styles(fs.readFileSync(new URL('../../src/page.html', import.meta.url), 'utf8'));
+  const dist = styles(fs.readFileSync(path.join(SITE, 'index.html'), 'utf8'));
+  assert.equal(dist.length, src.length);
+  const page = await navigateur.newPage();
+  const regles = css => page.evaluate(css => {
+    // Seuls les espaces autour de , et > changent (ceux que le raccourci enlève) : on les retire des deux côtés
+    const n = t => String(t).replace(/\s*([,>])\s*/g, '$1').trim();
+    const out = [];
+    const tour = (l, pre) => { for (const r of l) {
+      const t = pre + n(r.selectorText || r.conditionText || r.name || r.keyText || r.constructor.name);
+      if (r.style) { const props = []; for (let i = 0; i < r.style.length; i++) { const p = r.style[i]; props.push(p + ':' + n(r.style.getPropertyValue(p)) + (r.style.getPropertyPriority(p) ? '!' : '')); } out.push(t + '{' + props.join(';') + '}'); } else out.push(t);
+      if (r.cssRules) tour(r.cssRules, t + ' > ');
+    } };
+    for (const c of css) { const st = new CSSStyleSheet(); st.replaceSync(c); tour(st.cssRules, ''); }
+    return out;
+  }, css);
+  const a = await regles(src), b = await regles(dist);
+  assert.ok(a.length > 1500, `${a.length} règles`);
+  assert.equal(b.length, a.length);
+  const diff = a.map((x, i) => [x, b[i]]).filter(([x, y]) => x !== y);
+  assert.deepEqual(diff.slice(0, 3), []);
+  assert.ok(dist.join('').length < src.join('').length * 0.9);
+  await page.close();
+});
+
+test('données écran par écran (en ligne) : l’accueil s’affiche sans attendre les messages des groupes ; les Groupes les attendent, puis les montrent', async () => {
+  const [groupe] = autoGroups(ETUDIANT);
+  assert.ok(groupe);
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.groupe_messages = [{ id: 'a1b2c3d4-0000-4000-8000-000000000001', groupe, author_id: AUTEUR, body: 'Rendez-vous jeudi à la bibliothèque', created_at: new Date().toISOString() }];
+  let tenir = true; const tenus = [];
+  const m = await connecte({ attendre: ACCUEIL, avant: ctx => ctx.route(/\/sb\/rest\/v1\/groupe_messages/, r => (tenir ? tenus.push(r) : r.continue())) });
+  // L'accueil est là ; les messages des groupes partent juste après, sans le retenir
+  for (let i = 0; i < 40 && !tenus.length; i++) await m.page.waitForTimeout(100);
+  assert.equal(tenus.length, 1, 'une lecture des messages des groupes, partie après l’accueil');
+  assert.ok(await m.page.isVisible(ACCUEIL));
+  // Le reste d'ENSUITE est arrivé (réactions, commentaires de relecture), une seule fois chacun
+  for (let i = 0; i < 40 && site.appels.filter(a => a.u === '/sb/rest/v1/relecture_commentaires').length < 1; i++) await m.page.waitForTimeout(100);
+  for (const t of ['reactions_messages', 'relecture_commentaires']) assert.equal(site.appels.filter(a => a.u === '/sb/rest/v1/' + t && a.m === 'GET').length, 1, t);
+  // Les Groupes ouverts avant leur arrivée : l'écran d'attente, jamais une carte sans son dernier message
+  await m.page.evaluate(() => { location.hash = '#reseau/groupes'; });
+  await m.page.waitForSelector('.page-attente');
+  assert.equal(await m.page.locator('.rangee-groupes').count(), 0);
+  assert.equal(await m.page.locator('.page-attente [role="status"]').count(), 1, 'dit aux lecteurs d’écran que ça charge');
+  tenir = false; for (const r of tenus.splice(0)) await r.continue();
+  await m.page.waitForSelector('.rangee-groupes .gcard-last');
+  assert.match(await m.page.locator('.rangee-groupes .gcard-last').first().innerText(), /Rendez-vous jeudi à la bibliothèque/);
+  assert.equal(await m.page.locator('.page-attente').count(), 0);
+  // Ensuite, plus rien n'attend : retour à l'accueil puis aux Groupes, tout de suite là, sans nouvelle lecture
+  const lectures = site.appels.filter(a => a.u === '/sb/rest/v1/groupe_messages').length;
+  await m.page.evaluate(() => { location.hash = '#accueil'; }); await m.page.waitForSelector(ACCUEIL);
+  await m.page.evaluate(() => { location.hash = '#reseau'; });
+  await m.page.waitForSelector('.rangee-groupes .gcard-last');
+  assert.equal(await m.page.locator('.page-attente').count(), 0);
+  assert.equal(site.appels.filter(a => a.u === '/sb/rest/v1/groupe_messages').length, lectures);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('données écran par écran (en ligne) : une conversation ouverte d’un lien attend ses réactions, puis s’ouvre comme avant', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.mentorships = EN_CONTACT();
+  let tenir = true; const tenus = [];
+  const m = await connecte({ hash: '#messages/' + AUTEUR, attendre: '.page-attente', avant: ctx => ctx.route(/\/sb\/rest\/v1\/reactions_messages/, r => (tenir ? tenus.push(r) : r.continue())) });
+  assert.equal(await m.page.locator('#chat-txt').count(), 0);
+  for (let i = 0; i < 40 && !tenus.length; i++) await m.page.waitForTimeout(100);
+  assert.ok(tenus.length >= 1);
+  tenir = false; for (const r of tenus.splice(0)) await r.continue();
+  await m.page.waitForSelector('#chat-txt', { timeout: 10000 });
+  assert.equal(await m.page.locator('.page-attente').count(), 0);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});

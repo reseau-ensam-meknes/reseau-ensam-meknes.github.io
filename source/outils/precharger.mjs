@@ -3,7 +3,9 @@
 //     niveau, un aller-retour réseau à chaque fois), et donne à la page la liste du magasin et de l'application.
 //  2. Donne au service worker une version et la liste des fichiers à garder : l'application
 //     s'ouvre ensuite depuis le téléphone, sans attendre le réseau, puis se met à jour en arrière-plan.
+//  3. Raccourcit le CSS de la page (outils/minifier-css.mjs) : moins à télécharger avant le premier affichage.
 import fs from 'node:fs'; import path from 'node:path'; import crypto from 'node:crypto';
+import { minifierCss } from './minifier-css.mjs';
 const dist = path.resolve(process.argv[2] || 'dist');
 
 // Graphe des imports statiques d'un module (les import() dynamiques restent à la demande), dans l'ordre de découverte
@@ -19,9 +21,12 @@ function graphe(depart) {
 // Trois temps : la page d'entrée (préchargée dans <head>), le magasin (Supabase), puis le reste de l'application.
 // Un membre déjà connecté précharge les deux derniers dès <head> (script de tête de page.html).
 const entree = graphe('entree.js');
-// Page d'entrée : ses modules perdent leurs lignes de commentaire (environ 5 Ko compressés de moins en 3G).
-// Seules les lignes entières qui commencent par // et hors d'un gabarit `…` (le texte d'une page) sont retirées.
-for (const f of entree.filter(f => !f.startsWith('vendor/'))) {
+// L'illustration de l'école (scene.js) n'est plus dans la page d'entrée : elle arrive juste après le formulaire
+// (import() de entree.js) ; un membre déjà connecté la précharge avec l'application, pour l'en-tête de l'accueil
+const ensuite = ['scene.js'].filter(f => fs.existsSync(path.join(dist, f)) && !entree.includes(f));
+// Page d'entrée (et son illustration) : ses modules perdent leurs lignes de commentaire (environ 5 Ko compressés de moins
+// en 3G). Seules les lignes entières qui commencent par // et hors d'un gabarit `…` (le texte d'une page) sont retirées.
+for (const f of [...entree.filter(f => !f.startsWith('vendor/')), ...ensuite]) {
   const lignes = fs.readFileSync(path.join(dist, f), 'utf8').split('\n');
   let gabarit = false;
   const gardees = lignes.filter(l => {
@@ -34,6 +39,7 @@ for (const f of entree.filter(f => !f.startsWith('vendor/'))) {
 }
 const magasin = ['vendor/supabase.js', ...graphe('store.js').filter(f => !entree.includes(f))];
 const appli = graphe('app.js').filter(f => !entree.includes(f) && !magasin.includes(f));
+for (const f of ensuite) if (!appli.includes(f)) appli.push(f);
 const config = fs.readFileSync(path.join(dist, 'config.js'), 'utf8');
 const url = (config.match(/supabaseUrl:\s*'(https:[^']+)'/) || [])[1];
 const liens = ['<link rel="preload" href="config.js" as="script">', url && `<link rel="preconnect" href="${new URL(url).origin}" crossorigin>`, ...entree.map(f => `<link rel="modulepreload" href="${f}">`)].filter(Boolean).join('\n');
@@ -41,6 +47,7 @@ const index = path.join(dist, 'index.html');
 let html = fs.readFileSync(index, 'utf8');
 for (const r of ['<!--PRECHARGE-->', '/*MAGASIN*/[]', '/*MODULES*/[]']) if (!html.includes(r)) throw new Error(`index.html : repère ${r} introuvable`);
 html = html.replace('<!--PRECHARGE-->', liens).replace('/*MAGASIN*/[]', JSON.stringify(magasin)).replace('/*MODULES*/[]', JSON.stringify(appli));
+html = html.replace(/<style>([\s\S]*?)<\/style>/g, (_, css) => `<style>${minifierCss(css)}</style>`);
 fs.writeFileSync(index, html);
 
 // Fichiers gardés par le service worker (la carte Leaflet, le lecteur de PDF et les grandes images restent à la demande ;

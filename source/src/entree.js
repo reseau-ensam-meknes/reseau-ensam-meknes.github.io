@@ -4,7 +4,6 @@
 // et ce qui a été tapé reste en place. Un membre déjà connecté ne voit jamais cette page.
 import { html, render, useState, useLayoutEffect, useEffect, useRef } from './vendor/preact-htm.js';
 import { getLang, setLang, chargerAR, addAR, arCount } from './i18n.js';
-import { sceneMarkup } from './scene.js';
 import { glyph, TUILE_DEFS, TUILE } from './logo.js';
 import { roleDePromo, promoValide, lignesChiffres, estEmailEcole, chiffresCode, adresseContact, VERSION_ACCORD, lienPartage, lienEncoreBon, estUuid, phraseLien, suiteLien, offreFermeePour } from './regles-entree.js';
 
@@ -141,9 +140,14 @@ export function BrandLogo({ size = 38, draw = false }) {
 
 // L'entrée de l'école dessinée. La porte s'ouvre une seule fois par visite ; les animations
 // s'arrêtent quand l'image sort de l'écran. « pose » (ms) : à l'accueil, l'entrée s'anime à l'arrivée puis se pose.
-let gateOpened = false;
+// Le dessin (scene.js) arrive à part, juste après le formulaire de la page d'entrée : le ciel est déjà là (fond .sky),
+// l'illustration s'y pose dès qu'elle est chargée. Ensuite (accueil, autres écrans), elle est là tout de suite.
+let gateOpened = false, scene = null, sceneP = null;
+export const chargerScene = () => sceneP ||= import('./scene.js').then(m => (scene = m), e => { sceneP = null; throw e; });
 export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0 }) {
   const ref = useRef();
+  const [pret, setPret] = useState(!!scene);
+  useEffect(() => { if (!scene) chargerScene().then(() => setPret(true), () => {}); }, []);
   const [opening] = useState(() => { const o = !gateOpened; gateOpened = true; return o; });
   useEffect(() => {
     const el = ref.current;
@@ -153,7 +157,7 @@ export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0 }) {
     return () => io.disconnect();
   }, []);
   useEffect(() => { const el = ref.current; if (!el || !pose) return; const t = setTimeout(() => el.setAttribute('data-pose', ''), pose); return () => clearTimeout(t); }, [pose]);
-  return html`<div ref=${ref} class=${'scene' + (opening ? ' opening' : '')} aria-hidden="true" dangerouslySetInnerHTML=${{ __html: sceneMarkup(align, fit) }}></div>`;
+  return html`<div ref=${ref} class=${'scene' + (opening ? ' opening' : '')} aria-hidden="true" dangerouslySetInnerHTML=${{ __html: pret && scene ? scene.sceneMarkup(align, fit) : '' }}></div>`;
 }
 
 // Message d'erreur en dehors d'un formulaire (l'application branche ici ses petits messages en bas de l'écran)
@@ -585,20 +589,37 @@ if (!window.ENSAM_ENTREE) {
     delete d.dataset.entree;
     if (enLigne && jeton) magasinMembre();
     chargerApp();
+    chargerScene().catch(() => {});
   } else {
     d.dataset.entree = 'visiteur';
+    // Quelque chose à finir tout de suite : un code attendu, ce qui avait été tapé avant un rechargement, un lien
+    // d'appareil (?r=, ?notifs=, ?depuis= : l'application les lit)
+    let presse = !!lireAttente() || /[?&](r|notifs|depuis)=/.test(location.search);
+    try { presse ||= !!sessionStorage.getItem(SAISIE) || !!sessionStorage.getItem(RECHARGES); } catch { /* stockage indisponible */ }
     chiffresPublics();
     monter(null);
-    // Le magasin juste après le premier affichage (onglet en arrière-plan : requestAnimationFrame est suspendu)
+    chargerScene().catch(() => {});
     let parti = false; const go = () => { if (!parti) { parti = true; attendreMagasin().catch(() => addEventListener('online', () => attendreMagasin().catch(() => {}), { once: true })); } };
-    requestAnimationFrame(() => setTimeout(go)); setTimeout(go, 200);
+    if (presse) {
+      // Le magasin juste après le premier affichage (onglet en arrière-plan : requestAnimationFrame est suspendu)
+      requestAnimationFrame(() => setTimeout(go)); setTimeout(go, 200);
+    } else {
+      // Sinon, la page d'entrée garde le réseau pour elle (en 3G, ses polices et ses photos d'abord) : le magasin (Supabase)
+      // et l'application partent au premier geste (toucher, clavier), ou une fois la page chargée et calme,
+      // ou au plus tard après 12 s. Un envoi touché avant les attend simplement (run → attendreMagasin).
+      for (const t of ['pointerdown', 'keydown', 'focusin']) addEventListener(t, go, { once: true, passive: true, capture: true });
+      const auCalme = () => setTimeout(() => (typeof requestIdleCallback === 'function' ? requestIdleCallback(go, { timeout: 2000 }) : go()), 1000);
+      const charge = document.readyState === 'complete' ? Promise.resolve() : new Promise(ok => addEventListener('load', ok, { once: true }));
+      Promise.all([charge, document.fonts?.ready]).then(auCalme, auCalme);
+      setTimeout(go, 12e3);
+    }
     // Un lien public ouvert depuis l'entrée (Confidentialité) avant que l'application soit là : le logo patiente
     // à sa place, l'entrée attend cachée (ce qui a été tapé reste) ; ensuite, c'est l'application qui décide
     addEventListener('hashchange', () => {
       if (window.ENSAM_APP || !el) return;
       const pub = PUBLIQUE.test(location.hash);
       el.hidden = pub;
-      if (pub) delete d.dataset.entree; else d.dataset.entree = 'visiteur';
+      if (pub) { delete d.dataset.entree; go(); } else d.dataset.entree = 'visiteur';
     });
   }
 }

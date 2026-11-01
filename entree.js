@@ -1,6 +1,5 @@
 import { html, render, useState, useLayoutEffect, useEffect, useRef } from './vendor/preact-htm.js';
 import { getLang, setLang, chargerAR, addAR, arCount } from './i18n.js';
-import { sceneMarkup } from './scene.js';
 import { glyph, TUILE_DEFS, TUILE } from './logo.js';
 import { roleDePromo, promoValide, lignesChiffres, estEmailEcole, chiffresCode, adresseContact, VERSION_ACCORD, lienPartage, lienEncoreBon, estUuid, phraseLien, suiteLien, offreFermeePour } from './regles-entree.js';
 
@@ -120,9 +119,12 @@ export function BrandLogo({ size = 38, draw = false }) {
   return html`<svg class=${'brand-logo' + (draw ? ' draw' : '')} width=${size} height=${size} viewBox="0 0 512 512" aria-hidden="true" dangerouslySetInnerHTML=${{ __html: svg }}></svg>`;
 }
 
-let gateOpened = false;
+let gateOpened = false, scene = null, sceneP = null;
+export const chargerScene = () => sceneP ||= import('./scene.js').then(m => (scene = m), e => { sceneP = null; throw e; });
 export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0 }) {
   const ref = useRef();
+  const [pret, setPret] = useState(!!scene);
+  useEffect(() => { if (!scene) chargerScene().then(() => setPret(true), () => {}); }, []);
   const [opening] = useState(() => { const o = !gateOpened; gateOpened = true; return o; });
   useEffect(() => {
     const el = ref.current;
@@ -132,7 +134,7 @@ export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0 }) {
     return () => io.disconnect();
   }, []);
   useEffect(() => { const el = ref.current; if (!el || !pose) return; const t = setTimeout(() => el.setAttribute('data-pose', ''), pose); return () => clearTimeout(t); }, [pose]);
-  return html`<div ref=${ref} class=${'scene' + (opening ? ' opening' : '')} aria-hidden="true" dangerouslySetInnerHTML=${{ __html: sceneMarkup(align, fit) }}></div>`;
+  return html`<div ref=${ref} class=${'scene' + (opening ? ' opening' : '')} aria-hidden="true" dangerouslySetInnerHTML=${{ __html: pret && scene ? scene.sceneMarkup(align, fit) : '' }}></div>`;
 }
 
 let signaler = () => {};
@@ -492,17 +494,29 @@ if (!window.ENSAM_ENTREE) {
     delete d.dataset.entree;
     if (enLigne && jeton) magasinMembre();
     chargerApp();
+    chargerScene().catch(() => {});
   } else {
     d.dataset.entree = 'visiteur';
+    let presse = !!lireAttente() || /[?&](r|notifs|depuis)=/.test(location.search);
+    try { presse ||= !!sessionStorage.getItem(SAISIE) || !!sessionStorage.getItem(RECHARGES); } catch { /* stockage indisponible */ }
     chiffresPublics();
     monter(null);
+    chargerScene().catch(() => {});
     let parti = false; const go = () => { if (!parti) { parti = true; attendreMagasin().catch(() => addEventListener('online', () => attendreMagasin().catch(() => {}), { once: true })); } };
-    requestAnimationFrame(() => setTimeout(go)); setTimeout(go, 200);
+    if (presse) {
+      requestAnimationFrame(() => setTimeout(go)); setTimeout(go, 200);
+    } else {
+      for (const t of ['pointerdown', 'keydown', 'focusin']) addEventListener(t, go, { once: true, passive: true, capture: true });
+      const auCalme = () => setTimeout(() => (typeof requestIdleCallback === 'function' ? requestIdleCallback(go, { timeout: 2000 }) : go()), 1000);
+      const charge = document.readyState === 'complete' ? Promise.resolve() : new Promise(ok => addEventListener('load', ok, { once: true }));
+      Promise.all([charge, document.fonts?.ready]).then(auCalme, auCalme);
+      setTimeout(go, 12e3);
+    }
     addEventListener('hashchange', () => {
       if (window.ENSAM_APP || !el) return;
       const pub = PUBLIQUE.test(location.hash);
       el.hidden = pub;
-      if (pub) delete d.dataset.entree; else d.dataset.entree = 'visiteur';
+      if (pub) { delete d.dataset.entree; go(); } else d.dataset.entree = 'visiteur';
     });
   }
 }

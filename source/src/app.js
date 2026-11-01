@@ -363,8 +363,9 @@ function App({ store }) {
   // La pastille de la barre du bas : sous l'onglet de la page (aucune si la page n'y est pas : profil, messages…)
   const iBas = navBas.findIndex(([k]) => k === page);
   // Ouverture depuis les données gardées sur l'appareil, mise à jour pas encore arrivée : les écrans qui ont besoin de ce
-  // qui n'y est pas gardé (conversations entières, messages des groupes, commentaires de relecture, modération) l'attendent
-  const attente = !!store.enAttente && (page === 'messages' || page === 'admin' || (page === 'reseau' && route.sub === 'groupes') || (page === 'mentorat' && route.sub === 'cv'));
+  // qui n'y est pas gardé (conversations entières, messages des groupes, commentaires de relecture, modération) l'attendent ;
+  // de même, juste après l'ouverture, ceux qui lisent une table chargée en second (store.ecranEnAttente, tablesEcran)
+  const attente = (!!store.enAttente && (page === 'messages' || page === 'admin' || (page === 'reseau' && route.sub === 'groupes') || (page === 'mentorat' && route.sub === 'cv'))) || store.ecranEnAttente(page, route.sub);
   // L'accord (loi 09-08) pas encore donné : la fenêtre de l'accord, sauf sur Confidentialité et Mon profil ;
   // les feuilles de notifications attendent, quelle que soit la page
   const sansAccord = store.mode === 'live' && !me.consent_at;
@@ -1257,7 +1258,7 @@ function MyProfile({ ctx }) {
       </div>
       <${ProfileForm} ctx=${ctx} initial=${me} key=${me.id} onglet=${onglet} versOnglet=${versOnglet} apresVisibilite=${html`<${FondateurPublicCase} ctx=${ctx} niveau=${2}/>`}/>
       <div class="pf-partie" id="profil-notifications" hidden=${onglet !== 'notifications'}><${MesNotifications} ctx=${ctx}/></div>
-      <div class="pf-partie" id="profil-donnees" hidden=${onglet !== 'donnees'}><${MesDonnees} ctx=${ctx}/></div>
+      <div class="pf-partie" id="profil-donnees" hidden=${onglet !== 'donnees'}>${onglet === 'donnees' && !store.enAttente && store.ecranEnAttente('profil', 'donnees') ? html`<${PageEnChargement}/>` : html`<${MesDonnees} ctx=${ctx}/>`}</div>
     </div>
   </section>`;
 }

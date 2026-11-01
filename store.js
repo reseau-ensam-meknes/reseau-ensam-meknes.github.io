@@ -20,6 +20,23 @@ const MATCH = ['match_choix', 'matchs'];
 // clics ne sont jamais lus par le site (compter_sponsorise les écrit, bilan_sponsorises en donne les totaux à l'administration)
 const SPONSO = ['sponsorises'];
 export const TABLES = ['profiles', 'offers', 'comments', 'reactions', 'applications', 'placements', 'mentorships', 'questions', 'answers', 'votes', 'shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT, ...MATCH, ...SPONSO];
+// Chargement écran par écran (en ligne) : d'abord tout ce que l'accueil et la navigation lisent (PREMIERES : l'accueil
+// compte presque tout, pour ses pastilles et « À faire »), l'écran s'affiche, puis le reste juste après, en arrière-plan.
+// ENSUITE : les messages des groupes, les réactions aux messages privés et les commentaires de relecture de CV, que seuls
+// quelques écrans lisent (et que l'appareil ne garde pas, SANS_CACHE). Un écran qui en a besoin avant leur arrivée les
+// attend (tablesEcran, ecranEnAttente : l'écran d'attente de l'ouverture depuis l'appareil). Une fois là, rien ne change.
+export const ENSUITE = ['groupe_messages', 'reactions_messages', 'relecture_commentaires'];
+export const PREMIERES = TABLES.filter(t => !ENSUITE.includes(t));
+// Les tables d'ENSUITE que lit un écran : les Groupes du Réseau (leur onglet, celui qui s'ouvre aussi pour une adresse
+// inconnue), une conversation, la relecture du CV, l'administration et l'export « Mes données » (tout)
+const RESEAU_SANS_GROUPES = ['agenda', 'entraide', 'annuaire', 'entreprises', 'classement', 'talents', 'etranger'];
+export function tablesEcran(page, sub = '') {
+  if (page === 'reseau') return RESEAU_SANS_GROUPES.includes(sub) ? [] : ['groupe_messages'];
+  if (page === 'messages') return ['reactions_messages'];
+  if (page === 'mentorat') return sub === 'cv' ? ['relecture_commentaires'] : [];
+  if (page === 'admin' || (page === 'profil' && sub === 'donnees')) return ENSUITE;
+  return [];
+}
 // Tables ajoutées par supabase/mise-a-jour.sql : tant que la base n'est pas à jour, elles restent vides au lieu de bloquer le site.
 const OPTIONAL = new Set(['shortlists', 'invitations', 'kudos', 'attestations', 'liens_rdv', 'annonces', ...PHASE2, ...PHASE3, ...MESSAGERIE, ...DEMANDES, ...AMBASSADEURS, ...VIVANT, ...MATCH, ...SPONSO]);
 // Lues par une vue qui masque ce que chacun a choisi de cacher (auteur anonyme, visibilité du profil).
@@ -49,6 +66,9 @@ class Base {
   // L'administration change de vue (admin ⇄ lauréat) : son rôle change (protect_profile() le permet grâce à admin_ok)
   async changerVue(role) { if (!this.me?.admin_ok) throw new Error('Réservé à l’administration.'); return this.update('profiles', this.me.id, { role }); }
   byId(table, id) { return this.data[table].find(r => r.id === id); }
+  // Chargement écran par écran : en démo, tout est déjà là (voir SupabaseStore)
+  ecranEnAttente() { return false; }
+  charger() { return Promise.resolve(); }
   // Messagerie : « Répondre » et les réactions ont besoin de la base à jour (en démo, toujours)
   peutRepondre() { return this.mode !== 'live' || (this.data.messages || []).some(m => 'reponse_a' in m); }
   peutReagir() { return this.mode !== 'live' || !this.absentes?.has('reactions_messages'); }
@@ -1271,6 +1291,9 @@ export class SupabaseStore extends Base {
       this.data = { ...Object.fromEntries(TABLES.map(t => [t, []])), ...cache.data };
       this.reglages = cache.reglages || {}; this._pouls = cache.pouls || null;
       this.photosUrl = new Map(photosPourCache(cache.photos));
+      // Les tables gardées sur l'appareil sont là (la copie n'est écrite qu'une fois l'accueil chargé) ; les autres
+      // (SANS_CACHE, dont tout ENSUITE) sont attendues par leurs écrans
+      this.charges = new Set(TABLES.filter(t => !SANS_CACHE.has(t)));
       this.me = this.byId('profiles', gardee.user.id) || null;
       this.depuisCache = true; this.ready = true;
       this.rafraichir();
@@ -1314,6 +1337,8 @@ export class SupabaseStore extends Base {
     // la copie de l'appareil sous le nouveau)
     this.data = Object.fromEntries(TABLES.map(t => [t, []])); this.me = null; this._pouls = null;
     this.photosUrl = new Map(); this.photosDemandees = new Set();
+    // Une lecture de l'ancien compte encore en route n'écrit plus rien (loadTable) ; ses tables sont à relire
+    this.generation = (this.generation || 0) + 1; this.charges = new Set();
     try { await this.loadAll(); }
     catch {
       // Réseau qui hésite : le nouveau compte avec ce qui a pu être lu, et on réessaie (comme rafraichir)
@@ -1431,14 +1456,45 @@ export class SupabaseStore extends Base {
   }
 
   get userId() { return this.session?.user?.id || null; }
-  async loadAll() {
+  // Les tables déjà arrivées pour ce compte (lues, vides parce que la base n'est pas à jour, ou gardées après un échec)
+  get charges() { return this._charges ||= new Set(); }
+  set charges(v) { this._charges = v; }
+  // D'abord l'accueil et la navigation (PREMIERES) ; le reste (ENSUITE) part juste après, en arrière-plan, et l'écran se
+  // redessine à son arrivée. tout : attendre aussi le reste (changement de vue de l'administration).
+  async loadAll({ tout = false } = {}) {
     if (!this.userId) { this.data = Object.fromEntries(TABLES.map(t => [t, []])); this.me = null; return; }
-    await Promise.all([...TABLES.map(t => this.loadTable(t)), this.chargerPouls().catch(() => {})]);
+    const gen = this.generation || 0;
+    await Promise.all([...PREMIERES.map(t => this.loadTable(t)), this.chargerPouls().catch(() => {})]);
+    if (gen !== (this.generation || 0)) return;
     // Aucune offre lue : on demande une fois à la base si la colonne « origine » existe déjà
     if (!this.data.offers.length && this.origineSondee === undefined) this.origineSondee = await Promise.resolve(this.sb.from('offers').select('origine').limit(1)).then(r => !r.error, () => false);
     this.me = this.byId('profiles', this.userId) || null;
     this.subscribe();
     this.noterVisite();
+    // Relues à chaque chargement complet, comme les autres (elles ont pu changer depuis)
+    const ensuite = new Promise(ok => (typeof requestIdleCallback === 'function' ? requestIdleCallback(ok, { timeout: 1500 }) : setTimeout(ok, 200)))
+      .then(() => (gen === (this.generation || 0) ? this.charger(ENSUITE, { forcer: true }) : null));
+    if (tout) await ensuite;
+  }
+  // Ces tables, une seule lecture à la fois chacune (celles déjà arrivées sont gardées, sauf forcer) ; l'écran se redessine après
+  charger(ts, { forcer = false } = {}) {
+    if (!this.userId) return Promise.resolve();
+    const gen = this.generation || 0;
+    this.enCours ||= new Map();
+    const lectures = ts.filter(t => forcer || !this.charges.has(t)).map(t => {
+      if (!this.enCours.has(t)) this.enCours.set(t, this.loadTable(t).catch(() => { if (gen === (this.generation || 0)) this.charges.add(t); }).finally(() => this.enCours.delete(t)));
+      return this.enCours.get(t);
+    });
+    return lectures.length ? Promise.all(lectures).then(() => { if (gen === (this.generation || 0)) this.emit(); }) : Promise.resolve();
+  }
+  // Un écran qui a besoin de tables pas encore arrivées (tablesEcran) les attend : elles sont demandées tout de suite.
+  // Ouverture depuis la copie de l'appareil (enAttente) : rien n'est demandé avant la mise à jour (réseau peut-être
+  // coupé) ; loadAll les lit juste après.
+  ecranEnAttente(page, sub) {
+    if (!this.userId) return false;
+    const manquent = tablesEcran(page, sub).filter(t => !this.charges.has(t));
+    if (manquent.length && !this.enAttente) this.charger(manquent);
+    return manquent.length > 0;
   }
   // « Cette semaine dans le réseau » : la base compte tout (relectures et propositions comprises), pour que chacun voie le même chiffre
   async chargerPouls() {
@@ -1451,21 +1507,29 @@ export class SupabaseStore extends Base {
     this.vues ||= {};
     const vue = VUES[t] && this.vues[t] !== false ? VUES[t] : null;
     const all = [];
+    // Compte changé pendant la lecture : ces lignes étaient pour l'autre compte, rien n'est écrit
+    const gen = this.generation || 0, memeCompte = () => gen === (this.generation || 0);
+    // Deux lectures de la même table en même temps (le temps réel pendant le chargement) : la plus récente reste
+    const n = this.lectures = (this.lectures || 0) + 1;
     for (let from = 0; ; from += 1000) {
       const { data, error } = await this.sb.from(vue || t).select('*').order('created_at', { ascending: false }).range(from, from + 999);
+      if (!memeCompte()) return;
       // Base pas encore à jour : la vue manque (on lit la table), ou la table facultative manque (liste vide)
       if (error && absente(error)) {
         if (vue && from === 0) { this.vues[t] = false; return this.loadTable(t, essai); }
-        if (OPTIONAL.has(t)) { this.data[t] = []; (this.absentes ||= new Set()).add(t); return; }
+        if (OPTIONAL.has(t)) { this.data[t] = []; (this.absentes ||= new Set()).add(t); this.charges.add(t); return; }
         throw error;
       }
       // Réseau du téléphone qui coupe, ou session expirée le temps d'être renouvelée : on réessaie une fois,
       // puis on garde ce qu'on avait (jamais une liste vidée, ni la vue abandonnée pour toute la visite)
       if (error && !essai) { await new Promise(ok => setTimeout(ok, 1200)); return this.loadTable(t, 1); }
-      if (error) { if (this.data[t]?.length || OPTIONAL.has(t)) return; throw error; }
+      if (error) { if (this.data[t]?.length || OPTIONAL.has(t)) { this.charges.add(t); return; } throw error; }
       all.push(...data);
       if (data.length < 1000) break;
     }
+    this.charges.add(t);
+    if ((this.ecrites ||= {})[t] > n) return;
+    this.ecrites[t] = n;
     this.data[t] = all;
     this.absentes?.delete(t);
   }
@@ -1518,7 +1582,7 @@ export class SupabaseStore extends Base {
   // En ligne, les droits changent avec le rôle : toutes les tables sont relues (l'administration voyait tout, un lauréat non)
   async changerVue(role) {
     await super.changerVue(role);
-    await this.loadAll(); this.me = this.byId('profiles', this.userId) || null;
+    await this.loadAll({ tout: true }); this.me = this.byId('profiles', this.userId) || null;
     this.emit();
   }
   async update(table, id, patch) {
