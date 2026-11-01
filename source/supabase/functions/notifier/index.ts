@@ -696,11 +696,14 @@ const MOTIFS: Record<Langue, Record<string, string>> = {
 };
 
 // Ce qui remplace la précédente du même type dans la barre de notifications : un seul rappel du soir, un seul Match du
-// jour, un seul essai, une seule enquête ; et ce qui rend la précédente fausse : la vérification par les pairs (« encore
+// jour, un seul essai, une seule enquête ; ce qui rend la précédente fausse : la vérification par les pairs (« encore
 // un lauréat » puis « ton badge est là »), la nouvelle date d'un événement ou d'un rendez-vous de mentorat (l'ancienne
-// date ne doit pas rester affichée). Le reste, sans élément qui le regroupe (conversation, match, offre…), garde une
-// notification par événement : son tag porte l'identifiant de sa ligne dans la file (id).
-export const SE_REMPLACENT = ['rappel_visite', 'match_jour', 'test', 'enquete', 'verification_pair', 'evenement_deplace', 'mentorat_deplace'];
+// date ne doit pas rester affichée), un nouveau parrain (« ton parrainage cette année : … ») ; et, comme dans la liste
+// des tags fixes des nouvelles notifications (TAGS_FIXES), les arrivées dans la promo (au plus une par jour) et le
+// filleul. Le reste, sans élément qui le regroupe (conversation, match, offre…), garde une notification par événement :
+// son tag porte l'identifiant de sa ligne dans la file (id).
+export const SE_REMPLACENT = ['rappel_visite', 'match_jour', 'test', 'enquete', 'verification_pair', 'evenement_deplace', 'mentorat_deplace',
+  'parrain', 'promo_nouveau', 'filleul'];
 // Sur une même demande, chaque lauréat qui propose son aide, chaque réponse, est une personne de plus : une notification
 // chacune (sinon la deuxième efface la première, et son nom). Regroupées seulement quand la base les compte (n ≥ 1).
 const PAR_PERSONNE = ['demande_proposition', 'demande_reponse'];

@@ -30,8 +30,10 @@ test('tags : une notification par événement ; ce qui remplace garde son tag ; 
   assert.equal(t('reponse', { nom: 'Nadia', titre: 'Entretien chez Renault ?' }, '13'), 'reponse-13');
   assert.equal(t('candidature', { nom: 'Salma', titre: 'Stage' }), 'candidature', 'sans identifiant de file : le type');
   // Ce qui remplace la précédente : un seul rappel du soir, un seul Match du jour, un seul essai, une seule enquête ;
-  // la vérification par les pairs, la nouvelle date d'un événement ou d'un rendez-vous de mentorat
-  assert.deepEqual(N.SE_REMPLACENT, ['rappel_visite', 'match_jour', 'test', 'enquete', 'verification_pair', 'evenement_deplace', 'mentorat_deplace']);
+  // la vérification par les pairs, la nouvelle date d'un événement ou d'un rendez-vous de mentorat, un nouveau parrain ;
+  // les arrivées dans la promo et le filleul, comme dans TAGS_FIXES (nouvelles notifications)
+  assert.deepEqual(N.SE_REMPLACENT, ['rappel_visite', 'match_jour', 'test', 'enquete', 'verification_pair', 'evenement_deplace', 'mentorat_deplace',
+    'parrain', 'promo_nouveau', 'filleul']);
   assert.equal(t('rappel_visite', { messages: 2 }, 14), 'rappel_visite');
   assert.equal(t('match_jour', { n: 3, type: 'etudiant' }, 15), 'match_jour');
   assert.equal(t('test', {}, 16), 'test');
@@ -53,7 +55,7 @@ test('tags : une notification par événement ; ce qui remplace garde son tag ; 
   assert.deepEqual(b.push.map(x => x.message.tag), [`candidature-${a1}`, `candidature-${a2}`, 'match_jour']);
 });
 
-test('tags : la vérification par les pairs et une nouvelle date remplacent la précédente (l’ancienne ne reste pas affichée)', () => {
+test('tags : la vérification par les pairs, une nouvelle date et un nouveau parrain remplacent la précédente (l’ancienne ne reste pas affichée)', () => {
   const t = (kind, data, id) => N.texteNotif(kind, data, 'fr', SITE, id);
   const v1 = t('verification_pair', { nom: 'Youssef', n: 1 }, 101), v2 = t('verification_pair', { nom: 'Nadia', n: 2 }, 102);
   assert.match(v1.body, /Encore un lauréat et ton badge arrive/);
@@ -64,8 +66,18 @@ test('tags : la vérification par les pairs et une nouvelle date remplacent la p
   assert.equal(e1.tag, e2.tag, 'avant : la première gardait l’ancienne date');
   const m1 = t('mentorat_deplace', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-12T17:00:00Z' }, 303), m2 = t('mentorat_deplace', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-13T17:00:00Z' }, 304);
   assert.equal(m1.tag, m2.tag);
+  // Un nouveau parrain : « ton parrainage cette année : Youssef » ne reste pas affiché à côté de celui qui le remplace
+  const p1 = t('parrain', { nom: 'Youssef Alami' }, 305), p2 = t('parrain', { nom: 'Nadia Bennani' }, 306);
+  assert.match(p1.body, /Youssef Alami/);
+  assert.equal(p1.tag, p2.tag, 'avant : l’ancien parrain restait dans la barre');
+  assert.equal(p2.tag, 'parrain');
+  // Comme dans la liste des tags fixes des nouvelles notifications : une seule ligne pour la promo, une pour le filleul
+  for (const k of ['promo_nouveau', 'filleul']) {
+    assert.equal(t(k, { nom: 'A', n: 1, promo: '2024' }, 307).tag, k);
+    assert.equal(t(k, { nom: 'B', n: 3, promo: '2024' }, 308).tag, k);
+  }
   // Ce qui reste une notification par événement : chacun dit quelque chose de différent et de toujours vrai
-  for (const k of ['promo_nouveau', 'filleul', 'parrain', 'evenement', 'evenement_annule', 'candidature_statut', 'merci']) {
+  for (const k of ['evenement', 'evenement_annule', 'candidature_statut', 'merci']) {
     const x = t(k, { nom: 'A', n: 2, promo: '2024', titre: 'X', statut: 'entretien', debut: '2026-11-12T09:00:00Z' }, 7);
     const y = t(k, { nom: 'B', n: 2, promo: '2024', titre: 'Y', statut: 'retenu', debut: '2026-11-13T09:00:00Z' }, 8);
     assert.ok(x && y, k);
