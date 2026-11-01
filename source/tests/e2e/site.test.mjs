@@ -4302,6 +4302,126 @@ test('administration : sur téléphone, la liste des membres se lit — le rôle
   }
 });
 
+// Santé des notifications (Vue d'ensemble) : lisible d'un coup d'œil, des totaux seulement, en arabe et de nuit aussi
+const santeDemo = page => page.evaluate(async () => {
+  const L = await import(new URL('logic.js', location.href).href);
+  const r = L.santeResume(await window.__demo.santeNotifs());
+  return { r, raisons: L.raisonsNotifs(r) };
+});
+test('administration : « Santé des notifications » — après « À traiter » : le cercle, les reçues de la semaine, 7 jours en colonnes, pourquoi certaines n’arrivent pas, puis le détail replié', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin'); await s.aller('admin');
+  await s.page.waitForSelector('#adm-notifs .sn-haut');
+  const ordre = await s.page.evaluate(() => {
+    const p = document.querySelector('#adm-notifs'), a = document.querySelector('.callout.today'), k = document.querySelector('.kpis');
+    return [!!a && !!(a.compareDocumentPosition(p) & Node.DOCUMENT_POSITION_FOLLOWING), !!(p.compareDocumentPosition(k) & Node.DOCUMENT_POSITION_FOLLOWING)];
+  });
+  assert.deepEqual(ordre, [true, true], 'juste après « À traiter », avant les chiffres');
+  const { r, raisons } = await santeDemo(s.page);
+  const panneau = s.page.locator('#adm-notifs');
+  assert.equal(await panneau.locator('h2').innerText(), 'Santé des notifications');
+  assert.equal(await panneau.locator('.sn-portee .sn-phrase').innerText(), `${Math.round(r.part * 100)}% des membres reçoivent les notifications`);
+  assert.match(await panneau.locator('.sn-portee').innerText(), new RegExp(`${r.avecTel} membres sur ${r.membres} ont activé les notifications sur au moins un téléphone\\.`));
+  assert.equal(await panneau.locator('.sn-portee .anneau').getAttribute('aria-hidden'), 'true', 'la phrase dit déjà la part : le cercle est décoratif');
+  assert.equal(await panneau.locator('.sn-grand').innerText(), String(r.semaine.arrivees));
+  assert.match(await panneau.locator('.sn-semaine').innerText(), new RegExp(`notifications reçues cette semaine\\s+${r.semaine.perdues} perdues sur ${r.semaine.arrivees + r.semaine.perdues}`));
+  // Les 7 derniers jours : une colonne par jour (24 px au plus), la légende, et chaque jour en clair au survol
+  assert.deepEqual(await panneau.locator('.sn-legende').innerText().then(t => t.split(/\s+/)), ['Arrivées', 'Perdues']);
+  const cols = panneau.locator('.sn-col');
+  assert.equal(await cols.count(), 7);
+  assert.equal(await cols.nth(6).getAttribute('aria-label'), `${r.jours[6].long} : ${r.jours[6].arrivees} arrivées, ${r.jours[6].perdues} perdues`);
+  assert.ok((await panneau.locator('.sn-pile').evaluateAll(es => es.map(e => e.getBoundingClientRect().width))).every(w => w > 0 && w <= 24), 'des colonnes fines');
+  await cols.nth(6).hover();
+  const bulle = await cols.nth(6).locator('.sn-bulle').evaluate(e => { const b = e.getBoundingClientRect(); return { vue: getComputedStyle(e).display, texte: e.innerText, dedans: b.left >= 0 && b.right <= innerWidth }; });
+  assert.deepEqual(bulle, { vue: 'flex', texte: `${r.jours[6].long}\n${r.jours[6].arrivees} arrivées · ${r.jours[6].perdues} perdues`, dedans: true });
+  // Pourquoi : les phrases de la logique, dans le même ordre, avec les vrais nombres
+  assert.equal(await panneau.locator('.sn-raisons h3').innerText(), 'Pourquoi certaines n’arrivent pas');
+  assert.deepEqual(await panneau.locator('.sn-r').evaluateAll(es => es.map(e => e.textContent.trim())), raisons.map(x => x.texte));
+  assert.match(raisons[0].texte, new RegExp(`^${r.semaine.sansTel} notifications n’ont pas pu partir`));
+  // Le détail, replié : rôles, téléphones, services, par jour, par type, fonctionnement
+  assert.equal(await panneau.locator('.sn-detail-corps').count(), 0);
+  await panneau.locator('.sn-detail summary').click();
+  assert.equal(await panneau.locator('.sn-detail summary').innerText(), 'Masquer le détail');
+  assert.deepEqual(await panneau.locator('.sn-roles .sn-roles-l').allInnerTexts(), ['Étudiants', 'Lauréats', 'Administration']);
+  assert.equal(await panneau.locator('.sn-bloc:has(h3:text("Par jour")) tbody tr').count(), 7);
+  assert.equal(await panneau.locator('.sn-bloc:has(h3:text("Par type")) tbody tr').count(), r.types.length);
+  assert.equal(await panneau.locator('.sn-bloc:has(h3:text("Par type")) tbody th').first().innerText(), 'Message');
+  assert.match(await panneau.locator('.sn-fonct').innerText(), /File d’attente\s+Vide : tout est parti\s+Tâche de chaque minute, dernier passage\s+Passage réussi · à l’instant\s+Fonction notifier, dernier appel\s+Réponse 200 · il y a 4 min/);
+  // Jamais un nom ni une adresse
+  const tout = await panneau.innerText();
+  for (const nom of ['Salma', 'Youssef', 'Amine', '@']) assert.ok(!tout.includes(nom), nom);
+  // « Actualiser » relit
+  await s.page.evaluate(() => { window.__lectures = 0; const d = window.__demo, v = d.santeNotifs.bind(d); d.santeNotifs = async () => { window.__lectures++; return v(); }; });
+  await panneau.locator('.sn-relire').click(); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.evaluate(() => window.__lectures), 1);
+  assert.equal(await panneau.locator('.sn-detail-corps').count(), 1, 'le détail reste ouvert');
+  if (!(await s.page.evaluate(() => !!window.axe))) await s.page.addScriptTag({ content: AXE });
+  const v = await s.page.evaluate(async () => (await axe.run('#adm-notifs', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => `${x.id} : ${x.nodes.map(n => n.target.join(' ')).join(' ; ')}`));
+  assert.deepEqual(v, [], 'santé des notifications : axe');
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('administration : « Santé des notifications » de nuit, en arabe, à 360 px — couleurs de nuit, rien en français, rien qui déborde ; chaque phrase possible a sa traduction', async () => {
+  const s = await ouvrir({ largeur: 360, langue: 'ar', theme: 'dark' });
+  await s.comme('Admin'); await s.aller('admin');
+  await s.page.waitForSelector('#adm-notifs .sn-haut');
+  const couleurs = await s.page.evaluate(() => ['.sn-seg:not(.perdu)', '.sn-seg.perdu'].map(q => getComputedStyle(document.querySelector(q)).backgroundColor));
+  assert.deepEqual(couleurs, ['rgb(58, 147, 207)', 'rgb(217, 85, 95)'], 'les couleurs de nuit du graphique');
+  assert.match(await s.page.locator('#adm-notifs .sn-portee .sn-phrase').innerText(), /^⁦?\d+%⁩? من الأعضاء يتلقّون الإشعارات$/);
+  await s.page.locator('#adm-notifs .sn-detail summary').click();
+  await s.page.locator('#adm-notifs .sn-col').first().hover();
+  assert.equal(await s.debordement(), 0);
+  const oublis = (await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x));
+  assert.deepEqual(oublis, [], 'rien en français');
+  // Toutes les phrases que le panneau peut dire (1, 2, 3 à 10, 11 et plus ; minutes, heures, jours ; chaque panne)
+  const restes = await s.page.evaluate(async () => {
+    const L = await import(new URL('logic.js', location.href).href), I = await import(new URL('i18n.js', location.href).href);
+    const textes = new Set(), il = s => new Date(Date.now() - s * 1000).toISOString();
+    for (const n of [1, 2, 3, 11, 24]) {
+      const jours = [{ jour: '2026-10-26', envoyees: n, refusees: n, echecs: n, sans_tel: n, coupees: n, abandonnees: n, jetees: n }];
+      for (const [cron, http, age] of [[{ existe: true, at: il(n * 700), statut: 'succeeded' }, { code: 400 + n, at: il(60) }, n * 400], [{ existe: false }, { code: 401, at: il(60) }, n * 4000],
+        [{ existe: true, at: il(60), statut: 'failed' }, { code: 404, at: il(60) }, n * 90000], [{ existe: true, at: null }, { code: null, at: il(60), delai: true }, 400], [{ existe: true, at: il(n * 86400), statut: 'succeeded' }, null, 600]]) {
+        const r = L.santeResume({ roles: [{ role: 'etudiant', membres: n + 3, avec_tel: n }], telephones: { muets: n }, jours, file: { n, age_s: age }, cron, http });
+        for (const x of L.raisonsNotifs(r)) textes.add(x.texte);
+        textes.add(`${L.pct(r.part)} des membres reçoivent les notifications`);
+        textes.add(`${n} ${n > 1 ? 'membres' : 'membre'} sur ${n + 3} ${n > 1 ? 'ont' : 'a'} activé les notifications sur au moins un téléphone.`);
+        textes.add(`${n} ${n > 1 ? 'perdues' : 'perdue'} sur ${n * 2}`);
+        textes.add(`26 octobre : ${n} ${n > 1 ? 'arrivées' : 'arrivée'}, ${n} ${n > 1 ? 'perdues' : 'perdue'}`);
+        textes.add(`${n} ${n > 1 ? 'arrivées' : 'arrivée'} · ${n} ${n > 1 ? 'perdues' : 'perdue'}`);
+        textes.add(`${n} en attente · la plus ancienne depuis ${L.dureeAttente(age)}`);
+      }
+    }
+    for (const x of [...Object.values(L.NOMS_NOTIF), ...Object.values(L.NOMS_CATEGORIES_NOTIF), ...L.SERVICES_PUSH.map(x => x[1]), 'Réponse 200', 'Réponse 503']) textes.add(x);
+    const technique = /notifier|Supabase|Edge Functions|Details|Logs|Postgres|Database|Extensions|Cron|pg_cron|pg_net|Verify JWT|supabase\/mise-a-jour\.sql|Chrome|Android|Google|iPhone|Mac|Apple|Firefox|Mozilla|Edge|Windows|ENSAM/g;
+    return [...textes].map(x => [x, I.t(x)]).filter(([, a]) => /[A-Za-zÀ-ÿ]{2}/.test(a.replace(technique, '')));
+  });
+  assert.deepEqual(restes, [], 'chaque phrase a sa traduction');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('administration : « Santé des notifications » avant la mise à jour du serveur, une phrase calme ; hors ligne, « Réessayer » relit', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Admin');
+  await s.page.evaluate(() => { const d = window.__demo; d.__sante = d.santeNotifs; d.santeNotifs = async () => null; });
+  await s.aller('admin'); await s.page.waitForSelector('#adm-notifs .sn-absent');
+  assert.equal(await s.page.locator('#adm-notifs .sn-absent').innerText(), 'Ce panneau apparaît après la mise à jour du serveur.');
+  assert.equal(await s.page.locator('#adm-notifs button').count(), 0, 'rien à toucher');
+  await s.aller('accueil');
+  await s.page.evaluate(() => { window.__demo.santeNotifs = async () => { throw new Error('Pas de réseau pour l’instant. Réessaie dans un instant.'); }; });
+  await s.aller('admin'); await s.page.waitForSelector('#adm-notifs .sn-reessayer');
+  assert.equal(await s.page.locator('#adm-notifs .sn-erreur').innerText(), 'Pas de réseau pour l’instant. Réessaie dans un instant.');
+  await s.page.evaluate(() => { const d = window.__demo; d.santeNotifs = d.__sante; });
+  await s.page.click('#adm-notifs .sn-reessayer');
+  await s.page.waitForSelector('#adm-notifs .sn-haut');
+  assert.equal(await s.page.locator('#adm-notifs .sn-col').count(), 7);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('socle : la coche d’un café où l’on va déjà est posée (elle ne se rejoue pas à chaque visite), elle se dessine après « Je viens » ; sur ordinateur, les villes à suivre en colonnes', async () => {
   const s = await ouvrir({ largeur: 390, mouvement: true });
   await s.comme('Salma'); await s.aller('reseau/groupes');

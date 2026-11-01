@@ -106,8 +106,9 @@ export class Banc {
   constructor() {
     this.tables = {
       profiles: [], offers: [], applications: [], invitations: [], mentorships: [], questions: [], answers: [],
-      parrainages: [], cafes: [], placements: [], push_subscriptions: [], push_queue: [], push_journal: [], app_secrets: [], notif_etat: [],
+      parrainages: [], cafes: [], placements: [], push_subscriptions: [], push_queue: [], push_journal: [], push_morts: [], app_secrets: [], notif_etat: [],
     };
+    this.absentes = new Set();        // fonctions SQL absentes (base pas encore mise à jour) : 404 comme PostgREST
     this.emails = new Map();          // id -> email (auth.users)
     this.jetons = new Map();          // jeton utilisateur -> id
     this.statutsPush = new Map();     // endpoint -> code HTTP
@@ -205,6 +206,7 @@ export class Banc {
 
   rpc(fn, args) {
     this.appelsRpc[fn] = (this.appelsRpc[fn] || 0) + 1;
+    if (this.absentes.has(fn)) return this.json({ code: 'PGRST202', message: `Could not find the function public.${fn}` }, 404);
     // Fonctions SQL simulées par un test : this.rpcs[fn] = args => résultat
     if (this.rpcs?.[fn]) { (this.argsRpc ||= {})[fn] = [...(this.argsRpc[fn] || []), args]; const r = this.rpcs[fn](args); return r === undefined ? new Response(null, { status: 204 }) : this.json(r); }
     // Comme la fonction SQL : les notifications restent en file, marquées prises, jusqu'à push_faits ;
@@ -220,6 +222,27 @@ export class Banc {
       const faits = new Set((args.p_ids || []).map(Number));
       this.tables.push_queue = this.tables.push_queue.filter(x => !faits.has(Number(x.id)));
       return new Response(null, { status: 204 });
+    }
+    // Comme la fonction SQL : la santé de chaque abonnement ; 404, 410 ou un troisième refus définitif d'affilée le retirent
+    // et notent son adresse (push_morts). Rend les abonnements retirés.
+    if (fn === 'push_resultats') {
+      (this.argsRpc ||= {})[fn] = [...(this.argsRpc[fn] || []), args];
+      const l = Array.isArray(args.p) ? args.p : [];
+      const retires = [];
+      for (const r of l) {
+        const s = this.tables.push_subscriptions.find(x => x.id === r.id);
+        if (!s) continue;
+        Object.assign(s, { dernier_code: r.code, dernier_envoi_at: new Date().toISOString() });
+        s.refus = r.recu ? 0 : r.refus ? (s.refus || 0) + 1 : (s.refus || 0);
+        if (r.refus && !r.recu) s.refus_at = new Date().toISOString();
+        if (r.code === 404 || r.code === 410 || s.refus >= 3) {
+          this.tables.push_morts = this.tables.push_morts.filter(m => m.endpoint !== s.endpoint);
+          this.tables.push_morts.push({ endpoint: s.endpoint, at: new Date().toISOString() });
+          this.tables.push_subscriptions = this.tables.push_subscriptions.filter(x => x.id !== s.id);
+          retires.push(s.id);
+        }
+      }
+      return this.json(retires);
     }
     if (fn === 'destinataires_resume') {
       // Comme la fonction SQL : une fois par semaine, comptes de plus de 2 jours, emails_hebdo
@@ -244,6 +267,7 @@ export class Banc {
     const d = dechiffrer(octets, r);
     const statut = this.statutsPush.get(url.toString()) ?? 201;
     this.push.push({ endpoint: url.toString(), methode, entetes: Object.fromEntries(entetes), message: JSON.parse(d.clair), dechiffre: d, statut });
+    this.surPush?.(url.toString());   // un test peut faire avancer l'horloge à chaque envoi
     return new Response(statut === 201 ? null : 'gone', { status: statut });
   }
 
