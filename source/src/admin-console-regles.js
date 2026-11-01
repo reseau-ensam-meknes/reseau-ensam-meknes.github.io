@@ -90,7 +90,7 @@ export const jour = d => { if (!d) return ''; const x = new Date(d); return `${x
 export const ENTETES_CSV = ['Nom', 'Rôle', 'Promo', 'Filière', 'Entreprise', 'Poste', 'Ville', 'Email', 'Inscrit le', 'Vu le', 'Vérifié', 'CV', 'Photo'];
 // Le texte d'un fichier CSV qu'Excel ouvre tel quel : point-virgule, guillemets quand il le faut, BOM pour les accents.
 // Un texte qui commence par = + - @ (ou une tabulation) serait lu comme une formule : une apostrophe devant le neutralise,
-// car les noms, entreprises et postes sont \u00E9crits par les membres eux-m\u00EAmes.
+// car les noms, entreprises et postes sont écrits par les membres eux-mêmes.
 const celluleCSV = v => { let t = String(v ?? ''); if (typeof v === 'string' && /^[=+\-@\t\r]/.test(t)) t = "'" + t; return /[";\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
 export const texteCSV = lignes => '\uFEFF' + lignes.map(r => r.map(celluleCSV).join(';')).join('\r\n');
 export const ligneCSV = (p, c) => [p.full_name || '', ROLES.find(([k]) => k === p.role)?.[1] || p.role, p.promo ?? '', p.filiere || '', p.entreprise || '', p.poste || '', p.ville || '',
