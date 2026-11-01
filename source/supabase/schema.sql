@@ -1331,7 +1331,7 @@ begin
       insert into public.push_queue (user_id, kind, data)
       select p.id, 'question_routee', jsonb_build_object('cible', coalesce(nullif(new.entreprise, ''), new.pays), 'titre', new.titre)
       from public.profiles p
-      where p.role = 'laureat' and p.id <> new.author_id
+      where p.role = 'laureat' and p.id <> new.author_id and p.ecole = new.ecole
         and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'question_routee')
         and ((coalesce(new.entreprise, '') <> '' and public.meme_entreprise(p.entreprise, new.entreprise))
           or (public.cle_lieu(new.pays) <> 'maroc' and public.cle_lieu(p.pays) = public.cle_lieu(new.pays)))
@@ -1344,7 +1344,7 @@ begin
     insert into public.push_queue (user_id, kind, data)
     select p.id, 'cafe', jsonb_build_object('ville', new.ville, 'lieu', new.lieu, 'date_at', new.date_at)
     from public.profiles p
-    where p.id <> new.organisateur_id and public.cle_lieu(p.ville) = public.cle_lieu(new.ville)
+    where p.id <> new.organisateur_id and p.ecole = new.ecole and public.cle_lieu(p.ville) = public.cle_lieu(new.ville)
       and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'cafe')
     limit 200;
   end if;
@@ -1723,8 +1723,10 @@ begin
     perform public.noter_push(new.user_id, new.kind, -2);
     return null;
   end if;
-  -- Écoles : ce que fait un membre ne notifie que son école (l'administration reçoit tout, comme les signalements)
-  if auth.uid() is not null and exists (select 1 from public.profiles d where d.id = new.user_id and d.role <> 'admin'
+  -- Écoles : ce que fait un membre ne notifie que son école (l'administration reçoit tout, comme les signalements,
+  -- et ce qu'elle fait notifie le membre concerné, quelle que soit son école). Les envois à plusieurs filtrent
+  -- eux-mêmes l'école avant leur plafond (limit), sinon d'autres écoles prendraient les places.
+  if auth.uid() is not null and not public.is_admin() and exists (select 1 from public.profiles d where d.id = new.user_id and d.role <> 'admin'
       and d.ecole is distinct from (select e.ecole from public.profiles e where e.id = auth.uid())) then return null; end if;
   return new;
 exception when others then raise warning 'push_filtre : %', sqlerrm; return new;  -- dans le doute, la notification part
@@ -2388,7 +2390,7 @@ begin
     insert into public.push_queue (user_id, kind, data)
     select x.id, 'verifier_pair', jsonb_build_object('nom', new.full_name, 'promo', new.promo)
     from public.profiles x
-    where x.role = 'laureat' and x.verified and x.promo = new.promo and x.id <> new.id
+    where x.role = 'laureat' and x.verified and x.promo = new.promo and x.id <> new.id and x.ecole = new.ecole
       and exists (select 1 from public.push_subscriptions s where s.user_id = x.id) and public.push_voulu(x.id, 'verifier_pair')
     limit 5;
   end if;
@@ -2452,7 +2454,7 @@ begin
     select p.id, v_kind,
       jsonb_build_object('titre', new.titre, 'debut', new.debut, 'lieu', new.lieu)
     from public.profiles p
-    where p.id is distinct from new.author_id
+    where p.id is distinct from new.author_id and p.ecole = new.ecole
       and (new.public = 'tous' or (new.public = 'etudiants' and p.role = 'etudiant') or (new.public = 'laureats' and p.role = 'laureat'))
       and (tg_op = 'INSERT' or exists (select 1 from public.evenement_participants x where x.evenement_id = new.id and x.user_id = p.id))
       and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, v_kind)
@@ -2998,7 +3000,7 @@ begin
         insert into public.push_queue (user_id, kind, data)
         select l.id, 'relecture_demande', jsonb_build_object('nom', v_nom)
         from public.profiles l, public.profiles s
-        where s.id = new.student_id and l.role = 'laureat' and l.mentor_dispo and public.proximite_filiere(l.filiere, s.filiere) > 0 and l.id <> new.student_id
+        where s.id = new.student_id and l.role = 'laureat' and l.ecole = s.ecole and l.mentor_dispo and public.proximite_filiere(l.filiere, s.filiere) > 0 and l.id <> new.student_id
           and exists (select 1 from public.push_subscriptions x where x.user_id = l.id) and public.push_voulu(l.id, 'relecture_demande')
         limit 10;
       end if;
@@ -3889,7 +3891,7 @@ begin
   insert into public.push_queue (user_id, kind, data)
   select p.id, 'demande_nouvelle', jsonb_build_object('nom', split_part(v_a.full_name, ' ', 1), 'titre', new.titre, 'type', new.type, 'demande', new.id)
   from public.profiles p
-  where p.role = 'laureat' and p.id <> new.auteur_id and public.proximite_filiere(p.filiere, v_a.filiere) >= 1
+  where p.role = 'laureat' and p.id <> new.auteur_id and p.ecole = new.ecole and public.proximite_filiere(p.filiere, v_a.filiere) >= 1
     and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'demande_nouvelle')
     and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = new.auteur_id) or (b.user_id = new.auteur_id and b.bloque_id = p.id))
   limit 60;
@@ -5136,7 +5138,7 @@ begin
   insert into public.push_queue (user_id, kind, data)
   select p.id, 'annonce', jsonb_build_object('texte', left(new.texte, 180))
   from public.profiles p
-  where p.id is distinct from new.author_id
+  where p.id is distinct from new.author_id and p.ecole = new.ecole
     and (coalesce(new.public, 'tous') = 'tous' or (new.public = 'etudiants' and p.role = 'etudiant') or (new.public = 'laureats' and p.role = 'laureat'))
     and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'annonce')
   limit 2000;
@@ -5162,7 +5164,7 @@ begin
   insert into public.push_queue (user_id, kind, data)
   select l.id, 'mentorat_ouvert', jsonb_build_object('nom', v_s.full_name, 'sujet', new.sujet)
   from public.profiles l
-  where l.role = 'laureat' and coalesce(l.mentor_dispo, false) and l.id <> new.student_id and l.id is distinct from v_ancien
+  where l.role = 'laureat' and coalesce(l.mentor_dispo, false) and l.id <> new.student_id and l.id is distinct from v_ancien and l.ecole = new.ecole
     and public.proximite_filiere(l.filiere, v_s.filiere) >= 1
     and not exists (select 1 from public.blocages b where (b.user_id = l.id and b.bloque_id = new.student_id) or (b.user_id = new.student_id and b.bloque_id = l.id))
     and exists (select 1 from public.push_subscriptions s where s.user_id = l.id) and public.push_voulu(l.id, 'mentorat_ouvert')

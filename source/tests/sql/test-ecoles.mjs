@@ -101,6 +101,48 @@ test('ambassadeurs, enquêtes et cartes sponsorisées : par école', async () =>
   await db.query('delete from public.ambassadeurs');
 });
 
+// Les tâches de la base n'ont pas de membre connecté : push_filtre ne peut pas trier les écoles, et un plafond (limit)
+// rempli par une autre école priverait la sienne. Chaque envoi à plusieurs filtre donc l'école lui-même.
+const comme = (u, sql, p) => db.transaction(async tx => {
+  await tx.query(`select set_config('request.jwt.claim.sub', $1, true)`, [u]);
+  return (await tx.query(sql, p)).rows;
+});
+const recus = async kind => (await db.query('select user_id from public.push_queue where kind = $1', [kind])).rows.map(r => r.user_id);
+test('envois à plusieurs : l’école est filtrée avant le plafond, même lancés par la base', async () => {
+  const MEK3 = uid(806), NOUVEAU_LAU = uid(807);
+  await creerCompte(db, { id: MEK3, full_name: 'Nadia Meknes', role: 'laureat', filiere: 'GI', promo: 2016, entreprise: 'Lear' });
+  await db.query(`update public.profiles set verified = true, mentor_dispo = true, ville = 'Kenitra', entreprise = 'Lear' where id = any($1::uuid[])`, [[MEK3, AUTRE]]);
+  await db.query(`insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) select id, 'https://p/' || id, 'k', 'a' from public.profiles on conflict do nothing`);
+  const verifier = async (kind, action) => {
+    await db.query('delete from public.push_queue');
+    await action();
+    const r = await recus(kind);
+    assert.ok(r.includes(MEK3), `${kind} : la lauréate de la même école est prévenue`);
+    assert.ok(!r.includes(AUTRE), `${kind} : personne d’une autre école`);
+  };
+  await verifier('question_routee', () => db.query(`insert into public.questions (author_id, categorie, titre, entreprise) values ($1, 'stage', 'Un stage chez Lear ?', 'Lear')`, [MEK]));
+  await verifier('cafe', () => db.query(`insert into public.cafes (organisateur_id, ville, lieu, date_at) values ($1, 'Kenitra', 'Café central', now() + interval '3 days')`, [MEK]));
+  await verifier('verifier_pair', async () => {
+    await db.query('insert into auth.users (id, email) values ($1, $2)', [NOUVEAU_LAU, 'nouveau-lau@exemple.ma']);
+    await db.query(`insert into public.profiles (id, full_name, role, filiere, promo) values ($1, 'Omar Meknes', 'laureat', 'GI', 2016)`, [NOUVEAU_LAU]);
+  });
+  await verifier('evenement', () => db.query(`insert into public.evenements (author_id, titre, debut) values ($1, 'Forum entreprises', now() + interval '5 days')`, [ADMIN]));
+  await verifier('relecture_demande', () => db.query(`insert into public.relectures_cv (student_id, cv_path) values ($1, 'cv/salma.pdf')`, [MEK]));
+  await verifier('demande_nouvelle', () => db.query(`insert into public.demandes (auteur_id, type, titre, details) values ($1, 'pfe', 'PFE en génie industriel', 'Je cherche un PFE en amélioration continue, à Kénitra.')`, [MEK]));
+  await verifier('mentorat_ouvert', () => db.query(`insert into public.mentorships (student_id, besoin, sujet, creneaux) values ($1, 'cv', 'Relire mon CV', array[now() + interval '1 day']::timestamptz[])`, [MEK]));
+  await verifier('annonce', () => db.query(`insert into public.annonces (texte) values ('Forum des entreprises')`));
+  await db.query('delete from public.push_queue');
+});
+
+test('ce que fait l’administration notifie le membre concerné, quelle que soit son école', async () => {
+  await db.query('delete from public.push_queue');
+  await comme(ADMIN, `select public.pousser($1, 'reponse', '{"de": "admin"}')`, [AUTRE]);
+  await comme(MEK, `select public.pousser($1, 'reponse', '{"de": "membre"}')`, [AUTRE]);
+  const r = (await db.query(`select data->>'de' de from public.push_queue where user_id = $1 and kind = 'reponse'`, [AUTRE])).rows.map(x => x.de);
+  assert.deepEqual(r, ['admin'], 'un membre ne notifie pas une autre école ; l’administration, si');
+  await db.query('delete from public.push_queue');
+});
+
 test('relancée, la mise à jour ne perd rien', async () => {
   const sql = (await import('node:fs')).readFileSync(SCHEMA, 'utf8').replace(/^create extension if not exists pgcrypto;$/m, '');
   await db.exec(sql);
