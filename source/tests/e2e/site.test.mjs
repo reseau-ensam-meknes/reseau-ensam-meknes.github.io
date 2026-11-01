@@ -2803,15 +2803,17 @@ test('rangées de puces : un fondu au bord qui cache encore quelque chose, seule
   for (const langue of ['fr', 'ar']) {
     const s = await ouvrir({ largeur: 390, langue });
     const bords = sel => s.page.evaluate(sel => { const l = document.querySelector(sel); return { debut: l.classList.contains('fondu-debut'), fin: l.classList.contains('fondu-fin') }; }, sel);
-    await s.comme('Youssef'); await s.aller('reseau/groupes'); await s.page.waitForTimeout(150);
-    assert.deepEqual(await bords('.puces-nav'), { debut: false, fin: true }, `${langue} : au début, le fondu à la fin seulement`);
-    await s.page.evaluate(() => { const l = document.querySelector('.puces-nav'); l.scrollBy({ left: (getComputedStyle(l).direction === 'rtl' ? -1 : 1) * l.scrollWidth, behavior: 'auto' }); });
-    await s.page.waitForTimeout(150);
-    assert.deepEqual(await bords('.puces-nav'), { debut: true, fin: false }, `${langue} : au bout, le fondu passe au début`);
-    assert.notEqual(await s.page.evaluate(() => getComputedStyle(document.querySelector('.puces-nav')).webkitMaskImage), 'none');
-    // Une puce au milieu (Annuaire) : il reste à voir des deux côtés
-    await s.aller('reseau/annuaire'); await s.page.waitForTimeout(150);
-    assert.deepEqual(await bords('.puces-nav'), { debut: true, fin: true });
+    // Les catégories de l'Entraide défilent ; les quatre rubriques du Réseau, elles, tiennent sur la rangée : aucun fondu
+    await s.comme('Youssef'); await s.aller('reseau/entraide'); await s.page.waitForTimeout(150);
+    assert.deepEqual(await bords('.reseau-onglets'), { debut: false, fin: false }, `${langue} : les quatre rubriques tiennent`);
+    const glisser = part => s.page.evaluate(part => { const l = document.querySelector('.chips.rangee'); l.scrollBy({ left: (getComputedStyle(l).direction === 'rtl' ? -1 : 1) * (l.scrollWidth - l.clientWidth) * part, behavior: 'auto' }); }, part);
+    assert.deepEqual(await bords('.chips.rangee'), { debut: false, fin: true }, `${langue} : au début, le fondu à la fin seulement`);
+    // Au milieu : il reste à voir des deux côtés
+    await glisser(.5); await s.page.waitForTimeout(150);
+    assert.deepEqual(await bords('.chips.rangee'), { debut: true, fin: true });
+    await glisser(1); await s.page.waitForTimeout(150);
+    assert.deepEqual(await bords('.chips.rangee'), { debut: true, fin: false }, `${langue} : au bout, le fondu passe au début`);
+    assert.notEqual(await s.page.evaluate(() => getComputedStyle(document.querySelector('.chips.rangee')).webkitMaskImage), 'none');
     // Les filtres des offres : même indice
     await s.aller('offres'); await s.page.waitForSelector('.offres-chips');
     assert.deepEqual(await bords('.offres-chips'), { debut: false, fin: true });

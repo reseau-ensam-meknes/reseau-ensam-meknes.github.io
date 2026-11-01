@@ -3,7 +3,7 @@
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Bar, toast, useLocal, injectCSS, Anneau } from './ui.js';
 import { GUIDE_SECTIONS, niveauOf, timeAgo, groupKey } from './logic.js';
-import { canonPays, PAYS_AR, recherche, villeAffichee } from './geo.js';
+import { canonPays, codePays, PAYS_AR, recherche, villeAffichee } from './geo.js';
 import { getLang, addAR } from './i18n.js';
 import { arCount } from './i18n.js';
 import { OfferCard, matchesMe } from './offers.js';
@@ -55,6 +55,33 @@ function paysPourEcrire(me, e) {
   return e.rows.find(r => habite(me, r.pays))?.pays || null;
 }
 
+// Les pays dans l'ordre du guide : rubriques écrites d'abord, puis lauréats sur place et offres
+const parPoids = (a, b) => (ecrites(b) * 3 + b.laureats.length + b.offres.length) - (ecrites(a) * 3 + a.laureats.length + a.offres.length) || a.nom.localeCompare(b.nom);
+
+// Le drapeau d'un pays (flag-icons, licence MIT : img/drapeaux/LICENSE) : un petit rectangle arrondi, décoratif, toujours
+// à côté du nom écrit du pays. Pays inconnu ou image absente (démo publiée sans images) : repli, l'affichage d'avant.
+export function Drapeau({ pays, taille = 24, repli = null, cls = '' }) {
+  const code = codePays(pays);
+  const [rate, setRate] = useState(false);
+  if (!code || rate) return repli;
+  return html`<img class=${'drapeau' + (cls ? ' ' + cls : '')} src=${`img/drapeaux/${code.toLowerCase()}.svg`} alt="" width=${taille} height=${Math.round(taille * 3 / 4)}
+    loading="lazy" decoding="async" onError=${() => setRate(true)}/>`;
+}
+
+// En tête de l'Entraide (Réseau) : le guide de l'étranger, avec les drapeaux des pays qu'il couvre déjà
+export function CarteGuide({ ctx }) {
+  injectCSS('etranger', CSS);
+  const { data, me, saison, go } = ctx;
+  const pays = useMemo(() => [...indexPays(data, me, saison).values()].sort(parPoids), [data.guide_pays, data.profiles, data.offers, me, saison]);
+  const drapeaux = pays.filter(e => codePays(e.nom)).slice(0, 3);
+  return html`<button type="button" class="gp-entree" id="gp-entree" onClick=${() => go('reseau/etranger')}>
+    <span class=${'gp-entree-drapeaux' + (drapeaux.length ? '' : ' vide')} aria-hidden="true">${drapeaux.length
+      ? drapeaux.map(e => html`<${Drapeau} key=${e.key} pays=${e.nom} taille=${30}/>`) : html`<${Icon} name="globe" size=${22}/>`}</span>
+    <span class="gp-entree-txt"><strong>Partir à l’étranger : le guide des lauréats</strong>
+      <span class="small muted"><span>Visa, logement, budget : les conseils des lauréats sur place</span>${pays.length ? html`<span aria-hidden="true"> · </span><span>${pays.length} pays</span>` : null}</span></span>
+    <${Icon} name="arrow" size=${16}/></button>`;
+}
+
 export function EtrangerPage({ ctx }) {
   injectCSS('etranger', CSS);
   const { sub2 } = ctx;
@@ -70,19 +97,19 @@ function PaysList({ ctx }) {
   const idx = useMemo(() => indexPays(data, me, saison), [data.guide_pays, data.profiles, data.offers, me, saison]);
   const trouve = recherche(q); // « فرنسا », « usa » ou « fra » : accents, casse et alias ignorés
   const total = GUIDE_SECTIONS.length;
-  const list = [...idx.values()]
-    .filter(e => !trouve || trouve('', e.nom))
-    .sort((a, b) => (ecrites(b) * 3 + b.laureats.length + b.offres.length) - (ecrites(a) * 3 + a.laureats.length + a.offres.length) || a.nom.localeCompare(b.nom));
+  const list = [...idx.values()].filter(e => !trouve || trouve('', e.nom)).sort(parPoids);
   const monPays = me.role === 'laureat' && me.pays && paysKey(me.pays) !== 'maroc' ? idx.get(paysKey(me.pays)) : null;
   const reste = monPays ? total - ecrites(monPays) : 0;
+  // Rangé dans l'Entraide : le chemin du retour, puis le titre du guide
   return html`<div class="sub-page etranger">
-    <h2 class="sr-only">Partir en stage ou en PFE à l’étranger</h2>
-    <p class="small muted gp-intro">Ce que les lauréats sur place conseillent : admission, visa, convention, logement, budget. Chaque pays est tenu par ceux qui y vivent.</p>
-    ${monPays ? html`<div class="hint-box gp-mine"><${Icon} name="flag" size=${16}/><span class="grow">Tu vis en <b translate="no">${paysLabel(monPays.nom)}</b> : ton expérience aide les étudiants. ${reste ? `Il reste ${reste} rubrique${reste > 1 ? 's' : ''} à écrire.` : 'Le guide est complet, merci !'}</span>
+    <button type="button" class="btn ghost small back" onClick=${() => ctx.go('reseau/entraide', { remplacer: true })}>← Entraide</button>
+    <div class="gp-titre"><h2>Partir à l’étranger : le guide des lauréats</h2>
+      <p class="small muted gp-intro">Ce que les lauréats sur place conseillent : admission, visa, convention, logement, budget. Chaque pays est tenu par ceux qui y vivent.</p></div>
+    ${monPays ? html`<div class="hint-box gp-mine"><${Drapeau} pays=${monPays.nom} taille=${22} repli=${html`<${Icon} name="flag" size=${16}/>`}/><span class="grow">Tu vis en <b translate="no">${paysLabel(monPays.nom)}</b> : ton expérience aide les étudiants. ${reste ? `Il reste ${reste} rubrique${reste > 1 ? 's' : ''} à écrire.` : 'Le guide est complet, merci !'}</span>
       <button class="btn tiny primary" onClick=${() => goPays(ctx, monPays.key)}>Ouvrir le guide</button></div>` : null}
     <label class="search"><${Icon} name="search" size=${16}/><input id="gp-q" placeholder="Chercher un pays…" value=${q} onInput=${e => setQ(e.target.value)}/></label>
     ${list.length ? html`<ul class="lignes gp-grid">${list.map(e => { const n = ecrites(e); return html`<li class="ligne gp-ligne" key=${e.key}><button type="button" class="ligne-main gp-card" onClick=${() => goPays(ctx, e.key)}>
-      <${Anneau} valeur=${n} max=${total} taille=${48} epaisseur=${4} ton="impact" decoratif><${Icon} name="flag" size=${18}/><//>
+      <${Anneau} valeur=${n} max=${total} taille=${48} epaisseur=${4} ton="impact" decoratif><${Drapeau} pays=${e.nom} taille=${24} repli=${html`<${Icon} name="flag" size=${18}/>`}/><//>
       <span class="ligne-txt"><span class="ligne-nom" translate="no">${paysLabel(e.nom)}</span>
         ${e.laureats.length || e.offres.length ? html`<span class="ligne-meta gp-facts">${e.laureats.length ? html`<span><${Icon} name="people" size=${13}/> ${e.laureats.length} lauréat${e.laureats.length > 1 ? 's' : ''} sur place</span>` : null}${e.offres.length ? html`<span><${Icon} name="feed" size=${13}/> ${e.offres.length} offre${e.offres.length > 1 ? 's' : ''}</span>` : null}</span>` : null}
         <span class=${'ligne-meta gp-guide' + (n === total ? ' complet' : '')}>${n ? `${n} rubrique${n > 1 ? 's' : ''} écrite${n > 1 ? 's' : ''} sur ${total}` : 'Guide pas encore commencé'}</span></span>
@@ -109,7 +136,7 @@ function PaysView({ ctx, cle }) {
   return html`<div class="sub-page etranger">
     <button class="btn ghost small back" onClick=${() => go('reseau/etranger', { remplacer: true })}>← Tous les pays</button>
     <div class="group-head gp-head">
-      <span class="g-badge big k-pays"><${Icon} name="flag" size=${26}/></span>
+      <${Drapeau} pays=${e.nom} taille=${56} cls="gp-drapeau-tete" repli=${html`<span class="g-badge big k-pays"><${Icon} name="flag" size=${26}/></span>`}/>
       <div class="grow"><p class="eyebrow">Guide écrit par les lauréats sur place</p><h2 translate="no">${paysLabel(e.nom)}</h2>
         <p class="muted small">${n ? `${n} rubrique${n > 1 ? 's' : ''} écrite${n > 1 ? 's' : ''} sur ${total}` : 'Guide pas encore commencé'}</p></div>
     </div>
@@ -245,6 +272,27 @@ function Texte({ t }) {
 }
 
 const CSS = `
+/* Les drapeaux : de petits rectangles arrondis ; un filet discret garde le contour des drapeaux clairs (Japon, Suisse…) */
+.drapeau { flex: none; display: inline-block; vertical-align: middle; border-radius: 3px; object-fit: cover; background: var(--surface-2);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ink) 14%, transparent); }
+.gp-drapeau-tete { border-radius: 7px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--ink) 12%, transparent), var(--sh1); }
+.gp-ligne .anneau-centre .drapeau { border-radius: 2.5px; }
+.hint-box > .drapeau { margin-top: .05rem; }
+/* La carte du guide, en tête de l'Entraide */
+.gp-entree { display: flex; align-items: center; gap: var(--sp-3); width: 100%; min-height: 64px; padding: .8rem 1rem; border: 0; border-radius: var(--r-lg);
+  background: var(--surface); box-shadow: var(--sh1); color: var(--ink); font: inherit; text-align: start; cursor: pointer; transition: box-shadow .2s; }
+.gp-entree:hover { box-shadow: var(--sh2); }
+.gp-entree:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.gp-entree-drapeaux { flex: none; display: flex; align-items: center; }
+.gp-entree-drapeaux .drapeau { box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px color-mix(in srgb, var(--ink) 10%, transparent); }
+.gp-entree-drapeaux .drapeau + .drapeau { margin-inline-start: -9px; }
+.gp-entree-drapeaux.vide { width: 44px; height: 44px; justify-content: center; border-radius: var(--r-md); background: var(--brass-soft); color: var(--brass); }
+.gp-entree-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .15rem; }
+.gp-entree-txt strong { font-weight: 650; line-height: 1.3; }
+.gp-entree > .ico:last-child { flex: none; color: var(--muted); }
+@media (prefers-reduced-motion: reduce) { .gp-entree { transition: none; } }
+.gp-titre { display: flex; flex-direction: column; gap: .3rem; }
+.gp-titre h2 { margin: 0; font-size: var(--fs-5); }
 .etranger .gp-intro p { margin: 0; color: var(--ink-2); }
 .etranger .gp-mine { align-items: center; flex-wrap: wrap; }
 .etranger .gp-mine .grow { flex: 1 1 220px; min-width: 0; }
@@ -298,7 +346,10 @@ const CSS = `
 
 const LAU = ['خريج واحد', 'خريجان', 'خريجين', 'خريجًا'], OFF = ['عرض واحد', 'عرضان', 'عروض', 'عرضًا'], RUB = ['قسم واحد', 'قسمان', 'أقسام', 'قسمًا'];
 addAR({
-  'Partir en stage ou en PFE à l’étranger': 'السفر إلى الخارج من أجل تدريب أو مشروع نهاية الدراسة',
+  // Rangé dans l'Entraide (Réseau) : sa carte, puis son titre
+  'Partir à l’étranger : le guide des lauréats': 'السفر إلى الخارج: دليل الخريجين',
+  'Visa, logement, budget : les conseils des lauréats sur place': 'التأشيرة، السكن، الميزانية: نصائح الخريجين المقيمين هناك',
+  '← Entraide': '→ التعاون',
   'Ce que les lauréats sur place conseillent : admission, visa, convention, logement, budget. Chaque pays est tenu par ceux qui y vivent.': 'نصائح الخريجين المقيمين هناك: القبول، التأشيرة، اتفاقية التدريب، السكن، الميزانية. دليل كل بلد يكتبه من يعيشون فيه.',
   'Tu vis en': 'أنت تعيش في',
   ': ton expérience aide les étudiants.': ': تجربتك تساعد الطلبة.',
@@ -370,6 +421,7 @@ addAR({
   [/^Il reste (\d+) rubriques? à écrire\.$/, n => `بقي ${arCount(n, RUB)} للكتابة.`],
   [/^(\d+) lauréats? sur place$/, n => `${arCount(n, LAU)} هناك`],
   [/^(\d+) offres?$/, n => arCount(n, OFF)],
+  [/^(\d+) pays$/, n => arCount(n, ['بلد واحد', 'بلدان', 'بلدان', 'بلدًا'])],
   [/^(\d+) rubriques? écrites? sur (\d+)$/, (n, t) => `${n} من ${t} أقسام مكتوبة`],
   [/^(\d+) rubriques? sur (\d+) · (\d+) lauréats? sur place$/, (n, t, l) => `${n} من ${t} أقسام · ${arCount(l, LAU)} هناك`],
   [/^Voir les (\d+) lauréats$/, n => `عرض كل الخريجين (${n})`],

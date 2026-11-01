@@ -1,7 +1,7 @@
 // Annuaire pro : personnes (entreprise, ville, pays, secteur), carte des lauréats, entreprises, startups.
 import { html, useState, useMemo, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, CompanyLogo, toast, FiliereFiltre } from './ui.js';
-import { getLang } from './i18n.js';
+import { getLang, addAR } from './i18n.js';
 import { SECTEURS, TYPES, niveauOf, entKey, sameCompany, seasonLabel, filtreFiliere, parcoursOf } from './logic.js';
 import { coordsOf, canonPays, countryCentroid, PAYS_AR, recherche, villeAffichee } from './geo.js';
 import { OfferCard, matchesMe } from './offers.js';
@@ -9,24 +9,23 @@ import { EntrepriseResume, QuestionsRecentes } from './entreprises.js';
 import { SignalerBtn } from './confiance.js';
 import { PersonneLigne, useVoirPlus, VoirPlus, BoutonFiltres, FeuilleFiltres } from './lignes.js';
 
-// Les entreprises ont leur propre onglet (Réseau > Entreprises), avec les avis et les entretiens
-const VUES = [['personnes', 'Personnes', 'people'], ['carte', 'Carte', 'pin'], ['startups', 'Startups', 'spark']];
 const paysLabel = p => (getLang() === 'ar' && PAYS_AR[canonPays(p)]) || canonPays(p);
 const villeLabel = v => villeAffichee(v, getLang());
 // Liens de l'accueil (« … dont 5 de ta filière ») : la liste ouverte montre exactement les personnes annoncées
 const PRESETS = ['ma-filiere', 'mon-parcours', 'ma-promo', 'laureats'];
 
+addAR({ 'Voir sur la carte': 'عرض على الخريطة', '← Tous les membres': '→ كل الأعضاء' });
+
+// Réseau > Annuaire (community.js choisit entre Personnes, Entreprises, Classement et Talents). Ici, sous Personnes : la
+// liste (#reseau/annuaire et ses listes toutes faites) et la carte des lauréats (#reseau/annuaire/carte) ; sous
+// Entreprises : les startups des lauréats (#reseau/annuaire/startups)
 export function AnnuairePro({ ctx }) {
   // Ancien lien « Annuaire > Entreprises »
   useEffect(() => { if (ctx.sub2 === 'entreprises') ctx.go('reseau/entreprises', { exact: true }); }, [ctx.sub2]);
-  const vue = VUES.some(([k]) => k === ctx.sub2) ? ctx.sub2 : 'personnes';
+  if (ctx.sub2 === 'carte') return html`<${Carte} ctx=${ctx}/>`;
+  if (ctx.sub2 === 'startups') return html`<${Startups} ctx=${ctx}/>`;
   const preset = PRESETS.includes(ctx.sub2) ? ctx.sub2 : '';
-  return html`<div class="sub-page">
-    <div class="seg" role="tablist" aria-label="Annuaire">${VUES.map(([k, l, i]) => html`<button role="tab" aria-selected=${vue === k} class=${vue === k ? 'on' : ''} onClick=${() => ctx.go('reseau/annuaire' + (k === 'personnes' ? '' : '/' + k), { remplacer: true })}><${Icon} name=${i} size=${15}/> ${l}</button>`)}</div>
-    ${vue === 'personnes' ? html`<${Personnes} key=${preset || 'tous'} ctx=${ctx} preset=${preset}/>` : null}
-    ${vue === 'carte' ? html`<${Carte} ctx=${ctx}/>` : null}
-    ${vue === 'startups' ? html`<${Startups} ctx=${ctx}/>` : null}
-  </div>`;
+  return html`<${Personnes} key=${preset || 'tous'} ctx=${ctx} preset=${preset}/>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -55,7 +54,8 @@ function Personnes({ ctx, preset = '' }) {
   return html`<div class="sub-page">
     <div class="recherche-filtres"><label class="search"><${Icon} name="search" size=${16}/><input id="d-q" placeholder="Nom, entreprise, ville, compétence…" value=${q} onInput=${e => setQ(e.target.value)}/></label>
       <${BoutonFiltres} id="d-filtres" actifs=${actifs} onClick=${() => setFeuille(true)}/></div>
-    <p class="liste-tete" id="d-total">${`${dir.length} membre${dir.length > 1 ? 's' : ''}`}</p>
+    <div class="d-tete"><p class="liste-tete" id="d-total">${`${dir.length} membre${dir.length > 1 ? 's' : ''}`}</p>
+      <button type="button" class="linkish small d-carte" id="d-carte" onClick=${() => ctx.go('reseau/annuaire/carte')}><${Icon} name="pin" size=${15}/> Voir sur la carte</button></div>
     ${dir.length ? html`<ul class="lignes annuaire">${vus.map(p => html`<li key=${p.id} class="ligne">
       <${PersonneLigne} p=${p} score=${scores.get(p.id)} onOpen=${openProfile} sansEntreprise=${p.role === 'laureat' && !!p.entreprise}
         meta=${(p.poste || p.secteur || lieu(p)) ? html`${[p.poste, p.secteur].filter(Boolean).join(' · ')}${(l => l ? html`${p.poste || p.secteur ? ' · ' : ''}<span translate="no">${l}</span>` : null)(lieu(p))}` : null}/>
@@ -135,6 +135,7 @@ function Carte({ ctx }) {
     ref.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   };
   return html`<div class="sub-page">
+    <button type="button" class="btn ghost small back" onClick=${() => ctx.go('reseau/annuaire', { remplacer: true })}>← Tous les membres</button>
     <p class="muted small">Où travaillent les lauréats de l’ENSAM Meknès. Clique sur un point pour voir qui est là. En bleu le Maroc, en orange l’étranger.</p>
     ${err ? html`<p class="warn-t small">${err}</p>` : null}
     <div class="map" ref=${ref} dir="ltr" role="img" aria-label="Carte des lauréats"></div>
@@ -198,6 +199,7 @@ function Startups({ ctx }) {
   const [form, setForm] = useState(null);
   const list = data.startups.filter(s => !only || s.recrute).sort((a, b) => (b.recrute - a.recrute) || new Date(b.created_at) - new Date(a.created_at));
   return html`<div class="sub-page">
+    <button type="button" class="linkish small ent-back" onClick=${() => ctx.go('reseau/entreprises', { remplacer: true })}><${Icon} name="arrow" size=${14}/> Toutes les entreprises</button>
     <div class="toolbar"><p class="muted small grow">Les entreprises créées par des lauréats de l’école, et celles qui cherchent des stagiaires.</p>
       ${me.role !== 'etudiant' ? html`<button class="btn small primary" onClick=${() => setForm({})}><${Icon} name="plus" size=${15}/> Ajouter ma startup</button>` : null}</div>
     <div class="chips"><button class=${'chip' + (only ? ' on' : '')} aria-pressed=${only} onClick=${() => setOnly(!only)}><${Icon} name="briefcase" size=${14}/> Cherchent des stagiaires</button></div>
