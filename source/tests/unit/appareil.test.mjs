@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { navigateurIntegre, lienChrome, ouvertureSorte, OUVERTURE_IOS_ECART, ouvertureNotif, sorteLienNotifs, parametresLien, noterEchecPush, echecDefinitif, bandeauPush } from '../../src/logic.js';
+import * as logique from '../../src/logic.js';
 import { SupabaseStore } from '../../src/store.js';
 import { langueDuLien } from '../../src/regles-entree.js';
 import { readFileSync } from 'node:fs';
@@ -351,4 +352,160 @@ test('service worker : toucher la notification ouvre sa page ; écartée, le chi
   t = travailleur({ chiffre: false });
   await t.pousser({ title: 'A' }); await t.toucher('#accueil');
   assert.deepEqual(t.journal, ['ouverte ' + SCOPE + '#accueil']);
+});
+
+// Toutes les portes : la page d'entrée dans le navigateur d'une application (sa carte, « Ouvrir dans Chrome » avec ce que le
+// visiteur avait déjà choisi), Telegram, l'iPad, et le lien « Active tes notifications » quand tout est décoché.
+// appareil.js : le module que la page d'entrée charge à part (sans logic.js), que logic.js réexporte.
+const appareil = () => import('../../src/appareil.js');
+const UA2 = {
+  telegram: 'Mozilla/5.0 (Linux; Android 14; SM-A546B Build/UP1A.231005.007; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/141.0.7390.43 Mobile Safari/537.36 Telegram-Android/12.1.1 (Samsung SM-A546B; Android 14; SDK 34; HIGH)',
+  telegramBot: 'TelegramBot (like TwitterBot)',
+  // iPadOS se présente comme un Mac : seul l'écran tactile (navigator.maxTouchPoints) le distingue
+  safariIPadOS: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15',
+  safariIPad: 'Mozilla/5.0 (iPad; CPU OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1',
+  instagramIPad: 'Mozilla/5.0 (iPad; CPU OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 400.0.0.30.75 (iPad13,18; iPadOS 18_6; fr_FR; fr; scale=2.00; 1640x2360; 812345678)',
+  linkedinIPadOS: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) [LinkedInApp]/9.31.1820',
+};
+
+test('navigateur intégré : Telegram aussi (jamais son robot d’aperçu des liens) ; logic.js réexporte les règles d’appareil.js', async () => {
+  const a = await appareil();
+  assert.deepEqual(navigateurIntegre(UA2.telegram), { nom: 'Telegram', systeme: 'android' });
+  assert.equal(navigateurIntegre(UA2.telegramBot), null);
+  assert.ok(a.APPLIS.some(([nom]) => nom === 'Telegram'));
+  for (const k of ['APPLIS', 'estIPad', 'navigateurIntegre', 'contexteEntree', 'lienChrome', 'parametresLien', 'CLE_APPLI_VUE']) assert.equal(logique[k], a[k], k);
+});
+
+test('iPad : son nom, ou iPadOS (un « Mac » à écran tactile) ; un vrai Mac ou un iPhone n’en sont pas', async () => {
+  const { estIPad } = await appareil();
+  assert.equal(estIPad(UA2.safariIPad), true);
+  assert.equal(estIPad(UA2.instagramIPad, 5), true);
+  assert.equal(estIPad(UA2.safariIPadOS, 5), true);
+  assert.equal(estIPad(UA2.safariIPadOS, 0), false, 'un Mac');
+  assert.equal(estIPad(UA2.safariIPadOS, 1), false);
+  assert.equal(estIPad(UA.safariIos, 5), false, 'un iPhone');
+  assert.equal(estIPad(UA.chromeAndroid, 5), false);
+  assert.equal(estIPad(undefined, undefined), false);
+});
+
+test('navigateur intégré sur iPadOS : reconnu comme iOS grâce à l’écran tactile ; Safari sur iPad reste un vrai navigateur', () => {
+  assert.deepEqual(navigateurIntegre(UA2.linkedinIPadOS, 5), { nom: 'LinkedIn', systeme: 'ios' });
+  assert.deepEqual(navigateurIntegre(UA2.linkedinIPadOS, 0), { nom: 'LinkedIn', systeme: 'autre' }, 'sans écran tactile : un ordinateur');
+  assert.deepEqual(navigateurIntegre(UA2.instagramIPad), { nom: 'Instagram', systeme: 'ios' });
+  assert.equal(navigateurIntegre(UA2.safariIPadOS, 5), null);
+  assert.equal(navigateurIntegre(UA2.safariIPad, 5), null);
+});
+
+test('contexte emporté dans Chrome : une promo valable, un rôle, une étape ; rien d’autre (ni email, ni valeur bizarre)', () => {
+  const c = x => logique.contexteEntree(x);
+  assert.deepEqual(c({ promo: 2019, role: 'laureat', mode: 'connexion' }), { promo: '2019', role: 'laureat', mode: 'connexion' });
+  assert.deepEqual(c({ promo: '2027', role: 'etudiant', mode: 'inscription' }), { promo: '2027', role: 'etudiant', mode: 'inscription' });
+  assert.deepEqual(c({ promo: 1989 }), {}, 'avant la première promo');
+  for (const promo of [2041, '2019x', 2019.5, '', null]) assert.deepEqual(c({ promo }), {}, String(promo));
+  assert.deepEqual(c({ role: 'admin', mode: 'motdepasse' }), {}, 'ni l’admin, ni l’étape du mot de passe');
+  assert.deepEqual(c({ email: 'salma@ensam-umi.ac.ma', accord: true }), {}, 'jamais l’email ni l’accord');
+  assert.deepEqual(c(undefined), {});
+  assert.deepEqual(c(null), {});
+});
+
+test('« Ouvrir dans Chrome » depuis la page d’entrée : la langue, la promo du lien, le rôle choisi et l’étape partent avec la page', () => {
+  const l = lienChrome('https://reseau-ensam-meknes.github.io/', '', { lang: 'ar', contexte: { promo: 2019, role: 'laureat', mode: 'connexion' } });
+  const cible = 'https://reseau-ensam-meknes.github.io/?lang=ar&promo=2019&role=laureat&mode=connexion&notifs=1';
+  assert.equal(l, `intent://${cible.slice(8)}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(cible)};end`);
+  // Un lien partagé (une offre) passe en ?r= comme une route ; une valeur qui ne va pas reste en dehors
+  assert.match(lienChrome('https://reseau-ensam-meknes.github.io/#offre/abc-123', 'offre/abc-123', { lang: 'fr', contexte: { role: 'pirate', mode: 'inscription' } }),
+    /^intent:\/\/reseau-ensam-meknes\.github\.io\/\?mode=inscription&r=offre%2Fabc-123&notifs=1#Intent;/);
+  // Une promo déjà dans l'adresse n'est pas répétée
+  assert.match(lienChrome('https://reseau-ensam-meknes.github.io/?promo=2019', '', { contexte: { promo: 2019 } }), /^intent:\/\/reseau-ensam-meknes\.github\.io\/\?promo=2019&notifs=1#Intent;/);
+});
+
+// entree.js se charge ici sans navigateur : son démarrage ne tourne pas (window.ENSAM_ENTREE déjà posé)
+async function pageEntree() {
+  const avant = { window: globalThis.window, document: globalThis.document };
+  globalThis.window = { ENSAM_ENTREE: true };
+  globalThis.document ??= { documentElement: {} };
+  try { return await import('../../src/entree.js'); } finally {
+    for (const [k, v] of Object.entries(avant)) if (v === undefined) delete globalThis[k]; else globalThis[k] = v;
+  }
+}
+
+test('arrivée dans Chrome : la page d’entrée relit le rôle, l’étape et le lien partagé, laisse la promo, la langue et notifs=1 à leur lecteur', async () => {
+  const { contexteArrivee } = await pageEntree();
+  const l = lienChrome('https://reseau-ensam-meknes.github.io/#offre/abc-123', 'offre/abc-123', { lang: 'ar', contexte: { promo: 2027, role: 'etudiant', mode: 'connexion' } });
+  const secours = new URL(decodeURIComponent(l.match(/S\.browser_fallback_url=([^;]+);/)[1]));
+  const a = contexteArrivee(secours.search);
+  assert.deepEqual(a, { role: 'etudiant', mode: 'connexion', lien: { k: 'offre', id: 'abc-123', r: 'offre/abc-123' }, search: '?lang=ar&promo=2027&notifs=1', aucun: false });
+  // Ce qui reste : la promo (lireInvitation), l'arabe pour la visite (i18n.js), la feuille d'activation après la connexion (app.js)
+  const reste = new URLSearchParams(a.search);
+  assert.equal(reste.get('promo'), '2027');
+  assert.equal(langueDuLien(a.search, null), 'ar');
+  assert.deepEqual(parametresLien(a.search), { r: '', notifs: true, depuis: '', search: '?lang=ar&promo=2027', aucun: false });
+  // Une route de membre (pas un lien partagé) reste pour app.js ; une valeur bizarre ne compte pas
+  assert.deepEqual(contexteArrivee('?r=mentorat&notifs=1'), { role: null, mode: null, lien: null, search: '?r=mentorat&notifs=1', aucun: true });
+  assert.deepEqual(contexteArrivee('?role=admin&mode=motdepasse'), { role: null, mode: null, lien: null, search: '', aucun: false }, 'retirés quand même');
+  assert.equal(contexteArrivee('').aucun, true);
+  assert.equal(contexteArrivee('?promo=2019&lang=ar').aucun, true, 'un lien de promo ordinaire : l’adresse ne change pas ici');
+});
+
+test('carte de la page d’entrée : « d’Instagram », « de Facebook », « d’une application » ; ses phrases d’Android et d’iPhone', async () => {
+  const { CARTE, APPLIS } = await appareil();
+  assert.equal(CARTE.tuEs('Instagram'), 'Tu es dans le navigateur d’Instagram.');
+  assert.equal(CARTE.tuEs('Facebook'), 'Tu es dans le navigateur de Facebook.');
+  assert.equal(CARTE.tuEs('Messenger'), 'Tu es dans le navigateur de Messenger.');
+  assert.equal(CARTE.tuEs(null), 'Tu es dans le navigateur d’une application.');
+  for (const [nom] of APPLIS) assert.match(CARTE.tuEs(nom), new RegExp(`^Tu es dans le navigateur (d’|de )${nom}\\.$`), nom);
+  assert.equal(CARTE.android, 'Ouvre le Réseau dans Chrome : tu y resteras connecté et tes notifications arriveront sur ce téléphone.');
+  assert.equal(CARTE.geste, 'Touche ••• (ou Partager) puis « Ouvrir dans Safari ».');
+  assert.match(CARTE.icone.iphone, /^Sur iPhone, les notifications passent ensuite par l’icône de l’écran d’accueil\.$/);
+  assert.equal(CARTE.icone.ipad, CARTE.icone.iphone.replace('iPhone', 'iPad'));
+  // Mêmes mots que la feuille de l'application (pwa.js), et même arabe
+  const pwa = readFileSync(new URL('../../src/pwa.js', import.meta.url), 'utf8');
+  assert.ok(pwa.includes(`const APPLI_RIEN = '${CARTE.rien}';`));
+});
+
+test('carte de la page d’entrée en arabe : chaque phrase, et le nom de chaque application gardé en lettres latines', async () => {
+  const { CARTE, CARTE_AR, CARTE_MOTIFS, APPLIS } = await appareil();
+  const avant = globalThis.document;
+  globalThis.document ??= { documentElement: {} };
+  const i18n = await import('../../src/i18n.js');
+  try {
+    i18n.addAR(CARTE_AR, CARTE_MOTIFS);
+    await i18n.setLang('ar', { garder: false });
+    const phrases = [CARTE.tuEs(), CARTE.android, CARTE.ios, CARTE.geste, CARTE.icone.iphone, CARTE.icone.ipad, CARTE.ouvrir, CARTE.ici, CARTE.ligne, CARTE.rien];
+    i18n.missing.clear();
+    for (const p of phrases) {
+      const ar = i18n.t(p);
+      assert.match(ar, /[؀-ۿ]/, p);
+      assert.doesNotMatch(ar, /\b(Tu|tu|Ouvre|Ouvrir|Touche|Sur|Continuer|Rien|ou|puis|dans)\b/, p);
+    }
+    assert.equal(i18n.t(CARTE.tuEs()), 'أنت في متصفح أحد التطبيقات.', 'le dictionnaire passe avant le motif');
+    for (const [nom] of APPLIS) assert.equal(i18n.t(CARTE.tuEs(nom)), `أنت في متصفح ⁨${nom}⁩.`, nom);
+    assert.deepEqual([...i18n.missing], []);
+    const pwa = readFileSync(new URL('../../src/pwa.js', import.meta.url), 'utf8');
+    assert.ok(pwa.includes(`[APPLI_RIEN]: '${CARTE_AR[CARTE.rien]}'`), 'le même arabe que la feuille');
+    assert.ok(pwa.includes(`'${CARTE.ouvrir}': '${CARTE_AR[CARTE.ouvrir]}'`));
+  } finally {
+    await i18n.setLang('fr', { garder: false });
+    if (avant === undefined) delete globalThis.document; else globalThis.document = avant;
+  }
+});
+
+test('appareil.js : sans logic.js, chargé à part par la page d’entrée (jamais dans ses fichiers préchargés)', async () => {
+  const src = readFileSync(new URL('../../src/appareil.js', import.meta.url), 'utf8');
+  assert.deepEqual([...src.matchAll(/^import [^;]* from '([^']+)';/gm)].map(m => m[1]), ['./regles-entree.js']);
+  const entree = readFileSync(new URL('../../src/entree.js', import.meta.url), 'utf8');
+  assert.match(entree, /import\('\.\/appareil\.js'\)/);
+  assert.doesNotMatch(entree, /^import [^;]*'\.\/(appareil|logic)\.js';/m);
+  const { CLE_APPLI_VUE } = await appareil();
+  assert.equal(CLE_APPLI_VUE, 'ensam-appli-vue', 'la clé que la feuille du navigateur d’une application relit (pwa.js)');
+});
+
+test('carte de la page d’entrée : espaces insécables du français (jamais « : » ni « » » seul en début de ligne) ; l’arabe tel quel', async () => {
+  const { typo, CARTE } = await appareil();
+  assert.equal(typo(CARTE.android, 'fr'), 'Ouvre le Réseau dans Chrome : tu y resteras connecté et tes notifications arriveront sur ce téléphone.');
+  assert.equal(typo(CARTE.geste, 'fr'), 'Touche ••• (ou Partager) puis « Ouvrir dans Safari ».');
+  assert.equal(typo(CARTE.rien, 'fr'), 'Rien ne s’ouvre ? Touche ⋮ en haut à droite, puis « Ouvrir dans Chrome » ou « Ouvrir dans le navigateur ».');
+  // En arabe, la phrase reste la clé du dictionnaire
+  for (const s of [CARTE.android, CARTE.geste, CARTE.rien]) assert.equal(typo(s, 'ar'), s);
+  assert.equal(typo(null, 'fr'), null);
 });

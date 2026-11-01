@@ -196,6 +196,30 @@ export function lireInvitation() {
     return ar ? 'ar' : null;
   } catch { return null; /* stockage ou historique indisponible : le lien marche quand même, sans promo pré-remplie */ }
 }
+// Arrivée par « Ouvrir dans Chrome » depuis la page d'entrée d'un navigateur d'application (lienChrome, appareil.js) : le rôle
+// choisi, l'étape (créer un compte ou se connecter) et le lien partagé (?r=offre/…) reprennent leur place ; la promo et la
+// langue ont déjà la leur (lireInvitation, i18n.js), notifs=1 reste pour l'application. Une autre route en ?r= aussi (celle
+// d'un membre, app.js). search : l'adresse sans eux ; aucun : rien de tout cela.
+export function contexteArrivee(search = '') {
+  const p = new URLSearchParams(search);
+  const role = p.get('role'), mode = p.get('mode');
+  const lien = p.has('r') ? lienPartage(p.get('r')) : null;
+  const aucun = !p.has('role') && !p.has('mode') && !lien;
+  p.delete('role'); p.delete('mode'); if (lien) p.delete('r');
+  const reste = p.toString();
+  return { role: role === 'etudiant' || role === 'laureat' ? role : null, mode: mode === 'inscription' || mode === 'connexion' ? mode : null, lien, search: reste ? '?' + reste : '', aucun };
+}
+let modeArrivee = null;
+function reprendreArrivee() {
+  try {
+    const a = contexteArrivee(location.search);
+    if (a.aucun) return;
+    if (a.role) retenirRole(a.role);
+    modeArrivee = a.mode;
+    // Le lien partagé redevient l'adresse de la page, comme s'il avait été ouvert ici (retenirLien le garde ensuite)
+    history.replaceState(history.state, '', location.pathname + a.search + (a.lien ? '#' + a.lien.r : location.hash));
+  } catch { /* historique ou stockage indisponible : la page s'ouvre sans ce contexte */ }
+}
 export function promoInvitee() { const n = Number(lire(CLE)); return valide(n) ? n : null; }
 export const retenirRole = r => ecrire(CLE_ROLE, r === 'etudiant' || r === 'laureat' ? r : null);
 export const roleRetenu = () => { const r = lire(CLE_ROLE); return r === 'etudiant' || r === 'laureat' ? r : null; };
@@ -295,6 +319,53 @@ function Fondateurs() {
   return M ? html`<${M}/>` : null;
 }
 
+// ---------------------------------------------------------------------------
+// Le navigateur d'une application (lien ouvert dans Instagram, Facebook, Messenger, LinkedIn, TikTok, Snapchat, Telegram, ou
+// une vue web Android) : on n'y reste pas connecté et les notifications n'y arrivent pas. Une carte calme, au-dessus du
+// formulaire, propose Chrome (Android : un lien qui emporte la langue, la promo, le rôle choisi, l'étape et le lien partagé)
+// ou Safari (iPhone, iPad : le geste). « Continuer ici » la range : l'inscription ici reste possible. Une fois par visite (cet
+// onglet), puis une ligne discrète : sans Chrome, le lien rouvre la même page ici (browser_fallback_url), et la ligne dit
+// alors quoi faire au lieu de reproposer le même lien. Elle compte pour la feuille du navigateur d'une application de cette
+// visite (CLE_APPLI_VUE, pwa.js). La reconnaissance des applications, les phrases de la carte, leur arabe et son style
+// arrivent à part (appareil.js), juste après le premier affichage : la page d'entrée garde ses six fichiers.
+// ---------------------------------------------------------------------------
+const CLE_CARTE = 'ensam-entree-appli';
+const lireVisite = k => { try { return sessionStorage.getItem(k); } catch { return null; } };
+const ecrireVisite = (k, v) => { try { sessionStorage.setItem(k, v); } catch { /* navigation privée */ } };
+const integreIci = m => m.navigateurIntegre(navigator.userAgent, navigator.maxTouchPoints);
+let appareil = null, appareilP = null;
+const chargerAppareil = () => (appareilP ||= import('./appareil.js').then(m => {
+  if (integreIci(m)) {
+    addAR(m.CARTE_AR, m.CARTE_MOTIFS);
+    const st = document.createElement('style'); st.textContent = m.CARTE_CSS; document.head.appendChild(st);
+  }
+  return (appareil = m);
+}, () => { appareilP = null; return null; }));
+function CarteAppli({ mode, role, invite }) {
+  const [a, setA] = useState(() => appareil);
+  useEffect(() => { if (!a) chargerAppareil().then(m => m && setA(m)); }, []);
+  const [vue] = useState(() => lireVisite(CLE_CARTE));
+  const [range, setRange] = useState(false);
+  const mot = useRef(null);
+  const app = a && integreIci(a), sys = app && ['android', 'ios'].includes(app.systeme) ? app.systeme : null;
+  const carte = !!sys && !vue && !range;
+  useEffect(() => { if (carte) { ecrireVisite(CLE_CARTE, 'vue'); ecrireVisite(a.CLE_APPLI_VUE, '1'); } }, [carte]);
+  useEffect(() => { if (range) mot.current?.focus(); }, [range]);
+  if (!sys) return null;
+  const T = a.CARTE, f = x => a.typo(x, getLang());
+  // Relu au toucher : le rôle, l'étape ou le lien partagé ont pu changer depuis l'affichage
+  const lien = () => a.lienChrome(location.href, lienRetenu()?.r, { lang: getLang(), contexte: { promo: invite, role, mode: mode === 'inscription' ? mode : 'connexion' } });
+  const ouvrir = e => { e.currentTarget.href = lien(); ecrireVisite(CLE_CARTE, 'chrome'); };
+  const ico = html`<${Icon} name="globe" size=${18}/>`;
+  if (!carte) return html`<p class="entree-appli-mot" id="au-appli-mot" tabindex="-1" ref=${mot}>${ico}${sys === 'ios' || vue === 'chrome'
+    ? html`<span>${f(sys === 'ios' ? T.geste : T.rien)}</span>` : html`<a href=${lien()} id="au-appli-chrome" onClick=${ouvrir}>${T.ligne}</a>`}</p>`;
+  return html`<div class="entree-appli" id="au-appli" data-systeme=${sys}>${ico}<div class="entree-appli-txt">
+    <p><span>${f(T.tuEs(app.nom))}</span> <span>${f(T[sys])}</span></p>
+    ${sys === 'ios' ? html`<p>${f(T.geste)}</p><p class="small muted">${T.icone[a.estIPad(navigator.userAgent, navigator.maxTouchPoints) ? 'ipad' : 'iphone']}</p>` : null}</div>
+    <div class="entree-appli-acts">${sys === 'android' ? html`<a class="btn primary" id="au-appli-chrome" href=${lien()} onClick=${ouvrir}>${T.ouvrir}</a>` : null}<button type="button" class="linkish" id="au-appli-ici" onClick=${() => setRange(true)}>${T.ici}</button></div>
+  </div>`;
+}
+
 export function AuthScreen({ store }) {
   const [, setTick] = useState(0); const relang = () => setTick(t => t + 1);
   const recovery = /type=recovery/.test(location.hash);
@@ -317,7 +388,7 @@ export function AuthScreen({ store }) {
     });
     return () => { vivant = false; };
   }, []);
-  const [mode, setMode] = useState(recovery ? 'nouveau' : attente ? 'code' : ['inscription', 'connexion', 'motdepasse'].includes(saisie?.mode) ? saisie.mode : lien?.k === 'aider' || store?.sessionPerdue ? 'connexion' : invite || !dejaMembre() ? 'inscription' : 'connexion');
+  const [mode, setMode] = useState(recovery ? 'nouveau' : attente ? 'code' : ['inscription', 'connexion', 'motdepasse'].includes(saisie?.mode) ? saisie.mode : modeArrivee || (lien?.k === 'aider' || store?.sessionPerdue ? 'connexion' : invite || !dejaMembre() ? 'inscription' : 'connexion'));
   const [origine, setOrigine] = useState(attente ? (attente.creer ? 'inscription' : 'connexion') : 'inscription');
   const [role, setRoleEtat] = useState(() => roleRetenu() || (invite ? roleDePromo(invite) : ''));
   // Petit écran (moins de 680 px de haut) : le titre et les chiffres suffisent, la phrase d'explication laisse la place au
@@ -411,6 +482,7 @@ export function AuthScreen({ store }) {
       ${(lien && mode !== 'nouveau') || court ? null : html`<p class="entree-sous">Stage, PFE, premier emploi : les étudiants demandent, les lauréats aident et recrutent.</p>`}
     </section>
     <form class="auth-card form entree-form" onSubmit=${submit} aria-label=${inscription ? 'Créer mon compte' : null}>
+      ${inscription || mode === 'connexion' || mode === 'motdepasse' ? html`<${CarteAppli} mode=${mode} role=${role} invite=${invite}/>` : null}
       ${inscription ? null : html`<h2>${{ connexion: 'Se connecter', code: 'Ton code est parti', motdepasse: 'Se connecter', nouveau: 'Nouveau mot de passe' }[mode]}</h2>`}
       ${perdue && mode === 'connexion' ? html`<p class="auth-msg" id="au-session" role="status">${store.brouillonsGardes ? 'Ta session a expiré. Reconnecte-toi : ce que tu étais en train d’écrire est gardé.' : 'Ta session a expiré. Reconnecte-toi pour continuer.'}</p>` : null}
       ${bandeau ? html`<p class="invite-band"><${Icon} name="send" size=${18}/><span><strong>Bienvenue, promo ${invite} !</strong> Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.</span></p>` : null}
@@ -578,6 +650,7 @@ if (!window.ENSAM_ENTREE) {
   // La promo et le lien partagé sont gardés jusqu'à la fin de l'inscription : l'application les oublie dès
   // qu'un membre a son profil (un compte sans « Dernière étape » n'est pas encore un membre).
   if (lireInvitation() === 'ar' || (!lire('ensam-lang') && lireAttente()?.langue === 'ar')) setLang('ar', { attendre: false, garder: false }).catch(() => {});
+  reprendreArrivee();
   retenirLien(location.hash);
   const d = document.documentElement;
   if (!enLigne || jeton || PUBLIQUE.test(location.hash)) {
@@ -588,6 +661,8 @@ if (!window.ENSAM_ENTREE) {
   } else {
     d.dataset.entree = 'visiteur';
     chiffresPublics();
+    // Le navigateur d'une application, reconnu dès que possible : sa carte vient juste après le premier affichage
+    chargerAppareil();
     monter(null);
     // Le magasin juste après le premier affichage (onglet en arrière-plan : requestAnimationFrame est suspendu)
     let parti = false; const go = () => { if (!parti) { parti = true; attendreMagasin().catch(() => addEventListener('online', () => attendreMagasin().catch(() => {}), { once: true })); } };

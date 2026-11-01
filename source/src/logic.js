@@ -1328,55 +1328,9 @@ export function bandeauPush({ etat, memo = {}, now = Date.now(), role, voulu = t
   return memo.bandeau && now - memo.bandeau < BANDEAU_PUSH_ECART ? null : etat;
 }
 
-// Le navigateur intégré d'une application (lien ouvert dans Instagram, Facebook, Messenger, LinkedIn, TikTok, Snapchat, ou
-// une vue web Android « ; wv) ») : ni notification ni installation n'y sont possibles. { nom, systeme } ou null.
-// nom : l'application quand on la reconnaît (null pour une vue web quelconque) ; systeme : 'android', 'ios' ou 'autre'.
-const APPLIS = [
-  ['Messenger', /FB_IAB\/MESSENGER|FBAN\/Messenger|MessengerForiOS|MessengerLite/i],
-  ['Instagram', /\bInstagram\b/i],
-  ['Facebook', /FBAN\/|FBAV\/|FB_IAB|FBIOS|FB4A/],
-  ['LinkedIn', /LinkedInApp/i],
-  ['TikTok', /musical_ly|BytedanceWebview|\bTikTok\b/i],
-  ['Snapchat', /\bSnapchat\b/i],
-];
-export function navigateurIntegre(ua = '') {
-  const s = String(ua || '');
-  const systeme = /android/i.test(s) ? 'android' : /iphone|ipad|ipod/i.test(s) ? 'ios' : 'autre';
-  const a = APPLIS.find(([, re]) => re.test(s));
-  if (a) return { nom: a[0], systeme };
-  if (systeme === 'android' && /; wv\)/.test(s)) return { nom: null, systeme };
-  return null;
-}
-
-// « Ouvrir dans Chrome » depuis le navigateur d'une application Android : un lien intent:// vers la même page, que Chrome
-// ouvre (sinon la même adresse, browser_fallback_url). La route passe en ?r=… (le # sert à l'intent) et notifs=1 ouvre
-// tout de suite la feuille d'activation : c'est pour elle que le membre change de navigateur. app.js lit puis efface les deux.
-// lang : la langue de la page ; Chrome ne connaît pas le choix fait ici, l'arabe passe donc par l'adresse (?lang=ar, gardé
-// pour la visite, i18n.js), le français laisse Chrome à son propre choix. Sans lang : l'adresse garde le sien.
-export function lienChrome(adresse, route = '', { lang } = {}) {
-  const u = new URL(adresse);
-  u.hash = '';
-  for (const k of ['r', 'notifs', 'depuis']) u.searchParams.delete(k);
-  if (lang === 'ar') u.searchParams.set('lang', 'ar'); else if (lang) u.searchParams.delete('lang');
-  const r = String(route || '').replace(/^#/, '');
-  if (r && r !== 'accueil') u.searchParams.set('r', r);
-  u.searchParams.set('notifs', '1');
-  const cible = u.href, schema = u.protocol.replace(/:$/, '');
-  return `intent://${cible.slice(u.protocol.length + 2)}#Intent;scheme=${schema};package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(cible)};end`;
-}
-
-// Paramètres d'adresse lus au démarrage (app.js), puis retirés : r (la route, venue d'un autre navigateur par « Ouvrir dans
-// Chrome »), notifs=1 (le lien « Active tes notifications »), depuis=ancienne (arrivée par l'ancienne adresse du Réseau).
-// search : ce qui reste de l'adresse ('' ou '?…') ; aucun : rien de tout cela (l'adresse ne change pas).
-export function parametresLien(search = '') {
-  const p = new URLSearchParams(search);
-  const brut = (p.get('r') || '').replace(/^#/, '').trim();
-  const out = { r: /^[\w\-/]{1,200}$/.test(brut) ? brut : '', notifs: p.get('notifs') === '1', depuis: p.get('depuis') === 'ancienne' ? 'ancienne' : '' };
-  const aucun = !['r', 'notifs', 'depuis'].some(k => p.has(k));
-  for (const k of ['r', 'notifs', 'depuis']) p.delete(k);
-  const reste = p.toString();
-  return { ...out, search: reste ? '?' + reste : '', aucun };
-}
+// Le navigateur intégré d'une application, l'iPad, « Ouvrir dans Chrome » et les paramètres d'adresse lus au démarrage :
+// appareil.js, que la page d'entrée charge sans le reste du site
+export { APPLIS, estIPad, navigateurIntegre, contexteEntree, lienChrome, parametresLien, CLE_APPLI_VUE } from './appareil.js';
 
 // Abonnement refusé par le service de notifications pour une raison qui peut passer (réseau coupé, AbortError) : l'échec est
 // noté par jour (memo.echecs : les deux derniers jours, 'AAAA-MM-JJ'), et cet appareil n'est classé « sans notifications »
