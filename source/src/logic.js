@@ -1239,6 +1239,17 @@ export function prevenirVariante({ etat, raison, memo = {}, now = Date.now(), ro
   return null;
 }
 
+// La raison vraie pour ce membre (sa phrase, son titre, et la catégorie de Mon profil dont dépend la réponse attendue, pwa.js) :
+// une question d'un lauréat attend « un membre du réseau ». Une offre publiée attend des candidatures (« Candidatures ») et
+// l'intérêt des étudiants (« Match ») : la feuille ne promet que ce qui arrivera (offreCandidatures sans Match, offreInteret
+// sans Candidatures ; sans les deux, la catégorie de l'offre est décochée et rien n'est promis).
+export function raisonPrevenir(raison, me) {
+  if (raison === 'question') return me?.role === 'etudiant' ? 'question' : 'questionMembre';
+  if (raison !== 'offre') return raison;
+  const candidatures = pushChoix('candidatures', me), match = pushChoix('match', me);
+  return candidatures ? (match ? 'offre' : 'offreCandidatures') : match ? 'offreInteret' : 'offre';
+}
+
 // La ligne « Me prévenir », non modale, là où l'on attend une réponse : au-dessus du champ d'écriture (Messages), à la fin de
 // la pile (Match). Ce n'est pas une feuille : elle ne compte pas dans leur budget (3 jours après « Plus tard »), et son × la
 // range pour ce fil seulement (memo.lignes : l'id de la conversation, ou 'match'). attente : le membre attend vraiment une
@@ -1311,9 +1322,12 @@ export function ouvertureSorte({ etat, memo = {}, now = Date.now(), voulu = true
 
 // Le lien « Active tes notifications » (?notifs=1, dans les emails et sur WhatsApp) : la feuille qu'il ouvre tout de suite.
 // 'deja' : déjà activées ici (un mot suffit) ; null : coupées par le membre dans Mon profil (on respecte), démo ordinaire,
-// ou état pas encore connu.
-export function sorteLienNotifs({ etat, memo = {} }) {
+// ou état pas encore connu. voulu : false quand toutes les catégories sont décochées dans Mon profil ; activer cet appareil
+// (ou l'avoir déjà fait) n'apporterait rien : 'choisir', la feuille le dit et mène à Mon profil › Notifications, sans rien
+// recocher. iPhone sans l'icône, navigateur d'une application, notifications bloquées : leur geste d'abord, il reste à faire.
+export function sorteLienNotifs({ etat, memo = {}, voulu = true }) {
   if (memo.coupe || etat === '…' || etat === 'demo' || !etat) return null;
+  if (!voulu && (etat === 'on' || etat === 'off')) return 'choisir';
   return { on: 'deja', off: 'push', ios: 'ios', appli: 'appli', refuse: 'debloquer', absent: 'absent' }[etat] || null;
 }
 

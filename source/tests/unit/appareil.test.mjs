@@ -500,6 +500,20 @@ test('appareil.js : sans logic.js, chargé à part par la page d’entrée (jama
   assert.equal(CLE_APPLI_VUE, 'ensam-appli-vue', 'la clé que la feuille du navigateur d’une application relit (pwa.js)');
 });
 
+test('lien « Active tes notifications » avec tout décoché dans Mon profil : la feuille le dit (choisir) ; les gestes à faire d’abord restent', () => {
+  const l = x => sorteLienNotifs({ memo: {}, voulu: false, ...x });
+  assert.equal(l({ etat: 'off' }), 'choisir');
+  assert.equal(l({ etat: 'on' }), 'choisir', 'déjà activées : rien n’arrive pour autant');
+  assert.equal(l({ etat: 'ios' }), 'ios');
+  assert.equal(l({ etat: 'appli' }), 'appli');
+  assert.equal(l({ etat: 'refuse' }), 'debloquer');
+  assert.equal(l({ etat: 'absent' }), 'absent');
+  assert.equal(l({ etat: 'off', memo: { coupe: 1 } }), null, 'coupées par le membre : on respecte');
+  for (const etat of ['…', 'demo', undefined]) assert.equal(l({ etat }), null, String(etat));
+  assert.equal(sorteLienNotifs({ etat: 'off', memo: {}, voulu: true }), 'push');
+  assert.equal(sorteLienNotifs({ etat: 'on', memo: {} }), 'deja');
+});
+
 test('carte de la page d’entrée : espaces insécables du français (jamais « : » ni « » » seul en début de ligne) ; l’arabe tel quel', async () => {
   const { typo, CARTE } = await appareil();
   assert.equal(typo(CARTE.android, 'fr'), 'Ouvre le Réseau dans Chrome : tu y resteras connecté et tes notifications arriveront sur ce téléphone.');

@@ -6472,7 +6472,8 @@ test('accueil : le bandeau dit ce qui empêche les notifications, se range trois
 
 // ---------------------------------------------------------------------------
 // Toutes les portes : la page d'entrée « en ligne » (un faux Supabase local, jamais la vraie base) ouverte dans le navigateur
-// d'une application, et « Ouvrir dans Chrome » qui emporte ce que le visiteur avait choisi
+// d'une application, « Ouvrir dans Chrome » qui emporte ce que le visiteur avait choisi, l'iPad, le lien « Active tes
+// notifications » quand tout est décoché, la pastille après un échec définitif, et « Voir en tant que » de la démo
 // ---------------------------------------------------------------------------
 const FACEBOOK_IOS = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 [FBAN/FBIOS;FBAV/490.0.0.38.107;FBBV/700000000;FBDV/iPhone15,3;FBMD/iPhone;FBSN/iOS;FBSV/18.6;FBSS/3;FBCR/;FBID/phone;FBLC/fr_FR;FBOP/80]';
 const VUE_WEB = 'Mozilla/5.0 (Linux; Android 13; M2101K6G Build/TKQ1.221013.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/141.0.7390.43 Mobile Safari/537.36';
@@ -6662,4 +6663,240 @@ test('carte de la page d’entrée en arabe, de nuit, à 360 px : traduite, de d
     assert.deepEqual(s.erreurs, []);
     await s.ctx.close();
   }
+});
+
+test('« Me prévenir » après une offre publiée, « Candidatures » décochée : « Te prévenir des étudiants intéressés ? » (Match reste coché) ; les deux décochées, rien n’est promis', async () => {
+  const s = await prevenirSur('off');
+  const publier = async titre => {
+    await s.aller('offres'); await s.page.click('.page-head #of-publier'); await s.page.waitForSelector('#of-titre');
+    await s.page.fill('#of-titre', titre); await s.page.fill('#of-desc', 'Réduire les temps de changement de série sur la ligne de presses.');
+    if (!(await s.page.inputValue('#of-ent'))) await s.page.fill('#of-ent', 'Renault Group Maroc');
+    await s.page.click('.modal-foot #of-publier'); await s.page.waitForTimeout(700);
+  };
+  await s.comme('Youssef'); await ouvertureRangee(s);
+  await s.aller('profil/notifications'); await s.page.click('#np-candidatures'); await s.page.waitForTimeout(250);
+  assert.equal(await s.page.isChecked('#np-match'), true);
+  await publier('Stage méthodes emboutissage');
+  await s.page.waitForSelector('.modal.prevenir');
+  assert.equal(await s.page.locator('.prevenir .modal-head h2').innerText(), 'Te prévenir des étudiants intéressés ?');
+  const t = await s.page.locator('.modal.prevenir').innerText();
+  assert.match(t, /Dès qu’un étudiant s’intéresse à ton offre, une notification arrive sur cet appareil\./);
+  assert.doesNotMatch(t, /postule|candidature/i, 'rien n’est promis pour les candidatures');
+  assert.equal(await s.debordement(), 0);
+  await s.page.click('#pv-tard'); await s.page.waitForTimeout(300);
+  // Match décoché aussi : rien n'arrivera pour cette offre, la feuille ne vient pas (le petit mot reste)
+  await s.aller('profil/notifications'); await s.page.click('#np-match'); await s.page.waitForTimeout(250);
+  await s.changerMemo('({ ...m, at: m.at - 4 * 864e5 })');
+  await publier('Stage qualité fournisseurs');
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Offre publiée/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe : le titre et la phrase traduits
+  const a = await prevenirSur('off', { langue: 'ar' });
+  await a.comme('Youssef'); await ouvertureRangee(a);
+  await a.aller('profil/notifications'); await a.page.click('#np-candidatures'); await a.page.waitForTimeout(250);
+  await a.aller('offres'); await a.page.click('.page-head #of-publier'); await a.page.waitForSelector('#of-titre');
+  await a.page.fill('#of-titre', 'Stage méthodes'); await a.page.fill('#of-desc', 'Réduire les temps de changement de série.');
+  if (!(await a.page.inputValue('#of-ent'))) await a.page.fill('#of-ent', 'Renault Group Maroc');
+  await a.page.click('.modal-foot #of-publier'); await a.page.waitForSelector('.modal.prevenir');
+  assert.equal(await a.page.locator('.prevenir .modal-head h2').innerText(), 'هل نُعلمك بالطلبة المهتمين؟');
+  assert.match(await a.page.locator('.modal.prevenir').innerText(), /بمجرد أن يهتمّ طالب بعرضك، يصلك إشعار على هذا الجهاز\./);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
+test('iPad (iPadOS, qui se présente comme un Mac) : les feuilles disent « iPad » et « Partager, en haut de l’écran » ; sur iPhone, rien ne change', async () => {
+  const s = await prevenirSur(null, { ua: SAFARI_IPADOS });
+  await ecranTactile(s.ctx);
+  await s.page.setViewportSize({ width: 820, height: 1180 });
+  await s.page.evaluate(() => localStorage.setItem('ensam-prevenir-demo', 'ios')); await recharger(s);
+  // La feuille d'ouverture
+  await s.page.waitForSelector('.modal.ouverture-ios', { timeout: 8000 });
+  const t = await s.page.locator('.modal.ouverture-ios').innerText();
+  assert.match(t, /Reçois l’essentiel sur ton iPad/);
+  assert.match(t, /Sur iPad, les notifications n’arrivent que dans l’application ajoutée à l’écran d’accueil/);
+  assert.match(t, /Dans Safari, touche Partager, en haut de l’écran\./);
+  assert.doesNotMatch(t, /iPhone|en bas de l’écran/);
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+  // Le bandeau de l'accueil et Mon profil
+  await s.aller('accueil'); await s.page.waitForSelector('.push-bandeau[data-etat="ios"]');
+  assert.match(await s.page.locator('.push-bandeau').innerText(), /Sur iPad, c’est la seule façon de recevoir tes matchs et tes messages\./);
+  await s.aller('profil/notifications');
+  await s.page.waitForSelector('text=Sur iPad, installe d’abord l’application sur l’écran d’accueil.');
+  // « Me prévenir » (Amine, dont la feuille d'ouverture a déjà fait ses deux passages)
+  const amine = s.profils.find(x => x[1].includes('Amine'))[0];
+  await s.page.evaluate(id => localStorage.setItem('ensam-prevenir-' + id, JSON.stringify({ ios: { n: 2, at: Date.now() } })), amine);
+  await s.aller('accueil'); await s.comme('Amine'); await s.mentorat('Choisir mon stage de 3A');
+  await s.page.waitForSelector('.modal.prevenir');
+  const p = await s.page.locator('.modal.prevenir').innerText();
+  assert.match(p, /Sur iPad, les notifications arrivent une fois le Réseau ENSAM ajouté à l’écran d’accueil/);
+  assert.match(p, /Dans Safari, touche Partager, en haut de l’écran\./);
+  assert.doesNotMatch(p, /iPhone/);
+  await s.page.click('#pv-oui'); await s.page.waitForTimeout(300);
+  // La pastille (l'installation, seul chemin vers les notifications)
+  await s.page.evaluate(() => { localStorage.setItem('ensam-install-demo', 'ios'); localStorage.setItem('ensam-prevenir-demo', 'off'); });
+  await s.aller('accueil'); await recharger(s);
+  await s.page.waitForSelector('.pastille[data-sorte="installer"]', { timeout: 8000 });
+  assert.match(await s.page.locator('.pastille').innerText(), /Pour recevoir tes notifications sur iPad/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe : « iPad » aussi
+  const a = await prevenirSur(null, { ua: SAFARI_IPADOS, langue: 'ar' });
+  await ecranTactile(a.ctx);
+  await a.page.evaluate(() => localStorage.setItem('ensam-prevenir-demo', 'ios')); await recharger(a);
+  await a.page.waitForSelector('.modal.ouverture-ios', { timeout: 8000 });
+  const ta = await a.page.locator('.modal.ouverture-ios').innerText();
+  assert.match(ta, /على iPad/);
+  assert.match(ta, /في Safari، المس «مشاركة» في أعلى الشاشة\./);
+  assert.deepEqual(latinRestant(ta, ['ENSAM', 'iPad', 'Safari']), []);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+  // Un iPhone (écran tactile lui aussi) : toujours « iPhone », Partager en bas de l'écran
+  const i = await prevenirSur(null, { ua: SAFARI_IPHONE });
+  await ecranTactile(i.ctx, 'iPhone');
+  await i.page.evaluate(() => localStorage.setItem('ensam-prevenir-demo', 'ios')); await recharger(i);
+  await i.page.waitForSelector('.modal.ouverture-ios', { timeout: 8000 });
+  const tp = await i.page.locator('.modal.ouverture-ios').innerText();
+  assert.match(tp, /Reçois l’essentiel sur ton iPhone/);
+  assert.match(tp, /Dans Safari, touche Partager\s: en bas de l’écran, ou dans le menu •••\./);
+  assert.doesNotMatch(tp, /iPad/);
+  assert.deepEqual(i.erreurs, []);
+  await i.ctx.close();
+});
+
+const CATEGORIES = ['messages', 'match', 'demandes', 'candidatures', 'mentorat', 'offres', 'reseau', 'rappels'];
+const TOUT_DECOCHE = Object.fromEntries(CATEGORIES.map(c => [c, false]));
+
+test('lien « Active tes notifications » quand tout est décoché dans Mon profil : la feuille le dit calmement et mène aux cases, sans rien recocher', async () => {
+  const s = await prevenirSur('off');
+  const id = await s.page.$eval('#persona', e => e.value);
+  await s.page.evaluate(([id, np]) => window.__demo.update('profiles', id, { notif_push: np }), [id, TOUT_DECOCHE]);
+  await s.page.goto(adresse + '?notifs=1#reseau');
+  await s.page.waitForSelector('.modal.choisir', { timeout: 8000 });
+  assert.equal(await s.page.locator('.modal.ouverture').count(), 0, 'pas la feuille qui promet des notifications');
+  const t = await s.page.locator('.modal.choisir').innerText();
+  assert.match(t, /Choisis ce que tu reçois/);
+  assert.match(t, /Tout est décoché dans «\sMon profil\s»\s: aucune notification ne t’arrive pour l’instant\./);
+  assert.match(t, /Active-les sur cet appareil, puis coche ce que tu veux recevoir\./);
+  for (const sel of ['#choisir-profil', '#choisir-oui']) assert.ok((await s.page.locator(sel).boundingBox()).height >= 44, sel);
+  assert.equal(await s.debordement(), 0);
+  // « Activer » : cet appareil d'abord (en démo, un mot), puis les cases, toujours décochées
+  await s.page.click('#choisir-oui');
+  await s.page.waitForFunction(() => location.hash === '#profil/notifications');
+  await s.page.waitForSelector('#np-messages');
+  assert.equal(await s.page.locator('.modal.choisir').count(), 0);
+  assert.equal((await s.memo()).fait, 1);
+  assert.deepEqual(await s.page.$$eval('input[id^="np-"]', xs => xs.filter(x => x.checked).map(x => x.id)), [], 'rien recoché à sa place');
+  // « Choisir d'abord » : les cases tout de suite, sans rien demander au navigateur
+  await s.changerMemo('({})');
+  await s.page.goto(adresse + '?notifs=1#reseau');
+  await s.page.waitForSelector('.modal.choisir', { timeout: 8000 });
+  await s.page.click('#choisir-profil');
+  await s.page.waitForFunction(() => location.hash === '#profil/notifications');
+  assert.equal((await s.memo()).fait, undefined);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe
+  const a = await prevenirSur('off', { langue: 'ar' });
+  const ida = await a.page.$eval('#persona', e => e.value);
+  await a.page.evaluate(([id, np]) => window.__demo.update('profiles', id, { notif_push: np }), [ida, TOUT_DECOCHE]);
+  await a.page.goto(adresse + '?notifs=1#reseau');
+  await a.page.waitForSelector('.modal.choisir', { timeout: 8000 });
+  assert.deepEqual(latinRestant(await a.page.locator('.modal.choisir').innerText(), []), []);
+  assert.equal(await a.debordement(), 0);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
+// Un membre connecté sur le site en ligne (faux Supabase local), sur un téléphone Android dont le navigateur répond comme le
+// test le veut : permission (la réponse de la fenêtre du navigateur), abonnement 'ok' ou 'impossible' (NotSupportedError :
+// téléphone sans services de notifications), deja (cet appareil est déjà abonné)
+const MEMBRE = { id: UID, full_name: 'Salma Test', role: 'etudiant', filiere: 'Génie Industriel', promo: new Date().getFullYear() + 2, created_at: '2025-10-01T10:00:00Z', verified: true,
+  consent_at: '2025-10-01T10:00:00Z', emails_hebdo: true, alertes_offres: true, alertes_email: true, emails_messages: true };
+async function membreEnLigne({ profil = MEMBRE, permission = 'granted', abonnement = 'ok', deja = false, memo = null, chemin = '' } = {}) {
+  const site = await enLigne(); site.vider(); site.inscrits.push({ ...profil });
+  const ctx = await navigateur.newContext({ viewport: { width: 360, height: 740 }, serviceWorkers: 'block', reducedMotion: 'reduce', userAgent: TELEPHONE });
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  await ctx.addInitScript(([permission, abonnement, deja]) => {
+    const sub = { endpoint: 'https://push.exemple.ma/abc', toJSON: () => ({ endpoint: 'https://push.exemple.ma/abc', keys: { p256dh: 'p256', auth: 'auth' } }), unsubscribe: async () => true };
+    const pm = { getSubscription: async () => (deja ? sub : null), subscribe: async () => { if (abonnement === 'ok') return sub; throw new DOMException('Registration failed - push service not available', 'NotSupportedError'); } };
+    const reg = { waiting: null, installing: null, addEventListener() {}, pushManager: pm };
+    const sw = { register: async () => reg, ready: Promise.resolve(reg), getRegistration: async () => reg, controller: null, addEventListener() {} };
+    Object.defineProperty(Navigator.prototype, 'serviceWorker', { get: () => sw, configurable: true });
+    window.Notification = class { static permission = deja ? 'granted' : 'default'; static requestPermission = async () => { window.Notification.permission = permission; return permission; }; };
+    if (!('PushManager' in window)) window.PushManager = function PushManager() {};
+  }, [permission, abonnement, deja]);
+  await ctx.addInitScript(([uid, memo]) => {
+    if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1');
+    localStorage.setItem('ensam-lang', 'fr');
+    if (memo) localStorage.setItem('ensam-prevenir-' + uid, JSON.stringify(memo));
+    const now = Math.floor(Date.now() / 1000);
+    localStorage.setItem('sb-127-auth-token', JSON.stringify({ access_token: 'x.' + btoa(JSON.stringify({ sub: uid, exp: now + 7200 })) + '.y', token_type: 'bearer', expires_in: 7200, expires_at: now + 7200, refresh_token: 'r', user: { id: uid, aud: 'authenticated', email: 'membre@exemple.ma', user_metadata: {}, app_metadata: {} } }));
+  }, [UID, memo]);
+  const page = await ctx.newPage(); const erreurs = [];
+  page.on('pageerror', e => erreurs.push(e.message));
+  await page.goto(site.adresse + chemin);
+  await page.waitForSelector('.me-btn', { timeout: 15000 });
+  const memoIci = () => page.evaluate(uid => JSON.parse(localStorage.getItem('ensam-prevenir-' + uid) || '{}'), UID);
+  return { ctx, page, erreurs, site, memoIci };
+}
+
+test('Mon profil : l’abonnement échoue pour de bon (téléphone sans service de notifications) ; la pastille et le bandeau cessent aussitôt de proposer « Activer »', async () => {
+  // « Plus tard » hier : pas de feuille d'ouverture à cette visite
+  const m = await membreEnLigne({ abonnement: 'impossible', memo: { n: 1, at: Date.now() - 864e5 }, chemin: '#accueil' });
+  await m.page.waitForSelector('.push-bandeau[data-etat="off"]', { timeout: 10000 });
+  await m.page.waitForSelector('.pastille[data-sorte="activer"]', { timeout: 10000 });
+  await m.page.evaluate(() => { location.hash = 'profil/notifications'; });
+  await m.page.waitForSelector('#md-push-oui');
+  assert.equal(await m.page.locator('.pastille[data-sorte="activer"]').count(), 1);
+  await m.page.click('#md-push-oui');
+  await m.page.waitForSelector('.toast:has-text("Ce navigateur ne peut pas recevoir de notifications pour l’instant.")');
+  // Tout de suite, sans rechargement ni changement de page : plus de pastille « Activer »
+  await m.page.waitForFunction(() => !document.querySelector('.pastille[data-sorte="activer"]'), null, { timeout: 1500 });
+  assert.equal((await m.memoIci()).sans, 1);
+  assert.ok(await m.page.isVisible('#md-push-oui'), 'Mon profil garde le bouton pour réessayer');
+  // L'accueil : plus de bandeau qui propose « Activer » ; la pastille propose seulement l'installation, sans rien promettre
+  await m.page.evaluate(() => { location.hash = 'accueil'; }); await m.page.waitForTimeout(600);
+  assert.equal(await m.page.locator('.push-bandeau').count(), 0);
+  assert.equal(await m.page.locator('.pastille:not([data-sorte="installer"])').count(), 0);
+  if (await m.page.locator('.pastille').count()) assert.doesNotMatch(await m.page.locator('.pastille').innerText(), /notification/i);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('lien « Active tes notifications » sur un téléphone déjà abonné, tout décoché dans Mon profil : « Cet appareil est prêt », puis les cases', async () => {
+  const m = await membreEnLigne({ profil: { ...MEMBRE, notif_push: TOUT_DECOCHE }, deja: true, chemin: '?notifs=1#reseau' });
+  await m.page.waitForSelector('.modal.choisir', { timeout: 10000 });
+  const t = await m.page.locator('.modal.choisir').innerText();
+  assert.match(t, /Tout est décoché dans «\sMon profil\s»\s: aucune notification ne t’arrive pour l’instant\./);
+  assert.match(t, /Cet appareil est prêt\s: coche ce que tu veux recevoir\./);
+  assert.ok(await m.page.isVisible('#choisir-tard'), '« Plus tard » toujours là');
+  assert.equal(await m.page.locator('.toast:has-text("déjà activées")').count(), 0);
+  await m.page.click('#choisir-profil');
+  await m.page.waitForFunction(() => location.hash === '#profil/notifications');
+  await m.page.waitForSelector('#np-messages');
+  assert.deepEqual(await m.page.$$eval('input[id^="np-"]', xs => xs.filter(x => x.checked).map(x => x.id)), []);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('« Voir en tant que » (démo) : un autre membre sans recharger commence une nouvelle visite ; la ligne montrée au premier ne retire pas sa feuille au second', async () => {
+  const s = await prevenirSur('ios');
+  // L'iPhone dans Safari : la feuille d'ouverture a déjà fait ses deux passages pour l'un et l'autre
+  for (const nom of ['Youssef', 'Amine']) {
+    const id = s.profils.find(x => x[1].includes(nom))[0];
+    await s.page.evaluate(id => localStorage.setItem('ensam-prevenir-' + id, JSON.stringify({ ios: { n: 2, at: Date.now() } })), id);
+  }
+  await s.comme('Youssef');
+  await ecrireA(s, 'u-0006', 'Bonjour Rania, tu cherches toujours un stage pour cet été ?');
+  await s.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+  // Amine, dans le même onglet : sa demande de mentorat a sa feuille
+  await s.aller('accueil'); await s.comme('Amine');
+  await s.mentorat('Choisir mon stage de 3A');
+  await s.page.waitForSelector('.modal.prevenir', { timeout: 5000 });
+  assert.equal(await s.page.locator('.prevenir .ios-steps li').count(), 3);
+  assert.match(await s.page.locator('.prevenir .verify-ok').innerText(), /Horaires envoyés à Youssef\./);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
 });
