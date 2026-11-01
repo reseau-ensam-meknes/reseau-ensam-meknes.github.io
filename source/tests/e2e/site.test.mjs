@@ -1331,6 +1331,8 @@ test('Mon profil : activer ou couper les notifications ici est une réponse, plu
   assert.match(await s.page.locator('.toast').last().innerText(), /Sur la vraie plateforme/);
   // Activées : dit calmement, avec de quoi les couper ; le clavier reste dans la carte
   assert.match(await s.page.locator('#md-push-ok').innerText(), /Activées sur cet appareil/);
+  // Un téléphone ne sert qu'un compte : il le dit
+  assert.match(await s.page.locator('#md-push-compte').innerText(), /^Ce téléphone reçoit les notifications de ce compte\./);
   assert.equal(await s.page.locator('#md-push-oui').count(), 0);
   assert.equal(await s.page.locator('#md-push-test').count(), 0, 'rien à tester en démo');
   assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'md-push-non');
@@ -1370,7 +1372,7 @@ test('à l’ouverture : un lauréat voit ce qui le concerne ; « Activer » vau
   await s.ctx.close();
 });
 
-test('à l’ouverture : jamais par-dessus une autre feuille ni la bienvenue ; rien sur iPhone hors écran d’accueil, sans notifications ou pour l’admin', async () => {
+test('à l’ouverture : jamais par-dessus une autre feuille ni la bienvenue ; rien sans notifications ; sur iPhone hors écran d’accueil, ses gestes à la place ; l’admin a la sienne', async () => {
   // Une autre fenêtre ouverte : elle attend que l'écran soit calme
   let s = await prevenirSur('off');
   await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
@@ -1393,13 +1395,184 @@ test('à l’ouverture : jamais par-dessus une autre feuille ni la bienvenue ; r
     s = await prevenirSur(etat);
     await rienALouverture(s, etat);
     assert.equal(await s.page.locator('.modal.prevenir').count(), 0, etat);
+    // iPhone dans Safari : pas de bouton « Activer » qui ne marcherait pas, les gestes de l'écran d'accueil à la place
+    assert.equal(await s.page.locator('.modal.ouverture-ios').count(), etat === 'ios' ? 1 : 0, etat);
     await s.ctx.close();
   }
+  // L'administration aussi : ses signalements ne partent que vers un appareil abonné
   s = await prevenirSur('off');
   await s.comme('Admin');
-  await rienALouverture(s, 'pas pour l’admin');
+  await attendreOuverture(s);
+  assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['admin', 'messages']);
+  assert.match(await s.page.locator(ouverture).innerText(), /Les signalements à traiter/);
+  await s.page.click('#ouv-oui'); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator(ouverture).count(), 0);
+  const admin = await s.page.$eval('#persona', e => e.value);
+  assert.equal(await s.page.evaluate(id => JSON.parse(localStorage.getItem('ensam-prevenir-' + id)).fait, admin), 1);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
+});
+
+test('à l’ouverture sur iPhone dans Safari : les gestes pour l’écran d’accueil puis « Activer » ; une fois, puis une seule autre fois 14 jours après', async () => {
+  const ios = '.modal.ouverture-ios';
+  const s = await prevenirSur('ios');
+  const rienIos = async msg => { await s.page.waitForTimeout(4500); assert.equal(await s.page.locator(ios).count(), 0, msg); };
+  assert.equal(await s.page.locator(ios).count(), 0, 'pas tout de suite');
+  await s.page.waitForSelector(ios, { timeout: 8000 });
+  const t = await s.page.locator(ios).innerText();
+  assert.match(t, /Reçois l’essentiel sur ton iPhone/);
+  assert.match(t, /les notifications n’arrivent que dans l’application ajoutée à l’écran d’accueil/);
+  assert.match(t, /Dans Safari, touche Partager\s: en bas de l’écran, ou dans le menu •••\./);
+  assert.match(t, /Choisis «\sSur l’écran d’accueil\s», laisse «\sOuvrir en tant qu’app web\s» activé, puis touche «\sAjouter\s»/);
+  assert.match(t, /depuis sa nouvelle icône, connecte-toi une fois, puis touche «\sActiver\s»/);
+  assert.equal(await s.page.locator(`${ios} .ios-steps li`).count(), 3);
+  assert.equal(await s.page.locator(ouverture).count(), 0, 'pas de bouton « Activer » qui ne marcherait pas dans Safari');
+  assert.ok((await s.page.locator('#ios-ok').boundingBox()).height >= 44);
+  assert.equal(await s.debordement(), 0);
+  await s.page.click('#ios-ok'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).ios.n, 1);
+  assert.ok(!(await s.memo()).fait, 'pas une réponse : elle reviendra une fois');
+  await recharger(s); await rienIos('pas à chaque visite');
+  await s.changerMemo('({ ...m, ios: { ...m.ios, at: m.ios.at - 13 * 864e5 } })');
+  await recharger(s); await rienIos('13 jours après : pas encore');
+  await s.changerMemo('({ ...m, ios: { ...m.ios, at: m.ios.at - 864e5 } })');
+  await recharger(s); await s.page.waitForSelector(ios, { timeout: 8000 });
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).ios.n, 2);
+  await s.changerMemo('({ ...m, ios: { ...m.ios, at: m.ios.at - 60 * 864e5 } })');
+  await recharger(s); await rienIos('deux fois au plus');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('lien « Active tes notifications » (?notifs=1) : sa feuille tout de suite, même rangée la veille, sur la page du lien ; lu une fois ; rien pour qui les a coupées', async () => {
+  const s = await prevenirSur('off');
+  const id = await s.page.$eval('#persona', e => e.value);
+  const poser = m => s.page.evaluate(([id, m]) => localStorage.setItem('ensam-prevenir-' + id, JSON.stringify(m)), [id, m]);
+  // « Plus tard » hier : la feuille d'ouverture attendrait encore un jour ; le lien l'ouvre tout de suite
+  await poser({ n: 1, at: Date.now() - 864e5 });
+  await s.page.goto(adresse + '?notifs=1#reseau');
+  await s.page.waitForSelector(ouverture, { timeout: 8000 });
+  assert.equal(await s.page.evaluate(() => location.search + location.hash), '#reseau', 'l’adresse nettoyée, la page gardée');
+  assert.equal((await s.memo()).n, 2, 'comptée comme la feuille d’ouverture');
+  await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
+  // Rechargée : le lien ne rejoue pas
+  await s.page.reload(); await s.page.waitForSelector('#persona');
+  await rienALouverture(s, 'lu une fois');
+  // Le lien de nouveau : la feuille, et « Activer »
+  await s.page.goto(adresse + '?notifs=1'); await s.page.waitForSelector(ouverture, { timeout: 8000 });
+  await s.page.click('#ouv-oui'); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator(ouverture).count(), 0);
+  assert.equal((await s.memo()).fait, 1);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Sur la vraie plateforme/);
+  // Coupées dans Mon profil : le lien ne redemande rien
+  await poser({ fait: 1, coupe: 1 });
+  await s.page.goto(adresse + '?notifs=1'); await s.page.waitForSelector('.hello');
+  await rienALouverture(s, 'coupées par le membre');
+  // Bloquées : les gestes pour les débloquer
+  await s.page.evaluate(() => localStorage.setItem('ensam-prevenir-demo', 'refuse'));
+  await poser({});
+  await s.page.goto(adresse + '?notifs=1'); await s.page.waitForSelector('.modal:has(#debloquer-ok)', { timeout: 8000 });
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+  // iPhone dans Safari : les gestes de l'écran d'accueil, même après ses deux présentations
+  await s.page.evaluate(() => localStorage.setItem('ensam-prevenir-demo', 'ios'));
+  await poser({ ios: { n: 2, at: Date.now() } });
+  await s.page.goto(adresse + '?notifs=1'); await s.page.waitForSelector('.modal.ouverture-ios', { timeout: 8000 });
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('arrivée par l’ancienne adresse (?depuis=ancienne) : une seule feuille avec les gestes de cet appareil, « Activer » quand c’est possible ici', async () => {
+  const s = await prevenirSur('off');
+  await s.page.goto(adresse + '?depuis=ancienne'); await s.page.waitForSelector('.modal.ancienne', { timeout: 8000 });
+  const t = await s.page.locator('.modal.ancienne').innerText();
+  assert.match(t, /Le Réseau ENSAM a une nouvelle adresse/);
+  assert.match(t, /Supprime l’ancienne icône, installe celle-ci, puis active les notifications/);
+  assert.match(t, /Appuie longuement sur l’ancienne icône du Réseau ENSAM/);
+  assert.match(t, /Ici, touche le menu ⋮ du navigateur/);
+  assert.match(t, /sans ce toucher, aucune notification n’arrive/);
+  assert.equal(await s.page.locator('.ancienne .ios-steps li').count(), 3);
+  assert.equal(await s.page.evaluate(() => location.search), '', 'l’adresse nettoyée');
+  assert.equal(await s.debordement(), 0);
+  // « Plus tard » : un refus, comme sur la feuille d'ouverture ; pas de deuxième feuille, même après un rechargement
+  await s.page.click('#anc-tard'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).n, 1);
+  await rienALouverture(s, 'une seule feuille dans la visite');
+  await recharger(s); await rienALouverture(s, 'lu une fois');
+  assert.equal(await s.page.locator('.modal.ancienne').count(), 0);
+  // Le lien de nouveau : « Activer » abonne cet appareil (en démo, un mot)
+  await s.page.goto(adresse + '?depuis=ancienne'); await s.page.waitForSelector('#anc-oui', { timeout: 8000 });
+  await s.page.click('#anc-oui'); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator('.modal.ancienne').count(), 0);
+  assert.equal((await s.memo()).fait, 1);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // iPhone dans Safari : supprimer l'ancienne icône, puis les gestes de Safari ; rien à activer ici
+  const i = await prevenirSur('ios');
+  await i.page.goto(adresse + '?depuis=ancienne'); await i.page.waitForSelector('.modal.ancienne', { timeout: 8000 });
+  assert.equal(await i.page.locator('.ancienne .ios-steps li').count(), 4);
+  assert.match(await i.page.locator('.modal.ancienne').innerText(), /«\sSupprimer l’app\s»/);
+  assert.equal(await i.page.locator('#anc-oui').count(), 0);
+  await i.page.click('#anc-ok'); await i.page.waitForTimeout(4500);
+  assert.equal(await i.page.locator('.modal.ouverture-ios').count(), 0, 'pas de deuxième feuille dans la visite');
+  assert.equal((await i.memo()).ios.n, 1, 'comptée comme la feuille de l’iPhone');
+  assert.deepEqual(i.erreurs, []);
+  await i.ctx.close();
+});
+
+// Le navigateur intégré d'une application : un lien ouvert dans Instagram (Android, puis iPhone)
+const INSTAGRAM = 'Mozilla/5.0 (Linux; Android 14; SM-A546B Build/UP1A.231005.007; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/141.0.0.0 Mobile Safari/537.36 Instagram 350.0.0.42.81 Android (34/14; 450dpi; 1080x2340; samsung; SM-A546B; a54x; s5e8835; fr_FR; 645432123)';
+const INSTAGRAM_IOS = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 350.0.0.32.81 (iPhone15,3; iOS 18_5; fr_FR; fr; scale=3.00; 1290x2796; 645432123)';
+
+test('navigateur d’une application (Instagram) : « Ouvrir dans Chrome » à l’ouverture une fois par visite, dans le bandeau, la pastille et Mon profil ; ni « Activer » ni « Installer »', async () => {
+  const s = await ouvrir({ largeur: 360, ua: INSTAGRAM });
+  await s.page.setViewportSize({ width: 360, height: 640 });
+  await s.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  const t = await s.page.locator('.modal.appli').innerText();
+  assert.match(t, /Ouvre le Réseau ENSAM dans Chrome/);
+  assert.match(t, /Ce lien s’est ouvert dans Instagram\s: ici, les notifications ne peuvent pas arriver\./);
+  // Le lien rouvre la même page dans Chrome (sinon la même adresse), avec la feuille d'activation en arrivant
+  assert.match(await s.page.getAttribute('#appli-chrome', 'href'), /^intent:\/\/127\.0\.0\.1:\d+\/\?notifs=1#Intent;scheme=http;package=com\.android\.chrome;S\.browser_fallback_url=http%3A%2F%2F127\.0\.0\.1%3A\d+%2F%3Fnotifs%3D1;end$/);
+  assert.ok((await s.page.locator('#appli-chrome').boundingBox()).height >= 44);
+  assert.equal(await s.debordement(), 0);
+  // En démo, le lien n'ouvre rien : un mot le dit, et la feuille se range
+  await s.page.click('#appli-chrome'); await s.page.waitForTimeout(400);
+  assert.match(await s.page.locator('.toast').last().innerText(), /rouvre la page dans Chrome/);
+  assert.equal(await s.page.locator('.modal.appli').count(), 0);
+  // Le bandeau de l'accueil et la pastille disent la même chose, avec le même lien
+  await s.page.waitForSelector('.push-bandeau[data-etat="appli"]');
+  assert.match(await s.page.getAttribute('#push-b-oui', 'href'), /^intent:\/\//);
+  await s.page.waitForSelector('.pastille[data-sorte="appli"]');
+  assert.match(await s.page.locator('.pastille').innerText(), /Ouvrir dans Chrome/);
+  assert.match(await s.page.getAttribute('#pastille-go', 'href'), /^intent:\/\//);
+  // Une fois par visite : rechargée, pas de deuxième feuille
+  await recharger(s); await s.page.waitForTimeout(4500);
+  assert.equal(await s.page.locator('.modal.appli').count(), 0);
+  // Mon profil : la phrase et le lien, qui garde la page (?r=)
+  await s.aller('profil/notifications'); await s.page.waitForSelector('#md-push-chrome');
+  assert.match(await s.page.getAttribute('#md-push-chrome', 'href'), /\?r=profil%2Fnotifications&notifs=1#Intent;/);
+  assert.equal(await s.page.locator('#md-push-oui').count(), 0, 'pas de « Activer » qui ne marcherait pas ici');
+  assert.equal(await s.page.locator('.pastille[data-sorte="installer"]').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // iPhone : les gestes pour passer dans Safari, puis à l'écran d'accueil
+  const i = await ouvrir({ largeur: 390, ua: INSTAGRAM_IOS });
+  await i.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  assert.match(await i.page.locator('.modal.appli').innerText(), /Ouvre le Réseau ENSAM dans Safari/);
+  assert.equal(await i.page.locator('.appli .ios-steps li').count(), 3);
+  await i.page.click('#appli-ok'); await i.page.waitForTimeout(300);
+  await i.page.waitForSelector('.pastille[data-sorte="appli"]');
+  assert.match(await i.page.locator('.pastille').innerText(), /Ouvrir dans Safari/);
+  await i.page.click('#pastille-go'); await i.page.waitForSelector('.modal.appli');
+  assert.deepEqual(i.erreurs, []);
+  await i.ctx.close();
+  // En arabe : rien d'oublié, seuls les noms restent en lettres latines
+  const a = await ouvrir({ largeur: 360, ua: INSTAGRAM, langue: 'ar' });
+  await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  assert.deepEqual((await a.page.locator('.modal.appli').innerText()).match(/[A-Za-zÀ-ÿ]{2,}/g)?.filter(x => !['ENSAM', 'Chrome', 'Instagram'].includes(x)) || [], []);
+  assert.equal(await a.debordement(), 0);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
 });
 
 test('à l’ouverture : « Plus tard » puis une fête dans la même visite, le refus reste compté', async () => {
@@ -5063,29 +5236,20 @@ test('offres portées et partagées en arabe : le badge, la section et « مشا
   await s.ctx.close();
 });
 
-test('la pastille : « Installer l’application » d’abord, puis « Activer les notifications » ; × la range 3 jours ; en arabe sans texte oublié', async () => {
+test('la pastille : « Activer les notifications » d’abord (installer ne suffit pas), puis « Installer l’application » ; sur iPhone, l’installation d’abord ; × la range 3 jours ; en arabe sans texte oublié', async () => {
   const s = await prevenirSur(null);
   await s.page.waitForTimeout(2600);
   assert.equal(await s.page.locator('.pastille').count(), 0, 'démo ordinaire : rien à installer ni à activer');
   await s.page.evaluate(() => { localStorage.setItem('ensam-install-demo', 'android'); localStorage.setItem('ensam-prevenir-demo', 'off'); });
   await recharger(s);
   await s.page.locator('#ouv-tard').click({ timeout: 6000 }).catch(() => {});
-  await s.page.waitForSelector('.pastille[data-sorte="installer"]');
+  // Android : les notifications d'abord, l'installation attend
+  await s.page.waitForSelector('.pastille[data-sorte="activer"]');
   // Au-dessus de la barre du bas, sans rien déborder
   const [p, nav] = await Promise.all(['.pastille', '.bottom-nav'].map(x => s.page.locator(x).boundingBox()));
   assert.ok(p.y + p.height <= nav.y, 'la pastille ne couvre pas la barre du bas');
   assert.ok((await s.page.locator('#pastille-go').boundingBox()).height >= 44);
   assert.equal(await s.debordement(), 0);
-  // Android sans proposition du navigateur : les gestes à faire
-  await s.page.click('#pastille-go');
-  await s.page.waitForSelector('.modal:has-text("Touche le menu ⋮")');
-  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
-  // Le navigateur propose l'installation : un toucher, puis la pastille passe aux notifications
-  await s.page.evaluate(() => localStorage.setItem('ensam-install-demo', 'prompt'));
-  await recharger(s);
-  await s.page.locator('#ouv-tard').click({ timeout: 6000 }).catch(() => {});
-  await s.page.click('.pastille[data-sorte="installer"] #pastille-go');
-  await s.page.waitForSelector('.pastille[data-sorte="activer"]');
   // On écrit : elle se range, puis revient
   await s.aller('offres'); await s.page.waitForTimeout(300);
   const champ = s.page.locator('input[type="search"], input[type="text"]').first();
@@ -5099,12 +5263,26 @@ test('la pastille : « Installer l’application » d’abord, puis « Activer l
   await s.aller('messages'); await s.page.waitForTimeout(300);
   assert.equal(await s.page.locator('.pastille').count(), 0, 'pas dans les messages');
   await s.aller('accueil'); await s.page.waitForSelector('.pastille');
-  await s.page.click('#pastille-go'); await s.page.waitForTimeout(400);
-  assert.equal(await s.page.locator('.pastille').count(), 0, 'activées : plus de pastille');
-  // × : rangée 3 jours, même après rechargement
-  await s.page.evaluate(() => localStorage.setItem('ensam-install-demo', 'ios'));
+  // Activées : la pastille passe à l'installation
+  await s.page.click('#pastille-go');
+  await s.page.waitForSelector('.pastille[data-sorte="installer"]');
+  assert.match(await s.page.locator('.pastille').innerText(), /Une icône sur ton écran d’accueil/);
+  // Android sans proposition du navigateur : les gestes à faire, « Activer » compris
+  await s.page.click('#pastille-go');
+  await s.page.waitForSelector('.modal:has-text("Touche le menu ⋮")');
+  assert.match(await s.page.locator('.modal.installer').innerText(), /puis touche «\sActiver les notifications\s» si ce n’est pas déjà fait/);
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+  // Le navigateur propose l'installation : un toucher, et plus de pastille
+  await s.page.evaluate(() => { localStorage.setItem('ensam-install-demo', 'prompt'); localStorage.removeItem('ensam-prevenir-demo'); });
+  await recharger(s);
+  await s.page.click('.pastille[data-sorte="installer"] #pastille-go');
+  await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator('.pastille').count(), 0, 'activées et installée : plus de pastille');
+  // iPhone dans Safari : l'installation d'abord, seul chemin vers les notifications ; × la range 3 jours, même après rechargement
+  await s.page.evaluate(() => { localStorage.setItem('ensam-install-demo', 'ios'); localStorage.setItem('ensam-prevenir-demo', 'off'); });
   await recharger(s);
   await s.page.waitForSelector('.pastille[data-sorte="installer"]', { timeout: 8000 });
+  assert.match(await s.page.locator('.pastille').innerText(), /Pour recevoir tes notifications sur iPhone/);
   await s.page.locator('#ouv-tard').click({ timeout: 1000 }).catch(() => {});
   await s.page.click('#pastille-go');
   await s.page.waitForSelector('.modal:has-text("Dans Safari")');
@@ -5136,8 +5314,11 @@ test('la pastille « Notifications bloquées » : les gestes de cet appareil, en
     await s.page.click('#pastille-go');
     await s.page.waitForSelector('.modal .ios-steps');
     const t = await s.page.locator('.modal').innerText();
-    if (langue === 'fr') assert.match(t, /cadenas à gauche de l’adresse/);
-    else assert.deepEqual(t.match(/[A-Za-zÀ-ÿ]{2,}/g)?.filter(x => !['ENSAM', 'iPhone'].includes(x)) || [], []);
+    // Chrome sur Android : un cadenas ou l'icône des réglages ; et si le téléphone lui-même bloque Chrome, une ligne de plus
+    if (langue === 'fr') {
+      assert.match(t, /Touche l’icône à gauche de l’adresse \(cadenas ou réglages\)\./);
+      assert.match(await s.page.locator('#debloquer-plus').innerText(), /^Toujours rien\s\? Réglages du téléphone › Applications › Chrome › Notifications\s: autorise-les\.$/);
+    } else assert.deepEqual(t.match(/[A-Za-zÀ-ÿ]{2,}/g)?.filter(x => !['ENSAM', 'iPhone', 'Chrome'].includes(x)) || [], []);
     assert.equal(await s.debordement(), 0);
     assert.deepEqual(s.erreurs, []);
     await s.ctx.close();
