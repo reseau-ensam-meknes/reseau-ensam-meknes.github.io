@@ -41,6 +41,9 @@ test('chaque type de notification existe en français et en arabe', () => {
       assert.ok(n, `${kind} ${langue}`);
       assert.equal(n.url, SITE + '#' + ROUTES[kind], kind);
       assert.equal(n.tag, kind);
+      // Envoyée depuis la file (identifiant de sa ligne) : une notification par événement, la suivante ne la remplace pas ;
+      // l'essai remplace le précédent
+      assert.equal(N.texteNotif(kind, data, langue, SITE, 7).tag, kind === 'test' ? 'test' : `${kind}-7`, kind);
       assert.ok(n.title.length > 3 && n.body.length > 3, kind);
       assert.doesNotMatch(n.title + n.body, /undefined|null|NaN|\$\{/, kind);
       if (langue === 'ar') assert.match(n.title + n.body, /[؀-ۿ]/, kind + ' en arabe');
