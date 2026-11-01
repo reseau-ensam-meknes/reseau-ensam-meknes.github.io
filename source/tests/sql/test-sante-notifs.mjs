@@ -106,7 +106,7 @@ test('Match : chaque côté sans téléphone est noté (-1), l’intérêt aussi
   await db.query('delete from public.push_queue');
 });
 
-test('push_resultats : accepté remet à zéro ; 404, 410 ou 3 refus définitifs d’affilée retirent l’abonnement et notent son adresse ; 413 ne compte pas', async () => {
+test('push_resultats : accepté remet à zéro ; 404, 410, ou 3 refus définitifs d’affilée quand le service accepte un autre téléphone, retirent l’abonnement et notent son adresse ; 413 ne compte pas', async () => {
   const ep = n => `https://fcm.googleapis.com/fcm/send/res-${n}`;
   const ids = {};
   for (const n of ['ok', 'refus', 'parti', 'trop', 'panne', 'perdu', 'repris']) {
@@ -144,6 +144,61 @@ test('push_resultats : accepté remet à zéro ; 404, 410 ou 3 refus définitifs
   // Réservé à la fonction (clé de service)
   await assert.rejects(q(RES, `select public.push_resultats('[]'::jsonb)`), /permission denied/);
   await db.query('delete from public.push_subscriptions where user_id = $1', [RES]);
+});
+
+test('push_resultats : trois refus d’affilée sans qu’un autre téléphone du même service accepte depuis le premier : gardés, dit une fois chacun ; la preuve venue plus tard retire au refus suivant', async () => {
+  // Windows ici : aucun autre téléphone de ce service dans la base
+  const ep = n => `https://wns2-par02p.notify.windows.com/w/?token=preuve-${n}`;
+  const abo = async (u, n) => (await db.query(`insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values ($1, $2, 'k', 'a') returning id`, [u, ep(n)])).rows[0].id;
+  const W1 = await abo(RES, 'w1'), W2 = await abo(ETU3, 'w2'), W3 = await abo(LAU2, 'w3'), W4 = await abo(ETU2, 'w4');
+  const F = (await db.query(`insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values ($1, 'https://fcm.googleapis.com/fcm/send/preuve-f', 'k', 'a') returning id`, [ETU2])).rows[0].id;
+  const tour = async l => {
+    const notes = [];
+    const r = await db.query('select public.push_resultats($1::jsonb) r', [JSON.stringify(l)], { onNotice: n => notes.push(n) });
+    return { retires: r.rows[0].r, w: notes.filter(n => n.severity === 'WARNING').map(n => n.message) };
+  };
+  const refus = id => ({ id, code: 403, recu: false, refus: true }), accepte = id => ({ id, code: 201, recu: true, refus: false });
+  const etat = async id => (await db.query('select refus, refus_depuis from public.push_subscriptions where id = $1', [id])).rows[0];
+  const morts = async () => (await db.query(`select endpoint from public.push_morts where endpoint like '%preuve-%' order by endpoint`)).rows.map(r => r.endpoint);
+  // La clé de la plateforme ne va plus : chaque tour n'a qu'un téléphone (un message, une candidature), tous refusent.
+  // Un autre service qui accepte (FCM) ne prouve rien pour Windows.
+  const avert = [];
+  for (let n = 0; n < 3; n++) {
+    for (const id of [W1, W2, W3]) {
+      const r = await tour([refus(id)]);
+      assert.deepEqual(r.retires, [], 'personne n’est retiré');
+      avert.push(...r.w);
+      if (n === 0 && id === W1) await tour([accepte(F)]);
+    }
+  }
+  for (const id of [W1, W2, W3]) assert.equal((await etat(id)).refus, 3);
+  assert.equal(avert.length, 3, 'dit une fois par téléphone, à son troisième refus');
+  for (const w of avert) assert.match(w, /^push_resultats : des téléphones refusent trois fois de suite et aucun autre du même service n'accepte \(windows\) : gardés/);
+  assert.deepEqual(await tour([refus(W1)]), { retires: [], w: [] }, 'un quatrième refus : gardé, et rien de redit');
+  assert.deepEqual(await morts(), []);
+  // Windows accepte maintenant un autre téléphone : c'était bien W1 et W2 qu'il refusait ; retirés à leur refus suivant
+  assert.deepEqual(await tour([accepte(W4)]), { retires: [], w: [] });
+  assert.deepEqual(await tour([refus(W1)]), { retires: [W1], w: [] });
+  assert.deepEqual(await tour([refus(W2), accepte(W4)]), { retires: [W2], w: [] }, 'la preuve peut venir du même tour');
+  assert.deepEqual(await morts(), [ep('w1'), ep('w2')]);
+  // Un envoi accepté arrête la série : la preuve d'avant ne compte pas pour la suivante
+  await tour([accepte(W3)]);
+  assert.deepEqual(await etat(W3), { refus: 0, refus_depuis: null });
+  const r1 = await tour([refus(W3)]);
+  const debut = (await etat(W3)).refus_depuis;
+  assert.ok(debut, 'le premier refus de la série est daté'); assert.deepEqual(r1, { retires: [], w: [] });
+  await tour([refus(W3)]);
+  assert.equal((await etat(W3)).refus_depuis.getTime(), debut.getTime(), 'le début de la série ne bouge plus');
+  const r3 = await tour([refus(W3)]);
+  assert.deepEqual(r3.retires, [], 'W4 a accepté avant cette série : rien de prouvé');
+  assert.equal(r3.w.length, 1);
+  // Un abonnement en refus d'avant cette colonne (refus_depuis vide) : son dernier refus sert de début
+  const W5 = await abo(SANS, 'w5');
+  await db.query(`update public.push_subscriptions set refus = 2, refus_at = now() - interval '2 days', refus_depuis = null where id = $1`, [W5]);
+  await tour([accepte(W4)]);
+  assert.deepEqual(await tour([refus(W5)]), { retires: [W5], w: [] });
+  assert.deepEqual(await morts(), [ep('w1'), ep('w2'), ep('w5')]);
+  await db.query(`delete from public.push_subscriptions where endpoint like '%preuve-%'`);
 });
 
 test('push_rendues : une notification prise mais pas essayée revient tout de suite dans la file, sans essai compté', async () => {

@@ -1041,11 +1041,13 @@ create table if not exists public.push_subscriptions (
 );
 create index if not exists push_subscriptions_user_idx on public.push_subscriptions (user_id);
 -- La santé de chaque abonnement, tenue par la fonction « notifier » (push_resultats, plus bas) : la dernière réponse de son
--- service de push et quand, et ses refus définitifs d'affilée (400, 401, 403 ; un envoi accepté remet le compte à zéro)
+-- service de push et quand, et ses refus définitifs d'affilée (400, 401, 403 ; un envoi accepté remet le compte à zéro) :
+-- combien, le dernier (refus_at) et le premier de la série (refus_depuis)
 alter table public.push_subscriptions add column if not exists dernier_code int;
 alter table public.push_subscriptions add column if not exists dernier_envoi_at timestamptz;
 alter table public.push_subscriptions add column if not exists refus int not null default 0;
 alter table public.push_subscriptions add column if not exists refus_at timestamptz;
+alter table public.push_subscriptions add column if not exists refus_depuis timestamptz;
 
 create table if not exists public.push_queue (
   id bigint generated always as identity primary key,
@@ -1253,22 +1255,35 @@ revoke all on function public.push_faits(bigint[]) from public, anon, authentica
 
 -- Après chaque tour d'envoi, la fonction dit ce que chaque téléphone a répondu : p = [{ id, code, recu, refus }]
 -- (code : sa dernière réponse ; recu : au moins une notification acceptée ; refus : un refus définitif 400, 401 ou 403,
--- sans rien d'accepté). Accepté : le compte des refus repart de zéro. Téléphone parti (404, 410) ou troisième refus
--- définitif d'affilée : l'abonnement est retiré et son adresse notée (push_morts). Rend les abonnements retirés.
--- 413 (notification trop longue) n'est pas la faute de l'abonnement : rien n'est compté.
+-- sans rien d'accepté ; « Tester » n'en envoie jamais). Accepté : la série de refus s'arrête. Rend les abonnements retirés.
+--   · Téléphone parti (404, 410) : l'abonnement est retiré et son adresse notée (push_morts).
+--   · Troisième refus définitif d'affilée : retiré et noté seulement si le même service de push (service_push) a accepté
+--     un envoi vers un autre abonnement depuis le premier refus de la série : c'est bien ce téléphone qu'il refuse (par
+--     exemple un abonnement fait avec une ancienne clé). Sinon, la plateforme est sans doute en cause (clé VAPID,
+--     signature) : rien n'est retiré, tout repart quand elle est réparée, et Logs > Postgres le dit, une fois.
+--   · 413 (notification trop longue) n'est pas la faute de l'abonnement : rien n'est compté.
+-- La preuve se lit sur plusieurs tours, pas dans un seul : un message ou une candidature part seul dans son tour.
 create or replace function public.push_resultats(p jsonb) returns uuid[]
 language plpgsql security definer set search_path = public as $$
-declare v_l jsonb := case when jsonb_typeof(p) = 'array' then p else '[]'::jsonb end; v uuid[];
+declare v_l jsonb := case when jsonb_typeof(p) = 'array' then p else '[]'::jsonb end; v uuid[]; v_gardes text;
 begin
   update public.push_subscriptions s set dernier_code = r.code, dernier_envoi_at = now(),
       refus = case when coalesce(r.recu, false) then 0 when coalesce(r.refus, false) then s.refus + 1 else s.refus end,
+      refus_depuis = case when coalesce(r.recu, false) then null
+        when coalesce(r.refus, false) then case when s.refus = 0 then now() else coalesce(s.refus_depuis, s.refus_at, now()) end
+        else s.refus_depuis end,
       refus_at = case when coalesce(r.refus, false) and not coalesce(r.recu, false) then now() else s.refus_at end
     from jsonb_to_recordset(v_l) as r(id uuid, code int, recu boolean, refus boolean)
     where s.id = r.id;
-  with morts as (
-    select distinct s.id, s.endpoint from public.push_subscriptions s
+  with lus as (
+    select distinct on (s.id) s.id, s.endpoint, s.refus, s.refus_depuis, r.code from public.push_subscriptions s
       join jsonb_to_recordset(v_l) as r(id uuid, code int, recu boolean, refus boolean) on r.id = s.id
-    where r.code in (404, 410) or s.refus >= 3
+  ), morts as (
+    select l.id, l.endpoint from lus l
+    where l.code in (404, 410)
+       or (l.refus >= 3 and exists (select 1 from public.push_subscriptions o
+         where o.id <> l.id and o.dernier_code between 200 and 299 and o.dernier_envoi_at >= l.refus_depuis
+           and public.service_push(o.endpoint) = public.service_push(l.endpoint)))
   ), notees as (
     insert into public.push_morts (endpoint) select endpoint from morts
       on conflict (endpoint) do update set at = now()
@@ -1276,6 +1291,13 @@ begin
     delete from public.push_subscriptions s using morts m where s.id = m.id returning s.id
   )
   select coalesce(array_agg(id), '{}') into v from retirees;
+  -- Gardés au troisième refus d'affilée, sans qu'aucun autre téléphone du même service accepte : dit une fois
+  select string_agg(distinct public.service_push(s.endpoint), ', ') into v_gardes from public.push_subscriptions s
+    join jsonb_to_recordset(v_l) as r(id uuid, code int, recu boolean, refus boolean) on r.id = s.id
+    where coalesce(r.refus, false) and not coalesce(r.recu, false) and s.refus = 3;
+  if v_gardes is not null then
+    raise warning 'push_resultats : des téléphones refusent trois fois de suite et aucun autre du même service n''accepte (%) : gardés, la clé de la plateforme est sans doute en cause', v_gardes;
+  end if;
   return v;
 end $$;
 revoke all on function public.push_resultats(jsonb) from public, anon, authenticated;
