@@ -110,6 +110,31 @@ test('mes_invites : les camarades arrivés grâce à moi, prénoms seulement, ri
   assert.equal(y.invite_par, null);
 });
 
+test('le membre qui avait invité supprime lui-même son compte : « invité par » se vide, sans lien vers un profil disparu', async () => {
+  const [LAU, INV] = [uid(630), uid(631)];
+  await creerCompte(db, { id: LAU, full_name: 'Rachid Partant', role: 'laureat', filiere: 'Génie Civil', promo: 2013 });
+  const c = await un(LAU, 'select public.mon_code_invitation() x');
+  await inscrire(INV, 'Ihssane Restante', 'etudiant', S + 1, { invite_par: c });
+  assert.equal((await ligne(INV)).invite_par, LAU);
+  // Un membre ne vide pas lui-même « invité par » (ni ne le change)
+  await q(INV, 'update public.profiles set invite_par = null where id = $1', [INV]);
+  assert.equal((await ligne(INV)).invite_par, LAU);
+  await q(LAU, 'select public.supprimer_mon_compte()');
+  assert.equal(await ligne(LAU), undefined);
+  assert.equal((await ligne(INV)).invite_par, null);
+  const orphelins = await db.query('select count(*)::int n from public.profiles p where p.invite_par is not null and not exists (select 1 from public.profiles x where x.id = p.invite_par)');
+  assert.equal(orphelins.rows[0].n, 0);
+});
+
+test('le garde des invitations à postuler (protect_invitation) reste le sien : un lauréat invite sur son offre, un étudiant jamais', async () => {
+  const offre = (await q(NADIA, `insert into public.offers (author_id, type, titre, entreprise, description) values ($1, 'stage', 'Stage qualité', 'OCP', 'Deux mois au service qualité, à Jorf Lasfar.') returning id`, [NADIA]))[0].id;
+  const [inv] = await q(NADIA, `insert into public.invitations (laureat_id, student_id, offer_id, status) values ($1, $2, $3, 'declinee') returning laureat_id, status`, [YOUSSEF, SALMA, offre]);
+  assert.deepEqual([inv.laureat_id, inv.status], [NADIA, 'envoyee'], 'le lauréat de l’offre, invitation envoyée');
+  await assert.rejects(q(SALMA, 'insert into public.invitations (laureat_id, student_id, offer_id) values ($1, $2, $3)', [NADIA, uid(611), offre]), /Seul un lauréat peut inviter/);
+  const t = await db.query(`select g.tgrelid::regclass::text as t, p.proname as f from pg_trigger g join pg_proc p on p.oid = g.tgfoid where g.tgname in ('trg_protect_invitation', 'trg_protect_code_invitation') order by 1`);
+  assert.deepEqual(t.rows, [{ t: 'invitations', f: 'protect_invitation' }, { t: 'profiles', f: 'protect_code_invitation' }]);
+});
+
 const visages = u => un(u, 'select public.visages_publics() x');
 const photosVisiteur = async () => (await anon(`select name from storage.objects order by name`)).map(r => r.name);
 test('visages de la page d’entrée : seulement les lauréats qui ont dit oui, de l’école du visiteur ; la photo seule devient lisible', async () => {

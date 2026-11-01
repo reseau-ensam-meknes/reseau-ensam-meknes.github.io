@@ -5890,13 +5890,18 @@ end $$;
 create unique index if not exists profiles_code_invitation on public.profiles (code_invitation);
 create index if not exists profiles_invite_par on public.profiles (invite_par) where invite_par is not null;
 
-create or replace function public.protect_invitation() returns trigger
+-- Nom propre à ce garde : protect_invitation() est celui des invitations à postuler (plus haut). Une première version de
+-- cette section le remplaçait et posait trg_protect_invitation sur les profils : ce déclencheur-là part.
+drop trigger if exists trg_protect_invitation on public.profiles;
+create or replace function public.protect_code_invitation() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare v_code text; v_par uuid;
 begin
   if tg_op = 'UPDATE' then
     if auth.uid() is null or public.is_admin() then return new; end if;
-    new.invite_par := old.invite_par;
+    -- « invité par » ne bouge pas, sauf quand il se vide parce que le membre qui avait invité a supprimé son compte
+    -- (on delete set null, lancé par sa propre suppression) : le remettre laisserait un lien vers un profil disparu
+    if new.invite_par is not null or exists (select 1 from public.profiles p where p.id = old.invite_par) then new.invite_par := old.invite_par; end if;
     if coalesce(current_setting('ensam.code_invitation', true), '') <> 'on' then new.code_invitation := old.code_invitation; end if;
     return new;
   end if;
@@ -5913,10 +5918,10 @@ begin
   end if;
   return new;
 end $$;
-revoke all on function public.protect_invitation() from public, anon, authenticated;
-drop trigger if exists trg_protect_invitation on public.profiles;
-create trigger trg_protect_invitation before insert or update of code_invitation, invite_par on public.profiles
-  for each row execute function public.protect_invitation();
+revoke all on function public.protect_code_invitation() from public, anon, authenticated;
+drop trigger if exists trg_protect_code_invitation on public.profiles;
+create trigger trg_protect_code_invitation before insert or update of code_invitation, invite_par on public.profiles
+  for each row execute function public.protect_code_invitation();
 
 -- Le code du membre connecté, créé la première fois (lettres et chiffres faciles à lire : ni l, ni o, ni 0, ni 1)
 create or replace function public.mon_code_invitation() returns text
