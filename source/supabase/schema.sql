@@ -1065,7 +1065,8 @@ alter table public.push_queue add column if not exists essais int not null defau
 -- code : la réponse du service de push pour le meilleur des téléphones du membre (201 acceptée), 404 ou 410 téléphone
 -- parti, 400 / 401 / 403 refus définitif, 413 trop longue, 0 / 429 / 5xx service injoignable (nouvel essai) ;
 -- et ce qui n'est jamais parti : -1 aucun téléphone abonné, -2 catégorie coupée par le membre (Mon profil),
--- -3 abandonnée (1 jour ou 3 essais sans succès), -4 jetée par la fonction (type inconnu, rien à dire).
+-- -3 abandonnée après au moins un essai (3 essais, ou un jour, sans succès), -4 jetée par la fonction (type inconnu, rien
+-- à dire), -5 expirée sans avoir jamais été essayée (un jour en file : la fonction ou la tâche de chaque minute en panne).
 -- L'administration n'en lit que des totaux (admin_sante_notifs, section « Santé des notifications », à la fin).
 create table if not exists public.push_journal (
   id bigint generated always as identity primary key,
@@ -5758,7 +5759,8 @@ revoke all on function public.rappels_rdv_envoyes(bigint[]) from public, anon, a
 
 -- Ce qui attend encore : la fonction est rappelée (vrai si elle l'est). Abandonné : une notification de plus d'un jour
 -- (le service de push ne la garderait pas), un rappel dont l'heure est passée, 3 essais sans succès. Une notification
--- abandonnée laisse sa trace au journal (-3) : rien ne disparaît sans qu'on le sache.
+-- abandonnée laisse sa trace au journal : rien ne disparaît sans qu'on le sache. -3 si elle a été essayée (le service du
+-- téléphone ne répondait pas) ; -5 si elle ne l'a jamais été (la fonction ou la tâche de chaque minute ne tournait pas).
 create or replace function public.relancer_push() returns boolean
 language plpgsql security definer set search_path = public as $$
 declare v boolean := false;
@@ -5766,8 +5768,9 @@ begin
   begin
     with abandon as (
       delete from public.push_queue where created_at < now() - interval '1 day' or (essais >= 3 and pris_at < now() - interval '2 minutes')
-      returning user_id, kind)
-    insert into public.push_journal (user_id, kind, code) select user_id, left(kind, 40), -3 from abandon;
+      returning user_id, kind, essais)
+    insert into public.push_journal (user_id, kind, code)
+      select user_id, left(kind, 40), case when essais > 0 then -3 else -5 end from abandon;
   exception when others then
     raise warning 'relancer_push (journal) : %', sqlerrm;
     delete from public.push_queue where created_at < now() - interval '1 day' or (essais >= 3 and pris_at < now() - interval '2 minutes');

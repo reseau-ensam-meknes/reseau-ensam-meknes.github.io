@@ -1,7 +1,9 @@
 // Santé des notifications : rien ne se perd sans trace. Le journal dit pourquoi une notification n'est pas partie
-// (-1 aucun téléphone abonné, -2 catégorie coupée, -3 abandonnée), un abonnement mort est retiré et son adresse notée
-// (push_morts), abonner_push répond « mort » à une adresse morte, les erreurs se lisent (raise warning) sans jamais
-// bloquer le membre, et l'administration lit des totaux seulement (admin_sante_notifs).
+// (-1 aucun téléphone abonné, -2 catégorie coupée, -3 abandonnée après un essai, -5 expirée sans essai), un abonnement
+// mort est retiré et son adresse notée (push_morts) : téléphone parti, ou trois refus d'affilée quand le même service
+// accepte les autres (sinon la plateforme est en cause et personne n'est retiré). abonner_push_etat répond « mort » à une
+// adresse morte (abonner_push reste sans réponse, comme avant), les erreurs se lisent (raise warning) sans jamais bloquer
+// le membre, et l'administration lit des totaux seulement (admin_sante_notifs).
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -77,7 +79,7 @@ test('abonner_push_etat : « ok », puis « mort » pour une adresse refusée po
   await db.query('delete from public.push_subscriptions where user_id = $1', [ETU3]);
 });
 
-test('journal : sans téléphone (-1), catégorie coupée (-2) par pousser et par le filtre de la file, abandonnée (-3)', async () => {
+test('journal : sans téléphone (-1), catégorie coupée (-2) par pousser et par le filtre de la file, abandonnée après un essai (-3), expirée sans essai (-5)', async () => {
   await db.query(`select public.pousser($1, 'reponse', '{}')`, [SANS]);
   assert.deepEqual(await journal(SANS), [{ kind: 'reponse', code: -1 }]);
   await db.query(`select public.pousser($1, 'reponse', '{}')`, [COUPE]);
@@ -87,13 +89,16 @@ test('journal : sans téléphone (-1), catégorie coupée (-2) par pousser et pa
   // Ce qui part n'est noté qu'à son envoi (par la fonction)
   await db.query(`select public.pousser($1, 'reponse', '{}')`, [ETU]);
   assert.deepEqual(await file(ETU), ['reponse']); assert.deepEqual(await journal(ETU), []);
-  // Abandonnée : un jour en file, ou 3 essais sans succès
-  await db.query(`insert into public.push_queue (user_id, kind) values ($1, 'merci'), ($1, 'cafe')`, [ETU]);
+  // Abandonnée : 3 essais sans succès, ou un jour en file après un essai au moins (-3) ; un jour en file sans un seul essai,
+  // la fonction ou la tâche de chaque minute ne tournait pas : expirée (-5), pas la faute du téléphone
+  await db.query(`insert into public.push_queue (user_id, kind) values ($1, 'merci'), ($1, 'cafe'), ($1, 'visite')`, [ETU]);
   await db.query(`update public.push_queue set created_at = now() - interval '25 hours' where user_id = $1 and kind = 'merci'`, [ETU]);
   await db.query(`update public.push_queue set essais = 3, pris_at = now() - interval '3 minutes' where user_id = $1 and kind = 'cafe'`, [ETU]);
+  await db.query(`update public.push_queue set created_at = now() - interval '25 hours', essais = 1 where user_id = $1 and kind = 'visite'`, [ETU]);
   await service('select public.relancer_push()');
   assert.deepEqual(await file(ETU), ['reponse']);
-  assert.deepEqual((await journal(ETU)).sort((a, b) => a.kind.localeCompare(b.kind)), [{ kind: 'cafe', code: -3 }, { kind: 'merci', code: -3 }]);
+  assert.deepEqual((await journal(ETU)).sort((a, b) => a.kind.localeCompare(b.kind)),
+    [{ kind: 'cafe', code: -3 }, { kind: 'merci', code: -5 }, { kind: 'visite', code: -3 }]);
   // Jamais de contenu au journal
   assert.deepEqual((await db.query(`select column_name from information_schema.columns where table_schema = 'public' and table_name = 'push_journal' order by ordinal_position`)).rows
     .map(r => r.column_name), ['id', 'user_id', 'kind', 'code', 'at']);
