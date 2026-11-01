@@ -6375,3 +6375,225 @@ test('accueil : le bandeau dit ce qui empêche les notifications, se range trois
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
+
+// ---------------------------------------------------------------------------
+// Plan · confort : « Moi » derrière l'avatar (le thème en trois choix, plus de bouton en haut), le Réseau en quatre
+// onglets et ses anciennes adresses, les vrais drapeaux du guide de l'étranger, la fiche « Installer l'application »
+// ---------------------------------------------------------------------------
+const IPHONE_SAFARI = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+const lignesMoi = page => page.evaluate(() => [...document.querySelectorAll('.modal.moi .moi-ligne')].filter(b => b.getClientRects().length).map(b => b.querySelector('.grow').textContent.trim()));
+const themesMoi = page => page.locator('.modal.moi .moi-theme button').evaluateAll(bs => bs.map(b => b.getAttribute('aria-pressed')));
+
+for (const [largeur, langue] of [[1280, 'fr'], [390, 'fr'], [1280, 'ar'], [390, 'ar']]) {
+  test(`Moi : plus de bouton du thème en haut ; l’avatar ouvre « Moi », qui choisit Automatique, Clair ou Sombre (${largeur} px, ${langue})`, async () => {
+    const s = await ouvrir({ largeur, langue });
+    await s.comme('Salma');
+    assert.equal(await s.page.locator('.top .theme-btn, .top .ico-moon, .top .ico-sun').count(), 0, 'plus de bouton du thème dans la barre du haut');
+    assert.equal(await s.page.locator('.top .lang-btn').count(), 1, 'la langue reste en haut');
+    await s.page.click('.me-btn'); await s.page.waitForSelector('.modal.moi');
+    assert.equal(await s.page.getAttribute('.me-btn', 'aria-expanded'), 'true');
+    assert.ok(await s.page.evaluate(() => document.querySelector('.modal.moi').contains(document.activeElement)), 'le focus entre dans « Moi »');
+    // Sur ordinateur, un panneau sous l'avatar ; sur téléphone, une feuille qui monte du bas
+    const [m, av] = await Promise.all(['.modal.moi', '.me-btn'].map(x => s.page.locator(x).boundingBox()));
+    if (largeur > 800) assert.ok(m.y < 120 && m.y > av.y && m.width <= 360, `panneau sous l’avatar (${JSON.stringify(m)})`);
+    else assert.ok(Math.abs(m.y + m.height - 844) <= 2 && m.width === largeur, `feuille du bas (${JSON.stringify(m)})`);
+    // Dans l'ordre, sans doublon : qui je suis, mes pages, le thème, l'aide, Confidentialité, puis la démo à réinitialiser
+    const ordre = await s.page.evaluate(() => [...document.querySelectorAll('.modal.moi .modal-body > *')].map(e => e.classList.contains('moi-tete') ? 'moi' : e.classList.contains('moi-theme') ? 'theme' : 'lignes'));
+    assert.deepEqual(ordre, ['moi', 'lignes', 'theme', 'lignes', 'lignes']);
+    assert.match(await s.page.locator('.moi-qui strong').innerText(), /Salma/);
+    const lignes = (await lignesMoi(s.page)).filter(l => !/^(Installer l’application|تثبيت التطبيق)$/.test(l));
+    if (langue === 'fr') assert.deepEqual(lignes, largeur > 800 ? ['Mon profil', 'Comment ça marche ?', 'Ton année dans le réseau', 'Confidentialité', 'Réinitialiser la démo']
+      : ['Mon profil', 'Mon année', 'Mon parcours', 'Comment ça marche ?', 'Ton année dans le réseau', 'Confidentialité', 'Réinitialiser la démo']);
+    assert.equal(new Set(lignes).size, lignes.length, 'aucun doublon');
+    // Le thème : Automatique au départ, puis Sombre, Clair, et retour à l'appareil
+    assert.deepEqual(await themesMoi(s.page), ['true', 'false', 'false']);
+    const choisir = async i => { await s.page.locator('.modal.moi .moi-theme button').nth(i).click(); await s.page.waitForTimeout(150); };
+    await choisir(2);
+    assert.equal(await s.page.getAttribute('html', 'data-theme'), 'dark');
+    assert.deepEqual(await themesMoi(s.page), ['false', 'false', 'true']);
+    assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-theme')), 'dark');
+    assert.equal(await s.page.locator('.modal.moi').count(), 1, '« Moi » reste ouvert : le choix se voit');
+    await choisir(1);
+    assert.equal(await s.page.getAttribute('html', 'data-theme'), 'light');
+    assert.deepEqual(await themesMoi(s.page), ['false', 'true', 'false']);
+    await choisir(0);
+    assert.equal(await s.page.getAttribute('html', 'data-theme'), null);
+    assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-theme')), null);
+    assert.deepEqual(await themesMoi(s.page), ['true', 'false', 'false']);
+    if (langue === 'ar') {
+      assert.deepEqual((await s.page.locator('.modal.moi .moi-theme').innerText()).match(/[A-Za-zÀ-ÿ]{2,}/g) || [], []);
+      assert.deepEqual(await s.page.evaluate(() => [...window.__ensamMissing].filter(t => /^(Moi|Thème|Automatique|Clair|Sombre)$/.test(t))), []);
+    }
+    assert.equal(await s.debordement(), 0);
+    // Échap ferme « Moi » et rend le focus à l'avatar
+    await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+    assert.equal(await s.page.locator('.modal.moi').count(), 0);
+    assert.ok(await s.page.evaluate(() => document.activeElement?.classList.contains('me-btn')), 'le focus revient à l’avatar');
+    assert.equal(await s.page.getAttribute('.me-btn', 'aria-expanded'), 'false');
+    // Le choix est gardé
+    await s.page.click('.me-btn'); await s.page.waitForSelector('.modal.moi');
+    await choisir(2); await s.fermer();
+    await s.page.reload(); await s.page.waitForSelector('.hello');
+    assert.equal(await s.page.getAttribute('html', 'data-theme'), 'dark');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}
+
+test('Réseau : quatre onglets pour l’étudiante et le lauréat ; l’Annuaire choisit Personnes · Entreprises en une rangée (et Classement, Talents pour les lauréats)', async () => {
+  for (const [largeur, langue] of [[390, 'fr'], [1280, 'fr'], [390, 'ar']]) {
+    const s = await ouvrir({ largeur, langue });
+    for (const [nom, vues] of [['Salma', ['annuaire', 'entreprises']], ['Youssef', ['annuaire', 'entreprises', 'classement', 'talents']]]) {
+      await s.comme(nom); await s.aller('reseau/groupes');
+      const onglets = s.page.locator('.reseau-onglets [role="tab"]');
+      assert.equal(await onglets.count(), 4, `${nom} : quatre onglets`);
+      if (langue === 'fr') assert.deepEqual(await onglets.allInnerTexts(), ['Groupes', 'Agenda', 'Entraide', 'Annuaire']);
+      // Les quatre tiennent sur une ligne, sans défiler
+      assert.equal(new Set(await onglets.evaluateAll(bs => bs.map(b => Math.round(b.getBoundingClientRect().top)))).size, 1);
+      assert.ok(await s.page.evaluate(() => { const l = document.querySelector('.reseau-onglets'); return l.scrollWidth <= l.clientWidth + 1; }), `${nom} : rien à faire défiler (${largeur} px, ${langue})`);
+      await onglets.nth(3).click(); await s.page.waitForTimeout(250);
+      assert.equal(await ici(s.page), '#reseau/annuaire');
+      const choix = s.page.locator('.an-vues [role="tab"]');
+      assert.deepEqual(await choix.evaluateAll(bs => bs.map(b => b.id.replace('an-vue-', ''))), vues);
+      assert.equal(new Set(await choix.evaluateAll(bs => bs.map(b => Math.round(b.getBoundingClientRect().top)))).size, 1, 'une seule rangée');
+      assert.equal(await s.page.getAttribute('#an-vue-annuaire', 'aria-selected'), 'true');
+      assert.equal(await s.page.locator('#d-q').count(), 1, 'Personnes : la recherche des membres');
+      if (langue === 'fr') assert.equal(await s.page.locator('#an-vue-annuaire').innerText(), 'Personnes');
+      // Clavier : la flèche passe à Entreprises (dans le sens de lecture)
+      await s.page.focus('#an-vue-annuaire'); await s.page.keyboard.press(langue === 'ar' ? 'ArrowLeft' : 'ArrowRight'); await s.page.waitForTimeout(300);
+      assert.equal(await ici(s.page), '#reseau/entreprises');
+      assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'an-vue-entreprises');
+      assert.ok(await s.page.locator('.ent-row').first().isVisible(), 'Entreprises : la liste');
+      assert.equal(await s.page.locator('.reseau-onglets [aria-selected="true"]').count(), 1);
+      assert.equal(await s.page.locator('.reseau-onglets [role="tab"]').nth(3).getAttribute('aria-selected'), 'true', 'toujours sous l’Annuaire');
+    }
+    assert.equal(await s.debordement(), 0);
+    if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...window.__ensamMissing].filter(t => /^(Personnes|Entreprises|Classement|Talents|Annuaire|Voir sur la carte|Startups créées par des lauréats)$/.test(t))), []);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('Réseau : chaque ancienne adresse (liens WhatsApp, raccourcis) ouvre son contenu, sous l’onglet qui le range ; une rubrique fermée ouvre son onglet', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const onglet = () => s.page.evaluate(() => [...document.querySelectorAll('.reseau-onglets [role="tab"]')].findIndex(b => b.getAttribute('aria-selected') === 'true'));
+  const vue = () => s.page.evaluate(() => document.querySelector('.an-vues [aria-selected="true"]')?.id.replace('an-vue-', '') || null);
+  const GROUPES = 0, AGENDA = 1, ENTRAIDE = 2, ANNUAIRE = 3;
+  const cas = [
+    ['Youssef', 'reseau/entreprises', ANNUAIRE, 'entreprises', '.ent-row'],
+    ['Youssef', 'reseau/annuaire/startups', ANNUAIRE, 'entreprises', '.tcard.startup'],
+    ['Youssef', 'reseau/classement', ANNUAIRE, 'classement', '.annuaire-onglet .seg[aria-label="Classement"]'],
+    ['Youssef', 'reseau/classement/promos', ANNUAIRE, 'classement', '.annuaire-onglet .seg[aria-label="Classement"] [aria-selected="true"]:has-text("Coupe des promos")'],
+    ['Youssef', 'reseau/talents', ANNUAIRE, 'talents', '.annuaire-onglet .sub-page'],
+    ['Youssef', 'reseau/annuaire', ANNUAIRE, 'annuaire', '#d-q'],
+    ['Youssef', 'reseau/annuaire/ma-filiere', ANNUAIRE, 'annuaire', '#d-q'],
+    ['Youssef', 'reseau/annuaire/ma-promo', ANNUAIRE, 'annuaire', '#d-q'],
+    ['Youssef', 'reseau/annuaire/carte', ANNUAIRE, 'annuaire', '.pays-cloud'],
+    ['Salma', 'reseau/etranger', ENTRAIDE, null, '.gp-grid'],
+    ['Salma', 'reseau/etranger/canada', ENTRAIDE, null, 'img.gp-drapeau-tete[src$="drapeaux/ca.svg"]'],
+    ['Salma', 'reseau/entraide', ENTRAIDE, null, '#gp-entree'],
+    ['Salma', 'reseau/agenda', AGENDA, null, '.page'],
+    ['Salma', 'reseau', GROUPES, null, '.page'],
+    // Les raccourcis d'app.js
+    ['Salma', 'entreprises', ANNUAIRE, 'entreprises', '.ent-row'],
+    ['Salma', 'etranger', ENTRAIDE, null, '.gp-grid'],
+    ['Salma', 'entraide', ENTRAIDE, null, '#gp-entree'],
+    ['Salma', 'agenda', AGENDA, null, '.page'],
+    ['Salma', 'groupes', GROUPES, null, '.page'],
+    ['Salma', 'communaute', GROUPES, null, '.page'],
+    // Fermées aux étudiants : l'Annuaire s'ouvre sur ses Personnes, la fin de l'adresse ne compte plus
+    ['Salma', 'reseau/classement', ANNUAIRE, 'annuaire', '#d-q'],
+    ['Salma', 'reseau/classement/promos', ANNUAIRE, 'annuaire', '#d-q'],
+    ['Salma', 'reseau/talents', ANNUAIRE, 'annuaire', '#d-q'],
+  ];
+  let qui = null;
+  for (const [nom, route, o, v, contenu] of cas) {
+    if (nom !== qui) { await s.comme(nom); qui = nom; }
+    await s.aller(route); await s.page.waitForTimeout(150);
+    assert.equal(await onglet(), o, `#${route} : l’onglet`);
+    assert.equal(await vue(), v, `#${route} : le choix de l’Annuaire`);
+    assert.ok(await s.page.locator(contenu).count() > 0, `#${route} : ${contenu}`);
+  }
+  // Le guide de l'étranger : son titre, et le retour vers l'Entraide
+  await s.aller('reseau/etranger');
+  assert.equal(await s.page.locator('.gp-titre h2').innerText(), 'Partir à l’étranger : le guide des lauréats');
+  await s.page.click('button.back:has-text("Entraide")'); await s.page.waitForTimeout(300);
+  assert.equal(await ici(s.page), '#reseau/entraide');
+  await s.page.click('#gp-entree'); await s.page.waitForTimeout(300);
+  assert.equal(await ici(s.page), '#reseau/etranger');
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('guide de l’étranger : les vrais drapeaux des pays connus, petits rectangles arrondis, sans texte de remplacement, le nom du pays à côté (390 px, français et arabe)', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 390, langue });
+    await s.comme('Salma'); await s.aller('reseau/etranger');
+    await s.page.waitForFunction(() => [...document.querySelectorAll('.gp-grid img.drapeau')].every(i => i.complete));
+    const drapeaux = await s.page.$$eval('.gp-grid .gp-ligne', ls => ls.map(l => { const i = l.querySelector('img.drapeau'); return i && { src: i.getAttribute('src'), alt: i.getAttribute('alt'), w: i.naturalWidth, l: i.getBoundingClientRect().width, h: i.getBoundingClientRect().height, rayon: parseFloat(getComputedStyle(i).borderTopLeftRadius), nom: l.innerText.trim().split('\n')[0] }; }));
+    assert.ok(drapeaux.length >= 2, 'des pays dans le guide');
+    for (const d of drapeaux) {
+      assert.ok(d, 'chaque pays connu a son drapeau');
+      assert.match(d.src, /^img\/drapeaux\/[a-z]{2}\.svg$/);
+      assert.equal(d.alt, '', 'décoratif : le nom du pays est écrit à côté');
+      assert.ok(d.w > 0, `${d.src} chargé`);
+      assert.ok(Math.abs(d.l / d.h - 4 / 3) < .1 && d.l <= 32 && d.rayon > 0, `petit rectangle arrondi (${JSON.stringify(d)})`);
+      assert.ok(d.nom.length > 1, 'le nom du pays, visible');
+    }
+    if (langue === 'fr') assert.ok(drapeaux.some(d => d.src.endsWith('/fr.svg')) && drapeaux.some(d => d.src.endsWith('/ca.svg')));
+    // La carte du guide, en tête de l'Entraide : quelques drapeaux, le titre
+    await s.aller('reseau/entraide');
+    assert.ok(await s.page.locator('#gp-entree img.drapeau').count() >= 1);
+    if (langue === 'fr') assert.match(await s.page.locator('#gp-entree').innerText(), /Partir à l’étranger : le guide des lauréats/);
+    // Une question sur un pays porte son drapeau
+    assert.ok(await s.page.locator('.qrow img.drapeau').count() >= 1, 'le pays d’une question');
+    // La page d'un pays : son drapeau en grand
+    await s.aller('reseau/etranger/canada');
+    await s.page.waitForSelector('img.gp-drapeau-tete');
+    assert.ok(await s.page.evaluate(() => document.querySelector('img.gp-drapeau-tete').naturalWidth > 0));
+    if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...window.__ensamMissing].filter(t => /étranger|Entraide|pays|lauréats sur place/i.test(t))), []);
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+for (const [ua, android] of [[IPHONE_SAFARI, false], [TELEPHONE, true]]) {
+  test(`Installer l’application (${android ? 'Android' : 'iPhone'}) : depuis « Moi », trois gestes dessinés, l’accueil dans un téléphone, rien qui dépasse à 390 px (français et arabe)`, async () => {
+    for (const langue of ['fr', 'ar']) {
+      const s = await ouvrir({ largeur: 390, langue, ua });
+      await s.comme('Salma');
+      await s.page.click('.me-btn'); await s.page.waitForSelector('.modal.moi');
+      await s.page.locator('.modal.moi .moi-ligne:has(.ico-download)').click();
+      await s.page.waitForSelector('.modal.installer');
+      assert.equal(await s.page.locator('.modal.moi').count(), 0, '« Moi » laisse la place');
+      const fiche = s.page.locator('.modal.installer');
+      assert.equal(await fiche.locator('.ins-etapes li').count(), 3);
+      assert.equal(await fiche.locator('.ins-etapes li .ins-svg').count(), 3, 'un dessin par geste');
+      assert.deepEqual(await fiche.locator('.ins-n').allInnerTexts(), ['1', '2', '3']);
+      await s.page.waitForFunction(() => document.querySelector('.ins-tel img')?.complete);
+      assert.ok(await s.page.evaluate(() => document.querySelector('.ins-tel img').naturalWidth > 0), 'l’accueil dans le téléphone');
+      assert.match(await s.page.getAttribute('.ins-tel img', 'src'), new RegExp(`accueil-${langue}\\.jpg$`));
+      const t = await fiche.innerText();
+      if (langue === 'fr') {
+        assert.equal(await fiche.locator('.modal-head h2').innerText(), 'Installer l’application');
+        if (android) { assert.match(t, /Touche le menu ⋮/); assert.match(t, /Installer l’application/); assert.match(t, /Confirme en touchant «\sInstaller\s»/); assert.match(t, /Activer les notifications/); }
+        else { assert.match(t, /Dans Safari, touche Partager/); assert.match(t, /Choisis «\sSur l’écran d’accueil\s»/); assert.match(t, /puis touche «\sAjouter\s»/); assert.match(t, /Trois gestes/); }
+      } else {
+        assert.deepEqual(t.match(/[A-Za-zÀ-ÿ]{2,}/g)?.filter(x => !['ENSAM', 'iPhone', 'Safari'].includes(x)) || [], [], 'rien d’oublié en français');
+        assert.match(await s.page.evaluate(() => getComputedStyle(document.querySelector('.ins-svg')).transform), /^matrix\(-1/, 'les dessins en miroir');
+      }
+      // Moins de mouvement demandé : l'anneau ne bat pas
+      assert.equal(await s.page.evaluate(() => getComputedStyle(document.querySelector('.ins-svg .m-anneau')).animationName), 'none');
+      // Rien ne dépasse, ni la page ni la fiche
+      assert.equal(await s.debordement(), 0);
+      assert.deepEqual(await s.page.evaluate(() => [...document.querySelectorAll('.modal.installer *')].filter(e => { const r = e.getBoundingClientRect(); return r.width && (r.right > innerWidth + 1 || r.left < -1); }).map(e => e.className.baseVal ?? e.className)), []);
+      assert.ok(await s.page.evaluate(() => { const m = document.querySelector('.modal.installer'); return m.scrollWidth <= m.clientWidth; }));
+      await s.fermer();
+      assert.equal(await s.page.locator('.modal.installer').count(), 0);
+      assert.deepEqual(s.erreurs, []);
+      await s.ctx.close();
+    }
+  });
+}

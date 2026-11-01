@@ -6,7 +6,7 @@ Le site publié à la racine du dépôt (https://reseau-ensam-meknes.github.io/)
 - `supabase/schema.sql` : la base (tables, règles de sécurité, tâches planifiées). `build.sh` en tire `supabase/mise-a-jour.sql`, à lancer dans Supabase > SQL Editor.
 - `supabase/functions/notifier/` : emails et notifications (Edge Function « notifier »).
 - `supabase/emails-auth/` : les 6 emails de compte (français + arabe).
-- `outils/` : préchargement et cache hors ligne (`precharger.mjs`), logos.
+- `outils/` : préchargement et cache hors ligne (`precharger.mjs`), logos, écrans de démarrage de l'iPhone et captures de l'application installable (`generer-demarrage.mjs`, après `sh build.sh`).
 - `tests/` : tests automatiques, lancés par GitHub à chaque changement (`.github/workflows/tests.yml`).
 
 ## Construire
