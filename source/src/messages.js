@@ -146,12 +146,21 @@ const BRISE_GLACE = {
 
 // Réponses rapides : au début d'une conversation (l'autre a écrit, pas encore moi) ou quand une question attend.
 // Une puce remplit le champ (dans la langue de l'écran) ; rien ne part tout seul.
+// visio : « On en parle en visio ? » se propose entre membres, pas avec l'équipe du réseau (son mot de bienvenue n'appelle pas d'appel)
 const RAPIDES = ['Merci !', 'Je regarde et je reviens vers toi', 'On en parle en visio ?'];
-export function reponsesRapides(fil, moi, autre) {
+export function reponsesRapides(fil, moi, autre, { visio = true } = {}) {
   const dernier = fil[fil.length - 1];
   if (!dernier || dernier.author_id !== autre || dernier.type === 'rdv') return null;
   const question = dernier.type === 'texte' && /[?؟]\s*$/.test(dernier.body || '');
-  return question || !fil.some(m => m.author_id === moi) ? RAPIDES : null;
+  return question || !fil.some(m => m.author_id === moi) ? (visio ? RAPIDES : RAPIDES.slice(0, 2)) : null;
+}
+
+// Le sens d'un texte, celui de sa première lettre (comme dir="auto") : un message en français dans l'écran arabe
+// s'aligne à gauche avec son heure à droite, un message en arabe dans l'écran français à droite. null : rien à lire.
+const LETTRE = /([\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF])|[A-Za-z\u00C0-\u02B8\u0370-\u058F\u0900-\u1FFF]/;
+export function sensTexte(s) {
+  const x = LETTRE.exec(String(s || ''));
+  return x ? (x[1] ? 'rtl' : 'ltr') : null;
 }
 
 function Conversation({ ctx, autre }) {
@@ -261,7 +270,7 @@ function Conversation({ ctx, autre }) {
   const rdv = lien?.type === 'mentorat' && mentorState(lien.m) === 'rdv' && lien.m.rdv_at ? lien.m : null;
   const lienVisio = rdv && store.byId('liens_rdv', rdv.id)?.lien;
   const brise = BRISE_GLACE[me.role] || BRISE_GLACE.etudiant;
-  const rapides = actif ? reponsesRapides(fil, me.id, autre) : null;
+  const rapides = actif ? reponsesRapides(fil, me.id, autre, { visio: me.role !== 'admin' && p?.role !== 'admin' }) : null;
   // « Vu » : seulement si l'autre a vraiment lu mon dernier message (la date existe), sous ce message
   const dernierMsg = tous[tous.length - 1];
   const vu = dernierMsg && dernierMsg.author_id === me.id && !dernierMsg.etat && dernierMsg.lu_at ? dernierMsg.lu_at : null;
@@ -544,9 +553,11 @@ function Bulle({ ctx, m, mine, suite, neuf, sel, onSel, onVoir, onCopier, onSupp
   // Une pastille par emoji (deux personnes au plus dans une conversation)
   const pastilles = [];
   for (const r of reactions) { const x = pastilles.find(p => p.emoji === r.emoji); if (x) x.qui.push(r.user_id); else pastilles.push({ emoji: r.emoji, qui: [r.user_id] }); }
+  // Le texte s'aligne dans son propre sens, l'heure à sa fin ; la bulle, elle, reste du côté de son auteur
+  const sens = m.body && m.type !== 'vocal' && m.type !== 'rdv' ? sensTexte(m.body) : null;
   return html`<div id=${'msg-' + m.id} ref=${racine} class=${'msg' + (mine ? ' mine' : '') + (suite ? ' suite' : '') + (neuf ? ' neuf' : '') + (envoi ? ' envoi' : '') + (erreur ? ' erreur' : '') + (sel ? ' sel' : '') + (pastilles.length ? ' a-react' : '')}>
     ${peutRepondre ? html`<span class="glisse-ico" aria-hidden="true"><${Icon} name="reply" size=${18}/></span>` : null}
-    <div class=${'bulle t-' + (m.type || 'texte') + (cite ? ' avec-cite' : '')} ...${geste}>
+    <div class=${'bulle t-' + (m.type || 'texte') + (cite ? ' avec-cite' : '')} data-sens=${sens} ...${geste}>
       ${cite === 'supprime' ? html`<span class="msg-cite supprime"><span>Message supprimé</span></span>`
         : cite ? html`<button type="button" class="msg-cite" onClick=${() => onAller(cite.id)}>${nomDe(cite.author_id)}<${ExtraitCite} m=${cite}/></button>` : null}
       ${m.type === 'photo' ? html`<${Photo} ctx=${ctx} m=${m} onVoir=${onVoir}/>` : null}
@@ -758,7 +769,7 @@ function Composer({ txt, setTxt, onEnvoyer, onTape, cite, nomDe, onAnnulerCite, 
   const remplir = r => { setTxt(tr(r)); requestAnimationFrame(() => { const t = ta.current; if (!t) return; t.focus(); t.setSelectionRange(t.value.length, t.value.length); }); };
   return html`<div class="composer ecrire">
     ${bandeau}
-    ${rapides && !txt.trim() && !cite ? html`<div class="comp-rapides" role="group" aria-label="Réponses rapides">${rapides.map(r => html`<button type="button" key=${r} class="chip rapide" onClick=${() => remplir(r)}>${r}</button>`)}</div>` : null}
+    ${rapides && !txt.trim() && !cite ? html`<div class="comp-rapides chips rangee" role="group" aria-label="Réponses rapides">${rapides.map(r => html`<button type="button" key=${r} class="chip rapide" onClick=${() => remplir(r)}>${r}</button>`)}</div>` : null}
     <div class="comp-row">
       <div class="comp-champ">
         <button type="button" class="icon-btn comp-photo" aria-label="Envoyer une photo" title="Photo" onClick=${() => fichierIn.current?.click()}><${Icon} name="image"/></button>
@@ -854,6 +865,12 @@ injectCSS('messagerie', `
 .msg-txt { white-space: pre-wrap; overflow-wrap: anywhere; display: inline; }
 .msg-txt a { color: inherit; text-decoration: underline; }
 .msg-meta { float: inline-end; display: inline-flex; align-items: center; gap: 3px; margin-inline-start: .55rem; margin-top: .35rem; font-size: var(--fs-1); line-height: 1; color: var(--muted); position: relative; top: .2rem; }
+/* Un message écrit dans l'autre sens que l'écran (du français dans l'écran arabe, ou l'inverse) : ses lignes s'alignent
+   dans son sens et l'heure se met à sa fin ; la bulle, ses coins et ses réactions restent ceux de l'écran (data-sens, messages.js) */
+.bulle[data-sens="ltr"] { text-align: left; }
+.bulle[data-sens="rtl"] { text-align: right; }
+.bulle[data-sens="ltr"] > .msg-meta { float: right; margin-left: .55rem; margin-right: 0; }
+.bulle[data-sens="rtl"] > .msg-meta { float: left; margin-right: .55rem; margin-left: 0; }
 .msg.mine .msg-meta { color: var(--accent-ink); }
 .msg-etat { display: inline-flex; }
 .msg.mine .msg-etat.lu { color: var(--accent-ink); }
@@ -906,11 +923,14 @@ button.react-pill { cursor: pointer; font-family: inherit; }
 .msg:focus-visible > .bulle { outline: 2px solid var(--accent); outline-offset: 2px; }
 @keyframes msg-in { from { opacity: 0; transform: translateY(10px) scale(.96); } }
 .msg.mine.neuf .bulle { transform-origin: 100% 100%; }
+[dir="rtl"] .msg.mine.neuf .bulle { transform-origin: 0 100%; }
 .tape-bulle .bulle { padding: .7rem .9rem; color: var(--muted); }
 
 .t-photo { padding: 4px; }
 .t-photo .msg-txt { display: block; padding: .35rem .4rem .1rem; }
 .t-photo .msg-meta { margin-inline-end: .3rem; }
+.t-photo[data-sens="ltr"] > .msg-meta { margin-right: .3rem; }
+.t-photo[data-sens="rtl"] > .msg-meta { margin-left: .3rem; }
 .msg-photo { display: grid; place-items: center; width: min(260px, 62vw); max-height: 340px; border: 0; padding: 0; border-radius: 14px; overflow: hidden; cursor: zoom-in; background: linear-gradient(100deg, var(--surface-2) 30%, color-mix(in srgb, var(--surface-2) 50%, var(--surface)) 50%, var(--surface-2) 70%) 0 0 / 300% 100%; animation: shimmer 1.4s linear infinite; }
 .msg-photo.pret { animation: none; background: none; }
 .msg-photo img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0; transition: opacity .25s; }
@@ -946,8 +966,10 @@ button.react-pill { cursor: pointer; font-family: inherit; }
 .comp-champ textarea, .comp-champ textarea:focus { min-height: 44px; padding-block: .62rem; padding-inline: .15rem .9rem; border: 0; border-radius: 0; background: transparent; box-shadow: none; outline: none; }
 .comp-champ .comp-photo { width: 44px; height: 44px; color: var(--ink-2); }
 .comp-photo { width: 42px; height: 42px; border-radius: 50%; flex: none; }
-.comp-rapides { display: flex; flex-wrap: wrap; gap: .4rem; padding: .1rem 0 .15rem; animation: fade-in .2s ease; }
-.chip.rapide { flex: none; min-height: 40px; border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); color: var(--blue-text); background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface)); font-weight: 600; }
+/* Les réponses rapides sur une seule ligne qui défile (la rangée de puces du Socle, avec son fondu), jusqu'aux bords du champ */
+.comp-rapides { gap: .4rem; padding: .1rem 0 .15rem; animation: fade-in .2s ease; }
+.composer .comp-rapides.chips.rangee { margin-inline: -.65rem; padding-inline: .65rem; scroll-padding-inline: .65rem; }
+.composer .comp-rapides .chip.rapide { flex: none; min-height: 40px; border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); color: var(--blue-text); background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface)); font-weight: 600; }
 .chip.rapide:hover { border-color: var(--accent); color: var(--blue-text); }
 .sr-file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .send-btn { width: 44px; height: 44px; border-radius: 50%; border: 0; flex: none; display: grid; place-items: center; cursor: pointer; background: var(--accent); color: var(--accent-ink); transition: transform .15s var(--ease), filter .15s; }
@@ -989,7 +1011,7 @@ button.react-pill { cursor: pointer; font-family: inherit; }
   .conv-back { display: inline-grid; }
   .bulle { max-width: 84%; }
 }
-@media (prefers-reduced-motion: reduce) { .tape-dots i { animation: none !important; opacity: .8; } .react-pill, .react-bar, .comp-cite, .comp-rapides { animation: none; } .msg .bulle { transition: none; } .msg.eclaire .bulle, .msg.neuf.eclaire .bulle { animation-duration: .01s; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .tape-dots i { animation: none !important; opacity: .8; } .react-pill, .react-bar, .comp-cite, .comp-rapides, .msg-photo, .rec-dot { animation: none; } .msg .bulle { transition: none; } .msg.eclaire .bulle, .msg.neuf.eclaire .bulle { animation-duration: .01s; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); } }
 `);
 
 addAR({

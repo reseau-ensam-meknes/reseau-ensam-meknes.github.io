@@ -200,39 +200,66 @@ test('messagerie : écrire, être lu, bloquer ; pas de conversation sans lien', 
   await s.ctx.close();
 });
 
-test('messagerie : réponses rapides au début d’une conversation ou quand une question attend ; elles remplissent le champ, rien ne part (FR et AR)', async () => {
+test('messagerie : réponses rapides au début d’une conversation ou quand une question attend ; elles remplissent le champ, rien ne part ; « en visio » entre membres seulement, sur une ligne (FR et AR)', async () => {
   for (const langue of ['fr', 'ar']) {
     const s = await ouvrir({ largeur: 390, langue });
+    const T = langue === 'ar' ? { merci: 'شكرًا!', regarde: 'سألقي نظرة وأعود إليك', visio: 'نتحدث عن ذلك في مكالمة فيديو؟' } : { merci: 'Merci !', regarde: 'Je regarde et je reviens vers toi', visio: 'On en parle en visio ?' };
     await s.comme('Admin'); const admin = await s.page.evaluate(() => window.__demo.me.id);
-    // Nadia n'a encore rien répondu au mot de bienvenue : trois puces au-dessus du champ
+    // Nadia n'a encore rien répondu au mot de bienvenue de l'équipe du réseau : deux puces au-dessus du champ (pas d'appel en visio avec l'école)
     await s.aller('accueil'); await s.comme('Nadia'); await s.aller('messages/' + admin); await s.page.waitForSelector('#chat-txt');
     const puces = s.page.locator('.composer .comp-rapides .chip.rapide');
-    assert.equal(await puces.count(), 3);
+    assert.deepEqual(await puces.allInnerTexts(), [T.merci, T.regarde]);
     assert.equal(await s.page.getAttribute('.comp-rapides', 'role'), 'group');
     const nb = () => s.page.evaluate(() => window.__demo.data.messages.length);
     const avant = await nb();
     await puces.nth(1).click(); await s.page.waitForTimeout(200);
-    const attendu = langue === 'ar' ? 'سألقي نظرة وأعود إليك' : 'Je regarde et je reviens vers toi';
-    assert.equal(await s.page.inputValue('#chat-txt'), attendu, 'la puce remplit le champ, dans la langue de l’écran');
+    assert.equal(await s.page.inputValue('#chat-txt'), T.regarde, 'la puce remplit le champ, dans la langue de l’écran');
     assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'chat-txt');
     assert.equal(await nb(), avant, 'rien ne part tout seul');
     assert.equal(await puces.count(), 0, 'les puces s’effacent quand le champ a du texte');
     // Champ vidé : elles reviennent ; envoyé : elles partent (la question n'attend plus)
     await s.page.fill('#chat-txt', ''); await s.page.waitForTimeout(100);
-    assert.equal(await puces.count(), 3);
+    assert.equal(await puces.count(), 2);
     await puces.first().click(); await s.page.click('.composer .send-btn'); await s.page.waitForTimeout(400);
     assert.equal(await nb(), avant + 1);
     assert.equal(await puces.count(), 0);
     assert.equal(await s.debordement(), 0);
-    if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])].filter(t => ['Merci !', 'Je regarde et je reviens vers toi', 'On en parle en visio ?', 'Réponses rapides'].includes(t))), []);
     // Une conversation déjà lancée où rien n'attend de question : pas de puces
     await s.aller('accueil'); await s.comme('Salma'); const youssef = s.profils.find(x => x[1].includes('Youssef'))[0];
     await s.aller('messages/' + youssef); await s.page.waitForSelector('#chat-txt');
     assert.equal(await s.page.locator('.comp-rapides').count(), 0);
-    // Youssef pose une question : elles reviennent chez Salma
+    // Youssef pose une question : elles reviennent chez Salma, avec « en visio » (entre membres), sur une seule ligne qui défile
     await s.page.evaluate(id => { const d = window.__demo, me = d.me.id; d.data.messages.push({ id: 'q-' + Date.now(), author_id: id, dest_id: me, type: 'texte', body: 'Tu as pu préparer ton exemple 5S ?', lu_at: null, created_at: new Date().toISOString() }); }, youssef);
     await s.aller('accueil'); await s.aller('messages/' + youssef); await s.page.waitForSelector('#chat-txt');
-    assert.equal(await s.page.locator('.comp-rapides .chip.rapide').count(), 3);
+    assert.deepEqual(await puces.allInnerTexts(), [T.merci, T.regarde, T.visio]);
+    const ligne = await s.page.evaluate(() => { const r = document.querySelector('.comp-rapides'); return { hauts: new Set([...r.children].map(c => Math.round(c.getBoundingClientRect().top))).size, defile: r.scrollWidth > r.clientWidth, x: getComputedStyle(r).overflowX }; });
+    assert.equal(ligne.hauts, 1, 'les trois puces sur une seule ligne');
+    assert.equal(ligne.x, 'auto', 'la ligne défile si elle ne tient pas');
+    assert.equal(await s.debordement(), 0);
+    if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])].filter(t => ['Merci !', 'Je regarde et je reviens vers toi', 'On en parle en visio ?', 'Réponses rapides'].includes(t))), []);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('messagerie : chaque message s’aligne dans son propre sens (du français dans l’écran arabe, de l’arabe dans l’écran français), l’heure à sa fin ; la bulle reste du côté de son auteur', async () => {
+  for (const langue of ['ar', 'fr']) {
+    const s = await ouvrir({ largeur: 390, langue });
+    await s.comme('Salma'); const youssef = s.profils.find(x => x[1].includes('Youssef'))[0];
+    await s.page.evaluate(id => { const d = window.__demo, me = d.me.id, t = Date.now();
+      d.data.messages.push({ id: 'sens-fr', author_id: id, dest_id: me, type: 'texte', body: 'Bonjour Salma, tu as pu préparer ton exemple 5S pour notre appel de jeudi ? Garde-le court.', lu_at: null, created_at: new Date(t - 3e5).toISOString() });
+      d.data.messages.push({ id: 'sens-ar', author_id: id, dest_id: me, type: 'texte', body: 'مرحبا سلمى، هل حضّرت مثالك عن 5S لمكالمتنا يوم الخميس؟', lu_at: null, created_at: new Date(t - 2e5).toISOString() });
+      d.data.messages.push({ id: 'sens-moi', author_id: me, dest_id: id, type: 'texte', body: '👍', lu_at: null, created_at: new Date(t - 1e5).toISOString() }); }, youssef);
+    await s.aller('accueil'); await s.aller('messages/' + youssef); await s.page.waitForSelector('#msg-sens-ar');
+    const lire = id => s.page.evaluate(id => { const b = document.querySelector('#msg-' + id + ' .bulle'), m = b.querySelector('.msg-meta'), z = b.closest('.msg').parentElement.getBoundingClientRect(), r = b.getBoundingClientRect();
+      return { sens: b.dataset.sens ?? null, align: getComputedStyle(b).textAlign, heure: getComputedStyle(m).float, gauche: r.left - z.left < z.right - r.right }; }, id);
+    const fr = await lire('sens-fr'), ar = await lire('sens-ar'), moi = await lire('sens-moi');
+    assert.deepEqual([fr.sens, fr.align, fr.heure], ['ltr', 'left', 'right'], 'le français : à gauche, l’heure à droite');
+    assert.deepEqual([ar.sens, ar.align, ar.heure], ['rtl', 'right', 'left'], 'l’arabe : à droite, l’heure à gauche');
+    assert.equal(moi.sens, null, 'un emoji seul n’a pas de sens : la bulle suit l’écran');
+    // Les bulles de Youssef restent du côté de l'autre (à droite en arabe, à gauche en français), les miennes de l'autre côté
+    assert.equal(fr.gauche, langue === 'fr'); assert.equal(ar.gauche, langue === 'fr'); assert.equal(moi.gauche, langue === 'ar');
+    assert.equal(await s.debordement(), 0);
     assert.deepEqual(s.erreurs, []);
     await s.ctx.close();
   }
@@ -437,6 +464,89 @@ test('mentorat : le prochain rendez-vous en billet (date, vrai compte à rebours
   await s.page.addScriptTag({ content: AXE });
   const v = await s.page.evaluate(async () => (await axe.run('.page', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => `${x.id} : ${x.nodes[0].target.join(' ')}`));
   assert.deepEqual(v, []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('mentorat : un rendez-vous accepté sans horaire n’est pas un billet (le lauréat fixe le moment, l’école le voit en attente) ; le titre dit ce qu’il y a dessous ; une seule action pleine', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const fete = () => s.page.locator('.fete-acts .btn').last().click({ timeout: 1500 }).catch(() => {});
+  const youssef = s.profils.find(x => x[1].includes('Youssef'))[0];
+  // Une ancienne demande de Salma, acceptée sans horaire : Youssef doit encore fixer le moment
+  await s.comme('Salma');
+  const sujet = await s.page.evaluate(y => { const d = window.__demo, me = d.me.id; const m = d.data.mentorships.find(x => x.student_id === me && x.status === 'acceptee' && x.rdv_at); m.rdv_at = null; m.accepted_at = null; m.mentor_id = y; return m.sujet; }, youssef);
+  await s.aller('accueil'); await s.aller('mentorat'); await s.page.waitForTimeout(1300); await fete();
+  assert.equal(await s.page.locator('.billet').count(), 0, 'pas de billet sans date');
+  assert.doesNotMatch(await s.page.locator('.page').innerText(), /janv\.|En ce moment|Rejoindre la visio|C’est fait/, 'ni « 1 janv. 1970 », ni « En ce moment »');
+  assert.match(await s.page.locator('.m-autres h2').innerText(), /^En attente d’un horaire/);
+  const carte = s.page.locator('.m-autres .mreq', { hasText: sujet });
+  assert.match(await carte.innerText(), /Youssef va fixer l’horaire du rendez-vous\./);
+  assert.equal(await carte.locator('.state-pill').count(), 0, 'pas d’étiquette qui répète l’attente');
+  // L'école la voit avec les demandes en attente, pas avec les rendez-vous à venir
+  await s.aller('accueil'); await s.comme('Admin'); await s.aller('mentorat');
+  const rangees = s.page.locator('.m-suivi .rangee-bloc');
+  assert.equal(await rangees.count(), 2, 'deux rangées : les rendez-vous à venir, puis les demandes en attente');
+  assert.equal(await rangees.first().locator('.mreq', { hasText: sujet }).count(), 0);
+  const enAttente = rangees.last().locator('.mreq', { hasText: sujet });
+  assert.match(await enAttente.innerText(), /En attente d’un horaire[\s\S]*Avec Youssef El Amrani/);
+  assert.doesNotMatch(await enAttente.locator('.m-avec').innerText(), /·/, 'pas de date inventée');
+  assert.ok(await s.page.evaluate(() => document.documentElement.scrollHeight) < 1400, 'le suivi de l’école tient en deux rangées');
+  // Youssef fixe le moment depuis la carte : c'est alors un billet, chez lui et chez Salma
+  await s.aller('accueil'); await s.comme('Youssef'); await s.aller('mentorat');
+  const sienne = s.page.locator('.mreq', { hasText: sujet });
+  assert.match(await sienne.innerText(), /Pour toi/);
+  await sienne.locator('.tchoice .chip').first().click();
+  await sienne.locator('button:has-text("Confirmer le rendez-vous")').click(); await s.page.waitForTimeout(400); await fete();
+  assert.equal(await s.page.locator('.billet', { hasText: sujet }).count(), 1);
+  await s.aller('accueil'); await s.comme('Salma'); await s.aller('mentorat'); await s.page.waitForTimeout(1300); await fete();
+  assert.equal(await s.page.locator('.m-next .billet', { hasText: sujet }).count(), 1);
+  // Un rendez-vous passé à clore en plus du billet : « Je serai là » reste la seule action pleine, « Terminer » attend en tonal
+  await s.page.evaluate(y => { const d = window.__demo, me = d.me.id, t = Date.now();
+    d.data.mentorships.push({ id: 'passe-' + t, student_id: me, mentor_id: y, besoin: 'entretien', sujet: 'Simuler mon entretien chez Lear', message: null, creneaux: [], status: 'acceptee', rdv_at: new Date(t - 3 * 36e5).toISOString(), accepted_at: new Date(t - 4 * 864e5).toISOString(), confirme_at: new Date(t - 2 * 864e5).toISOString(), created_at: new Date(t - 5 * 864e5).toISOString() }); }, youssef);
+  await s.aller('accueil'); await s.aller('mentorat'); await s.page.waitForTimeout(1300); await fete();
+  assert.match(await s.page.locator('.m-autres h2').innerText(), /^Aussi en cours/);
+  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1);
+  assert.match(await s.page.locator('.page .btn.primary:visible').innerText(), /Je serai là/);
+  assert.equal(await s.page.locator('.m-autres .merci-box .btn.tonal').count(), 1);
+  // Présence confirmée, la visio n'est pas encore là : le billet n'a plus d'action pleine, « Terminer » la reprend
+  await s.page.locator('.m-next .billet .btn.primary').click(); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1);
+  assert.match(await s.page.locator('.page .btn.primary:visible').innerText(), /Terminer/);
+  assert.equal(await s.page.locator('.m-autres .merci-box .btn.primary').count(), 1);
+  // Le billet passé lui aussi : le rendez-vous à clore et une demande ouverte → « En cours » (pas « En attente d’un horaire »)
+  await s.page.evaluate(sujet => { const d = window.__demo, me = d.me.id, t = Date.now();
+    d.data.mentorships.find(x => x.student_id === me && x.sujet === sujet).status = 'terminee';
+    d.data.mentorships.push({ id: 'ouverte-' + t, student_id: me, mentor_id: null, besoin: 'cv', sujet: 'Relire mon CV pour un PFE en méthodes', message: null, creneaux: [new Date(t + 2 * 864e5).toISOString()], status: 'demande', created_at: new Date(t).toISOString() }); }, sujet);
+  await s.aller('accueil'); await s.aller('mentorat'); await s.page.waitForTimeout(1300); await fete();
+  assert.match(await s.page.locator('.m-autres h2').innerText(), /^En cours\s*2$/);
+  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1, '« Terminer » redevient l’action pleine');
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('mentorat : à 360 px les deux onglets tiennent, pastille comprise ; en arabe, la promo et l’entreprise d’un lauréat se lisent en entier ; « Voir les autres étudiants » les montre tous', async () => {
+  const s = await ouvrir({ largeur: 360, langue: 'ar' });
+  await s.page.setViewportSize({ width: 360, height: 740 });
+  await s.comme('Salma'); await s.aller('mentorat'); await s.page.waitForTimeout(1300);
+  await s.page.locator('.fete-acts .btn').last().click({ timeout: 1500 }).catch(() => {});
+  const onglets = await s.page.evaluate(() => { const n = document.querySelector('.mentorat .puces-nav'), r = n.getBoundingClientRect(), p = n.querySelector('.puce-n').getBoundingClientRect(); return { defile: n.scrollWidth > n.clientWidth + 1, pastille: p.left >= r.left && p.right <= r.right }; });
+  assert.deepEqual(onglets, { defile: false, pastille: true });
+  // « دفعة 2012 · Renault Group Maroc » : jamais coupé en « … » (en arabe, la coupure mangerait le début du nom latin)
+  const ligne = await s.page.evaluate(() => { const l = document.querySelector('.billet-qui .role-line'); return { txt: l.textContent, coupe: l.scrollWidth > l.clientWidth + 1 || getComputedStyle(l).textOverflow === 'ellipsis' && getComputedStyle(l).whiteSpace === 'nowrap' }; });
+  assert.match(ligne.txt, /Renault Group Maroc/);
+  assert.equal(ligne.coupe, false);
+  // Youssef : toutes les demandes, pas une de moins que le compte annoncé
+  await s.page.setViewportSize({ width: 390, height: 844 });
+  await s.aller('accueil'); await s.comme('Youssef'); await s.aller('mentorat');
+  await s.page.evaluate(() => { const d = window.__demo, t = Date.now(), etu = d.data.profiles.filter(p => p.role === 'etudiant').slice(0, 14);
+    etu.forEach((p, i) => d.data.mentorships.push({ id: 'beaucoup-' + i, student_id: p.id, mentor_id: null, besoin: 'cv', sujet: 'Relire mon CV, demande ' + (i + 1), message: null, creneaux: [new Date(t + (i + 2) * 864e5).toISOString()], status: 'demande', created_at: new Date(t - i * 6e4).toISOString() })); });
+  await s.aller('accueil'); await s.aller('mentorat');
+  const annonce = +(await s.page.locator('.m-avis h2 .count').innerText());
+  assert.ok(annonce > 12, 'plus de douze demandes');
+  await s.page.locator('.m-avis .past-toggle').click(); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.m-avis-liste .mreq').count(), annonce);
+  assert.equal(await s.debordement(), 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });

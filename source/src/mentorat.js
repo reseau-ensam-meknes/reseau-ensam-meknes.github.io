@@ -316,9 +316,19 @@ function FeuilleAgendaRdv({ txt, side, guest, other, onClose }) {
   <//>`;
 }
 
-function Billet({ ctx, m, side, focus, onFini }) {
+// L'action pleine d'un billet, s'il en a une : « Je serai là » avant l'heure, tant que l'étudiant n'a pas confirmé ;
+// « Rejoindre la visio » à l'heure, s'il y a un lien. Sinon aucune : la page donne la sienne à la carte suivante (le merci d'un rendez-vous passé)
+function pleinDuBillet(m, side, lien, now) {
+  const r = rebours(m.rdv_at, now);
+  if (side === 'student' && 'confirme_at' in m && !m.confirme_at && !r.live && now < new Date(m.rdv_at).getTime()) return 'confirmer';
+  return lien && r.live ? 'visio' : null;
+}
+
+// now : l'heure de la page quand elle la donne (la page et le billet changent d'action pleine au même moment)
+function Billet({ ctx, m, side, focus, onFini, calme = false, now: nowPage = null }) {
   const { store, act, openProfile } = ctx;
-  const now = useMaintenant();
+  const tic = useMaintenant();
+  const now = nowPage ?? tic;
   const other = store.byId('profiles', side === 'mentor' ? m.student_id : m.mentor_id);
   const lien = lienVisio(store, m.id);
   const [guest, setGuest] = useState(null);
@@ -337,7 +347,7 @@ function Billet({ ctx, m, side, focus, onFini }) {
   const commence = now >= new Date(m.rdv_at).getTime();
   const confirmable = 'confirme_at' in m;
   // Confirmer tant que ce n'est pas l'heure ; à l'heure, rejoindre passe devant
-  const aConfirmer = side === 'student' && confirmable && !m.confirme_at && !r.live && !commence;
+  const aConfirmer = pleinDuBillet(m, side, lien, now) === 'confirmer';
   const txt = rdvTexts(m, store, lien);
   const saveLien = () => act(async () => {
     if (!isHttps(newLien.trim())) throw new Error('Le lien doit commencer par https://');
@@ -362,13 +372,13 @@ function Billet({ ctx, m, side, focus, onFini }) {
       ${focus && side === 'mentor' && m.message ? html`<${Repliable} cls="quote" lignes=${2}>${m.message}<//>` : null}
       ${m.reponse && side === 'student' ? html`<p class="small billet-mot"><span class="muted"><span translate="no">${firstName(other)}</span> :</span> <span translate="no" dir="auto">${m.reponse}</span></p>` : null}
       ${aConfirmer ? html`<div class="m-confirm"><p class="small"><strong>Tu seras là ?</strong> ${`Confirme pour rassurer ${firstName(other)}.`}</p>
-          <div class="m-confirm-acts"><button type="button" class="btn small primary" onClick=${confirmer}><${Icon} name="check" size=${15}/> Je serai là</button>
+          <div class="m-confirm-acts"><button type="button" class=${'btn small ' + (calme ? 'tonal' : 'primary')} onClick=${confirmer}><${Icon} name="check" size=${15}/> Je serai là</button>
             <button type="button" class="linkish small m-quiet" onClick=${annuler}>Je ne peux pas</button></div></div>`
         : side === 'student' && m.confirme_at ? html`<p class="small m-ok good-t"><${Coche} taille=${22} pose=${dejaConfirme.current}/> Tu as confirmé ta présence.</p>`
         : side === 'mentor' && confirmable ? (m.confirme_at ? html`<p class="small m-ok good-t"><${Coche} taille=${22} pose/> ${`${firstName(other)} a confirmé sa présence.`}</p>`
           : html`<p class="small m-ok muted"><${Icon} name="clock" size=${15}/> ${`${firstName(other)} n’a pas encore confirmé.`}</p>`) : null}
       ${!aConfirmer ? html`<div class="billet-acts">
-        ${lien ? html`<a class=${'btn rdv-join ' + (r.live ? 'primary' : 'tonal')} href=${lien} target="_blank" rel="noopener"><${Icon} name="video" size=${16}/> Rejoindre la visio</a>`
+        ${lien ? html`<a class=${'btn rdv-join ' + (r.live && !calme ? 'primary' : 'tonal')} href=${lien} target="_blank" rel="noopener"><${Icon} name="video" size=${16}/> Rejoindre la visio</a>`
           : html`<span class="small muted billet-prep">Lien de visio en préparation…</span>`}
         ${jitsi ? html`<button type="button" class="icon-btn m-info" aria-label="Astuce Jitsi" aria-expanded=${astuce} onClick=${() => setAstuce(!astuce)}><${Picto} name="info" size=${16}/></button>` : null}
       </div>` : null}
@@ -381,8 +391,9 @@ function Billet({ ctx, m, side, focus, onFini }) {
   </article>${agenda ? html`<${FeuilleAgendaRdv} txt=${txt} side=${side} guest=${guest} other=${other} onClose=${() => setAgenda(false)}/>` : null}`;
 }
 
-// Après le rendez-vous, côté étudiant : une note, un merci, et c'est terminé
-function AfterBox({ ctx, m }) {
+// Après le rendez-vous, côté étudiant : une note, un merci, et c'est terminé.
+// plein : « Terminer » est l'action pleine de la page, sauf si une autre carte l'a déjà (le billet du haut qui attend un geste)
+function AfterBox({ ctx, m, plein = true }) {
   const { store, act } = ctx;
   const mentor = store.byId('profiles', m.mentor_id);
   const [note, setNote] = useState(5); const [merci, setMerci] = useState('');
@@ -390,7 +401,7 @@ function AfterBox({ ctx, m }) {
     <p><${Icon} name="heart" size=${16}/> <strong>Comment s’est passé l’échange avec ${firstName(mentor)} ?</strong></p>
     <span class="stars" role="radiogroup" aria-label="Aide reçue">${[1, 2, 3, 4, 5].map(v => html`<button type="button" role="radio" aria-checked=${v === note} class=${v <= note ? 'on' : ''} aria-label=${v + ' sur 5'} onClick=${() => setNote(v)}>★</button>`)}</span>
     <textarea id=${'am-merci-' + m.id} rows="2" maxlength="800" placeholder="Un mot de remerciement…" value=${merci} onInput=${e => setMerci(e.target.value)}></textarea>
-    <div class="row"><button type="button" class="linkish small m-quiet" onClick=${() => act(() => store.update('mentorships', m.id, { status: 'annulee' }))}>L’échange n’a pas eu lieu</button><span class="spacer"></span><button class="btn primary small">${merci.trim() ? 'Envoyer mon merci' : 'Terminer'}</button></div>
+    <div class="row"><button type="button" class="linkish small m-quiet" onClick=${() => act(() => store.update('mentorships', m.id, { status: 'annulee' }))}>L’échange n’a pas eu lieu</button><span class="spacer"></span><button class=${'btn small ' + (plein ? 'primary' : 'tonal')}>${merci.trim() ? 'Envoyer mon merci' : 'Terminer'}</button></div>
   </form>`;
 }
 
@@ -439,19 +450,23 @@ function NewSlots({ ctx, m, onDone }) {
 // Un mentorat, du début à la fin. Une carte compacte : qui (et « Écrire », « ⋯ ») sur une ligne, puis l'état et le besoin,
 // le sujet, son message replié, et ce qu'il y a à faire. Un rendez-vous fixé devient un billet.
 // ---------------------------------------------------------------------------
-export function RequestCard({ ctx, m, side, why = [], focus = false, onIgnore = null }) {
+// calme : l'action pleine de la page est sur une autre carte ; celles de cette carte restent tonales. now : l'heure de la page
+export function RequestCard({ ctx, m, side, why = [], focus = false, onIgnore = null, calme = false, now = null }) {
   const { store, act, openProfile } = ctx;
   const st = mentorState(m);
   const other = store.byId('profiles', side === 'student' ? m.mentor_id : m.student_id);
   const [reslot, setReslot] = useState(false);
   const [fin, setFin] = useState(false); // « C'est fait » pendant le rendez-vous : on passe tout de suite au merci
-  if (st === 'rdv' && !fin && side !== 'admin') return html`<${Billet} ctx=${ctx} m=${m} side=${side} focus=${focus} onFini=${() => (side === 'mentor' ? finirMentorat(ctx, m) : setFin(true))}/>`;
+  // Acceptée sans horaire (une ancienne demande, ou fixée par l'administration) : pas de billet, le lauréat fixe d'abord le moment
+  const sansHeure = st === 'rdv' && !m.rdv_at;
+  if (st === 'rdv' && !sansHeure && !fin && side !== 'admin') return html`<${Billet} ctx=${ctx} m=${m} side=${side} focus=${focus} calme=${calme} now=${now} onFini=${() => (side === 'mentor' ? finirMentorat(ctx, m) : setFin(true))}/>`;
   const slots = futureSlots(m);
-  const [cls, label] = side === 'mentor' && st === 'demande' ? ['m-demande', 'Pour toi'] : PILL[st] || PILL.demande;
+  const [cls, label] = side === 'mentor' && (st === 'demande' || sansHeure) ? ['m-demande', 'Pour toi'] : sansHeure ? PILL.demande : PILL[st] || PILL.demande;
   const waiting = st === 'ouverte' || st === 'demande';
   const apres = st === 'apres' || (st === 'rdv' && fin);
-  // Côté lauréat, une demande ouverte à tous n'a pas besoin d'étiquette : la phrase d'accueil de la section le dit
-  const pill = side === 'mentor' && st === 'ouverte' ? null : html`<span class=${'state-pill ' + cls}>${label}</span>`;
+  // Pas d'étiquette qui répète ce que la carte dit déjà : côté lauréat, « ouverte à tous » (la phrase d'accueil de la section) ;
+  // côté étudiant, l'attente (« Tous les lauréats » en tête, « En attente de Zakaria… » en bas, et les étapes)
+  const pill = (side === 'mentor' && st === 'ouverte') || (side === 'student' && (waiting || sansHeure)) ? null : html`<span class=${'state-pill ' + cls}>${label}</span>`;
   // « Pourquoi toi » : le besoin est déjà écrit sur son étiquette, on ne le répète pas
   const raisons = why.filter(w => w !== BESOINS[m.besoin]?.label);
   const annulerDemande = () => ctx.confirm('Retirer tes horaires ? Les lauréats ne les verront plus.', () => act(() => store.update('mentorships', m.id, { status: 'annulee' })), 'Retirer');
@@ -467,7 +482,7 @@ export function RequestCard({ ctx, m, side, why = [], focus = false, onIgnore = 
     side === 'mentor' && st === 'demande' ? { label: 'Pas disponible cette fois', icon: 'x', onClick: passer } : null,
   ].filter(Boolean);
   // Le suivi de l'école : sous « Rendez-vous à venir », l'état et le message n'ajoutent rien
-  const suivi = side === 'admin' && st === 'rdv';
+  const suivi = side === 'admin' && st === 'rdv' && !sansHeure;
   return html`<article class=${'mreq st-' + st + (focus ? ' m-focus-card' : '') + (apres ? ' m-compact' : '')}>
     <div class="mrow-head m-tete">
       ${other ? html`<${Person} p=${other} onOpen=${openProfile} size=${40}/>` : html`<span class="open-to"><span class="open-ico"><${Icon} name="people" size=${18}/></span><span><strong>Tous les lauréats</strong><span class="small muted">Le premier disponible choisit un horaire</span></span></span>`}
@@ -485,9 +500,10 @@ export function RequestCard({ ctx, m, side, why = [], focus = false, onIgnore = 
         ${slots.length ? html`<button class="linkish small" onClick=${() => setReslot(!reslot)}>${reslot ? 'Fermer' : 'Changer mes horaires'}</button>` : null}</div>
     </div>` : null}
 
-    ${side === 'mentor' && waiting ? html`<${TimeChoice} ctx=${ctx} m=${m}/>` : null}
-    ${mentorAdmin ? html`<p class="small muted m-avec"><${Icon} name="video" size=${15}/> <span>Avec</span> <bdi translate="no">${mentorAdmin.full_name}</bdi><span aria-hidden="true"> · </span><${When} iso=${m.rdv_at}/>${m.confirme_at ? html`<span aria-hidden="true"> · </span><span class="good-t m-avec-ok"><${Icon} name="checks" size=${14}/> Présence confirmée</span>` : null}</p>` : null}
-    ${apres && side === 'student' ? html`<${AfterBox} ctx=${ctx} m=${m}/>` : null}
+    ${side === 'mentor' && (waiting || sansHeure) ? html`<${TimeChoice} ctx=${ctx} m=${m}/>` : null}
+    ${side === 'student' && sansHeure ? html`<p class="small muted">${`${firstName(other)} va fixer l’horaire du rendez-vous.`}</p>` : null}
+    ${mentorAdmin ? html`<p class="small muted m-avec"><${Icon} name="video" size=${15}/> <span>Avec</span> <bdi translate="no">${mentorAdmin.full_name}</bdi>${m.rdv_at ? html`<span aria-hidden="true"> · </span><${When} iso=${m.rdv_at}/>` : null}${m.confirme_at ? html`<span aria-hidden="true"> · </span><span class="good-t m-avec-ok"><${Icon} name="checks" size=${14}/> Présence confirmée</span>` : null}</p>` : null}
+    ${apres && side === 'student' ? html`<${AfterBox} ctx=${ctx} m=${m} plein=${!calme}/>` : null}
     ${apres && side === 'mentor' ? html`<${AfterMentor} ctx=${ctx} m=${m}/>` : null}
     ${st === 'annulee' && side === 'student' && m.mentor_id && m.rdv_at && other && !nouvelleDemandeApres(ctx.data, m) ? html`<div class="row m-reprendre"><span class="spacer"></span><button type="button" class="linkish small" onClick=${() => ctx.askHelp(other, m.besoin || '', m.sujet)}>Proposer d’autres horaires</button></div>` : null}
     ${st === 'terminee' && (m.merci || m.note) ? html`<p class="small merci-inline">${m.note ? html`<span class="stars-ro" role="img" aria-label=${m.note + ' sur 5'}>${'★'.repeat(m.note)}</span>` : null}${m.merci ? html`<${Icon} name="heart" size=${14}/> <span translate="no" dir="auto">${m.merci}</span>` : null}</p>` : null}
@@ -592,6 +608,8 @@ export function MentoratPage(ctx) {
   const [past, setPast] = useState(false);
   const [more, setMore] = useState(false);
   const [ignorees, setIgnorees] = useLocal(CLE_IGNOREES, []);
+  // L'heure de la page : l'action pleine passe d'une carte à l'autre quand l'heure du rendez-vous approche
+  const now = useMaintenant();
   const isLaureat = me.role === 'laureat';
   const isAdmin = me.role === 'admin';
   const feter = me.role !== 'admin' && ctx.sub !== 'cv' ? acceptee(data, me) : null;
@@ -646,8 +664,9 @@ export function MentoratPage(ctx) {
   // Administration : d'abord ce qui la concerne elle-même (une demande adressée, un rendez-vous fixé), puis le suivi de l'école
   if (isAdmin) {
     const miens = new Set([...need.map(x => x.m.id), ...rdvs.map(m => m.id)]);
-    const open = data.mentorships.filter(m => m.status === 'demande' && !miens.has(m.id)).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-    const soon = data.mentorships.filter(m => mentorState(m) === 'rdv' && !miens.has(m.id)).sort(byRdv);
+    // Une demande acceptée sans horaire attend encore son moment : elle est avec les demandes, pas avec les rendez-vous
+    const open = data.mentorships.filter(m => (m.status === 'demande' || (mentorState(m) === 'rdv' && !m.rdv_at)) && !miens.has(m.id)).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const soon = data.mentorships.filter(m => mentorState(m) === 'rdv' && m.rdv_at && !miens.has(m.id)).sort(byRdv);
     return html`<section class="page mentorat">
       ${entete}
       ${rdvs.length ? html`<section class="m-section"><div class="m-head"><h2 class="h-ico"><${Icon} name="video"/> Tes rendez-vous</h2></div>
@@ -658,7 +677,8 @@ export function MentoratPage(ctx) {
         ${soon.length ? html`<h3 class="m-sub">Rendez-vous à venir <span class="count">${soon.length}</span></h3>
           <${Rangee} label="Rendez-vous à venir" grille cls="m-cartes">${soon.map(m => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="admin"/>`)}<//>` : null}
         <h3 class="m-sub">En attente d’un horaire <span class="count">${open.length}</span></h3>
-        <div class="list">${open.length ? open.map(m => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="admin"/>`) : html`<${Empty} icon="mentor" title="Personne n’attend d’horaire">Chaque étudiant a trouvé un lauréat.<//>`}</div>
+        ${open.length ? html`<${Rangee} label="En attente d’un horaire" grille cls="m-cartes">${open.map(m => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="admin"/>`)}<//>`
+          : html`<div class="list"><${Empty} icon="mentor" title="Personne n’attend d’horaire">Chaque étudiant a trouvé un lauréat.<//></div>`}
       </section>
     </section>`;
   }
@@ -667,14 +687,22 @@ export function MentoratPage(ctx) {
   const role = isLaureat ? 'laureat' : 'etudiant';
   const nouveau = !data.mentorships.some(m => m.student_id === me.id || m.mentor_id === me.id);
   const actifs = [...mineActive.map(m => ({ m, side: 'student' })), ...rdvs.map(m => ({ m, side: 'mentor' }))];
-  const next = actifs.filter(x => mentorState(x.m) === 'rdv').sort((a, b) => byRdv(a.m, b.m))[0] || null;
+  // Le billet ne porte qu'un rendez-vous qui a son heure ; un rendez-vous accepté sans horaire attend avec les autres
+  const next = actifs.filter(x => mentorState(x.m) === 'rdv' && x.m.rdv_at).sort((a, b) => byRdv(a.m, b.m))[0] || null;
   const RANG = { apres: 0, rdv: 1, demande: 2, ouverte: 2 };
   const autres = actifs.filter(x => x !== next).sort((a, b) => RANG[mentorState(a.m)] - RANG[mentorState(b.m)] || byRdv(a.m, b.m));
-  const titreAutres = next ? 'Aussi en cours' : autres.every(x => x.side === 'student') ? 'En attente d’un horaire' : 'Mes rendez-vous';
+  // Le titre dit ce que sont les cartes dessous : des horaires qui attendent, des rendez-vous passés à clore, ou les deux
+  const passes = autres.filter(x => mentorState(x.m) === 'apres').length;
+  const titreAutres = next ? 'Aussi en cours' : !passes ? 'En attente d’un horaire' : passes === autres.length ? 'Mes rendez-vous' : 'En cours';
+  // Une seule action pleine sur la page : celle de la première carte qui en a une (le billet du haut s'il attend un geste,
+  // sinon le merci d'un rendez-vous passé, ou un autre billet) ; les autres cartes restent tonales
+  const aUnPlein = ({ m, side }) => mentorState(m) === 'apres' ? side === 'student'
+    : mentorState(m) === 'rdv' && !!m.rdv_at && !!pleinDuBillet(m, side, lienVisio(store, m.id), now);
+  const pleine = [next, ...autres].find(x => x && aUnPlein(x)) || null;
   const hist = isLaureat ? done : minePast;
   const enCours = autres.length ? html`<section class="m-section m-autres">
       <div class="m-head"><h2>${titreAutres} <span class="count">${autres.length}</span></h2></div>
-      <div class="list">${autres.map(({ m, side }) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side=${side}/>`)}</div>
+      <div class="list">${autres.map(x => html`<${RequestCard} key=${x.m.id} ctx=${ctx} m=${x.m} side=${x.side} now=${now} calme=${x !== pleine}/>`)}</div>
     </section>` : null;
 
   return html`<section class="page mentorat">
@@ -684,7 +712,7 @@ export function MentoratPage(ctx) {
 
     ${next ? html`<section class="m-section m-next" aria-labelledby="m-next-h">
       <div class="m-head"><h2 id="m-next-h">Ton prochain rendez-vous</h2></div>
-      <${RequestCard} key=${next.m.id} ctx=${ctx} m=${next.m} side=${next.side} focus/>
+      <${RequestCard} key=${next.m.id} ctx=${ctx} m=${next.m} side=${next.side} focus now=${now} calme=${!!pleine && pleine !== next}/>
     </section>` : null}
 
     ${!isLaureat ? enCours : null}
@@ -693,7 +721,7 @@ export function MentoratPage(ctx) {
     ${isLaureat ? html`<section class="m-section m-avis" aria-labelledby="m-avis-h">
       <div class="m-head"><h2 id="m-avis-h" class="h-ico"><${Icon} name="heart"/> Ils aimeraient ton avis${need.length ? html` <span class="count">${need.length}</span>` : null}</h2></div>
       ${need.length ? html`<p class="small muted m-invite">Choisis l’étudiant que tu peux aider, à ton rythme. Les autres lauréats s’occupent du reste.</p>` : null}
-      ${need.length ? html`<${Rangee} label="Ils aimeraient ton avis" grille cls="m-cartes m-avis-liste">${need.slice(0, more ? 12 : 2).map(({ m, why, direct }) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="mentor" why=${why} onIgnore=${direct ? null : () => ignorer(m)}/>`)}<//>`
+      ${need.length ? html`<${Rangee} label="Ils aimeraient ton avis" grille cls="m-cartes m-avis-liste">${(more ? need : need.slice(0, 2)).map(({ m, why, direct }) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="mentor" why=${why} onIgnore=${direct ? null : () => ignorer(m)}/>`)}<//>`
         : html`<div class="list">${!me.mentor_dispo
         // Mentorat calme : une seule action, se rendre disponible
         ? html`<${Empty} icon="mentor" title="Tout est calme pour l’instant" action=${{ label: 'Me rendre disponible', icon: 'check', onClick: seRendreDispo }}>Rends-toi disponible : les étudiants de ton parcours pourront te demander conseil directement.<//>`
@@ -919,6 +947,10 @@ injectCSS('mentorat-ux', `
 .mrow-head.m-tete { display: flex; align-items: center; gap: .5rem; flex-wrap: nowrap; min-width: 0; }
 .mrow-head.m-tete > .person, .mrow-head.m-tete > .open-to { flex: 1 1 auto; min-width: 0; }
 .mrow-head.m-tete .role-line { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* En arabe, « دفعة 2012 · Renault Group Maroc » coupé en « … » perdrait le début du nom latin : la ligne passe à la ligne
+   (deux lignes au plus sur une carte de demande, où une longue filière en arabe se coupe à sa fin) */
+[dir="rtl"] .mrow-head.m-tete .role-line { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+[dir="rtl"] .m-mentor .role-line { white-space: normal; }
 .m-avec { margin: 0; line-height: 1.55; }
 .m-avec > svg { vertical-align: -3px; margin-inline-end: .1rem; }
 .m-avec-ok { white-space: nowrap; }
@@ -949,6 +981,9 @@ injectCSS('mentorat-ux', `
 .mentorat .mreq-body > .row { flex-wrap: wrap; gap: .2rem .6rem; }
 .mrow-acts > .m-more { margin-inline-start: -.1rem; }
 
+/* Les deux onglets tiennent à 360 px, pastille comprise (sans leurs pictogrammes, sous le fondu sinon) */
+@media (max-width: 380px) { .mentorat > .page-head .puces-nav [role="tab"] > .ico { display: none; } }
+
 /* Les demandes, côte à côte : une carte par étudiant, on glisse de l'un à l'autre (en grille sur ordinateur) */
 .m-cartes .rangee-cartes { --rangee-l: min(88%, 22rem); --rangee-min: 330px; }
 .m-cartes .mreq { height: 100%; animation: none; }
@@ -972,7 +1007,8 @@ injectCSS('mentorat-ux', `
 .billet-corps { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .5rem; padding-block: .85rem .9rem; padding-inline: .95rem .8rem; }
 .billet-qui { display: flex; align-items: flex-start; gap: .3rem; min-width: 0; }
 .billet-qui > .person { flex: 1 1 auto; min-width: 0; }
-.billet-qui .role-line { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Sur le billet, la promo et l'entreprise se lisent en entier (deux lignes s'il le faut, jamais « Renault Grou… ») */
+.billet-qui .role-line { display: block; }
 .billet-qui > .m-more { margin: -.25rem -.35rem 0 0; }
 [dir="rtl"] .billet-qui > .m-more { margin: -.25rem 0 0 -.35rem; }
 .billet .mreq-subject { margin: 0; font-size: var(--fs-4); line-height: 1.4; }
@@ -999,7 +1035,6 @@ injectCSS('mentorat-ux', `
 .rdv-tip { display: flex; align-items: baseline; gap: var(--sp-3); margin: 0; color: var(--ink-2); }
 .rdv-tip > span { flex: 1; }
 .rdv-tip .linkish { flex: none; }
-.rdv-edit { display: flex; flex-direction: column; gap: .6rem; padding-top: .6rem; border-top: 1px solid var(--line); }
 /* Ajouter à mon agenda : une feuille, deux choix */
 .m-agenda .m-agenda-quoi { display: flex; flex-direction: column; gap: .15rem; margin: 0 0 .9rem; }
 .m-agenda-choix { display: flex; flex-direction: column; gap: .5rem; }
@@ -1049,9 +1084,8 @@ injectCSS('mentorat-ux', `
 }
 
 /* ---- Des lauréats qui peuvent t'aider : cartes compactes ---- */
+/* Les cartes d'une rangée ont toutes la même hauteur : « Lui demander » s'aligne d'une carte à l'autre */
 .m-mentors .rangee-cartes { --rangee-l: min(84%, 19rem); }
-/* Téléphone (rangée qui défile) : chaque carte à sa hauteur, « Lui demander » juste sous le merci ; ordinateur (grille) : hauteurs égales */
-@media (max-width: 760px) { .m-mentors .rangee-cartes { align-items: start; } .m-mentors .mcard.m-mentor { height: auto; } }
 .mcard.m-mentor { gap: .55rem; padding: .95rem 1rem 1rem; height: 100%; }
 .m-mentor > .person { align-self: stretch; }
 .m-mentor .role-line { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1185,6 +1219,7 @@ const quandAR = q => {
 addAR({
   'Ton prochain rendez-vous': 'موعدك القادم',
   'Aussi en cours': 'جارٍ أيضًا',
+  'En cours': 'قيد الإنجاز',
   'Rendez-vous passé': 'موعد مضى',
   'En ce moment': 'الآن',
   'Besoin d’un autre conseil ?': 'تحتاج نصيحة أخرى؟',
@@ -1283,7 +1318,8 @@ addAR({
   [/^Dans (\d+) min$/, n => `بعد ${arCount(n, ['دقيقة واحدة', 'دقيقتين', 'دقائق', 'دقيقة'])}`],
   [/^Dans (\d+) jours$/, n => `بعد ${arCount(n, ['يوم واحد', 'يومين', 'أيام', 'يومًا'])}`],
   [/^Dans (\d+) h$/, n => `بعد ${arCount(n, ['ساعة واحدة', 'ساعتين', 'ساعات', 'ساعة'])}`],
-  [/^Dans (\d+) h (\d\d)$/, (h, m) => `بعد ${h} س ${m} د`],
+  // « Dans 2 h 05 » : en toutes lettres, « بعد ساعتين و5 دقائق » (pas d'abréviation en arabe)
+  [/^Dans (\d+) h (\d\d)$/, (h, m) => `بعد ${arCount(h, ['ساعة واحدة', 'ساعتين', 'ساعات', 'ساعة'])} و${arCount(+m, ['دقيقة واحدة', 'دقيقتين', 'دقائق', 'دقيقة'])}`],
   [/^(\d+) lauréats disponibles$/, n => arCount(n, ['خريج واحد متاح', 'خريجان متاحان', 'خريجين متاحين', 'خريجًا متاحًا'])],
   [/^Voir les autres étudiants \((\d+)\)$/, n => `عرض الطلبة الآخرين (${n})`],
   [/^Horaires envoyés à (.+?)\.$/, n => `أُرسلت توقيتاتك إلى ${n}.`],
