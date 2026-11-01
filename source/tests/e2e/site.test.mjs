@@ -1575,6 +1575,57 @@ test('navigateur d’une application (Instagram) : « Ouvrir dans Chrome » à l
   await a.ctx.close();
 });
 
+test('navigateur d’une application sans Chrome : « Ouvrir dans Chrome » rouvre la même adresse ici (?notifs=1) sans remontrer la feuille ; en arabe, la langue suit dans le lien', async () => {
+  const s = await ouvrir({ largeur: 360, ua: INSTAGRAM });
+  await s.page.setViewportSize({ width: 360, height: 640 });
+  await s.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  await s.page.click('#appli-chrome'); await s.page.waitForTimeout(400);
+  // Pas de Chrome sur ce téléphone : l'application ouvre l'adresse de secours ici même, à chaque toucher
+  for (let i = 0; i < 2; i++) {
+    await s.page.goto(adresse + '?notifs=1'); await s.page.waitForSelector('.hello');
+    await s.page.waitForTimeout(4500);
+    assert.equal(await s.page.locator('.modal.appli').count(), 0, 'la même feuille ne tourne pas en boucle');
+    assert.equal(await s.page.evaluate(() => sessionStorage.getItem('ensam-lien-appareil')), null, 'le lien est lu');
+  }
+  // La pastille reste là pour qui veut revoir les gestes
+  await s.page.waitForSelector('.pastille[data-sorte="appli"]');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe : Chrome ne connaît pas le choix fait ici, l'adresse le lui dit
+  const a = await ouvrir({ largeur: 360, ua: INSTAGRAM, langue: 'ar' });
+  await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  assert.match(await a.page.getAttribute('#appli-chrome', 'href'), /^intent:\/\/127\.0\.0\.1:\d+\/\?lang=ar&notifs=1#Intent;.*S\.browser_fallback_url=http%3A%2F%2F127\.0\.0\.1%3A\d+%2F%3Flang%3Dar%26notifs%3D1;end$/);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
+test('lien d’appareil : une nouvelle version recharge la page sous sa feuille, elle revient aussitôt, comptée une fois', async () => {
+  const s = await prevenirSur('off');
+  const id = await s.page.$eval('#persona', e => e.value);
+  await s.page.evaluate(id => localStorage.setItem('ensam-prevenir-' + id, JSON.stringify({ n: 1, at: Date.now() - 864e5 })), id);
+  await s.page.goto(adresse + '?notifs=1'); await s.page.waitForSelector(ouverture, { timeout: 8000 });
+  assert.equal((await s.memo()).n, 2);
+  // Rechargée sous la feuille (nouvelle version) : la même feuille tout de suite, pas un deuxième refus
+  await s.page.reload(); await s.page.waitForSelector(ouverture, { timeout: 8000 });
+  assert.equal((await s.memo()).n, 2, 'comptée une fois');
+  await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
+  await recharger(s); await rienALouverture(s, 'fermée : le lien est lu');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Le navigateur d'une application : sa feuille revient aussi tant qu'elle n'est pas fermée ; fermée, le lien ne la ramène plus
+  const a = await ouvrir({ largeur: 360, ua: INSTAGRAM });
+  await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  await a.page.keyboard.press('Escape'); await a.page.waitForTimeout(300);
+  await a.page.evaluate(() => sessionStorage.clear());
+  await a.page.goto(adresse + '?notifs=1'); await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  await a.page.reload(); await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  await a.page.keyboard.press('Escape'); await a.page.waitForTimeout(300);
+  await a.page.goto(adresse + '?notifs=1'); await a.page.waitForSelector('.hello'); await a.page.waitForTimeout(4500);
+  assert.equal(await a.page.locator('.modal.appli').count(), 0);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
 test('à l’ouverture : « Plus tard » puis une fête dans la même visite, le refus reste compté', async () => {
   const s = await prevenirSur('off');
   await attendreOuverture(s); await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
@@ -5323,6 +5374,42 @@ test('la pastille « Notifications bloquées » : les gestes de cet appareil, en
     assert.deepEqual(s.erreurs, []);
     await s.ctx.close();
   }
+});
+
+test('la pastille ne promet rien à qui n’en veut pas ou ne peut pas : coupées (iPhone : l’icône, sans promesse) ; abonnement impossible ici (ni « Activer » ni bandeau)', async () => {
+  const s = await prevenirSur('off');
+  const id = await s.page.$eval('#persona', e => e.value);
+  const poser = m => s.page.evaluate(([id, m]) => localStorage.setItem('ensam-prevenir-' + id, JSON.stringify(m)), [id, m]);
+  const pastille = async sorte => { await s.page.waitForSelector(`.pastille[data-sorte="${sorte}"]`, { timeout: 8000 }); return s.page.locator('.pastille').innerText(); };
+  // iPhone dans Safari, notifications coupées dans Mon profil : l'icône de l'écran d'accueil, sans parler de notifications
+  await s.page.evaluate(() => localStorage.setItem('ensam-install-demo', 'ios'));
+  await poser({ fait: 1, coupe: 1 });
+  await recharger(s);
+  const ios = await pastille('installer');
+  assert.match(ios, /Une icône sur ton écran d’accueil/);
+  assert.doesNotMatch(ios, /notifications/i);
+  // Android, abonnement déjà impossible pour de bon sur ce navigateur (Brave, téléphone sans services Google) :
+  // « Activer » n'y servirait à rien, ni dans la pastille ni dans le bandeau de l'accueil
+  await s.page.evaluate(() => localStorage.removeItem('ensam-install-demo'));
+  await poser({ fait: 1, sans: 1 });
+  await recharger(s); await s.page.waitForTimeout(2600);
+  assert.equal(await s.page.locator('.pastille').count(), 0);
+  assert.equal(await s.page.locator('.push-bandeau').count(), 0);
+  // L'installation reste proposée, sans promesse
+  await s.page.evaluate(() => localStorage.setItem('ensam-install-demo', 'android'));
+  await recharger(s);
+  assert.match(await pastille('installer'), /Une icône sur ton écran d’accueil/);
+  // Activées puis perdues sans échec : « Activer » revient, avec le bandeau
+  await s.page.evaluate(() => localStorage.removeItem('ensam-install-demo'));
+  await poser({ fait: 1 });
+  await recharger(s);
+  await pastille('activer');
+  await s.page.waitForSelector('.push-bandeau[data-etat="off"]');
+  // Mon profil garde le bouton pour réessayer
+  await poser({ fait: 1, sans: 1 });
+  await s.aller('profil/notifications'); await s.page.waitForSelector('#md-push-oui');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
 });
 
 // ---------------------------------------------------------------------------

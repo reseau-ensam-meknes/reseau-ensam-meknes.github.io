@@ -4,6 +4,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { navigateurIntegre, lienChrome, ouvertureSorte, OUVERTURE_IOS_ECART, ouvertureNotif, sorteLienNotifs, parametresLien, noterEchecPush, echecDefinitif, bandeauPush } from '../../src/logic.js';
 import { SupabaseStore } from '../../src/store.js';
+import { langueDuLien } from '../../src/regles-entree.js';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 
 const NOW = Date.UTC(2026, 10, 1, 12);
 const J = 864e5;
@@ -207,4 +210,145 @@ test('clé publique de la plateforme : demandée une fois pour la visite, même 
   assert.deepEqual(await Promise.all([s.pushKey(), s.pushKey()]), ['BEl62', 'BEl62']);
   assert.equal(await s.pushKey(), 'BEl62');
   assert.equal(n, 2, 'redemandée après l’échec, puis gardée');
+});
+
+test('« Ouvrir dans Chrome » en arabe : la langue de la page suit (?lang=ar, lue pour la visite) ; en français, Chrome garde son choix', () => {
+  const ar = lienChrome('https://reseau-ensam-meknes.github.io/#mentorat', 'mentorat', { lang: 'ar' });
+  assert.match(ar, /^intent:\/\/reseau-ensam-meknes\.github\.io\/\?lang=ar&r=mentorat&notifs=1#Intent;scheme=https;package=com\.android\.chrome;/);
+  const secours = new URL(decodeURIComponent(ar.match(/S\.browser_fallback_url=([^;]+);/)[1]));
+  assert.equal(langueDuLien(secours.search, null), 'ar', 'Chrome ouvre la page en arabe');
+  assert.deepEqual(parametresLien(secours.search), { r: 'mentorat', notifs: true, depuis: '', search: '?lang=ar', aucun: false }, 'la langue reste dans l’adresse');
+  // Un ?lang=ar resté dans l'adresse d'une page lue en français ne fait pas passer Chrome à l'arabe
+  assert.match(lienChrome('https://reseau-ensam-meknes.github.io/?lang=ar', '', { lang: 'fr' }), /^intent:\/\/reseau-ensam-meknes\.github\.io\/\?notifs=1#Intent;/);
+  assert.match(lienChrome('https://reseau-ensam-meknes.github.io/?promo=2019', '', { lang: 'fr' }), /\?promo=2019&notifs=1#Intent;/);
+});
+
+test('abonnement impossible pour de bon sur ce navigateur (memo.sans) : ni bandeau ni feuille d’ouverture ; le lien touché exprès réessaie', () => {
+  const sans = { fait: 1, sans: 1 };
+  assert.equal(bandeauPush({ etat: 'off', role: 'etudiant', now: NOW, memo: sans }), null);
+  assert.equal(bandeauPush({ etat: 'off', role: 'etudiant', now: NOW, memo: { fait: 1 } }), 'off', 'activées puis perdues : le bandeau le redit');
+  assert.equal(bandeauPush({ etat: 'refuse', role: 'etudiant', now: NOW, memo: sans }), 'refuse', 'bloquées depuis : les gestes pour débloquer');
+  assert.equal(bandeauPush({ etat: 'appli', role: 'etudiant', now: NOW, memo: sans }), 'appli');
+  assert.equal(s({ memo: sans }), null);
+  assert.equal(sorteLienNotifs({ etat: 'off', memo: sans }), 'push');
+});
+
+// Le service worker : chargé tel quel, avec un faux navigateur autour (fenêtres de l'application, barre de notifications, chiffre)
+const SW = readFileSync(new URL('../../src/sw.js', import.meta.url), 'utf8');
+const SCOPE = 'https://reseau-ensam-meknes.github.io/';
+function travailleur({ fenetres = [], chiffre = true, ouvrir = async url => ({ url }) } = {}) {
+  const ecoute = {}, journal = [], barre = [];
+  const self = {
+    addEventListener: (type, f) => { ecoute[type] = f; },
+    registration: {
+      scope: SCOPE,
+      showNotification: async (titre, o) => { barre.push({ titre, ...o }); },
+      getNotifications: async () => barre.slice(),
+      pushManager: { getSubscription: async () => null },
+    },
+    clients: { matchAll: async () => fenetres, openWindow: async url => { journal.push('ouverte ' + url); return ouvrir(url); } },
+    navigator: chiffre ? { setAppBadge: async n => { journal.push('chiffre ' + n); }, clearAppBadge: async () => { journal.push('chiffre effacé'); } } : {},
+  };
+  vm.runInNewContext(SW, { self, URL, console });
+  const lancer = async (type, ev = {}) => { let fin; ecoute[type]({ ...ev, waitUntil: p => { fin = p; } }); await fin; };
+  const pousser = d => lancer('push', { data: { json: () => d, text: () => JSON.stringify(d) } });
+  // Touchée, elle se ferme d'elle-même (close) ; écartée, elle a déjà quitté la barre
+  const toucher = (url, type = 'notificationclick') => { if (type === 'notificationclose') barre.shift(); return lancer(type, { notification: { data: { url }, close: () => { barre.shift(); } } }); };
+  return { lancer, pousser, toucher, journal, barre };
+}
+const fenetre = (journal, { visible = false, focused = false, url = SCOPE + '#accueil', naviguer = true } = {}) => {
+  const w = {
+    url, focused, visibilityState: visible ? 'visible' : 'hidden',
+    focus: async () => { journal.push('devant'); w.visibilityState = 'visible'; w.focused = true; return w; },
+    navigate: async u => { if (!naviguer) throw new TypeError('page pas contrôlée'); journal.push('va ' + u); return w; },
+    postMessage: m => { journal.push(typeof m === 'string' ? m : 'message ' + JSON.stringify(m)); },
+  };
+  return w;
+};
+
+test('service worker : application fermée, la notification sonne, garde l’heure de l’évènement, et le chiffre compte la barre', async () => {
+  const t = travailleur();
+  await t.pousser({ title: 'Nouveau message', body: 'Salma : bonjour', tag: 'message:42', url: '#messages/42', at: '2026-10-31T08:00:00Z' });
+  const n = t.barre[0];
+  assert.equal(n.titre, 'Nouveau message');
+  assert.equal(n.silent, false); assert.equal(n.renotify, true); assert.deepEqual(Array.from(n.vibrate), [120, 60, 120]);
+  assert.equal(n.timestamp, Date.parse('2026-10-31T08:00:00Z'));
+  assert.deepEqual({ ...n.data }, { url: '#messages/42' });
+  assert.deepEqual(t.journal, ['chiffre 1']);
+  await t.pousser({ title: 'Offre', body: '…' });
+  assert.deepEqual(t.journal, ['chiffre 1', 'chiffre 2']);
+  assert.ok(Math.abs(t.barre[1].timestamp - Date.now()) < 5000, 'sans heure : l’arrivée');
+  assert.equal(t.barre[1].renotify, false, 'sans tag, rien à renouveler');
+  // Un contenu illisible : le texte brut, sous le nom du Réseau
+  await t.lancer('push', { data: { json: () => { throw new SyntaxError('x'); }, text: () => 'Bonjour' } });
+  assert.equal(t.barre[2].titre, 'Réseau ENSAM Meknès'); assert.equal(t.barre[2].body, 'Bonjour');
+});
+
+test('service worker : application regardée, la notification se range sans bruit ; une page visible garde son chiffre', async () => {
+  const journal = [];
+  // Au premier plan : sans son ni vibration, et le chiffre de la page reste
+  let t = travailleur({ fenetres: [fenetre(journal, { visible: true, focused: true })] });
+  await t.pousser({ title: 'Nouveau message', tag: 'message:42' });
+  assert.equal(t.barre[0].silent, true); assert.equal(t.barre[0].renotify, false); assert.equal(t.barre[0].vibrate, undefined);
+  assert.deepEqual(t.journal, []);
+  // Visible mais une autre fenêtre devant (ordinateur) : elle sonne, la page garde son chiffre
+  t = travailleur({ fenetres: [fenetre(journal, { visible: true })] });
+  await t.pousser({ title: 'Nouveau message' });
+  assert.equal(t.barre[0].silent, false); assert.deepEqual(t.journal, []);
+  // Cachée (un autre onglet, l'écran éteint) : elle sonne, et le chiffre compte la barre
+  t = travailleur({ fenetres: [fenetre(journal)] });
+  await t.pousser({ title: 'Nouveau message' });
+  assert.equal(t.barre[0].silent, false); assert.deepEqual(t.journal, ['chiffre 1']);
+  // Demandée calme par la plateforme (rappel du soir) : sans bruit même application fermée
+  t = travailleur();
+  await t.pousser({ title: 'Rappel', calme: true });
+  assert.equal(t.barre[0].silent, true);
+  // Une fenêtre d'un autre site n'est pas l'application
+  t = travailleur({ fenetres: [fenetre(journal, { visible: true, focused: true, url: 'https://exemple.org/' })] });
+  await t.pousser({ title: 'Nouveau message' });
+  assert.equal(t.barre[0].silent, false); assert.deepEqual(t.journal, ['chiffre 1']);
+});
+
+test('service worker : toucher la notification ouvre sa page ; écartée, le chiffre suit la barre sauf si une page visible tient le sien', async () => {
+  // Aucune fenêtre : une nouvelle, et le chiffre suit la barre (la page ouverte mettra le sien)
+  let t = travailleur();
+  await t.pousser({ title: 'A', url: '#messages/1' }); await t.pousser({ title: 'B' });
+  t.journal.length = 0;
+  await t.toucher('#messages/1');
+  assert.deepEqual(t.journal.sort(), ['chiffre 1', 'ouverte ' + SCOPE + '#messages/1'].sort());
+  // Une page cachée : devant, elle va à l'adresse ; visible, c'est elle qui remet son chiffre (rien d'ici)
+  let journal = [];
+  t = travailleur({ fenetres: [fenetre(journal)] });
+  await t.pousser({ title: 'A' }); journal.length = 0; t.journal.length = 0;
+  await t.toucher('#mentorat');
+  assert.deepEqual(journal, ['devant', 'va ' + SCOPE + '#mentorat']);
+  assert.deepEqual(t.journal, []);
+  // Page pas encore contrôlée par ce service worker : elle reçoit l'adresse et y va elle-même ; la fenêtre devant d'abord
+  journal = [];
+  const cachee = fenetre(journal, { url: SCOPE + '#offres' }), devant = fenetre(journal, { visible: true, focused: true, naviguer: false });
+  t = travailleur({ fenetres: [cachee, devant] });
+  await t.toucher('#offres');
+  assert.deepEqual(journal, ['devant', 'message {"aller":"' + SCOPE + '#offres"}']);
+  assert.equal(cachee.focused, false, 'pas la fenêtre cachée');
+  // Le navigateur refuse de la mettre devant : elle reste cachée, le chiffre suit la barre
+  journal = [];
+  const tetue = fenetre(journal); tetue.focus = async () => { throw new Error('pas permis'); };
+  t = travailleur({ fenetres: [tetue] });
+  await t.pousser({ title: 'A' }); await t.pousser({ title: 'B' }); t.journal.length = 0;
+  await t.toucher('#accueil');
+  assert.deepEqual(t.journal, ['chiffre 1']);
+  // Écartée sans l'ouvrir : le chiffre suit la barre (0 : effacé)…
+  t = travailleur();
+  await t.pousser({ title: 'A' }); t.journal.length = 0;
+  await t.toucher('#accueil', 'notificationclose');
+  assert.deepEqual(t.journal, ['chiffre effacé']);
+  // … sauf quand une page visible tient le sien
+  t = travailleur({ fenetres: [fenetre([], { visible: true })] });
+  await t.pousser({ title: 'A' });
+  await t.toucher('#accueil', 'notificationclose');
+  assert.deepEqual(t.journal, []);
+  // Un système sans chiffre sur les icônes : rien ne casse
+  t = travailleur({ chiffre: false });
+  await t.pousser({ title: 'A' }); await t.toucher('#accueil');
+  assert.deepEqual(t.journal, ['ouverte ' + SCOPE + '#accueil']);
 });

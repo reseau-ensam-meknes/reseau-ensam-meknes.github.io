@@ -2641,10 +2641,10 @@ create table if not exists public.enquetes_insertion (
   updated_at timestamptz default now(),
   unique (user_id, vague)
 );
--- L'école de la réponse, celle de la personne à l'envoi : elle reste quand la réponse est anonymisée (user_id vide)
-alter table public.enquetes_insertion add column if not exists ecole text not null default 'ensam-meknes' references public.ecoles(slug);
-create index if not exists enquetes_insertion_ecole on public.enquetes_insertion (ecole, promo, vague);
 
+-- L'école de la réponse, celle de la personne (protect_enquete) : elle reste quand la réponse est anonymisée (user_id vide)
+alter table public.enquetes_insertion add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug);
+create index if not exists enquetes_insertion_ecole on public.enquetes_insertion (ecole, promo, vague);
 create or replace function public.protect_enquete() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare p public.profiles%rowtype;
@@ -4156,7 +4156,9 @@ create table if not exists public.ambassadeurs (
 -- Qui a retiré (membre, admin, systeme : changement de promo ou de filière) et le statut d'avant : chacun n'annule que son geste
 alter table public.ambassadeurs add column if not exists retire_par text check (retire_par in ('membre','admin','systeme'));
 alter table public.ambassadeurs add column if not exists statut_avant text check (statut_avant in ('propose','accepte'));
-create unique index if not exists ambassadeurs_un_en_cours on public.ambassadeurs (promo, filiere) where statut in ('propose','accepte');
+alter table public.ambassadeurs add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug);
+drop index if exists public.ambassadeurs_un_en_cours;
+create unique index if not exists ambassadeurs_ecole_en_cours on public.ambassadeurs (ecole, promo, filiere) where statut in ('propose','accepte');
 create index if not exists ambassadeurs_membre on public.ambassadeurs (user_id);
 -- Le classement compte l'activité de chaque membre : un index par auteur (sinon une lecture complète par membre)
 create index if not exists offers_auteur on public.offers (author_id);
@@ -4172,6 +4174,9 @@ create table if not exists public.ambassadeurs_passages (
   at timestamptz not null default now(),
   primary key (promo, filiere)
 );
+alter table public.ambassadeurs_passages add column if not exists ecole text not null default 'ensam-meknes' references public.ecoles(slug);
+alter table public.ambassadeurs_passages drop constraint if exists ambassadeurs_passages_pkey;
+alter table public.ambassadeurs_passages add primary key (ecole, promo, filiere);
 alter table public.ambassadeurs_passages enable row level security;
 revoke all on public.ambassadeurs_passages from anon, authenticated;
 alter table public.ambassadeurs enable row level security;
@@ -4294,7 +4299,7 @@ language sql stable security definer set search_path = public as $$
   -- La connexion récente départage ceux qui ont agi ; seule, elle ne suffit pas (rien fait, pas proposé)
   cross join lateral (select x.actions + case when x.actions > 0
       and (select u.last_sign_in_at from auth.users u where u.id = p.id) > now() - interval '30 days' then 2 else 0 end as score) s
-  where p.promo = p_promo and p.filiere = p_filiere and p.role in ('etudiant','laureat') and not p.admin_ok and p.consent_at is not null
+  where p.promo = p_promo and p.filiere = p_filiere and p.ecole = coalesce(public.mon_ecole(), 'ensam-meknes') and p.role in ('etudiant','laureat') and not p.admin_ok and p.consent_at is not null
     and not exists (select 1 from public.ambassadeurs a where a.user_id = p.id and a.promo = p_promo and a.filiere = p_filiere
       and (a.statut in ('refuse','expire','retire') or (a.statut = 'propose' and a.propose_at <= now() - interval '7 days')))
     and not exists (select 1 from public.ambassadeurs a where a.user_id = p.id
@@ -4312,27 +4317,27 @@ language plpgsql security definer set search_path = public as $$
 declare g record; v_id uuid; n int := 0; k int; v_admin boolean := public.is_admin(); v_moi record;
 begin
   if auth.uid() is null then return 0; end if;
-  select promo, filiere, role into v_moi from public.profiles where id = auth.uid();
+  select promo, filiere, role, ecole into v_moi from public.profiles where id = auth.uid();
   if v_moi is null then return 0; end if;
   perform set_config('ensam.amb_systeme', 'on', true);
   for g in select distinct p.promo, p.filiere from public.profiles p
-    where p.role in ('etudiant','laureat') and p.promo between 1990 and 2040 and char_length(p.filiere) between 1 and 120
+    where p.role in ('etudiant','laureat') and p.ecole = v_moi.ecole and p.promo between 1990 and 2040 and char_length(p.filiere) between 1 and 120
       and (v_admin or (p.promo = v_moi.promo and p.filiere = v_moi.filiere))
   loop
     begin
       update public.ambassadeurs set statut = 'expire', repondu_at = now()
-        where promo = g.promo and filiere = g.filiere and statut = 'propose' and propose_at <= now() - interval '7 days';
+        where ecole = v_moi.ecole and promo = g.promo and filiere = g.filiere and statut = 'propose' and propose_at <= now() - interval '7 days';
       get diagnostics k = row_count; n := n + k;
-      if exists (select 1 from public.ambassadeurs a where a.promo = g.promo and a.filiere = g.filiere and a.statut in ('propose','accepte')) then continue; end if;
-      if k = 0 and exists (select 1 from public.ambassadeurs_passages x where x.promo = g.promo and x.filiere = g.filiere and x.at > now() - interval '1 hour') then continue; end if;
+      if exists (select 1 from public.ambassadeurs a where a.ecole = v_moi.ecole and a.promo = g.promo and a.filiere = g.filiere and a.statut in ('propose','accepte')) then continue; end if;
+      if k = 0 and exists (select 1 from public.ambassadeurs_passages x where x.ecole = v_moi.ecole and x.promo = g.promo and x.filiere = g.filiere and x.at > now() - interval '1 hour') then continue; end if;
       v_id := null;
       select c.id into v_id from public.ambassadeur_candidats(g.promo, g.filiere) c limit 1;
       if v_id is null then
-        insert into public.ambassadeurs_passages (promo, filiere, at) values (g.promo, g.filiere, now())
-          on conflict (promo, filiere) do update set at = excluded.at;
+        insert into public.ambassadeurs_passages (ecole, promo, filiere, at) values (v_moi.ecole, g.promo, g.filiere, now())
+          on conflict (ecole, promo, filiere) do update set at = excluded.at;
         continue;
       end if;
-      insert into public.ambassadeurs (promo, filiere, user_id) values (g.promo, g.filiere, v_id) on conflict do nothing;
+      insert into public.ambassadeurs (ecole, promo, filiere, user_id) values (v_moi.ecole, g.promo, g.filiere, v_id) on conflict do nothing;
       get diagnostics k = row_count; n := n + k;
     exception when others then null;
     end;
@@ -4345,9 +4350,11 @@ grant execute on function public.ambassadeurs_proposer() to authenticated;
 
 -- Les chiffres vrais d'une promo × filière : depuis toujours, et pendant le mois qui commence à p_debut.
 -- Comme chiffresPromo() dans logic.js.
-create or replace function public.chiffres_groupe(p_promo int, p_filiere text, p_debut timestamptz)
+drop function if exists public.chiffres_groupe(int, text, timestamptz);
+create or replace function public.chiffres_groupe(p_promo int, p_filiere text, p_debut timestamptz, p_ecole text default null)
 returns jsonb language sql stable security definer set search_path = public as $$
-  with m as (select p.id, p.created_at from public.profiles p where p.promo = p_promo and p.filiere = p_filiere and p.role in ('etudiant','laureat')),
+  with m as (select p.id, p.created_at from public.profiles p where p.promo = p_promo and p.filiere = p_filiere and p.role in ('etudiant','laureat')
+    and p.ecole = coalesce(p_ecole, public.mon_ecole(), 'ensam-meknes')),
   d as (select x.updated_at, x.created_at from public.demandes x join m on m.id = x.auteur_id where x.status = 'pourvue'),
   s as (select coalesce(x.confirmed_at, x.created_at) as t from public.placements x join m on m.id = x.student_id where x.status in ('declare','confirme'))
   select jsonb_build_object(
@@ -4358,7 +4365,7 @@ returns jsonb language sql stable security definer set search_path = public as $
     'stages', (select count(*) from s),
     'stages_mois', (select count(*) from s where s.t >= p_debut and s.t < p_debut + interval '1 month'));
 $$;
-revoke all on function public.chiffres_groupe(int, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.chiffres_groupe(int, text, timestamptz, text) from public, anon, authenticated;
 
 -- L'ambassadeur (accepté) lit les chiffres de sa promo ; l'administration ceux de n'importe quel groupe
 create or replace function public.chiffres_ma_promo(p_debut timestamptz default null, p_promo int default null, p_filiere text default null)
@@ -4381,7 +4388,7 @@ grant execute on function public.chiffres_ma_promo(timestamptz, int, text) to au
 create or replace function public.chiffres_ambassadeurs(p_debut timestamptz)
 returns table (user_id uuid, promo int, filiere text, chiffres jsonb)
 language sql stable security definer set search_path = public as $$
-  select a.user_id, a.promo, a.filiere, public.chiffres_groupe(a.promo, a.filiere, p_debut)
+  select a.user_id, a.promo, a.filiere, public.chiffres_groupe(a.promo, a.filiere, p_debut, a.ecole)
   from public.ambassadeurs a join public.profiles p on p.id = a.user_id and p.promo = a.promo and p.filiere = a.filiere
   where a.statut = 'accepte';
 $$;
@@ -4883,7 +4890,7 @@ begin
       if new.lien is null or char_length(new.lien) > 500 or new.lien !~* '^https?://[^[:space:]/?#]+\.[^[:space:]]+$' then
         raise exception 'Ajoute le lien de l’offre (https://…).' using errcode = '23514';
       end if;
-      if exists (select 1 from public.offers o where o.id <> new.id and o.origine = 'partagee' and o.status = 'ouverte'
+      if exists (select 1 from public.offers o where o.id <> new.id and o.ecole = new.ecole and o.origine = 'partagee' and o.status = 'ouverte'
           and o.created_at > now() - interval '45 days'
           and lower(regexp_replace(trim(o.lien), '/+$', '')) = lower(regexp_replace(new.lien, '/+$', ''))) then
         raise exception 'Cette offre est déjà partagée sur le réseau.' using errcode = '23505';
@@ -4909,7 +4916,7 @@ begin
     end if;
     new.cooptation := false;
     -- Le même lien déjà partagé, encore ouvert : une seule fois sur le réseau
-    if exists (select 1 from public.offers o where o.origine = 'partagee' and o.status = 'ouverte'
+    if exists (select 1 from public.offers o where o.ecole = new.ecole and o.origine = 'partagee' and o.status = 'ouverte'
         and o.created_at > now() - interval '45 days'
         and lower(regexp_replace(trim(o.lien), '/+$', '')) = lower(regexp_replace(new.lien, '/+$', ''))) then
       raise exception 'Cette offre est déjà partagée sur le réseau.' using errcode = '23505';
@@ -5471,9 +5478,10 @@ alter table public.sponsorises_comptes enable row level security;
 revoke all on public.sponsorises_comptes from public, anon, authenticated;
 
 -- La carte vise-t-elle ce membre ? En cours, son public, son année, sa filière ; jamais l'administration (ni en vue lauréat)
+alter table public.sponsorises add column if not exists ecole text references public.ecoles(slug);
 create or replace function public.sponsorise_pour(s public.sponsorises, p public.profiles) returns boolean
 language sql stable set search_path = public as $$
-  select s.id is not null and p.id is not null and s.actif and current_date between s.debut and s.fin
+  select s.id is not null and p.id is not null and s.actif and current_date between s.debut and s.fin and (s.ecole is null or s.ecole = p.ecole)
     and p.role in ('etudiant','laureat') and not coalesce(p.admin_ok, false)
     and (s.public = 'tous' or (s.public = 'etudiants' and p.role = 'etudiant') or (s.public = 'laureats' and p.role = 'laureat'))
     and (cardinality(coalesce(s.annees, '{}')) = 0 or public.niveau_de(p.promo, public.saison_courante()) = any(s.annees))
