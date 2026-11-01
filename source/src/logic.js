@@ -916,13 +916,26 @@ export const GUIDE_SECTIONS = [
   ['logement', 'Logement', 'home'], ['budget', 'Budget et coût de la vie', 'briefcase'], ['stage', 'Trouver un stage ou un emploi', 'feed'], ['vie', 'Vie sur place', 'heart'],
 ];
 
+// L'école d'un membre ou d'une ligne : tout ce qui date d'avant les écoles est à ENSAM Meknès (même défaut que la base)
+export const ECOLE_DEFAUT = 'ensam-meknes';
+export const ecoleDe = x => x?.ecole || ECOLE_DEFAUT;
+// Administration > Membres : null si la liste officielle de son école n'a aucune ligne de sa promo, sinon true ou false
+// selon qu'il y figure (même nom et même promo, ou même email) ; les lignes d'une autre école ne comptent jamais
+export function surListeOfficielle(liste, p, email) {
+  const lignes = (liste || []).filter(l => ecoleDe(l) === ecoleDe(p)); const e = (email || '').toLowerCase();
+  if (!lignes.some(l => l.promo === p.promo)) return null;
+  return lignes.some(l => (l.promo === p.promo && cleNom(l.nom) === cleNom(p.full_name)) || (!!l.email && !!e && l.email === e));
+}
+
 // Taux d'insertion par promo, filière et vague (même calcul que rapport_insertion() dans la base) :
 // le taux exclut ceux qui poursuivent leurs études ; le taux de réponse se rapporte à la liste officielle si elle est importée.
-export function rapportInsertion(data, now = new Date()) {
+// ecole : une seule école (inscrits, réponses et liste de cette école), comme p_ecole dans la base.
+export function rapportInsertion(data, now = new Date(), ecole = null) {
   const an = now.getFullYear(); const enPoste = e => ['emploi', 'entrepreneur', 'volontariat'].includes(e.situation);
+  const ici = x => !ecole || ecoleDe(x) === ecole;
   const cohortes = new Map();
-  for (const p of data.profiles) if (p.role !== 'admin' && p.promo <= an && p.promo >= an - 6) { const k = p.promo + '|' + p.filiere; cohortes.set(k, (cohortes.get(k) || 0) + 1); }
-  const liste = data.liste_officielle || []; const enq = data.enquetes_insertion || [];
+  for (const p of data.profiles) if (p.role !== 'admin' && ici(p) && p.promo <= an && p.promo >= an - 6) { const k = p.promo + '|' + p.filiere; cohortes.set(k, (cohortes.get(k) || 0) + 1); }
+  const liste = (data.liste_officielle || []).filter(ici); const enq = (data.enquetes_insertion || []).filter(ici);
   const mediane = v => { if (!v.length) return null; const s = [...v].sort((a, b) => a - b); const m = (s.length - 1) / 2; return (s[Math.floor(m)] + s[Math.ceil(m)]) / 2; };
   const moy = v => v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length * 10) / 10 : null;
   const rows = [];
@@ -1320,8 +1333,11 @@ export function sorteLienNotifs({ etat, memo = {} }) {
 // Bandeau de l'accueil : tant que cet appareil ne reçoit rien (coupées par le navigateur, iPhone sans l'application, jamais
 // activées, navigateur d'une application), il le dit, sauf à qui les a coupées lui-même (memo.coupe) ; « plus tard » le range 3 jours.
 export const BANDEAU_PUSH_ECART = 3 * 864e5;
+// memo.sans : l'abonnement a déjà échoué pour de bon sur ce navigateur (apresEchec, pwa.js) : « Activer » n'y servirait à
+// rien, le bouton de Mon profil reste là pour réessayer.
 export function bandeauPush({ etat, memo = {}, now = Date.now(), role, voulu = true }) {
   if (role === 'admin' || !voulu || memo.coupe || !['off', 'ios', 'refuse', 'appli'].includes(etat)) return null;
+  if (etat === 'off' && memo.sans) return null;
   return memo.bandeau && now - memo.bandeau < BANDEAU_PUSH_ECART ? null : etat;
 }
 
@@ -1348,10 +1364,13 @@ export function navigateurIntegre(ua = '') {
 // « Ouvrir dans Chrome » depuis le navigateur d'une application Android : un lien intent:// vers la même page, que Chrome
 // ouvre (sinon la même adresse, browser_fallback_url). La route passe en ?r=… (le # sert à l'intent) et notifs=1 ouvre
 // tout de suite la feuille d'activation : c'est pour elle que le membre change de navigateur. app.js lit puis efface les deux.
-export function lienChrome(adresse, route = '') {
+// lang : la langue de la page ; Chrome ne connaît pas le choix fait ici, l'arabe passe donc par l'adresse (?lang=ar, gardé
+// pour la visite, i18n.js), le français laisse Chrome à son propre choix. Sans lang : l'adresse garde le sien.
+export function lienChrome(adresse, route = '', { lang } = {}) {
   const u = new URL(adresse);
   u.hash = '';
   for (const k of ['r', 'notifs', 'depuis']) u.searchParams.delete(k);
+  if (lang === 'ar') u.searchParams.set('lang', 'ar'); else if (lang) u.searchParams.delete('lang');
   const r = String(route || '').replace(/^#/, '');
   if (r && r !== 'accueil') u.searchParams.set('r', r);
   u.searchParams.set('notifs', '1');

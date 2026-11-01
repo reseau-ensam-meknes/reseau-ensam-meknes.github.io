@@ -2,10 +2,9 @@
 // Elles ne sont pas chargées pour tout le monde au démarrage : la page qui en a besoin les lit ici, en direct ou dans la démo.
 // En ligne, une table que la base n'a pas encore (mise à jour pas encore passée) donne une liste vide et absente = true.
 import { useState, useEffect } from './vendor/preact-htm.js';
-
-export const ECOLE_DEFAUT = 'ensam-meknes';
-// L'école d'une ligne : toutes les données d'avant les écoles sont celles de l'ENSAM Meknès
-export const ecoleDe = r => r?.ecole || ECOLE_DEFAUT;
+// L'école d'une ligne (ENSAM Meknès par défaut, comme dans la base) : définie une seule fois, dans logic.js
+import { ECOLE_DEFAUT, ecoleDe } from './logic.js';
+export { ECOLE_DEFAUT, ecoleDe };
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'x' + Math.random().toString(36).slice(2) + Date.now().toString(36));
 const absente = e => /does not exist|relation .* does not exist|schema cache|PGRST20[05]|42P01/i.test(`${e?.code || ''} ${e?.message || ''}`);
