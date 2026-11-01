@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<script>location.replace("../../?promo=2035"+location.hash)</script>
+<script>var d=/[?&]de=([a-z0-9]{8})(?:&|$)/.exec(location.search);location.replace("../../?promo=2035"+(d?"&de="+d[1]:"")+location.hash)</script>
 <title>Promo 2035 · tes camarades sont sur le Réseau</title>
 <meta name="description" content="Initiative de lauréats, indépendante de l’école : stages, PFE, emplois et conseils entre lauréats et étudiants de l’ENSAM Meknès. Inscription gratuite, ta promo est déjà indiquée.">
 <meta name="robots" content="noindex">
