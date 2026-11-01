@@ -2598,16 +2598,17 @@ test('cloche : son chiffre compte ce qui attend un geste, la feuille dit « À f
   const pastilles = () => s.page.$$eval('.bottom-nav a', as => as.filter(a => a.querySelector('.dotn')).map(a => a.innerText.trim().split('\n')[0]));
   // Accueil : la plateforme lui propose d'être ambassadeur de sa promo (ambassadeurs.js) ; sur téléphone, Mon espace est
   // dans le menu du compte (Match a pris sa place dans la barre) : sa pastille passe sur l'avatar
-  assert.deepEqual((await pastilles()).sort(), ['Accueil', 'Mentorat']);
+  // Match : Khadija s'est intéressée à son offre et attend une réponse
+  assert.deepEqual((await pastilles()).sort(), ['Accueil', 'Match', 'Mentorat']);
   assert.equal(await s.page.locator('.me-btn .dotn').count(), 1);
   // Mon espace ne répète pas la cloche : aucune de ses lignes (elles sont dans la cloche et sur l'accueil)
   await s.aller('espace');
   assert.equal(await s.page.locator('.page .af-row').count(), 0, 'Mon espace ne répète pas les lignes de la cloche');
   assert.doesNotMatch(await s.page.locator('.page').innerText(), /nouvelles candidatures|te demande de l’aide/);
-  // Un étudiant sans rien à faire : ni chiffre ni pastille, et la cloche le dit calmement
+  // Un étudiant sans rien à faire : ni chiffre ni pastille, et la cloche le dit calmement (seul Match s'allume : Youssef s'intéresse à son profil)
   await s.comme('Amine'); await s.aller('accueil');
   assert.equal(await s.page.locator('.cloche-btn .badge-n').count(), 0);
-  assert.deepEqual(await pastilles(), []);
+  assert.deepEqual(await pastilles(), ['Match']);
   assert.equal(await s.page.locator('.me-btn .dotn').count(), 0);
   await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
   assert.equal(await s.page.locator('.cloche .af-row').count(), 0);
@@ -5515,9 +5516,240 @@ test('Match : le geste montré une fois, sans gêner la carte', async () => {
   await s.comme('Salma'); await s.aller('match');
   await s.page.waitForSelector('.mx-guide');
   assert.equal(await s.page.locator('.mx-guide').evaluate(e => getComputedStyle(e).pointerEvents), 'none');
+  // Sans mouvement (réglage du système), la carte ne bouge pas toute seule (ni rien de la pile) : l'étiquette suffit
+  assert.deepEqual(await s.page.evaluate(() => document.getAnimations().map(a => a.animationName).filter(n => n === 'mx-montre')), []);
+  assert.equal(await s.page.locator('.mx-carte.dessus').evaluate(c => new DOMMatrixReadOnly(getComputedStyle(c).transform).e), 0);
   await s.page.locator('.mx-non').click();
   await s.page.waitForSelector('.mx-guide', { state: 'detached' });
   await s.page.reload(); await s.page.waitForSelector('.mx-carte');
   assert.equal(await s.page.locator('.mx-guide').count(), 0, 'pas deux fois');
+  await s.ctx.close();
+});
+
+test('Match : au premier passage, la carte du dessus montre elle-même le geste, une seule fois ; l’étiquette a un fond plein ; toucher la carte arrête tout', async () => {
+  const s = await ouvrir({ largeur: 390, mouvement: true });
+  await s.comme('Salma'); await s.aller('match');
+  await s.page.waitForSelector('.mx-pile.montre .mx-guide');
+  // Une seule démonstration de 1,9 s (vers « Intéressé », puis « Plus tard », puis retour), jamais en boucle
+  const montre = () => s.page.evaluate(() => document.getAnimations().filter(a => a.animationName === 'mx-montre')
+    .map(a => { const t = a.effect.getComputedTiming(); return { fois: t.iterations, duree: t.duration }; }));
+  assert.deepEqual(await montre(), [{ fois: 1, duree: 1900 }]);
+  // L'étiquette ne laisse pas voir la carte au travers (un fond plein, jour comme nuit)
+  const fond = await s.page.locator('.mx-guide').evaluate(e => getComputedStyle(e).backgroundColor);
+  assert.match(fond, /^rgb\(/, `fond plein : ${fond}`);
+  // Penchée vers « Intéressé » comme sous le doigt : 70 % du seuil (30 % de la largeur), le tampon d'autant, la suivante avance
+  await s.page.waitForFunction(() => parseFloat(getComputedStyle(document.querySelector('.mx-pile')).getPropertyValue('--mx-montre')) > .69);
+  const penche = () => s.page.locator('.mx-carte.dessus').evaluate(c => ({ x: new DOMMatrixReadOnly(getComputedStyle(c).transform).e / c.offsetWidth, p: parseFloat(getComputedStyle(c).getPropertyValue('--p')) }));
+  const avant = await penche();
+  assert.ok(Math.abs(avant.x - .21) < .015 && avant.p > .69, `penchée : ${JSON.stringify(avant)}`);
+  // La carte est à toi dès qu'on la touche : prise en route, elle reste où elle penchait (pas de saut au centre)…
+  const c = await s.page.locator('.mx-carte.dessus').boundingBox();
+  await s.page.mouse.move(c.x + c.width / 2, c.y + c.height / 2); await s.page.mouse.down();
+  const prise = await penche();
+  assert.ok(Math.abs(prise.x - avant.x) < .02, `prise là où elle penchait : ${JSON.stringify({ avant, prise })}`);
+  // … et un petit glissé (vers « Plus tard », sans choisir) arrête la démonstration et l'étiquette ; lâchée, elle revient
+  for (let i = 1; i <= 4; i++) { await s.page.mouse.move(c.x + c.width / 2 - i * 8, c.y + c.height / 2); await s.page.waitForTimeout(16); }
+  await s.page.mouse.up();
+  await s.page.waitForSelector('.mx-guide', { state: 'detached' });
+  assert.equal(await s.page.locator('.mx-pile.montre').count(), 0);
+  assert.deepEqual(await montre(), []);
+  await s.page.waitForFunction(() => { const c = document.querySelector('.mx-carte.dessus'); return c && !c.classList.contains('ressort') && Math.abs(new DOMMatrixReadOnly(getComputedStyle(c).transform).e) < .5; });
+  assert.equal(await s.page.locator('.modal').count(), 0, 'un glissé n’ouvre pas le détail');
+  assert.equal(await s.page.locator('.mx-carte.vol').count(), 0, 'rien n’est choisi');
+  assert.equal(await s.page.locator('.mx-tour-n').innerText(), '0', 'rien n’est choisi : le tour du jour n’a pas bougé');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : en arabe, un titre resté en français rejoint le bord droit de la carte, sur deux lignes aussi ; la description garde le sens du français ; un titre trop long, coupé, garde ses points de suspension (390 px)', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  await s.comme('Salma'); await s.aller('match');
+  const titre = s.page.locator('.mx-carte.dessus .mx-so-t');
+  await titre.waitFor();
+  // Chaque ligne d'un texte (ses morceaux à la même hauteur) : son écart au bord droit et au bord gauche de la colonne
+  const lignes = sel => s.page.locator(sel).evaluate(e => {
+    const r = document.createRange(); r.selectNodeContents(e);
+    const b = e.getBoundingClientRect(), par = new Map();
+    for (const x of r.getClientRects()) { const k = Math.round(x.bottom); const v = par.get(k) || [Infinity, -Infinity]; par.set(k, [Math.min(v[0], x.left), Math.max(v[1], x.right)]); }
+    const l = [...par.values()];
+    return { n: l.length, droite: Math.max(...l.map(([, d]) => Math.abs(b.right - d))), gauche: Math.max(...l.map(([g]) => Math.abs(g - b.left))), coupe: e.hasAttribute('data-coupe') };
+  });
+  // « Tableau de bord qualité en temps réel » (l'offre de Zineb pour Salma) : deux lignes, chacune au bord droit
+  const t = await lignes('.mx-carte.dessus .mx-so-t');
+  assert.ok(t.n === 2 && t.droite < 1.5 && !t.coupe, JSON.stringify(t));
+  // Sa description, un paragraphe : au bord gauche, comme on lit le français
+  const d = await lignes('.mx-carte.dessus .mx-c-desc');
+  assert.ok(d.n >= 2 && d.gauche < 1.5, JSON.stringify(d));
+  // Le même titre, trop long pour deux lignes : coupé, il garde l'alignement du français et ses points de suspension
+  await s.aller('accueil');
+  await s.page.evaluate(() => { const o = window.__demo.data.offers.find(o => /tableau de bord qualité en temps réel$/i.test(o.titre)); o.titre += ' et alertes de production sur les trois lignes du site'; });
+  await s.aller('match'); await titre.waitFor();
+  const c = await lignes('.mx-carte.dessus .mx-so-t');
+  assert.ok(c.coupe && c.gauche < 1.5, JSON.stringify(c));
+  assert.equal(await titre.evaluate(e => getComputedStyle(e).textAlign), 'start');
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : le tour du jour avance d’un point à chaque choix (TOUR_JOUR cartes, ou toute la pile si elle est plus courte) puis se coche ; la fin de la pile dit le vrai bilan de la visite, ce qui revient et quand, avec une seule action (390 px)', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('match');
+  await s.page.waitForSelector('.mx-carte.dessus');
+  const ou = async () => { const m = (await s.page.getAttribute('.mx-tour', 'aria-label')).match(/^Tour du jour : (\d+) sur (\d+)$/); return { n: +m[1], objectif: +m[2] }; };
+  // L'objectif : TOUR_JOUR cartes, ou toute la pile du jour (deckMatch, logic.js) quand elle est plus courte ; un point par carte
+  const { cartes, tourJour } = await s.page.evaluate(async () => { const l = await import('./logic.js'); return { cartes: l.deckMatch(window.__demo.data, window.__demo.me).length, tourJour: l.TOUR_JOUR }; });
+  const objectif = Math.min(tourJour, cartes);
+  assert.deepEqual(await ou(), { n: 0, objectif });
+  assert.equal(await s.page.getAttribute('.mx-tour', 'role'), 'img', 'aria-label lu : une image, pas un simple paragraphe');
+  assert.equal(await s.page.locator('.mx-tour').innerText(), `0 sur ${objectif} aujourd’hui`);
+  assert.equal(await s.page.locator('.mx-tour-pts i').count(), objectif);
+  assert.equal(await s.page.locator('.mx-tour-pts i.ici').count(), 1);
+  // Chaque choix avance d'un point ; l'objectif ne dépasse jamais TOUR_JOUR (il peut grandir : « Plus tard » sur la lauréate
+  // intéressée fait venir son offre) ; atteint, le tour se coche une fois, au dernier point et pas avant
+  let oui = 0, tard = 0, fait = false;
+  for (let pas = 0; await s.page.locator('.mx-carte.dessus').count(); pas++) {
+    assert.ok(pas < 30, 'la pile finit');
+    const avant = fait ? null : await ou();
+    if (pas === 1) { await s.page.click('.mx-oui'); oui++; } else { await s.page.click('.mx-non'); tard++; }
+    await s.page.waitForTimeout(260);
+    if (await s.page.locator('.mx-fete').count()) { await s.page.click('.mx-fete-plus'); await s.page.waitForTimeout(200); }
+    if (fait) continue;
+    if (await s.page.locator('.mx-tour.fini').count()) { fait = true; assert.equal(avant.n + 1, avant.objectif, 'coché au dernier point'); continue; }
+    const apres = await ou();
+    assert.equal(apres.n, avant.n + 1);
+    assert.ok(apres.objectif >= apres.n && apres.objectif <= tourJour);
+    assert.equal(await s.page.locator('.mx-tour-pts i.fait').count(), apres.n);
+  }
+  assert.ok(fait, 'toute la pile vue : le tour du jour est fait');
+  // La fin : « Tu as tout vu », le bilan vrai de cette visite, la suite avec le vrai délai, une seule action pleine
+  await s.page.waitForSelector('.mx-vide');
+  assert.equal(await s.page.locator('#mx-vide-t').innerText(), 'Tu as tout vu');
+  assert.equal(await s.page.locator('.mx-bl-oui .mx-compte').innerText(), String(oui));
+  assert.equal(await s.page.locator('.mx-bl-tard .mx-compte').innerText(), String(tard));
+  const jours = await s.page.evaluate(async () => (await import('./logic.js')).MATCH_PLUS_TARD_JOURS);
+  assert.match(await s.page.locator('.mx-suite').innerText(), new RegExp(`Les cartes « Plus tard » reviennent ${jours} jours après ton choix\\.`));
+  // L'en-tête garde le tour coché, une fois, sans points
+  assert.equal(await s.page.locator('.mx-tour.fini').count(), 1);
+  assert.match(await s.page.locator('.mx-tour').innerText(), /^Tour du jour fait/);
+  assert.equal(await s.page.locator('.mx-tour-pts').count(), 0);
+  assert.equal(await s.page.locator('.mx-page .btn.primary').count(), 1, 'une seule action pleine');
+  assert.ok(await s.page.locator('.mx-vide .btn.primary').isVisible());
+  // Tes matchs restent à portée, à la même place que pendant la pile (l'en-tête), une seule fois ; la fin tient au-dessus
+  // de la barre du bas, sans défiler. « Revenir sur mon dernier choix » ramène la dernière carte
+  assert.ok(await s.page.locator('.mx-tete .mx-matchs .mx-visage').count() >= 1);
+  assert.equal(await s.page.locator('.mx-matchs').count(), 1);
+  await s.page.evaluate(() => scrollTo(0, 0)); await s.page.waitForTimeout(100);
+  const { fin, barre } = await s.page.evaluate(() => ({ fin: document.querySelector('.mx-vide').getBoundingClientRect().bottom, barre: document.querySelector('.bottom-nav').getBoundingClientRect().top }));
+  assert.ok(fin <= barre, `la fin (${Math.round(fin)} px) tient au-dessus de la barre du bas (${Math.round(barre)} px)`);
+  await s.page.locator('.mx-vide .linkish', { hasText: 'Revenir sur mon dernier choix' }).click(); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator('.mx-carte.dessus').count(), 1);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : « Pourquoi toi » ne dit que du vrai — la filière, les compétences du profil que l’offre cite, jamais un score (1280 px)', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Salma'); await s.aller('match');
+  await s.page.waitForSelector('.mx-carte.dessus');
+  const vues = [];
+  for (let i = 0; i < 8 && await s.page.locator('.mx-carte.dessus').count(); i++) {
+    vues.push(await s.page.evaluate(() => {
+      const c = document.querySelector('.mx-carte.dessus');
+      return { titre: c.querySelector('h2').textContent, raisons: [...c.querySelectorAll('.mx-pq li')].map(li => li.textContent.trim()) };
+    }));
+    await s.page.click('.mx-non'); await s.page.waitForTimeout(260);
+  }
+  const me = await s.page.evaluate(() => ({ comp: window.__demo.me.competences, offres: window.__demo.data.offers.map(o => ({ texte: `${o.titre} ${o.description || ''}` })) }));
+  const plat = x => x.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  for (const v of vues) {
+    assert.ok(v.raisons.length >= 1 && v.raisons.length <= 3, `${v.titre} : de une à trois raisons`);
+    for (const r of v.raisons) {
+      assert.doesNotMatch(r, /\d\s?%|score|compatib/i, `${v.titre} : pas de score (« ${r} »)`);
+      // « Lean et VSM, dans ton profil » : chaque compétence est dans le profil, et l'offre (ou l'offre de la lauréate) la cite
+      const m = r.match(/^(.+), dans ton profil$/); if (!m) continue;
+      for (const c of m[1].split(/, | et /)) {
+        assert.ok(me.comp.includes(c), `${v.titre} : ${c} est dans le profil`);
+        assert.ok(me.offres.some(o => plat(o.texte).includes(plat(c))), `${v.titre} : une offre cite ${c}`);
+      }
+    }
+  }
+  // Le sujet de Yazaki (Lean, VSM) et celui de la lauréate d'OCP (Power BI) le disent
+  assert.ok(vues.some(v => /Lean sur une ligne de câblage/.test(v.titre) && v.raisons.includes('Lean et VSM, dans ton profil') && v.raisons.includes('Pour ta filière')), JSON.stringify(vues));
+  assert.ok(vues.some(v => v.raisons.includes('Power BI, dans ton profil')), JSON.stringify(vues));
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : le CV de démonstration est une vraie page, que l’application relit comme le profil (rôle, promo, filière), avec son pied « données fictives »', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Nadia'); await s.aller('match');
+  await s.page.waitForSelector('.mx-carte.dessus .mx-cv-apercu.pret img', { timeout: 15000 });
+  const r = await s.page.evaluate(async () => {
+    const d = window.__demo, L = await import('./lire-cv.js'), logic = await import('./logic.js'), { pdfCvDemo } = await import('./seed-cv.js');
+    const now = new Date(), S = logic.seasonOf(now);
+    // Le CV de la carte du dessus, tel que la carte le montre (lienCV)
+    const p0 = d.data.profiles.find(p => p.full_name === document.querySelector('.mx-carte.dessus h2').textContent);
+    const lu = await L.lireCVDetail(await (await fetch(await d.lienCV(p0.cv_path))).arrayBuffer(), now);
+    // Les élèves qui ont un CV, et ceux du cycle ingénieur sans CV : relus, aucun écart avec le profil
+    const eleves = d.data.profiles.filter(p => p.role === 'etudiant' && (p.cv_path || [3, 4, 5].includes(logic.niveauOf(p, S)))).slice(0, 30);
+    const ecarts = [];
+    for (const p of eleves) {
+      const demande = logic.demandesActives(d.data, p.id).sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0] || null;
+      const { cv } = await L.lireCVDetail(await pdfCvDemo(p, { demande }).arrayBuffer(), now);
+      const e = L.ecartsCV(p, cv, now); if (Object.keys(e).length) ecarts.push([p.full_name, e]);
+    }
+    return { pied: lu.texte.includes('CV de démonstration — données fictives'), role: lu.cv.role, promo: Number(lu.cv.promo), filiere: lu.cv.filiere, attendu: { promo: Number(p0.promo), filiere: p0.filiere }, n: eleves.length, avecCv: eleves.filter(p => p.cv_path).length, ecarts };
+  });
+  assert.ok(r.pied, 'le pied « CV de démonstration — données fictives »');
+  assert.deepEqual({ role: r.role, promo: r.promo, filiere: r.filiere }, { role: 'etudiant', ...r.attendu });
+  assert.ok(r.n >= 20 && r.avecCv >= 3, `${r.n} élèves relus, dont ${r.avecCv} avec un CV`);
+  assert.deepEqual(r.ecarts, []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('match : un voile assez haut met le visage au centre, comme l’en-tête d’un profil ; trop bas, à côté du nom ; la carte penchée par le geste n’y change rien', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('match');
+  const voile = s.page.locator('.mx-carte.dessus .mx-v-perso');
+  await voile.waitFor();
+  const mise = () => voile.evaluate(v => {
+    const r = v.getBoundingClientRect(), f = v.querySelector('.mx-v-visage').getBoundingClientRect(), t = v.querySelector('.mx-v-txt').getBoundingClientRect();
+    return { haut: v.classList.contains('haut'), centre: Math.abs((f.left + f.right) / 2 - (r.left + r.right) / 2) < 2 && t.top >= f.bottom,
+      cote: t.left >= f.right || t.right <= f.left, dedans: t.top >= r.top && t.bottom <= r.bottom };
+  });
+  assert.deepEqual(await mise(), { haut: true, centre: true, cote: false, dedans: true });
+  // Pendant le geste, la carte penche ; une nouvelle mesure (forcée ici, comme quand la police finit de charger) garde le visage au centre
+  const c = await s.page.locator('.mx-carte.dessus').boundingBox();
+  await s.page.mouse.move(c.x + c.width / 2, c.y + c.height / 2); await s.page.mouse.down();
+  for (let i = 1; i <= 8; i++) { await s.page.mouse.move(c.x + c.width / 2 + i * 16, c.y + c.height / 2 + i); await s.page.waitForTimeout(16); }
+  assert.notEqual(await s.page.locator('.mx-carte.dessus').evaluate(e => getComputedStyle(e).transform), 'none', 'la carte suit le doigt');
+  await voile.evaluate(v => new Promise(fin => {
+    const e = v.querySelector('.mx-v-ent'), image = f => requestAnimationFrame(() => requestAnimationFrame(f));
+    e.style.minHeight = e.offsetHeight + 1 + 'px'; image(() => { e.style.minHeight = ''; image(fin); });
+  }));
+  assert.equal(await voile.evaluate(v => v.classList.contains('haut')), true, 'toujours au centre pendant le geste');
+  await s.page.mouse.move(c.x + c.width / 2, c.y + c.height / 2); await s.page.mouse.up(); await s.page.waitForTimeout(300);
+  // Un écran bas : le voile n'a plus la place, le visage passe à côté du nom, rien ne sort du voile ; puis l'inverse
+  await s.page.setViewportSize({ width: 360, height: 640 }); await s.page.waitForTimeout(400);
+  assert.deepEqual(await mise(), { haut: false, centre: false, cote: true, dedans: true });
+  await s.page.setViewportSize({ width: 390, height: 844 }); await s.page.waitForTimeout(400);
+  assert.deepEqual(await mise(), { haut: true, centre: true, cote: false, dedans: true });
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('Match : le tour du jour avance à chaque carte et garde son compte', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('match');
+  await s.page.waitForSelector('.mx-tour');
+  assert.equal((await s.page.locator('.mx-tour-n').innerText()).trim(), '0');
+  await s.page.locator('.mx-non').click();
+  await s.page.waitForFunction(() => document.querySelector('.mx-tour-n').textContent.trim() === '1');
+  await s.page.reload(); await s.page.waitForSelector('.mx-tour');
+  assert.equal((await s.page.locator('.mx-tour-n').innerText()).trim(), '1', 'le compte du jour reste après un rechargement');
   await s.ctx.close();
 });

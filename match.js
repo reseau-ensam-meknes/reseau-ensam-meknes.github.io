@@ -9,7 +9,7 @@
 import { html, useState, useEffect, useLayoutEffect, useRef, useMemo } from './vendor/preact-htm.js';
 import { Icon, Avatar, AvatarPile, CompanyLogo, MentionLogos, toast, roleTexte, useFeuille, mouvementReduit, ecranLibre, injectCSS } from './ui.js';
 import { ajouterIcones } from './entree.js';
-import { deckMatch, matchsDe, titreOffre, resumeFilieres, filiereCourte, niveauOf, NIVEAUX, TYPES, demandesActives, typesDemande, DEMANDES_MAX, sponsorisesPour, avecSponsorises, decalageSponso } from './logic.js';
+import { deckMatch, matchsDe, titreOffre, resumeFilieres, filiereCourte, niveauOf, NIVEAUX, TYPES, demandesActives, typesDemande, DEMANDES_MAX, sponsorisesPour, avecSponsorises, decalageSponso, TOUR_JOUR, etatTour, avancerTour, jourLocal } from './logic.js';
 import { estPortee } from './origine.js';
 import { TYPE_ICON } from './entree.js';
 import { OfferComposer } from './offers.js';
@@ -37,6 +37,21 @@ const siteDe = lien => { try { return new URL(lien).hostname.replace(/^www\./, '
 // ---------------------------------------------------------------------------
 // La page
 // ---------------------------------------------------------------------------
+// Le tour du jour, par membre et dans ce navigateur (logic.js : avancerTour)
+const cleTour = id => 'match-tour-' + id;
+const lireTour = id => { try { return JSON.parse(localStorage.getItem(cleTour(id)) || 'null'); } catch { return null; } };
+const noterTour = (id, t) => { try { localStorage.setItem(cleTour(id), JSON.stringify(t)); } catch { /* stockage indisponible */ } };
+
+function AnneauTour({ tour }) {
+  const n = Math.min(tour.n, TOUR_JOUR), fini = tour.n >= TOUR_JOUR;
+  const texte = fini ? (tour.serie > 1 ? `${tour.serie} jours de suite` : 'Tour du jour fait') : `${n} sur ${TOUR_JOUR} aujourd’hui`;
+  return html`<div class=${'mx-tour' + (fini ? ' fini' : '')} role="img" aria-label=${texte} title=${texte}>
+    <svg viewBox="0 0 44 44" width="44" height="44" aria-hidden="true"><circle class="mx-tour-fond" cx="22" cy="22" r="19"/><circle class="mx-tour-val" cx="22" cy="22" r="19" pathLength="100" style=${`stroke-dashoffset:${100 - n * 100 / TOUR_JOUR}`}/></svg>
+    <span class="mx-tour-n" aria-hidden="true">${fini ? html`<${Icon} name="check" size=${18}/>` : n}</span>
+    ${fini && tour.serie > 1 ? html`<span class="mx-tour-serie" aria-hidden="true">${tour.serie}</span>` : null}
+  </div>`;
+}
+
 export function MatchPage(ctx) {
   const { data, me, store, go } = ctx;
   const etu = me.role === 'etudiant';
@@ -54,6 +69,7 @@ export function MatchPage(ctx) {
   const [compose, setCompose] = useState(false);
   const [lire, setLire] = useState(null);        // le CV ouvert en grand (la carte du dessus)
   const [annonce, setAnnonce] = useState('');
+  const [tour, setTour] = useState(() => etatTour(lireTour(me.id), jourLocal()));
   // Le premier passage : le geste montré une fois, cinq secondes, sans rien bloquer (par membre, dans ce navigateur)
   const [guide, setGuide] = useState(() => { try { return !localStorage.getItem('match-guide-' + me.id); } catch { return false; } });
   const pile = useRef();
@@ -76,6 +92,9 @@ export function MatchPage(ctx) {
     if (c.sorte === 'sponsorise') { setSautes(l => [...l, c.creneau]); setAnnonce('Carte sponsorisée passée.'); fin(); return; }
     setAnnonce(`${choix === 'oui' ? 'Intéressé' : 'Plus tard'} : ${c.offre ? titreOffre(c.offre) : c.profil?.full_name || ''}`);
     setHist(h => [...h, c.cle]); setPassees(n => n + 1);
+    const t = avancerTour(lireTour(me.id), jourLocal());
+    noterTour(me.id, t); setTour(t);
+    if (t.fini) { vibrer([12, 40, 12]); toast(t.serie > 1 ? `Tour du jour fait : ${t.serie} jours de suite` : 'Tour du jour fait', 'win'); }
     store.choisirMatch(c.offre ? { offre: c.offre.id } : { profil: c.profil.id }, choix).then(r => {
       if (!r?.match) return;
       const autre = store.byId('profiles', r.match.etudiant_id === me.id ? r.match.laureat_id : r.match.etudiant_id) || c.profil;
@@ -142,6 +161,7 @@ export function MatchPage(ctx) {
     <header class="mx-tete">
       <div class="mx-tete-txt"><h1>Match</h1>
         <p class="muted">${etu ? 'Des offres de lauréats, une carte à la fois.' : 'Des étudiants de l’école, une carte à la fois.'}</p></div>
+      <${AnneauTour} tour=${tour}/>
       <${MesMatchs} ctx=${ctx}/>
     </header>
     ${top || vol ? html`<div class="mx-zone">
@@ -458,6 +478,20 @@ injectCSS('match-sponso', `
 @container carte (max-height: 360px) { .mx-sponso .mx-s-texte { -webkit-line-clamp: 2; } }
 `);
 
+injectCSS('match-tour', `
+.mx-tour { position: relative; flex: none; inline-size: 44px; block-size: 44px; margin-inline-start: auto; color: var(--accent); }
+.mx-tour > svg { display: block; transform: rotate(-90deg); }
+.mx-tour circle { fill: none; stroke-width: 3.5; }
+.mx-tour-fond { stroke: var(--surface-2); }
+.mx-tour-val { stroke: var(--accent); stroke-linecap: round; stroke-dasharray: 100; transition: stroke-dashoffset .45s cubic-bezier(.22, 1, .36, 1); }
+.mx-tour-n { position: absolute; inset: 0; display: grid; place-items: center; font-size: var(--fs-2); font-weight: 750; font-variant-numeric: tabular-nums; }
+.mx-tour-serie { position: absolute; inset-block-start: -5px; inset-inline-end: -6px; min-inline-size: 20px; block-size: 20px; padding-inline: 4px; display: grid; place-items: center; border-radius: 10px; background: var(--orange); color: #2a1300; font-size: 11px; font-weight: 800; }
+.mx-tour.fini .mx-tour-val { stroke: var(--good); }
+.mx-tour.fini { color: var(--good); animation: mx-tour-pop .5s cubic-bezier(.34, 1.56, .64, 1) both; }
+@keyframes mx-tour-pop { from { transform: scale(.8); } }
+@media (prefers-reduced-motion: reduce) { .mx-tour.fini { animation: none; } .mx-tour-val { transition: none; } }
+`);
+
 injectCSS('match-guide', `
 .mx-guide { position: absolute; inset-inline: 12px; inset-block-end: 12px; z-index: 6; margin: 0; padding: .7rem .9rem; display: flex; align-items: center; gap: .7rem; border-radius: 14px; background: rgba(6, 18, 42, .86); color: #fff; font-size: var(--fs-2); font-weight: 600; pointer-events: none; animation: mx-guide-in .3s ease both; }
 .mx-guide-doigt { position: relative; flex: none; inline-size: 44px; block-size: 18px; border-radius: 9px; background: rgba(255,255,255,.18); }
@@ -467,6 +501,7 @@ injectCSS('match-guide', `
 @media (prefers-reduced-motion: reduce) { .mx-guide, .mx-guide-doigt::after { animation: none; } }
 `);
 addAR({
+  'Tour du jour fait': 'تمت جولة اليوم',
   'À droite : Intéressé · À gauche : Plus tard': 'إلى اليمين: مهتم · إلى اليسار: لاحقًا',
   // Cartes sponsorisées
   'Sponsorisé': 'مُموَّل', 'Carte sponsorisée passée.': 'تم تجاوز البطاقة المموَّلة.', 'Aperçu dans Match': 'معاينة في صفحة التوافق',
@@ -515,5 +550,8 @@ addAR({
   [/^Cherche un stage en (.+)$/, x => `البحث عن تدريب في ${x}`],
   [/^Cherche un stage à l’étranger en (.+)$/, x => `البحث عن تدريب بالخارج في ${x}`],
   [/^Cherche un emploi en (.+)$/, x => `البحث عن وظيفة في ${x}`],
+  [/^(\d+) jours de suite$/, n => `${n} أيام متتالية`],
+  [/^Tour du jour fait : (\d+) jours de suite$/, n => `تمت جولة اليوم: ${n} أيام متتالية`],
+  [/^(\d+) sur (\d+) aujourd’hui$/, (a, b) => `${a} من ${b} اليوم`],
   [/^(Intéressé|Plus tard) : (.+)$/, (c, x) => `${c === 'Intéressé' ? 'يهمّني' : 'لاحقًا'}: ${x}`],
 ]);
