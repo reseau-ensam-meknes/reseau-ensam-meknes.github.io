@@ -1692,3 +1692,164 @@ export function totauxSponsorises(sponsors, comptes) {
 }
 // Le taux de clic, « 4 % », ou « – » sans vue
 export const tauxClic = (clics, vues) => (vues > 0 ? pct(clics / vues) : '–');
+
+// ---------------------------------------------------------------------------
+// Santé des notifications
+// ---------------------------------------------------------------------------
+const entierSN = x => (Number.isFinite(Number(x)) && Number(x) > 0 ? Math.round(Number(x)) : 0);
+const plurielSN = (n, un, plusieurs) => (n > 1 ? plusieurs : un);
+
+// « Tester » (Mon profil) : ce que la fonction notifier répond, mis en forme. Un code par téléphone du compte
+// (201 accepté, 404 ou 410 parti, 400, 401 ou 403 refusé, 413 trop long, 0 injoignable). Une ancienne fonction ne
+// renvoie que { sent } : abonnements vaut alors null (on ne sait pas combien de téléphones sont enregistrés).
+export function bilanTestPush(d) {
+  const ab = d?.abonnements;
+  return {
+    sent: entierSN(d?.sent), failed: entierSN(d?.failed), removed: entierSN(d?.removed),
+    codes: Array.isArray(d?.codes) ? d.codes.map(c => (Number.isFinite(Number(c)) ? Math.trunc(Number(c)) : 0)) : [],
+    abonnements: ab === null || ab === undefined || ab === '' || !Number.isFinite(Number(ab)) ? null : entierSN(ab),
+  };
+}
+export const CODES_PUSH_PARTI = [404, 410];
+export const CODES_PUSH_REFUS = [400, 401, 403];
+// Pourquoi l'essai est arrivé ou non, en un mot (l'écran qui l'affiche a ses phrases) :
+// 'ok' au moins un téléphone l'a accepté ; 'aucun' aucun téléphone enregistré pour ce compte ;
+// 'parti' le service dit que cet abonnement n'existe plus (404, 410) ; 'refuse' il refuse l'envoi (400, 401, 403) ;
+// 'trop' message trop long (413) ; 'injoignable' service injoignable ou occupé (0, 429, 5xx) : réessayer plus tard ;
+// 'inconnu' ancienne fonction, qui ne dit que le nombre envoyé
+export function raisonTestPush(d) {
+  const b = bilanTestPush(d);
+  if (b.sent > 0) return 'ok';
+  if (b.abonnements === 0) return 'aucun';
+  if (b.abonnements === null && !b.codes.length) return 'inconnu';
+  if (b.removed > 0 || b.codes.some(c => CODES_PUSH_PARTI.includes(c))) return 'parti';
+  if (b.codes.some(c => CODES_PUSH_REFUS.includes(c))) return 'refuse';
+  if (b.codes.includes(413)) return 'trop';
+  return 'injoignable';
+}
+// Après l'essai, l'abonnement de cet appareil est à refaire (le service ne le reconnaît plus, ou le refuse)
+export const testPushARefaire = r => r === 'parti' || r === 'refuse';
+
+// Une attente lisible : « 9 min », « 3 h », « 2 jours » (jamais « 1 jours » : les jours commencent à 48 h)
+export function dureeAttente(sec) {
+  const s = Math.max(0, Number(sec) || 0);
+  if (s < 3600) return `${Math.max(1, Math.round(s / 60))} min`;
+  if (s < 48 * 3600) return `${Math.round(s / 3600)} h`;
+  return `${Math.round(s / 86400)} jours`;
+}
+
+// Le jour d'une colonne (admin_sante_notifs compte en jours UTC, 'AAAA-MM-JJ') : « 26 » sous la colonne, « 26 octobre » en clair
+export function jourNotif(jour) {
+  const d = new Date(`${jour}T12:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(jour || '')) || Number.isNaN(d.getTime())) return { court: '', long: '' };
+  return { court: String(d.getUTCDate()), long: d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', timeZone: 'UTC' }) };
+}
+
+// Le nom de chaque type de notification, pour le tableau « Par type » ; un type inconnu prend le nom de sa catégorie
+export const NOMS_NOTIF = {
+  message: 'Message', rdv_message: 'Entretien proposé', rdv_reponse: 'Réponse à un entretien', rappel_entretien: 'Rappel d’entretien',
+  match: 'Nouveau match', match_interet: 'Intérêt reçu', match_jour: 'Match du jour',
+  demande_nouvelle: 'Nouvelle demande', demande_large: 'Demande ouverte à tous', demande_proposition: 'Proposition d’aide', demande_match: 'Aide acceptée',
+  demande_rouverte: 'Demande rouverte', demande_reponse: 'Réponse à une demande',
+  candidature: 'Candidature reçue', candidature_statut: 'Suite d’une candidature', invitation: 'Invitation à postuler',
+  recrutement_a_confirmer: 'Recrutement à confirmer', recrutement_confirme: 'Recrutement confirmé', relance_offre: 'Relance d’une offre',
+  mentorat_demande: 'Demande de mentorat', mentorat_ouvert: 'Mentorat ouvert à tous', mentorat_accepte: 'Mentorat accepté', mentorat_deplace: 'Mentorat déplacé',
+  mentorat_annule: 'Mentorat annulé', rappel_rdv: 'Rappel de rendez-vous', merci: 'Merci reçu',
+  relecture_demande: 'Relecture de CV demandée', relecture_prise: 'Relecture de CV prise', relecture_rendue: 'Relecture de CV rendue',
+  contact_demande: 'Coordonnées demandées', contact_accepte: 'Coordonnées partagées', filleul: 'Nouveau filleul', parrain: 'Nouveau parrain',
+  offre_alerte: 'Nouvelle offre', rappel_visite: 'Rappel du soir',
+  reponse: 'Réponse à une question', question_routee: 'Question à toi', cafe: 'Café ENSAM', evenement: 'Événement', evenement_annule: 'Événement annulé',
+  evenement_deplace: 'Événement déplacé', enquete: 'Enquête d’insertion', verification_pair: 'Vérification par la promo', verifier_pair: 'Camarade à confirmer',
+  reaction: 'Réaction', promo_nouveau: 'Nouveau de la promo', offre_commentaire: 'Commentaire sur une offre', annonce: 'Annonce', signalement: 'Signalement',
+  test: 'Essai (Tester)',
+};
+export const NOMS_CATEGORIES_NOTIF = { messages: 'Messages', match: 'Match', demandes: 'Demandes', candidatures: 'Candidatures', mentorat: 'Mentorat',
+  offres: 'Offres', reseau: 'Vie du réseau', rappels: 'Rappels', admin: 'Administration' };
+export const nomTypeNotif = kind => (Object.prototype.hasOwnProperty.call(NOMS_NOTIF, kind)
+  ? { nom: NOMS_NOTIF[kind], connu: true } : { nom: NOMS_CATEGORIES_NOTIF[pushCategorie(kind)] || 'Vie du réseau', connu: false });
+// Les services de push (service_push dans la base), du plus courant au plus rare
+export const SERVICES_PUSH = [['fcm', 'Chrome et Android (Google)'], ['apple', 'iPhone et Mac (Apple)'], ['mozilla', 'Firefox (Mozilla)'], ['windows', 'Edge (Windows)'], ['autre', 'Autre service']];
+
+// Le panneau « Santé des notifications » : admin_sante_notifs() (ou la démo) mis en forme. Des totaux seulement.
+// « Perdue » : elle n'a atteint aucun téléphone : membre sans téléphone abonné (-1), refusée par le service de push
+// (4xx sauf 429), abandonnée après 3 essais ou un jour (-3), écartée par la fonction (-4). Une catégorie coupée par le
+// membre (-2) est son choix, pas une perte ; un échec passager (0, 429, 5xx) est réessayé, il finit envoyé ou abandonné.
+// Le cercle : la part des membres (étudiants et lauréats, sans l'administration) qui ont au moins un téléphone abonné.
+const ORDRE_ROLES_SN = ['etudiant', 'laureat', 'admin'];
+export function santeResume(s) {
+  if (!s || typeof s !== 'object') return null;
+  const roles = (Array.isArray(s.roles) ? s.roles : []).map(r => {
+    const membres = entierSN(r?.membres), avecTel = Math.min(entierSN(r?.avec_tel), membres);
+    return { role: String(r?.role || ''), membres, avecTel, part: membres ? avecTel / membres : null };
+  }).sort((a, b) => (ORDRE_ROLES_SN.indexOf(a.role) + 1 || 9) - (ORDRE_ROLES_SN.indexOf(b.role) + 1 || 9));
+  const hors = roles.filter(r => r.role !== 'admin');
+  const membres = hors.reduce((a, r) => a + r.membres, 0), avecTel = hors.reduce((a, r) => a + r.avecTel, 0);
+  const jours = (Array.isArray(s.jours) ? s.jours : []).map(j => {
+    const refusees = entierSN(j?.refusees), sansTel = entierSN(j?.sans_tel), abandonnees = entierSN(j?.abandonnees), jetees = entierSN(j?.jetees);
+    return { jour: String(j?.jour || ''), ...jourNotif(j?.jour), arrivees: entierSN(j?.envoyees), perdues: refusees + sansTel + abandonnees + jetees,
+      refusees, sansTel, abandonnees, jetees, coupees: entierSN(j?.coupees), echecs: entierSN(j?.echecs) };
+  });
+  const somme = k => jours.reduce((a, j) => a + j[k], 0);
+  const t = s.telephones && typeof s.telephones === 'object' ? s.telephones : {};
+  const sv = s.services && typeof s.services === 'object' ? s.services : {};
+  const f = s.file && typeof s.file === 'object' ? s.file : {};
+  const c = s.cron && typeof s.cron === 'object' ? s.cron : null, h = s.http && typeof s.http === 'object' ? s.http : null;
+  return {
+    at: s.at || null, membres, avecTel, part: membres ? avecTel / membres : null, roles,
+    jours, max: Math.max(1, ...jours.map(j => j.arrivees + j.perdues)),
+    semaine: Object.fromEntries(['arrivees', 'perdues', 'refusees', 'sansTel', 'abandonnees', 'jetees', 'coupees', 'echecs'].map(k => [k, somme(k)])),
+    telephones: { total: entierSN(t.total), recus24h: entierSN(t.recus_24h), recus7j: entierSN(t.recus_7j), muets: entierSN(t.muets), enRefus: entierSN(t.en_refus), retires7j: entierSN(t.retires_7j) },
+    services: SERVICES_PUSH.map(([k, nom]) => ({ cle: k, nom, n: entierSN(sv[k]) })).filter(x => x.n > 0).sort((a, b) => b.n - a.n),
+    types: (Array.isArray(s.types) ? s.types : []).map(x => ({ kind: String(x?.kind || ''), ...nomTypeNotif(String(x?.kind || '')), total: entierSN(x?.total),
+      arrivees: entierSN(x?.envoyees), perdues: entierSN(x?.perdues), coupees: entierSN(x?.coupees), echecs: entierSN(x?.echecs) })),
+    file: { n: entierSN(f.n), ageS: entierSN(f.age_s) },
+    cron: c ? { existe: c.existe !== false, at: c.at || null, statut: c.statut ? String(c.statut) : null } : null,
+    http: h ? { code: Number.isFinite(Number(h.code)) && h.code !== null ? Number(h.code) : null, at: h.at || null, delai: h.delai === true, erreur: h.erreur === true } : null,
+  };
+}
+
+// L'état de la tâche de chaque minute (pg_cron) en un mot ; null : rien à en dire
+const CRON_EN_COURS = ['running', 'starting', 'sending', 'connecting'];
+export const etatCronNotifs = c => (!c ? null : !c.existe ? 'absente' : !c.at ? 'jamais' : c.statut === 'failed' ? 'echec' : CRON_EN_COURS.includes(c.statut) ? 'en_cours' : c.statut === 'succeeded' ? 'ok' : 'inconnu');
+
+// « Pourquoi certaines n'arrivent pas » : des phrases simples avec les vrais nombres, la plus urgente d'abord.
+// ton : 'bad' (à régler), 'warn' (à surveiller), 'info' (normal, expliqué), 'note' (pas une perte : choix du membre, envoi
+// réessayé), 'bien' (rien ne s'est perdu).
+// D'abord la chaîne elle-même (fonction notifier, tâche de chaque minute, file), puis les pertes de la semaine, de la plus
+// fréquente à la plus rare (un défaut d'abord), enfin ce qui n'est pas une perte.
+export function raisonsNotifs(r, now = Date.now()) {
+  if (!r) return [];
+  const out = [], s = r.semaine, ajoute = (cle, ton, texte) => out.push({ cle, ton, texte });
+  const h = r.http, depuis = iso => (now - new Date(iso || 0).getTime()) / 1000;
+  if (h?.code === 401) ajoute('http', 'bad', 'La fonction notifier refuse les appels de la base (erreur 401) : désactive « Verify JWT » dans Supabase (Edge Functions > notifier > Details).');
+  else if (h?.code === 404) ajoute('http', 'bad', 'La fonction notifier est introuvable (erreur 404) : déploie-la dans Supabase (Edge Functions).');
+  else if (h?.code >= 400) ajoute('http', 'bad', `La fonction notifier a répondu par une erreur au dernier appel (erreur ${h.code}) : regarde ses Logs dans Supabase (Edge Functions > notifier > Logs).`);
+  else if (h && (h.delai || h.erreur || !h.code) && depuis(h.at) < 86400) ajoute('http', 'warn', 'Le dernier appel à la fonction notifier n’a pas abouti (délai dépassé ou réseau) : la base réessaie toute seule chaque minute.');
+  const ec = etatCronNotifs(r.cron);
+  if (ec === 'absente') ajoute('cron', 'bad', 'La tâche de chaque minute n’existe pas dans la base : active pg_cron (Database > Extensions), puis relance supabase/mise-a-jour.sql.');
+  else if (ec === 'echec') ajoute('cron', 'bad', 'La tâche de chaque minute a échoué à son dernier passage : regarde Logs > Postgres dans Supabase.');
+  else if (ec === 'jamais') ajoute('cron', 'warn', 'La tâche de chaque minute n’a encore jamais tourné : vérifie pg_cron dans Supabase (Database > Cron).');
+  else if (r.cron?.at && depuis(r.cron.at) > 600) ajoute('cron', 'warn', `La tâche de chaque minute n’a pas tourné depuis ${dureeAttente(depuis(r.cron.at))} : vérifie pg_cron dans Supabase (Database > Cron).`);
+  if (r.file.n > 0 && r.file.ageS > 300) {
+    ajoute('file', 'warn', `${r.file.n} ${plurielSN(r.file.n, 'notification attend', 'notifications attendent')} depuis ${dureeAttente(r.file.ageS)} au lieu de partir tout de suite : la tâche de chaque minute ou la fonction notifier est bloquée (voir Fonctionnement, dans le détail).`);
+  }
+  const pertes = [
+    ['jetees', 'bad', s.jetees, n => `${n} ${plurielSN(n, 'notification a été écartée', 'notifications ont été écartées')} par le serveur (type inconnu) : un défaut à signaler.`],
+    ['sans_tel', 'info', s.sansTel, n => `${n} ${plurielSN(n, 'notification n’a', 'notifications n’ont')} pas pu partir : le membre n’a activé les notifications sur aucun téléphone (ses emails l’invitent à le faire).`],
+    ['refusees', 'warn', s.refusees, n => `${n} ${plurielSN(n, 'notification a été refusée', 'notifications ont été refusées')} par le téléphone (application désinstallée, téléphone changé ou autorisation retirée). Un téléphone qui refuse est retiré : le membre devra réactiver les notifications.`],
+    ['abandonnees', 'warn', s.abandonnees, n => `${n} ${plurielSN(n, 'notification a été abandonnée', 'notifications ont été abandonnées')} après 3 essais ou un jour d’attente : le service du téléphone ne répondait pas.`],
+  ].filter(x => x[2] > 0).sort((a, b) => (a[1] === 'bad' ? 0 : 1) - (b[1] === 'bad' ? 0 : 1) || b[2] - a[2]);
+  for (const [cle, ton, n, texte] of pertes) ajoute(cle, ton, texte(n));
+  const m = r.telephones.muets;
+  if (m) ajoute('muets', 'warn', `${m} ${plurielSN(m, 'téléphone accepte', 'téléphones acceptent')} les notifications sans confirmer les afficher : économie d’énergie, notifications du navigateur coupées, ou ancienne version de l’application.`);
+  // La bonne nouvelle avant ce qui n'est pas une perte
+  if (!pertes.length) {
+    if (s.arrivees) ajoute('rien', 'bien', 'Rien ne s’est perdu cette semaine.');
+    else if (!s.coupees && !s.echecs) ajoute('vide', 'info', 'Aucune notification n’est partie cette semaine.');
+  }
+  if (s.coupees) ajoute('coupees', 'note', `${s.coupees} ${plurielSN(s.coupees, 'notification n’a pas été envoyée', 'notifications n’ont pas été envoyées')} : le membre a coupé ce type dans Mon profil. C’est son choix.`);
+  if (s.echecs) ajoute('echecs', 'note', `${s.echecs} ${plurielSN(s.echecs, 'envoi a échoué un moment (service du téléphone injoignable), puis a été réessayé.', 'envois ont échoué un moment (service du téléphone injoignable), puis ont été réessayés.')}`);
+  return out;
+}
+// Une perte ou un souci à montrer (le titre « Pourquoi certaines n'arrivent pas »), ou seulement des nouvelles calmes
+export const raisonsAvecPertes = l => (l || []).some(x => x.ton === 'bad' || x.ton === 'warn' || ['sans_tel', 'refusees', 'abandonnees', 'jetees'].includes(x.cle));
