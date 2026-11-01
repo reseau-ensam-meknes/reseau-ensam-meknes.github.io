@@ -313,7 +313,8 @@ test('sécurité : tables du serveur seulement, fonctions jamais appelables depu
   }
   for (const f of ['programme_place(null::uuid, null::text)', 'liberer_nuit()', 'match_jour_push()', 'match_attente_push()', 'rdv_demain_push()',
     'entretien_demain_push()', 'agenda_demain_push()', 'apres_rdv_push()', 'offres_bientot_push()', 'demande_attente_push()', 'demande_pause_push()',
-    'semaine_push()', 'groupe_jour_push()', 'matin_push()', 'midi_push()', 'veille_push()', 'horloge()']) {
+    'semaine_push()', 'groupe_jour_push()', 'matin_push()', 'midi_push()', 'veille_push()', 'horloge()', 'heure_calme()',
+    'programme_classe(null::text)', 'groupes_auto(null, null, null)', 'nom_groupe(null)']) {
     await assert.rejects(q(LAU, `select public.${f}`), /permission denied/, f);
     await assert.rejects(en(db, null, tx => tx.query(`select public.${f}`), { role: 'anon' }), /permission denied/, f + ' (anon)');
   }

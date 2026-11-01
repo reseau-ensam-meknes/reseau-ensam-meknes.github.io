@@ -1712,6 +1712,7 @@ create or replace function public.programme_classe(p_kind text) returns text
 language sql immutable as $$
   select case when p_kind in ('rdv_demain','entretien_demain','agenda_demain','apres_rdv','match_attente') then 'dure' else 'douce' end;
 $$;
+revoke all on function public.programme_classe(text) from public, anon, authenticated;
 
 -- Vrai (et noté) si ce membre peut recevoir maintenant cette notification programmée ; faux sinon, et toujours faux pour
 -- l'administration. Un verrou par membre : deux tâches simultanées ne dépassent pas le budget. Elle écrit : à n'appeler
@@ -6484,7 +6485,9 @@ begin
         where t.v > 0 order by t.i limit 3) z) as compte
     from membres m
   ),
-  places as materialized (select r.* from resumes r where r.compte is not null and public.programme_place(r.id, 'semaine')),
+  -- Tout à zéro : rien (filtré avant programme_place, qui écrit)
+  garnis as materialized (select r.* from resumes r where r.compte is not null),
+  places as materialized (select r.* from garnis r where public.programme_place(r.id, 'semaine')),
   envoi as (
     insert into public.push_queue (user_id, kind, data)
     select x.id, 'semaine', jsonb_build_object('type', x.role) || x.compte from places x
@@ -6512,6 +6515,7 @@ language sql immutable as $$
     case when public.cle_lieu(p_pays) is not null and public.cle_lieu(p_pays) <> 'maroc' then 'pays:' || public.cle_lieu(p_pays) end
   ], null);
 $$;
+revoke all on function public.groupes_auto(text, text, text) from public, anon, authenticated;
 
 -- Nom affiché d'un groupe (comme groupLabel de logic.js) : le nom du parcours, sinon l'écriture la plus courante parmi les
 -- profils du groupe
