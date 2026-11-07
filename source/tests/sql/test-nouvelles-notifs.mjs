@@ -166,6 +166,36 @@ test('nuit : chaque envoi à beaucoup est gardé ; une relecture demandée à un
   } finally { await reglerHorloge(db); await vider(); }
 });
 
+test('nuit : à 08:00, un événement corrigé dans la nuit part avec sa nouvelle heure et son nouveau lieu ; un café déjà passé ne part pas', async () => {
+  await vider();
+  const demain10 = aujourdhuiA(10, 0, 1), demain14 = aujourdhuiA(14, 0, 1);
+  let e = {}, c = {};
+  try {
+    // 22:00 : le forum de demain 10:00 est publié (annonce gardée pour le matin) ; 22:30 : corrigé à 14:00, en amphi B
+    // (personne n'est encore inscrit : pas d'evenement_deplace) ; 23:00 : un café pour 23:30
+    await reglerHorloge(db, aujourdhuiA(22, 0, -1));
+    [e] = (await db.query(`insert into public.evenements (author_id, titre, type, debut, lieu) values ($1, 'Forum entreprises', 'forum', $2, 'Amphi A') returning id`, [ADMIN, demain10])).rows;
+    await reglerHorloge(db, aujourdhuiA(22, 30, -1));
+    await db.query(`update public.evenements set debut = $2, lieu = 'Amphi B' where id = $1`, [e.id, demain14]);
+    await reglerHorloge(db, aujourdhuiA(23, 0, -1));
+    [c] = (await db.query(`insert into public.cafes (organisateur_id, ville, lieu, date_at) values ($1, 'Casablanca', 'Café de la gare', $2) returning id`, [LAU2, aujourdhuiA(23, 30, -1)])).rows;
+    const gardees = await nuit();
+    assert.ok(gardees.some(x => x.kind === 'evenement' && x.data.id === e.id) && gardees.some(x => x.kind === 'cafe' && x.data.id === c.id), 'gardés pour le matin');
+    assert.deepEqual(await file(), [], 'rien dans la file la nuit');
+    await reglerHorloge(db, aujourdhuiA(8, 0));
+    await db.query('select public.liberer_nuit()');
+    const ev = await file('evenement');
+    assert.ok(ev.length >= 5, `${ev.length} annonces`);
+    assert.deepEqual([...new Set(ev.map(x => JSON.stringify([x.data.id, Date.parse(x.data.debut), x.data.lieu, x.data.titre])))],
+      [JSON.stringify([e.id, Date.parse(demain14), 'Amphi B', 'Forum entreprises'])], 'l’heure et le lieu du matin, pas ceux de 22:00');
+    assert.deepEqual(await file('cafe'), [], 'le café de 23:30 est passé : rien');
+    assert.deepEqual(await nuit(), []);
+  } finally {
+    await reglerHorloge(db); await vider(); await db.query('delete from public.push_nuit');
+    await db.query('delete from public.evenements where id = $1', [e.id || null]); await db.query('delete from public.cafes where id = $1', [c.id || null]);
+  }
+});
+
 test('demandes ouvertes à tous : rien la nuit (23:05) ; la fenêtre de 3 jours rattrape à 08:05', async () => {
   const d = await demande(ETU, 'PFE amélioration continue');
   await db.query(`update public.demandes set created_at = now() - interval '25 hours' where id = $1`, [d]);

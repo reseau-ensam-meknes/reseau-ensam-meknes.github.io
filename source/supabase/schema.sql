@@ -1914,7 +1914,8 @@ create trigger trg_push_nuit before insert on public.push_queue
 
 -- À 08:00 (matin_push) : les envois de la nuit reprennent la file, dans leur ordre, et repassent par le filtre des
 -- catégories. Ce qui n'est plus vrai le matin ne part pas : offre fermée, demande fermée ou prise, événement ou café
--- annulé, mentorat ou relecture déjà pris, camarade déjà vérifié, question ou annonce retirée. Plus d'un jour : abandonné.
+-- annulé ou déjà commencé, mentorat ou relecture déjà pris, camarade déjà vérifié, question ou annonce retirée. Plus d'un
+-- jour : abandonné. Un événement ou un café corrigé dans la nuit part avec son heure et son lieu du matin (relus ici).
 create or replace function public.liberer_nuit() returns int
 language plpgsql security definer set search_path = public as $$
 declare v_n int;
@@ -1923,14 +1924,20 @@ begin
   delete from public.push_nuit where created_at < now() - interval '1 day';
   with partis as (delete from public.push_nuit returning *)
   insert into public.push_queue (user_id, kind, data)
-  select x.user_id, x.kind, x.data from partis x
+  select x.user_id, x.kind, case
+      when x.kind in ('evenement', 'evenement_deplace') then coalesce((select x.data || jsonb_build_object('titre', e.titre, 'debut', e.debut, 'lieu', e.lieu)
+        from public.evenements e where e.id = (x.data ->> 'id')::uuid), x.data)
+      when x.kind = 'cafe' then coalesce((select x.data || jsonb_build_object('date_at', c.date_at, 'lieu', c.lieu, 'ville', c.ville)
+        from public.cafes c where c.id = (x.data ->> 'id')::uuid), x.data)
+      else x.data end
+  from partis x
   where case x.kind
       when 'offre_alerte' then coalesce((select o.status = 'ouverte' from public.offers o where o.id = (x.data ->> 'offre')::uuid), x.data ->> 'offre' is null)
       when 'demande_nouvelle' then coalesce((select d.status = 'ouverte' from public.demandes d where d.id = (x.data ->> 'demande')::uuid), x.data ->> 'demande' is null)
       when 'demande_large' then coalesce((select d.status = 'ouverte' from public.demandes d where d.id = (x.data ->> 'demande')::uuid), x.data ->> 'demande' is null)
-      when 'evenement' then coalesce((select not e.annule from public.evenements e where e.id = (x.data ->> 'id')::uuid), x.data ->> 'id' is null)
-      when 'evenement_deplace' then coalesce((select not e.annule from public.evenements e where e.id = (x.data ->> 'id')::uuid), x.data ->> 'id' is null)
-      when 'cafe' then coalesce((select not c.annule from public.cafes c where c.id = (x.data ->> 'id')::uuid), x.data ->> 'id' is null)
+      when 'evenement' then coalesce((select not e.annule and e.debut > public.horloge() from public.evenements e where e.id = (x.data ->> 'id')::uuid), x.data ->> 'id' is null)
+      when 'evenement_deplace' then coalesce((select not e.annule and e.debut > public.horloge() from public.evenements e where e.id = (x.data ->> 'id')::uuid), x.data ->> 'id' is null)
+      when 'cafe' then coalesce((select not c.annule and c.date_at > public.horloge() from public.cafes c where c.id = (x.data ->> 'id')::uuid), x.data ->> 'id' is null)
       when 'mentorat_ouvert' then coalesce((select m.status = 'demande' and m.mentor_id is null from public.mentorships m where m.id = (x.data ->> 'm')::uuid), x.data ->> 'm' is null)
       when 'relecture_demande' then coalesce((select r.status = 'demandee' from public.relectures_cv r where r.id = (x.data ->> 'r')::uuid), x.data ->> 'r' is null)
       when 'verifier_pair' then coalesce((select not l.verified from public.profiles l where l.id = (x.data ->> 'de')::uuid), x.data ->> 'de' is null)
