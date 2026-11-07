@@ -177,7 +177,9 @@ export function LangToggle({ onChange, store, me, aussitot = false }) {
 // Le lien ouvre directement « Créer mon compte » et, à l'étape suivante, la promo (et le rôle) sont déjà remplis.
 // La promo et le rôle choisi sont gardés dans ce navigateur jusqu'à la fin de l'inscription, puis oubliés.
 // ---------------------------------------------------------------------------
-const CLE = 'ensam-invite-promo', CLE_ROLE = 'ensam-role-choisi';
+const CLE = 'ensam-invite-promo', CLE_ROLE = 'ensam-role-choisi', CLE_ECOLE = 'ensam-invite-ecole';
+// Lien d'une école : ?ecole=<slug> (« ensam-meknes » ou le nom court d'une autre école ouverte), gardé jusqu'à l'inscription
+const ecoleValide = e => typeof e === 'string' && /^[a-z0-9-]{2,40}$/.test(e);
 // Invitation nommée : &de=… est le code du membre qui a envoyé le lien (8 caractères), gardé comme la promo
 const CLE_DE = 'ensam-invite-de', CODE_DE = /^[a-z0-9]{8}$/;
 const valide = promoValide;
@@ -195,6 +197,12 @@ export function lireInvitation() {
       u.searchParams.delete('de');
       if (!u.searchParams.has('promo')) history.replaceState(history.state, '', u.pathname + u.search + u.hash);
     }
+    if (u.searchParams.has('ecole')) {
+      const e = u.searchParams.get('ecole');
+      if (ecoleValide(e)) localStorage.setItem(CLE_ECOLE, e);
+      u.searchParams.delete('ecole');
+      if (!u.searchParams.has('promo')) { history.replaceState(history.state, '', u.pathname + u.search + u.hash); return null; }
+    }
     if (!u.searchParams.has('promo')) return null;
     const n = Number(u.searchParams.get('promo'));
     if (valide(n)) localStorage.setItem(CLE, String(n));
@@ -205,9 +213,13 @@ export function lireInvitation() {
   } catch { return null; /* stockage ou historique indisponible : le lien marche quand même, sans promo pré-remplie */ }
 }
 export function promoInvitee() { const n = Number(lire(CLE)); return valide(n) ? n : null; }
+export function ecoleInvitee() { const e = lire(CLE_ECOLE); return ecoleValide(e) ? e : null; }
+// L'école de la page d'entrée pour les fonctions publiques (invitation nommée, visages, réussites) : celle du lien d'une
+// école ; sans lien, ou pour l'ENSAM Meknès, rien (la base prend l'ENSAM Meknès)
+export const argsEcole = () => { const e = ecoleInvitee(); return e && e !== 'ensam-meknes' ? { p_ecole: e } : {}; };
 export const retenirRole = r => ecrire(CLE_ROLE, r === 'etudiant' || r === 'laureat' ? r : null);
 export const roleRetenu = () => { const r = lire(CLE_ROLE); return r === 'etudiant' || r === 'laureat' ? r : null; };
-export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); ecrire(CLE_DE, null); }
+export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); ecrire(CLE_ECOLE, null); ecrire(CLE_DE, null); }
 const codeInvite = () => { const c = lire(CLE_DE); return c && CODE_DE.test(c) ? c : null; };
 
 // L'accord donné sur CET appareil (case cochée à l'inscription), pour cette adresse. Un compte créé par la demande de
@@ -270,10 +282,10 @@ export async function offrePartagee(id, cfg = window.ENSAM_CONFIG || {}) {
 }
 
 // L'invitation nommée : le prénom (tel qu'écrit par le membre), la promo et le rôle de qui a envoyé le lien, rien d'autre
-// (invitation_de, même école). null : code inconnu ; undefined : on ne sait pas (démo, base pas encore à jour, réseau)
+// (invitation_de, l'école de la page d'entrée). null : code inconnu ; undefined : on ne sait pas (démo, base pas encore à jour, réseau)
 export async function invitationDe(code, cfg = window.ENSAM_CONFIG || {}) {
   if (!CODE_DE.test(code || '') || !enLigneCfg(cfg)) return undefined;
-  const { ok, x } = await appelPublic('invitation_de', { p_code: code }, cfg);
+  const { ok, x } = await appelPublic('invitation_de', { p_code: code, ...argsEcole() }, cfg);
   if (!ok) return undefined;
   const prenom = typeof x?.prenom === 'string' ? x.prenom.trim().slice(0, 40) : '';
   return prenom ? { prenom, promo: promoValide(Number(x.promo)) ? Number(x.promo) : null } : null;

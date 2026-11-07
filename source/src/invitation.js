@@ -4,11 +4,11 @@
 import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { Icon, toast, injectCSS, lienWhatsApp } from './ui.js';
 import { addAR, getLang, arCount } from './i18n.js';
-import { NIVEAUX, niveauOf, seasonOf, lienPromo, messageCamarade, inscritsDeLaPromo, lienAvecCode, codeInvitationValide, ligneInvites } from './logic.js';
+import { NIVEAUX, niveauOf, seasonOf, lienPromo, messageCamarade, inscritsDeLaPromo, ecoleDe, ECOLE_DEFAUT, lienAvecCode, codeInvitationValide, ligneInvites } from './logic.js';
 import { roleDePromo, promoValide as valide } from './regles-entree.js';
 
 // Lire le lien, garder la promo et le rôle choisi : la page d'entrée s'en charge (elle s'affiche avant le reste du site)
-export { lireInvitation, promoInvitee, oublierInvitation, retenirRole, roleRetenu } from './entree.js';
+export { lireInvitation, promoInvitee, ecoleInvitee, oublierInvitation, retenirRole, roleRetenu } from './entree.js';
 export { roleDePromo };
 
 // Lien d'une promo : sa petite page d'aperçu (page = true) nomme la promo dans WhatsApp, puis ouvre le site avec ?promo=
@@ -107,10 +107,11 @@ async function copier(txt, fait) {
 }
 
 // Administration > Inviter : une ligne par promo, avec le lien, le message et le bouton WhatsApp
-// Une promo sans aucun inscrit garde le lien simple ?promo= : son aperçu ne dirait pas « tes camarades sont sur le Réseau »
+// Une promo sans aucun inscrit garde le lien simple ?promo= : son aperçu ne dirait pas « tes camarades sont sur le Réseau ».
+// Les liens et les messages sont ceux du Réseau ENSAM Meknès : ses inscrits seuls comptent, quelle que soit l'école regardée.
 export function InvitationsAdmin({ ctx }) {
   const { saison } = ctx;
-  const inscrites = new Set(ctx.data.profiles.map(p => Number(p.promo)));
+  const inscrites = new Set(ctx.data.profiles.filter(p => ecoleDe(p) === ECOLE_DEFAUT).map(p => Number(p.promo)));
   const [langue, setLangue] = useState(getLang() === 'ar' ? 'ar' : 'fr');
   const [autres, setAutres] = useState([]);
   const [saisie, setSaisie] = useState('');

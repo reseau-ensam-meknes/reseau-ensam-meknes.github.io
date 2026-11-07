@@ -271,6 +271,31 @@ test('réussites : jamais celles d’une autre école, 12 au plus, les plus réc
   assert.deepEqual([p.public_etudiant, p.public_laureat], [false, false]);
 });
 
+test('la page d’entrée d’une autre école (lien ?ecole=) : ses visages, ses réussites et ses invitations seulement ; rien tant que son réseau n’est pas ouvert', async () => {
+  const code = (await ligne(AILLEURS)).code_invitation;
+  const pour = (u, f, e) => un(u, `select public.${f}($1) x`, [e]);
+  const invitation = (c, e) => un(null, 'select public.invitation_de($1, $2) x', [c, e]);
+  assert.deepEqual(await pour(null, 'visages_publics', 'autre-ecole'), [{ nom: 'Omar A.', promo: 2019, entreprise: 'Lear', photo: `${AILLEURS}/photo-3.webp` }]);
+  assert.deepEqual((await pour(null, 'reussites_publiques', 'autre-ecole')).map(r => r.entreprise), ['Lear']);
+  assert.equal((await invitation(code, 'autre-ecole')).prenom, 'Omar');
+  assert.equal(await invitation((await ligne(NADIA)).code_invitation, 'autre-ecole'), null, 'un membre de l’ENSAM Meknès n’invite pas sur la page d’une autre école');
+  // L'ENSAM Meknès nommée dans le lien : comme sans lien
+  assert.deepEqual(await pour(null, 'visages_publics', 'ensam-meknes'), await visages(null));
+  assert.deepEqual(await pour(null, 'reussites_publiques', 'ensam-meknes'), await reussites(null));
+  // Un membre connecté voit la page de son école, quel que soit le lien
+  assert.ok(!(await pour(YOUSSEF, 'visages_publics', 'autre-ecole')).some(v => v.nom === 'Omar A.'));
+  assert.ok(!(await pour(YOUSSEF, 'reussites_publiques', 'autre-ecole')).some(r => r.entreprise === 'Lear'));
+  // Une école inconnue, ou dont le réseau n'est pas encore ouvert : rien
+  assert.deepEqual(await pour(null, 'visages_publics', 'inconnue'), []);
+  assert.equal(await invitation(code, 'inconnue'), null);
+  await db.query(`update public.ecoles set ouverte = false where slug = 'autre-ecole'`);
+  assert.deepEqual(await pour(null, 'visages_publics', 'autre-ecole'), []);
+  assert.deepEqual(await pour(null, 'reussites_publiques', 'autre-ecole'), []);
+  assert.equal(await invitation(code, 'autre-ecole'), null);
+  await db.query(`update public.ecoles set ouverte = true where slug = 'autre-ecole'`);
+  await assert.rejects(anon('select public.ecole_entree($1) x', ['autre-ecole']), /permission denied/);
+});
+
 test('relancée deux fois, la mise à jour ne perd rien : codes, invitations, oui donnés', async () => {
   const avant = await ligne(NADIA);
   const sql = fs.readFileSync(SCHEMA, 'utf8').replace(/^create extension if not exists pgcrypto;$/m, '');

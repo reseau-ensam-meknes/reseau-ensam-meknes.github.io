@@ -3,7 +3,7 @@ import { getLang, setLang, chargerAR, addAR } from './i18n.js';
 import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { createStore, texteErreur } from './store.js';
 import { Icon, Person, Avatar, Bar, CompanyLogo, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille, ecranLibre, mouvementReduit, EnTetePage, Anneau, Squelette } from './ui.js';
-import { deckMatch, matchsDe, seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, demandeLargeLe, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour, parametresLien } from './logic.js';
+import { deckMatch, matchsDe, seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, demandeLargeLe, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour, parametresLien, deMonEcole } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, recoFor, matchesMe, APP_STATUS } from './offers.js';
 import { estPortee, estPartagee, partageExpire } from './origine.js';
 import { nouvellesVivant } from './reseau-vivant.js';
@@ -20,7 +20,7 @@ import { CvCard } from './cv.js';
 import { PhotoCard, PhotoProposee } from './photo.js';
 import { notifsPartage, PartageFeuille } from './entreprises.js';
 import { ConfianceFeuille, demandesRecues, pairsAConfirmer } from './confiance.js';
-import { NextEvent } from './agenda.js';
+import { NextEvent, publierEvenement } from './agenda.js';
 import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, retenirLien, suiteLien, accordIci, roleAccord, oublierInvitation } from './entree.js';
 import { MessagesPage, useAlerteMessages } from './messages.js';
 import { MatchPage, MatchAccueil } from './match.js';
@@ -149,12 +149,20 @@ const readRoute = () => parseRoute((location.hash || '').slice(1));
 })();
 
 // Le chiffre sur l'icône de l'application installée : ce qui attend le membre, comme le titre de l'onglet (0 : effacé).
-// Le service worker met le sien quand une notification arrive (celles de la barre) ; la page ouverte le remplace.
-let badgePose = -1;
+// Tant que la page est visible, c'est elle qui le tient ; cachée ou fermée, le service worker met le sien quand une
+// notification arrive (celles de la barre), et la page remet le sien dès qu'on revient (visibilitychange).
+let badgePose = -1, badgeVoulu = null;
 // Déconnexion : store.signOut efface le chiffre ; le compte suivant pose le sien, même s'il a le même nombre
-addEventListener('ensam-deconnexion', () => { badgePose = -1; });
+addEventListener('ensam-deconnexion', () => { badgePose = -1; badgeVoulu = null; });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !badgeVoulu) return;
+  badgePose = -1; poserBadge(badgeVoulu.store, badgeVoulu.n);
+});
 function poserBadge(store, n) {
-  if (store.mode !== 'live' || n === badgePose || typeof navigator === 'undefined' || !('setAppBadge' in navigator)) return;
+  // Pendant la déconnexion, le chiffre de l'ancien compte ne revient pas
+  if (store.mode !== 'live' || store.deconnexionVoulue || typeof navigator === 'undefined' || !('setAppBadge' in navigator)) return;
+  badgeVoulu = { store, n };
+  if (n === badgePose) return;
   badgePose = n;
   Promise.resolve(n ? navigator.setAppBadge(n) : navigator.clearAppBadge()).catch(() => {});
 }
@@ -394,7 +402,7 @@ function App({ store }) {
   // Sur l'onglet « Entre lauréats », l'offre est d'emblée pour les lauréats. Le même bouton dans la page se cache alors (page.html).
   const publier = me.role === 'laureat' ? { cle: 'offre', label: 'Publier une offre', icon: 'plus', faire: () => setPublierOffre(page === 'offres' && route.sub === 'laureats' ? { audience: 'laureats', type: 'emploi', annees: [] } : {}) }
     : me.role === 'etudiant' ? (typesDemande(me, saison).length && demandesActives(data, me.id).length < DEMANDES_MAX ? { cle: 'demande', label: 'Publier ma demande', icon: 'send', faire: () => go('offres/demandes/nouvelle') } : null)
-    : me.role === 'admin' ? { cle: 'evenement', label: 'Publier un événement', icon: 'calendar', faire: () => go('reseau/agenda/nouveau') } : null;
+    : me.role === 'admin' ? { cle: 'evenement', label: 'Publier un événement', icon: 'calendar', faire: () => publierEvenement(go) } : null;
 
   return html`<div class=${'shell' + (premier ? ' premier' : '')} data-publier=${publier?.cle || null}>
     <a class="skip" href="#contenu" onClick=${e => { e.preventDefault(); document.getElementById('contenu')?.focus(); }}>Aller au contenu</a>
@@ -690,8 +698,8 @@ function buildNotifs({ data, me, store, saison }) {
       ligne: attente.length > 1 ? `${attente.length} lauréats de ta promo ${me.promo} à confirmer` : `${attente[0].full_name.split(' ')[0]} est de ta promo ${me.promo} ?` });
   }
   if (me.role === 'laureat') for (const v of pairs) if (v.laureat_id === me.id && recent(v.created_at, 14)) out.push({ key: 'vv' + v.id, tone: 'good', icon: 'shield', profile: v.verificateur_id, at: v.created_at, text: me.verified ? `${name(v.verificateur_id)} a confirmé que tu es de la promo ${me.promo}.` : `${name(v.verificateur_id)} a confirmé que tu es de la promo ${me.promo}. Encore un lauréat et ton badge arrive.` });
-  // Agenda de l'école : nouvel événement, puis rappel la veille et le jour même
-  for (const e of data.evenements || []) {
+  // Agenda de l'école : nouvel événement, puis rappel la veille et le jour même (ceux de son école, comme l'agenda)
+  for (const e of deMonEcole(data.evenements, me)) {
     if (e.annule || new Date(e.fin || e.debut) < Date.now()) continue;
     if (e.public === 'etudiants' && me.role === 'laureat') continue;
     if (e.public === 'laureats' && me.role === 'etudiant') continue;

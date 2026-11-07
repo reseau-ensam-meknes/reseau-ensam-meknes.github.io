@@ -2,13 +2,14 @@
 // « Ils sont déjà dans le réseau » : les lauréats qui ont dit oui dans Mon profil > Visibilité (visages_publics : le prénom
 // et l'initiale du nom, la promo, l'entreprise, la photo). « Réussites » : les recrutements confirmés que l'étudiant ET
 // le lauréat ont cochés (reussites_publiques : l'entreprise, les deux prénoms, la promo du lauréat, le mois).
-// Chaque fonction ne rend que l'école du visiteur. Les photos : des liens temporaires d'une heure, que la base n'accorde
+// Chaque fonction ne rend que l'école de la page (celle du lien ?ecole=…, sinon l'ENSAM Meknès ; rien pour une école dont le
+// réseau n'est pas ouvert). Les photos : des liens temporaires d'une heure, que la base n'accorde
 // que pour ces photos-là (politique « photos visages publics » de schema.sql), comme pour les membres fondateurs.
 // Chargé à part, après l'affichage (la page d'entrée garde ses six fichiers). Démo, base pas encore à jour, pas de
 // réseau, ou personne n'a dit oui : rien, sans erreur. Les entreprises sont écrites en texte, sans logo.
 import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { addAR, getLang } from './i18n.js';
-import { Icon } from './entree.js';
+import { Icon, argsEcole } from './entree.js';
 import { Visage } from './fondateurs-public.js';
 
 export const TITRE_VISAGES = 'Ils sont déjà dans le réseau';
@@ -44,7 +45,8 @@ let promesse = null;
 async function appeler(cfg) {
   const h = { apikey: cfg.supabaseAnonKey, Authorization: `Bearer ${cfg.supabaseAnonKey}`, 'Content-Type': 'application/json' };
   const c = new AbortController(); const t = setTimeout(() => c.abort(), 8000);
-  const rpc = nom => fetch(`${cfg.supabaseUrl}/rest/v1/rpc/${nom}`, { method: 'POST', headers: h, body: '{}', signal: c.signal })
+  const corps = JSON.stringify(argsEcole());
+  const rpc = nom => fetch(`${cfg.supabaseUrl}/rest/v1/rpc/${nom}`, { method: 'POST', headers: h, body: corps, signal: c.signal })
     .then(r => (r.ok ? r.json() : null), () => null);
   try {
     const [v, r] = await Promise.all([rpc('visages_publics'), rpc('reussites_publiques')]);

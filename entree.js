@@ -149,7 +149,8 @@ export function LangToggle({ onChange, store, me, aussitot = false }) {
     <${Icon} name="globe" size=${16}/><span translate="no">${ar ? 'FR' : 'ع'}</span><span class="lang-long" translate="no">${ar ? 'Français' : 'العربية'}</span></button>`;
 }
 
-const CLE = 'ensam-invite-promo', CLE_ROLE = 'ensam-role-choisi';
+const CLE = 'ensam-invite-promo', CLE_ROLE = 'ensam-role-choisi', CLE_ECOLE = 'ensam-invite-ecole';
+const ecoleValide = e => typeof e === 'string' && /^[a-z0-9-]{2,40}$/.test(e);
 const CLE_DE = 'ensam-invite-de', CODE_DE = /^[a-z0-9]{8}$/;
 const valide = promoValide;
 const lire = k => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -164,6 +165,12 @@ export function lireInvitation() {
       u.searchParams.delete('de');
       if (!u.searchParams.has('promo')) history.replaceState(history.state, '', u.pathname + u.search + u.hash);
     }
+    if (u.searchParams.has('ecole')) {
+      const e = u.searchParams.get('ecole');
+      if (ecoleValide(e)) localStorage.setItem(CLE_ECOLE, e);
+      u.searchParams.delete('ecole');
+      if (!u.searchParams.has('promo')) { history.replaceState(history.state, '', u.pathname + u.search + u.hash); return null; }
+    }
     if (!u.searchParams.has('promo')) return null;
     const n = Number(u.searchParams.get('promo'));
     if (valide(n)) localStorage.setItem(CLE, String(n));
@@ -174,9 +181,11 @@ export function lireInvitation() {
   } catch { return null; /* stockage ou historique indisponible : le lien marche quand même, sans promo pré-remplie */ }
 }
 export function promoInvitee() { const n = Number(lire(CLE)); return valide(n) ? n : null; }
+export function ecoleInvitee() { const e = lire(CLE_ECOLE); return ecoleValide(e) ? e : null; }
+export const argsEcole = () => { const e = ecoleInvitee(); return e && e !== 'ensam-meknes' ? { p_ecole: e } : {}; };
 export const retenirRole = r => ecrire(CLE_ROLE, r === 'etudiant' || r === 'laureat' ? r : null);
 export const roleRetenu = () => { const r = lire(CLE_ROLE); return r === 'etudiant' || r === 'laureat' ? r : null; };
-export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); ecrire(CLE_DE, null); }
+export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); ecrire(CLE_ECOLE, null); ecrire(CLE_DE, null); }
 const codeInvite = () => { const c = lire(CLE_DE); return c && CODE_DE.test(c) ? c : null; };
 
 const CLE_ACCORD = 'ensam-accord-ici';
@@ -225,7 +234,7 @@ export async function offrePartagee(id, cfg = window.ENSAM_CONFIG || {}) {
 
 export async function invitationDe(code, cfg = window.ENSAM_CONFIG || {}) {
   if (!CODE_DE.test(code || '') || !enLigneCfg(cfg)) return undefined;
-  const { ok, x } = await appelPublic('invitation_de', { p_code: code }, cfg);
+  const { ok, x } = await appelPublic('invitation_de', { p_code: code, ...argsEcole() }, cfg);
   if (!ok) return undefined;
   const prenom = typeof x?.prenom === 'string' ? x.prenom.trim().slice(0, 40) : '';
   return prenom ? { prenom, promo: promoValide(Number(x.promo)) ? Number(x.promo) : null } : null;
