@@ -72,6 +72,24 @@ test('budget : 3 notifications programmées par jour ; une DURE part toujours et
   await db.query('delete from public.notif_programme');
 });
 
+test('budget : l’administration qui regarde l’application en lauréat (admin_ok) ne reçoit rien de programmé, Match compris', async () => {
+  const PROGRAMMEES = ['match_jour', 'match_attente', 'demande_attente', 'demande_pause', 'groupe_jour', 'rappel_visite', 'semaine',
+    'offre_bientot', 'rdv_demain', 'entretien_demain', 'agenda_demain', 'apres_rdv'];
+  try {
+    // Son propre geste, comme store.changerVue : rôle « laureat » le temps de la vue, admin_ok gardé pour revenir
+    await q(ADMIN, `update public.profiles set role = 'laureat' where id = auth.uid()`);
+    assert.deepEqual({ ...(await un('select role, admin_ok from public.profiles where id = $1', [ADMIN])) }, { role: 'laureat', admin_ok: true });
+    for (const k of PROGRAMMEES) assert.equal(await place(ADMIN, k), false, `admin en vue lauréat : ${k}`);
+    assert.equal((await un('select count(*)::int n from public.notif_programme where user_id = $1', [ADMIN])).n, 0, 'rien de noté');
+    // Un vrai lauréat, lui, reçoit
+    assert.equal(await place(LAU, 'match_jour'), true);
+    assert.equal(await place(LAU, 'rdv_demain'), true);
+  } finally {
+    await db.query(`update public.profiles set role = 'admin' where id = $1`, [ADMIN]);
+    await db.query('delete from public.notif_programme');
+  }
+});
+
 test('budget : une tâche qui passe sur beaucoup de membres ne garde qu’un verrou (pas un par membre)', async () => {
   const membres = (await un(`select count(*)::int n from public.profiles where role in ('etudiant','laureat')`)).n;
   assert.ok(membres >= 5, 'plusieurs membres');
