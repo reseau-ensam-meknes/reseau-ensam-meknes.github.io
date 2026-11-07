@@ -159,13 +159,13 @@ test('photos : les liens déjà obtenus partent avec la copie du compte, jamais 
 });
 
 // ---------------------------------------------------------------------------
-// Données écran par écran (store.js) : d'abord l'accueil et la navigation, le reste juste après ; un écran qui lit
-// une table pas encore arrivée l'attend, puis tout est là comme avant
+// Données en deux temps (store.js) : d'abord l'accueil et la navigation, le reste juste après le premier affichage ;
+// un écran qui lit une table pas encore arrivée l'attend, puis tout est là comme avant
 // ---------------------------------------------------------------------------
 const STORE = await import('../../src/store.js');
 
-test('données écran par écran : PREMIERES et ENSUITE couvrent toutes les tables, chacune une seule fois', () => {
-  const { TABLES, PREMIERES, ENSUITE, tablesEcran, pourCache } = STORE;
+test('données en deux temps : PREMIERES et ENSUITE couvrent toutes les tables, chacune une seule fois ; les écrans qui les lisent', () => {
+  const { TABLES, PREMIERES, ENSUITE, tablesEcran, tablesLien, pourCache } = STORE;
   assert.equal(new Set(TABLES).size, TABLES.length, 'TABLES sans doublon');
   assert.ok(ENSUITE.length > 0 && PREMIERES.length > 0);
   for (const t of ENSUITE) assert.ok(TABLES.includes(t), t);
@@ -175,13 +175,13 @@ test('données écran par écran : PREMIERES et ENSUITE couvrent toutes les tabl
   const pleine = Object.fromEntries(TABLES.map(t => [t, [{ id: t + '-1', author_id: 'moi', user_id: 'moi', student_id: 'moi', laureat_id: 'moi', created_at: '2026-10-01T10:00:00Z' }]]));
   const copie = pourCache(pleine, 'moi');
   for (const t of ENSUITE) assert.deepEqual(copie[t], [], `${t} n'est pas gardée sur l'appareil`);
-  // Les écrans qui lisent ces tables, et seulement eux
+  // Les écrans de l'application qui les attendent (app.js), et seulement eux
   const cas = [
-    [['reseau', ''], ['groupe_messages']], [['reseau', 'groupes'], ['groupe_messages']], [['reseau', 'inconnue'], ['groupe_messages']],
-    [['reseau', 'annuaire'], []], [['reseau', 'agenda'], []], [['reseau', 'entreprises'], []], [['reseau', 'etranger'], []],
+    [['reseau', ''], ['groupe_messages']], [['reseau', 'groupes'], ['groupe_messages']],
+    [['reseau', 'annuaire'], []], [['reseau', 'agenda'], []], [['reseau', 'entreprises'], []], [['reseau', 'etranger'], []], [['reseau', 'entraide'], []],
     [['messages', ''], ['reactions_messages']], [['messages', 'abc'], ['reactions_messages']],
     [['mentorat', 'cv'], ['relecture_commentaires']], [['mentorat', ''], []],
-    [['admin', ''], ENSUITE], [['admin', 'membres'], ENSUITE], [['profil', 'donnees'], ENSUITE], [['profil', ''], []],
+    [['admin', ''], ENSUITE], [['admin', 'moderation'], ENSUITE], [['profil', 'donnees'], []], [['profil', ''], []],
     [['accueil', ''], []], [['offres', ''], []], [['parcours', ''], []], [['espace', ''], []], [['suivi', ''], []], [['match', ''], []], [['confidentialite', ''], []],
   ];
   for (const [[page, sub], attendu] of cas) {
@@ -189,6 +189,33 @@ test('données écran par écran : PREMIERES et ENSUITE couvrent toutes les tabl
     assert.deepEqual(ts, attendu, `${page}/${sub}`);
     for (const t of ts) assert.ok(ENSUITE.includes(t), t);
   }
+  // L'adresse de la page (un lien de notification) : ses tables viennent avec les premières
+  assert.deepEqual(tablesLien('#messages/00000000-0000-4000-8000-0000000000b2'), ['reactions_messages']);
+  assert.deepEqual(tablesLien('#reseau'), ['groupe_messages']);
+  assert.deepEqual(tablesLien('#reseau/groupes/ville%3Ameknes'), ['groupe_messages']);
+  assert.deepEqual(tablesLien('#mentorat/cv'), ['relecture_commentaires']);
+  assert.deepEqual(tablesLien('#admin/moderation'), ENSUITE);
+  for (const h of ['', '#', '#accueil', '#reseau/annuaire', '#offre/abc', '#%E0%A4%A', null, undefined]) assert.deepEqual(tablesLien(h), [], String(h));
+});
+
+// Garde-fou : un module qui se met à lire une table d'ENSUITE doit attendre qu'elle soit là (tablesEcran, store.attendre).
+// Ceux-ci le font : leur écran attend dans app.js (messages, mentorat/cv, admin, Mes données) ou lui-même (groupes.js) ;
+// logic.js ne les lit que pour l'administration (dernieresActions → parcoursInscription) ; le magasin et la démo les écrivent.
+test('données en deux temps : seuls les écrans qui attendent lisent les tables d’ENSUITE', () => {
+  const { ENSUITE } = STORE;
+  const LISENT = { 'groupes.js': ['groupe_messages'], 'messages.js': ['reactions_messages'], 'cv.js': ['relecture_commentaires'], 'admin.js': ENSUITE,
+    'privacy.js': ENSUITE, 'logic.js': ['groupe_messages'] };
+  const ECRIVENT = /^(store|seed\d*|i18n-ar)\.js$/;
+  let vus = 0;
+  for (const f of fs.readdirSync(SRC).filter(f => f.endsWith('.js') && !ECRIVENT.test(f))) {
+    const lues = ENSUITE.filter(t => new RegExp(`\\b${t}\\b`).test(lireSrc(f)));
+    for (const t of lues) assert.ok((LISENT[f] || []).includes(t), `${f} lit ${t} : son écran doit l’attendre (tablesEcran ou store.attendre), puis ajoute-le ici`);
+    vus += lues.length;
+  }
+  assert.ok(vus >= 6, 'les lectures connues sont bien trouvées');
+  assert.match(lireSrc('groupes.js'), /store\.attendre\(\['groupe_messages'\]\)/);
+  assert.match(lireSrc('app.js'), /store\.ecranEnAttente\(page, route\.sub\)/);
+  assert.match(lireSrc('app.js'), /onglet === 'donnees' && store\.attendre\(ENSUITE\)/);
 });
 
 // Un faux client Supabase dont les lectures des tables d'ENSUITE attendent qu'on les lâche
@@ -218,7 +245,7 @@ function magasinEnDeux({ retenir = STORE.ENSUITE } = {}) {
 }
 const tick = (ms = 0) => new Promise(ok => setTimeout(ok, ms));
 
-test('données écran par écran : l’accueil n’attend pas les messages des groupes ; le Réseau les attend, puis tout est là', async () => {
+test('données en deux temps : l’accueil n’attend pas les messages des groupes ; le reste part après le premier affichage ; le Réseau les attend', async () => {
   const { ENSUITE, PREMIERES } = STORE;
   const { s, lus, lacher, emis } = magasinEnDeux();
   // loadAll se termine sans les tables d'ENSUITE (l'accueil s'affiche)
@@ -226,15 +253,23 @@ test('données écran par écran : l’accueil n’attend pas les messages des g
   assert.equal(s.me?.id, 'moi');
   for (const t of PREMIERES) assert.ok(s.charges.has(t), t);
   for (const t of ENSUITE) { assert.equal(s.charges.has(t), false, t); assert.deepEqual(s.data[t], [], t); }
+  // Rien d'ENSUITE avant que l'application soit dessinée (elle s'abonne au magasin) : le réseau reste à l'accueil
+  await tick(260);
+  for (const t of ENSUITE) assert.equal(lus.includes(t), false, t);
   assert.equal(s.ecranEnAttente('accueil', ''), false);
   assert.equal(s.ecranEnAttente('reseau', 'annuaire'), false);
-  // Le Réseau ouvert tout de suite : il attend, et sa table part aussitôt (une seule lecture, même redessiné)
-  assert.equal(s.ecranEnAttente('reseau', 'groupes'), true);
-  assert.equal(s.ecranEnAttente('reseau', ''), true);
-  assert.equal(lus.filter(n => n === 'groupe_messages').length, 1);
-  // Le reste part de lui-même juste après (sans requestIdleCallback : 200 ms), sans relire ce qui est en route
+  assert.equal(s.attendre([]), false);
+  // L'application dessinée s'abonne : le reste part juste après (sans requestIdleCallback ici : 200 ms)
+  const off = s.on(() => {});
+  await tick(20);
+  for (const t of ENSUITE) assert.equal(lus.includes(t), false, `${t} : pas avant que le navigateur souffle`);
   await tick(260);
   for (const t of ENSUITE) assert.equal(lus.filter(n => n === t).length, 1, t);
+  // Le Réseau ouvert avant leur arrivée : il attend, sans relire ce qui est en route (même redessiné)
+  assert.equal(s.ecranEnAttente('reseau', 'groupes'), true);
+  assert.equal(s.ecranEnAttente('reseau', ''), true);
+  assert.equal(s.attendre(['groupe_messages']), true);
+  assert.equal(lus.filter(n => n === 'groupe_messages').length, 1);
   const avant = emis();
   lacher('groupe_messages');
   await tick();
@@ -242,55 +277,100 @@ test('données écran par écran : l’accueil n’attend pas les messages des g
   assert.deepEqual(s.data.groupe_messages.map(m => m.id), ['groupe_messages-1']);
   assert.ok(emis() > avant, 'l’écran est redessiné à l’arrivée');
   assert.equal(s.ecranEnAttente('messages', ''), true);
+  assert.equal(s.attendre(ENSUITE), true, 'Mes données attend tout');
   lacher('reactions_messages'); lacher('relecture_commentaires');
   await tick();
   for (const t of ENSUITE) assert.ok(s.charges.has(t), t);
-  for (const [page, sub] of [['messages', ''], ['mentorat', 'cv'], ['admin', ''], ['profil', 'donnees']]) assert.equal(s.ecranEnAttente(page, sub), false, page);
+  for (const [page, sub] of [['messages', ''], ['mentorat', 'cv'], ['admin', '']]) assert.equal(s.ecranEnAttente(page, sub), false, page);
+  assert.equal(s.attendre(ENSUITE), false);
   // Rien n'est relu ensuite pour un écran déjà servi
-  const n = lus.length; s.ecranEnAttente('reseau', 'groupes'); s.ecranEnAttente('admin', ''); assert.equal(lus.length, n);
+  const n = lus.length; s.ecranEnAttente('reseau', 'groupes'); s.ecranEnAttente('admin', ''); s.attendre(ENSUITE); assert.equal(lus.length, n);
+  off();
 });
 
-test('données écran par écran : changement de vue (tout), ouverture depuis l’appareil, compte changé, démo', async () => {
+test('données en deux temps : un écran ouvert avant le reste le demande tout de suite ; un échec ne le fait pas attendre toujours', async () => {
+  const { s, lus, lacher } = magasinEnDeux();
+  await s.loadAll();
+  // Mes données ouvert juste après l'accueil, avant que le navigateur souffle : tout part aussitôt, une fois
+  assert.equal(s.attendre(STORE.ENSUITE), true);
+  for (const t of STORE.ENSUITE) assert.equal(lus.filter(n => n === t).length, 1, t);
+  s.on(() => {}); await tick(260);
+  for (const t of STORE.ENSUITE) assert.equal(lus.filter(n => n === t).length, 1, `${t} : pas relue après le premier affichage`);
+  // Réseau qui coupe (deux échecs) : la table reste vide, l'écran ne l'attend plus
+  lacher('groupe_messages', { data: null, error: { message: 'Failed to fetch' } });
+  await tick(1300);
+  lacher('groupe_messages', { data: null, error: { message: 'Failed to fetch' } });
+  await tick();
+  assert.equal(s.attendre(['groupe_messages']), false);
+  assert.deepEqual(s.data.groupe_messages, []);
+});
+
+test('données en deux temps : tout d’un coup (copie de l’appareil, longue absence, changement de vue), lien d’une conversation, compte changé, démo', async () => {
   const { ENSUITE } = STORE;
-  // tout : loadAll attend aussi le reste (l'administration change de vue)
+  // ensemble : tout part en même temps, et loadAll attend tout (rafraichir, auRetour, changerVue)
   {
-    const { s, lacher } = magasinEnDeux();
+    const { s, lus, lacher } = magasinEnDeux();
     let fini = false;
-    const p = s.loadAll({ tout: true }).then(() => { fini = true; });
-    await tick(260);
+    const p = s.loadAll({ ensemble: true }).then(() => { fini = true; });
+    await tick();
+    for (const t of ENSUITE) assert.equal(lus.filter(n => n === t).length, 1, t);
     assert.equal(fini, false);
     for (const t of ENSUITE) lacher(t);
     await p;
     for (const t of ENSUITE) assert.ok(s.charges.has(t), t);
+    s.on(() => {}); await tick(260);
+    for (const t of ENSUITE) assert.equal(lus.filter(n => n === t).length, 1, `${t} : une seule lecture`);
   }
-  // Ouverture depuis la copie de l'appareil, mise à jour pas arrivée (enAttente) : l'écran attend, rien n'est demandé
+  // Ouverture depuis la copie de l'appareil, mise à jour pas arrivée (enAttente) : rien de plus que d'habitude (app.js fait
+  // attendre ses écrans, comme avant), rien n'est demandé
   {
     const { s, lus } = magasinEnDeux();
     s.enAttente = true;
-    assert.equal(s.ecranEnAttente('reseau', 'groupes'), true);
+    assert.equal(s.ecranEnAttente('reseau', 'groupes'), false);
+    assert.equal(s.attendre(ENSUITE), false);
     assert.equal(lus.length, 0);
   }
-  // Compte changé pendant la lecture : les lignes de l'ancien compte ne sont jamais écrites
+  // Une conversation ouverte d'un lien (notification) : ses réactions viennent avec les premières, rien n'attend après
   {
-    const { s, lacher } = magasinEnDeux();
+    globalThis.location = { hash: '#messages/00000000-0000-4000-8000-0000000000b2' };
+    try {
+      const { s, lus, lacher } = magasinEnDeux({ retenir: ['reactions_messages'] });
+      let fini = false;
+      const p = s.loadAll().then(() => { fini = true; });
+      await tick();
+      assert.equal(lus.filter(n => n === 'reactions_messages').length, 1);
+      assert.equal(fini, false, 'l’écran attend ses réactions avec le reste');
+      lacher('reactions_messages'); await p;
+      assert.equal(s.ecranEnAttente('messages', ''), false);
+      s.on(() => {}); await tick(260);
+      assert.equal(lus.filter(n => n === 'reactions_messages').length, 1, 'pas relue ensuite');
+      for (const t of ['groupe_messages', 'relecture_commentaires']) assert.equal(lus.filter(n => n === t).length, 1, t);
+    } finally { delete globalThis.location; }
+  }
+  // Compte changé pendant la lecture : les lignes de l'ancien compte ne sont jamais écrites, sa lecture ne bloque pas le nouveau
+  {
+    const { s, lus, lacher } = magasinEnDeux();
     await s.loadAll();
     assert.equal(s.ecranEnAttente('reseau', 'groupes'), true);
-    s.generation = (s.generation || 0) + 1; s.charges = new Set();
+    s.generation = (s.generation || 0) + 1; s.charges = new Set(); s.enCours = new Map();
     lacher('groupe_messages');
     await tick();
     assert.deepEqual(s.data.groupe_messages, []);
     assert.equal(s.charges.has('groupe_messages'), false);
+    assert.equal(s.attendre(['groupe_messages']), true);
+    assert.equal(lus.filter(n => n === 'groupe_messages').length, 2, 'relue pour le nouveau compte');
   }
   // La démo a tout tout de suite
   globalThis.window ??= {};
   window.ENSAM_CONFIG = {};
   const demo = await STORE.createStore();
   assert.equal(demo.mode, 'demo');
-  for (const [page, sub] of [['reseau', 'groupes'], ['messages', ''], ['mentorat', 'cv'], ['admin', ''], ['profil', 'donnees']]) assert.equal(demo.ecranEnAttente(page, sub), false);
+  for (const [page, sub] of [['reseau', 'groupes'], ['messages', ''], ['mentorat', 'cv'], ['admin', '']]) assert.equal(demo.ecranEnAttente(page, sub), false);
+  assert.equal(demo.attendre(ENSUITE), false);
   await demo.charger(ENSUITE);
 });
 
-test('données écran par écran : deux lectures de la même table en même temps, la plus récente reste (temps réel)', async () => {
+test('données en deux temps : deux lectures de la même table en même temps, la plus récente reste (temps réel)', async () => {
   const { s, lacher } = magasinEnDeux({ retenir: ['groupe_messages'] });
   // La lecture d'ENSUITE est en route quand un message est posté : le temps réel relit la table (plus récente)
   const ancienne = s.loadTable('groupe_messages'), recente = s.loadTable('groupe_messages');

@@ -1,7 +1,7 @@
 // Point d'entrée : coque de l'application, connexion, accueil, notifications.
 import { getLang, setLang, chargerAR, addAR } from './i18n.js';
 import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
-import { createStore, texteErreur } from './store.js';
+import { createStore, texteErreur, ENSUITE } from './store.js';
 import { Icon, Person, Avatar, Bar, CompanyLogo, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille, ecranLibre, mouvementReduit, EnTetePage, Anneau, Squelette } from './ui.js';
 import { deckMatch, matchsDe, seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, demandeLargeLe, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour, parametresLien } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, recoFor, matchesMe, APP_STATUS } from './offers.js';
@@ -1266,7 +1266,7 @@ function MyProfile({ ctx }) {
       </div>
       <${ProfileForm} ctx=${ctx} initial=${me} key=${me.id} onglet=${onglet} versOnglet=${versOnglet} apresVisibilite=${html`<${FondateurPublicCase} ctx=${ctx} niveau=${2}/>`}/>
       <div class="pf-partie" id="profil-notifications" hidden=${onglet !== 'notifications'}><${MesNotifications} ctx=${ctx}/></div>
-      <div class="pf-partie" id="profil-donnees" hidden=${onglet !== 'donnees'}>${onglet === 'donnees' && !store.enAttente && store.ecranEnAttente('profil', 'donnees') ? html`<${PageEnChargement}/>` : html`<${MesDonnees} ctx=${ctx}/>`}</div>
+      <div class="pf-partie" id="profil-donnees" hidden=${onglet !== 'donnees'}>${onglet === 'donnees' && store.attendre(ENSUITE) ? html`<${PageEnChargement}/>` : html`<${MesDonnees} ctx=${ctx}/>`}</div>
     </div>
   </section>`;
 }
