@@ -3,8 +3,8 @@
 import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, toast, ensuite, feteOuverte, quandFete, apresFete, injectCSS, mouvementReduit } from './ui.js';
 import { addAR, getLang } from './i18n.js';
-import { prevenirVariante, lignePrevenir, sansLigne, ouvertureSorte, sorteLienNotifs, bandeauPush, pushChoix, PUSH_CATEGORIES, navigateurIntegre, lienChrome, noterEchecPush, echecDefinitif,
-  raisonTestPush, testPushARefaire, APPLIS, estIPad, CLE_APPLI_VUE, raisonPrevenir } from './logic.js';
+import { prevenirVariante, lignePrevenir, sansLigne, ouvertureSorte, sorteLienNotifs, bandeauPush, pushChoix, navigateurIntegre, lienChrome, noterEchecPush, echecDefinitif,
+  raisonTestPush, testPushARefaire, APPLIS, estIPad, CLE_APPLI_VUE, raisonPrevenir, veutDesNotifs, choisirCas } from './logic.js';
 import { arriveeEnAttente } from './pouls.js';
 
 let installEvt = null;
@@ -204,9 +204,6 @@ const attendreRecu = ms => new Promise(ok => {
 });
 
 const PUSH_CHANGE = 'ensam-push';
-// Ce membre veut-il recevoir quelque chose ? Rien de coché dans Mon profil (les rappels seuls ne comptent pas) : rien à
-// proposer. L'administration reçoit toujours les signalements.
-const veutDesNotifs = m => m?.role === 'admin' || PUSH_CATEGORIES.some(c => c !== 'rappels' && pushChoix(c, m));
 // La clé publique de la plateforme, demandée dès qu'une feuille qui propose « Activer » s'affiche (store.pushKey la garde
 // pour la visite) : l'abonnement suit tout de suite la réponse du navigateur, sans un aller-retour de plus en 3G
 const cleAPrete = store => { if (store.mode === 'live') Promise.resolve(store.pushKey?.()).catch(() => {}); };
@@ -1219,7 +1216,12 @@ addAR({
 // pas encore abonné) ou par son bouton. « Plus tard » toujours dans le pied ; « Choisir d'abord » (sans activer), un lien
 // discret dans la feuille.
 const CHOISIR_TITRE = 'Choisis ce que tu reçois';
-const CHOISIR_TXT = 'Tout est décoché dans « Mon profil » : aucune notification ne t’arrive pour l’instant.';
+// Seuls les rappels cochés : rien d'autre à proposer non plus (veutDesNotifs), sans dire « Tout est décoché » à qui va les
+// trouver cochés (la case n'est montrée qu'une fois la base à jour, comme dans Mon profil)
+const CHOISIR_TXT = {
+  rien: 'Tout est décoché dans « Mon profil » : aucune notification ne t’arrive pour l’instant.',
+  rappels: 'Seuls les rappels sont cochés dans « Mon profil » : aucune autre notification ne t’arrive pour l’instant.',
+};
 const CHOISIR_SUITE = { off: 'Active-les sur cet appareil, puis coche ce que tu veux recevoir.', on: 'Cet appareil est prêt : coche ce que tu veux recevoir.' };
 // Mon profil › Notifications, et les cases elles-mêmes à l'écran : sur un petit téléphone, la barre du bas et la pastille
 // couvraient la première. La page arrive après le Retour qui retire la feuille (ensuite), puis l'état de cet appareil se lit
@@ -1256,7 +1258,7 @@ function FeuilleChoisir({ ctx, etat, onClose }) {
     ${activable ? html`<button type="button" class="btn primary" id="choisir-oui" disabled=${busy} onClick=${activer}><${Icon} name="bell" size=${16}/> Activer</button>`
       : html`<button type="button" class="btn primary" id="choisir-profil" onClick=${choisir}>Choisir</button>`}`;
   return html`<${Modal} title=${CHOISIR_TITRE} cls="appareil choisir" onClose=${onClose} footer=${pied}>
-    <p>${fr(CHOISIR_TXT)}</p>
+    <p>${fr(CHOISIR_TXT[choisirCas(me, !store.peutOrigine || store.peutOrigine())])}</p>
     <p class="small muted">${fr(CHOISIR_SUITE[activable ? 'off' : 'on'])}</p>
     ${activable ? html`<p class="choisir-lien"><button type="button" class="linkish" id="choisir-profil" onClick=${choisir}>Choisir d’abord</button></p>` : null}
   <//>`;
@@ -1264,7 +1266,8 @@ function FeuilleChoisir({ ctx, etat, onClose }) {
 injectCSS('choisir', `.choisir-lien { margin: 0; } .choisir-lien .linkish { display: inline-flex; align-items: center; min-height: 44px; }`);
 addAR({
   [CHOISIR_TITRE]: 'اختر ما يصلك',
-  [CHOISIR_TXT]: 'كل شيء غير محدَّد في «ملفي الشخصي»: لا يصلك أي إشعار حاليًا.',
+  [CHOISIR_TXT.rien]: 'كل شيء غير محدَّد في «ملفي الشخصي»: لا يصلك أي إشعار حاليًا.',
+  [CHOISIR_TXT.rappels]: 'لم يُحدَّد في «ملفي الشخصي» سوى التذكيرات: لا يصلك أي إشعار آخر حاليًا.',
   [CHOISIR_SUITE.off]: 'فعّلها على هذا الجهاز، ثم حدّد ما تريد تلقيه.',
   [CHOISIR_SUITE.on]: 'هذا الجهاز جاهز: حدّد ما تريد تلقيه.',
   'Choisir d’abord': 'الاختيار أولًا', 'Choisir': 'اختيار',

@@ -7341,6 +7341,52 @@ test('lien « Active tes notifications » sur un téléphone déjà abonné, tou
   await m.ctx.close();
 });
 
+// Tout décoché sauf « Rappels » : les rappels seuls ne comptent pas (rien d'autre à proposer), mais la feuille ne dit pas
+// « Tout est décoché » à qui va trouver « Rappels » cochée dans Mon profil. Une base pas encore à jour (le site en ligne
+// d'ici : une offre sans « origine ») ne montre pas cette case : là, « Tout est décoché » reste vrai.
+test('lien « Active tes notifications » avec seuls les rappels cochés dans Mon profil : la feuille dit ce qui est vrai, en français et en arabe', async () => {
+  const RAPPELS_SEULS = { ...TOUT_DECOCHE, rappels: true };
+  const s = await prevenirSur('off');
+  const id = await s.page.$eval('#persona', e => e.value);
+  await s.page.evaluate(([id, np]) => window.__demo.update('profiles', id, { notif_push: np }), [id, RAPPELS_SEULS]);
+  await s.page.goto(adresse + '?notifs=1#reseau');
+  await s.page.waitForSelector('.modal.choisir', { timeout: 8000 });
+  const t = await s.page.locator('.modal.choisir').innerText();
+  assert.doesNotMatch(t, /Tout est décoché/);
+  assert.match(t, /Seuls les rappels sont cochés dans «\sMon profil\s»\s: aucune autre notification ne t’arrive pour l’instant\./);
+  assert.match(t, /Active-les sur cet appareil, puis coche ce que tu veux recevoir\./);
+  await s.page.click('#choisir-profil');
+  await s.page.waitForFunction(() => location.hash === '#profil/notifications');
+  await s.page.waitForSelector('#np-messages');
+  assert.deepEqual(await s.page.$$eval('input[id^="np-"]', xs => xs.filter(x => x.checked).map(x => x.id)), ['np-rappels'], 'la case « Rappels » est là, cochée');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe
+  const a = await prevenirSur('off', { langue: 'ar' });
+  const ida = await a.page.$eval('#persona', e => e.value);
+  await a.page.evaluate(([id, np]) => window.__demo.update('profiles', id, { notif_push: np }), [ida, RAPPELS_SEULS]);
+  await a.page.goto(adresse + '?notifs=1#reseau');
+  await a.page.waitForSelector('.modal.choisir', { timeout: 8000 });
+  const ta = await a.page.locator('.modal.choisir').innerText();
+  assert.match(ta, /لم يُحدَّد في «ملفي الشخصي» سوى التذكيرات: لا يصلك أي إشعار آخر حاليًا\./);
+  assert.doesNotMatch(ta, /كل شيء غير محدَّد/);
+  assert.deepEqual(latinRestant(ta, []), []);
+  assert.equal(await a.debordement(), 0);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+  // En ligne, base pas encore à jour : pas de case « Rappels » dans Mon profil, « Tout est décoché » est vrai
+  const m = await membreEnLigne({ profil: { ...MEMBRE, notif_push: RAPPELS_SEULS }, deja: true, chemin: '?notifs=1#reseau' });
+  await m.page.waitForSelector('.modal.choisir', { timeout: 10000 });
+  assert.match(await m.page.locator('.modal.choisir').innerText(), /Tout est décoché dans «\sMon profil\s»/);
+  await m.page.click('#choisir-profil');
+  await m.page.waitForFunction(() => location.hash === '#profil/notifications');
+  await m.page.waitForSelector('#np-messages');
+  assert.equal(await m.page.locator('#np-rappels').count(), 0);
+  assert.deepEqual(await m.page.$$eval('input[id^="np-"]', xs => xs.filter(x => x.checked).map(x => x.id)), []);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
 // « Choisir » mène aux cases elles-mêmes, pas au haut de Mon profil : sur un petit téléphone (360 × 640), la barre du bas et la
 // pastille « Installer l'application » couvraient la première case. Le groupe vient sous la barre du haut, le curseur sur sa
 // première case (le lecteur d'écran dit le groupe, puis la case). De même pour « Choisir d'abord » et « Activer » (démo).

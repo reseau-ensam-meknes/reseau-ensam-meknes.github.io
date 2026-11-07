@@ -573,6 +573,21 @@ test('lien « Active tes notifications » avec tout décoché dans Mon profil : 
   assert.equal(sorteLienNotifs({ etat: 'on', memo: {} }), 'deja');
 });
 
+test('lien « Active tes notifications » avec seuls les rappels cochés : rien d’autre à proposer (choisir), et la feuille dit que « Rappels » reste cochée', () => {
+  const { veutDesNotifs, choisirCas, PUSH_CATEGORIES } = logique;
+  const seule = (c, role = 'etudiant') => ({ role, notif_push: Object.fromEntries(PUSH_CATEGORIES.map(x => [x, x === c])) });
+  assert.equal(veutDesNotifs(seule('rappels')), false, 'les rappels seuls ne comptent pas');
+  for (const etat of ['on', 'off']) assert.equal(sorteLienNotifs({ etat, memo: {}, voulu: veutDesNotifs(seule('rappels')) }), 'choisir', etat);
+  assert.equal(choisirCas(seule('rappels')), 'rappels');
+  assert.equal(choisirCas(seule(null)), 'rien', 'tout décoché');
+  assert.equal(choisirCas(seule('rappels'), false), 'rien', 'base pas encore à jour : Mon profil ne montre pas la case « Rappels »');
+  assert.equal(choisirCas({ role: 'laureat', notif_push: { messages: false } }), 'rappels', 'case jamais touchée : cochée par défaut');
+  assert.equal(veutDesNotifs(seule('messages')), true);
+  assert.equal(veutDesNotifs(seule('match')), true);
+  assert.equal(veutDesNotifs({ role: 'etudiant' }), true, 'par défaut, tout est coché');
+  assert.equal(veutDesNotifs(seule(null, 'admin')), true, 'l’administration reçoit toujours les signalements');
+});
+
 test('carte de la page d’entrée : espaces insécables du français (jamais « : » ni « » » seul en début de ligne) ; l’arabe tel quel', async () => {
   const { typo, CARTE } = await appareil();
   assert.equal(typo(CARTE.android, 'fr'), 'Ouvre le Réseau dans Chrome : tu y resteras connecté et tes notifications arriveront sur ce téléphone.');
