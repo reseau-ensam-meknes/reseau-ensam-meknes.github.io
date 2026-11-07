@@ -1,15 +1,16 @@
-// Administration, par onglets : vue d'ensemble (chiffres, annonce, défis, parrains, recrutements, offres),
-// modération des signalements, membres (rôle, vérification), liste officielle des étudiants,
-// liens d'invitation par promo, agenda de l'école, cartes sponsorisées de Match et réglages (email de l'école).
+// Administration : la console. Sur ordinateur, les rubriques dans une colonne en groupes (Piloter, Animer, Gérer, Grandir) ;
+// sur téléphone, une rangée de puces. Le tableau de bord (objectif du plan, chiffres, annonce, défis, parrains), ce qui est
+// à traiter, l'animation du réseau, l'agenda, les invitations, les membres, les contenus, la modération des signalements,
+// la liste officielle des étudiants, les écoles, les partenaires, les cartes sponsorisées de Match, les affiches et le rapport,
+// et les réglages (email de l'école). Le cadre et les rubriques nouvelles sont dans admin-console*.js et admin-tableau.js.
 import { html, useState, useEffect, useMemo, useRef } from './vendor/preact-htm.js';
-import { Icon, Field, Person, Empty, Bar, Avatar, toast, injectCSS, EnTetePage, Compteur } from './ui.js';
-import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
+import { Icon, Field, Person, Empty, Bar, Avatar, toast, injectCSS, EnTetePage } from './ui.js';
 import { addAR, arCount } from './i18n.js';
-import { NIVEAUX, niveauOf, timeAgo, cleNom, surListeOfficielle, norm, GUIDE_SECTIONS, pct, reponses48h, parcoursInscription, compteOuvert, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible,
+import { niveauOf, timeAgo, cleNom, surListeOfficielle, norm, pct, parcoursInscription, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible, ecoleDe, ECOLE_DEFAUT, pourLEcoleVue,
   SPONSO_PUBLICS, SPONSO_ANNEES, jourLocal, normaliserSponsorise, refusSponsorise, etatSponsorise, tauxClic, resumeFilieres, seasonLabel } from './logic.js';
 import { SanteNotifsAdmin } from './admin-notifs.js';
 import { DefisAdmin } from './saison.js';
-import { AgendaAdmin } from './agenda.js';
+import { AgendaAdmin, consoleRegarde } from './agenda.js';
 import { InvitationsAdmin } from './invitation.js';
 import { AmbassadeursAdmin } from './ambassadeurs.js';
 import { lireCVDe, libellesCV, SignalerLecture, CvButton } from './cv.js';
@@ -19,9 +20,23 @@ import { ajouterIcones } from './entree.js';
 import { FilieresPick } from './offers.js';
 import { ApercuSponsorise } from './match.js';
 import { getLang } from './i18n.js';
+import { useEcoleRegardee, useTableAdmin, suiviDe } from './admin-donnees.js';
+import { RUBRIQUES, useLarge, MenuConsole, PucesConsole, ChoixEcole, RechercheConsole, telecharger } from './admin-console.js';
+// Les règles sans écran, importées d'ici aussi : le navigateur les découvre avec le reste (un aller-retour de moins au premier chargement)
+import { donneesDeLEcole, elementsATraiter } from './admin-console-regles.js';
+import { MOTIFS, TYPES_CIBLE, court, cible, demandeCV } from './admin-console-cibles.js';
+import { ObjectifPlan, KpisPilotage, OuSontLesMembres, CeuxQuiAident, CeQuiSestPasse } from './admin-tableau.js';
+import { CalloutATraiter, ATraiter } from './admin-console-traiter.js';
+import { TableMembres } from './admin-console-membres.js';
+import { Contenus } from './admin-console-contenus.js';
+import { AnimerAdmin } from './admin-animer.js';
+import { EcolesAdmin } from './admin-ecoles.js';
+import { PartenairesAdmin } from './admin-partenaires.js';
+import { OutilsAdmin } from './admin-outils.js';
 
 // Une étiquette : l'onglet des cartes sponsorisées
-ajouterIcones({ etiquette: '<path d="M3.5 12.3V4.5a1 1 0 0 1 1-1h7.8l8.2 8.2a1.2 1.2 0 0 1 0 1.7l-7.6 7.6a1.2 1.2 0 0 1-1.7 0z"/><circle cx="8" cy="8" r="1.4"/>' });
+ajouterIcones({ etiquette: '<path d="M3.5 12.3V4.5a1 1 0 0 1 1-1h7.8l8.2 8.2a1.2 1.2 0 0 1 0 1.7l-7.6 7.6a1.2 1.2 0 0 1-1.7 0z"/><circle cx="8" cy="8" r="1.4"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11.2v5.2M12 7.7v.2"/>' });
 
 addAR({
   'Vue d’ensemble': 'نظرة عامة', 'Modération': 'الإشراف', 'Liste officielle': 'اللائحة الرسمية', 'Réglages': 'الإعدادات', 'Agenda': 'المفكرة',
@@ -42,6 +57,7 @@ addAR({
   'Un membre anonyme': 'عضو مجهول', 'Auteur': 'الكاتب', 'Auteur :': 'الكاتب:', 'Signalé par': 'بلّغ عنه',
   // Membres
   'Vérifie que la personne est bien diplômée de l’ENSAM Meknès (promo, filière), puis valide. Le badge rassure les étudiants. Deux lauréats vérifiés de sa promo peuvent aussi le confirmer.': 'تحقق من أن الشخص خريج ENSAM مكناس (الدفعة، الشعبة)، ثم أكّد. الشارة تطمئن الطلبة. يمكن أيضًا لخريجَين متحقق منهما من دفعته تأكيد ذلك.',
+  'Vérifie que la personne est bien diplômée de son école (promo, filière), puis valide. Le badge rassure les étudiants. Deux lauréats vérifiés de sa promo peuvent aussi le confirmer.': 'تحقق من أن الشخص خريج مدرسته (الدفعة، الشعبة)، ثم أكّد. الشارة تطمئن الطلبة. يمكن أيضًا لخريجَين متحقق منهما من دفعته تأكيد ذلك.',
   'Pas trouvé sur la liste officielle de sa promo': 'غير موجود في اللائحة الرسمية لدفعته', 'Sur la liste officielle': 'في اللائحة الرسمية', 'Aucune confirmation de sa promo': 'لا تأكيد من الدفعة',
   // Liste officielle
   'Importer la liste': 'استيراد اللائحة', 'Fichier Excel (.xlsx) ou CSV exporté de la scolarité : une ligne par étudiant, avec au moins le nom et la promo.': 'ملف Excel (.xlsx) أو CSV من مصلحة الشؤون الطلابية: سطر لكل طالب، مع الاسم والدفعة على الأقل.',
@@ -75,6 +91,8 @@ addAR({
   [/^(\d+) étudiants attendent un horaire depuis plus de 24 h$/, n => `${arCount(n, ['طالب واحد ينتظر', 'طالبان ينتظران', 'طلبة ينتظرون', 'طالبًا ينتظرون'])} توقيتًا منذ أكثر من 24 ساعة`],
   [/^Pas encore de demande d’étudiant ce mois-ci · toutes aides : (\d+)\s?%$/, t => `لا طلبات من الطلبة بعد هذا الشهر · كل أنواع المساعدة: ${t}%`],
   [/^(\d+) filleuls? cette année · (\d+) lauréats? volontaires? · (\d+) étudiants? de 3A sans parrain\. Chaque matin, la plateforme attribue aussi les parrains toute seule\.$/, (a, b, c) => `${arCount(a, ['طالب واحد في الرعاية', 'طالبان في الرعاية', 'طلبة في الرعاية', 'طالبًا في الرعاية'])} هذه السنة · ${arCount(b, ['خريج متطوع', 'خريجان متطوعان', 'خريجين متطوعين', 'خريجًا متطوعًا'])} · ${arCount(c, ['طالب واحد', 'طالبان', 'طلبة', 'طالبًا'])} من السنة الثالثة دون عرّاب. كل صباح تعيّن المنصة العرّابين تلقائيًا أيضًا.`],
+  [/^(\d+) filleuls? cette année · (\d+) lauréats? volontaires? · (\d+) étudiants? de 3A sans parrain\. Le bouton, comme la plateforme chaque matin, attribue les parrains dans toutes les écoles, chacun dans la sienne\.$/, (a, b, c) => `${arCount(a, ['طالب واحد في الرعاية', 'طالبان في الرعاية', 'طلبة في الرعاية', 'طالبًا في الرعاية'])} هذه السنة · ${arCount(b, ['خريج متطوع', 'خريجان متطوعان', 'خريجين متطوعين', 'خريجًا متطوعًا'])} · ${arCount(c, ['طالب واحد', 'طالبان', 'طلبة', 'طالبًا'])} من السنة الثالثة دون عرّاب. يعيّن الزر، كما تفعل المنصة كل صباح، العرّابين في كل المدارس، كلٌّ في مدرسته.`],
+  [/^(\d+) parrains? attribués? dans toutes les écoles\.$/, n => `عدد العرّابين المعيَّنين في كل المدارس: ${n}.`],
   [/^Jusqu’au (\d{1,2}) (\S+)$/, (j, m) => `إلى غاية ${j} ${m}`],
   [/^Signalé (\d+) fois$/, n => `بُلّغ عنه ${n} مرة`],
   [/^Personnes qui ont demandé un code sans l’entrer : (\d+) \(code pas reçu, ou visite interrompue\)\.$/, n => `عدد من طلبوا رمزًا دون إدخاله: ${n} (لم يصلهم الرمز، أو انقطعت الزيارة).`],
@@ -91,10 +109,6 @@ addAR({
   [/^Vider la liste de la promo (\d{4}) \? Les comptes déjà vérifiés le restent\.$/, y => `إفراغ لائحة دفعة ${y}؟ تبقى الحسابات المتحقق منها كما هي.`],
 ]);
 
-// Le menu du rôle (étiqueté « Rôle ») dit le rôle en un mot : sur téléphone, le nom du membre garde la place de se lire
-const ROLES = [['etudiant', 'Étudiant'], ['laureat', 'Lauréat']];
-const TABS = [['', 'Vue d’ensemble', 'chart'], ['moderation', 'Modération', 'flag'], ['membres', 'Membres', 'people'], ['liste', 'Liste officielle', 'file'], ['inviter', 'Inviter', 'send'], ['agenda', 'Agenda', 'calendar'], ['sponsorises', 'Sponsorisés', 'etiquette'], ['reglages', 'Réglages', 'wrench']];
-
 // Comptes (emails, dernière connexion), lus une fois pour toute la page
 function useComptes(store, n) {
   const [comptes, setComptes] = useState(null);
@@ -103,73 +117,97 @@ function useComptes(store, n) {
 }
 
 export function AdminPage(ctx) {
-  const { data, store, sub, go } = ctx;
-  const comptes = useComptes(store, data.profiles.length);
-  const tab = TABS.some(([k]) => k === sub) ? sub : '';
-  const ouverts = (data.signalements || []).filter(s => s.status === 'ouvert');
-  const toVerify = data.profiles.filter(p => p.role === 'laureat' && !p.verified);
-  const dot = { moderation: ouverts.length, membres: toVerify.length };
+  const { data, store, me, sub, go } = ctx;
+  const large = useLarge();
+  const comptesTous = useComptes(store, data.profiles.length);
+  // L'école regardée (seulement quand le réseau en compte au moins deux), gardée sur l'appareil pour cet admin et partagée
+  // avec la page Suivi ; '' : toutes les écoles
+  const { ecoles, recharger: relireEcoles, ecole, changer: setChoixEcole, nomDe } = useEcoleRegardee(ctx);
+  // La rubrique Écoles lit la table de son côté : en la quittant, la liste des écoles se relit (en ligne ; la démo suit déjà)
+  const rubriqueAvant = useRef(sub);
+  useEffect(() => { if (rubriqueAvant.current === 'ecoles' && sub !== 'ecoles') relireEcoles(); rubriqueAvant.current = sub; }, [sub]);
+  const vue = donneesDeLEcole(data, ecole);
+  // Les rubriques reçoivent l'école regardée (ecoleConsole, '' : toutes), la liste des écoles et leur nom : ce qu'elles écrivent
+  // va à cette école (pourLEcoleVue). Écoles, Partenaires, Animer, Affiches et les liens d'invitation gardent tout le réseau :
+  // leurs textes, affiches et rapports sont ceux du Réseau ENSAM Meknès (ceux d'une autre école attendent son accord pour le nom).
+  const commun = { ecoleConsole: ecole, ecoles, nomEcole: nomDe };
+  const c = { ...ctx, ...commun, data: vue };
+  const tout = { ...ctx, ...commun };
+  // Tant que la console est à l'écran, « Publier un événement » de la barre latérale part pour l'école regardée (agenda.js)
+  const vise = pourLEcoleVue(c).ecole || ''; const nomVise = vise ? nomDe(vise) : '';
+  useEffect(() => { consoleRegarde(vise ? { ecole: vise, ecoleNom: nomVise } : null); return () => consoleRegarde(null); }, [vise, nomVise]);
+  const ids = ecole ? new Set(vue.profiles.map(p => p.id)) : null;
+  const comptes = ids && comptesTous ? comptesTous.filter(x => ids.has(x.id)) : comptesTous;
+  const rubrique = RUBRIQUES.some(([k]) => k === sub) ? sub : '';
+  const items = elementsATraiter(vue, comptes);
+  const compte = {
+    traiter: items.length,
+    moderation: (vue.signalements || []).filter(s => s.status === 'ouvert').length,
+    membres: vue.profiles.filter(p => p.role === 'laureat' && !p.verified).length,
+  };
+  const outils = html`<div class="cs-outils"><${ChoixEcole} ecoles=${ecoles} valeur=${ecole} onChange=${setChoixEcole}/><${RechercheConsole} ctx=${c} comptes=${comptes}/></div>`;
   return html`<section class="page admin">
-    <${EnTetePage} surTitre=${ctx.saison ? `Année ${seasonLabel(ctx.saison)}` : null} titre="Administration">
-      <${PucesNav} cls="adm-tabs" label="Rubriques de l’administration" idPrefix="adm-tab-" items=${TABS.map(([k, l, i]) => ({ k, label: l, icon: i, n: dot[k] }))} actif=${tab} onChoisir=${k => go(k ? 'admin/' + k : 'admin')}/>
+    <${EnTetePage} surTitre=${ctx.saison ? `Année ${seasonLabel(ctx.saison)}` : null} titre="Administration" action=${large ? outils : null}>
+      ${large ? null : html`${outils}<${PucesConsole} actif=${rubrique} compte=${compte} go=${go}/>`}
     <//>
-    ${tab === '' ? html`<${VueEnsemble} ctx=${ctx} comptes=${comptes} ouverts=${ouverts} toVerify=${toVerify}/>` : null}
-    ${tab === 'moderation' ? html`<${Moderation} ctx=${ctx}/>` : null}
-    ${tab === 'membres' ? html`<${Membres} ctx=${ctx} comptes=${comptes} toVerify=${toVerify}/>` : null}
-    ${tab === 'liste' ? html`<${ListeOfficielle} ctx=${ctx}/>` : null}
-    ${tab === 'inviter' ? html`<${InvitationsAdmin} ctx=${ctx}/><${AmbassadeursAdmin} ctx=${ctx}/>` : null}
-    ${tab === 'agenda' ? html`<${AgendaAdmin} ctx=${ctx}/>` : null}
-    ${tab === 'sponsorises' ? html`<${SponsorisesAdmin} ctx=${ctx}/>` : null}
-    ${tab === 'reglages' ? html`<${Reglages} ctx=${ctx}/>` : null}
+    <div class="cs-corps">
+      ${large ? html`<${MenuConsole} actif=${rubrique} compte=${compte} go=${go}/>` : null}
+      <div class="cs-main">
+        ${rubrique === '' ? html`<${TableauDeBord} ctx=${c} comptes=${comptes} items=${items}/>` : null}
+        ${rubrique === 'traiter' ? html`<${ATraiter} ctx=${c} items=${items} comptes=${comptes}/>` : null}
+        ${rubrique === 'animer' ? html`<${NoteTextesMeknes} ctx=${c}/><${AnimerAdmin} ctx=${tout}/>` : null}
+        ${rubrique === 'agenda' ? html`<${AgendaAdmin} ctx=${c}/>` : null}
+        ${rubrique === 'inviter' ? html`<${NoteTextesMeknes} ctx=${c}/><${InvitationsAdmin} ctx=${tout}/><${AmbassadeursAdmin} ctx=${c}/>` : null}
+        ${rubrique === 'membres' ? html`<${Membres} ctx=${c} comptes=${comptes}/>` : null}
+        ${rubrique === 'contenus' ? html`<${Contenus} ctx=${c}/>` : null}
+        ${rubrique === 'moderation' ? html`<${Moderation} ctx=${c}/>` : null}
+        ${rubrique === 'liste' ? html`<${ListeOfficielle} key=${'liste-' + ecole} ctx=${c}/>` : null}
+        ${rubrique === 'ecoles' ? html`<${EcolesAdmin} ctx=${tout}/>` : null}
+        ${rubrique === 'partenaires' ? html`<${NoteTextesMeknes} ctx=${c}/><${PartenairesAdmin} ctx=${tout}/>` : null}
+        ${rubrique === 'sponsorises' ? html`<${SponsorisesAdmin} ctx=${c}/>` : null}
+        ${rubrique === 'outils' ? html`<${NoteTextesMeknes} ctx=${c}/><${OutilsAdmin} ctx=${tout}/>` : null}
+        ${rubrique === 'reglages' ? html`<${Reglages} ctx=${c}/>` : null}
+      </div>
+    </div>
   </section>`;
 }
 
+// Le nom de l'école d'une rubrique, seulement quand le réseau en compte plusieurs
+const plusieursEcoles = ctx => (ctx.ecoles || []).length > 1;
+function EcoleTag({ ctx, slug }) {
+  if (!plusieursEcoles(ctx)) return null;
+  return html`<span class="mini cs-ecole-tag"><${Icon} name="cap" size=${13}/> <span translate="no">${ctx.nomEcole?.(slug) || slug}</span></span>`;
+}
+// Animer, Partenaires, Affiches, liens d'invitation : quand la console regarde une autre école, une ligne dit que ces textes
+// sont ceux de l'ENSAM Meknès
+// (aussi sous « Toutes les écoles », où ces chiffres ne couvrent que l'ENSAM Meknès ; inutile quand la console la regarde)
+function NoteTextesMeknes({ ctx }) {
+  if (!plusieursEcoles(ctx) || ctx.ecoleConsole === ECOLE_DEFAUT) return null;
+  return html`<p class="hint-box small cs-note-ecole" role="note"><${Icon} name="info" size=${16}/><span>Ici, les textes, affiches et chiffres sont toujours ceux du Réseau ENSAM Meknès, quelle que soit l’école choisie.</span></p>`;
+}
+
 // ---------------------------------------------------------------------------
-// Vue d'ensemble
+// Tableau de bord : ce qui attend, l'objectif du plan, les chiffres de la semaine, puis l'animation (annonce, défis, parrains)
 // ---------------------------------------------------------------------------
-function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
-  const { data, store, act, openProfile, saison, go } = ctx;
-  const sansProfil = (comptes || []).filter(c => !c.a_profil && compteOuvert(c));
-  const week = Date.now() - 7 * 864e5;
-  const members = data.profiles.filter(p => p.role !== 'admin');
-  const nouveaux = members.filter(p => new Date(p.created_at) > week);
-  const confirmes = data.placements.filter(p => p.saison === saison && p.status === 'confirme').length;
-  // Le chiffre à suivre : chaque demande d'étudiant a une réponse d'un lauréat en moins de 48 h
-  const r48 = reponses48h(data);
-  const attenteM = r48.attente.filter(d => d.type === 'mentorat'), attenteQ = r48.attente.filter(d => d.type === 'question'), attenteD = r48.attente.filter(d => d.type === 'demande');
-  const parcours = parcoursInscription(comptes, data);
-  const dm = r48.parType.demande;
-  const kpis = [
-    ['Demandes aidées en 48 h', dm.taux === null ? '–' : pct(dm.taux), dm.total ? `${dm.a48} sur ${dm.total} en 30 jours · objectif 8 sur 10${r48.total > dm.total ? ` · toutes aides : ${pct(r48.taux)}` : ''}` : r48.total ? `Pas encore de demande d’étudiant ce mois-ci · toutes aides : ${pct(r48.taux)}` : 'Pas encore de demande d’étudiant ce mois-ci'],
-    ['Membres', members.length, `${members.filter(p => p.role === 'etudiant').length} étudiants · ${members.filter(p => p.role === 'laureat').length} lauréats`],
-    ['Actifs cette semaine', parcours.actifs, `${nouveaux.length} nouveau${nouveaux.length > 1 ? 'x' : ''} inscrit${nouveaux.length > 1 ? 's' : ''}${sansProfil.length ? ` · ${sansProfil.length} sans profil` : ''}`],
-    ['Recrutés et confirmés', confirmes, 'cette année, via la plateforme'],
-  ];
-  const lecturesFausses = (data.retours_cv || []).filter(r => r.status === 'ouvert');
-  const stale = data.placements.filter(p => p.status === 'en_attente').sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-  const todo = [
-    ouverts.length ? ['flag', `${ouverts.length} signalement${ouverts.length > 1 ? 's' : ''} à traiter`, 'admin/moderation'] : null,
-    toVerify.length ? ['shield', `${toVerify.length} lauréat${toVerify.length > 1 ? 's' : ''} à vérifier`, 'admin/membres'] : null,
-    attenteM.length ? ['clock', attenteM.length > 1 ? `${attenteM.length} étudiants attendent un horaire depuis plus de 24 h` : '1 étudiant attend un horaire depuis plus de 24 h', 'mentorat'] : null,
-    attenteD.length ? ['send', attenteD.length > 1 ? `${attenteD.length} demandes d’étudiants sans proposition depuis plus de 24 h` : '1 demande d’étudiant sans proposition depuis plus de 24 h', 'offres/demandes/' + attenteD[0].id] : null,
-    attenteQ.length ? ['qa', attenteQ.length > 1 ? `${attenteQ.length} questions d’étudiants sans réponse depuis plus de 24 h` : '1 question d’étudiant sans réponse depuis plus de 24 h', 'reseau/entraide/' + attenteQ[0].id] : null,
-    lecturesFausses.length ? ['file', lecturesFausses.length > 1 ? `${lecturesFausses.length} erreurs de lecture de CV signalées` : '1 erreur de lecture de CV signalée', 'admin/membres'] : null,
-  ].filter(Boolean);
+function TableauDeBord({ ctx, comptes, items }) {
+  const { data, go } = ctx;
+  // Toutes les écoles à la fois : l'objectif du plan (celui du lancement à l'ENSAM Meknès) et les défis (ceux de l'école de
+  // l'administration, là où va un nouveau défi) se comptent sur les données de leur seule école ; une autre école regardée
+  // n'a pas d'objectif du plan
+  const toutes = plusieursEcoles(ctx) && !ctx.ecoleConsole;
+  const ici = ctx.ecoleConsole || ecoleDe(ctx.me);
+  const plan = !ctx.ecoleConsole || ctx.ecoleConsole === ECOLE_DEFAUT;
   return html`
-    ${todo.length ? html`<div class="callout today"><h2 class="h-ico"><${Icon} name="bell"/> À traiter</h2><ul class="todo">${todo.map(([i, t, r]) => html`<li><button class="notif act" onClick=${() => go(r)}><span class="n-ico accent"><${Icon} name=${i} size=${16}/></span><span>${t}</span><${Icon} name="arrow" size=${16}/></button></li>`)}</ul></div>` : null}
+    <${CalloutATraiter} items=${items} go=${go}/>
     <${SanteNotifsAdmin} ctx=${ctx}/>
-    <div class="kpis">${kpis.map(([l, v, sub]) => html`<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-val">${typeof v === 'number' ? html`<${Compteur} v=${v}/>` : v}</span><span class="small muted">${sub}</span></div>`)}</div>
-
-    <${ParcoursInscription} p=${parcours} sansSuite=${codesSansSuite(comptes, data.profiles)}/>
-
+    ${plan ? html`<${ObjectifPlan} data=${toutes ? donneesDeLEcole(data, ECOLE_DEFAUT) : data}/>` : null}
+    <${KpisPilotage} ctx=${ctx} comptes=${comptes}/>
+    <${OuSontLesMembres} ctx=${ctx}/>
+    <div class="cs-deux"><${CeQuiSestPasse} ctx=${ctx}/><${CeuxQuiAident} ctx=${ctx}/></div>
+    <${ParcoursInscription} p=${parcoursInscription(comptes, data)} sansSuite=${codesSansSuite(comptes, data.profiles)}/>
     <${AnnonceBox} ctx=${ctx}/>
-    <${DefisAdmin} ctx=${ctx}/>
+    <${DefisAdmin} ctx=${toutes ? { ...ctx, data: donneesDeLEcole(data, ici) } : ctx} ecoleTag=${html`<${EcoleTag} ctx=${ctx} slug=${ici}/>`} plusieursEcoles=${plusieursEcoles(ctx)}/>
     <${ParrainsAdmin} ctx=${ctx}/>
-
-    ${stale.length ? html`<div class="panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="briefcase"/> <span>Recrutements en attente de l’étudiant <span class="count">${stale.length}</span></span></h2></div>
-      <p class="muted small">Le lauréat a déclaré ces recrutements. Si l’étudiant ne confirme pas, l’administration peut le faire après vérification.</p>
-      <ul class="people-list adm-gestes">${stale.map(p => { const s = store.byId('profiles', p.student_id), l = store.byId('profiles', p.laureat_id); return html`<li key=${p.id}><${Person} p=${s} onOpen=${openProfile} sub=${`${p.entreprise} · déclaré par ${l?.full_name || '?'} · ${timeAgo(p.created_at)}`}/><span class="spacer"></span>
-        <button class="btn small ghost" onClick=${() => act(() => store.update('placements', p.id, { status: 'refuse' }))}>Refuser</button><button class="btn small tonal" onClick=${() => act(() => store.update('placements', p.id, { status: 'confirme' }))}>Confirmer</button></li>`; })}</ul></div>` : null}
   `;
 }
 
@@ -195,41 +233,8 @@ function ParcoursInscription({ p, sansSuite = 0 }) {
 // ---------------------------------------------------------------------------
 // Modération : les signalements, regroupés par contenu
 // ---------------------------------------------------------------------------
-export const MOTIFS = { spam: 'Spam', arnaque: 'Arnaque', inapproprie: 'Inapproprié', faux: 'Faux ou trompeur', harcelement: 'Harcèlement', donnees: 'Données personnelles', autre: 'Autre' };
-const TYPES_CIBLE = { offre: ['Offre', 'feed'], commentaire: ['Commentaire', 'comment'], question: ['Question', 'qa'], reponse: ['Réponse', 'qa'], message: ['Message de groupe', 'people'], profil: ['Profil', 'user'], entretien: ['Entretien', 'briefcase'], avis: ['Avis de stage', 'star'], guide: ['Guide de l’étranger', 'flag'], cafe: ['Café ENSAM', 'clap'], startup: ['Startup', 'spark'], relecture: ['Relecture de CV', 'eye'], prive: ['Message privé', 'chat'], demande: ['Demande d’étudiant', 'send'], reponse_demande: ['Réponse à une demande', 'comment'] };
-const court = (t, n = 220) => { const s = String(t || '').replace(/\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
-const nomGroupe = g => String(g || '').split(':').slice(1).join(':');
-
-// Ce que l'administration voit du contenu signalé, et ce qu'elle peut en faire (selon les règles de la base)
-function cible(ctx, type, id) {
-  const { store, openOffer, openProfile, go } = ctx;
-  const by = t => store.byId(t, id);
-  const rm = t => () => store.remove(t, id);
-  switch (type) {
-    case 'offre': { const r = by('offers'); return r && { r, titre: `${r.titre} · ${r.entreprise}`, texte: r.description, auteur: r.author_id, voir: ['Ouvrir', () => openOffer(id)], actions: [r.status === 'ouverte' ? ['Masquer l’offre', () => store.update('offers', id, { status: 'fermee' })] : null, ['Supprimer l’offre', rm('offers'), true]].filter(Boolean) }; }
-    case 'commentaire': { const r = by('comments'); const o = r && store.byId('offers', r.offer_id); return r && { r, titre: o ? `${o.titre} · ${o.entreprise}` : '', texte: r.body, auteur: r.author_id, voir: o ? ['Ouvrir', () => openOffer(o.id)] : null, actions: [['Supprimer le commentaire', rm('comments'), true]] }; }
-    case 'question': { const r = by('questions'); return r && { r, titre: r.titre, texte: r.body, auteur: r.author_id, voir: ['Voir la question', () => go('reseau/entraide/' + id)], actions: [['Supprimer la question', rm('questions'), true]] }; }
-    case 'reponse': { const r = by('answers'); const q = r && store.byId('questions', r.question_id); return r && { r, titre: q?.titre || '', texte: r.body, auteur: r.author_id, voir: q ? ['Voir la question', () => go('reseau/entraide/' + q.id)] : null, actions: [['Supprimer la réponse', rm('answers'), true]] }; }
-    case 'message': { const r = by('groupe_messages'); return r && { r, titre: nomGroupe(r.groupe), texte: r.body, auteur: r.author_id, actions: [['Supprimer le message', rm('groupe_messages'), true]] }; }
-    case 'profil': { const r = by('profiles'); return r && { r, photo: r.photo_path ? r : null, titre: r.full_name, texte: [r.role === 'laureat' ? `Promo ${r.promo}` : r.filiere, r.entreprise, r.bio].filter(Boolean).join(' · '), auteur: null, voir: ['Voir le profil', () => openProfile(r)],
-      actions: [...(r.photo_path ? [['Retirer la photo', () => store.retirerPhoto(r), true]] : []), ...(r.role === 'laureat' && r.verified ? [['Retirer le badge vérifié', () => store.update('profiles', id, { verified: false }), true]] : [])] }; }
-    case 'entretien': { const r = by('entretiens'); return r && { r, titre: [r.entreprise, r.poste].filter(Boolean).join(' · '), texte: [...(r.questions || []), r.deroulement, r.conseils].filter(Boolean).join(' · '), auteur: r.author_id, actions: [['Supprimer l’entretien', rm('entretiens'), true]] }; }
-    case 'avis': { const r = by('avis_stage'); return r && { r, titre: [r.entreprise, r.ville].filter(Boolean).join(' · '), texte: r.conseils, auteur: r.author_id, actions: [['Supprimer l’avis', rm('avis_stage'), true]] }; }
-    case 'guide': { const r = by('guide_pays'); const s = r && GUIDE_SECTIONS.find(x => x[0] === r.section); return r && { r, titre: `${r.pays}${s ? ' · ' + s[1] : ''}`, texte: r.contenu, auteur: r.updated_by, actions: [['Supprimer la rubrique', rm('guide_pays'), true]] }; }
-    case 'cafe': { const r = by('cafes'); return r && { r, titre: `${r.ville} · ${r.lieu}`, texte: r.message, auteur: r.organisateur_id, actions: r.annule ? [] : [['Annuler le café', () => store.update('cafes', id, { annule: true }), true]] }; }
-    case 'startup': { const r = by('startups'); return r && { r, titre: r.nom, texte: r.pitch, auteur: r.fondateur_id, actions: [['Retirer la startup', rm('startups'), true]] }; }
-    case 'demande': { const r = by('demandes'); return r && { r, titre: r.titre, texte: r.details, auteur: r.auteur_id, voir: ['Voir la demande', () => go('offres/demandes/' + id)], actions: ['ouverte', 'match'].includes(r.status) ? [['Retirer la demande', () => store.update('demandes', id, { status: 'fermee' }), true]] : [] }; }
-    case 'reponse_demande': { const r = by('reponses_demandes'); const d = r && store.byId('demandes', r.demande_id); return r && { r, titre: d?.titre || '', texte: r.body, auteur: r.author_id, voir: d ? ['Voir la demande', () => go('offres/demandes/' + d.id)] : null, actions: [['Supprimer la réponse', rm('reponses_demandes'), true]] }; }
-    case 'relecture': { const r = by('relectures_cv'); const s = r && store.byId('profiles', r.student_id); return r && { r, titre: s?.full_name || '', texte: r.synthese || r.message, auteur: r.reviewer_id, actions: r.status === 'annulee' ? [] : [['Annuler la relecture', () => store.update('relectures_cv', id, { status: 'annulee' }), true]] }; }
-    case 'prive': {
-      const r = by('messages'); const nom = x => store.byId('profiles', x)?.full_name || '?';
-      // L'onglet s'ouvre tout de suite (sinon le navigateur le bloque), le lien temporaire arrive ensuite
-      const ouvrir = async () => { const w = window.open('', '_blank'); if (w) w.opener = null; const u = await store.lienChat(r.fichier).catch(() => null); if (u && w) w.location.href = u; else { w?.close(); toast('Fichier indisponible.', 'err'); } };
-      return r && { r, titre: `${nom(r.author_id)} → ${nom(r.dest_id)}`, texte: r.body, auteur: r.author_id, voir: r.fichier ? [r.type === 'vocal' ? 'Écouter le message vocal' : 'Voir la photo', ouvrir] : null, actions: [['Supprimer le message', () => store.supprimerMessage(id), true]] };
-    }
-    default: return null;
-  }
-}
+// Ce que l'administration voit du contenu signalé, et ce qu'elle peut en faire : admin-console-cibles.js (partagé avec « À traiter »)
+export { MOTIFS };
 
 function Moderation({ ctx }) {
   const { data } = ctx;
@@ -250,21 +255,7 @@ function Moderation({ ctx }) {
         <span class="grow"><strong class="small">${tl}</strong>${c ? html` <span class="small muted" translate="no" dir="auto">${court(c.titre, 70)}</span>` : html` <span class="small muted">Contenu déjà supprimé</span>`}<br/>
           <span class="small muted">${MOTIFS[s.motif] || s.motif}</span> <span class="small muted">· ${timeAgo(s.traite_at || s.created_at)}</span></span>
         <span class=${'tag ' + (s.status === 'traite' ? 'coopt' : 'done')}>${s.status === 'traite' ? 'Traité' : 'Sans suite'}</span></li>`; })}</ul>` : null}` : null}
-    <${DernieresOffres} ctx=${ctx}/>
   </div>`;
-}
-
-// Les dernières offres publiées, à relire d'un coup d'œil : les masquer ou les supprimer est de la modération
-// (sans attendre un signalement), pas un chiffre de la Vue d'ensemble
-function DernieresOffres({ ctx }) {
-  const { data, store, act } = ctx;
-  const offers = [...data.offers].sort((a, b) => new Date(b.created_at) - new Date(a.created_at)).slice(0, 5);
-  if (!offers.length) return null;
-  return html`<div class="panel" id="adm-offres"><div class="section-head"><h2 class="h-ico"><${Icon} name="feed"/> Dernières offres</h2></div>
-      <ul class="people-list adm-gestes">${offers.map(o => html`<li key=${o.id}><span class="grow"><button class="linkish strong" onClick=${() => ctx.openOffer(o.id)}>${o.titre}</button><br/><span class="muted small">${o.entreprise} · ${store.byId('profiles', o.author_id)?.full_name || ''} · ${timeAgo(o.created_at)}</span></span>
-        ${o.status !== 'ouverte' ? html`<span class="tag done">${o.status === 'pourvue' ? 'Pourvue' : 'Fermée'}</span>` : null}
-        <button class="btn tiny ghost" onClick=${() => act(() => store.update('offers', o.id, { status: o.status === 'ouverte' ? 'fermee' : 'ouverte' }))}>${o.status === 'ouverte' ? 'Masquer' : 'Rouvrir'}</button>
-        <button class="btn tiny ghost danger-t" onClick=${() => ctx.confirm('Supprimer cette offre ?', () => act(() => store.remove('offers', o.id)))}>Supprimer</button></li>`)}</ul></div>`;
 }
 
 function Signale({ ctx, g }) {
@@ -316,25 +307,14 @@ function useListe(store, data) {
   return Array.isArray(data.liste_officielle) ? data.liste_officielle : rows || [];
 }
 
-// Message prêt à envoyer au lauréat sans CV, dans sa langue ; l'administration le relit avant d'envoyer
-const demandeCV = p => {
-  const prenom = (p.full_name || '').split(' ')[0];
-  return p.langue === 'ar'
-    ? `مرحبًا ${prenom}، أهلًا بك في شبكة ENSAM مكناس! للتحقق من ملفك، هل يمكنك رفع سيرتك الذاتية بصيغة PDF في « ملفي » (أو إضافة رابط LinkedIn)؟ لن يستغرق ذلك سوى دقيقة. شكرًا!`
-    : `Bonjour ${prenom}, bienvenue sur le Réseau ENSAM Meknès ! Pour vérifier ton profil, peux-tu déposer ton CV en PDF dans « Mon profil » (ou ajouter ton lien LinkedIn) ? Ça prend une minute. Merci !`;
-};
-
-function Membres({ ctx, comptes, toVerify }) {
-  const { data, store, act, openProfile, saison } = ctx;
-  const [q, setQ] = useState('');
+// Membres : profils à revoir, erreurs de lecture des CV, lauréats à vérifier, puis le tableau de tous les membres
+// (admin-console-membres.js : filtres, tri, sélection, emails, CSV ; sur téléphone, la liste habituelle)
+function Membres({ ctx, comptes }) {
+  const { data, store, act, openProfile } = ctx;
+  const toVerify = data.profiles.filter(p => p.role === 'laureat' && !p.verified);
   const liste = useListe(store, data);
   const compte = new Map((comptes || []).map(c => [c.id, c]));
-  const sansProfil = (comptes || []).filter(c => !c.a_profil && compteOuvert(c));
   const members = data.profiles.filter(p => p.role !== 'admin');
-  const qq = q.trim().toLowerCase();
-  const list = members.filter(p => !qq || `${p.full_name} ${p.filiere} ${p.promo} ${p.entreprise || ''} ${compte.get(p.id)?.email || ''}`.toLowerCase().includes(qq))
-    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-  const { vus: shown, reste, plus } = useVoirPlus(list, 20, qq);
   const surListe = p => surListeOfficielle(liste, p, compte.get(p.id)?.email);
   const pairs = p => (data.verifications_pairs || []).filter(v => v.laureat_id === p.id).map(v => store.byId('profiles', v.verificateur_id)).filter(x => x?.role === 'laureat' && x.verified && x.promo === p.promo);
 
@@ -342,7 +322,7 @@ function Membres({ ctx, comptes, toVerify }) {
     <${ProfilsARevoir} ctx=${ctx} members=${members}/>
     <${LecturesSignalees} ctx=${ctx}/>
     ${toVerify.length ? html`<div class="panel accent-panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="shield"/> Lauréats à vérifier <span class="count">${toVerify.length}</span></h2></div>
-      <p class="muted small">Vérifie que la personne est bien diplômée de l’ENSAM Meknès (promo, filière), puis valide. Le badge rassure les étudiants. Deux lauréats vérifiés de sa promo peuvent aussi le confirmer.</p>
+      <p class="muted small">${plusieursEcoles(ctx) ? 'Vérifie que la personne est bien diplômée de son école (promo, filière), puis valide. Le badge rassure les étudiants. Deux lauréats vérifiés de sa promo peuvent aussi le confirmer.' : 'Vérifie que la personne est bien diplômée de l’ENSAM Meknès (promo, filière), puis valide. Le badge rassure les étudiants. Deux lauréats vérifiés de sa promo peuvent aussi le confirmer.'}</p>
       <ul class="people-list verif-list">${toVerify.map(p => { const pr = pairs(p); return html`<li key=${p.id}><div class="verif-who"><${Person} p=${p} onOpen=${openProfile} sub=${`${p.filiere} · Promo ${p.promo}${p.entreprise ? ' · ' + p.entreprise : ''}`}/>
         <span class="verif-facts small">
           ${compte.get(p.id) ? html`<span class="mono muted" dir="ltr" translate="no">${compte.get(p.id).email}</span>` : null}
@@ -355,18 +335,7 @@ function Membres({ ctx, comptes, toVerify }) {
           ${!p.cv_path && !p.cv_url ? html`<${MessageBtn} ctx=${ctx} p=${p} cls="btn tiny ghost" label="Demander son CV" texte=${demandeCV(p)}/>` : null}</span></div>
         <button class="btn small tonal" onClick=${() => act(async () => { await store.update('profiles', p.id, { verified: true }); toast('Lauréat vérifié.'); })}><${Icon} name="shield" size=${15}/> Vérifier</button></li>`; })}</ul></div>` : null}
 
-    <div class="panel">
-      <div class="section-head"><h2 class="h-ico"><${Icon} name="people"/> Membres</h2>
-        <label class="search"><${Icon} name="search" size=${16}/><input id="adm-q" placeholder="Nom, email, filière, promo…" value=${q} onInput=${e => setQ(e.target.value)}/></label></div>
-      ${sansProfil.length ? html`<p class="small hint-box"><${Icon} name="user" size=${15}/> <span>${sansProfil.length} compte${sansProfil.length > 1 ? 's' : ''} créé${sansProfil.length > 1 ? 's' : ''} sans profil (inscription pas terminée) : <span class="mono" dir="ltr" translate="no">${sansProfil.slice(0, 5).map(c => c.email).join(', ')}</span></span></p>` : null}
-      <p class="liste-tete">${qq ? `${list.length} sur ${members.length} membres` : `${members.length} membre${members.length > 1 ? 's' : ''}`}</p>
-      <ul class="lignes member-list">${shown.map(p => { const c = compte.get(p.id); return html`<li key=${p.id} class="ligne">
-        <${Person} p=${p} onOpen=${openProfile} size=${40} sub=${html`<span class="ligne-sub">${p.role === 'etudiant' ? `${NIVEAUX[niveauOf(p, saison)]?.short || ''} · ${p.filiere} · promo ${p.promo}` : `${p.filiere} · Promo ${p.promo}`}</span>
-          <span class="ligne-sub member-meta">${c ? html`<span dir="ltr" translate="no">${c.email}</span> · ` : null}<span>Inscrit ${timeAgo(p.created_at)}</span>${c?.last_sign_in_at ? html` · <span>Vu ${timeAgo(c.last_sign_in_at)}</span>` : null}</span>`}/>
-        <span class="ligne-act"><select id=${'role-' + p.id} aria-label="Rôle" value=${p.role} onChange=${e => act(async () => { await store.update('profiles', p.id, { role: e.target.value }); toast('Rôle modifié.'); })}>${ROLES.map(([k, l]) => html`<option value=${k}>${l}</option>`)}</select></span>
-      </li>`; })}</ul>
-      <${VoirPlus} reste=${reste} onPlus=${plus}/>
-    </div>`;
+    <${TableMembres} ctx=${ctx} comptes=${comptes}/>`;
 }
 
 // Profils à revoir : rôle et promo qui ne vont pas ensemble (ex. « lauréat » de la promo 2027), et profils que leur CV
@@ -569,16 +538,17 @@ function lignesDe(rows, aEntete, map, promoDefaut) {
   }));
 }
 const valide = l => l.nom.length >= 2 && !!cleNom(l.nom) && l.promo >= 1990 && l.promo <= 2040;
-
-function telecharger(nom, lignes) {
-  const q = v => (/[";\n]/.test(String(v ?? '')) ? `"${String(v).replace(/"/g, '""')}"` : String(v ?? ''));
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob(['﻿' + lignes.map(r => r.map(q).join(';')).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
-  a.download = nom; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-}
+const HORS_DOSSIER_CNDP = 'Avant d’importer la liste de cette école, ajoute-la au dossier CNDP : coche la case dans son suivi (rubrique Écoles).';
 
 function ListeOfficielle({ ctx }) {
-  const { store, act, confirm, data } = ctx;
+  const { store, act, confirm, data, me } = ctx;
+  // L'école de la liste : celle que regarde la console, sinon celle de l'administration (la base fait de même sans école)
+  const ecole = ctx.ecoleConsole || undefined;
+  const ici = ecole || ecoleDe(me);
+  // Le dossier CNDP ne couvre que l'ENSAM Meknès : la liste d'une autre école (noms, emails, matricules) n'entre qu'une fois
+  // l'école ajoutée au dossier, case cochée dans son suivi (rubrique Écoles), ou son réseau ouvert (ce qui demande la case)
+  const suivi = useTableAdmin(ctx, 'admin_suivi');
+  const dansLeDossier = ici === ECOLE_DEFAUT || (ctx.ecoles || []).find(e => e.slug === ici)?.ouverte === true || suiviDe(suivi.lignes, ici)?.cndp_ok === true;
   const [fichier, setFichier] = useState(null); // { nom, rows, aEntete, entetes }
   const [map, setMap] = useState(null);
   const [promoDefaut, setPromoDefaut] = useState('');
@@ -589,7 +559,7 @@ function ListeOfficielle({ ctx }) {
   const [promo, setPromo] = useState('');
   const [manquants, setManquants] = useState(null);
   const [erreur, setErreur] = useState(null);
-  useEffect(() => { let on = true; store.couvertureListe().then(r => on && setCouv(r || []), () => on && setCouv([])); return () => { on = false; }; }, [version, data.profiles.length]);
+  useEffect(() => { let on = true; store.couvertureListe(ecole).then(r => on && setCouv(r || []), () => on && setCouv([])); return () => { on = false; }; }, [version, data.profiles.length, ecole]);
 
   const charger = async e => {
     const f = e.target.files?.[0]; e.target.value = ''; if (!f) return;
@@ -605,23 +575,26 @@ function ListeOfficielle({ ctx }) {
   const bonnes = lignes.filter(valide);
   const sansNom = fichier && map.complet < 0 && map.nom < 0 && map.prenom < 0;
   const importer = () => act(async () => {
+    if (!dansLeDossier) throw new Error(HORS_DOSSIER_CNDP);
     if (bonnes.length > 5000) throw new Error('5000 lignes au plus : coupe le fichier par promo.');
-    const r = await store.importerListe(bonnes, remplacer);
+    const r = await store.importerListe(bonnes, remplacer, ecole);
     setRes({ ...r, rejetes: (r.rejetes || 0) + (lignes.length - bonnes.length) }); setFichier(null); setVersion(v => v + 1); setManquants(null);
     toast('Importé.', 'win');
   });
   const promos = [...new Set((couv || []).map(c => c.promo))].sort((a, b) => b - a);
   const parPromo = promos.map(p => { const rows = couv.filter(c => c.promo === p); return { promo: p, rows, total: rows.reduce((a, c) => a + c.total, 0), inscrits: rows.reduce((a, c) => a + c.inscrits, 0) }; });
-  const voir = () => act(async () => setManquants({ promo, rows: await store.manquantsListe(promo) }));
+  const voir = () => act(async () => setManquants({ promo, rows: await store.manquantsListe(promo, ecole) }));
 
   return html`<div class="sub-page liste">
     <div class="panel">
-      <div class="section-head"><h2 class="h-ico"><${Icon} name="upload"/> Importer la liste</h2>
+      <div class="section-head"><h2 class="h-ico"><${Icon} name="upload"/> Importer la liste <${EcoleTag} ctx=${ctx} slug=${ici}/></h2>
         <button class="btn tiny ghost" onClick=${() => telecharger('modele-liste-officielle.csv', [['nom', 'prenom', 'email', 'promo', 'filiere', 'matricule'], ['EL AMRANI', 'Salma', 'salma.elamrani@exemple.ma', new Date().getFullYear() + 1, 'Génie Industriel', 'M0001']])}><${Icon} name="download" size=${14}/> Modèle CSV</button></div>
       <p class="small muted">Fichier Excel (.xlsx) ou CSV exporté de la scolarité : une ligne par étudiant, avec au moins le nom et la promo.</p>
       <p class="small muted">Les inscrits qui figurent sur la liste (même nom et même promo, ou même email) sont vérifiés automatiquement.</p>
       <p class="small muted">La liste est effacée chaque 1er septembre, à la fin de l’année universitaire : importe celle de la nouvelle année à la rentrée.</p>
-      <label class="btn small file-btn"><${Icon} name="file" size=${15}/> Choisir un fichier<input id="lo-file" type="file" accept=".xlsx,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange=${charger}/></label>
+      ${!dansLeDossier && suivi.pret ? html`<div class="hint-box small lo-cndp" id="lo-cndp" role="note"><${Icon} name="info" size=${16}/><span>${HORS_DOSSIER_CNDP}</span>
+        <button type="button" class="btn tiny ghost" id="lo-cndp-ecoles" onClick=${() => ctx.go('admin/ecoles')}><${Icon} name="cap" size=${14}/> Ouvrir Écoles</button></div>` : null}
+      <label class=${'btn small file-btn' + (dansLeDossier ? '' : ' off')}><${Icon} name="file" size=${15}/> Choisir un fichier<input id="lo-file" type="file" disabled=${!dansLeDossier} accept=".xlsx,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange=${charger}/></label>
       ${erreur ? html`<p class="auth-msg err" role="alert">${erreur}</p>` : null}
       ${res ? html`<p class="hint-box good-box small" role="status"><${Icon} name="check" size=${15}/> <span>${`${res.importes} importée${res.importes > 1 ? 's' : ''}, ${res.rejetes} rejetée${res.rejetes > 1 ? 's' : ''}, ${res.verifies} compte${res.verifies > 1 ? 's' : ''} vérifié${res.verifies > 1 ? 's' : ''}`}</span></p>` : null}
       ${fichier ? html`<div class="lo-import">
@@ -633,7 +606,7 @@ function ListeOfficielle({ ctx }) {
           <table class="lo-table"><thead><tr><th>Nom</th><th>Email</th><th>Promo</th><th>Filière</th></tr></thead>
             <tbody>${lignes.slice(0, 5).map(l => html`<tr class=${valide(l) ? '' : 'bad'}><td translate="no" dir="auto">${l.nom || '—'}</td><td class="mono" dir="ltr" translate="no">${l.email || '—'}</td><td class="mono">${l.promo || '—'}</td><td translate="no">${l.filiere || '—'}</td></tr>`)}</tbody></table></div>
         <label class="check small"><input id="lo-remplacer" type="checkbox" checked=${remplacer} onChange=${e => setRemplacer(e.target.checked)}/> <span>Remplacer la liste de ces promos <span class="muted">Sinon, les lignes sont ajoutées ou mises à jour.</span></span></label>
-        <div class="row-end"><button class="btn ghost" onClick=${() => setFichier(null)}>Annuler</button><button class="btn primary" id="lo-go" disabled=${!bonnes.length} onClick=${importer}>${`Importer ${bonnes.length} ligne${bonnes.length > 1 ? 's' : ''}`}</button></div>
+        <div class="row-end"><button class="btn ghost" onClick=${() => setFichier(null)}>Annuler</button><button class="btn primary" id="lo-go" disabled=${!bonnes.length || !dansLeDossier} onClick=${importer}>${`Importer ${bonnes.length} ligne${bonnes.length > 1 ? 's' : ''}`}</button></div>
       </div>` : null}
     </div>
 
@@ -653,7 +626,7 @@ function ListeOfficielle({ ctx }) {
       <div class="row"><select id="lo-manq-promo" aria-label="Promo" value=${promo} onChange=${e => { setPromo(e.target.value); setManquants(null); }}><option value="">Promo</option>${promos.map(p => html`<option value=${p}>${p}</option>`)}</select>
         <button class="btn small" id="lo-manq" disabled=${!promo} onClick=${voir}>Voir qui manque</button>
         <span class="spacer"></span>
-        ${promo ? html`<button class="btn tiny ghost danger-t" onClick=${() => confirm(`Vider la liste de la promo ${promo} ? Les comptes déjà vérifiés le restent.`, () => act(async () => { await store.viderListe(promo); setManquants(null); setVersion(v => v + 1); toast('Liste vidée.'); }), 'Vider la liste de cette promo')}>Vider la liste de cette promo</button>` : null}</div>
+        ${promo ? html`<button class="btn tiny ghost danger-t" onClick=${() => confirm(`Vider la liste de la promo ${promo} ? Les comptes déjà vérifiés le restent.`, () => act(async () => { await store.viderListe(promo, ecole); setManquants(null); setVersion(v => v + 1); toast('Liste vidée.'); }), 'Vider la liste de cette promo')}>Vider la liste de cette promo</button>` : null}</div>
       ${manquants ? manquants.rows.length ? html`<div class="lo-manquants">
         <div class="row"><span class="small"><strong>${`${manquants.rows.length} personne${manquants.rows.length > 1 ? 's' : ''} pas encore inscrite${manquants.rows.length > 1 ? 's' : ''}`}</strong></span><span class="spacer"></span>
           ${manquants.rows.some(r => r.email) ? html`<button class="btn tiny ghost" onClick=${() => act(async () => { await navigator.clipboard.writeText(manquants.rows.map(r => r.email).filter(Boolean).join(', ')); toast('Emails copiés.'); })}><${Icon} name="copy" size=${14}/> Copier les emails</button>` : null}
@@ -700,11 +673,12 @@ function ParrainsAdmin({ ctx }) {
   const { data, store, act, saison } = ctx;
   const sans = data.profiles.filter(p => p.role === 'etudiant' && niveauOf(p, saison) === 3 && !data.parrainages.some(x => x.filleul_id === p.id && x.saison === saison));
   const parrains = data.profiles.filter(p => p.role === 'laureat' && p.parrain_dispo).length;
-  const n = data.parrainages.filter(x => x.saison === saison).length;
+  const ids = new Set(data.profiles.map(p => p.id));
+  const n = data.parrainages.filter(x => x.saison === saison && ids.has(x.filleul_id)).length;
   return html`<div class="panel">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="heart"/> Parrainage des 3A</h2>
-      <button class="btn small" disabled=${!sans.length} onClick=${() => act(async () => { const k = await store.attribuerParrains(); toast(k ? `${k} parrain${k > 1 ? 's' : ''} attribué${k > 1 ? 's' : ''}.` : 'Aucun parrain disponible dans ces filières pour l’instant.'); })}>Attribuer les parrains</button></div>
-    <p class="small muted">${n} filleul${n > 1 ? 's' : ''} cette année · ${parrains} lauréat${parrains > 1 ? 's' : ''} volontaire${parrains > 1 ? 's' : ''} · ${sans.length} étudiant${sans.length > 1 ? 's' : ''} de 3A sans parrain. Chaque matin, la plateforme attribue aussi les parrains toute seule.</p>
+      <button class="btn small" disabled=${!sans.length} onClick=${() => act(async () => { const k = await store.attribuerParrains(); toast(!k ? 'Aucun parrain disponible dans ces filières pour l’instant.' : plusieursEcoles(ctx) ? `${k} parrain${k > 1 ? 's' : ''} attribué${k > 1 ? 's' : ''} dans toutes les écoles.` : `${k} parrain${k > 1 ? 's' : ''} attribué${k > 1 ? 's' : ''}.`); })}>Attribuer les parrains</button></div>
+    <p class="small muted">${n} filleul${n > 1 ? 's' : ''} cette année · ${parrains} lauréat${parrains > 1 ? 's' : ''} volontaire${parrains > 1 ? 's' : ''} · ${sans.length} étudiant${sans.length > 1 ? 's' : ''} de 3A sans parrain. ${plusieursEcoles(ctx) ? 'Le bouton, comme la plateforme chaque matin, attribue les parrains dans toutes les écoles, chacun dans la sienne.' : 'Chaque matin, la plateforme attribue aussi les parrains toute seule.'}</p>
   </div>`;
 }
 
@@ -713,7 +687,10 @@ const POUR_LABEL = { etudiants: 'Pour les étudiants', laureats: 'Pour les laur�
 const finAnnonce = a => new Date(new Date(a.created_at).getTime() + ANNONCE_JOURS * 864e5).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' });
 function AnnonceBox({ ctx }) {
   const { data, store, me, act } = ctx;
-  const visibles = data.annonces.filter(a => annonceVisible(a)).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  // Les annonces d'une école : celle que regarde la console, sinon celle de l'administration (là où va une nouvelle annonce)
+  const ici = ctx.ecoleConsole || ecoleDe(me);
+  const deIci = a => ecoleDe(a) === ici;
+  const visibles = data.annonces.filter(a => deIci(a) && annonceVisible(a)).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   const [texte, setTexte] = useState(''); const [lien, setLien] = useState(''); const [pour, setPour] = useState('tous');
   // Une annonce en cours : le formulaire se range derrière « Nouvelle annonce », sous elle, et s'ouvre à sa place
   // (la Vue d'ensemble reste courte) ; aucune annonce, ou un brouillon commencé : il reste ouvert
@@ -732,15 +709,15 @@ function AnnonceBox({ ctx }) {
     act(async () => {
       if (lien.trim() && !/^https:\/\/\S+$/i.test(lien.trim())) throw new Error('Le lien doit commencer par https://');
       // La nouvelle d'abord : si elle échoue (base pas encore à jour…), l'annonce en cours reste
-      const anciennes = data.annonces.filter(x => x.active && remplacee(x.public || 'tous', pour));
-      await store.insert('annonces', { author_id: me.id, texte: texte.trim(), lien: lien.trim() || null, active: true, ...(pour === 'tous' ? {} : { public: pour }) });
+      const anciennes = data.annonces.filter(x => deIci(x) && x.active && remplacee(x.public || 'tous', pour));
+      await store.insert('annonces', { author_id: me.id, texte: texte.trim(), lien: lien.trim() || null, active: true, ...(pour === 'tous' ? {} : { public: pour }), ...pourLEcoleVue(ctx) });
       for (const a of anciennes) await store.update('annonces', a.id, { active: false });
       ranger();
       toast(pour === 'etudiants' ? 'Annonce publiée sur l’accueil des étudiants.' : pour === 'laureats' ? 'Annonce publiée sur l’accueil des lauréats.' : 'Annonce publiée sur l’accueil de tous les membres.', 'win');
     });
   };
   return html`<div class="panel">
-    <div class="section-head"><h2 class="h-ico"><${Icon} name="bell"/> Annonce sur l’accueil</h2></div>
+    <div class="section-head"><h2 class="h-ico"><${Icon} name="bell"/> Annonce sur l’accueil <${EcoleTag} ctx=${ctx} slug=${ici}/></h2></div>
     ${visibles.length ? visibles.map(a => html`<div class="annonce preview" key=${a.id}><${Icon} name="bell" size=${18}/><span class="grow"><span dir="auto" translate="no">${a.texte}</span><span class="annonce-meta"><span class="mini">${POUR_LABEL[a.public] || 'Tout le monde'}</span> <span class="small muted">${`Jusqu’au ${finAnnonce(a)}`}</span></span></span><button class="btn tiny ghost" onClick=${() => act(() => store.update('annonces', a.id, { active: false }))}>Retirer</button></div>`) : html`<p class="small muted">Aucune annonce en ce moment.</p>`}
     ${ouvert ? html`<form class="form" id="ann-form" onSubmit=${publish}>
       <${Field} label="Nouvelle annonce" hint="280 caractères au plus. Elle s’affiche sur une ligne, sur l’accueil des membres choisis, pendant 14 jours, et remplace l’annonce en cours pour eux."><textarea id="ann-txt" rows="2" maxlength="280" value=${texte} onInput=${e => setTexte(e.target.value)} placeholder="Ex. Forum entreprises jeudi à l’école : les lauréats sont les bienvenus."></textarea><//>
@@ -760,19 +737,22 @@ function AnnonceBox({ ctx }) {
 const ETATS_SPONSO = { en_cours: ['En cours', 'coopt'], programmee: ['Programmée', ''], terminee: ['Terminée', 'done'], arretee: ['Arrêtée', 'done'] };
 const dateFr = d => (d ? new Date(d + 'T12:00:00').toLocaleDateString('fr-FR') : '');
 const plusJours = (j, n) => jourLocal(new Date(j + 'T12:00:00').getTime() + n * 864e5);
-const vide = () => ({ entreprise: '', titre: '', texte: '', lien: '', domaine: '', public: 'tous', annees: [], filieres: [], debut: jourLocal(), fin: plusJours(jourLocal(), 30) });
+const vide = (ecole = '') => ({ entreprise: '', titre: '', texte: '', lien: '', domaine: '', public: 'tous', annees: [], filieres: [], debut: jourLocal(), fin: plusJours(jourLocal(), 30), ecole });
 // Pour qui, en une ligne : le public, les années, les filières (« Toutes les années », « Toutes les filières » quand rien n'est choisi)
 const cibleSponso = s => [SPONSO_PUBLICS.find(([k]) => k === (s.public || 'tous'))?.[1],
   s.annees?.length ? s.annees.map(n => SPONSO_ANNEES.find(([k]) => k === Number(n))?.[1]).filter(Boolean).join(', ') : 'Toutes les années',
   s.filieres?.length ? resumeFilieres(s.filieres).join(', ') : 'Toutes les filières'].join(' · ');
 // Le bilan à envoyer à l'entreprise : des totaux, jamais un nom ni un identifiant de membre (dans la langue de l'écran)
-export function bilanSponso(s, t, aujourdhui = jourLocal()) {
+// nomEcole (quand le réseau compte plusieurs écoles) : une ligne dit pour quelle école était la carte
+export function bilanSponso(s, t, aujourdhui = jourLocal(), nomEcole = null) {
   const v = t?.vues || 0, c = t?.clics || 0, m = t?.membres || 0, taux = tauxClic(c, v);
+  const ecoleAr = nomEcole ? [s.ecole ? `المدرسة: ${nomEcole(s.ecole) || s.ecole}` : 'المدارس: كل المدارس'] : [];
+  const ecoleFr = nomEcole ? [s.ecole ? `École : ${nomEcole(s.ecole) || s.ecole}` : 'Écoles : toutes les écoles'] : [];
   return getLang() === 'ar'
-    ? [`الحصيلة · شبكة ENSAM مكناس`, `البطاقة المموَّلة: «${s.titre}» (${s.entreprise})`, `الفترة: من ${dateFr(s.debut)} إلى ${dateFr(s.fin)}`,
+    ? [`الحصيلة · شبكة ENSAM مكناس`, `البطاقة المموَّلة: «${s.titre}» (${s.entreprise})`, ...ecoleAr, `الفترة: من ${dateFr(s.debut)} إلى ${dateFr(s.fin)}`,
       `المشاهدات: ${v} (مشاهدة واحدة لكل عضو في اليوم)`, `النقرات على «عرض»: ${c}`, `نسبة النقر: ${taux}`, `الأعضاء المختلفون: ${m}`,
       `أرقام إلى غاية ${dateFr(aujourdhui)}. مجاميع فقط: لا تنقل المنصة أبدًا من شاهد البطاقة أو نقر عليها.`].join('\n')
-    : [`Bilan · Réseau ENSAM Meknès`, `Carte sponsorisée : « ${s.titre} » (${s.entreprise})`, `Période : du ${dateFr(s.debut)} au ${dateFr(s.fin)}`,
+    : [`Bilan · Réseau ENSAM Meknès`, `Carte sponsorisée : « ${s.titre} » (${s.entreprise})`, ...ecoleFr, `Période : du ${dateFr(s.debut)} au ${dateFr(s.fin)}`,
       `Vues : ${v} (une par membre et par jour)`, `Clics sur « Voir » : ${c}`, `Taux de clic : ${taux}`, `Membres différents : ${m}`,
       `Chiffres au ${dateFr(aujourdhui)}. Totaux seulement : la plateforme ne transmet jamais qui a vu ou cliqué.`].join('\n');
 }
@@ -789,9 +769,10 @@ function SponsorisesAdmin({ ctx }) {
     return () => { on = false; };
   }, [cle]);
   if (!store.peutSponso?.()) return html`<div class="panel"><p class="muted">La base n’a pas encore les cartes sponsorisées : lance supabase/mise-a-jour.sql dans Supabase.</p></div>`;
-  const copier = async s => { try { await navigator.clipboard.writeText(bilanSponso(s, totaux?.[s.id])); toast('Bilan copié : il ne contient que des totaux.'); } catch { toast('Copie impossible ici : sélectionne le texte et copie-le.', 'err'); } };
+  const nomEcole = plusieursEcoles(ctx) ? ctx.nomEcole : null;
+  const copier = async s => { try { await navigator.clipboard.writeText(bilanSponso(s, totaux?.[s.id], jourLocal(), nomEcole)); toast('Bilan copié : il ne contient que des totaux.'); } catch { toast('Copie impossible ici : sélectionne le texte et copie-le.', 'err'); } };
   const basculer = s => act(async () => { await store.update('sponsorises', s.id, { actif: !s.actif }); toast(s.actif ? 'Carte arrêtée : elle ne paraît plus dans Match.' : 'Carte reprise : elle paraît de nouveau dans Match, entre ses dates.'); });
-  const ouvrir = s => setF(s ? { id: s.id, entreprise: s.entreprise, titre: s.titre, texte: s.texte, lien: s.lien, domaine: s.domaine || '', public: s.public || 'tous', annees: s.annees || [], filieres: s.filieres || [], debut: s.debut, fin: s.fin } : vide());
+  const ouvrir = s => setF(s ? { id: s.id, entreprise: s.entreprise, titre: s.titre, texte: s.texte, lien: s.lien, domaine: s.domaine || '', public: s.public || 'tous', annees: s.annees || [], filieres: s.filieres || [], debut: s.debut, fin: s.fin, ecole: s.ecole || '' } : vide(ctx.ecoleConsole || ''));
   return html`<div class="sub-page sponso-admin">
     <div class="panel">
       <div class="section-head"><h2 class="h-ico"><${Icon} name="etiquette"/> Cartes sponsorisées <span class="count">${liste.length}</span></h2>
@@ -801,7 +782,7 @@ function SponsorisesAdmin({ ctx }) {
       ${liste.length ? html`<ul class="sp-liste">${liste.map(s => { const t = totaux?.[s.id] || { vues: 0, clics: 0, membres: 0 }; const [el, tc] = ETATS_SPONSO[etatSponsorise(s)]; return html`<li key=${s.id} class="sp-ligne" data-id=${s.id}>
         <div class="sp-tete"><span class="sp-noms"><strong translate="no" dir="auto">${s.titre}</strong><span class="small muted" translate="no" dir="auto">${s.entreprise}</span></span><span class=${'tag ' + tc}>${el}</span></div>
         <p class="small muted sp-quand">${`Du ${dateFr(s.debut)} au ${dateFr(s.fin)}`}</p>
-        <p class="small sp-cible">${cibleSponso(s)}</p>
+        <p class="small sp-cible">${nomEcole ? html`${s.ecole ? html`<span class="sp-ecole" translate="no">${nomEcole(s.ecole)}</span>` : html`<span class="sp-ecole">Toutes les écoles</span>`}${' · '}` : null}${cibleSponso(s)}</p>
         <dl class="sp-chiffres">
           <div><dt>Vues</dt><dd class="sp-vues">${totaux ? t.vues : '…'}</dd></div>
           <div><dt>Clics</dt><dd class="sp-clics">${totaux ? t.clics : '…'}</dd></div>
@@ -820,14 +801,16 @@ function SponsorisesAdmin({ ctx }) {
 
 function FormSponso({ ctx, f, setF }) {
   const { store, act } = ctx;
+  const plusieurs = plusieursEcoles(ctx);
   const set = (k, v) => setF({ ...f, [k]: v });
   const entree = k => e => set(k, e.target.value);
   const bascule = n => set('annees', f.annees.includes(n) ? f.annees.filter(x => x !== n) : [...f.annees, n]);
   const enregistrer = e => {
     e.preventDefault();
     act(async () => {
-      const { id, ...champs } = f;
-      const row = normaliserSponsorise(champs);
+      const { id, ecole, ...champs } = f;
+      // L'école seulement quand le réseau en compte plusieurs (le choix est alors à l'écran) ; '' : toutes les écoles
+      const row = normaliserSponsorise(plusieurs ? { ...champs, ecole } : champs);
       const refus = refusSponsorise(row);
       if (refus) throw new Error(refus);
       if (id) await store.update('sponsorises', id, row); else await store.insert('sponsorises', { ...row, actif: true });
@@ -843,6 +826,7 @@ function FormSponso({ ctx, f, setF }) {
     <${Field} label="Texte" hint="280 caractères au plus. Des faits simples : ce que l’entreprise propose, pour qui, à quel prix s’il y en a un."><textarea id="sp-texte" rows="3" maxlength="280" value=${f.texte} onInput=${entree('texte')}></textarea><//>
     <div class="grid2"><${Field} label="Lien" hint="« Voir » l’ouvre dans un nouvel onglet."><input id="sp-lien" dir="ltr" type="url" maxlength="500" value=${f.lien} onInput=${entree('lien')} placeholder="https://…"/><//>
       <${Field} label="Site pour le logo (facultatif)" hint="Son icône sert de logo ; sinon, les initiales."><input id="sp-domaine" dir="ltr" maxlength="120" value=${f.domaine} onInput=${entree('domaine')} placeholder="exemple.ma"/><//></div>
+    ${plusieurs ? html`<${Field} label="École" hint="Une carte pour toutes les écoles paraît dans chaque réseau."><select id="sp-ecole" value=${f.ecole || ''} onChange=${entree('ecole')}><option value="">Toutes les écoles</option>${ctx.ecoles.map(e => html`<option key=${e.slug} value=${e.slug} translate="no">${e.nom}</option>`)}</select><//>` : null}
     <div class="field"><span class="field-label" id="sp-pub-l">Pour qui ?</span><div class="seg" role="radiogroup" aria-labelledby="sp-pub-l">${SPONSO_PUBLICS.map(([k, l]) => html`<button type="button" role="radio" id=${'sp-pub-' + k} aria-checked=${f.public === k} class=${f.public === k ? 'on' : ''} onClick=${() => set('public', k)}>${l}</button>`)}</div></div>
     <div class="field"><span class="field-label" id="sp-annees-l">Années</span><div id="sp-annees" class="chips" role="group" aria-labelledby="sp-annees-l">${SPONSO_ANNEES.map(([n, l]) => html`<button type="button" class=${'chip' + (f.annees.includes(n) ? ' on' : '')} aria-pressed=${f.annees.includes(n)} onClick=${() => bascule(n)}>${l}</button>`)}</div><span class="field-hint">Aucune année choisie = toutes les années.</span></div>
     <div class="field"><span class="field-label" id="sp-fil-l">Filières</span><div role="group" aria-labelledby="sp-fil-l"><${FilieresPick} value=${f.filieres} onChange=${v => set('filieres', v)}/></div><span class="field-hint">Aucune sélection = toutes les filières. Une ancienne appellation suit son parcours.</span></div>
@@ -876,6 +860,10 @@ addAR({
   'Le texte fait de 10 à 280 caractères.': 'يتكون النص من 10 إلى 280 حرفًا.', 'Le domaine du logo s’écrit sans https:// (ex. exemple.ma).': 'يُكتب نطاق الشعار دون https:// (مثال: exemple.ma).',
   'Choisis un public.': 'اختر الفئة المعنية.', 'Choisis des années de la liste.': 'اختر سنوات من اللائحة.', 'Choisis les dates de début et de fin.': 'اختر تاريخَي البداية والنهاية.',
   'La fin vient après le début.': 'يأتي تاريخ النهاية بعد البداية.',
+  'Une carte pour toutes les écoles paraît dans chaque réseau.': 'تظهر البطاقة الموجّهة إلى كل المدارس في شبكة كل مدرسة.',
+  'Avant d’importer la liste de cette école, ajoute-la au dossier CNDP : coche la case dans son suivi (rubrique Écoles).': 'قبل استيراد لائحة هذه المدرسة، أضفها إلى ملف CNDP: ضع علامة على الخانة في تتبّعها (قسم المدارس).',
+  'Ouvrir Écoles': 'فتح المدارس',
+  'Ici, les textes, affiches et chiffres sont toujours ceux du Réseau ENSAM Meknès, quelle que soit l’école choisie.': 'هنا، النصوص والملصقات والأرقام هي دائمًا تلك الخاصة بشبكة ENSAM مكناس، مهما كانت المدرسة المختارة.',
 }, [
   [/^Du (\S+) au (\S+)$/, (a, b) => `من ${a} إلى ${b}`],
 ]);
@@ -902,6 +890,10 @@ injectCSS('admin', `
 .sp-chiffres dd { margin: 0; font: 700 var(--fs-5)/1.2 var(--f-display); font-variant-numeric: tabular-nums; }
 @media (max-width: 520px) { .sp-chiffres { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .sp-acts { display: flex; flex-wrap: wrap; gap: .3rem; }
+/* L'école d'une rubrique (plusieurs écoles), et la ligne qui dit que les textes sont ceux de l'ENSAM Meknès */
+.cs-ecole-tag { display: inline-flex; align-items: center; gap: .25rem; margin-inline-start: .3rem; vertical-align: middle; font-weight: 600; }
+.cs-note-ecole { margin: 0; }
+.sp-ecole { font-weight: 600; }
 .sp-form { margin: .4rem 0 .8rem; padding: .9rem 1rem; border-radius: var(--r-lg); background: var(--surface-2); }
 .sp-form h3 { margin: 0; font-size: var(--fs-4); }
 .mod-card { display: flex; flex-direction: column; gap: .55rem; padding: .95rem 1.05rem; border-radius: var(--r-lg); background: var(--surface); border: 0; box-shadow: var(--sh1), inset 3px 0 0 var(--brass); }
@@ -955,6 +947,10 @@ injectCSS('admin', `
 @media (pointer: coarse) { .file-btn { overflow: visible; } .file-btn input { inset-block: min(0px, calc(50% - 22px)); } }
 /* Au clavier, le focus est sur le champ invisible : c'est le bouton qui le montre */
 .file-btn:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.file-btn.off { opacity: .5; }
+.file-btn.off input { cursor: not-allowed; }
+.lo-cndp { flex-wrap: wrap; align-items: center; margin-block: .2rem .5rem; }
+.lo-cndp > span { flex: 1 1 14rem; }
 .lo-import { display: flex; flex-direction: column; gap: .8rem; padding-top: .6rem; border-top: 1px dashed var(--line); }
 .lo-import p { margin: 0; }
 .lo-map { display: flex; flex-direction: column; gap: .4rem; }

@@ -43,6 +43,11 @@ test('annonces : chacun ne voit que la sienne, 14 jours au plus, la plus récent
   assert.equal(annoncePour(list, { role: 'laureat' }, NOW.getTime()).id, 'l');
   assert.equal(annoncePour(list, { role: 'admin' }, NOW.getTime()).id, 'l', 'l’administration voit tout');
   assert.equal(annoncePour([a('vieux', 'tous', 20)], { role: 'etudiant' }, NOW.getTime()), null);
+  // Un membre ne lit que l'annonce de son école (la règle de la base, que la démo n'a pas) ; l'administration lit tout
+  const autre = { ...a('ix', 'tous', 0), ecole: 'institut-exemple' };
+  assert.equal(annoncePour([...list, autre], { role: 'etudiant' }, NOW.getTime()).id, 'e', 'sans école : l’ENSAM Meknès');
+  assert.equal(annoncePour([...list, autre], { role: 'etudiant', ecole: 'institut-exemple' }, NOW.getTime()).id, 'ix');
+  assert.equal(annoncePour([...list, autre], { role: 'admin' }, NOW.getTime()).id, 'ix');
   assert.equal(pourPublic(undefined, 'etudiant'), true, 'une annonce d’avant le public : tout le monde');
   assert.equal(pourPublic('laureats', 'etudiant'), false);
 });
