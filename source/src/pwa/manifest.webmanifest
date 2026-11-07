@@ -34,6 +34,22 @@
       "purpose": "maskable"
     }
   ],
+  "screenshots": [
+    {
+      "src": "captures/telephone.jpg",
+      "sizes": "1080x1920",
+      "type": "image/jpeg",
+      "form_factor": "narrow",
+      "label": "L’accueil du Réseau ENSAM sur téléphone (démo, données fictives)"
+    },
+    {
+      "src": "captures/ordinateur.jpg",
+      "sizes": "1920x1080",
+      "type": "image/jpeg",
+      "form_factor": "wide",
+      "label": "Le Réseau ENSAM sur ordinateur (démo, données fictives)"
+    }
+  ],
   "shortcuts": [
     {
       "name": "Offres",

@@ -4,7 +4,6 @@
 // et ce qui a été tapé reste en place. Un membre déjà connecté ne voit jamais cette page.
 import { html, render, useState, useLayoutEffect, useEffect, useRef } from './vendor/preact-htm.js';
 import { getLang, setLang, chargerAR, addAR, arCount, t } from './i18n.js';
-import { sceneMarkup } from './scene.js';
 import { glyph, TUILE_DEFS, TUILE } from './logo.js';
 import { roleDePromo, promoValide, lignesChiffres, estEmailEcole, chiffresCode, adresseContact, VERSION_ACCORD, lienPartage, lienEncoreBon, estUuid, phraseLien, suiteLien, offreFermeePour } from './regles-entree.js';
 
@@ -141,9 +140,14 @@ export function BrandLogo({ size = 38, draw = false }) {
 
 // L'entrée de l'école dessinée. La porte s'ouvre une seule fois par visite ; les animations
 // s'arrêtent quand l'image sort de l'écran. « pose » (ms) : à l'accueil, l'entrée s'anime à l'arrivée puis se pose.
-let gateOpened = false;
+// Le dessin (scene.js) arrive à part, juste après le formulaire de la page d'entrée : le ciel est déjà là (fond .sky),
+// l'illustration s'y pose dès qu'elle est chargée. Ensuite (accueil, autres écrans), elle est là tout de suite.
+let gateOpened = false, scene = null, sceneP = null;
+export const chargerScene = () => sceneP ||= import('./scene.js').then(m => (scene = m), e => { sceneP = null; throw e; });
 export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0 }) {
   const ref = useRef();
+  const [pret, setPret] = useState(!!scene);
+  useEffect(() => { if (!scene) chargerScene().then(() => setPret(true), () => {}); }, []);
   const [opening] = useState(() => { const o = !gateOpened; gateOpened = true; return o; });
   useEffect(() => {
     const el = ref.current;
@@ -153,7 +157,7 @@ export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0 }) {
     return () => io.disconnect();
   }, []);
   useEffect(() => { const el = ref.current; if (!el || !pose) return; const t = setTimeout(() => el.setAttribute('data-pose', ''), pose); return () => clearTimeout(t); }, [pose]);
-  return html`<div ref=${ref} class=${'scene' + (opening ? ' opening' : '')} aria-hidden="true" dangerouslySetInnerHTML=${{ __html: sceneMarkup(align, fit) }}></div>`;
+  return html`<div ref=${ref} class=${'scene' + (opening ? ' opening' : '')} aria-hidden="true" dangerouslySetInnerHTML=${{ __html: pret && scene ? scene.sceneMarkup(align, fit) : '' }}></div>`;
 }
 
 // Message d'erreur en dehors d'un formulaire (l'application branche ici ses petits messages en bas de l'écran)
@@ -180,15 +184,23 @@ export function LangToggle({ onChange, store, me, aussitot = false }) {
 const CLE = 'ensam-invite-promo', CLE_ROLE = 'ensam-role-choisi', CLE_ECOLE = 'ensam-invite-ecole';
 // Lien d'une école : ?ecole=<slug> (« ensam-meknes » ou le nom court d'une autre école ouverte), gardé jusqu'à l'inscription
 const ecoleValide = e => typeof e === 'string' && /^[a-z0-9-]{2,40}$/.test(e);
+// Invitation nommée : &de=… est le code du membre qui a envoyé le lien (8 caractères), gardé comme la promo
+const CLE_DE = 'ensam-invite-de', CODE_DE = /^[a-z0-9]{8}$/;
 const valide = promoValide;
 const lire = k => { try { return localStorage.getItem(k); } catch { return null; } };
 const ecrire = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* navigation privée */ } };
 
-// Au chargement : lit ?promo= (et &lang=ar) dans l'adresse, garde la promo (sauf pour un membre connecté),
+// Au chargement : lit ?promo= (et &lang=ar, et &de= : le code de qui invite) dans l'adresse, garde la promo et le code,
 // puis les enlève de la barre d'adresse. Renvoie 'ar' pour un lien arabe, sauf si ce navigateur a déjà choisi sa langue.
 export function lireInvitation() {
   try {
     const u = new URL(location.href);
+    const de = u.searchParams.get('de');
+    if (de !== null) {
+      if (CODE_DE.test(de)) ecrire(CLE_DE, de);
+      u.searchParams.delete('de');
+      if (!u.searchParams.has('promo')) history.replaceState(history.state, '', u.pathname + u.search + u.hash);
+    }
     if (u.searchParams.has('ecole')) {
       const e = u.searchParams.get('ecole');
       if (ecoleValide(e)) localStorage.setItem(CLE_ECOLE, e);
@@ -231,9 +243,13 @@ function reprendreArrivee() {
 }
 export function promoInvitee() { const n = Number(lire(CLE)); return valide(n) ? n : null; }
 export function ecoleInvitee() { const e = lire(CLE_ECOLE); return ecoleValide(e) ? e : null; }
+// L'école de la page d'entrée pour les fonctions publiques (invitation nommée, visages, réussites) : celle du lien d'une
+// école ; sans lien, ou pour l'ENSAM Meknès, rien (la base prend l'ENSAM Meknès)
+export const argsEcole = () => { const e = ecoleInvitee(); return e && e !== 'ensam-meknes' ? { p_ecole: e } : {}; };
 export const retenirRole = r => ecrire(CLE_ROLE, r === 'etudiant' || r === 'laureat' ? r : null);
 export const roleRetenu = () => { const r = lire(CLE_ROLE); return r === 'etudiant' || r === 'laureat' ? r : null; };
-export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); ecrire(CLE_ECOLE, null); }
+export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); ecrire(CLE_ECOLE, null); ecrire(CLE_DE, null); }
+const codeInvite = () => { const c = lire(CLE_DE); return c && CODE_DE.test(c) ? c : null; };
 
 // L'accord donné sur CET appareil (case cochée à l'inscription), pour cette adresse. Un compte créé par la demande de
 // code de quelqu'un d'autre (adresse mal tapée) ne reprend jamais l'accord ni le rôle de cette personne-là.
@@ -295,6 +311,20 @@ export async function offrePartagee(id, cfg = window.ENSAM_CONFIG || {}) {
   return ['stage', 'pfe', 'etranger', 'emploi'].includes(x?.type) ? { type: x.type, audience: x.audience === 'laureats' ? 'laureats' : 'etudiants', ouverte: x.ouverte !== false } : undefined;
 }
 
+// L'invitation nommée : le prénom (tel qu'écrit par le membre), la promo et le rôle de qui a envoyé le lien, rien d'autre
+// (invitation_de, l'école de la page d'entrée). null : code inconnu ; undefined : on ne sait pas (démo, base pas encore à jour, réseau)
+export async function invitationDe(code, cfg = window.ENSAM_CONFIG || {}) {
+  if (!CODE_DE.test(code || '') || !enLigneCfg(cfg)) return undefined;
+  const { ok, x } = await appelPublic('invitation_de', { p_code: code, ...argsEcole() }, cfg);
+  if (!ok) return undefined;
+  const prenom = typeof x?.prenom === 'string' ? x.prenom.trim().slice(0, 40) : '';
+  return prenom ? { prenom, promo: promoValide(Number(x.promo)) ? Number(x.promo) : null } : null;
+}
+// « Invitation de Nadia · promo 2019 » : le prénom reste tel qu'il est écrit, même en arabe (il peut l'être en lettres arabes)
+export const ligneInvitation = (x, ar = getLang() === 'ar') => (!x ? '' : ar
+  ? `دعوة من \u2068${x.prenom}\u2069${x.promo ? ` · دفعة ${x.promo}` : ''}`
+  : `Invitation de ${x.prenom}${x.promo ? ` · promo ${x.promo}` : ''}`);
+
 // ---------------------------------------------------------------------------
 // L'écran d'entrée : choisir son rôle, donner son email, taper le code à 6 chiffres reçu. Pas de mot de passe à inventer.
 // Les comptes qui ont un mot de passe peuvent toujours s'en servir (« J'ai un mot de passe »).
@@ -327,6 +357,13 @@ const POUR = {
 function Fondateurs() {
   const [M, setM] = useState(null);
   useEffect(() => { import('./fondateurs-public.js').then(m => setM(() => m.FondateursPublics), () => {}); }, []);
+  return M ? html`<${M}/>` : null;
+}
+// Plan · partie membres : « Ils sont déjà dans le réseau » et « Réussites », ce que les membres ont accepté de montrer.
+// Même chargement à part ; sans base à jour, sans réseau ou sans accord, rien ne s'affiche.
+function Vitrine() {
+  const [M, setM] = useState(null);
+  useEffect(() => { import('./entree-vitrine.js').then(m => setM(() => m.VitrineEntree), () => {}); }, []);
   return M ? html`<${M}/>` : null;
 }
 
@@ -519,6 +556,14 @@ export function AuthScreen({ store }) {
   const [busy, setBusy] = useState(false); const [entre, setEntre] = useState(false);
   const [lignes, setLignes] = useState(null);
   useEffect(() => { let vivant = true; chiffresPublics().then(c => { if (vivant) setLignes(lignesChiffres(c)); }); return () => { vivant = false; }; }, []);
+  // Le lien venait d'un membre : qui invite (un code inconnu de cette école est oublié)
+  const [deQui, setDeQui] = useState(null);
+  useEffect(() => {
+    const c = codeInvite(); if (!c) return;
+    let vivant = true;
+    invitationDe(c).then(x => { if (!vivant) return; if (x === null) ecrire(CLE_DE, null); else if (x) setDeQui(x); });
+    return () => { vivant = false; };
+  }, []);
   const setRole = r => { setRoleEtat(r); retenirRole(r); setRoleMsg(false); };
   // Un seul envoi à la fois, même pour deux touchers dans le même instant (l'écran n'a pas encore grisé le bouton)
   const occupe = useRef(false);
@@ -530,7 +575,8 @@ export function AuthScreen({ store }) {
   };
   const ecole = store?.domainesEcole?.() || [];
   const deLEcole = estEmailEcole(email, ecole);
-  const meta = () => ({ consent_at: new Date().toISOString(), consent_version: VERSION_ACCORD, emails_hebdo: mails, langue: getLang(), ...(role ? { role_choisi: role } : {}) });
+  // invite_par : le code de qui invite ; la base retrouve le membre (même école) en créant le profil
+  const meta = () => { const de = codeInvite(); return { consent_at: new Date().toISOString(), consent_version: VERSION_ACCORD, emails_hebdo: mails, langue: getLang(), ...(role ? { role_choisi: role } : {}), ...(de ? { invite_par: de } : {}) }; };
   const vers = (m, cible = m === 'motdepasse' ? 'au-pw' : m === 'inscription' && !role ? 'au-je-etudiant' : 'au-email') => { setMode(m); setMsg(null); setRoleMsg(false); focus(cible); };
 
   // Demander un code : creer = la personne s'inscrit (un email déjà connu est simplement connecté)
@@ -598,7 +644,7 @@ export function AuthScreen({ store }) {
       ${carteIci && appli !== 'haut' ? html`<${CarteAppli} mode=${mode} role=${role} invite=${invite} ligne=${appli === 'ligne'}/>` : null}
       ${inscription ? null : html`<h2>${{ connexion: 'Se connecter', code: 'Ton code est parti', motdepasse: 'Se connecter', nouveau: 'Nouveau mot de passe' }[mode]}</h2>`}
       ${perdue && mode === 'connexion' ? html`<p class="auth-msg" id="au-session" role="status">${store.brouillonsGardes ? 'Ta session a expiré. Reconnecte-toi : ce que tu étais en train d’écrire est gardé.' : 'Ta session a expiré. Reconnecte-toi pour continuer.'}</p>` : null}
-      ${bandeau ? html`<p class="invite-band"><${Icon} name="send" size=${18}/><span><strong>Bienvenue, promo ${invite} !</strong> Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.</span></p>` : null}
+      ${bandeau || (deQui && inscription) ? html`<p class="invite-band"><${Icon} name="send" size=${18}/><span>${deQui && inscription ? html`<span id="au-invite-de" style="display:block;font-weight:650">${ligneInvitation(deQui)}</span>` : null}${bandeau ? html`<strong>Bienvenue, promo ${invite} !</strong> Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.` : null}</span></p>` : null}
       ${inscription ? html`<${ChoixRole} value=${role} onChange=${setRole} idPrefix="au-je-" compact/>
         ${roleMsg ? html`<p id="au-role-msg" class="auth-msg err" role="alert">Choisis d’abord ta situation.</p>` : null}` : null}
       ${mode === 'code' ? html`
@@ -619,7 +665,7 @@ export function AuthScreen({ store }) {
         ${mode === 'motdepasse' ? html`<button type="button" class="linkish" onClick=${() => vers('connexion')}>Recevoir un code à la place</button>` : null}
       </div>
     </form>
-    <div class="auth-pour">${pour.map(([t, items]) => html`<section><h2 class="eyebrow">${t}</h2><ul class="auth-points">${items.map(([i, x]) => html`<li><span class="sc-ico"><${Icon} name=${i}/></span> ${x}</li>`)}</ul></section>`)}</div>
+    <div class="auth-pour">${pour.map(([t, items]) => html`<section><h2 class="eyebrow">${t}</h2><ul class="auth-points">${items.map(([i, x]) => html`<li><span class="sc-ico"><${Icon} name=${i}/></span> ${x}</li>`)}</ul></section>`)}<${Vitrine}/></div>
     <div class="entree-scene sky"><${SchoolScene} fit="slice"/></div>
     <footer class="auth-pied small"><span>Initiative de lauréats, indépendante de l’administration de l’école</span><span class="auth-pied-liens"><a href=${'mailto:' + adresseContact()}>Contact</a><a href="#confidentialite">Confidentialité</a></span></footer>
   </main>`;
@@ -706,12 +752,36 @@ function magasinMembre() {
   magasin.catch(() => { magasin = null; });
 }
 
+// Le CSS complet du site (site.css, outils/precharger.mjs) : la page ne garde que celui de l'entrée et de la forme de l'accueil.
+// L'application l'attend avant son premier affichage. Rangé à la place de celui de l'entrée (avant le style que des modules
+// ajoutent en fin de <head>), qui part une fois le complet appliqué : le résultat est exactement celui d'avant. Sans adresse
+// (démo publiée telle quelle) : tout est déjà dans la page. Un échec (réseau) : l'application n'est pas affichée sans son
+// style, la page se recharge dès que le réseau répond (chargerApp, comme un module qui n'a pas pu se charger).
+// Appliqué, son adresse (avec son empreinte) est notée : le navigateur le garde, un membre le précharge dès <head> (page.html).
+const CSS_VU = 'ensam-css';
+let cssP = null;
+export function chargerCss() {
+  const href = window.ENSAM_CSS;
+  if (!href || typeof document === 'undefined') return Promise.resolve();
+  return cssP ||= new Promise((ok, ko) => {
+    const l = document.createElement('link'), ici = document.getElementById('css-entree');
+    l.rel = 'stylesheet'; l.href = href; l.dataset.css = 'site';
+    l.onload = () => { ici?.remove(); ecrire(CSS_VU, href); ok(); };
+    l.onerror = () => { l.remove(); cssP = null; ko(new TypeError('Failed to fetch')); };
+    if (ici) ici.after(l); else document.head.appendChild(l);
+  });
+}
+export const cssPret = () => chargerCss().catch(() => new Promise(() => {}));
+
 let appLancee = false, appEchec = false, relance = false, connecte = false;
-function chargerApp() {
+// cssEnsuite : un membre dont l'appareil n'a pas encore ce CSS (page.html, ENSAM_CSS_APRES). Il part quand app.js le demande
+// (cssPret), tout le code arrivé : en 3G, il ne prend plus le réseau au code qu'attendent les données, lues pendant qu'il arrive.
+function chargerApp({ cssEnsuite = false } = {}) {
   if (appLancee) return; appLancee = true;
   if (getLang() === 'ar') chargerAR().catch(() => {});
   precharger(window.ENSAM_MODULES);
-  import('./app.js').catch(e => {
+  const css = cssEnsuite ? null : chargerCss(); css?.catch(() => {});
+  import('./app.js').then(() => css || chargerCss()).catch(e => {
     // Un service worker garde peut-être une version qui ne colle plus : on le remet à neuf (une fois par visite)
     if (/^(SyntaxError|TypeError|ReferenceError)$/.test(e?.name) && navigator.serviceWorker?.controller) window.ensamReprise?.();
     // Sans service worker : un membre connecté (ou la démo) attend le réseau, puis la page se recharge ;
@@ -778,23 +848,40 @@ if (!window.ENSAM_ENTREE) {
     // Démo, membre déjà connecté, ou page publique : l'application tout de suite (la forme de l'accueil, ou le logo, patiente)
     delete d.dataset.entree;
     if (enLigne && jeton) magasinMembre();
-    chargerApp();
+    chargerApp({ cssEnsuite: !!window.ENSAM_CSS_APRES });
+    chargerScene().catch(() => {});
   } else {
     d.dataset.entree = 'visiteur';
+    // Quelque chose à finir tout de suite : un code attendu, ce qui avait été tapé avant un rechargement, un lien
+    // d'appareil (?r=, ?notifs=, ?depuis= : l'application les lit)
+    let presse = !!lireAttente() || /[?&](r|notifs|depuis)=/.test(location.search);
+    try { presse ||= !!sessionStorage.getItem(SAISIE) || !!sessionStorage.getItem(RECHARGES); } catch { /* stockage indisponible */ }
     chiffresPublics();
     // Le navigateur d'une application, reconnu dès que possible : sa carte vient juste après le premier affichage
     chargerAppareil();
     monter(null);
-    // Le magasin juste après le premier affichage (onglet en arrière-plan : requestAnimationFrame est suspendu)
+    chargerScene().catch(() => {});
     let parti = false; const go = () => { if (!parti) { parti = true; attendreMagasin().catch(() => addEventListener('online', () => attendreMagasin().catch(() => {}), { once: true })); } };
-    requestAnimationFrame(() => setTimeout(go)); setTimeout(go, 200);
+    if (presse) {
+      // Le magasin juste après le premier affichage (onglet en arrière-plan : requestAnimationFrame est suspendu)
+      requestAnimationFrame(() => setTimeout(go)); setTimeout(go, 200);
+    } else {
+      // Sinon, la page d'entrée garde le réseau pour elle (en 3G, ses polices et ses photos d'abord) : le magasin (Supabase)
+      // et l'application partent au premier geste (toucher, clavier), ou une fois la page chargée et calme,
+      // ou au plus tard après 12 s. Un envoi touché avant les attend simplement (run → attendreMagasin).
+      for (const t of ['pointerdown', 'keydown', 'focusin']) addEventListener(t, go, { once: true, passive: true, capture: true });
+      const auCalme = () => setTimeout(() => (typeof requestIdleCallback === 'function' ? requestIdleCallback(go, { timeout: 2000 }) : go()), 1000);
+      const charge = document.readyState === 'complete' ? Promise.resolve() : new Promise(ok => addEventListener('load', ok, { once: true }));
+      Promise.all([charge, document.fonts?.ready]).then(auCalme, auCalme);
+      setTimeout(go, 12e3);
+    }
     // Un lien public ouvert depuis l'entrée (Confidentialité) avant que l'application soit là : le logo patiente
     // à sa place, l'entrée attend cachée (ce qui a été tapé reste) ; ensuite, c'est l'application qui décide
     addEventListener('hashchange', () => {
       if (window.ENSAM_APP || !el) return;
       const pub = PUBLIQUE.test(location.hash);
       el.hidden = pub;
-      if (pub) delete d.dataset.entree; else d.dataset.entree = 'visiteur';
+      if (pub) { delete d.dataset.entree; go(); } else d.dataset.entree = 'visiteur';
     });
   }
 }

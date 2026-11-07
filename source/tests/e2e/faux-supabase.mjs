@@ -6,6 +6,8 @@
 // (secondes) périme d'un coup tous les jetons émis avant ; jetons.renouveler dit si /auth/v1/token?grant_type=refresh_token
 // rend une nouvelle session ou la refuse (400 invalid_grant, comme un jeton de renouvellement révoqué ou trop ancien).
 // tables : d'autres lignes rendues telles quelles (mentorats, propositions…).
+// rpc : d'autres fonctions de la base, par nom : (corps, membre) => réponse (undefined : la base n'a pas la fonction) ;
+// membre dit si l'appel porte le jeton d'un membre connecté plutôt que la clé publique. Vidé avant chaque test, comme tables.
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,11 +17,12 @@ export const UID = '00000000-0000-4000-8000-0000000000a1';
 
 // fondateurs : la réponse de fondateurs_publics() (absente : la base n'est pas à jour), ou (membre) => réponse ;
 // photo : l'image servie par les liens temporaires du stockage (photos des fondateurs)
-export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 19, promos: 14 }, reglages = [{ cle: 'domaines_ecole', valeur: ['ensam-umi.ac.ma'] }], offres = [], partagees = {}, profils = [], fondateurs = null, photo = null, ambassadeurs = null, chiffresPromo = null, tables = {} } = {}) {
+export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 19, promos: 14 }, reglages = [{ cle: 'domaines_ecole', valeur: ['ensam-umi.ac.ma'] }], offres = [], partagees = {}, profils = [], fondateurs = null, photo = null, ambassadeurs = null, chiffresPromo = null, tables = {}, rpc = {} } = {}) {
   let port; const appels = []; const meta = {}; const inscrits = []; const jetons = { renouveler: false, depuis: 0, n: 0 };
-  // Une nouvelle version du site publiée pendant un test (maj.version) : sw.js change de VERSION, et les fichiers que le
-  // service worker télécharge pour l'installer (fetch, sec-fetch-dest « empty ») attendent maj.retenue
-  const maj = { version: null, retenue: null };
+  // Une nouvelle version du site publiée pendant un test (maj.version) : sw.js change de VERSION, site.css reçoit en plus
+  // maj.css (des règles que seule la nouvelle version porte), et les fichiers que le service worker télécharge pour l'installer
+  // (fetch, sec-fetch-dest « empty ») attendent maj.retenue
+  const maj = { version: null, retenue: null, css: null };
   const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' };
   const json = (r, code, body) => { r.writeHead(code, { 'content-type': 'application/json', ...cors }); r.end(body === undefined ? '' : JSON.stringify(body)); };
   const session = email => {
@@ -32,6 +35,11 @@ export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 1
     if (u.startsWith('/sb/storage/v1/object/sign/photos/')) {
       if (!photo) { r.writeHead(404); return r.end(); }
       r.writeHead(200, { 'content-type': 'image/png', ...cors }); return r.end(photo);
+    }
+    // Photo de profil déposée (le corps est l'image elle-même, jamais du JSON) : acceptée telle quelle
+    if (u.startsWith('/sb/storage/v1/object/photos/') && q.method === 'POST') {
+      q.resume(); q.on('end', () => { appels.push({ u, m: q.method }); json(r, 200, { Key: u.slice('/sb/storage/v1/object/'.length) }); });
+      return;
     }
     if (u.startsWith('/sb/')) {
       let b = ''; q.on('data', c => { b += c; }); q.on('end', () => {
@@ -92,6 +100,11 @@ export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 1
             return row ? json(r, 200, /vnd\.pgrst\.object/.test(q.headers.accept || '') ? row : [row]) : json(r, 406, { code: 'PGRST116', message: 'no rows' });
           }
         }
+        const fn = u.startsWith('/sb/rest/v1/rpc/') ? rpc[u.slice('/sb/rest/v1/rpc/'.length)] : null;
+        if (typeof fn === 'function') {
+          const x = fn(corps, (q.headers.authorization || '') !== 'Bearer cle');
+          return x === undefined ? json(r, 404, { code: 'PGRST202', message: 'Could not find the function' }) : json(r, 200, x);
+        }
         if (u.startsWith('/sb/rest/v1/rpc/')) return json(r, 404, { code: 'PGRST202', message: 'Could not find the function' });
         if (u === '/sb/rest/v1/reglages') return json(r, 200, reglages);
         if (u === '/sb/rest/v1/offers' && q.method === 'GET') return json(r, 200, offres);
@@ -123,6 +136,7 @@ export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 1
     const servir = () => fs.readFile(fichier, (e, b) => {
       if (e) { r.writeHead(404); return r.end(); }
       if (f === '/sw.js' && maj.version) b = Buffer.from(String(b).replace(/const VERSION = '[^']*'/, `const VERSION = '${maj.version}'`));
+      if (f === '/site.css' && maj.version && maj.css) b = Buffer.concat([b, Buffer.from(maj.css)]);
       r.writeHead(200, { 'content-type': TYPES[path.extname(f)] || 'application/octet-stream' }); r.end(b);
     });
     if (maj.version && q.headers['sec-fetch-dest'] === 'empty' && f !== '/sw.js') return void maj.retenue.then(servir);
@@ -131,6 +145,6 @@ export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 1
   srv.on('upgrade', (_q, s) => s.destroy()); // temps réel : absent ici
   await new Promise(ok => srv.listen(0, '127.0.0.1', ok)); port = srv.address().port;
   // Chaque test repart d'une base vide (personne d'inscrit, aucun appel noté)
-  const vider = () => { appels.length = 0; inscrits.length = 0; for (const k of Object.keys(meta)) delete meta[k]; for (const k of Object.keys(tables)) delete tables[k]; Object.assign(jetons, { renouveler: false, depuis: 0 }); Object.assign(maj, { version: null, retenue: null }); };
-  return { adresse: `http://127.0.0.1:${port}/`, appels, inscrits, tables, jetons, maj, vider, fermer: () => srv.close() };
+  const vider = () => { appels.length = 0; inscrits.length = 0; for (const k of Object.keys(meta)) delete meta[k]; for (const k of Object.keys(tables)) delete tables[k]; for (const k of Object.keys(rpc)) delete rpc[k]; Object.assign(jetons, { renouveler: false, depuis: 0 }); Object.assign(maj, { version: null, retenue: null }); };
+  return { adresse: `http://127.0.0.1:${port}/`, appels, inscrits, tables, rpc, jetons, maj, vider, fermer: () => srv.close() };
 }

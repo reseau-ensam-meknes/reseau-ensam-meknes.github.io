@@ -6,18 +6,18 @@ import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
 import { proposerPrevenir } from './pwa.js';
 import { ChoixRole, accordIci } from './entree.js';
 import { getLang, setLang } from './i18n.js';
-import { laureatCompte, FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole, chiffreReseau, ecoleDuContenu } from './logic.js';
+import { laureatCompte, FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole, chiffreReseau, ecoleDuContenu, pionniersOf, PIONNIER_MOI } from './logic.js';
 import { villeAffichee } from './geo.js';
 import { TalentPool } from './growth.js';
 import { GroupesPage } from './groupes.js';
 import { AnnuairePro } from './pro.js';
 import { CoupePromos } from './saison.js';
 import { EntreprisesPage } from './entreprises.js';
-import { EtrangerPage } from './etranger.js';
+import { EtrangerPage, CarteGuide, Drapeau } from './etranger.js';
 import { AgendaPage } from './agenda.js';
 import { MessageBtn } from './messages.js';
 import { CvButton } from './cv.js';
-import { SignalerBtn, ContactBlock, PairVerify, VisibiliteFields, groupesMasques, confirmations, VIS_LABELS, VIS_CHOIX } from './confiance.js';
+import { SignalerBtn, ContactBlock, PairVerify, VisibiliteFields, groupesMasques, confirmations, VIS_LABELS, VIS_CHOIX, VitrinePubliqueCase } from './confiance.js';
 import { VIS_CHAMPS, VIS_DEFAUT, CV_MAX } from './store.js';
 import { addAR, arCount } from './i18n.js';
 import { oublierInvitation, ecoleInvitee } from './invitation.js';
@@ -89,8 +89,9 @@ injectCSS('entraide-v3', `
 .q-tags .mini { margin: 0; }
 `);
 
+// guide : le guide de l'étranger a sa carte en tête de l'Entraide (rien tant qu'il est vide, sauf pour l'administration)
 export function EntraidePage(ctx) {
-  const { data, store, me, go } = ctx;
+  const { data, store, me, go, guide } = ctx;
   const [cat, setCat] = useState('');
   const [ask, setAsk] = useState(false);
   const pourMoi = data.questions.filter(q => routedTo(q, me) && !data.answers.some(a => a.question_id === q.id && a.author_id === me.id));
@@ -100,12 +101,13 @@ export function EntraidePage(ctx) {
   if (q) return html`<${QuestionView} key=${q.id} ctx=${ctx} q=${q} onBack=${() => go('reseau/entraide', { remplacer: true })}/>`;
   return html`<div class="sub-page">
     <div class="toolbar"><p class="muted small grow">Les questions des étudiants, les réponses des lauréats.</p><button class="btn primary small" onClick=${() => setAsk(true)}><${Icon} name="plus" size=${16}/> Poser une question</button></div>
+    ${guide ? html`<${CarteGuide} ctx=${ctx}/>` : null}
     <div class="chips rangee" role="group" aria-label="Catégorie">${pourMoi.length ? html`<button class=${'chip' + (cat === 'moi' ? ' on' : '')} aria-pressed=${cat === 'moi'} onClick=${() => setCat(cat === 'moi' ? '' : 'moi')}><${Icon} name="send" size=${13}/> Pour toi <span class="count">${pourMoi.length}</span></button>` : null}${['', ...CATEGORIES_Q].map(c => html`<button class=${'chip' + (cat === c ? ' on' : '')} aria-pressed=${cat === c} onClick=${() => setCat(c)}>${c || 'Toutes'}</button>`)}</div>
     <div class=${qs.length ? 'list q-liste' : 'list'}>${qs.length ? qs.map(q => {
       const ans = data.answers.filter(a => a.question_id === q.id); const au = store.byId('profiles', q.author_id);
       return html`<button class="qrow" key=${q.id} onClick=${() => open(q.id)}>
         <span class=${'qcount' + (q.best_answer_id ? ' solved' : ans.length ? '' : ' none')}><b>${ans.length}</b><span>réponse${ans.length > 1 ? 's' : ''}</span></span>
-        <span class="qtxt"><span class="q-tags"><span class="mini">${q.categorie}</span>${q.entreprise || q.pays ? html`<span class="mini hit"><${Icon} name=${q.entreprise ? 'briefcase' : 'globe'} size=${11}/> ${q.entreprise || q.pays}</span>` : null}</span><strong>${q.titre}</strong><span class="muted small">${au?.full_name || 'Membre'} · ${timeAgo(q.created_at)}${q.best_answer_id ? ' · Résolue' : ''}</span></span>
+        <span class="qtxt"><span class="q-tags"><span class="mini">${q.categorie}</span>${q.entreprise || q.pays ? html`<span class="mini hit">${q.entreprise ? html`<${Icon} name="briefcase" size=${11}/>` : html`<${Drapeau} pays=${q.pays} taille=${14} repli=${html`<${Icon} name="globe" size=${11}/>`}/>`} ${q.entreprise || q.pays}</span>` : null}</span><strong>${q.titre}</strong><span class="muted small">${au?.full_name || 'Membre'} · ${timeAgo(q.created_at)}${q.best_answer_id ? ' · Résolue' : ''}</span></span>
         <${Icon} name="arrow"/></button>`;
     }) : html`<${Empty} icon="qa" title="Pas encore de question ici">Pose la première, les lauréats sont notifiés.<//>`}</div>
     ${ask ? html`<${AskQuestion} ctx=${ctx} onClose=${() => setAsk(false)} onDone=${id => { setAsk(false); open(id); }}/>` : null}
@@ -164,37 +166,94 @@ export function AskQuestion({ ctx, onClose, onDone, initial = {} }) {
 }
 
 // ---------------------------------------------------------------------------
-// Réseau : entraide, annuaire, classement et vitrine des talents (le mentorat a sa propre page)
+// Réseau : quatre onglets (le mentorat a sa propre page). Les autres rubriques y sont rangées : Entreprises, Classement
+// et Talents dans l'Annuaire, le guide de l'étranger dans l'Entraide. Leurs adresses ne changent pas (#reseau/entreprises,
+// #reseau/etranger/canada, #reseau/classement/promos…) : un lien partagé sur WhatsApp ouvre toujours le bon contenu,
+// sous l'onglet qui le range.
 // ---------------------------------------------------------------------------
-const RESEAU_TABS = [['groupes', 'Groupes', 'people'], ['agenda', 'Agenda', 'calendar'], ['entraide', 'Entraide', 'qa'], ['entreprises', 'Entreprises', 'briefcase'], ['etranger', 'Étranger', 'flag'], ['annuaire', 'Annuaire', 'network'], ['classement', 'Classement', 'trophy'], ['talents', 'Talents', 'spark']];
+const RESEAU_TABS = [['groupes', 'Groupes', 'people'], ['agenda', 'Agenda', 'calendar'], ['entraide', 'Entraide', 'qa'], ['annuaire', 'Annuaire', 'network']];
+const RANGEE_DANS = { entreprises: 'annuaire', classement: 'annuaire', talents: 'annuaire', etranger: 'entraide' };
+// En tête de l'Annuaire, une seule rangée : Personnes · Entreprises, puis Classement et Talents (lauréats et administration).
+// Le segment commun des onglets de page (.seg-page, ui.js, refonte des pages) : du texte, comme Mon profil ou Offres | Demandes
+const VUES_ANNUAIRE = [['annuaire', 'Personnes'], ['entreprises', 'Entreprises'], ['classement', 'Classement'], ['talents', 'Talents']];
 
 export function ReseauPage(ctx) {
   const { data, me, sub, go } = ctx;
-  // Une rubrique encore vide reste cachée jusqu'à son premier contenu (l'administration voit tout)
+  // Une rubrique encore vide reste cachée jusqu'à son premier contenu (l'administration voit tout) ; le classement et
+  // les talents ne sont pas pour les étudiants
   const vide = {
     agenda: !(data.evenements || []).length,
     etranger: !(data.guide_pays || []).length && !data.profiles.some(p => p.role === 'laureat' && p.pays && norm(p.pays) !== 'maroc'),
     classement: ![...(ctx.scores?.values() || [])].some(x => x?.points > 0),
   };
-  const tabs = RESEAU_TABS.filter(([k]) => (me.role !== 'etudiant' || !['classement', 'talents'].includes(k)) && (me.role === 'admin' || !vide[k]));
-  const tab = tabs.some(([k]) => k === sub) ? sub : 'groupes';
+  const ouverte = k => (me.role !== 'etudiant' || !['classement', 'talents'].includes(k)) && (me.role === 'admin' || !vide[k]);
+  const tabs = RESEAU_TABS.filter(([k]) => ouverte(k));
+  const aOnglet = k => tabs.some(([t]) => t === k);
+  // La rubrique de l'adresse si ce membre peut l'ouvrir ; sinon l'onglet qui la range ; sinon les Groupes
+  const rubrique = aOnglet(sub) || (RANGEE_DANS[sub] && ouverte(sub) && aOnglet(RANGEE_DANS[sub])) ? sub : aOnglet(RANGEE_DANS[sub]) ? RANGEE_DANS[sub] : 'groupes';
+  const tab = RANGEE_DANS[rubrique] || rubrique;
+  // Une rubrique fermée ouvre son onglet à sa racine : la fin de l'adresse ne le concerne pas
+  const c = rubrique === sub ? ctx : { ...ctx, sub: rubrique, sub2: '' };
   // Un seul chiffre par écran : l'annuaire, l'étranger et les entreprises ont déjà le leur
-  const chiffre = ['annuaire', 'etranger', 'entreprises'].includes(tab) ? '' : chiffreReseau(data.profiles, me);
-  // En-tête compact commun (EnTetePage) : le chiffre du réseau en sur-titre, le titre, puis les rubriques
+  const chiffre = ['annuaire', 'etranger', 'entreprises'].includes(rubrique) ? '' : chiffreReseau(data.profiles, me);
+  // En-tête compact commun (EnTetePage) : le chiffre du réseau en sur-titre, le titre, puis les quatre onglets
   return html`<section class="page reseau-page">
     <${EnTetePage} surTitre=${chiffre || null} garderPlace titre="Réseau">
-      <${PucesNav} label="Rubriques du réseau" items=${tabs.map(([k, l, i]) => ({ k, label: l, icon: i }))} actif=${tab} onChoisir=${k => go('reseau/' + k, { remplacer: true })}/>
+      <${PucesNav} cls="reseau-onglets" label="Rubriques du réseau" items=${tabs.map(([k, l, i]) => ({ k, label: l, icon: i }))} actif=${tab} onChoisir=${k => go('reseau/' + k, { remplacer: true })}/>
     <//>
-    ${tab === 'groupes' ? html`<${GroupesPage} ctx=${ctx}/>` : null}
-    ${tab === 'agenda' ? html`<${AgendaPage} ctx=${ctx}/>` : null}
-    ${tab === 'entraide' ? html`<${EntraidePage} ...${ctx}/>` : null}
-    ${tab === 'entreprises' ? html`<${EntreprisesPage} ctx=${ctx}/>` : null}
-    ${tab === 'etranger' ? html`<${EtrangerPage} ctx=${ctx}/>` : null}
-    ${tab === 'annuaire' ? html`<${AnnuairePro} ctx=${ctx}/>` : null}
-    ${tab === 'classement' ? html`<${Classement} ctx=${ctx}/>` : null}
-    ${tab === 'talents' ? html`<${TalentPool} ctx=${ctx}/>` : null}
+    ${tab === 'groupes' ? html`<${GroupesPage} ctx=${c}/>` : null}
+    ${tab === 'agenda' ? html`<${AgendaPage} ctx=${c}/>` : null}
+    ${rubrique === 'entraide' ? html`<${EntraidePage} ...${c} guide=${ouverte('etranger')}/>` : null}
+    ${rubrique === 'etranger' ? html`<${EtrangerPage} ctx=${c}/>` : null}
+    ${tab === 'annuaire' ? html`<${Annuaire} ctx=${c} rubrique=${rubrique} vues=${VUES_ANNUAIRE.filter(([k]) => ouverte(k))}/>` : null}
   </section>`;
 }
+
+// L'Annuaire : qui est dans le réseau. Une rangée de choix, puis la vue choisie. La carte des lauréats
+// (#reseau/annuaire/carte) se range sous Personnes, les startups des lauréats (#reseau/annuaire/startups) sous Entreprises.
+function Annuaire({ ctx, rubrique, vues }) {
+  const actif = rubrique === 'annuaire' && ctx.sub2 === 'startups' ? 'entreprises' : rubrique;
+  // Toucher la vue où l'on est déjà ramène à sa liste (depuis la carte, une fiche d'entreprise, la Coupe des promos)
+  const choisir = k => { if (k !== actif || ctx.sub2) ctx.go('reseau/' + k, { remplacer: true }); };
+  // Clavier : flèches (dans le sens de lecture), Début et Fin passent d'une vue à l'autre
+  const clavier = e => {
+    const n = vues.length, i = vues.findIndex(([k]) => k === actif);
+    const rtl = getComputedStyle(e.currentTarget).direction === 'rtl';
+    const j = { ArrowRight: i + (rtl ? -1 : 1), ArrowLeft: i + (rtl ? 1 : -1), Home: 0, End: n - 1 }[e.key];
+    if (j === undefined) return;
+    e.preventDefault();
+    const k = vues[(j + n) % n][0];
+    if (k !== actif) choisir(k);
+    requestAnimationFrame(() => document.getElementById('an-vue-' + k)?.focus());
+  };
+  return html`<div class="sub-page annuaire-onglet">
+    <div class="seg seg-page an-vues" role="tablist" aria-label="Annuaire" onKeyDown=${clavier}>${vues.map(([k, l]) => html`<button type="button" role="tab" key=${k} id=${'an-vue-' + k}
+      aria-selected=${actif === k ? 'true' : 'false'} tabindex=${actif === k ? 0 : -1} class=${actif === k ? 'on' : ''} onClick=${() => choisir(k)}>${l}</button>`)}</div>
+    ${rubrique === 'annuaire' ? html`<${AnnuairePro} ctx=${ctx}/>` : null}
+    ${rubrique === 'entreprises' ? html`<${EntreprisesPage} ctx=${ctx}/>` : null}
+    ${rubrique === 'classement' ? html`<${Classement} ctx=${ctx}/>` : null}
+    ${rubrique === 'talents' ? html`<${TalentPool} ctx=${ctx}/>` : null}
+  </div>`;
+}
+injectCSS('reseau-onglets', `
+/* Quatre onglets : sur téléphone, ils se partagent la rangée, en mots seuls (s'ils ne tiennent pas, la rangée glisse) */
+@media (max-width: 560px) {
+  .reseau-onglets [role="tab"] { flex: 1 0 auto; justify-content: center; padding-inline: .7rem; }
+}
+@media (max-width: 460px) { .reseau-onglets [role="tab"] svg { display: none; } }
+@media (max-width: 400px) { .reseau-onglets [role="tab"] { padding-inline: .55rem; } }
+/* La rangée va d'un bord de l'écran à l'autre (ses marges négatives, sans retrancher sa largeur) */
+@media (max-width: 760px) { .reseau-page .en-tete > .puces-nav.reseau-onglets { flex-basis: calc(100% + 32px); } }
+/* L'Annuaire : une seule rangée de choix (.seg-page : toute la largeur sur téléphone) ; à quatre, sur téléphone, chaque
+   choix prend la place de son texte, jamais rétréci sous lui */
+@media (max-width: 560px) {
+  .seg.seg-page.an-vues > [role="tab"] { flex: 1 0 auto; padding-inline: .45rem; font-size: var(--fs-2); }
+}
+/* Personnes : le nombre de membres, et la carte des lauréats à portée de pouce */
+.d-tete { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--sp-1) var(--sp-3); }
+.d-carte { display: inline-flex; align-items: center; gap: .3rem; min-height: 36px; }
+@media (pointer: coarse) { .d-carte { min-height: 44px; } }
+`);
 
 function Classement({ ctx }) {
   const promos = ctx.sub2 === 'promos';
@@ -239,7 +298,7 @@ export function ProfileModal({ ctx, p: p0, onClose, onAskMentor }) {
   const s = scores.get(p.id);
   // Un étudiant ne voit ni points ni classement : seulement les badges qui disent à qui il peut faire confiance.
   // « Vérifié » n'est pas un badge ici : c'est le bouclier, juste après le nom.
-  const badges = badgesOf(s, p, { star: ctx.starId, fondateurs: ctx.fondateurs, ambassadeurs: ctx.ambassadeurs }).filter(b => b.id !== 'verifie' && (me.role !== 'etudiant' || ['fondateur', 'ambassadeur', 'mentor', 'reactif'].includes(b.id)));
+  const badges = badgesOf(s, p, { star: ctx.starId, fondateurs: ctx.fondateurs, ambassadeurs: ctx.ambassadeurs, pionniers: pionniersOf(data.profiles) }).filter(b => b.id !== 'verifie' && (me.role !== 'etudiant' || ['fondateur', 'ambassadeur', 'pionnier', 'mentor', 'reactif'].includes(b.id))).map(b => (b.id === 'pionnier' && p.id === me.id ? { ...b, ...PIONNIER_MOI } : b));
   const helped = data.placements.filter(x => x.laureat_id === p.id && x.status === 'confirme').length;
   // Seulement les chiffres non nuls, accordés : un nouveau lauréat n'affiche pas une rangée de zéros
   const stats = [[s?.points, 'point'], [helped, 'recruté'], [s?.mentorats, 'mentorat'], [s?.offres, 'offre']]
@@ -715,7 +774,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
       <${Field} label="Autre (facultatif)"><input id="pf-contact" maxlength="200" value=${co.contact} onInput=${e => setC('contact', e.target.value)} placeholder="Ex. WhatsApp, plutôt le soir"/><//>
     </fieldset>
     <${VisibiliteFields} role=${f.role} value=${vis} onChange=${choisirVis} etat=${onboarding ? undefined : visOk} id="profil-visibilite"/>` : null}
-    ${onboarding || !apresVisibilite ? null : html`<div class="pf-fondateur">${apresVisibilite}</div>`}`;
+    ${onboarding || !apresVisibilite ? null : html`<div class="pf-fondateur">${apresVisibilite}<${VitrinePubliqueCase} ctx=${ctx}/></div>`}`;
   return html`<form class="form" id=${onboarding ? undefined : 'profil-infos'} hidden=${!voir('profil') && !voir('visibilite')} onSubmit=${submit}>
     <div class="pf-partie pf-infos" hidden=${!voir('profil')}>
     ${onboarding ? null : html`<h2 class="pf-titre titre-sec">Mes infos</h2>`}

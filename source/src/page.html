@@ -12,25 +12,39 @@
 <meta property="og:locale" content="fr_FR">
 <meta name="twitter:card" content="summary_large_image">
 <script>/* Avant l'affichage : thème, langue et sens de lecture. Un visiteur sans compte attend la page d'entrée (pas le logo) ;
-   un membre déjà connecté précharge toute l'application (juste après les modules de l'entrée). build.sh (outils/precharger.mjs) remplit les deux listes. */
+   un membre déjà connecté précharge toute l'application (juste après les modules de l'entrée). build.sh (outils/precharger.mjs) remplit les deux listes,
+   et l'adresse du CSS complet (site.css) : la page n'en garde que ce qu'il faut à l'entrée et à la forme de l'accueil. */
 (function(){var d=document.documentElement,ar=false,membre=false,L,i;
 try{L=localStorage;var t=L.getItem('ensam-theme');if(t==='light'||t==='dark'){d.dataset.theme=t;document.querySelectorAll('meta[name="theme-color"]').forEach(function(m){m.content=t==='dark'?'#0B1320':'#1670A8'})}
 var g=L.getItem('ensam-lang');ar=g==='ar'||(!g&&sessionStorage.getItem('ensam-lang-visite')==='ar');for(i=0;i<L.length;i++)if(/^sb-.+-auth-token$/.test(L.key(i)))membre=true}catch(e){}
 d.lang=ar?'ar':'fr';d.dir=ar?'rtl':'ltr';
-var M=window.ENSAM_MAGASIN=/*MAGASIN*/[],A=window.ENSAM_MODULES=/*MODULES*/[];
+var M=window.ENSAM_MAGASIN=/*MAGASIN*/[],A=window.ENSAM_MODULES=/*MODULES*/[];window.ENSAM_CSS=/*CSS*/'';
 if(!A.length)return;
 if(membre&&!/^#(verifier|desabo)\b/.test(location.hash))d.dataset.boot='membre';
 if(membre||/^#(verifier|desabo|confidentialite)\b|access_token=|type=recovery|error_description=/.test(location.hash))d.dataset.tete='appli';
 else{d.dataset.entree='visiteur';setTimeout(function(){if(!window.ENSAM_ENTREE)delete d.dataset.entree},4000)}})()</script>
 <!--PRECHARGE-->
-<script>/* Membre connecté ou page publique : le magasin et l'application se préchargent, APRÈS les modules de l'entrée
-   (préchargés juste au-dessus) : demandés avant, ils les retardaient (0,6 à 1,5 s de plus en 3G). */
-(function(){var d=document.documentElement;if(d.dataset.tete!=='appli')return;delete d.dataset.tete;
+<script>/* Membre connecté ou page publique : le magasin et l'application se préchargent, APRÈS les modules de l'entrée (préchargés
+   juste au-dessus) : demandés avant, ils les retardaient (0,6 à 1,5 s de plus en 3G). Le CSS complet aussi, sauf pour un membre dont
+   l'appareil n'a jamais appliqué cette version (ensam-css, noté par entree.js) : ses 39 Ko prendraient le réseau au code qu'attendent
+   ses données ; il part quand l'application le demande, tout son code arrivé, pendant la lecture des données (ENSAM_CSS_APRES). */
+(function(){var d=document.documentElement,c=window.ENSAM_CSS,l,vu;if(d.dataset.tete!=='appli')return;delete d.dataset.tete;
+try{vu=localStorage.getItem('ensam-css')===c}catch(e){}
+if(c&&d.dataset.boot==='membre'&&!vu)window.ENSAM_CSS_APRES=true;else if(c){l=document.createElement('link');l.rel='preload';l.as='style';l.href=c;document.head.appendChild(l)}
 (window.ENSAM_MAGASIN||[]).concat(window.ENSAM_MODULES||[]).forEach(function(f){var l=document.createElement('link');if(/supabase\.js$/.test(f)){l.rel='preload';l.as='script'}else l.rel='modulepreload';l.href=f;document.head.appendChild(l)})})()</script>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2264%22%20height%3D%2264%22%20viewBox%3D%220%200%20512%20512%22%20style%3D%22--lg-o%3A%23F7A11A%3B--lg-b%3A%234FA9E6%3B--lg-k%3A%23FFFFFF%3B--lg-in%3Atransparent%3B--lg-cap%3A%23FFFFFF%3B--lg-cap2%3A%23DCE6F3%3B--lg-bg%3A%231D3150%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22lg-tuile%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%2327497A%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%2316253F%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Crect%20width%3D%22512%22%20height%3D%22512%22%20rx%3D%22116%22%20fill%3D%22url(%23lg-tuile)%22%2F%3E%3Cg%3E%3Cpath%20d%3D%22M225.8%20104.9L233.6%2071.3L278.4%2071.3L286.2%20104.9L321.5%20116.4L347.6%2093.8L383.8%20120.1L370.4%20151.9L392.2%20182.0L426.6%20179.0L440.4%20221.6L410.9%20239.4L410.9%20276.6L440.4%20294.4L426.6%20337.0L392.2%20334.0L370.4%20364.1L383.8%20395.9L347.6%20422.2L321.5%20399.6L286.2%20411.1L278.4%20444.7L233.6%20444.7L225.8%20411.1L190.5%20399.6L164.4%20422.2L128.2%20395.9L141.6%20364.1L119.8%20334.0L85.4%20337.0L71.6%20294.4L101.1%20276.6L101.1%20239.4L71.6%20221.6L85.4%20179.0L119.8%20182.0L141.6%20151.9L128.2%20120.1L164.4%2093.8L190.5%20116.4ZM378%20258A122%20122%200%201%200%20134%20258A122%20122%200%201%200%20378%20258Z%22%20fill-rule%3D%22evenodd%22%20style%3D%22fill%3Avar(--lg-o%2C%23F39200)%22%2F%3E%3Ccircle%20cx%3D%22256%22%20cy%3D%22258%22%20r%3D%22122%22%20style%3D%22fill%3Avar(--lg-in%2C%231F3354)%22%2F%3E%3Cpath%20d%3D%22M256%20190%20358%20232%20256%20274%20154%20232Z%22%20style%3D%22fill%3Avar(--lg-cap%2C%23FFFFFF)%22%2F%3E%3Cpath%20d%3D%22M198%20252V294Q256%20326%20314%20294V252L256%20276Z%22%20style%3D%22fill%3Avar(--lg-cap2%2C%23E3EAF4)%22%2F%3E%3Cpath%20d%3D%22M256%20232%20338%20250V302%22%20fill%3D%22none%22%20stroke-width%3D%229%22%20stroke-linecap%3D%22round%22%20style%3D%22stroke%3Avar(--lg-b%2C%234FA9E6)%22%2F%3E%3Ccircle%20cx%3D%22338%22%20cy%3D%22308%22%20r%3D%2212%22%20style%3D%22fill%3Avar(--lg-b%2C%234FA9E6)%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E">
+<script>/* Le ciel du soir (thème clair), posé avant l'affichage : --soir de 0 à 1 et data-ciel="soir" sur <html>.
+   Même calcul que scene.js (soirDe : coucher du soleil à Meknès, heure UTC), vérifié par les tests unitaires ; ensuite, scene.js suit l'heure. */
+(function(){var C=[1055,1085,1109,1132,1155,1174,1174,1151,1111,1070,1040,1035],d=new Date(),r=document.documentElement,
+m=Math.abs(d.getTimezoneOffset())>180?(d.getHours()*60+d.getMinutes()+1380)%1440:d.getUTCHours()*60+d.getUTCMinutes(),
+y=d.getUTCFullYear(),n=d.getUTCMonth(),j=d.getUTCDate(),k=n-(j<15?1:0),p=Date.UTC(y,k,15),f=(Date.UTC(y,n,j)-p)/(Date.UTC(y,k+1,15)-p),
+a=C[(k+12)%12],t=m-(a+(C[(k+13)%12]-a)*f),
+u=t<-60||t>90?0:t<0?(t+60)/60:t<30?1:(90-t)/60,s=Math.round(u*u*(3-2*u)*1000)/1000;
+if(s>0){r.style.setProperty('--soir',String(s));r.dataset.ciel='soir'}})()</script>
 <!-- Polices gardées sur le site (outils/generer-polices.py, licence OFL : polices/OFL.txt), sans bloquer l’affichage : le texte
      s’affiche tout de suite avec la police du système. Chaque fichier ne part que si l’écran en a besoin : la police arabe, seulement en arabe.
      Les titres : un seul fichier pour les graisses 600 et 750 (police variable), comme le faisait Google Fonts.
+     Les titres en arabe ont leur propre police (Readex Pro, 600 et 700, 9 Ko chacune) : elle ne part que quand un titre arabe s’affiche.
      Jamais les isolants bidi (U+2066-2069) dans la plage arabe : un nom latin isolé deux fois y était rendu à 0 px. -->
 <style>
 @font-face { font-family: "Titres ENSAM"; font-weight: 600; font-display: swap; src: url(polices/titres.woff2) format("woff2"); unicode-range: U+0020-007E, U+00A0, U+00A9, U+00AB, U+00B0, U+00B7, U+00BB, U+00C0-00FF, U+0152-0153, U+2000-200B, U+2010-2011, U+2013-2014, U+2018-2019, U+201C-201D, U+2022, U+2026, U+202F, U+2039-203A, U+20AC, U+2212; }
@@ -40,6 +54,8 @@ else{d.dataset.entree='visiteur';setTimeout(function(){if(!window.ENSAM_ENTREE)d
 @font-face { font-family: "Texte ENSAM arabe"; font-weight: 500; font-display: swap; src: url(polices/arabe-500.woff2) format("woff2"); unicode-range: U+0600-06FF, U+200C-200F; }
 @font-face { font-family: "Texte ENSAM arabe"; font-weight: 600; font-display: swap; src: url(polices/arabe-600.woff2) format("woff2"); unicode-range: U+0600-06FF, U+200C-200F; }
 @font-face { font-family: "Texte ENSAM arabe"; font-weight: 700; font-display: swap; src: url(polices/arabe-700.woff2) format("woff2"); unicode-range: U+0600-06FF, U+200C-200F; }
+@font-face { font-family: "Titres ENSAM arabe"; font-weight: 600; font-display: swap; src: url(polices/arabe-titres-600.woff2) format("woff2"); unicode-range: U+0600-06FF, U+0750-077F, U+FB50-FDFF, U+FE70-FEFF, U+200C-200F; }
+@font-face { font-family: "Titres ENSAM arabe"; font-weight: 700; font-display: swap; src: url(polices/arabe-titres-700.woff2) format("woff2"); unicode-range: U+0600-06FF, U+0750-077F, U+FB50-FDFF, U+FE70-FEFF, U+200C-200F; }
 </style>
 <style>
 /* Mise en page : rail de navigation (ordinateur) / barre d'onglets en bas (téléphone),
@@ -747,12 +763,15 @@ button.impact-strip, button.panel { font: inherit; color: inherit; text-align: s
 .lang-btn:hover { border-color: var(--accent); color: var(--accent); }
 .lang-btn > span:first-of-type { display: none; }
 .auth-lang { position: fixed; top: calc(12px + env(safe-area-inset-top, 0px)); inset-inline-end: 16px; z-index: 50; }
+/* Les titres en arabe (h1 à h3, titres de page, de section, de fête, la marque) : « Titres ENSAM arabe », plus ronde que le texte ;
+   les lettres latines et les chiffres d'un titre gardent ceux des titres français (« Titres ENSAM », en premier) */
 :root[dir="rtl"] {
-  --f-display: "Titres ENSAM", "Texte ENSAM arabe", "Segoe UI", system-ui, sans-serif;
+  --f-display: "Titres ENSAM", "Titres ENSAM arabe", "Texte ENSAM arabe", "Segoe UI", system-ui, sans-serif;
   --f-body: "Texte ENSAM", "Texte ENSAM arabe", "Segoe UI", system-ui, -apple-system, sans-serif;
 }
 [dir="rtl"] body { font-size: 16px; line-height: 1.7; }
 [dir="rtl"] h1, [dir="rtl"] h2, [dir="rtl"] h3 { line-height: 1.35; }
+[dir="rtl"] h3 { font-family: var(--f-display); }
 [dir="rtl"] *, [dir="rtl"] *::before, [dir="rtl"] *::after { letter-spacing: 0 !important; }
 /* Le texte des membres (souvent en français) s'aligne selon sa propre langue (dir="auto") ; un champ vide garde le sens de l'interface pour son exemple */
 [dir="rtl"] :is(input, textarea)[dir="auto"]:placeholder-shown { direction: rtl; }
@@ -799,18 +818,37 @@ button.impact-strip, button.panel { font: inherit; color: inherit; text-align: s
   --bird: #3A4A63; --stars: 0; --lamp: 0; --crater: 0; --w-body-1: #1B7DBF; --w-body-2: #F39200; --w-skin: #8A5A3C; --w-hair: #2A1E17;
   background: linear-gradient(180deg, var(--sky-1), var(--sky-2) 78%);
 }
+/* Le soir, en thème clair (scene.js : soirDe ; --soir de 0 à 1 sur <html>, posé avant l'affichage par le script du haut) :
+   dès une heure avant le coucher du soleil à Meknès, les couleurs du jour (ci-dessus) glissent vers un ciel pêche et rose,
+   le soleil descend, les fenêtres et le réverbère s'allument ; même dessin, mêmes contrastes pour le texte posé dessus.
+   Le mélange se fait en oklch (bleu, lavande, rose puis pêche, comme un vrai ciel) ; le thème sombre (plus bas) l'emporte et remet --soir à 0. */
+@supports (color: color-mix(in oklch, red 50%, blue)) { :root[data-ciel="soir"] .sky {
+  --soir-p: calc(var(--soir, 0) * 100%);
+  --sky-1: color-mix(in oklch, #B4DAF3, #F3C9BC var(--soir-p)); --sky-2: color-mix(in oklch, #EDF6FC, #FDEBDD var(--soir-p)); --sun: color-mix(in oklch, #FFC94D, #FFA262 var(--soir-p));
+  --cloud: color-mix(in oklch, #FFFFFF, #FFEEE8 var(--soir-p)); --mtn: color-mix(in oklch, #C7DCEC, #DDBAC4 var(--soir-p)); --hill: color-mix(in oklch, #BFDCC2, #CBD0A8 var(--soir-p));
+  --bldg: color-mix(in oklch, #FFFDF8, #FFF3E9 var(--soir-p)); --bldg-top: color-mix(in oklch, #E7DFCF, #EFD3C3 var(--soir-p)); --bldg-shade: color-mix(in oklch, #EEE7D9, #F2DCD0 var(--soir-p));
+  --win: color-mix(in oklch, #8DBBDC, #F5CB86 var(--soir-p)); --tree-hi: color-mix(in oklch, #7CC08A, #ADC585 var(--soir-p));
+  --lawn-1: color-mix(in oklch, #A9D48E, #B7CF8D var(--soir-p)); --lawn-2: color-mix(in oklch, #8CC071, #9EB873 var(--soir-p));
+  --walk: color-mix(in oklch, #F0E5CF, #F5DECA var(--soir-p)); --walk-edge: color-mix(in oklch, #D8C6A4, #DDBFA4 var(--soir-p));
+  --lamp: calc(var(--soir, 0) * var(--soir, 0) * .85); --sun-dy: calc(var(--soir, 0) * 64px);
+} }
+.scene .sc-sun { transform: translateY(var(--sun-dy, 0px)); }
+.es .es-astre { transform: translateY(calc(var(--sun-dy, 0px) * .3)); }
+/* Passage clair ↔ sombre (app.js : setTheme) : le nouveau thème s'ouvre en cercle depuis le bouton touché, l'ancien reste
+   dessous sans bouger ; le cercle est animé par le script (il part du toucher). Sans l'API ou avec moins de mouvement : tout de suite. */
+:root.vt-theme::view-transition-old(root), :root.vt-theme::view-transition-new(root) { animation: none; mix-blend-mode: normal; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .sky {
   --sky-1: #050D1A; --sky-2: #17304F; --sun: #EFE9D6; --cloud: #22385A; --mtn: #0E1E35; --hill: #112640;
   --bldg: #1D2F48; --bldg-top: #15243A; --bldg-shade: #18293F; --win: #F4C46A; --tree-1: #1D4A37; --tree-2: #15392A; --tree-hi: #24573F; --trunk: #3E3226;
   --lawn-1: #16321F; --lawn-2: #112819; --walk: #2B3445; --walk-edge: #222A39; --hedge: #183A24; --bed: #142E1A;
   --fl-1: #C9951E; --fl-2: #B86E12; --fl-3: #CFAE45; --gate: #2C4C7E; --gate-in: #E6ECF5; --iron: #8EA2BF;
-  --bird: transparent; --stars: 1; --lamp: 1; --crater: .16; --w-body-1: #3C8FCB; --w-body-2: #D9861A; --w-skin: #6E4A33; --w-hair: #120D0A; } }
+  --bird: transparent; --stars: 1; --lamp: 1; --crater: .16; --w-body-1: #3C8FCB; --w-body-2: #D9861A; --w-skin: #6E4A33; --w-hair: #120D0A; --soir: 0; } }
 :root[data-theme="dark"] .sky {
   --sky-1: #050D1A; --sky-2: #17304F; --sun: #EFE9D6; --cloud: #22385A; --mtn: #0E1E35; --hill: #112640;
   --bldg: #1D2F48; --bldg-top: #15243A; --bldg-shade: #18293F; --win: #F4C46A; --tree-1: #1D4A37; --tree-2: #15392A; --tree-hi: #24573F; --trunk: #3E3226;
   --lawn-1: #16321F; --lawn-2: #112819; --walk: #2B3445; --walk-edge: #222A39; --hedge: #183A24; --bed: #142E1A;
   --fl-1: #C9951E; --fl-2: #B86E12; --fl-3: #CFAE45; --gate: #2C4C7E; --gate-in: #E6ECF5; --iron: #8EA2BF;
-  --bird: transparent; --stars: 1; --lamp: 1; --crater: .16; --w-body-1: #3C8FCB; --w-body-2: #D9861A; --w-skin: #6E4A33; --w-hair: #120D0A; }
+  --bird: transparent; --stars: 1; --lamp: 1; --crater: .16; --w-body-1: #3C8FCB; --w-body-2: #D9861A; --w-skin: #6E4A33; --w-hair: #120D0A; --soir: 0; }
 
 .scene { position: relative; overflow: hidden; }
 .scene svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; overflow: visible; }

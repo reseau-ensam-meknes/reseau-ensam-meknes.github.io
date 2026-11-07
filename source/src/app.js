@@ -1,8 +1,8 @@
 // Point d'entrée : coque de l'application, connexion, accueil, notifications.
 import { getLang, setLang, chargerAR, addAR } from './i18n.js';
 import { html, render, useState, useEffect, useLayoutEffect, useMemo, useRef } from './vendor/preact-htm.js';
-import { createStore, texteErreur } from './store.js';
-import { Icon, Person, Avatar, Bar, CompanyLogo, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, useLocal, Celebration, celebrate, voirRangs, roleTexte, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, Feuille, ecranLibre, mouvementReduit, EnTetePage, Anneau, Squelette } from './ui.js';
+import { createStore, texteErreur, ENSUITE } from './store.js';
+import { Icon, Person, Avatar, Bar, CompanyLogo, Toaster, toast, Confirm, LevelChip, BrandLogo, SchoolScene, useLocal, Celebration, celebrate, voirRangs, Pastille, brancherPhotos, Modal, LigneAFaire, LigneNouvelle, brancherHistorique, historiqueBranche, aller, ensuite, rendrePosition, ecranLibre, mouvementReduit, EnTetePage, Anneau, Squelette } from './ui.js';
 import { deckMatch, matchsDe, seasonOf, seasonLabel, niveauOf, NIVEAUX, OBJECTIFS, FOUND, statutOf, seasonStats, computeScores, starOfMonth, mentorState, requestsFor, pct, routedTo, needsRelance, myGroups, groupKey, enqueteDue, TYPES_EVENEMENT, conversations, offerMatch, demandesPour, demandeEnPause, typesDemande, rdvALaUne, profilLaureatFait, petitesTaches, tachePhoto, besoinsDeMoi, demandeLargeLe, etatAide, AIDE_OUVERTE, peutPostulerA, presetInscription, mercisPublics, porteApresRefus, pointsRecrutement, nouvelleDemandeApres, filiereCourte, demandesActives, DEMANDES_MAX, annoncePour, parametresLien, deMonEcole } from './logic.js';
 import { OffersPage, OfferCard, OfferDetail, OfferComposer, recoFor, matchesMe, APP_STATUS } from './offers.js';
 import { estPortee, estPartagee, partageExpire } from './origine.js';
@@ -21,7 +21,8 @@ import { PhotoCard, PhotoProposee } from './photo.js';
 import { notifsPartage, PartageFeuille } from './entreprises.js';
 import { ConfianceFeuille, demandesRecues, pairsAConfirmer } from './confiance.js';
 import { NextEvent, publierEvenement } from './agenda.js';
-import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, retenirLien, suiteLien, accordIci, roleAccord, oublierInvitation } from './entree.js';
+import { Moi } from './moi.js';
+import { Entree, LangToggle, magasinEntree, cssPret, chargerScene, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, retenirLien, suiteLien, accordIci, roleAccord, oublierInvitation } from './entree.js';
 import { MessagesPage, useAlerteMessages } from './messages.js';
 import { MatchPage, MatchAccueil } from './match.js';
 import { PoulsReseau, marquerArrivee, useArrivee, ArriveeSheet } from './pouls.js';
@@ -175,7 +176,7 @@ function App({ store }) {
   const [applyNow, setApplyNow] = useState(false);
   const [askMentor, setAskMentor] = useState(null);
   const [confirmBox, setConfirmBox] = useState(null);
-  const [pop, setPop] = useState(null); // le menu du compte ('me')
+  const [pop, setPop] = useState(null); // « Moi », derrière l'avatar ('me') : moi.js
   const [cloche, setCloche] = useState(false);
   // « Je peux aider » et « Choisir un horaire » s'ouvrent sur place : { demande: id } ou { mentorat: id }
   const [aide, setAide] = useState(null);
@@ -188,7 +189,6 @@ function App({ store }) {
   useEffect(() => store.on(() => setTick(t => t + 1)), []);
   // Pages publiques (attestation, désabonnement) : le lien « #… » suffit. Dans la coque, l'historique s'en charge (ui.js).
   useEffect(() => { const f = () => { if (!historiqueBranche()) setRoute(readRoute()); }; addEventListener('hashchange', f); return () => removeEventListener('hashchange', f); }, []);
-  useEffect(() => { if (!pop) return; const f = e => { if (!e.target.closest('.pop-wrap')) setPop(null); }; document.addEventListener('click', f); return () => document.removeEventListener('click', f); }, [pop]);
   // Changement d'écran. En avançant : seul le contenu arrive (voir plus bas), la coque reste immobile.
   // Au Retour : rien ne glisse (l'iPhone anime déjà son geste), et la page reprend sa place (y).
   const routeAct = useRef(route); routeAct.current = route;
@@ -372,8 +372,9 @@ function App({ store }) {
   // La pastille de la barre du bas : sous l'onglet de la page (aucune si la page n'y est pas : profil, messages…)
   const iBas = navBas.findIndex(([k]) => k === page);
   // Ouverture depuis les données gardées sur l'appareil, mise à jour pas encore arrivée : les écrans qui ont besoin de ce
-  // qui n'y est pas gardé (conversations entières, messages des groupes, commentaires de relecture, modération) l'attendent
-  const attente = !!store.enAttente && (page === 'messages' || page === 'admin' || (page === 'reseau' && route.sub === 'groupes') || (page === 'mentorat' && route.sub === 'cv'));
+  // qui n'y est pas gardé (conversations entières, messages des groupes, commentaires de relecture, modération) l'attendent ;
+  // de même, juste après l'ouverture, ceux qui lisent une table chargée en second (store.ecranEnAttente, tablesEcran)
+  const attente = (!!store.enAttente && (page === 'messages' || page === 'admin' || (page === 'reseau' && route.sub === 'groupes') || (page === 'mentorat' && route.sub === 'cv'))) || store.ecranEnAttente(page, route.sub);
   // L'accord (loi 09-08) pas encore donné : la fenêtre de l'accord, sauf sur Confidentialité et Mon profil ;
   // les feuilles de notifications attendent, quelle que soit la page
   const sansAccord = store.mode === 'live' && !me.consent_at;
@@ -420,28 +421,10 @@ function App({ store }) {
         <a class="brand mobile-only" href="#accueil" aria-label="Réseau ENSAM · Accueil" onClick=${e => { e.preventDefault(); go('accueil'); }}><${BrandLogo} size=${34}/><strong>Réseau ENSAM</strong></a>
         <span class="spacer"></span>
         ${store.mode === 'demo' ? html`<${PersonaSwitch} store=${store} go=${go}/>` : null}
-        <${ThemeToggle} onChange=${relang}/>
         <a class=${'icon-btn chat-top mobile-only' + (page === 'messages' ? ' on' : '')} aria-current=${page === 'messages' ? 'page' : null} href="#messages" aria-label=${msgs ? `Messages (${msgs} non lus)` : 'Messages'} onClick=${e => { e.preventDefault(); go('messages', { onglet: true }); }}><${Icon} name="chat"/>${msgs ? html`<span class="badge-n" aria-hidden="true">${neuf(msgs)}</span>` : null}</a>
         <${LangToggle} onChange=${relang} store=${store} me=${me}/>
         <button class="icon-btn cloche-btn" aria-label=${todo ? `Notifications (${todo} à faire)` : 'Notifications'} aria-haspopup="dialog" onClick=${() => { setPop(null); setCloche(true); }}><${Icon} name="bell"/>${todo ? html`<span class="badge-n" aria-hidden="true">${neuf(todo)}</span>` : null}</button>
-        <div class="pop-wrap"><button class="me-btn" onClick=${() => setPop(pop === 'me' ? null : 'me')} aria-label="Mon compte" aria-expanded=${pop === 'me'}><${Avatar} p=${me} size=${34}/>${avecMatch && dotFor(perso) ? html`<span class="dotn mobile-only" aria-hidden="true"></span>` : null}</button>
-          ${pop === 'me' ? html`<div class="menu-pop right" role="group" aria-label="Mon compte">
-            <div class="menu-who"><strong>${me.full_name}</strong><span class="muted small">${roleTexte(me)}</span></div>
-            ${me.admin_ok ? html`<div class="vue-switch" role="group" aria-label="Voir l’application comme">${[['admin', 'Admin', 'shield'], ['laureat', 'Lauréat', 'star']].map(([r, l, i]) =>
-              html`<button type="button" key=${r} class=${me.role === r ? 'on' : ''} aria-pressed=${me.role === r} onClick=${() => me.role !== r && changerVue(r)}><${Icon} name=${i} size=${15}/> ${l}</button>`)}</div>` : null}
-            <button onClick=${() => go('profil')}><${Icon} name="user" size=${16}/> Mon profil</button>
-            ${avecMatch ? html`<button class="menu-mobile" onClick=${() => go(perso)}><${Icon} name=${me.role === 'etudiant' ? 'route' : 'star'} size=${16}/> ${me.role === 'etudiant' ? 'Mon parcours' : 'Mon espace'}${dotFor(perso) ? html`<span class="dotn" aria-hidden="true"></span><span class="sr-only">À faire ici</span>` : null}</button>` : null}
-            <button class="menu-mobile" onClick=${() => go('suivi')}><${Icon} name="chart" size=${16}/> ${me.role === 'etudiant' ? 'Mon année' : 'Suivi'}</button>
-            ${me.role !== 'admin' ? html`<button onClick=${() => go('accueil/etapes')}><${Icon} name="route" size=${16}/> Comment ça marche ?</button>` : null}
-            ${me.role !== 'admin' ? html`<button onClick=${() => { setPop(null); ctx.openAnnee(); }}><${Icon} name="award" size=${16}/> Ton année dans le réseau</button>` : null}
-            ${install ? html`<button onClick=${() => { setPop(null); install.prompt ? install.prompt() : setIosHelp(install.android ? 'android' : 'ios'); }}><${Icon} name="download" size=${16}/> Installer l’application</button>` : null}
-            <button onClick=${() => go('confidentialite')}><${Icon} name="shield" size=${16}/> Confidentialité</button>
-            <button class="menu-theme" onClick=${() => { setTheme(themeActuel() === 'dark' ? 'light' : 'dark'); setPop(null); relang(); }}><${Icon} name=${themeActuel() === 'dark' ? 'sun' : 'moon'} size=${16}/> ${themeActuel() === 'dark' ? 'Mode clair' : 'Mode sombre'}</button>
-            ${themeChoisi() ? html`<button onClick=${() => { setTheme(null); setPop(null); relang(); }}><${Icon} name="sun" size=${16}/> Thème automatique (comme l’appareil)</button>` : null}
-            ${me.role === 'admin' ? html`<button onClick=${() => go('admin')}><${Icon} name="shield" size=${16}/> Administration</button>` : null}
-            ${store.mode === 'live' ? html`<button onClick=${() => store.signOut()}><${Icon} name="logout" size=${16}/> Se déconnecter</button>` : html`<button onClick=${async () => { setPop(null); await store.reset(); toast('Démo réinitialisée.'); }}><${Icon} name="spark" size=${16}/> Réinitialiser la démo</button>`}
-          </div>` : null}
-        </div>
+        <div class="pop-wrap"><button class="me-btn" onClick=${e => { e.currentTarget.focus({ preventScroll: true }); setPop(pop === 'me' ? null : 'me'); }} aria-label="Moi" aria-haspopup="dialog" aria-expanded=${pop === 'me'}><${Avatar} p=${me} size=${34}/>${avecMatch && dotFor(perso) ? html`<span class="dotn mobile-only" aria-hidden="true"></span>` : null}</button></div>
       </header>
       ${store.mode === 'demo' && !plein ? html`<section class=${'demo-band' + (demoOuverte ? ' ouverte' : '')} aria-label="Démo">
         <span class="demo-point" aria-hidden="true"></span>
@@ -452,7 +435,7 @@ function App({ store }) {
         ${page === 'accueil' ? html`<${Home} key=${me.id + me.role} ...${ctx}/>` : null}
         ${page === 'offres' ? html`<${OffersPage} ...${ctx}/>` : null}
         ${page === 'match' ? html`<${MatchPage} ...${ctx}/>` : null}
-        ${attente ? html`<${PageEnChargement} horsLigne=${store.horsLigne}/>` : null}
+        ${attente ? html`<${PageEnChargement} horsLigne=${store.horsLigne || attente === 'reseau'}/>` : null}
         ${page === 'mentorat' && !attente ? html`<${MentoratPage} ...${ctx}/>` : null}
         ${page === 'messages' && !attente ? html`<${MessagesPage} ...${ctx}/>` : null}
         ${page === 'parcours' ? html`<${ParcoursPage} ...${ctx}/>` : null}
@@ -483,7 +466,9 @@ function App({ store }) {
     ${iosHelp ? html`<${IosInstallHelp} android=${iosHelp === 'android'} onClose=${() => setIosHelp(false)}/>` : null}
     <${PastilleApp} ctx=${ctx} cache=${plein}/>
     ${needConsent ? html`<${ConsentModal} ctx=${ctx}/>` : null}
-    ${pop ? html`<${Feuille} key=${pop} onClose=${() => setPop(null)}/>` : null}
+    ${pop === 'me' ? html`<${Moi} me=${me} mode=${store.mode} avecMatch=${avecMatch} pointPerso=${dotFor(perso)} theme=${themeChoisi()} choisirTheme=${t => { setTheme(t); relang(); }} go=${go} changerVue=${changerVue}
+      installer=${install ? () => { setPop(null); install.prompt ? install.prompt() : setIosHelp(install.android ? 'android' : 'ios'); } : null} ouvrirAnnee=${() => { setPop(null); ctx.openAnnee(); }}
+      sortir=${store.mode === 'live' ? () => store.signOut() : async () => { setPop(null); await store.reset(); toast('Démo réinitialisée.'); }} onClose=${() => setPop(null)}/>` : null}
     <${Toaster}/>
     <${Celebration}/>
     <${PrevenirHote} ctx=${ctx} bloque=${sansAccord}/>
@@ -494,16 +479,45 @@ function App({ store }) {
 const THEME_KEY = 'ensam-theme';
 const themeChoisi = () => { try { const t = localStorage.getItem(THEME_KEY); return t === 'light' || t === 'dark' ? t : null; } catch { return null; } };
 const themeActuel = () => themeChoisi() || (matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-function setTheme(t) {
+// Le nouveau thème s'ouvre en cercle depuis le bouton touché (View Transitions, 450 ms). Tout de suite sans l'API, quand
+// l'appareil demande moins de mouvement, ou quand rien ne change à l'écran (thème automatique déjà pareil).
+// origin : { x, y } ou l'évènement du clic ; sans lui, le dernier toucher (moins d'1,5 s) ou l'élément qui a le focus (clavier).
+let dernierToucher = null, cercles = 0;
+if (typeof addEventListener === 'function') addEventListener('pointerdown', e => { dernierToucher = { x: e.clientX, y: e.clientY, t: performance.now() }; }, { capture: true, passive: true });
+function origineTheme(o) {
+  const x = o?.clientX ?? o?.x, y = o?.clientY ?? o?.y;
+  if (Number.isFinite(x) && Number.isFinite(y) && !(o?.type === 'click' && o.detail === 0)) return { x, y };
+  if (dernierToucher && performance.now() - dernierToucher.t < 1500) return dernierToucher;
+  const f = document.activeElement, r = f && f !== document.body ? f.getBoundingClientRect() : null;
+  return r?.width ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : null;
+}
+function themeEnCercle(t, origin) {
+  const o = origin === false ? null : origineTheme(origin);
+  const apres = t || (matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  if (!o || typeof document.startViewTransition !== 'function' || mouvementReduit() || apres === themeActuel()) return false;
+  const racine = document.documentElement, rayon = Math.hypot(Math.max(o.x, innerWidth - o.x), Math.max(o.y, innerHeight - o.y));
+  // Le choix est gardé tout de suite : ce qui se redessine avant la fin du cercle montre déjà le bon bouton
+  try { if (t) localStorage.setItem(THEME_KEY, t); else localStorage.removeItem(THEME_KEY); } catch { /* stockage indisponible */ }
+  racine.classList.add('vt-theme');
+  // Deux passages coup sur coup (Entrée gardée appuyée…) : le premier, interrompu, ne retire pas la classe du second
+  // (sans elle, le second cercle prendrait aussi le fondu des changements de page)
+  const n = ++cercles;
+  const fin = () => { if (n === cercles) racine.classList.remove('vt-theme'); };
+  try {
+    const vt = document.startViewTransition(() => setTheme(t, false));
+    vt.ready.then(() => racine.animate({ clipPath: [`circle(0px at ${o.x}px ${o.y}px)`, `circle(${rayon}px at ${o.x}px ${o.y}px)`] },
+      { duration: 450, easing: 'ease-out', pseudoElement: '::view-transition-new(root)' })).catch(() => {});
+    vt.finished.then(fin, fin);
+  } catch { fin(); return false; }
+  return true;
+}
+function setTheme(t, origin) {
+  if (themeEnCercle(t, origin)) return;
   try { if (t) localStorage.setItem(THEME_KEY, t); else localStorage.removeItem(THEME_KEY); } catch { /* stockage indisponible */ }
   const root = document.documentElement;
   if (t) root.dataset.theme = t; else delete root.dataset.theme;
   const sombre = themeActuel() === 'dark';
   document.querySelectorAll('meta[name="theme-color"]').forEach(m => { m.content = t ? (sombre ? '#0B1320' : '#1670A8') : (m.media.includes('dark') ? '#0B1320' : '#1670A8'); });
-}
-function ThemeToggle({ onChange }) {
-  const sombre = themeActuel() === 'dark';
-  return html`<button class="icon-btn theme-btn" onClick=${() => { setTheme(sombre ? 'light' : 'dark'); onChange?.(); }} aria-label=${sombre ? 'Passer en mode clair' : 'Passer en mode sombre'} title=${sombre ? 'Mode clair' : 'Mode sombre'}><${Icon} name=${sombre ? 'sun' : 'moon'}/></button>`;
 }
 
 
@@ -1151,7 +1165,7 @@ function Home(ctx) {
     ${feuilleFondateur}
     ${arrivee ? html`<${ArriveeSheet} a=${arrivee} pas=${pas} me=${me} store=${store} onClose=${finArrivee}/>` : null}
     ${(voirEtapes || parRoute) && guide ? html`<${EtapesSheet} me=${me} g=${guide} historique=${!parRoute} onClose=${() => { setVoirEtapes(false); if (parRoute) go('accueil'); }}
-      onHide=${() => { setOff(true); setVoirEtapes(false); if (parRoute) go('accueil'); toast('C’est noté. Tu retrouves les premiers pas dans ton menu : « Comment ça marche ? ».'); }}/>` : null}
+      onHide=${() => { setOff(true); setVoirEtapes(false); if (parRoute) go('accueil'); toast('C’est noté. Tu retrouves les premiers pas dans « Moi », en haut : « Comment ça marche ? ».'); }}/>` : null}
   </section>`;
 }
 
@@ -1225,6 +1239,8 @@ function MyProfile({ ctx }) {
   const versOnglet = k => go(routeOnglet(k), { remplacer: true });
   // L'anneau du profil : il se remplit à l'arrivée, puis avance à chaque champ ajouté (une photo, une bio…)
   const r = remplissageProfil(me), p = r ? Math.round(r.fait / r.total * 100) : 0;
+  // Mes données : l'export attend tout ce que le compte a écrit (les tables d'ENSUITE, que la copie de l'appareil ne garde pas)
+  const donnees = onglet === 'donnees' ? store.etatTables(ENSUITE) : '';
   const anneau = r ? html`<${Anneau} valeur=${p} max=${100} taille=${56} epaisseur=${5} ton=${p === 100 ? 'bien' : 'accent'} label=${`Profil rempli à ${p} %`}><b class="pf-pct" dir="ltr">${p}${html`<small>%</small>`}</b><//>` : null;
   return html`<section class="page narrow pf-page">
     <${EnTetePage} surTitre="Jamais public" titre="Mon profil" action=${anneau || store.mode === 'live' ? html`${anneau}${store.mode === 'live' ? html`<button class="btn ghost" onClick=${() => store.signOut()}><${Icon} name="logout"/> Se déconnecter</button>` : null}` : null}>
@@ -1237,7 +1253,7 @@ function MyProfile({ ctx }) {
       </div>
       <${ProfileForm} ctx=${ctx} initial=${me} key=${me.id} onglet=${onglet} versOnglet=${versOnglet} apresVisibilite=${html`<${FondateurPublicCase} ctx=${ctx} niveau=${2}/>`}/>
       <div class="pf-partie" id="profil-notifications" hidden=${onglet !== 'notifications'}><${MesNotifications} ctx=${ctx}/></div>
-      <div class="pf-partie" id="profil-donnees" hidden=${onglet !== 'donnees'}><${MesDonnees} ctx=${ctx}/></div>
+      <div class="pf-partie" id="profil-donnees" hidden=${onglet !== 'donnees'}>${donnees ? html`<${PageEnChargement} horsLigne=${donnees === 'reseau'}/>` : html`<${MesDonnees} ctx=${ctx}/>`}</div>
     </div>
   </section>`;
 }
@@ -1269,8 +1285,10 @@ function Onboarding({ store, relang }) {
   const root = document.getElementById('app');
   try {
     // Le magasin déjà prêt pour la page d'entrée, sinon on le crée ; l'arabe se charge en même temps que les données
-    // (sur la page d'entrée, ses phrases sont déjà traduites : on ne repasse pas en français pour une coupure)
-    const [store] = await Promise.all([magasinEntree() || createStore(), getLang() === 'ar' ? chargerAR().catch(() => { if (!document.getElementById('entree')) return setLang('fr', { garder: false }); }) : null]);
+    // (sur la page d'entrée, ses phrases sont déjà traduites : on ne repasse pas en français pour une coupure).
+    // Le premier affichage attend aussi le CSS complet (site.css : la page n'a que celui de l'entrée) et l'illustration
+    // de l'accueil, préchargés en même temps : l'application s'affiche telle qu'avant, en une fois.
+    const [store] = await Promise.all([magasinEntree() || createStore(), getLang() === 'ar' ? chargerAR().catch(() => { if (!document.getElementById('entree')) return setLang('fr', { garder: false }); }) : null, cssPret(), chargerScene().catch(() => {})]);
     brancherPhotos(path => store.photo(path));
     brancherSignal(m => toast(m, 'err'));
     // Connecté : ce qui avait été tapé sur la page d'entrée ne doit jamais revenir après une déconnexion

@@ -1898,6 +1898,115 @@ export function laureatsPourDemande(data, d, n = 3, now = new Date()) {
 }
 
 // ---------------------------------------------------------------------------
+// Plan · partie membres : « Pionnier de sa promo », « +1 depuis ta dernière visite », l'invitation nommée,
+// et ce que la page d'entrée montre avec l'accord des membres (mêmes règles que la section « Plan · partie membres »
+// de schema.sql ; la démo s'en sert, la page d'entrée lit la base).
+// ---------------------------------------------------------------------------
+// Pionnier : les 3 premiers lauréats de chaque promo à rejoindre le réseau (date d'inscription, puis l'id), école par école.
+// Jamais l'administration, même en vue lauréat. Un badge, rien d'autre : ni places restantes, ni compte à rebours, ni points.
+export const NB_PIONNIERS = 3;
+const pionniersVus = new WeakMap();
+export function pionniersOf(profiles) {
+  if (!Array.isArray(profiles)) return new Set();
+  if (pionniersVus.has(profiles)) return pionniersVus.get(profiles);
+  const promos = new Map();
+  for (const p of profiles) {
+    if (!laureatCompte(p) || !p.created_at || !p.promo || !Number.isFinite(new Date(p.created_at).getTime())) continue;
+    const k = `${p.ecole || 'ensam-meknes'}|${p.promo}`;
+    if (!promos.has(k)) promos.set(k, []);
+    promos.get(k).push(p);
+  }
+  const out = new Set();
+  for (const l of promos.values()) {
+    l.sort((a, b) => new Date(a.created_at) - new Date(b.created_at) || String(a.id).localeCompare(String(b.id)));
+    for (const p of l.slice(0, NB_PIONNIERS)) out.add(p.id);
+  }
+  pionniersVus.set(profiles, out);
+  return out;
+}
+BADGES.push({ id: 'pionnier', nom: 'Pionnier de sa promo', desc: 'Parmi les 3 premiers lauréats de sa promo à rejoindre le réseau', test: (s, p, x) => !!p.id && !!x.pionniers?.has(p.id) });
+// Le même badge, vu par le lauréat lui-même (Mon espace)
+export const PIONNIER_MOI = { nom: 'Pionnier de ta promo', desc: 'Parmi les 3 premiers lauréats de ta promo à rejoindre le réseau' };
+
+// « +1 depuis ta dernière visite » : ce qui a augmenté depuis les chiffres vus la dernière fois.
+// Première visite (rien de gardé), chiffre qui baisse ou illisible : rien.
+export function haussesDepuisVisite(avant, maintenant) {
+  const out = {};
+  if (!avant || typeof avant !== 'object' || Array.isArray(avant)) return out;
+  for (const [k, v] of Object.entries(maintenant || {})) {
+    const a = avant[k], n = v;
+    if (typeof a === 'number' && typeof n === 'number' && Number.isFinite(a) && Number.isFinite(n) && n > a) out[k] = n - a;
+  }
+  return out;
+}
+
+// Invitation nommée : le code d'un membre (8 caractères, a-z et 0-9) voyage dans son lien de promo (&de=…).
+// À l'inscription, la base retrouve qui a invité (même école), une seule fois. Aucun point, aucun classement.
+export const CODE_INVITATION = /^[a-z0-9]{8}$/;
+export const codeInvitationValide = c => typeof c === 'string' && CODE_INVITATION.test(c);
+export function lienAvecCode(lien, code) {
+  if (!codeInvitationValide(code) || !lien) return lien;
+  try { const u = new URL(lien); u.searchParams.set('de', code); return u.href; } catch { return lien; }
+}
+export const ligneInvites = n => (n > 1 ? `${n} camarades sont arrivés grâce à toi` : n === 1 ? '1 camarade est arrivé grâce à toi' : '');
+// Les camarades arrivés grâce à un membre : combien, et les prénoms des 20 derniers (comme mes_invites())
+export function invitesDe(profiles, id) {
+  const moi = (profiles || []).find(p => p.id === id);
+  if (!moi) return { n: 0, prenoms: [] };
+  const l = (profiles || []).filter(p => p.invite_par === id && (p.ecole || 'ensam-meknes') === (moi.ecole || 'ensam-meknes'))
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at) || String(a.id).localeCompare(String(b.id)));
+  return { n: l.length, prenoms: l.slice(0, 20).map(p => String(p.full_name || '').trim().split(/\s+/)[0]) };
+}
+
+// Page d'entrée. Un visage : le prénom et l'initiale du nom (« Nadia E. »), la promo, l'entreprise, la photo.
+// Seulement les lauréats vérifiés qui ont dit oui (vitrine_publique), de l'école du visiteur, 24 au plus, avec photo d'abord.
+// (Vérifié : un compte qui prendrait le nom et la photo de quelqu'un d'autre ne le met pas sur la page publique.)
+export function nomCourt(full) {
+  const [prenom = '', nom = ''] = String(full || '').trim().split(/\s+/);
+  return nom ? `${prenom} ${[...nom][0].toUpperCase()}.` : prenom;
+}
+export function visagesPublics(profiles, ecole = 'ensam-meknes', max = 24) {
+  return (profiles || []).filter(p => p.vitrine_publique === true && p.verified === true && laureatCompte(p) && (p.ecole || 'ensam-meknes') === ecole)
+    .sort((a, b) => (a.photo_path ? 0 : 1) - (b.photo_path ? 0 : 1) || new Date(a.created_at) - new Date(b.created_at) || String(a.id).localeCompare(String(b.id)))
+    .slice(0, max)
+    .map(p => ({ nom: nomCourt(p.full_name), promo: p.promo, entreprise: String(p.entreprise || '').trim() || null, photo: p.photo_path || null }));
+}
+// Une réussite montrée : recrutement confirmé, et l'étudiant ET le lauréat ont coché « Peut être montré sur la page d'entrée ».
+// L'entreprise, les deux prénoms, la promo du lauréat, le mois. Les 12 plus récentes de l'école.
+export const reussiteMontrable = pl => pl?.status === 'confirme' && !!pl.laureat_id;
+export function reussitesPubliques(data, ecole = 'ensam-meknes', max = 12) {
+  const qui = new Map((data?.profiles || []).map(p => [p.id, p]));
+  const prenomDe = p => String(p.full_name || '').trim().split(/\s+/)[0];
+  const quand = pl => pl.confirmed_at || pl.created_at;
+  return (data?.placements || []).filter(pl => {
+    const s = qui.get(pl.student_id), l = qui.get(pl.laureat_id);
+    return reussiteMontrable(pl) && pl.public_etudiant === true && pl.public_laureat === true && s && l
+      && (pl.ecole || 'ensam-meknes') === ecole && (s.ecole || 'ensam-meknes') === ecole && (l.ecole || 'ensam-meknes') === ecole;
+  }).sort((a, b) => new Date(quand(b)) - new Date(quand(a)) || String(a.id).localeCompare(String(b.id))).slice(0, max)
+    .map(pl => ({ entreprise: String(pl.entreprise || '').trim(), etudiant: prenomDe(qui.get(pl.student_id)), laureat: prenomDe(qui.get(pl.laureat_id)), promo: qui.get(pl.laureat_id).promo, mois: String(quand(pl) || '').slice(0, 7) }));
+}
+// « 3 lauréats peuvent t'aider » (demandes.js) : le besoin du conseil demandé directement, d'après le type de la demande
+export { BESOIN_DE_DEMANDE };
+// Un lauréat déjà sollicité par cet étudiant (conseil en attente ou en cours, ou demandé depuis la demande) : il n'est plus proposé
+export const dejaSollicite = (data, moiId, laureatId, d) => (data?.mentorships || []).some(m => m.student_id === moiId && m.mentor_id === laureatId
+  && (['demande', 'acceptee'].includes(m.status) || (d?.created_at && new Date(m.created_at) >= new Date(d.created_at))));
+// Sous chaque demande ouverte (pas en pause) d'un étudiant : jusqu'à 3 lauréats, jamais deux fois le même d'une demande à l'autre.
+// « Lui demander un conseil » lui envoie des horaires : seulement un lauréat disponible pour aider (comme mentorsFor et sa fiche),
+// jamais quelqu'un que l'étudiant a bloqué.
+export function laureatsPourMesDemandes(data, me, demandes, n = 3, now = new Date()) {
+  const vus = new Set(); const out = new Map();
+  if (me?.role !== 'etudiant') return out;
+  for (const d of demandes || []) {
+    if (d.status !== 'ouverte' || d.auteur_id !== me.id || demandeEnPause(d, now)) continue;
+    const l = laureatsPourDemande(data, d, Infinity, now)
+      .filter(x => x.p.mentor_dispo && !vus.has(x.p.id) && !bloque(data, me.id, x.p.id) && !dejaSollicite(data, me.id, x.p.id, d)).slice(0, n);
+    for (const x of l) vus.add(x.p.id);
+    out.set(d.id, l);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Console d'administration : le pilotage. L'objectif du plan, les semaines (nouveaux, actifs, demandes, offres, matchs, aides),
 // ce qui s'est passé, qui aide le plus, où sont les membres. Des calculs sur les données, rien d'autre (admin-tableau.js les montre).
 // ---------------------------------------------------------------------------

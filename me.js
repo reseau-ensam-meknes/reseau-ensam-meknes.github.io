@@ -1,8 +1,8 @@
 // « Mon parcours » (étudiants) et « Mon espace » (lauréats).
-import { html, useState } from './vendor/preact-htm.js';
+import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Avatar, Bar, toast, LevelChip, CompanyLogo, TYPE_ICON, celebrate, injectCSS, Embleme, EnTetePage, Compteur, Anneau, Rangee, vibrer, clavierOnglets } from './ui.js';
 import { addAR, arCount } from './i18n.js';
-import { OBJECTIFS, NIVEAUX, TYPES, niveauOf, statutOf, typeForNiveau, seasonLabel, timeAgo, levelOf, BADGES, badgesOf, BAREME, NIVEAUX_IMPACT, mentorState, requestsFor, demandesPour } from './logic.js';
+import { OBJECTIFS, NIVEAUX, TYPES, niveauOf, statutOf, typeForNiveau, seasonLabel, timeAgo, levelOf, BADGES, badgesOf, BAREME, NIVEAUX_IMPACT, mentorState, requestsFor, demandesPour, pionniersOf, PIONNIER_MOI, haussesDepuisVisite } from './logic.js';
 import { APP_STATUS, OfferComposer, annulerRecrutement } from './offers.js';
 import { AttestationCard, ShareModal } from './growth.js';
 import { Filleuls, ParrainCard } from './saison.js';
@@ -64,6 +64,7 @@ export function ParcoursPage(ctx) {
       ${pl && pl.status !== 'en_attente' ? html`<div class="found-line"><${CompanyLogo} name=${pl.entreprise} size=${40}/><span class="grow"><strong translate="no">${pl.entreprise}</strong>${pl.ville ? html`, <span translate="no">${pl.ville}</span>` : ''}${pl.pays && pl.pays !== 'Maroc' ? ` (${pl.pays})` : ''}<br/><span class="esp-sous">${pl.status === 'confirme' ? `Vérifié : recrutement déclaré par ${helper?.full_name || 'un lauréat'}, confirmé par toi` : 'Trouvé en dehors de la plateforme'}</span></span>
         <button type="button" class="btn small tonal" onClick=${() => setShare(true)}><${Icon} name="share" size=${15}/> Partager</button></div>` : null}
       ${pl && pl.status === 'confirme' && helper ? html`<label class="check small consent"><input id="pl-partage" type="checkbox" checked=${!!pl.partage_ok} onChange=${e => act(() => store.update('placements', pl.id, { partage_ok: e.target.checked }))}/> ${helper.full_name.split(' ')[0]} peut citer mon nom s’il partage mon recrutement sur LinkedIn</label>` : null}
+      ${pl && pl.status === 'confirme' && helper ? html`<${ReussitePublique} ctx=${ctx} pl=${pl} cote="etudiant"/>` : null}
     </section>
 
     ${pl && pl.laureat_id && pl.status === 'confirme' && pl.merci ? html`<${MerciBox} ctx=${ctx} pl=${pl} helper=${helper}/>` : null}
@@ -262,7 +263,8 @@ export const routeEspace = k => (k === 'impact' ? 'espace' : 'espace/' + k);
 export function EspacePage(ctx) {
   const { data, me, scores, go } = ctx;
   const s = scores.get(me.id) || { points: 0, events: [], offres: 0, recrutes: 0, mentorats: 0, mercis: 0, reponses: 0 };
-  const mine = badgesOf(s, me, { star: ctx.starId, fondateurs: ctx.fondateurs, ambassadeurs: ctx.ambassadeurs });
+  const mine = badgesOf(s, me, { star: ctx.starId, fondateurs: ctx.fondateurs, ambassadeurs: ctx.ambassadeurs, pionniers: pionniersOf(data.profiles) })
+    .map(b => (b.id === 'pionnier' ? { ...b, ...PIONNIER_MOI } : b));
   const myOffers = data.offers.filter(o => o.author_id === me.id).sort((a, b) => (a.status === 'ouverte' ? 0 : 1) - (b.status === 'ouverte' ? 0 : 1) || new Date(b.created_at) - new Date(a.created_at));
   const waiting = data.placements.filter(p => p.laureat_id === me.id && p.status === 'en_attente');
   const helped = data.placements.filter(p => p.laureat_id === me.id && p.status === 'confirme');
@@ -281,6 +283,7 @@ export function EspacePage(ctx) {
   // et le geste de la première aide passent en tonal
   const carteAFaire = aFaireIci(data, me);
   const onglet = ongletEspace(ctx.sub);
+  const hausses = useHausses(me.id, { recrutes: helped.length, mentorats: Number(s.mentorats) || 0, mercis: mercis.length });
   // Sur ordinateur, « Publier une offre » est dans la barre latérale (le bouton de la page se cache) ; sur un petit écran, « Publier »
   const publier = nouveau ? null : html`<button type="button" class=${'btn publier-offre ' + (carteAFaire ? 'tonal' : 'primary')} onClick=${() => setCompose(true)}>
     <${Icon} name="plus" size=${18}/><span class="po-long">Publier une offre</span><span class="po-court">Publier</span></button>`;
@@ -292,7 +295,7 @@ export function EspacePage(ctx) {
     ${nouveau ? html`<${PremiereAide} ctx=${ctx} plein=${!carteAFaire} onPublier=${() => setCompose(true)}/>
       <${ProchainBadge} s=${s} mine=${mine}/>` : html`
       <${CeQuiTAttend} ctx=${ctx} waiting=${waiting} rdv=${rdv}/>
-      <${MonImpact} s=${s} mine=${mine} recrutes=${helped.length} mercis=${mercis.length} onBareme=${() => setBareme(true)}/>
+      <${MonImpact} s=${s} mine=${mine} recrutes=${helped.length} mercis=${mercis.length} hausses=${hausses} onBareme=${() => setBareme(true)}/>
       <${OngletsEspace} onglet=${onglet} nOffres=${myOffers.length} onChange=${k => go(routeEspace(k), { remplacer: true })}/>
       <div class="esp-panneau" id="esp-panneau" role="tabpanel" aria-labelledby=${'esp-onglet-' + onglet} key=${onglet}>
         ${onglet === 'impact' ? html`<${PanneauImpact} ctx=${ctx} mercis=${mercis} recrues=${recrues} mine=${mine} events=${events} onShare=${setShare}/>` : null}
@@ -343,18 +346,20 @@ const MOIS_COURT = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', '
 
 // « Mon impact » : une carte bleu nuit. Trois chiffres qui comptent pour les étudiants (ils comptent à l'arrivée),
 // le niveau et ce qu'il reste pour le suivant, puis l'anneau du prochain badge. Les ondes, en haut, s'ouvrent une fois.
-function MonImpact({ s, mine, recrutes, mercis, onBareme }) {
+// Sous un chiffre qui a monté depuis la dernière visite : « +1 depuis ta dernière visite » (useHausses)
+function MonImpact({ s, mine, recrutes, mercis, hausses = {}, onBareme }) {
   const lvl = levelOf(s.points);
   const faits = [
-    [recrutes, 'recruté grâce à toi', 'recrutés grâce à toi'],
-    [Number(s.mentorats) || 0, 'mentorat terminé', 'mentorats terminés'],
-    [mercis, 'merci reçu', 'mercis reçus'],
+    [recrutes, 'recruté grâce à toi', 'recrutés grâce à toi', 'recrutes'],
+    [Number(s.mentorats) || 0, 'mentorat terminé', 'mentorats terminés', 'mentorats'],
+    [mercis, 'merci reçu', 'mercis reçus', 'mercis'],
   ];
   return html`<section class="impact-card" aria-labelledby="impact-titre">
     <span class="ic-ondes" aria-hidden="true"></span>
     <div class="ic-tete"><h2 id="impact-titre">Mon impact</h2><button type="button" class="ic-bareme" onClick=${onBareme}><span class="ic-long">Comment gagner des points ?</span><span class="ic-court">Barème</span></button></div>
-    <ul class="impact-nums">${faits.map(([n, un, plus], i) => html`<li key=${i} class=${n ? '' : 'zero'}>
-      <span class="impact-n"><${Compteur} v=${n}/></span><span class="impact-l">${n > 1 ? plus : un}</span></li>`)}</ul>
+    <ul class="impact-nums">${faits.map(([n, un, plus, k], i) => html`<li key=${i} class=${n ? '' : 'zero'}>
+      <span class="impact-n"><${Compteur} v=${n}/></span><span class="impact-l">${n > 1 ? plus : un}</span>
+      ${hausses[k] ? html`<${Hausse} n=${hausses[k]}/>` : null}</li>`)}</ul>
     <div class="ic-bas">
       <div class="impact-niveau">
         <div class="lvl-row"><${LevelChip} points=${s.points}/><span class="impact-pts">${`${s.points} point${s.points > 1 ? 's' : ''} d’impact`}</span></div>
@@ -364,6 +369,48 @@ function MonImpact({ s, mine, recrutes, mercis, onBareme }) {
       <${ProchainBadge} s=${s} mine=${mine} dedans/>
     </div>
   </section>`;
+}
+
+// « +1 depuis ta dernière visite » : les chiffres de « Mon impact » vus la dernière fois, gardés sur cet appareil pour chaque
+// membre. On les garde de nouveau en quittant Mon espace (ou au bout de 4 s, ou quand l'onglet passe en arrière-plan) :
+// la pastille reste pour cette visite, pas pour la suivante. Première visite : rien. Ni points, ni classement.
+const CLE_VUS = id => 'espace-vus-' + id;
+const lireVus = id => { try { return JSON.parse(localStorage.getItem(CLE_VUS(id)) || 'null'); } catch { return null; } };
+function useHausses(id, chiffres) {
+  const [avant, setAvant] = useState(() => ({ id, v: lireVus(id) }));
+  const derniers = useRef({}); derniers.current[id] = chiffres;
+  const vus = avant.id === id ? avant.v : lireVus(id);
+  useEffect(() => {
+    if (avant.id !== id) setAvant({ id, v: lireVus(id) });
+    const garder = () => { try { localStorage.setItem(CLE_VUS(id), JSON.stringify(derniers.current[id])); } catch { /* pas de stockage : pas de pastille */ } };
+    const cache = () => { if (document.visibilityState === 'hidden') garder(); };
+    const t = setTimeout(garder, 4000);
+    addEventListener('pagehide', garder); document.addEventListener('visibilitychange', cache);
+    return () => { clearTimeout(t); removeEventListener('pagehide', garder); document.removeEventListener('visibilitychange', cache); garder(); };
+  }, [id]);
+  return haussesDepuisVisite(vus, chiffres);
+}
+// La pastille dit tout haut ce qu'elle compte : sur un téléphone, pas de survol pour lire un « title »
+function Hausse({ n }) {
+  return html`<span class="impact-hausse">${`+${n} depuis ta dernière visite`}</span>`;
+}
+
+// « Peut être montré sur la page d'entrée » : sous un recrutement confirmé, l'étudiant et le lauréat cochent chacun leur case
+// (store.montrerReussite, jamais celle de l'autre). La réussite n'y paraît qu'avec les deux, et s'en va dès qu'un des deux décoche.
+export function ReussitePublique({ ctx, pl, cote }) {
+  const { store, act } = ctx;
+  if (pl?.status !== 'confirme' || !pl.laureat_id || !store.montrerReussite) return null;
+  const changer = e => act(async () => {
+    const oui = e.target.checked;
+    const x = await store.montrerReussite(pl.id, oui);
+    toast(!oui ? 'C’est noté : cette réussite n’est pas sur la page d’entrée.'
+      : x?.public_etudiant && x?.public_laureat ? 'C’est noté : cette réussite est maintenant sur la page d’entrée.'
+      : 'C’est noté : elle sera sur la page d’entrée quand l’autre personne aura coché aussi.');
+  });
+  return html`<div class="pl-public">
+    <label class="check small consent"><input id=${'pl-public-' + pl.id} class="pl-public-case" type="checkbox" checked=${pl['public_' + cote] === true} onChange=${changer}/> Peut être montré sur la page d’entrée</label>
+    <p class="small muted pl-public-sens">La page d’entrée est publique : l’entreprise, vos deux prénoms, la promo du lauréat et le mois y apparaissent seulement si vous cochez tous les deux. Tu peux décocher à tout moment.</p>
+  </div>`;
 }
 
 // Une rangée d'onglets au clavier (Mon espace, Suivi, Mentorat) : la brique commune de ui.js
@@ -387,9 +434,10 @@ function PanneauImpact({ ctx, mercis, recrues, mine, events, onShare }) {
     ${mercis.length ? html`<${Rangee} titre=${html`Leurs mercis <span class="count">${mercis.length}</span>`} cls="esp-mercis">${mercis.slice(0, 8).map(m => html`<${CarteMerci} key=${m.id} ctx=${ctx} m=${m}/>`)}<//>` : null}
     ${recrues.length ? html`<section class="esp-bloc esp-recrues" aria-labelledby="esp-recrues-titre">
       <h2 class="esp-h" id="esp-recrues-titre">Recrutés grâce à toi cette année <span class="count">${recrues.length}</span></h2>
-      <ul class="esp-lignes">${recrues.slice(0, 5).map(p => html`<li key=${p.id}><div class="esp-ligne">
+      <ul class="esp-lignes">${recrues.slice(0, 5).map(p => html`<li class="esp-recrue" key=${p.id}><div class="esp-ligne">
         <${Person} p=${store.byId('profiles', p.student_id)} onOpen=${openProfile} size=${44} sub=${html`<span class="faits"><span><bdi translate="no">${p.entreprise}</bdi></span><span>${TYPES[p.type]?.label}</span></span>`}/>
-        <button type="button" class="icon-btn esp-partage" aria-label="Partager sur LinkedIn" title="Partager sur LinkedIn" onClick=${() => onShare(p)}><${Icon} name="share" size=${18}/></button></div></li>`)}</ul>
+        <button type="button" class="icon-btn esp-partage" aria-label="Partager sur LinkedIn" title="Partager sur LinkedIn" onClick=${() => onShare(p)}><${Icon} name="share" size=${18}/></button></div>
+        <${ReussitePublique} ctx=${ctx} pl=${p} cote="laureat"/></li>`)}</ul>
     </section>` : null}
     <${Filleuls} ctx=${ctx}/>
     ${vide ? html`<${Empty} icon="heart" title="Les mercis des étudiants arriveront ici">Un CV relu, un conseil, une offre : chaque aide compte, et l’étudiant peut te dire merci.<//>` : null}
@@ -500,7 +548,8 @@ const VERS_BADGE = {
   top: ['Atteins 300 points d’impact', s => [s.points, 300]],
 };
 // « Membre fondateur » ne s'obtient plus après les 25 premiers : on ne le montre qu'à ceux qui l'ont
-const badgesPossibles = has => BADGES.filter(b => !['fondateur', 'ambassadeur'].includes(b.id) || has.has(b.id));
+// (« Pionnier de ta promo » non plus : il vient de la date d'arrivée, rien à viser)
+const badgesPossibles = has => BADGES.filter(b => !['fondateur', 'ambassadeur', 'pionnier'].includes(b.id) || has.has(b.id));
 
 // Le prochain badge : son emblème dans un anneau qui se remplit (où on en est), ce qu'il demande.
 // Dans « Mon impact » (dedans) ou seul, pour un nouveau lauréat (« Ton premier badge »)
@@ -578,6 +627,11 @@ injectCSS('me-espace', `
 .esp-ligne .person-l1 > :not(.person-name) { flex: none; }
 .esp-ligne .person-l1 > .verif { margin-block-start: calc((1.3em - 16px) / 2); }
 .esp-partage { flex: none; inline-size: 44px; block-size: 44px; color: var(--ink-2); }
+/* Réussite montrée sur la page d'entrée : la case et sa phrase ; sous une recrue, alignées sur son nom (après le visage) */
+.pl-public { display: flex; flex-direction: column; gap: .2rem; min-width: 0; }
+.pl-public .consent { margin-top: 0; }
+.pl-public-sens { margin: 0; padding-inline-start: 1.6rem; max-width: 60ch; }
+.esp-recrue > .pl-public { margin-top: -.35rem; padding: 0 1rem .85rem; padding-inline-start: calc(1rem + 44px + .85rem); }
 .esp-ligne-fin { flex: none; display: inline-flex; align-items: center; gap: .25rem; }
 .esp-go { flex: none; display: inline-grid; color: var(--muted); transition: transform .25s var(--ease), color .2s; }
 .esp-lignes button.esp-ligne:hover .esp-go { color: var(--accent); transform: translateX(2px); }
@@ -626,6 +680,10 @@ injectCSS('me-espace', `
 .impact-card .impact-n { font: 750 var(--fs-titre)/1 var(--f-display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; color: #FFFFFF; }
 .impact-card .impact-l { font-size: var(--fs-2); line-height: 1.35; color: var(--ic-l); text-wrap: balance; }
 .impact-card .impact-nums li.zero .impact-n { color: rgb(255 255 255 / .6); }
+/* « +1 depuis ta dernière visite » : une pastille calme sous le chiffre, verte sur le bleu nuit, le texte en blanc ;
+   dans une colonne étroite, elle passe à la ligne */
+.impact-card .impact-hausse { display: inline-block; max-width: 100%; padding: .1rem .5rem; border-radius: var(--r-sm); background: rgb(93 201 145 / .22); box-shadow: inset 0 0 0 1px rgb(93 201 145 / .42);
+  color: #FFFFFF; font: 650 var(--fs-1)/1.35 var(--f-body); font-variant-numeric: tabular-nums; white-space: normal; overflow-wrap: anywhere; text-wrap: balance; }
 .ic-bas { display: flex; flex-direction: column; gap: 1rem; padding-top: 1.05rem; border-top: 1px solid var(--ic-filet); min-width: 0; }
 .impact-card .impact-niveau { display: flex; flex-direction: column; gap: .6rem; }
 .impact-card .lvl-row { display: flex; align-items: center; gap: .55rem; flex-wrap: wrap; }
@@ -829,6 +887,8 @@ injectCSS('me-parcours', `
 }
 .pc-objectif .found-line { padding-top: 1rem; }
 .pc-objectif .consent { margin-top: -.4rem; }
+.pc-objectif .pl-public { margin-top: -.4rem; }
+.pc-objectif .pl-public .consent { margin-top: 0; }
 
 /* Mes candidatures : une carte, une ligne par candidature, le statut en couleur */
 .pc-tete { display: flex; align-items: center; justify-content: space-between; gap: .5rem 1rem; flex-wrap: wrap; }
@@ -903,7 +963,17 @@ addAR({
   'Un lauréat a déclaré ton recrutement : confirme-le juste au-dessus.': 'صرّح خريج بتوظيفك: أكّده في الأعلى.',
   'C’est fait : ta réussite compte dans le suivi de ton année. Bravo !': 'تمّ الأمر: نجاحك يُحتسب في تتبّع سنتك. أحسنت!',
   'Pas de placement à viser cette année : profite de l’Entraide et du mentorat pour préparer ton premier stage.': 'لا تدريب مطلوب هذه السنة: استفد من التعاون والإرشاد لتحضير تدريبك الأول.',
+  // Plan · partie membres
+  'Pionnier de ta promo': 'من روّاد دفعتك', 'Parmi les 3 premiers lauréats de ta promo à rejoindre le réseau': 'من بين أول 3 خريجين من دفعتك انضموا إلى الشبكة',
+  'Pionnier de sa promo': 'من روّاد الدفعة', 'Parmi les 3 premiers lauréats de sa promo à rejoindre le réseau': 'من بين أول 3 خريجين من دفعته انضموا إلى الشبكة',
+  'Pionnier': 'من الروّاد', 'Pionnier de sa promo : parmi les 3 premiers lauréats de sa promo à rejoindre le réseau': 'من روّاد الدفعة: من بين أول 3 خريجين من دفعته انضموا إلى الشبكة',
+  'Peut être montré sur la page d’entrée': 'يمكن عرضه في صفحة الدخول',
+  'C’est noté : cette réussite n’est pas sur la page d’entrée.': 'تم الحفظ: هذا النجاح غير معروض في صفحة الدخول.',
+  'C’est noté : cette réussite est maintenant sur la page d’entrée.': 'تم الحفظ: هذا النجاح معروض الآن في صفحة الدخول.',
+  'C’est noté : elle sera sur la page d’entrée quand l’autre personne aura coché aussi.': 'تم الحفظ: سيُعرض في صفحة الدخول عندما يؤشّر الطرف الآخر أيضًا.',
+  'La page d’entrée est publique : l’entreprise, vos deux prénoms, la promo du lauréat et le mois y apparaissent seulement si vous cochez tous les deux. Tu peux décocher à tout moment.': 'صفحة الدخول عمومية: تظهر فيها الشركة واسماكما الشخصيان ودفعة الخريج والشهر، فقط إذا أشّرتما معًا. يمكنك إلغاء التأشير في أي وقت.',
 }, [
+  [/^\+(\d+) depuis ta dernière visite$/, n => `+${n} منذ زيارتك الأخيرة`],
   [/^Guide de l’étranger : (.+)$/, x => `دليل الخارج: ${x}`],
   [/^Entretien partagé : (.+)$/, x => `مقابلة مشتركة: ${x}`],
   [/^Avis de stage : (.+)$/, x => `رأي حول تدريب: ${x}`],

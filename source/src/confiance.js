@@ -214,6 +214,38 @@ export function ConfianceFeuille({ ctx, quoi, onClose }) {
   <//>`;
 }
 
+// Plan · partie membres. « Mon profil » > Visibilité, lauréats seulement : être dans « Ils sont déjà dans le réseau » sur la
+// page d'entrée (visages_publics). La question n'apparaît que quand on connaît la réponse (store.monAccordVitrine : la vue
+// des profils ne la porte pas). Non, à tout moment : la photo change aussi de nom, un lien déjà donné ne mène plus à rien.
+// Seul un profil vérifié y paraît (visages_publics) : un lauréat pas encore vérifié le sait avant de cocher.
+export function VitrinePubliqueCase({ ctx }) {
+  const { me, store, act } = ctx;
+  const [choix, setChoix] = useState(undefined);
+  const laureat = me?.role === 'laureat';
+  const verifie = me?.verified === true;
+  useEffect(() => {
+    if (!laureat || !store?.monAccordVitrine) return;
+    let vivant = true;
+    store.monAccordVitrine().then(v => { if (vivant) setChoix(v); }, () => {});
+    return () => { vivant = false; };
+  }, [me?.id, laureat, me?.vitrine_publique]);
+  if (!laureat || choix === undefined) return null;
+  const changer = e => act(async () => {
+    const oui = e.target.checked;
+    const r = await store.changerVitrine(oui, choix === true);
+    setChoix(oui);
+    toast(oui ? (verifie ? 'C’est noté : ta photo, ton prénom, ta promo et ton entreprise sont sur la page d’entrée.' : 'C’est noté : tu seras sur la page d’entrée dès que ton profil sera vérifié.')
+      : r?.photoRetiree ? 'Tu n’es plus sur la page d’entrée. Ta photo a été retirée : remets-la depuis Mon profil.'
+      : 'Tu n’es plus sur la page d’entrée.');
+  });
+  return html`<div class="pf-vitrine">
+    <h2 class="md-titre">Page d’entrée</h2>
+    <label class="check"><input id="pf-vitrine" type="checkbox" checked=${choix === true} aria-describedby=${verifie ? 'pf-vitrine-sens' : 'pf-vitrine-sens pf-vitrine-verif'} onChange=${changer}/> Montrer ma photo, mon prénom, ma promo et mon entreprise sur la page d’entrée du réseau</label>
+    <p class="small muted" id="pf-vitrine-sens">La page d’entrée est publique : n’importe qui peut la voir. Tu peux l’enlever à tout moment.</p>
+    ${verifie ? null : html`<p class="small muted" id="pf-vitrine-verif">Seuls les profils vérifiés y apparaissent : tu y seras dès que le tien le sera.</p>`}
+  </div>`;
+}
+
 injectCSS('confiance', `
 .cf-signal { display: inline-flex; align-items: center; gap: .3rem; border: 0; background: none; color: var(--muted); font: inherit; font-size: var(--fs-2); padding: .25rem .4rem; border-radius: var(--r-sm); cursor: pointer; }
 .cf-signal:hover, .cf-signal:focus-visible { color: var(--bad); background: var(--bad-soft); }
@@ -258,6 +290,10 @@ injectCSS('confiance', `
 .profile-foot { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
 .cf-alertes { display: flex; flex-direction: column; gap: .4rem; padding: .6rem 0; border-block: 1px solid var(--line); }
 .cf-alertes .check.sub { padding-inline-start: 1.6rem; }
+/* Page d'entrée (Mon profil > Visibilité) : sous la case des membres fondateurs, un seul titre « Page d'entrée » */
+.pf-vitrine { display: flex; flex-direction: column; gap: .55rem; }
+.pf-vitrine p { margin: 0; }
+.pf-fondateur > .md-titre ~ .pf-vitrine > .md-titre { display: none; }
 @media (max-width: 640px) {
   .cf-vis-row { grid-template-columns: minmax(0, 1fr); }
   .cf-vis-seg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -301,6 +337,13 @@ addAR({
   'Ils aimeraient tes coordonnées': 'يودّون معلومات الاتصال بك', 'Je ne sais pas': 'لا أعرف', 'Je confirme': 'أؤكد',
   'Confirme ceux que tu connais : avec deux confirmations, leur badge « vérifié » arrive.': 'أكّد من تعرفهم: بتأكيدين يحصلون على شارة «موثَّق».',
   'Visible après accord :': 'يظهر بعد الموافقة:',
+  'Montrer ma photo, mon prénom, ma promo et mon entreprise sur la page d’entrée du réseau': 'إظهار صورتي واسمي الشخصي ودفعتي وشركتي في صفحة الدخول إلى الشبكة',
+  'La page d’entrée est publique : n’importe qui peut la voir. Tu peux l’enlever à tout moment.': 'صفحة الدخول عمومية: يمكن لأي شخص رؤيتها. يمكنك إزالة ذلك في أي وقت.',
+  'C’est noté : ta photo, ton prénom, ta promo et ton entreprise sont sur la page d’entrée.': 'تم الحفظ: صورتك واسمك الشخصي ودفعتك وشركتك الآن في صفحة الدخول.',
+  'Tu n’es plus sur la page d’entrée.': 'لم تعد تظهر في صفحة الدخول.',
+  'Tu n’es plus sur la page d’entrée. Ta photo a été retirée : remets-la depuis Mon profil.': 'لم تعد تظهر في صفحة الدخول. وأُزيلت صورتك: أعد إضافتها من «ملفي الشخصي».',
+  'C’est noté : tu seras sur la page d’entrée dès que ton profil sera vérifié.': 'تم الحفظ: ستظهر في صفحة الدخول بمجرد توثيق ملفك.',
+  'Seuls les profils vérifiés y apparaissent : tu y seras dès que le tien le sera.': 'لا تظهر فيها إلا الملفات الموثَّقة: ستظهر فيها بمجرد توثيق ملفك.',
 }, [
   [/^Qu’est-ce qui ne va pas avec (.+) \?$/, x => `ما المشكل في ${CIBLES_AR[x] || x}؟`],
   [/^(.+?) aimerait avoir tes coordonnées\.$/, n => `يود ${n} الحصول على معلومات اتصالك.`],

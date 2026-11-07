@@ -7,7 +7,7 @@ import { Icon, Modal, Field, Empty, Person, Avatar, roleTexte, useBusy, toast, i
 import { useBrouillon, mouvementReduit } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
 import { addAR, arCount, t as tr } from './i18n.js';
-import { TYPES, AIDES, DEMANDES_MAX, typesDemande, demandesActives, demandeEnPause, demandesPour, niveauOf, timeAgo, fmtDate, placementOf, etatAide, AIDE_OUVERTE, manquesDemande } from './logic.js';
+import { TYPES, AIDES, DEMANDES_MAX, typesDemande, demandesActives, demandeEnPause, demandesPour, niveauOf, timeAgo, fmtDate, placementOf, etatAide, AIDE_OUVERTE, manquesDemande, laureatsPourMesDemandes, BESOIN_DE_DEMANDE } from './logic.js';
 import { CV_MAX } from './store.js';
 import { CvButton, OuvrirCV } from './cv.js';
 import { MessageBtn } from './messages.js';
@@ -132,6 +132,8 @@ function MesDemandes({ ctx, focusId, onNew, onEdit }) {
   const anciennes = mine.filter(d => !ACTIVES.includes(d.status));
   const peutPlus = actives.length < DEMANDES_MAX;
   const laureat = me.role === 'laureat';
+  // « 3 lauréats peuvent t'aider » sous chaque demande ouverte : jamais deux fois le même d'une demande à l'autre
+  const reco = laureatsPourMesDemandes(data, me, actives);
   if (!mine.length) return html`<section class="panel dm-hero">
     ${laureat ? html`<p class="eyebrow">Un nouveau poste ?</p>` : null}
     <h2>${laureat ? 'Dis-le aux lauréats du réseau' : 'Dis aux lauréats ce que tu cherches'}</h2>
@@ -142,13 +144,13 @@ function MesDemandes({ ctx, focusId, onNew, onEdit }) {
   return html`<section class="m-section dm-mes">
     <div class="m-head"><h2 class="titre-sec">${laureat ? 'Ma demande d’emploi' : 'Mes demandes'}</h2><span class="spacer"></span>
       ${peutPlus ? html`<button type="button" id="dm-nouvelle" class="btn small" onClick=${onNew}><${Icon} name="plus" size=${15}/> Nouvelle demande</button>` : html`<span class="small muted">2 demandes en cours au plus</span>`}</div>
-    <div class="list">${actives.map(d => html`<${CarteAuteur} key=${d.id} ctx=${ctx} d=${d} focus=${d.id === focusId} onEdit=${() => onEdit(d)}/>`)}</div>
+    <div class="list">${actives.map(d => html`<${CarteAuteur} key=${d.id} ctx=${ctx} d=${d} focus=${d.id === focusId} onEdit=${() => onEdit(d)} reco=${reco.get(d.id)}/>`)}</div>
     ${anciennes.length ? html`<details class="dm-anciennes" open=${anciennes.some(d => d.id === focusId) || !actives.length}><summary>${anciennes.length > 1 ? `Anciennes demandes (${anciennes.length})` : 'Ancienne demande'}</summary>
       <div class="list">${anciennes.map(d => html`<${CarteAuteur} key=${d.id} ctx=${ctx} d=${d} focus=${d.id === focusId}/>`)}</div></details>` : null}
   </section>`;
 }
 
-function CarteAuteur({ ctx, d, focus, onEdit }) {
+function CarteAuteur({ ctx, d, focus, onEdit, reco }) {
   const { data, store, act, me } = ctx;
   const props = (data.propositions || []).filter(x => x.demande_id === d.id);
   const envoyees = props.filter(x => x.status === 'envoyee').sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
@@ -175,6 +177,7 @@ function CarteAuteur({ ctx, d, focus, onEdit }) {
     ${d.status === 'ouverte' ? (envoyees.length
       ? html`<div class="dm-props"><p class="eyebrow">${envoyees.length > 1 ? `${envoyees.length} lauréats te proposent leur aide` : 'Un lauréat te propose son aide'}</p>${envoyees.map(x => html`<${PropositionRecue} key=${x.id} ctx=${ctx} d=${d} x=${x}/>`)}</div>`
       : !pause ? html`<p class="small muted dm-attente"><${Icon} name="bell" size=${15}/> <span>Les lauréats de ton parcours sont prévenus. Leurs propositions arrivent ici et dans tes messages.</span></p>` : null) : null}
+    ${d.status === 'ouverte' && !pause && reco?.length ? html`<${LaureatsPourToi} ctx=${ctx} d=${d} liste=${reco}/>` : null}
     ${d.status === 'match' ? html`<${MatchAuteur} ctx=${ctx} d=${d}/>` : null}
     ${d.status === 'pourvue' ? html`<${ReussiteAuteur} ctx=${ctx} d=${d}/>` : null}
 
@@ -187,6 +190,29 @@ function CarteAuteur({ ctx, d, focus, onEdit }) {
     </div>
     <${DemandeSocial} ctx=${ctx} d=${d} ouvrir=${focus}/>
   </article>`;
+}
+
+// « 3 lauréats peuvent t'aider » : les mieux placés pour cette demande (même filière ou parcours, le sujet dans leur poste,
+// l'étranger), tant qu'aucune aide n'est acceptée. On leur demande directement un conseil (le sujet repris de la demande),
+// ou on ouvre leur profil. Un lauréat déjà sollicité laisse sa place au suivant ; moins de 3 : ceux qui existent.
+function LaureatsPourToi({ ctx, d, liste }) {
+  const { openProfile } = ctx;
+  const titre = liste.length > 1 ? `${liste.length} lauréats peuvent t’aider` : 'Un lauréat peut t’aider';
+  return html`<section class="dm-reco" aria-labelledby=${'dm-reco-' + d.id}>
+    <p class="eyebrow" id=${'dm-reco-' + d.id}>${titre}</p>
+    <ul class="dm-reco-liste" role="list">${liste.map(({ p, why }) => html`<li class="dm-reco-l" key=${p.id}>
+      <button type="button" class="dm-reco-qui" onClick=${() => openProfile(p)}>
+        <${Avatar} p=${p} size=${40}/>
+        <span class="dm-reco-txt"><strong translate="no" dir="auto">${p.full_name}</strong>
+          <span class="small muted">${`Promo ${p.promo}`}${p.entreprise ? html` · <span translate="no" dir="auto">${p.entreprise}</span>` : null}</span>
+          ${why.length ? html`<span class="why">${why.map(w => html`<span class="mini good">${w}</span>`)}</span>` : null}</span>
+      </button>
+      <div class="dm-reco-acts">
+        <button type="button" class="btn small tonal dm-reco-demander" aria-haspopup="dialog" onClick=${() => ctx.askHelp(p, BESOIN_DE_DEMANDE[d.type] || 'stage', d.titre)}><${Icon} name="mentor" size=${15}/> Lui demander un conseil</button>
+        <button type="button" class="btn small ghost dm-reco-profil" onClick=${() => openProfile(p)}>Voir son profil</button>
+      </div>
+    </li>`)}</ul>
+  </section>`;
 }
 
 // Une aide reçue : qui, quoi, son mot ; on l'accepte (c'est un match) ou on dit non merci
@@ -650,6 +676,18 @@ injectCSS('demandes', `
 .dm-chez > summary .grow { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dm-chez[open] > summary .linkish { display: none; }
 .dm-chez .grid2 { margin-top: var(--sp-2); }
+/* « 3 lauréats peuvent t'aider » : une ligne par lauréat (visage, nom, promo, pourquoi lui), ses deux gestes dessous */
+.dm-reco { display: flex; flex-direction: column; gap: var(--sp-2); padding-block-start: var(--sp-3); border-top: 1px solid var(--line); }
+.dm-reco > .eyebrow { margin: 0; }
+.dm-reco-liste { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-3); }
+.dm-reco-l { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); min-width: 0; }
+.dm-reco-qui { flex: 1 1 15rem; min-width: 0; display: flex; align-items: center; gap: var(--sp-3); min-height: 44px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; }
+.dm-reco-qui:hover strong { text-decoration: underline; text-underline-offset: 3px; }
+.dm-reco-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dm-reco-txt strong { overflow-wrap: anywhere; }
+.dm-reco-txt .why { display: flex; flex-wrap: wrap; gap: 4px; }
+.dm-reco-acts { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.dm-reco-acts .btn { min-height: 44px; }
 @media (prefers-reduced-motion: no-preference) { .dm-card.dm-focus { animation: dm-flash 1.2s ease-out 1; } }
 @keyframes dm-flash { from { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); } }
 /* Une demande, c'est quelqu'un qui demande : son visage et son statut en haut, ce qu'il cherche au-dessus du titre,
@@ -719,6 +757,7 @@ addAR({
   'Aucune demande en cours': 'لا يوجد طلب جارٍ', 'Les demandes des étudiants apparaissent ici dès qu’elles sont publiées.': 'تظهر طلبات الطلبة هنا بمجرد نشرها.', 'Retirer la demande': 'سحب الطلب', 'Demande retirée.': 'سُحب الطلب.',
   'Pas encore de proposition': 'لا يوجد اقتراح بعد', '1 proposition': 'اقتراح واحد', 'Un étudiant de ton parcours cherche': 'طالب من مسارك يبحث عن', 'Ma demande': 'طلبي',   'Ta demande et ton CV arrivent chez les lauréats de ton parcours : ceux qui peuvent t’aider te le proposent.': 'يصل طلبك وسيرتك الذاتية إلى خريجي مسارك: من يستطيع مساعدتك يقترح عليك ذلك.',
   'Demandes des étudiants': 'طلبات الطلبة', 'Via sa demande': 'عبر الطلب',
+  'Un lauréat peut t’aider': 'خريج واحد يمكنه مساعدتك',
   'avec l’encadrement de': 'بتأطير من', 'sur la recommandation de': 'بتوصية من',
   'Proposer mon aide': 'اقتراح مساعدتي', 'Recruter': 'توظيف', 'Encadrer': 'تأطير', 'Recommander': 'توصية',
   'Lire sa demande': 'قراءة الطلب', 'Réduire': 'إخفاء', 'Sa demande': 'الطلب', 'Ton entreprise': 'شركتك',
@@ -746,6 +785,7 @@ addAR({
   [/^Mes aides passées \((\d+)\)$/, n => `مساعداتي السابقة (${n})`],
   [/^(\d+) lauréats ont proposé leur aide$/, n => `عدد الخريجين الذين اقترحوا مساعدتهم: ${n}`],
   [/^(\d+) lauréats te proposent leur aide$/, n => `${n} خريجين يقترحون عليك مساعدتهم`],
+  [/^(\d+) lauréats peuvent t’aider$/, n => (+n === 2 ? 'خريجان يمكنهما مساعدتك' : `${n} خريجين يمكنهم مساعدتك`)],
   [/^(\d+) propositions$/, n => `${n} اقتراحات`],
   [/^Voir les (\d+)$/, n => `عرض ${n}`],
   [/^Je cherche : (.+)$/, t => `أبحث عن: ${({ Stage: 'تدريب', PFE: 'مشروع نهاية الدراسة', 'Stage à l’étranger': 'تدريب بالخارج', Emploi: 'عمل' })[t] || t}`],

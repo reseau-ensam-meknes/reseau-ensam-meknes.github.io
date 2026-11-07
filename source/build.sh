@@ -7,6 +7,8 @@ cd "$(dirname "$0")"
 rm -rf dist artifact && mkdir -p dist/vendor artifact/vendor
 for d in dist artifact; do cp src/*.js src/vendor/* "$d/" 2>/dev/null || true; mv "$d"/preact-htm.js "$d"/supabase.js "$d"/591.supabase.js "$d"/leaflet.js "$d"/leaflet.css "$d"/pdf.min.mjs "$d"/pdf.worker.min.mjs "$d/vendor/"; done
 { printf '<!doctype html>\n<html lang="fr">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">\n<meta name="theme-color" content="#1670A8" media="(prefers-color-scheme: light)">\n<meta name="theme-color" content="#0B1320" media="(prefers-color-scheme: dark)">\n<link rel="manifest" href="pwa/manifest.webmanifest">\n<link rel="apple-touch-icon" href="pwa/apple-touch-icon.png">\n<meta name="apple-mobile-web-app-capable" content="yes">\n<meta name="mobile-web-app-capable" content="yes">\n<meta name="apple-mobile-web-app-title" content="Réseau ENSAM">\n'
+  # iPhone : l'écran de démarrage de l'application installée, un par taille d'écran (outils/generer-demarrage.mjs)
+  LC_ALL=C ls src/pwa/demarrage | sed -n 's#^iphone-\([0-9]*\)x\([0-9]*\)-\([0-9]\)x\.png$#<link rel="apple-touch-startup-image" media="(device-width: \1px) and (device-height: \2px) and (-webkit-device-pixel-ratio: \3) and (orientation: portrait)" href="pwa/demarrage/&">#p'
   sed 's#<!--CONFIG-->#<script src="config.js"></script>#' src/page.html | sed '/^<div id="app">/,$d'
   printf '</head>\n<body>\n'
   sed -n '/^<div id="app">/,$p' src/page.html | sed 's#<!--CONFIG-->#<script src="config.js"></script>#'

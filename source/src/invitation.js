@@ -1,10 +1,10 @@
 // Lien d'invitation par promo, à coller dans les groupes WhatsApp : reseau-ensam-meknes.github.io/?promo=2027
 // Le lien ouvre directement « Créer mon compte » et, à l'étape suivante, la promo (et le rôle) sont déjà remplis.
 // La promo est gardée dans ce navigateur jusqu'à la fin de l'inscription, puis oubliée.
-import { html, useState } from './vendor/preact-htm.js';
+import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { Icon, toast, injectCSS, lienWhatsApp } from './ui.js';
-import { addAR, getLang } from './i18n.js';
-import { NIVEAUX, niveauOf, seasonOf, lienPromo, messageCamarade, inscritsDeLaPromo, ecoleDe, ECOLE_DEFAUT } from './logic.js';
+import { addAR, getLang, arCount } from './i18n.js';
+import { NIVEAUX, niveauOf, seasonOf, lienPromo, messageCamarade, inscritsDeLaPromo, ecoleDe, ECOLE_DEFAUT, lienAvecCode, codeInvitationValide, ligneInvites } from './logic.js';
 import { roleDePromo, promoValide as valide } from './regles-entree.js';
 
 // Lire le lien, garder la promo et le rôle choisi : la page d'entrée s'en charge (elle s'affiche avant le reste du site)
@@ -13,6 +13,34 @@ export { roleDePromo };
 
 // Lien d'une promo : sa petite page d'aperçu (page = true) nomme la promo dans WhatsApp, puis ouvre le site avec ?promo=
 export const lienInvitation = (promo, langue = 'fr', page = true) => lienPromo(promo, langue, page, location.href);
+
+// Invitation nommée : le lien de promo d'un membre porte son code (&de=…, la page d'aperçu le transmet). La page d'entrée
+// dit « Invitation de Nadia · promo 2019 », et l'inscription retient qui a invité. Sans code (base pas encore à jour,
+// pas de réseau, administration), le lien part sans : il marche pareil.
+export const lienDeMembre = (promo, langue, code, page = true) => lienAvecCode(lienInvitation(promo, langue, page), code);
+export function useCodeInvitation(ctx) {
+  const { store, me } = ctx;
+  const [code, setCode] = useState(() => (codeInvitationValide(me?.code_invitation) ? me.code_invitation : null));
+  useEffect(() => {
+    if (!me?.id || me.role === 'admin' || !store?.monCodeInvitation) return;
+    let vivant = true;
+    store.monCodeInvitation().then(c => { if (vivant) setCode(codeInvitationValide(c) ? c : null); }, () => {});
+    return () => { vivant = false; };
+  }, [me?.id]);
+  return code;
+}
+// Les camarades arrivés grâce au membre (mes_invites) : combien, et leurs prénoms. Un chiffre, jamais un classement.
+function useInvites(ctx) {
+  const { store, me, data } = ctx;
+  const [x, setX] = useState(null);
+  useEffect(() => {
+    if (!me?.id || !store?.mesInvites) return;
+    let vivant = true;
+    store.mesInvites().then(v => { if (vivant) setX(v); }, () => {});
+    return () => { vivant = false; };
+  }, [me?.id, store?.mode === 'live' ? null : data?.profiles]);
+  return x;
+}
 
 // Message prêt à coller dans le groupe WhatsApp de la promo. Une seule chose à faire en arrivant :
 // un étudiant de 3A à 5A dit aux lauréats ce qu'il cherche ; en 1re et 2e année, il demande un conseil ;
@@ -45,19 +73,24 @@ addAR({
   'Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.': 'دفعتك محدَّدة مسبقًا: أنشئ حسابك، ثم تحقق من معلوماتك.',
   'Fais venir ta promo': 'ادعُ دفعتك', '30 s': '30 ثانية',
   'Le message et le lien de ta promo sont prêts pour votre groupe WhatsApp.': 'الرسالة ورابط دفعتك جاهزان لمجموعة واتساب الخاصة بكم.',
+  '1 camarade est arrivé grâce à toi': 'انضمّ بفضلك زميل واحد',
   'Message prêt pour WhatsApp': 'الرسالة جاهزة لواتساب',
 }, [
+  [/^(\d+) camarades sont arrivés grâce à toi$/, n => `انضمّ بفضلك ${arCount(n, ['زميل واحد', 'زميلان', 'زملاء', 'زميلًا'])}`],
   [/^Bienvenue, promo (\d{4}) !$/, y => `مرحبا بك، دفعة ${y}!`],
   [/^Le message et le lien de la promo (\d{4}) sont prêts : envoie-les dans votre groupe WhatsApp\.$/, y => `الرسالة ورابط دفعة ${y} جاهزان: أرسلهما في مجموعة واتساب الخاصة بكم.`],
 ]);
 
 // « Fais venir ta promo » : un seul bouton, qui ouvre WhatsApp avec le message et le lien de la promo déjà prêts.
 // geste : une ligne de « Ta première aide » (me.js) ; sinon une petite carte (Mon espace, Mon parcours).
+// Le lien porte le code du membre ; la ligne dit combien de camarades sont arrivés grâce à lui (à partir d'un).
 export function FaisVenirPromo({ ctx, geste = false }) {
   const { data, me, saison } = ctx;
+  const code = useCodeInvitation(ctx);
+  const invites = useInvites(ctx);
   if (!['laureat', 'etudiant'].includes(me?.role) || !valide(Number(me.promo))) return null;
   const langue = getLang() === 'ar' ? 'ar' : 'fr';
-  const href = lienWhatsApp(messageCamarade(me, langue, lienInvitation(me.promo, langue), inscritsDeLaPromo(data.profiles, me.promo), saison));
+  const href = lienWhatsApp(messageCamarade(me, langue, lienDeMembre(me.promo, langue, code), inscritsDeLaPromo(data.profiles, me.promo), saison));
   if (geste) return html`<a class="pa-geste" id="pa-promo" href=${href} target="_blank" rel="noopener">
       <span class="pa-geste-ico"><${Icon} name="people" size=${20}/></span>
       <span class="pa-geste-txt"><span class="pa-geste-titre"><strong>Fais venir ta promo</strong><span class="pa-duree">30 s</span></span><span class="small muted">Le message et le lien de ta promo sont prêts pour votre groupe WhatsApp.</span></span>
@@ -66,7 +99,8 @@ export function FaisVenirPromo({ ctx, geste = false }) {
   return html`<div class="promo-card" id="promo-card">
     <a class="promo-lien" id="promo-wa" href=${href} target="_blank" rel="noopener">
       <span class="promo-ico" aria-hidden="true"><${Icon} name="people" size=${20}/></span>
-      <span class="promo-txt"><strong>Fais venir ta promo</strong><span class="promo-sous">Message prêt pour WhatsApp</span></span>
+      <span class="promo-txt"><strong>Fais venir ta promo</strong><span class="promo-sous">Message prêt pour WhatsApp</span>
+        ${invites?.n > 0 ? html`<span class="promo-invites" id="promo-invites"><${Icon} name="heart" size=${14}/><span>${ligneInvites(invites.n)}</span>${invites.prenoms.length ? html`<span class="promo-prenoms" translate="no" dir="auto">${invites.prenoms.slice(0, 5).join(', ')}${invites.n > 5 ? '…' : ''}</span>` : null}</span>` : null}</span>
       <span class="promo-go" aria-hidden="true"><${Icon} name="arrow" size=${18}/></span>
     </a>
   </div>`;
@@ -152,6 +186,11 @@ a.pa-geste { text-decoration: none; }
 .promo-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .05rem; }
 .promo-txt strong { font-weight: 650; line-height: 1.3; color: var(--ink); }
 .promo-sous { font-size: var(--fs-2); line-height: 1.4; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Les camarades arrivés grâce au membre : sous « Message prêt pour WhatsApp », dans la même ligne (le cœur, le nombre, les prénoms) */
+.promo-invites { display: flex; flex-wrap: wrap; align-items: center; gap: .1rem .4rem; margin-block-start: .2rem; font-size: var(--fs-2); line-height: 1.4; color: var(--ink-2); min-width: 0; }
+.promo-invites > .ico { flex: none; color: var(--accent); }
+.promo-invites > span:first-of-type { font-weight: 600; }
+.promo-prenoms { min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
 .promo-ico { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--tonal-bg); color: var(--tonal-ink); flex: none; }
 .promo-go { flex: none; display: inline-grid; color: var(--muted); transition: transform .25s var(--ease), color .2s; }
 .promo-lien:hover .promo-go { color: var(--accent); transform: translateX(2px); }
