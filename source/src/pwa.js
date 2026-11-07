@@ -360,7 +360,7 @@ addAR({
 // Une demande du navigateur lancée depuis Mon profil attend sa réponse : pas de feuille d'ouverture par-dessus
 let demandeEnCours = false;
 
-// « Notifications sur ce téléphone ou cet ordinateur », dans Mon profil (onglet Notifications) : coupées, une phrase et
+// « Notifications sur cet appareil », dans Mon profil (onglet Notifications) : coupées, une phrase et
 // un bouton « Activer » ; activées, « Activées sur cet appareil », « Tester » (pas en démo) et « Désactiver ». Ce que
 // l'appareil ne permet pas (navigateur, iPhone sans l'application, notifications bloquées) est dit en une phrase.
 export function PushToggle({ ctx }) {

@@ -6937,6 +6937,7 @@ test('page d’entrée dans Instagram sans Chrome : l’adresse de secours rouvr
   await c.page.click('#au-appli-ici');
   await c.page.waitForSelector('#au-appli-mot #au-appli-chrome');
   assert.equal(await c.page.locator('#au-appli').count(), 0);
+  await c.page.waitForFunction(() => document.activeElement?.id === 'au-appli-mot', null, { timeout: 5000 }).catch(() => {});
   assert.equal(await c.page.evaluate(() => document.activeElement?.id), 'au-appli-mot');
   assert.equal((await c.page.locator('#au-appli-mot').innerText()).trim(), 'Ouvrir le Réseau dans Chrome');
   assert.ok((await c.page.locator('#au-appli-mot #au-appli-chrome').boundingBox()).height >= 44);
@@ -7184,6 +7185,7 @@ test('page d’entrée : Facebook sur iPhone (un paragraphe : Safari, son geste 
   await f.page.click('#au-appli-ici');
   await f.page.waitForSelector('#au-appli-mot');
   assert.match(await f.page.locator('#au-appli-mot').innerText(), /^Touche ••• \(en haut ou en bas de l’écran\), puis «\sOuvrir dans Safari\s» ou «\sOuvrir dans le navigateur\s»\.$/);
+  await f.page.waitForFunction(() => document.activeElement?.id === 'au-appli-mot', null, { timeout: 5000 }).catch(() => {});
   assert.equal(await f.page.evaluate(() => document.activeElement?.id), 'au-appli-mot');
   assert.deepEqual(f.erreurs, []);
   await f.ctx.close();
@@ -7696,6 +7698,7 @@ test('iPad, application installée : la feuille d’ouverture, la ligne « Me pr
   await s.aller('profil/notifications');
   await s.page.click('#md-push-oui'); await s.page.waitForSelector('#md-push-compte');
   assert.match(await s.page.locator('#md-push-compte').innerText(), /^Cet iPad reçoit les notifications de ce compte\./);
+  assert.equal((await s.page.locator('#md-push-h').innerText()).trim(), 'Notifications sur cet appareil', 'le titre de Mon profil ne parle pas de téléphone');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
   // En arabe
@@ -7719,6 +7722,7 @@ test('iPad, application installée : la feuille d’ouverture, la ligne « Me pr
   const ca = await a.page.locator('#md-push-compte').innerText();
   assert.match(ca, /iPad/);
   assert.doesNotMatch(ca, /هاتف/);
+  assert.equal((await a.page.locator('#md-push-h').innerText()).trim(), 'الإشعارات على هذا الجهاز');
   assert.deepEqual(latinRestant(ca + ' ' + ta, ['iPad']), []);
   assert.deepEqual(a.erreurs, []);
   await a.ctx.close();
