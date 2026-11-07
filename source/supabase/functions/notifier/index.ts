@@ -770,7 +770,7 @@ export type Profil = {
   id: string; full_name: string; role: string; filiere: string; promo: number;
   entreprise?: string | null; pays?: string | null; ville?: string | null; vitrine?: boolean | null;
   verified?: boolean | null; cv_url?: string | null; cv_path?: string | null; competences?: string[] | null; created_at: string;
-  en_recherche?: boolean | null;
+  en_recherche?: boolean | null; ecole?: string | null;
 };
 export type Offre = {
   id: string; author_id: string; titre: string; entreprise: string; filieres?: string[] | null; annees?: number[] | null;
@@ -789,7 +789,7 @@ export type Placement = {
 };
 // Points d'un recrutement confirmé, même barème que logic.js (pointsRecrutement) : 50, +25 à l'international
 export const pointsRecrutement = (p: { type?: string | null; pays?: string | null }) => 50 + (p.type === 'etranger' || (!!p.pays && p.pays !== 'Maroc') ? 25 : 0);
-export type Evenement = { id: string; titre: string; debut: string; lieu?: string | null; public: string; annule?: boolean };
+export type Evenement = { id: string; titre: string; debut: string; lieu?: string | null; public: string; annule?: boolean; ecole?: string | null };
 export type Relecture = { id: string; student_id: string; reviewer_id: string | null; status: string };
 export type DemandeContact = { id: string; demandeur_id: string; cible_id: string; status: string };
 // Ambassadeur de promo et les chiffres de sa promo pour un mois (chiffres_ambassadeurs, schema.sql)
@@ -842,6 +842,32 @@ export type Donnees = {
   evenements: Evenement[]; enquetesFaites: Set<string>; relectures: Relecture[]; contactsEnAttente: Map<string, number>; signalements: number;
   ambassadeurs?: Map<string, ChiffresPromo>; moisAmbassadeurs?: string;
 };
+
+// Écoles : le résumé d'un membre ne parle que de son école. Une ligne suit l'école de la personne qui la porte
+// (auteur, étudiant, organisateur) ; une base d'avant les écoles n'a qu'ENSAM Meknès.
+export const ecoleDe = (x?: { ecole?: string | null } | null) => x?.ecole || 'ensam-meknes';
+export function parEcole(b: Brut, ecole: string): Brut {
+  const ici = new Set(b.profils.filter(p => ecoleDe(p) === ecole).map(p => p.id));
+  const a = (id?: string | null) => !!id && ici.has(id);
+  return {
+    ...b,
+    profils: b.profils.filter(p => ici.has(p.id)),
+    offres: b.offres.filter(o => a(o.author_id)),
+    candidatures: b.candidatures.filter(c => a(c.student_id)),
+    invitations: b.invitations.filter(i => a(i.student_id)),
+    mentorats: b.mentorats.filter(m => a(m.student_id)),
+    questions: b.questions.filter(q => a(q.author_id)),
+    reponses: b.reponses.filter(r => a(r.author_id)),
+    parrainages: b.parrainages.filter(x => a(x.filleul_id)),
+    cafes: b.cafes.filter(c => a(c.organisateur_id)),
+    placements: b.placements.filter(x => a(x.student_id)),
+    evenements: b.evenements?.filter(e => ecoleDe(e) === ecole),
+    enquetes: b.enquetes?.filter(e => a(e.user_id)),
+    relectures: b.relectures?.filter(r => a(r.student_id)),
+    demandesContact: b.demandesContact?.filter(x => a(x.cible_id)),
+    ambassadeurs: b.ambassadeurs?.filter(x => a(x.user_id)),
+  };
+}
 
 export function indexer(b: Brut, date: Date): Donnees {
   const now = date.getTime(), depuis7 = now - 7 * JOUR, depuis14 = now - 14 * JOUR, saison = saisonDe(date);
@@ -1956,7 +1982,8 @@ export async function chargerDonnees(env: Env, ids: string[], date: Date): Promi
   const Q = 'select=id,author_id,titre,entreprise,pays,created_at';
   const C = 'select=id,student_id,offer_id,status';
   const [profils, offres, postule, invitations, m1, m2, reponses, questions, parrainages, cafes, p1, p2, p3] = await Promise.all([
-    tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,cv_path,competences,created_at,en_recherche')
+    tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,cv_path,competences,created_at,en_recherche,ecole')
+      .catch(() => tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,cv_path,competences,created_at,en_recherche'))
       .catch(() => tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,cv_path,competences,created_at'))
       .catch(() => tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,competences,created_at')),
     tout<Offre>(env, 'offers', 'select=id,author_id,titre,entreprise,filieres,annees,audience,status,created_at,relance_at'),
@@ -1982,7 +2009,8 @@ export async function chargerDonnees(env: Env, ids: string[], date: Date): Promi
   const fac = <T>(p: Promise<T[]>): Promise<T[]> => p.catch(() => [] as T[]);
   const moisAmb = moisPrecedent(date);
   const [evenements, enquetes, relectures, demandesContact, signalements, ambassadeurs] = await Promise.all([
-    fac(tout<Evenement>(env, 'evenements', `select=id,titre,debut,lieu,public,annule&annule=is.false&debut=gte.${iso(t)}&debut=lte.${iso(t + 14 * JOUR)}`)),
+    fac(tout<Evenement>(env, 'evenements', `select=id,titre,debut,lieu,public,annule,ecole&annule=is.false&debut=gte.${iso(t)}&debut=lte.${iso(t + 14 * JOUR)}`)
+      .catch(() => tout<Evenement>(env, 'evenements', `select=id,titre,debut,lieu,public,annule&annule=is.false&debut=gte.${iso(t)}&debut=lte.${iso(t + 14 * JOUR)}`))),
     fac(parIds<{ user_id: string; vague: number }>(env, 'enquetes_insertion', 'select=id,user_id,vague', 'user_id', ids)),
     fac(tout<Relecture>(env, 'relectures_cv', 'select=id,student_id,reviewer_id,status&status=eq.demandee')),
     fac(parIds<DemandeContact>(env, 'demandes_contact', 'select=id,demandeur_id,cible_id,status&status=eq.envoyee', 'cible_id', ids)),
@@ -2566,13 +2594,16 @@ async function jobResume(env: Env): Promise<Response> {
   const b: { sent: number; empty: number; errors: number; via?: string } = { sent: 0, empty: 0, errors: 0 };
   if (!dest.length) return json(b);
   const [brut, sansTel] = await Promise.all([chargerDonnees(env, dest.map(x => x.id), date), sansTelephone(env, dest.map(x => x.id))]);
-  const d = indexer(brut, date);
+  // Une indexation par école : chacun ne lit que son réseau
+  const ecoleDu = new Map(brut.profils.map(p => [p.id, ecoleDe(p)]));
+  const parE = new Map<string, Donnees>();
+  const donnees = (id: string) => { const e = ecoleDu.get(id) || 'ensam-meknes'; let x = parE.get(e); if (!x) { x = indexer(parEcole(brut, e), date); parE.set(e, x); } return x; };
   const traites: string[] = [];
   const limite = Date.now() + 100_000;   // marge sur les 150 s : le reste partira demain
   await parallele(dest, f.paralleles, async x => {
     if (Date.now() > limite) return;
     try {
-      const p = d.profils.get(x.id);
+      const d = donnees(x.id), p = d.profils.get(x.id);
       const r = p ? resumeDe(p, d) : null;
       if (!r) { b.empty++; traites.push(x.id); return; }
       if (!x.email || !x.token) { b.errors++; return; }
