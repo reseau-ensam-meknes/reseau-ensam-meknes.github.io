@@ -32,13 +32,14 @@ const mois = v => (+v === 12 ? '12 شهراً' : `${v} أشهر`);
 export const tauxInsertion = r => (r && r.n - r.etudes > 0 ? r.en_poste / (r.n - r.etudes) : null);
 
 // Chiffres agrégés (stats_insertion côté base), rechargés quand une réponse arrive
-export function useStatsInsertion(store, dep) {
+// ecole : l'école choisie par l'administration (plusieurs écoles) ; un membre a toujours la sienne
+export function useStatsInsertion(store, dep, ecole) {
   const [rows, setRows] = useState(null);
   useEffect(() => {
     let on = true;
-    Promise.resolve(store.statsInsertion?.()).then(r => on && setRows(Array.isArray(r) ? r : []), () => on && setRows([]));
+    Promise.resolve(store.statsInsertion?.(ecole)).then(r => on && setRows(Array.isArray(r) ? r : []), () => on && setRows([]));
     return () => { on = false; };
-  }, [dep]);
+  }, [dep, ecole]);
   return rows;
 }
 

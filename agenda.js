@@ -3,9 +3,10 @@
 import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Avatar, Person, toast, injectCSS, vibrer } from './ui.js';
 import { addAR, getLang } from './i18n.js';
-import { TYPES_EVENEMENT, PUBLICS, pourPublic } from './logic.js';
+import { TYPES_EVENEMENT, PUBLICS, pourPublic, deMonEcole } from './logic.js';
 
 addAR({
+  'École :': 'المدرسة:',
   'Agenda du réseau': 'مفكرة الشبكة', 'Forum, conférences, portes ouvertes : ce qui se passe à l’école et en ligne.': 'المنتدى، المحاضرات، الأبواب المفتوحة: ما يجري في المدرسة وعبر الإنترنت.',
   'Publier un événement': 'نشر حدث', 'Modifier l’événement': 'تعديل الحدث', 'Je participe': 'سأشارك', 'Je ne viens plus': 'لن أحضر', 'Tu y vas': 'حضورك مسجّل',
   'Google Agenda': 'تقويم Google', 'Autre agenda (.ics)': 'تقويم آخر (.ics)', 'Rejoindre en ligne': 'الانضمام عبر الإنترنت', 'En ligne': 'عبر الإنترنت',
@@ -47,7 +48,7 @@ export const passe = e => new Date(e.fin || e.debut) < Date.now();
 
 // Ce que chacun voit : l'administration tout, sinon les événements ouverts à son rôle
 export function eventsFor(data, me) {
-  return (data.evenements || []).filter(e => pourPublic(e.public, me.role));
+  return deMonEcole(data.evenements, me).filter(e => pourPublic(e.public, me.role));
 }
 
 // ---------------------------------------------------------------------------
@@ -207,18 +208,41 @@ function EventDetail({ ctx, e, onClose, onEdit }) {
 // Formulaire de l'administration
 // ---------------------------------------------------------------------------
 function dansUneSemaine(h) { const d = new Date(); d.setDate(d.getDate() + 7); d.setHours(h, 0, 0, 0); return d; }
+// Un événement prérempli (Administration > Animer : « Rendez-vous du mois ») : le prochain formulaire « Publier un événement »
+// part de ces valeurs (titre, type, debut, fin, lieu, lien, description, public), une seule fois
+let preRempli = null;
+export function preparerEvenement(e) { preRempli = e || null; }
+// L'école que regarde la console ouverte (admin.js, AdminPage), seulement quand ce n'est pas celle de l'administration ;
+// null dès que la console se ferme. « Publier un événement » (barre latérale, agenda de la console, rendez-vous du mois)
+// part pour elle tant que la console est à l'écran ; ailleurs, pour l'école de l'administration.
+let ecoleDeLaConsole = null;
+export const consoleRegarde = x => { ecoleDeLaConsole = x?.ecole ? { ecole: x.ecole, ecoleNom: x.ecoleNom || x.ecole } : null; };
+export function publierEvenement(go, e = null) {
+  preparerEvenement(ecoleDeLaConsole || e ? { ...(e || {}), ...(ecoleDeLaConsole || {}) } : null);
+  go('reseau/agenda/nouveau');
+}
+// ecole et ecoleNom : l'école pour qui est l'événement (publierEvenement), absente pour celle de l'administration
+function nouveauFormulaire() {
+  const p = preRempli || {}; preRempli = null;
+  const f = { titre: '', type: 'conference', debut: toInput(dansUneSemaine(10)), fin: toInput(dansUneSemaine(12)), lieu: '', lien: '', description: '', public: 'tous' };
+  for (const k of ['titre', 'type', 'lieu', 'lien', 'description', 'public', 'ecole', 'ecoleNom']) if (typeof p[k] === 'string') f[k] = p[k];
+  if (p.debut) f.debut = toInput(new Date(p.debut));
+  if (p.fin) f.fin = toInput(new Date(p.fin));
+  return f;
+}
 
 function EventForm({ ctx, e, onClose }) {
   const { store, act } = ctx;
   const [f, setF] = useState(() => e ? { titre: e.titre, type: e.type, debut: toInput(new Date(e.debut)), fin: e.fin ? toInput(new Date(e.fin)) : '', lieu: e.lieu || '', lien: e.lien || '', description: e.description || '', public: e.public }
-    : { titre: '', type: 'conference', debut: toInput(dansUneSemaine(10)), fin: toInput(dansUneSemaine(12)), lieu: '', lien: '', description: '', public: 'tous' });
+    : nouveauFormulaire());
   const set = (k, v) => setF({ ...f, [k]: v });
   const lienOk = !f.lien.trim() || /^https:\/\/\S+$/i.test(f.lien.trim());
   const finOk = !f.fin || !f.debut || new Date(f.fin) >= new Date(f.debut);
   const ok = f.titre.trim().length >= 3 && f.debut && lienOk && finOk;
   const submit = ev => {
     ev.preventDefault(); if (!ok) return;
-    const row = { titre: f.titre.trim(), type: f.type, debut: new Date(f.debut).toISOString(), fin: f.fin ? new Date(f.fin).toISOString() : null, lieu: f.lieu.trim() || null, lien: f.lien.trim() || null, description: f.description.trim() || null, public: f.public };
+    const row = { titre: f.titre.trim(), type: f.type, debut: new Date(f.debut).toISOString(), fin: f.fin ? new Date(f.fin).toISOString() : null, lieu: f.lieu.trim() || null, lien: f.lien.trim() || null, description: f.description.trim() || null, public: f.public,
+      ...(!e && f.ecole ? { ecole: f.ecole } : {}) };
     act(async () => {
       if (e) { await store.update('evenements', e.id, row); toast('Événement modifié.'); }
       else { await store.insert('evenements', row); toast('Événement publié. Les membres concernés sont prévenus.', 'win'); }
@@ -227,6 +251,7 @@ function EventForm({ ctx, e, onClose }) {
   };
   return html`<${Modal} title=${e ? 'Modifier l’événement' : 'Publier un événement'} onClose=${onClose}>
     <form class="form" onSubmit=${submit}>
+      ${!e && f.ecole ? html`<p class="hint-box small ev-ecole" id="ev-ecole"><${Icon} name="cap" size=${15}/><span>École : <span translate="no">${f.ecoleNom || f.ecole}</span></span></p>` : null}
       <${Field} label="Titre"><input id="ev-titre" required minlength="3" maxlength="140" value=${f.titre} onInput=${x => set('titre', x.target.value)} placeholder="Ex. Forum ENSAM Entreprises"/><//>
       <div class="ev-types" role="radiogroup" aria-label="Type">${Object.entries(TYPES_EVENEMENT).map(([k, [l, i]]) => html`<button type="button" role="radio" aria-checked=${f.type === k} class=${'chip' + (f.type === k ? ' on' : '')} onClick=${() => set('type', k)}><${Icon} name=${i} size=${14}/> ${l}</button>`)}</div>
       <div class="grid2"><${Field} label="Début"><input id="ev-debut" type="datetime-local" required value=${f.debut} onInput=${x => set('debut', x.target.value)}/><//>
@@ -275,6 +300,8 @@ export function AgendaPage({ ctx }) {
 // Administration > Agenda : tous les événements, avec le nombre d'inscrits et leur liste à télécharger
 export function AgendaAdmin({ ctx }) {
   const { data, store, go } = ctx;
+  // La console regarde une autre école que celle de l'administration : l'événement publié est pour elle (publierEvenement)
+  const publier = () => publierEvenement(go);
   const all = data.evenements || [];
   const evs = [...all].sort((a, b) => (passe(a) - passe(b)) || (passe(a) ? new Date(b.debut) - new Date(a.debut) : new Date(a.debut) - new Date(b.debut))).slice(0, 15);
   const inscrits = id => (data.evenement_participants || []).filter(x => x.evenement_id === id);
@@ -288,7 +315,7 @@ export function AgendaAdmin({ ctx }) {
   const avenir = all.filter(e => !passe(e) && !e.annule).length;
   return html`<div class="panel">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="calendar"/> Événements <span class="count">${`${avenir} à venir`}</span></h2>
-      <span class="row"><button class="btn tiny ghost" onClick=${() => go('reseau/agenda')}>Tout voir <${Icon} name="arrow" size=${14}/></button><button class="btn small primary" id="adm-ev-new" onClick=${() => go('reseau/agenda/nouveau')}><${Icon} name="plus" size=${15}/> Publier un événement</button></span></div>
+      <span class="row"><button class="btn tiny ghost" onClick=${() => go('reseau/agenda')}>Tout voir <${Icon} name="arrow" size=${14}/></button><button class="btn small primary" id="adm-ev-new" onClick=${publier}><${Icon} name="plus" size=${15}/> Publier un événement</button></span></div>
     ${evs.length ? html`<ul class="people-list ev-admin-list">${evs.map(e => { const n = inscrits(e.id).length; return html`<li key=${e.id} class=${e.annule || passe(e) ? 'dim' : ''}>
       <${DateBloc} iso=${e.debut} compact/>
       <span class="grow"><button class=${'linkish strong' + (e.annule ? ' struck' : '')} onClick=${() => go('reseau/agenda/' + e.id)} translate="no" dir="auto">${e.titre}</button>

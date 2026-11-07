@@ -123,9 +123,9 @@ begin
   -- Email de l'école obligatoire pour les étudiants (si l'administration l'a demandé)
   if new.role = 'etudiant' and (tg_op = 'INSERT' or old.role <> 'etudiant') then
     begin
-      if exists (select 1 from public.reglages where cle = 'email_ecole_obligatoire' and valeur = 'true'::jsonb)
-         and cardinality(public.domaines_ecole()) > 0 and not public.email_ecole(new.id) then
-        raise exception using message = 'Inscris-toi avec ton email de l’école (@' || array_to_string(public.domaines_ecole(), ', @') || ').', errcode = 'P0001', hint = 'email_ecole';
+      if public.email_obligatoire_de(new.ecole)
+         and cardinality(public.domaines_de(new.ecole)) > 0 and not public.email_ecole(new.id, new.ecole) then
+        raise exception using message = 'Inscris-toi avec ton email de l’école (@' || array_to_string(public.domaines_de(new.ecole), ', @') || ').', errcode = 'P0001', hint = 'email_ecole';
       end if;
     exception when others then
       if sqlerrm like 'Inscris-toi avec ton email%' then raise; end if;
@@ -151,8 +151,8 @@ begin
   -- étudiant inscrit avec l'email de l'école, ou lauréat confirmé par deux lauréats vérifiés de sa promo.
   -- Jamais pour un « lauréat » d'une promo pas encore diplômée (un étudiant qui s'est trompé de rôle).
   begin
-    if not new.verified and (new.role <> 'laureat' or new.promo <= extract(year from now())::int) and (public.dans_liste(new.id, new.full_name, new.promo)
-        or (new.role = 'etudiant' and public.email_ecole(new.id))
+    if not new.verified and (new.role <> 'laureat' or new.promo <= extract(year from now())::int) and (public.dans_liste(new.id, new.full_name, new.promo, new.ecole)
+        or (new.role = 'etudiant' and public.email_ecole(new.id, new.ecole))
         or (new.role = 'laureat' and public.pairs_valides(new.id, new.promo) >= 2)) then
       new.verified := true;
     end if;
@@ -1040,6 +1040,14 @@ create table if not exists public.push_subscriptions (
   created_at timestamptz default now()
 );
 create index if not exists push_subscriptions_user_idx on public.push_subscriptions (user_id);
+-- La santé de chaque abonnement, tenue par la fonction « notifier » (push_resultats, plus bas) : la dernière réponse de son
+-- service de push et quand, et ses refus définitifs d'affilée (400, 401, 403 ; un envoi accepté remet le compte à zéro) :
+-- combien, le dernier (refus_at) et le premier de la série (refus_depuis)
+alter table public.push_subscriptions add column if not exists dernier_code int;
+alter table public.push_subscriptions add column if not exists dernier_envoi_at timestamptz;
+alter table public.push_subscriptions add column if not exists refus int not null default 0;
+alter table public.push_subscriptions add column if not exists refus_at timestamptz;
+alter table public.push_subscriptions add column if not exists refus_depuis timestamptz;
 
 create table if not exists public.push_queue (
   id bigint generated always as identity primary key,
@@ -1052,6 +1060,43 @@ create table if not exists public.push_queue (
 -- reprise qu'après 2 minutes sans confirmation, 3 essais au plus (relancer_push, section « Notifications qui arrivent »)
 alter table public.push_queue add column if not exists pris_at timestamptz;
 alter table public.push_queue add column if not exists essais int not null default 0;
+
+-- Journal des notifications (7 jours, taches_quotidiennes) : ce qu'est devenue chacune, jamais son contenu.
+-- code : la réponse du service de push pour le meilleur des téléphones du membre (201 acceptée), 404 ou 410 téléphone
+-- parti, 400 / 401 / 403 refus définitif, 413 trop longue, 0 / 429 / 5xx service injoignable (nouvel essai) ;
+-- et ce qui n'est jamais parti : -1 aucun téléphone abonné, -2 catégorie coupée par le membre (Mon profil),
+-- -3 abandonnée après au moins un essai (3 essais, ou un jour, sans succès), -4 jetée par la fonction (type inconnu, rien
+-- à dire), -5 expirée sans avoir jamais été essayée (un jour en file : la fonction ou la tâche de chaque minute en panne).
+-- L'administration n'en lit que des totaux (admin_sante_notifs, section « Santé des notifications », à la fin).
+create table if not exists public.push_journal (
+  id bigint generated always as identity primary key,
+  user_id uuid references public.profiles(id) on delete cascade,
+  kind text not null,
+  code int not null,
+  at timestamptz not null default now()
+);
+create index if not exists push_journal_user on public.push_journal (user_id, at desc);
+alter table public.push_journal enable row level security;
+
+-- Une ligne au journal : n'échoue jamais (une notification perdue ne bloque pas, son trou dans le journal non plus)
+create or replace function public.noter_push(p_user uuid, p_kind text, p_code int) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if p_user is null or coalesce(p_kind, '') = '' or p_code is null then return; end if;
+  insert into public.push_journal (user_id, kind, code) values (p_user, left(p_kind, 40), p_code);
+exception when others then raise warning 'noter_push : %', sqlerrm;
+end $$;
+revoke all on function public.noter_push(uuid, text, int) from public, anon, authenticated;
+
+-- Adresses d'abonnement mortes : téléphone parti (404, 410), ou trois refus définitifs d'affilée alors que le même service
+-- de push accepte les autres (push_resultats). Un appareil qui redonne l'une d'elles n'est pas réinscrit
+-- (abonner_push_etat répond 'mort') : il se réabonne, avec une adresse neuve.
+-- Gardées 90 jours (taches_quotidiennes). Aucune règle de lecture : seuls la base et la fonction y touchent.
+create table if not exists public.push_morts (
+  endpoint text primary key,
+  at timestamptz not null default now()
+);
+alter table public.push_morts enable row level security;
 
 -- Réglages internes : adresse du projet, clé publique, secret d'appel de la fonction, clés VAPID
 create table if not exists public.app_secrets (
@@ -1077,15 +1122,34 @@ create table if not exists public.rappels_envoyes (
 
 -- S'abonner depuis un téléphone (un même téléphone ne sert qu'un compte à la fois). Le site le refait à chaque
 -- ouverture (resynchroniserPush, pwa.js) : un abonnement oublié par la base revient, sans rien changer s'il y est déjà.
-create or replace function public.abonner_push(p_endpoint text, p_p256dh text, p_auth text) returns void
+-- abonner_push_etat répond 'ok', ou 'mort' si le service de push a refusé cette adresse pour de bon (push_morts) : elle
+-- n'est pas réinscrite, l'appareil doit se réabonner (unsubscribe puis subscribe donnent une adresse neuve).
+create or replace function public.abonner_push_etat(p_endpoint text, p_p256dh text, p_auth text) returns text
 language plpgsql security definer set search_path = public as $$
 begin
   if auth.uid() is null then raise exception 'Connecte-toi d’abord.'; end if;
   if p_endpoint !~* '^https://' then raise exception 'Abonnement invalide.'; end if;
+  if exists (select 1 from public.push_morts where endpoint = p_endpoint) then return 'mort'; end if;
   insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) values (auth.uid(), p_endpoint, p_p256dh, p_auth)
     on conflict (endpoint) do update set user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth,
       created_at = case when push_subscriptions.user_id = excluded.user_id then push_subscriptions.created_at else now() end
     where (push_subscriptions.user_id, push_subscriptions.p256dh, push_subscriptions.auth) is distinct from (excluded.user_id, excluded.p256dh, excluded.auth);
+  return 'ok';
+end $$;
+revoke all on function public.abonner_push_etat(text, text, text) from public, anon;
+grant execute on function public.abonner_push_etat(text, text, text) to authenticated;
+-- abonner_push, sans réponse comme avant (l'ancien site, et les mise-a-jour.sql d'autres branches qui la redéfinissent) :
+-- la même chose, une adresse morte n'est simplement pas réinscrite. Une base qui a reçu la première version de ce chantier
+-- (abonner_push rendait du texte) la voit retirée puis recréée, avec les mêmes droits.
+do $$ begin
+  if exists (select 1 from pg_proc where oid = to_regprocedure('public.abonner_push(text,text,text)') and prorettype <> 'void'::regtype) then
+    drop function public.abonner_push(text, text, text);
+  end if;
+end $$;
+create or replace function public.abonner_push(p_endpoint text, p_p256dh text, p_auth text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform public.abonner_push_etat(p_endpoint, p_p256dh, p_auth);
 end $$;
 revoke all on function public.abonner_push(text, text, text) from public, anon;
 grant execute on function public.abonner_push(text, text, text) to authenticated;
@@ -1122,42 +1186,47 @@ begin
 end $$;
 revoke all on function public.destinataires_resume(int) from public, anon, authenticated;
 
--- Appel de la fonction « notifier » (si l'extension pg_net et l'adresse du projet sont là)
+-- Appel de la fonction « notifier » (si l'extension pg_net et l'adresse du projet sont là). La clé publique part aussi en
+-- apikey : la passerelle de Supabase l'attend avec les nouvelles clés (sb_publishable_…), qui ne sont pas des jetons.
+-- Rien n'est bloqué si l'appel échoue, mais l'erreur se lit dans Logs > Postgres (« appeler_notifier : … »).
 create or replace function public.appeler_notifier(p_job text) returns void
 language plpgsql security definer set search_path = public as $$
-declare v_url text; v_key text; v_secret text;
+declare v_url text; v_key text; v_secret text; v_entetes jsonb;
 begin
   select valeur into v_url from public.app_secrets where cle = 'projet_url';
   select valeur into v_key from public.app_secrets where cle = 'anon_key';
   select valeur into v_secret from public.app_secrets where cle = 'notifier_secret';
-  if v_url is null or v_key is null then return; end if;
+  if v_url is null or v_key is null then
+    raise warning 'appeler_notifier : projet_url ou anon_key absent de app_secrets (« % » non appelé)', p_job;
+    return;
+  end if;
+  v_entetes := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || v_key, 'apikey', v_key, 'x-notifier', v_secret);
   -- 60 s d'attente : envoyer des emails prend plus que les 5 s par défaut de pg_net, qui coupait l'appel
   begin
-    perform net.http_post(
-      url := v_url || '/functions/v1/notifier',
-      body := jsonb_build_object('job', p_job),
-      headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || v_key, 'x-notifier', v_secret),
-      timeout_milliseconds := 60000);
+    perform net.http_post(url := v_url || '/functions/v1/notifier', body := jsonb_build_object('job', p_job),
+      headers := v_entetes, timeout_milliseconds := 60000);
   exception when undefined_function then  -- pg_net ancien, sans délai réglable
-    perform net.http_post(
-      url := v_url || '/functions/v1/notifier',
-      body := jsonb_build_object('job', p_job),
-      headers := jsonb_build_object('Content-Type', 'application/json', 'Authorization', 'Bearer ' || v_key, 'x-notifier', v_secret));
+    perform net.http_post(url := v_url || '/functions/v1/notifier', body := jsonb_build_object('job', p_job), headers := v_entetes);
   end;
-exception when others then null;  -- pas de pg_net, ou fonction pas encore déployée : rien n'est bloqué
+exception when others then raise warning 'appeler_notifier : %', sqlerrm;  -- pas de pg_net, ou fonction pas encore déployée
 end $$;
 revoke all on function public.appeler_notifier(text) from public, anon, authenticated;
 
 -- Met une notification en file pour un membre, seulement s'il l'a activée sur un téléphone
--- et qu'il veut ce type de notification (push_voulu, plus bas : son choix dans Mon profil, sinon le défaut de son rôle)
+-- et qu'il veut ce type de notification (push_voulu, plus bas : son choix dans Mon profil, sinon le défaut de son rôle).
+-- Sinon rien ne part, mais le journal dit pourquoi : -1 aucun téléphone abonné, -2 catégorie coupée.
 create or replace function public.pousser(p_user uuid, p_kind text, p_data jsonb default '{}') returns void
 language plpgsql security definer set search_path = public as $$
 begin
   if p_user is null or p_user = auth.uid() then return; end if;
-  if exists (select 1 from public.push_subscriptions where user_id = p_user) and public.push_voulu(p_user, p_kind) then
+  if not exists (select 1 from public.push_subscriptions where user_id = p_user) then
+    perform public.noter_push(p_user, p_kind, -1);
+  elsif public.push_voulu(p_user, p_kind) then
     insert into public.push_queue (user_id, kind, data) values (p_user, p_kind, coalesce(p_data, '{}'));
+  else
+    perform public.noter_push(p_user, p_kind, -2);
   end if;
-exception when others then null;  -- une notification ne doit jamais bloquer l'action du membre
+exception when others then raise warning 'pousser : %', sqlerrm;  -- une notification ne doit jamais bloquer l'action du membre
 end $$;
 revoke all on function public.pousser(uuid, text, jsonb) from public, anon, authenticated;
 
@@ -1199,6 +1268,64 @@ language sql security definer set search_path = public as $$
 $$;
 revoke all on function public.push_faits(bigint[]) from public, anon, authenticated;
 
+-- Après chaque tour d'envoi, la fonction dit ce que chaque téléphone a répondu : p = [{ id, code, recu, refus }]
+-- (code : sa dernière réponse ; recu : au moins une notification acceptée ; refus : un refus définitif 400, 401 ou 403,
+-- sans rien d'accepté ; « Tester » n'en envoie jamais). Accepté : la série de refus s'arrête. Rend les abonnements retirés.
+--   · Téléphone parti (404, 410) : l'abonnement est retiré et son adresse notée (push_morts).
+--   · Troisième refus définitif d'affilée : retiré et noté seulement si le même service de push (service_push) a accepté
+--     un envoi vers un autre abonnement depuis le premier refus de la série : c'est bien ce téléphone qu'il refuse (par
+--     exemple un abonnement fait avec une ancienne clé). Sinon, la plateforme est sans doute en cause (clé VAPID,
+--     signature) : rien n'est retiré, tout repart quand elle est réparée, et Logs > Postgres le dit, une fois.
+--   · 413 (notification trop longue) n'est pas la faute de l'abonnement : rien n'est compté.
+-- La preuve se lit sur plusieurs tours, pas dans un seul : un message ou une candidature part seul dans son tour.
+create or replace function public.push_resultats(p jsonb) returns uuid[]
+language plpgsql security definer set search_path = public as $$
+declare v_l jsonb := case when jsonb_typeof(p) = 'array' then p else '[]'::jsonb end; v uuid[]; v_gardes text;
+begin
+  update public.push_subscriptions s set dernier_code = r.code, dernier_envoi_at = now(),
+      refus = case when coalesce(r.recu, false) then 0 when coalesce(r.refus, false) then s.refus + 1 else s.refus end,
+      refus_depuis = case when coalesce(r.recu, false) then null
+        when coalesce(r.refus, false) then case when s.refus = 0 then now() else coalesce(s.refus_depuis, s.refus_at, now()) end
+        else s.refus_depuis end,
+      refus_at = case when coalesce(r.refus, false) and not coalesce(r.recu, false) then now() else s.refus_at end
+    from jsonb_to_recordset(v_l) as r(id uuid, code int, recu boolean, refus boolean)
+    where s.id = r.id;
+  with lus as (
+    select distinct on (s.id) s.id, s.endpoint, s.refus, s.refus_depuis, r.code from public.push_subscriptions s
+      join jsonb_to_recordset(v_l) as r(id uuid, code int, recu boolean, refus boolean) on r.id = s.id
+  ), morts as (
+    select l.id, l.endpoint from lus l
+    where l.code in (404, 410)
+       or (l.refus >= 3 and exists (select 1 from public.push_subscriptions o
+         where o.id <> l.id and o.dernier_code between 200 and 299 and o.dernier_envoi_at >= l.refus_depuis
+           and public.service_push(o.endpoint) = public.service_push(l.endpoint)))
+  ), notees as (
+    insert into public.push_morts (endpoint) select endpoint from morts
+      on conflict (endpoint) do update set at = now()
+  ), retirees as (
+    delete from public.push_subscriptions s using morts m where s.id = m.id returning s.id
+  )
+  select coalesce(array_agg(id), '{}') into v from retirees;
+  -- Gardés au troisième refus d'affilée, sans qu'aucun autre téléphone du même service accepte : dit une fois
+  select string_agg(distinct public.service_push(s.endpoint), ', ') into v_gardes from public.push_subscriptions s
+    join jsonb_to_recordset(v_l) as r(id uuid, code int, recu boolean, refus boolean) on r.id = s.id
+    where coalesce(r.refus, false) and not coalesce(r.recu, false) and s.refus = 3;
+  if v_gardes is not null then
+    raise warning 'push_resultats : des téléphones refusent trois fois de suite et aucun autre du même service n''accepte (%) : gardés, la clé de la plateforme est sans doute en cause', v_gardes;
+  end if;
+  return v;
+end $$;
+revoke all on function public.push_resultats(jsonb) from public, anon, authenticated;
+
+-- Prises par la fonction mais pas essayées (plus le temps : aucun envoi ne commence après 45 s) : rendues à la file tout de
+-- suite, sans leur compter d'essai, pour l'appel suivant
+create or replace function public.push_rendues(p_ids bigint[]) returns void
+language sql security definer set search_path = public as $$
+  update public.push_queue set pris_at = null, essais = greatest(essais - 1, 0)
+  where id = any(coalesce(p_ids, '{}'::bigint[])) and pris_at is not null;
+$$;
+revoke all on function public.push_rendues(bigint[]) from public, anon, authenticated;
+
 -- Ce qui déclenche une notification sur le téléphone
 create or replace function public.notif_evenements() returns trigger
 language plpgsql security definer set search_path = public as $$
@@ -1213,7 +1340,7 @@ begin
       if old.status = 'demande' and new.status = 'acceptee' then
         perform public.pousser(new.student_id, 'mentorat_accepte', jsonb_build_object('nom', (select full_name from public.profiles where id = new.mentor_id), 'sujet', new.sujet, 'rdv_at', new.rdv_at));
       elsif old.status = 'acceptee' and new.status = 'acceptee' and new.rdv_at is distinct from old.rdv_at then
-        perform public.pousser(new.student_id, 'mentorat_deplace', jsonb_build_object('nom', (select full_name from public.profiles where id = new.mentor_id), 'sujet', new.sujet, 'rdv_at', new.rdv_at));
+        perform public.pousser(new.student_id, 'mentorat_deplace', jsonb_build_object('nom', (select full_name from public.profiles where id = new.mentor_id), 'sujet', new.sujet, 'rdv_at', new.rdv_at, 'm', new.id));
       elsif old.status = 'acceptee' and new.status = 'annulee' then
         -- Qui annule est nommé ; si c'est le lauréat, l'étudiant reçoit un lien pour proposer d'autres horaires
         perform public.pousser(case when auth.uid() = new.student_id then new.mentor_id else new.student_id end, 'mentorat_annule',
@@ -1250,25 +1377,25 @@ begin
       insert into public.push_queue (user_id, kind, data)
       select p.id, 'question_routee', jsonb_build_object('cible', coalesce(nullif(new.entreprise, ''), new.pays), 'titre', new.titre)
       from public.profiles p
-      where p.role = 'laureat' and p.id <> new.author_id
+      where p.role = 'laureat' and p.id <> new.author_id and p.ecole = new.ecole
         and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'question_routee')
         and ((coalesce(new.entreprise, '') <> '' and public.meme_entreprise(p.entreprise, new.entreprise))
           or (public.cle_lieu(new.pays) <> 'maroc' and public.cle_lieu(p.pays) = public.cle_lieu(new.pays)))
       limit 40;
     end if;
   elsif tg_table_name = 'parrainages' then
-    perform public.pousser(new.parrain_id, 'filleul', jsonb_build_object('nom', (select full_name from public.profiles where id = new.filleul_id)));
+    perform public.pousser(new.parrain_id, 'filleul', jsonb_build_object('nom', (select full_name from public.profiles where id = new.filleul_id), 'filleul', new.filleul_id));
     perform public.pousser(new.filleul_id, 'parrain', jsonb_build_object('nom', (select full_name from public.profiles where id = new.parrain_id)));
   elsif tg_table_name = 'cafes' then
     insert into public.push_queue (user_id, kind, data)
     select p.id, 'cafe', jsonb_build_object('ville', new.ville, 'lieu', new.lieu, 'date_at', new.date_at)
     from public.profiles p
-    where p.id <> new.organisateur_id and public.cle_lieu(p.ville) = public.cle_lieu(new.ville)
+    where p.id <> new.organisateur_id and p.ecole = new.ecole and public.cle_lieu(p.ville) = public.cle_lieu(new.ville)
       and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'cafe')
     limit 200;
   end if;
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_evenements : %', sqlerrm; return null;
 end $$;
 
 do $$
@@ -1322,6 +1449,8 @@ do $$ begin
     grant execute on function public.destinataires_resume(int) to service_role;
     grant execute on function public.prendre_push(int) to service_role;
     grant execute on function public.push_faits(bigint[]) to service_role;
+    grant execute on function public.push_resultats(jsonb) to service_role;
+    grant execute on function public.push_rendues(bigint[]) to service_role;
   end if;
 end $$;
 
@@ -1633,15 +1762,21 @@ end $$;
 revoke all on function public.push_voulu(uuid, text) from public, anon, authenticated;
 
 -- Filtre central : couvre pousser() et les envois groupés (offres, demandes, agenda…). Dans le doute, la notification part.
+-- Une notification retirée parce que le membre a coupé sa catégorie est notée au journal (-2).
 create or replace function public.push_filtre() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
-  if public.push_voulu(new.user_id, new.kind) is false then return null; end if;
-  -- Écoles : ce que fait un membre ne notifie que son école (l'administration reçoit tout, comme les signalements)
-  if auth.uid() is not null and exists (select 1 from public.profiles d where d.id = new.user_id and d.role <> 'admin'
+  if public.push_voulu(new.user_id, new.kind) is false then
+    perform public.noter_push(new.user_id, new.kind, -2);
+    return null;
+  end if;
+  -- Écoles : ce que fait un membre ne notifie que son école (l'administration reçoit tout, comme les signalements,
+  -- et ce qu'elle fait notifie le membre concerné, quelle que soit son école). Les envois à plusieurs filtrent
+  -- eux-mêmes l'école avant leur plafond (limit), sinon d'autres écoles prendraient les places.
+  if auth.uid() is not null and not public.is_admin() and exists (select 1 from public.profiles d where d.id = new.user_id and d.role <> 'admin'
       and d.ecole is distinct from (select e.ecole from public.profiles e where e.id = auth.uid())) then return null; end if;
   return new;
-exception when others then return new;
+exception when others then raise warning 'push_filtre : %', sqlerrm; return new;  -- dans le doute, la notification part
 end $$;
 drop trigger if exists trg_push_filtre on public.push_queue;
 create trigger trg_push_filtre before insert on public.push_queue
@@ -1828,6 +1963,18 @@ end $$;
 drop trigger if exists trg_protect_ecole on public.profiles;
 create trigger trg_protect_ecole before insert or update of ecole on public.profiles
   for each row execute function public.protect_ecole();
+
+-- Une photo est rangée dans le dossier de son propriétaire (son id)
+create or replace function public.photo_de_mon_ecole(p_name text) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare v uuid;
+begin
+  if public.is_admin() then return true; end if;
+  begin v := split_part(p_name, '/', 1)::uuid; exception when others then return false; end;
+  return (select ecole from public.profiles where id = v) is not distinct from public.mon_ecole();
+end $$;
+revoke all on function public.photo_de_mon_ecole(text) from public, anon;
+grant execute on function public.photo_de_mon_ecole(text) to authenticated;
 
 create or replace view public.profils with (security_barrier = true) as
 select p.id, p.full_name, p.role, p.filiere, p.promo,
@@ -2224,12 +2371,39 @@ language sql stable security definer set search_path = public as $$
     (select valeur from public.reglages where cle = 'domaines_ecole' and jsonb_typeof(valeur) = 'array')) x where trim(x) <> ''), '{}');
 $$;
 
-create or replace function public.email_ecole(p_id uuid) returns boolean
+-- Domaines et email obligatoire d'une école : ENSAM Meknès garde ses réglages (Administration > Réglages), les autres
+-- écoles ont les leurs dans ecoles (seconde partie « Écoles », plus bas)
+create or replace function public.domaines_de(p_ecole text) returns text[]
+language plpgsql stable security definer set search_path = public as $$
+declare v text[];
+begin
+  if coalesce(p_ecole, 'ensam-meknes') = 'ensam-meknes' then return public.domaines_ecole(); end if;
+  execute 'select coalesce(domaines, ''{}'') from public.ecoles where slug = $1' into v using p_ecole;
+  return coalesce(v, '{}');
+exception when undefined_column or undefined_table then return '{}';
+end $$;
+revoke all on function public.domaines_de(text) from public, anon, authenticated;
+
+create or replace function public.email_obligatoire_de(p_ecole text) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare v boolean;
+begin
+  if coalesce(p_ecole, 'ensam-meknes') = 'ensam-meknes' then
+    return exists (select 1 from public.reglages where cle = 'email_ecole_obligatoire' and valeur = 'true'::jsonb);
+  end if;
+  execute 'select email_obligatoire from public.ecoles where slug = $1' into v using p_ecole;
+  return coalesce(v, false);
+exception when undefined_column or undefined_table then return false;
+end $$;
+revoke all on function public.email_obligatoire_de(text) from public, anon, authenticated;
+
+drop function if exists public.email_ecole(uuid);
+create or replace function public.email_ecole(p_id uuid, p_ecole text default null) returns boolean
 language sql stable security definer set search_path = public as $$
-  select exists (select 1 from auth.users u, unnest(public.domaines_ecole()) d
+  select exists (select 1 from auth.users u, unnest(public.domaines_de(p_ecole)) d
     where u.id = p_id and (lower(u.email) like '%@' || d or lower(u.email) like '%.' || d));
 $$;
-revoke all on function public.email_ecole(uuid) from public, anon, authenticated;
+revoke all on function public.email_ecole(uuid, text) from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------
 -- Vérification d'un lauréat par deux lauréats déjà vérifiés de la même promo
@@ -2290,12 +2464,12 @@ begin
     insert into public.push_queue (user_id, kind, data)
     select x.id, 'verifier_pair', jsonb_build_object('nom', new.full_name, 'promo', new.promo)
     from public.profiles x
-    where x.role = 'laureat' and x.verified and x.promo = new.promo and x.id <> new.id
+    where x.role = 'laureat' and x.verified and x.promo = new.promo and x.id <> new.id and x.ecole = new.ecole
       and exists (select 1 from public.push_subscriptions s where s.user_id = x.id) and public.push_voulu(x.id, 'verifier_pair')
     limit 5;
   end if;
   return null;
-exception when others then return null;
+exception when others then raise warning 'nouveau_laureat : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_nouveau_laureat on public.profiles;
 create trigger trg_nouveau_laureat after insert on public.profiles
@@ -2352,16 +2526,16 @@ begin
     v_kind := case when tg_op = 'INSERT' then 'evenement' when new.annule then 'evenement_annule' else 'evenement_deplace' end;
     insert into public.push_queue (user_id, kind, data)
     select p.id, v_kind,
-      jsonb_build_object('titre', new.titre, 'debut', new.debut, 'lieu', new.lieu)
+      jsonb_build_object('titre', new.titre, 'debut', new.debut, 'lieu', new.lieu, 'evenement', new.id)
     from public.profiles p
-    where p.id is distinct from new.author_id
+    where p.id is distinct from new.author_id and p.ecole = new.ecole
       and (new.public = 'tous' or (new.public = 'etudiants' and p.role = 'etudiant') or (new.public = 'laureats' and p.role = 'laureat'))
       and (tg_op = 'INSERT' or exists (select 1 from public.evenement_participants x where x.evenement_id = new.id and x.user_id = p.id))
       and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, v_kind)
     limit 2000;
   end if;
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_evenement : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_notif on public.evenements;
 create trigger trg_notif after insert or update on public.evenements for each row execute function public.notif_evenement();
@@ -2428,8 +2602,10 @@ begin
   perform public.attribuer_parrains();
   -- Durées de conservation : un échec ne bloque pas les emails du jour
   begin perform public.conservation_quotidienne(); exception when others then raise warning 'Conservation : %', sqlerrm; end;
-  -- Journal des notifications (push_journal, à la fin) et historique des tâches de pg_cron : 7 jours
-  begin delete from public.push_journal where at < now() - interval '7 days'; exception when others then null; end;
+  -- Journal des notifications (push_journal, section « Notifications sur le téléphone ») et historique des tâches de
+  -- pg_cron : 7 jours ; adresses d'abonnement mortes (push_morts) : 90 jours
+  begin delete from public.push_journal where at < now() - interval '7 days'; exception when others then raise warning 'push_journal : %', sqlerrm; end;
+  begin delete from public.push_morts where at < now() - interval '90 days'; exception when others then raise warning 'push_morts : %', sqlerrm; end;
   begin delete from cron.job_run_details where end_time < now() - interval '7 days'; exception when others then null; end;
   perform public.appeler_notifier('resume');
   perform public.appeler_notifier('enquetes');
@@ -2449,17 +2625,32 @@ end $$;
 -- Taux d'insertion par promo et filière, pour les rapports officiels et l'accréditation
 -- (administration seulement) : effectif de la liste officielle, inscrits, répondants à l'enquête,
 -- en poste, en recherche, en études, à l'étranger, délai médian, satisfaction.
+-- Une école à la fois : celle de l'administrateur, ou celle qu'il choisit (p_ecole).
 -- ---------------------------------------------------------------------
-create or replace function public.rapport_insertion()
+-- L'école visée par une fonction de l'administration : celle demandée (elle doit exister), sinon la sienne.
+-- Un membre reste toujours dans la sienne, quoi qu'il demande.
+create or replace function public.ecole_visee(p_ecole text default null) returns text
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if p_ecole is null or not public.is_admin() then return coalesce(public.mon_ecole(), 'ensam-meknes'); end if;
+  if not exists (select 1 from public.ecoles e where e.slug = p_ecole) then raise exception 'École inconnue : %.', p_ecole; end if;
+  return p_ecole;
+end $$;
+revoke all on function public.ecole_visee(text) from public, anon, authenticated;
+
+drop function if exists public.rapport_insertion();
+create or replace function public.rapport_insertion(p_ecole text default null)
 returns table (promo int, filiere text, vague int, effectif int, inscrits int, repondants int, en_poste int, recherche int, etudes int, etranger int,
   taux_insertion numeric, taux_reponse numeric, delai_median numeric, satisfaction numeric, lien_formation numeric)
 language plpgsql stable security definer set search_path = public as $$
+declare v_ecole text;
 begin
   if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
+  v_ecole := public.ecole_visee(p_ecole);
   return query
   with cohortes as (
     select p.promo, p.filiere, count(*)::int as inscrits from public.profiles p
-    where p.role <> 'admin' and p.promo <= extract(year from now())::int and p.promo >= extract(year from now())::int - 6
+    where p.role <> 'admin' and p.ecole = v_ecole and p.promo <= extract(year from now())::int and p.promo >= extract(year from now())::int - 6
     group by p.promo, p.filiere),
   vagues as (select c.*, v.vague from cohortes c cross join (values (6), (12)) v(vague)),
   rep as (
@@ -2470,8 +2661,8 @@ begin
       count(*) filter (where e.situation in ('emploi','entrepreneur','volontariat') and public.cle_lieu(e.pays) is not null and public.cle_lieu(e.pays) <> 'maroc')::int etr,
       (percentile_cont(0.5) within group (order by e.delai_mois))::numeric med,
       round(avg(e.satisfaction)::numeric, 1) sat, round(avg(e.lien_formation)::numeric, 1) lf
-    from public.enquetes_insertion e group by e.promo, e.filiere, e.vague),
-  liste as (select l.promo, public.cle_lieu(l.filiere) f, count(*)::int n from public.liste_officielle l group by l.promo, public.cle_lieu(l.filiere))
+    from public.enquetes_insertion e where e.ecole = v_ecole group by e.promo, e.filiere, e.vague),
+  liste as (select l.promo, public.cle_lieu(l.filiere) f, count(*)::int n from public.liste_officielle l where l.ecole = v_ecole group by l.promo, public.cle_lieu(l.filiere))
   select v.promo, v.filiere, v.vague, li.n, v.inscrits, coalesce(r.n, 0), coalesce(r.ep, 0), coalesce(r.rch, 0), coalesce(r.etu, 0), coalesce(r.etr, 0),
     case when coalesce(r.n, 0) - coalesce(r.etu, 0) > 0 then round(r.ep::numeric / (r.n - r.etu), 3) end,
     case when coalesce(li.n, v.inscrits) > 0 then round(coalesce(r.n, 0)::numeric / coalesce(li.n, v.inscrits), 3) end,
@@ -2482,8 +2673,8 @@ begin
   where r.n is not null or v.promo <= extract(year from now())::int - 1
   order by v.promo desc, v.filiere, v.vague;
 end $$;
-revoke all on function public.rapport_insertion() from public, anon;
-grant execute on function public.rapport_insertion() to authenticated;
+revoke all on function public.rapport_insertion(text) from public, anon;
+grant execute on function public.rapport_insertion(text) to authenticated;
 
 -- ---------------------------------------------------------------------
 -- Sécurité ligne par ligne (suite)
@@ -2615,6 +2806,9 @@ create table if not exists public.enquetes_insertion (
   unique (user_id, vague)
 );
 
+-- L'école de la réponse, celle de la personne (protect_enquete) : elle reste quand la réponse est anonymisée (user_id vide)
+alter table public.enquetes_insertion add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug);
+create index if not exists enquetes_insertion_ecole on public.enquetes_insertion (ecole, promo, vague);
 create or replace function public.protect_enquete() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare p public.profiles%rowtype;
@@ -2623,6 +2817,9 @@ begin
   if tg_op = 'UPDATE' then
     if auth.uid() is not null or new.user_id is not null then new.user_id := old.user_id; end if;
     new.vague := old.vague; new.created_at := old.created_at;
+    -- L'école suit le compte tant que la réponse y est attachée (seule l'administration change l'école d'un compte),
+    -- et ne bouge plus une fois la réponse anonymisée
+    new.ecole := coalesce((select x.ecole from public.profiles x where x.id = new.user_id), old.ecole);
   end if;
   if auth.uid() is not null and not public.is_admin() then
     if tg_op = 'INSERT' then new.user_id := auth.uid(); new.created_at := now(); end if;
@@ -2630,6 +2827,7 @@ begin
     if p.role is distinct from 'laureat' and public.niveau_de(p.promo, public.saison_courante()) < 6 then raise exception 'L’enquête s’adresse aux lauréats.'; end if;
     new.promo := p.promo; new.filiere := p.filiere;
   end if;
+  if tg_op = 'INSERT' then new.ecole := coalesce((select x.ecole from public.profiles x where x.id = new.user_id), new.ecole, 'ensam-meknes'); end if;
   new.updated_at := now();
   return new;
 end $$;
@@ -2637,12 +2835,14 @@ drop trigger if exists trg_protect_enquete on public.enquetes_insertion;
 create trigger trg_protect_enquete before insert or update on public.enquetes_insertion
   for each row execute function public.protect_enquete();
 
-create or replace function public.stats_insertion() returns jsonb
+drop function if exists public.stats_insertion();
+create or replace function public.stats_insertion(p_ecole text default null) returns jsonb
 language plpgsql stable security definer set search_path = public as $$
-declare r jsonb; m int := case when public.is_admin() then 1 else 5 end;
+declare r jsonb; m int := case when public.is_admin() then 1 else 5 end; v_ecole text;
 begin
   if auth.uid() is null then raise exception 'Connecte-toi d’abord.'; end if;
-  with e as (select * from public.enquetes_insertion),
+  v_ecole := public.ecole_visee(p_ecole);
+  with e as (select * from public.enquetes_insertion x where x.ecole = v_ecole),
   g as (
     select e.promo, e.vague, count(*) as n,
       count(*) filter (where situation in ('emploi','entrepreneur','volontariat')) as en_poste,
@@ -2656,18 +2856,18 @@ begin
   select coalesce(jsonb_agg(jsonb_build_object(
       'promo', g.promo, 'vague', g.vague, 'n', g.n, 'en_poste', g.en_poste, 'recherche', g.recherche, 'etudes', g.etudes,
       'etranger', g.etranger, 'delai_median', g.delai_median, 'lien_formation', g.lien_formation, 'satisfaction', g.satisfaction,
-      'canaux', (select jsonb_object_agg(c, k) from (select canal c, count(*) k from public.enquetes_insertion x where x.promo = g.promo and x.vague = g.vague and canal is not null group by canal) t),
-      'secteurs', case when g.n >= m then (select jsonb_object_agg(s, k) from (select secteur s, count(*) k from public.enquetes_insertion x where x.promo = g.promo and x.vague = g.vague and secteur is not null group by secteur having count(*) >= least(m, 2)) t) end,
-      'salaires', case when g.n >= m then (select jsonb_object_agg(s, k) from (select salaire s, count(*) k from public.enquetes_insertion x where x.promo = g.promo and x.vague = g.vague and salaire is not null and salaire <> 'nsp' group by salaire) t) end,
+      'canaux', (select jsonb_object_agg(c, k) from (select canal c, count(*) k from e x where x.promo = g.promo and x.vague = g.vague and canal is not null group by canal) t),
+      'secteurs', case when g.n >= m then (select jsonb_object_agg(s, k) from (select secteur s, count(*) k from e x where x.promo = g.promo and x.vague = g.vague and secteur is not null group by secteur having count(*) >= least(m, 2)) t) end,
+      'salaires', case when g.n >= m then (select jsonb_object_agg(s, k) from (select salaire s, count(*) k from e x where x.promo = g.promo and x.vague = g.vague and salaire is not null and salaire <> 'nsp' group by salaire) t) end,
       'filieres', (select jsonb_object_agg(f, jsonb_build_object('n', k, 'en_poste', ep)) from (
           select filiere f, count(*) k, count(*) filter (where situation in ('emploi','entrepreneur','volontariat')) ep
-          from public.enquetes_insertion x where x.promo = g.promo and x.vague = g.vague and filiere is not null group by filiere having count(*) >= m) t)
+          from e x where x.promo = g.promo and x.vague = g.vague and filiere is not null group by filiere having count(*) >= m) t)
     ) order by g.promo desc, g.vague), '[]'::jsonb) into r
   from g where g.n >= m;  -- en dessous de 5 réponses, seuls les chiffres de l'administration existent
   return r;
 end $$;
-revoke all on function public.stats_insertion() from public, anon;
-grant execute on function public.stats_insertion() to authenticated;
+revoke all on function public.stats_insertion(text) from public, anon;
+grant execute on function public.stats_insertion(text) to authenticated;
 
 -- ---------------------------------------------------------------------
 -- Liste officielle des étudiants (fournie par l'école, importée par l'administration).
@@ -2682,26 +2882,34 @@ create table if not exists public.liste_officielle (
   matricule text check (char_length(matricule) <= 40),
   created_at timestamptz default now()
 );
-create unique index if not exists liste_officielle_nom_promo on public.liste_officielle ((public.cle_nom(nom)), promo);
+alter table public.liste_officielle add column if not exists ecole text not null default 'ensam-meknes' references public.ecoles(slug);
+drop index if exists public.liste_officielle_nom_promo;
+create unique index if not exists liste_officielle_ecole_nom_promo on public.liste_officielle (ecole, (public.cle_nom(nom)), promo);
 create index if not exists liste_officielle_email on public.liste_officielle (email);
 
-create or replace function public.dans_liste(p_id uuid, p_nom text, p_promo int) returns boolean
+-- p_ecole : l'école du compte, passée par qui appelle. À l'inscription (protect_profile, avant l'insert), la ligne du profil
+-- n'existe pas encore : sans elle, l'inscrit d'une autre école serait comparé à la liste d'ENSAM Meknès.
+drop function if exists public.dans_liste(uuid, text, int);
+create or replace function public.dans_liste(p_id uuid, p_nom text, p_promo int, p_ecole text default null) returns boolean
 language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.liste_officielle l
-    where (l.promo = p_promo and public.cle_nom(l.nom) = public.cle_nom(p_nom))
-       or (l.email is not null and l.email = (select lower(u.email) from auth.users u where u.id = p_id)));
+    where l.ecole = coalesce(p_ecole, (select p.ecole from public.profiles p where p.id = p_id), 'ensam-meknes')
+      and ((l.promo = p_promo and public.cle_nom(l.nom) = public.cle_nom(p_nom))
+       or (l.email is not null and l.email = (select lower(u.email) from auth.users u where u.id = p_id))));
 $$;
-revoke all on function public.dans_liste(uuid, text, int) from public, anon, authenticated;
+revoke all on function public.dans_liste(uuid, text, int, text) from public, anon, authenticated;
 
-create or replace function public.importer_liste(p_lignes jsonb, p_remplacer boolean default false) returns jsonb
+drop function if exists public.importer_liste(jsonb, boolean);
+create or replace function public.importer_liste(p_lignes jsonb, p_remplacer boolean default false, p_ecole text default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
-declare x jsonb; v_nom text; v_promo int; v_email text; n_ok int := 0; n_rej int := 0; n_verif int := 0; v_promos int[] := '{}';
+declare x jsonb; v_nom text; v_promo int; v_email text; n_ok int := 0; n_rej int := 0; n_verif int := 0; v_promos int[] := '{}'; v_ecole text;
 begin
   if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
+  v_ecole := public.ecole_visee(p_ecole);
   if jsonb_typeof(p_lignes) <> 'array' or jsonb_array_length(p_lignes) > 5000 then raise exception 'Liste invalide (5000 lignes au plus).'; end if;
   if p_remplacer then
     select coalesce(array_agg(distinct (e ->> 'promo')::int), '{}') into v_promos from jsonb_array_elements(p_lignes) e where (e ->> 'promo') ~ '^\d{4}$';
-    delete from public.liste_officielle where promo = any(v_promos);
+    delete from public.liste_officielle where promo = any(v_promos) and ecole = v_ecole;
   end if;
   for x in select * from jsonb_array_elements(p_lignes) loop
     v_nom := left(regexp_replace(trim(coalesce(x ->> 'nom', '')), '\s+', ' ', 'g'), 120);
@@ -2709,53 +2917,73 @@ begin
     v_email := nullif(lower(trim(coalesce(x ->> 'email', ''))), '');
     if v_email is not null and v_email !~ '^[^@\s]+@[^@\s]+\.[^@\s]+$' then v_email := null; end if;
     if char_length(v_nom) < 2 or public.cle_nom(v_nom) is null or v_promo is null or v_promo not between 1990 and 2040 then n_rej := n_rej + 1; continue; end if;
-    insert into public.liste_officielle (nom, email, promo, filiere, matricule)
-      values (v_nom, left(v_email, 160), v_promo, nullif(left(trim(coalesce(x ->> 'filiere', '')), 80), ''), nullif(left(trim(coalesce(x ->> 'matricule', '')), 40), ''))
-      on conflict ((public.cle_nom(nom)), promo) do update set
+    insert into public.liste_officielle (ecole, nom, email, promo, filiere, matricule)
+      values (v_ecole, v_nom, left(v_email, 160), v_promo, nullif(left(trim(coalesce(x ->> 'filiere', '')), 80), ''), nullif(left(trim(coalesce(x ->> 'matricule', '')), 40), ''))
+      on conflict (ecole, (public.cle_nom(nom)), promo) do update set
         email = coalesce(excluded.email, liste_officielle.email),
         filiere = coalesce(excluded.filiere, liste_officielle.filiere),
         matricule = coalesce(excluded.matricule, liste_officielle.matricule);
     n_ok := n_ok + 1;
   end loop;
   update public.profiles p set verified = true
-    where not p.verified and p.role <> 'admin' and public.dans_liste(p.id, p.full_name, p.promo);
+    where not p.verified and p.role <> 'admin' and p.ecole = v_ecole and public.dans_liste(p.id, p.full_name, p.promo, p.ecole);
   get diagnostics n_verif = row_count;
   return jsonb_build_object('importes', n_ok, 'rejetes', n_rej, 'verifies', n_verif);
 end $$;
-revoke all on function public.importer_liste(jsonb, boolean) from public, anon;
-grant execute on function public.importer_liste(jsonb, boolean) to authenticated;
+revoke all on function public.importer_liste(jsonb, boolean, text) from public, anon;
+grant execute on function public.importer_liste(jsonb, boolean, text) to authenticated;
 
--- Couverture : combien d'étudiants de la liste sont inscrits, par promo et filière
-create or replace function public.couverture_liste() returns jsonb
+-- Couverture : combien d'étudiants de la liste sont inscrits, par promo et filière (une école : la sienne, ou p_ecole)
+drop function if exists public.couverture_liste();
+create or replace function public.couverture_liste(p_ecole text default null) returns jsonb
 language plpgsql stable security definer set search_path = public as $$
-declare r jsonb;
+declare r jsonb; v_ecole text;
 begin
   if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
+  v_ecole := public.ecole_visee(p_ecole);
   with m as (
     select l.promo, coalesce(l.filiere, '') as filiere, exists (
       select 1 from public.profiles p left join auth.users u on u.id = p.id
-      where (l.email is not null and lower(u.email) = l.email) or (p.promo = l.promo and public.cle_nom(p.full_name) = public.cle_nom(l.nom))) as inscrit
-    from public.liste_officielle l)
+      where p.ecole = l.ecole and ((l.email is not null and lower(u.email) = l.email) or (p.promo = l.promo and public.cle_nom(p.full_name) = public.cle_nom(l.nom)))) as inscrit
+    from public.liste_officielle l where l.ecole = v_ecole)
   select coalesce(jsonb_agg(jsonb_build_object('promo', promo, 'filiere', filiere, 'total', total, 'inscrits', inscrits) order by promo desc, filiere), '[]'::jsonb) into r
   from (select promo, filiere, count(*) total, count(*) filter (where inscrit) inscrits from m group by promo, filiere) t;
   return r;
 end $$;
-revoke all on function public.couverture_liste() from public, anon;
-grant execute on function public.couverture_liste() to authenticated;
+revoke all on function public.couverture_liste(text) from public, anon;
+grant execute on function public.couverture_liste(text) to authenticated;
 
 -- Qui manque encore (pour que les ambassadeurs de promo les invitent)
-create or replace function public.manquants_liste(p_promo int) returns table (nom text, email text, filiere text)
+drop function if exists public.manquants_liste(int);
+create or replace function public.manquants_liste(p_promo int, p_ecole text default null) returns table (nom text, email text, filiere text)
 language plpgsql stable security definer set search_path = public as $$
+declare v_ecole text;
 begin
   if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
+  v_ecole := public.ecole_visee(p_ecole);
   return query select l.nom, l.email, l.filiere from public.liste_officielle l
-    where l.promo = p_promo and not exists (
+    where l.ecole = v_ecole and l.promo = p_promo and not exists (
       select 1 from public.profiles p left join auth.users u on u.id = p.id
-      where (l.email is not null and lower(u.email) = l.email) or (p.promo = l.promo and public.cle_nom(p.full_name) = public.cle_nom(l.nom)))
+      where p.ecole = l.ecole and ((l.email is not null and lower(u.email) = l.email) or (p.promo = l.promo and public.cle_nom(p.full_name) = public.cle_nom(l.nom))))
     order by l.filiere nulls last, l.nom;
 end $$;
-revoke all on function public.manquants_liste(int) from public, anon;
-grant execute on function public.manquants_liste(int) to authenticated;
+revoke all on function public.manquants_liste(int, text) from public, anon;
+grant execute on function public.manquants_liste(int, text) to authenticated;
+
+-- Vider la liste d'une promo, dans une seule école (la sienne, ou p_ecole) ; les comptes déjà vérifiés le restent
+create or replace function public.vider_liste(p_promo int, p_ecole text default null) returns int
+language plpgsql security definer set search_path = public as $$
+declare v_ecole text; n int;
+begin
+  if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
+  if p_promo is null then raise exception 'Choisis une promo.'; end if;
+  v_ecole := public.ecole_visee(p_ecole);
+  delete from public.liste_officielle where ecole = v_ecole and promo = p_promo;
+  get diagnostics n = row_count;
+  return n;
+end $$;
+revoke all on function public.vider_liste(int, text) from public, anon;
+grant execute on function public.vider_liste(int, text) to authenticated;
 
 -- ---------------------------------------------------------------------
 -- Alertes d'offres : dès qu'une offre de son année et de sa filière est publiée,
@@ -2799,7 +3027,7 @@ begin
     and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'offre_alerte')
   limit 2000;
   return null;
-exception when others then return null;
+exception when others then raise warning 'alerte_offre : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_alerte_offre on public.offers;
 create trigger trg_alerte_offre after insert on public.offers
@@ -2894,7 +3122,7 @@ begin
         insert into public.push_queue (user_id, kind, data)
         select l.id, 'relecture_demande', jsonb_build_object('nom', v_nom)
         from public.profiles l, public.profiles s
-        where s.id = new.student_id and l.role = 'laureat' and l.mentor_dispo and public.proximite_filiere(l.filiere, s.filiere) > 0 and l.id <> new.student_id
+        where s.id = new.student_id and l.role = 'laureat' and l.ecole = s.ecole and l.mentor_dispo and public.proximite_filiere(l.filiere, s.filiere) > 0 and l.id <> new.student_id
           and exists (select 1 from public.push_subscriptions x where x.user_id = l.id) and public.push_voulu(l.id, 'relecture_demande')
         limit 10;
       end if;
@@ -2912,7 +3140,7 @@ begin
     limit 10;
   end if;
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_phase3 : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_notif on public.demandes_contact;
 create trigger trg_notif after insert or update on public.demandes_contact for each row execute function public.notif_phase3();
@@ -3034,7 +3262,7 @@ do $$ begin
   drop policy if exists "photos lecture" on storage.objects;
   drop policy if exists "photos depot" on storage.objects;
   drop policy if exists "photos suppression" on storage.objects;
-  create policy "photos lecture" on storage.objects for select to authenticated using (bucket_id = 'photos');
+  create policy "photos lecture" on storage.objects for select to authenticated using (bucket_id = 'photos' and public.photo_de_mon_ecole(name));
   create policy "photos depot" on storage.objects for insert to authenticated with check (
     bucket_id = 'photos' and (storage.foldername(name))[1] = auth.uid()::text and lower(storage.extension(name)) in ('webp','jpg','png'));
   create policy "photos suppression" on storage.objects for delete to authenticated using (
@@ -3271,7 +3499,11 @@ language plpgsql security definer set search_path = public as $$
 declare v_n int; v_calme boolean;
 begin
   if current_setting('ensam.sans_push_message', true) = 'on' then return null; end if;
-  if not exists (select 1 from public.push_subscriptions where user_id = new.dest_id) then return null; end if;
+  -- Personne à prévenir sur un téléphone : rien ne part, le journal le dit (-1)
+  if not exists (select 1 from public.push_subscriptions where user_id = new.dest_id) then
+    perform public.noter_push(new.dest_id, case when new.type = 'rdv' then 'rdv_message' else 'message' end, -1);
+    return null;
+  end if;
   -- Un entretien proposé : sa propre notification (catégorie « Messages »), la date et la durée, sans l'aperçu d'un message
   if new.type = 'rdv' then
     perform public.pousser(new.dest_id, 'rdv_message', jsonb_build_object(
@@ -3286,7 +3518,7 @@ begin
     'nom', (select full_name from public.profiles where id = new.author_id), 'de', new.author_id,
     'type', new.type, 'texte', left(coalesce(new.body, ''), 140), 'duree', new.duree, 'n', greatest(v_n, 1), 'calme', v_calme));
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_message : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_notif on public.messages;
 create trigger trg_notif after insert on public.messages for each row execute function public.notif_message();
@@ -3453,7 +3685,7 @@ begin
   -- (section « Notifications pour tout », à la fin) ; une erreur ici n'empêche pas le reste
   begin
     perform public.demandes_larges_push();
-  exception when others then null;
+  exception when others then raise warning 'demandes_larges_push : %', sqlerrm;
   end;
 end $$;
 revoke all on function public.alertes_horaires() from public, anon, authenticated;
@@ -3781,12 +4013,12 @@ begin
   insert into public.push_queue (user_id, kind, data)
   select p.id, 'demande_nouvelle', jsonb_build_object('nom', split_part(v_a.full_name, ' ', 1), 'titre', new.titre, 'type', new.type, 'demande', new.id)
   from public.profiles p
-  where p.role = 'laureat' and p.id <> new.auteur_id and public.proximite_filiere(p.filiere, v_a.filiere) >= 1
+  where p.role = 'laureat' and p.id <> new.auteur_id and p.ecole = new.ecole and public.proximite_filiere(p.filiere, v_a.filiere) >= 1
     and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'demande_nouvelle')
     and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = new.auteur_id) or (b.user_id = new.auteur_id and b.bloque_id = p.id))
   limit 60;
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_demande : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_notif on public.demandes;
 create trigger trg_notif after insert on public.demandes for each row execute function public.notif_demande();
@@ -3936,7 +4168,7 @@ language sql stable security definer set search_path = public as $$
     select b.* from brut b
       join public.profiles pl on pl.id = b.l and pl.role = 'laureat'
       join public.profiles ps on ps.id = b.s and ps.role = 'etudiant'
-    where b.at <= now() and b.at >= now() - interval '30 days'
+    where b.at <= now() and b.at >= now() - interval '30 days' and pl.ecole = public.mon_ecole() and ps.ecole = public.mon_ecole()
   ), fenetre as (
     select case when (select count(distinct l) from aides where at >= now() - interval '7 days') >= 2 then 7 else 30 end as jours
   ), f as (select a.* from aides a, fenetre w where a.at >= now() - make_interval(days => w.jours))
@@ -3956,7 +4188,8 @@ grant execute on function public.pouls_reseau() to authenticated;
 -- « Renault » et « Renault Tanger Med » comptent pour une seule entreprise (règle de meme_entreprise) : jamais gonflé.
 create or replace function public.chiffres_publics() returns jsonb
 language sql stable security definer set search_path = public as $$
-  with l as (select promo, public.cle_entreprise(entreprise) as k from public.profiles where role = 'laureat' and not admin_ok),
+  with l as (select promo, public.cle_entreprise(entreprise) as k from public.profiles
+    where role = 'laureat' and not admin_ok and ecole = coalesce(public.mon_ecole(), 'ensam-meknes')),
   ks as (select distinct k from l where k is not null and k <> '')
   select jsonb_build_object(
     'laureats', (select count(*) from l),
@@ -4005,7 +4238,7 @@ language sql stable security definer set search_path = public as $$
       where m.mentor_id is not null and m.status in ('acceptee', 'terminee')
   ), premiere as (
     select distinct on (c.l) c.l, c.at, c.k from c
-      join public.profiles p on p.id = c.l and p.role = 'laureat' and not p.admin_ok
+      join public.profiles p on p.id = c.l and p.role = 'laureat' and not p.admin_ok and p.ecole = coalesce(public.mon_ecole(), 'ensam-meknes')
       where c.at is not null
       order by c.l, c.at, c.k
   )
@@ -4091,7 +4324,9 @@ create table if not exists public.ambassadeurs (
 -- Qui a retiré (membre, admin, systeme : changement de promo ou de filière) et le statut d'avant : chacun n'annule que son geste
 alter table public.ambassadeurs add column if not exists retire_par text check (retire_par in ('membre','admin','systeme'));
 alter table public.ambassadeurs add column if not exists statut_avant text check (statut_avant in ('propose','accepte'));
-create unique index if not exists ambassadeurs_un_en_cours on public.ambassadeurs (promo, filiere) where statut in ('propose','accepte');
+alter table public.ambassadeurs add column if not exists ecole text not null default coalesce(public.mon_ecole(), 'ensam-meknes') references public.ecoles(slug);
+drop index if exists public.ambassadeurs_un_en_cours;
+create unique index if not exists ambassadeurs_ecole_en_cours on public.ambassadeurs (ecole, promo, filiere) where statut in ('propose','accepte');
 create index if not exists ambassadeurs_membre on public.ambassadeurs (user_id);
 -- Le classement compte l'activité de chaque membre : un index par auteur (sinon une lecture complète par membre)
 create index if not exists offers_auteur on public.offers (author_id);
@@ -4107,6 +4342,9 @@ create table if not exists public.ambassadeurs_passages (
   at timestamptz not null default now(),
   primary key (promo, filiere)
 );
+alter table public.ambassadeurs_passages add column if not exists ecole text not null default 'ensam-meknes' references public.ecoles(slug);
+alter table public.ambassadeurs_passages drop constraint if exists ambassadeurs_passages_pkey;
+alter table public.ambassadeurs_passages add primary key (ecole, promo, filiere);
 alter table public.ambassadeurs_passages enable row level security;
 revoke all on public.ambassadeurs_passages from anon, authenticated;
 alter table public.ambassadeurs enable row level security;
@@ -4124,18 +4362,20 @@ create policy "ambassadeurs repondre" on public.ambassadeurs for update to authe
 revoke all on public.ambassadeurs from anon, authenticated;
 grant select, insert, update on public.ambassadeurs to authenticated;
 
--- Une nomination prend la promo et la filière du membre ; jamais un administrateur
+-- Une nomination prend la promo, la filière et l'école du membre ; jamais un administrateur
 create or replace function public.protect_ambassadeur_insert() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare v record;
 begin
-  select promo, filiere, role into v from public.profiles where id = new.user_id;
+  select promo, filiere, role, ecole into v from public.profiles where id = new.user_id;
   if v is null or v.role not in ('etudiant','laureat') then raise exception 'Seul un étudiant ou un lauréat peut être ambassadeur' using errcode = '42501'; end if;
   -- Un seul groupe à la fois
   if exists (select 1 from public.ambassadeurs a where a.user_id = new.user_id and a.statut in ('propose','accepte')) then
     raise exception 'Déjà ambassadeur ou déjà proposé' using errcode = '23505';
   end if;
   new.promo := v.promo; new.filiere := v.filiere; new.propose_at := now(); new.created_at := now(); new.repondu_at := null;
+  -- L'école du membre, pas celle de l'administration qui le nomme (la valeur par défaut de la colonne)
+  new.ecole := coalesce(v.ecole, new.ecole);
   new.retire_par := null; new.statut_avant := null;
   if current_setting('ensam.amb_systeme', true) = 'on' then new.par := 'auto'; new.statut := 'propose'; end if;
   return new;
@@ -4229,7 +4469,7 @@ language sql stable security definer set search_path = public as $$
   -- La connexion récente départage ceux qui ont agi ; seule, elle ne suffit pas (rien fait, pas proposé)
   cross join lateral (select x.actions + case when x.actions > 0
       and (select u.last_sign_in_at from auth.users u where u.id = p.id) > now() - interval '30 days' then 2 else 0 end as score) s
-  where p.promo = p_promo and p.filiere = p_filiere and p.role in ('etudiant','laureat') and not p.admin_ok and p.consent_at is not null
+  where p.promo = p_promo and p.filiere = p_filiere and p.ecole = coalesce(public.mon_ecole(), 'ensam-meknes') and p.role in ('etudiant','laureat') and not p.admin_ok and p.consent_at is not null
     and not exists (select 1 from public.ambassadeurs a where a.user_id = p.id and a.promo = p_promo and a.filiere = p_filiere
       and (a.statut in ('refuse','expire','retire') or (a.statut = 'propose' and a.propose_at <= now() - interval '7 days')))
     and not exists (select 1 from public.ambassadeurs a where a.user_id = p.id
@@ -4247,27 +4487,27 @@ language plpgsql security definer set search_path = public as $$
 declare g record; v_id uuid; n int := 0; k int; v_admin boolean := public.is_admin(); v_moi record;
 begin
   if auth.uid() is null then return 0; end if;
-  select promo, filiere, role into v_moi from public.profiles where id = auth.uid();
+  select promo, filiere, role, ecole into v_moi from public.profiles where id = auth.uid();
   if v_moi is null then return 0; end if;
   perform set_config('ensam.amb_systeme', 'on', true);
   for g in select distinct p.promo, p.filiere from public.profiles p
-    where p.role in ('etudiant','laureat') and p.promo between 1990 and 2040 and char_length(p.filiere) between 1 and 120
+    where p.role in ('etudiant','laureat') and p.ecole = v_moi.ecole and p.promo between 1990 and 2040 and char_length(p.filiere) between 1 and 120
       and (v_admin or (p.promo = v_moi.promo and p.filiere = v_moi.filiere))
   loop
     begin
       update public.ambassadeurs set statut = 'expire', repondu_at = now()
-        where promo = g.promo and filiere = g.filiere and statut = 'propose' and propose_at <= now() - interval '7 days';
+        where ecole = v_moi.ecole and promo = g.promo and filiere = g.filiere and statut = 'propose' and propose_at <= now() - interval '7 days';
       get diagnostics k = row_count; n := n + k;
-      if exists (select 1 from public.ambassadeurs a where a.promo = g.promo and a.filiere = g.filiere and a.statut in ('propose','accepte')) then continue; end if;
-      if k = 0 and exists (select 1 from public.ambassadeurs_passages x where x.promo = g.promo and x.filiere = g.filiere and x.at > now() - interval '1 hour') then continue; end if;
+      if exists (select 1 from public.ambassadeurs a where a.ecole = v_moi.ecole and a.promo = g.promo and a.filiere = g.filiere and a.statut in ('propose','accepte')) then continue; end if;
+      if k = 0 and exists (select 1 from public.ambassadeurs_passages x where x.ecole = v_moi.ecole and x.promo = g.promo and x.filiere = g.filiere and x.at > now() - interval '1 hour') then continue; end if;
       v_id := null;
       select c.id into v_id from public.ambassadeur_candidats(g.promo, g.filiere) c limit 1;
       if v_id is null then
-        insert into public.ambassadeurs_passages (promo, filiere, at) values (g.promo, g.filiere, now())
-          on conflict (promo, filiere) do update set at = excluded.at;
+        insert into public.ambassadeurs_passages (ecole, promo, filiere, at) values (v_moi.ecole, g.promo, g.filiere, now())
+          on conflict (ecole, promo, filiere) do update set at = excluded.at;
         continue;
       end if;
-      insert into public.ambassadeurs (promo, filiere, user_id) values (g.promo, g.filiere, v_id) on conflict do nothing;
+      insert into public.ambassadeurs (ecole, promo, filiere, user_id) values (v_moi.ecole, g.promo, g.filiere, v_id) on conflict do nothing;
       get diagnostics k = row_count; n := n + k;
     exception when others then null;
     end;
@@ -4280,9 +4520,11 @@ grant execute on function public.ambassadeurs_proposer() to authenticated;
 
 -- Les chiffres vrais d'une promo × filière : depuis toujours, et pendant le mois qui commence à p_debut.
 -- Comme chiffresPromo() dans logic.js.
-create or replace function public.chiffres_groupe(p_promo int, p_filiere text, p_debut timestamptz)
+drop function if exists public.chiffres_groupe(int, text, timestamptz);
+create or replace function public.chiffres_groupe(p_promo int, p_filiere text, p_debut timestamptz, p_ecole text default null)
 returns jsonb language sql stable security definer set search_path = public as $$
-  with m as (select p.id, p.created_at from public.profiles p where p.promo = p_promo and p.filiere = p_filiere and p.role in ('etudiant','laureat')),
+  with m as (select p.id, p.created_at from public.profiles p where p.promo = p_promo and p.filiere = p_filiere and p.role in ('etudiant','laureat')
+    and p.ecole = coalesce(p_ecole, public.mon_ecole(), 'ensam-meknes')),
   d as (select x.updated_at, x.created_at from public.demandes x join m on m.id = x.auteur_id where x.status = 'pourvue'),
   s as (select coalesce(x.confirmed_at, x.created_at) as t from public.placements x join m on m.id = x.student_id where x.status in ('declare','confirme'))
   select jsonb_build_object(
@@ -4293,7 +4535,7 @@ returns jsonb language sql stable security definer set search_path = public as $
     'stages', (select count(*) from s),
     'stages_mois', (select count(*) from s where s.t >= p_debut and s.t < p_debut + interval '1 month'));
 $$;
-revoke all on function public.chiffres_groupe(int, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.chiffres_groupe(int, text, timestamptz, text) from public, anon, authenticated;
 
 -- L'ambassadeur (accepté) lit les chiffres de sa promo ; l'administration ceux de n'importe quel groupe
 create or replace function public.chiffres_ma_promo(p_debut timestamptz default null, p_promo int default null, p_filiere text default null)
@@ -4316,7 +4558,7 @@ grant execute on function public.chiffres_ma_promo(timestamptz, int, text) to au
 create or replace function public.chiffres_ambassadeurs(p_debut timestamptz)
 returns table (user_id uuid, promo int, filiere text, chiffres jsonb)
 language sql stable security definer set search_path = public as $$
-  select a.user_id, a.promo, a.filiere, public.chiffres_groupe(a.promo, a.filiere, p_debut)
+  select a.user_id, a.promo, a.filiere, public.chiffres_groupe(a.promo, a.filiere, p_debut, a.ecole)
   from public.ambassadeurs a join public.profiles p on p.id = a.user_id and p.promo = a.promo and p.filiere = a.filiere
   where a.statut = 'accepte';
 $$;
@@ -4455,7 +4697,7 @@ begin
     'emoji', new.emoji, 'n', v_n, 'titre', v_titre)
     || case when new.offer_id is not null then jsonb_build_object('offre', new.offer_id) else jsonb_build_object('demande', new.demande_id) end);
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_reaction_publique : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_notif on public.reactions_publiques;
 create trigger trg_notif after insert on public.reactions_publiques for each row execute function public.notif_reaction_publique();
@@ -4529,7 +4771,7 @@ begin
   perform public.pousser(v_d.auteur_id, 'demande_reponse', jsonb_build_object('nom', (select full_name from public.profiles where id = new.author_id),
     'titre', v_d.titre, 'texte', left(new.body, 140), 'demande', v_d.id));
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_reponse_demande : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_notif on public.reponses_demandes;
 create trigger trg_notif after insert on public.reponses_demandes for each row execute function public.notif_reponse_demande();
@@ -4752,7 +4994,7 @@ end $$;
 revoke all on function public.se_desabonner_rappels(uuid) from public;
 grant execute on function public.se_desabonner_rappels(uuid) to anon, authenticated;
 
--- Chaque soir à 18 h UTC (19 h au Maroc, 18 h pendant le ramadan) : le téléphone, puis les emails
+-- Chaque soir à 18 h UTC (18 h au Maroc depuis le retour à l'heure GMT, le 20 septembre 2026) : le téléphone, puis les emails
 create or replace function public.rappels_soir() returns void
 language plpgsql security definer set search_path = public as $$
 begin
@@ -4818,7 +5060,7 @@ begin
       if new.lien is null or char_length(new.lien) > 500 or new.lien !~* '^https?://[^[:space:]/?#]+\.[^[:space:]]+$' then
         raise exception 'Ajoute le lien de l’offre (https://…).' using errcode = '23514';
       end if;
-      if exists (select 1 from public.offers o where o.id <> new.id and o.origine = 'partagee' and o.status = 'ouverte'
+      if exists (select 1 from public.offers o where o.id <> new.id and o.ecole = new.ecole and o.origine = 'partagee' and o.status = 'ouverte'
           and o.created_at > now() - interval '45 days'
           and lower(regexp_replace(trim(o.lien), '/+$', '')) = lower(regexp_replace(new.lien, '/+$', ''))) then
         raise exception 'Cette offre est déjà partagée sur le réseau.' using errcode = '23505';
@@ -4844,7 +5086,7 @@ begin
     end if;
     new.cooptation := false;
     -- Le même lien déjà partagé, encore ouvert : une seule fois sur le réseau
-    if exists (select 1 from public.offers o where o.origine = 'partagee' and o.status = 'ouverte'
+    if exists (select 1 from public.offers o where o.ecole = new.ecole and o.origine = 'partagee' and o.status = 'ouverte'
         and o.created_at > now() - interval '45 days'
         and lower(regexp_replace(trim(o.lien), '/+$', '')) = lower(regexp_replace(new.lien, '/+$', ''))) then
       raise exception 'Cette offre est déjà partagée sur le réseau.' using errcode = '23505';
@@ -4975,7 +5217,7 @@ begin
     perform public.pousser(r.id, 'promo_nouveau', jsonb_build_object('nom', split_part(new.full_name, ' ', 1), 'n', greatest(v_n, 1), 'promo', new.promo));
   end loop;
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_promo : %', sqlerrm; return null;
 end $$;
 -- Le nom du trigger le fait passer après trg_nouveau_laureat (ordre alphabétique) : verifier_pair est déjà en file
 drop trigger if exists trg_promo_nouveau on public.profiles;
@@ -5006,7 +5248,7 @@ begin
     perform public.pousser(r.id, 'offre_commentaire', v_data || jsonb_build_object('pour', r.pour));
   end loop;
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_commentaire : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_notif_commentaire on public.comments;
 create trigger trg_notif_commentaire after insert on public.comments
@@ -5020,12 +5262,12 @@ begin
   insert into public.push_queue (user_id, kind, data)
   select p.id, 'annonce', jsonb_build_object('texte', left(new.texte, 180))
   from public.profiles p
-  where p.id is distinct from new.author_id
+  where p.id is distinct from new.author_id and p.ecole = new.ecole
     and (coalesce(new.public, 'tous') = 'tous' or (new.public = 'etudiants' and p.role = 'etudiant') or (new.public = 'laureats' and p.role = 'laureat'))
     and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'annonce')
   limit 2000;
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_annonce : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_notif_annonce on public.annonces;
 create trigger trg_notif_annonce after insert on public.annonces
@@ -5046,13 +5288,13 @@ begin
   insert into public.push_queue (user_id, kind, data)
   select l.id, 'mentorat_ouvert', jsonb_build_object('nom', v_s.full_name, 'sujet', new.sujet)
   from public.profiles l
-  where l.role = 'laureat' and coalesce(l.mentor_dispo, false) and l.id <> new.student_id and l.id is distinct from v_ancien
+  where l.role = 'laureat' and coalesce(l.mentor_dispo, false) and l.id <> new.student_id and l.id is distinct from v_ancien and l.ecole = new.ecole
     and public.proximite_filiere(l.filiere, v_s.filiere) >= 1
     and not exists (select 1 from public.blocages b where (b.user_id = l.id and b.bloque_id = new.student_id) or (b.user_id = new.student_id and b.bloque_id = l.id))
     and exists (select 1 from public.push_subscriptions s where s.user_id = l.id) and public.push_voulu(l.id, 'mentorat_ouvert')
   limit 30;
   return null;
-exception when others then return null;
+exception when others then raise warning 'notif_mentorat_ouvert : %', sqlerrm; return null;
 end $$;
 drop trigger if exists trg_notif_mentorat_ouvert on public.mentorships;
 create trigger trg_notif_mentorat_ouvert after insert or update of mentor_id on public.mentorships
@@ -5202,40 +5444,41 @@ begin
     insert into public.matchs (etudiant_id, laureat_id, offre_id) values (v_etu, v_lau, v_offre)
       on conflict (etudiant_id, laureat_id) do nothing returning * into v_m;
     if v_m.id is null then return null; end if;
-    -- « C'est un match ! » aux deux, y compris à celui qui vient de dire oui (son téléphone ouvre la discussion)
+    -- « C'est un match ! » aux deux, y compris à celui qui vient de dire oui (son téléphone ouvre la discussion).
+    -- Le filtre de la file retire (et note, -2) un côté qui a coupé Match ; un côté sans téléphone abonné est noté (-1).
     begin
       v_titre := (select titre from public.offers where id = v_offre);
       insert into public.push_queue (user_id, kind, data)
       select p.id, 'match', jsonb_strip_nulls(jsonb_build_object('nom', split_part(a.full_name, ' ', 1), 'de', a.id, 'match', v_m.id, 'titre', v_titre))
       from public.profiles p join public.profiles a on a.id = case when p.id = v_etu then v_lau else v_etu end
       where p.id in (v_etu, v_lau)
-        and exists (select 1 from public.push_subscriptions s where s.user_id = p.id) and public.push_voulu(p.id, 'match');
-    exception when others then null;  -- une notification ne bloque jamais le match
+        and exists (select 1 from public.push_subscriptions s where s.user_id = p.id);
+      perform public.noter_push(x.id, 'match', -1) from unnest(array[v_etu, v_lau]) as x(id)
+        where not exists (select 1 from public.push_subscriptions s where s.user_id = x.id);
+    exception when others then raise warning 'match_apres_choix : %', sqlerrm;  -- une notification ne bloque jamais le match
     end;
     return null;
   end if;
-  -- Pas encore de match : l'intérêt, à la personne visée
+  -- Pas encore de match : l'intérêt, à la personne visée, une fois par jour au plus pour une même paire (un « oui » repris
+  -- après « Plus tard » ne repart pas), avec ou sans téléphone : pousser le met en file, ou le note au journal (-1 sans
+  -- téléphone abonné, -2 Match coupé), une fois comme il serait parti
   begin
     if new.user_id = v_lau then
       -- L'étudiant apprend qu'un lauréat s'intéresse à lui ; l'entreprise seulement si le lauréat la montre à tous
-      if exists (select 1 from public.push_subscriptions s where s.user_id = v_etu) then
-        if public.cadence('match_interet:' || v_etu || ':' || v_lau, interval '1 day') then
-          select * into v_l from public.profiles where id = v_lau;
-          perform public.pousser(v_etu, 'match_interet', jsonb_strip_nulls(jsonb_build_object('nom', split_part(v_l.full_name, ' ', 1), 'de', v_lau,
-            'entreprise', case when coalesce(v_l.visibilite ->> 'travail', 'tous') = 'tous' then nullif(btrim(v_l.entreprise), '') end)));
-        end if;
+      if public.cadence('match_interet:' || v_etu || ':' || v_lau, interval '1 day') then
+        select * into v_l from public.profiles where id = v_lau;
+        perform public.pousser(v_etu, 'match_interet', jsonb_strip_nulls(jsonb_build_object('nom', split_part(v_l.full_name, ' ', 1), 'de', v_lau,
+          'entreprise', case when coalesce(v_l.visibilite ->> 'travail', 'tous') = 'tous' then nullif(btrim(v_l.entreprise), '') end)));
       end if;
     elsif new.cible_offre is not null then
       -- Le lauréat apprend qu'un étudiant s'intéresse à son offre
-      if exists (select 1 from public.push_subscriptions s where s.user_id = v_lau) then
-        if public.cadence('match_interet:' || v_etu || ':' || v_lau, interval '1 day') then
-          perform public.pousser(v_lau, 'match_interet', jsonb_build_object(
-            'nom', split_part((select full_name from public.profiles where id = v_etu), ' ', 1), 'de', v_etu,
-            'titre', (select titre from public.offers where id = new.cible_offre), 'offre', new.cible_offre));
-        end if;
+      if public.cadence('match_interet:' || v_etu || ':' || v_lau, interval '1 day') then
+        perform public.pousser(v_lau, 'match_interet', jsonb_build_object(
+          'nom', split_part((select full_name from public.profiles where id = v_etu), ' ', 1), 'de', v_etu,
+          'titre', (select titre from public.offers where id = new.cible_offre), 'offre', new.cible_offre));
       end if;
     end if;
-  exception when others then null;
+  exception when others then raise warning 'match_apres_choix : %', sqlerrm;
   end;
   return null;
 end $$;
@@ -5406,9 +5649,10 @@ alter table public.sponsorises_comptes enable row level security;
 revoke all on public.sponsorises_comptes from public, anon, authenticated;
 
 -- La carte vise-t-elle ce membre ? En cours, son public, son année, sa filière ; jamais l'administration (ni en vue lauréat)
+alter table public.sponsorises add column if not exists ecole text references public.ecoles(slug);
 create or replace function public.sponsorise_pour(s public.sponsorises, p public.profiles) returns boolean
 language sql stable set search_path = public as $$
-  select s.id is not null and p.id is not null and s.actif and current_date between s.debut and s.fin
+  select s.id is not null and p.id is not null and s.actif and current_date between s.debut and s.fin and (s.ecole is null or s.ecole = p.ecole)
     and p.role in ('etudiant','laureat') and not coalesce(p.admin_ok, false)
     and (s.public = 'tous' or (s.public = 'etudiants' and p.role = 'etudiant') or (s.public = 'laureats' and p.role = 'laureat'))
     and (cardinality(coalesce(s.annees, '{}')) = 0 or public.niveau_de(p.promo, public.saison_courante()) = any(s.annees))
@@ -5567,17 +5811,7 @@ end $$;
 --      notification aux deux personnes ; un email à celle qui n'a de notifications sur aucun appareil.
 -- =====================================================================
 
--- code : réponse du service de push pour le meilleur des téléphones (201 reçue), 404 ou 410 téléphone parti,
--- 0 service injoignable, -1 aucun téléphone. Lu par l'administration dans l'éditeur SQL, jamais par le site.
-create table if not exists public.push_journal (
-  id bigint generated always as identity primary key,
-  user_id uuid references public.profiles(id) on delete cascade,
-  kind text not null,
-  code int not null,
-  at timestamptz not null default now()
-);
-create index if not exists push_journal_user on public.push_journal (user_id, at desc);
-alter table public.push_journal enable row level security;
+-- Le journal (push_journal) et ses codes : section « Notifications sur le téléphone », au début, près de la file.
 
 -- Entretiens proposés dans une discussion déjà rappelés, avec leur horaire
 create table if not exists public.rappels_entretiens (
@@ -5615,7 +5849,7 @@ begin
     select p_user, p_kind, p_data || jsonb_strip_nulls(jsonb_build_object('lien', p_lien)), (p_data ->> 'rdv_at')::timestamptz
     where exists (select 1 from auth.users u where u.id = p_user and u.email is not null);
   return found;
-exception when others then return false;  -- un rappel ne bloque jamais les autres
+exception when others then raise warning 'rappeler : %', sqlerrm; return false;  -- un rappel ne bloque jamais les autres
 end $$;
 revoke all on function public.rappeler(uuid, text, jsonb, text) from public, anon, authenticated;
 
@@ -5680,12 +5914,23 @@ $$;
 revoke all on function public.rappels_rdv_envoyes(bigint[]) from public, anon, authenticated;
 
 -- Ce qui attend encore : la fonction est rappelée (vrai si elle l'est). Abandonné : une notification de plus d'un jour
--- (le service de push ne la garderait pas), un rappel dont l'heure est passée, 3 essais sans succès.
+-- (le service de push ne la garderait pas), un rappel dont l'heure est passée, 3 essais sans succès. Une notification
+-- abandonnée laisse sa trace au journal : rien ne disparaît sans qu'on le sache. -3 si elle a été essayée (le service du
+-- téléphone ne répondait pas) ; -5 si elle ne l'a jamais été (la fonction ou la tâche de chaque minute ne tournait pas).
 create or replace function public.relancer_push() returns boolean
 language plpgsql security definer set search_path = public as $$
 declare v boolean := false;
 begin
-  delete from public.push_queue where created_at < now() - interval '1 day' or (essais >= 3 and pris_at < now() - interval '2 minutes');
+  begin
+    with abandon as (
+      delete from public.push_queue where created_at < now() - interval '1 day' or (essais >= 3 and pris_at < now() - interval '2 minutes')
+      returning user_id, kind, essais)
+    insert into public.push_journal (user_id, kind, code)
+      select user_id, left(kind, 40), case when essais > 0 then -3 else -5 end from abandon;
+  exception when others then
+    raise warning 'relancer_push (journal) : %', sqlerrm;
+    delete from public.push_queue where created_at < now() - interval '1 day' or (essais >= 3 and pris_at < now() - interval '2 minutes');
+  end;
   delete from public.rappels_emails where rdv_at < now() or (essais >= 3 and pris_at < now() - interval '2 minutes');
   if exists (select 1 from public.push_queue where essais < 3
       and ((pris_at is null and created_at < now() - interval '1 minute') or pris_at < now() - interval '2 minutes')) then
@@ -5772,6 +6017,16 @@ begin
   end loop;
 end $$;
 
+-- La marque et l'inscription de chaque école : nom court et ville (affichés), couleur, logo, domaines de l'email
+alter table public.ecoles add column if not exists nom_court text check (char_length(nom_court) <= 40);
+alter table public.ecoles add column if not exists ville text check (char_length(ville) <= 60);
+alter table public.ecoles add column if not exists couleur text check (couleur ~ '^#[0-9a-fA-F]{6}$');
+alter table public.ecoles add column if not exists logo_url text check (char_length(logo_url) <= 300 and logo_url ~ '^https://');
+alter table public.ecoles add column if not exists domaines text[] not null default '{}';
+alter table public.ecoles add column if not exists email_obligatoire boolean not null default false;
+update public.ecoles set nom_court = coalesce(nom_court, 'ENSAM'), ville = coalesce(ville, 'Meknès'), couleur = coalesce(couleur, '#1670A8')
+  where slug = 'ensam-meknes';
+
 -- Arguments du déclencheur : « colonne:table » ; la table citée a un id et une école. Sans membre connecté
 -- (tâches de la base) ni pour l'administration, rien à vérifier.
 create or replace function public.garde_ecole() returns trigger
@@ -5824,6 +6079,143 @@ do $$ begin
     grant execute on function public.rappels_rdv_envoyes(bigint[]) to service_role;
   end if;
 end $$;
+
+-- =====================================================================
+--  Santé des notifications (panneau de l'administration, Vue d'ensemble) : des totaux seulement, jamais un nom, un
+--  identifiant ni le contenu d'une notification. Les jours sont ceux de l'heure UTC (l'heure du Maroc depuis le
+--  20 septembre 2026).
+--    · membres, et membres qui ont activé les notifications sur au moins un téléphone, par rôle ;
+--    · téléphones abonnés : combien ont confirmé une réception (push_recu) en 24 h et en 7 jours, combien ont reçu un
+--      envoi en 7 jours (servis), combien acceptent les notifications sans jamais confirmer (service de push d'accord,
+--      rien d'affiché), combien refusent, combien ont été retirés ;
+--    · leur service de push (Chrome et Android : fcm ; iPhone et Mac : apple ; Firefox : mozilla ; Edge : windows), avec,
+--      d'après la dernière réponse de chacun en 7 jours, ceux qu'il accepte (2xx) et ceux qu'il refuse (400, 401, 403), et
+--      combien de membres distincts refusent : tous refusés et aucun accepté, la clé de la plateforme est en cause, pas les
+--      téléphones ;
+--    · le journal (push_journal) des 7 derniers jours, par jour et par type (les 12 plus fréquents) : envoyées (2xx) ;
+--      perdues : parties (404, 410), refusées (autres 4xx sauf 413 et 429), trop longues (413), abandonnées (-3),
+--      expirées sans essai (-5), jetées (-4) ; à part, sans téléphone (-1), coupées (-2), échecs passagers (0, 429, 5xx) ;
+--    · la file d'attente, le dernier passage de la tâche de chaque minute (pg_cron « ensam-rappels »), la dernière
+--      réponse à l'appel de la fonction « notifier » (pg_net, qui ne garde ses réponses que 6 h : { vide } quand il n'en
+--      a plus aucune), quand la base les laisse lire (sinon null), et la dernière notification traitée par la fonction.
+-- =====================================================================
+create or replace function public.service_push(p_endpoint text) returns text
+language sql immutable set search_path = public as $$
+  select case
+    when h = 'fcm.googleapis.com' or h like '%.googleapis.com' then 'fcm'
+    when h = 'web.push.apple.com' or h like '%.push.apple.com' then 'apple'
+    when h like '%.mozilla.com' or h like '%.mozilla.org' or h like '%.mozaws.net' then 'mozilla'
+    when h like '%.windows.com' then 'windows'
+    else 'autre' end
+  from (select lower(split_part(split_part(coalesce(p_endpoint, ''), '/', 3), ':', 1)) as h) x;
+$$;
+revoke all on function public.service_push(text) from public, anon, authenticated;
+
+create or replace function public.admin_sante_notifs() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare
+  v_jour date := (now() at time zone 'UTC')::date;
+  v_debut timestamptz := ((now() at time zone 'UTC')::date - 6)::timestamp at time zone 'UTC';
+  v_cron jsonb; v_http jsonb; v_r jsonb;
+begin
+  if not public.is_admin() then raise exception 'Réservé à l’administration.' using errcode = '42501'; end if;
+  -- pg_cron et pg_net ne sont pas toujours là, ni lisibles : alors null, sans erreur
+  begin
+    select jsonb_build_object('existe', true, 'at', d.start_time, 'statut', d.status) into v_cron
+    from cron.job j left join lateral (
+      select x.start_time, x.status from cron.job_run_details x where x.jobid = j.jobid order by x.start_time desc nulls last limit 1
+    ) d on true
+    where j.jobname = 'ensam-rappels' limit 1;
+    if v_cron is null then v_cron := jsonb_build_object('existe', false); end if;
+  exception when others then v_cron := null;
+  end;
+  begin
+    select to_jsonb(r) into v_r from net._http_response r order by r.id desc limit 1;
+    if v_r is not null then
+      v_http := jsonb_build_object('code', v_r->'status_code', 'at', v_r->'created',
+        'delai', coalesce((v_r->>'timed_out')::boolean, false), 'erreur', coalesce(v_r->>'error_msg', '') <> '');
+    else
+      v_http := jsonb_build_object('vide', true);   -- lisible, mais aucune réponse gardée (6 h au plus)
+    end if;
+  exception when others then v_http := null;
+  end;
+  return jsonb_build_object(
+    'at', now(),
+    'roles', coalesce((
+      select jsonb_agg(jsonb_build_object('role', x.role, 'membres', x.membres, 'avec_tel', x.avec_tel) order by x.role)
+      from (select p.role, count(*)::int as membres,
+          (count(*) filter (where exists (select 1 from public.push_subscriptions s where s.user_id = p.id)))::int as avec_tel
+        from public.profiles p group by p.role) x), '[]'::jsonb),
+    'telephones', (
+      select jsonb_build_object(
+        'total', count(*)::int,
+        'recus_24h', (count(*) filter (where s.recu_at > now() - interval '24 hours'))::int,
+        'recus_7j', (count(*) filter (where s.recu_at > now() - interval '7 days'))::int,
+        -- Ceux à qui quelque chose est parti cette semaine (ou qui ont confirmé une réception)
+        'servis_7j', (count(*) filter (where s.dernier_envoi_at > now() - interval '7 days' or s.recu_at > now() - interval '7 days'))::int,
+        -- Accepté par le service de push il y a plus d'une heure, et rien de reçu depuis (à 10 minutes près : le téléphone
+        -- peut confirmer avant que la fonction ait noté l'envoi)
+        'muets', (count(*) filter (where s.dernier_code between 200 and 299
+            and s.dernier_envoi_at > now() - interval '7 days' and s.dernier_envoi_at < now() - interval '1 hour'
+            and (s.recu_at is null or s.recu_at < s.dernier_envoi_at - interval '10 minutes')))::int,
+        'en_refus', (count(*) filter (where s.refus > 0))::int,
+        'retires_7j', (select count(*)::int from public.push_morts m where m.at > now() - interval '7 days'))
+      from public.push_subscriptions s),
+    'services', (
+      select jsonb_object_agg(z.srv, jsonb_build_object('n', z.n, 'ok', z.ok, 'refus', z.refus, 'refus_membres', z.refus_membres))
+      from (
+        select k.srv, count(x.srv)::int as n,
+          (count(x.srv) filter (where x.dernier_code between 200 and 299 and x.dernier_envoi_at > now() - interval '7 days'))::int as ok,
+          (count(x.srv) filter (where x.dernier_code in (400, 401, 403) and x.dernier_envoi_at > now() - interval '7 days'))::int as refus,
+          -- Des membres distincts, comme le garde-fou de la fonction (un membre et ses vieux abonnements ne font pas un service)
+          (count(distinct x.user_id) filter (where x.dernier_code in (400, 401, 403) and x.dernier_envoi_at > now() - interval '7 days'))::int as refus_membres
+        from (values ('fcm'), ('apple'), ('mozilla'), ('windows'), ('autre')) as k(srv)
+        left join (select public.service_push(s.endpoint) as srv, s.user_id, s.dernier_code, s.dernier_envoi_at
+          from public.push_subscriptions s) x on x.srv = k.srv
+        group by k.srv) z),
+    'jours', (
+      select jsonb_agg(jsonb_build_object('jour', to_char(g.jour::timestamp, 'YYYY-MM-DD'),
+          'envoyees', coalesce(t.envoyees, 0), 'parties', coalesce(t.parties, 0), 'refusees', coalesce(t.refusees, 0),
+          'trop_longues', coalesce(t.trop_longues, 0), 'echecs', coalesce(t.echecs, 0), 'sans_tel', coalesce(t.sans_tel, 0),
+          'coupees', coalesce(t.coupees, 0), 'abandonnees', coalesce(t.abandonnees, 0), 'expirees', coalesce(t.expirees, 0),
+          'jetees', coalesce(t.jetees, 0)) order by g.jour)
+      from (select v_jour - 6 + i as jour from generate_series(0, 6) as i) g
+      left join (
+        select (j.at at time zone 'UTC')::date as jour,
+          (count(*) filter (where j.code between 200 and 299))::int as envoyees,
+          (count(*) filter (where j.code in (404, 410)))::int as parties,
+          (count(*) filter (where j.code between 400 and 499 and j.code not in (404, 410, 413, 429)))::int as refusees,
+          (count(*) filter (where j.code = 413))::int as trop_longues,
+          (count(*) filter (where j.code = 0 or j.code = 429 or j.code >= 500))::int as echecs,
+          (count(*) filter (where j.code = -1))::int as sans_tel,
+          (count(*) filter (where j.code = -2))::int as coupees,
+          (count(*) filter (where j.code = -3))::int as abandonnees,
+          (count(*) filter (where j.code = -5))::int as expirees,
+          (count(*) filter (where j.code = -4))::int as jetees
+        from public.push_journal j where j.at >= v_debut group by 1
+      ) t on t.jour = g.jour),
+    'types', coalesce((
+      select jsonb_agg(jsonb_build_object('kind', y.kind, 'total', y.total, 'envoyees', y.envoyees, 'perdues', y.perdues,
+          'sans_tel', y.sans_tel, 'coupees', y.coupees, 'echecs', y.echecs) order by y.total desc, y.kind)
+      from (
+        select j.kind, count(*)::int as total,
+          (count(*) filter (where j.code between 200 and 299))::int as envoyees,
+          (count(*) filter (where j.code in (-3, -4, -5) or (j.code between 400 and 499 and j.code <> 429)))::int as perdues,
+          (count(*) filter (where j.code = -1))::int as sans_tel,
+          (count(*) filter (where j.code = -2))::int as coupees,
+          (count(*) filter (where j.code = 0 or j.code = 429 or j.code >= 500))::int as echecs
+        from public.push_journal j where j.at >= v_debut
+        group by j.kind order by count(*) desc, j.kind limit 12
+      ) y), '[]'::jsonb),
+    'file', (select jsonb_build_object('n', count(*)::int,
+        'age_s', coalesce(floor(extract(epoch from now() - min(q.created_at)))::int, 0)) from public.push_queue q),
+    -- La dernière notification traitée par la fonction (une réponse de service de push, ou jetée), même au-delà des 6 h de pg_net
+    'envoi_at', (select max(j.at) from public.push_journal j where j.code >= 0 or j.code = -4),
+    'cron', v_cron,
+    'http', v_http);
+end $$;
+revoke all on function public.admin_sante_notifs() from public, anon;
+grant execute on function public.admin_sante_notifs() to authenticated;
 
 -- =====================================================================
 --  Console d'administration : le suivi des écoles à contacter et des partenaires (entreprises qui sponsorisent).

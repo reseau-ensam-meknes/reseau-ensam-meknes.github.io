@@ -916,13 +916,35 @@ export const GUIDE_SECTIONS = [
   ['logement', 'Logement', 'home'], ['budget', 'Budget et coût de la vie', 'briefcase'], ['stage', 'Trouver un stage ou un emploi', 'feed'], ['vie', 'Vie sur place', 'heart'],
 ];
 
+// L'école d'un membre ou d'une ligne : tout ce qui date d'avant les écoles est à ENSAM Meknès (même défaut que la base)
+export const ECOLE_DEFAUT = 'ensam-meknes';
+export const ecoleDe = x => x?.ecole || ECOLE_DEFAUT;
+// Ce qu'un membre lit : ce qui est de son école, comme la règle « reseau de l'ecole » de la base (la démo, elle, a tout) ;
+// l'administration lit tout
+export const deMonEcole = (lignes, me) => (me?.role === 'admin' ? (lignes || []) : (lignes || []).filter(x => ecoleDe(x) === ecoleDe(me)));
+// Ce que l'administration écrit depuis la console pour l'école qu'elle y regarde : { ecole } seulement quand ce n'est pas
+// la sienne (la base met la sienne par défaut ; une base pas encore à jour n'a pas la colonne). Hors de la console : {}.
+export const pourLEcoleVue = ctx => (ctx?.ecoleConsole && ctx.ecoleConsole !== ecoleDe(ctx.me) ? { ecole: ctx.ecoleConsole } : {});
+// Ce que l'administration écrit sous le contenu d'une autre école (bravo, réponse, vote, offre enregistrée) est de cette
+// école : sans cela, la base lui donnerait celle de l'administration, et les membres de l'école ne le verraient pas
+export const ecoleDuContenu = (me, contenu) => (me?.role === 'admin' && contenu?.ecole && contenu.ecole !== ecoleDe(me) ? { ecole: contenu.ecole } : {});
+// Administration > Membres : null si la liste officielle de son école n'a aucune ligne de sa promo, sinon true ou false
+// selon qu'il y figure (même nom et même promo, ou même email) ; les lignes d'une autre école ne comptent jamais
+export function surListeOfficielle(liste, p, email) {
+  const lignes = (liste || []).filter(l => ecoleDe(l) === ecoleDe(p)); const e = (email || '').toLowerCase();
+  if (!lignes.some(l => l.promo === p.promo)) return null;
+  return lignes.some(l => (l.promo === p.promo && cleNom(l.nom) === cleNom(p.full_name)) || (!!l.email && !!e && l.email === e));
+}
+
 // Taux d'insertion par promo, filière et vague (même calcul que rapport_insertion() dans la base) :
 // le taux exclut ceux qui poursuivent leurs études ; le taux de réponse se rapporte à la liste officielle si elle est importée.
-export function rapportInsertion(data, now = new Date()) {
+// ecole : une seule école (inscrits, réponses et liste de cette école), comme p_ecole dans la base.
+export function rapportInsertion(data, now = new Date(), ecole = null) {
   const an = now.getFullYear(); const enPoste = e => ['emploi', 'entrepreneur', 'volontariat'].includes(e.situation);
+  const ici = x => !ecole || ecoleDe(x) === ecole;
   const cohortes = new Map();
-  for (const p of data.profiles) if (p.role !== 'admin' && p.promo <= an && p.promo >= an - 6) { const k = p.promo + '|' + p.filiere; cohortes.set(k, (cohortes.get(k) || 0) + 1); }
-  const liste = data.liste_officielle || []; const enq = data.enquetes_insertion || [];
+  for (const p of data.profiles) if (p.role !== 'admin' && ici(p) && p.promo <= an && p.promo >= an - 6) { const k = p.promo + '|' + p.filiere; cohortes.set(k, (cohortes.get(k) || 0) + 1); }
+  const liste = (data.liste_officielle || []).filter(ici); const enq = (data.enquetes_insertion || []).filter(ici);
   const mediane = v => { if (!v.length) return null; const s = [...v].sort((a, b) => a - b); const m = (s.length - 1) / 2; return (s[Math.floor(m)] + s[Math.ceil(m)]) / 2; };
   const moy = v => v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length * 10) / 10 : null;
   const rows = [];
@@ -1146,7 +1168,7 @@ export const PUBLICS = [['tous', 'Tout le monde'], ['etudiants', 'Étudiants'], 
 export const pourPublic = (pub, role) => role === 'admin' || !pub || pub === 'tous' || (pub === 'etudiants' && role === 'etudiant') || (pub === 'laureats' && role === 'laureat');
 export const ANNONCE_JOURS = 14;
 export const annonceVisible = (a, now = Date.now()) => !!a?.active && now - new Date(a.created_at).getTime() < ANNONCE_JOURS * 864e5;
-export const annoncePour = (annonces, me, now = Date.now()) => (annonces || []).filter(a => annonceVisible(a, now) && pourPublic(a.public, me?.role))
+export const annoncePour = (annonces, me, now = Date.now()) => deMonEcole(annonces, me).filter(a => annonceVisible(a, now) && pourPublic(a.public, me?.role))
   .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0] || null;
 
 // « À faire » sur l'accueil : trois petites choses au plus que seul le membre peut boucler (les messages non lus en premier, app.js).
@@ -1320,8 +1342,11 @@ export function sorteLienNotifs({ etat, memo = {} }) {
 // Bandeau de l'accueil : tant que cet appareil ne reçoit rien (coupées par le navigateur, iPhone sans l'application, jamais
 // activées, navigateur d'une application), il le dit, sauf à qui les a coupées lui-même (memo.coupe) ; « plus tard » le range 3 jours.
 export const BANDEAU_PUSH_ECART = 3 * 864e5;
+// memo.sans : l'abonnement a déjà échoué pour de bon sur ce navigateur (apresEchec, pwa.js) : « Activer » n'y servirait à
+// rien, le bouton de Mon profil reste là pour réessayer.
 export function bandeauPush({ etat, memo = {}, now = Date.now(), role, voulu = true }) {
   if (role === 'admin' || !voulu || memo.coupe || !['off', 'ios', 'refuse', 'appli'].includes(etat)) return null;
+  if (etat === 'off' && memo.sans) return null;
   return memo.bandeau && now - memo.bandeau < BANDEAU_PUSH_ECART ? null : etat;
 }
 
@@ -1348,10 +1373,13 @@ export function navigateurIntegre(ua = '') {
 // « Ouvrir dans Chrome » depuis le navigateur d'une application Android : un lien intent:// vers la même page, que Chrome
 // ouvre (sinon la même adresse, browser_fallback_url). La route passe en ?r=… (le # sert à l'intent) et notifs=1 ouvre
 // tout de suite la feuille d'activation : c'est pour elle que le membre change de navigateur. app.js lit puis efface les deux.
-export function lienChrome(adresse, route = '') {
+// lang : la langue de la page ; Chrome ne connaît pas le choix fait ici, l'arabe passe donc par l'adresse (?lang=ar, gardé
+// pour la visite, i18n.js), le français laisse Chrome à son propre choix. Sans lang : l'adresse garde le sien.
+export function lienChrome(adresse, route = '', { lang } = {}) {
   const u = new URL(adresse);
   u.hash = '';
   for (const k of ['r', 'notifs', 'depuis']) u.searchParams.delete(k);
+  if (lang === 'ar') u.searchParams.set('lang', 'ar'); else if (lang) u.searchParams.delete('lang');
   const r = String(route || '').replace(/^#/, '');
   if (r && r !== 'accueil') u.searchParams.set('r', r);
   u.searchParams.set('notifs', '1');
@@ -1752,6 +1780,7 @@ export function normaliserSponsorise(r) {
   if ('domaine' in out) out.domaine = String(out.domaine || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '') || null;
   if ('annees' in out) out.annees = out.annees?.length ? [...new Set(out.annees.map(Number))].sort((a, b) => a - b) : null;
   if ('filieres' in out) out.filieres = out.filieres?.length ? [...new Set(out.filieres)] : null;
+  if ('ecole' in out) out.ecole = out.ecole || null; // sans école : pour toutes les écoles
   return out;
 }
 // Ce que la base refuserait pour cette carte (son message), sinon null
@@ -1776,6 +1805,8 @@ export const etatSponsorise = (s, now = Date.now()) => (!s.actif ? 'arretee' : s
 // suit son parcours). Ni l'administration, ni l'administration qui regarde l'application comme un lauréat (admin_ok).
 export function sponsorisePour(s, me, now = Date.now(), saison = seasonOf(new Date(now))) {
   if (!me || !['etudiant', 'laureat'].includes(me.role) || me.admin_ok || !sponsoEnCours(s, now)) return false;
+  // Une carte d'une école ne paraît que dans son réseau ; sans école, dans tous (comme sponsorise_pour dans la base)
+  if (s.ecole && s.ecole !== ecoleDe(me)) return false;
   const pub = s.public || 'tous';
   if (!(pub === 'tous' || (pub === 'etudiants' && me.role === 'etudiant') || (pub === 'laureats' && me.role === 'laureat'))) return false;
   if (s.annees?.length && !s.annees.map(Number).includes(niveauOf(me, saison))) return false;
@@ -1819,6 +1850,49 @@ export function totauxSponsorises(sponsors, comptes) {
 // Le taux de clic, « 4 % », ou « – » sans vue
 export const tauxClic = (clics, vues) => (vues > 0 ? pct(clics / vues) : '–');
 
+// ---------------------------------------------------------------------------
+// Santé des notifications : « Tester » ici (chaque membre) ; le panneau de l'administration dans sante-notifs.js
+// ---------------------------------------------------------------------------
+const entierSN = x => (Number.isFinite(Number(x)) && Number(x) > 0 ? Math.round(Number(x)) : 0);
+
+// « Tester » (Mon profil) : ce que la fonction notifier répond, mis en forme. Un code par téléphone du compte
+// (201 accepté, 404 ou 410 parti, 400, 401 ou 403 refusé, 413 trop long, 0 injoignable). Une ancienne fonction ne
+// renvoie que { sent } : abonnements vaut alors null (on ne sait pas combien de téléphones sont enregistrés).
+// ici : le code de l'appareil qui a touché « Tester » (-1 : pas enregistré pour ce compte) ; null, la fonction ne le dit pas.
+export function bilanTestPush(d) {
+  const ab = d?.abonnements, ici = d?.ici;
+  return {
+    sent: entierSN(d?.sent), failed: entierSN(d?.failed), removed: entierSN(d?.removed),
+    codes: Array.isArray(d?.codes) ? d.codes.map(c => (Number.isFinite(Number(c)) ? Math.trunc(Number(c)) : 0)) : [],
+    abonnements: ab === null || ab === undefined || ab === '' || !Number.isFinite(Number(ab)) ? null : entierSN(ab),
+    ici: (typeof ici === 'number' || (typeof ici === 'string' && ici.trim() !== '')) && Number.isFinite(Number(ici)) ? Math.trunc(Number(ici)) : null,
+  };
+}
+export const CODES_PUSH_PARTI = [404, 410];
+export const CODES_PUSH_REFUS = [400, 401, 403];
+// Pourquoi l'essai est arrivé ou non, en un mot (l'écran qui l'affiche a ses phrases) :
+// 'ok' au moins un téléphone l'a accepté ; 'aucun' aucun téléphone enregistré pour ce compte ;
+// 'parti' le service dit que cet abonnement n'existe plus (404, 410) ; 'refuse' il refuse l'envoi (400, 401, 403) ;
+// 'trop' message trop long (413) ; 'injoignable' service injoignable ou occupé (0, 429, 5xx) : réessayer plus tard ;
+// 'inconnu' ancienne fonction, qui ne dit que le nombre envoyé. La réponse de cet appareil-là (ici), quand la fonction la
+// donne, décide seule : un autre téléphone du compte, parti ou injoignable, ne fait ni refaire ni accuser celui-ci.
+export function raisonTestPush(d) {
+  const b = bilanTestPush(d);
+  if (b.abonnements !== 0 && b.ici !== null) return raisonCodePush(b.ici);
+  if (b.sent > 0) return 'ok';
+  if (b.abonnements === 0) return 'aucun';
+  if (b.abonnements === null && !b.codes.length) return 'inconnu';
+  if (b.removed > 0 || b.codes.some(c => CODES_PUSH_PARTI.includes(c))) return 'parti';
+  if (b.codes.some(c => CODES_PUSH_REFUS.includes(c))) return 'refuse';
+  if (b.codes.includes(413)) return 'trop';
+  return 'injoignable';
+}
+// La réponse d'un téléphone en un mot ; -1 : cet appareil n'est pas enregistré pour ce compte, comme parti
+const raisonCodePush = c => (c >= 200 && c < 300 ? 'ok' : c === -1 || CODES_PUSH_PARTI.includes(c) ? 'parti'
+  : CODES_PUSH_REFUS.includes(c) ? 'refuse' : c === 413 ? 'trop' : 'injoignable');
+// Après l'essai, l'abonnement de cet appareil est à refaire (le service ne le reconnaît plus, ou le refuse)
+export const testPushARefaire = r => r === 'parti' || r === 'refuse';
+
 // « 3 lauréats peuvent t'aider » : pour une Demande d'étudiant, les lauréats les mieux placés (même filière, puis même parcours ;
 // le sujet dans leur poste ou leurs compétences ; un lauréat à l'étranger pour une demande « étranger » ; vérifié, disponible pour
 // le mentorat, une entreprise renseignée). Jamais l'auteur, l'administration ni un lauréat qui a déjà proposé son aide sur cette demande.
@@ -1838,4 +1912,134 @@ export function laureatsPourDemande(data, d, n = 3, now = new Date()) {
     .filter(x => x.pertinent)
     .sort((a, b) => b.score - a.score || new Date(a.p.created_at) - new Date(b.p.created_at))
     .slice(0, n);
+}
+
+// ---------------------------------------------------------------------------
+// Console d'administration : le pilotage. L'objectif du plan, les semaines (nouveaux, actifs, demandes, offres, matchs, aides),
+// ce qui s'est passé, qui aide le plus, où sont les membres. Des calculs sur les données, rien d'autre (admin-tableau.js les montre).
+// ---------------------------------------------------------------------------
+// L'objectif du plan d'ici au 22 novembre 2026, compté depuis le lancement : 40 demandes, 50 offres, 20 matchs, 10 aides acceptées.
+// Une aide acceptée : une proposition d'un lauréat que l'étudiant a acceptée (status « acceptee », comme dans poulsReseau).
+export const OBJECTIF_PLAN = { fin: '2026-11-22', cibles: [['demandes', 40], ['offres', 50], ['matchs', 20], ['aides', 10]] };
+export function objectifPlan(data, now = new Date(), objectif = OBJECTIF_PLAN) {
+  const n = {
+    demandes: (data.demandes || []).length,
+    offres: (data.offers || []).length,
+    matchs: (data.matchs || []).length,
+    aides: (data.propositions || []).filter(x => x.status === 'acceptee').length,
+  };
+  const jours = daysUntil(objectif.fin, now);
+  return {
+    fin: objectif.fin, jours: Math.max(0, jours), fini: jours <= 0,
+    lignes: objectif.cibles.map(([k, cible]) => ({ k, n: n[k] || 0, cible, atteint: (n[k] || 0) >= cible, reste: Math.max(0, cible - (n[k] || 0)) })),
+  };
+}
+
+// Combien par semaine sur n semaines glissantes qui finissent maintenant, la plus ancienne d'abord :
+// la dernière case est ]maintenant − 7 j, maintenant], celle d'avant les 7 jours d'avant, etc. Une date à venir ne compte pas.
+const SEMAINE = 7 * 864e5;
+export function serieHebdo(dates, now = new Date(), n = 8) {
+  const fin = now.getTime(), out = Array(n).fill(0);
+  for (const d of dates || []) {
+    const t = d ? new Date(d).getTime() : NaN;
+    if (!(t <= fin)) continue;
+    const k = Math.floor((fin - t) / SEMAINE);
+    if (k < n) out[n - 1 - k]++;
+  }
+  return out;
+}
+// Cette semaine, la semaine d'avant et l'écart (signé)
+export function ecartHebdo(serie) {
+  const n = serie?.length ? serie[serie.length - 1] : 0, avant = serie?.length > 1 ? serie[serie.length - 2] : 0;
+  return { n, avant, delta: n - avant };
+}
+// Les membres actifs de chaque semaine (même notion que parcoursInscription : une action, hors administration ;
+// la dernière semaine donne le même chiffre que parcoursInscription().actifs, une date à venir y compte)
+export function actifsParSemaine(data, now = new Date(), n = 8) {
+  const admins = new Set((data.profiles || []).filter(p => p.role === 'admin').map(p => p.id));
+  const fin = now.getTime(), gens = Array.from({ length: n }, () => new Set());
+  const noter = (id, at) => {
+    const t = at ? new Date(at).getTime() : NaN;
+    if (!id || admins.has(id) || Number.isNaN(t)) return;
+    const k = t > fin ? 0 : Math.floor((fin - t) / SEMAINE);
+    if (k < n) gens[n - 1 - k].add(id);
+  };
+  for (const [table, col] of ACTIONS) for (const r of data[table] || []) noter(r[col], r.created_at);
+  for (const r of data.mentorships || []) if (r.mentor_id && r.accepted_at) noter(r.mentor_id, r.accepted_at);
+  return gens.map(g => g.size);
+}
+// Les aides du réseau, une par geste (même notion que poulsReseau) : rendez-vous de mentorat terminé, relecture rendue,
+// recrutement confirmé, proposition acceptée ; toujours d'un lauréat vers un étudiant qui ont un profil.
+export function aidesDuReseau(data) {
+  const role = new Map((data.profiles || []).map(p => [p.id, p.role]));
+  const out = [];
+  const aide = (laureat, etudiant, at, sorte) => { if (laureat && etudiant && role.get(laureat) === 'laureat' && role.get(etudiant) === 'etudiant') out.push({ laureat, etudiant, at, sorte }); };
+  for (const m of data.mentorships || []) if (m.status === 'terminee') aide(m.mentor_id, m.student_id, m.rdv_at || m.accepted_at, 'rdv');
+  for (const r of data.relectures_cv || []) if (r.status === 'rendue') aide(r.reviewer_id, r.student_id, r.rendue_at, 'cv');
+  for (const p of data.placements || []) if (p.status === 'confirme') aide(p.laureat_id, p.student_id, p.confirmed_at, 'recrute');
+  const auteur = new Map((data.demandes || []).map(d => [d.id, d.auteur_id]));
+  for (const x of data.propositions || []) if (x.status === 'acceptee') aide(x.laureat_id, auteur.get(x.demande_id), x.repondu_at, 'match');
+  return out;
+}
+// Les lauréats qui ont le plus aidé ces derniers jours (pour l'administration seule) : nombre d'aides, d'étudiants aidés,
+// la plus récente ; à égalité, la plus récente d'abord
+export function topAidants(data, now = new Date(), jours = 30, n = 8) {
+  const fin = now.getTime(), debut = fin - jours * 864e5, m = new Map();
+  for (const a of aidesDuReseau(data)) {
+    const t = a.at ? new Date(a.at).getTime() : NaN;
+    if (!(t >= debut && t <= fin)) continue;
+    const x = m.get(a.laureat) || { id: a.laureat, aides: 0, gens: new Set(), derniere: 0 };
+    x.aides++; x.gens.add(a.etudiant); x.derniere = Math.max(x.derniere, t); m.set(a.laureat, x);
+  }
+  return [...m.values()].sort((a, b) => b.aides - a.aides || b.derniere - a.derniere).slice(0, n)
+    .map(x => ({ id: x.id, aides: x.aides, etudiants: x.gens.size, derniere: x.derniere }));
+}
+// Ce qui s'est passé dans le réseau, le plus récent d'abord : arrivée d'un membre, offre, demande, aide proposée,
+// conseil demandé, match, recrutement confirmé, événement publié. qui : le membre qui agit ; avec : l'autre membre.
+export function evenementsReseau(data, n = 15) {
+  const out = [];
+  const ajouter = (sorte, at, champs) => { const t = at ? new Date(at).getTime() : NaN; if (!Number.isNaN(t)) out.push({ sorte, at, t, ...champs }); };
+  for (const p of data.profiles || []) if (p.role !== 'admin' && !p.admin_ok) ajouter('membre', p.created_at, { id: p.id, qui: p.id });
+  for (const o of data.offers || []) ajouter('offre', o.created_at, { id: o.id, qui: o.author_id, titre: o.titre });
+  const demande = new Map((data.demandes || []).map(d => [d.id, d]));
+  for (const d of data.demandes || []) ajouter('demande', d.created_at, { id: d.id, qui: d.auteur_id, titre: d.titre });
+  for (const x of data.propositions || []) ajouter('aide', x.created_at, { id: x.demande_id, qui: x.laureat_id, avec: demande.get(x.demande_id)?.auteur_id || null, titre: demande.get(x.demande_id)?.titre || '' });
+  for (const m of data.mentorships || []) ajouter('mentorat', m.created_at, { id: m.id, qui: m.student_id, avec: m.mentor_id || null, titre: m.sujet || '' });
+  for (const m of data.matchs || []) ajouter('match', m.created_at, { id: m.id, qui: m.etudiant_id, avec: m.laureat_id });
+  for (const p of data.placements || []) if (p.status === 'confirme') ajouter('recrutement', p.confirmed_at, { id: p.id, qui: p.student_id, avec: p.laureat_id, titre: p.entreprise || '' });
+  for (const e of data.evenements || []) if (!e.annule) ajouter('evenement', e.created_at, { id: e.id, qui: e.author_id, titre: e.titre });
+  return out.sort((a, b) => b.t - a.t).slice(0, n);
+}
+// Où sont les membres : une ligne par promo d'étudiants (5A d'abord), puis les lauréats par tranches de 5 promos ;
+// une colonne par parcours (une ancienne appellation suit son premier parcours), puis la prépa et « Autre » s'il y en a.
+// L'administration, et l'administration en vue lauréat, ne comptent pas.
+export function repartitionMembres(profiles, saison = seasonOf()) {
+  const codes = [...PARCOURS.map(p => p.code), 'PREPA', 'AUTRE'];
+  const colonne = p => (p.filiere === PREPA ? 'PREPA' : parcoursOf(p.filiere)[0] || 'AUTRE');
+  const lignes = new Map();
+  const ligne = (cle, groupe, ordre, etiquette) => {
+    if (!lignes.has(cle)) lignes.set(cle, { cle, groupe, ordre, etiquette, n: Object.fromEntries(codes.map(c => [c, 0])), total: 0 });
+    return lignes.get(cle);
+  };
+  for (const p of profiles || []) {
+    let l = null;
+    if (p.role === 'etudiant') {
+      const promo = Number(p.promo);
+      l = Number.isInteger(promo) && promo > 1900 ? ligne('e' + promo, 'etudiants', promo, `${NIVEAUX[niveauOf(p, saison)]?.short || ''} · promo ${promo}`) : ligne('e?', 'etudiants', 9999, 'Sans promo');
+    } else if (laureatCompte(p)) {
+      const promo = Number(p.promo);
+      if (!Number.isInteger(promo) || promo < 1900) l = ligne('l?', 'laureats', 9999, 'Sans promo');
+      else {
+        const k = Math.max(0, Math.floor((saison - promo) / 5));
+        l = k >= 3 ? ligne('l3', 'laureats', 3, `Avant ${saison - 14}`) : ligne('l' + k, 'laureats', k, `Promos ${saison - 5 * k - 4}–${saison - 5 * k}`);
+      }
+    }
+    if (!l) continue;
+    l.n[colonne(p)]++; l.total++;
+  }
+  const toutes = [...lignes.values()].sort((a, b) => (a.groupe === b.groupe ? a.ordre - b.ordre : a.groupe === 'etudiants' ? -1 : 1));
+  const colonnes = codes.filter(c => PARCOURS.some(p => p.code === c) || toutes.some(l => l.n[c] > 0))
+    .map(c => ({ code: c, nom: c === 'PREPA' ? 'Prépa' : c === 'AUTRE' ? 'Autre' : parcoursNom(c) }));
+  const max = Math.max(0, ...toutes.flatMap(l => colonnes.map(c => l.n[c.code])));
+  return { colonnes, lignes: toutes.map(l => ({ ...l, n: colonnes.map(c => l.n[c.code]) })), max };
 }

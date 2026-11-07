@@ -521,7 +521,7 @@ export const AR = {
   'Chaque offre, chaque mentorat, chaque recrutement confirmé fait avancer la barre.': 'كل عرض، وكل جلسة إرشاد، وكل توظيف مؤكد يدفع الشريط إلى الأمام.', 'Défi réussi, bravo à tous !': 'نجح التحدي، تهانينا للجميع!',
   'Nouveau défi': 'تحدٍّ جديد', 'Un objectif collectif affiché sur l’accueil, avec une barre qui avance toute seule.': 'هدف جماعي يظهر في الصفحة الرئيسية، مع شريط يتقدم تلقائيًا.',
   'Ex. Novembre : 15 stages pour les 4A': 'مثال: نونبر: 15 تدريبًا لطلبة السنة الرابعة', 'Lancer le défi': 'إطلاق التحدي', 'Titre': 'العنوان', 'On compte': 'نحتسب', 'Niveau': 'المستوى', 'Objectif': 'الهدف',
-  'Début': 'البداية', 'Fin': 'النهاية', 'Défi lancé : il apparaît sur l’accueil de tous.': 'تم إطلاق التحدي: يظهر في الصفحة الرئيسية للجميع.', 'Supprimer ce défi ?': 'حذف هذا التحدي؟', 'Réussites': 'النجاحات',
+  'Début': 'البداية', 'Fin': 'النهاية', 'Défi lancé : il apparaît sur l’accueil de tous.': 'تم إطلاق التحدي: يظهر في الصفحة الرئيسية للجميع.', 'Défi lancé : il apparaît sur l’accueil de tous les membres de l’école.': 'تم إطلاق التحدي: يظهر في الصفحة الرئيسية لكل أعضاء المدرسة.', 'Supprimer ce défi ?': 'حذف هذا التحدي؟', 'Réussites': 'النجاحات',
   'Stages trouvés': 'تداريب تم إيجادها', 'PFE trouvés': 'مشاريع تخرج تم إيجادها', 'Expériences à l’étranger': 'تجارب في الخارج', 'Premiers emplois': 'وظائف أولى', 'Mentorats terminés': 'جلسات إرشاد منتهية',
   'Réponses dans l’Entraide': 'أجوبة في التعاون', 'Coupe des promos': 'كأس الدفعات', 'Ta promo est sur le podium. Continuez !': 'دفعتك على منصة التتويج. واصلوا!',
   'Ta promo': 'دفعتك', 'actif': 'نشيط',
