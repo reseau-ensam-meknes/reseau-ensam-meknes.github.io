@@ -2,6 +2,7 @@
 // toujours sans aide ou mise en pause, le résumé du dimanche, une réponse utile, un bravo, une présence confirmée, les
 // messages des groupes. Chaque type en français et en arabe, avec de vrais chiffres (n = 1, 2, 12), le tag et la route du
 // contrat, sa case de Mon profil, son urgence et sa durée de vie ; jamais « undefined » ni « 0 », jamais culpabilisant.
+// Rien de vrai à dire (pas de chiffre, pas de titre) : rien, en arabe comme en français.
 // Sans les nouvelles clés (file d'une base plus ancienne) : un texte quand même, la route du type et un tag égal au type.
 // Dans la file (jobPush passe l'identifiant de la ligne) : un tag par élément ou un tag fixe ne change jamais.
 import { test } from 'node:test';
@@ -101,8 +102,11 @@ test('la veille : événement ou café de demain où je suis inscrit ; inscrits 
   // La veille reprend la ligne de l'annonce de l'événement, et celle du café
   assert.equal(t('agenda_demain', d(1)).tag, t('evenement', { titre: 'Forum entreprises', id: EV }).tag);
   assert.equal(c.tag, t('cafe', { ville: 'Casablanca', lieu: 'x', id: CAFE }).tag);
-  // Sans titre ni ville, rien à dire : pas de notification vide
-  assert.equal(t('agenda_demain', { type: 'evenement', debut: DEMAIN, id: EV, n: 1 }), null);
+  // Sans titre ni ville, rien à dire : pas de notification vide, en arabe non plus
+  for (const l of ['fr', 'ar']) {
+    assert.equal(t('agenda_demain', { type: 'evenement', debut: DEMAIN, id: EV, n: 1 }, l), null, l);
+    assert.equal(t('agenda_demain', { type: 'evenement', debut: DEMAIN, id: EV, n: 2 }, l), null, `${l} n = 2`);
+  }
 });
 
 test('après un rendez-vous : un merci possible pour l’étudiant, le marquer terminé pour le lauréat', () => {
@@ -133,8 +137,11 @@ test('offre mise de côté qui ferme : demain ou dans 2 jours, la date limite du
     assert.deepEqual([g.title, g.body, g.url, g.tag], [fr, 'Leur date limite tombe dans les prochains jours.', SITE + '#offres', 'offre_bientot']);
     assert.equal(t('offre_bientot', { n, groupe: true }, 'ar').title, ar2);
   }
-  // Groupée d'une seule offre, ou sans titre : pas de faux groupe, pas de notification vide
-  assert.equal(t('offre_bientot', { n: 1, groupe: true }), null);
+  // Groupée d'une seule offre, ou sans titre : pas de faux groupe, pas de notification vide, en arabe non plus
+  for (const l of ['fr', 'ar']) {
+    assert.equal(t('offre_bientot', { n: 1, groupe: true }, l), null, l);
+    assert.equal(t('offre_bientot', { offre: OFFRE, jours: 1, entreprise: 'OCP', date_limite: '2026-11-03' }, l), null, `${l} sans titre`);
+  }
   assert.equal(t('offre_bientot', { ...d, n: 1, groupe: true }).tag, `offre-${OFFRE}`);
 });
 
@@ -235,9 +242,12 @@ test('messages des groupes : le groupe le plus actif, les autres comptés ; le l
   // Une ville avec un accent dans son nom affiché ; la clé est passée telle quelle, encodée dans le lien
   const v = t('groupe_jour', { n: 3, groupe: 'Fès', gkey: 'ville:fes', autres: 0 });
   assert.deepEqual([v.url, v.tag], [SITE + '#reseau/groupes/ville%3Afes', 'groupe-ville:fes']);
-  // Rien à compter, ou pas de nom de groupe : rien ; une clé douteuse : la page des groupes
-  assert.equal(t('groupe_jour', { n: 0, groupe: 'Génie industriel', gkey: 'filiere:genie industriel' }), null);
-  assert.equal(t('groupe_jour', { n: 2, gkey: 'filiere:genie industriel' }), null);
+  // Rien à compter, ou pas de nom de groupe : rien, en arabe non plus (jamais « 0 رسالة ») ; une clé douteuse : la page des groupes
+  for (const l of ['fr', 'ar']) {
+    assert.equal(t('groupe_jour', { n: 0, groupe: 'Génie industriel', gkey: 'filiere:genie industriel', autres: 0 }, l), null, l);
+    assert.equal(t('groupe_jour', { groupe: 'Génie industriel', gkey: 'filiere:genie industriel', autres: 2 }, l), null, `${l} sans n`);
+    assert.equal(t('groupe_jour', { n: 2, gkey: 'filiere:genie industriel' }, l), null, `${l} sans nom`);
+  }
   const k = t('groupe_jour', { n: 2, groupe: 'X', gkey: 'pas une clé\n' });
   assert.deepEqual([k.url, k.tag], [SITE + '#reseau/groupes', 'groupe_jour']);
 });
@@ -259,6 +269,30 @@ test('base plus ancienne : sans les nouvelles clés, chaque nouveau type a un te
     const x = t(kind, d, l);
     if (x) assert.doesNotMatch(x.title + x.body, /undefined|null|NaN|\[object|\$\{|(^|[^\d:])0(?![\d:])/, `${kind} ${JSON.stringify(d)} ${l}`);
   }
+});
+
+test('rien de vrai à dire : la même décision en français et en arabe, pour chaque type et chaque donnée absente, vide ou à 0', () => {
+  // Une donnée complète, puis chacune de ses clés retirée, vide ou à 0 : jamais une notification en arabe quand le
+  // français n'a rien de vrai à dire (« 0 رسالة جديدة », « غدًا على الساعة 10:00:  », «» sans titre), ni l'inverse
+  const riche = {
+    nom: 'Salma', titre: 'Forum entreprises', sujet: 'Relire mon CV', n: 2, groupe: 'Génie industriel', gkey: 'filiere:genie industriel', autres: 1,
+    type: 'evenement', debut: DEMAIN, rdv_at: DEMAIN, date_at: DEMAIN, id: EV, offre: OFFRE, jours: 1, ville: 'Casablanca', lieu: 'Amphi A', inscrits: 5,
+    de: DE, m: M, demande: D, q: Q, answer: ANS, best: true, entreprise: 'OCP', placement: PL, date_limite: '2026-11-03', texte: 'Bonjour', duree: 30,
+    visio: true, pour: 'demandeur', statut: 'entretien', vague: 6, cible: 'OCP', motif: 'spam', r: uid(9311), c: uid(9312), p: uid(9313),
+    messages: 2, matchs: 1, offres: 2, laureats: 1, promo: 2, evenements: 1, demandes: 3,
+  };
+  const bases = [riche, { ...riche, type: 'cafe' }, { ...riche, groupe: true, n: 3 }, { ...riche, type: 'etudiant' }, { ...riche, type: 'laureat' },
+    { ...riche, pour: 'mentor' }, { ...riche, n: 1 }, { ...riche, n: 12 }, ...Object.values(CAS).map(([data]) => data(1))];
+  const kinds = [...new Set([...Object.keys(logic.PUSH_KINDS), ...Object.keys(CAS), 'rappel_visite', 'test'])];
+  let essais = 0;
+  for (const kind of kinds) for (const base of bases) for (const k of [null, ...Object.keys(base)]) for (const vide of k ? [undefined, 0, ''] : [undefined]) {
+    const d = { ...base };
+    if (k) { if (vide === undefined) delete d[k]; else d[k] = vide; }
+    const fr = t(kind, d, 'fr'), ar = t(kind, d, 'ar');
+    assert.equal(fr === null, ar === null, `${kind}, ${k ? `${k} = ${String(vide)}` : 'complet'} : ${fr === null ? 'rien en français, une notification en arabe' : 'rien en arabe, une notification en français'}`);
+    essais++;
+  }
+  assert.ok(kinds.length > 50 && essais > 50000, `${kinds.length} types, ${essais} essais`);
 });
 
 test('types existants : un tag et une route par élément quand la clé est là ; sans elle, l’ancien comportement', () => {
