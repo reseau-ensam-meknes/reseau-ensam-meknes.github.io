@@ -92,6 +92,11 @@ export const CARTE_AR = {
 // c'est elle que le dictionnaire reconnaît.
 export const typo = (s, lang) => (lang === 'ar' || typeof s !== 'string' ? s : s.replace(/« /g, '«\u00a0').replace(/ ([»:;?!])/g, '\u00a0$1'));
 export const CARTE_MOTIFS = [[/^Tu es dans le navigateur (?:d’|de )(.+)\.$/, n => `أنت في متصفح ${n}.`]];
+// Le nom de l'application, Chrome et Safari dans une phrase déjà traduite : mis à part, pour que la page les entoure d'un
+// <span translate="no" dir="auto"> (nom latin dans une phrase arabe ; la traduction du navigateur n'y touche pas). Morceaux
+// pairs : le texte ; impairs : les noms. L'isolant qu'i18n.js met autour d'un nom (FSI…PDI) part avec lui : le span isole déjà.
+const LATINS = new RegExp(`\\u2068?\\b(${[...APPLIS.map(([nom]) => nom), 'Chrome', 'Safari'].join('|')})\\b\\u2069?`);
+export const nomsLatins = s => (typeof s === 'string' ? s.split(LATINS) : [s]);
 // Cibles de 44 px au moins. La page d'entrée garde à la carte la place de la plus haute (PLACE, entree.js : une phrase ou un
 // style qui change sa hauteur s'y reporte) ; une carte plus courte remplit cette place, ses gestes en bas. « Rien ne s'ouvre ? »,
 // sous les gestes, ne prend de place qu'une fois dit (vide, hors de la grille : la zone annoncée est déjà là).

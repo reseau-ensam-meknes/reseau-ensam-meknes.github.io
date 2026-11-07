@@ -7051,6 +7051,59 @@ test('carte de la page d’entrée en arabe, de nuit, à 360 px : traduite, de d
   }
 });
 
+// Le nom de l'application, Chrome et Safari dans une phrase : chacun dans son <span translate="no" dir="auto"> (nom latin dans
+// une phrase arabe ; la traduction automatique du navigateur n'y touche pas), plus d'isolant FSI…PDI autour. Dans la carte de
+// l'entrée et son mot discret, comme dans la feuille du navigateur d'une application, le bandeau de l'accueil et Mon profil.
+// apart : le texte de chaque span, dans l'ordre ; nus : un nom (ou un isolant) resté dans le texte, hors d'un tel span
+const LATINS = /\b(?:Instagram|Facebook|Messenger|LinkedIn|TikTok|Snapchat|Telegram|Chrome|Safari)\b/;
+const nomsLatinsDans = (page, sel) => page.evaluate(([sel, src]) => {
+  const re = new RegExp(src), seul = new RegExp(`^(?:${src})$`), apart = [], nus = [];
+  for (const racine of document.querySelectorAll(sel)) {
+    const w = document.createTreeWalker(racine, NodeFilter.SHOW_TEXT);
+    for (let x; (x = w.nextNode());) {
+      const s = x.parentElement.closest('[translate="no"]');
+      if (s && racine.contains(s)) (s.matches('span[dir="auto"]') && seul.test(s.textContent) ? apart : nus).push(s.textContent);
+      else if (re.test(x.data) || /[⁨⁩]/.test(x.data)) nus.push(x.data);
+    }
+  }
+  return { apart, nus };
+}, [sel, LATINS.source]);
+
+test('noms latins (l’application, Chrome, Safari) chacun dans un <span translate="no" dir="auto"> : carte de l’entrée et son mot discret, feuille du navigateur d’une application, bandeau, Mon profil', async () => {
+  for (const [ua, langue, tactile, noms, mot] of [[INSTAGRAM, 'ar', null, ['Instagram', 'Chrome', 'Chrome'], ['Chrome']], [INSTAGRAM, 'fr', null, ['Instagram', 'Chrome', 'Chrome'], ['Chrome']],
+    [FACEBOOK_IOS, 'ar', 'iPhone', ['Safari', 'Safari'], ['Safari']], [FACEBOOK_IOS, 'fr', 'iPhone', ['Safari', 'Safari'], ['Safari']]]) {
+    const cas = `${ua === INSTAGRAM ? 'Instagram' : 'Facebook iPhone'} ${langue}`;
+    const s = await porte({ ua, langue, tactile, largeur: 390, hauteur: 844 });
+    await s.page.waitForSelector('#au-appli');
+    assert.deepEqual(await nomsLatinsDans(s.page, '#au-appli'), { apart: noms, nus: [] }, `${cas} : la carte`);
+    if (langue === 'ar') assert.deepEqual(latinRestant(await s.page.locator('#au-appli').innerText(), ['Instagram', 'Chrome', 'Safari']), [], cas);
+    // Le bouton (en flex) garde sa phrase d'un seul morceau, avec son espace avant le nom
+    if (ua === INSTAGRAM) assert.equal((await s.page.locator('#au-appli-chrome').innerText()).trim(), langue === 'ar' ? 'فتح في Chrome' : 'Ouvrir dans Chrome', cas);
+    // « Continuer ici » : le mot discret (Android : le lien vers Chrome ; iPhone : le geste)
+    await s.page.click('#au-appli-ici'); await s.page.waitForSelector('#au-appli-mot');
+    assert.deepEqual(await nomsLatinsDans(s.page, '#au-appli-mot'), { apart: mot, nus: [] }, `${cas} : le mot discret`);
+    if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])]), [], cas);
+    assert.equal(await s.debordement(), 0, cas);
+    assert.deepEqual(s.erreurs, [], cas);
+    await s.ctx.close();
+  }
+  // Membre dans Instagram, en arabe : la feuille (sa phrase, Chrome dans les deux autres, son bouton), le bandeau, Mon profil
+  const a = await ouvrir({ largeur: 360, ua: INSTAGRAM, langue: 'ar' });
+  await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  assert.deepEqual(await nomsLatinsDans(a.page, '.modal.appli .modal-body, #appli-chrome'), { apart: ['Instagram', 'Chrome', 'Chrome', 'Chrome'], nus: [] }, 'la feuille');
+  assert.equal((await a.page.locator('#appli-chrome').innerText()).trim(), 'فتح في Chrome');
+  assert.deepEqual(latinRestant(await a.page.locator('.modal.appli .modal-body').innerText(), ['Instagram', 'Chrome']), []);
+  await a.page.click('#appli-tard');
+  await a.page.waitForSelector('.push-bandeau[data-etat="appli"]');
+  assert.deepEqual(await nomsLatinsDans(a.page, '.push-bandeau .push-b-txt > span, #push-b-oui'), { apart: ['Instagram', 'Chrome'], nus: [] }, 'le bandeau');
+  await a.aller('profil/notifications'); await a.page.waitForSelector('#md-push-chrome');
+  assert.deepEqual(await nomsLatinsDans(a.page, '.push-etat[data-etat="appli"]'), { apart: ['Instagram', 'Chrome', 'Chrome'], nus: [] }, 'Mon profil');
+  assert.deepEqual((await a.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), []);
+  assert.equal(await a.debordement(), 0);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
 test('« Me prévenir » après une offre publiée, « Candidatures » décochée : « Te prévenir des étudiants intéressés ? » (Match reste coché) ; les deux décochées, rien n’est promis', async () => {
   const s = await prevenirSur('off');
   const publier = async titre => {

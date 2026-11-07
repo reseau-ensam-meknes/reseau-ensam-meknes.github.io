@@ -3,7 +3,7 @@
 // se charge ensuite, puis l'application, qui « adopte » l'entrée déjà à l'écran : rien ne clignote,
 // et ce qui a été tapé reste en place. Un membre déjà connecté ne voit jamais cette page.
 import { html, render, useState, useLayoutEffect, useEffect, useRef } from './vendor/preact-htm.js';
-import { getLang, setLang, chargerAR, addAR, arCount } from './i18n.js';
+import { getLang, setLang, chargerAR, addAR, arCount, t } from './i18n.js';
 import { sceneMarkup } from './scene.js';
 import { glyph, TUILE_DEFS, TUILE } from './logo.js';
 import { roleDePromo, promoValide, lignesChiffres, estEmailEcole, chiffresCode, adresseContact, VERSION_ACCORD, lienPartage, lienEncoreBon, estUuid, phraseLien, suiteLien, offreFermeePour } from './regles-entree.js';
@@ -377,6 +377,9 @@ const chargerAppareil = () => (appareilP ||= import('./appareil.js').then(m => {
   }
   return (appareil = m);
 }, () => { appareilP = null; return null; }));
+// Preact écrit translate comme une propriété (vrai ou faux) : « no » y deviendrait translate="yes". L'attribut est posé à la main
+// une fois l'élément créé ; translate="no" reste dans ses props pour i18n.js, qui laisse alors le nom tel quel
+const sansTraduction = el => el?.setAttribute('translate', 'no');
 function CarteAppli({ mode, role, invite }) {
   const [a, setA] = useState(() => appareil);
   useEffect(() => { if (!a) chargerAppareil().then(m => m && setA(m)); }, []);
@@ -393,7 +396,9 @@ function CarteAppli({ mode, role, invite }) {
   // Avant appareil.js : sa place (la carte, ou la ligne discrète : trois lignes pour « Rien ne s'ouvre ? » sur un petit écran).
   // Sa propre clé : la carte arrive dans un élément neuf, sans transition depuis la place vide (mouvement réduit)
   if (!a) return html`<div key="place" class="entree-appli-place" style=${{ minHeight: place || (sys === 'ios' || vue === 'chrome' ? placeMot(sys, getLang(), largeur, rem) : '44px') }}></div>`;
-  const T = a.CARTE, f = x => a.typo(x, getLang());
+  // Chaque phrase traduite d'abord (l'arabe passe tel quel), puis le nom de l'application, Chrome et Safari chacun dans son span.
+  // Dans un lien ou un bouton en flex, la phrase reste dans un seul span : un seul morceau, les espaces gardés
+  const T = a.CARTE, f = x => a.nomsLatins(a.typo(t(x), getLang())).map((p, i) => (i % 2 ? html`<span translate="no" dir="auto" ref=${sansTraduction}>${p}</span>` : p));
   // Relu au toucher : le rôle, l'étape ou le lien partagé ont pu changer depuis l'affichage. ici : l'adresse de secours le dit
   const lien = () => a.lienChrome(location.href, lienRetenu()?.r, { lang: getLang(), contexte: { promo: invite, role, mode: mode === 'inscription' ? mode : 'connexion' }, ici: true });
   // Sans Chrome, l'adresse de secours recharge la page ici : ce qui est déjà tapé revient (lireSaisie). L'application peut
@@ -406,7 +411,7 @@ function CarteAppli({ mode, role, invite }) {
   };
   const ico = html`<${Icon} name="globe" size=${18}/>`;
   if (!carte) return html`<p class="entree-appli-mot" id="au-appli-mot" tabindex="-1" ref=${mot}>${ico}${sys === 'ios' || vue === 'chrome' || rien
-    ? html`<span>${f(sys === 'ios' ? T.geste : T.rien)}</span>` : html`<a href=${lien()} id="au-appli-chrome" onClick=${ouvrir}>${T.ligne}</a>`}</p>`;
+    ? html`<span>${f(sys === 'ios' ? T.geste : T.rien)}</span>` : html`<a href=${lien()} id="au-appli-chrome" onClick=${ouvrir}><span>${f(T.ligne)}</span></a>`}</p>`;
   const ici = html`<button type="button" class="linkish" id="au-appli-ici" onClick=${() => setRange(true)}>${T.ici}</button>`;
   // iPhone, iPad : pas de bouton à elle, rien qu'un geste à dire. Un seul paragraphe, « Continuer ici » au bout : le champ
   // Email reste au premier écran d'un iPhone SE, « Recevoir mon code » aussi sur un iPhone 13 (fenêtres de Facebook, Instagram)
@@ -415,7 +420,7 @@ function CarteAppli({ mode, role, invite }) {
   </div>`;
   return html`<div class="entree-appli" id="au-appli" data-systeme=${sys} style=${{ minHeight: place }}>${ico}<div class="entree-appli-txt">
     <p><span>${f(T.tuEs(app.nom))}</span> <span>${f(T[sys])}</span></p></div>
-    <div class="entree-appli-acts"><a class="btn primary" id="au-appli-chrome" href=${lien()} onClick=${ouvrir}>${T.ouvrir}</a>${ici}</div>
+    <div class="entree-appli-acts"><a class="btn primary" id="au-appli-chrome" href=${lien()} onClick=${ouvrir}><span>${f(T.ouvrir)}</span></a>${ici}</div>
     <p class="entree-appli-rien" id="au-appli-rien" aria-live="polite">${rien ? f(T.rien) : null}</p>
   </div>`;
 }

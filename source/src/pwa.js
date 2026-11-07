@@ -2,11 +2,11 @@
 // Le service worker n'est enregistré que sur le vrai site (dist/), qui déclare un manifeste.
 import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, toast, ensuite, feteOuverte, quandFete, apresFete, injectCSS, mouvementReduit } from './ui.js';
-import { addAR, getLang } from './i18n.js';
+import { addAR, getLang, t } from './i18n.js';
 import { prevenirVariante, lignePrevenir, sansLigne, ouvertureSorte, sorteLienNotifs, bandeauPush, pushChoix, navigateurIntegre, lienChrome, noterEchecPush, echecDefinitif,
   raisonTestPush, testPushARefaire, APPLIS, estIPad, CLE_APPLI_VUE, raisonPrevenir, veutDesNotifs, choisirCas } from './logic.js';
 import { arriveeEnAttente } from './pouls.js';
-import { GESTE_SAFARI, CARTE_AR } from './appareil.js';
+import { GESTE_SAFARI, CARTE_AR, nomsLatins } from './appareil.js';
 
 let installEvt = null;
 const listeners = new Set();
@@ -479,7 +479,7 @@ export function BandeauPush({ ctx }) {
     : html`<button type="button" class="btn small primary" id="push-b-oui" disabled=${busy} onClick=${agir}>${action}</button>`;
   return html`<section class="push-bandeau" aria-label=${titre} data-etat=${v}>
     <span class="push-b-ico" aria-hidden="true"><${Icon} name="bell" size=${22}/></span>
-    <div class="push-b-txt"><strong>${titre}</strong><span>${fr(texte)}</span>
+    <div class="push-b-txt"><strong>${titre}</strong><span>${avecNoms(texte)}</span>
       <div class="push-b-acts">${bouton}
         <button type="button" class="linkish small" id="push-b-tard" onClick=${plusTard}>Plus tard</button></div></div>
     ${feuilles}
@@ -513,6 +513,11 @@ const APPLI_INCONNUE = 'Ce lien s’est ouvert dans une application : ici, les n
 const appliIci = nom => (nom ? `Ce lien s’est ouvert dans ${nom} : ici, les notifications ne peuvent pas arriver.` : APPLI_INCONNUE);
 const APPLI_CHROME = 'Dans Chrome, ce qui te concerne arrive tout de suite, même quand l’application est fermée.';
 const APPLI_RIEN = 'Rien ne s’ouvre ? Touche ⋮ en haut à droite, puis « Ouvrir dans Chrome » ou « Ouvrir dans le navigateur ».';
+// Une phrase qui nomme l'application, Chrome ou Safari : traduite d'abord, puis chaque nom dans son <span translate="no" dir="auto">,
+// comme dans la carte de la page d'entrée. Preact écrit translate comme une propriété (« no » y deviendrait translate="yes") :
+// l'attribut est posé à la main une fois l'élément créé ; translate="no" reste dans ses props pour i18n.js
+const sansTraduction = el => el?.setAttribute('translate', 'no');
+const avecNoms = s => nomsLatins(fr(t(s))).map((p, i) => (i % 2 ? html`<span translate="no" dir="auto" ref=${sansTraduction}>${p}</span>` : p));
 const ETAPES_APPLI = {
   ios: [
     ['more', GESTE_SAFARI],
@@ -531,13 +536,13 @@ function OuvrirChrome({ store, cls = 'btn primary', id, onOuvert, children }) {
     if (store.mode !== 'live') { e.preventDefault(); toast(DEMO_CHROME); } else e.currentTarget.href = lienIci();
     onOuvert?.();
   };
-  return html`<a class=${cls} id=${id} href=${lienIci()} onClick=${clic}>${children || html`<${Icon} name="globe" size=${16}/> Ouvrir dans Chrome`}</a>`;
+  return html`<a class=${cls} id=${id} href=${lienIci()} onClick=${clic}>${children || html`<${Icon} name="globe" size=${16}/> <span>${avecNoms('Ouvrir dans Chrome')}</span>`}</a>`;
 }
 // Mon profil › Notifications : la phrase et le geste
 function AppliDit({ ctx }) {
   const sys = systeme();
-  return html`<p class="small muted">${fr(appliIci(integre()?.nom))}</p>
-    ${sys === 'android' ? html`<div class="push-acts"><${OuvrirChrome} store=${ctx.store} id="md-push-chrome"/></div><p class="small muted">${fr(APPLI_RIEN)}</p>`
+  return html`<p class="small muted">${avecNoms(appliIci(integre()?.nom))}</p>
+    ${sys === 'android' ? html`<div class="push-acts"><${OuvrirChrome} store=${ctx.store} id="md-push-chrome"/></div><p class="small muted">${avecNoms(APPLI_RIEN)}</p>`
       : html`<${Etapes} liste=${ETAPES_APPLI[sys]}/>`}`;
 }
 function FeuilleAppli({ ctx, onClose }) {
@@ -547,8 +552,8 @@ function FeuilleAppli({ ctx, onClose }) {
       <${OuvrirChrome} store=${ctx.store} id="appli-chrome" onOuvert=${() => setTimeout(() => onClose(), 0)}/>`
     : html`<button type="button" class="btn primary" id="appli-ok" onClick=${() => onClose()}>J’ai compris</button>`;
   return html`<${Modal} title=${APPLI_TITRE[sys]} cls="appareil appli" onClose=${onClose} footer=${pied}>
-    <p>${fr(appliIci(integre()?.nom))}</p>
-    ${sys === 'android' ? html`<p>${fr(APPLI_CHROME)}</p><p class="small muted">${fr(APPLI_RIEN)}</p>` : html`<${Etapes} liste=${ETAPES_APPLI[sys]}/>`}
+    <p>${avecNoms(appliIci(integre()?.nom))}</p>
+    ${sys === 'android' ? html`<p>${avecNoms(APPLI_CHROME)}</p><p class="small muted">${avecNoms(APPLI_RIEN)}</p>` : html`<${Etapes} liste=${ETAPES_APPLI[sys]}/>`}
   <//>`;
 }
 injectCSS('pwa-appareil', `

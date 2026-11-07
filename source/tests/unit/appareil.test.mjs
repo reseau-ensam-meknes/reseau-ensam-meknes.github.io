@@ -557,6 +557,29 @@ test('le geste de Safari (iPhone, iPad) : le même dans la carte de l’entrée 
   assert.equal(CARTE_AR[GESTE_SAFARI], 'المس ••• (أعلى الشاشة أو أسفلها)، ثم «فتح في Safari» أو «فتح في المتصفح».');
 });
 
+// Le nom de l'application, Chrome et Safari, mis à part dans une phrase déjà traduite : la page d'entrée (CarteAppli) et les
+// feuilles de l'application (avecNoms, pwa.js) entourent chacun d'un <span translate="no" dir="auto">
+test('noms latins d’une phrase (l’application, Chrome, Safari) : mis à part pour leur <span translate="no" dir="auto">, sans l’isolant d’i18n.js', async () => {
+  const { nomsLatins, CARTE, CARTE_AR, APPLIS } = await appareil();
+  assert.deepEqual(nomsLatins('Tu es dans le navigateur d’Instagram.'), ['Tu es dans le navigateur d’', 'Instagram', '.']);
+  assert.deepEqual(nomsLatins('أنت في متصفح ⁨Instagram⁩.'), ['أنت في متصفح ', 'Instagram', '.'], 'FSI…PDI partent avec le nom');
+  assert.deepEqual(nomsLatins(CARTE_AR[CARTE.ouvrir]), ['فتح في ', 'Chrome', '']);
+  assert.deepEqual(nomsLatins(CARTE.geste).filter((_, i) => i % 2), ['Safari']);
+  assert.deepEqual(nomsLatins(CARTE_AR[CARTE.rien]).filter((_, i) => i % 2), ['Chrome']);
+  for (const [nom] of APPLIS) assert.deepEqual(nomsLatins(CARTE.tuEs(nom)).filter((_, i) => i % 2), [nom], nom);
+  assert.deepEqual(nomsLatins(CARTE.ici), ['Continuer ici'], 'sans nom : la phrase entière');
+  assert.deepEqual(nomsLatins(CARTE.tuEs()), [CARTE.tuEs()]);
+  assert.deepEqual(nomsLatins('Chromebook, Safarix'), ['Chromebook, Safarix'], 'des mots entiers');
+  assert.deepEqual(nomsLatins(null), [null]);
+  // Les deux pages s'en servent, avec un span qui garde translate="no" dans le DOM (Preact en ferait translate="yes")
+  for (const f of ['entree.js', 'pwa.js']) {
+    const src = readFileSync(new URL(`../../src/${f}`, import.meta.url), 'utf8');
+    assert.match(src, /nomsLatins\(/, f);
+    assert.match(src, /<span translate="no" dir="auto" ref=\$\{sansTraduction\}>/, f);
+    assert.match(src, /const sansTraduction = el => el\?\.setAttribute\('translate', 'no'\);/, f);
+  }
+});
+
 test('carte de la page d’entrée en arabe : chaque phrase, et le nom de chaque application gardé en lettres latines', async () => {
   const { CARTE, CARTE_AR, CARTE_MOTIFS, APPLIS } = await appareil();
   const avant = globalThis.document;
