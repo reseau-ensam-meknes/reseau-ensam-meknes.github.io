@@ -6877,48 +6877,72 @@ test('page d’entrée dans une vue web sans stockage : « Ouvrir dans Chrome »
   await s.ctx.close();
 });
 
-// L'application peut ignorer le lien intent:// : rien ne s'ouvre, la page reste là, visible
-test('page d’entrée dans Instagram : l’application ignore « Ouvrir dans Chrome » ; un moment après, la carte dit quoi faire sous le bouton (en arabe, de nuit aussi) ; rien quand Chrome s’est ouvert', async () => {
-  const rien = p => p.evaluate(() => document.getElementById('au-appli-rien')?.textContent ?? null);
-  for (const [langue, theme] of [['fr', 'light'], ['ar', 'dark']]) {
-    const s = await porte({ ua: INSTAGRAM, langue, theme });
+// L'application peut ignorer le lien intent:// : rien ne s'ouvre, la page reste là, visible. Un moment après, la carte le dit
+// à la place de sa phrase (le lecteur d'écran aussi), sans changer de hauteur : rien ne glisse sous le doigt qui visait
+// « Je suis à l'école ». Le lien discret (après « Continuer ici ») fait de même, dans la hauteur qu'il a déjà
+const RIEN_FR = /^Rien ne s’ouvre\s\? Touche ⋮ en haut à droite, puis «\sOuvrir dans Chrome\s» ou «\sOuvrir dans le navigateur\s»\.$/;
+const RIEN_AR = /^لا يُفتح شيء؟ المس ⋮ في أعلى الشاشة، ثم «فتح في Chrome» أو «فتح في المتصفح»\.$/;
+test('page d’entrée dans Instagram : l’application ignore « Ouvrir dans Chrome » ; un moment après, la carte dit quoi faire à la place de sa phrase, sans rien déplacer (en arabe, de nuit aussi) ; rien quand Chrome s’est ouvert', async () => {
+  const dit = p => p.evaluate(() => document.getElementById('au-appli-dit')?.textContent ?? null);
+  const boite = (p, sel) => p.locator(sel).boundingBox();
+  const sousLeDoigt = (p, b) => p.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest('#au-je-etudiant'), [b.x + b.width / 2, b.y + b.height / 2]);
+  for (const [langue, theme, largeur, hauteur] of [['fr', 'light', 360, 740], ['ar', 'dark', 360, 740], ['fr', 'light', 390, 844]]) {
+    const cas = `${langue} ${theme} ${largeur} × ${hauteur}`;
+    const s = await porte({ ua: INSTAGRAM, langue, theme, largeur, hauteur });
     await s.page.waitForSelector('#au-appli');
+    await s.page.evaluate(() => document.fonts.ready);
+    const avant = await dit(s.page);
+    assert.match(avant, langue === 'ar' ? /^أنت في متصفح Instagram\./ : /^Tu es dans le navigateur d’Instagram\./, cas);
+    const [role, carte] = await Promise.all([boite(s.page, '#au-je-etudiant'), boite(s.page, '#au-appli')]);
     await s.toucherChrome();
-    assert.equal(await rien(s.page), '', 'pas tout de suite : Chrome s’ouvre peut-être');
-    await s.page.waitForFunction(() => document.getElementById('au-appli-rien')?.textContent, null, { timeout: 5000 });
-    assert.match(await s.page.locator('#au-appli-rien').innerText(), langue === 'ar' ? /^لا يُفتح شيء؟ المس ⋮ في أعلى الشاشة، ثم «فتح في Chrome» أو «فتح في المتصفح»\.$/
-      : /^Rien ne s’ouvre\s\? Touche ⋮ en haut à droite, puis «\sOuvrir dans Chrome\s» ou «\sOuvrir dans le navigateur\s»\.$/);
-    assert.equal(await s.page.getAttribute('#au-appli-rien', 'aria-live'), 'polite', 'le lecteur d’écran le dit aussi');
-    const [b, r] = await Promise.all(['#au-appli-chrome', '#au-appli-rien'].map(x => s.page.locator(x).boundingBox()));
-    assert.ok(r.y >= b.y + b.height - 1, 'sous le bouton');
+    assert.equal(await dit(s.page), avant, `${cas} : pas tout de suite, Chrome s’ouvre peut-être`);
+    await s.page.waitForFunction(a => document.getElementById('au-appli-dit')?.textContent !== a, avant, { timeout: 5000 });
+    assert.match(await s.page.locator('#au-appli-dit').innerText(), langue === 'ar' ? RIEN_AR : RIEN_FR, cas);
+    assert.equal(await s.page.getAttribute('#au-appli-dit', 'aria-live'), 'polite', 'le lecteur d’écran le dit aussi');
+    const [role2, carte2] = await Promise.all([boite(s.page, '#au-je-etudiant'), boite(s.page, '#au-appli')]);
+    assert.ok(Math.abs(role2.y - role.y) <= 1, `${cas} : « Je suis à l’école » est passé de ${role.y} à ${role2.y}`);
+    assert.ok(Math.abs(carte2.height - carte.height) <= 1, `${cas} : la carte est passée de ${carte.height} à ${carte2.height} px`);
+    assert.ok(await sousLeDoigt(s.page, role), `${cas} : le doigt tombe toujours sur « Je suis à l’école »`);
+    const [b, r] = await Promise.all(['#au-appli-chrome', '#au-appli-dit'].map(x => boite(s.page, x)));
+    assert.ok(r.y + r.height <= b.y + 1, `${cas} : au-dessus du bouton, à la place de la phrase`);
     assert.equal(await s.page.locator('#au-appli #au-appli-chrome').count(), 1, 'le bouton reste, pour réessayer');
     assert.equal(await s.debordement(), 0);
     await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* sans fin */ } }));
     await s.page.addScriptTag({ content: AXE });
-    assert.deepEqual(await s.page.evaluate(async () => (await axe.run('#au-appli', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => x.id)), [], `${langue} ${theme}`);
+    assert.deepEqual(await s.page.evaluate(async () => (await axe.run('#au-appli', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => x.id)), [], cas);
     if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])]), []);
-    assert.deepEqual(s.erreurs, []);
+    assert.deepEqual(s.erreurs, [], cas);
     await s.ctx.close();
   }
   // Chrome s'est ouvert par-dessus (la page cachée) : rien à dire au retour
   const c = await porte({ ua: INSTAGRAM });
   await c.page.waitForSelector('#au-appli');
+  const avant = await dit(c.page);
   await c.toucherChrome();
   await c.page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange', { bubbles: true })); });
   await c.page.waitForTimeout(2200);
-  assert.equal(await rien(c.page), '');
+  assert.equal(await dit(c.page), avant);
   assert.deepEqual(c.erreurs, []);
   await c.ctx.close();
-  // Le lien discret (après « Continuer ici ») : le même mot à sa place, le focus le suit
-  const m = await porte({ ua: INSTAGRAM, langue: 'ar' });
-  await m.page.waitForSelector('#au-appli');
-  await m.page.click('#au-appli-ici');
-  await m.page.waitForSelector('#au-appli-mot #au-appli-chrome');
-  await m.toucherChrome();
-  await m.page.waitForFunction(() => document.activeElement?.id === 'au-appli-mot' && /^لا يُفتح شيء؟/.test(document.getElementById('au-appli-mot').textContent), null, { timeout: 5000 });
-  assert.equal(await m.debordement(), 0);
-  assert.deepEqual(m.erreurs, []);
-  await m.ctx.close();
+  // Le lien discret (après « Continuer ici ») : le même mot à sa place, le focus le suit, le formulaire ne bouge pas
+  for (const [langue, largeur] of [['ar', 360], ['fr', 360], ['fr', 320], ['fr', 412]]) {
+    const cas = `lien discret ${langue} ${largeur}`;
+    const m = await porte({ ua: INSTAGRAM, langue, largeur });
+    await m.page.waitForSelector('#au-appli');
+    await m.page.click('#au-appli-ici');
+    await m.page.waitForSelector('#au-appli-mot #au-appli-chrome');
+    await m.page.evaluate(() => document.fonts.ready);
+    const role = await boite(m.page, '#au-je-etudiant');
+    await m.toucherChrome();
+    await m.page.waitForFunction(() => document.activeElement?.id === 'au-appli-mot' && /^(لا يُفتح شيء؟|Rien ne s’ouvre)/.test(document.getElementById('au-appli-mot').textContent), null, { timeout: 5000 });
+    assert.match((await m.page.locator('#au-appli-mot').innerText()).trim(), langue === 'ar' ? RIEN_AR : RIEN_FR, cas);
+    const role2 = await boite(m.page, '#au-je-etudiant');
+    assert.ok(Math.abs(role2.y - role.y) <= 1, `${cas} : « Je suis à l’école » est passé de ${role.y} à ${role2.y}`);
+    assert.ok(await sousLeDoigt(m.page, role), `${cas} : le doigt tombe toujours sur « Je suis à l’école »`);
+    assert.equal(await m.debordement(), 0);
+    assert.deepEqual(m.erreurs, [], cas);
+    await m.ctx.close();
+  }
 });
 
 test('page d’entrée : Facebook sur iPhone (un paragraphe : Safari, son geste et « Continuer ici », pas de lien magique), une vue web Android, l’iPad ; rien dans Chrome ni Samsung Internet', async () => {
@@ -6991,7 +7015,7 @@ test('page d’entrée sur iPhone, dans Facebook ou Instagram : la carte compact
 // sous le doigt qui visait « Je suis à l'école »
 test('page d’entrée dans le navigateur d’une application, appareil.js en retard : la place de la carte est gardée, le formulaire ne bouge pas quand elle arrive', async () => {
   for (const [ua, largeur, hauteur, langue, tactile, vue] of [[INSTAGRAM, 360, 740, 'fr'], [INSTAGRAM, 390, 844, 'ar'], [INSTAGRAM, 320, 640, 'fr'], [INSTAGRAM, 412, 915, 'fr'], [VUE_WEB, 360, 740, 'fr'],
-    [FACEBOOK_IOS, 390, 844, 'fr', 'iPhone'], [FACEBOOK_IOS, 375, 667, 'ar', 'iPhone'], [INSTAGRAM, 360, 740, 'fr', null, 'chrome'], [INSTAGRAM, 390, 844, 'fr', null, 'vue'],
+    [FACEBOOK_IOS, 390, 844, 'fr', 'iPhone'], [FACEBOOK_IOS, 375, 667, 'ar', 'iPhone'], [INSTAGRAM, 360, 740, 'fr', null, 'chrome'], [INSTAGRAM, 390, 844, 'fr', null, 'vue'], [INSTAGRAM, 360, 740, 'fr', null, 'vue'],
     [FACEBOOK_IOS, 360, 740, 'fr', 'iPhone', 'vue'], [FACEBOOK_IOS, 390, 844, 'fr', 'iPhone', 'vue']]) {
     const cas = `${ua === INSTAGRAM ? 'Instagram' : ua === VUE_WEB ? 'vue web' : 'Facebook iPhone'} ${largeur} ${langue}${vue ? ' ' + vue : ''}`;
     let lacher; const tenu = new Promise(ok => { lacher = ok; });

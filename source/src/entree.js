@@ -396,16 +396,20 @@ function CarteAppli({ mode, role, invite }) {
   if (!sys || echec) return null;
   const largeur = document.documentElement.clientWidth || innerWidth, rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
   const place = carte ? placeCarte(sys, getLang(), largeur, rem) : '';
-  // Avant appareil.js : sa place (la carte, ou la ligne discrète : trois lignes pour « Rien ne s'ouvre ? » sur un petit écran).
-  // Sa propre clé : la carte arrive dans un élément neuf, sans transition depuis la place vide (mouvement réduit)
-  if (!a) return html`<div key="place" class="entree-appli-place" style=${{ minHeight: place || (sys === 'ios' || vue === 'chrome' ? placeMot(sys, getLang(), largeur, rem) : '44px') }}></div>`;
+  // La ligne discrète a toujours la hauteur de sa plus longue phrase (« Rien ne s'ouvre ? » sur Android, le geste sur iPhone) :
+  // cette phrase arrive sans rien déplacer
+  const placeLigne = placeMot(sys, getLang(), largeur, rem);
+  // Avant appareil.js : sa place (la carte, ou la ligne discrète). Sa propre clé : la carte arrive dans un élément neuf, sans
+  // transition depuis la place vide (mouvement réduit)
+  if (!a) return html`<div key="place" class="entree-appli-place" style=${{ minHeight: place || placeLigne }}></div>`;
   // Chaque phrase traduite d'abord (l'arabe passe tel quel), puis le nom de l'application, Chrome et Safari chacun dans son span.
   // Dans un lien ou un bouton en flex, la phrase reste dans un seul span : un seul morceau, les espaces gardés
   const T = a.CARTE, f = x => a.nomsLatins(a.typo(t(x), getLang())).map((p, i) => (i % 2 ? html`<span translate="no" dir="auto" ref=${sansTraduction}>${p}</span>` : p));
   // Relu au toucher : le rôle, l'étape ou le lien partagé ont pu changer depuis l'affichage. ici : l'adresse de secours le dit
   const lien = () => a.lienChrome(location.href, lienRetenu()?.r, { lang: getLang(), contexte: { promo: invite, role, mode: mode === 'inscription' ? mode : 'connexion' }, ici: true });
   // Sans Chrome, l'adresse de secours recharge la page ici : ce qui est déjà tapé revient (lireSaisie). L'application peut
-  // aussi ignorer le lien : la page toujours là et visible 1,5 s après (ni cachée ni quittée), la carte dit quoi faire
+  // aussi ignorer le lien : la page toujours là et visible 1,5 s après (ni cachée ni quittée), la carte dit quoi faire, à la
+  // place de sa phrase (même hauteur : rien ne glisse sous le doigt)
   const ouvrir = e => {
     e.currentTarget.href = lien(); ecrireVisite(CLE_CARTE, 'chrome'); try { garderSaisie(); } catch { /* stockage indisponible */ }
     let parti = false; const p = () => { parti = true; }, ev = ['pagehide', 'blur', 'visibilitychange'];
@@ -413,7 +417,7 @@ function CarteAppli({ mode, role, invite }) {
     setTimeout(() => { ev.forEach(n => removeEventListener(n, p)); if (!parti && !document.hidden) setRien(true); }, 1500);
   };
   const ico = html`<${Icon} name="globe" size=${18}/>`;
-  if (!carte) return html`<p class="entree-appli-mot" id="au-appli-mot" tabindex="-1" ref=${mot}>${ico}${sys === 'ios' || vue === 'chrome' || rien
+  if (!carte) return html`<p class="entree-appli-mot" id="au-appli-mot" tabindex="-1" ref=${mot} style=${{ minHeight: placeLigne }}>${ico}${sys === 'ios' || vue === 'chrome' || rien
     ? html`<span>${f(sys === 'ios' ? T.geste : T.rien)}</span>` : html`<a href=${lien()} id="au-appli-chrome" onClick=${ouvrir}><span>${f(T.ligne)}</span></a>`}</p>`;
   const ici = html`<button type="button" class="linkish" id="au-appli-ici" onClick=${() => setRange(true)}>${T.ici}</button>`;
   // iPhone, iPad : pas de bouton à elle, rien qu'un geste à dire. Un seul paragraphe, « Continuer ici » au bout : le champ
@@ -422,9 +426,8 @@ function CarteAppli({ mode, role, invite }) {
     <p><span>${f(T.ios)}</span> <span>${f(T.geste)}</span> ${ici}</p></div>
   </div>`;
   return html`<div class="entree-appli" id="au-appli" data-systeme=${sys} style=${{ minHeight: place }}>${ico}<div class="entree-appli-txt">
-    <p><span>${f(T.tuEs(app.nom))}</span> <span>${f(T[sys])}</span></p></div>
+    <p id="au-appli-dit" aria-live="polite">${rien ? f(T.rien) : html`<span>${f(T.tuEs(app.nom))}</span> <span>${f(T[sys])}</span>`}</p></div>
     <div class="entree-appli-acts"><a class="btn primary" id="au-appli-chrome" href=${lien()} onClick=${ouvrir}><span>${f(T.ouvrir)}</span></a>${ici}</div>
-    <p class="entree-appli-rien" id="au-appli-rien" aria-live="polite">${rien ? f(T.rien) : null}</p>
   </div>`;
 }
 
