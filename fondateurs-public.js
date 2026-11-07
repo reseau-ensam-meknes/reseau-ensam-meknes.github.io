@@ -1,47 +1,33 @@
-// Membres fondateurs : les 25 premiers lauréats à aider les étudiants (classementFondateurs dans logic.js, et la même
-// règle dans schema.sql). Ce module-ci est léger : la carte d'un fondateur et son style (partagés avec l'accueil des
-// membres, fondateurs.js), et le bandeau de la page d'entrée pour un visiteur sans compte.
-// La page d'entrée le charge à part, après s'être affichée (import dynamique) : elle garde ses six fichiers.
-// Un visiteur ne lit aucun profil : fondateurs_publics() lui donne les totaux, et le nom, la filière, la promo et la photo
-// des seuls fondateurs qui ont dit oui. Démo, base pas encore à jour ou pas de réseau : rien, sans erreur.
 import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { addAR, arCount } from './i18n.js';
 import { Icon, ajouterIcones } from './entree.js';
 
-// Le bouclier « vérifié » (le reste du site l'apporte avec ui.js, que la page d'entrée n'attend pas)
 ajouterIcones({ shield: '<path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>' });
 
 export const TITRE_FONDATEURS = 'Membres fondateurs';
 export const DU_MOIS = 'Lauréats du mois';
 export const SOUS_FONDATEURS = 'Les premiers à aider les étudiants. Merci !';
-// Ce que le fondateur a fait en premier (les mêmes types que la base : offre, aide, mentorat)
 export const FAIT = { offre: 'Offre publiée', aide: 'Aide proposée', mentorat: 'Mentorat accepté' };
 const ICONE = { offre: 'briefcase', aide: 'send', mentorat: 'mentor' };
 
-// « GM · Promo 2024 » : le code officiel de la filière (le même que filiereCourte dans logic.js), et un code court
-// pour les anciennes appellations, que portent la plupart des lauréats
 const CODES = {
   'Génie Industriel et Productique': 'GIP24', 'Génie Industriel : Excellence Opérationnelle': 'GIEO',
   'Génie Électromécanique : Digitalisation Industrielle': 'GE-DI', 'Génie Électromécanique : Maintenance et Commande Industrielles': 'GE-MCI',
   'Génie Mécanique : Conception et Industrialisation des Systèmes Mécaniques': 'GM-CISM', 'Génie Mécanique : Ingénierie Mécanique et Structures': 'GM-IMS',
   'Génie Mécanique : Matériaux et Procédés de Fabrication': 'GM-MPF', 'Génie Mécanique : Énergétique': 'GME24', 'Génie Civil': 'GC24',
   'Intelligence Artificielle et Technologies des Données : Systèmes Industriels': 'IATD-SI', 'Génie Informatique : Ingénierie Logicielle et Systèmes Intelligents': 'GI-ILSI',
-  // Anciennes appellations
   'Génie Mécanique': 'GM', 'Génie Industriel': 'GI', 'Génie Électromécanique': 'GEM', 'Génie Énergétique': 'GE', 'Mécatronique': 'MECA', 'Génie Informatique & IA': 'GI-IA',
 };
 export const filiereFondateur = f => CODES[f] || f || '';
 
-// « 23 octobre » (l'année seulement si ce n'est pas celle-ci) : le mois en toutes lettres se traduit tout seul en arabe
 const MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
 export function jourFondateur(iso, now = new Date()) {
   const d = new Date(iso);
   if (!Number.isFinite(d.getTime())) return '';
   return `${d.getDate()} ${MOIS[d.getMonth()]}${d.getFullYear() !== now.getFullYear() ? ' ' + d.getFullYear() : ''}`;
 }
-// Les visiteurs ne voient que des totaux pour ceux qui n'ont pas (encore) dit oui
 export const ligneTotaux = (total, places) => `${total > 1 ? `${total} membres fondateurs` : '1 membre fondateur'} · ${places > 1 ? `${places} places restantes` : places === 1 ? '1 place restante' : 'complet'}`;
 
-// Un visage : la photo si elle est là, sinon les initiales sur une teinte douce (les mêmes teintes que l'Avatar du site)
 const TEINTES = [[205, 62], [28, 78], [222, 32], [176, 46], [150, 34], [244, 42], [350, 52], [42, 66], [290, 28]];
 const hacher = (s = '') => { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; };
 const initiales = n => (n || '').trim().split(/\s+/).filter(Boolean).slice(0, 2).map(x => [...x][0]).join('').toUpperCase();
@@ -51,8 +37,6 @@ export function Visage({ nom, url, size = 80 }) {
   return html`<span class=${'avatar' + (url ? ' a-photo' : '')} style=${`--h:${h};--s:${s}%;--s2:${Math.min(s + 8, 70)}%;width:${size}px;height:${size}px;font-size:${Math.round(size * 0.38)}px`} aria-hidden="true"><span class="av-ini">${ini[0] || ''}${ini.length > 1 ? html`<span class="av-l2">${ini.slice(1).join('')}</span>` : null}</span>${url ? html`<img src=${url} alt="" width=${size} height=${size} decoding="async" onError=${e => { e.currentTarget.hidden = true; }}/>` : null}</span>`;
 }
 
-// La carte d'un fondateur. visage : la photo (Avatar sur l'accueil, Visage ici) ; apresNom : le bouclier « vérifié » ;
-// onOpen : ouvre sa fiche (membres) ; pied : le « Merci » (membres)
 export function CarteFondateur({ f, visage, apresNom, onOpen, pied }) {
   const Tete = onOpen ? 'button' : 'div';
   return html`<li class="fd-carte">
@@ -70,10 +54,6 @@ export function TeteFondateurs({ id }) {
     <div class="fd-tete-txt"><div class="fd-l1"><h2 class="fd-titre" id=${id}>${TITRE_FONDATEURS}</h2><span class="fd-pastille">${DU_MOIS}</span></div><p class="fd-sous">${SOUS_FONDATEURS}</p></div></div>`;
 }
 
-// ---------------------------------------------------------------------------
-// Page d'entrée : fondateurs_publics(), puis les photos de ceux qui ont dit oui (liens temporaires d'une heure,
-// que la base n'accorde que pour ces photos-là : politique « photos fondateurs publics » de schema.sql)
-// ---------------------------------------------------------------------------
 let promesse = null;
 async function appeler(cfg) {
   const h = { apikey: cfg.supabaseAnonKey, Authorization: `Bearer ${cfg.supabaseAnonKey}`, 'Content-Type': 'application/json' };
@@ -103,7 +83,6 @@ export function fondateursPublics(cfg = window.ENSAM_CONFIG || {}) {
 
 export function FondateursPublics() {
   const [x, setX] = useState(null);
-  // Téléphone : une ligne par fondateur, photo à côté du nom ; petit écran (moins de 700 px de haut) : les visages seuls
   const [petit] = useState(() => typeof innerWidth === 'number' && innerWidth < 900);
   useEffect(() => { let vivant = true; fondateursPublics().then(v => { if (vivant) setX(v); }); return () => { vivant = false; }; }, []);
   if (!x || !x.total) return null;
@@ -116,7 +95,6 @@ export function FondateursPublics() {
   </section>`;
 }
 
-// Le style, partagé avec l'accueil des membres. Pas de cadre dans un cadre : une carte, des visages dedans.
 const CSS = `
 .fondateurs { position: relative; display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-4); border-radius: var(--r-lg); background: linear-gradient(180deg, color-mix(in srgb, var(--brass) 8%, var(--surface)), var(--surface) 70%); box-shadow: var(--sh1); }
 .fd-tete { display: flex; align-items: flex-start; gap: var(--sp-3); }
@@ -182,7 +160,6 @@ if (typeof document !== 'undefined' && !document.querySelector('style[data-modul
   const s = document.createElement('style'); s.dataset.module = 'fondateurs'; s.textContent = CSS; document.head.appendChild(s);
 }
 
-// Arabe : خريجين, jamais القدامى ; formulations neutres. Les mêmes phrases sont aussi à l'accueil des membres.
 const FAIT_AR = { [FAIT.offre]: 'نشر عرض', [FAIT.aide]: 'اقتراح مساعدة', [FAIT.mentorat]: 'قبول إرشاد' };
 const MEMBRE_F = ['عضو مؤسس واحد', 'عضوان مؤسسان', 'أعضاء مؤسسين', 'عضوًا مؤسسًا'];
 const PLACE = ['مكان واحد متبقٍّ', 'مكانان متبقيان', 'أماكن متبقية', 'مكانًا متبقيًا'];
@@ -192,7 +169,6 @@ addAR({
   'Profil vérifié': 'ملف موثَّق',
 }, [
   [/^Promo (\d{4})$/, y => `دفعة ${y}`],
-  // « Offre publiée le 23 octobre » : le mois passe en arabe tout seul (dateFix)
   [/^(Offre publiée|Aide proposée|Mentorat accepté) le (\d{1,2} \S+(?: \d{4})?)$/, (t, j) => `${FAIT_AR[t]} يوم ${j}`],
   [/^(\d+) membres fondateurs · (\d+) places restantes$/, (t, p) => `${arCount(t, MEMBRE_F)} · ${arCount(p, PLACE)}`],
   [/^(\d+) membres fondateurs · 1 place restante$/, t => `${arCount(t, MEMBRE_F)} · مكان واحد متبقٍّ`],

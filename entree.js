@@ -442,12 +442,27 @@ function magasinMembre() {
   magasin.catch(() => { magasin = null; });
 }
 
+let cssP = null;
+export function chargerCss() {
+  const href = window.ENSAM_CSS;
+  if (!href || typeof document === 'undefined') return Promise.resolve();
+  return cssP ||= new Promise((ok, ko) => {
+    const l = document.createElement('link'), ici = document.getElementById('css-entree');
+    l.rel = 'stylesheet'; l.href = href; l.dataset.css = 'site';
+    l.onload = () => { ici?.remove(); ok(); };
+    l.onerror = () => { l.remove(); cssP = null; ko(new TypeError('Failed to fetch')); };
+    if (ici) ici.after(l); else document.head.appendChild(l);
+  });
+}
+export const cssPret = () => chargerCss().catch(() => new Promise(() => {}));
+
 let appLancee = false, appEchec = false, relance = false, connecte = false;
 function chargerApp() {
   if (appLancee) return; appLancee = true;
   if (getLang() === 'ar') chargerAR().catch(() => {});
   precharger(window.ENSAM_MODULES);
-  import('./app.js').catch(e => {
+  const css = chargerCss(); css.catch(() => {});
+  import('./app.js').then(() => css).catch(e => {
     if (/^(SyntaxError|TypeError|ReferenceError)$/.test(e?.name) && navigator.serviceWorker?.controller) window.ensamReprise?.();
     appEchec = true;
     if (!document.documentElement.dataset.entree || connecte) relancerApp();
