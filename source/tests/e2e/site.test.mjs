@@ -7038,7 +7038,8 @@ test('console · Affiches et rapport : l’affiche et le rapport s’impriment s
   assert.equal(await s.page.locator('#ou-rapport .rp-graphe').first().locator('table.sr-only tbody tr').count(), 12);
   // Mode événement : plein écran, focus sur « Fermer », Échap rend la main au bouton
   await s.page.click('#ou-ev-ouvrir'); await s.page.waitForSelector('#ou-ev-ecran .ev-qr svg');
-  assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'ou-ev-fermer');
+  // Le focus passe sur « Fermer » juste après l'affichage de l'écran (l'effet suit le premier dessin)
+  await s.page.waitForFunction(() => document.activeElement?.id === 'ou-ev-fermer', null, { timeout: 2000 });
   assert.match(await s.page.locator('#ou-ev-ecran .ev-n').innerText(), /^\d+$/);
   await s.page.keyboard.press('Escape'); await s.page.waitForSelector('#ou-ev-ecran', { state: 'detached' });
   await s.page.waitForTimeout(100);
