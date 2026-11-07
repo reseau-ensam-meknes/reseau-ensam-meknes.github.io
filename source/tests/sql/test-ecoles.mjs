@@ -1,7 +1,7 @@
 // Écoles : chaque réseau ne voit que le sien, ENSAM Meknès ne change pas, personne n'entre seul dans une autre école
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { nouvelleBase, en, creerCompte, uid } from './banc-sql.mjs';
+import { nouvelleBase, en, creerCompte, uid, reglerHorloge, aujourdhuiA } from './banc-sql.mjs';
 
 const SCHEMA = process.env.SCHEMA_SQL || new URL('../../supabase/schema.sql', import.meta.url).pathname;
 let db;
@@ -141,6 +141,136 @@ test('ce que fait l’administration notifie le membre concerné, quelle que soi
   const r = (await db.query(`select data->>'de' de from public.push_queue where user_id = $1 and kind = 'reponse'`, [AUTRE])).rows.map(x => x.de);
   assert.deepEqual(r, ['admin'], 'un membre ne notifie pas une autre école ; l’administration, si');
   await db.query('delete from public.push_queue');
+});
+
+// Les nouvelles notifications programmées (P2, P5 à P8, P11b, P11d, le rappel du soir) et la nuit calme partent aussi de
+// pg_cron, sans membre connecté : chacune choisit ses destinataires, ses chiffres et ses noms dans l'école du membre, avant
+// tout plafond.
+// Ici, à chaque fois, des jumeaux d'une autre école qui rempliraient sinon les conditions (Karim, lauréat GI 2016 à Kénitra
+// comme Nadia ; Hiba, étudiante GI 2027 comme Salma) ; le détail de chaque envoi : test-ecoles-notifs.mjs. Le budget du jour
+// est remis à zéro avant chaque tâche : ce n'est pas lui qu'on vérifie ici.
+test('nouvelles notifications programmées : l’école est filtrée avant le plafond, même lancées par la base', async () => {
+  const MEK3 = uid(806), NOUVEAU_LAU = uid(807), HIBA = uid(808);
+  await creerCompte(db, { id: HIBA, full_name: 'Hiba Autre', role: 'etudiant', filiere: 'GI', promo: 2027, ville: 'Kenitra', ecole: 'autre-ecole' });
+  try {
+    await db.query(`insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) select id, 'https://p/' || id, 'k', 'a' from public.profiles on conflict do nothing`);
+    await db.query(`insert into public.visites (user_id, vu_at) select id, now() - interval '3 days' from public.profiles on conflict (user_id) do update set vu_at = excluded.vu_at`);
+    const NOMS = { [MEK]: 'MEK', [MEK2]: 'MEK2', [MEK3]: 'MEK3', [NOUVEAU_LAU]: 'NOUVEAU_LAU', [AUTRE]: 'AUTRE', [HIBA]: 'HIBA', [ADMIN]: 'ADMIN' };
+    // La file d'un type, par destinataire : { MEK: [data, …], … }
+    const file = async kind => {
+      const m = {};
+      for (const x of (await db.query('select user_id, data from public.push_queue where kind = $1 order by id', [kind])).rows) (m[NOMS[x.user_id] || x.user_id] ??= []).push(x.data);
+      return m;
+    };
+    const par = (f, champ) => Object.fromEntries(Object.entries(f).map(([k, d]) => [k, d.map(x => (typeof champ === 'function' ? champ(x) : x[champ]))]));
+    // Chaque tâche à son heure (en UTC, l'heure du Maroc), file vidée et budget du jour remis à zéro
+    const lancer = async (f, h, m = 0) => {
+      await db.query('delete from public.push_queue'); await db.query('delete from public.notif_programme');
+      await reglerHorloge(db, aujourdhuiA(h, m));
+      try { return (await db.query(`select public.${f}() n`)).rows[0].n; } finally { await reglerHorloge(db); }
+    };
+
+    // Offre qui ferme (P5) : ses offres enregistrées de son école, même avec une offre d'ailleurs enregistrée (pour l'année
+    // de Salma et de Hiba, promo 2027, quelle que soit la saison)
+    const ferme = async (auteur, ecole, titre) => (await db.query(`insert into public.offers (author_id, type, titre, entreprise, description, annees, deadline, ecole)
+      values ($1, 'pfe', $2, 'OCP', 'Mission.', array[public.niveau_de(2027, public.saison_courante())], $3, $4) returning id`,
+      [auteur, titre, aujourdhuiA(0, 0, 2).slice(0, 10), ecole])).rows[0].id;
+    const om = await ferme(MEK2, 'ensam-meknes', 'PFE qui ferme à Meknès'), oa = await ferme(AUTRE, 'autre-ecole', 'PFE qui ferme ailleurs');
+    await db.query(`insert into public.reactions (offer_id, user_id, kind) select o, u, 'save' from unnest($1::uuid[]) o, unnest($2::uuid[]) u`, [[om, oa], [MEK, HIBA]]);
+    await lancer('offres_bientot_push', 9);
+    assert.deepEqual(par(await file('offre_bientot'), 'offre'), { MEK: [om], HIBA: [oa] });
+
+    // Demande sans aide (P6), 150 lauréats au plus par demande : 150 lauréats d'une autre école, du même parcours et venus
+    // plus récemment, ne prennent pas la place de ceux de l'école de la demande. Celle de Salma passe la première (plus
+    // ancienne) : sinon ces 150 auraient déjà eu leur notification du jour, et ne lui disputeraient plus rien.
+    const demande = async (auteur, ecole, titre, ilYa) => {
+      const { id } = (await db.query(`insert into public.demandes (auteur_id, type, titre, details, ecole) values ($1, 'pfe', $2,
+        'Je cherche un PFE en amélioration continue, à Kénitra.', $3) returning id`, [auteur, titre, ecole])).rows[0];
+      await db.query(`update public.demandes set created_at = now() - $2::interval, relancee_at = now() - $2::interval where id = $1`, [id, ilYa]);
+      return id;
+    };
+    const dm = await demande(MEK, 'ensam-meknes', 'PFE lean à Kénitra', '26 hours'), da = await demande(HIBA, 'autre-ecole', 'PFE qualité à Kénitra', '25 hours');
+    const foule = Array.from({ length: 150 }, (_, i) => uid(900 + i));
+    await db.query(`insert into auth.users (id, email) select u, u::text || '@autre.ma' from unnest($1::uuid[]) u`, [foule]);
+    await db.query(`insert into public.profiles (id, full_name, role, filiere, promo, ecole) select u, 'Lauréat Autre', 'laureat', 'GI', 2016, 'autre-ecole' from unnest($1::uuid[]) u`, [foule]);
+    await db.query(`insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) select u, 'https://p/' || u, 'k', 'a' from unnest($1::uuid[]) u`, [foule]);
+    await db.query(`insert into public.visites (user_id, vu_at) select u, now() from unnest($1::uuid[]) u`, [foule]);
+    try {
+      await lancer('demande_attente_push', 10);
+      const att = (await db.query(`select user_id, data->>'demande' d, data->>'nom' nom from public.push_queue where kind = 'demande_attente'`)).rows;
+      assert.deepEqual(att.filter(x => x.d === dm).map(x => NOMS[x.user_id] || 'foule').sort(), ['MEK2', 'MEK3', 'NOUVEAU_LAU'], 'les lauréats de son école');
+      assert.ok(att.filter(x => x.d === dm).every(x => x.nom === 'Salma'));
+      const ailleurs = att.filter(x => x.d === da);
+      assert.equal(ailleurs.length, 150, 'le plafond, rempli par l’école de la demande');
+      assert.ok(ailleurs.every(x => !['MEK', 'MEK2', 'MEK3', 'NOUVEAU_LAU'].includes(NOMS[x.user_id])), 'personne de Meknès');
+    } finally {
+      await db.query('delete from auth.users where id = any($1::uuid[])', [foule]);
+    }
+
+    // Demande en pause (P11b) : chacun la sienne
+    await db.query(`update public.demandes set created_at = now() - interval '61 days', relancee_at = now() - interval '61 days' where id = any($1::uuid[])`, [[dm, da]]);
+    await lancer('demande_pause_push', 8);
+    assert.deepEqual(par(await file('demande_pause'), 'demande'), { MEK: [dm], HIBA: [da] });
+
+    // Groupes du jour (P11d) : Kénitra est un groupe à part dans chaque école ; les messages de l'autre ne comptent pas
+    const ecrire = (u, ecole, n) => db.query(`insert into public.groupe_messages (groupe, author_id, body, ecole, created_at)
+      select 'ville:kenitra', $1, 'Bonjour ' || i, $2, now() - interval '2 hours' from generate_series(1, $3::int) i`, [u, ecole, n]);
+    await ecrire(MEK, 'ensam-meknes', 2); await ecrire(HIBA, 'autre-ecole', 3);
+    await lancer('groupe_jour_push', 19, 30);
+    assert.deepEqual(par(await file('groupe_jour'), 'n'), { MEK3: [2], AUTRE: [3] });
+
+    // Résumé du dimanche (P7) : tous ces comptes sont arrivés cette semaine ; chacun ne compte que son école
+    await lancer('semaine_push', 10);
+    const sem = await file('semaine');
+    assert.equal(sem.MEK[0].laureats, 3, 'Youssef, Nadia et Omar ; pas Karim, d’une autre école');
+    assert.equal(sem.MEK[0].promo, undefined, 'Hiba est de sa promo, mais d’une autre école');
+    assert.equal(sem.MEK3[0].promo, 1, 'Omar ; pas Karim, de sa promo mais d’une autre école');
+    assert.deepEqual([sem.HIBA[0].laureats, sem.HIBA[0].promo], [1, undefined], 'Karim ; pas Salma, de sa promo mais d’une autre école');
+
+    // La veille (P8) : l'événement de demain de son école ; les inscrits comptés dans l'école de l'événement
+    const ev = async (ecole, titre) => (await db.query(`insert into public.evenements (titre, debut, lieu, public, ecole) values ($1, $2, 'Amphi A', 'tous', $3) returning id`,
+      [titre, aujourdhuiA(14, 0, 1), ecole])).rows[0].id;
+    const em = await ev('ensam-meknes', 'Atelier CV de demain'), ea = await ev('autre-ecole', 'Forum de demain');
+    await db.query(`insert into public.evenement_participants (evenement_id, user_id) values ($1, $3), ($1, $4), ($2, $5), ($2, $6)`, [em, ea, MEK3, AUTRE, HIBA, MEK]);
+    await lancer('agenda_demain_push', 19, 30);
+    assert.deepEqual(par(await file('agenda_demain'), x => [x.id, x.inscrits]), { MEK3: [[em, 1]], HIBA: [[ea, 1]] });
+
+    // Intérêt qui attend (P2) : Nadia a dit oui à Salma il y a 21 h ; Karim, d'une autre école, plus tard : ni compté ni nommé
+    const oui = (de, champ, cible, ilYa = '21 hours') => db.query(`insert into public.match_choix (user_id, ${champ}, choix, updated_at)
+      values ($1, $2, 'oui', now() - $3::interval)`, [de, cible, ilYa]);
+    await oui(MEK3, 'cible_profil', MEK);
+    await oui(AUTRE, 'cible_profil', MEK, '20 hours 30 minutes');
+    await oui(NOUVEAU_LAU, 'cible_profil', HIBA); // d'une autre école : rien pour Hiba
+    await oui(HIBA, 'cible_offre', om);           // sur l'offre de Youssef, d'une autre école : rien pour lui
+    await lancer('match_attente_push', 12, 30);
+    assert.deepEqual(par(await file('match_attente'), x => [x.n, x.nom, x.de]), { MEK: [[1, 'Nadia', MEK3]] });
+
+    // Rappel du soir : les nouvelles clés comptent dans son école (un match et un oui chacun ; Hiba, rien de Meknès)
+    await db.query(`insert into public.matchs (etudiant_id, laureat_id) values ($1, $2), ($3, $4)`, [MEK, MEK2, HIBA, MEK3]);
+    await db.query(`update public.profiles set created_at = now() - interval '30 days' where id = any($1::uuid[])`, [[MEK, MEK2, MEK3, AUTRE, HIBA]]);
+    await lancer('rappels_push', 18);
+    const rv = await file('rappel_visite');
+    assert.deepEqual([rv.MEK[0].matchs, rv.MEK[0].interets], [1, 1], 'Youssef et Nadia ; pas le oui de Karim, d’une autre école');
+    assert.equal(rv.MEK3[0].matchs, undefined, 'le match avec Hiba, d’une autre école, ne compte pas');
+    assert.deepEqual([rv.HIBA[0].matchs, rv.HIBA[0].interets], [undefined, undefined], 'ni le match avec Nadia ni le oui d’Omar');
+    assert.equal(rv.MEK2?.[0]?.interets, undefined, 'le oui de Hiba sur son offre, d’une autre école, ne compte pas');
+
+    // La nuit calme : un événement publié à 23 h attend 08:00 (push_nuit), puis part vers son école seulement
+    await db.query('delete from public.push_queue'); await db.query('delete from public.push_nuit');
+    await reglerHorloge(db, aujourdhuiA(23, 0));
+    try {
+      await db.query(`insert into public.evenements (titre, debut, lieu, public, ecole) values ('Forum de rentrée', now() + interval '4 days', 'Amphi B', 'tous', 'ensam-meknes')`);
+      assert.deepEqual(await file('evenement'), {}, 'rien la nuit');
+      await reglerHorloge(db, aujourdhuiA(8, 0, 1));
+      assert.ok((await db.query('select public.liberer_nuit() n')).rows[0].n > 0);
+    } finally { await reglerHorloge(db); }
+    assert.deepEqual(Object.keys(await file('evenement')).sort(), ['ADMIN', 'MEK', 'MEK2', 'MEK3', 'NOUVEAU_LAU']);
+    await db.query('delete from public.push_queue');
+  } finally {
+    // Hiba repart (la suite du fichier compte les membres de l'autre école) ; l'horloge revient à 10 h
+    await db.query('delete from auth.users where id = $1', [HIBA]);
+    await reglerHorloge(db);
+  }
 });
 
 test('relancée, la mise à jour ne perd rien', async () => {
