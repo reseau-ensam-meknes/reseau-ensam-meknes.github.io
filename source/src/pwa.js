@@ -332,6 +332,8 @@ addAR({
   [TEST_INJOIGNABLE]: 'خدمة الإشعارات على هذا الجهاز لا تستجيب حاليًا. أعد المحاولة بعد بضع دقائق.',
   [SERVICE_LENT]: 'خدمة الإشعارات لا تستجيب، أعد المحاولة بعد قليل.',
   [PREMIERE_RATEE]: 'لم يُرسَل الإشعار التجريبي. أعدنا تسجيل هذا الجهاز: اضغط على «تجربة» في «ملفي الشخصي» للتحقق.',
+  // La fonction notifier injoignable (store.testPushDetails) : le message de « Tester »
+  'La fonction de notifications ne répond pas encore.': 'خدمة الإشعارات على المنصة لا تستجيب بعد.',
 });
 
 // Une demande du navigateur lancée depuis Mon profil attend sa réponse : pas de feuille d'ouverture par-dessus

@@ -1137,6 +1137,16 @@ async function appareil({ hash = '#profil/notifications', langue = 'fr', pm = {}
 }
 const effaces = () => site.appels.filter(a => a.m === 'DELETE' && a.u === '/sb/rest/v1/push_subscriptions').length;
 
+test('« Tester » en ligne, en arabe : la fonction de notifications qui ne répond pas se dit en arabe', async () => {
+  const m = await appareil({ test: 500, langue: 'ar' });
+  await m.tester();
+  assert.deepEqual(await m.toasts(), ['خدمة الإشعارات على المنصة لا تستجيب بعد.'], `avant : « ${TEST_PHRASES.panne} », en français`);
+  assert.ok(!(await m.page.evaluate(() => [...(window.__ensamMissing || [])])).includes(TEST_PHRASES.panne));
+  assert.deepEqual(await m.etat(), { carte: 'on', cur: 'https://push.exemple.ma/e1', journal: [] }, 'rien n’est touché');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
 test('« Tester » en ligne, la réparation échoue (service de push muet, clé injoignable) : jamais « réabonné », la carte dit ce qui reste', async () => {
   // L'ancien abonnement retiré, le nouveau refusé : l'appareil n'a plus d'abonnement, la carte repasse à « Activer »
   let m = await appareil({ test: { sent: 0, failed: 1, removed: 0, codes: [403], abonnements: 1, ici: 403 }, pm: { refuse: 1 } });
