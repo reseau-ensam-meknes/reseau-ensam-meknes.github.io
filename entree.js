@@ -149,7 +149,8 @@ export function LangToggle({ onChange, store, me, aussitot = false }) {
     <${Icon} name="globe" size=${16}/><span translate="no">${ar ? 'FR' : 'ع'}</span><span class="lang-long" translate="no">${ar ? 'Français' : 'العربية'}</span></button>`;
 }
 
-const CLE = 'ensam-invite-promo', CLE_ROLE = 'ensam-role-choisi';
+const CLE = 'ensam-invite-promo', CLE_ROLE = 'ensam-role-choisi', CLE_ECOLE = 'ensam-invite-ecole';
+const ecoleValide = e => typeof e === 'string' && /^[a-z0-9-]{2,40}$/.test(e);
 const valide = promoValide;
 const lire = k => { try { return localStorage.getItem(k); } catch { return null; } };
 const ecrire = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* navigation privée */ } };
@@ -157,6 +158,12 @@ const ecrire = (k, v) => { try { if (v == null) localStorage.removeItem(k); else
 export function lireInvitation() {
   try {
     const u = new URL(location.href);
+    if (u.searchParams.has('ecole')) {
+      const e = u.searchParams.get('ecole');
+      if (ecoleValide(e)) localStorage.setItem(CLE_ECOLE, e);
+      u.searchParams.delete('ecole');
+      if (!u.searchParams.has('promo')) { history.replaceState(history.state, '', u.pathname + u.search + u.hash); return null; }
+    }
     if (!u.searchParams.has('promo')) return null;
     const n = Number(u.searchParams.get('promo'));
     if (valide(n)) localStorage.setItem(CLE, String(n));
@@ -167,9 +174,10 @@ export function lireInvitation() {
   } catch { return null; /* stockage ou historique indisponible : le lien marche quand même, sans promo pré-remplie */ }
 }
 export function promoInvitee() { const n = Number(lire(CLE)); return valide(n) ? n : null; }
+export function ecoleInvitee() { const e = lire(CLE_ECOLE); return ecoleValide(e) ? e : null; }
 export const retenirRole = r => ecrire(CLE_ROLE, r === 'etudiant' || r === 'laureat' ? r : null);
 export const roleRetenu = () => { const r = lire(CLE_ROLE); return r === 'etudiant' || r === 'laureat' ? r : null; };
-export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); }
+export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); ecrire(CLE_ECOLE, null); }
 
 const CLE_ACCORD = 'ensam-accord-ici';
 const adresse = e => String(e || '').trim().toLowerCase();
