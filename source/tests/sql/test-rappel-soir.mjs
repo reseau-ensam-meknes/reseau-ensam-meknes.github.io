@@ -156,3 +156,31 @@ test('interets : un « Intéressé » déjà rappelé à midi (match_attente) ne
     for (const t of ['push_queue', 'rappels_visite', 'notif_programme']) await db.query(`delete from public.${t}`);
   }
 });
+
+test('dimanche : le résumé de 10:00 est parti, pas de rappel du soir le même jour ; il part le lendemain, recalculé', async () => {
+  for (const t of ['push_queue', 'rappels_visite', 'notif_programme']) await db.query(`delete from public.${t}`);
+  // Imane, venue il y a 2 jours : des réponses à sa question, et une offre de la semaine pour son année
+  await db.query(`insert into public.visites (user_id, vu_at) values ($1, now() - interval '2 days') on conflict (user_id) do update set vu_at = excluded.vu_at`, [ETU3]);
+  const { id: o } = await un(`insert into public.offers (author_id, type, titre, entreprise, description, annees) values ($1, 'pfe', 'PFE supply chain', 'Lear', 'd', '{5}') returning id`, [LAU3]);
+  const recu = async kind => (await db.query(`select data from public.push_queue where kind = $1 and user_id = $2`, [kind, ETU3])).rows.map(r => r.data);
+  try {
+    await reglerHorloge(db, aujourdhuiA(10, 0));
+    await db.query('select public.semaine_push()');
+    assert.equal((await recu('semaine')).length, 1, 'le résumé du dimanche, à 10:00');
+    await db.query('delete from public.push_queue');
+    await reglerHorloge(db, aujourdhuiA(18, 0));
+    await db.query('select public.rappels_push()');
+    assert.deepEqual(await recu('rappel_visite'), [], 'pas un deuxième résumé le même jour, avec d’autres chiffres');
+    assert.equal((await un('select count(*)::int n from public.rappels_visite where user_id = $1', [ETU3])).n, 0, 'pas noté : il reste dû');
+    // Le lendemain soir : il part, recalculé (ses réponses l'attendent toujours)
+    await reglerHorloge(db, aujourdhuiA(18, 0, 1));
+    await db.query('select public.rappels_push()');
+    const soir = await recu('rappel_visite');
+    assert.equal(soir.length, 1, 'le lendemain : le rappel part');
+    assert.ok(soir[0].reponses >= 1, JSON.stringify(soir[0]));
+  } finally {
+    await reglerHorloge(db, aujourdhuiA(18, 0));
+    await db.query('delete from public.offers where id = $1', [o]);
+    for (const t of ['push_queue', 'rappels_visite', 'notif_programme']) await db.query(`delete from public.${t}`);
+  }
+});

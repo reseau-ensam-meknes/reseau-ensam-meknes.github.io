@@ -5121,12 +5121,16 @@ revoke all on function public.rappels_dus() from public, anon, authenticated;
 
 -- Chaque soir : la notification sur le téléphone (par la file, donc par le filtre des catégories), notée tout de suite.
 -- Une notification programmée DOUCE : seulement s'il reste de la place dans le budget du jour (programme_place, appelée
--- sur les seuls membres dus et abonnés)
+-- sur les seuls membres dus et abonnés). Rien le soir d'un résumé du dimanche (semaine, dans les 20 h) : pas deux résumés
+-- le même jour, avec des chiffres différents ; il reste dû, et part le lendemain, recalculé.
 create or replace function public.rappels_push() returns int
 language plpgsql security definer set search_path = public as $$
 declare v_n int;
 begin
-  with dus as materialized (select * from public.rappels_dus() d where d.abonne),
+  with dus as materialized (
+    select * from public.rappels_dus() d where d.abonne
+      and not exists (select 1 from public.notif_programme n where n.user_id = d.id and n.kind = 'semaine'
+                        and n.at > public.horloge() - interval '20 hours')),
   places as materialized (select d.* from dus d where public.programme_place(d.id, 'rappel_visite')),
   envoyes as (
     insert into public.push_queue (user_id, kind, data)
