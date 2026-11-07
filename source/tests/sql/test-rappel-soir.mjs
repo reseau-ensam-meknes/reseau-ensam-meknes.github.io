@@ -127,3 +127,32 @@ test('le soir : une notification DOUCE, seulement s’il reste de la place dans 
   await db.query('select public.rappels_push()');
   assert.ok((await db.query(`select user_id from public.push_queue where kind = 'rappel_visite'`)).rows.some(r => r.user_id === LAU));
 });
+
+test('interets : un « Intéressé » déjà rappelé à midi (match_attente) ne revient ni dans le rappel de 18:00, ni dans les suivants', async () => {
+  for (const t of ['push_queue', 'rappels_visite', 'notif_programme']) await db.query(`delete from public.${t}`);
+  // Imane, venue il y a 2 jours : Karim a dit oui à son profil il y a 21 h ; son match_interet est parti à ce moment-là
+  await db.query(`insert into public.visites (user_id, vu_at) values ($1, now() - interval '2 days') on conflict (user_id) do update set vu_at = excluded.vu_at`, [ETU3]);
+  await choix(LAU2, { profil: ETU3 }, 'oui', '21 hours');
+  await db.query('delete from public.push_queue');
+  assert.equal((await contenu(ETU3, "now() - interval '2 days'")).interets, 1, 'avant midi : il attend sa réponse');
+  try {
+    await reglerHorloge(db, aujourdhuiA(12, 30));
+    await db.query('select public.match_attente_push()');
+    assert.deepEqual((await db.query(`select data ->> 'de' de from public.push_queue where kind = 'match_attente' and user_id = $1`, [ETU3])).rows.map(r => r.de), [LAU2],
+      'rappelé une fois, à midi');
+    await db.query('delete from public.push_queue');
+    await reglerHorloge(db, aujourdhuiA(18, 0));
+    assert.equal((await contenu(ETU3, "now() - interval '2 days'")).interets, undefined, 'déjà rappelé : il ne compte plus');
+    await db.query('select public.rappels_push()');
+    const soir = (await db.query(`select data from public.push_queue where kind = 'rappel_visite' and user_id = $1`, [ETU3])).rows.map(r => r.data);
+    assert.equal(soir.length, 1, 'le rappel part pour le reste (ses réponses)');
+    assert.equal(soir[0].interets, undefined, JSON.stringify(soir[0]));
+    // Un autre « Intéressé », pas encore rappelé : lui compte
+    await choix(LAU, { profil: ETU3 }, 'oui', '2 hours');
+    assert.equal((await contenu(ETU3, "now() - interval '2 days'")).interets, 1);
+  } finally {
+    await reglerHorloge(db, aujourdhuiA(18, 0));
+    await db.query('delete from public.match_choix where cible_profil = $1', [ETU3]);
+    for (const t of ['push_queue', 'rappels_visite', 'notif_programme']) await db.query(`delete from public.${t}`);
+  }
+});

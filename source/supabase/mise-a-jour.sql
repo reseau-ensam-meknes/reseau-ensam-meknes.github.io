@@ -5014,7 +5014,8 @@ revoke all on function public.derniere_visite(uuid) from public, anon, authentic
 --   offres        : nouvelles offres pour lui (son année et sa filière : offre_pour) depuis sa dernière visite
 --   matchs        : matchs des 30 derniers jours qu'il n'a pas encore vus (hors membres bloqués)
 --   interets      : personnes qui lui ont dit « Intéressé » ces 7 derniers jours (son profil ; une de ses offres pour un
---                   lauréat), sans réponse de sa part depuis (comme deckMatch), sans match ni blocage
+--                   lauréat), sans réponse de sa part depuis (comme deckMatch), sans match ni blocage, et pas déjà rappelées
+--                   par match_attente (match_attente_notif) : un même « Intéressé » n'est rappelé qu'une fois
 --   reponses      : réponses des autres à ses questions depuis sa dernière visite
 --   evenements    : événements et cafés où il est inscrit, non annulés, dans les 2 jours (pas ceux qu'il organise)
 -- En plpgsql : elle lit les tables de Match, créées plus bas (une fonction en sql les voudrait déjà là).
@@ -5050,6 +5051,7 @@ begin
            and not exists (select 1 from public.match_choix r where r.user_id = p.id and r.cible_profil = c.user_id
                              and (r.choix = 'oui' or r.updated_at >= c.updated_at))
            and not exists (select 1 from public.matchs m where m.etudiant_id = p.id and m.laureat_id = c.user_id)
+           and not exists (select 1 from public.match_attente_notif n where n.choix_id = c.id)
            and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = c.user_id) or (b.user_id = c.user_id and b.bloque_id = p.id)))
        when p.role = 'laureat' then (select count(distinct c.user_id) from public.offers o
          join public.match_choix c on c.cible_offre = o.id join public.profiles e on e.id = c.user_id
@@ -5058,6 +5060,7 @@ begin
            and not exists (select 1 from public.match_choix r where r.user_id = p.id and r.cible_profil = c.user_id
                              and (r.choix = 'oui' or r.updated_at >= c.updated_at))
            and not exists (select 1 from public.matchs m where m.laureat_id = p.id and m.etudiant_id = c.user_id)
+           and not exists (select 1 from public.match_attente_notif n where n.choix_id = c.id)
            and not exists (select 1 from public.blocages b where (b.user_id = p.id and b.bloque_id = c.user_id) or (b.user_id = c.user_id and b.bloque_id = p.id)))
        else 0 end),
     ('reponses', (select count(*) from public.questions q join public.answers a on a.question_id = q.id join public.profiles r on r.id = a.author_id
