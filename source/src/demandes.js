@@ -140,7 +140,7 @@ function MesDemandes({ ctx, focusId, onNew, onEdit }) {
     <div class="row"><button type="button" id="dm-nouvelle" class="btn primary" onClick=${onNew}><${Icon} name="send" size=${16}/> Publier ma demande</button></div>
   </section>`;
   return html`<section class="m-section dm-mes">
-    <div class="m-head"><h2 class="h-ico"><${Icon} name="send"/> ${laureat ? 'Ma demande d’emploi' : 'Mes demandes'}</h2><span class="spacer"></span>
+    <div class="m-head"><h2 class="titre-sec">${laureat ? 'Ma demande d’emploi' : 'Mes demandes'}</h2><span class="spacer"></span>
       ${peutPlus ? html`<button type="button" id="dm-nouvelle" class="btn small" onClick=${onNew}><${Icon} name="plus" size=${15}/> Nouvelle demande</button>` : html`<span class="small muted">2 demandes en cours au plus</span>`}</div>
     <div class="list">${actives.map(d => html`<${CarteAuteur} key=${d.id} ctx=${ctx} d=${d} focus=${d.id === focusId} onEdit=${() => onEdit(d)}/>`)}</div>
     ${anciennes.length ? html`<details class="dm-anciennes" open=${anciennes.some(d => d.id === focusId) || !actives.length}><summary>${anciennes.length > 1 ? `Anciennes demandes (${anciennes.length})` : 'Ancienne demande'}</summary>
@@ -364,13 +364,16 @@ function DemandesLaureat({ ctx, focusId }) {
   const rangee = useRef();
   usePucesEntieres(rangee);
   const seule = focusId && !vues.has(focusId) ? store.byId('demandes', focusId) : null;
+  // Le mode d'emploi, pour qui n'a encore aidé personne : ouvert en tête quand aucune demande n'attend ; replié sous la liste
+  // sinon, comme sur Mentorat et la relecture de CV (la liste d'abord)
+  const comment = !enCours.length && !passees.length ? html`<details class="m-how" open=${!libres.length}><summary>Comment ça marche ?</summary><${Comment} laureat/></details>` : null;
   return html`<div class="dm-laureat">
     ${seule && seule.auteur_id !== me.id ? html`<section class="m-section"><div class="list"><${CarteLaureat} ctx=${ctx} d=${seule} focus/></div></section>` : null}
-    ${enCours.length ? html`<section class="m-section"><div class="m-head"><h2 class="h-ico"><${Icon} name="heart"/> Mes aides en cours</h2></div>
+    ${enCours.length ? html`<section class="m-section"><div class="m-head"><h2 class="titre-sec">Mes aides en cours</h2></div>
       <div class="list">${enCours.map(({ d }) => html`<${CarteLaureat} key=${d.id} ctx=${ctx} d=${d} focus=${d.id === focusId}/>`)}</div></section>` : null}
     <section class="m-section">
-      ${enCours.length || (seule && seule.auteur_id !== me.id) ? html`<div class="m-head"><h2 class="h-ico"><${Icon} name="send"/> Ils cherchent</h2></div>` : html`<h2 class="sr-only">Ils cherchent</h2>`}
-      ${!enCours.length && !passees.length ? html`<details class="m-how" open=${!libres.length}><summary>Comment ça marche ?</summary><${Comment} laureat/></details>` : null}
+      ${enCours.length || (seule && seule.auteur_id !== me.id) ? html`<div class="m-head"><h2 class="titre-sec">Ils cherchent</h2></div>` : html`<h2 class="sr-only">Ils cherchent</h2>`}
+      ${libres.length ? null : comment}
       ${libres.length ? html`<div class="chips offres-chips dm-filtres" role="group" aria-label="Filtrer les demandes" ref=${rangee}>
         <button type="button" class=${'chip' + (proche ? ' on' : '')} aria-pressed=${proche} onClick=${() => setProche(!proche)}>${proche ? html`<${Icon} name="check" size=${15}/>` : null}Proches de ma filière</button>
         ${types.length > 1 ? html`<span class="chips-sep" aria-hidden="true"></span>${['tous', ...types].map(t => html`<button type="button" class=${'chip' + (type === t ? ' on' : '')} aria-pressed=${type === t} onClick=${() => setType(t)}>${t === 'tous' ? 'Tout' : TYPES[t].label}</button>`)}` : null}
@@ -378,6 +381,7 @@ function DemandesLaureat({ ctx, focusId }) {
       ${liste.length ? html`<div class="list">${liste.map(({ d, why }) => html`<${CarteLaureat} key=${d.id} ctx=${ctx} d=${d} why=${why} focus=${d.id === focusId}/>`)}</div>`
         : libres.length ? html`<p class="small muted">Rien de ce côté pour l’instant. <button type="button" class="linkish" onClick=${() => { setProche(false); setType('tous'); }}>Voir toutes les demandes</button></p>`
         : html`<${Empty} icon="send" scene="demandes" title="Pas de demande ouverte pour le moment" action=${ctx.publierOffre ? { label: 'Publier une offre', icon: 'plus', onClick: ctx.publierOffre } : null}>Dès qu’un étudiant de ton parcours publie ce qu’il cherche, on te prévient. En attendant, une offre publiée lui parle tout de suite.<//>`}
+      ${libres.length ? comment : null}
     </section>
     ${passees.length ? html`<details class="dm-anciennes"><summary>${passees.length > 1 ? `Mes aides passées (${passees.length})` : 'Mon aide passée'}</summary>
       <div class="list">${passees.map(({ d }) => html`<${CarteLaureat} key=${d.id} ctx=${ctx} d=${d}/>`)}</div></details>` : null}
@@ -547,7 +551,7 @@ function DemandesAdmin({ ctx, focusId }) {
   const n = s => toutes.filter(d => d.status === s).length;
   const retirer = d => ctx.confirm(`Retirer la demande « ${d.titre} » ? Elle ne sera plus proposée aux lauréats.`, () => act(async () => { await store.update('demandes', d.id, { status: 'fermee' }); toast('Demande retirée.'); }), 'Retirer la demande');
   return html`<section class="m-section">
-    <div class="m-head"><h2 class="h-ico"><${Icon} name="send"/> Demandes en cours</h2></div>
+    <div class="m-head"><h2 class="titre-sec">Demandes en cours</h2></div>
     <p class="small muted">${`${n('ouverte')} ${n('ouverte') > 1 ? 'ouvertes' : 'ouverte'} · ${n('match')} en match · ${n('pourvue')} ${n('pourvue') > 1 ? 'réussies' : 'réussie'}`}</p>
     ${actives.length ? html`<div class="list">${actives.map(d => {
       const props = (data.propositions || []).filter(x => x.demande_id === d.id && ['envoyee', 'acceptee'].includes(x.status)).length;

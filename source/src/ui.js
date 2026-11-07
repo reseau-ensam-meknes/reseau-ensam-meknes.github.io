@@ -797,9 +797,12 @@ export function roleTexte(p, sansEntreprise = false) {
 // Le bouclier « vérifié » se met juste après le nom (Bouclier), plus dans cette ligne
 export function RoleLine({ p, score, sansEntreprise }) {
   if (!p) return null;
-  return html`<span class="role-line">${roleTexte(p, sansEntreprise)}
-    ${p.role === 'laureat' && score && rangsVisibles ? html` <${LevelChip} points=${score.points}/>` : null}
-    ${p.role === 'laureat' && score && !rangsVisibles && aides(score) ? html` <span class="mini aide-chip"><${Icon} name="heart" size=${11}/> ${aides(score) > 1 ? `A aidé ${aides(score)} étudiants` : 'A aidé 1 étudiant'}</span>` : null}</span>`;
+  const txt = roleTexte(p, sansEntreprise);
+  const badge = p.role !== 'laureat' || !score ? null
+    : rangsVisibles ? html`<${LevelChip} points=${score.points}/>`
+    : aides(score) ? html`<span class="mini aide-chip"><${Icon} name="heart" size=${11}/> ${aides(score) > 1 ? `A aidé ${aides(score)} étudiants` : 'A aidé 1 étudiant'}</span>` : null;
+  // Avec un badge, le texte a sa boîte : dans une ligne de liste, le badge tient en entier à côté de lui ou ne se montre pas
+  return html`<span class="role-line">${badge ? html`<span class="role-txt">${txt}</span> ${badge}` : txt}</span>`;
 }
 
 const aides = s => (s?.recrutes || 0) + (s?.mentorats || 0);

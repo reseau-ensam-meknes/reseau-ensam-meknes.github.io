@@ -1719,6 +1719,11 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"], html[lang=
 /* En arabe, un nom écrit en lettres latines reste calé à droite comme le reste de la ligne */
 :root[dir="rtl"] .ligne .person-name { text-align: right; }
 .ligne .role-line > .verif, .ligne .role-line > .mini { margin-inline-start: .25rem; }
+/* Le badge d'un lauréat (niveau, « A aidé … ») ne se coupe jamais : il tient en entier à côté de la promo, sinon il passe
+   sur une deuxième ligne, cachée. Le texte garde ses points de suspension et la ligne sa hauteur (jamais « Promo 2014 … ») */
+.ligne:not(.rang) .role-line:has(> .role-txt) { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 2rem .35rem; height: calc(1.4rem + 6px); }
+.ligne:not(.rang) .role-line > .role-txt { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ligne:not(.rang) .role-line:has(> .role-txt) > :is(.mini, .lvl) { flex: none; margin: 0; }
 .ligne-sub { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Une seule ligne sous le nom, pour garder 56 px : la promo, puis les faits quand la place le permet
    (sur téléphone, la promo seule ; le détail des points est dans la fiche) */
