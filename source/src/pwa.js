@@ -24,8 +24,16 @@ const dejaInstallee = () => { try { return localStorage.getItem(INSTALLEE) === '
 // Enregistré au premier moment calme : son installation (tout le site gardé sur le téléphone) ne passe pas
 // devant les données du membre en 3G
 const ouverture = Date.now();
-// Une nouvelle version ne recharge la page visible que pendant ses premières secondes ; après, elle attend que la page soit cachée
+// Une nouvelle version ne recharge la page visible que pendant ses premières secondes, tant que personne n'y a touché ;
+// sinon elle attend que la page soit cachée
 const FENETRE_MAJ = 8000;
+// Le visiteur a commencé quelque chose (un toucher, un clic, une touche, la molette, un champ rempli, même par le navigateur) :
+// la page n'est plus rechargée sous ses doigts. Un champ de texte qui a le curseur compte aussi (rempli avant ce module).
+let touchee = false;
+if (typeof document !== 'undefined') for (const t of ['pointerdown', 'keydown', 'wheel', 'input']) document.addEventListener(t, () => { touchee = true; }, { capture: true, passive: true, once: true });
+const occupee = () => touchee || ecrit(document.activeElement);
+// Juste avant un rechargement voulu par une nouvelle version : la page d'entrée garde ce qui a été tapé (entree.js)
+const rechargerPage = () => { try { dispatchEvent(new Event('ensam-recharge')); } catch { /* ancien navigateur */ } location.reload(); };
 const auRepos = f => (typeof requestIdleCallback === 'function' ? requestIdleCallback(f, { timeout: 4000 }) : setTimeout(f, 1500));
 // Le service worker n'a pas pu s'enregistrer (navigateur qui les refuse, navigation privée) : les notifications non plus,
 // et ceux qui avaient cru pouvoir proposer « Activer » (etatPush) relisent l'état
@@ -37,15 +45,17 @@ export const swReady = (() => {
 })();
 
 // Nouvelle version du site : le téléphone la télécharge en arrière-plan, puis elle prend la main
-// quand la page est cachée (ou tout de suite si la page vient de s'ouvrir), et la page se recharge
-// sans que personne ne le voie. Jamais au milieu de ce que le membre est en train de faire.
+// quand la page est cachée (ou tout de suite si la page vient de s'ouvrir et que personne n'y a touché), et la page se
+// recharge sans que personne ne le voie. Jamais au milieu de ce que le membre est en train de faire.
 function suivreMisesAJour(reg) {
   const debut = ouverture;
   const avait = !!navigator.serviceWorker.controller;
+  const cachee = () => document.visibilityState === 'hidden';
+  const quandCachee = f => document.addEventListener('visibilitychange', function g() { if (cachee()) { document.removeEventListener('visibilitychange', g); f(); } });
   const appliquer = w => {
     if (!w || !avait) return;
-    if (Date.now() - debut < 5000 || document.visibilityState === 'hidden') w.postMessage('nouvelle-version');
-    else document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') w.postMessage('nouvelle-version'); }, { once: true });
+    if (cachee() || (Date.now() - debut < 5000 && !occupee())) w.postMessage('nouvelle-version');
+    else quandCachee(() => w.postMessage('nouvelle-version'));
   };
   if (reg.waiting) appliquer(reg.waiting);
   reg.addEventListener('updatefound', () => { const w = reg.installing; w?.addEventListener('statechange', () => { if (w.state === 'installed') appliquer(w); }); });
@@ -53,7 +63,10 @@ function suivreMisesAJour(reg) {
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (fait || !avait) return;
     fait = true;
-    if (document.visibilityState === 'hidden' || Date.now() - debut < FENETRE_MAJ) location.reload();
+    // Elle a pris la main pendant que le membre est dans la page (il vient d'y toucher, ou un autre onglet l'a appliquée) :
+    // la page se recharge la prochaine fois qu'elle est cachée
+    if (cachee() || (Date.now() - debut < FENETRE_MAJ && !occupee())) rechargerPage();
+    else quandCachee(rechargerPage);
   });
 }
 

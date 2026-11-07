@@ -32,9 +32,10 @@ after(async () => { await navigateur?.close(); site?.fermer(); });
 beforeEach(() => { site.vider(); fondateursFaux = null; ambFaux = null; });
 
 // langue: null = un visiteur qui n'a jamais choisi de langue ; avant(ctx) : réseau à régler avant la première visite ;
-// ua : l'appareil (le navigateur d'une application, par exemple)
-async function visiteur({ largeur = 360, hauteur = 640, langue = 'fr', hash = '', query = '', stockage = {}, avant, ua } = {}) {
-  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce', ...(ua ? { userAgent: ua } : {}) });
+// ua : l'appareil (le navigateur d'une application, par exemple) ;
+// sw : le service worker est permis (l'application gardée sur l'appareil, les nouvelles versions)
+async function visiteur({ largeur = 360, hauteur = 640, langue = 'fr', hash = '', query = '', stockage = {}, avant, ua, sw = false } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: sw ? 'allow' : 'block', reducedMotion: 'reduce', ...(ua ? { userAgent: ua } : {}) });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
   if (avant) await avant(ctx);
   await ctx.addInitScript(([langue, stockage]) => {
@@ -1149,3 +1150,42 @@ for (const [langue, theme] of [['fr', 'light'], ['ar', 'dark']]) {
     await m.ctx.close();
   });
 }
+
+// La page passe derrière une autre application (le visiteur va chercher son code dans sa boîte mail)
+const cacher = page => page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+
+test('nouvelle version publiée pendant que le visiteur tape son email : la page ne se recharge pas sous ses doigts ; cachée, elle se recharge et l’email revient', async () => {
+  const s = await visiteur({ sw: true });
+  let liberer = () => {};
+  try {
+    // Le site gardé sur l'appareil : le service worker installé a pris la main sur la page
+    await s.page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 30000 });
+    await s.page.reload(); await s.page.waitForSelector('#entree .entree-form');
+    assert.ok(await s.page.evaluate(() => !!navigator.serviceWorker.controller), 'le site est gardé sur l’appareil');
+    // Il revient après une mise en ligne : la nouvelle version s'installe pendant qu'il tape
+    Object.assign(site.maj, { version: 'test-' + Date.now(), retenue: new Promise(ok => { liberer = ok; }) });
+    let chargements = 0;
+    s.page.on('load', () => { chargements++; });
+    await s.page.reload(); await s.page.waitForSelector('#entree .entree-form');
+    await s.page.click('#au-je-etudiant');
+    await s.page.fill('#au-email', 'amine@ensam-umi.ac.ma');
+    liberer();
+    const prete = () => s.page.evaluate(() => navigator.serviceWorker.getRegistration().then(r => !!r?.waiting));
+    for (let i = 0; i < 150 && !(await prete()); i++) await s.page.waitForTimeout(100);
+    assert.ok(await prete(), 'la nouvelle version est installée et attend');
+    // Les premières secondes passées (celles où une page qu'on n'a pas touchée se recharge d'elle-même) : rien n'a bougé
+    await s.page.waitForFunction(() => performance.now() > 10000, null, { timeout: 15000, polling: 200 });
+    assert.equal(chargements, 1, 'pas de rechargement pendant qu’il tape');
+    assert.equal(await s.page.inputValue('#au-email'), 'amine@ensam-umi.ac.ma');
+    // Il va lire son code ailleurs : la nouvelle version prend la main, la page se recharge sans qu'il le voie
+    await cacher(s.page);
+    for (let i = 0; i < 100 && chargements < 2; i++) await s.page.waitForTimeout(100);
+    assert.equal(chargements, 2, 'la nouvelle version s’applique une fois la page cachée');
+    await s.page.waitForSelector('#entree .entree-form');
+    assert.equal(await s.page.inputValue('#au-email'), 'amine@ensam-umi.ac.ma', 'ce qu’il avait tapé revient');
+    assert.deepEqual(s.erreurs, []);
+  } finally {
+    liberer(); Object.assign(site.maj, { version: null, retenue: null });
+    await s.ctx.close();
+  }
+});
