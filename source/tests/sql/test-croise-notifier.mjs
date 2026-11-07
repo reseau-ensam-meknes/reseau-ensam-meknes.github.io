@@ -149,11 +149,11 @@ const VIE = {
 };
 
 let db;
-const lignes = [];   // { etape, user_id, kind, data }
+const lignes = [];   // { etape, id, user_id, kind, data } (id : l'identifiant de la ligne dans la file)
 const un = async (sql, p) => (await db.query(sql, p)).rows[0];
-// La file comme jobPush la traite : chaque ligne relevée, notée dans le journal (201), puis retirée
+// La file comme jobPush la traite : chaque ligne relevée avec son identifiant, notée dans le journal (201), puis retirée
 async function ramasser(etape) {
-  const r = (await db.query('select user_id, kind, data from public.push_queue order by id')).rows;
+  const r = (await db.query('select id, user_id, kind, data from public.push_queue order by id')).rows;
   for (const x of r) lignes.push({ etape, ...x });
   await db.query(`insert into public.push_journal (user_id, kind, code) select user_id, kind, 201 from public.push_queue`);
   await db.query('delete from public.push_queue');
@@ -352,8 +352,9 @@ before(async () => {
   await tache('chaque minute rappels_rdv', aujourdhuiA(10, 0), 'select public.rappels_rdv()');
 });
 
-// Ce que le téléphone affichera pour une ligne, dans une langue
-const texte = (x, l) => N.texteNotif(x.kind, x.data, l, SITE);
+// Ce que le téléphone affichera pour une ligne, dans une langue : comme jobPush, avec l'identifiant de sa ligne dans la file
+// (le filet ne doit toucher ni un tag par élément, ni un tag fixe voulu)
+const texte = (x, l) => N.texteNotif(x.kind, x.data, l, SITE, x.id);
 const quoi = (x, l) => `${x.etape} · ${x.kind} → ${QUI(x.user_id)} (${l}) ${JSON.stringify(x.data)}`;
 
 test('chaque producteur met de vraies lignes en file : tous les types du contrat, avec leurs variantes', () => {
@@ -441,6 +442,9 @@ test('le tag et la route du contrat, un écran qui existe dans app.js ; un élé
     // Un tag par élément : seuls les types de TAGS_FIXES gardent un tag égal au type
     if (!N.TAGS_FIXES.has(x.kind)) assert.notEqual(tag, x.kind, quoi(x, 'fr') + ' : tag fixe');
     assert.ok(ROUTES.includes(route.split('/')[0]), `${route} : écran inconnu de app.js`);
+    // Sur la base d'aujourd'hui, le filet de la file ne sert jamais : chaque ligne porte déjà son élément, ou un tag fixe voulu
+    assert.ok(Number(x.id) >= 1, quoi(x, 'fr') + ' : sans identifiant de file');
+    assert.equal(texte(x, 'fr').tag, N.texteNotif(x.kind, x.data, 'fr', SITE).tag, quoi(x, 'fr') + ' : le filet change le tag');
   }
   // Deux candidatures sur deux offres : deux lignes dans la barre de Youssef ; deux sur la même offre : la même ligne
   const cand = lignes.filter(x => x.kind === 'candidature' && x.user_id === L1).map(x => texte(x, 'fr').tag);
@@ -518,7 +522,7 @@ test('chaque clé que la base envoie sert au notifier : changer sa valeur change
       e.add(k);
       const sans = { ...x.data }; delete sans[k];
       const autre = { ...x.data, [k]: changer(x.data[k]) };
-      const lu = d => vu([N.texteNotif(x.kind, d, 'fr', SITE), N.texteNotif(x.kind, d, 'ar', SITE)]);
+      const lu = d => vu([N.texteNotif(x.kind, d, 'fr', SITE, x.id), N.texteNotif(x.kind, d, 'ar', SITE, x.id)]);
       if (lu(autre) !== ref || lu(sans) !== ref) s.add(k);
     }
   }

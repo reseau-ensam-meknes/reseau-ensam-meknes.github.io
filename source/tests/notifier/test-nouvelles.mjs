@@ -3,6 +3,7 @@
 // messages des groupes. Chaque type en français et en arabe, avec de vrais chiffres (n = 1, 2, 12), le tag et la route du
 // contrat, sa case de Mon profil, son urgence et sa durée de vie ; jamais « undefined » ni « 0 », jamais culpabilisant.
 // Sans les nouvelles clés (file d'une base plus ancienne) : un texte quand même, la route du type et un tag égal au type.
+// Dans la file (jobPush passe l'identifiant de la ligne) : un tag par élément ou un tag fixe ne change jamais.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -332,8 +333,34 @@ test('tags fixes : exactement la liste du contrat ; ces types gardent leur tag, 
     match_attente: { nom: 'Salma', de: DE, n: 3 }, offre_bientot: { n: 3, groupe: true },
   };
   for (const k of N.TAGS_FIXES) assert.equal(t(k, exemples[k]).tag, k, k);
+  // Dans la file aussi (jobPush passe l'identifiant de la ligne) : le filet ne touche pas un tag fixe voulu
+  for (const k of N.TAGS_FIXES) assert.equal(N.texteNotif(k, exemples[k], 'fr', SITE, 42).tag, k, `${k} dans la file`);
   // Chaque type classé dans Mon profil est connu : soit à tag fixe, soit avec un tag par élément quand la donnée le dit
   for (const k of N.TAGS_FIXES) assert.ok(k === 'test' || k in logic.PUSH_KINDS, k);
+});
+
+test('dans la file (identifiant de sa ligne) : un tag par élément ou un tag fixe ne change jamais ; le filet ne prend que ce qu’aucun élément ne regroupe', () => {
+  const f = (k, d, id) => N.texteNotif(k, d, 'fr', SITE, id).tag;
+  // Les nouveaux types, avec les clés du contrat : le tag du contrat, quelle que soit la ligne ; la suivante remplace la précédente
+  for (const [kind, [data, , tag]] of Object.entries(CAS)) for (const n of [1, 2, 12]) {
+    assert.equal(f(kind, data(n), 41), tag, `${kind} n = ${n}`);
+    assert.equal(f(kind, data(n), 42), tag, `${kind} n = ${n}, ligne suivante`);
+  }
+  // Leurs variantes : un intérêt Match d'une personne, un café de demain
+  assert.equal(f('match_attente', { nom: 'Salma', de: DE, n: 1, type: 'laureat' }, 43), `match_interet-${DE}`);
+  assert.equal(f('agenda_demain', { type: 'cafe', ville: 'Casablanca', id: CAFE, n: 1 }, 44), `cafe-${CAFE}`);
+  // Les tags fixes qui ne sont pas dans SE_REMPLACENT restent fixes : le résumé du dimanche, plusieurs intérêts Match en
+  // attente, les offres mises de côté qui ferment ensemble (une seule ligne chacun, jamais une par jour)
+  for (const [k, d] of [['semaine', { type: 'etudiant', offres: 2 }], ['match_attente', { nom: 'Salma', de: DE, n: 3, type: 'etudiant' }],
+    ['offre_bientot', { n: 3, groupe: true }]]) {
+    assert.ok(N.TAGS_FIXES.has(k) && !N.SE_REMPLACENT.includes(k), k);
+    assert.deepEqual([f(k, d, 45), f(k, d, 46)], [k, k], k);
+  }
+  // Les propositions d'aide que la base compte (n) : une ligne par demande, qui se met à jour
+  assert.equal(f('demande_proposition', { nom: 'Youssef', titre: 'PFE', demande: D, n: 2 }, 47), `demande_proposition-${D}`);
+  // Ce qu'aucun élément ne regroupe (sans la clé, base plus ancienne) : une notification par ligne de file
+  assert.equal(f('rdv_demain', { nom: 'Salma', sujet: 'CV', rdv_at: DEMAIN, n: 1 }, 48), 'rdv_demain-48');
+  assert.equal(f('groupe_jour', { n: 2, groupe: 'Génie industriel', autres: 0 }, 49), 'groupe_jour-49');
 });
 
 test('chaque lien mène à un écran qui existe dans src/app.js (aucune route inventée)', () => {
