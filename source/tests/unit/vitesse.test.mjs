@@ -182,6 +182,47 @@ test('photos : la photo qu’on vient de choisir (blob:) ne part pas avec la cop
   URL.revokeObjectURL(s.photosUrl.get('moi/photo-3.webp').url);
 });
 
+// Les images gardées par le service worker (photos-v1) partent quand on se déconnecte, quand on supprime son compte, et
+// quand un autre compte se connecte sur l'appareil (la session du premier perdue) ; le même compte qui revient les garde
+test('photos : les images gardées partent avec le compte supprimé ou quand un autre compte se connecte', async () => {
+  const { SupabaseStore, TABLES } = await import('../../src/store.js');
+  const effaces = [], avantCaches = globalThis.caches, avantLieu = globalThis.location;
+  globalThis.caches = { delete: async nom => { effaces.push(nom); return true; } };
+  globalThis.location = { hash: '#accueil', replace() {} };
+  const magasin = () => {
+    const s = new SupabaseStore({ supabaseUrl: 'https://x.supabase.co', supabaseAnonKey: 'k' });
+    s.sb = {
+      from: () => ({ select: () => ({ order: () => ({ range: async () => ({ data: [], error: null }) }), limit: async () => ({ error: null }) }) }),
+      rpc: async () => ({ data: null, error: null }),
+      channel: () => ({ on() { return this; }, subscribe() { return this; } }),
+      storage: { from: () => ({ list: async () => ({ data: [] }), remove: async () => ({}) }) },
+      auth: { signOut: async () => ({}) },
+    };
+    for (const t of TABLES) s.data[t] = [];
+    return s;
+  };
+  const arreter = s => { clearTimeout(s.minuteurCache); clearTimeout(s.minuteurEssai); s.apresAbonnement = null; };
+  try {
+    // Session de A perdue, A revient : ses photos restent
+    let s = magasin(); s.compteParti = 'aaaa';
+    await s.changementSession('SIGNED_IN', { user: { id: 'aaaa' } });
+    assert.deepEqual(effaces, []);
+    arreter(s);
+    // B se connecte sur le même téléphone : rien de A ne reste
+    s = magasin(); s.compteParti = 'aaaa';
+    await s.changementSession('SIGNED_IN', { user: { id: 'bbbb' } });
+    assert.deepEqual(effaces, ['photos-v1']);
+    arreter(s);
+    // Compte supprimé : les photos partent avec lui
+    s = magasin(); s.session = { user: { id: 'cccc' } };
+    await s.supprimerCompte();
+    assert.deepEqual(effaces, ['photos-v1', 'photos-v1']);
+  } finally {
+    if (avantCaches === undefined) delete globalThis.caches; else globalThis.caches = avantCaches;
+    if (avantLieu === undefined) delete globalThis.location; else globalThis.location = avantLieu;
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Données en deux temps (store.js) : d'abord l'accueil et la navigation, le reste juste après le premier affichage ;
 // un écran qui lit une table pas encore arrivée l'attend, puis tout est là comme avant

@@ -1274,7 +1274,8 @@ export const oublierCache = () => cacheFaire('readwrite', st => st.delete('membr
 // visages s'affichent tout de suite (le service worker rend l'image gardée) au lieu d'attendre de nouveaux liens.
 // Seulement les liens du stockage (http, https) : jamais l'adresse blob: de la photo qu'on vient de choisir (retenirPhoto),
 // qui ne vaut que pour cette page (rouverte, sa propre photo laissait place aux initiales pendant 5 h).
-// Les images elles-mêmes (cache « photos-v1 » de sw.js) sont effacées quand on se déconnecte soi-même.
+// Les images elles-mêmes (cache « photos-v1 » de sw.js) sont effacées quand on se déconnecte soi-même, quand le compte est
+// supprimé, ou quand un autre compte se connecte sur l'appareil.
 export const photosPourCache = (m, maintenant = Date.now()) => [...(m || [])].filter(([p, v]) => p && /^https?:\/\//i.test(v?.url || '') && v.fin > maintenant + 300e3).slice(-400);
 const oublierPhotos = () => { try { globalThis.caches?.delete('photos-v1').catch(() => {}); } catch { /* stockage indisponible */ } };
 
@@ -1352,7 +1353,8 @@ export class SupabaseStore extends Base {
     if (!s && this.session && lienPartage(location.hash)) try { location.replace('#accueil'); } catch { /* */ }
     // Session perdue sans l'avoir voulu : on redemande la connexion calmement, les brouillons restent pour ce compte
     if (!s && this.session) { if (this.deconnexionVoulue) { this.sessionPerdue = false; this.compteParti = this.session.user.id; this.emailPerdu = ''; } else this.perdreSession(this.session); }
-    if (s && this.compteParti && this.compteParti !== s.user.id) oublierBrouillons(this.compteParti);
+    // Un autre compte sur ce téléphone : rien de l'ancien ne reste, ni ses brouillons, ni les photos qu'il avait vues
+    if (s && this.compteParti && this.compteParti !== s.user.id) { oublierBrouillons(this.compteParti); oublierPhotos(); }
     this.deconnexionVoulue = false;
     clearTimeout(this.minuteurCache); oublierCache();
     this.session = s; this.depuisCache = false; this.enAttente = false; this.horsLigne = false;
@@ -1739,6 +1741,8 @@ export class SupabaseStore extends Base {
     }
     const { error } = await this.sb.rpc('supprimer_mon_compte');
     if (error) throw new Error(frError(error));
+    // Les photos gardées sur l'appareil (la sienne, celles des membres vus) partent avec le compte
+    oublierPhotos();
     await this.sb.auth.signOut().catch(() => {});
   }
   async seDesabonner(token) {
