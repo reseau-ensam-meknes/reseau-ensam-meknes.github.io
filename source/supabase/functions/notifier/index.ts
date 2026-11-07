@@ -419,8 +419,9 @@ const phrase = (t: string) => (!t || /[.!?…؟]\u2069?$/.test(t) ? t : t + '.')
 // Match montre TOUR_JOUR cartes par jour (TOUR_JOUR de src/logic.js, un test vérifie qu'ils restent égaux)
 export const TOUR_JOUR = 5;
 // Types qui gardent exprès un tag fixe : la suivante remplace la précédente dans la barre (match_attente quand n ≥ 2,
-// offre_bientot quand elle est groupée). Les autres ont un tag par élément quand la donnée le permet (lienNotif).
-export const TAGS_FIXES = new Set(['rappel_visite', 'promo_nouveau', 'verification_pair', 'enquete', 'filleul', 'parrain', 'test',
+// offre_bientot quand elle est groupée). Les autres ont un tag par élément quand la donnée le permet (lienNotif). Le
+// filleul n'y est plus : chaque filleul est une personne de plus, il a sa ligne (filleul-<étudiant>).
+export const TAGS_FIXES = new Set(['rappel_visite', 'promo_nouveau', 'verification_pair', 'enquete', 'parrain', 'test',
   'semaine', 'match_jour', 'match_attente', 'offre_bientot']);
 // Ce que cherche l'auteur d'une demande (type de la demande)
 const CHERCHE: Record<string, string> = { stage: 'un stage', pfe: 'un PFE', etranger: 'un stage à l’étranger', emploi: 'un emploi' };
@@ -914,8 +915,11 @@ const MOTIFS: Record<Langue, Record<string, string>> = {
 // Où mène la notification, et quelle ligne de la barre elle prend (tag). Un tag par élément quand la donnée le dit : la
 // suivante du même élément remplace la précédente, celles de deux éléments s'empilent. Sans la donnée (file d'une base
 // plus ancienne), la route du type et un tag égal au type, comme avant. TAGS_FIXES : les types qui gardent un tag fixe.
-// Types sans cas particulier : [clé de data, préfixe du tag, route quand la clé est là (sinon celle du type)]
-const PAR_ELEMENT: Record<string, [string, string, ((id: string) => string)?]> = {
+// Types sans cas particulier : [clé de data (ou clés, la première présente gagne), préfixe du tag, route quand la clé
+// est là (sinon celle du type)]. L'événement : id, ou evenement (la clé d'une base d'avant ce lot) : quelle que soit la
+// version de la base, un événement garde sa ligne.
+const EVENEMENT = ['id', 'evenement'];
+const PAR_ELEMENT: Record<string, [string | string[], string, ((id: string) => string)?]> = {
   candidature: ['offre', 'candidature', x => `offre/${x}`], // la fiche de l'offre s'ouvre sur ses candidats pour son auteur
   candidature_statut: ['offre', 'candidature_statut'],
   invitation: ['offre', 'invitation', x => `offre/${x}`],
@@ -923,8 +927,10 @@ const PAR_ELEMENT: Record<string, [string, string, ((id: string) => string)?]> =
   offre_commentaire: ['offre', 'offre_commentaire', x => `offre/${x}`],
   recrutement_a_confirmer: ['p', 'recrutement'], recrutement_confirme: ['p', 'recrutement'],
   reponse: ['q', 'reponse', x => `reseau/entraide/${x}`], question_routee: ['q', 'question_routee', x => `reseau/entraide/${x}`],
-  evenement: ['id', 'evenement', x => `reseau/agenda/${x}`], evenement_annule: ['id', 'evenement', x => `reseau/agenda/${x}`],
-  evenement_deplace: ['id', 'evenement', x => `reseau/agenda/${x}`], cafe: ['id', 'cafe'],
+  evenement: [EVENEMENT, 'evenement', x => `reseau/agenda/${x}`], evenement_annule: [EVENEMENT, 'evenement', x => `reseau/agenda/${x}`],
+  evenement_deplace: [EVENEMENT, 'evenement', x => `reseau/agenda/${x}`], cafe: ['id', 'cafe'],
+  // Chaque filleul a sa ligne : une personne de plus (sans son identifiant, données d'avant : une ligne par notification)
+  filleul: ['filleul', 'filleul'],
   // Toute la vie d'un mentorat sur une seule ligne : demande, rendez-vous fixé, déplacé, veille, rappel, présence, après
   mentorat_demande: ['m', 'mentorat'], mentorat_accepte: ['m', 'mentorat'], mentorat_deplace: ['m', 'mentorat'], rappel_rdv: ['m', 'mentorat'],
   rdv_demain: ['m', 'mentorat'], mentorat_presence: ['m', 'mentorat'], apres_rdv: ['m', 'mentorat'], mentorat_ouvert: ['m', 'mentorat_ouvert'],
@@ -936,8 +942,11 @@ const PAR_ELEMENT: Record<string, [string, string, ((id: string) => string)?]> =
   offre_alerte: ['offre', 'offre', x => `offre/${x}`],
 };
 function lienNotif(kind: string, d: Record<string, unknown>, v: V, route: string): { route: string; tag: string } {
-  const id = (k: string) => (estUuid(d[k]) ? d[k] as string : null);
-  const el = (k: string, prefixe: string, r?: (x: string) => string) => {
+  const id = (k: string | string[]) => {
+    for (const c of Array.isArray(k) ? k : [k]) if (estUuid(d[c])) return d[c] as string;
+    return null;
+  };
+  const el = (k: string | string[], prefixe: string, r?: (x: string) => string) => {
     const x = id(k);
     return x ? { route: r ? r(x) : route, tag: `${prefixe}-${x}` } : { route, tag: kind };
   };
@@ -986,9 +995,10 @@ function lienNotif(kind: string, d: Record<string, unknown>, v: V, route: string
 // jour, un seul essai, une seule enquête ; ce qui rend la précédente fausse : la vérification par les pairs (« encore
 // un lauréat » puis « ton badge est là »), un nouveau parrain (« ton parrainage cette année : … »), les arrivées dans la
 // promo (au plus une par jour). La nouvelle date d'un événement ou d'un rendez-vous de mentorat remplace celle du même
-// élément (son identifiant est dans les données : evenement, m) ; sans lui (données d'avant), celle du même type. Chaque
-// filleul a sa ligne (une personne de plus, comme PAR_PERSONNE). Le reste, sans élément qui le regroupe (conversation,
-// match, offre…), garde une notification par événement : son tag porte l'identifiant de sa ligne dans la file (id).
+// élément, sur la ligne de cet élément (son identifiant est dans les données : id ou evenement, m ; tags evenement-<id>
+// et mentorat-<m>, voir PAR_ELEMENT) ; sans lui (données d'avant), celle du même type. Chaque filleul a sa ligne (une
+// personne de plus, comme PAR_PERSONNE). Le reste, sans élément qui le regroupe (conversation, match, offre…), garde une
+// notification par événement : son tag porte l'identifiant de sa ligne dans la file (id).
 export const SE_REMPLACENT = ['rappel_visite', 'match_jour', 'test', 'enquete', 'verification_pair', 'evenement_deplace', 'mentorat_deplace',
   'parrain', 'promo_nouveau'];
 // Sur une même demande, chaque lauréat qui propose son aide, chaque réponse, est une personne de plus : une notification

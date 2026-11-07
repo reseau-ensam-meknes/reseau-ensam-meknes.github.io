@@ -372,16 +372,24 @@ test('deux candidatures sur deux offres : deux lignes ; la deuxième sur la mêm
 });
 
 test('tags fixes : exactement la liste du contrat ; ces types gardent leur tag, la suivante remplace la précédente', () => {
-  assert.deepEqual([...N.TAGS_FIXES].sort(), ['enquete', 'filleul', 'match_attente', 'match_jour', 'offre_bientot', 'parrain', 'promo_nouveau', 'rappel_visite', 'semaine',
+  // Le filleul n'y est plus : chaque filleul est une personne de plus, il a sa ligne (filleul-<étudiant>, plus bas)
+  assert.deepEqual([...N.TAGS_FIXES].sort(), ['enquete', 'match_attente', 'match_jour', 'offre_bientot', 'parrain', 'promo_nouveau', 'rappel_visite', 'semaine',
     'test', 'verification_pair'].sort());
   const exemples = {
     rappel_visite: { messages: 2 }, promo_nouveau: { nom: 'Chaimae', n: 2, promo: 2028 }, verification_pair: { nom: 'Karim', n: 1 }, enquete: { vague: 6 },
-    filleul: { nom: 'Amine' }, parrain: { nom: 'Youssef' }, test: {}, semaine: { type: 'etudiant', offres: 2 }, match_jour: { n: 3, type: 'etudiant' },
+    parrain: { nom: 'Youssef' }, test: {}, semaine: { type: 'etudiant', offres: 2 }, match_jour: { n: 3, type: 'etudiant' },
     match_attente: { nom: 'Salma', de: DE, n: 3 }, offre_bientot: { n: 3, groupe: true },
   };
   for (const k of N.TAGS_FIXES) assert.equal(t(k, exemples[k]).tag, k, k);
   // Dans la file aussi (jobPush passe l'identifiant de la ligne) : le filet ne touche pas un tag fixe voulu
   for (const k of N.TAGS_FIXES) assert.equal(N.texteNotif(k, exemples[k], 'fr', SITE, 42).tag, k, `${k} dans la file`);
+  // Le filleul : sa ligne (la clé filleul que la base écrit) ; sans elle (données d'avant), une ligne par notification,
+  // jamais une ligne fixe où le deuxième filleul effacerait le premier
+  const F = uid(9351);
+  assert.ok(!N.SE_REMPLACENT.includes('filleul'));
+  assert.equal(N.texteNotif('filleul', { nom: 'Amine', filleul: F }, 'fr', SITE, 42).tag, `filleul-${F}`);
+  assert.equal(N.texteNotif('filleul', { nom: 'Amine', filleul: F }, 'ar', SITE, 43).tag, `filleul-${F}`);
+  assert.deepEqual([42, 43].map(id => N.texteNotif('filleul', { nom: 'Amine' }, 'fr', SITE, id).tag), ['filleul-42', 'filleul-43']);
   // Chaque type classé dans Mon profil est connu : soit à tag fixe, soit avec un tag par élément quand la donnée le dit
   for (const k of N.TAGS_FIXES) assert.ok(k === 'test' || k in logic.PUSH_KINDS, k);
 });

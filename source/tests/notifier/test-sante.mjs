@@ -66,20 +66,33 @@ test('tags : la vérification par les pairs, une nouvelle date et un nouveau par
   assert.equal(v2.title, 'Ton profil est vérifié');
   assert.equal(v1.tag, v2.tag, 'avant : deux lignes, la première disait « encore un lauréat » après le badge');
   assert.equal(v2.tag, 'verification_pair');
-  // La nouvelle date d'un même événement, d'un même rendez-vous, remplace l'ancienne ; un autre élément ne l'efface pas
+  // La nouvelle date d'un même événement, d'un même rendez-vous, remplace l'ancienne ; un autre élément ne l'efface pas.
+  // Un seul nom de ligne par élément, celui du contrat : evenement-<id> (l'annonce, la nouvelle date, l'annulation, la
+  // veille) et mentorat-<m> (toute la vie d'un mentorat)
   const forum = uid(311), visite = uid(312), cv = uid(313), renault = uid(314);
-  const e1 = t('evenement_deplace', { titre: 'Forum', debut: '2026-11-12T09:00:00Z', evenement: forum }, 301);
-  const e2 = t('evenement_deplace', { titre: 'Forum', debut: '2026-11-19T09:00:00Z', evenement: forum }, 302);
-  const e3 = t('evenement_deplace', { titre: 'Visite OCP', debut: '2026-11-22T14:00:00Z', evenement: visite }, 309);
+  const e1 = t('evenement_deplace', { titre: 'Forum', debut: '2026-11-12T09:00:00Z', id: forum, evenement: forum }, 301);
+  const e2 = t('evenement_deplace', { titre: 'Forum', debut: '2026-11-19T09:00:00Z', id: forum, evenement: forum }, 302);
+  const e3 = t('evenement_deplace', { titre: 'Visite OCP', debut: '2026-11-22T14:00:00Z', id: visite, evenement: visite }, 309);
   assert.equal(e1.tag, e2.tag, 'avant : la première gardait l’ancienne date');
-  assert.equal(e1.tag, `evenement_deplace-${forum}`);
+  assert.equal(e1.tag, `evenement-${forum}`);
+  assert.equal(e1.url, `${SITE}#reseau/agenda/${forum}`);
   assert.notEqual(e3.tag, e1.tag, 'avant : la Visite OCP effaçait le Forum');
+  // L'événement sous l'une ou l'autre clé : id (ce lot) ou evenement (la base d'avant, main) ; la même ligne, la même page
+  for (const d of [{ id: forum }, { evenement: forum }, { id: forum, evenement: forum }]) {
+    const x = t('evenement_deplace', { titre: 'Forum', debut: '2026-11-19T09:00:00Z', ...d }, 330);
+    assert.deepEqual([x.tag, x.url], [e1.tag, e1.url], JSON.stringify(d));
+  }
+  // L'annonce et l'annulation du même événement : la même ligne (l'ancienne date ne reste pas affichée à côté)
+  assert.equal(t('evenement', { titre: 'Forum', debut: '2026-11-12T09:00:00Z', evenement: forum }, 331).tag, e1.tag);
+  assert.equal(t('evenement_annule', { titre: 'Forum', debut: '2026-11-19T09:00:00Z', id: forum, evenement: forum }, 332).tag, e1.tag);
   const m1 = t('mentorat_deplace', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-12T17:00:00Z', m: cv }, 303);
   const m2 = t('mentorat_deplace', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-13T17:00:00Z', m: cv }, 304);
   const m3 = t('mentorat_deplace', { nom: 'Nadia', sujet: 'Entretien Renault', rdv_at: '2026-11-21T17:00:00Z', m: renault }, 310);
   assert.equal(m1.tag, m2.tag);
-  assert.equal(m1.tag, `mentorat_deplace-${cv}`);
+  assert.equal(m1.tag, `mentorat-${cv}`);
   assert.notEqual(m3.tag, m1.tag, 'avant : le rendez-vous de Nadia effaçait celui de Youssef');
+  // Le rendez-vous fixé puis déplacé : la même ligne (la première date ne reste pas affichée)
+  assert.equal(t('mentorat_accepte', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-12T17:00:00Z', m: cv }, 333).tag, m1.tag);
   // Données d'avant (sans l'élément) : la nouvelle date remplace la précédente, comme avant
   assert.equal(t('evenement_deplace', { titre: 'Forum', debut: '2026-11-12T09:00:00Z' }, 315).tag, 'evenement_deplace');
   assert.equal(t('mentorat_deplace', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-12T17:00:00Z' }, 316).tag, 'mentorat_deplace');
