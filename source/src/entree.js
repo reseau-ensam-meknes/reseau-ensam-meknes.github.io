@@ -388,7 +388,12 @@ export function AuthScreen({ store }) {
     });
     return () => { vivant = false; };
   }, []);
-  const [mode, setMode] = useState(recovery ? 'nouveau' : attente ? 'code' : ['inscription', 'connexion', 'motdepasse'].includes(saisie?.mode) ? saisie.mode : modeArrivee || (lien?.k === 'aider' || store?.sessionPerdue ? 'connexion' : invite || !dejaMembre() ? 'inscription' : 'connexion'));
+  // L'étape apportée par l'adresse ne vaut que pour l'arrivée : lue une fois, jamais après une session perdue ou une déconnexion
+  const [mode, setMode] = useState(() => {
+    const arrivee = modeArrivee; modeArrivee = null;
+    return recovery ? 'nouveau' : attente ? 'code' : ['inscription', 'connexion', 'motdepasse'].includes(saisie?.mode) ? saisie.mode
+      : store?.sessionPerdue || store?.compteParti ? 'connexion' : arrivee || (lien?.k === 'aider' ? 'connexion' : invite || !dejaMembre() ? 'inscription' : 'connexion');
+  });
   const [origine, setOrigine] = useState(attente ? (attente.creer ? 'inscription' : 'connexion') : 'inscription');
   const [role, setRoleEtat] = useState(() => roleRetenu() || (invite ? roleDePromo(invite) : ''));
   // Petit écran (moins de 680 px de haut) : le titre et les chiffres suffisent, la phrase d'explication laisse la place au

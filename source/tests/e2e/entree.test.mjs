@@ -1031,6 +1031,57 @@ test('se déconnecter soi-même : la copie de l’accueil et les brouillons de c
   await m.ctx.close();
 });
 
+// L'adresse que la carte « Ouvrir dans Chrome » construit porte l'étape (mode=inscription) : elle ne vaut que pour l'arrivée,
+// jamais pour la page d'entrée qui revient plus tard dans la même visite (déconnexion, session perdue)
+const ARRIVEE_CARTE = '?role=etudiant&mode=inscription';
+async function arriveEtSeConnecte() {
+  const s = await visiteur({ largeur: 390, hauteur: 844, query: ARRIVEE_CARTE });
+  assert.ok(await s.page.isVisible('#au-je-etudiant'), 'l’arrivée ouvre bien « Créer mon compte »');
+  await s.page.click('.entree-form button.linkish:has-text("J’ai déjà un compte")');
+  await s.page.fill('#au-email', 'membre@exemple.ma');
+  await s.page.click('.entree-form button.btn.primary'); await s.page.waitForSelector('#au-code');
+  await s.page.fill('#au-code', '123456');
+  await s.page.waitForSelector('.me-btn', { timeout: 15000 });
+  return s;
+}
+
+test('arrivée par l’adresse de la carte (?mode=inscription), connexion, puis « Se déconnecter » : « Se connecter », pas « Créer mon compte »', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  const s = await arriveEtSeConnecte();
+  await s.page.click('.me-btn'); await s.page.click('.menu-pop button:has-text("Se déconnecter")');
+  await s.page.waitForSelector('#entree .entree-form', { timeout: 15000 });
+  assert.equal(await s.page.locator('#au-je-etudiant').count(), 0, 'pas « Créer mon compte » juste après une déconnexion');
+  assert.equal(await s.page.locator('.entree-form h2').innerText(), 'Se connecter');
+  assert.equal(await s.page.locator('#au-session').count(), 0, 'déconnexion voulue : pas de « session expirée »');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('arrivée par l’adresse de la carte (?mode=inscription) puis session perdue : « Ta session a expiré », l’adresse déjà là ; de même pour une session gardée trop ancienne', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  const s = await arriveEtSeConnecte();
+  // Le téléphone sort de veille : renouvellement refusé, la session est perdue sans l'avoir voulu
+  await s.page.evaluate(() => {
+    const k = 'sb-127-auth-token', x = JSON.parse(localStorage.getItem(k));
+    x.expires_at = Math.floor(Date.now() / 1000) + 30; localStorage.setItem(k, JSON.stringify(x));
+    dispatchEvent(new Event('focus'));
+  });
+  await s.page.waitForSelector('#entree #au-session', { timeout: 15000 });
+  assert.equal(await s.page.locator('.entree-form h2').innerText(), 'Se connecter');
+  assert.equal(await s.page.locator('#au-je-etudiant').count(), 0, 'se reconnecter, pas créer un compte');
+  assert.equal(await s.page.inputValue('#au-email'), 'membre@exemple.ma');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Un membre dont la session gardée est trop ancienne, ouvert sur la même adresse : la session perdue passe avant l'étape
+  site.vider(); site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  const m = await connecte({ hash: ARRIVEE_CARTE, exp: -3600, expiresAt: -3600, attendre: '#entree .entree-form' });
+  await m.page.waitForSelector('#entree #au-session', { timeout: 15000 });
+  assert.equal(await m.page.inputValue('#au-email'), 'membre@exemple.ma');
+  assert.equal(await m.page.locator('#au-je-etudiant').count(), 0);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
 for (const [langue, theme] of [['fr', 'light'], ['ar', 'dark']]) {
   test(`tout premier chargement d’un membre (${langue}, ${theme}) : la forme de l’accueil à sa taille, pas le logo`, async () => {
     site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
