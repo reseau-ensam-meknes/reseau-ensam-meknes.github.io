@@ -265,11 +265,14 @@ test('données en deux temps : PREMIERES et ENSUITE couvrent toutes les tables, 
 
 // Garde-fou : un module qui se met à lire une table d'ENSUITE doit attendre qu'elle soit là (tablesEcran, store.attendre).
 // Ceux-ci le font : leur écran attend dans app.js (messages, mentorat/cv, admin, Mes données) ou lui-même (groupes.js) ;
-// logic.js ne les lit que pour l'administration (dernieresActions → parcoursInscription) ; le magasin et la démo les écrivent.
+// logic.js ne les lit que pour l'administration (dernieresActions → parcoursInscription, actifsParSemaine) ; le message de
+// groupe signalé (admin-console-cibles.js) ne se montre que dans la console (Modération, « À traiter »), sous admin, qui
+// attend tout ; admin-console-regles.js ne fait que ranger les lignes par école (donneesDeLEcole : la console, et le Suivi
+// de l'administration, qui n'en montre ni n'en compte aucune) ; le magasin et la démo les écrivent.
 test('données en deux temps : seuls les écrans qui attendent lisent les tables d’ENSUITE', () => {
   const { ENSUITE } = STORE;
   const LISENT = { 'groupes.js': ['groupe_messages'], 'messages.js': ['reactions_messages'], 'cv.js': ['relecture_commentaires'], 'admin.js': ENSUITE,
-    'privacy.js': ENSUITE, 'logic.js': ['groupe_messages'] };
+    'privacy.js': ENSUITE, 'logic.js': ['groupe_messages'], 'admin-console-cibles.js': ['groupe_messages'], 'admin-console-regles.js': ['groupe_messages'] };
   const ECRIVENT = /^(store|seed\d*|i18n-ar)\.js$/;
   let vus = 0;
   for (const f of fs.readdirSync(SRC).filter(f => f.endsWith('.js') && !ECRIVENT.test(f))) {

@@ -7,11 +7,27 @@ import { CompanyLogo } from './ui.js';
 import { addAR, arCount } from './i18n.js';
 import { SuccessFeed } from './growth.js';
 import { useStatsInsertion, tauxInsertion, KpisInsertion, virgule } from './enquete.js';
+import { useEcoleRegardee, ecoleDe, ECOLE_DEFAUT } from './admin-donnees.js';
+import { donneesDeLEcole } from './admin-console-regles.js';
 
 export function DashboardPage(ctx) {
+  if (ctx.me.role === 'admin') return html`<${SuiviAdmin} ctx=${ctx}/>`;
   if (ctx.sub === 'insertion') return html`<${InsertionPage} ctx=${ctx}/>`;
   if (ctx.me.role === 'etudiant') return html`<${PromoPage} ctx=${ctx}/>`;
   return html`<${SeasonPage} ctx=${ctx}/>`;
+}
+
+// L'administration : le suivi d'une école à la fois quand le réseau en compte plusieurs (celle que regarde la console,
+// sinon la sienne), avec le choix de l'école en tête de page ; une seule école : tout, comme avant
+function SuiviAdmin({ ctx }) {
+  const { ecoles, ecole, changer, nomDe } = useEcoleRegardee(ctx);
+  const plusieurs = ecoles.length > 1;
+  const ici = plusieurs ? ecole || ecoleDe(ctx.me) : '';
+  // Changer d'école refait la page (clé) : le choix, recréé, reprend le focus qu'il avait (clavier, lecteur d'écran)
+  const choisir = e => { const avait = document.activeElement === e.target; changer(e.target.value); if (avait) requestAnimationFrame(() => document.getElementById('suivi-ecole')?.focus()); };
+  const choix = plusieurs ? html`<label class="season-pick suivi-ecole">École <select id="suivi-ecole" value=${ici} onChange=${choisir}>${ecoles.map(e => html`<option key=${e.slug} value=${e.slug} translate="no">${e.nom}</option>`)}</select></label>` : null;
+  const c = { ...ctx, data: donneesDeLEcole(ctx.data, ici), ecoleSuivi: ici, nomEcoleSuivi: ici ? nomDe(ici) : '', choixEcole: choix };
+  return ctx.sub === 'insertion' ? html`<${InsertionPage} key=${'ins-' + ici} ctx=${c}/>` : html`<${SeasonPage} key=${'sp-' + ici} ctx=${c}/>`;
 }
 
 // Placement / Insertion : deux vues du même onglet
@@ -42,7 +58,7 @@ function SeasonPage({ ctx }) {
   return html`<section class="page">
     <header class="page-head">
       <div><p class="eyebrow">Suivi de placement</p><h1>Tableau de bord</h1></div>
-      <label class="season-pick">Année <select id="dash-season" value=${saison} onChange=${e => setSaison(+e.target.value)}>${seasons.map(s => html`<option value=${s}>${seasonLabel(s)}${s === cur ? ' (en cours)' : ''}</option>`)}</select></label>
+      <div class="suivi-picks">${ctx.choixEcole || null}<label class="season-pick">Année <select id="dash-season" value=${saison} onChange=${e => setSaison(+e.target.value)}>${seasons.map(s => html`<option value=${s}>${seasonLabel(s)}${s === cur ? ' (en cours)' : ''}</option>`)}</select></label></div>
     </header>
     <${SuiviSeg} ctx=${ctx} on="placement"/>
 
@@ -235,6 +251,7 @@ injectCSS('dashboard-promo', `
 `);
 
 addAR({
+  'École': 'المدرسة',
   'Mon année': 'سنتي', 'Année terminée': 'انتهت السنة', 'Où vont les étudiants de ton année': 'أين يتجه طلبة سنتك',
   'Liste complète de l’année (une ligne par étudiant), à ouvrir dans Excel.': 'اللائحة الكاملة للسنة (سطر لكل طالب)، تُفتح في Excel.',
   'Offres pour ton année': 'عروض لسنتك', 'ouvertes en ce moment': 'مفتوحة حاليًا', 'ouverte en ce moment': 'مفتوح حاليًا',
@@ -318,6 +335,13 @@ addAR({
 ]);
 
 injectCSS('dashboard-insertion', `
+/* Suivi de l'administration : le choix de l'école à côté de celui de l'année (plusieurs écoles) */
+.suivi-picks { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem; }
+/* Un nom d'école long se coupe au lieu de faire défiler la page de côté (390 px) */
+.suivi-picks { min-width: 0; max-width: 100%; }
+.suivi-ecole { min-width: 0; max-width: 100%; }
+.suivi-ecole select { min-width: 0; flex: 0 1 auto; text-overflow: ellipsis; }
+.page-head > .suivi-ecole { align-self: flex-end; }
 .suivi-seg { align-self: flex-start; }
 .suivi-seg button { display: inline-flex; align-items: center; gap: .35rem; }
 .ins-pick { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; }
@@ -380,7 +404,7 @@ function InsertionPage({ ctx }) {
   const { data, me, store, go } = ctx;
   const admin = me.role === 'admin';
   const etu = me.role === 'etudiant';
-  const stats = useStatsInsertion(store, data.enquetes_insertion);
+  const stats = useStatsInsertion(store, data.enquetes_insertion, ctx.ecoleSuivi || undefined);
   const min = admin ? 1 : 5;
   const rows = (stats || []).map(r => ({ ...r, n: num(r.n), en_poste: num(r.en_poste), recherche: num(r.recherche), etudes: num(r.etudes), etranger: num(r.etranger), delai_median: num(r.delai_median), satisfaction: num(r.satisfaction), lien_formation: num(r.lien_formation) }))
     .filter(r => r.n >= min);
@@ -396,6 +420,7 @@ function InsertionPage({ ctx }) {
 
   return html`<section class="page insertion">
     <header class="page-head ins-noprint"><div><p class="eyebrow">Enquête d’insertion</p><h1>${etu ? 'Après le diplôme' : 'Insertion des diplômés'}</h1></div>
+      ${ctx.choixEcole || null}
       ${promos.length ? html`<div class="ins-pick">
         <label class="season-pick">Promotion <select id="ins-promo" value=${p} onChange=${e => { setPromo(+e.target.value); setVague(null); }}>${promos.map(x => html`<option value=${x}>${x}</option>`)}</select></label>
         ${vagues.length > 1 ? html`<div class="seg small-seg" role="group" aria-label="Vague">${vagues.map(x => html`<button class=${x === v ? 'on' : ''} aria-pressed=${x === v} onClick=${() => setVague(x)}>${x} mois</button>`)}</div>` : null}
@@ -482,14 +507,17 @@ function totaux(list, promo) {
 
 function RapportPanel({ ctx, stats }) {
   const { store, data } = ctx;
+  // L'école du rapport : celle choisie en tête de page (plusieurs écoles), sinon celle de l'administration
+  const ecole = ctx.ecoleSuivi || undefined;
+  const autre = !!ecole && ecole !== ECOLE_DEFAUT;
   const [rows, setRows] = useState(null);
   const [promo, setPromo] = useState('');
   const [vague, setVague] = useState(0);
   useEffect(() => {
     let on = true;
-    Promise.resolve(store.rapportInsertion()).then(r => on && setRows(Array.isArray(r) ? r : []), e => { if (on) { setRows([]); toast(e.message || String(e), 'err'); } });
+    Promise.resolve(store.rapportInsertion(ecole)).then(r => on && setRows(Array.isArray(r) ? r : []), e => { if (on) { setRows([]); toast(e.message || String(e), 'err'); } });
     return () => { on = false; };
-  }, [data.enquetes_insertion, data.profiles.length, data.liste_officielle?.length]);
+  }, [data.enquetes_insertion, data.profiles.length, data.liste_officielle?.length, ecole]);
   const all = (rows || []).map(r => ({ ...r, promo: num(r.promo), vague: num(r.vague) }));
   const promos = [...new Set(all.map(r => r.promo))].sort((a, b) => b - a);
   const list = all.filter(r => (!promo || r.promo === +promo) && (!vague || r.vague === vague));
@@ -501,8 +529,9 @@ function RapportPanel({ ctx, stats }) {
     if (t === 'dec') return virgule(Math.round(num(x) * 10) / 10);
     return x;
   };
-  const meta = { promo: promo ? +promo : null, vague };
-  const nom = ext => `insertion-ensam-meknes-${promo || 'toutes-promos'}${vague ? '-' + vague + 'mois' : ''}-${new Date().toISOString().slice(0, 10)}.${ext}`;
+  // Le classeur porte le nom de l'école du rapport (une autre que l'ENSAM Meknès : sans le nom de la plateforme)
+  const meta = { promo: promo ? +promo : null, vague, ecoleNom: autre ? ctx.nomEcoleSuivi || ecole : '' };
+  const nom = ext => `insertion-${ecole || ECOLE_DEFAUT}-${promo || 'toutes-promos'}${vague ? '-' + vague + 'mois' : ''}-${new Date().toISOString().slice(0, 10)}.${ext}`;
   const csv = () => { telecharger(new Blob([rapportCSV(list, tots)], { type: 'text/csv;charset=utf-8' }), nom('csv')); toast('Fichier CSV prêt.'); };
   const excel = () => { telecharger(rapportXLSX(list, tots, stats.filter(s => (!promo || s.promo === +promo) && (!vague || s.vague === vague)), meta), nom('xlsx')); toast('Fichier Excel prêt.'); };
   const imprimer = () => {
@@ -514,7 +543,7 @@ function RapportPanel({ ctx, stats }) {
   const date = new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
 
   return html`<div class="panel ins-rapport-panel">
-    <div class="ins-print-head"><p>École Nationale Supérieure d’Arts et Métiers de Meknès</p><h1>Rapport d’insertion des diplômés</h1>
+    <div class="ins-print-head">${autre ? html`<p translate="no">${ctx.nomEcoleSuivi || ecole}</p>` : html`<p>École Nationale Supérieure d’Arts et Métiers de Meknès</p>`}<h1>Rapport d’insertion des diplômés</h1>
       <p>Généré le ${date}${promo ? ` · Promo ${promo}` : ''}${vague ? ` · ${vague} mois` : ''}</p>${METHODE.map(m => html`<p>${m}</p>`)}</div>
     <div class="section-head ins-noprint"><h2 class="h-ico"><${Icon} name="file"/> Rapport d’insertion</h2>
       <div class="ins-actions">
@@ -619,7 +648,7 @@ function classeur(feuilles) {
   ]);
 }
 
-function rapportXLSX(list, tots, stats, { promo, vague }) {
+function rapportXLSX(list, tots, stats, { promo, vague, ecoleNom = '' }) {
   const date = new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
   const filtre = `${promo ? `Promo ${promo}` : 'Toutes les promos'} · ${vague ? `${vague} mois après le diplôme` : 'vagues à 6 et 12 mois'}`;
   const v = (r, [k, , t]) => {
@@ -633,7 +662,7 @@ function rapportXLSX(list, tots, stats, { promo, vague }) {
     return { v: num(x), s: r.tot ? 5 : 0 };
   };
   const rapport = [
-    [{ v: 'ENSAM Meknès · Rapport d’insertion des diplômés', s: 4 }],
+    [{ v: `${ecoleNom || 'ENSAM Meknès'} · Rapport d’insertion des diplômés`, s: 4 }],
     [`Généré le ${date} · ${filtre}`],
     [],
     COLS.map(([, l]) => ({ v: l, s: 1 })),
@@ -650,7 +679,7 @@ function rapportXLSX(list, tots, stats, { promo, vague }) {
   ];
   const methode = [
     [{ v: 'Méthode', s: 4 }],
-    ['Source : enquête d’insertion de la plateforme Réseau ENSAM Meknès, envoyée aux diplômés 6 mois puis 12 mois après le diplôme.'],
+    [`Source : enquête d’insertion de la plateforme${ecoleNom ? '' : ' Réseau ENSAM Meknès'}, envoyée aux diplômés 6 mois puis 12 mois après le diplôme.`],
     ...METHODE.map(m => [{ v: m, s: 7 }]),
     ['En poste : emploi, création d’entreprise, volontariat ou VIE.'],
     ['Délai médian : mois entre le diplôme et le premier poste, pour les diplômés en poste qui ont répondu.'],

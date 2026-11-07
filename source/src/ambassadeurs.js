@@ -6,7 +6,7 @@
 // jour : la table manque, rien ne s'affiche.
 import { html, useState, useEffect, useMemo } from './vendor/preact-htm.js';
 import { Icon, Avatar, Bouclier, Embleme, Modal, toast, celebrate, injectCSS, lienWhatsApp } from './ui.js';
-import { ambassadeurDuGroupe, ambassadeursActifs, proposerAmbassadeur, chiffresPromo, reussitesDuGroupe, texteReussite, filiereCourte, AMB_DELAI_JOURS, timeAgo } from './logic.js';
+import { ambassadeurDuGroupe, ambassadeursActifs, proposerAmbassadeur, chiffresPromo, reussitesDuGroupe, texteReussite, filiereCourte, AMB_DELAI_JOURS, timeAgo, ecoleDe } from './logic.js';
 import { addAR, getLang } from './i18n.js';
 import { MessageBtn } from './messages.js';
 import { lienInvitation, messageInvitation } from './invitation.js';
@@ -77,8 +77,11 @@ const repondre = (ctx, a, statut) => ctx.store.update('ambassadeurs', a.id, { st
 // (un seul en cours par promo × filière) ; on le dit calmement au lieu d'une erreur.
 const TROP_TARD = 'Trop tard, c’est déjà proposé à quelqu’un d’autre.';
 const placePrise = e => e?.code === '23505' || /duplicate key|ambassadeurs_un_en_cours|Déjà ambassadeur|^Trop tard/i.test(String(e?.message || e || ''));
+// Le groupe d'une ligne ou d'un membre, dans son école : l'administration voit les ambassadeurs de toutes les écoles
+// (un seul en cours par école × promo × filière)
+const duGroupe = (data, x) => ambassadeurDuGroupe({ ambassadeurs: (data.ambassadeurs || []).filter(a => ecoleDe(a) === ecoleDe(x)) }, x.promo, x.filiere);
 async function annuler(store, a, fn) {
-  const enCours = ambassadeurDuGroupe(store.data, a.promo, a.filiere);
+  const enCours = duGroupe(store.data, a);
   if (enCours && enCours.id !== a.id) return toast(TROP_TARD, 'ok');
   try { await fn(); } catch (e) { if (placePrise(e)) return toast(TROP_TARD, 'ok'); throw e; }
 }
@@ -228,9 +231,14 @@ function MerciAmbassadeur({ ctx, a }) {
 // Administration > Inviter : les ambassadeurs, retirer, nommer à la main, proposer maintenant
 // ---------------------------------------------------------------------------
 export function AmbassadeursAdmin({ ctx }) {
-  const { data, store, act } = ctx;
+  const { data, store, act, me } = ctx;
   const [q, setQ] = useState('');
-  const lignes = (data.ambassadeurs || []).filter(a => a.statut === 'accepte' || (a.statut === 'propose' && ambassadeurDuGroupe(data, a.promo, a.filiere)?.id === a.id))
+  // Plusieurs écoles : chaque ligne dit son école ; « Proposer maintenant » ne vaut que pour l'école de l'administration
+  // (en ligne, la base propose pour l'école de qui appelle ; les membres des autres écoles le font en ouvrant l'appli)
+  const plusieurs = (ctx.ecoles || []).length > 1;
+  const ecoleTxt = x => (plusieurs ? html` · <span translate="no">${ctx.nomEcole?.(ecoleDe(x)) || ecoleDe(x)}</span>` : null);
+  const autreEcole = !!ctx.ecoleConsole && ctx.ecoleConsole !== ecoleDe(me);
+  const lignes = (data.ambassadeurs || []).filter(a => a.statut === 'accepte' || (a.statut === 'propose' && duGroupe(data, a)?.id === a.id))
     .sort((x, y) => (x.statut === 'accepte' ? 0 : 1) - (y.statut === 'accepte' ? 0 : 1) || y.promo - x.promo || String(x.filiere).localeCompare(String(y.filiere)));
   const nom = id => store.byId('profiles', id)?.full_name || 'Un membre';
   const retirer = a => act(async () => {
@@ -239,13 +247,15 @@ export function AmbassadeursAdmin({ ctx }) {
     toast(`${nom(a.user_id)} n’est plus ambassadeur.`, 'ok', 0, { annuler: () => act(() => annuler(store, a, () => store.update('ambassadeurs', a.id, { statut: avant }))) });
   });
   const nommer = p => act(async () => {
-    const deja = ambassadeurDuGroupe(data, p.promo, p.filiere);
+    const deja = duGroupe(data, p);
     if (deja?.user_id === p.id) return toast(`${p.full_name} est déjà proposé ou ambassadeur.`, 'err');
     if (deja) await store.update('ambassadeurs', deja.id, { statut: 'retire' });
     // Une proposition comme une autre : la personne l'accepte (ou non) depuis son accueil
-    const vieille = (data.ambassadeurs || []).find(a => a.statut === 'propose' && a.promo === Number(p.promo) && a.filiere === p.filiere && a.id !== deja?.id);
+    const vieille = (data.ambassadeurs || []).find(a => a.statut === 'propose' && ecoleDe(a) === ecoleDe(p) && a.promo === Number(p.promo) && a.filiere === p.filiere && a.id !== deja?.id);
     if (vieille) await store.update('ambassadeurs', vieille.id, { statut: 'expire' }).catch(() => {});
-    await store.insert('ambassadeurs', { promo: Number(p.promo), filiere: p.filiere, user_id: p.id, statut: 'propose', par: 'admin', propose_at: new Date().toISOString(), repondu_at: null });
+    // L'école du membre nommé (la base la reprend aussi de son profil) ; seulement quand ce n'est pas celle de l'administration
+    await store.insert('ambassadeurs', { promo: Number(p.promo), filiere: p.filiere, user_id: p.id, statut: 'propose', par: 'admin', propose_at: new Date().toISOString(), repondu_at: null,
+      ...(ecoleDe(p) !== ecoleDe(me) ? { ecole: ecoleDe(p) } : {}) });
     setQ('');
     toast(`Proposé à ${p.full_name} : la proposition l’attend sur son accueil.`);
   });
@@ -258,19 +268,19 @@ export function AmbassadeursAdmin({ ctx }) {
   const trouves = mots.length >= 2 ? data.profiles.filter(p => MEMBRES.includes(p.role) && p.full_name.toLowerCase().includes(mots)).slice(0, 5) : [];
   return html`<div class="panel amb-admin" id="amb-admin">
     <div class="section-head"><h2 class="h-ico"><${Embleme} id="ambassadeur" size=${20}/> Ambassadeurs de promo</h2>
-      <button type="button" class="btn tiny ghost" id="amb-lancer" onClick=${lancer}><${Icon} name="spark" size=${14}/> Proposer maintenant</button></div>
+      ${autreEcole ? null : html`<button type="button" class="btn tiny ghost" id="amb-lancer" onClick=${lancer}><${Icon} name="spark" size=${14}/> Proposer maintenant</button>`}</div>
     <p class="small muted">${`La plateforme propose le rôle au membre le plus actif de chaque promo et filière ; sans réponse en ${AMB_DELAI_JOURS} jours ou après un refus, au suivant. Un seul ambassadeur par promo et filière.`}</p>
     ${lignes.length ? html`<ul class="amb-liste" role="list">${lignes.map(a => {
       const p = store.byId('profiles', a.user_id);
       return html`<li key=${a.id}><${Avatar} p=${p} size=${36}/>
         <span class="grow"><strong translate="no" dir="auto">${nom(a.user_id)}</strong>
-          <small>${`Promo ${a.promo} · ${filiereCourte(a.filiere)}`}${' · '}${a.statut === 'accepte' ? `Ambassadeur depuis le ${jourMois(a.repondu_at || a.created_at)}` : `Proposé, réponse attendue avant le ${jourMois(new Date(new Date(a.propose_at || a.created_at).getTime() + AMB_DELAI_JOURS * 864e5).toISOString())}`}${a.par === 'admin' ? ' · nommé par l’administration' : null}</small></span>
+          <small>${`Promo ${a.promo} · ${filiereCourte(a.filiere)}`}${ecoleTxt(a)}${' · '}${a.statut === 'accepte' ? `Ambassadeur depuis le ${jourMois(a.repondu_at || a.created_at)}` : `Proposé, réponse attendue avant le ${jourMois(new Date(new Date(a.propose_at || a.created_at).getTime() + AMB_DELAI_JOURS * 864e5).toISOString())}`}${a.par === 'admin' ? ' · nommé par l’administration' : null}</small></span>
         <button type="button" class="btn tiny ghost amb-retirer" onClick=${() => retirer(a)}>Retirer</button></li>`;
     })}</ul>` : html`<p class="small muted">Aucun ambassadeur pour l’instant.</p>`}
     <div class="amb-nommer">
       <label class="small" for="amb-qui">Nommer à la main</label>
       <input id="amb-qui" type="search" placeholder="Nom d’un étudiant ou d’un lauréat" value=${q} onInput=${e => setQ(e.target.value)} autocomplete="off"/>
-      ${trouves.length ? html`<ul class="amb-trouves" role="list">${trouves.map(p => html`<li key=${p.id}><span class="grow"><span translate="no" dir="auto">${p.full_name}</span><small>${`Promo ${p.promo} · ${filiereCourte(p.filiere)}`}</small></span>
+      ${trouves.length ? html`<ul class="amb-trouves" role="list">${trouves.map(p => html`<li key=${p.id}><span class="grow"><span translate="no" dir="auto">${p.full_name}</span><small>${`Promo ${p.promo} · ${filiereCourte(p.filiere)}`}${ecoleTxt(p)}</small></span>
         <button type="button" class="btn tiny tonal amb-nommer-btn" onClick=${() => nommer(p)}>Nommer</button></li>`)}</ul>` : null}
     </div>
   </div>`;
@@ -328,7 +338,7 @@ addAR({
   'Ambassadeurs de promo': 'سفراء الدفعات', 'Proposer maintenant': 'اقتراح الآن', 'Retirer': 'سحب', 'Nommer': 'تعيين', 'Nommer à la main': 'تعيين يدوي',
   'Nom d’un étudiant ou d’un lauréat': 'اسم طالب أو خريج', 'Aucun ambassadeur pour l’instant.': 'لا يوجد سفراء حاليًا.',
   'Rien à proposer pour l’instant.': 'لا شيء للاقتراح حاليًا.', '1 changement : proposition faite ou expirée.': 'تغيير واحد: اقتراح جديد أو منتهٍ.',
-  ' · nommé par l’administration': ' · بتعيين من الإدارة', ' · sans nom': ' · دون اسم',
+  ' · nommé par l’administration': ' · بتعيين من الإدارة', 'nommé par l’administration': 'بتعيين من الإدارة', ' · sans nom': ' · دون اسم',
   'Ambassadeur de promo': 'سفير الدفعة', 'Fait venir sa promo et relaie ses réussites': 'يدعو دفعته وينقل نجاحاتها',
   [`La plateforme propose le rôle au membre le plus actif de chaque promo et filière ; sans réponse en ${AMB_DELAI_JOURS} jours ou après un refus, au suivant. Un seul ambassadeur par promo et filière.`]: `تقترح المنصة الدور على العضو الأكثر نشاطًا في كل دفعة وشعبة؛ وإن لم يأتِ رد خلال ${AMB_DELAI_JOURS} أيام أو جاء رفض، فعلى من يليه. سفير واحد لكل دفعة وشعبة.`,
 }, [
