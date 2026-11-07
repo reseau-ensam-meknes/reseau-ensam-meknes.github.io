@@ -6494,13 +6494,19 @@ test('match : programmer un entretien (jour, heure, durée, visio) ; l’autre r
   await s.page.locator('.mx-b-acts .btn', { hasText: 'Programmer un entretien' }).click();
   await s.page.waitForSelector('#mx-rdv-jour');
   const feuille = s.page.locator('.modal').last();
-  await feuille.locator('.chip', { hasText: /^Demain$/ }).click();
+  // Le jour : « Demain » quand il est proposé. Les dimanches ne le sont jamais (joursProposes) : un samedi, c'est le premier
+  // jour proposé après aujourd'hui, « Lundi 9 » sur sa puce et « Lundi 9 novembre » dans le résumé et sur la carte
+  const puces = feuille.locator('.mx-fs').first().locator('.chip');
+  const jours = await puces.allInnerTexts();
+  const jour = jours.includes('Demain') ? 'Demain' : jours.find(j => j !== 'Aujourd’hui');
+  await puces.filter({ hasText: new RegExp(`^${jour}$`) }).click();
   await feuille.locator('.chip', { hasText: /^15:00$/ }).click();
   await feuille.locator('.chip', { hasText: /^45 min$/ }).click();
-  assert.match(await feuille.locator('.mx-resume').innerText(), /^Demain · 15:00 · 45 min$/);
+  const leJour = jour === 'Demain' ? 'Demain' : `${jour} \\p{L}+`;
+  assert.match(await feuille.locator('.mx-resume').innerText(), new RegExp(`^${leJour} · 15:00 · 45 min$`, 'u'));
   await s.page.click('button[form="mx-rdv-f"]'); await s.page.waitForTimeout(400);
   const carte = s.page.locator('.msg.mine .bulle.t-rdv').last();
-  assert.match(await carte.innerText(), /Tu proposes un entretien[\s\S]*Demain[\s\S]*15:00[\s\S]*45 min · En visio[\s\S]*meet\.jit\.si\/ReseauENSAM-[\s\S]*En attente de la réponse de/);
+  assert.match(await carte.innerText(), new RegExp(`Tu proposes un entretien[\\s\\S]*${leJour}[\\s\\S]*15:00[\\s\\S]*45 min · En visio[\\s\\S]*meet\\.jit\\.si\\/ReseauENSAM-[\\s\\S]*En attente de la réponse de`, 'u'));
   // Le lien d'agenda dit l'heure et la durée
   await carte.locator('summary').click();
   const g = await carte.locator('a', { hasText: 'Google Agenda' }).getAttribute('href');
