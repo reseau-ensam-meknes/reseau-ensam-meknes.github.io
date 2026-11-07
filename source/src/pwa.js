@@ -4,7 +4,7 @@ import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Modal, toast, ensuite, feteOuverte, quandFete, apresFete, injectCSS } from './ui.js';
 import { addAR, getLang } from './i18n.js';
 import { prevenirVariante, lignePrevenir, sansLigne, ouvertureSorte, sorteLienNotifs, bandeauPush, pushChoix, PUSH_CATEGORIES, navigateurIntegre, lienChrome, noterEchecPush, echecDefinitif,
-  APPLIS, estIPad, CLE_APPLI_VUE, raisonPrevenir } from './logic.js';
+  raisonTestPush, testPushARefaire, APPLIS, estIPad, CLE_APPLI_VUE, raisonPrevenir } from './logic.js';
 import { arriveeEnAttente } from './pouls.js';
 
 let installEvt = null;
@@ -140,6 +140,15 @@ const memeCle = (cle, b64) => {
   const a = new Uint8Array(cle), b = b64ToBytes(b64);
   return a.length === b.length && a.every((x, i) => x === b[i]);
 };
+// La base répond 'mort' : cette adresse a été retirée pour de bon (téléphone parti, ou refusé trois fois de suite) et
+// n'est pas reprise. L'appareil se réabonne une fois, avec une adresse neuve. 'ok' ou null (base pas à jour) : rien à faire.
+async function enregistrerPush(store, reg, sub, key) {
+  if ((await store.abonnerPush(sub)) !== 'mort' || !key || !reg?.pushManager) return sub;
+  await sub.unsubscribe().catch(() => {});
+  const neuf = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
+  try { await store.abonnerPush(neuf); } catch (e) { await neuf.unsubscribe().catch(() => {}); throw e; }
+  return neuf;
+}
 export async function resynchroniserPush(store) {
   const id = store.me?.id;
   if (store.mode !== 'live' || !id || resynchronises.has(id)) return;
@@ -157,7 +166,7 @@ export async function resynchroniserPush(store) {
       await sub.unsubscribe().catch(() => {});
       sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
     }
-    await store.abonnerPush(sub);
+    await enregistrerPush(store, reg, sub, key);
   } catch { /* hors ligne, ou navigateur qui veut un geste : à la prochaine ouverture */ }
 }
 if (typeof window !== 'undefined') {
@@ -182,7 +191,7 @@ async function reparerPush(store) {
   if (!key || !ancien) return;
   await store.desabonnerPush(ancien.endpoint).catch(() => {});
   await ancien.unsubscribe().catch(() => {});
-  await store.abonnerPush(await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) }));
+  await enregistrerPush(store, reg, await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) }), key);
 }
 // Le service worker de cet appareil a-t-il reçu quelque chose dans le délai ?
 const attendreRecu = ms => new Promise(ok => {
@@ -238,7 +247,7 @@ export async function activerPush(store) {
     throw Object.assign(new Error(definitif ? SANS_NOTIF : SERVICE_LENT), { plateforme: definitif, passager: !definitif, cause: e });
   }
   // Pas enregistré par la plateforme (réseau) : l'abonnement du navigateur est retiré, sinon il paraîtrait actif
-  try { await store.abonnerPush(sub); } catch (e) { await sub.unsubscribe().catch(() => {}); throw e; }
+  try { sub = await enregistrerPush(store, reg, sub, key); } catch (e) { await sub.unsubscribe().catch(() => {}); throw e; }
   return 'on';
 }
 
@@ -287,7 +296,13 @@ async function premiereNotif(store, diag) {
 }
 const SERVICE_LENT = 'Le service de notifications ne répond pas, réessaie dans un moment.';
 const PREMIERE_RATEE = 'La notification d’essai n’est pas partie. Cet appareil vient d’être réabonné : touche « Tester » dans « Mon profil » pour vérifier.';
+const TEST_REABONNE = 'Le service de notifications ne reconnaissait plus cet appareil : il vient d’être réabonné. Touche « Tester » encore une fois.';
+const TEST_TROP = 'La notification d’essai a été refusée (trop longue). Préviens l’administration.';
+const TEST_INJOIGNABLE = 'Le service de notifications de cet appareil ne répond pas pour l’instant. Réessaie dans quelques minutes.';
 addAR({
+  [TEST_REABONNE]: 'لم تعد خدمة الإشعارات تتعرّف على هذا الجهاز: أُعيد تسجيله للتو. اضغط «تجربة» مرة أخرى.',
+  [TEST_TROP]: 'رُفض الإشعار التجريبي (طويل جدًا). أخبر الإدارة.',
+  [TEST_INJOIGNABLE]: 'خدمة الإشعارات على هذا الجهاز لا تستجيب حاليًا. أعد المحاولة بعد بضع دقائق.',
   [SERVICE_LENT]: 'خدمة الإشعارات لا تستجيب، أعد المحاولة بعد قليل.',
   [PREMIERE_RATEE]: 'لم يُرسَل الإشعار التجريبي. أعدنا تسجيل هذا الجهاز: اضغط على «تجربة» في «ملفي الشخصي» للتحقق.',
 });
@@ -360,8 +375,16 @@ export function PushToggle({ ctx }) {
     setBusy(true); setDiag(null);
     try {
       const recu = attendreRecu(ATTENTE_TEST);
-      const n = await store.testPush();
-      if (!n) { toast('Aucun appareil abonné pour l’instant.'); return; }
+      const r = raisonTestPush(await store.testPushDetails());
+      // 'inconnu' : ancienne fonction notifier, qui ne dit que le nombre envoyé (ici aucun)
+      if (r === 'aucun' || r === 'inconnu') { toast('Aucun appareil abonné pour l’instant.'); return; }
+      if (testPushARefaire(r)) {
+        await reparerPush(store).catch(() => {});
+        toast(TEST_REABONNE);
+        return;
+      }
+      if (r === 'trop') { toast(TEST_TROP, 'err'); return; }
+      if (r === 'injoignable') { toast(TEST_INJOIGNABLE, 'err'); return; }
       toast('Notification de test envoyée.');
       if (await recu) { setDiag('recue'); return; }
       await reparerPush(store).catch(() => {});

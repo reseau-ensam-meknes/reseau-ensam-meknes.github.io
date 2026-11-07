@@ -116,11 +116,13 @@ test('push : regroupé par membre, chiffré, VAPID, 410 supprimé, file vidée',
   const r = await appel({ job: 'push' }, { 'x-notifier': SECRET });
   assert.equal(r.status, 200);
   assert.deepEqual(await corpsDe(r), { sent: 3, failed: 0, removed: 1 });
-  // Abonnement 410 supprimé (par id), une seule tentative dessus
+  // Abonnement 410 retiré par la base (push_resultats), son adresse notée ; une seule tentative dessus
   assert.deepEqual(b.tables.push_subscriptions.map(x => x.id).sort(), [s1.id, s3.id].sort());
   assert.equal(b.push.filter(x => x.endpoint === s2.endpoint).length, 1);
-  const del = b.journal.find(x => x.methode === 'DELETE');
-  assert.ok(del.url.includes(`/push_subscriptions?id=in.(${s2.id})`));
+  assert.deepEqual(b.tables.push_morts.map(x => x.endpoint), [s2.endpoint]);
+  assert.deepEqual(b.argsRpc.push_resultats[0].p.find(x => x.id === s2.id), { id: s2.id, code: 410, recu: false, refus: false });
+  assert.deepEqual(b.argsRpc.push_resultats[0].p.find(x => x.id === s1.id), { id: s1.id, code: 201, recu: true, refus: false });
+  assert.ok(!b.journal.some(x => x.methode === 'DELETE'), 'rien à retirer à côté');
   // Une seule lecture des abonnements par tour, pour tous les membres du lot
   const lectures = b.journal.filter(x => x.methode === 'GET' && x.url.includes('/push_subscriptions'));
   assert.equal(lectures.length, 1);
@@ -130,9 +132,10 @@ test('push : regroupé par membre, chiffré, VAPID, 410 supprimé, file vidée',
   assert.equal(b.appelsRpc.prendre_push, 2);
   // Ordre et contenu sur le téléphone de u1
   const recu1 = b.push.filter(x => x.endpoint === s1.endpoint);
-  assert.deepEqual(recu1.map(x => x.message.tag), ['mentorat_accepte', 'merci']);
+  // Une notification par événement : le tag porte l'identifiant de sa ligne de file, la suivante ne la remplace pas
+  assert.deepEqual(recu1.map(x => x.message.tag), ['mentorat_accepte-1', 'merci-3']);
   assert.deepEqual(recu1[0].message, {
-    title: 'Rendez-vous fixé', body: 'Youssef Alami a choisi un de tes horaires : Mon CV, mercredi 21 octobre à 17:30', url: SITE + '#mentorat', tag: 'mentorat_accepte',
+    title: 'Rendez-vous fixé', body: 'Youssef Alami a choisi un de tes horaires : Mon CV, mercredi 21 octobre à 17:30', url: SITE + '#mentorat', tag: 'mentorat_accepte-1',
   });
   assert.equal(recu1[0].entetes.urgency, 'high');
   assert.equal(recu1[1].entetes.urgency, 'high');
@@ -231,7 +234,9 @@ test('test : notification d’essai sur les téléphones du membre connecté, da
   b.statutsPush.set(g.endpoint, 410);
   const r = await appel({ job: 'test' }, { Authorization: 'Bearer jeton-utilisateur' });
   assert.equal(r.status, 200);
-  assert.deepEqual(await corpsDe(r), { sent: 1 });
+  // Ce que chaque téléphone a répondu, dans l'ordre de leur inscription : de quoi dire la vraie raison d'un échec
+  assert.deepEqual(await corpsDe(r), { sent: 1, failed: 0, removed: 1, codes: [201, 410], abonnements: 2 });
+  assert.deepEqual(b.tables.push_journal.map(x => [x.user_id, x.kind, x.code]), [[u, 'test', 201]]);
   assert.equal(b.push.length, 2);
   assert.ok(b.push.every(p => p.endpoint !== `${'https://push.example.net'}/s/${autre.slice(-4)}-1`));
   const ok = b.push.find(p => p.endpoint === a.endpoint);
