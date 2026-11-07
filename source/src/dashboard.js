@@ -69,6 +69,10 @@ function SeasonPage({ ctx }) {
   const pendingAll = st.rows.reduce((a, r) => a + r.pending, 0);
   const ouvertes = data.offers.filter(o => o.status === 'ouverte');
   const auteurs = new Set(ouvertes.map(o => o.author_id)).size;
+  // « 0 offre ouverte » (une école qui débute : personne n'a publié), « 1 offre ouverte, publiée par 1 lauréat »,
+  // « 3 offres ouvertes, publiées par 2 lauréats » : le nom et « publiée » s'accordent avec le nombre d'offres
+  const faitOffres = !ouvertes.length ? 'offre ouverte'
+    : `${ouvertes.length > 1 ? 'offres ouvertes, publiées' : 'offre ouverte, publiée'} par ${auteurs} lauréat${auteurs > 1 ? 's' : ''}`;
   const row = st.rows.find(r => r.n === niv);
   const [detail, setDetail] = useState(false);
   const [tousCherchent, setTousCherchent] = useState(false);
@@ -101,7 +105,7 @@ function SeasonPage({ ctx }) {
         <ul class="sh-faits">
           <li><span class="sh-pt bien" aria-hidden="true"></span><span><strong><${Compteur} v=${st.viaTotal}/></strong> <span>${`grâce à la plateforme (${pct(partVia)} des réussites)`}</span></span></li>
           <li><span class="sh-pt attente" aria-hidden="true"></span><span><strong><${Compteur} v=${pendingAll}/></strong> <span>à confirmer par l’étudiant</span></span></li>
-          <li><span class="sh-pt offres" aria-hidden="true"></span><span><strong><${Compteur} v=${ouvertes.length}/></strong> <span>${`offres ouvertes, publiées par ${auteurs} lauréat${auteurs > 1 ? 's' : ''}`}</span></span></li>
+          <li><span class="sh-pt offres" aria-hidden="true"></span><span><strong><${Compteur} v=${ouvertes.length}/></strong> <span>${faitOffres}</span></span></li>
         </ul>
       </div>
     </section>

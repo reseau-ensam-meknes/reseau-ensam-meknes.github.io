@@ -4788,12 +4788,12 @@ test('socle : l’annonce de l’administration — une annonce en cours, le for
 
 // Hauteur touchable de chaque élément actif visible : sa boîte, ou la zone invisible (::before / ::after) qui la prolonge.
 // { largeur: true } : la largeur aussi (même mesure, de gauche à droite), sauf pour un lien posé dans une phrase, qui a la
-// largeur de ses mots
-const petites = (page, { largeur = false } = {}) => page.evaluate(largeur => {
+// largeur de ses mots. { dans } : là où chercher (la page, sinon une feuille ouverte)
+const petites = (page, { largeur = false, dans = '#contenu' } = {}) => page.evaluate(([largeur, dans]) => {
   const zone = (el, pseudo, [d1, d2]) => { const cs = getComputedStyle(el, pseudo); if (cs.content === 'none' || cs.position !== 'absolute') return 0; const h = parseFloat(cs[d1]), b = parseFloat(cs[d2]); return Math.max(0, -(isNaN(h) ? 0 : h)) + Math.max(0, -(isNaN(b) ? 0 : b)); };
   const HAUT = ['top', 'bottom'], LARGE = ['left', 'right'];
   const out = [];
-  for (const el of document.querySelectorAll('#contenu :is(button, a[href], [role="tab"], select, summary, input:not([type="hidden"]), textarea)')) {
+  for (const el of document.querySelectorAll(`${dans} :is(button, a[href], [role="tab"], select, summary, input:not([type="hidden"]), textarea)`)) {
     const r = el.getBoundingClientRect(); if (!r.width || !r.height) continue;
     const cs = getComputedStyle(el); if (cs.visibility === 'hidden' || el.closest('[hidden], [inert], .sr-only')) continue;
     if (el.tagName === 'SELECT' && cs.opacity === '0') continue;   // menu natif posé sur une pastille : on touche la pastille
@@ -4806,7 +4806,7 @@ const petites = (page, { largeur = false } = {}) => page.evaluate(largeur => {
     else if (h < 43.5 || (l < 43.5 && !dansLaPhrase)) out.push(`${nom} ${Math.round(l)} × ${Math.round(h)} px`);
   }
   return out;
-}, largeur);
+}, [largeur, dans]);
 
 test('socle : au doigt, chaque cible du Réseau, de Mon profil et de l’administration se touche sur 44 px de haut au moins (une zone invisible prolonge les petites, le dessin ne bouge pas)', async () => {
   const ECRANS_SOCLE = [['Salma', ['reseau/groupes', 'reseau/agenda', 'reseau/entraide', 'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'profil', 'profil/visibilite', 'profil/notifications', 'profil/donnees']],
@@ -4827,7 +4827,7 @@ test('socle : au doigt, chaque cible du Réseau, de Mon profil et de l’adminis
   }
 });
 
-test('pages du lot 2 : au doigt, chaque cible des Offres, Demandes, Mentorat (rendez-vous et CV), Messages, Mon parcours, Mon espace, du Suivi et des Talents se touche sur 44 px de haut et de large au moins (réactions, « Bravo », étoiles, menu « … », marque-page, « Signaler », visages, petites icônes), à 390 px et en arabe à 360 px', async () => {
+test('pages du lot 2 : au doigt, chaque cible des Offres (fiche d’une offre comprise), Demandes, Mentorat (rendez-vous et CV), Messages, Mon parcours, Mon espace, du Suivi et des Talents se touche sur 44 px de haut et de large au moins (réactions, « Bravo », étoiles, menu « … », marque-page, « Signaler », visages, petites icônes), à 390 px et en arabe à 360 px', async () => {
   const ECRANS = [['Salma', ['offres', 'offres/demandes', 'mentorat', 'mentorat/cv', 'parcours', 'suivi', 'suivi/insertion', 'messages']],
     ['Amine', ['parcours', 'mentorat', 'messages']],
     ['Youssef', ['offres', 'offres/demandes', 'mentorat', 'mentorat/cv', 'espace', 'espace/offres', 'espace/documents', 'suivi', 'reseau/talents', 'messages']],
@@ -4842,6 +4842,44 @@ test('pages du lot 2 : au doigt, chaque cible des Offres, Demandes, Mentorat (re
       await s.comme(qui);
       for (const e of tous ? ecrans : ecrans.slice(0, 4)) { await s.aller(e); await s.page.waitForTimeout(250); for (const x of await petites(s.page, { largeur: true })) trop.push(`${largeur} ${langue} · ${qui} · ${e} : ${x}`); }
     }
+    // La fiche d'une offre (la première de la liste) : « Fermer », « Partager », « Signaler », « Gérer l’offre », et les
+    // gestes de chaque question publique (« Signaler », « Supprimer ») ; pour un lauréat et l'administration, aussi la fiche
+    // d'une offre d'un autre dont l'entreprise a des avis ou des entretiens (« Voir », au bout de son résumé)
+    const feuille = '.modal-back:not(.sortie) .modal';
+    for (const qui of ['Salma', 'Youssef', 'Admin']) {
+      await s.comme(qui); await s.aller('offres');
+      await s.page.locator('.ocard-main').first().click(); await s.page.waitForSelector(`${feuille} .od h2`); await s.page.waitForTimeout(300);
+      for (const x of await petites(s.page, { largeur: true, dans: feuille })) trop.push(`${largeur} ${langue} · ${qui} · fiche d’une offre : ${x}`);
+      await s.fermer();
+      if (qui === 'Salma') continue;
+      const avecAvis = await s.page.evaluate(async () => {
+        const { sameCompany } = await import(new URL('logic.js', location.href).href);
+        const d = window.__demo.data, deja = [...(d.avis_stage || []), ...(d.entretiens || [])];
+        return d.offers.find(o => o.status === 'ouverte' && o.author_id !== window.__demo.me.id && deja.some(a => sameCompany(a.entreprise, o.entreprise)))?.id;
+      });
+      assert.ok(avecAvis, 'une offre ouverte d’une entreprise qui a des avis ou des entretiens');
+      await s.aller('offre/' + avecAvis); await s.page.waitForSelector(`${feuille} .od .ent-resume .linkish`); await s.page.waitForTimeout(300);
+      for (const x of await petites(s.page, { largeur: true, dans: feuille })) trop.push(`${largeur} ${langue} · ${qui} · fiche d’une offre (avis sur l’entreprise) : ${x}`);
+      await s.fermer();
+    }
+    assert.deepEqual(trop, [], 'des cibles trop petites au doigt');
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('accueil : au doigt, l’annonce (son texte et « Masquer l’annonce »), le « Merci » sous chaque fondateur et « Plus tard » de l’invitation à parrainer se touchent sur 44 px de haut et de large, pour chaque profil, à 390 px et en arabe à 360 px', async () => {
+  for (const [largeur, langue] of [[390, 'fr'], [360, 'ar']]) {
+    const s = await ouvrir({ largeur, langue, toucher: true });
+    assert.ok(await s.page.evaluate(() => matchMedia('(pointer: coarse)').matches), 'un écran tactile');
+    const trop = [], vus = new Set();
+    for (const [id, nom] of s.profils) {
+      await s.page.selectOption('#persona', id); await s.aller('accueil'); await s.page.waitForTimeout(300);
+      for (const [cle, sel] of [['annonce', '.annonce-ligne .annonce-txt'], ['masquer', '.annonce-ligne .icon-btn.small'], ['merci', '.fd-merci'], ['plus tard', '.parrain-cta .icon-btn.small']]) if (await s.page.locator(`#contenu ${sel}`).count()) vus.add(cle);
+      for (const x of await petites(s.page, { largeur: true })) trop.push(`${largeur} ${langue} · ${nom} · accueil : ${x}`);
+    }
+    assert.deepEqual([...vus].sort(), ['annonce', 'masquer', 'merci', 'plus tard'], 'chacune de ces cibles mesurée au moins une fois');
     assert.deepEqual(trop, [], 'des cibles trop petites au doigt');
     assert.equal(await s.debordement(), 0);
     assert.deepEqual(s.erreurs, []);
@@ -5462,18 +5500,28 @@ for (const [largeur, langue, theme] of [[1280, 'fr', 'light'], [390, 'ar', 'dark
   test(`accessibilité : aucun problème relevé par axe (${largeur} px, ${langue}, ${theme})`, async () => {
     const s = await ouvrir({ largeur, langue, theme });
     const problemes = [];
+    const auditer = async ou => {
+      if (!(await s.page.evaluate(() => !!window.axe))) await s.page.addScriptTag({ content: AXE });
+      // Les fondus d'arrivée (même courts) faussent la mesure des contrastes : on les termine avant l'audit
+      await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* animation sans fin */ } }));
+      const v = await s.page.evaluate(async () => (await axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'best-practice'] }, resultTypes: ['violations'] }))
+        .violations.map(x => `${x.id} : ${x.nodes.slice(0, 2).map(n => n.target.join(' ')).join(' ; ')}`));
+      for (const x of v) problemes.push(`${ou} · ${x}`);
+    };
     for (const [id, nom] of s.profils) {
       await s.page.selectOption('#persona', id); await s.page.waitForTimeout(250);
       for (const e of ECRANS) {
         await s.aller(e);
         // Une page chargée à la demande (l'administration, le suivi) : l'audit lit la page, pas sa silhouette d'attente
         await s.page.waitForFunction(() => !document.querySelector('.page-attente'));
-        if (!(await s.page.evaluate(() => !!window.axe))) await s.page.addScriptTag({ content: AXE });
-        // Les fondus d'arrivée (même courts) faussent la mesure des contrastes : on les termine avant l'audit
-        await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* animation sans fin */ } }));
-        const v = await s.page.evaluate(async () => (await axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'best-practice'] }, resultTypes: ['violations'] }))
-          .violations.map(x => `${x.id} : ${x.nodes.slice(0, 2).map(n => n.target.join(' ')).join(' ; ')}`));
-        for (const x of v) problemes.push(`${nom} · ${e} · ${x}`);
+        await auditer(`${nom} · ${e}`);
+      }
+      // La fiche d'une offre, la première de la liste (le niveau de son auteur sur le fond du bloc « Proposée par »)
+      await s.aller('offres');
+      if (await s.page.locator('.ocard-main').count()) {
+        await s.page.locator('.ocard-main').first().click(); await s.page.waitForSelector('.modal-back:not(.sortie) .modal .od h2');
+        await auditer(`${nom} · fiche d’une offre`);
+        await s.fermer();
       }
     }
     assert.deepEqual(problemes, []);
@@ -8071,6 +8119,30 @@ test('console · deux écoles en arabe (390 px) : le choix d’école, les rubri
   assert.deepEqual(oublis, [], 'tout traduit');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
+});
+
+test('Suivi d’une école qui débute : « 0 offre ouverte », sans « publiées par 0 lauréat » ; avec une offre, puis deux, le nom et « publiée » s’accordent (français et arabe)', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const ar = langue === 'ar';
+    const s = await ouvrir({ largeur: 390, langue });
+    await s.comme('Admin'); const slug = await deuxiemeEcole(s);
+    await s.page.selectOption('#cs-ecole', slug); await s.page.waitForTimeout(200);
+    await s.aller('suivi'); await s.page.waitForSelector('#suivi-ecole');
+    assert.equal(await s.page.inputValue('#suivi-ecole'), slug);
+    await s.page.evaluate(() => window.__ensamMissing?.clear());
+    const ligne = async () => (await s.page.locator('.sh-faits li').last().innerText()).replace(/[⁦-⁩]/g, '').replace(/\s+/g, ' ').trim();
+    assert.equal(await ligne(), ar ? '0 عرض مفتوح' : '0 offre ouverte');
+    // Deux offres ouvertes de l'ENSAM Meknès, de deux lauréats différents, passent une à une dans cette école
+    const [a, b] = await s.page.evaluate(() => { const o = window.__demo.data.offers.filter(x => x.status === 'ouverte'); return [o[0].id, o.find(x => x.author_id !== o[0].author_id).id]; });
+    const deplacer = async id => { await s.page.evaluate(([id, e]) => window.__demo.update('offers', id, { ecole: e }), [id, slug]); await s.page.waitForTimeout(300); };
+    await deplacer(a);
+    assert.equal(await ligne(), ar ? '1 عرض مفتوح، نشره خريج واحد' : '1 offre ouverte, publiée par 1 lauréat');
+    await deplacer(b);
+    assert.equal(await ligne(), ar ? '2 عروض مفتوحة، نشرها خريجان' : '2 offres ouvertes, publiées par 2 lauréats');
+    if (ar) assert.deepEqual((await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), [], 'tout traduit');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
 });
 
 test('console · Partenaires : la formule choisie remplit le montant ; le message à une entreprise se copie avec les vrais chiffres', async () => {

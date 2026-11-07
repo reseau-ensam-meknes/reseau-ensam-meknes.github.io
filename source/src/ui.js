@@ -509,10 +509,11 @@ export function Modal({ title, onClose, children, wide, footer, cls, historique 
       else ouvertes[ouvertes.length - 1]?.ref.current?.querySelector(FOCUSABLES)?.focus();
     };
   }, []);
+  // La barre de titre d'une feuille est un <div> : un <header> y ferait un second repère « bannière », à côté de celui du site
   return html`<div class=${'modal-back' + (vv ? ' clavier' : '')} style=${vv ? `--vvh:${vv.h}px;--vvt:${vv.t}px` : ''} onPointerDown=${e => { appuiFond.current = e.target === e.currentTarget; }}
     onClick=${e => { const ok = appuiFond.current; appuiFond.current = false; if (ok && e.target === e.currentTarget) onClose(); }}>
     <div class=${'modal' + (wide ? ' wide' : '') + (footer ? ' has-foot' : '') + (cls ? ' ' + cls : '')} role="dialog" aria-modal="true" aria-label=${title} ref=${ref}>
-      <header class="modal-head"><span class="sheet-grip" aria-hidden="true"></span><h2>${title}</h2><button class="icon-btn" onClick=${onClose} aria-label="Fermer"><${Icon} name="x"/></button></header>
+      <div class="modal-head"><span class="sheet-grip" aria-hidden="true"></span><h2>${title}</h2><button class="icon-btn" onClick=${onClose} aria-label="Fermer"><${Icon} name="x"/></button></div>
       <div class="modal-body">${children}</div>
       ${footer ? html`<footer class="modal-foot">${footer}</footer>` : null}
     </div>

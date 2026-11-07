@@ -50,7 +50,7 @@ else{d.dataset.entree='visiteur';setTimeout(function(){if(!window.ENSAM_ENTREE)d
   --bg: #F3F6FA; --surface: #FFFFFF; --surface-2: #EDF1F6; --raised: #FFFFFF; --ink: #13203A; --ink-2: #3E4C65; --muted: #56637A; --line: #E2E8F0; --line-strong: #C9D2DE;
   --accent: #1670A8; --accent-ink: #FFFFFF; --accent-soft: #E3F0F9; --accent-hover: #12628F;
   --brass: #A65400; --brass-soft: #FDEDD8; --orange: #F39200; --navy: #1F3354;
-  --brass-on-ink: #F6A94A; --blue-text: #135F8F; --lvl1: #9C6B3E; --bad-ink: #FFFFFF;
+  --brass-on-ink: #F6A94A; --blue-text: #135F8F; --lvl1: #8C5E34; --bad-ink: #FFFFFF;
   --good: #1D7348; --good-soft: #E2F3E9; --warn: #9A5800; --warn-soft: #FBEFD9; --bad: #B0222E; --bad-soft: #FBE5E6;
   --s1: #1670A8; --s2: #F39200; --blue: #1670A8; --teal: #0F6F66; --indigo: #4A4FB5;
   --em-o: #F39200; --em-b: #1B7DBF; --em-n: #1F3354;
@@ -1568,6 +1568,15 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"], html[lang=
   .stars { gap: 0; margin-inline-start: calc((1.35rem + 2px - 44px) / 2); }
   .stars button { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; }
   :is(.rdv-tip .linkish, .linkish.m-quiet)::before { inset-inline: min(-4px, calc(50% - 22px)); }
+  /* La fiche d'une offre : en haut « Fermer » (40 px de dessin au doigt), « Partager », « Signaler » et « Gérer l'offre » ;
+     « Voir » au bout du résumé de l'entreprise ; « Signaler » et « Supprimer » de chaque question publique. L'accueil : le
+     texte de l'annonce et « Masquer l'annonce », « Plus tard » de l'invitation à parrainer. La zone invisible les porte à
+     44 px de haut et de large, dans les marges de leur rangée (6 px au moins entre deux outils de la fiche, 8 px entre
+     l'annonce et sa croix) */
+  .annonce-txt, .ent-resume .linkish { position: relative; }
+  :is(.modal-head .icon-btn, .od-outils > :is(.icon-btn, .cf-signal), .od-outils .menu-wrap > .icon-btn, .ent-resume .linkish, .comment > :is(.cf-signal.small, .icon-btn.small), .annonce-ligne > .icon-btn.small, .parrain-cta > .icon-btn.small)::before {
+    content: ""; position: absolute; inset: min(0px, calc(50% - 22px)); }
+  .annonce-txt::before { content: ""; position: absolute; inset-block: min(0px, calc(50% - 22px)); inset-inline: 0; }
 }
 
 /* Accueil : une prochaine étape, deux sections, des titres de section plus nets */
