@@ -162,9 +162,11 @@ test('la file : une notification « rappel_visite » part comme les autres, et u
 
 test('invitation aux notifications : seulement pour qui n’en a sur aucun appareil, dans les deux langues', () => {
   const sans = N.rendreRappel({ messages: 1 }, 'fr', SITE, TOKEN);
-  assert.doesNotMatch(sans.html, /Active tes notifications/);
+  assert.doesNotMatch(sans.html, /Activer les notifications/);
+  assert.ok(!sans.texte.includes('notifs=1'));
   const avec = N.rendreRappel({ messages: 1 }, 'fr', SITE, TOKEN, true);
-  assert.match(avec.html, /Active tes notifications/);
-  assert.ok(avec.html.includes('#profil/notifications')); assert.ok(avec.texte.includes('#profil/notifications'));
-  assert.match(N.rendreRappel({ messages: 1 }, 'ar', SITE, TOKEN, true).html, /فعّل إشعاراتك/);
+  assert.match(avec.html, /Activer les notifications/);
+  // ?notifs=1 : le site ouvre directement l'activation qui convient à ce téléphone
+  assert.ok(avec.html.includes('notifs=1')); assert.ok(avec.texte.includes('notifs=1'));
+  assert.match(N.rendreRappel({ messages: 1 }, 'ar', SITE, TOKEN, true).html, /تفعيل الإشعارات/);
 });

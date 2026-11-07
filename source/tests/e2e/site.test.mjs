@@ -4356,6 +4356,244 @@ test('administration : sur téléphone, la liste des membres se lit — le rôle
   }
 });
 
+// Santé des notifications (Vue d'ensemble) : lisible d'un coup d'œil, des totaux seulement, en arabe et de nuit aussi
+const santeDemo = page => page.evaluate(async () => {
+  const L = await import(new URL('logic.js', location.href).href);
+  const r = L.santeResume(await window.__demo.santeNotifs());
+  return { r, raisons: L.raisonsNotifs(r) };
+});
+const accordE2E = (n, un, plusieurs) => `${n} ${n > 1 ? plusieurs : un}`;
+test('administration : « Santé des notifications » — après « À traiter » : le cercle, les envoyées de la semaine et ce que les téléphones confirment, 7 jours en colonnes, pourquoi certaines n’arrivent pas, puis le détail replié', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin'); await s.aller('admin');
+  await s.page.waitForSelector('#adm-notifs .sn-haut');
+  const ordre = await s.page.evaluate(() => {
+    const p = document.querySelector('#adm-notifs'), a = document.querySelector('.callout.today'), k = document.querySelector('.kpis');
+    return [!!a && !!(a.compareDocumentPosition(p) & Node.DOCUMENT_POSITION_FOLLOWING), !!(p.compareDocumentPosition(k) & Node.DOCUMENT_POSITION_FOLLOWING)];
+  });
+  assert.deepEqual(ordre, [true, true], 'juste après « À traiter », avant les chiffres');
+  const { r, raisons } = await santeDemo(s.page);
+  const panneau = s.page.locator('#adm-notifs');
+  assert.equal(await panneau.locator('h2').innerText(), 'Santé des notifications');
+  // Ce que le cercle mesure : les membres qui ont activé les notifications (pas ceux qui les « reçoivent »)
+  assert.equal(await panneau.locator('.sn-portee .sn-phrase').innerText(), `${Math.round(r.part * 100)}% des membres ont activé les notifications`);
+  assert.match(await panneau.locator('.sn-portee').innerText(), new RegExp(`${r.avecTel} membres sur ${r.membres} ont au moins un téléphone abonné\\.`));
+  assert.equal(await panneau.locator('.sn-portee .anneau').getAttribute('aria-hidden'), 'true', 'la phrase dit déjà la part : le cercle est décoratif');
+  // Envoyées (acceptées par le service de notification), les vraies pertes, puis à part ceux qui n'avaient pas de téléphone
+  const sm = r.semaine, t = r.telephones;
+  assert.equal(await panneau.locator('.sn-grand').innerText(), String(sm.envoyees));
+  assert.equal(await panneau.locator('.sn-semaine .sn-phrase').innerText(), 'notifications envoyées cette semaine');
+  assert.equal(await panneau.locator('.sn-sous').innerText(), `${sm.perdues} perdues sur ${sm.envoyees + sm.perdues} · ${sm.sansTel} n’ont pas pu partir (membre sans téléphone)`);
+  assert.ok(sm.sansTel > sm.perdues, 'en démo, la plupart des « pas parties » sont des membres sans téléphone');
+  // À côté, ce que les téléphones confirment avoir affiché
+  assert.equal(await panneau.locator('.sn-affiche').innerText(), `${t.recus7j} téléphones sur ${t.servis7j} ont affiché une notification cette semaine.`);
+  assert.doesNotMatch(await panneau.innerText(), /reçues|reçoivent|Arrivées|arrivées|Rien ne s’est perdu/);
+  // Les 7 derniers jours : une colonne par jour (24 px au plus), la légende, et chaque jour en clair au survol
+  assert.deepEqual(await panneau.locator('.sn-legende').innerText().then(x => x.split(/\s+/)), ['Envoyées', 'Perdues']);
+  const cols = panneau.locator('.sn-col');
+  assert.equal(await cols.count(), 7);
+  const j6 = r.jours[6], dit = `${accordE2E(j6.envoyees, 'envoyée', 'envoyées')} · ${accordE2E(j6.perdues, 'perdue', 'perdues')}`;
+  assert.equal(await cols.nth(6).getAttribute('aria-label'), `${j6.long} : ${dit.replace(' · ', ', ')}`);
+  assert.equal(r.max, Math.max(...r.jours.map(j => j.envoyees + j.perdues)), 'sans téléphone : hors du graphique');
+  assert.equal(await panneau.locator('.sn-echelle').innerText(), String(r.max));
+  assert.ok((await panneau.locator('.sn-pile').evaluateAll(es => es.map(e => e.getBoundingClientRect().width))).every(w => w > 0 && w <= 24), 'des colonnes fines');
+  await cols.nth(6).hover();
+  const bulle = await cols.nth(6).locator('.sn-bulle').evaluate(e => { const b = e.getBoundingClientRect(); return { vue: getComputedStyle(e).display, texte: e.innerText, dedans: b.left >= 0 && b.right <= innerWidth }; });
+  assert.deepEqual(bulle, { vue: 'flex', texte: `${j6.long}\n${dit}`, dedans: true });
+  // Sans la couleur : les perdues sont hachurées (graphique et légende), les envoyées pleines
+  const motifs = await s.page.evaluate(() => ['.sn-seg.perdu', '.sn-pastille.perdu', '.sn-seg:not(.perdu)', '.sn-pastille:not(.perdu)'].map(q => getComputedStyle(document.querySelector(q)).backgroundImage));
+  assert.ok(motifs[0].startsWith('repeating-linear-gradient') && motifs[1].startsWith('repeating-linear-gradient'), motifs.join(' | '));
+  assert.deepEqual(motifs.slice(2), ['none', 'none']);
+  // Pourquoi : les phrases de la logique, dans le même ordre, avec les vrais nombres ; les vraies pertes d'abord,
+  // « sans téléphone » après (ce n'est pas une perte)
+  assert.equal(await panneau.locator('.sn-raisons h3').innerText(), 'Pourquoi certaines n’arrivent pas');
+  assert.deepEqual(await panneau.locator('.sn-r').evaluateAll(es => es.map(e => e.textContent.trim())), raisons.map(x => x.texte));
+  assert.deepEqual(raisons.map(x => x.cle), ['refusees', 'abandonnees', 'muets', 'parties', 'sans_tel', 'coupees', 'echecs']);
+  assert.match(raisons[0].texte, /^1 notification a été refusée par le service de notification du téléphone\. Après 3 refus de suite, le téléphone est retiré, sauf si tout ce service refuse/);
+  // Le détail, replié : rôles, téléphones, services, par jour, par type, fonctionnement
+  assert.equal(await panneau.locator('.sn-detail-corps').count(), 0);
+  await panneau.locator('.sn-detail summary').click();
+  // L'événement « toggle » de <details> arrive après le clic : on attend le détail avant de lire
+  await panneau.locator('.sn-detail-corps').waitFor();
+  assert.equal(await panneau.locator('.sn-detail summary').innerText(), 'Masquer le détail');
+  assert.deepEqual(await panneau.locator('.sn-roles .sn-roles-l').allInnerTexts(), ['Étudiants', 'Lauréats', 'Administration']);
+  assert.match(await panneau.locator('.sn-chiffres').innerText(), new RegExp(`Téléphones abonnés\\s+${t.total}\\s+Visés par un envoi en 7 jours\\s+${t.servis7j}\\s+`));
+  // Chaque service : abonnés, acceptent, refusent (d'après la dernière réponse en 7 jours)
+  const lignes = q => panneau.locator(`.sn-bloc${q} tbody tr`).evaluateAll(es => es.map(e => [...e.children].map(c => c.innerText.trim())));
+  assert.deepEqual(await lignes('.sn-services'), r.services.map(x => [x.nom, String(x.n), String(x.ok), String(x.refus)]));
+  assert.deepEqual((await lignes('.sn-services'))[0], ['Chrome et Android (Google)', '44', '41', '1']);
+  // Par jour et par type : « Sans tél. » à part ; « Par type » dit qu'il ne montre que les 12 plus fréquents
+  const jours = panneau.locator('.sn-bloc:has(h3:text-is("Par jour"))');
+  assert.deepEqual(await jours.locator('thead th').evaluateAll(es => es.map(e => (e.querySelector('[aria-hidden]') || e).textContent.trim())), ['Jour', 'Envoyées', 'Perdues', 'Sans tél.', 'Coupées']);
+  assert.equal(await jours.locator('thead th .sr-only').textContent(), 'Sans téléphone', 'en entier pour un lecteur d’écran');
+  assert.deepEqual(await lignes(':has(h3:text-is("Par jour"))'), r.jours.map(j => [j.long, ...[j.envoyees, j.perdues, j.sansTel, j.coupees].map(String)]));
+  assert.equal(await panneau.locator('.sn-types h3').innerText(), 'Par type (les 12 plus fréquents)');
+  const types = await lignes('.sn-types');
+  assert.equal(types.length, 12); assert.equal(types[0][0], 'Message');
+  // Les colonnes de « Par type » tombent juste sur la semaine
+  const col = i => types.reduce((a, x) => a + Number(x[i]), 0);
+  assert.deepEqual([col(1), col(2), col(3), col(4)], [sm.envoyees, sm.perdues, sm.sansTel, sm.coupees]);
+  assert.match(await panneau.locator('.sn-fonct').innerText(), /File d’attente\s+Vide : tout est parti\s+Tâche de chaque minute, dernier passage\s+Passage réussi · à l’instant\s+Fonction notifier, dernier appel\s+Réponse 200 · il y a 4 min\s+Dernière notification traitée\s+il y a 4 min/);
+  // Jamais un nom ni une adresse
+  const tout = await panneau.innerText();
+  for (const nom of ['Salma', 'Youssef', 'Amine', '@']) assert.ok(!tout.includes(nom), nom);
+  if (!(await s.page.evaluate(() => !!window.axe))) await s.page.addScriptTag({ content: AXE });
+  const v = await s.page.evaluate(async () => (await axe.run('#adm-notifs', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => `${x.id} : ${x.nodes.map(n => n.target.join(' ')).join(' ; ')}`));
+  assert.deepEqual(v, [], 'santé des notifications : axe');
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('administration : « Santé des notifications » — « Actualiser » au clavier garde le focus pendant la relecture, ignore un second appui, et annonce la fin', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Admin'); await s.aller('admin');
+  await s.page.waitForSelector('#adm-notifs .sn-haut');
+  await s.page.locator('#adm-notifs .sn-detail summary').click();
+  await s.page.locator('#adm-notifs .sn-detail-corps').waitFor();
+  // Une relecture lente (600 ms), comptée
+  await s.page.evaluate(() => {
+    window.__lectures = 0; const d = window.__demo, v = d.santeNotifs.bind(d);
+    d.santeNotifs = async () => { window.__lectures++; await new Promise(ok => setTimeout(ok, 600)); return v(); };
+  });
+  const bouton = s.page.locator('#adm-notifs .sn-relire'), annonce = s.page.locator('#adm-notifs .sn-annonce');
+  assert.equal(await annonce.getAttribute('aria-live'), 'polite');
+  assert.equal(await annonce.textContent(), '');
+  await bouton.focus(); await s.page.keyboard.press('Enter');
+  await s.page.waitForTimeout(150);
+  const pendant = await s.page.evaluate(() => { const b = document.querySelector('#adm-notifs .sn-relire'); return { focus: document.activeElement === b, aria: b.getAttribute('aria-disabled'), desactive: b.disabled, texte: b.textContent }; });
+  assert.deepEqual(pendant, { focus: true, aria: 'true', desactive: false, texte: 'Actualisation…' }, 'le bouton reste là, avec le focus');
+  // Pendant la lecture : Entrée, puis un clic (forcé : Playwright attendrait sinon la fin d'aria-disabled)
+  await s.page.keyboard.press('Enter'); await bouton.click({ force: true });
+  await s.page.waitForFunction(() => document.querySelector('#adm-notifs .sn-relire')?.textContent === 'Actualiser');
+  const apres = await s.page.evaluate(() => { const b = document.querySelector('#adm-notifs .sn-relire'); return { focus: document.activeElement === b, aria: b.getAttribute('aria-disabled'), lectures: window.__lectures }; });
+  assert.deepEqual(apres, { focus: true, aria: null, lectures: 1 }, 'une seule relecture, le focus toujours sur le bouton');
+  assert.equal(await annonce.textContent(), 'Chiffres actualisés.');
+  assert.equal(await s.page.locator('#adm-notifs .sn-detail-corps').count(), 1, 'le détail reste ouvert');
+  // Une deuxième fois : l'annonce se vide pendant la lecture, puis revient (un lecteur d'écran la redit)
+  await s.page.keyboard.press('Enter'); await s.page.waitForTimeout(150);
+  assert.equal(await annonce.textContent(), '');
+  await s.page.waitForFunction(() => document.querySelector('#adm-notifs .sn-annonce')?.textContent === 'Chiffres actualisés.');
+  assert.equal(await s.page.evaluate(() => window.__lectures), 2);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('administration : « Santé des notifications » quand la plateforme est en cause — tout un service refuse, aucun téléphone ne confirme, pg_net sans réponse depuis 6 h', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Admin');
+  await s.page.evaluate(() => {
+    const d = window.__demo, v = d.santeNotifs.bind(d);
+    d.santeNotifs = async () => {
+      const x = await v();
+      // Les 13 iPhone refusent tous (12 membres), les autres acceptent ; personne ne confirme rien ; pg_net est vide
+      x.services.apple = { n: 13, ok: 0, refus: 13, refus_membres: 12 };
+      x.telephones = { ...x.telephones, recus_24h: 0, recus_7j: 0, muets: x.telephones.servis_7j };
+      x.http = { vide: true };
+      return x;
+    };
+  });
+  await s.aller('admin'); await s.page.waitForSelector('#adm-notifs .sn-haut');
+  const panneau = s.page.locator('#adm-notifs');
+  const raisons = await panneau.locator('.sn-r').evaluateAll(es => es.map(e => [e.dataset.cle, e.className.replace('sn-r t-', '')]));
+  assert.deepEqual(raisons.slice(0, 2), [['masse_apple', 'bad'], ['aucune_recue', 'bad']], 'la clé de la plateforme, puis les affichages manquants, en tête');
+  assert.ok(!raisons.some(([c]) => c === 'muets' || c === 'rien' || c === 'http'), raisons.join(' '));
+  assert.equal(await panneau.locator('.sn-r[data-cle="masse_apple"]').innerText(), 'Le service « iPhone et Mac (Apple) » refuse les notifications de 13 téléphones et n’en accepte aucun : la clé de la plateforme est en cause, pas les membres. Regarde les Logs de la fonction notifier (Edge Functions > notifier > Logs).');
+  assert.match(await panneau.locator('.sn-r[data-cle="aucune_recue"]').innerText(), /^Les services de notification ont accepté \d+ envois cette semaine, mais aucun téléphone ne confirme les avoir affichés/);
+  assert.equal(await panneau.locator('.sn-affiche').innerText(), 'Aucun téléphone n’a confirmé afficher une notification cette semaine.');
+  await panneau.locator('.sn-detail summary').click();
+  await panneau.locator('.sn-detail-corps').waitFor();
+  assert.deepEqual(await panneau.locator('.sn-services tbody tr[data-cle="apple"] > *').allInnerTexts(), ['iPhone et Mac (Apple)', '13', '0', '13']);
+  assert.match(await panneau.locator('.sn-fonct').innerText(), /Fonction notifier, dernier appel\s+Aucun appel ces 6 dernières heures \(pg_net n’en garde pas plus\)\s+Dernière notification traitée\s+il y a 4 min/);
+  assert.doesNotMatch(await panneau.innerText(), /Pas encore appelée/);
+  if (!(await s.page.evaluate(() => !!window.axe))) await s.page.addScriptTag({ content: AXE });
+  const v = await s.page.evaluate(async () => (await axe.run('#adm-notifs', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => `${x.id} : ${x.nodes.map(n => n.target.join(' ')).join(' ; ')}`));
+  assert.deepEqual(v, [], 'santé des notifications : axe');
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('administration : « Santé des notifications » de nuit, en arabe, à 360 px — couleurs de nuit, rien en français, rien qui déborde ; chaque phrase possible a sa traduction', async () => {
+  const s = await ouvrir({ largeur: 360, langue: 'ar', theme: 'dark' });
+  await s.comme('Admin'); await s.aller('admin');
+  await s.page.waitForSelector('#adm-notifs .sn-haut');
+  const couleurs = await s.page.evaluate(() => ['.sn-seg:not(.perdu)', '.sn-seg.perdu'].map(q => getComputedStyle(document.querySelector(q)).backgroundColor));
+  assert.deepEqual(couleurs, ['rgb(58, 147, 207)', 'rgb(217, 85, 95)'], 'les couleurs de nuit du graphique');
+  assert.match(await s.page.evaluate(() => getComputedStyle(document.querySelector('.sn-seg.perdu')).backgroundImage), /^repeating-linear-gradient/, 'hachurées de nuit aussi');
+  assert.match(await s.page.locator('#adm-notifs .sn-portee .sn-phrase').innerText(), /^⁦?\d+%⁩? من الأعضاء فعّلوا الإشعارات$/);
+  await s.page.locator('#adm-notifs .sn-detail summary').click();
+  await s.page.locator('#adm-notifs .sn-detail-corps').waitFor();
+  await s.page.locator('#adm-notifs .sn-col').first().hover();
+  assert.equal(await s.debordement(), 0);
+  const oublis = (await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x));
+  assert.deepEqual(oublis, [], 'rien en français');
+  // Toutes les phrases que le panneau peut dire (1, 2, 3 à 10, 11 et plus ; minutes, heures, jours ; chaque panne)
+  const restes = await s.page.evaluate(async () => {
+    const L = await import(new URL('logic.js', location.href).href), I = await import(new URL('i18n.js', location.href).href);
+    const textes = new Set(), il = s => new Date(Date.now() - s * 1000).toISOString();
+    const acc = (n, un, pl) => `${n} ${n > 1 ? pl : un}`;
+    for (const n of [1, 2, 3, 11, 24]) {
+      const jours = [{ jour: '2026-10-26', envoyees: n, parties: n, refusees: n, trop_longues: n, echecs: n, sans_tel: n, coupees: n, abandonnees: n, expirees: n, jetees: n }];
+      const services = Object.fromEntries(L.SERVICES_PUSH.map(([k]) => [k, { n: n + 3, ok: 0, refus: n + 3, refus_membres: n + 3 }]));
+      for (const [cron, http, age, recus] of [[{ existe: true, at: il(n * 700), statut: 'succeeded' }, { code: 400 + n, at: il(60) }, n * 400, n],
+        [{ existe: false }, { code: 401, at: il(60) }, n * 4000, 0], [{ existe: true, at: il(60), statut: 'failed' }, { code: 404, at: il(60) }, n * 90000, n],
+        [{ existe: true, at: null }, { code: null, at: il(60), delai: true }, 400, 0], [{ existe: true, at: il(n * 86400), statut: 'succeeded' }, null, 600, n]]) {
+        const r = L.santeResume({ roles: [{ role: 'etudiant', membres: n + 3, avec_tel: n }], telephones: { total: n + 3, servis_7j: n + 3, recus_7j: recus, muets: n }, services, jours, file: { n, age_s: age }, cron, http });
+        for (const x of L.raisonsNotifs(r)) textes.add(x.texte);
+        textes.add(`${L.pct(r.part)} des membres ont activé les notifications`);
+        textes.add(`${acc(n, 'membre', 'membres')} sur ${n + 3} ${n > 1 ? 'ont' : 'a'} au moins un téléphone abonné.`);
+        textes.add(`${acc(n, 'perdue', 'perdues')} sur ${n * 2}`);
+        textes.add(`${n} ${n > 1 ? 'n’ont' : 'n’a'} pas pu partir (membre sans téléphone)`);
+        textes.add(`${acc(n, 'téléphone', 'téléphones')} sur ${n + 3} ${n > 1 ? 'ont' : 'a'} affiché une notification cette semaine.`);
+        textes.add(`26 octobre : ${acc(n, 'envoyée', 'envoyées')}, ${acc(n, 'perdue', 'perdues')}`);
+        textes.add(`${acc(n, 'envoyée', 'envoyées')} · ${acc(n, 'perdue', 'perdues')}`);
+        textes.add(`${n} en attente · la plus ancienne depuis ${L.dureeAttente(age)}`);
+      }
+      // Sans téléphone seulement, des téléphones muets seulement : les autres phrases calmes
+      for (const t of [{ total: 4, servis_7j: 4, recus_7j: 4 }, { total: 4, servis_7j: 4, recus_7j: 2, muets: n }]) {
+        for (const x of L.raisonsNotifs(L.santeResume({ jours: [{ jour: '2026-10-26', envoyees: n, sans_tel: n }], telephones: t }))) textes.add(x.texte);
+      }
+    }
+    for (const x of [...Object.values(L.NOMS_NOTIF), ...Object.values(L.NOMS_CATEGORIES_NOTIF), ...L.SERVICES_PUSH.map(x => x[1]), 'Réponse 200', 'Réponse 503',
+      'Aucun téléphone n’a confirmé afficher une notification cette semaine.', 'Aucune notification envoyée ces 7 derniers jours.', 'Aucune notification cette semaine', 'aucune perdue',
+      'Illisible ici (pg_net absent ou fermé à la lecture)', 'Aucun appel ces 6 dernières heures (pg_net n’en garde pas plus)', 'Dernière notification traitée', 'Aucune ces 7 derniers jours',
+      'Par type', `Par type (les ${L.TYPES_MAX_SN} plus fréquents)`, 'Chiffres actualisés.', 'Actualisation…', 'Réessayer', 'notification envoyée cette semaine', 'Cette semaine']) textes.add(x);
+    const technique = /notifier|Supabase|Edge Functions|Details|Logs|Postgres|Database|Extensions|Cron|pg_cron|pg_net|Verify JWT|supabase\/mise-a-jour\.sql|Chrome|Android|Google|iPhone|Mac|Apple|Firefox|Mozilla|Edge|Windows|ENSAM/g;
+    return [...textes].map(x => [x, I.t(x)]).filter(([, a]) => /[A-Za-zÀ-ÿ]{2}/.test(a.replace(technique, '')));
+  });
+  assert.deepEqual(restes, [], 'chaque phrase a sa traduction');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('administration : « Santé des notifications » avant la mise à jour du serveur, une phrase calme ; hors ligne, « Réessayer » relit, puis le focus passe à « Actualiser »', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Admin');
+  await s.page.evaluate(() => { const d = window.__demo; d.__sante = d.santeNotifs; d.santeNotifs = async () => null; });
+  await s.aller('admin'); await s.page.waitForSelector('#adm-notifs .sn-absent');
+  assert.equal(await s.page.locator('#adm-notifs .sn-absent').innerText(), 'Ce panneau apparaît après la mise à jour du serveur.');
+  assert.equal(await s.page.locator('#adm-notifs button').count(), 0, 'rien à toucher');
+  await s.aller('accueil');
+  await s.page.evaluate(() => { window.__demo.santeNotifs = async () => { throw new Error('Pas de réseau pour l’instant. Réessaie dans un instant.'); }; });
+  await s.aller('admin'); await s.page.waitForSelector('#adm-notifs .sn-reessayer');
+  assert.equal(await s.page.locator('#adm-notifs .sn-erreur').innerText(), 'Pas de réseau pour l’instant. Réessaie dans un instant.');
+  // Encore hors ligne : « Réessayer » reste là, et l'échec est annoncé
+  await s.page.locator('#adm-notifs .sn-reessayer').focus(); await s.page.keyboard.press('Enter');
+  await s.page.waitForFunction(() => document.querySelector('#adm-notifs .sn-annonce')?.textContent === 'Pas de réseau pour l’instant. Réessaie dans un instant.');
+  assert.equal(await s.page.evaluate(() => document.activeElement?.classList.contains('sn-reessayer')), true);
+  // De retour : le panneau, et le focus sur « Actualiser » (« Réessayer » a disparu avec l'erreur)
+  await s.page.evaluate(() => { const d = window.__demo; d.santeNotifs = d.__sante; });
+  await s.page.keyboard.press('Enter');
+  await s.page.waitForSelector('#adm-notifs .sn-haut');
+  assert.equal(await s.page.locator('#adm-notifs .sn-col').count(), 7);
+  await s.page.waitForFunction(() => document.activeElement?.classList.contains('sn-relire'));
+  assert.equal(await s.page.locator('#adm-notifs .sn-annonce').textContent(), 'Chiffres actualisés.');
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('socle : la coche d’un café où l’on va déjà est posée (elle ne se rejoue pas à chaque visite), elle se dessine après « Je viens » ; sur ordinateur, les villes à suivre en colonnes', async () => {
   const s = await ouvrir({ largeur: 390, mouvement: true });
   await s.comme('Salma'); await s.aller('reseau/groupes');

@@ -34,7 +34,7 @@ const ROUTES = {
 };
 
 // Tag attendu par type, sans identifiant dans data (file d'une base plus ancienne) : le type lui-même, comme avant
-// (le chantier serveur y ajoute ensuite l'id de la ligne de file, sauf pour TAGS_FIXES)
+// (depuis la file, jobPush y ajoute l'id de sa ligne, sauf pour les tags fixes et ce qui remplace : voir plus bas)
 const TAGS = {
   mentorat_demande: 'mentorat_demande', mentorat_accepte: 'mentorat_accepte', mentorat_deplace: 'mentorat_deplace', mentorat_annule: 'mentorat_annule',
   merci: 'merci', candidature: 'candidature', candidature_statut: 'candidature_statut', recrutement_a_confirmer: 'recrutement_a_confirmer',
@@ -51,6 +51,10 @@ test('chaque type de notification existe en français et en arabe', () => {
       assert.ok(n, `${kind} ${langue}`);
       assert.equal(n.url, SITE + '#' + ROUTES[kind], kind);
       assert.equal(n.tag, TAGS[kind], kind);
+      // Envoyée depuis la file (identifiant de sa ligne), sans identifiant d'élément dans data : une notification par
+      // événement, la suivante ne la remplace pas ; l'essai remplace le précédent, la nouvelle date d'un rendez-vous aussi
+      // (l'ancienne ne doit pas rester affichée), le nouveau parrain et le filleul aussi (tags fixes, TAGS_FIXES)
+      assert.equal(N.texteNotif(kind, data, langue, SITE, 7).tag, ['test', 'mentorat_deplace', 'filleul', 'parrain'].includes(kind) ? kind : `${kind}-7`, kind);
       assert.ok(n.title.length > 3 && n.body.length > 3, kind);
       assert.doesNotMatch(n.title + n.body, /undefined|null|NaN|\$\{/, kind);
       if (langue === 'ar') assert.match(n.title + n.body, /[؀-ۿ]/, kind + ' en arabe');
