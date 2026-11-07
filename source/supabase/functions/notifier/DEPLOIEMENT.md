@@ -4,7 +4,7 @@ Notifications sur le téléphone (Web Push) et résumé hebdomadaire par email (
 
 ## 0. Dans quel ordre
 1. **D'abord fusionner, puis régénérer** : une fois la branche fusionnée avec `main`, `sh build.sh` refait `supabase/mise-a-jour.sql` à partir du `schema.sql` fusionné. Ne jamais lancer seul le `mise-a-jour.sql` d'une branche pas encore fusionnée sur une base qui a déjà reçu celui de `main` : `main` a changé des vues (`avis_publics`, `entretiens_publics`, `profils`) et l'ancien script s'arrête sur `cannot drop columns from view`. Un ancien script relancé après le bon remettrait aussi d'anciennes versions des fonctions : toujours le dernier, régénéré.
-2. **Ensuite la fonction** (partie 1) : la nouvelle version marche aussi avec une base pas encore mise à jour (elle retire alors les téléphones partis comme avant, ce qu'elle n'a pas eu le temps d'essayer est repris après 2 minutes comme avant, et ses Logs le disent).
+2. **Ensuite la fonction** (partie 1) : la nouvelle version marche aussi avec une base pas encore mise à jour (elle retire alors les téléphones partis comme avant, rend elle-même à la file ce qu'elle n'a pas eu le temps d'essayer, sans essai compté, comme `push_rendues` le fera ensuite, et ses Logs le disent).
 3. **Puis la base** : Supabase > SQL Editor > New query, coller tout le `supabase/mise-a-jour.sql` régénéré, **Run**. Relançable sans risque.
 4. **Puis le site** : il marche avec l'ancienne base comme avec la nouvelle (sans `abonner_push_etat`, il s'abonne par `abonner_push` ; sans `admin_sante_notifs`, le panneau dit « Ce panneau apparaît après la mise à jour du serveur. »).
 5. **Enfin les contrôles** (partie 5).

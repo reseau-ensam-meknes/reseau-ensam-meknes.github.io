@@ -2183,12 +2183,23 @@ async function confirmerPush(env: Env, ids: number[]): Promise<void> {
   catch (e) { console.error('notifier : confirmation des notifications impossible', e instanceof Error ? e.message : String(e)); }
 }
 
-// Rend à la file ce qui a été pris sans être essayé (push_rendues). Une base pas encore mise à jour : repris après
-// 2 minutes, comme avant.
+// Rend à la file ce qui a été pris sans être essayé (push_rendues), sans l'essai que prendre_push lui a compté. Une base
+// pas encore mise à jour (sans push_rendues) : rendues ici, par la table, pareil (sinon chaque reprise coûterait un essai,
+// et le troisième passage les jetterait sans trace). prendre_push ne prend que sous 3 essais et compte le sien : 1, 2 ou 3.
 async function rendrePush(env: Env, ids: number[]): Promise<void> {
-  if (!ids.length) return;
-  try { await rpc(env, 'push_rendues', { p_ids: ids }); }
-  catch (e) { console.error('notifier : notifications non rendues à la file (push_rendues ; base à mettre à jour ?)', e instanceof Error ? e.message : String(e)); }
+  const l = ids.filter(Number.isSafeInteger);
+  if (!l.length) return;
+  try { await rpc(env, 'push_rendues', { p_ids: l }); return; }
+  catch (e) { console.error('notifier : push_rendues absente (base à mettre à jour ?) : notifications rendues par la table', e instanceof Error ? e.message : String(e)); }
+  try {
+    for (let i = 0; i < l.length; i += MORCEAU) {
+      for (const k of [1, 2, 3]) {
+        await db(env, `push_queue?id=in.(${l.slice(i, i + MORCEAU).join(',')})&essais=eq.${k}&pris_at=not.is.null`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ pris_at: null, essais: k - 1 }),
+        });
+      }
+    }
+  } catch (e) { console.error('notifier : notifications non rendues à la file', e instanceof Error ? e.message : String(e)); }
 }
 
 // Journal des notifications (push_journal) : ne bloque jamais l'envoi

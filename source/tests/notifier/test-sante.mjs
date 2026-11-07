@@ -318,15 +318,45 @@ test('45 s : un tour ne commence pas à moins de 10 s de la fin ; ce qui a été
   assert.deepEqual(b.tables.push_queue.map(x => [x.essais, !!x.pris_at]), [[0, false]], 'rendue : aucun essai compté, libre tout de suite');
   assert.deepEqual(await corpsDe(await appel({ job: 'push' })), { sent: 1, failed: 0, removed: 0 }, 'repartie sans attendre 2 minutes');
   assert.deepEqual(journal(b).filter(([k]) => k === 'merci').length, 11, 'chacune une fois au journal, à son envoi');
-  // Une base sans push_rendues : reprise après 2 minutes, comme avant, et les Logs le disent
+  // Une base sans push_rendues : rendue quand même, par la table, sans l'essai compté, et les Logs le disent
   b.absentes.add('push_rendues');
   for (let i = 0; i < 4; i++) enFile(b, u, 'merci', { nom: 'S' + i });
   decalage = 0;
   Date.now = () => vrai() + decalage;
   b.surPush = () => { decalage += 20_000; };
   try { await appel({ job: 'push' }); } finally { Date.now = vrai; b.surPush = null; }
-  assert.deepEqual(b.tables.push_queue.map(x => [x.essais, !!x.pris_at]), [[1, true]]);
+  assert.deepEqual(b.tables.push_queue.map(x => [x.essais, !!x.pris_at]), [[0, false]], 'avant : [1, true], un essai perdu à chaque reprise');
   assert.ok(erreurs.some(e => e.includes('push_rendues')));
+});
+
+test('nouvelle fonction sur une base pas encore mise à jour (sans push_rendues ni push_resultats) : un téléphone lent reçoit tout, une fois, rien ne se perd', async () => {
+  const b = nouveauBanc();
+  b.absentes.add('push_rendues');
+  b.absentes.add('push_resultats');
+  const u = uid(84);
+  b.tables.profiles.push(profil(u));
+  b.abonner(u, 1);
+  for (let i = 0; i < 12; i++) enFile(b, u, 'merci', { nom: 'L' + i });
+  const vrai = Date.now;
+  let decalage = 0;
+  Date.now = () => vrai() + decalage;
+  b.surPush = () => { decalage += 20_000; };   // son service répond en 20 s : trois envois par appel
+  const bilans = [];
+  try {
+    for (let i = 0; i < 8 && b.tables.push_queue.length; i++) {
+      decalage = 0;
+      bilans.push(await corpsDe(await appel({ job: 'push' })));
+      // L'ancienne base, chaque minute (relancer_push) : 3 essais comptés et pris depuis 2 minutes, la ligne est jetée sans trace
+      vieillir(b, 3);
+      b.tables.push_queue = b.tables.push_queue.filter(x => !((x.essais ?? 0) >= 3 && x.pris_at && Date.parse(x.pris_at) < Date.now() - 120e3));
+    }
+  } finally { Date.now = vrai; b.surPush = null; }
+  assert.deepEqual(b.push.map(x => x.message.body), Array.from({ length: 12 }, (_, i) => `L${i} te remercie pour ton aide.`),
+    'avant : 9 reçues, les 3 dernières jetées au troisième passage (chaque reprise coûtait un essai)');
+  assert.deepEqual(bilans, [{ sent: 3, failed: 0, removed: 0, retry: 9 }, { sent: 3, failed: 0, removed: 0, retry: 6 },
+    { sent: 3, failed: 0, removed: 0, retry: 3 }, { sent: 3, failed: 0, removed: 0 }]);
+  assert.deepEqual(b.tables.push_queue, []);
+  assert.deepEqual(journal(b), Array(12).fill(['merci', 201]), 'chacune une fois au journal');
 });
 
 test('« Tester » : le détail de chaque téléphone, au journal sous « test » ; en urgence haute', async () => {
