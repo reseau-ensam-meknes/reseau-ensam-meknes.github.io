@@ -539,6 +539,8 @@ function magasinMembre() {
 // ajoutent en fin de <head>), qui part une fois le complet appliqué : le résultat est exactement celui d'avant. Sans adresse
 // (démo publiée telle quelle) : tout est déjà dans la page. Un échec (réseau) : l'application n'est pas affichée sans son
 // style, la page se recharge dès que le réseau répond (chargerApp, comme un module qui n'a pas pu se charger).
+// Appliqué, son adresse (avec son empreinte) est notée : le navigateur le garde, un membre le précharge dès <head> (page.html).
+const CSS_VU = 'ensam-css';
 let cssP = null;
 export function chargerCss() {
   const href = window.ENSAM_CSS;
@@ -546,7 +548,7 @@ export function chargerCss() {
   return cssP ||= new Promise((ok, ko) => {
     const l = document.createElement('link'), ici = document.getElementById('css-entree');
     l.rel = 'stylesheet'; l.href = href; l.dataset.css = 'site';
-    l.onload = () => { ici?.remove(); ok(); };
+    l.onload = () => { ici?.remove(); ecrire(CSS_VU, href); ok(); };
     l.onerror = () => { l.remove(); cssP = null; ko(new TypeError('Failed to fetch')); };
     if (ici) ici.after(l); else document.head.appendChild(l);
   });
@@ -554,12 +556,14 @@ export function chargerCss() {
 export const cssPret = () => chargerCss().catch(() => new Promise(() => {}));
 
 let appLancee = false, appEchec = false, relance = false, connecte = false;
-function chargerApp() {
+// cssEnsuite : un membre dont l'appareil n'a pas encore ce CSS (page.html, ENSAM_CSS_APRES). Il part quand app.js le demande
+// (cssPret), tout le code arrivé : en 3G, il ne prend plus le réseau au code qu'attendent les données, lues pendant qu'il arrive.
+function chargerApp({ cssEnsuite = false } = {}) {
   if (appLancee) return; appLancee = true;
   if (getLang() === 'ar') chargerAR().catch(() => {});
   precharger(window.ENSAM_MODULES);
-  const css = chargerCss(); css.catch(() => {});
-  import('./app.js').then(() => css).catch(e => {
+  const css = cssEnsuite ? null : chargerCss(); css?.catch(() => {});
+  import('./app.js').then(() => css || chargerCss()).catch(e => {
     // Un service worker garde peut-être une version qui ne colle plus : on le remet à neuf (une fois par visite)
     if (/^(SyntaxError|TypeError|ReferenceError)$/.test(e?.name) && navigator.serviceWorker?.controller) window.ensamReprise?.();
     // Sans service worker : un membre connecté (ou la démo) attend le réseau, puis la page se recharge ;
@@ -617,7 +621,7 @@ if (!window.ENSAM_ENTREE) {
     // Démo, membre déjà connecté, ou page publique : l'application tout de suite (la forme de l'accueil, ou le logo, patiente)
     delete d.dataset.entree;
     if (enLigne && jeton) magasinMembre();
-    chargerApp();
+    chargerApp({ cssEnsuite: !!window.ENSAM_CSS_APRES });
     chargerScene().catch(() => {});
   } else {
     d.dataset.entree = 'visiteur';
