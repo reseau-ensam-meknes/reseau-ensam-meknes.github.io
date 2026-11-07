@@ -1323,3 +1323,85 @@ test('données en deux temps (en ligne) : l’administration voit tout dans sa c
   assert.deepEqual(m.erreurs, []);
   await m.ctx.close();
 });
+
+// ---------------------------------------------------------------------------
+// Plan · vitesse et ambiance, revue : une lecture du second temps ratée (réseau coupé juste après l'accueil) est dite, puis
+// relue au retour du réseau ; ouvert depuis la copie de l'appareil, le Réseau ne montre plus « Pas encore de message » sur
+// des groupes qui en ont, ni Mes données un export incomplet ; la photo qu'on vient de choisir revient au rechargement.
+// ---------------------------------------------------------------------------
+const PAS_DE_RESEAU_PAGE = 'Pas de réseau pour l’instant : cette page s’affiche dès qu’il revient.';
+const ONGLETS_RESEAU = '[role="tablist"][aria-label="Rubriques du réseau"] [role="tab"]';
+
+test('données en deux temps (en ligne) : réseau coupé juste après l’accueil, les Groupes le disent (jamais « Pas encore de message ») ; le réseau revenu, leurs messages arrivent', async () => {
+  const [groupe] = autoGroups(ETUDIANT);
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.groupe_messages = [{ id: 'a1b2c3d4-0000-4000-8000-000000000002', groupe, author_id: AUTEUR, body: 'Rendez-vous jeudi à la bibliothèque', created_at: new Date().toISOString() }];
+  let couper = true, coupees = 0;
+  const m = await connecte({ attendre: ACCUEIL, avant: ctx => ctx.route(/\/sb\/rest\/v1\/groupe_messages/, r => (couper ? (coupees++, r.abort('internetdisconnected')) : r.continue())) });
+  // La lecture du second temps et son nouvel essai échouent : l'accueil n'en sait rien
+  for (let i = 0; i < 60 && coupees < 2; i++) await m.page.waitForTimeout(100);
+  assert.equal(coupees, 2);
+  assert.ok(await m.page.isVisible(ACCUEIL));
+  // Le Réseau (son onglet Groupes) le dit, ses autres onglets restent là ; l'écran relit aussitôt (encore coupé)
+  await m.page.evaluate(() => { location.hash = '#reseau'; });
+  await m.page.getByText(PAS_DE_RESEAU_PAGE).waitFor({ timeout: 10000 });
+  assert.equal(await m.page.locator('.gcard').count(), 0, 'aucune carte de groupe sans son dernier message');
+  assert.equal(await m.page.getByText('Pas encore de message. Dis bonjour !').count(), 0);
+  assert.equal(await m.page.locator('.page-attente').count(), 0, 'la page du Réseau est là');
+  assert.ok((await m.page.locator(ONGLETS_RESEAU).count()) >= 2, 'ses autres onglets restent ouverts');
+  for (let i = 0; i < 60 && coupees < 4; i++) await m.page.waitForTimeout(100);
+  assert.equal(coupees, 4, 'relue une fois en arrivant sur l’écran');
+  // Le réseau revient (au plus une lecture toutes les 5 s) : relue, l'écran se redessine avec le dernier message
+  await m.page.waitForTimeout(4000);
+  couper = false;
+  await m.page.evaluate(() => dispatchEvent(new Event('online')));
+  await m.page.waitForSelector('.rangee-groupes .gcard-last', { timeout: 10000 });
+  assert.match(await m.page.locator('.rangee-groupes .gcard-last').first().innerText(), /Rendez-vous jeudi à la bibliothèque/);
+  assert.equal(await m.page.getByText(PAS_DE_RESEAU_PAGE).count(), 0);
+  assert.equal(coupees, 4);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('membre revenu sur le Réseau (copie de l’appareil) : les Groupes attendent la mise à jour, jamais « Pas encore de message » ; sans réseau, eux et Mes données le disent', async () => {
+  const [groupe] = autoGroups(ETUDIANT);
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.groupe_messages = [{ id: 'a1b2c3d4-0000-4000-8000-000000000003', groupe, author_id: AUTEUR, body: 'Qui vient au café samedi ?', created_at: new Date().toISOString() }];
+  let mode = 'passer'; const tenus = [];
+  const m = await connecte({ attendre: ACCUEIL, avant: ctx => ctx.route(/\/sb\/rest\/v1\//, r => (mode === 'tenir' ? tenus.push(r) : mode === 'couper' ? r.abort('internetdisconnected') : r.continue())) });
+  let c = null;
+  for (let i = 0; i < 40 && !c; i++) { await m.page.waitForTimeout(250); c = await lireCacheMembre(m.page); }
+  assert.ok(c, 'une copie de l’accueil est gardée');
+  assert.deepEqual(c.data.groupe_messages, [], 'la copie ne garde pas les messages des groupes');
+  // Rouvert sur le Réseau, la base ne répond pas encore : la page et ses onglets tout de suite, la liste attend la mise à jour
+  mode = 'tenir';
+  await m.page.evaluate(() => { location.hash = '#reseau'; });
+  await m.page.reload();
+  await m.page.waitForSelector(ONGLETS_RESEAU, { timeout: 5000 });
+  await m.page.waitForSelector('[aria-busy="true"] > .sq-liste');
+  assert.equal(await m.page.locator('.page-attente').count(), 0, 'les onglets du Réseau restent ouverts');
+  assert.equal(await m.page.locator('.gcard').count(), 0);
+  assert.equal(await m.page.getByText('Pas encore de message. Dis bonjour !').count(), 0);
+  assert.ok(tenus.length > 0, 'la base n’a pas encore répondu');
+  mode = 'passer'; for (const r of tenus.splice(0)) await r.continue();
+  await m.page.waitForSelector('.rangee-groupes .gcard-last', { timeout: 10000 });
+  assert.match(await m.page.locator('.rangee-groupes .gcard-last').first().innerText(), /Qui vient au café samedi \?/);
+  // Rouvert sans réseau : les Groupes le disent (onglets toujours là), Mes données aussi (son export serait incomplet)
+  mode = 'couper';
+  await m.page.reload();
+  await m.page.getByText(PAS_DE_RESEAU_PAGE).waitFor({ timeout: 10000 });
+  assert.ok((await m.page.locator(ONGLETS_RESEAU).count()) >= 2);
+  assert.equal(await m.page.locator('.gcard').count(), 0);
+  await m.page.evaluate(() => { location.hash = '#profil/donnees'; });
+  await m.page.locator('#profil-donnees').getByText(PAS_DE_RESEAU_PAGE).waitFor({ timeout: 5000 });
+  assert.equal(await m.page.locator('#md-export').count(), 0, 'pas d’export sans les messages des groupes');
+  // Le réseau revient : tout arrive, l'export est là, les Groupes ont leur dernier message
+  mode = 'passer';
+  await m.page.evaluate(() => dispatchEvent(new Event('online')));
+  await m.page.waitForSelector('#md-export', { timeout: 15000 });
+  await m.page.evaluate(() => { location.hash = '#reseau'; });
+  await m.page.waitForSelector('.rangee-groupes .gcard-last', { timeout: 5000 });
+  assert.match(await m.page.locator('.rangee-groupes .gcard-last').first().innerText(), /Qui vient au café samedi \?/);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});

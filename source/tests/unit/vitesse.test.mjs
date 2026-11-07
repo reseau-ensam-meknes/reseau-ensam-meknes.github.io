@@ -278,9 +278,11 @@ test('données en deux temps : seuls les écrans qui attendent lisent les tables
     vus += lues.length;
   }
   assert.ok(vus >= 6, 'les lectures connues sont bien trouvées');
-  assert.match(lireSrc('groupes.js'), /store\.attendre\(\['groupe_messages'\]\)/);
+  assert.match(lireSrc('groupes.js'), /store\.etatTables\(\['groupe_messages'\]\)/);
   assert.match(lireSrc('app.js'), /store\.ecranEnAttente\(page, route\.sub\)/);
-  assert.match(lireSrc('app.js'), /onglet === 'donnees' && store\.attendre\(ENSUITE\)/);
+  // Lecture ratée : l'écran de l'application le dit (« Pas de réseau »), Mes données aussi
+  assert.match(lireSrc('app.js'), /PageEnChargement\} horsLigne=\$\{store\.horsLigne \|\| attente === 'reseau'\}/);
+  assert.match(lireSrc('app.js'), /onglet === 'donnees' \? store\.etatTables\(ENSUITE\) : ''/);
 });
 
 // Un faux client Supabase dont les lectures des tables d'ENSUITE attendent qu'on les lâche
@@ -353,21 +355,106 @@ test('données en deux temps : l’accueil n’attend pas les messages des group
   off();
 });
 
-test('données en deux temps : un écran ouvert avant le reste le demande tout de suite ; un échec ne le fait pas attendre toujours', async () => {
-  const { s, lus, lacher } = magasinEnDeux();
-  await s.loadAll();
-  // Mes données ouvert juste après l'accueil, avant que le navigateur souffle : tout part aussitôt, une fois
-  assert.equal(s.attendre(STORE.ENSUITE), true);
-  for (const t of STORE.ENSUITE) assert.equal(lus.filter(n => n === t).length, 1, t);
-  s.on(() => {}); await tick(260);
-  for (const t of STORE.ENSUITE) assert.equal(lus.filter(n => n === t).length, 1, `${t} : pas relue après le premier affichage`);
-  // Réseau qui coupe (deux échecs) : la table reste vide, l'écran ne l'attend plus
-  lacher('groupe_messages', { data: null, error: { message: 'Failed to fetch' } });
-  await tick(1300);
-  lacher('groupe_messages', { data: null, error: { message: 'Failed to fetch' } });
-  await tick();
-  assert.equal(s.attendre(['groupe_messages']), false);
-  assert.deepEqual(s.data.groupe_messages, []);
+test('données en deux temps : un écran ouvert avant le reste le demande tout de suite ; une lecture ratée est dite, puis relue', async () => {
+  const { ENSUITE } = STORE;
+  const { s, lus, lacher, emis } = magasinEnDeux();
+  const echec = { data: null, error: { message: 'Failed to fetch' } };
+  const nb = t => lus.filter(n => n === t).length;
+  try {
+    await s.loadAll();
+    // Mes données ouvert juste après l'accueil, avant que le navigateur souffle : tout part aussitôt, une fois
+    assert.equal(s.attendre(ENSUITE), true);
+    assert.equal(s.etatTables(ENSUITE), 'attente');
+    for (const t of ENSUITE) assert.equal(nb(t), 1, t);
+    s.on(() => {}); await tick(260);
+    for (const t of ENSUITE) assert.equal(nb(t), 1, `${t} : pas relue après le premier affichage`);
+    // Réseau qui coupe (deux échecs) : l'écran ne l'attend plus pour toujours, et ne montre pas pour autant une liste vide
+    // comme si de rien n'était (« Pas encore de message » sur des groupes qui en ont, un compte faux dans l'administration)
+    lacher('groupe_messages', echec);
+    await tick(1300);
+    lacher('groupe_messages', echec);
+    lacher('reactions_messages'); lacher('relecture_commentaires');
+    await tick();
+    assert.deepEqual(s.data.groupe_messages, []);
+    assert.equal(nb('groupe_messages'), 2);
+    assert.ok(s.minuteurRatees, 'une nouvelle lecture est prévue');
+    assert.equal(s.attendre(['groupe_messages']), false);
+    assert.equal(s.etatTables(['groupe_messages']), 'reseau', 'l’onglet Groupes dit « Pas de réseau »');
+    assert.equal(s.etatTables(ENSUITE), 'reseau', 'Mes données aussi (l’export serait incomplet)');
+    assert.equal(s.ecranEnAttente('admin', ''), 'reseau');
+    // La messagerie et le Réseau s'affichent (les autres onglets restent ouverts) ; la relecture du CV a ses commentaires
+    for (const [page, sub] of [['reseau', ''], ['reseau', 'groupes'], ['messages', ''], ['mentorat', 'cv']]) assert.equal(s.ecranEnAttente(page, sub), false, `${page}/${sub}`);
+    // L'écran affiché la relit aussitôt, une seule fois même redessiné
+    assert.equal(nb('groupe_messages'), 3);
+    // Encore deux échecs : rien à redessiner, pas d'autre lecture avant 5 s, une nouvelle est prévue
+    const e = emis();
+    lacher('groupe_messages', echec);
+    await tick(1300);
+    lacher('groupe_messages', echec);
+    await tick();
+    assert.equal(nb('groupe_messages'), 4);
+    assert.equal(s.etatTables(['groupe_messages']), 'reseau');
+    assert.equal(nb('groupe_messages'), 4, 'pas plus d’une lecture toutes les 5 s');
+    assert.equal(emis(), e);
+    // Le réseau revient (ou l'application revient au premier plan) : relue, l'écran se redessine avec ses messages
+    s.derniereRelecture = 0;
+    s.auRetour(0);
+    assert.equal(nb('groupe_messages'), 5);
+    lacher('groupe_messages');
+    await tick();
+    assert.deepEqual(s.data.groupe_messages.map(m => m.id), ['groupe_messages-1']);
+    assert.ok(emis() > e, 'l’écran est redessiné à l’arrivée');
+    assert.equal(s.etatTables(['groupe_messages']), '');
+    assert.equal(s.etatTables(ENSUITE), '');
+    assert.equal(s.ecranEnAttente('admin', ''), false);
+    // Plus rien n'est relu ensuite
+    const n = lus.length;
+    s.derniereRelecture = 0; s.auRetour(0); s.etatTables(ENSUITE); s.ecranEnAttente('admin', '');
+    assert.equal(lus.length, n);
+    // Une table déjà là dont une relecture (temps réel) échoue garde ce qu'elle avait, et son écran s'affiche
+    const relue = s.loadTable('groupe_messages');
+    await tick();
+    lacher('groupe_messages', echec);
+    await tick(1300);
+    lacher('groupe_messages', echec);
+    await relue;
+    assert.deepEqual(s.data.groupe_messages.map(m => m.id), ['groupe_messages-1']);
+    assert.equal(s.etatTables(['groupe_messages']), '');
+  } finally { clearTimeout(s.minuteurRatees); }
+});
+
+// Seul le réseau (ou la passerelle indisponible) est passager : une erreur de la base qui reviendrait à chaque lecture ne
+// bloque jamais un écran derrière « Pas de réseau », ni ne relit la table toutes les 20 s
+test('données en deux temps : une erreur de la base (pas le réseau) laisse la table vide comme avant ; une passerelle indisponible est relue', async () => {
+  const nbLus = lus => lus.filter(n => n === 'groupe_messages').length;
+  {
+    const { s, lus, lacher } = magasinEnDeux({ retenir: ['groupe_messages'] });
+    const refus = { data: null, error: { message: 'permission denied for table groupe_messages', code: '42501' } };
+    try {
+      await s.loadAll();
+      assert.equal(s.etatTables(['groupe_messages']), 'attente');
+      lacher('groupe_messages', refus); await tick(1300); lacher('groupe_messages', refus); await tick();
+      assert.equal(s.etatTables(['groupe_messages']), '');
+      assert.equal(s.ecranEnAttente('reseau', 'groupes'), false);
+      assert.deepEqual(s.data.groupe_messages, []);
+      s.derniereRelecture = 0; s.auRetour(0); s.etatTables(['groupe_messages']);
+      assert.equal(nbLus(lus), 2);
+    } finally { clearTimeout(s.minuteurRatees); }
+  }
+  {
+    const { s, lus, lacher } = magasinEnDeux({ retenir: ['groupe_messages'] });
+    const passerelle = { data: null, error: { message: '' }, status: 503 };
+    try {
+      await s.loadAll();
+      s.attendre(['groupe_messages']);
+      lacher('groupe_messages', passerelle); await tick(1300); lacher('groupe_messages', passerelle); await tick();
+      assert.equal(s.etatTables(['groupe_messages']), 'reseau');
+      assert.equal(nbLus(lus), 3, 'relue');
+      lacher('groupe_messages'); await tick();
+      assert.equal(s.etatTables(['groupe_messages']), '');
+      assert.deepEqual(s.data.groupe_messages.map(m => m.id), ['groupe_messages-1']);
+    } finally { clearTimeout(s.minuteurRatees); }
+  }
 });
 
 test('données en deux temps : tout d’un coup (copie de l’appareil, longue absence, changement de vue), lien d’une conversation, compte changé, démo', async () => {
@@ -393,6 +480,14 @@ test('données en deux temps : tout d’un coup (copie de l’appareil, longue a
     s.enAttente = true;
     assert.equal(s.ecranEnAttente('reseau', 'groupes'), false);
     assert.equal(s.attendre(ENSUITE), false);
+    // Le Réseau ouvert sans sous-page (son onglet Groupes) : la copie ne garde pas leurs messages, la liste attend la mise à
+    // jour au lieu de « Pas encore de message » sur chaque groupe ; sans réseau, l'onglet le dit. Mes données de même.
+    assert.equal(s.etatTables(['groupe_messages']), 'attente');
+    assert.equal(s.etatTables(ENSUITE), 'attente');
+    s.horsLigne = true;
+    assert.equal(s.etatTables(['groupe_messages']), 'reseau');
+    assert.equal(s.etatTables(ENSUITE), 'reseau');
+    assert.equal(s.etatTables([]), '');
     assert.equal(lus.length, 0);
   }
   // Une conversation ouverte d'un lien (notification) : ses réactions viennent avec les premières, rien n'attend après
@@ -432,6 +527,7 @@ test('données en deux temps : tout d’un coup (copie de l’appareil, longue a
   assert.equal(demo.mode, 'demo');
   for (const [page, sub] of [['reseau', 'groupes'], ['messages', ''], ['mentorat', 'cv'], ['admin', '']]) assert.equal(demo.ecranEnAttente(page, sub), false);
   assert.equal(demo.attendre(ENSUITE), false);
+  assert.equal(demo.etatTables(ENSUITE), '');
   await demo.charger(ENSUITE);
 });
 

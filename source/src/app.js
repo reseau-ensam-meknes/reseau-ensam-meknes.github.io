@@ -452,7 +452,7 @@ function App({ store }) {
         ${page === 'accueil' ? html`<${Home} key=${me.id + me.role} ...${ctx}/>` : null}
         ${page === 'offres' ? html`<${OffersPage} ...${ctx}/>` : null}
         ${page === 'match' ? html`<${MatchPage} ...${ctx}/>` : null}
-        ${attente ? html`<${PageEnChargement} horsLigne=${store.horsLigne}/>` : null}
+        ${attente ? html`<${PageEnChargement} horsLigne=${store.horsLigne || attente === 'reseau'}/>` : null}
         ${page === 'mentorat' && !attente ? html`<${MentoratPage} ...${ctx}/>` : null}
         ${page === 'messages' && !attente ? html`<${MessagesPage} ...${ctx}/>` : null}
         ${page === 'parcours' ? html`<${ParcoursPage} ...${ctx}/>` : null}
@@ -1255,6 +1255,8 @@ function MyProfile({ ctx }) {
   const versOnglet = k => go(routeOnglet(k), { remplacer: true });
   // L'anneau du profil : il se remplit à l'arrivée, puis avance à chaque champ ajouté (une photo, une bio…)
   const r = remplissageProfil(me), p = r ? Math.round(r.fait / r.total * 100) : 0;
+  // Mes données : l'export attend tout ce que le compte a écrit (les tables d'ENSUITE, que la copie de l'appareil ne garde pas)
+  const donnees = onglet === 'donnees' ? store.etatTables(ENSUITE) : '';
   const anneau = r ? html`<${Anneau} valeur=${p} max=${100} taille=${56} epaisseur=${5} ton=${p === 100 ? 'bien' : 'accent'} label=${`Profil rempli à ${p} %`}><b class="pf-pct" dir="ltr">${p}${html`<small>%</small>`}</b><//>` : null;
   return html`<section class="page narrow pf-page">
     <${EnTetePage} surTitre="Jamais public" titre="Mon profil" action=${anneau || store.mode === 'live' ? html`${anneau}${store.mode === 'live' ? html`<button class="btn ghost" onClick=${() => store.signOut()}><${Icon} name="logout"/> Se déconnecter</button>` : null}` : null}/>
@@ -1266,7 +1268,7 @@ function MyProfile({ ctx }) {
       </div>
       <${ProfileForm} ctx=${ctx} initial=${me} key=${me.id} onglet=${onglet} versOnglet=${versOnglet} apresVisibilite=${html`<${FondateurPublicCase} ctx=${ctx} niveau=${2}/>`}/>
       <div class="pf-partie" id="profil-notifications" hidden=${onglet !== 'notifications'}><${MesNotifications} ctx=${ctx}/></div>
-      <div class="pf-partie" id="profil-donnees" hidden=${onglet !== 'donnees'}>${onglet === 'donnees' && store.attendre(ENSUITE) ? html`<${PageEnChargement}/>` : html`<${MesDonnees} ctx=${ctx}/>`}</div>
+      <div class="pf-partie" id="profil-donnees" hidden=${onglet !== 'donnees'}>${donnees ? html`<${PageEnChargement} horsLigne=${donnees === 'reseau'}/>` : html`<${MesDonnees} ctx=${ctx}/>`}</div>
     </div>
   </section>`;
 }

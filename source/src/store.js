@@ -76,6 +76,7 @@ class Base {
   // Chargement en deux temps : en démo, tout est déjà là (voir SupabaseStore)
   attendre() { return false; }
   ecranEnAttente() { return false; }
+  etatTables() { return ''; }
   charger() { return Promise.resolve(); }
   // Messagerie : « Répondre » et les réactions ont besoin de la base à jour (en démo, toujours)
   peutRepondre() { return this.mode !== 'live' || (this.data.messages || []).some(m => 'reponse_a' in m); }
@@ -1201,6 +1202,8 @@ function demoParrains(store, onlyId = null) {
 // Une table ou une vue qui n'existe pas encore (mise à jour de la base pas encore faite).
 // Une session expirée (401, PGRST301), un droit refusé (42501) ou une coupure réseau ne sont que passagers.
 const absente = e => ['42P01', 'PGRST205'].includes(e?.code) || /relation .* does not exist|could not find the table/i.test(e?.message || '');
+// Réseau coupé, ou passerelle de Supabase indisponible (comme frError) : la même lecture pourra réussir un peu plus tard
+const coupure = (e, status) => [502, 503, 504].includes(status) || /failed to fetch|load failed|networkerror|network request failed|fetch failed|timed? ?out/i.test(e?.message || '');
 const SUITES = { demandes: ['propositions', 'placements'], propositions: ['demandes', 'propositions', 'placements', 'coordonnees'], placements: ['demandes', 'propositions'] };
 
 // ---------------------------------------------------------------------------
@@ -1365,6 +1368,7 @@ export class SupabaseStore extends Base {
     this.photosUrl = new Map(); this.photosDemandees = new Set();
     // Une lecture de l'ancien compte encore en route n'écrit plus rien (loadTable) ; ses tables sont à relire
     this.generation = (this.generation || 0) + 1; this.charges = new Set(); this.enCours = new Map(); this.apresAbonnement = null;
+    this.ratees = new Set(); clearTimeout(this.minuteurRatees);
     try { await this.loadAll(); }
     catch {
       // Réseau qui hésite : le nouveau compte avec ce qui a pu être lu, et on réessaie (comme rafraichir)
@@ -1425,7 +1429,7 @@ export class SupabaseStore extends Base {
   // téléphone, le temps réel dort : les messages arrivés entre-temps manquaient dans la discussion jusqu'au rechargement.
   auRetour(absent) {
     if (absent > 5 * 60e3) this.loadAll({ ensemble: true }).then(() => this.emit(), () => {});
-    else if (absent > 1500) this.rattraperMessages();
+    else { if (absent > 1500) this.rattraperMessages(); this.relireRatees(); }
     if (absent > 20e3) this.sonderTempsReel();
   }
   // Les messages (et leurs réactions) relus d'un coup ; un seul rattrapage à la fois, pas plus d'un toutes les 3 s
@@ -1516,7 +1520,8 @@ export class SupabaseStore extends Base {
     return off;
   }
   // Ces tables, une seule lecture à la fois chacune (celles déjà arrivées sont gardées) ; l'écran se redessine après.
-  // Un échec ne fait pas attendre un écran pour toujours : la table garde ce qu'elle avait (comme loadAll).
+  // Un échec ne fait pas attendre un écran pour toujours : la table garde ce qu'elle avait (comme loadAll), et elle est
+  // relue plus tard (relireRatees).
   charger(ts) {
     if (!this.userId) return Promise.resolve();
     const gen = this.generation || 0;
@@ -1525,7 +1530,7 @@ export class SupabaseStore extends Base {
       if (!this.enCours.has(t)) this.enCours.set(t, this.loadTable(t).catch(() => { if (gen === (this.generation || 0)) this.charges.add(t); }).finally(() => { if (gen === (this.generation || 0)) this.enCours.delete(t); }));
       return this.enCours.get(t);
     });
-    return lectures.length ? Promise.all(lectures).then(() => { if (gen === (this.generation || 0)) this.emit(); }) : Promise.resolve();
+    return lectures.length ? Promise.all(lectures).then(() => { if (gen === (this.generation || 0)) { this.emit(); this.relireBientot(); } }) : Promise.resolve();
   }
   // Un écran qui a besoin de tables pas encore arrivées les attend : elles sont demandées tout de suite. Pendant la mise à
   // jour de la copie de l'appareil (enAttente), rien de plus que d'habitude : ses écrans attendent déjà (app.js), et tout
@@ -1534,9 +1539,47 @@ export class SupabaseStore extends Base {
     if (!this.userId || this.enAttente) return false;
     const manquent = ts.filter(t => !this.charges.has(t));
     if (manquent.length) this.charger(manquent);
+    else if (ts.some(t => this.ratees?.has(t))) this.relireRatees();
     return manquent.length > 0;
   }
-  ecranEnAttente(page, sub) { return this.attendre(tablesEcran(page, sub)); }
+  // Ce qu'affiche un écran qui lit ces tables : '' (elles sont là), 'attente' (elles arrivent), 'reseau' (pas de réseau pour
+  // les lire : leur lecture a échoué, ou la copie de l'appareil, qui ne les garde pas, attend sa mise à jour hors ligne).
+  // L'écran le dit, plutôt qu'une liste vide ou un compte faux, et se redessine à leur arrivée.
+  etatTables(ts) {
+    if (this.attendre(ts)) return 'attente';
+    if (!this.userId) return '';
+    if (ts.some(t => this.ratees?.has(t))) return this.enAttente && !this.horsLigne ? 'attente' : 'reseau';
+    if (this.enAttente && ts.some(t => !this.charges.has(t))) return this.horsLigne ? 'reseau' : 'attente';
+    return '';
+  }
+  // L'écran de l'application (app.js) attend ses tables pas encore arrivées (true). Leur lecture a échoué : l'administration
+  // et la relecture du CV le disent ('reseau') plutôt qu'un compte faux ou une relecture sans ses commentaires ; la
+  // messagerie s'affiche (ses réactions sont relues en arrière-plan), le Réseau aussi (GroupesPage le dit pour son onglet,
+  // les autres restent ouverts).
+  ecranEnAttente(page, sub) {
+    const ts = tablesEcran(page, sub);
+    if (this.attendre(ts)) return true;
+    return (page === 'admin' || page === 'mentorat') && !this.enAttente && ts.some(t => this.ratees?.has(t)) ? 'reseau' : false;
+  }
+  // Une table d'ENSUITE dont la lecture a échoué (réseau coupé juste après l'ouverture) est relue : quand un écran qui la lit
+  // s'affiche (pas plus d'une fois toutes les 5 s), au retour du réseau ou de l'application (auRetour), et toutes les 20 s
+  // tant qu'elle manque, page visible. L'écran se redessine à son arrivée.
+  relireRatees() {
+    const ts = ENSUITE.filter(t => this.ratees?.has(t));
+    if (!this.userId || !ts.length || this.enAttente || this.relecture || Date.now() - (this.derniereRelecture || 0) < 5000) return;
+    const gen = this.generation || 0; this.derniereRelecture = Date.now();
+    clearTimeout(this.minuteurRatees);
+    const p = this.relecture = Promise.all(ts.map(t => this.loadTable(t).catch(() => {}))).then(() => {
+      if (gen !== (this.generation || 0)) return;
+      if (ts.some(t => !this.ratees?.has(t))) this.emit();
+      this.relireBientot();
+    }).finally(() => { if (this.relecture === p) this.relecture = null; });
+  }
+  relireBientot() {
+    clearTimeout(this.minuteurRatees);
+    if (!ENSUITE.some(t => this.ratees?.has(t))) return;
+    this.minuteurRatees = setTimeout(() => { if (typeof document === 'undefined' || document.visibilityState !== 'hidden') this.relireRatees(); }, 20e3);
+  }
   // « Cette semaine dans le réseau » : la base compte tout (relectures et propositions comprises), pour que chacun voie le même chiffre
   async chargerPouls() {
     const { data, error } = await this.sb.rpc('pouls_reseau');
@@ -1553,22 +1596,30 @@ export class SupabaseStore extends Base {
     // Deux lectures de la même table en même temps (le temps réel pendant le chargement) : la plus récente reste
     const n = this.lectures = (this.lectures || 0) + 1;
     for (let from = 0; ; from += 1000) {
-      const { data, error } = await this.sb.from(vue || t).select('*').order('created_at', { ascending: false }).range(from, from + 999);
+      const { data, error, status } = await this.sb.from(vue || t).select('*').order('created_at', { ascending: false }).range(from, from + 999);
       if (!memeCompte()) return;
       // Base pas encore à jour : la vue manque (on lit la table), ou la table facultative manque (liste vide)
       if (error && absente(error)) {
         if (vue && from === 0) { this.vues[t] = false; return this.loadTable(t, essai); }
-        if (OPTIONAL.has(t)) { this.data[t] = []; (this.absentes ||= new Set()).add(t); this.charges.add(t); return; }
+        if (OPTIONAL.has(t)) { this.data[t] = []; (this.absentes ||= new Set()).add(t); this.ratees?.delete(t); this.charges.add(t); return; }
         throw error;
       }
       // Réseau du téléphone qui coupe, ou session expirée le temps d'être renouvelée : on réessaie une fois,
       // puis on garde ce qu'on avait (jamais une liste vidée, ni la vue abandonnée pour toute la visite)
       if (error && !essai) { await new Promise(ok => setTimeout(ok, 1200)); return this.loadTable(t, 1); }
-      if (error) { if (this.data[t]?.length || OPTIONAL.has(t)) { this.charges.add(t); return; } throw error; }
+      if (error) {
+        // Une table d'ENSUITE sans bonne copie pour ce compte (jamais lue, ou déjà ratée) : réseau coupé, son écran le dit et
+        // elle sera relue (relireRatees) ; une autre erreur la laisse vide, comme avant (jamais « Pas de réseau » pour toujours)
+        if (ENSUITE.includes(t) && !(this.charges.has(t) && !this.ratees?.has(t))) {
+          if (coupure(error, status)) (this.ratees ||= new Set()).add(t); else this.ratees?.delete(t);
+        }
+        if (this.data[t]?.length || OPTIONAL.has(t)) { this.charges.add(t); return; }
+        throw error;
+      }
       all.push(...data);
       if (data.length < 1000) break;
     }
-    this.charges.add(t);
+    this.charges.add(t); this.ratees?.delete(t);
     if ((this.ecrites ||= {})[t] > n) return;
     this.ecrites[t] = n;
     this.data[t] = all;
