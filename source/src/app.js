@@ -21,7 +21,7 @@ import { PhotoCard, PhotoProposee } from './photo.js';
 import { notifsPartage, PartageFeuille } from './entreprises.js';
 import { ConfianceFeuille, demandesRecues, pairsAConfirmer } from './confiance.js';
 import { NextEvent } from './agenda.js';
-import { Entree, LangToggle, magasinEntree, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, retenirLien, suiteLien, accordIci, roleAccord, oublierInvitation } from './entree.js';
+import { Entree, LangToggle, magasinEntree, cssPret, chargerScene, cacherEntree, marquerMembre, brancherSignal, promoInvitee, roleRetenu, lienRetenu, oublierLien, retenirLien, suiteLien, accordIci, roleAccord, oublierInvitation } from './entree.js';
 import { MessagesPage, useAlerteMessages } from './messages.js';
 import { MatchPage, MatchAccueil } from './match.js';
 import { PoulsReseau, marquerArrivee, useArrivee, ArriveeSheet } from './pouls.js';
@@ -1298,8 +1298,10 @@ function Onboarding({ store, relang }) {
   const root = document.getElementById('app');
   try {
     // Le magasin déjà prêt pour la page d'entrée, sinon on le crée ; l'arabe se charge en même temps que les données
-    // (sur la page d'entrée, ses phrases sont déjà traduites : on ne repasse pas en français pour une coupure)
-    const [store] = await Promise.all([magasinEntree() || createStore(), getLang() === 'ar' ? chargerAR().catch(() => { if (!document.getElementById('entree')) return setLang('fr', { garder: false }); }) : null]);
+    // (sur la page d'entrée, ses phrases sont déjà traduites : on ne repasse pas en français pour une coupure).
+    // Le premier affichage attend aussi le CSS complet (site.css : la page n'a que celui de l'entrée) et l'illustration
+    // de l'accueil, préchargés en même temps : l'application s'affiche telle qu'avant, en une fois.
+    const [store] = await Promise.all([magasinEntree() || createStore(), getLang() === 'ar' ? chargerAR().catch(() => { if (!document.getElementById('entree')) return setLang('fr', { garder: false }); }) : null, cssPret(), chargerScene().catch(() => {})]);
     brancherPhotos(path => store.photo(path));
     brancherSignal(m => toast(m, 'err'));
     // Connecté : ce qui avait été tapé sur la page d'entrée ne doit jamais revenir après une déconnexion

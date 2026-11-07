@@ -354,3 +354,69 @@ test('CSS raccourci : sans commentaires ni espaces inutiles ; chaînes, url(), �
   const avant = gz(styles.join('')), apres = gz(styles.map(m).join(''));
   assert.ok(apres < avant * 0.8, `CSS compressé ${avant} → ${apres} octets`);
 });
+
+// ---------------------------------------------------------------------------
+// Page d'entrée plus légère : son CSS tiré au build du CSS complet (outils/css-critique.mjs, appelé par precharger.mjs)
+// ---------------------------------------------------------------------------
+test('CSS de l’entrée : découpage sûr (chaînes, parenthèses), mots des modules, sélecteurs possibles', async () => {
+  const { decouper, motsDe, selecteurs, selecteurPossible } = await import('../../outils/css-critique.mjs');
+  assert.deepEqual(decouper('a{x:1}@media (min-width:1px){b{y:2}}@layer l;'), [{ prelude: 'a', corps: 'x:1' }, { prelude: '@media (min-width:1px)', corps: 'b{y:2}' }, { prelude: '@layer l', corps: null }]);
+  // { } ; dans une chaîne ou entre parenthèses ne coupent rien
+  assert.deepEqual(decouper('a::after{content:"}{;"}b[x="{"]{y:url(a;b)}'), [{ prelude: 'a::after', corps: 'content:"}{;"' }, { prelude: 'b[x="{"]', corps: 'y:url(a;b)' }]);
+  for (const mal of ['a{x:1', 'a{x:1}}', 'a{content:"x}']) assert.throws(() => decouper(mal), /CSS/, mal);
+  // Les mots : classes et id possibles ; « ico-${nom} » rend possible toute classe ico-… ; jamais les commentaires
+  const connu = motsDe(['const x = html`<div class="auth-card wide">`;\n  // pas-ceci\n/* ni-cela */ const i = `ico-${n}`;', '<span id="entree-x">']);
+  for (const m of ['auth-card', 'wide', 'ico-', 'ico-cap', 'ico-n-importe', 'entree-x']) assert.ok(connu(m), m);
+  for (const m of ['pas-ceci', 'ni-cela', 'shell', 'auth']) assert.equal(connu(m), false, m);
+  assert.deepEqual(selecteurs('a, b:is(.c, .d) > e, [data-x="1,2"] f'), ['a', 'b:is(.c, .d) > e', '[data-x="1,2"] f']);
+  const c = motsDe(['auth btn']);
+  for (const s of ['.auth .btn', 'html[data-theme=dark] .btn:hover', '.btn:not(.inconnue)', 'button', ':root', '.auth:has(.autre)', '.btn::after']) assert.ok(selecteurPossible(s, c), s);
+  for (const s of ['.shell .btn', '#app .auth', '.btn.inconnue', '.auth > .x:hover']) assert.equal(selecteurPossible(s, c), false, s);
+});
+
+test('CSS de l’entrée : les règles possibles, dans leur ordre, @media et @supports filtrés, animations citées seulement', async () => {
+  const { cssCritique, motsDe } = await import('../../outils/css-critique.mjs');
+  const css = [
+    ':root{--a:1}', 'html,body{margin:0}', '.auth{color:red}', '.shell{color:blue}', '.auth,.shell{gap:1px}', '.x::-webkit-thumb,.auth{all:unset}',
+    '@font-face{font-family:F;src:url(f.woff2)}', '@property --p{syntax:"<number>";inherits:false;initial-value:0}',
+    '@media (max-width:760px){.auth{padding:0}.shell{padding:1px}}', '@media print{.shell{display:none}}',
+    '@supports (color:color-mix(in oklch,red 50%,blue)){@media (min-width:1px){.auth{color:green}}}',
+    '.auth{animation:rise .7s var(--ease) backwards}', '@keyframes rise{from{opacity:0}}', '@keyframes inutile{to{opacity:1}}',
+    '@media (prefers-reduced-motion:no-preference){.shell{animation:glisse 1s}}', '@keyframes glisse{to{opacity:1}}',
+  ].join('');
+  const out = cssCritique(css, motsDe(['class="auth"']));
+  assert.equal(out, [
+    ':root{--a:1}', 'html,body{margin:0}', '.auth{color:red}', '.auth{gap:1px}', '.x::-webkit-thumb,.auth{all:unset}',
+    '@font-face{font-family:F;src:url(f.woff2)}', '@property --p{syntax:"<number>";inherits:false;initial-value:0}',
+    '@media (max-width:760px){.auth{padding:0}}',
+    '@supports (color:color-mix(in oklch,red 50%,blue)){@media (min-width:1px){.auth{color:green}}}',
+    '.auth{animation:rise .7s var(--ease) backwards}', '@keyframes rise{from{opacity:0}}',
+  ].join(''));
+  assert.equal(cssCritique(css, motsDe(['class="auth"'])), out, 'toujours le même résultat');
+});
+
+test('CSS de l’entrée : sur le vrai site, un morceau du CSS complet dans le même ordre, bien plus petit, qui garde la forme de l’accueil', async () => {
+  const { minifierCss } = await import('../../outils/minifier-css.mjs');
+  const { cssCritique, motsDe, decouper } = await import('../../outils/css-critique.mjs');
+  const page = lireSrc('page.html');
+  const fin = page.indexOf('<div id="app">');
+  const styles = [...page.slice(0, fin).matchAll(/<style>([\s\S]*?)<\/style>/g)].map(x => x[1]);
+  assert.equal(styles.length, 2, 'deux <style> dans <head> : les polices, puis tout le site');
+  const complet = minifierCss(styles[1]);
+  const modules = ['entree.js', 'i18n.js', 'logo.js', 'regles-entree.js', 'fondateurs-public.js', 'scene.js'].map(lireSrc);
+  const critique = cssCritique(complet, motsDe([...modules, page.slice(fin)]));
+  // Chaque instruction gardée est une instruction du CSS complet (ou sa liste de sélecteurs raccourcie), dans le même ordre
+  const tete = b => b.prelude.split(',')[0];
+  const tous = decouper(complet), garde = decouper(critique);
+  let k = 0;
+  for (const b of garde) {
+    while (k < tous.length && !(tete(tous[k]) === tete(b) || tous[k].prelude.split(',').includes(b.prelude.split(',')[0]))) k++;
+    assert.ok(k < tous.length, `${b.prelude.slice(0, 80)} : introuvable dans l’ordre du CSS complet`);
+    k++;
+  }
+  // La forme de l'accueil d'un membre (page.html, #squelette) et la page d'entrée ont leurs règles ; pas l'application
+  for (const s of ['.squelette .side-nav', '.home-hero', '.entree-form', '.auth-card', '.bottom-nav', '#app>.boot']) assert.ok(critique.includes(s), s);
+  for (const s of ['.gcard', '.cloche', '.demo-band', '.page-attente']) { assert.ok(complet.includes(s), s); assert.equal(critique.includes(s), false, s); }
+  const gz = t => zlib.gzipSync(t).length;
+  assert.ok(gz(critique) < gz(complet) * 0.45, `CSS de l’entrée ${gz(critique)} octets compressés, complet ${gz(complet)}`);
+});
