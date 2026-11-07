@@ -389,7 +389,7 @@ test('chaque producteur met de vraies lignes en file : tous les types du contrat
     'bravo un': de('bravo').some(d => d.n === 1),
     'bravo plusieurs': de('bravo').some(d => d.n >= 2),
     'groupe_jour avec un autre groupe': de('groupe_jour').some(d => d.autres >= 1),
-    'rappel_visite Match et agenda': de('rappel_visite').some(d => d.matchs > 0 || d.interets > 0) && de('rappel_visite').some(d => d.evenements > 0),
+    'rappel_visite Match': de('rappel_visite').some(d => d.matchs > 0 || d.interets > 0),
     'rappel_visite réponses': de('rappel_visite').some(d => d.reponses > 0),
     'candidature plusieurs': de('candidature').some(d => d.n >= 2),
     'reponse plusieurs': de('reponse').some(d => d.n >= 2),
@@ -400,6 +400,8 @@ test('chaque producteur met de vraies lignes en file : tous les types du contrat
     'merci relecture': de('merci').some(d => d.r),
   };
   assert.deepEqual(Object.entries(variantes).filter(([, v]) => !v).map(([k]) => k), [], 'variantes jamais produites');
+  // L'agenda n'est pas redit par le rappel du soir : agenda_demain l'annonce la veille (personne n'a coupé Réseau ici)
+  assert.deepEqual(de('rappel_visite').filter(d => 'evenements' in d), [], 'rappel_visite avec l’agenda');
   assert.ok(lignes.length >= 100, `${lignes.length} lignes`);
 });
 

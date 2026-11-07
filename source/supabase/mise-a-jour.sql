@@ -5123,14 +5123,20 @@ revoke all on function public.rappels_dus() from public, anon, authenticated;
 -- Une notification programmée DOUCE : seulement s'il reste de la place dans le budget du jour (programme_place, appelée
 -- sur les seuls membres dus et abonnés). Rien le soir d'un résumé du dimanche (semaine, dans les 20 h) : pas deux résumés
 -- le même jour, avec des chiffres différents ; il reste dû, et part le lendemain, recalculé.
+-- L'agenda des 2 jours (evenements) n'est pas redit sur le téléphone : agenda_demain (DURE) annonce chacun la veille à
+-- 19:30. Il y reste pour qui a coupé cette notification (Réseau, dans Mon profil) ; l'email le garde toujours (il lit
+-- rappel_contenu). Rien que l'agenda : pas de rappel ce soir-là.
 create or replace function public.rappels_push() returns int
 language plpgsql security definer set search_path = public as $$
 declare v_n int;
 begin
   with dus as materialized (
-    select * from public.rappels_dus() d where d.abonne
-      and not exists (select 1 from public.notif_programme n where n.user_id = d.id and n.kind = 'semaine'
-                        and n.at > public.horloge() - interval '20 hours')),
+    select x.* from (
+      select d.id, d.n, case when public.push_voulu(d.id, 'agenda_demain') then d.contenu - 'evenements' else d.contenu end as contenu
+      from public.rappels_dus() d where d.abonne
+        and not exists (select 1 from public.notif_programme n where n.user_id = d.id and n.kind = 'semaine'
+                          and n.at > public.horloge() - interval '20 hours')) x
+    where x.contenu <> '{}'::jsonb),
   places as materialized (select d.* from dus d where public.programme_place(d.id, 'rappel_visite')),
   envoyes as (
     insert into public.push_queue (user_id, kind, data)

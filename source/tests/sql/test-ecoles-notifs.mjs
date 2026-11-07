@@ -194,13 +194,14 @@ test('Rappel du soir : les nouvelles clés (matchs, intérêts, réponses, agend
   const c = await contenu(EM);
   assert.deepEqual({ matchs: c.matchs, interets: c.interets, reponses: c.reponses, evenements: c.evenements },
     { matchs: 1, interets: 1, reponses: 1, evenements: 1 });
-  // Le soir même, sur le téléphone : les mêmes chiffres
+  // Le soir même, sur le téléphone : les mêmes chiffres, sauf l'agenda, que agenda_demain annonce la veille à 19:30 (l'email,
+  // qui lit rappel_contenu, le garde)
   await reglerHorloge(db, aujourdhuiA(18, 0));
   try {
     await lancer('rappels_push');
     const r = await recus('rappel_visite');
     assert.deepEqual({ matchs: r.EM.matchs, interets: r.EM.interets, reponses: r.EM.reponses, evenements: r.EM.evenements },
-      { matchs: 1, interets: 1, reponses: 1, evenements: 1 });
+      { matchs: 1, interets: 1, reponses: 1, evenements: undefined });
   } finally { await reglerHorloge(db); }
 });
 

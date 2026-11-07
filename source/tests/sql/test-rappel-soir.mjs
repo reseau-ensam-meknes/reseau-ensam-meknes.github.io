@@ -113,19 +113,25 @@ test('le soir : un compte de moins d’un jour n’est pas rappelé ; un jour ap
 test('le soir : une notification DOUCE, seulement s’il reste de la place dans le budget du jour (sinon, le lendemain)', async () => {
   await db.query('delete from public.push_queue');
   await db.query(`delete from public.rappels_visite`);
-  // ETU3 et LAU ont quelque chose (réponses, événements) ; LAU a déjà reçu 3 notifications programmées aujourd'hui
-  for (const u of [ETU3, LAU]) await db.query(`insert into public.visites (user_id, vu_at) values ($1, now() - interval '2 days') on conflict (user_id) do update set vu_at = excluded.vu_at`, [u]);
-  for (const k of ['match_jour', 'offre_bientot', 'groupe_jour']) await db.query(`select public.programme_place($1, $2)`, [LAU, k]);
-  await db.query('select public.rappels_push()');
-  const qui = (await db.query(`select user_id from public.push_queue where kind = 'rappel_visite'`)).rows.map(r => NOMS[r.user_id]);
-  assert.ok(qui.includes('ETU3') && !qui.includes('LAU'), qui.join());
-  assert.equal((await un('select count(*)::int n from public.rappels_visite where user_id = $1', [LAU])).n, 0, 'pas noté : il reste dû');
-  assert.equal((await un(`select count(*)::int n from public.notif_programme where user_id = $1 and kind = 'rappel_visite'`, [ETU3])).n, 1, 'compté dans le budget');
-  // Le lendemain : il part
-  await db.query(`update public.notif_programme set at = at - interval '1 day'`);
-  await db.query('delete from public.push_queue');
-  await db.query('select public.rappels_push()');
-  assert.ok((await db.query(`select user_id from public.push_queue where kind = 'rappel_visite'`)).rows.some(r => r.user_id === LAU));
+  // ETU3 et LAU ont quelque chose (réponses ; un message non lu : son agenda seul ne fait pas de rappel sur le téléphone) ;
+  // LAU a déjà reçu 3 notifications programmées aujourd'hui
+  const { id: msg } = await un(`insert into public.messages (author_id, dest_id, body) values ($1, $2, 'Bonjour, une question sur Renault ?') returning id`, [ETU2, LAU]);
+  try {
+    for (const u of [ETU3, LAU]) await db.query(`insert into public.visites (user_id, vu_at) values ($1, now() - interval '2 days') on conflict (user_id) do update set vu_at = excluded.vu_at`, [u]);
+    for (const k of ['match_jour', 'offre_bientot', 'groupe_jour']) await db.query(`select public.programme_place($1, $2)`, [LAU, k]);
+    await db.query('select public.rappels_push()');
+    const qui = (await db.query(`select user_id from public.push_queue where kind = 'rappel_visite'`)).rows.map(r => NOMS[r.user_id]);
+    assert.ok(qui.includes('ETU3') && !qui.includes('LAU'), qui.join());
+    assert.equal((await un('select count(*)::int n from public.rappels_visite where user_id = $1', [LAU])).n, 0, 'pas noté : il reste dû');
+    assert.equal((await un(`select count(*)::int n from public.notif_programme where user_id = $1 and kind = 'rappel_visite'`, [ETU3])).n, 1, 'compté dans le budget');
+    // Le lendemain : il part
+    await db.query(`update public.notif_programme set at = at - interval '1 day'`);
+    await db.query('delete from public.push_queue');
+    await db.query('select public.rappels_push()');
+    assert.ok((await db.query(`select user_id from public.push_queue where kind = 'rappel_visite'`)).rows.some(r => r.user_id === LAU));
+  } finally {
+    await db.query('delete from public.messages where id = $1', [msg]);
+  }
 });
 
 test('interets : un « Intéressé » déjà rappelé à midi (match_attente) ne revient ni dans le rappel de 18:00, ni dans les suivants', async () => {
@@ -181,6 +187,38 @@ test('dimanche : le résumé de 10:00 est parti, pas de rappel du soir le même 
   } finally {
     await reglerHorloge(db, aujourdhuiA(18, 0));
     await db.query('delete from public.offers where id = $1', [o]);
+    for (const t of ['push_queue', 'rappels_visite', 'notif_programme']) await db.query(`delete from public.${t}`);
+  }
+});
+
+test('le soir, sur le téléphone : pas l’agenda des 2 jours (agenda_demain l’annonce la veille à 19:30) ; seul, pas de rappel ; l’email le garde ; Réseau coupé, le rappel le dit', async () => {
+  for (const t of ['push_queue', 'rappels_visite', 'notif_programme']) await db.query(`delete from public.${t}`);
+  // Youssef : inscrit au forum de demain et au café (test « evenements »), rien d'autre ; Imane : ses réponses, et le forum
+  const { id: forum } = await un(`select id from public.evenements where titre = 'Forum entreprises'`);
+  await db.query('insert into public.evenement_participants (evenement_id, user_id) values ($1, $2) on conflict do nothing', [forum, ETU3]);
+  for (const u of [ETU3, LAU]) await db.query(`insert into public.visites (user_id, vu_at) values ($1, now() - interval '2 days') on conflict (user_id) do update set vu_at = excluded.vu_at`, [u]);
+  const soir = async () => Object.fromEntries((await db.query(`select user_id, data from public.push_queue where kind = 'rappel_visite'`)).rows.map(r => [NOMS[r.user_id], r.data]));
+  try {
+    assert.equal((await contenu(LAU)).evenements, 2, 'la base les compte (l’email s’en sert)');
+    assert.equal((await contenu(ETU3)).evenements, 1);
+    await db.query('select public.rappels_push()');
+    const f = await soir();
+    assert.equal(f.LAU, undefined, 'rien que l’agenda : agenda_demain l’annonce, pas de rappel');
+    assert.equal((await un('select count(*)::int n from public.rappels_visite where user_id = $1', [LAU])).n, 0, 'rien de noté pour Youssef');
+    assert.equal(f.ETU3?.evenements, undefined, JSON.stringify(f.ETU3));
+    assert.ok(f.ETU3.reponses >= 1, 'le reste part');
+    // L'email garde l'agenda (agenda_demain ne passe pas par l'email) : Youssef, absent depuis 6 jours
+    await db.query(`update public.visites set vu_at = now() - interval '6 days' where user_id = $1`, [LAU]);
+    const mails = Object.fromEntries((await db.query('select id, contenu from public.rappels_emails_a_envoyer()')).rows.map(r => [NOMS[r.id], r.contenu]));
+    assert.equal(mails.LAU?.evenements, 2, JSON.stringify(mails));
+    // Réseau coupé dans Mon profil (pas d'agenda_demain) : le rappel du soir, lui, le dit
+    await db.query(`update public.profiles set notif_push = '{"reseau": false}'::jsonb where id = $1`, [LAU]);
+    await db.query('delete from public.push_queue');
+    await db.query('select public.rappels_push()');
+    assert.equal((await soir()).LAU?.evenements, 2);
+  } finally {
+    await db.query(`update public.profiles set notif_push = '{}'::jsonb where id = $1`, [LAU]);
+    await db.query('delete from public.evenement_participants where evenement_id = $1 and user_id = $2', [forum, ETU3]);
     for (const t of ['push_queue', 'rappels_visite', 'notif_programme']) await db.query(`delete from public.${t}`);
   }
 });
