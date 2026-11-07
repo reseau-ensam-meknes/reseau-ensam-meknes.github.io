@@ -70,14 +70,14 @@ function GroupList({ ctx }) {
     <p class="muted small">Tu es dans les groupes de ton parcours et de ta ville.</p>
     <${Rangee} cls="rangee-groupes" grille label="Tes groupes">${mine.all.map(k => html`<${GroupCard} ctx=${ctx} gkey=${k} key=${k}/>`)}<//>
 
-    <${Rangee} cls="rangee-cafes" grille titre=${html`<span class="h-ico"><${Icon} name="clap"/> Cafés ENSAM</span>`} sousTitre="Une heure autour d’un café, avec les membres de ta ville."
+    <${Rangee} cls="rangee-cafes" grille titre="Cafés ENSAM" sousTitre="Une heure autour d’un café, avec les membres de ta ville."
       action=${html`<button class="btn small" onClick=${() => setCafe(true)}><${Icon} name="plus" size=${15}/> Organiser un café</button>`}
       vide=${html`<${Empty} icon="clap" title="Aucun café prévu pour l’instant">Lance le premier dans ta ville : les membres de ta ville sont prévenus.<//>`}>
       ${[...near, ...cafes.filter(c => !near.includes(c))].slice(0, 6).map(c => html`<${CafeCard} ctx=${ctx} c=${c} key=${c.id} showCity/>`)}<//>
 
-    ${abroad.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="globe"/> Lauréats à l’étranger</h2></div>
+    ${abroad.length ? html`<div class="section-head"><h2 class="titre-sec">Lauréats à l’étranger</h2></div>
       <ul class="group-follow">${abroad.map(([k, n]) => html`<li key=${k}><button class="linkish strong" onClick=${() => go2(ctx, k)}>${groupLabel(data, k)}</button><span class="muted small">${n} membre${n > 1 ? 's' : ''}</span><span class="spacer"></span><button class="btn tiny" onClick=${() => follow(k)}>Suivre</button></li>`)}</ul>` : null}
-    ${villes.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="pin"/> Autres villes</h2></div>
+    ${villes.length ? html`<div class="section-head"><h2 class="titre-sec">Autres villes</h2></div>
       <ul class="group-follow">${villes.map(([k, n]) => html`<li key=${k}><button class="linkish strong" onClick=${() => go2(ctx, k)}>${nomGroupe(data, k)}</button><span class="muted small">${n} membre${n > 1 ? 's' : ''}</span><span class="spacer"></span><button class="btn tiny" onClick=${() => follow(k)}>Suivre</button></li>`)}</ul>` : null}
     ${cafe ? html`<${CafeComposer} ctx=${ctx} onClose=${() => setCafe(false)}/>` : null}
   </div>`;

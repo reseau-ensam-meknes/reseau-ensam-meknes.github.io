@@ -31,9 +31,11 @@ before(async () => {
 after(async () => { await navigateur?.close(); site?.fermer(); });
 beforeEach(() => { site.vider(); fondateursFaux = null; ambFaux = null; });
 
-// langue: null = un visiteur qui n'a jamais choisi de langue ; avant(ctx) : réseau à régler avant la première visite
-async function visiteur({ largeur = 360, hauteur = 640, langue = 'fr', hash = '', query = '', stockage = {}, avant } = {}) {
-  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce' });
+// langue: null = un visiteur qui n'a jamais choisi de langue ; avant(ctx) : réseau à régler avant la première visite ;
+// ua : l'appareil (le navigateur d'une application, par exemple) ;
+// sw : le service worker est permis (l'application gardée sur l'appareil, les nouvelles versions)
+async function visiteur({ largeur = 360, hauteur = 640, langue = 'fr', hash = '', query = '', stockage = {}, avant, ua, sw = false } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: sw ? 'allow' : 'block', reducedMotion: 'reduce', ...(ua ? { userAgent: ua } : {}) });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
   if (avant) await avant(ctx);
   await ctx.addInitScript(([langue, stockage]) => {
@@ -1031,6 +1033,102 @@ test('se déconnecter soi-même : la copie de l’accueil et les brouillons de c
   await m.ctx.close();
 });
 
+// L'adresse que la carte « Ouvrir dans Chrome » construit porte l'étape (mode=inscription) : elle ne vaut que pour l'arrivée,
+// jamais pour la page d'entrée qui revient plus tard dans la même visite (déconnexion, session perdue)
+const ARRIVEE_CARTE = '?role=etudiant&mode=inscription';
+async function arriveEtSeConnecte() {
+  const s = await visiteur({ largeur: 390, hauteur: 844, query: ARRIVEE_CARTE });
+  assert.ok(await s.page.isVisible('#au-je-etudiant'), 'l’arrivée ouvre bien « Créer mon compte »');
+  await s.page.click('.entree-form button.linkish:has-text("J’ai déjà un compte")');
+  await s.page.fill('#au-email', 'membre@exemple.ma');
+  await s.page.click('.entree-form button.btn.primary'); await s.page.waitForSelector('#au-code');
+  await s.page.fill('#au-code', '123456');
+  await s.page.waitForSelector('.me-btn', { timeout: 15000 });
+  return s;
+}
+
+test('arrivée par l’adresse de la carte (?mode=inscription), connexion, puis « Se déconnecter » : « Se connecter », pas « Créer mon compte »', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  const s = await arriveEtSeConnecte();
+  await s.page.click('.me-btn'); await s.page.click('.menu-pop button:has-text("Se déconnecter")');
+  await s.page.waitForSelector('#entree .entree-form', { timeout: 15000 });
+  assert.equal(await s.page.locator('#au-je-etudiant').count(), 0, 'pas « Créer mon compte » juste après une déconnexion');
+  assert.equal(await s.page.locator('.entree-form h2').innerText(), 'Se connecter');
+  assert.equal(await s.page.locator('#au-session').count(), 0, 'déconnexion voulue : pas de « session expirée »');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('arrivée par l’adresse de la carte (?mode=inscription) puis session perdue : « Ta session a expiré », l’adresse déjà là ; de même pour une session gardée trop ancienne', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  const s = await arriveEtSeConnecte();
+  // Le téléphone sort de veille : renouvellement refusé, la session est perdue sans l'avoir voulu
+  await s.page.evaluate(() => {
+    const k = 'sb-127-auth-token', x = JSON.parse(localStorage.getItem(k));
+    x.expires_at = Math.floor(Date.now() / 1000) + 30; localStorage.setItem(k, JSON.stringify(x));
+    dispatchEvent(new Event('focus'));
+  });
+  await s.page.waitForSelector('#entree #au-session', { timeout: 15000 });
+  assert.equal(await s.page.locator('.entree-form h2').innerText(), 'Se connecter');
+  assert.equal(await s.page.locator('#au-je-etudiant').count(), 0, 'se reconnecter, pas créer un compte');
+  assert.equal(await s.page.inputValue('#au-email'), 'membre@exemple.ma');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Un membre dont la session gardée est trop ancienne, ouvert sur la même adresse : la session perdue passe avant l'étape
+  site.vider(); site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  const m = await connecte({ hash: ARRIVEE_CARTE, exp: -3600, expiresAt: -3600, attendre: '#entree .entree-form' });
+  await m.page.waitForSelector('#entree #au-session', { timeout: 15000 });
+  assert.equal(await m.page.inputValue('#au-email'), 'membre@exemple.ma');
+  assert.equal(await m.page.locator('#au-je-etudiant').count(), 0);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// « Ouvrir dans Chrome » touché dans Instagram (Android), mais l'application ignore le lien : rien ne se recharge, on s'inscrit
+// ici. Ce qui a été gardé au toucher (l'étape « Créer mon compte », pour l'adresse de secours) ne revient jamais sur la page
+// d'entrée qui suit dans la visite (déconnexion, session perdue) : se reconnecter, pas créer un compte
+const INSTAGRAM = 'Mozilla/5.0 (Linux; Android 14; SM-A546B Build/UP1A.231005.007; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/141.0.7390.122 Mobile Safari/537.36 Instagram 404.0.0.48.76 Android (34/14; 450dpi; 1080x2340; samsung; SM-A546B; a54x; s5e8835; fr_FR; 812345678)';
+for (const fin of ['déconnexion', 'session perdue']) test(`Instagram, « Ouvrir dans Chrome » sans effet, inscription ici, puis ${fin} : « Se connecter »${fin === 'session perdue' ? ' et « Ta session a expiré »' : ''}, pas « Créer mon compte »`, async () => {
+  const s = await visiteur({ largeur: 390, hauteur: 844, ua: INSTAGRAM });
+  await s.page.waitForSelector('#au-appli');
+  await s.page.click('#au-je-etudiant');
+  await s.page.fill('#au-email', 'amine@ensam-umi.ac.ma');
+  await s.page.evaluate(() => addEventListener('click', e => { if (e.target.closest?.('#au-appli-chrome')) e.preventDefault(); }, { capture: true, once: true }));
+  await s.page.click('#au-appli-chrome');
+  await s.page.check('#au-ok');
+  await s.page.click('.entree-form button.btn.primary.wide'); await s.page.waitForSelector('#au-code');
+  await s.page.fill('#au-code', '123456');
+  await s.page.waitForSelector('.auth-card.wide.onb', { timeout: 15000 });
+  await s.page.fill('#pf-name', 'Amine Alaoui'); await s.page.fill('#pf-promo', String(S + 1));
+  await s.page.selectOption('#pf-fil', { index: 1 });
+  await s.page.click('.pf-pied .btn');
+  await s.page.waitForFunction(() => !document.querySelector('.auth-card.wide.onb'), null, { timeout: 15000 });
+  await s.page.waitForSelector('.me-btn', { timeout: 15000 });
+  assert.equal(await s.page.evaluate(() => sessionStorage.getItem('ensam-entree-saisie')), null, 'connecté : plus rien de la page d’entrée à reprendre');
+  if (fin === 'déconnexion') {
+    for (let i = 0; i < 4 && await s.page.locator('.modal').count(); i++) { await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(200); }
+    await s.page.click('.me-btn'); await s.page.click('.menu-pop button:has-text("Se déconnecter")');
+    await s.page.waitForSelector('#entree .entree-form', { timeout: 15000 });
+  } else {
+    // Une saisie qui traînerait encore (par un autre chemin) : la session perdue passe avant son étape.
+    // Puis le téléphone sort de veille : renouvellement refusé, la session est perdue sans l'avoir voulu
+    await s.page.evaluate(() => {
+      sessionStorage.setItem('ensam-entree-saisie', JSON.stringify({ email: 'amine@ensam-umi.ac.ma', mode: 'inscription', ok: false, mails: true, t: Date.now() }));
+      const k = 'sb-127-auth-token', x = JSON.parse(localStorage.getItem(k));
+      x.expires_at = Math.floor(Date.now() / 1000) + 30; localStorage.setItem(k, JSON.stringify(x));
+      dispatchEvent(new Event('focus'));
+    });
+    await s.page.waitForSelector('#entree #au-session', { timeout: 15000 });
+    assert.equal(await s.page.locator('#au-session').innerText(), 'Ta session a expiré. Reconnecte-toi pour continuer.');
+    assert.equal(await s.page.inputValue('#au-email'), 'amine@ensam-umi.ac.ma', 'l’adresse déjà là');
+  }
+  assert.equal(await s.page.locator('.entree-form h2').innerText(), 'Se connecter');
+  assert.equal(await s.page.locator('#au-je-etudiant').count(), 0, 'se reconnecter, pas créer un compte');
+  assert.equal(await s.page.getAttribute('.entree-form', 'aria-label'), null);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 for (const [langue, theme] of [['fr', 'light'], ['ar', 'dark']]) {
   test(`tout premier chargement d’un membre (${langue}, ${theme}) : la forme de l’accueil à sa taille, pas le logo`, async () => {
     site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
@@ -1053,6 +1151,44 @@ for (const [langue, theme] of [['fr', 'light'], ['ar', 'dark']]) {
   });
 }
 
+// La page passe derrière une autre application (le visiteur va chercher son code dans sa boîte mail)
+const cacher = page => page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+
+test('nouvelle version publiée pendant que le visiteur tape son email : la page ne se recharge pas sous ses doigts ; cachée, elle se recharge et l’email revient', async () => {
+  const s = await visiteur({ sw: true });
+  let liberer = () => {};
+  try {
+    // Le site gardé sur l'appareil : le service worker installé a pris la main sur la page
+    await s.page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 30000 });
+    await s.page.reload(); await s.page.waitForSelector('#entree .entree-form');
+    assert.ok(await s.page.evaluate(() => !!navigator.serviceWorker.controller), 'le site est gardé sur l’appareil');
+    // Il revient après une mise en ligne : la nouvelle version s'installe pendant qu'il tape
+    Object.assign(site.maj, { version: 'test-' + Date.now(), retenue: new Promise(ok => { liberer = ok; }) });
+    let chargements = 0;
+    s.page.on('load', () => { chargements++; });
+    await s.page.reload(); await s.page.waitForSelector('#entree .entree-form');
+    await s.page.click('#au-je-etudiant');
+    await s.page.fill('#au-email', 'amine@ensam-umi.ac.ma');
+    liberer();
+    const prete = () => s.page.evaluate(() => navigator.serviceWorker.getRegistration().then(r => !!r?.waiting));
+    for (let i = 0; i < 150 && !(await prete()); i++) await s.page.waitForTimeout(100);
+    assert.ok(await prete(), 'la nouvelle version est installée et attend');
+    // Les premières secondes passées (celles où une page qu'on n'a pas touchée se recharge d'elle-même) : rien n'a bougé
+    await s.page.waitForFunction(() => performance.now() > 10000, null, { timeout: 15000, polling: 200 });
+    assert.equal(chargements, 1, 'pas de rechargement pendant qu’il tape');
+    assert.equal(await s.page.inputValue('#au-email'), 'amine@ensam-umi.ac.ma');
+    // Il va lire son code ailleurs : la nouvelle version prend la main, la page se recharge sans qu'il le voie
+    await cacher(s.page);
+    for (let i = 0; i < 100 && chargements < 2; i++) await s.page.waitForTimeout(100);
+    assert.equal(chargements, 2, 'la nouvelle version s’applique une fois la page cachée');
+    await s.page.waitForSelector('#entree .entree-form');
+    assert.equal(await s.page.inputValue('#au-email'), 'amine@ensam-umi.ac.ma', 'ce qu’il avait tapé revient');
+    assert.deepEqual(s.erreurs, []);
+  } finally {
+    liberer(); Object.assign(site.maj, { version: null, retenue: null });
+    await s.ctx.close();
+  }
+});
 // Un appareil déjà abonné, en ligne (PushManager simulé) : « Tester » et la resynchronisation à l'ouverture.
 // pm.refuse : subscribe() est rejeté à partir de cet appel (1 = le premier), comme un service de push qui ne répond pas ;
 // morts : les adresses auxquelles abonner_push_etat répond « mort » ; test : la réponse du job test (un objet, ou 500) ;

@@ -26,8 +26,21 @@ create function storage.filename(name text) returns text language sql immutable 
 create function storage.extension(name text) returns text language sql immutable as $$ select lower(reverse(split_part(reverse(name), '.', 1))) $$;
 `;
 
+// L'heure du calendrier de la base (public.horloge() : heure du jour, date, lundi), fixée pour que les tests ne dépendent pas
+// de l'heure où ils tournent. Par défaut aujourd'hui à 10:00 UTC (= heure du Maroc), de jour, loin de la nuit calme
+// (21:30 – 08:00). Les durées écoulées (20 h, 7 jours…) restent mesurées avec now(), comme les dates des lignes.
+export const aujourdhuiA = (h = 10, m = 0, jours = 0) => {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + jours);
+  d.setUTCHours(h, m, 0, 0);
+  return d.toISOString();
+};
+// quand = '' : l'heure réelle (now())
+export const reglerHorloge = (db, quand = aujourdhuiA()) => db.query(`select set_config('ensam.horloge', $1, false)`, [quand]);
+
 export async function nouvelleBase(schemaPath) {
   const db = new PGlite();
+  await reglerHorloge(db);
   await db.exec(SUPABASE);
   if (schemaPath) await db.exec(fs.readFileSync(schemaPath, 'utf8').replace(/^create extension if not exists pgcrypto;$/m, '-- pgcrypto : gen_random_uuid est intégré'));
   return db;

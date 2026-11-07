@@ -1,6 +1,8 @@
 // Sur le téléphone, une notification par élément : chaque filleul, chaque événement déplacé et chaque rendez-vous de
 // mentorat déplacé a la sienne. La base met l'identifiant de l'élément dans les données, la fonction notifier en fait le
-// tag : une nouvelle date du même élément remplace l'ancienne, un autre élément ne l'efface pas (ni son nom).
+// tag : une nouvelle date du même élément remplace l'ancienne, un autre élément ne l'efface pas (ni son nom). Un seul nom
+// de ligne par élément, celui du contrat : filleul-<étudiant>, evenement-<id> (l'annonce et chaque nouvelle date du même
+// événement), mentorat-<m> (le rendez-vous fixé et chaque nouvelle date du même mentorat).
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { nouvelleBase, en, creerCompte, uid } from './banc-sql.mjs';
@@ -51,9 +53,15 @@ test('deux événements déplacés : deux notifications ; une nouvelle date du m
   await db.query('update public.evenements set debut = $2 where id = $1', [forum, dans(144)]);
   const l = await file(ETU, 'evenement_deplace');
   assert.equal(l.length, 3);
+  // Sous ses deux clés : evenement (lue par la fonction d'avant) et id (celle des autres types, lue par ce lot)
   assert.deepEqual(l.map(x => x.data.evenement), [forum, visite, forum], 'l’identifiant de l’événement est dans les données');
-  assert.deepEqual(l.map(x => x.n.tag), [`evenement_deplace-${forum}`, `evenement_deplace-${visite}`, `evenement_deplace-${forum}`],
+  assert.deepEqual(l.map(x => x.data.id), [forum, visite, forum]);
+  assert.deepEqual(l.map(x => x.n.tag), [`evenement-${forum}`, `evenement-${visite}`, `evenement-${forum}`],
     'avant : « evenement_deplace » pour les trois, la Visite OCP effaçait le Forum');
+  assert.deepEqual(l.map(x => x.n.url), [forum, visite, forum].map(e => `${SITE}#reseau/agenda/${e}`));
+  // L'annonce de chaque événement : sa ligne, que la nouvelle date reprend (l'ancienne date ne reste pas affichée)
+  const a = await file(ETU, 'evenement');
+  assert.deepEqual(a.map(x => x.n.tag).sort(), [`evenement-${forum}`, `evenement-${visite}`].sort());
 });
 
 test('deux rendez-vous de mentorat déplacés : deux notifications ; une nouvelle date du même rendez-vous remplace la précédente', async () => {
@@ -69,7 +77,10 @@ test('deux rendez-vous de mentorat déplacés : deux notifications ; une nouvell
   const l = await file(ETU, 'mentorat_deplace');
   assert.equal(l.length, 3);
   assert.deepEqual(l.map(x => x.data.m), [cv, entretien, cv], 'l’identifiant du rendez-vous est dans les données');
-  assert.deepEqual(l.map(x => x.n.tag), [`mentorat_deplace-${cv}`, `mentorat_deplace-${entretien}`, `mentorat_deplace-${cv}`],
+  assert.deepEqual(l.map(x => x.n.tag), [`mentorat-${cv}`, `mentorat-${entretien}`, `mentorat-${cv}`],
     'avant : « mentorat_deplace » pour les trois, le rendez-vous de Nadia effaçait celui de Karim');
   assert.match(l[1].n.body, /^Nadia Mentor propose /);
+  // Le rendez-vous fixé de chaque mentorat : sa ligne, que la nouvelle date reprend
+  const a = await file(ETU, 'mentorat_accepte');
+  assert.deepEqual(a.map(x => x.n.tag).sort(), [`mentorat-${cv}`, `mentorat-${entretien}`].sort());
 });

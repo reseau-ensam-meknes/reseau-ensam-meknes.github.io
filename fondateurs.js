@@ -181,8 +181,8 @@ injectCSS('fondateurs-membres', `
 .fd-accueil .fd-carte { position: relative; }
 .fd-accueil .fd-toi { position: absolute; inset-block-start: 0; inset-inline-start: 0; padding: 2px 8px; border-radius: var(--r-pill); background: var(--surface); box-shadow: var(--sh1); color: var(--ink-2); font-size: var(--fs-1); font-weight: 650; line-height: 1.4; }
 .fd-accueil .fd-merci { position: absolute; inset-block-start: 0; inset-inline-start: 0; margin: 0; display: grid; place-items: center; inline-size: 30px; block-size: 30px; padding: 0; border: 1px solid var(--line); border-radius: 50%; background: var(--surface); color: var(--brass); box-shadow: var(--sh1); cursor: pointer; }
-/* Une cible de 40 px pour le doigt (30 px à l’écran) : -6 px autour de sa boîte intérieure (28 px, la bordure en moins) */
-.fd-accueil .fd-merci::before { content: ""; position: absolute; inset: -6px; border-radius: 50%; }
+/* Une cible de 44 px pour le doigt (30 px à l’écran) : la zone déborde de sa boîte intérieure (28 px, la bordure en moins) de 8 px de chaque côté */
+.fd-accueil .fd-merci::before { content: ""; position: absolute; inset: min(-6px, calc(50% - 22px)); border-radius: 50%; }
 .fd-accueil .fd-merci:hover { background: color-mix(in srgb, var(--brass) 10%, var(--surface)); }
 .fd-merci .ico { color: var(--brass); }
 .modal.fd-feuille .modal-body { align-items: center; text-align: center; gap: var(--sp-2); padding-block: var(--sp-5) var(--sp-4); }
