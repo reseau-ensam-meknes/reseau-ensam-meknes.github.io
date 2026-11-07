@@ -578,7 +578,9 @@ textarea { resize: vertical; }
 .step-dot { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--surface); border: 1px solid var(--line-strong); font: 600 var(--fs-1)/1 var(--f-body); font-variant-numeric: tabular-nums; }
 .stepper li.done .step-dot { background: var(--good); border-color: var(--good); color: #fff; }
 .cands { display: flex; flex-direction: column; gap: .7rem; align-items: stretch; }
-.cands > .btn { align-self: flex-start; }
+/* « J’ai recruté un étudiant qui n’a pas postulé ici » : sur deux lignes plutôt que de sortir de la fiche à 360 px,
+   là où le texte se dessine un peu plus large */
+.cands > .btn { align-self: flex-start; max-width: 100%; white-space: normal; text-align: start; }
 .cand { background: var(--surface); box-shadow: var(--sh1); border-radius: var(--r-lg); padding: .9rem 1rem; display: flex; flex-direction: column; gap: .6rem; }
 .cand-head { display: flex; align-items: flex-start; gap: .5rem; }
 .cand-head .person { flex: 1; min-width: 0; }
