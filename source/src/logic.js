@@ -916,13 +916,26 @@ export const GUIDE_SECTIONS = [
   ['logement', 'Logement', 'home'], ['budget', 'Budget et coût de la vie', 'briefcase'], ['stage', 'Trouver un stage ou un emploi', 'feed'], ['vie', 'Vie sur place', 'heart'],
 ];
 
+// L'école d'un membre ou d'une ligne : tout ce qui date d'avant les écoles est à ENSAM Meknès (même défaut que la base)
+export const ECOLE_DEFAUT = 'ensam-meknes';
+export const ecoleDe = x => x?.ecole || ECOLE_DEFAUT;
+// Administration > Membres : null si la liste officielle de son école n'a aucune ligne de sa promo, sinon true ou false
+// selon qu'il y figure (même nom et même promo, ou même email) ; les lignes d'une autre école ne comptent jamais
+export function surListeOfficielle(liste, p, email) {
+  const lignes = (liste || []).filter(l => ecoleDe(l) === ecoleDe(p)); const e = (email || '').toLowerCase();
+  if (!lignes.some(l => l.promo === p.promo)) return null;
+  return lignes.some(l => (l.promo === p.promo && cleNom(l.nom) === cleNom(p.full_name)) || (!!l.email && !!e && l.email === e));
+}
+
 // Taux d'insertion par promo, filière et vague (même calcul que rapport_insertion() dans la base) :
 // le taux exclut ceux qui poursuivent leurs études ; le taux de réponse se rapporte à la liste officielle si elle est importée.
-export function rapportInsertion(data, now = new Date()) {
+// ecole : une seule école (inscrits, réponses et liste de cette école), comme p_ecole dans la base.
+export function rapportInsertion(data, now = new Date(), ecole = null) {
   const an = now.getFullYear(); const enPoste = e => ['emploi', 'entrepreneur', 'volontariat'].includes(e.situation);
+  const ici = x => !ecole || ecoleDe(x) === ecole;
   const cohortes = new Map();
-  for (const p of data.profiles) if (p.role !== 'admin' && p.promo <= an && p.promo >= an - 6) { const k = p.promo + '|' + p.filiere; cohortes.set(k, (cohortes.get(k) || 0) + 1); }
-  const liste = data.liste_officielle || []; const enq = data.enquetes_insertion || [];
+  for (const p of data.profiles) if (p.role !== 'admin' && ici(p) && p.promo <= an && p.promo >= an - 6) { const k = p.promo + '|' + p.filiere; cohortes.set(k, (cohortes.get(k) || 0) + 1); }
+  const liste = (data.liste_officielle || []).filter(ici); const enq = (data.enquetes_insertion || []).filter(ici);
   const mediane = v => { if (!v.length) return null; const s = [...v].sort((a, b) => a - b); const m = (s.length - 1) / 2; return (s[Math.floor(m)] + s[Math.ceil(m)]) / 2; };
   const moy = v => v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length * 10) / 10 : null;
   const rows = [];
@@ -1239,25 +1252,157 @@ export function prevenirVariante({ etat, raison, memo = {}, now = Date.now(), ro
   return null;
 }
 
+// La ligne « Me prévenir », non modale, là où l'on attend une réponse : au-dessus du champ d'écriture (Messages), à la fin de
+// la pile (Match). Ce n'est pas une feuille : elle ne compte pas dans leur budget (3 jours après « Plus tard »), et son × la
+// range pour ce fil seulement (memo.lignes : l'id de la conversation, ou 'match'). attente : le membre attend vraiment une
+// réponse ici. Rien pour l'admin ; rien quand cet appareil reçoit déjà ('on'), ne peut rien recevoir ('absent'), n'est pas
+// encore connu ('…', démo ordinaire) ; rien pour qui a coupé ici (memo.coupe) ou décoché la catégorie ; rien une fois la
+// demande acceptée sur cet appareil (memo.fait). Une seule demande par visite : rien quand une feuille a été vue ou refusée
+// depuis le début de la visite (depuis ; memo.at, écrit par la feuille d'ouverture et par chaque refus), ni quand une feuille
+// « Me prévenir » y a été demandée ou que la fenêtre du navigateur y a eu sa réponse (deja).
+// Bloquées : « Débloquer » seulement si ce blocage n'est pas une réponse donnée sur cet appareil. Avec memo.fait, le membre a
+// répondu ici (« Bloquer » dans la fenêtre du navigateur ouverte par une feuille, une ligne, la pastille ; ou bloquées dans les
+// réglages après les avoir activées) : son refus est respecté, la ligne ne le lui redemande pas à chaque visite.
+// 'activer' (son toucher ouvre la fenêtre du navigateur), 'ios' (« Comment faire »), 'debloquer' (« Débloquer »), ou null.
+export function lignePrevenir({ etat, memo = {}, role, voulu = true, attente = true, fil = null, depuis = 0, deja = false }) {
+  if (role === 'admin' || !voulu || !attente || memo.coupe || deja) return null;
+  if (fil && Array.isArray(memo.lignes) && memo.lignes.includes(fil)) return null;
+  if (depuis && memo.at && memo.at >= depuis) return null;
+  if (etat === 'off') return memo.fait ? null : 'activer';
+  if (etat === 'ios') return 'ios';
+  if (etat === 'refuse') return memo.fait ? null : 'debloquer';
+  return null;
+}
+// Le × d'une ligne : ce fil s'ajoute à memo.lignes (les plus récents d'abord, LIGNES_MAX au plus)
+export const LIGNES_MAX = 40;
+export function sansLigne(memo = {}, fil) {
+  const avant = Array.isArray(memo.lignes) ? memo.lignes.filter(x => x !== fil) : [];
+  return { ...memo, lignes: [fil, ...avant].slice(0, LIGNES_MAX) };
+}
+// Une conversation qui attend la réponse de l'autre : un entretien que j'ai proposé, à venir, sans sa réponse ; ou bien j'ai
+// écrit et l'autre n'a encore rien écrit ni répondu à un entretien. Sans message de moi, elle n'attend rien (la ligne ne vient
+// jamais avant).
+export function attendReponse(fil = [], moi, now = Date.now()) {
+  const miens = fil.filter(m => m.author_id === moi);
+  if (!miens.length) return false;
+  if (miens.some(m => m.type === 'rdv' && !m.rdv_reponse && !!m.rdv_at && Date.parse(m.rdv_at) > now)) return true;
+  return !fil.some(m => m.author_id !== moi) && !miens.some(m => m.rdv_reponse);
+}
+
 // À l'ouverture, « Reçois l'essentiel sur ton téléphone » : pour un membre dont l'appareil peut recevoir des notifications
-// sans y être abonné (etat 'off' ; jamais sur iPhone hors écran d'accueil, ni sans notifications possibles). Même mémo que
+// sans y être abonné (etat 'off'). L'administration aussi : les signalements ne partent que vers un appareil abonné. Même mémo que
 // « Me prévenir » : chaque affichage sans « Activer » (« Plus tard », fermer, quitter l'application) la ramène 2 jours
 // après, tant que rien n'est activé ; acceptée, ou refusée
 // par le navigateur (etat 'refuse' : le bandeau de l'accueil prend le relais), plus jamais. Une feuille « Me prévenir » remise à cette visite passe avant.
 // voulu : false quand toutes les catégories sont décochées dans Mon profil (rien à proposer).
+// L'iPhone dans Safari et les navigateurs des applications ont leur propre feuille : ouvertureSorte.
 export const OUVERTURE_ECART = 2 * 864e5;
-export function ouvertureNotif({ etat, memo = {}, now = Date.now(), role, voulu = true }) {
-  if (role === 'admin' || !voulu || etat !== 'off' || memo.fait || memo.differe) return false;
+export function ouvertureNotif({ etat, memo = {}, now = Date.now(), voulu = true }) {
+  if (!voulu || etat !== 'off' || memo.fait || memo.differe) return false;
   return !(memo.at && now - memo.at < OUVERTURE_ECART);
 }
 
+// La feuille d'ouverture qui convient à cet appareil, ou null :
+//  'push'  : il peut recevoir sans être abonné (ouvertureNotif) ;
+//  'ios'   : iPhone dans Safari, où les notifications n'arrivent que depuis l'icône de l'écran d'accueil : les gestes pour
+//            l'ajouter, une fois, puis une seule autre fois 14 jours après (memo.ios = { n, at }) ;
+//  'appli' : le navigateur intégré d'une application (Instagram, Facebook…), où rien n'est possible : « Ouvrir dans
+//            Chrome » ou « Ouvrir dans Safari », une fois par visite au plus (appliVue : déjà montrée pendant cette visite).
+// Jamais pour qui a coupé les notifications dans Mon profil, ni quand tout y est décoché ; une feuille « Me prévenir »
+// remise à cette visite passe avant.
+export const OUVERTURE_IOS_ECART = 14 * 864e5;
+export function ouvertureSorte({ etat, memo = {}, now = Date.now(), voulu = true, appliVue = false }) {
+  if (!voulu || memo.coupe || memo.differe) return null;
+  if (etat === 'off') return ouvertureNotif({ etat, memo, now, voulu }) ? 'push' : null;
+  if (etat === 'ios') {
+    const i = memo.ios || {};
+    return (i.n || 0) < 2 && !(i.at && now - i.at < OUVERTURE_IOS_ECART) ? 'ios' : null;
+  }
+  if (etat === 'appli') return appliVue ? null : 'appli';
+  return null;
+}
+
+// Le lien « Active tes notifications » (?notifs=1, dans les emails et sur WhatsApp) : la feuille qu'il ouvre tout de suite.
+// 'deja' : déjà activées ici (un mot suffit) ; null : coupées par le membre dans Mon profil (on respecte), démo ordinaire,
+// ou état pas encore connu.
+export function sorteLienNotifs({ etat, memo = {} }) {
+  if (memo.coupe || etat === '…' || etat === 'demo' || !etat) return null;
+  return { on: 'deja', off: 'push', ios: 'ios', appli: 'appli', refuse: 'debloquer', absent: 'absent' }[etat] || null;
+}
+
 // Bandeau de l'accueil : tant que cet appareil ne reçoit rien (coupées par le navigateur, iPhone sans l'application, jamais
-// activées), il le dit, sauf à qui les a coupées lui-même (memo.coupe) ; « plus tard » le range 3 jours.
+// activées, navigateur d'une application), il le dit, sauf à qui les a coupées lui-même (memo.coupe) ; « plus tard » le range 3 jours.
 export const BANDEAU_PUSH_ECART = 3 * 864e5;
+// memo.sans : l'abonnement a déjà échoué pour de bon sur ce navigateur (apresEchec, pwa.js) : « Activer » n'y servirait à
+// rien, le bouton de Mon profil reste là pour réessayer.
 export function bandeauPush({ etat, memo = {}, now = Date.now(), role, voulu = true }) {
-  if (role === 'admin' || !voulu || memo.coupe || !['off', 'ios', 'refuse'].includes(etat)) return null;
+  if (role === 'admin' || !voulu || memo.coupe || !['off', 'ios', 'refuse', 'appli'].includes(etat)) return null;
+  if (etat === 'off' && memo.sans) return null;
   return memo.bandeau && now - memo.bandeau < BANDEAU_PUSH_ECART ? null : etat;
 }
+
+// Le navigateur intégré d'une application (lien ouvert dans Instagram, Facebook, Messenger, LinkedIn, TikTok, Snapchat, ou
+// une vue web Android « ; wv) ») : ni notification ni installation n'y sont possibles. { nom, systeme } ou null.
+// nom : l'application quand on la reconnaît (null pour une vue web quelconque) ; systeme : 'android', 'ios' ou 'autre'.
+const APPLIS = [
+  ['Messenger', /FB_IAB\/MESSENGER|FBAN\/Messenger|MessengerForiOS|MessengerLite/i],
+  ['Instagram', /\bInstagram\b/i],
+  ['Facebook', /FBAN\/|FBAV\/|FB_IAB|FBIOS|FB4A/],
+  ['LinkedIn', /LinkedInApp/i],
+  ['TikTok', /musical_ly|BytedanceWebview|\bTikTok\b/i],
+  ['Snapchat', /\bSnapchat\b/i],
+];
+export function navigateurIntegre(ua = '') {
+  const s = String(ua || '');
+  const systeme = /android/i.test(s) ? 'android' : /iphone|ipad|ipod/i.test(s) ? 'ios' : 'autre';
+  const a = APPLIS.find(([, re]) => re.test(s));
+  if (a) return { nom: a[0], systeme };
+  if (systeme === 'android' && /; wv\)/.test(s)) return { nom: null, systeme };
+  return null;
+}
+
+// « Ouvrir dans Chrome » depuis le navigateur d'une application Android : un lien intent:// vers la même page, que Chrome
+// ouvre (sinon la même adresse, browser_fallback_url). La route passe en ?r=… (le # sert à l'intent) et notifs=1 ouvre
+// tout de suite la feuille d'activation : c'est pour elle que le membre change de navigateur. app.js lit puis efface les deux.
+// lang : la langue de la page ; Chrome ne connaît pas le choix fait ici, l'arabe passe donc par l'adresse (?lang=ar, gardé
+// pour la visite, i18n.js), le français laisse Chrome à son propre choix. Sans lang : l'adresse garde le sien.
+export function lienChrome(adresse, route = '', { lang } = {}) {
+  const u = new URL(adresse);
+  u.hash = '';
+  for (const k of ['r', 'notifs', 'depuis']) u.searchParams.delete(k);
+  if (lang === 'ar') u.searchParams.set('lang', 'ar'); else if (lang) u.searchParams.delete('lang');
+  const r = String(route || '').replace(/^#/, '');
+  if (r && r !== 'accueil') u.searchParams.set('r', r);
+  u.searchParams.set('notifs', '1');
+  const cible = u.href, schema = u.protocol.replace(/:$/, '');
+  return `intent://${cible.slice(u.protocol.length + 2)}#Intent;scheme=${schema};package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(cible)};end`;
+}
+
+// Paramètres d'adresse lus au démarrage (app.js), puis retirés : r (la route, venue d'un autre navigateur par « Ouvrir dans
+// Chrome »), notifs=1 (le lien « Active tes notifications »), depuis=ancienne (arrivée par l'ancienne adresse du Réseau).
+// search : ce qui reste de l'adresse ('' ou '?…') ; aucun : rien de tout cela (l'adresse ne change pas).
+export function parametresLien(search = '') {
+  const p = new URLSearchParams(search);
+  const brut = (p.get('r') || '').replace(/^#/, '').trim();
+  const out = { r: /^[\w\-/]{1,200}$/.test(brut) ? brut : '', notifs: p.get('notifs') === '1', depuis: p.get('depuis') === 'ancienne' ? 'ancienne' : '' };
+  const aucun = !['r', 'notifs', 'depuis'].some(k => p.has(k));
+  for (const k of ['r', 'notifs', 'depuis']) p.delete(k);
+  const reste = p.toString();
+  return { ...out, search: reste ? '?' + reste : '', aucun };
+}
+
+// Abonnement refusé par le service de notifications pour une raison qui peut passer (réseau coupé, AbortError) : l'échec est
+// noté par jour (memo.echecs : les deux derniers jours, 'AAAA-MM-JJ'), et cet appareil n'est classé « sans notifications »
+// qu'au deuxième jour différent (arret). Deux échecs le même jour : on réessaiera plus tard.
+export function noterEchecPush(memo = {}, now = Date.now()) {
+  const avant = Array.isArray(memo.echecs) ? memo.echecs.filter(x => typeof x === 'string') : [];
+  const echecs = [...new Set([...avant, jourLocal(now)])].slice(-2);
+  return { echecs, arret: echecs.length >= 2 };
+}
+// L'erreur de pushManager.subscribe est-elle définitive pour ce navigateur ? Navigateur sans service de notifications
+// (NotSupportedError), autorisation refusée au moment de l'abonnement (NotAllowedError), Brave sans les services de Google.
+// Le reste (AbortError d'un réseau coupé, service injoignable) peut passer.
+export const echecDefinitif = (e, { brave = false } = {}) => brave || ['NotSupportedError', 'NotAllowedError'].includes(e?.name);
 
 // Notifications sur le téléphone, par catégorie : chacun choisit dans Mon profil ce qu'il reçoit.
 // me.notif_push ne garde que les choix faits ({ offres: true, reseau: false }) ; une catégorie absente suit le défaut

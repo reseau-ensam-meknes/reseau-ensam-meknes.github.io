@@ -684,14 +684,24 @@ export function celebrate({ cle, titre, texte, action, icon = 'trophy', pts = 0,
 }
 // Une fenêtre déjà ouverte qui doit laisser la place à une fête qui arrive après elle
 export const quandFete = fn => { surFete.add(fn); return () => surFete.delete(fn); };
-// Une fête est à l'écran : rien d'autre ne s'ouvre par-dessus (la feuille « Me prévenir » attend la prochaine visite)
+// Une fête est à l'écran : rien d'autre ne s'ouvre par-dessus (la feuille « Me prévenir » attend qu'elle se ferme)
 export const feteOuverte = () => feteActive;
+// Ce qui attend la fin de la fête (la feuille « Me prévenir », pwa.js) : la file est vidée un instant après sa fermeture, le
+// temps que la fête s'en aille. Sans fête à l'écran, tout de suite.
+const APRES_FETE = 400;
+let apresFetes = [];
+export const apresFete = fn => { if (feteActive) apresFetes.push(fn); else fn(); };
 // Rien d'ouvert par-dessus l'écran (feuille, fenêtre ou fête ; une copie qui s'en va ne compte pas) : une fête peut venir
 export const ecranLibre = () => !document.querySelector('.modal-back:not(.sortie), .fete-back:not(.sortie)') && !feteActive;
 export function Celebration() {
   const [f, setF] = useState(null);
   feteSet = setF;
-  return f ? html`<${Fete} f=${f} key=${f.t} onClose=${() => { feteActive = false; setF(null); }}/>` : null;
+  const fermer = () => {
+    feteActive = false; setF(null);
+    const l = apresFetes; apresFetes = [];
+    if (l.length) setTimeout(() => { for (const fn of l) apresFete(fn); }, APRES_FETE);
+  };
+  return f ? html`<${Fete} f=${f} key=${f.t} onClose=${fermer}/>` : null;
 }
 const COULEURS_FETE = ['var(--em-o)', 'var(--em-b)', 'var(--orange)', 'var(--accent)', 'var(--good)', '#FFD166'];
 // Le match : les couleurs de l'école seulement (bleu, orange, bleu nuit), et la pluie part quand la coche apparaît

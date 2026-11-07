@@ -942,7 +942,7 @@ test('« Me prévenir » sur iPhone, en arabe : les étapes pour ajouter le Rés
   await s.ctx.close();
 });
 
-test('« Me prévenir » : une fête qui s’ouvre pendant la feuille passe devant ; la feuille revient plus tard, sans compter de refus', async () => {
+test('« Me prévenir » : une fête qui s’ouvre pendant la feuille passe devant ; la feuille revient juste après elle, dans la même visite, sans compter de refus', async () => {
   const s = await prevenirSur('off');
   await s.comme('Amine'); await s.mentorat('Choisir mon stage de 3A');
   await s.page.waitForSelector('.modal.prevenir');
@@ -955,12 +955,20 @@ test('« Me prévenir » : une fête qui s’ouvre pendant la feuille passe deva
   assert.equal(await s.page.locator('.modal.prevenir').count(), 0, 'jamais deux fenêtres l’une sur l’autre');
   const m = await s.memo();
   assert.ok(!m.n, 'pas un refus');
-  assert.ok(m.differe, 'gardée pour la visite suivante');
+  assert.ok(m.differe, 'gardée le temps de la fête');
+  // La fête fermée : la feuille revient un instant après, dans la même visite, sans le petit mot
+  await s.page.locator('.fete-back .fete-acts .btn').last().click();
+  await s.page.waitForSelector('.modal.prevenir', { timeout: 3000 });
+  assert.equal(await s.page.locator('.fete-back:not(.sortie)').count(), 0);
+  assert.equal(await s.page.locator('.prevenir .verify-ok').count(), 0);
+  assert.match(await s.page.locator('.modal.prevenir').innerText(), /choisit un horaire/);
+  const apres = await s.memo();
+  assert.ok(!apres.n && !apres.differe, JSON.stringify(apres));
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
 
-test('« Me prévenir » n’arrive jamais par-dessus une fête : il attend la visite suivante ; accepté, il ne revient plus', async () => {
+test('« Me prévenir » n’arrive jamais par-dessus une fête : l’application fermée pendant la fête, il attend la visite suivante ; accepté, il ne revient plus', async () => {
   const s = await prevenirSur('off');
   await s.comme('Salma'); await s.aller('offres/demandes');
   await s.page.click('#dm-nouvelle'); await s.page.waitForTimeout(200);
@@ -982,6 +990,425 @@ test('« Me prévenir » n’arrive jamais par-dessus une fête : il attend la v
   assert.equal((await s.memo()).fait, 1);
   await s.mentorat('Préparer mes entretiens');
   assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// « Demander au bon moment » : juste après la fête, après un « Intéressé », une offre publiée, des coordonnées demandées ;
+// dans Messages et à la fin de la pile Match, une ligne au lieu d'une feuille
+test('« Me prévenir » juste après la fête, dans la même visite : la première demande publiée, la fête, puis la feuille', async () => {
+  const s = await prevenirSur('off');
+  await s.comme('Salma'); await s.aller('offres/demandes');
+  await s.page.click('#dm-nouvelle'); await s.page.waitForTimeout(200);
+  await s.page.click('#dm-type-pfe');
+  await s.page.fill('#dm-titre', 'PFE en maintenance prédictive');
+  await s.page.fill('#dm-details', 'Je cherche un PFE de 6 mois en maintenance prédictive, à Casablanca ou à Kénitra.');
+  await s.page.click('#dm-publier'); await s.page.waitForTimeout(500);
+  assert.ok(await s.page.locator('.fete-back').isVisible());
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0, 'jamais par-dessus la fête');
+  assert.equal((await s.memo()).differe, 'demande');
+  await s.page.locator('.fete-back .fete-acts .btn').last().click();
+  await s.page.waitForSelector('.modal.prevenir', { timeout: 3000 });
+  assert.equal(await s.page.locator('.fete-back:not(.sortie)').count(), 0, 'la fête est partie');
+  assert.equal(await s.page.locator('.prevenir .verify-ok').count(), 0, 'la fête a déjà dit que c’était publié');
+  assert.match(await s.page.locator('.modal.prevenir').innerText(), /te propose son aide/);
+  assert.equal((await s.memo()).differe, undefined, 'montrée : plus rien ne l’attend à la visite suivante');
+  await s.page.click('#pv-tard'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).n, 1);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// Une feuille d'ouverture rangée il y a quatre jours : les feuilles « Me prévenir » peuvent venir à cette visite
+const ouvertureRangee = async s => { await attendreOuverture(s); await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300); await s.changerMemo('({ ...m, at: m.at - 4 * 864e5 })'); };
+// Match : « Intéressé » sur une carte où personne ne s'est encore intéressé à soi (pas de match tout de suite)
+async function interesseSansMatch(s) {
+  for (let i = 0; i < 6 && await s.page.locator('.mx-carte.dessus .mx-interet').count(); i++) { await s.page.click('.mx-non'); await s.page.waitForTimeout(450); }
+  await s.page.click('.mx-oui'); await s.page.waitForTimeout(1000);
+  assert.equal(await s.page.locator('.mx-fete').count(), 0, 'pas un match');
+}
+
+test('« Me prévenir » après un « Intéressé » qui ne fait pas de match : « Te prévenir en cas de match ? » ; pas avant 3 jours ; acceptée, plus jamais', async () => {
+  const s = await prevenirSur('off');
+  await s.comme('Youssef'); await ouvertureRangee(s);
+  await s.aller('match'); await s.page.waitForSelector('.mx-carte.dessus');
+  await interesseSansMatch(s);
+  await s.page.waitForSelector('.modal.prevenir');
+  assert.equal(await s.page.locator('.prevenir .modal-head h2').innerText(), 'Te prévenir en cas de match ?');
+  assert.match(await s.page.locator('.modal.prevenir').innerText(), /Si l’intérêt est réciproque, une notification arrive sur cet appareil\./);
+  assert.equal(await s.page.locator('.prevenir .verify-ok').count(), 0, 'pas de petit mot : la carte partie l’a dit');
+  assert.ok(await s.page.evaluate(() => document.querySelector('.prevenir .modal-foot').getBoundingClientRect().bottom <= innerHeight + .5));
+  assert.equal(await s.debordement(), 0);
+  await s.page.click('#pv-tard'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).n, 2);
+  // Un autre « Intéressé » : pas une deuxième fois avant 3 jours (ni pendant cette visite)
+  await interesseSansMatch(s);
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  // 3 jours plus tard, elle revient ; acceptée, plus jamais (en démo, rien n'est abonné)
+  await s.changerMemo('({ ...m, at: m.at - 3 * 864e5 })');
+  await interesseSansMatch(s);
+  await s.page.waitForSelector('.modal.prevenir');
+  await s.page.click('#pv-oui'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Sur la vraie plateforme/);
+  assert.equal((await s.memo()).fait, 1);
+  await interesseSansMatch(s);
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Démo ordinaire (l'état de l'appareil n'est pas simulé) : rien
+  const d = await prevenirSur(null);
+  await d.comme('Youssef'); await d.aller('match'); await d.page.waitForSelector('.mx-carte.dessus');
+  await interesseSansMatch(d);
+  assert.equal(await d.page.locator('.modal.prevenir').count(), 0);
+  assert.deepEqual(d.erreurs, []);
+  await d.ctx.close();
+});
+
+test('« Me prévenir » après une offre publiée : « Te prévenir des candidatures ? » ; la première offre, juste après sa fête', async () => {
+  const s = await prevenirSur('off');
+  const publier = async titre => {
+    await s.aller('offres'); await s.page.click('.page-head #of-publier'); await s.page.waitForSelector('#of-titre');
+    await s.page.fill('#of-titre', titre); await s.page.fill('#of-desc', 'Réduire les temps de changement de série sur la ligne de presses.');
+    if (!(await s.page.inputValue('#of-ent'))) await s.page.fill('#of-ent', 'Renault Group Maroc');
+    await s.page.click('.modal-foot #of-publier'); await s.page.waitForTimeout(700);
+  };
+  await s.comme('Youssef'); await ouvertureRangee(s);
+  await publier('Stage méthodes emboutissage');
+  await s.page.waitForSelector('.modal.prevenir');
+  assert.equal(await s.page.locator('.prevenir .modal-head h2').innerText(), 'Te prévenir des candidatures ?');
+  assert.match(await s.page.locator('.prevenir .verify-ok').innerText(), /Offre publiée\. Les étudiants concernés la voient dans leurs offres\./);
+  assert.match(await s.page.locator('.modal.prevenir').innerText(), /Dès qu’un étudiant postule ou s’intéresse à ton offre, une notification arrive sur cet appareil\./);
+  assert.equal(await s.page.locator('#of-titre').count(), 0, 'la fenêtre de l’offre est fermée dessous');
+  assert.equal(await s.page.locator('.toast').count(), 0, 'pas de petit mot sous la feuille');
+  await s.page.click('#pv-tard'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).n, 2);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Nadia publie sa première offre : la fête d'abord, la feuille juste après elle
+  const n = await prevenirSur('off');
+  await n.comme('Nadia'); await ouvertureRangee(n);
+  await n.aller('offres'); await n.page.click('.page-head #of-publier'); await n.page.waitForSelector('#of-titre');
+  await n.page.fill('#of-titre', 'Stage qualité fournisseurs'); await n.page.fill('#of-desc', 'Suivre les audits fournisseurs et les plans d’action.');
+  if (!(await n.page.inputValue('#of-ent'))) await n.page.fill('#of-ent', 'Yazaki Morocco');
+  await n.page.click('.modal-foot #of-publier'); await n.page.waitForTimeout(700);
+  assert.ok(await n.page.locator('.fete-back').isVisible(), 'la fête de la première offre');
+  assert.equal(await n.page.locator('.modal.prevenir').count(), 0);
+  assert.equal((await n.memo()).differe, 'offre');
+  await n.page.locator('.fete-back .fete-acts .btn').last().click();
+  await n.page.waitForSelector('.modal.prevenir', { timeout: 3000 });
+  assert.equal(await n.page.locator('.prevenir .verify-ok').count(), 0);
+  assert.match(await n.page.locator('.modal.prevenir').innerText(), /postule ou s’intéresse à ton offre/);
+  assert.equal((await n.memo()).differe, undefined);
+  assert.deepEqual(n.erreurs, []);
+  await n.ctx.close();
+});
+
+test('« Me prévenir » après une demande de coordonnées : la feuille remplace « C’est envoyé. »', async () => {
+  const s = await prevenirSur('off');
+  await s.comme('Amine'); await ouvertureRangee(s);
+  await s.fiche('Youssef El Amrani');
+  await s.page.click('#cf-ask'); await s.page.fill('#cf-ask-msg', 'Bonjour, je suis en 3A et j’aimerais un conseil.');
+  await s.page.click('#cf-ask-send');
+  await s.page.waitForSelector('.modal.prevenir');
+  assert.equal(await s.page.locator('.prevenir .modal-head h2').innerText(), 'Te prévenir de la réponse ?');
+  assert.match(await s.page.locator('.prevenir .verify-ok').innerText(), /C’est envoyé\./);
+  assert.match(await s.page.locator('.modal.prevenir').innerText(), /Si la personne accepte de partager ses coordonnées, une notification arrive sur cet appareil\./);
+  assert.equal(await s.page.locator('#cf-ask-msg').count(), 0, 'la demande est partie, sa fenêtre fermée');
+  assert.equal(await s.page.locator('.toast').count(), 0);
+  assert.equal(await s.debordement(), 0);
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).n, 2);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// Une feuille refusée hier : pas de feuille d'ouverture à cette visite, pas de feuille « Me prévenir » avant 3 jours ;
+// la ligne, elle, n'attend pas
+const refuseeHier = async (s, nom) => {
+  const id = s.profils.find(x => x[1].includes(nom))[0];
+  await s.page.evaluate(id => localStorage.setItem('ensam-prevenir-' + id, JSON.stringify({ n: 1, at: Date.now() - 864e5 })), id);
+  await s.comme(nom);
+};
+const ecrireA = async (s, autre, texte) => { await s.aller('messages/' + autre); await s.page.waitForTimeout(300); await s.page.fill('#chat-txt', texte); await s.page.click('.composer .send-btn'); };
+
+test('« Me prévenir » dans Messages : une ligne au-dessus du champ, jamais une feuille, après un premier message resté sans réponse ; son × vaut pour cette conversation', async () => {
+  const s = await prevenirSur('off');
+  // Des conversations ouvertes (mentorat, candidature…) où personne n'a encore écrit
+  const rania = 'u-0006', nour = 'u-000a', khadija = 'u-000e';
+  await refuseeHier(s, 'Youssef');
+  await s.aller('messages/' + rania); await s.page.waitForTimeout(1200);
+  assert.equal(await s.page.locator('.pv-ligne').count(), 0, 'rien tant qu’il n’a pas écrit');
+  await ecrireA(s, rania, 'Bonjour Rania, tu cherches toujours un stage pour cet été ?');
+  await s.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+  const ligne = s.page.locator('.pv-ligne');
+  assert.equal(await ligne.locator('.pv-l-txt').innerText(), 'Sa réponse peut arriver sur ce téléphone, même application fermée · Activer');
+  assert.equal(await s.page.locator('.modal').count(), 0, 'pas de feuille sur la conversation');
+  const [l, c] = [await ligne.boundingBox(), await s.page.locator('.composer').boundingBox()];
+  assert.ok(l.y + l.height <= c.y + .5, 'au-dessus du champ d’écriture, sans le couvrir');
+  assert.equal(await s.page.getAttribute('#pv-ligne-x', 'aria-label'), 'Ne plus le proposer dans cette conversation');
+  assert.equal(await s.debordement(), 0);
+  // Son × : rangée pour cette conversation (dans le mémo), sans compter comme un refus de feuille
+  await s.page.click('#pv-ligne-x'); await s.page.waitForTimeout(200);
+  assert.equal(await ligne.count(), 0);
+  let m = await s.memo();
+  assert.deepEqual(m.lignes, [rania]);
+  assert.equal(m.n, 1);
+  await s.aller('messages'); await s.aller('messages/' + rania); await s.page.waitForTimeout(1300);
+  assert.equal(await ligne.count(), 0, 'plus dans cette conversation');
+  // Une autre conversation qui attend sa réponse : la ligne y vient ; « Activer » (en démo, rien n'est abonné)
+  await ecrireA(s, nour, 'Bonjour Nour, as-tu trouvé ton PFE ?');
+  await s.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+  await s.page.click('#pv-ligne-go'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Sur la vraie plateforme/);
+  assert.equal(await ligne.count(), 0);
+  m = await s.memo();
+  assert.equal(m.fait, 1);
+  assert.equal(m.n, 1, 'accepté : pas un refus');
+  // Activées sur cet appareil : plus de ligne, dans aucune conversation
+  await ecrireA(s, khadija, 'Bonjour Khadija, un mot sur ton stage ?');
+  await s.page.waitForTimeout(1500);
+  assert.equal(await ligne.count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Me prévenir » dans Messages : la ligne après un entretien proposé qui attend sa réponse ; rien pour l’administration ni en démo ordinaire', async () => {
+  const s = await prevenirSur('off');
+  const id = nom => s.profils.find(x => x[1].includes(nom))[0];
+  await refuseeHier(s, 'Youssef');
+  const salma = id('Salma'), youssef = id('Youssef');
+  // Une conversation où l'autre a écrit en dernier : la ligne ne vient pas ; un entretien proposé, à venir, sans réponse : elle vient
+  await s.comme('Salma'); await ecrireA(s, youssef, 'Bonjour, merci pour votre aide !'); await s.page.waitForTimeout(300);
+  await s.aller('accueil'); await s.comme('Youssef');
+  await s.aller('messages/' + salma); await s.page.waitForTimeout(1300);
+  assert.equal(await s.page.locator('.pv-ligne').count(), 0, 'la conversation a sa réponse');
+  await s.page.evaluate(dest => window.__demo.envoyerMessage({ dest, type: 'rdv', rdv_at: new Date(Date.now() + 2 * 864e5).toISOString(), rdv_duree: 30, rdv_lien: 'https://meet.jit.si/reseau-ensam-test' }), salma);
+  await s.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+  assert.match(await s.page.locator('.pv-ligne').innerText(), /Sa réponse peut arriver sur ce téléphone/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // L'administration écrit à tout le monde : jamais de ligne
+  const a = await prevenirSur('off');
+  await a.comme('Admin');
+  await ecrireA(a, a.profils.find(x => x[1].includes('Salma'))[0], 'Bienvenue sur le réseau !');
+  await a.page.waitForTimeout(1500);
+  assert.equal(await a.page.locator('.pv-ligne').count(), 0);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+  // Démo ordinaire : rien
+  const d = await prevenirSur(null);
+  await refuseeHier(d, 'Youssef');
+  await ecrireA(d, 'u-0006', 'Bonjour Rania !');
+  await d.page.waitForTimeout(1500);
+  assert.equal(await d.page.locator('.pv-ligne').count(), 0);
+  assert.deepEqual(d.erreurs, []);
+  await d.ctx.close();
+});
+
+test('« Me prévenir » dans Messages : sur iPhone hors écran d’accueil, « Comment faire » ; bloquées, « Débloquer » et ses gestes ; en arabe', async () => {
+  const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';
+  const s = await prevenirSur('ios', { ua: IPHONE });
+  await s.comme('Youssef');
+  await ecrireA(s, 'u-0006', 'Bonjour Rania, tu cherches toujours un stage ?');
+  await s.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+  assert.equal(await s.page.locator('.pv-l-txt').innerText(), 'Sa réponse peut arriver sur ce téléphone, même application fermée · Comment faire');
+  await s.page.click('#pv-ligne-go');
+  await s.page.waitForSelector('.modal .ios-steps');
+  assert.equal(await s.page.locator('.modal-head h2').innerText(), 'Installer l’application');
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.pv-ligne').count(), 1, 'toujours là : rien n’est encore installé');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  const b = await prevenirSur('refuse', { langue: 'ar' });
+  await b.comme('Youssef');
+  await ecrireA(b, 'u-0006', 'Bonjour Rania !');
+  await b.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+  assert.equal(await b.page.getAttribute('html', 'dir'), 'rtl');
+  assert.equal(await b.page.locator('.pv-l-txt').innerText(), 'قد يصلك الرد على هذا الهاتف، حتى والتطبيق مغلق · إلغاء الحظر');
+  assert.equal(await b.page.getAttribute('#pv-ligne-x', 'aria-label'), 'عدم اقتراح ذلك مجددًا في هذه المحادثة');
+  assert.equal(await b.debordement(), 0);
+  await b.page.click('#pv-ligne-go');
+  await b.page.waitForSelector('#debloquer-ok');
+  assert.equal(await b.page.locator('.modal .ios-steps li').count(), 3);
+  // « C'est fait » (en démo, rien n'est vérifié) : la ligne a eu sa réponse pour cette visite
+  await b.page.click('#debloquer-ok'); await b.page.waitForTimeout(400);
+  assert.equal(await b.page.locator('.pv-ligne').count(), 0);
+  assert.deepEqual(await b.page.evaluate(() => [...window.__ensamMissing].filter(t => /prévenir|réponse|Activer|Débloquer|Comment faire|conversation/i.test(t))), []);
+  assert.deepEqual(b.erreurs, []);
+  await b.ctx.close();
+});
+
+test('« Me prévenir » : une seule demande par visite — après une feuille, pas de ligne ; après une ligne, pas de feuille', async () => {
+  const s = await prevenirSur('off');
+  const rania = 'u-0006';
+  await s.comme('Youssef'); await ouvertureRangee(s);
+  // La feuille d'abord (un « Intéressé »), refusée : pas de ligne dans Messages pendant cette visite
+  await s.aller('match'); await s.page.waitForSelector('.mx-carte.dessus');
+  await interesseSansMatch(s);
+  await s.page.waitForSelector('.modal.prevenir'); await s.page.click('#pv-tard'); await s.page.waitForTimeout(300);
+  await ecrireA(s, rania, 'Bonjour Rania, tu cherches toujours un stage ?');
+  await s.page.waitForTimeout(1500);
+  assert.equal(await s.page.locator('.pv-ligne').count(), 0, 'déjà demandé pendant cette visite');
+  // La visite suivante : la ligne n'attend pas les 3 jours des feuilles
+  await s.page.goto(adresse); await s.page.waitForSelector('.hello'); await s.comme('Youssef'); await s.aller('messages/' + rania);
+  await s.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+  // La ligne montrée, c'est la demande de cette visite : pas de feuille après une action (le petit mot à sa place),
+  // ni de feuille d'ouverture
+  await s.changerMemo('({ ...m, at: m.at - 4 * 864e5 })');
+  await s.aller('match'); await s.page.waitForSelector('.mx-carte.dessus');
+  await interesseSansMatch(s);
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  await s.page.waitForTimeout(3000);
+  assert.equal(await s.page.locator(ouverture).count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Me prévenir » à la fin de la pile Match : après des « Intéressé », une ligne sous le bilan ; la fin tient au-dessus de la barre du bas ; son × la range', async () => {
+  const s = await prevenirSur('off');
+  await s.page.setViewportSize({ width: 390, height: 844 });
+  await refuseeHier(s, 'Salma');
+  await s.aller('match'); await s.page.waitForSelector('.mx-carte.dessus');
+  let oui = 0;
+  for (let pas = 0; await s.page.locator('.mx-carte.dessus').count(); pas++) {
+    assert.ok(pas < 20, 'la pile finit');
+    if (await s.page.locator('.mx-carte.dessus .mx-interet').count()) await s.page.click('.mx-non'); else { await s.page.click('.mx-oui'); oui++; }
+    await s.page.waitForTimeout(450);
+    if (await s.page.locator('.mx-fete').count()) { await s.page.click('.mx-fete-plus'); await s.page.waitForTimeout(200); }
+    assert.equal(await s.page.locator('.modal.prevenir').count(), 0, 'refusée hier : pas de feuille avant 3 jours');
+  }
+  assert.ok(oui > 0);
+  await s.page.waitForSelector('.mx-vide');
+  await s.page.waitForSelector('.mx-vide .pv-ligne', { timeout: 5000 });
+  assert.equal(await s.page.locator('.mx-vide .pv-l-txt').innerText(), 'Une notification arrive dès qu’un intérêt est réciproque · Activer');
+  assert.equal(await s.page.getAttribute('#pv-ligne-x', 'aria-label'), 'Ne plus le proposer ici');
+  // Sous le bilan de la visite, et la fin tient toujours au-dessus de la barre du bas
+  assert.ok(await s.page.evaluate(() => document.querySelector('.mx-bilan').compareDocumentPosition(document.querySelector('.pv-ligne')) & Node.DOCUMENT_POSITION_FOLLOWING));
+  await s.page.evaluate(() => scrollTo(0, 0)); await s.page.waitForTimeout(100);
+  const { fin, barre } = await s.page.evaluate(() => ({ fin: document.querySelector('.mx-vide').getBoundingClientRect().bottom, barre: document.querySelector('.bottom-nav').getBoundingClientRect().top }));
+  assert.ok(fin <= barre, `la fin (${Math.round(fin)} px) tient au-dessus de la barre du bas (${Math.round(barre)} px)`);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(await axeLigne(s), [], 'fin de la pile : axe');
+  // Une seule demande à l'écran : la pastille « Activer les notifications » s'efface devant la ligne (elle flottait aussi sur
+  // la fin de la pile), et revient quand la ligne s'en va
+  assert.equal(await s.page.locator('.pastille').count(), 1, 'la pastille est là, cachée');
+  assert.equal(await s.page.locator('.pastille').isVisible(), false, 'pas la pastille en même temps que la ligne');
+  await s.page.click('#pv-ligne-x'); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator('.pv-ligne').count(), 0);
+  assert.ok(await s.page.locator('.pastille').isVisible(), 'la ligne partie, la pastille revient');
+  const m = await s.memo();
+  assert.deepEqual(m.lignes, ['match']);
+  assert.equal(m.n, 1, 'le × ne compte pas comme un refus de feuille');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Rien que des « Plus tard » : rien à attendre, pas de ligne
+  const t = await prevenirSur('off');
+  await refuseeHier(t, 'Amine');
+  await t.aller('match'); await t.page.waitForSelector('.mx-carte.dessus');
+  for (let pas = 0; await t.page.locator('.mx-carte.dessus').count() && pas < 20; pas++) { await t.page.click('.mx-non'); await t.page.waitForTimeout(450); }
+  assert.equal(await t.page.locator('.mx-bl-oui .mx-compte').innerText(), '0');
+  await t.page.waitForSelector('.mx-vide'); await t.page.waitForTimeout(1300);
+  assert.equal(await t.page.locator('.pv-ligne').count(), 0);
+  assert.deepEqual(t.erreurs, []);
+  await t.ctx.close();
+});
+
+// La ligne « Me prévenir » : axe (contrastes, noms), les animations d'arrivée terminées
+async function axeLigne(s) {
+  if (!(await s.page.evaluate(() => !!window.axe))) await s.page.addScriptTag({ content: AXE });
+  await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* animation sans fin */ } }));
+  return s.page.evaluate(async () => (await axe.run('.pv-ligne', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] }))
+    .violations.map(x => `${x.id} : ${x.nodes.map(n => n.target.join(' ')).join(' ; ')}`));
+}
+// Hauteur touchable : la boîte, ou la zone invisible (::before / ::after) qui la prolonge (comme le test du socle)
+const hauteurTouchable = (s, sel) => s.page.$eval(sel, el => {
+  const zone = pseudo => { const cs = getComputedStyle(el, pseudo); if (cs.content === 'none' || cs.position !== 'absolute') return 0; const h = parseFloat(cs.top), b = parseFloat(cs.bottom); return Math.max(0, -(isNaN(h) ? 0 : h)) + Math.max(0, -(isNaN(b) ? 0 : b)); };
+  return el.getBoundingClientRect().height + Math.max(zone('::before'), zone('::after'));
+});
+
+test('« Me prévenir » : la ligne se lit et se touche — axe de jour et de nuit, 44 px au doigt, au clavier le focus passe à la suite sans ouvrir le clavier', async () => {
+  for (const theme of ['light', 'dark']) {
+    const s = await prevenirSur('off', { theme, toucher: true });
+    await refuseeHier(s, 'Youssef');
+    await ecrireA(s, 'u-0006', 'Bonjour Rania, tu cherches toujours un stage ?');
+    await s.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+    assert.deepEqual(await axeLigne(s), [], `ligne de Messages : axe (${theme})`);
+    for (const sel of ['#pv-ligne-go', '#pv-ligne-x']) { const h = await hauteurTouchable(s, sel); assert.ok(h >= 43.5, `${sel} : ${Math.round(h)} px au doigt (${theme})`); }
+    // Au clavier : le × range la ligne, le focus passe à ce qui la suit, jamais au champ d'écriture
+    await s.page.evaluate(() => document.activeElement?.blur());
+    await s.page.focus('#pv-ligne-x'); await s.page.keyboard.press('Enter'); await s.page.waitForTimeout(250);
+    assert.equal(await s.page.locator('.pv-ligne').count(), 0);
+    const focus = await s.page.evaluate(() => [document.activeElement?.tagName, !!document.activeElement?.closest('.composer')]);
+    assert.ok(focus[0] === 'BUTTON' && focus[1], `le focus reste dans la conversation, sur un bouton : ${focus}`);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+  // De nuit, la fin de la pile Match
+  const n = await prevenirSur('off', { theme: 'dark', toucher: true });
+  await refuseeHier(n, 'Salma');
+  await n.aller('match'); await n.page.waitForSelector('.mx-carte.dessus');
+  // Un « Intéressé » (sur une carte où personne ne s'est encore intéressé à elle), le reste à plus tard
+  for (let pas = 0, oui = 0; await n.page.locator('.mx-carte.dessus').count() && pas < 20; pas++) {
+    const libre = !oui && !(await n.page.locator('.mx-carte.dessus .mx-interet').count());
+    await n.page.click(libre ? '.mx-oui' : '.mx-non'); if (libre) oui++;
+    await n.page.waitForTimeout(450);
+  }
+  await n.page.waitForSelector('.mx-vide .pv-ligne', { timeout: 5000 });
+  assert.deepEqual(await axeLigne(n), [], 'fin de la pile : axe (nuit)');
+  for (const sel of ['#pv-ligne-go', '#pv-ligne-x']) { const h = await hauteurTouchable(n, sel); assert.ok(h >= 43.5, `${sel} : ${Math.round(h)} px au doigt (fin de la pile)`); }
+  assert.equal(await n.debordement(), 0);
+  assert.deepEqual(n.erreurs, []);
+  await n.ctx.close();
+});
+
+test('« Me prévenir » dans Match, réseau lent : deux « Intéressé » de suite, une seule feuille, qui ne se refait pas sous le doigt', async () => {
+  const s = await prevenirSur('off');
+  await s.comme('Youssef'); await ouvertureRangee(s);
+  await s.aller('match'); await s.page.waitForSelector('.mx-carte.dessus');
+  // La base répond 1,2 s après chaque choix : la réponse du premier « Intéressé » arrive après le second
+  await s.page.evaluate(() => { const st = window.__demo, f = st.choisirMatch.bind(st); st.choisirMatch = (...a) => new Promise(ok => setTimeout(ok, 1200)).then(() => f(...a)); });
+  const libre = async () => { for (let i = 0; i < 6 && await s.page.locator('.mx-carte.dessus .mx-interet').count(); i++) { await s.page.click('.mx-non'); await s.page.waitForTimeout(450); } };
+  await libre(); await s.page.click('.mx-oui'); await s.page.waitForTimeout(450);
+  await libre(); await s.page.click('.mx-oui');
+  await s.page.waitForSelector('.modal.prevenir', { timeout: 5000 });
+  await s.page.evaluate(() => { document.querySelector('.modal.prevenir').dataset.premiere = '1'; });
+  await s.page.waitForTimeout(2000);
+  assert.equal(await s.page.locator('.modal-back:not(.sortie) .modal.prevenir').count(), 1, 'une seule feuille');
+  assert.equal(await s.page.locator('.modal.prevenir[data-premiere]').count(), 1, 'la même feuille, pas remplacée sous le doigt');
+  await s.page.click('#pv-tard'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.equal((await s.memo()).n, 2, 'un seul refus compté');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Me prévenir » dans Messages : la ligne qui arrive laisse la conversation en bas — l’entretien proposé reste entier au-dessus d’elle', async () => {
+  const s = await prevenirSur('off');
+  const id = nom => s.profils.find(x => x[1].includes(nom))[0];
+  const salma = id('Salma'), youssef = id('Youssef');
+  await refuseeHier(s, 'Youssef');
+  // Une longue conversation où Salma a écrit (elle a sa réponse), puis Youssef propose un entretien, qui attend la sienne
+  await s.comme('Salma');
+  for (let i = 0; i < 12; i++) await s.page.evaluate(([d, i]) => window.__demo.envoyerMessage({ dest: d, type: 'texte', body: `Question ${i + 1} sur le stage : les dates, le lieu et l’équipe.` }), [youssef, i]);
+  await s.comme('Youssef'); await s.aller('messages/' + salma); await s.page.waitForTimeout(600);
+  await s.page.evaluate(d => window.__demo.envoyerMessage({ dest: d, type: 'rdv', rdv_at: new Date(Date.now() + 2 * 864e5).toISOString(), rdv_duree: 30, rdv_lien: 'https://meet.jit.si/reseau-ensam-test' }), salma);
+  await s.page.waitForSelector('.pv-ligne', { timeout: 5000 }); await s.page.waitForTimeout(400);
+  const { dernier, fil } = await s.page.evaluate(() => ({ dernier: [...document.querySelectorAll('.conv-fil .msg')].pop().getBoundingClientRect().bottom, fil: document.querySelector('.conv-fil').getBoundingClientRect().bottom }));
+  assert.ok(dernier <= fil + .5, `l’entretien proposé (bas à ${Math.round(dernier)} px) reste entier au-dessus de la ligne (${Math.round(fil)} px)`);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('« Me prévenir » dans Messages : bloquées par une réponse donnée sur cet appareil, la ligne ne demande pas de les débloquer', async () => {
+  const s = await prevenirSur('refuse');
+  const youssef = s.profils.find(x => x[1].includes('Youssef'))[0];
+  // « Bloquer » choisi ici dans la fenêtre du navigateur (le mémo garde la réponse) : le refus est respecté
+  await s.page.evaluate(id => localStorage.setItem('ensam-prevenir-' + id, JSON.stringify({ fait: 1 })), youssef);
+  await s.comme('Youssef');
+  await ecrireA(s, 'u-0006', 'Bonjour Rania, tu cherches toujours un stage ?');
+  await s.page.waitForTimeout(1500);
+  assert.equal(await s.page.locator('.pv-ligne').count(), 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -1103,6 +1530,8 @@ test('Mon profil : activer ou couper les notifications ici est une réponse, plu
   assert.match(await s.page.locator('.toast').last().innerText(), /Sur la vraie plateforme/);
   // Activées : dit calmement, avec de quoi les couper ; le clavier reste dans la carte
   assert.match(await s.page.locator('#md-push-ok').innerText(), /Activées sur cet appareil/);
+  // Un téléphone ne sert qu'un compte : il le dit
+  assert.match(await s.page.locator('#md-push-compte').innerText(), /^Ce téléphone reçoit les notifications de ce compte\./);
   assert.equal(await s.page.locator('#md-push-oui').count(), 0);
   assert.equal(await s.page.locator('#md-push-test').count(), 0, 'rien à tester en démo');
   assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'md-push-non');
@@ -1142,7 +1571,7 @@ test('à l’ouverture : un lauréat voit ce qui le concerne ; « Activer » vau
   await s.ctx.close();
 });
 
-test('à l’ouverture : jamais par-dessus une autre feuille ni la bienvenue ; rien sur iPhone hors écran d’accueil, sans notifications ou pour l’admin', async () => {
+test('à l’ouverture : jamais par-dessus une autre feuille ni la bienvenue ; rien sans notifications ; sur iPhone hors écran d’accueil, ses gestes à la place ; l’admin a la sienne', async () => {
   // Une autre fenêtre ouverte : elle attend que l'écran soit calme
   let s = await prevenirSur('off');
   await s.page.click('.cloche-btn'); await s.page.waitForSelector('.modal.cloche');
@@ -1165,13 +1594,235 @@ test('à l’ouverture : jamais par-dessus une autre feuille ni la bienvenue ; r
     s = await prevenirSur(etat);
     await rienALouverture(s, etat);
     assert.equal(await s.page.locator('.modal.prevenir').count(), 0, etat);
+    // iPhone dans Safari : pas de bouton « Activer » qui ne marcherait pas, les gestes de l'écran d'accueil à la place
+    assert.equal(await s.page.locator('.modal.ouverture-ios').count(), etat === 'ios' ? 1 : 0, etat);
     await s.ctx.close();
   }
+  // L'administration aussi : ses signalements ne partent que vers un appareil abonné
   s = await prevenirSur('off');
   await s.comme('Admin');
-  await rienALouverture(s, 'pas pour l’admin');
+  await attendreOuverture(s);
+  assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['admin', 'messages']);
+  assert.match(await s.page.locator(ouverture).innerText(), /Les signalements à traiter/);
+  await s.page.click('#ouv-oui'); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator(ouverture).count(), 0);
+  const admin = await s.page.$eval('#persona', e => e.value);
+  assert.equal(await s.page.evaluate(id => JSON.parse(localStorage.getItem('ensam-prevenir-' + id)).fait, admin), 1);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
+});
+
+test('à l’ouverture sur iPhone dans Safari : les gestes pour l’écran d’accueil puis « Activer » ; une fois, puis une seule autre fois 14 jours après', async () => {
+  const ios = '.modal.ouverture-ios';
+  const s = await prevenirSur('ios');
+  const rienIos = async msg => { await s.page.waitForTimeout(4500); assert.equal(await s.page.locator(ios).count(), 0, msg); };
+  assert.equal(await s.page.locator(ios).count(), 0, 'pas tout de suite');
+  await s.page.waitForSelector(ios, { timeout: 8000 });
+  const t = await s.page.locator(ios).innerText();
+  assert.match(t, /Reçois l’essentiel sur ton iPhone/);
+  assert.match(t, /les notifications n’arrivent que dans l’application ajoutée à l’écran d’accueil/);
+  assert.match(t, /Dans Safari, touche Partager\s: en bas de l’écran, ou dans le menu •••\./);
+  assert.match(t, /Choisis «\sSur l’écran d’accueil\s», laisse «\sOuvrir en tant qu’app web\s» activé, puis touche «\sAjouter\s»/);
+  assert.match(t, /depuis sa nouvelle icône, connecte-toi une fois, puis touche «\sActiver\s»/);
+  assert.equal(await s.page.locator(`${ios} .ios-steps li`).count(), 3);
+  assert.equal(await s.page.locator(ouverture).count(), 0, 'pas de bouton « Activer » qui ne marcherait pas dans Safari');
+  assert.ok((await s.page.locator('#ios-ok').boundingBox()).height >= 44);
+  assert.equal(await s.debordement(), 0);
+  await s.page.click('#ios-ok'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).ios.n, 1);
+  assert.ok(!(await s.memo()).fait, 'pas une réponse : elle reviendra une fois');
+  await recharger(s); await rienIos('pas à chaque visite');
+  await s.changerMemo('({ ...m, ios: { ...m.ios, at: m.ios.at - 13 * 864e5 } })');
+  await recharger(s); await rienIos('13 jours après : pas encore');
+  await s.changerMemo('({ ...m, ios: { ...m.ios, at: m.ios.at - 864e5 } })');
+  await recharger(s); await s.page.waitForSelector(ios, { timeout: 8000 });
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).ios.n, 2);
+  await s.changerMemo('({ ...m, ios: { ...m.ios, at: m.ios.at - 60 * 864e5 } })');
+  await recharger(s); await rienIos('deux fois au plus');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('lien « Active tes notifications » (?notifs=1) : sa feuille tout de suite, même rangée la veille, sur la page du lien ; lu une fois ; rien pour qui les a coupées', async () => {
+  const s = await prevenirSur('off');
+  const id = await s.page.$eval('#persona', e => e.value);
+  const poser = m => s.page.evaluate(([id, m]) => localStorage.setItem('ensam-prevenir-' + id, JSON.stringify(m)), [id, m]);
+  // « Plus tard » hier : la feuille d'ouverture attendrait encore un jour ; le lien l'ouvre tout de suite
+  await poser({ n: 1, at: Date.now() - 864e5 });
+  await s.page.goto(adresse + '?notifs=1#reseau');
+  await s.page.waitForSelector(ouverture, { timeout: 8000 });
+  assert.equal(await s.page.evaluate(() => location.search + location.hash), '#reseau', 'l’adresse nettoyée, la page gardée');
+  assert.equal((await s.memo()).n, 2, 'comptée comme la feuille d’ouverture');
+  await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
+  // Rechargée : le lien ne rejoue pas
+  await s.page.reload(); await s.page.waitForSelector('#persona');
+  await rienALouverture(s, 'lu une fois');
+  // Le lien de nouveau : la feuille, et « Activer »
+  await s.page.goto(adresse + '?notifs=1'); await s.page.waitForSelector(ouverture, { timeout: 8000 });
+  await s.page.click('#ouv-oui'); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator(ouverture).count(), 0);
+  assert.equal((await s.memo()).fait, 1);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Sur la vraie plateforme/);
+  // Coupées dans Mon profil : le lien ne redemande rien
+  await poser({ fait: 1, coupe: 1 });
+  await s.page.goto(adresse + '?notifs=1'); await s.page.waitForSelector('.hello');
+  await rienALouverture(s, 'coupées par le membre');
+  // Bloquées : les gestes pour les débloquer
+  await s.page.evaluate(() => localStorage.setItem('ensam-prevenir-demo', 'refuse'));
+  await poser({});
+  await s.page.goto(adresse + '?notifs=1'); await s.page.waitForSelector('.modal:has(#debloquer-ok)', { timeout: 8000 });
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+  // iPhone dans Safari : les gestes de l'écran d'accueil, même après ses deux présentations
+  await s.page.evaluate(() => localStorage.setItem('ensam-prevenir-demo', 'ios'));
+  await poser({ ios: { n: 2, at: Date.now() } });
+  await s.page.goto(adresse + '?notifs=1'); await s.page.waitForSelector('.modal.ouverture-ios', { timeout: 8000 });
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('arrivée par l’ancienne adresse (?depuis=ancienne) : une seule feuille avec les gestes de cet appareil, « Activer » quand c’est possible ici', async () => {
+  const s = await prevenirSur('off');
+  await s.page.goto(adresse + '?depuis=ancienne'); await s.page.waitForSelector('.modal.ancienne', { timeout: 8000 });
+  const t = await s.page.locator('.modal.ancienne').innerText();
+  assert.match(t, /Le Réseau ENSAM a une nouvelle adresse/);
+  assert.match(t, /Supprime l’ancienne icône, installe celle-ci, puis active les notifications/);
+  assert.match(t, /Appuie longuement sur l’ancienne icône du Réseau ENSAM/);
+  assert.match(t, /Ici, touche le menu ⋮ du navigateur/);
+  assert.match(t, /sans ce toucher, aucune notification n’arrive/);
+  assert.equal(await s.page.locator('.ancienne .ios-steps li').count(), 3);
+  assert.equal(await s.page.evaluate(() => location.search), '', 'l’adresse nettoyée');
+  assert.equal(await s.debordement(), 0);
+  // « Plus tard » : un refus, comme sur la feuille d'ouverture ; pas de deuxième feuille, même après un rechargement
+  await s.page.click('#anc-tard'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).n, 1);
+  await rienALouverture(s, 'une seule feuille dans la visite');
+  await recharger(s); await rienALouverture(s, 'lu une fois');
+  assert.equal(await s.page.locator('.modal.ancienne').count(), 0);
+  // Le lien de nouveau : « Activer » abonne cet appareil (en démo, un mot)
+  await s.page.goto(adresse + '?depuis=ancienne'); await s.page.waitForSelector('#anc-oui', { timeout: 8000 });
+  await s.page.click('#anc-oui'); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator('.modal.ancienne').count(), 0);
+  assert.equal((await s.memo()).fait, 1);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // iPhone dans Safari : supprimer l'ancienne icône, puis les gestes de Safari ; rien à activer ici
+  const i = await prevenirSur('ios');
+  await i.page.goto(adresse + '?depuis=ancienne'); await i.page.waitForSelector('.modal.ancienne', { timeout: 8000 });
+  assert.equal(await i.page.locator('.ancienne .ios-steps li').count(), 4);
+  assert.match(await i.page.locator('.modal.ancienne').innerText(), /«\sSupprimer l’app\s»/);
+  assert.equal(await i.page.locator('#anc-oui').count(), 0);
+  await i.page.click('#anc-ok'); await i.page.waitForTimeout(4500);
+  assert.equal(await i.page.locator('.modal.ouverture-ios').count(), 0, 'pas de deuxième feuille dans la visite');
+  assert.equal((await i.memo()).ios.n, 1, 'comptée comme la feuille de l’iPhone');
+  assert.deepEqual(i.erreurs, []);
+  await i.ctx.close();
+});
+
+// Le navigateur intégré d'une application : un lien ouvert dans Instagram (Android, puis iPhone)
+const INSTAGRAM = 'Mozilla/5.0 (Linux; Android 14; SM-A546B Build/UP1A.231005.007; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/141.0.0.0 Mobile Safari/537.36 Instagram 350.0.0.42.81 Android (34/14; 450dpi; 1080x2340; samsung; SM-A546B; a54x; s5e8835; fr_FR; 645432123)';
+const INSTAGRAM_IOS = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 350.0.0.32.81 (iPhone15,3; iOS 18_5; fr_FR; fr; scale=3.00; 1290x2796; 645432123)';
+
+test('navigateur d’une application (Instagram) : « Ouvrir dans Chrome » à l’ouverture une fois par visite, dans le bandeau, la pastille et Mon profil ; ni « Activer » ni « Installer »', async () => {
+  const s = await ouvrir({ largeur: 360, ua: INSTAGRAM });
+  await s.page.setViewportSize({ width: 360, height: 640 });
+  await s.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  const t = await s.page.locator('.modal.appli').innerText();
+  assert.match(t, /Ouvre le Réseau ENSAM dans Chrome/);
+  assert.match(t, /Ce lien s’est ouvert dans Instagram\s: ici, les notifications ne peuvent pas arriver\./);
+  // Le lien rouvre la même page dans Chrome (sinon la même adresse), avec la feuille d'activation en arrivant
+  assert.match(await s.page.getAttribute('#appli-chrome', 'href'), /^intent:\/\/127\.0\.0\.1:\d+\/\?notifs=1#Intent;scheme=http;package=com\.android\.chrome;S\.browser_fallback_url=http%3A%2F%2F127\.0\.0\.1%3A\d+%2F%3Fnotifs%3D1;end$/);
+  assert.ok((await s.page.locator('#appli-chrome').boundingBox()).height >= 44);
+  assert.equal(await s.debordement(), 0);
+  // En démo, le lien n'ouvre rien : un mot le dit, et la feuille se range
+  await s.page.click('#appli-chrome'); await s.page.waitForTimeout(400);
+  assert.match(await s.page.locator('.toast').last().innerText(), /rouvre la page dans Chrome/);
+  assert.equal(await s.page.locator('.modal.appli').count(), 0);
+  // Le bandeau de l'accueil et la pastille disent la même chose, avec le même lien
+  await s.page.waitForSelector('.push-bandeau[data-etat="appli"]');
+  assert.match(await s.page.getAttribute('#push-b-oui', 'href'), /^intent:\/\//);
+  await s.page.waitForSelector('.pastille[data-sorte="appli"]');
+  assert.match(await s.page.locator('.pastille').innerText(), /Ouvrir dans Chrome/);
+  assert.match(await s.page.getAttribute('#pastille-go', 'href'), /^intent:\/\//);
+  // Une fois par visite : rechargée, pas de deuxième feuille
+  await recharger(s); await s.page.waitForTimeout(4500);
+  assert.equal(await s.page.locator('.modal.appli').count(), 0);
+  // Mon profil : la phrase et le lien, qui garde la page (?r=)
+  await s.aller('profil/notifications'); await s.page.waitForSelector('#md-push-chrome');
+  assert.match(await s.page.getAttribute('#md-push-chrome', 'href'), /\?r=profil%2Fnotifications&notifs=1#Intent;/);
+  assert.equal(await s.page.locator('#md-push-oui').count(), 0, 'pas de « Activer » qui ne marcherait pas ici');
+  assert.equal(await s.page.locator('.pastille[data-sorte="installer"]').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // iPhone : les gestes pour passer dans Safari, puis à l'écran d'accueil
+  const i = await ouvrir({ largeur: 390, ua: INSTAGRAM_IOS });
+  await i.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  assert.match(await i.page.locator('.modal.appli').innerText(), /Ouvre le Réseau ENSAM dans Safari/);
+  assert.equal(await i.page.locator('.appli .ios-steps li').count(), 3);
+  await i.page.click('#appli-ok'); await i.page.waitForTimeout(300);
+  await i.page.waitForSelector('.pastille[data-sorte="appli"]');
+  assert.match(await i.page.locator('.pastille').innerText(), /Ouvrir dans Safari/);
+  await i.page.click('#pastille-go'); await i.page.waitForSelector('.modal.appli');
+  assert.deepEqual(i.erreurs, []);
+  await i.ctx.close();
+  // En arabe : rien d'oublié, seuls les noms restent en lettres latines
+  const a = await ouvrir({ largeur: 360, ua: INSTAGRAM, langue: 'ar' });
+  await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  assert.deepEqual((await a.page.locator('.modal.appli').innerText()).match(/[A-Za-zÀ-ÿ]{2,}/g)?.filter(x => !['ENSAM', 'Chrome', 'Instagram'].includes(x)) || [], []);
+  assert.equal(await a.debordement(), 0);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
+test('navigateur d’une application sans Chrome : « Ouvrir dans Chrome » rouvre la même adresse ici (?notifs=1) sans remontrer la feuille ; en arabe, la langue suit dans le lien', async () => {
+  const s = await ouvrir({ largeur: 360, ua: INSTAGRAM });
+  await s.page.setViewportSize({ width: 360, height: 640 });
+  await s.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  await s.page.click('#appli-chrome'); await s.page.waitForTimeout(400);
+  // Pas de Chrome sur ce téléphone : l'application ouvre l'adresse de secours ici même, à chaque toucher
+  for (let i = 0; i < 2; i++) {
+    await s.page.goto(adresse + '?notifs=1'); await s.page.waitForSelector('.hello');
+    await s.page.waitForTimeout(4500);
+    assert.equal(await s.page.locator('.modal.appli').count(), 0, 'la même feuille ne tourne pas en boucle');
+    assert.equal(await s.page.evaluate(() => sessionStorage.getItem('ensam-lien-appareil')), null, 'le lien est lu');
+  }
+  // La pastille reste là pour qui veut revoir les gestes
+  await s.page.waitForSelector('.pastille[data-sorte="appli"]');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe : Chrome ne connaît pas le choix fait ici, l'adresse le lui dit
+  const a = await ouvrir({ largeur: 360, ua: INSTAGRAM, langue: 'ar' });
+  await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  assert.match(await a.page.getAttribute('#appli-chrome', 'href'), /^intent:\/\/127\.0\.0\.1:\d+\/\?lang=ar&notifs=1#Intent;.*S\.browser_fallback_url=http%3A%2F%2F127\.0\.0\.1%3A\d+%2F%3Flang%3Dar%26notifs%3D1;end$/);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
+test('lien d’appareil : une nouvelle version recharge la page sous sa feuille, elle revient aussitôt, comptée une fois', async () => {
+  const s = await prevenirSur('off');
+  const id = await s.page.$eval('#persona', e => e.value);
+  await s.page.evaluate(id => localStorage.setItem('ensam-prevenir-' + id, JSON.stringify({ n: 1, at: Date.now() - 864e5 })), id);
+  await s.page.goto(adresse + '?notifs=1'); await s.page.waitForSelector(ouverture, { timeout: 8000 });
+  assert.equal((await s.memo()).n, 2);
+  // Rechargée sous la feuille (nouvelle version) : la même feuille tout de suite, pas un deuxième refus
+  await s.page.reload(); await s.page.waitForSelector(ouverture, { timeout: 8000 });
+  assert.equal((await s.memo()).n, 2, 'comptée une fois');
+  await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
+  await recharger(s); await rienALouverture(s, 'fermée : le lien est lu');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Le navigateur d'une application : sa feuille revient aussi tant qu'elle n'est pas fermée ; fermée, le lien ne la ramène plus
+  const a = await ouvrir({ largeur: 360, ua: INSTAGRAM });
+  await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  await a.page.keyboard.press('Escape'); await a.page.waitForTimeout(300);
+  await a.page.evaluate(() => sessionStorage.clear());
+  await a.page.goto(adresse + '?notifs=1'); await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  await a.page.reload(); await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  await a.page.keyboard.press('Escape'); await a.page.waitForTimeout(300);
+  await a.page.goto(adresse + '?notifs=1'); await a.page.waitForSelector('.hello'); await a.page.waitForTimeout(4500);
+  assert.equal(await a.page.locator('.modal.appli').count(), 0);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
 });
 
 test('à l’ouverture : « Plus tard » puis une fête dans la même visite, le refus reste compté', async () => {
@@ -5110,29 +5761,20 @@ test('offres portées et partagées en arabe : le badge, la section et « مشا
   await s.ctx.close();
 });
 
-test('la pastille : « Installer l’application » d’abord, puis « Activer les notifications » ; × la range 3 jours ; en arabe sans texte oublié', async () => {
+test('la pastille : « Activer les notifications » d’abord (installer ne suffit pas), puis « Installer l’application » ; sur iPhone, l’installation d’abord ; × la range 3 jours ; en arabe sans texte oublié', async () => {
   const s = await prevenirSur(null);
   await s.page.waitForTimeout(2600);
   assert.equal(await s.page.locator('.pastille').count(), 0, 'démo ordinaire : rien à installer ni à activer');
   await s.page.evaluate(() => { localStorage.setItem('ensam-install-demo', 'android'); localStorage.setItem('ensam-prevenir-demo', 'off'); });
   await recharger(s);
   await s.page.locator('#ouv-tard').click({ timeout: 6000 }).catch(() => {});
-  await s.page.waitForSelector('.pastille[data-sorte="installer"]');
+  // Android : les notifications d'abord, l'installation attend
+  await s.page.waitForSelector('.pastille[data-sorte="activer"]');
   // Au-dessus de la barre du bas, sans rien déborder
   const [p, nav] = await Promise.all(['.pastille', '.bottom-nav'].map(x => s.page.locator(x).boundingBox()));
   assert.ok(p.y + p.height <= nav.y, 'la pastille ne couvre pas la barre du bas');
   assert.ok((await s.page.locator('#pastille-go').boundingBox()).height >= 44);
   assert.equal(await s.debordement(), 0);
-  // Android sans proposition du navigateur : les gestes à faire
-  await s.page.click('#pastille-go');
-  await s.page.waitForSelector('.modal:has-text("Touche le menu ⋮")');
-  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
-  // Le navigateur propose l'installation : un toucher, puis la pastille passe aux notifications
-  await s.page.evaluate(() => localStorage.setItem('ensam-install-demo', 'prompt'));
-  await recharger(s);
-  await s.page.locator('#ouv-tard').click({ timeout: 6000 }).catch(() => {});
-  await s.page.click('.pastille[data-sorte="installer"] #pastille-go');
-  await s.page.waitForSelector('.pastille[data-sorte="activer"]');
   // On écrit : elle se range, puis revient
   await s.aller('offres'); await s.page.waitForTimeout(300);
   const champ = s.page.locator('input[type="search"], input[type="text"]').first();
@@ -5146,12 +5788,26 @@ test('la pastille : « Installer l’application » d’abord, puis « Activer l
   await s.aller('messages'); await s.page.waitForTimeout(300);
   assert.equal(await s.page.locator('.pastille').count(), 0, 'pas dans les messages');
   await s.aller('accueil'); await s.page.waitForSelector('.pastille');
-  await s.page.click('#pastille-go'); await s.page.waitForTimeout(400);
-  assert.equal(await s.page.locator('.pastille').count(), 0, 'activées : plus de pastille');
-  // × : rangée 3 jours, même après rechargement
-  await s.page.evaluate(() => localStorage.setItem('ensam-install-demo', 'ios'));
+  // Activées : la pastille passe à l'installation
+  await s.page.click('#pastille-go');
+  await s.page.waitForSelector('.pastille[data-sorte="installer"]');
+  assert.match(await s.page.locator('.pastille').innerText(), /Une icône sur ton écran d’accueil/);
+  // Android sans proposition du navigateur : les gestes à faire, « Activer » compris
+  await s.page.click('#pastille-go');
+  await s.page.waitForSelector('.modal:has-text("Touche le menu ⋮")');
+  assert.match(await s.page.locator('.modal.installer').innerText(), /puis touche «\sActiver les notifications\s» si ce n’est pas déjà fait/);
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+  // Le navigateur propose l'installation : un toucher, et plus de pastille
+  await s.page.evaluate(() => { localStorage.setItem('ensam-install-demo', 'prompt'); localStorage.removeItem('ensam-prevenir-demo'); });
+  await recharger(s);
+  await s.page.click('.pastille[data-sorte="installer"] #pastille-go');
+  await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator('.pastille').count(), 0, 'activées et installée : plus de pastille');
+  // iPhone dans Safari : l'installation d'abord, seul chemin vers les notifications ; × la range 3 jours, même après rechargement
+  await s.page.evaluate(() => { localStorage.setItem('ensam-install-demo', 'ios'); localStorage.setItem('ensam-prevenir-demo', 'off'); });
   await recharger(s);
   await s.page.waitForSelector('.pastille[data-sorte="installer"]', { timeout: 8000 });
+  assert.match(await s.page.locator('.pastille').innerText(), /Pour recevoir tes notifications sur iPhone/);
   await s.page.locator('#ouv-tard').click({ timeout: 1000 }).catch(() => {});
   await s.page.click('#pastille-go');
   await s.page.waitForSelector('.modal:has-text("Dans Safari")');
@@ -5183,12 +5839,51 @@ test('la pastille « Notifications bloquées » : les gestes de cet appareil, en
     await s.page.click('#pastille-go');
     await s.page.waitForSelector('.modal .ios-steps');
     const t = await s.page.locator('.modal').innerText();
-    if (langue === 'fr') assert.match(t, /cadenas à gauche de l’adresse/);
-    else assert.deepEqual(t.match(/[A-Za-zÀ-ÿ]{2,}/g)?.filter(x => !['ENSAM', 'iPhone'].includes(x)) || [], []);
+    // Chrome sur Android : un cadenas ou l'icône des réglages ; et si le téléphone lui-même bloque Chrome, une ligne de plus
+    if (langue === 'fr') {
+      assert.match(t, /Touche l’icône à gauche de l’adresse \(cadenas ou réglages\)\./);
+      assert.match(await s.page.locator('#debloquer-plus').innerText(), /^Toujours rien\s\? Réglages du téléphone › Applications › Chrome › Notifications\s: autorise-les\.$/);
+    } else assert.deepEqual(t.match(/[A-Za-zÀ-ÿ]{2,}/g)?.filter(x => !['ENSAM', 'iPhone', 'Chrome'].includes(x)) || [], []);
     assert.equal(await s.debordement(), 0);
     assert.deepEqual(s.erreurs, []);
     await s.ctx.close();
   }
+});
+
+test('la pastille ne promet rien à qui n’en veut pas ou ne peut pas : coupées (iPhone : l’icône, sans promesse) ; abonnement impossible ici (ni « Activer » ni bandeau)', async () => {
+  const s = await prevenirSur('off');
+  const id = await s.page.$eval('#persona', e => e.value);
+  const poser = m => s.page.evaluate(([id, m]) => localStorage.setItem('ensam-prevenir-' + id, JSON.stringify(m)), [id, m]);
+  const pastille = async sorte => { await s.page.waitForSelector(`.pastille[data-sorte="${sorte}"]`, { timeout: 8000 }); return s.page.locator('.pastille').innerText(); };
+  // iPhone dans Safari, notifications coupées dans Mon profil : l'icône de l'écran d'accueil, sans parler de notifications
+  await s.page.evaluate(() => localStorage.setItem('ensam-install-demo', 'ios'));
+  await poser({ fait: 1, coupe: 1 });
+  await recharger(s);
+  const ios = await pastille('installer');
+  assert.match(ios, /Une icône sur ton écran d’accueil/);
+  assert.doesNotMatch(ios, /notifications/i);
+  // Android, abonnement déjà impossible pour de bon sur ce navigateur (Brave, téléphone sans services Google) :
+  // « Activer » n'y servirait à rien, ni dans la pastille ni dans le bandeau de l'accueil
+  await s.page.evaluate(() => localStorage.removeItem('ensam-install-demo'));
+  await poser({ fait: 1, sans: 1 });
+  await recharger(s); await s.page.waitForTimeout(2600);
+  assert.equal(await s.page.locator('.pastille').count(), 0);
+  assert.equal(await s.page.locator('.push-bandeau').count(), 0);
+  // L'installation reste proposée, sans promesse
+  await s.page.evaluate(() => localStorage.setItem('ensam-install-demo', 'android'));
+  await recharger(s);
+  assert.match(await pastille('installer'), /Une icône sur ton écran d’accueil/);
+  // Activées puis perdues sans échec : « Activer » revient, avec le bandeau
+  await s.page.evaluate(() => localStorage.removeItem('ensam-install-demo'));
+  await poser({ fait: 1 });
+  await recharger(s);
+  await pastille('activer');
+  await s.page.waitForSelector('.push-bandeau[data-etat="off"]');
+  // Mon profil garde le bouton pour réessayer
+  await poser({ fait: 1, sans: 1 });
+  await s.aller('profil/notifications'); await s.page.waitForSelector('#md-push-oui');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
 });
 
 // ---------------------------------------------------------------------------

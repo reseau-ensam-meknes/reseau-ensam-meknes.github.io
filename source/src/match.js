@@ -21,6 +21,7 @@ import { TYPE_ICON } from './entree.js';
 import { OfferComposer } from './offers.js';
 import { addAR, getLang } from './i18n.js';
 import { ApercuCV, LecteurCV } from './apercu-cv.js';
+import { proposerPrevenir, LignePrevenir } from './pwa.js';
 
 ajouterIcones({
   // Deux cartes l'une sur l'autre, une coche sur celle de devant
@@ -243,8 +244,10 @@ export function MatchPage(ctx) {
     const t = avancerTour(avant, jour, Math.min(TOUR_JOUR, etatTour(avant, jour).n + restantes));
     noterTour(me.id, t); setTour(t);
     if (t.fini) { vibrer([12, 40, 12]); toast(t.serie > 1 ? `Tour du jour fait : ${t.serie} jours de suite` : 'Tour du jour fait', 'win'); }
+    const parti = Date.now();
     store.choisirMatch(c.offre ? { offre: c.offre.id } : { profil: c.profil.id }, choix).then(r => {
-      if (!r?.match) return;
+      // Un « Intéressé » qui ne fait pas de match tout de suite : « Me prévenir » le propose, la carte une fois partie
+      if (!r?.match) { if (choix === 'oui') proposerPrevenir('match', null, Math.max(0, (mouvementReduit() ? 180 : 420) - (Date.now() - parti))); return; }
       const autre = store.byId('profiles', r.match.etudiant_id === me.id ? r.match.laureat_id : r.match.etudiant_id) || c.profil;
       setTimeout(() => setFete({ m: r.match, autre, offre: (r.match.offre_id && store.byId('offers', r.match.offre_id)) || null }), mouvementReduit() ? 0 : 260);
     }, e => { setHist(h => h.filter(x => x !== c.cle)); setBilan(b => b.filter(x => x.cle !== c.cle)); setPassees(n => Math.max(0, n - 1)); setDevant(c.cle); toast(e.message || String(e), 'err'); });
@@ -731,6 +734,7 @@ function PileVide({ ctx, bilan, onPublier, revenir }) {
       <p class="mx-bl-t">Cette visite</p>
       <p class="mx-bl-n"><span class=${'mx-bl-oui' + (oui ? ' vif' : '')}><${Compte} n=${oui}/><span>Intéressé</span></span><span class="mx-bl-tard"><${Compte} n=${tard}/><span>Plus tard</span></span></p>
     </div>` : null}
+    <${LignePrevenir} ctx=${ctx} raison="match" fil="match" attente=${oui > 0}/>
     <ul class="mx-suite">${suite.map(([i, t]) => html`<li><span class="mx-s-ico"><${Icon} name=${i} size=${16}/></span><span>${t}</span></li>`)}</ul>
     <div class="mx-vide-acts">
       ${etu ? (demande ? html`<button type="button" class="btn primary" onClick=${() => go('offres/demandes/nouvelle')}><${Icon} name="send" size=${18}/> Publier ma demande</button>`

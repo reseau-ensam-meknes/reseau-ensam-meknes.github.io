@@ -5,12 +5,13 @@
 import { html, useState, useEffect, useLayoutEffect, useRef, useMemo } from './vendor/preact-htm.js';
 import { Icon, Avatar, Empty, toast, injectCSS, roleTexte, Modal, lienDirect } from './ui.js';
 import { useBrouillon, oublierBrouillon, lireBrouillon, ecrireBrouillon } from './ui.js';
-import { conversations, lienAvec, mentorState, norm, matchEntre, etapeMatch, titreOffre, peutPostulerA } from './logic.js';
+import { conversations, lienAvec, mentorState, norm, matchEntre, etapeMatch, titreOffre, peutPostulerA, attendReponse } from './logic.js';
 import { addAR, getLang, t as tr } from './i18n.js';
 import { VOCAL_MAX, REACTIONS, jitsiLink } from './store.js';
 import { SignalerBtn } from './confiance.js';
 import { OuvrirCV } from './cv.js';
 import { gcalUrl, icsHref } from './mentorat.js';
+import { LignePrevenir } from './pwa.js';
 
 const pad = n => String(n).padStart(2, '0');
 const prenom = p => (p?.full_name || '').split(' ')[0] || 'Membre';
@@ -316,6 +317,7 @@ function Conversation({ ctx, autre }) {
       ${tape ? html`<div class="msg tape-bulle" aria-hidden="true"><div class="bulle"><span class="tape-dots"><i></i><i></i><i></i></span></div></div>` : null}
     </div>
     ${plusBas ? html`<div class="conv-bas-ancre"><button class="conv-bas" aria-label="Aller aux derniers messages" onClick=${versLeBas}><${Icon} name="arrow" size=${16}/></button></div>` : null}
+    ${actif ? html`<${LignePrevenir} ctx=${ctx} raison="message" fil=${autre} attente=${attendReponse(fil, me.id)}/>` : null}
 
     ${blocage ? html`<div class="composer ferme"><${Icon} name="block" size=${16}/><span>Tu as bloqué <span translate="no">${prenom(p)}</span>.</span><span class="spacer"></span><button class="btn small" onClick=${debloquer}>Débloquer</button></div>`
       : !ouvert ? html`<div class="composer ferme"><${Icon} name="lock" size=${16}/><span>Vous ne pouvez pas vous écrire pour l’instant. Une conversation s’ouvre avec un match, un mentorat, une candidature ou des coordonnées partagées.</span></div>`
