@@ -1,11 +1,12 @@
 // Application installable (écran d'accueil du téléphone) et notifications sur le téléphone.
 // Le service worker n'est enregistré que sur le vrai site (dist/), qui déclare un manifeste.
 import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
-import { Icon, Modal, toast, ensuite, feteOuverte, quandFete, apresFete, injectCSS } from './ui.js';
-import { addAR, getLang } from './i18n.js';
-import { prevenirVariante, lignePrevenir, sansLigne, ouvertureSorte, sorteLienNotifs, bandeauPush, pushChoix, PUSH_CATEGORIES, navigateurIntegre, lienChrome, noterEchecPush, echecDefinitif,
-  raisonTestPush, testPushARefaire, APPLIS, estIPad, CLE_APPLI_VUE, raisonPrevenir } from './logic.js';
+import { Icon, Modal, toast, ensuite, feteOuverte, quandFete, apresFete, injectCSS, mouvementReduit } from './ui.js';
+import { addAR, getLang, t } from './i18n.js';
+import { prevenirVariante, lignePrevenir, sansLigne, ouvertureSorte, sorteLienNotifs, bandeauPush, pushChoix, navigateurIntegre, lienChrome, noterEchecPush, echecDefinitif,
+  raisonTestPush, testPushARefaire, APPLIS, estIPad, CLE_APPLI_VUE, raisonPrevenir, veutDesNotifs, choisirCas } from './logic.js';
 import { arriveeEnAttente } from './pouls.js';
+import { GESTE_SAFARI, CARTE_AR, nomsLatins } from './appareil.js';
 
 let installEvt = null;
 const listeners = new Set();
@@ -23,8 +24,16 @@ const dejaInstallee = () => { try { return localStorage.getItem(INSTALLEE) === '
 // Enregistré au premier moment calme : son installation (tout le site gardé sur le téléphone) ne passe pas
 // devant les données du membre en 3G
 const ouverture = Date.now();
-// Une nouvelle version ne recharge la page visible que pendant ses premières secondes ; après, elle attend que la page soit cachée
+// Une nouvelle version ne recharge la page visible que pendant ses premières secondes, tant que personne n'y a touché ;
+// sinon elle attend que la page soit cachée
 const FENETRE_MAJ = 8000;
+// Le visiteur a commencé quelque chose (un toucher, un clic, une touche, la molette, un champ rempli, même par le navigateur) :
+// la page n'est plus rechargée sous ses doigts. Un champ de texte qui a le curseur compte aussi (rempli avant ce module).
+let touchee = false;
+if (typeof document !== 'undefined') for (const t of ['pointerdown', 'keydown', 'wheel', 'input']) document.addEventListener(t, () => { touchee = true; }, { capture: true, passive: true, once: true });
+const occupee = () => touchee || ecrit(document.activeElement);
+// Juste avant un rechargement voulu par une nouvelle version : la page d'entrée garde ce qui a été tapé (entree.js)
+const rechargerPage = () => { try { dispatchEvent(new Event('ensam-recharge')); } catch { /* ancien navigateur */ } location.reload(); };
 const auRepos = f => (typeof requestIdleCallback === 'function' ? requestIdleCallback(f, { timeout: 4000 }) : setTimeout(f, 1500));
 // Le service worker n'a pas pu s'enregistrer (navigateur qui les refuse, navigation privée) : les notifications non plus,
 // et ceux qui avaient cru pouvoir proposer « Activer » (etatPush) relisent l'état
@@ -36,15 +45,17 @@ export const swReady = (() => {
 })();
 
 // Nouvelle version du site : le téléphone la télécharge en arrière-plan, puis elle prend la main
-// quand la page est cachée (ou tout de suite si la page vient de s'ouvrir), et la page se recharge
-// sans que personne ne le voie. Jamais au milieu de ce que le membre est en train de faire.
+// quand la page est cachée (ou tout de suite si la page vient de s'ouvrir et que personne n'y a touché), et la page se
+// recharge sans que personne ne le voie. Jamais au milieu de ce que le membre est en train de faire.
 function suivreMisesAJour(reg) {
   const debut = ouverture;
   const avait = !!navigator.serviceWorker.controller;
+  const cachee = () => document.visibilityState === 'hidden';
+  const quandCachee = f => document.addEventListener('visibilitychange', function g() { if (cachee()) { document.removeEventListener('visibilitychange', g); f(); } });
   const appliquer = w => {
     if (!w || !avait) return;
-    if (Date.now() - debut < 5000 || document.visibilityState === 'hidden') w.postMessage('nouvelle-version');
-    else document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') w.postMessage('nouvelle-version'); }, { once: true });
+    if (cachee() || (Date.now() - debut < 5000 && !occupee())) w.postMessage('nouvelle-version');
+    else quandCachee(() => w.postMessage('nouvelle-version'));
   };
   if (reg.waiting) appliquer(reg.waiting);
   reg.addEventListener('updatefound', () => { const w = reg.installing; w?.addEventListener('statechange', () => { if (w.state === 'installed') appliquer(w); }); });
@@ -52,7 +63,10 @@ function suivreMisesAJour(reg) {
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (fait || !avait) return;
     fait = true;
-    if (document.visibilityState === 'hidden' || Date.now() - debut < FENETRE_MAJ) location.reload();
+    // Elle a pris la main pendant que le membre est dans la page (il vient d'y toucher, ou un autre onglet l'a appliquée) :
+    // la page se recharge la prochaine fois qu'elle est cachée
+    if (cachee() || (Date.now() - debut < FENETRE_MAJ && !occupee())) rechargerPage();
+    else quandCachee(rechargerPage);
   });
 }
 
@@ -88,8 +102,9 @@ export function useInstall() {
 // Typographie française des gestes : ni « ni : ? ! ; seul en début ou en fin de ligne (espace insécable). En arabe, la
 // phrase française reste la clé du dictionnaire : elle passe telle quelle.
 const fr = s => (typeof s !== 'string' || getLang() === 'ar' ? s : s.replace(/« /g, '«\u00a0').replace(/ ([»:;?!])/g, '\u00a0$1'));
-// Des gestes numérotés, chacun avec son icône ; 'more-v' : le menu ⋮ d'Android (les trois points debout), 'more' : le ••• de l'iPhone
-const Etapes = ({ liste }) => html`<ol class="ios-steps">${liste.map(([ico, txt]) => html`<li key=${txt}><span class=${'g-ico' + (ico === 'more-v' ? ' debout' : '')}><${Icon} name=${ico === 'more-v' ? 'more' : ico} size=${18}/></span> ${fr(txt)}</li>`)}</ol>`;
+// Des gestes numérotés, chacun avec son icône ; 'more-v' : le menu ⋮ d'Android (les trois points debout), 'more' : le ••• de l'iPhone.
+// La phrase dans un seul span (le li est en flex : un morceau par nom y perdrait ses espaces), Safari ou Chrome dans le sien (avecNoms)
+const Etapes = ({ liste }) => html`<ol class="ios-steps">${liste.map(([ico, txt]) => html`<li key=${txt}><span class=${'g-ico' + (ico === 'more-v' ? ' debout' : '')}><${Icon} name=${ico === 'more-v' ? 'more' : ico} size=${18}/></span> <span>${avecNoms(txt)}</span></li>`)}</ol>`;
 // iPhone : les notifications n'arrivent que dans l'application ajoutée à l'écran d'accueil, dont le stockage est à part
 // (on s'y connecte une fois). Partager est en bas de Safari, ou dans son menu ••• ; dans Chrome ou Firefox, dans la barre d'adresse.
 const PARTAGER = { safari: 'Dans Safari, touche Partager : en bas de l’écran, ou dans le menu •••.', ipad: 'Dans Safari, touche Partager, en haut de l’écran.', autre: 'Touche Partager, dans la barre d’adresse ou dans le menu du navigateur.' };
@@ -240,9 +255,6 @@ const attendreRecu = ms => new Promise(ok => {
 });
 
 const PUSH_CHANGE = 'ensam-push';
-// Ce membre veut-il recevoir quelque chose ? Rien de coché dans Mon profil (les rappels seuls ne comptent pas) : rien à
-// proposer. L'administration reçoit toujours les signalements.
-const veutDesNotifs = m => m?.role === 'admin' || PUSH_CATEGORIES.some(c => c !== 'rappels' && pushChoix(c, m));
 // La clé publique de la plateforme, demandée dès qu'une feuille qui propose « Activer » s'affiche (store.pushKey la garde
 // pour la visite) : l'abonnement suit tout de suite la réponse du navigateur, sans un aller-retour de plus en 3G
 const cleAPrete = store => { if (store.mode === 'live') Promise.resolve(store.pushKey?.()).catch(() => {}); };
@@ -348,7 +360,7 @@ addAR({
 // Une demande du navigateur lancée depuis Mon profil attend sa réponse : pas de feuille d'ouverture par-dessus
 let demandeEnCours = false;
 
-// « Notifications sur ce téléphone ou cet ordinateur », dans Mon profil (onglet Notifications) : coupées, une phrase et
+// « Notifications sur cet appareil », dans Mon profil (onglet Notifications) : coupées, une phrase et
 // un bouton « Activer » ; activées, « Activées sur cet appareil », « Tester » (pas en démo) et « Désactiver ». Ce que
 // l'appareil ne permet pas (navigateur, iPhone sans l'application, notifications bloquées) est dit en une phrase.
 export function PushToggle({ ctx }) {
@@ -437,14 +449,14 @@ export function PushToggle({ ctx }) {
   }[st];
   return html`<div class="push-etat" data-etat=${st} ref=${ici}>
     ${st === 'on' ? html`<p class="verify-ok push-ok" id="md-push-ok"><${Icon} name="check" size=${18}/> Activées sur cet appareil</p>
-      <p class="small muted" id="md-push-compte">${surTelephone() ? UN_COMPTE.tel : UN_COMPTE.pc}</p>
+      <p class="small muted" id="md-push-compte">${avecNoms(UN_COMPTE[appareilIci()])}</p>
       <div class="push-acts">${simule ? null : html`<button type="button" class="btn small" id="md-push-test" disabled=${busy} onClick=${test}>Tester</button>`}
         <button type="button" class="btn small ghost" id="md-push-non" disabled=${busy} onClick=${() => { garderFocus.current = true; turnOff(); }}>Désactiver</button></div>`
     : st === 'off' ? html`<p class="small muted">${PUSH_POURQUOI}</p>
       <div class="push-acts"><button type="button" class="btn primary" id="md-push-oui" disabled=${busy} onClick=${() => { garderFocus.current = true; turnOn(); }}><${Icon} name="bell" size=${16}/> Activer</button></div>`
     : st === 'appli' ? html`<${AppliDit} ctx=${ctx}/>` : null}
     ${note ? html`<p class="small muted">${note}</p>` : null}
-    ${st === 'on' && diag ? html`<p class="small muted" id="md-push-diag">${diag === 'recue' ? DIAG_RECUE : DIAG_PERDUE}</p>` : null}
+    ${st === 'on' && diag ? html`<p class="small muted" id="md-push-diag">${diag === 'recue' ? DIAG_RECUE[isIOS() ? 'ios' : 'autre'] : DIAG_PERDUE}</p>` : null}
     ${st === 'refuse' ? html`<p class="small"><button type="button" class="linkish" id="md-push-debloquer" onClick=${() => setDebloquer(true)}>Comment les débloquer ?</button></p>` : null}
     ${st === 'ios' ? html`<p class="small muted">${pourIos(INSTALLER_D_ABORD)} <button class="linkish" onClick=${() => setHelp(true)}>Comment faire ?</button></p>` : null}
     ${help ? html`<${IosInstallHelp} onClose=${() => setHelp(false)}/>` : null}
@@ -457,18 +469,25 @@ const NOTE_ABSENT = 'Ce navigateur ne permet pas les notifications. Essaie Chrom
 // Un téléphone ne sert qu'un compte : le dernier connecté (abonner_push). Se déconnecter le retire de ce compte.
 const UN_COMPTE = {
   tel: 'Ce téléphone reçoit les notifications de ce compte. Si un autre compte s’y connecte, c’est lui qui les recevra.',
+  ipad: 'Cet iPad reçoit les notifications de ce compte. Si un autre compte s’y connecte, c’est lui qui les recevra.',
   pc: 'Cet ordinateur reçoit les notifications de ce compte. Si un autre compte s’y connecte, c’est lui qui les recevra.',
 };
 addAR({
   [UN_COMPTE.tel]: 'يتلقى هذا الهاتف إشعارات هذا الحساب. إذا سُجّل الدخول عليه بحساب آخر، فهو من سيتلقاها.',
+  [UN_COMPTE.ipad]: 'يتلقى جهاز iPad هذا إشعارات هذا الحساب. إذا سُجّل الدخول عليه بحساب آخر، فهو من سيتلقاها.',
   [UN_COMPTE.pc]: 'يتلقى هذا الحاسوب إشعارات هذا الحساب. إذا سُجّل الدخول عليه بحساب آخر، فهو من سيتلقاها.',
 });
-const DIAG_RECUE = 'Reçue par cet appareil. Rien dans la barre de notifications ? Dans les réglages du téléphone, autorise les notifications de ton navigateur et retire-le de l’économie de batterie.';
+// Reçue, mais rien à l'écran : sur iPhone et iPad (l'application de l'écran d'accueil), les mêmes réglages que pour les débloquer
+const DIAG_RECUE = {
+  autre: 'Reçue par cet appareil. Rien dans la barre de notifications ? Dans les réglages du téléphone, autorise les notifications de ton navigateur et retire-le de l’économie de batterie.',
+  ios: 'Reçue par cet appareil. Rien ne s’affiche ? Dans Réglages › Notifications › Réseau ENSAM, active « Autoriser les notifications ».',
+};
 const DIAG_PERDUE = 'Pas arrivée. L’abonnement de cet appareil vient d’être refait : touche « Tester » de nouveau.';
 const PUSH_POURQUOI = 'Messages, réponses, rendez-vous : ce qui te concerne arrive tout de suite, même quand l’application est fermée.';
 addAR({
   [PUSH_POURQUOI]: 'الرسائل والأجوبة والمواعيد: ما يخصك يصلك فورًا، حتى والتطبيق مغلق.',
-  [DIAG_RECUE]: 'وصل الإشعار إلى هذا الجهاز. لا يظهر شيء في شريط الإشعارات؟ من إعدادات الهاتف، اسمح بإشعارات المتصفح وأزله من توفير البطارية.',
+  [DIAG_RECUE.autre]: 'وصل الإشعار إلى هذا الجهاز. لا يظهر شيء في شريط الإشعارات؟ من إعدادات الهاتف، اسمح بإشعارات المتصفح وأزله من توفير البطارية.',
+  [DIAG_RECUE.ios]: 'وصل الإشعار إلى هذا الجهاز. لا يظهر شيء؟ من الإعدادات › الإشعارات › شبكة ENSAM، فعّل «السماح بالإشعارات».',
   [DIAG_PERDUE]: 'لم يصل الإشعار. أعدنا تسجيل هذا الجهاز: اضغط على «تجربة» مرة أخرى.',
   'Activées sur cet appareil': 'مفعّلة على هذا الجهاز', 'Comment les débloquer ?': 'كيف ترفع الحظر عنها؟',
 });
@@ -513,7 +532,7 @@ export function BandeauPush({ ctx }) {
     : html`<button type="button" class="btn small primary" id="push-b-oui" disabled=${busy} onClick=${agir}>${action}</button>`;
   return html`<section class="push-bandeau" aria-label=${titre} data-etat=${v}>
     <span class="push-b-ico" aria-hidden="true"><${Icon} name="bell" size=${22}/></span>
-    <div class="push-b-txt"><strong>${titre}</strong><span>${fr(texte)}</span>
+    <div class="push-b-txt"><strong>${avecNoms(titre)}</strong><span>${avecNoms(texte)}</span>
       <div class="push-b-acts">${bouton}
         <button type="button" class="linkish small" id="push-b-tard" onClick=${plusTard}>Plus tard</button></div></div>
     ${feuilles}
@@ -547,9 +566,17 @@ const APPLI_INCONNUE = 'Ce lien s’est ouvert dans une application : ici, les n
 const appliIci = nom => (nom ? `Ce lien s’est ouvert dans ${nom} : ici, les notifications ne peuvent pas arriver.` : APPLI_INCONNUE);
 const APPLI_CHROME = 'Dans Chrome, ce qui te concerne arrive tout de suite, même quand l’application est fermée.';
 const APPLI_RIEN = 'Rien ne s’ouvre ? Touche ⋮ en haut à droite, puis « Ouvrir dans Chrome » ou « Ouvrir dans le navigateur ».';
+// Une phrase qui nomme l'application, Chrome ou Safari : traduite d'abord, puis chaque nom dans son <span translate="no" dir="auto">,
+// comme dans la carte de la page d'entrée. Preact écrit translate comme une propriété (« no » y deviendrait translate="yes") :
+// l'attribut est posé à la main une fois l'élément créé ; translate="no" reste dans ses props pour i18n.js
+const sansTraduction = el => el?.setAttribute('translate', 'no');
+const avecNoms = s => nomsLatins(fr(t(s))).map((p, i) => (i % 2 ? html`<span translate="no" dir="auto" ref=${sansTraduction}>${p}</span>` : p));
+// Le titre d'une feuille qui nomme Chrome, Safari ou l'iPad : Modal s'en sert pour son titre (h2), le nom dans son span, et pour
+// le nom de la feuille (aria-label), qui reçoit la phrase entière, déjà traduite. Sans nom : la phrase telle quelle
+const titreAvecNoms = s => { const x = avecNoms(s); return x.length < 2 ? s : Object.assign(x, { toString: () => x.map(p => (typeof p === 'string' ? p : p.props.children)).join('') }); };
 const ETAPES_APPLI = {
   ios: [
-    ['more', 'Touche ••• (en haut ou en bas de l’écran), puis « Ouvrir dans Safari » ou « Ouvrir dans le navigateur ».'],
+    ['more', GESTE_SAFARI],
     ['share', 'Dans Safari : Partager, puis « Sur l’écran d’accueil ».'],
     ['bell', 'Ouvre la nouvelle icône, connecte-toi une fois, puis touche « Activer ».'],
   ],
@@ -557,20 +584,21 @@ const ETAPES_APPLI = {
 };
 const DEMO_CHROME = 'Sur la vraie plateforme, ce bouton rouvre la page dans Chrome, où les notifications arrivent.';
 // Le lien « Ouvrir dans Chrome » : la page où l'on est (relue au toucher), la feuille d'activation en arrivant
-// La langue de la page suit dans Chrome (l'arabe choisi ici, Chrome ne le connaît pas)
-const lienIci = () => lienChrome(location.href, (location.hash || '').slice(1), { lang: getLang() });
+// La langue de la page suit dans Chrome (l'arabe choisi ici, Chrome ne le connaît pas). Seul un membre connecté le voit :
+// Chrome, qui ne le connaît pas encore, s'ouvre sur « Se connecter » (jamais « Créer mon compte »)
+const lienIci = () => lienChrome(location.href, (location.hash || '').slice(1), { lang: getLang(), contexte: { mode: 'connexion' } });
 function OuvrirChrome({ store, cls = 'btn primary', id, onOuvert, children }) {
   const clic = e => {
     if (store.mode !== 'live') { e.preventDefault(); toast(DEMO_CHROME); } else e.currentTarget.href = lienIci();
     onOuvert?.();
   };
-  return html`<a class=${cls} id=${id} href=${lienIci()} onClick=${clic}>${children || html`<${Icon} name="globe" size=${16}/> Ouvrir dans Chrome`}</a>`;
+  return html`<a class=${cls} id=${id} href=${lienIci()} onClick=${clic}>${children || html`<${Icon} name="globe" size=${16}/> <span>${avecNoms('Ouvrir dans Chrome')}</span>`}</a>`;
 }
 // Mon profil › Notifications : la phrase et le geste
 function AppliDit({ ctx }) {
   const sys = systeme();
-  return html`<p class="small muted">${fr(appliIci(integre()?.nom))}</p>
-    ${sys === 'android' ? html`<div class="push-acts"><${OuvrirChrome} store=${ctx.store} id="md-push-chrome"/></div><p class="small muted">${fr(APPLI_RIEN)}</p>`
+  return html`<p class="small muted">${avecNoms(appliIci(integre()?.nom))}</p>
+    ${sys === 'android' ? html`<div class="push-acts"><${OuvrirChrome} store=${ctx.store} id="md-push-chrome"/></div><p class="small muted">${avecNoms(APPLI_RIEN)}</p>`
       : html`<${Etapes} liste=${ETAPES_APPLI[sys]}/>`}`;
 }
 function FeuilleAppli({ ctx, onClose }) {
@@ -579,13 +607,14 @@ function FeuilleAppli({ ctx, onClose }) {
     ? html`<button type="button" class="btn ghost" id="appli-tard" onClick=${() => onClose()}>Plus tard</button>
       <${OuvrirChrome} store=${ctx.store} id="appli-chrome" onOuvert=${() => setTimeout(() => onClose(), 0)}/>`
     : html`<button type="button" class="btn primary" id="appli-ok" onClick=${() => onClose()}>J’ai compris</button>`;
-  return html`<${Modal} title=${APPLI_TITRE[sys]} cls="appareil appli" onClose=${onClose} footer=${pied}>
-    <p>${fr(appliIci(integre()?.nom))}</p>
-    ${sys === 'android' ? html`<p>${fr(APPLI_CHROME)}</p><p class="small muted">${fr(APPLI_RIEN)}</p>` : html`<${Etapes} liste=${ETAPES_APPLI[sys]}/>`}
+  return html`<${Modal} title=${titreAvecNoms(APPLI_TITRE[sys])} cls="appareil appli" onClose=${onClose} footer=${pied}>
+    <p>${avecNoms(appliIci(integre()?.nom))}</p>
+    ${sys === 'android' ? html`<p>${avecNoms(APPLI_CHROME)}</p><p class="small muted">${avecNoms(APPLI_RIEN)}</p>` : html`<${Etapes} liste=${ETAPES_APPLI[sys]}/>`}
   <//>`;
 }
 injectCSS('pwa-appareil', `
 a.pastille-go { text-decoration: none; }
+.pastille-txt strong span { font-size: inherit; color: inherit; }
 .push-b-acts a.btn, .push-acts a.btn, .modal-foot a.btn { text-decoration: none; }
 .modal.appli .modal-body > p, .modal.ancienne .modal-body > p, .modal.ouverture-ios .modal-body > p { margin: 0; }
 .modal.appli .modal-body, .modal.ancienne .modal-body, .modal.ouverture-ios .modal-body { display: flex; flex-direction: column; gap: .8rem; }
@@ -597,7 +626,7 @@ addAR({
   [APPLI_INCONNUE]: 'فُتح هذا الرابط داخل تطبيق: هنا لا يمكن أن تصلك الإشعارات.',
   [APPLI_CHROME]: 'في Chrome، يصلك ما يخصك فورًا، حتى والتطبيق مغلق.',
   [APPLI_RIEN]: 'لا يُفتح شيء؟ المس ⋮ في أعلى الشاشة، ثم «فتح في Chrome» أو «فتح في المتصفح».',
-  [ETAPES_APPLI.ios[0][1]]: 'المس ••• (أعلى الشاشة أو أسفلها)، ثم «فتح في Safari» أو «فتح في المتصفح».',
+  [GESTE_SAFARI]: CARTE_AR[GESTE_SAFARI],
   [ETAPES_APPLI.ios[1][1]]: 'في Safari: «مشاركة»، ثم «إضافة إلى الشاشة الرئيسية».',
   [ETAPES_APPLI.ios[2][1]]: 'افتح الأيقونة الجديدة، وسجّل الدخول مرة واحدة، ثم المس «تفعيل».',
   [ETAPES_APPLI.pc[0][1]]: 'افتح قائمة التطبيق، ثم «فتح في المتصفح».',
@@ -918,8 +947,10 @@ async function accepterNotif(store, me) {
   } catch (e) {
     // Navigateur sans service de notifications (Brave, téléphone sans services Google…) : une phrase calme, et la feuille
     // ne revient plus sur ce navigateur ; le bouton de « Mon profil » reste là pour réessayer. Service qui n'a pas répondu :
-    // au deuxième jour seulement (apresEchec)
-    return apresEchec(me, e);
+    // au deuxième jour seulement (apresEchec). Le bandeau et la pastille à l'écran suivent aussitôt, comme après Mon profil
+    const r = apresEchec(me, e);
+    dispatchEvent(new Event(PUSH_CHANGE));
+    return r;
   }
 }
 
@@ -980,8 +1011,8 @@ if (typeof document !== 'undefined') {
 }
 // La phrase vraie pour ce fil (sur un ordinateur, c'est lui qu'« Activer » abonne), puis le geste
 const LIGNE = {
-  message: { tel: 'Sa réponse peut arriver sur ce téléphone, même application fermée', pc: 'Sa réponse peut arriver sur cet ordinateur, même onglet fermé' },
-  match: { tel: 'Une notification arrive dès qu’un intérêt est réciproque', pc: 'Une notification arrive dès qu’un intérêt est réciproque' },
+  message: { tel: 'Sa réponse peut arriver sur ce téléphone, même application fermée', ipad: 'Sa réponse peut arriver sur cet iPad, même application fermée', pc: 'Sa réponse peut arriver sur cet ordinateur, même onglet fermé' },
+  match: { tel: 'Une notification arrive dès qu’un intérêt est réciproque', ipad: 'Une notification arrive dès qu’un intérêt est réciproque', pc: 'Une notification arrive dès qu’un intérêt est réciproque' },
 };
 const LIGNE_GESTE = { activer: 'Activer', ios: 'Comment faire', debloquer: 'Débloquer' };
 const LIGNE_X = { message: 'Ne plus le proposer dans cette conversation', match: 'Ne plus le proposer ici' };
@@ -1071,7 +1102,7 @@ export function LignePrevenir({ ctx, raison = 'message', fil = null, attente = t
   const txt = LIGNE[raison] || LIGNE.message;
   return html`<div class="pv-ligne" ref=${ici} data-sorte=${sorte} data-raison=${raison}>
       <span class="pv-l-ico" aria-hidden="true"><${Icon} name=${sorte === 'debloquer' ? 'lock' : 'bell'} size=${16}/></span>
-      <p class="pv-l-txt">${surTelephone() ? txt.tel : txt.pc}<span aria-hidden="true"> · </span><button type="button" class="linkish pv-l-go" id="pv-ligne-go" disabled=${busy} onClick=${agir}>${LIGNE_GESTE[sorte]}</button></p>
+      <p class="pv-l-txt">${avecNoms(txt[appareilIci()])}<span aria-hidden="true"> · </span><button type="button" class="linkish pv-l-go" id="pv-ligne-go" disabled=${busy} onClick=${agir}>${LIGNE_GESTE[sorte]}</button></p>
       <button type="button" class="icon-btn small pv-l-x" id="pv-ligne-x" aria-label=${LIGNE_X[raison] || LIGNE_X.message} onClick=${masquer}><${Icon} name="x" size=${15}/></button>
     </div>${feuille}`;
 }
@@ -1106,6 +1137,7 @@ addAR({
   [TITRE_RAISON.match]: 'هل نُعلمك عند حدوث توافق؟',
   [TITRE_RAISON.offre]: 'هل نُعلمك بالترشيحات؟',
   [LIGNE.message.tel]: 'قد يصلك الرد على هذا الهاتف، حتى والتطبيق مغلق',
+  [LIGNE.message.ipad]: 'قد يصلك الرد على جهاز iPad هذا، حتى والتطبيق مغلق',
   [LIGNE.message.pc]: 'قد يصلك الرد على هذا الحاسوب، حتى وعلامة التبويب مغلقة',
   [LIGNE.match.tel]: 'يصلك إشعار بمجرد أن يكون الاهتمام متبادلًا',
   'Comment faire': 'كيف أفعل ذلك', 'Débloquer': 'إلغاء الحظر',
@@ -1127,10 +1159,11 @@ const OUV_DELAI = 3000, OUV_ESSAI = 2500, OUV_FIN = 30000, OUV_ABSENCE = 3600e3;
 // Page servie par le service worker : une nouvelle version peut la recharger pendant ses premières secondes
 // (suivreMisesAJour) ; la feuille attend la fin de cette fenêtre. Ce qu'il reste à attendre, en millisecondes.
 const attenteMaj = () => (navigator.serviceWorker?.controller ? FENETRE_MAJ + 500 - (Date.now() - ouverture) : 0);
-// Un téléphone ou une tablette : la feuille parle de « ton téléphone » ; sur un ordinateur, de cet ordinateur (c'est lui
-// qu'« Activer » abonne)
+// Un téléphone ou une tablette : la feuille parle de « ton téléphone » (de « ton iPad » sur un iPad, comme pourIos) ; sur un
+// ordinateur, de cet ordinateur (c'est lui qu'« Activer » abonne). Même choix pour Mon profil et la ligne « Me prévenir ».
 const surTelephone = () => isIOS() || /android|mobile/i.test(navigator.userAgent);
-const OUV_TITRE = { tel: 'Reçois l’essentiel sur ton téléphone', pc: 'Reçois l’essentiel sur cet ordinateur' };
+const appareilIci = () => (surIPad() ? 'ipad' : surTelephone() ? 'tel' : 'pc');
+const OUV_TITRE = { tel: 'Reçois l’essentiel sur ton téléphone', ipad: 'Reçois l’essentiel sur ton iPad', pc: 'Reçois l’essentiel sur cet ordinateur' };
 // En train d'écrire (un champ de texte a le curseur) : la feuille attend
 const ecrit = el => !!el && (el.isContentEditable || el.tagName === 'TEXTAREA'
   || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'range', 'color', 'image'].includes(el.type)));
@@ -1185,7 +1218,7 @@ function FeuilleOuverture({ ctx, onClose }) {
   const activer = async () => { setBusy(true); if (await accepterNotif(store, me)) onClose(); else setBusy(false); };
   const pied = html`<button type="button" class="btn ghost" id="ouv-tard" onClick=${() => onClose()}>Plus tard</button>
     <button type="button" class="btn primary" id="ouv-oui" disabled=${busy} onClick=${activer}><${Icon} name="bell" size=${16}/> Activer</button>`;
-  return html`<${Modal} title=${surTelephone() ? OUV_TITRE.tel : OUV_TITRE.pc} cls="prevenir ouverture" onClose=${onClose} footer=${pied}>
+  return html`<${Modal} title=${titreAvecNoms(OUV_TITRE[appareilIci()])} cls="prevenir ouverture" onClose=${onClose} footer=${pied}>
     <p>${OUV_INTRO}</p>
     ${points.length ? html`<ul class="ouv-points">${points.map(([cat, txt]) => html`<li key=${cat} data-cat=${cat}><span class="g-ico"><${Icon} name=${OUV_ICONES[cat]} size=${18}/></span> ${txt}</li>`)}</ul>` : null}
     <p class="small muted">${OUV_CHOIX}</p>
@@ -1256,30 +1289,61 @@ addAR({
 
 // Le lien « Active tes notifications » (?notifs=1) quand tout est décoché dans Mon profil : activer cet appareil n'apporterait
 // rien. La feuille le dit calmement, ne recoche rien, et mène à Mon profil › Notifications : après l'activation (cet appareil
-// pas encore abonné) ou par son bouton.
+// pas encore abonné) ou par son bouton. « Plus tard » toujours dans le pied ; « Choisir d'abord » (sans activer), un lien
+// discret dans la feuille.
 const CHOISIR_TITRE = 'Choisis ce que tu reçois';
-const CHOISIR_TXT = 'Tout est décoché dans « Mon profil » : aucune notification ne t’arrive pour l’instant.';
+// Seuls les rappels cochés : rien d'autre à proposer non plus (veutDesNotifs), sans dire « Tout est décoché » à qui va les
+// trouver cochés (la case n'est montrée qu'une fois la base à jour, comme dans Mon profil)
+const CHOISIR_TXT = {
+  rien: 'Tout est décoché dans « Mon profil » : aucune notification ne t’arrive pour l’instant.',
+  rappels: 'Seuls les rappels sont cochés dans « Mon profil » : aucune autre notification ne t’arrive pour l’instant.',
+};
 const CHOISIR_SUITE = { off: 'Active-les sur cet appareil, puis coche ce que tu veux recevoir.', on: 'Cet appareil est prêt : coche ce que tu veux recevoir.' };
+// Mon profil › Notifications, et les cases elles-mêmes à l'écran : sur un petit téléphone, la barre du bas et la pastille
+// couvraient la première. La page arrive après le Retour qui retire la feuille (ensuite), puis l'état de cet appareil se lit
+// un instant au-dessus des cases : on attend les deux (3 s au plus), puis le groupe vient juste sous la barre du haut et le
+// curseur se pose sur sa première case (le lecteur d'écran dit le groupe, « Ce que je reçois », puis la case). Un doigt qui
+// fait déjà défiler la page l'emporte.
+function versLesCases(go) {
+  go('profil/notifications');
+  ensuite(() => {
+    let n = 0, stop = false;
+    const arreter = () => { stop = true; };
+    const fin = () => { removeEventListener('touchstart', arreter); removeEventListener('wheel', arreter); };
+    addEventListener('touchstart', arreter, { passive: true }); addEventListener('wheel', arreter, { passive: true });
+    const essai = () => {
+      const cases = document.querySelector('#md-push .md-cats'), etat = document.querySelector('#md-push .push-etat');
+      if (stop || location.hash !== '#profil/notifications') return fin();
+      if (!cases || !etat || etat.dataset.etat === '…') { if (++n < 180) requestAnimationFrame(essai); else fin(); return; }
+      fin();
+      const haut = document.querySelector('.top')?.getBoundingClientRect().bottom || 0;
+      scrollTo({ top: Math.max(0, scrollY + cases.getBoundingClientRect().top - haut - 12), behavior: mouvementReduit() ? 'auto' : 'smooth' });
+      cases.querySelector('input')?.focus({ preventScroll: true });
+    };
+    requestAnimationFrame(essai);
+  });
+}
 function FeuilleChoisir({ ctx, etat, onClose }) {
   const { store, me, go } = ctx;
   const [busy, setBusy] = useState(false);
   const activable = etat === 'off';
   useEffect(() => { if (activable) cleAPrete(store); }, []);
-  const choisir = () => { onClose(); go('profil/notifications'); };
+  const choisir = () => { onClose(); versLesCases(go); };
   const activer = async () => { setBusy(true); const r = await accepterNotif(store, me); if (r === true) choisir(); else if (r) onClose(); else setBusy(false); };
-  const pied = activable
-    ? html`<button type="button" class="btn ghost" id="choisir-profil" onClick=${choisir}>Choisir d’abord</button>
-      <button type="button" class="btn primary" id="choisir-oui" disabled=${busy} onClick=${activer}><${Icon} name="bell" size=${16}/> Activer</button>`
-    : html`<button type="button" class="btn ghost" id="choisir-tard" onClick=${() => onClose()}>Plus tard</button>
-      <button type="button" class="btn primary" id="choisir-profil" onClick=${choisir}>Choisir</button>`;
+  const pied = html`<button type="button" class="btn ghost" id="choisir-tard" onClick=${() => onClose()}>Plus tard</button>
+    ${activable ? html`<button type="button" class="btn primary" id="choisir-oui" disabled=${busy} onClick=${activer}><${Icon} name="bell" size=${16}/> Activer</button>`
+      : html`<button type="button" class="btn primary" id="choisir-profil" onClick=${choisir}>Choisir</button>`}`;
   return html`<${Modal} title=${CHOISIR_TITRE} cls="appareil choisir" onClose=${onClose} footer=${pied}>
-    <p>${fr(CHOISIR_TXT)}</p>
+    <p>${fr(CHOISIR_TXT[choisirCas(me, !store.peutOrigine || store.peutOrigine())])}</p>
     <p class="small muted">${fr(CHOISIR_SUITE[activable ? 'off' : 'on'])}</p>
+    ${activable ? html`<p class="choisir-lien"><button type="button" class="linkish" id="choisir-profil" onClick=${choisir}>Choisir d’abord</button></p>` : null}
   <//>`;
 }
+injectCSS('choisir', `.choisir-lien { margin: 0; } .choisir-lien .linkish { display: inline-flex; align-items: center; min-height: 44px; }`);
 addAR({
   [CHOISIR_TITRE]: 'اختر ما يصلك',
-  [CHOISIR_TXT]: 'كل شيء غير محدَّد في «ملفي الشخصي»: لا يصلك أي إشعار حاليًا.',
+  [CHOISIR_TXT.rien]: 'كل شيء غير محدَّد في «ملفي الشخصي»: لا يصلك أي إشعار حاليًا.',
+  [CHOISIR_TXT.rappels]: 'لم يُحدَّد في «ملفي الشخصي» سوى التذكيرات: لا يصلك أي إشعار آخر حاليًا.',
   [CHOISIR_SUITE.off]: 'فعّلها على هذا الجهاز، ثم حدّد ما تريد تلقيه.',
   [CHOISIR_SUITE.on]: 'هذا الجهاز جاهز: حدّد ما تريد تلقيه.',
   'Choisir d’abord': 'الاختيار أولًا', 'Choisir': 'اختيار',
@@ -1305,6 +1369,7 @@ addAR({
   [NOTIF_RAISON.relecture]: 'بمجرد أن يراجع أحد الخريجين سيرتك الذاتية، يصلك إشعار على هذا الجهاز.',
   // Feuille d'ouverture
   [OUV_TITRE.tel]: 'الأهم يصلك على هاتفك',
+  [OUV_TITRE.ipad]: 'الأهم يصلك على iPad الخاص بك',
   [OUV_TITRE.pc]: 'الأهم يصلك على هذا الحاسوب',
   'Tu choisis quoi recevoir dans « Mon profil ». Pas de publicité.': 'تختار ما يصلك من «ملفي الشخصي». لا إعلانات.',
   [OUV_INTRO]: 'ما يخصك يصلك فورًا، حتى والتطبيق مغلق:',
@@ -1417,7 +1482,7 @@ export function PastilleApp({ ctx, cache }) {
   // « Pour recevoir tes notifications » : seulement à qui les veut (coupées dans Mon profil, ou rien de coché : une icône, sans promesse)
   const sous = sorte === 'installer' && install.ios && voulu ? pourIos(PASTILLE_IOS) : PASTILLE[sorte][1];
   const dedans = html`<span class="pastille-ico" aria-hidden="true"><${Icon} name=${PASTILLE_ICO[sorte]} size=${18}/></span>
-    <span class="pastille-txt"><strong>${titre}</strong><span>${sous}</span></span>`;
+    <span class="pastille-txt"><strong>${avecNoms(titre)}</strong><span>${sous}</span></span>`;
   // Sur Android, le navigateur d'une application : le lien rouvre la page dans Chrome, en un toucher
   const go = sorte === 'appli' && sys === 'android' ? html`<${OuvrirChrome} store=${store} cls="pastille-go" id="pastille-go">${dedans}<//>`
     : html`<button type="button" class="pastille-go" id="pastille-go" disabled=${busy} onClick=${agir}>${dedans}</button>`;

@@ -1,5 +1,5 @@
 import { html, render, useState, useLayoutEffect, useEffect, useRef } from './vendor/preact-htm.js';
-import { getLang, setLang, chargerAR, addAR, arCount } from './i18n.js';
+import { getLang, setLang, chargerAR, addAR, arCount, t } from './i18n.js';
 import { sceneMarkup } from './scene.js';
 import { glyph, TUILE_DEFS, TUILE } from './logo.js';
 import { roleDePromo, promoValide, lignesChiffres, estEmailEcole, chiffresCode, adresseContact, VERSION_ACCORD, lienPartage, lienEncoreBon, estUuid, phraseLien, suiteLien, offreFermeePour } from './regles-entree.js';
@@ -175,20 +175,20 @@ export function lireInvitation() {
 }
 export function contexteArrivee(search = '') {
   const p = new URLSearchParams(search);
-  const role = p.get('role'), mode = p.get('mode');
+  const role = p.get('role'), mode = p.get('mode'), ici = p.get('ici') === '1';
   const lien = p.has('r') ? lienPartage(p.get('r')) : null;
-  const aucun = !p.has('role') && !p.has('mode') && !lien;
-  p.delete('role'); p.delete('mode'); if (lien) p.delete('r');
+  const aucun = !p.has('role') && !p.has('mode') && !p.has('ici') && !lien;
+  p.delete('role'); p.delete('mode'); p.delete('ici'); if (lien) p.delete('r');
   const reste = p.toString();
-  return { role: role === 'etudiant' || role === 'laureat' ? role : null, mode: mode === 'inscription' || mode === 'connexion' ? mode : null, lien, search: reste ? '?' + reste : '', aucun };
+  return { role: role === 'etudiant' || role === 'laureat' ? role : null, mode: mode === 'inscription' || mode === 'connexion' ? mode : null, lien, ici, search: reste ? '?' + reste : '', aucun };
 }
-let modeArrivee = null;
+let modeArrivee = null, retourIci = false;
 function reprendreArrivee() {
   try {
     const a = contexteArrivee(location.search);
     if (a.aucun) return;
     if (a.role) retenirRole(a.role);
-    modeArrivee = a.mode;
+    modeArrivee = a.mode; retourIci = a.ici;
     history.replaceState(history.state, '', location.pathname + a.search + (a.lien ? '#' + a.lien.r : location.hash));
   } catch { /* historique ou stockage indisponible : la page s'ouvre sans ce contexte */ }
 }
@@ -206,9 +206,10 @@ export function accordIci(e) { return !!lireAccord(e); }
 export function roleAccord(e) { const r = lireAccord(e)?.r; return r === 'etudiant' || r === 'laureat' ? r : null; }
 
 const CLE_LIEN = 'ensam-lien-partage';
-export function retenirLien(hash) { const l = lienPartage(hash); if (l) ecrire(CLE_LIEN, JSON.stringify({ r: l.r, t: Date.now() })); }
-export function lienRetenu() { try { return lienEncoreBon(JSON.parse(lire(CLE_LIEN) || 'null')); } catch { return null; } }
-export const oublierLien = () => ecrire(CLE_LIEN, null);
+let lienGarde = null;
+export function retenirLien(hash) { const l = lienPartage(hash); if (l) ecrire(CLE_LIEN, JSON.stringify(lienGarde = { r: l.r, t: Date.now() })); }
+export function lienRetenu() { try { return lienEncoreBon(JSON.parse(lire(CLE_LIEN) || 'null') || lienGarde); } catch { return null; } }
+export const oublierLien = () => { lienGarde = null; ecrire(CLE_LIEN, null); };
 export { suiteLien };
 
 const ROLES = [
@@ -268,9 +269,39 @@ function Fondateurs() {
   return M ? html`<${M}/>` : null;
 }
 
+export function appliIci(ua = '', toucher = 0) {
+  const s = String(ua || ''), sys = /android/i.test(s) ? 'android' : /iphone|ipad|ipod/i.test(s) || (/Macintosh/.test(s) && toucher > 1) ? 'ios' : '';
+  return sys && (/FBAN\/|FBAV\/|FB_IAB|FBIOS|FB4A/.test(s) || /FB_IAB\/MESSENGER|FBAN\/Messenger|MessengerForiOS|MessengerLite|\bInstagram\b|LinkedInApp|musical_ly|BytedanceWebview|\bTikTok\b|\bSnapchat\b|\bTelegram\b/i.test(s) || (sys === 'android' && /; wv\)/.test(s))) ? sys : '';
+}
+const PLACE = {
+  androidfr: [21.5, 11.72, 22.4, 8.72, 25.9, 7.39, 37.5, 6.05, 99, 4.72, 6.05],
+  androidar: [24.9, 6.05, 99, 4.72, 4.72],
+  iosfr: [17.87, 10.56, 20.5, 9.22, 23.93, 7.89, 30.18, 6.56, 99, 5.22, 6.56],
+  iosar: [17.56, 10.65, 17.62, 8.28, 21.25, 6.56, 28.25, 5.22, 99, 3.89, 3.89],
+};
+const BORD = { android: 46.5, ios: 2 };
+const placeRem = (sys, lang, largeur, rem) => {
+  const t = PLACE[sys + (lang === 'ar' ? 'ar' : 'fr')];
+  let i = 0;
+  if (largeur < 900) while (largeur / rem >= t[i]) i += 2; else i = t.length - 2;
+  return t[i + 1];
+};
+export const placeCarte = (sys, lang, largeur, rem = 16) => `calc(${BORD[sys]}px + ${placeRem(sys, lang, largeur, rem)}rem)`;
+const SOUS_CARTE = { fr: [36.6, 35.15], ar: [37.05, 35.25] };
+export function carteTient(sys, lang, largeur, hauteur, rem = 16) {
+  const [etroit, large] = SOUS_CARTE[lang === 'ar' ? 'ar' : 'fr'];
+  return hauteur >= BORD[sys] + (placeRem(sys, lang, largeur, rem) + (largeur / rem < 23.4 ? etroit : large)) * rem;
+}
+const MOT = { androidfr: [24, 3.42], iosfr: [23.25, 3.44], iosar: [17.56, 2.77] };
+export function placeMot(sys, lang, largeur, rem = 16) {
+  const m = MOT[sys + (lang === 'ar' ? 'ar' : 'fr')];
+  return m && largeur / rem < m[0] ? `${m[1]}rem` : '44px';
+}
+const APPLI_ICI = appliIci(navigator.userAgent, navigator.maxTouchPoints);
 const CLE_CARTE = 'ensam-entree-appli';
 const lireVisite = k => { try { return sessionStorage.getItem(k); } catch { return null; } };
 const ecrireVisite = (k, v) => { try { sessionStorage.setItem(k, v); } catch { /* navigation privée */ } };
+const vueCarte = () => lireVisite(CLE_CARTE) || (retourIci ? 'chrome' : null);
 const integreIci = m => m.navigateurIntegre(navigator.userAgent, navigator.maxTouchPoints);
 let appareil = null, appareilP = null;
 const chargerAppareil = () => (appareilP ||= import('./appareil.js').then(m => {
@@ -280,27 +311,41 @@ const chargerAppareil = () => (appareilP ||= import('./appareil.js').then(m => {
   }
   return (appareil = m);
 }, () => { appareilP = null; return null; }));
-function CarteAppli({ mode, role, invite }) {
+const sansTraduction = el => el?.setAttribute('translate', 'no');
+function CarteAppli({ mode, role, invite, ligne = false, onEchec }) {
   const [a, setA] = useState(() => appareil);
-  useEffect(() => { if (!a) chargerAppareil().then(m => m && setA(m)); }, []);
-  const [vue] = useState(() => lireVisite(CLE_CARTE));
-  const [range, setRange] = useState(false);
+  const [echec, setEchec] = useState(false);
+  useEffect(() => { if (!a) chargerAppareil().then(m => { if (m) setA(m); else { setEchec(true); onEchec?.(); } }); }, []);
+  const [vue] = useState(vueCarte);
+  const [range, setRange] = useState(false), [rien, setRien] = useState(false);
   const mot = useRef(null);
-  const app = a && integreIci(a), sys = app && ['android', 'ios'].includes(app.systeme) ? app.systeme : null;
-  const carte = !!sys && !vue && !range;
-  useEffect(() => { if (carte) { ecrireVisite(CLE_CARTE, 'vue'); ecrireVisite(a.CLE_APPLI_VUE, '1'); } }, [carte]);
-  useEffect(() => { if (range) mot.current?.focus(); }, [range]);
-  if (!sys) return null;
-  const T = a.CARTE, f = x => a.typo(x, getLang());
-  const lien = () => a.lienChrome(location.href, lienRetenu()?.r, { lang: getLang(), contexte: { promo: invite, role, mode: mode === 'inscription' ? mode : 'connexion' } });
-  const ouvrir = e => { e.currentTarget.href = lien(); ecrireVisite(CLE_CARTE, 'chrome'); };
+  const app = a && integreIci(a), sys = !a ? APPLI_ICI : app && ['android', 'ios'].includes(app.systeme) ? app.systeme : null;
+  const carte = !!sys && !vue && !range && !ligne;
+  useEffect(() => { if (carte && a) { ecrireVisite(CLE_CARTE, 'vue'); ecrireVisite(a.CLE_APPLI_VUE, '1'); } }, [carte, a]);
+  useEffect(() => { if (range || rien) mot.current?.focus(); }, [range, rien]);
+  if (!sys || echec) return null;
+  const largeur = document.documentElement.clientWidth || innerWidth, rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  const place = carte ? placeCarte(sys, getLang(), largeur, rem) : '';
+  const placeLigne = placeMot(sys, getLang(), largeur, rem);
+  if (!a) return html`<div key="place" class="entree-appli-place" style=${{ minHeight: place || placeLigne }}></div>`;
+  const T = a.CARTE, f = x => a.nomsLatins(a.typo(t(x), getLang())).map((p, i) => (i % 2 ? html`<span translate="no" dir="auto" ref=${sansTraduction}>${p}</span>` : p));
+  const lien = () => a.lienChrome(location.href, lienRetenu()?.r, { lang: getLang(), contexte: { promo: invite, role, mode: mode === 'inscription' ? mode : 'connexion' }, ici: true });
+  const ouvrir = e => {
+    e.currentTarget.href = lien(); ecrireVisite(CLE_CARTE, 'chrome'); try { garderSaisie(); } catch { /* stockage indisponible */ }
+    let parti = false; const p = () => { parti = true; }, ev = ['pagehide', 'blur', 'visibilitychange'];
+    ev.forEach(n => addEventListener(n, p));
+    setTimeout(() => { ev.forEach(n => removeEventListener(n, p)); if (!parti && !document.hidden) setRien(true); }, 1500);
+  };
   const ico = html`<${Icon} name="globe" size=${18}/>`;
-  if (!carte) return html`<p class="entree-appli-mot" id="au-appli-mot" tabindex="-1" ref=${mot}>${ico}${sys === 'ios' || vue === 'chrome'
-    ? html`<span>${f(sys === 'ios' ? T.geste : T.rien)}</span>` : html`<a href=${lien()} id="au-appli-chrome" onClick=${ouvrir}>${T.ligne}</a>`}</p>`;
-  return html`<div class="entree-appli" id="au-appli" data-systeme=${sys}>${ico}<div class="entree-appli-txt">
-    <p><span>${f(T.tuEs(app.nom))}</span> <span>${f(T[sys])}</span></p>
-    ${sys === 'ios' ? html`<p>${f(T.geste)}</p><p class="small muted">${T.icone[a.estIPad(navigator.userAgent, navigator.maxTouchPoints) ? 'ipad' : 'iphone']}</p>` : null}</div>
-    <div class="entree-appli-acts">${sys === 'android' ? html`<a class="btn primary" id="au-appli-chrome" href=${lien()} onClick=${ouvrir}>${T.ouvrir}</a>` : null}<button type="button" class="linkish" id="au-appli-ici" onClick=${() => setRange(true)}>${T.ici}</button></div>
+  if (!carte) return html`<p class="entree-appli-mot" id="au-appli-mot" tabindex="-1" ref=${mot} style=${{ minHeight: placeLigne }}>${ico}${sys === 'ios' || vue === 'chrome' || rien
+    ? html`<span>${f(sys === 'ios' ? T.geste : T.rien)}</span>` : html`<a href=${lien()} id="au-appli-chrome" onClick=${ouvrir}><span>${f(T.ligne)}</span></a>`}</p>`;
+  const ici = html`<button type="button" class="linkish" id="au-appli-ici" onClick=${() => setRange(true)}>${T.ici}</button>`;
+  if (sys === 'ios') return html`<div class="entree-appli" id="au-appli" data-systeme="ios" style=${{ minHeight: place }}>${ico}<div class="entree-appli-txt">
+    <p><span>${f(T.ios)}</span> <span>${f(T.geste)}</span> ${ici}</p></div>
+  </div>`;
+  return html`<div class="entree-appli" id="au-appli" data-systeme=${sys} style=${{ minHeight: place }}>${ico}<div class="entree-appli-txt">
+    <p id="au-appli-dit" aria-live="polite">${rien ? f(T.rien) : html`<span>${f(T.tuEs(app.nom))}</span> <span>${f(T[sys])}</span>`}</p></div>
+    <div class="entree-appli-acts"><a class="btn primary" id="au-appli-chrome" href=${lien()} onClick=${ouvrir}><span>${f(T.ouvrir)}</span></a>${ici}</div>
   </div>`;
 }
 
@@ -322,10 +367,25 @@ export function AuthScreen({ store }) {
     });
     return () => { vivant = false; };
   }, []);
-  const [mode, setMode] = useState(recovery ? 'nouveau' : attente ? 'code' : ['inscription', 'connexion', 'motdepasse'].includes(saisie?.mode) ? saisie.mode : modeArrivee || (lien?.k === 'aider' || store?.sessionPerdue ? 'connexion' : invite || !dejaMembre() ? 'inscription' : 'connexion'));
+  const [mode, setMode] = useState(() => {
+    const arrivee = modeArrivee; modeArrivee = null;
+    return recovery ? 'nouveau' : attente ? 'code' : store?.sessionPerdue || store?.compteParti ? 'connexion'
+      : ['inscription', 'connexion', 'motdepasse'].includes(saisie?.mode) ? saisie.mode
+      : arrivee || (lien?.k === 'aider' ? 'connexion' : invite || !dejaMembre() ? 'inscription' : 'connexion');
+  });
   const [origine, setOrigine] = useState(attente ? (attente.creer ? 'inscription' : 'connexion') : 'inscription');
   const [role, setRoleEtat] = useState(() => roleRetenu() || (invite ? roleDePromo(invite) : ''));
   const [court] = useState(() => innerWidth < 900 && innerHeight < 680);
+  const [appli] = useState(() => {
+    if (!APPLI_ICI) return '';
+    const largeur = document.documentElement.clientWidth || innerWidth, rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    return innerWidth >= 900 || carteTient(APPLI_ICI, getLang(), largeur, innerHeight, rem) ? 'carte' : court ? 'haut' : 'ligne';
+  });
+  const [appliKo, setAppliKo] = useState(false);
+  const carteIci = mode === 'inscription' || mode === 'connexion' || mode === 'motdepasse';
+  const enHaut = appli === 'haut' && carteIci && !appliKo;
+  const [sansSous] = useState(() => !!APPLI_ICI && innerWidth < 900 && (!vueCarte() || appli !== 'carte'));
+  const serre = enHaut;
   const perdue = !!store?.sessionPerdue;
   const [email, setEmail] = useState(attente?.email || saisie?.email || (perdue && store.emailPerdu) || ''); const [pw, setPw] = useState('');
   const [ok, setOk] = useState(!!saisie?.ok); const [mails, setMails] = useState(attente ? attente.mails !== false : saisie ? saisie.mails !== false : true);
@@ -402,15 +462,15 @@ export function AuthScreen({ store }) {
   return html`<main class="auth entree">
     <div class="entree-ciel sky" aria-hidden="true"></div>
     <header class="entree-top"><span class="entree-marque"><${BrandLogo} size=${34} draw/><span>Réseau ENSAM Meknès</span></span><${LangToggle} onChange=${relang} aussitot/></header>
-    <section class="entree-promesse">
+    <section class="entree-promesse" style=${serre ? { paddingBlock: '.5rem .6rem' } : null}>
       ${lien && mode !== 'nouveau' ? html`<p id="au-lien" class=${'lien-accueil' + (infos === null || infos?.ouverte === false || (inscrire && offreFermeePour(infos, role)) ? ' fini' : '')}><${Icon} name=${icoLien} size=${18}/><span>${phraseLien(lien, infos, inscrire, inscrire ? role : '')}</span></p>` : null}
       <${Fondateurs}/>
       <h1>Les lauréats ouvrent la porte aux étudiants.</h1>
-      <p class="auth-chiffres">${(lignes || []).map(l => html`<span>${l}</span>`)}</p>
-      ${(lien && mode !== 'nouveau') || court ? null : html`<p class="entree-sous">Stage, PFE, premier emploi : les étudiants demandent, les lauréats aident et recrutent.</p>`}
+      ${enHaut ? html`<${CarteAppli} mode=${mode} role=${role} invite=${invite} ligne onEchec=${() => setAppliKo(true)}/>` : html`<p class="auth-chiffres">${(lignes || []).map(l => html`<span>${l}</span>`)}</p>`}
+      ${(lien && mode !== 'nouveau') || court || sansSous ? null : html`<p class="entree-sous">Stage, PFE, premier emploi : les étudiants demandent, les lauréats aident et recrutent.</p>`}
     </section>
-    <form class="auth-card form entree-form" onSubmit=${submit} aria-label=${inscription ? 'Créer mon compte' : null}>
-      ${inscription || mode === 'connexion' || mode === 'motdepasse' ? html`<${CarteAppli} mode=${mode} role=${role} invite=${invite}/>` : null}
+    <form class="auth-card form entree-form" style=${serre ? { marginBlockStart: '.5rem', gap: '.55rem' } : null} onSubmit=${submit} aria-label=${inscription ? 'Créer mon compte' : null}>
+      ${carteIci && appli !== 'haut' ? html`<${CarteAppli} mode=${mode} role=${role} invite=${invite} ligne=${appli === 'ligne'}/>` : null}
       ${inscription ? null : html`<h2>${{ connexion: 'Se connecter', code: 'Ton code est parti', motdepasse: 'Se connecter', nouveau: 'Nouveau mot de passe' }[mode]}</h2>`}
       ${perdue && mode === 'connexion' ? html`<p class="auth-msg" id="au-session" role="status">${store.brouillonsGardes ? 'Ta session a expiré. Reconnecte-toi : ce que tu étais en train d’écrire est gardé.' : 'Ta session a expiré. Reconnecte-toi pour continuer.'}</p>` : null}
       ${bandeau ? html`<p class="invite-band"><${Icon} name="send" size=${18}/><span><strong>Bienvenue, promo ${invite} !</strong> Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.</span></p>` : null}
@@ -525,7 +585,11 @@ function relancerApp() {
   };
   essai();
 }
-const apresConnexion = () => { connecte = true; if (appEchec) relancerApp(); };
+const apresConnexion = () => {
+  connecte = true;
+  try { sessionStorage.removeItem(SAISIE); } catch { /* stockage indisponible */ }
+  if (appEchec) relancerApp();
+};
 
 let el = null;
 function monter(store) {
@@ -545,6 +609,7 @@ export function Entree({ store }) {
 
 if (!window.ENSAM_ENTREE) {
   window.ENSAM_ENTREE = true;
+  addEventListener('ensam-recharge', () => { if (!connecte) try { garderSaisie(); } catch { /* stockage indisponible */ } });
   const cfg = window.ENSAM_CONFIG || {};
   const enLigne = !!(cfg.supabaseUrl && cfg.supabaseAnonKey);
   let jeton = false;

@@ -1434,6 +1434,12 @@ export function pushVoulu(kind, me) {
   const cat = pushCategorie(kind);
   return cat === 'admin' ? true : pushChoix(cat, me);
 }
+// Ce membre veut-il recevoir quelque chose ? Rien de coché dans Mon profil (les rappels seuls ne comptent pas) : rien à
+// proposer. L'administration reçoit toujours les signalements.
+export const veutDesNotifs = m => m?.role === 'admin' || PUSH_CATEGORIES.some(c => c !== 'rappels' && pushChoix(c, m));
+// Rien à proposer (veutDesNotifs) : ce que dit la feuille « Choisis ce que tu reçois ». 'rappels' : la case « Rappels »
+// reste cochée (montree : Mon profil la montre, la base est à jour) ; 'rien' : tout est décoché.
+export const choisirCas = (m, montree = true) => (montree && pushChoix('rappels', m) ? 'rappels' : 'rien');
 
 // ---------------------------------------------------------------------------
 // Ambassadeurs de promo : pour chaque promo × filière, la plateforme propose le rôle au membre le plus actif
