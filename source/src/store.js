@@ -1792,8 +1792,11 @@ export class SupabaseStore extends Base {
     }
     const { error } = await this.sb.rpc('supprimer_mon_compte');
     if (error) throw new Error(frError(error));
-    // Les photos gardées sur l'appareil (la sienne, celles des membres vus) partent avec le compte
-    oublierPhotos();
+    // Un départ voulu, comme « Se déconnecter » : pas de « session expirée » à l'entrée, et rien du compte ne reste
+    // sur l'appareil (ses brouillons, la copie de ses données, les photos gardées : la sienne, celles des membres vus)
+    this.deconnexionVoulue = true;
+    oublierBrouillons(this.userId); clearTimeout(this.minuteurCache); await oublierCache(); oublierPhotos();
+    try { navigator.clearAppBadge?.()?.catch?.(() => {}); dispatchEvent(new Event('ensam-deconnexion')); } catch { /* */ }
     await this.sb.auth.signOut().catch(() => {});
   }
   async seDesabonner(token) {

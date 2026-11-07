@@ -1431,3 +1431,31 @@ test('photo de profil choisie en ligne : rouverte depuis la copie de l’apparei
   assert.deepEqual(m.erreurs, []);
   await m.ctx.close();
 });
+
+test('supprimer son compte : pas de « session expirée » ensuite, ni brouillons, ni copie, ni photos gardées sur l’appareil', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.mentorships = EN_CONTACT();
+  let supprime = 0;
+  const m = await connecte({ hash: '#messages/' + AUTEUR, attendre: '#chat-txt',
+    avant: ctx => ctx.route(/\/sb\/rest\/v1\/rpc\/supprimer_mon_compte/, r => { supprime++; return r.fulfill({ status: 204, body: '' }); }) });
+  await m.page.fill('#chat-txt', 'Un mot pas encore envoyé');
+  let c = null;
+  for (let i = 0; i < 40 && !c; i++) { await m.page.waitForTimeout(250); c = await lireCacheMembre(m.page); }
+  assert.ok(c); assert.equal((await brouillons(m.page)).length, 1);
+  // Une photo de membre gardée par le service worker (le cache qu'il remplit)
+  await m.page.evaluate(async () => { const k = await caches.open('photos-v1'); await k.put(location.origin + '/sb/storage/v1/object/sign/photos/x/photo.png', new Response('img', { headers: { 'content-type': 'image/png' } })); });
+  await m.page.evaluate(() => { location.hash = '#profil/donnees'; });
+  await m.page.click('#md-supprimer');
+  await m.page.fill('#del-txt', 'SUPPRIMER');
+  await m.page.click('.modal button:has-text("Supprimer définitivement")');
+  await m.page.waitForSelector('#entree .entree-form', { timeout: 15000 });
+  await m.page.waitForTimeout(500);
+  assert.equal(supprime, 1, 'la base supprime le compte');
+  assert.equal(await m.page.locator('#au-session').count(), 0, 'compte supprimé : pas de « session expirée »');
+  assert.equal(await m.page.inputValue('#au-email').catch(() => ''), '', 'l’adresse du compte supprimé n’est pas reproposée');
+  assert.deepEqual(await brouillons(m.page), []);
+  assert.equal(await lireCacheMembre(m.page), null);
+  assert.equal(await m.page.evaluate(() => caches.has('photos-v1')), false);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
