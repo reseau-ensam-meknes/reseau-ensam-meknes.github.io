@@ -51,7 +51,10 @@ test('tags : une notification par événement ; ce qui remplace garde son tag ; 
   const a1 = enFile(b, u, 'candidature', { nom: 'Salma Idrissi', titre: 'Stage maintenance' });
   const a2 = enFile(b, u, 'candidature', { nom: 'Amine Tazi', titre: 'Stage qualité' });
   enFile(b, u, 'match_jour', { n: 2, type: 'laureat' });
-  assert.deepEqual(await corpsDe(await appel({ job: 'push' })), { sent: 3, failed: 0, removed: 0 });
+  // À 12:30, l'heure du tour Match (midi_push) : la nuit, une notification programmée ne part pas (test-file-push.mjs)
+  const vrai = Date.now;
+  Date.now = () => Date.parse('2026-11-09T12:30:00Z');
+  try { assert.deepEqual(await corpsDe(await appel({ job: 'push' })), { sent: 3, failed: 0, removed: 0 }); } finally { Date.now = vrai; }
   assert.deepEqual(b.push.map(x => x.message.tag), [`candidature-${a1}`, `candidature-${a2}`, 'match_jour']);
 });
 

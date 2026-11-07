@@ -357,6 +357,22 @@ const DUREES: Record<string, number> = {
   match_attente: 12 * HEURE, offre_bientot: 12 * HEURE, semaine: 12 * HEURE, groupe_jour: 12 * HEURE,
 };
 export const dureeVie = (kind: string) => (Object.prototype.hasOwnProperty.call(DUREES, kind) ? DUREES[kind] : 86400);
+// Nuit calme, de 21:30 à 08:00 (heure du Maroc = UTC) : rien de programmé ne doit arriver la nuit. La base choisit l'heure
+// d'envoi (programme_place, heure_calme), pas celle de la remise : le service de push garde la notification tant que sa
+// durée de vie court, pour un téléphone hors réseau ou, en urgence « normal », un Android en veille. La durée de vie d'une
+// notification programmée s'arrête donc à 21:30 (les durées ci-dessus restent la borne haute) ; prise par la fonction la
+// nuit (file en retard après une panne), elle ne part pas (jobPush). Programmées : les types du budget du jour, ceux que
+// la base fait passer par programme_place. Entre personnes (le rappel 15 minutes avant un rendez-vous compris), rien ne change.
+export const PROGRAMMEES = new Set(['rdv_demain', 'entretien_demain', 'agenda_demain', 'apres_rdv', 'match_attente',
+  'match_jour', 'offre_bientot', 'demande_attente', 'demande_pause', 'rappel_visite', 'semaine', 'groupe_jour']);
+// Secondes qui restent avant 21:30 (t : l'heure, en ms) ; 0 pendant la nuit, après minuit compris
+export function avantNuit(t: number = Date.now()): number {
+  const d = new Date(t), m = d.getUTCHours() * 60 + d.getUTCMinutes();
+  if (m < 8 * 60 || m >= 21 * 60 + 30) return 0;
+  return Math.max(0, Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 21, 30) - t) / 1000));
+}
+// La durée de vie à donner maintenant au service de push ; 0 : la nuit a commencé, une notification programmée ne part plus
+export const vieEnvoi = (kind: string, t: number = Date.now()) => (PROGRAMMEES.has(kind) ? Math.min(dureeVie(kind), avantNuit(t)) : dureeVie(kind));
 
 // Envoie une notification ; rend le code HTTP du service de push (0 si injoignable ou trop lent)
 async function pousserUn(a: Abonnement, n: Notif, urg: string, v: Vapid, ttl = 86400, delai = 15000): Promise<number> {
@@ -2405,7 +2421,8 @@ export const MARGE_TOUR = 10_000;
 // téléphone, type inconnu, refus définitif). Les autres sont reprises par la base après 2 minutes (relancer_push) ;
 // celles qui n'ont pas été essayées du tout (plus le temps) lui sont rendues tout de suite, sans essai compté
 // (push_rendues). Au journal (push_journal) : chacune, avec la réponse de son meilleur téléphone ; -1 sans téléphone ;
-// -4 jetée (type inconnu, rien à dire) ; rien pour celle qui attend sans avoir été essayée.
+// -4 jetée (type inconnu, rien à dire) ; -5 une notification programmée prise après 21:30 (nuit calme, file en retard
+// après une panne) : elle ne part pas, comme une expirée sans essai ; rien pour celle qui attend sans avoir été essayée.
 async function jobPush(env: Env): Promise<Response> {
   const b: Bilan = { sent: 0, failed: 0, removed: 0 };
   let v: Vapid | null = null;
@@ -2420,16 +2437,26 @@ async function jobPush(env: Env): Promise<Response> {
     const parMembre = new Map<string, AEnvoyer[]>();
     const suivi: { id: number; user_id: string; kind: string; r: Resultat }[] = [];
     const jetees: { id: number; user_id: string; kind: string }[] = [];
+    const tard: { id: number; user_id: string; kind: string }[] = [];
     for (const l of lignes) {
       const n = texteNotif(l.kind, l.data, l.langue, env.site, l.id);
       // null : type ou statut inconnu, ou rien de vrai à dire (Match du jour à 0, semaine vide, groupe sans nom…) ; seul le type
       // est écrit, jamais le contenu
       if (!n) { console.error('notifier : notification ignorée (type inconnu, ou rien de vrai à dire)', l.kind); jetees.push(l); continue; }
+      // Nuit calme : une notification programmée ne vit que jusqu'à 21:30 ; prise plus tard, elle ne part pas
+      const ttl = vieEnvoi(l.kind);
+      if (ttl <= 0) { tard.push(l); continue; }
       const r: Resultat = { code: -1, recue: false, reprendre: false };
       suivi.push({ id: l.id, user_id: l.user_id, kind: l.kind, r });
-      const x = { n, urg: urgence(l.kind), ttl: dureeVie(l.kind), r };
+      const x = { n, urg: urgence(l.kind), ttl, r };
       const liste = parMembre.get(l.user_id);
       if (liste) liste.push(x); else parMembre.set(l.user_id, [x]);
+    }
+    if (tard.length) {
+      const parType = new Map<string, number>();
+      for (const x of tard) parType.set(x.kind, (parType.get(x.kind) || 0) + 1);
+      console.error('notifier : nuit calme (21:30 → 08:00), notifications programmées prises trop tard, non envoyées :',
+        [...parType].map(([k, n]) => `${k} ${n}`).join(', '));
     }
     const abos = await parIds<Abonnement>(env, 'push_subscriptions', 'select=id,user_id,endpoint,p256dh,auth', 'user_id', [...parMembre.keys()]);
     const morts: string[] = [];
@@ -2443,11 +2470,12 @@ async function jobPush(env: Env): Promise<Response> {
     b.removed += retires.filter(id => !morts.includes(id)).length;
     const reprises = suivi.filter(x => !x.r.recue && x.r.reprendre).length;
     if (reprises) b.retry = (b.retry || 0) + reprises;
-    await confirmerPush(env, [...jetees.map(x => x.id), ...suivi.filter(x => x.r.recue || !x.r.reprendre).map(x => x.id)]);
+    await confirmerPush(env, [...jetees.map(x => x.id), ...tard.map(x => x.id), ...suivi.filter(x => x.r.recue || !x.r.reprendre).map(x => x.id)]);
     await rendrePush(env, suivi.filter(x => !x.r.essayee && !x.r.recue && x.r.reprendre).map(x => x.id));
     await journaliser(env, [
       ...suivi.filter(x => x.r.essayee || x.r.recue || !x.r.reprendre).map(x => ({ user_id: x.user_id, kind: x.kind, code: x.r.code })),
       ...jetees.map(x => ({ user_id: x.user_id, kind: x.kind, code: -4 })),
+      ...tard.map(x => ({ user_id: x.user_id, kind: x.kind, code: -5 })),
     ]);
   }
   return json(b);

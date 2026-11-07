@@ -1071,7 +1071,8 @@ alter table public.push_queue add column if not exists essais int not null defau
 -- parti, 400 / 401 / 403 refus définitif, 413 trop longue, 0 / 429 / 5xx service injoignable (nouvel essai) ;
 -- et ce qui n'est jamais parti : -1 aucun téléphone abonné, -2 catégorie coupée par le membre (Mon profil),
 -- -3 abandonnée après au moins un essai (3 essais, ou un jour, sans succès), -4 jetée par la fonction (type inconnu, rien
--- à dire), -5 expirée sans avoir jamais été essayée (un jour en file : la fonction ou la tâche de chaque minute en panne).
+-- à dire), -5 expirée sans avoir jamais été essayée (un jour en file, ou une notification programmée que la fonction ne
+-- prend qu'après 21:30, nuit calme : la fonction ou la tâche de chaque minute en panne).
 -- L'administration n'en lit que des totaux (admin_sante_notifs, section « Santé des notifications », à la fin).
 create table if not exists public.push_journal (
   id bigint generated always as identity primary key,
