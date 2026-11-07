@@ -3,7 +3,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { PUSH_KINDS, PUSH_CATEGORIES, pushCategorie, pushDefaut, pushChoix, pushVoulu, NOMS_NOTIF } from '../../src/logic.js';
+import { PUSH_KINDS, PUSH_CATEGORIES, pushCategorie, pushDefaut, pushChoix, pushVoulu } from '../../src/logic.js';
+// Les noms du panneau « Santé des notifications » ont quitté logic.js pour sante-notifs.js (main, 1f2ad27)
+import { NOMS_NOTIF } from '../../src/sante-notifs.js';
 
 const SCHEMA = fs.readFileSync(new URL('../../supabase/schema.sql', import.meta.url), 'utf8');
 const NOTIFIER = fs.readFileSync(new URL('../../supabase/functions/notifier/index.ts', import.meta.url), 'utf8');
