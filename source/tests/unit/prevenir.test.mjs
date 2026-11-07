@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { prevenirVariante, PREVENIR_ECART, ouvertureNotif, OUVERTURE_ECART, bandeauPush, BANDEAU_PUSH_ECART, lignePrevenir, sansLigne, LIGNES_MAX, attendReponse,
   PUSH_CATEGORIES } from '../../src/logic.js';
+import * as logique from '../../src/logic.js';
 
 const NOW = Date.UTC(2026, 9, 23, 10);
 const J = 864e5;
@@ -197,4 +198,33 @@ test('attendReponse : un premier message resté sans réponse, ou un entretien p
   assert.equal(attendReponse([msg(lui), msg(moi, { type: 'rdv', rdv_at: hier, rdv_reponse: null })], moi, NOW), false, 'passé : plus rien à attendre');
   // Répondu à l'entretien sans écrire : c'est une réponse
   assert.equal(attendReponse([msg(moi, { type: 'rdv', rdv_at: demain, rdv_reponse: 'autre' })], moi, NOW), false);
+});
+
+// Une offre publiée attend deux choses : des candidatures (« Candidatures » dans Mon profil) et l'intérêt des étudiants (« Match »).
+// La feuille ne promet que ce qui arrivera vraiment, d'après ce que le lauréat a gardé coché.
+test('raisonPrevenir : une offre publiée promet les candidatures, l’intérêt des étudiants, ou les deux, selon Mon profil', () => {
+  const r = (raison, notif_push, role = 'laureat') => logique.raisonPrevenir(raison, { id: 'u-0002', role, notif_push });
+  assert.equal(r('offre', {}), 'offre', 'les deux cochées (par défaut)');
+  assert.equal(r('offre', { candidatures: true, match: true }), 'offre');
+  assert.equal(r('offre', { match: false }), 'offreCandidatures');
+  assert.equal(r('offre', { candidatures: false }), 'offreInteret');
+  assert.equal(r('offre', { candidatures: false, match: false }), 'offre', 'rien à promettre : la catégorie de l’offre est décochée');
+  // La question d'un lauréat (ou de l'admin) attend un membre du réseau, celle d'un étudiant un lauréat
+  assert.equal(r('question', {}, 'etudiant'), 'question');
+  assert.equal(r('question', {}, 'laureat'), 'questionMembre');
+  assert.equal(r('question', {}, 'admin'), 'questionMembre');
+  // Les autres raisons restent les mêmes
+  for (const raison of ['demande', 'mentorat', 'candidature', 'match', 'offreLaureats', 'contact', 'message']) assert.equal(r(raison, { candidatures: false, match: false }), raison, raison);
+});
+
+test('offre publiée sans « Candidatures » : la feuille parle des étudiants intéressés (Match), en français et en arabe', () => {
+  const pwa = fs.readFileSync(new URL('../../src/pwa.js', import.meta.url), 'utf8');
+  const bloc = nom => { const i = pwa.indexOf(`const ${nom} = {`); return pwa.slice(i, pwa.indexOf('};', i)); };
+  const cat = Object.fromEntries([...bloc('CAT_RAISON').matchAll(/(\w+): '(\w+)'/g)].map(m => [m[1], m[2]]));
+  assert.equal(cat.offreInteret, 'match');
+  assert.equal(cat.offreCandidatures, 'candidatures');
+  assert.match(bloc('NOTIF_RAISON'), /\n  offreInteret: 'Dès qu’un étudiant s’intéresse à ton offre, une notification arrive sur cet appareil\.'/);
+  assert.match(bloc('TITRE_RAISON'), /offreInteret: 'Te prévenir des étudiants intéressés \?'/);
+  assert.match(bloc('TITRE_RAISON'), /offreCandidatures: 'Te prévenir des candidatures \?'/);
+  for (const k of ['NOTIF_RAISON.offreInteret', 'TITRE_RAISON.offreInteret']) assert.match(pwa, new RegExp(`\\[${k.replace('.', '\\.')}\\]: '[^']*[\\u0600-\\u06FF]`), `arabe de ${k}`);
 });

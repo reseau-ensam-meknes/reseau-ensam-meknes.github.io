@@ -29,7 +29,7 @@
 try{L=localStorage;var t=L.getItem('ensam-theme');if(t==='light'||t==='dark'){d.dataset.theme=t;document.querySelectorAll('meta[name="theme-color"]').forEach(function(m){m.content=t==='dark'?'#0B1320':'#1670A8'})}
 var g=L.getItem('ensam-lang');ar=g==='ar'||(!g&&sessionStorage.getItem('ensam-lang-visite')==='ar');for(i=0;i<L.length;i++)if(/^sb-.+-auth-token$/.test(L.key(i)))membre=true}catch(e){}
 d.lang=ar?'ar':'fr';d.dir=ar?'rtl':'ltr';
-var M=window.ENSAM_MAGASIN=["vendor/supabase.js","store.js","origine.js","reseau-vivant.js","logic.js"],A=window.ENSAM_MODULES=["app.js","ui.js","vitrine-regles.js","offers.js","pwa.js","pouls.js","recrutement.js","cv.js","messages.js","confiance.js","mentorat.js","growth.js","geo.js","lignes.js","entreprises.js","pro.js","demandes.js","reactions.js","partages.js","vitrine.js","me.js","saison.js","invitation.js","community.js","groupes.js","etranger.js","agenda.js","photo.js","privacy.js","fondateurs.js","fondateurs-public.js","rappels.js","match.js","apercu-cv.js","reussites.js","ambassadeurs.js"];
+var M=window.ENSAM_MAGASIN=["vendor/supabase.js","store.js","origine.js","reseau-vivant.js","logic.js","appareil.js"],A=window.ENSAM_MODULES=["app.js","ui.js","vitrine-regles.js","offers.js","pwa.js","pouls.js","recrutement.js","cv.js","messages.js","confiance.js","mentorat.js","growth.js","geo.js","lignes.js","entreprises.js","pro.js","demandes.js","reactions.js","partages.js","vitrine.js","me.js","saison.js","invitation.js","community.js","groupes.js","etranger.js","agenda.js","photo.js","privacy.js","fondateurs.js","fondateurs-public.js","rappels.js","match.js","apercu-cv.js","reussites.js","ambassadeurs.js"];
 if(!A.length)return;
 if(membre&&!/^#(verifier|desabo)\b/.test(location.hash))d.dataset.boot='membre';
 if(membre||/^#(verifier|desabo|confidentialite)\b|access_token=|type=recovery|error_description=/.test(location.hash))d.dataset.tete='appli';
@@ -968,6 +968,12 @@ button.impact-strip, button.panel { font: inherit; color: inherit; text-align: s
   .je-suis.compact legend { margin-block-end: .4rem; }
   .je-suis.compact .je-carte { padding: .6rem .7rem .65rem; }
   .je-suis.compact .je-carte strong { line-height: 1.2; text-wrap: balance; }
+  /* Petit écran, la ligne du navigateur d'une application sous le titre (serre, entree.js) : moins d'air entre les blocs, pour
+     garder une ligne d'accord de réserve au-dessus de « Recevoir mon code » (le texte se dessine plus large sur certains écrans) */
+  .entree-promesse.serre { padding-block: .3rem .4rem; }
+  .auth-card.entree-form.serre { margin-block-start: .3rem; gap: .4rem; }
+  .entree-form.serre .je-suis.compact legend { margin-block-end: .25rem; }
+  .entree-form.serre .je-suis.compact .je-carte { padding: .5rem .65rem .55rem; }
 }
 @media (min-width: 900px) {
   .auth.entree { max-width: 1180px; grid-template-columns: minmax(0, 1fr) minmax(400px, 480px); grid-template-rows: auto auto auto 1fr auto; grid-template-areas: "top top" "promesse form" "pour form" "scene form" "pied pied"; column-gap: 2.6rem; padding-block: 1.4rem 0; }

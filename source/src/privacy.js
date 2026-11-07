@@ -290,7 +290,7 @@ export function MesNotifications({ ctx }) {
   const { me, store, act } = ctx;
   const cats = store.mode !== 'live' || 'notif_push' in me;
   return html`<section class="panel md-push" id="md-push" aria-labelledby="md-push-h">
-      <h2 class="h-ico" id="md-push-h"><${Icon} name="bell"/> Notifications sur ce téléphone ou cet ordinateur</h2>
+      <h2 class="h-ico" id="md-push-h"><${Icon} name="bell"/> Notifications sur cet appareil</h2>
       <${PushToggle} ctx=${ctx}/>
       ${cats ? html`<${ChoixNotifs} ctx=${ctx}/>` : null}
     </section>

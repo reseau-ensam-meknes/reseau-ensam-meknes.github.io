@@ -17,6 +17,9 @@ export const UID = '00000000-0000-4000-8000-0000000000a1';
 // photo : l'image servie par les liens temporaires du stockage (photos des fondateurs)
 export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 19, promos: 14 }, reglages = [{ cle: 'domaines_ecole', valeur: ['ensam-umi.ac.ma'] }], offres = [], partagees = {}, profils = [], fondateurs = null, photo = null, ambassadeurs = null, chiffresPromo = null, tables = {} } = {}) {
   let port; const appels = []; const meta = {}; const inscrits = []; const jetons = { renouveler: false, depuis: 0, n: 0 };
+  // Une nouvelle version du site publiée pendant un test (maj.version) : sw.js change de VERSION, et les fichiers que le
+  // service worker télécharge pour l'installer (fetch, sec-fetch-dest « empty ») attendent maj.retenue
+  const maj = { version: null, retenue: null };
   const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' };
   const json = (r, code, body) => { r.writeHead(code, { 'content-type': 'application/json', ...cors }); r.end(body === undefined ? '' : JSON.stringify(body)); };
   const session = email => {
@@ -117,14 +120,17 @@ export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 1
     if (f === '/config.js') { r.writeHead(200, { 'content-type': 'text/javascript' }); return r.end(`window.ENSAM_CONFIG = { supabaseUrl: 'http://127.0.0.1:${port}/sb', supabaseAnonKey: 'cle' };`); }
     const fichier = path.join(SITE, path.normalize(f));
     if (!fichier.startsWith(SITE)) { r.writeHead(403); return r.end(); }
-    fs.readFile(fichier, (e, b) => {
+    const servir = () => fs.readFile(fichier, (e, b) => {
       if (e) { r.writeHead(404); return r.end(); }
+      if (f === '/sw.js' && maj.version) b = Buffer.from(String(b).replace(/const VERSION = '[^']*'/, `const VERSION = '${maj.version}'`));
       r.writeHead(200, { 'content-type': TYPES[path.extname(f)] || 'application/octet-stream' }); r.end(b);
     });
+    if (maj.version && q.headers['sec-fetch-dest'] === 'empty' && f !== '/sw.js') return void maj.retenue.then(servir);
+    servir();
   });
   srv.on('upgrade', (_q, s) => s.destroy()); // temps réel : absent ici
   await new Promise(ok => srv.listen(0, '127.0.0.1', ok)); port = srv.address().port;
   // Chaque test repart d'une base vide (personne d'inscrit, aucun appel noté)
-  const vider = () => { appels.length = 0; inscrits.length = 0; for (const k of Object.keys(meta)) delete meta[k]; for (const k of Object.keys(tables)) delete tables[k]; Object.assign(jetons, { renouveler: false, depuis: 0 }); };
-  return { adresse: `http://127.0.0.1:${port}/`, appels, inscrits, tables, jetons, vider, fermer: () => srv.close() };
+  const vider = () => { appels.length = 0; inscrits.length = 0; for (const k of Object.keys(meta)) delete meta[k]; for (const k of Object.keys(tables)) delete tables[k]; Object.assign(jetons, { renouveler: false, depuis: 0 }); Object.assign(maj, { version: null, retenue: null }); };
+  return { adresse: `http://127.0.0.1:${port}/`, appels, inscrits, tables, jetons, maj, vider, fermer: () => srv.close() };
 }

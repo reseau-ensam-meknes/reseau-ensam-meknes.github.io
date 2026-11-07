@@ -1261,6 +1261,17 @@ export function prevenirVariante({ etat, raison, memo = {}, now = Date.now(), ro
   return null;
 }
 
+// La raison vraie pour ce membre (sa phrase, son titre, et la catégorie de Mon profil dont dépend la réponse attendue, pwa.js) :
+// une question d'un lauréat attend « un membre du réseau ». Une offre publiée attend des candidatures (« Candidatures ») et
+// l'intérêt des étudiants (« Match ») : la feuille ne promet que ce qui arrivera (offreCandidatures sans Match, offreInteret
+// sans Candidatures ; sans les deux, la catégorie de l'offre est décochée et rien n'est promis).
+export function raisonPrevenir(raison, me) {
+  if (raison === 'question') return me?.role === 'etudiant' ? 'question' : 'questionMembre';
+  if (raison !== 'offre') return raison;
+  const candidatures = pushChoix('candidatures', me), match = pushChoix('match', me);
+  return candidatures ? (match ? 'offre' : 'offreCandidatures') : match ? 'offreInteret' : 'offre';
+}
+
 // La ligne « Me prévenir », non modale, là où l'on attend une réponse : au-dessus du champ d'écriture (Messages), à la fin de
 // la pile (Match). Ce n'est pas une feuille : elle ne compte pas dans leur budget (3 jours après « Plus tard »), et son × la
 // range pour ce fil seulement (memo.lignes : l'id de la conversation, ou 'match'). attente : le membre attend vraiment une
@@ -1333,9 +1344,12 @@ export function ouvertureSorte({ etat, memo = {}, now = Date.now(), voulu = true
 
 // Le lien « Active tes notifications » (?notifs=1, dans les emails et sur WhatsApp) : la feuille qu'il ouvre tout de suite.
 // 'deja' : déjà activées ici (un mot suffit) ; null : coupées par le membre dans Mon profil (on respecte), démo ordinaire,
-// ou état pas encore connu.
-export function sorteLienNotifs({ etat, memo = {} }) {
+// ou état pas encore connu. voulu : false quand toutes les catégories sont décochées dans Mon profil ; activer cet appareil
+// (ou l'avoir déjà fait) n'apporterait rien : 'choisir', la feuille le dit et mène à Mon profil › Notifications, sans rien
+// recocher. iPhone sans l'icône, navigateur d'une application, notifications bloquées : leur geste d'abord, il reste à faire.
+export function sorteLienNotifs({ etat, memo = {}, voulu = true }) {
   if (memo.coupe || etat === '…' || etat === 'demo' || !etat) return null;
+  if (!voulu && (etat === 'on' || etat === 'off')) return 'choisir';
   return { on: 'deja', off: 'push', ios: 'ios', appli: 'appli', refuse: 'debloquer', absent: 'absent' }[etat] || null;
 }
 
@@ -1350,55 +1364,9 @@ export function bandeauPush({ etat, memo = {}, now = Date.now(), role, voulu = t
   return memo.bandeau && now - memo.bandeau < BANDEAU_PUSH_ECART ? null : etat;
 }
 
-// Le navigateur intégré d'une application (lien ouvert dans Instagram, Facebook, Messenger, LinkedIn, TikTok, Snapchat, ou
-// une vue web Android « ; wv) ») : ni notification ni installation n'y sont possibles. { nom, systeme } ou null.
-// nom : l'application quand on la reconnaît (null pour une vue web quelconque) ; systeme : 'android', 'ios' ou 'autre'.
-const APPLIS = [
-  ['Messenger', /FB_IAB\/MESSENGER|FBAN\/Messenger|MessengerForiOS|MessengerLite/i],
-  ['Instagram', /\bInstagram\b/i],
-  ['Facebook', /FBAN\/|FBAV\/|FB_IAB|FBIOS|FB4A/],
-  ['LinkedIn', /LinkedInApp/i],
-  ['TikTok', /musical_ly|BytedanceWebview|\bTikTok\b/i],
-  ['Snapchat', /\bSnapchat\b/i],
-];
-export function navigateurIntegre(ua = '') {
-  const s = String(ua || '');
-  const systeme = /android/i.test(s) ? 'android' : /iphone|ipad|ipod/i.test(s) ? 'ios' : 'autre';
-  const a = APPLIS.find(([, re]) => re.test(s));
-  if (a) return { nom: a[0], systeme };
-  if (systeme === 'android' && /; wv\)/.test(s)) return { nom: null, systeme };
-  return null;
-}
-
-// « Ouvrir dans Chrome » depuis le navigateur d'une application Android : un lien intent:// vers la même page, que Chrome
-// ouvre (sinon la même adresse, browser_fallback_url). La route passe en ?r=… (le # sert à l'intent) et notifs=1 ouvre
-// tout de suite la feuille d'activation : c'est pour elle que le membre change de navigateur. app.js lit puis efface les deux.
-// lang : la langue de la page ; Chrome ne connaît pas le choix fait ici, l'arabe passe donc par l'adresse (?lang=ar, gardé
-// pour la visite, i18n.js), le français laisse Chrome à son propre choix. Sans lang : l'adresse garde le sien.
-export function lienChrome(adresse, route = '', { lang } = {}) {
-  const u = new URL(adresse);
-  u.hash = '';
-  for (const k of ['r', 'notifs', 'depuis']) u.searchParams.delete(k);
-  if (lang === 'ar') u.searchParams.set('lang', 'ar'); else if (lang) u.searchParams.delete('lang');
-  const r = String(route || '').replace(/^#/, '');
-  if (r && r !== 'accueil') u.searchParams.set('r', r);
-  u.searchParams.set('notifs', '1');
-  const cible = u.href, schema = u.protocol.replace(/:$/, '');
-  return `intent://${cible.slice(u.protocol.length + 2)}#Intent;scheme=${schema};package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(cible)};end`;
-}
-
-// Paramètres d'adresse lus au démarrage (app.js), puis retirés : r (la route, venue d'un autre navigateur par « Ouvrir dans
-// Chrome »), notifs=1 (le lien « Active tes notifications »), depuis=ancienne (arrivée par l'ancienne adresse du Réseau).
-// search : ce qui reste de l'adresse ('' ou '?…') ; aucun : rien de tout cela (l'adresse ne change pas).
-export function parametresLien(search = '') {
-  const p = new URLSearchParams(search);
-  const brut = (p.get('r') || '').replace(/^#/, '').trim();
-  const out = { r: /^[\w\-/]{1,200}$/.test(brut) ? brut : '', notifs: p.get('notifs') === '1', depuis: p.get('depuis') === 'ancienne' ? 'ancienne' : '' };
-  const aucun = !['r', 'notifs', 'depuis'].some(k => p.has(k));
-  for (const k of ['r', 'notifs', 'depuis']) p.delete(k);
-  const reste = p.toString();
-  return { ...out, search: reste ? '?' + reste : '', aucun };
-}
+// Le navigateur intégré d'une application, l'iPad, « Ouvrir dans Chrome » et les paramètres d'adresse lus au démarrage :
+// appareil.js, que la page d'entrée charge sans le reste du site
+export { APPLIS, estIPad, navigateurIntegre, contexteEntree, lienChrome, parametresLien, CLE_APPLI_VUE } from './appareil.js';
 
 // Abonnement refusé par le service de notifications pour une raison qui peut passer (réseau coupé, AbortError) : l'échec est
 // noté par jour (memo.echecs : les deux derniers jours, 'AAAA-MM-JJ'), et cet appareil n'est classé « sans notifications »
@@ -1466,6 +1434,12 @@ export function pushVoulu(kind, me) {
   const cat = pushCategorie(kind);
   return cat === 'admin' ? true : pushChoix(cat, me);
 }
+// Ce membre veut-il recevoir quelque chose ? Rien de coché dans Mon profil (les rappels seuls ne comptent pas) : rien à
+// proposer. L'administration reçoit toujours les signalements.
+export const veutDesNotifs = m => m?.role === 'admin' || PUSH_CATEGORIES.some(c => c !== 'rappels' && pushChoix(c, m));
+// Rien à proposer (veutDesNotifs) : ce que dit la feuille « Choisis ce que tu reçois ». 'rappels' : la case « Rappels »
+// reste cochée (montree : Mon profil la montre, la base est à jour) ; 'rien' : tout est décoché.
+export const choisirCas = (m, montree = true) => (montree && pushChoix('rappels', m) ? 'rappels' : 'rien');
 
 // ---------------------------------------------------------------------------
 // Ambassadeurs de promo : pour chaque promo × filière, la plateforme propose le rôle au membre le plus actif
