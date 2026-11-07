@@ -1422,20 +1422,29 @@ export const echecDefinitif = (e, { brave = false } = {}) => brave || ['NotSuppo
 export const PUSH_CATEGORIES = ['messages', 'match', 'demandes', 'candidatures', 'mentorat', 'offres', 'reseau', 'rappels'];
 // Type de notification -> catégorie (un type inconnu : vie du réseau)
 export const PUSH_KINDS = {
-  // Un entretien proposé dans une discussion, sa réponse et son rappel sont des messages : couper « Match » ne fait pas rater un entretien
-  message: 'messages', rdv_message: 'messages', rdv_reponse: 'messages', rappel_entretien: 'messages',
-  match: 'match', match_interet: 'match', match_jour: 'match',
+  // Un entretien proposé dans une discussion, sa réponse, sa veille et son rappel sont des messages : couper « Match » ne fait
+  // pas rater un entretien
+  message: 'messages', rdv_message: 'messages', rdv_reponse: 'messages', rappel_entretien: 'messages', entretien_demain: 'messages',
+  // Match : un match, un intérêt pour soi, les intérêts qui attendent une réponse, le tour du jour à midi
+  match: 'match', match_interet: 'match', match_jour: 'match', match_attente: 'match',
   demande_nouvelle: 'demandes', demande_large: 'demandes', demande_proposition: 'demandes', demande_match: 'demandes', demande_rouverte: 'demandes', demande_reponse: 'demandes',
+  demande_attente: 'demandes', demande_pause: 'demandes',
   candidature: 'candidatures', candidature_statut: 'candidatures', invitation: 'candidatures',
   recrutement_a_confirmer: 'candidatures', recrutement_confirme: 'candidatures', relance_offre: 'candidatures',
   mentorat_demande: 'mentorat', mentorat_ouvert: 'mentorat', mentorat_accepte: 'mentorat', mentorat_deplace: 'mentorat', mentorat_annule: 'mentorat',
   rappel_rdv: 'mentorat', merci: 'mentorat', relecture_demande: 'mentorat', relecture_prise: 'mentorat', relecture_rendue: 'mentorat',
   contact_demande: 'mentorat', contact_accepte: 'mentorat', filleul: 'mentorat', parrain: 'mentorat',
-  offre_alerte: 'offres',
-  rappel_visite: 'rappels',
+  // La veille d'un rendez-vous, la présence confirmée, la suite après
+  rdv_demain: 'mentorat', mentorat_presence: 'mentorat', apres_rdv: 'mentorat',
+  // Une offre de son année, et une offre mise de côté qui va fermer
+  offre_alerte: 'offres', offre_bientot: 'offres',
+  // Après quelques jours sans visite, et le résumé du dimanche
+  rappel_visite: 'rappels', semaine: 'rappels',
   reponse: 'reseau', question_routee: 'reseau', cafe: 'reseau', evenement: 'reseau', evenement_annule: 'reseau', evenement_deplace: 'reseau',
   enquete: 'reseau', verification_pair: 'reseau', verifier_pair: 'reseau', reaction: 'reseau',
   promo_nouveau: 'reseau', offre_commentaire: 'reseau', annonce: 'reseau',
+  // La veille d'un événement ou d'un café où l'on va, ses réponses jugées utiles, les bravos, les messages de ses groupes
+  agenda_demain: 'reseau', reponse_utile: 'reseau', bravo: 'reseau', groupe_jour: 'reseau',
   signalement: 'admin',
 };
 export const pushCategorie = kind => (Object.prototype.hasOwnProperty.call(PUSH_KINDS, kind) ? PUSH_KINDS[kind] : 'reseau');

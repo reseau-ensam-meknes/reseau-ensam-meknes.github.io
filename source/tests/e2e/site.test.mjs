@@ -1224,8 +1224,9 @@ test('à l’ouverture : la feuille des notifications selon le rôle ; « Plus t
   const txt = await s.page.locator(ouverture).innerText();
   assert.match(await s.page.locator(`${ouverture} .modal-head h2`).innerText(), /^Reçois l’essentiel sur ton téléphone$/);
   assert.match(txt, /Ce qui te concerne arrive tout de suite, même quand l’application est fermée/);
-  assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['messages', 'demandes', 'candidatures', 'offres']);
-  assert.match(txt, /Les nouvelles offres de ton année et de ta filière/);
+  // Match juste après les messages (les lauréats qui s'intéressent à son profil)
+  assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['messages', 'match', 'demandes', 'candidatures']);
+  assert.match(txt, /Les lauréats qui s’intéressent à ton profil/);
   assert.match(txt, /Tu choisis quoi recevoir dans « Mon profil »\. Pas de publicité\./);
   assert.match(await s.page.locator('#ouv-oui').innerText(), /Activer/);
   assert.ok(await s.page.evaluate(() => document.querySelector('.ouverture .modal-foot').getBoundingClientRect().bottom <= innerHeight + .5), 'les boutons à portée du pouce');
@@ -1354,21 +1355,67 @@ test('à l’ouverture : un lauréat voit ce qui le concerne ; « Activer » vau
   await attendreOuverture(s);
   const txt = await s.page.locator(ouverture).innerText();
   assert.match(txt, /Ce qui te concerne arrive tout de suite/);
-  // Tout est activé par défaut, les nouvelles offres aussi pour un lauréat qui ne cherche pas d'emploi
-  assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['messages', 'demandes', 'offres', 'candidatures']);
+  // Tout est activé par défaut, les nouvelles offres aussi pour un lauréat qui ne cherche pas d'emploi ; Match après ses demandes
+  assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['messages', 'demandes', 'match', 'offres']);
   assert.match(txt, /Les nouvelles demandes d’étudiants de ta filière/);
   await s.page.click('#ouv-oui'); await s.page.waitForTimeout(300);
   assert.equal(await s.page.locator(ouverture).count(), 0);
   assert.match(await s.page.locator('.toast').last().innerText(), /Sur la vraie plateforme/);
   assert.equal((await s.memo()).fait, 1);
   await recharger(s); await rienALouverture(s, 'acceptée : plus jamais');
-  // Un lauréat qui cherche un emploi : la suite de sa demande et de ses candidatures, et les offres pour lui
+  // Un lauréat qui cherche un emploi : la suite de sa demande et de ses candidatures, et les offres pour lui (Match en dernier)
   await s.comme('Nadia');
   await s.page.evaluate(() => window.__demo.update('profiles', window.__demo.me.id, { en_recherche: true }));
   await attendreOuverture(s);
   assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['messages', 'demandes', 'offres', 'candidatures']);
   const rech = await s.page.locator(ouverture).innerText();
   assert.match(rech, /Les réponses à ta demande d’emploi/); assert.match(rech, /Tes candidatures qui avancent/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// La feuille parle de Match (constat 9 de l'enquête) : sa ligne et son icône, les deux cartes de Match (jamais un cœur)
+test('à l’ouverture : la ligne Match et ses deux cartes, selon le rôle et en arabe ; coupée dans Mon profil, la suivante prend sa place', async () => {
+  let s = await prevenirSur('off');
+  const cats = () => s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat));
+  const ligne = () => s.page.locator(`${ouverture} .ouv-points li[data-cat="match"]`);
+  const plusTard = async () => { await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300); };
+  await attendreOuverture(s);
+  assert.deepEqual(await cats(), ['messages', 'match', 'demandes', 'candidatures']);
+  assert.equal((await ligne().innerText()).trim(), 'Les lauréats qui s’intéressent à ton profil');
+  assert.equal(await ligne().locator('svg.ico-match').count(), 1, 'l’icône de Match');
+  assert.ok(await ligne().locator('svg.ico-match > *').count() > 0, 'dessinée');
+  assert.equal(await s.page.locator(`${ouverture} .ico-heart`).count(), 0, 'jamais un cœur');
+  assert.equal(await s.debordement(), 0);
+  // Match coupé dans Mon profil : la feuille revient sans lui, les offres reprennent la 4e place
+  await plusTard();
+  await s.aller('profil/notifications');
+  await s.page.click('#np-match'); await s.page.waitForTimeout(250);
+  await s.changerMemo('({ ...m, at: m.at - 8 * 864e5 })');
+  await s.page.reload(); await s.page.waitForSelector('#md-push'); await attendreOuverture(s);
+  assert.deepEqual(await cats(), ['messages', 'demandes', 'candidatures', 'offres']);
+  await plusTard();
+  // Un lauréat : après ses demandes
+  await s.comme('Youssef'); await attendreOuverture(s);
+  assert.deepEqual(await cats(), ['messages', 'demandes', 'match', 'offres']);
+  assert.equal((await ligne().innerText()).trim(), 'Les étudiants qui s’intéressent à tes offres');
+  assert.equal(await ligne().locator('svg.ico-match').count(), 1);
+  await plusTard();
+  // Un lauréat qui cherche un emploi : Match en dernier ; ses offres coupées, c'est le mentorat qui vient, pas Match
+  await s.comme('Nadia');
+  await s.page.evaluate(() => window.__demo.update('profiles', window.__demo.me.id, { en_recherche: true, notif_push: { offres: false } }));
+  await attendreOuverture(s);
+  assert.deepEqual(await cats(), ['messages', 'demandes', 'candidatures', 'mentorat']);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe : الخريجون pour les lauréats, الطلبة pour les étudiants
+  s = await prevenirSur('off', { langue: 'ar' });
+  await attendreOuverture(s);
+  assert.equal((await ligne().innerText()).trim(), 'الخريجون المهتمون بملفك');
+  await plusTard();
+  await s.comme('Youssef'); await attendreOuverture(s);
+  assert.equal((await ligne().innerText()).trim(), 'الطلبة المهتمون بعروضك');
+  assert.equal(await s.debordement(), 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -1852,9 +1899,9 @@ test('Mon profil : la case « Rappels », cochée par défaut, se coupe et reste
     assert.equal(await s.page.isChecked('#np-rappels'), true, 'activée par défaut');
     const texte = await rappels.innerText();
     if (langue === 'fr') {
-      assert.match(texte, /^Rappels/);
-      assert.match(texte, /Après quelques jours sans visite, ce qui t’attend : messages, propositions d’aide, nouvelles offres\./);
-      assert.match(texte, /par email une fois par semaine au plus/);
+      assert.match(texte, /^Rappels et résumé du dimanche/);
+      assert.match(texte, /Après quelques jours sans visite, ce qui t’attend : messages, Match, propositions d’aide, réponses à tes questions, événements, nouvelles offres\./);
+      assert.match(texte, /par email une fois par semaine au plus\. Le dimanche matin, ta semaine en une ligne\./);
     } else {
       assert.match(texte, /التذكيرات/); assert.match(texte, /بعد أيام دون زيارة/);
       assert.deepEqual(texte.match(/[A-Za-zÀ-ÿ]{2,}/g) || [], [], 'rien d’oublié en français');
@@ -1886,9 +1933,12 @@ test('Mon profil : la case « Rappels », cochée par défaut, se coupe et reste
     // Le lien « Ne plus recevoir ces rappels » d'un email : une page, un bouton, sans connexion
     await s.page.goto(adresse + '#desabo/11111111-2222-4333-8444-555555555555/rappels'); await s.page.waitForSelector('#desabo-rappels');
     assert.match(await s.page.locator('.desabo h1').innerText(), langue === 'fr' ? /^Rappels$/ : /التذكيرات/);
+    // Le lien décoche toute la case « Rappels et résumé du dimanche » : la page le dit avant le clic, et après
+    assert.match(await s.page.locator('.desabo').innerText(), langue === 'fr' ? /Le résumé du dimanche sur le téléphone s’arrêtera aussi/ : /سيتوقف أيضًا ملخص الأحد على الهاتف/);
     await s.page.click('#desabo-rappels');
     await s.page.waitForSelector('.desabo .verify-ok');
     assert.match(await s.page.locator('.desabo').innerText(), langue === 'fr' ? /plus de rappels, ni par email ni sur le téléphone/ : /لا تذكيرات بعد الآن/);
+    assert.match(await s.page.locator('.desabo').innerText(), langue === 'fr' ? /s’arrête aussi ; les autres emails et notifications ne changent pas/ : /يتوقف أيضًا ملخص الأحد على الهاتف، ولا تتغير الرسائل والإشعارات الأخرى/);
     assert.equal(await s.debordement(), 0);
     assert.deepEqual(s.erreurs, []);
     await s.ctx.close();

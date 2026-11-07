@@ -1101,10 +1101,12 @@ const OUV_TITRE = { tel: 'Reçois l’essentiel sur ton téléphone', pc: 'Reço
 // En train d'écrire (un champ de texte a le curseur) : la feuille attend
 const ecrit = el => !!el && (el.isContentEditable || el.tagName === 'TEXTAREA'
   || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'range', 'color', 'image'].includes(el.type)));
-// Ce que chacun reçoit, dans l'ordre où le dire ; la feuille en montre quatre au plus, parmi ses catégories activées
+// Ce que chacun reçoit, dans l'ordre où le dire ; la feuille en montre quatre au plus, parmi ses catégories activées.
+// Match (match_interet, match, le tour du jour) : juste après les messages pour un étudiant, après les demandes pour un lauréat
 const OUV_POINTS = {
   etudiant: {
     messages: 'Tes messages',
+    match: 'Les lauréats qui s’intéressent à ton profil',
     demandes: 'Les lauréats qui te proposent leur aide',
     candidatures: 'Tes candidatures qui avancent',
     offres: 'Les nouvelles offres de ton année et de ta filière',
@@ -1114,12 +1116,13 @@ const OUV_POINTS = {
   laureat: {
     messages: 'Tes messages',
     demandes: 'Les nouvelles demandes d’étudiants de ta filière',
+    match: 'Les étudiants qui s’intéressent à tes offres',
     offres: 'Les nouvelles offres de ta filière',
     candidatures: 'Les candidatures reçues sur tes offres',
     mentorat: 'Les demandes de mentorat et tes rendez-vous',
     reseau: 'Les questions qui te sont adressées',
   },
-  // Un lauréat qui cherche un emploi publie sa demande et postule : la suite des siennes d'abord
+  // Un lauréat qui cherche un emploi publie sa demande et postule : la suite des siennes d'abord, Match en dernier
   recherche: {
     demandes: 'Les réponses à ta demande d’emploi',
     candidatures: 'Tes candidatures qui avancent',
@@ -1130,7 +1133,10 @@ const OUV_POINTS = {
     messages: 'Tes messages',
   },
 };
-const OUV_ICONES = { admin: 'flag', messages: 'chat', demandes: 'send', candidatures: 'briefcase', offres: 'feed', mentorat: 'mentor', reseau: 'qa' };
+// Le lauréat qui cherche un emploi : l'ordre du lauréat avec ses textes à lui, Match en dernier
+const ouvRecherche = () => { const { match, ...l } = OUV_POINTS.laureat; return { ...l, ...OUV_POINTS.recherche, match }; };
+// Match : ses deux cartes (match.js), jamais un cœur
+const OUV_ICONES = { admin: 'flag', messages: 'chat', match: 'match', demandes: 'send', candidatures: 'briefcase', offres: 'feed', mentorat: 'mentor', reseau: 'qa' };
 const OUV_INTRO = 'Ce qui te concerne arrive tout de suite, même quand l’application est fermée :';
 const OUV_CHOIX = 'Tu choisis quoi recevoir dans « Mon profil ». Pas de publicité.';
 
@@ -1139,8 +1145,10 @@ function FeuilleOuverture({ ctx, onClose }) {
   const [busy, setBusy] = useState(false);
   // « Activer » à l'écran : la clé de la plateforme est demandée dès maintenant
   useEffect(() => { cleAPrete(store); }, []);
-  const mots = me.role === 'admin' ? OUV_POINTS.admin : me.role === 'etudiant' ? OUV_POINTS.etudiant : me.en_recherche ? { ...OUV_POINTS.laureat, ...OUV_POINTS.recherche } : OUV_POINTS.laureat;
-  const points = Object.entries(mots).filter(([cat]) => pushChoix(cat, me)).slice(0, 4);
+  const mots = me.role === 'admin' ? OUV_POINTS.admin : me.role === 'etudiant' ? OUV_POINTS.etudiant : me.en_recherche ? ouvRecherche() : OUV_POINTS.laureat;
+  // Match, comme dans « Mon profil » : seulement quand la base le connaît (la colonne match_visible arrive avec lui)
+  const avecMatch = store.mode !== 'live' || 'match_visible' in me;
+  const points = Object.entries(mots).filter(([cat]) => pushChoix(cat, me) && (cat !== 'match' || avecMatch)).slice(0, 4);
   const activer = async () => { setBusy(true); if (await accepterNotif(store, me)) onClose(); else setBusy(false); };
   const pied = html`<button type="button" class="btn ghost" id="ouv-tard" onClick=${() => onClose()}>Plus tard</button>
     <button type="button" class="btn primary" id="ouv-oui" disabled=${busy} onClick=${activer}><${Icon} name="bell" size=${16}/> Activer</button>`;
@@ -1237,12 +1245,14 @@ addAR({
   'Tu choisis quoi recevoir dans « Mon profil ». Pas de publicité.': 'تختار ما يصلك من «ملفي الشخصي». لا إعلانات.',
   [OUV_INTRO]: 'ما يخصك يصلك فورًا، حتى والتطبيق مغلق:',
   [OUV_POINTS.etudiant.messages]: 'رسائلك',
+  [OUV_POINTS.etudiant.match]: 'الخريجون المهتمون بملفك',
   [OUV_POINTS.etudiant.demandes]: 'الخريجون الذين يقترحون عليك مساعدتهم',
   [OUV_POINTS.etudiant.candidatures]: 'تقدّم ترشيحاتك',
   [OUV_POINTS.etudiant.offres]: 'العروض الجديدة الخاصة بسنتك وشعبتك',
   [OUV_POINTS.etudiant.mentorat]: 'مواعيد الإرشاد ومراجعات سيرتك الذاتية',
   [OUV_POINTS.etudiant.reseau]: 'الأجوبة على أسئلتك',
   [OUV_POINTS.laureat.demandes]: 'الطلبات الجديدة لطلبة شعبتك',
+  [OUV_POINTS.laureat.match]: 'الطلبة المهتمون بعروضك',
   [OUV_POINTS.laureat.offres]: 'العروض الجديدة في شعبتك',
   [OUV_POINTS.laureat.candidatures]: 'الترشيحات التي تصل إلى عروضك',
   [OUV_POINTS.laureat.mentorat]: 'طلبات الإرشاد ومواعيدك',

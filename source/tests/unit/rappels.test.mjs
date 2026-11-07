@@ -39,8 +39,13 @@ test('Mon profil : une case « Rappels » pour les étudiants et les lauréats (
   assert.match(p, /rappels: RAPPELS_NOTIF\.etudiant/);
   assert.match(p, /rappels: RAPPELS_NOTIF\.laureat/);
   assert.match(p, /c !== 'rappels'/);
-  for (const k of ['RAPPELS_NOTIF.etudiant[1]', 'RAPPELS_NOTIF.laureat[1]', 'PHRASE_VISITE']) assert.ok(r.includes(`[${k}]:`), k);
+  for (const k of ['RAPPELS_NOTIF.etudiant[1]', 'RAPPELS_NOTIF.laureat[1]', 'PHRASE_VISITE', 'TITRE']) assert.ok(r.includes(`[${k}]:`), k);
   assert.match(r, /Rappels: 'التذكيرات'/);
+  // La case dit aussi Match, les réponses, les événements et le résumé du dimanche (notification « semaine »)
+  assert.match(r, /const TITRE = 'Rappels et résumé du dimanche';/);
+  assert.match(r, /\[TITRE\]: 'التذكيرات وملخص الأحد'/);
+  for (const mot of ['Match', 'réponses à tes questions', 'événements', 'Le dimanche matin, ta semaine en une ligne.']) assert.ok(r.includes(mot), mot);
+  for (const mot of ['التوافق', 'الأجوبة على أسئلتك', 'الأنشطة', 'وصباح كل أحد، أسبوعك في سطر واحد.']) assert.ok(r.includes(mot), mot);
   // Les textes affichés sur la page de désabonnement ont tous leur traduction
   const ar = r.slice(r.indexOf('addAR({'), r.indexOf('});', r.indexOf('addAR({')));
   const page = r.slice(r.indexOf('export function DesaboRappels'));
