@@ -6504,3 +6504,115 @@ test('photos de profil : gardées par le service worker sous leur adresse sans j
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close(); st.fermer();
 });
+
+// Passage jour/nuit (setTheme, app.js) : avec du mouvement, le nouveau thème s'ouvre en cercle depuis le bouton touché
+// (View Transitions) ; moins de mouvement : tout de suite, sans transition. Le choix est gardé dans les deux cas.
+test('passage jour/nuit : le nouveau thème s’ouvre en cercle depuis le bouton touché ; tout de suite si l’appareil demande moins de mouvement', async () => {
+  for (const mouvement of [true, false]) {
+    const s = await ouvrir({ largeur: 1280, mouvement });
+    await s.page.evaluate(() => {
+      window.__vt = { transitions: 0, cercles: [] };
+      const vt = document.startViewTransition?.bind(document);
+      if (vt) document.startViewTransition = f => { window.__vt.transitions++; return vt(f); };
+      const anim = Element.prototype.animate;
+      Element.prototype.animate = function (k, o) { if (o?.pseudoElement === '::view-transition-new(root)') window.__vt.cercles.push({ clip: k.clipPath, duree: o.duration }); return anim.call(this, k, o); };
+    });
+    const avant = await s.page.getAttribute('html', 'data-theme') || 'light';
+    const b = await s.page.locator('.top .theme-btn').boundingBox();
+    await s.page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
+    const pendant = await s.page.evaluate(() => document.documentElement.classList.contains('vt-theme'));
+    await s.page.waitForFunction(() => !document.documentElement.classList.contains('vt-theme'), null, { timeout: 5000 });
+    await s.page.waitForTimeout(100);
+    const apres = await s.page.getAttribute('html', 'data-theme');
+    assert.notEqual(apres, avant, 'le thème a changé');
+    assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-theme')), apres, 'le choix est gardé');
+    const vu = await s.page.evaluate(() => window.__vt);
+    if (mouvement) {
+      assert.ok(pendant, 'html.vt-theme pendant le cercle');
+      assert.equal(vu.transitions, 1);
+      assert.equal(vu.cercles.length, 1);
+      // Le cercle part du bouton touché et couvre tout l'écran, en 450 ms
+      const [de, a] = vu.cercles[0].clip.map(c => c.match(/circle\(([\d.]+)px at ([\d.]+)px ([\d.]+)px\)/).slice(1).map(Number));
+      assert.equal(de[0], 0);
+      assert.ok(Math.abs(de[1] - (b.x + b.width / 2)) < 2 && Math.abs(de[2] - (b.y + b.height / 2)) < 2, `centre ${de[1]},${de[2]}`);
+      assert.ok(a[0] >= Math.hypot(1280 / 2, 900 / 2), `rayon ${a[0]}`);
+      assert.equal(vu.cercles[0].duree, 450);
+    } else {
+      assert.equal(pendant, false);
+      assert.deepEqual(vu, { transitions: 0, cercles: [] }, 'moins de mouvement : aucune transition');
+    }
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+// Ciel du soir (scene.js et le script du haut de page.html) : l'heure forcée à une heure de soir à Meknès, le ciel du thème
+// clair est celui du soir dès le premier affichage ; le thème sombre garde sa nuit ; à midi, le ciel de jour
+const minuteOu = (jour, f) => { for (let m = 0; m < 1440; m++) { const d = new Date(jour + m * 60e3); if (f(soirDe(d))) return d; } return null; };
+test('ciel du soir : à l’heure du soir à Meknès, le ciel clair passe au soir dès le premier affichage ; le thème sombre garde sa nuit', async () => {
+  const jour = Date.UTC(2026, 5, 15);
+  const soir = minuteOu(jour, v => v === 1), midi = new Date(jour + 12 * 3600e3);
+  assert.ok(soir && soirDe(midi) === 0);
+  const ciel = async (theme, quand) => {
+    const ctx = await navigateur.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block', colorScheme: theme, reducedMotion: 'reduce' });
+    await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+    await ctx.clock.install({ time: quand });
+    // Le ciel noté juste avant que l'application s'affiche : il doit déjà être celui de l'heure
+    await ctx.addInitScript(() => { document.addEventListener('DOMContentLoaded', () => { window.__ciel = { soir: document.documentElement.dataset.ciel || null, v: document.documentElement.style.getPropertyValue('--soir') }; }); });
+    const page = await ctx.newPage(); const erreurs = []; page.on('pageerror', e => erreurs.push(e.message));
+    await page.goto(adresse); await page.waitForSelector('.hello .scene svg');
+    const v = await page.evaluate(() => {
+      const h = document.querySelector('.home-hero.sky'), cs = getComputedStyle(h);
+      return { tete: window.__ciel, ciel: document.documentElement.dataset.ciel || null, soir: document.documentElement.style.getPropertyValue('--soir'), fond: cs.backgroundImage, sky1: cs.getPropertyValue('--sky-1').trim(), lampe: getComputedStyle(document.querySelector('.hello .scene .lamp-glow')).opacity };
+    });
+    assert.deepEqual(erreurs, []);
+    await ctx.close();
+    return v;
+  };
+  const clairSoir = await ciel('light', soir), clairMidi = await ciel('light', midi), sombreSoir = await ciel('dark', soir), sombreMidi = await ciel('dark', midi);
+  assert.deepEqual(clairSoir.tete, { soir: 'soir', v: '1' }, 'posé par le script du haut, avant l’affichage');
+  assert.equal(clairSoir.ciel, 'soir'); assert.equal(clairSoir.soir, '1');
+  assert.deepEqual(clairMidi.tete, { soir: null, v: '' });
+  assert.equal(clairMidi.ciel, null);
+  assert.notEqual(clairSoir.fond, clairMidi.fond, 'le ciel du soir n’est pas celui du jour');
+  assert.notEqual(clairSoir.sky1, clairMidi.sky1);
+  // Le halo du réverbère (opacity: var(--lamp), calculée) : allumé le soir, éteint à midi
+  assert.ok(Number(clairSoir.lampe) > 0.8, `le réverbère s’allume (${clairSoir.lampe})`);
+  assert.equal(Number(clairMidi.lampe), 0, `le réverbère éteint à midi (${clairMidi.lampe})`);
+  // Le thème sombre : la même nuit à l'heure du soir qu'à midi
+  assert.equal(sombreSoir.fond, sombreMidi.fond);
+  assert.equal(sombreSoir.sky1, sombreMidi.sky1);
+});
+
+// Titres en arabe : leur police dédiée (« Titres ENSAM arabe », 600 et 700), demandée seulement quand un titre arabe s'affiche
+test('titres en arabe : leur police dédiée, chargée seulement en arabe ; les lettres latines gardent celle des titres français', async () => {
+  for (const langue of ['ar', 'fr']) {
+    // Une page neuve (rien en cache), dans sa langue dès la première visite
+    const ctx = await navigateur.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
+    await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+    await ctx.addInitScript(l => { if (!sessionStorage.getItem('__l')) { sessionStorage.setItem('__l', '1'); localStorage.setItem('ensam-lang', l); } }, langue);
+    const page = await ctx.newPage(), erreurs = [], polices = [];
+    page.on('pageerror', e => erreurs.push(e.message));
+    page.on('request', q => { const u = new URL(q.url()).pathname; if (/\.woff2$/.test(u)) polices.push(u.slice(1)); });
+    await page.goto(adresse); await page.waitForSelector('.hello h1');
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForTimeout(300);
+    const v = await page.evaluate(() => ({
+      h1: getComputedStyle(document.querySelector('.hello h1')).fontFamily,
+      h3: document.querySelector('h3') ? getComputedStyle(document.querySelector('h3')).fontFamily : null,
+      chargee: [...document.fonts].some(f => f.family.replace(/"/g, '') === 'Titres ENSAM arabe' && f.status === 'loaded'),
+    }));
+    if (langue === 'ar') {
+      assert.match(v.h1, /^"Titres ENSAM", "Titres ENSAM arabe"/, v.h1);
+      if (v.h3) assert.match(v.h3, /Titres ENSAM arabe/, v.h3);
+      assert.ok(v.chargee, 'la police des titres arabes est chargée');
+      assert.ok(polices.some(p => /^polices\/arabe-titres-(600|700)\.woff2$/.test(p)), polices.join(', '));
+    } else {
+      assert.doesNotMatch(v.h1, /arabe/);
+      assert.equal(v.chargee, false);
+      assert.deepEqual(polices.filter(p => /arabe/.test(p)), [], 'aucune police arabe en français');
+    }
+    assert.deepEqual(erreurs, []);
+    await ctx.close();
+  }
+});

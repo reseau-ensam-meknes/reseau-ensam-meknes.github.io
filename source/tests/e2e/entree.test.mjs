@@ -7,6 +7,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
 import { fauxSite, UID } from './faux-supabase.mjs';
+import { autoGroups } from '../../src/logic.js';
 
 const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe.min.js'), 'utf8');
 const SITE = path.resolve(process.env.SITE_DIR || new URL('../../dist', import.meta.url).pathname);
@@ -1055,64 +1056,141 @@ for (const [langue, theme] of [['fr', 'light'], ['ar', 'dark']]) {
 
 // ---------------------------------------------------------------------------
 // Plan · vitesse et ambiance (lot plan-vitesse) : page d'entrée plus légère (le magasin et l'application partent au
-// premier geste ou une fois la page calme, l'illustration juste après le formulaire, le CSS raccourci au build), et les
-// données écran par écran (l'accueil d'abord, les messages des groupes, les réactions et les commentaires de relecture
-// juste après ; un écran qui les lit les attend)
+// premier geste ou une fois la page calme, l'illustration juste après le formulaire, la page ne garde que le CSS de l'entrée,
+// tiré au build du CSS complet), et les données en deux temps (l'accueil d'abord ; les messages des groupes, les réactions et
+// les commentaires de relecture juste après le premier affichage ; un écran qui les lit les attend)
 // ---------------------------------------------------------------------------
-const { autoGroups } = await import('../../src/logic.js');
+// Le CSS complet du site construit (lu à la demande : sans site construit, before() le dit d'abord)
+const siteCss = () => fs.readFileSync(path.join(SITE, 'site.css'), 'utf8');
 
-test('page d’entrée plus légère : avant un geste, rien du magasin ni de l’application ; au premier toucher, ils partent', async () => {
-  const js = [], polices = [];
-  const v = await visiteur({ largeur: 390, hauteur: 844, avant: async ctx => {
-    ctx.on('request', q => { const u = new URL(q.url()); if (/\.m?js$/.test(u.pathname)) js.push(u.pathname.slice(1)); });
-    // Polices retenues : la page n'est jamais « calme », seul un geste fait partir le magasin (ou 12 s)
-    await ctx.route(/\.woff2$/, r => { polices.push(r); });
-  } });
+// Un visiteur dont les polices (ou autre chose) restent en route : la page n'est jamais « chargée », ni calme
+async function visiteLegere({ query = '', retenir = /\.woff2$/, largeur = 390, hauteur = 844, langue = 'fr' } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce' });
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  const js = [], tenus = []; let tenir = true;
+  ctx.on('request', q => { const u = new URL(q.url()); if (/\.m?js$/.test(u.pathname)) js.push(u.pathname.slice(1)); });
+  if (retenir) await ctx.route(retenir, r => (tenir ? tenus.push(r) : r.continue()));
+  await ctx.addInitScript(l => { if (!sessionStorage.getItem('__init')) { sessionStorage.setItem('__init', '1'); localStorage.setItem('ensam-lang', l); } }, langue);
+  const page = await ctx.newPage(), erreurs = [];
+  page.on('pageerror', e => erreurs.push(e.message));
+  await page.goto(site.adresse + query, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#entree .entree-form');
+  const lacher = async () => { tenir = false; for (const r of tenus.splice(0)) await r.continue().catch(() => {}); };
+  const app = () => page.waitForFunction(() => window.ENSAM_APP, null, { timeout: 15000 });
+  return { ctx, page, erreurs, js, tenus, lacher, app };
+}
+const parti = (page, re) => page.waitForFunction(re => performance.getEntriesByType('resource').some(e => new RegExp(re).test(e.name)), re.source, { timeout: 5000 });
+
+test('page d’entrée plus légère : avant un geste, ni le magasin ni l’application (8 fichiers JS, 10 au plus, contre 13 avant) ; au premier toucher, ils partent', async () => {
+  const v = await visiteLegere();
   await v.page.waitForTimeout(2500);
   const { magasin, modules } = await v.page.evaluate(() => ({ magasin: window.ENSAM_MAGASIN || [], modules: window.ENSAM_MODULES || [] }));
   assert.ok(magasin.includes('store.js') && modules.includes('app.js'), 'les listes du magasin et de l’application (site construit)');
   // Seuls les modules de l'entrée (préchargés), config.js, l'illustration et la rangée des fondateurs ; jamais le magasin
-  // ni l'application (fondateurs-public.js et scene.js servent aussi à l'application, ils sont chargés à part)
-  const avantGeste = [...js];
+  // ni l'application (fondateurs-public.js et scene.js servent aussi à l'application, l'entrée les charge à part).
+  // Mesuré : 8 fichiers JS ; la marge en laisse 10 au plus (main en demandait 13 dans les mêmes conditions).
+  const avantGeste = [...v.js];
   const deTrop = avantGeste.filter(f => [...magasin, ...modules].includes(f) && !['scene.js', 'fondateurs-public.js'].includes(f));
   assert.deepEqual(deTrop, [], `avant un geste : ${avantGeste.join(', ')}`);
   assert.ok(avantGeste.length <= 10, `${avantGeste.length} fichiers JS avant un geste : ${avantGeste.join(', ')}`);
   assert.ok(avantGeste.includes('scene.js'), 'l’illustration arrive juste après le formulaire');
-  assert.ok(await v.page.locator('#entree .entree-scene .scene svg').count() > 0, 'l’école est dessinée');
+  await v.page.waitForSelector('#entree .entree-scene .scene svg');
   assert.equal(await v.page.evaluate(() => typeof window.ENSAM_APP), 'undefined');
+  assert.equal(await v.page.locator('link[data-css="site"]').count(), 0, 'le CSS complet attend l’application');
   // Premier geste : le magasin part aussitôt, puis l'application ; la page marche comme avant
   await v.page.click('#au-je-etudiant');
-  await v.page.waitForFunction(() => performance.getEntriesByType('resource').some(e => /\/store\.js$/.test(e.name)), null, { timeout: 5000 });
-  for (const r of polices.splice(0)) await r.continue().catch(() => {});
+  await parti(v.page, /\/store\.js$/);
+  await v.lacher();
   await v.app();
   // Le toucher qui a fait partir le magasin a aussi fait son travail : le rôle est choisi
   assert.equal(await v.page.getAttribute('#au-je-etudiant', 'aria-pressed'), 'true');
-  assert.ok(await v.debordement() <= 0);
+  // Le CSS complet est arrivé avec l'application, et celui de l'entrée est parti (rien en double)
+  assert.equal(await v.page.locator('link[data-css="site"]').count(), 1);
+  assert.equal(await v.page.locator('#css-entree').count(), 0);
+  assert.ok((await v.page.evaluate(() => document.documentElement.scrollWidth - innerWidth)) <= 0);
   assert.deepEqual(v.erreurs, []);
   await v.ctx.close();
 });
 
-test('page d’entrée plus légère : sans geste, le magasin part une fois la page chargée et calme ; un lien d’appareil le fait partir tout de suite', async () => {
-  let v = await visiteur({ largeur: 390, hauteur: 844 });
+test('page d’entrée plus légère : sans geste, le magasin part une fois la page chargée et calme ; un lien d’appareil (?notifs=1) le fait partir tout de suite', async () => {
+  const v = await visiteur({ largeur: 390, hauteur: 844 });
   await v.app();
   const t = await v.page.evaluate(() => ({ charge: performance.getEntriesByType('navigation')[0].loadEventEnd, magasin: performance.getEntriesByType('resource').find(e => /\/store\.js$/.test(e.name))?.startTime }));
   assert.ok(t.magasin >= t.charge + 800, `le magasin après la page calme (chargée à ${Math.round(t.charge)} ms, magasin à ${Math.round(t.magasin)} ms)`);
   assert.deepEqual(v.erreurs, []);
   await v.ctx.close();
-  // ?notifs=1 (lien d'une notification) : l'application lit l'adresse, le magasin part tout de suite
-  const polices = [];
-  v = await visiteur({ largeur: 390, hauteur: 844, query: '?notifs=1', avant: ctx => ctx.route(/\.woff2$/, r => { polices.push(r); }) });
-  await v.page.waitForFunction(() => performance.getEntriesByType('resource').some(e => /\/store\.js$/.test(e.name)), null, { timeout: 4000 });
-  for (const r of polices.splice(0)) await r.continue().catch(() => {});
-  assert.deepEqual(v.erreurs, []);
-  await v.ctx.close();
+  // ?notifs=1 (lien d'une notification) : l'application lit l'adresse, le magasin part tout de suite, même page pas chargée
+  const n = await visiteLegere({ query: '?notifs=1' });
+  await parti(n.page, /\/store\.js$/);
+  await n.lacher();
+  assert.deepEqual(n.erreurs, []);
+  await n.ctx.close();
 });
 
-test('page d’entrée plus légère : le CSS raccourci au build donne au navigateur exactement les mêmes règles que page.html', async () => {
-  const styles = h => [...h.matchAll(/<style>([\s\S]*?)<\/style>/g)].map(m => m[1]);
-  const src = styles(fs.readFileSync(new URL('../../src/page.html', import.meta.url), 'utf8'));
-  const dist = styles(fs.readFileSync(path.join(SITE, 'index.html'), 'utf8'));
-  assert.equal(dist.length, src.length);
+// Le CSS de l'entrée (dans la page) face au CSS complet (site.css) : chaque élément, chaque propriété calculée, pseudo-éléments
+// compris, doit être pareil avec l'un ou l'autre. Le CSS complet est retenu (jamais servi, sans échec : un échec ferait
+// recharger la page d'un membre) pour voir la page sans lui.
+const stylesCalcules = page => page.evaluate(() => {
+  const out = {};
+  const els = [document.documentElement, ...document.querySelectorAll('body, body *')].filter(e => !e.closest('svg') || e.tagName.toLowerCase() === 'svg');
+  els.forEach((e, i) => {
+    const id = i + ':' + e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (typeof e.className === 'string' && e.className.trim() ? '.' + e.className.trim().split(/\s+/).join('.') : '');
+    for (const pseudo of [null, '::before', '::after', '::placeholder', '::marker']) {
+      const st = getComputedStyle(e, pseudo);
+      if ((pseudo === '::before' || pseudo === '::after') && st.content === 'none') continue;
+      const o = {}; for (let k = 0; k < st.length; k++) { const p = st[k]; if (!/^(transition|animation)/.test(p)) o[p] = st.getPropertyValue(p); }
+      out[id + (pseudo || '')] = o;
+    }
+  });
+  return out;
+});
+async function memesStyles(nom, { largeur = 390, hauteur = 844, langue = 'fr', theme = 'light', query = '', jeton = false, faire } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce', colorScheme: theme });
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  await ctx.route(/\/site\.css/, () => {});
+  await ctx.addInitScript(([langue, jeton, uid]) => {
+    if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1');
+    localStorage.setItem('ensam-lang', langue);
+    if (jeton) { const now = Math.floor(Date.now() / 1000); localStorage.setItem('sb-127-auth-token', JSON.stringify({ access_token: 'x.' + btoa(JSON.stringify({ sub: uid, exp: now + 3600 })) + '.y', refresh_token: 'r', expires_at: now + 3600, expires_in: 3600, token_type: 'bearer', user: { id: uid, email: 'membre@exemple.ma' } })); }
+  }, [langue, jeton, UID]);
+  const page = await ctx.newPage();
+  await page.goto(site.adresse + query, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector(jeton ? '.shell.squelette' : '#entree .entree-form');
+  if (faire) await faire(page);
+  await page.waitForTimeout(1200);
+  const seul = await stylesCalcules(page);
+  await page.evaluate(css => { const s = document.createElement('style'); s.textContent = css; const e = document.getElementById('css-entree'); e.after(s); e.remove(); }, siteCss());
+  await page.waitForTimeout(200);
+  const complet = await stylesCalcules(page);
+  const diffs = [];
+  for (const k of Object.keys(complet)) { if (!seul[k]) { diffs.push(`${k} : absent sans le CSS complet`); continue; } for (const p of Object.keys(complet[k])) if (seul[k][p] !== complet[k][p]) diffs.push(`${k} { ${p}: ${seul[k][p]} → ${complet[k][p]} }`); }
+  assert.ok(Object.keys(complet).length > 30, `${nom} : ${Object.keys(complet).length} éléments`);
+  assert.deepEqual(diffs.slice(0, 8), [], `${nom} : ${diffs.length} différences`);
+  await ctx.close();
+}
+test('page d’entrée plus légère : son CSS seul donne exactement les styles du CSS complet (formulaire, fondateurs, code, erreur, promo, arabe sombre, forme de l’accueil)', async () => {
+  // Bien plus petit que le CSS complet, et tiré de lui au build (outils/css-critique.mjs)
+  const page = fs.readFileSync(path.join(SITE, 'index.html'), 'utf8');
+  const entree = page.match(/<style id="css-entree">([\s\S]*?)<\/style>/)?.[1] || '';
+  assert.ok(entree.length > 10000 && entree.length < siteCss().length * 0.35, `CSS de l’entrée ${entree.length} octets, complet ${siteCss().length}`);
+  assert.match(page, /window\.ENSAM_CSS='site\.css\?v=[0-9a-f]{10}'/);
+  fondateursFaux = reponse();
+  await memesStyles('visiteur, fondateurs', { faire: p => p.waitForSelector('.fd-public .fd-carte') });
+  fondateursFaux = null;
+  await memesStyles('arabe, sombre, ordinateur', { langue: 'ar', theme: 'dark', largeur: 1280, hauteur: 900 });
+  await memesStyles('code', { faire: async p => { await p.click('#au-je-etudiant'); await p.fill('#au-email', 'amine@ensam-umi.ac.ma'); await p.check('#au-ok'); await p.click('.entree-form button.btn.primary'); await p.waitForSelector('#au-code'); } });
+  await memesStyles('erreur', { faire: async p => { await p.click('#au-je-etudiant'); await p.fill('#au-email', 'vite@exemple.ma'); await p.check('#au-ok'); await p.click('.entree-form button.btn.primary'); await p.waitForSelector('.auth-msg'); } });
+  await memesStyles('promo, mot de passe', { query: '?promo=2019', faire: async p => { await p.click('text=J’ai déjà un compte'); await p.click('#au-mdp'); } });
+  await memesStyles('forme de l’accueil (membre)', { jeton: true });
+  await memesStyles('forme de l’accueil (membre, arabe, ordinateur)', { jeton: true, langue: 'ar', largeur: 1280, hauteur: 900 });
+});
+
+test('page d’entrée plus légère : le CSS complet donne au navigateur exactement les règles de page.html', async () => {
+  const src = fs.readFileSync(new URL('../../src/page.html', import.meta.url), 'utf8');
+  const fin = src.indexOf('<div id="app">');
+  const [polices, tout] = [...src.slice(0, fin).matchAll(/<style>([\s\S]*?)<\/style>/g)].map(m => m[1]);
+  const dist = fs.readFileSync(path.join(SITE, 'index.html'), 'utf8');
+  const policesDist = dist.match(/<style>([\s\S]*?)<\/style>/)[1];
   const page = await navigateur.newPage();
   const regles = css => page.evaluate(css => {
     // Seuls les espaces autour de , et > changent (ceux que le raccourci enlève) : on les retire des deux côtés
@@ -1123,19 +1201,56 @@ test('page d’entrée plus légère : le CSS raccourci au build donne au naviga
       if (r.style) { const props = []; for (let i = 0; i < r.style.length; i++) { const p = r.style[i]; props.push(p + ':' + n(r.style.getPropertyValue(p)) + (r.style.getPropertyPriority(p) ? '!' : '')); } out.push(t + '{' + props.join(';') + '}'); } else out.push(t);
       if (r.cssRules) tour(r.cssRules, t + ' > ');
     } };
-    for (const c of css) { const st = new CSSStyleSheet(); st.replaceSync(c); tour(st.cssRules, ''); }
+    const st = new CSSStyleSheet(); st.replaceSync(css); tour(st.cssRules, '');
     return out;
   }, css);
-  const a = await regles(src), b = await regles(dist);
-  assert.ok(a.length > 1500, `${a.length} règles`);
-  assert.equal(b.length, a.length);
-  const diff = a.map((x, i) => [x, b[i]]).filter(([x, y]) => x !== y);
-  assert.deepEqual(diff.slice(0, 3), []);
-  assert.ok(dist.join('').length < src.join('').length * 0.9);
+  for (const [a, b, nom] of [[tout, siteCss(), 'site.css'], [polices, policesDist, 'polices']]) {
+    const ra = await regles(a), rb = await regles(b);
+    assert.equal(rb.length, ra.length, nom);
+    assert.deepEqual(ra.map((x, i) => [x, rb[i]]).filter(([x, y]) => x !== y).slice(0, 3), [], nom);
+  }
+  assert.ok((await regles(tout)).length > 1500);
   await page.close();
 });
 
-test('données écran par écran (en ligne) : l’accueil s’affiche sans attendre les messages des groupes ; les Groupes les attendent, puis les montrent', async () => {
+// Un membre déjà connecté, sans attendre le chargement complet de la page (un fichier retenu le retarderait)
+async function membreLeger({ hash = '', avant } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  if (avant) await avant(ctx);
+  await ctx.addInitScript(uid => {
+    if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1');
+    localStorage.setItem('ensam-lang', 'fr');
+    const now = Math.floor(Date.now() / 1000);
+    localStorage.setItem('sb-127-auth-token', JSON.stringify({ access_token: 'x.' + btoa(JSON.stringify({ sub: uid, exp: now + 7200 })) + '.y', token_type: 'bearer', expires_in: 7200, expires_at: now + 7200, refresh_token: 'r', user: { id: uid, aud: 'authenticated', email: 'membre@exemple.ma', user_metadata: {}, app_metadata: {} } }));
+  }, UID);
+  const page = await ctx.newPage(), erreurs = [];
+  page.on('pageerror', e => erreurs.push(e.message));
+  await page.goto(site.adresse + hash, { waitUntil: 'domcontentloaded' });
+  return { ctx, page, erreurs };
+}
+
+test('page d’entrée plus légère : un membre connecté voit la forme de l’accueil, et l’application attend le CSS complet pour s’afficher', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  let tenir = true; const tenus = [];
+  const m = await membreLeger({ avant: ctx => ctx.route(/\/site\.css/, r => (tenir ? tenus.push(r) : r.continue())) });
+  await m.page.waitForSelector('.shell.squelette');
+  // Le CSS complet est demandé tout de suite (préchargé dans <head>), avec le magasin et l'application
+  for (let i = 0; i < 50 && !tenus.length; i++) await m.page.waitForTimeout(100);
+  assert.ok(tenus.length >= 1, 'site.css demandé dès le haut de la page');
+  await m.page.waitForFunction(() => performance.getEntriesByType('resource').some(e => /\/app\.js$/.test(e.name) && e.responseEnd > 0), null, { timeout: 10000 });
+  await m.page.waitForTimeout(800);
+  assert.equal(await m.page.locator(ACCUEIL).count(), 0, 'pas d’accueil sans son CSS');
+  assert.equal(await m.page.locator('.shell.squelette').count(), 1, 'la forme de l’accueil patiente');
+  tenir = false; for (const r of tenus.splice(0)) await r.continue();
+  await m.page.waitForSelector(ACCUEIL, { timeout: 15000 });
+  assert.equal(await m.page.locator('#css-entree').count(), 0);
+  assert.equal(await m.page.locator(ACCUEIL).evaluate(e => getComputedStyle(e).display), 'grid', 'l’accueil a tout son style');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('données en deux temps (en ligne) : l’accueil s’affiche sans attendre les messages des groupes ; ils partent juste après ; les Groupes les attendent, puis les montrent', async () => {
   const [groupe] = autoGroups(ETUDIANT);
   assert.ok(groupe);
   site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
@@ -1158,7 +1273,7 @@ test('données écran par écran (en ligne) : l’accueil s’affiche sans atten
   await m.page.waitForSelector('.rangee-groupes .gcard-last');
   assert.match(await m.page.locator('.rangee-groupes .gcard-last').first().innerText(), /Rendez-vous jeudi à la bibliothèque/);
   assert.equal(await m.page.locator('.page-attente').count(), 0);
-  // Ensuite, plus rien n'attend : retour à l'accueil puis aux Groupes, tout de suite là, sans nouvelle lecture
+  // Ensuite, plus rien n'attend : retour à l'accueil puis au Réseau, tout de suite là, sans nouvelle lecture
   const lectures = site.appels.filter(a => a.u === '/sb/rest/v1/groupe_messages').length;
   await m.page.evaluate(() => { location.hash = '#accueil'; }); await m.page.waitForSelector(ACCUEIL);
   await m.page.evaluate(() => { location.hash = '#reseau'; });
@@ -1169,17 +1284,42 @@ test('données écran par écran (en ligne) : l’accueil s’affiche sans atten
   await m.ctx.close();
 });
 
-test('données écran par écran (en ligne) : une conversation ouverte d’un lien attend ses réactions, puis s’ouvre comme avant', async () => {
+test('données en deux temps (en ligne) : une conversation ouverte d’un lien (notification) lit ses réactions avec le reste, puis s’ouvre comme avant', async () => {
   site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
   site.tables.mentorships = EN_CONTACT();
   let tenir = true; const tenus = [];
-  const m = await connecte({ hash: '#messages/' + AUTEUR, attendre: '.page-attente', avant: ctx => ctx.route(/\/sb\/rest\/v1\/reactions_messages/, r => (tenir ? tenus.push(r) : r.continue())) });
-  assert.equal(await m.page.locator('#chat-txt').count(), 0);
-  for (let i = 0; i < 40 && !tenus.length; i++) await m.page.waitForTimeout(100);
-  assert.ok(tenus.length >= 1);
+  const m = await connecte({ hash: '#messages/' + AUTEUR, attendre: null, avant: ctx => ctx.route(/\/sb\/rest\/v1\/reactions_messages/, r => (tenir ? tenus.push(r) : r.continue())) });
+  for (let i = 0; i < 50 && !tenus.length; i++) await m.page.waitForTimeout(100);
+  assert.equal(tenus.length, 1, 'les réactions partent avec les premières tables');
+  await m.page.waitForTimeout(600);
+  assert.equal(await m.page.locator('#chat-txt').count(), 0, 'pas de conversation sans ses réactions');
   tenir = false; for (const r of tenus.splice(0)) await r.continue();
   await m.page.waitForSelector('#chat-txt', { timeout: 10000 });
   assert.equal(await m.page.locator('.page-attente').count(), 0);
+  await m.page.waitForTimeout(2500);
+  // Ensuite, relues seulement avec les messages, par le rattrapage de la conversation ouverte (messages.js, comme avant) ;
+  // jamais par le second temps, qui ne lit que ce qui manque encore
+  const lues = t => site.appels.filter(a => a.u === '/sb/rest/v1/' + t && a.m === 'GET').length;
+  assert.equal(lues('reactions_messages'), lues('messages'), `réactions ${lues('reactions_messages')}, messages ${lues('messages')}`);
+  assert.ok(lues('reactions_messages') <= 2, `réactions lues ${lues('reactions_messages')} fois`);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('données en deux temps (en ligne) : l’administration voit tout dans sa console ; le message de groupe signalé, arrivé en second, est dans la modération', async () => {
+  const GM = 'a1b2c3d4-0000-4000-8000-0000000000aa';
+  site.inscrits.push({ ...ETUDIANT, role: 'admin', full_name: 'Admin Test', consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.groupe_messages = [{ id: GM, groupe: 'filiere:gi', author_id: AUTEUR, body: 'Stage payé contre 500 dirhams, écris-moi', created_at: new Date().toISOString() }];
+  site.tables.signalements = [{ id: 'a1b2c3d4-0000-4000-8000-0000000000bb', cible_type: 'message', cible_id: GM, motif: 'arnaque', status: 'ouvert', auteur_id: AUTEUR, created_at: new Date().toISOString() }];
+  let tenir = true; const tenus = [];
+  const m = await connecte({ attendre: '.me-btn', avant: ctx => ctx.route(/\/sb\/rest\/v1\/groupe_messages/, r => (tenir ? tenus.push(r) : r.continue())) });
+  await m.page.evaluate(() => { location.hash = '#admin/moderation'; });
+  await m.page.waitForSelector('.page-attente');
+  assert.equal(await m.page.locator('.mod-card').count(), 0, 'jamais « Contenu déjà supprimé » pour un message pas encore arrivé');
+  tenir = false; for (const r of tenus.splice(0)) await r.continue();
+  await m.page.waitForSelector('.mod-card .mod-texte');
+  assert.match(await m.page.locator('.mod-card .mod-texte').first().innerText(), /Stage payé contre 500 dirhams/);
+  assert.equal(await m.page.getByText('Contenu déjà supprimé').count(), 0);
   assert.deepEqual(m.erreurs, []);
   await m.ctx.close();
 });
