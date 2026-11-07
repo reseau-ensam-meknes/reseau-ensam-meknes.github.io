@@ -447,11 +447,13 @@ export function AuthScreen({ store }) {
     });
     return () => { vivant = false; };
   }, []);
-  // L'étape apportée par l'adresse ne vaut que pour l'arrivée : lue une fois, jamais après une session perdue ou une déconnexion
+  // L'étape apportée par l'adresse ne vaut que pour l'arrivée : lue une fois, jamais après une session perdue ou une déconnexion.
+  // Un compte qui vient de partir (déconnexion, session perdue) passe aussi avant l'étape d'une saisie gardée : se reconnecter
   const [mode, setMode] = useState(() => {
     const arrivee = modeArrivee; modeArrivee = null;
-    return recovery ? 'nouveau' : attente ? 'code' : ['inscription', 'connexion', 'motdepasse'].includes(saisie?.mode) ? saisie.mode
-      : store?.sessionPerdue || store?.compteParti ? 'connexion' : arrivee || (lien?.k === 'aider' ? 'connexion' : invite || !dejaMembre() ? 'inscription' : 'connexion');
+    return recovery ? 'nouveau' : attente ? 'code' : store?.sessionPerdue || store?.compteParti ? 'connexion'
+      : ['inscription', 'connexion', 'motdepasse'].includes(saisie?.mode) ? saisie.mode
+      : arrivee || (lien?.k === 'aider' ? 'connexion' : invite || !dejaMembre() ? 'inscription' : 'connexion');
   });
   const [origine, setOrigine] = useState(attente ? (attente.creer ? 'inscription' : 'connexion') : 'inscription');
   const [role, setRoleEtat] = useState(() => roleRetenu() || (invite ? roleDePromo(invite) : ''));
@@ -687,7 +689,13 @@ function relancerApp() {
   };
   essai();
 }
-const apresConnexion = () => { connecte = true; if (appEchec) relancerApp(); };
+// Connecté : ce que la page d'entrée avait gardé pour un rechargement (« Ouvrir dans Chrome » que l'application a ignoré,
+// par exemple) ne sert plus, et ne doit pas revenir sur la page d'entrée d'une déconnexion ou d'une session perdue
+const apresConnexion = () => {
+  connecte = true;
+  try { sessionStorage.removeItem(SAISIE); } catch { /* stockage indisponible */ }
+  if (appEchec) relancerApp();
+};
 
 // L'entrée vit dans son propre conteneur, à côté de #app ; l'application la reprend telle quelle
 let el = null;
