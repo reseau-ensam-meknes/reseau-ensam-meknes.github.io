@@ -338,7 +338,7 @@ addAR({
   'Ambassadeurs de promo': 'سفراء الدفعات', 'Proposer maintenant': 'اقتراح الآن', 'Retirer': 'سحب', 'Nommer': 'تعيين', 'Nommer à la main': 'تعيين يدوي',
   'Nom d’un étudiant ou d’un lauréat': 'اسم طالب أو خريج', 'Aucun ambassadeur pour l’instant.': 'لا يوجد سفراء حاليًا.',
   'Rien à proposer pour l’instant.': 'لا شيء للاقتراح حاليًا.', '1 changement : proposition faite ou expirée.': 'تغيير واحد: اقتراح جديد أو منتهٍ.',
-  ' · nommé par l’administration': ' · بتعيين من الإدارة', ' · sans nom': ' · دون اسم',
+  ' · nommé par l’administration': ' · بتعيين من الإدارة', 'nommé par l’administration': 'بتعيين من الإدارة', ' · sans nom': ' · دون اسم',
   'Ambassadeur de promo': 'سفير الدفعة', 'Fait venir sa promo et relaie ses réussites': 'يدعو دفعته وينقل نجاحاتها',
   [`La plateforme propose le rôle au membre le plus actif de chaque promo et filière ; sans réponse en ${AMB_DELAI_JOURS} jours ou après un refus, au suivant. Un seul ambassadeur par promo et filière.`]: `تقترح المنصة الدور على العضو الأكثر نشاطًا في كل دفعة وشعبة؛ وإن لم يأتِ رد خلال ${AMB_DELAI_JOURS} أيام أو جاء رفض، فعلى من يليه. سفير واحد لكل دفعة وشعبة.`,
 }, [

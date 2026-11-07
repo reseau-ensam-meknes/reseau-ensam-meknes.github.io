@@ -160,6 +160,9 @@ injectCSS('admin-console', `
 .en-tete-act .cs-outils { flex-wrap: nowrap; }
 .cs-ecole { display: inline-flex; align-items: center; gap: .4rem; padding-inline-start: .6rem; border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--surface); color: var(--muted); }
 .cs-ecole select { border: 0; background: transparent; padding-inline: .2rem .5rem; color: var(--ink); font-weight: 600; }
+/* Un nom d'école long se coupe au lieu de faire défiler la page de côté (390 px) */
+.cs-ecole { min-width: 0; max-width: 100%; }
+.cs-ecole select { min-width: 0; flex: 0 1 auto; text-overflow: ellipsis; }
 @media (pointer: fine) { .cs-ecole select { min-height: 40px; } }
 .cs-cherche { position: relative; flex: 1 1 18rem; min-width: 0; }
 .en-tete-act .cs-cherche { flex: 0 1 21rem; width: 21rem; }

@@ -176,10 +176,10 @@ function EcoleTag({ ctx, slug }) {
 }
 // Animer, Partenaires, Affiches, liens d'invitation : quand la console regarde une autre école, une ligne dit que ces textes
 // sont ceux de l'ENSAM Meknès
+// (aussi sous « Toutes les écoles », où ces chiffres ne couvrent que l'ENSAM Meknès ; inutile quand la console la regarde)
 function NoteTextesMeknes({ ctx }) {
-  const e = ctx.ecoleConsole;
-  if (!e || e === ECOLE_DEFAUT) return null;
-  return html`<p class="hint-box small cs-note-ecole" role="note"><${Icon} name="info" size=${16}/><span>${`Ici, les textes, affiches et chiffres sont ceux du Réseau ENSAM Meknès : pour ${ctx.nomEcole(e)}, il faut d’abord l’accord écrit de l’école pour son nom.`}</span></p>`;
+  if (!plusieursEcoles(ctx) || ctx.ecoleConsole === ECOLE_DEFAUT) return null;
+  return html`<p class="hint-box small cs-note-ecole" role="note"><${Icon} name="info" size=${16}/><span>Ici, les textes, affiches et chiffres sont toujours ceux du Réseau ENSAM Meknès, quelle que soit l’école choisie.</span></p>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -848,10 +848,9 @@ addAR({
   'Choisis un public.': 'اختر الفئة المعنية.', 'Choisis des années de la liste.': 'اختر سنوات من اللائحة.', 'Choisis les dates de début et de fin.': 'اختر تاريخَي البداية والنهاية.',
   'La fin vient après le début.': 'يأتي تاريخ النهاية بعد البداية.',
   'Une carte pour toutes les écoles paraît dans chaque réseau.': 'تظهر البطاقة الموجّهة إلى كل المدارس في شبكة كل مدرسة.',
+  'Ici, les textes, affiches et chiffres sont toujours ceux du Réseau ENSAM Meknès, quelle que soit l’école choisie.': 'هنا، النصوص والملصقات والأرقام هي دائمًا تلك الخاصة بشبكة ENSAM مكناس، مهما كانت المدرسة المختارة.',
 }, [
   [/^Du (\S+) au (\S+)$/, (a, b) => `من ${a} إلى ${b}`],
-  [/^Ici, les textes, affiches et chiffres sont ceux du Réseau ENSAM Meknès : pour (.+), il faut d’abord l’accord écrit de l’école pour son nom\.$/,
-    n => `هنا، النصوص والملصقات والأرقام خاصة بشبكة ENSAM مكناس: بالنسبة إلى ${n}، يلزم أولًا الموافقة الكتابية للمدرسة على استعمال اسمها.`],
 ]);
 
 injectCSS('admin', `

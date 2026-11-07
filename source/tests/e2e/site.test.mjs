@@ -6865,11 +6865,12 @@ test('console · Écoles : « Ouvrir le réseau » reste grisé tant que les tro
 });
 
 // Deux écoles dans la démo : la console d'une école créée dans la rubrique Écoles (« Institut exemple », son suivi déjà là)
-async function deuxiemeEcole(s) {
+async function deuxiemeEcole(s, nom = 'Institut exemple') {
   await s.aller('admin/ecoles'); await s.page.waitForSelector('#ec-reseaux');
-  await s.page.click('#ec-creer'); await s.page.fill('#ec-nom', 'Institut exemple'); await s.page.click('#ec-creer-ok');
-  await s.page.locator('.ec-reseau[data-slug="institut-exemple"]').waitFor();
+  await s.page.click('#ec-creer'); await s.page.fill('#ec-nom', nom); await s.page.click('#ec-creer-ok');
+  const reseau = s.page.locator('.ec-reseau', { hasText: nom }).first(); await reseau.waitFor();
   await s.page.waitForSelector('#cs-ecole');
+  return reseau.getAttribute('data-slug');
 }
 
 test('console · deux écoles : le choix d’école (gardé et partagé avec Suivi) range l’annonce, la liste officielle, les cartes sponsorisées et les ambassadeurs ; l’identifiant d’une école qui a son réseau ne change plus', async () => {
@@ -6896,13 +6897,24 @@ test('console · deux écoles : le choix d’école (gardé et partagé avec Sui
   await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.page.waitForTimeout(200);
   for (const r of ['admin/animer', 'admin/partenaires', 'admin/outils', 'admin/inviter']) {
     await s.aller(r);
-    assert.match(await s.page.locator('.cs-note-ecole').innerText(), /pour Institut exemple, il faut d’abord l’accord écrit de l’école/, r);
+    assert.match(await s.page.locator('.cs-note-ecole').innerText(), /toujours ceux du Réseau ENSAM Meknès, quelle que soit l’école choisie/, r);
   }
   await s.aller('admin/agenda'); assert.equal(await s.page.locator('.cs-note-ecole').count(), 0);
+  // Sous « Toutes les écoles » aussi (ces chiffres ne couvrent que l'ENSAM Meknès) ; pas quand la console la regarde
+  await s.aller('admin/animer');
+  await s.page.selectOption('#cs-ecole', ''); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator('.cs-note-ecole').count(), 1);
+  await s.page.selectOption('#cs-ecole', 'ensam-meknes'); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator('.cs-note-ecole').count(), 0);
+  await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.page.waitForTimeout(200);
   // « Publier un événement » de la barre latérale part, lui aussi, pour l'école que regarde la console
+  await s.aller('admin/agenda');
   await s.page.click('.side-pub'); await s.page.waitForSelector('#ev-titre');
   assert.match(await s.page.locator('#ev-ecole').innerText(), /École : Institut exemple/);
-  await s.fermer();
+  await s.page.fill('#ev-titre', 'Journée portes ouvertes de l’Institut'); await s.page.click('#ev-ok'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.evaluate(() => window.__demo.data.evenements.find(e => e.titre === 'Journée portes ouvertes de l’Institut')?.ecole), 'institut-exemple');
+  await s.aller('admin/agenda');
+  assert.match(await s.page.locator('.cs-main').innerText(), /Journée portes ouvertes de l’Institut/, 'dans l’agenda de la console, pour l’Institut');
 
   // L'annonce publiée pour l'Institut exemple reste la sienne
   await s.aller('admin');
@@ -6993,6 +7005,12 @@ test('console · deux écoles en arabe (390 px) : le choix d’école, les rubri
   }
   await s.aller('admin/sponsorises'); await s.page.click('#sp-nouvelle'); await s.page.waitForSelector('#sp-ecole');
   await relever('admin/sponsorises · nouvelle carte');
+  await s.fermer();
+  // Un nom d'école long se coupe : la page ne défile pas de côté (console, Suivi)
+  const long = await deuxiemeEcole(s, 'Institut supérieur des sciences appliquées et des métiers de demain');
+  await s.page.selectOption('#cs-ecole', long); await s.page.waitForTimeout(200);
+  for (const r of ['admin', 'admin/liste', 'suivi', 'suivi/insertion']) { await s.aller(r); assert.equal(await s.debordement(), 0, `${r} : nom long, rien ne dépasse`); }
+  await relever('nom d’école long');
   assert.deepEqual(oublis, [], 'tout traduit');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();

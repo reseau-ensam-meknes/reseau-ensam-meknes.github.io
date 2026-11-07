@@ -23,7 +23,9 @@ function SuiviAdmin({ ctx }) {
   const { ecoles, ecole, changer, nomDe } = useEcoleRegardee(ctx);
   const plusieurs = ecoles.length > 1;
   const ici = plusieurs ? ecole || ecoleDe(ctx.me) : '';
-  const choix = plusieurs ? html`<label class="season-pick suivi-ecole">École <select id="suivi-ecole" value=${ici} onChange=${e => changer(e.target.value)}>${ecoles.map(e => html`<option key=${e.slug} value=${e.slug} translate="no">${e.nom}</option>`)}</select></label>` : null;
+  // Changer d'école refait la page (clé) : le choix, recréé, reprend le focus qu'il avait (clavier, lecteur d'écran)
+  const choisir = e => { const avait = document.activeElement === e.target; changer(e.target.value); if (avait) requestAnimationFrame(() => document.getElementById('suivi-ecole')?.focus()); };
+  const choix = plusieurs ? html`<label class="season-pick suivi-ecole">École <select id="suivi-ecole" value=${ici} onChange=${choisir}>${ecoles.map(e => html`<option key=${e.slug} value=${e.slug} translate="no">${e.nom}</option>`)}</select></label>` : null;
   const c = { ...ctx, data: donneesDeLEcole(ctx.data, ici), ecoleSuivi: ici, nomEcoleSuivi: ici ? nomDe(ici) : '', choixEcole: choix };
   return ctx.sub === 'insertion' ? html`<${InsertionPage} key=${'ins-' + ici} ctx=${c}/>` : html`<${SeasonPage} key=${'sp-' + ici} ctx=${c}/>`;
 }
@@ -335,6 +337,10 @@ addAR({
 injectCSS('dashboard-insertion', `
 /* Suivi de l'administration : le choix de l'école à côté de celui de l'année (plusieurs écoles) */
 .suivi-picks { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .9rem; }
+/* Un nom d'école long se coupe au lieu de faire défiler la page de côté (390 px) */
+.suivi-picks { min-width: 0; max-width: 100%; }
+.suivi-ecole { min-width: 0; max-width: 100%; }
+.suivi-ecole select { min-width: 0; flex: 0 1 auto; text-overflow: ellipsis; }
 .page-head > .suivi-ecole { align-self: flex-end; }
 .suivi-seg { align-self: flex-start; }
 .suivi-seg button { display: inline-flex; align-items: center; gap: .35rem; }
