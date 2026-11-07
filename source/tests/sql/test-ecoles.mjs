@@ -245,12 +245,14 @@ test('nouvelles notifications programmées : l’école est filtrée avant le pl
     await lancer('match_attente_push', 12, 30);
     assert.deepEqual(par(await file('match_attente'), x => [x.n, x.nom, x.de]), { MEK: [[1, 'Nadia', MEK3]] });
 
-    // Rappel du soir : les nouvelles clés comptent dans son école (un match et un oui chacun ; Hiba, rien de Meknès)
+    // Rappel du soir : les nouvelles clés comptent dans son école (un match et un oui chacun ; Hiba, rien de Meknès). Le oui
+    // de Nadia, rappelé à midi (match_attente), ne revient pas le soir : Omar, de Meknès, dit oui à Salma cet après-midi.
+    await oui(NOUVEAU_LAU, 'cible_profil', MEK, '2 hours');
     await db.query(`insert into public.matchs (etudiant_id, laureat_id) values ($1, $2), ($3, $4)`, [MEK, MEK2, HIBA, MEK3]);
     await db.query(`update public.profiles set created_at = now() - interval '30 days' where id = any($1::uuid[])`, [[MEK, MEK2, MEK3, AUTRE, HIBA]]);
     await lancer('rappels_push', 18);
     const rv = await file('rappel_visite');
-    assert.deepEqual([rv.MEK[0].matchs, rv.MEK[0].interets], [1, 1], 'Youssef et Nadia ; pas le oui de Karim, d’une autre école');
+    assert.deepEqual([rv.MEK[0].matchs, rv.MEK[0].interets], [1, 1], 'Youssef et Omar ; pas le oui de Karim, d’une autre école');
     assert.equal(rv.MEK3[0].matchs, undefined, 'le match avec Hiba, d’une autre école, ne compte pas');
     assert.deepEqual([rv.HIBA[0].matchs, rv.HIBA[0].interets], [undefined, undefined], 'ni le match avec Nadia ni le oui d’Omar');
     assert.equal(rv.MEK2?.[0]?.interets, undefined, 'le oui de Hiba sur son offre, d’une autre école, ne compte pas');
