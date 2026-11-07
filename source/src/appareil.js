@@ -76,7 +76,6 @@ export const CARTE = {
   android: 'Ouvre le Réseau dans Chrome : tu y resteras connecté et tes notifications arriveront sur ce téléphone.',
   ios: 'Ouvre le Réseau dans Safari : tu y resteras connecté.',
   geste: GESTE_SAFARI,
-  icone: { iphone: 'Sur iPhone, les notifications passent ensuite par l’icône de l’écran d’accueil.', ipad: 'Sur iPad, les notifications passent ensuite par l’icône de l’écran d’accueil.' },
   ouvrir: 'Ouvrir dans Chrome', ici: 'Continuer ici', ligne: 'Ouvrir le Réseau dans Chrome',
   rien: 'Rien ne s’ouvre ? Touche ⋮ en haut à droite, puis « Ouvrir dans Chrome » ou « Ouvrir dans le navigateur ».',
 };
@@ -85,8 +84,6 @@ export const CARTE_AR = {
   [CARTE.android]: 'افتح الشبكة في Chrome: ستبقى متصلًا، وستصل إشعاراتك إلى هذا الهاتف.',
   [CARTE.ios]: 'افتح الشبكة في Safari: ستبقى متصلًا.',
   [GESTE_SAFARI]: 'المس ••• (أعلى الشاشة أو أسفلها)، ثم «فتح في Safari» أو «فتح في المتصفح».',
-  [CARTE.icone.iphone]: 'على iPhone، تصل الإشعارات بعد ذلك عبر الأيقونة على الشاشة الرئيسية.',
-  [CARTE.icone.ipad]: 'على iPad، تصل الإشعارات بعد ذلك عبر الأيقونة على الشاشة الرئيسية.',
   [CARTE.ouvrir]: 'فتح في Chrome', [CARTE.ici]: 'المتابعة هنا', [CARTE.ligne]: 'افتح الشبكة في Chrome',
   [CARTE.rien]: 'لا يُفتح شيء؟ المس ⋮ في أعلى الشاشة، ثم «فتح في Chrome» أو «فتح في المتصفح».',
 };
@@ -106,6 +103,8 @@ export const CARTE_CSS = `.entree-appli { display: grid; grid-template-columns: 
 .entree-appli-acts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .5rem; }
 .entree-appli-acts .btn { min-height: 44px; text-decoration: none; }
 .entree-appli-acts .linkish { min-height: 44px; padding-inline: .5rem; }
+.entree-appli[data-systeme="ios"] { padding-block: .6rem; }
+.entree-appli[data-systeme="ios"] .linkish { display: inline-flex; align-items: center; min-height: 44px; margin-block: -12px; padding-inline: .35rem; vertical-align: baseline; }
 .entree-appli-rien { grid-column: 1 / -1; margin: 0; font-size: var(--fs-2); line-height: 1.4; color: var(--ink-2); text-wrap: pretty; }
 .entree-appli-rien:empty { position: absolute; }
 .entree-appli-mot { display: flex; align-items: center; gap: .45rem; margin: 0; min-height: 44px; font-size: var(--fs-2); line-height: 1.4; color: var(--ink-2); }

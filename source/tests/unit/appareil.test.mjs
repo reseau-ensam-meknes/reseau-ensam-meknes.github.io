@@ -470,7 +470,9 @@ test('page d’entrée : la carte prévue dès le premier affichage (appliIci) d
 
 test('page d’entrée : la place gardée pour la carte ne grandit jamais avec la largeur de l’écran ; plus grande avec un texte agrandi', async () => {
   const { placeCarte } = await pageEntree();
-  const rem = x => Number(x.match(/^calc\(46\.5px \+ ([\d.]+)rem\)$/)[1]);
+  // Le bord (et sur Android, la ligne des boutons) en px, puis le texte en rem : rem() lit le texte, px() le tout à 16 px le rem
+  const lire = x => x.match(/^calc\(([\d.]+)px \+ ([\d.]+)rem\)$/).slice(1).map(Number);
+  const rem = x => lire(x)[1], px = x => lire(x)[0] + 16 * lire(x)[1];
   for (const sys of ['android', 'ios']) for (const lang of ['fr', 'ar']) {
     let avant = Infinity;
     for (let w = 300; w < 900; w += 2) { const h = rem(placeCarte(sys, lang, w)); assert.ok(h <= avant, `${sys} ${lang} ${w}`); avant = h; }
@@ -478,7 +480,10 @@ test('page d’entrée : la place gardée pour la carte ne grandit jamais avec l
     assert.ok(rem(placeCarte(sys, lang, 1280)) > 0, 'ordinateur');
   }
   assert.equal(placeCarte('android', 'fr', 360), 'calc(46.5px + 7.39rem)', 'Instagram à 360 px : quatre lignes et les deux gestes');
-  assert.ok(rem(placeCarte('ios', 'fr', 390)) > rem(placeCarte('android', 'fr', 390)), 'sur iPhone, le geste et l’icône en plus');
+  // iPhone : un paragraphe (la phrase, le geste, « Continuer ici »), quatre lignes à 390 px et cinq à 375, sans ligne de boutons
+  assert.equal(placeCarte('ios', 'fr', 390), 'calc(2px + 6.56rem)');
+  assert.equal(placeCarte('ios', 'fr', 375), 'calc(2px + 7.89rem)');
+  assert.ok(px(placeCarte('ios', 'fr', 390)) < px(placeCarte('android', 'fr', 390)), 'plus courte que la carte d’Android et ses boutons');
 });
 
 test('page d’entrée : la place de la ligne discrète (après « Continuer ici ») suit sa phrase, jamais moins de 44 px', async () => {
@@ -530,8 +535,10 @@ test('carte de la page d’entrée : « d’Instagram », « de Facebook », « 
   for (const [nom] of APPLIS) assert.match(CARTE.tuEs(nom), new RegExp(`^Tu es dans le navigateur (d’|de )${nom}\\.$`), nom);
   assert.equal(CARTE.android, 'Ouvre le Réseau dans Chrome : tu y resteras connecté et tes notifications arriveront sur ce téléphone.');
   assert.equal(CARTE.geste, 'Touche ••• (en haut ou en bas de l’écran), puis « Ouvrir dans Safari » ou « Ouvrir dans le navigateur ».');
-  assert.match(CARTE.icone.iphone, /^Sur iPhone, les notifications passent ensuite par l’icône de l’écran d’accueil\.$/);
-  assert.equal(CARTE.icone.ipad, CARTE.icone.iphone.replace('iPhone', 'iPad'));
+  assert.equal(CARTE.ios, 'Ouvre le Réseau dans Safari : tu y resteras connecté.');
+  // Sur iPhone et iPad, la carte tient en un paragraphe : plus de ligne sur l'icône de l'écran d'accueil, que les feuilles de
+  // l'application redisent au moment d'activer les notifications
+  assert.equal(CARTE.icone, undefined);
   // Mêmes mots que la feuille de l'application (pwa.js), et même arabe
   const pwa = readFileSync(new URL('../../src/pwa.js', import.meta.url), 'utf8');
   assert.ok(pwa.includes(`const APPLI_RIEN = '${CARTE.rien}';`));
@@ -558,7 +565,7 @@ test('carte de la page d’entrée en arabe : chaque phrase, et le nom de chaque
   try {
     i18n.addAR(CARTE_AR, CARTE_MOTIFS);
     await i18n.setLang('ar', { garder: false });
-    const phrases = [CARTE.tuEs(), CARTE.android, CARTE.ios, CARTE.geste, CARTE.icone.iphone, CARTE.icone.ipad, CARTE.ouvrir, CARTE.ici, CARTE.ligne, CARTE.rien];
+    const phrases = [CARTE.tuEs(), CARTE.android, CARTE.ios, CARTE.geste, CARTE.ouvrir, CARTE.ici, CARTE.ligne, CARTE.rien];
     i18n.missing.clear();
     for (const p of phrases) {
       const ar = i18n.t(p);

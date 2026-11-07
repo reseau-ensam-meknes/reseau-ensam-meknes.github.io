@@ -6921,13 +6921,16 @@ test('page d’entrée dans Instagram : l’application ignore « Ouvrir dans Ch
   await m.ctx.close();
 });
 
-test('page d’entrée : Facebook sur iPhone (les gestes de Safari, l’icône pour les notifications, pas de lien magique), une vue web Android, l’iPad ; rien dans Chrome ni Samsung Internet', async () => {
+test('page d’entrée : Facebook sur iPhone (un paragraphe : Safari, son geste et « Continuer ici », pas de lien magique), une vue web Android, l’iPad ; rien dans Chrome ni Samsung Internet', async () => {
   const f = await porte({ ua: FACEBOOK_IOS, largeur: 390, hauteur: 844, tactile: 'iPhone' });
   await f.page.waitForSelector('#au-appli[data-systeme="ios"]');
   const t = await f.page.locator('#au-appli').innerText();
-  assert.match(t, /Tu es dans le navigateur de Facebook\. Ouvre le Réseau dans Safari\s: tu y resteras connecté\./);
-  assert.match(t, /Touche ••• \(en haut ou en bas de l’écran\), puis «\sOuvrir dans Safari\s» ou «\sOuvrir dans le navigateur\s»\./, 'le geste des feuilles de l’application');
-  assert.match(t, /Sur iPhone, les notifications passent ensuite par l’icône de l’écran d’accueil\./);
+  // Un seul paragraphe : la raison de passer dans Safari, le geste des feuilles de l'application, « Continuer ici » au bout ;
+  // plus de ligne sur l'icône de l'écran d'accueil (les feuilles la redisent quand il s'agit d'activer les notifications)
+  assert.match(t, /^Ouvre le Réseau dans Safari\s: tu y resteras connecté\. Touche ••• \(en haut ou en bas de l’écran\), puis «\sOuvrir dans Safari\s» ou «\sOuvrir dans le navigateur\s»\.\s+Continuer ici$/, 'le geste des feuilles de l’application');
+  assert.equal(await f.page.locator('#au-appli p').count(), 1, 'un seul paragraphe');
+  assert.equal(await f.page.locator('#au-appli p #au-appli-ici').count(), 1, '« Continuer ici » dans la phrase');
+  assert.doesNotMatch(t, /icône/);
   assert.equal(await f.page.locator('#au-appli-chrome').count(), 0, 'pas de lien vers Chrome sur iPhone');
   assert.ok((await f.page.locator('#au-appli-ici').boundingBox()).height >= 44);
   await f.page.click('#au-appli-ici');
@@ -6942,13 +6945,12 @@ test('page d’entrée : Facebook sur iPhone (les gestes de Safari, l’icône p
   assert.match(await w.page.locator('#au-appli').innerText(), /^Tu es dans le navigateur d’une application\. Ouvre le Réseau dans Chrome\s: tu y resteras connecté et tes notifications arriveront sur ce téléphone\./);
   assert.equal(await w.debordement(), 0);
   await w.ctx.close();
-  // L'iPad : la même carte, l'iPad nommé
+  // L'iPad : la même carte, sans « iPhone »
   const i = await porte({ ua: INSTAGRAM_IPAD, largeur: 820, hauteur: 1180, tactile: 'iPad' });
   await i.page.waitForSelector('#au-appli[data-systeme="ios"]');
   const ti = await i.page.locator('#au-appli').innerText();
-  assert.match(ti, /Tu es dans le navigateur d’Instagram\./);
-  assert.match(ti, /Sur iPad, les notifications passent ensuite par l’icône de l’écran d’accueil\./);
-  assert.doesNotMatch(ti, /iPhone/);
+  assert.match(ti, /^Ouvre le Réseau dans Safari\s: tu y resteras connecté\. Touche ••• \(en haut ou en bas de l’écran\)/);
+  assert.doesNotMatch(ti, /iPhone|icône/);
   await i.ctx.close();
   // De vrais navigateurs : ni carte ni lien
   for (const ua of [TELEPHONE, SAMSUNG, SAFARI_IPHONE]) {
@@ -6958,6 +6960,29 @@ test('page d’entrée : Facebook sur iPhone (les gestes de Safari, l’icône p
     assert.ok(await n.page.isVisible('.entree-sous'), 'la phrase d’explication garde sa place');
     assert.deepEqual(n.erreurs, []);
     await n.ctx.close();
+  }
+});
+
+// Sur iPhone, la carte n'a pas de bouton à elle : une phrase, le geste et « Continuer ici » dans le même paragraphe. Dans les
+// fenêtres réelles du navigateur de Facebook ou d'Instagram (375 × 553 sur un iPhone SE, 390 × 664 sur un iPhone 13), le
+// champ Email reste au premier écran, et « Recevoir mon code » aussi dès 390 × 664 (en connexion, dès 375 × 553)
+test('page d’entrée sur iPhone, dans Facebook ou Instagram : la carte compacte laisse l’email au premier écran (375 × 553) et « Recevoir mon code » (390 × 664)', async () => {
+  const BOUTON = '.entree-form button.btn.primary.wide';
+  for (const [ua, largeur, hauteur, langue, quoi, membre] of [[FACEBOOK_IOS, 375, 553, 'fr', '#au-email'], [FACEBOOK_IOS, 390, 664, 'fr', BOUTON], [INSTAGRAM_IOS, 390, 664, 'fr', BOUTON],
+    [FACEBOOK_IOS, 390, 664, 'ar', BOUTON], [INSTAGRAM_IOS, 375, 553, 'ar', '#au-email'], [FACEBOOK_IOS, 375, 553, 'fr', BOUTON, true]]) {
+    const cas = `${ua === FACEBOOK_IOS ? 'Facebook' : 'Instagram'} ${largeur} × ${hauteur} ${langue}${membre ? ' connexion' : ''}`;
+    const s = await porte({ ua, largeur, hauteur, langue, tactile: 'iPhone', avant: membre ? ctx => ctx.addInitScript(() => localStorage.setItem('ensam-deja-membre', '1')) : null });
+    await s.page.waitForSelector('#au-appli[data-systeme="ios"]');
+    await s.page.evaluate(() => document.fonts.ready);
+    await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* sans fin */ } }));
+    const b = await s.page.locator(quoi).boundingBox();
+    assert.ok(b.y >= 0 && b.y + b.height <= hauteur, `${cas} : ${quoi} de ${Math.round(b.y)} à ${Math.round(b.y + b.height)}, hors du premier écran`);
+    // La carte dit toujours quoi faire, et « Continuer ici » reste une vraie cible
+    assert.match(await s.page.locator('#au-appli').innerText(), langue === 'ar' ? /المس •••/ : /Touche •••/, cas);
+    assert.ok((await s.page.locator('#au-appli-ici').boundingBox()).height >= 44, `${cas} : « Continuer ici » de 44 px`);
+    assert.equal(await s.debordement(), 0, cas);
+    assert.deepEqual(s.erreurs, [], cas);
+    await s.ctx.close();
   }
 });
 

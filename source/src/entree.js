@@ -344,14 +344,16 @@ export function appliIci(ua = '', toucher = 0) {
 const PLACE = {
   androidfr: [21.5, 11.72, 22.4, 8.72, 25.9, 7.39, 37.5, 6.05, 99, 4.72, 6.05],
   androidar: [24.9, 6.05, 99, 4.72, 4.72],
-  iosfr: [19.81, 17.14, 19.87, 15.96, 20.12, 14.63, 24.62, 13.3, 27.81, 11.96, 33.12, 10.63, 99, 9.45, 10.63],
-  iosar: [19.06, 11.96, 27.43, 10.63, 28.62, 9.45, 32.5, 8.12, 99, 6.79, 9.45],
+  iosfr: [17.87, 10.56, 20.5, 9.22, 23.93, 7.89, 30.18, 6.56, 99, 5.22, 6.56],
+  iosar: [17.56, 10.65, 17.62, 8.28, 21.25, 6.56, 28.25, 5.22, 99, 3.89, 3.89],
 };
+// Le bord et les boutons, en px : la ligne de « Ouvrir dans Chrome » sur Android ; sur iPhone, le bord seul
+const BORD = { android: 46.5, ios: 2 };
 export function placeCarte(sys, lang, largeur, rem = 16) {
   const t = PLACE[sys + (lang === 'ar' ? 'ar' : 'fr')];
   let i = 0;
   if (largeur < 900) while (largeur / rem >= t[i]) i += 2; else i = t.length - 2;
-  return `calc(46.5px + ${t[i + 1]}rem)`;
+  return `calc(${BORD[sys]}px + ${t[i + 1]}rem)`;
 }
 // La ligne discrète qui remplace la carte dans la visite : 44 px, sauf là où sa phrase prend une ligne de plus (largeur en rem
 // jusqu'à laquelle, hauteur en rem). Android : « Rien ne s'ouvre ? » (après Chrome) ; iPhone, iPad : le geste de Safari.
@@ -405,11 +407,16 @@ function CarteAppli({ mode, role, invite }) {
   const ico = html`<${Icon} name="globe" size=${18}/>`;
   if (!carte) return html`<p class="entree-appli-mot" id="au-appli-mot" tabindex="-1" ref=${mot}>${ico}${sys === 'ios' || vue === 'chrome' || rien
     ? html`<span>${f(sys === 'ios' ? T.geste : T.rien)}</span>` : html`<a href=${lien()} id="au-appli-chrome" onClick=${ouvrir}>${T.ligne}</a>`}</p>`;
+  const ici = html`<button type="button" class="linkish" id="au-appli-ici" onClick=${() => setRange(true)}>${T.ici}</button>`;
+  // iPhone, iPad : pas de bouton à elle, rien qu'un geste à dire. Un seul paragraphe, « Continuer ici » au bout : le champ
+  // Email reste au premier écran d'un iPhone SE, « Recevoir mon code » aussi sur un iPhone 13 (fenêtres de Facebook, Instagram)
+  if (sys === 'ios') return html`<div class="entree-appli" id="au-appli" data-systeme="ios" style=${{ minHeight: place }}>${ico}<div class="entree-appli-txt">
+    <p><span>${f(T.ios)}</span> <span>${f(T.geste)}</span> ${ici}</p></div>
+  </div>`;
   return html`<div class="entree-appli" id="au-appli" data-systeme=${sys} style=${{ minHeight: place }}>${ico}<div class="entree-appli-txt">
-    <p><span>${f(T.tuEs(app.nom))}</span> <span>${f(T[sys])}</span></p>
-    ${sys === 'ios' ? html`<p>${f(T.geste)}</p><p class="small muted">${T.icone[a.estIPad(navigator.userAgent, navigator.maxTouchPoints) ? 'ipad' : 'iphone']}</p>` : null}</div>
-    <div class="entree-appli-acts">${sys === 'android' ? html`<a class="btn primary" id="au-appli-chrome" href=${lien()} onClick=${ouvrir}>${T.ouvrir}</a>` : null}<button type="button" class="linkish" id="au-appli-ici" onClick=${() => setRange(true)}>${T.ici}</button></div>
-    ${sys === 'android' ? html`<p class="entree-appli-rien" id="au-appli-rien" aria-live="polite">${rien ? f(T.rien) : null}</p>` : null}
+    <p><span>${f(T.tuEs(app.nom))}</span> <span>${f(T[sys])}</span></p></div>
+    <div class="entree-appli-acts"><a class="btn primary" id="au-appli-chrome" href=${lien()} onClick=${ouvrir}>${T.ouvrir}</a>${ici}</div>
+    <p class="entree-appli-rien" id="au-appli-rien" aria-live="polite">${rien ? f(T.rien) : null}</p>
   </div>`;
 }
 
@@ -448,6 +455,8 @@ export function AuthScreen({ store }) {
   const [court] = useState(() => innerWidth < 900 && innerHeight < 680);
   // Sur téléphone, la carte du navigateur d'une application prend la place de la phrase d'explication, dès le premier affichage
   const [sansSous] = useState(() => !!APPLI_ICI && !vueCarte() && innerWidth < 900);
+  // Et sur un petit écran, un peu de l'air autour d'elle : le rôle, l'email et « Recevoir mon code » restent au premier écran
+  const serre = court && sansSous;
   // Session expirée sans l'avoir voulu : on redemande la connexion calmement, avec son adresse déjà là
   const perdue = !!store?.sessionPerdue;
   const [email, setEmail] = useState(attente?.email || saisie?.email || (perdue && store.emailPerdu) || ''); const [pw, setPw] = useState('');
@@ -528,14 +537,14 @@ export function AuthScreen({ store }) {
   return html`<main class="auth entree">
     <div class="entree-ciel sky" aria-hidden="true"></div>
     <header class="entree-top"><span class="entree-marque"><${BrandLogo} size=${34} draw/><span>Réseau ENSAM Meknès</span></span><${LangToggle} onChange=${relang} aussitot/></header>
-    <section class="entree-promesse">
+    <section class="entree-promesse" style=${serre ? { paddingBlockEnd: '.6rem' } : null}>
       ${lien && mode !== 'nouveau' ? html`<p id="au-lien" class=${'lien-accueil' + (infos === null || infos?.ouverte === false || (inscrire && offreFermeePour(infos, role)) ? ' fini' : '')}><${Icon} name=${icoLien} size=${18}/><span>${phraseLien(lien, infos, inscrire, inscrire ? role : '')}</span></p>` : null}
       <${Fondateurs}/>
       <h1>Les lauréats ouvrent la porte aux étudiants.</h1>
       <p class="auth-chiffres">${(lignes || []).map(l => html`<span>${l}</span>`)}</p>
       ${(lien && mode !== 'nouveau') || court || sansSous ? null : html`<p class="entree-sous">Stage, PFE, premier emploi : les étudiants demandent, les lauréats aident et recrutent.</p>`}
     </section>
-    <form class="auth-card form entree-form" onSubmit=${submit} aria-label=${inscription ? 'Créer mon compte' : null}>
+    <form class="auth-card form entree-form" style=${serre ? { marginBlockStart: '.5rem' } : null} onSubmit=${submit} aria-label=${inscription ? 'Créer mon compte' : null}>
       ${inscription || mode === 'connexion' || mode === 'motdepasse' ? html`<${CarteAppli} mode=${mode} role=${role} invite=${invite}/>` : null}
       ${inscription ? null : html`<h2>${{ connexion: 'Se connecter', code: 'Ton code est parti', motdepasse: 'Se connecter', nouveau: 'Nouveau mot de passe' }[mode]}</h2>`}
       ${perdue && mode === 'connexion' ? html`<p class="auth-msg" id="au-session" role="status">${store.brouillonsGardes ? 'Ta session a expiré. Reconnecte-toi : ce que tu étais en train d’écrire est gardé.' : 'Ta session a expiré. Reconnecte-toi pour continuer.'}</p>` : null}
