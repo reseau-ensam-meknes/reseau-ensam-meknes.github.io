@@ -420,29 +420,29 @@ export function OngletsProfil({ onglet, onChange }) {
     if (k !== onglet) onChange(k);
     requestAnimationFrame(() => document.getElementById('pf-onglet-' + k)?.focus());
   };
-  return html`<div class="seg pf-onglets" role="tablist" aria-label="Parties du profil" onKeyDown=${clavier}>
+  return html`<div class="seg seg-page pf-onglets" role="tablist" aria-label="Parties du profil" onKeyDown=${clavier}>
     ${ONGLETS_PROFIL.map(([k, l]) => html`<button type="button" role="tab" key=${k} id=${'pf-onglet-' + k} class=${onglet === k ? 'on' : ''} aria-selected=${onglet === k ? 'true' : 'false'}
       aria-controls="pf-panneau" tabindex=${onglet === k ? 0 : -1} onClick=${() => { if (k !== onglet) onChange(k); }}>${l}</button>`)}
   </div>`;
 }
 injectCSS('pf-onglets', `
-/* La rangée de segments de l'appli ; sur téléphone, toute la largeur, chaque onglet entier (jamais rétréci sous son texte) */
-.pf-onglets button { min-height: 40px; }
+/* Le segment commun des onglets de page (.seg-page, ui.js) ; à quatre, sur téléphone, chaque onglet prend la place de son
+   texte (jamais rétréci sous lui) */
 @media (max-width: 560px) {
-  .pf-onglets { align-self: stretch; }
-  .pf-onglets button { flex: 1 1 auto; min-height: 44px; padding-inline: .45rem; font-size: var(--fs-2); }
+  .seg.seg-page.pf-onglets > [role="tab"] { flex: 1 1 auto; padding-inline: .45rem; font-size: var(--fs-2); }
 }
 /* Une seule partie à l'écran : les autres restent montées (ce qui est tapé et pas encore enregistré survit au changement) */
 .pf-page [hidden] { display: none !important; }
 .pf-panneau { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
 .pf-partie { display: contents; }
-.pf-titre { margin: .25rem 0 0; font-size: var(--fs-4); }
+.pf-titre { margin: .25rem 0 0; }
 /* Visibilité : pas de filet au-dessus du premier bloc, ni sous la carte « Visible par les lauréats » */
 .pf-vis > :is(.cf-private, .cf-vis):first-child, .pf-visible + :is(.cf-private, .cf-vis) { border-top: 0; padding-top: 0; }
 /* « Visible par les lauréats » : un seul interrupteur pour Match et la Vitrine des talents */
 .pf-visible { display: flex; align-items: center; gap: 1rem; padding: 1rem 1.1rem; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--sh1); }
 .pf-visible-txt { flex: 1; min-width: 0; }
-.pf-visible-txt h2 { display: flex; align-items: center; gap: .45rem; margin: 0 0 .25rem; font: 650 var(--fs-4)/1.3 var(--f-body); }
+/* Le titre de la carte : celui des autres cartes de Mon profil (h2 commun : police des titres, --fs-4, 600) */
+.pf-visible-txt h2 { display: flex; align-items: center; gap: .45rem; margin: 0 0 .25rem; }
 .pf-visible-txt p { margin: 0; }
 /* Page d'entrée (membres fondateurs) : un bloc comme les autres réglages de l'onglet */
 .pf-fondateur { display: flex; flex-direction: column; gap: .55rem; border-top: 1px solid var(--line); padding-top: .9rem; }
@@ -718,7 +718,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
     ${onboarding || !apresVisibilite ? null : html`<div class="pf-fondateur">${apresVisibilite}<${VitrinePubliqueCase} ctx=${ctx}/></div>`}`;
   return html`<form class="form" id=${onboarding ? undefined : 'profil-infos'} hidden=${!voir('profil') && !voir('visibilite')} onSubmit=${submit}>
     <div class="pf-partie pf-infos" hidden=${!voir('profil')}>
-    ${onboarding ? null : html`<h2 class="pf-titre">Mes infos</h2>`}
+    ${onboarding ? null : html`<h2 class="pf-titre titre-sec">Mes infos</h2>`}
     ${onboarding ? (voirRole || !f.role ? html`<${ChoixRole} value=${f.role} onChange=${choisirRole}/>`
       : html`<div class="pf-role"><p class="small" id="pf-role-rappel">${f.role === 'laureat' ? 'Tu t’inscris côté lauréats.' : 'Tu t’inscris côté étudiants.'}</p><button type="button" class="linkish small" id="pf-role-changer" onClick=${changerRole}>Changer</button></div>`)
     : f.role !== 'admin' ? html`<div class="seg" role="group" aria-label="Ta situation"><button type="button" class=${isStudent ? 'on' : ''} onClick=${() => choisirRole('etudiant')}>Je suis à l’école</button><button type="button" class=${!isStudent ? 'on' : ''} onClick=${() => choisirRole('laureat')}>J’ai mon diplôme</button></div>` : null}

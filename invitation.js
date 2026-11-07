@@ -74,6 +74,7 @@ addAR({
   'Fais venir ta promo': 'ادعُ دفعتك', '30 s': '30 ثانية',
   'Le message et le lien de ta promo sont prêts pour votre groupe WhatsApp.': 'الرسالة ورابط دفعتك جاهزان لمجموعة واتساب الخاصة بكم.',
   '1 camarade est arrivé grâce à toi': 'انضمّ بفضلك زميل واحد',
+  'Message prêt pour WhatsApp': 'الرسالة جاهزة لواتساب',
 }, [
   [/^(\d+) camarades sont arrivés grâce à toi$/, n => `انضمّ بفضلك ${arCount(n, ['زميل واحد', 'زميلان', 'زملاء', 'زميلًا'])}`],
   [/^Bienvenue, promo (\d{4}) !$/, y => `مرحبا بك، دفعة ${y}!`],
@@ -82,7 +83,7 @@ addAR({
 
 // « Fais venir ta promo » : un seul bouton, qui ouvre WhatsApp avec le message et le lien de la promo déjà prêts.
 // geste : une ligne de « Ta première aide » (me.js) ; sinon une petite carte (Mon espace, Mon parcours).
-// Le lien porte le code du membre ; la carte dit combien de camarades sont arrivés grâce à lui (à partir d'un).
+// Le lien porte le code du membre ; la ligne dit combien de camarades sont arrivés grâce à lui (à partir d'un).
 export function FaisVenirPromo({ ctx, geste = false }) {
   const { data, me, saison } = ctx;
   const code = useCodeInvitation(ctx);
@@ -94,11 +95,14 @@ export function FaisVenirPromo({ ctx, geste = false }) {
       <span class="pa-geste-ico"><${Icon} name="people" size=${20}/></span>
       <span class="pa-geste-txt"><span class="pa-geste-titre"><strong>Fais venir ta promo</strong><span class="pa-duree">30 s</span></span><span class="small muted">Le message et le lien de ta promo sont prêts pour votre groupe WhatsApp.</span></span>
       <span class="pa-geste-go" aria-hidden="true"><${Icon} name="arrow" size=${16}/></span></a>`;
+  // Une seule ligne : toute la ligne est le lien (une grande cible), comme les lignes de Mon espace
   return html`<div class="promo-card" id="promo-card">
-    <span class="promo-ico" aria-hidden="true"><${Icon} name="people" size=${22}/></span>
-    <div class="grow"><strong>Fais venir ta promo</strong><span class="small muted">${`Le message et le lien de la promo ${me.promo} sont prêts : envoie-les dans votre groupe WhatsApp.`}</span>
-      ${invites?.n > 0 ? html`<span class="promo-invites" id="promo-invites"><${Icon} name="heart" size=${14}/><span>${ligneInvites(invites.n)}</span>${invites.prenoms.length ? html`<span class="muted" translate="no" dir="auto">${invites.prenoms.slice(0, 5).join(', ')}${invites.n > 5 ? '…' : ''}</span>` : null}</span>` : null}</div>
-    <a class="btn small" id="promo-wa" href=${href} target="_blank" rel="noopener"><${Icon} name="send" size=${16}/> Envoyer sur WhatsApp</a>
+    <a class="promo-lien" id="promo-wa" href=${href} target="_blank" rel="noopener">
+      <span class="promo-ico" aria-hidden="true"><${Icon} name="people" size=${20}/></span>
+      <span class="promo-txt"><strong>Fais venir ta promo</strong><span class="promo-sous">Message prêt pour WhatsApp</span>
+        ${invites?.n > 0 ? html`<span class="promo-invites" id="promo-invites"><${Icon} name="heart" size=${14}/><span>${ligneInvites(invites.n)}</span>${invites.prenoms.length ? html`<span class="promo-prenoms" translate="no" dir="auto">${invites.prenoms.slice(0, 5).join(', ')}${invites.n > 5 ? '…' : ''}</span>` : null}</span>` : null}</span>
+      <span class="promo-go" aria-hidden="true"><${Icon} name="arrow" size=${18}/></span>
+    </a>
   </div>`;
 }
 
@@ -171,11 +175,25 @@ injectCSS('invitation', `
 .inv-link { color: var(--ink-2); overflow-wrap: anywhere; font-size: var(--fs-2); }
 .inv-act { display: flex; flex-wrap: wrap; gap: .3rem; }
 a.pa-geste { text-decoration: none; }
-.promo-card { display: flex; align-items: center; gap: .9rem; flex-wrap: wrap; padding: 1rem 1.1rem; margin-block-start: .8rem; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--sh1); }
-.promo-card .grow { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; gap: .15rem; }
-.promo-invites { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .15rem .4rem; margin-block-start: .25rem; font-size: var(--fs-2); color: var(--ink-2); }
-.promo-invites > .ico { color: var(--accent); }
+/* « Fais venir ta promo » : une ligne, toute la ligne est le lien */
+.promo-card { min-width: 0; }
+.promo-lien { display: flex; align-items: center; gap: .85rem; min-height: 64px; padding: .7rem .8rem; padding-inline-start: 1rem; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--sh1);
+  color: inherit; text-decoration: none; -webkit-tap-highlight-color: transparent; transition: transform .22s var(--ease), box-shadow .22s ease, background-color .2s; }
+.promo-lien:active { transform: scale(.985); transition-duration: .08s; }
+@media (hover: hover) and (pointer: fine) { .promo-lien:hover { box-shadow: var(--sh2); transform: translateY(-1px); } }
+@media (prefers-reduced-motion: reduce) { .promo-lien:hover, .promo-lien:active { transform: none; } }
+.promo-lien:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.promo-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .05rem; }
+.promo-txt strong { font-weight: 650; line-height: 1.3; color: var(--ink); }
+.promo-sous { font-size: var(--fs-2); line-height: 1.4; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Les camarades arrivés grâce au membre : sous « Message prêt pour WhatsApp », dans la même ligne (le cœur, le nombre, les prénoms) */
+.promo-invites { display: flex; flex-wrap: wrap; align-items: center; gap: .1rem .4rem; margin-block-start: .2rem; font-size: var(--fs-2); line-height: 1.4; color: var(--ink-2); min-width: 0; }
+.promo-invites > .ico { flex: none; color: var(--accent); }
 .promo-invites > span:first-of-type { font-weight: 600; }
+.promo-prenoms { min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
 .promo-ico { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--tonal-bg); color: var(--tonal-ink); flex: none; }
+.promo-go { flex: none; display: inline-grid; color: var(--muted); transition: transform .25s var(--ease), color .2s; }
+.promo-lien:hover .promo-go { color: var(--accent); transform: translateX(2px); }
+[dir="rtl"] .promo-lien:hover .promo-go { transform: translateX(-2px); }
 .inv-msg { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: var(--fs-3); line-height: 1.55; padding: .8rem .9rem; border-radius: var(--r-md); background: var(--surface-2); color: var(--ink); }
 `);

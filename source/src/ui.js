@@ -509,10 +509,11 @@ export function Modal({ title, onClose, children, wide, footer, cls, historique 
       else ouvertes[ouvertes.length - 1]?.ref.current?.querySelector(FOCUSABLES)?.focus();
     };
   }, []);
+  // La barre de titre d'une feuille est un <div> : un <header> y ferait un second repère « bannière », à côté de celui du site
   return html`<div class=${'modal-back' + (vv ? ' clavier' : '')} style=${vv ? `--vvh:${vv.h}px;--vvt:${vv.t}px` : ''} onPointerDown=${e => { appuiFond.current = e.target === e.currentTarget; }}
     onClick=${e => { const ok = appuiFond.current; appuiFond.current = false; if (ok && e.target === e.currentTarget) onClose(); }}>
     <div class=${'modal' + (wide ? ' wide' : '') + (footer ? ' has-foot' : '') + (cls ? ' ' + cls : '')} role="dialog" aria-modal="true" aria-label=${title} ref=${ref}>
-      <header class="modal-head"><span class="sheet-grip" aria-hidden="true"></span><h2>${title}</h2><button class="icon-btn" onClick=${onClose} aria-label="Fermer"><${Icon} name="x"/></button></header>
+      <div class="modal-head"><span class="sheet-grip" aria-hidden="true"></span><h2>${title}</h2><button class="icon-btn" onClick=${onClose} aria-label="Fermer"><${Icon} name="x"/></button></div>
       <div class="modal-body">${children}</div>
       ${footer ? html`<footer class="modal-foot">${footer}</footer>` : null}
     </div>
@@ -797,9 +798,12 @@ export function roleTexte(p, sansEntreprise = false) {
 // Le bouclier « vérifié » se met juste après le nom (Bouclier), plus dans cette ligne
 export function RoleLine({ p, score, sansEntreprise }) {
   if (!p) return null;
-  return html`<span class="role-line">${roleTexte(p, sansEntreprise)}
-    ${p.role === 'laureat' && score && rangsVisibles ? html` <${LevelChip} points=${score.points}/>` : null}
-    ${p.role === 'laureat' && score && !rangsVisibles && aides(score) ? html` <span class="mini aide-chip"><${Icon} name="heart" size=${11}/> ${aides(score) > 1 ? `A aidé ${aides(score)} étudiants` : 'A aidé 1 étudiant'}</span>` : null}</span>`;
+  const txt = roleTexte(p, sansEntreprise);
+  const badge = p.role !== 'laureat' || !score ? null
+    : rangsVisibles ? html`<${LevelChip} points=${score.points}/>`
+    : aides(score) ? html`<span class="mini aide-chip"><${Icon} name="heart" size=${11}/> ${aides(score) > 1 ? `A aidé ${aides(score)} étudiants` : 'A aidé 1 étudiant'}</span>` : null;
+  // Avec un badge, le texte a sa boîte : dans une ligne de liste, le badge tient en entier à côté de lui ou ne se montre pas
+  return html`<span class="role-line">${badge ? html`<span class="role-txt">${txt}</span> ${badge}` : txt}</span>`;
 }
 
 const aides = s => (s?.recrutes || 0) + (s?.mentorats || 0);
@@ -1111,6 +1115,19 @@ export function FiliereFiltre({ id, value, onChange }) {
 // garderPlace : sans sur-titre, sa ligne reste réservée (vide, muette) pour que le titre et les puces ne sautent pas
 // d'un onglet à l'autre quand certains onglets n'ont pas de chiffre.
 //   <${EnTetePage} surTitre="45 lauréats" titre="Réseau" sousTitre="Groupes, agenda, entraide…" action=${html`<button class="btn tonal">…</button>`}/>
+// Une rangée d'onglets au clavier (onglets de page : Mon espace, Suivi, Mentorat…) : les flèches dans le sens de lecture,
+// Début et Fin ; l'onglet atteint est choisi et prend le focus (un seul arrêt de tabulation dans la rangée)
+export const clavierOnglets = (cles, actuel, choisir, idDe) => e => {
+  const n = cles.length, i = cles.indexOf(actuel);
+  const rtl = getComputedStyle(e.currentTarget).direction === 'rtl';
+  const j = { ArrowRight: i + (rtl ? -1 : 1), ArrowLeft: i + (rtl ? 1 : -1), Home: 0, End: n - 1 }[e.key];
+  if (j === undefined) return;
+  e.preventDefault();
+  const k = cles[(j + n) % n];
+  if (k !== actuel) choisir(k);
+  requestAnimationFrame(() => document.getElementById(idDe(k))?.focus());
+};
+
 export function EnTetePage({ surTitre, titre, sousTitre, action, children, id, garderPlace = false }) {
   return html`<header class="page-head en-tete" id=${id}>
     <div class="en-tete-txt">${surTitre ? html`<p class="eyebrow">${surTitre}</p>` : garderPlace ? html`<span class="en-tete-place" aria-hidden="true"></span>` : null}<h1>${titre}</h1>${sousTitre ? html`<p class="en-tete-sous">${sousTitre}</p>` : null}</div>
@@ -1248,6 +1265,20 @@ const CSS_BRIQUES = `
 .en-tete-sous { margin: .15rem 0 0; color: var(--ink-2); font-size: var(--fs-3); line-height: 1.45; max-width: 58ch; text-wrap: pretty; }
 .en-tete-act { flex: none; display: flex; align-items: center; gap: .5rem; }
 .en-tete > :not(.en-tete-txt):not(.en-tete-act) { flex-basis: 100%; min-width: 0; }
+
+/* Onglets d'une page : 2 à 4 vues qui tiennent sur une ligne, juste sous le titre (Offres | Demandes, Rendez-vous |
+   Relecture de CV, Mon année | Après le diplôme, Mon profil, Mon espace) : un seul dessin partout, du texte et au plus
+   un chiffre. Les rubriques nombreuses qui défilent (Réseau, Administration) restent des puces (PucesNav). */
+.en-tete-onglets { display: flex; min-width: 0; }
+.seg.seg-page { display: flex; width: min(100%, 26rem); }
+.seg.seg-page > [role="tab"] { flex: 1 1 0; min-width: 0; min-height: 38px; padding-inline: .6rem; font-size: .875rem; }
+.seg.seg-page .count { margin-inline-start: .15rem; }
+.seg.seg-page > .on .count { background: color-mix(in srgb, var(--sel-ink) 14%, transparent); color: var(--sel-ink); }
+@media (max-width: 760px) { .seg.seg-page { width: 100%; align-self: stretch; } }
+
+/* Titre de section, entre les cartes : le même sur chaque page (nettement au-dessus du titre d'une carte), son chiffre à côté */
+.titre-sec { margin: 0; font: 750 var(--fs-5)/1.25 var(--f-display); letter-spacing: -.015em; color: var(--ink); text-wrap: balance; }
+.titre-sec .count { margin-inline-start: .4rem; vertical-align: .2em; font-family: var(--f-body); letter-spacing: 0; }
 
 /* Compteur : chiffres alignés, la largeur ne danse pas pendant qu'il compte */
 .compteur { font-variant-numeric: tabular-nums; }

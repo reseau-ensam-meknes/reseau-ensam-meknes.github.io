@@ -390,6 +390,11 @@ test('mise à jour relancée : rien de perdu, un seul déclencheur, l’ancienne
 });
 
 test('le tour Match du jour : seulement à qui a des cartes, jamais vers une pile vide ; catégorie coupée : rien', async () => {
+  // Les choix faits plus haut datent d'aujourd'hui, et le tour du jour ne part pas à qui a déjà choisi aujourd'hui :
+  // ils reculent de 2 jours (membres actifs, sans choix aujourd'hui). Nadia est venue il y a 3 jours : les étudiants
+  // arrivés depuis sont ses cartes neuves. (Règles détaillées et compte ≤ deckMatch : test-match-jour.mjs)
+  await db.query(`update public.match_choix set updated_at = updated_at - interval '2 days'`);
+  await db.query(`insert into public.visites (user_id, vu_at) values ($1, now() - interval '3 days') on conflict (user_id) do update set vu_at = excluded.vu_at`, [LAU3]);
   await vider();
   const n = await db.query('select public.match_jour_push() as n');
   const dus = await file('match_jour');
@@ -398,11 +403,16 @@ test('le tour Match du jour : seulement à qui a des cartes, jamais vers une pil
   assert.equal(lau?.data.type, 'laureat'); assert.ok(lau.data.n >= 1 && lau.data.n <= 5, 'cinq au plus');
   assert.equal(etu?.data.type, 'etudiant'); assert.ok(etu.data.n >= 1 && etu.data.n <= 5);
   assert.ok(!dus.some(x => x.qui === 'ADMIN' || x.qui === 'SANS'), 'ni l’administration, ni sans filière');
+  // Catégorie coupée : rien (le tour déjà envoyé à Nadia est oublié, pour que seule la catégorie l'arrête)
+  const oublier = () => db.exec(`delete from public.match_jour_notif where user_id = '${LAU3}'; delete from public.notif_programme where user_id = '${LAU3}'`);
+  await oublier();
   await vider();
   await db.query(`update public.profiles set notif_push = '{"match": false}' where id = $1`, [LAU3]);
   await db.query('select public.match_jour_push()');
   assert.ok(!(await file('match_jour')).some(x => x.qui === 'LAU3'));
   await db.query(`update public.profiles set notif_push = '{}' where id = $1`, [LAU3]);
+  await db.query('select public.match_jour_push()');
+  assert.ok((await file('match_jour')).some(x => x.qui === 'LAU3'), 'catégorie remise : de nouveau');
   await vider();
 });
 

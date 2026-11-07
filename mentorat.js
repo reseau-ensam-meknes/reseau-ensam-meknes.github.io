@@ -1,11 +1,11 @@
 // Mentorat en 3 étapes, sur une seule page : l'étudiant dit ce dont il a besoin et propose ses horaires,
 // un lauréat clique sur un horaire, la visio et l'invitation d'agenda sont prêtes. Après l'échange : un merci.
 // Ce qui compte d'abord : le prochain rendez-vous en haut, le mode d'emploi seulement pour qui découvre.
-import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, toast, celebrate, useLocal, injectCSS } from './ui.js';
-import { useBrouillon } from './ui.js';
+import { html, useState, useEffect, useLayoutEffect, useRef } from './vendor/preact-htm.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, toast, celebrate, useLocal, injectCSS, roleTexte } from './ui.js';
+import { useBrouillon, EnTetePage, Rangee, Coche, vibrer, mouvementReduit, clavierOnglets } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
-import { BESOINS, RDV_MIN, mentorState, futureSlots, requestsFor, mentorsFor, timeAgo, helpMatch, niveauOf, coupDeMain, alerteTalents, mercisPublics, dernierMerciPour, nouvelleDemandeApres } from './logic.js';
+import { BESOINS, RDV_MIN, mentorState, futureSlots, requestsFor, mentorsFor, timeAgo, helpMatch, niveauOf, coupDeMain, alerteTalents, mercisPublics, dernierMerciPour, nouvelleDemandeApres, joursAvant } from './logic.js';
 import { getLang, addAR, arCount, t as tr } from './i18n.js';
 import { RelecturesPage, DemandeRelecture } from './cv.js';
 import { MessageBtn } from './messages.js';
@@ -58,16 +58,6 @@ function quand(iso) {
 }
 
 const enDirect = (iso, now = Date.now()) => { const t = new Date(iso).getTime(); return now > t - 15 * 6e4 && now < t + 60 * 6e4; };
-
-// Compte à rebours doux, seulement dans l'heure : « Dans 25 min », « En ce moment ».
-// Plus loin, la date n'est écrite qu'une fois, dans la carte du rendez-vous.
-function Countdown({ iso }) {
-  const live = enDirect(iso);
-  const min = Math.round((new Date(iso).getTime() - Date.now()) / 6e4);
-  if (!live && !(min > 0 && min < 60)) return null;
-  return html`<span class=${'m-countdown' + (live ? ' live' : '')}><${Icon} name=${live ? 'video' : 'clock'} size=${14}/>
-    ${live ? 'En ce moment' : `Dans ${min} min`}</span>`;
-}
 
 const toInput = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 // Horaires proposés par défaut : les trois prochains jours (sauf dimanche), en fin de journée ou à midi
@@ -220,6 +210,7 @@ export function AskHelp({ ctx, mentor = null, besoin: b0 = '', sujet: s0 = '', o
 // ---------------------------------------------------------------------------
 // Côté lauréat : choisir un horaire (ou un autre moment), avec son propre lien s'il le souhaite
 // ---------------------------------------------------------------------------
+// fin : un geste de plus au bout de la ligne du titre (« Ignorer », « Pas disponible cette fois »), sur la page Mentorat
 function TimeChoice({ ctx, m, compact }) {
   const { store, me, act } = ctx;
   const slots = futureSlots(m);
@@ -259,70 +250,149 @@ function TimeChoice({ ctx, m, compact }) {
 }
 
 // ---------------------------------------------------------------------------
-// Le rendez-vous : une action claire (rejoindre), l'agenda à la demande, le reste dans « ⋯ »
+// Le rendez-vous, comme un billet : le talon (jour, date, heure), qui, quoi et un compte à rebours vrai.
+// Dessous, une seule action pleine à la fois : confirmer sa présence, puis « Rejoindre la visio » quand c'est l'heure.
+// L'agenda s'ouvre dans une feuille ; le reste (déplacer, annuler) attend dans « ⋯ ».
 // ---------------------------------------------------------------------------
-function RdvBox({ ctx, m, side, focus, onFini }) {
-  const { store, act } = ctx;
-  const lienRow = store.byId('liens_rdv', m.id);
-  const lien = isHttps(lienRow?.lien) ? lienRow.lien : null;
+const JOURS_COURTS = ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
+const MOIS_COURTS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+
+// L'heure qui passe : un nouveau rendu toutes les 30 s tant que le billet est à l'écran (le texte change, rien ne bouge)
+function useMaintenant(pas = 3e4) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const h = setInterval(() => setNow(Date.now()), pas); return () => clearInterval(h); }, [pas]);
+  return now;
+}
+
+// Le compte à rebours, vrai et calme : « Dans 3 jours », « Demain », « Dans 20 h », « Dans 2 h 05 », « Dans 12 min », « En ce moment ».
+// live : du quart d'heure avant jusqu'à l'heure après le début (la visio devient alors l'action pleine)
+function rebours(iso, now = Date.now()) {
+  const t = new Date(iso).getTime(), min = Math.ceil((t - now) / 6e4);
+  if (now >= t) return { live: now < t + 60 * 6e4, txt: 'En ce moment' };
+  if (min <= 15) return { live: true, txt: `Dans ${min} min` };
+  if (min < 60) return { live: false, txt: `Dans ${min} min` };
+  const h = Math.floor(min / 60), j = joursAvant(iso, new Date(now));
+  if (h < 24) return { live: false, txt: h < 6 && min % 60 ? `Dans ${h} h ${pad(min % 60)}` : `Dans ${h} h` };
+  if (j <= 1) return { live: false, txt: 'Demain' };
+  return { live: false, txt: `Dans ${j} jours` };
+}
+
+// Le talon du billet : le jour, la date en grand, le mois, l'heure ; dessous, « Agenda » (le talon qu'on garde pour soi)
+function Talon({ iso, onAgenda }) {
+  const d = new Date(iso);
+  return html`<div class="billet-talon"><time class="bt-date" datetime=${iso}><span class="bt-jour">${JOURS_COURTS[d.getDay()]}</span><span class="bt-num">${d.getDate()}</span><span class="bt-mois">${MOIS_COURTS[d.getMonth()]}</span><span class="bt-heure mono">${pad(d.getHours())}:${pad(d.getMinutes())}</span></time>
+    <button type="button" class="bt-agenda" aria-haspopup="dialog" aria-label="Ajouter à mon agenda" title="Ajouter à mon agenda" onClick=${onAgenda}><${Icon} name="calendar" size=${16}/><span>Agenda</span></button></div>`;
+}
+
+// Un texte long replié sur quelques lignes ; « Lire la suite » seulement s'il dépasse vraiment (mesuré, pas deviné)
+function Repliable({ lignes = 2, cls = '', children }) {
+  const ref = useRef();
+  const [ouvert, setOuvert] = useState(false);
+  const [deborde, setDeborde] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || ouvert) return;
+    const mesurer = () => setDeborde(el.scrollHeight > el.clientHeight + 2);
+    mesurer();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(mesurer); ro.observe(el);
+    return () => ro.disconnect();
+  }, [ouvert]);
+  return html`<p class=${'m-repli' + (cls ? ' ' + cls : '') + (ouvert ? ' ouvert' : '')} style=${`--lignes:${lignes}`} ref=${ref} translate="no" dir="auto">${children}</p>${deborde || ouvert
+    ? html`<button type="button" class="linkish small m-repli-btn" aria-expanded=${ouvert} onClick=${() => setOuvert(!ouvert)}>${ouvert ? 'Réduire' : 'Lire la suite'}</button>` : null}`;
+}
+
+// Ajouter à son agenda : une feuille, deux choix (Google Agenda, avec l'étudiant en invité côté lauréat ; ou un fichier .ics)
+function FeuilleAgendaRdv({ txt, side, guest, other, onClose }) {
+  const invite = side === 'mentor' && !!guest;
+  return html`<${Modal} title="Ajouter à mon agenda" onClose=${onClose} cls="m-agenda">
+    <p class="m-agenda-quoi"><strong translate="no" dir="auto">${txt.m.sujet}</strong><span class="small muted"><${When} iso=${txt.m.rdv_at}/><span aria-hidden="true"> · </span><span>${`${RDV_MIN} min en visio`}</span></span></p>
+    <div class="m-agenda-choix">
+      <a class="btn" href=${gcalUrl(txt, invite ? guest : null)} target="_blank" rel="noopener" onClick=${onClose}><${Icon} name="calendar" size=${16}/> ${invite ? 'Inviter via Google Agenda' : 'Ajouter à Google Agenda'}</a>
+      <a class="btn" href=${icsHref(txt)} download="rendez-vous-ensam.ics" onClick=${onClose}><${Icon} name="download" size=${16}/> Autre agenda (.ics)</a>
+    </div>
+    ${invite ? html`<p class="small muted">${`Google Agenda ajoute ${firstName(other)} à l’événement : enregistre-le puis choisis « Envoyer » pour lui envoyer l’invitation par email.`}</p>` : null}
+  <//>`;
+}
+
+// L'action pleine d'un billet, s'il en a une : « Je serai là » avant l'heure, tant que l'étudiant n'a pas confirmé ;
+// « Rejoindre la visio » à l'heure, s'il y a un lien. Sinon aucune : la page donne la sienne à la carte suivante (le merci d'un rendez-vous passé)
+function pleinDuBillet(m, side, lien, now) {
+  const r = rebours(m.rdv_at, now);
+  if (side === 'student' && 'confirme_at' in m && !m.confirme_at && !r.live && now < new Date(m.rdv_at).getTime()) return 'confirmer';
+  return lien && r.live ? 'visio' : null;
+}
+
+// now : l'heure de la page quand elle la donne (la page et le billet changent d'action pleine au même moment)
+function Billet({ ctx, m, side, focus, onFini, calme = false, now: nowPage = null }) {
+  const { store, act, openProfile } = ctx;
+  const tic = useMaintenant();
+  const now = nowPage ?? tic;
   const other = store.byId('profiles', side === 'mentor' ? m.student_id : m.mentor_id);
+  const lien = lienVisio(store, m.id);
   const [guest, setGuest] = useState(null);
   const [edit, setEdit] = useState(false);
+  const [agenda, setAgenda] = useState(false);
   const [newLien, setNewLien] = useState('');
   // L'astuce Jitsi s'affiche d'elle-même une seule fois (sur le prochain rendez-vous), puis derrière le petit « i »
   const jitsi = side === 'mentor' && !!lien && lien.includes('meet.jit.si');
   const [astuceVue, setAstuceVue] = useLocal('ensam-astuce-jitsi', false);
   const [astuce, setAstuce] = useState(() => !!focus && !astuceVue);
+  // La coche de la présence : posée si c'était déjà confirmé en arrivant, elle se dessine quand on vient de confirmer
+  const dejaConfirme = useRef(!!m.confirme_at);
   useEffect(() => { let on = true; if (side === 'mentor') Promise.resolve(store.emailRdv?.(m.id)).then(g => on && setGuest(g || null), () => {}); return () => { on = false; }; }, [m.id, m.status, side]);
   useEffect(() => { if (astuce && jitsi && !astuceVue) setAstuceVue(true); }, [astuce, jitsi]);
-  if (!m.rdv_at) return side === 'mentor' ? html`<${TimeChoice} ctx=${ctx} m=${m}/>` : html`<p class="small muted">${firstName(other)} va fixer l’horaire du rendez-vous.</p>`;
-  const live = enDirect(m.rdv_at);
+  const r = rebours(m.rdv_at, now);
+  const commence = now >= new Date(m.rdv_at).getTime();
+  const confirmable = 'confirme_at' in m;
+  // Confirmer tant que ce n'est pas l'heure ; à l'heure, rejoindre passe devant
+  const aConfirmer = pleinDuBillet(m, side, lien, now) === 'confirmer';
   const txt = rdvTexts(m, store, lien);
   const saveLien = () => act(async () => {
     if (!isHttps(newLien.trim())) throw new Error('Le lien doit commencer par https://');
     await store.update('liens_rdv', m.id, { lien: newLien.trim() }); setNewLien(''); setEdit(false); toast('Lien enregistré.');
   });
   const annuler = () => ctx.confirm(side === 'mentor' ? `Annuler le rendez-vous ? On prévient ${firstName(other)}.` : 'Annuler le rendez-vous ? On prévient le lauréat.', () => act(async () => { await store.update('mentorships', m.id, { status: 'annulee' }); toast('Rendez-vous annulé.'); }), 'Annuler le rendez-vous');
-  // L'étudiant confirme sa présence (base à jour seulement) ; une fois l'heure venue, chacun peut dire « c'est fait »
-  const confirmable = 'confirme_at' in m;
-  const commence = Date.now() >= new Date(m.rdv_at).getTime();
-  const confirmer = () => confirmerPresence(ctx, m);
+  const confirmer = async () => { await confirmerPresence(ctx, m); if (store.byId('mentorships', m.id)?.confirme_at) vibrer(10); };
   const menu = [
     side === 'mentor' ? { label: 'Changer l’horaire ou le lien', icon: 'clock', onClick: () => setEdit(true) } : null,
-    side !== 'admin' ? { label: 'Annuler le rendez-vous', icon: 'x', danger: true, onClick: annuler } : null,
+    { label: 'Annuler le rendez-vous', icon: 'x', danger: true, onClick: annuler },
   ].filter(Boolean);
-  return html`<div class=${'rdv-box' + (live ? ' live' : '')}>
-    <div class="rdv-top"><${SlotDate} iso=${m.rdv_at}/><span class="rdv-what"><strong>${live ? 'C’est le moment !' : `${RDV_MIN} min en visio`}</strong>
-      ${lien ? html`<span class="rdv-link-row"><span class="small muted mono rdv-link" dir="ltr" translate="no">${lien.replace(/^https:\/\//, '')}</span>
-        ${jitsi ? html`<button type="button" class="icon-btn m-info" aria-label="Astuce Jitsi" aria-expanded=${astuce} onClick=${() => setAstuce(!astuce)}><${Picto} name="info" size=${16}/></button>` : null}</span>`
-        : html`<span class="small muted">Lien de visio en préparation…</span>`}</span>
-      <${MoreMenu} items=${menu}/></div>
-    <div class="rdv-actions">
-      ${lien ? html`<a class=${'btn rdv-join' + (live || (focus && !(side === 'student' && confirmable && !m.confirme_at)) ? ' primary' : '')} href=${lien} target="_blank" rel="noopener"><${Icon} name="video" size=${16}/> Rejoindre la visio</a>` : null}
-      <details class="rdv-cal"><summary class="btn ghost small"><${Icon} name="calendar" size=${15}/> Ajouter à mon agenda <${Picto} name="chev" size=${15}/></summary>
-        <div class="rdv-cal-body">
-          <a class="btn ghost small" href=${gcalUrl(txt, side === 'mentor' ? guest : null)} target="_blank" rel="noopener"><${Icon} name="calendar" size=${15}/> ${side === 'mentor' && guest ? 'Inviter via Google Agenda' : 'Ajouter à Google Agenda'}</a>
-          <a class="btn ghost small" href=${icsHref(txt)} download="rendez-vous-ensam.ics"><${Icon} name="download" size=${15}/> Autre agenda (.ics)</a>
-          ${side === 'mentor' && guest ? html`<p class="small muted">Google Agenda ajoute ${firstName(other)} à l’événement : enregistre-le puis choisis « Envoyer » pour lui envoyer l’invitation par email.</p>` : null}
-        </div></details>
+  return html`<article class=${'mreq billet st-rdv' + (r.live ? ' live' : '') + (focus ? ' m-focus-card' : '')}>
+    <div class="billet-haut">
+      <${Talon} iso=${m.rdv_at} onAgenda=${() => setAgenda(true)}/>
+      <div class="billet-corps">
+        <div class="billet-qui">${other ? html`<${Person} p=${other} onOpen=${openProfile} size=${36}/>` : html`<span class="spacer"></span>`}<${MoreMenu} items=${menu}/></div>
+        <p class="mreq-subject"><${BesoinTag} k=${m.besoin}/><strong translate="no" dir="auto">${m.sujet}</strong></p>
+        <p class="billet-quand"><span class=${'m-rebours' + (r.live ? ' live' : '')}><${Icon} name=${r.live ? 'video' : 'clock'} size=${14}/><span>${r.txt}</span></span><span class="billet-duree">${`${RDV_MIN} min en visio`}</span></p>
+      </div>
     </div>
-    ${side === 'student' && confirmable && !m.confirme_at && !commence ? html`<div class="m-confirm">
-      <p class="small"><strong>Tu seras là ?</strong> ${`Confirme pour rassurer ${firstName(other)}.`}</p>
-      <div class="m-confirm-acts"><button type="button" class="btn small primary" onClick=${confirmer}><${Icon} name="check" size=${15}/> Je serai là</button>
-        <button type="button" class="linkish small m-quiet" onClick=${annuler}>Je ne peux pas</button></div></div>`
-    : side === 'student' && m.confirme_at ? html`<p class="small m-ok good-t"><${Icon} name="checks" size=${15}/> Tu as confirmé ta présence.</p>`
-    : side === 'mentor' && confirmable ? (m.confirme_at ? html`<p class="small m-ok good-t"><${Icon} name="checks" size=${15}/> ${`${firstName(other)} a confirmé sa présence.`}</p>`
-      : html`<p class="small m-ok muted"><${Icon} name="clock" size=${15}/> ${`${firstName(other)} n’a pas encore confirmé.`}</p>`) : null}
-    ${commence && onFini ? html`<div class="m-fini"><span class="small muted">L’échange est terminé ?</span><button type="button" class="btn small m-done" onClick=${onFini}><${Icon} name="check" size=${15}/> C’est fait</button></div>` : null}
-    ${jitsi && astuce ? html`<p class="rdv-tip small"><span>Jitsi est gratuit. La première personne qui entre se connecte avec Google pour ouvrir la salle.</span><button type="button" class="linkish small" onClick=${() => setAstuce(false)}>Compris</button></p>` : null}
-    ${edit ? html`<div class="rdv-edit"><${TimeChoice} ctx=${ctx} m=${{ ...m, creneaux: [] }} compact/>
-      <div class="row"><input id=${'rdv-lien-' + m.id} class="grow" dir="ltr" value=${newLien} onInput=${e => setNewLien(e.target.value)} placeholder="Nouveau lien : https://meet.google.com/…"/><button class="btn small" disabled=${!newLien.trim()} onClick=${saveLien}>Enregistrer le lien</button></div>
-      <div class="row"><span class="spacer"></span><button type="button" class="linkish small" onClick=${() => setEdit(false)}>Fermer</button></div></div>` : null}
-  </div>`;
+    <div class="billet-bas">
+      ${focus && side === 'mentor' && m.message ? html`<${Repliable} cls="quote" lignes=${2}>${m.message}<//>` : null}
+      ${m.reponse && side === 'student' ? html`<p class="small billet-mot"><span class="muted"><span translate="no">${firstName(other)}</span> :</span> <span translate="no" dir="auto">${m.reponse}</span></p>` : null}
+      ${aConfirmer ? html`<div class="m-confirm"><p class="small"><strong>Tu seras là ?</strong> ${`Confirme pour rassurer ${firstName(other)}.`}</p>
+          <div class="m-confirm-acts"><button type="button" class=${'btn small ' + (calme ? 'tonal' : 'primary')} onClick=${confirmer}><${Icon} name="check" size=${15}/> Je serai là</button>
+            <button type="button" class="linkish small m-quiet" onClick=${annuler}>Je ne peux pas</button></div></div>`
+        : side === 'student' && m.confirme_at ? html`<p class="small m-ok good-t"><${Coche} taille=${22} pose=${dejaConfirme.current}/> Tu as confirmé ta présence.</p>`
+        : side === 'mentor' && confirmable ? (m.confirme_at ? html`<p class="small m-ok good-t"><${Coche} taille=${22} pose/> ${`${firstName(other)} a confirmé sa présence.`}</p>`
+          : html`<p class="small m-ok muted"><${Icon} name="clock" size=${15}/> ${`${firstName(other)} n’a pas encore confirmé.`}</p>`) : null}
+      ${!aConfirmer ? html`<div class="billet-acts">
+        ${lien ? html`<a class=${'btn rdv-join ' + (r.live && !calme ? 'primary' : 'tonal')} href=${lien} target="_blank" rel="noopener"><${Icon} name="video" size=${16}/> Rejoindre la visio</a>`
+          : html`<span class="small muted billet-prep">Lien de visio en préparation…</span>`}
+        ${jitsi ? html`<button type="button" class="icon-btn m-info" aria-label="Astuce Jitsi" aria-expanded=${astuce} onClick=${() => setAstuce(!astuce)}><${Picto} name="info" size=${16}/></button>` : null}
+      </div>` : null}
+      ${jitsi && astuce ? html`<p class="rdv-tip small"><span>Jitsi est gratuit. La première personne qui entre se connecte avec Google pour ouvrir la salle.</span><button type="button" class="linkish small" onClick=${() => setAstuce(false)}>Compris</button></p>` : null}
+      ${commence && onFini ? html`<div class="m-fini"><span class="small muted">L’échange est terminé ?</span><button type="button" class="btn small m-done" onClick=${onFini}><${Icon} name="check" size=${15}/> C’est fait</button></div>` : null}
+      ${edit ? html`<div class="rdv-edit"><${TimeChoice} ctx=${ctx} m=${{ ...m, creneaux: [] }} compact/>
+        <div class="row"><input id=${'rdv-lien-' + m.id} class="grow" dir="ltr" value=${newLien} onInput=${e => setNewLien(e.target.value)} placeholder="Nouveau lien : https://meet.google.com/…"/><button class="btn small" disabled=${!newLien.trim()} onClick=${saveLien}>Enregistrer le lien</button></div>
+        <div class="row"><span class="spacer"></span><button type="button" class="linkish small" onClick=${() => setEdit(false)}>Fermer</button></div></div>` : null}
+    </div>
+  </article>${agenda ? html`<${FeuilleAgendaRdv} txt=${txt} side=${side} guest=${guest} other=${other} onClose=${() => setAgenda(false)}/>` : null}`;
 }
 
-// Après le rendez-vous, côté étudiant : une note, un merci, et c'est terminé
-function AfterBox({ ctx, m }) {
+// Après le rendez-vous, côté étudiant : une note, un merci, et c'est terminé.
+// plein : « Terminer » est l'action pleine de la page, sauf si une autre carte l'a déjà (le billet du haut qui attend un geste)
+function AfterBox({ ctx, m, plein = true }) {
   const { store, act } = ctx;
   const mentor = store.byId('profiles', m.mentor_id);
   const [note, setNote] = useState(5); const [merci, setMerci] = useState('');
@@ -330,7 +400,7 @@ function AfterBox({ ctx, m }) {
     <p><${Icon} name="heart" size=${16}/> <strong>Comment s’est passé l’échange avec ${firstName(mentor)} ?</strong></p>
     <span class="stars" role="radiogroup" aria-label="Aide reçue">${[1, 2, 3, 4, 5].map(v => html`<button type="button" role="radio" aria-checked=${v === note} class=${v <= note ? 'on' : ''} aria-label=${v + ' sur 5'} onClick=${() => setNote(v)}>★</button>`)}</span>
     <textarea id=${'am-merci-' + m.id} rows="2" maxlength="800" placeholder="Un mot de remerciement…" value=${merci} onInput=${e => setMerci(e.target.value)}></textarea>
-    <div class="row"><button type="button" class="linkish small m-quiet" onClick=${() => act(() => store.update('mentorships', m.id, { status: 'annulee' }))}>L’échange n’a pas eu lieu</button><span class="spacer"></span><button class="btn primary small">${merci.trim() ? 'Envoyer mon merci' : 'Terminer'}</button></div>
+    <div class="row"><button type="button" class="linkish small m-quiet" onClick=${() => act(() => store.update('mentorships', m.id, { status: 'annulee' }))}>L’échange n’a pas eu lieu</button><span class="spacer"></span><button class=${'btn small ' + (plein ? 'primary' : 'tonal')}>${merci.trim() ? 'Envoyer mon merci' : 'Terminer'}</button></div>
   </form>`;
 }
 
@@ -376,32 +446,49 @@ function NewSlots({ ctx, m, onDone }) {
 }
 
 // ---------------------------------------------------------------------------
-// Un mentorat, du début à la fin
+// Un mentorat, du début à la fin. Une carte compacte : qui (et « Écrire », « ⋯ ») sur une ligne, puis l'état et le besoin,
+// le sujet, son message replié, et ce qu'il y a à faire. Un rendez-vous fixé devient un billet.
 // ---------------------------------------------------------------------------
-export function RequestCard({ ctx, m, side, why = [], focus = false, onIgnore = null }) {
+// calme : l'action pleine de la page est sur une autre carte ; celles de cette carte restent tonales. now : l'heure de la page
+export function RequestCard({ ctx, m, side, why = [], focus = false, onIgnore = null, calme = false, now = null }) {
   const { store, act, openProfile } = ctx;
   const st = mentorState(m);
   const other = store.byId('profiles', side === 'student' ? m.mentor_id : m.student_id);
   const [reslot, setReslot] = useState(false);
   const [fin, setFin] = useState(false); // « C'est fait » pendant le rendez-vous : on passe tout de suite au merci
+  // Acceptée sans horaire (une ancienne demande, ou fixée par l'administration) : pas de billet, le lauréat fixe d'abord le moment
+  const sansHeure = st === 'rdv' && !m.rdv_at;
+  if (st === 'rdv' && !sansHeure && !fin && side !== 'admin') return html`<${Billet} ctx=${ctx} m=${m} side=${side} focus=${focus} calme=${calme} now=${now} onFini=${() => (side === 'mentor' ? finirMentorat(ctx, m) : setFin(true))}/>`;
   const slots = futureSlots(m);
-  const [cls, label] = side === 'mentor' && st === 'demande' ? ['m-demande', 'Pour toi'] : PILL[st] || PILL.demande;
+  const [cls, label] = side === 'mentor' && (st === 'demande' || sansHeure) ? ['m-demande', 'Pour toi'] : sansHeure ? PILL.demande : PILL[st] || PILL.demande;
   const waiting = st === 'ouverte' || st === 'demande';
   const apres = st === 'apres' || (st === 'rdv' && fin);
+  // Pas d'étiquette qui répète ce que la carte dit déjà : côté lauréat, « ouverte à tous » (la phrase d'accueil de la section) ;
+  // côté étudiant, l'attente (« Tous les lauréats » en tête, « En attente de Zakaria… » en bas, et les étapes)
+  const pill = (side === 'mentor' && st === 'ouverte') || (side === 'student' && (waiting || sansHeure)) ? null : html`<span class=${'state-pill ' + cls}>${label}</span>`;
+  // « Pourquoi toi » : le besoin est déjà écrit sur son étiquette, on ne le répète pas
+  const raisons = why.filter(w => w !== BESOINS[m.besoin]?.label);
   const annulerDemande = () => ctx.confirm('Retirer tes horaires ? Les lauréats ne les verront plus.', () => act(() => store.update('mentorships', m.id, { status: 'annulee' })), 'Retirer');
   // L'administration retire des horaires restés sans suite (un test, un doublon) ; l'étudiant ne reçoit pas de message
   const clore = () => ctx.confirm(`Retirer « ${m.sujet} » ? Ces horaires ne seront plus proposés aux lauréats.`, () => act(async () => { await store.update('mentorships', m.id, { status: 'annulee' }); toast('C’est retiré.'); }), 'Retirer');
   const passer = () => passerDemande(ctx, m);
   const mentorAdmin = side === 'admin' && st === 'rdv' ? store.byId('profiles', m.mentor_id) : null;
+  // Une demande ouverte à tous s'écarte d'un geste (« Ignorer ») ; une demande adressée se décline dans « ⋯ » (plus rare)
+  const decliner = side === 'mentor' && waiting && st !== 'demande' && onIgnore ? html`<button type="button" class="icon-btn m-ignorer" title="Ignorer" onClick=${onIgnore}><${Icon} name="x" size=${18}/><span class="sr-only">Ignorer</span></button>` : null;
+  const menu = [
+    side === 'student' && waiting ? { label: 'Retirer mes horaires', icon: 'x', danger: true, onClick: annulerDemande } : null,
+    side === 'admin' && waiting ? { label: 'Retirer ces horaires', icon: 'x', danger: true, onClick: clore } : null,
+    side === 'mentor' && st === 'demande' ? { label: 'Pas disponible cette fois', icon: 'x', onClick: passer } : null,
+  ].filter(Boolean);
+  // Le suivi de l'école : sous « Rendez-vous à venir », l'état et le message n'ajoutent rien
+  const suivi = side === 'admin' && st === 'rdv' && !sansHeure;
   return html`<article class=${'mreq st-' + st + (focus ? ' m-focus-card' : '') + (apres ? ' m-compact' : '')}>
-    <div class="mrow-head">
-      ${other ? html`<${Person} p=${other} onOpen=${openProfile} size=${36}/>` : html`<span class="open-to"><span class="open-ico"><${Icon} name="people" size=${18}/></span><span><strong>Tous les lauréats</strong><span class="small muted">Le premier disponible choisit un horaire</span></span></span>`}
-      <span class="spacer"></span><span class=${'state-pill ' + cls}>${label}</span>${other ? html`<${MessageBtn} ctx=${ctx} p=${other} cls="btn tiny ghost"/>` : null}
-      ${side === 'student' && waiting ? html`<${MoreMenu} items=${[{ label: 'Retirer mes horaires', icon: 'x', danger: true, onClick: annulerDemande }]}/>` : null}
-      ${side === 'admin' && waiting ? html`<${MoreMenu} items=${[{ label: 'Retirer ces horaires', icon: 'x', danger: true, onClick: clore }]}/>` : null}</div>
-    <p class="mreq-subject"><${BesoinTag} k=${m.besoin}/><strong translate="no" dir="auto">${m.sujet}</strong>${waiting ? html` <span class="muted small m-ago">· ${timeAgo(m.created_at)}</span>` : null}</p>
-    ${m.message && !apres ? html`<p class="quote" translate="no" dir="auto">${m.message}</p>` : null}
-    ${why.length && waiting ? html`<p class="why"><span class="small muted">Pourquoi toi :</span> ${why.map(w => html`<span class="mini good">${w}</span>`)}</p>` : null}
+    <div class="mrow-head m-tete">
+      ${other ? html`<${Person} p=${other} onOpen=${openProfile} size=${40}/>` : html`<span class="open-to"><span class="open-ico"><${Icon} name="people" size=${18}/></span><span><strong>Tous les lauréats</strong><span class="small muted">Le premier disponible choisit un horaire</span></span></span>`}
+      <span class="mrow-acts">${other ? html`<${MessageBtn} ctx=${ctx} p=${other} label="" cls="icon-btn m-ecrire" aria=${`Écrire à ${firstName(other)}`}/>` : null}${decliner}<${MoreMenu} items=${menu}/></span></div>
+    <p class="m-tags">${suivi ? null : pill}<${BesoinTag} k=${m.besoin}/>${waiting ? raisons.map(w => html`<span class="mini good">${w}</span>`) : null}${waiting ? html`<span class="muted small m-ago">${timeAgo(m.created_at)}</span>` : null}</p>
+    <p class="mreq-subject"><strong translate="no" dir="auto">${m.sujet}</strong></p>
+    ${m.message && !apres && !suivi ? html`<${Repliable} cls="quote" lignes=${2}>${m.message}<//>` : null}
     ${(side === 'student' && waiting) || st === 'terminee' ? html`<${MStepper} m=${m}/>` : null}
     ${m.reponse && side === 'student' && st !== 'ouverte' && !apres ? html`<p class="small"><span class="muted"><span translate="no">${firstName(other)}</span> :</span> <span translate="no" dir="auto">${m.reponse}</span></p>` : null}
 
@@ -412,18 +499,33 @@ export function RequestCard({ ctx, m, side, why = [], focus = false, onIgnore = 
         ${slots.length ? html`<button class="linkish small" onClick=${() => setReslot(!reslot)}>${reslot ? 'Fermer' : 'Changer mes horaires'}</button>` : null}</div>
     </div>` : null}
 
-    ${side === 'mentor' && waiting ? html`<${TimeChoice} ctx=${ctx} m=${m}/>
-      ${st === 'demande' || onIgnore ? html`<div class="row m-decline"><span class="spacer"></span>${st === 'demande'
-        ? html`<button type="button" class="btn tiny ghost" onClick=${passer}><${Icon} name="x" size=${14}/> Pas disponible cette fois</button>`
-        : html`<button type="button" class="btn tiny ghost" onClick=${onIgnore}><${Icon} name="x" size=${14}/> Ignorer</button>`}</div>` : null}` : null}
-
-    ${st === 'rdv' && !fin && side !== 'admin' ? html`<${RdvBox} ctx=${ctx} m=${m} side=${side} focus=${focus} onFini=${() => (side === 'mentor' ? finirMentorat(ctx, m) : setFin(true))}/>` : null}
-    ${mentorAdmin ? html`<p class="small muted m-ok"><${Icon} name="video" size=${15}/> <span>Avec</span> <bdi translate="no">${mentorAdmin.full_name}</bdi> · <${When} iso=${m.rdv_at}/>${m.confirme_at ? html` · <span class="good-t"><${Icon} name="checks" size=${14}/> Présence confirmée</span>` : null}</p>` : null}
-    ${apres && side === 'student' ? html`<${AfterBox} ctx=${ctx} m=${m}/>` : null}
+    ${side === 'mentor' && (waiting || sansHeure) ? html`<${TimeChoice} ctx=${ctx} m=${m}/>` : null}
+    ${side === 'student' && sansHeure ? html`<p class="small muted">${`${firstName(other)} va fixer l’horaire du rendez-vous.`}</p>` : null}
+    ${mentorAdmin ? html`<p class="small muted m-avec"><${Icon} name="video" size=${15}/> <span>Avec</span> <bdi translate="no">${mentorAdmin.full_name}</bdi>${m.rdv_at ? html`<span aria-hidden="true"> · </span><${When} iso=${m.rdv_at}/>` : null}${m.confirme_at ? html`<span aria-hidden="true"> · </span><span class="good-t m-avec-ok"><${Icon} name="checks" size=${14}/> Présence confirmée</span>` : null}</p>` : null}
+    ${apres && side === 'student' ? html`<${AfterBox} ctx=${ctx} m=${m} plein=${!calme}/>` : null}
     ${apres && side === 'mentor' ? html`<${AfterMentor} ctx=${ctx} m=${m}/>` : null}
     ${st === 'annulee' && side === 'student' && m.mentor_id && m.rdv_at && other && !nouvelleDemandeApres(ctx.data, m) ? html`<div class="row m-reprendre"><span class="spacer"></span><button type="button" class="linkish small" onClick=${() => ctx.askHelp(other, m.besoin || '', m.sujet)}>Proposer d’autres horaires</button></div>` : null}
-    ${st === 'terminee' && (m.merci || m.note) ? html`<p class="small merci-inline">${m.note ? html`<span class="stars-ro" aria-label=${m.note + ' sur 5'}>${'★'.repeat(m.note)}</span>` : null}${m.merci ? html`<${Icon} name="heart" size=${14}/> <span translate="no" dir="auto">${m.merci}</span>` : null}</p>` : null}
+    ${st === 'terminee' && (m.merci || m.note) ? html`<p class="small merci-inline">${m.note ? html`<span class="stars-ro" role="img" aria-label=${m.note + ' sur 5'}>${'★'.repeat(m.note)}</span>` : null}${m.merci ? html`<${Icon} name="heart" size=${14}/> <span translate="no" dir="auto">${m.merci}</span>` : null}</p>` : null}
   </article>`;
+}
+
+// L'historique : une ligne par mentorat (visage, sujet, état, date, le merci reçu), replié par défaut
+function LigneHisto({ ctx, m, side }) {
+  const { store } = ctx;
+  const st = mentorState(m);
+  const other = store.byId('profiles', side === 'mentor' ? m.student_id : m.mentor_id);
+  const [cls, label] = PILL[st] || PILL.demande;
+  const w = slotWhen(m.rdv_at || m.created_at);
+  const reprendre = st === 'annulee' && side === 'student' && m.mentor_id && m.rdv_at && other && !nouvelleDemandeApres(ctx.data, m);
+  return html`<li class="m-histo-ligne">
+    ${other ? html`<${Avatar} p=${other} size=${36}/>` : html`<span class="open-ico"><${Icon} name="people" size=${18}/></span>`}
+    <span class="mh-txt">
+      <span class="mh-l1"><strong class="mh-sujet" translate="no" dir="auto">${m.sujet}</strong><span class=${'state-pill ' + cls}>${label}</span></span>
+      <span class="small muted mh-l2">${other ? html`<bdi translate="no" dir="auto">${other.full_name}</bdi><span aria-hidden="true"> · </span>` : null}<span>${w.date}</span></span>
+      ${st === 'terminee' && (m.merci || m.note) ? html`<span class="small merci-inline mh-merci">${m.note ? html`<span class="stars-ro" role="img" aria-label=${m.note + ' sur 5'}>${'★'.repeat(m.note)}</span>` : null}${m.merci ? html`<span class="mh-merci-txt" translate="no" dir="auto">${m.merci}</span>` : null}</span>` : null}
+      ${reprendre ? html`<button type="button" class="linkish small mh-reprendre" onClick=${() => ctx.askHelp(other, m.besoin || '', m.sujet)}>Proposer d’autres horaires</button>` : null}
+    </span>
+  </li>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -431,21 +533,80 @@ export function RequestCard({ ctx, m, side, why = [], focus = false, onIgnore = 
 // ---------------------------------------------------------------------------
 const ACTIVE = ['rdv', 'apres', 'ouverte', 'demande'];
 const byRdv = (a, b) => new Date(a.rdv_at || a.created_at) - new Date(b.rdv_at || b.created_at);
+// Combien d'étudiants ce lauréat a aidés (recrutés grâce à lui, mentorats terminés), comme sur sa ligne
+const aidesDe = s => (s?.recrutes || 0) + (s?.mentorats || 0);
 
-// Deux volets : les rendez-vous en visio et la relecture de CV
-function MentorSeg({ ctx }) {
+// Deux onglets : les rendez-vous en visio et la relecture de CV (la rangée de puces du Socle)
+function MentorOnglets({ ctx }) {
   const { data, me, sub, go } = ctx;
-  const cv = sub === 'cv';
   const R = data.relectures_cv || [];
   const aFaire = R.filter(r => (r.reviewer_id === me.id && ['demandee', 'en_cours'].includes(r.status)) || (r.student_id === me.id && r.status === 'rendue' && !r.merci && !r.note)).length;
-  return html`<div class="seg mentor-seg" role="tablist" aria-label="Mentorat">
-    <button role="tab" aria-selected=${!cv} class=${!cv ? 'on' : ''} onClick=${() => go('mentorat', { remplacer: true })}><${Icon} name="video" size=${15}/> Rendez-vous</button>
-    <button role="tab" aria-selected=${cv} class=${cv ? 'on' : ''} onClick=${() => go('mentorat/cv', { remplacer: true })}><${Icon} name="file" size=${15}/> Relecture de CV${aFaire ? html` <span class="count">${aFaire}</span>` : null}</button></div>`;
+  // Deux vues qui tiennent sur une ligne : le segment commun des onglets de page (comme Offres | Demandes), au clavier
+  // flèches, Début et Fin ; le chiffre dit ce qui attend un geste dans les relectures
+  const actif = sub === 'cv' ? 'cv' : 'rdv';
+  const choisir = k => go(k === 'cv' ? 'mentorat/cv' : 'mentorat', { remplacer: true });
+  const ONGLETS = [['rdv', 'Rendez-vous'], ['cv', 'Relecture de CV', aFaire]];
+  const clavier = clavierOnglets(ONGLETS.map(([k]) => k), actif, choisir, k => 'm-onglet-' + k);
+  return html`<div class="en-tete-onglets"><div class="seg seg-page m-onglets" role="tablist" aria-label="Mentorat" onKeyDown=${clavier}>
+    ${ONGLETS.map(([k, l, n]) => html`<button type="button" role="tab" key=${k} id=${'m-onglet-' + k} class=${actif === k ? 'on' : ''} aria-selected=${actif === k ? 'true' : 'false'}
+      tabindex=${actif === k ? 0 : -1} onClick=${() => { if (k !== actif) choisir(k); }}>${l}${n ? html` <span class="count">${n}</span>` : null}</button>`)}
+  </div></div>`;
 }
 
 // « Comment ça marche ? » replié, pour celles et ceux qui connaissent déjà
 function HowMore({ role }) {
   return html`<details class="m-how"><summary>Comment ça marche ?</summary><${HowItWorks} role=${role}/></details>`;
+}
+
+// « Disponible pour aider » : un interrupteur clair, et ce qu'il change, en une phrase
+function Dispo({ ctx }) {
+  const { me, store, act } = ctx;
+  const on = !!me.mentor_dispo;
+  const [vient, setVient] = useState(false);
+  const basculer = e => {
+    const v = e.target.checked;
+    act(async () => { await store.update('profiles', me.id, { mentor_dispo: v }); if (v) { vibrer(10); setVient(true); } });
+  };
+  return html`<div class=${'m-dispo' + (on ? ' on' : '') + (on && vient ? ' vient' : '')}>
+    <span class="m-dispo-point" aria-hidden="true"></span>
+    <span class="m-dispo-txt"><label for="mentor-dispo">Disponible pour aider</label>
+      <span class="small" id="mentor-dispo-aide">${on ? 'Les étudiants de ton parcours peuvent te proposer leurs horaires.' : 'Les étudiants ne te voient pas encore.'}</span></span>
+    <label class="mx-switch"><input id="mentor-dispo" type="checkbox" role="switch" checked=${on} aria-describedby="mentor-dispo-aide" onChange=${basculer}/><span class="mx-switch-piste" aria-hidden="true"></span></label>
+  </div>`;
+}
+
+// Besoin d'un conseil : cinq tuiles aux couleurs douces, un toucher ouvre la demande sur ce besoin
+const SOUS_BESOIN = { cv: 'Un regard neuf avant d’envoyer', stage: 'Où chercher, comment postuler', entretien: 'S’entraîner avec un lauréat', etranger: 'Les étapes, pas à pas', carriere: 'Choisir sa voie, sereinement' };
+function TuilesBesoin({ titre, onChoisir }) {
+  return html`<section class="m-section m-besoins" aria-labelledby="m-besoins-h">
+    <div class="m-head"><h2 id="m-besoins-h" class="titre-sec">${titre}</h2></div>
+    <div class="need-tuiles">${Object.entries(BESOINS).map(([k, v]) => html`<button type="button" class=${'need-tuile nt-' + k} onClick=${() => onChoisir(k)}>
+      <span class="nt-ico"><${Icon} name=${v.icon} size=${20}/></span><span class="nt-txt"><strong>${v.label}</strong><span class="nt-sous">${SOUS_BESOIN[k]}</span></span></button>`)}</div>
+  </section>`;
+}
+
+// « … dernier mot » : le dernier mot et le guillemet fermant restent ensemble (le texte lu reste « texte »)
+function citation(txt) {
+  const t = String(txt || '').trim(), r = /^([\s\S]*\s)?(\S*[\p{L}\p{N}]\S*(?:\s+[^\p{L}\p{N}\s]+)*)$/u.exec(t);
+  return !r || !r[1] ? html`<span class="m-insec" translate="no">«\u00a0${t}\u00a0»</span>` : html`«\u00a0${r[1]}<span class="m-insec" translate="no">${r[2]}\u00a0»</span>`;
+}
+
+// Un lauréat qui peut aider, en carte compacte : visage, nom, promo et entreprise, son poste, le sceau « A aidé N étudiants »,
+// son dernier merci (replié sur deux lignes) et « Lui demander »
+// La promo et l'entreprise en entier (« Promo 2016 · Renault Group Maroc ») : l'entreprise passe à la ligne plutôt que de
+// finir en « … » (.faits : aucune ligne ne commence par « · »)
+const promoFaits = p => p.role !== 'laureat' ? roleTexte(p)
+  : html`<span class="faits"><span class="nowrap">${`Promo ${p.promo}`}</span>${p.entreprise ? html`<span><bdi translate="no">${p.entreprise}</bdi></span>` : null}</span>`;
+
+function CarteMentor({ ctx, p, why, merci, onDemander }) {
+  const n = aidesDe(ctx.scores?.get(p.id));
+  return html`<article class="mcard m-mentor">
+    <${Person} p=${p} onOpen=${ctx.openProfile} size=${48} sub=${promoFaits(p)}/>
+    ${p.poste ? html`<p class="mm-poste"><${Icon} name="briefcase" size=${14}/><span translate="no" dir="auto">${p.poste}</span></p>` : null}
+    ${n || why.length ? html`<p class="mm-sceaux">${n ? html`<span class="m-sceau"><${Icon} name="heart" size=${12}/><span>${n > 1 ? `A aidé ${n} étudiants` : 'A aidé 1 étudiant'}</span></span>` : null}${why.map(w => html`<span class="mini">${w}</span>`)}</p>` : null}
+    ${merci ? html`<blockquote class="merci mcard-merci"><${Repliable} lignes=${2}>${citation(merci.txt)}<//><${MerciDuo} ctx=${ctx} m=${merci} size=${22} seul/></blockquote>` : null}
+    <div class="mm-pied"><button type="button" class="btn small tonal" onClick=${onDemander}>Lui demander</button></div>
+  </article>`;
 }
 
 // Une demande acceptée récemment (côté étudiant), pas encore fêtée
@@ -454,15 +615,17 @@ function acceptee(data, me) {
 }
 
 export function MentoratPage(ctx) {
-  const { data, me, store, act, scores, openProfile } = ctx;
+  const { data, me, store, act, scores } = ctx;
   const [ask, setAsk] = useState(null); // { mentor, besoin }
   const [past, setPast] = useState(false);
   const [more, setMore] = useState(false);
   const [ignorees, setIgnorees] = useLocal(CLE_IGNOREES, []);
+  // L'heure de la page : l'action pleine passe d'une carte à l'autre quand l'heure du rendez-vous approche
+  const now = useMaintenant();
   const isLaureat = me.role === 'laureat';
   const isAdmin = me.role === 'admin';
   const feter = me.role !== 'admin' && ctx.sub !== 'cv' ? acceptee(data, me) : null;
-  // Un lauréat a accepté ma demande : on le fête une fois, avec une seule prochaine étape.
+  // Un lauréat a accepté ma demande : on le fête une fois, avec une seule prochaine étape. Les deux visages se rejoignent.
   // Elle arrive une seconde après la page (on voit d'abord son rendez-vous), et part avec elle si on s'en va.
   useEffect(() => {
     if (!feter) return;
@@ -470,7 +633,7 @@ export function MentoratPage(ctx) {
     if (!prenom) return;
     const titre = `${prenom} a accepté !`;
     const h = setTimeout(() => celebrate({
-      cle: 'rdv-accepte-' + feter.id, icon: 'calendar', titre,
+      cle: 'rdv-accepte-' + feter.id, icon: 'calendar', titre, visages: [me, mentor],
       texte: `Rendez-vous ${quand(feter.rdv_at)}, ${RDV_MIN} min en visio. Note deux ou trois questions : c’est tout ce qu’il faut.`,
       action: store.peutDiscuter?.(feter.mentor_id) ? { label: 'Lui écrire', icon: 'chat', onClick: () => ctx.ecrire(feter.mentor_id) } : null,
     }), 1000);
@@ -490,35 +653,44 @@ export function MentoratPage(ctx) {
   // Demandes pour moi : toutes celles qui me vont (lauréat), ou celles qu'un étudiant m'a adressées (administration)
   const need = isLaureat || isAdmin ? requestsFor(data, me, id => store.byId('profiles', id)).filter(x => x.direct || (isLaureat && !ignorees.includes(x.m.id))) : [];
   const ignorer = m => { setIgnorees([...ignorees.filter(id => id !== m.id), m.id].slice(-200)); toast('C’est masqué : tu ne le reverras plus dans ta liste.'); };
-  const seRendreDispo = () => act(() => store.update('profiles', me.id, { mentor_dispo: true }));
+  const seRendreDispo = () => act(async () => { await store.update('profiles', me.id, { mentor_dispo: true }); vibrer(10); });
+  // « Voir les autres étudiants » : la rangée s'allonge et glisse jusqu'à la première carte qu'on n'avait pas vue
+  const voirAutres = () => {
+    const ouvrir = !more; setMore(ouvrir);
+    if (ouvrir) requestAnimationFrame(() => { const c = document.querySelector('.m-avis-liste .rangee-cartes'); const x = c?.children[2]; if (c && x && c.scrollWidth > c.clientWidth) c.scrollTo({ left: x.offsetLeft - c.firstElementChild.offsetLeft, behavior: mouvementReduit() ? 'auto' : 'smooth' }); });
+  };
   const busy = new Set(mineActive.map(m => m.mentor_id));
-  const reco = me.role === 'etudiant' ? mentorsFor(data, me, '', scores).filter(x => !busy.has(x.p.id)).slice(0, 3) : [];
+  const dispos = me.role === 'etudiant' ? mentorsFor(data, me, '', scores) : [];
+  const reco = dispos.filter(x => !busy.has(x.p.id)).slice(0, 3);
   // Sur chaque carte : le dernier merci reçu, s'il est déjà sur le mur des mercis (sinon rien)
   const mercis = reco.length ? mercisPublics(data) : [];
+  // Sur-titre : un chiffre vrai et utile (les lauréats prêts à aider un étudiant), sinon la ligne reste réservée
+  const surTitre = dispos.length > 1 ? `${dispos.length} lauréats disponibles` : dispos.length ? '1 lauréat disponible' : null;
+  const entete = html`<${EnTetePage} surTitre=${surTitre} garderPlace titre="Mentorat"><${MentorOnglets} ctx=${ctx}/><//>`;
 
   if (ctx.sub === 'cv') return html`<section class="page mentorat">
-    <header class="page-head"><div><h1>Mentorat</h1></div></header>
-    <${MentorSeg} ctx=${ctx}/>
+    ${entete}
     <${RelecturesPage} ctx=${ctx}/>
   </section>`;
 
   // Administration : d'abord ce qui la concerne elle-même (une demande adressée, un rendez-vous fixé), puis le suivi de l'école
   if (isAdmin) {
     const miens = new Set([...need.map(x => x.m.id), ...rdvs.map(m => m.id)]);
-    const open = data.mentorships.filter(m => m.status === 'demande' && !miens.has(m.id)).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
-    const soon = data.mentorships.filter(m => mentorState(m) === 'rdv' && !miens.has(m.id)).sort(byRdv);
+    // Une demande acceptée sans horaire attend encore son moment : elle est avec les demandes, pas avec les rendez-vous
+    const open = data.mentorships.filter(m => (m.status === 'demande' || (mentorState(m) === 'rdv' && !m.rdv_at)) && !miens.has(m.id)).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const soon = data.mentorships.filter(m => mentorState(m) === 'rdv' && m.rdv_at && !miens.has(m.id)).sort(byRdv);
     return html`<section class="page mentorat">
-      <header class="page-head"><div><h1>Mentorat</h1></div></header>
-      <${MentorSeg} ctx=${ctx}/>
-      ${rdvs.length ? html`<section class="m-section"><div class="m-head"><h2 class="h-ico"><${Icon} name="video"/> Tes rendez-vous</h2></div>
+      ${entete}
+      ${rdvs.length ? html`<section class="m-section"><div class="m-head"><h2 class="titre-sec">Tes rendez-vous</h2></div>
         <div class="list">${rdvs.map((m, i) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="mentor" focus=${i === 0}/>`)}</div></section>` : null}
-      ${need.length ? html`<section class="m-section"><div class="m-head"><h2 class="h-ico"><${Icon} name="heart"/> Ils aimeraient ton avis <span class="count">${need.length}</span></h2></div>
+      ${need.length ? html`<section class="m-section"><div class="m-head"><h2 class="titre-sec">Ils aimeraient ton avis <span class="count">${need.length}</span></h2></div>
         <div class="list">${need.map(({ m, why }) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="mentor" why=${why}/>`)}</div></section>` : null}
-      <section class="m-section"><div class="m-head"><h2 class="h-ico"><${Icon} name="chart"/> Suivi de l’école</h2></div>
+      <section class="m-section m-suivi"><div class="m-head"><h2 class="titre-sec">Suivi de l’école</h2></div>
         ${soon.length ? html`<h3 class="m-sub">Rendez-vous à venir <span class="count">${soon.length}</span></h3>
-          <div class="list">${soon.map(m => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="admin"/>`)}</div>` : null}
+          <${Rangee} label="Rendez-vous à venir" grille cls="m-cartes">${soon.map(m => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="admin"/>`)}<//>` : null}
         <h3 class="m-sub">En attente d’un horaire <span class="count">${open.length}</span></h3>
-        <div class="list">${open.length ? open.map(m => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="admin"/>`) : html`<${Empty} icon="mentor" title="Personne n’attend d’horaire">Chaque étudiant a trouvé un lauréat.<//>`}</div>
+        ${open.length ? html`<${Rangee} label="En attente d’un horaire" grille cls="m-cartes">${open.map(m => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="admin"/>`)}<//>`
+          : html`<div class="list"><${Empty} icon="mentor" title="Personne n’attend d’horaire">Chaque étudiant a trouvé un lauréat.<//></div>`}
       </section>
     </section>`;
   }
@@ -527,59 +699,60 @@ export function MentoratPage(ctx) {
   const role = isLaureat ? 'laureat' : 'etudiant';
   const nouveau = !data.mentorships.some(m => m.student_id === me.id || m.mentor_id === me.id);
   const actifs = [...mineActive.map(m => ({ m, side: 'student' })), ...rdvs.map(m => ({ m, side: 'mentor' }))];
-  const next = actifs.filter(x => mentorState(x.m) === 'rdv').sort((a, b) => byRdv(a.m, b.m))[0] || null;
+  // Le billet ne porte qu'un rendez-vous qui a son heure ; un rendez-vous accepté sans horaire attend avec les autres
+  const next = actifs.filter(x => mentorState(x.m) === 'rdv' && x.m.rdv_at).sort((a, b) => byRdv(a.m, b.m))[0] || null;
   const RANG = { apres: 0, rdv: 1, demande: 2, ouverte: 2 };
   const autres = actifs.filter(x => x !== next).sort((a, b) => RANG[mentorState(a.m)] - RANG[mentorState(b.m)] || byRdv(a.m, b.m));
-  const titreAutres = next ? 'Aussi en cours' : autres.every(x => x.side === 'student') ? 'En attente d’un horaire' : 'Mes rendez-vous';
+  // Le titre dit ce que sont les cartes dessous : des horaires qui attendent, des rendez-vous passés à clore, ou les deux
+  const passes = autres.filter(x => mentorState(x.m) === 'apres').length;
+  const titreAutres = next ? 'Aussi en cours' : !passes ? 'En attente d’un horaire' : passes === autres.length ? 'Mes rendez-vous' : 'En cours';
+  // Une seule action pleine sur la page : celle de la première carte qui en a une (le billet du haut s'il attend un geste,
+  // sinon le merci d'un rendez-vous passé, ou un autre billet) ; les autres cartes restent tonales
+  const aUnPlein = ({ m, side }) => mentorState(m) === 'apres' ? side === 'student'
+    : mentorState(m) === 'rdv' && !!m.rdv_at && !!pleinDuBillet(m, side, lienVisio(store, m.id), now);
+  const pleine = [next, ...autres].find(x => x && aUnPlein(x)) || null;
   const hist = isLaureat ? done : minePast;
+  const enCours = autres.length ? html`<section class="m-section m-autres">
+      <div class="m-head"><h2 class="titre-sec">${titreAutres} <span class="count">${autres.length}</span></h2></div>
+      <div class="list">${autres.map(x => html`<${RequestCard} key=${x.m.id} ctx=${ctx} m=${x.m} side=${x.side} now=${now} calme=${x !== pleine}/>`)}</div>
+    </section>` : null;
 
   return html`<section class="page mentorat">
-    <header class="page-head"><div><h1>Mentorat</h1></div>
-      ${isLaureat ? html`<label class="switch"><input id="mentor-dispo" type="checkbox" checked=${!!me.mentor_dispo} onChange=${e => act(() => store.update('profiles', me.id, { mentor_dispo: e.target.checked }))}/> Disponible pour aider</label>` : null}</header>
-    <${MentorSeg} ctx=${ctx}/>
-
+    ${entete}
+    ${isLaureat && (me.mentor_dispo || need.length) ? html`<${Dispo} ctx=${ctx}/>` : null}
     ${nouveau ? html`<${HowItWorks} role=${role}/>` : null}
 
     ${next ? html`<section class="m-section m-next" aria-labelledby="m-next-h">
-      <div class="m-head"><h2 id="m-next-h" class="h-ico"><${Icon} name="video"/> Ton prochain rendez-vous</h2><${Countdown} iso=${next.m.rdv_at}/></div>
-      <${RequestCard} key=${next.m.id} ctx=${ctx} m=${next.m} side=${next.side} focus/>
+      <div class="m-head"><h2 id="m-next-h" class="titre-sec">Ton prochain rendez-vous</h2></div>
+      <${RequestCard} key=${next.m.id} ctx=${ctx} m=${next.m} side=${next.side} focus now=${now} calme=${!!pleine && pleine !== next}/>
     </section>` : null}
 
-    ${autres.length ? html`<section class="m-section">
-      <div class="m-head"><h2>${titreAutres} <span class="count">${autres.length}</span></h2></div>
-      <div class="list">${autres.map(({ m, side }) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side=${side}/>`)}</div>
-    </section>` : null}
+    ${!isLaureat ? enCours : null}
+    ${!isLaureat ? html`<${TuilesBesoin} titre=${mine.length ? 'Besoin d’un autre conseil ?' : 'Besoin d’un conseil ?'} onChoisir=${k => setAsk({ besoin: k })}/>` : null}
 
-    ${!isLaureat ? html`<div class="need-card">
-      <h2>${mine.length ? 'Besoin d’un autre conseil ?' : 'De quoi as-tu besoin ?'}</h2>
-      <div class="need-grid">${Object.entries(BESOINS).map(([k, v]) => html`<button class="need-btn" onClick=${() => setAsk({ besoin: k })}><span class="need-ico"><${Icon} name=${v.icon} size=${22}/></span><span>${v.label}</span></button>`)}</div>
-    </div>` : null}
-
-    ${isLaureat ? html`<section class="m-section">
-      <div class="m-head"><h2 class="h-ico"><${Icon} name="heart"/> Ils aimeraient ton avis</h2></div>
+    ${isLaureat ? html`<section class="m-section m-avis" aria-labelledby="m-avis-h">
+      <div class="m-head"><h2 id="m-avis-h" class="titre-sec">Ils aimeraient ton avis${need.length ? html` <span class="count">${need.length}</span>` : null}</h2></div>
       ${need.length ? html`<p class="small muted m-invite">Choisis l’étudiant que tu peux aider, à ton rythme. Les autres lauréats s’occupent du reste.</p>` : null}
-      ${!me.mentor_dispo && need.length ? html`<div class="hint-box"><${Icon} name="mentor" size=${16}/><span class="grow small">Les étudiants ne te voient pas encore : rends-toi disponible, ils pourront te proposer leurs horaires directement.</span><button class="btn small primary" onClick=${seRendreDispo}>Me rendre disponible</button></div>` : null}
-      <div class="list">${need.length ? need.slice(0, more ? 12 : 2).map(({ m, why, direct }) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="mentor" why=${why} onIgnore=${direct ? null : () => ignorer(m)}/>`) : !me.mentor_dispo
+      ${need.length ? html`<${Rangee} label="Ils aimeraient ton avis" grille cls="m-cartes m-avis-liste">${(more ? need : need.slice(0, 2)).map(({ m, why, direct }) => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side="mentor" why=${why} onIgnore=${direct ? null : () => ignorer(m)}/>`)}<//>`
+        : html`<div class="list">${!me.mentor_dispo
         // Mentorat calme : une seule action, se rendre disponible
         ? html`<${Empty} icon="mentor" title="Tout est calme pour l’instant" action=${{ label: 'Me rendre disponible', icon: 'check', onClick: seRendreDispo }}>Rends-toi disponible : les étudiants de ton parcours pourront te demander conseil directement.<//>`
-        : html`<${Empty} icon="mentor" title="Tout est calme pour l’instant">On te prévient dès qu’un étudiant demande de l’aide.<//>`}</div>
-      ${need.length > 2 ? html`<button class="linkish small past-toggle" onClick=${() => setMore(!more)}>${more ? 'Voir moins' : `Voir les autres étudiants (${need.length - 2})`}</button>` : null}
+        : html`<${Empty} icon="mentor" title="Tout est calme pour l’instant">On te prévient dès qu’un étudiant demande de l’aide.<//>`}</div>`}
+      ${need.length > 2 ? html`<button type="button" class="linkish small past-toggle" aria-expanded=${more} onClick=${voirAutres}>${more ? 'Voir moins' : `Voir les autres étudiants (${need.length - 2})`}</button>` : null}
     </section>` : null}
+    ${isLaureat ? enCours : null}
 
-    ${!isLaureat && reco.length ? html`<div class="section-head"><h2>Des lauréats qui peuvent t’aider</h2><span class="muted small">Ou choisis toi-même</span></div>
-      <div class="cards">${reco.map(({ p, why }) => html`<div class="mcard" key=${p.id}>
-        <${Person} p=${p} score=${scores.get(p.id)} onOpen=${openProfile} size=${44}/>
-        ${p.poste ? html`<p class="small"><${Icon} name="briefcase" size=${14}/> <span translate="no" dir="auto">${p.poste}</span></p>` : null}
-        ${p.mentor_sujets ? html`<p class="topics"><span class="muted small">Peut t’aider sur :</span> <span translate="no" dir="auto">${p.mentor_sujets}</span></p>` : null}
-        ${(m => m ? html`<blockquote class="merci mcard-merci"><p translate="no" dir="auto">« ${m.txt} »</p><${MerciDuo} ctx=${ctx} m=${m} size=${22} seul/></blockquote>` : null)(dernierMerciPour(mercis, p.id))}
-        <div class="row"><span class="why">${why.map(w => html`<span class="mini">${w}</span>`)}</span><span class="spacer"></span><button class="btn small tonal" onClick=${() => setAsk({ mentor: p })}>Lui demander</button></div>
-      </div>`)}</div>` : null}
+    ${!isLaureat && reco.length ? html`<${Rangee} titre="Des lauréats qui peuvent t’aider" sousTitre="Ou choisis toi-même à qui demander" grille cls="m-mentors">
+      ${reco.map(({ p, why }) => html`<${CarteMentor} key=${p.id} ctx=${ctx} p=${p} why=${why} merci=${dernierMerciPour(mercis, p.id)} onDemander=${() => setAsk({ mentor: p })}/>`)}
+    <//>` : null}
 
-    ${hist.length ? html`<button class="linkish small past-toggle" onClick=${() => setPast(!past)}>${past ? 'Masquer l’historique' : `Voir l’historique (${hist.length})`}</button>
-      ${past ? html`<div class="list">${hist.slice(0, 10).map(m => html`<${RequestCard} key=${m.id} ctx=${ctx} m=${m} side=${isLaureat ? 'mentor' : 'student'}/>`)}</div>` : null}` : null}
+    ${hist.length ? html`<div class="m-histo">
+      <button type="button" class="linkish small past-toggle" aria-expanded=${past} onClick=${() => setPast(!past)}>${past ? 'Masquer l’historique' : `Voir l’historique (${hist.length})`}</button>
+      ${past ? html`<ul class="m-histo-liste">${hist.slice(0, 10).map(m => html`<${LigneHisto} key=${m.id} ctx=${ctx} m=${m} side=${isLaureat ? 'mentor' : 'student'}/>`)}</ul>` : null}
+    </div>` : null}
 
-    ${isLaureat && me.en_recherche ? html`<div class="callout"><p><strong>Tu cherches un emploi ?</strong> Un lauréat plus expérimenté peut relire ton CV, te préparer à un entretien ou te parler salaire.</p><div><button class="btn small primary" id="mt-demande-laureat" onClick=${() => setAsk({ besoin: 'entretien' })}><${Icon} name="heart" size=${15}/> Demander conseil</button></div></div>`
-      : isLaureat ? html`<p class="small muted center">Toi aussi, tu cherches un conseil ? <button class="linkish" onClick=${() => setAsk({})}>Demande à un lauréat plus expérimenté</button></p>` : null}
+    ${isLaureat && me.en_recherche ? html`<div class="callout"><p><strong>Tu cherches un emploi ?</strong> Un lauréat plus expérimenté peut relire ton CV, te préparer à un entretien ou te parler salaire.</p><div><button class="btn small tonal" id="mt-demande-laureat" onClick=${() => setAsk({ besoin: 'entretien' })}><${Icon} name="heart" size=${15}/> Demander conseil</button></div></div>`
+      : isLaureat ? html`<p class="small muted center m-aussi">Toi aussi, tu cherches un conseil ? <button type="button" class="linkish" onClick=${() => setAsk({})}>Demande à un lauréat plus expérimenté</button></p>` : null}
     ${!nouveau ? html`<${HowMore} role=${role}/>` : null}
     ${ask ? html`<${AskHelp} ctx=${ctx} mentor=${ask.mentor} besoin=${ask.besoin} sujet=${ask.sujet} onClose=${() => setAsk(null)}/>` : null}
   </section>`;
@@ -736,11 +909,13 @@ function SuiviAide({ ctx, s }) {
 // ---------------------------------------------------------------------------
 injectCSS('mentorat-ux', `
 /* Confirmation de présence, « c'est fait », refus poli */
-.m-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); margin-top: var(--sp-2); padding-top: var(--sp-3); border-top: 1px solid var(--line); }
+.m-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); }
 .m-confirm p { margin: 0; flex: 1 1 16rem; }
 .m-confirm-acts { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
-.m-ok { display: flex; align-items: center; gap: .4rem; margin: var(--sp-2) 0 0; }
-.m-fini { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3); flex-wrap: wrap; margin-top: var(--sp-3); padding-top: var(--sp-3); border-top: 1px solid var(--line); }
+.m-confirm-acts .btn { min-height: 44px; }
+.m-ok { display: flex; align-items: center; gap: .45rem; margin: 0; }
+.m-ok > .coche { flex: none; }
+.m-fini { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-3); flex-wrap: wrap; padding-top: var(--sp-3); border-top: 1px solid var(--line); }
 .m-decline { margin-top: calc(-1 * var(--sp-1)); }
 .m-sub { margin: var(--sp-2) 0 0; font-size: var(--fs-3, 1rem); display: flex; align-items: center; gap: .5rem; }
 /* Sections : un titre, puis le contenu */
@@ -748,26 +923,9 @@ injectCSS('mentorat-ux', `
 .m-head { display: flex; align-items: center; gap: var(--sp-2) var(--sp-3); flex-wrap: wrap; }
 .m-head h2 { margin: 0; }
 .m-invite { margin: calc(-1 * var(--sp-1)) 0 0; max-width: 60ch; }
-.m-countdown { display: inline-flex; align-items: center; gap: .35rem; padding: .3rem .75rem; border-radius: var(--r-pill); background: var(--accent-soft); color: var(--accent); font-weight: 600; font-size: var(--fs-2); line-height: 1.3; white-space: nowrap; }
-.m-countdown.live { background: var(--good-soft); color: var(--good); }
-.m-countdown .when { gap: .25rem; }
 .mreq.m-focus-card { box-shadow: var(--sh2); }
 
-/* En-tête d'une demande : le nom garde sa ligne, l'état et « Écrire » passent dessous sur téléphone */
-.mrow-head { flex-wrap: wrap; row-gap: var(--sp-2); }
-.mrow-head > .person, .mrow-head > .open-to { flex: 0 1 auto; min-width: 0; }
-.mrow-head .person-name { overflow-wrap: anywhere; }
-@media (max-width: 480px) {
-  .mrow-head > .person, .mrow-head > .open-to { flex: 1 1 100%; }
-  .mrow-head > .spacer { display: none; }
-  .mrow-head > .state-pill { margin-inline-start: calc(36px + .6rem); }
-  .mrow-head > .msg-btn, .mrow-head > .state-pill + .m-more { margin-inline-start: auto; }
-  .mstep, .mstep li { gap: .3rem; }
-  .mstep li { font-size: .76rem; }
-  .mstep li + li::before { width: 12px; }
-  .mstep .step-dot { width: 20px; height: 20px; font-size: .75rem; }
-}
-/* Le besoin au-dessus, comme un sur-titre ; puis le sujet coule comme une phrase : « · il y a 2 j » suit le dernier mot */
+/* Le besoin au-dessus, comme un sur-titre ; puis le sujet coule comme une phrase (aussi dans la feuille de l'accueil) */
 .mreq-subject { display: block; line-height: 1.5; }
 .mreq-subject > .mini.besoin { display: flex; width: fit-content; margin: 0 0 .3rem; }
 .mreq-subject > .m-ago { white-space: nowrap; }
@@ -776,73 +934,234 @@ injectCSS('mentorat-ux', `
 [dir="rtl"] .mreq-subject { display: flex; flex-wrap: wrap; align-items: center; gap: .15rem .45rem; }
 [dir="rtl"] .mreq-subject > .mini.besoin { margin: 0; order: -2; }
 [dir="rtl"] .mreq-subject::before { content: ""; order: -1; flex-basis: 100%; height: 0; }
+@media (max-width: 480px) {
+  .mstep, .mstep li { gap: .3rem; }
+  .mstep li { font-size: var(--fs-1); }
+  .mstep li + li::before { width: 12px; }
+  .mstep .step-dot { width: 20px; height: 20px; font-size: var(--fs-1); }
+}
+
+/* En-tête d'une carte de relecture (cv.js) : le nom garde sa ligne, l'état et « Écrire » passent dessous sur téléphone */
+.mrow-head { flex-wrap: wrap; row-gap: var(--sp-2); }
+.mrow-head > .person, .mrow-head > .open-to { flex: 0 1 auto; min-width: 0; }
+.mrow-head .person-name { overflow-wrap: anywhere; }
 .mrow-head > .m-more { margin-inline-start: -.2rem; }
+@media (max-width: 480px) {
+  .mrow-head > .person, .mrow-head > .open-to { flex: 1 1 100%; }
+  .mrow-head > .spacer { display: none; }
+  .mrow-head > .state-pill { margin-inline-start: calc(36px + .6rem); }
+  .mrow-head > .msg-btn, .mrow-head > .state-pill + .m-more { margin-inline-start: auto; }
+}
+
+/* ---- Page Mentorat : des cartes compactes ---- */
+.mentorat .mreq:not(.billet) { gap: .6rem; padding: .9rem 1rem 1rem; }
+/* Qui, sur une ligne : le visage et le nom à gauche, « Écrire » et « ⋯ » au bout ; la ligne d'année se coupe, jamais l'action */
+.mrow-head.m-tete { display: flex; align-items: center; gap: .5rem; flex-wrap: nowrap; min-width: 0; }
+.mrow-head.m-tete > .person, .mrow-head.m-tete > .open-to { flex: 1 1 auto; min-width: 0; }
+.mrow-head.m-tete .role-line { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* En arabe, « دفعة 2012 · Renault Group Maroc » coupé en « … » perdrait le début du nom latin : la ligne passe à la ligne
+   (deux lignes au plus sur une carte de demande, où une longue filière en arabe se coupe à sa fin) */
+[dir="rtl"] .mrow-head.m-tete .role-line { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.m-avec { margin: 0; line-height: 1.55; }
+.m-avec > svg { vertical-align: -3px; margin-inline-end: .1rem; }
+.m-avec-ok { white-space: nowrap; }
+.m-avec-ok > svg { vertical-align: -2px; }
+.mrow-acts { flex: none; display: inline-flex; align-items: center; gap: .15rem; margin-inline-end: -.4rem; }
+.mrow-acts:empty { display: none; }
+.icon-btn.m-ecrire { position: relative; width: 40px; height: 40px; border-radius: 50%; color: var(--blue-text); }
+.icon-btn.m-ecrire::before { content: ""; position: absolute; inset: -2px; }
+.icon-btn.m-ecrire:hover { background: var(--tonal-bg); color: var(--tonal-ink); }
+.icon-btn.m-ecrire .count { position: absolute; top: 0; inset-inline-end: -2px; min-width: 1.15rem; padding: 0 .25rem; background: var(--accent); color: var(--accent-ink); font-size: var(--fs-1); line-height: 1.15rem; }
+/* L'état, le besoin, ce qui le rapproche de toi et depuis quand, sur une ligne de petites étiquettes */
+.m-tags { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .4rem; margin: 0; min-width: 0; }
+.m-tags:empty { display: none; }
+.m-tags .mini, .m-tags .state-pill { margin: 0; }
+.m-tags .m-ago { white-space: nowrap; margin-inline-start: .1rem; }
+.mentorat .mreq-subject { font-size: var(--fs-4); line-height: 1.4; }
+.mentorat .mreq-subject strong { font-weight: 650; overflow-wrap: anywhere; }
+/* Un message long se replie sur deux ou trois lignes : « Lire la suite » s'il dépasse vraiment */
+.m-repli { margin: 0; overflow-wrap: anywhere; }
+.m-repli:not(.ouvert) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--lignes, 2); overflow: hidden; }
+.m-repli-btn { align-self: flex-start; min-height: 32px; margin-top: -.35rem; font-weight: 600; }
+.mentorat .mreq .quote { font-size: var(--fs-3); line-height: 1.5; }
+/* Choisir un horaire : le titre et « Ignorer » sur une ligne, les horaires en puces */
+.icon-btn.m-ignorer { width: 44px; height: 44px; border-radius: 50%; color: var(--ink-2); }
+.icon-btn.m-ignorer:hover { background: var(--surface-2); color: var(--ink); }
+.mentorat .tchoice .chips { gap: .4rem; }
+.mentorat .tchoice .chip { min-height: 40px; }
+.mentorat .mreq-body > .row { flex-wrap: wrap; gap: .2rem .6rem; }
+.mrow-acts > .m-more { margin-inline-start: -.1rem; }
+
+
+/* Les demandes, côte à côte : une carte par étudiant, on glisse de l'un à l'autre (en grille sur ordinateur) */
+.m-cartes .rangee-cartes { --rangee-l: min(88%, 22rem); --rangee-min: 330px; }
+.m-cartes .mreq { height: 100%; animation: none; }
+
+/* ---- Le billet du rendez-vous ---- */
+.mreq.billet { padding: 0; gap: 0; }
+.billet-haut { display: flex; align-items: stretch; min-width: 0; }
+.billet-talon { flex: none; inline-size: 4.6rem; display: flex; flex-direction: column; align-items: center; justify-content: space-between; gap: .45rem; padding: .85rem .3rem .45rem;
+  border-start-start-radius: var(--r-lg); background: color-mix(in srgb, var(--accent) 8%, var(--surface)); color: var(--blue-text); text-align: center;
+  border-inline-end: 2px dashed color-mix(in srgb, var(--accent) 26%, transparent); transition: background-color .3s, color .3s; }
+.bt-date { display: flex; flex-direction: column; align-items: center; gap: .05rem; margin-block: auto; }
+.bt-agenda { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: .12rem; min-inline-size: 48px; min-block-size: 44px; padding: .3rem .35rem; border: 0; border-radius: var(--r-md);
+  background: none; color: var(--blue-text); font: 600 var(--fs-1)/1.15 var(--f-body); cursor: pointer; transition: background-color .2s; }
+.bt-agenda:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.bt-agenda:active { transform: scale(.95); }
+.billet.live .bt-agenda { color: var(--good); }
+.bt-jour { font: 600 var(--fs-1)/1.25 var(--f-body); text-transform: capitalize; }
+.bt-num { font: 750 var(--fs-7)/1.02 var(--f-display); letter-spacing: -.02em; color: var(--ink); font-variant-numeric: tabular-nums; }
+.bt-mois { font: 600 var(--fs-2)/1.25 var(--f-body); }
+.bt-heure { margin-top: .45rem; padding: .16rem .5rem; border-radius: var(--r-pill); background: var(--surface); color: var(--ink); font-weight: 650; font-size: var(--fs-2); box-shadow: var(--sh1); }
+.billet-corps { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .5rem; padding-block: .85rem .9rem; padding-inline: .95rem .8rem; }
+.billet-qui { display: flex; align-items: flex-start; gap: .3rem; min-width: 0; }
+.billet-qui > .person { flex: 1 1 auto; min-width: 0; }
+/* Sur le billet, la promo et l'entreprise se lisent en entier (deux lignes s'il le faut, jamais « Renault Grou… ») */
+.billet-qui .role-line { display: block; }
+.billet-qui > .m-more { margin: -.25rem -.35rem 0 0; }
+[dir="rtl"] .billet-qui > .m-more { margin: -.25rem 0 0 -.35rem; }
+.billet .mreq-subject { margin: 0; font-size: var(--fs-4); line-height: 1.4; }
+.billet .mreq-subject strong { font-weight: 650; }
+.billet-quand { display: flex; align-items: center; flex-wrap: wrap; gap: .35rem .6rem; margin: 0; }
+.m-rebours { display: inline-flex; align-items: center; gap: .35rem; padding: .28rem .65rem; border-radius: var(--r-pill); background: var(--accent-soft); color: var(--blue-text); font-weight: 650; font-size: var(--fs-2); line-height: 1.3; white-space: nowrap; }
+.m-rebours.live { background: var(--good-soft); color: var(--good); }
+.billet-duree { color: var(--muted); font-size: var(--fs-2); }
+/* Le bas du billet, après la ligne pointillée : ce qu'il y a à faire */
+.billet-bas { display: flex; flex-direction: column; gap: .7rem; padding: .85rem .95rem .95rem; border-top: 2px dashed color-mix(in srgb, var(--accent) 22%, transparent); }
+.billet-bas > p { margin: 0; }
+.billet-mot { color: var(--ink-2); }
+.billet-acts { display: flex; align-items: center; flex-wrap: wrap; gap: .4rem .9rem; }
+.billet-acts .rdv-join { min-height: 44px; padding-inline: 1.1rem; }
+.billet-acts > .m-info { margin-inline-start: -.3rem; }
+.billet-prep { flex: 1 1 100%; }
+@media (max-width: 480px) { .billet-acts .rdv-join { flex: 1 1 auto; justify-content: center; } }
+/* C'est l'heure : le talon passe au vert, la visio est l'action pleine */
+.billet.live { box-shadow: 0 0 0 2px color-mix(in srgb, var(--good) 55%, transparent), var(--sh2); }
+.billet.live .billet-talon { background: color-mix(in srgb, var(--good) 12%, var(--surface)); color: var(--good); border-inline-end-color: color-mix(in srgb, var(--good) 34%, transparent); }
+.icon-btn.m-info { position: relative; width: 32px; height: 32px; flex: none; border-radius: 50%; color: var(--ink-2); }
+.icon-btn.m-info::before { content: ""; position: absolute; inset: -6px; }
+.icon-btn.m-info[aria-expanded="true"] { background: var(--surface-2); color: var(--accent); }
+.rdv-tip { display: flex; align-items: baseline; gap: var(--sp-3); margin: 0; color: var(--ink-2); }
+.rdv-tip > span { flex: 1; }
+.rdv-tip .linkish { flex: none; }
+/* Ajouter à mon agenda : une feuille, deux choix */
+.m-agenda .m-agenda-quoi { display: flex; flex-direction: column; gap: .15rem; margin: 0 0 .9rem; }
+.m-agenda-choix { display: flex; flex-direction: column; gap: .5rem; }
+.m-agenda-choix .btn { justify-content: center; min-height: 48px; }
+.m-agenda .modal-body > p.small { margin: .8rem 0 0; }
+/* Dans « Ajouter à mon agenda » des discussions (messages.js) */
+.rdv-cal > summary { list-style: none; cursor: pointer; }
+.rdv-cal > summary::-webkit-details-marker { display: none; }
+.rdv-cal-body { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-2); }
+.rdv-cal-body > p { flex-basis: 100%; margin: 0; }
+
+/* ---- « Disponible pour aider » : un interrupteur, et ce qu'il change ---- */
+.m-dispo { display: flex; align-items: center; gap: .75rem; padding: .6rem .45rem .6rem .9rem; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--sh1); min-width: 0; }
+[dir="rtl"] .m-dispo { padding: .6rem .9rem .6rem .45rem; }
+.m-dispo-point { position: relative; flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--line-strong); transition: background-color .25s; }
+.m-dispo.on .m-dispo-point { background: var(--good); }
+.m-dispo-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .1rem; line-height: 1.35; }
+.m-dispo-txt > label { font-weight: 650; color: var(--ink); cursor: pointer; }
+.m-dispo-txt > .small { color: var(--ink-2); }
+.m-dispo.on .m-dispo-txt > .small { color: var(--good); }
+/* Elle vient de se rendre disponible : le point envoie une onde, une seule fois */
+@media (prefers-reduced-motion: no-preference) {
+  .m-dispo.vient .m-dispo-point::after { content: ""; position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 2px var(--good); animation: m-onde .4s ease-out 1 forwards; }
+}
+@keyframes m-onde { from { opacity: .8; transform: scale(1); } to { opacity: 0; transform: scale(2.6); } }
+
+/* ---- Besoin d'un conseil : cinq tuiles aux couleurs douces ---- */
+.need-tuiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; }
+.need-tuile { --t: var(--accent); position: relative; display: flex; align-items: center; gap: .7rem; min-height: 64px; padding: .7rem .8rem; border: 0; border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--t) 8%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--t) 16%, transparent);
+  color: var(--ink); font: inherit; text-align: start; cursor: pointer; transition: background-color .2s, transform .2s var(--ease), box-shadow .2s; -webkit-tap-highlight-color: transparent; }
+.need-tuile:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.need-tuile:hover { background: color-mix(in srgb, var(--t) 13%, var(--surface)); }
+.need-tuile:active { transform: scale(.97); transition-duration: .08s; }
+.nt-cv { --t: var(--accent); } .nt-stage { --t: var(--orange); } .nt-entretien { --t: var(--teal); } .nt-etranger { --t: var(--indigo); } .nt-carriere { --t: var(--navy); }
+.nt-ico { flex: none; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; background: color-mix(in srgb, var(--t) 16%, var(--surface)); color: color-mix(in srgb, var(--t) 82%, var(--ink)); transition: transform .25s var(--ease); }
+.need-tuile:hover .nt-ico { transform: translateY(-2px); }
+.nt-txt { display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
+.nt-txt strong { font-weight: 650; font-size: var(--fs-3); line-height: 1.25; }
+@media (max-width: 380px) { .need-tuile { gap: .55rem; padding: .65rem .65rem; } .nt-ico { width: 34px; height: 34px; border-radius: 10px; } }
+.nt-sous { display: none; color: var(--ink-2); font-size: var(--fs-2); line-height: 1.35; }
+@media (min-width: 761px) {
+  .need-tuiles { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .need-tuile:last-child:nth-child(odd) { grid-column: auto; }
+  .need-tuile { flex-direction: column; align-items: flex-start; gap: .55rem; min-height: 0; padding: .9rem .9rem 1rem; }
+  .nt-sous { display: block; }
+}
+
+/* ---- Des lauréats qui peuvent t'aider : cartes compactes ---- */
+/* Les cartes d'une rangée ont toutes la même hauteur : « Lui demander » s'aligne d'une carte à l'autre */
+.m-mentors .rangee-cartes { --rangee-l: min(84%, 19rem); }
+.mcard.m-mentor { gap: .55rem; padding: .95rem 1rem 1rem; height: 100%; }
+.m-mentor > .person { align-self: stretch; }
+/* Qui il est et ce qu'il fait, en entier, dans les deux sens : la promo et l'entreprise passent à la ligne entre deux faits
+   (.faits), le poste sur deux lignes au plus (« Responsable méthodes emboutissage », à 360 px), ses lignes collées à
+   l'icône du côté où la page commence, même écrit en lettres latines dans la page arabe */
+.m-mentor .role-line { display: block; white-space: normal; }
+.mm-poste { display: flex; align-items: flex-start; gap: .35rem; margin: 0; color: var(--ink-2); font-size: var(--fs-2); line-height: 1.4; min-width: 0; align-self: stretch; }
+.mm-poste > svg { flex: none; margin-block-start: calc((1.4em - 14px) / 2); color: var(--muted); }
+.mm-poste > span { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; text-align: left; }
+[dir="rtl"] .mm-poste > span { text-align: right; }
+.mm-sceaux { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; margin: 0; }
+.mm-sceaux .mini { margin: 0; }
+.m-sceau { display: inline-flex; align-items: center; gap: .3rem; padding-block: .18rem; padding-inline: .4rem .55rem; border-radius: var(--r-pill); background: var(--good-soft); color: var(--good); font-size: var(--fs-1); font-weight: 650; line-height: 1.35; }
+.m-sceau > svg { flex: none; }
+.m-mentor .mcard-merci { margin: .1rem 0 0; padding: .1rem 0 .1rem .75rem; align-self: stretch; gap: .35rem; }
+[dir="rtl"] .m-mentor .mcard-merci { padding: .1rem .75rem .1rem 0; }
+.m-mentor .mcard-merci p { font-size: var(--fs-3); line-height: 1.45; }
+/* Qui a dit merci, et quand : la taille des autres lignes de la carte (la brique commune garde la sienne ailleurs) */
+.m-mentor .merci-duo { font-size: var(--fs-2); }
+.m-mentor .mcard-merci p.ouvert { display: block; }
+.m-mentor .m-repli-btn { margin-top: -.2rem; }
+.m-mentor .merci-duo .md-quand { flex-basis: auto; }
+.m-mentor .merci-duo .md-quand::before { content: "· "; }
+.m-insec { white-space: nowrap; }
+.mm-pied { margin-top: auto; align-self: stretch; display: flex; padding-top: .25rem; }
+.mm-pied .btn { flex: 1; justify-content: center; min-height: 44px; }
+
+/* ---- L'historique : une ligne par mentorat ---- */
+.m-histo { display: flex; flex-direction: column; gap: .5rem; min-width: 0; }
+.past-toggle { min-height: 40px; }
+.m-histo-liste { list-style: none; margin: 0; padding: .2rem .9rem; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--sh1); animation: m-ouvre .22s var(--ease) backwards; }
+.m-histo-ligne { display: flex; align-items: flex-start; gap: .7rem; padding: .7rem 0; min-width: 0; }
+.m-histo-ligne + .m-histo-ligne { border-top: 1px solid var(--line); }
+.mh-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .15rem; }
+.mh-l1 { display: flex; align-items: center; gap: .5rem; min-width: 0; }
+.mh-sujet { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mh-l1 > .state-pill { flex: none; }
+.mh-merci { flex-wrap: nowrap; min-width: 0; }
+.mh-merci-txt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mh-reprendre { align-self: flex-start; min-height: 36px; }
+.m-aussi .linkish { min-height: 40px; }
 
 /* Mode d'emploi replié */
 .m-how { align-self: flex-start; max-width: 100%; }
-.m-how > summary { display: inline-flex; align-items: center; gap: .4rem; cursor: pointer; list-style: none; color: var(--ink-2); font-weight: 600; font-size: var(--fs-2); padding: .35rem 0; border-radius: var(--r-sm); }
-.m-how > summary::-webkit-details-marker, .rdv-cal > summary::-webkit-details-marker { display: none; }
+.m-how > summary { display: inline-flex; align-items: center; gap: .4rem; min-height: 40px; cursor: pointer; list-style: none; color: var(--ink-2); font-weight: 600; font-size: var(--fs-2); padding: .35rem 0; border-radius: var(--r-sm); }
+@media (pointer: coarse) { .m-how > summary { min-height: 44px; } }
+.m-how > summary::-webkit-details-marker { display: none; }
 /* « i » rond avant, chevron après : dessinés en CSS pour servir aussi au volet « Relecture de CV » */
 .m-how > summary::before { content: "i"; display: inline-grid; place-items: center; width: 16px; height: 16px; border: 1.6px solid currentColor; border-radius: 50%; font: 700 10px/1 var(--f-body); }
 .m-how > summary::after { content: ""; width: 6px; height: 6px; margin-inline-start: .15rem; border: solid currentColor; border-width: 0 1.6px 1.6px 0; transform: translateY(-2px) rotate(45deg); transition: transform .2s var(--ease); }
 .m-how[open] > summary::after { transform: translateY(1px) rotate(-135deg); }
 .m-how > summary:hover { color: var(--accent); }
 .m-how[open] > summary { margin-bottom: var(--sp-2); }
-.rdv-cal .ico-chev { transition: transform .2s var(--ease); }
-.rdv-cal[open] > summary .ico-chev { transform: rotate(180deg); }
-.m-how[open] > .how, .rdv-cal-body, .m-more-pop, .m-after-non, .rdv-tip { animation: m-ouvre .22s var(--ease) backwards; }
+.m-how[open] > .how, .m-more-pop, .m-after-non, .rdv-tip, .rdv-cal-body { animation: m-ouvre .22s var(--ease) backwards; }
 @keyframes m-ouvre { from { opacity: 0; transform: translateY(-4px); } }
 
 /* Horaires à choisir : deux par ligne sur téléphone */
 @media (max-width: 420px) {
   .tchoice .chips { gap: .35rem; }
-  .tchoice .chip { padding: .38rem .6rem; font-size: .82rem; min-height: 38px; }
+  .tchoice .chip { padding: .38rem .6rem; font-size: var(--fs-2); min-height: 38px; }
   .tchoice .chip .when { gap: .12rem; }
 }
 
-/* Choix du besoin : 5 tuiles, sans tuile orpheline sur téléphone (3 puis 2, centrées) */
-@media (max-width: 420px) {
-  .need-card { padding: var(--sp-4); }
-  .need-grid { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--sp-2); }
-  .need-grid > .need-btn { grid-column: span 2; padding: .6rem .25rem; font-size: var(--fs-2); gap: .35rem; }
-  .need-grid > .need-btn:nth-child(4) { grid-column: 2 / span 2; }
-  .need-grid .need-ico { width: 38px; height: 38px; }
-}
-
-/* Le rendez-vous */
-.rdv-box { position: relative; gap: var(--sp-3); }
-.rdv-top { padding-inline-end: 2.5rem; }
-.rdv-top > .m-more { position: absolute; top: .4rem; inset-inline-end: .4rem; }
-.rdv-what { flex: 1 1 13rem; }
-.rdv-link-row { display: flex; align-items: center; gap: .2rem; min-width: 0; }
-.rdv-link { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; min-width: 0; }
-.rdv-box.live .slot-date .sd-date { color: inherit; opacity: .9; }
-.icon-btn.m-info { width: 28px; height: 28px; flex: none; border-radius: 50%; color: var(--ink-2); }
-.icon-btn.m-info::before { content: ""; position: absolute; inset: -6px; }
-.icon-btn.m-info[aria-expanded="true"] { background: var(--surface); color: var(--accent); }
-.rdv-tip { display: flex; align-items: flex-start; gap: var(--sp-3); padding: .55rem .75rem; border-radius: var(--r-md); background: var(--surface); color: var(--ink-2); }
-.rdv-tip > span { flex: 1; }
-.rdv-tip .linkish { flex: none; }
-.rdv-actions { align-items: flex-start; gap: var(--sp-2); }
-.rdv-cal { flex: 1 1 auto; min-width: 0; }
-.rdv-cal > summary { list-style: none; cursor: pointer; }
-.rdv-cal-body { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: var(--sp-2); }
-.rdv-cal-body > p { flex-basis: 100%; margin: 0; }
-@media (max-width: 760px) {
-  .rdv-actions { flex-direction: column; align-items: stretch; }
-  .rdv-actions > .btn, .rdv-cal > summary { width: 100%; }
-  .rdv-actions > .rdv-join { min-height: 46px; }
-}
-
-/* Sombre : une surface chaude mais claire, au lieu du brun épais (seulement ici, sans toucher au jeton partagé) */
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .rdv-box:not(.live) { background: color-mix(in srgb, var(--brass) 8%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brass) 22%, transparent); } }
-:root[data-theme="dark"] .rdv-box:not(.live) { background: color-mix(in srgb, var(--brass) 8%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brass) 22%, transparent); }
-
 /* Menu « ⋯ » */
-.m-more { display: inline-flex; flex: none; }
-.m-more-btn { width: 34px; height: 34px; border-radius: 50%; }
+.m-more { display: inline-flex; flex: none; position: relative; }
+.m-more-btn { width: 40px; height: 40px; border-radius: 50%; }
 .m-more-btn:hover, .m-more-btn[aria-expanded="true"] { background: var(--surface-2); color: var(--ink); }
-.rdv-box .m-more-btn:hover, .rdv-box .m-more-btn[aria-expanded="true"] { background: var(--surface); }
 .m-more-pop { min-width: 200px; width: max-content; max-width: min(320px, calc(100vw - 48px)); }
 .m-more-pop button { color: var(--ink); }
 .m-more-pop button.m-danger { color: var(--bad); }
@@ -851,7 +1170,7 @@ injectCSS('mentorat-ux', `
 .mreq .merci-box > p:first-child { flex-wrap: nowrap; align-items: flex-start; }
 .mreq .merci-box > p:first-child > svg { flex: none; margin-top: .2em; color: var(--brass); }
 .mreq.m-compact { gap: var(--sp-2); }
-.m-after { display: flex; flex-direction: column; gap: var(--sp-2); padding: .7rem .85rem; border-radius: var(--r-md); background: var(--surface-2); }
+.m-after { display: flex; flex-direction: column; gap: var(--sp-2); padding-top: var(--sp-3); border-top: 1px dashed var(--line); }
 .m-after-q { display: flex; align-items: baseline; gap: .3rem .6rem; flex-wrap: wrap; margin: 0; }
 .m-after-acts { display: flex; align-items: center; gap: var(--sp-2) var(--sp-4); flex-wrap: wrap; }
 .btn.m-done { background: var(--good-soft); border-color: color-mix(in srgb, var(--good) 35%, transparent); color: var(--good); }
@@ -897,7 +1216,8 @@ injectCSS('mentorat-ux', `
 
 @media (prefers-reduced-motion: reduce) {
   @keyframes m-ouvre { from { opacity: 0; } }
-  .m-how > summary::after, .rdv-cal .ico-chev { transition: none; }
+  .m-how > summary::after, .need-tuile, .nt-ico, .billet-talon { transition: none; }
+  .need-tuile:hover .nt-ico { transform: none; }
 }
 `);
 
@@ -915,6 +1235,7 @@ const quandAR = q => {
 addAR({
   'Ton prochain rendez-vous': 'موعدك القادم',
   'Aussi en cours': 'جارٍ أيضًا',
+  'En cours': 'قيد الإنجاز',
   'Rendez-vous passé': 'موعد مضى',
   'En ce moment': 'الآن',
   'Besoin d’un autre conseil ?': 'تحتاج نصيحة أخرى؟',
@@ -990,6 +1311,17 @@ addAR({
   'Ou': 'أو',
   'Plus besoin d’horaire ici': 'لم يعد هذا بحاجة إلى توقيت',
   'Un autre lauréat a choisi un horaire, ou l’étudiant a retiré les siens. Merci d’avoir voulu aider !': 'اختار خريج آخر توقيتًا، أو سُحبت التوقيتات. شكرًا على رغبتك في المساعدة!',
+  // Le talon du billet : le jour en entier (l'arabe n'abrège pas les jours)
+  'dim.': 'الأحد', 'lun.': 'الإثنين', 'mar.': 'الثلاثاء', 'mer.': 'الأربعاء', 'jeu.': 'الخميس', 'ven.': 'الجمعة', 'sam.': 'السبت',
+  'Les étudiants de ton parcours peuvent te proposer leurs horaires.': 'يمكن لطلبة مسارك أن يقترحوا عليك توقيتاتهم.',
+  'Les étudiants ne te voient pas encore.': 'لا يراك الطلبة بعد.',
+  'Un regard neuf avant d’envoyer': 'نظرة جديدة قبل الإرسال',
+  'Où chercher, comment postuler': 'أين تبحث وكيف تترشح',
+  'S’entraîner avec un lauréat': 'التدرّب مع خريج',
+  'Les étapes, pas à pas': 'الخطوات، خطوة بخطوة',
+  'Choisir sa voie, sereinement': 'اختيار طريقك بهدوء',
+  'Ou choisis toi-même à qui demander': 'أو اختر بنفسك من تسأل',
+  '1 lauréat disponible': 'خريج واحد متاح',
 }, [
   [/^Demander conseil à (.+), ton parrain$/, n => `اطلب نصيحة من ${n}، عرّابك`],
   [/^(.+) attend une relecture de son CV\.$/, n => `سيرة ${n} الذاتية في انتظار المراجعة.`],
@@ -1001,6 +1333,10 @@ addAR({
   [/^(.+) a fixé ton rendez-vous\. Confirme ta présence : (.+)$/, (n, x) => `موعدك محدَّد مع ${n}. أكّد حضورك: ${x}`],
   [/^Dans (\d+) min$/, n => `بعد ${arCount(n, ['دقيقة واحدة', 'دقيقتين', 'دقائق', 'دقيقة'])}`],
   [/^Dans (\d+) jours$/, n => `بعد ${arCount(n, ['يوم واحد', 'يومين', 'أيام', 'يومًا'])}`],
+  [/^Dans (\d+) h$/, n => `بعد ${arCount(n, ['ساعة واحدة', 'ساعتين', 'ساعات', 'ساعة'])}`],
+  // « Dans 2 h 05 » : en toutes lettres, « بعد ساعتين و5 دقائق » (pas d'abréviation en arabe)
+  [/^Dans (\d+) h (\d\d)$/, (h, m) => `بعد ${arCount(h, ['ساعة واحدة', 'ساعتين', 'ساعات', 'ساعة'])} و${arCount(+m, ['دقيقة واحدة', 'دقيقتين', 'دقائق', 'دقيقة'])}`],
+  [/^(\d+) lauréats disponibles$/, n => arCount(n, ['خريج واحد متاح', 'خريجان متاحان', 'خريجين متاحين', 'خريجًا متاحًا'])],
   [/^Voir les autres étudiants \((\d+)\)$/, n => `عرض الطلبة الآخرين (${n})`],
   [/^Horaires envoyés à (.+?)\.$/, n => `أُرسلت توقيتاتك إلى ${n}.`],
   [/^Horaires envoyés à (.+?)\. On te prévient dès qu’un horaire est choisi\.$/, n => `أُرسلت توقيتاتك إلى ${n}. سيصلك إشعار بمجرد اختيار توقيت.`],

@@ -50,7 +50,7 @@ else{d.dataset.entree='visiteur';setTimeout(function(){if(!window.ENSAM_ENTREE)d
   --bg: #F3F6FA; --surface: #FFFFFF; --surface-2: #EDF1F6; --raised: #FFFFFF; --ink: #13203A; --ink-2: #3E4C65; --muted: #56637A; --line: #E2E8F0; --line-strong: #C9D2DE;
   --accent: #1670A8; --accent-ink: #FFFFFF; --accent-soft: #E3F0F9; --accent-hover: #12628F;
   --brass: #A65400; --brass-soft: #FDEDD8; --orange: #F39200; --navy: #1F3354;
-  --brass-on-ink: #F6A94A; --blue-text: #135F8F; --lvl1: #9C6B3E; --bad-ink: #FFFFFF;
+  --brass-on-ink: #F6A94A; --blue-text: #135F8F; --lvl1: #8C5E34; --bad-ink: #FFFFFF;
   --good: #1D7348; --good-soft: #E2F3E9; --warn: #9A5800; --warn-soft: #FBEFD9; --bad: #B0222E; --bad-soft: #FBE5E6;
   --s1: #1670A8; --s2: #F39200; --blue: #1670A8; --teal: #0F6F66; --indigo: #4A4FB5;
   --em-o: #F39200; --em-b: #1B7DBF; --em-n: #1F3354;
@@ -240,7 +240,17 @@ textarea { resize: vertical; }
 .person-txt { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
 .person-name { font-weight: 600; }
 .person:hover .person-name { color: var(--accent); }
-.role-line { font-size: .8rem; color: var(--muted); display: inline-flex; align-items: center; gap: .3rem; flex-wrap: wrap; }
+.role-line { font-size: var(--fs-2); color: var(--muted); display: inline-flex; align-items: center; gap: .3rem; flex-wrap: wrap; }
+/* Une ligne de faits (« Renault Group Maroc · il y a 2 j ») se lit en entier : elle passe à la ligne entre deux faits plutôt
+   que de couper un nom. Chaque fait porte son point devant lui, dans une marge masquée : aucune ligne ne commence par « · ».
+   Un fait plus long que la ligne (un nom d'entreprise, à 360 px) passe lui-même à la ligne, aligné sur son début ;
+   .nowrap garde un fait entier (une date, « Promo 2016 »). Le point n'est pas lu. Un nom latin s'isole dans un <bdi> à
+   l'intérieur du fait, jamais par dir="auto" sur le fait : en arabe, le fait prendrait le sens du nom et son point, sa marge,
+   passeraient du mauvais côté (« · Renault Group Mar… »). */
+.faits { display: flex; flex-wrap: wrap; align-items: baseline; min-width: 0; margin-inline-start: -1em; clip-path: inset(-3px -3px -3px 1em); }
+[dir="rtl"] .faits { clip-path: inset(-3px 1em -3px -3px); }
+.faits > * { position: relative; min-width: 0; margin-inline-start: 1em; overflow-wrap: anywhere; }
+.faits > *::before { content: "·"; content: "·" / ""; position: absolute; inset-inline-start: -1em; width: 1em; text-align: center; font-weight: 400; color: var(--muted); }
 .verif { color: var(--teal); display: inline-flex; flex: none; }
 .lvl { font: 600 var(--fs-1)/1 var(--f-body); padding: .22rem .5rem; border-radius: var(--r-pill); border: 1px solid currentColor; color: var(--muted); }
 .lvl-1 { color: var(--lvl1); } .lvl-2 { color: var(--ink-2); } .lvl-3, .lvl-4, .lvl-5 { color: var(--brass); background: var(--brass-soft); }
@@ -365,21 +375,12 @@ textarea { resize: vertical; }
 /* Parcours / impact */
 .objective { display: flex; gap: 1.2rem; justify-content: space-between; flex-wrap: wrap; padding: 1.2rem 1.3rem; border-radius: var(--r-lg); background: var(--surface); border: 0; box-shadow: var(--sh1); }
 .objective-main { display: flex; flex-direction: column; gap: .3rem; min-width: 0; }
-.objective-state { display: flex; flex-direction: column; align-items: flex-start; gap: .5rem; }
 .objective.compact { padding: 1rem 1.1rem; }
-.objective.compact .objective-state { flex-direction: row; flex-wrap: wrap; align-items: center; }
 .merci-box { display: flex; flex-direction: column; gap: .6rem; padding: .85rem 0 0; border-top: 1px solid var(--line); }
 .merci-done { display: flex; align-items: center; gap: .6rem; color: var(--brass); flex-wrap: wrap; }
-.kanban { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .7rem; }
-.kcol { background: var(--surface-2); border-radius: var(--r-lg); padding: .7rem; display: flex; flex-direction: column; gap: .5rem; min-width: 0; }
-.kcol h3 { font-size: .9375rem; display: flex; align-items: center; gap: .4rem; }
-.kcard { background: var(--surface); border-radius: var(--r-md); padding: .7rem; display: flex; flex-direction: column; gap: .3rem; box-shadow: var(--sh1); }
-.kcard select { font-size: var(--fs-2); padding: .25rem .4rem; }
-.timeline { margin: 0; padding-inline-start: 1.1rem; display: flex; flex-direction: column; gap: .4rem; }
 /* Gros chiffres : police des titres, chiffres alignés */
 .big { font-family: var(--f-display); font-size: 2.2rem; font-weight: 750; line-height: 1; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .lvl-row { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
-.confirm-row { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; background: var(--surface); border-radius: var(--r-md); padding: .6rem .7rem; box-shadow: var(--sh1); }
 .badges { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--sp-4) var(--sp-3); }
 .badge { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1); color: var(--muted); font-size: var(--fs-2); }
 .badge strong { color: var(--ink-2); font-size: var(--fs-3); font-weight: 600; line-height: 1.3; }
@@ -407,23 +408,16 @@ textarea { resize: vertical; }
 .kpi { background: var(--surface); border: 0; box-shadow: var(--sh1); border-radius: var(--r-lg); padding: .95rem 1.05rem; display: flex; flex-direction: column; gap: .25rem; min-width: 0; }
 .kpi-label { font-size: var(--fs-2); color: var(--muted); font-weight: 600; }
 .kpi-val { font: 750 1.9rem/1.1 var(--f-display); font-variant-numeric: tabular-nums; letter-spacing: -.01em; } .kpi-val small { font: 600 1rem var(--f-body); color: var(--muted); }
-.niv-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .7rem; }
-.niv-card { text-align: start; background: var(--surface); border: 0; box-shadow: var(--sh1); border-radius: var(--r-lg); padding: 1rem; display: flex; flex-direction: column; gap: .6rem; cursor: pointer; min-width: 0; color: inherit; }
-.niv-card.on { box-shadow: inset 0 0 0 1.5px var(--sel-ring); }
-.niv-top { display: flex; align-items: center; justify-content: space-between; gap: .4rem; flex-wrap: wrap; }
 .niv-badge { font: 650 var(--fs-1)/1 var(--f-body); font-variant-numeric: tabular-nums; padding: .32rem .5rem; border-radius: 6px; background: var(--surface-2); color: var(--ink); flex: none; }
-.niv-obj { font-size: var(--fs-3); }
-.niv-num { display: flex; flex-direction: column; gap: .15rem; }
-.niv-num .big { font-size: 1.8rem; }
-.status { display: inline-flex; align-items: center; gap: .3rem; font-size: var(--fs-1); font-weight: 600; }
-.sdot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
-.s-good { color: var(--good); } .s-warn { color: var(--warn); } .s-bad { color: var(--bad); }
-.legend { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; }
-.lg-fill { width: 18px; height: 8px; border-radius: 4px; background: var(--accent); display: inline-block; }
-.lg-pace { width: 2px; height: 14px; background: var(--ink); display: inline-block; margin-inline-start: .6rem; }
-.sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; } .sw.s1 { background: var(--s1); } .sw.s2 { background: var(--s2); margin-inline-start: .5rem; }
-.chart-wrap { overflow-x: auto; }
+.legend { display: flex; align-items: center; gap: .2rem .9rem; flex-wrap: wrap; }
+/* Une pastille et son libellé ne se séparent jamais au retour à la ligne */
+.legend .lg-item { display: inline-flex; align-items: center; gap: .4rem; }
+.sw { flex: none; width: 10px; height: 10px; border-radius: 3px; display: inline-block; } .sw.s1 { background: var(--s1); } .sw.s2 { background: var(--s2); }
+.chart-wrap { overflow-x: auto; container-type: inline-size; }
 .chart { width: 100%; min-width: 520px; height: auto; display: block; }
+/* L'échelle répétée au bout du graphique : seulement quand il défile (plus étroit que ses 520 px) */
+.chart .axis-fin { display: none; }
+@container (max-width: 519.98px) { .chart .axis-fin { display: inline; } }
 .chart .grid { stroke: var(--line); stroke-width: 1; }
 .chart .axis { fill: var(--muted); font: 12px var(--f-body); }
 .chart rect.s1 { fill: var(--s1); } .chart rect.s2 { fill: var(--s2); }
@@ -432,6 +426,8 @@ textarea { resize: vertical; }
 .rank li { display: flex; justify-content: space-between; gap: 1rem; padding: .45rem 0; border-bottom: 1px solid var(--line); counter-increment: r; }
 .rank li::before { content: counter(r); font: 600 var(--fs-2) var(--f-body); font-variant-numeric: tabular-nums; color: var(--muted); width: 1.4rem; }
 .rank li span:first-of-type { flex: 1; }
+/* En arabe, un nom d'entreprise en lettres latines reste calé à droite, contre son rang */
+:root[dir="rtl"] .rank li span[dir="auto"] { text-align: right; }
 .people-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .people-list li { display: flex; align-items: center; gap: .6rem; justify-content: space-between; flex-wrap: nowrap; padding: .5rem 0; border-bottom: 1px solid var(--line); }
 /* Le filet sépare deux lignes : pas de trait sous la dernière, le bord de la carte suffit */
@@ -455,9 +451,7 @@ textarea { resize: vertical; }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: .7rem; }
 .mcard { background: var(--surface); border: 0; box-shadow: var(--sh1); border-radius: var(--r-lg); padding: 1rem 1.05rem; display: flex; flex-direction: column; gap: .5rem; min-width: 0; align-items: flex-start; }
 .mcard .row { width: 100%; }
-.topics { font-size: var(--fs-2); }
 .list { display: flex; flex-direction: column; gap: .6rem; }
-.mrow { background: var(--surface); border: 0; box-shadow: var(--sh1); border-radius: var(--r-lg); padding: .95rem 1.05rem; display: flex; flex-direction: column; gap: .5rem; }
 .mrow-head { display: flex; align-items: center; gap: .6rem; }
 .quote { color: var(--ink-2); border-inline-start: 3px solid var(--line-strong); padding-inline-start: .75rem; }
 .qrow { display: flex; align-items: center; gap: 1rem; text-align: start; background: var(--surface); border: 0; box-shadow: var(--sh1); border-radius: var(--r-lg); padding: .85rem 1rem; cursor: pointer; color: inherit; width: 100%; }
@@ -1199,16 +1193,7 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"], html[lang=
 .how li { display: flex; align-items: center; gap: .55rem; padding: .35rem 0; font-size: var(--fs-3); color: var(--ink-2); } /* des étapes à plat : jamais de carte dans la carte */
 .how li svg { color: var(--blue-text); flex: none; }
 .how-n { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent-soft); color: var(--blue-text); font: 650 var(--fs-1)/1 var(--f-body); font-variant-numeric: tabular-nums; flex: none; }
-.need-card { display: flex; flex-direction: column; gap: .8rem; padding: 1.15rem 1.2rem; border-radius: var(--r-lg); background: var(--surface); border: 0; box-shadow: var(--sh1); }
-.need-card h2 { margin: 0; }
-.need-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .55rem; }
-.need-btn { display: flex; flex-direction: column; align-items: center; gap: .45rem; padding: .7rem .4rem; border-radius: var(--r-md); border: 0; background: none; color: var(--ink); font: 600 var(--fs-2)/1.25 var(--f-body); text-align: center; cursor: pointer; transition: background .2s; }
-.need-btn:hover { background: var(--surface-2); }
-.need-btn .need-ico { transition: transform .25s var(--ease); }
-.need-btn:hover .need-ico { transform: translateY(-2px); }
-.need-btn:active { transform: scale(.97); }
 .need-ico { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: var(--accent-soft); color: var(--blue-text); }
-.need-btn:nth-child(2n) .need-ico { background: var(--brass-soft); color: var(--brass); }
 .mreq { display: flex; flex-direction: column; gap: .65rem; padding: 1rem 1.1rem; background: var(--surface); border: 0; border-radius: var(--r-lg); box-shadow: var(--sh1); min-width: 0; animation: rise .45s var(--ease) backwards; }
 .mreq.st-annulee, .mreq.st-refusee { opacity: .75; }
 .mreq p { margin: 0; }
@@ -1232,26 +1217,14 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"], html[lang=
 .chip.time.on { border-color: transparent; }
 .when { display: inline-flex; gap: .2rem; text-transform: none; }
 .when > span:first-child::first-letter { text-transform: uppercase; }
-.rdv-box { display: flex; flex-direction: column; gap: .65rem; padding: .8rem 0 0; border-top: 1px solid var(--line); }
-.rdv-box.live { padding: .8rem .9rem; border-top: 0; border-radius: var(--r-md); background: var(--good-soft); }
-.rdv-box.live .slot-date { background: var(--good); color: var(--surface); }
-.rdv-box p { margin: 0; }
-.rdv-top { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; }
-.rdv-what { display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
-.rdv-link { overflow-wrap: anywhere; }
-.rdv-actions { display: flex; gap: .45rem; flex-wrap: wrap; align-items: center; }
-.rdv-actions .btn.ghost { background: var(--surface-2); }
-.rdv-foot { gap: .6rem; }
 .rdv-edit { display: flex; flex-direction: column; gap: .6rem; padding-top: .6rem; border-top: 1px solid var(--line); }
 .slot-pick, .need-pick { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .4rem; min-width: 0; }
 .slot-inputs { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: .5rem; }
 .slot-inputs input { min-width: 0; }
 .ask .chips .chip { padding: .4rem .8rem; }
-.after-mentor { padding: .6rem 0 0; border-top: 1px solid var(--line); }
 .stars-ro { color: var(--brass); letter-spacing: 1px; margin-inline-end: .4rem; }
 .merci-inline { display: flex; align-items: center; gap: .3rem; flex-wrap: wrap; color: var(--ink-2); }
 .past-toggle { align-self: flex-start; }
-.help-needed { display: flex; flex-direction: column; gap: .5rem; }
 .next-rdv { display: flex; align-items: center; gap: .9rem; padding: .9rem 1.05rem; border-radius: var(--r-lg); background: var(--surface); border: 0; box-shadow: var(--sh1); }
 .next-rdv.live { background: var(--good-soft); box-shadow: 0 0 0 2px var(--good) inset; }
 .next-rdv.live .slot-date { background: var(--good); color: var(--surface); }
@@ -1259,7 +1232,6 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"], html[lang=
 .next-main .eyebrow { display: inline-flex; align-items: center; gap: .3rem; margin: 0; }
 .next-act { display: flex; gap: .4rem; flex-wrap: wrap; }
 .next-act .btn.ghost { background: color-mix(in srgb, var(--surface) 70%, transparent); }
-.help-needed .section-head { margin-top: 0; }
 .help-cta { display: flex; align-items: center; gap: .9rem; flex-wrap: wrap; padding: .95rem 1.1rem; border-radius: var(--r-lg); background: var(--surface); border: 0; box-shadow: var(--sh1); }
 .help-cta .grow { display: flex; flex-direction: column; gap: .1rem; min-width: 200px; }
 .reco { display: flex; flex-direction: column; gap: .2rem; }
@@ -1278,10 +1250,7 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"], html[lang=
 @media (max-width: 760px) {
   .how { grid-template-columns: minmax(0, 1fr); gap: .35rem; }
   .how li { padding: .3rem 0; }
-  .need-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .need-btn { padding: .75rem .35rem; font-size: .82rem; }
   .slot-inputs { grid-template-columns: minmax(0, 1fr); }
-  .rdv-actions .btn { flex: 1 1 auto; justify-content: center; }
   .member-meta { flex-basis: 100%; margin-inline-start: 46px; }
   .next-rdv { flex-wrap: wrap; }
   .next-main { flex-basis: calc(100% - 9.5rem); }
@@ -1289,7 +1258,6 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"], html[lang=
   .next-act .btn { flex: 1; justify-content: center; }
   .admin .search { flex: 1 1 100%; }
 }
-@media (max-width: 420px) { .need-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 /* Phase 2 : groupes et cafés, annuaire pro et carte, startups, recrutement, saison, confidentialité */
 .side-foot { display: flex; flex-direction: column; gap: .3rem; }
 .side-foot a { text-decoration: none; } .side-foot a:hover { color: var(--accent); }
@@ -1403,9 +1371,14 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"], html[lang=
 .coupe-top li { display: flex; align-items: center; gap: .55rem; font-weight: 500; }
 .coupe-top li.me { color: var(--accent); }
 .board li.me { box-shadow: inset 3px 0 0 var(--accent), var(--sh1); }
-.parrain-card { display: flex; align-items: center; gap: .9rem; flex-wrap: wrap; padding: .95rem 1.1rem; border-radius: var(--r-lg); border: 0; box-shadow: var(--sh1); background: var(--surface); }
-.parrain-card .grow { display: flex; flex-direction: column; gap: .3rem; min-width: 220px; }
-.parrain-card .eyebrow { margin: 0; }
+/* Ton parrain (Mon parcours, 3A) : qui il est, pourquoi lui écrire, deux gestes */
+.parrain-card { display: flex; flex-direction: column; align-items: stretch; gap: .75rem; padding: 1.1rem 1.15rem 1.15rem; border-radius: var(--r-xl); border: 0; box-shadow: var(--sh1); background: var(--surface); min-width: 0; }
+.parrain-card .eyebrow { margin: 0; display: inline-flex; align-items: center; gap: .35rem; color: var(--brass); }
+.parrain-card .person { align-self: flex-start; gap: .8rem; max-width: 100%; }
+.parrain-txt { margin: 0; font-size: var(--fs-3); line-height: 1.5; color: var(--ink-2); text-wrap: pretty; }
+.parrain-card .parrain-acts { display: grid; grid-template-columns: minmax(0, 1fr); gap: .5rem; }
+.parrain-card .parrain-acts .btn { min-height: 44px; }
+@media (min-width: 520px) { .parrain-card .parrain-acts { display: flex; flex-wrap: wrap; } }
 .parrain-cta .grow { min-width: 220px; }
 .annee-strip > svg { color: var(--blue-text); }
 .annee { display: flex; flex-direction: column; gap: 1rem; }
@@ -1575,6 +1548,35 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"], html[lang=
   .puces-nav { padding-block: 4px; margin-block: -2px; }
   .chips.rangee { padding-block: 4px; margin-block: -1px; }
   .seg button { min-height: 38px; }
+  /* Hors du Socle aussi (Offres, Demandes, Mentorat, Mon parcours, Suivi, Talents) : la même zone invisible prolonge les
+     petites cibles jusqu'à 44 px (réactions, « Bravo », étoiles, menu « … », visages qui ouvrent une fiche, petites icônes) */
+  :is(.rx-ajouter, .rx-resume, .kudo, .stars button, .m-more-btn, button.person) { position: relative; }
+  :is(.rx-ajouter, .rx-resume, .kudo, .stars button, .m-more-btn, .ligne-act .icon-btn, .pc-hors-act .icon-btn, button.person)::before {
+    content: ""; position: absolute; inset-block: min(0px, calc(50% - 22px)); inset-inline: 0; }
+  /* … et en largeur aussi, du côté où les voisins laissent la place : réagir (40 px de dessin), la corbeille d'une
+     candidature et le marque-page d'un talent gagnent 2 px de chaque côté ; le menu « … » s'élargit vers le bord de la carte (« Écrire » le touche de
+     l'autre côté) ; le marque-page d'une carte d'offre, vers le bord de la carte (« Postuler » est à 6 px) ; « Signaler »
+     d'une demande fait 44 px (l'icône au bout de la ligne des réponses, au milieu de celle des gestes) ; chaque étoile
+     d'une note fait 44 px, la première calée sur le texte au-dessus ; « Compris » et « Il n'a pas eu lieu », courts en
+     arabe, débordent sur leurs côtés libres */
+  :is(.rx-ajouter, .pc-hors-act .icon-btn, .ligne-act .icon-btn)::before { inset-inline: min(0px, calc(50% - 22px)); }
+  .icon-btn.m-more-btn::before { inset-inline: 0 min(0px, calc(100% - 44px)); }
+  .ocard-foot > .ocard-garder { position: relative; }
+  .ocard-foot > .ocard-garder::before { content: ""; position: absolute; inset-block: min(-7px, calc(50% - 22px)); inset-inline: -4px min(-4px, calc(100% - 40px)); }
+  :is(.dm-social, .dm-acts) .cf-signal.small { min-width: 44px; justify-content: flex-end; }
+  .dm-acts .cf-signal.small { justify-content: center; }
+  .stars { gap: 0; margin-inline-start: calc((1.35rem + 2px - 44px) / 2); }
+  .stars button { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; }
+  :is(.rdv-tip .linkish, .linkish.m-quiet)::before { inset-inline: min(-4px, calc(50% - 22px)); }
+  /* La fiche d'une offre : en haut « Fermer » (40 px de dessin au doigt), « Partager », « Signaler » et « Gérer l'offre » ;
+     « Voir » au bout du résumé de l'entreprise ; « Signaler » et « Supprimer » de chaque question publique. L'accueil : le
+     texte de l'annonce et « Masquer l'annonce », « Plus tard » de l'invitation à parrainer. La zone invisible les porte à
+     44 px de haut et de large, dans les marges de leur rangée (6 px au moins entre deux outils de la fiche, 8 px entre
+     l'annonce et sa croix) */
+  .annonce-txt, .ent-resume .linkish { position: relative; }
+  :is(.modal-head .icon-btn, .od-outils > :is(.icon-btn, .cf-signal), .od-outils .menu-wrap > .icon-btn, .ent-resume .linkish, .comment > :is(.cf-signal.small, .icon-btn.small), .annonce-ligne > .icon-btn.small, .parrain-cta > .icon-btn.small)::before {
+    content: ""; position: absolute; inset: min(0px, calc(50% - 22px)); }
+  .annonce-txt::before { content: ""; position: absolute; inset-block: min(0px, calc(50% - 22px)); inset-inline: 0; }
 }
 
 /* Accueil : une prochaine étape, deux sections, des titres de section plus nets */
@@ -1738,7 +1740,7 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"], html[lang=
 .filtres-bascules .chip.on { background: var(--sel-bg); color: var(--sel-ink); border-color: transparent; box-shadow: inset 0 0 0 1px var(--sel-ring); font-weight: 600; }
 .filtres-feuille .modal-foot .btn.ghost { flex: none; }
 
-/* Suivi : quatre chiffres en tête (les .kpis), le détail replié dessous */
+/* Suivi : l'anneau et les trois faits en tête, chaque année en ligne, le détail replié dessous */
 .suivi-detail > summary { display: flex; align-items: center; justify-content: center; gap: .4rem; min-height: 44px; padding: .5rem 1rem; border-radius: var(--r-md); color: var(--tonal-ink); background: var(--tonal-bg); font-weight: 600; cursor: pointer; list-style: none; width: max-content; max-width: 100%; margin-inline: auto; }
 .suivi-detail > summary::-webkit-details-marker { display: none; }
 /* (plus précis que le miroir arabe des flèches : vers le bas, puis vers le haut, dans les deux sens d'écriture) */
@@ -1749,7 +1751,6 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"], html[lang=
 
 /* Chiffres d'en-tête (Admin, Mon année…) : sans majuscules d'étiquette, gros chiffres en police des titres, cartes sans bordure */
 .kpi .kpi-val { font-family: var(--f-display); font-weight: 750; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
-.niv-num .big { font-family: var(--f-display); font-weight: 750; font-variant-numeric: tabular-nums; }
 .rank .num { font-weight: 600; font-variant-numeric: tabular-nums; }
 /* Détails des lignes : deux lignes de méta passées en « sub », le logo d'entreprise à droite, l'état d'un talent */
 .ligne .role-line { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-block: 3px; margin-block: -3px; }
@@ -1757,6 +1758,11 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"], html[lang=
 /* En arabe, un nom écrit en lettres latines reste calé à droite comme le reste de la ligne */
 :root[dir="rtl"] .ligne .person-name { text-align: right; }
 .ligne .role-line > .verif, .ligne .role-line > .mini { margin-inline-start: .25rem; }
+/* Le badge d'un lauréat (niveau, « A aidé … ») ne se coupe jamais : il tient en entier à côté de la promo, sinon il passe
+   sur une deuxième ligne, cachée. Le texte garde ses points de suspension et la ligne sa hauteur (jamais « Promo 2014 … ») */
+.ligne:not(.rang) .role-line:has(> .role-txt) { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-start; gap: 2rem .35rem; height: calc(1.4rem + 6px); }
+.ligne:not(.rang) .role-line > .role-txt { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ligne:not(.rang) .role-line:has(> .role-txt) > :is(.mini, .lvl) { flex: none; margin: 0; }
 .ligne-sub { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Une seule ligne sous le nom, pour garder 56 px : la promo, puis les faits quand la place le permet
    (sur téléphone, la promo seule ; le détail des points est dans la fiche) */
@@ -2039,9 +2045,11 @@ html.defil-bloque.defil-gouttiere { scrollbar-gutter: stable; }
 .menu-pop .menu-mobile .dotn { margin-inline-start: auto; }
 
 .mx-page { max-width: 500px; gap: var(--sp-4); }
-/* L'en-tête : le titre et où l'on en est (« 3 sur 8 ») au début, « Tes matchs » à la fin (les visages défilent si besoin) */
-.mx-tete { display: flex; align-items: center; justify-content: space-between; gap: 1rem; min-width: 0; }
-.mx-tete-txt { flex: none; display: flex; flex-direction: column; gap: .35rem; min-width: 0; max-width: 100%; }
+/* L'en-tête : où l'on en est (« 3 sur 8 ») en sur-titre, puis le titre, comme l'en-tête commun des pages (même place du
+   titre d'un onglet à l'autre) ; « Tes matchs » à la fin (les visages défilent si besoin) */
+.mx-tete { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; min-width: 0; }
+.mx-tete-txt { flex: none; display: flex; flex-direction: column; gap: .2rem; min-width: 0; max-width: 100%; padding-block-start: .15rem; }
+.mx-tete .mx-matchs { align-self: center; }
 /* Le titre : celui de toutes les pages (Socle : h1, --fs-titre, même graisse), sur une ligne serrée en arabe aussi */
 .mx-tete h1 { margin: 0; line-height: 1.15; }
 .mx-tete .mx-sous { margin: 0; font-size: var(--fs-3); }
@@ -2383,7 +2391,6 @@ html.mx-fige { overflow: hidden; }
 .oc-ent { font-size: var(--fs-3); font-weight: 650; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .oc-lieu { font-size: var(--fs-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .oc-sep { display: none; }
-.oc-coin { flex: none; align-self: flex-start; }
 .ocard .ocard-title { font: 700 var(--fs-5)/1.25 var(--f-display); letter-spacing: -.015em; color: var(--ink); text-wrap: balance; overflow-wrap: anywhere; }
 .ocard .ocard-tags { gap: .35rem; }
 .ocard .ocard-tags .tag { padding: .22rem .55rem; }
@@ -2658,7 +2665,8 @@ input, select, textarea { border-radius: var(--r-md); border-color: var(--line-s
 
 /* --- Pages du Socle : les rubriques sous le titre (Réseau, Admin), l'anneau de Mon profil --- */
 .en-tete > .puces-nav { margin-top: .3rem; }
-.pf-page .en-tete-act { align-self: center; }
+/* L'anneau de Mon profil (56 px) se centre sur le titre sans grandir l'en-tête : le titre reste à la même hauteur que sur les autres pages */
+.pf-page .en-tete-act { align-self: center; margin-block: -4px; }
 .pf-pct { display: inline-flex; align-items: baseline; font: 750 var(--fs-3)/1 var(--f-display); letter-spacing: -.01em; color: var(--ink); }
 .pf-pct small { font-size: .68em; font-weight: 650; margin-inline-start: 1px; color: var(--ink-2); }
 /* Sans flou derrière (vieux navigateurs, économie d'énergie) : les barres sont pleines */

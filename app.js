@@ -1226,8 +1226,9 @@ function MyProfile({ ctx }) {
   const r = remplissageProfil(me), p = r ? Math.round(r.fait / r.total * 100) : 0;
   const anneau = r ? html`<${Anneau} valeur=${p} max=${100} taille=${56} epaisseur=${5} ton=${p === 100 ? 'bien' : 'accent'} label=${`Profil rempli à ${p} %`}><b class="pf-pct" dir="ltr">${p}${html`<small>%</small>`}</b><//>` : null;
   return html`<section class="page narrow pf-page">
-    <${EnTetePage} surTitre="Jamais public" titre="Mon profil" action=${anneau || store.mode === 'live' ? html`${anneau}${store.mode === 'live' ? html`<button class="btn ghost" onClick=${() => store.signOut()}><${Icon} name="logout"/> Se déconnecter</button>` : null}` : null}/>
-    <${OngletsProfil} onglet=${onglet} onChange=${versOnglet}/>
+    <${EnTetePage} surTitre="Jamais public" titre="Mon profil" action=${anneau || store.mode === 'live' ? html`${anneau}${store.mode === 'live' ? html`<button class="btn ghost" onClick=${() => store.signOut()}><${Icon} name="logout"/> Se déconnecter</button>` : null}` : null}>
+      <div class="en-tete-onglets"><${OngletsProfil} onglet=${onglet} onChange=${versOnglet}/></div>
+    <//>
     <div class="pf-panneau" id="pf-panneau" role="tabpanel" aria-labelledby=${'pf-onglet-' + onglet}>
       <div class="pf-partie" hidden=${onglet !== 'profil'}>
         <${PhotoCard} ctx=${ctx}/>
