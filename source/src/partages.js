@@ -17,8 +17,9 @@ const lienSur = l => (lienValide(l) ? l.trim() : null);
 export const BadgePortee = ({ long = false }) => html`<span class="tag portee"><${Icon} name="shield" size=${13}/>${long ? 'Offre portée par un lauréat · il encadre' : 'Portée par un lauréat · il encadre'}</span>`;
 
 // Où l'offre a été vue, pour la phrase « Partagée par Salma · vue sur LinkedIn »
-export function lignePartage(o, auteur) {
-  const src = sourceDe(o.lien), p = prenom(auteur);
+// Sa propre offre partagée : « Partagée par toi », comme « Ton offre » sur les cartes
+export function lignePartage(o, auteur, moi = false) {
+  const src = sourceDe(o.lien), p = moi ? 'toi' : prenom(auteur);
   return p && src ? `Partagée par ${p} · vue sur ${src}` : p ? `Partagée par ${p}` : src ? `Vue sur ${src}` : 'Offre partagée';
 }
 
@@ -31,11 +32,11 @@ export function PartageCard({ o, ctx, onOpen, i = 0 }) {
   const mine = o.author_id === me.id;
   return html`<article class=${'opart' + (o.status !== 'ouverte' ? ' closed' : '')} style=${`${styleEntreprise(o.entreprise)};--i:${i}`}>
     <button type="button" class="opart-main" onClick=${e => ouvrirEnDouceur(e.currentTarget.closest('.opart'), onOpen)} aria-label=${`Ouvrir : ${titreOffre(o)}`}>
-      <${LogoEntreprise} nom=${o.entreprise} lien=${o.lien} taille=${40}/>
+      <${LogoEntreprise} nom=${o.entreprise} lien=${o.lien} taille=${44}/>
       <span class="opart-txt">
         <strong class="opart-titre" translate="no" dir="auto">${titreOffre(o)}</strong>
         <span class="opart-meta" translate="no" dir="auto">${o.entreprise}${lieu ? ` · ${lieu}` : ''}</span>
-        <span class="opart-ligne"><span class="opart-par">${lignePartage(o, auteur)}</span><span class="opart-quand">${timeAgo(o.created_at)}</span></span>
+        <span class="opart-ligne"><span class="opart-par">${lignePartage(o, auteur, mine)}</span><span class="opart-quand">${timeAgo(o.created_at)}</span></span>
       </span>
     </button>
     <div class="opart-actions">
@@ -52,7 +53,7 @@ export function PartageCard({ o, ctx, onOpen, i = 0 }) {
 export function SectionPartages({ ctx, list, onPartager }) {
   if (!list.length && !onPartager) return null;
   return html`<section class="partages" aria-labelledby="partages-titre">
-    <div class="section-head"><h2 id="partages-titre" class="h-ico"><${Icon} name="share"/> Offres partagées</h2>${list.length ? html`<span class="count">${list.length}</span>` : null}</div>
+    <div class="section-head"><h2 id="partages-titre" class="titre-sec">Offres partagées</h2>${list.length ? html`<span class="count">${list.length}</span>` : null}</div>
     <p class="small muted partages-note">${list.length ? 'Vues ailleurs (LinkedIn, sites d’entreprise) et partagées par des membres. La candidature se fait sur le site d’origine.' : 'Tu as vu une offre intéressante sur LinkedIn ? Partage-la ici, avec son lien.'}</p>
     ${list.length ? html`<div class="partages-liste">${list.map((o, i) => html`<${PartageCard} key=${o.id} o=${o} ctx=${ctx} i=${i} onOpen=${() => ctx.openOffer(o.id)}/>`)}</div>` : null}
     ${onPartager ? html`<button type="button" class="btn small ghost partages-btn" id="of-partager-bas" onClick=${onPartager}><${Icon} name="plus" size=${15}/> Partager une offre</button>` : null}
@@ -63,8 +64,8 @@ export function SectionPartages({ ctx, list, onPartager }) {
 export const EngagementPortee = ({ auteur }) => html`<div class="od-portee"><${BadgePortee} long/>
   <p class="small">${prenom(auteur) ? `${prenom(auteur)} a apporté cette offre de son entreprise, en est responsable et encadre la personne retenue.` : 'Un lauréat a apporté cette offre de son entreprise, en est responsable et encadre la personne retenue.'}</p></div>`;
 
-// Dans la fiche d'une offre partagée : d'où elle vient, et qu'on postule là-bas
-export const NotePartage = ({ o, auteur }) => html`<p class="small muted od-partage-note"><${Icon} name="share" size=${14}/> <span><span>${lignePartage(o, auteur)}</span> <span>La candidature se fait sur le site d’origine, pas ici.</span></span></p>`;
+// Dans la fiche d'une offre partagée : d'où elle vient, puis, sur sa propre ligne, qu'on postule là-bas
+export const NotePartage = ({ o, auteur, moi = false }) => html`<p class="small od-partage-note"><${Icon} name="share" size=${15}/><span class="od-partage-txt"><span class="od-partage-qui">${lignePartage(o, auteur, moi)}</span><span class="muted">La candidature se fait sur le site d’origine, pas ici.</span></span></p>`;
 export function PiedPartage({ o }) {
   const lien = lienSur(o.lien), src = sourceDe(o.lien);
   if (!lien) return null;
@@ -106,28 +107,36 @@ injectCSS('partages', `
 .ocard.portee { box-shadow: var(--sh1), inset 0 0 0 1px color-mix(in srgb, var(--good) 28%, transparent); border-inline-start: 3px solid var(--good); }
 .od-portee { display: flex; flex-direction: column; align-items: flex-start; gap: .35rem; padding: .7rem .8rem; border-radius: var(--r-md); background: color-mix(in srgb, var(--good-soft) 60%, var(--surface)); }
 .od-portee p { margin: 0; }
-/* Offres partagées : une section à part, des cartes compactes */
+/* Offres partagées : une section à part, des cartes compactes de la même famille que les autres (surface, ombre, coins) */
 .partages { display: flex; flex-direction: column; gap: .6rem; margin-top: 1.4rem; min-width: 0; }
 .partages .section-head { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
 .partages .partages-btn { align-self: flex-start; }
 .partages-note { margin: 0; }
 .partages-liste { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: .6rem; }
-.opart { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md); display: flex; flex-direction: column; min-width: 0; }
+.opart { background: var(--surface); border: 0; box-shadow: var(--sh1); border-radius: var(--r-lg); display: flex; flex-direction: column; min-width: 0; }
 .opart.closed { opacity: .7; }
-.opart-main { display: flex; gap: .65rem; align-items: flex-start; padding: .7rem .8rem .45rem; border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; min-width: 0; border-radius: var(--r-md) var(--r-md) 0 0; }
+.opart-main { display: flex; gap: .75rem; align-items: flex-start; padding: .85rem .9rem .6rem; border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; min-width: 0; border-radius: var(--r-lg) var(--r-lg) 0 0; }
 .opart-txt { display: flex; flex-direction: column; gap: .12rem; min-width: 0; }
-.opart-titre { font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
-.opart-meta, .opart-ligne { font-size: var(--fs-1); color: var(--muted); overflow-wrap: anywhere; }
+.opart-titre { font: 700 var(--fs-4)/1.3 var(--f-display); letter-spacing: -.01em; overflow-wrap: anywhere; text-wrap: pretty; }
+.opart-meta { font-size: var(--fs-2); font-weight: 600; color: var(--ink-2); overflow-wrap: anywhere; }
 .opart-par { color: var(--ink-2); }
+/* « Partagée par Salma · vue sur LinkedIn · il y a 2 j » : « il y a 2 j » porte son point devant lui, dans une marge
+   masquée (comme la méta des cartes d'offre) ; passé à la ligne, il ne laisse aucun « · » seul en bout de ligne */
+.opart-ligne { display: flex; flex-wrap: wrap; margin-inline-start: -1em; clip-path: inset(-3px -3px -3px 1em); font-size: var(--fs-2); color: var(--muted); overflow-wrap: anywhere; }
+[dir="rtl"] .opart-ligne { clip-path: inset(-3px 1em -3px -3px); }
+.opart-ligne > span { position: relative; min-width: 0; margin-inline-start: 1em; }
+.opart-ligne > span::before { content: "·"; position: absolute; inset-inline-start: -1em; width: 1em; text-align: center; }
 .opart-quand { white-space: nowrap; }
-.opart-quand::before { content: " · "; white-space: normal; }   /* espace insécable : à la ligne, le point reste au bout de la phrase */
 /* Un seul pied, sur une ligne : les réactions, Signaler et « Voir l'offre » (depuis quand : sous « Partagée par… ») */
-.opart-actions { display: flex; align-items: center; gap: .35rem; padding: .3rem .6rem .5rem .8rem; min-width: 0; }
+.opart-actions { display: flex; align-items: center; gap: .35rem; min-height: 46px; padding: .25rem .5rem .25rem .9rem; border-top: 1px solid var(--line); min-width: 0; }
 .opart-actions > :not(.spacer) { flex: none; }
 .opart-actions .spacer { flex: 1; }
 .opart .opart-actions .btn { min-height: 36px; }
 [dir="rtl"] .opart-txt [dir="auto"] { text-align: right; }
-.od-partage-note { display: flex; gap: .4rem; align-items: flex-start; margin: 0; }
+.od-partage-note { display: flex; gap: .5rem; align-items: flex-start; margin: 0; color: var(--ink-2); }
+.od-partage-note > svg { flex: none; margin-top: .15rem; color: var(--muted); }
+.od-partage-txt { display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
+.od-partage-qui { font-weight: 600; }
 /* Formulaire : le premier choix, en deux grands boutons */
 .origine-pick { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem; }
 .origine-opt { display: flex; align-items: center; gap: .55rem; padding: .7rem .8rem; border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--surface); color: var(--ink-2); font: inherit; font-weight: 600; text-align: start; cursor: pointer; line-height: 1.3; min-height: 52px; }
@@ -145,7 +154,7 @@ addAR({
   'Portée par un lauréat · il encadre': 'يقدّمه خريج · مع التأطير',
   'Offre portée par un lauréat · il encadre': 'عرض يقدّمه خريج · مع التأطير',
   'Offres partagées': 'عروض تمت مشاركتها',
-  'Offre partagée': 'عرض تمت مشاركته',
+  'Offre partagée': 'عرض تمت مشاركته', 'Partagée par toi': 'مشاركة منك',
   'Partager une offre': 'مشاركة عرض',
   'Vues ailleurs (LinkedIn, sites d’entreprise) et partagées par des membres. La candidature se fait sur le site d’origine.': 'عروض منشورة في مواقع أخرى (LinkedIn، مواقع الشركات) شاركها أعضاء الشبكة. يتم الترشح في الموقع الأصلي.',
   'Tu as vu une offre intéressante sur LinkedIn ? Partage-la ici, avec son lien.': 'رأيت عرضًا مهمًّا على LinkedIn؟ شاركه هنا مع رابطه.',
@@ -177,6 +186,7 @@ addAR({
   'Cette offre est déjà partagée sur le réseau.': 'تمت مشاركة هذا العرض من قبل في الشبكة.',
   'Cette offre partagée se postule sur son site d’origine.': 'يتم الترشح لهذا العرض المشارَك في موقعه الأصلي.',
 }, [
+  [/^Partagée par toi · vue sur (.+)$/, s => `مشاركة منك · منشور على ${s}`],
   [/^Partagée par (.+?) · vue sur (.+)$/, (n, s) => `مشاركة من ${n} · منشور على ${s}`],
   [/^Vue sur (.+)$/, s => `منشور على ${s}`],
   [/^(.+?) a apporté cette offre de son entreprise, en est responsable et encadre la personne retenue\.$/, n => `عرض قدّمه ${n} من شركته، مع المسؤولية عنه وتأطير الشخص المقبول.`],

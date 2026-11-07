@@ -777,7 +777,10 @@ export const AR_PATTERNS = [
   [/^réponses?$/, () => 'جواب'],
   [/^(\d+) lauréats · (\d+) étudiants$/, (a, b) => `${arCount(a, LAU)} · ${arCount(b, ETU)}`],
   [/^(\d+) réponses?$/, (n) => `${n} جواب`],
-  [/^publiées par (\d+) lauréats$/, (n) => `نشرها ${n} خريجًا`],
+  // Le Suivi : « publiées par 1 lauréat » (plusieurs offres d'un seul lauréat, singulier en français) ; le nom s'accorde
+  // avec le nombre. Une seule offre (« offre ouverte, publiée par 1 lauréat ») : عرض est masculin, نشره
+  [/^publiées par (\d+) lauréats?$/, (n) => `نشرها ${arCount(n, LAU)}`],
+  [/^publiée par (\d+) lauréats?$/, (n) => `نشره ${arCount(n, LAU)}`],
   [/^(.+?) · (\d+) via la plateforme$/, null],
   [/^(\d+) via la plateforme$/, (n) => `${n} عبر المنصة`],
   [/^camarades de (\dA) ont déjà trouvé leur (.+?)(\.?)$/, (a, x, dot) => `من زملائك في ${a} وجدوا ${AR[x] || x}${dot}`],

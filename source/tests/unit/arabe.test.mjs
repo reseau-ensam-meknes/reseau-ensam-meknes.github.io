@@ -40,6 +40,12 @@ test('nombres accordés : en-tête du Réseau, défis de l’année, chiffres d�
   assert.equal(t('3 recrutés'), '3 موظَّفين');
   assert.equal(t('2 mentorats'), 'جلستا إرشاد');
   assert.equal(t('12 offres'), '12 عرضًا');
+  // Le Suivi : « publiée » (une offre) ou « publiées » (plusieurs), et le nombre de lauréats qui publient
+  assert.equal(t('offre ouverte, publiée par 1 lauréat'), 'عرض مفتوح، نشره خريج واحد');
+  assert.equal(t('offres ouvertes, publiées par 1 lauréat'), 'عروض مفتوحة، نشرها خريج واحد');
+  assert.equal(t('offres ouvertes, publiées par 2 lauréats'), 'عروض مفتوحة، نشرها خريجان');
+  assert.equal(t('offres ouvertes, publiées par 12 lauréats'), 'عروض مفتوحة، نشرها 12 خريجًا');
+  assert.equal(t('offre ouverte'), 'عرض مفتوح');
 });
 
 // Les dictionnaires : export const AR = {…} dans i18n-ar.js et chaque addAR({…}) des modules
