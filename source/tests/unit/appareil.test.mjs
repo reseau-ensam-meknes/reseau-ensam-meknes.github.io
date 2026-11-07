@@ -419,6 +419,15 @@ test('« Ouvrir dans Chrome » depuis la page d’entrée : la langue, la promo 
   assert.match(lienChrome('https://reseau-ensam-meknes.github.io/?promo=2019', '', { contexte: { promo: 2019 } }), /^intent:\/\/reseau-ensam-meknes\.github\.io\/\?promo=2019&notifs=1#Intent;/);
 });
 
+test('contexte emporté dans Chrome : le code de qui invite et l’école du lien, seulement bien formés', () => {
+  const c = x => logique.contexteEntree(x);
+  assert.deepEqual(c({ promo: 2019, de: 'nadia219', ecole: 'ensam-casa', role: 'laureat', mode: 'inscription' }), { promo: '2019', de: 'nadia219', ecole: 'ensam-casa', role: 'laureat', mode: 'inscription' });
+  for (const de of ['Nadia219', 'nadia21', 'nadia2190', 'nadia<b>', '', null, 12345678]) assert.deepEqual(c({ de }), {}, String(de));
+  for (const ecole of ['ENSAM Casa', 'e', '../x', 'a'.repeat(41), '', null]) assert.deepEqual(c({ ecole }), {}, String(ecole));
+  assert.match(lienChrome('https://reseau-ensam-meknes.github.io/', '', { contexte: { promo: 2019, de: 'nadia219', ecole: 'ensam-casa', mode: 'inscription' } }),
+    /^intent:\/\/reseau-ensam-meknes\.github\.io\/\?promo=2019&de=nadia219&ecole=ensam-casa&mode=inscription&notifs=1#Intent;/);
+});
+
 // entree.js se charge ici sans navigateur : son démarrage ne tourne pas (window.ENSAM_ENTREE déjà posé)
 async function pageEntree() {
   const avant = { window: globalThis.window, document: globalThis.document };
@@ -674,4 +683,18 @@ test('carte de la page d’entrée : espaces insécables du français (jamais «
   // En arabe, la phrase reste la clé du dictionnaire
   for (const s of [CARTE.android, CARTE.geste, CARTE.rien]) assert.equal(typo(s, 'ar'), s);
   assert.equal(typo(null, 'fr'), null);
+});
+
+test('page d’entrée dans le navigateur d’une application : la carte compte le bandeau d’un lien d’invitation', async () => {
+  const { carteTient } = await pageEntree();
+  // Android, 360 px, en français : sans bandeau, la carte tient à 800 px de haut ; avec, il en faut un peu plus
+  assert.equal(carteTient('android', 'fr', 360, 800), true);
+  assert.equal(carteTient('android', 'fr', 360, 800, 16, 'promo'), false);
+  // Le code de qui invite : sous 23,4 rem de large, la place d'un prénom long (deux lignes) ; au-delà, une ligne
+  assert.equal(carteTient('android', 'fr', 360, 815, 16, 'promo'), true);
+  assert.equal(carteTient('android', 'fr', 360, 815, 16, 'de'), false);
+  assert.equal(carteTient('android', 'fr', 412, 840, 16, 'de'), true);
+  // En arabe, une ligne dans tous les cas
+  assert.equal(carteTient('android', 'ar', 360, 800, 16, 'de'), carteTient('android', 'ar', 360, 800, 16, 'promo'));
+  assert.equal(carteTient('ios', 'ar', 375, 667, 16, 'promo'), false);
 });
