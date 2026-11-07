@@ -402,7 +402,7 @@ export function PushToggle({ ctx }) {
       <div class="push-acts"><button type="button" class="btn primary" id="md-push-oui" disabled=${busy} onClick=${() => { garderFocus.current = true; turnOn(); }}><${Icon} name="bell" size=${16}/> Activer</button></div>`
     : st === 'appli' ? html`<${AppliDit} ctx=${ctx}/>` : null}
     ${note ? html`<p class="small muted">${note}</p>` : null}
-    ${st === 'on' && diag ? html`<p class="small muted" id="md-push-diag">${diag === 'recue' ? DIAG_RECUE : DIAG_PERDUE}</p>` : null}
+    ${st === 'on' && diag ? html`<p class="small muted" id="md-push-diag">${diag === 'recue' ? DIAG_RECUE[isIOS() ? 'ios' : 'autre'] : DIAG_PERDUE}</p>` : null}
     ${st === 'refuse' ? html`<p class="small"><button type="button" class="linkish" id="md-push-debloquer" onClick=${() => setDebloquer(true)}>Comment les débloquer ?</button></p>` : null}
     ${st === 'ios' ? html`<p class="small muted">${pourIos(INSTALLER_D_ABORD)} <button class="linkish" onClick=${() => setHelp(true)}>Comment faire ?</button></p>` : null}
     ${help ? html`<${IosInstallHelp} onClose=${() => setHelp(false)}/>` : null}
@@ -423,12 +423,17 @@ addAR({
   [UN_COMPTE.ipad]: 'يتلقى جهاز iPad هذا إشعارات هذا الحساب. إذا سُجّل الدخول عليه بحساب آخر، فهو من سيتلقاها.',
   [UN_COMPTE.pc]: 'يتلقى هذا الحاسوب إشعارات هذا الحساب. إذا سُجّل الدخول عليه بحساب آخر، فهو من سيتلقاها.',
 });
-const DIAG_RECUE = 'Reçue par cet appareil. Rien dans la barre de notifications ? Dans les réglages du téléphone, autorise les notifications de ton navigateur et retire-le de l’économie de batterie.';
+// Reçue, mais rien à l'écran : sur iPhone et iPad (l'application de l'écran d'accueil), les mêmes réglages que pour les débloquer
+const DIAG_RECUE = {
+  autre: 'Reçue par cet appareil. Rien dans la barre de notifications ? Dans les réglages du téléphone, autorise les notifications de ton navigateur et retire-le de l’économie de batterie.',
+  ios: 'Reçue par cet appareil. Rien ne s’affiche ? Dans Réglages › Notifications › Réseau ENSAM, active « Autoriser les notifications ».',
+};
 const DIAG_PERDUE = 'Pas arrivée. L’abonnement de cet appareil vient d’être refait : touche « Tester » de nouveau.';
 const PUSH_POURQUOI = 'Messages, réponses, rendez-vous : ce qui te concerne arrive tout de suite, même quand l’application est fermée.';
 addAR({
   [PUSH_POURQUOI]: 'الرسائل والأجوبة والمواعيد: ما يخصك يصلك فورًا، حتى والتطبيق مغلق.',
-  [DIAG_RECUE]: 'وصل الإشعار إلى هذا الجهاز. لا يظهر شيء في شريط الإشعارات؟ من إعدادات الهاتف، اسمح بإشعارات المتصفح وأزله من توفير البطارية.',
+  [DIAG_RECUE.autre]: 'وصل الإشعار إلى هذا الجهاز. لا يظهر شيء في شريط الإشعارات؟ من إعدادات الهاتف، اسمح بإشعارات المتصفح وأزله من توفير البطارية.',
+  [DIAG_RECUE.ios]: 'وصل الإشعار إلى هذا الجهاز. لا يظهر شيء؟ من الإعدادات › الإشعارات › شبكة ENSAM، فعّل «السماح بالإشعارات».',
   [DIAG_PERDUE]: 'لم يصل الإشعار. أعدنا تسجيل هذا الجهاز: اضغط على «تجربة» مرة أخرى.',
   'Activées sur cet appareil': 'مفعّلة على هذا الجهاز', 'Comment les débloquer ?': 'كيف ترفع الحظر عنها؟',
 });

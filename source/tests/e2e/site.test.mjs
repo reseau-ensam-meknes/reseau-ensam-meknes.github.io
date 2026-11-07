@@ -7230,7 +7230,7 @@ test('lien « Active tes notifications » quand tout est décoché dans Mon prof
 const MEMBRE = { id: UID, full_name: 'Salma Test', role: 'etudiant', filiere: 'Génie Industriel', promo: new Date().getFullYear() + 2, created_at: '2025-10-01T10:00:00Z', verified: true,
   consent_at: '2025-10-01T10:00:00Z', emails_hebdo: true, alertes_offres: true, alertes_email: true, emails_messages: true };
 // vueWeb : le navigateur d'une application (ua), où ni Notification ni PushManager n'existent
-async function membreEnLigne({ profil = MEMBRE, permission = 'granted', abonnement = 'ok', deja = false, memo = null, chemin = '', ua = TELEPHONE, vueWeb = false, hauteur = 740 } = {}) {
+async function membreEnLigne({ profil = MEMBRE, permission = 'granted', abonnement = 'ok', deja = false, memo = null, chemin = '', ua = TELEPHONE, vueWeb = false, hauteur = 740, tactile = null } = {}) {
   const site = await enLigne(); site.vider(); site.inscrits.push({ ...profil });
   const ctx = await navigateur.newContext({ viewport: { width: 360, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce', userAgent: ua });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
@@ -7239,7 +7239,11 @@ async function membreEnLigne({ profil = MEMBRE, permission = 'granted', abonneme
     const sub = { endpoint: 'https://push.exemple.ma/abc', toJSON: () => ({ endpoint: 'https://push.exemple.ma/abc', keys: { p256dh: 'p256', auth: 'auth' } }), unsubscribe: async () => true };
     const pm = { getSubscription: async () => (deja ? sub : null), subscribe: async () => { if (abonnement === 'ok') return sub; throw new DOMException('Registration failed - push service not available', 'NotSupportedError'); } };
     const reg = { waiting: null, installing: null, addEventListener() {}, pushManager: pm };
-    const sw = { register: async () => reg, ready: Promise.resolve(reg), getRegistration: async () => reg, controller: null, addEventListener() {} };
+    // Ses messages : window.__pushRecu() fait comme le service worker qui vient de recevoir la notification d'essai
+    const ecoute = new EventTarget();
+    const sw = { register: async () => reg, ready: Promise.resolve(reg), getRegistration: async () => reg, controller: null,
+      addEventListener: (...a) => ecoute.addEventListener(...a), removeEventListener: (...a) => ecoute.removeEventListener(...a) };
+    window.__pushRecu = () => ecoute.dispatchEvent(new MessageEvent('message', { data: 'push-recu' }));
     Object.defineProperty(Navigator.prototype, 'serviceWorker', { get: () => sw, configurable: true });
     window.Notification = class { static permission = deja ? 'granted' : 'default'; static requestPermission = async () => { window.Notification.permission = permission; return permission; }; };
     if (!('PushManager' in window)) window.PushManager = function PushManager() {};
@@ -7251,6 +7255,7 @@ async function membreEnLigne({ profil = MEMBRE, permission = 'granted', abonneme
     const now = Math.floor(Date.now() / 1000);
     localStorage.setItem('sb-127-auth-token', JSON.stringify({ access_token: 'x.' + btoa(JSON.stringify({ sub: uid, exp: now + 7200 })) + '.y', token_type: 'bearer', expires_in: 7200, expires_at: now + 7200, refresh_token: 'r', user: { id: uid, aud: 'authenticated', email: 'membre@exemple.ma', user_metadata: {}, app_metadata: {} } }));
   }, [UID, memo]);
+  if (tactile) await ecranTactile(ctx, tactile);
   const page = await ctx.newPage(); const erreurs = [];
   page.on('pageerror', e => erreurs.push(e.message));
   await page.goto(site.adresse + chemin);
@@ -7427,6 +7432,37 @@ test('« Choisis ce que tu reçois » à 360 × 640 : « Choisir », « Choisir 
   }
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
+});
+
+// « Tester » sur un iPhone ou un iPad (l'application de l'écran d'accueil), la notification d'essai reçue mais rien à l'écran :
+// les réglages de l'iPhone (Réglages › Notifications), pas ceux d'Android (barre de notifications, économie de batterie)
+test('« Tester » sur iPhone et sur iPad, notification d’essai reçue : les réglages de l’iPhone, pas ceux d’Android, en français et en arabe', async () => {
+  const diagnostic = async (m, toast) => {
+    await m.page.waitForSelector('#md-push-test', { timeout: 10000 });
+    await m.page.click('#md-push-test');
+    await m.page.waitForSelector(`.toast:has-text("${toast}")`, { timeout: 8000 });
+    await m.page.evaluate(() => window.__pushRecu());
+    await m.page.waitForSelector('#md-push-diag', { timeout: 5000 });
+    return m.page.locator('#md-push-diag').innerText();
+  };
+  for (const [ua, tactile, nom] of [[SAFARI_IPHONE, 'iPhone', 'iPhone'], [SAFARI_IPADOS, 'MacIntel', 'iPad']]) {
+    const m = await membreEnLigne({ ua, tactile, deja: true, chemin: '#profil/notifications' });
+    const t = await diagnostic(m, 'Notification de test envoyée.');
+    assert.match(t, /^Reçue par cet appareil\. Rien ne s’affiche\s\? Dans Réglages › Notifications › Réseau ENSAM, active «\sAutoriser les notifications\s»\.$/, nom);
+    assert.doesNotMatch(t, /barre de notifications|économie de batterie|téléphone|navigateur/, nom);
+    await m.page.evaluate(() => localStorage.setItem('ensam-lang', 'ar'));
+    await m.page.reload();
+    const ta = await diagnostic(m, 'تم إرسال إشعار تجريبي.');
+    assert.match(ta, /^وصل الإشعار إلى هذا الجهاز\. لا يظهر شيء؟ من الإعدادات › الإشعارات › شبكة ENSAM، فعّل «السماح بالإشعارات»\.$/, nom);
+    assert.deepEqual(latinRestant(ta, ['ENSAM']), [], nom);
+    assert.deepEqual(m.erreurs, [], nom);
+    await m.ctx.close();
+  }
+  // Android : ses gestes à lui restent
+  const a = await membreEnLigne({ deja: true, chemin: '#profil/notifications' });
+  assert.match(await diagnostic(a, 'Notification de test envoyée.'), /^Reçue par cet appareil\. Rien dans la barre de notifications\s\? Dans les réglages du téléphone/);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
 });
 
 test('« Voir en tant que » (démo) : un autre membre sans recharger commence une nouvelle visite ; la ligne montrée au premier ne retire pas sa feuille au second', async () => {
