@@ -180,6 +180,8 @@ const cvExemple = (p, data) => import('./seed-cv.js').then(m => m.pdfCvDemo(p, {
 // Démo : données d'exemple, gardées dans le navigateur du visiteur
 // ---------------------------------------------------------------------------
 const DEMO_KEY = 'ensam-demo-v14';
+// Tables lues par certaines pages seulement (pas au démarrage) : la démo les garde avec le reste ; écoles et suivi = console d'administration
+const TABLES_ADMIN_DEMO = ['guide_pays_historique', 'liste_officielle', 'ecoles', 'admin_suivi'];
 class DemoStore extends Base {
   constructor() { super(); this.mode = 'demo'; this.fichiers = new Map(); }
   async init() {
@@ -188,7 +190,9 @@ class DemoStore extends Base {
     this.data = saved?.data || await chargerSeed();
     // Une démo enregistrée avant les cartes sponsorisées : sa carte d'exemple arrive (rien d'autre ne change)
     if (!this.data.sponsorises) this.data.sponsorises = (await import('./seed-match.js')).seedSponsorises(this.data);
-    for (const t of [...TABLES, 'guide_pays_historique', 'liste_officielle']) this.data[t] ||= [];
+    // Une démo enregistrée avant le suivi des écoles et des partenaires : ses exemples arrivent (rien d'autre ne change)
+    if (!this.data.admin_suivi) this.data.admin_suivi = (await import('./seed4.js')).seedSuiviAdmin().admin_suivi;
+    for (const t of [...TABLES, ...TABLES_ADMIN_DEMO]) this.data[t] ||= [];
     this.reglages = saved?.reglages || {};
     // Une démo enregistrée avant la vue lauréat de l'administration : son admin reçoit admin_ok, comme la mise à jour de la base
     for (const p of this.data.profiles) if (p.role === 'admin' && p.admin_ok === undefined) p.admin_ok = true;
@@ -211,7 +215,7 @@ class DemoStore extends Base {
   }
   async seDesabonnerRappels() { return true; }
   // Démo réinitialisée : comme une déconnexion, les brouillons partent aussi
-  async reset() { oublierBrouillons(); this.data = await chargerSeed(); for (const t of [...TABLES, 'guide_pays_historique', 'liste_officielle']) this.data[t] ||= []; this.reglages = {}; this.me = this.personas()[0]; this.persist(); this.emit(); }
+  async reset() { oublierBrouillons(); this.data = await chargerSeed(); for (const t of [...TABLES, ...TABLES_ADMIN_DEMO]) this.data[t] ||= []; this.reglages = {}; this.me = this.personas()[0]; this.persist(); this.emit(); }
   async insert(table, row) {
     const r = { id: uuid(), created_at: new Date().toISOString(), ...row };
     if (table === 'placements') applyPlacementRules(this, r, null);
