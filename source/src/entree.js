@@ -199,23 +199,24 @@ export function lireInvitation() {
 // Arrivée par « Ouvrir dans Chrome » depuis la page d'entrée d'un navigateur d'application (lienChrome, appareil.js) : le rôle
 // choisi, l'étape (créer un compte ou se connecter) et le lien partagé (?r=offre/…) reprennent leur place ; la promo et la
 // langue ont déjà la leur (lireInvitation, i18n.js), notifs=1 reste pour l'application. Une autre route en ?r= aussi (celle
-// d'un membre, app.js). search : l'adresse sans eux ; aucun : rien de tout cela.
+// d'un membre, app.js). ici : revenu par l'adresse de secours (pas de Chrome), dite par l'adresse même (sans stockage aussi).
+// search : l'adresse sans eux ; aucun : rien de tout cela.
 export function contexteArrivee(search = '') {
   const p = new URLSearchParams(search);
-  const role = p.get('role'), mode = p.get('mode');
+  const role = p.get('role'), mode = p.get('mode'), ici = p.get('ici') === '1';
   const lien = p.has('r') ? lienPartage(p.get('r')) : null;
-  const aucun = !p.has('role') && !p.has('mode') && !lien;
-  p.delete('role'); p.delete('mode'); if (lien) p.delete('r');
+  const aucun = !p.has('role') && !p.has('mode') && !p.has('ici') && !lien;
+  p.delete('role'); p.delete('mode'); p.delete('ici'); if (lien) p.delete('r');
   const reste = p.toString();
-  return { role: role === 'etudiant' || role === 'laureat' ? role : null, mode: mode === 'inscription' || mode === 'connexion' ? mode : null, lien, search: reste ? '?' + reste : '', aucun };
+  return { role: role === 'etudiant' || role === 'laureat' ? role : null, mode: mode === 'inscription' || mode === 'connexion' ? mode : null, lien, ici, search: reste ? '?' + reste : '', aucun };
 }
-let modeArrivee = null;
+let modeArrivee = null, retourIci = false;
 function reprendreArrivee() {
   try {
     const a = contexteArrivee(location.search);
     if (a.aucun) return;
     if (a.role) retenirRole(a.role);
-    modeArrivee = a.mode;
+    modeArrivee = a.mode; retourIci = a.ici;
     // Le lien partagé redevient l'adresse de la page, comme s'il avait été ouvert ici (retenirLien le garde ensuite)
     history.replaceState(history.state, '', location.pathname + a.search + (a.lien ? '#' + a.lien.r : location.hash));
   } catch { /* historique ou stockage indisponible : la page s'ouvre sans ce contexte */ }
@@ -236,11 +237,12 @@ export function accordIci(e) { return !!lireAccord(e); }
 export function roleAccord(e) { const r = lireAccord(e)?.r; return r === 'etudiant' || r === 'laureat' ? r : null; }
 
 // Le lien partagé (offre, question, « Je peux aider ») est gardé 24 h : un détour par la messagerie ou une adresse
-// nettoyée ne le perd pas, et il s'ouvre dès la fin de l'inscription
+// nettoyée ne le perd pas, et il s'ouvre dès la fin de l'inscription. Gardé aussi pour la page ouverte (sans stockage)
 const CLE_LIEN = 'ensam-lien-partage';
-export function retenirLien(hash) { const l = lienPartage(hash); if (l) ecrire(CLE_LIEN, JSON.stringify({ r: l.r, t: Date.now() })); }
-export function lienRetenu() { try { return lienEncoreBon(JSON.parse(lire(CLE_LIEN) || 'null')); } catch { return null; } }
-export const oublierLien = () => ecrire(CLE_LIEN, null);
+let lienGarde = null;
+export function retenirLien(hash) { const l = lienPartage(hash); if (l) ecrire(CLE_LIEN, JSON.stringify(lienGarde = { r: l.r, t: Date.now() })); }
+export function lienRetenu() { try { return lienEncoreBon(JSON.parse(lire(CLE_LIEN) || 'null') || lienGarde); } catch { return null; } }
+export const oublierLien = () => { lienGarde = null; ecrire(CLE_LIEN, null); };
 export { suiteLien };
 
 // ---------------------------------------------------------------------------
@@ -355,6 +357,8 @@ const APPLI_ICI = appliIci(navigator.userAgent, navigator.maxTouchPoints);
 const CLE_CARTE = 'ensam-entree-appli';
 const lireVisite = k => { try { return sessionStorage.getItem(k); } catch { return null; } };
 const ecrireVisite = (k, v) => { try { sessionStorage.setItem(k, v); } catch { /* navigation privée */ } };
+// Revenu par l'adresse de secours : la carte a déjà été touchée, même sans stockage pour s'en souvenir
+const vueCarte = () => lireVisite(CLE_CARTE) || (retourIci ? 'chrome' : null);
 const integreIci = m => m.navigateurIntegre(navigator.userAgent, navigator.maxTouchPoints);
 let appareil = null, appareilP = null;
 const chargerAppareil = () => (appareilP ||= import('./appareil.js').then(m => {
@@ -367,7 +371,7 @@ const chargerAppareil = () => (appareilP ||= import('./appareil.js').then(m => {
 function CarteAppli({ mode, role, invite }) {
   const [a, setA] = useState(() => appareil);
   useEffect(() => { if (!a) chargerAppareil().then(m => m && setA(m)); }, []);
-  const [vue] = useState(() => lireVisite(CLE_CARTE));
+  const [vue] = useState(vueCarte);
   const [range, setRange] = useState(false);
   const mot = useRef(null);
   const app = a && integreIci(a), sys = !a ? APPLI_ICI : app && ['android', 'ios'].includes(app.systeme) ? app.systeme : null;
@@ -381,8 +385,8 @@ function CarteAppli({ mode, role, invite }) {
   // Sa propre clé : la carte arrive dans un élément neuf, sans transition depuis la place vide (mouvement réduit)
   if (!a) return html`<div key="place" class="entree-appli-place" style=${{ minHeight: place || (sys === 'android' && vue === 'chrome' && getLang() !== 'ar' && largeur / rem < 24 ? '3.42rem' : '44px') }}></div>`;
   const T = a.CARTE, f = x => a.typo(x, getLang());
-  // Relu au toucher : le rôle, l'étape ou le lien partagé ont pu changer depuis l'affichage
-  const lien = () => a.lienChrome(location.href, lienRetenu()?.r, { lang: getLang(), contexte: { promo: invite, role, mode: mode === 'inscription' ? mode : 'connexion' } });
+  // Relu au toucher : le rôle, l'étape ou le lien partagé ont pu changer depuis l'affichage. ici : l'adresse de secours le dit
+  const lien = () => a.lienChrome(location.href, lienRetenu()?.r, { lang: getLang(), contexte: { promo: invite, role, mode: mode === 'inscription' ? mode : 'connexion' }, ici: true });
   const ouvrir = e => { e.currentTarget.href = lien(); ecrireVisite(CLE_CARTE, 'chrome'); };
   const ico = html`<${Icon} name="globe" size=${18}/>`;
   if (!carte) return html`<p class="entree-appli-mot" id="au-appli-mot" tabindex="-1" ref=${mot}>${ico}${sys === 'ios' || vue === 'chrome'
@@ -428,7 +432,7 @@ export function AuthScreen({ store }) {
   // bouton. Décidé à l'ouverture : le clavier qui s'ouvre ensuite ne fait rien bouger.
   const [court] = useState(() => innerWidth < 900 && innerHeight < 680);
   // Sur téléphone, la carte du navigateur d'une application prend la place de la phrase d'explication, dès le premier affichage
-  const [sansSous] = useState(() => !!APPLI_ICI && !lireVisite(CLE_CARTE) && innerWidth < 900);
+  const [sansSous] = useState(() => !!APPLI_ICI && !vueCarte() && innerWidth < 900);
   // Session expirée sans l'avoir voulu : on redemande la connexion calmement, avec son adresse déjà là
   const perdue = !!store?.sessionPerdue;
   const [email, setEmail] = useState(attente?.email || saisie?.email || (perdue && store.emailPerdu) || ''); const [pw, setPw] = useState('');

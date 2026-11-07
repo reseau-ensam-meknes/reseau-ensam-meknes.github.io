@@ -434,15 +434,15 @@ test('arrivée dans Chrome : la page d’entrée relit le rôle, l’étape et l
   const l = lienChrome('https://reseau-ensam-meknes.github.io/#offre/abc-123', 'offre/abc-123', { lang: 'ar', contexte: { promo: 2027, role: 'etudiant', mode: 'connexion' } });
   const secours = new URL(decodeURIComponent(l.match(/S\.browser_fallback_url=([^;]+);/)[1]));
   const a = contexteArrivee(secours.search);
-  assert.deepEqual(a, { role: 'etudiant', mode: 'connexion', lien: { k: 'offre', id: 'abc-123', r: 'offre/abc-123' }, search: '?lang=ar&promo=2027&notifs=1', aucun: false });
+  assert.deepEqual(a, { role: 'etudiant', mode: 'connexion', lien: { k: 'offre', id: 'abc-123', r: 'offre/abc-123' }, ici: false, search: '?lang=ar&promo=2027&notifs=1', aucun: false });
   // Ce qui reste : la promo (lireInvitation), l'arabe pour la visite (i18n.js), la feuille d'activation après la connexion (app.js)
   const reste = new URLSearchParams(a.search);
   assert.equal(reste.get('promo'), '2027');
   assert.equal(langueDuLien(a.search, null), 'ar');
   assert.deepEqual(parametresLien(a.search), { r: '', notifs: true, depuis: '', search: '?lang=ar&promo=2027', aucun: false });
   // Une route de membre (pas un lien partagé) reste pour app.js ; une valeur bizarre ne compte pas
-  assert.deepEqual(contexteArrivee('?r=mentorat&notifs=1'), { role: null, mode: null, lien: null, search: '?r=mentorat&notifs=1', aucun: true });
-  assert.deepEqual(contexteArrivee('?role=admin&mode=motdepasse'), { role: null, mode: null, lien: null, search: '', aucun: false }, 'retirés quand même');
+  assert.deepEqual(contexteArrivee('?r=mentorat&notifs=1'), { role: null, mode: null, lien: null, ici: false, search: '?r=mentorat&notifs=1', aucun: true });
+  assert.deepEqual(contexteArrivee('?role=admin&mode=motdepasse'), { role: null, mode: null, lien: null, ici: false, search: '', aucun: false }, 'retirés quand même');
   assert.equal(contexteArrivee('').aucun, true);
   assert.equal(contexteArrivee('?promo=2019&lang=ar').aucun, true, 'un lien de promo ordinaire : l’adresse ne change pas ici');
 });
@@ -487,7 +487,23 @@ test('« Ouvrir dans Chrome » d’un membre connecté : sa page et l’étape �
   const l = lienChrome('https://reseau-ensam-meknes.github.io/#offres', 'offres', { lang: 'fr', contexte: { mode: 'connexion' } });
   assert.equal(l, 'intent://reseau-ensam-meknes.github.io/?mode=connexion&r=offres&notifs=1#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=https%3A%2F%2Freseau-ensam-meknes.github.io%2F%3Fmode%3Dconnexion%26r%3Doffres%26notifs%3D1;end');
   const secours = new URL(decodeURIComponent(l.match(/S\.browser_fallback_url=([^;]+);/)[1]));
-  assert.deepEqual(contexteArrivee(secours.search), { role: null, mode: 'connexion', lien: null, search: '?r=offres&notifs=1', aucun: false }, 'la page du membre reste pour app.js');
+  assert.deepEqual(contexteArrivee(secours.search), { role: null, mode: 'connexion', lien: null, ici: false, search: '?r=offres&notifs=1', aucun: false }, 'la page du membre reste pour app.js');
+});
+
+// Sans Chrome, l'application rouvre l'adresse de secours dans son propre navigateur. Sans stockage (vue web sans stockage
+// DOM), seule l'adresse peut dire à la page qu'elle revient de là : ici=1, dans l'adresse de secours seulement
+test('« Ouvrir dans Chrome » de la carte : l’adresse de secours porte ici=1 (jamais celle que Chrome ouvre) ; la page d’entrée le lit puis le retire', async () => {
+  const { contexteArrivee } = await pageEntree();
+  const l = lienChrome('https://reseau-ensam-meknes.github.io/?promo=2019&lang=ar#offre/abc-123', 'offre/abc-123', { lang: 'ar', contexte: { promo: 2019, mode: 'inscription' }, ici: true });
+  const cible = 'https://reseau-ensam-meknes.github.io/?promo=2019&lang=ar&mode=inscription&r=offre%2Fabc-123&notifs=1';
+  assert.equal(l, `intent://${cible.slice(8)}#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(cible + '&ici=1')};end`);
+  const secours = new URL(decodeURIComponent(l.match(/S\.browser_fallback_url=([^;]+);/)[1]));
+  assert.deepEqual(contexteArrivee(secours.search), { role: null, mode: 'inscription', lien: { k: 'offre', id: 'abc-123', r: 'offre/abc-123' }, ici: true, search: '?promo=2019&lang=ar&notifs=1', aucun: false });
+  assert.deepEqual(contexteArrivee('?ici=1'), { role: null, mode: null, lien: null, ici: true, search: '', aucun: false }, 'seule, la marque est lue et retirée');
+  assert.equal(contexteArrivee('?ici=0').ici, false);
+  // Une marque restée dans l'adresse ne part jamais vers Chrome ; sans ici, l'adresse de secours est celle de Chrome
+  assert.doesNotMatch(lienChrome('https://reseau-ensam-meknes.github.io/?ici=1', '').split('#Intent')[0], /ici/);
+  assert.doesNotMatch(lienChrome('https://reseau-ensam-meknes.github.io/', '', { lang: 'fr' }), /ici/);
 });
 
 test('carte de la page d’entrée : « d’Instagram », « de Facebook », « d’une application » ; ses phrases d’Android et d’iPhone', async () => {

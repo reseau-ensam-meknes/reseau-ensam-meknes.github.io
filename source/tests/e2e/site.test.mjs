@@ -6736,14 +6736,15 @@ after(() => siteEnLigne?.fermer());
 
 // Un visiteur sans compte sur la page d'entrée, sur l'appareil voulu (ua) ; langue null : jamais choisie sur ce navigateur
 // (un Chrome tout neuf) ; tactile : la plateforme d'un écran tactile (iPadOS : « MacIntel ») ; avant(ctx) : réseau à régler
-// avant la première visite
-async function porte({ ua, largeur = 360, hauteur = 740, langue = 'fr', theme = 'light', chemin = '', tactile = null, avant } = {}) {
+// avant la première visite ; stockage: false : une vue web sans stockage DOM (localStorage et sessionStorage valent null)
+async function porte({ ua, largeur = 360, hauteur = 740, langue = 'fr', theme = 'light', chemin = '', tactile = null, avant, stockage = true } = {}) {
   const site = await enLigne();
   const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce', colorScheme: theme, ...(ua ? { userAgent: ua } : {}) });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
   if (avant) await avant(ctx);
   if (tactile) await ecranTactile(ctx, tactile);
-  await ctx.addInitScript(l => { if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1'); if (l) localStorage.setItem('ensam-lang', l); }, langue);
+  if (!stockage) await ctx.addInitScript(() => { for (const k of ['localStorage', 'sessionStorage']) Object.defineProperty(window, k, { configurable: true, get: () => null }); });
+  else await ctx.addInitScript(l => { if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1'); if (l) localStorage.setItem('ensam-lang', l); }, langue);
   const page = await ctx.newPage(); const erreurs = [];
   page.on('pageerror', e => erreurs.push(e.message));
   await page.goto(site.adresse + chemin);
@@ -6752,11 +6753,13 @@ async function porte({ ua, largeur = 360, hauteur = 740, langue = 'fr', theme = 
   const appareilLu = async () => { await page.waitForFunction(() => performance.getEntriesByType('resource').some(e => /\/appareil\.js$/.test(e.name))); await page.waitForTimeout(300); };
   // Le lien « Ouvrir dans Chrome » ne mène nulle part ici (pas d'Android) : le test lit l'adresse de secours qu'il porte
   const secours = async (sel = '#au-appli-chrome') => new URL(decodeURIComponent((await page.getAttribute(sel, 'href')).match(/;S\.browser_fallback_url=([^;]+);end$/)[1]));
+  // … et l'adresse que Chrome ouvre (avant #Intent)
+  const cible = async (sel = '#au-appli-chrome') => new URL('http://' + (await page.getAttribute(sel, 'href')).match(/^intent:\/\/([^#]+)#Intent;/)[1]);
   const toucherChrome = async () => {
     await page.evaluate(() => addEventListener('click', e => { if (e.target.closest?.('#au-appli-chrome')) e.preventDefault(); }, { capture: true, once: true }));
     await page.click('#au-appli-chrome');
   };
-  return { ctx, page, erreurs, site, appareilLu, secours, toucherChrome, debordement: () => page.evaluate(() => document.documentElement.scrollWidth - innerWidth) };
+  return { ctx, page, erreurs, site, appareilLu, secours, cible, toucherChrome, debordement: () => page.evaluate(() => document.documentElement.scrollWidth - innerWidth) };
 }
 const latinRestant = (t, garder) => (t.match(/[A-Za-zÀ-ÿ]{2,}/g) || []).filter(x => !garder.includes(x));
 
@@ -6767,12 +6770,17 @@ test('page d’entrée dans Instagram (Android) : une carte calme au-dessus du f
   assert.ok(await s.page.isVisible('#au-lien'), 'l’offre partagée est dite');
   await s.page.click('#au-je-laureat');
   assert.match(await s.page.getAttribute('#au-appli-chrome', 'href'), /^intent:\/\/127\.0\.0\.1:\d+\/\?[^#]+#Intent;scheme=http;package=com\.android\.chrome;S\.browser_fallback_url=[^;]+;end$/);
-  const fb = await s.secours();
+  const fb = await s.cible();
   assert.deepEqual(Object.fromEntries(fb.searchParams), { lang: 'ar', promo: '2019', role: 'laureat', mode: 'inscription', r: 'offre/' + OFFRE_PARTAGEE, notifs: '1' });
   assert.equal(fb.hash, '');
+  // L'adresse de secours (sans Chrome, ici même) : la même, et ici=1
+  const ici = await s.secours();
+  assert.equal(ici.searchParams.get('ici'), '1');
+  ici.searchParams.delete('ici');
+  assert.equal(ici.href, fb.href);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
-  // Chrome : un navigateur tout neuf (ni le stockage d'Instagram ni son choix de langue), ouvert sur l'adresse de secours
+  // Chrome : un navigateur tout neuf (ni le stockage d'Instagram ni son choix de langue), ouvert sur l'adresse du lien
   const c = await porte({ ua: TELEPHONE, langue: null, chemin: fb.search });
   assert.equal(await c.page.getAttribute('html', 'dir'), 'rtl', 'en arabe, comme dans Instagram');
   await c.page.waitForSelector('.invite-band');
@@ -6793,7 +6801,7 @@ test('page d’entrée dans Instagram (Android) : une carte calme au-dessus du f
   await k.page.click('#au-je-etudiant');
   await k.page.click('.entree-form .linkish:has-text("J’ai déjà un compte")');
   await k.page.waitForSelector('.entree-form h2');
-  const fk = await k.secours();
+  const fk = await k.cible();
   assert.deepEqual(Object.fromEntries(fk.searchParams), { role: 'etudiant', mode: 'connexion', notifs: '1' });
   await k.ctx.close();
   const kc = await porte({ ua: TELEPHONE, langue: null, chemin: fk.search });
@@ -6828,11 +6836,38 @@ test('page d’entrée dans Instagram sans Chrome : l’adresse de secours rouvr
   assert.equal(await c.page.evaluate(() => document.activeElement?.id), 'au-appli-mot');
   assert.equal((await c.page.locator('#au-appli-mot').innerText()).trim(), 'Ouvrir le Réseau dans Chrome');
   assert.ok((await c.page.locator('#au-appli-mot #au-appli-chrome').boundingBox()).height >= 44);
-  assert.match(await c.page.getAttribute('#au-appli-mot #au-appli-chrome', 'href'), /^intent:\/\/.*mode%3Dinscription%26notifs%3D1;end$/);
+  assert.match(await c.page.getAttribute('#au-appli-mot #au-appli-chrome', 'href'), /^intent:\/\/.*mode%3Dinscription%26notifs%3D1%26ici%3D1;end$/);
   await c.page.reload(); await c.page.waitForSelector('#au-appli-mot');
   assert.equal(await c.page.locator('#au-appli').count(), 0, 'une fois par visite');
   assert.deepEqual(c.erreurs, []);
   await c.ctx.close();
+});
+
+// Une vue web sans stockage DOM : rien ne se garde d'une page à l'autre, l'adresse de secours dit seule qu'il n'y a pas de Chrome
+test('page d’entrée dans une vue web sans stockage : « Ouvrir dans Chrome » emporte l’offre partagée ; l’adresse de secours ne ramène pas la carte, en boucle (le mot discret, en arabe)', async () => {
+  const s = await porte({ ua: VUE_WEB, langue: null, stockage: false, chemin: '?promo=2019&lang=ar#offre/' + OFFRE_PARTAGEE });
+  await s.page.waitForSelector('#au-appli[data-systeme="android"]');
+  assert.equal(await s.page.evaluate(() => window.localStorage === null && window.sessionStorage === null), true, 'aucun stockage');
+  assert.equal(await s.page.getAttribute('html', 'dir'), 'rtl');
+  assert.ok(await s.page.isVisible('#au-lien'), 'l’offre partagée est dite, même sans stockage');
+  const fc = await s.cible(), fb = await s.secours();
+  assert.equal(fc.searchParams.get('r'), 'offre/' + OFFRE_PARTAGEE, 'Chrome reçoit l’offre partagée');
+  assert.equal(fc.searchParams.has('ici'), false);
+  assert.equal(fb.searchParams.get('ici'), '1');
+  await s.toucherChrome();
+  // Pas de Chrome : la vue web ouvre l'adresse de secours dans le même onglet, autant de fois qu'on touche
+  for (let i = 0; i < 2; i++) {
+    await s.page.goto(fb.href); await s.page.waitForSelector('#entree .entree-form');
+    await s.page.waitForSelector('#au-appli-mot');
+    assert.equal(await s.page.locator('#au-appli').count(), 0, 'la carte ne tourne pas en boucle');
+    assert.match(await s.page.locator('#au-appli-mot').innerText(), /لا يُفتح شيء؟/);
+    assert.ok(await s.page.isVisible('#au-lien'), 'l’offre partagée toujours là');
+    assert.equal(await s.page.evaluate(() => location.hash), '#offre/' + OFFRE_PARTAGEE);
+    assert.equal(await s.page.evaluate(() => new URLSearchParams(location.search).has('ici')), false, 'la marque lue puis retirée');
+  }
+  assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])]), []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
 });
 
 test('page d’entrée : Facebook sur iPhone (les gestes de Safari, l’icône pour les notifications, pas de lien magique), une vue web Android, l’iPad ; rien dans Chrome ni Samsung Internet', async () => {

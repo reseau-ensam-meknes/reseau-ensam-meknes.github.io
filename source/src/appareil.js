@@ -49,17 +49,19 @@ export function contexteEntree(x) {
 // lang : la langue de la page ; Chrome ne connaît pas le choix fait ici, l'arabe passe donc par l'adresse (?lang=ar, gardé
 // pour la visite, i18n.js), le français laisse Chrome à son propre choix. Sans lang : l'adresse garde le sien.
 // contexte : depuis la page d'entrée, ce que le visiteur y avait déjà (contexteEntree) ; la page d'entrée le relit en arrivant.
-export function lienChrome(adresse, route = '', { lang, contexte } = {}) {
+// ici : l'adresse de secours seule porte en plus ici=1, la page d'entrée sait ainsi qu'il n'y a pas de Chrome (sans stockage aussi).
+export function lienChrome(adresse, route = '', { lang, contexte, ici } = {}) {
   const u = new URL(adresse);
   u.hash = '';
-  for (const k of ['r', 'notifs', 'depuis']) u.searchParams.delete(k);
+  for (const k of ['r', 'notifs', 'depuis', 'ici']) u.searchParams.delete(k);
   if (lang === 'ar') u.searchParams.set('lang', 'ar'); else if (lang) u.searchParams.delete('lang');
   for (const [k, v] of Object.entries(contexteEntree(contexte))) u.searchParams.set(k, v);
   const r = String(route || '').replace(/^#/, '');
   if (r && r !== 'accueil') u.searchParams.set('r', r);
   u.searchParams.set('notifs', '1');
   const cible = u.href, schema = u.protocol.replace(/:$/, '');
-  return `intent://${cible.slice(u.protocol.length + 2)}#Intent;scheme=${schema};package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(cible)};end`;
+  if (ici) u.searchParams.set('ici', '1');
+  return `intent://${cible.slice(u.protocol.length + 2)}#Intent;scheme=${schema};package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(u.href)};end`;
 }
 // La carte de la page d'entrée dans le navigateur d'une application (CarteAppli, entree.js) : ses phrases, leur arabe et son
 // style arrivent avec ce module, seul ce navigateur-là en a besoin (la page d'entrée reste légère). Mêmes mots que les
