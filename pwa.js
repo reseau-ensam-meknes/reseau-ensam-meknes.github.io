@@ -147,10 +147,12 @@ export async function resynchroniserPush(store) {
   const id = store.me?.id;
   if (store.mode !== 'live' || !id || resynchronises.has(id)) return;
   resynchronises.add(id);
+  let reg = null, avant;
   try {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
-    const reg = await swReady;
+    reg = await swReady;
     let sub = await reg?.pushManager?.getSubscription();
+    avant = sub?.endpoint ?? null;
     const key = await store.pushKey();
     // Autorisées sur cet appareil mais plus d'abonnement (réinstallation, données effacées) : il se réabonne, sans rien demander
     if (!sub) {
@@ -161,7 +163,11 @@ export async function resynchroniserPush(store) {
       sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
     }
     await enregistrerPush(store, reg, sub, key);
-  } catch { /* hors ligne, ou navigateur qui veut un geste : à la prochaine ouverture */ }
+  } catch { /* hors ligne, ou navigateur qui veut un geste : à la prochaine ouverture */ } finally {
+    // L'abonnement a changé (refait, ou retiré sans qu'un nouveau soit accepté) : les cartes, la pastille et le bandeau le
+    // relisent, au lieu de dire « Activées » toute la visite sans abonnement
+    if (avant !== undefined && ((await reg?.pushManager?.getSubscription().catch(() => null))?.endpoint ?? null) !== avant) await annoncerPush(store);
+  }
 }
 if (typeof window !== 'undefined') {
   // Déconnexion (store.signOut) : cet appareil a été retiré du compte dans la base ; reconnecté sans recharger la page, il s'y
@@ -179,13 +185,43 @@ if (typeof window !== 'undefined') {
   });
 }
 
-// Rien n'arrive malgré l'abonnement : le jeton du service de push est refait
+// Ce que l'abonnement de cet appareil est devenu (sans un geste du membre) : les cartes, la pastille et le bandeau le relisent
+async function annoncerPush(store) {
+  etatConnu = await etatPush(store).catch(() => etatConnu);
+  dispatchEvent(new Event(PUSH_CHANGE));
+}
+// Rien n'arrive malgré l'abonnement : le jeton du service de push est refait. 'fait' : un abonnement neuf, donné à la base ;
+// 'cle' : la clé de la plateforme ne répond pas, rien n'est touché ; 'aucun' : plus d'abonnement sur cet appareil. Le service
+// de push refuse le nouveau, ou la base ne le prend pas : l'erreur est levée, et cet appareil reste sans abonnement (dit aux
+// cartes, qui repassent à « Activer ») plutôt que de paraître abonné.
 async function reparerPush(store) {
-  const reg = await swReady, key = await store.pushKey(), ancien = await reg?.pushManager?.getSubscription();
-  if (!key || !ancien) return;
+  const reg = await swReady, ancien = await reg?.pushManager?.getSubscription();
+  if (!ancien) { await annoncerPush(store); return 'aucun'; }
+  const key = await store.pushKey();
+  if (!key) return 'cle';
   await store.desabonnerPush(ancien.endpoint).catch(() => {});
   await ancien.unsubscribe().catch(() => {});
-  await enregistrerPush(store, reg, await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) }), key);
+  let sub = null;
+  try {
+    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
+    await enregistrerPush(store, reg, sub, key);
+    return 'fait';
+  } catch (e) {
+    await sub?.unsubscribe().catch(() => {});
+    await annoncerPush(store);
+    throw e;
+  }
+}
+// La réparation, avec ce qui n'a pas pu se faire dit en une phrase : true seulement si l'abonnement est vraiment refait
+async function refaireAbonnement(store) {
+  try {
+    const r = await reparerPush(store);
+    if (r === 'cle') toast(SERVICE_LENT, 'err');
+    return r === 'fait';
+  } catch (e) {
+    toast(echecDefinitif(e, { brave: !!navigator.brave }) ? SANS_NOTIF : SERVICE_LENT, 'err');
+    return false;
+  }
 }
 // Le service worker de cet appareil a-t-il reçu quelque chose dans le délai ?
 const attendreRecu = ms => new Promise(ok => {
@@ -275,14 +311,14 @@ async function premiereNotif(store, diag) {
   try {
     let recu = attendreRecu(ATTENTE_TEST);
     if (!(await store.testPush())) {
-      await reparerPush(store);
+      // Pas refait (clé injoignable, service de push qui refuse) : la phrase dit pourquoi, jamais « réabonné »
+      if (!(await refaireAbonnement(store))) return;
       recu = attendreRecu(ATTENTE_TEST);
       if (!(await store.testPush())) { toast(PREMIERE_RATEE); return; }
     }
     if (!diag) return;
-    const ok = await recu;
-    if (!ok) await reparerPush(store).catch(() => {});
-    diag(ok ? 'recue' : 'perdue');
+    if (await recu) { diag('recue'); return; }
+    if (await refaireAbonnement(store)) diag('perdue');
   } catch { /* « Tester » dans Mon profil */ }
 }
 const SERVICE_LENT = 'Le service de notifications ne répond pas, réessaie dans un moment.';
@@ -296,6 +332,8 @@ addAR({
   [TEST_INJOIGNABLE]: 'خدمة الإشعارات على هذا الجهاز لا تستجيب حاليًا. أعد المحاولة بعد بضع دقائق.',
   [SERVICE_LENT]: 'خدمة الإشعارات لا تستجيب، أعد المحاولة بعد قليل.',
   [PREMIERE_RATEE]: 'لم يُرسَل الإشعار التجريبي. أعدنا تسجيل هذا الجهاز: اضغط على «تجربة» في «ملفي الشخصي» للتحقق.',
+  // La fonction notifier injoignable (store.testPushDetails) : le message de « Tester »
+  'La fonction de notifications ne répond pas encore.': 'خدمة الإشعارات على المنصة لا تستجيب بعد.',
 });
 
 // Une demande du navigateur lancée depuis Mon profil attend sa réponse : pas de feuille d'ouverture par-dessus
@@ -362,20 +400,21 @@ export function PushToggle({ ctx }) {
     setBusy(true); setDiag(null);
     try {
       const recu = attendreRecu(ATTENTE_TEST);
-      const r = raisonTestPush(await store.testPushDetails());
+      // L'adresse de cet appareil part avec l'essai : la raison est la sienne, pas celle d'un autre téléphone du compte
+      const sub = await (await swReady)?.pushManager?.getSubscription().catch(() => null);
+      const r = raisonTestPush(await store.testPushDetails(sub?.endpoint));
       // 'inconnu' : ancienne fonction notifier, qui ne dit que le nombre envoyé (ici aucun)
       if (r === 'aucun' || r === 'inconnu') { toast('Aucun appareil abonné pour l’instant.'); return; }
+      // « Réabonné » seulement s'il l'est vraiment : sinon la phrase dit ce qui reste à faire
       if (testPushARefaire(r)) {
-        await reparerPush(store).catch(() => {});
-        toast(TEST_REABONNE);
+        if (await refaireAbonnement(store)) toast(TEST_REABONNE);
         return;
       }
       if (r === 'trop') { toast(TEST_TROP, 'err'); return; }
       if (r === 'injoignable') { toast(TEST_INJOIGNABLE, 'err'); return; }
       toast('Notification de test envoyée.');
       if (await recu) { setDiag('recue'); return; }
-      await reparerPush(store).catch(() => {});
-      setDiag('perdue');
+      if (await refaireAbonnement(store)) setDiag('perdue');
     } catch (e) { toast(e.message, 'err'); } finally { setBusy(false); }
   };
   const note = {

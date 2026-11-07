@@ -138,3 +138,18 @@ test('page d’entrée légère : six fichiers préchargés, moins de 32 Ko comp
   assert.match(index, /<script type="module" src="entree\.js"/);
   assert.ok(!/\/\*MAGASIN\*\/\[\]|\/\*MODULES\*\/\[\]|<!--PRECHARGE-->/.test(index), 'listes de préchargement remplies');
 });
+
+test('magasin léger : « Santé des notifications » (administration) se charge avec son panneau, pas dans logic.js pour chaque membre', () => {
+  const index = fs.readFileSync(new URL('index.html', DIST), 'utf8');
+  const liste = nom => JSON.parse(index.match(new RegExp(`window\\.ENSAM_${nom}=(\\[[^\\]]*\\])`))[1]);
+  // Ce que chaque membre connecté précharge dès l'ouverture : le magasin (dont logic.js), puis l'application
+  const pourTous = [...liste('MAGASIN'), ...liste('MODULES')];
+  assert.ok(pourTous.includes('logic.js') && pourTous.includes('pwa.js'), pourTous.join(', '));
+  assert.deepEqual(pourTous.filter(f => /^(admin|admin-notifs|sante-notifs)\.js$/.test(f)), [], 'le panneau reste à la demande');
+  const PANNEAU = /^export (?:function|const) (?:santeResume|raisonsNotifs|raisonsAvecPertes|etatCronNotifs|dureeAttente|jourNotif|nomTypeNotif|NOMS_NOTIF|SERVICES_PUSH)\b/m;
+  const ko = f => `${(zlib.gzipSync(fs.readFileSync(new URL(f, DIST))).length / 1024).toFixed(1)} Ko`;
+  assert.deepEqual(pourTous.filter(f => PANNEAU.test(fs.readFileSync(new URL(f, DIST), 'utf8'))), [],
+    `avant : la mise en forme du panneau dans logic.js (${ko('logic.js')} compressés), chargée par chaque membre`);
+  // « Tester » (Mon profil) sert à chacun : sa mise en forme reste dans logic.js
+  assert.match(fs.readFileSync(new URL('logic.js', DIST), 'utf8'), /^export function raisonTestPush\b/m);
+});

@@ -53,8 +53,9 @@ test('chaque type de notification existe en français et en arabe', () => {
       assert.equal(n.tag, TAGS[kind], kind);
       // Envoyée depuis la file (identifiant de sa ligne), sans identifiant d'élément dans data : une notification par
       // événement, la suivante ne la remplace pas ; l'essai remplace le précédent, la nouvelle date d'un rendez-vous aussi
-      // (l'ancienne ne doit pas rester affichée), le nouveau parrain et le filleul aussi (tags fixes, TAGS_FIXES)
-      assert.equal(N.texteNotif(kind, data, langue, SITE, 7).tag, ['test', 'mentorat_deplace', 'filleul', 'parrain'].includes(kind) ? kind : `${kind}-7`, kind);
+      // (sans le rendez-vous dans les données : l'ancienne date ne doit pas rester affichée), le nouveau parrain aussi
+      // (tags fixes, TAGS_FIXES) ; chaque filleul a sa ligne (une personne de plus)
+      assert.equal(N.texteNotif(kind, data, langue, SITE, 7).tag, ['test', 'mentorat_deplace', 'parrain'].includes(kind) ? kind : `${kind}-7`, kind);
       assert.ok(n.title.length > 3 && n.body.length > 3, kind);
       assert.doesNotMatch(n.title + n.body, /undefined|null|NaN|\$\{/, kind);
       if (langue === 'ar') assert.match(n.title + n.body, /[؀-ۿ]/, kind + ' en arabe');

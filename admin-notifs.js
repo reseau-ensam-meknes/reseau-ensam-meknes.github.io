@@ -3,7 +3,8 @@
 import { html, useState, useEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { Icon, Bar, injectCSS, Compteur, Anneau, Squelette } from './ui.js';
 import { addAR, arCount } from './i18n.js';
-import { pct, timeAgo, santeResume, raisonsNotifs, raisonsAvecPertes, dureeAttente, etatCronNotifs, TYPES_MAX_SN } from './logic.js';
+import { pct, timeAgo } from './logic.js';
+import { santeResume, raisonsNotifs, raisonsAvecPertes, dureeAttente, etatCronNotifs, TYPES_MAX_SN } from './sante-notifs.js';
 
 // ---------------------------------------------------------------------------
 // Santé des notifications : combien de membres les ont activées, ce que les services de notification acceptent et ce que

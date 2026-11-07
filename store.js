@@ -2101,9 +2101,10 @@ export class SupabaseStore extends Base {
     return data;
   }
   // « Tester » : un essai vers chaque téléphone de ce compte. Le détail dit ce que chacun a répondu :
-  // { sent, failed, removed, codes, abonnements } (bilanTestPush ; abonnements null avec une ancienne fonction)
-  async testPushDetails() {
-    const { data, error } = await this.sb.functions.invoke('notifier', { body: { job: 'test' } });
+  // { sent, failed, removed, codes, abonnements, ici } (bilanTestPush ; abonnements null avec une ancienne fonction).
+  // endpoint : l'adresse de cet appareil, pour que la fonction dise sa réponse à lui (ici)
+  async testPushDetails(endpoint) {
+    const { data, error } = await this.sb.functions.invoke('notifier', { body: { job: 'test', ...(typeof endpoint === 'string' && endpoint ? { endpoint } : {}) } });
     if (error) throw new Error('La fonction de notifications ne répond pas encore.');
     return bilanTestPush(data);
   }

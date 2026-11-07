@@ -984,13 +984,13 @@ function lienNotif(kind: string, d: Record<string, unknown>, v: V, route: string
 
 // Ce qui remplace la précédente du même type dans la barre de notifications : un seul rappel du soir, un seul Match du
 // jour, un seul essai, une seule enquête ; ce qui rend la précédente fausse : la vérification par les pairs (« encore
-// un lauréat » puis « ton badge est là »), la nouvelle date d'un événement ou d'un rendez-vous de mentorat (l'ancienne
-// date ne doit pas rester affichée), un nouveau parrain (« ton parrainage cette année : … ») ; et, comme dans la liste
-// des tags fixes des nouvelles notifications (TAGS_FIXES), les arrivées dans la promo (au plus une par jour) et le
-// filleul. Le reste, sans élément qui le regroupe (conversation, match, offre…), garde une notification par événement :
-// son tag porte l'identifiant de sa ligne dans la file (id).
+// un lauréat » puis « ton badge est là »), un nouveau parrain (« ton parrainage cette année : … »), les arrivées dans la
+// promo (au plus une par jour). La nouvelle date d'un événement ou d'un rendez-vous de mentorat remplace celle du même
+// élément (son identifiant est dans les données : evenement, m) ; sans lui (données d'avant), celle du même type. Chaque
+// filleul a sa ligne (une personne de plus, comme PAR_PERSONNE). Le reste, sans élément qui le regroupe (conversation,
+// match, offre…), garde une notification par événement : son tag porte l'identifiant de sa ligne dans la file (id).
 export const SE_REMPLACENT = ['rappel_visite', 'match_jour', 'test', 'enquete', 'verification_pair', 'evenement_deplace', 'mentorat_deplace',
-  'parrain', 'promo_nouveau', 'filleul'];
+  'parrain', 'promo_nouveau'];
 // Sur une même demande, chaque lauréat qui propose son aide, chaque réponse, est une personne de plus : une notification
 // chacune (sinon la deuxième efface la première, et son nom). Regroupées seulement quand la base les compte (n ≥ 1).
 const PAR_PERSONNE = ['demande_proposition', 'demande_reponse'];
@@ -1047,7 +1047,7 @@ export type Profil = {
   id: string; full_name: string; role: string; filiere: string; promo: number;
   entreprise?: string | null; pays?: string | null; ville?: string | null; vitrine?: boolean | null;
   verified?: boolean | null; cv_url?: string | null; cv_path?: string | null; competences?: string[] | null; created_at: string;
-  en_recherche?: boolean | null;
+  en_recherche?: boolean | null; ecole?: string | null;
 };
 export type Offre = {
   id: string; author_id: string; titre: string; entreprise: string; filieres?: string[] | null; annees?: number[] | null;
@@ -1066,7 +1066,7 @@ export type Placement = {
 };
 // Points d'un recrutement confirmé, même barème que logic.js (pointsRecrutement) : 50, +25 à l'international
 export const pointsRecrutement = (p: { type?: string | null; pays?: string | null }) => 50 + (p.type === 'etranger' || (!!p.pays && p.pays !== 'Maroc') ? 25 : 0);
-export type Evenement = { id: string; titre: string; debut: string; lieu?: string | null; public: string; annule?: boolean };
+export type Evenement = { id: string; titre: string; debut: string; lieu?: string | null; public: string; annule?: boolean; ecole?: string | null };
 export type Relecture = { id: string; student_id: string; reviewer_id: string | null; status: string };
 export type DemandeContact = { id: string; demandeur_id: string; cible_id: string; status: string };
 // Ambassadeur de promo et les chiffres de sa promo pour un mois (chiffres_ambassadeurs, schema.sql)
@@ -1119,6 +1119,32 @@ export type Donnees = {
   evenements: Evenement[]; enquetesFaites: Set<string>; relectures: Relecture[]; contactsEnAttente: Map<string, number>; signalements: number;
   ambassadeurs?: Map<string, ChiffresPromo>; moisAmbassadeurs?: string;
 };
+
+// Écoles : le résumé d'un membre ne parle que de son école. Une ligne suit l'école de la personne qui la porte
+// (auteur, étudiant, organisateur) ; une base d'avant les écoles n'a qu'ENSAM Meknès.
+export const ecoleDe = (x?: { ecole?: string | null } | null) => x?.ecole || 'ensam-meknes';
+export function parEcole(b: Brut, ecole: string): Brut {
+  const ici = new Set(b.profils.filter(p => ecoleDe(p) === ecole).map(p => p.id));
+  const a = (id?: string | null) => !!id && ici.has(id);
+  return {
+    ...b,
+    profils: b.profils.filter(p => ici.has(p.id)),
+    offres: b.offres.filter(o => a(o.author_id)),
+    candidatures: b.candidatures.filter(c => a(c.student_id)),
+    invitations: b.invitations.filter(i => a(i.student_id)),
+    mentorats: b.mentorats.filter(m => a(m.student_id)),
+    questions: b.questions.filter(q => a(q.author_id)),
+    reponses: b.reponses.filter(r => a(r.author_id)),
+    parrainages: b.parrainages.filter(x => a(x.filleul_id)),
+    cafes: b.cafes.filter(c => a(c.organisateur_id)),
+    placements: b.placements.filter(x => a(x.student_id)),
+    evenements: b.evenements?.filter(e => ecoleDe(e) === ecole),
+    enquetes: b.enquetes?.filter(e => a(e.user_id)),
+    relectures: b.relectures?.filter(r => a(r.student_id)),
+    demandesContact: b.demandesContact?.filter(x => a(x.cible_id)),
+    ambassadeurs: b.ambassadeurs?.filter(x => a(x.user_id)),
+  };
+}
 
 export function indexer(b: Brut, date: Date): Donnees {
   const now = date.getTime(), depuis7 = now - 7 * JOUR, depuis14 = now - 14 * JOUR, saison = saisonDe(date);
@@ -2244,7 +2270,8 @@ export async function chargerDonnees(env: Env, ids: string[], date: Date): Promi
   const Q = 'select=id,author_id,titre,entreprise,pays,created_at';
   const C = 'select=id,student_id,offer_id,status';
   const [profils, offres, postule, invitations, m1, m2, reponses, questions, parrainages, cafes, p1, p2, p3] = await Promise.all([
-    tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,cv_path,competences,created_at,en_recherche')
+    tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,cv_path,competences,created_at,en_recherche,ecole')
+      .catch(() => tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,cv_path,competences,created_at,en_recherche'))
       .catch(() => tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,cv_path,competences,created_at'))
       .catch(() => tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,competences,created_at')),
     tout<Offre>(env, 'offers', 'select=id,author_id,titre,entreprise,filieres,annees,audience,status,created_at,relance_at'),
@@ -2270,7 +2297,8 @@ export async function chargerDonnees(env: Env, ids: string[], date: Date): Promi
   const fac = <T>(p: Promise<T[]>): Promise<T[]> => p.catch(() => [] as T[]);
   const moisAmb = moisPrecedent(date);
   const [evenements, enquetes, relectures, demandesContact, signalements, ambassadeurs] = await Promise.all([
-    fac(tout<Evenement>(env, 'evenements', `select=id,titre,debut,lieu,public,annule&annule=is.false&debut=gte.${iso(t)}&debut=lte.${iso(t + 14 * JOUR)}`)),
+    fac(tout<Evenement>(env, 'evenements', `select=id,titre,debut,lieu,public,annule,ecole&annule=is.false&debut=gte.${iso(t)}&debut=lte.${iso(t + 14 * JOUR)}`)
+      .catch(() => tout<Evenement>(env, 'evenements', `select=id,titre,debut,lieu,public,annule&annule=is.false&debut=gte.${iso(t)}&debut=lte.${iso(t + 14 * JOUR)}`))),
     fac(parIds<{ user_id: string; vague: number }>(env, 'enquetes_insertion', 'select=id,user_id,vague', 'user_id', ids)),
     fac(tout<Relecture>(env, 'relectures_cv', 'select=id,student_id,reviewer_id,status&status=eq.demandee')),
     fac(parIds<DemandeContact>(env, 'demandes_contact', 'select=id,demandeur_id,cible_id,status&status=eq.envoyee', 'cible_id', ids)),
@@ -2488,12 +2516,23 @@ async function confirmerPush(env: Env, ids: number[]): Promise<void> {
   catch (e) { console.error('notifier : confirmation des notifications impossible', e instanceof Error ? e.message : String(e)); }
 }
 
-// Rend à la file ce qui a été pris sans être essayé (push_rendues). Une base pas encore mise à jour : repris après
-// 2 minutes, comme avant.
+// Rend à la file ce qui a été pris sans être essayé (push_rendues), sans l'essai que prendre_push lui a compté. Une base
+// pas encore mise à jour (sans push_rendues) : rendues ici, par la table, pareil (sinon chaque reprise coûterait un essai,
+// et le troisième passage les jetterait sans trace). prendre_push ne prend que sous 3 essais et compte le sien : 1, 2 ou 3.
 async function rendrePush(env: Env, ids: number[]): Promise<void> {
-  if (!ids.length) return;
-  try { await rpc(env, 'push_rendues', { p_ids: ids }); }
-  catch (e) { console.error('notifier : notifications non rendues à la file (push_rendues ; base à mettre à jour ?)', e instanceof Error ? e.message : String(e)); }
+  const l = ids.filter(Number.isSafeInteger);
+  if (!l.length) return;
+  try { await rpc(env, 'push_rendues', { p_ids: l }); return; }
+  catch (e) { console.error('notifier : push_rendues absente (base à mettre à jour ?) : notifications rendues par la table', e instanceof Error ? e.message : String(e)); }
+  try {
+    for (let i = 0; i < l.length; i += MORCEAU) {
+      for (const k of [1, 2, 3]) {
+        await db(env, `push_queue?id=in.(${l.slice(i, i + MORCEAU).join(',')})&essais=eq.${k}&pris_at=not.is.null`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ pris_at: null, essais: k - 1 }),
+        });
+      }
+    }
+  } catch (e) { console.error('notifier : notifications non rendues à la file', e instanceof Error ? e.message : String(e)); }
 }
 
 // Journal des notifications (push_journal) : ne bloque jamais l'envoi
@@ -2509,7 +2548,11 @@ async function journaliser(env: Env, lignes: { user_id: string; kind: string; co
 // leur inscription), abonnements (téléphones inscrits avant l'essai) }. Au journal sous « test ». Ses refus ne comptent
 // pas contre le téléphone : trois appuis d'affilée ne doivent pas retirer l'abonnement qu'on essaie de réparer (un
 // téléphone parti, 404 ou 410, l'est toujours).
-async function jobTest(env: Env, req: Request): Promise<Response> {
+// endpoint : l'adresse de l'appareil qui a touché « Tester » (pages récentes). ici : sa réponse à lui (-1 : pas enregistré
+// pour ce compte), pour que la page dise ce qui arrive à cet appareil-là et ne refasse pas son abonnement à cause d'un autre
+// téléphone du compte. Sans adresse (page plus ancienne), la réponse reste celle d'avant.
+async function jobTest(env: Env, req: Request, endpoint?: unknown): Promise<Response> {
+  const moi = typeof endpoint === 'string' && endpoint ? endpoint : null;
   const jeton = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
   if (!jeton) return refus();
   const r = await fetch(`${env.url}/auth/v1/user`, { headers: { apikey: env.cle, Authorization: `Bearer ${jeton}` } });
@@ -2523,7 +2566,7 @@ async function jobTest(env: Env, req: Request): Promise<Response> {
   const b: Bilan = { sent: 0, failed: 0, removed: 0 };
   if (!abos.length) {
     await journaliser(env, [{ user_id: u.id, kind: 'test', code: -1 }]);
-    return json({ ...b, codes: [], abonnements: 0 });
+    return json({ ...b, codes: [], abonnements: 0, ...(moi ? { ici: -1 } : {}) });
   }
   const v = await preparerVapid(env);
   const n = texteNotif('test', {}, profil[0]?.langue, env.site) as Notif;
@@ -2537,7 +2580,8 @@ async function jobTest(env: Env, req: Request): Promise<Response> {
   const retires = await rendreCompte(env, etats, morts, abos);
   b.removed += retires.filter(id => !morts.includes(id)).length;
   await journaliser(env, [{ user_id: u.id, kind: 'test', code: res.code }]);
-  return json({ ...b, codes: abos.map(a => etats.find(e => e.id === a.id)?.code ?? 0), abonnements: abos.length });
+  const codes = abos.map(a => etats.find(e => e.id === a.id)?.code ?? 0), i = moi ? abos.findIndex(a => a.endpoint === moi) : -1;
+  return json({ ...b, codes, abonnements: abos.length, ...(moi ? { ici: i < 0 ? -1 : codes[i] } : {}) });
 }
 
 // ---------------------------------------------------------------------
@@ -2852,13 +2896,16 @@ async function jobResume(env: Env): Promise<Response> {
   const b: { sent: number; empty: number; errors: number; via?: string } = { sent: 0, empty: 0, errors: 0 };
   if (!dest.length) return json(b);
   const [brut, sansTel] = await Promise.all([chargerDonnees(env, dest.map(x => x.id), date), sansTelephone(env, dest.map(x => x.id))]);
-  const d = indexer(brut, date);
+  // Une indexation par école : chacun ne lit que son réseau
+  const ecoleDu = new Map(brut.profils.map(p => [p.id, ecoleDe(p)]));
+  const parE = new Map<string, Donnees>();
+  const donnees = (id: string) => { const e = ecoleDu.get(id) || 'ensam-meknes'; let x = parE.get(e); if (!x) { x = indexer(parEcole(brut, e), date); parE.set(e, x); } return x; };
   const traites: string[] = [];
   const limite = Date.now() + 100_000;   // marge sur les 150 s : le reste partira demain
   await parallele(dest, f.paralleles, async x => {
     if (Date.now() > limite) return;
     try {
-      const p = d.profils.get(x.id);
+      const d = donnees(x.id), p = d.profils.get(x.id);
       const r = p ? resumeDe(p, d) : null;
       if (!r) { b.empty++; traites.push(x.id); return; }
       if (!x.email || !x.token) { b.errors++; return; }
@@ -3112,8 +3159,8 @@ async function jobRappels(env: Env): Promise<Response> {
 export async function handler(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'Méthode non autorisée' }, 405);
-  let job: unknown;
-  try { job = (await req.json())?.job; } catch { return json({ error: 'Requête invalide' }, 400); }
+  let job: unknown, endpoint: unknown;
+  try { ({ job, endpoint } = (await req.json()) ?? {}); } catch { return json({ error: 'Requête invalide' }, 400); }
   if (typeof job !== 'string' || !['cle', 'test', 'push', 'resume', 'essai_email', 'alertes', 'enquetes', 'messages', 'relances', 'demandes', 'rappels', 'inactifs', 'rappels_rdv'].includes(job)) return json({ error: 'Tâche inconnue' }, 400);
   const env = lireEnv();
   if (!env.url || !env.cle) {
@@ -3122,7 +3169,7 @@ export async function handler(req: Request): Promise<Response> {
   }
   try {
     if (job === 'cle') return await jobCle(env);
-    if (job === 'test') return await jobTest(env, req);
+    if (job === 'test') return await jobTest(env, req, endpoint);
     if (!(await appelAutorise(env, req))) return refus();
     if (job === 'essai_email') return await jobEssaiEmail(env);
     if (job === 'alertes') return await jobAlertes(env);

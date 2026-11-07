@@ -4405,7 +4405,7 @@ test('administration : sur téléphone, la liste des membres se lit — le rôle
 
 // Santé des notifications (Vue d'ensemble) : lisible d'un coup d'œil, des totaux seulement, en arabe et de nuit aussi
 const santeDemo = page => page.evaluate(async () => {
-  const L = await import(new URL('logic.js', location.href).href);
+  const L = await import(new URL('sante-notifs.js', location.href).href);
   const r = L.santeResume(await window.__demo.santeNotifs());
   return { r, raisons: L.raisonsNotifs(r) };
 });
@@ -4577,7 +4577,8 @@ test('administration : « Santé des notifications » de nuit, en arabe, à 360 
   assert.deepEqual(oublis, [], 'rien en français');
   // Toutes les phrases que le panneau peut dire (1, 2, 3 à 10, 11 et plus ; minutes, heures, jours ; chaque panne)
   const restes = await s.page.evaluate(async () => {
-    const L = await import(new URL('logic.js', location.href).href), I = await import(new URL('i18n.js', location.href).href);
+    const L = { ...(await import(new URL('logic.js', location.href).href)), ...(await import(new URL('sante-notifs.js', location.href).href)) };
+    const I = await import(new URL('i18n.js', location.href).href);
     const textes = new Set(), il = s => new Date(Date.now() - s * 1000).toISOString();
     const acc = (n, un, pl) => `${n} ${n > 1 ? pl : un}`;
     for (const n of [1, 2, 3, 11, 24]) {
@@ -6083,13 +6084,16 @@ test('match : programmer un entretien (jour, heure, durée, visio) ; l’autre r
   await s.page.locator('.mx-b-acts .btn', { hasText: 'Programmer un entretien' }).click();
   await s.page.waitForSelector('#mx-rdv-jour');
   const feuille = s.page.locator('.modal').last();
-  await feuille.locator('.chip', { hasText: /^Demain$/ }).click();
+  // Le premier jour à venir proposé : « Demain », ou lundi un samedi (pas de dimanche dans la liste)
+  const jour = feuille.locator('.chip', { hasText: /^(Demain|(Lundi|Mardi|Mercredi|Jeudi|Vendredi|Samedi) \d{1,2})$/ }).first();
+  const J = (await jour.innerText()).trim(), J1 = J.split(' ')[0];
+  await jour.click();
   await feuille.locator('.chip', { hasText: /^15:00$/ }).click();
   await feuille.locator('.chip', { hasText: /^45 min$/ }).click();
-  assert.match(await feuille.locator('.mx-resume').innerText(), /^Demain · 15:00 · 45 min$/);
+  assert.match(await feuille.locator('.mx-resume').innerText(), new RegExp(`^${J1}[^·]* · 15:00 · 45 min$`));
   await s.page.click('button[form="mx-rdv-f"]'); await s.page.waitForTimeout(400);
   const carte = s.page.locator('.msg.mine .bulle.t-rdv').last();
-  assert.match(await carte.innerText(), /Tu proposes un entretien[\s\S]*Demain[\s\S]*15:00[\s\S]*45 min · En visio[\s\S]*meet\.jit\.si\/ReseauENSAM-[\s\S]*En attente de la réponse de/);
+  assert.match(await carte.innerText(), new RegExp(`Tu proposes un entretien[^]*${J1}[^]*15:00[^]*45 min · En visio[^]*meet\\.jit\\.si/ReseauENSAM-[^]*En attente de la réponse de`, 'i'));
   // Le lien d'agenda dit l'heure et la durée
   await carte.locator('summary').click();
   const g = await carte.locator('a', { hasText: 'Google Agenda' }).getAttribute('href');

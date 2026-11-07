@@ -275,6 +275,17 @@ test('nouvelles notifications programmées : l’école est filtrée avant le pl
   }
 });
 
+test('chaque école ses domaines : un email d’une autre école ne vérifie pas, et l’email obligatoire suit l’école', async () => {
+  await db.query(`update public.ecoles set domaines = '{autre.ac.ma}', email_obligatoire = true where slug = 'autre-ecole'`);
+  const E1 = uid(811), E2 = uid(812);
+  await db.query(`insert into auth.users (id, email) values ($1, 'a@autre.ac.ma'), ($2, 'b@gmail.com')`, [E1, E2]);
+  await q(E1, `insert into public.profiles (id, full_name, role, ecole, promo, filiere) values ($1, 'Etu Autre', 'etudiant', 'autre-ecole', 2028, 'GI')`, [E1]);
+  assert.equal((await db.query('select verified from public.profiles where id = $1', [E1])).rows[0].verified, true, 'email de son école : vérifié');
+  await assert.rejects(q(E2, `insert into public.profiles (id, full_name, role, ecole, promo, filiere) values ($1, 'Etu Gmail', 'etudiant', 'autre-ecole', 2028, 'GI')`, [E2]), /email de l’école \(@autre\.ac\.ma\)/);
+  assert.equal((await db.query(`select public.email_ecole($1, 'ensam-meknes') v`, [E1])).rows[0].v, false, 'pas un email d’ENSAM Meknès');
+  await db.query('delete from public.profiles where id = $1', [E1]);
+});
+
 test('relancée, la mise à jour ne perd rien', async () => {
   const sql = (await import('node:fs')).readFileSync(SCHEMA, 'utf8').replace(/^create extension if not exists pgcrypto;$/m, '');
   await db.exec(sql);
