@@ -220,7 +220,8 @@ const WHAT = { stage: 'son stage', pfe: 'son PFE', etranger: 'son stage à l’�
 
 // max : nombre de réussites montrées. S'il en reste : un lien discret vers le Suivi, où elles sont toutes ;
 // sur le Suivi lui-même (lien=false), on les déplie sur place.
-export function SuccessFeed({ ctx, max = 5, lien = true }) {
+// tete : l'en-tête que donne la page hôte, au style de ses autres titres (Mon année) ; sans lui, le titre du fil
+export function SuccessFeed({ ctx, max = 5, lien = true, tete = null }) {
   const { data, me, saison, store, act, openProfile } = ctx;
   const [share, setShare] = useState(null);
   const [tout, setTout] = useState(false);
@@ -235,7 +236,7 @@ export function SuccessFeed({ ctx, max = 5, lien = true }) {
     setTimeout(() => document.getElementById('reussites')?.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }), 400);
   };
   return html`<div class="panel wins-panel" id=${lien ? undefined : 'reussites'}>
-    <div class="section-head"><h2 class="h-ico"><${Icon} name="trophy"/> ${myN ? 'Réussites de mon année' : 'Réussites de l’année'}</h2></div>
+    ${tete || html`<div class="section-head"><h2 class="h-ico"><${Icon} name="trophy"/> ${myN ? 'Réussites de mon année' : 'Réussites de l’année'}</h2></div>`}
     <ul class="wins">${items.map(p => {
       const st = store.byId('profiles', p.student_id); const la = p.status === 'confirme' && p.laureat_id ? store.byId('profiles', p.laureat_id) : null;
       const k = data.kudos.filter(x => x.placement_id === p.id); const mine = k.find(x => x.user_id === me.id);

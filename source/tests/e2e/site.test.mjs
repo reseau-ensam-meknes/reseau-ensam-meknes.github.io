@@ -8,13 +8,14 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
 import { soirDe } from '../../src/scene.js';
+import { fauxSite, UID } from './faux-supabase.mjs';
 
 const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe.min.js'), 'utf8');
 
 const SITE = path.resolve(process.env.SITE_DIR || new URL('../../dist', import.meta.url).pathname);
 const TYPES = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
-const ECRANS = ['accueil', 'offres', 'offres/demandes', 'match', 'mentorat', 'mentorat/cv', 'messages', 'parcours', 'espace', 'reseau/groupes', 'reseau/agenda', 'reseau/entraide',
-  'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'reseau/annuaire/ma-filiere', 'reseau/annuaire/ma-promo', 'reseau/classement', 'reseau/talents', 'suivi', 'profil', 'profil/visibilite', 'profil/notifications', 'profil/donnees', 'enquete',
+const ECRANS = ['accueil', 'offres', 'offres/demandes', 'match', 'mentorat', 'mentorat/cv', 'messages', 'parcours', 'espace', 'espace/offres', 'espace/documents', 'reseau/groupes', 'reseau/agenda', 'reseau/entraide',
+  'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'reseau/annuaire/ma-filiere', 'reseau/annuaire/ma-promo', 'reseau/classement', 'reseau/talents', 'suivi', 'suivi/insertion', 'profil', 'profil/visibilite', 'profil/notifications', 'profil/donnees', 'enquete',
   'confidentialite', 'admin', 'admin/traiter', 'admin/animer', 'admin/contenus', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda',
   'admin/ecoles', 'admin/partenaires', 'admin/sponsorises', 'admin/outils', 'admin/reglages'];
 
@@ -187,6 +188,9 @@ test('messagerie : écrire, être lu, bloquer ; pas de conversation sans lien', 
   await s.aller('messages/' + salma); await s.page.waitForTimeout(300);
   await s.aller('accueil'); await s.comme('Salma'); await s.aller('messages/' + youssef); await s.page.waitForTimeout(300);
   assert.equal(await dernier().locator('.msg-etat').getAttribute('title'), 'Vu');
+  // « Vu » se lit aussi sous le dernier message, une seule fois, avec l'heure de lecture (la donnée existe)
+  assert.equal(await s.page.locator('.msg-vu').count(), 1);
+  assert.match(await s.page.locator('.msg-vu').innerText(), /^Vu\s*·\s*\d\d:\d\d$/);
   // Salma bloque : plus personne ne peut écrire
   await s.page.click('.conv-menu > .icon-btn'); await s.page.click('.conv-menu .danger-t');
   await s.page.locator('.modal .btn.danger').click(); await s.page.waitForTimeout(300);
@@ -199,6 +203,71 @@ test('messagerie : écrire, être lu, bloquer ; pas de conversation sans lien', 
   assert.equal(await s.page.locator('.composer.ferme').count(), 1);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
+});
+
+test('messagerie : réponses rapides au début d’une conversation ou quand une question attend ; elles remplissent le champ, rien ne part ; « en visio » entre membres seulement, sur une ligne (FR et AR)', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 390, langue });
+    const T = langue === 'ar' ? { merci: 'شكرًا!', regarde: 'سألقي نظرة وأعود إليك', visio: 'نتحدث عن ذلك في مكالمة فيديو؟' } : { merci: 'Merci !', regarde: 'Je regarde et je reviens vers toi', visio: 'On en parle en visio ?' };
+    await s.comme('Admin'); const admin = await s.page.evaluate(() => window.__demo.me.id);
+    // Nadia n'a encore rien répondu au mot de bienvenue de l'équipe du réseau : deux puces au-dessus du champ (pas d'appel en visio avec l'école)
+    await s.aller('accueil'); await s.comme('Nadia'); await s.aller('messages/' + admin); await s.page.waitForSelector('#chat-txt');
+    const puces = s.page.locator('.composer .comp-rapides .chip.rapide');
+    assert.deepEqual(await puces.allInnerTexts(), [T.merci, T.regarde]);
+    assert.equal(await s.page.getAttribute('.comp-rapides', 'role'), 'group');
+    const nb = () => s.page.evaluate(() => window.__demo.data.messages.length);
+    const avant = await nb();
+    await puces.nth(1).click(); await s.page.waitForTimeout(200);
+    assert.equal(await s.page.inputValue('#chat-txt'), T.regarde, 'la puce remplit le champ, dans la langue de l’écran');
+    assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'chat-txt');
+    assert.equal(await nb(), avant, 'rien ne part tout seul');
+    assert.equal(await puces.count(), 0, 'les puces s’effacent quand le champ a du texte');
+    // Champ vidé : elles reviennent ; envoyé : elles partent (la question n'attend plus)
+    await s.page.fill('#chat-txt', ''); await s.page.waitForTimeout(100);
+    assert.equal(await puces.count(), 2);
+    await puces.first().click(); await s.page.click('.composer .send-btn'); await s.page.waitForTimeout(400);
+    assert.equal(await nb(), avant + 1);
+    assert.equal(await puces.count(), 0);
+    assert.equal(await s.debordement(), 0);
+    // Une conversation déjà lancée où rien n'attend de question : pas de puces
+    await s.aller('accueil'); await s.comme('Salma'); const youssef = s.profils.find(x => x[1].includes('Youssef'))[0];
+    await s.aller('messages/' + youssef); await s.page.waitForSelector('#chat-txt');
+    assert.equal(await s.page.locator('.comp-rapides').count(), 0);
+    // Youssef pose une question : elles reviennent chez Salma, avec « en visio » (entre membres), sur une seule ligne qui défile
+    await s.page.evaluate(id => { const d = window.__demo, me = d.me.id; d.data.messages.push({ id: 'q-' + Date.now(), author_id: id, dest_id: me, type: 'texte', body: 'Tu as pu préparer ton exemple 5S ?', lu_at: null, created_at: new Date().toISOString() }); }, youssef);
+    await s.aller('accueil'); await s.aller('messages/' + youssef); await s.page.waitForSelector('#chat-txt');
+    assert.deepEqual(await puces.allInnerTexts(), [T.merci, T.regarde, T.visio]);
+    const ligne = await s.page.evaluate(() => { const r = document.querySelector('.comp-rapides'); return { hauts: new Set([...r.children].map(c => Math.round(c.getBoundingClientRect().top))).size, defile: r.scrollWidth > r.clientWidth, x: getComputedStyle(r).overflowX }; });
+    assert.equal(ligne.hauts, 1, 'les trois puces sur une seule ligne');
+    assert.equal(ligne.x, 'auto', 'la ligne défile si elle ne tient pas');
+    assert.equal(await s.debordement(), 0);
+    if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])].filter(t => ['Merci !', 'Je regarde et je reviens vers toi', 'On en parle en visio ?', 'Réponses rapides'].includes(t))), []);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('messagerie : chaque message s’aligne dans son propre sens (du français dans l’écran arabe, de l’arabe dans l’écran français), l’heure à sa fin ; la bulle reste du côté de son auteur', async () => {
+  for (const langue of ['ar', 'fr']) {
+    const s = await ouvrir({ largeur: 390, langue });
+    await s.comme('Salma'); const youssef = s.profils.find(x => x[1].includes('Youssef'))[0];
+    await s.page.evaluate(id => { const d = window.__demo, me = d.me.id, t = Date.now();
+      d.data.messages.push({ id: 'sens-fr', author_id: id, dest_id: me, type: 'texte', body: 'Bonjour Salma, tu as pu préparer ton exemple 5S pour notre appel de jeudi ? Garde-le court.', lu_at: null, created_at: new Date(t - 3e5).toISOString() });
+      d.data.messages.push({ id: 'sens-ar', author_id: id, dest_id: me, type: 'texte', body: 'مرحبا سلمى، هل حضّرت مثالك عن 5S لمكالمتنا يوم الخميس؟', lu_at: null, created_at: new Date(t - 2e5).toISOString() });
+      d.data.messages.push({ id: 'sens-moi', author_id: me, dest_id: id, type: 'texte', body: '👍', lu_at: null, created_at: new Date(t - 1e5).toISOString() }); }, youssef);
+    await s.aller('accueil'); await s.aller('messages/' + youssef); await s.page.waitForSelector('#msg-sens-ar');
+    const lire = id => s.page.evaluate(id => { const b = document.querySelector('#msg-' + id + ' .bulle'), m = b.querySelector('.msg-meta'), z = b.closest('.msg').parentElement.getBoundingClientRect(), r = b.getBoundingClientRect();
+      return { sens: b.dataset.sens ?? null, align: getComputedStyle(b).textAlign, heure: getComputedStyle(m).float, gauche: r.left - z.left < z.right - r.right }; }, id);
+    const fr = await lire('sens-fr'), ar = await lire('sens-ar'), moi = await lire('sens-moi');
+    assert.deepEqual([fr.sens, fr.align, fr.heure], ['ltr', 'left', 'right'], 'le français : à gauche, l’heure à droite');
+    assert.deepEqual([ar.sens, ar.align, ar.heure], ['rtl', 'right', 'left'], 'l’arabe : à droite, l’heure à gauche');
+    assert.equal(moi.sens, null, 'un emoji seul n’a pas de sens : la bulle suit l’écran');
+    // Les bulles de Youssef restent du côté de l'autre (à droite en arabe, à gauche en français), les miennes de l'autre côté
+    assert.equal(fr.gauche, langue === 'fr'); assert.equal(ar.gauche, langue === 'fr'); assert.equal(moi.gauche, langue === 'ar');
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
 });
 
 test('messagerie : répondre à un message précis, réagir ; sous le nom, qui est la personne (jamais « Administration »)', async () => {
@@ -358,6 +427,136 @@ test('mentorat : demander, fixer l’horaire, confirmer sa présence, ignorer un
   await s.ctx.close();
 });
 
+test('mentorat : le prochain rendez-vous en billet (date, vrai compte à rebours, agenda) ; « Disponible pour aider » en interrupteur', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('mentorat'); await s.page.waitForTimeout(1300);
+  await s.page.locator('.fete-acts .btn').last().click({ timeout: 2000 }).catch(() => {});
+  const billet = s.page.locator('.m-next .billet');
+  assert.equal(await billet.count(), 1);
+  // Le talon : le jour, la date, le mois et l'heure du rendez-vous (vrais), et le compte à rebours qui en découle
+  const rdv = await s.page.evaluate(() => { const d = window.__demo, me = d.me.id; return d.data.mentorships.filter(m => m.student_id === me && m.status === 'acceptee' && new Date(m.rdv_at) > Date.now()).sort((a, b) => new Date(a.rdv_at) - new Date(b.rdv_at))[0].rdv_at; });
+  const d = new Date(rdv);
+  assert.equal(await billet.locator('.bt-num').innerText(), String(d.getDate()));
+  assert.equal(await billet.locator('.bt-heure').innerText(), `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`);
+  const h = Math.floor((d - Date.now()) / 36e5);
+  assert.match(await billet.locator('.m-rebours').innerText(), h >= 24 ? /^Dans \d+ jours$|^Demain$/ : /^Dans \d+ (h|min)/);
+  // Avant de confirmer : une seule action pleine (« Je serai là ») ; la visio attend
+  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1);
+  assert.match(await billet.locator('.btn.primary').innerText(), /Je serai là/);
+  // L'agenda s'ouvre dans une feuille : Google et un fichier .ics, avec le sujet et l'heure
+  await billet.locator('.bt-agenda').click();
+  const feuille = s.page.locator('.modal.m-agenda');
+  await feuille.waitFor();
+  assert.match(await feuille.locator('a[href^="https://calendar.google.com"]').first().getAttribute('href'), /action=TEMPLATE/);
+  assert.match(await feuille.locator('a[download$=".ics"]').getAttribute('href'), /^data:text\/calendar/);
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(200);
+  assert.equal(await feuille.count(), 0);
+  // Youssef : « Disponible pour aider » est un interrupteur accessible, et il dit ce que cela change
+  await s.aller('accueil'); await s.comme('Youssef'); await s.aller('mentorat');
+  const inter = s.page.locator('#mentor-dispo');
+  assert.equal(await inter.getAttribute('role'), 'switch');
+  assert.equal(await inter.isChecked(), true);
+  assert.match(await s.page.locator('#mentor-dispo-aide').innerText(), /peuvent te proposer leurs horaires/);
+  await s.page.click('.m-dispo .mx-switch'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.evaluate(() => window.__demo.me.mentor_dispo), false);
+  assert.match(await s.page.locator('#mentor-dispo-aide').innerText(), /ne te voient pas encore/);
+  await s.page.click('.m-dispo .mx-switch'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.evaluate(() => window.__demo.me.mentor_dispo), true);
+  // Les demandes en cartes compactes, rangées côte à côte : la page reste courte
+  assert.ok(await s.page.locator('.m-avis-liste .mreq').count() >= 1);
+  assert.ok(await s.page.evaluate(() => document.documentElement.scrollHeight) < 2400, 'la page du lauréat reste courte');
+  assert.equal(await s.debordement(), 0);
+  await s.page.addScriptTag({ content: AXE });
+  const v = await s.page.evaluate(async () => (await axe.run('.page', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => `${x.id} : ${x.nodes[0].target.join(' ')}`));
+  assert.deepEqual(v, []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('mentorat : un rendez-vous accepté sans horaire n’est pas un billet (le lauréat fixe le moment, l’école le voit en attente) ; le titre dit ce qu’il y a dessous ; une seule action pleine', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  const fete = () => s.page.locator('.fete-acts .btn').last().click({ timeout: 1500 }).catch(() => {});
+  const youssef = s.profils.find(x => x[1].includes('Youssef'))[0];
+  // Une ancienne demande de Salma, acceptée sans horaire : Youssef doit encore fixer le moment
+  await s.comme('Salma');
+  const sujet = await s.page.evaluate(y => { const d = window.__demo, me = d.me.id; const m = d.data.mentorships.find(x => x.student_id === me && x.status === 'acceptee' && x.rdv_at); m.rdv_at = null; m.accepted_at = null; m.mentor_id = y; return m.sujet; }, youssef);
+  await s.aller('accueil'); await s.aller('mentorat'); await s.page.waitForTimeout(1300); await fete();
+  assert.equal(await s.page.locator('.billet').count(), 0, 'pas de billet sans date');
+  assert.doesNotMatch(await s.page.locator('.page').innerText(), /janv\.|En ce moment|Rejoindre la visio|C’est fait/, 'ni « 1 janv. 1970 », ni « En ce moment »');
+  assert.match(await s.page.locator('.m-autres h2').innerText(), /^En attente d’un horaire/);
+  const carte = s.page.locator('.m-autres .mreq', { hasText: sujet });
+  assert.match(await carte.innerText(), /Youssef va fixer l’horaire du rendez-vous\./);
+  assert.equal(await carte.locator('.state-pill').count(), 0, 'pas d’étiquette qui répète l’attente');
+  // L'école la voit avec les demandes en attente, pas avec les rendez-vous à venir
+  await s.aller('accueil'); await s.comme('Admin'); await s.aller('mentorat');
+  const rangees = s.page.locator('.m-suivi .rangee-bloc');
+  assert.equal(await rangees.count(), 2, 'deux rangées : les rendez-vous à venir, puis les demandes en attente');
+  assert.equal(await rangees.first().locator('.mreq', { hasText: sujet }).count(), 0);
+  const enAttente = rangees.last().locator('.mreq', { hasText: sujet });
+  assert.match(await enAttente.innerText(), /En attente d’un horaire[\s\S]*Avec Youssef El Amrani/);
+  assert.doesNotMatch(await enAttente.locator('.m-avec').innerText(), /·/, 'pas de date inventée');
+  assert.ok(await s.page.evaluate(() => document.documentElement.scrollHeight) < 1400, 'le suivi de l’école tient en deux rangées');
+  // Youssef fixe le moment depuis la carte : c'est alors un billet, chez lui et chez Salma
+  await s.aller('accueil'); await s.comme('Youssef'); await s.aller('mentorat');
+  const sienne = s.page.locator('.mreq', { hasText: sujet });
+  assert.match(await sienne.innerText(), /Pour toi/);
+  await sienne.locator('.tchoice .chip').first().click();
+  await sienne.locator('button:has-text("Confirmer le rendez-vous")').click(); await s.page.waitForTimeout(400); await fete();
+  assert.equal(await s.page.locator('.billet', { hasText: sujet }).count(), 1);
+  await s.aller('accueil'); await s.comme('Salma'); await s.aller('mentorat'); await s.page.waitForTimeout(1300); await fete();
+  assert.equal(await s.page.locator('.m-next .billet', { hasText: sujet }).count(), 1);
+  // Un rendez-vous passé à clore en plus du billet : « Je serai là » reste la seule action pleine, « Terminer » attend en tonal
+  await s.page.evaluate(y => { const d = window.__demo, me = d.me.id, t = Date.now();
+    d.data.mentorships.push({ id: 'passe-' + t, student_id: me, mentor_id: y, besoin: 'entretien', sujet: 'Simuler mon entretien chez Lear', message: null, creneaux: [], status: 'acceptee', rdv_at: new Date(t - 3 * 36e5).toISOString(), accepted_at: new Date(t - 4 * 864e5).toISOString(), confirme_at: new Date(t - 2 * 864e5).toISOString(), created_at: new Date(t - 5 * 864e5).toISOString() }); }, youssef);
+  await s.aller('accueil'); await s.aller('mentorat'); await s.page.waitForTimeout(1300); await fete();
+  assert.match(await s.page.locator('.m-autres h2').innerText(), /^Aussi en cours/);
+  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1);
+  assert.match(await s.page.locator('.page .btn.primary:visible').innerText(), /Je serai là/);
+  assert.equal(await s.page.locator('.m-autres .merci-box .btn.tonal').count(), 1);
+  // Présence confirmée, la visio n'est pas encore là : le billet n'a plus d'action pleine, « Terminer » la reprend
+  await s.page.locator('.m-next .billet .btn.primary').click(); await s.page.waitForTimeout(400);
+  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1);
+  assert.match(await s.page.locator('.page .btn.primary:visible').innerText(), /Terminer/);
+  assert.equal(await s.page.locator('.m-autres .merci-box .btn.primary').count(), 1);
+  // Le billet passé lui aussi : le rendez-vous à clore et une demande ouverte → « En cours » (pas « En attente d’un horaire »)
+  await s.page.evaluate(sujet => { const d = window.__demo, me = d.me.id, t = Date.now();
+    d.data.mentorships.find(x => x.student_id === me && x.sujet === sujet).status = 'terminee';
+    d.data.mentorships.push({ id: 'ouverte-' + t, student_id: me, mentor_id: null, besoin: 'cv', sujet: 'Relire mon CV pour un PFE en méthodes', message: null, creneaux: [new Date(t + 2 * 864e5).toISOString()], status: 'demande', created_at: new Date(t).toISOString() }); }, sujet);
+  await s.aller('accueil'); await s.aller('mentorat'); await s.page.waitForTimeout(1300); await fete();
+  assert.match(await s.page.locator('.m-autres h2').innerText(), /^En cours\s*2$/);
+  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1, '« Terminer » redevient l’action pleine');
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('mentorat : à 360 px les deux onglets tiennent, pastille comprise ; en arabe, la promo et l’entreprise d’un lauréat se lisent en entier ; « Voir les autres étudiants » les montre tous', async () => {
+  const s = await ouvrir({ largeur: 360, langue: 'ar' });
+  await s.page.setViewportSize({ width: 360, height: 740 });
+  await s.comme('Salma'); await s.aller('mentorat'); await s.page.waitForTimeout(1300);
+  await s.page.locator('.fete-acts .btn').last().click({ timeout: 1500 }).catch(() => {});
+  // Les onglets de page (segments) : rien ne défile ni ne déborde, aucun libellé coupé, la pastille dans son onglet
+  const onglets = await s.page.evaluate(() => { const n = document.querySelector('.mentorat .m-onglets'), r = n.getBoundingClientRect(), p = n.querySelector('.count').getBoundingClientRect(); return { defile: n.scrollWidth > n.clientWidth + 1 || [...n.querySelectorAll('[role="tab"]')].some(b => b.scrollWidth > b.clientWidth + 1), pastille: p.left >= r.left && p.right <= r.right }; });
+  assert.deepEqual(onglets, { defile: false, pastille: true });
+  // « دفعة 2012 · Renault Group Maroc » : jamais coupé en « … » (en arabe, la coupure mangerait le début du nom latin)
+  const ligne = await s.page.evaluate(() => { const l = document.querySelector('.billet-qui .role-line'); return { txt: l.textContent, coupe: l.scrollWidth > l.clientWidth + 1 || getComputedStyle(l).textOverflow === 'ellipsis' && getComputedStyle(l).whiteSpace === 'nowrap' }; });
+  assert.match(ligne.txt, /Renault Group Maroc/);
+  assert.equal(ligne.coupe, false);
+  // Youssef : toutes les demandes, pas une de moins que le compte annoncé
+  await s.page.setViewportSize({ width: 390, height: 844 });
+  await s.aller('accueil'); await s.comme('Youssef'); await s.aller('mentorat');
+  await s.page.evaluate(() => { const d = window.__demo, t = Date.now(), etu = d.data.profiles.filter(p => p.role === 'etudiant').slice(0, 14);
+    etu.forEach((p, i) => d.data.mentorships.push({ id: 'beaucoup-' + i, student_id: p.id, mentor_id: null, besoin: 'cv', sujet: 'Relire mon CV, demande ' + (i + 1), message: null, creneaux: [new Date(t + (i + 2) * 864e5).toISOString()], status: 'demande', created_at: new Date(t - i * 6e4).toISOString() })); });
+  await s.aller('accueil'); await s.aller('mentorat');
+  const annonce = +(await s.page.locator('.m-avis h2 .count').innerText());
+  assert.ok(annonce > 12, 'plus de douze demandes');
+  await s.page.locator('.m-avis .past-toggle').click(); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('.m-avis-liste .mreq').count(), annonce);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('signaler un profil, puis l’administration le traite', async () => {
   const s = await ouvrir();
   await s.comme('Salma'); await s.fiche('Nadia Ferhat');
@@ -415,6 +614,40 @@ test('hors ligne : le site s’ouvre depuis la copie gardée sur le téléphone'
   await s.ctx.setOffline(false);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
+});
+
+test('nouvelle version publiée pendant qu’un membre tape : pas de rechargement sous ses doigts ; elle s’applique quand la page est cachée', async () => {
+  const s = await ouvrir({ sw: true });
+  let liberer = () => {};
+  try {
+    // Le site gardé sur l'appareil : le service worker installé a pris la main sur la page
+    await s.page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 30000 });
+    await s.aller('reseau/annuaire');
+    await s.page.reload(); await s.page.waitForSelector('#d-q');
+    assert.ok(await s.page.evaluate(() => !!navigator.serviceWorker.controller));
+    nouvelleVersion = { version: 'test-' + Date.now(), retenue: new Promise(ok => { liberer = ok; }) };
+    let chargements = 0;
+    s.page.on('load', () => { chargements++; });
+    await s.page.reload(); await s.page.waitForSelector('#d-q');
+    // Il cherche quelqu'un dès l'ouverture, pendant que la nouvelle version s'installe
+    await s.page.fill('#d-q', 'Nadia');
+    liberer();
+    const prete = () => s.page.evaluate(() => navigator.serviceWorker.getRegistration().then(r => !!r?.waiting));
+    for (let i = 0; i < 150 && !(await prete()); i++) await s.page.waitForTimeout(100);
+    assert.ok(await prete(), 'la nouvelle version est installée et attend');
+    await s.page.waitForFunction(() => performance.now() > 10000, null, { timeout: 15000, polling: 200 });
+    assert.equal(chargements, 1, 'pas de rechargement pendant qu’il tape');
+    assert.equal(await s.page.inputValue('#d-q'), 'Nadia');
+    // Il passe à une autre application : la nouvelle version prend la main et la page se recharge sans qu'il le voie
+    await s.page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+    for (let i = 0; i < 100 && chargements < 2; i++) await s.page.waitForTimeout(100);
+    assert.equal(chargements, 2, 'la nouvelle version s’applique une fois la page cachée');
+    await s.page.waitForSelector('#d-q');
+    assert.deepEqual(s.erreurs, []);
+  } finally {
+    liberer(); nouvelleVersion = null;
+    await s.ctx.close();
+  }
 });
 
 test('lien d’invitation d’une promo : la promo est gardée, l’adresse nettoyée, le message prêt pour WhatsApp', async () => {
@@ -566,7 +799,8 @@ test('preuves : dernier merci sur la carte du mentor, deux visages sur le merci 
     return { merci: m[0]?.[0], ent: p.entreprise };
   }, 'Ismail Sebti');
   const ismail = cartes.filter({ hasText: 'Ismail Sebti' });
-  assert.equal(await ismail.locator('.mcard-merci p').innerText(), `« ${attendu.merci} »`);
+  // Les guillemets tiennent au texte par des espaces insécables (typographie française) : on les lit comme des espaces
+  assert.equal((await ismail.locator('.mcard-merci p').innerText()).replace(/\u00a0/g, ' '), `« ${attendu.merci} »`);
   assert.equal(await ismail.locator('.mcard-merci .avatar').count(), 1, 'le visage de l’étudiant');
   assert.match(await ismail.locator('.mcard-merci .merci-duo').innerText(), /·\s*(\dA|Promo \d{4})/, 'son année ou sa promo');
   assert.equal(await cartes.filter({ hasText: 'Hiba Rahmouni' }).locator('.mcard-merci').count(), 0);
@@ -680,7 +914,7 @@ test('« Me prévenir » : rien en démo ordinaire, le petit mot reste', async (
   await s.ctx.close();
 });
 
-test('« Me prévenir » : après une demande de mentorat, la feuille remplace le petit mot ; deux refus au plus, à 14 jours d’écart', async () => {
+test('« Me prévenir » : après une demande de mentorat, la feuille remplace le petit mot ; après « Plus tard », elle revient 3 jours après, sans plafond', async () => {
   const s = await prevenirSur('off');
   await s.comme('Amine'); await s.mentorat('Choisir mon stage de 3A');
   await s.page.waitForSelector('.modal.prevenir');
@@ -698,15 +932,26 @@ test('« Me prévenir » : après une demande de mentorat, la feuille remplace l
   await s.mentorat('Préparer mon entretien');
   assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
   assert.match(await s.page.locator('.toast').last().innerText(), /Horaires envoyés à Youssef/);
-  // 15 jours plus tard : une dernière fois
-  await s.changerMemo('({ ...m, at: m.at - 15 * 864e5 })');
+  // Deux jours plus tard : toujours le petit mot
+  await s.changerMemo('({ ...m, at: m.at - 2 * 864e5 })');
   await s.mentorat('Relire mon rapport');
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0, 'pas avant 3 jours');
+  assert.match(await s.page.locator('.toast').last().innerText(), /Horaires envoyés à Youssef/);
+  // Trois demandes attendent un horaire, le plus permis à la fois : une est annulée avant chaque nouvelle demande
+  const annulerUne = () => s.page.evaluate(() => { const d = window.__demo, m = d.data.mentorships.find(x => x.student_id === d.me.id && x.status === 'demande'); return d.update('mentorships', m.id, { status: 'annulee' }); });
+  // 3 jours après « Plus tard » : elle revient
+  await s.changerMemo('({ ...m, at: m.at - 864e5 })');
+  await annulerUne(); await s.mentorat('Choisir une option');
   await s.page.waitForSelector('.modal.prevenir');
   await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
   assert.equal((await s.memo()).n, 2);
-  await s.changerMemo('({ ...m, at: m.at - 30 * 864e5 })');
-  await s.mentorat('Choisir une option');
-  assert.equal(await s.page.locator('.modal.prevenir').count(), 0, 'plus jamais après deux refus');
+  // Pas de plafond : 3 jours après ce deuxième refus, elle revient encore
+  await s.changerMemo('({ ...m, at: m.at - 3 * 864e5 })');
+  await annulerUne(); await s.mentorat('Préparer ma soutenance');
+  await s.page.waitForSelector('.modal.prevenir');
+  assert.match(await s.page.locator('.prevenir .verify-ok').innerText(), /Horaires envoyés à Youssef\./);
+  await s.page.click('#pv-tard'); await s.page.waitForTimeout(300);
+  assert.equal((await s.memo()).n, 3);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -1227,8 +1472,9 @@ test('à l’ouverture : la feuille des notifications selon le rôle ; « Plus t
   const txt = await s.page.locator(ouverture).innerText();
   assert.match(await s.page.locator(`${ouverture} .modal-head h2`).innerText(), /^Reçois l’essentiel sur ton téléphone$/);
   assert.match(txt, /Ce qui te concerne arrive tout de suite, même quand l’application est fermée/);
-  assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['messages', 'demandes', 'candidatures', 'offres']);
-  assert.match(txt, /Les nouvelles offres de ton année et de ta filière/);
+  // Match juste après les messages (les lauréats qui s'intéressent à son profil)
+  assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['messages', 'match', 'demandes', 'candidatures']);
+  assert.match(txt, /Les lauréats qui s’intéressent à ton profil/);
   assert.match(txt, /Tu choisis quoi recevoir dans « Mon profil »\. Pas de publicité\./);
   assert.match(await s.page.locator('#ouv-oui').innerText(), /Activer/);
   assert.ok(await s.page.evaluate(() => document.querySelector('.ouverture .modal-foot').getBoundingClientRect().bottom <= innerHeight + .5), 'les boutons à portée du pouce');
@@ -1357,21 +1603,67 @@ test('à l’ouverture : un lauréat voit ce qui le concerne ; « Activer » vau
   await attendreOuverture(s);
   const txt = await s.page.locator(ouverture).innerText();
   assert.match(txt, /Ce qui te concerne arrive tout de suite/);
-  // Tout est activé par défaut, les nouvelles offres aussi pour un lauréat qui ne cherche pas d'emploi
-  assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['messages', 'demandes', 'offres', 'candidatures']);
+  // Tout est activé par défaut, les nouvelles offres aussi pour un lauréat qui ne cherche pas d'emploi ; Match après ses demandes
+  assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['messages', 'demandes', 'match', 'offres']);
   assert.match(txt, /Les nouvelles demandes d’étudiants de ta filière/);
   await s.page.click('#ouv-oui'); await s.page.waitForTimeout(300);
   assert.equal(await s.page.locator(ouverture).count(), 0);
   assert.match(await s.page.locator('.toast').last().innerText(), /Sur la vraie plateforme/);
   assert.equal((await s.memo()).fait, 1);
   await recharger(s); await rienALouverture(s, 'acceptée : plus jamais');
-  // Un lauréat qui cherche un emploi : la suite de sa demande et de ses candidatures, et les offres pour lui
+  // Un lauréat qui cherche un emploi : la suite de sa demande et de ses candidatures, et les offres pour lui (Match en dernier)
   await s.comme('Nadia');
   await s.page.evaluate(() => window.__demo.update('profiles', window.__demo.me.id, { en_recherche: true }));
   await attendreOuverture(s);
   assert.deepEqual(await s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat)), ['messages', 'demandes', 'offres', 'candidatures']);
   const rech = await s.page.locator(ouverture).innerText();
   assert.match(rech, /Les réponses à ta demande d’emploi/); assert.match(rech, /Tes candidatures qui avancent/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// La feuille parle de Match (constat 9 de l'enquête) : sa ligne et son icône, les deux cartes de Match (jamais un cœur)
+test('à l’ouverture : la ligne Match et ses deux cartes, selon le rôle et en arabe ; coupée dans Mon profil, la suivante prend sa place', async () => {
+  let s = await prevenirSur('off');
+  const cats = () => s.page.$$eval(`${ouverture} .ouv-points li`, ls => ls.map(l => l.dataset.cat));
+  const ligne = () => s.page.locator(`${ouverture} .ouv-points li[data-cat="match"]`);
+  const plusTard = async () => { await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300); };
+  await attendreOuverture(s);
+  assert.deepEqual(await cats(), ['messages', 'match', 'demandes', 'candidatures']);
+  assert.equal((await ligne().innerText()).trim(), 'Les lauréats qui s’intéressent à ton profil');
+  assert.equal(await ligne().locator('svg.ico-match').count(), 1, 'l’icône de Match');
+  assert.ok(await ligne().locator('svg.ico-match > *').count() > 0, 'dessinée');
+  assert.equal(await s.page.locator(`${ouverture} .ico-heart`).count(), 0, 'jamais un cœur');
+  assert.equal(await s.debordement(), 0);
+  // Match coupé dans Mon profil : la feuille revient sans lui, les offres reprennent la 4e place
+  await plusTard();
+  await s.aller('profil/notifications');
+  await s.page.click('#np-match'); await s.page.waitForTimeout(250);
+  await s.changerMemo('({ ...m, at: m.at - 8 * 864e5 })');
+  await s.page.reload(); await s.page.waitForSelector('#md-push'); await attendreOuverture(s);
+  assert.deepEqual(await cats(), ['messages', 'demandes', 'candidatures', 'offres']);
+  await plusTard();
+  // Un lauréat : après ses demandes
+  await s.comme('Youssef'); await attendreOuverture(s);
+  assert.deepEqual(await cats(), ['messages', 'demandes', 'match', 'offres']);
+  assert.equal((await ligne().innerText()).trim(), 'Les étudiants qui s’intéressent à tes offres');
+  assert.equal(await ligne().locator('svg.ico-match').count(), 1);
+  await plusTard();
+  // Un lauréat qui cherche un emploi : Match en dernier ; ses offres coupées, c'est le mentorat qui vient, pas Match
+  await s.comme('Nadia');
+  await s.page.evaluate(() => window.__demo.update('profiles', window.__demo.me.id, { en_recherche: true, notif_push: { offres: false } }));
+  await attendreOuverture(s);
+  assert.deepEqual(await cats(), ['messages', 'demandes', 'candidatures', 'mentorat']);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe : الخريجون pour les lauréats, الطلبة pour les étudiants
+  s = await prevenirSur('off', { langue: 'ar' });
+  await attendreOuverture(s);
+  assert.equal((await ligne().innerText()).trim(), 'الخريجون المهتمون بملفك');
+  await plusTard();
+  await s.comme('Youssef'); await attendreOuverture(s);
+  assert.equal((await ligne().innerText()).trim(), 'الطلبة المهتمون بعروضك');
+  assert.equal(await s.debordement(), 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -1536,7 +1828,7 @@ test('navigateur d’une application (Instagram) : « Ouvrir dans Chrome » à l
   assert.match(t, /Ouvre le Réseau ENSAM dans Chrome/);
   assert.match(t, /Ce lien s’est ouvert dans Instagram\s: ici, les notifications ne peuvent pas arriver\./);
   // Le lien rouvre la même page dans Chrome (sinon la même adresse), avec la feuille d'activation en arrivant
-  assert.match(await s.page.getAttribute('#appli-chrome', 'href'), /^intent:\/\/127\.0\.0\.1:\d+\/\?notifs=1#Intent;scheme=http;package=com\.android\.chrome;S\.browser_fallback_url=http%3A%2F%2F127\.0\.0\.1%3A\d+%2F%3Fnotifs%3D1;end$/);
+  assert.match(await s.page.getAttribute('#appli-chrome', 'href'), /^intent:\/\/127\.0\.0\.1:\d+\/\?mode=connexion&notifs=1#Intent;scheme=http;package=com\.android\.chrome;S\.browser_fallback_url=http%3A%2F%2F127\.0\.0\.1%3A\d+%2F%3Fmode%3Dconnexion%26notifs%3D1;end$/);
   assert.ok((await s.page.locator('#appli-chrome').boundingBox()).height >= 44);
   assert.equal(await s.debordement(), 0);
   // En démo, le lien n'ouvre rien : un mot le dit, et la feuille se range
@@ -1554,7 +1846,7 @@ test('navigateur d’une application (Instagram) : « Ouvrir dans Chrome » à l
   assert.equal(await s.page.locator('.modal.appli').count(), 0);
   // Mon profil : la phrase et le lien, qui garde la page (?r=)
   await s.aller('profil/notifications'); await s.page.waitForSelector('#md-push-chrome');
-  assert.match(await s.page.getAttribute('#md-push-chrome', 'href'), /\?r=profil%2Fnotifications&notifs=1#Intent;/);
+  assert.match(await s.page.getAttribute('#md-push-chrome', 'href'), /\?mode=connexion&r=profil%2Fnotifications&notifs=1#Intent;/);
   assert.equal(await s.page.locator('#md-push-oui').count(), 0, 'pas de « Activer » qui ne marcherait pas ici');
   assert.equal(await s.page.locator('.pastille[data-sorte="installer"]').count(), 0);
   assert.deepEqual(s.erreurs, []);
@@ -1598,7 +1890,7 @@ test('navigateur d’une application sans Chrome : « Ouvrir dans Chrome » rouv
   // En arabe : Chrome ne connaît pas le choix fait ici, l'adresse le lui dit
   const a = await ouvrir({ largeur: 360, ua: INSTAGRAM, langue: 'ar' });
   await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
-  assert.match(await a.page.getAttribute('#appli-chrome', 'href'), /^intent:\/\/127\.0\.0\.1:\d+\/\?lang=ar&notifs=1#Intent;.*S\.browser_fallback_url=http%3A%2F%2F127\.0\.0\.1%3A\d+%2F%3Flang%3Dar%26notifs%3D1;end$/);
+  assert.match(await a.page.getAttribute('#appli-chrome', 'href'), /^intent:\/\/127\.0\.0\.1:\d+\/\?lang=ar&mode=connexion&notifs=1#Intent;.*S\.browser_fallback_url=http%3A%2F%2F127\.0\.0\.1%3A\d+%2F%3Flang%3Dar%26mode%3Dconnexion%26notifs%3D1;end$/);
   assert.deepEqual(a.erreurs, []);
   await a.ctx.close();
 });
@@ -1855,9 +2147,9 @@ test('Mon profil : la case « Rappels », cochée par défaut, se coupe et reste
     assert.equal(await s.page.isChecked('#np-rappels'), true, 'activée par défaut');
     const texte = await rappels.innerText();
     if (langue === 'fr') {
-      assert.match(texte, /^Rappels/);
-      assert.match(texte, /Après quelques jours sans visite, ce qui t’attend : messages, propositions d’aide, nouvelles offres\./);
-      assert.match(texte, /par email une fois par semaine au plus/);
+      assert.match(texte, /^Rappels et résumé du dimanche/);
+      assert.match(texte, /Après quelques jours sans visite, ce qui t’attend : messages, Match, propositions d’aide, réponses à tes questions, événements, nouvelles offres\./);
+      assert.match(texte, /par email une fois par semaine au plus\. Le dimanche matin, ta semaine en une ligne\./);
     } else {
       assert.match(texte, /التذكيرات/); assert.match(texte, /بعد أيام دون زيارة/);
       assert.deepEqual(texte.match(/[A-Za-zÀ-ÿ]{2,}/g) || [], [], 'rien d’oublié en français');
@@ -1889,9 +2181,12 @@ test('Mon profil : la case « Rappels », cochée par défaut, se coupe et reste
     // Le lien « Ne plus recevoir ces rappels » d'un email : une page, un bouton, sans connexion
     await s.page.goto(adresse + '#desabo/11111111-2222-4333-8444-555555555555/rappels'); await s.page.waitForSelector('#desabo-rappels');
     assert.match(await s.page.locator('.desabo h1').innerText(), langue === 'fr' ? /^Rappels$/ : /التذكيرات/);
+    // Le lien décoche toute la case « Rappels et résumé du dimanche » : la page le dit avant le clic, et après
+    assert.match(await s.page.locator('.desabo').innerText(), langue === 'fr' ? /Le résumé du dimanche sur le téléphone s’arrêtera aussi/ : /سيتوقف أيضًا ملخص الأحد على الهاتف/);
     await s.page.click('#desabo-rappels');
     await s.page.waitForSelector('.desabo .verify-ok');
     assert.match(await s.page.locator('.desabo').innerText(), langue === 'fr' ? /plus de rappels, ni par email ni sur le téléphone/ : /لا تذكيرات بعد الآن/);
+    assert.match(await s.page.locator('.desabo').innerText(), langue === 'fr' ? /s’arrête aussi ; les autres emails et notifications ne changent pas/ : /يتوقف أيضًا ملخص الأحد على الهاتف، ولا تتغير الرسائل والإشعارات الأخرى/);
     assert.equal(await s.debordement(), 0);
     assert.deepEqual(s.erreurs, []);
     await s.ctx.close();
@@ -2273,11 +2568,21 @@ test('profil : promo effacée, le bouton le dit et mène au champ, depuis l’on
 test('offres : une seule rangée de puces avant la première offre ; les anciens liens ouvrent la bonne puce ; « Demandes » dit combien', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Youssef');
-  // L'ancien onglet « Sujets PFE » : la puce PFE choisie, et « Déposer un sujet » reste le bouton plein
+  // L'ancien onglet « Sujets PFE » : la puce PFE choisie, et « Déposer un sujet » reste le bouton plein. Sur un téléphone,
+  // son libellé se resserre (« Déposer ») pour que le chiffre du sur-titre reste entier ; son nom reste complet.
   await s.aller('offres/sujets'); await s.page.waitForSelector('.offres-chips');
   assert.equal((await s.page.locator('.offres-chips .chip[aria-pressed="true"]').innerText()).trim(), 'PFE');
-  assert.match(await s.page.locator('#of-publier.btn.primary').innerText(), /Déposer un sujet/);
-  const types = await s.page.locator('.ocard .ocard-tags > .tag:first-child').allInnerTexts();
+  assert.equal(await s.page.locator('#of-publier.btn.primary').getAttribute('aria-label'), 'Déposer un sujet');
+  assert.equal((await s.page.locator('#of-publier').innerText()).trim(), 'Déposer');
+  const chiffre = await s.page.evaluate(() => { const c = document.querySelector('.of-chiffre'), t = c?.querySelector('.compteur'), b = document.querySelector('#of-publier');
+    if (!c) return null; const rc = c.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    return { coupe: t.scrollWidth > t.clientWidth + 1, recouvre: rc.left < rb.right && rc.right > rb.left && rc.top < rb.bottom && rc.bottom > rb.top, texte: t.textContent }; });
+  assert.ok(chiffre, 'Youssef a des candidatures à traiter : le chiffre mène à elles');
+  assert.equal(chiffre.coupe, false, `le chiffre reste entier (${chiffre.texte})`);
+  assert.equal(chiffre.recouvre, false, 'le chiffre ne passe pas sous le bouton');
+  // La puce du type ouvre la rangée ; seule l'échéance proche (« J-4 ») passe devant elle
+  const types = await s.page.locator('.ocard .ocard-tags > :is(.tag:first-child:not(.urgent), .tag.urgent:first-child + .tag)').allInnerTexts();
+  assert.equal(types.length, await s.page.locator('.ocard').count(), 'chaque carte dit son type');
   assert.ok(types.length && types.every(t => /PFE/.test(t)), 'seulement des sujets de PFE');
   // Une seule rangée de filtres ; Offres · Demandes (n) en tête, n les demandes ouvertes qu'il voit
   assert.equal(await s.page.locator('.offres-page .chips').count(), 1);
@@ -2288,7 +2593,12 @@ test('offres : une seule rangée de puces avant la première offre ; les anciens
   // Une autre puce : l'adresse redevient celle des offres
   await s.page.click('.offres-chips .chip:has-text("Tout")'); await s.page.waitForTimeout(250);
   assert.equal(await s.page.evaluate(() => location.hash), '#offres');
-  assert.match(await s.page.locator('#of-publier').innerText(), /Publier une offre/);
+  assert.equal(await s.page.locator('#of-publier').getAttribute('aria-label'), 'Publier une offre');
+  assert.equal((await s.page.locator('#of-publier').innerText()).trim(), 'Publier');
+  // Plus large (430 px) : le libellé complet
+  await s.page.setViewportSize({ width: 430, height: 900 }); await s.page.waitForTimeout(100);
+  assert.equal((await s.page.locator('#of-publier').innerText()).trim(), 'Publier une offre');
+  await s.page.setViewportSize({ width: 390, height: 844 }); await s.page.waitForTimeout(100);
   // « Entre lauréats » : une puce de la même rangée, l'ancien lien y mène aussi
   await s.aller('offres/laureats'); await s.page.waitForSelector('.offres-chips');
   assert.equal((await s.page.locator('.offres-chips .chip[aria-pressed="true"]').innerText()).trim(), 'Entre lauréats');
@@ -2686,7 +2996,15 @@ test('demande d’un étudiant : il publie (CV joint), un lauréat propose, matc
   assert.match(await s.page.locator('.wins').first().innerText(), /Salma Bennani a décroché son PFE chez Renault Group Maroc avec l’encadrement de Youssef El Amrani/);
   // L'administration voit les demandes en cours
   await s.comme('Admin'); await s.aller('offres/demandes');
-  assert.match(await s.page.locator('.dm-page').innerText(), /ouvertes · \d+ en match · \d+ réussies/);
+  // Le bilan dit les vrais nombres, accordés (« 1 réussie », « 2 réussies »)
+  const [nO, nM, nR] = await s.page.evaluate(() => { const d = window.__demo.data.demandes; const n = st => d.filter(x => x.status === st).length; return [n('ouverte'), n('match'), n('pourvue')]; });
+  const accord = (n, un, plus) => `${n} ${n > 1 ? plus : un}`;
+  assert.ok((await s.page.locator('.dm-page').innerText()).includes(`${accord(nO, 'ouverte', 'ouvertes')} · ${nM} en match · ${accord(nR, 'réussie', 'réussies')}`));
+  // Ses cartes ont la forme des autres : le visage et l'état en haut, le type au-dessus du titre (jamais dans la ligne du visage)
+  const cartesAdm = s.page.locator('.dm-page .dm-card');
+  assert.ok(await cartesAdm.count() >= 1);
+  assert.equal(await s.page.locator('.dm-page .dm-card .dm-head .dm-type').count(), 0);
+  assert.equal(await s.page.locator('.dm-page .dm-card .dm-sur + .dm-titre').count(), await cartesAdm.count());
   assert.ok((await s.debordement()) <= 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
@@ -2706,22 +3024,23 @@ test('réseau vivant : une étudiante voit les demandes de sa promo et leurs ré
   assert.equal(await carte.count(), 1);
   assert.match(await carte.locator('.state-pill').innerText(), /Ouverte/);
   assert.equal(await carte.locator('button:has-text("Voir le CV"), .dm-aider').count(), 0);
-  // Le pied de la carte tient sur une ligne : le résumé « 👏❤️ 3 » (les réactions des autres), puis « Réagir »
+  // Le pied de la carte tient sur une ligne : le résumé « 👏❤️ » (les réactions des autres), puis « Réagir ». Les réactions
+  // ne s'affichent jamais en nombre : la liste « qui a réagi » dit qui, nom par nom.
   const resume = carte.locator('.dm-social .rx-resume');
-  const total = async () => +(await resume.locator('.rx-n').innerText());
-  assert.ok(await total() >= 1, 'les réactions des autres se voient');
+  assert.equal(await resume.getAttribute('aria-label'), 'Voir qui a réagi');
+  assert.doesNotMatch(await resume.innerText(), /\d/, 'aucun nombre de réactions');
+  assert.equal(await carte.locator('.dm-social .rx-n').count(), 0);
+  const total = async () => { await resume.click(); await s.page.waitForSelector('.modal .rx-qui li'); const n = await s.page.locator('.modal .rx-qui li').count(); await s.fermer(); return n; };
   assert.equal(await carte.locator('.rx-pill, .rx-total').count(), 0, 'pas de deuxième ligne de pastilles sur la carte');
   // Toucher le résumé : qui a réagi
-  await resume.click(); await s.page.waitForSelector('.modal .rx-qui li');
-  assert.ok(await s.page.locator('.modal .rx-qui li').count() >= 1);
-  await s.fermer();
+  assert.ok(await total() >= 1, 'les réactions des autres se voient');
   // La demande réussie de sa promo : « Réussie » et le nombre de lauréats qui ont proposé leur aide, sans dire qui
   const reussie = promo.locator('.dm-card.st-pourvue').first();
   assert.match(await reussie.innerText(), /Réussie/);
   assert.match(await reussie.innerText(), /Un lauréat a proposé son aide/);
   assert.equal(await reussie.locator('.dm-prop, .dm-aide').count(), 0);
-  // Elle réagit : sa réaction se voit tout de suite (le bouton prend son émoji, en couleur de sélection) et le total monte ;
-  // la même émoji la retire
+  // Elle réagit : sa réaction se voit tout de suite (le bouton prend son émoji, en couleur de sélection) et elle entre dans
+  // la liste « qui a réagi » ; la même émoji la retire
   const avant = await total();
   await carte.locator('.rx-ajouter').click();
   await carte.locator('.rx-btn[aria-label="Réagir avec 👏"]').click(); await s.page.waitForTimeout(150);
@@ -2739,9 +3058,12 @@ test('réseau vivant : une étudiante voit les demandes de sa promo et leurs ré
   await s.page.click('.modal .rx-retirer'); await s.page.waitForTimeout(250);
   assert.equal(await carte.locator('.rx-ajouter.on').count(), 0);
   assert.equal(await s.page.locator('.modal .rx-qui').count(), 0, 'la liste se ferme une fois la réaction retirée');
-  // Les réponses : déjà une, d'un lauréat
+  // Les réponses : déjà une, d'un lauréat ; l'invite du champ est courte et entière à 360 px
   await carte.locator('.dm-rep-btn').click();
   assert.match(await carte.locator('.dm-reponses').innerText(), /audits énergétiques/);
+  assert.deepEqual(await carte.locator('.dm-rep-form input').evaluate(e => { const st = getComputedStyle(e), c = document.createElement('canvas').getContext('2d');
+    c.font = `${st.fontWeight} ${st.fontSize} ${st.fontFamily}`; return [e.placeholder, c.measureText(e.placeholder).width <= e.clientWidth - parseFloat(st.paddingLeft) - parseFloat(st.paddingRight)]; }),
+  ['Un conseil, un contact…', true]);
   assert.equal(await s.debordement(), 0);
   // Youssef répond sous la demande
   await s.comme('Youssef'); await s.aller('offres/demandes'); await fete();
@@ -2775,16 +3097,43 @@ test('réseau vivant : une étudiante voit les demandes de sa promo et leurs ré
   await oc.locator('.rx-btn[aria-label="Réagir avec 🙏"]').click(); await s.page.waitForTimeout(150);
   assert.equal(await s.page.locator('.modal').count(), 0, 'la fiche ne s’ouvre pas');
   assert.equal((await oc.locator('.rx-ajouter.on').innerText()).trim(), '🙏');
-  assert.equal(await oc.locator('.rx-resume').getAttribute('aria-label'), '1 réaction : voir qui');
+  // Sa seule réaction : son bouton la montre ; le résumé, fait des réactions des autres, ne la répète pas (jamais « 🙏 🙏 »)
+  assert.equal(await oc.locator('.rx-resume').count(), 0, 'sa réaction n’est pas montrée deux fois');
   assert.equal(await s.page.evaluate(() => document.activeElement?.classList.contains('rx-ajouter')), true, 'le focus revient sur le bouton');
+  // Youssef réagit à la même offre : le résumé montre son émoji, sans nombre ; qui a réagi : « Toi » d'abord, puis lui
+  const titreOc = await oc.locator('.ocard-title').innerText();
+  await s.page.evaluate(t => { const d = window.__demo, o = d.data.offers.find(x => x.titre.toLowerCase().includes(t.toLowerCase())), y = d.data.profiles.find(p => p.full_name === 'Youssef El Amrani');
+    d.data.reactions_publiques = [{ id: 'rxp-test-y', offer_id: o.id, demande_id: null, user_id: y.id, emoji: '👏', created_at: new Date().toISOString() }, ...d.data.reactions_publiques]; d.emit(); }, titreOc);
+  await s.page.waitForTimeout(150);
+  assert.equal(await oc.locator('.rx-resume').getAttribute('aria-label'), 'Voir qui a réagi');
+  assert.equal((await oc.locator('.rx-resume').innerText()).trim(), '👏', 'le résumé : les réactions des autres');
+  assert.doesNotMatch(await oc.locator('.rx-resume').innerText(), /\d/, 'pas de nombre sur la carte');
+  await oc.locator('.rx-resume').click(); await s.page.waitForSelector('.modal .rx-qui li');
+  assert.deepEqual(await s.page.locator('.modal .rx-qui .rx-nom').allInnerTexts(), ['Toi', 'Youssef El Amrani']);
+  await s.fermer();
+  await s.page.evaluate(() => { const d = window.__demo; d.data.reactions_publiques = d.data.reactions_publiques.filter(r => r.id !== 'rxp-test-y'); d.emit(); });
+  await s.page.waitForTimeout(150);
   // Toucher sa réaction rouvre le choix : la même émoji la retire
   await oc.locator('.rx-ajouter').click(); await oc.locator('.rx-btn.on').click(); await s.page.waitForTimeout(150);
   assert.equal(await oc.locator('.rx-ajouter.on').count(), 0);
   assert.equal(await oc.locator('.rx-resume').count(), 0, 'plus de réaction : plus de résumé');
   await oc.locator('.rx-ajouter').click(); await oc.locator('.rx-btn[aria-label="Réagir avec 🙏"]').click(); await s.page.waitForTimeout(150);
-  // La fiche montre la même réaction
+  // La fiche montre la même réaction, comme la carte : sans nombre, sans la répéter dans un résumé
   await oc.locator('.ocard-main').click(); await s.page.waitForSelector('.modal .od-rx');
-  assert.match(await s.page.locator('.modal .od-rx .rx-pill.mien').innerText(), /🙏/);
+  const odRx = s.page.locator('.modal .od-rx');
+  assert.equal((await odRx.locator('.rx-ajouter.on').innerText()).trim(), '🙏');
+  assert.equal(await odRx.locator('.rx-resume').count(), 0);
+  assert.equal(await odRx.locator('.rx-pill, .rx-n, .rx-total').count(), 0, 'pas de pastille chiffrée dans la fiche');
+  assert.doesNotMatch(await odRx.innerText(), /\d/, 'pas de nombre dans la fiche');
+  // Le choix des émojis s'ouvre par-dessus la ligne des réactions de la fiche, sans rien pousser ni déborder
+  const hRx = (await odRx.boundingBox()).height;
+  await odRx.locator('.rx-ajouter').click(); await s.page.waitForSelector('.modal .od-rx .rx-choix');
+  const r = await s.page.evaluate(() => { const l = document.querySelector('.modal .od-rx'), c = l.querySelector('.rx-choix'); const a = l.getBoundingClientRect(), b = c.getBoundingClientRect();
+    return { dedans: b.left >= a.left - 1 && b.right <= a.right + 1 && Math.abs(b.top - a.top) <= 1, h: a.height }; });
+  assert.ok(r.dedans, 'le choix couvre la ligne des réactions');
+  assert.ok(Math.abs(r.h - hRx) <= 1, 'la ligne garde sa hauteur');
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(150);
+  assert.equal(await s.page.locator('.modal .od-rx .rx-choix').count(), 0);
   assert.ok(await s.page.evaluate(() => { const m = document.querySelector('.modal'); return m.scrollWidth <= m.clientWidth + 1; }), 'la fiche ne déborde pas');
   await s.fermer();
   // Échap ferme le choix sans réagir
@@ -2792,6 +3141,22 @@ test('réseau vivant : une étudiante voit les demandes de sa promo et leurs ré
   await oc2.locator('.rx-ajouter').click(); await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(100);
   assert.equal(await oc2.locator('.rx-bar').count(), 0);
   assert.equal(await s.page.evaluate(() => document.activeElement?.classList.contains('rx-ajouter')), true, 'Échap rend le focus au bouton');
+  // Une vibration légère (8 à 15 ms), une seule, quand la réaction est vraiment enregistrée ; aucune pour un retrait, ni pour
+  // un échec (l'émoji ne reste pas, un message le dit)
+  await s.page.evaluate(() => { window.__vib = []; Object.defineProperty(navigator, 'vibrate', { configurable: true, value: ms => { window.__vib.push(ms); return true; } }); });
+  await oc2.locator('.rx-ajouter').click(); await oc2.locator('.rx-btn[aria-label="Réagir avec 👍"]').click(); await s.page.waitForTimeout(200);
+  assert.equal((await oc2.locator('.rx-ajouter.on').innerText()).trim(), '👍');
+  const vib = await s.page.evaluate(() => window.__vib);
+  assert.equal(vib.length, 1, 'une vibration pour la réaction enregistrée'); assert.ok(vib[0] >= 8 && vib[0] <= 15);
+  await oc2.locator('.rx-ajouter').click(); await oc2.locator('.rx-btn.on').click(); await s.page.waitForTimeout(200);
+  assert.equal(await oc2.locator('.rx-ajouter.on').count(), 0);
+  assert.equal((await s.page.evaluate(() => window.__vib)).length, 1, 'pas de vibration pour un retrait');
+  await s.page.evaluate(() => { const d = window.__demo; d.__reagir = d.reagirPublic; d.reagirPublic = () => Promise.reject(new Error('Pas de connexion pour le moment.')); });
+  await oc2.locator('.rx-ajouter').click(); await oc2.locator('.rx-btn[aria-label="Réagir avec 👏"]').click(); await s.page.waitForTimeout(250);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Pas de connexion pour le moment/);
+  assert.equal(await oc2.locator('.rx-ajouter.on').count(), 0, 'la réaction refusée ne s’affiche pas');
+  assert.equal((await s.page.evaluate(() => window.__vib)).length, 1, 'pas de vibration pour un échec');
+  await s.page.evaluate(() => { const d = window.__demo; d.reagirPublic = d.__reagir; delete d.__reagir; });
   assert.equal(await s.debordement(), 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
@@ -2829,6 +3194,10 @@ test('cartes d’offre : un seul pied, sur une ligne (visage, réactions, Postul
         };
       }));
       assert.ok(cartes.length > 0);
+      // Chaque titre se lit en entier (trois lignes au plus) : l'échéance « بقي 4 أيام » ne lui prend plus sa largeur
+      const titresCoupes = await s.page.evaluate(() => [...document.querySelectorAll('.ocard-title')]
+        .filter(t => t.getBoundingClientRect().width > 0 && t.scrollHeight > t.clientHeight + 1).map(t => `${t.textContent} (${t.clientWidth} px)`));
+      assert.deepEqual(titresCoupes, [], `${nom} : des titres d’offre coupés (${langue})`);
       for (const c of cartes) {
         assert.equal(c.pieds, 1, `${nom} · ${c.titre} : un seul pied`);
         assert.equal(c.rxHors, 0, `${nom} · ${c.titre} : les réactions sont dans le pied`);
@@ -3299,14 +3668,16 @@ test('Mon parcours : seulement ce qui se fait sur place (confirmer, puis dire me
   await s.ctx.close();
 });
 
-test('Mon espace : ce qui l’attend d’abord, puis « Mon impact » en une carte (trois chiffres vrais, niveau, prochain badge), le détail replié ; aucun pouls hors de l’accueil', async () => {
+test('Mon espace : ce qui l’attend d’abord, puis « Mon impact » en une carte (trois chiffres vrais, niveau, anneau du prochain badge), puis Impact | Mes offres | Documents en onglets gardés dans l’adresse ; aucun pouls hors de l’accueil', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Youssef'); await s.aller('espace');
-  // L'ordre : en attente de confirmation, rendez-vous, Mon impact, Mes offres, Mes documents, puis le détail replié
-  const ordre = await s.page.evaluate(() => ['.esp-attente', '.esp-rdv', '.impact-card', '.esp-offres', '.esp-docs', 'details.esp-badges', 'details.ledger']
+  // L'ordre : ce qui l'attend (rendez-vous, recrutement à confirmer), Mon impact, les onglets, puis le panneau de l'onglet
+  const ordre = await s.page.evaluate(() => ['.esp-attend', '.impact-card', '.esp-onglets', '#esp-panneau']
     .map(sel => [...document.querySelectorAll('.page > *')].findIndex(e => e.matches(sel))));
   assert.ok(ordre.every(i => i >= 0), `chaque bloc est là : ${ordre}`);
   assert.deepEqual(ordre, [...ordre].sort((a, b) => a - b), 'dans l’ordre');
+  assert.equal(await s.page.locator('.esp-attend .esp-rdv').count(), 1, 'le prochain rendez-vous');
+  assert.ok(await s.page.locator('.esp-attend .esp-attente').count() >= 1, 'le recrutement qui attend la confirmation de l’étudiant');
   assert.equal(await s.page.locator('.impact-hero, .impact-facts').count(), 0, 'plus de mur de chiffres');
   // Trois chiffres, et ce sont les vrais
   const vrais = await s.page.evaluate(() => {
@@ -3318,35 +3689,204 @@ test('Mon espace : ce qui l’attend d’abord, puis « Mon impact » en une car
   });
   assert.deepEqual(await s.page.$$eval('.impact-nums .impact-n', x => x.map(e => e.textContent.trim())), vrais);
   assert.match(await s.page.locator('.impact-nums').innerText(), /recrutés? grâce à toi[\s\S]*mentorats? terminés?[\s\S]*mercis? reçus?/);
-  // Le niveau avec sa barre, le barème, le prochain badge
+  // Le niveau avec sa barre, le barème, le prochain badge et son anneau
   assert.equal(await s.page.locator('.impact-card .impact-niveau .lvl').count(), 1);
   assert.equal(await s.page.locator('.impact-card .impact-niveau .bar').count(), 1);
   assert.match(await s.page.locator('.impact-card .impact-niveau').innerText(), /\d+ points d’impact[\s\S]*(encore \d+ pour|Niveau maximum)/);
   assert.equal(await s.page.locator('.impact-card .badge-next').count(), 1);
+  assert.equal(await s.page.locator('.impact-card .badge-next [role="progressbar"]').count(), 1, 'l’anneau du prochain badge');
   await s.page.click('.impact-card button:has-text("Comment gagner des points")'); await s.page.waitForSelector('.modal .tbl'); await s.fermer();
-  // Les offres partagées : le chiffre du titre ; chaque offre dit son état en couleur
+  // Les onglets : Impact d'abord, avec les badges et l'historique repliés (et leur compte)
+  assert.equal(await s.page.locator('.esp-onglets[role="tablist"] [role="tab"]').count(), 3);
+  assert.equal(await s.page.getAttribute('#esp-onglet-impact', 'aria-selected'), 'true');
+  assert.match(await s.page.locator('#esp-panneau details.esp-badges summary').innerText(), /Mes badges · \d+ sur \d+/);
+  assert.equal(await s.page.locator('#esp-panneau details.ledger').count(), 1);
+  assert.equal(await s.page.locator('details.esp-badges[open], details.ledger[open]').count(), 0, 'repliés');
+  // L'historique dit son total ; il en montre 12, puis tous à la demande
+  const nPoints = Number((await s.page.locator('details.ledger summary .count').innerText()).trim());
+  await s.page.click('details.ledger summary');
+  assert.equal(await s.page.locator('details.ledger .events li').count(), Math.min(12, nPoints));
+  if (nPoints > 12) {
+    assert.equal(await s.page.locator('details.ledger .esp-plus').innerText(), `Voir les ${nPoints - 12} plus anciens`);
+    await s.page.click('details.ledger .esp-plus');
+    assert.equal(await s.page.locator('details.ledger .events li').count(), nPoints, 'tout l’historique');
+    assert.equal(await s.page.getAttribute('details.ledger .esp-plus', 'aria-expanded'), 'true');
+  }
+  await s.page.click('details.ledger summary');
+  // « Annuler » d'un recrutement en attente dit, pour un lecteur d'écran, de qui il s'agit
+  assert.match(await s.page.getAttribute('.esp-attente .btn.tiny', 'aria-label'), /^Annuler le recrutement déclaré pour \S+/);
+  // Un seul bouton plein à l'écran
+  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1, 'un seul bouton plein');
+  // Mes offres : l'onglet change l'adresse ; le chiffre du titre ; chaque offre dit son état en couleur
+  await s.page.click('#esp-onglet-offres'); await s.page.waitForSelector('#esp-panneau .esp-offres');
+  assert.equal(await s.page.evaluate(() => location.hash), '#espace/offres');
+  assert.equal(await s.page.getAttribute('#esp-onglet-offres', 'aria-selected'), 'true');
   const nOffres = await s.page.evaluate(() => window.__demo.data.offers.filter(o => o.author_id === window.__demo.me.id).length);
   assert.equal((await s.page.locator('.esp-offres h2 .count').innerText()).trim(), String(nOffres));
   assert.equal(await s.page.locator('.esp-offres .app-row .state-pill').count(), Math.min(10, nOffres));
-  // Badges et historique repliés, avec leur compte
-  assert.match(await s.page.locator('details.esp-badges summary').innerText(), /Mes badges · \d+ sur \d+/);
-  assert.equal(await s.page.locator('details.esp-badges[open], details.ledger[open]').count(), 0, 'repliés');
+  // Documents : l'attestation et le bilan côte à côte
+  await s.page.click('#esp-onglet-documents'); await s.page.waitForSelector('#esp-panneau .esp-docs');
+  assert.equal(await s.page.evaluate(() => location.hash), '#espace/documents');
   assert.equal(await s.page.locator('.esp-docs .attest-card').count(), 2, 'attestation et bilan côte à côte');
-  // Un seul bouton plein à l'écran
-  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1, 'un seul bouton plein');
+  // Au clavier : la flèche (dans le sens de lecture) passe à l'onglet voisin ; l'adresse et le focus suivent
+  await s.page.focus('#esp-onglet-documents'); await s.page.keyboard.press('ArrowLeft');
+  await s.page.waitForSelector('#esp-panneau .esp-offres');
+  assert.equal(await s.page.evaluate(() => location.hash), '#espace/offres');
+  await s.page.waitForFunction(() => document.activeElement?.id === 'esp-onglet-offres');
+  assert.equal(await s.page.getAttribute('#esp-onglet-offres', 'tabindex'), '0');
+  assert.equal(await s.page.getAttribute('#esp-onglet-impact', 'tabindex'), '-1', 'un seul arrêt de tabulation dans les onglets');
+  // L'adresse ouvre l'onglet ; « espace » seul revient à Impact
+  await s.aller('espace/documents'); assert.equal(await s.page.locator('#esp-panneau .esp-docs .attest-card').count(), 2);
+  await s.aller('espace'); assert.equal(await s.page.getAttribute('#esp-onglet-impact', 'aria-selected'), 'true');
   assert.equal(await s.page.locator('.pouls').count(), 0);
   // Le pouls du réseau n'est plus que sur l'accueil
   await s.aller('mentorat'); assert.equal(await s.page.locator('.pouls').count(), 0, 'pas sur Mentorat (lauréat)');
   await s.aller('suivi'); assert.equal(await s.page.locator('.pouls').count(), 0, 'pas sur Suivi (lauréat)');
   await s.comme('Nadia'); await s.aller('espace');
   assert.equal(await s.page.locator('.premiere-aide').count(), 1);
-  assert.equal(await s.page.locator('.pouls, .impact-card').count(), 0, 'nouvelle lauréate : la première aide, sans pouls ni tableau');
+  assert.equal(await s.page.locator('.pouls, .impact-card, .esp-onglets').count(), 0, 'nouvelle lauréate : la première aide, sans pouls, ni tableau, ni onglets');
+  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1, 'la première aide : un seul bouton plein');
   await s.comme('Salma');
   for (const e of ['mentorat', 'suivi', 'parcours']) { await s.aller(e); assert.equal(await s.page.locator('.pouls').count(), 0, `pas sur ${e} (étudiante)`); }
   await s.aller('accueil'); assert.equal(await s.page.locator('.pouls').count(), 1, 'toujours sur l’accueil');
   assert.ok((await s.debordement()) <= 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
+});
+
+test('Mon parcours : l’objectif en un chemin (étapes reliées, la sienne mise en avant, la ligne remplie jusqu’à elle), la prochaine chose à faire en un seul bouton plein, puis ses candidatures et leur statut', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await s.aller('parcours');
+  const v = await s.page.evaluate(async () => {
+    const d = window.__demo, me = d.me, L = await import('./logic.js'), S = L.seasonOf();
+    const apps = d.data.applications.filter(a => a.student_id === me.id);
+    return { apps: apps.length, plateforme: apps.filter(a => a.offer_id).length, entretien: apps.some(a => a.status === 'entretien'), cle: L.statutOf(d.data, me, S).key };
+  });
+  assert.ok(v.entretien && !['trouve', 'validation'].includes(v.cle), 'la démo : un entretien en cours, pas encore recrutée');
+  // Quatre étapes : les deux premières franchies, la troisième en cours (elle seule), la ligne pleine jusqu'à elle
+  assert.deepEqual(await s.page.$$eval('.chemin-etapes > li', x => x.map(e => e.className)), ['ch-fait', 'ch-fait', 'ch-ici', 'ch-apres']);
+  assert.equal(await s.page.locator('.chemin [aria-current="step"]').count(), 1);
+  assert.match(await s.page.locator('.chemin [aria-current="step"]').innerText(), /Recrutement/);
+  assert.equal(await s.page.locator('.chemin .ch-fait .sr-only').count(), 2, 'les étapes franchies le disent aux lecteurs d’écran');
+  const vers = await s.page.evaluate(() => parseFloat(getComputedStyle(document.querySelector('.chemin')).getPropertyValue('--vers')));
+  assert.ok(Math.abs(vers - 2 / 3) < 0.01, `la ligne va jusqu’à l’étape en cours : ${vers}`);
+  // La prochaine chose à faire : une phrase et le seul bouton plein de la page
+  assert.match(await s.page.locator('.pc-suite').innerText(), /Prochaine étape[\s\S]*entretien/);
+  assert.equal(await s.page.locator('.pc-suite .btn.primary').count(), 1);
+  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1, 'un seul bouton plein');
+  // Ses candidatures, chacune avec son statut : celles de la plateforme ouvrent l'offre, les autres se mettent à jour ici
+  assert.equal((await s.page.locator('.pc-cands h2 .count').innerText()).trim(), String(v.apps));
+  assert.equal(await s.page.locator('.pc-cand').count(), v.apps);
+  assert.equal(await s.page.locator('.pc-cand:not(.hors) button.esp-ligne .state-pill').count(), v.plateforme);
+  assert.equal(await s.page.locator('.pc-cand.hors select').count(), v.apps - v.plateforme);
+  // Amine (3A), sans candidature : le chemin commence à « Je postule » ; son parrain passe devant, la prochaine étape est en tonal
+  await s.comme('Amine'); await s.aller('parcours');
+  assert.deepEqual(await s.page.$$eval('.chemin-etapes > li', x => x.map(e => e.className)), ['ch-ici', 'ch-apres', 'ch-apres', 'ch-apres']);
+  assert.match(await s.page.locator('.pc-suite').innerText(), /Postule à une offre de ton année/);
+  assert.equal(await s.page.locator('.page .btn.primary:visible').count(), 1, 'un seul bouton plein');
+  if (await s.page.locator('.parrain-card').count()) assert.equal(await s.page.locator('.pc-suite .btn.primary').count(), 0, 'le parrain d’abord');
+  assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('un seul bouton plein quand une carte à confirmer passe devant : « Lui écrire » du parrain (3A) et la première aide d’une nouvelle lauréate passent en tonal', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  // Amine (3A) reçoit son parrain à sa première visite : sans rien à confirmer, « Lui écrire » est le bouton plein
+  await s.comme('Amine'); await s.aller('parcours'); await s.page.waitForSelector('.parrain-card');
+  assert.equal(await s.page.locator('.parrain-card .btn.primary').count(), 1);
+  // Youssef déclare le recrutement d'Amine, et celui de Nadia (jeune lauréate)
+  await s.comme('Youssef'); await s.aller('accueil');
+  await s.page.evaluate(async () => {
+    const d = window.__demo, { seasonOf } = await import('./logic.js');
+    const qui = n => d.data.profiles.find(p => p.full_name.startsWith(n));
+    await d.insert('placements', { student_id: qui('Amine').id, saison: seasonOf(), niveau: 3, type: 'stage', entreprise: 'Lear', ville: 'Meknès', pays: 'Maroc' });
+    await d.insert('placements', { student_id: qui('Nadia').id, saison: seasonOf(), niveau: 6, type: 'emploi', entreprise: 'Renault Group Maroc', ville: 'Tanger', pays: 'Maroc' });
+  });
+  const pleins = () => s.page.$$eval('.page .btn.primary', xs => xs.filter(e => e.offsetWidth).map(e => (e.closest('.confirm-card, .parrain-card, .pc-suite, .premiere-aide')?.className || '?').split(' ')[0]));
+  await s.comme('Amine'); await s.aller('parcours'); await s.page.waitForSelector('.a-faire .confirm-card');
+  assert.deepEqual(await pleins(), ['confirm-card'], 'le seul bouton plein confirme le recrutement');
+  assert.equal(await s.page.locator('.parrain-card .msg-btn.tonal').count(), 1, '« Lui écrire » en tonal');
+  await s.comme('Nadia'); await s.aller('espace'); await s.page.waitForSelector('.a-faire .confirm-card');
+  assert.equal(await s.page.locator('.premiere-aide').count(), 1);
+  assert.deepEqual(await pleins(), ['confirm-card'], 'la première aide attend : son geste passe en tonal');
+  assert.equal(await s.page.locator('.premiere-aide .pa-une-btn.tonal').count(), 1);
+  assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('en arabe, Mon espace, Mon parcours et Mon année calent à droite les titres et les noms d’entreprise écrits en lettres latines (et les titres coupés gardent leurs points de suspension)', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  // La boîte du titre épouse le texte et touche le bord droit de sa colonne ; rien ne dépasse de la boîte (les « … » restent visibles)
+  const titresCales = sel => s.page.$$eval(sel, xs => xs.map(e => {
+    const r = e.getBoundingClientRect(), p = e.parentElement.getBoundingClientRect();
+    return Math.abs(r.right - p.right) <= 1 && e.scrollWidth <= e.clientWidth + 1;
+  }));
+  await s.comme('Youssef'); await s.aller('espace/offres'); await s.page.waitForSelector('.esp-offres .esp-titre');
+  const offres = await titresCales('.esp-offres .esp-titre');
+  assert.ok(offres.length && offres.every(Boolean), JSON.stringify(offres));
+  await s.comme('Salma'); await s.aller('suivi'); await s.page.waitForSelector('.pr-entreprises .pr-ent-nom');
+  assert.deepEqual([...new Set(await s.page.$$eval('.pr-ent-nom', xs => xs.map(e => getComputedStyle(e).textAlign)))], ['right']);
+  await s.aller('parcours'); await s.page.waitForSelector('.pc-cand .esp-titre');
+  const cands = await titresCales('.pc-cand .esp-titre[dir="auto"]');
+  assert.ok(cands.length && cands.every(Boolean), JSON.stringify(cands));
+  assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// Les textes coupés d'une partie de la page : un texte qui sort de sa boîte (mesuré au pixel près, mot à mot, avec un
+// Range : une ellipse peut cacher moins d'un pixel), ou une boîte qui cache ce qui la dépasse et plus basse que son texte
+// (des lignes en trop). La zone de toucher invisible d'un lien (::before) dépasse de sa boîte sans rien couper.
+const textesCoupes = (page, sel) => page.$$eval(sel, els => els.filter(e => e.getClientRects().length).flatMap(e => {
+  const cs = getComputedStyle(e), boite = e.getBoundingClientRect();
+  let g = Infinity, d = -Infinity;
+  const w = document.createTreeWalker(e, NodeFilter.SHOW_TEXT);
+  for (let n; (n = w.nextNode());) {
+    if (!n.data.trim()) continue;
+    const r = document.createRange(); r.selectNodeContents(n);
+    for (const q of r.getClientRects()) if (q.width) { g = Math.min(g, q.left); d = Math.max(d, q.right); }
+  }
+  const cache = cs.overflowX !== 'visible' || cs.overflowY !== 'visible';
+  const coupe = g < boite.left - .5 || d > boite.right + .5
+    || (cache && (e.scrollWidth > e.clientWidth + 1 || e.scrollHeight > e.clientHeight + 1));
+  return coupe ? [`${String(e.className).trim()} « ${e.textContent.trim()} » (${e.clientWidth} px)`] : [];
+}));
+
+test('à 360 px, en français et en arabe, les noms et les entreprises se lisent en entier : Mon espace (en-tête, mercis, recrues, filleuls), Mon parcours, Mentorat, Messages ; « Écrire » d’un filleul devient une icône qui garde son nom', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 360, langue });
+    const coupes = [];
+    const releve = async (ou, sel) => { assert.ok(await s.page.locator(sel).count(), `${ou} : rien à relever (${sel})`); for (const x of await textesCoupes(s.page, sel)) coupes.push(`${langue} · ${ou} : ${x}`); };
+    // Mon espace : « Promo 2016 · Renault Group Maroc », les mercis (pour quoi, quand), les recrues, les filleuls
+    await s.comme('Youssef'); await s.aller('espace'); await s.page.waitForSelector('.esp-filleuls .esp-ligne');
+    await releve('Mon espace', '.esp-page .en-tete .eyebrow');
+    await releve('Mon espace', '.merci-carte :is(.mc-nom, .esp-sous)');
+    await releve('Mon espace', '.esp-page .esp-ligne :is(.person-name, .role-line)');
+    // Un filleul : « Écrire » devient une icône ronde de 44 px, son nom reste dit (« Écrire à Soufiane »)
+    const ecrire = s.page.locator('.esp-filleuls .msg-btn').first();
+    const b = await ecrire.boundingBox();
+    assert.ok(b.width >= 43.5 && b.width <= 48 && b.height >= 43.5, `« Écrire » d’un filleul : une icône de 44 px (${b.width} × ${b.height})`);
+    assert.equal(await ecrire.locator('.msg-btn-txt').isVisible(), false, 'le mot se cache à 360 px');
+    assert.match(await ecrire.getAttribute('aria-label'), langue === 'ar' ? /^مراسلة \S+/ : /^Écrire à \S+/, 'le bouton garde son nom');
+    // Mon parcours : l'entreprise et la date de chaque candidature
+    await s.comme('Salma'); await s.aller('parcours'); await s.page.waitForSelector('.pc-cand');
+    await releve('Mon parcours', '.pc-cand :is(.pc-ent, .pc-quand)');
+    // Mentorat : « Promo 2016 · Renault Group Maroc » et le poste de chaque lauréat proposé
+    for (const qui of ['Salma', 'Amine']) {
+      await s.comme(qui); await s.aller('mentorat'); await s.page.waitForSelector('.m-mentor');
+      await releve(`Mentorat (${qui})`, '.m-mentor :is(.person-name, .role-line)');
+      if (await s.page.locator('.mm-poste').count()) await releve(`Mentorat (${qui})`, '.mm-poste > span');
+    }
+    // Messages : « Bureau des relations entreprises » sur deux lignes plutôt qu'en « … »
+    await s.comme('Nadia'); await s.aller('messages'); await s.page.waitForSelector('.conv-item');
+    await releve('Messages', '.ci-name');
+    assert.deepEqual(coupes, [], 'des noms ou des entreprises coupés');
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
 });
 
 test('Mon année (étudiante) : les offres de l’année avec la part pour sa filière, les camarades qui ont trouvé en barre ; des chiffres vrais, dits une fois', async () => {
@@ -3372,10 +3912,18 @@ test('Mon année (étudiante) : les offres de l’année avec la part pour sa fi
   if (v.via) assert.match(legende, new RegExp(`${v.via} grâce à un lauréat`));
   if (v.attente) assert.match(legende, new RegExp(`${v.attente} à confirmer`));
   assert.equal(await s.page.locator('.pr-trouve .tr-attente').count(), v.attente ? 2 : 0, 'le gris des confirmations en attente, barre et légende');
+  // Les réussites de l'année : leur titre a le style des autres cartes de la page (la pastille, le titre), et il lui parle
+  assert.equal((await s.page.locator('.wins-panel .pr-tete h2').innerText()).trim(), 'Réussites de ton année');
+  assert.equal(await s.page.locator('.wins-panel .pr-tete .pr-stat-ico').count(), 1);
+  assert.equal(await s.page.locator('.page h2.h-ico:visible').count(), 0, 'pas un troisième style de titre');
   // Où vont-ils : une barre proportionnelle par entreprise ; jamais de pouls
   assert.equal(await s.page.locator('.pr-entreprises .pr-ent-bar').count(), await s.page.locator('.pr-entreprises li').count());
   assert.equal(await s.page.locator('.pouls').count(), 0);
   assert.ok((await s.debordement()) <= 0);
+  // L'accueil garde son propre titre des réussites (replié sous « Plus du réseau » quand un merci récent tient la place)
+  await s.aller('accueil'); await s.page.waitForSelector('.home-side .wins-panel', { state: 'attached' });
+  assert.match((await s.page.locator('.home-side .wins-panel .section-head h2.h-ico').first().textContent()).trim(), /^Réussites de (mon année|l’année)$/, 'l’accueil inchangé');
+  assert.equal(await s.page.locator('.home-side .wins-panel .pr-tete').count(), 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -3385,6 +3933,78 @@ async function sansDemandeOuverte(s) {
   await s.page.evaluate(() => { const k = 'ensam-demo-v14'; const x = JSON.parse(localStorage.getItem(k)); for (const d of x.data.demandes) if (d.status === 'ouverte') d.status = 'fermee'; localStorage.setItem(k, JSON.stringify(x)); });
   await s.page.reload(); await s.page.waitForSelector('.hello');
 }
+
+
+test('Tableau de bord : un anneau et trois faits (les vrais chiffres), chaque année d’études en ligne avec sa barre et sa lecture ; une année touchée ouvre son détail ; Placement | Insertion en onglets dans l’adresse', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await s.aller('suivi'); await s.page.waitForSelector('.suivi-hero');
+  const v = await s.page.evaluate(async () => {
+    const d = window.__demo, L = await import('./logic.js'), S = L.seasonOf();
+    const st = L.seasonStats(d.data, S, new Date());
+    const somme = k => st.rows.reduce((a, r) => a + r[k], 0);
+    return { total: somme('total'), found: somme('found'), pending: somme('pending'), via: st.viaTotal, ouvertes: d.data.offers.filter(o => o.status === 'ouverte').length,
+      part: L.pct(somme('found') / somme('total')), cherche5: st.rows.find(r => r.n === 5).searching.length,
+      rows: st.rows.map(r => ({ found: r.found, total: r.total, pct: L.pct(r.rate), pace: r.daysLeft >= 0 })) };
+  });
+  // Le panneau de la vue (sous l'en-tête) ne contient pas ses propres onglets
+  assert.equal(await s.page.getAttribute('#suivi-vue', 'role'), 'tabpanel');
+  assert.equal(await s.page.getAttribute('#suivi-vue', 'aria-labelledby'), 'suivi-onglet-placement');
+  assert.equal(await s.page.locator('#suivi-vue [role="tablist"]').count(), 0);
+  // L'anneau dit la part qui a trouvé ; le chiffre, sur les inscrits ; puis les trois faits
+  const anneau = s.page.locator('.suivi-hero [role="progressbar"]');
+  assert.equal(await anneau.getAttribute('aria-valuenow'), String(v.found));
+  assert.equal(await anneau.getAttribute('aria-valuemax'), String(v.total));
+  assert.equal((await s.page.locator('.sh-n').innerText()).trim(), String(v.found));
+  assert.equal((await s.page.locator('.sh-pct').innerText()).trim(), v.part, 'la part écrite comme sur chaque ligne');
+  assert.match(await s.page.locator('.sh-sur').innerText(), new RegExp(`sur ${v.total} inscrits`));
+  const faits = await s.page.locator('.sh-faits li').allInnerTexts();
+  assert.equal(faits.length, 3);
+  assert.match(faits[0], new RegExp(`^${v.via} grâce à la plateforme`));
+  assert.match(faits[1], new RegExp(`^${v.pending} à confirmer par l’étudiant`));
+  assert.match(faits[2], new RegExp(`^${v.ouvertes} offres ouvertes`));
+  // Une ligne par année d'études : la part, la barre (le trait du rythme tant que l'échéance court), la lecture, les chiffres
+  const lignes = s.page.locator('.suivi-annees .sa-ligne');
+  assert.equal(await lignes.count(), v.rows.length);
+  for (let i = 0; i < v.rows.length; i++) {
+    const r = v.rows[i], l = lignes.nth(i);
+    assert.match(await l.innerText(), new RegExp(`${r.pct}[\\s\\S]*${r.found} sur ${r.total}`));
+    assert.equal(await l.locator('.bar[role="img"]').count(), 1);
+    assert.equal(await l.locator('.bar-pace').count(), r.pace ? 1 : 0);
+    assert.match(await l.locator('.sa-ton').innerText(), /^(Dans les temps|À surveiller|En retard|Objectif atteint|Année terminée)$/);
+  }
+  // Une année touchée : son détail s'ouvre dessous (par filière, encore en recherche), la ligne le dit
+  assert.equal(await s.page.locator('details.suivi-detail[open]').count(), 0, 'replié d’abord');
+  await lignes.nth(2).click();
+  await s.page.waitForSelector('details.suivi-detail[open]');
+  assert.equal(await lignes.nth(2).getAttribute('aria-pressed'), 'true');
+  assert.match(await s.page.locator('.suivi-detail-titre').innerText(), /^5e année/);
+  assert.ok(await s.page.locator('.sd-filieres li .bar').count() > 0, 'une barre par filière');
+  // Encore en recherche : les six premiers, puis tous à la demande (le titre dit le total)
+  assert.equal((await s.page.locator('.sd-cherche h2 .count').innerText()).trim(), String(v.cherche5));
+  assert.equal(await s.page.locator('.sd-cherche li').count(), Math.min(6, v.cherche5));
+  if (v.cherche5 > 6) {
+    await s.page.click('.sd-cherche .sd-plus');
+    assert.equal(await s.page.locator('.sd-cherche li').count(), v.cherche5);
+  }
+  assert.doesNotMatch(await s.page.locator('.suivi-detail').innerText(), /Communauté/);
+  // Sur téléphone, le graphique des 12 mois défile : il s'ouvre sur les mois récents, son échelle répétée à ce bout
+  await s.page.locator('.suivi-detail .chart-wrap').scrollIntoViewIfNeeded();
+  await s.page.waitForFunction(() => { const el = document.querySelector('.suivi-detail .chart-wrap');
+    return el.scrollWidth > el.clientWidth && el.scrollLeft >= el.scrollWidth - el.clientWidth - 1; });
+  const echelleAuBout = await s.page.evaluate(() => { const el = document.querySelector('.suivi-detail .chart-wrap'), w = el.getBoundingClientRect();
+    return [...el.querySelectorAll('.axis-fin')].filter(t => { const b = t.getBoundingClientRect(); return b.width > 0 && b.left >= w.left - 1 && b.right <= w.right + 1; }).length; });
+  assert.ok(echelleAuBout > 1, 'l’échelle se lit au bout du graphique, à côté des mois récents');
+  // Placement | Insertion : des onglets, la vue dans l'adresse ; au clavier aussi
+  assert.equal(await s.page.getAttribute('#suivi-onglet-placement', 'aria-selected'), 'true');
+  await s.page.focus('#suivi-onglet-placement'); await s.page.keyboard.press('ArrowRight');
+  await s.page.waitForFunction(() => location.hash === '#suivi/insertion');
+  await s.page.waitForSelector('#suivi-onglet-insertion[aria-selected="true"]');
+  await s.page.waitForFunction(() => document.activeElement?.id === 'suivi-onglet-insertion');
+  assert.equal(await s.page.locator('.pouls').count(), 0);
+  assert.ok((await s.debordement()) <= 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
 
 test('premiers pas fondus dans la carte : la feuille s’ouvre, se masque, et se retrouve dans le menu', async () => {
   const s = await ouvrir({ largeur: 390 });
@@ -4265,21 +4885,29 @@ test('socle : l’annonce de l’administration — une annonce en cours, le for
   }
 });
 
+// Hauteur touchable de chaque élément actif visible : sa boîte, ou la zone invisible (::before / ::after) qui la prolonge.
+// { largeur: true } : la largeur aussi (même mesure, de gauche à droite), sauf pour un lien posé dans une phrase, qui a la
+// largeur de ses mots. { dans } : là où chercher (la page, sinon une feuille ouverte)
+const petites = (page, { largeur = false, dans = '#contenu' } = {}) => page.evaluate(([largeur, dans]) => {
+  const zone = (el, pseudo, [d1, d2]) => { const cs = getComputedStyle(el, pseudo); if (cs.content === 'none' || cs.position !== 'absolute') return 0; const h = parseFloat(cs[d1]), b = parseFloat(cs[d2]); return Math.max(0, -(isNaN(h) ? 0 : h)) + Math.max(0, -(isNaN(b) ? 0 : b)); };
+  const HAUT = ['top', 'bottom'], LARGE = ['left', 'right'];
+  const out = [];
+  for (const el of document.querySelectorAll(`${dans} :is(button, a[href], [role="tab"], select, summary, input:not([type="hidden"]), textarea)`)) {
+    const r = el.getBoundingClientRect(); if (!r.width || !r.height) continue;
+    const cs = getComputedStyle(el); if (cs.visibility === 'hidden' || el.closest('[hidden], [inert], .sr-only')) continue;
+    if (el.tagName === 'SELECT' && cs.opacity === '0') continue;   // menu natif posé sur une pastille : on touche la pastille
+    if (el.tagName === 'INPUT' && /checkbox|radio/.test(el.type)) continue;   // une case dans son label : on touche le label
+    const nom = `${el.tagName.toLowerCase()}.${String(el.className?.baseVal ?? el.className).trim().replace(/\s+/g, '.')} « ${(el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 24)} »`;
+    const h = r.height + Math.max(zone(el, '::before', HAUT), zone(el, '::after', HAUT));
+    const l = r.width + Math.max(zone(el, '::before', LARGE), zone(el, '::after', LARGE));
+    const dansLaPhrase = cs.display === 'inline' && el.closest('p');
+    if (!largeur) { if (h < 43.5) out.push(`${nom} ${Math.round(h)} px`); }
+    else if (h < 43.5 || (l < 43.5 && !dansLaPhrase)) out.push(`${nom} ${Math.round(l)} × ${Math.round(h)} px`);
+  }
+  return out;
+}, [largeur, dans]);
+
 test('socle : au doigt, chaque cible du Réseau, de Mon profil et de l’administration se touche sur 44 px de haut au moins (une zone invisible prolonge les petites, le dessin ne bouge pas)', async () => {
-  // Hauteur touchable de chaque élément actif visible : sa boîte, ou la zone invisible (::before / ::after) qui la prolonge
-  const petites = page => page.evaluate(() => {
-    const zone = (el, pseudo) => { const cs = getComputedStyle(el, pseudo); if (cs.content === 'none' || cs.position !== 'absolute') return 0; const h = parseFloat(cs.top), b = parseFloat(cs.bottom); return Math.max(0, -(isNaN(h) ? 0 : h)) + Math.max(0, -(isNaN(b) ? 0 : b)); };
-    const out = [];
-    for (const el of document.querySelectorAll('#contenu :is(button, a[href], [role="tab"], select, summary, input:not([type="hidden"]), textarea)')) {
-      const r = el.getBoundingClientRect(); if (!r.width || !r.height) continue;
-      const cs = getComputedStyle(el); if (cs.visibility === 'hidden' || el.closest('[hidden], [inert], .sr-only')) continue;
-      if (el.tagName === 'SELECT' && cs.opacity === '0') continue;   // menu natif posé sur une pastille : on touche la pastille
-      if (el.tagName === 'INPUT' && /checkbox|radio/.test(el.type)) continue;   // une case dans son label : on touche le label
-      const h = r.height + Math.max(zone(el, '::before'), zone(el, '::after'));
-      if (h < 43.5) out.push(`${el.tagName.toLowerCase()}.${String(el.className?.baseVal ?? el.className).trim().replace(/\s+/g, '.')} « ${(el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 24)} » ${Math.round(h)} px`);
-    }
-    return out;
-  });
   const ECRANS_SOCLE = [['Salma', ['reseau/groupes', 'reseau/agenda', 'reseau/entraide', 'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'profil', 'profil/visibilite', 'profil/notifications', 'profil/donnees']],
     ['Youssef', ['reseau/classement']], ['Admin', ['admin', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda', 'admin/reglages']]];
   for (const langue of ['fr', 'ar']) {
@@ -4292,6 +4920,66 @@ test('socle : au doigt, chaque cible du Réseau, de Mon profil et de l’adminis
     }
     assert.deepEqual(trop, [], 'des cibles trop petites au doigt');
     // La zone ne déplace rien : les puces du Réseau gardent leur place d'un écran à l'autre, sans rien qui dépasse
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('pages du lot 2 : au doigt, chaque cible des Offres (fiche d’une offre comprise), Demandes, Mentorat (rendez-vous et CV), Messages, Mon parcours, Mon espace, du Suivi et des Talents se touche sur 44 px de haut et de large au moins (réactions, « Bravo », étoiles, menu « … », marque-page, « Signaler », visages, petites icônes), à 390 px et en arabe à 360 px', async () => {
+  const ECRANS = [['Salma', ['offres', 'offres/demandes', 'mentorat', 'mentorat/cv', 'parcours', 'suivi', 'suivi/insertion', 'messages']],
+    ['Amine', ['parcours', 'mentorat', 'messages']],
+    ['Youssef', ['offres', 'offres/demandes', 'mentorat', 'mentorat/cv', 'espace', 'espace/offres', 'espace/documents', 'suivi', 'reseau/talents', 'messages']],
+    ['Nadia', ['espace', 'mentorat', 'messages']],
+    ['Admin', ['offres/demandes', 'mentorat', 'suivi', 'messages']]];
+  // En arabe à 390 px, les quatre premiers écrans de chacun ; en arabe à 360 px (les mots les plus courts, la place la plus juste), tous
+  for (const [largeur, langue, tous] of [[390, 'fr', true], [390, 'ar', false], [360, 'ar', true]]) {
+    const s = await ouvrir({ largeur, langue, toucher: true });
+    assert.ok(await s.page.evaluate(() => matchMedia('(pointer: coarse)').matches), 'un écran tactile');
+    const trop = [];
+    for (const [qui, ecrans] of ECRANS) {
+      await s.comme(qui);
+      for (const e of tous ? ecrans : ecrans.slice(0, 4)) { await s.aller(e); await s.page.waitForTimeout(250); for (const x of await petites(s.page, { largeur: true })) trop.push(`${largeur} ${langue} · ${qui} · ${e} : ${x}`); }
+    }
+    // La fiche d'une offre (la première de la liste) : « Fermer », « Partager », « Signaler », « Gérer l’offre », et les
+    // gestes de chaque question publique (« Signaler », « Supprimer ») ; pour un lauréat et l'administration, aussi la fiche
+    // d'une offre d'un autre dont l'entreprise a des avis ou des entretiens (« Voir », au bout de son résumé)
+    const feuille = '.modal-back:not(.sortie) .modal';
+    for (const qui of ['Salma', 'Youssef', 'Admin']) {
+      await s.comme(qui); await s.aller('offres');
+      await s.page.locator('.ocard-main').first().click(); await s.page.waitForSelector(`${feuille} .od h2`); await s.page.waitForTimeout(300);
+      for (const x of await petites(s.page, { largeur: true, dans: feuille })) trop.push(`${largeur} ${langue} · ${qui} · fiche d’une offre : ${x}`);
+      await s.fermer();
+      if (qui === 'Salma') continue;
+      const avecAvis = await s.page.evaluate(async () => {
+        const { sameCompany } = await import(new URL('logic.js', location.href).href);
+        const d = window.__demo.data, deja = [...(d.avis_stage || []), ...(d.entretiens || [])];
+        return d.offers.find(o => o.status === 'ouverte' && o.author_id !== window.__demo.me.id && deja.some(a => sameCompany(a.entreprise, o.entreprise)))?.id;
+      });
+      assert.ok(avecAvis, 'une offre ouverte d’une entreprise qui a des avis ou des entretiens');
+      await s.aller('offre/' + avecAvis); await s.page.waitForSelector(`${feuille} .od .ent-resume .linkish`); await s.page.waitForTimeout(300);
+      for (const x of await petites(s.page, { largeur: true, dans: feuille })) trop.push(`${largeur} ${langue} · ${qui} · fiche d’une offre (avis sur l’entreprise) : ${x}`);
+      await s.fermer();
+    }
+    assert.deepEqual(trop, [], 'des cibles trop petites au doigt');
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('accueil : au doigt, l’annonce (son texte et « Masquer l’annonce »), le « Merci » sous chaque fondateur et « Plus tard » de l’invitation à parrainer se touchent sur 44 px de haut et de large, pour chaque profil, à 390 px et en arabe à 360 px', async () => {
+  for (const [largeur, langue] of [[390, 'fr'], [360, 'ar']]) {
+    const s = await ouvrir({ largeur, langue, toucher: true });
+    assert.ok(await s.page.evaluate(() => matchMedia('(pointer: coarse)').matches), 'un écran tactile');
+    const trop = [], vus = new Set();
+    for (const [id, nom] of s.profils) {
+      await s.page.selectOption('#persona', id); await s.aller('accueil'); await s.page.waitForTimeout(300);
+      for (const [cle, sel] of [['annonce', '.annonce-ligne .annonce-txt'], ['masquer', '.annonce-ligne .icon-btn.small'], ['merci', '.fd-merci'], ['plus tard', '.parrain-cta .icon-btn.small']]) if (await s.page.locator(`#contenu ${sel}`).count()) vus.add(cle);
+      for (const x of await petites(s.page, { largeur: true })) trop.push(`${largeur} ${langue} · ${nom} · accueil : ${x}`);
+    }
+    assert.deepEqual([...vus].sort(), ['annonce', 'masquer', 'merci', 'plus tard'], 'chacune de ces cibles mesurée au moins une fois');
+    assert.deepEqual(trop, [], 'des cibles trop petites au doigt');
     assert.equal(await s.debordement(), 0);
     assert.deepEqual(s.erreurs, []);
     await s.ctx.close();
@@ -4718,6 +5406,9 @@ test('match fêté des deux côtés : « Oui, accepter » avec son visage, les d
   assert.equal(await feuille.locator('.btn.danger').count(), 0, 'accepter n’est pas une action rouge');
   assert.equal(await feuille.locator('.btn.primary').count(), 1);
   assert.equal((await feuille.locator('.btn.primary').innerText()).trim(), 'Oui, accepter');
+  // Un match se scelle d'une coche, jamais d'un cœur
+  assert.equal(await feuille.locator('.btn.primary .ico-check').count(), 1);
+  assert.equal(await feuille.locator('.ico-heart').count(), 0);
   await feuille.locator('.btn.primary').click();
   await s.page.waitForSelector('.fete.fete-match');
   // Les deux visages (le sien, puis celui du lauréat), la coche, des confettis bleu, orange et bleu nuit ; aucun point pour l'étudiante
@@ -4729,6 +5420,8 @@ test('match fêté des deux côtés : « Oui, accepter » avec son visage, les d
   assert.equal(await s.page.locator('.fete .pastille-pts').count(), 0);
   await fete();
   assert.match(await carte.innerText(), /C’est un match/i);
+  assert.equal(await carte.locator('.eyebrow', { hasText: 'C’est un match' }).locator('.ico-check').count(), 1, 'la coche, pas le cœur');
+  assert.equal(await carte.locator('.eyebrow .ico-heart').count(), 0);
   // Youssef revient sur l'accueil : « Salma a accepté ton aide », les deux visages, et « Écrire à Salma »
   await s.comme('Youssef'); await s.page.waitForSelector('.fete.fete-match', { timeout: 4000 });
   assert.equal(await s.page.locator('#fete-titre').innerText(), 'Salma a accepté ton aide');
@@ -4909,18 +5602,28 @@ for (const [largeur, langue, theme] of [[1280, 'fr', 'light'], [390, 'ar', 'dark
   test(`accessibilité : aucun problème relevé par axe (${largeur} px, ${langue}, ${theme})`, async () => {
     const s = await ouvrir({ largeur, langue, theme });
     const problemes = [];
+    const auditer = async ou => {
+      if (!(await s.page.evaluate(() => !!window.axe))) await s.page.addScriptTag({ content: AXE });
+      // Les fondus d'arrivée (même courts) faussent la mesure des contrastes : on les termine avant l'audit
+      await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* animation sans fin */ } }));
+      const v = await s.page.evaluate(async () => (await axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'best-practice'] }, resultTypes: ['violations'] }))
+        .violations.map(x => `${x.id} : ${x.nodes.slice(0, 2).map(n => n.target.join(' ')).join(' ; ')}`));
+      for (const x of v) problemes.push(`${ou} · ${x}`);
+    };
     for (const [id, nom] of s.profils) {
       await s.page.selectOption('#persona', id); await s.page.waitForTimeout(250);
       for (const e of ECRANS) {
         await s.aller(e);
         // Une page chargée à la demande (l'administration, le suivi) : l'audit lit la page, pas sa silhouette d'attente
         await s.page.waitForFunction(() => !document.querySelector('.page-attente'));
-        if (!(await s.page.evaluate(() => !!window.axe))) await s.page.addScriptTag({ content: AXE });
-        // Les fondus d'arrivée (même courts) faussent la mesure des contrastes : on les termine avant l'audit
-        await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* animation sans fin */ } }));
-        const v = await s.page.evaluate(async () => (await axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'best-practice'] }, resultTypes: ['violations'] }))
-          .violations.map(x => `${x.id} : ${x.nodes.slice(0, 2).map(n => n.target.join(' ')).join(' ; ')}`));
-        for (const x of v) problemes.push(`${nom} · ${e} · ${x}`);
+        await auditer(`${nom} · ${e}`);
+      }
+      // La fiche d'une offre, la première de la liste (le niveau de son auteur sur le fond du bloc « Proposée par »)
+      await s.aller('offres');
+      if (await s.page.locator('.ocard-main').count()) {
+        await s.page.locator('.ocard-main').first().click(); await s.page.waitForSelector('.modal-back:not(.sortie) .modal .od h2');
+        await auditer(`${nom} · fiche d’une offre`);
+        await s.fermer();
       }
     }
     assert.deepEqual(problemes, []);
@@ -5430,6 +6133,10 @@ test('offres partagées : une étudiante colle une offre LinkedIn ; la liste met
   await s.comme('Salma'); await fermerFete(s); await s.aller('offres');
   // Une étudiante ne publie pas d'offre, elle en partage une vue ailleurs
   assert.equal(await s.page.locator('.page-head #of-publier').count(), 0);
+  // Son bouton « Partager une offre » est tonal : sur sa page, le seul bouton plein reste « Postuler » ou l'action du moment
+  assert.equal(await s.page.locator('.page-head #of-partager.btn.tonal').count(), 1);
+  assert.equal(await s.page.locator('.page-head #of-partager.primary').count(), 0);
+  assert.ok((await s.page.locator('.offres-page .btn.primary:visible').count()) <= 1, 'un seul bouton plein au plus');
   await s.page.click('#of-partager'); await s.page.waitForSelector('#of-lien-p');
   assert.equal(await s.page.locator('.modal-head h2').innerText(), 'Partager une offre');
   assert.equal(await s.page.locator('#of-mode-entreprise').count(), 0, 'pas de choix « mon entreprise » pour une étudiante');
@@ -5456,7 +6163,8 @@ test('offres partagées : une étudiante colle une offre LinkedIn ; la liste met
   // Dans la liste : une carte compacte, à part, sous les autres offres
   const carte = s.page.locator('.partages .opart', { hasText: 'Stagiaire PFE en excellence opérationnelle' });
   assert.equal(await carte.count(), 1);
-  assert.match(await carte.locator('.opart-par').innerText(), /^Partagée par Salma · vue sur LinkedIn$/);
+  // Son propre partage : « Partagée par toi », comme « Ton offre » sur les cartes ; les autres lisent son prénom (plus bas)
+  assert.match(await carte.locator('.opart-par').innerText(), /^Partagée par toi · vue sur LinkedIn$/);
   assert.equal(await carte.locator('.opart-voir').getAttribute('href'), LIEN_LINKEDIN);
   assert.equal(await carte.locator('.opart-voir').getAttribute('target'), '_blank');
   assert.equal(await s.page.locator('.offer-grid .ocard', { hasText: 'Stagiaire PFE en excellence opérationnelle' }).count(), 0);
@@ -5496,6 +6204,10 @@ test('offres partagées : une étudiante colle une offre LinkedIn ; la liste met
   // La fiche d'un partage : le lien vers le site d'origine, pas de candidature ici ; on peut signaler
   await s.page.locator('.partages .opart-main', { hasText: 'Stagiaire PFE en excellence opérationnelle' }).click(); await s.page.waitForSelector('.modal');
   assert.equal(await s.page.locator('.modal-head h2').innerText(), 'Offre partagée');
+  // Le titre de la fenêtre ne dit pas le type : la tuile « Type » le dit ; d'où elle vient, puis, à la ligne, où postuler
+  assert.ok((await s.page.locator('.od-facts dt').allInnerTexts()).includes('Type'), 'un partage dit son type dans les tuiles');
+  assert.match(await s.page.locator('.od-partage-note .od-partage-qui').innerText(), /^Partagée par Salma · vue sur LinkedIn$/, 'un autre membre lit le prénom de celle qui a partagé');
+  assert.ok(await s.page.evaluate(() => { const [a, b] = document.querySelectorAll('.od-partage-txt > span'); return b.getBoundingClientRect().top >= a.getBoundingClientRect().bottom - 1; }), 'la candidature ailleurs : sur sa propre ligne');
   assert.equal(await s.page.locator('#od-voir-partage').getAttribute('href'), LIEN_LINKEDIN);
   assert.match(await s.page.locator('#od-voir-partage').innerText(), /Voir l’offre sur LinkedIn/);
   assert.equal(await s.page.locator('.modal button:has-text("Postuler")').count(), 0);
@@ -5505,8 +6217,8 @@ test('offres partagées : une étudiante colle une offre LinkedIn ; la liste met
   // L'étudiante : l'offre portée de son année et de sa filière passe en tête de « Recommandé pour toi »
   await s.page.evaluate(async id => { const d = window.__demo, salma = d.data.profiles.find(p => p.full_name === 'Salma Bennani'); await d.update('offers', id, { filieres: [salma.filiere] }); }, porte.id);
   await s.comme('Salma'); await fermerFete(s); await s.aller('offres');
-  assert.match(await s.page.locator('.reco .ocard').first().innerText(), /PFE méthodes emboutissage, encadré par moi/);
-  assert.equal(await s.page.locator('.reco .ocard').first().locator('.tag.portee').count(), 1);
+  assert.match(await s.page.locator('.reco .pt-carte').first().innerText(), /PFE méthodes emboutissage, encadré par moi/);
+  assert.equal(await s.page.locator('.reco .pt-carte').first().locator('.tag.portee').count(), 1);
   assert.ok((await s.debordement()) <= 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
@@ -5525,9 +6237,12 @@ test('offres portées et partagées en arabe : le badge, la section et « مشا
   await s.aller('accueil'); await s.aller('offres');
   assert.equal(await s.page.locator('.offer-grid .ocard').first().locator('.tag.portee').innerText(), 'يقدّمه خريج · مع التأطير');
   assert.equal(await s.page.locator('#partages-titre').innerText(), 'عروض تمت مشاركتها');
-  assert.match((await s.page.locator('.partages .opart-par').first().innerText()).replace(/[\u2066-\u2069]/g, ''), /^مشاركة من Youssef · منشور على LinkedIn$/);
+  // Son propre partage : « مشاركة منك » ; une autre membre lit « مشاركة من Youssef »
+  assert.match((await s.page.locator('.partages .opart-par').first().innerText()).replace(/[\u2066-\u2069]/g, ''), /^مشاركة منك · منشور على LinkedIn$/);
   await s.comme('Salma'); await fermerFete(s); await s.aller('offres');
-  await s.page.locator('.ocard.portee .ocard-main').first().click(); await s.page.waitForSelector('.od-portee');
+  assert.match((await s.page.locator('.partages .opart-par').first().innerText()).replace(/[\u2066-\u2069]/g, ''), /^مشاركة من Youssef · منشور على LinkedIn$/);
+  // L'offre portée de son année passe dans « Pour toi » (grandes cartes) quand elle y a sa place, sinon dans la liste
+  await s.page.locator('.ocard.portee .ocard-main, .pt-carte.portee .pt-main').first().click(); await s.page.waitForSelector('.od-portee');
   assert.match(await s.page.locator('.od-portee').innerText(), /عرض يقدّمه خريج · مع التأطير/);
   await s.fermer();
   await s.comme('Youssef'); await fermerFete(s); await s.aller('offres');
@@ -5671,14 +6386,15 @@ test('la pastille ne promet rien à qui n’en veut pas ou ne peut pas : coupée
 // ---------------------------------------------------------------------------
 const fermerFetes = async page => { for (let i = 0; i < 3; i++) { const b = page.locator('.fete-acts .btn').first(); if (!(await b.count())) break; await b.click(); await page.waitForTimeout(250); } };
 const icone = n => `<svg xmlns="http://www.w3.org/2000/svg" width="${n}" height="${n}" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#1F6FB2"/></svg>`;
-const carteDe = (page, texte) => page.locator('.offer-grid .ocard').filter({ hasText: texte }).first();
+// Une offre de la page : une carte de la liste, ou une grande carte de « Pour toi » (ses offres n'y sont pas répétées)
+const carteDe = (page, texte) => page.locator('.offer-grid .ocard, .reco .pt-carte').filter({ hasText: texte }).first();
 
 test('vitrine : le logo d’une entreprise, l’icône de son site quand elle arrive, sinon son monogramme (requête coupée, icône minuscule)', async () => {
   // Les requêtes vers l'extérieur sont coupées (comme dans tous ces tests) : le monogramme, sans image cassée
   const s = await ouvrir({ largeur: 360 });
   await s.comme('Salma'); await fermerFetes(s.page); await s.aller('offres');
   const yazaki = carteDe(s.page, 'Yazaki').locator('.clogo');
-  await s.page.waitForFunction(() => { const c = [...document.querySelectorAll('.offer-grid .ocard')].find(x => x.innerText.includes('Yazaki'))?.querySelector('.clogo'); return c && !c.classList.contains('c-fav'); });
+  await s.page.waitForFunction(() => { const c = [...document.querySelectorAll('.offer-grid .ocard, .reco .pt-carte')].find(x => x.innerText.includes('Yazaki'))?.querySelector('.clogo'); return c && !c.classList.contains('c-fav'); });
   assert.equal(await yazaki.locator('img').count(), 0);
   assert.equal((await yazaki.innerText()).trim(), 'Y');
   assert.equal(await s.page.locator('.clogo.c-fav-ok').count(), 0);
@@ -5700,7 +6416,7 @@ test('vitrine : le logo d’une entreprise, l’icône de son site quand elle ar
   assert.ok(demandes.length && demandes.every(d => !d.referer), 'aucune adresse de page envoyée : ' + JSON.stringify(demandes.slice(0, 3)));
   const ocp = carteDe(t.page, 'OCP');
   await ocp.scrollIntoViewIfNeeded();
-  await t.page.waitForFunction(() => { const c = [...document.querySelectorAll('.offer-grid .ocard')].find(x => x.innerText.includes('OCP'))?.querySelector('.clogo'); return c && !c.classList.contains('c-fav'); });
+  await t.page.waitForFunction(() => { const c = [...document.querySelectorAll('.offer-grid .ocard, .reco .pt-carte')].find(x => x.innerText.includes('OCP'))?.querySelector('.clogo'); return c && !c.classList.contains('c-fav'); });
   assert.equal(await ocp.locator('.clogo img').count(), 0, 'icône trop petite : le monogramme');
   // La mention, sous la liste
   assert.equal(await t.page.locator('.mention-logos').innerText(), 'Logos affichés pour reconnaître les entreprises, sans aucun partenariat.');
@@ -5733,13 +6449,13 @@ test('vitrine : des cartes d’offres parlantes et vraies, « Ça bouge cette se
   await s.page.waitForTimeout(300); await fermerFetes(s.page); await s.aller('offres');
   const carte = carteDe(s.page, TITRE);
   const o = await s.page.evaluate(async t => { const L = await import(new URL('logic.js', location.href).href); return window.__demo.data.offers.find(x => L.titreOffre(x) === t); }, TITRE);
-  assert.equal(await carte.locator('.oc-tete .ocard-meta .oc-ent').innerText(), o.entreprise);
+  assert.equal(await carte.locator('.ocard-meta .oc-ent').innerText(), o.entreprise);
   assert.equal(await carte.locator('.ocard-title').innerText(), TITRE);
   assert.match(await carte.locator('.ocard-tags > .tag:first-child').innerText(), /PFE/);
   assert.equal(await carte.locator('.tag.neutre').innerText(), o.duree);
   assert.equal(await carte.locator('.tag.paye').count(), o.remunere ? 1 : 0);
   assert.equal(await carte.locator('.oc-preuve').innerText(), `${n} étudiants l’ont mise de côté`);
-  assert.equal(await carte.locator('.ocard-foot .avatar').count(), 1, 'le visage du lauréat qui la porte');
+  assert.equal(await carte.locator(':is(.ocard-foot, .pt-visage) .avatar').count(), 1, 'le visage du lauréat qui la porte');
   assert.doesNotMatch((await s.page.locator('.offer-grid').allInnerTexts()).join('\n'), /\bpoints?\b|\bpts\b/i, 'un étudiant ne voit pas de points');
   assert.equal(await s.page.locator('.offer-grid .ocard').count(), await s.page.locator('.offer-grid .oc-tete .clogo').count());
   // Marque-page : l'icône se remplit
@@ -5776,6 +6492,9 @@ test('vitrine : des cartes d’offres parlantes et vraies, « Ça bouge cette se
   await grace.click(); await s.page.waitForSelector('.modal .od'); await s.fermer();
   await s.aller('offres'); await s.page.locator('.offres-chips .chip', { hasText: 'Mes offres' }).click(); await s.page.waitForTimeout(300);
   const rebuts = carteDe(s.page, 'réduction des rebuts');
+  // Sur ses propres cartes, le pied dit « Ton offre », pas son prénom ni sa promo
+  assert.deepEqual([...new Set(await s.page.locator('.offer-grid .ocard .ocard-foot .oa-nom').allInnerTexts())], ['Ton offre']);
+  assert.equal(await s.page.locator('.offer-grid .ocard .ocard-foot .oa-promo').count(), 0);
   const nApps = await s.page.evaluate(() => { const d = window.__demo; const o = d.data.offers.find(x => /réduction des rebuts/.test(x.titre) && x.author_id === d.me.id); return d.data.applications.filter(a => a.offer_id === o.id).length; });
   assert.equal(await rebuts.locator('.oc-preuve').innerText(), nApps > 1 ? `${nApps} candidatures` : '1 candidature');
   assert.doesNotMatch((await s.page.locator('.offer-grid').allInnerTexts()).join('\n'), /\b0 candidat/);
@@ -5826,6 +6545,227 @@ test('vitrine : la carte devient la fiche (logo et titre glissent), les cartes a
   await r.page.waitForSelector('.modal .od');
   assert.deepEqual(r.erreurs, []);
   await r.ctx.close();
+});
+
+// Une rangée de puces qui déborde : la puce coupée au bord ne montre que son amorce (14 px), jamais un mot coupé en deux.
+// Rend l'écart entre le masque posé (--of-cache-f) et celui attendu pour la première puce coupée en fin de rangée (zéro quand
+// il en paraît déjà moins de 14 px : le fondu du bord suffit).
+const puceCoupee = (page, sel) => page.evaluate(sel => {
+  const r = document.querySelector(sel), W = r.clientWidth, b = r.getBoundingClientRect(), rtl = getComputedStyle(r).direction === 'rtl';
+  const puces = [...r.children].filter(e => !e.matches('.chips-sep')).map(e => { const x = e.getBoundingClientRect(); const d = rtl ? b.right - x.right : x.left - b.left; return { d, f: d + x.width }; });
+  const c = puces.find(x => x.f > W + .5 && x.d < W);
+  const cache = parseFloat(getComputedStyle(r).getPropertyValue('--of-cache-f')) || 0;
+  return c ? { coupee: true, ecart: Math.abs(cache - Math.max(0, W - (c.d + 14))), fondu: r.classList.contains('fondu-fin') } : { coupee: false, ecart: cache, fondu: r.classList.contains('fondu-fin') };
+}, sel);
+
+// Offres : « Pour toi » en grandes cartes (pas répétées dans la liste), « Nouveau » depuis la dernière visite (par membre, sur
+// cet appareil ; rien à la première), puis le reste. La rangée de filtres se colle sous la barre du haut.
+test('offres : « Pour toi » (3 à 6 grandes cartes), « Nouveau » depuis la dernière visite, rangée de filtres collée qui ne coupe aucune puce (390 px, français et arabe)', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 390, langue });
+    await s.comme('Salma'); await fermerFetes(s.page); await s.aller('offres'); await s.page.waitForSelector('.offer-grid .ocard');
+    const reco = await s.page.locator('.reco .pt-carte .ocard-title').allInnerTexts();
+    assert.ok(reco.length >= 3 && reco.length <= 6, `${langue} : ${reco.length} cartes « Pour toi »`);
+    const liste = await s.page.locator('.offer-grid .ocard .ocard-title').allInnerTexts();
+    assert.deepEqual(reco.filter(t => liste.includes(t)), [], 'une offre de « Pour toi » ne revient pas dans la liste');
+    assert.ok(await s.page.locator('.reco .pt-carte .pt-signal').count() >= 1, '« Ta filière » : une vraie raison, sur la carte');
+    assert.equal(await s.page.locator('.of-nouveau').count(), 0, 'première visite : rien n’est « Nouveau »');
+    // Une offre arrive après cette visite : à la suivante, elle est « Nouveau » ; la fois d'après, elle a été vue
+    const TITRE = 'PFE jumeau numérique de la ligne de peinture';
+    await s.aller('accueil');
+    await s.page.evaluate(async t => { const d = window.__demo, y = d.data.profiles.find(p => p.full_name === 'Youssef El Amrani');
+      await d.insert('offers', { author_id: y.id, type: 'pfe', titre: t, entreprise: 'Renault Group Maroc', ville: 'Tanger', description: 'Sujet de PFE.', annees: [5], filieres: [], status: 'ouverte' }); }, TITRE);
+    await s.aller('offres'); await s.page.waitForSelector('.of-nouveau');
+    assert.match(await s.page.locator('.of-nouveau + .offer-grid').innerText(), new RegExp(TITRE));
+    await s.aller('accueil'); await s.aller('offres'); await s.page.waitForSelector('.offer-grid .ocard');
+    assert.doesNotMatch((await s.page.locator('.of-nouveau + .offer-grid').allInnerTexts()).join('\n'), new RegExp(TITRE), 'vue : elle n’est plus « Nouveau »');
+    assert.match((await s.page.locator('.offer-grid').allInnerTexts()).join('\n'), new RegExp(TITRE), 'elle reste dans la liste');
+    // La rangée de filtres : une puce coupée au bord ne montre que son amorce
+    await s.page.waitForTimeout(300);
+    const p = await puceCoupee(s.page, '.offres-chips');
+    if (p.coupee) assert.ok(p.ecart <= 1.5 && p.fondu, `${langue} : la puce coupée ne montre que son amorce (écart ${p.ecart} px)`);
+    // Collée sous la barre du haut quand on descend
+    await s.page.evaluate(() => scrollTo(0, 1500)); await s.page.waitForTimeout(300);
+    assert.equal(await s.page.locator('.of-filtres.colle').count(), 1);
+    const ecart = await s.page.evaluate(() => Math.abs(document.querySelector('.of-filtres').getBoundingClientRect().top - document.querySelector('.top').getBoundingClientRect().bottom));
+    assert.ok(ecart <= 1, `la rangée se colle sous la barre (${ecart} px)`);
+    // Une puce choisie, rangée collée : la liste repart juste sous la rangée
+    await s.page.locator('.offres-chips .chip').nth(1).click(); await s.page.waitForTimeout(400);
+    const sous = await s.page.evaluate(() => { const b = document.querySelector('.of-filtres').getBoundingClientRect().bottom, c = document.querySelector('.offer-grid .ocard, .offres-page .empty')?.getBoundingClientRect().top; return c - b; });
+    assert.ok(sous >= 0 && sous <= 40, `la liste repart sous la rangée (${sous} px)`);
+    assert.equal(await s.debordement(), 0);
+    if (langue === 'ar') assert.deepEqual((await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x) && !/jumeau numérique/.test(x)), []);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+// La fiche d'une offre : un haut fort (logo, titre, entreprise), les faits en tuiles, qui la propose ; « Postuler » ouvre le
+// formulaire (le même toucher n'envoie rien), la coche paraît une fois la candidature partie. Sur ordinateur, un panneau à côté.
+test('fiche d’une offre : haut aux couleurs de l’entreprise, faits en tuiles, « Proposée par » ; « Postuler » n’envoie rien tout seul, la coche après l’envoi ; panneau sur ordinateur (390 et 1280 px, arabe sombre)', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Salma'); await fermerFetes(s.page); await s.aller('offres'); await s.page.waitForSelector('.offer-grid .ocard');
+  await s.page.locator('.offer-grid .ocard:has(.ocard-apply) .ocard-main').first().click(); await s.page.waitForSelector('.modal.fiche-offre .od-hero');
+  assert.equal(await s.page.locator('.od h2').count(), 1, 'un seul titre dans la fiche');
+  assert.equal(await s.page.locator('.od-hero h2').count(), 1);
+  assert.equal(Math.round((await s.page.locator('.od-hero .detail-head > .clogo').boundingBox()).width), 64);
+  // Le type est dit une fois, par le titre de la fenêtre (« Projet de fin d’études »…) : pas de tuile « Type » qui le répète
+  const faits = await s.page.locator('.od-facts dt').allInnerTexts();
+  assert.ok(!faits.includes('Type') && faits.includes('Pour'), faits.join(', '));
+  assert.match(await s.page.locator('.modal.fiche-offre .modal-head h2').innerText(), /^(Projet de fin d’études|Stage|Emploi)/);
+  // « Pour » : un morceau par année ou filière ; le « · » qui les sépare n'est pas dans le texte (il pend devant chaque
+  // morceau, masqué en début de ligne) : aucune ligne ne finit par « · »
+  const morceaux = await s.page.locator('.od-facts .od-pour > span').allInnerTexts();
+  assert.ok(morceaux.length >= 2 && morceaux.every(t => t.trim() && !/·/.test(t)), JSON.stringify(morceaux));
+  // Les questions : une invite courte et entière (le titre « Questions publiques » dit déjà que tout le monde les voit), un nom
+  assert.deepEqual(await s.page.locator('.modal.fiche-offre .comment-form input').evaluate(e => { const st = getComputedStyle(e), c = document.createElement('canvas').getContext('2d');
+    c.font = `${st.fontWeight} ${st.fontSize} ${st.fontFamily}`; return [e.placeholder, e.getAttribute('aria-label'), c.measureText(e.placeholder).width <= e.clientWidth - parseFloat(st.paddingLeft) - parseFloat(st.paddingRight)]; }),
+  ['Pose ta question…', 'Ta question sur l’offre', true]);
+  // Les réactions de la fiche : jamais de nombre ; tant qu'elle n'a pas réagi, le bouton dit « Réagir » en toutes lettres
+  const rxFiche = s.page.locator('.modal.fiche-offre .od-rx');
+  assert.equal(await rxFiche.locator('.rx-pill, .rx-n, .rx-total').count(), 0);
+  assert.equal(await rxFiche.locator('.rx-ajouter:not(.on)').evaluate(b => getComputedStyle(b, '::after').content), '"Réagir"');
+  assert.equal(await s.page.locator('.od-par h3').innerText(), 'Proposée par');
+  assert.equal(await s.page.locator('.od-par .od-author .avatar').count(), 1);
+  // Le titre de la fenêtre flotte sur le voile, puis se pose en verre quand la fiche défile
+  assert.equal(await s.page.locator('.modal.fiche-offre.defile').count(), 0);
+  await s.page.evaluate(() => { document.querySelector('.modal.fiche-offre').scrollTop = 300; }); await s.page.waitForTimeout(150);
+  assert.equal(await s.page.locator('.modal.fiche-offre.defile').count(), 1);
+  const mesCandidatures = () => s.page.evaluate(() => window.__demo.data.applications.filter(a => a.student_id === window.__demo.me.id).length);
+  const avant = await mesCandidatures();
+  await s.page.click('.modal.fiche-offre .od-postuler'); await s.page.waitForSelector('#ap-msg'); await s.page.waitForTimeout(300);
+  assert.equal(await mesCandidatures(), avant, 'toucher « Postuler » ouvre le formulaire, sans rien envoyer');
+  assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'ap-msg');
+  await s.page.fill('#ap-msg', 'Bonjour, je suis en 5A Génie Industriel et ce sujet me parle.');
+  await s.page.click('.modal.fiche-offre .modal-foot button[type="submit"]'); await s.page.waitForTimeout(400); await fermerFetes(s.page);
+  assert.equal(await mesCandidatures(), avant + 1);
+  assert.equal(await s.page.locator('.modal.fiche-offre .modal-foot .od-envoyee .coche').count(), 1);
+  assert.match(await s.page.locator('.modal.fiche-offre .modal-foot').innerText(), /Candidature envoyée/);
+  assert.equal(await s.debordement(), 0);
+  await s.fermer();
+  // Le marque-page de la fiche se pose
+  await s.page.locator('.offer-grid .ocard:has(.ocard-apply) .ocard-main').first().click(); await s.page.waitForSelector('.modal.fiche-offre .od-save');
+  const pose = await s.page.getAttribute('.modal.fiche-offre .od-save', 'aria-pressed');
+  await s.page.click('.modal.fiche-offre .od-save'); await s.page.waitForTimeout(200);
+  assert.notEqual(await s.page.getAttribute('.modal.fiche-offre .od-save', 'aria-pressed'), pose);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Ordinateur : un panneau sur toute la hauteur, à droite ; la liste reste visible à gauche
+  const d = await ouvrir({ largeur: 1280 });
+  await d.comme('Salma'); await fermerFetes(d.page); await d.aller('offres'); await d.page.waitForSelector('.offer-grid .ocard');
+  await d.page.locator('.offer-grid .ocard-main').first().click(); await d.page.waitForSelector('.modal.fiche-offre .od-hero'); await d.page.waitForTimeout(300);
+  const b = await d.page.locator('.modal.fiche-offre').boundingBox();
+  assert.ok(Math.abs(b.x + b.width - (1280 - 12)) <= 2 && b.x > 560, `le panneau à droite : ${JSON.stringify(b)}`);
+  assert.ok(b.height >= 900 - 24 - 2, `sur toute la hauteur : ${b.height}`);
+  assert.deepEqual(d.erreurs, []);
+  await d.ctx.close();
+  // En arabe, sombre : le panneau à gauche, tout traduit
+  const a = await ouvrir({ largeur: 1280, langue: 'ar', theme: 'dark' });
+  await a.comme('Salma'); await fermerFetes(a.page); await a.aller('offres'); await a.page.waitForSelector('.offer-grid .ocard');
+  await a.page.evaluate(() => window.__ensamMissing?.clear());
+  await a.page.locator('.offer-grid .ocard-main').first().click(); await a.page.waitForSelector('.modal.fiche-offre .od-hero'); await a.page.waitForTimeout(300);
+  const g = await a.page.locator('.modal.fiche-offre').boundingBox();
+  assert.ok(Math.abs(g.x - 12) <= 2, `le panneau à gauche en arabe : ${JSON.stringify(g)}`);
+  assert.deepEqual((await a.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), []);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
+// Lauréat : le chiffre du haut mène à ce qu'il compte ; les candidats en gros boutons, le statut choisi dans sa couleur
+test('lauréat : « N candidatures à traiter » ouvre ses candidats ; onglets de la fiche sur toute la largeur (390 px)', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await fermerFetes(s.page); await s.aller('offres'); await s.page.waitForSelector('.of-chiffre');
+  assert.match(await s.page.locator('.of-chiffre').innerText(), /^\d+ candidatures? à traiter$/);
+  await s.page.click('.of-chiffre'); await s.page.waitForSelector('.modal.fiche-offre .cands');
+  assert.match(await s.page.locator('.od-onglets [aria-selected="true"]').innerText(), /^Candidats/);
+  const largeurs = await s.page.locator('.od-onglets > button').evaluateAll(bs => bs.map(b => Math.round(b.getBoundingClientRect().width)));
+  assert.ok(Math.max(...largeurs) - Math.min(...largeurs) <= 1, `onglets égaux : ${largeurs}`);
+  assert.ok(await s.page.locator('.cand-statut .seg > button[data-s].on').count() >= 1);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// Sous les candidats : les profils qui correspondent à l'offre. Le nom en entier, la raison, « Inviter à postuler » tonal
+// (il se répète, jamais plein) ; l'invitation envoyée devient un état sur la ligne. Téléphone (360 px), ordinateur, arabe sombre.
+test('candidats : « Profils qui correspondent à ton offre », noms entiers, invitation tonale qui devient un état (360 px, 1280 px, arabe sombre)', async () => {
+  for (const [largeur, langue, theme] of [[360, 'fr', 'light'], [1280, 'fr', 'light'], [390, 'ar', 'dark']]) {
+    const s = await ouvrir({ largeur, langue, theme });
+    await s.comme('Youssef'); await fermerFetes(s.page); await s.aller('offres'); await s.page.waitForSelector('.of-chiffre');
+    await s.page.click('.of-chiffre'); await s.page.waitForSelector('.modal.fiche-offre .matching .people-list > li');
+    const sec = s.page.locator('.modal.fiche-offre .matching');
+    await sec.scrollIntoViewIfNeeded();
+    assert.equal(await sec.getAttribute('aria-labelledby'), await sec.locator('h3.matching-titre').getAttribute('id'), 'la section porte le nom de son titre');
+    assert.equal(await sec.locator('h3.matching-titre').innerText(), langue === 'ar' ? 'ملفات تناسب عرضك' : 'Profils qui correspondent à ton offre');
+    const lignes = await sec.evaluate(m => [...m.querySelectorAll('.people-list > li')].map(li => {
+      const nom = li.querySelector('.person-name'), b = li.querySelector(':scope > :is(.btn, .state-pill)'), p = li.querySelector(':scope > .person');
+      const r = li.getBoundingClientRect(), rb = b.getBoundingClientRect(), rp = p.getBoundingClientRect();
+      return { nom: nom.textContent, coupe: nom.scrollWidth > nom.clientWidth + 1, dedans: rb.left >= r.left - 1 && rb.right <= r.right + 1,
+        dessous: rb.top >= rp.bottom - 1 };
+    }));
+    assert.ok(lignes.length >= 1);
+    assert.deepEqual(lignes.filter(l => l.coupe).map(l => l.nom), [], `${largeur} px : les noms restent entiers`);
+    assert.ok(lignes.every(l => l.dedans), `${largeur} px : l’invitation reste dans sa ligne`);
+    // Téléphone : le visage et le nom sur toute la largeur, la raison et l'invitation dessous ; ordinateur : une seule ligne
+    assert.ok(lignes.every(l => l.dessous === largeur < 600), `${largeur} px : ${JSON.stringify(lignes)}`);
+    assert.equal(await sec.locator('.btn.primary').count(), 0, 'l’invitation se répète : jamais un bouton plein');
+    const libre = sec.locator('.people-list > li').filter({ has: s.page.locator(':scope > button.btn.tonal') }).first();
+    const nom = await libre.locator('.person-name').innerText();
+    const bouton = libre.locator(':scope > button.btn.tonal');
+    assert.equal(await bouton.innerText(), langue === 'ar' ? 'دعوة للترشح' : 'Inviter à postuler');
+    assert.ok((await bouton.boundingBox()).height >= 38, 'un bouton à la taille du doigt');
+    await bouton.click(); await s.page.waitForTimeout(400);
+    const ligne = sec.locator('.people-list > li').filter({ hasText: nom });
+    assert.equal(await ligne.locator(':scope > .state-pill').innerText(), langue === 'ar' ? 'دعوة مُرسلة' : 'Invitation envoyée');
+    assert.equal(await ligne.locator(':scope > button.btn').count(), 0);
+    assert.ok(await s.page.evaluate(n => { const d = window.__demo, p = d.data.profiles.find(x => x.full_name === n);
+      return d.data.invitations.some(i => i.student_id === p.id && i.laureat_id === d.me.id); }, nom), 'l’invitation est enregistrée');
+    assert.ok(await s.page.evaluate(() => { const m = document.querySelector('.modal.fiche-offre'); return m.scrollWidth <= m.clientWidth + 1; }), 'la fiche ne déborde pas');
+    assert.equal(await s.debordement(), 0);
+    if (langue === 'ar') assert.deepEqual((await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), []);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+// Demandes : qui demande (visage, statut), ce qu'il cherche au-dessus du titre, ses mots dans une bulle ; « Je peux aider » au pouce
+test('demandes : le visage et le statut en haut, le type au-dessus du titre ; « Je peux aider » de 44 px ; filtres sans puce coupée (390 px)', async () => {
+  const s = await ouvrir({ largeur: 390 });
+  await s.comme('Youssef'); await fermerFetes(s.page); await s.aller('offres/demandes'); await s.page.waitForSelector('.dm-laureat .dm-card');
+  const carte = s.page.locator('.dm-laureat .dm-card').first();
+  assert.equal(await carte.locator('.dm-head .dm-type').count(), 0, 'le type n’est plus dans la ligne du visage');
+  assert.equal(await carte.locator('.dm-sur + .dm-titre').count(), 1);
+  const h = (await carte.locator('.dm-aider').boundingBox()).height;
+  assert.ok(h >= 44, `« Je peux aider » : ${h} px`);
+  await s.page.waitForTimeout(300);
+  const p = await puceCoupee(s.page, '.dm-filtres');
+  if (p.coupee) assert.ok(p.ecart <= 1.5 && p.fondu, `la puce coupée ne montre que son amorce (écart ${p.ecart} px)`);
+  await s.comme('Salma'); await fermerFetes(s.page); await s.aller('offres/demandes'); await s.page.waitForSelector('.dm-promo .dm-card');
+  assert.equal(await s.page.locator('.dm-promo .dm-card').first().locator('.dm-head > .state-pill').count(), 1);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// Le pied d'une carte : la feuille « Réactions » (qui a réagi) est en position fixe ; une carte soulevée au survol
+// (transformée) l'enfermerait dans la carte. Elle doit couvrir l'écran, carte survolée. À 360 px, les prénoms restent entiers.
+test('cartes d’offre : la feuille « Réactions » ouverte depuis le pied couvre tout l’écran, carte survolée ; prénoms entiers à 360 px', async () => {
+  for (const largeur of [1280, 360]) {
+    const s = await ouvrir({ largeur });
+    await s.comme('Salma'); await fermerFetes(s.page); await s.aller('offres'); await s.page.waitForSelector('.offer-grid .ocard');
+    if (largeur === 360) {
+      const coupes = await s.page.evaluate(() => [...document.querySelectorAll('.offer-grid .ocard-foot .oa-nom > span:first-child')]
+        .filter(e => e.getBoundingClientRect().width > 0 && e.scrollWidth > e.clientWidth + 1).map(e => e.textContent));
+      assert.deepEqual(coupes, [], 'à 360 px, les prénoms du pied restent entiers');
+    }
+    const resume = s.page.locator('.offer-grid .ocard-foot .rx-resume').first();
+    await resume.scrollIntoViewIfNeeded(); await resume.hover(); await resume.click(); await s.page.waitForSelector('.rx-feuille');
+    await s.page.waitForTimeout(250);
+    const r = await s.page.evaluate(() => { const b = document.querySelector('.rx-feuille').closest('.modal-back').getBoundingClientRect(); return { x: b.x, y: b.y, l: b.width, h: b.height, L: innerWidth, H: innerHeight }; });
+    assert.ok(Math.abs(r.x) < 1 && Math.abs(r.y) < 1 && Math.abs(r.l - r.L) < 1 && Math.abs(r.h - r.H) < 1, `${largeur} px : la feuille couvre l’écran (${JSON.stringify(r)})`);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -6048,16 +6988,19 @@ test('match : programmer un entretien (jour, heure, durée, visio) ; l’autre r
   await s.page.locator('.mx-b-acts .btn', { hasText: 'Programmer un entretien' }).click();
   await s.page.waitForSelector('#mx-rdv-jour');
   const feuille = s.page.locator('.modal').last();
-  // Le premier jour à venir proposé : « Demain », ou lundi un samedi (pas de dimanche dans la liste)
-  const jour = feuille.locator('.chip', { hasText: /^(Demain|(Lundi|Mardi|Mercredi|Jeudi|Vendredi|Samedi) \d{1,2})$/ }).first();
-  const J = (await jour.innerText()).trim(), J1 = J.split(' ')[0];
-  await jour.click();
+  // Le jour : « Demain » quand il est proposé. Les dimanches ne le sont jamais (joursProposes) : un samedi, c'est le premier
+  // jour proposé après aujourd'hui, « Lundi 9 » sur sa puce et « Lundi 9 novembre » dans le résumé et sur la carte
+  const puces = feuille.locator('.mx-fs').first().locator('.chip');
+  const jours = await puces.allInnerTexts();
+  const jour = jours.includes('Demain') ? 'Demain' : jours.find(j => j !== 'Aujourd’hui');
+  await puces.filter({ hasText: new RegExp(`^${jour}$`) }).click();
   await feuille.locator('.chip', { hasText: /^15:00$/ }).click();
   await feuille.locator('.chip', { hasText: /^45 min$/ }).click();
-  assert.match(await feuille.locator('.mx-resume').innerText(), new RegExp(`^${J1}[^·]* · 15:00 · 45 min$`));
+  const leJour = jour === 'Demain' ? 'Demain' : `${jour} \\p{L}+`;
+  assert.match(await feuille.locator('.mx-resume').innerText(), new RegExp(`^${leJour} · 15:00 · 45 min$`, 'u'));
   await s.page.click('button[form="mx-rdv-f"]'); await s.page.waitForTimeout(400);
   const carte = s.page.locator('.msg.mine .bulle.t-rdv').last();
-  assert.match(await carte.innerText(), new RegExp(`Tu proposes un entretien[^]*${J1}[^]*15:00[^]*45 min · En visio[^]*meet\\.jit\\.si/ReseauENSAM-[^]*En attente de la réponse de`, 'i'));
+  assert.match(await carte.innerText(), new RegExp(`Tu proposes un entretien[\\s\\S]*${leJour}[\\s\\S]*15:00[\\s\\S]*45 min · En visio[\\s\\S]*meet\\.jit\\.si\\/ReseauENSAM-[\\s\\S]*En attente de la réponse de`, 'u'));
   // Le lien d'agenda dit l'heure et la durée
   await carte.locator('summary').click();
   const g = await carte.locator('a', { hasText: 'Google Agenda' }).getAttribute('href');
@@ -6912,6 +7855,177 @@ test('passage jour/nuit : deux passages coup sur coup au clavier, le second gard
 });
 
 // ---------------------------------------------------------------------------
+// Toutes les portes : la page d'entrée « en ligne » (un faux Supabase local, jamais la vraie base) ouverte dans le navigateur
+// d'une application, « Ouvrir dans Chrome » qui emporte ce que le visiteur avait choisi, l'iPad, le lien « Active tes
+// notifications » quand tout est décoché, la pastille après un échec définitif, et « Voir en tant que » de la démo
+// ---------------------------------------------------------------------------
+const FACEBOOK_IOS = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 [FBAN/FBIOS;FBAV/490.0.0.38.107;FBBV/700000000;FBDV/iPhone15,3;FBMD/iPhone;FBSN/iOS;FBSV/18.6;FBSS/3;FBCR/;FBID/phone;FBLC/fr_FR;FBOP/80]';
+const VUE_WEB = 'Mozilla/5.0 (Linux; Android 13; M2101K6G Build/TKQ1.221013.002; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/141.0.7390.43 Mobile Safari/537.36';
+const INSTAGRAM_IPAD = 'Mozilla/5.0 (iPad; CPU OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Instagram 400.0.0.30.75 (iPad13,18; iPadOS 18_6; fr_FR; fr; scale=2.00; 1640x2360; 812345678)';
+const SAMSUNG = 'Mozilla/5.0 (Linux; Android 14; SM-A546B) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/28.0 Chrome/130.0.0.0 Mobile Safari/537.36';
+const SAFARI_IPADOS = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15';
+const SAFARI_IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1';
+// Un écran tactile : iPadOS se présente comme un Mac, seuls navigator.maxTouchPoints et navigator.platform le trahissent
+const ecranTactile = (ctx, platform = 'MacIntel') => ctx.addInitScript(p => {
+  Object.defineProperty(Navigator.prototype, 'maxTouchPoints', { configurable: true, get: () => 5 });
+  Object.defineProperty(Navigator.prototype, 'platform', { configurable: true, get: () => p });
+}, platform);
+
+const OFFRE_PARTAGEE = '3f2b8c1e-9a7d-4e21-b6c0-5d4e3f2a1b0c', AUTEUR_OFFRE = '00000000-0000-4000-8000-0000000000b2';
+let siteEnLigne = null;
+const enLigne = async () => (siteEnLigne ||= await fauxSite(SITE, {
+  profils: [{ id: AUTEUR_OFFRE, full_name: 'Hajar Lauréate', role: 'laureat', filiere: 'Génie Industriel', promo: 2016, created_at: '2026-10-01T10:00:00Z', verified: true }],
+  offres: [{ id: OFFRE_PARTAGEE, author_id: AUTEUR_OFFRE, type: 'pfe', titre: 'PFE Lean manufacturing', entreprise: 'OCP', description: 'Amélioration continue.', annees: [5], filieres: [], status: 'ouverte', audience: 'etudiants', created_at: new Date().toISOString() }],
+  partagees: { [OFFRE_PARTAGEE]: { type: 'pfe', audience: 'etudiants', ouverte: true } },
+}));
+after(() => siteEnLigne?.fermer());
+
+// Un visiteur sans compte sur la page d'entrée, sur l'appareil voulu (ua) ; langue null : jamais choisie sur ce navigateur
+// (un Chrome tout neuf) ; tactile : la plateforme d'un écran tactile (iPadOS : « MacIntel ») ; avant(ctx) : réseau à régler
+// avant la première visite ; stockage: false : une vue web sans stockage DOM (localStorage et sessionStorage valent null).
+// Par défaut, un écran de 360 × 800 : la carte du navigateur d'une application y tient avec « Recevoir mon code » (moins haut,
+// sa ligne discrète à la place : e2e « Recevoir mon code au premier écran »)
+async function porte({ ua, largeur = 360, hauteur = 800, langue = 'fr', theme = 'light', chemin = '', tactile = null, avant, stockage = true } = {}) {
+  const site = await enLigne();
+  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce', colorScheme: theme, ...(ua ? { userAgent: ua } : {}) });
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  if (avant) await avant(ctx);
+  if (tactile) await ecranTactile(ctx, tactile);
+  if (!stockage) await ctx.addInitScript(() => { for (const k of ['localStorage', 'sessionStorage']) Object.defineProperty(window, k, { configurable: true, get: () => null }); });
+  else await ctx.addInitScript(l => { if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1'); if (l) localStorage.setItem('ensam-lang', l); }, langue);
+  const page = await ctx.newPage(); const erreurs = [];
+  page.on('pageerror', e => erreurs.push(e.message));
+  await page.goto(site.adresse + chemin);
+  await page.waitForSelector('#entree .entree-form');
+  // La carte vient avec appareil.js, chargé juste après le premier affichage
+  const appareilLu = async () => { await page.waitForFunction(() => performance.getEntriesByType('resource').some(e => /\/appareil\.js$/.test(e.name))); await page.waitForTimeout(300); };
+  // Le lien « Ouvrir dans Chrome » ne mène nulle part ici (pas d'Android) : le test lit l'adresse de secours qu'il porte
+  const secours = async (sel = '#au-appli-chrome') => new URL(decodeURIComponent((await page.getAttribute(sel, 'href')).match(/;S\.browser_fallback_url=([^;]+);end$/)[1]));
+  // … et l'adresse que Chrome ouvre (avant #Intent)
+  const cible = async (sel = '#au-appli-chrome') => new URL('http://' + (await page.getAttribute(sel, 'href')).match(/^intent:\/\/([^#]+)#Intent;/)[1]);
+  const toucherChrome = async () => {
+    await page.evaluate(() => addEventListener('click', e => { if (e.target.closest?.('#au-appli-chrome')) e.preventDefault(); }, { capture: true, once: true }));
+    await page.click('#au-appli-chrome');
+  };
+  return { ctx, page, erreurs, site, appareilLu, secours, cible, toucherChrome, debordement: () => page.evaluate(() => document.documentElement.scrollWidth - innerWidth) };
+}
+const latinRestant = (t, garder) => (t.match(/[A-Za-zÀ-ÿ]{2,}/g) || []).filter(x => !garder.includes(x));
+
+test('page d’entrée dans Instagram (Android) : une carte calme au-dessus du formulaire ; « Ouvrir dans Chrome » emporte la langue, la promo, le rôle et l’offre partagée, que Chrome retrouve sans rien de l’ancien navigateur', async () => {
+  const s = await porte({ ua: INSTAGRAM, langue: 'ar', chemin: '?promo=2019#offre/' + OFFRE_PARTAGEE });
+  await s.page.waitForSelector('#au-appli[data-systeme="android"]');
+  assert.ok(await s.page.isVisible('#au-je-laureat'), 'le formulaire reste là, sous la carte');
+  assert.ok(await s.page.isVisible('#au-lien'), 'l’offre partagée est dite');
+  await s.page.click('#au-je-laureat');
+  assert.match(await s.page.getAttribute('#au-appli-chrome', 'href'), /^intent:\/\/127\.0\.0\.1:\d+\/\?[^#]+#Intent;scheme=http;package=com\.android\.chrome;S\.browser_fallback_url=[^;]+;end$/);
+  const fb = await s.cible();
+  assert.deepEqual(Object.fromEntries(fb.searchParams), { lang: 'ar', promo: '2019', role: 'laureat', mode: 'inscription', r: 'offre/' + OFFRE_PARTAGEE, notifs: '1' });
+  assert.equal(fb.hash, '');
+  // L'adresse de secours (sans Chrome, ici même) : la même, et ici=1
+  const ici = await s.secours();
+  assert.equal(ici.searchParams.get('ici'), '1');
+  ici.searchParams.delete('ici');
+  assert.equal(ici.href, fb.href);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Chrome : un navigateur tout neuf (ni le stockage d'Instagram ni son choix de langue), ouvert sur l'adresse du lien
+  const c = await porte({ ua: TELEPHONE, langue: null, chemin: fb.search });
+  assert.equal(await c.page.getAttribute('html', 'dir'), 'rtl', 'en arabe, comme dans Instagram');
+  await c.page.waitForSelector('.invite-band');
+  assert.match(await c.page.locator('.invite-band').innerText(), /2019/);
+  assert.equal(await c.page.getAttribute('#au-je-laureat', 'aria-pressed'), 'true');
+  await c.page.waitForSelector('#au-lien');
+  assert.equal(await c.page.evaluate(() => location.hash), '#offre/' + OFFRE_PARTAGEE, 'l’offre redevient l’adresse de la page');
+  const reste = await c.page.evaluate(() => [...new URLSearchParams(location.search).keys()]);
+  assert.deepEqual(reste.filter(k => ['lang', 'promo', 'role', 'mode', 'r'].includes(k)), [], 'l’adresse nettoyée');
+  await c.appareilLu();
+  assert.equal(await c.page.locator('#au-appli, #au-appli-mot').count(), 0, 'dans Chrome, plus de carte');
+  assert.deepEqual(await c.page.evaluate(() => [...(window.__ensamMissing || [])]), []);
+  assert.deepEqual(c.erreurs, []);
+  await c.ctx.close();
+  // Se connecter : l'étape et le rôle suivent aussi (sans promo), en français
+  const k = await porte({ ua: INSTAGRAM });
+  await k.page.waitForSelector('#au-appli');
+  await k.page.click('#au-je-etudiant');
+  await k.page.click('.entree-form .linkish:has-text("J’ai déjà un compte")');
+  await k.page.waitForSelector('.entree-form h2');
+  const fk = await k.cible();
+  assert.deepEqual(Object.fromEntries(fk.searchParams), { role: 'etudiant', mode: 'connexion', notifs: '1' });
+  await k.ctx.close();
+  const kc = await porte({ ua: TELEPHONE, langue: null, chemin: fk.search });
+  assert.equal(await kc.page.locator('.entree-form h2').innerText(), 'Se connecter');
+  await kc.page.click('.entree-form .linkish:has-text("Créer un compte")');
+  assert.equal(await kc.page.getAttribute('#au-je-etudiant', 'aria-pressed'), 'true', 'le rôle choisi dans Instagram');
+  assert.deepEqual(kc.erreurs, []);
+  await kc.ctx.close();
+});
+
+test('page d’entrée dans Instagram sans Chrome : l’adresse de secours rouvre la page ici, la carte ne revient pas (un mot discret à la place) ; « Continuer ici » la range pour la visite', async () => {
+  const s = await porte({ ua: INSTAGRAM });
+  await s.page.waitForSelector('#au-appli');
+  // Ce qui est déjà choisi et tapé revient avec l'adresse de secours
+  await s.page.click('#au-je-etudiant');
+  await s.page.fill('#au-email', 'salma@ensam-umi.ac.ma');
+  await s.toucherChrome();
+  const fb = await s.secours();
+  // Pas de Chrome sur ce téléphone : Instagram ouvre l'adresse de secours dans le même onglet
+  for (let i = 0; i < 2; i++) {
+    await s.page.goto(fb.href); await s.page.waitForSelector('#entree .entree-form');
+    await s.page.waitForSelector('#au-appli-mot');
+    if (!i) {
+      assert.equal(await s.page.getAttribute('#au-je-etudiant', 'aria-pressed'), 'true');
+      assert.equal(await s.page.inputValue('#au-email'), 'salma@ensam-umi.ac.ma', 'l’adresse déjà tapée revient');
+    }
+    assert.equal(await s.page.locator('#au-appli').count(), 0, 'la carte ne tourne pas en boucle');
+    assert.match(await s.page.locator('#au-appli-mot').innerText(), /Rien ne s’ouvre\s\? Touche ⋮ en haut à droite, puis «\sOuvrir dans Chrome\s» ou «\sOuvrir dans le navigateur\s»\./);
+  }
+  assert.equal(await s.page.evaluate(() => sessionStorage.getItem('ensam-appli-vue')), '1', 'après la connexion, la feuille du navigateur d’une application ne la répète pas');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // « Continuer ici » : la carte se range, un lien discret reste, le focus le suit ; rechargée, toujours le lien discret
+  const c = await porte({ ua: INSTAGRAM });
+  await c.page.waitForSelector('#au-appli');
+  await c.page.click('#au-appli-ici');
+  await c.page.waitForSelector('#au-appli-mot #au-appli-chrome');
+  assert.equal(await c.page.locator('#au-appli').count(), 0);
+  await c.page.waitForFunction(() => document.activeElement?.id === 'au-appli-mot', null, { timeout: 5000 }).catch(() => {});
+  assert.equal(await c.page.evaluate(() => document.activeElement?.id), 'au-appli-mot');
+  assert.equal((await c.page.locator('#au-appli-mot').innerText()).trim(), 'Ouvrir le Réseau dans Chrome');
+  assert.ok((await c.page.locator('#au-appli-mot #au-appli-chrome').boundingBox()).height >= 44);
+  assert.match(await c.page.getAttribute('#au-appli-mot #au-appli-chrome', 'href'), /^intent:\/\/.*mode%3Dinscription%26notifs%3D1%26ici%3D1;end$/);
+  await c.page.reload(); await c.page.waitForSelector('#au-appli-mot');
+  assert.equal(await c.page.locator('#au-appli').count(), 0, 'une fois par visite');
+  assert.deepEqual(c.erreurs, []);
+  await c.ctx.close();
+});
+
+// Une vue web sans stockage DOM : rien ne se garde d'une page à l'autre, l'adresse de secours dit seule qu'il n'y a pas de Chrome
+test('page d’entrée dans une vue web sans stockage : « Ouvrir dans Chrome » emporte l’offre partagée ; l’adresse de secours ne ramène pas la carte, en boucle (le mot discret, en arabe)', async () => {
+  const s = await porte({ ua: VUE_WEB, langue: null, stockage: false, chemin: '?promo=2019&lang=ar#offre/' + OFFRE_PARTAGEE });
+  await s.page.waitForSelector('#au-appli[data-systeme="android"]');
+  assert.equal(await s.page.evaluate(() => window.localStorage === null && window.sessionStorage === null), true, 'aucun stockage');
+  assert.equal(await s.page.getAttribute('html', 'dir'), 'rtl');
+  assert.ok(await s.page.isVisible('#au-lien'), 'l’offre partagée est dite, même sans stockage');
+  const fc = await s.cible(), fb = await s.secours();
+  assert.equal(fc.searchParams.get('r'), 'offre/' + OFFRE_PARTAGEE, 'Chrome reçoit l’offre partagée');
+  assert.equal(fc.searchParams.has('ici'), false);
+  assert.equal(fb.searchParams.get('ici'), '1');
+  await s.toucherChrome();
+  // Pas de Chrome : la vue web ouvre l'adresse de secours dans le même onglet, autant de fois qu'on touche
+  for (let i = 0; i < 2; i++) {
+    await s.page.goto(fb.href); await s.page.waitForSelector('#entree .entree-form');
+    await s.page.waitForSelector('#au-appli-mot');
+    assert.equal(await s.page.locator('#au-appli').count(), 0, 'la carte ne tourne pas en boucle');
+    assert.match(await s.page.locator('#au-appli-mot').innerText(), /لا يُفتح شيء؟/);
+    assert.ok(await s.page.isVisible('#au-lien'), 'l’offre partagée toujours là');
+    assert.equal(await s.page.evaluate(() => location.hash), '#offre/' + OFFRE_PARTAGEE);
+    assert.equal(await s.page.evaluate(() => new URLSearchParams(location.search).has('ici')), false, 'la marque lue puis retirée');
+  }
+  assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])]), []);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 // Console d'administration : les rubriques en colonne (ordinateur) ou en puces (téléphone), « À traiter », Membres, Contenus
 // ---------------------------------------------------------------------------
 const RUBRIQUES_ADMIN = ['admin', 'admin/traiter', 'admin/animer', 'admin/agenda', 'admin/inviter', 'admin/membres', 'admin/contenus', 'admin/moderation', 'admin/liste',
@@ -7039,6 +8153,178 @@ test('administration · À traiter : une demande sans proposition propose trois 
   await s.ctx.close();
 });
 
+// L'application peut ignorer le lien intent:// : rien ne s'ouvre, la page reste là, visible. Un moment après, la carte le dit
+// à la place de sa phrase (le lecteur d'écran aussi), sans changer de hauteur : rien ne glisse sous le doigt qui visait
+// « Je suis à l'école ». Le lien discret (après « Continuer ici ») fait de même, dans la hauteur qu'il a déjà
+const RIEN_FR = /^Rien ne s’ouvre\s\? Touche ⋮ en haut à droite, puis «\sOuvrir dans Chrome\s» ou «\sOuvrir dans le navigateur\s»\.$/;
+const RIEN_AR = /^لا يُفتح شيء؟ المس ⋮ في أعلى الشاشة، ثم «فتح في Chrome» أو «فتح في المتصفح»\.$/;
+test('page d’entrée dans Instagram : l’application ignore « Ouvrir dans Chrome » ; un moment après, la carte dit quoi faire à la place de sa phrase, sans rien déplacer (en arabe, de nuit aussi) ; rien quand Chrome s’est ouvert', async () => {
+  const dit = p => p.evaluate(() => document.getElementById('au-appli-dit')?.textContent ?? null);
+  const boite = (p, sel) => p.locator(sel).boundingBox();
+  const sousLeDoigt = (p, b) => p.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest('#au-je-etudiant'), [b.x + b.width / 2, b.y + b.height / 2]);
+  for (const [langue, theme, largeur, hauteur] of [['fr', 'light', 360, 800], ['ar', 'dark', 360, 740], ['fr', 'light', 390, 844]]) {
+    const cas = `${langue} ${theme} ${largeur} × ${hauteur}`;
+    const s = await porte({ ua: INSTAGRAM, langue, theme, largeur, hauteur });
+    await s.page.waitForSelector('#au-appli');
+    await s.page.evaluate(() => document.fonts.ready);
+    const avant = await dit(s.page);
+    assert.match(avant, langue === 'ar' ? /^أنت في متصفح Instagram\./ : /^Tu es dans le navigateur d’Instagram\./, cas);
+    const [role, carte] = await Promise.all([boite(s.page, '#au-je-etudiant'), boite(s.page, '#au-appli')]);
+    await s.toucherChrome();
+    assert.equal(await dit(s.page), avant, `${cas} : pas tout de suite, Chrome s’ouvre peut-être`);
+    await s.page.waitForFunction(a => document.getElementById('au-appli-dit')?.textContent !== a, avant, { timeout: 5000 });
+    assert.match(await s.page.locator('#au-appli-dit').innerText(), langue === 'ar' ? RIEN_AR : RIEN_FR, cas);
+    assert.equal(await s.page.getAttribute('#au-appli-dit', 'aria-live'), 'polite', 'le lecteur d’écran le dit aussi');
+    const [role2, carte2] = await Promise.all([boite(s.page, '#au-je-etudiant'), boite(s.page, '#au-appli')]);
+    assert.ok(Math.abs(role2.y - role.y) <= 1, `${cas} : « Je suis à l’école » est passé de ${role.y} à ${role2.y}`);
+    assert.ok(Math.abs(carte2.height - carte.height) <= 1, `${cas} : la carte est passée de ${carte.height} à ${carte2.height} px`);
+    assert.ok(await sousLeDoigt(s.page, role), `${cas} : le doigt tombe toujours sur « Je suis à l’école »`);
+    const [b, r] = await Promise.all(['#au-appli-chrome', '#au-appli-dit'].map(x => boite(s.page, x)));
+    assert.ok(r.y + r.height <= b.y + 1, `${cas} : au-dessus du bouton, à la place de la phrase`);
+    assert.equal(await s.page.locator('#au-appli #au-appli-chrome').count(), 1, 'le bouton reste, pour réessayer');
+    assert.equal(await s.debordement(), 0);
+    await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* sans fin */ } }));
+    await s.page.addScriptTag({ content: AXE });
+    assert.deepEqual(await s.page.evaluate(async () => (await axe.run('#au-appli', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => x.id)), [], cas);
+    if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])]), []);
+    assert.deepEqual(s.erreurs, [], cas);
+    await s.ctx.close();
+  }
+  // Chrome s'est ouvert par-dessus (la page cachée) : rien à dire au retour
+  const c = await porte({ ua: INSTAGRAM });
+  await c.page.waitForSelector('#au-appli');
+  const avant = await dit(c.page);
+  await c.toucherChrome();
+  await c.page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange', { bubbles: true })); });
+  await c.page.waitForTimeout(2200);
+  assert.equal(await dit(c.page), avant);
+  assert.deepEqual(c.erreurs, []);
+  await c.ctx.close();
+  // Le lien discret (après « Continuer ici ») : le même mot à sa place, le focus le suit, le formulaire ne bouge pas
+  for (const [langue, largeur, hauteur] of [['ar', 360], ['fr', 360], ['fr', 320, 860], ['fr', 412]]) {
+    const cas = `lien discret ${langue} ${largeur}`;
+    const m = await porte({ ua: INSTAGRAM, langue, largeur, hauteur });
+    await m.page.waitForSelector('#au-appli');
+    await m.page.click('#au-appli-ici');
+    await m.page.waitForSelector('#au-appli-mot #au-appli-chrome');
+    await m.page.evaluate(() => document.fonts.ready);
+    const role = await boite(m.page, '#au-je-etudiant');
+    await m.toucherChrome();
+    await m.page.waitForFunction(() => document.activeElement?.id === 'au-appli-mot' && /^(لا يُفتح شيء؟|Rien ne s’ouvre)/.test(document.getElementById('au-appli-mot').textContent), null, { timeout: 5000 });
+    assert.match((await m.page.locator('#au-appli-mot').innerText()).trim(), langue === 'ar' ? RIEN_AR : RIEN_FR, cas);
+    const role2 = await boite(m.page, '#au-je-etudiant');
+    assert.ok(Math.abs(role2.y - role.y) <= 1, `${cas} : « Je suis à l’école » est passé de ${role.y} à ${role2.y}`);
+    assert.ok(await sousLeDoigt(m.page, role), `${cas} : le doigt tombe toujours sur « Je suis à l’école »`);
+    assert.equal(await m.debordement(), 0);
+    assert.deepEqual(m.erreurs, [], cas);
+    await m.ctx.close();
+  }
+});
+
+test('page d’entrée : Facebook sur iPhone (un paragraphe : Safari, son geste et « Continuer ici », pas de lien magique), une vue web Android, l’iPad ; rien dans Chrome ni Samsung Internet', async () => {
+  const f = await porte({ ua: FACEBOOK_IOS, largeur: 390, hauteur: 844, tactile: 'iPhone' });
+  await f.page.waitForSelector('#au-appli[data-systeme="ios"]');
+  const t = await f.page.locator('#au-appli').innerText();
+  // Un seul paragraphe : la raison de passer dans Safari, le geste des feuilles de l'application, « Continuer ici » au bout ;
+  // plus de ligne sur l'icône de l'écran d'accueil (les feuilles la redisent quand il s'agit d'activer les notifications)
+  assert.match(t, /^Ouvre le Réseau dans Safari\s: tu y resteras connecté\. Touche ••• \(en haut ou en bas de l’écran\), puis «\sOuvrir dans Safari\s» ou «\sOuvrir dans le navigateur\s»\.\s+Continuer ici$/, 'le geste des feuilles de l’application');
+  assert.equal(await f.page.locator('#au-appli p').count(), 1, 'un seul paragraphe');
+  assert.equal(await f.page.locator('#au-appli p #au-appli-ici').count(), 1, '« Continuer ici » dans la phrase');
+  assert.doesNotMatch(t, /icône/);
+  assert.equal(await f.page.locator('#au-appli-chrome').count(), 0, 'pas de lien vers Chrome sur iPhone');
+  assert.ok((await f.page.locator('#au-appli-ici').boundingBox()).height >= 44);
+  await f.page.click('#au-appli-ici');
+  await f.page.waitForSelector('#au-appli-mot');
+  assert.match(await f.page.locator('#au-appli-mot').innerText(), /^Touche ••• \(en haut ou en bas de l’écran\), puis «\sOuvrir dans Safari\s» ou «\sOuvrir dans le navigateur\s»\.$/);
+  await f.page.waitForFunction(() => document.activeElement?.id === 'au-appli-mot', null, { timeout: 5000 }).catch(() => {});
+  assert.equal(await f.page.evaluate(() => document.activeElement?.id), 'au-appli-mot');
+  assert.deepEqual(f.erreurs, []);
+  await f.ctx.close();
+  // Une vue web Android quelconque : « le navigateur d'une application »
+  const w = await porte({ ua: VUE_WEB });
+  await w.page.waitForSelector('#au-appli[data-systeme="android"]');
+  assert.match(await w.page.locator('#au-appli').innerText(), /^Tu es dans le navigateur d’une application\. Ouvre le Réseau dans Chrome\s: tu y resteras connecté et tes notifications arriveront sur ce téléphone\./);
+  assert.equal(await w.debordement(), 0);
+  await w.ctx.close();
+  // L'iPad : la même carte, sans « iPhone »
+  const i = await porte({ ua: INSTAGRAM_IPAD, largeur: 820, hauteur: 1180, tactile: 'iPad' });
+  await i.page.waitForSelector('#au-appli[data-systeme="ios"]');
+  const ti = await i.page.locator('#au-appli').innerText();
+  assert.match(ti, /^Ouvre le Réseau dans Safari\s: tu y resteras connecté\. Touche ••• \(en haut ou en bas de l’écran\)/);
+  assert.doesNotMatch(ti, /iPhone|icône/);
+  await i.ctx.close();
+  // De vrais navigateurs : ni carte ni lien
+  for (const ua of [TELEPHONE, SAMSUNG, SAFARI_IPHONE]) {
+    const n = await porte({ ua });
+    await n.appareilLu();
+    assert.equal(await n.page.locator('#au-appli, #au-appli-mot').count(), 0, ua);
+    assert.ok(await n.page.isVisible('.entree-sous'), 'la phrase d’explication garde sa place');
+    assert.deepEqual(n.erreurs, []);
+    await n.ctx.close();
+  }
+});
+
+// Le premier écran dans le navigateur d'une application : « Recevoir mon code » y reste. La carte ne vient que si le bouton
+// tient encore avec elle ; sinon sa ligne discrète au-dessus du formulaire, et sur un petit écran (moins de 680 px de haut : la
+// fenêtre d'Instagram ou de Facebook sur la plupart des téléphones, 375 × 553 sur un iPhone SE, 390 × 664 sur un iPhone 13)
+// sous le titre, à la place des chiffres. Sur iPhone, la carte n'a pas de bouton à elle : une phrase, le geste et « Continuer
+// ici » dans le même paragraphe
+const FACEBOOK_ANDROID = 'Mozilla/5.0 (Linux; Android 14; SM-A546B Build/UP1A.231005.007; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/141.0.7390.122 Mobile Safari/537.36 [FB_IAB/FB4A;FBAV/533.0.0.48.74;IABMV/1;]';
+test('page d’entrée dans le navigateur d’une application : « Recevoir mon code » au premier écran ; la carte seulement si elle l’y laisse, sinon sa ligne discrète, sous le titre sur un petit écran (Android 360 × 640 et 390 × 664, iPhone SE 375 × 553, en arabe aussi)', async () => {
+  const BOUTON = '.entree-form button.btn.primary.wide', ACCORD = '.entree-form label.check:has(#au-ok)';
+  const noms = new Map([[INSTAGRAM, 'Instagram'], [FACEBOOK_ANDROID, 'Facebook'], [FACEBOOK_IOS, 'Facebook iPhone'], [INSTAGRAM_IOS, 'Instagram iPhone']]);
+  for (const [ua, largeur, hauteur, langue, place, membre] of [
+    [INSTAGRAM, 360, 640, 'fr', 'haut'], [INSTAGRAM, 360, 640, 'ar', 'haut'], [FACEBOOK_ANDROID, 390, 664, 'fr', 'haut'], [INSTAGRAM, 390, 664, 'ar', 'haut'],
+    [FACEBOOK_IOS, 375, 553, 'fr', 'haut'], [INSTAGRAM_IOS, 375, 553, 'ar', 'haut'], [INSTAGRAM_IOS, 390, 664, 'fr', 'haut'], [FACEBOOK_IOS, 375, 553, 'fr', 'haut', true],
+    [INSTAGRAM, 360, 700, 'fr', 'ligne'], [FACEBOOK_ANDROID, 320, 740, 'fr', 'ligne'],
+    [INSTAGRAM, 360, 800, 'fr', 'carte'], [INSTAGRAM, 360, 740, 'ar', 'carte'], [INSTAGRAM, 412, 780, 'fr', 'carte'], [FACEBOOK_IOS, 393, 690, 'fr', 'carte'], [INSTAGRAM_IOS, 375, 667, 'ar', 'carte']]) {
+    const ios = ua === FACEBOOK_IOS || ua === INSTAGRAM_IOS;
+    const cas = `${noms.get(ua)} ${largeur} × ${hauteur} ${langue}${membre ? ' connexion' : ''}`;
+    const s = await porte({ ua, largeur, hauteur, langue, tactile: ios ? 'iPhone' : null, avant: membre ? ctx => ctx.addInitScript(() => localStorage.setItem('ensam-deja-membre', '1')) : null });
+    await s.page.waitForSelector('#au-appli, #au-appli-mot');
+    await s.page.evaluate(() => document.fonts.ready);
+    await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* sans fin */ } }));
+    // Ce qu'il faut pour s'inscrire (ou se connecter), au premier écran, avec la carte ou sa ligne
+    for (const sel of ['#au-appli, #au-appli-mot', ...(membre ? [] : ['#au-je-etudiant']), '#au-email', ...(membre ? [] : [ACCORD]), BOUTON]) {
+      const b = await s.page.locator(sel).boundingBox();
+      assert.ok(b.y >= 0 && b.y + b.height <= hauteur, `${cas} : ${sel} de ${Math.round(b.y)} à ${Math.round(b.y + b.height)}, hors du premier écran`);
+    }
+    const [carte, mot, sousLeTitre, chiffres] = await Promise.all(['#au-appli', '#au-appli-mot', '.entree-promesse #au-appli-mot', '.auth-chiffres'].map(x => s.page.locator(x).count()));
+    assert.deepEqual({ carte, mot, sousLeTitre, chiffres }, { carte: +(place === 'carte'), mot: +(place !== 'carte'), sousLeTitre: +(place === 'haut'), chiffres: +(place !== 'haut') }, cas);
+    // La carte ou sa ligne dit quoi faire : le lien vers Chrome (une cible de 44 px) sur Android, le geste de Safari sur iPhone
+    if (place === 'carte') {
+      if (ios) {
+        assert.match(await s.page.locator('#au-appli').innerText(), langue === 'ar' ? /المس •••/ : /Touche •••/, cas);
+        assert.ok((await s.page.locator('#au-appli-ici').boundingBox()).height >= 44, `${cas} : « Continuer ici » de 44 px`);
+      }
+    } else {
+      const t = (await s.page.locator('#au-appli-mot').innerText()).trim();
+      if (ios) assert.match(t, langue === 'ar' ? /^المس ••• / : /^Touche ••• /, cas);
+      else {
+        assert.equal(t, langue === 'ar' ? 'افتح الشبكة في Chrome' : 'Ouvrir le Réseau dans Chrome', cas);
+        assert.ok((await s.page.locator('#au-appli-mot #au-appli-chrome').boundingBox()).height >= 44, `${cas} : le lien de 44 px`);
+      }
+    }
+    if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])]), [], cas);
+    assert.equal(await s.debordement(), 0, cas);
+    assert.deepEqual(s.erreurs, [], cas);
+    await s.ctx.close();
+  }
+  // Sous le titre aussi, l'application qui ignore le lien : « Rien ne s'ouvre ? » à sa place, le focus le suit, rien ne bouge
+  const s = await porte({ ua: INSTAGRAM, largeur: 360, hauteur: 640 });
+  await s.page.waitForSelector('.entree-promesse #au-appli-chrome');
+  await s.page.evaluate(() => document.fonts.ready);
+  const role = await s.page.locator('#au-je-etudiant').boundingBox();
+  await s.toucherChrome();
+  await s.page.waitForFunction(() => document.activeElement?.id === 'au-appli-mot' && /^Rien ne s’ouvre/.test(document.getElementById('au-appli-mot').textContent), null, { timeout: 5000 });
+  assert.match((await s.page.locator('#au-appli-mot').innerText()).trim(), RIEN_FR);
+  const role2 = await s.page.locator('#au-je-etudiant').boundingBox();
+  assert.ok(Math.abs(role2.y - role.y) <= 1, `« Je suis à l’école » est passé de ${role.y} à ${role2.y}`);
+  assert.ok(role2.y + role2.height <= 640);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('administration · Membres (ordinateur) : filtrer les lauréats, trier par promo, cocher deux membres et exporter leur fichier CSV', async () => {
   const s = await ouvrir({ largeur: 1280 });
   await s.comme('Admin'); await s.aller('admin/membres');
@@ -7132,6 +8418,43 @@ test('administration · Contenus : masquer une offre puis la rouvrir sans quitte
   await s.ctx.close();
 });
 
+// appareil.js arrive après le premier affichage (3G : une demi-seconde, 3G lente : une seconde et demie) : la place de la
+// carte (ou de sa ligne discrète, au-dessus du formulaire ou sous le titre) est gardée dès le premier affichage, rien ne glisse
+// sous le doigt qui visait « Je suis à l'école »
+test('page d’entrée dans le navigateur d’une application, appareil.js en retard : la place de la carte est gardée, le formulaire ne bouge pas quand elle arrive', async () => {
+  for (const [ua, largeur, hauteur, langue, tactile, vue, place = vue ? 'ligne' : 'carte'] of [[INSTAGRAM, 360, 800, 'fr'], [INSTAGRAM, 360, 740, 'fr', null, null, 'ligne'], [INSTAGRAM, 390, 844, 'ar'],
+    [INSTAGRAM, 320, 640, 'fr', null, null, 'haut'], [INSTAGRAM, 360, 640, 'ar', null, null, 'haut'], [INSTAGRAM, 412, 915, 'fr'], [VUE_WEB, 360, 800, 'fr'],
+    [FACEBOOK_IOS, 390, 844, 'fr', 'iPhone'], [FACEBOOK_IOS, 375, 667, 'ar', 'iPhone'], [FACEBOOK_IOS, 375, 553, 'fr', 'iPhone', null, 'haut'], [INSTAGRAM, 360, 740, 'fr', null, 'chrome'],
+    [INSTAGRAM, 360, 640, 'fr', null, 'chrome', 'haut'], [INSTAGRAM, 390, 844, 'fr', null, 'vue'], [INSTAGRAM, 360, 740, 'fr', null, 'vue'], [FACEBOOK_IOS, 360, 740, 'fr', 'iPhone', 'vue'], [FACEBOOK_IOS, 390, 844, 'fr', 'iPhone', 'vue']]) {
+    const cas = `${ua === INSTAGRAM ? 'Instagram' : ua === VUE_WEB ? 'vue web' : 'Facebook iPhone'} ${largeur} × ${hauteur} ${langue}${vue ? ' ' + vue : ''}`;
+    let lacher; const tenu = new Promise(ok => { lacher = ok; });
+    const s = await porte({ ua, largeur, hauteur, langue, tactile, avant: async ctx => {
+      if (vue) await ctx.addInitScript(v => sessionStorage.setItem('ensam-entree-appli', v), vue);
+      await ctx.route(/\/appareil\.js$/, async r => { await tenu; await r.continue(); });
+    } });
+    // Sous le titre, la place de la ligne prend celle des chiffres
+    await s.page.waitForFunction(haut => (haut ? !!document.querySelector('.entree-promesse .entree-appli-place') : document.querySelector('.auth-chiffres')?.children.length === 3), place === 'haut');
+    await s.page.evaluate(() => document.fonts.ready);
+    const avant = await s.page.locator('#au-je-etudiant').boundingBox();
+    assert.equal(await s.page.locator('#au-appli, #au-appli-mot').count(), 0, `${cas} : pas encore de carte`);
+    const sous = await s.page.isVisible('.entree-sous');
+    lacher();
+    const sel = { carte: '#au-appli', ligne: '.entree-form #au-appli-mot', haut: '.entree-promesse #au-appli-mot' }[place];
+    await s.page.waitForSelector(sel);
+    await s.page.evaluate(() => document.fonts.ready);
+    const apres = await s.page.locator('#au-je-etudiant').boundingBox();
+    assert.ok(Math.abs(apres.y - avant.y) < 1, `${cas} : « Je suis à l’école » est passé de ${avant.y} à ${apres.y}`);
+    if (!vue) assert.equal(sous, false, `${cas} : la phrase d’explication, que la carte remplace sur téléphone, n’était pas là non plus avant elle`);
+    assert.ok(await s.page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest('#au-je-etudiant'), [avant.x + avant.width / 2, avant.y + avant.height / 2]), `${cas} : le doigt tombe toujours sur « Je suis à l’école »`);
+    // La carte remplit sa place : pas de trou entre elle et le formulaire
+    const carte = await s.page.locator(sel).boundingBox(), role = await s.page.locator('.entree-form fieldset.je-suis').boundingBox();
+    assert.ok(role.y - (carte.y + carte.height) < 20, `${cas} : ${Math.round(role.y - carte.y - carte.height)} px entre la carte et le choix du rôle`);
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
 test('administration · Contenus : retirer une demande se confirme (un match en cours s’arrête, et c’est dit) et ne se rouvre pas d’ici ; « En pause » : sans relance depuis 60 jours', async () => {
   for (const langue of ['fr', 'ar']) {
     const s = await ouvrir({ largeur: 1280, langue });
@@ -7169,6 +8492,554 @@ test('administration · Contenus : retirer une demande se confirme (un match en 
     assert.deepEqual(s.erreurs, []);
     await s.ctx.close();
   }
+});
+
+// appareil.js ne se charge pas (le réseau lâche juste après la page) : la place gardée pour la carte ne reste pas vide toute la
+// visite, le formulaire la reprend et « Recevoir mon code » revient au premier écran, comme dans Chrome sans carte
+test('page d’entrée dans le navigateur d’une application, appareil.js en échec : sa place est rendue au formulaire, « Recevoir mon code » au premier écran', async () => {
+  for (const [ua, largeur, hauteur, langue, tactile] of [[INSTAGRAM, 360, 640, 'fr'], [INSTAGRAM, 360, 640, 'ar'], [FACEBOOK_IOS, 375, 667, 'fr', 'iPhone'], [INSTAGRAM, 390, 844, 'ar']]) {
+    const cas = `${ua === INSTAGRAM ? 'Instagram' : 'Facebook iPhone'} ${largeur} × ${hauteur} ${langue}`;
+    const s = await porte({ ua, largeur, hauteur, langue, tactile, avant: ctx => ctx.route(/\/appareil\.js$/, r => r.abort('internetdisconnected')) });
+    await s.page.waitForSelector('.entree-appli-place', { state: 'detached', timeout: 5000 }).catch(() => {});
+    assert.equal(await s.page.locator('.entree-appli-place, #au-appli, #au-appli-mot').count(), 0, `${cas} : plus de place vide`);
+    await s.page.evaluate(() => document.fonts.ready);
+    const b = await s.page.locator('.entree-form button.btn.primary.wide').boundingBox();
+    assert.ok(b.y + b.height <= hauteur, `${cas} : « Recevoir mon code » de ${Math.round(b.y)} à ${Math.round(b.y + b.height)}, hors du premier écran`);
+    assert.equal(await s.page.locator('.auth-chiffres').count(), 1, `${cas} : les chiffres à leur place`);
+    assert.equal(await s.debordement(), 0, cas);
+    assert.deepEqual(s.erreurs, [], cas);
+    await s.ctx.close();
+  }
+});
+
+test('carte de la page d’entrée en arabe, de nuit, à 360 px : traduite, de droite à gauche, sans débordement ; cibles de 44 px, focus visible, contrastes', async () => {
+  for (const [langue, theme] of [['ar', 'dark'], ['fr', 'light']]) {
+    const s = await porte({ ua: INSTAGRAM, langue, theme });
+    await s.page.waitForSelector('#au-appli');
+    await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* sans fin */ } }));
+    if (langue === 'ar') {
+      assert.equal(await s.page.getAttribute('html', 'dir'), 'rtl');
+      assert.deepEqual(latinRestant(await s.page.locator('#au-appli').innerText(), ['Instagram', 'Chrome']), []);
+      assert.match(await s.page.locator('#au-appli').innerText(), /أنت في متصفح/);
+    }
+    assert.equal(await s.debordement(), 0);
+    for (const sel of ['#au-appli-chrome', '#au-appli-ici']) assert.ok((await s.page.locator(sel).boundingBox()).height >= 44, sel);
+    // Les deux gestes sur une ligne, sous la phrase ; le formulaire juste dessous
+    const [a, b] = await Promise.all(['#au-appli-chrome', '#au-appli-ici'].map(x => s.page.locator(x).boundingBox()));
+    assert.ok(Math.abs(a.y - b.y) < 2, 'sur la même ligne');
+    // Au clavier : chaque geste a son contour
+    for (let i = 0; i < 12 && await s.page.evaluate(() => document.activeElement?.id) !== 'au-appli-ici'; i++) await s.page.keyboard.press('Tab');
+    assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'au-appli-ici');
+    assert.notEqual(await s.page.$eval('#au-appli-ici', el => getComputedStyle(el).outlineStyle), 'none');
+    await s.page.keyboard.press('Shift+Tab');
+    assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'au-appli-chrome');
+    assert.notEqual(await s.page.$eval('#au-appli-chrome', el => getComputedStyle(el).outlineStyle), 'none');
+    await s.page.addScriptTag({ content: AXE });
+    assert.deepEqual(await s.page.evaluate(async () => (await axe.run('#au-appli', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => x.id)), [], `${langue} ${theme}`);
+    if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])]), []);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+// Le nom de l'application, Chrome, Safari et l'iPad dans une phrase : chacun dans son <span translate="no" dir="auto"> (nom
+// latin dans une phrase arabe ; la traduction automatique du navigateur n'y touche pas), plus d'isolant FSI…PDI autour. Dans la
+// carte de l'entrée et son mot discret, comme dans la feuille du navigateur d'une application (son titre et ses gestes aussi),
+// le bandeau de l'accueil, la pastille, Mon profil, et sur iPad le titre de la feuille d'ouverture.
+// apart : le texte de chaque span, dans l'ordre ; nus : un nom (ou un isolant) resté dans le texte, hors d'un tel span
+const LATINS = /\b(?:Instagram|Facebook|Messenger|LinkedIn|TikTok|Snapchat|Telegram|Chrome|Safari|iPad)\b/;
+const nomsLatinsDans = (page, sel) => page.evaluate(([sel, src]) => {
+  const re = new RegExp(src), seul = new RegExp(`^(?:${src})$`), apart = [], nus = [];
+  for (const racine of document.querySelectorAll(sel)) {
+    const w = document.createTreeWalker(racine, NodeFilter.SHOW_TEXT);
+    for (let x; (x = w.nextNode());) {
+      const s = x.parentElement.closest('[translate="no"]');
+      if (s && racine.contains(s)) (s.matches('span[dir="auto"]') && seul.test(s.textContent) ? apart : nus).push(s.textContent);
+      else if (re.test(x.data) || /[⁨⁩]/.test(x.data)) nus.push(x.data);
+    }
+  }
+  return { apart, nus };
+}, [sel, LATINS.source]);
+
+test('noms latins (l’application, Chrome, Safari, iPad) chacun dans un <span translate="no" dir="auto"> : carte de l’entrée et son mot discret, feuille du navigateur d’une application (titre et gestes), bandeau, pastille, Mon profil ; feuille d’ouverture sur iPad', async () => {
+  for (const [ua, langue, tactile, noms, mot] of [[INSTAGRAM, 'ar', null, ['Instagram', 'Chrome', 'Chrome'], ['Chrome']], [INSTAGRAM, 'fr', null, ['Instagram', 'Chrome', 'Chrome'], ['Chrome']],
+    [FACEBOOK_IOS, 'ar', 'iPhone', ['Safari', 'Safari'], ['Safari']], [FACEBOOK_IOS, 'fr', 'iPhone', ['Safari', 'Safari'], ['Safari']]]) {
+    const cas = `${ua === INSTAGRAM ? 'Instagram' : 'Facebook iPhone'} ${langue}`;
+    const s = await porte({ ua, langue, tactile, largeur: 390, hauteur: 844 });
+    await s.page.waitForSelector('#au-appli');
+    assert.deepEqual(await nomsLatinsDans(s.page, '#au-appli'), { apart: noms, nus: [] }, `${cas} : la carte`);
+    if (langue === 'ar') assert.deepEqual(latinRestant(await s.page.locator('#au-appli').innerText(), ['Instagram', 'Chrome', 'Safari']), [], cas);
+    // Le bouton (en flex) garde sa phrase d'un seul morceau, avec son espace avant le nom
+    if (ua === INSTAGRAM) assert.equal((await s.page.locator('#au-appli-chrome').innerText()).trim(), langue === 'ar' ? 'فتح في Chrome' : 'Ouvrir dans Chrome', cas);
+    // « Continuer ici » : le mot discret (Android : le lien vers Chrome ; iPhone : le geste)
+    await s.page.click('#au-appli-ici'); await s.page.waitForSelector('#au-appli-mot');
+    assert.deepEqual(await nomsLatinsDans(s.page, '#au-appli-mot'), { apart: mot, nus: [] }, `${cas} : le mot discret`);
+    if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])]), [], cas);
+    assert.equal(await s.debordement(), 0, cas);
+    assert.deepEqual(s.erreurs, [], cas);
+    await s.ctx.close();
+  }
+  // Membre dans Instagram, en arabe : la feuille (son titre, sa phrase, Chrome dans les deux autres, son bouton), le bandeau (son
+  // titre aussi), la pastille, Mon profil. Le nom de la feuille et du bandeau pour les lecteurs d'écran : la phrase entière
+  const a = await ouvrir({ largeur: 360, ua: INSTAGRAM, langue: 'ar' });
+  await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  assert.deepEqual(await nomsLatinsDans(a.page, '.modal.appli .modal-head h2'), { apart: ['Chrome'], nus: [] }, 'le titre de la feuille');
+  assert.equal(await a.page.getAttribute('.modal.appli', 'aria-label'), 'افتح شبكة ENSAM في Chrome');
+  assert.deepEqual(await nomsLatinsDans(a.page, '.modal.appli .modal-body, #appli-chrome'), { apart: ['Instagram', 'Chrome', 'Chrome', 'Chrome'], nus: [] }, 'la feuille');
+  assert.equal((await a.page.locator('#appli-chrome').innerText()).trim(), 'فتح في Chrome');
+  assert.deepEqual(latinRestant(await a.page.locator('.modal.appli').innerText(), ['ENSAM', 'Instagram', 'Chrome']), []);
+  await a.page.click('#appli-tard');
+  await a.page.waitForSelector('.push-bandeau[data-etat="appli"]');
+  assert.deepEqual(await nomsLatinsDans(a.page, '.push-bandeau .push-b-txt > strong, .push-bandeau .push-b-txt > span, #push-b-oui'), { apart: ['Chrome', 'Instagram', 'Chrome'], nus: [] }, 'le bandeau');
+  assert.equal(await a.page.getAttribute('.push-bandeau', 'aria-label'), 'افتح شبكة ENSAM في Chrome');
+  await a.page.waitForSelector('.pastille[data-sorte="appli"]');
+  assert.deepEqual(await nomsLatinsDans(a.page, '.pastille'), { apart: ['Chrome'], nus: [] }, 'la pastille');
+  assert.equal(await a.page.getAttribute('.pastille', 'aria-label'), 'فتح في Chrome');
+  // Le nom garde la taille, la graisse et la couleur de son titre (la petite ligne grise de la pastille est un autre span)
+  const style = sel => a.page.$eval(sel, e => ['fontSize', 'fontWeight', 'color'].map(k => [getComputedStyle(e)[k], getComputedStyle(e.parentElement)[k]]));
+  for (const sel of ['.pastille-txt strong span[dir="auto"]', '.push-b-txt strong span[dir="auto"]']) for (const [nom, titre] of await style(sel)) assert.equal(nom, titre, sel);
+  await a.aller('profil/notifications'); await a.page.waitForSelector('#md-push-chrome');
+  assert.deepEqual(await nomsLatinsDans(a.page, '.push-etat[data-etat="appli"]'), { apart: ['Instagram', 'Chrome', 'Chrome'], nus: [] }, 'Mon profil');
+  assert.deepEqual((await a.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), []);
+  assert.equal(await a.debordement(), 0);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+  // iPhone, dans Instagram, en arabe : Safari dans le titre de la feuille et dans ses gestes
+  const i = await ouvrir({ largeur: 390, ua: INSTAGRAM_IOS, langue: 'ar' });
+  await i.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  assert.deepEqual(await nomsLatinsDans(i.page, '.modal.appli .modal-head h2, .modal.appli .ios-steps'), { apart: ['Safari', 'Safari', 'Safari'], nus: [] }, 'iPhone : le titre et les gestes');
+  assert.equal(await i.page.getAttribute('.modal.appli', 'aria-label'), 'افتح شبكة ENSAM في Safari');
+  assert.deepEqual(latinRestant(await i.page.locator('.modal.appli').innerText(), ['ENSAM', 'Instagram', 'Safari']), []);
+  assert.deepEqual((await i.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), []);
+  assert.deepEqual(i.erreurs, []);
+  await i.ctx.close();
+  // iPad, application installée, en arabe : le titre de la feuille d'ouverture et Mon profil
+  const p = await prevenirSur(null, { ua: SAFARI_IPADOS, langue: 'ar' });
+  await ecranTactile(p.ctx);
+  await p.page.setViewportSize({ width: 820, height: 1180 });
+  await p.page.evaluate(() => localStorage.setItem('ensam-prevenir-demo', 'off')); await recharger(p);
+  await attendreOuverture(p);
+  assert.deepEqual(await nomsLatinsDans(p.page, ouverture + ' .modal-head h2'), { apart: ['iPad'], nus: [] }, 'iPad : le titre de la feuille d’ouverture');
+  assert.equal(await p.page.getAttribute(ouverture, 'aria-label'), 'الأهم يصلك على iPad الخاص بك');
+  await p.page.click('#ouv-tard'); await p.page.waitForTimeout(300);
+  await p.aller('profil/notifications');
+  await p.page.click('#md-push-oui'); await p.page.waitForSelector('#md-push-compte');
+  assert.deepEqual(await nomsLatinsDans(p.page, '#md-push-compte'), { apart: ['iPad'], nus: [] }, 'iPad : Mon profil');
+  assert.deepEqual(p.erreurs, []);
+  await p.ctx.close();
+});
+
+test('« Me prévenir » après une offre publiée, « Candidatures » décochée : « Te prévenir des étudiants intéressés ? » (Match reste coché) ; les deux décochées, rien n’est promis', async () => {
+  const s = await prevenirSur('off');
+  const publier = async titre => {
+    await s.aller('offres'); await s.page.click('.page-head #of-publier'); await s.page.waitForSelector('#of-titre');
+    await s.page.fill('#of-titre', titre); await s.page.fill('#of-desc', 'Réduire les temps de changement de série sur la ligne de presses.');
+    if (!(await s.page.inputValue('#of-ent'))) await s.page.fill('#of-ent', 'Renault Group Maroc');
+    await s.page.click('.modal-foot #of-publier'); await s.page.waitForTimeout(700);
+  };
+  await s.comme('Youssef'); await ouvertureRangee(s);
+  await s.aller('profil/notifications'); await s.page.click('#np-candidatures'); await s.page.waitForTimeout(250);
+  assert.equal(await s.page.isChecked('#np-match'), true);
+  await publier('Stage méthodes emboutissage');
+  await s.page.waitForSelector('.modal.prevenir');
+  assert.equal(await s.page.locator('.prevenir .modal-head h2').innerText(), 'Te prévenir des étudiants intéressés ?');
+  const t = await s.page.locator('.modal.prevenir').innerText();
+  assert.match(t, /Dès qu’un étudiant s’intéresse à ton offre, une notification arrive sur cet appareil\./);
+  assert.doesNotMatch(t, /postule|candidature/i, 'rien n’est promis pour les candidatures');
+  assert.equal(await s.debordement(), 0);
+  await s.page.click('#pv-tard'); await s.page.waitForTimeout(300);
+  // Match décoché aussi : rien n'arrivera pour cette offre, la feuille ne vient pas (le petit mot reste)
+  await s.aller('profil/notifications'); await s.page.click('#np-match'); await s.page.waitForTimeout(250);
+  await s.changerMemo('({ ...m, at: m.at - 4 * 864e5 })');
+  await publier('Stage qualité fournisseurs');
+  assert.equal(await s.page.locator('.modal.prevenir').count(), 0);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Offre publiée/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe : le titre et la phrase traduits
+  const a = await prevenirSur('off', { langue: 'ar' });
+  await a.comme('Youssef'); await ouvertureRangee(a);
+  await a.aller('profil/notifications'); await a.page.click('#np-candidatures'); await a.page.waitForTimeout(250);
+  await a.aller('offres'); await a.page.click('.page-head #of-publier'); await a.page.waitForSelector('#of-titre');
+  await a.page.fill('#of-titre', 'Stage méthodes'); await a.page.fill('#of-desc', 'Réduire les temps de changement de série.');
+  if (!(await a.page.inputValue('#of-ent'))) await a.page.fill('#of-ent', 'Renault Group Maroc');
+  await a.page.click('.modal-foot #of-publier'); await a.page.waitForSelector('.modal.prevenir');
+  assert.equal(await a.page.locator('.prevenir .modal-head h2').innerText(), 'هل نُعلمك بالطلبة المهتمين؟');
+  assert.match(await a.page.locator('.modal.prevenir').innerText(), /بمجرد أن يهتمّ طالب بعرضك، يصلك إشعار على هذا الجهاز\./);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
+test('iPad (iPadOS, qui se présente comme un Mac) : les feuilles disent « iPad » et « Partager, en haut de l’écran » ; sur iPhone, rien ne change', async () => {
+  const s = await prevenirSur(null, { ua: SAFARI_IPADOS });
+  await ecranTactile(s.ctx);
+  await s.page.setViewportSize({ width: 820, height: 1180 });
+  await s.page.evaluate(() => localStorage.setItem('ensam-prevenir-demo', 'ios')); await recharger(s);
+  // La feuille d'ouverture
+  await s.page.waitForSelector('.modal.ouverture-ios', { timeout: 8000 });
+  const t = await s.page.locator('.modal.ouverture-ios').innerText();
+  assert.match(t, /Reçois l’essentiel sur ton iPad/);
+  assert.match(t, /Sur iPad, les notifications n’arrivent que dans l’application ajoutée à l’écran d’accueil/);
+  assert.match(t, /Dans Safari, touche Partager, en haut de l’écran\./);
+  assert.doesNotMatch(t, /iPhone|en bas de l’écran/);
+  await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(300);
+  // Le bandeau de l'accueil et Mon profil
+  await s.aller('accueil'); await s.page.waitForSelector('.push-bandeau[data-etat="ios"]');
+  assert.match(await s.page.locator('.push-bandeau').innerText(), /Sur iPad, c’est la seule façon de recevoir tes matchs et tes messages\./);
+  await s.aller('profil/notifications');
+  await s.page.waitForSelector('text=Sur iPad, installe d’abord l’application sur l’écran d’accueil.');
+  // « Me prévenir » (Amine, dont la feuille d'ouverture a déjà fait ses deux passages)
+  const amine = s.profils.find(x => x[1].includes('Amine'))[0];
+  await s.page.evaluate(id => localStorage.setItem('ensam-prevenir-' + id, JSON.stringify({ ios: { n: 2, at: Date.now() } })), amine);
+  await s.aller('accueil'); await s.comme('Amine'); await s.mentorat('Choisir mon stage de 3A');
+  await s.page.waitForSelector('.modal.prevenir');
+  const p = await s.page.locator('.modal.prevenir').innerText();
+  assert.match(p, /Sur iPad, les notifications arrivent une fois le Réseau ENSAM ajouté à l’écran d’accueil/);
+  assert.match(p, /Dans Safari, touche Partager, en haut de l’écran\./);
+  assert.doesNotMatch(p, /iPhone/);
+  await s.page.click('#pv-oui'); await s.page.waitForTimeout(300);
+  // La pastille (l'installation, seul chemin vers les notifications)
+  await s.page.evaluate(() => { localStorage.setItem('ensam-install-demo', 'ios'); localStorage.setItem('ensam-prevenir-demo', 'off'); });
+  await s.aller('accueil'); await recharger(s);
+  await s.page.waitForSelector('.pastille[data-sorte="installer"]', { timeout: 8000 });
+  assert.match(await s.page.locator('.pastille').innerText(), /Pour recevoir tes notifications sur iPad/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe : « iPad » aussi
+  const a = await prevenirSur(null, { ua: SAFARI_IPADOS, langue: 'ar' });
+  await ecranTactile(a.ctx);
+  await a.page.evaluate(() => localStorage.setItem('ensam-prevenir-demo', 'ios')); await recharger(a);
+  await a.page.waitForSelector('.modal.ouverture-ios', { timeout: 8000 });
+  const ta = await a.page.locator('.modal.ouverture-ios').innerText();
+  assert.match(ta, /على iPad/);
+  assert.match(ta, /في Safari، المس «مشاركة» في أعلى الشاشة\./);
+  assert.deepEqual(latinRestant(ta, ['ENSAM', 'iPad', 'Safari']), []);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+  // Un iPhone (écran tactile lui aussi) : toujours « iPhone », Partager en bas de l'écran
+  const i = await prevenirSur(null, { ua: SAFARI_IPHONE });
+  await ecranTactile(i.ctx, 'iPhone');
+  await i.page.evaluate(() => localStorage.setItem('ensam-prevenir-demo', 'ios')); await recharger(i);
+  await i.page.waitForSelector('.modal.ouverture-ios', { timeout: 8000 });
+  const tp = await i.page.locator('.modal.ouverture-ios').innerText();
+  assert.match(tp, /Reçois l’essentiel sur ton iPhone/);
+  assert.match(tp, /Dans Safari, touche Partager\s: en bas de l’écran, ou dans le menu •••\./);
+  assert.doesNotMatch(tp, /iPad/);
+  assert.deepEqual(i.erreurs, []);
+  await i.ctx.close();
+});
+
+// L'application installée sur l'iPad (démo 'off') : les notifications y sont possibles, chaque phrase nomme l'iPad
+test('iPad, application installée : la feuille d’ouverture, la ligne « Me prévenir » et Mon profil disent « iPad », jamais « téléphone » ; en arabe aussi', async () => {
+  const s = await prevenirSur(null, { ua: SAFARI_IPADOS });
+  await ecranTactile(s.ctx);
+  await s.page.setViewportSize({ width: 820, height: 1180 });
+  await s.page.evaluate(() => localStorage.setItem('ensam-prevenir-demo', 'off')); await recharger(s);
+  await attendreOuverture(s);
+  const t = await s.page.locator(ouverture).innerText();
+  assert.match(t, /^Reçois l’essentiel sur ton iPad/);
+  assert.doesNotMatch(t, /téléphone/);
+  await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
+  // La ligne « Me prévenir » dans Messages (Youssef, dont la feuille a été rangée hier)
+  await refuseeHier(s, 'Youssef');
+  await ecrireA(s, 'u-0006', 'Bonjour Rania, tu cherches toujours un stage pour cet été ?');
+  await s.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+  assert.equal(await s.page.locator('.pv-ligne .pv-l-txt').innerText(), 'Sa réponse peut arriver sur cet iPad, même application fermée · Activer');
+  // Mon profil, une fois activées
+  await s.aller('profil/notifications');
+  await s.page.click('#md-push-oui'); await s.page.waitForSelector('#md-push-compte');
+  assert.match(await s.page.locator('#md-push-compte').innerText(), /^Cet iPad reçoit les notifications de ce compte\./);
+  assert.equal((await s.page.locator('#md-push-h').innerText()).trim(), 'Notifications sur cet appareil', 'le titre de Mon profil ne parle pas de téléphone');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe
+  const a = await prevenirSur(null, { ua: SAFARI_IPADOS, langue: 'ar' });
+  await ecranTactile(a.ctx);
+  await a.page.setViewportSize({ width: 820, height: 1180 });
+  await a.page.evaluate(() => localStorage.setItem('ensam-prevenir-demo', 'off')); await recharger(a);
+  await attendreOuverture(a);
+  const ta = await a.page.locator(ouverture + ' h2').innerText();
+  assert.match(ta, /iPad/);
+  assert.doesNotMatch(await a.page.locator(ouverture).innerText(), /هاتف/);
+  await a.page.click('#ouv-tard'); await a.page.waitForTimeout(300);
+  await refuseeHier(a, 'Youssef');
+  await ecrireA(a, 'u-0006', 'مرحبا');
+  await a.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+  assert.match(await a.page.locator('.pv-ligne .pv-l-txt').innerText(), /iPad/);
+  // Nom latin dans une phrase arabe : l'iPad dans son <span translate="no" dir="auto">, comme dans la feuille et Mon profil
+  assert.deepEqual(await nomsLatinsDans(a.page, '.pv-ligne .pv-l-txt'), { apart: ['iPad'], nus: [] }, 'la ligne « Me prévenir »');
+  await a.aller('profil/notifications');
+  await a.page.click('#md-push-oui'); await a.page.waitForSelector('#md-push-compte');
+  const ca = await a.page.locator('#md-push-compte').innerText();
+  assert.match(ca, /iPad/);
+  assert.doesNotMatch(ca, /هاتف/);
+  assert.equal((await a.page.locator('#md-push-h').innerText()).trim(), 'الإشعارات على هذا الجهاز');
+  assert.deepEqual(latinRestant(ca + ' ' + ta, ['iPad']), []);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
+const CATEGORIES = ['messages', 'match', 'demandes', 'candidatures', 'mentorat', 'offres', 'reseau', 'rappels'];
+const TOUT_DECOCHE = Object.fromEntries(CATEGORIES.map(c => [c, false]));
+
+test('lien « Active tes notifications » quand tout est décoché dans Mon profil : la feuille le dit calmement et mène aux cases, sans rien recocher', async () => {
+  const s = await prevenirSur('off');
+  const id = await s.page.$eval('#persona', e => e.value);
+  await s.page.evaluate(([id, np]) => window.__demo.update('profiles', id, { notif_push: np }), [id, TOUT_DECOCHE]);
+  await s.page.goto(adresse + '?notifs=1#reseau');
+  await s.page.waitForSelector('.modal.choisir', { timeout: 8000 });
+  assert.equal(await s.page.locator('.modal.ouverture').count(), 0, 'pas la feuille qui promet des notifications');
+  const t = await s.page.locator('.modal.choisir').innerText();
+  assert.match(t, /Choisis ce que tu reçois/);
+  assert.match(t, /Tout est décoché dans «\sMon profil\s»\s: aucune notification ne t’arrive pour l’instant\./);
+  assert.match(t, /Active-les sur cet appareil, puis coche ce que tu veux recevoir\./);
+  assert.ok(await s.page.isVisible('.modal.choisir .modal-foot #choisir-tard'), '« Plus tard » toujours là');
+  for (const sel of ['#choisir-tard', '#choisir-profil', '#choisir-oui']) assert.ok((await s.page.locator(sel).boundingBox()).height >= 44, sel);
+  assert.equal(await s.debordement(), 0);
+  // « Activer » : cet appareil d'abord (en démo, un mot), puis les cases, toujours décochées
+  await s.page.click('#choisir-oui');
+  await s.page.waitForFunction(() => location.hash === '#profil/notifications');
+  await s.page.waitForSelector('#np-messages');
+  assert.equal(await s.page.locator('.modal.choisir').count(), 0);
+  assert.equal((await s.memo()).fait, 1);
+  assert.deepEqual(await s.page.$$eval('input[id^="np-"]', xs => xs.filter(x => x.checked).map(x => x.id)), [], 'rien recoché à sa place');
+  // « Choisir d'abord » : les cases tout de suite, sans rien demander au navigateur
+  await s.changerMemo('({})');
+  await s.page.goto(adresse + '?notifs=1#reseau');
+  await s.page.waitForSelector('.modal.choisir', { timeout: 8000 });
+  await s.page.click('#choisir-profil');
+  await s.page.waitForFunction(() => location.hash === '#profil/notifications');
+  assert.equal((await s.memo()).fait, undefined);
+  // « Plus tard » : la feuille se range, rien n'est demandé au navigateur, la page reste
+  await s.changerMemo('({})');
+  await s.page.goto(adresse + '?notifs=1#reseau');
+  await s.page.waitForSelector('.modal.choisir', { timeout: 8000 });
+  await s.page.click('#choisir-tard');
+  await s.page.waitForFunction(() => !document.querySelector('.modal.choisir'));
+  assert.equal(await s.page.evaluate(() => location.hash), '#reseau');
+  assert.equal((await s.memo()).fait, undefined);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe
+  const a = await prevenirSur('off', { langue: 'ar' });
+  const ida = await a.page.$eval('#persona', e => e.value);
+  await a.page.evaluate(([id, np]) => window.__demo.update('profiles', id, { notif_push: np }), [ida, TOUT_DECOCHE]);
+  await a.page.goto(adresse + '?notifs=1#reseau');
+  await a.page.waitForSelector('.modal.choisir', { timeout: 8000 });
+  assert.deepEqual(latinRestant(await a.page.locator('.modal.choisir').innerText(), []), []);
+  assert.equal(await a.debordement(), 0);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
+// Un membre connecté sur le site en ligne (faux Supabase local), sur un téléphone Android dont le navigateur répond comme le
+// test le veut : permission (la réponse de la fenêtre du navigateur), abonnement 'ok' ou 'impossible' (NotSupportedError :
+// téléphone sans services de notifications), deja (cet appareil est déjà abonné)
+const MEMBRE = { id: UID, full_name: 'Salma Test', role: 'etudiant', filiere: 'Génie Industriel', promo: new Date().getFullYear() + 2, created_at: '2025-10-01T10:00:00Z', verified: true,
+  consent_at: '2025-10-01T10:00:00Z', emails_hebdo: true, alertes_offres: true, alertes_email: true, emails_messages: true };
+// vueWeb : le navigateur d'une application (ua), où ni Notification ni PushManager n'existent
+async function membreEnLigne({ profil = MEMBRE, permission = 'granted', abonnement = 'ok', deja = false, memo = null, chemin = '', ua = TELEPHONE, vueWeb = false, hauteur = 740, tactile = null } = {}) {
+  const site = await enLigne(); site.vider(); site.inscrits.push({ ...profil });
+  const ctx = await navigateur.newContext({ viewport: { width: 360, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce', userAgent: ua });
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  if (vueWeb) await ctx.addInitScript(() => { delete window.Notification; delete window.PushManager; });
+  else await ctx.addInitScript(([permission, abonnement, deja]) => {
+    const sub = { endpoint: 'https://push.exemple.ma/abc', toJSON: () => ({ endpoint: 'https://push.exemple.ma/abc', keys: { p256dh: 'p256', auth: 'auth' } }), unsubscribe: async () => true };
+    const pm = { getSubscription: async () => (deja ? sub : null), subscribe: async () => { if (abonnement === 'ok') return sub; throw new DOMException('Registration failed - push service not available', 'NotSupportedError'); } };
+    const reg = { waiting: null, installing: null, addEventListener() {}, pushManager: pm };
+    // Ses messages : window.__pushRecu() fait comme le service worker qui vient de recevoir la notification d'essai
+    const ecoute = new EventTarget();
+    const sw = { register: async () => reg, ready: Promise.resolve(reg), getRegistration: async () => reg, controller: null,
+      addEventListener: (...a) => ecoute.addEventListener(...a), removeEventListener: (...a) => ecoute.removeEventListener(...a) };
+    window.__pushRecu = () => ecoute.dispatchEvent(new MessageEvent('message', { data: 'push-recu' }));
+    Object.defineProperty(Navigator.prototype, 'serviceWorker', { get: () => sw, configurable: true });
+    window.Notification = class { static permission = deja ? 'granted' : 'default'; static requestPermission = async () => { window.Notification.permission = permission; return permission; }; };
+    if (!('PushManager' in window)) window.PushManager = function PushManager() {};
+  }, [permission, abonnement, deja]);
+  await ctx.addInitScript(([uid, memo]) => {
+    if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1');
+    localStorage.setItem('ensam-lang', 'fr');
+    if (memo) localStorage.setItem('ensam-prevenir-' + uid, JSON.stringify(memo));
+    const now = Math.floor(Date.now() / 1000);
+    localStorage.setItem('sb-127-auth-token', JSON.stringify({ access_token: 'x.' + btoa(JSON.stringify({ sub: uid, exp: now + 7200 })) + '.y', token_type: 'bearer', expires_in: 7200, expires_at: now + 7200, refresh_token: 'r', user: { id: uid, aud: 'authenticated', email: 'membre@exemple.ma', user_metadata: {}, app_metadata: {} } }));
+  }, [UID, memo]);
+  if (tactile) await ecranTactile(ctx, tactile);
+  const page = await ctx.newPage(); const erreurs = [];
+  page.on('pageerror', e => erreurs.push(e.message));
+  await page.goto(site.adresse + chemin);
+  await page.waitForSelector('.me-btn', { timeout: 15000 });
+  const memoIci = () => page.evaluate(uid => JSON.parse(localStorage.getItem('ensam-prevenir-' + uid) || '{}'), UID);
+  return { ctx, page, erreurs, site, memoIci };
+}
+
+// « Ouvrir dans Chrome » n'est proposé qu'à un membre connecté (feuille, bandeau, pastille, Mon profil) : Chrome, qui ne
+// connaît pas encore ce membre, s'ouvre sur « Se connecter », jamais sur « Créer mon compte »
+test('membre connecté dans le navigateur d’Instagram : « Ouvrir dans Chrome » emporte l’étape « Se connecter » ; Chrome tout neuf s’ouvre dessus, la page gardée', async () => {
+  const m = await membreEnLigne({ ua: INSTAGRAM, vueWeb: true, chemin: '#offres' });
+  await m.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  const href = await m.page.getAttribute('#appli-chrome', 'href');
+  const fb = new URL(decodeURIComponent(href.match(/;S\.browser_fallback_url=([^;]+);end$/)[1]));
+  assert.equal(fb.searchParams.get('mode'), 'connexion', href);
+  assert.equal(fb.searchParams.get('r'), 'offres');
+  assert.equal(fb.searchParams.get('notifs'), '1');
+  assert.equal(new URLSearchParams(href.match(/^intent:\/\/[^?#]+(\?[^#]*)#/)[1]).get('mode'), 'connexion', 'Chrome reçoit la même étape');
+  await m.page.click('#appli-tard');
+  await m.page.evaluate(() => { location.hash = 'profil/notifications'; });
+  await m.page.waitForSelector('#md-push-chrome');
+  assert.match(await m.page.getAttribute('#md-push-chrome', 'href'), /\?mode=connexion&r=profil%2Fnotifications&notifs=1#Intent;/);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+  const c = await porte({ ua: TELEPHONE, langue: null, chemin: fb.search });
+  assert.equal(await c.page.locator('#au-je-etudiant').count(), 0, 'pas « Créer mon compte » pour un membre');
+  assert.equal(await c.page.locator('.entree-form h2').innerText(), 'Se connecter');
+  assert.deepEqual([...new URLSearchParams(await c.page.evaluate(() => location.search)).keys()].filter(k => k === 'mode'), [], 'l’étape lue, l’adresse nettoyée');
+  assert.deepEqual(c.erreurs, []);
+  await c.ctx.close();
+});
+
+test('Mon profil : l’abonnement échoue pour de bon (téléphone sans service de notifications) ; la pastille et le bandeau cessent aussitôt de proposer « Activer »', async () => {
+  // « Plus tard » hier : pas de feuille d'ouverture à cette visite
+  const m = await membreEnLigne({ abonnement: 'impossible', memo: { n: 1, at: Date.now() - 864e5 }, chemin: '#accueil' });
+  await m.page.waitForSelector('.push-bandeau[data-etat="off"]', { timeout: 10000 });
+  await m.page.waitForSelector('.pastille[data-sorte="activer"]', { timeout: 10000 });
+  await m.page.evaluate(() => { location.hash = 'profil/notifications'; });
+  await m.page.waitForSelector('#md-push-oui');
+  assert.equal(await m.page.locator('.pastille[data-sorte="activer"]').count(), 1);
+  await m.page.click('#md-push-oui');
+  await m.page.waitForSelector('.toast:has-text("Ce navigateur ne peut pas recevoir de notifications pour l’instant.")');
+  // Tout de suite, sans rechargement ni changement de page : plus de pastille « Activer »
+  await m.page.waitForFunction(() => !document.querySelector('.pastille[data-sorte="activer"]'), null, { timeout: 1500 });
+  assert.equal((await m.memoIci()).sans, 1);
+  assert.ok(await m.page.isVisible('#md-push-oui'), 'Mon profil garde le bouton pour réessayer');
+  // L'accueil : plus de bandeau qui propose « Activer » ; la pastille propose seulement l'installation, sans rien promettre
+  await m.page.evaluate(() => { location.hash = 'accueil'; }); await m.page.waitForTimeout(600);
+  assert.equal(await m.page.locator('.push-bandeau').count(), 0);
+  assert.equal(await m.page.locator('.pastille:not([data-sorte="installer"])').count(), 0);
+  if (await m.page.locator('.pastille').count()) assert.doesNotMatch(await m.page.locator('.pastille').innerText(), /notification/i);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// L'échec définitif dit pendant que l'accueil reste à l'écran (la feuille d'ouverture par-dessus) : le bandeau suit aussitôt
+test('feuille d’ouverture sur l’accueil : « Activer » échoue pour de bon ; le bandeau « Active tes notifications » s’en va aussitôt, sans changer de page', async () => {
+  const m = await membreEnLigne({ abonnement: 'impossible', chemin: '#accueil' });
+  await m.page.waitForSelector('.push-bandeau[data-etat="off"]', { timeout: 10000 });
+  await m.page.waitForSelector('.modal.ouverture', { timeout: 10000 });
+  await m.page.click('#ouv-oui');
+  await m.page.waitForSelector('.toast:has-text("Ce navigateur ne peut pas recevoir de notifications pour l’instant.")');
+  await m.page.waitForFunction(() => !document.querySelector('.modal.ouverture'));
+  assert.equal((await m.memoIci()).sans, 1);
+  // Tout de suite, sans rechargement ni changement de page
+  await m.page.waitForFunction(() => !document.querySelector('.push-bandeau'), null, { timeout: 1500 }).catch(() => {});
+  assert.equal(await m.page.locator('.push-bandeau').count(), 0, 'plus de bandeau qui propose « Activer »');
+  assert.equal(await m.page.evaluate(() => location.hash), '#accueil');
+  assert.equal(await m.page.locator('.pastille[data-sorte="activer"]').count(), 0);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('lien « Active tes notifications » sur un téléphone déjà abonné, tout décoché dans Mon profil : « Cet appareil est prêt », puis les cases', async () => {
+  const m = await membreEnLigne({ profil: { ...MEMBRE, notif_push: TOUT_DECOCHE }, deja: true, chemin: '?notifs=1#reseau' });
+  await m.page.waitForSelector('.modal.choisir', { timeout: 10000 });
+  const t = await m.page.locator('.modal.choisir').innerText();
+  assert.match(t, /Tout est décoché dans «\sMon profil\s»\s: aucune notification ne t’arrive pour l’instant\./);
+  assert.match(t, /Cet appareil est prêt\s: coche ce que tu veux recevoir\./);
+  assert.ok(await m.page.isVisible('#choisir-tard'), '« Plus tard » toujours là');
+  assert.equal(await m.page.locator('.toast:has-text("déjà activées")').count(), 0);
+  await m.page.click('#choisir-profil');
+  await m.page.waitForFunction(() => location.hash === '#profil/notifications');
+  await m.page.waitForSelector('#np-messages');
+  assert.deepEqual(await m.page.$$eval('input[id^="np-"]', xs => xs.filter(x => x.checked).map(x => x.id)), []);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// Tout décoché sauf « Rappels » : les rappels seuls ne comptent pas (rien d'autre à proposer), mais la feuille ne dit pas
+// « Tout est décoché » à qui va trouver « Rappels » cochée dans Mon profil. Une base pas encore à jour (le site en ligne
+// d'ici : une offre sans « origine ») ne montre pas cette case : là, « Tout est décoché » reste vrai.
+test('lien « Active tes notifications » avec seuls les rappels cochés dans Mon profil : la feuille dit ce qui est vrai, en français et en arabe', async () => {
+  const RAPPELS_SEULS = { ...TOUT_DECOCHE, rappels: true };
+  const s = await prevenirSur('off');
+  const id = await s.page.$eval('#persona', e => e.value);
+  await s.page.evaluate(([id, np]) => window.__demo.update('profiles', id, { notif_push: np }), [id, RAPPELS_SEULS]);
+  await s.page.goto(adresse + '?notifs=1#reseau');
+  await s.page.waitForSelector('.modal.choisir', { timeout: 8000 });
+  const t = await s.page.locator('.modal.choisir').innerText();
+  assert.doesNotMatch(t, /Tout est décoché/);
+  assert.match(t, /Seuls les rappels sont cochés dans «\sMon profil\s»\s: aucune autre notification ne t’arrive pour l’instant\./);
+  assert.match(t, /Active-les sur cet appareil, puis coche ce que tu veux recevoir\./);
+  await s.page.click('#choisir-profil');
+  await s.page.waitForFunction(() => location.hash === '#profil/notifications');
+  await s.page.waitForSelector('#np-messages');
+  assert.deepEqual(await s.page.$$eval('input[id^="np-"]', xs => xs.filter(x => x.checked).map(x => x.id)), ['np-rappels'], 'la case « Rappels » est là, cochée');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe
+  const a = await prevenirSur('off', { langue: 'ar' });
+  const ida = await a.page.$eval('#persona', e => e.value);
+  await a.page.evaluate(([id, np]) => window.__demo.update('profiles', id, { notif_push: np }), [ida, RAPPELS_SEULS]);
+  await a.page.goto(adresse + '?notifs=1#reseau');
+  await a.page.waitForSelector('.modal.choisir', { timeout: 8000 });
+  const ta = await a.page.locator('.modal.choisir').innerText();
+  assert.match(ta, /لم يُحدَّد في «ملفي الشخصي» سوى التذكيرات: لا يصلك أي إشعار آخر حاليًا\./);
+  assert.doesNotMatch(ta, /كل شيء غير محدَّد/);
+  assert.deepEqual(latinRestant(ta, []), []);
+  assert.equal(await a.debordement(), 0);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+  // En ligne, base pas encore à jour : pas de case « Rappels » dans Mon profil, « Tout est décoché » est vrai
+  const m = await membreEnLigne({ profil: { ...MEMBRE, notif_push: RAPPELS_SEULS }, deja: true, chemin: '?notifs=1#reseau' });
+  await m.page.waitForSelector('.modal.choisir', { timeout: 10000 });
+  assert.match(await m.page.locator('.modal.choisir').innerText(), /Tout est décoché dans «\sMon profil\s»/);
+  await m.page.click('#choisir-profil');
+  await m.page.waitForFunction(() => location.hash === '#profil/notifications');
+  await m.page.waitForSelector('#np-messages');
+  assert.equal(await m.page.locator('#np-rappels').count(), 0);
+  assert.deepEqual(await m.page.$$eval('input[id^="np-"]', xs => xs.filter(x => x.checked).map(x => x.id)), []);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// « Choisir » mène aux cases elles-mêmes, pas au haut de Mon profil : sur un petit téléphone (360 × 640), la barre du bas et la
+// pastille « Installer l'application » couvraient la première case. Le groupe vient sous la barre du haut, le curseur sur sa
+// première case (le lecteur d'écran dit le groupe, puis la case). De même pour « Choisir d'abord » et « Activer » (démo).
+const casesALEcran = p => p.evaluate(() => {
+  const haut = document.querySelector('.top').getBoundingClientRect().bottom;
+  const bas = Math.min(innerHeight, ...[...document.querySelectorAll('.bottom-nav, .pastille')].map(e => e.getBoundingClientRect().top));
+  const legende = document.querySelector('.md-cats legend').getBoundingClientRect();
+  const cases = [...document.querySelectorAll('.md-cats input')].slice(0, 3).map(x => { const b = x.closest('label').getBoundingClientRect(); return [x.id, Math.round(b.top), Math.round(b.bottom)]; });
+  return { haut: Math.round(haut), bas: Math.round(bas), legende: Math.round(legende.top), cases, focus: document.activeElement?.id || document.activeElement?.tagName, premiere: document.querySelector('.md-cats input')?.id };
+});
+const verifierCases = (v, cas) => {
+  assert.ok(v.legende >= v.haut - 1, `${cas} : « Ce que je reçois » sous la barre du haut (${JSON.stringify(v)})`);
+  for (const [id, h, b] of v.cases) assert.ok(h >= v.haut - 1 && b <= v.bas + 1, `${cas} : ${id} à l’écran, au-dessus de la barre du bas et de la pastille (${JSON.stringify(v)})`);
+  assert.equal(v.focus, v.premiere, `${cas} : le curseur sur la première case`);
+};
+test('« Choisis ce que tu reçois » à 360 × 640 : « Choisir », « Choisir d’abord » et « Activer » amènent les cases à l’écran, le curseur sur la première', async () => {
+  const m = await membreEnLigne({ profil: { ...MEMBRE, notif_push: TOUT_DECOCHE }, deja: true, chemin: '?notifs=1#reseau', hauteur: 640 });
+  await m.page.waitForSelector('.modal.choisir', { timeout: 10000 });
+  await m.page.click('#choisir-profil');
+  await m.page.waitForFunction(() => location.hash === '#profil/notifications');
+  await m.page.waitForFunction(() => document.activeElement?.closest?.('.md-cats'), null, { timeout: 5000 }).catch(() => {});
+  await m.page.waitForSelector('.pastille', { timeout: 5000 }).catch(() => {});
+  verifierCases(await casesALEcran(m.page), 'en ligne, « Choisir »');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+  // Démo, cet appareil pas encore abonné : « Choisir d'abord », puis « Activer »
+  const s = await prevenirSur('off');
+  const id = await s.page.$eval('#persona', e => e.value);
+  await s.page.evaluate(([id, np]) => window.__demo.update('profiles', id, { notif_push: np }), [id, TOUT_DECOCHE]);
+  for (const [bouton, cas] of [['#choisir-profil', 'démo, « Choisir d’abord »'], ['#choisir-oui', 'démo, « Activer »']]) {
+    await s.changerMemo('({})');
+    await s.page.goto(adresse + '?notifs=1#reseau');
+    await s.page.waitForSelector('.modal.choisir', { timeout: 8000 });
+    await s.page.click(bouton);
+    await s.page.waitForFunction(() => location.hash === '#profil/notifications');
+    await s.page.waitForFunction(() => document.activeElement?.closest?.('.md-cats'), null, { timeout: 5000 }).catch(() => {});
+    verifierCases(await casesALEcran(s.page), cas);
+  }
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
 });
 
 test('administration · sur ordinateur, aucun filtre ne se cache au bout de sa rangée (À traiter, Membres, Contenus) ; sur téléphone, chaque cible de l’objectif a toute la largeur', async () => {
@@ -7474,6 +9345,81 @@ test('console · deux écoles en arabe (390 px) : le choix d’école, les rubri
   for (const r of ['admin', 'admin/liste', 'suivi', 'suivi/insertion']) { await s.aller(r); assert.equal(await s.debordement(), 0, `${r} : nom long, rien ne dépasse`); }
   await relever('nom d’école long');
   assert.deepEqual(oublis, [], 'tout traduit');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('Suivi d’une école qui débute : « 0 offre ouverte », sans « publiées par 0 lauréat » ; avec une offre, puis deux, le nom et « publiée » s’accordent (français et arabe)', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const ar = langue === 'ar';
+    const s = await ouvrir({ largeur: 390, langue });
+    await s.comme('Admin'); const slug = await deuxiemeEcole(s);
+    await s.page.selectOption('#cs-ecole', slug); await s.page.waitForTimeout(200);
+    await s.aller('suivi'); await s.page.waitForSelector('#suivi-ecole');
+    assert.equal(await s.page.inputValue('#suivi-ecole'), slug);
+    await s.page.evaluate(() => window.__ensamMissing?.clear());
+    const ligne = async () => (await s.page.locator('.sh-faits li').last().innerText()).replace(/[⁦-⁩]/g, '').replace(/\s+/g, ' ').trim();
+    assert.equal(await ligne(), ar ? '0 عرض مفتوح' : '0 offre ouverte');
+    // Deux offres ouvertes de l'ENSAM Meknès, de deux lauréats différents, passent une à une dans cette école
+    const [a, b] = await s.page.evaluate(() => { const o = window.__demo.data.offers.filter(x => x.status === 'ouverte'); return [o[0].id, o.find(x => x.author_id !== o[0].author_id).id]; });
+    const deplacer = async id => { await s.page.evaluate(([id, e]) => window.__demo.update('offers', id, { ecole: e }), [id, slug]); await s.page.waitForTimeout(300); };
+    await deplacer(a);
+    assert.equal(await ligne(), ar ? '1 عرض مفتوح، نشره خريج واحد' : '1 offre ouverte, publiée par 1 lauréat');
+    await deplacer(b);
+    assert.equal(await ligne(), ar ? '2 عروض مفتوحة، نشرها خريجان' : '2 offres ouvertes, publiées par 2 lauréats');
+    if (ar) assert.deepEqual((await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), [], 'tout traduit');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+// « Tester » sur un iPhone ou un iPad (l'application de l'écran d'accueil), la notification d'essai reçue mais rien à l'écran :
+// les réglages de l'iPhone (Réglages › Notifications), pas ceux d'Android (barre de notifications, économie de batterie)
+test('« Tester » sur iPhone et sur iPad, notification d’essai reçue : les réglages de l’iPhone, pas ceux d’Android, en français et en arabe', async () => {
+  const diagnostic = async (m, toast) => {
+    await m.page.waitForSelector('#md-push-test', { timeout: 10000 });
+    await m.page.click('#md-push-test');
+    await m.page.waitForSelector(`.toast:has-text("${toast}")`, { timeout: 8000 });
+    await m.page.evaluate(() => window.__pushRecu());
+    await m.page.waitForSelector('#md-push-diag', { timeout: 5000 });
+    return m.page.locator('#md-push-diag').innerText();
+  };
+  for (const [ua, tactile, nom] of [[SAFARI_IPHONE, 'iPhone', 'iPhone'], [SAFARI_IPADOS, 'MacIntel', 'iPad']]) {
+    const m = await membreEnLigne({ ua, tactile, deja: true, chemin: '#profil/notifications' });
+    const t = await diagnostic(m, 'Notification de test envoyée.');
+    assert.match(t, /^Reçue par cet appareil\. Rien ne s’affiche\s\? Dans Réglages › Notifications › Réseau ENSAM, active «\sAutoriser les notifications\s»\.$/, nom);
+    assert.doesNotMatch(t, /barre de notifications|économie de batterie|téléphone|navigateur/, nom);
+    await m.page.evaluate(() => localStorage.setItem('ensam-lang', 'ar'));
+    await m.page.reload();
+    const ta = await diagnostic(m, 'تم إرسال إشعار تجريبي.');
+    assert.match(ta, /^وصل الإشعار إلى هذا الجهاز\. لا يظهر شيء؟ من الإعدادات › الإشعارات › شبكة ENSAM، فعّل «السماح بالإشعارات»\.$/, nom);
+    assert.deepEqual(latinRestant(ta, ['ENSAM']), [], nom);
+    assert.deepEqual(m.erreurs, [], nom);
+    await m.ctx.close();
+  }
+  // Android : ses gestes à lui restent
+  const a = await membreEnLigne({ deja: true, chemin: '#profil/notifications' });
+  assert.match(await diagnostic(a, 'Notification de test envoyée.'), /^Reçue par cet appareil\. Rien dans la barre de notifications\s\? Dans les réglages du téléphone/);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
+test('« Voir en tant que » (démo) : un autre membre sans recharger commence une nouvelle visite ; la ligne montrée au premier ne retire pas sa feuille au second', async () => {
+  const s = await prevenirSur('ios');
+  // L'iPhone dans Safari : la feuille d'ouverture a déjà fait ses deux passages pour l'un et l'autre
+  for (const nom of ['Youssef', 'Amine']) {
+    const id = s.profils.find(x => x[1].includes(nom))[0];
+    await s.page.evaluate(id => localStorage.setItem('ensam-prevenir-' + id, JSON.stringify({ ios: { n: 2, at: Date.now() } })), id);
+  }
+  await s.comme('Youssef');
+  await ecrireA(s, 'u-0006', 'Bonjour Rania, tu cherches toujours un stage pour cet été ?');
+  await s.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+  // Amine, dans le même onglet : sa demande de mentorat a sa feuille
+  await s.aller('accueil'); await s.comme('Amine');
+  await s.mentorat('Choisir mon stage de 3A');
+  await s.page.waitForSelector('.modal.prevenir', { timeout: 5000 });
+  assert.equal(await s.page.locator('.prevenir .ios-steps li').count(), 3);
+  assert.match(await s.page.locator('.prevenir .verify-ok').innerText(), /Horaires envoyés à Youssef\./);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });

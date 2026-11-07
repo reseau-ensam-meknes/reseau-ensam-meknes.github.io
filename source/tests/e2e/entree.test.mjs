@@ -32,9 +32,11 @@ before(async () => {
 after(async () => { await navigateur?.close(); site?.fermer(); });
 beforeEach(() => { site.vider(); fondateursFaux = null; ambFaux = null; });
 
-// langue: null = un visiteur qui n'a jamais choisi de langue ; avant(ctx) : réseau à régler avant la première visite
-async function visiteur({ largeur = 360, hauteur = 640, langue = 'fr', hash = '', query = '', stockage = {}, avant } = {}) {
-  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce' });
+// langue: null = un visiteur qui n'a jamais choisi de langue ; avant(ctx) : réseau à régler avant la première visite ;
+// ua : l'appareil (le navigateur d'une application, par exemple) ;
+// sw : le service worker est permis (l'application gardée sur l'appareil, les nouvelles versions)
+async function visiteur({ largeur = 360, hauteur = 640, langue = 'fr', hash = '', query = '', stockage = {}, avant, ua, sw = false } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: sw ? 'allow' : 'block', reducedMotion: 'reduce', ...(ua ? { userAgent: ua } : {}) });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
   if (avant) await avant(ctx);
   await ctx.addInitScript(([langue, stockage]) => {
@@ -1032,6 +1034,102 @@ test('se déconnecter soi-même : la copie de l’accueil et les brouillons de c
   await m.ctx.close();
 });
 
+// L'adresse que la carte « Ouvrir dans Chrome » construit porte l'étape (mode=inscription) : elle ne vaut que pour l'arrivée,
+// jamais pour la page d'entrée qui revient plus tard dans la même visite (déconnexion, session perdue)
+const ARRIVEE_CARTE = '?role=etudiant&mode=inscription';
+async function arriveEtSeConnecte() {
+  const s = await visiteur({ largeur: 390, hauteur: 844, query: ARRIVEE_CARTE });
+  assert.ok(await s.page.isVisible('#au-je-etudiant'), 'l’arrivée ouvre bien « Créer mon compte »');
+  await s.page.click('.entree-form button.linkish:has-text("J’ai déjà un compte")');
+  await s.page.fill('#au-email', 'membre@exemple.ma');
+  await s.page.click('.entree-form button.btn.primary'); await s.page.waitForSelector('#au-code');
+  await s.page.fill('#au-code', '123456');
+  await s.page.waitForSelector('.me-btn', { timeout: 15000 });
+  return s;
+}
+
+test('arrivée par l’adresse de la carte (?mode=inscription), connexion, puis « Se déconnecter » : « Se connecter », pas « Créer mon compte »', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  const s = await arriveEtSeConnecte();
+  await s.page.click('.me-btn'); await s.page.click('.menu-pop button:has-text("Se déconnecter")');
+  await s.page.waitForSelector('#entree .entree-form', { timeout: 15000 });
+  assert.equal(await s.page.locator('#au-je-etudiant').count(), 0, 'pas « Créer mon compte » juste après une déconnexion');
+  assert.equal(await s.page.locator('.entree-form h2').innerText(), 'Se connecter');
+  assert.equal(await s.page.locator('#au-session').count(), 0, 'déconnexion voulue : pas de « session expirée »');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('arrivée par l’adresse de la carte (?mode=inscription) puis session perdue : « Ta session a expiré », l’adresse déjà là ; de même pour une session gardée trop ancienne', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  const s = await arriveEtSeConnecte();
+  // Le téléphone sort de veille : renouvellement refusé, la session est perdue sans l'avoir voulu
+  await s.page.evaluate(() => {
+    const k = 'sb-127-auth-token', x = JSON.parse(localStorage.getItem(k));
+    x.expires_at = Math.floor(Date.now() / 1000) + 30; localStorage.setItem(k, JSON.stringify(x));
+    dispatchEvent(new Event('focus'));
+  });
+  await s.page.waitForSelector('#entree #au-session', { timeout: 15000 });
+  assert.equal(await s.page.locator('.entree-form h2').innerText(), 'Se connecter');
+  assert.equal(await s.page.locator('#au-je-etudiant').count(), 0, 'se reconnecter, pas créer un compte');
+  assert.equal(await s.page.inputValue('#au-email'), 'membre@exemple.ma');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // Un membre dont la session gardée est trop ancienne, ouvert sur la même adresse : la session perdue passe avant l'étape
+  site.vider(); site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  const m = await connecte({ hash: ARRIVEE_CARTE, exp: -3600, expiresAt: -3600, attendre: '#entree .entree-form' });
+  await m.page.waitForSelector('#entree #au-session', { timeout: 15000 });
+  assert.equal(await m.page.inputValue('#au-email'), 'membre@exemple.ma');
+  assert.equal(await m.page.locator('#au-je-etudiant').count(), 0);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// « Ouvrir dans Chrome » touché dans Instagram (Android), mais l'application ignore le lien : rien ne se recharge, on s'inscrit
+// ici. Ce qui a été gardé au toucher (l'étape « Créer mon compte », pour l'adresse de secours) ne revient jamais sur la page
+// d'entrée qui suit dans la visite (déconnexion, session perdue) : se reconnecter, pas créer un compte
+const INSTAGRAM = 'Mozilla/5.0 (Linux; Android 14; SM-A546B Build/UP1A.231005.007; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/141.0.7390.122 Mobile Safari/537.36 Instagram 404.0.0.48.76 Android (34/14; 450dpi; 1080x2340; samsung; SM-A546B; a54x; s5e8835; fr_FR; 812345678)';
+for (const fin of ['déconnexion', 'session perdue']) test(`Instagram, « Ouvrir dans Chrome » sans effet, inscription ici, puis ${fin} : « Se connecter »${fin === 'session perdue' ? ' et « Ta session a expiré »' : ''}, pas « Créer mon compte »`, async () => {
+  const s = await visiteur({ largeur: 390, hauteur: 844, ua: INSTAGRAM });
+  await s.page.waitForSelector('#au-appli');
+  await s.page.click('#au-je-etudiant');
+  await s.page.fill('#au-email', 'amine@ensam-umi.ac.ma');
+  await s.page.evaluate(() => addEventListener('click', e => { if (e.target.closest?.('#au-appli-chrome')) e.preventDefault(); }, { capture: true, once: true }));
+  await s.page.click('#au-appli-chrome');
+  await s.page.check('#au-ok');
+  await s.page.click('.entree-form button.btn.primary.wide'); await s.page.waitForSelector('#au-code');
+  await s.page.fill('#au-code', '123456');
+  await s.page.waitForSelector('.auth-card.wide.onb', { timeout: 15000 });
+  await s.page.fill('#pf-name', 'Amine Alaoui'); await s.page.fill('#pf-promo', String(S + 1));
+  await s.page.selectOption('#pf-fil', { index: 1 });
+  await s.page.click('.pf-pied .btn');
+  await s.page.waitForFunction(() => !document.querySelector('.auth-card.wide.onb'), null, { timeout: 15000 });
+  await s.page.waitForSelector('.me-btn', { timeout: 15000 });
+  assert.equal(await s.page.evaluate(() => sessionStorage.getItem('ensam-entree-saisie')), null, 'connecté : plus rien de la page d’entrée à reprendre');
+  if (fin === 'déconnexion') {
+    for (let i = 0; i < 4 && await s.page.locator('.modal').count(); i++) { await s.page.keyboard.press('Escape'); await s.page.waitForTimeout(200); }
+    await s.page.click('.me-btn'); await s.page.click('.menu-pop button:has-text("Se déconnecter")');
+    await s.page.waitForSelector('#entree .entree-form', { timeout: 15000 });
+  } else {
+    // Une saisie qui traînerait encore (par un autre chemin) : la session perdue passe avant son étape.
+    // Puis le téléphone sort de veille : renouvellement refusé, la session est perdue sans l'avoir voulu
+    await s.page.evaluate(() => {
+      sessionStorage.setItem('ensam-entree-saisie', JSON.stringify({ email: 'amine@ensam-umi.ac.ma', mode: 'inscription', ok: false, mails: true, t: Date.now() }));
+      const k = 'sb-127-auth-token', x = JSON.parse(localStorage.getItem(k));
+      x.expires_at = Math.floor(Date.now() / 1000) + 30; localStorage.setItem(k, JSON.stringify(x));
+      dispatchEvent(new Event('focus'));
+    });
+    await s.page.waitForSelector('#entree #au-session', { timeout: 15000 });
+    assert.equal(await s.page.locator('#au-session').innerText(), 'Ta session a expiré. Reconnecte-toi pour continuer.');
+    assert.equal(await s.page.inputValue('#au-email'), 'amine@ensam-umi.ac.ma', 'l’adresse déjà là');
+  }
+  assert.equal(await s.page.locator('.entree-form h2').innerText(), 'Se connecter');
+  assert.equal(await s.page.locator('#au-je-etudiant').count(), 0, 'se reconnecter, pas créer un compte');
+  assert.equal(await s.page.getAttribute('.entree-form', 'aria-label'), null);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 for (const [langue, theme] of [['fr', 'light'], ['ar', 'dark']]) {
   test(`tout premier chargement d’un membre (${langue}, ${theme}) : la forme de l’accueil à sa taille, pas le logo`, async () => {
     site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
@@ -1081,16 +1179,17 @@ async function visiteLegere({ query = '', retenir = /\.woff2$/, largeur = 390, h
 }
 const parti = (page, re) => page.waitForFunction(re => performance.getEntriesByType('resource').some(e => new RegExp(re).test(e.name)), re.source, { timeout: 5000 });
 
-test('page d’entrée plus légère : avant un geste, ni le magasin ni l’application (8 fichiers JS, 10 au plus, contre 13 avant) ; au premier toucher, ils partent', async () => {
+test('page d’entrée plus légère : avant un geste, ni le magasin ni l’application (9 fichiers JS, 10 au plus, contre 13 avant) ; au premier toucher, ils partent', async () => {
   const v = await visiteLegere();
   await v.page.waitForTimeout(2500);
   const { magasin, modules } = await v.page.evaluate(() => ({ magasin: window.ENSAM_MAGASIN || [], modules: window.ENSAM_MODULES || [] }));
   assert.ok(magasin.includes('store.js') && modules.includes('app.js'), 'les listes du magasin et de l’application (site construit)');
-  // Seuls les modules de l'entrée (préchargés), config.js, l'illustration et la rangée des fondateurs ; jamais le magasin
-  // ni l'application (fondateurs-public.js et scene.js servent aussi à l'application, l'entrée les charge à part).
-  // Mesuré : 8 fichiers JS ; la marge en laisse 10 au plus (main en demandait 13 dans les mêmes conditions).
+  // Seuls les modules de l'entrée (préchargés), config.js, l'illustration, la rangée des fondateurs et la reconnaissance du
+  // navigateur d'une application (appareil.js, sa carte : portes #59) ; jamais le magasin ni l'application (fondateurs-public.js
+  // et scene.js servent aussi à l'application, appareil.js au magasin par logic.js : l'entrée les charge à part).
+  // Mesuré : 9 fichiers JS (8 avant appareil.js) ; la marge en laisse 10 au plus (main en demandait 13 dans les mêmes conditions).
   const avantGeste = [...v.js];
-  const deTrop = avantGeste.filter(f => [...magasin, ...modules].includes(f) && !['scene.js', 'fondateurs-public.js'].includes(f));
+  const deTrop = avantGeste.filter(f => [...magasin, ...modules].includes(f) && !['scene.js', 'fondateurs-public.js', 'appareil.js'].includes(f));
   assert.deepEqual(deTrop, [], `avant un geste : ${avantGeste.join(', ')}`);
   assert.ok(avantGeste.length <= 10, `${avantGeste.length} fichiers JS avant un geste : ${avantGeste.join(', ')}`);
   assert.ok(avantGeste.includes('scene.js'), 'l’illustration arrive juste après le formulaire');
@@ -1144,8 +1243,8 @@ const stylesCalcules = page => page.evaluate(() => {
   });
   return out;
 });
-async function memesStyles(nom, { largeur = 390, hauteur = 844, langue = 'fr', theme = 'light', query = '', jeton = false, faire } = {}) {
-  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce', colorScheme: theme });
+async function memesStyles(nom, { largeur = 390, hauteur = 844, langue = 'fr', theme = 'light', query = '', jeton = false, ua, faire } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce', colorScheme: theme, ...(ua ? { userAgent: ua } : {}) });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
   await ctx.route(/\/site\.css/, () => {});
   await ctx.addInitScript(([langue, jeton, uid]) => {
@@ -1168,7 +1267,10 @@ async function memesStyles(nom, { largeur = 390, hauteur = 844, langue = 'fr', t
   assert.deepEqual(diffs.slice(0, 8), [], `${nom} : ${diffs.length} différences`);
   await ctx.close();
 }
-test('page d’entrée plus légère : son CSS seul donne exactement les styles du CSS complet (formulaire, fondateurs, code, erreur, promo, arabe sombre, forme de l’accueil)', async () => {
+// La carte du navigateur d'une application (portes, #59) : son propre style arrive avec appareil.js ; ses boutons, son lien et
+// son icône prennent celui de la page (Instagram sur Android, Facebook sur iPhone)
+const FACEBOOK_IOS = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 [FBAN/FBIOS;FBAV/490.0.0.38.107;FBBV/700000000;FBDV/iPhone15,3;FBMD/iPhone;FBSN/iOS;FBSV/18.6;FBSS/3;FBCR/;FBID/phone;FBLC/fr_FR;FBOP/80]';
+test('page d’entrée plus légère : son CSS seul donne exactement les styles du CSS complet (formulaire, fondateurs, code, erreur, promo, arabe sombre, forme de l’accueil, carte du navigateur d’une application)', async () => {
   // Bien plus petit que le CSS complet, et tiré de lui au build (outils/css-critique.mjs)
   const page = fs.readFileSync(path.join(SITE, 'index.html'), 'utf8');
   const entree = page.match(/<style id="css-entree">([\s\S]*?)<\/style>/)?.[1] || '';
@@ -1183,6 +1285,10 @@ test('page d’entrée plus légère : son CSS seul donne exactement les styles 
   await memesStyles('promo, mot de passe', { query: '?promo=2019', faire: async p => { await p.click('text=J’ai déjà un compte'); await p.click('#au-mdp'); } });
   await memesStyles('forme de l’accueil (membre)', { jeton: true });
   await memesStyles('forme de l’accueil (membre, arabe, ordinateur)', { jeton: true, langue: 'ar', largeur: 1280, hauteur: 900 });
+  await memesStyles('navigateur d’une application (Android) : la carte', { ua: INSTAGRAM, faire: p => p.waitForSelector('#au-appli[data-systeme="android"] #au-appli-chrome') });
+  await memesStyles('navigateur d’une application (Android) : « Continuer ici », sa ligne', { ua: INSTAGRAM, faire: async p => { await p.waitForSelector('#au-appli-ici'); await p.click('#au-appli-ici'); await p.waitForSelector('.entree-appli-mot #au-appli-chrome'); } });
+  await memesStyles('navigateur d’une application (Android, petit écran) : la ligne sous le titre', { ua: INSTAGRAM, largeur: 360, hauteur: 640, faire: p => p.waitForSelector('.entree-promesse .entree-appli-mot') });
+  await memesStyles('navigateur d’une application (iPhone, arabe, sombre) : la carte', { ua: FACEBOOK_IOS, langue: 'ar', theme: 'dark', faire: p => p.waitForSelector('#au-appli[data-systeme="ios"] #au-appli-ici') });
 });
 
 test('page d’entrée plus légère : le CSS complet donne au navigateur exactement les règles de page.html', async () => {
@@ -1460,6 +1566,44 @@ test('supprimer son compte : pas de « session expirée » ensuite, ni brouillon
   await m.ctx.close();
 });
 
+// La page passe derrière une autre application (le visiteur va chercher son code dans sa boîte mail)
+const cacher = page => page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+
+test('nouvelle version publiée pendant que le visiteur tape son email : la page ne se recharge pas sous ses doigts ; cachée, elle se recharge et l’email revient', async () => {
+  const s = await visiteur({ sw: true });
+  let liberer = () => {};
+  try {
+    // Le site gardé sur l'appareil : le service worker installé a pris la main sur la page
+    await s.page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 30000 });
+    await s.page.reload(); await s.page.waitForSelector('#entree .entree-form');
+    assert.ok(await s.page.evaluate(() => !!navigator.serviceWorker.controller), 'le site est gardé sur l’appareil');
+    // Il revient après une mise en ligne : la nouvelle version s'installe pendant qu'il tape
+    Object.assign(site.maj, { version: 'test-' + Date.now(), retenue: new Promise(ok => { liberer = ok; }) });
+    let chargements = 0;
+    s.page.on('load', () => { chargements++; });
+    await s.page.reload(); await s.page.waitForSelector('#entree .entree-form');
+    await s.page.click('#au-je-etudiant');
+    await s.page.fill('#au-email', 'amine@ensam-umi.ac.ma');
+    liberer();
+    const prete = () => s.page.evaluate(() => navigator.serviceWorker.getRegistration().then(r => !!r?.waiting));
+    for (let i = 0; i < 150 && !(await prete()); i++) await s.page.waitForTimeout(100);
+    assert.ok(await prete(), 'la nouvelle version est installée et attend');
+    // Les premières secondes passées (celles où une page qu'on n'a pas touchée se recharge d'elle-même) : rien n'a bougé
+    await s.page.waitForFunction(() => performance.now() > 10000, null, { timeout: 15000, polling: 200 });
+    assert.equal(chargements, 1, 'pas de rechargement pendant qu’il tape');
+    assert.equal(await s.page.inputValue('#au-email'), 'amine@ensam-umi.ac.ma');
+    // Il va lire son code ailleurs : la nouvelle version prend la main, la page se recharge sans qu'il le voie
+    await cacher(s.page);
+    for (let i = 0; i < 100 && chargements < 2; i++) await s.page.waitForTimeout(100);
+    assert.equal(chargements, 2, 'la nouvelle version s’applique une fois la page cachée');
+    await s.page.waitForSelector('#entree .entree-form');
+    assert.equal(await s.page.inputValue('#au-email'), 'amine@ensam-umi.ac.ma', 'ce qu’il avait tapé revient');
+    assert.deepEqual(s.erreurs, []);
+  } finally {
+    liberer(); Object.assign(site.maj, { version: null, retenue: null });
+    await s.ctx.close();
+  }
+});
 // Un appareil déjà abonné, en ligne (PushManager simulé) : « Tester » et la resynchronisation à l'ouverture.
 // pm.refuse : subscribe() est rejeté à partir de cet appel (1 = le premier), comme un service de push qui ne répond pas ;
 // morts : les adresses auxquelles abonner_push_etat répond « mort » ; test : la réponse du job test (un objet, ou 500) ;

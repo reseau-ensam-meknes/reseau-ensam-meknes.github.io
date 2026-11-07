@@ -451,7 +451,7 @@ export const AR = {
   'Résumé par email': 'الملخص بالبريد الإلكتروني', 'Tu ne veux plus recevoir le résumé de la semaine ?': 'لا تريد تلقي ملخص الأسبوع بعد الآن؟', 'Me désabonner': 'إلغاء اشتراكي',
   'C’est fait : tu ne recevras plus le résumé par email.': 'تم: لن يصلك الملخص بالبريد الإلكتروني بعد الآن.', 'Tu peux le réactiver à tout moment dans « Mon profil ».': 'يمكنك إعادة تفعيله في أي وقت من «ملفي الشخصي».',
   'Ce lien n’est plus valable. Connecte-toi et désactive le résumé dans « Mon profil ».': 'هذا الرابط لم يعد صالحًا. سجّل دخولك وأوقف الملخص من «ملفي الشخصي».', 'Aller sur la plateforme': 'الذهاب إلى المنصة',
-  'Notifications sur ce téléphone ou cet ordinateur': 'الإشعارات على هذا الهاتف أو هذا الحاسوب',
+  'Notifications sur cet appareil': 'الإشعارات على هذا الجهاز',
   'Sur la vraie plateforme : candidature reçue, rendez-vous, réponse à ta question… arrivent directement sur ton téléphone.': 'في المنصة الحقيقية: ترشيح جديد، موعد، جواب على سؤالك… تصلك مباشرة على هاتفك.',
   'Les notifications ne sont pas encore prêtes sur la plateforme. Réessaie plus tard.': 'الإشعارات ليست جاهزة بعد على المنصة. أعد المحاولة لاحقًا.',
   'Notifications activées sur cet appareil.': 'تم تفعيل الإشعارات على هذا الجهاز.', 'Notifications désactivées sur cet appareil.': 'تم إيقاف الإشعارات على هذا الجهاز.',
@@ -777,7 +777,10 @@ export const AR_PATTERNS = [
   [/^réponses?$/, () => 'جواب'],
   [/^(\d+) lauréats · (\d+) étudiants$/, (a, b) => `${arCount(a, LAU)} · ${arCount(b, ETU)}`],
   [/^(\d+) réponses?$/, (n) => `${n} جواب`],
-  [/^publiées par (\d+) lauréats$/, (n) => `نشرها ${n} خريجًا`],
+  // Le Suivi : « publiées par 1 lauréat » (plusieurs offres d'un seul lauréat, singulier en français) ; le nom s'accorde
+  // avec le nombre. Une seule offre (« offre ouverte, publiée par 1 lauréat ») : عرض est masculin, نشره
+  [/^publiées par (\d+) lauréats?$/, (n) => `نشرها ${arCount(n, LAU)}`],
+  [/^publiée par (\d+) lauréats?$/, (n) => `نشره ${arCount(n, LAU)}`],
   [/^(.+?) · (\d+) via la plateforme$/, null],
   [/^(\d+) via la plateforme$/, (n) => `${n} عبر المنصة`],
   [/^camarades de (\dA) ont déjà trouvé leur (.+?)(\.?)$/, (a, x, dot) => `من زملائك في ${a} وجدوا ${AR[x] || x}${dot}`],

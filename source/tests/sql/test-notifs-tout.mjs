@@ -168,7 +168,8 @@ test('nouveau membre de ta promo : « Prénom a rejoint ta promo », au plus une
   await vider();
   await creerCompte(db, { id: C, full_name: 'Chaimae Nouvelle', role: 'etudiant', filiere: GI, promo: P });
   const p1 = await file('promo_nouveau');
-  assert.deepEqual(p1.map(x => [x.qui, x.data]), [[A, { nom: 'Chaimae', n: 2, promo: P }], [B, { nom: 'Chaimae', n: 1, promo: P }]],
+  // Ordre d'envoi : les plus actifs d'abord (plafond de 300) ; ici on compare par personne
+  assert.deepEqual(p1.map(x => [x.qui, x.data]).sort((a, b) => a[0].localeCompare(b[0])), [[A, { nom: 'Chaimae', n: 2, promo: P }], [B, { nom: 'Chaimae', n: 1, promo: P }]],
     'toute la promo, toutes filières ; le compte : arrivés depuis soi (Aya : Badr et Chaimae)');
   // Le même jour : une autre arrivée ne renvoie rien
   await vider();
@@ -222,10 +223,10 @@ test('annonce de l’équipe : son public seulement ; mentorat ouvert à tous : 
   await db.query(`update public.profiles set mentor_dispo = true where id = any($1::uuid[])`, [[LAU2, CIVIL]]);
   await vider();
   const creneau = new Date(Date.now() + 3 * 864e5).toISOString();
-  await q(ETU2, `insert into public.mentorships (student_id, sujet, besoin, creneaux) values ($1, 'Préparer un entretien', 'entretien', $2)`, [ETU2, [creneau]]);
+  const [mo1] = await q(ETU2, `insert into public.mentorships (student_id, sujet, besoin, creneaux) values ($1, 'Préparer un entretien', 'entretien', $2) returning id`, [ETU2, [creneau]]);
   const mo = await file('mentorat_ouvert');
   assert.deepEqual(mo.map(x => x.qui), ['LAU2'], 'disponible et du même parcours');
-  assert.deepEqual(mo[0].data, { nom: 'Hiba Alaoui', sujet: 'Préparer un entretien' });
+  assert.deepEqual(mo[0].data, { nom: 'Hiba Alaoui', sujet: 'Préparer un entretien', m: mo1.id }, 'm : le mentorat, pour ouvrir le bon');
   // Le lauréat choisi passe la main : les autres disponibles, pas lui
   await db.query(`update public.profiles set mentor_dispo = true where id = $1`, [LAU]);
   const [m] = await q(ETU, `insert into public.mentorships (student_id, mentor_id, sujet, besoin, creneaux) values ($1, $2, 'Relire mon CV', 'cv', $3) returning id`, [ETU, LAU2, [creneau]]);

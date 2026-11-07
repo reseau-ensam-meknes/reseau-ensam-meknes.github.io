@@ -242,7 +242,7 @@ export function RelecturesPage({ ctx }) {
     return html`<div class="sub-page">
       <div class="kpis">${[['CV en attente', ouv.length, 'pas encore pris en charge'], ['En cours', cours.length, 'un lauréat relit'], ['Relectures rendues', rendues.length, 'depuis le début'],
         ['Note moyenne', notes.length ? (notes.reduce((a, b) => a + b, 0) / notes.length).toFixed(1) : '–', notes.length ? 'donnée par les étudiants' : 'pas encore de note']].map(([l, v, s]) => html`<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-val mono">${v}</span><span class="small muted">${s}</span></div>`)}</div>
-      ${vieilles.length ? html`<div class="section-head"><h2>En attente depuis plus d’une semaine <span class="count">${vieilles.length}</span></h2></div>
+      ${vieilles.length ? html`<div class="section-head"><h2 class="titre-sec">En attente depuis plus d’une semaine <span class="count">${vieilles.length}</span></h2></div>
         <ul class="people-list">${vieilles.map(r => html`<li key=${r.id}><${Person} p=${store.byId('profiles', r.student_id)} onOpen=${ctx.openProfile} size=${32}/><span class="spacer"></span><span class="small muted">${timeAgo(r.created_at)}</span></li>`)}</ul>` : null}
     </div>`;
   }
@@ -264,24 +264,27 @@ export function RelecturesPage({ ctx }) {
   // Le mode d'emploi en grand pour qui découvre ; replié pour celles et ceux qui ont déjà une relecture (comme les rendez-vous)
   const how = html`<ol class="how">${steps.map(([ic, t, pts], i) => html`<li><span class="how-n">${i + 1}</span><${Icon} name=${ic} size=${18}/><span>${t}<${Pastille} n=${pts}/></span></li>`)}</ol>`;
   const connu = mine.length || done.length || toMe.length;
+  // Une seule action pleine sur la page : celle de la première carte qui attend un geste (relire, rendre, remercier) ;
+  // les autres cartes, la file des CV à relire et « Demander une relecture » (dès qu'une relecture est en cours) restent tonales
+  const pleine = toMe[0] || mineActive.find(r => r.status === 'rendue') || null;
   return html`<div class="sub-page relectures">
     ${connu ? null : how}
 
-    ${toMe.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="edit"/> CV que je relis <span class="count">${toMe.length}</span></h2></div>
-      <div class="list">${toMe.map(r => html`<${RelectureCard} key=${r.id} ctx=${ctx} r=${r} side="reviewer"/>`)}</div>` : null}
+    ${toMe.length ? html`<div class="section-head"><h2 class="titre-sec">CV que je relis <span class="count">${toMe.length}</span></h2></div>
+      <div class="list">${toMe.map(r => html`<${RelectureCard} key=${r.id} ctx=${ctx} r=${r} side="reviewer" calme=${r !== pleine}/>`)}</div>` : null}
 
-    ${isLaureat ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="eye"/> CV à relire <span class="count">${queue.length}</span></h2>${queue.length > 1 ? html`<span class="small muted">Ceux de ta filière d’abord</span>` : null}</div>
+    ${isLaureat ? html`<div class="section-head"><h2 class="titre-sec">CV à relire <span class="count">${queue.length}</span></h2>${queue.length > 1 ? html`<span class="small muted">Ceux de ta filière d’abord</span>` : null}</div>
       <div class="list">${queue.length ? queue.slice(0, more ? 20 : 3).map(({ r }) => html`<${RelectureCard} key=${r.id} ctx=${ctx} r=${r} side="queue"/>`) : html`<${Empty} icon="eye" title="Aucun CV n’attend de relecture">On te prévient dès qu’un étudiant en demande une.<//>`}</div>
       ${queue.length > 3 ? html`<button class="linkish small past-toggle" onClick=${() => setMore(!more)}>${more ? 'Voir moins' : `Voir les autres CV (${queue.length - 3})`}</button>` : null}` : null}
 
-    ${!isLaureat || mineActive.length ? html`<div class="section-head"><h2 class="h-ico"><${Icon} name="file"/> Mes relectures${mineActive.length ? html` <span class="count">${mineActive.length}</span>` : null}</h2>
-        ${canAsk ? html`<button id="rv-new" class="btn small primary" onClick=${() => setAsk(true)}><${Icon} name="plus" size=${15}/> Demander une relecture</button>` : null}</div>
-      ${mineActive.length ? html`<div class="list">${mineActive.map(r => html`<${RelectureCard} key=${r.id} ctx=${ctx} r=${r} side="student"/>`)}</div>`
+    ${!isLaureat || mineActive.length ? html`<div class="section-head"><h2 class="titre-sec">Mes relectures${mineActive.length ? html` <span class="count">${mineActive.length}</span>` : null}</h2>
+        ${canAsk ? html`<button id="rv-new" class=${'btn small ' + (mineActive.length || pleine ? 'tonal' : 'primary')} onClick=${() => setAsk(true)}><${Icon} name="plus" size=${15}/> Demander une relecture</button>` : null}</div>
+      ${mineActive.length ? html`<div class="list">${mineActive.map(r => html`<${RelectureCard} key=${r.id} ctx=${ctx} r=${r} side="student" calme=${r !== pleine}/>`)}</div>`
         : !me.cv_path ? html`<div class="help-cta"><span class="obj-ico"><${Icon} name="upload" size=${22}/></span><div class="grow"><strong>Dépose d’abord ton CV en PDF</strong><span class="small muted">Dans « Mon profil ». Ensuite, un lauréat peut le relire.</span></div><button class="btn primary small" onClick=${() => go('profil')}>Mon profil</button></div>`
         : !minePast.length ? html`<${Empty} icon="eye" title="Pas encore de relecture">Demande une relecture : un lauréat ouvre ton CV et te laisse ses conseils.<//>` : null}` : null}
 
     ${hist.length ? html`<button class="linkish small past-toggle" onClick=${() => setPast(!past)}>${past ? 'Masquer l’historique' : `Voir l’historique (${hist.length})`}</button>
-      ${past ? html`<div class="list">${hist.slice(0, 12).map(r => html`<${RelectureCard} key=${r.id} ctx=${ctx} r=${r} side=${isLaureat ? 'reviewer' : 'student'}/>`)}</div>` : null}` : null}
+      ${past ? html`<div class="list">${hist.slice(0, 12).map(r => html`<${RelectureCard} key=${r.id} ctx=${ctx} r=${r} side=${isLaureat ? 'reviewer' : 'student'} calme/>`)}</div>` : null}` : null}
     ${isLaureat && !mineActive.length && me.cv_path ? html`<p class="small muted center">Toi aussi, tu veux un regard neuf sur ton CV ? <button class="linkish" onClick=${() => setAsk(true)}>Demande à un lauréat plus expérimenté</button></p>` : null}
     ${connu ? html`<details class="m-how"><summary>Comment ça marche ?</summary>${how}</details>` : null}
     ${ask ? html`<${DemandeRelecture} ctx=${ctx} onClose=${() => setAsk(false)}/>` : null}
@@ -293,8 +296,9 @@ function Etapes({ r }) {
   return html`<ol class="stepper mstep">${ETAPES.map((s, i) => html`<li class=${i < n ? 'done' : ''}><span class="step-dot">${i < n ? html`<${Icon} name="check" size=${13}/>` : i + 1}</span>${s}</li>`)}</ol>`;
 }
 
-// Une relecture de CV, vue par l'étudiant (student), le lauréat qui relit (reviewer) ou un lauréat qui parcourt la file (queue)
-function RelectureCard({ ctx, r, side }) {
+// Une relecture de CV, vue par l'étudiant (student), le lauréat qui relit (reviewer) ou un lauréat qui parcourt la file (queue).
+// calme : l'action pleine de la page est sur une autre carte ; celle de cette carte reste tonale (la file l'est toujours)
+function RelectureCard({ ctx, r, side, calme = false }) {
   const { store, act, openProfile, me } = ctx;
   const student = store.byId('profiles', r.student_id); const reviewer = r.reviewer_id ? store.byId('profiles', r.reviewer_id) : null;
   const other = side === 'student' ? reviewer : student;
@@ -309,14 +313,14 @@ function RelectureCard({ ctx, r, side }) {
     <p class="small muted">${r.status === 'rendue' && r.rendue_at ? `Demandée ${timeAgo(r.created_at)} · rendue ${timeAgo(r.rendue_at)}` : `Demandée ${timeAgo(r.created_at)}`}</p>
     ${side !== 'queue' && r.status !== 'annulee' ? html`<${Etapes} r=${r}/>` : null}
 
-    ${side === 'queue' ? html`<div class="row"><${OuvrirCV} store=${store} path=${r.cv_path}/><span class="spacer"></span><button class="btn small primary" onClick=${prendre}><${Icon} name="check" size=${15}/> Je m’en occupe</button></div>` : null}
+    ${side === 'queue' ? html`<div class="row"><${OuvrirCV} store=${store} path=${r.cv_path}/><span class="spacer"></span><button class="btn small tonal" onClick=${prendre}><${Icon} name="check" size=${15}/> Je m’en occupe</button></div>` : null}
 
     ${side === 'reviewer' && r.status === 'demandee' ? html`<p class="small">${`${firstName(student)} aimerait que tu relises son CV.`}</p>
       <div class="row"><${OuvrirCV} store=${store} path=${r.cv_path}/><span class="spacer"></span>
         <button class="linkish small" onClick=${() => ctx.confirm('Tu n’es pas disponible ? Son CV sera proposé aux autres lauréats.', () => act(async () => { await store.update('relectures_cv', r.id, { reviewer_id: null }); toast('CV proposé aux autres lauréats.'); }), 'Proposer aux autres')}>Pas disponible</button>
-        <button class="btn small primary" onClick=${prendre}><${Icon} name="check" size=${15}/> Je m’en occupe</button></div>` : null}
-    ${side === 'reviewer' && r.status === 'en_cours' ? html`<${Atelier} ctx=${ctx} r=${r} student=${student}/>` : null}
-    ${r.status === 'rendue' && side !== 'queue' ? html`<${Retour} ctx=${ctx} r=${r} side=${side}/>` : null}
+        <button class=${'btn small ' + (calme ? 'tonal' : 'primary')} onClick=${prendre}><${Icon} name="check" size=${15}/> Je m’en occupe</button></div>` : null}
+    ${side === 'reviewer' && r.status === 'en_cours' ? html`<${Atelier} ctx=${ctx} r=${r} student=${student} calme=${calme}/>` : null}
+    ${r.status === 'rendue' && side !== 'queue' ? html`<${Retour} ctx=${ctx} r=${r} side=${side} calme=${calme}/>` : null}
 
     ${side === 'student' && ACTIVES.includes(r.status) ? html`<div class="row"><span class="small muted">${r.status === 'en_cours' ? `${firstName(reviewer) || 'Un lauréat'} relit ton CV. On te prévient dès que c’est fini.` : reviewer ? `En attente de ${firstName(reviewer)}…` : 'En attente d’un lauréat…'}</span><span class="spacer"></span>
       <button class="linkish small m-quiet" onClick=${() => ctx.confirm('Annuler cette relecture ?', () => act(() => store.update('relectures_cv', r.id, { status: 'annulee' })), 'Annuler la relecture')}>Annuler</button></div>` : null}
@@ -325,7 +329,7 @@ function RelectureCard({ ctx, r, side }) {
 }
 
 // Atelier du lauréat : ouvrir le CV, commenter par rubrique, rédiger la synthèse, rendre
-function Atelier({ ctx, r, student }) {
+function Atelier({ ctx, r, student, calme = false }) {
   const { data, store, act, me } = ctx;
   const [rub, setRub] = useState('general'); const [txt, setTxt] = useState('');
   const [syn, setSyn] = useState(r.synthese || ''); const [busy, setBusy] = useState(false);
@@ -348,7 +352,7 @@ function Atelier({ ctx, r, student }) {
     <${Field} label="Synthèse" hint="Ce qu’il faut retenir en trois lignes : points forts, priorités."><textarea id=${'rv-syn-' + r.id} rows="3" maxlength="2000" value=${syn} onInput=${e => setSyn(e.target.value)}
       onBlur=${() => { if ((syn.trim() || null) !== (r.synthese || null)) act(() => store.update('relectures_cv', r.id, { synthese: syn.trim() || null, reviewer_id: me.id })); }}></textarea><//>
     <div class="row"><button type="button" class="linkish small" onClick=${() => ctx.confirm('Rendre la main ? Le CV sera proposé aux autres lauréats.', () => act(() => store.update('relectures_cv', r.id, { reviewer_id: null })), 'Rendre la main')}>Je ne peux plus</button><span class="spacer"></span>
-      <button id=${'rv-rendre-' + r.id} class="btn primary small" disabled=${!peutRendre} title=${peutRendre ? '' : 'Ajoute au moins un commentaire ou une synthèse'} onClick=${rendre}><${Icon} name="send" size=${15}/> Rendre la relecture</button></div>
+      <button id=${'rv-rendre-' + r.id} class=${'btn small ' + (calme ? 'tonal' : 'primary')} disabled=${!peutRendre} title=${peutRendre ? '' : 'Ajoute au moins un commentaire ou une synthèse'} onClick=${rendre}><${Icon} name="send" size=${15}/> Rendre la relecture</button></div>
   </div>`;
 }
 
@@ -366,7 +370,7 @@ function Commentaires({ ctx, r, coms }) {
 }
 
 // Relecture rendue : la synthèse, les commentaires, puis le merci de l'étudiant (note et mot)
-function Retour({ ctx, r, side }) {
+function Retour({ ctx, r, side, calme = false }) {
   const { data, store, act, me } = ctx;
   const coms = data.relecture_commentaires.filter(c => c.relecture_id === r.id);
   const reviewer = store.byId('profiles', r.reviewer_id); const student = store.byId('profiles', r.student_id);
@@ -378,7 +382,7 @@ function Retour({ ctx, r, side }) {
       <p><${Icon} name="heart" size=${16}/> <strong>Cette relecture t’a été utile ?</strong></p>
       <span class="stars" role="radiogroup" aria-label="Aide reçue">${[1, 2, 3, 4, 5].map(v => html`<button type="button" role="radio" aria-checked=${v === note} class=${v <= note ? 'on' : ''} aria-label=${v + ' sur 5'} onClick=${() => setNote(v)}>★</button>`)}</span>
       <textarea id=${'rv-merci-' + r.id} rows="2" maxlength="800" placeholder="Un mot de remerciement…" value=${merci} onInput=${e => setMerci(e.target.value)}></textarea>
-      <div class="row-end"><button class="btn primary small">${merci.trim() ? 'Envoyer mon merci' : 'Envoyer ma note'}</button></div>
+      <div class="row-end"><button class=${'btn small ' + (calme ? 'tonal' : 'primary')}>${merci.trim() ? 'Envoyer mon merci' : 'Envoyer ma note'}</button></div>
     </form>` : null}
     ${r.merci || r.note ? html`<p class="small merci-inline">${r.note ? html`<span class="stars-ro" aria-label=${r.note + ' sur 5'}>${'★'.repeat(r.note)}</span>` : null}${r.merci ? html`<${Icon} name="heart" size=${14}/> <span dir="auto" translate="no">${r.merci}</span>` : null}</p>` : null}
     <form class="rel-add-row" onSubmit=${e => { e.preventDefault(); if (!q.trim()) return; act(async () => { await store.insert('relecture_commentaires', { relecture_id: r.id, author_id: me.id, section: 'general', body: q.trim() }); setQ(''); }); }}>

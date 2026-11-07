@@ -6,7 +6,7 @@ import { html, useState, useEffect, useLayoutEffect, useRef, useMemo } from './v
 import { Icon, Avatar, Empty, toast, injectCSS, roleTexte, Modal, lienDirect } from './ui.js';
 import { useBrouillon, oublierBrouillon, lireBrouillon, ecrireBrouillon } from './ui.js';
 import { conversations, lienAvec, mentorState, norm, matchEntre, etapeMatch, titreOffre, peutPostulerA, attendReponse } from './logic.js';
-import { addAR, getLang } from './i18n.js';
+import { addAR, getLang, t as tr } from './i18n.js';
 import { VOCAL_MAX, REACTIONS, jitsiLink } from './store.js';
 import { SignalerBtn } from './confiance.js';
 import { OuvrirCV } from './cv.js';
@@ -40,13 +40,14 @@ const apercus = new Map();
 // Message préparé (ex. l'administration demande un CV) : repris une seule fois à l'ouverture de la conversation
 const brouillons = new Map();
 // icone, compte : le « Merci » des membres fondateurs (accueil) a son cœur et ne compte pas les messages non lus
-// aria : le nom du bouton quand il n'a pas de libellé à l'écran (label vide : l'icône seule)
+// aria : le nom du bouton quand il n'a pas de libellé à l'écran (label vide : l'icône seule), ou quand le libellé peut
+// se cacher (.msg-btn-txt : les filleuls, sur un petit téléphone)
 export function MessageBtn({ ctx, p, label = 'Écrire', cls = 'btn small', texte = '', icone = 'chat', compte = true, aria }) {
   const id = p?.id || p;
   if (!id || !ctx.store.peutDiscuter?.(id)) return null;
   const n = compte ? (ctx.data.messages || []).filter(m => m.author_id === id && m.dest_id === ctx.me.id && !m.lu_at).length : 0;
   return html`<button type="button" class=${cls + ' msg-btn'} aria-label=${aria} title=${aria} onClick=${e => { e.stopPropagation(); if (texte) brouillons.set(id, texte); ctx.ecrire ? ctx.ecrire(id) : ctx.go('messages/' + id); }}>
-    <${Icon} name=${icone} size=${15}/>${label ? ` ${label}` : null}${n ? html` <span class="count">${n}</span>` : null}</button>`;
+    <${Icon} name=${icone} size=${15}/>${label ? html` <span class="msg-btn-txt">${label}</span>` : null}${n ? html` <span class="count">${n}</span>` : null}</button>`;
 }
 
 function Apercu({ m, me }) {
@@ -85,10 +86,12 @@ export function MessagesPage(ctx) {
   const autre = sub && sub !== me.id && store.byId('profiles', sub) ? sub : null;
   return html`<section class=${'chat-page' + (autre ? ' has-conv' : '')}>
     <${ConvList} ctx=${ctx} convs=${convs} actif=${autre}/>
-    ${autre ? html`<${Conversation} ctx=${ctx} autre=${autre} key=${autre}/>` : html`<div class="chat-vide">
-      <span class="chat-vide-ico"><${Icon} name="chat" size=${34}/></span>
+    ${autre ? html`<${Conversation} ctx=${ctx} autre=${autre} key=${autre}/>` : html`<div class="chat-vide">${convs.length
+      // Des conversations attendent dans la liste : la scène dessinée (une seule fois à l'écran, la liste a ses visages)
+      ? html`<${Empty} icon="chat" scene="messages" title="Tes conversations">Écris à un lauréat qui t’aide, à un étudiant qui a postulé, à ton parrain : en texte, en photo ou en message vocal.<//>`
+      : html`<span class="chat-vide-ico"><${Icon} name="chat" size=${34}/></span>
       <h2>Tes conversations</h2>
-      <p class="muted">Écris à un lauréat qui t’aide, à un étudiant qui a postulé, à ton parrain : en texte, en photo ou en message vocal.</p>
+      <p class="muted">Écris à un lauréat qui t’aide, à un étudiant qui a postulé, à ton parrain : en texte, en photo ou en message vocal.</p>`}
     </div>`}
   </section>`;
 }
@@ -114,6 +117,8 @@ function ConvList({ ctx, convs, actif }) {
   const list = q.trim() ? convs.filter(c => norm(nom(c.autre)).includes(norm(q.trim()))) : convs;
   const total = convs.reduce((n, c) => n + c.nonLus, 0);
   const ouvrir = (e, id) => { e.preventDefault(); go('messages/' + id); };
+  // Aucune conversation : l'action de la carte vide mène au mentorat
+  const versMentorat = { label: me.role === 'laureat' ? 'Voir qui a besoin d’aide' : 'Demander un conseil', icon: 'mentor', onClick: () => go('mentorat') };
   return html`<aside class="conv-list" aria-label="Conversations">
     <header class="conv-head"><h1>Messages</h1>${total ? html`<span class="count">${total}</span>` : null}</header>
     ${convs.length > 5 ? html`<div class="conv-search"><${Icon} name="search" size=${16}/><input id="conv-q" type="search" aria-label="Chercher une conversation" placeholder="Chercher un nom" value=${q} onInput=${e => setQ(e.target.value)}/></div>` : null}
@@ -122,12 +127,11 @@ function ConvList({ ctx, convs, actif }) {
         <${Avatar} p=${p} size=${48}/><span class="sugg-nom" translate="no">${prenom(p)}</span><span class="sugg-lien">${l?.label || roleTexte(p)}</span></a>`; })}</div></div>` : null}
     ${list.length ? html`<ul class="convs">${list.map(c => { const p = store.byId('profiles', c.autre); return html`<li key=${c.autre}>
       <a class=${'conv-item' + (c.autre === actif ? ' on' : '') + (c.nonLus ? ' unread' : '')} href=${'#messages/' + c.autre} aria-current=${c.autre === actif ? 'true' : undefined} onClick=${e => ouvrir(e, c.autre)}>
-        <${Avatar} p=${p} size=${46}/>
-        <span class="ci-main"><span class="ci-top"><span class="ci-name" translate="no">${p?.full_name || 'Membre'}</span><span class="ci-time">${quandCourt(c.dernier.created_at)}</span></span>
+        <${Avatar} p=${p} size=${48}/>
+        <span class="ci-main"><span class="ci-top"><span class="ci-name" translate="no" dir="auto">${p?.full_name || 'Membre'}</span><span class="ci-time">${quandCourt(c.dernier.created_at)}</span></span>
           <span class="ci-bas"><${Apercu} m=${c.dernier} me=${me.id}/>${c.nonLus ? html`<span class="ci-n"><span aria-hidden="true">${c.nonLus}</span><span class="sr-only">${c.nonLus > 1 ? `${c.nonLus} messages non lus` : '1 message non lu'}</span></span>` : c.dernier.author_id === me.id && c.dernier.lu_at ? html`<span class="ci-vu"><${Icon} name="checks" size=${15}/></span>` : null}</span></span>
       </a></li>`; })}</ul>`
-    : !sugg.length && !q ? html`<div class="conv-empty"><${Empty} icon="chat" scene="messages" title="Pas encore de message">Une conversation s’ouvre avec un match, un mentorat, une candidature, ton parrain ou des coordonnées partagées.<//>
-        <button class="btn small" onClick=${() => go('mentorat')}><${Icon} name="mentor" size=${15}/> ${me.role === 'laureat' ? 'Voir qui a besoin d’aide' : 'Demander un conseil'}</button></div>`
+    : !sugg.length && !q ? html`<div class="conv-empty"><${Empty} icon="chat" scene="messages" title="Pas encore de message" action=${versMentorat}>Une conversation s’ouvre avec un match, un mentorat, une candidature, ton parrain ou des coordonnées partagées.<//></div>`
     : q ? html`<p class="small muted conv-none">Aucune conversation à ce nom.</p>` : null}
     <p class="small muted conv-note"><${Icon} name="lock" size=${13}/> Une conversation n’est visible que par vous deux.</p>
   </aside>`;
@@ -141,6 +145,25 @@ const BRISE_GLACE = {
   laureat: ['Bonjour ! Dis-moi comment je peux t’aider.', 'Envoie-moi ton CV ici avant notre appel.', 'Bravo pour ta démarche, on en parle quand tu veux.'],
   admin: ['Bonjour ! Bienvenue sur le réseau.', 'Merci pour ta participation.', 'Une question sur la plateforme ? Réponds ici.'],
 };
+
+// Réponses rapides : au début d'une conversation (l'autre a écrit, pas encore moi) ou quand une question attend.
+// Une puce remplit le champ (dans la langue de l'écran) ; rien ne part tout seul.
+// visio : « On en parle en visio ? » se propose entre membres, pas avec l'équipe du réseau (son mot de bienvenue n'appelle pas d'appel)
+const RAPIDES = ['Merci !', 'Je regarde et je reviens vers toi', 'On en parle en visio ?'];
+export function reponsesRapides(fil, moi, autre, { visio = true } = {}) {
+  const dernier = fil[fil.length - 1];
+  if (!dernier || dernier.author_id !== autre || dernier.type === 'rdv') return null;
+  const question = dernier.type === 'texte' && /[?؟]\s*$/.test(dernier.body || '');
+  return question || !fil.some(m => m.author_id === moi) ? (visio ? RAPIDES : RAPIDES.slice(0, 2)) : null;
+}
+
+// Le sens d'un texte, celui de sa première lettre (comme dir="auto") : un message en français dans l'écran arabe
+// s'aligne à gauche avec son heure à droite, un message en arabe dans l'écran français à droite. null : rien à lire.
+const LETTRE = /([\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF])|[A-Za-z\u00C0-\u02B8\u0370-\u058F\u0900-\u1FFF]/;
+export function sensTexte(s) {
+  const x = LETTRE.exec(String(s || ''));
+  return x ? (x[1] ? 'rtl' : 'ltr') : null;
+}
 
 function Conversation({ ctx, autre }) {
   const { me, data, store, go, act, openProfile } = ctx;
@@ -249,6 +272,10 @@ function Conversation({ ctx, autre }) {
   const rdv = lien?.type === 'mentorat' && mentorState(lien.m) === 'rdv' && lien.m.rdv_at ? lien.m : null;
   const lienVisio = rdv && store.byId('liens_rdv', rdv.id)?.lien;
   const brise = BRISE_GLACE[me.role] || BRISE_GLACE.etudiant;
+  const rapides = actif ? reponsesRapides(fil, me.id, autre, { visio: me.role !== 'admin' && p?.role !== 'admin' }) : null;
+  // « Vu » : seulement si l'autre a vraiment lu mon dernier message (la date existe), sous ce message
+  const dernierMsg = tous[tous.length - 1];
+  const vu = dernierMsg && dernierMsg.author_id === me.id && !dernierMsg.etat && dernierMsg.lu_at ? dernierMsg.lu_at : null;
 
   let jour = null;
   return html`<section class="conv" aria-label=${'Conversation avec ' + (p?.full_name || '')}>
@@ -256,7 +283,7 @@ function Conversation({ ctx, autre }) {
       <button class="icon-btn conv-back" aria-label="Retour aux conversations" onClick=${() => go('messages', { remplacer: true })}><${Icon} name="back"/></button>
       <button type="button" class="conv-who" onClick=${() => openProfile(p)}>
         <${Avatar} p=${p} size=${40}/>
-        <span class="conv-who-txt"><strong translate="no">${p?.full_name || 'Membre'}</strong>
+        <span class="conv-who-txt"><strong translate="no" dir="auto">${p?.full_name || 'Membre'}</strong>
           <span class="conv-sub">${tape ? html`<span class="tape-txt">écrit<span class="tape-dots" aria-hidden="true"><i></i><i></i><i></i></span></span>`
             : lien?.label ? html`<span>${lien.label}</span>${lien.detail && lien.type !== 'match' ? html` · <bdi translate="no">${lien.detail}</bdi>` : null}` : html`<span>${roleTexte(p)}</span>`}</span></span>
       </button>
@@ -275,9 +302,9 @@ function Conversation({ ctx, autre }) {
 
     <div class="conv-fil" ref=${zone} onScroll=${defile} role="log" aria-live="polite" aria-label="Messages">
       <p class="conv-safe"><${Icon} name="lock" size=${13}/> Messages visibles seulement par vous deux. Un souci ? Signale un message en un clic.</p>
-      ${!tous.length ? html`<div class="conv-start"><${Avatar} p=${p} size=${72}/><strong translate="no">${p?.full_name || ''}</strong>
+      ${!tous.length ? html`<div class="conv-start"><span class="cs-duo" aria-hidden="true"><${Avatar} p=${me} size=${52}/><${Avatar} p=${p} size=${72}/></span><strong translate="no">${p?.full_name || ''}</strong>
         <span class="small muted">${lien?.label ? html`<span>${lien.label}</span>${lien.detail ? html` · <span translate="no" dir="auto">${lien.detail}</span>` : null}` : html`<span>${roleTexte(p)}</span>`}</span>
-        ${ouvert && !blocage ? html`<p class="small">Pour briser la glace :</p><div class="chips brise">${brise.map(b => html`<button type="button" class="chip" onClick=${() => { setTxt(b); document.getElementById('chat-txt')?.focus(); }}>${b}</button>`)}</div>` : null}</div>` : null}
+        ${ouvert && !blocage ? html`<p class="small">Pour briser la glace :</p><div class="chips brise">${brise.map(b => html`<button type="button" class="chip" onClick=${() => { setTxt(tr(b)); document.getElementById('chat-txt')?.focus(); }}>${b}</button>`)}</div>` : null}</div>` : null}
       ${tous.map((m, i) => {
         const j = jourDe(m.created_at); const sep = j !== jour; jour = j;
         const prev = tous[i - 1]; const suite = !sep && prev && prev.author_id === m.author_id && new Date(m.created_at) - new Date(prev.created_at) < 5 * 6e4;
@@ -287,6 +314,7 @@ function Conversation({ ctx, autre }) {
             cite=${m.reponse_a ? parId.get(m.reponse_a) || 'supprime' : null} nomDe=${nomDe} onAller=${allerA} reactions=${reactions.get(m.id) || []} options=${options}
             onRepondre=${repondre} onReagir=${reagir} onAutre=${actif ? () => setEntretien(true) : null}/>`;
       })}
+      ${vu && !tape ? html`<p class="msg-vu"><${Icon} name="checks" size=${14}/><span>Vu</span><span aria-hidden="true">·</span><span class="mono">${quandCourt(vu)}</span></p>` : null}
       ${tape ? html`<div class="msg tape-bulle" aria-hidden="true"><div class="bulle"><span class="tape-dots"><i></i><i></i><i></i></span></div></div>` : null}
     </div>
     ${plusBas ? html`<div class="conv-bas-ancre"><button class="conv-bas" aria-label="Aller aux derniers messages" onClick=${versLeBas}><${Icon} name="arrow" size=${16}/></button></div>` : null}
@@ -294,7 +322,7 @@ function Conversation({ ctx, autre }) {
 
     ${blocage ? html`<div class="composer ferme"><${Icon} name="block" size=${16}/><span>Tu as bloqué <span translate="no">${prenom(p)}</span>.</span><span class="spacer"></span><button class="btn small" onClick=${debloquer}>Débloquer</button></div>`
       : !ouvert ? html`<div class="composer ferme"><${Icon} name="lock" size=${16}/><span>Vous ne pouvez pas vous écrire pour l’instant. Une conversation s’ouvre avec un match, un mentorat, une candidature ou des coordonnées partagées.</span></div>`
-      : html`<${Composer} txt=${txt} setTxt=${setTxt} onEnvoyer=${envoyer} onTape=${() => canal.current?.tape()}
+      : html`<${Composer} txt=${txt} setTxt=${setTxt} onEnvoyer=${envoyer} onTape=${() => canal.current?.tape()} rapides=${rapides}
           cite=${cite && fil.some(m => m.id === cite.id) ? cite : null} nomDe=${nomDe} onAnnulerCite=${() => setCite(null)}/>`}
     ${vue ? html`<${Visionneuse} url=${vue} onClose=${() => setVue(null)}/>` : null}
     ${entretien && p ? html`<${EntretienSheet} ctx=${ctx} p=${p} onClose=${() => setEntretien(false)}/>` : null}
@@ -528,9 +556,11 @@ function Bulle({ ctx, m, mine, suite, neuf, sel, onSel, onVoir, onCopier, onSupp
   // Une pastille par emoji (deux personnes au plus dans une conversation)
   const pastilles = [];
   for (const r of reactions) { const x = pastilles.find(p => p.emoji === r.emoji); if (x) x.qui.push(r.user_id); else pastilles.push({ emoji: r.emoji, qui: [r.user_id] }); }
+  // Le texte s'aligne dans son propre sens, l'heure à sa fin ; la bulle, elle, reste du côté de son auteur
+  const sens = m.body && m.type !== 'vocal' && m.type !== 'rdv' ? sensTexte(m.body) : null;
   return html`<div id=${'msg-' + m.id} ref=${racine} class=${'msg' + (mine ? ' mine' : '') + (suite ? ' suite' : '') + (neuf ? ' neuf' : '') + (envoi ? ' envoi' : '') + (erreur ? ' erreur' : '') + (sel ? ' sel' : '') + (pastilles.length ? ' a-react' : '')}>
     ${peutRepondre ? html`<span class="glisse-ico" aria-hidden="true"><${Icon} name="reply" size=${18}/></span>` : null}
-    <div class=${'bulle t-' + (m.type || 'texte') + (cite ? ' avec-cite' : '')} ...${geste}>
+    <div class=${'bulle t-' + (m.type || 'texte') + (cite ? ' avec-cite' : '')} data-sens=${sens} ...${geste}>
       ${cite === 'supprime' ? html`<span class="msg-cite supprime"><span>Message supprimé</span></span>`
         : cite ? html`<button type="button" class="msg-cite" onClick=${() => onAller(cite.id)}>${nomDe(cite.author_id)}<${ExtraitCite} m=${cite}/></button>` : null}
       ${m.type === 'photo' ? html`<${Photo} ctx=${ctx} m=${m} onVoir=${onVoir}/>` : null}
@@ -709,7 +739,7 @@ function useEnregistreur(onFini) {
   return { possible, etat, sec, niv, demarrer, arreter };
 }
 
-function Composer({ txt, setTxt, onEnvoyer, onTape, cite, nomDe, onAnnulerCite }) {
+function Composer({ txt, setTxt, onEnvoyer, onTape, cite, nomDe, onAnnulerCite, rapides }) {
   const ta = useRef(); const fichierIn = useRef();
   // Ce qui part pendant qu'un message est cité lui répond (texte, photo ou vocal)
   const citeRef = useRef(cite); citeRef.current = cite;
@@ -739,13 +769,17 @@ function Composer({ txt, setTxt, onEnvoyer, onTape, cite, nomDe, onAnnulerCite }
       <button type="button" class="send-btn" aria-label="Envoyer le message vocal" onClick=${() => rec.arreter(true)}><${Icon} name="send" size=${19}/></button>
     </div>
   </div>`;
+  const remplir = r => { setTxt(tr(r)); requestAnimationFrame(() => { const t = ta.current; if (!t) return; t.focus(); t.setSelectionRange(t.value.length, t.value.length); }); };
   return html`<div class="composer ecrire">
     ${bandeau}
+    ${rapides && !txt.trim() && !cite ? html`<div class="comp-rapides chips rangee" role="group" aria-label="Réponses rapides">${rapides.map(r => html`<button type="button" key=${r} class="chip rapide" onClick=${() => remplir(r)}>${r}</button>`)}</div>` : null}
     <div class="comp-row">
-      <button type="button" class="icon-btn comp-photo" aria-label="Envoyer une photo" title="Photo" onClick=${() => fichierIn.current?.click()}><${Icon} name="image"/></button>
-      <input type="file" accept="image/*" class="sr-file" tabindex="-1" aria-hidden="true" ref=${fichierIn} onChange=${photo}/>
-      <textarea id="chat-txt" ref=${ta} rows="1" maxlength="2000" aria-label="Ton message" placeholder="Écris un message…" value=${txt}
-        onInput=${e => { setTxt(e.target.value); onTape(); }} onKeyDown=${clavier}></textarea>
+      <div class="comp-champ">
+        <button type="button" class="icon-btn comp-photo" aria-label="Envoyer une photo" title="Photo" onClick=${() => fichierIn.current?.click()}><${Icon} name="image"/></button>
+        <input type="file" accept="image/*" class="sr-file" tabindex="-1" aria-hidden="true" ref=${fichierIn} onChange=${photo}/>
+        <textarea id="chat-txt" ref=${ta} rows="1" maxlength="2000" aria-label="Ton message" placeholder="Écris un message…" value=${txt}
+          onInput=${e => { setTxt(e.target.value); onTape(); }} onKeyDown=${clavier}></textarea>
+      </div>
       ${txt.trim() || !rec.possible ? html`<button type="button" class="send-btn" aria-label="Envoyer" disabled=${!txt.trim()} onClick=${envoyerTexte}><${Icon} name="send" size=${19}/></button>`
         : html`<button type="button" class="send-btn mic" aria-label="Enregistrer un message vocal" title="Message vocal" onClick=${rec.demarrer}><${Icon} name="mic" size=${20}/></button>`}
     </div>
@@ -759,7 +793,7 @@ injectCSS('messagerie', `
 .chat-page { flex: 1; min-height: 0; min-width: 0; display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); background: var(--surface); }
 .conv-list { min-width: 0; display: flex; flex-direction: column; min-height: 0; border-inline-end: 1px solid var(--line); background: var(--surface); }
 .conv-head { display: flex; align-items: center; gap: .6rem; padding: 1.1rem 1.1rem .5rem; }
-.conv-head h1 { font-size: 1.5rem; }
+.conv-head h1 { font-size: var(--fs-titre); }
 .conv-search { margin: .2rem 1rem .5rem; display: flex; align-items: center; gap: .4rem; padding: 0 .7rem; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
 .conv-search input { border: 0; background: transparent; padding: .5rem 0; }
 .conv-sugg { padding: .3rem 0 .6rem; border-bottom: 1px solid var(--line); }
@@ -767,7 +801,7 @@ injectCSS('messagerie', `
 .sugg-row { display: flex; gap: .3rem; overflow-x: auto; padding: .2rem .8rem .2rem; scrollbar-width: none; }
 .sugg { display: flex; flex-direction: column; align-items: center; gap: .2rem; width: 76px; flex: none; padding: .4rem .2rem; border-radius: 12px; text-decoration: none; color: var(--ink); text-align: center; }
 .sugg:hover { background: var(--surface-2); }
-.sugg-nom { font-size: .8rem; font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sugg-nom { font-size: var(--fs-2); font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sugg-lien { font-size: var(--fs-1); color: var(--muted); }
 .convs { list-style: none; margin: 0; padding: .3rem .45rem; overflow-y: auto; flex: 1; min-height: 0; }
 .conv-item { display: flex; align-items: center; gap: .75rem; padding: .6rem .65rem; border-radius: 14px; color: var(--ink); text-decoration: none; transition: background .15s; }
@@ -775,14 +809,20 @@ injectCSS('messagerie', `
 .conv-item.on { background: var(--accent-soft); }
 .ci-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .ci-top, .ci-bas { display: flex; align-items: center; gap: .5rem; min-width: 0; }
-.ci-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Un nom long (« Bureau des relations entreprises ») prend deux lignes plutôt que de finir en « … » ; l'heure reste sur la première */
+.ci-top { align-items: baseline; }
+.ci-name { flex: 1; min-width: 0; font-weight: 600; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+/* Un nom dans son propre sens (dir="auto"), posé du côté de la lecture de l'écran, contre le visage */
+.ci-name, .conv-who-txt strong { text-align: left; }
+:root[dir="rtl"] .ci-name, :root[dir="rtl"] .conv-who-txt strong { text-align: right; }
 .ci-time { font-size: var(--fs-1); color: var(--muted); flex: none; }
-.ci-prev { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: .3rem; color: var(--muted); font-size: .88rem; overflow: hidden; white-space: nowrap; }
+.ci-prev { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: .3rem; color: var(--muted); font-size: var(--fs-2); overflow: hidden; white-space: nowrap; }
 .ci-prev > span { white-space: nowrap; }
 .ci-prev > :not(.ci-moi) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ci-moi { flex: none; }
 .ci-media { display: inline-flex; align-items: center; gap: .25rem; vertical-align: middle; }
 .conv-item.unread .ci-prev { color: var(--ink); font-weight: 500; }
+.conv-item.unread .ci-name { font-weight: 700; }
 .conv-item.unread .ci-time { color: var(--accent); font-weight: 600; }
 .ci-n { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: var(--accent); color: var(--accent-ink); font: 600 var(--fs-1)/22px var(--f-body); text-align: center; flex: none; font-variant-numeric: tabular-nums; }
 .ci-vu { color: var(--accent); display: inline-flex; flex: none; }
@@ -791,6 +831,7 @@ injectCSS('messagerie', `
 .conv-none { padding: .5rem 1.1rem; }
 .chat-vide { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .6rem; padding: 2rem; text-align: center; background: color-mix(in srgb, var(--accent-soft) 40%, var(--bg)); }
 .chat-vide p { max-width: 38ch; }
+.chat-vide .empty { max-width: 26rem; background: none; }
 .chat-vide-ico { width: 84px; height: 84px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); color: var(--blue-text); box-shadow: var(--sh2); margin-bottom: .3rem; }
 
 .conv { position: relative; display: flex; flex-direction: column; min-height: 0; min-width: 0; background: color-mix(in srgb, var(--accent-soft) 38%, var(--bg)); }
@@ -800,31 +841,41 @@ injectCSS('messagerie', `
 .conv-who:hover { background: var(--surface-2); }
 .conv-who-txt { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
 .conv-who-txt strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.conv-sub { font-size: .8rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-sub { font-size: var(--fs-2); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tape-txt { color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: .3rem; }
 .tape-dots { display: inline-flex; gap: 3px; align-items: center; }
 .tape-dots i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .5; animation: tape 1.2s infinite ease-in-out; }
 .tape-dots i:nth-child(2) { animation-delay: .15s; } .tape-dots i:nth-child(3) { animation-delay: .3s; }
 @keyframes tape { 0%, 60%, 100% { transform: translateY(0); opacity: .45; } 30% { transform: translateY(-4px); opacity: 1; } }
-.conv-rdv { display: flex; align-items: center; gap: .5rem; padding: .45rem .9rem; background: var(--accent-soft); color: var(--blue-text); font-size: .86rem; font-weight: 500; border-bottom: 1px solid var(--line); }
+.conv-rdv { display: flex; align-items: center; gap: .5rem; padding: .45rem .9rem; background: var(--accent-soft); color: var(--blue-text); font-size: var(--fs-2); font-weight: 500; border-bottom: 1px solid var(--line); }
 .conv-fil { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: .8rem clamp(.7rem, 3vw, 2rem) 1rem; display: flex; flex-direction: column; }
-.conv-safe { align-self: center; max-width: 34rem; margin: .2rem auto .6rem; padding: .45rem .85rem; border-radius: var(--r-md); background: var(--surface); border: 0; box-shadow: var(--sh1); color: var(--muted); font-size: var(--fs-1); text-align: center; display: flex; gap: .35rem; align-items: center; }
+.conv-safe { align-self: center; max-width: 30rem; margin: .1rem auto .5rem; padding: .3rem .6rem; color: var(--muted); font-size: var(--fs-1); text-align: center; text-wrap: balance; }
+.conv-safe .ico { display: inline-block; vertical-align: -2px; margin-inline-end: .3rem; }
 .conv-start { display: flex; flex-direction: column; align-items: center; gap: .35rem; margin: auto 0; padding: 1.5rem 0; text-align: center; }
-.conv-start strong { font-family: var(--f-display); font-size: 1.15rem; }
+.cs-duo { display: inline-flex; align-items: flex-end; margin-bottom: .4rem; }
+.cs-duo > :first-child { margin-inline-end: -14px; box-shadow: 0 0 0 3px var(--surface); border-radius: 50%; z-index: 1; }
+.cs-duo > :last-child { box-shadow: 0 0 0 3px var(--surface), var(--sh2); border-radius: 50%; }
+.conv-start strong { font-family: var(--f-display); font-size: var(--fs-4); }
 .chips.brise { justify-content: center; max-width: 30rem; }
 .jour { align-self: center; margin: .9rem 0 .35rem; position: sticky; top: 0; z-index: 1; }
-.jour span { display: inline-block; padding: .2rem .8rem; border-radius: var(--r-pill); background: var(--surface); border: 0; font-size: var(--fs-1); font-weight: 600; color: var(--muted); box-shadow: var(--sh1); }
+.jour span { display: inline-block; padding: .22rem .8rem; border-radius: var(--r-pill); background: color-mix(in srgb, var(--surface) 90%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); font-size: var(--fs-1); font-weight: 600; letter-spacing: .01em; color: var(--ink-2); box-shadow: 0 0 0 1px var(--hair), var(--sh1); }
 
 .msg { display: flex; align-items: center; gap: .15rem; margin-top: .55rem; flex-wrap: wrap; }
 .msg.suite { margin-top: 3px; }
 .msg.mine { flex-direction: row-reverse; }
-.bulle { position: relative; max-width: min(80%, 34rem); padding: .45rem .7rem .35rem; border-radius: 18px; background: var(--surface); color: var(--ink); border: 0; box-shadow: 0 0 0 1px var(--hair), 0 1px 2px rgb(19 33 58 / .06); min-width: 0; }
+.bulle { position: relative; max-width: min(80%, 34rem); padding: .5rem .75rem .4rem; border-radius: 20px; background: var(--surface); color: var(--ink); border: 0; box-shadow: 0 0 0 1px var(--hair), 0 1px 2px rgb(19 33 58 / .06); min-width: 0; }
 .msg:not(.suite):not(.mine) .bulle { border-start-start-radius: 6px; }
 .msg.mine .bulle { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .msg.mine:not(.suite) .bulle { border-start-end-radius: 6px; }
 .msg-txt { white-space: pre-wrap; overflow-wrap: anywhere; display: inline; }
 .msg-txt a { color: inherit; text-decoration: underline; }
 .msg-meta { float: inline-end; display: inline-flex; align-items: center; gap: 3px; margin-inline-start: .55rem; margin-top: .35rem; font-size: var(--fs-1); line-height: 1; color: var(--muted); position: relative; top: .2rem; }
+/* Un message écrit dans l'autre sens que l'écran (du français dans l'écran arabe, ou l'inverse) : ses lignes s'alignent
+   dans son sens et l'heure se met à sa fin ; la bulle, ses coins et ses réactions restent ceux de l'écran (data-sens, messages.js) */
+.bulle[data-sens="ltr"] { text-align: left; }
+.bulle[data-sens="rtl"] { text-align: right; }
+.bulle[data-sens="ltr"] > .msg-meta { float: right; margin-left: .55rem; margin-right: 0; }
+.bulle[data-sens="rtl"] > .msg-meta { float: left; margin-right: .55rem; margin-left: 0; }
 .msg.mine .msg-meta { color: var(--accent-ink); }
 .msg-etat { display: inline-flex; }
 .msg.mine .msg-etat.lu { color: var(--accent-ink); }
@@ -834,27 +885,29 @@ injectCSS('messagerie', `
 .msg-retry { color: var(--bad); flex-basis: 100%; text-align: end; padding: .15rem .3rem; }
 .msg-more { opacity: 0; transition: opacity .15s; color: var(--muted); }
 .msg:hover .msg-more, .msg-more:focus-visible, .msg.sel .msg-more { opacity: 1; }
-@media (hover: none) { .msg-more { opacity: .6; } }
+@media (hover: none) { .msg-more { opacity: .4; } }
+.msg-vu { align-self: flex-end; display: inline-flex; align-items: center; gap: .3rem; margin: .3rem .35rem 0; font-size: var(--fs-1); color: var(--muted); }
+.msg-vu .ico { color: var(--blue-text); }
 .msg-actions { flex-basis: 100%; display: flex; flex-direction: column; align-items: flex-start; gap: .35rem; padding: .3rem .2rem 0; }
 .msg.mine .msg-actions { align-items: flex-end; }
 .msg-acts-row { display: flex; flex-wrap: wrap; gap: .3rem; }
 .msg.mine .msg-acts-row { justify-content: flex-end; }
 .react-bar { display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--raised); border: 0; box-shadow: var(--sh3); animation: react-bar-in .2s var(--ease); }
 @keyframes react-bar-in { from { opacity: 0; transform: translateY(6px) scale(.94); } }
-.react-btn { width: 40px; height: 40px; border-radius: 50%; border: 0; background: none; font-size: 1.3rem; line-height: 1; cursor: pointer; display: grid; place-items: center; transition: transform .15s var(--ease), background .15s; }
+.react-btn { width: 40px; height: 40px; border-radius: 50%; border: 0; background: none; font-size: var(--fs-5); line-height: 1; cursor: pointer; display: grid; place-items: center; transition: transform .15s var(--ease), background .15s; }
 .react-btn:hover { transform: scale(1.18); background: var(--surface-2); }
 .react-btn:active { transform: scale(.9); }
 .react-btn.on { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); }
 .msg.a-react { margin-bottom: 18px; }
 .msg.a-react .msg-actions { padding-top: 18px; }
 .msg-reacts { position: absolute; bottom: -15px; inset-inline-start: 10px; display: flex; gap: 3px; z-index: 1; }
-.react-pill { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 6px; border-radius: 12px; background: var(--raised); border: 0; box-shadow: var(--sh2); font-size: .9rem; line-height: 1; color: var(--ink); animation: react-pop .28s var(--ease); }
+.react-pill { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 6px; border-radius: 12px; background: var(--raised); border: 0; box-shadow: var(--sh2); font-size: var(--fs-3); line-height: 1; color: var(--ink); animation: react-pop .28s var(--ease); }
 button.react-pill { cursor: pointer; font-family: inherit; }
 .react-pill.mien { border-color: var(--accent); background: var(--accent-soft); }
 .react-n { font-size: var(--fs-1); font-weight: 600; color: var(--muted); }
 @keyframes react-pop { 0% { transform: scale(.3); opacity: 0; } 70% { transform: scale(1.12); } }
-.msg-cite { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; min-width: 0; margin: 0 0 .3rem; padding: .3rem .6rem; border: 0; border-inline-start: 3px solid var(--accent); border-radius: 10px; background: color-mix(in srgb, var(--accent) 9%, var(--surface-2)); color: var(--ink); font: inherit; font-size: .82rem; text-align: start; cursor: pointer; }
-.msg-cite strong { font-size: .78rem; color: var(--blue-text); }
+.msg-cite { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; min-width: 0; margin: 0 0 .3rem; padding: .3rem .6rem; border: 0; border-inline-start: 3px solid var(--accent); border-radius: 10px; background: color-mix(in srgb, var(--accent) 9%, var(--surface-2)); color: var(--ink); font: inherit; font-size: var(--fs-2); text-align: start; cursor: pointer; }
+.msg-cite strong { font-size: var(--fs-1); color: var(--blue-text); }
 .msg.mine .msg-cite { background: color-mix(in srgb, var(--accent) 80%, var(--ink)); border-inline-start-color: var(--accent-ink); color: var(--accent-ink); }
 .msg.mine .msg-cite strong { color: var(--accent-ink); }
 .msg-cite.supprime { cursor: default; font-style: italic; opacity: .8; }
@@ -875,11 +928,14 @@ button.react-pill { cursor: pointer; font-family: inherit; }
 .msg:focus-visible > .bulle { outline: 2px solid var(--accent); outline-offset: 2px; }
 @keyframes msg-in { from { opacity: 0; transform: translateY(10px) scale(.96); } }
 .msg.mine.neuf .bulle { transform-origin: 100% 100%; }
+[dir="rtl"] .msg.mine.neuf .bulle { transform-origin: 0 100%; }
 .tape-bulle .bulle { padding: .7rem .9rem; color: var(--muted); }
 
 .t-photo { padding: 4px; }
 .t-photo .msg-txt { display: block; padding: .35rem .4rem .1rem; }
 .t-photo .msg-meta { margin-inline-end: .3rem; }
+.t-photo[data-sens="ltr"] > .msg-meta { margin-right: .3rem; }
+.t-photo[data-sens="rtl"] > .msg-meta { margin-left: .3rem; }
 .msg-photo { display: grid; place-items: center; width: min(260px, 62vw); max-height: 340px; border: 0; padding: 0; border-radius: 14px; overflow: hidden; cursor: zoom-in; background: linear-gradient(100deg, var(--surface-2) 30%, color-mix(in srgb, var(--surface-2) 50%, var(--surface)) 50%, var(--surface-2) 70%) 0 0 / 300% 100%; animation: shimmer 1.4s linear infinite; }
 .msg-photo.pret { animation: none; background: none; }
 .msg-photo img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0; transition: opacity .25s; }
@@ -905,18 +961,28 @@ button.react-pill { cursor: pointer; font-family: inherit; }
 .composer.ecrire { flex-direction: column; align-items: stretch; gap: .4rem; }
 .composer.ecrire .comp-row { flex: none; }
 .comp-cite { display: flex; align-items: center; gap: .5rem; padding-block: .35rem; padding-inline: .7rem .3rem; border-radius: 12px; border-inline-start: 3px solid var(--accent); background: var(--surface-2); color: var(--accent); animation: fade-in .18s ease; }
-.comp-cite-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; color: var(--ink); font-size: .84rem; }
-.comp-cite-txt strong { color: var(--blue-text); font-size: .78rem; }
+.comp-cite-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; color: var(--ink); font-size: var(--fs-2); }
+.comp-cite-txt strong { color: var(--blue-text); font-size: var(--fs-1); }
 .comp-row textarea { flex: 1; resize: none; min-height: 42px; max-height: 140px; padding: .6rem .95rem; border-radius: 21px; line-height: 1.4; background: var(--surface-2); border-color: transparent; }
 .comp-row textarea:focus { border-color: var(--accent); background: var(--surface); }
+/* Le champ : une seule pastille (photo + texte) qui s'éclaire au focus ; envoyer reste à côté */
+.comp-champ { flex: 1; min-width: 0; display: flex; align-items: flex-end; border-radius: 24px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--hair); transition: background .15s, box-shadow .15s; }
+.comp-champ:focus-within { background: var(--surface); box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+.comp-champ textarea, .comp-champ textarea:focus { min-height: 44px; padding-block: .62rem; padding-inline: .15rem .9rem; border: 0; border-radius: 0; background: transparent; box-shadow: none; outline: none; }
+.comp-champ .comp-photo { width: 44px; height: 44px; color: var(--ink-2); }
 .comp-photo { width: 42px; height: 42px; border-radius: 50%; flex: none; }
+/* Les réponses rapides sur une seule ligne qui défile (la rangée de puces du Socle, avec son fondu), jusqu'aux bords du champ */
+.comp-rapides { gap: .4rem; padding: .1rem 0 .15rem; animation: fade-in .2s ease; }
+.composer .comp-rapides.chips.rangee { margin-inline: -.65rem; padding-inline: .65rem; scroll-padding-inline: .65rem; }
+.composer .comp-rapides .chip.rapide { flex: none; min-height: 40px; border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); color: var(--blue-text); background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface)); font-weight: 600; }
+.chip.rapide:hover { border-color: var(--accent); color: var(--blue-text); }
 .sr-file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .send-btn { width: 44px; height: 44px; border-radius: 50%; border: 0; flex: none; display: grid; place-items: center; cursor: pointer; background: var(--accent); color: var(--accent-ink); transition: transform .15s var(--ease), filter .15s; }
 .send-btn:hover { filter: brightness(1.08); }
 .send-btn:active { transform: scale(.9); }
 .send-btn:disabled { opacity: .45; cursor: default; }
 .send-btn .ico-send { margin-inline-start: -2px; }
-.composer.ferme { color: var(--muted); font-size: .88rem; padding: .9rem 1rem; padding-bottom: calc(.9rem + env(safe-area-inset-bottom, 0px)); }
+.composer.ferme { color: var(--muted); font-size: var(--fs-2); padding: .9rem 1rem; padding-bottom: calc(.9rem + env(safe-area-inset-bottom, 0px)); }
 .composer.rec .comp-row { align-items: center; gap: .6rem; }
 .rec-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--bad); animation: rec 1s ease-in-out infinite; flex: none; }
 @keyframes rec { 50% { opacity: .3; } }
@@ -950,7 +1016,7 @@ button.react-pill { cursor: pointer; font-family: inherit; }
   .conv-back { display: inline-grid; }
   .bulle { max-width: 84%; }
 }
-@media (prefers-reduced-motion: reduce) { .tape-dots i { animation: none !important; opacity: .8; } .react-pill, .react-bar, .comp-cite { animation: none; } .msg .bulle { transition: none; } .msg.eclaire .bulle, .msg.neuf.eclaire .bulle { animation-duration: .01s; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .tape-dots i { animation: none !important; opacity: .8; } .react-pill, .react-bar, .comp-cite, .comp-rapides, .msg-photo, .rec-dot { animation: none; } .msg .bulle { transition: none; } .msg.eclaire .bulle, .msg.neuf.eclaire .bulle { animation-duration: .01s; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent); } }
 `);
 
 addAR({
@@ -996,6 +1062,7 @@ addAR({
   'En visio': 'عن بعد بالفيديو', 'Lien Meet ou Teams (facultatif)': 'رابط Meet أو Teams (اختياري)', 'Sans lien, une visio Jitsi est créée pour vous deux.': 'بدون رابط، يُنشأ لكما اتصال مرئي على Jitsi.',
   'Ex. : usine de Meknès, accueil principal': 'مثال: مصنع مكناس، الاستقبال الرئيسي', 'Un mot (facultatif)': 'كلمة (اختياري)', 'Ex. : prépare un exemple de projet.': 'مثال: حضّر مثالًا عن مشروع.',
   'Proposer l’entretien': 'اقترح المقابلة',
+  'Réponses rapides': 'ردود سريعة', 'Je regarde et je reviens vers toi': 'سألقي نظرة وأعود إليك', 'On en parle en visio ?': 'نتحدث عن ذلك في مكالمة فيديو؟',
   'Le lien de la visio doit commencer par https://': 'يجب أن يبدأ رابط الاتصال المرئي بـ https://', 'Indique le lieu de l’entretien.': 'حدّد مكان المقابلة.',
   'Appel de 15 min': 'مكالمة 15 دقيقة', 'Entretien passé': 'انتهت المقابلة', 'Tu as dit que tu serais là.': 'قلت إنك ستحضر.', 'Tu as demandé un autre horaire.': 'طلبت موعدًا آخر.',
   'Autre horaire': 'موعد آخر', 'Ajouter à l’agenda': 'أضف إلى الأجندة', 'Propose un autre horaire qui te convient.': 'اقترح موعدًا آخر يناسبك.',
