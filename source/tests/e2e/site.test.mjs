@@ -6877,6 +6877,50 @@ test('page d’entrée dans une vue web sans stockage : « Ouvrir dans Chrome »
   await s.ctx.close();
 });
 
+// L'application peut ignorer le lien intent:// : rien ne s'ouvre, la page reste là, visible
+test('page d’entrée dans Instagram : l’application ignore « Ouvrir dans Chrome » ; un moment après, la carte dit quoi faire sous le bouton (en arabe, de nuit aussi) ; rien quand Chrome s’est ouvert', async () => {
+  const rien = p => p.evaluate(() => document.getElementById('au-appli-rien')?.textContent ?? null);
+  for (const [langue, theme] of [['fr', 'light'], ['ar', 'dark']]) {
+    const s = await porte({ ua: INSTAGRAM, langue, theme });
+    await s.page.waitForSelector('#au-appli');
+    await s.toucherChrome();
+    assert.equal(await rien(s.page), '', 'pas tout de suite : Chrome s’ouvre peut-être');
+    await s.page.waitForFunction(() => document.getElementById('au-appli-rien')?.textContent, null, { timeout: 5000 });
+    assert.match(await s.page.locator('#au-appli-rien').innerText(), langue === 'ar' ? /^لا يُفتح شيء؟ المس ⋮ في أعلى الشاشة، ثم «فتح في Chrome» أو «فتح في المتصفح»\.$/
+      : /^Rien ne s’ouvre\s\? Touche ⋮ en haut à droite, puis «\sOuvrir dans Chrome\s» ou «\sOuvrir dans le navigateur\s»\.$/);
+    assert.equal(await s.page.getAttribute('#au-appli-rien', 'aria-live'), 'polite', 'le lecteur d’écran le dit aussi');
+    const [b, r] = await Promise.all(['#au-appli-chrome', '#au-appli-rien'].map(x => s.page.locator(x).boundingBox()));
+    assert.ok(r.y >= b.y + b.height - 1, 'sous le bouton');
+    assert.equal(await s.page.locator('#au-appli #au-appli-chrome').count(), 1, 'le bouton reste, pour réessayer');
+    assert.equal(await s.debordement(), 0);
+    await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* sans fin */ } }));
+    await s.page.addScriptTag({ content: AXE });
+    assert.deepEqual(await s.page.evaluate(async () => (await axe.run('#au-appli', { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] }, resultTypes: ['violations'] })).violations.map(x => x.id)), [], `${langue} ${theme}`);
+    if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])]), []);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+  // Chrome s'est ouvert par-dessus (la page cachée) : rien à dire au retour
+  const c = await porte({ ua: INSTAGRAM });
+  await c.page.waitForSelector('#au-appli');
+  await c.toucherChrome();
+  await c.page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange', { bubbles: true })); });
+  await c.page.waitForTimeout(2200);
+  assert.equal(await rien(c.page), '');
+  assert.deepEqual(c.erreurs, []);
+  await c.ctx.close();
+  // Le lien discret (après « Continuer ici ») : le même mot à sa place, le focus le suit
+  const m = await porte({ ua: INSTAGRAM, langue: 'ar' });
+  await m.page.waitForSelector('#au-appli');
+  await m.page.click('#au-appli-ici');
+  await m.page.waitForSelector('#au-appli-mot #au-appli-chrome');
+  await m.toucherChrome();
+  await m.page.waitForFunction(() => document.activeElement?.id === 'au-appli-mot' && /^لا يُفتح شيء؟/.test(document.getElementById('au-appli-mot').textContent), null, { timeout: 5000 });
+  assert.equal(await m.debordement(), 0);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
 test('page d’entrée : Facebook sur iPhone (les gestes de Safari, l’icône pour les notifications, pas de lien magique), une vue web Android, l’iPad ; rien dans Chrome ni Samsung Internet', async () => {
   const f = await porte({ ua: FACEBOOK_IOS, largeur: 390, hauteur: 844, tactile: 'iPhone' });
   await f.page.waitForSelector('#au-appli[data-systeme="ios"]');

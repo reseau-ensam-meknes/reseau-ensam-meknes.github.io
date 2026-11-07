@@ -372,12 +372,12 @@ function CarteAppli({ mode, role, invite }) {
   const [a, setA] = useState(() => appareil);
   useEffect(() => { if (!a) chargerAppareil().then(m => m && setA(m)); }, []);
   const [vue] = useState(vueCarte);
-  const [range, setRange] = useState(false);
+  const [range, setRange] = useState(false), [rien, setRien] = useState(false);
   const mot = useRef(null);
   const app = a && integreIci(a), sys = !a ? APPLI_ICI : app && ['android', 'ios'].includes(app.systeme) ? app.systeme : null;
   const carte = !!sys && !vue && !range;
   useEffect(() => { if (carte && a) { ecrireVisite(CLE_CARTE, 'vue'); ecrireVisite(a.CLE_APPLI_VUE, '1'); } }, [carte, a]);
-  useEffect(() => { if (range) mot.current?.focus(); }, [range]);
+  useEffect(() => { if (range || rien) mot.current?.focus(); }, [range, rien]);
   if (!sys) return null;
   const largeur = document.documentElement.clientWidth || innerWidth, rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
   const place = carte ? placeCarte(sys, getLang(), largeur, rem) : '';
@@ -387,15 +387,22 @@ function CarteAppli({ mode, role, invite }) {
   const T = a.CARTE, f = x => a.typo(x, getLang());
   // Relu au toucher : le rôle, l'étape ou le lien partagé ont pu changer depuis l'affichage. ici : l'adresse de secours le dit
   const lien = () => a.lienChrome(location.href, lienRetenu()?.r, { lang: getLang(), contexte: { promo: invite, role, mode: mode === 'inscription' ? mode : 'connexion' }, ici: true });
-  // Sans Chrome, l'adresse de secours recharge la page ici : ce qui est déjà tapé revient (lireSaisie)
-  const ouvrir = e => { e.currentTarget.href = lien(); ecrireVisite(CLE_CARTE, 'chrome'); try { garderSaisie(); } catch { /* stockage indisponible */ } };
+  // Sans Chrome, l'adresse de secours recharge la page ici : ce qui est déjà tapé revient (lireSaisie). L'application peut
+  // aussi ignorer le lien : la page toujours là et visible 1,5 s après (ni cachée ni quittée), la carte dit quoi faire
+  const ouvrir = e => {
+    e.currentTarget.href = lien(); ecrireVisite(CLE_CARTE, 'chrome'); try { garderSaisie(); } catch { /* stockage indisponible */ }
+    let parti = false; const p = () => { parti = true; }, ev = ['pagehide', 'blur', 'visibilitychange'];
+    ev.forEach(n => addEventListener(n, p));
+    setTimeout(() => { ev.forEach(n => removeEventListener(n, p)); if (!parti && !document.hidden) setRien(true); }, 1500);
+  };
   const ico = html`<${Icon} name="globe" size=${18}/>`;
-  if (!carte) return html`<p class="entree-appli-mot" id="au-appli-mot" tabindex="-1" ref=${mot}>${ico}${sys === 'ios' || vue === 'chrome'
+  if (!carte) return html`<p class="entree-appli-mot" id="au-appli-mot" tabindex="-1" ref=${mot}>${ico}${sys === 'ios' || vue === 'chrome' || rien
     ? html`<span>${f(sys === 'ios' ? T.geste : T.rien)}</span>` : html`<a href=${lien()} id="au-appli-chrome" onClick=${ouvrir}>${T.ligne}</a>`}</p>`;
   return html`<div class="entree-appli" id="au-appli" data-systeme=${sys} style=${{ minHeight: place }}>${ico}<div class="entree-appli-txt">
     <p><span>${f(T.tuEs(app.nom))}</span> <span>${f(T[sys])}</span></p>
     ${sys === 'ios' ? html`<p>${f(T.geste)}</p><p class="small muted">${T.icone[a.estIPad(navigator.userAgent, navigator.maxTouchPoints) ? 'ipad' : 'iphone']}</p>` : null}</div>
     <div class="entree-appli-acts">${sys === 'android' ? html`<a class="btn primary" id="au-appli-chrome" href=${lien()} onClick=${ouvrir}>${T.ouvrir}</a>` : null}<button type="button" class="linkish" id="au-appli-ici" onClick=${() => setRange(true)}>${T.ici}</button></div>
+    ${sys === 'android' ? html`<p class="entree-appli-rien" id="au-appli-rien" aria-live="polite">${rien ? f(T.rien) : null}</p>` : null}
   </div>`;
 }
 

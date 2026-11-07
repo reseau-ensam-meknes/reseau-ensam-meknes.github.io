@@ -93,7 +93,8 @@ export const CARTE_AR = {
 export const typo = (s, lang) => (lang === 'ar' || typeof s !== 'string' ? s : s.replace(/« /g, '«\u00a0').replace(/ ([»:;?!])/g, '\u00a0$1'));
 export const CARTE_MOTIFS = [[/^Tu es dans le navigateur (?:d’|de )(.+)\.$/, n => `أنت في متصفح ${n}.`]];
 // Cibles de 44 px au moins. La page d'entrée garde à la carte la place de la plus haute (PLACE, entree.js : une phrase ou un
-// style qui change sa hauteur s'y reporte) ; une carte plus courte remplit cette place, ses gestes en bas.
+// style qui change sa hauteur s'y reporte) ; une carte plus courte remplit cette place, ses gestes en bas. « Rien ne s'ouvre ? »,
+// sous les gestes, ne prend de place qu'une fois dit (vide, hors de la grille : la zone annoncée est déjà là).
 export const CARTE_CSS = `.entree-appli { display: grid; grid-template-columns: auto minmax(0, 1fr); align-content: space-between; gap: .55rem .6rem; padding: .75rem .85rem; border-radius: 14px; border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--line)); background: var(--surface); color: var(--ink); font-size: .92rem; line-height: 1.45; }
 .entree-appli > .ico, .entree-appli-mot > .ico { flex: none; color: var(--accent); }
 .entree-appli > .ico { margin-block-start: .12rem; }
@@ -102,6 +103,8 @@ export const CARTE_CSS = `.entree-appli { display: grid; grid-template-columns: 
 .entree-appli-acts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .5rem; }
 .entree-appli-acts .btn { min-height: 44px; text-decoration: none; }
 .entree-appli-acts .linkish { min-height: 44px; padding-inline: .5rem; }
+.entree-appli-rien { grid-column: 1 / -1; margin: 0; font-size: var(--fs-2); line-height: 1.4; color: var(--ink-2); text-wrap: pretty; }
+.entree-appli-rien:empty { position: absolute; }
 .entree-appli-mot { display: flex; align-items: center; gap: .45rem; margin: 0; min-height: 44px; font-size: var(--fs-2); line-height: 1.4; color: var(--ink-2); }
 .entree-appli-mot a { display: inline-flex; align-items: center; min-height: 44px; color: var(--blue-text); font-weight: 600; text-underline-offset: .2em; }
 @media (prefers-reduced-motion: no-preference) { .entree-appli { animation: entree-appli .3s ease-out backwards; } }
