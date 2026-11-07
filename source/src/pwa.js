@@ -6,6 +6,7 @@ import { addAR, getLang } from './i18n.js';
 import { prevenirVariante, lignePrevenir, sansLigne, ouvertureSorte, sorteLienNotifs, bandeauPush, pushChoix, navigateurIntegre, lienChrome, noterEchecPush, echecDefinitif,
   raisonTestPush, testPushARefaire, APPLIS, estIPad, CLE_APPLI_VUE, raisonPrevenir, veutDesNotifs, choisirCas } from './logic.js';
 import { arriveeEnAttente } from './pouls.js';
+import { GESTE_SAFARI, CARTE_AR } from './appareil.js';
 
 let installEvt = null;
 const listeners = new Set();
@@ -514,7 +515,7 @@ const APPLI_CHROME = 'Dans Chrome, ce qui te concerne arrive tout de suite, mêm
 const APPLI_RIEN = 'Rien ne s’ouvre ? Touche ⋮ en haut à droite, puis « Ouvrir dans Chrome » ou « Ouvrir dans le navigateur ».';
 const ETAPES_APPLI = {
   ios: [
-    ['more', 'Touche ••• (en haut ou en bas de l’écran), puis « Ouvrir dans Safari » ou « Ouvrir dans le navigateur ».'],
+    ['more', GESTE_SAFARI],
     ['share', 'Dans Safari : Partager, puis « Sur l’écran d’accueil ».'],
     ['bell', 'Ouvre la nouvelle icône, connecte-toi une fois, puis touche « Activer ».'],
   ],
@@ -563,7 +564,7 @@ addAR({
   [APPLI_INCONNUE]: 'فُتح هذا الرابط داخل تطبيق: هنا لا يمكن أن تصلك الإشعارات.',
   [APPLI_CHROME]: 'في Chrome، يصلك ما يخصك فورًا، حتى والتطبيق مغلق.',
   [APPLI_RIEN]: 'لا يُفتح شيء؟ المس ⋮ في أعلى الشاشة، ثم «فتح في Chrome» أو «فتح في المتصفح».',
-  [ETAPES_APPLI.ios[0][1]]: 'المس ••• (أعلى الشاشة أو أسفلها)، ثم «فتح في Safari» أو «فتح في المتصفح».',
+  [GESTE_SAFARI]: CARTE_AR[GESTE_SAFARI],
   [ETAPES_APPLI.ios[1][1]]: 'في Safari: «مشاركة»، ثم «إضافة إلى الشاشة الرئيسية».',
   [ETAPES_APPLI.ios[2][1]]: 'افتح الأيقونة الجديدة، وسجّل الدخول مرة واحدة، ثم المس «تفعيل».',
   [ETAPES_APPLI.pc[0][1]]: 'افتح قائمة التطبيق، ثم «فتح في المتصفح».',

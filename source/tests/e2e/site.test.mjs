@@ -6926,13 +6926,13 @@ test('page d’entrée : Facebook sur iPhone (les gestes de Safari, l’icône p
   await f.page.waitForSelector('#au-appli[data-systeme="ios"]');
   const t = await f.page.locator('#au-appli').innerText();
   assert.match(t, /Tu es dans le navigateur de Facebook\. Ouvre le Réseau dans Safari\s: tu y resteras connecté\./);
-  assert.match(t, /Touche ••• \(ou Partager\) puis «\sOuvrir dans Safari\s»\./);
+  assert.match(t, /Touche ••• \(en haut ou en bas de l’écran\), puis «\sOuvrir dans Safari\s» ou «\sOuvrir dans le navigateur\s»\./, 'le geste des feuilles de l’application');
   assert.match(t, /Sur iPhone, les notifications passent ensuite par l’icône de l’écran d’accueil\./);
   assert.equal(await f.page.locator('#au-appli-chrome').count(), 0, 'pas de lien vers Chrome sur iPhone');
   assert.ok((await f.page.locator('#au-appli-ici').boundingBox()).height >= 44);
   await f.page.click('#au-appli-ici');
   await f.page.waitForSelector('#au-appli-mot');
-  assert.match(await f.page.locator('#au-appli-mot').innerText(), /^Touche ••• \(ou Partager\) puis «\sOuvrir dans Safari\s»\.$/);
+  assert.match(await f.page.locator('#au-appli-mot').innerText(), /^Touche ••• \(en haut ou en bas de l’écran\), puis «\sOuvrir dans Safari\s» ou «\sOuvrir dans le navigateur\s»\.$/);
   assert.equal(await f.page.evaluate(() => document.activeElement?.id), 'au-appli-mot');
   assert.deepEqual(f.erreurs, []);
   await f.ctx.close();
@@ -6966,7 +6966,8 @@ test('page d’entrée : Facebook sur iPhone (les gestes de Safari, l’icône p
 // sous le doigt qui visait « Je suis à l'école »
 test('page d’entrée dans le navigateur d’une application, appareil.js en retard : la place de la carte est gardée, le formulaire ne bouge pas quand elle arrive', async () => {
   for (const [ua, largeur, hauteur, langue, tactile, vue] of [[INSTAGRAM, 360, 740, 'fr'], [INSTAGRAM, 390, 844, 'ar'], [INSTAGRAM, 320, 640, 'fr'], [INSTAGRAM, 412, 915, 'fr'], [VUE_WEB, 360, 740, 'fr'],
-    [FACEBOOK_IOS, 390, 844, 'fr', 'iPhone'], [FACEBOOK_IOS, 375, 667, 'ar', 'iPhone'], [INSTAGRAM, 360, 740, 'fr', null, 'chrome'], [INSTAGRAM, 390, 844, 'fr', null, 'vue']]) {
+    [FACEBOOK_IOS, 390, 844, 'fr', 'iPhone'], [FACEBOOK_IOS, 375, 667, 'ar', 'iPhone'], [INSTAGRAM, 360, 740, 'fr', null, 'chrome'], [INSTAGRAM, 390, 844, 'fr', null, 'vue'],
+    [FACEBOOK_IOS, 360, 740, 'fr', 'iPhone', 'vue'], [FACEBOOK_IOS, 390, 844, 'fr', 'iPhone', 'vue']]) {
     const cas = `${ua === INSTAGRAM ? 'Instagram' : ua === VUE_WEB ? 'vue web' : 'Facebook iPhone'} ${largeur} ${langue}${vue ? ' ' + vue : ''}`;
     let lacher; const tenu = new Promise(ok => { lacher = ok; });
     const s = await porte({ ua, largeur, hauteur, langue, tactile, avant: async ctx => {

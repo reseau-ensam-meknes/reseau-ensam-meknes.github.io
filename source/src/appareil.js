@@ -68,11 +68,14 @@ export function lienChrome(adresse, route = '', { lang, contexte, ici } = {}) {
 // feuilles de l'application (pwa.js). La feuille du navigateur d'une application est montrée une fois par visite au plus
 // (CLE_APPLI_VUE, cet onglet) : la carte de l'entrée compte pour elle.
 export const CLE_APPLI_VUE = 'ensam-appli-vue';
+// Le geste pour passer dans Safari depuis le navigateur d'une application (iPhone, iPad) : le même dans la carte de l'entrée,
+// son mot discret et les feuilles de l'application (ETAPES_APPLI, pwa.js, qui l'importe), avec un seul arabe (CARTE_AR)
+export const GESTE_SAFARI = 'Touche ••• (en haut ou en bas de l’écran), puis « Ouvrir dans Safari » ou « Ouvrir dans le navigateur ».';
 export const CARTE = {
   tuEs: nom => (nom ? `Tu es dans le navigateur ${/^[AEIOUY]/i.test(nom) ? 'd’' : 'de '}${nom}.` : 'Tu es dans le navigateur d’une application.'),
   android: 'Ouvre le Réseau dans Chrome : tu y resteras connecté et tes notifications arriveront sur ce téléphone.',
   ios: 'Ouvre le Réseau dans Safari : tu y resteras connecté.',
-  geste: 'Touche ••• (ou Partager) puis « Ouvrir dans Safari ».',
+  geste: GESTE_SAFARI,
   icone: { iphone: 'Sur iPhone, les notifications passent ensuite par l’icône de l’écran d’accueil.', ipad: 'Sur iPad, les notifications passent ensuite par l’icône de l’écran d’accueil.' },
   ouvrir: 'Ouvrir dans Chrome', ici: 'Continuer ici', ligne: 'Ouvrir le Réseau dans Chrome',
   rien: 'Rien ne s’ouvre ? Touche ⋮ en haut à droite, puis « Ouvrir dans Chrome » ou « Ouvrir dans le navigateur ».',
@@ -81,7 +84,7 @@ export const CARTE_AR = {
   [CARTE.tuEs()]: 'أنت في متصفح أحد التطبيقات.',
   [CARTE.android]: 'افتح الشبكة في Chrome: ستبقى متصلًا، وستصل إشعاراتك إلى هذا الهاتف.',
   [CARTE.ios]: 'افتح الشبكة في Safari: ستبقى متصلًا.',
-  [CARTE.geste]: 'المس ••• (أو «مشاركة») ثم «فتح في Safari».',
+  [GESTE_SAFARI]: 'المس ••• (أعلى الشاشة أو أسفلها)، ثم «فتح في Safari» أو «فتح في المتصفح».',
   [CARTE.icone.iphone]: 'على iPhone، تصل الإشعارات بعد ذلك عبر الأيقونة على الشاشة الرئيسية.',
   [CARTE.icone.ipad]: 'على iPad، تصل الإشعارات بعد ذلك عبر الأيقونة على الشاشة الرئيسية.',
   [CARTE.ouvrir]: 'فتح في Chrome', [CARTE.ici]: 'المتابعة هنا', [CARTE.ligne]: 'افتح الشبكة في Chrome',

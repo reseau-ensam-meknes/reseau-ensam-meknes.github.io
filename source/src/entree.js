@@ -344,14 +344,21 @@ export function appliIci(ua = '', toucher = 0) {
 const PLACE = {
   androidfr: [21.5, 11.72, 22.4, 8.72, 25.9, 7.39, 37.5, 6.05, 99, 4.72, 6.05],
   androidar: [24.9, 6.05, 99, 4.72, 4.72],
-  iosfr: [20.2, 13.3, 24.7, 11.97, 26.8, 10.64, 33.8, 9.3, 99, 8.13, 9.3],
-  iosar: [21.4, 10.64, 27.5, 9.3, 30, 8.13, 99, 6.8, 8.13],
+  iosfr: [19.81, 17.14, 19.87, 15.96, 20.12, 14.63, 24.62, 13.3, 27.81, 11.96, 33.12, 10.63, 99, 9.45, 10.63],
+  iosar: [19.06, 11.96, 27.43, 10.63, 28.62, 9.45, 32.5, 8.12, 99, 6.79, 9.45],
 };
 export function placeCarte(sys, lang, largeur, rem = 16) {
   const t = PLACE[sys + (lang === 'ar' ? 'ar' : 'fr')];
   let i = 0;
   if (largeur < 900) while (largeur / rem >= t[i]) i += 2; else i = t.length - 2;
   return `calc(46.5px + ${t[i + 1]}rem)`;
+}
+// La ligne discrète qui remplace la carte dans la visite : 44 px, sauf là où sa phrase prend une ligne de plus (largeur en rem
+// jusqu'à laquelle, hauteur en rem). Android : « Rien ne s'ouvre ? » (après Chrome) ; iPhone, iPad : le geste de Safari.
+const MOT = { androidfr: [24, 3.42], iosfr: [23.25, 3.44], iosar: [17.56, 2.77] };
+export function placeMot(sys, lang, largeur, rem = 16) {
+  const m = MOT[sys + (lang === 'ar' ? 'ar' : 'fr')];
+  return m && largeur / rem < m[0] ? `${m[1]}rem` : '44px';
 }
 const APPLI_ICI = appliIci(navigator.userAgent, navigator.maxTouchPoints);
 const CLE_CARTE = 'ensam-entree-appli';
@@ -383,7 +390,7 @@ function CarteAppli({ mode, role, invite }) {
   const place = carte ? placeCarte(sys, getLang(), largeur, rem) : '';
   // Avant appareil.js : sa place (la carte, ou la ligne discrète : trois lignes pour « Rien ne s'ouvre ? » sur un petit écran).
   // Sa propre clé : la carte arrive dans un élément neuf, sans transition depuis la place vide (mouvement réduit)
-  if (!a) return html`<div key="place" class="entree-appli-place" style=${{ minHeight: place || (sys === 'android' && vue === 'chrome' && getLang() !== 'ar' && largeur / rem < 24 ? '3.42rem' : '44px') }}></div>`;
+  if (!a) return html`<div key="place" class="entree-appli-place" style=${{ minHeight: place || (sys === 'ios' || vue === 'chrome' ? placeMot(sys, getLang(), largeur, rem) : '44px') }}></div>`;
   const T = a.CARTE, f = x => a.typo(x, getLang());
   // Relu au toucher : le rôle, l'étape ou le lien partagé ont pu changer depuis l'affichage. ici : l'adresse de secours le dit
   const lien = () => a.lienChrome(location.href, lienRetenu()?.r, { lang: getLang(), contexte: { promo: invite, role, mode: mode === 'inscription' ? mode : 'connexion' }, ici: true });

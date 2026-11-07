@@ -481,6 +481,21 @@ test('page d’entrée : la place gardée pour la carte ne grandit jamais avec l
   assert.ok(rem(placeCarte('ios', 'fr', 390)) > rem(placeCarte('android', 'fr', 390)), 'sur iPhone, le geste et l’icône en plus');
 });
 
+test('page d’entrée : la place de la ligne discrète (après « Continuer ici ») suit sa phrase, jamais moins de 44 px', async () => {
+  const { placeMot } = await pageEntree();
+  const px = x => (x.endsWith('rem') ? parseFloat(x) * 16 : parseFloat(x));
+  // iPhone : le geste de Safari en trois lignes sur un petit écran, deux (dans 44 px) au-delà
+  assert.equal(placeMot('ios', 'fr', 360), '3.44rem');
+  assert.equal(placeMot('ios', 'fr', 390), '44px');
+  // Android, après Chrome : « Rien ne s'ouvre ? » ; l'arabe, plus court, tient dans 44 px
+  assert.equal(placeMot('android', 'fr', 360), '3.42rem');
+  assert.equal(placeMot('android', 'ar', 360), '44px');
+  for (const sys of ['android', 'ios']) for (const lang of ['fr', 'ar']) {
+    let avant = Infinity;
+    for (let w = 280; w < 900; w += 2) { const h = px(placeMot(sys, lang, w)); assert.ok(h >= 44 && h <= avant, `${sys} ${lang} ${w}`); avant = h; }
+  }
+});
+
 // pwa.js (lienIci) : « Ouvrir dans Chrome » n'est montré qu'à un membre connecté ; Chrome ne le connaît pas encore
 test('« Ouvrir dans Chrome » d’un membre connecté : sa page et l’étape « Se connecter » partent avec le lien ; la page d’entrée de Chrome les relit', async () => {
   const { contexteArrivee } = await pageEntree();
@@ -514,12 +529,25 @@ test('carte de la page d’entrée : « d’Instagram », « de Facebook », « 
   assert.equal(CARTE.tuEs(null), 'Tu es dans le navigateur d’une application.');
   for (const [nom] of APPLIS) assert.match(CARTE.tuEs(nom), new RegExp(`^Tu es dans le navigateur (d’|de )${nom}\\.$`), nom);
   assert.equal(CARTE.android, 'Ouvre le Réseau dans Chrome : tu y resteras connecté et tes notifications arriveront sur ce téléphone.');
-  assert.equal(CARTE.geste, 'Touche ••• (ou Partager) puis « Ouvrir dans Safari ».');
+  assert.equal(CARTE.geste, 'Touche ••• (en haut ou en bas de l’écran), puis « Ouvrir dans Safari » ou « Ouvrir dans le navigateur ».');
   assert.match(CARTE.icone.iphone, /^Sur iPhone, les notifications passent ensuite par l’icône de l’écran d’accueil\.$/);
   assert.equal(CARTE.icone.ipad, CARTE.icone.iphone.replace('iPhone', 'iPad'));
   // Mêmes mots que la feuille de l'application (pwa.js), et même arabe
   const pwa = readFileSync(new URL('../../src/pwa.js', import.meta.url), 'utf8');
   assert.ok(pwa.includes(`const APPLI_RIEN = '${CARTE.rien}';`));
+});
+
+// Le geste pour passer dans Safari : une seule phrase, dans la carte de l'entrée (et son mot discret) comme dans les feuilles
+// de l'application (pwa.js l'importe d'appareil.js), avec un seul arabe
+test('le geste de Safari (iPhone, iPad) : le même dans la carte de l’entrée et dans les feuilles de l’application, avec un seul arabe', async () => {
+  const { CARTE, CARTE_AR, GESTE_SAFARI } = await appareil();
+  assert.equal(CARTE.geste, GESTE_SAFARI);
+  const pwa = readFileSync(new URL('../../src/pwa.js', import.meta.url), 'utf8');
+  assert.match(pwa, /^import \{[^}]*\bGESTE_SAFARI\b[^}]*\} from '\.\/appareil\.js';$/m);
+  assert.match(pwa, /ios: \[\s*\['more', GESTE_SAFARI\],/, 'la première étape de la feuille (ETAPES_APPLI.ios) est cette phrase');
+  assert.ok(!pwa.includes(GESTE_SAFARI.slice(0, 30)), 'pas de seconde copie dans pwa.js');
+  assert.ok(pwa.includes('[GESTE_SAFARI]: CARTE_AR[GESTE_SAFARI],'), 'l’arabe de la carte, pas un second');
+  assert.equal(CARTE_AR[GESTE_SAFARI], 'المس ••• (أعلى الشاشة أو أسفلها)، ثم «فتح في Safari» أو «فتح في المتصفح».');
 });
 
 test('carte de la page d’entrée en arabe : chaque phrase, et le nom de chaque application gardé en lettres latines', async () => {
@@ -591,7 +619,7 @@ test('lien « Active tes notifications » avec seuls les rappels cochés : rien 
 test('carte de la page d’entrée : espaces insécables du français (jamais « : » ni « » » seul en début de ligne) ; l’arabe tel quel', async () => {
   const { typo, CARTE } = await appareil();
   assert.equal(typo(CARTE.android, 'fr'), 'Ouvre le Réseau dans Chrome : tu y resteras connecté et tes notifications arriveront sur ce téléphone.');
-  assert.equal(typo(CARTE.geste, 'fr'), 'Touche ••• (ou Partager) puis « Ouvrir dans Safari ».');
+  assert.equal(typo(CARTE.geste, 'fr'), 'Touche ••• (en haut ou en bas de l’écran), puis « Ouvrir dans Safari » ou « Ouvrir dans le navigateur ».');
   assert.equal(typo(CARTE.rien, 'fr'), 'Rien ne s’ouvre ? Touche ⋮ en haut à droite, puis « Ouvrir dans Chrome » ou « Ouvrir dans le navigateur ».');
   // En arabe, la phrase reste la clé du dictionnaire
   for (const s of [CARTE.android, CARTE.geste, CARTE.rien]) assert.equal(typo(s, 'ar'), s);
