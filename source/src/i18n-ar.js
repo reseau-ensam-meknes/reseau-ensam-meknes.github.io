@@ -777,7 +777,8 @@ export const AR_PATTERNS = [
   [/^réponses?$/, () => 'جواب'],
   [/^(\d+) lauréats · (\d+) étudiants$/, (a, b) => `${arCount(a, LAU)} · ${arCount(b, ETU)}`],
   [/^(\d+) réponses?$/, (n) => `${n} جواب`],
-  [/^publiées par (\d+) lauréats$/, (n) => `نشرها ${n} خريجًا`],
+  // Le Suivi d'une école qui débute : 0 ou 1 lauréat (singulier en français) ; le nom s'accorde avec le nombre
+  [/^publiées par (\d+) lauréats?$/, (n) => `نشرها ${arCount(n, LAU)}`],
   [/^(.+?) · (\d+) via la plateforme$/, null],
   [/^(\d+) via la plateforme$/, (n) => `${n} عبر المنصة`],
   [/^camarades de (\dA) ont déjà trouvé leur (.+?)(\.?)$/, (a, x, dot) => `من زملائك في ${a} وجدوا ${AR[x] || x}${dot}`],
