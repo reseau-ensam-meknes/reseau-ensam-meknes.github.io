@@ -6807,8 +6807,8 @@ revoke all on function public.demande_pause_push() from public, anon, authentica
 -- 3 au plus, dans cet ordre :
 --   étudiant : offres pour lui (offre_pour), nouveaux lauréats de sa filière, nouveaux membres de sa promo, événements à
 --              venir dans les 7 jours pour son public ;
---   lauréat  : demandes d'étudiants pour lui (demande_pour), nouvelles offres de sa filière, nouveaux membres de sa promo,
---              événements.
+--   lauréat  : demandes d'étudiants de son parcours (demande_pour, proximité ≥ 1), nouvelles offres de sa filière, nouveaux
+--              membres de sa promo, événements.
 -- Rien si tout est à zéro, si un rappel du soir lui est parti dans les 24 h, ou un résumé dans les 6 jours. DOUCE.
 -- ---------------------------------------------------------------------
 create or replace function public.semaine_push() returns int
@@ -6835,7 +6835,9 @@ begin
       (select count(*) from nouveaux n where n.ecole = p.ecole and n.promo = p.promo and n.id <> p.id) as promo,
       (select count(*) from agenda e where e.ecole = p.ecole
          and (e.public = 'tous' or (e.public = 'etudiants' and p.role = 'etudiant') or (e.public = 'laureats' and p.role = 'laureat'))) as evenements,
+      -- « de ton parcours » : pas une demande d'un autre parcours restée sans aide (ouverte à tous par demande_pour)
       case when p.role = 'laureat' then (select count(*) from demandes x where public.demande_pour(x.d, p)
+        and public.proximite_filiere(p.filiere, (select a.filiere from public.profiles a where a.id = (x.d).auteur_id)) >= 1
         and not exists (select 1 from public.propositions y where y.demande_id = (x.d).id and y.laureat_id = p.id)) else 0 end as demandes
     from public.profiles p
     where p.role in ('etudiant','laureat')

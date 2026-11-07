@@ -234,3 +234,24 @@ test('P7 le dimanche : les vrais comptes des 7 derniers jours, 3 au plus, dans l
     assert.ok(o1);
   } finally { await reglerHorloge(db, aujourdhuiA(9, 0)); }
 });
+
+test('P7 lauréat : « N nouvelles demandes d’étudiants de ton parcours » ne compte que son parcours, pas une demande d’ailleurs ouverte à tous', async () => {
+  await nouveauJour();
+  // Une étudiante de Génie Civil publie il y a 2 jours, sans aide : ouverte à tous les lauréats depuis 24 h (demande_pour)
+  const AUTRE = uid(1430);
+  NOMS[AUTRE] = 'CIVILE';
+  await creerCompte(db, { id: AUTRE, full_name: 'Imane Civile', role: 'etudiant', filiere: GC, promo: S + 1 });
+  const d = await demande(AUTRE, 'Stage chantier en été', '2 days');
+  await reglerHorloge(db, aujourdhuiA(10, 0));
+  try {
+    const youssef = await un(`select public.demande_pour(d, p) ok from public.demandes d, public.profiles p where d.id = $1 and p.id = $2`, [d, LAU]);
+    assert.equal(youssef.ok, true, 'Youssef peut l’aider (ouverte à tous)');
+    await lancer('semaine_push');
+    const f = Object.fromEntries((await file('semaine')).map(x => [x.qui, x.data]));
+    assert.deepEqual([f.LAU?.demandes, f.LAU2?.demandes], [1, 1], 'Youssef et Karim : la seule demande de leur parcours (Salma)');
+    assert.equal(f.CIVIL?.demandes, 1, 'Nadia (Génie Civil) : celle d’Imane, de son parcours');
+  } finally {
+    await reglerHorloge(db, aujourdhuiA(9, 0));
+    await db.query('delete from public.demandes where id = $1', [d]);
+  }
+});
