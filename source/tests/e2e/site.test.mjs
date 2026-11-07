@@ -6735,11 +6735,13 @@ const enLigne = async () => (siteEnLigne ||= await fauxSite(SITE, {
 after(() => siteEnLigne?.fermer());
 
 // Un visiteur sans compte sur la page d'entrée, sur l'appareil voulu (ua) ; langue null : jamais choisie sur ce navigateur
-// (un Chrome tout neuf) ; tactile : la plateforme d'un écran tactile (iPadOS : « MacIntel »)
-async function porte({ ua, largeur = 360, hauteur = 740, langue = 'fr', theme = 'light', chemin = '', tactile = null } = {}) {
+// (un Chrome tout neuf) ; tactile : la plateforme d'un écran tactile (iPadOS : « MacIntel ») ; avant(ctx) : réseau à régler
+// avant la première visite
+async function porte({ ua, largeur = 360, hauteur = 740, langue = 'fr', theme = 'light', chemin = '', tactile = null, avant } = {}) {
   const site = await enLigne();
   const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce', colorScheme: theme, ...(ua ? { userAgent: ua } : {}) });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  if (avant) await avant(ctx);
   if (tactile) await ecranTactile(ctx, tactile);
   await ctx.addInitScript(l => { if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1'); if (l) localStorage.setItem('ensam-lang', l); }, langue);
   const page = await ctx.newPage(); const erreurs = [];
@@ -6870,6 +6872,40 @@ test('page d’entrée : Facebook sur iPhone (les gestes de Safari, l’icône p
     assert.ok(await n.page.isVisible('.entree-sous'), 'la phrase d’explication garde sa place');
     assert.deepEqual(n.erreurs, []);
     await n.ctx.close();
+  }
+});
+
+// appareil.js arrive après le premier affichage (3G : une demi-seconde, 3G lente : une seconde et demie) : la place de la
+// carte (ou de la ligne discrète qui la remplace ensuite dans la visite) est gardée dès le premier affichage, rien ne glisse
+// sous le doigt qui visait « Je suis à l'école »
+test('page d’entrée dans le navigateur d’une application, appareil.js en retard : la place de la carte est gardée, le formulaire ne bouge pas quand elle arrive', async () => {
+  for (const [ua, largeur, hauteur, langue, tactile, vue] of [[INSTAGRAM, 360, 740, 'fr'], [INSTAGRAM, 390, 844, 'ar'], [INSTAGRAM, 320, 640, 'fr'], [INSTAGRAM, 412, 915, 'fr'], [VUE_WEB, 360, 740, 'fr'],
+    [FACEBOOK_IOS, 390, 844, 'fr', 'iPhone'], [FACEBOOK_IOS, 375, 667, 'ar', 'iPhone'], [INSTAGRAM, 360, 740, 'fr', null, 'chrome'], [INSTAGRAM, 390, 844, 'fr', null, 'vue']]) {
+    const cas = `${ua === INSTAGRAM ? 'Instagram' : ua === VUE_WEB ? 'vue web' : 'Facebook iPhone'} ${largeur} ${langue}${vue ? ' ' + vue : ''}`;
+    let lacher; const tenu = new Promise(ok => { lacher = ok; });
+    const s = await porte({ ua, largeur, hauteur, langue, tactile, avant: async ctx => {
+      if (vue) await ctx.addInitScript(v => sessionStorage.setItem('ensam-entree-appli', v), vue);
+      await ctx.route(/\/appareil\.js$/, async r => { await tenu; await r.continue(); });
+    } });
+    await s.page.waitForFunction(() => document.querySelector('.auth-chiffres')?.children.length === 3);
+    await s.page.evaluate(() => document.fonts.ready);
+    const avant = await s.page.locator('#au-je-etudiant').boundingBox();
+    assert.equal(await s.page.locator('#au-appli, #au-appli-mot').count(), 0, `${cas} : pas encore de carte`);
+    const sous = await s.page.isVisible('.entree-sous');
+    lacher();
+    const sel = vue ? '#au-appli-mot' : '#au-appli';
+    await s.page.waitForSelector(sel);
+    await s.page.evaluate(() => document.fonts.ready);
+    const apres = await s.page.locator('#au-je-etudiant').boundingBox();
+    assert.ok(Math.abs(apres.y - avant.y) < 1, `${cas} : « Je suis à l’école » est passé de ${avant.y} à ${apres.y}`);
+    if (!vue) assert.equal(sous, false, `${cas} : la phrase d’explication, que la carte remplace sur téléphone, n’était pas là non plus avant elle`);
+    assert.ok(await s.page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest('#au-je-etudiant'), [avant.x + avant.width / 2, avant.y + avant.height / 2]), `${cas} : le doigt tombe toujours sur « Je suis à l’école »`);
+    // La carte remplit sa place : pas de trou entre elle et le formulaire
+    const carte = await s.page.locator(sel).boundingBox(), role = await s.page.locator('.entree-form fieldset.je-suis').boundingBox();
+    assert.ok(role.y - (carte.y + carte.height) < 20, `${cas} : ${Math.round(role.y - carte.y - carte.height)} px entre la carte et le choix du rôle`);
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
   }
 });
 

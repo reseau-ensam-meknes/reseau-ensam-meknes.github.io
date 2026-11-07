@@ -327,8 +327,31 @@ function Fondateurs() {
 // onglet), puis une ligne discrète : sans Chrome, le lien rouvre la même page ici (browser_fallback_url), et la ligne dit
 // alors quoi faire au lieu de reproposer le même lien. Elle compte pour la feuille du navigateur d'une application de cette
 // visite (CLE_APPLI_VUE, pwa.js). La reconnaissance des applications, les phrases de la carte, leur arabe et son style
-// arrivent à part (appareil.js), juste après le premier affichage : la page d'entrée garde ses six fichiers.
+// arrivent à part (appareil.js), juste après le premier affichage : la page d'entrée garde ses six fichiers. Sa place, elle,
+// est gardée dès le premier affichage : rien ne glisse sous le doigt quand la carte arrive.
 // ---------------------------------------------------------------------------
+// 'android', 'ios' ou '' : la règle de navigateurIntegre (appareil.js), sans les noms, pour savoir tout de suite si une carte
+// viendra (le test unitaire vérifie que les deux disent toujours la même chose)
+export function appliIci(ua = '', toucher = 0) {
+  const s = String(ua || ''), sys = /android/i.test(s) ? 'android' : /iphone|ipad|ipod/i.test(s) || (/Macintosh/.test(s) && toucher > 1) ? 'ios' : '';
+  return sys && (/FBAN\/|FBAV\/|FB_IAB|FBIOS|FB4A/.test(s) || /FB_IAB\/MESSENGER|FBAN\/Messenger|MessengerForiOS|MessengerLite|\bInstagram\b|LinkedInApp|musical_ly|BytedanceWebview|\bTikTok\b|\bSnapchat\b|\bTelegram\b/i.test(s) || (sys === 'android' && /; wv\)/.test(s))) ? sys : '';
+}
+// La place gardée : la plus haute carte, toutes applications confondues, mesurée à chaque largeur d'écran. Par système et
+// langue : des paires (largeur d'écran en rem jusqu'à laquelle, hauteur en rem en plus du bord et des boutons), puis la hauteur
+// sur ordinateur (900 px et plus). Une phrase ou un style de la carte qui change se reporte ici (e2e « appareil.js en retard »).
+const PLACE = {
+  androidfr: [21.5, 11.72, 22.4, 8.72, 25.9, 7.39, 37.5, 6.05, 99, 4.72, 6.05],
+  androidar: [24.9, 6.05, 99, 4.72, 4.72],
+  iosfr: [20.2, 13.3, 24.7, 11.97, 26.8, 10.64, 33.8, 9.3, 99, 8.13, 9.3],
+  iosar: [21.4, 10.64, 27.5, 9.3, 30, 8.13, 99, 6.8, 8.13],
+};
+export function placeCarte(sys, lang, largeur, rem = 16) {
+  const t = PLACE[sys + (lang === 'ar' ? 'ar' : 'fr')];
+  let i = 0;
+  if (largeur < 900) while (largeur / rem >= t[i]) i += 2; else i = t.length - 2;
+  return `calc(46.5px + ${t[i + 1]}rem)`;
+}
+const APPLI_ICI = appliIci(navigator.userAgent, navigator.maxTouchPoints);
 const CLE_CARTE = 'ensam-entree-appli';
 const lireVisite = k => { try { return sessionStorage.getItem(k); } catch { return null; } };
 const ecrireVisite = (k, v) => { try { sessionStorage.setItem(k, v); } catch { /* navigation privée */ } };
@@ -347,11 +370,16 @@ function CarteAppli({ mode, role, invite }) {
   const [vue] = useState(() => lireVisite(CLE_CARTE));
   const [range, setRange] = useState(false);
   const mot = useRef(null);
-  const app = a && integreIci(a), sys = app && ['android', 'ios'].includes(app.systeme) ? app.systeme : null;
+  const app = a && integreIci(a), sys = !a ? APPLI_ICI : app && ['android', 'ios'].includes(app.systeme) ? app.systeme : null;
   const carte = !!sys && !vue && !range;
-  useEffect(() => { if (carte) { ecrireVisite(CLE_CARTE, 'vue'); ecrireVisite(a.CLE_APPLI_VUE, '1'); } }, [carte]);
+  useEffect(() => { if (carte && a) { ecrireVisite(CLE_CARTE, 'vue'); ecrireVisite(a.CLE_APPLI_VUE, '1'); } }, [carte, a]);
   useEffect(() => { if (range) mot.current?.focus(); }, [range]);
   if (!sys) return null;
+  const largeur = document.documentElement.clientWidth || innerWidth, rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  const place = carte ? placeCarte(sys, getLang(), largeur, rem) : '';
+  // Avant appareil.js : sa place (la carte, ou la ligne discrète : trois lignes pour « Rien ne s'ouvre ? » sur un petit écran).
+  // Sa propre clé : la carte arrive dans un élément neuf, sans transition depuis la place vide (mouvement réduit)
+  if (!a) return html`<div key="place" class="entree-appli-place" style=${{ minHeight: place || (sys === 'android' && vue === 'chrome' && getLang() !== 'ar' && largeur / rem < 24 ? '3.42rem' : '44px') }}></div>`;
   const T = a.CARTE, f = x => a.typo(x, getLang());
   // Relu au toucher : le rôle, l'étape ou le lien partagé ont pu changer depuis l'affichage
   const lien = () => a.lienChrome(location.href, lienRetenu()?.r, { lang: getLang(), contexte: { promo: invite, role, mode: mode === 'inscription' ? mode : 'connexion' } });
@@ -359,7 +387,7 @@ function CarteAppli({ mode, role, invite }) {
   const ico = html`<${Icon} name="globe" size=${18}/>`;
   if (!carte) return html`<p class="entree-appli-mot" id="au-appli-mot" tabindex="-1" ref=${mot}>${ico}${sys === 'ios' || vue === 'chrome'
     ? html`<span>${f(sys === 'ios' ? T.geste : T.rien)}</span>` : html`<a href=${lien()} id="au-appli-chrome" onClick=${ouvrir}>${T.ligne}</a>`}</p>`;
-  return html`<div class="entree-appli" id="au-appli" data-systeme=${sys}>${ico}<div class="entree-appli-txt">
+  return html`<div class="entree-appli" id="au-appli" data-systeme=${sys} style=${{ minHeight: place }}>${ico}<div class="entree-appli-txt">
     <p><span>${f(T.tuEs(app.nom))}</span> <span>${f(T[sys])}</span></p>
     ${sys === 'ios' ? html`<p>${f(T.geste)}</p><p class="small muted">${T.icone[a.estIPad(navigator.userAgent, navigator.maxTouchPoints) ? 'ipad' : 'iphone']}</p>` : null}</div>
     <div class="entree-appli-acts">${sys === 'android' ? html`<a class="btn primary" id="au-appli-chrome" href=${lien()} onClick=${ouvrir}>${T.ouvrir}</a>` : null}<button type="button" class="linkish" id="au-appli-ici" onClick=${() => setRange(true)}>${T.ici}</button></div>
@@ -399,6 +427,8 @@ export function AuthScreen({ store }) {
   // Petit écran (moins de 680 px de haut) : le titre et les chiffres suffisent, la phrase d'explication laisse la place au
   // bouton. Décidé à l'ouverture : le clavier qui s'ouvre ensuite ne fait rien bouger.
   const [court] = useState(() => innerWidth < 900 && innerHeight < 680);
+  // Sur téléphone, la carte du navigateur d'une application prend la place de la phrase d'explication, dès le premier affichage
+  const [sansSous] = useState(() => !!APPLI_ICI && !lireVisite(CLE_CARTE) && innerWidth < 900);
   // Session expirée sans l'avoir voulu : on redemande la connexion calmement, avec son adresse déjà là
   const perdue = !!store?.sessionPerdue;
   const [email, setEmail] = useState(attente?.email || saisie?.email || (perdue && store.emailPerdu) || ''); const [pw, setPw] = useState('');
@@ -484,7 +514,7 @@ export function AuthScreen({ store }) {
       <${Fondateurs}/>
       <h1>Les lauréats ouvrent la porte aux étudiants.</h1>
       <p class="auth-chiffres">${(lignes || []).map(l => html`<span>${l}</span>`)}</p>
-      ${(lien && mode !== 'nouveau') || court ? null : html`<p class="entree-sous">Stage, PFE, premier emploi : les étudiants demandent, les lauréats aident et recrutent.</p>`}
+      ${(lien && mode !== 'nouveau') || court || sansSous ? null : html`<p class="entree-sous">Stage, PFE, premier emploi : les étudiants demandent, les lauréats aident et recrutent.</p>`}
     </section>
     <form class="auth-card form entree-form" onSubmit=${submit} aria-label=${inscription ? 'Créer mon compte' : null}>
       ${inscription || mode === 'connexion' || mode === 'motdepasse' ? html`<${CarteAppli} mode=${mode} role=${role} invite=${invite}/>` : null}
