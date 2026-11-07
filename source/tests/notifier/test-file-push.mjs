@@ -1,7 +1,9 @@
 // La file des notifications : une notification n'en sort que reçue par un téléphone, ou sans espoir ; une panne
 // passagère la laisse pour un nouvel essai. Journal de chaque envoi. Rappel d'un entretien, par notification ou par email.
+// Ce que reçoit vraiment le service de push : la durée de vie et l'urgence de chaque type ; la nuit calme (21:30 → 08:00).
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { MODULE, Banc, installer, configurerEnv, requete, uid, SITE } from './banc.mjs';
 
 const N = await import(MODULE);
@@ -102,6 +104,99 @@ test('rappel d’entretien : l’heure, avec qui, où ; ouvre la discussion ; ur
   assert.equal(fr.entetes.ttl, '900');
   assert.equal(ar.message.title, 'مكالمة على الساعة 17:30');
   assert.equal(ar.message.body, 'مع \u2068Salma\u2069 · 15 دقيقة · \u2068OCP Casablanca\u2069.');
+});
+
+// ---------------------------------------------------------------------------
+// Ce que reçoit vraiment le service de push : la durée de vie (en-tête TTL) et l'urgence de chaque type, celles du contrat.
+// Nuit calme, de 21:30 à 08:00 (heure du Maroc = UTC) : la base ne programme rien la nuit, mais le service de push garde
+// une notification tant que sa durée de vie court, pour un téléphone hors réseau, ou un Android en veille quand l'urgence
+// est « normal ». Une notification programmée (le budget du jour, programme_place) ne vit donc que jusqu'à 21:30 ; prise
+// par la fonction après 21:30 (file en retard, après une panne), elle ne part pas. Entre personnes : rien ne change.
+const H = 3600;
+const aLHeure = async (iso, f) => { const vrai = Date.now; Date.now = () => Date.parse(iso); try { return await f(); } finally { Date.now = vrai; } };
+const DEMAIN = '2026-11-10T10:00:00Z';
+const [MT, DE, EV, OF, DM] = [uid(41), uid(42), uid(43), uid(44), uid(45)];
+// type : [data, durée de vie du contrat, urgence] ; les 12 programmées, puis deux notifications entre personnes
+const TYPES = {
+  match_jour: [{ n: 3, type: 'etudiant' }, 6 * H, 'high'],
+  match_attente: [{ nom: 'Salma', de: DE, n: 1, type: 'laureat' }, 12 * H, 'high'],
+  rdv_demain: [{ nom: 'Youssef', sujet: 'Relire mon CV', rdv_at: DEMAIN, m: MT, n: 1 }, 4 * H, 'high'],
+  entretien_demain: [{ nom: 'Salma', rdv_at: DEMAIN, duree: 30, visio: true, m: uid(46), de: DE, n: 1 }, 4 * H, 'high'],
+  agenda_demain: [{ type: 'evenement', titre: 'Forum entreprises', debut: DEMAIN, lieu: 'Amphi A', id: EV, n: 1 }, 4 * H, 'high'],
+  apres_rdv: [{ nom: 'Youssef', sujet: 'Relire mon CV', m: MT, pour: 'demandeur' }, 24 * H, 'high'],
+  offre_bientot: [{ titre: 'Stage lean', entreprise: 'OCP', date_limite: '2026-11-10', offre: OF, jours: 1 }, 12 * H, 'high'],
+  demande_attente: [{ nom: 'Hiba', type: 'pfe', titre: 'PFE supply chain', demande: DM }, 24 * H, 'high'],
+  demande_pause: [{ titre: 'Stage en BTP', demande: DM }, 24 * H, 'normal'],
+  semaine: [{ type: 'etudiant', offres: 2 }, 12 * H, 'normal'],
+  groupe_jour: [{ n: 2, groupe: 'Génie industriel', gkey: 'filiere:genie industriel', autres: 0 }, 12 * H, 'normal'],
+  rappel_visite: [{ messages: 2 }, 24 * H, 'normal'],
+  message: [{ nom: 'Salma', de: DE, type: 'texte', texte: 'Bonjour' }, 24 * H, 'high'],
+  rappel_rdv: [{ nom: 'Youssef', sujet: 'Relire mon CV', rdv_at: DEMAIN, m: MT }, 900, 'high'],
+};
+const ENTRE_PERSONNES = ['message', 'rappel_rdv'];
+// Une ligne de file de chaque type, chacune pour son membre (un téléphone), traitée par la fonction à l'heure dite ; rend
+// le banc, la réponse de la fonction et, par type, ce que le service de push a reçu
+async function traiterA(iso, types = Object.keys(TYPES)) {
+  const b = nouveauBanc();
+  const tel = new Map();
+  types.forEach((kind, i) => {
+    const u = uid(600 + i);
+    b.tables.profiles.push(profil(u));
+    tel.set(b.abonner(u, 1).endpoint, kind);
+    b.tables.push_queue.push({ id: 700 + i, user_id: u, kind, data: TYPES[kind][0] });
+  });
+  const bilan = await aLHeure(iso, async () => corpsDe(await appel({ job: 'push' })));
+  const recu = Object.fromEntries(b.push.map(p => [tel.get(p.endpoint), { ttl: Number(p.entetes.ttl), urgence: p.entetes.urgency }]));
+  return { b, bilan, recu };
+}
+
+test('service de push : la durée de vie et l’urgence du contrat pour chaque type ; une notification programmée ne vit pas au-delà de 21:30', async () => {
+  // À 8 h, il reste 13 h 30 avant la nuit : les durées du contrat partent telles quelles, celles d'un jour sont raccourcies
+  const matin = await traiterA('2026-11-09T08:00:00Z');
+  assert.deepEqual(matin.bilan, { sent: Object.keys(TYPES).length, failed: 0, removed: 0 });
+  for (const [kind, [, vie, urgence]] of Object.entries(TYPES)) {
+    assert.deepEqual(matin.recu[kind], { ttl: ENTRE_PERSONNES.includes(kind) ? vie : Math.min(vie, 13.5 * H), urgence }, kind);
+  }
+  assert.deepEqual(['match_jour', 'rdv_demain', 'entretien_demain', 'agenda_demain', 'match_attente', 'offre_bientot', 'semaine', 'groupe_jour'].map(k => matin.recu[k].ttl),
+    [6 * H, 4 * H, 4 * H, 4 * H, 12 * H, 12 * H, 12 * H, 12 * H], 'jamais un jour pour tout');
+  // À 19 h 30 (la veille, après un rendez-vous, les groupes du jour) : 2 h au plus, plus rien ne sonne à 2 h du matin ;
+  // entre personnes, la durée ne change pas
+  const soir = await traiterA('2026-11-09T19:30:00Z');
+  for (const [kind, [, vie, urgence]] of Object.entries(TYPES)) {
+    assert.deepEqual(soir.recu[kind], { ttl: ENTRE_PERSONNES.includes(kind) ? vie : 2 * H, urgence }, kind);
+  }
+  // À 21:05 (la dernière demande sans aide de la journée) : 25 minutes ; à 21:29:30, 30 secondes
+  assert.equal((await traiterA('2026-11-09T21:05:00Z', ['demande_attente'])).recu.demande_attente.ttl, 25 * 60);
+  assert.equal((await traiterA('2026-11-09T21:29:30Z', ['groupe_jour'])).recu.groupe_jour.ttl, 30);
+});
+
+test('nuit calme : prise après 21:30 (file en retard), une notification programmée ne part pas et sort de la file, notée -5 ; entre personnes, elle part', async () => {
+  for (const iso of ['2026-11-09T21:30:00Z', '2026-11-09T23:00:00Z', '2026-11-10T03:00:00Z', '2026-11-10T07:59:59Z']) {
+    erreurs = [];
+    const { b, bilan, recu } = await traiterA(iso);
+    assert.deepEqual(Object.keys(recu).sort(), [...ENTRE_PERSONNES].sort(), iso);
+    assert.deepEqual(bilan, { sent: ENTRE_PERSONNES.length, failed: 0, removed: 0 }, iso);
+    assert.deepEqual(b.tables.push_queue, [], `${iso} : rien ne reste en file, pas de nouvel essai dans la nuit`);
+    const journal = Object.fromEntries(b.tables.push_journal.map(x => [x.kind, x.code]));
+    for (const kind of Object.keys(TYPES)) assert.equal(journal[kind], ENTRE_PERSONNES.includes(kind) ? 201 : -5, `${iso} ${kind}`);
+    assert.ok(erreurs.some(e => e.includes('nuit calme') && e.includes('groupe_jour')), `${iso} : dit dans les Logs`);
+    assert.ok(!erreurs.some(e => /Salma|Youssef|Hiba|Génie|Stage/.test(e)), 'les Logs ne gardent que le type');
+  }
+  // À 8 h, tout repart
+  assert.equal(Object.keys((await traiterA('2026-11-10T08:00:00Z')).recu).length, Object.keys(TYPES).length);
+});
+
+test('nuit calme : le temps qui reste avant 21:30 ; les types programmés sont ceux du budget de la base (programme_place)', () => {
+  const a = iso => N.avantNuit(Date.parse(iso));
+  assert.deepEqual(['08:00:00', '12:30:00', '19:30:00', '21:05:00', '21:29:30', '21:30:00', '23:59:59'].map(h => a(`2026-11-09T${h}Z`)),
+    [13.5 * H, 9 * H, 2 * H, 25 * 60, 30, 0, 0]);
+  assert.deepEqual(['00:00:00', '03:00:00', '07:59:59', '08:00:00'].map(h => a(`2026-11-10T${h}Z`)), [0, 0, 0, 13.5 * H], 'après minuit aussi');
+  // Un type programmé de plus dans la base (programme_place) : la fonction le borne aussi
+  const sql = fs.readFileSync(new URL('../../supabase/schema.sql', import.meta.url), 'utf8');
+  const budget = [...new Set([...sql.matchAll(/programme_place\(\w+\.\w+, '(\w+)'\)/g)].map(x => x[1]))].sort();
+  assert.equal(budget.length, 12);
+  assert.deepEqual([...N.PROGRAMMEES].sort(), budget);
+  assert.deepEqual(Object.keys(TYPES).filter(k => !ENTRE_PERSONNES.includes(k)).sort(), budget, 'les tests ci-dessus essaient chacun');
 });
 
 // ---------------------------------------------------------------------------

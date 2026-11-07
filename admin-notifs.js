@@ -3,7 +3,8 @@
 import { html, useState, useEffect, useMemo, useRef } from './vendor/preact-htm.js';
 import { Icon, Bar, injectCSS, Compteur, Anneau, Squelette } from './ui.js';
 import { addAR, arCount } from './i18n.js';
-import { pct, timeAgo, santeResume, raisonsNotifs, raisonsAvecPertes, dureeAttente, etatCronNotifs, TYPES_MAX_SN } from './logic.js';
+import { pct, timeAgo } from './logic.js';
+import { santeResume, raisonsNotifs, raisonsAvecPertes, dureeAttente, etatCronNotifs, TYPES_MAX_SN } from './sante-notifs.js';
 
 // ---------------------------------------------------------------------------
 // Santé des notifications : combien de membres les ont activées, ce que les services de notification acceptent et ce que
@@ -217,7 +218,7 @@ addAR({
   'Réponse à un entretien': 'رد على مقابلة', 'Rappel d’entretien': 'تذكير بمقابلة',
   'Intérêt reçu': 'اهتمام وارد', 'Match du jour': 'توافق اليوم', 'Demande ouverte à tous': 'طلب مفتوح للجميع', 'Proposition d’aide': 'اقتراح مساعدة',
   'Aide acceptée': 'مساعدة مقبولة', 'Demande rouverte': 'طلب أُعيد فتحه', 'Suite d’une candidature': 'مستجدّ ترشيح',
-  'Invitation à postuler': 'دعوة للترشح', 'Recrutement à confirmer': 'توظيف في انتظار التأكيد', 'Recrutement confirmé': 'توظيف مؤكَّد', 'Relance d’une offre': 'تذكير بعرض',
+  'Invitation à postuler': 'دعوة للترشح', 'Recrutement à confirmer': 'توظيف للتأكيد', 'Recrutement confirmé': 'توظيف مؤكد', 'Relance d’une offre': 'تذكير بعرض',
   'Demande de mentorat': 'طلب إرشاد', 'Mentorat ouvert à tous': 'إرشاد مفتوح للجميع', 'Mentorat déplacé': 'إرشاد بموعد جديد',
   'Mentorat annulé': 'إرشاد ملغى', 'Rappel de rendez-vous': 'تذكير بموعد', 'Merci reçu': 'شكر وارد',
   'Relecture de CV demandée': 'طلب مراجعة سيرة ذاتية', 'Relecture de CV prise': 'مراجعة سيرة ذاتية قيد الإنجاز', 'Relecture de CV rendue': 'مراجعة سيرة ذاتية منجزة',

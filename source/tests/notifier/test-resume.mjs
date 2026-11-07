@@ -270,3 +270,15 @@ test('lauréat qui cherche un emploi : les offres pour jeunes diplômés et entr
   const r = N.resumeDe({ ...n, en_recherche: true }, D);
   assert.ok(r.offres.liste.some(o => o.titre === 'Ingénieur méthodes junior'));
 });
+
+test('écoles : le résumé ne parle que de l’école du membre', () => {
+  const b = { profils: [{ id: 'a', ecole: 'ensam-meknes' }, { id: 'b' }, { id: 'c', ecole: 'autre' }],
+    offres: [{ id: 'o1', author_id: 'a' }, { id: 'o2', author_id: 'c' }], candidatures: [], invitations: [], mentorats: [{ id: 'm', student_id: 'c' }],
+    questions: [], reponses: [], parrainages: [], cafes: [{ id: 'k', organisateur_id: 'c' }], placements: [],
+    evenements: [{ id: 'e1' }, { id: 'e2', ecole: 'autre' }] };
+  const m = N.parEcole(b, 'ensam-meknes'), x = N.parEcole(b, 'autre');
+  assert.deepEqual(m.profils.map(p => p.id), ['a', 'b'], 'sans école : ENSAM Meknès');
+  assert.deepEqual(m.offres.map(o => o.id), ['o1']); assert.deepEqual(x.offres.map(o => o.id), ['o2']);
+  assert.equal(m.mentorats.length, 0); assert.equal(x.cafes.length, 1);
+  assert.deepEqual(m.evenements.map(e => e.id), ['e1']); assert.deepEqual(x.evenements.map(e => e.id), ['e2']);
+});

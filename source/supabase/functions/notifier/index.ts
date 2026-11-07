@@ -343,10 +343,36 @@ type Abonnement = { id: string; user_id: string; endpoint: string; p256dh: strin
 export type Notif = { title: string; body: string; url: string; tag: string; calme?: boolean };
 
 // Tout arrive tout de suite : en urgence « normal », un Android en veille garde la notification jusqu'à son prochain réveil.
-// Seuls les rappels de visite et les enquêtes peuvent attendre.
-export const urgence = (kind: string) => (['rappel_visite', 'enquete'].includes(kind) ? 'normal' : 'high');
-// Durée de vie chez le service de push (téléphone éteint) : un jour ; un rappel ne sert plus une fois le rendez-vous commencé
-export const dureeVie = (kind: string) => (kind === 'rappel_rdv' || kind === 'rappel_entretien' ? 900 : 86400);
+// Seuls peuvent attendre : les rappels de visite, les enquêtes, et les nouvelles douces sans heure (résumé du dimanche,
+// demande mise en pause, messages des groupes).
+const PEUT_ATTENDRE = new Set(['rappel_visite', 'enquete', 'semaine', 'demande_pause', 'groupe_jour']);
+export const urgence = (kind: string) => (PEUT_ATTENDRE.has(kind) ? 'normal' : 'high');
+// Durée de vie chez le service de push (téléphone éteint) : un jour ; un rappel ne sert plus une fois le rendez-vous commencé ;
+// la veille d'un rendez-vous, plus après la soirée (4 h) ; le tour Match de midi, plus le soir (6 h) ; le reste, la journée (12 h)
+const HEURE = 3600;
+const DUREES: Record<string, number> = {
+  rappel_rdv: 900, rappel_entretien: 900,
+  rdv_demain: 4 * HEURE, entretien_demain: 4 * HEURE, agenda_demain: 4 * HEURE,
+  match_jour: 6 * HEURE,
+  match_attente: 12 * HEURE, offre_bientot: 12 * HEURE, semaine: 12 * HEURE, groupe_jour: 12 * HEURE,
+};
+export const dureeVie = (kind: string) => (Object.prototype.hasOwnProperty.call(DUREES, kind) ? DUREES[kind] : 86400);
+// Nuit calme, de 21:30 à 08:00 (heure du Maroc = UTC) : rien de programmé ne doit arriver la nuit. La base choisit l'heure
+// d'envoi (programme_place, heure_calme), pas celle de la remise : le service de push garde la notification tant que sa
+// durée de vie court, pour un téléphone hors réseau ou, en urgence « normal », un Android en veille. La durée de vie d'une
+// notification programmée s'arrête donc à 21:30 (les durées ci-dessus restent la borne haute) ; prise par la fonction la
+// nuit (file en retard après une panne), elle ne part pas (jobPush). Programmées : les types du budget du jour, ceux que
+// la base fait passer par programme_place. Entre personnes (le rappel 15 minutes avant un rendez-vous compris), rien ne change.
+export const PROGRAMMEES = new Set(['rdv_demain', 'entretien_demain', 'agenda_demain', 'apres_rdv', 'match_attente',
+  'match_jour', 'offre_bientot', 'demande_attente', 'demande_pause', 'rappel_visite', 'semaine', 'groupe_jour']);
+// Secondes qui restent avant 21:30 (t : l'heure, en ms) ; 0 pendant la nuit, après minuit compris
+export function avantNuit(t: number = Date.now()): number {
+  const d = new Date(t), m = d.getUTCHours() * 60 + d.getUTCMinutes();
+  if (m < 8 * 60 || m >= 21 * 60 + 30) return 0;
+  return Math.max(0, Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 21, 30) - t) / 1000));
+}
+// La durée de vie à donner maintenant au service de push ; 0 : la nuit a commencé, une notification programmée ne part plus
+export const vieEnvoi = (kind: string, t: number = Date.now()) => (PROGRAMMEES.has(kind) ? Math.min(dureeVie(kind), avantNuit(t)) : dureeVie(kind));
 
 // Envoie une notification ; rend le code HTTP du service de push (0 si injoignable ou trop lent)
 async function pousserUn(a: Abonnement, n: Notif, urg: string, v: Vapid, ttl = 86400, delai = 15000): Promise<number> {
@@ -377,9 +403,54 @@ async function pousserUn(a: Abonnement, n: Notif, urg: string, v: Vapid, ttl = 8
 // ---------------------------------------------------------------------
 // Textes des notifications (fr / ar)
 // ---------------------------------------------------------------------
-type V = { nom: string; sujet: string; titre: string; entreprise: string; cible: string; ville: string; lieu: string; statut: string; date: string; heure: string; promo: string; n: number; vague: string; motif: string; texte: string; mtype: string; duree: number; aide: string; dtype: string; pour: string; origine?: string; emoji: string; quoi: string; reponse: string; sur: string };
+type V = { nom: string; sujet: string; titre: string; entreprise: string; cible: string; ville: string; lieu: string; statut: string; date: string; heure: string; promo: string; n: number; vague: string; motif: string; texte: string; mtype: string; duree: number; aide: string; dtype: string; pour: string; origine?: string; emoji: string; quoi: string; reponse: string; sur: string;
+  // Nouveaux types : jours avant la date limite, inscrits, autres groupes actifs, meilleure réponse, en visio, nom du groupe,
+  // envoi groupé, date limite écrite, comptes de la semaine (entiers > 0 seulement)
+  jours: number; inscrits: number; autres: number; best: boolean; visio: boolean; groupe: string; lot: boolean; limite: string; semaine: Record<string, number> };
 // Réactions publiques : les mêmes émojis que la table reactions_publiques
 const EMOJIS_PUBLICS = ['👍', '❤️', '👏', '🙏', '💪'];
+// Un vrai nombre : entier positif, envoyé en nombre ou en texte par la base ; sinon 0, qui n'est jamais écrit
+const entier = (x: unknown): number => {
+  const n = typeof x === 'number' ? x : typeof x === 'string' && /^\d{1,6}$/.test(x.trim()) ? Number(x) : NaN;
+  return Number.isInteger(n) && n > 0 && n < 100000 ? n : 0;
+};
+// Une phrase finie : un point, sauf si le texte du membre en a déjà un (« Préparer mon PFE ? »)
+const phrase = (t: string) => (!t || /[.!?…؟]\u2069?$/.test(t) ? t : t + '.');
+// Match montre TOUR_JOUR cartes par jour (TOUR_JOUR de src/logic.js, un test vérifie qu'ils restent égaux)
+export const TOUR_JOUR = 5;
+// Types qui gardent exprès un tag fixe : la suivante remplace la précédente dans la barre (match_attente quand n ≥ 2,
+// offre_bientot quand elle est groupée). Les autres ont un tag par élément quand la donnée le permet (lienNotif). Le
+// filleul n'y est plus : chaque filleul est une personne de plus, il a sa ligne (filleul-<étudiant>).
+export const TAGS_FIXES = new Set(['rappel_visite', 'promo_nouveau', 'verification_pair', 'enquete', 'parrain', 'test',
+  'semaine', 'match_jour', 'match_attente', 'offre_bientot']);
+// Ce que cherche l'auteur d'une demande (type de la demande)
+const CHERCHE: Record<string, string> = { stage: 'un stage', pfe: 'un PFE', etranger: 'un stage à l’étranger', emploi: 'un emploi' };
+// Résumé du dimanche : les comptes dans l'ordre du rôle, 3 au plus, jamais un zéro
+const SEMAINE_ORDRE: Record<string, string[]> = {
+  etudiant: ['offres', 'laureats', 'promo', 'evenements', 'demandes'],
+  laureat: ['demandes', 'offres', 'promo', 'evenements', 'laureats'],
+};
+const MOTS_SEMAINE: Record<Langue, Record<string, (n: number, lau: boolean) => string>> = {
+  fr: {
+    offres: (n, lau) => `${n > 1 ? `${n} nouvelles offres` : '1 nouvelle offre'} ${lau ? 'dans ta filière' : 'pour toi'}`,
+    laureats: n => (n > 1 ? `${n} nouveaux lauréats de ta filière` : '1 nouveau lauréat de ta filière'),
+    promo: n => (n > 1 ? `${n} nouveaux membres dans ta promo` : '1 nouveau membre dans ta promo'),
+    evenements: n => (n > 1 ? `${n} événements cette semaine` : '1 événement cette semaine'),
+    demandes: n => (n > 1 ? `${n} nouvelles demandes d’étudiants de ton parcours` : '1 nouvelle demande d’étudiant de ton parcours'),
+  },
+  ar: {
+    offres: (n, lau) => arN(n, lau ? ['عرض جديد في شعبتك', 'عرضان جديدان في شعبتك', '{n} عروض جديدة في شعبتك', '{n} عرضًا جديدًا في شعبتك']
+      : ['عرض جديد يخصك', 'عرضان جديدان يخصانك', '{n} عروض جديدة تخصك', '{n} عرضًا جديدًا يخصك']),
+    laureats: n => arN(n, ['خريج جديد من شعبتك', 'خريجان جديدان من شعبتك', '{n} خريجين جدد من شعبتك', '{n} خريجًا جديدًا من شعبتك']),
+    promo: n => arN(n, ['عضو جديد في دفعتك', 'عضوان جديدان في دفعتك', '{n} أعضاء جدد في دفعتك', '{n} عضوًا جديدًا في دفعتك']),
+    evenements: n => arN(n, ['نشاط واحد هذا الأسبوع', 'نشاطان هذا الأسبوع', '{n} أنشطة هذا الأسبوع', '{n} نشاطًا هذا الأسبوع']),
+    demandes: n => arN(n, ['طلب مساعدة جديد من طلبة مسارك', 'طلبا مساعدة جديدان من طلبة مسارك', '{n} طلبات مساعدة جديدة من طلبة مسارك', '{n} طلب مساعدة جديدًا من طلبة مسارك']),
+  },
+};
+const phrasesSemaine = (v: V, l: Langue): string[] => {
+  const lau = v.dtype === 'laureat';
+  return (SEMAINE_ORDRE[lau ? 'laureat' : 'etudiant']).filter(k => v.semaine[k] > 0).slice(0, 3).map(k => MOTS_SEMAINE[l][k](v.semaine[k], lau));
+};
 
 // Aperçu d'un message privé : le début du texte, ou « Photo », « Message vocal (0:42) »
 const minSec = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
@@ -422,10 +493,13 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     fr: v => ['Un merci pour toi', `${v.nom} te remercie pour ton aide.`],
     ar: v => ['رسالة شكر لك', `وصلتك رسالة شكر من ${v.nom} على مساعدتك.`],
   },
+  // n : candidatures en attente sur l'offre ; une ligne par offre dans la barre (lienNotif), qui ouvre ses candidats
   candidature: {
     route: 'espace',
-    fr: v => ['Nouvelle candidature', `${v.nom} a postulé : ${v.titre}`],
-    ar: v => ['ترشيح جديد', `ترشيح من ${v.nom} لعرض: ${v.titre}`],
+    fr: v => v.n >= 2 ? [`${v.n} candidatures sur ${v.titre ? `« ${v.titre} »` : 'ton offre'}`, `${v.nom} vient de postuler.`]
+      : ['Nouvelle candidature', `${v.nom} a postulé : ${v.titre}`],
+    ar: v => v.n >= 2 ? [`${arN(v.n, ['', 'ترشيحان', '{n} ترشيحات', '{n} ترشيحًا'])} على ${v.titre ? `«${v.titre}»` : 'عرضك'}`, `آخر ترشيح من ${v.nom}.`]
+      : ['ترشيح جديد', `ترشيح من ${v.nom} لعرض: ${v.titre}`],
   },
   candidature_statut: {
     route: 'parcours',
@@ -457,10 +531,13 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     fr: v => ['Une demande ouverte à tous les lauréats', `${v.nom}${TYPES_OFFRE.fr[v.dtype] ? ` · ${TYPES_OFFRE.fr[v.dtype]}` : ''} : ${v.titre}`],
     ar: v => ['طلب مفتوح لكل الخريجين', `${v.nom}${TYPES_OFFRE.ar[v.dtype] ? ` · ${TYPES_OFFRE.ar[v.dtype]}` : ''}: ${v.titre}`],
   },
+  // n : propositions sur la demande (une ligne par demande dans la barre) ; la dernière en détail
   demande_proposition: {
     route: 'offres/demandes',
-    fr: v => ['Un lauréat te propose son aide', `${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''} : ${v.titre}`],
-    ar: v => ['عرض مساعدة جديد', `${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''}: ${v.titre}`],
+    fr: v => v.n >= 2 ? [`${v.n} lauréats te proposent leur aide`, `${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''} et ${v.n === 2 ? 'un autre' : `${v.n - 1} autres`} : ${v.titre}`]
+      : ['Un lauréat te propose son aide', `${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''} : ${v.titre}`],
+    ar: v => v.n >= 2 ? [arN(v.n, ['', 'عرضا مساعدة من الخريجين', '{n} عروض مساعدة من الخريجين', '{n} عرض مساعدة من الخريجين']), `آخرها من ${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''}: ${v.titre}`]
+      : ['عرض مساعدة جديد', `${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''}: ${v.titre}`],
   },
   demande_match: {
     route: 'offres/demandes',
@@ -482,6 +559,19 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     fr: v => ['Une réponse à ta demande', `${v.nom}${v.titre ? ` sur « ${v.titre} »` : ''} : ${v.texte}`],
     ar: v => ['رد على طلبك', `رد من ${v.nom}${v.titre ? ` على «${v.titre}»` : ''}: ${v.texte}`],
   },
+  // Une demande de mon parcours encore sans aide après 24 h (lauréats que la publication n'a pas prévenus) : elle reprend la
+  // ligne de la publication (tag demande_nouvelle-<d>) et ouvre « Je peux aider »
+  demande_attente: {
+    route: 'offres/demandes',
+    fr: v => [`${v.nom} cherche toujours ${CHERCHE[v.dtype] || 'de l’aide'}`, `${v.titre ? `Sa demande « ${v.titre} » est encore ouverte` : 'Sa demande est encore ouverte'}. Un conseil ou un contact peut l’aider.`],
+    ar: v => ['طلب من مسارك لا يزال مفتوحًا', `${v.nom}${TYPES_OFFRE.ar[v.dtype] ? ` · ${TYPES_OFFRE.ar[v.dtype]}` : ''}${v.titre ? `: «${v.titre}»` : ''}. نصيحة أو جهة اتصال قد تكفي.`],
+  },
+  // Ma demande passe en pause après 60 jours sans nouvelle : la relancer si je cherche toujours
+  demande_pause: {
+    route: 'offres/demandes',
+    fr: v => ['Ta demande est en pause', `${v.titre ? `« ${v.titre} » : tu` : 'Tu'} peux la relancer en un clic si tu cherches toujours.`],
+    ar: v => ['طلبك متوقف مؤقتًا', `${v.titre ? `«${v.titre}»: ` : ''}يمكنك إعادة إطلاقه بنقرة واحدة إن كنت لا تزال تبحث.`],
+  },
   // Page Match (catégorie « Match ») : c'est un match (aux deux, ouvre la discussion) ; un oui qui me vise (au plus un par
   // jour pour une même paire) : sur mon offre (lauréat) ou sur mon profil (étudiant) ; un entretien proposé dans la
   // discussion, puis la réponse (« Je serai là » / « Autre horaire »). Prénoms seulement, comme sur l'écran du match.
@@ -490,11 +580,16 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     fr: v => ['C’est un match !', `Toi et ${v.nom}, vous pouvez vous écrire.`],
     ar: v => ['تمّ الاتفاق!', `يمكنك الآن مراسلة ${v.nom}.`],
   },
-  // Le soir : le tour du jour (match_jour_push). n : 5 au plus ; type : le rôle de qui le reçoit
+  // À midi : le tour du jour (match_jour_push). n : les vraies cartes, comptées comme Match les montre (TOUR_JOUR au plus) ;
+  // type : le rôle de qui le reçoit. Ni cœur, ni emoji, ni série ; aucune carte, rien
   match_jour: {
     route: 'match',
-    fr: v => ['Ton tour Match du jour', `${v.n > 1 ? `${v.n} ${v.dtype === 'laureat' ? 'étudiants' : 'offres'} à découvrir` : v.dtype === 'laureat' ? '1 étudiant à découvrir' : '1 offre à découvrir'} : une minute suffit.`],
-    ar: v => ['جولتك اليومية في التوافق', `${v.dtype === 'laureat' ? `طلبة جدد للاكتشاف: ${v.n}` : `عروض جديدة للاكتشاف: ${v.n}`}. دقيقة واحدة تكفي.`],
+    fr: v => { const k = Math.min(v.n, TOUR_JOUR); return !k ? null : ['Ton tour du jour est prêt', v.dtype === 'laureat'
+      ? (k > 1 ? `${k} nouveaux étudiants de ton parcours dans Match.` : 'Un nouvel étudiant de ton parcours dans Match.')
+      : (k > 1 ? `${k} offres de lauréats pour ton année, dans Match.` : 'Une offre d’un lauréat pour ton année, dans Match.')]; },
+    ar: v => { const k = Math.min(v.n, TOUR_JOUR); return !k ? null : ['جولة اليوم جاهزة', v.dtype === 'laureat'
+      ? arN(k, ['طالب جديد من مسارك في صفحة التوافق.', 'طالبان جديدان من مسارك في صفحة التوافق.', '{n} طلبة جدد من مسارك في صفحة التوافق.', '{n} طالبًا جديدًا من مسارك في صفحة التوافق.'])
+      : arN(k, ['عرض واحد من الخريجين لسنتك في صفحة التوافق.', 'عرضان من الخريجين لسنتك في صفحة التوافق.', '{n} عروض من الخريجين لسنتك في صفحة التوافق.', '{n} عرضًا من الخريجين لسنتك في صفحة التوافق.'])]; },
   },
   match_interet: {
     route: 'match',
@@ -502,6 +597,23 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
       : ['Un lauréat s’intéresse à ton profil', `${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''} s’intéresse à ton profil. Réponds dans Match.`],
     ar: v => v.sur === 'offre' ? ['اهتمام جديد بعرضك', `اهتمام من ${v.nom} بعرضك${v.titre ? ` «${v.titre}»` : ''}. يمكنك الرد في صفحة التوافق.`]
       : ['أحد الخريجين مهتم بملفك', `اهتمام بملفك من ${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''}. يمكنك الرد في صفحة التوافق.`],
+  },
+  // À midi : les « Intéressé » qui attendent une réponse (match_attente_push), tous regroupés ; seul, il remplace l'intérêt
+  // d'origine (même tag). Prénom du premier ; son entreprise seulement si elle est visible de tous. type : rôle de qui le reçoit
+  match_attente: {
+    route: 'match',
+    fr: v => {
+      const lau = v.dtype === 'laureat' || (v.dtype !== 'etudiant' && v.sur === 'offre');
+      if (v.n >= 2) return [`${v.n} intérêts t’attendent dans Match`, `${v.nom} et ${v.n === 2 ? `un autre ${lau ? 'étudiant' : 'lauréat'}` : `${v.n - 1} autres ${lau ? 'étudiants' : 'lauréats'}`} s’intéressent ${lau ? 'à tes offres' : 'à ton profil'}. Réponds quand tu as un moment.`];
+      return ['Un intérêt t’attend dans Match', lau ? `${v.nom} s’intéresse à ton offre${v.titre ? ` « ${v.titre} »` : ''}. Réponds quand tu as un moment.`
+        : `${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''} s’intéresse à ton profil. Réponds quand tu as un moment.`];
+    },
+    ar: v => {
+      const lau = v.dtype === 'laureat' || (v.dtype !== 'etudiant' && v.sur === 'offre');
+      if (v.n >= 2) return [arN(v.n, ['', 'اهتمامان ينتظران ردك في صفحة التوافق', '{n} اهتمامات تنتظر ردك في صفحة التوافق', '{n} اهتمامًا ينتظر ردك في صفحة التوافق']), `من بينها اهتمام من ${v.nom}. يمكنك الرد متى سمح وقتك.`];
+      return ['اهتمام ينتظر ردك في صفحة التوافق', lau ? `اهتمام من ${v.nom} بعرضك${v.titre ? ` «${v.titre}»` : ''}. يمكنك الرد متى سمح وقتك.`
+        : `اهتمام بملفك من ${v.nom}${v.entreprise ? ` (${v.entreprise})` : ''}. يمكنك الرد متى سمح وقتك.`];
+    },
   },
   // 15 minutes : un appel ; sans lieu : en visio (le lien est dans la discussion)
   rdv_message: {
@@ -531,15 +643,34 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     fr: v => ['Invitation à postuler', `${v.nom} t’invite à postuler : ${v.titre}`],
     ar: v => ['دعوة للترشح', `دعوة من ${v.nom} للترشح: ${v.titre}`],
   },
+  // n : réponses à ma question depuis la précédente notification (une ligne par question dans la barre)
   reponse: {
     route: 'reseau/entraide',
-    fr: v => ['Nouvelle réponse', `${v.nom} a répondu à ta question : ${v.titre}`],
-    ar: v => ['جواب جديد', `جواب من ${v.nom} على سؤالك: ${v.titre}`],
+    fr: v => v.n >= 2 ? [`${v.n} nouvelles réponses à ta question`, `${v.nom} a répondu en dernier${v.titre ? ` : ${v.titre}` : '.'}`]
+      : ['Nouvelle réponse', `${v.nom} a répondu à ta question : ${v.titre}`],
+    ar: v => v.n >= 2 ? [arN(v.n, ['', 'جوابان جديدان على سؤالك', '{n} أجوبة جديدة على سؤالك', '{n} جوابًا جديدًا على سؤالك']), `آخرها من ${v.nom}${v.titre ? `: ${v.titre}` : '.'}`]
+      : ['جواب جديد', `جواب من ${v.nom} على سؤالك: ${v.titre}`],
   },
   question_routee: {
     route: 'reseau/entraide',
     fr: v => ['Une question pour toi', `Question sur ${v.cible} : ${v.titre}`],
     ar: v => ['سؤال موجّه إليك', `سؤال حول ${v.cible}: ${v.titre}`],
+  },
+  // Entre personnes : un vote pour ma réponse (n : ses votes, au plus une par jour), ou ma réponse choisie comme la meilleure
+  reponse_utile: {
+    route: 'reseau/entraide',
+    fr: v => v.best ? ['Ta réponse a été choisie', `${v.nom} l’a choisie comme meilleure réponse${v.titre ? ` : ${v.titre}` : '.'}`]
+      : ['Ta réponse est utile', `${v.n >= 2 ? `${v.n} membres l’ont trouvée utile` : `${v.nom} l’a trouvée utile`}${v.titre ? ` : ${v.titre}` : '.'}`],
+    ar: v => v.best ? ['اختيار أفضل جواب', `اختيار جوابك كأفضل جواب من طرف ${v.nom}${v.titre ? `: ${v.titre}` : '.'}`]
+      : ['جوابك مفيد', `${v.n >= 2 ? arN(v.n, ['', 'تصويتان على جوابك', '{n} تصويتات على جوابك', '{n} تصويتًا على جوابك']) : `تصويت من ${v.nom} على جوابك`}${v.titre ? `: ${v.titre}` : '.'}`],
+  },
+  // Entre personnes : les bravos sur ma réussite (n : ses bravos, un par membre ; au plus une notification par heure)
+  bravo: {
+    route: 'accueil',
+    fr: v => v.n >= 2 ? [`${v.n} bravos pour ta réussite${v.entreprise ? ` chez ${v.entreprise}` : ''}`, `${v.nom} et ${v.n === 2 ? 'un autre membre' : `${v.n - 1} autres membres`} te félicitent.`]
+      : [`${v.nom} te dit bravo`, v.entreprise ? `Pour ta réussite chez ${v.entreprise}.` : 'Pour ta réussite.'],
+    ar: v => v.n >= 2 ? [`${arN(v.n, ['', 'تهنئتان على نجاحك', '{n} تهانٍ على نجاحك', '{n} تهنئةً على نجاحك'])}${v.entreprise ? ` لدى ${v.entreprise}` : ''}`, `آخرها من ${v.nom}.`]
+      : [`تهنئة من ${v.nom}`, v.entreprise ? `على نجاحك لدى ${v.entreprise}.` : 'على نجاحك.'],
   },
   filleul: {
     route: 'espace',
@@ -556,10 +687,44 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     fr: v => [`Café ENSAM à ${v.ville}`, `${v.date ? `${v.date} à ${v.heure} · ` : ''}${v.lieu}. Inscris-toi en un clic.`],
     ar: v => [`مقهى ENSAM في ${v.ville}`, `${v.date ? `${v.date} على الساعة ${v.heure} · ` : ''}${v.lieu}. سجّل بنقرة واحدة.`],
   },
+  // Le soir, les messages de mes groupes depuis ma dernière lecture : le plus actif en titre, les autres comptés (autres)
+  groupe_jour: {
+    route: 'reseau/groupes',
+    fr: v => !v.n || !v.groupe ? null : [`${v.n > 1 ? `${v.n} nouveaux messages` : '1 nouveau message'} dans le groupe ${v.groupe}`,
+      v.autres >= 2 ? `Et du nouveau dans ${v.autres} autres groupes.` : v.autres === 1 ? 'Et du nouveau dans un autre de tes groupes.' : 'À lire quand tu as un moment.'],
+    ar: v => !v.n || !v.groupe ? null : [`${arN(v.n, ['رسالة جديدة', 'رسالتان جديدتان', '{n} رسائل جديدة', '{n} رسالة جديدة'])} في مجموعة ${v.groupe}`,
+      v.autres >= 2 ? arN(v.autres, ['', 'وجديد في مجموعتين أخريين.', 'وجديد في {n} مجموعات أخرى.', 'وجديد في {n} مجموعة أخرى.']) : v.autres === 1 ? 'وجديد في مجموعة أخرى من مجموعاتك.' : 'ألقِ نظرة متى سمح وقتك.'],
+  },
   rappel_rdv: {
     route: 'mentorat',
     fr: v => ['Rendez-vous bientôt', `Avec ${v.nom}${v.heure ? ` à ${v.heure}` : ''} : ${v.sujet}`],
     ar: v => ['موعدك قريبًا', `مع ${v.nom}${v.heure ? ` على الساعة ${v.heure}` : ''}: ${v.sujet}`],
+  },
+  // La veille au soir (veille_push) : un rendez-vous de mentorat demain ; n : rendez-vous demain, le premier en détail.
+  // Même ligne que tout le mentorat (tag) : le rappel de 15 minutes la remplacera
+  rdv_demain: {
+    route: 'mentorat',
+    fr: v => v.n >= 2 ? [`Demain : ${v.n} rendez-vous`, `Le premier${v.heure ? ` à ${v.heure}` : ''} avec ${v.nom}${v.sujet ? ` : ${phrase(v.sujet)}` : '.'} Un rappel arrive 15 minutes avant chacun.`]
+      : [`Demain${v.heure ? ` à ${v.heure}` : ''} : rendez-vous avec ${v.nom}`, `${v.sujet ? `${phrase(v.sujet)} ` : ''}Un rappel arrive 15 minutes avant.`],
+    ar: v => v.n >= 2 ? [arN(v.n, ['', 'غدًا: موعدان', 'غدًا: {n} مواعيد', 'غدًا: {n} موعدًا']), `أولها${v.heure ? ` على الساعة ${v.heure}` : ''} مع ${v.nom}${v.sujet ? `: ${phrase(v.sujet)}` : '.'} يصلك تذكير قبل 15 دقيقة من كل موعد.`]
+      : [`غدًا${v.heure ? ` على الساعة ${v.heure}` : ''}: موعد مع ${v.nom}`, `${v.sujet ? `${phrase(v.sujet)} ` : ''}يصلك تذكير قبل 15 دقيقة.`],
+  },
+  // Le soir, après un rendez-vous de mentorat (veille_push) : à l'étudiant (demandeur) un merci possible, au lauréat (mentor)
+  // le marquer terminé
+  apres_rdv: {
+    route: 'mentorat',
+    fr: v => v.pour === 'mentor' ? [`Ton rendez-vous avec ${v.nom} a eu lieu ?`, 'Tu peux le marquer comme terminé en un geste.']
+      : v.pour === 'demandeur' ? [`Comment s’est passé ton échange avec ${v.nom} ?`, `${v.sujet ? `${phrase(v.sujet)} ` : ''}Tu peux lui laisser un merci en un clic.`]
+      : [`Ton rendez-vous avec ${v.nom}`, v.sujet ? `${v.sujet} : la suite est dans Mentorat.` : 'La suite est dans Mentorat.'],
+    ar: v => v.pour === 'mentor' ? [`هل تمّ موعدك مع ${v.nom}؟`, 'يمكنك تأكيد انتهائه بنقرة واحدة.']
+      : v.pour === 'demandeur' ? [`كيف كان لقاؤك مع ${v.nom}؟`, `${v.sujet ? `${phrase(v.sujet)} ` : ''}يمكنك ترك رسالة شكر بنقرة واحدة.`]
+      : [`موعدك مع ${v.nom}`, v.sujet ? `${v.sujet}: التتمة في صفحة الإرشاد.` : 'التتمة في صفحة الإرشاد.'],
+  },
+  // Entre personnes : l'étudiant confirme sa présence au rendez-vous (au lauréat)
+  mentorat_presence: {
+    route: 'mentorat',
+    fr: v => [`${v.nom} a confirmé sa présence`, v.date ? `${v.sujet ? `${v.sujet} · ` : ''}${v.date} à ${v.heure}.` : v.sujet ? phrase(v.sujet) : 'Le rendez-vous est confirmé.'],
+    ar: v => [`تأكيد الحضور من ${v.nom}`, v.date ? `${v.sujet ? `${v.sujet} · ` : ''}${v.date} على الساعة ${v.heure}.` : v.sujet ? phrase(v.sujet) : 'الموعد مؤكد.'],
   },
   // 15 minutes avant un entretien proposé dans une discussion (rappels_rdv) : l'heure, avec qui, où ; ouvre la discussion
   rappel_entretien: {
@@ -568,6 +733,23 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
       `Avec ${v.nom}${v.duree ? ` · ${v.duree} min` : ''}${v.lieu ? ` · ${v.lieu}.` : ' en visio. Le lien est dans votre discussion.'}`],
     ar: v => [`${v.duree === 15 ? 'مكالمة' : 'مقابلة'}${v.heure ? ` على الساعة ${v.heure}` : ' قريبًا'}`,
       `مع ${v.nom}${v.duree ? ` · ${v.duree} دقيقة` : ''}${v.lieu ? ` · ${v.lieu}.` : ' عبر الفيديو. الرابط في محادثتكما.'}`],
+  },
+  // La veille au soir : un entretien proposé dans une discussion a lieu demain (15 minutes : un appel ; sans lieu : en visio).
+  // n : rendez-vous demain, le premier en détail ; même ligne que le rappel de 15 minutes (tag), ouvre la discussion
+  entretien_demain: {
+    route: 'messages',
+    fr: v => {
+      const quoi = v.duree === 15 ? 'appel' : 'entretien';
+      const detail = `${v.duree ? `${v.duree} min · ` : ''}${v.lieu && !v.visio ? phrase(v.lieu) : 'en visio. Le lien est dans votre discussion.'}`;
+      return v.n >= 2 ? [`Demain : ${v.n} rendez-vous`, `Le premier${v.heure ? ` à ${v.heure}` : ''} : ${quoi} avec ${v.nom} · ${detail}`]
+        : [`Demain${v.heure ? ` à ${v.heure}` : ''} : ${quoi} avec ${v.nom}`, majuscule(detail)];
+    },
+    ar: v => {
+      const quoi = v.duree === 15 ? 'مكالمة' : 'مقابلة';
+      const detail = `${v.duree ? `${v.duree} دقيقة · ` : ''}${v.lieu && !v.visio ? phrase(v.lieu) : 'عبر الفيديو. الرابط في محادثتكما.'}`;
+      return v.n >= 2 ? [arN(v.n, ['', 'غدًا: موعدان', 'غدًا: {n} مواعيد', 'غدًا: {n} موعدًا']), `أولها${v.heure ? ` على الساعة ${v.heure}` : ''}: ${quoi} مع ${v.nom} · ${detail}`]
+        : [`غدًا${v.heure ? ` على الساعة ${v.heure}` : ''}: ${quoi} مع ${v.nom}`, detail];
+    },
   },
   relance_offre: {
     route: 'offres',
@@ -582,6 +764,18 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
       : v.origine === 'partagee' ? 'Offre partagée pour toi' : 'Nouvelle offre pour toi', `${v.titre}${v.entreprise ? ` · ${v.entreprise}` : ''}${ORIGINE_ALERTE.fr[v.origine || ''] || ''}`],
     ar: v => [v.pour === 'relayer' ? (v.origine === 'partagee' ? 'عرض تمت مشاركته في شعبتك' : 'عرض جديد في شعبتك')
       : v.origine === 'partagee' ? 'عرض تمت مشاركته معك' : 'عرض جديد لك', `${v.titre}${v.entreprise ? ` · ${v.entreprise}` : ''}${ORIGINE_ALERTE.ar[v.origine || ''] || ''}`],
+  },
+  // Le matin : une offre mise de côté ferme bientôt (jours : 1 ou 2) ; elle prend la ligne de l'annonce de l'offre (tag).
+  // L'échéance d'abord : un long titre d'offre est coupé à 80 caractères par la fin, jamais « demain ».
+  // Plusieurs le même jour : une seule notification groupée (groupe, n)
+  offre_bientot: {
+    route: 'offres',
+    fr: v => v.lot && v.n >= 2 ? [`${v.n} offres mises de côté ferment bientôt`, 'Leur date limite tombe dans les prochains jours.']
+      : !v.titre ? null : [`${v.jours === 1 ? 'Ferme demain' : v.jours >= 2 && v.jours <= 7 ? `Ferme dans ${v.jours} jours` : 'Ferme bientôt'} : « ${v.titre} »`,
+        `Tu l’as mise de côté${v.entreprise ? ` · ${v.entreprise}` : ''}.${v.limite ? ` Date limite : ${v.limite}.` : ''}`],
+    ar: v => v.lot && v.n >= 2 ? [arN(v.n, ['', 'عرضان محفوظان يُغلقان قريبًا', '{n} عروض محفوظة تُغلق قريبًا', '{n} عرضًا محفوظًا يُغلق قريبًا']), 'آخر أجل للتقديم عليها في الأيام القادمة.']
+      : !v.titre ? null : [`${v.jours === 1 ? 'يُغلق غدًا' : v.jours === 2 ? 'يُغلق بعد يومين' : v.jours >= 3 && v.jours <= 7 ? `يُغلق بعد ${v.jours} أيام` : 'يُغلق قريبًا'}: «${v.titre}»`,
+        `عرض حفظته${v.entreprise ? ` · ${v.entreprise}` : ''}.${v.limite ? ` آخر أجل: ${v.limite}.` : ''}`],
   },
   // Un commentaire sur mon offre ; la réponse de son auteur sous une offre où j'ai écrit
   offre_commentaire: {
@@ -661,6 +855,23 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     fr: v => ['Nouvelle date', v.date ? `${v.titre} : ${v.date} à ${v.heure}` : v.titre],
     ar: v => ['موعد جديد', v.date ? `${v.titre}: ${v.date} على الساعة ${v.heure}` : v.titre],
   },
+  // La veille au soir : un événement ou un café de demain où je suis inscrit (pas l'organisateur) ; il prend la ligne de
+  // son annonce (tag). inscrits : le vrai nombre, dit à partir de 2 ; n : rendez-vous de l'agenda demain, le premier en détail
+  agenda_demain: {
+    route: 'reseau/agenda',
+    fr: v => {
+      const quoi = v.dtype === 'cafe' ? (v.ville ? `Café ENSAM à ${v.ville}` : 'Café ENSAM') : v.titre;
+      if (!quoi) return null;
+      return v.n >= 2 ? [`Demain : ${v.n} rendez-vous de l’agenda`, `Le premier${v.heure ? ` à ${v.heure}` : ''} : ${quoi}${v.lieu ? ` · ${v.lieu}` : ''}.`]
+        : [`Demain${v.heure ? ` à ${v.heure}` : ''} : ${quoi}`, [v.lieu, v.inscrits >= 2 ? `${v.inscrits} inscrits` : '', 'Ta participation est notée.'].filter(Boolean).join(' · ')];
+    },
+    ar: v => {
+      const quoi = v.dtype === 'cafe' ? (v.ville ? `مقهى ENSAM في ${v.ville}` : 'مقهى ENSAM') : v.titre;
+      if (!quoi) return null;
+      return v.n >= 2 ? [arN(v.n, ['', 'غدًا: موعدان في الأجندة', 'غدًا: {n} مواعيد في الأجندة', 'غدًا: {n} موعدًا في الأجندة']), `أولها${v.heure ? ` على الساعة ${v.heure}` : ''}: ${quoi}${v.lieu ? ` · ${v.lieu}` : ''}.`]
+        : [`غدًا${v.heure ? ` على الساعة ${v.heure}` : ''}: ${quoi}`, [v.lieu, v.inscrits >= 2 ? `عدد المسجلين: ${v.inscrits}` : '', 'حضورك مسجّل.'].filter(Boolean).join(' · ')];
+    },
+  },
   enquete: {
     route: 'enquete',
     fr: v => ['Enquête d’insertion', `${v.vague || 6} mois après ton diplôme : 2 minutes pour aider les promos suivantes.`],
@@ -671,6 +882,12 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
     route: 'messages',
     fr: v => [v.nom, v.n > 1 ? `${v.n} nouveaux messages · ${apercuMessage(v, 'fr')}` : apercuMessage(v, 'fr')],
     ar: v => [v.nom, v.n > 1 ? `رسائل جديدة: ${v.n} · ${apercuMessage(v, 'ar')}` : apercuMessage(v, 'ar')],
+  },
+  // Dimanche matin : la semaine en une ligne, vrais comptes des 7 derniers jours (3 au plus, jamais un zéro ; aucun, rien)
+  semaine: {
+    route: 'accueil',
+    fr: v => { const p = phrasesSemaine(v, 'fr'); return p.length ? ['Ta semaine sur le Réseau ENSAM', `${p.join(' · ')}.`] : null; },
+    ar: v => { const p = phrasesSemaine(v, 'ar'); return p.length ? ['أسبوعك على شبكة ENSAM', `${p.join(' · ')}.`] : null; },
   },
   // Rappel de visite : texte écrit par notifRappel (les chiffres de chaque chose qui attend ne tiennent pas dans V)
   rappel_visite: {
@@ -695,20 +912,101 @@ const MOTIFS: Record<Langue, Record<string, string>> = {
   ar: { spam: 'رسائل مزعجة', arnaque: 'احتيال', inapproprie: 'محتوى غير لائق', faux: 'معلومة خاطئة', harcelement: 'تحرش', donnees: 'معطيات شخصية', autre: 'سبب آخر' },
 };
 
+// Où mène la notification, et quelle ligne de la barre elle prend (tag). Un tag par élément quand la donnée le dit : la
+// suivante du même élément remplace la précédente, celles de deux éléments s'empilent. Sans la donnée (file d'une base
+// plus ancienne), la route du type et un tag égal au type, comme avant. TAGS_FIXES : les types qui gardent un tag fixe.
+// Types sans cas particulier : [clé de data (ou clés, la première présente gagne), préfixe du tag, route quand la clé
+// est là (sinon celle du type)]. L'événement : id, ou evenement (la clé d'une base d'avant ce lot) : quelle que soit la
+// version de la base, un événement garde sa ligne.
+const EVENEMENT = ['id', 'evenement'];
+const PAR_ELEMENT: Record<string, [string | string[], string, ((id: string) => string)?]> = {
+  candidature: ['offre', 'candidature', x => `offre/${x}`], // la fiche de l'offre s'ouvre sur ses candidats pour son auteur
+  candidature_statut: ['offre', 'candidature_statut'],
+  invitation: ['offre', 'invitation', x => `offre/${x}`],
+  relance_offre: ['offre', 'relance_offre', x => `offre/${x}`],
+  offre_commentaire: ['offre', 'offre_commentaire', x => `offre/${x}`],
+  recrutement_a_confirmer: ['p', 'recrutement'], recrutement_confirme: ['p', 'recrutement'],
+  reponse: ['q', 'reponse', x => `reseau/entraide/${x}`], question_routee: ['q', 'question_routee', x => `reseau/entraide/${x}`],
+  evenement: [EVENEMENT, 'evenement', x => `reseau/agenda/${x}`], evenement_annule: [EVENEMENT, 'evenement', x => `reseau/agenda/${x}`],
+  evenement_deplace: [EVENEMENT, 'evenement', x => `reseau/agenda/${x}`], cafe: ['id', 'cafe'],
+  // Chaque filleul a sa ligne : une personne de plus (sans son identifiant, données d'avant : une ligne par notification)
+  filleul: ['filleul', 'filleul'],
+  // Toute la vie d'un mentorat sur une seule ligne : demande, rendez-vous fixé, déplacé, veille, rappel, présence, après
+  mentorat_demande: ['m', 'mentorat'], mentorat_accepte: ['m', 'mentorat'], mentorat_deplace: ['m', 'mentorat'], rappel_rdv: ['m', 'mentorat'],
+  rdv_demain: ['m', 'mentorat'], mentorat_presence: ['m', 'mentorat'], apres_rdv: ['m', 'mentorat'], mentorat_ouvert: ['m', 'mentorat_ouvert'],
+  relecture_demande: ['r', 'relecture'], relecture_prise: ['r', 'relecture'], relecture_rendue: ['r', 'relecture'],
+  contact_demande: ['c', 'contact'], contact_accepte: ['c', 'contact'], verifier_pair: ['de', 'verifier_pair'],
+  annonce: ['id', 'annonce'], signalement: ['id', 'signalement'], bravo: ['placement', 'bravo'],
+  message: ['de', 'message', x => `messages/${x}`], match_interet: ['de', 'match_interet'],
+  // Une alerte ouvre l'offre ; quand l'offre mise de côté va fermer, la notification reprend sa ligne
+  offre_alerte: ['offre', 'offre', x => `offre/${x}`],
+};
+function lienNotif(kind: string, d: Record<string, unknown>, v: V, route: string): { route: string; tag: string } {
+  const id = (k: string | string[]) => {
+    for (const c of Array.isArray(k) ? k : [k]) if (estUuid(d[c])) return d[c] as string;
+    return null;
+  };
+  const el = (k: string | string[], prefixe: string, r?: (x: string) => string) => {
+    const x = id(k);
+    return x ? { route: r ? r(x) : route, tag: `${prefixe}-${x}` } : { route, tag: kind };
+  };
+  switch (kind) {
+    // Une réaction ouvre l'élément : l'offre, ou la carte de la demande
+    case 'reaction': {
+      const o = id('offre'), dm = id('demande');
+      return o ? { route: `offre/${o}`, tag: `reaction-${o}` } : dm ? { route: `offres/demandes/${dm}`, tag: `reaction-${dm}` } : { route, tag: kind };
+    }
+    // Un match et un entretien (proposé, sa réponse, sa veille, son rappel) ouvrent la discussion avec l'autre personne (de) ;
+    // la veille d'un entretien prend la ligne de son rappel
+    case 'match': return { route: id('de') ? `messages/${id('de')}` : route, tag: id('match') ? `match-${id('match')}` : kind };
+    case 'rdv_message': case 'rdv_reponse': case 'rappel_entretien': case 'entretien_demain':
+      return { route: id('de') ? `messages/${id('de')}` : route, tag: id('m') ? `${kind === 'entretien_demain' ? 'rappel_entretien' : kind}-${id('m')}` : kind };
+    // Un seul intérêt qui attend : la ligne de cet intérêt ; plusieurs : une ligne fixe
+    case 'match_attente': return v.n <= 1 && id('de') ? { route, tag: `match_interet-${id('de')}` } : { route, tag: kind };
+    case 'offre_bientot': return v.lot && v.n >= 2 ? { route: 'offres', tag: kind } : el('offre', 'offre', x => `offre/${x}`);
+    // Un rendez-vous annulé : à l'étudiant, le lien direct « Proposer d'autres horaires »
+    case 'mentorat_annule': {
+      const m = id('m');
+      return m ? { route: v.pour === 'demandeur' ? `mentorat/reprendre/${m}` : route, tag: `mentorat-${m}` } : { route, tag: kind };
+    }
+    // Un merci : celui d'un mentorat ou d'une relecture prend la ligne de l'élément
+    case 'merci': return id('m') ? { route, tag: `mentorat-${id('m')}` } : el('r', 'relecture');
+    case 'reponse_utile': return { route: id('q') ? `reseau/entraide/${id('q')}` : route, tag: id('answer') ? `reponse_utile-${id('answer')}` : kind };
+    case 'agenda_demain': {
+      const x = id('id');
+      return v.dtype === 'cafe' ? { route: 'reseau/groupes', tag: x ? `cafe-${x}` : kind } : { route: x ? `reseau/agenda/${x}` : route, tag: x ? `evenement-${x}` : kind };
+    }
+    case 'groupe_jour': {
+      const k = typeof d.gkey === 'string' && /^[a-z_]+:\S[^\n\r\t]{0,119}$/.test(d.gkey) ? d.gkey : null;
+      return k ? { route: `reseau/groupes/${encodeURIComponent(k)}`, tag: `groupe-${k}` } : { route, tag: kind };
+    }
+    // Une nouvelle demande, pour un lauréat, ouvre directement « Je peux aider », prérempli ; toujours sans aide le
+    // lendemain, elle reprend la ligne de sa publication
+    case 'demande_nouvelle': case 'demande_large': return el('demande', kind, x => `aider/${x}`);
+    case 'demande_attente': return el('demande', 'demande_nouvelle', x => `aider/${x}`);
+  }
+  // Les autres demandes ouvrent leur carte
+  if (kind.startsWith('demande_')) return el('demande', kind, x => `offres/demandes/${x}`);
+  const e = Object.prototype.hasOwnProperty.call(PAR_ELEMENT, kind) ? PAR_ELEMENT[kind] : null;
+  return e ? el(...e) : { route, tag: kind };
+}
+
 // Ce qui remplace la précédente du même type dans la barre de notifications : un seul rappel du soir, un seul Match du
 // jour, un seul essai, une seule enquête ; ce qui rend la précédente fausse : la vérification par les pairs (« encore
-// un lauréat » puis « ton badge est là »), la nouvelle date d'un événement ou d'un rendez-vous de mentorat (l'ancienne
-// date ne doit pas rester affichée), un nouveau parrain (« ton parrainage cette année : … ») ; et, comme dans la liste
-// des tags fixes des nouvelles notifications (TAGS_FIXES), les arrivées dans la promo (au plus une par jour) et le
-// filleul. Le reste, sans élément qui le regroupe (conversation, match, offre…), garde une notification par événement :
-// son tag porte l'identifiant de sa ligne dans la file (id).
+// un lauréat » puis « ton badge est là »), un nouveau parrain (« ton parrainage cette année : … »), les arrivées dans la
+// promo (au plus une par jour). La nouvelle date d'un événement ou d'un rendez-vous de mentorat remplace celle du même
+// élément, sur la ligne de cet élément (son identifiant est dans les données : id ou evenement, m ; tags evenement-<id>
+// et mentorat-<m>, voir PAR_ELEMENT) ; sans lui (données d'avant), celle du même type. Chaque filleul a sa ligne (une
+// personne de plus, comme PAR_PERSONNE). Le reste, sans élément qui le regroupe (conversation, match, offre…), garde une
+// notification par événement : son tag porte l'identifiant de sa ligne dans la file (id).
 export const SE_REMPLACENT = ['rappel_visite', 'match_jour', 'test', 'enquete', 'verification_pair', 'evenement_deplace', 'mentorat_deplace',
-  'parrain', 'promo_nouveau', 'filleul'];
+  'parrain', 'promo_nouveau'];
 // Sur une même demande, chaque lauréat qui propose son aide, chaque réponse, est une personne de plus : une notification
 // chacune (sinon la deuxième efface la première, et son nom). Regroupées seulement quand la base les compte (n ≥ 1).
 const PAR_PERSONNE = ['demande_proposition', 'demande_reponse'];
 
-// Notification prête à envoyer : { title, body, url, tag } ; null si le type est inconnu
+// Notification prête à envoyer : { title, body, url, tag } ; null si le type est inconnu, ou s'il n'y a rien de vrai à dire
+// (un chiffre à 0, un titre ou un nom qui manque : jamais de notification vide)
 export function texteNotif(kind: string, data: unknown, langue: unknown, site: string, id?: number | string | null): Notif | null {
   if (!Object.prototype.hasOwnProperty.call(NOTIFS, kind)) return null;
   if (kind === 'rappel_visite') return notifRappel(data, langue, site);
@@ -721,7 +1019,7 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
     nom: s('nom') || (l === 'ar' ? 'عضو في الشبكة' : 'Un membre'), sujet: s('sujet'), titre: s('titre'),
     entreprise: s('entreprise'), cible: s('cible'), ville: s('ville'), lieu: s('lieu'), statut: txt(d.statut),
     date: q?.date || '', heure: q?.heure || '',
-    promo: /^\d{4}$/.test(txt(d.promo)) ? txt(d.promo) : '', n: Number(d.n) || 0,
+    promo: /^\d{4}$/.test(txt(d.promo)) ? txt(d.promo) : '', n: entier(d.n),
     vague: txt(d.vague) === '12' ? '12' : txt(d.vague) === '6' ? '6' : '', motif: txt(d.motif),
     texte: s('texte'), mtype: txt(d.type), duree: Math.max(0, Math.min(600, Number(d.duree) || 0)),
     aide: ['recrute', 'encadre', 'recommande'].includes(txt(d.aide)) ? txt(d.aide) : '', dtype: txt(d.type),
@@ -731,31 +1029,23 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
     emoji: EMOJIS_PUBLICS.includes(txt(d.emoji)) ? txt(d.emoji) : '', quoi: estUuid(d.demande) ? 'demande' : 'offre',
     // Entretien : la réponse du destinataire ; intérêt (Match) : sur une offre, sinon sur le profil
     reponse: ['oui', 'autre'].includes(txt(d.reponse)) ? txt(d.reponse) : '', sur: estUuid(d.offre) ? 'offre' : 'profil',
+    jours: entier(d.jours), inscrits: entier(d.inscrits), autres: entier(d.autres), best: d.best === true, visio: d.visio === true,
+    groupe: typeof d.groupe === 'string' ? s('groupe') : '', lot: d.groupe === true, limite: quand(d.date_limite, l)?.date || '',
+    semaine: Object.fromEntries(['offres', 'laureats', 'promo', 'evenements', 'demandes'].map(k => [k, entier(d[k])])),
   };
   const t = g[l](v);
   if (!t) return null;
-  // Une alerte ouvre directement l'offre, un message sa conversation (une notification par personne)
-  // Une demande ouvre sa carte ; une nouvelle demande, pour un lauréat, ouvre directement « Je peux aider », prérempli
-  const dem = kind.startsWith('demande_') && estUuid(d.demande) ? d.demande : null;
+  const lien = lienNotif(kind, d, v, g.route);
+  // Envoyée depuis la file (id : l'identifiant de sa ligne). Sur une même demande, chaque lauréat qui propose son aide,
+  // chaque réponse, est une personne de plus : une notification chacune, tant que la base ne les compte pas (n ≥ 1).
+  // Et le filet : ce qu'aucun élément ne regroupe (tag resté égal au type, par exemple une base plus ancienne sans
+  // l'identifiant dans data) garde une notification par événement, sauf les tags fixes voulus (TAGS_FIXES) et ce qui rend
+  // la précédente fausse (SE_REMPLACENT). Hors ces deux demandes comptées par personne, un tag par élément ne change jamais.
   const ligneDeFile = id != null && String(id) !== '';
-  const demParPersonne = dem && PAR_PERSONNE.includes(kind) && !(Number(d.n) >= 1) && ligneDeFile;
-  const annule = kind === 'mentorat_annule' && estUuid(d.m) ? d.m : null;
-  // Une réaction ouvre l'élément : l'offre, ou la carte de la demande ; une seule notification par élément sur le téléphone
-  const rx = kind === 'reaction' ? (estUuid(d.offre) ? { route: `offre/${d.offre}`, id: d.offre } : estUuid(d.demande) ? { route: `offres/demandes/${d.demande}`, id: d.demande } : null) : null;
-  // Un commentaire ouvre l'offre ; une notification par offre sur le téléphone
-  const com = kind === 'offre_commentaire' && estUuid(d.offre) ? d.offre : null;
-  // Match : un match et un entretien (proposé, sa réponse, son rappel) ouvrent la discussion avec l'autre personne (de) ;
-  // un intérêt, la page Match
-  const entretien = kind === 'rdv_message' || kind === 'rdv_reponse' || kind === 'rappel_entretien';
-  const disc = (kind === 'match' || entretien) && estUuid(d.de) ? d.de : null;
-  const mt = kind === 'match' && estUuid(d.match) ? d.match : entretien && estUuid(d.m) ? d.m
-    : kind === 'match_interet' && estUuid(d.de) ? d.de : null;
-  const route = disc ? `messages/${disc}` : rx ? rx.route : kind === 'offre_alerte' && estUuid(d.offre) ? `offre/${d.offre}` : com ? `offre/${com}` : kind === 'message' && estUuid(d.de) ? `messages/${d.de}`
-    : annule && v.pour === 'demandeur' ? `mentorat/reprendre/${annule}`
-    : dem ? (kind === 'demande_nouvelle' || kind === 'demande_large' ? `aider/${dem}` : `offres/demandes/${dem}`) : g.route;
-  const tag = rx ? `reaction-${rx.id}` : kind === 'offre_alerte' && estUuid(d.offre) ? `offre-${d.offre}` : com ? `${kind}-${com}`
-    : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem && !demParPersonne ? `${kind}-${dem}` : annule ? `${kind}-${annule}` : mt ? `${kind}-${mt}`
-    : ligneDeFile && !SE_REMPLACENT.includes(kind) ? `${kind}-${id}` : kind;
+  const tag = !ligneDeFile ? lien.tag
+    : PAR_PERSONNE.includes(kind) && estUuid(d.demande) && !(Number(d.n) >= 1) ? `${kind}-${id}`
+    : lien.tag === kind && !TAGS_FIXES.has(kind) && !SE_REMPLACENT.includes(kind) ? `${kind}-${id}` : lien.tag;
+  const route = lien.route;
   // Message arrivé moins de 20 s après le précédent de la conversation : l'aperçu change sans sonner
   return { title: couper(t[0], 80), body: couper(t[1], 180), url: site + '#' + route, tag, ...(kind === 'message' && d.calme === true ? { calme: true } : {}) };
 }
@@ -767,7 +1057,7 @@ export type Profil = {
   id: string; full_name: string; role: string; filiere: string; promo: number;
   entreprise?: string | null; pays?: string | null; ville?: string | null; vitrine?: boolean | null;
   verified?: boolean | null; cv_url?: string | null; cv_path?: string | null; competences?: string[] | null; created_at: string;
-  en_recherche?: boolean | null;
+  en_recherche?: boolean | null; ecole?: string | null;
 };
 export type Offre = {
   id: string; author_id: string; titre: string; entreprise: string; filieres?: string[] | null; annees?: number[] | null;
@@ -786,7 +1076,7 @@ export type Placement = {
 };
 // Points d'un recrutement confirmé, même barème que logic.js (pointsRecrutement) : 50, +25 à l'international
 export const pointsRecrutement = (p: { type?: string | null; pays?: string | null }) => 50 + (p.type === 'etranger' || (!!p.pays && p.pays !== 'Maroc') ? 25 : 0);
-export type Evenement = { id: string; titre: string; debut: string; lieu?: string | null; public: string; annule?: boolean };
+export type Evenement = { id: string; titre: string; debut: string; lieu?: string | null; public: string; annule?: boolean; ecole?: string | null };
 export type Relecture = { id: string; student_id: string; reviewer_id: string | null; status: string };
 export type DemandeContact = { id: string; demandeur_id: string; cible_id: string; status: string };
 // Ambassadeur de promo et les chiffres de sa promo pour un mois (chiffres_ambassadeurs, schema.sql)
@@ -839,6 +1129,32 @@ export type Donnees = {
   evenements: Evenement[]; enquetesFaites: Set<string>; relectures: Relecture[]; contactsEnAttente: Map<string, number>; signalements: number;
   ambassadeurs?: Map<string, ChiffresPromo>; moisAmbassadeurs?: string;
 };
+
+// Écoles : le résumé d'un membre ne parle que de son école. Une ligne suit l'école de la personne qui la porte
+// (auteur, étudiant, organisateur) ; une base d'avant les écoles n'a qu'ENSAM Meknès.
+export const ecoleDe = (x?: { ecole?: string | null } | null) => x?.ecole || 'ensam-meknes';
+export function parEcole(b: Brut, ecole: string): Brut {
+  const ici = new Set(b.profils.filter(p => ecoleDe(p) === ecole).map(p => p.id));
+  const a = (id?: string | null) => !!id && ici.has(id);
+  return {
+    ...b,
+    profils: b.profils.filter(p => ici.has(p.id)),
+    offres: b.offres.filter(o => a(o.author_id)),
+    candidatures: b.candidatures.filter(c => a(c.student_id)),
+    invitations: b.invitations.filter(i => a(i.student_id)),
+    mentorats: b.mentorats.filter(m => a(m.student_id)),
+    questions: b.questions.filter(q => a(q.author_id)),
+    reponses: b.reponses.filter(r => a(r.author_id)),
+    parrainages: b.parrainages.filter(x => a(x.filleul_id)),
+    cafes: b.cafes.filter(c => a(c.organisateur_id)),
+    placements: b.placements.filter(x => a(x.student_id)),
+    evenements: b.evenements?.filter(e => ecoleDe(e) === ecole),
+    enquetes: b.enquetes?.filter(e => a(e.user_id)),
+    relectures: b.relectures?.filter(r => a(r.student_id)),
+    demandesContact: b.demandesContact?.filter(x => a(x.cible_id)),
+    ambassadeurs: b.ambassadeurs?.filter(x => a(x.user_id)),
+  };
+}
 
 export function indexer(b: Brut, date: Date): Donnees {
   const now = date.getTime(), depuis7 = now - 7 * JOUR, depuis14 = now - 14 * JOUR, saison = saisonDe(date);
@@ -1874,10 +2190,13 @@ export function rendreInactif(langue: Langue, site: string): Courriel {
 // Rappels de visite : après quelques jours sans visite, ce qui attend vraiment le membre, avec les vrais chiffres.
 // La base choisit qui et compte (rappels_dus, rappel_contenu dans schema.sql) ; ici, seulement les mots.
 // ---------------------------------------------------------------------
-export const RAPPEL_ORDRE = ['messages', 'propositions', 'mentorats', 'candidatures', 'demandes', 'offres'] as const;
+// matchs : matchs pas encore vus ; interets : « Intéressé » reçus sans réponse ; reponses : réponses à mes questions depuis ma
+// dernière visite ; evenements : un événement ou un café où je suis inscrit, dans les 2 jours
+export const RAPPEL_ORDRE = ['messages', 'matchs', 'interets', 'propositions', 'mentorats', 'candidatures', 'reponses', 'evenements', 'demandes', 'offres'] as const;
 type CleRappel = typeof RAPPEL_ORDRE[number];
 const ROUTE_RAPPEL: Record<CleRappel, string> = {
-  messages: 'messages', propositions: 'offres/demandes', mentorats: 'mentorat', candidatures: 'espace', demandes: 'offres/demandes', offres: 'offres',
+  messages: 'messages', matchs: 'match', interets: 'match', propositions: 'offres/demandes', mentorats: 'mentorat', candidatures: 'espace',
+  reponses: 'reseau/entraide', evenements: 'reseau/agenda', demandes: 'offres/demandes', offres: 'offres',
 };
 // Ce qui attend, dans l'ordre où on le dit (le plus personnel d'abord) ; un chiffre douteux est ignoré
 export function comptesRappel(data: unknown): [CleRappel, number][] {
@@ -1887,17 +2206,25 @@ export function comptesRappel(data: unknown): [CleRappel, number][] {
 const MOTS_RAPPEL: Record<Langue, Record<CleRappel, (n: number) => string>> = {
   fr: {
     messages: n => (n > 1 ? `${n} messages non lus` : '1 message non lu'),
+    matchs: n => (n > 1 ? `${n} nouveaux matchs à découvrir` : '1 nouveau match à découvrir'),
+    interets: n => (n > 1 ? `${n} intérêts t’attendent dans Match` : '1 intérêt t’attend dans Match'),
     propositions: n => (n > 1 ? `${n} lauréats te proposent leur aide` : 'un lauréat te propose son aide'),
     mentorats: n => (n > 1 ? `${n} mentorats attendent ta réponse` : '1 mentorat attend ta réponse'),
     candidatures: n => (n > 1 ? `${n} nouvelles candidatures sur tes offres` : '1 nouvelle candidature sur tes offres'),
+    reponses: n => (n > 1 ? `${n} nouvelles réponses à tes questions` : '1 nouvelle réponse à tes questions'),
+    evenements: n => (n > 1 ? `${n} événements de ton agenda dans les 2 jours` : '1 événement de ton agenda dans les 2 jours'),
     demandes: n => (n > 1 ? `${n} demandes d’étudiants depuis ta dernière visite` : '1 demande d’étudiant depuis ta dernière visite'),
     offres: n => (n > 1 ? `${n} nouvelles offres pour toi` : '1 nouvelle offre pour toi'),
   },
   ar: {
     messages: n => arN(n, ['رسالة غير مقروءة', 'رسالتان غير مقروءتين', '{n} رسائل غير مقروءة', '{n} رسالة غير مقروءة']),
+    matchs: n => arN(n, ['توافق جديد في انتظارك', 'توافقان جديدان في انتظارك', '{n} توافقات جديدة في انتظارك', '{n} توافقًا جديدًا في انتظارك']),
+    interets: n => arN(n, ['اهتمام ينتظر ردك في صفحة التوافق', 'اهتمامان ينتظران ردك في صفحة التوافق', '{n} اهتمامات تنتظر ردك في صفحة التوافق', '{n} اهتمامًا ينتظر ردك في صفحة التوافق']),
     propositions: n => arN(n, ['عرض مساعدة من خريج', 'عرضا مساعدة من الخريجين', '{n} عروض مساعدة من الخريجين', '{n} عرض مساعدة من الخريجين']),
     mentorats: n => arN(n, ['إرشاد ينتظر ردك', 'إرشادان ينتظران ردك', '{n} إرشادات تنتظر ردك', '{n} إرشادًا ينتظر ردك']),
     candidatures: n => arN(n, ['ترشيح جديد على عروضك', 'ترشيحان جديدان على عروضك', '{n} ترشيحات جديدة على عروضك', '{n} ترشيحًا جديدًا على عروضك']),
+    reponses: n => arN(n, ['جواب جديد على أسئلتك', 'جوابان جديدان على أسئلتك', '{n} أجوبة جديدة على أسئلتك', '{n} جوابًا جديدًا على أسئلتك']),
+    evenements: n => arN(n, ['نشاط واحد في أجندتك خلال يومين', 'نشاطان في أجندتك خلال يومين', '{n} أنشطة في أجندتك خلال يومين', '{n} نشاطًا في أجندتك خلال يومين']),
     demandes: n => arN(n, ['طلب مساعدة جديد من الطلبة منذ زيارتك الأخيرة', 'طلبا مساعدة جديدان من الطلبة منذ زيارتك الأخيرة', '{n} طلبات مساعدة جديدة من الطلبة منذ زيارتك الأخيرة', '{n} طلب مساعدة جديدًا من الطلبة منذ زيارتك الأخيرة']),
     offres: n => arN(n, ['عرض جديد يخصك', 'عرضان جديدان يخصانك', '{n} عروض جديدة تخصك', '{n} عرضًا جديدًا يخصك']),
   },
@@ -1953,7 +2280,8 @@ export async function chargerDonnees(env: Env, ids: string[], date: Date): Promi
   const Q = 'select=id,author_id,titre,entreprise,pays,created_at';
   const C = 'select=id,student_id,offer_id,status';
   const [profils, offres, postule, invitations, m1, m2, reponses, questions, parrainages, cafes, p1, p2, p3] = await Promise.all([
-    tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,cv_path,competences,created_at,en_recherche')
+    tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,cv_path,competences,created_at,en_recherche,ecole')
+      .catch(() => tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,cv_path,competences,created_at,en_recherche'))
       .catch(() => tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,cv_path,competences,created_at'))
       .catch(() => tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,competences,created_at')),
     tout<Offre>(env, 'offers', 'select=id,author_id,titre,entreprise,filieres,annees,audience,status,created_at,relance_at'),
@@ -1979,7 +2307,8 @@ export async function chargerDonnees(env: Env, ids: string[], date: Date): Promi
   const fac = <T>(p: Promise<T[]>): Promise<T[]> => p.catch(() => [] as T[]);
   const moisAmb = moisPrecedent(date);
   const [evenements, enquetes, relectures, demandesContact, signalements, ambassadeurs] = await Promise.all([
-    fac(tout<Evenement>(env, 'evenements', `select=id,titre,debut,lieu,public,annule&annule=is.false&debut=gte.${iso(t)}&debut=lte.${iso(t + 14 * JOUR)}`)),
+    fac(tout<Evenement>(env, 'evenements', `select=id,titre,debut,lieu,public,annule,ecole&annule=is.false&debut=gte.${iso(t)}&debut=lte.${iso(t + 14 * JOUR)}`)
+      .catch(() => tout<Evenement>(env, 'evenements', `select=id,titre,debut,lieu,public,annule&annule=is.false&debut=gte.${iso(t)}&debut=lte.${iso(t + 14 * JOUR)}`))),
     fac(parIds<{ user_id: string; vague: number }>(env, 'enquetes_insertion', 'select=id,user_id,vague', 'user_id', ids)),
     fac(tout<Relecture>(env, 'relectures_cv', 'select=id,student_id,reviewer_id,status&status=eq.demandee')),
     fac(parIds<DemandeContact>(env, 'demandes_contact', 'select=id,demandeur_id,cible_id,status&status=eq.envoyee', 'cible_id', ids)),
@@ -2130,7 +2459,8 @@ export const MARGE_TOUR = 10_000;
 // téléphone, type inconnu, refus définitif). Les autres sont reprises par la base après 2 minutes (relancer_push) ;
 // celles qui n'ont pas été essayées du tout (plus le temps) lui sont rendues tout de suite, sans essai compté
 // (push_rendues). Au journal (push_journal) : chacune, avec la réponse de son meilleur téléphone ; -1 sans téléphone ;
-// -4 jetée (type inconnu, rien à dire) ; rien pour celle qui attend sans avoir été essayée.
+// -4 jetée (type inconnu, rien à dire) ; -5 une notification programmée prise après 21:30 (nuit calme, file en retard
+// après une panne) : elle ne part pas, comme une expirée sans essai ; rien pour celle qui attend sans avoir été essayée.
 async function jobPush(env: Env): Promise<Response> {
   const b: Bilan = { sent: 0, failed: 0, removed: 0 };
   let v: Vapid | null = null;
@@ -2145,14 +2475,26 @@ async function jobPush(env: Env): Promise<Response> {
     const parMembre = new Map<string, AEnvoyer[]>();
     const suivi: { id: number; user_id: string; kind: string; r: Resultat }[] = [];
     const jetees: { id: number; user_id: string; kind: string }[] = [];
+    const tard: { id: number; user_id: string; kind: string }[] = [];
     for (const l of lignes) {
       const n = texteNotif(l.kind, l.data, l.langue, env.site, l.id);
-      if (!n) { console.error('notifier : notification ignorée (type ou statut inconnu)', l.kind); jetees.push(l); continue; }
+      // null : type ou statut inconnu, ou rien de vrai à dire (Match du jour à 0, semaine vide, groupe sans nom…) ; seul le type
+      // est écrit, jamais le contenu
+      if (!n) { console.error('notifier : notification ignorée (type inconnu, ou rien de vrai à dire)', l.kind); jetees.push(l); continue; }
+      // Nuit calme : une notification programmée ne vit que jusqu'à 21:30 ; prise plus tard, elle ne part pas
+      const ttl = vieEnvoi(l.kind);
+      if (ttl <= 0) { tard.push(l); continue; }
       const r: Resultat = { code: -1, recue: false, reprendre: false };
       suivi.push({ id: l.id, user_id: l.user_id, kind: l.kind, r });
-      const x = { n, urg: urgence(l.kind), ttl: dureeVie(l.kind), r };
+      const x = { n, urg: urgence(l.kind), ttl, r };
       const liste = parMembre.get(l.user_id);
       if (liste) liste.push(x); else parMembre.set(l.user_id, [x]);
+    }
+    if (tard.length) {
+      const parType = new Map<string, number>();
+      for (const x of tard) parType.set(x.kind, (parType.get(x.kind) || 0) + 1);
+      console.error('notifier : nuit calme (21:30 → 08:00), notifications programmées prises trop tard, non envoyées :',
+        [...parType].map(([k, n]) => `${k} ${n}`).join(', '));
     }
     const abos = await parIds<Abonnement>(env, 'push_subscriptions', 'select=id,user_id,endpoint,p256dh,auth', 'user_id', [...parMembre.keys()]);
     const morts: string[] = [];
@@ -2166,11 +2508,12 @@ async function jobPush(env: Env): Promise<Response> {
     b.removed += retires.filter(id => !morts.includes(id)).length;
     const reprises = suivi.filter(x => !x.r.recue && x.r.reprendre).length;
     if (reprises) b.retry = (b.retry || 0) + reprises;
-    await confirmerPush(env, [...jetees.map(x => x.id), ...suivi.filter(x => x.r.recue || !x.r.reprendre).map(x => x.id)]);
+    await confirmerPush(env, [...jetees.map(x => x.id), ...tard.map(x => x.id), ...suivi.filter(x => x.r.recue || !x.r.reprendre).map(x => x.id)]);
     await rendrePush(env, suivi.filter(x => !x.r.essayee && !x.r.recue && x.r.reprendre).map(x => x.id));
     await journaliser(env, [
       ...suivi.filter(x => x.r.essayee || x.r.recue || !x.r.reprendre).map(x => ({ user_id: x.user_id, kind: x.kind, code: x.r.code })),
       ...jetees.map(x => ({ user_id: x.user_id, kind: x.kind, code: -4 })),
+      ...tard.map(x => ({ user_id: x.user_id, kind: x.kind, code: -5 })),
     ]);
   }
   return json(b);
@@ -2183,12 +2526,23 @@ async function confirmerPush(env: Env, ids: number[]): Promise<void> {
   catch (e) { console.error('notifier : confirmation des notifications impossible', e instanceof Error ? e.message : String(e)); }
 }
 
-// Rend à la file ce qui a été pris sans être essayé (push_rendues). Une base pas encore mise à jour : repris après
-// 2 minutes, comme avant.
+// Rend à la file ce qui a été pris sans être essayé (push_rendues), sans l'essai que prendre_push lui a compté. Une base
+// pas encore mise à jour (sans push_rendues) : rendues ici, par la table, pareil (sinon chaque reprise coûterait un essai,
+// et le troisième passage les jetterait sans trace). prendre_push ne prend que sous 3 essais et compte le sien : 1, 2 ou 3.
 async function rendrePush(env: Env, ids: number[]): Promise<void> {
-  if (!ids.length) return;
-  try { await rpc(env, 'push_rendues', { p_ids: ids }); }
-  catch (e) { console.error('notifier : notifications non rendues à la file (push_rendues ; base à mettre à jour ?)', e instanceof Error ? e.message : String(e)); }
+  const l = ids.filter(Number.isSafeInteger);
+  if (!l.length) return;
+  try { await rpc(env, 'push_rendues', { p_ids: l }); return; }
+  catch (e) { console.error('notifier : push_rendues absente (base à mettre à jour ?) : notifications rendues par la table', e instanceof Error ? e.message : String(e)); }
+  try {
+    for (let i = 0; i < l.length; i += MORCEAU) {
+      for (const k of [1, 2, 3]) {
+        await db(env, `push_queue?id=in.(${l.slice(i, i + MORCEAU).join(',')})&essais=eq.${k}&pris_at=not.is.null`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ pris_at: null, essais: k - 1 }),
+        });
+      }
+    }
+  } catch (e) { console.error('notifier : notifications non rendues à la file', e instanceof Error ? e.message : String(e)); }
 }
 
 // Journal des notifications (push_journal) : ne bloque jamais l'envoi
@@ -2204,7 +2558,11 @@ async function journaliser(env: Env, lignes: { user_id: string; kind: string; co
 // leur inscription), abonnements (téléphones inscrits avant l'essai) }. Au journal sous « test ». Ses refus ne comptent
 // pas contre le téléphone : trois appuis d'affilée ne doivent pas retirer l'abonnement qu'on essaie de réparer (un
 // téléphone parti, 404 ou 410, l'est toujours).
-async function jobTest(env: Env, req: Request): Promise<Response> {
+// endpoint : l'adresse de l'appareil qui a touché « Tester » (pages récentes). ici : sa réponse à lui (-1 : pas enregistré
+// pour ce compte), pour que la page dise ce qui arrive à cet appareil-là et ne refasse pas son abonnement à cause d'un autre
+// téléphone du compte. Sans adresse (page plus ancienne), la réponse reste celle d'avant.
+async function jobTest(env: Env, req: Request, endpoint?: unknown): Promise<Response> {
+  const moi = typeof endpoint === 'string' && endpoint ? endpoint : null;
   const jeton = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
   if (!jeton) return refus();
   const r = await fetch(`${env.url}/auth/v1/user`, { headers: { apikey: env.cle, Authorization: `Bearer ${jeton}` } });
@@ -2218,7 +2576,7 @@ async function jobTest(env: Env, req: Request): Promise<Response> {
   const b: Bilan = { sent: 0, failed: 0, removed: 0 };
   if (!abos.length) {
     await journaliser(env, [{ user_id: u.id, kind: 'test', code: -1 }]);
-    return json({ ...b, codes: [], abonnements: 0 });
+    return json({ ...b, codes: [], abonnements: 0, ...(moi ? { ici: -1 } : {}) });
   }
   const v = await preparerVapid(env);
   const n = texteNotif('test', {}, profil[0]?.langue, env.site) as Notif;
@@ -2232,7 +2590,8 @@ async function jobTest(env: Env, req: Request): Promise<Response> {
   const retires = await rendreCompte(env, etats, morts, abos);
   b.removed += retires.filter(id => !morts.includes(id)).length;
   await journaliser(env, [{ user_id: u.id, kind: 'test', code: res.code }]);
-  return json({ ...b, codes: abos.map(a => etats.find(e => e.id === a.id)?.code ?? 0), abonnements: abos.length });
+  const codes = abos.map(a => etats.find(e => e.id === a.id)?.code ?? 0), i = moi ? abos.findIndex(a => a.endpoint === moi) : -1;
+  return json({ ...b, codes, abonnements: abos.length, ...(moi ? { ici: i < 0 ? -1 : codes[i] } : {}) });
 }
 
 // ---------------------------------------------------------------------
@@ -2547,13 +2906,16 @@ async function jobResume(env: Env): Promise<Response> {
   const b: { sent: number; empty: number; errors: number; via?: string } = { sent: 0, empty: 0, errors: 0 };
   if (!dest.length) return json(b);
   const [brut, sansTel] = await Promise.all([chargerDonnees(env, dest.map(x => x.id), date), sansTelephone(env, dest.map(x => x.id))]);
-  const d = indexer(brut, date);
+  // Une indexation par école : chacun ne lit que son réseau
+  const ecoleDu = new Map(brut.profils.map(p => [p.id, ecoleDe(p)]));
+  const parE = new Map<string, Donnees>();
+  const donnees = (id: string) => { const e = ecoleDu.get(id) || 'ensam-meknes'; let x = parE.get(e); if (!x) { x = indexer(parEcole(brut, e), date); parE.set(e, x); } return x; };
   const traites: string[] = [];
   const limite = Date.now() + 100_000;   // marge sur les 150 s : le reste partira demain
   await parallele(dest, f.paralleles, async x => {
     if (Date.now() > limite) return;
     try {
-      const p = d.profils.get(x.id);
+      const d = donnees(x.id), p = d.profils.get(x.id);
       const r = p ? resumeDe(p, d) : null;
       if (!r) { b.empty++; traites.push(x.id); return; }
       if (!x.email || !x.token) { b.errors++; return; }
@@ -2807,8 +3169,8 @@ async function jobRappels(env: Env): Promise<Response> {
 export async function handler(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'Méthode non autorisée' }, 405);
-  let job: unknown;
-  try { job = (await req.json())?.job; } catch { return json({ error: 'Requête invalide' }, 400); }
+  let job: unknown, endpoint: unknown;
+  try { ({ job, endpoint } = (await req.json()) ?? {}); } catch { return json({ error: 'Requête invalide' }, 400); }
   if (typeof job !== 'string' || !['cle', 'test', 'push', 'resume', 'essai_email', 'alertes', 'enquetes', 'messages', 'relances', 'demandes', 'rappels', 'inactifs', 'rappels_rdv'].includes(job)) return json({ error: 'Tâche inconnue' }, 400);
   const env = lireEnv();
   if (!env.url || !env.cle) {
@@ -2817,7 +3179,7 @@ export async function handler(req: Request): Promise<Response> {
   }
   try {
     if (job === 'cle') return await jobCle(env);
-    if (job === 'test') return await jobTest(env, req);
+    if (job === 'test') return await jobTest(env, req, endpoint);
     if (!(await appelAutorise(env, req))) return refus();
     if (job === 'essai_email') return await jobEssaiEmail(env);
     if (job === 'alertes') return await jobAlertes(env);

@@ -919,6 +919,15 @@ export const GUIDE_SECTIONS = [
 // L'école d'un membre ou d'une ligne : tout ce qui date d'avant les écoles est à ENSAM Meknès (même défaut que la base)
 export const ECOLE_DEFAUT = 'ensam-meknes';
 export const ecoleDe = x => x?.ecole || ECOLE_DEFAUT;
+// Ce qu'un membre lit : ce qui est de son école, comme la règle « reseau de l'ecole » de la base (la démo, elle, a tout) ;
+// l'administration lit tout
+export const deMonEcole = (lignes, me) => (me?.role === 'admin' ? (lignes || []) : (lignes || []).filter(x => ecoleDe(x) === ecoleDe(me)));
+// Ce que l'administration écrit depuis la console pour l'école qu'elle y regarde : { ecole } seulement quand ce n'est pas
+// la sienne (la base met la sienne par défaut ; une base pas encore à jour n'a pas la colonne). Hors de la console : {}.
+export const pourLEcoleVue = ctx => (ctx?.ecoleConsole && ctx.ecoleConsole !== ecoleDe(ctx.me) ? { ecole: ctx.ecoleConsole } : {});
+// Ce que l'administration écrit sous le contenu d'une autre école (bravo, réponse, vote, offre enregistrée) est de cette
+// école : sans cela, la base lui donnerait celle de l'administration, et les membres de l'école ne le verraient pas
+export const ecoleDuContenu = (me, contenu) => (me?.role === 'admin' && contenu?.ecole && contenu.ecole !== ecoleDe(me) ? { ecole: contenu.ecole } : {});
 // Administration > Membres : null si la liste officielle de son école n'a aucune ligne de sa promo, sinon true ou false
 // selon qu'il y figure (même nom et même promo, ou même email) ; les lignes d'une autre école ne comptent jamais
 export function surListeOfficielle(liste, p, email) {
@@ -1159,7 +1168,7 @@ export const PUBLICS = [['tous', 'Tout le monde'], ['etudiants', 'Étudiants'], 
 export const pourPublic = (pub, role) => role === 'admin' || !pub || pub === 'tous' || (pub === 'etudiants' && role === 'etudiant') || (pub === 'laureats' && role === 'laureat');
 export const ANNONCE_JOURS = 14;
 export const annonceVisible = (a, now = Date.now()) => !!a?.active && now - new Date(a.created_at).getTime() < ANNONCE_JOURS * 864e5;
-export const annoncePour = (annonces, me, now = Date.now()) => (annonces || []).filter(a => annonceVisible(a, now) && pourPublic(a.public, me?.role))
+export const annoncePour = (annonces, me, now = Date.now()) => deMonEcole(annonces, me).filter(a => annonceVisible(a, now) && pourPublic(a.public, me?.role))
   .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0] || null;
 
 // « À faire » sur l'accueil : trois petites choses au plus que seul le membre peut boucler (les messages non lus en premier, app.js).
@@ -1381,20 +1390,29 @@ export const echecDefinitif = (e, { brave = false } = {}) => brave || ['NotSuppo
 export const PUSH_CATEGORIES = ['messages', 'match', 'demandes', 'candidatures', 'mentorat', 'offres', 'reseau', 'rappels'];
 // Type de notification -> catégorie (un type inconnu : vie du réseau)
 export const PUSH_KINDS = {
-  // Un entretien proposé dans une discussion, sa réponse et son rappel sont des messages : couper « Match » ne fait pas rater un entretien
-  message: 'messages', rdv_message: 'messages', rdv_reponse: 'messages', rappel_entretien: 'messages',
-  match: 'match', match_interet: 'match', match_jour: 'match',
+  // Un entretien proposé dans une discussion, sa réponse, sa veille et son rappel sont des messages : couper « Match » ne fait
+  // pas rater un entretien
+  message: 'messages', rdv_message: 'messages', rdv_reponse: 'messages', rappel_entretien: 'messages', entretien_demain: 'messages',
+  // Match : un match, un intérêt pour soi, les intérêts qui attendent une réponse, le tour du jour à midi
+  match: 'match', match_interet: 'match', match_jour: 'match', match_attente: 'match',
   demande_nouvelle: 'demandes', demande_large: 'demandes', demande_proposition: 'demandes', demande_match: 'demandes', demande_rouverte: 'demandes', demande_reponse: 'demandes',
+  demande_attente: 'demandes', demande_pause: 'demandes',
   candidature: 'candidatures', candidature_statut: 'candidatures', invitation: 'candidatures',
   recrutement_a_confirmer: 'candidatures', recrutement_confirme: 'candidatures', relance_offre: 'candidatures',
   mentorat_demande: 'mentorat', mentorat_ouvert: 'mentorat', mentorat_accepte: 'mentorat', mentorat_deplace: 'mentorat', mentorat_annule: 'mentorat',
   rappel_rdv: 'mentorat', merci: 'mentorat', relecture_demande: 'mentorat', relecture_prise: 'mentorat', relecture_rendue: 'mentorat',
   contact_demande: 'mentorat', contact_accepte: 'mentorat', filleul: 'mentorat', parrain: 'mentorat',
-  offre_alerte: 'offres',
-  rappel_visite: 'rappels',
+  // La veille d'un rendez-vous, la présence confirmée, la suite après
+  rdv_demain: 'mentorat', mentorat_presence: 'mentorat', apres_rdv: 'mentorat',
+  // Une offre de son année, et une offre mise de côté qui va fermer
+  offre_alerte: 'offres', offre_bientot: 'offres',
+  // Après quelques jours sans visite, et le résumé du dimanche
+  rappel_visite: 'rappels', semaine: 'rappels',
   reponse: 'reseau', question_routee: 'reseau', cafe: 'reseau', evenement: 'reseau', evenement_annule: 'reseau', evenement_deplace: 'reseau',
   enquete: 'reseau', verification_pair: 'reseau', verifier_pair: 'reseau', reaction: 'reseau',
   promo_nouveau: 'reseau', offre_commentaire: 'reseau', annonce: 'reseau',
+  // La veille d'un événement ou d'un café où l'on va, ses réponses jugées utiles, les bravos, les messages de ses groupes
+  agenda_demain: 'reseau', reponse_utile: 'reseau', bravo: 'reseau', groupe_jour: 'reseau',
   signalement: 'admin',
 };
 export const pushCategorie = kind => (Object.prototype.hasOwnProperty.call(PUSH_KINDS, kind) ? PUSH_KINDS[kind] : 'reseau');
@@ -1739,6 +1757,7 @@ export function normaliserSponsorise(r) {
   if ('domaine' in out) out.domaine = String(out.domaine || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '') || null;
   if ('annees' in out) out.annees = out.annees?.length ? [...new Set(out.annees.map(Number))].sort((a, b) => a - b) : null;
   if ('filieres' in out) out.filieres = out.filieres?.length ? [...new Set(out.filieres)] : null;
+  if ('ecole' in out) out.ecole = out.ecole || null; // sans école : pour toutes les écoles
   return out;
 }
 // Ce que la base refuserait pour cette carte (son message), sinon null
@@ -1763,6 +1782,8 @@ export const etatSponsorise = (s, now = Date.now()) => (!s.actif ? 'arretee' : s
 // suit son parcours). Ni l'administration, ni l'administration qui regarde l'application comme un lauréat (admin_ok).
 export function sponsorisePour(s, me, now = Date.now(), saison = seasonOf(new Date(now))) {
   if (!me || !['etudiant', 'laureat'].includes(me.role) || me.admin_ok || !sponsoEnCours(s, now)) return false;
+  // Une carte d'une école ne paraît que dans son réseau ; sans école, dans tous (comme sponsorise_pour dans la base)
+  if (s.ecole && s.ecole !== ecoleDe(me)) return false;
   const pub = s.public || 'tous';
   if (!(pub === 'tous' || (pub === 'etudiants' && me.role === 'etudiant') || (pub === 'laureats' && me.role === 'laureat'))) return false;
   if (s.annees?.length && !s.annees.map(Number).includes(niveauOf(me, saison))) return false;
@@ -1807,20 +1828,21 @@ export function totauxSponsorises(sponsors, comptes) {
 export const tauxClic = (clics, vues) => (vues > 0 ? pct(clics / vues) : '–');
 
 // ---------------------------------------------------------------------------
-// Santé des notifications
+// Santé des notifications : « Tester » ici (chaque membre) ; le panneau de l'administration dans sante-notifs.js
 // ---------------------------------------------------------------------------
 const entierSN = x => (Number.isFinite(Number(x)) && Number(x) > 0 ? Math.round(Number(x)) : 0);
-const plurielSN = (n, un, plusieurs) => (n > 1 ? plusieurs : un);
 
 // « Tester » (Mon profil) : ce que la fonction notifier répond, mis en forme. Un code par téléphone du compte
 // (201 accepté, 404 ou 410 parti, 400, 401 ou 403 refusé, 413 trop long, 0 injoignable). Une ancienne fonction ne
 // renvoie que { sent } : abonnements vaut alors null (on ne sait pas combien de téléphones sont enregistrés).
+// ici : le code de l'appareil qui a touché « Tester » (-1 : pas enregistré pour ce compte) ; null, la fonction ne le dit pas.
 export function bilanTestPush(d) {
-  const ab = d?.abonnements;
+  const ab = d?.abonnements, ici = d?.ici;
   return {
     sent: entierSN(d?.sent), failed: entierSN(d?.failed), removed: entierSN(d?.removed),
     codes: Array.isArray(d?.codes) ? d.codes.map(c => (Number.isFinite(Number(c)) ? Math.trunc(Number(c)) : 0)) : [],
     abonnements: ab === null || ab === undefined || ab === '' || !Number.isFinite(Number(ab)) ? null : entierSN(ab),
+    ici: (typeof ici === 'number' || (typeof ici === 'string' && ici.trim() !== '')) && Number.isFinite(Number(ici)) ? Math.trunc(Number(ici)) : null,
   };
 }
 export const CODES_PUSH_PARTI = [404, 410];
@@ -1829,9 +1851,11 @@ export const CODES_PUSH_REFUS = [400, 401, 403];
 // 'ok' au moins un téléphone l'a accepté ; 'aucun' aucun téléphone enregistré pour ce compte ;
 // 'parti' le service dit que cet abonnement n'existe plus (404, 410) ; 'refuse' il refuse l'envoi (400, 401, 403) ;
 // 'trop' message trop long (413) ; 'injoignable' service injoignable ou occupé (0, 429, 5xx) : réessayer plus tard ;
-// 'inconnu' ancienne fonction, qui ne dit que le nombre envoyé
+// 'inconnu' ancienne fonction, qui ne dit que le nombre envoyé. La réponse de cet appareil-là (ici), quand la fonction la
+// donne, décide seule : un autre téléphone du compte, parti ou injoignable, ne fait ni refaire ni accuser celui-ci.
 export function raisonTestPush(d) {
   const b = bilanTestPush(d);
+  if (b.abonnements !== 0 && b.ici !== null) return raisonCodePush(b.ici);
   if (b.sent > 0) return 'ok';
   if (b.abonnements === 0) return 'aucun';
   if (b.abonnements === null && !b.codes.length) return 'inconnu';
@@ -1840,179 +1864,159 @@ export function raisonTestPush(d) {
   if (b.codes.includes(413)) return 'trop';
   return 'injoignable';
 }
+// La réponse d'un téléphone en un mot ; -1 : cet appareil n'est pas enregistré pour ce compte, comme parti
+const raisonCodePush = c => (c >= 200 && c < 300 ? 'ok' : c === -1 || CODES_PUSH_PARTI.includes(c) ? 'parti'
+  : CODES_PUSH_REFUS.includes(c) ? 'refuse' : c === 413 ? 'trop' : 'injoignable');
 // Après l'essai, l'abonnement de cet appareil est à refaire (le service ne le reconnaît plus, ou le refuse)
 export const testPushARefaire = r => r === 'parti' || r === 'refuse';
 
-// Une attente lisible : « 9 min », « 3 h », « 2 jours » (jamais « 1 jours » : les jours commencent à 48 h)
-export function dureeAttente(sec) {
-  const s = Math.max(0, Number(sec) || 0);
-  if (s < 3600) return `${Math.max(1, Math.round(s / 60))} min`;
-  if (s < 48 * 3600) return `${Math.round(s / 3600)} h`;
-  return `${Math.round(s / 86400)} jours`;
+// « 3 lauréats peuvent t'aider » : pour une Demande d'étudiant, les lauréats les mieux placés (même filière, puis même parcours ;
+// le sujet dans leur poste ou leurs compétences ; un lauréat à l'étranger pour une demande « étranger » ; vérifié, disponible pour
+// le mentorat, une entreprise renseignée). Jamais l'auteur, l'administration ni un lauréat qui a déjà proposé son aide sur cette demande.
+// Sert à l'étudiant (sous sa demande) et à l'administration (demande qui attend depuis 24 h : à qui écrire).
+const BESOIN_DE_DEMANDE = { stage: 'stage', pfe: 'stage', etranger: 'etranger', emploi: 'carriere' };
+export function laureatsPourDemande(data, d, n = 3, now = new Date()) {
+  const etu = (data.profiles || []).find(p => p.id === d?.auteur_id);
+  if (!etu) return [];
+  const deja = new Set((data.propositions || []).filter(x => x.demande_id === d.id).map(x => x.laureat_id));
+  return (data.profiles || [])
+    .filter(p => p.role === 'laureat' && !p.admin_ok && p.id !== etu.id && !deja.has(p.id) && (p.ecole || 'ensam-meknes') === (etu.ecole || 'ensam-meknes'))
+    .map(p => {
+      // mentor_id : une demande adressée, l'ancienneté ne compte pas ; seule la proximité (filière, sujet, pays) rend pertinent
+      const { score, why } = helpMatch({ besoin: BESOIN_DE_DEMANDE[d.type], mentor_id: p.id }, p, etu, now);
+      return { p, why, pertinent: score >= 2, score: score + (p.verified ? 1 : 0) + (p.mentor_dispo ? 1 : 0) + (p.entreprise ? 0.5 : 0) };
+    })
+    .filter(x => x.pertinent)
+    .sort((a, b) => b.score - a.score || new Date(a.p.created_at) - new Date(b.p.created_at))
+    .slice(0, n);
 }
 
-// Le jour d'une colonne (admin_sante_notifs compte en jours UTC, 'AAAA-MM-JJ') : « 26 » sous la colonne, « 26 octobre » en clair
-export function jourNotif(jour) {
-  const d = new Date(`${jour}T12:00:00Z`);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(jour || '')) || Number.isNaN(d.getTime())) return { court: '', long: '' };
-  return { court: String(d.getUTCDate()), long: d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', timeZone: 'UTC' }) };
-}
-
-// Le nom de chaque type de notification, pour le tableau « Par type » ; un type inconnu prend le nom de sa catégorie
-export const NOMS_NOTIF = {
-  message: 'Message', rdv_message: 'Entretien proposé', rdv_reponse: 'Réponse à un entretien', rappel_entretien: 'Rappel d’entretien',
-  match: 'Nouveau match', match_interet: 'Intérêt reçu', match_jour: 'Match du jour',
-  demande_nouvelle: 'Nouvelle demande', demande_large: 'Demande ouverte à tous', demande_proposition: 'Proposition d’aide', demande_match: 'Aide acceptée',
-  demande_rouverte: 'Demande rouverte', demande_reponse: 'Réponse à une demande',
-  candidature: 'Candidature reçue', candidature_statut: 'Suite d’une candidature', invitation: 'Invitation à postuler',
-  recrutement_a_confirmer: 'Recrutement à confirmer', recrutement_confirme: 'Recrutement confirmé', relance_offre: 'Relance d’une offre',
-  mentorat_demande: 'Demande de mentorat', mentorat_ouvert: 'Mentorat ouvert à tous', mentorat_accepte: 'Mentorat accepté', mentorat_deplace: 'Mentorat déplacé',
-  mentorat_annule: 'Mentorat annulé', rappel_rdv: 'Rappel de rendez-vous', merci: 'Merci reçu',
-  relecture_demande: 'Relecture de CV demandée', relecture_prise: 'Relecture de CV prise', relecture_rendue: 'Relecture de CV rendue',
-  contact_demande: 'Coordonnées demandées', contact_accepte: 'Coordonnées partagées', filleul: 'Nouveau filleul', parrain: 'Nouveau parrain',
-  offre_alerte: 'Nouvelle offre', rappel_visite: 'Rappel du soir',
-  reponse: 'Réponse à une question', question_routee: 'Question à toi', cafe: 'Café ENSAM', evenement: 'Événement', evenement_annule: 'Événement annulé',
-  evenement_deplace: 'Événement déplacé', enquete: 'Enquête d’insertion', verification_pair: 'Vérification par la promo', verifier_pair: 'Camarade à confirmer',
-  reaction: 'Réaction', promo_nouveau: 'Nouveau de la promo', offre_commentaire: 'Commentaire sur une offre', annonce: 'Annonce', signalement: 'Signalement',
-  // Les notifications programmées et les nouvelles notifications entre personnes (chantier « nouvelles notifications ») :
-  // nommées ici pour que le tableau les dise en clair dès la fusion
-  rdv_demain: 'Rendez-vous demain', entretien_demain: 'Entretien demain', agenda_demain: 'Événement ou café demain', apres_rdv: 'Après un rendez-vous',
-  mentorat_presence: 'Présence confirmée', match_attente: 'Intérêts en attente', offre_bientot: 'Offre qui ferme bientôt',
-  demande_attente: 'Demande toujours ouverte', demande_pause: 'Demande en pause', semaine: 'Résumé de la semaine', reponse_utile: 'Réponse utile',
-  bravo: 'Bravo reçu', groupe_jour: 'Messages des groupes',
-  test: 'Essai (Tester)',
-};
-export const NOMS_CATEGORIES_NOTIF = { messages: 'Messages', match: 'Match', demandes: 'Demandes', candidatures: 'Candidatures', mentorat: 'Mentorat',
-  offres: 'Offres', reseau: 'Vie du réseau', rappels: 'Rappels', admin: 'Administration' };
-export const nomTypeNotif = kind => (Object.prototype.hasOwnProperty.call(NOMS_NOTIF, kind)
-  ? { nom: NOMS_NOTIF[kind], connu: true } : { nom: NOMS_CATEGORIES_NOTIF[pushCategorie(kind)] || 'Vie du réseau', connu: false });
-// Les services de push (service_push dans la base), du plus courant au plus rare
-export const SERVICES_PUSH = [['fcm', 'Chrome et Android (Google)'], ['apple', 'iPhone et Mac (Apple)'], ['mozilla', 'Firefox (Mozilla)'], ['windows', 'Edge (Windows)'], ['autre', 'Autre service']];
-
-// Le panneau « Santé des notifications » : admin_sante_notifs() (ou la démo) mis en forme. Des totaux seulement.
-// « Envoyée » : acceptée par le service de notification du téléphone (2xx). Ce n'est pas encore « affichée » : le téléphone
-// le confirme à part (telephones.recus_7j, « ont affiché une notification »), et le panneau montre les deux.
-// « Perdue » : partie vers un téléphone sans l'atteindre : téléphone parti (404, 410), refusée par son service (autres 4xx,
-// sauf 413 et 429), trop longue (413), abandonnée après au moins un essai (-3), expirée sans avoir jamais été essayée (-5 :
-// la fonction ou la tâche de chaque minute ne tournait pas), écartée par la fonction (-4). Ce qui n'est pas une perte est
-// compté à part : membre sans téléphone abonné (-1 : rien ne pouvait partir, ses emails l'invitent à activer), catégorie
-// coupée par le membre (-2 : son choix), échec passager (0, 429, 5xx : réessayé, il finit envoyé ou abandonné).
-// Le cercle : la part des membres (étudiants et lauréats, sans l'administration) qui ont au moins un téléphone abonné.
-const ORDRE_ROLES_SN = ['etudiant', 'laureat', 'admin'];
-export const PERTES_SN = ['parties', 'refusees', 'tropLongues', 'abandonnees', 'expirees', 'jetees'];
-// « Par type » : la base n'en rend que les plus fréquents
-export const TYPES_MAX_SN = 12;
-// Tout un service refuse, pour au moins autant de membres, sans accepter aucun téléphone : la clé de la plateforme est en
-// cause, pas les téléphones (même seuil que REFUS_EN_MASSE dans la fonction notifier)
-export const REFUS_EN_MASSE_SN = 3;
-export function santeResume(s) {
-  if (!s || typeof s !== 'object') return null;
-  const roles = (Array.isArray(s.roles) ? s.roles : []).map(r => {
-    const membres = entierSN(r?.membres), avecTel = Math.min(entierSN(r?.avec_tel), membres);
-    return { role: String(r?.role || ''), membres, avecTel, part: membres ? avecTel / membres : null };
-  }).sort((a, b) => (ORDRE_ROLES_SN.indexOf(a.role) + 1 || 9) - (ORDRE_ROLES_SN.indexOf(b.role) + 1 || 9));
-  const hors = roles.filter(r => r.role !== 'admin');
-  const membres = hors.reduce((a, r) => a + r.membres, 0), avecTel = hors.reduce((a, r) => a + r.avecTel, 0);
-  const jours = (Array.isArray(s.jours) ? s.jours : []).map(j => {
-    const x = { envoyees: entierSN(j?.envoyees), parties: entierSN(j?.parties), refusees: entierSN(j?.refusees), tropLongues: entierSN(j?.trop_longues),
-      abandonnees: entierSN(j?.abandonnees), expirees: entierSN(j?.expirees), jetees: entierSN(j?.jetees),
-      sansTel: entierSN(j?.sans_tel), coupees: entierSN(j?.coupees), echecs: entierSN(j?.echecs) };
-    return { jour: String(j?.jour || ''), ...jourNotif(j?.jour), ...x, perdues: PERTES_SN.reduce((a, k) => a + x[k], 0) };
-  });
-  const somme = k => jours.reduce((a, j) => a + j[k], 0);
-  const t = s.telephones && typeof s.telephones === 'object' ? s.telephones : {};
-  const sv = s.services && typeof s.services === 'object' ? s.services : {};
-  const f = s.file && typeof s.file === 'object' ? s.file : {};
-  const c = s.cron && typeof s.cron === 'object' ? s.cron : null, h = s.http && typeof s.http === 'object' ? s.http : null;
-  // Un service : { n, ok, refus, refus_membres } (téléphones abonnés ; dernière réponse en 7 jours acceptée, refusée ; membres
-  // distincts qui refusent). Un simple nombre (forme plus ancienne) ne dit que les abonnés.
-  const service = v => (v && typeof v === 'object' ? v : { n: v });
-  const types = (Array.isArray(s.types) ? s.types : []).map(x => ({ kind: String(x?.kind || ''), ...nomTypeNotif(String(x?.kind || '')), total: entierSN(x?.total),
-    envoyees: entierSN(x?.envoyees), perdues: entierSN(x?.perdues), sansTel: entierSN(x?.sans_tel), coupees: entierSN(x?.coupees), echecs: entierSN(x?.echecs) }));
+// ---------------------------------------------------------------------------
+// Console d'administration : le pilotage. L'objectif du plan, les semaines (nouveaux, actifs, demandes, offres, matchs, aides),
+// ce qui s'est passé, qui aide le plus, où sont les membres. Des calculs sur les données, rien d'autre (admin-tableau.js les montre).
+// ---------------------------------------------------------------------------
+// L'objectif du plan d'ici au 22 novembre 2026, compté depuis le lancement : 40 demandes, 50 offres, 20 matchs, 10 aides acceptées.
+// Une aide acceptée : une proposition d'un lauréat que l'étudiant a acceptée (status « acceptee », comme dans poulsReseau).
+export const OBJECTIF_PLAN = { fin: '2026-11-22', cibles: [['demandes', 40], ['offres', 50], ['matchs', 20], ['aides', 10]] };
+export function objectifPlan(data, now = new Date(), objectif = OBJECTIF_PLAN) {
+  const n = {
+    demandes: (data.demandes || []).length,
+    offres: (data.offers || []).length,
+    matchs: (data.matchs || []).length,
+    aides: (data.propositions || []).filter(x => x.status === 'acceptee').length,
+  };
+  const jours = daysUntil(objectif.fin, now);
   return {
-    at: s.at || null, membres, avecTel, part: membres ? avecTel / membres : null, roles,
-    jours, max: Math.max(1, ...jours.map(j => j.envoyees + j.perdues)),
-    semaine: Object.fromEntries(['envoyees', 'perdues', ...PERTES_SN, 'sansTel', 'coupees', 'echecs'].map(k => [k, somme(k)])),
-    telephones: { total: entierSN(t.total), servis7j: entierSN(t.servis_7j), recus24h: entierSN(t.recus_24h), recus7j: entierSN(t.recus_7j), muets: entierSN(t.muets),
-      enRefus: entierSN(t.en_refus), retires7j: entierSN(t.retires_7j) },
-    services: SERVICES_PUSH.map(([k, nom]) => {
-      const v = service(sv[k]), refus = entierSN(v.refus);
-      return { cle: k, nom, n: entierSN(v.n), ok: entierSN(v.ok), refus, refusMembres: v.refus_membres === undefined ? refus : entierSN(v.refus_membres) };
-    }).filter(x => x.n > 0).sort((a, b) => b.n - a.n),
-    types, typesPlein: types.length >= TYPES_MAX_SN,
-    file: { n: entierSN(f.n), ageS: entierSN(f.age_s) },
-    // La dernière notification traitée par la fonction (journal de 7 jours) ; null : aucune
-    envoiAt: s.envoi_at ? String(s.envoi_at) : null,
-    cron: c ? { existe: c.existe !== false, at: c.at || null, statut: c.statut ? String(c.statut) : null } : null,
-    // vide : pg_net est lisible mais n'a plus aucune réponse (il ne les garde que 6 h) ; null : illisible
-    http: !h ? null : h.vide === true ? { vide: true, code: null, at: null, delai: false, erreur: false }
-      : { vide: false, code: Number.isFinite(Number(h.code)) && h.code !== null ? Number(h.code) : null, at: h.at || null, delai: h.delai === true, erreur: h.erreur === true },
+    fin: objectif.fin, jours: Math.max(0, jours), fini: jours <= 0,
+    lignes: objectif.cibles.map(([k, cible]) => ({ k, n: n[k] || 0, cible, atteint: (n[k] || 0) >= cible, reste: Math.max(0, cible - (n[k] || 0)) })),
   };
 }
 
-// L'état de la tâche de chaque minute (pg_cron) en un mot ; null : rien à en dire
-const CRON_EN_COURS = ['running', 'starting', 'sending', 'connecting'];
-export const etatCronNotifs = c => (!c ? null : !c.existe ? 'absente' : !c.at ? 'jamais' : c.statut === 'failed' ? 'echec' : CRON_EN_COURS.includes(c.statut) ? 'en_cours' : c.statut === 'succeeded' ? 'ok' : 'inconnu');
-
-// « Pourquoi certaines n'arrivent pas » : des phrases simples avec les vrais nombres, la plus urgente d'abord.
-// ton : 'bad' (à régler), 'warn' (à surveiller), 'info' (normal, expliqué), 'note' (pas une perte : choix du membre, envoi
-// réessayé), 'bien' (rien ne s'est perdu).
-// D'abord la chaîne elle-même (fonction notifier, tâche de chaque minute, file), puis un service qui refuse tout (la clé de la
-// plateforme), des envois acceptés que personne ne confirme, les pertes de la semaine (un défaut d'abord, puis ce qui est à
-// surveiller, chacun du plus fréquent au plus rare), les téléphones qui ne confirment pas, les pertes normales (téléphone
-// parti), enfin ce qui n'est pas une perte (sans téléphone, catégorie coupée, envoi réessayé).
-const RANG_TON_SN = { bad: 0, warn: 1, info: 2 };
-export function raisonsNotifs(r, now = Date.now()) {
-  if (!r) return [];
-  const out = [], s = r.semaine, t = r.telephones, ajoute = (cle, ton, texte) => out.push({ cle, ton, texte });
-  const h = r.http?.vide ? null : r.http, depuis = iso => (now - new Date(iso || 0).getTime()) / 1000;
-  if (h?.code === 401) ajoute('http', 'bad', 'La fonction notifier refuse les appels de la base (erreur 401) : désactive « Verify JWT » dans Supabase (Edge Functions > notifier > Details).');
-  else if (h?.code === 404) ajoute('http', 'bad', 'La fonction notifier est introuvable (erreur 404) : déploie-la dans Supabase (Edge Functions).');
-  else if (h?.code >= 400) ajoute('http', 'bad', `La fonction notifier a répondu par une erreur au dernier appel (erreur ${h.code}) : regarde ses Logs dans Supabase (Edge Functions > notifier > Logs).`);
-  else if (h && (h.delai || h.erreur || !h.code) && depuis(h.at) < 86400) ajoute('http', 'warn', 'Le dernier appel à la fonction notifier n’a pas abouti (délai dépassé ou réseau) : la base réessaie toute seule chaque minute.');
-  const ec = etatCronNotifs(r.cron);
-  if (ec === 'absente') ajoute('cron', 'bad', 'La tâche de chaque minute n’existe pas dans la base : active pg_cron (Database > Extensions), puis relance supabase/mise-a-jour.sql.');
-  else if (ec === 'echec') ajoute('cron', 'bad', 'La tâche de chaque minute a échoué à son dernier passage : regarde Logs > Postgres dans Supabase.');
-  else if (ec === 'jamais') ajoute('cron', 'warn', 'La tâche de chaque minute n’a encore jamais tourné : vérifie pg_cron dans Supabase (Database > Cron).');
-  else if (r.cron?.at && depuis(r.cron.at) > 600) ajoute('cron', 'warn', `La tâche de chaque minute n’a pas tourné depuis ${dureeAttente(depuis(r.cron.at))} : vérifie pg_cron dans Supabase (Database > Cron).`);
-  if (r.file.n > 0 && r.file.ageS > 300) {
-    ajoute('file', 'warn', `${r.file.n} ${plurielSN(r.file.n, 'notification attend', 'notifications attendent')} depuis ${dureeAttente(r.file.ageS)} au lieu de partir tout de suite : la tâche de chaque minute ou la fonction notifier est bloquée (voir Fonctionnement, dans le détail).`);
+// Combien par semaine sur n semaines glissantes qui finissent maintenant, la plus ancienne d'abord :
+// la dernière case est ]maintenant − 7 j, maintenant], celle d'avant les 7 jours d'avant, etc. Une date à venir ne compte pas.
+const SEMAINE = 7 * 864e5;
+export function serieHebdo(dates, now = new Date(), n = 8) {
+  const fin = now.getTime(), out = Array(n).fill(0);
+  for (const d of dates || []) {
+    const t = d ? new Date(d).getTime() : NaN;
+    if (!(t <= fin)) continue;
+    const k = Math.floor((fin - t) / SEMAINE);
+    if (k < n) out[n - 1 - k]++;
   }
-  // Tout un service refuse et n'accepte personne : la clé de la plateforme (rien n'est retiré, la fonction le dit dans ses Logs)
-  for (const x of r.services) {
-    if (!x.ok && x.refus && x.refusMembres >= REFUS_EN_MASSE_SN) {
-      ajoute('masse_' + x.cle, 'bad', `Le service « ${x.nom} » refuse les notifications de ${x.refus} téléphones et n’en accepte aucun : la clé de la plateforme est en cause, pas les membres. Regarde les Logs de la fonction notifier (Edge Functions > notifier > Logs).`);
-    }
-  }
-  // Les services acceptent, mais aucun téléphone ne dit avoir affiché quoi que ce soit
-  const aucuneRecue = s.envoyees > 0 && t.servis7j > 0 && t.recus7j === 0;
-  if (aucuneRecue) {
-    ajoute('aucune_recue', 'bad', `Les services de notification ont accepté ${s.envoyees} ${plurielSN(s.envoyees, 'envoi', 'envois')} cette semaine, mais aucun téléphone ne confirme les avoir affichés : essaie « Tester » sur un vrai téléphone (Mon profil > Notifications).`);
-  }
-  const pertes = [
-    ['jetees', 'bad', s.jetees, n => `${n} ${plurielSN(n, 'notification a été écartée', 'notifications ont été écartées')} par le serveur (type inconnu) : un défaut à signaler.`],
-    ['trop_longues', 'bad', s.tropLongues, n => `${n} ${plurielSN(n, 'notification a été refusée parce que trop longue', 'notifications ont été refusées parce que trop longues')} (erreur 413) : un défaut à signaler.`],
-    ['expirees', 'warn', s.expirees, n => `${n} ${plurielSN(n, 'notification a expiré', 'notifications ont expiré')} sans aucun essai d’envoi, après un jour d’attente : la fonction notifier ou la tâche de chaque minute ne tournait pas (voir Fonctionnement, dans le détail).`],
-    ['refusees', 'warn', s.refusees, n => `${n} ${plurielSN(n, 'notification a été refusée', 'notifications ont été refusées')} par le service de notification du téléphone. Après 3 refus de suite, le téléphone est retiré, sauf si tout ce service refuse (la clé de la plateforme serait alors en cause).`],
-    ['abandonnees', 'warn', s.abandonnees, n => `${n} ${plurielSN(n, 'notification a été abandonnée', 'notifications ont été abandonnées')} après 3 essais ou un jour d’attente : le service du téléphone ne répondait pas.`],
-    ['parties', 'info', s.parties, n => `${n} ${plurielSN(n, 'notification n’a', 'notifications n’ont')} pas pu arriver : le téléphone n’était plus abonné (application désinstallée, téléphone changé ou notifications retirées). Son abonnement est retiré ; le membre devra réactiver les notifications.`],
-  ].filter(x => x[2] > 0).sort((a, b) => RANG_TON_SN[a[1]] - RANG_TON_SN[b[1]] || b[2] - a[2]);
-  // Ce qui est à régler ou à surveiller, puis les téléphones qui ne confirment pas, puis les pertes normales (téléphone parti)
-  for (const [cle, ton, n, texte] of pertes.filter(x => x[1] !== 'info')) ajoute(cle, ton, texte(n));
-  const m = t.muets;
-  if (m && !aucuneRecue) ajoute('muets', 'warn', `${m} ${plurielSN(m, 'téléphone accepte', 'téléphones acceptent')} les notifications sans confirmer les afficher : économie d’énergie, notifications du navigateur coupées, ou ancienne version de l’application.`);
-  for (const [cle, ton, n, texte] of pertes.filter(x => x[1] === 'info')) ajoute(cle, ton, texte(n));
-  // La bonne nouvelle avant ce qui n'est pas une perte : seulement si rien ne manque, que les téléphones confirment, et que
-  // la chaîne elle-même va bien (une fonction en panne ne perd rien tout de suite : ses notifications expirent un jour après)
-  if (!pertes.length && !m && !aucuneRecue) {
-    if (s.envoyees) { if (!out.some(x => x.ton === 'bad' || x.ton === 'warn')) ajoute('rien', 'bien', 'Aucune notification envoyée ne s’est perdue cette semaine.'); }
-    else if (!s.coupees && !s.echecs) ajoute('vide', 'info', 'Aucune notification n’est partie cette semaine.');
-  }
-  if (s.sansTel) ajoute('sans_tel', 'info', `${s.sansTel} ${plurielSN(s.sansTel, 'notification n’a', 'notifications n’ont')} pas pu partir : le membre n’a activé les notifications sur aucun téléphone (ses emails l’invitent à le faire).`);
-  if (s.coupees) ajoute('coupees', 'note', `${s.coupees} ${plurielSN(s.coupees, 'notification n’a pas été envoyée', 'notifications n’ont pas été envoyées')} : le membre a coupé ce type dans Mon profil. C’est son choix.`);
-  if (s.echecs) ajoute('echecs', 'note', `${s.echecs} ${plurielSN(s.echecs, 'envoi a échoué un moment (service du téléphone injoignable), puis a été réessayé.', 'envois ont échoué un moment (service du téléphone injoignable), puis ont été réessayés.')}`);
   return out;
 }
-// Une perte ou un souci à montrer (le titre « Pourquoi certaines n'arrivent pas »), ou seulement des nouvelles calmes
-const CLES_PERTES_SN = ['parties', 'refusees', 'trop_longues', 'abandonnees', 'expirees', 'jetees'];
-export const raisonsAvecPertes = l => (l || []).some(x => x.ton === 'bad' || x.ton === 'warn' || CLES_PERTES_SN.includes(x.cle));
+// Cette semaine, la semaine d'avant et l'écart (signé)
+export function ecartHebdo(serie) {
+  const n = serie?.length ? serie[serie.length - 1] : 0, avant = serie?.length > 1 ? serie[serie.length - 2] : 0;
+  return { n, avant, delta: n - avant };
+}
+// Les membres actifs de chaque semaine (même notion que parcoursInscription : une action, hors administration ;
+// la dernière semaine donne le même chiffre que parcoursInscription().actifs, une date à venir y compte)
+export function actifsParSemaine(data, now = new Date(), n = 8) {
+  const admins = new Set((data.profiles || []).filter(p => p.role === 'admin').map(p => p.id));
+  const fin = now.getTime(), gens = Array.from({ length: n }, () => new Set());
+  const noter = (id, at) => {
+    const t = at ? new Date(at).getTime() : NaN;
+    if (!id || admins.has(id) || Number.isNaN(t)) return;
+    const k = t > fin ? 0 : Math.floor((fin - t) / SEMAINE);
+    if (k < n) gens[n - 1 - k].add(id);
+  };
+  for (const [table, col] of ACTIONS) for (const r of data[table] || []) noter(r[col], r.created_at);
+  for (const r of data.mentorships || []) if (r.mentor_id && r.accepted_at) noter(r.mentor_id, r.accepted_at);
+  return gens.map(g => g.size);
+}
+// Les aides du réseau, une par geste (même notion que poulsReseau) : rendez-vous de mentorat terminé, relecture rendue,
+// recrutement confirmé, proposition acceptée ; toujours d'un lauréat vers un étudiant qui ont un profil.
+export function aidesDuReseau(data) {
+  const role = new Map((data.profiles || []).map(p => [p.id, p.role]));
+  const out = [];
+  const aide = (laureat, etudiant, at, sorte) => { if (laureat && etudiant && role.get(laureat) === 'laureat' && role.get(etudiant) === 'etudiant') out.push({ laureat, etudiant, at, sorte }); };
+  for (const m of data.mentorships || []) if (m.status === 'terminee') aide(m.mentor_id, m.student_id, m.rdv_at || m.accepted_at, 'rdv');
+  for (const r of data.relectures_cv || []) if (r.status === 'rendue') aide(r.reviewer_id, r.student_id, r.rendue_at, 'cv');
+  for (const p of data.placements || []) if (p.status === 'confirme') aide(p.laureat_id, p.student_id, p.confirmed_at, 'recrute');
+  const auteur = new Map((data.demandes || []).map(d => [d.id, d.auteur_id]));
+  for (const x of data.propositions || []) if (x.status === 'acceptee') aide(x.laureat_id, auteur.get(x.demande_id), x.repondu_at, 'match');
+  return out;
+}
+// Les lauréats qui ont le plus aidé ces derniers jours (pour l'administration seule) : nombre d'aides, d'étudiants aidés,
+// la plus récente ; à égalité, la plus récente d'abord
+export function topAidants(data, now = new Date(), jours = 30, n = 8) {
+  const fin = now.getTime(), debut = fin - jours * 864e5, m = new Map();
+  for (const a of aidesDuReseau(data)) {
+    const t = a.at ? new Date(a.at).getTime() : NaN;
+    if (!(t >= debut && t <= fin)) continue;
+    const x = m.get(a.laureat) || { id: a.laureat, aides: 0, gens: new Set(), derniere: 0 };
+    x.aides++; x.gens.add(a.etudiant); x.derniere = Math.max(x.derniere, t); m.set(a.laureat, x);
+  }
+  return [...m.values()].sort((a, b) => b.aides - a.aides || b.derniere - a.derniere).slice(0, n)
+    .map(x => ({ id: x.id, aides: x.aides, etudiants: x.gens.size, derniere: x.derniere }));
+}
+// Ce qui s'est passé dans le réseau, le plus récent d'abord : arrivée d'un membre, offre, demande, aide proposée,
+// conseil demandé, match, recrutement confirmé, événement publié. qui : le membre qui agit ; avec : l'autre membre.
+export function evenementsReseau(data, n = 15) {
+  const out = [];
+  const ajouter = (sorte, at, champs) => { const t = at ? new Date(at).getTime() : NaN; if (!Number.isNaN(t)) out.push({ sorte, at, t, ...champs }); };
+  for (const p of data.profiles || []) if (p.role !== 'admin' && !p.admin_ok) ajouter('membre', p.created_at, { id: p.id, qui: p.id });
+  for (const o of data.offers || []) ajouter('offre', o.created_at, { id: o.id, qui: o.author_id, titre: o.titre });
+  const demande = new Map((data.demandes || []).map(d => [d.id, d]));
+  for (const d of data.demandes || []) ajouter('demande', d.created_at, { id: d.id, qui: d.auteur_id, titre: d.titre });
+  for (const x of data.propositions || []) ajouter('aide', x.created_at, { id: x.demande_id, qui: x.laureat_id, avec: demande.get(x.demande_id)?.auteur_id || null, titre: demande.get(x.demande_id)?.titre || '' });
+  for (const m of data.mentorships || []) ajouter('mentorat', m.created_at, { id: m.id, qui: m.student_id, avec: m.mentor_id || null, titre: m.sujet || '' });
+  for (const m of data.matchs || []) ajouter('match', m.created_at, { id: m.id, qui: m.etudiant_id, avec: m.laureat_id });
+  for (const p of data.placements || []) if (p.status === 'confirme') ajouter('recrutement', p.confirmed_at, { id: p.id, qui: p.student_id, avec: p.laureat_id, titre: p.entreprise || '' });
+  for (const e of data.evenements || []) if (!e.annule) ajouter('evenement', e.created_at, { id: e.id, qui: e.author_id, titre: e.titre });
+  return out.sort((a, b) => b.t - a.t).slice(0, n);
+}
+// Où sont les membres : une ligne par promo d'étudiants (5A d'abord), puis les lauréats par tranches de 5 promos ;
+// une colonne par parcours (une ancienne appellation suit son premier parcours), puis la prépa et « Autre » s'il y en a.
+// L'administration, et l'administration en vue lauréat, ne comptent pas.
+export function repartitionMembres(profiles, saison = seasonOf()) {
+  const codes = [...PARCOURS.map(p => p.code), 'PREPA', 'AUTRE'];
+  const colonne = p => (p.filiere === PREPA ? 'PREPA' : parcoursOf(p.filiere)[0] || 'AUTRE');
+  const lignes = new Map();
+  const ligne = (cle, groupe, ordre, etiquette) => {
+    if (!lignes.has(cle)) lignes.set(cle, { cle, groupe, ordre, etiquette, n: Object.fromEntries(codes.map(c => [c, 0])), total: 0 });
+    return lignes.get(cle);
+  };
+  for (const p of profiles || []) {
+    let l = null;
+    if (p.role === 'etudiant') {
+      const promo = Number(p.promo);
+      l = Number.isInteger(promo) && promo > 1900 ? ligne('e' + promo, 'etudiants', promo, `${NIVEAUX[niveauOf(p, saison)]?.short || ''} · promo ${promo}`) : ligne('e?', 'etudiants', 9999, 'Sans promo');
+    } else if (laureatCompte(p)) {
+      const promo = Number(p.promo);
+      if (!Number.isInteger(promo) || promo < 1900) l = ligne('l?', 'laureats', 9999, 'Sans promo');
+      else {
+        const k = Math.max(0, Math.floor((saison - promo) / 5));
+        l = k >= 3 ? ligne('l3', 'laureats', 3, `Avant ${saison - 14}`) : ligne('l' + k, 'laureats', k, `Promos ${saison - 5 * k - 4}–${saison - 5 * k}`);
+      }
+    }
+    if (!l) continue;
+    l.n[colonne(p)]++; l.total++;
+  }
+  const toutes = [...lignes.values()].sort((a, b) => (a.groupe === b.groupe ? a.ordre - b.ordre : a.groupe === 'etudiants' ? -1 : 1));
+  const colonnes = codes.filter(c => PARCOURS.some(p => p.code === c) || toutes.some(l => l.n[c] > 0))
+    .map(c => ({ code: c, nom: c === 'PREPA' ? 'Prépa' : c === 'AUTRE' ? 'Autre' : parcoursNom(c) }));
+  const max = Math.max(0, ...toutes.flatMap(l => colonnes.map(c => l.n[c.code])));
+  return { colonnes, lignes: toutes.map(l => ({ ...l, n: colonnes.map(c => l.n[c.code]) })), max };
+}

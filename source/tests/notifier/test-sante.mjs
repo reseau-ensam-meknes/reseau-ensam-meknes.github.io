@@ -30,10 +30,11 @@ test('tags : une notification par événement ; ce qui remplace garde son tag ; 
   assert.equal(t('reponse', { nom: 'Nadia', titre: 'Entretien chez Renault ?' }, '13'), 'reponse-13');
   assert.equal(t('candidature', { nom: 'Salma', titre: 'Stage' }), 'candidature', 'sans identifiant de file : le type');
   // Ce qui remplace la précédente : un seul rappel du soir, un seul Match du jour, un seul essai, une seule enquête ;
-  // la vérification par les pairs, la nouvelle date d'un événement ou d'un rendez-vous de mentorat, un nouveau parrain ;
-  // les arrivées dans la promo et le filleul, comme dans TAGS_FIXES (nouvelles notifications)
+  // la vérification par les pairs, un nouveau parrain, les arrivées dans la promo ; la nouvelle date d'un événement ou
+  // d'un rendez-vous de mentorat quand la base ne dit pas lequel (sinon : celle du même élément). Le filleul n'y est plus :
+  // chacun est une personne de plus
   assert.deepEqual(N.SE_REMPLACENT, ['rappel_visite', 'match_jour', 'test', 'enquete', 'verification_pair', 'evenement_deplace', 'mentorat_deplace',
-    'parrain', 'promo_nouveau', 'filleul']);
+    'parrain', 'promo_nouveau']);
   assert.equal(t('rappel_visite', { messages: 2 }, 14), 'rappel_visite');
   assert.equal(t('match_jour', { n: 3, type: 'etudiant' }, 15), 'match_jour');
   assert.equal(t('test', {}, 16), 'test');
@@ -51,7 +52,10 @@ test('tags : une notification par événement ; ce qui remplace garde son tag ; 
   const a1 = enFile(b, u, 'candidature', { nom: 'Salma Idrissi', titre: 'Stage maintenance' });
   const a2 = enFile(b, u, 'candidature', { nom: 'Amine Tazi', titre: 'Stage qualité' });
   enFile(b, u, 'match_jour', { n: 2, type: 'laureat' });
-  assert.deepEqual(await corpsDe(await appel({ job: 'push' })), { sent: 3, failed: 0, removed: 0 });
+  // À 12:30, l'heure du tour Match (midi_push) : la nuit, une notification programmée ne part pas (test-file-push.mjs)
+  const vrai = Date.now;
+  Date.now = () => Date.parse('2026-11-09T12:30:00Z');
+  try { assert.deepEqual(await corpsDe(await appel({ job: 'push' })), { sent: 3, failed: 0, removed: 0 }); } finally { Date.now = vrai; }
   assert.deepEqual(b.push.map(x => x.message.tag), [`candidature-${a1}`, `candidature-${a2}`, 'match_jour']);
 });
 
@@ -62,20 +66,51 @@ test('tags : la vérification par les pairs, une nouvelle date et un nouveau par
   assert.equal(v2.title, 'Ton profil est vérifié');
   assert.equal(v1.tag, v2.tag, 'avant : deux lignes, la première disait « encore un lauréat » après le badge');
   assert.equal(v2.tag, 'verification_pair');
-  const e1 = t('evenement_deplace', { titre: 'Forum', debut: '2026-11-12T09:00:00Z' }, 301), e2 = t('evenement_deplace', { titre: 'Forum', debut: '2026-11-19T09:00:00Z' }, 302);
+  // La nouvelle date d'un même événement, d'un même rendez-vous, remplace l'ancienne ; un autre élément ne l'efface pas.
+  // Un seul nom de ligne par élément, celui du contrat : evenement-<id> (l'annonce, la nouvelle date, l'annulation, la
+  // veille) et mentorat-<m> (toute la vie d'un mentorat)
+  const forum = uid(311), visite = uid(312), cv = uid(313), renault = uid(314);
+  const e1 = t('evenement_deplace', { titre: 'Forum', debut: '2026-11-12T09:00:00Z', id: forum, evenement: forum }, 301);
+  const e2 = t('evenement_deplace', { titre: 'Forum', debut: '2026-11-19T09:00:00Z', id: forum, evenement: forum }, 302);
+  const e3 = t('evenement_deplace', { titre: 'Visite OCP', debut: '2026-11-22T14:00:00Z', id: visite, evenement: visite }, 309);
   assert.equal(e1.tag, e2.tag, 'avant : la première gardait l’ancienne date');
-  const m1 = t('mentorat_deplace', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-12T17:00:00Z' }, 303), m2 = t('mentorat_deplace', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-13T17:00:00Z' }, 304);
+  assert.equal(e1.tag, `evenement-${forum}`);
+  assert.equal(e1.url, `${SITE}#reseau/agenda/${forum}`);
+  assert.notEqual(e3.tag, e1.tag, 'avant : la Visite OCP effaçait le Forum');
+  // L'événement sous l'une ou l'autre clé : id (ce lot) ou evenement (la base d'avant, main) ; la même ligne, la même page
+  for (const d of [{ id: forum }, { evenement: forum }, { id: forum, evenement: forum }]) {
+    const x = t('evenement_deplace', { titre: 'Forum', debut: '2026-11-19T09:00:00Z', ...d }, 330);
+    assert.deepEqual([x.tag, x.url], [e1.tag, e1.url], JSON.stringify(d));
+  }
+  // L'annonce et l'annulation du même événement : la même ligne (l'ancienne date ne reste pas affichée à côté)
+  assert.equal(t('evenement', { titre: 'Forum', debut: '2026-11-12T09:00:00Z', evenement: forum }, 331).tag, e1.tag);
+  assert.equal(t('evenement_annule', { titre: 'Forum', debut: '2026-11-19T09:00:00Z', id: forum, evenement: forum }, 332).tag, e1.tag);
+  const m1 = t('mentorat_deplace', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-12T17:00:00Z', m: cv }, 303);
+  const m2 = t('mentorat_deplace', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-13T17:00:00Z', m: cv }, 304);
+  const m3 = t('mentorat_deplace', { nom: 'Nadia', sujet: 'Entretien Renault', rdv_at: '2026-11-21T17:00:00Z', m: renault }, 310);
   assert.equal(m1.tag, m2.tag);
+  assert.equal(m1.tag, `mentorat-${cv}`);
+  assert.notEqual(m3.tag, m1.tag, 'avant : le rendez-vous de Nadia effaçait celui de Youssef');
+  // Le rendez-vous fixé puis déplacé : la même ligne (la première date ne reste pas affichée)
+  assert.equal(t('mentorat_accepte', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-12T17:00:00Z', m: cv }, 333).tag, m1.tag);
+  // Données d'avant (sans l'élément) : la nouvelle date remplace la précédente, comme avant
+  assert.equal(t('evenement_deplace', { titre: 'Forum', debut: '2026-11-12T09:00:00Z' }, 315).tag, 'evenement_deplace');
+  assert.equal(t('mentorat_deplace', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-12T17:00:00Z' }, 316).tag, 'mentorat_deplace');
   // Un nouveau parrain : « ton parrainage cette année : Youssef » ne reste pas affiché à côté de celui qui le remplace
   const p1 = t('parrain', { nom: 'Youssef Alami' }, 305), p2 = t('parrain', { nom: 'Nadia Bennani' }, 306);
   assert.match(p1.body, /Youssef Alami/);
   assert.equal(p1.tag, p2.tag, 'avant : l’ancien parrain restait dans la barre');
   assert.equal(p2.tag, 'parrain');
-  // Comme dans la liste des tags fixes des nouvelles notifications : une seule ligne pour la promo, une pour le filleul
-  for (const k of ['promo_nouveau', 'filleul']) {
-    assert.equal(t(k, { nom: 'A', n: 1, promo: '2024' }, 307).tag, k);
-    assert.equal(t(k, { nom: 'B', n: 3, promo: '2024' }, 308).tag, k);
-  }
+  // Les arrivées dans la promo : une seule ligne, qui se met à jour
+  assert.equal(t('promo_nouveau', { nom: 'A', n: 1, promo: '2024' }, 307).tag, 'promo_nouveau');
+  assert.equal(t('promo_nouveau', { nom: 'B', n: 3, promo: '2024' }, 308).tag, 'promo_nouveau');
+  // Trois filleuls donnés d'un coup : trois lignes, chacune avec son nom (avant : la troisième effaçait les deux autres)
+  const [f1, f2] = [uid(317), uid(318)];
+  const g1 = t('filleul', { nom: 'Salma', filleul: f1 }, 319), g2 = t('filleul', { nom: 'Hiba', filleul: f2 }, 320);
+  assert.equal(g1.tag, `filleul-${f1}`);
+  assert.notEqual(g2.tag, g1.tag);
+  assert.equal(t('filleul', { nom: 'Salma', filleul: f1 }, 321).tag, g1.tag, 'le même filleul : la même ligne');
+  assert.notEqual(t('filleul', { nom: 'Salma' }, 322).tag, t('filleul', { nom: 'Hiba' }, 323).tag, 'données d’avant : une ligne par notification');
   // Ce qui reste une notification par événement : chacun dit quelque chose de différent et de toujours vrai
   for (const k of ['evenement', 'evenement_annule', 'candidature_statut', 'merci']) {
     const x = t(k, { nom: 'A', n: 2, promo: '2024', titre: 'X', statut: 'entretien', debut: '2026-11-12T09:00:00Z' }, 7);
@@ -318,15 +353,45 @@ test('45 s : un tour ne commence pas à moins de 10 s de la fin ; ce qui a été
   assert.deepEqual(b.tables.push_queue.map(x => [x.essais, !!x.pris_at]), [[0, false]], 'rendue : aucun essai compté, libre tout de suite');
   assert.deepEqual(await corpsDe(await appel({ job: 'push' })), { sent: 1, failed: 0, removed: 0 }, 'repartie sans attendre 2 minutes');
   assert.deepEqual(journal(b).filter(([k]) => k === 'merci').length, 11, 'chacune une fois au journal, à son envoi');
-  // Une base sans push_rendues : reprise après 2 minutes, comme avant, et les Logs le disent
+  // Une base sans push_rendues : rendue quand même, par la table, sans l'essai compté, et les Logs le disent
   b.absentes.add('push_rendues');
   for (let i = 0; i < 4; i++) enFile(b, u, 'merci', { nom: 'S' + i });
   decalage = 0;
   Date.now = () => vrai() + decalage;
   b.surPush = () => { decalage += 20_000; };
   try { await appel({ job: 'push' }); } finally { Date.now = vrai; b.surPush = null; }
-  assert.deepEqual(b.tables.push_queue.map(x => [x.essais, !!x.pris_at]), [[1, true]]);
+  assert.deepEqual(b.tables.push_queue.map(x => [x.essais, !!x.pris_at]), [[0, false]], 'avant : [1, true], un essai perdu à chaque reprise');
   assert.ok(erreurs.some(e => e.includes('push_rendues')));
+});
+
+test('nouvelle fonction sur une base pas encore mise à jour (sans push_rendues ni push_resultats) : un téléphone lent reçoit tout, une fois, rien ne se perd', async () => {
+  const b = nouveauBanc();
+  b.absentes.add('push_rendues');
+  b.absentes.add('push_resultats');
+  const u = uid(84);
+  b.tables.profiles.push(profil(u));
+  b.abonner(u, 1);
+  for (let i = 0; i < 12; i++) enFile(b, u, 'merci', { nom: 'L' + i });
+  const vrai = Date.now;
+  let decalage = 0;
+  Date.now = () => vrai() + decalage;
+  b.surPush = () => { decalage += 20_000; };   // son service répond en 20 s : trois envois par appel
+  const bilans = [];
+  try {
+    for (let i = 0; i < 8 && b.tables.push_queue.length; i++) {
+      decalage = 0;
+      bilans.push(await corpsDe(await appel({ job: 'push' })));
+      // L'ancienne base, chaque minute (relancer_push) : 3 essais comptés et pris depuis 2 minutes, la ligne est jetée sans trace
+      vieillir(b, 3);
+      b.tables.push_queue = b.tables.push_queue.filter(x => !((x.essais ?? 0) >= 3 && x.pris_at && Date.parse(x.pris_at) < Date.now() - 120e3));
+    }
+  } finally { Date.now = vrai; b.surPush = null; }
+  assert.deepEqual(b.push.map(x => x.message.body), Array.from({ length: 12 }, (_, i) => `L${i} te remercie pour ton aide.`),
+    'avant : 9 reçues, les 3 dernières jetées au troisième passage (chaque reprise coûtait un essai)');
+  assert.deepEqual(bilans, [{ sent: 3, failed: 0, removed: 0, retry: 9 }, { sent: 3, failed: 0, removed: 0, retry: 6 },
+    { sent: 3, failed: 0, removed: 0, retry: 3 }, { sent: 3, failed: 0, removed: 0 }]);
+  assert.deepEqual(b.tables.push_queue, []);
+  assert.deepEqual(journal(b), Array(12).fill(['merci', 201]), 'chacune une fois au journal');
 });
 
 test('« Tester » : le détail de chaque téléphone, au journal sous « test » ; en urgence haute', async () => {
@@ -347,6 +412,27 @@ test('« Tester » : le détail de chaque téléphone, au journal sous « test �
   // Aucun téléphone : la réponse le dit, le journal le note
   assert.deepEqual(await tester('jeton-sans'), { sent: 0, failed: 0, removed: 0, codes: [], abonnements: 0 });
   assert.deepEqual(b.tables.push_journal.at(-1), { user_id: sans, kind: 'test', code: -1 });
+});
+
+test('« Tester » avec l’adresse de l’appareil : ici, sa réponse à lui (un autre téléphone du compte ne décide pas pour lui) ; -1 s’il n’est pas enregistré', async () => {
+  const b = nouveauBanc();
+  const u = uid(9), sans = uid(10);
+  b.tables.profiles.push(profil(u), profil(sans));
+  b.jetons.set('jeton-u', u);
+  b.jetons.set('jeton-sans', sans);
+  const ici = b.abonner(u, 1), vieux = b.abonner(u, 2);
+  b.recepteurs.delete(ici.endpoint);       // ce téléphone-ci : son service ne répond pas
+  b.statutsPush.set(vieux.endpoint, 410);  // l'autre, un vieux téléphone : parti
+  const tester = (corps, jeton = 'jeton-u') => N.handler(requete({ job: 'test', ...corps }, { Authorization: `Bearer ${jeton}` })).then(corpsDe);
+  assert.deepEqual(await tester({ endpoint: ici.endpoint }), { sent: 0, failed: 1, removed: 1, codes: [0, 410], abonnements: 2, ici: 0 },
+    'avant : rien ne disait lequel est cet appareil, la page le croyait parti (410) et refaisait son abonnement');
+  assert.deepEqual(await tester({ endpoint: ici.endpoint }), { sent: 0, failed: 1, removed: 0, codes: [0], abonnements: 1, ici: 0 });
+  assert.deepEqual(await tester({ endpoint: 'https://push.example.net/inconnu' }), { sent: 0, failed: 1, removed: 0, codes: [0], abonnements: 1, ici: -1 }, 'pas enregistré pour ce compte');
+  assert.deepEqual(await tester({ endpoint: ici.endpoint }, 'jeton-sans'), { sent: 0, failed: 0, removed: 0, codes: [], abonnements: 0, ici: -1 });
+  // Une page plus ancienne n'envoie pas d'adresse : la réponse d'avant, sans ici
+  for (const corps of [{}, { endpoint: 42 }, { endpoint: '' }]) {
+    assert.deepEqual(await tester(corps), { sent: 0, failed: 1, removed: 0, codes: [0], abonnements: 1 }, JSON.stringify(corps));
+  }
 });
 
 test('« Tester » appuyé quatre fois sur un téléphone que le service refuse : jamais retiré, toujours essayé', async () => {

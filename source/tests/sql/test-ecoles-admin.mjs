@@ -155,3 +155,16 @@ test('relancée, la mise à jour ne garde qu’une version de chaque fonction, e
   assert.deepEqual((await db.query(`select has_function_privilege('anon', 'public.vider_liste(int, text)', 'execute') a, has_function_privilege('authenticated', 'public.ecole_visee(text)', 'execute') b,
     has_function_privilege('authenticated', 'public.dans_liste(uuid, text, int, text)', 'execute') c`)).rows[0], { a: false, b: false, c: false });
 });
+
+test('nommer un ambassadeur : la proposition prend l’école du membre nommé, pas celle de l’administrateur', async () => {
+  const ecoleDe = async id => (await db.query(`select ecole from public.ambassadeurs where user_id = $1 and statut = 'propose'`, [id])).rows.map(r => r.ecole);
+  // Un lauréat d'une autre école, puis un lauréat de Meknès de la même promo et de la même filière : deux groupes différents
+  await q(ADMIN, `insert into public.ambassadeurs (promo, filiere, user_id, statut, par) values ($1, 'GI', $2, 'propose', 'admin')`, [AN - 1, LAUREATS_AUTRE[0]]);
+  assert.deepEqual(await ecoleDe(LAUREATS_AUTRE[0]), ['autre-ecole']);
+  await q(ADMIN, `insert into public.ambassadeurs (promo, filiere, user_id, statut, par) values ($1, 'GI', $2, 'propose', 'admin')`, [AN - 1, LAUREAT_MEK]);
+  assert.deepEqual(await ecoleDe(LAUREAT_MEK), ['ensam-meknes'], 'le même groupe dans une autre école ne bloque pas');
+  // Même si la ligne envoyée dit une autre école, c'est celle du membre qui compte
+  await db.query(`update public.ambassadeurs set statut = 'expire' where user_id = $1`, [LAUREATS_AUTRE[0]]);
+  await q(ADMIN, `insert into public.ambassadeurs (promo, filiere, user_id, statut, par, ecole) values ($1, 'GI', $2, 'propose', 'admin', 'ensam-meknes')`, [AN - 1, LAUREATS_AUTRE[1]]);
+  assert.deepEqual(await ecoleDe(LAUREATS_AUTRE[1]), ['autre-ecole']);
+});
