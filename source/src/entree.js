@@ -328,9 +328,11 @@ function Fondateurs() {
 // ou Safari (iPhone, iPad : le geste). « Continuer ici » la range : l'inscription ici reste possible. Une fois par visite (cet
 // onglet), puis une ligne discrète : sans Chrome, le lien rouvre la même page ici (browser_fallback_url), et la ligne dit
 // alors quoi faire au lieu de reproposer le même lien. Elle compte pour la feuille du navigateur d'une application de cette
-// visite (CLE_APPLI_VUE, pwa.js). La reconnaissance des applications, les phrases de la carte, leur arabe et son style
-// arrivent à part (appareil.js), juste après le premier affichage : la page d'entrée garde ses six fichiers. Sa place, elle,
-// est gardée dès le premier affichage : rien ne glisse sous le doigt quand la carte arrive.
+// visite (CLE_APPLI_VUE, pwa.js). Sur un téléphone où elle ne laisserait pas « Recevoir mon code » au premier écran
+// (carteTient), la ligne discrète d'emblée, sous le titre sur un petit écran. La reconnaissance des applications, les
+// phrases de la carte, leur arabe et son style arrivent à part (appareil.js), juste après le premier affichage : la page
+// d'entrée garde ses six fichiers. Sa place, elle, est gardée dès le premier affichage : rien ne glisse sous le doigt quand la
+// carte arrive.
 // ---------------------------------------------------------------------------
 // 'android', 'ios' ou '' : la règle de navigateurIntegre (appareil.js), sans les noms, pour savoir tout de suite si une carte
 // viendra (le test unitaire vérifie que les deux disent toujours la même chose)
@@ -349,11 +351,21 @@ const PLACE = {
 };
 // Le bord et les boutons, en px : la ligne de « Ouvrir dans Chrome » sur Android ; sur iPhone, le bord seul
 const BORD = { android: 46.5, ios: 2 };
-export function placeCarte(sys, lang, largeur, rem = 16) {
+const placeRem = (sys, lang, largeur, rem) => {
   const t = PLACE[sys + (lang === 'ar' ? 'ar' : 'fr')];
   let i = 0;
   if (largeur < 900) while (largeur / rem >= t[i]) i += 2; else i = t.length - 2;
-  return `calc(${BORD[sys]}px + ${t[i + 1]}rem)`;
+  return t[i + 1];
+};
+export const placeCarte = (sys, lang, largeur, rem = 16) => `calc(${BORD[sys]}px + ${placeRem(sys, lang, largeur, rem)}rem)`;
+// Sur téléphone, la carte ne vient que si « Recevoir mon code » tient encore avec elle au premier écran. Ce qu'il faut autour
+// d'elle, en rem, du haut de la page au bas du bouton (la marque, le titre, les chiffres, l'écart, le rôle, l'email, l'accord),
+// mesuré avec la carte de 320 à 899 px de large : le plus haut sous 23,4 rem de large (une ligne de plus), puis au-delà. Un
+// texte ou un style de la page qui change cette hauteur se reporte ici (e2e « Recevoir mon code au premier écran »).
+const SOUS_CARTE = { fr: [36.6, 35.15], ar: [37.05, 35.25] };
+export function carteTient(sys, lang, largeur, hauteur, rem = 16) {
+  const [etroit, large] = SOUS_CARTE[lang === 'ar' ? 'ar' : 'fr'];
+  return hauteur >= BORD[sys] + (placeRem(sys, lang, largeur, rem) + (largeur / rem < 23.4 ? etroit : large)) * rem;
 }
 // La ligne discrète qui remplace la carte dans la visite : 44 px, sauf là où sa phrase prend une ligne de plus (largeur en rem
 // jusqu'à laquelle, hauteur en rem). Android : « Rien ne s'ouvre ? » (après Chrome) ; iPhone, iPad : le geste de Safari.
@@ -380,17 +392,19 @@ const chargerAppareil = () => (appareilP ||= import('./appareil.js').then(m => {
 // Preact écrit translate comme une propriété (vrai ou faux) : « no » y deviendrait translate="yes". L'attribut est posé à la main
 // une fois l'élément créé ; translate="no" reste dans ses props pour i18n.js, qui laisse alors le nom tel quel
 const sansTraduction = el => el?.setAttribute('translate', 'no');
-function CarteAppli({ mode, role, invite }) {
+// ligne : la ligne discrète d'emblée, la carte ne laisserait pas « Recevoir mon code » au premier écran (elle ne compte alors
+// pas pour la feuille du navigateur d'une application : celle-ci le redira, une fois, après l'inscription)
+function CarteAppli({ mode, role, invite, ligne = false, onEchec }) {
   const [a, setA] = useState(() => appareil);
   // appareil.js n'a pas pu se charger (le réseau a lâché juste après la page) : sa place ne reste pas vide toute la visite,
   // le formulaire la reprend (le navigateur ne redemande pas un module en échec : pas de carte dans cette page)
   const [echec, setEchec] = useState(false);
-  useEffect(() => { if (!a) chargerAppareil().then(m => (m ? setA(m) : setEchec(true))); }, []);
+  useEffect(() => { if (!a) chargerAppareil().then(m => { if (m) setA(m); else { setEchec(true); onEchec?.(); } }); }, []);
   const [vue] = useState(vueCarte);
   const [range, setRange] = useState(false), [rien, setRien] = useState(false);
   const mot = useRef(null);
   const app = a && integreIci(a), sys = !a ? APPLI_ICI : app && ['android', 'ios'].includes(app.systeme) ? app.systeme : null;
-  const carte = !!sys && !vue && !range;
+  const carte = !!sys && !vue && !range && !ligne;
   useEffect(() => { if (carte && a) { ecrireVisite(CLE_CARTE, 'vue'); ecrireVisite(a.CLE_APPLI_VUE, '1'); } }, [carte, a]);
   useEffect(() => { if (range || rien) mot.current?.focus(); }, [range, rien]);
   if (!sys || echec) return null;
@@ -466,10 +480,23 @@ export function AuthScreen({ store }) {
   // Petit écran (moins de 680 px de haut) : le titre et les chiffres suffisent, la phrase d'explication laisse la place au
   // bouton. Décidé à l'ouverture : le clavier qui s'ouvre ensuite ne fait rien bouger.
   const [court] = useState(() => innerWidth < 900 && innerHeight < 680);
-  // Sur téléphone, la carte du navigateur d'une application prend la place de la phrase d'explication, dès le premier affichage
-  const [sansSous] = useState(() => !!APPLI_ICI && !vueCarte() && innerWidth < 900);
-  // Et sur un petit écran, un peu de l'air autour d'elle : le rôle, l'email et « Recevoir mon code » restent au premier écran
-  const serre = court && sansSous;
+  // Le navigateur d'une application sur téléphone : la carte seulement si « Recevoir mon code » tient encore avec elle au
+  // premier écran ('carte') ; sinon sa ligne discrète au-dessus du formulaire ('ligne'), et sur un petit écran sous le titre, à
+  // la place des chiffres ('haut'). Décidé à l'ouverture, comme court.
+  const [appli] = useState(() => {
+    if (!APPLI_ICI) return '';
+    const largeur = document.documentElement.clientWidth || innerWidth, rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+    return innerWidth >= 900 || carteTient(APPLI_ICI, getLang(), largeur, innerHeight, rem) ? 'carte' : court ? 'haut' : 'ligne';
+  });
+  // appareil.js en échec : plus de ligne sous le titre, les chiffres reviennent
+  const [appliKo, setAppliKo] = useState(false);
+  const carteIci = mode === 'inscription' || mode === 'connexion' || mode === 'motdepasse';
+  const enHaut = appli === 'haut' && carteIci && !appliKo;
+  // Sur téléphone, la carte (ou sa ligne, quand elle ne tiendrait pas) prend la place de la phrase d'explication, dès le
+  // premier affichage ; la ligne d'une carte déjà vue dans la visite la laisse, s'il y a la place
+  const [sansSous] = useState(() => !!APPLI_ICI && innerWidth < 900 && (!vueCarte() || appli !== 'carte'));
+  // Et sous le titre, un peu moins d'air : le rôle, l'email, l'accord et « Recevoir mon code » restent au premier écran
+  const serre = enHaut;
   // Session expirée sans l'avoir voulu : on redemande la connexion calmement, avec son adresse déjà là
   const perdue = !!store?.sessionPerdue;
   const [email, setEmail] = useState(attente?.email || saisie?.email || (perdue && store.emailPerdu) || ''); const [pw, setPw] = useState('');
@@ -550,15 +577,15 @@ export function AuthScreen({ store }) {
   return html`<main class="auth entree">
     <div class="entree-ciel sky" aria-hidden="true"></div>
     <header class="entree-top"><span class="entree-marque"><${BrandLogo} size=${34} draw/><span>Réseau ENSAM Meknès</span></span><${LangToggle} onChange=${relang} aussitot/></header>
-    <section class="entree-promesse" style=${serre ? { paddingBlockEnd: '.6rem' } : null}>
+    <section class="entree-promesse" style=${serre ? { paddingBlock: '.5rem .6rem' } : null}>
       ${lien && mode !== 'nouveau' ? html`<p id="au-lien" class=${'lien-accueil' + (infos === null || infos?.ouverte === false || (inscrire && offreFermeePour(infos, role)) ? ' fini' : '')}><${Icon} name=${icoLien} size=${18}/><span>${phraseLien(lien, infos, inscrire, inscrire ? role : '')}</span></p>` : null}
       <${Fondateurs}/>
       <h1>Les lauréats ouvrent la porte aux étudiants.</h1>
-      <p class="auth-chiffres">${(lignes || []).map(l => html`<span>${l}</span>`)}</p>
+      ${enHaut ? html`<${CarteAppli} mode=${mode} role=${role} invite=${invite} ligne onEchec=${() => setAppliKo(true)}/>` : html`<p class="auth-chiffres">${(lignes || []).map(l => html`<span>${l}</span>`)}</p>`}
       ${(lien && mode !== 'nouveau') || court || sansSous ? null : html`<p class="entree-sous">Stage, PFE, premier emploi : les étudiants demandent, les lauréats aident et recrutent.</p>`}
     </section>
-    <form class="auth-card form entree-form" style=${serre ? { marginBlockStart: '.5rem' } : null} onSubmit=${submit} aria-label=${inscription ? 'Créer mon compte' : null}>
-      ${inscription || mode === 'connexion' || mode === 'motdepasse' ? html`<${CarteAppli} mode=${mode} role=${role} invite=${invite}/>` : null}
+    <form class="auth-card form entree-form" style=${serre ? { marginBlockStart: '.5rem', gap: '.55rem' } : null} onSubmit=${submit} aria-label=${inscription ? 'Créer mon compte' : null}>
+      ${carteIci && appli !== 'haut' ? html`<${CarteAppli} mode=${mode} role=${role} invite=${invite} ligne=${appli === 'ligne'}/>` : null}
       ${inscription ? null : html`<h2>${{ connexion: 'Se connecter', code: 'Ton code est parti', motdepasse: 'Se connecter', nouveau: 'Nouveau mot de passe' }[mode]}</h2>`}
       ${perdue && mode === 'connexion' ? html`<p class="auth-msg" id="au-session" role="status">${store.brouillonsGardes ? 'Ta session a expiré. Reconnecte-toi : ce que tu étais en train d’écrire est gardé.' : 'Ta session a expiré. Reconnecte-toi pour continuer.'}</p>` : null}
       ${bandeau ? html`<p class="invite-band"><${Icon} name="send" size=${18}/><span><strong>Bienvenue, promo ${invite} !</strong> Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.</span></p>` : null}

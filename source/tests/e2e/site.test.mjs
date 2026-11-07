@@ -6736,8 +6736,10 @@ after(() => siteEnLigne?.fermer());
 
 // Un visiteur sans compte sur la page d'entrée, sur l'appareil voulu (ua) ; langue null : jamais choisie sur ce navigateur
 // (un Chrome tout neuf) ; tactile : la plateforme d'un écran tactile (iPadOS : « MacIntel ») ; avant(ctx) : réseau à régler
-// avant la première visite ; stockage: false : une vue web sans stockage DOM (localStorage et sessionStorage valent null)
-async function porte({ ua, largeur = 360, hauteur = 740, langue = 'fr', theme = 'light', chemin = '', tactile = null, avant, stockage = true } = {}) {
+// avant la première visite ; stockage: false : une vue web sans stockage DOM (localStorage et sessionStorage valent null).
+// Par défaut, un écran de 360 × 800 : la carte du navigateur d'une application y tient avec « Recevoir mon code » (moins haut,
+// sa ligne discrète à la place : e2e « Recevoir mon code au premier écran »)
+async function porte({ ua, largeur = 360, hauteur = 800, langue = 'fr', theme = 'light', chemin = '', tactile = null, avant, stockage = true } = {}) {
   const site = await enLigne();
   const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce', colorScheme: theme, ...(ua ? { userAgent: ua } : {}) });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
@@ -6886,7 +6888,7 @@ test('page d’entrée dans Instagram : l’application ignore « Ouvrir dans Ch
   const dit = p => p.evaluate(() => document.getElementById('au-appli-dit')?.textContent ?? null);
   const boite = (p, sel) => p.locator(sel).boundingBox();
   const sousLeDoigt = (p, b) => p.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest('#au-je-etudiant'), [b.x + b.width / 2, b.y + b.height / 2]);
-  for (const [langue, theme, largeur, hauteur] of [['fr', 'light', 360, 740], ['ar', 'dark', 360, 740], ['fr', 'light', 390, 844]]) {
+  for (const [langue, theme, largeur, hauteur] of [['fr', 'light', 360, 800], ['ar', 'dark', 360, 740], ['fr', 'light', 390, 844]]) {
     const cas = `${langue} ${theme} ${largeur} × ${hauteur}`;
     const s = await porte({ ua: INSTAGRAM, langue, theme, largeur, hauteur });
     await s.page.waitForSelector('#au-appli');
@@ -6925,9 +6927,9 @@ test('page d’entrée dans Instagram : l’application ignore « Ouvrir dans Ch
   assert.deepEqual(c.erreurs, []);
   await c.ctx.close();
   // Le lien discret (après « Continuer ici ») : le même mot à sa place, le focus le suit, le formulaire ne bouge pas
-  for (const [langue, largeur] of [['ar', 360], ['fr', 360], ['fr', 320], ['fr', 412]]) {
+  for (const [langue, largeur, hauteur] of [['ar', 360], ['fr', 360], ['fr', 320, 860], ['fr', 412]]) {
     const cas = `lien discret ${langue} ${largeur}`;
-    const m = await porte({ ua: INSTAGRAM, langue, largeur });
+    const m = await porte({ ua: INSTAGRAM, langue, largeur, hauteur });
     await m.page.waitForSelector('#au-appli');
     await m.page.click('#au-appli-ici');
     await m.page.waitForSelector('#au-appli-mot #au-appli-chrome');
@@ -6987,49 +6989,89 @@ test('page d’entrée : Facebook sur iPhone (un paragraphe : Safari, son geste 
   }
 });
 
-// Sur iPhone, la carte n'a pas de bouton à elle : une phrase, le geste et « Continuer ici » dans le même paragraphe. Dans les
-// fenêtres réelles du navigateur de Facebook ou d'Instagram (375 × 553 sur un iPhone SE, 390 × 664 sur un iPhone 13), le
-// champ Email reste au premier écran, et « Recevoir mon code » aussi dès 390 × 664 (en connexion, dès 375 × 553)
-test('page d’entrée sur iPhone, dans Facebook ou Instagram : la carte compacte laisse l’email au premier écran (375 × 553) et « Recevoir mon code » (390 × 664)', async () => {
-  const BOUTON = '.entree-form button.btn.primary.wide';
-  for (const [ua, largeur, hauteur, langue, quoi, membre] of [[FACEBOOK_IOS, 375, 553, 'fr', '#au-email'], [FACEBOOK_IOS, 390, 664, 'fr', BOUTON], [INSTAGRAM_IOS, 390, 664, 'fr', BOUTON],
-    [FACEBOOK_IOS, 390, 664, 'ar', BOUTON], [INSTAGRAM_IOS, 375, 553, 'ar', '#au-email'], [FACEBOOK_IOS, 375, 553, 'fr', BOUTON, true]]) {
-    const cas = `${ua === FACEBOOK_IOS ? 'Facebook' : 'Instagram'} ${largeur} × ${hauteur} ${langue}${membre ? ' connexion' : ''}`;
-    const s = await porte({ ua, largeur, hauteur, langue, tactile: 'iPhone', avant: membre ? ctx => ctx.addInitScript(() => localStorage.setItem('ensam-deja-membre', '1')) : null });
-    await s.page.waitForSelector('#au-appli[data-systeme="ios"]');
+// Le premier écran dans le navigateur d'une application : « Recevoir mon code » y reste. La carte ne vient que si le bouton
+// tient encore avec elle ; sinon sa ligne discrète au-dessus du formulaire, et sur un petit écran (moins de 680 px de haut : la
+// fenêtre d'Instagram ou de Facebook sur la plupart des téléphones, 375 × 553 sur un iPhone SE, 390 × 664 sur un iPhone 13)
+// sous le titre, à la place des chiffres. Sur iPhone, la carte n'a pas de bouton à elle : une phrase, le geste et « Continuer
+// ici » dans le même paragraphe
+const FACEBOOK_ANDROID = 'Mozilla/5.0 (Linux; Android 14; SM-A546B Build/UP1A.231005.007; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/141.0.7390.122 Mobile Safari/537.36 [FB_IAB/FB4A;FBAV/533.0.0.48.74;IABMV/1;]';
+test('page d’entrée dans le navigateur d’une application : « Recevoir mon code » au premier écran ; la carte seulement si elle l’y laisse, sinon sa ligne discrète, sous le titre sur un petit écran (Android 360 × 640 et 390 × 664, iPhone SE 375 × 553, en arabe aussi)', async () => {
+  const BOUTON = '.entree-form button.btn.primary.wide', ACCORD = '.entree-form label.check:has(#au-ok)';
+  const noms = new Map([[INSTAGRAM, 'Instagram'], [FACEBOOK_ANDROID, 'Facebook'], [FACEBOOK_IOS, 'Facebook iPhone'], [INSTAGRAM_IOS, 'Instagram iPhone']]);
+  for (const [ua, largeur, hauteur, langue, place, membre] of [
+    [INSTAGRAM, 360, 640, 'fr', 'haut'], [INSTAGRAM, 360, 640, 'ar', 'haut'], [FACEBOOK_ANDROID, 390, 664, 'fr', 'haut'], [INSTAGRAM, 390, 664, 'ar', 'haut'],
+    [FACEBOOK_IOS, 375, 553, 'fr', 'haut'], [INSTAGRAM_IOS, 375, 553, 'ar', 'haut'], [INSTAGRAM_IOS, 390, 664, 'fr', 'haut'], [FACEBOOK_IOS, 375, 553, 'fr', 'haut', true],
+    [INSTAGRAM, 360, 700, 'fr', 'ligne'], [FACEBOOK_ANDROID, 320, 740, 'fr', 'ligne'],
+    [INSTAGRAM, 360, 800, 'fr', 'carte'], [INSTAGRAM, 360, 740, 'ar', 'carte'], [INSTAGRAM, 412, 780, 'fr', 'carte'], [FACEBOOK_IOS, 393, 690, 'fr', 'carte'], [INSTAGRAM_IOS, 375, 667, 'ar', 'carte']]) {
+    const ios = ua === FACEBOOK_IOS || ua === INSTAGRAM_IOS;
+    const cas = `${noms.get(ua)} ${largeur} × ${hauteur} ${langue}${membre ? ' connexion' : ''}`;
+    const s = await porte({ ua, largeur, hauteur, langue, tactile: ios ? 'iPhone' : null, avant: membre ? ctx => ctx.addInitScript(() => localStorage.setItem('ensam-deja-membre', '1')) : null });
+    await s.page.waitForSelector('#au-appli, #au-appli-mot');
     await s.page.evaluate(() => document.fonts.ready);
     await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* sans fin */ } }));
-    const b = await s.page.locator(quoi).boundingBox();
-    assert.ok(b.y >= 0 && b.y + b.height <= hauteur, `${cas} : ${quoi} de ${Math.round(b.y)} à ${Math.round(b.y + b.height)}, hors du premier écran`);
-    // La carte dit toujours quoi faire, et « Continuer ici » reste une vraie cible
-    assert.match(await s.page.locator('#au-appli').innerText(), langue === 'ar' ? /المس •••/ : /Touche •••/, cas);
-    assert.ok((await s.page.locator('#au-appli-ici').boundingBox()).height >= 44, `${cas} : « Continuer ici » de 44 px`);
+    // Ce qu'il faut pour s'inscrire (ou se connecter), au premier écran, avec la carte ou sa ligne
+    for (const sel of ['#au-appli, #au-appli-mot', ...(membre ? [] : ['#au-je-etudiant']), '#au-email', ...(membre ? [] : [ACCORD]), BOUTON]) {
+      const b = await s.page.locator(sel).boundingBox();
+      assert.ok(b.y >= 0 && b.y + b.height <= hauteur, `${cas} : ${sel} de ${Math.round(b.y)} à ${Math.round(b.y + b.height)}, hors du premier écran`);
+    }
+    const [carte, mot, sousLeTitre, chiffres] = await Promise.all(['#au-appli', '#au-appli-mot', '.entree-promesse #au-appli-mot', '.auth-chiffres'].map(x => s.page.locator(x).count()));
+    assert.deepEqual({ carte, mot, sousLeTitre, chiffres }, { carte: +(place === 'carte'), mot: +(place !== 'carte'), sousLeTitre: +(place === 'haut'), chiffres: +(place !== 'haut') }, cas);
+    // La carte ou sa ligne dit quoi faire : le lien vers Chrome (une cible de 44 px) sur Android, le geste de Safari sur iPhone
+    if (place === 'carte') {
+      if (ios) {
+        assert.match(await s.page.locator('#au-appli').innerText(), langue === 'ar' ? /المس •••/ : /Touche •••/, cas);
+        assert.ok((await s.page.locator('#au-appli-ici').boundingBox()).height >= 44, `${cas} : « Continuer ici » de 44 px`);
+      }
+    } else {
+      const t = (await s.page.locator('#au-appli-mot').innerText()).trim();
+      if (ios) assert.match(t, langue === 'ar' ? /^المس ••• / : /^Touche ••• /, cas);
+      else {
+        assert.equal(t, langue === 'ar' ? 'افتح الشبكة في Chrome' : 'Ouvrir le Réseau dans Chrome', cas);
+        assert.ok((await s.page.locator('#au-appli-mot #au-appli-chrome').boundingBox()).height >= 44, `${cas} : le lien de 44 px`);
+      }
+    }
+    if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])]), [], cas);
     assert.equal(await s.debordement(), 0, cas);
     assert.deepEqual(s.erreurs, [], cas);
     await s.ctx.close();
   }
+  // Sous le titre aussi, l'application qui ignore le lien : « Rien ne s'ouvre ? » à sa place, le focus le suit, rien ne bouge
+  const s = await porte({ ua: INSTAGRAM, largeur: 360, hauteur: 640 });
+  await s.page.waitForSelector('.entree-promesse #au-appli-chrome');
+  await s.page.evaluate(() => document.fonts.ready);
+  const role = await s.page.locator('#au-je-etudiant').boundingBox();
+  await s.toucherChrome();
+  await s.page.waitForFunction(() => document.activeElement?.id === 'au-appli-mot' && /^Rien ne s’ouvre/.test(document.getElementById('au-appli-mot').textContent), null, { timeout: 5000 });
+  assert.match((await s.page.locator('#au-appli-mot').innerText()).trim(), RIEN_FR);
+  const role2 = await s.page.locator('#au-je-etudiant').boundingBox();
+  assert.ok(Math.abs(role2.y - role.y) <= 1, `« Je suis à l’école » est passé de ${role.y} à ${role2.y}`);
+  assert.ok(role2.y + role2.height <= 640);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
 });
 
 // appareil.js arrive après le premier affichage (3G : une demi-seconde, 3G lente : une seconde et demie) : la place de la
-// carte (ou de la ligne discrète qui la remplace ensuite dans la visite) est gardée dès le premier affichage, rien ne glisse
+// carte (ou de sa ligne discrète, au-dessus du formulaire ou sous le titre) est gardée dès le premier affichage, rien ne glisse
 // sous le doigt qui visait « Je suis à l'école »
 test('page d’entrée dans le navigateur d’une application, appareil.js en retard : la place de la carte est gardée, le formulaire ne bouge pas quand elle arrive', async () => {
-  for (const [ua, largeur, hauteur, langue, tactile, vue] of [[INSTAGRAM, 360, 740, 'fr'], [INSTAGRAM, 390, 844, 'ar'], [INSTAGRAM, 320, 640, 'fr'], [INSTAGRAM, 412, 915, 'fr'], [VUE_WEB, 360, 740, 'fr'],
-    [FACEBOOK_IOS, 390, 844, 'fr', 'iPhone'], [FACEBOOK_IOS, 375, 667, 'ar', 'iPhone'], [INSTAGRAM, 360, 740, 'fr', null, 'chrome'], [INSTAGRAM, 390, 844, 'fr', null, 'vue'], [INSTAGRAM, 360, 740, 'fr', null, 'vue'],
-    [FACEBOOK_IOS, 360, 740, 'fr', 'iPhone', 'vue'], [FACEBOOK_IOS, 390, 844, 'fr', 'iPhone', 'vue']]) {
-    const cas = `${ua === INSTAGRAM ? 'Instagram' : ua === VUE_WEB ? 'vue web' : 'Facebook iPhone'} ${largeur} ${langue}${vue ? ' ' + vue : ''}`;
+  for (const [ua, largeur, hauteur, langue, tactile, vue, place = vue ? 'ligne' : 'carte'] of [[INSTAGRAM, 360, 800, 'fr'], [INSTAGRAM, 360, 740, 'fr', null, null, 'ligne'], [INSTAGRAM, 390, 844, 'ar'],
+    [INSTAGRAM, 320, 640, 'fr', null, null, 'haut'], [INSTAGRAM, 360, 640, 'ar', null, null, 'haut'], [INSTAGRAM, 412, 915, 'fr'], [VUE_WEB, 360, 800, 'fr'],
+    [FACEBOOK_IOS, 390, 844, 'fr', 'iPhone'], [FACEBOOK_IOS, 375, 667, 'ar', 'iPhone'], [FACEBOOK_IOS, 375, 553, 'fr', 'iPhone', null, 'haut'], [INSTAGRAM, 360, 740, 'fr', null, 'chrome'],
+    [INSTAGRAM, 360, 640, 'fr', null, 'chrome', 'haut'], [INSTAGRAM, 390, 844, 'fr', null, 'vue'], [INSTAGRAM, 360, 740, 'fr', null, 'vue'], [FACEBOOK_IOS, 360, 740, 'fr', 'iPhone', 'vue'], [FACEBOOK_IOS, 390, 844, 'fr', 'iPhone', 'vue']]) {
+    const cas = `${ua === INSTAGRAM ? 'Instagram' : ua === VUE_WEB ? 'vue web' : 'Facebook iPhone'} ${largeur} × ${hauteur} ${langue}${vue ? ' ' + vue : ''}`;
     let lacher; const tenu = new Promise(ok => { lacher = ok; });
     const s = await porte({ ua, largeur, hauteur, langue, tactile, avant: async ctx => {
       if (vue) await ctx.addInitScript(v => sessionStorage.setItem('ensam-entree-appli', v), vue);
       await ctx.route(/\/appareil\.js$/, async r => { await tenu; await r.continue(); });
     } });
-    await s.page.waitForFunction(() => document.querySelector('.auth-chiffres')?.children.length === 3);
+    // Sous le titre, la place de la ligne prend celle des chiffres
+    await s.page.waitForFunction(haut => (haut ? !!document.querySelector('.entree-promesse .entree-appli-place') : document.querySelector('.auth-chiffres')?.children.length === 3), place === 'haut');
     await s.page.evaluate(() => document.fonts.ready);
     const avant = await s.page.locator('#au-je-etudiant').boundingBox();
     assert.equal(await s.page.locator('#au-appli, #au-appli-mot').count(), 0, `${cas} : pas encore de carte`);
     const sous = await s.page.isVisible('.entree-sous');
     lacher();
-    const sel = vue ? '#au-appli-mot' : '#au-appli';
+    const sel = { carte: '#au-appli', ligne: '.entree-form #au-appli-mot', haut: '.entree-promesse #au-appli-mot' }[place];
     await s.page.waitForSelector(sel);
     await s.page.evaluate(() => document.fonts.ready);
     const apres = await s.page.locator('#au-je-etudiant').boundingBox();

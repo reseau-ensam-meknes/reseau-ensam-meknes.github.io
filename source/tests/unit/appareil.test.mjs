@@ -501,6 +501,22 @@ test('page d’entrée : la place de la ligne discrète (après « Continuer ici
   }
 });
 
+// Sur téléphone, la carte ne vient que si « Recevoir mon code » tient encore avec elle au premier écran (e2e « Recevoir mon
+// code au premier écran ») ; sinon sa ligne discrète. La fenêtre d'Instagram ou de Facebook : 360 × 640 sur la plupart des
+// téléphones Android, 360 × 700 avec la navigation par gestes, 375 × 553 sur un iPhone SE, 390 × 664 sur un iPhone 13
+test('page d’entrée : la carte du navigateur d’une application seulement si « Recevoir mon code » tient encore avec elle au premier écran', async () => {
+  const { carteTient } = await pageEntree();
+  for (const [sys, lang, largeur, hauteur] of [['android', 'fr', 360, 640], ['android', 'ar', 360, 640], ['android', 'fr', 360, 700], ['android', 'fr', 360, 740], ['android', 'fr', 390, 664],
+    ['android', 'fr', 320, 740], ['ios', 'fr', 375, 553], ['ios', 'ar', 375, 553], ['ios', 'fr', 390, 664]]) assert.equal(carteTient(sys, lang, largeur, hauteur), false, `${sys} ${lang} ${largeur} × ${hauteur}`);
+  for (const [sys, lang, largeur, hauteur] of [['android', 'fr', 360, 800], ['android', 'ar', 360, 740], ['android', 'fr', 412, 780], ['ios', 'fr', 393, 690], ['ios', 'ar', 375, 667],
+    ['ios', 'fr', 390, 844]]) assert.equal(carteTient(sys, lang, largeur, hauteur), true, `${sys} ${lang} ${largeur} × ${hauteur}`);
+  // Assez haut, elle tient toujours ; un texte agrandi demande plus de place, jamais moins
+  for (const sys of ['android', 'ios']) for (const lang of ['fr', 'ar']) for (let w = 300; w < 900; w += 2) {
+    assert.ok(carteTient(sys, lang, w, 900), `${sys} ${lang} ${w} × 900`);
+    for (const h of [600, 700, 760, 820]) if (carteTient(sys, lang, w, h, 20)) assert.ok(carteTient(sys, lang, w, h), `${sys} ${lang} ${w} × ${h}, texte agrandi`);
+  }
+});
+
 // pwa.js (lienIci) : « Ouvrir dans Chrome » n'est montré qu'à un membre connecté ; Chrome ne le connaît pas encore
 test('« Ouvrir dans Chrome » d’un membre connecté : sa page et l’étape « Se connecter » partent avec le lien ; la page d’entrée de Chrome les relit', async () => {
   const { contexteArrivee } = await pageEntree();
