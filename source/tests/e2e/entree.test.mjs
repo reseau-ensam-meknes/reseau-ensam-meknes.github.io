@@ -1175,3 +1175,17 @@ test('« Tester » en ligne, deux téléphones sur le compte : la raison est cel
   assert.deepEqual(m.erreurs, []);
   await m.ctx.close();
 });
+
+test('à l’ouverture, adresse « morte » pour la base : réabonné une fois ; le service de push refuse : la carte repasse à « Activer »', async () => {
+  let m = await appareil({ morts: ['https://push.exemple.ma/e1'] });
+  assert.deepEqual(m.appels, [['abonner_push_etat', 'https://push.exemple.ma/e1'], ['abonner_push_etat', 'https://push.exemple.ma/e2']]);
+  assert.deepEqual(await m.etat(), { carte: 'on', cur: 'https://push.exemple.ma/e2', journal: ['unsubscribe https://push.exemple.ma/e1', 'subscribe'] });
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+  m = await appareil({ morts: ['https://push.exemple.ma/e1'], pm: { refuse: 1 } });
+  assert.deepEqual(await m.etat(), { carte: 'off', cur: null, journal: ['unsubscribe https://push.exemple.ma/e1', 'subscribe'] }, 'avant : « Activées » toute la visite, sans abonnement');
+  assert.ok(await m.page.isVisible('#md-push-oui'));
+  assert.equal(await m.page.locator('#md-push-test').count(), 0, 'plus de « Tester »');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});

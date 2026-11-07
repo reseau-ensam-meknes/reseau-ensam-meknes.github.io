@@ -147,10 +147,12 @@ export async function resynchroniserPush(store) {
   const id = store.me?.id;
   if (store.mode !== 'live' || !id || resynchronises.has(id)) return;
   resynchronises.add(id);
+  let reg = null, avant;
   try {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
-    const reg = await swReady;
+    reg = await swReady;
     let sub = await reg?.pushManager?.getSubscription();
+    avant = sub?.endpoint ?? null;
     const key = await store.pushKey();
     // Autorisées sur cet appareil mais plus d'abonnement (réinstallation, données effacées) : il se réabonne, sans rien demander
     if (!sub) {
@@ -161,7 +163,11 @@ export async function resynchroniserPush(store) {
       sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
     }
     await enregistrerPush(store, reg, sub, key);
-  } catch { /* hors ligne, ou navigateur qui veut un geste : à la prochaine ouverture */ }
+  } catch { /* hors ligne, ou navigateur qui veut un geste : à la prochaine ouverture */ } finally {
+    // L'abonnement a changé (refait, ou retiré sans qu'un nouveau soit accepté) : les cartes, la pastille et le bandeau le
+    // relisent, au lieu de dire « Activées » toute la visite sans abonnement
+    if (avant !== undefined && ((await reg?.pushManager?.getSubscription().catch(() => null))?.endpoint ?? null) !== avant) await annoncerPush(store);
+  }
 }
 if (typeof window !== 'undefined') {
   // Déconnexion (store.signOut) : cet appareil a été retiré du compte dans la base ; reconnecté sans recharger la page, il s'y
