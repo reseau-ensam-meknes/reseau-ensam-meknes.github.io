@@ -6876,7 +6876,8 @@ revoke all on function public.semaine_push() from public, anon, authenticated;
 -- groupe_jour (19:30, après la veille) : les messages de ses groupes (ceux de son profil : parcours, ville, pays, comme
 -- autoGroups de logic.js ; et ceux qu'il suit) écrits par d'autres depuis sa dernière visite (la base n'a pas de repère
 -- « lu » par groupe : une heure de marge après la visite, 24 h au plus). Le groupe le plus actif en détail, autres = ses
--- autres groupes qui ont du nouveau. Au plus un par jour. DOUCE.
+-- autres groupes qui ont du nouveau. Au plus un par jour. DOUCE. Pas pour qui n'est pas venu depuis 14 jours (le repère
+-- d'activité de match_jour) : un envoi à beaucoup, chaque soir, jamais ouvert ; le rappel du soir, lui, s'espace.
 -- ---------------------------------------------------------------------
 -- Clés des groupes d'un profil (mêmes clés que groupKey / groupeFiliere / autoGroups de logic.js)
 create or replace function public.groupes_auto(p_filiere text, p_ville text, p_pays text) returns text[]
@@ -6931,11 +6932,14 @@ begin
     where p.role in ('etudiant','laureat') and (m.groupe, p.ecole) in (select x.groupe, x.ecole from actifs x)
   ),
   abonnes as materialized (
-    select x.id, public.derniere_visite(x.id) as vu from (select distinct m.id from membres m) x
-    where exists (select 1 from public.push_subscriptions s where s.user_id = x.id)
-      and public.push_voulu(x.id, 'groupe_jour')
-      and not exists (select 1 from public.notif_programme n where n.user_id = x.id and n.kind = 'groupe_jour'
-                        and n.at >= v_debut and n.at < v_debut + interval '1 day')
+    select y.* from (
+      select x.id, public.derniere_visite(x.id) as vu from (select distinct m.id from membres m) x
+      where exists (select 1 from public.push_subscriptions s where s.user_id = x.id)
+        and public.push_voulu(x.id, 'groupe_jour')
+        and not exists (select 1 from public.notif_programme n where n.user_id = x.id and n.kind = 'groupe_jour'
+                          and n.at >= v_debut and n.at < v_debut + interval '1 day')) y
+    -- Venu ces 14 derniers jours
+    where y.vu > now() - interval '14 days'
   ),
   comptes as materialized (
     select m.id, m.groupe, m.ecole, count(*) as n

@@ -186,6 +186,34 @@ test('P11d groupes actifs du jour : messages des autres depuis sa dernière visi
   await db.query('delete from public.blocages');
 });
 
+test('P11d groupes actifs du jour : rien pour qui n’ouvre plus l’application (pas venu depuis 14 jours) ; il revient, ça repart', async () => {
+  const PEI = 'filiere:electro-industriel';
+  const venu = (u, ilYa) => db.query(`insert into public.visites (user_id, vu_at) values ($1, now() - $2::interval) on conflict (user_id) do update set vu_at = excluded.vu_at`, [u, ilYa]);
+  try {
+    await db.exec('delete from public.groupe_messages; delete from public.notif_programme;');
+    // Salma écrit dans le groupe de son parcours : Youssef et Karim en sont
+    for (const t of ['Qui a un contact chez Lear ?', 'Je partage mon rapport de stage']) {
+      await db.query(`insert into public.groupe_messages (groupe, author_id, body) values ($1, $2, $3)`, [PEI, ETU, t]);
+    }
+    await venu(LAU2, '15 days');
+    await venu(LAU, '13 days');
+    await lancer('groupe_jour_push');
+    const f = Object.fromEntries((await file('groupe_jour')).map(x => [x.qui, x.data]));
+    assert.equal(f.LAU2, undefined, 'Karim n’est pas venu depuis 15 jours : un envoi chaque soir, jamais ouvert, non');
+    assert.deepEqual(f.LAU, { n: 2, groupe: 'Électro-industriel', gkey: PEI, autres: 0 }, 'Youssef, venu il y a 13 jours : oui');
+    assert.equal((await un(`select count(*)::int n from public.notif_programme where user_id = $1`, [LAU2])).n, 0, 'rien de compté pour Karim');
+    // Karim revient (avant ces messages) : ça repart
+    await db.query('delete from public.notif_programme');
+    await venu(LAU2, '25 hours');
+    await lancer('groupe_jour_push');
+    assert.deepEqual((await file('groupe_jour')).filter(x => x.qui === 'LAU2').map(x => x.data), [{ n: 2, groupe: 'Électro-industriel', gkey: PEI, autres: 0 }]);
+  } finally {
+    for (const u of [LAU, LAU2]) await venu(u, '2 days');
+    await db.query('delete from public.notif_programme');
+    await vider();
+  }
+});
+
 test('P11d les groupes de la base sont ceux de l’application (autoGroups, groupLabel)', async () => {
   const profils = (await db.query('select id, role, filiere, ville, pays from public.profiles')).rows;
   for (const p of profils) {
