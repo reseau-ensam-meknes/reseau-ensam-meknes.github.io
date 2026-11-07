@@ -118,13 +118,13 @@ test('après un rendez-vous : un merci possible pour l’étudiant, le marquer t
 
 test('offre mise de côté qui ferme : demain ou dans 2 jours, la date limite du Maroc ; plusieurs, une seule ligne groupée', () => {
   const d = CAS.offre_bientot[0]();
-  assert.deepEqual([t('offre_bientot', d).title, t('offre_bientot', d).body], ['« Stage lean » ferme dans 2 jours', 'Tu l’as mise de côté · OCP. Date limite : mardi 3 novembre.']);
-  assert.equal(t('offre_bientot', { ...d, jours: 1, date_limite: '2026-11-02' }).title, '« Stage lean » ferme demain');
-  assert.equal(t('offre_bientot', { ...d, jours: undefined }).title, '« Stage lean » ferme bientôt');
+  assert.deepEqual([t('offre_bientot', d).title, t('offre_bientot', d).body], ['Ferme dans 2 jours : « Stage lean »', 'Tu l’as mise de côté · OCP. Date limite : mardi 3 novembre.']);
+  assert.equal(t('offre_bientot', { ...d, jours: 1, date_limite: '2026-11-02' }).title, 'Ferme demain : « Stage lean »');
+  assert.equal(t('offre_bientot', { ...d, jours: undefined }).title, 'Ferme bientôt : « Stage lean »');
   assert.equal(t('offre_bientot', { ...d, date_limite: null }).body, 'Tu l’as mise de côté · OCP.');
   const ar = t('offre_bientot', d, 'ar');
-  assert.deepEqual([ar.title, ar.body], [`«${FSI}Stage lean${PDI}» يُغلق بعد يومين`, `عرض حفظته · ${FSI}OCP${PDI}. آخر أجل: الثلاثاء، 3 نونبر.`]);
-  assert.equal(t('offre_bientot', { ...d, jours: 1 }, 'ar').title, `«${FSI}Stage lean${PDI}» يُغلق غدًا`);
+  assert.deepEqual([ar.title, ar.body], [`يُغلق بعد يومين: «${FSI}Stage lean${PDI}»`, `عرض حفظته · ${FSI}OCP${PDI}. آخر أجل: الثلاثاء، 3 نونبر.`]);
+  assert.equal(t('offre_bientot', { ...d, jours: 1 }, 'ar').title, `يُغلق غدًا: «${FSI}Stage lean${PDI}»`);
   // La même ligne que l'annonce de l'offre (offre_alerte)
   assert.equal(t('offre_bientot', d).tag, t('offre_alerte', { titre: 'Stage lean', offre: OFFRE }).tag);
   for (const [n, fr, ar2] of [[2, '2 offres mises de côté ferment bientôt', 'عرضان محفوظان يُغلقان قريبًا'], [3, '3 offres mises de côté ferment bientôt', '3 عروض محفوظة تُغلق قريبًا'],
@@ -136,6 +136,19 @@ test('offre mise de côté qui ferme : demain ou dans 2 jours, la date limite du
   // Groupée d'une seule offre, ou sans titre : pas de faux groupe, pas de notification vide
   assert.equal(t('offre_bientot', { n: 1, groupe: true }), null);
   assert.equal(t('offre_bientot', { ...d, n: 1, groupe: true }).tag, `offre-${OFFRE}`);
+});
+
+test('offre mise de côté qui ferme : l’échéance en tête du titre, même avec un long titre d’offre (coupé à 80, elle reste)', () => {
+  // 83 caractères (offers.titre en accepte 140) : la fin du titre est coupée, jamais « demain »
+  const long = 'Stage PFE – Ingénieur méthodes et amélioration continue (H/F) – Usine de Tanger Med';
+  assert.equal(Array.from(long).length, 83);
+  const d = { ...CAS.offre_bientot[0](), titre: long };
+  for (const [jours, fr, ar] of [[1, 'Ferme demain', 'يُغلق غدًا'], [2, 'Ferme dans 2 jours', 'يُغلق بعد يومين'],
+    [5, 'Ferme dans 5 jours', 'يُغلق بعد 5 أيام'], [undefined, 'Ferme bientôt', 'يُغلق قريبًا']]) {
+    const f = t('offre_bientot', { ...d, jours }).title, a = t('offre_bientot', { ...d, jours }, 'ar').title;
+    assert.ok(f.startsWith(`${fr} : « Stage PFE – Ingénieur méthodes`) && f.endsWith('…') && Array.from(f).length <= 80, f);
+    assert.ok(a.startsWith(`${ar}: «${FSI}Stage PFE – Ingénieur méthodes`) && a.endsWith('…') && Array.from(a).length <= 80, a);
+  }
 });
 
 test('demande toujours sans aide (lauréats du parcours) ; demande mise en pause (son auteur)', () => {

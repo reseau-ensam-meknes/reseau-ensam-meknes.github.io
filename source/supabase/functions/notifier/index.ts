@@ -749,14 +749,15 @@ const NOTIFS: Record<string, { route: string; fr: Texte; ar: Texte }> = {
       : v.origine === 'partagee' ? 'عرض تمت مشاركته معك' : 'عرض جديد لك', `${v.titre}${v.entreprise ? ` · ${v.entreprise}` : ''}${ORIGINE_ALERTE.ar[v.origine || ''] || ''}`],
   },
   // Le matin : une offre mise de côté ferme bientôt (jours : 1 ou 2) ; elle prend la ligne de l'annonce de l'offre (tag).
+  // L'échéance d'abord : un long titre d'offre est coupé à 80 caractères par la fin, jamais « demain ».
   // Plusieurs le même jour : une seule notification groupée (groupe, n)
   offre_bientot: {
     route: 'offres',
     fr: v => v.lot && v.n >= 2 ? [`${v.n} offres mises de côté ferment bientôt`, 'Leur date limite tombe dans les prochains jours.']
-      : !v.titre ? null : [`« ${v.titre} » ${v.jours === 1 ? 'ferme demain' : v.jours >= 2 && v.jours <= 7 ? `ferme dans ${v.jours} jours` : 'ferme bientôt'}`,
+      : !v.titre ? null : [`${v.jours === 1 ? 'Ferme demain' : v.jours >= 2 && v.jours <= 7 ? `Ferme dans ${v.jours} jours` : 'Ferme bientôt'} : « ${v.titre} »`,
         `Tu l’as mise de côté${v.entreprise ? ` · ${v.entreprise}` : ''}.${v.limite ? ` Date limite : ${v.limite}.` : ''}`],
     ar: v => v.lot && v.n >= 2 ? [arN(v.n, ['', 'عرضان محفوظان يُغلقان قريبًا', '{n} عروض محفوظة تُغلق قريبًا', '{n} عرضًا محفوظًا يُغلق قريبًا']), 'آخر أجل للتقديم عليها في الأيام القادمة.']
-      : !v.titre ? null : [`«${v.titre}» ${v.jours === 1 ? 'يُغلق غدًا' : v.jours === 2 ? 'يُغلق بعد يومين' : v.jours >= 3 && v.jours <= 7 ? `يُغلق بعد ${v.jours} أيام` : 'يُغلق قريبًا'}`,
+      : !v.titre ? null : [`${v.jours === 1 ? 'يُغلق غدًا' : v.jours === 2 ? 'يُغلق بعد يومين' : v.jours >= 3 && v.jours <= 7 ? `يُغلق بعد ${v.jours} أيام` : 'يُغلق قريبًا'}: «${v.titre}»`,
         `عرض حفظته${v.entreprise ? ` · ${v.entreprise}` : ''}.${v.limite ? ` آخر أجل: ${v.limite}.` : ''}`],
   },
   // Un commentaire sur mon offre ; la réponse de son auteur sous une offre où j'ai écrit
