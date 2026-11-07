@@ -1162,25 +1162,28 @@ for (const [langue, theme] of [['fr', 'light'], ['ar', 'dark']]) {
 const siteCss = () => fs.readFileSync(path.join(SITE, 'site.css'), 'utf8');
 
 // Un visiteur dont les polices (ou autre chose) restent en route : la page n'est jamais « chargée », ni calme
-async function visiteLegere({ query = '', retenir = /\.woff2$/, largeur = 390, hauteur = 844, langue = 'fr' } = {}) {
+// (cssVu : l'appareil a déjà appliqué le CSS complet de cette version, comme après une déconnexion)
+async function visiteLegere({ query = '', retenir = /\.woff2$/, largeur = 390, hauteur = 844, langue = 'fr', cssVu = false } = {}) {
   const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce' });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
-  const js = [], tenus = []; let tenir = true;
-  ctx.on('request', q => { const u = new URL(q.url()); if (/\.m?js$/.test(u.pathname)) js.push(u.pathname.slice(1)); });
+  const js = [], css = [], tenus = []; let tenir = true;
+  ctx.on('request', q => { const u = new URL(q.url()); if (/\.m?js$/.test(u.pathname)) js.push(u.pathname.slice(1)); else if (u.pathname === '/site.css') css.push(q.url()); });
   if (retenir) await ctx.route(retenir, r => (tenir ? tenus.push(r) : r.continue()));
-  await ctx.addInitScript(l => { if (!sessionStorage.getItem('__init')) { sessionStorage.setItem('__init', '1'); localStorage.setItem('ensam-lang', l); } }, langue);
+  const vu = cssVu ? fs.readFileSync(path.join(SITE, 'index.html'), 'utf8').match(/window\.ENSAM_CSS='([^']+)'/)[1] : null;
+  await ctx.addInitScript(([l, vu]) => { if (!sessionStorage.getItem('__init')) { sessionStorage.setItem('__init', '1'); localStorage.setItem('ensam-lang', l); if (vu) localStorage.setItem('ensam-css', vu); } }, [langue, vu]);
   const page = await ctx.newPage(), erreurs = [];
   page.on('pageerror', e => erreurs.push(e.message));
   await page.goto(site.adresse + query, { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#entree .entree-form');
   const lacher = async () => { tenir = false; for (const r of tenus.splice(0)) await r.continue().catch(() => {}); };
   const app = () => page.waitForFunction(() => window.ENSAM_APP, null, { timeout: 15000 });
-  return { ctx, page, erreurs, js, tenus, lacher, app };
+  return { ctx, page, erreurs, js, css, tenus, lacher, app };
 }
-const parti = (page, re) => page.waitForFunction(re => performance.getEntriesByType('resource').some(e => new RegExp(re).test(e.name)), re.source, { timeout: 5000 });
+const parti =(page, re) => page.waitForFunction(re => performance.getEntriesByType('resource').some(e => new RegExp(re).test(e.name)), re.source, { timeout: 5000 });
 
 test('page d’entrée plus légère : avant un geste, ni le magasin ni l’application (9 fichiers JS, 10 au plus, contre 13 avant) ; au premier toucher, ils partent', async () => {
-  const v = await visiteLegere();
+  // Même sur un appareil qui a déjà reçu le CSS complet (un membre déconnecté) : rien ne le précharge pour un visiteur
+  const v = await visiteLegere({ cssVu: true });
   await v.page.waitForTimeout(2500);
   const { magasin, modules } = await v.page.evaluate(() => ({ magasin: window.ENSAM_MAGASIN || [], modules: window.ENSAM_MODULES || [] }));
   assert.ok(magasin.includes('store.js') && modules.includes('app.js'), 'les listes du magasin et de l’application (site construit)');
@@ -1196,6 +1199,7 @@ test('page d’entrée plus légère : avant un geste, ni le magasin ni l’appl
   await v.page.waitForSelector('#entree .entree-scene .scene svg');
   assert.equal(await v.page.evaluate(() => typeof window.ENSAM_APP), 'undefined');
   assert.equal(await v.page.locator('link[data-css="site"]').count(), 0, 'le CSS complet attend l’application');
+  assert.deepEqual(v.css, [], 'ni demandé ni préchargé avant un geste');
   // Premier geste : le magasin part aussitôt, puis l'application ; la page marche comme avant
   await v.page.click('#au-je-etudiant');
   await parti(v.page, /\/store\.js$/);
@@ -1341,9 +1345,9 @@ test('page d’entrée plus légère : un membre connecté voit la forme de l’
   let tenir = true; const tenus = [];
   const m = await membreLeger({ avant: ctx => ctx.route(/\/site\.css/, r => (tenir ? tenus.push(r) : r.continue())) });
   await m.page.waitForSelector('.shell.squelette');
-  // Le CSS complet est demandé tout de suite (préchargé dans <head>), avec le magasin et l'application
+  // Le CSS complet est demandé (cet appareil ne l'a jamais reçu : par l'application, son code arrivé ; le test suivant)
   for (let i = 0; i < 50 && !tenus.length; i++) await m.page.waitForTimeout(100);
-  assert.ok(tenus.length >= 1, 'site.css demandé dès le haut de la page');
+  assert.ok(tenus.length >= 1, 'site.css demandé');
   await m.page.waitForFunction(() => performance.getEntriesByType('resource').some(e => /\/app\.js$/.test(e.name) && e.responseEnd > 0), null, { timeout: 10000 });
   await m.page.waitForTimeout(800);
   assert.equal(await m.page.locator(ACCUEIL).count(), 0, 'pas d’accueil sans son CSS');
@@ -1352,6 +1356,45 @@ test('page d’entrée plus légère : un membre connecté voit la forme de l’
   await m.page.waitForSelector(ACCUEIL, { timeout: 15000 });
   assert.equal(await m.page.locator('#css-entree').count(), 0);
   assert.equal(await m.page.locator(ACCUEIL).evaluate(e => getComputedStyle(e).display), 'grid', 'l’accueil a tout son style');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// Un membre dont l'appareil n'a jamais appliqué cette version du CSS complet : préchargés ensemble, ses 39 Ko prenaient en 3G
+// le réseau au code qu'attendent ses données (mesuré : l'accueil 0,3 s plus tard qu'avec le CSS dans la page). Il part quand
+// l'application le demande, tout son code arrivé, pendant la lecture des données ; noté (ensam-css), il est ensuite gardé par le
+// navigateur : la fois suivante, préchargé dès le haut de la page, comme avant
+test('page d’entrée plus légère : un membre dont l’appareil n’a pas ce CSS le demande une fois le code de l’application arrivé, jamais avant ; la fois suivante, dès le haut de la page', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  let tenir = true; const tenus = [], css = [];
+  const m = await membreLeger({ avant: async ctx => {
+    ctx.on('request', q => { if (new URL(q.url()).pathname === '/site.css') css.push(q.url()); });
+    await ctx.route(/\/app\.js$/, r => (tenir ? tenus.push(r) : r.continue()));
+  } });
+  await m.page.waitForSelector('.shell.squelette');
+  // L'entrée a lancé le magasin et l'application : le code du magasin est arrivé, celui de l'application est retenu
+  await m.page.waitForFunction(() => window.ENSAM_ENTREE && performance.getEntriesByType('resource').some(e => /\/store\.js$/.test(e.name) && e.responseEnd > 0), null, { timeout: 10000 });
+  await m.page.waitForTimeout(1000);
+  assert.ok(tenus.length >= 1, 'app.js retenu');
+  assert.deepEqual(css, [], 'le CSS complet attend le code de l’application');
+  assert.equal(await m.page.locator('link[data-css="site"]').count(), 0);
+  tenir = false; for (const r of tenus.splice(0)) await r.continue();
+  await m.page.waitForSelector(ACCUEIL, { timeout: 15000 });
+  assert.equal(css.length, 1, 'demandé une fois, par l’application');
+  assert.equal(await m.page.locator(ACCUEIL).evaluate(e => getComputedStyle(e).display), 'grid', 'l’accueil a tout son style');
+  const { vu, adresse } = await m.page.evaluate(() => ({ vu: localStorage.getItem('ensam-css'), adresse: window.ENSAM_CSS }));
+  assert.match(adresse, /^site\.css\?v=[0-9a-f]{10}$/);
+  assert.equal(vu, adresse, 'noté sur l’appareil, avec son empreinte');
+  // La fois suivante : préchargé dès le haut de la page, pendant que le code de l'application est encore retenu
+  tenir = true; css.length = 0;
+  await m.page.reload({ waitUntil: 'domcontentloaded' });
+  await m.page.waitForSelector('.shell.squelette');
+  for (let i = 0; i < 50 && !css.length; i++) await m.page.waitForTimeout(100);
+  assert.ok(css.length >= 1, 'site.css demandé dès le haut de la page');
+  assert.ok(tenus.length >= 1, 'app.js retenu');
+  assert.equal(await m.page.evaluate(() => typeof window.ENSAM_APP), 'undefined');
+  tenir = false; for (const r of tenus.splice(0)) await r.continue();
+  await m.page.waitForSelector(ACCUEIL, { timeout: 15000 });
   assert.deepEqual(m.erreurs, []);
   await m.ctx.close();
 });
