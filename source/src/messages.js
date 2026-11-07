@@ -40,13 +40,14 @@ const apercus = new Map();
 // Message préparé (ex. l'administration demande un CV) : repris une seule fois à l'ouverture de la conversation
 const brouillons = new Map();
 // icone, compte : le « Merci » des membres fondateurs (accueil) a son cœur et ne compte pas les messages non lus
-// aria : le nom du bouton quand il n'a pas de libellé à l'écran (label vide : l'icône seule)
+// aria : le nom du bouton quand il n'a pas de libellé à l'écran (label vide : l'icône seule), ou quand le libellé peut
+// se cacher (.msg-btn-txt : les filleuls, sur un petit téléphone)
 export function MessageBtn({ ctx, p, label = 'Écrire', cls = 'btn small', texte = '', icone = 'chat', compte = true, aria }) {
   const id = p?.id || p;
   if (!id || !ctx.store.peutDiscuter?.(id)) return null;
   const n = compte ? (ctx.data.messages || []).filter(m => m.author_id === id && m.dest_id === ctx.me.id && !m.lu_at).length : 0;
   return html`<button type="button" class=${cls + ' msg-btn'} aria-label=${aria} title=${aria} onClick=${e => { e.stopPropagation(); if (texte) brouillons.set(id, texte); ctx.ecrire ? ctx.ecrire(id) : ctx.go('messages/' + id); }}>
-    <${Icon} name=${icone} size=${15}/>${label ? ` ${label}` : null}${n ? html` <span class="count">${n}</span>` : null}</button>`;
+    <${Icon} name=${icone} size=${15}/>${label ? html` <span class="msg-btn-txt">${label}</span>` : null}${n ? html` <span class="count">${n}</span>` : null}</button>`;
 }
 
 function Apercu({ m, me }) {
@@ -800,7 +801,7 @@ injectCSS('messagerie', `
 .sugg-row { display: flex; gap: .3rem; overflow-x: auto; padding: .2rem .8rem .2rem; scrollbar-width: none; }
 .sugg { display: flex; flex-direction: column; align-items: center; gap: .2rem; width: 76px; flex: none; padding: .4rem .2rem; border-radius: 12px; text-decoration: none; color: var(--ink); text-align: center; }
 .sugg:hover { background: var(--surface-2); }
-.sugg-nom { font-size: .8rem; font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sugg-nom { font-size: var(--fs-2); font-weight: 600; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sugg-lien { font-size: var(--fs-1); color: var(--muted); }
 .convs { list-style: none; margin: 0; padding: .3rem .45rem; overflow-y: auto; flex: 1; min-height: 0; }
 .conv-item { display: flex; align-items: center; gap: .75rem; padding: .6rem .65rem; border-radius: 14px; color: var(--ink); text-decoration: none; transition: background .15s; }
@@ -808,12 +809,14 @@ injectCSS('messagerie', `
 .conv-item.on { background: var(--accent-soft); }
 .ci-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .ci-top, .ci-bas { display: flex; align-items: center; gap: .5rem; min-width: 0; }
-.ci-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Un nom dans son propre sens (dir="auto") : coupé à sa fin, mais posé du côté de la lecture de l'écran, contre le visage */
+/* Un nom long (« Bureau des relations entreprises ») prend deux lignes plutôt que de finir en « … » ; l'heure reste sur la première */
+.ci-top { align-items: baseline; }
+.ci-name { flex: 1; min-width: 0; font-weight: 600; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+/* Un nom dans son propre sens (dir="auto"), posé du côté de la lecture de l'écran, contre le visage */
 .ci-name, .conv-who-txt strong { text-align: left; }
 :root[dir="rtl"] .ci-name, :root[dir="rtl"] .conv-who-txt strong { text-align: right; }
 .ci-time { font-size: var(--fs-1); color: var(--muted); flex: none; }
-.ci-prev { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: .3rem; color: var(--muted); font-size: .88rem; overflow: hidden; white-space: nowrap; }
+.ci-prev { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: .3rem; color: var(--muted); font-size: var(--fs-2); overflow: hidden; white-space: nowrap; }
 .ci-prev > span { white-space: nowrap; }
 .ci-prev > :not(.ci-moi) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ci-moi { flex: none; }
@@ -838,13 +841,13 @@ injectCSS('messagerie', `
 .conv-who:hover { background: var(--surface-2); }
 .conv-who-txt { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
 .conv-who-txt strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.conv-sub { font-size: .8rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conv-sub { font-size: var(--fs-2); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tape-txt { color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: .3rem; }
 .tape-dots { display: inline-flex; gap: 3px; align-items: center; }
 .tape-dots i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .5; animation: tape 1.2s infinite ease-in-out; }
 .tape-dots i:nth-child(2) { animation-delay: .15s; } .tape-dots i:nth-child(3) { animation-delay: .3s; }
 @keyframes tape { 0%, 60%, 100% { transform: translateY(0); opacity: .45; } 30% { transform: translateY(-4px); opacity: 1; } }
-.conv-rdv { display: flex; align-items: center; gap: .5rem; padding: .45rem .9rem; background: var(--accent-soft); color: var(--blue-text); font-size: .86rem; font-weight: 500; border-bottom: 1px solid var(--line); }
+.conv-rdv { display: flex; align-items: center; gap: .5rem; padding: .45rem .9rem; background: var(--accent-soft); color: var(--blue-text); font-size: var(--fs-2); font-weight: 500; border-bottom: 1px solid var(--line); }
 .conv-fil { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: .8rem clamp(.7rem, 3vw, 2rem) 1rem; display: flex; flex-direction: column; }
 .conv-safe { align-self: center; max-width: 30rem; margin: .1rem auto .5rem; padding: .3rem .6rem; color: var(--muted); font-size: var(--fs-1); text-align: center; text-wrap: balance; }
 .conv-safe .ico { display: inline-block; vertical-align: -2px; margin-inline-end: .3rem; }
@@ -852,7 +855,7 @@ injectCSS('messagerie', `
 .cs-duo { display: inline-flex; align-items: flex-end; margin-bottom: .4rem; }
 .cs-duo > :first-child { margin-inline-end: -14px; box-shadow: 0 0 0 3px var(--surface); border-radius: 50%; z-index: 1; }
 .cs-duo > :last-child { box-shadow: 0 0 0 3px var(--surface), var(--sh2); border-radius: 50%; }
-.conv-start strong { font-family: var(--f-display); font-size: 1.15rem; }
+.conv-start strong { font-family: var(--f-display); font-size: var(--fs-4); }
 .chips.brise { justify-content: center; max-width: 30rem; }
 .jour { align-self: center; margin: .9rem 0 .35rem; position: sticky; top: 0; z-index: 1; }
 .jour span { display: inline-block; padding: .22rem .8rem; border-radius: var(--r-pill); background: color-mix(in srgb, var(--surface) 90%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); font-size: var(--fs-1); font-weight: 600; letter-spacing: .01em; color: var(--ink-2); box-shadow: 0 0 0 1px var(--hair), var(--sh1); }
@@ -891,20 +894,20 @@ injectCSS('messagerie', `
 .msg.mine .msg-acts-row { justify-content: flex-end; }
 .react-bar { display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--raised); border: 0; box-shadow: var(--sh3); animation: react-bar-in .2s var(--ease); }
 @keyframes react-bar-in { from { opacity: 0; transform: translateY(6px) scale(.94); } }
-.react-btn { width: 40px; height: 40px; border-radius: 50%; border: 0; background: none; font-size: 1.3rem; line-height: 1; cursor: pointer; display: grid; place-items: center; transition: transform .15s var(--ease), background .15s; }
+.react-btn { width: 40px; height: 40px; border-radius: 50%; border: 0; background: none; font-size: var(--fs-5); line-height: 1; cursor: pointer; display: grid; place-items: center; transition: transform .15s var(--ease), background .15s; }
 .react-btn:hover { transform: scale(1.18); background: var(--surface-2); }
 .react-btn:active { transform: scale(.9); }
 .react-btn.on { background: var(--accent-soft); box-shadow: inset 0 0 0 2px var(--accent); }
 .msg.a-react { margin-bottom: 18px; }
 .msg.a-react .msg-actions { padding-top: 18px; }
 .msg-reacts { position: absolute; bottom: -15px; inset-inline-start: 10px; display: flex; gap: 3px; z-index: 1; }
-.react-pill { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 6px; border-radius: 12px; background: var(--raised); border: 0; box-shadow: var(--sh2); font-size: .9rem; line-height: 1; color: var(--ink); animation: react-pop .28s var(--ease); }
+.react-pill { display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 6px; border-radius: 12px; background: var(--raised); border: 0; box-shadow: var(--sh2); font-size: var(--fs-3); line-height: 1; color: var(--ink); animation: react-pop .28s var(--ease); }
 button.react-pill { cursor: pointer; font-family: inherit; }
 .react-pill.mien { border-color: var(--accent); background: var(--accent-soft); }
 .react-n { font-size: var(--fs-1); font-weight: 600; color: var(--muted); }
 @keyframes react-pop { 0% { transform: scale(.3); opacity: 0; } 70% { transform: scale(1.12); } }
-.msg-cite { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; min-width: 0; margin: 0 0 .3rem; padding: .3rem .6rem; border: 0; border-inline-start: 3px solid var(--accent); border-radius: 10px; background: color-mix(in srgb, var(--accent) 9%, var(--surface-2)); color: var(--ink); font: inherit; font-size: .82rem; text-align: start; cursor: pointer; }
-.msg-cite strong { font-size: .78rem; color: var(--blue-text); }
+.msg-cite { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; width: 100%; min-width: 0; margin: 0 0 .3rem; padding: .3rem .6rem; border: 0; border-inline-start: 3px solid var(--accent); border-radius: 10px; background: color-mix(in srgb, var(--accent) 9%, var(--surface-2)); color: var(--ink); font: inherit; font-size: var(--fs-2); text-align: start; cursor: pointer; }
+.msg-cite strong { font-size: var(--fs-1); color: var(--blue-text); }
 .msg.mine .msg-cite { background: color-mix(in srgb, var(--accent) 80%, var(--ink)); border-inline-start-color: var(--accent-ink); color: var(--accent-ink); }
 .msg.mine .msg-cite strong { color: var(--accent-ink); }
 .msg-cite.supprime { cursor: default; font-style: italic; opacity: .8; }
@@ -958,8 +961,8 @@ button.react-pill { cursor: pointer; font-family: inherit; }
 .composer.ecrire { flex-direction: column; align-items: stretch; gap: .4rem; }
 .composer.ecrire .comp-row { flex: none; }
 .comp-cite { display: flex; align-items: center; gap: .5rem; padding-block: .35rem; padding-inline: .7rem .3rem; border-radius: 12px; border-inline-start: 3px solid var(--accent); background: var(--surface-2); color: var(--accent); animation: fade-in .18s ease; }
-.comp-cite-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; color: var(--ink); font-size: .84rem; }
-.comp-cite-txt strong { color: var(--blue-text); font-size: .78rem; }
+.comp-cite-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; color: var(--ink); font-size: var(--fs-2); }
+.comp-cite-txt strong { color: var(--blue-text); font-size: var(--fs-1); }
 .comp-row textarea { flex: 1; resize: none; min-height: 42px; max-height: 140px; padding: .6rem .95rem; border-radius: 21px; line-height: 1.4; background: var(--surface-2); border-color: transparent; }
 .comp-row textarea:focus { border-color: var(--accent); background: var(--surface); }
 /* Le champ : une seule pastille (photo + texte) qui s'éclaire au focus ; envoyer reste à côté */
@@ -979,7 +982,7 @@ button.react-pill { cursor: pointer; font-family: inherit; }
 .send-btn:active { transform: scale(.9); }
 .send-btn:disabled { opacity: .45; cursor: default; }
 .send-btn .ico-send { margin-inline-start: -2px; }
-.composer.ferme { color: var(--muted); font-size: .88rem; padding: .9rem 1rem; padding-bottom: calc(.9rem + env(safe-area-inset-bottom, 0px)); }
+.composer.ferme { color: var(--muted); font-size: var(--fs-2); padding: .9rem 1rem; padding-bottom: calc(.9rem + env(safe-area-inset-bottom, 0px)); }
 .composer.rec .comp-row { align-items: center; gap: .6rem; }
 .rec-dot { width: 11px; height: 11px; border-radius: 50%; background: var(--bad); animation: rec 1s ease-in-out infinite; flex: none; }
 @keyframes rec { 50% { opacity: .3; } }

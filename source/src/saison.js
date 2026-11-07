@@ -132,7 +132,7 @@ export function Filleuls({ ctx }) {
     <h2 class="esp-h" id="esp-filleuls-titre">Mes filleuls${list.length ? html` <span class="count">${list.length}</span>` : null}</h2>
     ${list.length ? html`<ul class="esp-lignes">${list.map(p => html`<li key=${p.id}><div class="esp-ligne">
       <${Person} p=${p} onOpen=${openProfile} size=${44} sub=${html`<span>${NIVEAUX[niveauOf(p, saison)]?.short || ''}</span> · <span translate="no">${filiereCourte(p.filiere)}</span>`}/>
-      <${MessageBtn} ctx=${ctx} p=${p} cls="btn tiny tonal"/></div></li>`)}</ul>` : null}
+      <${MessageBtn} ctx=${ctx} p=${p} cls="btn tiny tonal" aria=${`Écrire à ${(p.full_name || '').split(' ')[0]}`}/></div></li>`)}</ul>` : null}
     <div class="esp-note"><p>${list.length ? 'Envoie-leur un mot de bienvenue : c’est souvent le seul lauréat qu’ils connaissent.' : 'Tu es parrain disponible. Dès qu’un 3A de ton parcours s’inscrit, il te sera confié.'}</p>${stop}</div>
   </section>`;
 }

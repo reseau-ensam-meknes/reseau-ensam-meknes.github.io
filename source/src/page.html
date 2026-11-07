@@ -240,7 +240,17 @@ textarea { resize: vertical; }
 .person-txt { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
 .person-name { font-weight: 600; }
 .person:hover .person-name { color: var(--accent); }
-.role-line { font-size: .8rem; color: var(--muted); display: inline-flex; align-items: center; gap: .3rem; flex-wrap: wrap; }
+.role-line { font-size: var(--fs-2); color: var(--muted); display: inline-flex; align-items: center; gap: .3rem; flex-wrap: wrap; }
+/* Une ligne de faits (« Renault Group Maroc · il y a 2 j ») se lit en entier : elle passe à la ligne entre deux faits plutôt
+   que de couper un nom. Chaque fait porte son point devant lui, dans une marge masquée : aucune ligne ne commence par « · ».
+   Un fait plus long que la ligne (un nom d'entreprise, à 360 px) passe lui-même à la ligne, aligné sur son début ;
+   .nowrap garde un fait entier (une date, « Promo 2016 »). Le point n'est pas lu. Un nom latin s'isole dans un <bdi> à
+   l'intérieur du fait, jamais par dir="auto" sur le fait : en arabe, le fait prendrait le sens du nom et son point, sa marge,
+   passeraient du mauvais côté (« · Renault Group Mar… »). */
+.faits { display: flex; flex-wrap: wrap; align-items: baseline; min-width: 0; margin-inline-start: -1em; clip-path: inset(-3px -3px -3px 1em); }
+[dir="rtl"] .faits { clip-path: inset(-3px 1em -3px -3px); }
+.faits > * { position: relative; min-width: 0; margin-inline-start: 1em; overflow-wrap: anywhere; }
+.faits > *::before { content: "·"; content: "·" / ""; position: absolute; inset-inline-start: -1em; width: 1em; text-align: center; font-weight: 400; color: var(--muted); }
 .verif { color: var(--teal); display: inline-flex; flex: none; }
 .lvl { font: 600 var(--fs-1)/1 var(--f-body); padding: .22rem .5rem; border-radius: var(--r-pill); border: 1px solid currentColor; color: var(--muted); }
 .lvl-1 { color: var(--lvl1); } .lvl-2 { color: var(--ink-2); } .lvl-3, .lvl-4, .lvl-5 { color: var(--brass); background: var(--brass-soft); }
@@ -1543,6 +1553,21 @@ html[lang="ar"] .boot [lang="fr"], html[lang="fr"] .boot [lang="ar"], html[lang=
   :is(.rx-ajouter, .rx-resume, .kudo, .stars button, .m-more-btn, button.person) { position: relative; }
   :is(.rx-ajouter, .rx-resume, .kudo, .stars button, .m-more-btn, .ligne-act .icon-btn, .pc-hors-act .icon-btn, button.person)::before {
     content: ""; position: absolute; inset-block: min(0px, calc(50% - 22px)); inset-inline: 0; }
+  /* … et en largeur aussi, du côté où les voisins laissent la place : réagir (40 px de dessin), la corbeille d'une
+     candidature et le marque-page d'un talent gagnent 2 px de chaque côté ; le menu « … » s'élargit vers le bord de la carte (« Écrire » le touche de
+     l'autre côté) ; le marque-page d'une carte d'offre, vers le bord de la carte (« Postuler » est à 6 px) ; « Signaler »
+     d'une demande fait 44 px (l'icône au bout de la ligne des réponses, au milieu de celle des gestes) ; chaque étoile
+     d'une note fait 44 px, la première calée sur le texte au-dessus ; « Compris » et « Il n'a pas eu lieu », courts en
+     arabe, débordent sur leurs côtés libres */
+  :is(.rx-ajouter, .pc-hors-act .icon-btn, .ligne-act .icon-btn)::before { inset-inline: min(0px, calc(50% - 22px)); }
+  .icon-btn.m-more-btn::before { inset-inline: 0 min(0px, calc(100% - 44px)); }
+  .ocard-foot > .ocard-garder { position: relative; }
+  .ocard-foot > .ocard-garder::before { content: ""; position: absolute; inset-block: min(-7px, calc(50% - 22px)); inset-inline: -4px min(-4px, calc(100% - 40px)); }
+  :is(.dm-social, .dm-acts) .cf-signal.small { min-width: 44px; justify-content: flex-end; }
+  .dm-acts .cf-signal.small { justify-content: center; }
+  .stars { gap: 0; margin-inline-start: calc((1.35rem + 2px - 44px) / 2); }
+  .stars button { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; }
+  :is(.rdv-tip .linkish, .linkish.m-quiet)::before { inset-inline: min(-4px, calc(50% - 22px)); }
 }
 
 /* Accueil : une prochaine étape, deux sections, des titres de section plus nets */
@@ -2357,7 +2382,6 @@ html.mx-fige { overflow: hidden; }
 .oc-ent { font-size: var(--fs-3); font-weight: 650; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .oc-lieu { font-size: var(--fs-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .oc-sep { display: none; }
-.oc-coin { flex: none; align-self: flex-start; }
 .ocard .ocard-title { font: 700 var(--fs-5)/1.25 var(--f-display); letter-spacing: -.015em; color: var(--ink); text-wrap: balance; overflow-wrap: anywhere; }
 .ocard .ocard-tags { gap: .35rem; }
 .ocard .ocard-tags .tag { padding: .22rem .55rem; }

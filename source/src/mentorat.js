@@ -593,10 +593,15 @@ function citation(txt) {
 
 // Un lauréat qui peut aider, en carte compacte : visage, nom, promo et entreprise, son poste, le sceau « A aidé N étudiants »,
 // son dernier merci (replié sur deux lignes) et « Lui demander »
+// La promo et l'entreprise en entier (« Promo 2016 · Renault Group Maroc ») : l'entreprise passe à la ligne plutôt que de
+// finir en « … » (.faits : aucune ligne ne commence par « · »)
+const promoFaits = p => p.role !== 'laureat' ? roleTexte(p)
+  : html`<span class="faits"><span class="nowrap">${`Promo ${p.promo}`}</span>${p.entreprise ? html`<span><bdi translate="no">${p.entreprise}</bdi></span>` : null}</span>`;
+
 function CarteMentor({ ctx, p, why, merci, onDemander }) {
   const n = aidesDe(ctx.scores?.get(p.id));
   return html`<article class="mcard m-mentor">
-    <${Person} p=${p} onOpen=${ctx.openProfile} size=${48} sub=${roleTexte(p)}/>
+    <${Person} p=${p} onOpen=${ctx.openProfile} size=${48} sub=${promoFaits(p)}/>
     ${p.poste ? html`<p class="mm-poste"><${Icon} name="briefcase" size=${14}/><span translate="no" dir="auto">${p.poste}</span></p>` : null}
     ${n || why.length ? html`<p class="mm-sceaux">${n ? html`<span class="m-sceau"><${Icon} name="heart" size=${12}/><span>${n > 1 ? `A aidé ${n} étudiants` : 'A aidé 1 étudiant'}</span></span>` : null}${why.map(w => html`<span class="mini">${w}</span>`)}</p>` : null}
     ${merci ? html`<blockquote class="merci mcard-merci"><${Repliable} lignes=${2}>${citation(merci.txt)}<//><${MerciDuo} ctx=${ctx} m=${merci} size=${22} seul/></blockquote>` : null}
@@ -931,9 +936,9 @@ injectCSS('mentorat-ux', `
 [dir="rtl"] .mreq-subject::before { content: ""; order: -1; flex-basis: 100%; height: 0; }
 @media (max-width: 480px) {
   .mstep, .mstep li { gap: .3rem; }
-  .mstep li { font-size: .76rem; }
+  .mstep li { font-size: var(--fs-1); }
   .mstep li + li::before { width: 12px; }
-  .mstep .step-dot { width: 20px; height: 20px; font-size: .75rem; }
+  .mstep .step-dot { width: 20px; height: 20px; font-size: var(--fs-1); }
 }
 
 /* En-tête d'une carte de relecture (cv.js) : le nom garde sa ligne, l'état et « Écrire » passent dessous sur téléphone */
@@ -957,7 +962,6 @@ injectCSS('mentorat-ux', `
 /* En arabe, « دفعة 2012 · Renault Group Maroc » coupé en « … » perdrait le début du nom latin : la ligne passe à la ligne
    (deux lignes au plus sur une carte de demande, où une longue filière en arabe se coupe à sa fin) */
 [dir="rtl"] .mrow-head.m-tete .role-line { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-[dir="rtl"] .m-mentor .role-line { white-space: normal; }
 .m-avec { margin: 0; line-height: 1.55; }
 .m-avec > svg { vertical-align: -3px; margin-inline-end: .1rem; }
 .m-avec-ok { white-space: nowrap; }
@@ -967,7 +971,7 @@ injectCSS('mentorat-ux', `
 .icon-btn.m-ecrire { position: relative; width: 40px; height: 40px; border-radius: 50%; color: var(--blue-text); }
 .icon-btn.m-ecrire::before { content: ""; position: absolute; inset: -2px; }
 .icon-btn.m-ecrire:hover { background: var(--tonal-bg); color: var(--tonal-ink); }
-.icon-btn.m-ecrire .count { position: absolute; top: 0; inset-inline-end: -2px; min-width: 1.15rem; padding: 0 .25rem; background: var(--accent); color: var(--accent-ink); font-size: .68rem; line-height: 1.15rem; }
+.icon-btn.m-ecrire .count { position: absolute; top: 0; inset-inline-end: -2px; min-width: 1.15rem; padding: 0 .25rem; background: var(--accent); color: var(--accent-ink); font-size: var(--fs-1); line-height: 1.15rem; }
 /* L'état, le besoin, ce qui le rapproche de toi et depuis quand, sur une ligne de petites étiquettes */
 .m-tags { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem .4rem; margin: 0; min-width: 0; }
 .m-tags:empty { display: none; }
@@ -1006,7 +1010,7 @@ injectCSS('mentorat-ux', `
 .bt-agenda:active { transform: scale(.95); }
 .billet.live .bt-agenda { color: var(--good); }
 .bt-jour { font: 600 var(--fs-1)/1.25 var(--f-body); text-transform: capitalize; }
-.bt-num { font: 750 2rem/1.02 var(--f-display); letter-spacing: -.02em; color: var(--ink); font-variant-numeric: tabular-nums; }
+.bt-num { font: 750 var(--fs-7)/1.02 var(--f-display); letter-spacing: -.02em; color: var(--ink); font-variant-numeric: tabular-nums; }
 .bt-mois { font: 600 var(--fs-2)/1.25 var(--f-body); }
 .bt-heure { margin-top: .45rem; padding: .16rem .5rem; border-radius: var(--r-pill); background: var(--surface); color: var(--ink); font-weight: 650; font-size: var(--fs-2); box-shadow: var(--sh1); }
 .billet-corps { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .5rem; padding-block: .85rem .9rem; padding-inline: .95rem .8rem; }
@@ -1079,7 +1083,7 @@ injectCSS('mentorat-ux', `
 .need-tuile:hover .nt-ico { transform: translateY(-2px); }
 .nt-txt { display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
 .nt-txt strong { font-weight: 650; font-size: var(--fs-3); line-height: 1.25; }
-@media (max-width: 380px) { .need-tuile { gap: .55rem; padding: .65rem .65rem; } .nt-ico { width: 34px; height: 34px; border-radius: 10px; } .nt-txt strong { font-size: .95rem; } }
+@media (max-width: 380px) { .need-tuile { gap: .55rem; padding: .65rem .65rem; } .nt-ico { width: 34px; height: 34px; border-radius: 10px; } }
 .nt-sous { display: none; color: var(--ink-2); font-size: var(--fs-2); line-height: 1.35; }
 @media (min-width: 761px) {
   .need-tuiles { grid-template-columns: repeat(5, minmax(0, 1fr)); }
@@ -1093,10 +1097,14 @@ injectCSS('mentorat-ux', `
 .m-mentors .rangee-cartes { --rangee-l: min(84%, 19rem); }
 .mcard.m-mentor { gap: .55rem; padding: .95rem 1rem 1rem; height: 100%; }
 .m-mentor > .person { align-self: stretch; }
-.m-mentor .role-line { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mm-poste { display: flex; align-items: center; gap: .35rem; margin: 0; color: var(--ink-2); font-size: var(--fs-2); min-width: 0; align-self: stretch; }
-.mm-poste > svg { flex: none; color: var(--muted); }
-.mm-poste > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Qui il est et ce qu'il fait, en entier, dans les deux sens : la promo et l'entreprise passent à la ligne entre deux faits
+   (.faits), le poste sur deux lignes au plus (« Responsable méthodes emboutissage », à 360 px), ses lignes collées à
+   l'icône du côté où la page commence, même écrit en lettres latines dans la page arabe */
+.m-mentor .role-line { display: block; white-space: normal; }
+.mm-poste { display: flex; align-items: flex-start; gap: .35rem; margin: 0; color: var(--ink-2); font-size: var(--fs-2); line-height: 1.4; min-width: 0; align-self: stretch; }
+.mm-poste > svg { flex: none; margin-block-start: calc((1.4em - 14px) / 2); color: var(--muted); }
+.mm-poste > span { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; text-align: left; }
+[dir="rtl"] .mm-poste > span { text-align: right; }
 .mm-sceaux { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; margin: 0; }
 .mm-sceaux .mini { margin: 0; }
 .m-sceau { display: inline-flex; align-items: center; gap: .3rem; padding-block: .18rem; padding-inline: .4rem .55rem; border-radius: var(--r-pill); background: var(--good-soft); color: var(--good); font-size: var(--fs-1); font-weight: 650; line-height: 1.35; }
@@ -1104,6 +1112,8 @@ injectCSS('mentorat-ux', `
 .m-mentor .mcard-merci { margin: .1rem 0 0; padding: .1rem 0 .1rem .75rem; align-self: stretch; gap: .35rem; }
 [dir="rtl"] .m-mentor .mcard-merci { padding: .1rem .75rem .1rem 0; }
 .m-mentor .mcard-merci p { font-size: var(--fs-3); line-height: 1.45; }
+/* Qui a dit merci, et quand : la taille des autres lignes de la carte (la brique commune garde la sienne ailleurs) */
+.m-mentor .merci-duo { font-size: var(--fs-2); }
 .m-mentor .mcard-merci p.ouvert { display: block; }
 .m-mentor .m-repli-btn { margin-top: -.2rem; }
 .m-mentor .merci-duo .md-quand { flex-basis: auto; }
@@ -1144,7 +1154,7 @@ injectCSS('mentorat-ux', `
 /* Horaires à choisir : deux par ligne sur téléphone */
 @media (max-width: 420px) {
   .tchoice .chips { gap: .35rem; }
-  .tchoice .chip { padding: .38rem .6rem; font-size: .82rem; min-height: 38px; }
+  .tchoice .chip { padding: .38rem .6rem; font-size: var(--fs-2); min-height: 38px; }
   .tchoice .chip .when { gap: .12rem; }
 }
 

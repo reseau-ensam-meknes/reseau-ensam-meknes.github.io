@@ -600,7 +600,7 @@ injectCSS('demandes', `
 .dm-etapes li + li::before { content: ''; width: 1.2rem; height: 2px; background: var(--line); margin-inline-end: .1rem; }
 .dm-etapes li.fait { color: var(--good, #2e7d32); }
 .dm-etapes li.ici { color: var(--accent); font-weight: 600; }
-.dm-pt { display: inline-grid; place-items: center; width: 1.35rem; height: 1.35rem; border-radius: 50%; border: 1.5px solid currentColor; font-size: .75rem; font-weight: 700; }
+.dm-pt { display: inline-grid; place-items: center; width: 1.35rem; height: 1.35rem; border-radius: 50%; border: 1.5px solid currentColor; font-size: var(--fs-1); font-weight: 700; }
 .dm-etapes li.fait .dm-pt { background: var(--good-soft, #e8f5e9); }
 .dm-props { display: flex; flex-direction: column; gap: var(--sp-3); margin-top: var(--sp-2); }
 .dm-props > .eyebrow { margin: 0; }
@@ -640,12 +640,12 @@ injectCSS('demandes', `
 .dm-resume .dm-meta, .dm-resume .dm-details { margin: 0; }
 .dm-resume-acts { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2) var(--sp-3); }
 .dm-aides { display: flex; flex-wrap: nowrap; gap: .4rem; }
-.dm-aide-choix { position: relative; flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: .45rem .6rem; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); color: var(--ink-2); font-size: .9rem; white-space: nowrap; cursor: pointer; }
+.dm-aide-choix { position: relative; flex: 1 1 auto; display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: .45rem .6rem; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--surface); color: var(--ink-2); font-size: var(--fs-3); white-space: nowrap; cursor: pointer; }
 .dm-aide-choix input { position: absolute; opacity: 0; pointer-events: none; }
 .dm-aide-choix.on { border-color: transparent; background: var(--sel-bg); color: var(--sel-ink); box-shadow: inset 0 0 0 1px var(--sel-ring); font-weight: 600; }
 .dm-aide-choix:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (max-width: 340px) { .dm-aides { flex-wrap: wrap; } }
-.dm-chez > summary { display: flex; align-items: center; gap: .5rem; min-height: 44px; cursor: pointer; list-style: none; color: var(--ink-2); font-size: .9rem; }
+.dm-chez > summary { display: flex; align-items: center; gap: .5rem; min-height: 44px; cursor: pointer; list-style: none; color: var(--ink-2); font-size: var(--fs-3); }
 .dm-chez > summary::-webkit-details-marker { display: none; }
 .dm-chez > summary .grow { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dm-chez[open] > summary .linkish { display: none; }

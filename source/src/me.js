@@ -74,9 +74,11 @@ export function ParcoursPage(ctx) {
       ${apps.length ? html`<ul class="esp-lignes">${apps.map(a => {
         const o = a.offer_id ? store.byId('offers', a.offer_id) : null;
         const titre = a.titre || o?.titre;
+        // Sous le titre (deux lignes au plus), l'entreprise et la date en entier : une ligne de faits, qui passe à la ligne
+        // entre les deux plutôt que d'abréger le nom (« Renault Group Maroc », à 360 px)
         const corps = html`<${CompanyLogo} name=${a.entreprise} size=${44}/>
           <span class="esp-ligne-txt">${titre ? html`<strong class="esp-titre" translate="no" dir="auto">${titre}</strong>` : html`<strong class="esp-titre">Candidature</strong>`}
-            <span class="esp-sous pc-sous"><span class="pc-ent" translate="no" dir="auto">${a.entreprise}</span><span class="pc-quand"> · <span>${o ? timeAgo(a.updated_at || a.created_at) : 'hors plateforme'}</span></span></span></span>`;
+            <span class="esp-sous pc-sous faits"><span class="pc-ent"><bdi translate="no">${a.entreprise}</bdi></span><span class="pc-quand nowrap">${o ? timeAgo(a.updated_at || a.created_at) : 'hors plateforme'}</span></span></span>`;
         return o ? html`<li class="pc-cand" key=${a.id}><button type="button" class="esp-ligne" onClick=${() => openOffer(o.id)}>${corps}<span class=${'state-pill a-' + a.status}>${APP_STATUS[a.status]}</span></button></li>`
           : html`<li class="pc-cand hors" key=${a.id}><div class="esp-ligne">${corps}
             <span class="pc-hors-act"><select id=${'ap-' + a.id} aria-label="Statut" value=${a.status} onChange=${e => act(() => store.update('applications', a.id, { status: e.target.value, updated_at: new Date().toISOString() }))}>${Object.entries(APP_STATUS).map(([v, t]) => html`<option value=${v}>${t}</option>`)}</select>
@@ -284,7 +286,7 @@ export function EspacePage(ctx) {
     <${Icon} name="plus" size=${18}/><span class="po-long">Publier une offre</span><span class="po-court">Publier</span></button>`;
 
   return html`<section class="page espace esp-page">
-    <${EnTetePage} surTitre=${`Promo ${me.promo}${me.entreprise ? ' · ' + me.entreprise : ''}`} titre="Mon espace" action=${publier}/>
+    <${EnTetePage} surTitre=${html`<span class="faits"><span class="nowrap">${`Promo ${me.promo}`}</span>${me.entreprise ? html`<span><bdi translate="no">${me.entreprise}</bdi></span>` : null}</span>`} titre="Mon espace" action=${publier}/>
 
     <${AFaire} ctx=${ctx}/>
     ${nouveau ? html`<${PremiereAide} ctx=${ctx} plein=${!carteAFaire} onPublier=${() => setCompose(true)}/>
@@ -331,7 +333,7 @@ function CeQuiTAttend({ ctx, waiting, rdv }) {
         return html`<li class="esp-attente" key=${p.id}><div class="esp-ligne">
           <${Avatar} p=${st} size=${44}/>
           <span class="esp-ligne-txt"><button type="button" class="linkish esp-nom" onClick=${() => openProfile(st)}>${st ? html`<span translate="no" dir="auto">${st.full_name}</span>` : 'Un étudiant'}</button>
-            <span class="esp-sous"><span class="esp-attente-pt" aria-hidden="true"></span><span>Confirmation attendue</span> · <span class="nowrap" translate="no" dir="auto">${p.entreprise}</span></span></span>
+            <span class="esp-sous faits"><span class="nowrap"><span class="esp-attente-pt" aria-hidden="true"></span><span>Confirmation attendue</span></span><span><bdi translate="no">${p.entreprise}</bdi></span></span></span>
           <button type="button" class="btn tiny ghost" aria-label=${`Annuler le recrutement déclaré pour ${st ? st.full_name : 'un étudiant'}`} onClick=${() => annulerRecrutement(ctx, p)}>Annuler</button></div></li>`;
       })}
     </ul>
@@ -386,7 +388,7 @@ function PanneauImpact({ ctx, mercis, recrues, mine, events, onShare }) {
     ${recrues.length ? html`<section class="esp-bloc esp-recrues" aria-labelledby="esp-recrues-titre">
       <h2 class="esp-h" id="esp-recrues-titre">Recrutés grâce à toi cette année <span class="count">${recrues.length}</span></h2>
       <ul class="esp-lignes">${recrues.slice(0, 5).map(p => html`<li key=${p.id}><div class="esp-ligne">
-        <${Person} p=${store.byId('profiles', p.student_id)} onOpen=${openProfile} size=${44} sub=${html`<span translate="no" dir="auto">${p.entreprise}</span> · <span>${TYPES[p.type]?.label}</span>`}/>
+        <${Person} p=${store.byId('profiles', p.student_id)} onOpen=${openProfile} size=${44} sub=${html`<span class="faits"><span><bdi translate="no">${p.entreprise}</bdi></span><span>${TYPES[p.type]?.label}</span></span>`}/>
         <button type="button" class="icon-btn esp-partage" aria-label="Partager sur LinkedIn" title="Partager sur LinkedIn" onClick=${() => onShare(p)}><${Icon} name="share" size=${18}/></button></div></li>`)}</ul>
     </section>` : null}
     <${Filleuls} ctx=${ctx}/>
@@ -410,14 +412,15 @@ function HistoriquePoints({ events }) {
   </details>`;
 }
 
-// Un merci : la phrase de l'étudiant en grand, qui il est, pour quoi, quand
+// Un merci : la phrase de l'étudiant en grand, qui il est, pour quoi, quand (en entier : la date passe sous l'aide plutôt
+// que de finir en « … », .faits)
 function CarteMerci({ ctx, m }) {
   const p = ctx.store.byId('profiles', m.who);
   return html`<figure class="merci-carte">
     <blockquote><p translate="no" dir="auto">${m.txt}</p></blockquote>
     <figcaption class="mc-qui"><${Avatar} p=${p} size=${32}/>
       <span class="mc-txt"><button type="button" class="linkish mc-nom" onClick=${() => ctx.openProfile(p)}>${p ? html`<span translate="no" dir="auto">${p.full_name}</span>` : 'Un étudiant'}</button>
-        <span class="esp-sous"><span translate="no" dir="auto">${m.ctx}</span> · <span class="nowrap">${timeAgo(m.at)}</span></span></span></figcaption>
+        <span class="esp-sous faits"><span><bdi translate="no">${m.ctx}</bdi></span><span class="nowrap">${timeAgo(m.at)}</span></span></span></figcaption>
   </figure>`;
 }
 
@@ -536,6 +539,8 @@ injectCSS('me-espace', `
 /* Le rythme des pages (.page, 1,25rem entre les blocs) : le même que partout */
 /* En-tête : le titre garde sa ligne ; « Publier une offre » devient « Publier » sur un petit téléphone (sur ordinateur, la barre latérale l'a déjà) */
 .esp-page .en-tete-txt { flex-basis: 11rem; }
+/* « Promo 2016 · Renault Group Maroc » en entier : l'entreprise passe à la ligne plutôt que de finir en « … » (.faits) */
+.esp-page .en-tete .eyebrow { white-space: normal; }
 .esp-page .en-tete .btn.publier-offre { width: auto; min-height: 44px; padding-inline: 1rem 1.1rem; gap: .4rem; }
 .esp-page .po-court { display: none; }
 @media (max-width: 430px) { .esp-page .po-long { display: none; } .esp-page .po-court { display: inline; } }
@@ -565,10 +570,13 @@ injectCSS('me-espace', `
 :root[dir="rtl"] .esp-sujet { text-align: right; }
 .esp-ligne .person { flex: 1 1 auto; min-width: 0; gap: .85rem; }
 .esp-ligne .person .person-txt { min-width: 0; }
-.esp-ligne .person .role-line { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-2); color: var(--muted); }
-.esp-ligne .person-l1 { display: flex; align-items: center; min-width: 0; }
-.esp-ligne .person-name { min-width: 0; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Le nom et la ligne du dessous se lisent en entier : à 360 px, un nom long passe à la ligne (le bouclier reste sur la
+   première), et l'entreprise passe à la ligne avant ce qui la suit (.faits) plutôt que de finir en « … » */
+.esp-ligne .person .role-line { display: block; font-size: var(--fs-2); color: var(--muted); }
+.esp-ligne .person-l1 { display: flex; align-items: flex-start; min-width: 0; }
+.esp-ligne .person-name { min-width: 0; font-weight: 650; overflow-wrap: anywhere; }
 .esp-ligne .person-l1 > :not(.person-name) { flex: none; }
+.esp-ligne .person-l1 > .verif { margin-block-start: calc((1.3em - 16px) / 2); }
 .esp-partage { flex: none; inline-size: 44px; block-size: 44px; color: var(--ink-2); }
 .esp-ligne-fin { flex: none; display: inline-flex; align-items: center; gap: .25rem; }
 .esp-go { flex: none; display: inline-grid; color: var(--muted); transition: transform .25s var(--ease), color .2s; }
@@ -672,13 +680,18 @@ injectCSS('me-espace', `
 .mc-qui { display: flex; align-items: center; gap: .6rem; min-width: 0; }
 .mc-txt { display: flex; flex-direction: column; min-width: 0; }
 .mc-nom { align-self: flex-start; font-weight: 650; color: var(--ink); text-align: start; }
-.mc-txt .esp-sous { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Une note sous une liste (filleuls) et son petit lien d'action */
 .esp-note { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0 1rem; }
 .esp-note p { margin: 0; flex: 1 1 16rem; font-size: var(--fs-2); line-height: 1.45; color: var(--muted); }
 .esp-note-act { display: inline-flex; align-items: center; min-height: 44px; font-size: var(--fs-2); }
 .esp-ligne .msg-btn { flex: none; min-height: 40px; }
+/* Petit téléphone : « Écrire » d'un filleul devient une icône ronde de 44 px (son nom, aria-label « Écrire à Soufiane »,
+   reste lu), et le nom du filleul garde sa ligne */
+@media (max-width: 380px) {
+  .esp-filleuls .msg-btn { justify-content: center; min-width: 44px; min-height: 44px; padding-inline: .6rem; border-radius: var(--r-pill); }
+  .esp-filleuls .msg-btn-txt { display: none; }
+}
 
 /* Le détail replié : badges et historique des points, deux lignes d'une même carte */
 .esp-plis { display: flex; flex-direction: column; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--sh1); overflow: hidden; }
@@ -821,10 +834,6 @@ injectCSS('me-parcours', `
 .pc-tete { display: flex; align-items: center; justify-content: space-between; gap: .5rem 1rem; flex-wrap: wrap; }
 .pc-tete .btn { min-height: 40px; }
 .pc-cand .state-pill { flex: none; }
-/* Sous le titre (deux lignes au plus), l'entreprise s'abrège avant la date, qui reste entière */
-.pc-sous { display: flex; min-width: 0; }
-.pc-ent { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pc-quand { flex: none; white-space: pre; }
 .pc-cand.hors .esp-ligne { flex-wrap: wrap; row-gap: .5rem; }
 .pc-cand.hors .esp-ligne-txt { flex-basis: calc(100% - 44px - .85rem); }
 .pc-hors-act { display: flex; align-items: center; gap: .35rem; margin-inline-start: calc(44px + .85rem); }

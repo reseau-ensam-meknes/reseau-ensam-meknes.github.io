@@ -271,7 +271,7 @@ function PromoPage({ ctx }) {
         <button type="button" class="linkish small pr-stat-go" onClick=${() => go('mentorat')}>Trouver un mentor <${Icon} name="arrow" size=${14}/></button>
       </section>`}
     </div>
-    <${SuccessFeed} ctx=${ctx} max=${3} lien=${false}/>
+    <${SuccessFeed} ctx=${ctx} max=${3} lien=${false} tete=${tete('pr-reussites-t', 'trophy', 'Réussites de ton année')}/>
     ${comp.length ? html`<section class="esp-bloc" aria-labelledby="pr-ent-titre"><h2 class="esp-h" id="pr-ent-titre">Où vont les étudiants de ton année</h2>
       <ul class="esp-lignes pr-entreprises">${comp.map(([c, k]) => html`<li key=${c}><div class="esp-ligne"><${CompanyLogo} name=${c} size=${40}/><span class="pr-ent"><span class="pr-ent-nom" translate="no" dir="auto">${c}</span><span class="pr-ent-piste" aria-hidden="true"><span class="pr-ent-bar" style=${`width:${(k / maxComp) * 100}%`}></span></span></span><span class="pr-ent-n">${k}</span></div></li>`)}</ul></section>` : null}
     <//>
@@ -413,7 +413,7 @@ addAR({
   'Mon année': 'سنتي', 'Année terminée': 'انتهت السنة', 'Où vont les étudiants de ton année': 'أين يتجه طلبة سنتك',
   'Liste complète de l’année (une ligne par étudiant), à ouvrir dans Excel.': 'اللائحة الكاملة للسنة (سطر لكل طالب)، تُفتح في Excel.',
   'Offres pour ton année': 'عروض لسنتك', 'ouvertes en ce moment': 'مفتوحة حاليًا', 'ouverte en ce moment': 'مفتوح حاليًا',
-  'Camarades qui ont trouvé': 'زملاء وجدوا فرصتهم', 'Des lauréats pour t’aider': 'خريجون لمساعدتك',
+  'Camarades qui ont trouvé': 'زملاء وجدوا فرصتهم', 'Des lauréats pour t’aider': 'خريجون لمساعدتك', 'Réussites de ton année': 'نجاحات سنتك',
   'vérifiées des deux côtés': 'موثّقة من الطرفين',
   'lauréats de ta filière dans le réseau': 'خريجون من شعبتك في الشبكة',
   'lauréat de ta filière dans le réseau': 'خريج من شعبتك في الشبكة',
@@ -506,11 +506,11 @@ injectCSS('dashboard-insertion', `
 .ins-stack span { height: 100%; transition: width .6s var(--ease); }
 .ins-c-poste { background: var(--good); } .ins-c-rech { background: var(--warn); } .ins-c-etu { background: var(--accent); } .ins-c-autre { background: var(--muted); }
 .ins-legend { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .4rem; }
-.ins-legend li { display: flex; align-items: center; gap: .5rem; font-size: .9rem; }
+.ins-legend li { display: flex; align-items: center; gap: .5rem; font-size: var(--fs-2); }
 .ins-legend .dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
 .ins-legend .v, .ins-bars .v { margin-inline-start: auto; font-variant-numeric: tabular-nums; color: var(--ink-2); white-space: nowrap; }
 .ins-bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .55rem; }
-.ins-bars li { display: grid; grid-template-columns: minmax(0, 11rem) minmax(0, 1fr) 3.4rem; gap: .6rem; align-items: center; font-size: .88rem; }
+.ins-bars li { display: grid; grid-template-columns: minmax(0, 11rem) minmax(0, 1fr) 3.4rem; gap: .6rem; align-items: center; font-size: var(--fs-2); }
 .ins-bars li > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ins-bars .v { text-align: end; }
 .tbl-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -520,10 +520,10 @@ injectCSS('dashboard-insertion', `
 .tbl tr.click:hover td { background: var(--surface-2); }
 .tbl tr.sel td { background: var(--accent-soft); }
 .tbl.ins-all td { white-space: nowrap; }
-.tbl.ins-rapport { font-size: .82rem; min-width: 860px; }
+.tbl.ins-rapport { font-size: var(--fs-2); min-width: 860px; }
 .tbl.ins-rapport th, .tbl.ins-rapport td { padding-inline: .35rem; }
 .tbl.ins-rapport td.fil { white-space: nowrap; }
-.tbl.ins-rapport th { white-space: normal; vertical-align: bottom; text-transform: none; letter-spacing: 0; font-size: .74rem; }
+.tbl.ins-rapport th { white-space: normal; vertical-align: bottom; text-transform: none; letter-spacing: 0; font-size: var(--fs-1); }
 .tbl.ins-rapport tr.tot td { font-weight: 600; background: var(--surface-2); }
 .ins-actions { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
 .ins-method { margin: 0; }
@@ -531,7 +531,7 @@ injectCSS('dashboard-insertion', `
 @media (max-width: 760px) {
   .ins-bars li { grid-template-columns: minmax(0, 1fr) 3rem; row-gap: .25rem; }
   .ins-bars li > span:first-child { grid-column: 1 / -1; white-space: normal; }
-  .tbl.ins-all { font-size: .84rem; }
+  .tbl.ins-all { font-size: var(--fs-2); }
   .tbl.ins-all th, .tbl.ins-all td { padding-inline: .35rem; }
   .ins-pick { width: 100%; }
   .ins-actions .btn { flex: 1; }

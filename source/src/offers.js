@@ -343,6 +343,8 @@ function Garder({ ctx, o, saved, pop, cls = '', taille = 16 }) {
 // « Entreprise · Ville · il y a 3 j » sur une ligne, trois puces sobres au plus, et ce qui est vrai autour (il peut te
 // recommander, en vert ; mises de côté, candidatures pour son auteur). Un seul pied, sur une ligne : le visage du
 // lauréat qui la partage (« Ton offre » pour la sienne), les réactions, Postuler (ou l'état), le marque-page.
+// L'échéance proche (« J-4 », « بقي 4 أيام ») ouvre la rangée des puces : à côté du titre, elle lui prendrait sa largeur
+// (en arabe à 360 px, un titre de trois lignes en demandait quatre).
 export function OfferCard({ o, ctx, onOpen, why, sujets = false, i = 0 }) {
   // Une offre partagée (vue ailleurs) : la carte compacte, avec le lien vers le site d'origine
   if (estPartagee(o)) return html`<${PartageCard} o=${o} ctx=${ctx} onOpen=${onOpen} i=${i}/>`;
@@ -378,9 +380,8 @@ export function OfferCard({ o, ctx, onOpen, why, sujets = false, i = 0 }) {
           <strong class="ocard-title" translate="no" dir="auto">${titreOffre(o)}</strong>
           <span class="ocard-meta"><span class="oc-ent"><bdi translate="no">${o.entreprise}</bdi></span>${lieu ? html`<span class="oc-lieu"><bdi translate="no">${lieu}</bdi></span>` : null}${quand ? html`<span class="oc-quand">${quand}</span>` : null}</span>
         </span>
-        ${urgent ? html`<span class="tag urgent oc-coin">${dl === 0 ? 'Dernier jour' : `J-${dl}`}</span>` : null}
       </span>
-      <span class="ocard-tags">${pucesOffre(o).slice(0, 3)}</span>
+      <span class="ocard-tags">${urgent ? html`<span class="tag urgent oc-echeance" key="echeance">${dl === 0 ? 'Dernier jour' : `J-${dl}`}</span>` : null}${pucesOffre(o).slice(0, 3)}</span>
       ${why?.length ? html`<${Pourquoi} why=${why}/>` : null}
       ${coopt ? html`<span class="oc-preuve oa-coopt"><${Icon} name="thumb" size=${16}/><span>${`${prenom(author)} peut te recommander`}</span></span>` : null}
       ${preuve ? html`<span class="oc-preuve"><${Icon} name=${preuve[0]} size=${16}/><span>${preuve[1]}</span></span>` : null}

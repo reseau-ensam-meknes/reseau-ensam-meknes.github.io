@@ -168,7 +168,7 @@ injectCSS('reactions', `
   background: none; color: var(--ink-2); font: inherit; font-size: var(--fs-2); cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .rx-ajouter:hover { background: var(--surface-2); color: var(--ink); }
 .rx-ajouter.seul { padding: 0 .55rem; }
-.rx-plus { font-weight: 700; font-size: .85rem; margin-inline-start: -.2rem; }
+.rx-plus { font-weight: 700; font-size: var(--fs-2); margin-inline-start: -.2rem; }
 .rx-total { margin-inline-start: auto; font-size: var(--fs-1); color: var(--muted); padding: .5rem .25rem; min-height: 36px; }
 .rx-choix { flex-wrap: nowrap; justify-content: space-between; }
 .rx-bar { display: flex; gap: 2px; padding: 0; border-radius: 999px; background: var(--raised); box-shadow: var(--sh2, var(--sh3)); min-width: 0; }
@@ -193,7 +193,7 @@ injectCSS('reactions', `
 .rx-resume { display: inline-flex; align-items: center; gap: .3rem; min-height: 36px; min-width: 44px; justify-content: center; padding: 0 .55rem; border: 0; border-radius: 999px;
   background: var(--surface-2); color: var(--ink); font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 .rx-resume:hover { background: var(--tonal-hover, var(--surface-2)); }
-.rx-pile { display: inline-flex; gap: 1px; font-size: .95rem; line-height: 1; }
+.rx-pile { display: inline-flex; gap: 1px; font-size: var(--fs-3); line-height: 1; }
 .rx-court .rx-ajouter { width: 40px; min-width: 40px; padding: 0; gap: 0; }
 .rx-ajouter.on { background: var(--sel-bg); color: var(--sel-ink); box-shadow: inset 0 0 0 1px var(--sel-ring); }
 .rx-mienne { font-size: 1.15rem; line-height: 1; }

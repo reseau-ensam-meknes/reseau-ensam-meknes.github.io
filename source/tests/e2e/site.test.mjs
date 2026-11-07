@@ -2480,7 +2480,9 @@ test('offres : une seule rangée de puces avant la première offre ; les anciens
   assert.ok(chiffre, 'Youssef a des candidatures à traiter : le chiffre mène à elles');
   assert.equal(chiffre.coupe, false, `le chiffre reste entier (${chiffre.texte})`);
   assert.equal(chiffre.recouvre, false, 'le chiffre ne passe pas sous le bouton');
-  const types = await s.page.locator('.ocard .ocard-tags > .tag:first-child').allInnerTexts();
+  // La puce du type ouvre la rangée ; seule l'échéance proche (« J-4 ») passe devant elle
+  const types = await s.page.locator('.ocard .ocard-tags > :is(.tag:first-child:not(.urgent), .tag.urgent:first-child + .tag)').allInnerTexts();
+  assert.equal(types.length, await s.page.locator('.ocard').count(), 'chaque carte dit son type');
   assert.ok(types.length && types.every(t => /PFE/.test(t)), 'seulement des sujets de PFE');
   // Une seule rangée de filtres ; Offres · Demandes (n) en tête, n les demandes ouvertes qu'il voit
   assert.equal(await s.page.locator('.offres-page .chips').count(), 1);
@@ -3092,6 +3094,10 @@ test('cartes d’offre : un seul pied, sur une ligne (visage, réactions, Postul
         };
       }));
       assert.ok(cartes.length > 0);
+      // Chaque titre se lit en entier (trois lignes au plus) : l'échéance « بقي 4 أيام » ne lui prend plus sa largeur
+      const titresCoupes = await s.page.evaluate(() => [...document.querySelectorAll('.ocard-title')]
+        .filter(t => t.getBoundingClientRect().width > 0 && t.scrollHeight > t.clientHeight + 1).map(t => `${t.textContent} (${t.clientWidth} px)`));
+      assert.deepEqual(titresCoupes, [], `${nom} : des titres d’offre coupés (${langue})`);
       for (const c of cartes) {
         assert.equal(c.pieds, 1, `${nom} · ${c.titre} : un seul pied`);
         assert.equal(c.rxHors, 0, `${nom} · ${c.titre} : les réactions sont dans le pied`);
@@ -3730,6 +3736,59 @@ test('en arabe, Mon espace, Mon parcours et Mon année calent à droite les titr
   await s.ctx.close();
 });
 
+// Les textes coupés d'une partie de la page : un texte qui sort de sa boîte (mesuré au pixel près, mot à mot, avec un
+// Range : une ellipse peut cacher moins d'un pixel), ou une boîte qui cache ce qui la dépasse et plus basse que son texte
+// (des lignes en trop). La zone de toucher invisible d'un lien (::before) dépasse de sa boîte sans rien couper.
+const textesCoupes = (page, sel) => page.$$eval(sel, els => els.filter(e => e.getClientRects().length).flatMap(e => {
+  const cs = getComputedStyle(e), boite = e.getBoundingClientRect();
+  let g = Infinity, d = -Infinity;
+  const w = document.createTreeWalker(e, NodeFilter.SHOW_TEXT);
+  for (let n; (n = w.nextNode());) {
+    if (!n.data.trim()) continue;
+    const r = document.createRange(); r.selectNodeContents(n);
+    for (const q of r.getClientRects()) if (q.width) { g = Math.min(g, q.left); d = Math.max(d, q.right); }
+  }
+  const cache = cs.overflowX !== 'visible' || cs.overflowY !== 'visible';
+  const coupe = g < boite.left - .5 || d > boite.right + .5
+    || (cache && (e.scrollWidth > e.clientWidth + 1 || e.scrollHeight > e.clientHeight + 1));
+  return coupe ? [`${String(e.className).trim()} « ${e.textContent.trim()} » (${e.clientWidth} px)`] : [];
+}));
+
+test('à 360 px, en français et en arabe, les noms et les entreprises se lisent en entier : Mon espace (en-tête, mercis, recrues, filleuls), Mon parcours, Mentorat, Messages ; « Écrire » d’un filleul devient une icône qui garde son nom', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 360, langue });
+    const coupes = [];
+    const releve = async (ou, sel) => { assert.ok(await s.page.locator(sel).count(), `${ou} : rien à relever (${sel})`); for (const x of await textesCoupes(s.page, sel)) coupes.push(`${langue} · ${ou} : ${x}`); };
+    // Mon espace : « Promo 2016 · Renault Group Maroc », les mercis (pour quoi, quand), les recrues, les filleuls
+    await s.comme('Youssef'); await s.aller('espace'); await s.page.waitForSelector('.esp-filleuls .esp-ligne');
+    await releve('Mon espace', '.esp-page .en-tete .eyebrow');
+    await releve('Mon espace', '.merci-carte :is(.mc-nom, .esp-sous)');
+    await releve('Mon espace', '.esp-page .esp-ligne :is(.person-name, .role-line)');
+    // Un filleul : « Écrire » devient une icône ronde de 44 px, son nom reste dit (« Écrire à Soufiane »)
+    const ecrire = s.page.locator('.esp-filleuls .msg-btn').first();
+    const b = await ecrire.boundingBox();
+    assert.ok(b.width >= 43.5 && b.width <= 48 && b.height >= 43.5, `« Écrire » d’un filleul : une icône de 44 px (${b.width} × ${b.height})`);
+    assert.equal(await ecrire.locator('.msg-btn-txt').isVisible(), false, 'le mot se cache à 360 px');
+    assert.match(await ecrire.getAttribute('aria-label'), langue === 'ar' ? /^مراسلة \S+/ : /^Écrire à \S+/, 'le bouton garde son nom');
+    // Mon parcours : l'entreprise et la date de chaque candidature
+    await s.comme('Salma'); await s.aller('parcours'); await s.page.waitForSelector('.pc-cand');
+    await releve('Mon parcours', '.pc-cand :is(.pc-ent, .pc-quand)');
+    // Mentorat : « Promo 2016 · Renault Group Maroc » et le poste de chaque lauréat proposé
+    for (const qui of ['Salma', 'Amine']) {
+      await s.comme(qui); await s.aller('mentorat'); await s.page.waitForSelector('.m-mentor');
+      await releve(`Mentorat (${qui})`, '.m-mentor :is(.person-name, .role-line)');
+      if (await s.page.locator('.mm-poste').count()) await releve(`Mentorat (${qui})`, '.mm-poste > span');
+    }
+    // Messages : « Bureau des relations entreprises » sur deux lignes plutôt qu'en « … »
+    await s.comme('Nadia'); await s.aller('messages'); await s.page.waitForSelector('.conv-item');
+    await releve('Messages', '.ci-name');
+    assert.deepEqual(coupes, [], 'des noms ou des entreprises coupés');
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
 test('Mon année (étudiante) : les offres de l’année avec la part pour sa filière, les camarades qui ont trouvé en barre ; des chiffres vrais, dits une fois', async () => {
   const s = await ouvrir({ largeur: 390 });
   await s.comme('Salma'); await s.aller('suivi');
@@ -3753,10 +3812,18 @@ test('Mon année (étudiante) : les offres de l’année avec la part pour sa fi
   if (v.via) assert.match(legende, new RegExp(`${v.via} grâce à un lauréat`));
   if (v.attente) assert.match(legende, new RegExp(`${v.attente} à confirmer`));
   assert.equal(await s.page.locator('.pr-trouve .tr-attente').count(), v.attente ? 2 : 0, 'le gris des confirmations en attente, barre et légende');
+  // Les réussites de l'année : leur titre a le style des autres cartes de la page (la pastille, le titre), et il lui parle
+  assert.equal((await s.page.locator('.wins-panel .pr-tete h2').innerText()).trim(), 'Réussites de ton année');
+  assert.equal(await s.page.locator('.wins-panel .pr-tete .pr-stat-ico').count(), 1);
+  assert.equal(await s.page.locator('.page h2.h-ico:visible').count(), 0, 'pas un troisième style de titre');
   // Où vont-ils : une barre proportionnelle par entreprise ; jamais de pouls
   assert.equal(await s.page.locator('.pr-entreprises .pr-ent-bar').count(), await s.page.locator('.pr-entreprises li').count());
   assert.equal(await s.page.locator('.pouls').count(), 0);
   assert.ok((await s.debordement()) <= 0);
+  // L'accueil garde son propre titre des réussites (replié sous « Plus du réseau » quand un merci récent tient la place)
+  await s.aller('accueil'); await s.page.waitForSelector('.home-side .wins-panel', { state: 'attached' });
+  assert.match((await s.page.locator('.home-side .wins-panel .section-head h2.h-ico').first().textContent()).trim(), /^Réussites de (mon année|l’année)$/, 'l’accueil inchangé');
+  assert.equal(await s.page.locator('.home-side .wins-panel .pr-tete').count(), 0);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
@@ -4715,20 +4782,27 @@ test('socle : l’annonce de l’administration — une annonce en cours, le for
   }
 });
 
-// Hauteur touchable de chaque élément actif visible : sa boîte, ou la zone invisible (::before / ::after) qui la prolonge
-const petites = page => page.evaluate(() => {
-  const zone = (el, pseudo) => { const cs = getComputedStyle(el, pseudo); if (cs.content === 'none' || cs.position !== 'absolute') return 0; const h = parseFloat(cs.top), b = parseFloat(cs.bottom); return Math.max(0, -(isNaN(h) ? 0 : h)) + Math.max(0, -(isNaN(b) ? 0 : b)); };
+// Hauteur touchable de chaque élément actif visible : sa boîte, ou la zone invisible (::before / ::after) qui la prolonge.
+// { largeur: true } : la largeur aussi (même mesure, de gauche à droite), sauf pour un lien posé dans une phrase, qui a la
+// largeur de ses mots
+const petites = (page, { largeur = false } = {}) => page.evaluate(largeur => {
+  const zone = (el, pseudo, [d1, d2]) => { const cs = getComputedStyle(el, pseudo); if (cs.content === 'none' || cs.position !== 'absolute') return 0; const h = parseFloat(cs[d1]), b = parseFloat(cs[d2]); return Math.max(0, -(isNaN(h) ? 0 : h)) + Math.max(0, -(isNaN(b) ? 0 : b)); };
+  const HAUT = ['top', 'bottom'], LARGE = ['left', 'right'];
   const out = [];
   for (const el of document.querySelectorAll('#contenu :is(button, a[href], [role="tab"], select, summary, input:not([type="hidden"]), textarea)')) {
     const r = el.getBoundingClientRect(); if (!r.width || !r.height) continue;
     const cs = getComputedStyle(el); if (cs.visibility === 'hidden' || el.closest('[hidden], [inert], .sr-only')) continue;
     if (el.tagName === 'SELECT' && cs.opacity === '0') continue;   // menu natif posé sur une pastille : on touche la pastille
     if (el.tagName === 'INPUT' && /checkbox|radio/.test(el.type)) continue;   // une case dans son label : on touche le label
-    const h = r.height + Math.max(zone(el, '::before'), zone(el, '::after'));
-    if (h < 43.5) out.push(`${el.tagName.toLowerCase()}.${String(el.className?.baseVal ?? el.className).trim().replace(/\s+/g, '.')} « ${(el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 24)} » ${Math.round(h)} px`);
+    const nom = `${el.tagName.toLowerCase()}.${String(el.className?.baseVal ?? el.className).trim().replace(/\s+/g, '.')} « ${(el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 24)} »`;
+    const h = r.height + Math.max(zone(el, '::before', HAUT), zone(el, '::after', HAUT));
+    const l = r.width + Math.max(zone(el, '::before', LARGE), zone(el, '::after', LARGE));
+    const dansLaPhrase = cs.display === 'inline' && el.closest('p');
+    if (!largeur) { if (h < 43.5) out.push(`${nom} ${Math.round(h)} px`); }
+    else if (h < 43.5 || (l < 43.5 && !dansLaPhrase)) out.push(`${nom} ${Math.round(l)} × ${Math.round(h)} px`);
   }
   return out;
-});
+}, largeur);
 
 test('socle : au doigt, chaque cible du Réseau, de Mon profil et de l’administration se touche sur 44 px de haut au moins (une zone invisible prolonge les petites, le dessin ne bouge pas)', async () => {
   const ECRANS_SOCLE = [['Salma', ['reseau/groupes', 'reseau/agenda', 'reseau/entraide', 'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'profil', 'profil/visibilite', 'profil/notifications', 'profil/donnees']],
@@ -4749,17 +4823,20 @@ test('socle : au doigt, chaque cible du Réseau, de Mon profil et de l’adminis
   }
 });
 
-test('pages du lot 2 : au doigt, chaque cible des Offres, Demandes, Mentorat (rendez-vous et CV), Mon parcours, Mon espace, du Suivi et des Talents se touche sur 44 px de haut au moins (réactions, « Bravo », étoiles, menu « … », visages, petites icônes)', async () => {
-  const ECRANS = [['Salma', ['offres', 'offres/demandes', 'mentorat', 'mentorat/cv', 'parcours', 'suivi', 'suivi/insertion']],
-    ['Youssef', ['offres', 'offres/demandes', 'mentorat', 'mentorat/cv', 'espace', 'espace/offres', 'espace/documents', 'suivi', 'reseau/talents']],
-    ['Admin', ['offres/demandes', 'mentorat', 'suivi']]];
-  for (const langue of ['fr', 'ar']) {
-    const s = await ouvrir({ largeur: 390, langue, toucher: true });
+test('pages du lot 2 : au doigt, chaque cible des Offres, Demandes, Mentorat (rendez-vous et CV), Messages, Mon parcours, Mon espace, du Suivi et des Talents se touche sur 44 px de haut et de large au moins (réactions, « Bravo », étoiles, menu « … », marque-page, « Signaler », visages, petites icônes), à 390 px et en arabe à 360 px', async () => {
+  const ECRANS = [['Salma', ['offres', 'offres/demandes', 'mentorat', 'mentorat/cv', 'parcours', 'suivi', 'suivi/insertion', 'messages']],
+    ['Amine', ['parcours', 'mentorat', 'messages']],
+    ['Youssef', ['offres', 'offres/demandes', 'mentorat', 'mentorat/cv', 'espace', 'espace/offres', 'espace/documents', 'suivi', 'reseau/talents', 'messages']],
+    ['Nadia', ['espace', 'mentorat', 'messages']],
+    ['Admin', ['offres/demandes', 'mentorat', 'suivi', 'messages']]];
+  // En arabe à 390 px, les quatre premiers écrans de chacun ; en arabe à 360 px (les mots les plus courts, la place la plus juste), tous
+  for (const [largeur, langue, tous] of [[390, 'fr', true], [390, 'ar', false], [360, 'ar', true]]) {
+    const s = await ouvrir({ largeur, langue, toucher: true });
     assert.ok(await s.page.evaluate(() => matchMedia('(pointer: coarse)').matches), 'un écran tactile');
     const trop = [];
     for (const [qui, ecrans] of ECRANS) {
       await s.comme(qui);
-      for (const e of langue === 'fr' ? ecrans : ecrans.slice(0, 4)) { await s.aller(e); await s.page.waitForTimeout(250); for (const x of await petites(s.page)) trop.push(`${qui} · ${e} : ${x}`); }
+      for (const e of tous ? ecrans : ecrans.slice(0, 4)) { await s.aller(e); await s.page.waitForTimeout(250); for (const x of await petites(s.page, { largeur: true })) trop.push(`${largeur} ${langue} · ${qui} · ${e} : ${x}`); }
     }
     assert.deepEqual(trop, [], 'des cibles trop petites au doigt');
     assert.equal(await s.debordement(), 0);
