@@ -7135,11 +7135,12 @@ test('carte de la page d’entrée en arabe, de nuit, à 360 px : traduite, de d
   }
 });
 
-// Le nom de l'application, Chrome et Safari dans une phrase : chacun dans son <span translate="no" dir="auto"> (nom latin dans
-// une phrase arabe ; la traduction automatique du navigateur n'y touche pas), plus d'isolant FSI…PDI autour. Dans la carte de
-// l'entrée et son mot discret, comme dans la feuille du navigateur d'une application, le bandeau de l'accueil et Mon profil.
+// Le nom de l'application, Chrome, Safari et l'iPad dans une phrase : chacun dans son <span translate="no" dir="auto"> (nom
+// latin dans une phrase arabe ; la traduction automatique du navigateur n'y touche pas), plus d'isolant FSI…PDI autour. Dans la
+// carte de l'entrée et son mot discret, comme dans la feuille du navigateur d'une application (son titre et ses gestes aussi),
+// le bandeau de l'accueil, la pastille, Mon profil, et sur iPad le titre de la feuille d'ouverture.
 // apart : le texte de chaque span, dans l'ordre ; nus : un nom (ou un isolant) resté dans le texte, hors d'un tel span
-const LATINS = /\b(?:Instagram|Facebook|Messenger|LinkedIn|TikTok|Snapchat|Telegram|Chrome|Safari)\b/;
+const LATINS = /\b(?:Instagram|Facebook|Messenger|LinkedIn|TikTok|Snapchat|Telegram|Chrome|Safari|iPad)\b/;
 const nomsLatinsDans = (page, sel) => page.evaluate(([sel, src]) => {
   const re = new RegExp(src), seul = new RegExp(`^(?:${src})$`), apart = [], nus = [];
   for (const racine of document.querySelectorAll(sel)) {
@@ -7153,7 +7154,7 @@ const nomsLatinsDans = (page, sel) => page.evaluate(([sel, src]) => {
   return { apart, nus };
 }, [sel, LATINS.source]);
 
-test('noms latins (l’application, Chrome, Safari) chacun dans un <span translate="no" dir="auto"> : carte de l’entrée et son mot discret, feuille du navigateur d’une application, bandeau, Mon profil', async () => {
+test('noms latins (l’application, Chrome, Safari, iPad) chacun dans un <span translate="no" dir="auto"> : carte de l’entrée et son mot discret, feuille du navigateur d’une application (titre et gestes), bandeau, pastille, Mon profil ; feuille d’ouverture sur iPad', async () => {
   for (const [ua, langue, tactile, noms, mot] of [[INSTAGRAM, 'ar', null, ['Instagram', 'Chrome', 'Chrome'], ['Chrome']], [INSTAGRAM, 'fr', null, ['Instagram', 'Chrome', 'Chrome'], ['Chrome']],
     [FACEBOOK_IOS, 'ar', 'iPhone', ['Safari', 'Safari'], ['Safari']], [FACEBOOK_IOS, 'fr', 'iPhone', ['Safari', 'Safari'], ['Safari']]]) {
     const cas = `${ua === INSTAGRAM ? 'Instagram' : 'Facebook iPhone'} ${langue}`;
@@ -7171,21 +7172,54 @@ test('noms latins (l’application, Chrome, Safari) chacun dans un <span transla
     assert.deepEqual(s.erreurs, [], cas);
     await s.ctx.close();
   }
-  // Membre dans Instagram, en arabe : la feuille (sa phrase, Chrome dans les deux autres, son bouton), le bandeau, Mon profil
+  // Membre dans Instagram, en arabe : la feuille (son titre, sa phrase, Chrome dans les deux autres, son bouton), le bandeau (son
+  // titre aussi), la pastille, Mon profil. Le nom de la feuille et du bandeau pour les lecteurs d'écran : la phrase entière
   const a = await ouvrir({ largeur: 360, ua: INSTAGRAM, langue: 'ar' });
   await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  assert.deepEqual(await nomsLatinsDans(a.page, '.modal.appli .modal-head h2'), { apart: ['Chrome'], nus: [] }, 'le titre de la feuille');
+  assert.equal(await a.page.getAttribute('.modal.appli', 'aria-label'), 'افتح شبكة ENSAM في Chrome');
   assert.deepEqual(await nomsLatinsDans(a.page, '.modal.appli .modal-body, #appli-chrome'), { apart: ['Instagram', 'Chrome', 'Chrome', 'Chrome'], nus: [] }, 'la feuille');
   assert.equal((await a.page.locator('#appli-chrome').innerText()).trim(), 'فتح في Chrome');
-  assert.deepEqual(latinRestant(await a.page.locator('.modal.appli .modal-body').innerText(), ['Instagram', 'Chrome']), []);
+  assert.deepEqual(latinRestant(await a.page.locator('.modal.appli').innerText(), ['ENSAM', 'Instagram', 'Chrome']), []);
   await a.page.click('#appli-tard');
   await a.page.waitForSelector('.push-bandeau[data-etat="appli"]');
-  assert.deepEqual(await nomsLatinsDans(a.page, '.push-bandeau .push-b-txt > span, #push-b-oui'), { apart: ['Instagram', 'Chrome'], nus: [] }, 'le bandeau');
+  assert.deepEqual(await nomsLatinsDans(a.page, '.push-bandeau .push-b-txt > strong, .push-bandeau .push-b-txt > span, #push-b-oui'), { apart: ['Chrome', 'Instagram', 'Chrome'], nus: [] }, 'le bandeau');
+  assert.equal(await a.page.getAttribute('.push-bandeau', 'aria-label'), 'افتح شبكة ENSAM في Chrome');
+  await a.page.waitForSelector('.pastille[data-sorte="appli"]');
+  assert.deepEqual(await nomsLatinsDans(a.page, '.pastille'), { apart: ['Chrome'], nus: [] }, 'la pastille');
+  assert.equal(await a.page.getAttribute('.pastille', 'aria-label'), 'فتح في Chrome');
+  // Le nom garde la taille, la graisse et la couleur de son titre (la petite ligne grise de la pastille est un autre span)
+  const style = sel => a.page.$eval(sel, e => ['fontSize', 'fontWeight', 'color'].map(k => [getComputedStyle(e)[k], getComputedStyle(e.parentElement)[k]]));
+  for (const sel of ['.pastille-txt strong span[dir="auto"]', '.push-b-txt strong span[dir="auto"]']) for (const [nom, titre] of await style(sel)) assert.equal(nom, titre, sel);
   await a.aller('profil/notifications'); await a.page.waitForSelector('#md-push-chrome');
   assert.deepEqual(await nomsLatinsDans(a.page, '.push-etat[data-etat="appli"]'), { apart: ['Instagram', 'Chrome', 'Chrome'], nus: [] }, 'Mon profil');
   assert.deepEqual((await a.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), []);
   assert.equal(await a.debordement(), 0);
   assert.deepEqual(a.erreurs, []);
   await a.ctx.close();
+  // iPhone, dans Instagram, en arabe : Safari dans le titre de la feuille et dans ses gestes
+  const i = await ouvrir({ largeur: 390, ua: INSTAGRAM_IOS, langue: 'ar' });
+  await i.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  assert.deepEqual(await nomsLatinsDans(i.page, '.modal.appli .modal-head h2, .modal.appli .ios-steps'), { apart: ['Safari', 'Safari', 'Safari'], nus: [] }, 'iPhone : le titre et les gestes');
+  assert.equal(await i.page.getAttribute('.modal.appli', 'aria-label'), 'افتح شبكة ENSAM في Safari');
+  assert.deepEqual(latinRestant(await i.page.locator('.modal.appli').innerText(), ['ENSAM', 'Instagram', 'Safari']), []);
+  assert.deepEqual((await i.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), []);
+  assert.deepEqual(i.erreurs, []);
+  await i.ctx.close();
+  // iPad, application installée, en arabe : le titre de la feuille d'ouverture et Mon profil
+  const p = await prevenirSur(null, { ua: SAFARI_IPADOS, langue: 'ar' });
+  await ecranTactile(p.ctx);
+  await p.page.setViewportSize({ width: 820, height: 1180 });
+  await p.page.evaluate(() => localStorage.setItem('ensam-prevenir-demo', 'off')); await recharger(p);
+  await attendreOuverture(p);
+  assert.deepEqual(await nomsLatinsDans(p.page, ouverture + ' .modal-head h2'), { apart: ['iPad'], nus: [] }, 'iPad : le titre de la feuille d’ouverture');
+  assert.equal(await p.page.getAttribute(ouverture, 'aria-label'), 'الأهم يصلك على iPad الخاص بك');
+  await p.page.click('#ouv-tard'); await p.page.waitForTimeout(300);
+  await p.aller('profil/notifications');
+  await p.page.click('#md-push-oui'); await p.page.waitForSelector('#md-push-compte');
+  assert.deepEqual(await nomsLatinsDans(p.page, '#md-push-compte'), { apart: ['iPad'], nus: [] }, 'iPad : Mon profil');
+  assert.deepEqual(p.erreurs, []);
+  await p.ctx.close();
 });
 
 test('« Me prévenir » après une offre publiée, « Candidatures » décochée : « Te prévenir des étudiants intéressés ? » (Match reste coché) ; les deux décochées, rien n’est promis', async () => {
@@ -7324,6 +7358,8 @@ test('iPad, application installée : la feuille d’ouverture, la ligne « Me pr
   await ecrireA(a, 'u-0006', 'مرحبا');
   await a.page.waitForSelector('.pv-ligne', { timeout: 5000 });
   assert.match(await a.page.locator('.pv-ligne .pv-l-txt').innerText(), /iPad/);
+  // Nom latin dans une phrase arabe : l'iPad dans son <span translate="no" dir="auto">, comme dans la feuille et Mon profil
+  assert.deepEqual(await nomsLatinsDans(a.page, '.pv-ligne .pv-l-txt'), { apart: ['iPad'], nus: [] }, 'la ligne « Me prévenir »');
   await a.aller('profil/notifications');
   await a.page.click('#md-push-oui'); await a.page.waitForSelector('#md-push-compte');
   const ca = await a.page.locator('#md-push-compte').innerText();

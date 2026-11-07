@@ -575,7 +575,7 @@ test('le geste de Safari (iPhone, iPad) : le même dans la carte de l’entrée 
 
 // Le nom de l'application, Chrome et Safari, mis à part dans une phrase déjà traduite : la page d'entrée (CarteAppli) et les
 // feuilles de l'application (avecNoms, pwa.js) entourent chacun d'un <span translate="no" dir="auto">
-test('noms latins d’une phrase (l’application, Chrome, Safari) : mis à part pour leur <span translate="no" dir="auto">, sans l’isolant d’i18n.js', async () => {
+test('noms latins d’une phrase (l’application, Chrome, Safari, iPad) : mis à part pour leur <span translate="no" dir="auto">, sans l’isolant d’i18n.js', async () => {
   const { nomsLatins, CARTE, CARTE_AR, APPLIS } = await appareil();
   assert.deepEqual(nomsLatins('Tu es dans le navigateur d’Instagram.'), ['Tu es dans le navigateur d’', 'Instagram', '.']);
   assert.deepEqual(nomsLatins('أنت في متصفح ⁨Instagram⁩.'), ['أنت في متصفح ', 'Instagram', '.'], 'FSI…PDI partent avec le nom');
@@ -587,6 +587,10 @@ test('noms latins d’une phrase (l’application, Chrome, Safari) : mis à part
   assert.deepEqual(nomsLatins(CARTE.tuEs()), [CARTE.tuEs()]);
   assert.deepEqual(nomsLatins('Chromebook, Safarix'), ['Chromebook, Safarix'], 'des mots entiers');
   assert.deepEqual(nomsLatins(null), [null]);
+  // L'iPad aussi (le titre de la feuille d'ouverture, Mon profil) ; iPadOS reste un mot entier
+  assert.deepEqual(nomsLatins('Reçois l’essentiel sur ton iPad'), ['Reçois l’essentiel sur ton ', 'iPad', '']);
+  assert.deepEqual(nomsLatins('يتلقى جهاز iPad هذا إشعارات هذا الحساب.'), ['يتلقى جهاز ', 'iPad', ' هذا إشعارات هذا الحساب.']);
+  assert.deepEqual(nomsLatins('Safari sur iPadOS'), ['', 'Safari', ' sur iPadOS']);
   // Les deux pages s'en servent, avec un span qui garde translate="no" dans le DOM (Preact en ferait translate="yes")
   for (const f of ['entree.js', 'pwa.js']) {
     const src = readFileSync(new URL(`../../src/${f}`, import.meta.url), 'utf8');

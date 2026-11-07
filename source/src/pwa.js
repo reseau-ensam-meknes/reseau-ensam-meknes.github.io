@@ -89,8 +89,9 @@ export function useInstall() {
 // Typographie française des gestes : ni « ni : ? ! ; seul en début ou en fin de ligne (espace insécable). En arabe, la
 // phrase française reste la clé du dictionnaire : elle passe telle quelle.
 const fr = s => (typeof s !== 'string' || getLang() === 'ar' ? s : s.replace(/« /g, '«\u00a0').replace(/ ([»:;?!])/g, '\u00a0$1'));
-// Des gestes numérotés, chacun avec son icône ; 'more-v' : le menu ⋮ d'Android (les trois points debout), 'more' : le ••• de l'iPhone
-const Etapes = ({ liste }) => html`<ol class="ios-steps">${liste.map(([ico, txt]) => html`<li key=${txt}><span class=${'g-ico' + (ico === 'more-v' ? ' debout' : '')}><${Icon} name=${ico === 'more-v' ? 'more' : ico} size=${18}/></span> ${fr(txt)}</li>`)}</ol>`;
+// Des gestes numérotés, chacun avec son icône ; 'more-v' : le menu ⋮ d'Android (les trois points debout), 'more' : le ••• de l'iPhone.
+// La phrase dans un seul span (le li est en flex : un morceau par nom y perdrait ses espaces), Safari ou Chrome dans le sien (avecNoms)
+const Etapes = ({ liste }) => html`<ol class="ios-steps">${liste.map(([ico, txt]) => html`<li key=${txt}><span class=${'g-ico' + (ico === 'more-v' ? ' debout' : '')}><${Icon} name=${ico === 'more-v' ? 'more' : ico} size=${18}/></span> <span>${avecNoms(txt)}</span></li>`)}</ol>`;
 // iPhone : les notifications n'arrivent que dans l'application ajoutée à l'écran d'accueil, dont le stockage est à part
 // (on s'y connecte une fois). Partager est en bas de Safari, ou dans son menu ••• ; dans Chrome ou Firefox, dans la barre d'adresse.
 const PARTAGER = { safari: 'Dans Safari, touche Partager : en bas de l’écran, ou dans le menu •••.', ipad: 'Dans Safari, touche Partager, en haut de l’écran.', autre: 'Touche Partager, dans la barre d’adresse ou dans le menu du navigateur.' };
@@ -396,7 +397,7 @@ export function PushToggle({ ctx }) {
   }[st];
   return html`<div class="push-etat" data-etat=${st} ref=${ici}>
     ${st === 'on' ? html`<p class="verify-ok push-ok" id="md-push-ok"><${Icon} name="check" size=${18}/> Activées sur cet appareil</p>
-      <p class="small muted" id="md-push-compte">${UN_COMPTE[appareilIci()]}</p>
+      <p class="small muted" id="md-push-compte">${avecNoms(UN_COMPTE[appareilIci()])}</p>
       <div class="push-acts">${simule ? null : html`<button type="button" class="btn small" id="md-push-test" disabled=${busy} onClick=${test}>Tester</button>`}
         <button type="button" class="btn small ghost" id="md-push-non" disabled=${busy} onClick=${() => { garderFocus.current = true; turnOff(); }}>Désactiver</button></div>`
     : st === 'off' ? html`<p class="small muted">${PUSH_POURQUOI}</p>
@@ -479,7 +480,7 @@ export function BandeauPush({ ctx }) {
     : html`<button type="button" class="btn small primary" id="push-b-oui" disabled=${busy} onClick=${agir}>${action}</button>`;
   return html`<section class="push-bandeau" aria-label=${titre} data-etat=${v}>
     <span class="push-b-ico" aria-hidden="true"><${Icon} name="bell" size=${22}/></span>
-    <div class="push-b-txt"><strong>${titre}</strong><span>${avecNoms(texte)}</span>
+    <div class="push-b-txt"><strong>${avecNoms(titre)}</strong><span>${avecNoms(texte)}</span>
       <div class="push-b-acts">${bouton}
         <button type="button" class="linkish small" id="push-b-tard" onClick=${plusTard}>Plus tard</button></div></div>
     ${feuilles}
@@ -518,6 +519,9 @@ const APPLI_RIEN = 'Rien ne s’ouvre ? Touche ⋮ en haut à droite, puis « Ou
 // l'attribut est posé à la main une fois l'élément créé ; translate="no" reste dans ses props pour i18n.js
 const sansTraduction = el => el?.setAttribute('translate', 'no');
 const avecNoms = s => nomsLatins(fr(t(s))).map((p, i) => (i % 2 ? html`<span translate="no" dir="auto" ref=${sansTraduction}>${p}</span>` : p));
+// Le titre d'une feuille qui nomme Chrome, Safari ou l'iPad : Modal s'en sert pour son titre (h2), le nom dans son span, et pour
+// le nom de la feuille (aria-label), qui reçoit la phrase entière, déjà traduite. Sans nom : la phrase telle quelle
+const titreAvecNoms = s => { const x = avecNoms(s); return x.length < 2 ? s : Object.assign(x, { toString: () => x.map(p => (typeof p === 'string' ? p : p.props.children)).join('') }); };
 const ETAPES_APPLI = {
   ios: [
     ['more', GESTE_SAFARI],
@@ -551,13 +555,14 @@ function FeuilleAppli({ ctx, onClose }) {
     ? html`<button type="button" class="btn ghost" id="appli-tard" onClick=${() => onClose()}>Plus tard</button>
       <${OuvrirChrome} store=${ctx.store} id="appli-chrome" onOuvert=${() => setTimeout(() => onClose(), 0)}/>`
     : html`<button type="button" class="btn primary" id="appli-ok" onClick=${() => onClose()}>J’ai compris</button>`;
-  return html`<${Modal} title=${APPLI_TITRE[sys]} cls="appareil appli" onClose=${onClose} footer=${pied}>
+  return html`<${Modal} title=${titreAvecNoms(APPLI_TITRE[sys])} cls="appareil appli" onClose=${onClose} footer=${pied}>
     <p>${avecNoms(appliIci(integre()?.nom))}</p>
     ${sys === 'android' ? html`<p>${avecNoms(APPLI_CHROME)}</p><p class="small muted">${avecNoms(APPLI_RIEN)}</p>` : html`<${Etapes} liste=${ETAPES_APPLI[sys]}/>`}
   <//>`;
 }
 injectCSS('pwa-appareil', `
 a.pastille-go { text-decoration: none; }
+.pastille-txt strong span { font-size: inherit; color: inherit; }
 .push-b-acts a.btn, .push-acts a.btn, .modal-foot a.btn { text-decoration: none; }
 .modal.appli .modal-body > p, .modal.ancienne .modal-body > p, .modal.ouverture-ios .modal-body > p { margin: 0; }
 .modal.appli .modal-body, .modal.ancienne .modal-body, .modal.ouverture-ios .modal-body { display: flex; flex-direction: column; gap: .8rem; }
@@ -1045,7 +1050,7 @@ export function LignePrevenir({ ctx, raison = 'message', fil = null, attente = t
   const txt = LIGNE[raison] || LIGNE.message;
   return html`<div class="pv-ligne" ref=${ici} data-sorte=${sorte} data-raison=${raison}>
       <span class="pv-l-ico" aria-hidden="true"><${Icon} name=${sorte === 'debloquer' ? 'lock' : 'bell'} size=${16}/></span>
-      <p class="pv-l-txt">${txt[appareilIci()]}<span aria-hidden="true"> · </span><button type="button" class="linkish pv-l-go" id="pv-ligne-go" disabled=${busy} onClick=${agir}>${LIGNE_GESTE[sorte]}</button></p>
+      <p class="pv-l-txt">${avecNoms(txt[appareilIci()])}<span aria-hidden="true"> · </span><button type="button" class="linkish pv-l-go" id="pv-ligne-go" disabled=${busy} onClick=${agir}>${LIGNE_GESTE[sorte]}</button></p>
       <button type="button" class="icon-btn small pv-l-x" id="pv-ligne-x" aria-label=${LIGNE_X[raison] || LIGNE_X.message} onClick=${masquer}><${Icon} name="x" size=${15}/></button>
     </div>${feuille}`;
 }
@@ -1153,7 +1158,7 @@ function FeuilleOuverture({ ctx, onClose }) {
   const activer = async () => { setBusy(true); if (await accepterNotif(store, me)) onClose(); else setBusy(false); };
   const pied = html`<button type="button" class="btn ghost" id="ouv-tard" onClick=${() => onClose()}>Plus tard</button>
     <button type="button" class="btn primary" id="ouv-oui" disabled=${busy} onClick=${activer}><${Icon} name="bell" size=${16}/> Activer</button>`;
-  return html`<${Modal} title=${OUV_TITRE[appareilIci()]} cls="prevenir ouverture" onClose=${onClose} footer=${pied}>
+  return html`<${Modal} title=${titreAvecNoms(OUV_TITRE[appareilIci()])} cls="prevenir ouverture" onClose=${onClose} footer=${pied}>
     <p>${OUV_INTRO}</p>
     ${points.length ? html`<ul class="ouv-points">${points.map(([cat, txt]) => html`<li key=${cat} data-cat=${cat}><span class="g-ico"><${Icon} name=${OUV_ICONES[cat]} size=${18}/></span> ${txt}</li>`)}</ul>` : null}
     <p class="small muted">${OUV_CHOIX}</p>
@@ -1415,7 +1420,7 @@ export function PastilleApp({ ctx, cache }) {
   // « Pour recevoir tes notifications » : seulement à qui les veut (coupées dans Mon profil, ou rien de coché : une icône, sans promesse)
   const sous = sorte === 'installer' && install.ios && voulu ? pourIos(PASTILLE_IOS) : PASTILLE[sorte][1];
   const dedans = html`<span class="pastille-ico" aria-hidden="true"><${Icon} name=${PASTILLE_ICO[sorte]} size=${18}/></span>
-    <span class="pastille-txt"><strong>${titre}</strong><span>${sous}</span></span>`;
+    <span class="pastille-txt"><strong>${avecNoms(titre)}</strong><span>${sous}</span></span>`;
   // Sur Android, le navigateur d'une application : le lien rouvre la page dans Chrome, en un toucher
   const go = sorte === 'appli' && sys === 'android' ? html`<${OuvrirChrome} store=${store} cls="pastille-go" id="pastille-go">${dedans}<//>`
     : html`<button type="button" class="pastille-go" id="pastille-go" disabled=${busy} onClick=${agir}>${dedans}</button>`;
