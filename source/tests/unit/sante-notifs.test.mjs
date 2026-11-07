@@ -17,11 +17,14 @@ const il_y_a = s => new Date(NOW - s * 1000).toISOString();
 // ---------------------------------------------------------------------------
 test('bilanTestPush : la réponse de la fonction, mise en forme ; une ancienne fonction ne dit que { sent }', () => {
   assert.deepEqual(bilanTestPush({ sent: 1, failed: 2, removed: 0, codes: [201, 403, 0], abonnements: 3 }),
-    { sent: 1, failed: 2, removed: 0, codes: [201, 403, 0], abonnements: 3 });
-  assert.deepEqual(bilanTestPush({ sent: 0 }), { sent: 0, failed: 0, removed: 0, codes: [], abonnements: null }, 'ancienne fonction');
-  assert.deepEqual(bilanTestPush(null), { sent: 0, failed: 0, removed: 0, codes: [], abonnements: null });
+    { sent: 1, failed: 2, removed: 0, codes: [201, 403, 0], abonnements: 3, ici: null });
+  assert.deepEqual(bilanTestPush({ sent: 0 }), { sent: 0, failed: 0, removed: 0, codes: [], abonnements: null, ici: null }, 'ancienne fonction');
+  assert.deepEqual(bilanTestPush(null), { sent: 0, failed: 0, removed: 0, codes: [], abonnements: null, ici: null });
   assert.deepEqual(bilanTestPush({ sent: '2', failed: -1, removed: 'x', codes: ['410', null, 'abc'], abonnements: 0 }),
-    { sent: 2, failed: 0, removed: 0, codes: [410, 0, 0], abonnements: 0 }, 'des nombres, jamais négatifs');
+    { sent: 2, failed: 0, removed: 0, codes: [410, 0, 0], abonnements: 0, ici: null }, 'des nombres, jamais négatifs');
+  // ici : la réponse de l'appareil qui a touché « Tester » (-1 : pas enregistré pour ce compte)
+  assert.deepEqual([503, -1, 0, '410', null, undefined, '', 'abc', true].map(ici => bilanTestPush({ sent: 0, codes: [0], abonnements: 1, ici }).ici),
+    [503, -1, 0, 410, null, null, null, null, null]);
 });
 
 test('raisonTestPush : arrivé, aucun téléphone, parti, refusé, trop long, injoignable, ou inconnu (ancienne fonction)', () => {
@@ -39,6 +42,18 @@ test('raisonTestPush : arrivé, aucun téléphone, parti, refusé, trop long, in
   assert.equal(raisonTestPush({ sent: 0 }), 'inconnu', 'ancienne fonction : on ne sait pas pourquoi');
   assert.equal(raisonTestPush({ sent: 1 }), 'ok');
   assert.deepEqual(['ok', 'aucun', 'parti', 'refuse', 'trop', 'injoignable', 'inconnu'].filter(testPushARefaire), ['parti', 'refuse']);
+});
+
+test('raisonTestPush avec ici : deux téléphones sur le compte, la raison est celle de cet appareil, pas celle de l’autre', () => {
+  // Celui-ci ne répond pas (503), un vieux téléphone du compte est parti (410)
+  assert.equal(raisonTestPush({ sent: 0, failed: 1, removed: 1, codes: [503, 410], abonnements: 2, ici: 503 }), 'injoignable', 'avant : « parti », et cet appareil réabonné');
+  // Celui-ci est parti, l'autre a accepté
+  assert.equal(raisonTestPush({ sent: 1, failed: 0, removed: 1, codes: [201, 410], abonnements: 2, ici: 410 }), 'parti', 'avant : « ok », puis 20 s d’attente pour rien');
+  const r = (ici, d = {}) => raisonTestPush({ sent: 1, failed: 1, removed: 0, codes: [201, 403], abonnements: 2, ici, ...d });
+  assert.deepEqual([201, 403, 400, 401, 404, 410, 413, 0, 429, 500, -1].map(c => r(c)),
+    ['ok', 'refuse', 'refuse', 'refuse', 'parti', 'parti', 'trop', 'injoignable', 'injoignable', 'injoignable', 'parti']);
+  assert.equal(r(201, { sent: 1, failed: 1, removed: 1, codes: [201, 410] }), 'ok', 'l’autre téléphone parti ne change rien pour celui-ci');
+  assert.equal(raisonTestPush({ sent: 0, failed: 0, removed: 0, codes: [], abonnements: 0, ici: -1 }), 'aucun', 'aucun téléphone sur le compte');
 });
 
 // ---------------------------------------------------------------------------
@@ -291,7 +306,7 @@ test('démo : la santé des notifications, plausible et sans aucun nom, pour l�
   assert.deepEqual(cles(raisonsNotifs(r)), ['refusees', 'abandonnees', 'muets', 'parties', 'sans_tel', 'coupees', 'echecs']);
   // Aucun téléphone en démo : l'abonnement est accepté, l'essai ne part vers aucun téléphone
   assert.equal(await s.abonnerPush({}), 'ok');
-  assert.deepEqual(await s.testPushDetails(), { sent: 0, failed: 0, removed: 0, codes: [], abonnements: 0 });
+  assert.deepEqual(await s.testPushDetails(), { sent: 0, failed: 0, removed: 0, codes: [], abonnements: 0, ici: null });
   assert.equal(await s.testPush(), 0);
 });
 
@@ -335,11 +350,15 @@ test('store réel : abonnerPush demande abonner_push_etat (« ok » ou « mort �
 test('store réel : testPushDetails dit ce que chaque téléphone a répondu ; testPush garde son contrat (le nombre envoyé)', async () => {
   const rep = { data: { sent: 1, failed: 1, removed: 1, codes: [201, 410], abonnements: 2 }, error: null };
   let m = magasin({ invoke: rep });
-  assert.deepEqual(await m.s.testPushDetails(), { sent: 1, failed: 1, removed: 1, codes: [201, 410], abonnements: 2 });
+  assert.deepEqual(await m.s.testPushDetails(), { sent: 1, failed: 1, removed: 1, codes: [201, 410], abonnements: 2, ici: null });
   assert.deepEqual(m.appels, [['invoke', 'notifier', { body: { job: 'test' } }]]);
   assert.equal(await m.s.testPush(), 1);
+  // L'adresse de cet appareil part avec l'essai : la fonction dit sa réponse à lui (ici)
+  m = magasin({ invoke: { data: { ...rep.data, ici: 410 }, error: null } });
+  assert.deepEqual(await m.s.testPushDetails('https://fcm.googleapis.com/fcm/send/abc'), { sent: 1, failed: 1, removed: 1, codes: [201, 410], abonnements: 2, ici: 410 });
+  assert.deepEqual(m.appels, [['invoke', 'notifier', { body: { job: 'test', endpoint: 'https://fcm.googleapis.com/fcm/send/abc' } }]], 'avant : { job: \'test\' } seul');
   m = magasin({ invoke: { data: { sent: 0 }, error: null } });
-  assert.deepEqual(await m.s.testPushDetails(), { sent: 0, failed: 0, removed: 0, codes: [], abonnements: null }, 'ancienne fonction');
+  assert.deepEqual(await m.s.testPushDetails(), { sent: 0, failed: 0, removed: 0, codes: [], abonnements: null, ici: null }, 'ancienne fonction');
   assert.equal(await m.s.testPush(), 0);
   m = magasin({ invoke: { data: null, error: { message: 'FunctionsFetchError' } } });
   await assert.rejects(m.s.testPushDetails(), { message: 'La fonction de notifications ne répond pas encore.' });

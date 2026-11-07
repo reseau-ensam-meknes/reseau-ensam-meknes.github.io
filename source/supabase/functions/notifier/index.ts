@@ -2218,7 +2218,11 @@ async function journaliser(env: Env, lignes: { user_id: string; kind: string; co
 // leur inscription), abonnements (téléphones inscrits avant l'essai) }. Au journal sous « test ». Ses refus ne comptent
 // pas contre le téléphone : trois appuis d'affilée ne doivent pas retirer l'abonnement qu'on essaie de réparer (un
 // téléphone parti, 404 ou 410, l'est toujours).
-async function jobTest(env: Env, req: Request): Promise<Response> {
+// endpoint : l'adresse de l'appareil qui a touché « Tester » (pages récentes). ici : sa réponse à lui (-1 : pas enregistré
+// pour ce compte), pour que la page dise ce qui arrive à cet appareil-là et ne refasse pas son abonnement à cause d'un autre
+// téléphone du compte. Sans adresse (page plus ancienne), la réponse reste celle d'avant.
+async function jobTest(env: Env, req: Request, endpoint?: unknown): Promise<Response> {
+  const moi = typeof endpoint === 'string' && endpoint ? endpoint : null;
   const jeton = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
   if (!jeton) return refus();
   const r = await fetch(`${env.url}/auth/v1/user`, { headers: { apikey: env.cle, Authorization: `Bearer ${jeton}` } });
@@ -2232,7 +2236,7 @@ async function jobTest(env: Env, req: Request): Promise<Response> {
   const b: Bilan = { sent: 0, failed: 0, removed: 0 };
   if (!abos.length) {
     await journaliser(env, [{ user_id: u.id, kind: 'test', code: -1 }]);
-    return json({ ...b, codes: [], abonnements: 0 });
+    return json({ ...b, codes: [], abonnements: 0, ...(moi ? { ici: -1 } : {}) });
   }
   const v = await preparerVapid(env);
   const n = texteNotif('test', {}, profil[0]?.langue, env.site) as Notif;
@@ -2246,7 +2250,8 @@ async function jobTest(env: Env, req: Request): Promise<Response> {
   const retires = await rendreCompte(env, etats, morts, abos);
   b.removed += retires.filter(id => !morts.includes(id)).length;
   await journaliser(env, [{ user_id: u.id, kind: 'test', code: res.code }]);
-  return json({ ...b, codes: abos.map(a => etats.find(e => e.id === a.id)?.code ?? 0), abonnements: abos.length });
+  const codes = abos.map(a => etats.find(e => e.id === a.id)?.code ?? 0), i = moi ? abos.findIndex(a => a.endpoint === moi) : -1;
+  return json({ ...b, codes, abonnements: abos.length, ...(moi ? { ici: i < 0 ? -1 : codes[i] } : {}) });
 }
 
 // ---------------------------------------------------------------------
@@ -2821,8 +2826,8 @@ async function jobRappels(env: Env): Promise<Response> {
 export async function handler(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'Méthode non autorisée' }, 405);
-  let job: unknown;
-  try { job = (await req.json())?.job; } catch { return json({ error: 'Requête invalide' }, 400); }
+  let job: unknown, endpoint: unknown;
+  try { ({ job, endpoint } = (await req.json()) ?? {}); } catch { return json({ error: 'Requête invalide' }, 400); }
   if (typeof job !== 'string' || !['cle', 'test', 'push', 'resume', 'essai_email', 'alertes', 'enquetes', 'messages', 'relances', 'demandes', 'rappels', 'inactifs', 'rappels_rdv'].includes(job)) return json({ error: 'Tâche inconnue' }, 400);
   const env = lireEnv();
   if (!env.url || !env.cle) {
@@ -2831,7 +2836,7 @@ export async function handler(req: Request): Promise<Response> {
   }
   try {
     if (job === 'cle') return await jobCle(env);
-    if (job === 'test') return await jobTest(env, req);
+    if (job === 'test') return await jobTest(env, req, endpoint);
     if (!(await appelAutorise(env, req))) return refus();
     if (job === 'essai_email') return await jobEssaiEmail(env);
     if (job === 'alertes') return await jobAlertes(env);

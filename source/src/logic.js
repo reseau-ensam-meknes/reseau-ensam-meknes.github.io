@@ -1847,12 +1847,14 @@ const plurielSN = (n, un, plusieurs) => (n > 1 ? plusieurs : un);
 // « Tester » (Mon profil) : ce que la fonction notifier répond, mis en forme. Un code par téléphone du compte
 // (201 accepté, 404 ou 410 parti, 400, 401 ou 403 refusé, 413 trop long, 0 injoignable). Une ancienne fonction ne
 // renvoie que { sent } : abonnements vaut alors null (on ne sait pas combien de téléphones sont enregistrés).
+// ici : le code de l'appareil qui a touché « Tester » (-1 : pas enregistré pour ce compte) ; null, la fonction ne le dit pas.
 export function bilanTestPush(d) {
-  const ab = d?.abonnements;
+  const ab = d?.abonnements, ici = d?.ici;
   return {
     sent: entierSN(d?.sent), failed: entierSN(d?.failed), removed: entierSN(d?.removed),
     codes: Array.isArray(d?.codes) ? d.codes.map(c => (Number.isFinite(Number(c)) ? Math.trunc(Number(c)) : 0)) : [],
     abonnements: ab === null || ab === undefined || ab === '' || !Number.isFinite(Number(ab)) ? null : entierSN(ab),
+    ici: (typeof ici === 'number' || (typeof ici === 'string' && ici.trim() !== '')) && Number.isFinite(Number(ici)) ? Math.trunc(Number(ici)) : null,
   };
 }
 export const CODES_PUSH_PARTI = [404, 410];
@@ -1861,9 +1863,11 @@ export const CODES_PUSH_REFUS = [400, 401, 403];
 // 'ok' au moins un téléphone l'a accepté ; 'aucun' aucun téléphone enregistré pour ce compte ;
 // 'parti' le service dit que cet abonnement n'existe plus (404, 410) ; 'refuse' il refuse l'envoi (400, 401, 403) ;
 // 'trop' message trop long (413) ; 'injoignable' service injoignable ou occupé (0, 429, 5xx) : réessayer plus tard ;
-// 'inconnu' ancienne fonction, qui ne dit que le nombre envoyé
+// 'inconnu' ancienne fonction, qui ne dit que le nombre envoyé. La réponse de cet appareil-là (ici), quand la fonction la
+// donne, décide seule : un autre téléphone du compte, parti ou injoignable, ne fait ni refaire ni accuser celui-ci.
 export function raisonTestPush(d) {
   const b = bilanTestPush(d);
+  if (b.abonnements !== 0 && b.ici !== null) return raisonCodePush(b.ici);
   if (b.sent > 0) return 'ok';
   if (b.abonnements === 0) return 'aucun';
   if (b.abonnements === null && !b.codes.length) return 'inconnu';
@@ -1872,6 +1876,9 @@ export function raisonTestPush(d) {
   if (b.codes.includes(413)) return 'trop';
   return 'injoignable';
 }
+// La réponse d'un téléphone en un mot ; -1 : cet appareil n'est pas enregistré pour ce compte, comme parti
+const raisonCodePush = c => (c >= 200 && c < 300 ? 'ok' : c === -1 || CODES_PUSH_PARTI.includes(c) ? 'parti'
+  : CODES_PUSH_REFUS.includes(c) ? 'refuse' : c === 413 ? 'trop' : 'injoignable');
 // Après l'essai, l'abonnement de cet appareil est à refaire (le service ne le reconnaît plus, ou le refuse)
 export const testPushARefaire = r => r === 'parti' || r === 'refuse';
 

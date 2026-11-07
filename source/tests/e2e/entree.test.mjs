@@ -1052,3 +1052,97 @@ for (const [langue, theme] of [['fr', 'light'], ['ar', 'dark']]) {
     await m.ctx.close();
   });
 }
+
+// Un appareil déjà abonné, en ligne (PushManager simulé) : « Tester » et la resynchronisation à l'ouverture.
+// pm.refuse : subscribe() est rejeté à partir de cet appel (1 = le premier), comme un service de push qui ne répond pas ;
+// morts : les adresses auxquelles abonner_push_etat répond « mort » ; test : la réponse du job test (un objet, ou 500) ;
+// cle : false, la clé de la plateforme est injoignable. Les appels au job test et à abonner_push_etat sont notés (appels),
+// chaque toast aussi (window.__toasts), et l'abonnement du navigateur (window.__pm : cur, journal).
+const TEST_PHRASES = {
+  aucun: 'Aucun appareil abonné pour l’instant.',
+  reabonne: 'Le service de notifications ne reconnaissait plus cet appareil : il vient d’être réabonné. Touche « Tester » encore une fois.',
+  trop: 'La notification d’essai a été refusée (trop longue). Préviens l’administration.',
+  injoignable: 'Le service de notifications de cet appareil ne répond pas pour l’instant. Réessaie dans quelques minutes.',
+  lent: 'Le service de notifications ne répond pas, réessaie dans un moment.',
+  panne: 'La fonction de notifications ne répond pas encore.',
+};
+async function appareil({ hash = '#profil/notifications', langue = 'fr', pm = {}, morts = [], test = null, cle = true } = {}) {
+  site.vider(); site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z', notif_push: {} });
+  const ctx = await navigateur.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  const appels = [];
+  await ctx.route('**/sb/rest/v1/rpc/abonner_push_etat', r => {
+    const ep = r.request().postDataJSON()?.p_endpoint;
+    appels.push(['abonner_push_etat', ep]);
+    return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(morts.includes(ep) ? 'mort' : 'ok') });
+  });
+  await ctx.route('**/sb/functions/v1/notifier', r => {
+    const corps = r.request().postDataJSON() || {};
+    if (corps.job === 'cle' && !cle) return r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"Erreur interne"}' });
+    if (corps.job !== 'test') return r.continue();
+    appels.push(['test', corps.endpoint ?? null]);
+    if (test === 500) return r.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"Erreur interne"}' });
+    return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(test) });
+  });
+  await ctx.addInitScript(pm => {
+    const st = window.__pm = { n: 0, cur: null, subs: 0, journal: [] };
+    const nouveau = () => {
+      const endpoint = 'https://push.exemple.ma/e' + ++st.n;
+      const s = { endpoint, options: {}, toJSON: () => ({ endpoint, keys: { p256dh: 'p256', auth: 'auth' } }),
+        unsubscribe: async () => { st.journal.push('unsubscribe ' + endpoint); if (st.cur === s) st.cur = null; return true; } };
+      return s;
+    };
+    if (pm.existante !== false) st.cur = nouveau();
+    const manager = {
+      getSubscription: async () => st.cur,
+      subscribe: async () => {
+        st.subs++; st.journal.push('subscribe');
+        if (pm.refuse && st.subs >= pm.refuse) throw new DOMException('Registration failed - push service error', 'AbortError');
+        if (!st.cur) st.cur = nouveau();
+        return st.cur;
+      },
+    };
+    const reg = { waiting: null, installing: null, addEventListener() {}, pushManager: manager };
+    const sw = { register: async () => reg, ready: Promise.resolve(reg), controller: null, addEventListener() {}, removeEventListener() {} };
+    Object.defineProperty(Navigator.prototype, 'serviceWorker', { get: () => sw, configurable: true });
+    window.Notification = class { static permission = 'granted'; static requestPermission = async () => 'granted'; };
+    if (!('PushManager' in window)) window.PushManager = function PushManager() {};
+    window.__toasts = [];
+    new MutationObserver(ms => { for (const m of ms) for (const n of m.addedNodes) if (n.nodeType === 1 && n.classList?.contains('toast')) setTimeout(() => window.__toasts.push(n.innerText.trim()), 30); })
+      .observe(document, { childList: true, subtree: true });
+  }, pm);
+  await ctx.addInitScript(([uid, langue]) => {
+    if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1');
+    localStorage.setItem('ensam-lang', langue);
+    const now = Math.floor(Date.now() / 1000);
+    localStorage.setItem('sb-127-auth-token', JSON.stringify({ access_token: 'x.' + btoa(JSON.stringify({ sub: uid, exp: now + 7200 })) + '.y', token_type: 'bearer', expires_in: 7200, expires_at: now + 7200, refresh_token: 'r', user: { id: uid, aud: 'authenticated', email: 'membre@exemple.ma', user_metadata: {}, app_metadata: {} } }));
+  }, [UID, langue]);
+  const page = await ctx.newPage(); const erreurs = [];
+  page.on('pageerror', e => erreurs.push(e.message));
+  await page.goto(site.adresse + hash);
+  await page.waitForSelector('.me-btn', { timeout: 15000 });
+  await page.waitForSelector('#md-push .push-etat[data-etat="on"], #md-push .push-etat[data-etat="off"]', { timeout: 15000 });
+  // La resynchronisation de l'ouverture a donné l'abonnement à la base
+  for (let i = 0; i < 50 && !appels.some(a => a[0] === 'abonner_push_etat'); i++) await page.waitForTimeout(100);
+  await page.waitForTimeout(400);
+  const etat = () => page.evaluate(() => ({ carte: document.querySelector('#md-push .push-etat')?.dataset.etat || null, cur: window.__pm.cur?.endpoint || null, journal: window.__pm.journal }));
+  const toasts = () => page.evaluate(() => window.__toasts);
+  const tester = async () => {
+    await page.evaluate(() => { window.__pm.journal = []; window.__toasts = []; });
+    await page.click('#md-push-test');
+    await page.waitForFunction(() => window.__toasts.length > 0, null, { timeout: 8000 });
+    await page.waitForTimeout(600);
+  };
+  return { ctx, page, erreurs, appels, etat, toasts, tester };
+}
+const effaces = () => site.appels.filter(a => a.m === 'DELETE' && a.u === '/sb/rest/v1/push_subscriptions').length;
+
+test('« Tester » en ligne, deux téléphones sur le compte : la raison est celle de cet appareil, pas celle de l’autre', async () => {
+  // Celui-ci : son service ne répond pas (503) ; l'autre, un vieux téléphone, est parti (410)
+  const m = await appareil({ test: { sent: 0, failed: 1, removed: 1, codes: [503, 410], abonnements: 2, ici: 503 } });
+  await m.tester();
+  assert.deepEqual(await m.toasts(), [TEST_PHRASES.injoignable], 'avant : « ne reconnaissait plus cet appareil »');
+  assert.deepEqual(await m.etat(), { carte: 'on', cur: 'https://push.exemple.ma/e1', journal: [] }, 'avant : cet appareil réabonné à cause de l’autre');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});

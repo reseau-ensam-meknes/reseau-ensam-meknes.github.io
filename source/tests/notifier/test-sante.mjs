@@ -398,6 +398,27 @@ test('« Tester » : le détail de chaque téléphone, au journal sous « test �
   assert.deepEqual(b.tables.push_journal.at(-1), { user_id: sans, kind: 'test', code: -1 });
 });
 
+test('« Tester » avec l’adresse de l’appareil : ici, sa réponse à lui (un autre téléphone du compte ne décide pas pour lui) ; -1 s’il n’est pas enregistré', async () => {
+  const b = nouveauBanc();
+  const u = uid(9), sans = uid(10);
+  b.tables.profiles.push(profil(u), profil(sans));
+  b.jetons.set('jeton-u', u);
+  b.jetons.set('jeton-sans', sans);
+  const ici = b.abonner(u, 1), vieux = b.abonner(u, 2);
+  b.recepteurs.delete(ici.endpoint);       // ce téléphone-ci : son service ne répond pas
+  b.statutsPush.set(vieux.endpoint, 410);  // l'autre, un vieux téléphone : parti
+  const tester = (corps, jeton = 'jeton-u') => N.handler(requete({ job: 'test', ...corps }, { Authorization: `Bearer ${jeton}` })).then(corpsDe);
+  assert.deepEqual(await tester({ endpoint: ici.endpoint }), { sent: 0, failed: 1, removed: 1, codes: [0, 410], abonnements: 2, ici: 0 },
+    'avant : rien ne disait lequel est cet appareil, la page le croyait parti (410) et refaisait son abonnement');
+  assert.deepEqual(await tester({ endpoint: ici.endpoint }), { sent: 0, failed: 1, removed: 0, codes: [0], abonnements: 1, ici: 0 });
+  assert.deepEqual(await tester({ endpoint: 'https://push.example.net/inconnu' }), { sent: 0, failed: 1, removed: 0, codes: [0], abonnements: 1, ici: -1 }, 'pas enregistré pour ce compte');
+  assert.deepEqual(await tester({ endpoint: ici.endpoint }, 'jeton-sans'), { sent: 0, failed: 0, removed: 0, codes: [], abonnements: 0, ici: -1 });
+  // Une page plus ancienne n'envoie pas d'adresse : la réponse d'avant, sans ici
+  for (const corps of [{}, { endpoint: 42 }, { endpoint: '' }]) {
+    assert.deepEqual(await tester(corps), { sent: 0, failed: 1, removed: 0, codes: [0], abonnements: 1 }, JSON.stringify(corps));
+  }
+});
+
 test('« Tester » appuyé quatre fois sur un téléphone que le service refuse : jamais retiré, toujours essayé', async () => {
   const b = nouveauBanc();
   const u = uid(51), autre = uid(52);

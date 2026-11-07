@@ -362,7 +362,9 @@ export function PushToggle({ ctx }) {
     setBusy(true); setDiag(null);
     try {
       const recu = attendreRecu(ATTENTE_TEST);
-      const r = raisonTestPush(await store.testPushDetails());
+      // L'adresse de cet appareil part avec l'essai : la raison est la sienne, pas celle d'un autre téléphone du compte
+      const sub = await (await swReady)?.pushManager?.getSubscription().catch(() => null);
+      const r = raisonTestPush(await store.testPushDetails(sub?.endpoint));
       // 'inconnu' : ancienne fonction notifier, qui ne dit que le nombre envoyé (ici aucun)
       if (r === 'aucun' || r === 'inconnu') { toast('Aucun appareil abonné pour l’instant.'); return; }
       if (testPushARefaire(r)) {
