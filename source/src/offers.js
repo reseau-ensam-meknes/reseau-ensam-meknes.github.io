@@ -4,7 +4,7 @@ import { Icon, Modal, Field, Empty, Person, Avatar, LogoEntreprise, MentionLogos
 import { useBrouillon } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
 import { getLang, addAR, arCount } from './i18n.js';
-import { TYPES, titreOffre, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande, manquesOffre, peutRecommander, porteApresRefus, demandesPour, typeForNiveau } from './logic.js';
+import { TYPES, titreOffre, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande, manquesOffre, peutRecommander, porteApresRefus, demandesPour, typeForNiveau, ecoleDuContenu } from './logic.js';
 import { RelanceBanner, PasteOffer, sujetPris } from './recrutement.js';
 import { CvButton } from './cv.js';
 import { SignalerBtn } from './confiance.js';
@@ -214,7 +214,7 @@ export function OfferCard({ o, ctx, onOpen, why, sujets = false, i = 0 }) {
   const pop = Date.now() - (vientDeSauver.get(o.id) || 0) < 900;
   // « il y a 3 j » dit qu'elle est fraîche ; au-delà d'un mois, la date reste dans la fiche
   const recente = Date.now() - new Date(o.created_at) < 30 * 864e5;
-  const sauver = () => { if (!saved) { vientDeSauver.set(o.id, Date.now()); try { navigator.vibrate?.(8); } catch { /* */ } } act(() => saved ? store.remove('reactions', saved.id) : store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save' })); };
+  const sauver = () => { if (!saved) { vientDeSauver.set(o.id, Date.now()); try { navigator.vibrate?.(8); } catch { /* */ } } act(() => saved ? store.remove('reactions', saved.id) : store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save', ...ecoleDuContenu(me, o) })); };
   // Où en est-on (sa candidature, un sujet pris ou libre) ; sinon, quand il n'y a rien à faire, depuis quand elle est là,
   // écrit sous le prénom de l'auteur (la ligne du pied garde la place pour les réactions et le marque-page)
   const etat = myApp ? html`<span class=${'state-pill a-' + myApp.status}>${APP_STATUS[myApp.status]}</span>` : pris ? html`<span class="state-pill s-trouve">Pris</span>`
@@ -298,7 +298,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
   const candidat = peutPostulerA(o, me, ctx.saison);
   const myApp = candidat ? apps.find(a => a.student_id === me.id) : null;
   const saved = data.reactions.find(r => r.offer_id === o.id && r.user_id === me.id && r.kind === 'save');
-  const toggleSave = () => act(() => saved ? store.remove('reactions', saved.id) : store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save' }));
+  const toggleSave = () => act(() => saved ? store.remove('reactions', saved.id) : store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save', ...ecoleDuContenu(me, o) }));
   const dl = o.deadline ? new Date(o.deadline + 'T12:00:00') : null;
   const jours = daysUntil(o.deadline);
   const urgent = o.status === 'ouverte' && jours !== null && jours >= 0 && jours <= 7;

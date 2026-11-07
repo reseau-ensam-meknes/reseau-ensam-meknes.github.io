@@ -9,17 +9,32 @@ const ms = d => (d ? new Date(d).getTime() || 0 : 0);
 // Les tables dont chaque ligne porte une école, comme dans la base (une ligne sans école est de l'ENSAM Meknès, même en démo)
 export const TABLES_ECOLE = new Set(['profiles', 'offers', 'questions', 'demandes', 'annonces', 'cafes', 'startups', 'evenements', 'placements',
   'mentorships', 'answers', 'groupe_messages', 'groupe_membres', 'relectures_cv', 'verifications_pairs', 'defis', 'ambassadeurs', 'votes',
-  'reactions', 'kudos', 'cafe_participants', 'evenement_participants', 'shortlists', 'entretiens', 'avis_stage', 'enquetes_insertion',
+  'reactions', 'kudos', 'cafe_participants', 'evenement_participants', 'shortlists', 'enquetes_insertion',
   'liste_officielle', 'ambassadeurs_passages']);
-// Les tables sans école : une ligne est de l'école du membre qu'elle concerne (un membre n'agit que dans la sienne)
+// Les tables sans école : une ligne est de l'école du membre qu'elle concerne (un membre n'agit que dans la sienne).
+// Les entretiens et les avis de stage ont une école dans la base, mais arrivent par des vues qui ne la donnent pas
+// (entretiens_publics, avis_publics) : l'administration y lit toujours l'auteur, même d'un récit anonyme.
 export const PAR_MEMBRE = { signalements: 'auteur_id', retours_cv: 'profil_id', parrainages: 'filleul_id', propositions: 'laureat_id',
   applications: 'student_id', matchs: 'etudiant_id', match_choix: 'user_id', messages: 'author_id', comments: 'author_id',
-  demandes_contact: 'demandeur_id', blocages: 'user_id', invitations: 'student_id', attestations: 'laureat_id' };
+  demandes_contact: 'demandeur_id', blocages: 'user_id', invitations: 'student_id', attestations: 'laureat_id',
+  entretiens: 'author_id', avis_stage: 'author_id' };
 
 // Les données d'une école : chaque table dont les lignes portent une école, celles qui suivent leur membre, et les cartes
-// sponsorisées de l'école ou de toutes les écoles (sans école) ; les autres (guide des pays…) restent entières
+// sponsorisées de l'école ou de toutes les écoles (sans école) ; les autres (guide des pays…) restent entières.
+// Calculées une fois par état des données (chaque écriture remplace la liste de sa table) : d'un rendu à l'autre, la
+// console reçoit le même objet, et ce qu'elle mémorise sur ses données ne se recalcule pas à chaque frappe.
+const memoEcole = new WeakMap();
 export function donneesDeLEcole(data, slug) {
-  if (!slug) return data;
+  if (!slug || !data) return data;
+  let parSlug = memoEcole.get(data);
+  if (!parSlug) memoEcole.set(data, parSlug = new Map());
+  const vu = parSlug.get(slug); const cles = Object.keys(data);
+  if (vu && vu.cles.length === cles.length && cles.every(k => vu.src[k] === data[k])) return vu.out;
+  const out = filtrerEcole(data, slug);
+  parSlug.set(slug, { cles, src: { ...data }, out });
+  return out;
+}
+function filtrerEcole(data, slug) {
   const out = { ...data };
   for (const [t, v] of Object.entries(data)) {
     if (!Array.isArray(v)) continue;

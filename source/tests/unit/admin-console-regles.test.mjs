@@ -53,6 +53,25 @@ test('une école : les tables de l’école le restent même quand aucune ligne 
   assert.deepEqual(ids(r.messages), ['z']);
 });
 
+test('une école : les entretiens et les avis (des vues sans école) suivent leur auteur ; le même état des données donne le même objet', () => {
+  const data = {
+    profiles: [{ id: 'm1' }, { id: 'x1', ecole: 'ensam-casa' }],
+    entretiens: [{ id: 'en1', author_id: 'm1' }, { id: 'en2', author_id: 'x1' }],
+    avis_stage: [{ id: 'av1', author_id: 'x1' }, { id: 'av2', author_id: 'm1' }],
+  };
+  const casa = donneesDeLEcole(data, 'ensam-casa');
+  assert.deepEqual([ids(casa.entretiens), ids(casa.avis_stage)], [['en2'], ['av1']]);
+  const mek = donneesDeLEcole(data, 'ensam-meknes');
+  assert.deepEqual([ids(mek.entretiens), ids(mek.avis_stage)], [['en1'], ['av2']]);
+  assert.equal(donneesDeLEcole(data, 'ensam-casa'), casa, 'rien n’a changé : le même objet');
+  data.entretiens = [...data.entretiens, { id: 'en3', author_id: 'x1' }];
+  const apres = donneesDeLEcole(data, 'ensam-casa');
+  assert.notEqual(apres, casa, 'une table remplacée : un nouveau calcul');
+  assert.deepEqual(ids(apres.entretiens), ['en2', 'en3']);
+  data.nouvelle = [];
+  assert.notEqual(donneesDeLEcole(data, 'ensam-casa'), apres, 'une table de plus : un nouveau calcul');
+});
+
 const PROFILS = [
   { id: 'adm', role: 'admin', full_name: 'Administration Youssef' },
   { id: 'l1', role: 'laureat', full_name: 'Youssef El Amrani', promo: 2016, filiere: 'Génie Mécanique : Énergétique' },

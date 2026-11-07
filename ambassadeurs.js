@@ -77,8 +77,11 @@ const repondre = (ctx, a, statut) => ctx.store.update('ambassadeurs', a.id, { st
 // (un seul en cours par promo × filière) ; on le dit calmement au lieu d'une erreur.
 const TROP_TARD = 'Trop tard, c’est déjà proposé à quelqu’un d’autre.';
 const placePrise = e => e?.code === '23505' || /duplicate key|ambassadeurs_un_en_cours|Déjà ambassadeur|^Trop tard/i.test(String(e?.message || e || ''));
+// Le groupe d'une ligne ou d'un membre, dans son école : l'administration voit les ambassadeurs de toutes les écoles
+// (un seul en cours par école × promo × filière)
+const duGroupe = (data, x) => ambassadeurDuGroupe({ ambassadeurs: (data.ambassadeurs || []).filter(a => ecoleDe(a) === ecoleDe(x)) }, x.promo, x.filiere);
 async function annuler(store, a, fn) {
-  const enCours = ambassadeurDuGroupe(store.data, a.promo, a.filiere);
+  const enCours = duGroupe(store.data, a);
   if (enCours && enCours.id !== a.id) return toast(TROP_TARD, 'ok');
   try { await fn(); } catch (e) { if (placePrise(e)) return toast(TROP_TARD, 'ok'); throw e; }
 }
@@ -227,9 +230,6 @@ function MerciAmbassadeur({ ctx, a }) {
 // ---------------------------------------------------------------------------
 // Administration > Inviter : les ambassadeurs, retirer, nommer à la main, proposer maintenant
 // ---------------------------------------------------------------------------
-// Le groupe d'une ligne ou d'un membre, dans son école : l'administration voit les ambassadeurs de toutes les écoles
-const duGroupe = (data, x) => ambassadeurDuGroupe({ ambassadeurs: (data.ambassadeurs || []).filter(a => ecoleDe(a) === ecoleDe(x)) }, x.promo, x.filiere);
-
 export function AmbassadeursAdmin({ ctx }) {
   const { data, store, act, me } = ctx;
   const [q, setQ] = useState('');

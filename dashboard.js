@@ -523,7 +523,8 @@ function RapportPanel({ ctx, stats }) {
     if (t === 'dec') return virgule(Math.round(num(x) * 10) / 10);
     return x;
   };
-  const meta = { promo: promo ? +promo : null, vague };
+  // Le classeur porte le nom de l'école du rapport (une autre que l'ENSAM Meknès : sans le nom de la plateforme)
+  const meta = { promo: promo ? +promo : null, vague, ecoleNom: autre ? ctx.nomEcoleSuivi || ecole : '' };
   const nom = ext => `insertion-${ecole || ECOLE_DEFAUT}-${promo || 'toutes-promos'}${vague ? '-' + vague + 'mois' : ''}-${new Date().toISOString().slice(0, 10)}.${ext}`;
   const csv = () => { telecharger(new Blob([rapportCSV(list, tots)], { type: 'text/csv;charset=utf-8' }), nom('csv')); toast('Fichier CSV prêt.'); };
   const excel = () => { telecharger(rapportXLSX(list, tots, stats.filter(s => (!promo || s.promo === +promo) && (!vague || s.vague === vague)), meta), nom('xlsx')); toast('Fichier Excel prêt.'); };
@@ -641,7 +642,7 @@ function classeur(feuilles) {
   ]);
 }
 
-function rapportXLSX(list, tots, stats, { promo, vague }) {
+function rapportXLSX(list, tots, stats, { promo, vague, ecoleNom = '' }) {
   const date = new Date().toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
   const filtre = `${promo ? `Promo ${promo}` : 'Toutes les promos'} · ${vague ? `${vague} mois après le diplôme` : 'vagues à 6 et 12 mois'}`;
   const v = (r, [k, , t]) => {
@@ -655,7 +656,7 @@ function rapportXLSX(list, tots, stats, { promo, vague }) {
     return { v: num(x), s: r.tot ? 5 : 0 };
   };
   const rapport = [
-    [{ v: 'ENSAM Meknès · Rapport d’insertion des diplômés', s: 4 }],
+    [{ v: `${ecoleNom || 'ENSAM Meknès'} · Rapport d’insertion des diplômés`, s: 4 }],
     [`Généré le ${date} · ${filtre}`],
     [],
     COLS.map(([, l]) => ({ v: l, s: 1 })),
@@ -672,7 +673,7 @@ function rapportXLSX(list, tots, stats, { promo, vague }) {
   ];
   const methode = [
     [{ v: 'Méthode', s: 4 }],
-    ['Source : enquête d’insertion de la plateforme Réseau ENSAM Meknès, envoyée aux diplômés 6 mois puis 12 mois après le diplôme.'],
+    [`Source : enquête d’insertion de la plateforme${ecoleNom ? '' : ' Réseau ENSAM Meknès'}, envoyée aux diplômés 6 mois puis 12 mois après le diplôme.`],
     ...METHODE.map(m => [{ v: m, s: 7 }]),
     ['En poste : emploi, création d’entreprise, volontariat ou VIE.'],
     ['Délai médian : mois entre le diplôme et le premier poste, pour les diplômés en poste qui ont répondu.'],

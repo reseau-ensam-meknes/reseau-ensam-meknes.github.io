@@ -34,7 +34,8 @@ import { PartenairesAdmin } from './admin-partenaires.js';
 import { OutilsAdmin } from './admin-outils.js';
 
 // Une étiquette : l'onglet des cartes sponsorisées
-ajouterIcones({ etiquette: '<path d="M3.5 12.3V4.5a1 1 0 0 1 1-1h7.8l8.2 8.2a1.2 1.2 0 0 1 0 1.7l-7.6 7.6a1.2 1.2 0 0 1-1.7 0z"/><circle cx="8" cy="8" r="1.4"/>' });
+ajouterIcones({ etiquette: '<path d="M3.5 12.3V4.5a1 1 0 0 1 1-1h7.8l8.2 8.2a1.2 1.2 0 0 1 0 1.7l-7.6 7.6a1.2 1.2 0 0 1-1.7 0z"/><circle cx="8" cy="8" r="1.4"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11.2v5.2M12 7.7v.2"/>' });
 
 addAR({
   'Vue d’ensemble': 'نظرة عامة', 'Modération': 'الإشراف', 'Liste officielle': 'اللائحة الرسمية', 'Réglages': 'الإعدادات', 'Agenda': 'المفكرة',
@@ -55,6 +56,7 @@ addAR({
   'Un membre anonyme': 'عضو مجهول', 'Auteur': 'الكاتب', 'Auteur :': 'الكاتب:', 'Signalé par': 'بلّغ عنه',
   // Membres
   'Vérifie que la personne est bien diplômée de l’ENSAM Meknès (promo, filière), puis valide. Le badge rassure les étudiants. Deux lauréats vérifiés de sa promo peuvent aussi le confirmer.': 'تحقق من أن الشخص خريج ENSAM مكناس (الدفعة، الشعبة)، ثم أكّد. الشارة تطمئن الطلبة. يمكن أيضًا لخريجَين متحقق منهما من دفعته تأكيد ذلك.',
+  'Vérifie que la personne est bien diplômée de son école (promo, filière), puis valide. Le badge rassure les étudiants. Deux lauréats vérifiés de sa promo peuvent aussi le confirmer.': 'تحقق من أن الشخص خريج مدرسته (الدفعة، الشعبة)، ثم أكّد. الشارة تطمئن الطلبة. يمكن أيضًا لخريجَين متحقق منهما من دفعته تأكيد ذلك.',
   'Pas trouvé sur la liste officielle de sa promo': 'غير موجود في اللائحة الرسمية لدفعته', 'Sur la liste officielle': 'في اللائحة الرسمية', 'Aucune confirmation de sa promo': 'لا تأكيد من الدفعة',
   // Liste officielle
   'Importer la liste': 'استيراد اللائحة', 'Fichier Excel (.xlsx) ou CSV exporté de la scolarité : une ligne par étudiant, avec au moins le nom et la promo.': 'ملف Excel (.xlsx) أو CSV من مصلحة الشؤون الطلابية: سطر لكل طالب، مع الاسم والدفعة على الأقل.',
@@ -88,6 +90,8 @@ addAR({
   [/^(\d+) étudiants attendent un horaire depuis plus de 24 h$/, n => `${arCount(n, ['طالب واحد ينتظر', 'طالبان ينتظران', 'طلبة ينتظرون', 'طالبًا ينتظرون'])} توقيتًا منذ أكثر من 24 ساعة`],
   [/^Pas encore de demande d’étudiant ce mois-ci · toutes aides : (\d+)\s?%$/, t => `لا طلبات من الطلبة بعد هذا الشهر · كل أنواع المساعدة: ${t}%`],
   [/^(\d+) filleuls? cette année · (\d+) lauréats? volontaires? · (\d+) étudiants? de 3A sans parrain\. Chaque matin, la plateforme attribue aussi les parrains toute seule\.$/, (a, b, c) => `${arCount(a, ['طالب واحد في الرعاية', 'طالبان في الرعاية', 'طلبة في الرعاية', 'طالبًا في الرعاية'])} هذه السنة · ${arCount(b, ['خريج متطوع', 'خريجان متطوعان', 'خريجين متطوعين', 'خريجًا متطوعًا'])} · ${arCount(c, ['طالب واحد', 'طالبان', 'طلبة', 'طالبًا'])} من السنة الثالثة دون عرّاب. كل صباح تعيّن المنصة العرّابين تلقائيًا أيضًا.`],
+  [/^(\d+) filleuls? cette année · (\d+) lauréats? volontaires? · (\d+) étudiants? de 3A sans parrain\. Le bouton, comme la plateforme chaque matin, attribue les parrains dans toutes les écoles, chacun dans la sienne\.$/, (a, b, c) => `${arCount(a, ['طالب واحد في الرعاية', 'طالبان في الرعاية', 'طلبة في الرعاية', 'طالبًا في الرعاية'])} هذه السنة · ${arCount(b, ['خريج متطوع', 'خريجان متطوعان', 'خريجين متطوعين', 'خريجًا متطوعًا'])} · ${arCount(c, ['طالب واحد', 'طالبان', 'طلبة', 'طالبًا'])} من السنة الثالثة دون عرّاب. يعيّن الزر، كما تفعل المنصة كل صباح، العرّابين في كل المدارس، كلٌّ في مدرسته.`],
+  [/^(\d+) parrains? attribués? dans toutes les écoles\.$/, n => `عدد العرّابين المعيَّنين في كل المدارس: ${n}.`],
   [/^Jusqu’au (\d{1,2}) (\S+)$/, (j, m) => `إلى غاية ${j} ${m}`],
   [/^Signalé (\d+) fois$/, n => `بُلّغ عنه ${n} مرة`],
   [/^Personnes qui ont demandé un code sans l’entrer : (\d+) \(code pas reçu, ou visite interrompue\)\.$/, n => `عدد من طلبوا رمزًا دون إدخاله: ${n} (لم يصلهم الرمز، أو انقطعت الزيارة).`],
@@ -123,8 +127,8 @@ export function AdminPage(ctx) {
   useEffect(() => { if (rubriqueAvant.current === 'ecoles' && sub !== 'ecoles') relireEcoles(); rubriqueAvant.current = sub; }, [sub]);
   const vue = donneesDeLEcole(data, ecole);
   // Les rubriques reçoivent l'école regardée (ecoleConsole, '' : toutes), la liste des écoles et leur nom : ce qu'elles écrivent
-  // va à cette école (pourLEcoleVue). Écoles, Partenaires, Animer et Affiches gardent tout le réseau : leurs textes, affiches
-  // et rapports sont ceux du Réseau ENSAM Meknès (ceux d'une autre école attendent son accord pour le nom).
+  // va à cette école (pourLEcoleVue). Écoles, Partenaires, Animer, Affiches et les liens d'invitation gardent tout le réseau :
+  // leurs textes, affiches et rapports sont ceux du Réseau ENSAM Meknès (ceux d'une autre école attendent son accord pour le nom).
   const commun = { ecoleConsole: ecole, ecoles, nomEcole: nomDe };
   const c = { ...ctx, ...commun, data: vue };
   const tout = { ...ctx, ...commun };
@@ -149,7 +153,7 @@ export function AdminPage(ctx) {
         ${rubrique === 'traiter' ? html`<${ATraiter} ctx=${c} items=${items} comptes=${comptes}/>` : null}
         ${rubrique === 'animer' ? html`<${NoteTextesMeknes} ctx=${c}/><${AnimerAdmin} ctx=${tout}/>` : null}
         ${rubrique === 'agenda' ? html`<${AgendaAdmin} ctx=${c}/>` : null}
-        ${rubrique === 'inviter' ? html`<${InvitationsAdmin} ctx=${c}/><${AmbassadeursAdmin} ctx=${c}/>` : null}
+        ${rubrique === 'inviter' ? html`<${NoteTextesMeknes} ctx=${c}/><${InvitationsAdmin} ctx=${tout}/><${AmbassadeursAdmin} ctx=${c}/>` : null}
         ${rubrique === 'membres' ? html`<${Membres} ctx=${c} comptes=${comptes}/>` : null}
         ${rubrique === 'contenus' ? html`<${Contenus} ctx=${c}/>` : null}
         ${rubrique === 'moderation' ? html`<${Moderation} ctx=${c}/>` : null}
@@ -170,7 +174,8 @@ function EcoleTag({ ctx, slug }) {
   if (!plusieursEcoles(ctx)) return null;
   return html`<span class="mini cs-ecole-tag"><${Icon} name="cap" size=${13}/> <span translate="no">${ctx.nomEcole?.(slug) || slug}</span></span>`;
 }
-// Animer, Partenaires, Affiches : quand la console regarde une autre école, une ligne dit que ces textes sont ceux de l'ENSAM Meknès
+// Animer, Partenaires, Affiches, liens d'invitation : quand la console regarde une autre école, une ligne dit que ces textes
+// sont ceux de l'ENSAM Meknès
 function NoteTextesMeknes({ ctx }) {
   const e = ctx.ecoleConsole;
   if (!e || e === ECOLE_DEFAUT) return null;
@@ -182,15 +187,21 @@ function NoteTextesMeknes({ ctx }) {
 // ---------------------------------------------------------------------------
 function TableauDeBord({ ctx, comptes, items }) {
   const { data, go } = ctx;
+  // Toutes les écoles à la fois : l'objectif du plan (celui du lancement à l'ENSAM Meknès) et les défis (ceux de l'école de
+  // l'administration, là où va un nouveau défi) se comptent sur les données de leur seule école ; une autre école regardée
+  // n'a pas d'objectif du plan
+  const toutes = plusieursEcoles(ctx) && !ctx.ecoleConsole;
+  const ici = ctx.ecoleConsole || ecoleDe(ctx.me);
+  const plan = !ctx.ecoleConsole || ctx.ecoleConsole === ECOLE_DEFAUT;
   return html`
     <${CalloutATraiter} items=${items} go=${go}/>
-    <${ObjectifPlan} data=${data}/>
+    ${plan ? html`<${ObjectifPlan} data=${toutes ? donneesDeLEcole(data, ECOLE_DEFAUT) : data}/>` : null}
     <${KpisPilotage} ctx=${ctx} comptes=${comptes}/>
     <${OuSontLesMembres} ctx=${ctx}/>
     <div class="cs-deux"><${CeQuiSestPasse} ctx=${ctx}/><${CeuxQuiAident} ctx=${ctx}/></div>
     <${ParcoursInscription} p=${parcoursInscription(comptes, data)} sansSuite=${codesSansSuite(comptes, data.profiles)}/>
     <${AnnonceBox} ctx=${ctx}/>
-    <${DefisAdmin} ctx=${ctx}/>
+    <${DefisAdmin} ctx=${toutes ? { ...ctx, data: donneesDeLEcole(data, ici) } : ctx} ecoleTag=${html`<${EcoleTag} ctx=${ctx} slug=${ici}/>`} plusieursEcoles=${plusieursEcoles(ctx)}/>
     <${ParrainsAdmin} ctx=${ctx}/>
   `;
 }
@@ -306,7 +317,7 @@ function Membres({ ctx, comptes }) {
     <${ProfilsARevoir} ctx=${ctx} members=${members}/>
     <${LecturesSignalees} ctx=${ctx}/>
     ${toVerify.length ? html`<div class="panel accent-panel"><div class="section-head"><h2 class="h-ico"><${Icon} name="shield"/> Lauréats à vérifier <span class="count">${toVerify.length}</span></h2></div>
-      <p class="muted small">Vérifie que la personne est bien diplômée de l’ENSAM Meknès (promo, filière), puis valide. Le badge rassure les étudiants. Deux lauréats vérifiés de sa promo peuvent aussi le confirmer.</p>
+      <p class="muted small">${plusieursEcoles(ctx) ? 'Vérifie que la personne est bien diplômée de son école (promo, filière), puis valide. Le badge rassure les étudiants. Deux lauréats vérifiés de sa promo peuvent aussi le confirmer.' : 'Vérifie que la personne est bien diplômée de l’ENSAM Meknès (promo, filière), puis valide. Le badge rassure les étudiants. Deux lauréats vérifiés de sa promo peuvent aussi le confirmer.'}</p>
       <ul class="people-list verif-list">${toVerify.map(p => { const pr = pairs(p); return html`<li key=${p.id}><div class="verif-who"><${Person} p=${p} onOpen=${openProfile} sub=${`${p.filiere} · Promo ${p.promo}${p.entreprise ? ' · ' + p.entreprise : ''}`}/>
         <span class="verif-facts small">
           ${compte.get(p.id) ? html`<span class="mono muted" dir="ltr" translate="no">${compte.get(p.id).email}</span>` : null}
@@ -653,8 +664,8 @@ function ParrainsAdmin({ ctx }) {
   const n = data.parrainages.filter(x => x.saison === saison && ids.has(x.filleul_id)).length;
   return html`<div class="panel">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="heart"/> Parrainage des 3A</h2>
-      <button class="btn small" disabled=${!sans.length} onClick=${() => act(async () => { const k = await store.attribuerParrains(); toast(k ? `${k} parrain${k > 1 ? 's' : ''} attribué${k > 1 ? 's' : ''}.` : 'Aucun parrain disponible dans ces filières pour l’instant.'); })}>Attribuer les parrains</button></div>
-    <p class="small muted">${n} filleul${n > 1 ? 's' : ''} cette année · ${parrains} lauréat${parrains > 1 ? 's' : ''} volontaire${parrains > 1 ? 's' : ''} · ${sans.length} étudiant${sans.length > 1 ? 's' : ''} de 3A sans parrain. Chaque matin, la plateforme attribue aussi les parrains toute seule.</p>
+      <button class="btn small" disabled=${!sans.length} onClick=${() => act(async () => { const k = await store.attribuerParrains(); toast(!k ? 'Aucun parrain disponible dans ces filières pour l’instant.' : plusieursEcoles(ctx) ? `${k} parrain${k > 1 ? 's' : ''} attribué${k > 1 ? 's' : ''} dans toutes les écoles.` : `${k} parrain${k > 1 ? 's' : ''} attribué${k > 1 ? 's' : ''}.`); })}>Attribuer les parrains</button></div>
+    <p class="small muted">${n} filleul${n > 1 ? 's' : ''} cette année · ${parrains} lauréat${parrains > 1 ? 's' : ''} volontaire${parrains > 1 ? 's' : ''} · ${sans.length} étudiant${sans.length > 1 ? 's' : ''} de 3A sans parrain. ${plusieursEcoles(ctx) ? 'Le bouton, comme la plateforme chaque matin, attribue les parrains dans toutes les écoles, chacun dans la sienne.' : 'Chaque matin, la plateforme attribue aussi les parrains toute seule.'}</p>
   </div>`;
 }
 

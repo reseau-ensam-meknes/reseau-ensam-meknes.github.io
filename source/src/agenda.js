@@ -3,7 +3,7 @@
 import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Avatar, Person, toast, injectCSS, vibrer } from './ui.js';
 import { addAR, getLang } from './i18n.js';
-import { TYPES_EVENEMENT, PUBLICS, pourPublic, pourLEcoleVue } from './logic.js';
+import { TYPES_EVENEMENT, PUBLICS, pourPublic, pourLEcoleVue, ecoleVueGardee, deMonEcole } from './logic.js';
 
 addAR({
   'École :': 'المدرسة:',
@@ -48,7 +48,7 @@ export const passe = e => new Date(e.fin || e.debut) < Date.now();
 
 // Ce que chacun voit : l'administration tout, sinon les événements ouverts à son rôle
 export function eventsFor(data, me) {
-  return (data.evenements || []).filter(e => pourPublic(e.public, me.role));
+  return deMonEcole(data.evenements, me).filter(e => pourPublic(e.public, me.role));
 }
 
 // ---------------------------------------------------------------------------
@@ -212,11 +212,11 @@ function dansUneSemaine(h) { const d = new Date(); d.setDate(d.getDate() + 7); d
 // part de ces valeurs (titre, type, debut, fin, lieu, lien, description, public), une seule fois
 let preRempli = null;
 export function preparerEvenement(e) { preRempli = e || null; }
-// ecole et ecoleNom : l'école que regarde la console (l'événement est pour elle), seulement quand ce n'est pas celle de l'administration
-function nouveauFormulaire() {
-  const p = preRempli; preRempli = null;
+// ecole et ecoleNom : l'école que regarde la console (l'événement est pour elle), seulement quand ce n'est pas celle de l'administration.
+// Un formulaire ouvert hors de la console (barre latérale, agenda) part, lui aussi, pour l'école que la console regardait.
+function nouveauFormulaire(me) {
+  const p = { ...ecoleVueGardee(me), ...(preRempli || {}) }; preRempli = null;
   const f = { titre: '', type: 'conference', debut: toInput(dansUneSemaine(10)), fin: toInput(dansUneSemaine(12)), lieu: '', lien: '', description: '', public: 'tous' };
-  if (!p) return f;
   for (const k of ['titre', 'type', 'lieu', 'lien', 'description', 'public', 'ecole', 'ecoleNom']) if (typeof p[k] === 'string') f[k] = p[k];
   if (p.debut) f.debut = toInput(new Date(p.debut));
   if (p.fin) f.fin = toInput(new Date(p.fin));
@@ -226,7 +226,7 @@ function nouveauFormulaire() {
 function EventForm({ ctx, e, onClose }) {
   const { store, act } = ctx;
   const [f, setF] = useState(() => e ? { titre: e.titre, type: e.type, debut: toInput(new Date(e.debut)), fin: e.fin ? toInput(new Date(e.fin)) : '', lieu: e.lieu || '', lien: e.lien || '', description: e.description || '', public: e.public }
-    : nouveauFormulaire());
+    : nouveauFormulaire(ctx.me));
   const set = (k, v) => setF({ ...f, [k]: v });
   const lienOk = !f.lien.trim() || /^https:\/\/\S+$/i.test(f.lien.trim());
   const finOk = !f.fin || !f.debut || new Date(f.fin) >= new Date(f.debut);

@@ -919,9 +919,26 @@ export const GUIDE_SECTIONS = [
 // L'école d'un membre ou d'une ligne : tout ce qui date d'avant les écoles est à ENSAM Meknès (même défaut que la base)
 export const ECOLE_DEFAUT = 'ensam-meknes';
 export const ecoleDe = x => x?.ecole || ECOLE_DEFAUT;
+// Ce qu'un membre lit : ce qui est de son école, comme la règle « reseau de l'ecole » de la base (la démo, elle, a tout) ;
+// l'administration lit tout
+export const deMonEcole = (lignes, me) => (me?.role === 'admin' ? (lignes || []) : (lignes || []).filter(x => ecoleDe(x) === ecoleDe(me)));
 // Ce que l'administration écrit depuis la console pour l'école qu'elle y regarde : { ecole } seulement quand ce n'est pas
 // la sienne (la base met la sienne par défaut ; une base pas encore à jour n'a pas la colonne). Hors de la console : {}.
 export const pourLEcoleVue = ctx => (ctx?.ecoleConsole && ctx.ecoleConsole !== ecoleDe(ctx.me) ? { ecole: ctx.ecoleConsole } : {});
+// Ce que l'administration écrit sous le contenu d'une autre école (bravo, réponse, vote, offre enregistrée) est de cette
+// école : sans cela, la base lui donnerait celle de l'administration, et les membres de l'école ne le verraient pas
+export const ecoleDuContenu = (me, contenu) => (me?.role === 'admin' && contenu?.ecole && contenu.ecole !== ecoleDe(me) ? { ecole: contenu.ecole } : {});
+// L'école que regarde la console, gardée sur l'appareil avec son nom (admin-donnees.js, useEcoleRegardee) : ce qui se
+// publie hors de la console (« Publier un événement » de la barre latérale ou de l'agenda) part pour elle, comme dans la
+// console. { ecole, ecoleNom } quand ce n'est pas celle de l'administration, sinon {}.
+export const CLE_ECOLE_VUE = id => 'ensam-admin-ecole-vue:' + (id || '');
+export function ecoleVueGardee(me) {
+  if (me?.role !== 'admin') return {};
+  try {
+    const v = JSON.parse(localStorage.getItem(CLE_ECOLE_VUE(me.id)) || 'null');
+    return v && typeof v.slug === 'string' && v.slug && v.slug !== ecoleDe(me) ? { ecole: v.slug, ecoleNom: typeof v.nom === 'string' && v.nom ? v.nom : v.slug } : {};
+  } catch { return {}; }
+}
 // Administration > Membres : null si la liste officielle de son école n'a aucune ligne de sa promo, sinon true ou false
 // selon qu'il y figure (même nom et même promo, ou même email) ; les lignes d'une autre école ne comptent jamais
 export function surListeOfficielle(liste, p, email) {
@@ -1162,7 +1179,7 @@ export const PUBLICS = [['tous', 'Tout le monde'], ['etudiants', 'Étudiants'], 
 export const pourPublic = (pub, role) => role === 'admin' || !pub || pub === 'tous' || (pub === 'etudiants' && role === 'etudiant') || (pub === 'laureats' && role === 'laureat');
 export const ANNONCE_JOURS = 14;
 export const annonceVisible = (a, now = Date.now()) => !!a?.active && now - new Date(a.created_at).getTime() < ANNONCE_JOURS * 864e5;
-export const annoncePour = (annonces, me, now = Date.now()) => (annonces || []).filter(a => annonceVisible(a, now) && pourPublic(a.public, me?.role))
+export const annoncePour = (annonces, me, now = Date.now()) => deMonEcole(annonces, me).filter(a => annonceVisible(a, now) && pourPublic(a.public, me?.role))
   .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0] || null;
 
 // « À faire » sur l'accueil : trois petites choses au plus que seul le membre peut boucler (les messages non lus en premier, app.js).

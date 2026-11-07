@@ -6892,13 +6892,18 @@ test('console · deux écoles : le choix d’école (gardé et partagé avec Sui
   assert.equal(await s.page.locator('#sv-slug').evaluate(i => i.readOnly), false);
   await s.fermer();
 
-  // La console regarde l'Institut exemple : Animer, Partenaires et Affiches disent que leurs textes sont ceux de l'ENSAM Meknès
+  // La console regarde l'Institut exemple : Animer, Partenaires, Affiches et les liens d'invitation disent que leurs textes
+  // sont ceux de l'ENSAM Meknès
   await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.page.waitForTimeout(200);
-  for (const r of ['admin/animer', 'admin/partenaires', 'admin/outils']) {
+  for (const r of ['admin/animer', 'admin/partenaires', 'admin/outils', 'admin/inviter']) {
     await s.aller(r);
     assert.match(await s.page.locator('.cs-note-ecole').innerText(), /pour Institut exemple, il faut d’abord l’accord écrit de l’école/, r);
   }
   await s.aller('admin/agenda'); assert.equal(await s.page.locator('.cs-note-ecole').count(), 0);
+  // « Publier un événement » de la barre latérale part, lui aussi, pour l'école que regarde la console
+  await s.page.click('.side-pub'); await s.page.waitForSelector('#ev-titre');
+  assert.match(await s.page.locator('#ev-ecole').innerText(), /École : Institut exemple/);
+  await s.fermer();
 
   // L'annonce publiée pour l'Institut exemple reste la sienne
   await s.aller('admin');
@@ -6912,6 +6917,21 @@ test('console · deux écoles : le choix d’école (gardé et partagé avec Sui
   await s.page.selectOption('#cs-ecole', 'ensam-meknes'); await s.page.waitForTimeout(200);
   assert.match(await annonce.locator('h2').innerText(), /ENSAM Meknès/);
   assert.doesNotMatch(await annonce.innerText(), /Réunion de lancement/);
+
+  // Les défis d'une école, comptés sur ses données ; l'objectif du plan est celui de l'ENSAM Meknès
+  const defis = s.page.locator('.cs-main .panel', { has: s.page.locator('h2', { hasText: 'Défis de l’année' }) });
+  assert.equal(await s.page.locator('#adm-objectif').count(), 1);
+  await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator('#adm-objectif').count(), 0, 'pas d’objectif du plan pour une autre école');
+  assert.match(await defis.locator('h2').innerText(), /Institut exemple/);
+  await defis.locator('.section-head .btn').click(); await s.page.fill('#df-titre', 'Premier défi de l’Institut');
+  await defis.locator('form .btn.primary').click(); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.evaluate(() => window.__demo.data.defis.find(d => d.titre === 'Premier défi de l’Institut')?.ecole), 'institut-exemple');
+  assert.match(await defis.innerText(), /Premier défi de l’Institut · 0\/20/);
+  await s.page.selectOption('#cs-ecole', ''); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator('#adm-objectif').count(), 1);
+  assert.match(await defis.locator('h2').innerText(), /ENSAM Meknès/);
+  assert.doesNotMatch(await defis.innerText(), /Premier défi de l’Institut/, 'toutes les écoles : les défis de l’école de l’administration');
 
   // La liste officielle d'une école ne se mêle pas à celle de l'autre
   await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.aller('admin/liste');
