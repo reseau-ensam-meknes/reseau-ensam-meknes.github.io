@@ -179,13 +179,43 @@ if (typeof window !== 'undefined') {
   });
 }
 
-// Rien n'arrive malgré l'abonnement : le jeton du service de push est refait
+// Ce que l'abonnement de cet appareil est devenu (sans un geste du membre) : les cartes, la pastille et le bandeau le relisent
+async function annoncerPush(store) {
+  etatConnu = await etatPush(store).catch(() => etatConnu);
+  dispatchEvent(new Event(PUSH_CHANGE));
+}
+// Rien n'arrive malgré l'abonnement : le jeton du service de push est refait. 'fait' : un abonnement neuf, donné à la base ;
+// 'cle' : la clé de la plateforme ne répond pas, rien n'est touché ; 'aucun' : plus d'abonnement sur cet appareil. Le service
+// de push refuse le nouveau, ou la base ne le prend pas : l'erreur est levée, et cet appareil reste sans abonnement (dit aux
+// cartes, qui repassent à « Activer ») plutôt que de paraître abonné.
 async function reparerPush(store) {
-  const reg = await swReady, key = await store.pushKey(), ancien = await reg?.pushManager?.getSubscription();
-  if (!key || !ancien) return;
+  const reg = await swReady, ancien = await reg?.pushManager?.getSubscription();
+  if (!ancien) { await annoncerPush(store); return 'aucun'; }
+  const key = await store.pushKey();
+  if (!key) return 'cle';
   await store.desabonnerPush(ancien.endpoint).catch(() => {});
   await ancien.unsubscribe().catch(() => {});
-  await enregistrerPush(store, reg, await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) }), key);
+  let sub = null;
+  try {
+    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(key) });
+    await enregistrerPush(store, reg, sub, key);
+    return 'fait';
+  } catch (e) {
+    await sub?.unsubscribe().catch(() => {});
+    await annoncerPush(store);
+    throw e;
+  }
+}
+// La réparation, avec ce qui n'a pas pu se faire dit en une phrase : true seulement si l'abonnement est vraiment refait
+async function refaireAbonnement(store) {
+  try {
+    const r = await reparerPush(store);
+    if (r === 'cle') toast(SERVICE_LENT, 'err');
+    return r === 'fait';
+  } catch (e) {
+    toast(echecDefinitif(e, { brave: !!navigator.brave }) ? SANS_NOTIF : SERVICE_LENT, 'err');
+    return false;
+  }
 }
 // Le service worker de cet appareil a-t-il reçu quelque chose dans le délai ?
 const attendreRecu = ms => new Promise(ok => {
@@ -275,14 +305,14 @@ async function premiereNotif(store, diag) {
   try {
     let recu = attendreRecu(ATTENTE_TEST);
     if (!(await store.testPush())) {
-      await reparerPush(store);
+      // Pas refait (clé injoignable, service de push qui refuse) : la phrase dit pourquoi, jamais « réabonné »
+      if (!(await refaireAbonnement(store))) return;
       recu = attendreRecu(ATTENTE_TEST);
       if (!(await store.testPush())) { toast(PREMIERE_RATEE); return; }
     }
     if (!diag) return;
-    const ok = await recu;
-    if (!ok) await reparerPush(store).catch(() => {});
-    diag(ok ? 'recue' : 'perdue');
+    if (await recu) { diag('recue'); return; }
+    if (await refaireAbonnement(store)) diag('perdue');
   } catch { /* « Tester » dans Mon profil */ }
 }
 const SERVICE_LENT = 'Le service de notifications ne répond pas, réessaie dans un moment.';
@@ -367,17 +397,16 @@ export function PushToggle({ ctx }) {
       const r = raisonTestPush(await store.testPushDetails(sub?.endpoint));
       // 'inconnu' : ancienne fonction notifier, qui ne dit que le nombre envoyé (ici aucun)
       if (r === 'aucun' || r === 'inconnu') { toast('Aucun appareil abonné pour l’instant.'); return; }
+      // « Réabonné » seulement s'il l'est vraiment : sinon la phrase dit ce qui reste à faire
       if (testPushARefaire(r)) {
-        await reparerPush(store).catch(() => {});
-        toast(TEST_REABONNE);
+        if (await refaireAbonnement(store)) toast(TEST_REABONNE);
         return;
       }
       if (r === 'trop') { toast(TEST_TROP, 'err'); return; }
       if (r === 'injoignable') { toast(TEST_INJOIGNABLE, 'err'); return; }
       toast('Notification de test envoyée.');
       if (await recu) { setDiag('recue'); return; }
-      await reparerPush(store).catch(() => {});
-      setDiag('perdue');
+      if (await refaireAbonnement(store)) setDiag('perdue');
     } catch (e) { toast(e.message, 'err'); } finally { setBusy(false); }
   };
   const note = {

@@ -1137,6 +1137,35 @@ async function appareil({ hash = '#profil/notifications', langue = 'fr', pm = {}
 }
 const effaces = () => site.appels.filter(a => a.m === 'DELETE' && a.u === '/sb/rest/v1/push_subscriptions').length;
 
+test('« Tester » en ligne, la réparation échoue (service de push muet, clé injoignable) : jamais « réabonné », la carte dit ce qui reste', async () => {
+  // L'ancien abonnement retiré, le nouveau refusé : l'appareil n'a plus d'abonnement, la carte repasse à « Activer »
+  let m = await appareil({ test: { sent: 0, failed: 1, removed: 0, codes: [403], abonnements: 1, ici: 403 }, pm: { refuse: 1 } });
+  await m.tester();
+  assert.deepEqual(await m.toasts(), [TEST_PHRASES.lent], 'avant : « il vient d’être réabonné »');
+  assert.deepEqual(await m.etat(), { carte: 'off', cur: null, journal: ['unsubscribe https://push.exemple.ma/e1', 'subscribe'] }, 'avant : « Activées sur cet appareil »');
+  assert.ok(await m.page.isVisible('#md-push-oui'), '« Activer » à toucher');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+  // Sans la clé de la plateforme, rien n'est refait : l'abonnement reste, et le message dit de réessayer
+  m = await appareil({ test: { sent: 0, failed: 0, removed: 1, codes: [410], abonnements: 1, ici: 410 }, cle: false });
+  await m.tester();
+  assert.deepEqual(await m.toasts(), [TEST_PHRASES.lent], 'avant : « il vient d’être réabonné », sans rien avoir fait');
+  assert.deepEqual(await m.etat(), { carte: 'on', cur: 'https://push.exemple.ma/e1', journal: [] });
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+  // Acceptée mais pas arrivée sur cet appareil dans les 20 s, et l'abonnement ne peut pas être refait : pas de « vient d'être refait »
+  m = await appareil({ test: { sent: 1, failed: 0, removed: 0, codes: [201], abonnements: 1, ici: 201 }, pm: { refuse: 1 } });
+  await m.tester();
+  assert.deepEqual(await m.toasts(), ['Notification de test envoyée.']);
+  await m.page.waitForFunction(() => window.__toasts.length > 1 || document.querySelector('#md-push-diag'), null, { timeout: 30000 });
+  await m.page.waitForTimeout(600);
+  assert.equal(await m.page.locator('#md-push-diag').count(), 0, 'avant : « L’abonnement de cet appareil vient d’être refait », sans abonnement');
+  assert.deepEqual(await m.toasts(), ['Notification de test envoyée.', TEST_PHRASES.lent]);
+  assert.deepEqual(await m.etat(), { carte: 'off', cur: null, journal: ['unsubscribe https://push.exemple.ma/e1', 'subscribe'] });
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
 test('« Tester » en ligne, deux téléphones sur le compte : la raison est celle de cet appareil, pas celle de l’autre', async () => {
   // Celui-ci : son service ne répond pas (503) ; l'autre, un vieux téléphone, est parti (410)
   const m = await appareil({ test: { sent: 0, failed: 1, removed: 1, codes: [503, 410], abonnements: 2, ici: 503 } });
