@@ -35,6 +35,7 @@ addAR({
   'Réseau fermé aux nouvelles inscriptions. Les membres gardent leur compte.': 'أُغلقت الشبكة أمام التسجيلات الجديدة. يحتفظ الأعضاء بحساباتهم.',
   'Nom de l’école': 'اسم المدرسة', 'Identifiant': 'المعرّف', 'Ex. ENSA Fès': 'مثال: ENSA Fès',
   'Tiré du nom : lettres minuscules, chiffres et tirets (2 à 40). Il ne change plus ensuite.': 'مأخوذ من الاسم: حروف لاتينية صغيرة وأرقام وشرطات (من 2 إلى 40). لا يتغير بعد ذلك.',
+  'Celui du réseau de cette école : il ne change plus.': 'معرّف شبكة هذه المدرسة: لم يعد يتغير.',
   'Cet identifiant est déjà pris.': 'هذا المعرّف مستعمل من قبل.', 'Identifiant invalide.': 'معرّف غير صالح.',
   'Le réseau est créé fermé. Il s’ouvre une fois les trois conditions remplies dans le suivi.': 'تُنشأ الشبكة مغلقة. تُفتح بعد استيفاء الشروط الثلاثة في المتابعة.',
   'École créée, réseau fermé.': 'أُنشئت المدرسة، والشبكة مغلقة.', 'Créer': 'إنشاء',
@@ -132,7 +133,8 @@ function CarteSuivi({ l, type, compact, now, onOuvrir, onDeplacer, onBasculer, e
 
 // suivi : useTableAdmin(ctx, 'admin_suivi') ; fiche : l'état de la fiche ouverte, tenu par la page (pour l'ouvrir d'ailleurs) ;
 // extra : ce qu'une carte montre de plus (un partenaire signé : « Créer sa carte sponsorisée »)
-export function SuiviTableau({ ctx, type, suivi, id, titre, icone, ajouter, vide, fiche, setFiche, extra }) {
+// reseaux : les identifiants des écoles qui ont déjà un réseau (l'identifiant d'une fiche liée à l'un d'eux ne change plus)
+export function SuiviTableau({ ctx, type, suivi, id, titre, icone, ajouter, vide, fiche, setFiche, extra, reseaux = [] }) {
   const large = useLarge();
   const now = Date.now();
   const { colonnes, hors } = grouperSuivi(suivi.lignes, type);
@@ -153,15 +155,17 @@ export function SuiviTableau({ ctx, type, suivi, id, titre, icone, ajouter, vide
           ${c.lignes.map(l => carte(l, false))}</section>`)}</div>`}
     ${hors.length ? html`<details class="sv-hors"><summary class="small strong"><span>En pause ou refus</span> <span class="count">${hors.length}</span></summary>
       <div class="sv-hors-l">${hors.map(l => html`<div class="sv-hors-i" key=${l.id}><span class="tag done">${nomEtape(type, l.etape)}</span>${carte(l, false)}</div>`)}</div></details>` : null}
-    ${fiche ? html`<${FicheSuivi} key=${fiche.id || 'nouvelle'} ctx=${ctx} type=${type} suivi=${suivi} ligne=${fiche.id ? fiche : null} preset=${fiche.id ? {} : fiche} onClose=${() => setFiche(null)}/>` : null}
+    ${fiche ? html`<${FicheSuivi} key=${fiche.id || 'nouvelle'} ctx=${ctx} type=${type} suivi=${suivi} ligne=${fiche.id ? fiche : null} preset=${fiche.id ? {} : fiche} reseaux=${reseaux} onClose=${() => setFiche(null)}/>` : null}
   </section>`;
 }
 
 // La fiche d'une ligne : créer, modifier, changer d'étape, supprimer
 const VIDE = { nom: '', ecole_slug: '', ville: '', contact_nom: '', contact_role: '', contact: '', etape: 'a_contacter', prochaine_action: '', prochaine_le: '',
   formule: '', montant_dh: '', referent_ok: false, accord_nom: false, cndp_ok: false, notes: '' };
-export function FicheSuivi({ ctx, type, suivi, ligne, preset = {}, onClose }) {
+export function FicheSuivi({ ctx, type, suivi, ligne, preset = {}, reseaux = [], onClose }) {
   const nouvelle = !ligne;
+  // Liée au réseau d'une école déjà créée : son identifiant ne change plus (sinon le suivi perd son réseau)
+  const slugFige = type === 'ecole' && reseaux.includes(ligne?.ecole_slug || preset.ecole_slug || '');
   const [f, setF] = useState(() => {
     const x = { ...VIDE, ...preset };
     for (const k of Object.keys(VIDE)) if (ligne && ligne[k] !== undefined && ligne[k] !== null) x[k] = typeof VIDE[k] === 'string' ? String(ligne[k]) : ligne[k];
@@ -202,8 +206,8 @@ export function FicheSuivi({ ctx, type, suivi, ligne, preset = {}, onClose }) {
         <input id="sv-nom" required minlength="2" maxlength="120" list=${type === 'ecole' ? 'sv-suggestions' : null} value=${f.nom} onInput=${e => set('nom', e.target.value)} placeholder=${type === 'ecole' ? 'Ex. ENSA Fès' : ''}/>
       <//>
       ${type === 'ecole' ? html`<datalist id="sv-suggestions">${SUGGESTIONS.map(n => html`<option value=${n}/>`)}</datalist>
-        <${Field} label="Identifiant" err=${slugOk ? null : 'Identifiant invalide.'} hint="Tiré du nom : lettres minuscules, chiffres et tirets (2 à 40). Il ne change plus ensuite.">
-          <input id="sv-slug" dir="ltr" maxlength="40" value=${f.ecole_slug} onInput=${e => { setSlugLibre(true); set('ecole_slug', e.target.value.toLowerCase()); }}/><//>` : null}
+        <${Field} label="Identifiant" err=${slugOk ? null : 'Identifiant invalide.'} hint=${slugFige ? 'Celui du réseau de cette école : il ne change plus.' : 'Tiré du nom : lettres minuscules, chiffres et tirets (2 à 40). Il ne change plus ensuite.'}>
+          <input id="sv-slug" dir="ltr" maxlength="40" value=${f.ecole_slug} readonly=${slugFige} aria-readonly=${slugFige ? 'true' : null} onInput=${e => { if (slugFige) return; setSlugLibre(true); set('ecole_slug', e.target.value.toLowerCase()); }}/><//>` : null}
       <div class="grid2">
         <${Field} label="Ville"><input id="sv-ville" maxlength="80" value=${f.ville} onInput=${e => set('ville', e.target.value)}/><//>
         <${Field} label="Étape"><select id="sv-etape" value=${f.etape} onChange=${e => set('etape', e.target.value)}>${etapes.map(([k, l]) => html`<option value=${k}>${l}</option>`)}</select><//>
@@ -336,7 +340,7 @@ export function EcolesAdmin({ ctx }) {
       ${ecoles.absente ? html`<p class="small muted" id="ec-absente">Les réseaux des autres écoles arrivent avec la prochaine mise à jour de la base.</p>` : null}
       <div class="ec-grille">${ecoles.ecoles.map(e => html`<${CarteReseau} key=${e.slug} ctx=${c} e=${e} membres=${membres} suivi=${suivi} absente=${ecoles.absente} onSuivi=${completer}/>`)}</div>
     </section>
-    <${SuiviTableau} ctx=${ctx} type="ecole" suivi=${suivi} id="ec-suivi" titre="Suivi des écoles" icone="route" ajouter="Ajouter une école"
+    <${SuiviTableau} ctx=${ctx} type="ecole" suivi=${suivi} reseaux=${ecoles.ecoles.map(e => e.slug)} id="ec-suivi" titre="Suivi des écoles" icone="route" ajouter="Ajouter une école"
       vide="Personne à contacter pour l’instant : ajoute une école." fiche=${fiche} setFiche=${setFiche}/>
     <${MessageEcole} ctx=${ctx} suivi=${suivi}/>
     ${creer ? html`<${CreerEcole} ctx=${ctx} ecoles=${ecoles} suivi=${suivi} onClose=${() => setCreer(false)}/>` : null}

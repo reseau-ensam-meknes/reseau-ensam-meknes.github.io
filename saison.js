@@ -3,7 +3,7 @@ import { html, useState, useMemo, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Bar, Num, toast, useLocal } from './ui.js';
 import { getLang, t as tr } from './i18n.js';
 import { MessageBtn } from './messages.js';
-import { MESURES, defiProgress, activeDefis, coupeDesPromos, computeScores, tonAnnee, niveauOf, seasonLabel, NIVEAUX, proximiteFiliere } from './logic.js';
+import { MESURES, defiProgress, activeDefis, coupeDesPromos, computeScores, tonAnnee, niveauOf, seasonLabel, NIVEAUX, proximiteFiliere, pourLEcoleVue } from './logic.js';
 
 const NIV_OPTS = [['', 'Toutes les années'], [3, '3A'], [4, '4A'], [5, '5A'], [6, 'Jeunes diplômés']];
 const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -42,7 +42,8 @@ export function DefisAdmin({ ctx }) {
   const list = [...data.defis].sort((a, b) => b.fin.localeCompare(a.fin));
   const start = ([titre, mesure, niveau, cible]) => setF({ titre, mesure, niveau, cible, debut: iso(now), fin: iso(fin) });
   const save = e => { e.preventDefault(); act(async () => {
-    await store.insert('defis', { titre: f.titre.trim(), mesure: f.mesure, niveau: f.niveau ? +f.niveau : null, cible: +f.cible, debut: f.debut, fin: f.fin });
+    // Depuis la console, pour l'école qu'elle regarde (sinon celle de l'administration, par défaut dans la base)
+    await store.insert('defis', { titre: f.titre.trim(), mesure: f.mesure, niveau: f.niveau ? +f.niveau : null, cible: +f.cible, debut: f.debut, fin: f.fin, ...pourLEcoleVue(ctx) });
     toast('Défi lancé : il apparaît sur l’accueil de tous.'); setF(null);
   }); };
   return html`<div class="panel">

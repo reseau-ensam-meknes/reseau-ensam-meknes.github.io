@@ -4,9 +4,9 @@
 // la liste officielle des étudiants, les écoles, les partenaires, les cartes sponsorisées de Match, les affiches et le rapport,
 // et les réglages (email de l'école). Le cadre et les rubriques nouvelles sont dans admin-console*.js et admin-tableau.js.
 import { html, useState, useEffect, useMemo, useRef } from './vendor/preact-htm.js';
-import { Icon, Field, Person, Empty, Bar, Avatar, toast, injectCSS, EnTetePage, useLocal } from './ui.js';
+import { Icon, Field, Person, Empty, Bar, Avatar, toast, injectCSS, EnTetePage } from './ui.js';
 import { addAR, arCount } from './i18n.js';
-import { niveauOf, timeAgo, cleNom, surListeOfficielle, norm, pct, parcoursInscription, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible,
+import { niveauOf, timeAgo, cleNom, surListeOfficielle, norm, pct, parcoursInscription, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible, ecoleDe, ECOLE_DEFAUT, pourLEcoleVue,
   SPONSO_PUBLICS, SPONSO_ANNEES, jourLocal, normaliserSponsorise, refusSponsorise, etatSponsorise, tauxClic, resumeFilieres, seasonLabel } from './logic.js';
 import { DefisAdmin } from './saison.js';
 import { AgendaAdmin } from './agenda.js';
@@ -19,7 +19,7 @@ import { ajouterIcones } from './entree.js';
 import { FilieresPick } from './offers.js';
 import { ApercuSponsorise } from './match.js';
 import { getLang } from './i18n.js';
-import { useEcoles } from './admin-donnees.js';
+import { useEcoleRegardee } from './admin-donnees.js';
 import { RUBRIQUES, useLarge, MenuConsole, PucesConsole, ChoixEcole, RechercheConsole, telecharger } from './admin-console.js';
 // Les règles sans écran, importées d'ici aussi : le navigateur les découvre avec le reste (un aller-retour de moins au premier chargement)
 import { donneesDeLEcole, elementsATraiter } from './admin-console-regles.js';
@@ -115,15 +115,19 @@ export function AdminPage(ctx) {
   const { data, store, me, sub, go } = ctx;
   const large = useLarge();
   const comptesTous = useComptes(store, data.profiles.length);
-  // L'école regardée (seulement quand le réseau en compte au moins deux), gardée sur l'appareil pour cet admin
-  const { ecoles, recharger: relireEcoles } = useEcoles(ctx);
+  // L'école regardée (seulement quand le réseau en compte au moins deux), gardée sur l'appareil pour cet admin et partagée
+  // avec la page Suivi ; '' : toutes les écoles
+  const { ecoles, recharger: relireEcoles, ecole, changer: setChoixEcole, nomDe } = useEcoleRegardee(ctx);
   // La rubrique Écoles lit la table de son côté : en la quittant, la liste des écoles se relit (en ligne ; la démo suit déjà)
   const rubriqueAvant = useRef(sub);
   useEffect(() => { if (rubriqueAvant.current === 'ecoles' && sub !== 'ecoles') relireEcoles(); rubriqueAvant.current = sub; }, [sub]);
-  const [choixEcole, setChoixEcole] = useLocal('ensam-admin-ecole:' + (me?.id || ''), '');
-  const ecole = ecoles.length > 1 && ecoles.some(e => e.slug === choixEcole) ? choixEcole : '';
   const vue = donneesDeLEcole(data, ecole);
-  const c = ecole ? { ...ctx, data: vue } : ctx;
+  // Les rubriques reçoivent l'école regardée (ecoleConsole, '' : toutes), la liste des écoles et leur nom : ce qu'elles écrivent
+  // va à cette école (pourLEcoleVue). Écoles, Partenaires, Animer et Affiches gardent tout le réseau : leurs textes, affiches
+  // et rapports sont ceux du Réseau ENSAM Meknès (ceux d'une autre école attendent son accord pour le nom).
+  const commun = { ecoleConsole: ecole, ecoles, nomEcole: nomDe };
+  const c = { ...ctx, ...commun, data: vue };
+  const tout = { ...ctx, ...commun };
   const ids = ecole ? new Set(vue.profiles.map(p => p.id)) : null;
   const comptes = ids && comptesTous ? comptesTous.filter(x => ids.has(x.id)) : comptesTous;
   const rubrique = RUBRIQUES.some(([k]) => k === sub) ? sub : '';
@@ -143,21 +147,34 @@ export function AdminPage(ctx) {
       <div class="cs-main">
         ${rubrique === '' ? html`<${TableauDeBord} ctx=${c} comptes=${comptes} items=${items}/>` : null}
         ${rubrique === 'traiter' ? html`<${ATraiter} ctx=${c} items=${items} comptes=${comptes}/>` : null}
-        ${rubrique === 'animer' ? html`<${AnimerAdmin} ctx=${c}/>` : null}
+        ${rubrique === 'animer' ? html`<${NoteTextesMeknes} ctx=${c}/><${AnimerAdmin} ctx=${tout}/>` : null}
         ${rubrique === 'agenda' ? html`<${AgendaAdmin} ctx=${c}/>` : null}
         ${rubrique === 'inviter' ? html`<${InvitationsAdmin} ctx=${c}/><${AmbassadeursAdmin} ctx=${c}/>` : null}
         ${rubrique === 'membres' ? html`<${Membres} ctx=${c} comptes=${comptes}/>` : null}
         ${rubrique === 'contenus' ? html`<${Contenus} ctx=${c}/>` : null}
         ${rubrique === 'moderation' ? html`<${Moderation} ctx=${c}/>` : null}
-        ${rubrique === 'liste' ? html`<${ListeOfficielle} ctx=${c}/>` : null}
-        ${rubrique === 'ecoles' ? html`<${EcolesAdmin} ctx=${c}/>` : null}
-        ${rubrique === 'partenaires' ? html`<${PartenairesAdmin} ctx=${c}/>` : null}
+        ${rubrique === 'liste' ? html`<${ListeOfficielle} key=${'liste-' + ecole} ctx=${c}/>` : null}
+        ${rubrique === 'ecoles' ? html`<${EcolesAdmin} ctx=${tout}/>` : null}
+        ${rubrique === 'partenaires' ? html`<${NoteTextesMeknes} ctx=${c}/><${PartenairesAdmin} ctx=${tout}/>` : null}
         ${rubrique === 'sponsorises' ? html`<${SponsorisesAdmin} ctx=${c}/>` : null}
-        ${rubrique === 'outils' ? html`<${OutilsAdmin} ctx=${c}/>` : null}
+        ${rubrique === 'outils' ? html`<${NoteTextesMeknes} ctx=${c}/><${OutilsAdmin} ctx=${tout}/>` : null}
         ${rubrique === 'reglages' ? html`<${Reglages} ctx=${c}/>` : null}
       </div>
     </div>
   </section>`;
+}
+
+// Le nom de l'école d'une rubrique, seulement quand le réseau en compte plusieurs
+const plusieursEcoles = ctx => (ctx.ecoles || []).length > 1;
+function EcoleTag({ ctx, slug }) {
+  if (!plusieursEcoles(ctx)) return null;
+  return html`<span class="mini cs-ecole-tag"><${Icon} name="cap" size=${13}/> <span translate="no">${ctx.nomEcole?.(slug) || slug}</span></span>`;
+}
+// Animer, Partenaires, Affiches : quand la console regarde une autre école, une ligne dit que ces textes sont ceux de l'ENSAM Meknès
+function NoteTextesMeknes({ ctx }) {
+  const e = ctx.ecoleConsole;
+  if (!e || e === ECOLE_DEFAUT) return null;
+  return html`<p class="hint-box small cs-note-ecole" role="note"><${Icon} name="info" size=${16}/><span>${`Ici, les textes, affiches et chiffres sont ceux du Réseau ENSAM Meknès : pour ${ctx.nomEcole(e)}, il faut d’abord l’accord écrit de l’école pour son nom.`}</span></p>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -507,7 +524,10 @@ function lignesDe(rows, aEntete, map, promoDefaut) {
 const valide = l => l.nom.length >= 2 && !!cleNom(l.nom) && l.promo >= 1990 && l.promo <= 2040;
 
 function ListeOfficielle({ ctx }) {
-  const { store, act, confirm, data } = ctx;
+  const { store, act, confirm, data, me } = ctx;
+  // L'école de la liste : celle que regarde la console, sinon celle de l'administration (la base fait de même sans école)
+  const ecole = ctx.ecoleConsole || undefined;
+  const ici = ecole || ecoleDe(me);
   const [fichier, setFichier] = useState(null); // { nom, rows, aEntete, entetes }
   const [map, setMap] = useState(null);
   const [promoDefaut, setPromoDefaut] = useState('');
@@ -518,7 +538,7 @@ function ListeOfficielle({ ctx }) {
   const [promo, setPromo] = useState('');
   const [manquants, setManquants] = useState(null);
   const [erreur, setErreur] = useState(null);
-  useEffect(() => { let on = true; store.couvertureListe().then(r => on && setCouv(r || []), () => on && setCouv([])); return () => { on = false; }; }, [version, data.profiles.length]);
+  useEffect(() => { let on = true; store.couvertureListe(ecole).then(r => on && setCouv(r || []), () => on && setCouv([])); return () => { on = false; }; }, [version, data.profiles.length, ecole]);
 
   const charger = async e => {
     const f = e.target.files?.[0]; e.target.value = ''; if (!f) return;
@@ -535,17 +555,17 @@ function ListeOfficielle({ ctx }) {
   const sansNom = fichier && map.complet < 0 && map.nom < 0 && map.prenom < 0;
   const importer = () => act(async () => {
     if (bonnes.length > 5000) throw new Error('5000 lignes au plus : coupe le fichier par promo.');
-    const r = await store.importerListe(bonnes, remplacer);
+    const r = await store.importerListe(bonnes, remplacer, ecole);
     setRes({ ...r, rejetes: (r.rejetes || 0) + (lignes.length - bonnes.length) }); setFichier(null); setVersion(v => v + 1); setManquants(null);
     toast('Importé.', 'win');
   });
   const promos = [...new Set((couv || []).map(c => c.promo))].sort((a, b) => b - a);
   const parPromo = promos.map(p => { const rows = couv.filter(c => c.promo === p); return { promo: p, rows, total: rows.reduce((a, c) => a + c.total, 0), inscrits: rows.reduce((a, c) => a + c.inscrits, 0) }; });
-  const voir = () => act(async () => setManquants({ promo, rows: await store.manquantsListe(promo) }));
+  const voir = () => act(async () => setManquants({ promo, rows: await store.manquantsListe(promo, ecole) }));
 
   return html`<div class="sub-page liste">
     <div class="panel">
-      <div class="section-head"><h2 class="h-ico"><${Icon} name="upload"/> Importer la liste</h2>
+      <div class="section-head"><h2 class="h-ico"><${Icon} name="upload"/> Importer la liste <${EcoleTag} ctx=${ctx} slug=${ici}/></h2>
         <button class="btn tiny ghost" onClick=${() => telecharger('modele-liste-officielle.csv', [['nom', 'prenom', 'email', 'promo', 'filiere', 'matricule'], ['EL AMRANI', 'Salma', 'salma.elamrani@exemple.ma', new Date().getFullYear() + 1, 'Génie Industriel', 'M0001']])}><${Icon} name="download" size=${14}/> Modèle CSV</button></div>
       <p class="small muted">Fichier Excel (.xlsx) ou CSV exporté de la scolarité : une ligne par étudiant, avec au moins le nom et la promo.</p>
       <p class="small muted">Les inscrits qui figurent sur la liste (même nom et même promo, ou même email) sont vérifiés automatiquement.</p>
@@ -582,7 +602,7 @@ function ListeOfficielle({ ctx }) {
       <div class="row"><select id="lo-manq-promo" aria-label="Promo" value=${promo} onChange=${e => { setPromo(e.target.value); setManquants(null); }}><option value="">Promo</option>${promos.map(p => html`<option value=${p}>${p}</option>`)}</select>
         <button class="btn small" id="lo-manq" disabled=${!promo} onClick=${voir}>Voir qui manque</button>
         <span class="spacer"></span>
-        ${promo ? html`<button class="btn tiny ghost danger-t" onClick=${() => confirm(`Vider la liste de la promo ${promo} ? Les comptes déjà vérifiés le restent.`, () => act(async () => { await store.viderListe(promo); setManquants(null); setVersion(v => v + 1); toast('Liste vidée.'); }), 'Vider la liste de cette promo')}>Vider la liste de cette promo</button>` : null}</div>
+        ${promo ? html`<button class="btn tiny ghost danger-t" onClick=${() => confirm(`Vider la liste de la promo ${promo} ? Les comptes déjà vérifiés le restent.`, () => act(async () => { await store.viderListe(promo, ecole); setManquants(null); setVersion(v => v + 1); toast('Liste vidée.'); }), 'Vider la liste de cette promo')}>Vider la liste de cette promo</button>` : null}</div>
       ${manquants ? manquants.rows.length ? html`<div class="lo-manquants">
         <div class="row"><span class="small"><strong>${`${manquants.rows.length} personne${manquants.rows.length > 1 ? 's' : ''} pas encore inscrite${manquants.rows.length > 1 ? 's' : ''}`}</strong></span><span class="spacer"></span>
           ${manquants.rows.some(r => r.email) ? html`<button class="btn tiny ghost" onClick=${() => act(async () => { await navigator.clipboard.writeText(manquants.rows.map(r => r.email).filter(Boolean).join(', ')); toast('Emails copiés.'); })}><${Icon} name="copy" size=${14}/> Copier les emails</button>` : null}
@@ -629,7 +649,8 @@ function ParrainsAdmin({ ctx }) {
   const { data, store, act, saison } = ctx;
   const sans = data.profiles.filter(p => p.role === 'etudiant' && niveauOf(p, saison) === 3 && !data.parrainages.some(x => x.filleul_id === p.id && x.saison === saison));
   const parrains = data.profiles.filter(p => p.role === 'laureat' && p.parrain_dispo).length;
-  const n = data.parrainages.filter(x => x.saison === saison).length;
+  const ids = new Set(data.profiles.map(p => p.id));
+  const n = data.parrainages.filter(x => x.saison === saison && ids.has(x.filleul_id)).length;
   return html`<div class="panel">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="heart"/> Parrainage des 3A</h2>
       <button class="btn small" disabled=${!sans.length} onClick=${() => act(async () => { const k = await store.attribuerParrains(); toast(k ? `${k} parrain${k > 1 ? 's' : ''} attribué${k > 1 ? 's' : ''}.` : 'Aucun parrain disponible dans ces filières pour l’instant.'); })}>Attribuer les parrains</button></div>
@@ -642,7 +663,10 @@ const POUR_LABEL = { etudiants: 'Pour les étudiants', laureats: 'Pour les laur�
 const finAnnonce = a => new Date(new Date(a.created_at).getTime() + ANNONCE_JOURS * 864e5).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' });
 function AnnonceBox({ ctx }) {
   const { data, store, me, act } = ctx;
-  const visibles = data.annonces.filter(a => annonceVisible(a)).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  // Les annonces d'une école : celle que regarde la console, sinon celle de l'administration (là où va une nouvelle annonce)
+  const ici = ctx.ecoleConsole || ecoleDe(me);
+  const deIci = a => ecoleDe(a) === ici;
+  const visibles = data.annonces.filter(a => deIci(a) && annonceVisible(a)).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   const [texte, setTexte] = useState(''); const [lien, setLien] = useState(''); const [pour, setPour] = useState('tous');
   // Une annonce en cours : le formulaire se range derrière « Nouvelle annonce », sous elle, et s'ouvre à sa place
   // (la Vue d'ensemble reste courte) ; aucune annonce, ou un brouillon commencé : il reste ouvert
@@ -661,15 +685,15 @@ function AnnonceBox({ ctx }) {
     act(async () => {
       if (lien.trim() && !/^https:\/\/\S+$/i.test(lien.trim())) throw new Error('Le lien doit commencer par https://');
       // La nouvelle d'abord : si elle échoue (base pas encore à jour…), l'annonce en cours reste
-      const anciennes = data.annonces.filter(x => x.active && remplacee(x.public || 'tous', pour));
-      await store.insert('annonces', { author_id: me.id, texte: texte.trim(), lien: lien.trim() || null, active: true, ...(pour === 'tous' ? {} : { public: pour }) });
+      const anciennes = data.annonces.filter(x => deIci(x) && x.active && remplacee(x.public || 'tous', pour));
+      await store.insert('annonces', { author_id: me.id, texte: texte.trim(), lien: lien.trim() || null, active: true, ...(pour === 'tous' ? {} : { public: pour }), ...pourLEcoleVue(ctx) });
       for (const a of anciennes) await store.update('annonces', a.id, { active: false });
       ranger();
       toast(pour === 'etudiants' ? 'Annonce publiée sur l’accueil des étudiants.' : pour === 'laureats' ? 'Annonce publiée sur l’accueil des lauréats.' : 'Annonce publiée sur l’accueil de tous les membres.', 'win');
     });
   };
   return html`<div class="panel">
-    <div class="section-head"><h2 class="h-ico"><${Icon} name="bell"/> Annonce sur l’accueil</h2></div>
+    <div class="section-head"><h2 class="h-ico"><${Icon} name="bell"/> Annonce sur l’accueil <${EcoleTag} ctx=${ctx} slug=${ici}/></h2></div>
     ${visibles.length ? visibles.map(a => html`<div class="annonce preview" key=${a.id}><${Icon} name="bell" size=${18}/><span class="grow"><span dir="auto" translate="no">${a.texte}</span><span class="annonce-meta"><span class="mini">${POUR_LABEL[a.public] || 'Tout le monde'}</span> <span class="small muted">${`Jusqu’au ${finAnnonce(a)}`}</span></span></span><button class="btn tiny ghost" onClick=${() => act(() => store.update('annonces', a.id, { active: false }))}>Retirer</button></div>`) : html`<p class="small muted">Aucune annonce en ce moment.</p>`}
     ${ouvert ? html`<form class="form" id="ann-form" onSubmit=${publish}>
       <${Field} label="Nouvelle annonce" hint="280 caractères au plus. Elle s’affiche sur une ligne, sur l’accueil des membres choisis, pendant 14 jours, et remplace l’annonce en cours pour eux."><textarea id="ann-txt" rows="2" maxlength="280" value=${texte} onInput=${e => setTexte(e.target.value)} placeholder="Ex. Forum entreprises jeudi à l’école : les lauréats sont les bienvenus."></textarea><//>
@@ -689,19 +713,22 @@ function AnnonceBox({ ctx }) {
 const ETATS_SPONSO = { en_cours: ['En cours', 'coopt'], programmee: ['Programmée', ''], terminee: ['Terminée', 'done'], arretee: ['Arrêtée', 'done'] };
 const dateFr = d => (d ? new Date(d + 'T12:00:00').toLocaleDateString('fr-FR') : '');
 const plusJours = (j, n) => jourLocal(new Date(j + 'T12:00:00').getTime() + n * 864e5);
-const vide = () => ({ entreprise: '', titre: '', texte: '', lien: '', domaine: '', public: 'tous', annees: [], filieres: [], debut: jourLocal(), fin: plusJours(jourLocal(), 30) });
+const vide = (ecole = '') => ({ entreprise: '', titre: '', texte: '', lien: '', domaine: '', public: 'tous', annees: [], filieres: [], debut: jourLocal(), fin: plusJours(jourLocal(), 30), ecole });
 // Pour qui, en une ligne : le public, les années, les filières (« Toutes les années », « Toutes les filières » quand rien n'est choisi)
 const cibleSponso = s => [SPONSO_PUBLICS.find(([k]) => k === (s.public || 'tous'))?.[1],
   s.annees?.length ? s.annees.map(n => SPONSO_ANNEES.find(([k]) => k === Number(n))?.[1]).filter(Boolean).join(', ') : 'Toutes les années',
   s.filieres?.length ? resumeFilieres(s.filieres).join(', ') : 'Toutes les filières'].join(' · ');
 // Le bilan à envoyer à l'entreprise : des totaux, jamais un nom ni un identifiant de membre (dans la langue de l'écran)
-export function bilanSponso(s, t, aujourdhui = jourLocal()) {
+// nomEcole (quand le réseau compte plusieurs écoles) : une ligne dit pour quelle école était la carte
+export function bilanSponso(s, t, aujourdhui = jourLocal(), nomEcole = null) {
   const v = t?.vues || 0, c = t?.clics || 0, m = t?.membres || 0, taux = tauxClic(c, v);
+  const ecoleAr = nomEcole ? [s.ecole ? `المدرسة: ${nomEcole(s.ecole) || s.ecole}` : 'المدارس: كل المدارس'] : [];
+  const ecoleFr = nomEcole ? [s.ecole ? `École : ${nomEcole(s.ecole) || s.ecole}` : 'Écoles : toutes les écoles'] : [];
   return getLang() === 'ar'
-    ? [`الحصيلة · شبكة ENSAM مكناس`, `البطاقة المموَّلة: «${s.titre}» (${s.entreprise})`, `الفترة: من ${dateFr(s.debut)} إلى ${dateFr(s.fin)}`,
+    ? [`الحصيلة · شبكة ENSAM مكناس`, `البطاقة المموَّلة: «${s.titre}» (${s.entreprise})`, ...ecoleAr, `الفترة: من ${dateFr(s.debut)} إلى ${dateFr(s.fin)}`,
       `المشاهدات: ${v} (مشاهدة واحدة لكل عضو في اليوم)`, `النقرات على «عرض»: ${c}`, `نسبة النقر: ${taux}`, `الأعضاء المختلفون: ${m}`,
       `أرقام إلى غاية ${dateFr(aujourdhui)}. مجاميع فقط: لا تنقل المنصة أبدًا من شاهد البطاقة أو نقر عليها.`].join('\n')
-    : [`Bilan · Réseau ENSAM Meknès`, `Carte sponsorisée : « ${s.titre} » (${s.entreprise})`, `Période : du ${dateFr(s.debut)} au ${dateFr(s.fin)}`,
+    : [`Bilan · Réseau ENSAM Meknès`, `Carte sponsorisée : « ${s.titre} » (${s.entreprise})`, ...ecoleFr, `Période : du ${dateFr(s.debut)} au ${dateFr(s.fin)}`,
       `Vues : ${v} (une par membre et par jour)`, `Clics sur « Voir » : ${c}`, `Taux de clic : ${taux}`, `Membres différents : ${m}`,
       `Chiffres au ${dateFr(aujourdhui)}. Totaux seulement : la plateforme ne transmet jamais qui a vu ou cliqué.`].join('\n');
 }
@@ -718,9 +745,10 @@ function SponsorisesAdmin({ ctx }) {
     return () => { on = false; };
   }, [cle]);
   if (!store.peutSponso?.()) return html`<div class="panel"><p class="muted">La base n’a pas encore les cartes sponsorisées : lance supabase/mise-a-jour.sql dans Supabase.</p></div>`;
-  const copier = async s => { try { await navigator.clipboard.writeText(bilanSponso(s, totaux?.[s.id])); toast('Bilan copié : il ne contient que des totaux.'); } catch { toast('Copie impossible ici : sélectionne le texte et copie-le.', 'err'); } };
+  const nomEcole = plusieursEcoles(ctx) ? ctx.nomEcole : null;
+  const copier = async s => { try { await navigator.clipboard.writeText(bilanSponso(s, totaux?.[s.id], jourLocal(), nomEcole)); toast('Bilan copié : il ne contient que des totaux.'); } catch { toast('Copie impossible ici : sélectionne le texte et copie-le.', 'err'); } };
   const basculer = s => act(async () => { await store.update('sponsorises', s.id, { actif: !s.actif }); toast(s.actif ? 'Carte arrêtée : elle ne paraît plus dans Match.' : 'Carte reprise : elle paraît de nouveau dans Match, entre ses dates.'); });
-  const ouvrir = s => setF(s ? { id: s.id, entreprise: s.entreprise, titre: s.titre, texte: s.texte, lien: s.lien, domaine: s.domaine || '', public: s.public || 'tous', annees: s.annees || [], filieres: s.filieres || [], debut: s.debut, fin: s.fin } : vide());
+  const ouvrir = s => setF(s ? { id: s.id, entreprise: s.entreprise, titre: s.titre, texte: s.texte, lien: s.lien, domaine: s.domaine || '', public: s.public || 'tous', annees: s.annees || [], filieres: s.filieres || [], debut: s.debut, fin: s.fin, ecole: s.ecole || '' } : vide(ctx.ecoleConsole || ''));
   return html`<div class="sub-page sponso-admin">
     <div class="panel">
       <div class="section-head"><h2 class="h-ico"><${Icon} name="etiquette"/> Cartes sponsorisées <span class="count">${liste.length}</span></h2>
@@ -730,7 +758,7 @@ function SponsorisesAdmin({ ctx }) {
       ${liste.length ? html`<ul class="sp-liste">${liste.map(s => { const t = totaux?.[s.id] || { vues: 0, clics: 0, membres: 0 }; const [el, tc] = ETATS_SPONSO[etatSponsorise(s)]; return html`<li key=${s.id} class="sp-ligne" data-id=${s.id}>
         <div class="sp-tete"><span class="sp-noms"><strong translate="no" dir="auto">${s.titre}</strong><span class="small muted" translate="no" dir="auto">${s.entreprise}</span></span><span class=${'tag ' + tc}>${el}</span></div>
         <p class="small muted sp-quand">${`Du ${dateFr(s.debut)} au ${dateFr(s.fin)}`}</p>
-        <p class="small sp-cible">${cibleSponso(s)}</p>
+        <p class="small sp-cible">${nomEcole ? html`${s.ecole ? html`<span class="sp-ecole" translate="no">${nomEcole(s.ecole)}</span>` : html`<span class="sp-ecole">Toutes les écoles</span>`}${' · '}` : null}${cibleSponso(s)}</p>
         <dl class="sp-chiffres">
           <div><dt>Vues</dt><dd class="sp-vues">${totaux ? t.vues : '…'}</dd></div>
           <div><dt>Clics</dt><dd class="sp-clics">${totaux ? t.clics : '…'}</dd></div>
@@ -749,14 +777,16 @@ function SponsorisesAdmin({ ctx }) {
 
 function FormSponso({ ctx, f, setF }) {
   const { store, act } = ctx;
+  const plusieurs = plusieursEcoles(ctx);
   const set = (k, v) => setF({ ...f, [k]: v });
   const entree = k => e => set(k, e.target.value);
   const bascule = n => set('annees', f.annees.includes(n) ? f.annees.filter(x => x !== n) : [...f.annees, n]);
   const enregistrer = e => {
     e.preventDefault();
     act(async () => {
-      const { id, ...champs } = f;
-      const row = normaliserSponsorise(champs);
+      const { id, ecole, ...champs } = f;
+      // L'école seulement quand le réseau en compte plusieurs (le choix est alors à l'écran) ; '' : toutes les écoles
+      const row = normaliserSponsorise(plusieurs ? { ...champs, ecole } : champs);
       const refus = refusSponsorise(row);
       if (refus) throw new Error(refus);
       if (id) await store.update('sponsorises', id, row); else await store.insert('sponsorises', { ...row, actif: true });
@@ -772,6 +802,7 @@ function FormSponso({ ctx, f, setF }) {
     <${Field} label="Texte" hint="280 caractères au plus. Des faits simples : ce que l’entreprise propose, pour qui, à quel prix s’il y en a un."><textarea id="sp-texte" rows="3" maxlength="280" value=${f.texte} onInput=${entree('texte')}></textarea><//>
     <div class="grid2"><${Field} label="Lien" hint="« Voir » l’ouvre dans un nouvel onglet."><input id="sp-lien" dir="ltr" type="url" maxlength="500" value=${f.lien} onInput=${entree('lien')} placeholder="https://…"/><//>
       <${Field} label="Site pour le logo (facultatif)" hint="Son icône sert de logo ; sinon, les initiales."><input id="sp-domaine" dir="ltr" maxlength="120" value=${f.domaine} onInput=${entree('domaine')} placeholder="exemple.ma"/><//></div>
+    ${plusieurs ? html`<${Field} label="École" hint="Une carte pour toutes les écoles paraît dans chaque réseau."><select id="sp-ecole" value=${f.ecole || ''} onChange=${entree('ecole')}><option value="">Toutes les écoles</option>${ctx.ecoles.map(e => html`<option key=${e.slug} value=${e.slug} translate="no">${e.nom}</option>`)}</select><//>` : null}
     <div class="field"><span class="field-label" id="sp-pub-l">Pour qui ?</span><div class="seg" role="radiogroup" aria-labelledby="sp-pub-l">${SPONSO_PUBLICS.map(([k, l]) => html`<button type="button" role="radio" id=${'sp-pub-' + k} aria-checked=${f.public === k} class=${f.public === k ? 'on' : ''} onClick=${() => set('public', k)}>${l}</button>`)}</div></div>
     <div class="field"><span class="field-label" id="sp-annees-l">Années</span><div id="sp-annees" class="chips" role="group" aria-labelledby="sp-annees-l">${SPONSO_ANNEES.map(([n, l]) => html`<button type="button" class=${'chip' + (f.annees.includes(n) ? ' on' : '')} aria-pressed=${f.annees.includes(n)} onClick=${() => bascule(n)}>${l}</button>`)}</div><span class="field-hint">Aucune année choisie = toutes les années.</span></div>
     <div class="field"><span class="field-label" id="sp-fil-l">Filières</span><div role="group" aria-labelledby="sp-fil-l"><${FilieresPick} value=${f.filieres} onChange=${v => set('filieres', v)}/></div><span class="field-hint">Aucune sélection = toutes les filières. Une ancienne appellation suit son parcours.</span></div>
@@ -805,8 +836,11 @@ addAR({
   'Le texte fait de 10 à 280 caractères.': 'يتكون النص من 10 إلى 280 حرفًا.', 'Le domaine du logo s’écrit sans https:// (ex. exemple.ma).': 'يُكتب نطاق الشعار دون https:// (مثال: exemple.ma).',
   'Choisis un public.': 'اختر الفئة المعنية.', 'Choisis des années de la liste.': 'اختر سنوات من اللائحة.', 'Choisis les dates de début et de fin.': 'اختر تاريخَي البداية والنهاية.',
   'La fin vient après le début.': 'يأتي تاريخ النهاية بعد البداية.',
+  'Une carte pour toutes les écoles paraît dans chaque réseau.': 'تظهر البطاقة الموجّهة إلى كل المدارس في شبكة كل مدرسة.',
 }, [
   [/^Du (\S+) au (\S+)$/, (a, b) => `من ${a} إلى ${b}`],
+  [/^Ici, les textes, affiches et chiffres sont ceux du Réseau ENSAM Meknès : pour (.+), il faut d’abord l’accord écrit de l’école pour son nom\.$/,
+    n => `هنا، النصوص والملصقات والأرقام خاصة بشبكة ENSAM مكناس: بالنسبة إلى ${n}، يلزم أولًا الموافقة الكتابية للمدرسة على استعمال اسمها.`],
 ]);
 
 injectCSS('admin', `
@@ -831,6 +865,10 @@ injectCSS('admin', `
 .sp-chiffres dd { margin: 0; font: 700 var(--fs-5)/1.2 var(--f-display); font-variant-numeric: tabular-nums; }
 @media (max-width: 520px) { .sp-chiffres { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .sp-acts { display: flex; flex-wrap: wrap; gap: .3rem; }
+/* L'école d'une rubrique (plusieurs écoles), et la ligne qui dit que les textes sont ceux de l'ENSAM Meknès */
+.cs-ecole-tag { display: inline-flex; align-items: center; gap: .25rem; margin-inline-start: .3rem; vertical-align: middle; font-weight: 600; }
+.cs-note-ecole { margin: 0; }
+.sp-ecole { font-weight: 600; }
 .sp-form { margin: .4rem 0 .8rem; padding: .9rem 1rem; border-radius: var(--r-lg); background: var(--surface-2); }
 .sp-form h3 { margin: 0; font-size: var(--fs-4); }
 .mod-card { display: flex; flex-direction: column; gap: .55rem; padding: .95rem 1.05rem; border-radius: var(--r-lg); background: var(--surface); border: 0; box-shadow: var(--sh1), inset 3px 0 0 var(--brass); }

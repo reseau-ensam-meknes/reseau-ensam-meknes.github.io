@@ -919,6 +919,9 @@ export const GUIDE_SECTIONS = [
 // L'école d'un membre ou d'une ligne : tout ce qui date d'avant les écoles est à ENSAM Meknès (même défaut que la base)
 export const ECOLE_DEFAUT = 'ensam-meknes';
 export const ecoleDe = x => x?.ecole || ECOLE_DEFAUT;
+// Ce que l'administration écrit depuis la console pour l'école qu'elle y regarde : { ecole } seulement quand ce n'est pas
+// la sienne (la base met la sienne par défaut ; une base pas encore à jour n'a pas la colonne). Hors de la console : {}.
+export const pourLEcoleVue = ctx => (ctx?.ecoleConsole && ctx.ecoleConsole !== ecoleDe(ctx.me) ? { ecole: ctx.ecoleConsole } : {});
 // Administration > Membres : null si la liste officielle de son école n'a aucune ligne de sa promo, sinon true ou false
 // selon qu'il y figure (même nom et même promo, ou même email) ; les lignes d'une autre école ne comptent jamais
 export function surListeOfficielle(liste, p, email) {
@@ -1771,6 +1774,7 @@ export function normaliserSponsorise(r) {
   if ('domaine' in out) out.domaine = String(out.domaine || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '') || null;
   if ('annees' in out) out.annees = out.annees?.length ? [...new Set(out.annees.map(Number))].sort((a, b) => a - b) : null;
   if ('filieres' in out) out.filieres = out.filieres?.length ? [...new Set(out.filieres)] : null;
+  if ('ecole' in out) out.ecole = out.ecole || null; // sans école : pour toutes les écoles
   return out;
 }
 // Ce que la base refuserait pour cette carte (son message), sinon null
@@ -1795,6 +1799,8 @@ export const etatSponsorise = (s, now = Date.now()) => (!s.actif ? 'arretee' : s
 // suit son parcours). Ni l'administration, ni l'administration qui regarde l'application comme un lauréat (admin_ok).
 export function sponsorisePour(s, me, now = Date.now(), saison = seasonOf(new Date(now))) {
   if (!me || !['etudiant', 'laureat'].includes(me.role) || me.admin_ok || !sponsoEnCours(s, now)) return false;
+  // Une carte d'une école ne paraît que dans son réseau ; sans école, dans tous (comme sponsorise_pour dans la base)
+  if (s.ecole && s.ecole !== ecoleDe(me)) return false;
   const pub = s.public || 'tous';
   if (!(pub === 'tous' || (pub === 'etudiants' && me.role === 'etudiant') || (pub === 'laureats' && me.role === 'laureat'))) return false;
   if (s.annees?.length && !s.annees.map(Number).includes(niveauOf(me, saison))) return false;

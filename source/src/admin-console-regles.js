@@ -6,11 +6,31 @@ import { deLEcole } from './admin-donnees.js';
 
 const ms = d => (d ? new Date(d).getTime() || 0 : 0);
 
-// Les données d'une école : les profils et chaque table dont les lignes portent une école (les autres restent entières)
+// Les tables dont chaque ligne porte une école, comme dans la base (une ligne sans école est de l'ENSAM Meknès, même en démo)
+export const TABLES_ECOLE = new Set(['profiles', 'offers', 'questions', 'demandes', 'annonces', 'cafes', 'startups', 'evenements', 'placements',
+  'mentorships', 'answers', 'groupe_messages', 'groupe_membres', 'relectures_cv', 'verifications_pairs', 'defis', 'ambassadeurs', 'votes',
+  'reactions', 'kudos', 'cafe_participants', 'evenement_participants', 'shortlists', 'entretiens', 'avis_stage', 'enquetes_insertion',
+  'liste_officielle', 'ambassadeurs_passages']);
+// Les tables sans école : une ligne est de l'école du membre qu'elle concerne (un membre n'agit que dans la sienne)
+export const PAR_MEMBRE = { signalements: 'auteur_id', retours_cv: 'profil_id', parrainages: 'filleul_id', propositions: 'laureat_id',
+  applications: 'student_id', matchs: 'etudiant_id', match_choix: 'user_id', messages: 'author_id', comments: 'author_id',
+  demandes_contact: 'demandeur_id', blocages: 'user_id', invitations: 'student_id', attestations: 'laureat_id' };
+
+// Les données d'une école : chaque table dont les lignes portent une école, celles qui suivent leur membre, et les cartes
+// sponsorisées de l'école ou de toutes les écoles (sans école) ; les autres (guide des pays…) restent entières
 export function donneesDeLEcole(data, slug) {
   if (!slug) return data;
   const out = { ...data };
-  for (const [t, v] of Object.entries(data)) if (Array.isArray(v) && (t === 'profiles' || v.some(r => r && typeof r === 'object' && 'ecole' in r))) out[t] = deLEcole(v, slug);
+  for (const [t, v] of Object.entries(data)) {
+    if (!Array.isArray(v)) continue;
+    if (t === 'sponsorises') out[t] = v.filter(r => !r?.ecole || r.ecole === slug);
+    else if (TABLES_ECOLE.has(t) || v.some(r => r && typeof r === 'object' && 'ecole' in r)) out[t] = deLEcole(v, slug);
+  }
+  const ids = new Set((out.profiles || []).map(p => p.id));
+  for (const [t, col] of Object.entries(PAR_MEMBRE)) {
+    const v = data[t];
+    if (Array.isArray(v) && !v.some(r => r && typeof r === 'object' && 'ecole' in r)) out[t] = v.filter(r => ids.has(r?.[col]));
+  }
   return out;
 }
 

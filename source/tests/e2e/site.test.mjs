@@ -6861,6 +6861,120 @@ test('console · Écoles : « Ouvrir le réseau » reste grisé tant que les tro
   await s.ctx.close();
 });
 
+// Deux écoles dans la démo : la console d'une école créée dans la rubrique Écoles (« Institut exemple », son suivi déjà là)
+async function deuxiemeEcole(s) {
+  await s.aller('admin/ecoles'); await s.page.waitForSelector('#ec-reseaux');
+  await s.page.click('#ec-creer'); await s.page.fill('#ec-nom', 'Institut exemple'); await s.page.click('#ec-creer-ok');
+  await s.page.locator('.ec-reseau[data-slug="institut-exemple"]').waitFor();
+  await s.page.waitForSelector('#cs-ecole');
+}
+
+test('console · deux écoles : le choix d’école (gardé et partagé avec Suivi) range l’annonce, la liste officielle, les cartes sponsorisées et les ambassadeurs ; l’identifiant d’une école qui a son réseau ne change plus', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin'); await s.aller('admin');
+  assert.equal(await s.page.locator('#cs-ecole').count(), 0, 'une seule école : pas de choix');
+  await deuxiemeEcole(s);
+  assert.deepEqual(await s.page.locator('#cs-ecole option').evaluateAll(os => os.map(o => o.value)), ['', 'ensam-meknes', 'institut-exemple']);
+  assert.equal(await s.page.inputValue('#cs-ecole'), '', 'toutes les écoles d’abord');
+  // L'identifiant de la fiche de suivi liée à ce réseau ne change plus ; celui d'une école sans réseau se corrige encore
+  const fiche = async nom => { await s.page.locator('#ec-suivi .sv-carte', { hasText: nom }).first().locator('.sv-modif').click(); await s.page.waitForSelector('#sv-slug'); };
+  await fiche('Institut exemple');
+  assert.equal(await s.page.locator('#sv-slug').evaluate(i => i.readOnly), true);
+  await s.page.locator('#sv-slug').press('End'); await s.page.keyboard.type('-2');
+  assert.equal(await s.page.inputValue('#sv-slug'), 'institut-exemple');
+  assert.match(await s.page.locator('.modal').innerText(), /il ne change plus/);
+  await s.fermer();
+  await fiche('École exemple');
+  assert.equal(await s.page.locator('#sv-slug').evaluate(i => i.readOnly), false);
+  await s.fermer();
+
+  // La console regarde l'Institut exemple : Animer, Partenaires et Affiches disent que leurs textes sont ceux de l'ENSAM Meknès
+  await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.page.waitForTimeout(200);
+  for (const r of ['admin/animer', 'admin/partenaires', 'admin/outils']) {
+    await s.aller(r);
+    assert.match(await s.page.locator('.cs-note-ecole').innerText(), /pour Institut exemple, il faut d’abord l’accord écrit de l’école/, r);
+  }
+  await s.aller('admin/agenda'); assert.equal(await s.page.locator('.cs-note-ecole').count(), 0);
+
+  // L'annonce publiée pour l'Institut exemple reste la sienne
+  await s.aller('admin');
+  const annonce = s.page.locator('.cs-main .panel', { has: s.page.locator('#ann-txt, #ann-nouvelle') });
+  assert.match(await annonce.locator('h2').innerText(), /Annonce sur l’accueil\s+Institut exemple/);
+  if (await s.page.locator('#ann-nouvelle').count()) await s.page.click('#ann-nouvelle');
+  await s.page.fill('#ann-txt', 'Réunion de lancement du réseau à l’Institut exemple');
+  await s.page.locator('#ann-form .btn.primary').click(); await s.page.waitForTimeout(300);
+  assert.match(await annonce.innerText(), /Réunion de lancement du réseau/);
+  assert.equal(await s.page.evaluate(() => window.__demo.data.annonces.find(a => /Réunion de lancement/.test(a.texte))?.ecole), 'institut-exemple');
+  await s.page.selectOption('#cs-ecole', 'ensam-meknes'); await s.page.waitForTimeout(200);
+  assert.match(await annonce.locator('h2').innerText(), /ENSAM Meknès/);
+  assert.doesNotMatch(await annonce.innerText(), /Réunion de lancement/);
+
+  // La liste officielle d'une école ne se mêle pas à celle de l'autre
+  await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.aller('admin/liste');
+  assert.match(await s.page.locator('.liste h2').first().innerText(), /Institut exemple/);
+  assert.match(await s.page.locator('.liste').innerText(), /Aucune liste importée pour l’instant/);
+  await s.page.setInputFiles('#lo-file', { name: 'institut.csv', mimeType: 'text/csv', buffer: Buffer.from('nom,prenom,email,promo\nEXEMPLE,Ilyas,ilyas@institut.example,2031\n') });
+  await s.page.click('#lo-go'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.lo-couv').innerText(), /Promo 2031/);
+  assert.equal(await s.page.evaluate(() => window.__demo.data.liste_officielle.find(l => l.promo === 2031)?.ecole), 'institut-exemple');
+  await s.page.selectOption('#cs-ecole', 'ensam-meknes'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.liste h2').first().innerText(), /ENSAM Meknès/);
+  assert.doesNotMatch(await s.page.locator('.liste').innerText(), /Promo 2031/);
+
+  // Une carte sponsorisée : l'école regardée d'abord, ou toutes les écoles ; la ligne dit pour quelle école
+  await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.aller('admin/sponsorises');
+  await s.page.click('#sp-nouvelle'); await s.page.waitForSelector('#sp-ecole');
+  assert.deepEqual(await s.page.locator('#sp-ecole option').evaluateAll(os => os.map(o => o.value)), ['', 'ensam-meknes', 'institut-exemple']);
+  assert.equal(await s.page.inputValue('#sp-ecole'), 'institut-exemple');
+  await s.page.fill('#sp-ent', 'Atelier Exemple'); await s.page.fill('#sp-titre', 'Cours de langue pour l’Institut');
+  await s.page.fill('#sp-texte', 'Allemand et anglais pour les élèves ingénieurs, en soirée.'); await s.page.fill('#sp-lien', 'https://example.org/langues');
+  await s.page.click('#sp-enregistrer'); await s.page.waitForTimeout(300);
+  const id = await s.page.evaluate(() => window.__demo.data.sponsorises.find(x => x.titre === 'Cours de langue pour l’Institut')?.id);
+  assert.equal(await s.page.evaluate(i => window.__demo.data.sponsorises.find(x => x.id === i).ecole, id), 'institut-exemple');
+  assert.match(await s.page.locator(`.sp-ligne[data-id="${id}"] .sp-cible`).innerText(), /^Institut exemple · /);
+  assert.match(await s.page.locator('.sp-ligne[data-id="sp-demo-0001"] .sp-cible').innerText(), /^Toutes les écoles · /, 'la carte d’exemple, pour toutes les écoles');
+  await s.page.selectOption('#cs-ecole', 'ensam-meknes'); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator(`.sp-ligne[data-id="${id}"]`).count(), 0);
+  assert.equal(await s.page.locator('.sp-ligne[data-id="sp-demo-0001"]').count(), 1);
+
+  // Ambassadeurs : « Proposer maintenant » ne vaut que pour l'école de l'administration
+  await s.aller('admin/inviter'); await s.page.waitForSelector('#amb-admin');
+  assert.equal(await s.page.locator('#amb-lancer').count(), 1);
+  await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator('#amb-lancer').count(), 0);
+
+  // Suivi : le même choix, gardé d'une page à l'autre (sans « Toutes les écoles » : une page Suivi montre une école)
+  await s.aller('suivi'); await s.page.waitForSelector('#suivi-ecole');
+  assert.deepEqual(await s.page.locator('#suivi-ecole option').evaluateAll(os => os.map(o => o.value)), ['ensam-meknes', 'institut-exemple']);
+  assert.equal(await s.page.inputValue('#suivi-ecole'), 'institut-exemple');
+  await s.page.selectOption('#suivi-ecole', 'ensam-meknes'); await s.page.waitForTimeout(200);
+  await s.aller('suivi/insertion'); await s.page.waitForSelector('#suivi-ecole');
+  assert.equal(await s.page.inputValue('#suivi-ecole'), 'ensam-meknes');
+  await s.aller('admin'); assert.equal(await s.page.inputValue('#cs-ecole'), 'ensam-meknes');
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('console · deux écoles en arabe (390 px) : le choix d’école, les rubriques, Suivi et la carte sponsorisée sont traduits ; rien ne dépasse', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  await s.comme('Admin'); await deuxiemeEcole(s);
+  await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.page.waitForTimeout(200);
+  await s.page.evaluate(() => window.__ensamMissing?.clear());
+  const oublis = [];
+  const relever = async ou => { for (const x of await s.page.evaluate(() => { const m = [...(window.__ensamMissing || [])]; window.__ensamMissing?.clear(); return m; })) if (!ecritParUnMembre(x)) oublis.push(`${ou} : ${x}`); };
+  for (const r of [...RUBRIQUES_ADMIN, 'suivi', 'suivi/insertion']) {
+    await s.aller(r);
+    assert.equal(await s.debordement(), 0, `${r} : rien ne dépasse`);
+    await relever(r);
+  }
+  await s.aller('admin/sponsorises'); await s.page.click('#sp-nouvelle'); await s.page.waitForSelector('#sp-ecole');
+  await relever('admin/sponsorises · nouvelle carte');
+  assert.deepEqual(oublis, [], 'tout traduit');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
 test('console · Partenaires : la formule choisie remplit le montant ; le message à une entreprise se copie avec les vrais chiffres', async () => {
   const s = await ouvrir();
   await s.ctx.grantPermissions(['clipboard-read', 'clipboard-write']);

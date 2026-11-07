@@ -61,6 +61,23 @@ export function useEcoles(ctx) {
   return { ...t, ecoles };
 }
 
+// L'école que l'administration regarde, gardée sur l'appareil pour ce compte : la console et le suivi la partagent.
+// Seulement quand le réseau compte au moins deux écoles ; sinon '' (la console montre alors tout, le suivi l'école du compte).
+// nomDe(slug) : le nom d'une école (son identifiant si elle n'est pas dans la liste).
+export const CLE_ECOLE_ADMIN = id => 'ensam-admin-ecole:' + (id || '');
+export function useEcoleRegardee(ctx) {
+  const t = useEcoles(ctx);
+  const cle = CLE_ECOLE_ADMIN(ctx.me?.id);
+  const lire = () => { try { const v = JSON.parse(localStorage.getItem(cle) || '""'); return typeof v === 'string' ? v : ''; } catch { return ''; } };
+  const [choix, setChoix] = useState(lire);
+  // Une autre page (la console, le suivi) a pu changer le choix depuis : relu à chaque arrivée sur la page
+  useEffect(() => { const v = lire(); if (v !== choix) setChoix(v); }, [cle]);
+  const changer = v => { setChoix(v); try { localStorage.setItem(cle, JSON.stringify(v)); } catch { /* pas de stockage */ } };
+  const ecole = t.ecoles.length > 1 && t.ecoles.some(e => e.slug === choix) ? choix : '';
+  const nomDe = slug => t.ecoles.find(e => e.slug === slug)?.nom || slug || '';
+  return { ...t, ecole, changer, nomDe };
+}
+
 // Les lignes d'une table qui sont de cette école (null : toutes les écoles)
 export const deLEcole = (lignes, slug) => (!slug ? lignes : (lignes || []).filter(r => ecoleDe(r) === slug));
 

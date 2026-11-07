@@ -4194,18 +4194,20 @@ create policy "ambassadeurs repondre" on public.ambassadeurs for update to authe
 revoke all on public.ambassadeurs from anon, authenticated;
 grant select, insert, update on public.ambassadeurs to authenticated;
 
--- Une nomination prend la promo et la filière du membre ; jamais un administrateur
+-- Une nomination prend la promo, la filière et l'école du membre ; jamais un administrateur
 create or replace function public.protect_ambassadeur_insert() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare v record;
 begin
-  select promo, filiere, role into v from public.profiles where id = new.user_id;
+  select promo, filiere, role, ecole into v from public.profiles where id = new.user_id;
   if v is null or v.role not in ('etudiant','laureat') then raise exception 'Seul un étudiant ou un lauréat peut être ambassadeur' using errcode = '42501'; end if;
   -- Un seul groupe à la fois
   if exists (select 1 from public.ambassadeurs a where a.user_id = new.user_id and a.statut in ('propose','accepte')) then
     raise exception 'Déjà ambassadeur ou déjà proposé' using errcode = '23505';
   end if;
   new.promo := v.promo; new.filiere := v.filiere; new.propose_at := now(); new.created_at := now(); new.repondu_at := null;
+  -- L'école du membre, pas celle de l'administration qui le nomme (la valeur par défaut de la colonne)
+  new.ecole := coalesce(v.ecole, new.ecole);
   new.retire_par := null; new.statut_avant := null;
   if current_setting('ensam.amb_systeme', true) = 'on' then new.par := 'auto'; new.statut := 'propose'; end if;
   return new;

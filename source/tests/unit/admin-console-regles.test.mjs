@@ -13,19 +13,44 @@ test('une école : ses profils et les lignes qui portent son école (sans école
   const data = {
     profiles: [{ id: 'a' }, { id: 'b', ecole: 'ensam-casa' }, { id: 'c', ecole: 'ensam-meknes' }],
     offers: [{ id: 'o1', ecole: 'ensam-casa' }, { id: 'o2' }],
-    comments: [{ id: 'c1' }], reactions: [], saison: 2026,
+    guide_pays: [{ id: 'g1' }], reactions: [], saison: 2026,
   };
   assert.equal(donneesDeLEcole(data, ''), data, 'aucune école choisie : toutes');
   assert.equal(donneesDeLEcole(data, null), data);
   const m = donneesDeLEcole(data, 'ensam-meknes');
   assert.deepEqual(ids(m.profiles), ['a', 'c']);
   assert.deepEqual(ids(m.offers), ['o2']);
-  assert.equal(m.comments, data.comments, 'une table sans école reste la même');
-  assert.equal(m.reactions, data.reactions);
+  assert.equal(m.guide_pays, data.guide_pays, 'une table partagée par toutes les écoles reste la même');
+  assert.deepEqual(m.reactions, []);
   assert.equal(m.saison, 2026);
   const c = donneesDeLEcole(data, 'ensam-casa');
   assert.deepEqual([ids(c.profiles), ids(c.offers)], [['b'], ['o1']]);
   assert.equal(data.profiles.length, 3, 'les données d’origine ne changent pas');
+});
+
+test('une école : les tables de l’école le restent même quand aucune ligne ne porte encore d’école (démo) ; les tables sans école suivent leur membre ; une carte sponsorisée sans école est pour toutes', () => {
+  const data = {
+    profiles: [{ id: 'm1' }, { id: 'm2' }, { id: 'x1', ecole: 'ensam-casa' }],
+    annonces: [{ id: 'an1' }], defis: [{ id: 'd1' }], evenements: [{ id: 'e1' }],
+    signalements: [{ id: 's1', auteur_id: 'm1' }, { id: 's2', auteur_id: 'x1' }],
+    retours_cv: [{ id: 'r1', profil_id: 'x1' }], parrainages: [{ id: 'p1', filleul_id: 'm2' }, { id: 'p2', filleul_id: 'x1' }],
+    propositions: [{ id: 'pr1', laureat_id: 'x1' }], messages: [{ id: 'ms1', author_id: 'm1' }],
+    sponsorises: [{ id: 'sp1' }, { id: 'sp2', ecole: null }, { id: 'sp3', ecole: 'ensam-meknes' }, { id: 'sp4', ecole: 'ensam-casa' }],
+  };
+  const casa = donneesDeLEcole(data, 'ensam-casa');
+  assert.deepEqual([ids(casa.annonces), ids(casa.defis), ids(casa.evenements)], [[], [], []], 'les lignes de la démo sans école sont de l’ENSAM Meknès');
+  assert.deepEqual(ids(casa.signalements), ['s2']);
+  assert.deepEqual(ids(casa.retours_cv), ['r1']);
+  assert.deepEqual(ids(casa.parrainages), ['p2']);
+  assert.deepEqual(ids(casa.propositions), ['pr1']);
+  assert.deepEqual(ids(casa.messages), []);
+  assert.deepEqual(ids(casa.sponsorises), ['sp1', 'sp2', 'sp4'], 'sans école : toutes les écoles');
+  const mek = donneesDeLEcole(data, 'ensam-meknes');
+  assert.deepEqual([ids(mek.annonces), ids(mek.signalements), ids(mek.parrainages), ids(mek.messages)], [['an1'], ['s1'], ['p1'], ['ms1']]);
+  assert.deepEqual(ids(mek.sponsorises), ['sp1', 'sp2', 'sp3']);
+  // Une table sans école dans la base, mais dont les lignes en portent une (une base plus récente) : l'école des lignes compte
+  const r = donneesDeLEcole({ profiles: [], messages: [{ id: 'z', author_id: 'inconnu', ecole: 'ensam-casa' }] }, 'ensam-casa');
+  assert.deepEqual(ids(r.messages), ['z']);
 });
 
 const PROFILS = [
