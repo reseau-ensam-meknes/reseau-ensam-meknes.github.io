@@ -2,6 +2,54 @@
 // Dessin original en SVG. Les couleurs viennent du CSS (.sky, thème clair ou sombre) et le mouvement
 // aussi (nuages, oiseaux, arbres, étudiants qui marchent vers la porte), coupé si l'appareil le demande.
 
+// ---------------------------------------------------------------------------
+// Le ciel du soir (thème clair) : dès une heure avant le coucher du soleil à Meknès, le ciel se réchauffe peu à peu
+// (pêche et rose, soleil bas), garde ses couleurs jusqu'à la nuit, puis revient doucement au ciel de jour.
+// --soir (0 à 1) sur <html>, et data-ciel="soir" tant qu'il vaut plus que 0. Le premier calcul est fait dans page.html,
+// avant l'affichage (le même calcul en ES5, comparé à celui-ci par les tests unitaires) ; ensuite, une fois par minute.
+// ---------------------------------------------------------------------------
+// Coucher du soleil à Meknès (33,89 N ; 5,55 O) le 15 de chaque mois, en minutes après minuit UTC (algorithme de la NOAA)
+export const COUCHER = [1055, 1085, 1109, 1132, 1155, 1174, 1174, 1151, 1111, 1070, 1040, 1035];
+const AVANT = 60, TENU = 30, RETOUR = 60;   // minutes : montée avant le coucher, ciel du soir tenu, retour au jour à la nuit
+
+// L'heure du soleil de Meknès : l'heure UTC (juste au Maroc toute l'année, ramadan compris, et proche en Europe) ;
+// à plus de 3 h de l'heure UTC (Amériques, Asie), l'heure du téléphone, comme si le soleil s'y couchait à l'heure de Meknès.
+export function minutesSoleil(date) {
+  if (Math.abs(date.getTimezoneOffset()) > 180) return (date.getHours() * 60 + date.getMinutes() + 1380) % 1440;
+  return date.getUTCHours() * 60 + date.getUTCMinutes();
+}
+
+// Coucher du jour (minutes UTC) : entre les valeurs du 15 de deux mois voisins, au prorata des jours (février compris)
+export function coucherDu(date) {
+  const y = date.getUTCFullYear(), n = date.getUTCMonth(), j = date.getUTCDate(), k = n - (j < 15 ? 1 : 0);
+  const p = Date.UTC(y, k, 15), f = (Date.UTC(y, n, j) - p) / (Date.UTC(y, k + 1, 15) - p), a = COUCHER[(k + 12) % 12];
+  return a + (COUCHER[(k + 13) % 12] - a) * f;
+}
+
+// 0 = ciel de jour, 1 = ciel du soir ; une courbe douce, arrondie au millième (pas de saut d'une minute à l'autre)
+export function soirDe(date = new Date()) {
+  const t = minutesSoleil(date) - coucherDu(date);
+  const u = t < -AVANT || t > TENU + RETOUR ? 0 : t < 0 ? (t + AVANT) / AVANT : t < TENU ? 1 : (TENU + RETOUR - t) / RETOUR;
+  return Math.round(u * u * (3 - 2 * u) * 1000) / 1000;
+}
+
+// Pose --soir et data-ciel sur <html> ; suivreLeCiel() recalcule ensuite chaque minute et au retour sur l'onglet
+export function poserCiel(date = new Date(), racine = document.documentElement) {
+  const s = soirDe(date);
+  if (s > 0) { racine.style.setProperty('--soir', String(s)); racine.dataset.ciel = 'soir'; } else { racine.style.removeProperty('--soir'); delete racine.dataset.ciel; }
+  return s;
+}
+let suivi = false;
+export function suivreLeCiel() {
+  if (suivi || typeof document === 'undefined') return;
+  suivi = true;
+  poserCiel();
+  setInterval(() => poserCiel(), 60e3);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) poserCiel(); });
+}
+// Dès que l'illustration est chargée (page d'entrée comme application), le ciel suit l'heure
+suivreLeCiel();
+
 const r1 = n => Math.round(n * 10) / 10;
 
 // Logo de l'ENSAM tel qu'il est peint sur le fronton de l'école (deux A, losange, crémaillère et roue),

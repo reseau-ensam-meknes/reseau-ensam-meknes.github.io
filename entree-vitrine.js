@@ -1,12 +1,3 @@
-// Page d'entrée · Plan, partie membres : ce que les membres ont accepté de montrer à un visiteur sans compte.
-// « Ils sont déjà dans le réseau » : les lauréats qui ont dit oui dans Mon profil > Visibilité (visages_publics : le prénom
-// et l'initiale du nom, la promo, l'entreprise, la photo). « Réussites » : les recrutements confirmés que l'étudiant ET
-// le lauréat ont cochés (reussites_publiques : l'entreprise, les deux prénoms, la promo du lauréat, le mois).
-// Chaque fonction ne rend que l'école de la page (celle du lien ?ecole=…, sinon l'ENSAM Meknès ; rien pour une école dont le
-// réseau n'est pas ouvert). Les photos : des liens temporaires d'une heure, que la base n'accorde
-// que pour ces photos-là (politique « photos visages publics » de schema.sql), comme pour les membres fondateurs.
-// Chargé à part, après l'affichage (la page d'entrée garde ses six fichiers). Démo, base pas encore à jour, pas de
-// réseau, ou personne n'a dit oui : rien, sans erreur. Les entreprises sont écrites en texte, sans logo.
 import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { addAR, getLang } from './i18n.js';
 import { Icon, argsEcole } from './entree.js';
@@ -16,22 +7,18 @@ export const TITRE_VISAGES = 'Ils sont déjà dans le réseau';
 export const TITRE_REUSSITES = 'Réussites';
 const MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
 const MOIS_AR = ['يناير', 'فبراير', 'مارس', 'أبريل', 'ماي', 'يونيو', 'يوليوز', 'غشت', 'شتنبر', 'أكتوبر', 'نونبر', 'دجنبر'];
-// Un prénom glissé dans une phrase arabe garde sa ponctuation à sa place (isolé), et reste tel qu'il est écrit
 const iso = n => `⁨${n}⁩`;
 const texte = (x, max) => (typeof x === 'string' ? x.trim().slice(0, max) : '');
 const promoOk = p => (Number.isInteger(+p) && +p >= 1990 && +p <= 2040 ? +p : null);
 
-// « octobre 2026 » (« 2026-10 ») ; illisible : rien
 export function moisReussite(m, ar = false) {
   const [a, n] = String(m || '').split('-').map(Number);
   return a > 1990 && n >= 1 && n <= 12 ? `${(ar ? MOIS_AR : MOIS)[n - 1]} ${a}` : '';
 }
-// « Salma, avec l'aide de Youssef (promo 2016) » : qui, et grâce à qui. Les prénoms restent tels qu'ils sont écrits.
 export function phraseReussite(r, ar = false) {
   const p = r.promo ? (ar ? ` (دفعة ${r.promo})` : ` (promo ${r.promo})`) : '';
   return ar ? `${iso(r.etudiant)}، بمساعدة ${iso(r.laureat)}${p}` : `${r.etudiant}, avec l’aide de ${r.laureat}${p}`;
 }
-// Ce que la base a rendu, relu : une forme inattendue ne casse rien, elle ne s'affiche pas
 export function lireVisages(x) {
   return (Array.isArray(x) ? x : []).map(v => ({ nom: texte(v?.nom, 60), promo: promoOk(v?.promo), entreprise: texte(v?.entreprise, 80) || null, photo: typeof v?.photo === 'string' && v.photo ? v.photo : null }))
     .filter(v => v.nom).slice(0, 24);
@@ -94,7 +81,6 @@ export function VitrineEntree() {
   </div>`;
 }
 
-// Pas de cadre dans un cadre : deux rangées sous « Pour les lauréats » et « Pour les étudiants », sur toute la largeur
 const CSS = `
 .ev { display: flex; flex-direction: column; gap: 1.1rem; min-width: 0; grid-column: 1 / -1; }
 .ev-bloc { min-width: 0; }

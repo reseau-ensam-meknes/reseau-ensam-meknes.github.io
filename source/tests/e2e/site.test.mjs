@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
+import { soirDe } from '../../src/scene.js';
 import { fauxSite, UID } from './faux-supabase.mjs';
 
 const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe.min.js'), 'utf8');
@@ -50,9 +51,11 @@ after(async () => { await navigateur?.close(); serveur?.close(); });
 // Une page neuve, dans la langue voulue, avec un relevé des erreurs
 // ua : le user-agent d'un vrai appareil (TELEPHONE) ; sinon celui de Chromium sur un ordinateur
 // mouvement : les animations jouent (sinon, mouvement réduit) ; toucher : un écran tactile (événements touch, pour glisser au doigt)
-async function ouvrir({ largeur = 1280, langue = 'fr', sw = false, theme = 'light', ua, mouvement = false, toucher = false } = {}) {
+// heure : l'heure de l'appareil, qui avance ensuite (le ciel du thème clair la suit : celui du soir à la tombée du jour)
+async function ouvrir({ largeur = 1280, langue = 'fr', sw = false, theme = 'light', ua, mouvement = false, toucher = false, heure } = {}) {
   const ctx = await navigateur.newContext({ viewport: { width: largeur, height: largeur > 800 ? 900 : 844 }, serviceWorkers: sw ? 'allow' : 'block', colorScheme: theme, reducedMotion: mouvement ? 'no-preference' : 'reduce', hasTouch: toucher, ...(ua ? { userAgent: ua } : {}) });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  if (heure !== undefined) await ctx.clock.install({ time: heure });
   const page = await ctx.newPage(); const erreurs = [];
   page.on('pageerror', e => erreurs.push(e.message));
   page.on('dialog', d => d.accept());
@@ -5508,9 +5511,12 @@ test('carte « Fait » : au retour sur l’accueil, l’étape accomplie se coch
   await s.ctx.close();
 });
 
+// Le ciel du thème clair suit l'heure de Meknès (ciel du soir) : le jour se vérifie à midi, aujourd'hui
+const midi = () => { const d = new Date(); d.setUTCHours(11, 0, 0, 0); return d; };
 test('écrans vides illustrés : une scène dessinée pour aucune demande, aucun message, aucune candidature ; jour et nuit, en arabe aussi', async () => {
+  assert.equal(soirDe(midi()), 0, 'midi : pas encore le soir');
   for (const [theme, langue] of [['light', 'fr'], ['dark', 'ar']]) {
-    const s = await ouvrir({ largeur: 390, theme, langue });
+    const s = await ouvrir({ largeur: 390, theme, langue, heure: midi() });
     const scenes = {};
     const voir = async (nom, e, scene) => {
       await s.comme(nom); await s.aller(e);
@@ -5977,11 +5983,12 @@ const demandeEtAide = (page, { accepter = false, pause = false } = {}) => page.e
 test('arabe : un prénom cité deux fois dans la fête du match reste à l’écran, isolé une seule fois ; la police arabe ne prend pas les isolants', async () => {
   const s = await ouvrir({ largeur: 390, langue: 'ar' });
   await s.comme('Salma'); await s.page.waitForTimeout(300); await fermerFete(s);
-  // La plage de la police arabe du site : jamais U+2066-2069 (deux isolants de suite y rendaient le nom à 0 px)
+  // Les plages des polices arabes du site (le texte en 4 graisses, les titres en 600 et 700) : jamais U+2066-2069 (deux
+  // isolants de suite y rendaient le nom à 0 px)
   const plages = await s.page.evaluate(() => [...document.styleSheets].flatMap(f => { try { return [...f.cssRules]; } catch { return []; } })
-    .filter(r => r instanceof CSSFontFaceRule && /arabe/.test(r.style.getPropertyValue('font-family'))).map(r => r.style.getPropertyValue('unicode-range')));
-  assert.equal(plages.length, 4);
-  for (const p of plages) assert.doesNotMatch(p, /206[6-9]/i);
+    .filter(r => r instanceof CSSFontFaceRule && /arabe/.test(r.style.getPropertyValue('font-family'))).map(r => [r.style.getPropertyValue('font-family').replace(/"/g, ''), r.style.getPropertyValue('unicode-range')]));
+  assert.deepEqual(plages.map(p => p[0]), [...Array(4).fill('Texte ENSAM arabe'), ...Array(2).fill('Titres ENSAM arabe')]);
+  for (const [, p] of plages) assert.doesNotMatch(p, /206[6-9]/i);
   await demandeEtAide(s.page);
   await s.aller('offres/demandes');
   await s.page.click('.dm-accepter'); await s.page.waitForSelector('.modal.dm-oui-feuille');
@@ -7646,6 +7653,203 @@ test('accueil : le bandeau dit ce qui empêche les notifications, se range trois
   await s.changerMemo('({ ...m, coupe: 1 })');
   await recharger(s); await s.page.waitForTimeout(800);
   assert.equal(await s.page.locator('.push-bandeau').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// ===========================================================================
+// Plan · vitesse et ambiance : photos gardées par le service worker, ciel du soir, passage jour/nuit en cercle,
+// titres arabes dans leur police
+// ===========================================================================
+// Un faux stockage Supabase sur un autre port (autre origine, comme le vrai) : il compte les images qu'il envoie
+async function fauxStockage() {
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  const envois = {};
+  const srv = http.createServer((q, r) => {
+    const url = new URL(q.url, 'http://x'), u = url.pathname; envois[u] = (envois[u] || 0) + 1;
+    const cors = { 'access-control-allow-origin': '*', 'cache-control': 'no-store' };
+    // Comme le stockage de Supabase : un lien expiré est refusé en JSON (400) ; « html » : une page d'erreur rendue en 200
+    const jeton = url.searchParams.get('token');
+    if (jeton === 'expire') { r.writeHead(400, { 'content-type': 'application/json', ...cors }); return r.end('{"statusCode":"400","error":"InvalidJWT","message":"\\"exp\\" claim timestamp check failed"}'); }
+    if (jeton === 'html') { r.writeHead(200, { 'content-type': 'text/html', ...cors }); return r.end('<!doctype html><title>Erreur</title>'); }
+    r.writeHead(200, { 'content-type': 'image/png', ...cors }); r.end(PNG);
+  });
+  await new Promise(ok => srv.listen(0, '127.0.0.1', ok));
+  return { adresse: `http://127.0.0.1:${srv.address().port}`, envois, fermer: () => srv.close() };
+}
+
+test('photos de profil : gardées par le service worker sous leur adresse sans jeton, rendues sans retéléchargement ; jamais un CV', async () => {
+  const st = await fauxStockage();
+  const s = await ouvrir({ sw: true });
+  await s.page.waitForFunction(() => navigator.serviceWorker.getRegistration().then(r => !!r?.active), null, { timeout: 30000 });
+  await s.page.reload(); await s.page.waitForSelector('.hello');
+  assert.ok(await s.page.evaluate(() => !!navigator.serviceWorker.controller));
+  const image = src => s.page.evaluate(src => new Promise(ok => { const i = new Image(); i.onload = () => ok(i.naturalWidth); i.onerror = () => ok(0); i.src = src; }), src);
+  const photo = '/storage/v1/object/sign/photos/u1/photo-1.png', cv = '/storage/v1/object/sign/cv/u1/cv.png';
+  assert.equal(await image(st.adresse + photo + '?token=premier'), 1);
+  await s.page.waitForFunction(() => caches.open('photos-v1').then(c => c.keys()).then(k => k.length === 1));
+  // Un nouveau lien (autre jeton, comme à chaque visite) : l'image vient du téléphone
+  assert.equal(await image(st.adresse + photo + '?token=second'), 1);
+  assert.equal(await image(st.adresse + photo + '?token=troisieme'), 1);
+  assert.equal(st.envois[photo], 1, 'une seule fois sur le réseau');
+  assert.deepEqual(await s.page.evaluate(() => caches.open('photos-v1').then(c => c.keys()).then(k => k.map(r => r.url))), [st.adresse + photo]);
+  // Un CV n'est jamais gardé, ni une photo de la messagerie
+  await image(st.adresse + cv + '?token=1'); await image(st.adresse + cv + '?token=2');
+  assert.equal(st.envois[cv], 2);
+  const chat = '/storage/v1/object/sign/chat/u1/u2/img-1.png';
+  await image(st.adresse + chat + '?token=1'); await image(st.adresse + chat + '?token=2');
+  assert.equal(st.envois[chat], 2);
+  // Un lien expiré (refusé en JSON) ou une page d'erreur (200, pas une image) n'est jamais gardé à la place de la photo :
+  // chaque essai repart au réseau, et la vraie photo, une fois arrivée, est gardée
+  const autre = '/storage/v1/object/sign/photos/u2/photo-7.png';
+  assert.equal(await image(st.adresse + autre + '?token=expire'), 0);
+  assert.equal(await image(st.adresse + autre + '?token=html'), 0);
+  assert.equal(st.envois[autre], 2);
+  assert.equal(await image(st.adresse + autre + '?token=bon'), 1);
+  await s.page.waitForFunction(() => caches.open('photos-v1').then(c => c.keys()).then(k => k.length === 2));
+  assert.equal(await image(st.adresse + autre + '?token=expire'), 1, 'gardée : rendue même avec un lien expiré');
+  assert.equal(st.envois[autre], 3);
+  assert.deepEqual(await s.page.evaluate(() => caches.open('photos-v1').then(c => c.keys()).then(k => k.map(r => r.url).sort())), [st.adresse + photo, st.adresse + autre].sort());
+  // Une nouvelle version du site ne vide pas les photos gardées (seulement les anciennes copies du site)
+  assert.ok((await s.page.evaluate(() => caches.keys())).includes('photos-v1'));
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close(); st.fermer();
+});
+
+// Passage jour/nuit (setTheme, app.js) : avec du mouvement, le nouveau thème s'ouvre en cercle depuis le bouton touché
+// (View Transitions) ; moins de mouvement : tout de suite, sans transition. Le choix est gardé dans les deux cas.
+test('passage jour/nuit : le nouveau thème s’ouvre en cercle depuis le bouton touché ; tout de suite si l’appareil demande moins de mouvement', async () => {
+  for (const mouvement of [true, false]) {
+    const s = await ouvrir({ largeur: 1280, mouvement });
+    await s.page.evaluate(() => {
+      window.__vt = { transitions: 0, cercles: [] };
+      const vt = document.startViewTransition?.bind(document);
+      if (vt) document.startViewTransition = f => { window.__vt.transitions++; return vt(f); };
+      const anim = Element.prototype.animate;
+      Element.prototype.animate = function (k, o) { if (o?.pseudoElement === '::view-transition-new(root)') window.__vt.cercles.push({ clip: k.clipPath, duree: o.duration }); return anim.call(this, k, o); };
+    });
+    const avant = await s.page.getAttribute('html', 'data-theme') || 'light';
+    const b = await s.page.locator('.top .theme-btn').boundingBox();
+    await s.page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
+    const pendant = await s.page.evaluate(() => document.documentElement.classList.contains('vt-theme'));
+    await s.page.waitForFunction(() => !document.documentElement.classList.contains('vt-theme'), null, { timeout: 5000 });
+    await s.page.waitForTimeout(100);
+    const apres = await s.page.getAttribute('html', 'data-theme');
+    assert.notEqual(apres, avant, 'le thème a changé');
+    assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-theme')), apres, 'le choix est gardé');
+    const vu = await s.page.evaluate(() => window.__vt);
+    if (mouvement) {
+      assert.ok(pendant, 'html.vt-theme pendant le cercle');
+      assert.equal(vu.transitions, 1);
+      assert.equal(vu.cercles.length, 1);
+      // Le cercle part du bouton touché et couvre tout l'écran, en 450 ms
+      const [de, a] = vu.cercles[0].clip.map(c => c.match(/circle\(([\d.]+)px at ([\d.]+)px ([\d.]+)px\)/).slice(1).map(Number));
+      assert.equal(de[0], 0);
+      assert.ok(Math.abs(de[1] - (b.x + b.width / 2)) < 2 && Math.abs(de[2] - (b.y + b.height / 2)) < 2, `centre ${de[1]},${de[2]}`);
+      assert.ok(a[0] >= Math.hypot(1280 / 2, 900 / 2), `rayon ${a[0]}`);
+      assert.equal(vu.cercles[0].duree, 450);
+    } else {
+      assert.equal(pendant, false);
+      assert.deepEqual(vu, { transitions: 0, cercles: [] }, 'moins de mouvement : aucune transition');
+    }
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+// Ciel du soir (scene.js et le script du haut de page.html) : l'heure forcée à une heure de soir à Meknès, le ciel du thème
+// clair est celui du soir dès le premier affichage ; le thème sombre garde sa nuit ; à midi, le ciel de jour
+const minuteOu = (jour, f) => { for (let m = 0; m < 1440; m++) { const d = new Date(jour + m * 60e3); if (f(soirDe(d))) return d; } return null; };
+test('ciel du soir : à l’heure du soir à Meknès, le ciel clair passe au soir dès le premier affichage ; le thème sombre garde sa nuit', async () => {
+  const jour = Date.UTC(2026, 5, 15);
+  const soir = minuteOu(jour, v => v === 1), midi = new Date(jour + 12 * 3600e3);
+  assert.ok(soir && soirDe(midi) === 0);
+  const ciel = async (theme, quand) => {
+    const ctx = await navigateur.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block', colorScheme: theme, reducedMotion: 'reduce' });
+    await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+    await ctx.clock.install({ time: quand });
+    // Le ciel noté juste avant que l'application s'affiche : il doit déjà être celui de l'heure
+    await ctx.addInitScript(() => { document.addEventListener('DOMContentLoaded', () => { window.__ciel = { soir: document.documentElement.dataset.ciel || null, v: document.documentElement.style.getPropertyValue('--soir') }; }); });
+    const page = await ctx.newPage(); const erreurs = []; page.on('pageerror', e => erreurs.push(e.message));
+    await page.goto(adresse); await page.waitForSelector('.hello .scene svg');
+    const v = await page.evaluate(() => {
+      const h = document.querySelector('.home-hero.sky'), cs = getComputedStyle(h);
+      return { tete: window.__ciel, ciel: document.documentElement.dataset.ciel || null, soir: document.documentElement.style.getPropertyValue('--soir'), fond: cs.backgroundImage, sky1: cs.getPropertyValue('--sky-1').trim(), lampe: getComputedStyle(document.querySelector('.hello .scene .lamp-glow')).opacity };
+    });
+    assert.deepEqual(erreurs, []);
+    await ctx.close();
+    return v;
+  };
+  const clairSoir = await ciel('light', soir), clairMidi = await ciel('light', midi), sombreSoir = await ciel('dark', soir), sombreMidi = await ciel('dark', midi);
+  assert.deepEqual(clairSoir.tete, { soir: 'soir', v: '1' }, 'posé par le script du haut, avant l’affichage');
+  assert.equal(clairSoir.ciel, 'soir'); assert.equal(clairSoir.soir, '1');
+  assert.deepEqual(clairMidi.tete, { soir: null, v: '' });
+  assert.equal(clairMidi.ciel, null);
+  assert.notEqual(clairSoir.fond, clairMidi.fond, 'le ciel du soir n’est pas celui du jour');
+  assert.notEqual(clairSoir.sky1, clairMidi.sky1);
+  // Le halo du réverbère (opacity: var(--lamp), calculée) : allumé le soir, éteint à midi
+  assert.ok(Number(clairSoir.lampe) > 0.8, `le réverbère s’allume (${clairSoir.lampe})`);
+  assert.equal(Number(clairMidi.lampe), 0, `le réverbère éteint à midi (${clairMidi.lampe})`);
+  // Le thème sombre : la même nuit à l'heure du soir qu'à midi
+  assert.equal(sombreSoir.fond, sombreMidi.fond);
+  assert.equal(sombreSoir.sky1, sombreMidi.sky1);
+});
+
+// Titres en arabe : leur police dédiée (« Titres ENSAM arabe », 600 et 700), demandée seulement quand un titre arabe s'affiche
+test('titres en arabe : leur police dédiée, chargée seulement en arabe ; les lettres latines gardent celle des titres français', async () => {
+  for (const langue of ['ar', 'fr']) {
+    // Une page neuve (rien en cache), dans sa langue dès la première visite
+    const ctx = await navigateur.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
+    await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+    await ctx.addInitScript(l => { if (!sessionStorage.getItem('__l')) { sessionStorage.setItem('__l', '1'); localStorage.setItem('ensam-lang', l); } }, langue);
+    const page = await ctx.newPage(), erreurs = [], polices = [];
+    page.on('pageerror', e => erreurs.push(e.message));
+    page.on('request', q => { const u = new URL(q.url()).pathname; if (/\.woff2$/.test(u)) polices.push(u.slice(1)); });
+    await page.goto(adresse); await page.waitForSelector('.hello h1');
+    await page.evaluate(() => document.fonts.ready);
+    await page.waitForTimeout(300);
+    const v = await page.evaluate(() => ({
+      h1: getComputedStyle(document.querySelector('.hello h1')).fontFamily,
+      h3: document.querySelector('h3') ? getComputedStyle(document.querySelector('h3')).fontFamily : null,
+      chargee: [...document.fonts].some(f => f.family.replace(/"/g, '') === 'Titres ENSAM arabe' && f.status === 'loaded'),
+    }));
+    if (langue === 'ar') {
+      assert.match(v.h1, /^"Titres ENSAM", "Titres ENSAM arabe"/, v.h1);
+      if (v.h3) assert.match(v.h3, /Titres ENSAM arabe/, v.h3);
+      assert.ok(v.chargee, 'la police des titres arabes est chargée');
+      assert.ok(polices.some(p => /^polices\/arabe-titres-(600|700)\.woff2$/.test(p)), polices.join(', '));
+    } else {
+      assert.doesNotMatch(v.h1, /arabe/);
+      assert.equal(v.chargee, false);
+      assert.deepEqual(polices.filter(p => /arabe/.test(p)), [], 'aucune police arabe en français');
+    }
+    assert.deepEqual(erreurs, []);
+    await ctx.close();
+  }
+});
+
+test('passage jour/nuit : deux passages coup sur coup au clavier, le second garde son cercle (jamais le fondu des changements de page)', async () => {
+  const s = await ouvrir({ largeur: 1280, mouvement: true });
+  await s.page.focus('.top .theme-btn');
+  await s.page.keyboard.press('Enter');
+  await s.page.waitForTimeout(120);
+  await s.page.keyboard.press('Enter');
+  // Pendant le second cercle (interrompant le premier) : html.vt-theme reste, ni fondu ni glissé des pages sur la racine
+  const vu = await s.page.evaluate(() => new Promise(ok => {
+    const notes = [], t0 = performance.now();
+    const f = () => {
+      const a = document.getAnimations().filter(x => x.effect?.pseudoElement?.includes('view-transition-')).map(x => x.animationName || 'cercle');
+      if (a.length) notes.push({ classe: document.documentElement.classList.contains('vt-theme'), a });
+      if (performance.now() - t0 < 400) requestAnimationFrame(f); else ok(notes);
+    };
+    f();
+  }));
+  assert.ok(vu.some(x => x.a.includes('cercle')), 'le second passage s’ouvre en cercle');
+  assert.ok(vu.every(x => x.classe), 'html.vt-theme tout au long du second cercle');
+  assert.ok(vu.every(x => !x.a.includes('vt-in') && !x.a.includes('fade-out')), `pas le fondu des pages : ${JSON.stringify(vu.at(-1))}`);
+  await s.page.waitForFunction(() => !document.documentElement.classList.contains('vt-theme'), null, { timeout: 5000 });
+  assert.equal(await s.page.getAttribute('html', 'data-theme'), 'light', 'aller-retour : le thème clair');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-theme')), 'light');
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });

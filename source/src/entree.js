@@ -4,7 +4,6 @@
 // et ce qui a été tapé reste en place. Un membre déjà connecté ne voit jamais cette page.
 import { html, render, useState, useLayoutEffect, useEffect, useRef } from './vendor/preact-htm.js';
 import { getLang, setLang, chargerAR, addAR, arCount, t } from './i18n.js';
-import { sceneMarkup } from './scene.js';
 import { glyph, TUILE_DEFS, TUILE } from './logo.js';
 import { roleDePromo, promoValide, lignesChiffres, estEmailEcole, chiffresCode, adresseContact, VERSION_ACCORD, lienPartage, lienEncoreBon, estUuid, phraseLien, suiteLien, offreFermeePour } from './regles-entree.js';
 
@@ -141,9 +140,14 @@ export function BrandLogo({ size = 38, draw = false }) {
 
 // L'entrée de l'école dessinée. La porte s'ouvre une seule fois par visite ; les animations
 // s'arrêtent quand l'image sort de l'écran. « pose » (ms) : à l'accueil, l'entrée s'anime à l'arrivée puis se pose.
-let gateOpened = false;
+// Le dessin (scene.js) arrive à part, juste après le formulaire de la page d'entrée : le ciel est déjà là (fond .sky),
+// l'illustration s'y pose dès qu'elle est chargée. Ensuite (accueil, autres écrans), elle est là tout de suite.
+let gateOpened = false, scene = null, sceneP = null;
+export const chargerScene = () => sceneP ||= import('./scene.js').then(m => (scene = m), e => { sceneP = null; throw e; });
 export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0 }) {
   const ref = useRef();
+  const [pret, setPret] = useState(!!scene);
+  useEffect(() => { if (!scene) chargerScene().then(() => setPret(true), () => {}); }, []);
   const [opening] = useState(() => { const o = !gateOpened; gateOpened = true; return o; });
   useEffect(() => {
     const el = ref.current;
@@ -153,7 +157,7 @@ export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0 }) {
     return () => io.disconnect();
   }, []);
   useEffect(() => { const el = ref.current; if (!el || !pose) return; const t = setTimeout(() => el.setAttribute('data-pose', ''), pose); return () => clearTimeout(t); }, [pose]);
-  return html`<div ref=${ref} class=${'scene' + (opening ? ' opening' : '')} aria-hidden="true" dangerouslySetInnerHTML=${{ __html: sceneMarkup(align, fit) }}></div>`;
+  return html`<div ref=${ref} class=${'scene' + (opening ? ' opening' : '')} aria-hidden="true" dangerouslySetInnerHTML=${{ __html: pret && scene ? scene.sceneMarkup(align, fit) : '' }}></div>`;
 }
 
 // Message d'erreur en dehors d'un formulaire (l'application branche ici ses petits messages en bas de l'écran)
@@ -747,12 +751,36 @@ function magasinMembre() {
   magasin.catch(() => { magasin = null; });
 }
 
+// Le CSS complet du site (site.css, outils/precharger.mjs) : la page ne garde que celui de l'entrée et de la forme de l'accueil.
+// L'application l'attend avant son premier affichage. Rangé à la place de celui de l'entrée (avant le style que des modules
+// ajoutent en fin de <head>), qui part une fois le complet appliqué : le résultat est exactement celui d'avant. Sans adresse
+// (démo publiée telle quelle) : tout est déjà dans la page. Un échec (réseau) : l'application n'est pas affichée sans son
+// style, la page se recharge dès que le réseau répond (chargerApp, comme un module qui n'a pas pu se charger).
+// Appliqué, son adresse (avec son empreinte) est notée : le navigateur le garde, un membre le précharge dès <head> (page.html).
+const CSS_VU = 'ensam-css';
+let cssP = null;
+export function chargerCss() {
+  const href = window.ENSAM_CSS;
+  if (!href || typeof document === 'undefined') return Promise.resolve();
+  return cssP ||= new Promise((ok, ko) => {
+    const l = document.createElement('link'), ici = document.getElementById('css-entree');
+    l.rel = 'stylesheet'; l.href = href; l.dataset.css = 'site';
+    l.onload = () => { ici?.remove(); ecrire(CSS_VU, href); ok(); };
+    l.onerror = () => { l.remove(); cssP = null; ko(new TypeError('Failed to fetch')); };
+    if (ici) ici.after(l); else document.head.appendChild(l);
+  });
+}
+export const cssPret = () => chargerCss().catch(() => new Promise(() => {}));
+
 let appLancee = false, appEchec = false, relance = false, connecte = false;
-function chargerApp() {
+// cssEnsuite : un membre dont l'appareil n'a pas encore ce CSS (page.html, ENSAM_CSS_APRES). Il part quand app.js le demande
+// (cssPret), tout le code arrivé : en 3G, il ne prend plus le réseau au code qu'attendent les données, lues pendant qu'il arrive.
+function chargerApp({ cssEnsuite = false } = {}) {
   if (appLancee) return; appLancee = true;
   if (getLang() === 'ar') chargerAR().catch(() => {});
   precharger(window.ENSAM_MODULES);
-  import('./app.js').catch(e => {
+  const css = cssEnsuite ? null : chargerCss(); css?.catch(() => {});
+  import('./app.js').then(() => css || chargerCss()).catch(e => {
     // Un service worker garde peut-être une version qui ne colle plus : on le remet à neuf (une fois par visite)
     if (/^(SyntaxError|TypeError|ReferenceError)$/.test(e?.name) && navigator.serviceWorker?.controller) window.ensamReprise?.();
     // Sans service worker : un membre connecté (ou la démo) attend le réseau, puis la page se recharge ;
@@ -819,23 +847,40 @@ if (!window.ENSAM_ENTREE) {
     // Démo, membre déjà connecté, ou page publique : l'application tout de suite (la forme de l'accueil, ou le logo, patiente)
     delete d.dataset.entree;
     if (enLigne && jeton) magasinMembre();
-    chargerApp();
+    chargerApp({ cssEnsuite: !!window.ENSAM_CSS_APRES });
+    chargerScene().catch(() => {});
   } else {
     d.dataset.entree = 'visiteur';
+    // Quelque chose à finir tout de suite : un code attendu, ce qui avait été tapé avant un rechargement, un lien
+    // d'appareil (?r=, ?notifs=, ?depuis= : l'application les lit)
+    let presse = !!lireAttente() || /[?&](r|notifs|depuis)=/.test(location.search);
+    try { presse ||= !!sessionStorage.getItem(SAISIE) || !!sessionStorage.getItem(RECHARGES); } catch { /* stockage indisponible */ }
     chiffresPublics();
     // Le navigateur d'une application, reconnu dès que possible : sa carte vient juste après le premier affichage
     chargerAppareil();
     monter(null);
-    // Le magasin juste après le premier affichage (onglet en arrière-plan : requestAnimationFrame est suspendu)
+    chargerScene().catch(() => {});
     let parti = false; const go = () => { if (!parti) { parti = true; attendreMagasin().catch(() => addEventListener('online', () => attendreMagasin().catch(() => {}), { once: true })); } };
-    requestAnimationFrame(() => setTimeout(go)); setTimeout(go, 200);
+    if (presse) {
+      // Le magasin juste après le premier affichage (onglet en arrière-plan : requestAnimationFrame est suspendu)
+      requestAnimationFrame(() => setTimeout(go)); setTimeout(go, 200);
+    } else {
+      // Sinon, la page d'entrée garde le réseau pour elle (en 3G, ses polices et ses photos d'abord) : le magasin (Supabase)
+      // et l'application partent au premier geste (toucher, clavier), ou une fois la page chargée et calme,
+      // ou au plus tard après 12 s. Un envoi touché avant les attend simplement (run → attendreMagasin).
+      for (const t of ['pointerdown', 'keydown', 'focusin']) addEventListener(t, go, { once: true, passive: true, capture: true });
+      const auCalme = () => setTimeout(() => (typeof requestIdleCallback === 'function' ? requestIdleCallback(go, { timeout: 2000 }) : go()), 1000);
+      const charge = document.readyState === 'complete' ? Promise.resolve() : new Promise(ok => addEventListener('load', ok, { once: true }));
+      Promise.all([charge, document.fonts?.ready]).then(auCalme, auCalme);
+      setTimeout(go, 12e3);
+    }
     // Un lien public ouvert depuis l'entrée (Confidentialité) avant que l'application soit là : le logo patiente
     // à sa place, l'entrée attend cachée (ce qui a été tapé reste) ; ensuite, c'est l'application qui décide
     addEventListener('hashchange', () => {
       if (window.ENSAM_APP || !el) return;
       const pub = PUBLIQUE.test(location.hash);
       el.hidden = pub;
-      if (pub) delete d.dataset.entree; else d.dataset.entree = 'visiteur';
+      if (pub) { delete d.dataset.entree; go(); } else d.dataset.entree = 'visiteur';
     });
   }
 }

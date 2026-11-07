@@ -7,6 +7,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
 import { fauxSite, UID } from './faux-supabase.mjs';
+import { autoGroups } from '../../src/logic.js';
 
 const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe.min.js'), 'utf8');
 const SITE = path.resolve(process.env.SITE_DIR || new URL('../../dist', import.meta.url).pathname);
@@ -1151,10 +1152,474 @@ for (const [langue, theme] of [['fr', 'light'], ['ar', 'dark']]) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Plan · vitesse et ambiance (lot plan-vitesse) : page d'entrée plus légère (le magasin et l'application partent au
+// premier geste ou une fois la page calme, l'illustration juste après le formulaire, la page ne garde que le CSS de l'entrée,
+// tiré au build du CSS complet), et les données en deux temps (l'accueil d'abord ; les messages des groupes, les réactions et
+// les commentaires de relecture juste après le premier affichage ; un écran qui les lit les attend)
+// ---------------------------------------------------------------------------
+// Le CSS complet du site construit (lu à la demande : sans site construit, before() le dit d'abord)
+const siteCss = () => fs.readFileSync(path.join(SITE, 'site.css'), 'utf8');
+
+// Un visiteur dont les polices (ou autre chose) restent en route : la page n'est jamais « chargée », ni calme
+// (cssVu : l'appareil a déjà appliqué le CSS complet de cette version, comme après une déconnexion)
+async function visiteLegere({ query = '', retenir = /\.woff2$/, largeur = 390, hauteur = 844, langue = 'fr', cssVu = false } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce' });
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  const js = [], css = [], tenus = []; let tenir = true;
+  ctx.on('request', q => { const u = new URL(q.url()); if (/\.m?js$/.test(u.pathname)) js.push(u.pathname.slice(1)); else if (u.pathname === '/site.css') css.push(q.url()); });
+  if (retenir) await ctx.route(retenir, r => (tenir ? tenus.push(r) : r.continue()));
+  const vu = cssVu ? fs.readFileSync(path.join(SITE, 'index.html'), 'utf8').match(/window\.ENSAM_CSS='([^']+)'/)[1] : null;
+  await ctx.addInitScript(([l, vu]) => { if (!sessionStorage.getItem('__init')) { sessionStorage.setItem('__init', '1'); localStorage.setItem('ensam-lang', l); if (vu) localStorage.setItem('ensam-css', vu); } }, [langue, vu]);
+  const page = await ctx.newPage(), erreurs = [];
+  page.on('pageerror', e => erreurs.push(e.message));
+  await page.goto(site.adresse + query, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('#entree .entree-form');
+  const lacher = async () => { tenir = false; for (const r of tenus.splice(0)) await r.continue().catch(() => {}); };
+  const app = () => page.waitForFunction(() => window.ENSAM_APP, null, { timeout: 15000 });
+  return { ctx, page, erreurs, js, css, tenus, lacher, app };
+}
+const parti =(page, re) => page.waitForFunction(re => performance.getEntriesByType('resource').some(e => new RegExp(re).test(e.name)), re.source, { timeout: 5000 });
+
+test('page d’entrée plus légère : avant un geste, ni le magasin ni l’application (10 fichiers JS, 10 au plus, contre 13 avant) ; au premier toucher, ils partent', async () => {
+  // Même sur un appareil qui a déjà reçu le CSS complet (un membre déconnecté) : rien ne le précharge pour un visiteur
+  const v = await visiteLegere({ cssVu: true });
+  await v.page.waitForTimeout(2500);
+  const { magasin, modules } = await v.page.evaluate(() => ({ magasin: window.ENSAM_MAGASIN || [], modules: window.ENSAM_MODULES || [] }));
+  assert.ok(magasin.includes('store.js') && modules.includes('app.js'), 'les listes du magasin et de l’application (site construit)');
+  // Seuls les modules de l'entrée (préchargés), config.js, l'illustration, la rangée des fondateurs, la reconnaissance du
+  // navigateur d'une application (appareil.js, sa carte : portes #59) et ce que les membres ont accepté de montrer
+  // (entree-vitrine.js : plan, partie membres) ; jamais le magasin ni l'application (fondateurs-public.js et scene.js servent
+  // aussi à l'application, appareil.js au magasin par logic.js, et entree-vitrine.js, que l'entrée charge ensuite, est
+  // préchargé avec l'application d'un membre : l'entrée les charge à part).
+  // Mesuré : 10 fichiers JS (8 avant appareil.js et entree-vitrine.js) ; 10 au plus (main en demandait 13 dans les mêmes conditions).
+  const avantGeste = [...v.js];
+  const deTrop = avantGeste.filter(f => [...magasin, ...modules].includes(f) && !['scene.js', 'fondateurs-public.js', 'appareil.js', 'entree-vitrine.js'].includes(f));
+  assert.deepEqual(deTrop, [], `avant un geste : ${avantGeste.join(', ')}`);
+  assert.ok(avantGeste.length <= 10, `${avantGeste.length} fichiers JS avant un geste : ${avantGeste.join(', ')}`);
+  assert.ok(avantGeste.includes('scene.js'), 'l’illustration arrive juste après le formulaire');
+  await v.page.waitForSelector('#entree .entree-scene .scene svg');
+  assert.equal(await v.page.evaluate(() => typeof window.ENSAM_APP), 'undefined');
+  assert.equal(await v.page.locator('link[data-css="site"]').count(), 0, 'le CSS complet attend l’application');
+  assert.deepEqual(v.css, [], 'ni demandé ni préchargé avant un geste');
+  // Premier geste : le magasin part aussitôt, puis l'application ; la page marche comme avant
+  await v.page.click('#au-je-etudiant');
+  await parti(v.page, /\/store\.js$/);
+  await v.lacher();
+  await v.app();
+  // Le toucher qui a fait partir le magasin a aussi fait son travail : le rôle est choisi
+  assert.equal(await v.page.getAttribute('#au-je-etudiant', 'aria-pressed'), 'true');
+  // Le CSS complet est arrivé avec l'application, et celui de l'entrée est parti (rien en double)
+  assert.equal(await v.page.locator('link[data-css="site"]').count(), 1);
+  assert.equal(await v.page.locator('#css-entree').count(), 0);
+  assert.ok((await v.page.evaluate(() => document.documentElement.scrollWidth - innerWidth)) <= 0);
+  assert.deepEqual(v.erreurs, []);
+  await v.ctx.close();
+});
+
+test('page d’entrée plus légère : sans geste, le magasin part une fois la page chargée et calme ; un lien d’appareil (?notifs=1) le fait partir tout de suite', async () => {
+  const v = await visiteur({ largeur: 390, hauteur: 844 });
+  await v.app();
+  const t = await v.page.evaluate(() => ({ charge: performance.getEntriesByType('navigation')[0].loadEventEnd, magasin: performance.getEntriesByType('resource').find(e => /\/store\.js$/.test(e.name))?.startTime }));
+  assert.ok(t.magasin >= t.charge + 800, `le magasin après la page calme (chargée à ${Math.round(t.charge)} ms, magasin à ${Math.round(t.magasin)} ms)`);
+  assert.deepEqual(v.erreurs, []);
+  await v.ctx.close();
+  // ?notifs=1 (lien d'une notification) : l'application lit l'adresse, le magasin part tout de suite, même page pas chargée
+  const n = await visiteLegere({ query: '?notifs=1' });
+  await parti(n.page, /\/store\.js$/);
+  await n.lacher();
+  assert.deepEqual(n.erreurs, []);
+  await n.ctx.close();
+});
+
+// Le CSS de l'entrée (dans la page) face au CSS complet (site.css) : chaque élément, chaque propriété calculée, pseudo-éléments
+// compris, doit être pareil avec l'un ou l'autre. Le CSS complet est retenu (jamais servi, sans échec : un échec ferait
+// recharger la page d'un membre) pour voir la page sans lui.
+const stylesCalcules = page => page.evaluate(() => {
+  const out = {};
+  const els = [document.documentElement, ...document.querySelectorAll('body, body *')].filter(e => !e.closest('svg') || e.tagName.toLowerCase() === 'svg');
+  els.forEach((e, i) => {
+    const id = i + ':' + e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (typeof e.className === 'string' && e.className.trim() ? '.' + e.className.trim().split(/\s+/).join('.') : '');
+    for (const pseudo of [null, '::before', '::after', '::placeholder', '::marker']) {
+      const st = getComputedStyle(e, pseudo);
+      if ((pseudo === '::before' || pseudo === '::after') && st.content === 'none') continue;
+      const o = {}; for (let k = 0; k < st.length; k++) { const p = st[k]; if (!/^(transition|animation)/.test(p)) o[p] = st.getPropertyValue(p); }
+      out[id + (pseudo || '')] = o;
+    }
+  });
+  return out;
+});
+async function memesStyles(nom, { largeur = 390, hauteur = 844, langue = 'fr', theme = 'light', query = '', jeton = false, ua, faire } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: largeur, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce', colorScheme: theme, ...(ua ? { userAgent: ua } : {}) });
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  await ctx.route(/\/site\.css/, () => {});
+  await ctx.addInitScript(([langue, jeton, uid]) => {
+    if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1');
+    localStorage.setItem('ensam-lang', langue);
+    if (jeton) { const now = Math.floor(Date.now() / 1000); localStorage.setItem('sb-127-auth-token', JSON.stringify({ access_token: 'x.' + btoa(JSON.stringify({ sub: uid, exp: now + 3600 })) + '.y', refresh_token: 'r', expires_at: now + 3600, expires_in: 3600, token_type: 'bearer', user: { id: uid, email: 'membre@exemple.ma' } })); }
+  }, [langue, jeton, UID]);
+  const page = await ctx.newPage();
+  await page.goto(site.adresse + query, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector(jeton ? '.shell.squelette' : '#entree .entree-form');
+  if (faire) await faire(page);
+  await page.waitForTimeout(1200);
+  const seul = await stylesCalcules(page);
+  await page.evaluate(css => { const s = document.createElement('style'); s.textContent = css; const e = document.getElementById('css-entree'); e.after(s); e.remove(); }, siteCss());
+  await page.waitForTimeout(200);
+  const complet = await stylesCalcules(page);
+  const diffs = [];
+  for (const k of Object.keys(complet)) { if (!seul[k]) { diffs.push(`${k} : absent sans le CSS complet`); continue; } for (const p of Object.keys(complet[k])) if (seul[k][p] !== complet[k][p]) diffs.push(`${k} { ${p}: ${seul[k][p]} → ${complet[k][p]} }`); }
+  assert.ok(Object.keys(complet).length > 30, `${nom} : ${Object.keys(complet).length} éléments`);
+  assert.deepEqual(diffs.slice(0, 8), [], `${nom} : ${diffs.length} différences`);
+  await ctx.close();
+}
+// La carte du navigateur d'une application (portes, #59) : son propre style arrive avec appareil.js ; ses boutons, son lien et
+// son icône prennent celui de la page (Instagram sur Android, Facebook sur iPhone)
+const FACEBOOK_IOS = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 [FBAN/FBIOS;FBAV/490.0.0.38.107;FBBV/700000000;FBDV/iPhone15,3;FBMD/iPhone;FBSN/iOS;FBSV/18.6;FBSS/3;FBCR/;FBID/phone;FBLC/fr_FR;FBOP/80]';
+test('page d’entrée plus légère : son CSS seul donne exactement les styles du CSS complet (formulaire, fondateurs, code, erreur, promo, arabe sombre, forme de l’accueil, carte du navigateur d’une application)', async () => {
+  // Bien plus petit que le CSS complet, et tiré de lui au build (outils/css-critique.mjs)
+  const page = fs.readFileSync(path.join(SITE, 'index.html'), 'utf8');
+  const entree = page.match(/<style id="css-entree">([\s\S]*?)<\/style>/)?.[1] || '';
+  assert.ok(entree.length > 10000 && entree.length < siteCss().length * 0.35, `CSS de l’entrée ${entree.length} octets, complet ${siteCss().length}`);
+  assert.match(page, /window\.ENSAM_CSS='site\.css\?v=[0-9a-f]{10}'/);
+  fondateursFaux = reponse();
+  await memesStyles('visiteur, fondateurs', { faire: p => p.waitForSelector('.fd-public .fd-carte') });
+  fondateursFaux = null;
+  await memesStyles('arabe, sombre, ordinateur', { langue: 'ar', theme: 'dark', largeur: 1280, hauteur: 900 });
+  await memesStyles('code', { faire: async p => { await p.click('#au-je-etudiant'); await p.fill('#au-email', 'amine@ensam-umi.ac.ma'); await p.check('#au-ok'); await p.click('.entree-form button.btn.primary'); await p.waitForSelector('#au-code'); } });
+  await memesStyles('erreur', { faire: async p => { await p.click('#au-je-etudiant'); await p.fill('#au-email', 'vite@exemple.ma'); await p.check('#au-ok'); await p.click('.entree-form button.btn.primary'); await p.waitForSelector('.auth-msg'); } });
+  await memesStyles('promo, mot de passe', { query: '?promo=2019', faire: async p => { await p.click('text=J’ai déjà un compte'); await p.click('#au-mdp'); } });
+  await memesStyles('forme de l’accueil (membre)', { jeton: true });
+  await memesStyles('forme de l’accueil (membre, arabe, ordinateur)', { jeton: true, langue: 'ar', largeur: 1280, hauteur: 900 });
+  await memesStyles('navigateur d’une application (Android) : la carte', { ua: INSTAGRAM, faire: p => p.waitForSelector('#au-appli[data-systeme="android"] #au-appli-chrome') });
+  await memesStyles('navigateur d’une application (Android) : « Continuer ici », sa ligne', { ua: INSTAGRAM, faire: async p => { await p.waitForSelector('#au-appli-ici'); await p.click('#au-appli-ici'); await p.waitForSelector('.entree-appli-mot #au-appli-chrome'); } });
+  await memesStyles('navigateur d’une application (Android, petit écran) : la ligne sous le titre', { ua: INSTAGRAM, largeur: 360, hauteur: 640, faire: p => p.waitForSelector('.entree-promesse .entree-appli-mot') });
+  await memesStyles('navigateur d’une application (iPhone, arabe, sombre) : la carte', { ua: FACEBOOK_IOS, langue: 'ar', theme: 'dark', faire: p => p.waitForSelector('#au-appli[data-systeme="ios"] #au-appli-ici') });
+});
+
+test('page d’entrée plus légère : le CSS complet donne au navigateur exactement les règles de page.html', async () => {
+  const src = fs.readFileSync(new URL('../../src/page.html', import.meta.url), 'utf8');
+  const fin = src.indexOf('<div id="app">');
+  const [polices, tout] = [...src.slice(0, fin).matchAll(/<style>([\s\S]*?)<\/style>/g)].map(m => m[1]);
+  const dist = fs.readFileSync(path.join(SITE, 'index.html'), 'utf8');
+  const policesDist = dist.match(/<style>([\s\S]*?)<\/style>/)[1];
+  const page = await navigateur.newPage();
+  const regles = css => page.evaluate(css => {
+    // Seuls les espaces autour de , et > changent (ceux que le raccourci enlève) : on les retire des deux côtés
+    const n = t => String(t).replace(/\s*([,>])\s*/g, '$1').trim();
+    const out = [];
+    const tour = (l, pre) => { for (const r of l) {
+      const t = pre + n(r.selectorText || r.conditionText || r.name || r.keyText || r.constructor.name);
+      if (r.style) { const props = []; for (let i = 0; i < r.style.length; i++) { const p = r.style[i]; props.push(p + ':' + n(r.style.getPropertyValue(p)) + (r.style.getPropertyPriority(p) ? '!' : '')); } out.push(t + '{' + props.join(';') + '}'); } else out.push(t);
+      if (r.cssRules) tour(r.cssRules, t + ' > ');
+    } };
+    const st = new CSSStyleSheet(); st.replaceSync(css); tour(st.cssRules, '');
+    return out;
+  }, css);
+  for (const [a, b, nom] of [[tout, siteCss(), 'site.css'], [polices, policesDist, 'polices']]) {
+    const ra = await regles(a), rb = await regles(b);
+    assert.equal(rb.length, ra.length, nom);
+    assert.deepEqual(ra.map((x, i) => [x, rb[i]]).filter(([x, y]) => x !== y).slice(0, 3), [], nom);
+  }
+  assert.ok((await regles(tout)).length > 1500);
+  await page.close();
+});
+
+// Un membre déjà connecté, sans attendre le chargement complet de la page (un fichier retenu le retarderait)
+async function membreLeger({ hash = '', avant } = {}) {
+  const ctx = await navigateur.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'block', reducedMotion: 'reduce' });
+  await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  if (avant) await avant(ctx);
+  await ctx.addInitScript(uid => {
+    if (sessionStorage.getItem('__init')) return; sessionStorage.setItem('__init', '1');
+    localStorage.setItem('ensam-lang', 'fr');
+    const now = Math.floor(Date.now() / 1000);
+    localStorage.setItem('sb-127-auth-token', JSON.stringify({ access_token: 'x.' + btoa(JSON.stringify({ sub: uid, exp: now + 7200 })) + '.y', token_type: 'bearer', expires_in: 7200, expires_at: now + 7200, refresh_token: 'r', user: { id: uid, aud: 'authenticated', email: 'membre@exemple.ma', user_metadata: {}, app_metadata: {} } }));
+  }, UID);
+  const page = await ctx.newPage(), erreurs = [];
+  page.on('pageerror', e => erreurs.push(e.message));
+  await page.goto(site.adresse + hash, { waitUntil: 'domcontentloaded' });
+  return { ctx, page, erreurs };
+}
+
+test('page d’entrée plus légère : un membre connecté voit la forme de l’accueil, et l’application attend le CSS complet pour s’afficher', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  let tenir = true; const tenus = [];
+  const m = await membreLeger({ avant: ctx => ctx.route(/\/site\.css/, r => (tenir ? tenus.push(r) : r.continue())) });
+  await m.page.waitForSelector('.shell.squelette');
+  // Le CSS complet est demandé (cet appareil ne l'a jamais reçu : par l'application, son code arrivé ; le test suivant)
+  for (let i = 0; i < 50 && !tenus.length; i++) await m.page.waitForTimeout(100);
+  assert.ok(tenus.length >= 1, 'site.css demandé');
+  await m.page.waitForFunction(() => performance.getEntriesByType('resource').some(e => /\/app\.js$/.test(e.name) && e.responseEnd > 0), null, { timeout: 10000 });
+  await m.page.waitForTimeout(800);
+  assert.equal(await m.page.locator(ACCUEIL).count(), 0, 'pas d’accueil sans son CSS');
+  assert.equal(await m.page.locator('.shell.squelette').count(), 1, 'la forme de l’accueil patiente');
+  tenir = false; for (const r of tenus.splice(0)) await r.continue();
+  await m.page.waitForSelector(ACCUEIL, { timeout: 15000 });
+  assert.equal(await m.page.locator('#css-entree').count(), 0);
+  assert.equal(await m.page.locator(ACCUEIL).evaluate(e => getComputedStyle(e).display), 'grid', 'l’accueil a tout son style');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// Un membre dont l'appareil n'a jamais appliqué cette version du CSS complet : préchargés ensemble, ses 39 Ko prenaient en 3G
+// le réseau au code qu'attendent ses données (mesuré : l'accueil 0,3 s plus tard qu'avec le CSS dans la page). Il part quand
+// l'application le demande, tout son code arrivé, pendant la lecture des données ; noté (ensam-css), il est ensuite gardé par le
+// navigateur : la fois suivante, préchargé dès le haut de la page, comme avant
+test('page d’entrée plus légère : un membre dont l’appareil n’a pas ce CSS le demande une fois le code de l’application arrivé, jamais avant ; la fois suivante, dès le haut de la page', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  let tenir = true; const tenus = [], css = [];
+  const m = await membreLeger({ avant: async ctx => {
+    ctx.on('request', q => { if (new URL(q.url()).pathname === '/site.css') css.push(q.url()); });
+    await ctx.route(/\/app\.js$/, r => (tenir ? tenus.push(r) : r.continue()));
+  } });
+  await m.page.waitForSelector('.shell.squelette');
+  // L'entrée a lancé le magasin et l'application : le code du magasin est arrivé, celui de l'application est retenu
+  await m.page.waitForFunction(() => window.ENSAM_ENTREE && performance.getEntriesByType('resource').some(e => /\/store\.js$/.test(e.name) && e.responseEnd > 0), null, { timeout: 10000 });
+  await m.page.waitForTimeout(1000);
+  assert.ok(tenus.length >= 1, 'app.js retenu');
+  assert.deepEqual(css, [], 'le CSS complet attend le code de l’application');
+  assert.equal(await m.page.locator('link[data-css="site"]').count(), 0);
+  tenir = false; for (const r of tenus.splice(0)) await r.continue();
+  await m.page.waitForSelector(ACCUEIL, { timeout: 15000 });
+  assert.equal(css.length, 1, 'demandé une fois, par l’application');
+  assert.equal(await m.page.locator(ACCUEIL).evaluate(e => getComputedStyle(e).display), 'grid', 'l’accueil a tout son style');
+  const { vu, adresse } = await m.page.evaluate(() => ({ vu: localStorage.getItem('ensam-css'), adresse: window.ENSAM_CSS }));
+  assert.match(adresse, /^site\.css\?v=[0-9a-f]{10}$/);
+  assert.equal(vu, adresse, 'noté sur l’appareil, avec son empreinte');
+  // La fois suivante : préchargé dès le haut de la page, pendant que le code de l'application est encore retenu
+  tenir = true; css.length = 0;
+  await m.page.reload({ waitUntil: 'domcontentloaded' });
+  await m.page.waitForSelector('.shell.squelette');
+  for (let i = 0; i < 50 && !css.length; i++) await m.page.waitForTimeout(100);
+  assert.ok(css.length >= 1, 'site.css demandé dès le haut de la page');
+  assert.ok(tenus.length >= 1, 'app.js retenu');
+  assert.equal(await m.page.evaluate(() => typeof window.ENSAM_APP), 'undefined');
+  tenir = false; for (const r of tenus.splice(0)) await r.continue();
+  await m.page.waitForSelector(ACCUEIL, { timeout: 15000 });
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('données en deux temps (en ligne) : l’accueil s’affiche sans attendre les messages des groupes ; ils partent juste après ; les Groupes les attendent, puis les montrent', async () => {
+  const [groupe] = autoGroups(ETUDIANT);
+  assert.ok(groupe);
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.groupe_messages = [{ id: 'a1b2c3d4-0000-4000-8000-000000000001', groupe, author_id: AUTEUR, body: 'Rendez-vous jeudi à la bibliothèque', created_at: new Date().toISOString() }];
+  let tenir = true; const tenus = [];
+  const m = await connecte({ attendre: ACCUEIL, avant: ctx => ctx.route(/\/sb\/rest\/v1\/groupe_messages/, r => (tenir ? tenus.push(r) : r.continue())) });
+  // L'accueil est là ; les messages des groupes partent juste après, sans le retenir
+  for (let i = 0; i < 40 && !tenus.length; i++) await m.page.waitForTimeout(100);
+  assert.equal(tenus.length, 1, 'une lecture des messages des groupes, partie après l’accueil');
+  assert.ok(await m.page.isVisible(ACCUEIL));
+  // Le reste d'ENSUITE est arrivé (réactions, commentaires de relecture), une seule fois chacun
+  for (let i = 0; i < 40 && site.appels.filter(a => a.u === '/sb/rest/v1/relecture_commentaires').length < 1; i++) await m.page.waitForTimeout(100);
+  for (const t of ['reactions_messages', 'relecture_commentaires']) assert.equal(site.appels.filter(a => a.u === '/sb/rest/v1/' + t && a.m === 'GET').length, 1, t);
+  // Les Groupes ouverts avant leur arrivée : l'écran d'attente, jamais une carte sans son dernier message
+  await m.page.evaluate(() => { location.hash = '#reseau/groupes'; });
+  await m.page.waitForSelector('.page-attente');
+  assert.equal(await m.page.locator('.rangee-groupes').count(), 0);
+  assert.equal(await m.page.locator('.page-attente [role="status"]').count(), 1, 'dit aux lecteurs d’écran que ça charge');
+  tenir = false; for (const r of tenus.splice(0)) await r.continue();
+  await m.page.waitForSelector('.rangee-groupes .gcard-last');
+  assert.match(await m.page.locator('.rangee-groupes .gcard-last').first().innerText(), /Rendez-vous jeudi à la bibliothèque/);
+  assert.equal(await m.page.locator('.page-attente').count(), 0);
+  // Ensuite, plus rien n'attend : retour à l'accueil puis au Réseau, tout de suite là, sans nouvelle lecture
+  const lectures = site.appels.filter(a => a.u === '/sb/rest/v1/groupe_messages').length;
+  await m.page.evaluate(() => { location.hash = '#accueil'; }); await m.page.waitForSelector(ACCUEIL);
+  await m.page.evaluate(() => { location.hash = '#reseau'; });
+  await m.page.waitForSelector('.rangee-groupes .gcard-last');
+  assert.equal(await m.page.locator('.page-attente').count(), 0);
+  assert.equal(site.appels.filter(a => a.u === '/sb/rest/v1/groupe_messages').length, lectures);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('données en deux temps (en ligne) : une conversation ouverte d’un lien (notification) lit ses réactions avec le reste, puis s’ouvre comme avant', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.mentorships = EN_CONTACT();
+  let tenir = true; const tenus = [];
+  const m = await connecte({ hash: '#messages/' + AUTEUR, attendre: null, avant: ctx => ctx.route(/\/sb\/rest\/v1\/reactions_messages/, r => (tenir ? tenus.push(r) : r.continue())) });
+  for (let i = 0; i < 50 && !tenus.length; i++) await m.page.waitForTimeout(100);
+  assert.equal(tenus.length, 1, 'les réactions partent avec les premières tables');
+  await m.page.waitForTimeout(600);
+  assert.equal(await m.page.locator('#chat-txt').count(), 0, 'pas de conversation sans ses réactions');
+  tenir = false; for (const r of tenus.splice(0)) await r.continue();
+  await m.page.waitForSelector('#chat-txt', { timeout: 10000 });
+  assert.equal(await m.page.locator('.page-attente').count(), 0);
+  await m.page.waitForTimeout(2500);
+  // Ensuite, relues seulement avec les messages, par le rattrapage de la conversation ouverte (messages.js, comme avant) ;
+  // jamais par le second temps, qui ne lit que ce qui manque encore
+  const lues = t => site.appels.filter(a => a.u === '/sb/rest/v1/' + t && a.m === 'GET').length;
+  assert.equal(lues('reactions_messages'), lues('messages'), `réactions ${lues('reactions_messages')}, messages ${lues('messages')}`);
+  assert.ok(lues('reactions_messages') <= 2, `réactions lues ${lues('reactions_messages')} fois`);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('données en deux temps (en ligne) : l’administration voit tout dans sa console ; le message de groupe signalé, arrivé en second, est dans la modération', async () => {
+  const GM = 'a1b2c3d4-0000-4000-8000-0000000000aa';
+  site.inscrits.push({ ...ETUDIANT, role: 'admin', full_name: 'Admin Test', consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.groupe_messages = [{ id: GM, groupe: 'filiere:gi', author_id: AUTEUR, body: 'Stage payé contre 500 dirhams, écris-moi', created_at: new Date().toISOString() }];
+  site.tables.signalements = [{ id: 'a1b2c3d4-0000-4000-8000-0000000000bb', cible_type: 'message', cible_id: GM, motif: 'arnaque', status: 'ouvert', auteur_id: AUTEUR, created_at: new Date().toISOString() }];
+  let tenir = true; const tenus = [];
+  const m = await connecte({ attendre: '.me-btn', avant: ctx => ctx.route(/\/sb\/rest\/v1\/groupe_messages/, r => (tenir ? tenus.push(r) : r.continue())) });
+  await m.page.evaluate(() => { location.hash = '#admin/moderation'; });
+  await m.page.waitForSelector('.page-attente');
+  assert.equal(await m.page.locator('.mod-card').count(), 0, 'jamais « Contenu déjà supprimé » pour un message pas encore arrivé');
+  tenir = false; for (const r of tenus.splice(0)) await r.continue();
+  await m.page.waitForSelector('.mod-card .mod-texte');
+  assert.match(await m.page.locator('.mod-card .mod-texte').first().innerText(), /Stage payé contre 500 dirhams/);
+  assert.equal(await m.page.getByText('Contenu déjà supprimé').count(), 0);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Plan · vitesse et ambiance, revue : une lecture du second temps ratée (réseau coupé juste après l'accueil) est dite, puis
+// relue au retour du réseau ; ouvert depuis la copie de l'appareil, le Réseau ne montre plus « Pas encore de message » sur
+// des groupes qui en ont, ni Mes données un export incomplet ; la photo qu'on vient de choisir revient au rechargement.
+// ---------------------------------------------------------------------------
+const PAS_DE_RESEAU_PAGE = 'Pas de réseau pour l’instant : cette page s’affiche dès qu’il revient.';
+const ONGLETS_RESEAU = '[role="tablist"][aria-label="Rubriques du réseau"] [role="tab"]';
+
+test('données en deux temps (en ligne) : réseau coupé juste après l’accueil, les Groupes le disent (jamais « Pas encore de message ») ; le réseau revenu, leurs messages arrivent', async () => {
+  const [groupe] = autoGroups(ETUDIANT);
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.groupe_messages = [{ id: 'a1b2c3d4-0000-4000-8000-000000000002', groupe, author_id: AUTEUR, body: 'Rendez-vous jeudi à la bibliothèque', created_at: new Date().toISOString() }];
+  let couper = true, coupees = 0;
+  const m = await connecte({ attendre: ACCUEIL, avant: ctx => ctx.route(/\/sb\/rest\/v1\/groupe_messages/, r => (couper ? (coupees++, r.abort('internetdisconnected')) : r.continue())) });
+  // La lecture du second temps et son nouvel essai échouent : l'accueil n'en sait rien
+  for (let i = 0; i < 60 && coupees < 2; i++) await m.page.waitForTimeout(100);
+  assert.equal(coupees, 2);
+  assert.ok(await m.page.isVisible(ACCUEIL));
+  // Le Réseau (son onglet Groupes) le dit, ses autres onglets restent là ; l'écran relit aussitôt (encore coupé)
+  await m.page.evaluate(() => { location.hash = '#reseau'; });
+  await m.page.getByText(PAS_DE_RESEAU_PAGE).waitFor({ timeout: 10000 });
+  assert.equal(await m.page.locator('.gcard').count(), 0, 'aucune carte de groupe sans son dernier message');
+  assert.equal(await m.page.getByText('Pas encore de message. Dis bonjour !').count(), 0);
+  assert.equal(await m.page.locator('.page-attente').count(), 0, 'la page du Réseau est là');
+  assert.ok((await m.page.locator(ONGLETS_RESEAU).count()) >= 2, 'ses autres onglets restent ouverts');
+  for (let i = 0; i < 60 && coupees < 4; i++) await m.page.waitForTimeout(100);
+  assert.equal(coupees, 4, 'relue une fois en arrivant sur l’écran');
+  // Le réseau revient (au plus une lecture toutes les 5 s) : relue, l'écran se redessine avec le dernier message
+  await m.page.waitForTimeout(4000);
+  couper = false;
+  await m.page.evaluate(() => dispatchEvent(new Event('online')));
+  await m.page.waitForSelector('.rangee-groupes .gcard-last', { timeout: 10000 });
+  assert.match(await m.page.locator('.rangee-groupes .gcard-last').first().innerText(), /Rendez-vous jeudi à la bibliothèque/);
+  assert.equal(await m.page.getByText(PAS_DE_RESEAU_PAGE).count(), 0);
+  assert.equal(coupees, 4);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('membre revenu sur le Réseau (copie de l’appareil) : les Groupes attendent la mise à jour, jamais « Pas encore de message » ; sans réseau, eux et Mes données le disent', async () => {
+  const [groupe] = autoGroups(ETUDIANT);
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.groupe_messages = [{ id: 'a1b2c3d4-0000-4000-8000-000000000003', groupe, author_id: AUTEUR, body: 'Qui vient au café samedi ?', created_at: new Date().toISOString() }];
+  let mode = 'passer'; const tenus = [];
+  const m = await connecte({ attendre: ACCUEIL, avant: ctx => ctx.route(/\/sb\/rest\/v1\//, r => (mode === 'tenir' ? tenus.push(r) : mode === 'couper' ? r.abort('internetdisconnected') : r.continue())) });
+  let c = null;
+  for (let i = 0; i < 40 && !c; i++) { await m.page.waitForTimeout(250); c = await lireCacheMembre(m.page); }
+  assert.ok(c, 'une copie de l’accueil est gardée');
+  assert.deepEqual(c.data.groupe_messages, [], 'la copie ne garde pas les messages des groupes');
+  // Rouvert sur le Réseau, la base ne répond pas encore : la page et ses onglets tout de suite, la liste attend la mise à jour
+  mode = 'tenir';
+  await m.page.evaluate(() => { location.hash = '#reseau'; });
+  await m.page.reload();
+  await m.page.waitForSelector(ONGLETS_RESEAU, { timeout: 5000 });
+  await m.page.waitForSelector('[aria-busy="true"] > .sq-liste');
+  assert.equal(await m.page.locator('.page-attente').count(), 0, 'les onglets du Réseau restent ouverts');
+  assert.equal(await m.page.locator('.gcard').count(), 0);
+  assert.equal(await m.page.getByText('Pas encore de message. Dis bonjour !').count(), 0);
+  assert.ok(tenus.length > 0, 'la base n’a pas encore répondu');
+  mode = 'passer'; for (const r of tenus.splice(0)) await r.continue();
+  await m.page.waitForSelector('.rangee-groupes .gcard-last', { timeout: 10000 });
+  assert.match(await m.page.locator('.rangee-groupes .gcard-last').first().innerText(), /Qui vient au café samedi \?/);
+  // Rouvert sans réseau : les Groupes le disent (onglets toujours là), Mes données aussi (son export serait incomplet)
+  mode = 'couper';
+  await m.page.reload();
+  await m.page.getByText(PAS_DE_RESEAU_PAGE).waitFor({ timeout: 10000 });
+  assert.ok((await m.page.locator(ONGLETS_RESEAU).count()) >= 2);
+  assert.equal(await m.page.locator('.gcard').count(), 0);
+  await m.page.evaluate(() => { location.hash = '#profil/donnees'; });
+  await m.page.locator('#profil-donnees').getByText(PAS_DE_RESEAU_PAGE).waitFor({ timeout: 5000 });
+  assert.equal(await m.page.locator('#md-export').count(), 0, 'pas d’export sans les messages des groupes');
+  // Le réseau revient : tout arrive, l'export est là, les Groupes ont leur dernier message
+  mode = 'passer';
+  await m.page.evaluate(() => dispatchEvent(new Event('online')));
+  await m.page.waitForSelector('#md-export', { timeout: 15000 });
+  await m.page.evaluate(() => { location.hash = '#reseau'; });
+  await m.page.waitForSelector('.rangee-groupes .gcard-last', { timeout: 5000 });
+  assert.match(await m.page.locator('.rangee-groupes .gcard-last').first().innerText(), /Qui vient au café samedi \?/);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('photo de profil choisie en ligne : rouverte depuis la copie de l’appareil, c’est toujours la photo (jamais une adresse blob: morte, ni les initiales)', async () => {
+  site.inscrits.push({ ...ETUDIANT, photo_path: null, consent_at: '2025-10-01T10:00:00Z' });
+  const m = await connecte({ hash: '#profil', attendre: '#profil-photo' });
+  const IMG = '#profil-photo .avatar img';
+  await m.page.evaluate(async () => {
+    const c = document.createElement('canvas'); c.width = 240; c.height = 300;
+    const g = c.getContext('2d'); g.fillStyle = '#a8714f'; g.fillRect(0, 0, 240, 300); g.fillStyle = '#2b3a55'; g.fillRect(30, 230, 180, 70);
+    const b = await new Promise(ok => c.toBlob(ok, 'image/png'));
+    const dt = new DataTransfer(); dt.items.add(new File([b], 'moi.png', { type: 'image/png' }));
+    const input = document.querySelector('#photo-file'); input.files = dt.files; input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  // Tout de suite à l'écran (adresse blob: de cette page), déposée, puis gardée avec la copie du compte
+  await m.page.waitForFunction(sel => /^blob:/.test(document.querySelector(sel)?.src || ''), IMG, { timeout: 15000 });
+  assert.ok(site.appels.some(a => a.u.startsWith('/sb/storage/v1/object/photos/' + UID + '/photo-') && a.m === 'POST'), 'la photo est déposée');
+  let c = null;
+  for (let i = 0; i < 40 && !c?.data.profiles.find(p => p.id === UID)?.photo_path; i++) { await m.page.waitForTimeout(250); c = await lireCacheMembre(m.page); }
+  assert.ok(c?.data.profiles.find(p => p.id === UID)?.photo_path, 'la copie a la nouvelle photo');
+  assert.ok(!(c.photos || []).some(([, v]) => /^blob:/.test(v?.url || '')), 'jamais l’adresse blob: dans la copie');
+  // Rouverte : la photo arrive par un lien du stockage, l'image s'affiche (pas les initiales)
+  await m.page.reload();
+  await m.page.waitForFunction(sel => { const i = document.querySelector(sel); return !!i && !i.hidden && i.complete && i.naturalWidth > 0; }, IMG, { timeout: 10000 });
+  assert.match(await m.page.getAttribute(IMG, 'src'), /\/storage\/v1\/object\/sign\/photos\//);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+test('supprimer son compte : pas de « session expirée » ensuite, ni brouillons, ni copie, ni photos gardées sur l’appareil', async () => {
+  site.inscrits.push({ ...ETUDIANT, consent_at: '2025-10-01T10:00:00Z' });
+  site.tables.mentorships = EN_CONTACT();
+  let supprime = 0;
+  const m = await connecte({ hash: '#messages/' + AUTEUR, attendre: '#chat-txt',
+    avant: ctx => ctx.route(/\/sb\/rest\/v1\/rpc\/supprimer_mon_compte/, r => { supprime++; return r.fulfill({ status: 204, body: '' }); }) });
+  await m.page.fill('#chat-txt', 'Un mot pas encore envoyé');
+  let c = null;
+  for (let i = 0; i < 40 && !c; i++) { await m.page.waitForTimeout(250); c = await lireCacheMembre(m.page); }
+  assert.ok(c); assert.equal((await brouillons(m.page)).length, 1);
+  // Une photo de membre gardée par le service worker (le cache qu'il remplit)
+  await m.page.evaluate(async () => { const k = await caches.open('photos-v1'); await k.put(location.origin + '/sb/storage/v1/object/sign/photos/x/photo.png', new Response('img', { headers: { 'content-type': 'image/png' } })); });
+  await m.page.evaluate(() => { location.hash = '#profil/donnees'; });
+  await m.page.click('#md-supprimer');
+  await m.page.fill('#del-txt', 'SUPPRIMER');
+  await m.page.click('.modal button:has-text("Supprimer définitivement")');
+  await m.page.waitForSelector('#entree .entree-form', { timeout: 15000 });
+  await m.page.waitForTimeout(500);
+  assert.equal(supprime, 1, 'la base supprime le compte');
+  assert.equal(await m.page.locator('#au-session').count(), 0, 'compte supprimé : pas de « session expirée »');
+  assert.equal(await m.page.inputValue('#au-email').catch(() => ''), '', 'l’adresse du compte supprimé n’est pas reproposée');
+  assert.deepEqual(await brouillons(m.page), []);
+  assert.equal(await lireCacheMembre(m.page), null);
+  assert.equal(await m.page.evaluate(() => caches.has('photos-v1')), false);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
 // La page passe derrière une autre application (le visiteur va chercher son code dans sa boîte mail)
 const cacher = page => page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
 
-test('nouvelle version publiée pendant que le visiteur tape son email : la page ne se recharge pas sous ses doigts ; cachée, elle se recharge et l’email revient', async () => {
+// Le CSS complet appliqué (site.css : la page n'a d'abord que celui de l'entrée) : la règle que seule la nouvelle version porte
+const cssApplique = async page => {
+  await page.waitForFunction(() => !document.getElementById('css-entree'), null, { timeout: 15000 });
+  return page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--maj-test').trim());
+};
+test('nouvelle version publiée pendant que le visiteur tape son email : la page ne se recharge pas sous ses doigts ; cachée, elle se recharge et l’email revient, avec le CSS complet de la nouvelle version', async () => {
   const s = await visiteur({ sw: true });
   let liberer = () => {};
   try {
@@ -1162,8 +1627,8 @@ test('nouvelle version publiée pendant que le visiteur tape son email : la page
     await s.page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 30000 });
     await s.page.reload(); await s.page.waitForSelector('#entree .entree-form');
     assert.ok(await s.page.evaluate(() => !!navigator.serviceWorker.controller), 'le site est gardé sur l’appareil');
-    // Il revient après une mise en ligne : la nouvelle version s'installe pendant qu'il tape
-    Object.assign(site.maj, { version: 'test-' + Date.now(), retenue: new Promise(ok => { liberer = ok; }) });
+    // Il revient après une mise en ligne : la nouvelle version s'installe pendant qu'il tape (son site.css a une règle de plus)
+    Object.assign(site.maj, { version: 'test-' + Date.now(), retenue: new Promise(ok => { liberer = ok; }), css: ':root{--maj-test:1}' });
     let chargements = 0;
     s.page.on('load', () => { chargements++; });
     await s.page.reload(); await s.page.waitForSelector('#entree .entree-form');
@@ -1177,15 +1642,20 @@ test('nouvelle version publiée pendant que le visiteur tape son email : la page
     await s.page.waitForFunction(() => performance.now() > 10000, null, { timeout: 15000, polling: 200 });
     assert.equal(chargements, 1, 'pas de rechargement pendant qu’il tape');
     assert.equal(await s.page.inputValue('#au-email'), 'amine@ensam-umi.ac.ma');
+    // L'application partie à son premier geste a le CSS complet de sa version, gardé avec elle (jamais un mélange)
+    assert.equal(await cssApplique(s.page), '', 'le CSS complet de la version gardée');
     // Il va lire son code ailleurs : la nouvelle version prend la main, la page se recharge sans qu'il le voie
     await cacher(s.page);
     for (let i = 0; i < 100 && chargements < 2; i++) await s.page.waitForTimeout(100);
     assert.equal(chargements, 2, 'la nouvelle version s’applique une fois la page cachée');
     await s.page.waitForSelector('#entree .entree-form');
     assert.equal(await s.page.inputValue('#au-email'), 'amine@ensam-umi.ac.ma', 'ce qu’il avait tapé revient');
+    // Rechargée, la page a le site.css de la nouvelle version (son adresse porte la même empreinte ici : c'est la copie de la
+    // nouvelle version que le service worker rend)
+    assert.equal(await cssApplique(s.page), '1', 'la nouvelle version apporte son CSS complet');
     assert.deepEqual(s.erreurs, []);
   } finally {
-    liberer(); Object.assign(site.maj, { version: null, retenue: null });
+    liberer(); Object.assign(site.maj, { version: null, retenue: null, css: null });
     await s.ctx.close();
   }
 });

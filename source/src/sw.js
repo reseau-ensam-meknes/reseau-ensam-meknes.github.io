@@ -23,10 +23,39 @@ self.addEventListener('install', e => e.waitUntil((async () => {
   if (deja.length) await c.addAll(deja.map(f => new Request(f, { cache: 'no-cache' }))).catch(() => {});
 })()));
 self.addEventListener('activate', e => e.waitUntil((async () => {
-  for (const k of await caches.keys()) if (k !== CACHE) await caches.delete(k);
+  for (const k of await caches.keys()) if (k !== CACHE && k !== PHOTOS) await caches.delete(k);
   await self.clients.claim();
 })()));
 self.addEventListener('message', e => { if (e.data === 'nouvelle-version') self.skipWaiting(); });
+
+// Photos de profil (stockage « photos » de Supabase) : leurs liens signés changent à chaque visite, mais une photo ne change
+// jamais sous le même nom (une nouvelle photo = un nouveau fichier). Elle est donc gardée sous son adresse sans le jeton,
+// et rendue tout de suite les fois suivantes, même hors réseau. Seulement les photos (jamais les CV ni la messagerie),
+// seulement des images reçues en entier ; les 300 dernières. Gardé d'une version du site à l'autre ; vidé à la déconnexion (store.js).
+const PHOTOS = 'photos-v1', PHOTOS_MAX = 300;
+function clePhoto(url) {
+  let u; try { u = new URL(url); } catch { return null; }
+  return /\/storage\/v1\/object\/sign\/photos\/./.test(u.pathname) ? u.origin + u.pathname : null;
+}
+self.addEventListener('fetch', e => {
+  const cle = e.request.method === 'GET' ? clePhoto(e.request.url) : null;
+  if (cle) e.respondWith(photoGardee(e.request, cle));
+});
+async function photoGardee(req, cle) {
+  const c = await caches.open(PHOTOS).catch(() => null);
+  const hit = c && await c.match(cle, { ignoreVary: true }).catch(() => null);
+  if (hit) return hit;
+  // Demandée en CORS (Supabase le permet) pour pouvoir vérifier ce qui est gardé ; sinon, comme la page l'avait demandée
+  let res;
+  try { res = await fetch(req.url, { mode: 'cors', credentials: 'omit' }); } catch { return fetch(req); }
+  if (c && res.ok && /^image\//.test(res.headers.get('content-type') || '')) c.put(cle, res.clone()).then(() => taillerPhotos(c)).catch(() => {});
+  return res;
+}
+// Les plus anciennes partent d'abord (ordre d'arrivée dans le cache)
+async function taillerPhotos(c, max = PHOTOS_MAX) {
+  const cles = await c.keys();
+  for (const k of cles.slice(0, Math.max(0, cles.length - max))) await c.delete(k);
+}
 
 self.addEventListener('fetch', e => {
   const req = e.request;

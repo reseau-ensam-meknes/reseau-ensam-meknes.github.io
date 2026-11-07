@@ -1,7 +1,7 @@
 // Groupes (filière, ville, à l'étranger) et Cafés ENSAM : on se retrouve, en ligne puis en vrai.
 import { html, useState, useRef } from './vendor/preact-htm.js';
 import { getLang, addAR } from './i18n.js';
-import { Icon, Modal, Field, Empty, Person, Avatar, toast, Rangee, injectCSS, vibrer, Coche } from './ui.js';
+import { Icon, Modal, Field, Empty, Person, Avatar, toast, Rangee, injectCSS, vibrer, Coche, Squelette } from './ui.js';
 import { myGroups, groupMembers, groupLabel, groupKey, autoGroups, timeAgo } from './logic.js';
 import { SlotDate } from './mentorat.js';
 import { SignalerBtn } from './confiance.js';
@@ -24,6 +24,13 @@ const nomGroupe = (data, k) => { const l = groupLabel(data, k); return k.startsW
 
 export function GroupesPage({ ctx }) {
   const { sub2 } = ctx;
+  // Juste après l'ouverture, les messages des groupes arrivent en second (store.js, ENSUITE) : la forme de la liste en
+  // attendant, jamais une carte sans son dernier message (le Réseau revient ici d'une rubrique cachée, sans l'adresse /groupes).
+  // Sans réseau pour les lire (lecture ratée, ou copie de l'appareil pas encore à jour), la page le dit : jamais « Pas encore
+  // de message » sur des groupes qui en ont ; les autres onglets du Réseau restent ouverts.
+  const etat = ctx.store.etatTables(['groupe_messages']);
+  if (etat === 'reseau') return html`<p class="muted small" role="status">Pas de réseau pour l’instant : cette page s’affiche dès qu’il revient.</p>`;
+  if (etat) return html`<div aria-busy="true"><span class="sr-only" role="status">Chargement…</span><div class="sq-liste" aria-hidden="true">${[0, 1, 2].map(i => html`<${Squelette} key=${i} avatar lignes=${2}/>`)}</div></div>`;
   if (sub2) return html`<${GroupView} ctx=${ctx} gkey=${sub2} key=${sub2}/>`;
   return html`<${GroupList} ctx=${ctx}/>`;
 }
