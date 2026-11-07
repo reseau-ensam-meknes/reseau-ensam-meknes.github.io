@@ -1,6 +1,6 @@
 // Le site construit (dist/, ou SITE_DIR) ouvert dans Chromium, en démo : aucun appel à la vraie base.
 // Chaque profil de démo parcourt tous les écrans, puis les parcours importants sont rejoués.
-import { test, before, after } from 'node:test';
+import { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -8,6 +8,8 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
 import { fauxSite, UID } from './faux-supabase.mjs';
+// test : celui de node:test, sauf sur la CI où chaque machine n'en déclare qu'une part (PARTIE, partie.mjs)
+import { test } from './partie.mjs';
 
 const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe.min.js'), 'utf8');
 

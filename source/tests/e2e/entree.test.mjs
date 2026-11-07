@@ -1,12 +1,14 @@
 // Le site « en ligne » vu par un visiteur sans compte (faux Supabase local) : page d'entrée, code à 6 chiffres,
 // « Dernière étape », lien d'invitation d'une promo et lien d'une offre partagée sur WhatsApp
-import { test, before, after, beforeEach } from 'node:test';
+import { before, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { chromium } from 'playwright';
 import { fauxSite, UID } from './faux-supabase.mjs';
+// test : celui de node:test, sauf sur la CI où chaque machine n'en déclare qu'une part (PARTIE, partie.mjs)
+import { test } from './partie.mjs';
 
 const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe.min.js'), 'utf8');
 const SITE = path.resolve(process.env.SITE_DIR || new URL('../../dist', import.meta.url).pathname);
