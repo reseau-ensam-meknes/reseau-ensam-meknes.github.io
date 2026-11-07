@@ -1137,6 +1137,35 @@ async function appareil({ hash = '#profil/notifications', langue = 'fr', pm = {}
 }
 const effaces = () => site.appels.filter(a => a.m === 'DELETE' && a.u === '/sb/rest/v1/push_subscriptions').length;
 
+test('« Tester » en ligne : chaque réponse de la fonction a sa phrase ; parti ou refusé, cet appareil est réabonné ; sinon rien n’est touché', async () => {
+  const cas = [
+    ['aucun téléphone', { sent: 0, failed: 0, removed: 0, codes: [], abonnements: 0 }, 'aucun', false],
+    ['parti 410', { sent: 0, failed: 0, removed: 1, codes: [410], abonnements: 1, ici: 410 }, 'reabonne', true],
+    ['refusé 403', { sent: 0, failed: 1, removed: 0, codes: [403], abonnements: 1, ici: 403 }, 'reabonne', true],
+    ['trop longue 413', { sent: 0, failed: 1, removed: 0, codes: [413], abonnements: 1, ici: 413 }, 'trop', false],
+    ['injoignable 0', { sent: 0, failed: 0, removed: 0, codes: [0], abonnements: 1, ici: 0 }, 'injoignable', false],
+    ['injoignable 503', { sent: 0, failed: 1, removed: 0, codes: [503], abonnements: 1, ici: 503 }, 'injoignable', false],
+    ['fonction en panne', 500, 'panne', false],
+  ];
+  for (const [nom, reponse, phrase, refait] of cas) {
+    const m = await appareil({ test: reponse });
+    await m.tester();
+    assert.deepEqual(await m.toasts(), [TEST_PHRASES[phrase]], nom);
+    assert.deepEqual(m.appels.filter(a => a[0] === 'test'), [['test', 'https://push.exemple.ma/e1']], `${nom} : l’adresse de cet appareil part avec l’essai`);
+    const e = await m.etat();
+    if (refait) {
+      assert.deepEqual(e, { carte: 'on', cur: 'https://push.exemple.ma/e2', journal: ['unsubscribe https://push.exemple.ma/e1', 'subscribe'] }, nom);
+      assert.ok(m.appels.some(a => a[0] === 'abonner_push_etat' && a[1] === 'https://push.exemple.ma/e2'), `${nom} : la nouvelle adresse est donnée à la base`);
+      assert.equal(effaces(), 1, `${nom} : l’ancienne est retirée de la base`);
+    } else {
+      assert.deepEqual(e, { carte: 'on', cur: 'https://push.exemple.ma/e1', journal: [] }, `${nom} : rien n’est touché`);
+      assert.equal(effaces(), 0, nom);
+    }
+    assert.deepEqual(m.erreurs, [], nom);
+    await m.ctx.close();
+  }
+});
+
 test('« Tester » en ligne, en arabe : la fonction de notifications qui ne répond pas se dit en arabe', async () => {
   const m = await appareil({ test: 500, langue: 'ar' });
   await m.tester();
