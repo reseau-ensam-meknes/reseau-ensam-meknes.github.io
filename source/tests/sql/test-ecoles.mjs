@@ -286,6 +286,22 @@ test('chaque école ses domaines : un email d’une autre école ne vérifie pas
   await db.query('delete from public.profiles where id = $1', [E1]);
 });
 
+test('l’administration d’une école ne voit que son école ; celle du réseau voit tout', async () => {
+  const AC = uid(821);
+  await creerCompte(db, { id: AC, full_name: 'Admin Autre', role: 'etudiant', filiere: 'GI', promo: 2010 });
+  await db.query(`update public.profiles set role = 'admin', ecole = 'autre-ecole' where id = $1`, [AC]);
+  const vus = (await q(AC, 'select full_name from public.profils')).map(r => r.full_name).sort();
+  assert.ok(!vus.includes('Salma Meknes') && vus.includes('Karim Autre'), 'son école seulement');
+  const titres = (await q(AC, 'select titre from public.offers')).map(r => r.titre);
+  assert.ok(titres.includes('PFE Autre') && !titres.includes('PFE Meknès'), 'les offres de son école seulement');
+  await assert.rejects(q(AC, `insert into public.messages (author_id, dest_id, body) values ($1, $2, 'Salut')`, [AC, MEK]), /pas dans ton réseau/);
+  const comptes = (await q(AC, 'select id from public.admin_comptes()')).map(r => r.id);
+  assert.ok(!comptes.includes(MEK), 'pas les comptes d’une autre école');
+  assert.equal((await q(ADMIN, 'select count(*)::int n from public.profils'))[0].n >= 5, true, 'le réseau voit tout');
+  assert.equal((await db.query(`select ouverte from public.ecoles where slug = 'ensam-casa'`)).rows[0].ouverte, false, 'ENSAM Casablanca fermée');
+  await db.query('delete from public.profiles where id = $1', [AC]);
+});
+
 test('relancée, la mise à jour ne perd rien', async () => {
   const sql = (await import('node:fs')).readFileSync(SCHEMA, 'utf8').replace(/^create extension if not exists pgcrypto;$/m, '');
   await db.exec(sql);
