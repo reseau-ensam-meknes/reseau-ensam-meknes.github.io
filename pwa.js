@@ -7,6 +7,7 @@ import { prevenirVariante, lignePrevenir, sansLigne, ouvertureSorte, sorteLienNo
   raisonTestPush, testPushARefaire, APPLIS, estIPad, CLE_APPLI_VUE, raisonPrevenir, veutDesNotifs, choisirCas } from './logic.js';
 import { arriveeEnAttente } from './pouls.js';
 import { GESTE_SAFARI, CARTE_AR, nomsLatins } from './appareil.js';
+import { IosInstallHelp } from './installer.js';
 
 let installEvt = null;
 const listeners = new Set();
@@ -120,14 +121,8 @@ const ETAPES_ANDROID = [
   ['plus', 'Choisis « Installer l’application » ou « Ajouter à l’écran d’accueil ».'],
   ['bell', 'Ouvre le Réseau ENSAM depuis son icône, puis touche « Activer les notifications » si ce n’est pas déjà fait.'],
 ];
-const EtapesAndroid = () => html`<${Etapes} liste=${ETAPES_ANDROID}/>`;
-const POURQUOI_INSTALLER = {
-  android: 'Une icône sur ton écran d’accueil : le Réseau ENSAM s’ouvre en un toucher, comme une application.',
-  ios: 'Sur iPhone, les notifications n’arrivent que dans l’application ajoutée à l’écran d’accueil. Trois gestes :',
-};
-export function IosInstallHelp({ onClose, android }) {
-  return html`<${Modal} title="Installer l’application" cls="installer" onClose=${onClose}><p>${fr(android ? POURQUOI_INSTALLER.android : pourIos(POURQUOI_INSTALLER.ios))}</p>${android ? html`<${EtapesAndroid}/>` : html`<${EtapesIos}/>`}<//>`;
-}
+// La fiche « Installer l'application » (gestes illustrés, iPhone, iPad et Android) : installer.js
+export { IosInstallHelp };
 addAR({
   [PARTAGER.safari]: 'في Safari، المس «مشاركة»: أسفل الشاشة، أو في قائمة •••.',
   [PARTAGER.ipad]: 'في Safari، المس «مشاركة» في أعلى الشاشة.',
@@ -137,8 +132,6 @@ addAR({
   [ETAPES_ANDROID[0][1]]: 'المس قائمة ⋮ في المتصفح، أعلى الشاشة.',
   [ETAPES_ANDROID[1][1]]: 'اختر «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».',
   [ETAPES_ANDROID[2][1]]: 'افتح شبكة ENSAM من أيقونتها، ثم المس «فعّل الإشعارات» إن لم يتمّ ذلك بعد.',
-  [POURQUOI_INSTALLER.android]: 'أيقونة على شاشتك الرئيسية: تُفتح شبكة ENSAM بلمسة واحدة، مثل تطبيق.',
-  [POURQUOI_INSTALLER.ios]: 'على iPhone، لا تصل الإشعارات إلا داخل التطبيق المضاف إلى الشاشة الرئيسية. ثلاث خطوات:',
 });
 
 function b64ToBytes(b64) {
@@ -1552,9 +1545,9 @@ addAR({
   [DEBLOQUER.pc[2][1]]: 'أعد تحميل الصفحة، ثم المس «تمّ».',
 });
 
-// L'arabe des phrases de l'iPad (pourIos) : le même que pour l'iPhone, avec « iPad »
+// L'arabe des phrases de l'iPad (pourIos) : le même que pour l'iPhone, avec « iPad » (la fiche « Installer l'application »
+// a les siennes : installer.js)
 const IPAD_AR = [
-  [POURQUOI_INSTALLER.ios, 'على iPhone، لا تصل الإشعارات إلا داخل التطبيق المضاف إلى الشاشة الرئيسية. ثلاث خطوات:'],
   [INSTALLER_D_ABORD, 'على iPhone، ثبّت التطبيق أولًا على الشاشة الرئيسية.'],
   [BANDEAU.ios[1], 'على iPhone، هذه هي الطريقة الوحيدة لتلقي التوافقات والرسائل.'],
   [PREVENIR_IOS, 'على iPhone، تصل الإشعارات بعد إضافة شبكة ENSAM إلى الشاشة الرئيسية:'],

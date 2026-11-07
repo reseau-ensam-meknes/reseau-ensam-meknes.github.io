@@ -130,6 +130,7 @@ function ListeEntreprises({ ctx, all, ouvrir }) {
     <div class="chips rangee" role="group" aria-label="Type"><button class=${'chip' + (!type ? ' on' : '')} aria-pressed=${!type} onClick=${() => setType('')}>Toutes</button>
       ${TYPE_CHIPS.map(([k, l]) => html`<button class=${'chip' + (type === k ? ' on' : '')} aria-pressed=${type === k} onClick=${() => setType(type === k ? '' : k)}><${Icon} name=${TYPE_ICON[k]} size=${14}/> ${l}</button>`)}
       ${all.some(contribue) ? html`<button class=${'chip' + (miens ? ' on' : '')} aria-pressed=${miens} onClick=${() => setMiens(!miens)}><${Icon} name="user" size=${14}/> Mes partages</button>` : null}</div>
+    <${EntreeStartups} ctx=${ctx}/>
     ${list.length ? html`<p class="liste-tete">${`${list.length} entreprise${list.length > 1 ? 's' : ''}`}</p>` : null}
     ${list.length ? html`<ul class="ent-list">${vus.map(c => html`<li key=${c.k}><button class="ent-row clickable" onClick=${() => ctx.go('reseau/entreprises/' + encodeURIComponent(c.k))}>
       <${CompanyLogo} name=${c.nom} size=${40}/>
@@ -141,6 +142,20 @@ function ListeEntreprises({ ctx, all, ouvrir }) {
     ${!list.length ? html`<${Empty} icon="briefcase" title="Aucune entreprise trouvée">${ouvrir ? 'Tu as passé un entretien ou fait un stage ? Sois le premier à partager.' : ''}<//>` : null}
     <${MentionLogos} noms=${vus.map(c => c.nom)}/>
   </div>`;
+}
+
+// Les startups créées par des lauréats (Réseau > Annuaire > Entreprises) : une ligne qui ouvre leur vitrine
+// (#reseau/annuaire/startups). Un étudiant ne la voit qu'une fois la première startup présentée.
+function EntreeStartups({ ctx }) {
+  const { data, me, go } = ctx;
+  const su = data.startups || [], r = su.filter(s => s.recrute).length;
+  if (!su.length && me.role === 'etudiant') return null;
+  const sous = su.length ? [pluriel(su.length, 'startup', 'startups'), r ? `${r} ${r > 1 ? 'cherchent' : 'cherche'} des stagiaires` : ''].filter(Boolean).join(' · ')
+    : me.role === 'laureat' ? 'Tu as créé une entreprise ? Présente-la ici.' : 'Aucune startup pour l’instant';
+  return html`<button type="button" class="ent-startups clickable" id="ent-startups" onClick=${() => go('reseau/annuaire/startups')}>
+    <span class="ent-startups-ico" aria-hidden="true"><${Icon} name="spark" size=${18}/></span>
+    <span class="grow"><strong>Startups créées par des lauréats</strong><span class="small muted">${sous}</span></span>
+    <${Icon} name="arrow" size=${16}/></button>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -479,6 +494,13 @@ injectCSS('entreprises', `
 .ent-stars .on { color: var(--brass); }
 .ent-stars .half { background: linear-gradient(90deg, var(--brass) 50%, color-mix(in srgb, var(--brass) 25%, transparent) 50%); -webkit-background-clip: text; background-clip: text; color: transparent; }
 :root[dir="rtl"] .ent-stars .half { background: linear-gradient(270deg, var(--brass) 50%, color-mix(in srgb, var(--brass) 25%, transparent) 50%); -webkit-background-clip: text; background-clip: text; }
+/* Les startups des lauréats : une ligne calme sous les filtres, qui ouvre leur vitrine */
+.ent-startups { display: flex; align-items: center; gap: .8rem; width: 100%; min-height: 56px; padding: .7rem 1rem; border: 0; border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--sh1); color: var(--ink); font: inherit; text-align: start; cursor: pointer; }
+.ent-startups:hover { box-shadow: var(--sh2); }
+.ent-startups .grow { display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
+.ent-startups strong { font-weight: 650; }
+.ent-startups-ico { flex: none; display: grid; place-items: center; width: 38px; height: 38px; border-radius: var(--r-md); background: var(--brass-soft); color: var(--brass); }
+.ent-startups > .ico:last-child { flex: none; color: var(--muted); }
 .ent-back { display: inline-flex; align-items: center; gap: .3rem; align-self: flex-start; }
 .ent-back svg { transform: scaleX(-1); }
 :root[dir="rtl"] .ent-back svg { transform: none; }
@@ -554,6 +576,8 @@ injectCSS('entreprises', `
 
 // ---------------------------------------------------------------------------
 addAR({
+  // Les startups des lauréats, rangées sous Réseau > Annuaire > Entreprises
+  'Startups créées par des lauréats': 'شركات ناشئة أسسها خريجون', 'Tu as créé une entreprise ? Présente-la ici.': 'أسست شركة؟ قدّمها هنا.',
   'Sur place': 'حضوريا', 'Visio': 'عن بعد', 'Téléphone': 'الهاتف', 'Test écrit': 'اختبار كتابي',
   'En attente de réponse': 'في انتظار الجواب', 'Je ne sais pas': 'لا أعرف',
   'Non rémunéré': 'بدون منحة', 'Symbolique': 'رمزية', 'Correcte': 'مقبولة', 'Bonne': 'جيدة',
@@ -622,6 +646,9 @@ addAR({
   [/^(\d+) avis · La note s’affiche à partir de (\d+) avis\.$/, (n, m) => `${arCount(n, ['رأي واحد', 'رأيان', 'آراء', 'رأيًا'])} · يظهر التقييم ابتداءً من ${m} آراء.`],
   [/^(\d+) entretiens? partagés?$/, n => `${n} مقابلة مشتركة`],
   [/^([\d,]+) sur 5$/, n => `${n} من 5`],
+  // Les startups des lauréats (Réseau > Annuaire > Entreprises)
+  [/^(\d+) startups?$/, n => arCount(n, ['شركة ناشئة واحدة', 'شركتان ناشئتان', 'شركات ناشئة', 'شركة ناشئة'])],
+  [/^(\d+) cherchent? des stagiaires$/, n => (+n === 1 ? 'واحدة منها تبحث عن متدربين' : +n === 2 ? 'اثنتان منها تبحثان عن متدربين' : `${n} منها تبحث عن متدربين`)],
   [/^Difficulté (\d)\/5$/, n => `الصعوبة ${n}/5`],
   [/^Question (\d+)$/, n => `السؤال ${n}`],
   [/^Gratification : (.+)$/, g => `المنحة: ${{ 'Non rémunéré': 'بدون منحة', Symbolique: 'رمزية', Correcte: 'مقبولة', Bonne: 'جيدة' }[g] || g}`],

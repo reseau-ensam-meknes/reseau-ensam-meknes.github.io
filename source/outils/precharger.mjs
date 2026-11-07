@@ -71,13 +71,14 @@ html = html.replace('<!--PRECHARGE-->', liens).replace('/*MAGASIN*/[]', JSON.str
 fs.writeFileSync(index, html);
 
 // Fichiers gardés par le service worker (la carte Leaflet, le lecteur de PDF et les grandes images restent à la demande ;
-// les pages d'aperçu des promos aussi : le service worker les remplace par l'application)
+// les pages d'aperçu des promos aussi : le service worker les remplace par l'application ; les écrans de démarrage de
+// l'iPhone et les captures de l'application, que l'iPhone ou le navigateur demandent eux-mêmes, aussi)
 const tous = [];
 (function lister(d) { for (const e of fs.readdirSync(path.join(dist, d), { withFileTypes: true })) { const r = d ? `${d}/${e.name}` : e.name; if (e.isDirectory()) lister(r); else tous.push(r); } })('');
 // L'arabe (dictionnaire et police) n'est téléchargé que par qui le choisit : le service worker ne le garde d'avance
 // que si la version précédente l'avait déjà (FACULTATIFS) ; sinon il le garde au premier usage.
 const facultatifs = tous.filter(f => /^i18n-ar\.js$|^polices\/arabe-/.test(f)).sort();
-const garder = tous.filter(f => f !== 'sw.js' && !facultatifs.includes(f) && !/^vendor\/(?:leaflet|pdf)\.|^img\/|^promo\/|-512\.png$|apple-touch-icon|^seed|^config\.example|\.txt$/.test(f)).sort();
+const garder = tous.filter(f => f !== 'sw.js' && !facultatifs.includes(f) && !/^vendor\/(?:leaflet|pdf)\.|^img\/|^promo\/|^pwa\/(?:demarrage|captures)\/|-512\.png$|apple-touch-icon|^seed|^config\.example|\.txt$/.test(f)).sort();
 const version = crypto.createHash('sha256').update(tous.filter(f => f !== 'sw.js').sort().map(f => f + '\0' + fs.readFileSync(path.join(dist, f), 'latin1')).join('\0')).digest('hex').slice(0, 12);
 const sw = path.join(dist, 'sw.js');
 const code = fs.readFileSync(sw, 'utf8').replace("/*VERSION*/'dev'", `'${version}'`).replace('/*FICHIERS*/[]', JSON.stringify(['./', ...garder.filter(f => f !== 'index.html')])).replace('/*FACULTATIFS*/[]', JSON.stringify(facultatifs));

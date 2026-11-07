@@ -14,6 +14,7 @@ Ne sont pas couverts par cette licence :
 - le nom « Réseau ENSAM Meknès » et ses logos (dossier `img/`, `source/src/logo.js`) : une copie du code doit porter un autre nom et un autre logo ;
 - le logo de l'ENSAM dessiné sur le fronton de l'école (`ensamLogo` dans `source/src/scene.js`), qui appartient à l'école ;
 - les logos d'entreprises (dossier `img/logos/`, `source/src/img/logos/`) et les icônes des sites d'entreprises que le site affiche via DuckDuckGo (`source/src/vitrine-regles.js`), montrés seulement pour reconnaître les entreprises, sans aucun partenariat : ils restent la propriété de leurs détenteurs ;
+- les drapeaux du guide de l'étranger (dossier `img/drapeaux/`, `source/src/img/drapeaux/`), tirés de [flag-icons](https://github.com/lipis/flag-icons) © 2013 Panayiotis Lipiridis, sous licence MIT (texte complet dans `img/drapeaux/LICENSE`) ;
 - les bibliothèques du dossier `vendor/` (Preact, htm, supabase-js, Leaflet, PDF.js), qui gardent chacune leur propre licence.
 
 Les données des membres ne sont jamais dans ce dépôt : elles restent dans la base, que seuls les administrateurs du réseau gèrent.
