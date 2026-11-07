@@ -7307,6 +7307,24 @@ test('Mon profil : l’abonnement échoue pour de bon (téléphone sans service 
   await m.ctx.close();
 });
 
+// L'échec définitif dit pendant que l'accueil reste à l'écran (la feuille d'ouverture par-dessus) : le bandeau suit aussitôt
+test('feuille d’ouverture sur l’accueil : « Activer » échoue pour de bon ; le bandeau « Active tes notifications » s’en va aussitôt, sans changer de page', async () => {
+  const m = await membreEnLigne({ abonnement: 'impossible', chemin: '#accueil' });
+  await m.page.waitForSelector('.push-bandeau[data-etat="off"]', { timeout: 10000 });
+  await m.page.waitForSelector('.modal.ouverture', { timeout: 10000 });
+  await m.page.click('#ouv-oui');
+  await m.page.waitForSelector('.toast:has-text("Ce navigateur ne peut pas recevoir de notifications pour l’instant.")');
+  await m.page.waitForFunction(() => !document.querySelector('.modal.ouverture'));
+  assert.equal((await m.memoIci()).sans, 1);
+  // Tout de suite, sans rechargement ni changement de page
+  await m.page.waitForFunction(() => !document.querySelector('.push-bandeau'), null, { timeout: 1500 }).catch(() => {});
+  assert.equal(await m.page.locator('.push-bandeau').count(), 0, 'plus de bandeau qui propose « Activer »');
+  assert.equal(await m.page.evaluate(() => location.hash), '#accueil');
+  assert.equal(await m.page.locator('.pastille[data-sorte="activer"]').count(), 0);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
 test('lien « Active tes notifications » sur un téléphone déjà abonné, tout décoché dans Mon profil : « Cet appareil est prêt », puis les cases', async () => {
   const m = await membreEnLigne({ profil: { ...MEMBRE, notif_push: TOUT_DECOCHE }, deja: true, chemin: '?notifs=1#reseau' });
   await m.page.waitForSelector('.modal.choisir', { timeout: 10000 });

@@ -882,8 +882,10 @@ async function accepterNotif(store, me) {
   } catch (e) {
     // Navigateur sans service de notifications (Brave, téléphone sans services Google…) : une phrase calme, et la feuille
     // ne revient plus sur ce navigateur ; le bouton de « Mon profil » reste là pour réessayer. Service qui n'a pas répondu :
-    // au deuxième jour seulement (apresEchec)
-    return apresEchec(me, e);
+    // au deuxième jour seulement (apresEchec). Le bandeau et la pastille à l'écran suivent aussitôt, comme après Mon profil
+    const r = apresEchec(me, e);
+    dispatchEvent(new Event(PUSH_CHANGE));
+    return r;
   }
 }
 
