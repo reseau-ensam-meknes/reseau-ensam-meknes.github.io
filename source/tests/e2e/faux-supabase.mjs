@@ -30,6 +30,11 @@ export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 1
       if (!photo) { r.writeHead(404); return r.end(); }
       r.writeHead(200, { 'content-type': 'image/png', ...cors }); return r.end(photo);
     }
+    // Photo de profil déposée (le corps est l'image elle-même, jamais du JSON) : acceptée telle quelle
+    if (u.startsWith('/sb/storage/v1/object/photos/') && q.method === 'POST') {
+      q.resume(); q.on('end', () => { appels.push({ u, m: q.method }); json(r, 200, { Key: u.slice('/sb/storage/v1/object/'.length) }); });
+      return;
+    }
     if (u.startsWith('/sb/')) {
       let b = ''; q.on('data', c => { b += c; }); q.on('end', () => {
         if (q.method === 'OPTIONS') return json(r, 204);

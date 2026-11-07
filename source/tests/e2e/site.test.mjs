@@ -6474,8 +6474,13 @@ async function fauxStockage() {
   const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
   const envois = {};
   const srv = http.createServer((q, r) => {
-    const u = new URL(q.url, 'http://x').pathname; envois[u] = (envois[u] || 0) + 1;
-    r.writeHead(200, { 'content-type': 'image/png', 'access-control-allow-origin': '*', 'cache-control': 'no-store' }); r.end(PNG);
+    const url = new URL(q.url, 'http://x'), u = url.pathname; envois[u] = (envois[u] || 0) + 1;
+    const cors = { 'access-control-allow-origin': '*', 'cache-control': 'no-store' };
+    // Comme le stockage de Supabase : un lien expiré est refusé en JSON (400) ; « html » : une page d'erreur rendue en 200
+    const jeton = url.searchParams.get('token');
+    if (jeton === 'expire') { r.writeHead(400, { 'content-type': 'application/json', ...cors }); return r.end('{"statusCode":"400","error":"InvalidJWT","message":"\\"exp\\" claim timestamp check failed"}'); }
+    if (jeton === 'html') { r.writeHead(200, { 'content-type': 'text/html', ...cors }); return r.end('<!doctype html><title>Erreur</title>'); }
+    r.writeHead(200, { 'content-type': 'image/png', ...cors }); r.end(PNG);
   });
   await new Promise(ok => srv.listen(0, '127.0.0.1', ok));
   return { adresse: `http://127.0.0.1:${srv.address().port}`, envois, fermer: () => srv.close() };
@@ -6496,9 +6501,23 @@ test('photos de profil : gardées par le service worker sous leur adresse sans j
   assert.equal(await image(st.adresse + photo + '?token=troisieme'), 1);
   assert.equal(st.envois[photo], 1, 'une seule fois sur le réseau');
   assert.deepEqual(await s.page.evaluate(() => caches.open('photos-v1').then(c => c.keys()).then(k => k.map(r => r.url))), [st.adresse + photo]);
-  // Un CV n'est jamais gardé
+  // Un CV n'est jamais gardé, ni une photo de la messagerie
   await image(st.adresse + cv + '?token=1'); await image(st.adresse + cv + '?token=2');
   assert.equal(st.envois[cv], 2);
+  const chat = '/storage/v1/object/sign/chat/u1/u2/img-1.png';
+  await image(st.adresse + chat + '?token=1'); await image(st.adresse + chat + '?token=2');
+  assert.equal(st.envois[chat], 2);
+  // Un lien expiré (refusé en JSON) ou une page d'erreur (200, pas une image) n'est jamais gardé à la place de la photo :
+  // chaque essai repart au réseau, et la vraie photo, une fois arrivée, est gardée
+  const autre = '/storage/v1/object/sign/photos/u2/photo-7.png';
+  assert.equal(await image(st.adresse + autre + '?token=expire'), 0);
+  assert.equal(await image(st.adresse + autre + '?token=html'), 0);
+  assert.equal(st.envois[autre], 2);
+  assert.equal(await image(st.adresse + autre + '?token=bon'), 1);
+  await s.page.waitForFunction(() => caches.open('photos-v1').then(c => c.keys()).then(k => k.length === 2));
+  assert.equal(await image(st.adresse + autre + '?token=expire'), 1, 'gardée : rendue même avec un lien expiré');
+  assert.equal(st.envois[autre], 3);
+  assert.deepEqual(await s.page.evaluate(() => caches.open('photos-v1').then(c => c.keys()).then(k => k.map(r => r.url).sort())), [st.adresse + photo, st.adresse + autre].sort());
   // Une nouvelle version du site ne vide pas les photos gardées (seulement les anciennes copies du site)
   assert.ok((await s.page.evaluate(() => caches.keys())).includes('photos-v1'));
   assert.deepEqual(s.erreurs, []);

@@ -1405,3 +1405,29 @@ test('membre revenu sur le Réseau (copie de l’appareil) : les Groupes attende
   assert.deepEqual(m.erreurs, []);
   await m.ctx.close();
 });
+
+test('photo de profil choisie en ligne : rouverte depuis la copie de l’appareil, c’est toujours la photo (jamais une adresse blob: morte, ni les initiales)', async () => {
+  site.inscrits.push({ ...ETUDIANT, photo_path: null, consent_at: '2025-10-01T10:00:00Z' });
+  const m = await connecte({ hash: '#profil', attendre: '#profil-photo' });
+  const IMG = '#profil-photo .avatar img';
+  await m.page.evaluate(async () => {
+    const c = document.createElement('canvas'); c.width = 240; c.height = 300;
+    const g = c.getContext('2d'); g.fillStyle = '#a8714f'; g.fillRect(0, 0, 240, 300); g.fillStyle = '#2b3a55'; g.fillRect(30, 230, 180, 70);
+    const b = await new Promise(ok => c.toBlob(ok, 'image/png'));
+    const dt = new DataTransfer(); dt.items.add(new File([b], 'moi.png', { type: 'image/png' }));
+    const input = document.querySelector('#photo-file'); input.files = dt.files; input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  // Tout de suite à l'écran (adresse blob: de cette page), déposée, puis gardée avec la copie du compte
+  await m.page.waitForFunction(sel => /^blob:/.test(document.querySelector(sel)?.src || ''), IMG, { timeout: 15000 });
+  assert.ok(site.appels.some(a => a.u.startsWith('/sb/storage/v1/object/photos/' + UID + '/photo-') && a.m === 'POST'), 'la photo est déposée');
+  let c = null;
+  for (let i = 0; i < 40 && !c?.data.profiles.find(p => p.id === UID)?.photo_path; i++) { await m.page.waitForTimeout(250); c = await lireCacheMembre(m.page); }
+  assert.ok(c?.data.profiles.find(p => p.id === UID)?.photo_path, 'la copie a la nouvelle photo');
+  assert.ok(!(c.photos || []).some(([, v]) => /^blob:/.test(v?.url || '')), 'jamais l’adresse blob: dans la copie');
+  // Rouverte : la photo arrive par un lien du stockage, l'image s'affiche (pas les initiales)
+  await m.page.reload();
+  await m.page.waitForFunction(sel => { const i = document.querySelector(sel); return !!i && !i.hidden && i.complete && i.naturalWidth > 0; }, IMG, { timeout: 10000 });
+  assert.match(await m.page.getAttribute(IMG, 'src'), /\/storage\/v1\/object\/sign\/photos\//);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
