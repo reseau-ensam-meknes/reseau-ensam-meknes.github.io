@@ -20,7 +20,7 @@ import { CvButton } from './cv.js';
 import { SignalerBtn, ContactBlock, PairVerify, VisibiliteFields, groupesMasques, confirmations, VIS_LABELS, VIS_CHOIX } from './confiance.js';
 import { VIS_CHAMPS, VIS_DEFAUT, CV_MAX } from './store.js';
 import { addAR, arCount } from './i18n.js';
-import { oublierInvitation } from './invitation.js';
+import { oublierInvitation, ecoleInvitee } from './invitation.js';
 import { photoPreteDuCV, PhotoTrouvee } from './photo.js';
 
 // Arabe : textes du profil ajoutés en Phase 3
@@ -621,7 +621,8 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
     const coordChange = v3 && ['telephone', 'email', 'contact'].some(k => (champs[k] || '') !== (coord0[k] || ''));
     act(async () => {
       if (onboarding) {
-        await store.insert('profiles', { id: store.userId, ...row }); oublierInvitation();
+        // Venu par le lien d'une école : le compte est créé dans son réseau (la base refuse une école pas encore ouverte)
+        await store.insert('profiles', { id: store.userId, ...row, ...(ecoleInvitee() && ecoleInvitee() !== 'ensam-meknes' ? { ecole: ecoleInvitee() } : {}) }); oublierInvitation();
         // L'accueil s'annonce tout de suite : CV, photo et coordonnées suivent sans le retarder
         onInscrit?.();
         // La langue de l'inscription (celle d'un lien arabe, par exemple) devient celle du membre sur cet appareil
