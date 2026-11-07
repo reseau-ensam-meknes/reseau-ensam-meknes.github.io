@@ -282,3 +282,10 @@ test('écoles : le résumé ne parle que de l’école du membre', () => {
   assert.equal(m.mentorats.length, 0); assert.equal(x.cafes.length, 1);
   assert.deepEqual(m.evenements.map(e => e.id), ['e1']); assert.deepEqual(x.evenements.map(e => e.id), ['e2']);
 });
+
+test('écoles : la marque d’une autre école dans les emails', () => {
+  const c = N.marquer({ sujet: 'Ta semaine · Réseau ENSAM Meknès', html: '<b>Réseau ENSAM Meknès</b> شبكة ENSAM مكناس', texte: 'Réseau ENSAM Meknès' }, { nom: 'ENSAM Casablanca', nom_ar: 'ENSAM الدار البيضاء' });
+  assert.equal(c.sujet, 'Ta semaine · Réseau ENSAM Casablanca');
+  assert.match(c.html, /شبكة ENSAM الدار البيضاء/);
+  assert.equal(N.marquer(c, null), c);
+});

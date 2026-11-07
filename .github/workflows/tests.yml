@@ -13,11 +13,11 @@ permissions:
   contents: read
 
 jobs:
-  tests:
+  verifs:
+    name: Sources, calculs, base, emails
     # Playwright 1.56 ne gère pas encore Ubuntu 26.04 (ubuntu-latest)
     runs-on: ubuntu-24.04
-    # Le parcours complet du site prend près de 20 min depuis Match : de la marge
-    timeout-minutes: 35
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: source
@@ -36,9 +36,7 @@ jobs:
           git diff --exit-code -- supabase/mise-a-jour.sql
       - name: Installer les outils de test
         working-directory: source/tests
-        run: |
-          npm ci
-          npx playwright install --with-deps chromium
+        run: npm ci
       - name: Calculs
         working-directory: source/tests
         run: npm run unit
@@ -48,6 +46,49 @@ jobs:
       - name: Emails et notifications
         working-directory: source/tests
         run: npm run notifier
+
+  site:
+    # Le parcours complet du site dépasse 30 min sur une seule machine : il est partagé entre trois machines
+    # qui tournent en même temps, chacune un test sur trois (PARTIE, e2e/partie.mjs)
+    name: Site (part ${{ matrix.partie }} sur 3)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        partie: [1, 2, 3]
+    defaults:
+      run:
+        working-directory: source
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: source/tests/package-lock.json
+      - name: Construire le site depuis les sources
+        run: sh build.sh
+      - name: Installer les outils de test
+        working-directory: source/tests
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
       - name: Site (tous les écrans, parcours, hors ligne)
         working-directory: source/tests
+        env:
+          PARTIE: ${{ matrix.partie }}/3
         run: npm run site
+
+  # Le contrôle « tests » que regarde main : vert seulement si les sources et les trois parts du site le sont
+  tests:
+    needs: [verifs, site]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Tout est vert
+        run: |
+          echo "sources, calculs, base, emails : ${{ needs.verifs.result }} ; site : ${{ needs.site.result }}"
+          test "${{ needs.verifs.result }}" = success
+          test "${{ needs.site.result }}" = success

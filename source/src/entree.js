@@ -541,7 +541,8 @@ export function AuthScreen({ store }) {
   // Sur téléphone, la carte (ou sa ligne, quand elle ne tiendrait pas) prend la place de la phrase d'explication, dès le
   // premier affichage ; la ligne d'une carte déjà vue dans la visite la laisse, s'il y a la place
   const [sansSous] = useState(() => !!APPLI_ICI && innerWidth < 900 && (!vueCarte() || appli !== 'carte'));
-  // Et sous le titre, un peu moins d'air : le rôle, l'email, l'accord et « Recevoir mon code » restent au premier écran
+  // Et sous le titre, un peu moins d'air (classe serre, page.html) : le rôle, l'email, l'accord et « Recevoir mon code » restent
+  // au premier écran, même là où le texte se dessine un peu plus large et où l'accord prend une ligne de plus
   const serre = enHaut;
   // Session expirée sans l'avoir voulu : on redemande la connexion calmement, avec son adresse déjà là
   const perdue = !!store?.sessionPerdue;
@@ -632,14 +633,14 @@ export function AuthScreen({ store }) {
   return html`<main class="auth entree">
     <div class="entree-ciel sky" aria-hidden="true"></div>
     <header class="entree-top"><span class="entree-marque"><${BrandLogo} size=${34} draw/><span>Réseau ENSAM Meknès</span></span><${LangToggle} onChange=${relang} aussitot/></header>
-    <section class="entree-promesse" style=${serre ? { paddingBlock: '.5rem .6rem' } : null}>
+    <section class=${'entree-promesse' + (serre ? ' serre' : '')}>
       ${lien && mode !== 'nouveau' ? html`<p id="au-lien" class=${'lien-accueil' + (infos === null || infos?.ouverte === false || (inscrire && offreFermeePour(infos, role)) ? ' fini' : '')}><${Icon} name=${icoLien} size=${18}/><span>${phraseLien(lien, infos, inscrire, inscrire ? role : '')}</span></p>` : null}
       <${Fondateurs}/>
       <h1>Les lauréats ouvrent la porte aux étudiants.</h1>
       ${enHaut ? html`<${CarteAppli} mode=${mode} role=${role} invite=${invite} ligne onEchec=${() => setAppliKo(true)}/>` : html`<p class="auth-chiffres">${(lignes || []).map(l => html`<span>${l}</span>`)}</p>`}
       ${(lien && mode !== 'nouveau') || court || sansSous ? null : html`<p class="entree-sous">Stage, PFE, premier emploi : les étudiants demandent, les lauréats aident et recrutent.</p>`}
     </section>
-    <form class="auth-card form entree-form" style=${serre ? { marginBlockStart: '.5rem', gap: '.55rem' } : null} onSubmit=${submit} aria-label=${inscription ? 'Créer mon compte' : null}>
+    <form class=${'auth-card form entree-form' + (serre ? ' serre' : '')} onSubmit=${submit} aria-label=${inscription ? 'Créer mon compte' : null}>
       ${carteIci && appli !== 'haut' ? html`<${CarteAppli} mode=${mode} role=${role} invite=${invite} ligne=${appli === 'ligne'}/>` : null}
       ${inscription ? null : html`<h2>${{ connexion: 'Se connecter', code: 'Ton code est parti', motdepasse: 'Se connecter', nouveau: 'Nouveau mot de passe' }[mode]}</h2>`}
       ${perdue && mode === 'connexion' ? html`<p class="auth-msg" id="au-session" role="status">${store.brouillonsGardes ? 'Ta session a expiré. Reconnecte-toi : ce que tu étais en train d’écrire est gardé.' : 'Ta session a expiré. Reconnecte-toi pour continuer.'}</p>` : null}
