@@ -3,7 +3,7 @@ import { html, useState, useMemo, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Person, Bar, Num, toast, useLocal } from './ui.js';
 import { getLang, t as tr } from './i18n.js';
 import { MessageBtn } from './messages.js';
-import { MESURES, defiProgress, activeDefis, coupeDesPromos, computeScores, tonAnnee, niveauOf, seasonLabel, NIVEAUX, proximiteFiliere } from './logic.js';
+import { MESURES, defiProgress, activeDefis, coupeDesPromos, computeScores, tonAnnee, niveauOf, seasonLabel, NIVEAUX, proximiteFiliere, pourLEcoleVue, deMonEcole } from './logic.js';
 
 const NIV_OPTS = [['', 'Toutes les années'], [3, '3A'], [4, '4A'], [5, '5A'], [6, 'Jeunes diplômés']];
 const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -16,7 +16,7 @@ export function DefisPanel({ ctx }) {
   const { data, me, saison } = ctx;
   // Un étudiant ne voit que les défis de son année (ou ceux de tout le monde)
   const niv = me.role === 'etudiant' ? niveauOf(me, saison) : null;
-  const list = activeDefis(data).filter(d => !niv || !d.niveau || d.niveau === niv).map(d => ({ d, p: defiProgress(data, d) })).sort((a, b) => a.p.daysLeft - b.p.daysLeft);
+  const list = deMonEcole(activeDefis(data), me).filter(d => !niv || !d.niveau || d.niveau === niv).map(d => ({ d, p: defiProgress(data, d) })).sort((a, b) => a.p.daysLeft - b.p.daysLeft);
   if (!list.length) return null;
   return html`<div class="panel defis">
     <div class="section-head"><h2 class="h-ico"><${Icon} name="trophy"/> Défi${list.length > 1 ? 's' : ''} de l’année</h2></div>
@@ -29,7 +29,8 @@ export function DefisPanel({ ctx }) {
   </div>`;
 }
 
-export function DefisAdmin({ ctx }) {
+// ecoleTag : le nom de l'école des défis montrés (console, plusieurs écoles) ; les données reçues sont celles de cette école
+export function DefisAdmin({ ctx, ecoleTag = null, plusieursEcoles = false }) {
   const { data, store, act } = ctx;
   const now = new Date();
   const fin = new Date(now.getFullYear(), now.getMonth() + 1, 0);
@@ -42,11 +43,12 @@ export function DefisAdmin({ ctx }) {
   const list = [...data.defis].sort((a, b) => b.fin.localeCompare(a.fin));
   const start = ([titre, mesure, niveau, cible]) => setF({ titre, mesure, niveau, cible, debut: iso(now), fin: iso(fin) });
   const save = e => { e.preventDefault(); act(async () => {
-    await store.insert('defis', { titre: f.titre.trim(), mesure: f.mesure, niveau: f.niveau ? +f.niveau : null, cible: +f.cible, debut: f.debut, fin: f.fin });
-    toast('Défi lancé : il apparaît sur l’accueil de tous.'); setF(null);
+    // Depuis la console, pour l'école qu'elle regarde (sinon celle de l'administration, par défaut dans la base)
+    await store.insert('defis', { titre: f.titre.trim(), mesure: f.mesure, niveau: f.niveau ? +f.niveau : null, cible: +f.cible, debut: f.debut, fin: f.fin, ...pourLEcoleVue(ctx) });
+    toast(plusieursEcoles ? 'Défi lancé : il apparaît sur l’accueil de tous les membres de l’école.' : 'Défi lancé : il apparaît sur l’accueil de tous.'); setF(null);
   }); };
   return html`<div class="panel">
-    <div class="section-head"><h2 class="h-ico"><${Icon} name="trophy"/> Défis de l’année</h2><button class="btn small" onClick=${() => start(['', 'reussites', '', 20])}><${Icon} name="plus" size=${15}/> Nouveau défi</button></div>
+    <div class="section-head"><h2 class="h-ico"><${Icon} name="trophy"/> Défis de l’année ${ecoleTag}</h2><button class="btn small" onClick=${() => start(['', 'reussites', '', 20])}><${Icon} name="plus" size=${15}/> Nouveau défi</button></div>
     <p class="muted small">Un objectif collectif affiché sur l’accueil, avec une barre qui avance toute seule.</p>
     ${f ? html`<form class="form defi-form" onSubmit=${save}>
       <${Field} label="Titre"><input id="df-titre" required minlength="4" maxlength="120" value=${f.titre} onInput=${e => setF({ ...f, titre: e.target.value })} placeholder="Ex. Novembre : 15 stages pour les 4A"/><//>

@@ -3,7 +3,7 @@
 // « Déjà vue » est gardé par membre dans ce navigateur : l'anneau s'éteint, rien d'autre ne change.
 import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { Icon, Avatar, injectCSS, mouvementReduit, useFeuille } from './ui.js';
-import { niveauOf, timeAgo, AIDES } from './logic.js';
+import { niveauOf, timeAgo, AIDES, ecoleDuContenu } from './logic.js';
 import { addAR } from './i18n.js';
 
 const MAX = 12, DUREE = 6000;
@@ -62,7 +62,7 @@ function Histoire({ ctx, liste, debut, onVu, onClose }) {
   if (!p) return null;
   const st = store.byId('profiles', p.student_id), la = p.laureat_id ? store.byId('profiles', p.laureat_id) : null;
   const k = (data.kudos || []).filter(x => x.placement_id === p.id), mine = k.find(x => x.user_id === me.id);
-  const bravo = () => { vibrer(12); act(() => (mine ? store.remove('kudos', mine.id) : store.insert('kudos', { placement_id: p.id, user_id: me.id }))); };
+  const bravo = () => { vibrer(12); act(() => (mine ? store.remove('kudos', mine.id) : store.insert('kudos', { placement_id: p.id, user_id: me.id, ...ecoleDuContenu(me, p) }))); };
   const voir = q => { onClose(); openProfile(q); };
   return html`<div class="rs-histoire" role="dialog" aria-modal="true" aria-label="Réussites">
     <div class="rs-barres" aria-hidden="true">${liste.map((x, n) => html`<i key=${x.id} class=${n < i ? 'faite' : n === i ? (calme ? 'faite' : 'cours') : ''} style=${`--d:${DUREE}ms`}></i>`)}</div>

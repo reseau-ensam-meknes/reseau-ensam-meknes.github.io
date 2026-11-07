@@ -143,3 +143,24 @@ test('mode réel, base pas encore mise à jour : « Vider la liste » marche enc
   await assert.rejects(s.viderListe(2027, 'autre-ecole'));
   assert.deepEqual(appels.map(a => a[0]), ['rpc']);
 });
+
+test('démo : « Attribuer les parrains » donne à un 3A un lauréat de son école, jamais d’une autre (comme donner_parrain)', async () => {
+  const { s, comme } = await demo();
+  comme('Admin');
+  const { seasonOf, niveauOf } = await import('../../src/logic.js');
+  const S = seasonOf();
+  // Un lauréat volontaire de Meknès qui a encore de la place (3 filleuls au plus par année)
+  const lau = s.data.profiles.find(p => p.role === 'laureat' && p.parrain_dispo && p.filiere
+    && s.data.parrainages.filter(x => x.parrain_id === p.id && x.saison === S).length < 3);
+  assert.ok(lau, 'un lauréat volontaire avec de la place dans la démo');
+  // Un 3A d'une autre école, de la filière de ce lauréat de Meknès
+  const etu = { id: 'etu-autre-3a', role: 'etudiant', full_name: 'Test Autre', promo: S + 3, filiere: lau.filiere, ecole: 'autre-ecole', created_at: new Date().toISOString() };
+  assert.equal(niveauOf(etu, S), 3);
+  s.data.profiles = [...s.data.profiles, etu];
+  await s.attribuerParrains();
+  assert.equal(s.data.parrainages.filter(x => x.filleul_id === etu.id).length, 0, 'aucun lauréat volontaire de son école : pas de parrain');
+  const sien = { id: 'lau-autre', role: 'laureat', full_name: 'Lauréat Autre', promo: S - 3, filiere: lau.filiere, parrain_dispo: true, ecole: 'autre-ecole', created_at: new Date().toISOString() };
+  s.data.profiles = [...s.data.profiles, sien];
+  await s.attribuerParrains();
+  assert.deepEqual(s.data.parrainages.filter(x => x.filleul_id === etu.id).map(x => x.parrain_id), ['lau-autre']);
+});

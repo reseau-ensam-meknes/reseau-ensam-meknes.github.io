@@ -14,7 +14,8 @@ const SITE = path.resolve(process.env.SITE_DIR || new URL('../../dist', import.m
 const TYPES = { '.js': 'text/javascript', '.mjs': 'text/javascript', '.html': 'text/html', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.webmanifest': 'application/manifest+json' };
 const ECRANS = ['accueil', 'offres', 'offres/demandes', 'match', 'mentorat', 'mentorat/cv', 'messages', 'parcours', 'espace', 'reseau/groupes', 'reseau/agenda', 'reseau/entraide',
   'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'reseau/annuaire/ma-filiere', 'reseau/annuaire/ma-promo', 'reseau/classement', 'reseau/talents', 'suivi', 'profil', 'profil/visibilite', 'profil/notifications', 'profil/donnees', 'enquete',
-  'confidentialite', 'admin', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda', 'admin/sponsorises', 'admin/reglages'];
+  'confidentialite', 'admin', 'admin/traiter', 'admin/animer', 'admin/contenus', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda',
+  'admin/ecoles', 'admin/partenaires', 'admin/sponsorises', 'admin/outils', 'admin/reglages'];
 
 let serveur, adresse, navigateur;
 // Une nouvelle version du site publiée pendant un test : sw.js change de VERSION, et les fichiers que le service worker
@@ -4267,7 +4268,10 @@ test('socle : un chiffre qui compte se pose sur la valeur du moment — une conf
   const chiffre = () => s.page.evaluate(() => [...document.querySelectorAll('.kpi')].find(k => /Recrutés et confirmés/.test(k.textContent)).querySelector('.kpi-val').textContent.trim());
   const avant = Number(await chiffre());
   assert.ok(avant > 0, `le chiffre a fini de compter (${avant})`);
-  await s.page.locator('.people-list.adm-gestes button', { hasText: 'Confirmer' }).first().click(); await s.page.waitForTimeout(700);
+  // Les recrutements déclarés se confirment dans « À traiter » ; le tableau de bord montre ensuite le nouveau chiffre
+  await s.aller('admin/traiter/recrutements');
+  await s.page.locator('.tt-item[data-cat="recrutements"] .tt-gestes button', { hasText: 'Confirmer' }).first().click(); await s.page.waitForTimeout(300);
+  await s.aller('admin'); await s.page.waitForTimeout(700);
   assert.equal(Number(await chiffre()), avant + 1, 'le nouveau chiffre, pas celui d’avant');
   // Et c'est bien celui que la page montre en y revenant
   await s.aller('admin/membres'); await s.aller('admin'); await s.page.waitForTimeout(700);
@@ -4341,11 +4345,11 @@ test('socle : au doigt, chaque cible du Réseau, de Mon profil et de l’adminis
   }
 });
 
-test('administration : la modération — retirer depuis une carte est tonal (rouge), jamais en aplat ; « Ouvrir » sous le contenu, les mots du membre sur leur ligne ; les dernières offres se relisent ici, plus dans la Vue d’ensemble', async () => {
+test('administration : la modération — retirer depuis une carte est tonal (rouge), jamais en aplat ; « Ouvrir » sous le contenu, les mots du membre sur leur ligne ; les offres se relisent dans Contenus, plus dans le tableau de bord', async () => {
   for (const [largeur, langue] of [[390, 'fr'], [360, 'ar']]) {
     const s = await ouvrir({ largeur, langue });
     await s.comme('Admin'); await s.aller('admin');
-    assert.equal(await s.page.locator('#adm-offres').count(), 0, 'la Vue d’ensemble ne relit plus les offres');
+    assert.equal(await s.page.locator('#adm-offres').count(), 0, 'le tableau de bord ne relit pas les offres');
     assert.equal(await s.page.locator('h2', { hasText: langue === 'ar' ? 'آخر العروض' : 'Dernières offres' }).count(), 0);
     await s.aller('admin/moderation');
     const cartes = s.page.locator('.mod-card');
@@ -4372,7 +4376,8 @@ test('administration : la modération — retirer depuis une carte est tonal (ro
     await offre.locator('.mod-voir').click(); await s.page.waitForSelector('.modal .od h2');
     assert.match(await s.page.locator('.modal .od h2').innerText(), /rebuts/);
     await s.fermer();
-    // Les dernières offres se relisent ici : une offre masquée se voit tout de suite
+    // Les offres se relisent dans Contenus : une offre masquée se voit tout de suite
+    await s.aller('admin/contenus');
     const ligne = s.page.locator('#adm-offres li').first();
     await ligne.locator('button', { hasText: langue === 'ar' ? 'إخفاء' : 'Masquer' }).click(); await s.page.waitForTimeout(300);
     assert.equal(await ligne.locator('.tag.done').count(), 1, 'l’offre masquée est dite fermée');
@@ -4952,6 +4957,8 @@ for (const [largeur, langue, theme] of [[1280, 'fr', 'light'], [390, 'ar', 'dark
       await s.page.selectOption('#persona', id); await s.page.waitForTimeout(250);
       for (const e of ECRANS) {
         await s.aller(e);
+        // Une page chargée à la demande (l'administration, le suivi) : l'audit lit la page, pas sa silhouette d'attente
+        await s.page.waitForFunction(() => !document.querySelector('.page-attente'));
         if (!(await s.page.evaluate(() => !!window.axe))) await s.page.addScriptTag({ content: AXE });
         // Les fondus d'arrivée (même courts) faussent la mesure des contrastes : on les termine avant l'audit
         await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* animation sans fin */ } }));
@@ -6320,7 +6327,7 @@ test('administration : « Sponsorisés » — créer une carte ciblée, la modif
   await s.ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
   await s.comme('Admin'); await s.aller('admin/sponsorises');
   await s.page.waitForSelector('.sp-ligne');
-  assert.equal(await s.page.getAttribute('#adm-tab-sponsorises', 'aria-selected'), 'true', 'un onglet « Sponsorisés »');
+  assert.equal(await s.page.getAttribute('#adm-tab-sponsorises', 'aria-current'), 'page', 'une rubrique « Sponsorisés »');
   const ex = s.page.locator('.sp-ligne[data-id="sp-demo-0001"]');
   assert.match(await ex.innerText(), /En cours/);
   assert.match(await ex.locator('.sp-cible').innerText(), /^Étudiants et lauréats · Toutes les années · Toutes les filières$/);
@@ -6746,6 +6753,679 @@ test('accueil : le bandeau dit ce qui empêche les notifications, se range trois
   await s.changerMemo('({ ...m, coupe: 1 })');
   await recharger(s); await s.page.waitForTimeout(800);
   assert.equal(await s.page.locator('.push-bandeau').count(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Console d'administration : les rubriques en colonne (ordinateur) ou en puces (téléphone), « À traiter », Membres, Contenus
+// ---------------------------------------------------------------------------
+const RUBRIQUES_ADMIN = ['admin', 'admin/traiter', 'admin/animer', 'admin/agenda', 'admin/inviter', 'admin/membres', 'admin/contenus', 'admin/moderation', 'admin/liste',
+  'admin/ecoles', 'admin/partenaires', 'admin/sponsorises', 'admin/outils', 'admin/reglages'];
+
+test('console d’administration (ordinateur) : les rubriques en colonne, par groupes ; chacune s’ouvre ; un seul choix d’école, donc pas de menu d’école ; la recherche ouvre une fiche ou une offre', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Admin'); await s.aller('admin');
+  await s.page.waitForSelector('nav.cs-menu');
+  assert.equal(await s.page.locator('.adm-tabs').count(), 0, 'pas de puces sur ordinateur : la colonne');
+  assert.equal(await s.page.locator('nav.cs-menu').evaluate(n => getComputedStyle(n).position), 'sticky', 'la colonne reste en vue');
+  assert.deepEqual(await s.page.locator('.cs-menu .cs-g-titre').evaluateAll(es => es.map(e => e.textContent.trim())), ['Piloter', 'Animer', 'Gérer', 'Grandir']);
+  assert.deepEqual(await s.page.locator('.cs-menu a').evaluateAll(as => as.map(a => a.getAttribute('href'))), RUBRIQUES_ADMIN.map(r => '#' + r));
+  assert.equal(await s.page.locator('#cs-ecole').count(), 0, 'une seule école : pas de choix');
+  assert.equal(await s.page.locator('h1').count(), 1);
+  assert.equal(await s.page.locator('h1').innerText(), 'Administration');
+  // Chaque rubrique s'ouvre depuis la colonne, la sienne marquée (aria-current), sans rien qui dépasse
+  for (const r of RUBRIQUES_ADMIN) {
+    await s.page.locator(`.cs-menu a[href="#${r}"]`).click(); await s.page.waitForTimeout(200);
+    assert.equal(await s.page.evaluate(() => location.hash), '#' + r);
+    assert.deepEqual(await s.page.locator('.cs-menu a[aria-current="page"]').evaluateAll(as => as.map(a => a.getAttribute('href'))), ['#' + r]);
+    assert.ok((await s.page.locator('.cs-main').innerText()).trim().length > 10, `${r} : la rubrique s’affiche`);
+    assert.equal(await s.debordement(), 0, `${r} : rien ne dépasse`);
+  }
+  // Les pastilles disent ce qui attend : « À traiter » compte ses lignes, Modération ses contenus signalés, Membres ses lauréats à vérifier
+  const pastille = async k => Number((await s.page.locator(`#adm-tab-${k} .cs-n`).innerText()).trim());
+  await s.aller('admin/traiter');
+  assert.equal(await pastille('traiter'), await s.page.locator('.tt-item').count());
+  assert.equal(await pastille('moderation'), 2);
+  assert.equal(await pastille('membres'), 6);
+  // La recherche : « / » y met le curseur ; les flèches et Entrée ouvrent la fiche
+  await s.page.locator('h1').click();
+  await s.page.keyboard.press('/');
+  assert.equal(await s.page.evaluate(() => document.activeElement.id), 'cs-q');
+  await s.page.keyboard.type('youssef el');
+  await s.page.waitForSelector('#cs-res:not([hidden]) [role="option"]');
+  assert.equal(await s.page.getAttribute('#cs-q', 'aria-expanded'), 'true');
+  assert.match(await s.page.locator('#cs-opt-0').innerText(), /Youssef El Amrani/);
+  assert.equal(await s.page.getAttribute('#cs-q', 'aria-activedescendant'), 'cs-opt-0');
+  await s.page.keyboard.press('Enter');
+  await s.page.waitForSelector('.modal');
+  assert.match(await s.page.locator('.modal').innerText(), /Youssef El Amrani/);
+  await s.fermer();
+  // Ctrl+K aussi ; une offre par son titre ; Échap vide la recherche
+  await s.page.keyboard.press('Control+k');
+  assert.equal(await s.page.evaluate(() => document.activeElement.id), 'cs-q');
+  await s.page.keyboard.type('emboutissage');
+  await s.page.waitForSelector('#cs-res [role="option"]');
+  const offre = s.page.locator('#cs-res [role="option"]', { hasText: 'rebuts' }).first();
+  assert.match(await offre.innerText(), /Offre/);
+  await s.page.keyboard.press('Escape');
+  assert.equal(await s.page.inputValue('#cs-q'), '');
+  assert.equal(await s.page.locator('#cs-res').isHidden(), true);
+  await s.page.fill('#cs-q', 'emboutissage'); await s.page.waitForSelector('#cs-res [role="option"]');
+  await s.page.locator('#cs-res [role="option"]', { hasText: 'rebuts' }).first().click();
+  await s.page.waitForSelector('.modal .od h2');
+  assert.match(await s.page.locator('.modal .od h2').innerText(), /rebuts/);
+  await s.fermer();
+  // Par e-mail aussi (les comptes ne sont lus que par l'administration)
+  await s.page.fill('#cs-q', 'salma.bennani@'); await s.page.waitForSelector('#cs-res [role="option"]');
+  assert.match(await s.page.locator('#cs-opt-0').innerText(), /Salma Bennani/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('console d’administration (téléphone) : les rubriques sur une seule rangée de puces, la sienne choisie ; rien ne dépasse, en français comme en arabe', async () => {
+  const autres = ['admin/animer', 'admin/ecoles', 'admin/partenaires', 'admin/outils']; // remplies par un autre chantier : leurs mots sont vérifiés par la visite de tous les écrans
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 390, langue });
+    await s.comme('Admin');
+    const oublis = [];
+    for (const r of [...RUBRIQUES_ADMIN, 'admin/contenus/demandes', 'admin/contenus/questions', 'admin/contenus/mentorats', 'admin/contenus/evenements', 'admin/traiter/demandes']) {
+      await s.aller(r);
+      assert.equal(await s.page.locator('nav.cs-menu').count(), 0, 'pas de colonne sur téléphone');
+      const puces = s.page.locator('.adm-tabs [role="tab"]');
+      assert.equal(await puces.count(), 14, `${r} : toutes les rubriques`);
+      assert.deepEqual(await s.page.locator('.adm-tabs [aria-selected="true"]').evaluateAll(b => b.map(x => x.id)), ['adm-tab-' + (r.split('/')[1] || 'vue')], `${r} : la sienne choisie`);
+      assert.equal(new Set(await puces.evaluateAll(b => b.map(x => Math.round(x.getBoundingClientRect().top)))).size, 1, `${r} : une seule rangée`);
+      assert.equal(await s.debordement(), 0, `${langue} · ${r} : rien ne dépasse`);
+      if (langue === 'ar') for (const x of await s.page.evaluate(() => { const m = [...(window.__ensamMissing || [])]; window.__ensamMissing?.clear(); return m; })) if (!autres.includes(r) && !ecritParUnMembre(x)) oublis.push(`${r} : ${x}`);
+    }
+    assert.deepEqual(oublis, [], 'tout traduit');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('administration · À traiter : une demande sans proposition propose trois lauréats, chacun avec un message prêt dans sa langue ; un lauréat se vérifie sur place', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Admin'); await s.aller('admin');
+  // L'encadré du tableau de bord ouvre « À traiter » sur la bonne sorte
+  await s.page.locator('.cs-a-traiter .cs-todo button', { hasText: 'demande d’étudiant sans proposition' }).click(); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.evaluate(() => location.hash), '#admin/traiter/demandes');
+  assert.deepEqual([...new Set(await s.page.locator('.tt-item').evaluateAll(l => l.map(x => x.dataset.cat)))], ['demandes']);
+  const ligne = s.page.locator('.tt-item[data-cat="demandes"]').first();
+  assert.match(await ligne.locator('.tt-titre').innerText(), /PFE en efficacité énergétique industrielle/);
+  await ligne.locator('.tt-ouvrir').click();
+  assert.equal(await ligne.locator('.tt-ouvrir').getAttribute('aria-expanded'), 'true');
+  const aidants = ligne.locator('.tt-aidants > li');
+  assert.equal(await aidants.count(), 3, 'trois lauréats');
+  // Le premier : un message prêt dans la messagerie, à relire
+  const prenom = (await aidants.first().locator('.person-name').innerText()).split(' ')[0];
+  await aidants.first().locator('.msg-btn').click(); await s.page.waitForTimeout(400);
+  const brouillon = await s.page.inputValue('#chat-txt');
+  assert.ok(brouillon.startsWith(`Bonjour ${prenom}, `), brouillon);
+  assert.match(brouillon, /\(5A · GME24\) cherche un PFE : « PFE en efficacité énergétique industrielle »\. Tu pourrais jeter un œil à sa demande \? \S+#offres\/demandes\/dm-00gx Merci !$/);
+  // Un lauréat qui lit en arabe reçoit le message en arabe
+  await s.aller('admin/traiter/demandes');
+  const second = s.page.locator('.tt-item[data-cat="demandes"]').first();
+  await second.locator('.tt-ouvrir').click();
+  const id = await second.locator('.tt-aidants > li').nth(1).evaluate(li => li.querySelector('.person-name').textContent.trim())
+    .then(nom => s.page.evaluate(nom => window.__demo.data.profiles.find(p => p.full_name === nom).id, nom));
+  await s.page.evaluate(id => window.__demo.update('profiles', id, { langue: 'ar' }), id); await s.page.waitForTimeout(200);
+  await second.locator('.tt-aidants > li').nth(1).locator('.msg-btn').click(); await s.page.waitForTimeout(400);
+  assert.match(await s.page.inputValue('#chat-txt'), /^مرحبًا .+« PFE en efficacité énergétique industrielle ».+#offres\/demandes\/dm-00gx شكرًا!$/);
+  // Un lauréat se vérifie sans quitter la liste ; la pastille suit
+  await s.aller('admin/traiter/laureats');
+  const avant = await s.page.locator('.tt-item[data-cat="laureats"]').count();
+  const badge = Number(await s.page.locator('#adm-tab-traiter .cs-n').innerText());
+  await s.page.locator('.tt-item[data-cat="laureats"] .tt-gestes button', { hasText: 'Vérifier' }).first().click(); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.toast').last().innerText(), /Lauréat vérifié/);
+  assert.equal(await s.page.locator('.tt-item[data-cat="laureats"]').count(), avant - 1);
+  assert.equal(Number(await s.page.locator('#adm-tab-traiter .cs-n').innerText()), badge - 1);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('administration · Membres (ordinateur) : filtrer les lauréats, trier par promo, cocher deux membres et exporter leur fichier CSV', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Admin'); await s.aller('admin/membres');
+  await s.page.click('#mb-f-laureats');
+  assert.equal(await s.page.getAttribute('#mb-f-laureats', 'aria-pressed'), 'true');
+  const lignes = s.page.locator('tr.mb-ligne');
+  assert.equal(await lignes.count(), 45, 'les 45 lauréats de la démo');
+  assert.deepEqual([...new Set(await s.page.locator('tr.mb-ligne .c-role select').evaluateAll(l => l.map(x => x.value)))], ['laureat']);
+  // Trier par promo : croissant, puis décroissant ; l'en-tête le dit (aria-sort)
+  const promos = () => s.page.locator('tr.mb-ligne td.c-promo').evaluateAll(l => l.map(td => parseInt(td.textContent, 10)));
+  await s.page.click('#mb-tri-promo');
+  assert.equal(await s.page.getAttribute('th.c-promo', 'aria-sort'), 'ascending');
+  let p = await promos(); assert.deepEqual(p, [...p].sort((a, b) => a - b));
+  await s.page.click('#mb-tri-promo');
+  assert.equal(await s.page.getAttribute('th.c-promo', 'aria-sort'), 'descending');
+  p = await promos(); assert.deepEqual(p, [...p].sort((a, b) => b - a));
+  assert.equal(await s.page.locator('th[aria-sort]').count(), 1, 'une seule colonne triée');
+  // Deux membres cochés : l'export ne contient qu'eux
+  const noms = [await lignes.nth(0).locator('.person-name').innerText(), await lignes.nth(1).locator('.person-name').innerText()];
+  await lignes.nth(0).locator('input[type="checkbox"]').check(); await lignes.nth(1).locator('input[type="checkbox"]').check();
+  assert.equal(await s.page.locator('#mb-n').innerText(), '2 sélectionnés');
+  assert.equal(await s.page.locator('th.c-coche input').evaluate(c => c.indeterminate), true, 'la case de l’en-tête : en partie');
+  const [fichier] = await Promise.all([s.page.waitForEvent('download'), s.page.click('#mb-csv')]);
+  assert.match(fichier.suggestedFilename(), /^membres-reseau-ensam-\d{4}-\d{2}-\d{2}\.csv$/);
+  const csv = fs.readFileSync(await fichier.path(), 'utf8');
+  assert.ok(csv.startsWith('﻿'), 'avec BOM : Excel lit les accents');
+  const rangs = csv.slice(1).split('\r\n');
+  assert.equal(rangs[0], 'Nom;Rôle;Promo;Filière;Entreprise;Poste;Ville;Email;Inscrit le;Vu le;Vérifié;CV;Photo');
+  assert.equal(rangs.length, 3);
+  assert.deepEqual(rangs.slice(1).map(r => r.split(';')[0]), noms);
+  assert.ok(rangs.slice(1).every(r => r.split(';')[1] === 'Lauréat' && /@/.test(r.split(';')[7])), 'leur rôle et leur e-mail');
+  // Tout cocher : toutes les lignes visibles
+  await s.page.locator('th.c-coche input').check();
+  assert.equal(await s.page.locator('#mb-n').innerText(), '45 sélectionnés');
+  assert.equal(await s.page.locator('tr.mb-ligne.on').count(), 45);
+  // Les filtres se combinent : une promo, une recherche
+  await s.page.locator('button', { hasText: 'Tout désélectionner' }).click();
+  await s.page.click('#mb-f-tous');
+  await s.page.fill('#adm-q', 'Soufiane');
+  assert.ok((await s.page.locator('tr.mb-ligne').allInnerTexts()).every(t => /Soufiane/.test(t)));
+  assert.match(await s.page.locator('.cs-barre .liste-tete').innerText(), /^\d+ sur 105 membres$/);
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('administration · Contenus : masquer une offre puis la rouvrir sans quitter le tableau ; les demandes, questions, mentorats et événements en onglets', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Admin'); await s.aller('admin/contenus');
+  assert.equal(await s.page.getAttribute('#cnt-tab-offres', 'aria-selected'), 'true', 'les offres d’abord');
+  const id = await s.page.locator('#adm-offres .cnt-ligne[data-statut="ouverte"]').first().getAttribute('data-id');
+  const ligne = s.page.locator(`#adm-offres .cnt-ligne[data-id="${id}"]`);
+  await ligne.locator('button', { hasText: 'Masquer' }).click(); await s.page.waitForTimeout(300);
+  assert.equal(await ligne.getAttribute('data-statut'), 'fermee');
+  assert.equal(await ligne.locator('.tag').innerText(), 'Fermée');
+  assert.match(await s.page.locator('.toast').last().innerText(), /Offre masquée/);
+  assert.equal(await s.page.evaluate(id => window.__demo.byId('offers', id).status, id), 'fermee');
+  await ligne.locator('button', { hasText: 'Rouvrir' }).click(); await s.page.waitForTimeout(300);
+  assert.equal(await ligne.getAttribute('data-statut'), 'ouverte');
+  assert.equal(await ligne.locator('.tag').innerText(), 'Ouverte');
+  // Les statuts en puces, la recherche
+  await s.page.locator('.cnt-filtres .chip', { hasText: 'Pourvue' }).click();
+  assert.deepEqual([...new Set(await s.page.locator('#adm-offres .cnt-ligne').evaluateAll(l => l.map(x => x.dataset.statut)))], ['pourvue']);
+  await s.page.locator('.cnt-filtres .chip', { hasText: 'Tous' }).click();
+  await s.page.fill('#cnt-q', 'emboutissage');
+  assert.ok((await s.page.locator('#adm-offres .cnt-ligne').allInnerTexts()).every(t => /emboutissage/i.test(t)));
+  // Supprimer demande confirmation ; « Annuler » garde l'offre
+  await s.page.locator('#adm-offres .cnt-ligne .cnt-suppr').first().click();
+  await s.page.waitForSelector('.modal');
+  assert.match(await s.page.locator('.modal').innerText(), /Supprimer cette offre \?/);
+  await s.page.locator('.modal button', { hasText: 'Annuler' }).click(); await s.page.waitForTimeout(200);
+  assert.ok(await s.page.locator('#adm-offres .cnt-ligne').count() >= 1);
+  // Les autres sortes : un onglet chacune, son adresse, ses lignes
+  for (const k of ['demandes', 'questions', 'mentorats', 'evenements']) {
+    await s.page.click('#cnt-tab-' + k); await s.page.waitForTimeout(150);
+    assert.equal(await s.page.evaluate(() => location.hash), '#admin/contenus/' + k);
+    assert.equal(await s.page.getAttribute('#cnt-tab-' + k, 'aria-selected'), 'true');
+    assert.ok(await s.page.locator(`#adm-${k} .cnt-ligne`).count() >= 1, `${k} : des lignes`);
+  }
+  // Un événement à venir s'annule (les inscrits sont prévenus) et se rétablit
+  const ev = s.page.locator('#adm-evenements .cnt-ligne[data-statut="avenir"]').first();
+  const evId = await ev.getAttribute('data-id');
+  await ev.locator('button', { hasText: 'Annuler l’événement' }).click();
+  await s.page.locator('.modal button', { hasText: 'Annuler l’événement' }).click(); await s.page.waitForTimeout(300);
+  const evLigne = s.page.locator(`#adm-evenements .cnt-ligne[data-id="${evId}"]`);
+  assert.equal(await evLigne.getAttribute('data-statut'), 'annule');
+  await evLigne.locator('button', { hasText: 'Rétablir' }).click(); await s.page.waitForTimeout(300);
+  assert.equal(await evLigne.getAttribute('data-statut'), 'avenir');
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('administration · Contenus : retirer une demande se confirme (un match en cours s’arrête, et c’est dit) et ne se rouvre pas d’ici ; « En pause » : sans relance depuis 60 jours', async () => {
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 1280, langue });
+    await s.comme('Admin'); await s.aller('admin/contenus/demandes'); await s.page.waitForSelector('#adm-demandes');
+    // Une demande sans relance depuis 70 jours ; une autre en match (le lauréat a proposé, l'étudiante a accepté)
+    const prop = await s.page.evaluate(async vieux => {
+      const d = window.__demo;
+      await d.update('demandes', 'dm-00gy', { created_at: vieux, relancee_at: vieux });
+      const l = d.data.profiles.find(p => p.role === 'laureat' && p.verified);
+      const x = await d.insert('propositions', { demande_id: 'dm-00gx', laureat_id: l.id, message: 'Je peux t’aider.', status: 'envoyee' });
+      await d.update('propositions', x.id, { status: 'acceptee' });
+      return x.id;
+    }, new Date(Date.now() - 70 * 864e5).toISOString());
+    await s.page.waitForTimeout(300);
+    const ligne = id => s.page.locator(`#adm-demandes .cnt-ligne[data-id="${id}"]`);
+    assert.equal(await ligne('dm-00gy').getAttribute('data-statut'), 'pause', 'ouverte, mais sans relance depuis 60 jours');
+    assert.equal(await ligne('dm-00gx').getAttribute('data-statut'), 'match');
+    if (langue === 'fr') assert.deepEqual(await s.page.locator('.cnt-filtres .chip').allInnerTexts().then(l => l.map(t => t.replace(/\s+/g, ' '))), ['Tous 3', 'En pause 1', 'Match 1', 'Réussie 1']);
+    // Retirer le match : la fenêtre le dit, puis la demande est fermée, l'aide acceptée close, et rien ne la rouvre d'ici
+    await ligne('dm-00gx').locator('.k-gestes .btn.tonal').click(); await s.page.waitForSelector('.modal');
+    assert.match(await s.page.locator('.modal p').innerText(), langue === 'fr'
+      ? /^Retirer la demande « PFE en efficacité énergétique industrielle » \? Elle ne sera plus proposée aux lauréats, et le match en cours s’arrête\.$/
+      : /^سحب الطلب «.*PFE en efficacité énergétique industrielle.*»؟ لن يُقترح على الخريجين بعد الآن، وسيتوقف التوافق الجاري\.$/);
+    await s.page.locator('.modal .btn.danger').click(); await s.page.waitForTimeout(300);
+    assert.match(await s.page.locator('.toast').last().innerText(), langue === 'fr' ? /Demande retirée\./ : /سُحب الطلب\./);
+    assert.equal(await ligne('dm-00gx').getAttribute('data-statut'), 'fermee');
+    assert.equal(await ligne('dm-00gx').locator('.k-gestes .btn.tonal').count(), 0, 'pas de « Rouvrir » : seul l’auteur rouvre sa demande');
+    assert.deepEqual(await s.page.evaluate(id => [window.__demo.byId('demandes', 'dm-00gx').status, window.__demo.byId('propositions', id).status], prop), ['fermee', 'close']);
+    // La demande en pause se retire aussi ; « Annuler » la garde
+    await ligne('dm-00gy').locator('.k-gestes .btn.tonal').click(); await s.page.waitForSelector('.modal');
+    if (langue === 'fr') assert.match(await s.page.locator('.modal p').innerText(), /^Retirer la demande « Stage d’été de 4A en productio.* » \? Elle ne sera plus proposée aux lauréats\.$/);
+    await s.page.locator('.modal .btn.ghost').click(); await s.page.waitForTimeout(200);
+    assert.equal(await ligne('dm-00gy').getAttribute('data-statut'), 'pause');
+    if (langue === 'ar') assert.deepEqual((await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x)), [], 'tout traduit');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('administration · sur ordinateur, aucun filtre ne se cache au bout de sa rangée (À traiter, Membres, Contenus) ; sur téléphone, chaque cible de l’objectif a toute la largeur', async () => {
+  const s = await ouvrir({ largeur: 1280 });
+  await s.comme('Admin');
+  for (const [route, rangee] of [['admin/traiter', '.tt-filtres'], ['admin/membres', '.cs-puces'], ['admin/contenus/mentorats', '.cnt-filtres']]) {
+    await s.aller(route); await s.page.waitForSelector(rangee);
+    const r = await s.page.locator(rangee).evaluate(l => { const b = l.getBoundingClientRect(); return { defile: l.scrollWidth > l.clientWidth + 1, caches: [...l.children].filter(c => { const x = c.getBoundingClientRect(); return x.left < b.left - 1 || x.right > b.right + 1; }).length }; });
+    assert.deepEqual(r, { defile: false, caches: 0 }, `${route} : toutes les puces se voient`);
+  }
+  // Les lauréats proposés pour une demande : chaque « Écrire » dit à qui
+  await s.aller('admin/traiter/demandes');
+  await s.page.locator('.tt-item[data-cat="demandes"] .tt-ouvrir').first().click(); await s.page.waitForTimeout(200);
+  const n = await s.page.locator('.tt-aidants > li').count();
+  assert.equal(await s.page.locator('.tt-detail .tt-sous-t').innerText(), ['Un lauréat qui peut aider', 'Deux lauréats qui peuvent aider', 'Trois lauréats qui peuvent aider'][n - 1]);
+  for (const li of await s.page.locator('.tt-aidants > li').all()) {
+    const prenom = (await li.locator('.person-name').innerText()).split(' ')[0];
+    assert.equal(await li.locator('.msg-btn').getAttribute('aria-label'), `Écrire à ${prenom}`);
+  }
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  const t = await ouvrir({ largeur: 390 });
+  await t.comme('Admin'); await t.aller('admin'); await t.page.waitForSelector('#adm-objectif .cs-obj li');
+  const lignes = await t.page.locator('#adm-objectif .cs-obj').evaluate(u => { const w = u.getBoundingClientRect().width; return [...u.children].map(li => Math.round(li.getBoundingClientRect().width - w) === 0 && li.querySelector('.cs-obj-bar').getBoundingClientRect().width > w - 2); });
+  assert.ok(lignes.length === 4 && lignes.every(Boolean), 'quatre cibles, chacune et sa barre sur toute la largeur');
+  assert.equal(await t.debordement(), 0);
+  assert.deepEqual(t.erreurs, []);
+  await t.ctx.close();
+});
+
+// ---------------------------------------------------------------------------
+// Console d'administration : rubriques Animer, Écoles, Partenaires, Affiches et rapport
+// (routes admin/animer, admin/ecoles, admin/partenaires, admin/outils, branchées par la console)
+// ---------------------------------------------------------------------------
+const RUBRIQUES_OUTILS = [['admin/animer', '#adm-resume'], ['admin/ecoles', '#ec-suivi'], ['admin/partenaires', '#pa-suivi'], ['admin/outils', '#ou-affiche .af-qr svg']];
+
+for (const [largeur, langue, theme] of [[1280, 'fr', 'light'], [390, 'ar', 'dark']]) {
+  test(`console · Animer, Écoles, Partenaires, Affiches et rapport : sans erreur, débordement ni problème relevé par axe${langue === 'ar' ? ', sans texte oublié en français' : ''} (${largeur} px, ${langue}, ${theme})`, async () => {
+    const s = await ouvrir({ largeur, langue, theme });
+    await s.comme('Admin');
+    const problemes = [], oublis = new Map();
+    const lireOublis = async ou => { for (const x of await s.page.evaluate(() => { const m = [...(window.__ensamMissing || [])]; window.__ensamMissing?.clear(); return m; })) if (!oublis.has(x)) oublis.set(x, ou); };
+    // Le même audit axe que pour les autres écrans (les fondus terminés avant de mesurer les contrastes)
+    const auditer = async ou => {
+      if (!(await s.page.evaluate(() => !!window.axe))) await s.page.addScriptTag({ content: AXE });
+      await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* animation sans fin */ } }));
+      const v = await s.page.evaluate(async () => (await axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'best-practice'] }, resultTypes: ['violations'] }))
+        .violations.map(x => `${x.id} : ${x.nodes.slice(0, 2).map(n => n.target.join(' ')).join(' ; ')}`));
+      for (const x of v) problemes.push(`${ou} · ${x}`);
+    };
+    const verifier = async ou => {
+      const d = await s.debordement(); if (d > 0) problemes.push(`${ou} : ${d} px de trop en largeur`);
+      if (langue === 'ar') await lireOublis(ou);
+      await auditer(ou);
+    };
+    for (const [route, pret] of RUBRIQUES_OUTILS) { await s.aller(route); await s.page.waitForSelector(pret); await s.page.waitForTimeout(150); await verifier(route); }
+    // Ce qui s'ouvre : la fiche du suivi (école, partenaire), la création d'une école, le mode événement
+    await s.aller('admin/ecoles'); await s.page.click('#ec-suivi-ajouter'); await s.page.waitForSelector('#sv-nom'); await verifier('fiche école'); await s.fermer();
+    await s.page.click('#ec-creer'); await s.page.waitForSelector('#ec-nom'); await verifier('créer une école'); await s.fermer();
+    await s.aller('admin/partenaires'); await s.page.click('#pa-suivi-ajouter'); await s.page.waitForSelector('#sv-formule'); await verifier('fiche partenaire'); await s.fermer();
+    await s.aller('admin/outils'); await s.page.waitForSelector('#ou-ev-ouvrir:not([disabled])');
+    await s.page.click('#ou-ev-ouvrir'); await s.page.waitForSelector('#ou-ev-ecran'); await verifier('mode événement');
+    await s.page.keyboard.press('Escape'); await s.page.waitForSelector('#ou-ev-ecran', { state: 'detached' });
+    if (langue === 'ar') for (const [x, ou] of oublis) if (!ecritParUnMembre(x)) problemes.push(`${ou} : texte non traduit ${JSON.stringify(x)}`);
+    assert.deepEqual([...s.erreurs, ...problemes], []);
+    await s.ctx.close();
+  });
+}
+
+test('console · Animer : « Copier » met le message dans le presse-papiers, WhatsApp s’ouvre à part ; le merci ne cite que les prénoms cochés, gardés pour la semaine', async () => {
+  const s = await ouvrir();
+  await s.ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await s.comme('Admin'); await s.aller('admin/animer'); await s.page.waitForSelector('#adm-resume');
+  // Le résumé pour une promo d'étudiants : copié tel qu'affiché
+  await s.page.locator('#adm-resume-pour .chip').nth(1).click(); await s.page.waitForTimeout(150);
+  const texte = await s.page.inputValue('#adm-resume textarea');
+  assert.match(texte, /^✅ Cette semaine pour la promo \d{4} \(5A\)/);
+  await s.page.click('#adm-resume .adm-copier'); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.evaluate(() => navigator.clipboard.readText()), texte);
+  const wa = s.page.locator('#adm-resume .adm-wa');
+  assert.equal(await wa.getAttribute('href'), 'https://wa.me/?text=' + encodeURIComponent(texte));
+  assert.equal(await wa.getAttribute('target'), '_blank');
+  assert.match(await wa.getAttribute('rel'), /noopener/);
+  // En arabe, le texte arabe
+  await s.page.locator('#adm-resume-langue button[lang="ar"]').click(); await s.page.waitForTimeout(150);
+  assert.match(await s.page.inputValue('#adm-resume textarea'), /هذا الأسبوع/);
+  // Merci : rien de coché, pas de prénom ; une case cochée, son prénom seulement ; la case reste cochée après un rechargement
+  const merci = () => s.page.inputValue('#adm-merci textarea');
+  assert.match(await merci(), /^🙏 Merci aux lauréats qui ont aidé cette semaine !/);
+  const ligne = s.page.locator('#adm-merci-liste li').first();
+  const prenom = (await ligne.locator('.person-name').innerText()).trim().split(/\s+/)[0];
+  await ligne.locator('.adm-ok input').check(); await s.page.waitForTimeout(150);
+  assert.match(await merci(), new RegExp(`^🙏 Merci à ${prenom} !`));
+  await s.page.reload(); await s.page.waitForSelector('#persona'); await s.comme('Admin'); await s.aller('admin/animer'); await s.page.waitForSelector('#adm-merci-liste');
+  assert.equal(await s.page.locator('#adm-merci-liste li').first().locator('.adm-ok input').isChecked(), true);
+  assert.match(await merci(), new RegExp(`^🙏 Merci à ${prenom} !`));
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('console · Écoles : « Ouvrir le réseau » reste grisé tant que les trois conditions du suivi ne sont pas cochées ; l’ouverture et la fermeture se confirment', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin'); await s.aller('admin/ecoles'); await s.page.waitForSelector('#ec-reseaux');
+  // Le réseau d'origine ne se ferme pas
+  assert.equal(await s.page.locator('.ec-reseau[data-slug="ensam-meknes"] .ec-fermer').count(), 0);
+  // Créer l'école (fermée) : l'identifiant vient du nom
+  await s.page.click('#ec-creer'); await s.page.fill('#ec-nom', 'Institut exemple');
+  assert.equal(await s.page.inputValue('#ec-slug'), 'institut-exemple');
+  await s.page.click('#ec-creer-ok');
+  const carte = s.page.locator('.ec-reseau[data-slug="institut-exemple"]');
+  await carte.waitFor();
+  assert.match(await carte.innerText(), /Fermé/);
+  const ouvrirBtn = s.page.locator('#ec-ouvrir-institut-exemple');
+  assert.equal(await ouvrirBtn.isDisabled(), true);
+  assert.equal(await s.page.locator('#ec-manque-institut-exemple li.ok').count(), 2, 'deux conditions sur trois dans la démo');
+  // La troisième condition (dossier CNDP), cochée dans le suivi de l'école
+  const suivi = s.page.locator('#ec-suivi .sv-carte', { hasText: 'Institut exemple' }).first();
+  const cndp = suivi.locator('.sv-check').nth(2);
+  assert.equal(await cndp.getAttribute('aria-checked'), 'false');
+  await cndp.click(); await s.page.waitForTimeout(200);
+  assert.equal(await suivi.locator('.sv-check').nth(2).getAttribute('aria-checked'), 'true');
+  assert.equal(await ouvrirBtn.isDisabled(), false);
+  // Ouvrir : une confirmation, puis « Ouvert » ; le suivi passe à « Réseau ouvert »
+  await ouvrirBtn.click(); await s.page.waitForSelector('.modal-back:not(.sortie) .modal .row-end');
+  assert.match(await s.page.locator('.modal-back:not(.sortie) .modal').innerText(), /Ouvrir le réseau « Institut exemple » \?/);
+  await s.page.locator('.modal-back:not(.sortie) .modal .row-end .btn.primary').click(); await s.page.waitForTimeout(300);
+  assert.match(await carte.innerText(), /Ouvert/);
+  assert.equal(await s.page.locator('#ec-suivi .sv-col[data-etape="ouvert"] .sv-carte', { hasText: 'Institut exemple' }).count(), 1);
+  assert.match(await s.page.locator('#ec-suivi .sv-col[data-etape="ouvert"] .sv-col-t').innerText(), /Réseau ouvert/);
+  // Fermer : les membres gardent leur compte (le texte le dit), seules les nouvelles inscriptions sont bloquées
+  await carte.locator('.ec-fermer').click(); await s.page.waitForSelector('.modal-back:not(.sortie) .modal .row-end');
+  assert.match(await s.page.locator('.modal-back:not(.sortie) .modal').innerText(), /nouvelles inscriptions sont bloquées ; les membres déjà inscrits gardent leur compte/);
+  await s.page.locator('.modal-back:not(.sortie) .modal .row-end .btn:not(.ghost)').click(); await s.page.waitForTimeout(300);
+  assert.match(await carte.innerText(), /Fermé/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// Deux écoles dans la démo : la console d'une école créée dans la rubrique Écoles (« Institut exemple », son suivi déjà là)
+async function deuxiemeEcole(s, nom = 'Institut exemple') {
+  await s.aller('admin/ecoles'); await s.page.waitForSelector('#ec-reseaux');
+  await s.page.click('#ec-creer'); await s.page.fill('#ec-nom', nom); await s.page.click('#ec-creer-ok');
+  const reseau = s.page.locator('.ec-reseau', { hasText: nom }).first(); await reseau.waitFor();
+  await s.page.waitForSelector('#cs-ecole');
+  return reseau.getAttribute('data-slug');
+}
+
+test('console · deux écoles : le choix d’école (gardé et partagé avec Suivi) range l’annonce, la liste officielle, les cartes sponsorisées et les ambassadeurs ; l’identifiant d’une école qui a son réseau ne change plus', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin'); await s.aller('admin');
+  assert.equal(await s.page.locator('#cs-ecole').count(), 0, 'une seule école : pas de choix');
+  await deuxiemeEcole(s);
+  assert.deepEqual(await s.page.locator('#cs-ecole option').evaluateAll(os => os.map(o => o.value)), ['', 'ensam-meknes', 'institut-exemple']);
+  assert.equal(await s.page.inputValue('#cs-ecole'), '', 'toutes les écoles d’abord');
+  // L'identifiant de la fiche de suivi liée à ce réseau ne change plus ; celui d'une école sans réseau se corrige encore
+  const fiche = async nom => { await s.page.locator('#ec-suivi .sv-carte', { hasText: nom }).first().locator('.sv-modif').click(); await s.page.waitForSelector('#sv-slug'); };
+  await fiche('Institut exemple');
+  assert.equal(await s.page.locator('#sv-slug').evaluate(i => i.readOnly), true);
+  await s.page.locator('#sv-slug').press('End'); await s.page.keyboard.type('-2');
+  assert.equal(await s.page.inputValue('#sv-slug'), 'institut-exemple');
+  assert.match(await s.page.locator('.modal').innerText(), /il ne change plus/);
+  await s.fermer();
+  await fiche('École exemple');
+  assert.equal(await s.page.locator('#sv-slug').evaluate(i => i.readOnly), false);
+  await s.fermer();
+
+  // La console regarde l'Institut exemple : Animer, Partenaires, Affiches et les liens d'invitation disent que leurs textes
+  // sont ceux de l'ENSAM Meknès
+  await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.page.waitForTimeout(200);
+  for (const r of ['admin/animer', 'admin/partenaires', 'admin/outils', 'admin/inviter']) {
+    await s.aller(r);
+    assert.match(await s.page.locator('.cs-note-ecole').innerText(), /toujours ceux du Réseau ENSAM Meknès, quelle que soit l’école choisie/, r);
+  }
+  await s.aller('admin/agenda'); assert.equal(await s.page.locator('.cs-note-ecole').count(), 0);
+  // Sous « Toutes les écoles » aussi (ces chiffres ne couvrent que l'ENSAM Meknès) ; pas quand la console la regarde
+  await s.aller('admin/animer');
+  await s.page.selectOption('#cs-ecole', ''); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator('.cs-note-ecole').count(), 1);
+  await s.page.selectOption('#cs-ecole', 'ensam-meknes'); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator('.cs-note-ecole').count(), 0);
+  await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.page.waitForTimeout(200);
+  // Le rendez-vous du mois, prérempli, part pour l'école regardée
+  await s.page.click('#adm-rdv-ok'); await s.page.waitForSelector('#ev-titre');
+  assert.match(await s.page.inputValue('#ev-titre'), /Rendez-vous du mois/);
+  assert.match(await s.page.locator('#ev-ecole').innerText(), /École : Institut exemple/);
+  await s.fermer();
+  // « Publier un événement » de la barre latérale part, lui aussi, pour l'école que regarde la console, tant qu'elle est à l'écran
+  await s.aller('admin/agenda');
+  await s.page.click('.side-pub'); await s.page.waitForSelector('#ev-titre');
+  assert.match(await s.page.locator('#ev-ecole').innerText(), /École : Institut exemple/);
+  await s.page.fill('#ev-titre', 'Journée portes ouvertes de l’Institut'); await s.page.click('#ev-ok'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.evaluate(() => window.__demo.data.evenements.find(e => e.titre === 'Journée portes ouvertes de l’Institut')?.ecole), 'institut-exemple');
+  await s.aller('admin/agenda');
+  assert.match(await s.page.locator('.cs-main').innerText(), /Journée portes ouvertes de l’Institut/, 'dans l’agenda de la console, pour l’Institut');
+  // Hors de la console (l'accueil), le même bouton publie pour l'école de l'administration
+  await s.aller('accueil');
+  await s.page.click('.side-pub'); await s.page.waitForSelector('#ev-titre');
+  assert.equal(await s.page.locator('#ev-ecole').count(), 0, 'hors de la console : l’école de l’administration');
+  await s.fermer();
+
+  // L'annonce publiée pour l'Institut exemple reste la sienne
+  await s.aller('admin');
+  const annonce = s.page.locator('.cs-main .panel', { has: s.page.locator('#ann-txt, #ann-nouvelle') });
+  assert.match(await annonce.locator('h2').innerText(), /Annonce sur l’accueil\s+Institut exemple/);
+  if (await s.page.locator('#ann-nouvelle').count()) await s.page.click('#ann-nouvelle');
+  await s.page.fill('#ann-txt', 'Réunion de lancement du réseau à l’Institut exemple');
+  await s.page.locator('#ann-form .btn.primary').click(); await s.page.waitForTimeout(300);
+  assert.match(await annonce.innerText(), /Réunion de lancement du réseau/);
+  assert.equal(await s.page.evaluate(() => window.__demo.data.annonces.find(a => /Réunion de lancement/.test(a.texte))?.ecole), 'institut-exemple');
+  await s.page.selectOption('#cs-ecole', 'ensam-meknes'); await s.page.waitForTimeout(200);
+  assert.match(await annonce.locator('h2').innerText(), /ENSAM Meknès/);
+  assert.doesNotMatch(await annonce.innerText(), /Réunion de lancement/);
+
+  // Les défis d'une école, comptés sur ses données ; l'objectif du plan est celui de l'ENSAM Meknès
+  const defis = s.page.locator('.cs-main .panel', { has: s.page.locator('h2', { hasText: 'Défis de l’année' }) });
+  assert.equal(await s.page.locator('#adm-objectif').count(), 1);
+  await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator('#adm-objectif').count(), 0, 'pas d’objectif du plan pour une autre école');
+  assert.match(await defis.locator('h2').innerText(), /Institut exemple/);
+  await defis.locator('.section-head .btn').click(); await s.page.fill('#df-titre', 'Premier défi de l’Institut');
+  await defis.locator('form .btn.primary').click(); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.evaluate(() => window.__demo.data.defis.find(d => d.titre === 'Premier défi de l’Institut')?.ecole), 'institut-exemple');
+  assert.match(await defis.innerText(), /Premier défi de l’Institut · 0\/20/);
+  await s.page.selectOption('#cs-ecole', ''); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator('#adm-objectif').count(), 1);
+  assert.match(await defis.locator('h2').innerText(), /ENSAM Meknès/);
+  assert.doesNotMatch(await defis.innerText(), /Premier défi de l’Institut/, 'toutes les écoles : les défis de l’école de l’administration');
+
+  // La liste officielle d'une école ne se mêle pas à celle de l'autre ; elle n'entre qu'une fois l'école dans le dossier CNDP
+  await s.aller('admin'); await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.aller('admin/liste');
+  assert.match(await s.page.locator('.liste h2').first().innerText(), /Institut exemple/);
+  assert.match(await s.page.locator('.liste').innerText(), /Aucune liste importée pour l’instant/);
+  assert.match(await s.page.locator('#lo-cndp').innerText(), /ajoute-la au dossier CNDP/);
+  assert.equal(await s.page.locator('#lo-file').isDisabled(), true, 'pas d’import hors du dossier CNDP');
+  await s.page.click('#lo-cndp-ecoles'); await s.page.waitForSelector('#ec-suivi');
+  const suiviInstitut = s.page.locator('#ec-suivi .sv-carte', { hasText: 'Institut exemple' }).first();
+  await suiviInstitut.locator('.sv-check').nth(2).click(); await s.page.waitForTimeout(200);
+  assert.equal(await suiviInstitut.locator('.sv-check').nth(2).getAttribute('aria-checked'), 'true');
+  await s.aller('admin/liste');
+  assert.equal(await s.page.locator('#lo-cndp').count(), 0);
+  assert.equal(await s.page.locator('#lo-file').isDisabled(), false);
+  await s.page.setInputFiles('#lo-file', { name: 'institut.csv', mimeType: 'text/csv', buffer: Buffer.from('nom,prenom,email,promo\nEXEMPLE,Ilyas,ilyas@institut.example,2031\n') });
+  await s.page.click('#lo-go'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.lo-couv').innerText(), /Promo 2031/);
+  assert.equal(await s.page.evaluate(() => window.__demo.data.liste_officielle.find(l => l.promo === 2031)?.ecole), 'institut-exemple');
+  await s.page.selectOption('#cs-ecole', 'ensam-meknes'); await s.page.waitForTimeout(300);
+  assert.match(await s.page.locator('.liste h2').first().innerText(), /ENSAM Meknès/);
+  assert.doesNotMatch(await s.page.locator('.liste').innerText(), /Promo 2031/);
+
+  // Une carte sponsorisée : l'école regardée d'abord, ou toutes les écoles ; la ligne dit pour quelle école
+  await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.aller('admin/sponsorises');
+  await s.page.click('#sp-nouvelle'); await s.page.waitForSelector('#sp-ecole');
+  assert.deepEqual(await s.page.locator('#sp-ecole option').evaluateAll(os => os.map(o => o.value)), ['', 'ensam-meknes', 'institut-exemple']);
+  assert.equal(await s.page.inputValue('#sp-ecole'), 'institut-exemple');
+  await s.page.fill('#sp-ent', 'Atelier Exemple'); await s.page.fill('#sp-titre', 'Cours de langue pour l’Institut');
+  await s.page.fill('#sp-texte', 'Allemand et anglais pour les élèves ingénieurs, en soirée.'); await s.page.fill('#sp-lien', 'https://example.org/langues');
+  await s.page.click('#sp-enregistrer'); await s.page.waitForTimeout(300);
+  const id = await s.page.evaluate(() => window.__demo.data.sponsorises.find(x => x.titre === 'Cours de langue pour l’Institut')?.id);
+  assert.equal(await s.page.evaluate(i => window.__demo.data.sponsorises.find(x => x.id === i).ecole, id), 'institut-exemple');
+  assert.match(await s.page.locator(`.sp-ligne[data-id="${id}"] .sp-cible`).innerText(), /^Institut exemple · /);
+  assert.match(await s.page.locator('.sp-ligne[data-id="sp-demo-0001"] .sp-cible').innerText(), /^Toutes les écoles · /, 'la carte d’exemple, pour toutes les écoles');
+  await s.page.selectOption('#cs-ecole', 'ensam-meknes'); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator(`.sp-ligne[data-id="${id}"]`).count(), 0);
+  assert.equal(await s.page.locator('.sp-ligne[data-id="sp-demo-0001"]').count(), 1);
+
+  // Ambassadeurs : « Proposer maintenant » ne vaut que pour l'école de l'administration
+  await s.aller('admin/inviter'); await s.page.waitForSelector('#amb-admin');
+  assert.equal(await s.page.locator('#amb-lancer').count(), 1);
+  await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.page.waitForTimeout(200);
+  assert.equal(await s.page.locator('#amb-lancer').count(), 0);
+
+  // Suivi : le même choix, gardé d'une page à l'autre (sans « Toutes les écoles » : une page Suivi montre une école)
+  await s.aller('suivi'); await s.page.waitForSelector('#suivi-ecole');
+  assert.deepEqual(await s.page.locator('#suivi-ecole option').evaluateAll(os => os.map(o => o.value)), ['ensam-meknes', 'institut-exemple']);
+  assert.equal(await s.page.inputValue('#suivi-ecole'), 'institut-exemple');
+  await s.page.selectOption('#suivi-ecole', 'ensam-meknes'); await s.page.waitForTimeout(200);
+  await s.aller('suivi/insertion'); await s.page.waitForSelector('#suivi-ecole');
+  assert.equal(await s.page.inputValue('#suivi-ecole'), 'ensam-meknes');
+  await s.aller('admin'); assert.equal(await s.page.inputValue('#cs-ecole'), 'ensam-meknes');
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('console · deux écoles en arabe (390 px) : le choix d’école, les rubriques, Suivi et la carte sponsorisée sont traduits ; rien ne dépasse', async () => {
+  const s = await ouvrir({ largeur: 390, langue: 'ar' });
+  await s.comme('Admin'); await deuxiemeEcole(s);
+  await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.page.waitForTimeout(200);
+  await s.page.evaluate(() => window.__ensamMissing?.clear());
+  const oublis = [];
+  const relever = async ou => { for (const x of await s.page.evaluate(() => { const m = [...(window.__ensamMissing || [])]; window.__ensamMissing?.clear(); return m; })) if (!ecritParUnMembre(x)) oublis.push(`${ou} : ${x}`); };
+  for (const r of [...RUBRIQUES_ADMIN, 'suivi', 'suivi/insertion']) {
+    await s.aller(r);
+    assert.equal(await s.debordement(), 0, `${r} : rien ne dépasse`);
+    await relever(r);
+  }
+  await s.aller('admin/sponsorises'); await s.page.click('#sp-nouvelle'); await s.page.waitForSelector('#sp-ecole');
+  await relever('admin/sponsorises · nouvelle carte');
+  await s.fermer();
+  // Un nom d'école long se coupe : la page ne défile pas de côté (console, Suivi)
+  const long = await deuxiemeEcole(s, 'Institut supérieur des sciences appliquées et des métiers de demain');
+  await s.page.selectOption('#cs-ecole', long); await s.page.waitForTimeout(200);
+  for (const r of ['admin', 'admin/liste', 'suivi', 'suivi/insertion']) { await s.aller(r); assert.equal(await s.debordement(), 0, `${r} : nom long, rien ne dépasse`); }
+  await relever('nom d’école long');
+  assert.deepEqual(oublis, [], 'tout traduit');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('console · Partenaires : la formule choisie remplit le montant ; le message à une entreprise se copie avec les vrais chiffres', async () => {
+  const s = await ouvrir();
+  await s.ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await s.comme('Admin'); await s.aller('admin/partenaires'); await s.page.waitForSelector('#pa-suivi');
+  await s.page.click('#pa-suivi-ajouter'); await s.page.waitForSelector('#sv-formule');
+  await s.page.fill('#sv-nom', 'Entreprise essai');
+  await s.page.selectOption('#sv-formule', 'partenaire'); await s.page.waitForTimeout(100);
+  assert.equal(await s.page.inputValue('#sv-montant'), '2500');
+  await s.page.click('#sv-ok'); await s.page.waitForTimeout(300);
+  assert.equal(await s.page.locator('#pa-suivi .sv-carte', { hasText: 'Entreprise essai' }).count(), 1);
+  // Les formules, avec leurs prix de départ ; jamais « saison » à l'écran
+  assert.match(await s.page.locator('#pa-formules').innerText(), /Campagne PFE[\s\S]*5\s000\sDH la campagne/);
+  assert.doesNotMatch(await s.page.locator('.adm-partenaires').innerText(), /saison/i);
+  await s.page.click('#pa-message .adm-copier'); await s.page.waitForTimeout(200);
+  const copie = await s.page.evaluate(() => navigator.clipboard.readText());
+  assert.equal(copie, await s.page.inputValue('#pa-message textarea'));
+  assert.match(copie, /label « Sponsorisé »/);
+  assert.match(copie, /une carte sponsorisée au plus toutes les 10 cartes/);
+  assert.match(copie, /\d+ lauréats et \d+ étudiants de 3e, 4e et 5e année/);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('console · Affiches et rapport : l’affiche et le rapport s’impriment seuls sur une page A4 ; le mode événement plein écran se ferme avec Échap', async () => {
+  const s = await ouvrir();
+  await s.ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await s.comme('Admin'); await s.aller('admin/outils'); await s.page.waitForSelector('#ou-affiche .af-qr svg');
+  // Le lien de l'affiche : la page de la promo
+  await s.page.click('#ou-affiche-lien'); await s.page.waitForTimeout(150);
+  assert.match(await s.page.evaluate(() => navigator.clipboard.readText()), /^http:\/\/127\.0\.0\.1:\d+\/promo\/\d{4}\/$/);
+  assert.match(await s.page.locator('#ou-affiche .af-url').innerText(), /^127\.0\.0\.1:\d+\/promo\/\d{4}$/);
+  // Impression : window.print est remplacé pour garder la copie en place, puis la page imprimée est vérifiée
+  await s.page.evaluate(() => { window.print = () => { window.__imprime = (window.__imprime || 0) + 1; }; });
+  const pagesPDF = async () => { const pdf = (await s.page.pdf({ preferCSSPageSize: true, printBackground: true })).toString('latin1'); return { pages: (pdf.match(/\/Type\s*\/Page[^s]/g) || []).length, a4: /\/MediaBox\s*\[\s*0 0 59[45]\.\d+ 84[12]\.\d+\s*\]/.test(pdf) }; };
+  await s.page.click('#ou-affiche-imprimer');
+  assert.equal(await s.page.evaluate(() => window.__imprime), 1);
+  await s.page.emulateMedia({ media: 'print' });
+  const affiche = await s.page.evaluate(() => ({
+    classe: document.body.classList.contains('print-affiche'), app: getComputedStyle(document.getElementById('app')).display,
+    copies: document.querySelectorAll('.adm-impression').length, qr: !!document.querySelector('.adm-impression .af-qr svg path'),
+    largeur: Math.round(document.querySelector('.adm-impression .affiche').getBoundingClientRect().width), ids: document.querySelectorAll('.adm-impression [id]').length,
+  }));
+  assert.deepEqual(affiche, { classe: true, app: 'none', copies: 1, qr: true, largeur: 794, ids: 0 });
+  assert.deepEqual(await pagesPDF(), { pages: 1, a4: true });
+  await s.page.emulateMedia({ media: null }); // (« screen » ferait imprimer le PDF suivant avec le style de l'écran)
+  // Le rapport : une seule copie à la fois, une page A4, sans aucun nom de membre
+  await s.page.click('#ou-rapport-imprimer');
+  assert.equal(await s.page.locator('.adm-impression').count(), 1);
+  assert.equal(await s.page.locator('.adm-impression .rp-feuille').count(), 1);
+  const rapport = await s.page.locator('.adm-impression .rp-feuille').evaluate(x => x.textContent);
+  const noms = await s.page.evaluate(() => window.__demo.data.profiles.map(p => p.full_name));
+  assert.deepEqual(noms.filter(n => rapport.includes(n)), []);
+  assert.match(rapport, /Initiative de lauréats, indépendante de l’administration de l’école\./);
+  assert.deepEqual(await pagesPDF(), { pages: 1, a4: true });
+  // Après l'impression (afterprint), la copie s'en va
+  await s.page.waitForSelector('.adm-impression', { state: 'detached' });
+  assert.equal(await s.page.evaluate(() => document.body.classList.contains('print-adm')), false);
+  // Le graphique : une série, un titre par semaine, le tableau des valeurs pour les lecteurs d'écran
+  assert.equal(await s.page.locator('#ou-rapport .rp-colonnes').first().getAttribute('role'), 'img');
+  assert.equal(await s.page.locator('#ou-rapport .rp-graphe').first().locator('title').count(), 12);
+  assert.equal(await s.page.locator('#ou-rapport .rp-graphe').first().locator('table.sr-only tbody tr').count(), 12);
+  // Mode événement : plein écran, focus sur « Fermer », Échap rend la main au bouton
+  await s.page.click('#ou-ev-ouvrir'); await s.page.waitForSelector('#ou-ev-ecran .ev-qr svg');
+  // Le focus passe sur « Fermer » juste après l'affichage de l'écran (l'effet suit le premier dessin)
+  await s.page.waitForFunction(() => document.activeElement?.id === 'ou-ev-fermer', null, { timeout: 2000 });
+  assert.match(await s.page.locator('#ou-ev-ecran .ev-n').innerText(), /^\d+$/);
+  await s.page.keyboard.press('Escape'); await s.page.waitForSelector('#ou-ev-ecran', { state: 'detached' });
+  await s.page.waitForTimeout(100);
+  assert.equal(await s.page.evaluate(() => document.activeElement?.id), 'ou-ev-ouvrir');
+  // En quittant la rubrique, une copie restée là (impression annulée sans afterprint) disparaît aussi
+  await s.page.click('#ou-rapport-imprimer');
+  assert.equal(await s.page.locator('.adm-impression').count(), 1);
+  await s.aller('admin/animer');
+  assert.equal(await s.page.locator('.adm-impression').count(), 0);
+  assert.equal(await s.page.evaluate(() => document.body.classList.contains('print-adm')), false);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+test('console · Visuels des réussites : téléchargement seulement après l’accord des deux, image PNG aux bonnes dimensions', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin'); await s.aller('admin/outils'); await s.page.waitForSelector('#ou-visuels .ou-vis-toile');
+  const boutons = s.page.locator('#ou-visuels .ou-vis-dl');
+  assert.equal(await boutons.count(), 2);
+  for (let i = 0; i < 2; i++) assert.equal(await boutons.nth(i).isDisabled(), true);
+  const cases = s.page.locator('#ou-vis-accords .adm-ok input');
+  const n = await cases.count();
+  assert.ok(n >= 1 && n <= 2);
+  await cases.first().check(); await s.page.waitForTimeout(100);
+  if (n === 2) assert.equal(await boutons.first().isDisabled(), true, 'un seul accord ne suffit pas');
+  for (let i = 0; i < n; i++) await cases.nth(i).check();
+  await s.page.waitForFunction(() => [...document.querySelectorAll('#ou-visuels .ou-vis-dl')].every(b => !b.disabled));
+  for (const [format, w, h] of [['carre', 1080, 1080], ['paysage', 1200, 627]]) {
+    const [dl] = await Promise.all([s.page.waitForEvent('download'), s.page.click(`#ou-visuels .ou-vis-${format} .ou-vis-dl`)]);
+    assert.match(dl.suggestedFilename(), new RegExp(`^reussite-[a-z0-9-]+-${w}x${h}\\.png$`));
+    const png = fs.readFileSync(await dl.path());
+    assert.equal(png.toString('latin1', 1, 4), 'PNG');
+    assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [w, h]);
+  }
+  // Les cases restent cochées pour ce recrutement (gardées sur l'appareil)
+  await s.aller('admin/animer'); await s.aller('admin/outils'); await s.page.waitForSelector('#ou-vis-accords');
+  assert.equal(await s.page.locator('#ou-vis-accords .adm-ok input:checked').count(), n);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
 });
