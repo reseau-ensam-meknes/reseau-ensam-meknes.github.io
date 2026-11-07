@@ -7125,6 +7125,52 @@ test('iPad (iPadOS, qui se présente comme un Mac) : les feuilles disent « iPad
   await i.ctx.close();
 });
 
+// L'application installée sur l'iPad (démo 'off') : les notifications y sont possibles, chaque phrase nomme l'iPad
+test('iPad, application installée : la feuille d’ouverture, la ligne « Me prévenir » et Mon profil disent « iPad », jamais « téléphone » ; en arabe aussi', async () => {
+  const s = await prevenirSur(null, { ua: SAFARI_IPADOS });
+  await ecranTactile(s.ctx);
+  await s.page.setViewportSize({ width: 820, height: 1180 });
+  await s.page.evaluate(() => localStorage.setItem('ensam-prevenir-demo', 'off')); await recharger(s);
+  await attendreOuverture(s);
+  const t = await s.page.locator(ouverture).innerText();
+  assert.match(t, /^Reçois l’essentiel sur ton iPad/);
+  assert.doesNotMatch(t, /téléphone/);
+  await s.page.click('#ouv-tard'); await s.page.waitForTimeout(300);
+  // La ligne « Me prévenir » dans Messages (Youssef, dont la feuille a été rangée hier)
+  await refuseeHier(s, 'Youssef');
+  await ecrireA(s, 'u-0006', 'Bonjour Rania, tu cherches toujours un stage pour cet été ?');
+  await s.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+  assert.equal(await s.page.locator('.pv-ligne .pv-l-txt').innerText(), 'Sa réponse peut arriver sur cet iPad, même application fermée · Activer');
+  // Mon profil, une fois activées
+  await s.aller('profil/notifications');
+  await s.page.click('#md-push-oui'); await s.page.waitForSelector('#md-push-compte');
+  assert.match(await s.page.locator('#md-push-compte').innerText(), /^Cet iPad reçoit les notifications de ce compte\./);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En arabe
+  const a = await prevenirSur(null, { ua: SAFARI_IPADOS, langue: 'ar' });
+  await ecranTactile(a.ctx);
+  await a.page.setViewportSize({ width: 820, height: 1180 });
+  await a.page.evaluate(() => localStorage.setItem('ensam-prevenir-demo', 'off')); await recharger(a);
+  await attendreOuverture(a);
+  const ta = await a.page.locator(ouverture + ' h2').innerText();
+  assert.match(ta, /iPad/);
+  assert.doesNotMatch(await a.page.locator(ouverture).innerText(), /هاتف/);
+  await a.page.click('#ouv-tard'); await a.page.waitForTimeout(300);
+  await refuseeHier(a, 'Youssef');
+  await ecrireA(a, 'u-0006', 'مرحبا');
+  await a.page.waitForSelector('.pv-ligne', { timeout: 5000 });
+  assert.match(await a.page.locator('.pv-ligne .pv-l-txt').innerText(), /iPad/);
+  await a.aller('profil/notifications');
+  await a.page.click('#md-push-oui'); await a.page.waitForSelector('#md-push-compte');
+  const ca = await a.page.locator('#md-push-compte').innerText();
+  assert.match(ca, /iPad/);
+  assert.doesNotMatch(ca, /هاتف/);
+  assert.deepEqual(latinRestant(ca + ' ' + ta, ['iPad']), []);
+  assert.deepEqual(a.erreurs, []);
+  await a.ctx.close();
+});
+
 const CATEGORIES = ['messages', 'match', 'demandes', 'candidatures', 'mentorat', 'offres', 'reseau', 'rappels'];
 const TOUT_DECOCHE = Object.fromEntries(CATEGORIES.map(c => [c, false]));
 

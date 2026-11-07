@@ -398,7 +398,7 @@ export function PushToggle({ ctx }) {
   }[st];
   return html`<div class="push-etat" data-etat=${st} ref=${ici}>
     ${st === 'on' ? html`<p class="verify-ok push-ok" id="md-push-ok"><${Icon} name="check" size=${18}/> Activées sur cet appareil</p>
-      <p class="small muted" id="md-push-compte">${surTelephone() ? UN_COMPTE.tel : UN_COMPTE.pc}</p>
+      <p class="small muted" id="md-push-compte">${UN_COMPTE[appareilIci()]}</p>
       <div class="push-acts">${simule ? null : html`<button type="button" class="btn small" id="md-push-test" disabled=${busy} onClick=${test}>Tester</button>`}
         <button type="button" class="btn small ghost" id="md-push-non" disabled=${busy} onClick=${() => { garderFocus.current = true; turnOff(); }}>Désactiver</button></div>`
     : st === 'off' ? html`<p class="small muted">${PUSH_POURQUOI}</p>
@@ -418,10 +418,12 @@ const NOTE_ABSENT = 'Ce navigateur ne permet pas les notifications. Essaie Chrom
 // Un téléphone ne sert qu'un compte : le dernier connecté (abonner_push). Se déconnecter le retire de ce compte.
 const UN_COMPTE = {
   tel: 'Ce téléphone reçoit les notifications de ce compte. Si un autre compte s’y connecte, c’est lui qui les recevra.',
+  ipad: 'Cet iPad reçoit les notifications de ce compte. Si un autre compte s’y connecte, c’est lui qui les recevra.',
   pc: 'Cet ordinateur reçoit les notifications de ce compte. Si un autre compte s’y connecte, c’est lui qui les recevra.',
 };
 addAR({
   [UN_COMPTE.tel]: 'يتلقى هذا الهاتف إشعارات هذا الحساب. إذا سُجّل الدخول عليه بحساب آخر، فهو من سيتلقاها.',
+  [UN_COMPTE.ipad]: 'يتلقى جهاز iPad هذا إشعارات هذا الحساب. إذا سُجّل الدخول عليه بحساب آخر، فهو من سيتلقاها.',
   [UN_COMPTE.pc]: 'يتلقى هذا الحاسوب إشعارات هذا الحساب. إذا سُجّل الدخول عليه بحساب آخر، فهو من سيتلقاها.',
 });
 const DIAG_RECUE = 'Reçue par cet appareil. Rien dans la barre de notifications ? Dans les réglages du téléphone, autorise les notifications de ton navigateur et retire-le de l’économie de batterie.';
@@ -942,8 +944,8 @@ if (typeof document !== 'undefined') {
 }
 // La phrase vraie pour ce fil (sur un ordinateur, c'est lui qu'« Activer » abonne), puis le geste
 const LIGNE = {
-  message: { tel: 'Sa réponse peut arriver sur ce téléphone, même application fermée', pc: 'Sa réponse peut arriver sur cet ordinateur, même onglet fermé' },
-  match: { tel: 'Une notification arrive dès qu’un intérêt est réciproque', pc: 'Une notification arrive dès qu’un intérêt est réciproque' },
+  message: { tel: 'Sa réponse peut arriver sur ce téléphone, même application fermée', ipad: 'Sa réponse peut arriver sur cet iPad, même application fermée', pc: 'Sa réponse peut arriver sur cet ordinateur, même onglet fermé' },
+  match: { tel: 'Une notification arrive dès qu’un intérêt est réciproque', ipad: 'Une notification arrive dès qu’un intérêt est réciproque', pc: 'Une notification arrive dès qu’un intérêt est réciproque' },
 };
 const LIGNE_GESTE = { activer: 'Activer', ios: 'Comment faire', debloquer: 'Débloquer' };
 const LIGNE_X = { message: 'Ne plus le proposer dans cette conversation', match: 'Ne plus le proposer ici' };
@@ -1033,7 +1035,7 @@ export function LignePrevenir({ ctx, raison = 'message', fil = null, attente = t
   const txt = LIGNE[raison] || LIGNE.message;
   return html`<div class="pv-ligne" ref=${ici} data-sorte=${sorte} data-raison=${raison}>
       <span class="pv-l-ico" aria-hidden="true"><${Icon} name=${sorte === 'debloquer' ? 'lock' : 'bell'} size=${16}/></span>
-      <p class="pv-l-txt">${surTelephone() ? txt.tel : txt.pc}<span aria-hidden="true"> · </span><button type="button" class="linkish pv-l-go" id="pv-ligne-go" disabled=${busy} onClick=${agir}>${LIGNE_GESTE[sorte]}</button></p>
+      <p class="pv-l-txt">${txt[appareilIci()]}<span aria-hidden="true"> · </span><button type="button" class="linkish pv-l-go" id="pv-ligne-go" disabled=${busy} onClick=${agir}>${LIGNE_GESTE[sorte]}</button></p>
       <button type="button" class="icon-btn small pv-l-x" id="pv-ligne-x" aria-label=${LIGNE_X[raison] || LIGNE_X.message} onClick=${masquer}><${Icon} name="x" size=${15}/></button>
     </div>${feuille}`;
 }
@@ -1068,6 +1070,7 @@ addAR({
   [TITRE_RAISON.match]: 'هل نُعلمك عند حدوث توافق؟',
   [TITRE_RAISON.offre]: 'هل نُعلمك بالترشيحات؟',
   [LIGNE.message.tel]: 'قد يصلك الرد على هذا الهاتف، حتى والتطبيق مغلق',
+  [LIGNE.message.ipad]: 'قد يصلك الرد على جهاز iPad هذا، حتى والتطبيق مغلق',
   [LIGNE.message.pc]: 'قد يصلك الرد على هذا الحاسوب، حتى وعلامة التبويب مغلقة',
   [LIGNE.match.tel]: 'يصلك إشعار بمجرد أن يكون الاهتمام متبادلًا',
   'Comment faire': 'كيف أفعل ذلك', 'Débloquer': 'إلغاء الحظر',
@@ -1089,10 +1092,11 @@ const OUV_DELAI = 3000, OUV_ESSAI = 2500, OUV_FIN = 30000, OUV_ABSENCE = 3600e3;
 // Page servie par le service worker : une nouvelle version peut la recharger pendant ses premières secondes
 // (suivreMisesAJour) ; la feuille attend la fin de cette fenêtre. Ce qu'il reste à attendre, en millisecondes.
 const attenteMaj = () => (navigator.serviceWorker?.controller ? FENETRE_MAJ + 500 - (Date.now() - ouverture) : 0);
-// Un téléphone ou une tablette : la feuille parle de « ton téléphone » ; sur un ordinateur, de cet ordinateur (c'est lui
-// qu'« Activer » abonne)
+// Un téléphone ou une tablette : la feuille parle de « ton téléphone » (de « ton iPad » sur un iPad, comme pourIos) ; sur un
+// ordinateur, de cet ordinateur (c'est lui qu'« Activer » abonne). Même choix pour Mon profil et la ligne « Me prévenir ».
 const surTelephone = () => isIOS() || /android|mobile/i.test(navigator.userAgent);
-const OUV_TITRE = { tel: 'Reçois l’essentiel sur ton téléphone', pc: 'Reçois l’essentiel sur cet ordinateur' };
+const appareilIci = () => (surIPad() ? 'ipad' : surTelephone() ? 'tel' : 'pc');
+const OUV_TITRE = { tel: 'Reçois l’essentiel sur ton téléphone', ipad: 'Reçois l’essentiel sur ton iPad', pc: 'Reçois l’essentiel sur cet ordinateur' };
 // En train d'écrire (un champ de texte a le curseur) : la feuille attend
 const ecrit = el => !!el && (el.isContentEditable || el.tagName === 'TEXTAREA'
   || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'range', 'color', 'image'].includes(el.type)));
@@ -1139,7 +1143,7 @@ function FeuilleOuverture({ ctx, onClose }) {
   const activer = async () => { setBusy(true); if (await accepterNotif(store, me)) onClose(); else setBusy(false); };
   const pied = html`<button type="button" class="btn ghost" id="ouv-tard" onClick=${() => onClose()}>Plus tard</button>
     <button type="button" class="btn primary" id="ouv-oui" disabled=${busy} onClick=${activer}><${Icon} name="bell" size=${16}/> Activer</button>`;
-  return html`<${Modal} title=${surTelephone() ? OUV_TITRE.tel : OUV_TITRE.pc} cls="prevenir ouverture" onClose=${onClose} footer=${pied}>
+  return html`<${Modal} title=${OUV_TITRE[appareilIci()]} cls="prevenir ouverture" onClose=${onClose} footer=${pied}>
     <p>${OUV_INTRO}</p>
     ${points.length ? html`<ul class="ouv-points">${points.map(([cat, txt]) => html`<li key=${cat} data-cat=${cat}><span class="g-ico"><${Icon} name=${OUV_ICONES[cat]} size=${18}/></span> ${txt}</li>`)}</ul>` : null}
     <p class="small muted">${OUV_CHOIX}</p>
@@ -1260,6 +1264,7 @@ addAR({
   [NOTIF_RAISON.relecture]: 'بمجرد أن يراجع أحد الخريجين سيرتك الذاتية، يصلك إشعار على هذا الجهاز.',
   // Feuille d'ouverture
   [OUV_TITRE.tel]: 'الأهم يصلك على هاتفك',
+  [OUV_TITRE.ipad]: 'الأهم يصلك على iPad الخاص بك',
   [OUV_TITRE.pc]: 'الأهم يصلك على هذا الحاسوب',
   'Tu choisis quoi recevoir dans « Mon profil ». Pas de publicité.': 'تختار ما يصلك من «ملفي الشخصي». لا إعلانات.',
   [OUV_INTRO]: 'ما يخصك يصلك فورًا، حتى والتطبيق مغلق:',
