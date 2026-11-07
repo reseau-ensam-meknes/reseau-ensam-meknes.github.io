@@ -158,6 +158,30 @@ test('photos : les liens déjà obtenus partent avec la copie du compte, jamais 
   assert.equal(gardes.length, 400); assert.equal(gardes[0][0], 'u/50.jpg');
 });
 
+// La photo qu'on vient de choisir s'affiche par une adresse blob: (retenirPhoto), valable 5 h mais seulement dans cette page :
+// gardée avec la copie du compte, la page rouverte la reprenait (adresse morte) au lieu de demander un lien, et sa propre photo
+// laissait place aux initiales pendant 5 h
+test('photos : la photo qu’on vient de choisir (blob:) ne part pas avec la copie du compte ; son lien est redemandé', async () => {
+  const { photosPourCache, SupabaseStore } = await import('../../src/store.js');
+  const t = Date.UTC(2026, 10, 1, 12);
+  const m = new Map([['moi/photo-2.jpg', { url: 'blob:https://site.ma/1b2c', fin: t + 5 * 3600e3 }], ['u/d.jpg', { url: 'data:image/png;base64,AAA', fin: t + 3600e3 }],
+    ['u/e.jpg', { url: 'HTTPS://x/e?token=3', fin: t + 3600e3 }], ['u/f.jpg', { url: 'http://127.0.0.1:54321/storage/v1/object/sign/photos/u/f.jpg?token=4', fin: t + 3600e3 }]]);
+  assert.deepEqual(photosPourCache(m, t).map(([p]) => p), ['u/e.jpg', 'u/f.jpg']);
+  // Dans le magasin : la photo choisie s'affiche tout de suite, la copie ne la garde pas ; rouvert, le lien est redemandé
+  const s = new SupabaseStore({});
+  s.retenirPhoto('moi/photo-3.webp', new Blob([new Uint8Array([1, 2, 3])], { type: 'image/webp' }));
+  assert.match(s.photo('moi/photo-3.webp'), /^blob:/);
+  assert.deepEqual(photosPourCache(s.photosUrl), []);
+  const rouvert = new SupabaseStore({}); rouvert.photosUrl = new Map(photosPourCache(s.photosUrl));
+  let demandes = null; rouvert.liensPhotos = async paths => { demandes = paths; return { 'moi/photo-3.webp': 'https://x/moi/photo-3.webp?token=n' }; };
+  rouvert.emit = () => {};
+  assert.equal(rouvert.photo('moi/photo-3.webp'), null);
+  await new Promise(ok => setTimeout(ok, 60));
+  assert.deepEqual(demandes, ['moi/photo-3.webp']);
+  assert.equal(rouvert.photo('moi/photo-3.webp'), 'https://x/moi/photo-3.webp?token=n');
+  URL.revokeObjectURL(s.photosUrl.get('moi/photo-3.webp').url);
+});
+
 // ---------------------------------------------------------------------------
 // Données en deux temps (store.js) : d'abord l'accueil et la navigation, le reste juste après le premier affichage ;
 // un écran qui lit une table pas encore arrivée l'attend, puis tout est là comme avant

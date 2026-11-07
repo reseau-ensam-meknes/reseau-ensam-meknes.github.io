@@ -1272,8 +1272,10 @@ const ecrireCache = c => cacheFaire('readwrite', st => st.put(c, 'membre'));
 export const oublierCache = () => cacheFaire('readwrite', st => st.delete('membre'));
 // Photos de profil : les liens déjà obtenus (valables 6 h, gardés 5 h) vont avec la copie de ce compte ; au retour, les
 // visages s'affichent tout de suite (le service worker rend l'image gardée) au lieu d'attendre de nouveaux liens.
+// Seulement les liens du stockage (http, https) : jamais l'adresse blob: de la photo qu'on vient de choisir (retenirPhoto),
+// qui ne vaut que pour cette page (rouverte, sa propre photo laissait place aux initiales pendant 5 h).
 // Les images elles-mêmes (cache « photos-v1 » de sw.js) sont effacées quand on se déconnecte soi-même.
-export const photosPourCache = (m, maintenant = Date.now()) => [...(m || [])].filter(([p, v]) => p && v?.url && v.fin > maintenant + 300e3).slice(-400);
+export const photosPourCache = (m, maintenant = Date.now()) => [...(m || [])].filter(([p, v]) => p && /^https?:\/\//i.test(v?.url || '') && v.fin > maintenant + 300e3).slice(-400);
 const oublierPhotos = () => { try { globalThis.caches?.delete('photos-v1').catch(() => {}); } catch { /* stockage indisponible */ } };
 
 // Brouillons (message en cours, demande, offre, question…) : gardés sur l'appareil pour ce compte, même si la session
