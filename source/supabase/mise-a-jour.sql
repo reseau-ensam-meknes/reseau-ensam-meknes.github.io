@@ -6705,7 +6705,8 @@ revoke all on function public.offres_bientot_push() from public, anon, authentic
 -- demande_attente (alertes_horaires, chaque heure de 8 h à 21 h) : une demande publiée il y a 24 à 72 h, toujours ouverte
 -- et sans aucune aide proposée. Les lauréats de son parcours (demande_pour, proximité ≥ 1) sans proposition, une fois par
 -- demande, 150 au plus : d'abord ceux que l'annonce de la demande n'a pas atteints (pas de demande_nouvelle dans le
--- journal), puis les plus actifs. Au plus une par jour et par lauréat. DOUCE.
+-- journal dans les 15 minutes de sa publication ; publiée la nuit, son annonce part à 08:00 : jusqu'à 08:15), puis les
+-- plus actifs. Au plus une par jour et par lauréat. DOUCE.
 -- ---------------------------------------------------------------------
 create table if not exists public.demandes_attente_notif (
   demande_id uuid primary key references public.demandes(id) on delete cascade,
@@ -6715,7 +6716,7 @@ alter table public.demandes_attente_notif enable row level security;
 
 create or replace function public.demande_attente_push() returns int
 language plpgsql security definer set search_path = public as $$
-declare d public.demandes; v_a record; v_n int := 0; v_k int;
+declare d public.demandes; v_a record; v_n int := 0; v_k int; v_annonce timestamptz;
   v_debut timestamptz := date_trunc('day', public.horloge() at time zone 'UTC') at time zone 'UTC';
 begin
   if extract(hour from public.horloge() at time zone 'UTC') not between 8 and 21 then return 0; end if;
@@ -6726,6 +6727,10 @@ begin
       order by x.created_at limit 50 loop
     insert into public.demandes_attente_notif (demande_id) values (d.id) on conflict do nothing;
     select split_part(full_name, ' ', 1) as prenom, filiere into v_a from public.profiles where id = d.auteur_id;
+    -- Jusqu'où chercher son annonce au journal : 15 minutes ; publiée la nuit (push_nuit), 08:15 le matin qui suit
+    v_annonce := case when public.heure_calme(d.created_at)
+      then (date_trunc('day', (d.created_at at time zone 'UTC') + interval '150 minutes') + interval '8 hours 15 minutes') at time zone 'UTC'
+      else d.created_at + interval '15 minutes' end;
     with dest as materialized (
       select p.id from public.profiles p
       where p.role = 'laureat' and public.proximite_filiere(p.filiere, v_a.filiere) >= 1
@@ -6736,7 +6741,7 @@ begin
         and not exists (select 1 from public.notif_programme n where n.user_id = p.id and n.kind = 'demande_attente'
                           and n.at >= v_debut and n.at < v_debut + interval '1 day')
       order by exists (select 1 from public.push_journal j where j.user_id = p.id and j.kind = 'demande_nouvelle'
-                         and j.at >= d.created_at and j.at < d.created_at + interval '15 minutes'),
+                         and j.at >= d.created_at and j.at < v_annonce),
         public.derniere_visite(p.id) desc nulls last
       limit 150
     ),

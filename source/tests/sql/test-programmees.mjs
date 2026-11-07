@@ -142,6 +142,33 @@ test('P6 150 lauréats au plus : d’abord ceux que l’annonce de la demande n�
   await db.query('delete from public.profiles where id = any($1::uuid[])', [ids]);
 });
 
+test('P6 une demande publiée la nuit : son annonce part à 08:00 (push_nuit) ; ceux qu’elle n’a pas atteints passent d’abord, comme le jour', async () => {
+  await nouveauJour();
+  const ids = [...Array(152).keys()].map(i => `00000000-0000-4000-9300-${String(i + 1).padStart(12, '0')}`);
+  await db.query(`insert into auth.users (id, email) select id, right(id::text, 4) || '@exemple.ma' from unnest($1::uuid[]) id`, [ids]);
+  await db.query(`insert into public.profiles (id, full_name, role, filiere, promo, created_at) select id, 'Lauréat ' || right(id::text, 3), 'laureat', $2, 2000, now() - interval '30 days' from unnest($1::uuid[]) id`, [ids, GI]);
+  await db.query(`insert into public.visites (user_id, vu_at) select id, now() - right(id::text, 3)::int * interval '1 hour' from unnest($1::uuid[]) id`, [ids]);
+  await db.query(`insert into public.push_subscriptions (user_id, endpoint, p256dh, auth) select id, 'https://push.example/' || id, 'k', 'a' from unnest($1::uuid[]) id`, [ids]);
+  // Publiée à 23:00 il y a deux jours : son annonce (demande_nouvelle) a attendu 08:00 dans push_nuit (liberer_nuit) ;
+  // le notifier l'a notée au journal à 08:01, chez les 5 plus actifs
+  const d = await demande(ETU4, 'PFE publié le soir');
+  const soir = aujourdhuiA(23, 0, -2), matin = aujourdhuiA(8, 1, -1);
+  await db.query(`update public.demandes set created_at = $2, relancee_at = $2 where id = $1`, [d, soir]);
+  await db.query(`insert into public.push_journal (user_id, kind, code, at) select id, 'demande_nouvelle', 201, $2 from unnest($1::uuid[]) id`, [ids.slice(0, 5), matin]);
+  try {
+    await reglerHorloge(db, aujourdhuiA(10, 5));
+    await lancer('demande_attente_push');
+    const recus = new Set((await file('demande_attente')).filter(x => x.data.demande === d).map(x => x.qui));
+    assert.equal(recus.size, 150, '150 au plus');
+    assert.deepEqual(ids.filter(id => !recus.has(id)).map(id => Number(id.slice(-3))), [2, 3, 4, 5],
+      'laissés de côté : ceux que l’annonce du matin a atteints, pas les moins actifs (149 à 152, jamais prévenus)');
+  } finally {
+    await reglerHorloge(db, aujourdhuiA(9, 0));
+    await db.query('delete from public.demandes where id = $1', [d]);
+    await db.query('delete from public.profiles where id = any($1::uuid[])', [ids]);
+  }
+});
+
 test('P11b demande en pause depuis 60 jours : son auteur, une fois par pause ; relancée puis de nouveau en pause : de nouveau', async () => {
   await nouveauJour();
   const d = await demande(ETU3A, 'Stage ouvrier en usine', '61 days');
