@@ -518,8 +518,9 @@ const ETAPES_APPLI = {
 };
 const DEMO_CHROME = 'Sur la vraie plateforme, ce bouton rouvre la page dans Chrome, où les notifications arrivent.';
 // Le lien « Ouvrir dans Chrome » : la page où l'on est (relue au toucher), la feuille d'activation en arrivant
-// La langue de la page suit dans Chrome (l'arabe choisi ici, Chrome ne le connaît pas)
-const lienIci = () => lienChrome(location.href, (location.hash || '').slice(1), { lang: getLang() });
+// La langue de la page suit dans Chrome (l'arabe choisi ici, Chrome ne le connaît pas). Seul un membre connecté le voit :
+// Chrome, qui ne le connaît pas encore, s'ouvre sur « Se connecter » (jamais « Créer mon compte »)
+const lienIci = () => lienChrome(location.href, (location.hash || '').slice(1), { lang: getLang(), contexte: { mode: 'connexion' } });
 function OuvrirChrome({ store, cls = 'btn primary', id, onOuvert, children }) {
   const clic = e => {
     if (store.mode !== 'live') { e.preventDefault(); toast(DEMO_CHROME); } else e.currentTarget.href = lienIci();

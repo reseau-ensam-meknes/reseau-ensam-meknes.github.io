@@ -481,6 +481,15 @@ test('page d’entrée : la place gardée pour la carte ne grandit jamais avec l
   assert.ok(rem(placeCarte('ios', 'fr', 390)) > rem(placeCarte('android', 'fr', 390)), 'sur iPhone, le geste et l’icône en plus');
 });
 
+// pwa.js (lienIci) : « Ouvrir dans Chrome » n'est montré qu'à un membre connecté ; Chrome ne le connaît pas encore
+test('« Ouvrir dans Chrome » d’un membre connecté : sa page et l’étape « Se connecter » partent avec le lien ; la page d’entrée de Chrome les relit', async () => {
+  const { contexteArrivee } = await pageEntree();
+  const l = lienChrome('https://reseau-ensam-meknes.github.io/#offres', 'offres', { lang: 'fr', contexte: { mode: 'connexion' } });
+  assert.equal(l, 'intent://reseau-ensam-meknes.github.io/?mode=connexion&r=offres&notifs=1#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=https%3A%2F%2Freseau-ensam-meknes.github.io%2F%3Fmode%3Dconnexion%26r%3Doffres%26notifs%3D1;end');
+  const secours = new URL(decodeURIComponent(l.match(/S\.browser_fallback_url=([^;]+);/)[1]));
+  assert.deepEqual(contexteArrivee(secours.search), { role: null, mode: 'connexion', lien: null, search: '?r=offres&notifs=1', aucun: false }, 'la page du membre reste pour app.js');
+});
+
 test('carte de la page d’entrée : « d’Instagram », « de Facebook », « d’une application » ; ses phrases d’Android et d’iPhone', async () => {
   const { CARTE, APPLIS } = await appareil();
   assert.equal(CARTE.tuEs('Instagram'), 'Tu es dans le navigateur d’Instagram.');

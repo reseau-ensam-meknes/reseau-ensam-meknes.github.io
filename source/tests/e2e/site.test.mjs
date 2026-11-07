@@ -1544,7 +1544,7 @@ test('navigateur d’une application (Instagram) : « Ouvrir dans Chrome » à l
   assert.match(t, /Ouvre le Réseau ENSAM dans Chrome/);
   assert.match(t, /Ce lien s’est ouvert dans Instagram\s: ici, les notifications ne peuvent pas arriver\./);
   // Le lien rouvre la même page dans Chrome (sinon la même adresse), avec la feuille d'activation en arrivant
-  assert.match(await s.page.getAttribute('#appli-chrome', 'href'), /^intent:\/\/127\.0\.0\.1:\d+\/\?notifs=1#Intent;scheme=http;package=com\.android\.chrome;S\.browser_fallback_url=http%3A%2F%2F127\.0\.0\.1%3A\d+%2F%3Fnotifs%3D1;end$/);
+  assert.match(await s.page.getAttribute('#appli-chrome', 'href'), /^intent:\/\/127\.0\.0\.1:\d+\/\?mode=connexion&notifs=1#Intent;scheme=http;package=com\.android\.chrome;S\.browser_fallback_url=http%3A%2F%2F127\.0\.0\.1%3A\d+%2F%3Fmode%3Dconnexion%26notifs%3D1;end$/);
   assert.ok((await s.page.locator('#appli-chrome').boundingBox()).height >= 44);
   assert.equal(await s.debordement(), 0);
   // En démo, le lien n'ouvre rien : un mot le dit, et la feuille se range
@@ -1562,7 +1562,7 @@ test('navigateur d’une application (Instagram) : « Ouvrir dans Chrome » à l
   assert.equal(await s.page.locator('.modal.appli').count(), 0);
   // Mon profil : la phrase et le lien, qui garde la page (?r=)
   await s.aller('profil/notifications'); await s.page.waitForSelector('#md-push-chrome');
-  assert.match(await s.page.getAttribute('#md-push-chrome', 'href'), /\?r=profil%2Fnotifications&notifs=1#Intent;/);
+  assert.match(await s.page.getAttribute('#md-push-chrome', 'href'), /\?mode=connexion&r=profil%2Fnotifications&notifs=1#Intent;/);
   assert.equal(await s.page.locator('#md-push-oui').count(), 0, 'pas de « Activer » qui ne marcherait pas ici');
   assert.equal(await s.page.locator('.pastille[data-sorte="installer"]').count(), 0);
   assert.deepEqual(s.erreurs, []);
@@ -1606,7 +1606,7 @@ test('navigateur d’une application sans Chrome : « Ouvrir dans Chrome » rouv
   // En arabe : Chrome ne connaît pas le choix fait ici, l'adresse le lui dit
   const a = await ouvrir({ largeur: 360, ua: INSTAGRAM, langue: 'ar' });
   await a.page.waitForSelector('.modal.appli', { timeout: 8000 });
-  assert.match(await a.page.getAttribute('#appli-chrome', 'href'), /^intent:\/\/127\.0\.0\.1:\d+\/\?lang=ar&notifs=1#Intent;.*S\.browser_fallback_url=http%3A%2F%2F127\.0\.0\.1%3A\d+%2F%3Flang%3Dar%26notifs%3D1;end$/);
+  assert.match(await a.page.getAttribute('#appli-chrome', 'href'), /^intent:\/\/127\.0\.0\.1:\d+\/\?lang=ar&mode=connexion&notifs=1#Intent;.*S\.browser_fallback_url=http%3A%2F%2F127\.0\.0\.1%3A\d+%2F%3Flang%3Dar%26mode%3Dconnexion%26notifs%3D1;end$/);
   assert.deepEqual(a.erreurs, []);
   await a.ctx.close();
 });
@@ -7088,11 +7088,13 @@ test('lien « Active tes notifications » quand tout est décoché dans Mon prof
 // téléphone sans services de notifications), deja (cet appareil est déjà abonné)
 const MEMBRE = { id: UID, full_name: 'Salma Test', role: 'etudiant', filiere: 'Génie Industriel', promo: new Date().getFullYear() + 2, created_at: '2025-10-01T10:00:00Z', verified: true,
   consent_at: '2025-10-01T10:00:00Z', emails_hebdo: true, alertes_offres: true, alertes_email: true, emails_messages: true };
-async function membreEnLigne({ profil = MEMBRE, permission = 'granted', abonnement = 'ok', deja = false, memo = null, chemin = '' } = {}) {
+// vueWeb : le navigateur d'une application (ua), où ni Notification ni PushManager n'existent
+async function membreEnLigne({ profil = MEMBRE, permission = 'granted', abonnement = 'ok', deja = false, memo = null, chemin = '', ua = TELEPHONE, vueWeb = false } = {}) {
   const site = await enLigne(); site.vider(); site.inscrits.push({ ...profil });
-  const ctx = await navigateur.newContext({ viewport: { width: 360, height: 740 }, serviceWorkers: 'block', reducedMotion: 'reduce', userAgent: TELEPHONE });
+  const ctx = await navigateur.newContext({ viewport: { width: 360, height: 740 }, serviceWorkers: 'block', reducedMotion: 'reduce', userAgent: ua });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
-  await ctx.addInitScript(([permission, abonnement, deja]) => {
+  if (vueWeb) await ctx.addInitScript(() => { delete window.Notification; delete window.PushManager; });
+  else await ctx.addInitScript(([permission, abonnement, deja]) => {
     const sub = { endpoint: 'https://push.exemple.ma/abc', toJSON: () => ({ endpoint: 'https://push.exemple.ma/abc', keys: { p256dh: 'p256', auth: 'auth' } }), unsubscribe: async () => true };
     const pm = { getSubscription: async () => (deja ? sub : null), subscribe: async () => { if (abonnement === 'ok') return sub; throw new DOMException('Registration failed - push service not available', 'NotSupportedError'); } };
     const reg = { waiting: null, installing: null, addEventListener() {}, pushManager: pm };
@@ -7115,6 +7117,31 @@ async function membreEnLigne({ profil = MEMBRE, permission = 'granted', abonneme
   const memoIci = () => page.evaluate(uid => JSON.parse(localStorage.getItem('ensam-prevenir-' + uid) || '{}'), UID);
   return { ctx, page, erreurs, site, memoIci };
 }
+
+// « Ouvrir dans Chrome » n'est proposé qu'à un membre connecté (feuille, bandeau, pastille, Mon profil) : Chrome, qui ne
+// connaît pas encore ce membre, s'ouvre sur « Se connecter », jamais sur « Créer mon compte »
+test('membre connecté dans le navigateur d’Instagram : « Ouvrir dans Chrome » emporte l’étape « Se connecter » ; Chrome tout neuf s’ouvre dessus, la page gardée', async () => {
+  const m = await membreEnLigne({ ua: INSTAGRAM, vueWeb: true, chemin: '#offres' });
+  await m.page.waitForSelector('.modal.appli', { timeout: 8000 });
+  const href = await m.page.getAttribute('#appli-chrome', 'href');
+  const fb = new URL(decodeURIComponent(href.match(/;S\.browser_fallback_url=([^;]+);end$/)[1]));
+  assert.equal(fb.searchParams.get('mode'), 'connexion', href);
+  assert.equal(fb.searchParams.get('r'), 'offres');
+  assert.equal(fb.searchParams.get('notifs'), '1');
+  assert.equal(new URLSearchParams(href.match(/^intent:\/\/[^?#]+(\?[^#]*)#/)[1]).get('mode'), 'connexion', 'Chrome reçoit la même étape');
+  await m.page.click('#appli-tard');
+  await m.page.evaluate(() => { location.hash = 'profil/notifications'; });
+  await m.page.waitForSelector('#md-push-chrome');
+  assert.match(await m.page.getAttribute('#md-push-chrome', 'href'), /\?mode=connexion&r=profil%2Fnotifications&notifs=1#Intent;/);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+  const c = await porte({ ua: TELEPHONE, langue: null, chemin: fb.search });
+  assert.equal(await c.page.locator('#au-je-etudiant').count(), 0, 'pas « Créer mon compte » pour un membre');
+  assert.equal(await c.page.locator('.entree-form h2').innerText(), 'Se connecter');
+  assert.deepEqual([...new URLSearchParams(await c.page.evaluate(() => location.search)).keys()].filter(k => k === 'mode'), [], 'l’étape lue, l’adresse nettoyée');
+  assert.deepEqual(c.erreurs, []);
+  await c.ctx.close();
+});
 
 test('Mon profil : l’abonnement échoue pour de bon (téléphone sans service de notifications) ; la pastille et le bandeau cessent aussitôt de proposer « Activer »', async () => {
   // « Plus tard » hier : pas de feuille d'ouverture à cette visite
