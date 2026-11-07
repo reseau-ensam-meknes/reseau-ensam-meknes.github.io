@@ -696,9 +696,17 @@ const MOTIFS: Record<Langue, Record<string, string>> = {
 };
 
 // Ce qui remplace la précédente du même type dans la barre de notifications : un seul rappel du soir, un seul Match du
-// jour, un seul essai, une seule enquête. Le reste, sans élément qui le regroupe (conversation, match, offre…), garde
-// une notification par événement : son tag porte l'identifiant de sa ligne dans la file (id).
-export const SE_REMPLACENT = ['rappel_visite', 'match_jour', 'test', 'enquete'];
+// jour, un seul essai, une seule enquête ; ce qui rend la précédente fausse : la vérification par les pairs (« encore
+// un lauréat » puis « ton badge est là »), la nouvelle date d'un événement ou d'un rendez-vous de mentorat (l'ancienne
+// date ne doit pas rester affichée), un nouveau parrain (« ton parrainage cette année : … ») ; et, comme dans la liste
+// des tags fixes des nouvelles notifications (TAGS_FIXES), les arrivées dans la promo (au plus une par jour) et le
+// filleul. Le reste, sans élément qui le regroupe (conversation, match, offre…), garde une notification par événement :
+// son tag porte l'identifiant de sa ligne dans la file (id).
+export const SE_REMPLACENT = ['rappel_visite', 'match_jour', 'test', 'enquete', 'verification_pair', 'evenement_deplace', 'mentorat_deplace',
+  'parrain', 'promo_nouveau', 'filleul'];
+// Sur une même demande, chaque lauréat qui propose son aide, chaque réponse, est une personne de plus : une notification
+// chacune (sinon la deuxième efface la première, et son nom). Regroupées seulement quand la base les compte (n ≥ 1).
+const PAR_PERSONNE = ['demande_proposition', 'demande_reponse'];
 
 // Notification prête à envoyer : { title, body, url, tag } ; null si le type est inconnu
 export function texteNotif(kind: string, data: unknown, langue: unknown, site: string, id?: number | string | null): Notif | null {
@@ -729,6 +737,8 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
   // Une alerte ouvre directement l'offre, un message sa conversation (une notification par personne)
   // Une demande ouvre sa carte ; une nouvelle demande, pour un lauréat, ouvre directement « Je peux aider », prérempli
   const dem = kind.startsWith('demande_') && estUuid(d.demande) ? d.demande : null;
+  const ligneDeFile = id != null && String(id) !== '';
+  const demParPersonne = dem && PAR_PERSONNE.includes(kind) && !(Number(d.n) >= 1) && ligneDeFile;
   const annule = kind === 'mentorat_annule' && estUuid(d.m) ? d.m : null;
   // Une réaction ouvre l'élément : l'offre, ou la carte de la demande ; une seule notification par élément sur le téléphone
   const rx = kind === 'reaction' ? (estUuid(d.offre) ? { route: `offre/${d.offre}`, id: d.offre } : estUuid(d.demande) ? { route: `offres/demandes/${d.demande}`, id: d.demande } : null) : null;
@@ -744,8 +754,8 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
     : annule && v.pour === 'demandeur' ? `mentorat/reprendre/${annule}`
     : dem ? (kind === 'demande_nouvelle' || kind === 'demande_large' ? `aider/${dem}` : `offres/demandes/${dem}`) : g.route;
   const tag = rx ? `reaction-${rx.id}` : kind === 'offre_alerte' && estUuid(d.offre) ? `offre-${d.offre}` : com ? `${kind}-${com}`
-    : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem ? `${kind}-${dem}` : annule ? `${kind}-${annule}` : mt ? `${kind}-${mt}`
-    : id != null && String(id) !== '' && !SE_REMPLACENT.includes(kind) ? `${kind}-${id}` : kind;
+    : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem && !demParPersonne ? `${kind}-${dem}` : annule ? `${kind}-${annule}` : mt ? `${kind}-${mt}`
+    : ligneDeFile && !SE_REMPLACENT.includes(kind) ? `${kind}-${id}` : kind;
   // Message arrivé moins de 20 s après le précédent de la conversation : l'aperçu change sans sonner
   return { title: couper(t[0], 80), body: couper(t[1], 180), url: site + '#' + route, tag, ...(kind === 'message' && d.calme === true ? { calme: true } : {}) };
 }
@@ -1462,8 +1472,13 @@ export const TELEPHONE: Record<Langue, { phrase: string; lien: string }> = {
   fr: { phrase: 'Reçois tes matchs et tes messages directement sur ton téléphone', lien: 'Activer les notifications' },
   ar: { phrase: 'استقبل توافقاتك ورسائلك مباشرة على هاتفك', lien: 'تفعيل الإشعارات' },
 };
-function blocTelephone(site: string, langue: Langue): string {
-  const debut = langue === 'ar' ? 'right' : 'left', t = TELEPHONE[langue];
+// Le rappel d'un rendez-vous par email ne part qu'à qui n'a de notifications sur aucun appareil : sa ligne parle de ces rappels
+export const TELEPHONE_RAPPEL: Record<Langue, string> = {
+  fr: 'Reçois ces rappels directement sur ton téléphone, 15 minutes avant chaque rendez-vous',
+  ar: 'استقبل هذه التذكيرات مباشرة على هاتفك، 15 دقيقة قبل كل موعد',
+};
+function blocTelephone(site: string, langue: Langue, phrase = TELEPHONE[langue].phrase): string {
+  const debut = langue === 'ar' ? 'right' : 'left', t = { ...TELEPHONE[langue], phrase };
   const police = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Tahoma,Helvetica,Arial,sans-serif;";
   return `
 <tr><td style="padding:24px 28px 0;">
@@ -1473,7 +1488,7 @@ ${esc(t.phrase)}<br><a href="${esc(lienNotifs(site))}" style="color:#1670A8;font
 </td></tr></table>
 </td></tr>`;
 }
-const ligneTelephone = (site: string, langue: Langue) => `${TELEPHONE[langue].phrase}${langue === 'ar' ? ': ' : ' : '}${lienNotifs(site)}`;
+const ligneTelephone = (site: string, langue: Langue, phrase = TELEPHONE[langue].phrase) => `${phrase}${langue === 'ar' ? ': ' : ' : '}${lienNotifs(site)}`;
 
 // desabo vide : email envoyé une seule fois, sans lien de désabonnement
 export type Courriel = { sujet: string; html: string; texte: string; desabo: string };
@@ -1553,8 +1568,9 @@ ${esc(L.pied)}<br>
 // Emails courts (alerte d'offre, enquête d'insertion) : même présentation que le résumé
 // ---------------------------------------------------------------------
 type Bloc = { lignes: string[]; bouton?: { texte: string; url: string } };
-// telephone : l'adresse du site, pour la ligne d'un membre sans téléphone abonné
-type Cadre = { langue: Langue; sujet: string; apercu: string; sousTitre: string; intro: string[]; blocs: Bloc[]; pied: string; liens: [string, string][]; telephone?: string };
+// telephone : l'adresse du site, pour la ligne d'un membre sans téléphone abonné (telephonePhrase : sa phrase, si ce
+// n'est pas celle de tous les emails)
+type Cadre = { langue: Langue; sujet: string; apercu: string; sousTitre: string; intro: string[]; blocs: Bloc[]; pied: string; liens: [string, string][]; telephone?: string; telephonePhrase?: string };
 
 function cadreEmail(c: Cadre): string {
   const ar = c.langue === 'ar', debut = ar ? 'right' : 'left', dir = ar ? 'rtl' : 'ltr';
@@ -1593,7 +1609,7 @@ ${b.lignes.map(l => `<p style="margin:0 0 8px;">${l}</p>`).join('\n')}
 </td></tr>
 <tr><td style="padding:24px 28px 0;text-align:${debut};${police}font-size:15px;line-height:22px;color:#2B2F36;">
 ${c.intro.map((l, i) => `<p style="margin:0 0 6px;${i === 0 ? 'font-weight:600;' : ''}">${l}</p>`).join('\n')}
-</td></tr>${blocs}${c.telephone ? blocTelephone(c.telephone, c.langue) : ''}
+</td></tr>${blocs}${c.telephone ? blocTelephone(c.telephone, c.langue, c.telephonePhrase) : ''}
 <tr><td style="padding:26px 28px 0;"><div style="border-top:1px solid #E3E7ED;height:1px;line-height:1px;font-size:1px;">&nbsp;</div></td></tr>
 <tr><td style="padding:14px 28px 26px;text-align:${debut};${police}font-size:12px;line-height:18px;color:#6B7280;">
 ${esc(c.pied)}<br>
@@ -1727,8 +1743,9 @@ export function rendreMessages(n: number, noms: string[], langue: Langue, site: 
 
 // Rappel 15 minutes avant un rendez-vous (rappels_rdv dans schema.sql), pour qui n'a de notifications sur aucun appareil :
 // avec qui, à quelle heure, où ; le bouton ouvre la visio quand il y en a une, sinon la discussion ou le mentorat.
-// Pas de lien de désabonnement : un seul email, pour un rendez-vous pris par le membre ou proposé à lui.
-export function rendreRappelRdv(kind: string, data: unknown, langue: Langue, site: string): Courriel | null {
+// Pas de lien de désabonnement : un seul email, pour un rendez-vous pris par le membre ou proposé à lui. La base ne le
+// prépare que pour qui n'a aucun téléphone abonné (rappeler) : la ligne pour les activer y est donc toujours (sansTel).
+export function rendreRappelRdv(kind: string, data: unknown, langue: Langue, site: string, sansTel = true): Courriel | null {
   const d = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
   const q = quand(d.rdv_at, langue);
   if (!q || (kind !== 'rappel_rdv' && kind !== 'rappel_entretien')) return null;
@@ -1754,21 +1771,26 @@ export function rendreRappelRdv(kind: string, data: unknown, langue: Langue, sit
   const lignes = (F: Fmt) => [debut(F), ...(sujetRdv ? [ar ? `الموضوع: ${F.u(sujetRdv)}.` : `Sujet : ${F.u(sujetRdv)}.`] : []), ou(F)];
   const ouvrir = mentorat ? (ar ? 'فتح المواكبة' : 'Ouvrir le mentorat') : (ar ? 'فتح المحادثة' : 'Ouvrir la discussion');
   const bouton = lien && !lieu ? { texte: ar ? 'الانضمام إلى الفيديو' : 'Rejoindre la visio', url: lien } : { texte: ouvrir, url: ici };
-  const pied = ar ? 'يصلك هذا البريد لأن لديك موعدًا على شبكة ENSAM مكناس ولم تفعّل الإشعارات على أي جهاز. فعّلها في «ملفي» لتصلك هذه التذكيرات على هاتفك.'
-    : 'Tu reçois cet email parce que tu as un rendez-vous sur le Réseau ENSAM Meknès et que les notifications ne sont activées sur aucun de tes appareils. Active-les dans Mon profil pour recevoir ces rappels sur ton téléphone.';
+  // La ligne au-dessus dit comment les activer : le pied dit seulement pourquoi cet email
+  const pied = ar ? (sansTel ? 'يصلك هذا البريد لأن لديك موعدًا على شبكة ENSAM مكناس ولم تفعّل الإشعارات على أي جهاز.'
+      : 'يصلك هذا البريد لأن لديك موعدًا على شبكة ENSAM مكناس.')
+    : sansTel ? 'Tu reçois cet email parce que tu as un rendez-vous sur le Réseau ENSAM Meknès et que les notifications ne sont activées sur aucun de tes appareils.'
+      : 'Tu reçois cet email parce que tu as un rendez-vous sur le Réseau ENSAM Meknès.';
   const html = cadreEmail({
     langue, sujet, apercu: lignes(b).join(' '), sousTitre: ar ? 'تذكير' : 'Rappel',
     intro: [esc(ar ? 'مرحبًا،' : 'Bonjour,')],
     blocs: [{ lignes: lignes(f), bouton }],
+    ...(sansTel ? { telephone: site, telephonePhrase: TELEPHONE_RAPPEL[langue] } : {}),
     pied, liens: bouton.url === ici ? [[ar ? 'فتح المنصة' : 'Ouvrir la plateforme', site]] : [[ouvrir, ici]],
   });
   const texte = [`${(ar ? AR : FR).marque} · ${ar ? 'تذكير' : 'Rappel'}`, '', ar ? 'مرحبًا،' : 'Bonjour,', ...lignes(b), '',
-    `${bouton.texte}${ar ? ': ' : ' : '}${bouton.url}`, ...(bouton.url === ici ? [] : [`${ouvrir}${ar ? ': ' : ' : '}${ici}`]), '', '--', pied].join('\n');
+    `${bouton.texte}${ar ? ': ' : ' : '}${bouton.url}`, ...(bouton.url === ici ? [] : [`${ouvrir}${ar ? ': ' : ' : '}${ici}`]), '',
+    ...(sansTel ? [ligneTelephone(site, langue, TELEPHONE_RAPPEL[langue]), ''] : []), '--', pied].join('\n');
   return { sujet, html, texte, desabo: '' };
 }
 
-// Enquête d'insertion : invitation, ou rappel trois semaines après
-export function rendreEnquete(vague: number, rappel: boolean, langue: Langue, site: string, token: string): Courriel {
+// Enquête d'insertion : invitation, ou rappel trois semaines après ; la ligne du téléphone pour qui n'en a aucun abonné
+export function rendreEnquete(vague: number, rappel: boolean, langue: Langue, site: string, token: string, sansTel = false): Courriel {
   site = siteEn(site, langue);
   const ar = langue === 'ar', v = vague === 12 ? 12 : 6;
   const desabo = `${site}#desabo/${token}`;
@@ -1787,11 +1809,13 @@ export function rendreEnquete(vague: number, rappel: boolean, langue: Langue, si
     langue, sujet, apercu: lignes[0], sousTitre: ar ? 'استمارة الإدماج المهني' : 'Enquête d’insertion',
     intro: [esc(ar ? 'مرحبًا،' : 'Bonjour,')],
     blocs: [{ lignes: lignes.map(esc), bouton: { texte: ar ? 'الإجابة على الاستمارة' : 'Répondre à l’enquête', url } }],
+    ...(sansTel ? { telephone: site } : {}),
     pied: ar ? 'يصلك هذا البريد مرة عند فتح الاستمارة، وتذكير واحد إن لم تجب.' : 'Tu reçois cet email une fois à l’ouverture de l’enquête, et un seul rappel si tu n’as pas répondu.',
     liens: [[ar ? 'فتح المنصة' : 'Ouvrir la plateforme', site], [ar ? 'إلغاء الاشتراك' : 'Se désabonner', desabo]],
   });
   const texte = [`${(ar ? AR : FR).marque} · ${ar ? 'استمارة الإدماج المهني' : 'Enquête d’insertion'}`, '', ar ? 'مرحبًا،' : 'Bonjour,', ...lignes, '',
-    `${ar ? 'الإجابة على الاستمارة' : 'Répondre à l’enquête'}${ar ? ': ' : ' : '}${url}`, '', '--', `${ar ? 'إلغاء الاشتراك' : 'Se désabonner'}${ar ? ': ' : ' : '}${desabo}`].join('\n');
+    `${ar ? 'الإجابة على الاستمارة' : 'Répondre à l’enquête'}${ar ? ': ' : ' : '}${url}`, '', ...(sansTel ? [ligneTelephone(site, langue), ''] : []), '--',
+    `${ar ? 'إلغاء الاشتراك' : 'Se désabonner'}${ar ? ': ' : ' : '}${desabo}`].join('\n');
   return { sujet, html, texte, desabo };
 }
 
@@ -2014,28 +2038,41 @@ const passager = (st: number) => st === 0 || st === 429 || st >= 500;
 // Refus définitif (abonnement invalide, clé refusée) : au troisième d'affilée, la base retire l'abonnement (push_resultats).
 // 413 (notification trop longue) n'est pas la faute du téléphone : seulement au journal.
 const refusDefinitif = (st: number) => st === 400 || st === 401 || st === 403;
-// Pendant un tour, tous les téléphones d'un même service de push refusent et aucun n'accepte : c'est sans doute la
-// plateforme (clé VAPID, signature), pas les téléphones. Ces refus ne comptent pas, sinon trois tours suffiraient à
-// retirer tout le monde. À partir de 3 téléphones refusés du même service ; rend les services concernés (pour les Logs).
+// Pendant un tour, les téléphones d'au moins 3 membres différents, sur un même service de push, refusent et aucun
+// n'accepte : c'est sans doute la plateforme (clé VAPID, signature), pas les téléphones. Ces refus ne comptent pas, et
+// c'est dit dans les Logs ; rend les services concernés. Compté par membre : un membre seul avec trois vieux abonnements
+// refusés, ce sont bien eux (comptés, puis retirés quand le service accepte d'autres téléphones). Sur plusieurs tours
+// (un téléphone par tour, le cas courant), c'est la base qui protège : push_resultats ne retire un abonnement au
+// troisième refus que si le même service a accepté un autre téléphone depuis le premier.
 export const REFUS_EN_MASSE = 3;
-export function refusEnMasse(etats: EtatAbo[], serviceDe: (id: string) => string): string[] {
-  const groupes = new Map<string, { refus: EtatAbo[]; recu: boolean }>();
+export function refusEnMasse(etats: EtatAbo[], serviceDe: (id: string) => string, membreDe: (id: string) => string = id => id): string[] {
+  const groupes = new Map<string, { refus: EtatAbo[]; membres: Set<string>; recu: boolean }>();
   for (const e of etats) {
     const s = serviceDe(e.id);
-    const g = groupes.get(s) || { refus: [], recu: false };
+    const g = groupes.get(s) || { refus: [], membres: new Set<string>(), recu: false };
     groupes.set(s, g);
     if (e.recu) g.recu = true;
-    else if (e.refus) g.refus.push(e);
+    else if (e.refus) { g.refus.push(e); g.membres.add(membreDe(e.id)); }
   }
   const services: string[] = [];
   for (const [s, g] of groupes) {
-    if (g.recu || g.refus.length < REFUS_EN_MASSE) continue;
+    if (g.recu || g.membres.size < REFUS_EN_MASSE) continue;
     for (const e of g.refus) e.refus = false;
     services.push(s);
   }
   return services;
 }
-const serviceDeLAdresse = (endpoint: string) => { try { return new URL(endpoint).origin; } catch { return ''; } };
+// Le service de push d'un abonnement, nommé comme dans la base (service_push) : fcm (Chrome, Android), apple (iPhone,
+// Mac), mozilla (Firefox), windows (Edge), autre
+export function servicePush(endpoint: string): string {
+  let h = '';
+  try { h = new URL(endpoint).hostname.toLowerCase(); } catch { return 'autre'; }
+  if (h === 'fcm.googleapis.com' || h.endsWith('.googleapis.com')) return 'fcm';
+  if (h === 'web.push.apple.com' || h.endsWith('.push.apple.com')) return 'apple';
+  if (/\.(mozilla\.com|mozilla\.org|mozaws\.net)$/.test(h)) return 'mozilla';
+  if (h.endsWith('.windows.com')) return 'windows';
+  return 'autre';
+}
 
 // Envoie à un téléphone les notifications de son membre, dans l'ordre ; s'arrête s'il n'existe plus. Passé l'heure
 // limite (fin), ce qui n'est pas parti reste en file pour l'appel suivant. Rend ce que le téléphone a répondu.
@@ -2063,13 +2100,14 @@ async function envoyerA(a: Abonnement, notifs: AEnvoyer[], v: Vapid, b: Bilan, m
 }
 
 // Ce que chaque téléphone a répondu (push_resultats) : la base tient la santé des abonnements, retire les morts (404,
-// 410, trois refus définitifs d'affilée) et note leur adresse (push_morts). Rend les abonnements retirés. Une base pas
-// encore mise à jour (sans push_resultats) : les téléphones partis sont retirés comme avant. Ne bloque jamais l'envoi.
-// Un refus en masse (refusEnMasse) n'est pas compté, et c'est dit dans les Logs.
+// 410 ; trois refus définitifs d'affilée quand le même service accepte d'autres téléphones) et note leur adresse
+// (push_morts). Rend les abonnements retirés. Une base pas encore mise à jour (sans push_resultats) : les téléphones
+// partis sont retirés comme avant. Ne bloque jamais l'envoi. Un refus en masse (refusEnMasse) n'est pas compté, et c'est
+// dit dans les Logs.
 async function rendreCompte(env: Env, etats: EtatAbo[], morts: string[], abos: Abonnement[]): Promise<string[]> {
   if (!etats.length) return [];
-  const service = new Map(abos.map(a => [a.id, serviceDeLAdresse(a.endpoint)]));
-  for (const s of refusEnMasse(etats, id => service.get(id) || '')) {
+  const abo = new Map(abos.map(a => [a.id, a]));
+  for (const s of refusEnMasse(etats, id => servicePush(abo.get(id)?.endpoint || ''), id => abo.get(id)?.user_id || id)) {
     console.error('notifier : tous les téléphones de ce service refusent les envois (clé VAPID ou signature ?) ; refus non comptés', s);
   }
   try {
@@ -2082,21 +2120,24 @@ async function rendreCompte(env: Env, etats: EtatAbo[], morts: string[], abos: A
   catch (e) { console.error('notifier : abonnements partis non retirés', e instanceof Error ? e.message : String(e)); return []; }
 }
 
-// pg_net attend la réponse 60 s (appeler_notifier) : aucun envoi ne commence après 45 s. La suite reste en file, la base
-// rappelle la fonction chaque minute (relancer_push).
+// pg_net attend la réponse 60 s (appeler_notifier) : aucun envoi ne commence après 45 s, et aucun tour à moins de 10 s
+// de cette heure (il prendrait 300 notifications sans le temps de les envoyer). La suite reste en file, la base rappelle
+// la fonction chaque minute (relancer_push).
 export const DUREE_PUSH = 45_000;
+export const MARGE_TOUR = 10_000;
 
 // Une notification prise dans la file y reste jusqu'à push_faits : reçue par un téléphone, ou sans espoir (plus de
-// téléphone, type inconnu, refus définitif). Les autres sont reprises par la base après 2 minutes (relancer_push).
-// Au journal (push_journal) : chacune, avec la réponse de son meilleur téléphone ; -1 sans téléphone ; -4 jetée (type
-// inconnu, rien à dire) ; rien pour celle qui attend sans avoir été essayée (plus le temps).
+// téléphone, type inconnu, refus définitif). Les autres sont reprises par la base après 2 minutes (relancer_push) ;
+// celles qui n'ont pas été essayées du tout (plus le temps) lui sont rendues tout de suite, sans essai compté
+// (push_rendues). Au journal (push_journal) : chacune, avec la réponse de son meilleur téléphone ; -1 sans téléphone ;
+// -4 jetée (type inconnu, rien à dire) ; rien pour celle qui attend sans avoir été essayée.
 async function jobPush(env: Env): Promise<Response> {
   const b: Bilan = { sent: 0, failed: 0, removed: 0 };
   let v: Vapid | null = null;
   const fin = Date.now() + DUREE_PUSH;
   for (let tour = 0; tour < 5; tour++) {
     // Garde-fous : 2 s de CPU (900 envois), et la réponse avant que pg_net ne cesse d'attendre
-    if (b.sent + b.failed + b.removed >= 900 || Date.now() >= fin) break;
+    if (b.sent + b.failed + b.removed >= 900 || fin - Date.now() < MARGE_TOUR) break;
     const lignes = (await rpc(env, 'prendre_push', { p_max: 300 })) as { id: number; user_id: string; kind: string; data: unknown; langue: string }[];
     if (!lignes?.length) break;
     v = v || (await preparerVapid(env));
@@ -2126,6 +2167,7 @@ async function jobPush(env: Env): Promise<Response> {
     const reprises = suivi.filter(x => !x.r.recue && x.r.reprendre).length;
     if (reprises) b.retry = (b.retry || 0) + reprises;
     await confirmerPush(env, [...jetees.map(x => x.id), ...suivi.filter(x => x.r.recue || !x.r.reprendre).map(x => x.id)]);
+    await rendrePush(env, suivi.filter(x => !x.r.essayee && !x.r.recue && x.r.reprendre).map(x => x.id));
     await journaliser(env, [
       ...suivi.filter(x => x.r.essayee || x.r.recue || !x.r.reprendre).map(x => ({ user_id: x.user_id, kind: x.kind, code: x.r.code })),
       ...jetees.map(x => ({ user_id: x.user_id, kind: x.kind, code: -4 })),
@@ -2141,6 +2183,14 @@ async function confirmerPush(env: Env, ids: number[]): Promise<void> {
   catch (e) { console.error('notifier : confirmation des notifications impossible', e instanceof Error ? e.message : String(e)); }
 }
 
+// Rend à la file ce qui a été pris sans être essayé (push_rendues). Une base pas encore mise à jour : repris après
+// 2 minutes, comme avant.
+async function rendrePush(env: Env, ids: number[]): Promise<void> {
+  if (!ids.length) return;
+  try { await rpc(env, 'push_rendues', { p_ids: ids }); }
+  catch (e) { console.error('notifier : notifications non rendues à la file (push_rendues ; base à mettre à jour ?)', e instanceof Error ? e.message : String(e)); }
+}
+
 // Journal des notifications (push_journal) : ne bloque jamais l'envoi
 async function journaliser(env: Env, lignes: { user_id: string; kind: string; code: number }[]): Promise<void> {
   const l = lignes.filter(x => estUuid(x.user_id));
@@ -2151,7 +2201,9 @@ async function journaliser(env: Env, lignes: { user_id: string; kind: string; co
 
 // « Tester » (Mon profil) : une notification d'essai sur chaque téléphone du membre connecté. Rend ce que chacun a
 // répondu, pour dire la vraie raison d'un échec : { sent, failed, removed, codes (un par téléphone, dans l'ordre de
-// leur inscription), abonnements (téléphones inscrits avant l'essai) }. Au journal sous « test ».
+// leur inscription), abonnements (téléphones inscrits avant l'essai) }. Au journal sous « test ». Ses refus ne comptent
+// pas contre le téléphone : trois appuis d'affilée ne doivent pas retirer l'abonnement qu'on essaie de réparer (un
+// téléphone parti, 404 ou 410, l'est toujours).
 async function jobTest(env: Env, req: Request): Promise<Response> {
   const jeton = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
   if (!jeton) return refus();
@@ -2175,7 +2227,7 @@ async function jobTest(env: Env, req: Request): Promise<Response> {
   const etats: EtatAbo[] = [];
   await parallele(abos, 5, async a => {
     const e = await envoyerA(a, [{ n, urg: urgence('test'), ttl: dureeVie('test'), r: res }], v, b, morts);
-    if (e) etats.push(e);
+    if (e) etats.push({ ...e, refus: false });
   });
   const retires = await rendreCompte(env, etats, morts, abos);
   b.removed += retires.filter(id => !morts.includes(id)).length;
@@ -2698,12 +2750,13 @@ async function jobEnquetes(env: Env): Promise<Response> {
   const f = facteur(env);
   const faits: { id: string; vague: number; rappel: boolean }[] = [];
   const limite = Date.now() + 100_000;
+  const sansTel = f.pret ? await sansTelephone(env, dest.filter(x => x.email_ok && x.email).map(x => x.id)) : new Set<string>();
   await parallele(dest, f.paralleles, async x => {
     if (Date.now() > limite || !estUuid(x.id) || (x.vague !== 6 && x.vague !== 12)) return;
     const ligne = { id: x.id, vague: x.vague, rappel: !!x.rappel };
     if (!x.email_ok || !x.email || !x.token || !f.pret) { b.push++; faits.push(ligne); return; }
     try {
-      if (await f.envoyer(x.email, rendreEnquete(x.vague, !!x.rappel, langueDe(x.langue), env.site, x.token))) { b.sent++; faits.push(ligne); }
+      if (await f.envoyer(x.email, rendreEnquete(x.vague, !!x.rappel, langueDe(x.langue), env.site, x.token, sansTel.has(x.id)))) { b.sent++; faits.push(ligne); }
       else b.errors++;
     } catch (e) {
       b.errors++;

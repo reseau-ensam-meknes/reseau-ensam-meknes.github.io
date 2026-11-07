@@ -1046,11 +1046,13 @@ create table if not exists public.push_subscriptions (
 );
 create index if not exists push_subscriptions_user_idx on public.push_subscriptions (user_id);
 -- La santé de chaque abonnement, tenue par la fonction « notifier » (push_resultats, plus bas) : la dernière réponse de son
--- service de push et quand, et ses refus définitifs d'affilée (400, 401, 403 ; un envoi accepté remet le compte à zéro)
+-- service de push et quand, et ses refus définitifs d'affilée (400, 401, 403 ; un envoi accepté remet le compte à zéro) :
+-- combien, le dernier (refus_at) et le premier de la série (refus_depuis)
 alter table public.push_subscriptions add column if not exists dernier_code int;
 alter table public.push_subscriptions add column if not exists dernier_envoi_at timestamptz;
 alter table public.push_subscriptions add column if not exists refus int not null default 0;
 alter table public.push_subscriptions add column if not exists refus_at timestamptz;
+alter table public.push_subscriptions add column if not exists refus_depuis timestamptz;
 
 create table if not exists public.push_queue (
   id bigint generated always as identity primary key,
@@ -1068,7 +1070,8 @@ alter table public.push_queue add column if not exists essais int not null defau
 -- code : la réponse du service de push pour le meilleur des téléphones du membre (201 acceptée), 404 ou 410 téléphone
 -- parti, 400 / 401 / 403 refus définitif, 413 trop longue, 0 / 429 / 5xx service injoignable (nouvel essai) ;
 -- et ce qui n'est jamais parti : -1 aucun téléphone abonné, -2 catégorie coupée par le membre (Mon profil),
--- -3 abandonnée (1 jour ou 3 essais sans succès), -4 jetée par la fonction (type inconnu, rien à dire).
+-- -3 abandonnée après au moins un essai (3 essais, ou un jour, sans succès), -4 jetée par la fonction (type inconnu, rien
+-- à dire), -5 expirée sans avoir jamais été essayée (un jour en file : la fonction ou la tâche de chaque minute en panne).
 -- L'administration n'en lit que des totaux (admin_sante_notifs, section « Santé des notifications », à la fin).
 create table if not exists public.push_journal (
   id bigint generated always as identity primary key,
@@ -1090,8 +1093,9 @@ exception when others then raise warning 'noter_push : %', sqlerrm;
 end $$;
 revoke all on function public.noter_push(uuid, text, int) from public, anon, authenticated;
 
--- Adresses d'abonnement mortes : téléphone parti (404, 410) ou trois refus définitifs d'affilée. Un appareil qui redonne
--- l'une d'elles n'est pas réinscrit (abonner_push répond 'mort') : il se réabonne, avec une adresse neuve.
+-- Adresses d'abonnement mortes : téléphone parti (404, 410), ou trois refus définitifs d'affilée alors que le même service
+-- de push accepte les autres (push_resultats). Un appareil qui redonne l'une d'elles n'est pas réinscrit
+-- (abonner_push_etat répond 'mort') : il se réabonne, avec une adresse neuve.
 -- Gardées 90 jours (taches_quotidiennes). Aucune règle de lecture : seuls la base et la fonction y touchent.
 create table if not exists public.push_morts (
   endpoint text primary key,
@@ -1123,11 +1127,9 @@ create table if not exists public.rappels_envoyes (
 
 -- S'abonner depuis un téléphone (un même téléphone ne sert qu'un compte à la fois). Le site le refait à chaque
 -- ouverture (resynchroniserPush, pwa.js) : un abonnement oublié par la base revient, sans rien changer s'il y est déjà.
--- Réponse : 'ok' ; 'mort' si le service de push a refusé cette adresse pour de bon (push_morts) : elle n'est pas
--- réinscrite, l'appareil doit se réabonner (unsubscribe puis subscribe donnent une adresse neuve).
--- Le type de retour a changé (void avant) : la fonction est retirée puis recréée, avec les mêmes droits.
-drop function if exists public.abonner_push(text, text, text);
-create function public.abonner_push(p_endpoint text, p_p256dh text, p_auth text) returns text
+-- abonner_push_etat répond 'ok', ou 'mort' si le service de push a refusé cette adresse pour de bon (push_morts) : elle
+-- n'est pas réinscrite, l'appareil doit se réabonner (unsubscribe puis subscribe donnent une adresse neuve).
+create or replace function public.abonner_push_etat(p_endpoint text, p_p256dh text, p_auth text) returns text
 language plpgsql security definer set search_path = public as $$
 begin
   if auth.uid() is null then raise exception 'Connecte-toi d’abord.'; end if;
@@ -1138,6 +1140,21 @@ begin
       created_at = case when push_subscriptions.user_id = excluded.user_id then push_subscriptions.created_at else now() end
     where (push_subscriptions.user_id, push_subscriptions.p256dh, push_subscriptions.auth) is distinct from (excluded.user_id, excluded.p256dh, excluded.auth);
   return 'ok';
+end $$;
+revoke all on function public.abonner_push_etat(text, text, text) from public, anon;
+grant execute on function public.abonner_push_etat(text, text, text) to authenticated;
+-- abonner_push, sans réponse comme avant (l'ancien site, et les mise-a-jour.sql d'autres branches qui la redéfinissent) :
+-- la même chose, une adresse morte n'est simplement pas réinscrite. Une base qui a reçu la première version de ce chantier
+-- (abonner_push rendait du texte) la voit retirée puis recréée, avec les mêmes droits.
+do $$ begin
+  if exists (select 1 from pg_proc where oid = to_regprocedure('public.abonner_push(text,text,text)') and prorettype <> 'void'::regtype) then
+    drop function public.abonner_push(text, text, text);
+  end if;
+end $$;
+create or replace function public.abonner_push(p_endpoint text, p_p256dh text, p_auth text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform public.abonner_push_etat(p_endpoint, p_p256dh, p_auth);
 end $$;
 revoke all on function public.abonner_push(text, text, text) from public, anon;
 grant execute on function public.abonner_push(text, text, text) to authenticated;
@@ -1258,22 +1275,35 @@ revoke all on function public.push_faits(bigint[]) from public, anon, authentica
 
 -- Après chaque tour d'envoi, la fonction dit ce que chaque téléphone a répondu : p = [{ id, code, recu, refus }]
 -- (code : sa dernière réponse ; recu : au moins une notification acceptée ; refus : un refus définitif 400, 401 ou 403,
--- sans rien d'accepté). Accepté : le compte des refus repart de zéro. Téléphone parti (404, 410) ou troisième refus
--- définitif d'affilée : l'abonnement est retiré et son adresse notée (push_morts). Rend les abonnements retirés.
--- 413 (notification trop longue) n'est pas la faute de l'abonnement : rien n'est compté.
+-- sans rien d'accepté ; « Tester » n'en envoie jamais). Accepté : la série de refus s'arrête. Rend les abonnements retirés.
+--   · Téléphone parti (404, 410) : l'abonnement est retiré et son adresse notée (push_morts).
+--   · Troisième refus définitif d'affilée : retiré et noté seulement si le même service de push (service_push) a accepté
+--     un envoi vers un autre abonnement depuis le premier refus de la série : c'est bien ce téléphone qu'il refuse (par
+--     exemple un abonnement fait avec une ancienne clé). Sinon, la plateforme est sans doute en cause (clé VAPID,
+--     signature) : rien n'est retiré, tout repart quand elle est réparée, et Logs > Postgres le dit, une fois.
+--   · 413 (notification trop longue) n'est pas la faute de l'abonnement : rien n'est compté.
+-- La preuve se lit sur plusieurs tours, pas dans un seul : un message ou une candidature part seul dans son tour.
 create or replace function public.push_resultats(p jsonb) returns uuid[]
 language plpgsql security definer set search_path = public as $$
-declare v_l jsonb := case when jsonb_typeof(p) = 'array' then p else '[]'::jsonb end; v uuid[];
+declare v_l jsonb := case when jsonb_typeof(p) = 'array' then p else '[]'::jsonb end; v uuid[]; v_gardes text;
 begin
   update public.push_subscriptions s set dernier_code = r.code, dernier_envoi_at = now(),
       refus = case when coalesce(r.recu, false) then 0 when coalesce(r.refus, false) then s.refus + 1 else s.refus end,
+      refus_depuis = case when coalesce(r.recu, false) then null
+        when coalesce(r.refus, false) then case when s.refus = 0 then now() else coalesce(s.refus_depuis, s.refus_at, now()) end
+        else s.refus_depuis end,
       refus_at = case when coalesce(r.refus, false) and not coalesce(r.recu, false) then now() else s.refus_at end
     from jsonb_to_recordset(v_l) as r(id uuid, code int, recu boolean, refus boolean)
     where s.id = r.id;
-  with morts as (
-    select distinct s.id, s.endpoint from public.push_subscriptions s
+  with lus as (
+    select distinct on (s.id) s.id, s.endpoint, s.refus, s.refus_depuis, r.code from public.push_subscriptions s
       join jsonb_to_recordset(v_l) as r(id uuid, code int, recu boolean, refus boolean) on r.id = s.id
-    where r.code in (404, 410) or s.refus >= 3
+  ), morts as (
+    select l.id, l.endpoint from lus l
+    where l.code in (404, 410)
+       or (l.refus >= 3 and exists (select 1 from public.push_subscriptions o
+         where o.id <> l.id and o.dernier_code between 200 and 299 and o.dernier_envoi_at >= l.refus_depuis
+           and public.service_push(o.endpoint) = public.service_push(l.endpoint)))
   ), notees as (
     insert into public.push_morts (endpoint) select endpoint from morts
       on conflict (endpoint) do update set at = now()
@@ -1281,9 +1311,25 @@ begin
     delete from public.push_subscriptions s using morts m where s.id = m.id returning s.id
   )
   select coalesce(array_agg(id), '{}') into v from retirees;
+  -- Gardés au troisième refus d'affilée, sans qu'aucun autre téléphone du même service accepte : dit une fois
+  select string_agg(distinct public.service_push(s.endpoint), ', ') into v_gardes from public.push_subscriptions s
+    join jsonb_to_recordset(v_l) as r(id uuid, code int, recu boolean, refus boolean) on r.id = s.id
+    where coalesce(r.refus, false) and not coalesce(r.recu, false) and s.refus = 3;
+  if v_gardes is not null then
+    raise warning 'push_resultats : des téléphones refusent trois fois de suite et aucun autre du même service n''accepte (%) : gardés, la clé de la plateforme est sans doute en cause', v_gardes;
+  end if;
   return v;
 end $$;
 revoke all on function public.push_resultats(jsonb) from public, anon, authenticated;
+
+-- Prises par la fonction mais pas essayées (plus le temps : aucun envoi ne commence après 45 s) : rendues à la file tout de
+-- suite, sans leur compter d'essai, pour l'appel suivant
+create or replace function public.push_rendues(p_ids bigint[]) returns void
+language sql security definer set search_path = public as $$
+  update public.push_queue set pris_at = null, essais = greatest(essais - 1, 0)
+  where id = any(coalesce(p_ids, '{}'::bigint[])) and pris_at is not null;
+$$;
+revoke all on function public.push_rendues(bigint[]) from public, anon, authenticated;
 
 -- Ce qui déclenche une notification sur le téléphone
 create or replace function public.notif_evenements() returns trigger
@@ -1409,6 +1455,7 @@ do $$ begin
     grant execute on function public.prendre_push(int) to service_role;
     grant execute on function public.push_faits(bigint[]) to service_role;
     grant execute on function public.push_resultats(jsonb) to service_role;
+    grant execute on function public.push_rendues(bigint[]) to service_role;
   end if;
 end $$;
 
@@ -5388,29 +5435,23 @@ begin
     end;
     return null;
   end if;
-  -- Pas encore de match : l'intérêt, à la personne visée (sans téléphone abonné : noté au journal, -1)
+  -- Pas encore de match : l'intérêt, à la personne visée, une fois par jour au plus pour une même paire (un « oui » repris
+  -- après « Plus tard » ne repart pas), avec ou sans téléphone : pousser le met en file, ou le note au journal (-1 sans
+  -- téléphone abonné, -2 Match coupé), une fois comme il serait parti
   begin
     if new.user_id = v_lau then
       -- L'étudiant apprend qu'un lauréat s'intéresse à lui ; l'entreprise seulement si le lauréat la montre à tous
-      if exists (select 1 from public.push_subscriptions s where s.user_id = v_etu) then
-        if public.cadence('match_interet:' || v_etu || ':' || v_lau, interval '1 day') then
-          select * into v_l from public.profiles where id = v_lau;
-          perform public.pousser(v_etu, 'match_interet', jsonb_strip_nulls(jsonb_build_object('nom', split_part(v_l.full_name, ' ', 1), 'de', v_lau,
-            'entreprise', case when coalesce(v_l.visibilite ->> 'travail', 'tous') = 'tous' then nullif(btrim(v_l.entreprise), '') end)));
-        end if;
-      else
-        perform public.noter_push(v_etu, 'match_interet', -1);
+      if public.cadence('match_interet:' || v_etu || ':' || v_lau, interval '1 day') then
+        select * into v_l from public.profiles where id = v_lau;
+        perform public.pousser(v_etu, 'match_interet', jsonb_strip_nulls(jsonb_build_object('nom', split_part(v_l.full_name, ' ', 1), 'de', v_lau,
+          'entreprise', case when coalesce(v_l.visibilite ->> 'travail', 'tous') = 'tous' then nullif(btrim(v_l.entreprise), '') end)));
       end if;
     elsif new.cible_offre is not null then
       -- Le lauréat apprend qu'un étudiant s'intéresse à son offre
-      if exists (select 1 from public.push_subscriptions s where s.user_id = v_lau) then
-        if public.cadence('match_interet:' || v_etu || ':' || v_lau, interval '1 day') then
-          perform public.pousser(v_lau, 'match_interet', jsonb_build_object(
-            'nom', split_part((select full_name from public.profiles where id = v_etu), ' ', 1), 'de', v_etu,
-            'titre', (select titre from public.offers where id = new.cible_offre), 'offre', new.cible_offre));
-        end if;
-      else
-        perform public.noter_push(v_lau, 'match_interet', -1);
+      if public.cadence('match_interet:' || v_etu || ':' || v_lau, interval '1 day') then
+        perform public.pousser(v_lau, 'match_interet', jsonb_build_object(
+          'nom', split_part((select full_name from public.profiles where id = v_etu), ' ', 1), 'de', v_etu,
+          'titre', (select titre from public.offers where id = new.cible_offre), 'offre', new.cible_offre));
       end if;
     end if;
   exception when others then raise warning 'match_apres_choix : %', sqlerrm;
@@ -5850,7 +5891,8 @@ revoke all on function public.rappels_rdv_envoyes(bigint[]) from public, anon, a
 
 -- Ce qui attend encore : la fonction est rappelée (vrai si elle l'est). Abandonné : une notification de plus d'un jour
 -- (le service de push ne la garderait pas), un rappel dont l'heure est passée, 3 essais sans succès. Une notification
--- abandonnée laisse sa trace au journal (-3) : rien ne disparaît sans qu'on le sache.
+-- abandonnée laisse sa trace au journal : rien ne disparaît sans qu'on le sache. -3 si elle a été essayée (le service du
+-- téléphone ne répondait pas) ; -5 si elle ne l'a jamais été (la fonction ou la tâche de chaque minute ne tournait pas).
 create or replace function public.relancer_push() returns boolean
 language plpgsql security definer set search_path = public as $$
 declare v boolean := false;
@@ -5858,8 +5900,9 @@ begin
   begin
     with abandon as (
       delete from public.push_queue where created_at < now() - interval '1 day' or (essais >= 3 and pris_at < now() - interval '2 minutes')
-      returning user_id, kind)
-    insert into public.push_journal (user_id, kind, code) select user_id, left(kind, 40), -3 from abandon;
+      returning user_id, kind, essais)
+    insert into public.push_journal (user_id, kind, code)
+      select user_id, left(kind, 40), case when essais > 0 then -3 else -5 end from abandon;
   exception when others then
     raise warning 'relancer_push (journal) : %', sqlerrm;
     delete from public.push_queue where created_at < now() - interval '1 day' or (essais >= 3 and pris_at < now() - interval '2 minutes');
@@ -6008,12 +6051,19 @@ end $$;
 --  identifiant ni le contenu d'une notification. Les jours sont ceux de l'heure UTC (l'heure du Maroc depuis le
 --  20 septembre 2026).
 --    · membres, et membres qui ont activé les notifications sur au moins un téléphone, par rôle ;
---    · téléphones abonnés : combien ont confirmé une réception (push_recu) en 24 h et en 7 jours, combien acceptent les
---      notifications sans jamais confirmer (service de push d'accord, rien d'affiché), combien ont été retirés ;
---    · leur service de push (Chrome et Android : fcm ; iPhone et Mac : apple ; Firefox : mozilla ; Edge : windows) ;
---    · le journal (push_journal) des 7 derniers jours, par jour et par type (les 12 plus fréquents) ;
---    · la file d'attente, le dernier passage de la tâche de chaque minute (pg_cron « ensam-rappels ») et la dernière
---      réponse à l'appel de la fonction « notifier » (pg_net), quand la base les laisse lire (sinon null).
+--    · téléphones abonnés : combien ont confirmé une réception (push_recu) en 24 h et en 7 jours, combien ont reçu un
+--      envoi en 7 jours (servis), combien acceptent les notifications sans jamais confirmer (service de push d'accord,
+--      rien d'affiché), combien refusent, combien ont été retirés ;
+--    · leur service de push (Chrome et Android : fcm ; iPhone et Mac : apple ; Firefox : mozilla ; Edge : windows), avec,
+--      d'après la dernière réponse de chacun en 7 jours, ceux qu'il accepte (2xx) et ceux qu'il refuse (400, 401, 403), et
+--      combien de membres distincts refusent : tous refusés et aucun accepté, la clé de la plateforme est en cause, pas les
+--      téléphones ;
+--    · le journal (push_journal) des 7 derniers jours, par jour et par type (les 12 plus fréquents) : envoyées (2xx) ;
+--      perdues : parties (404, 410), refusées (autres 4xx sauf 413 et 429), trop longues (413), abandonnées (-3),
+--      expirées sans essai (-5), jetées (-4) ; à part, sans téléphone (-1), coupées (-2), échecs passagers (0, 429, 5xx) ;
+--    · la file d'attente, le dernier passage de la tâche de chaque minute (pg_cron « ensam-rappels »), la dernière
+--      réponse à l'appel de la fonction « notifier » (pg_net, qui ne garde ses réponses que 6 h : { vide } quand il n'en
+--      a plus aucune), quand la base les laisse lire (sinon null), et la dernière notification traitée par la fonction.
 -- =====================================================================
 create or replace function public.service_push(p_endpoint text) returns text
 language sql immutable set search_path = public as $$
@@ -6050,6 +6100,8 @@ begin
     if v_r is not null then
       v_http := jsonb_build_object('code', v_r->'status_code', 'at', v_r->'created',
         'delai', coalesce((v_r->>'timed_out')::boolean, false), 'erreur', coalesce(v_r->>'error_msg', '') <> '');
+    else
+      v_http := jsonb_build_object('vide', true);   -- lisible, mais aucune réponse gardée (6 h au plus)
     end if;
   exception when others then v_http := null;
   end;
@@ -6065,6 +6117,8 @@ begin
         'total', count(*)::int,
         'recus_24h', (count(*) filter (where s.recu_at > now() - interval '24 hours'))::int,
         'recus_7j', (count(*) filter (where s.recu_at > now() - interval '7 days'))::int,
+        -- Ceux à qui quelque chose est parti cette semaine (ou qui ont confirmé une réception)
+        'servis_7j', (count(*) filter (where s.dernier_envoi_at > now() - interval '7 days' or s.recu_at > now() - interval '7 days'))::int,
         -- Accepté par le service de push il y a plus d'une heure, et rien de reçu depuis (à 10 minutes près : le téléphone
         -- peut confirmer avant que la fonction ait noté l'envoi)
         'muets', (count(*) filter (where s.dernier_code between 200 and 299
@@ -6074,35 +6128,46 @@ begin
         'retires_7j', (select count(*)::int from public.push_morts m where m.at > now() - interval '7 days'))
       from public.push_subscriptions s),
     'services', (
-      select jsonb_build_object(
-        'fcm', (count(*) filter (where x.srv = 'fcm'))::int, 'apple', (count(*) filter (where x.srv = 'apple'))::int,
-        'mozilla', (count(*) filter (where x.srv = 'mozilla'))::int, 'windows', (count(*) filter (where x.srv = 'windows'))::int,
-        'autre', (count(*) filter (where x.srv = 'autre'))::int)
-      from (select public.service_push(s.endpoint) as srv from public.push_subscriptions s) x),
+      select jsonb_object_agg(z.srv, jsonb_build_object('n', z.n, 'ok', z.ok, 'refus', z.refus, 'refus_membres', z.refus_membres))
+      from (
+        select k.srv, count(x.srv)::int as n,
+          (count(x.srv) filter (where x.dernier_code between 200 and 299 and x.dernier_envoi_at > now() - interval '7 days'))::int as ok,
+          (count(x.srv) filter (where x.dernier_code in (400, 401, 403) and x.dernier_envoi_at > now() - interval '7 days'))::int as refus,
+          -- Des membres distincts, comme le garde-fou de la fonction (un membre et ses vieux abonnements ne font pas un service)
+          (count(distinct x.user_id) filter (where x.dernier_code in (400, 401, 403) and x.dernier_envoi_at > now() - interval '7 days'))::int as refus_membres
+        from (values ('fcm'), ('apple'), ('mozilla'), ('windows'), ('autre')) as k(srv)
+        left join (select public.service_push(s.endpoint) as srv, s.user_id, s.dernier_code, s.dernier_envoi_at
+          from public.push_subscriptions s) x on x.srv = k.srv
+        group by k.srv) z),
     'jours', (
       select jsonb_agg(jsonb_build_object('jour', to_char(g.jour::timestamp, 'YYYY-MM-DD'),
-          'envoyees', coalesce(t.envoyees, 0), 'refusees', coalesce(t.refusees, 0), 'echecs', coalesce(t.echecs, 0),
-          'sans_tel', coalesce(t.sans_tel, 0), 'coupees', coalesce(t.coupees, 0), 'abandonnees', coalesce(t.abandonnees, 0),
+          'envoyees', coalesce(t.envoyees, 0), 'parties', coalesce(t.parties, 0), 'refusees', coalesce(t.refusees, 0),
+          'trop_longues', coalesce(t.trop_longues, 0), 'echecs', coalesce(t.echecs, 0), 'sans_tel', coalesce(t.sans_tel, 0),
+          'coupees', coalesce(t.coupees, 0), 'abandonnees', coalesce(t.abandonnees, 0), 'expirees', coalesce(t.expirees, 0),
           'jetees', coalesce(t.jetees, 0)) order by g.jour)
       from (select v_jour - 6 + i as jour from generate_series(0, 6) as i) g
       left join (
         select (j.at at time zone 'UTC')::date as jour,
           (count(*) filter (where j.code between 200 and 299))::int as envoyees,
-          (count(*) filter (where j.code between 400 and 499 and j.code <> 429))::int as refusees,
+          (count(*) filter (where j.code in (404, 410)))::int as parties,
+          (count(*) filter (where j.code between 400 and 499 and j.code not in (404, 410, 413, 429)))::int as refusees,
+          (count(*) filter (where j.code = 413))::int as trop_longues,
           (count(*) filter (where j.code = 0 or j.code = 429 or j.code >= 500))::int as echecs,
           (count(*) filter (where j.code = -1))::int as sans_tel,
           (count(*) filter (where j.code = -2))::int as coupees,
           (count(*) filter (where j.code = -3))::int as abandonnees,
+          (count(*) filter (where j.code = -5))::int as expirees,
           (count(*) filter (where j.code = -4))::int as jetees
         from public.push_journal j where j.at >= v_debut group by 1
       ) t on t.jour = g.jour),
     'types', coalesce((
       select jsonb_agg(jsonb_build_object('kind', y.kind, 'total', y.total, 'envoyees', y.envoyees, 'perdues', y.perdues,
-          'coupees', y.coupees, 'echecs', y.echecs) order by y.total desc, y.kind)
+          'sans_tel', y.sans_tel, 'coupees', y.coupees, 'echecs', y.echecs) order by y.total desc, y.kind)
       from (
         select j.kind, count(*)::int as total,
           (count(*) filter (where j.code between 200 and 299))::int as envoyees,
-          (count(*) filter (where j.code in (-1, -3, -4) or (j.code between 400 and 499 and j.code <> 429)))::int as perdues,
+          (count(*) filter (where j.code in (-3, -4, -5) or (j.code between 400 and 499 and j.code <> 429)))::int as perdues,
+          (count(*) filter (where j.code = -1))::int as sans_tel,
           (count(*) filter (where j.code = -2))::int as coupees,
           (count(*) filter (where j.code = 0 or j.code = 429 or j.code >= 500))::int as echecs
         from public.push_journal j where j.at >= v_debut
@@ -6110,6 +6175,8 @@ begin
       ) y), '[]'::jsonb),
     'file', (select jsonb_build_object('n', count(*)::int,
         'age_s', coalesce(floor(extract(epoch from now() - min(q.created_at)))::int, 0)) from public.push_queue q),
+    -- La dernière notification traitée par la fonction (une réponse de service de push, ou jetée), même au-delà des 6 h de pg_net
+    'envoi_at', (select max(j.at) from public.push_journal j where j.code >= 0 or j.code = -4),
     'cron', v_cron,
     'http', v_http);
 end $$;

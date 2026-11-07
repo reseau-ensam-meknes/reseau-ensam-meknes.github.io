@@ -1,7 +1,8 @@
 // Santé des notifications, côté fonction : une notification par événement dans la barre (sauf ce qui remplace),
-// les abonnements morts retirés (404, 410, trois refus définitifs d'affilée), 413 au journal seulement, une base pas
-// encore mise à jour servie comme avant, l'heure limite de 45 s, le détail de « Tester », et la ligne des emails
-// pour qui n'a de notifications sur aucun téléphone.
+// les abonnements morts retirés (404, 410 ; trois refus définitifs d'affilée quand le même service accepte d'autres
+// téléphones), un refus en masse qui ne retire personne, 413 au journal seulement, une base pas encore mise à jour
+// servie comme avant, l'heure limite de 45 s, le détail de « Tester » (dont les refus ne comptent pas), et la ligne des
+// emails pour qui n'a de notifications sur aucun téléphone.
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { MODULE, Banc, installer, configurerEnv, requete, uid, SITE } from './banc.mjs';
@@ -28,8 +29,11 @@ test('tags : une notification par événement ; ce qui remplace garde son tag ; 
   assert.equal(t('candidature', { nom: 'Salma', titre: 'Stage' }, 12), 'candidature-12');
   assert.equal(t('reponse', { nom: 'Nadia', titre: 'Entretien chez Renault ?' }, '13'), 'reponse-13');
   assert.equal(t('candidature', { nom: 'Salma', titre: 'Stage' }), 'candidature', 'sans identifiant de file : le type');
-  // Ce qui remplace la précédente : un seul rappel du soir, un seul Match du jour, un seul essai, une seule enquête
-  assert.deepEqual(N.SE_REMPLACENT, ['rappel_visite', 'match_jour', 'test', 'enquete']);
+  // Ce qui remplace la précédente : un seul rappel du soir, un seul Match du jour, un seul essai, une seule enquête ;
+  // la vérification par les pairs, la nouvelle date d'un événement ou d'un rendez-vous de mentorat, un nouveau parrain ;
+  // les arrivées dans la promo et le filleul, comme dans TAGS_FIXES (nouvelles notifications)
+  assert.deepEqual(N.SE_REMPLACENT, ['rappel_visite', 'match_jour', 'test', 'enquete', 'verification_pair', 'evenement_deplace', 'mentorat_deplace',
+    'parrain', 'promo_nouveau', 'filleul']);
   assert.equal(t('rappel_visite', { messages: 2 }, 14), 'rappel_visite');
   assert.equal(t('match_jour', { n: 3, type: 'etudiant' }, 15), 'match_jour');
   assert.equal(t('test', {}, 16), 'test');
@@ -51,12 +55,65 @@ test('tags : une notification par événement ; ce qui remplace garde son tag ; 
   assert.deepEqual(b.push.map(x => x.message.tag), [`candidature-${a1}`, `candidature-${a2}`, 'match_jour']);
 });
 
-test('refus définitifs : au troisième d’affilée l’abonnement est retiré et son adresse notée ; un envoi accepté remet le compte à zéro', async () => {
+test('tags : la vérification par les pairs, une nouvelle date et un nouveau parrain remplacent la précédente (l’ancienne ne reste pas affichée)', () => {
+  const t = (kind, data, id) => N.texteNotif(kind, data, 'fr', SITE, id);
+  const v1 = t('verification_pair', { nom: 'Youssef', n: 1 }, 101), v2 = t('verification_pair', { nom: 'Nadia', n: 2 }, 102);
+  assert.match(v1.body, /Encore un lauréat et ton badge arrive/);
+  assert.equal(v2.title, 'Ton profil est vérifié');
+  assert.equal(v1.tag, v2.tag, 'avant : deux lignes, la première disait « encore un lauréat » après le badge');
+  assert.equal(v2.tag, 'verification_pair');
+  const e1 = t('evenement_deplace', { titre: 'Forum', debut: '2026-11-12T09:00:00Z' }, 301), e2 = t('evenement_deplace', { titre: 'Forum', debut: '2026-11-19T09:00:00Z' }, 302);
+  assert.equal(e1.tag, e2.tag, 'avant : la première gardait l’ancienne date');
+  const m1 = t('mentorat_deplace', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-12T17:00:00Z' }, 303), m2 = t('mentorat_deplace', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-13T17:00:00Z' }, 304);
+  assert.equal(m1.tag, m2.tag);
+  // Un nouveau parrain : « ton parrainage cette année : Youssef » ne reste pas affiché à côté de celui qui le remplace
+  const p1 = t('parrain', { nom: 'Youssef Alami' }, 305), p2 = t('parrain', { nom: 'Nadia Bennani' }, 306);
+  assert.match(p1.body, /Youssef Alami/);
+  assert.equal(p1.tag, p2.tag, 'avant : l’ancien parrain restait dans la barre');
+  assert.equal(p2.tag, 'parrain');
+  // Comme dans la liste des tags fixes des nouvelles notifications : une seule ligne pour la promo, une pour le filleul
+  for (const k of ['promo_nouveau', 'filleul']) {
+    assert.equal(t(k, { nom: 'A', n: 1, promo: '2024' }, 307).tag, k);
+    assert.equal(t(k, { nom: 'B', n: 3, promo: '2024' }, 308).tag, k);
+  }
+  // Ce qui reste une notification par événement : chacun dit quelque chose de différent et de toujours vrai
+  for (const k of ['evenement', 'evenement_annule', 'candidature_statut', 'merci']) {
+    const x = t(k, { nom: 'A', n: 2, promo: '2024', titre: 'X', statut: 'entretien', debut: '2026-11-12T09:00:00Z' }, 7);
+    const y = t(k, { nom: 'B', n: 2, promo: '2024', titre: 'Y', statut: 'retenu', debut: '2026-11-13T09:00:00Z' }, 8);
+    assert.ok(x && y, k);
+    assert.notEqual(x.tag, y.tag, k);
+  }
+});
+
+test('tags : sur une même demande, chaque lauréat qui propose son aide et chaque réponse ont leur notification ; regroupées quand la base les compte', () => {
+  const dem = uid(700);
+  const t = (kind, data, id) => N.texteNotif(kind, data, 'fr', SITE, id);
+  const a = t('demande_proposition', { nom: 'Youssef', entreprise: 'OCP', titre: 'Stage', demande: dem }, 201);
+  const c = t('demande_proposition', { nom: 'Karim', entreprise: 'Renault', titre: 'Stage', demande: dem }, 202);
+  assert.notEqual(a.tag, c.tag, 'avant : la proposition de Karim effaçait celle de Youssef, et son nom');
+  assert.equal(a.tag, 'demande_proposition-201');
+  const r1 = t('demande_reponse', { nom: 'Salma', titre: 'Stage', texte: 'Contacte X', demande: dem }, 203);
+  const r2 = t('demande_reponse', { nom: 'Amine', titre: 'Stage', texte: 'Essaie Y', demande: dem }, 204);
+  assert.notEqual(r1.tag, r2.tag);
+  // Toutes ouvrent la carte de la demande
+  for (const n of [a, c, r1, r2]) assert.equal(n.url, `${SITE}#offres/demandes/${dem}`);
+  // La base compte (n) : une seule notification pour la demande, qui se met à jour
+  assert.equal(t('demande_proposition', { nom: 'Karim', titre: 'Stage', demande: dem, n: 2 }, 205).tag, `demande_proposition-${dem}`);
+  // Sans ligne de file (appel direct, ancien code) : par demande, comme avant
+  assert.equal(t('demande_reponse', { nom: 'Salma', titre: 'Stage', texte: 'X', demande: dem }).tag, `demande_reponse-${dem}`);
+  // Les autres notifications d'une demande restent une par demande (un seul état vrai à la fois)
+  for (const k of ['demande_nouvelle', 'demande_large', 'demande_match', 'demande_rouverte']) {
+    assert.equal(t(k, { nom: 'Salma', titre: 'Stage', demande: dem, pour: 'auteur' }, 206).tag, `${k}-${dem}`, k);
+  }
+});
+
+test('refus définitifs : au troisième d’affilée l’abonnement est retiré et son adresse notée, quand le même service accepte un autre téléphone ; un envoi accepté remet le compte à zéro', async () => {
   const b = nouveauBanc();
-  const u = uid(2);
-  b.tables.profiles.push(profil(u));
+  const u = uid(2), autre = uid(9);
+  b.tables.profiles.push(profil(u), profil(autre));
   const s = b.abonner(u, 1, 'https://fcm.googleapis.com');
-  const envoi = async () => { enFile(b, u, 'merci', { nom: 'Salma' }); return corpsDe(await appel({ job: 'push' })); };
+  b.abonner(autre, 1, 'https://fcm.googleapis.com');   // un autre membre, que Google accepte
+  const envoi = async (qui = u) => { enFile(b, qui, 'merci', { nom: 'Salma' }); return corpsDe(await appel({ job: 'push' })); };
   const abo = () => b.tables.push_subscriptions.find(x => x.id === s.id);
   b.statutsPush.set(s.endpoint, 403);
   assert.deepEqual(await envoi(), { sent: 0, failed: 1, removed: 0 });
@@ -67,6 +124,8 @@ test('refus définitifs : au troisième d’affilée l’abonnement est retiré 
   assert.equal(abo().refus, 0, 'accepté : le compte repart de zéro');
   b.statutsPush.set(s.endpoint, 401);
   await envoi();
+  // Pendant la série, Google accepte le téléphone d'un autre membre : c'est bien celui-ci qu'il refuse
+  assert.deepEqual(await envoi(autre), { sent: 1, failed: 0, removed: 0 });
   b.statutsPush.set(s.endpoint, 400);
   await envoi();
   assert.equal(abo().refus, 2);
@@ -76,7 +135,8 @@ test('refus définitifs : au troisième d’affilée l’abonnement est retiré 
   assert.deepEqual(b.tables.push_morts.map(x => x.endpoint), [s.endpoint]);
   // Un refus définitif n'est pas repris : chaque notification sort de la file, avec sa réponse au journal
   assert.deepEqual(b.tables.push_queue, []);
-  assert.deepEqual(journal(b), [['merci', 403], ['merci', 201], ['merci', 401], ['merci', 400], ['merci', 403]]);
+  assert.deepEqual(b.tables.push_journal.filter(x => x.user_id === u).map(x => [x.kind, x.code]),
+    [['merci', 403], ['merci', 201], ['merci', 401], ['merci', 400], ['merci', 403]]);
   // Plusieurs refus dans un même tour ne comptent qu'une fois
   const s2 = b.abonner(u, 2);
   b.statutsPush.set(s2.endpoint, 403);
@@ -98,7 +158,7 @@ test('refus en masse : tous les téléphones d’un service refusent et aucun n�
   assert.deepEqual(refus(), [0, 0, 0], 'trois tours de refus en masse : personne n’est retiré');
   assert.deepEqual(b.tables.push_morts, []);
   assert.equal(b.tables.push_subscriptions.find(x => x.id === ailleurs.id).refus, 0);
-  assert.ok(erreurs.some(e => e.includes('tous les téléphones de ce service refusent') && e.includes('https://fcm.googleapis.com')), 'Logs : le service est nommé');
+  assert.ok(erreurs.some(e => e.includes('tous les téléphones de ce service refusent') && e.endsWith(' fcm')), 'Logs : le service est nommé, comme dans la base');
   assert.ok(erreurs.every(e => !us.some(u => e.includes(u)) && !fcm.some(s => e.includes(s.endpoint))), 'Logs : ni membre ni adresse');
   // Deux téléphones seulement refusent : ce sont eux, leurs refus comptent
   b.statutsPush.delete(fcm[2].endpoint);
@@ -106,6 +166,49 @@ test('refus en masse : tous les téléphones d’un service refusent et aucun n�
   assert.deepEqual(refus(), [1, 1, 0], 'un téléphone du même service accepte : les refus des autres comptent');
   assert.deepEqual(N.refusEnMasse([{ id: 'a', code: 403, recu: false, refus: true }, { id: 'b', code: 401, recu: false, refus: true }], () => 'x'), [], 'moins de 3 : comptés');
   assert.equal(N.REFUS_EN_MASSE, 3);
+});
+
+test('refus en masse, un téléphone par tour (le cas courant) : Google refuse les quatre membres, trois messages chacun : personne n’est retiré', async () => {
+  const b = nouveauBanc();
+  const us = [uid(31), uid(32), uid(33), uid(34)];
+  for (const u of us) b.tables.profiles.push(profil(u));
+  const fcm = us.map(u => b.abonner(u, 1, 'https://fcm.googleapis.com'));
+  for (const s of fcm) b.statutsPush.set(s.endpoint, 403);
+  // Chaque message déclenche son propre appel, un destinataire à la fois : le garde-fou d'un tour ne voit qu'un téléphone
+  for (let i = 0; i < 3; i++) for (const u of us) { enFile(b, u, 'merci', { nom: 'Salma' }); await appel({ job: 'push' }); }
+  assert.equal(b.tables.push_subscriptions.length, 4, 'aucun téléphone retiré (avant : les quatre)');
+  assert.deepEqual(b.tables.push_morts, [], 'aucune adresse bannie');
+  assert.deepEqual(b.tables.push_subscriptions.map(x => x.refus), [3, 3, 3, 3], 'les refus sont comptés, la base attend une preuve');
+  assert.equal(b.avertissements.length, 4, 'la base le dit une fois par téléphone');
+  // La clé de la plateforme réparée : tout repart, le compte des refus revient à zéro
+  for (const s of fcm) b.statutsPush.delete(s.endpoint);
+  enFile(b, us[0], 'merci', { nom: 'Amine' });
+  assert.deepEqual(await corpsDe(await appel({ job: 'push' })), { sent: 1, failed: 0, removed: 0 });
+  assert.equal(b.tables.push_subscriptions.find(x => x.id === fcm[0].id).refus, 0);
+});
+
+test('refus en masse compté par membre : un membre seul avec trois vieux abonnements refusés : ses refus comptent, sans fausse alerte ; retirés dès que Google accepte un autre téléphone', async () => {
+  const b = nouveauBanc();
+  const u = uid(91), autre = uid(92);
+  b.tables.profiles.push(profil(u), profil(autre));
+  const vieux = [1, 2, 3].map(i => b.abonner(u, i, 'https://fcm.googleapis.com'));
+  for (const s of vieux) b.statutsPush.set(s.endpoint, 403);
+  for (let i = 0; i < 3; i++) { enFile(b, u, 'merci', { nom: 'X' + i }); await appel({ job: 'push' }); }
+  assert.deepEqual(b.tables.push_subscriptions.map(x => x.refus), [3, 3, 3], 'comptés (avant : jamais, ils restaient pour toujours)');
+  assert.ok(!erreurs.some(e => e.includes('tous les téléphones de ce service refusent')), 'Logs : pas d’alerte « clé de la plateforme » pour un seul membre');
+  assert.deepEqual(N.refusEnMasse(vieux.map(s => ({ id: s.id, code: 403, recu: false, refus: true })), () => 'fcm', () => u), [], 'un membre : pas un refus en masse');
+  assert.deepEqual(N.refusEnMasse([1, 2, 3].map(i => ({ id: 'a' + i, code: 403, recu: false, refus: true })), () => 'fcm', id => id), ['fcm'], 'trois membres : oui');
+  // Google accepte le téléphone d'un autre membre : au refus suivant, les trois vieux abonnements sont retirés
+  b.abonner(autre, 1, 'https://fcm.googleapis.com');
+  enFile(b, autre, 'merci', { nom: 'Y' }); await appel({ job: 'push' });
+  enFile(b, u, 'merci', { nom: 'Z' });
+  assert.deepEqual(await corpsDe(await appel({ job: 'push' })), { sent: 0, failed: 3, removed: 3 });
+  assert.deepEqual(b.tables.push_subscriptions.map(x => x.user_id), [autre]);
+  assert.equal(b.tables.push_morts.length, 3);
+  // Le service est nommé comme dans la base (service_push)
+  assert.deepEqual(['https://fcm.googleapis.com/fcm/send/x', 'https://web.push.apple.com/x', 'https://updates.push.services.mozilla.com/wpush/v2/x',
+    'https://wns2-par02p.notify.windows.com/w/?token=x', 'https://push.exemple.ma/x', 'pas une adresse'].map(N.servicePush),
+  ['fcm', 'apple', 'mozilla', 'windows', 'autre', 'autre']);
 });
 
 test('413 : notification trop longue, notée au journal, pas reprise ; rien n’est compté contre le téléphone', async () => {
@@ -184,6 +287,48 @@ test('heure limite : aucun envoi ne commence après 45 s ; la suite reste en fil
   assert.deepEqual(b.push.map(x => x.message.body), Array.from({ length: 8 }, (_, i) => `N${i} te remercie pour ton aide.`));
 });
 
+test('45 s : un tour ne commence pas à moins de 10 s de la fin ; ce qui a été pris sans être essayé revient tout de suite dans la file, sans essai compté', async () => {
+  const b = nouveauBanc();
+  const u = uid(81), w = uid(82);
+  b.tables.profiles.push(profil(u), profil(w));
+  b.abonner(u, 1); b.abonner(w, 1);
+  enFile(b, u, 'merci', { nom: 'premier' });
+  const vrai = Date.now;
+  let decalage = 0, n = 0;
+  Date.now = () => vrai() + decalage;
+  // Le premier envoi dure 44 s ; pendant ce temps, 6 notifications arrivent pour w
+  b.surPush = () => { n++; if (n === 1) { decalage += 44_000; for (let i = 0; i < 6; i++) enFile(b, w, 'merci', { nom: 'suite' + i }); } else decalage += 1_500; };
+  try {
+    assert.equal(N.MARGE_TOUR, 10_000);
+    assert.deepEqual(await corpsDe(await appel({ job: 'push' })), { sent: 1, failed: 0, removed: 0 });
+  } finally { Date.now = vrai; b.surPush = null; }
+  assert.equal(b.appelsRpc.prendre_push, 1, 'pas de second tour à 1 s de la fin');
+  assert.deepEqual(b.tables.push_queue.map(x => [x.essais ?? 0, !!x.pris_at]), Array(6).fill([0, false]), 'avant : 6 notifications prises, un essai compté, bloquées 2 minutes');
+  // L'appel suivant (une minute plus tard au plus) les envoie toutes
+  assert.deepEqual(await corpsDe(await appel({ job: 'push' })), { sent: 6, failed: 0, removed: 0 });
+  // Prises dans un tour mais pas essayées (plus le temps) : rendues à la file (push_rendues)
+  for (let i = 0; i < 4; i++) enFile(b, u, 'merci', { nom: 'R' + i });
+  decalage = 0;
+  Date.now = () => vrai() + decalage;
+  b.surPush = () => { decalage += 20_000; };   // chaque envoi prend 20 s : deux partent, deux attendent
+  try {
+    assert.deepEqual(await corpsDe(await appel({ job: 'push' })), { sent: 3, failed: 0, removed: 0, retry: 1 });
+  } finally { Date.now = vrai; b.surPush = null; }
+  assert.deepEqual(b.argsRpc.push_rendues.at(-1).p_ids.length, 1);
+  assert.deepEqual(b.tables.push_queue.map(x => [x.essais, !!x.pris_at]), [[0, false]], 'rendue : aucun essai compté, libre tout de suite');
+  assert.deepEqual(await corpsDe(await appel({ job: 'push' })), { sent: 1, failed: 0, removed: 0 }, 'repartie sans attendre 2 minutes');
+  assert.deepEqual(journal(b).filter(([k]) => k === 'merci').length, 11, 'chacune une fois au journal, à son envoi');
+  // Une base sans push_rendues : reprise après 2 minutes, comme avant, et les Logs le disent
+  b.absentes.add('push_rendues');
+  for (let i = 0; i < 4; i++) enFile(b, u, 'merci', { nom: 'S' + i });
+  decalage = 0;
+  Date.now = () => vrai() + decalage;
+  b.surPush = () => { decalage += 20_000; };
+  try { await appel({ job: 'push' }); } finally { Date.now = vrai; b.surPush = null; }
+  assert.deepEqual(b.tables.push_queue.map(x => [x.essais, !!x.pris_at]), [[1, true]]);
+  assert.ok(erreurs.some(e => e.includes('push_rendues')));
+});
+
 test('« Tester » : le détail de chaque téléphone, au journal sous « test » ; en urgence haute', async () => {
   const b = nouveauBanc();
   const u = uid(7), sans = uid(8);
@@ -196,11 +341,31 @@ test('« Tester » : le détail de chaque téléphone, au journal sous « test �
   const tester = jeton => N.handler(requete({ job: 'test' }, { Authorization: `Bearer ${jeton}` })).then(corpsDe);
   assert.deepEqual(await tester('jeton-u'), { sent: 1, failed: 2, removed: 0, codes: [201, 403, 0], abonnements: 3 });
   assert.equal(b.push.find(p => p.endpoint === a.endpoint).entetes.urgency, 'high', 'le membre attend cette notification');
-  assert.equal(b.tables.push_subscriptions.find(x => x.id === c.id).refus, 1, 'un refus du test compte comme les autres');
+  assert.equal(b.tables.push_subscriptions.find(x => x.id === c.id).refus, 0, 'un refus du test ne compte pas contre le téléphone');
+  assert.equal(b.tables.push_subscriptions.find(x => x.id === c.id).dernier_code, 403, 'mais sa réponse est notée');
   assert.deepEqual(journal(b), [['test', 201]]);
   // Aucun téléphone : la réponse le dit, le journal le note
   assert.deepEqual(await tester('jeton-sans'), { sent: 0, failed: 0, removed: 0, codes: [], abonnements: 0 });
   assert.deepEqual(b.tables.push_journal.at(-1), { user_id: sans, kind: 'test', code: -1 });
+});
+
+test('« Tester » appuyé quatre fois sur un téléphone que le service refuse : jamais retiré, toujours essayé', async () => {
+  const b = nouveauBanc();
+  const u = uid(51), autre = uid(52);
+  b.tables.profiles.push(profil(u), profil(autre));
+  b.jetons.set('jeton-membre', u);
+  const s = b.abonner(u, 1, 'https://fcm.googleapis.com');
+  b.abonner(autre, 1, 'https://fcm.googleapis.com');
+  enFile(b, autre, 'merci', { nom: 'Y' }); await appel({ job: 'push' });   // Google accepte un autre téléphone
+  b.statutsPush.set(s.endpoint, 403);
+  const tester = () => N.handler(requete({ job: 'test' }, { Authorization: 'Bearer jeton-membre' })).then(corpsDe);
+  for (let i = 0; i < 4; i++) assert.deepEqual(await tester(), { sent: 0, failed: 1, removed: 0, codes: [403], abonnements: 1 }, `essai ${i + 1}`);
+  assert.equal(b.tables.push_subscriptions.find(x => x.id === s.id).refus, 0, 'avant : retiré au troisième appui, et son adresse bannie');
+  assert.deepEqual(b.tables.push_morts, []);
+  // Un téléphone parti (410) l'est toujours, même pendant un essai
+  b.statutsPush.set(s.endpoint, 410);
+  assert.deepEqual(await tester(), { sent: 0, failed: 0, removed: 1, codes: [410], abonnements: 1 });
+  assert.equal(b.tables.push_subscriptions.find(x => x.id === s.id), undefined);
 });
 
 const NOW = new Date('2026-10-20T09:00:00Z');
@@ -260,4 +425,38 @@ test('emails : la ligne va seulement à qui n’a aucun téléphone abonné (ni 
   assert.deepEqual(await corpsDe(await appel({ job: 'messages' })), { sent: 1, errors: 0, via: 'brevo' });
   assert.ok(!corps(2).htmlContent.includes(PHRASE));
   assert.ok(erreurs.some(e => e.includes('téléphones des destinataires illisibles')));
+});
+
+test('emails : le rappel de rendez-vous (qui ne part qu’à qui n’a aucun téléphone) et l’enquête portent la ligne pour activer les notifications', () => {
+  const RDV = { nom: 'Youssef Alami', sujet: 'Mon CV', rdv_at: '2026-11-02T17:30:00Z', lien: 'https://meet.example/x' };
+  const PHRASE_RDV = 'Reçois ces rappels directement sur ton téléphone, 15 minutes avant chaque rendez-vous';
+  assert.equal(N.TELEPHONE_RAPPEL.fr, PHRASE_RDV);
+  const fr = N.rendreRappelRdv('rappel_rdv', RDV, 'fr', SITE);
+  assert.ok(fr.html.includes(PHRASE_RDV) && fr.html.includes(`href="${SITE}?notifs=1"`), 'avant : aucune ligne, alors que c’est justement à eux qu’il part');
+  assert.ok(fr.texte.includes(`${PHRASE_RDV} : ${SITE}?notifs=1`));
+  assert.ok(!fr.html.includes('Active-les dans Mon profil'), 'le pied ne répète plus ce que la ligne dit');
+  assert.match(fr.html, /les notifications ne sont activées sur aucun de tes appareils\./);
+  const ar = N.rendreRappelRdv('rappel_entretien', { ...RDV, de: uid(20) }, 'ar', SITE);
+  assert.ok(ar.html.includes(N.TELEPHONE_RAPPEL.ar) && ar.html.includes(`href="${SITE}?lang=ar&amp;notifs=1"`));
+  assert.ok(ar.texte.includes(`${N.TELEPHONE_RAPPEL.ar}: ${SITE}?lang=ar&notifs=1`));
+  assert.ok(!N.rendreRappelRdv('rappel_rdv', RDV, 'fr', SITE, false).html.includes(PHRASE_RDV));
+  // L'enquête : la ligne de tous les emails, seulement sans téléphone
+  const e = N.rendreEnquete(6, false, 'fr', SITE, TOKEN, true);
+  assert.ok(e.html.includes(PHRASE) && e.texte.includes(`${PHRASE} : ${SITE}?notifs=1`));
+  assert.ok(N.rendreEnquete(12, true, 'ar', SITE, TOKEN, true).html.includes(PHRASE_AR));
+  assert.ok(!N.rendreEnquete(6, false, 'fr', SITE, TOKEN).html.includes(PHRASE));
+});
+
+test('emails : l’invitation à l’enquête porte la ligne seulement pour qui n’a aucun téléphone abonné', async () => {
+  const b = nouveauBanc();
+  configurerEnv({ BREVO_API_KEY: 'xkeysib-test', SENDER_EMAIL: 'reseau@ensam-meknes.example' });
+  const avec = uid(14), sans = uid(15);
+  b.tables.profiles.push(profil(avec, { role: 'laureat' }), profil(sans, { role: 'laureat' }));
+  b.abonner(avec, 1);
+  const L = (id, n) => ({ id, email: `e${n}@exemple.ma`, langue: 'fr', token: `00000000-0000-4000-9000-00000000001${n}`, vague: 6, rappel: false, email_ok: true });
+  b.rpcs = { enquetes_a_inviter: () => [L(avec, 1), L(sans, 2)], enquetes_invitees: () => 2 };
+  assert.deepEqual(await corpsDe(await appel({ job: 'enquetes' })), { sent: 2, push: 0, errors: 0, via: 'brevo' });
+  const corps = n => b.brevo.find(x => x.corps.to[0].email === `e${n}@exemple.ma`).corps;
+  assert.ok(!corps(1).htmlContent.includes(PHRASE), 'un téléphone abonné : rien');
+  assert.ok(corps(2).htmlContent.includes(PHRASE) && corps(2).textContent.includes(`${SITE}?notifs=1`));
 });

@@ -1177,10 +1177,27 @@ function demoParrains(store, onlyId = null) {
 // Santé des notifications en démo : une semaine plausible, la même à chaque ouverture pour les mêmes membres, avec les
 // champs d'admin_sante_notifs() dans la base. Six étudiants sur dix et un lauréat sur deux environ ont un téléphone abonné.
 const DEMO_PUSH_PART = { etudiant: 62, laureat: 49, admin: 100 };
-// Par jour, du plus ancien à aujourd'hui (journée pas finie) : envoyées, sans téléphone, refusées, abandonnées, coupées, échecs passagers
-const DEMO_PUSH_JOURS = [[52, 11, 1, 0, 3, 2], [61, 14, 0, 0, 4, 0], [47, 9, 2, 1, 2, 3], [68, 13, 0, 0, 5, 1], [58, 12, 1, 0, 3, 0], [33, 6, 0, 0, 1, 0], [21, 4, 0, 0, 1, 1]];
+// Par jour, du plus ancien à aujourd'hui (journée pas finie) : envoyées, sans téléphone, téléphone parti, refusées,
+// abandonnées, coupées, échecs passagers
+const DEMO_PUSH_JOURS = [[52, 11, 1, 0, 0, 3, 2], [61, 14, 0, 0, 0, 4, 0], [47, 9, 1, 1, 1, 2, 3], [68, 13, 0, 0, 0, 5, 1], [58, 12, 1, 0, 0, 3, 0], [33, 6, 0, 0, 0, 1, 0], [21, 4, 0, 0, 0, 1, 1]];
 const DEMO_PUSH_TYPES = [['message', 31], ['match_jour', 17], ['offre_alerte', 12], ['demande_nouvelle', 9], ['match_interet', 7], ['rappel_visite', 6],
   ['candidature', 5], ['mentorat_demande', 4], ['reponse', 3], ['match', 2], ['rdv_message', 2], ['merci', 1]];
+// Les types qui passent par pousser() et peuvent donc finir « sans téléphone » (-1) ou « coupés » (-2). Les autres ne sont mis
+// en file que pour un membre qui a un téléphone et qui veut ce type (Match du jour, nouvelles offres, nouvelles demandes,
+// rappel du soir : push_voulu est vérifié avant).
+const DEMO_PUSH_POUSSER = new Set(['message', 'candidature', 'reponse', 'match', 'match_interet', 'merci', 'rdv_message', 'mentorat_demande']);
+// Répartit un total selon des poids, en entiers qui tombent juste (au plus fort reste) ; un poids nul ne reçoit rien
+function repartirDemo(total, poids) {
+  const somme = poids.reduce((a, w) => a + w, 0);
+  if (!somme) return poids.map(() => 0);
+  const brut = poids.map(w => (total * w) / somme), parts = brut.map(Math.floor);
+  let reste = total - parts.reduce((a, x) => a + x, 0);
+  for (const [, i] of brut.map((x, i) => [x - Math.floor(x), i]).filter(([, i]) => poids[i] > 0).sort((a, b) => b[0] - a[0] || a[1] - b[1])) {
+    if (reste <= 0) break;
+    parts[i]++; reste--;
+  }
+  return parts;
+}
 function demoSanteNotifs(profiles, now = Date.now()) {
   const hache = id => { let h = 7; for (const c of String(id)) h = (h * 31 + c.charCodeAt(0)) % 1000003; return h % 100; };
   const roles = {};
@@ -1192,23 +1209,37 @@ function demoSanteNotifs(profiles, now = Date.now()) {
   const avec = Object.values(roles).reduce((a, r) => a + r.avec_tel, 0);
   const total = avec + Math.round(avec / 9); // quelques membres ont deux téléphones
   const d = new Date(now), j0 = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
-  const jours = DEMO_PUSH_JOURS.map(([envoyees, sans_tel, refusees, abandonnees, coupees, echecs], i) => ({
-    jour: new Date(j0 - (6 - i) * 864e5).toISOString().slice(0, 10), envoyees, refusees, echecs, sans_tel, coupees, abandonnees, jetees: 0 }));
+  const jours = DEMO_PUSH_JOURS.map(([envoyees, sans_tel, parties, refusees, abandonnees, coupees, echecs], i) => ({
+    jour: new Date(j0 - (6 - i) * 864e5).toISOString().slice(0, 10), envoyees, parties, refusees, trop_longues: 0, echecs, sans_tel, coupees,
+    abandonnees, expirees: 0, jetees: 0 }));
   const somme = k => jours.reduce((a, x) => a + x[k], 0);
-  const poids = DEMO_PUSH_TYPES.reduce((a, [, w]) => a + w, 0), part = (k, w) => Math.floor(somme(k) * w / poids);
-  const types = DEMO_PUSH_TYPES.map(([kind, w]) => {
-    const envoyees = part('envoyees', w), perdues = part('sans_tel', w) + part('refusees', w) + part('abandonnees', w), coupees = part('coupees', w), echecs = part('echecs', w);
-    return { kind, total: envoyees + perdues + coupees + echecs, envoyees, perdues, coupees, echecs };
+  // Par type : chaque colonne tombe juste sur la semaine ; « sans téléphone » et « coupées » seulement pour les types de pousser()
+  const poids = DEMO_PUSH_TYPES.map(([, w]) => w), pousse = DEMO_PUSH_TYPES.map(([k, w]) => (DEMO_PUSH_POUSSER.has(k) ? w : 0));
+  const col = {
+    envoyees: repartirDemo(somme('envoyees'), poids),
+    perdues: repartirDemo(['parties', 'refusees', 'trop_longues', 'abandonnees', 'expirees', 'jetees'].reduce((a, k) => a + somme(k), 0), poids),
+    sans_tel: repartirDemo(somme('sans_tel'), pousse), coupees: repartirDemo(somme('coupees'), pousse), echecs: repartirDemo(somme('echecs'), poids),
+  };
+  const types = DEMO_PUSH_TYPES.map(([kind], i) => {
+    const x = { envoyees: col.envoyees[i], perdues: col.perdues[i], sans_tel: col.sans_tel[i], coupees: col.coupees[i], echecs: col.echecs[i] };
+    return { kind, total: x.envoyees + x.perdues + x.sans_tel + x.coupees + x.echecs, ...x };
   }).sort((a, b) => b.total - a.total || a.kind.localeCompare(b.kind));
+  // Les téléphones : presque tous ont reçu un envoi cette semaine et l'ont affiché ; deux acceptent sans confirmer, un refuse
+  const servis = Math.max(0, total - 2), recus7j = Math.max(0, total - 4), enRefus = Math.min(1, total);
   const fcm = Math.round(total * .71), apple = Math.round(total * .21), mozilla = Math.round(total * .05);
   const windows = Math.max(0, Math.min(Math.round(total * .02), total - fcm - apple - mozilla));
+  const autre = Math.max(0, total - fcm - apple - mozilla - windows);
+  // Le téléphone en refus et les deux sans envoi cette semaine sont chez Google ; tous les autres acceptent
+  const refusFcm = Math.min(enRefus, fcm), sansEnvoi = Math.min(total - servis, fcm - refusFcm);
+  const srv = (n, refus = 0, absents = 0) => ({ n, ok: Math.max(0, n - refus - absents), refus, refus_membres: refus });
   return {
     at: new Date(now).toISOString(),
     roles: Object.values(roles).sort((a, b) => a.role.localeCompare(b.role)),
-    telephones: { total, recus_24h: Math.round(total * .58), recus_7j: Math.max(0, total - 4), muets: Math.min(2, total), en_refus: Math.min(1, total), retires_7j: 2 },
-    services: { fcm, apple, mozilla, windows, autre: Math.max(0, total - fcm - apple - mozilla - windows) },
+    telephones: { total, recus_24h: Math.round(total * .58), recus_7j: recus7j, servis_7j: servis, muets: Math.min(2, Math.max(0, servis - recus7j)), en_refus: enRefus, retires_7j: somme('parties') },
+    services: { fcm: srv(fcm, refusFcm, sansEnvoi), apple: srv(apple), mozilla: srv(mozilla), windows: srv(windows), autre: srv(autre) },
     jours, types,
     file: { n: 0, age_s: 0 },
+    envoi_at: new Date(now - 4 * 60e3).toISOString(),
     cron: { existe: true, at: new Date(now - 38e3).toISOString(), statut: 'succeeded' },
     http: { code: 200, at: new Date(now - 4 * 60e3).toISOString(), delai: false, erreur: false },
   };
@@ -1220,6 +1251,8 @@ function demoSanteNotifs(profiles, now = Date.now()) {
 // Une table ou une vue qui n'existe pas encore (mise à jour de la base pas encore faite).
 // Une session expirée (401, PGRST301), un droit refusé (42501) ou une coupure réseau ne sont que passagers.
 const absente = e => ['42P01', 'PGRST205'].includes(e?.code) || /relation .* does not exist|could not find the table/i.test(e?.message || '');
+// Une fonction de la base qui n'existe pas encore (PostgREST : PGRST202 ; Postgres : 42883)
+const fonctionAbsente = e => ['PGRST202', '42883'].includes(e?.code) || /could not find the function|function .* does not exist/i.test(e?.message || '');
 const SUITES = { demandes: ['propositions', 'placements'], propositions: ['demandes', 'propositions', 'placements', 'coordonnees'], placements: ['demandes', 'propositions'] };
 
 // ---------------------------------------------------------------------------
@@ -1707,13 +1740,21 @@ export class SupabaseStore extends Base {
     }
     return this.clePush;
   }
-  // Renvoie 'ok', ou 'mort' : cette adresse a été retirée (téléphone parti, ou refusé trois fois de suite) et n'est pas
-  // reprise ; l'appareil doit se réabonner avec une adresse neuve. null : base pas encore à jour (elle ne répond rien).
+  // Renvoie 'ok', ou 'mort' : cette adresse a été retirée pour de bon (téléphone parti, ou refusé trois fois de suite alors
+  // que son service accepte d'autres téléphones) et n'est pas reprise ; l'appareil doit se réabonner avec une adresse neuve.
+  // null : base pas encore à jour. abonner_push_etat y manque : l'abonnement passe alors par abonner_push, qui ne répond
+  // rien (et le reste pour l'ancien site), et on ne redemande plus abonner_push_etat jusqu'au prochain chargement.
   async abonnerPush(sub) {
-    const j = sub.toJSON();
-    const { data, error } = await this.sb.rpc('abonner_push', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth });
+    const j = sub.toJSON(), args = { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth };
+    if (!this.sansAbonnerEtat) {
+      const { data, error } = await this.sb.rpc('abonner_push_etat', args);
+      if (!error) return data === 'ok' || data === 'mort' ? data : null;
+      if (!fonctionAbsente(error)) throw new Error(frError(error));
+      this.sansAbonnerEtat = true;
+    }
+    const { error } = await this.sb.rpc('abonner_push', args);
     if (error) throw new Error(frError(error));
-    return data === 'ok' || data === 'mort' ? data : null;
+    return null;
   }
   async desabonnerPush(endpoint) { await this.sb.from('push_subscriptions').delete().eq('endpoint', endpoint); }
   // Phase 3
@@ -2073,7 +2114,7 @@ export class SupabaseStore extends Base {
   async santeNotifs() {
     const { data, error } = await this.sb.rpc('admin_sante_notifs');
     if (error) {
-      if (['PGRST202', '42883'].includes(error.code) || /could not find the function|function .*admin_sante_notifs.* does not exist/i.test(error.message || '')) return null;
+      if (fonctionAbsente(error)) return null;
       throw new Error(frError(error));
     }
     return data && typeof data === 'object' ? data : null;
