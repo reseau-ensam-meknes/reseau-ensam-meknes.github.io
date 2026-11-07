@@ -52,6 +52,17 @@ language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.profiles where id = auth.uid() and role = 'admin');
 $$;
 
+-- L'administration du réseau (école ENSAM Meknès) voit toutes les écoles ; celle d'une autre école ne voit que la sienne.
+-- En plpgsql : la colonne « ecole » n'existe pas encore à cet endroit d'une première installation.
+create or replace function public.super_admin() returns boolean
+language plpgsql stable security definer set search_path = public as $$
+begin
+  return exists (select 1 from public.profiles where id = auth.uid() and role = 'admin' and coalesce(ecole, 'ensam-meknes') = 'ensam-meknes');
+exception when undefined_column then return public.is_admin();
+end $$;
+revoke all on function public.super_admin() from public, anon;
+grant execute on function public.super_admin() to authenticated, service_role;
+
 -- ---------------------------------------------------------------------
 -- Filières : 11 filières officielles (choix en 3A) groupées en 5 parcours, plus les anciennes
 -- appellations des promos précédentes, rattachées à leur parcours. Mêmes règles que logic.js.
@@ -660,9 +671,12 @@ returns table (id uuid, email text, created_at timestamptz, last_sign_in_at time
 language plpgsql stable security definer set search_path = public as $$
 begin
   if not public.is_admin() then raise exception 'Réservé à l’administration.'; end if;
+  -- L'administration d'une école : les comptes de son école seulement (un compte sans profil n'a pas encore d'école)
   return query select u.id, u.email::text, u.created_at, u.last_sign_in_at, exists (select 1 from public.profiles p where p.id = u.id),
     coalesce(u.raw_user_meta_data->>'par_code', '') = 'true'
-    from auth.users u order by u.created_at desc;
+    from auth.users u
+    where public.super_admin() or exists (select 1 from public.profiles p where p.id = u.id and p.ecole = public.mon_ecole())
+    order by u.created_at desc;
 end $$;
 revoke all on function public.admin_comptes() from public;
 grant execute on function public.admin_comptes() to authenticated;
@@ -2108,10 +2122,6 @@ create table if not exists public.ecoles (
 );
 insert into public.ecoles (slug, nom, ouverte) values ('ensam-meknes', 'ENSAM Meknès', true) on conflict (slug) do nothing;
 alter table public.ecoles enable row level security;
-drop policy if exists "lecture" on public.ecoles;
-create policy "lecture" on public.ecoles for select to anon, authenticated using (ouverte or public.is_admin());
-drop policy if exists "administration" on public.ecoles;
-create policy "administration" on public.ecoles for all to authenticated using (public.is_admin()) with check (public.is_admin());
 
 alter table public.profiles add column if not exists ecole text not null default 'ensam-meknes' references public.ecoles(slug);
 create index if not exists profiles_ecole on public.profiles (ecole);
@@ -2123,11 +2133,17 @@ $$;
 revoke all on function public.mon_ecole() from public, anon;
 grant execute on function public.mon_ecole() to authenticated, service_role;
 
+-- Les écoles ouvertes, la sienne, et toutes pour l'administration du réseau
+drop policy if exists "lecture" on public.ecoles;
+create policy "lecture" on public.ecoles for select to anon, authenticated using (ouverte or public.super_admin() or slug = public.mon_ecole());
+drop policy if exists "administration" on public.ecoles;
+create policy "administration" on public.ecoles for all to authenticated using (public.super_admin()) with check (public.super_admin());
+
 -- L'école d'un membre ne se choisit qu'à l'inscription, parmi les écoles ouvertes ; ensuite seule l'administration la change
 create or replace function public.protect_ecole() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
-  if auth.uid() is null or public.is_admin() then return new; end if;
+  if auth.uid() is null or public.super_admin() then return new; end if;
   if tg_op = 'UPDATE' then
     if new.ecole is distinct from old.ecole then raise exception 'L’école d’un compte ne se change pas.' using errcode = '42501'; end if;
   elsif not exists (select 1 from public.ecoles e where e.slug = new.ecole and e.ouverte) then
@@ -2144,7 +2160,7 @@ create or replace function public.photo_de_mon_ecole(p_name text) returns boolea
 language plpgsql stable security definer set search_path = public as $$
 declare v uuid;
 begin
-  if public.is_admin() then return true; end if;
+  if public.super_admin() then return true; end if;
   begin v := split_part(p_name, '/', 1)::uuid; exception when others then return false; end;
   return (select ecole from public.profiles where id = v) is not distinct from public.mon_ecole();
 end $$;
@@ -2178,7 +2194,7 @@ select p.id, p.full_name, p.role, p.filiere, p.promo,
   case when p.id = auth.uid() then p.notif_push end as notif_push,
   p.match_visible, p.admin_ok, p.ecole
 from public.profiles p
-where auth.uid() is not null and (p.ecole = (select public.mon_ecole()) or (select public.is_admin()));
+where auth.uid() is not null and (p.ecole = (select public.mon_ecole()) or (select public.super_admin()));
 revoke all on public.profils from public, anon;
 grant select on public.profils to authenticated;
 
@@ -2427,7 +2443,7 @@ select e.id,
   case when e.anonyme and e.author_id is distinct from auth.uid() and not public.is_admin() then null else e.offer_id end as offer_id,
   e.created_at
 from public.entretiens e
-where auth.uid() is not null and (e.ecole = (select public.mon_ecole()) or (select public.is_admin()));
+where auth.uid() is not null and (e.ecole = (select public.mon_ecole()) or (select public.super_admin()));
 revoke all on public.entretiens_publics from public, anon;
 grant select on public.entretiens_publics to authenticated;
 
@@ -2439,7 +2455,7 @@ select a.id,
   case when a.anonyme and a.author_id is distinct from auth.uid() and not public.is_admin() then null else a.placement_id end as placement_id,
   a.verifie, a.created_at
 from public.avis_stage a
-where auth.uid() is not null and (a.ecole = (select public.mon_ecole()) or (select public.is_admin()));
+where auth.uid() is not null and (a.ecole = (select public.mon_ecole()) or (select public.super_admin()));
 revoke all on public.avis_publics from public, anon;
 grant select on public.avis_publics to authenticated;
 
@@ -2812,7 +2828,7 @@ end $$;
 create or replace function public.ecole_visee(p_ecole text default null) returns text
 language plpgsql stable security definer set search_path = public as $$
 begin
-  if p_ecole is null or not public.is_admin() then return coalesce(public.mon_ecole(), 'ensam-meknes'); end if;
+  if p_ecole is null or not public.super_admin() then return coalesce(public.mon_ecole(), 'ensam-meknes'); end if;
   if not exists (select 1 from public.ecoles e where e.slug = p_ecole) then raise exception 'École inconnue : %.', p_ecole; end if;
   return p_ecole;
 end $$;
@@ -6343,8 +6359,8 @@ begin
     execute format('create index if not exists %I on public.%I (ecole)', t || '_ecole', t);
     execute format('drop policy if exists "reseau de l''ecole" on public.%I', t);
     execute format($f$create policy "reseau de l'ecole" on public.%I as restrictive for all to authenticated
-      using (ecole = (select public.mon_ecole()) or (select public.is_admin()))
-      with check (ecole = (select public.mon_ecole()) or (select public.is_admin()))$f$, t);
+      using (ecole = (select public.mon_ecole()) or (select public.super_admin()))
+      with check (ecole = (select public.mon_ecole()) or (select public.super_admin()))$f$, t);
   end loop;
 end $$;
 
@@ -6357,6 +6373,11 @@ alter table public.ecoles add column if not exists domaines text[] not null defa
 alter table public.ecoles add column if not exists email_obligatoire boolean not null default false;
 update public.ecoles set nom_court = coalesce(nom_court, 'ENSAM'), ville = coalesce(ville, 'Meknès'), couleur = coalesce(couleur, '#1670A8')
   where slug = 'ensam-meknes';
+alter table public.ecoles add column if not exists nom_ar text check (char_length(nom_ar) <= 120);
+update public.ecoles set nom_ar = coalesce(nom_ar, 'ENSAM مكناس') where slug = 'ensam-meknes';
+-- Deuxième école : fermée tant que l'administration ne l'ouvre pas (domaines et filières à recevoir de l'école)
+insert into public.ecoles (slug, nom, nom_court, ville, nom_ar, ouverte) values ('ensam-casa', 'ENSAM Casablanca', 'ENSAM', 'Casablanca', 'ENSAM الدار البيضاء', false)
+  on conflict (slug) do nothing;
 
 -- Arguments du déclencheur : « colonne:table » ; la table citée a un id et une école. Sans membre connecté
 -- (tâches de la base) ni pour l'administration, rien à vérifier.
@@ -6364,7 +6385,7 @@ create or replace function public.garde_ecole() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare i int; v text; e text; m text := public.mon_ecole();
 begin
-  if auth.uid() is null or public.is_admin() then return new; end if;
+  if auth.uid() is null or public.super_admin() then return new; end if;
   for i in 0 .. tg_nargs - 1 loop
     v := to_jsonb(new) ->> split_part(tg_argv[i], ':', 1);
     continue when v is null;

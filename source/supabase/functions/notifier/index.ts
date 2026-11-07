@@ -1133,6 +1133,17 @@ export type Donnees = {
 // Écoles : le résumé d'un membre ne parle que de son école. Une ligne suit l'école de la personne qui la porte
 // (auteur, étudiant, organisateur) ; une base d'avant les écoles n'a qu'ENSAM Meknès.
 export const ecoleDe = (x?: { ecole?: string | null } | null) => x?.ecole || 'ensam-meknes';
+// La marque d'une autre école dans un email déjà rendu : « Réseau ENSAM Meknès » devient « Réseau ENSAM Casablanca »
+export type Marque = { nom: string; nom_ar?: string | null };
+export function marquer<T extends { sujet: string; html: string; texte: string }>(c: T, m?: Marque | null): T {
+  if (!m?.nom) return c;
+  const r = (x: string) => x.replaceAll('Réseau ENSAM Meknès', `Réseau ${m.nom}`).replaceAll('شبكة ENSAM مكناس', `شبكة ${m.nom_ar || m.nom}`);
+  return { ...c, sujet: r(c.sujet), html: r(c.html), texte: r(c.texte) };
+}
+async function marques(env: Env): Promise<Map<string, Marque>> {
+  try { return new Map((await tout<{ slug: string; nom: string; nom_ar: string | null }>(env, 'ecoles', 'select=slug,nom,nom_ar&slug=neq.ensam-meknes')).map(e => [e.slug, e])); }
+  catch { return new Map(); }
+}
 export function parEcole(b: Brut, ecole: string): Brut {
   const ici = new Set(b.profils.filter(p => ecoleDe(p) === ecole).map(p => p.id));
   const a = (id?: string | null) => !!id && ici.has(id);
@@ -2910,6 +2921,7 @@ async function jobResume(env: Env): Promise<Response> {
   const ecoleDu = new Map(brut.profils.map(p => [p.id, ecoleDe(p)]));
   const parE = new Map<string, Donnees>();
   const donnees = (id: string) => { const e = ecoleDu.get(id) || 'ensam-meknes'; let x = parE.get(e); if (!x) { x = indexer(parEcole(brut, e), date); parE.set(e, x); } return x; };
+  const M = await marques(env);
   const traites: string[] = [];
   const limite = Date.now() + 100_000;   // marge sur les 150 s : le reste partira demain
   await parallele(dest, f.paralleles, async x => {
@@ -2919,7 +2931,7 @@ async function jobResume(env: Env): Promise<Response> {
       const r = p ? resumeDe(p, d) : null;
       if (!r) { b.empty++; traites.push(x.id); return; }
       if (!x.email || !x.token) { b.errors++; return; }
-      if (await f.envoyer(x.email, rendreResume(r, langueDe(x.langue), env.site, x.token, sansTel.has(x.id)))) { b.sent++; traites.push(x.id); }
+      if (await f.envoyer(x.email, marquer(rendreResume(r, langueDe(x.langue), env.site, x.token, sansTel.has(x.id)), M.get(ecoleDu.get(x.id) || '')))) { b.sent++; traites.push(x.id); }
       else b.errors++;
     } catch (e) {
       b.errors++;
