@@ -4516,14 +4516,18 @@ create trigger trg_protect_fondateur_public before update of fondateur_public on
 
 -- Photos de la page d'entrée : le stockage « photos » reste privé ; un visiteur peut seulement obtenir un lien temporaire
 -- (createSignedUrl) vers la photo actuelle d'un fondateur qui a dit oui. Rien d'autre n'est lisible sans compte.
+-- La règle du stockage ne connaît que le nom du fichier, pas l'école que regarde le visiteur : c'est le propriétaire qui
+-- décide (le profil dont c'est la photo actuelle, son propre oui, un réseau ouvert, et une place parmi les fondateurs
+-- de SON école). La photo d'un membre d'une école pas encore ouverte n'est jamais lisible sans compte.
 create or replace function public.photo_fondateur_publique(p_name text) returns boolean
 language plpgsql stable security definer set search_path = public as $$
-declare v uuid;
+declare v uuid; v_ecole text;
 begin
   -- D'abord le profil (index partiel, une ligne au plus) : le classement n'est calculé que pour une photo consentie
-  select p.id into v from public.profiles p where p.photo_path = p_name and p.fondateur_public and p.role = 'laureat' limit 1;
+  select p.id, p.ecole into v, v_ecole from public.profiles p join public.ecoles e on e.slug = p.ecole and e.ouverte
+    where p.photo_path = p_name and p.fondateur_public and p.role = 'laureat' limit 1;
   if v is null then return false; end if;
-  return exists (select 1 from public.fondateurs_classement() c where c.id = v);
+  return exists (select 1 from public.fondateurs_classement(v_ecole) c where c.id = v);
 end $$;
 revoke all on function public.photo_fondateur_publique(text) from public;
 grant execute on function public.photo_fondateur_publique(text) to anon;
@@ -7390,7 +7394,8 @@ create trigger trg_admin_suivi_maj before update on public.admin_suivi for each 
 --  Plan · partie membres : l'invitation nommée, la vitrine de la page d'entrée, les réussites montrées.
 --  Rien n'apparaît sans compte sans le oui du membre lui-même ; chacun le retire quand il veut ; chaque fonction
 --  ouverte aux visiteurs ne rend que des lignes de l'école du visiteur (ecole_entree : sans compte, celle du lien
---  ?ecole=…, sinon ENSAM Meknès ; rien tant que le réseau de cette école n'est pas ouvert).
+--  ?ecole=…, sinon ENSAM Meknès ; rien tant que le réseau de cette école n'est pas ouvert). Une photo, elle, suit
+--  l'école de son propriétaire (la règle du stockage ne connaît que le nom du fichier).
 -- =====================================================================
 
 -- L'école que montre la page d'entrée : ecole_entree(p_ecole), dans la première partie « Écoles » (les chiffres et les
@@ -7539,13 +7544,13 @@ revoke all on function public.visages_publics(text) from public;
 grant execute on function public.visages_publics(text) to anon, authenticated;
 
 -- Le stockage « photos » reste privé : un visiteur obtient seulement un lien temporaire vers la photo actuelle d'un lauréat
--- vérifié de l'école qui a dit oui. Un oui retiré : l'application change le nom du fichier, l'ancien lien ne mène plus à rien.
--- La règle du stockage ne sait pas quelle école le visiteur regarde : sans compte, seulement les photos de l'ENSAM Meknès
--- (la page d'entrée d'une autre école montre les initiales).
+-- vérifié qui a dit oui. Un oui retiré : l'application change le nom du fichier, l'ancien lien ne mène plus à rien.
+-- La règle du stockage ne sait pas quelle école le visiteur regarde : c'est le propriétaire de la photo qui décide (son oui,
+-- et le réseau de SON école ouvert). La photo d'un membre d'une école pas encore ouverte n'est jamais lisible sans compte.
 create or replace function public.photo_visage_publique(p_name text) returns boolean
 language sql stable security definer set search_path = public as $$
-  select exists (select 1 from public.profiles p where p.photo_path = p_name and p.vitrine_publique and p.verified and p.role = 'laureat'
-    and not p.admin_ok and p.ecole = coalesce(public.mon_ecole(), 'ensam-meknes'));
+  select exists (select 1 from public.profiles p join public.ecoles e on e.slug = p.ecole and e.ouverte
+    where p.photo_path = p_name and p.vitrine_publique and p.verified and p.role = 'laureat' and not p.admin_ok);
 $$;
 revoke all on function public.photo_visage_publique(text) from public;
 grant execute on function public.photo_visage_publique(text) to anon;
