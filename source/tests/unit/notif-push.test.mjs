@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { PUSH_KINDS, PUSH_CATEGORIES, pushCategorie, pushDefaut, pushChoix, pushVoulu } from '../../src/logic.js';
+import { PUSH_KINDS, PUSH_CATEGORIES, pushCategorie, pushDefaut, pushChoix, pushVoulu, NOMS_NOTIF } from '../../src/logic.js';
 
 const SCHEMA = fs.readFileSync(new URL('../../supabase/schema.sql', import.meta.url), 'utf8');
 const NOTIFIER = fs.readFileSync(new URL('../../supabase/functions/notifier/index.ts', import.meta.url), 'utf8');
@@ -36,6 +36,19 @@ test('chaque type de notification de la base et du notifier a sa catégorie, et 
     'match_attente', 'rdv_demain', 'entretien_demain', 'agenda_demain', 'apres_rdv', 'offre_bientot', 'demande_attente', 'semaine', 'reponse_utile', 'bravo',
     'demande_pause', 'mentorat_presence', 'groupe_jour', 'rappel_visite'])
     assert.ok(base.has(k), `lecture de la base incomplète : ${k}`);
+});
+
+// « Santé des notifications » (Par type) : un type sans nom y prendrait celui de sa catégorie (« Vie du réseau »), et ses
+// chiffres se confondraient avec d'autres. Chaque nom a son arabe (un dictionnaire commun : addAR, dans un fichier de src/).
+test('chaque type classé a son nom dans « Santé des notifications » (NOMS_NOTIF), en français et en arabe ; aucun nom pour un type inconnu', () => {
+  for (const k of Object.keys(PUSH_KINDS)) assert.ok(Object.prototype.hasOwnProperty.call(NOMS_NOTIF, k), `type sans nom dans « Par type » : ${k}`);
+  for (const k of Object.keys(NOMS_NOTIF)) assert.ok(k === 'test' || k in PUSH_KINDS, `nom d’un type que rien n’envoie : ${k}`);
+  const dossier = new URL('../../src/', import.meta.url);
+  const src = fs.readdirSync(dossier).filter(f => f.endsWith('.js')).map(f => fs.readFileSync(new URL(f, dossier), 'utf8')).join('\n');
+  for (const nom of Object.values(NOMS_NOTIF)) {
+    const ar = src.match(new RegExp(`'${nom.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}': '([^']+)'`));
+    assert.ok(ar && /[\u0600-\u06FF]/.test(ar[1]), `nom sans arabe : ${nom}`);
+  }
 });
 
 test('catégories : messages, demandes, candidatures, mentorat, offres, vie du réseau ; un type inconnu suit la vie du réseau', () => {
