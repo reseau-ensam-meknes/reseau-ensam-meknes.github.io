@@ -7230,9 +7230,9 @@ test('lien « Active tes notifications » quand tout est décoché dans Mon prof
 const MEMBRE = { id: UID, full_name: 'Salma Test', role: 'etudiant', filiere: 'Génie Industriel', promo: new Date().getFullYear() + 2, created_at: '2025-10-01T10:00:00Z', verified: true,
   consent_at: '2025-10-01T10:00:00Z', emails_hebdo: true, alertes_offres: true, alertes_email: true, emails_messages: true };
 // vueWeb : le navigateur d'une application (ua), où ni Notification ni PushManager n'existent
-async function membreEnLigne({ profil = MEMBRE, permission = 'granted', abonnement = 'ok', deja = false, memo = null, chemin = '', ua = TELEPHONE, vueWeb = false } = {}) {
+async function membreEnLigne({ profil = MEMBRE, permission = 'granted', abonnement = 'ok', deja = false, memo = null, chemin = '', ua = TELEPHONE, vueWeb = false, hauteur = 740 } = {}) {
   const site = await enLigne(); site.vider(); site.inscrits.push({ ...profil });
-  const ctx = await navigateur.newContext({ viewport: { width: 360, height: 740 }, serviceWorkers: 'block', reducedMotion: 'reduce', userAgent: ua });
+  const ctx = await navigateur.newContext({ viewport: { width: 360, height: hauteur }, serviceWorkers: 'block', reducedMotion: 'reduce', userAgent: ua });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
   if (vueWeb) await ctx.addInitScript(() => { delete window.Notification; delete window.PushManager; });
   else await ctx.addInitScript(([permission, abonnement, deja]) => {
@@ -7339,6 +7339,48 @@ test('lien « Active tes notifications » sur un téléphone déjà abonné, tou
   assert.deepEqual(await m.page.$$eval('input[id^="np-"]', xs => xs.filter(x => x.checked).map(x => x.id)), []);
   assert.deepEqual(m.erreurs, []);
   await m.ctx.close();
+});
+
+// « Choisir » mène aux cases elles-mêmes, pas au haut de Mon profil : sur un petit téléphone (360 × 640), la barre du bas et la
+// pastille « Installer l'application » couvraient la première case. Le groupe vient sous la barre du haut, le curseur sur sa
+// première case (le lecteur d'écran dit le groupe, puis la case). De même pour « Choisir d'abord » et « Activer » (démo).
+const casesALEcran = p => p.evaluate(() => {
+  const haut = document.querySelector('.top').getBoundingClientRect().bottom;
+  const bas = Math.min(innerHeight, ...[...document.querySelectorAll('.bottom-nav, .pastille')].map(e => e.getBoundingClientRect().top));
+  const legende = document.querySelector('.md-cats legend').getBoundingClientRect();
+  const cases = [...document.querySelectorAll('.md-cats input')].slice(0, 3).map(x => { const b = x.closest('label').getBoundingClientRect(); return [x.id, Math.round(b.top), Math.round(b.bottom)]; });
+  return { haut: Math.round(haut), bas: Math.round(bas), legende: Math.round(legende.top), cases, focus: document.activeElement?.id || document.activeElement?.tagName, premiere: document.querySelector('.md-cats input')?.id };
+});
+const verifierCases = (v, cas) => {
+  assert.ok(v.legende >= v.haut - 1, `${cas} : « Ce que je reçois » sous la barre du haut (${JSON.stringify(v)})`);
+  for (const [id, h, b] of v.cases) assert.ok(h >= v.haut - 1 && b <= v.bas + 1, `${cas} : ${id} à l’écran, au-dessus de la barre du bas et de la pastille (${JSON.stringify(v)})`);
+  assert.equal(v.focus, v.premiere, `${cas} : le curseur sur la première case`);
+};
+test('« Choisis ce que tu reçois » à 360 × 640 : « Choisir », « Choisir d’abord » et « Activer » amènent les cases à l’écran, le curseur sur la première', async () => {
+  const m = await membreEnLigne({ profil: { ...MEMBRE, notif_push: TOUT_DECOCHE }, deja: true, chemin: '?notifs=1#reseau', hauteur: 640 });
+  await m.page.waitForSelector('.modal.choisir', { timeout: 10000 });
+  await m.page.click('#choisir-profil');
+  await m.page.waitForFunction(() => location.hash === '#profil/notifications');
+  await m.page.waitForFunction(() => document.activeElement?.closest?.('.md-cats'), null, { timeout: 5000 }).catch(() => {});
+  await m.page.waitForSelector('.pastille', { timeout: 5000 }).catch(() => {});
+  verifierCases(await casesALEcran(m.page), 'en ligne, « Choisir »');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+  // Démo, cet appareil pas encore abonné : « Choisir d'abord », puis « Activer »
+  const s = await prevenirSur('off');
+  const id = await s.page.$eval('#persona', e => e.value);
+  await s.page.evaluate(([id, np]) => window.__demo.update('profiles', id, { notif_push: np }), [id, TOUT_DECOCHE]);
+  for (const [bouton, cas] of [['#choisir-profil', 'démo, « Choisir d’abord »'], ['#choisir-oui', 'démo, « Activer »']]) {
+    await s.changerMemo('({})');
+    await s.page.goto(adresse + '?notifs=1#reseau');
+    await s.page.waitForSelector('.modal.choisir', { timeout: 8000 });
+    await s.page.click(bouton);
+    await s.page.waitForFunction(() => location.hash === '#profil/notifications');
+    await s.page.waitForFunction(() => document.activeElement?.closest?.('.md-cats'), null, { timeout: 5000 }).catch(() => {});
+    verifierCases(await casesALEcran(s.page), cas);
+  }
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
 });
 
 test('« Voir en tant que » (démo) : un autre membre sans recharger commence une nouvelle visite ; la ligne montrée au premier ne retire pas sa feuille au second', async () => {

@@ -1,7 +1,7 @@
 // Application installable (écran d'accueil du téléphone) et notifications sur le téléphone.
 // Le service worker n'est enregistré que sur le vrai site (dist/), qui déclare un manifeste.
 import { html, useState, useEffect, useRef } from './vendor/preact-htm.js';
-import { Icon, Modal, toast, ensuite, feteOuverte, quandFete, apresFete, injectCSS } from './ui.js';
+import { Icon, Modal, toast, ensuite, feteOuverte, quandFete, apresFete, injectCSS, mouvementReduit } from './ui.js';
 import { addAR, getLang } from './i18n.js';
 import { prevenirVariante, lignePrevenir, sansLigne, ouvertureSorte, sorteLienNotifs, bandeauPush, pushChoix, PUSH_CATEGORIES, navigateurIntegre, lienChrome, noterEchecPush, echecDefinitif,
   raisonTestPush, testPushARefaire, APPLIS, estIPad, CLE_APPLI_VUE, raisonPrevenir } from './logic.js';
@@ -1221,12 +1221,36 @@ addAR({
 const CHOISIR_TITRE = 'Choisis ce que tu reçois';
 const CHOISIR_TXT = 'Tout est décoché dans « Mon profil » : aucune notification ne t’arrive pour l’instant.';
 const CHOISIR_SUITE = { off: 'Active-les sur cet appareil, puis coche ce que tu veux recevoir.', on: 'Cet appareil est prêt : coche ce que tu veux recevoir.' };
+// Mon profil › Notifications, et les cases elles-mêmes à l'écran : sur un petit téléphone, la barre du bas et la pastille
+// couvraient la première. La page arrive après le Retour qui retire la feuille (ensuite), puis l'état de cet appareil se lit
+// un instant au-dessus des cases : on attend les deux (3 s au plus), puis le groupe vient juste sous la barre du haut et le
+// curseur se pose sur sa première case (le lecteur d'écran dit le groupe, « Ce que je reçois », puis la case). Un doigt qui
+// fait déjà défiler la page l'emporte.
+function versLesCases(go) {
+  go('profil/notifications');
+  ensuite(() => {
+    let n = 0, stop = false;
+    const arreter = () => { stop = true; };
+    const fin = () => { removeEventListener('touchstart', arreter); removeEventListener('wheel', arreter); };
+    addEventListener('touchstart', arreter, { passive: true }); addEventListener('wheel', arreter, { passive: true });
+    const essai = () => {
+      const cases = document.querySelector('#md-push .md-cats'), etat = document.querySelector('#md-push .push-etat');
+      if (stop || location.hash !== '#profil/notifications') return fin();
+      if (!cases || !etat || etat.dataset.etat === '…') { if (++n < 180) requestAnimationFrame(essai); else fin(); return; }
+      fin();
+      const haut = document.querySelector('.top')?.getBoundingClientRect().bottom || 0;
+      scrollTo({ top: Math.max(0, scrollY + cases.getBoundingClientRect().top - haut - 12), behavior: mouvementReduit() ? 'auto' : 'smooth' });
+      cases.querySelector('input')?.focus({ preventScroll: true });
+    };
+    requestAnimationFrame(essai);
+  });
+}
 function FeuilleChoisir({ ctx, etat, onClose }) {
   const { store, me, go } = ctx;
   const [busy, setBusy] = useState(false);
   const activable = etat === 'off';
   useEffect(() => { if (activable) cleAPrete(store); }, []);
-  const choisir = () => { onClose(); go('profil/notifications'); };
+  const choisir = () => { onClose(); versLesCases(go); };
   const activer = async () => { setBusy(true); const r = await accepterNotif(store, me); if (r === true) choisir(); else if (r) onClose(); else setBusy(false); };
   const pied = html`<button type="button" class="btn ghost" id="choisir-tard" onClick=${() => onClose()}>Plus tard</button>
     ${activable ? html`<button type="button" class="btn primary" id="choisir-oui" disabled=${busy} onClick=${activer}><${Icon} name="bell" size=${16}/> Activer</button>`
