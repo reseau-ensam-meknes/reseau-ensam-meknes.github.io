@@ -9,7 +9,7 @@ import { addAR, arCount } from './i18n.js';
 import { niveauOf, timeAgo, cleNom, surListeOfficielle, norm, pct, parcoursInscription, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible, ecoleDe, ECOLE_DEFAUT, pourLEcoleVue,
   SPONSO_PUBLICS, SPONSO_ANNEES, jourLocal, normaliserSponsorise, refusSponsorise, etatSponsorise, tauxClic, resumeFilieres, seasonLabel } from './logic.js';
 import { DefisAdmin } from './saison.js';
-import { AgendaAdmin } from './agenda.js';
+import { AgendaAdmin, consoleRegarde } from './agenda.js';
 import { InvitationsAdmin } from './invitation.js';
 import { AmbassadeursAdmin } from './ambassadeurs.js';
 import { lireCVDe, libellesCV, SignalerLecture, CvButton } from './cv.js';
@@ -19,7 +19,7 @@ import { ajouterIcones } from './entree.js';
 import { FilieresPick } from './offers.js';
 import { ApercuSponsorise } from './match.js';
 import { getLang } from './i18n.js';
-import { useEcoleRegardee } from './admin-donnees.js';
+import { useEcoleRegardee, useTableAdmin, suiviDe } from './admin-donnees.js';
 import { RUBRIQUES, useLarge, MenuConsole, PucesConsole, ChoixEcole, RechercheConsole, telecharger } from './admin-console.js';
 // Les règles sans écran, importées d'ici aussi : le navigateur les découvre avec le reste (un aller-retour de moins au premier chargement)
 import { donneesDeLEcole, elementsATraiter } from './admin-console-regles.js';
@@ -132,6 +132,9 @@ export function AdminPage(ctx) {
   const commun = { ecoleConsole: ecole, ecoles, nomEcole: nomDe };
   const c = { ...ctx, ...commun, data: vue };
   const tout = { ...ctx, ...commun };
+  // Tant que la console est à l'écran, « Publier un événement » de la barre latérale part pour l'école regardée (agenda.js)
+  const vise = pourLEcoleVue(c).ecole || ''; const nomVise = vise ? nomDe(vise) : '';
+  useEffect(() => { consoleRegarde(vise ? { ecole: vise, ecoleNom: nomVise } : null); return () => consoleRegarde(null); }, [vise, nomVise]);
   const ids = ecole ? new Set(vue.profiles.map(p => p.id)) : null;
   const comptes = ids && comptesTous ? comptesTous.filter(x => ids.has(x.id)) : comptesTous;
   const rubrique = RUBRIQUES.some(([k]) => k === sub) ? sub : '';
@@ -533,12 +536,17 @@ function lignesDe(rows, aEntete, map, promoDefaut) {
   }));
 }
 const valide = l => l.nom.length >= 2 && !!cleNom(l.nom) && l.promo >= 1990 && l.promo <= 2040;
+const HORS_DOSSIER_CNDP = 'Avant d’importer la liste de cette école, ajoute-la au dossier CNDP : coche la case dans son suivi (rubrique Écoles).';
 
 function ListeOfficielle({ ctx }) {
   const { store, act, confirm, data, me } = ctx;
   // L'école de la liste : celle que regarde la console, sinon celle de l'administration (la base fait de même sans école)
   const ecole = ctx.ecoleConsole || undefined;
   const ici = ecole || ecoleDe(me);
+  // Le dossier CNDP ne couvre que l'ENSAM Meknès : la liste d'une autre école (noms, emails, matricules) n'entre qu'une fois
+  // l'école ajoutée au dossier, case cochée dans son suivi (rubrique Écoles), ou son réseau ouvert (ce qui demande la case)
+  const suivi = useTableAdmin(ctx, 'admin_suivi');
+  const dansLeDossier = ici === ECOLE_DEFAUT || (ctx.ecoles || []).find(e => e.slug === ici)?.ouverte === true || suiviDe(suivi.lignes, ici)?.cndp_ok === true;
   const [fichier, setFichier] = useState(null); // { nom, rows, aEntete, entetes }
   const [map, setMap] = useState(null);
   const [promoDefaut, setPromoDefaut] = useState('');
@@ -565,6 +573,7 @@ function ListeOfficielle({ ctx }) {
   const bonnes = lignes.filter(valide);
   const sansNom = fichier && map.complet < 0 && map.nom < 0 && map.prenom < 0;
   const importer = () => act(async () => {
+    if (!dansLeDossier) throw new Error(HORS_DOSSIER_CNDP);
     if (bonnes.length > 5000) throw new Error('5000 lignes au plus : coupe le fichier par promo.');
     const r = await store.importerListe(bonnes, remplacer, ecole);
     setRes({ ...r, rejetes: (r.rejetes || 0) + (lignes.length - bonnes.length) }); setFichier(null); setVersion(v => v + 1); setManquants(null);
@@ -581,7 +590,9 @@ function ListeOfficielle({ ctx }) {
       <p class="small muted">Fichier Excel (.xlsx) ou CSV exporté de la scolarité : une ligne par étudiant, avec au moins le nom et la promo.</p>
       <p class="small muted">Les inscrits qui figurent sur la liste (même nom et même promo, ou même email) sont vérifiés automatiquement.</p>
       <p class="small muted">La liste est effacée chaque 1er septembre, à la fin de l’année universitaire : importe celle de la nouvelle année à la rentrée.</p>
-      <label class="btn small file-btn"><${Icon} name="file" size=${15}/> Choisir un fichier<input id="lo-file" type="file" accept=".xlsx,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange=${charger}/></label>
+      ${!dansLeDossier && suivi.pret ? html`<div class="hint-box small lo-cndp" id="lo-cndp" role="note"><${Icon} name="info" size=${16}/><span>${HORS_DOSSIER_CNDP}</span>
+        <button type="button" class="btn tiny ghost" id="lo-cndp-ecoles" onClick=${() => ctx.go('admin/ecoles')}><${Icon} name="cap" size=${14}/> Ouvrir Écoles</button></div>` : null}
+      <label class=${'btn small file-btn' + (dansLeDossier ? '' : ' off')}><${Icon} name="file" size=${15}/> Choisir un fichier<input id="lo-file" type="file" disabled=${!dansLeDossier} accept=".xlsx,.csv,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange=${charger}/></label>
       ${erreur ? html`<p class="auth-msg err" role="alert">${erreur}</p>` : null}
       ${res ? html`<p class="hint-box good-box small" role="status"><${Icon} name="check" size=${15}/> <span>${`${res.importes} importée${res.importes > 1 ? 's' : ''}, ${res.rejetes} rejetée${res.rejetes > 1 ? 's' : ''}, ${res.verifies} compte${res.verifies > 1 ? 's' : ''} vérifié${res.verifies > 1 ? 's' : ''}`}</span></p>` : null}
       ${fichier ? html`<div class="lo-import">
@@ -593,7 +604,7 @@ function ListeOfficielle({ ctx }) {
           <table class="lo-table"><thead><tr><th>Nom</th><th>Email</th><th>Promo</th><th>Filière</th></tr></thead>
             <tbody>${lignes.slice(0, 5).map(l => html`<tr class=${valide(l) ? '' : 'bad'}><td translate="no" dir="auto">${l.nom || '—'}</td><td class="mono" dir="ltr" translate="no">${l.email || '—'}</td><td class="mono">${l.promo || '—'}</td><td translate="no">${l.filiere || '—'}</td></tr>`)}</tbody></table></div>
         <label class="check small"><input id="lo-remplacer" type="checkbox" checked=${remplacer} onChange=${e => setRemplacer(e.target.checked)}/> <span>Remplacer la liste de ces promos <span class="muted">Sinon, les lignes sont ajoutées ou mises à jour.</span></span></label>
-        <div class="row-end"><button class="btn ghost" onClick=${() => setFichier(null)}>Annuler</button><button class="btn primary" id="lo-go" disabled=${!bonnes.length} onClick=${importer}>${`Importer ${bonnes.length} ligne${bonnes.length > 1 ? 's' : ''}`}</button></div>
+        <div class="row-end"><button class="btn ghost" onClick=${() => setFichier(null)}>Annuler</button><button class="btn primary" id="lo-go" disabled=${!bonnes.length || !dansLeDossier} onClick=${importer}>${`Importer ${bonnes.length} ligne${bonnes.length > 1 ? 's' : ''}`}</button></div>
       </div>` : null}
     </div>
 
@@ -848,6 +859,8 @@ addAR({
   'Choisis un public.': 'اختر الفئة المعنية.', 'Choisis des années de la liste.': 'اختر سنوات من اللائحة.', 'Choisis les dates de début et de fin.': 'اختر تاريخَي البداية والنهاية.',
   'La fin vient après le début.': 'يأتي تاريخ النهاية بعد البداية.',
   'Une carte pour toutes les écoles paraît dans chaque réseau.': 'تظهر البطاقة الموجّهة إلى كل المدارس في شبكة كل مدرسة.',
+  'Avant d’importer la liste de cette école, ajoute-la au dossier CNDP : coche la case dans son suivi (rubrique Écoles).': 'قبل استيراد لائحة هذه المدرسة، أضفها إلى ملف CNDP: ضع علامة على الخانة في تتبّعها (قسم المدارس).',
+  'Ouvrir Écoles': 'فتح المدارس',
   'Ici, les textes, affiches et chiffres sont toujours ceux du Réseau ENSAM Meknès, quelle que soit l’école choisie.': 'هنا، النصوص والملصقات والأرقام هي دائمًا تلك الخاصة بشبكة ENSAM مكناس، مهما كانت المدرسة المختارة.',
 }, [
   [/^Du (\S+) au (\S+)$/, (a, b) => `من ${a} إلى ${b}`],
@@ -932,6 +945,10 @@ injectCSS('admin', `
 @media (pointer: coarse) { .file-btn { overflow: visible; } .file-btn input { inset-block: min(0px, calc(50% - 22px)); } }
 /* Au clavier, le focus est sur le champ invisible : c'est le bouton qui le montre */
 .file-btn:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.file-btn.off { opacity: .5; }
+.file-btn.off input { cursor: not-allowed; }
+.lo-cndp { flex-wrap: wrap; align-items: center; margin-block: .2rem .5rem; }
+.lo-cndp > span { flex: 1 1 14rem; }
 .lo-import { display: flex; flex-direction: column; gap: .8rem; padding-top: .6rem; border-top: 1px dashed var(--line); }
 .lo-import p { margin: 0; }
 .lo-map { display: flex; flex-direction: column; gap: .4rem; }

@@ -12,7 +12,7 @@ import { ajouterIcones } from './entree.js';
 import { avecLangue } from './regles-entree.js';
 import { MessageBtn } from './messages.js';
 import { OfferComposer } from './offers.js';
-import { preparerEvenement } from './agenda.js';
+import { publierEvenement } from './agenda.js';
 import { lienInvitation } from './invitation.js';
 import { NIVEAUX, classementFondateurs, lignePlaces } from './logic.js';
 import { resumeSemaine, aidantsSemaine, texteMerci, messageAccordMerci, texteFondateurs, textePromoDemande, laureatsSansOffre, messageOffreBoite,
@@ -264,9 +264,9 @@ function OffreBoite({ ctx }) {
   </section>`;
 }
 
-// f) Le rendez-vous du mois : le formulaire de l'agenda, déjà rempli (agenda.js, preparerEvenement)
+// f) Le rendez-vous du mois : le formulaire de l'agenda, déjà rempli, pour l'école que regarde la console (agenda.js, publierEvenement)
 function RendezVous({ ctx }) {
-  const ouvrir = () => { preparerEvenement(rendezVousDuMois(Date.now(), getLang() === 'ar' ? 'ar' : 'fr')); ctx.go('reseau/agenda/nouveau'); };
+  const ouvrir = () => publierEvenement(ctx.go, rendezVousDuMois(Date.now(), getLang() === 'ar' ? 'ar' : 'fr'));
   return html`<section class="panel adm-carte" id="adm-rdv" aria-labelledby="adm-rdv-t">
     <h3 class="h-ico adm-carte-t" id="adm-rdv-t"><${Icon} name="calendar"/> <span>Rendez-vous du mois</span></h3>
     <p class="small muted">Un lauréat raconte son métier en 30 minutes, en ligne, puis répond aux questions. Le formulaire de l’agenda s’ouvre déjà rempli : choisis la date et ajoute le lien de la visio.</p>

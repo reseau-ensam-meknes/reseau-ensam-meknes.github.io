@@ -3,7 +3,7 @@
 // En ligne, une table que la base n'a pas encore (mise à jour pas encore passée) donne une liste vide et absente = true.
 import { useState, useEffect } from './vendor/preact-htm.js';
 // L'école d'une ligne (ENSAM Meknès par défaut, comme dans la base) : définie une seule fois, dans logic.js
-import { ECOLE_DEFAUT, ecoleDe, CLE_ECOLE_VUE } from './logic.js';
+import { ECOLE_DEFAUT, ecoleDe } from './logic.js';
 export { ECOLE_DEFAUT, ecoleDe };
 
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'x' + Math.random().toString(36).slice(2) + Date.now().toString(36));
@@ -75,12 +75,6 @@ export function useEcoleRegardee(ctx) {
   const changer = v => { setChoix(v); try { localStorage.setItem(cle, JSON.stringify(v)); } catch { /* pas de stockage */ } };
   const ecole = t.ecoles.length > 1 && t.ecoles.some(e => e.slug === choix) ? choix : '';
   const nomDe = slug => t.ecoles.find(e => e.slug === slug)?.nom || slug || '';
-  // Le choix vérifié (une école de la liste), avec son nom, pour ce qui se publie hors de la console (logic.js, ecoleVueGardee)
-  const nom = ecole ? nomDe(ecole) : '';
-  useEffect(() => {
-    if (!t.pret) return;
-    try { localStorage.setItem(CLE_ECOLE_VUE(ctx.me?.id), JSON.stringify(ecole ? { slug: ecole, nom } : null)); } catch { /* pas de stockage */ }
-  }, [ecole, nom, t.pret]);
   return { ...t, ecole, changer, nomDe };
 }
 

@@ -6907,7 +6907,12 @@ test('console · deux écoles : le choix d’école (gardé et partagé avec Sui
   await s.page.selectOption('#cs-ecole', 'ensam-meknes'); await s.page.waitForTimeout(200);
   assert.equal(await s.page.locator('.cs-note-ecole').count(), 0);
   await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.page.waitForTimeout(200);
-  // « Publier un événement » de la barre latérale part, lui aussi, pour l'école que regarde la console
+  // Le rendez-vous du mois, prérempli, part pour l'école regardée
+  await s.page.click('#adm-rdv-ok'); await s.page.waitForSelector('#ev-titre');
+  assert.match(await s.page.inputValue('#ev-titre'), /Rendez-vous du mois/);
+  assert.match(await s.page.locator('#ev-ecole').innerText(), /École : Institut exemple/);
+  await s.fermer();
+  // « Publier un événement » de la barre latérale part, lui aussi, pour l'école que regarde la console, tant qu'elle est à l'écran
   await s.aller('admin/agenda');
   await s.page.click('.side-pub'); await s.page.waitForSelector('#ev-titre');
   assert.match(await s.page.locator('#ev-ecole').innerText(), /École : Institut exemple/);
@@ -6915,6 +6920,11 @@ test('console · deux écoles : le choix d’école (gardé et partagé avec Sui
   assert.equal(await s.page.evaluate(() => window.__demo.data.evenements.find(e => e.titre === 'Journée portes ouvertes de l’Institut')?.ecole), 'institut-exemple');
   await s.aller('admin/agenda');
   assert.match(await s.page.locator('.cs-main').innerText(), /Journée portes ouvertes de l’Institut/, 'dans l’agenda de la console, pour l’Institut');
+  // Hors de la console (l'accueil), le même bouton publie pour l'école de l'administration
+  await s.aller('accueil');
+  await s.page.click('.side-pub'); await s.page.waitForSelector('#ev-titre');
+  assert.equal(await s.page.locator('#ev-ecole').count(), 0, 'hors de la console : l’école de l’administration');
+  await s.fermer();
 
   // L'annonce publiée pour l'Institut exemple reste la sienne
   await s.aller('admin');
@@ -6944,10 +6954,19 @@ test('console · deux écoles : le choix d’école (gardé et partagé avec Sui
   assert.match(await defis.locator('h2').innerText(), /ENSAM Meknès/);
   assert.doesNotMatch(await defis.innerText(), /Premier défi de l’Institut/, 'toutes les écoles : les défis de l’école de l’administration');
 
-  // La liste officielle d'une école ne se mêle pas à celle de l'autre
-  await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.aller('admin/liste');
+  // La liste officielle d'une école ne se mêle pas à celle de l'autre ; elle n'entre qu'une fois l'école dans le dossier CNDP
+  await s.aller('admin'); await s.page.selectOption('#cs-ecole', 'institut-exemple'); await s.aller('admin/liste');
   assert.match(await s.page.locator('.liste h2').first().innerText(), /Institut exemple/);
   assert.match(await s.page.locator('.liste').innerText(), /Aucune liste importée pour l’instant/);
+  assert.match(await s.page.locator('#lo-cndp').innerText(), /ajoute-la au dossier CNDP/);
+  assert.equal(await s.page.locator('#lo-file').isDisabled(), true, 'pas d’import hors du dossier CNDP');
+  await s.page.click('#lo-cndp-ecoles'); await s.page.waitForSelector('#ec-suivi');
+  const suiviInstitut = s.page.locator('#ec-suivi .sv-carte', { hasText: 'Institut exemple' }).first();
+  await suiviInstitut.locator('.sv-check').nth(2).click(); await s.page.waitForTimeout(200);
+  assert.equal(await suiviInstitut.locator('.sv-check').nth(2).getAttribute('aria-checked'), 'true');
+  await s.aller('admin/liste');
+  assert.equal(await s.page.locator('#lo-cndp').count(), 0);
+  assert.equal(await s.page.locator('#lo-file').isDisabled(), false);
   await s.page.setInputFiles('#lo-file', { name: 'institut.csv', mimeType: 'text/csv', buffer: Buffer.from('nom,prenom,email,promo\nEXEMPLE,Ilyas,ilyas@institut.example,2031\n') });
   await s.page.click('#lo-go'); await s.page.waitForTimeout(300);
   assert.match(await s.page.locator('.lo-couv').innerText(), /Promo 2031/);

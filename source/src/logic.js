@@ -928,17 +928,6 @@ export const pourLEcoleVue = ctx => (ctx?.ecoleConsole && ctx.ecoleConsole !== e
 // Ce que l'administration écrit sous le contenu d'une autre école (bravo, réponse, vote, offre enregistrée) est de cette
 // école : sans cela, la base lui donnerait celle de l'administration, et les membres de l'école ne le verraient pas
 export const ecoleDuContenu = (me, contenu) => (me?.role === 'admin' && contenu?.ecole && contenu.ecole !== ecoleDe(me) ? { ecole: contenu.ecole } : {});
-// L'école que regarde la console, gardée sur l'appareil avec son nom (admin-donnees.js, useEcoleRegardee) : ce qui se
-// publie hors de la console (« Publier un événement » de la barre latérale ou de l'agenda) part pour elle, comme dans la
-// console. { ecole, ecoleNom } quand ce n'est pas celle de l'administration, sinon {}.
-export const CLE_ECOLE_VUE = id => 'ensam-admin-ecole-vue:' + (id || '');
-export function ecoleVueGardee(me) {
-  if (me?.role !== 'admin') return {};
-  try {
-    const v = JSON.parse(localStorage.getItem(CLE_ECOLE_VUE(me.id)) || 'null');
-    return v && typeof v.slug === 'string' && v.slug && v.slug !== ecoleDe(me) ? { ecole: v.slug, ecoleNom: typeof v.nom === 'string' && v.nom ? v.nom : v.slug } : {};
-  } catch { return {}; }
-}
 // Administration > Membres : null si la liste officielle de son école n'a aucune ligne de sa promo, sinon true ou false
 // selon qu'il y figure (même nom et même promo, ou même email) ; les lignes d'une autre école ne comptent jamais
 export function surListeOfficielle(liste, p, email) {

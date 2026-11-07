@@ -3,7 +3,7 @@
 import { html, useState, useEffect } from './vendor/preact-htm.js';
 import { Icon, Modal, Field, Empty, Avatar, Person, toast, injectCSS, vibrer } from './ui.js';
 import { addAR, getLang } from './i18n.js';
-import { TYPES_EVENEMENT, PUBLICS, pourPublic, pourLEcoleVue, ecoleVueGardee, deMonEcole } from './logic.js';
+import { TYPES_EVENEMENT, PUBLICS, pourPublic, deMonEcole } from './logic.js';
 
 addAR({
   'École :': 'المدرسة:',
@@ -212,10 +212,18 @@ function dansUneSemaine(h) { const d = new Date(); d.setDate(d.getDate() + 7); d
 // part de ces valeurs (titre, type, debut, fin, lieu, lien, description, public), une seule fois
 let preRempli = null;
 export function preparerEvenement(e) { preRempli = e || null; }
-// ecole et ecoleNom : l'école que regarde la console (l'événement est pour elle), seulement quand ce n'est pas celle de l'administration.
-// Un formulaire ouvert hors de la console (barre latérale, agenda) part, lui aussi, pour l'école que la console regardait.
-function nouveauFormulaire(me) {
-  const p = { ...ecoleVueGardee(me), ...(preRempli || {}) }; preRempli = null;
+// L'école que regarde la console ouverte (admin.js, AdminPage), seulement quand ce n'est pas celle de l'administration ;
+// null dès que la console se ferme. « Publier un événement » (barre latérale, agenda de la console, rendez-vous du mois)
+// part pour elle tant que la console est à l'écran ; ailleurs, pour l'école de l'administration.
+let ecoleDeLaConsole = null;
+export const consoleRegarde = x => { ecoleDeLaConsole = x?.ecole ? { ecole: x.ecole, ecoleNom: x.ecoleNom || x.ecole } : null; };
+export function publierEvenement(go, e = null) {
+  preparerEvenement(ecoleDeLaConsole || e ? { ...(e || {}), ...(ecoleDeLaConsole || {}) } : null);
+  go('reseau/agenda/nouveau');
+}
+// ecole et ecoleNom : l'école pour qui est l'événement (publierEvenement), absente pour celle de l'administration
+function nouveauFormulaire() {
+  const p = preRempli || {}; preRempli = null;
   const f = { titre: '', type: 'conference', debut: toInput(dansUneSemaine(10)), fin: toInput(dansUneSemaine(12)), lieu: '', lien: '', description: '', public: 'tous' };
   for (const k of ['titre', 'type', 'lieu', 'lien', 'description', 'public', 'ecole', 'ecoleNom']) if (typeof p[k] === 'string') f[k] = p[k];
   if (p.debut) f.debut = toInput(new Date(p.debut));
@@ -226,7 +234,7 @@ function nouveauFormulaire(me) {
 function EventForm({ ctx, e, onClose }) {
   const { store, act } = ctx;
   const [f, setF] = useState(() => e ? { titre: e.titre, type: e.type, debut: toInput(new Date(e.debut)), fin: e.fin ? toInput(new Date(e.fin)) : '', lieu: e.lieu || '', lien: e.lien || '', description: e.description || '', public: e.public }
-    : nouveauFormulaire(ctx.me));
+    : nouveauFormulaire());
   const set = (k, v) => setF({ ...f, [k]: v });
   const lienOk = !f.lien.trim() || /^https:\/\/\S+$/i.test(f.lien.trim());
   const finOk = !f.fin || !f.debut || new Date(f.fin) >= new Date(f.debut);
@@ -292,8 +300,8 @@ export function AgendaPage({ ctx }) {
 // Administration > Agenda : tous les événements, avec le nombre d'inscrits et leur liste à télécharger
 export function AgendaAdmin({ ctx }) {
   const { data, store, go } = ctx;
-  // La console regarde une autre école que celle de l'administration : l'événement publié est pour elle
-  const publier = () => { const x = pourLEcoleVue(ctx); if (x.ecole) preparerEvenement({ ...x, ecoleNom: ctx.nomEcole?.(x.ecole) || x.ecole }); go('reseau/agenda/nouveau'); };
+  // La console regarde une autre école que celle de l'administration : l'événement publié est pour elle (publierEvenement)
+  const publier = () => publierEvenement(go);
   const all = data.evenements || [];
   const evs = [...all].sort((a, b) => (passe(a) - passe(b)) || (passe(a) ? new Date(b.debut) - new Date(a.debut) : new Date(a.debut) - new Date(b.debut))).slice(0, 15);
   const inscrits = id => (data.evenement_participants || []).filter(x => x.evenement_id === id);
