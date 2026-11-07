@@ -6815,12 +6815,19 @@ test('page d’entrée dans Instagram (Android) : une carte calme au-dessus du f
 test('page d’entrée dans Instagram sans Chrome : l’adresse de secours rouvre la page ici, la carte ne revient pas (un mot discret à la place) ; « Continuer ici » la range pour la visite', async () => {
   const s = await porte({ ua: INSTAGRAM });
   await s.page.waitForSelector('#au-appli');
+  // Ce qui est déjà choisi et tapé revient avec l'adresse de secours
+  await s.page.click('#au-je-etudiant');
+  await s.page.fill('#au-email', 'salma@ensam-umi.ac.ma');
   await s.toucherChrome();
   const fb = await s.secours();
   // Pas de Chrome sur ce téléphone : Instagram ouvre l'adresse de secours dans le même onglet
   for (let i = 0; i < 2; i++) {
     await s.page.goto(fb.href); await s.page.waitForSelector('#entree .entree-form');
     await s.page.waitForSelector('#au-appli-mot');
+    if (!i) {
+      assert.equal(await s.page.getAttribute('#au-je-etudiant', 'aria-pressed'), 'true');
+      assert.equal(await s.page.inputValue('#au-email'), 'salma@ensam-umi.ac.ma', 'l’adresse déjà tapée revient');
+    }
     assert.equal(await s.page.locator('#au-appli').count(), 0, 'la carte ne tourne pas en boucle');
     assert.match(await s.page.locator('#au-appli-mot').innerText(), /Rien ne s’ouvre\s\? Touche ⋮ en haut à droite, puis «\sOuvrir dans Chrome\s» ou «\sOuvrir dans le navigateur\s»\./);
   }

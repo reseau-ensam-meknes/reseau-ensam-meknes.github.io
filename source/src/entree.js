@@ -387,7 +387,8 @@ function CarteAppli({ mode, role, invite }) {
   const T = a.CARTE, f = x => a.typo(x, getLang());
   // Relu au toucher : le rôle, l'étape ou le lien partagé ont pu changer depuis l'affichage. ici : l'adresse de secours le dit
   const lien = () => a.lienChrome(location.href, lienRetenu()?.r, { lang: getLang(), contexte: { promo: invite, role, mode: mode === 'inscription' ? mode : 'connexion' }, ici: true });
-  const ouvrir = e => { e.currentTarget.href = lien(); ecrireVisite(CLE_CARTE, 'chrome'); };
+  // Sans Chrome, l'adresse de secours recharge la page ici : ce qui est déjà tapé revient (lireSaisie)
+  const ouvrir = e => { e.currentTarget.href = lien(); ecrireVisite(CLE_CARTE, 'chrome'); try { garderSaisie(); } catch { /* stockage indisponible */ } };
   const ico = html`<${Icon} name="globe" size=${18}/>`;
   if (!carte) return html`<p class="entree-appli-mot" id="au-appli-mot" tabindex="-1" ref=${mot}>${ico}${sys === 'ios' || vue === 'chrome'
     ? html`<span>${f(sys === 'ios' ? T.geste : T.rien)}</span>` : html`<a href=${lien()} id="au-appli-chrome" onClick=${ouvrir}>${T.ligne}</a>`}</p>`;
