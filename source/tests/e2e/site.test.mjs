@@ -6635,3 +6635,29 @@ test('titres en arabe : leur police dédiée, chargée seulement en arabe ; les 
     await ctx.close();
   }
 });
+
+test('passage jour/nuit : deux passages coup sur coup au clavier, le second garde son cercle (jamais le fondu des changements de page)', async () => {
+  const s = await ouvrir({ largeur: 1280, mouvement: true });
+  await s.page.focus('.top .theme-btn');
+  await s.page.keyboard.press('Enter');
+  await s.page.waitForTimeout(120);
+  await s.page.keyboard.press('Enter');
+  // Pendant le second cercle (interrompant le premier) : html.vt-theme reste, ni fondu ni glissé des pages sur la racine
+  const vu = await s.page.evaluate(() => new Promise(ok => {
+    const notes = [], t0 = performance.now();
+    const f = () => {
+      const a = document.getAnimations().filter(x => x.effect?.pseudoElement?.includes('view-transition-')).map(x => x.animationName || 'cercle');
+      if (a.length) notes.push({ classe: document.documentElement.classList.contains('vt-theme'), a });
+      if (performance.now() - t0 < 400) requestAnimationFrame(f); else ok(notes);
+    };
+    f();
+  }));
+  assert.ok(vu.some(x => x.a.includes('cercle')), 'le second passage s’ouvre en cercle');
+  assert.ok(vu.every(x => x.classe), 'html.vt-theme tout au long du second cercle');
+  assert.ok(vu.every(x => !x.a.includes('vt-in') && !x.a.includes('fade-out')), `pas le fondu des pages : ${JSON.stringify(vu.at(-1))}`);
+  await s.page.waitForFunction(() => !document.documentElement.classList.contains('vt-theme'), null, { timeout: 5000 });
+  assert.equal(await s.page.getAttribute('html', 'data-theme'), 'light', 'aller-retour : le thème clair');
+  assert.equal(await s.page.evaluate(() => localStorage.getItem('ensam-theme')), 'light');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});

@@ -497,7 +497,7 @@ const themeActuel = () => themeChoisi() || (matchMedia?.('(prefers-color-scheme:
 // Le nouveau thème s'ouvre en cercle depuis le bouton touché (View Transitions, 450 ms). Tout de suite sans l'API, quand
 // l'appareil demande moins de mouvement, ou quand rien ne change à l'écran (thème automatique déjà pareil).
 // origin : { x, y } ou l'évènement du clic ; sans lui, le dernier toucher (moins d'1,5 s) ou l'élément qui a le focus (clavier).
-let dernierToucher = null;
+let dernierToucher = null, cercles = 0;
 if (typeof addEventListener === 'function') addEventListener('pointerdown', e => { dernierToucher = { x: e.clientX, y: e.clientY, t: performance.now() }; }, { capture: true, passive: true });
 function origineTheme(o) {
   const x = o?.clientX ?? o?.x, y = o?.clientY ?? o?.y;
@@ -514,7 +514,10 @@ function themeEnCercle(t, origin) {
   // Le choix est gardé tout de suite : ce qui se redessine avant la fin du cercle montre déjà le bon bouton
   try { if (t) localStorage.setItem(THEME_KEY, t); else localStorage.removeItem(THEME_KEY); } catch { /* stockage indisponible */ }
   racine.classList.add('vt-theme');
-  const fin = () => racine.classList.remove('vt-theme');
+  // Deux passages coup sur coup (Entrée gardée appuyée…) : le premier, interrompu, ne retire pas la classe du second
+  // (sans elle, le second cercle prendrait aussi le fondu des changements de page)
+  const n = ++cercles;
+  const fin = () => { if (n === cercles) racine.classList.remove('vt-theme'); };
   try {
     const vt = document.startViewTransition(() => setTheme(t, false));
     vt.ready.then(() => racine.animate({ clipPath: [`circle(0px at ${o.x}px ${o.y}px)`, `circle(${rayon}px at ${o.x}px ${o.y}px)`] },
