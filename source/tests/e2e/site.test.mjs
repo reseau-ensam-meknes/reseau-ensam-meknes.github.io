@@ -4355,7 +4355,7 @@ test('administration : sur téléphone, la liste des membres se lit — le rôle
 
 // Santé des notifications (Vue d'ensemble) : lisible d'un coup d'œil, des totaux seulement, en arabe et de nuit aussi
 const santeDemo = page => page.evaluate(async () => {
-  const L = await import(new URL('logic.js', location.href).href);
+  const L = await import(new URL('sante-notifs.js', location.href).href);
   const r = L.santeResume(await window.__demo.santeNotifs());
   return { r, raisons: L.raisonsNotifs(r) };
 });
@@ -4527,7 +4527,8 @@ test('administration : « Santé des notifications » de nuit, en arabe, à 360 
   assert.deepEqual(oublis, [], 'rien en français');
   // Toutes les phrases que le panneau peut dire (1, 2, 3 à 10, 11 et plus ; minutes, heures, jours ; chaque panne)
   const restes = await s.page.evaluate(async () => {
-    const L = await import(new URL('logic.js', location.href).href), I = await import(new URL('i18n.js', location.href).href);
+    const L = { ...(await import(new URL('logic.js', location.href).href)), ...(await import(new URL('sante-notifs.js', location.href).href)) };
+    const I = await import(new URL('i18n.js', location.href).href);
     const textes = new Set(), il = s => new Date(Date.now() - s * 1000).toISOString();
     const acc = (n, un, pl) => `${n} ${n > 1 ? pl : un}`;
     for (const n of [1, 2, 3, 11, 24]) {

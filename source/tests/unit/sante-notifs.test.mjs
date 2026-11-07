@@ -5,8 +5,9 @@
 // sur abonner_push pour une base d'avant ; admin_sante_notifs absente).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { bilanTestPush, raisonTestPush, testPushARefaire, dureeAttente, jourNotif, nomTypeNotif, NOMS_NOTIF, santeResume, raisonsNotifs,
-  raisonsAvecPertes, etatCronNotifs, SERVICES_PUSH, TYPES_MAX_SN, REFUS_EN_MASSE_SN } from '../../src/logic.js';
+import { bilanTestPush, raisonTestPush, testPushARefaire } from '../../src/logic.js';
+import { dureeAttente, jourNotif, nomTypeNotif, NOMS_NOTIF, santeResume, raisonsNotifs,
+  raisonsAvecPertes, etatCronNotifs, SERVICES_PUSH, TYPES_MAX_SN, REFUS_EN_MASSE_SN } from '../../src/sante-notifs.js';
 import { SupabaseStore } from '../../src/store.js';
 
 const NOW = Date.parse('2026-11-01T10:00:00Z');
