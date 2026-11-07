@@ -30,10 +30,11 @@ test('tags : une notification par événement ; ce qui remplace garde son tag ; 
   assert.equal(t('reponse', { nom: 'Nadia', titre: 'Entretien chez Renault ?' }, '13'), 'reponse-13');
   assert.equal(t('candidature', { nom: 'Salma', titre: 'Stage' }), 'candidature', 'sans identifiant de file : le type');
   // Ce qui remplace la précédente : un seul rappel du soir, un seul Match du jour, un seul essai, une seule enquête ;
-  // la vérification par les pairs, la nouvelle date d'un événement ou d'un rendez-vous de mentorat, un nouveau parrain ;
-  // les arrivées dans la promo et le filleul, comme dans TAGS_FIXES (nouvelles notifications)
+  // la vérification par les pairs, un nouveau parrain, les arrivées dans la promo ; la nouvelle date d'un événement ou
+  // d'un rendez-vous de mentorat quand la base ne dit pas lequel (sinon : celle du même élément). Le filleul n'y est plus :
+  // chacun est une personne de plus
   assert.deepEqual(N.SE_REMPLACENT, ['rappel_visite', 'match_jour', 'test', 'enquete', 'verification_pair', 'evenement_deplace', 'mentorat_deplace',
-    'parrain', 'promo_nouveau', 'filleul']);
+    'parrain', 'promo_nouveau']);
   assert.equal(t('rappel_visite', { messages: 2 }, 14), 'rappel_visite');
   assert.equal(t('match_jour', { n: 3, type: 'etudiant' }, 15), 'match_jour');
   assert.equal(t('test', {}, 16), 'test');
@@ -62,20 +63,38 @@ test('tags : la vérification par les pairs, une nouvelle date et un nouveau par
   assert.equal(v2.title, 'Ton profil est vérifié');
   assert.equal(v1.tag, v2.tag, 'avant : deux lignes, la première disait « encore un lauréat » après le badge');
   assert.equal(v2.tag, 'verification_pair');
-  const e1 = t('evenement_deplace', { titre: 'Forum', debut: '2026-11-12T09:00:00Z' }, 301), e2 = t('evenement_deplace', { titre: 'Forum', debut: '2026-11-19T09:00:00Z' }, 302);
+  // La nouvelle date d'un même événement, d'un même rendez-vous, remplace l'ancienne ; un autre élément ne l'efface pas
+  const forum = uid(311), visite = uid(312), cv = uid(313), renault = uid(314);
+  const e1 = t('evenement_deplace', { titre: 'Forum', debut: '2026-11-12T09:00:00Z', evenement: forum }, 301);
+  const e2 = t('evenement_deplace', { titre: 'Forum', debut: '2026-11-19T09:00:00Z', evenement: forum }, 302);
+  const e3 = t('evenement_deplace', { titre: 'Visite OCP', debut: '2026-11-22T14:00:00Z', evenement: visite }, 309);
   assert.equal(e1.tag, e2.tag, 'avant : la première gardait l’ancienne date');
-  const m1 = t('mentorat_deplace', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-12T17:00:00Z' }, 303), m2 = t('mentorat_deplace', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-13T17:00:00Z' }, 304);
+  assert.equal(e1.tag, `evenement_deplace-${forum}`);
+  assert.notEqual(e3.tag, e1.tag, 'avant : la Visite OCP effaçait le Forum');
+  const m1 = t('mentorat_deplace', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-12T17:00:00Z', m: cv }, 303);
+  const m2 = t('mentorat_deplace', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-13T17:00:00Z', m: cv }, 304);
+  const m3 = t('mentorat_deplace', { nom: 'Nadia', sujet: 'Entretien Renault', rdv_at: '2026-11-21T17:00:00Z', m: renault }, 310);
   assert.equal(m1.tag, m2.tag);
+  assert.equal(m1.tag, `mentorat_deplace-${cv}`);
+  assert.notEqual(m3.tag, m1.tag, 'avant : le rendez-vous de Nadia effaçait celui de Youssef');
+  // Données d'avant (sans l'élément) : la nouvelle date remplace la précédente, comme avant
+  assert.equal(t('evenement_deplace', { titre: 'Forum', debut: '2026-11-12T09:00:00Z' }, 315).tag, 'evenement_deplace');
+  assert.equal(t('mentorat_deplace', { nom: 'Youssef', sujet: 'CV', rdv_at: '2026-11-12T17:00:00Z' }, 316).tag, 'mentorat_deplace');
   // Un nouveau parrain : « ton parrainage cette année : Youssef » ne reste pas affiché à côté de celui qui le remplace
   const p1 = t('parrain', { nom: 'Youssef Alami' }, 305), p2 = t('parrain', { nom: 'Nadia Bennani' }, 306);
   assert.match(p1.body, /Youssef Alami/);
   assert.equal(p1.tag, p2.tag, 'avant : l’ancien parrain restait dans la barre');
   assert.equal(p2.tag, 'parrain');
-  // Comme dans la liste des tags fixes des nouvelles notifications : une seule ligne pour la promo, une pour le filleul
-  for (const k of ['promo_nouveau', 'filleul']) {
-    assert.equal(t(k, { nom: 'A', n: 1, promo: '2024' }, 307).tag, k);
-    assert.equal(t(k, { nom: 'B', n: 3, promo: '2024' }, 308).tag, k);
-  }
+  // Les arrivées dans la promo : une seule ligne, qui se met à jour
+  assert.equal(t('promo_nouveau', { nom: 'A', n: 1, promo: '2024' }, 307).tag, 'promo_nouveau');
+  assert.equal(t('promo_nouveau', { nom: 'B', n: 3, promo: '2024' }, 308).tag, 'promo_nouveau');
+  // Trois filleuls donnés d'un coup : trois lignes, chacune avec son nom (avant : la troisième effaçait les deux autres)
+  const [f1, f2] = [uid(317), uid(318)];
+  const g1 = t('filleul', { nom: 'Salma', filleul: f1 }, 319), g2 = t('filleul', { nom: 'Hiba', filleul: f2 }, 320);
+  assert.equal(g1.tag, `filleul-${f1}`);
+  assert.notEqual(g2.tag, g1.tag);
+  assert.equal(t('filleul', { nom: 'Salma', filleul: f1 }, 321).tag, g1.tag, 'le même filleul : la même ligne');
+  assert.notEqual(t('filleul', { nom: 'Salma' }, 322).tag, t('filleul', { nom: 'Hiba' }, 323).tag, 'données d’avant : une ligne par notification');
   // Ce qui reste une notification par événement : chacun dit quelque chose de différent et de toujours vrai
   for (const k of ['evenement', 'evenement_annule', 'candidature_statut', 'merci']) {
     const x = t(k, { nom: 'A', n: 2, promo: '2024', titre: 'X', statut: 'entretien', debut: '2026-11-12T09:00:00Z' }, 7);

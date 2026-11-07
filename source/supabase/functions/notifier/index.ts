@@ -697,13 +697,13 @@ const MOTIFS: Record<Langue, Record<string, string>> = {
 
 // Ce qui remplace la précédente du même type dans la barre de notifications : un seul rappel du soir, un seul Match du
 // jour, un seul essai, une seule enquête ; ce qui rend la précédente fausse : la vérification par les pairs (« encore
-// un lauréat » puis « ton badge est là »), la nouvelle date d'un événement ou d'un rendez-vous de mentorat (l'ancienne
-// date ne doit pas rester affichée), un nouveau parrain (« ton parrainage cette année : … ») ; et, comme dans la liste
-// des tags fixes des nouvelles notifications (TAGS_FIXES), les arrivées dans la promo (au plus une par jour) et le
-// filleul. Le reste, sans élément qui le regroupe (conversation, match, offre…), garde une notification par événement :
-// son tag porte l'identifiant de sa ligne dans la file (id).
+// un lauréat » puis « ton badge est là »), un nouveau parrain (« ton parrainage cette année : … »), les arrivées dans la
+// promo (au plus une par jour). La nouvelle date d'un événement ou d'un rendez-vous de mentorat remplace celle du même
+// élément (son identifiant est dans les données : evenement, m) ; sans lui (données d'avant), celle du même type. Chaque
+// filleul a sa ligne (une personne de plus, comme PAR_PERSONNE). Le reste, sans élément qui le regroupe (conversation,
+// match, offre…), garde une notification par événement : son tag porte l'identifiant de sa ligne dans la file (id).
 export const SE_REMPLACENT = ['rappel_visite', 'match_jour', 'test', 'enquete', 'verification_pair', 'evenement_deplace', 'mentorat_deplace',
-  'parrain', 'promo_nouveau', 'filleul'];
+  'parrain', 'promo_nouveau'];
 // Sur une même demande, chaque lauréat qui propose son aide, chaque réponse, est une personne de plus : une notification
 // chacune (sinon la deuxième efface la première, et son nom). Regroupées seulement quand la base les compte (n ≥ 1).
 const PAR_PERSONNE = ['demande_proposition', 'demande_reponse'];
@@ -740,6 +740,9 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
   const ligneDeFile = id != null && String(id) !== '';
   const demParPersonne = dem && PAR_PERSONNE.includes(kind) && !(Number(d.n) >= 1) && ligneDeFile;
   const annule = kind === 'mentorat_annule' && estUuid(d.m) ? d.m : null;
+  // L'élément déplacé, ou le filleul : une ligne chacun (la nouvelle date du même élément remplace l'ancienne)
+  const element = kind === 'evenement_deplace' && estUuid(d.evenement) ? d.evenement : kind === 'mentorat_deplace' && estUuid(d.m) ? d.m
+    : kind === 'filleul' && estUuid(d.filleul) ? d.filleul : null;
   // Une réaction ouvre l'élément : l'offre, ou la carte de la demande ; une seule notification par élément sur le téléphone
   const rx = kind === 'reaction' ? (estUuid(d.offre) ? { route: `offre/${d.offre}`, id: d.offre } : estUuid(d.demande) ? { route: `offres/demandes/${d.demande}`, id: d.demande } : null) : null;
   // Un commentaire ouvre l'offre ; une notification par offre sur le téléphone
@@ -754,7 +757,7 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
     : annule && v.pour === 'demandeur' ? `mentorat/reprendre/${annule}`
     : dem ? (kind === 'demande_nouvelle' || kind === 'demande_large' ? `aider/${dem}` : `offres/demandes/${dem}`) : g.route;
   const tag = rx ? `reaction-${rx.id}` : kind === 'offre_alerte' && estUuid(d.offre) ? `offre-${d.offre}` : com ? `${kind}-${com}`
-    : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem && !demParPersonne ? `${kind}-${dem}` : annule ? `${kind}-${annule}` : mt ? `${kind}-${mt}`
+    : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem && !demParPersonne ? `${kind}-${dem}` : annule ? `${kind}-${annule}` : element ? `${kind}-${element}` : mt ? `${kind}-${mt}`
     : ligneDeFile && !SE_REMPLACENT.includes(kind) ? `${kind}-${id}` : kind;
   // Message arrivé moins de 20 s après le précédent de la conversation : l'aperçu change sans sonner
   return { title: couper(t[0], 80), body: couper(t[1], 180), url: site + '#' + route, tag, ...(kind === 'message' && d.calme === true ? { calme: true } : {}) };

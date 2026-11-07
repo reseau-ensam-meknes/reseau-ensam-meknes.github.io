@@ -1345,7 +1345,7 @@ begin
       if old.status = 'demande' and new.status = 'acceptee' then
         perform public.pousser(new.student_id, 'mentorat_accepte', jsonb_build_object('nom', (select full_name from public.profiles where id = new.mentor_id), 'sujet', new.sujet, 'rdv_at', new.rdv_at));
       elsif old.status = 'acceptee' and new.status = 'acceptee' and new.rdv_at is distinct from old.rdv_at then
-        perform public.pousser(new.student_id, 'mentorat_deplace', jsonb_build_object('nom', (select full_name from public.profiles where id = new.mentor_id), 'sujet', new.sujet, 'rdv_at', new.rdv_at));
+        perform public.pousser(new.student_id, 'mentorat_deplace', jsonb_build_object('nom', (select full_name from public.profiles where id = new.mentor_id), 'sujet', new.sujet, 'rdv_at', new.rdv_at, 'm', new.id));
       elsif old.status = 'acceptee' and new.status = 'annulee' then
         -- Qui annule est nommé ; si c'est le lauréat, l'étudiant reçoit un lien pour proposer d'autres horaires
         perform public.pousser(case when auth.uid() = new.student_id then new.mentor_id else new.student_id end, 'mentorat_annule',
@@ -1389,7 +1389,7 @@ begin
       limit 40;
     end if;
   elsif tg_table_name = 'parrainages' then
-    perform public.pousser(new.parrain_id, 'filleul', jsonb_build_object('nom', (select full_name from public.profiles where id = new.filleul_id)));
+    perform public.pousser(new.parrain_id, 'filleul', jsonb_build_object('nom', (select full_name from public.profiles where id = new.filleul_id), 'filleul', new.filleul_id));
     perform public.pousser(new.filleul_id, 'parrain', jsonb_build_object('nom', (select full_name from public.profiles where id = new.parrain_id)));
   elsif tg_table_name = 'cafes' then
     insert into public.push_queue (user_id, kind, data)
@@ -2504,7 +2504,7 @@ begin
     v_kind := case when tg_op = 'INSERT' then 'evenement' when new.annule then 'evenement_annule' else 'evenement_deplace' end;
     insert into public.push_queue (user_id, kind, data)
     select p.id, v_kind,
-      jsonb_build_object('titre', new.titre, 'debut', new.debut, 'lieu', new.lieu)
+      jsonb_build_object('titre', new.titre, 'debut', new.debut, 'lieu', new.lieu, 'evenement', new.id)
     from public.profiles p
     where p.id is distinct from new.author_id and p.ecole = new.ecole
       and (new.public = 'tous' or (new.public = 'etudiants' and p.role = 'etudiant') or (new.public = 'laureats' and p.role = 'laureat'))
