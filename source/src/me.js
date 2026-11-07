@@ -829,6 +829,7 @@ injectCSS('me-parcours', `
 .pc-cand.hors .esp-ligne-txt { flex-basis: calc(100% - 44px - .85rem); }
 .pc-hors-act { display: flex; align-items: center; gap: .35rem; margin-inline-start: calc(44px + .85rem); }
 .pc-hors-act select { min-height: 40px; padding: .3rem .55rem; font-size: var(--fs-2); }
+@media (pointer: coarse) { .pc-hors-act select { min-height: 44px; } }
 .pc-hors-act .icon-btn { inline-size: 40px; block-size: 40px; color: var(--muted); }
 @media (min-width: 640px) {
   .pc-cand.hors .esp-ligne { flex-wrap: nowrap; }

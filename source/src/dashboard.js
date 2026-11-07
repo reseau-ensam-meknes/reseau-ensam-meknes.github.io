@@ -329,7 +329,7 @@ injectCSS('dashboard-promo', `
 .suivi-vue > :nth-child(3) { animation-delay: .12s; } .suivi-vue > :nth-child(n+4) { animation-delay: .16s; }
 /* Les réussites de l'année gardent le rythme des autres blocs (pas de marge en plus de l'écart du panneau) ;
    un « Bravo » ne s'affiche pas en nombre (règle du réseau, comme les réactions) : le bouton dit seulement si j'ai applaudi */
-.suivi-vue > .wins-panel { margin-top: 0; }
+.suivi-vue .wins-panel { margin-top: 0; }
 .suivi-vue .kudo > b { display: none; }
 
 /* ===== Tableau de bord (lauréats, administration) : un anneau, trois faits, puis chaque année d'études en barre ===== */

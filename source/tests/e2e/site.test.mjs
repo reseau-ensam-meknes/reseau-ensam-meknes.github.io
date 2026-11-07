@@ -4715,21 +4715,22 @@ test('socle : l’annonce de l’administration — une annonce en cours, le for
   }
 });
 
+// Hauteur touchable de chaque élément actif visible : sa boîte, ou la zone invisible (::before / ::after) qui la prolonge
+const petites = page => page.evaluate(() => {
+  const zone = (el, pseudo) => { const cs = getComputedStyle(el, pseudo); if (cs.content === 'none' || cs.position !== 'absolute') return 0; const h = parseFloat(cs.top), b = parseFloat(cs.bottom); return Math.max(0, -(isNaN(h) ? 0 : h)) + Math.max(0, -(isNaN(b) ? 0 : b)); };
+  const out = [];
+  for (const el of document.querySelectorAll('#contenu :is(button, a[href], [role="tab"], select, summary, input:not([type="hidden"]), textarea)')) {
+    const r = el.getBoundingClientRect(); if (!r.width || !r.height) continue;
+    const cs = getComputedStyle(el); if (cs.visibility === 'hidden' || el.closest('[hidden], [inert], .sr-only')) continue;
+    if (el.tagName === 'SELECT' && cs.opacity === '0') continue;   // menu natif posé sur une pastille : on touche la pastille
+    if (el.tagName === 'INPUT' && /checkbox|radio/.test(el.type)) continue;   // une case dans son label : on touche le label
+    const h = r.height + Math.max(zone(el, '::before'), zone(el, '::after'));
+    if (h < 43.5) out.push(`${el.tagName.toLowerCase()}.${String(el.className?.baseVal ?? el.className).trim().replace(/\s+/g, '.')} « ${(el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 24)} » ${Math.round(h)} px`);
+  }
+  return out;
+});
+
 test('socle : au doigt, chaque cible du Réseau, de Mon profil et de l’administration se touche sur 44 px de haut au moins (une zone invisible prolonge les petites, le dessin ne bouge pas)', async () => {
-  // Hauteur touchable de chaque élément actif visible : sa boîte, ou la zone invisible (::before / ::after) qui la prolonge
-  const petites = page => page.evaluate(() => {
-    const zone = (el, pseudo) => { const cs = getComputedStyle(el, pseudo); if (cs.content === 'none' || cs.position !== 'absolute') return 0; const h = parseFloat(cs.top), b = parseFloat(cs.bottom); return Math.max(0, -(isNaN(h) ? 0 : h)) + Math.max(0, -(isNaN(b) ? 0 : b)); };
-    const out = [];
-    for (const el of document.querySelectorAll('#contenu :is(button, a[href], [role="tab"], select, summary, input:not([type="hidden"]), textarea)')) {
-      const r = el.getBoundingClientRect(); if (!r.width || !r.height) continue;
-      const cs = getComputedStyle(el); if (cs.visibility === 'hidden' || el.closest('[hidden], [inert], .sr-only')) continue;
-      if (el.tagName === 'SELECT' && cs.opacity === '0') continue;   // menu natif posé sur une pastille : on touche la pastille
-      if (el.tagName === 'INPUT' && /checkbox|radio/.test(el.type)) continue;   // une case dans son label : on touche le label
-      const h = r.height + Math.max(zone(el, '::before'), zone(el, '::after'));
-      if (h < 43.5) out.push(`${el.tagName.toLowerCase()}.${String(el.className?.baseVal ?? el.className).trim().replace(/\s+/g, '.')} « ${(el.textContent || el.getAttribute('aria-label') || '').trim().slice(0, 24)} » ${Math.round(h)} px`);
-    }
-    return out;
-  });
   const ECRANS_SOCLE = [['Salma', ['reseau/groupes', 'reseau/agenda', 'reseau/entraide', 'reseau/entreprises', 'reseau/etranger', 'reseau/annuaire', 'profil', 'profil/visibilite', 'profil/notifications', 'profil/donnees']],
     ['Youssef', ['reseau/classement']], ['Admin', ['admin', 'admin/moderation', 'admin/membres', 'admin/liste', 'admin/inviter', 'admin/agenda', 'admin/reglages']]];
   for (const langue of ['fr', 'ar']) {
@@ -4742,6 +4743,25 @@ test('socle : au doigt, chaque cible du Réseau, de Mon profil et de l’adminis
     }
     assert.deepEqual(trop, [], 'des cibles trop petites au doigt');
     // La zone ne déplace rien : les puces du Réseau gardent leur place d'un écran à l'autre, sans rien qui dépasse
+    assert.equal(await s.debordement(), 0);
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  }
+});
+
+test('pages du lot 2 : au doigt, chaque cible des Offres, Demandes, Mentorat (rendez-vous et CV), Mon parcours, Mon espace, du Suivi et des Talents se touche sur 44 px de haut au moins (réactions, « Bravo », étoiles, menu « … », visages, petites icônes)', async () => {
+  const ECRANS = [['Salma', ['offres', 'offres/demandes', 'mentorat', 'mentorat/cv', 'parcours', 'suivi', 'suivi/insertion']],
+    ['Youssef', ['offres', 'offres/demandes', 'mentorat', 'mentorat/cv', 'espace', 'espace/offres', 'espace/documents', 'suivi', 'reseau/talents']],
+    ['Admin', ['offres/demandes', 'mentorat', 'suivi']]];
+  for (const langue of ['fr', 'ar']) {
+    const s = await ouvrir({ largeur: 390, langue, toucher: true });
+    assert.ok(await s.page.evaluate(() => matchMedia('(pointer: coarse)').matches), 'un écran tactile');
+    const trop = [];
+    for (const [qui, ecrans] of ECRANS) {
+      await s.comme(qui);
+      for (const e of langue === 'fr' ? ecrans : ecrans.slice(0, 4)) { await s.aller(e); await s.page.waitForTimeout(250); for (const x of await petites(s.page)) trop.push(`${qui} · ${e} : ${x}`); }
+    }
+    assert.deepEqual(trop, [], 'des cibles trop petites au doigt');
     assert.equal(await s.debordement(), 0);
     assert.deepEqual(s.erreurs, []);
     await s.ctx.close();

@@ -1130,6 +1130,7 @@ injectCSS('mentorat-ux', `
 /* Mode d'emploi replié */
 .m-how { align-self: flex-start; max-width: 100%; }
 .m-how > summary { display: inline-flex; align-items: center; gap: .4rem; min-height: 40px; cursor: pointer; list-style: none; color: var(--ink-2); font-weight: 600; font-size: var(--fs-2); padding: .35rem 0; border-radius: var(--r-sm); }
+@media (pointer: coarse) { .m-how > summary { min-height: 44px; } }
 .m-how > summary::-webkit-details-marker { display: none; }
 /* « i » rond avant, chevron après : dessinés en CSS pour servir aussi au volet « Relecture de CV » */
 .m-how > summary::before { content: "i"; display: inline-grid; place-items: center; width: 16px; height: 16px; border: 1.6px solid currentColor; border-radius: 50%; font: 700 10px/1 var(--f-body); }
