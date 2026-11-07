@@ -17,9 +17,10 @@ export const UID = '00000000-0000-4000-8000-0000000000a1';
 // photo : l'image servie par les liens temporaires du stockage (photos des fondateurs)
 export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 19, promos: 14 }, reglages = [{ cle: 'domaines_ecole', valeur: ['ensam-umi.ac.ma'] }], offres = [], partagees = {}, profils = [], fondateurs = null, photo = null, ambassadeurs = null, chiffresPromo = null, tables = {} } = {}) {
   let port; const appels = []; const meta = {}; const inscrits = []; const jetons = { renouveler: false, depuis: 0, n: 0 };
-  // Une nouvelle version du site publiée pendant un test (maj.version) : sw.js change de VERSION, et les fichiers que le
-  // service worker télécharge pour l'installer (fetch, sec-fetch-dest « empty ») attendent maj.retenue
-  const maj = { version: null, retenue: null };
+  // Une nouvelle version du site publiée pendant un test (maj.version) : sw.js change de VERSION, site.css reçoit en plus
+  // maj.css (des règles que seule la nouvelle version porte), et les fichiers que le service worker télécharge pour l'installer
+  // (fetch, sec-fetch-dest « empty ») attendent maj.retenue
+  const maj = { version: null, retenue: null, css: null };
   const cors = { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*', 'access-control-allow-methods': '*', 'access-control-expose-headers': '*' };
   const json = (r, code, body) => { r.writeHead(code, { 'content-type': 'application/json', ...cors }); r.end(body === undefined ? '' : JSON.stringify(body)); };
   const session = email => {
@@ -128,6 +129,7 @@ export async function fauxSite(SITE, { chiffres = { laureats: 39, entreprises: 1
     const servir = () => fs.readFile(fichier, (e, b) => {
       if (e) { r.writeHead(404); return r.end(); }
       if (f === '/sw.js' && maj.version) b = Buffer.from(String(b).replace(/const VERSION = '[^']*'/, `const VERSION = '${maj.version}'`));
+      if (f === '/site.css' && maj.version && maj.css) b = Buffer.concat([b, Buffer.from(maj.css)]);
       r.writeHead(200, { 'content-type': TYPES[path.extname(f)] || 'application/octet-stream' }); r.end(b);
     });
     if (maj.version && q.headers['sec-fetch-dest'] === 'empty' && f !== '/sw.js') return void maj.retenue.then(servir);

@@ -1612,7 +1612,12 @@ test('supprimer son compte : pas de « session expirée » ensuite, ni brouillon
 // La page passe derrière une autre application (le visiteur va chercher son code dans sa boîte mail)
 const cacher = page => page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
 
-test('nouvelle version publiée pendant que le visiteur tape son email : la page ne se recharge pas sous ses doigts ; cachée, elle se recharge et l’email revient', async () => {
+// Le CSS complet appliqué (site.css : la page n'a d'abord que celui de l'entrée) : la règle que seule la nouvelle version porte
+const cssApplique = async page => {
+  await page.waitForFunction(() => !document.getElementById('css-entree'), null, { timeout: 15000 });
+  return page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--maj-test').trim());
+};
+test('nouvelle version publiée pendant que le visiteur tape son email : la page ne se recharge pas sous ses doigts ; cachée, elle se recharge et l’email revient, avec le CSS complet de la nouvelle version', async () => {
   const s = await visiteur({ sw: true });
   let liberer = () => {};
   try {
@@ -1620,8 +1625,8 @@ test('nouvelle version publiée pendant que le visiteur tape son email : la page
     await s.page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 30000 });
     await s.page.reload(); await s.page.waitForSelector('#entree .entree-form');
     assert.ok(await s.page.evaluate(() => !!navigator.serviceWorker.controller), 'le site est gardé sur l’appareil');
-    // Il revient après une mise en ligne : la nouvelle version s'installe pendant qu'il tape
-    Object.assign(site.maj, { version: 'test-' + Date.now(), retenue: new Promise(ok => { liberer = ok; }) });
+    // Il revient après une mise en ligne : la nouvelle version s'installe pendant qu'il tape (son site.css a une règle de plus)
+    Object.assign(site.maj, { version: 'test-' + Date.now(), retenue: new Promise(ok => { liberer = ok; }), css: ':root{--maj-test:1}' });
     let chargements = 0;
     s.page.on('load', () => { chargements++; });
     await s.page.reload(); await s.page.waitForSelector('#entree .entree-form');
@@ -1635,15 +1640,20 @@ test('nouvelle version publiée pendant que le visiteur tape son email : la page
     await s.page.waitForFunction(() => performance.now() > 10000, null, { timeout: 15000, polling: 200 });
     assert.equal(chargements, 1, 'pas de rechargement pendant qu’il tape');
     assert.equal(await s.page.inputValue('#au-email'), 'amine@ensam-umi.ac.ma');
+    // L'application partie à son premier geste a le CSS complet de sa version, gardé avec elle (jamais un mélange)
+    assert.equal(await cssApplique(s.page), '', 'le CSS complet de la version gardée');
     // Il va lire son code ailleurs : la nouvelle version prend la main, la page se recharge sans qu'il le voie
     await cacher(s.page);
     for (let i = 0; i < 100 && chargements < 2; i++) await s.page.waitForTimeout(100);
     assert.equal(chargements, 2, 'la nouvelle version s’applique une fois la page cachée');
     await s.page.waitForSelector('#entree .entree-form');
     assert.equal(await s.page.inputValue('#au-email'), 'amine@ensam-umi.ac.ma', 'ce qu’il avait tapé revient');
+    // Rechargée, la page a le site.css de la nouvelle version (son adresse porte la même empreinte ici : c'est la copie de la
+    // nouvelle version que le service worker rend)
+    assert.equal(await cssApplique(s.page), '1', 'la nouvelle version apporte son CSS complet');
     assert.deepEqual(s.erreurs, []);
   } finally {
-    liberer(); Object.assign(site.maj, { version: null, retenue: null });
+    liberer(); Object.assign(site.maj, { version: null, retenue: null, css: null });
     await s.ctx.close();
   }
 });
