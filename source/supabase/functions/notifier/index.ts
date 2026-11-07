@@ -348,8 +348,8 @@ export const urgence = (kind: string) => (['rappel_visite', 'enquete'].includes(
 // Durée de vie chez le service de push (téléphone éteint) : un jour ; un rappel ne sert plus une fois le rendez-vous commencé
 export const dureeVie = (kind: string) => (kind === 'rappel_rdv' || kind === 'rappel_entretien' ? 900 : 86400);
 
-// Envoie une notification ; rend le code HTTP du service de push (0 si injoignable)
-async function pousserUn(a: Abonnement, n: Notif, urg: string, v: Vapid, ttl = 86400): Promise<number> {
+// Envoie une notification ; rend le code HTTP du service de push (0 si injoignable ou trop lent)
+async function pousserUn(a: Abonnement, n: Notif, urg: string, v: Vapid, ttl = 86400, delai = 15000): Promise<number> {
   try {
     const aud = new URL(a.endpoint).origin;
     let j = v.jetons.get(aud);
@@ -363,7 +363,7 @@ async function pousserUn(a: Abonnement, n: Notif, urg: string, v: Vapid, ttl = 8
         Urgency: urg, Authorization: `vapid t=${await j}, k=${v.publique}`,
       },
       body: bs(corps),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(delai),
     });
     if (ok(r.status) || r.status === 404 || r.status === 410) await r.body?.cancel();
     else console.error('notifier : push refusé', r.status, aud, (await r.text()).slice(0, 200));
@@ -695,8 +695,21 @@ const MOTIFS: Record<Langue, Record<string, string>> = {
   ar: { spam: 'رسائل مزعجة', arnaque: 'احتيال', inapproprie: 'محتوى غير لائق', faux: 'معلومة خاطئة', harcelement: 'تحرش', donnees: 'معطيات شخصية', autre: 'سبب آخر' },
 };
 
+// Ce qui remplace la précédente du même type dans la barre de notifications : un seul rappel du soir, un seul Match du
+// jour, un seul essai, une seule enquête ; ce qui rend la précédente fausse : la vérification par les pairs (« encore
+// un lauréat » puis « ton badge est là »), un nouveau parrain (« ton parrainage cette année : … »), les arrivées dans la
+// promo (au plus une par jour). La nouvelle date d'un événement ou d'un rendez-vous de mentorat remplace celle du même
+// élément (son identifiant est dans les données : evenement, m) ; sans lui (données d'avant), celle du même type. Chaque
+// filleul a sa ligne (une personne de plus, comme PAR_PERSONNE). Le reste, sans élément qui le regroupe (conversation,
+// match, offre…), garde une notification par événement : son tag porte l'identifiant de sa ligne dans la file (id).
+export const SE_REMPLACENT = ['rappel_visite', 'match_jour', 'test', 'enquete', 'verification_pair', 'evenement_deplace', 'mentorat_deplace',
+  'parrain', 'promo_nouveau'];
+// Sur une même demande, chaque lauréat qui propose son aide, chaque réponse, est une personne de plus : une notification
+// chacune (sinon la deuxième efface la première, et son nom). Regroupées seulement quand la base les compte (n ≥ 1).
+const PAR_PERSONNE = ['demande_proposition', 'demande_reponse'];
+
 // Notification prête à envoyer : { title, body, url, tag } ; null si le type est inconnu
-export function texteNotif(kind: string, data: unknown, langue: unknown, site: string): Notif | null {
+export function texteNotif(kind: string, data: unknown, langue: unknown, site: string, id?: number | string | null): Notif | null {
   if (!Object.prototype.hasOwnProperty.call(NOTIFS, kind)) return null;
   if (kind === 'rappel_visite') return notifRappel(data, langue, site);
   const g = NOTIFS[kind], l = langueDe(langue);
@@ -724,7 +737,12 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
   // Une alerte ouvre directement l'offre, un message sa conversation (une notification par personne)
   // Une demande ouvre sa carte ; une nouvelle demande, pour un lauréat, ouvre directement « Je peux aider », prérempli
   const dem = kind.startsWith('demande_') && estUuid(d.demande) ? d.demande : null;
+  const ligneDeFile = id != null && String(id) !== '';
+  const demParPersonne = dem && PAR_PERSONNE.includes(kind) && !(Number(d.n) >= 1) && ligneDeFile;
   const annule = kind === 'mentorat_annule' && estUuid(d.m) ? d.m : null;
+  // L'élément déplacé, ou le filleul : une ligne chacun (la nouvelle date du même élément remplace l'ancienne)
+  const element = kind === 'evenement_deplace' && estUuid(d.evenement) ? d.evenement : kind === 'mentorat_deplace' && estUuid(d.m) ? d.m
+    : kind === 'filleul' && estUuid(d.filleul) ? d.filleul : null;
   // Une réaction ouvre l'élément : l'offre, ou la carte de la demande ; une seule notification par élément sur le téléphone
   const rx = kind === 'reaction' ? (estUuid(d.offre) ? { route: `offre/${d.offre}`, id: d.offre } : estUuid(d.demande) ? { route: `offres/demandes/${d.demande}`, id: d.demande } : null) : null;
   // Un commentaire ouvre l'offre ; une notification par offre sur le téléphone
@@ -739,7 +757,8 @@ export function texteNotif(kind: string, data: unknown, langue: unknown, site: s
     : annule && v.pour === 'demandeur' ? `mentorat/reprendre/${annule}`
     : dem ? (kind === 'demande_nouvelle' || kind === 'demande_large' ? `aider/${dem}` : `offres/demandes/${dem}`) : g.route;
   const tag = rx ? `reaction-${rx.id}` : kind === 'offre_alerte' && estUuid(d.offre) ? `offre-${d.offre}` : com ? `${kind}-${com}`
-    : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem ? `${kind}-${dem}` : annule ? `${kind}-${annule}` : mt ? `${kind}-${mt}` : kind;
+    : kind === 'message' && estUuid(d.de) ? `message-${d.de}` : dem && !demParPersonne ? `${kind}-${dem}` : annule ? `${kind}-${annule}` : element ? `${kind}-${element}` : mt ? `${kind}-${mt}`
+    : ligneDeFile && !SE_REMPLACENT.includes(kind) ? `${kind}-${id}` : kind;
   // Message arrivé moins de 20 s après le précédent de la conversation : l'aperçu change sans sonner
   return { title: couper(t[0], 80), body: couper(t[1], 180), url: site + '#' + route, tag, ...(kind === 'message' && d.calme === true ? { calme: true } : {}) };
 }
@@ -751,7 +770,7 @@ export type Profil = {
   id: string; full_name: string; role: string; filiere: string; promo: number;
   entreprise?: string | null; pays?: string | null; ville?: string | null; vitrine?: boolean | null;
   verified?: boolean | null; cv_url?: string | null; cv_path?: string | null; competences?: string[] | null; created_at: string;
-  en_recherche?: boolean | null;
+  en_recherche?: boolean | null; ecole?: string | null;
 };
 export type Offre = {
   id: string; author_id: string; titre: string; entreprise: string; filieres?: string[] | null; annees?: number[] | null;
@@ -770,7 +789,7 @@ export type Placement = {
 };
 // Points d'un recrutement confirmé, même barème que logic.js (pointsRecrutement) : 50, +25 à l'international
 export const pointsRecrutement = (p: { type?: string | null; pays?: string | null }) => 50 + (p.type === 'etranger' || (!!p.pays && p.pays !== 'Maroc') ? 25 : 0);
-export type Evenement = { id: string; titre: string; debut: string; lieu?: string | null; public: string; annule?: boolean };
+export type Evenement = { id: string; titre: string; debut: string; lieu?: string | null; public: string; annule?: boolean; ecole?: string | null };
 export type Relecture = { id: string; student_id: string; reviewer_id: string | null; status: string };
 export type DemandeContact = { id: string; demandeur_id: string; cible_id: string; status: string };
 // Ambassadeur de promo et les chiffres de sa promo pour un mois (chiffres_ambassadeurs, schema.sql)
@@ -823,6 +842,32 @@ export type Donnees = {
   evenements: Evenement[]; enquetesFaites: Set<string>; relectures: Relecture[]; contactsEnAttente: Map<string, number>; signalements: number;
   ambassadeurs?: Map<string, ChiffresPromo>; moisAmbassadeurs?: string;
 };
+
+// Écoles : le résumé d'un membre ne parle que de son école. Une ligne suit l'école de la personne qui la porte
+// (auteur, étudiant, organisateur) ; une base d'avant les écoles n'a qu'ENSAM Meknès.
+export const ecoleDe = (x?: { ecole?: string | null } | null) => x?.ecole || 'ensam-meknes';
+export function parEcole(b: Brut, ecole: string): Brut {
+  const ici = new Set(b.profils.filter(p => ecoleDe(p) === ecole).map(p => p.id));
+  const a = (id?: string | null) => !!id && ici.has(id);
+  return {
+    ...b,
+    profils: b.profils.filter(p => ici.has(p.id)),
+    offres: b.offres.filter(o => a(o.author_id)),
+    candidatures: b.candidatures.filter(c => a(c.student_id)),
+    invitations: b.invitations.filter(i => a(i.student_id)),
+    mentorats: b.mentorats.filter(m => a(m.student_id)),
+    questions: b.questions.filter(q => a(q.author_id)),
+    reponses: b.reponses.filter(r => a(r.author_id)),
+    parrainages: b.parrainages.filter(x => a(x.filleul_id)),
+    cafes: b.cafes.filter(c => a(c.organisateur_id)),
+    placements: b.placements.filter(x => a(x.student_id)),
+    evenements: b.evenements?.filter(e => ecoleDe(e) === ecole),
+    enquetes: b.enquetes?.filter(e => a(e.user_id)),
+    relectures: b.relectures?.filter(r => a(r.student_id)),
+    demandesContact: b.demandesContact?.filter(x => a(x.cible_id)),
+    ambassadeurs: b.ambassadeurs?.filter(x => a(x.user_id)),
+  };
+}
 
 export function indexer(b: Brut, date: Date): Donnees {
   const now = date.getTime(), depuis7 = now - 7 * JOUR, depuis14 = now - 14 * JOUR, saison = saisonDe(date);
@@ -1449,24 +1494,37 @@ function sujetDe(r: Resume, L: Dico, langue: Langue): string {
 // Les liens d'un email arabe ouvrent le site en arabe (?lang=ar), sauf si ce navigateur a déjà choisi sa langue
 export const siteEn = (site: string, langue: Langue) => (langue === 'ar' ? `${site}?lang=ar` : site);
 
+// Membre sans téléphone abonné : une ligne calme au bas de ses emails, pour recevoir tout ça sur son téléphone.
+// ?notifs=1 : le site ouvre l'activation des notifications.
+export const lienNotifs = (site: string) => `${site}${site.includes('?') ? '&' : '?'}notifs=1`;
+export const TELEPHONE: Record<Langue, { phrase: string; lien: string }> = {
+  fr: { phrase: 'Reçois tes matchs et tes messages directement sur ton téléphone', lien: 'Activer les notifications' },
+  ar: { phrase: 'استقبل توافقاتك ورسائلك مباشرة على هاتفك', lien: 'تفعيل الإشعارات' },
+};
+// Le rappel d'un rendez-vous par email ne part qu'à qui n'a de notifications sur aucun appareil : sa ligne parle de ces rappels
+export const TELEPHONE_RAPPEL: Record<Langue, string> = {
+  fr: 'Reçois ces rappels directement sur ton téléphone, 15 minutes avant chaque rendez-vous',
+  ar: 'استقبل هذه التذكيرات مباشرة على هاتفك، 15 دقيقة قبل كل موعد',
+};
+function blocTelephone(site: string, langue: Langue, phrase = TELEPHONE[langue].phrase): string {
+  const debut = langue === 'ar' ? 'right' : 'left', t = { ...TELEPHONE[langue], phrase };
+  const police = "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Tahoma,Helvetica,Arial,sans-serif;";
+  return `
+<tr><td style="padding:24px 28px 0;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+<td style="background:#EEF4FA;border-radius:8px;padding:12px 16px;text-align:${debut};${police}font-size:13px;line-height:19px;color:#1F3354;">
+${esc(t.phrase)}<br><a href="${esc(lienNotifs(site))}" style="color:#1670A8;font-weight:600;">${esc(t.lien)}</a>
+</td></tr></table>
+</td></tr>`;
+}
+const ligneTelephone = (site: string, langue: Langue, phrase = TELEPHONE[langue].phrase) => `${phrase}${langue === 'ar' ? ': ' : ' : '}${lienNotifs(site)}`;
+
 // desabo vide : email envoyé une seule fois, sans lien de désabonnement
 export type Courriel = { sujet: string; html: string; texte: string; desabo: string };
 
-// Pour qui n'a de notifications sur aucun appareil : une invitation dans les emails qui partent déjà, aucun email de plus
-export const INVITE_NOTIFS: Record<Langue, { titre: string; texte: string; bouton: string }> = {
-  fr: { titre: 'Active tes notifications', texte: 'Tes matchs, tes messages et les réponses des lauréats arrivent sur ton téléphone, même application fermée.', bouton: 'Activer' },
-  ar: { titre: 'فعّل إشعاراتك', texte: 'توافقاتك ورسائلك وأجوبة الخريجين تصل إلى هاتفك، حتى والتطبيق مغلق.', bouton: 'تفعيل' },
-};
-// Membres sans aucun abonnement parmi ces destinataires
-async function sansNotifs(env: Env, ids: string[]): Promise<Set<string>> {
-  try {
-    const abonnes = new Set((await parIds<{ user_id: string }>(env, 'push_subscriptions', 'select=user_id', 'user_id', ids)).map(x => x.user_id));
-    return new Set(ids.filter(id => !abonnes.has(id)));
-  } catch { return new Set(); }   // l'email part sans l'invitation
-}
-
-export function rendreResume(r: Resume, langue: Langue, site: string, token: string, inviter = false): Courriel {
+export function rendreResume(r: Resume, langue: Langue, site: string, token: string, sansTel = false): Courriel {
   site = siteEn(site, langue);
+  const tel = sansTel && r.role !== 'admin';
   const L = langue === 'ar' ? AR : FR, ar = langue === 'ar';
   const secs = sectionsDe(r, L, langue);
   const sujet = sujetDe(r, L, langue);
@@ -1494,13 +1552,6 @@ ${s.lignes.map(l => `<p style="margin:0 0 6px;"><span style="color:#F39200;">&#8
 </table>
 </td></tr>`).join('');
 
-  const inv = INVITE_NOTIFS[langue], urlInv = `${site}#profil/notifications`;
-  const invitation = inviter ? `
-<tr><td style="padding:22px 28px 0;text-align:${debut};${police}">
-<p style="margin:0 0 4px;font-size:15px;line-height:21px;font-weight:700;color:#1F3354;">${esc(inv.titre)}</p>
-<p style="margin:0 0 8px;font-size:14px;line-height:21px;color:#2B2F36;">${esc(inv.texte)}</p>
-<a href="${esc(urlInv)}" style="font-size:14px;line-height:18px;font-weight:600;color:#1670A8;">${esc(inv.bouton)}</a>
-</td></tr>` : '';
 
   const html = `<!DOCTYPE html>
 <html lang="${langue}" dir="${dir}">
@@ -1522,7 +1573,7 @@ ${s.lignes.map(l => `<p style="margin:0 0 6px;"><span style="color:#F39200;">&#8
 <tr><td style="padding:24px 28px 14px;text-align:${debut};${police}font-size:15px;line-height:22px;color:#2B2F36;">
 <p style="margin:0 0 6px;font-weight:600;">${esc(salut)}</p>
 <p style="margin:0;">${esc(intro)}</p>
-</td></tr>${blocs}${invitation}
+</td></tr>${blocs}${tel ? blocTelephone(site, langue) : ''}
 <tr><td style="padding:28px 28px 0;"><div style="border-top:1px solid #E3E7ED;height:1px;line-height:1px;font-size:1px;">&nbsp;</div></td></tr>
 <tr><td style="padding:14px 28px 26px;text-align:${debut};${police}font-size:12px;line-height:18px;color:#6B7280;">
 ${esc(L.pied)}<br>
@@ -1536,6 +1587,7 @@ ${esc(L.pied)}<br>
 
   const texte = [`${L.marque} · ${L.sousTitre}`, '', salut, intro, '',
     ...secs.flatMap(s => [s.titre.toUpperCase(), ...s.lignes.map(l => `• ${l(ft)}`), `${L.routes[s.route] || L.ouvrir}${L.sep}${site}#${s.route}`, '']),
+    ...(tel ? [ligneTelephone(site, langue), ''] : []),
     '--', L.pied, `${L.ouvrir}${L.sep}${site}`, `${L.desabo}${L.sep}${desabo}`].join('\n');
 
   return { sujet, html, texte, desabo };
@@ -1545,7 +1597,9 @@ ${esc(L.pied)}<br>
 // Emails courts (alerte d'offre, enquête d'insertion) : même présentation que le résumé
 // ---------------------------------------------------------------------
 type Bloc = { lignes: string[]; bouton?: { texte: string; url: string } };
-type Cadre = { langue: Langue; sujet: string; apercu: string; sousTitre: string; intro: string[]; blocs: Bloc[]; pied: string; liens: [string, string][] };
+// telephone : l'adresse du site, pour la ligne d'un membre sans téléphone abonné (telephonePhrase : sa phrase, si ce
+// n'est pas celle de tous les emails)
+type Cadre = { langue: Langue; sujet: string; apercu: string; sousTitre: string; intro: string[]; blocs: Bloc[]; pied: string; liens: [string, string][]; telephone?: string; telephonePhrase?: string };
 
 function cadreEmail(c: Cadre): string {
   const ar = c.langue === 'ar', debut = ar ? 'right' : 'left', dir = ar ? 'rtl' : 'ltr';
@@ -1584,7 +1638,7 @@ ${b.lignes.map(l => `<p style="margin:0 0 8px;">${l}</p>`).join('\n')}
 </td></tr>
 <tr><td style="padding:24px 28px 0;text-align:${debut};${police}font-size:15px;line-height:22px;color:#2B2F36;">
 ${c.intro.map((l, i) => `<p style="margin:0 0 6px;${i === 0 ? 'font-weight:600;' : ''}">${l}</p>`).join('\n')}
-</td></tr>${blocs}
+</td></tr>${blocs}${c.telephone ? blocTelephone(c.telephone, c.langue, c.telephonePhrase) : ''}
 <tr><td style="padding:26px 28px 0;"><div style="border-top:1px solid #E3E7ED;height:1px;line-height:1px;font-size:1px;">&nbsp;</div></td></tr>
 <tr><td style="padding:14px 28px 26px;text-align:${debut};${police}font-size:12px;line-height:18px;color:#6B7280;">
 ${esc(c.pied)}<br>
@@ -1609,7 +1663,7 @@ const TYPES_OFFRE: Record<Langue, Record<string, string>> = {
 };
 
 // Alerte : les nouvelles offres de son année et de sa filière (5 au plus)
-export function rendreAlerte(offres: OffreAlerte[], langue: Langue, site: string, token: string): Courriel {
+export function rendreAlerte(offres: OffreAlerte[], langue: Langue, site: string, token: string, sansTel = false): Courriel {
   site = siteEn(site, langue);
   const ar = langue === 'ar', f = ar ? HTML_AR : HTML, b = ar ? BRUT_AR : BRUT;
   const n = offres.length, o0 = offres[0];
@@ -1634,9 +1688,10 @@ export function rendreAlerte(offres: OffreAlerte[], langue: Langue, site: string
     blocs: offres.map(o => ({ lignes: [`<span style="color:#F39200;">&#8226;</span>&nbsp; ${ligne(o, f)}`], bouton: { texte: ar ? 'عرض العرض' : 'Voir l’offre', url: lien(o) } })),
     pied: ar ? 'يصلك هذا التنبيه لأن العرض يناسب شعبتك وسنتك، ثلاث مرات في اليوم على الأكثر.' : 'Tu reçois cette alerte parce que l’offre correspond à ta filière et à ton année, 3 fois par jour au plus.',
     liens: [[ar ? 'فتح المنصة' : 'Ouvrir la plateforme', site], [ar ? 'إيقاف تنبيهات البريد' : 'Ne plus recevoir les alertes par email', desabo]],
+    ...(sansTel ? { telephone: site } : {}),
   });
   const texte = [`${(ar ? AR : FR).marque} · ${ar ? 'تنبيه العروض' : 'Alerte offres'}`, '', ar ? 'مرحبًا،' : 'Bonjour,', intro, '',
-    ...offres.flatMap(o => [`• ${ligne(o, b)}`, `  ${lien(o)}`]), '', '--',
+    ...offres.flatMap(o => [`• ${ligne(o, b)}`, `  ${lien(o)}`]), '', ...(sansTel ? [ligneTelephone(site, langue), ''] : []), '--',
     ar ? 'يصلك هذا التنبيه لأن العرض يناسب شعبتك وسنتك.' : 'Tu reçois cette alerte parce que l’offre correspond à ta filière et à ton année.',
     `${ar ? 'إيقاف تنبيهات البريد' : 'Ne plus recevoir les alertes par email'}${ar ? ': ' : ' : '}${desabo}`].join('\n');
   return { sujet, html, texte, desabo };
@@ -1647,7 +1702,7 @@ export function rendreAlerte(offres: OffreAlerte[], langue: Langue, site: string
 export type DemandeAlerte = { id: string; titre: string; type?: string | null; lieu?: string | null; prenom?: string | null; niveau?: number | null; role?: string | null; large?: boolean | null };
 const niveauCourt = (x: DemandeAlerte, l: Langue) => x.role === 'laureat' ? (l === 'ar' ? 'خريج' : 'Lauréat')
   : Number(x.niveau) >= 6 ? (l === 'ar' ? 'خريج جديد' : 'Jeune diplômé') : Number(x.niveau) >= 3 ? `${Number(x.niveau)}A` : '';
-export function rendreDemandes(demandes: DemandeAlerte[], langue: Langue, site: string, token: string): Courriel {
+export function rendreDemandes(demandes: DemandeAlerte[], langue: Langue, site: string, token: string, sansTel = false): Courriel {
   site = siteEn(site, langue);
   const ar = langue === 'ar', f = ar ? HTML_AR : HTML, b = ar ? BRUT_AR : BRUT;
   const n = demandes.length, d0 = demandes[0];
@@ -1678,16 +1733,17 @@ export function rendreDemandes(demandes: DemandeAlerte[], langue: Langue, site: 
     blocs: demandes.map(x => ({ lignes: [`<span style="color:#F39200;">&#8226;</span>&nbsp; ${ligne(x, f)}`], bouton: { texte: ar ? 'أستطيع المساعدة' : 'Je peux aider', url: lien(x) } })),
     pied: ar ? `يصلك هذا البريد ${raison}، مرة في اليوم على الأكثر.` : `Tu reçois cet email ${raison}, une fois par jour au plus.`,
     liens: [[ar ? 'فتح المنصة' : 'Ouvrir la plateforme', site], [ar ? 'إيقاف تنبيهات البريد' : 'Ne plus recevoir les alertes par email', desabo]],
+    ...(sansTel ? { telephone: site } : {}),
   });
   const texte = [`${(ar ? AR : FR).marque} · ${ar ? 'طلبات الطلبة' : 'Demandes des étudiants'}`, '', ar ? 'مرحبًا،' : 'Bonjour,', intro, '',
-    ...demandes.flatMap(x => [`• ${ligne(x, b)}`, `  ${lien(x)}`]), '', '--',
+    ...demandes.flatMap(x => [`• ${ligne(x, b)}`, `  ${lien(x)}`]), '', ...(sansTel ? [ligneTelephone(site, langue), ''] : []), '--',
     ar ? `يصلك هذا البريد ${raison}.` : `Tu reçois cet email ${raison}.`,
     `${ar ? 'إيقاف تنبيهات البريد' : 'Ne plus recevoir les alertes par email'}${ar ? ': ' : ' : '}${desabo}`].join('\n');
   return { sujet, html, texte, desabo };
 }
 
 // Messages non lus depuis 30 minutes : qui t'a écrit, et un bouton pour répondre (jamais le contenu)
-export function rendreMessages(n: number, noms: string[], langue: Langue, site: string, token: string): Courriel {
+export function rendreMessages(n: number, noms: string[], langue: Langue, site: string, token: string, sansTel = false): Courriel {
   site = siteEn(site, langue);
   const ar = langue === 'ar', f = ar ? HTML_AR : HTML, b = ar ? BRUT_AR : BRUT;
   const desabo = `${site}#desabo/${token}/messages`;
@@ -1706,17 +1762,19 @@ export function rendreMessages(n: number, noms: string[], langue: Langue, site: 
     blocs: [{ lignes: [esc(ar ? 'اقرأ وأجب من المنصة، بالكتابة أو بالصور أو برسالة صوتية.' : 'Lis et réponds depuis la plateforme : par écrit, en photo ou en message vocal.')], bouton: { texte: ar ? 'قراءة الرسائل' : 'Lire et répondre', url } }],
     pied: ar ? 'يصلك هذا البريد إذا بقيت رسالة غير مقروءة نصف ساعة، مرة كل 6 ساعات على الأكثر.' : 'Tu reçois cet email quand un message reste non lu 30 minutes, une fois toutes les 6 heures au plus.',
     liens: [[ar ? 'فتح المنصة' : 'Ouvrir la plateforme', site], [ar ? 'إيقاف بريد الرسائل' : 'Ne plus recevoir ces emails', desabo]],
+    ...(sansTel ? { telephone: site } : {}),
   });
   const texte = [`${(ar ? AR : FR).marque} · ${ar ? 'الرسائل' : 'Messages'}`, '', ar ? 'مرحبًا،' : 'Bonjour,', ligne(b), '',
-    `${ar ? 'قراءة الرسائل' : 'Lire et répondre'}${ar ? ': ' : ' : '}${url}`, '', '--',
+    `${ar ? 'قراءة الرسائل' : 'Lire et répondre'}${ar ? ': ' : ' : '}${url}`, '', ...(sansTel ? [ligneTelephone(site, langue), ''] : []), '--',
     `${ar ? 'إيقاف بريد الرسائل' : 'Ne plus recevoir ces emails'}${ar ? ': ' : ' : '}${desabo}`].join('\n');
   return { sujet, html, texte, desabo };
 }
 
 // Rappel 15 minutes avant un rendez-vous (rappels_rdv dans schema.sql), pour qui n'a de notifications sur aucun appareil :
 // avec qui, à quelle heure, où ; le bouton ouvre la visio quand il y en a une, sinon la discussion ou le mentorat.
-// Pas de lien de désabonnement : un seul email, pour un rendez-vous pris par le membre ou proposé à lui.
-export function rendreRappelRdv(kind: string, data: unknown, langue: Langue, site: string): Courriel | null {
+// Pas de lien de désabonnement : un seul email, pour un rendez-vous pris par le membre ou proposé à lui. La base ne le
+// prépare que pour qui n'a aucun téléphone abonné (rappeler) : la ligne pour les activer y est donc toujours (sansTel).
+export function rendreRappelRdv(kind: string, data: unknown, langue: Langue, site: string, sansTel = true): Courriel | null {
   const d = (data && typeof data === 'object' ? data : {}) as Record<string, unknown>;
   const q = quand(d.rdv_at, langue);
   if (!q || (kind !== 'rappel_rdv' && kind !== 'rappel_entretien')) return null;
@@ -1742,21 +1800,26 @@ export function rendreRappelRdv(kind: string, data: unknown, langue: Langue, sit
   const lignes = (F: Fmt) => [debut(F), ...(sujetRdv ? [ar ? `الموضوع: ${F.u(sujetRdv)}.` : `Sujet : ${F.u(sujetRdv)}.`] : []), ou(F)];
   const ouvrir = mentorat ? (ar ? 'فتح المواكبة' : 'Ouvrir le mentorat') : (ar ? 'فتح المحادثة' : 'Ouvrir la discussion');
   const bouton = lien && !lieu ? { texte: ar ? 'الانضمام إلى الفيديو' : 'Rejoindre la visio', url: lien } : { texte: ouvrir, url: ici };
-  const pied = ar ? 'يصلك هذا البريد لأن لديك موعدًا على شبكة ENSAM مكناس ولم تفعّل الإشعارات على أي جهاز. فعّلها في «ملفي» لتصلك هذه التذكيرات على هاتفك.'
-    : 'Tu reçois cet email parce que tu as un rendez-vous sur le Réseau ENSAM Meknès et que les notifications ne sont activées sur aucun de tes appareils. Active-les dans Mon profil pour recevoir ces rappels sur ton téléphone.';
+  // La ligne au-dessus dit comment les activer : le pied dit seulement pourquoi cet email
+  const pied = ar ? (sansTel ? 'يصلك هذا البريد لأن لديك موعدًا على شبكة ENSAM مكناس ولم تفعّل الإشعارات على أي جهاز.'
+      : 'يصلك هذا البريد لأن لديك موعدًا على شبكة ENSAM مكناس.')
+    : sansTel ? 'Tu reçois cet email parce que tu as un rendez-vous sur le Réseau ENSAM Meknès et que les notifications ne sont activées sur aucun de tes appareils.'
+      : 'Tu reçois cet email parce que tu as un rendez-vous sur le Réseau ENSAM Meknès.';
   const html = cadreEmail({
     langue, sujet, apercu: lignes(b).join(' '), sousTitre: ar ? 'تذكير' : 'Rappel',
     intro: [esc(ar ? 'مرحبًا،' : 'Bonjour,')],
     blocs: [{ lignes: lignes(f), bouton }],
+    ...(sansTel ? { telephone: site, telephonePhrase: TELEPHONE_RAPPEL[langue] } : {}),
     pied, liens: bouton.url === ici ? [[ar ? 'فتح المنصة' : 'Ouvrir la plateforme', site]] : [[ouvrir, ici]],
   });
   const texte = [`${(ar ? AR : FR).marque} · ${ar ? 'تذكير' : 'Rappel'}`, '', ar ? 'مرحبًا،' : 'Bonjour,', ...lignes(b), '',
-    `${bouton.texte}${ar ? ': ' : ' : '}${bouton.url}`, ...(bouton.url === ici ? [] : [`${ouvrir}${ar ? ': ' : ' : '}${ici}`]), '', '--', pied].join('\n');
+    `${bouton.texte}${ar ? ': ' : ' : '}${bouton.url}`, ...(bouton.url === ici ? [] : [`${ouvrir}${ar ? ': ' : ' : '}${ici}`]), '',
+    ...(sansTel ? [ligneTelephone(site, langue, TELEPHONE_RAPPEL[langue]), ''] : []), '--', pied].join('\n');
   return { sujet, html, texte, desabo: '' };
 }
 
-// Enquête d'insertion : invitation, ou rappel trois semaines après
-export function rendreEnquete(vague: number, rappel: boolean, langue: Langue, site: string, token: string): Courriel {
+// Enquête d'insertion : invitation, ou rappel trois semaines après ; la ligne du téléphone pour qui n'en a aucun abonné
+export function rendreEnquete(vague: number, rappel: boolean, langue: Langue, site: string, token: string, sansTel = false): Courriel {
   site = siteEn(site, langue);
   const ar = langue === 'ar', v = vague === 12 ? 12 : 6;
   const desabo = `${site}#desabo/${token}`;
@@ -1775,11 +1838,13 @@ export function rendreEnquete(vague: number, rappel: boolean, langue: Langue, si
     langue, sujet, apercu: lignes[0], sousTitre: ar ? 'استمارة الإدماج المهني' : 'Enquête d’insertion',
     intro: [esc(ar ? 'مرحبًا،' : 'Bonjour,')],
     blocs: [{ lignes: lignes.map(esc), bouton: { texte: ar ? 'الإجابة على الاستمارة' : 'Répondre à l’enquête', url } }],
+    ...(sansTel ? { telephone: site } : {}),
     pied: ar ? 'يصلك هذا البريد مرة عند فتح الاستمارة، وتذكير واحد إن لم تجب.' : 'Tu reçois cet email une fois à l’ouverture de l’enquête, et un seul rappel si tu n’as pas répondu.',
     liens: [[ar ? 'فتح المنصة' : 'Ouvrir la plateforme', site], [ar ? 'إلغاء الاشتراك' : 'Se désabonner', desabo]],
   });
   const texte = [`${(ar ? AR : FR).marque} · ${ar ? 'استمارة الإدماج المهني' : 'Enquête d’insertion'}`, '', ar ? 'مرحبًا،' : 'Bonjour,', ...lignes, '',
-    `${ar ? 'الإجابة على الاستمارة' : 'Répondre à l’enquête'}${ar ? ': ' : ' : '}${url}`, '', '--', `${ar ? 'إلغاء الاشتراك' : 'Se désabonner'}${ar ? ': ' : ' : '}${desabo}`].join('\n');
+    `${ar ? 'الإجابة على الاستمارة' : 'Répondre à l’enquête'}${ar ? ': ' : ' : '}${url}`, '', ...(sansTel ? [ligneTelephone(site, langue), ''] : []), '--',
+    `${ar ? 'إلغاء الاشتراك' : 'Se désabonner'}${ar ? ': ' : ' : '}${desabo}`].join('\n');
   return { sujet, html, texte, desabo };
 }
 
@@ -1883,7 +1948,7 @@ export function notifRappel(data: unknown, langue: unknown, site: string): Notif
 }
 
 // Email (sans téléphone abonné, ou absent depuis 5 jours) : les mêmes chiffres, un bouton, le lien pour ne plus les recevoir
-export function rendreRappel(data: unknown, langue: Langue, site: string, token: string, inviter = false): Courriel {
+export function rendreRappel(data: unknown, langue: Langue, site: string, token: string, sansTel = false): Courriel {
   site = siteEn(site, langue);
   const ar = langue === 'ar', c = comptesRappel(data), p = phrasesRappel(data, langue).map(majuscule);
   const desabo = `${site}#desabo/${token}/rappels`;
@@ -1895,16 +1960,15 @@ export function rendreRappel(data: unknown, langue: Langue, site: string, token:
   const pied = ar ? 'يصلك هذا التذكير حين ينتظرك شيء بعد أيام دون زيارة، مرة في الأسبوع على الأكثر عبر البريد.'
     : 'Tu reçois ce rappel quand quelque chose t’attend après quelques jours sans visite, une fois par semaine au plus par email.';
   const arret = ar ? 'إيقاف هذه التذكيرات' : 'Ne plus recevoir ces rappels';
-  const inv = INVITE_NOTIFS[langue], urlInv = `${site}#profil/notifications`;
   const html = cadreEmail({
     langue, sujet, apercu: p.join(' · '), sousTitre: ar ? 'ما ينتظرك' : 'Ce qui t’attend',
     intro: [esc(salut), esc(intro)],
-    blocs: [{ lignes: p.map(x => `• ${esc(x)}`), bouton: { texte: bouton, url } },
-      ...(inviter ? [{ lignes: [`<strong>${esc(inv.titre)}</strong>`, esc(inv.texte)], bouton: { texte: inv.bouton, url: urlInv } }] : [])],
+    blocs: [{ lignes: p.map(x => `• ${esc(x)}`), bouton: { texte: bouton, url } }],
     pied, liens: [[ar ? 'فتح المنصة' : 'Ouvrir la plateforme', site], [arret, desabo]],
+    ...(sansTel ? { telephone: site } : {}),
   });
   const texte = [`${(ar ? AR : FR).marque} · ${ar ? 'ما ينتظرك' : 'Ce qui t’attend'}`, '', salut, intro, ...p.map(x => `• ${x}`), '',
-    `${bouton}${ar ? ': ' : ' : '}${url}`, ...(inviter ? ['', `${inv.titre}${ar ? ': ' : ' : '}${urlInv}`] : []), '', '--', pied, `${arret}${ar ? ': ' : ' : '}${desabo}`].join('\n');
+    `${bouton}${ar ? ': ' : ' : '}${url}`, '', ...(sansTel ? [ligneTelephone(site, langue), ''] : []), '--', pied, `${arret}${ar ? ': ' : ' : '}${desabo}`].join('\n');
   return { sujet, html, texte, desabo };
 }
 
@@ -1918,7 +1982,8 @@ export async function chargerDonnees(env: Env, ids: string[], date: Date): Promi
   const Q = 'select=id,author_id,titre,entreprise,pays,created_at';
   const C = 'select=id,student_id,offer_id,status';
   const [profils, offres, postule, invitations, m1, m2, reponses, questions, parrainages, cafes, p1, p2, p3] = await Promise.all([
-    tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,cv_path,competences,created_at,en_recherche')
+    tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,cv_path,competences,created_at,en_recherche,ecole')
+      .catch(() => tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,cv_path,competences,created_at,en_recherche'))
       .catch(() => tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,cv_path,competences,created_at'))
       .catch(() => tout<Profil>(env, 'profiles', 'select=id,full_name,role,filiere,promo,entreprise,pays,ville,vitrine,verified,cv_url,competences,created_at')),
     tout<Offre>(env, 'offers', 'select=id,author_id,titre,entreprise,filieres,annees,audience,status,created_at,relance_at'),
@@ -1944,7 +2009,8 @@ export async function chargerDonnees(env: Env, ids: string[], date: Date): Promi
   const fac = <T>(p: Promise<T[]>): Promise<T[]> => p.catch(() => [] as T[]);
   const moisAmb = moisPrecedent(date);
   const [evenements, enquetes, relectures, demandesContact, signalements, ambassadeurs] = await Promise.all([
-    fac(tout<Evenement>(env, 'evenements', `select=id,titre,debut,lieu,public,annule&annule=is.false&debut=gte.${iso(t)}&debut=lte.${iso(t + 14 * JOUR)}`)),
+    fac(tout<Evenement>(env, 'evenements', `select=id,titre,debut,lieu,public,annule,ecole&annule=is.false&debut=gte.${iso(t)}&debut=lte.${iso(t + 14 * JOUR)}`)
+      .catch(() => tout<Evenement>(env, 'evenements', `select=id,titre,debut,lieu,public,annule&annule=is.false&debut=gte.${iso(t)}&debut=lte.${iso(t + 14 * JOUR)}`))),
     fac(parIds<{ user_id: string; vague: number }>(env, 'enquetes_insertion', 'select=id,user_id,vague', 'user_id', ids)),
     fac(tout<Relecture>(env, 'relectures_cv', 'select=id,student_id,reviewer_id,status&status=eq.demandee')),
     fac(parIds<DemandeContact>(env, 'demandes_contact', 'select=id,demandeur_id,cible_id,status&status=eq.envoyee', 'cible_id', ids)),
@@ -1993,43 +2059,126 @@ async function jobCle(env: Env): Promise<Response> {
 type Bilan = { sent: number; failed: number; removed: number; retry?: number };
 type AEnvoyer = { n: Notif; urg: string; ttl?: number; r?: Resultat };
 // Ce qu'est devenue une notification de la file, tous téléphones du membre confondus : code du meilleur envoi
-// (-1 : aucun téléphone), reçue quelque part, ou à reprendre (service injoignable, saturé ou en panne)
-type Resultat = { code: number; recue: boolean; reprendre: boolean };
+// (-1 : aucun téléphone), reçue quelque part, à reprendre (service injoignable, saturé ou en panne, ou plus le temps),
+// essayée au moins une fois
+type Resultat = { code: number; recue: boolean; reprendre: boolean; essayee?: boolean };
+// Ce qu'un téléphone a répondu pendant un tour, pour push_resultats : sa dernière réponse, au moins une notification
+// acceptée (recu), un refus définitif (refus)
+type EtatAbo = { id: string; code: number; recu: boolean; refus: boolean };
 const passager = (st: number) => st === 0 || st === 429 || st >= 500;
-
-// Envoie à un téléphone les notifications de son membre, dans l'ordre ; s'arrête s'il n'existe plus
-async function envoyerA(a: Abonnement, notifs: AEnvoyer[], v: Vapid, b: Bilan, morts: string[]) {
-  for (const x of notifs) {
-    const st = await pousserUn(a, x.n, x.urg, v, x.ttl);
-    if (x.r && !x.r.recue) {
-      x.r.code = st;
-      if (ok(st)) x.r.recue = true; else if (passager(st)) x.r.reprendre = true;
-    }
-    if (ok(st)) b.sent++;
-    else if (st === 404 || st === 410) { b.removed++; morts.push(a.id); return; }
-    else b.failed++;
+// Refus définitif (abonnement invalide, clé refusée) : au troisième d'affilée, la base retire l'abonnement (push_resultats).
+// 413 (notification trop longue) n'est pas la faute du téléphone : seulement au journal.
+const refusDefinitif = (st: number) => st === 400 || st === 401 || st === 403;
+// Pendant un tour, les téléphones d'au moins 3 membres différents, sur un même service de push, refusent et aucun
+// n'accepte : c'est sans doute la plateforme (clé VAPID, signature), pas les téléphones. Ces refus ne comptent pas, et
+// c'est dit dans les Logs ; rend les services concernés. Compté par membre : un membre seul avec trois vieux abonnements
+// refusés, ce sont bien eux (comptés, puis retirés quand le service accepte d'autres téléphones). Sur plusieurs tours
+// (un téléphone par tour, le cas courant), c'est la base qui protège : push_resultats ne retire un abonnement au
+// troisième refus que si le même service a accepté un autre téléphone depuis le premier.
+export const REFUS_EN_MASSE = 3;
+export function refusEnMasse(etats: EtatAbo[], serviceDe: (id: string) => string, membreDe: (id: string) => string = id => id): string[] {
+  const groupes = new Map<string, { refus: EtatAbo[]; membres: Set<string>; recu: boolean }>();
+  for (const e of etats) {
+    const s = serviceDe(e.id);
+    const g = groupes.get(s) || { refus: [], membres: new Set<string>(), recu: false };
+    groupes.set(s, g);
+    if (e.recu) g.recu = true;
+    else if (e.refus) { g.refus.push(e); g.membres.add(membreDe(e.id)); }
   }
+  const services: string[] = [];
+  for (const [s, g] of groupes) {
+    if (g.recu || g.membres.size < REFUS_EN_MASSE) continue;
+    for (const e of g.refus) e.refus = false;
+    services.push(s);
+  }
+  return services;
+}
+// Le service de push d'un abonnement, nommé comme dans la base (service_push) : fcm (Chrome, Android), apple (iPhone,
+// Mac), mozilla (Firefox), windows (Edge), autre
+export function servicePush(endpoint: string): string {
+  let h = '';
+  try { h = new URL(endpoint).hostname.toLowerCase(); } catch { return 'autre'; }
+  if (h === 'fcm.googleapis.com' || h.endsWith('.googleapis.com')) return 'fcm';
+  if (h === 'web.push.apple.com' || h.endsWith('.push.apple.com')) return 'apple';
+  if (/\.(mozilla\.com|mozilla\.org|mozaws\.net)$/.test(h)) return 'mozilla';
+  if (h.endsWith('.windows.com')) return 'windows';
+  return 'autre';
 }
 
+// Envoie à un téléphone les notifications de son membre, dans l'ordre ; s'arrête s'il n'existe plus. Passé l'heure
+// limite (fin), ce qui n'est pas parti reste en file pour l'appel suivant. Rend ce que le téléphone a répondu.
+async function envoyerA(a: Abonnement, notifs: AEnvoyer[], v: Vapid, b: Bilan, morts: string[], fin = Infinity): Promise<EtatAbo | null> {
+  let e: EtatAbo | null = null;
+  for (const x of notifs) {
+    const reste = fin - Date.now();
+    if (reste <= 0) { if (x.r && !x.r.recue) x.r.reprendre = true; continue; }
+    // Une requête commencée près de la fin n'attend pas 15 s : la réponse doit arriver avant que pg_net abandonne
+    const st = await pousserUn(a, x.n, x.urg, v, x.ttl, Math.max(3000, Math.min(15000, reste + 10_000)));
+    e = e || { id: a.id, code: st, recu: false, refus: false };
+    e.code = st;
+    if (x.r) {
+      x.r.essayee = true;
+      if (!x.r.recue) {
+        x.r.code = st;
+        if (ok(st)) x.r.recue = true; else if (passager(st)) x.r.reprendre = true;
+      }
+    }
+    if (ok(st)) { b.sent++; e.recu = true; }
+    else if (st === 404 || st === 410) { b.removed++; morts.push(a.id); return e; }
+    else { b.failed++; if (refusDefinitif(st)) e.refus = true; }
+  }
+  return e;
+}
+
+// Ce que chaque téléphone a répondu (push_resultats) : la base tient la santé des abonnements, retire les morts (404,
+// 410 ; trois refus définitifs d'affilée quand le même service accepte d'autres téléphones) et note leur adresse
+// (push_morts). Rend les abonnements retirés. Une base pas encore mise à jour (sans push_resultats) : les téléphones
+// partis sont retirés comme avant. Ne bloque jamais l'envoi. Un refus en masse (refusEnMasse) n'est pas compté, et c'est
+// dit dans les Logs.
+async function rendreCompte(env: Env, etats: EtatAbo[], morts: string[], abos: Abonnement[]): Promise<string[]> {
+  if (!etats.length) return [];
+  const abo = new Map(abos.map(a => [a.id, a]));
+  for (const s of refusEnMasse(etats, id => servicePush(abo.get(id)?.endpoint || ''), id => abo.get(id)?.user_id || id)) {
+    console.error('notifier : tous les téléphones de ce service refusent les envois (clé VAPID ou signature ?) ; refus non comptés', s);
+  }
+  try {
+    const r = await rpc(env, 'push_resultats', { p: etats });
+    return Array.isArray(r) ? r.filter(estUuid) : [];
+  } catch (e) {
+    console.error('notifier : santé des abonnements non notée (push_resultats ; base à mettre à jour ?)', e instanceof Error ? e.message : String(e));
+  }
+  try { await supprimer(env, 'push_subscriptions', morts); return [...new Set(morts)]; }
+  catch (e) { console.error('notifier : abonnements partis non retirés', e instanceof Error ? e.message : String(e)); return []; }
+}
+
+// pg_net attend la réponse 60 s (appeler_notifier) : aucun envoi ne commence après 45 s, et aucun tour à moins de 10 s
+// de cette heure (il prendrait 300 notifications sans le temps de les envoyer). La suite reste en file, la base rappelle
+// la fonction chaque minute (relancer_push).
+export const DUREE_PUSH = 45_000;
+export const MARGE_TOUR = 10_000;
+
 // Une notification prise dans la file y reste jusqu'à push_faits : reçue par un téléphone, ou sans espoir (plus de
-// téléphone, type inconnu, refus définitif). Les autres sont reprises par la base après 2 minutes (relancer_push).
+// téléphone, type inconnu, refus définitif). Les autres sont reprises par la base après 2 minutes (relancer_push) ;
+// celles qui n'ont pas été essayées du tout (plus le temps) lui sont rendues tout de suite, sans essai compté
+// (push_rendues). Au journal (push_journal) : chacune, avec la réponse de son meilleur téléphone ; -1 sans téléphone ;
+// -4 jetée (type inconnu, rien à dire) ; rien pour celle qui attend sans avoir été essayée.
 async function jobPush(env: Env): Promise<Response> {
   const b: Bilan = { sent: 0, failed: 0, removed: 0 };
   let v: Vapid | null = null;
-  const debut = Date.now();
+  const fin = Date.now() + DUREE_PUSH;
   for (let tour = 0; tour < 5; tour++) {
-    // Garde-fou (2 s de CPU, 150 s en tout) : au-delà, la suite reste en file pour l'appel suivant
-    if (b.sent + b.failed + b.removed >= 900 || Date.now() - debut > 60_000) break;
+    // Garde-fous : 2 s de CPU (900 envois), et la réponse avant que pg_net ne cesse d'attendre
+    if (b.sent + b.failed + b.removed >= 900 || fin - Date.now() < MARGE_TOUR) break;
     const lignes = (await rpc(env, 'prendre_push', { p_max: 300 })) as { id: number; user_id: string; kind: string; data: unknown; langue: string }[];
     if (!lignes?.length) break;
     v = v || (await preparerVapid(env));
     // Les notifications de chaque membre, puis ses téléphones (une seule lecture par tour)
     const parMembre = new Map<string, AEnvoyer[]>();
     const suivi: { id: number; user_id: string; kind: string; r: Resultat }[] = [];
-    const ignorees: number[] = [];
+    const jetees: { id: number; user_id: string; kind: string }[] = [];
     for (const l of lignes) {
-      const n = texteNotif(l.kind, l.data, l.langue, env.site);
-      if (!n) { console.error('notifier : notification ignorée (type ou statut inconnu)', l.kind); ignorees.push(l.id); continue; }
+      const n = texteNotif(l.kind, l.data, l.langue, env.site, l.id);
+      if (!n) { console.error('notifier : notification ignorée (type ou statut inconnu)', l.kind); jetees.push(l); continue; }
       const r: Resultat = { code: -1, recue: false, reprendre: false };
       suivi.push({ id: l.id, user_id: l.user_id, kind: l.kind, r });
       const x = { n, urg: urgence(l.kind), ttl: dureeVie(l.kind), r };
@@ -2038,13 +2187,22 @@ async function jobPush(env: Env): Promise<Response> {
     }
     const abos = await parIds<Abonnement>(env, 'push_subscriptions', 'select=id,user_id,endpoint,p256dh,auth', 'user_id', [...parMembre.keys()]);
     const morts: string[] = [];
+    const etats: EtatAbo[] = [];
     const vv = v;
-    await parallele(abos, 10, a => envoyerA(a, parMembre.get(a.user_id) || [], vv, b, morts));
-    await supprimer(env, 'push_subscriptions', morts);
+    await parallele(abos, 10, async a => {
+      const e = await envoyerA(a, parMembre.get(a.user_id) || [], vv, b, morts, fin);
+      if (e) etats.push(e);
+    });
+    const retires = await rendreCompte(env, etats, morts, abos);
+    b.removed += retires.filter(id => !morts.includes(id)).length;
     const reprises = suivi.filter(x => !x.r.recue && x.r.reprendre).length;
     if (reprises) b.retry = (b.retry || 0) + reprises;
-    await confirmerPush(env, [...ignorees, ...suivi.filter(x => x.r.recue || !x.r.reprendre).map(x => x.id)]);
-    await journaliser(env, suivi.map(x => ({ user_id: x.user_id, kind: x.kind, code: x.r.code })));
+    await confirmerPush(env, [...jetees.map(x => x.id), ...suivi.filter(x => x.r.recue || !x.r.reprendre).map(x => x.id)]);
+    await rendrePush(env, suivi.filter(x => !x.r.essayee && !x.r.recue && x.r.reprendre).map(x => x.id));
+    await journaliser(env, [
+      ...suivi.filter(x => x.r.essayee || x.r.recue || !x.r.reprendre).map(x => ({ user_id: x.user_id, kind: x.kind, code: x.r.code })),
+      ...jetees.map(x => ({ user_id: x.user_id, kind: x.kind, code: -4 })),
+    ]);
   }
   return json(b);
 }
@@ -2056,6 +2214,25 @@ async function confirmerPush(env: Env, ids: number[]): Promise<void> {
   catch (e) { console.error('notifier : confirmation des notifications impossible', e instanceof Error ? e.message : String(e)); }
 }
 
+// Rend à la file ce qui a été pris sans être essayé (push_rendues), sans l'essai que prendre_push lui a compté. Une base
+// pas encore mise à jour (sans push_rendues) : rendues ici, par la table, pareil (sinon chaque reprise coûterait un essai,
+// et le troisième passage les jetterait sans trace). prendre_push ne prend que sous 3 essais et compte le sien : 1, 2 ou 3.
+async function rendrePush(env: Env, ids: number[]): Promise<void> {
+  const l = ids.filter(Number.isSafeInteger);
+  if (!l.length) return;
+  try { await rpc(env, 'push_rendues', { p_ids: l }); return; }
+  catch (e) { console.error('notifier : push_rendues absente (base à mettre à jour ?) : notifications rendues par la table', e instanceof Error ? e.message : String(e)); }
+  try {
+    for (let i = 0; i < l.length; i += MORCEAU) {
+      for (const k of [1, 2, 3]) {
+        await db(env, `push_queue?id=in.(${l.slice(i, i + MORCEAU).join(',')})&essais=eq.${k}&pris_at=not.is.null`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ pris_at: null, essais: k - 1 }),
+        });
+      }
+    }
+  } catch (e) { console.error('notifier : notifications non rendues à la file', e instanceof Error ? e.message : String(e)); }
+}
+
 // Journal des notifications (push_journal) : ne bloque jamais l'envoi
 async function journaliser(env: Env, lignes: { user_id: string; kind: string; code: number }[]): Promise<void> {
   const l = lignes.filter(x => estUuid(x.user_id));
@@ -2064,7 +2241,16 @@ async function journaliser(env: Env, lignes: { user_id: string; kind: string; co
   catch (e) { console.error('notifier : journal des notifications impossible', e instanceof Error ? e.message : String(e)); }
 }
 
-async function jobTest(env: Env, req: Request): Promise<Response> {
+// « Tester » (Mon profil) : une notification d'essai sur chaque téléphone du membre connecté. Rend ce que chacun a
+// répondu, pour dire la vraie raison d'un échec : { sent, failed, removed, codes (un par téléphone, dans l'ordre de
+// leur inscription), abonnements (téléphones inscrits avant l'essai) }. Au journal sous « test ». Ses refus ne comptent
+// pas contre le téléphone : trois appuis d'affilée ne doivent pas retirer l'abonnement qu'on essaie de réparer (un
+// téléphone parti, 404 ou 410, l'est toujours).
+// endpoint : l'adresse de l'appareil qui a touché « Tester » (pages récentes). ici : sa réponse à lui (-1 : pas enregistré
+// pour ce compte), pour que la page dise ce qui arrive à cet appareil-là et ne refasse pas son abonnement à cause d'un autre
+// téléphone du compte. Sans adresse (page plus ancienne), la réponse reste celle d'avant.
+async function jobTest(env: Env, req: Request, endpoint?: unknown): Promise<Response> {
+  const moi = typeof endpoint === 'string' && endpoint ? endpoint : null;
   const jeton = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
   if (!jeton) return refus();
   const r = await fetch(`${env.url}/auth/v1/user`, { headers: { apikey: env.cle, Authorization: `Bearer ${jeton}` } });
@@ -2075,14 +2261,25 @@ async function jobTest(env: Env, req: Request): Promise<Response> {
     tout<Abonnement>(env, 'push_subscriptions', `select=id,user_id,endpoint,p256dh,auth&user_id=eq.${u.id}`),
     db(env, `profiles?select=langue&id=eq.${u.id}`) as Promise<{ langue: string }[]>,
   ]);
-  if (!abos.length) return json({ sent: 0 });
+  const b: Bilan = { sent: 0, failed: 0, removed: 0 };
+  if (!abos.length) {
+    await journaliser(env, [{ user_id: u.id, kind: 'test', code: -1 }]);
+    return json({ ...b, codes: [], abonnements: 0, ...(moi ? { ici: -1 } : {}) });
+  }
   const v = await preparerVapid(env);
   const n = texteNotif('test', {}, profil[0]?.langue, env.site) as Notif;
-  const b: Bilan = { sent: 0, failed: 0, removed: 0 };
+  const res: Resultat = { code: -1, recue: false, reprendre: false };
   const morts: string[] = [];
-  await parallele(abos, 5, a => envoyerA(a, [{ n, urg: 'normal' }], v, b, morts));
-  await supprimer(env, 'push_subscriptions', morts);
-  return json({ sent: b.sent });
+  const etats: EtatAbo[] = [];
+  await parallele(abos, 5, async a => {
+    const e = await envoyerA(a, [{ n, urg: urgence('test'), ttl: dureeVie('test'), r: res }], v, b, morts);
+    if (e) etats.push({ ...e, refus: false });
+  });
+  const retires = await rendreCompte(env, etats, morts, abos);
+  b.removed += retires.filter(id => !morts.includes(id)).length;
+  await journaliser(env, [{ user_id: u.id, kind: 'test', code: res.code }]);
+  const codes = abos.map(a => etats.find(e => e.id === a.id)?.code ?? 0), i = moi ? abos.findIndex(a => a.endpoint === moi) : -1;
+  return json({ ...b, codes, abonnements: abos.length, ...(moi ? { ici: i < 0 ? -1 : codes[i] } : {}) });
 }
 
 // ---------------------------------------------------------------------
@@ -2371,6 +2568,24 @@ async function jobEssaiEmail(env: Env): Promise<Response> {
   return json(b);
 }
 
+// Destinataires d'un email qui n'ont de notifications sur aucun téléphone (ni l'administration) : leur email le leur
+// propose, en une ligne. Lecture impossible (base en panne) : rien n'est ajouté, l'email part quand même.
+async function sansTelephone(env: Env, ids: string[]): Promise<Set<string>> {
+  const u = [...new Set(ids.filter(estUuid))];
+  if (!u.length) return new Set();
+  try {
+    const [abos, admins] = await Promise.all([
+      parIds<{ user_id: string }>(env, 'push_subscriptions', 'select=user_id', 'user_id', u),
+      parIds<{ id: string }>(env, 'profiles', 'select=id&role=eq.admin', 'id', u),
+    ]);
+    const avec = new Set([...abos.map(a => a.user_id), ...admins.map(a => a.id)]);
+    return new Set(u.filter(id => !avec.has(id)));
+  } catch (e) {
+    console.error('notifier : téléphones des destinataires illisibles', e instanceof Error ? e.message : String(e));
+    return new Set();
+  }
+}
+
 async function jobResume(env: Env): Promise<Response> {
   const f = facteur(env);
   if (!f.pret) return json({ skipped: 'email' });
@@ -2378,18 +2593,21 @@ async function jobResume(env: Env): Promise<Response> {
   const dest = ((await rpc(env, 'destinataires_resume', { p_max: 150 })) || []) as { id: string; email: string; langue: string; token: string }[];
   const b: { sent: number; empty: number; errors: number; via?: string } = { sent: 0, empty: 0, errors: 0 };
   if (!dest.length) return json(b);
-  const d = indexer(await chargerDonnees(env, dest.map(x => x.id), date), date);
-  const sans = await sansNotifs(env, dest.map(x => x.id));
+  const [brut, sansTel] = await Promise.all([chargerDonnees(env, dest.map(x => x.id), date), sansTelephone(env, dest.map(x => x.id))]);
+  // Une indexation par école : chacun ne lit que son réseau
+  const ecoleDu = new Map(brut.profils.map(p => [p.id, ecoleDe(p)]));
+  const parE = new Map<string, Donnees>();
+  const donnees = (id: string) => { const e = ecoleDu.get(id) || 'ensam-meknes'; let x = parE.get(e); if (!x) { x = indexer(parEcole(brut, e), date); parE.set(e, x); } return x; };
   const traites: string[] = [];
   const limite = Date.now() + 100_000;   // marge sur les 150 s : le reste partira demain
   await parallele(dest, f.paralleles, async x => {
     if (Date.now() > limite) return;
     try {
-      const p = d.profils.get(x.id);
+      const d = donnees(x.id), p = d.profils.get(x.id);
       const r = p ? resumeDe(p, d) : null;
       if (!r) { b.empty++; traites.push(x.id); return; }
       if (!x.email || !x.token) { b.errors++; return; }
-      if (await f.envoyer(x.email, rendreResume(r, langueDe(x.langue), env.site, x.token, sans.has(x.id)))) { b.sent++; traites.push(x.id); }
+      if (await f.envoyer(x.email, rendreResume(r, langueDe(x.langue), env.site, x.token, sansTel.has(x.id)))) { b.sent++; traites.push(x.id); }
       else b.errors++;
     } catch (e) {
       b.errors++;
@@ -2416,13 +2634,14 @@ async function jobAlertes(env: Env): Promise<Response> {
   const b: { sent: number; errors: number; via?: string } = { sent: 0, errors: 0 };
   if (!dest.length) return json(b);
   const envoyes: string[] = [];
+  const sansTel = await sansTelephone(env, dest.map(x => x.id));
   const limite = Date.now() + 100_000;
   await parallele(dest, f.paralleles, async x => {
     if (Date.now() > limite) return;
     const offres = (Array.isArray(x.offres) ? x.offres : []).filter(o => estUuid(o?.id) && txt(o.titre)).slice(0, 5);
     if (!offres.length || !x.email || !x.token || !estUuid(x.id)) { b.errors++; return; }
     try {
-      if (await f.envoyer(x.email, rendreAlerte(offres, langueDe(x.langue), env.site, x.token))) { b.sent++; envoyes.push(x.id); }
+      if (await f.envoyer(x.email, rendreAlerte(offres, langueDe(x.langue), env.site, x.token, sansTel.has(x.id)))) { b.sent++; envoyes.push(x.id); }
       else b.errors++;
     } catch (e) {
       b.errors++;
@@ -2443,13 +2662,14 @@ async function jobDemandes(env: Env): Promise<Response> {
   const b: { sent: number; errors: number; via?: string } = { sent: 0, errors: 0 };
   if (!dest.length) return json(b);
   const envoyes: string[] = [];
+  const sansTel = await sansTelephone(env, dest.map(x => x.id));
   const limite = Date.now() + 100_000;
   await parallele(dest, f.paralleles, async x => {
     if (Date.now() > limite) return;
     const demandes = (Array.isArray(x.demandes) ? x.demandes : []).filter(d => estUuid(d?.id) && txt(d.titre)).slice(0, 5);
     if (!demandes.length || !x.email || !x.token || !estUuid(x.id)) { b.errors++; return; }
     try {
-      if (await f.envoyer(x.email, rendreDemandes(demandes, langueDe(x.langue), env.site, x.token))) { b.sent++; envoyes.push(x.id); }
+      if (await f.envoyer(x.email, rendreDemandes(demandes, langueDe(x.langue), env.site, x.token, sansTel.has(x.id)))) { b.sent++; envoyes.push(x.id); }
       else b.errors++;
     } catch (e) {
       b.errors++;
@@ -2470,12 +2690,13 @@ async function jobMessages(env: Env): Promise<Response> {
   const b: { sent: number; errors: number; via?: string } = { sent: 0, errors: 0 };
   if (!dest.length) return json(b);
   const envoyes: string[] = [];
+  const sansTel = await sansTelephone(env, dest.map(x => x.id));
   const limite = Date.now() + 100_000;
   await parallele(dest, f.paralleles, async x => {
     if (Date.now() > limite) return;
     if (!x.email || !x.token || !estUuid(x.id) || !(Number(x.n) > 0)) { b.errors++; return; }
     try {
-      if (await f.envoyer(x.email, rendreMessages(Number(x.n), Array.isArray(x.noms) ? x.noms : [], langueDe(x.langue), env.site, x.token))) { b.sent++; envoyes.push(x.id); }
+      if (await f.envoyer(x.email, rendreMessages(Number(x.n), Array.isArray(x.noms) ? x.noms : [], langueDe(x.langue), env.site, x.token, sansTel.has(x.id)))) { b.sent++; envoyes.push(x.id); }
       else b.errors++;
     } catch (e) {
       b.errors++;
@@ -2579,12 +2800,13 @@ async function jobEnquetes(env: Env): Promise<Response> {
   const f = facteur(env);
   const faits: { id: string; vague: number; rappel: boolean }[] = [];
   const limite = Date.now() + 100_000;
+  const sansTel = f.pret ? await sansTelephone(env, dest.filter(x => x.email_ok && x.email).map(x => x.id)) : new Set<string>();
   await parallele(dest, f.paralleles, async x => {
     if (Date.now() > limite || !estUuid(x.id) || (x.vague !== 6 && x.vague !== 12)) return;
     const ligne = { id: x.id, vague: x.vague, rappel: !!x.rappel };
     if (!x.email_ok || !x.email || !x.token || !f.pret) { b.push++; faits.push(ligne); return; }
     try {
-      if (await f.envoyer(x.email, rendreEnquete(x.vague, !!x.rappel, langueDe(x.langue), env.site, x.token))) { b.sent++; faits.push(ligne); }
+      if (await f.envoyer(x.email, rendreEnquete(x.vague, !!x.rappel, langueDe(x.langue), env.site, x.token, sansTel.has(x.id)))) { b.sent++; faits.push(ligne); }
       else b.errors++;
     } catch (e) {
       b.errors++;
@@ -2609,14 +2831,14 @@ async function jobRappels(env: Env): Promise<Response> {
   const b: { sent: number; skipped: number; errors: number; via?: string } = { sent: 0, skipped: 0, errors: 0 };
   if (!dest.length) return json(b);
   const envoyes: string[] = [];
-  const sans = await sansNotifs(env, dest.map(x => x.id));
+  const sansTel = await sansTelephone(env, dest.map(x => x.id));
   const limite = Date.now() + 100_000;
   await parallele(dest, f.paralleles, async x => {
     if (Date.now() > limite) return;
     if (Date.now() - temps(x.dernier_email) < JOUR || !comptesRappel(x.contenu).length) { b.skipped++; return; }
     if (!x.email || !x.token || !estUuid(x.id)) { b.errors++; return; }
     try {
-      if (await f.envoyer(x.email, rendreRappel(x.contenu, langueDe(x.langue), env.site, x.token, sans.has(x.id)))) { b.sent++; envoyes.push(x.id); }
+      if (await f.envoyer(x.email, rendreRappel(x.contenu, langueDe(x.langue), env.site, x.token, sansTel.has(x.id)))) { b.sent++; envoyes.push(x.id); }
       else b.errors++;
     } catch (e) {
       b.errors++;
@@ -2635,8 +2857,8 @@ async function jobRappels(env: Env): Promise<Response> {
 export async function handler(req: Request): Promise<Response> {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'Méthode non autorisée' }, 405);
-  let job: unknown;
-  try { job = (await req.json())?.job; } catch { return json({ error: 'Requête invalide' }, 400); }
+  let job: unknown, endpoint: unknown;
+  try { ({ job, endpoint } = (await req.json()) ?? {}); } catch { return json({ error: 'Requête invalide' }, 400); }
   if (typeof job !== 'string' || !['cle', 'test', 'push', 'resume', 'essai_email', 'alertes', 'enquetes', 'messages', 'relances', 'demandes', 'rappels', 'inactifs', 'rappels_rdv'].includes(job)) return json({ error: 'Tâche inconnue' }, 400);
   const env = lireEnv();
   if (!env.url || !env.cle) {
@@ -2645,7 +2867,7 @@ export async function handler(req: Request): Promise<Response> {
   }
   try {
     if (job === 'cle') return await jobCle(env);
-    if (job === 'test') return await jobTest(env, req);
+    if (job === 'test') return await jobTest(env, req, endpoint);
     if (!(await appelAutorise(env, req))) return refus();
     if (job === 'essai_email') return await jobEssaiEmail(env);
     if (job === 'alertes') return await jobAlertes(env);

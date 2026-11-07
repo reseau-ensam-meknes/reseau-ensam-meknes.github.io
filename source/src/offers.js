@@ -4,7 +4,7 @@ import { Icon, Modal, Field, Empty, Person, Avatar, LogoEntreprise, MentionLogos
 import { useBrouillon, EnTetePage, Compteur, Rangee, vibrer, Coche, mouvementReduit } from './ui.js';
 import { proposerPrevenir } from './pwa.js';
 import { getLang, addAR, arCount, t as tr } from './i18n.js';
-import { TYPES, titreOffre, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande, manquesOffre, peutRecommander, porteApresRefus, demandesPour, typeForNiveau } from './logic.js';
+import { TYPES, titreOffre, FILIERES, PARCOURS, FILIERES_INFO, NIVEAUX, OBJECTIFS, niveauOf, timeAgo, daysUntil, placementOf, offerMatch, talentsFor, resumeFilieres, filiereSousTitre, offrePour, peutPostulerA, typesDemande, manquesOffre, peutRecommander, porteApresRefus, demandesPour, typeForNiveau, ecoleDuContenu } from './logic.js';
 import { RelanceBanner, PasteOffer, sujetPris } from './recrutement.js';
 import { CvButton } from './cv.js';
 import { SignalerBtn } from './confiance.js';
@@ -333,7 +333,7 @@ function Garder({ ctx, o, saved, pop, cls = '', taille = 16 }) {
   // La vibration attend que l'offre soit vraiment mise de côté (un vrai succès, jamais un échec)
   const sauver = () => {
     if (!saved) vientDeSauver.set(o.id, Date.now());
-    act(async () => { if (saved) await store.remove('reactions', saved.id); else { await store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save' }); vibrer(10); } });
+    act(async () => { if (saved) await store.remove('reactions', saved.id); else { await store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save', ...ecoleDuContenu(me, o) }); vibrer(10); } });
   };
   return html`<button type="button" class=${'icon-btn small ocard-garder ' + cls + (saved ? ' on' : '') + (saved && pop ? ' pop' : '')} aria-pressed=${!!saved} aria-label=${saved ? 'Ne plus mettre de côté' : 'Mettre de côté'} onClick=${sauver}><${Icon} name="bookmark" size=${taille}/></button>`;
 }
@@ -472,7 +472,7 @@ export function OfferDetail({ ctx, id, onClose, apply }) {
   const saved = data.reactions.find(r => r.offer_id === o.id && r.user_id === me.id && r.kind === 'save');
   const toggleSave = () => {
     if (!saved) setPop(true);
-    act(async () => { if (saved) await store.remove('reactions', saved.id); else { await store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save' }); vibrer(10); } });
+    act(async () => { if (saved) await store.remove('reactions', saved.id); else { await store.insert('reactions', { offer_id: o.id, user_id: me.id, kind: 'save', ...ecoleDuContenu(me, o) }); vibrer(10); } });
   };
   const dl = o.deadline ? new Date(o.deadline + 'T12:00:00') : null;
   const jours = daysUntil(o.deadline);

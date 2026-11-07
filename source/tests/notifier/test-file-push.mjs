@@ -35,7 +35,8 @@ test('file : reçue sur un téléphone, ou sans téléphone, elle sort ; chaque 
   // 1 : reçue sur un des deux téléphones ; 2 : son seul téléphone est parti ; 3 : aucun téléphone ; 4 : type inconnu
   assert.deepEqual(b.tables.push_queue, []);
   assert.deepEqual([...b.argsRpc.push_faits[0].p_ids].sort(), [1, 2, 3, 4]);
-  assert.deepEqual(b.tables.push_journal.map(x => [x.user_id, x.kind, x.code]).sort(), [[u1, 'merci', 201], [u2, 'merci', 410], [u3, 'merci', -1]]);
+  // Le type inconnu aussi : jetée par la fonction (-4), rien ne se perd sans trace
+  assert.deepEqual(b.tables.push_journal.map(x => [x.user_id, x.kind, x.code]).sort(), [[u1, 'merci', 201], [u1, 'type_inconnu', -4], [u2, 'merci', 410], [u3, 'merci', -1]]);
   assert.ok(!JSON.stringify(b.tables.push_journal).includes('Salma'), 'le journal ne garde pas le contenu');
 });
 

@@ -8,6 +8,13 @@ export const CLE_SERVICE = 'cle-service-de-test';
 export const SITE = 'https://reseau-ensam-meknes.github.io/';
 
 export const uid = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+// Le service de push d'une adresse, comme service_push dans schema.sql
+export function servicePush(endpoint) {
+  let h = '';
+  try { h = new URL(endpoint).hostname.toLowerCase(); } catch { return 'autre'; }
+  return h === 'fcm.googleapis.com' || h.endsWith('.googleapis.com') ? 'fcm' : h === 'web.push.apple.com' || h.endsWith('.push.apple.com') ? 'apple'
+    : /\.(mozilla\.com|mozilla\.org|mozaws\.net)$/.test(h) ? 'mozilla' : h.endsWith('.windows.com') ? 'windows' : 'autre';
+}
 const pause = ms => new Promise(r => setTimeout(r, ms));
 
 // Colonnes de chaque table, lues dans schema.sql : comme le vrai PostgREST, le faux refuse une colonne
@@ -106,8 +113,9 @@ export class Banc {
   constructor() {
     this.tables = {
       profiles: [], offers: [], applications: [], invitations: [], mentorships: [], questions: [], answers: [],
-      parrainages: [], cafes: [], placements: [], push_subscriptions: [], push_queue: [], push_journal: [], app_secrets: [], notif_etat: [],
+      parrainages: [], cafes: [], placements: [], push_subscriptions: [], push_queue: [], push_journal: [], push_morts: [], app_secrets: [], notif_etat: [],
     };
+    this.absentes = new Set();        // fonctions SQL absentes (base pas encore mise à jour) : 404 comme PostgREST
     this.emails = new Map();          // id -> email (auth.users)
     this.jetons = new Map();          // jeton utilisateur -> id
     this.statutsPush = new Map();     // endpoint -> code HTTP
@@ -205,6 +213,7 @@ export class Banc {
 
   rpc(fn, args) {
     this.appelsRpc[fn] = (this.appelsRpc[fn] || 0) + 1;
+    if (this.absentes.has(fn)) return this.json({ code: 'PGRST202', message: `Could not find the function public.${fn}` }, 404);
     // Fonctions SQL simulées par un test : this.rpcs[fn] = args => résultat
     if (this.rpcs?.[fn]) { (this.argsRpc ||= {})[fn] = [...(this.argsRpc[fn] || []), args]; const r = this.rpcs[fn](args); return r === undefined ? new Response(null, { status: 204 }) : this.json(r); }
     // Comme la fonction SQL : les notifications restent en file, marquées prises, jusqu'à push_faits ;
@@ -219,6 +228,47 @@ export class Banc {
       (this.argsRpc ||= {})[fn] = [...(this.argsRpc[fn] || []), args];
       const faits = new Set((args.p_ids || []).map(Number));
       this.tables.push_queue = this.tables.push_queue.filter(x => !faits.has(Number(x.id)));
+      return new Response(null, { status: 204 });
+    }
+    // Comme la fonction SQL : la santé de chaque abonnement, puis 404 ou 410 le retirent et notent son adresse
+    // (push_morts) ; un troisième refus définitif d'affilée aussi, seulement si le même service a accepté un autre
+    // téléphone depuis le premier refus de la série (sinon : gardé, et un avertissement à son troisième refus).
+    // Rend les abonnements retirés.
+    if (fn === 'push_resultats') {
+      (this.argsRpc ||= {})[fn] = [...(this.argsRpc[fn] || []), args];
+      const l = Array.isArray(args.p) ? args.p : [];
+      const maintenant = new Date().toISOString();
+      const lus = [];
+      for (const r of l) {
+        const s = this.tables.push_subscriptions.find(x => x.id === r.id);
+        if (!s) continue;
+        const avant = s.refus || 0;
+        Object.assign(s, { dernier_code: r.code, dernier_envoi_at: maintenant });
+        s.refus = r.recu ? 0 : r.refus ? avant + 1 : avant;
+        s.refus_depuis = r.recu ? null : r.refus ? (avant === 0 ? maintenant : s.refus_depuis || s.refus_at || maintenant) : (s.refus_depuis ?? null);
+        if (r.refus && !r.recu) s.refus_at = maintenant;
+        lus.push({ s, r });
+      }
+      const preuve = s => this.tables.push_subscriptions.some(o => o.id !== s.id && o.dernier_code >= 200 && o.dernier_code <= 299
+        && o.dernier_envoi_at >= s.refus_depuis && servicePush(o.endpoint) === servicePush(s.endpoint));
+      const morts = lus.filter(({ s, r }) => r.code === 404 || r.code === 410 || (s.refus >= 3 && preuve(s))).map(x => x.s);
+      for (const { s, r } of lus) {
+        if (r.refus && !r.recu && s.refus === 3 && !morts.includes(s)) (this.avertissements ||= []).push(`push_resultats : gardé (${servicePush(s.endpoint)})`);
+      }
+      for (const s of morts) {
+        this.tables.push_morts = this.tables.push_morts.filter(m => m.endpoint !== s.endpoint);
+        this.tables.push_morts.push({ endpoint: s.endpoint, at: maintenant });
+      }
+      this.tables.push_subscriptions = this.tables.push_subscriptions.filter(x => !morts.includes(x));
+      return this.json(morts.map(s => s.id));
+    }
+    // Comme la fonction SQL : prises sans avoir été essayées, rendues à la file sans essai compté
+    if (fn === 'push_rendues') {
+      (this.argsRpc ||= {})[fn] = [...(this.argsRpc[fn] || []), args];
+      const ids = new Set((args.p_ids || []).map(Number));
+      for (const x of this.tables.push_queue) {
+        if (ids.has(Number(x.id)) && x.pris_at) { x.pris_at = null; x.essais = Math.max((x.essais ?? 0) - 1, 0); }
+      }
       return new Response(null, { status: 204 });
     }
     if (fn === 'destinataires_resume') {
@@ -244,6 +294,7 @@ export class Banc {
     const d = dechiffrer(octets, r);
     const statut = this.statutsPush.get(url.toString()) ?? 201;
     this.push.push({ endpoint: url.toString(), methode, entetes: Object.fromEntries(entetes), message: JSON.parse(d.clair), dechiffre: d, statut });
+    this.surPush?.(url.toString());   // un test peut faire avancer l'horloge à chaque envoi
     return new Response(statut === 201 ? null : 'gone', { status: statut });
   }
 

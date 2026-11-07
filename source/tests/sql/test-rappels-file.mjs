@@ -180,7 +180,10 @@ test('chaque minute : les rappels, puis les files ; le journal et l’historique
   const [{ q }] = (await db.query(`select pg_get_functiondef('public.taches_quotidiennes'::regproc) q`)).rows;
   assert.match(q, /push_journal where at < now\(\) - interval '7 days'/);
   assert.match(q, /cron\.job_run_details where end_time < now\(\) - interval '7 days'/);
+  // Le journal note aussi ce qui n'est jamais parti (sans téléphone, catégorie coupée) : les tests d'avant y ont laissé des lignes du jour
+  const avant = (await db.query('select count(*)::int n from public.push_journal')).rows[0].n;
   await db.query(`insert into public.push_journal (user_id, kind, code, at) values ($1, 'merci', 201, now() - interval '8 days'), ($1, 'merci', 201, now())`, [ETU]);
   await service('select public.taches_quotidiennes()');
-  assert.equal((await db.query('select count(*)::int n from public.push_journal')).rows[0].n, 1);
+  assert.equal((await db.query('select count(*)::int n from public.push_journal')).rows[0].n, avant + 1);
+  assert.equal((await db.query(`select count(*)::int n from public.push_journal where at < now() - interval '7 days'`)).rows[0].n, 0);
 });
