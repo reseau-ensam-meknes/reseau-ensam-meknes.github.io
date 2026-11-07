@@ -5674,7 +5674,9 @@ create trigger trg_protect_match_choix before insert or update on public.match_c
 -- Après un oui : le match quand les deux ont dit oui (le lauréat au profil de l'étudiant ; l'étudiant à une offre de ce
 -- lauréat ou à son profil), une notification aux deux ; sinon, la personne visée apprend l'intérêt (au plus une fois
 -- par jour pour cette paire, jamais quand c'est déjà un match). Deux oui au même instant : un verrou par paire, le
--- second voit le premier et crée le match.
+-- second voit le premier et crée le match. L'administration qui regarde l'application en lauréat (admin_ok) ne reçoit
+-- ni « C'est un match ! » ni intérêt, et rien n'est noté pour elle (comme pour le programmé, programme_place) ; l'autre
+-- côté, lui, reçoit.
 create or replace function public.match_apres_choix() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare v_role text; v_etu uuid; v_lau uuid; v_offre uuid; v_m public.matchs; v_l public.profiles; v_titre text;
@@ -5708,10 +5710,11 @@ begin
       insert into public.push_queue (user_id, kind, data)
       select p.id, 'match', jsonb_strip_nulls(jsonb_build_object('nom', split_part(a.full_name, ' ', 1), 'de', a.id, 'match', v_m.id, 'titre', v_titre))
       from public.profiles p join public.profiles a on a.id = case when p.id = v_etu then v_lau else v_etu end
-      where p.id in (v_etu, v_lau)
+      where p.id in (v_etu, v_lau) and not coalesce(p.admin_ok, false)
         and exists (select 1 from public.push_subscriptions s where s.user_id = p.id);
       perform public.noter_push(x.id, 'match', -1) from unnest(array[v_etu, v_lau]) as x(id)
-        where not exists (select 1 from public.push_subscriptions s where s.user_id = x.id);
+        where not exists (select 1 from public.push_subscriptions s where s.user_id = x.id)
+          and not exists (select 1 from public.profiles p where p.id = x.id and coalesce(p.admin_ok, false));
     exception when others then raise warning 'match_apres_choix : %', sqlerrm;  -- une notification ne bloque jamais le match
     end;
     return null;
@@ -5720,6 +5723,11 @@ begin
   -- après « Plus tard » ne repart pas), avec ou sans téléphone : pousser le met en file, ou le note au journal (-1 sans
   -- téléphone abonné, -2 Match coupé), une fois comme il serait parti
   begin
+    -- La personne visée est l'administration en vue lauréat : rien (et la cadence de la paire n'est pas prise)
+    if exists (select 1 from public.profiles p where p.id = case when new.user_id = v_lau then v_etu else v_lau end
+                 and coalesce(p.admin_ok, false)) then
+      return null;
+    end if;
     if new.user_id = v_lau then
       -- L'étudiant apprend qu'un lauréat s'intéresse à lui ; l'entreprise seulement si le lauréat la montre à tous
       if public.cadence('match_interet:' || v_etu || ':' || v_lau, interval '1 day') then

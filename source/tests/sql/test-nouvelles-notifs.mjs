@@ -90,6 +90,52 @@ test('budget : l’administration qui regarde l’application en lauréat (admin
   }
 });
 
+test('Match : l’administration en vue lauréat (admin_ok) ne reçoit ni intérêt ni « C’est un match ! » ; l’autre côté, lui, reçoit', async () => {
+  const choix = (u, col, cible) => q(u, `insert into public.match_choix (${col}, choix) values ($1, 'oui')`, [cible]);
+  const pour = async (u, kinds) => (await db.query(`select kind, data from public.push_queue where user_id = $1 and kind = any($2::text[]) order by id`,
+    [u, kinds])).rows.map(r => [r.kind, r.data.de]);
+  const journal = async u => (await db.query(`select kind, code from public.push_journal where user_id = $1 and kind in ('match', 'match_interet')`, [u])).rows;
+  const MATCH = ['match', 'match_interet'];
+  let oA, oL;
+  await vider();
+  try {
+    await q(ADMIN, `update public.profiles set role = 'laureat' where id = auth.uid()`);
+    oA = await offre(ADMIN, 'PFE proposé par l’administration');
+    oL = await offre(LAU2, 'PFE chez OCP');
+    // Une étudiante dit oui à l'offre de l'administration : rien pour l'administration ; à celle d'un vrai lauréat : il l'apprend
+    await choix(ETU, 'cible_offre', oA);
+    await choix(ETU, 'cible_offre', oL);
+    assert.deepEqual(await pour(LAU2, MATCH), [['match_interet', ETU]], 'un vrai lauréat apprend l’intérêt');
+    assert.deepEqual(await pour(ADMIN, MATCH), [], 'avant : « Salma s’intéresse à ton offre » sur le téléphone de l’administration');
+    // L'administration dit oui à son profil : le match se fait, l'étudiante le reçoit, pas l'administration
+    await choix(ADMIN, 'cible_profil', ETU);
+    assert.equal((await un('select count(*)::int n from public.matchs where etudiant_id = $1 and laureat_id = $2', [ETU, ADMIN])).n, 1, 'le match existe');
+    assert.deepEqual(await pour(ETU, ['match']), [['match', ADMIN]], 'l’étudiante reçoit « C’est un match ! »');
+    // Dans l'autre sens : l'intérêt de l'administration part vers l'étudiante ; sa réponse fait le match, sans rien pour l'administration
+    await choix(ADMIN, 'cible_profil', ETU2);
+    assert.deepEqual(await pour(ETU2, MATCH), [['match_interet', ADMIN]]);
+    await choix(ETU2, 'cible_profil', ADMIN);
+    assert.deepEqual(await pour(ETU2, MATCH), [['match_interet', ADMIN], ['match', ADMIN]]);
+    assert.deepEqual(await pour(ADMIN, MATCH), [], 'avant : deux « C’est un match ! » sur le téléphone de l’administration');
+    // Sans téléphone non plus, rien de noté pour elle (comme pour le programmé) ; l'étudiante sans téléphone, elle, est notée
+    await db.query('delete from public.push_subscriptions where user_id = any($1::uuid[])', [[ADMIN, ETU3]]);
+    await db.query(`update public.offers set annees = '{4,5}' where id = $1`, [oA]);
+    await choix(ETU3, 'cible_offre', oA);
+    await choix(ADMIN, 'cible_profil', ETU3);
+    assert.equal((await un('select count(*)::int n from public.matchs where etudiant_id = $1 and laureat_id = $2', [ETU3, ADMIN])).n, 1);
+    assert.deepEqual(await journal(ADMIN), [], 'avant : -1 noté pour l’administration');
+    assert.deepEqual((await journal(ETU3)).map(r => [r.kind, r.code]), [['match', -1]]);
+  } finally {
+    await db.query(`update public.profiles set role = 'admin' where id = $1`, [ADMIN]);
+    await abonner([ADMIN, ETU3]);
+    await db.query('delete from public.matchs where laureat_id = any($1::uuid[])', [[ADMIN, LAU2]]);
+    await db.query('delete from public.match_choix where user_id = any($1::uuid[]) or cible_profil = any($1::uuid[])', [[ADMIN, ETU, ETU2, ETU3]]);
+    await db.query('delete from public.offers where id = any($1::uuid[])', [[oA, oL].filter(Boolean)]);
+    await db.query(`delete from public.push_journal where kind in ('match', 'match_interet')`);
+    await vider();
+  }
+});
+
 test('budget : une tâche qui passe sur beaucoup de membres ne garde qu’un verrou (pas un par membre)', async () => {
   const membres = (await un(`select count(*)::int n from public.profiles where role in ('etudiant','laureat')`)).n;
   assert.ok(membres >= 5, 'plusieurs membres');
