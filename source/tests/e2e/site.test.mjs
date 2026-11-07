@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
+import { soirDe } from '../../src/scene.js';
 
 const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe.min.js'), 'utf8');
 
@@ -48,9 +49,11 @@ after(async () => { await navigateur?.close(); serveur?.close(); });
 // Une page neuve, dans la langue voulue, avec un relevé des erreurs
 // ua : le user-agent d'un vrai appareil (TELEPHONE) ; sinon celui de Chromium sur un ordinateur
 // mouvement : les animations jouent (sinon, mouvement réduit) ; toucher : un écran tactile (événements touch, pour glisser au doigt)
-async function ouvrir({ largeur = 1280, langue = 'fr', sw = false, theme = 'light', ua, mouvement = false, toucher = false } = {}) {
+// heure : l'heure de l'appareil, qui avance ensuite (le ciel du thème clair la suit : celui du soir à la tombée du jour)
+async function ouvrir({ largeur = 1280, langue = 'fr', sw = false, theme = 'light', ua, mouvement = false, toucher = false, heure } = {}) {
   const ctx = await navigateur.newContext({ viewport: { width: largeur, height: largeur > 800 ? 900 : 844 }, serviceWorkers: sw ? 'allow' : 'block', colorScheme: theme, reducedMotion: mouvement ? 'no-preference' : 'reduce', hasTouch: toucher, ...(ua ? { userAgent: ua } : {}) });
   await ctx.route(/^https?:\/\/(?!127\.0\.0\.1)/, r => r.abort());
+  if (heure !== undefined) await ctx.clock.install({ time: heure });
   const page = await ctx.newPage(); const erreurs = [];
   page.on('pageerror', e => erreurs.push(e.message));
   page.on('dialog', d => d.accept());
@@ -4571,9 +4574,12 @@ test('carte « Fait » : au retour sur l’accueil, l’étape accomplie se coch
   await s.ctx.close();
 });
 
+// Le ciel du thème clair suit l'heure de Meknès (ciel du soir) : le jour se vérifie à midi, aujourd'hui
+const midi = () => { const d = new Date(); d.setUTCHours(11, 0, 0, 0); return d; };
 test('écrans vides illustrés : une scène dessinée pour aucune demande, aucun message, aucune candidature ; jour et nuit, en arabe aussi', async () => {
+  assert.equal(soirDe(midi()), 0, 'midi : pas encore le soir');
   for (const [theme, langue] of [['light', 'fr'], ['dark', 'ar']]) {
-    const s = await ouvrir({ largeur: 390, theme, langue });
+    const s = await ouvrir({ largeur: 390, theme, langue, heure: midi() });
     const scenes = {};
     const voir = async (nom, e, scene) => {
       await s.comme(nom); await s.aller(e);
@@ -5028,11 +5034,12 @@ const demandeEtAide = (page, { accepter = false, pause = false } = {}) => page.e
 test('arabe : un prénom cité deux fois dans la fête du match reste à l’écran, isolé une seule fois ; la police arabe ne prend pas les isolants', async () => {
   const s = await ouvrir({ largeur: 390, langue: 'ar' });
   await s.comme('Salma'); await s.page.waitForTimeout(300); await fermerFete(s);
-  // La plage de la police arabe du site : jamais U+2066-2069 (deux isolants de suite y rendaient le nom à 0 px)
+  // Les plages des polices arabes du site (le texte en 4 graisses, les titres en 600 et 700) : jamais U+2066-2069 (deux
+  // isolants de suite y rendaient le nom à 0 px)
   const plages = await s.page.evaluate(() => [...document.styleSheets].flatMap(f => { try { return [...f.cssRules]; } catch { return []; } })
-    .filter(r => r instanceof CSSFontFaceRule && /arabe/.test(r.style.getPropertyValue('font-family'))).map(r => r.style.getPropertyValue('unicode-range')));
-  assert.equal(plages.length, 4);
-  for (const p of plages) assert.doesNotMatch(p, /206[6-9]/i);
+    .filter(r => r instanceof CSSFontFaceRule && /arabe/.test(r.style.getPropertyValue('font-family'))).map(r => [r.style.getPropertyValue('font-family').replace(/"/g, ''), r.style.getPropertyValue('unicode-range')]));
+  assert.deepEqual(plages.map(p => p[0]), [...Array(4).fill('Texte ENSAM arabe'), ...Array(2).fill('Titres ENSAM arabe')]);
+  for (const [, p] of plages) assert.doesNotMatch(p, /206[6-9]/i);
   await demandeEtAide(s.page);
   await s.aller('offres/demandes');
   await s.page.click('.dm-accepter'); await s.page.waitForSelector('.modal.dm-oui-feuille');
