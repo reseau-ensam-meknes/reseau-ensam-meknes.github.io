@@ -709,6 +709,8 @@ export function Entree({ store }) {
 
 if (!window.ENSAM_ENTREE) {
   window.ENSAM_ENTREE = true;
+  // Une nouvelle version du site recharge la page (pwa.js, une fois la page cachée) : ce que le visiteur a tapé revient
+  addEventListener('ensam-recharge', () => { if (!connecte) try { garderSaisie(); } catch { /* stockage indisponible */ } });
   const cfg = window.ENSAM_CONFIG || {};
   const enLigne = !!(cfg.supabaseUrl && cfg.supabaseAnonKey);
   let jeton = false;

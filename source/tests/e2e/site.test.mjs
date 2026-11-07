@@ -414,6 +414,40 @@ test('hors ligne : le site s’ouvre depuis la copie gardée sur le téléphone'
   await s.ctx.close();
 });
 
+test('nouvelle version publiée pendant qu’un membre tape : pas de rechargement sous ses doigts ; elle s’applique quand la page est cachée', async () => {
+  const s = await ouvrir({ sw: true });
+  let liberer = () => {};
+  try {
+    // Le site gardé sur l'appareil : le service worker installé a pris la main sur la page
+    await s.page.waitForFunction(() => !!navigator.serviceWorker.controller, null, { timeout: 30000 });
+    await s.aller('reseau/annuaire');
+    await s.page.reload(); await s.page.waitForSelector('#d-q');
+    assert.ok(await s.page.evaluate(() => !!navigator.serviceWorker.controller));
+    nouvelleVersion = { version: 'test-' + Date.now(), retenue: new Promise(ok => { liberer = ok; }) };
+    let chargements = 0;
+    s.page.on('load', () => { chargements++; });
+    await s.page.reload(); await s.page.waitForSelector('#d-q');
+    // Il cherche quelqu'un dès l'ouverture, pendant que la nouvelle version s'installe
+    await s.page.fill('#d-q', 'Nadia');
+    liberer();
+    const prete = () => s.page.evaluate(() => navigator.serviceWorker.getRegistration().then(r => !!r?.waiting));
+    for (let i = 0; i < 150 && !(await prete()); i++) await s.page.waitForTimeout(100);
+    assert.ok(await prete(), 'la nouvelle version est installée et attend');
+    await s.page.waitForFunction(() => performance.now() > 10000, null, { timeout: 15000, polling: 200 });
+    assert.equal(chargements, 1, 'pas de rechargement pendant qu’il tape');
+    assert.equal(await s.page.inputValue('#d-q'), 'Nadia');
+    // Il passe à une autre application : la nouvelle version prend la main et la page se recharge sans qu'il le voie
+    await s.page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true }); document.dispatchEvent(new Event('visibilitychange')); });
+    for (let i = 0; i < 100 && chargements < 2; i++) await s.page.waitForTimeout(100);
+    assert.equal(chargements, 2, 'la nouvelle version s’applique une fois la page cachée');
+    await s.page.waitForSelector('#d-q');
+    assert.deepEqual(s.erreurs, []);
+  } finally {
+    liberer(); nouvelleVersion = null;
+    await s.ctx.close();
+  }
+});
+
 test('lien d’invitation d’une promo : la promo est gardée, l’adresse nettoyée, le message prêt pour WhatsApp', async () => {
   const s = await ouvrir();
   await s.page.goto(adresse + '?promo=2027'); await s.page.waitForSelector('.hello');
