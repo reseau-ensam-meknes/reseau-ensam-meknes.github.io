@@ -7,6 +7,7 @@ import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
 import { addAR, arCount } from './i18n.js';
 import { NIVEAUX, niveauOf, timeAgo, cleNom, surListeOfficielle, norm, GUIDE_SECTIONS, pct, reponses48h, parcoursInscription, compteOuvert, codesSansSuite, PUBLICS, ANNONCE_JOURS, annonceVisible,
   SPONSO_PUBLICS, SPONSO_ANNEES, jourLocal, normaliserSponsorise, refusSponsorise, etatSponsorise, tauxClic, resumeFilieres, seasonLabel } from './logic.js';
+import { SanteNotifsAdmin } from './admin-notifs.js';
 import { DefisAdmin } from './saison.js';
 import { AgendaAdmin } from './agenda.js';
 import { InvitationsAdmin } from './invitation.js';
@@ -156,6 +157,7 @@ function VueEnsemble({ ctx, comptes, ouverts, toVerify }) {
   ].filter(Boolean);
   return html`
     ${todo.length ? html`<div class="callout today"><h2 class="h-ico"><${Icon} name="bell"/> À traiter</h2><ul class="todo">${todo.map(([i, t, r]) => html`<li><button class="notif act" onClick=${() => go(r)}><span class="n-ico accent"><${Icon} name=${i} size=${16}/></span><span>${t}</span><${Icon} name="arrow" size=${16}/></button></li>`)}</ul></div>` : null}
+    <${SanteNotifsAdmin} ctx=${ctx}/>
     <div class="kpis">${kpis.map(([l, v, sub]) => html`<div class="kpi"><span class="kpi-label">${l}</span><span class="kpi-val">${typeof v === 'number' ? html`<${Compteur} v=${v}/>` : v}</span><span class="small muted">${sub}</span></div>`)}</div>
 
     <${ParcoursInscription} p=${parcours} sansSuite=${codesSansSuite(comptes, data.profiles)}/>
