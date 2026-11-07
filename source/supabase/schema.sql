@@ -123,9 +123,9 @@ begin
   -- Email de l'école obligatoire pour les étudiants (si l'administration l'a demandé)
   if new.role = 'etudiant' and (tg_op = 'INSERT' or old.role <> 'etudiant') then
     begin
-      if exists (select 1 from public.reglages where cle = 'email_ecole_obligatoire' and valeur = 'true'::jsonb)
-         and cardinality(public.domaines_ecole()) > 0 and not public.email_ecole(new.id) then
-        raise exception using message = 'Inscris-toi avec ton email de l’école (@' || array_to_string(public.domaines_ecole(), ', @') || ').', errcode = 'P0001', hint = 'email_ecole';
+      if public.email_obligatoire_de(new.ecole)
+         and cardinality(public.domaines_de(new.ecole)) > 0 and not public.email_ecole(new.id, new.ecole) then
+        raise exception using message = 'Inscris-toi avec ton email de l’école (@' || array_to_string(public.domaines_de(new.ecole), ', @') || ').', errcode = 'P0001', hint = 'email_ecole';
       end if;
     exception when others then
       if sqlerrm like 'Inscris-toi avec ton email%' then raise; end if;
@@ -152,7 +152,7 @@ begin
   -- Jamais pour un « lauréat » d'une promo pas encore diplômée (un étudiant qui s'est trompé de rôle).
   begin
     if not new.verified and (new.role <> 'laureat' or new.promo <= extract(year from now())::int) and (public.dans_liste(new.id, new.full_name, new.promo, new.ecole)
-        or (new.role = 'etudiant' and public.email_ecole(new.id))
+        or (new.role = 'etudiant' and public.email_ecole(new.id, new.ecole))
         or (new.role = 'laureat' and public.pairs_valides(new.id, new.promo) >= 2)) then
       new.verified := true;
     end if;
@@ -2371,12 +2371,39 @@ language sql stable security definer set search_path = public as $$
     (select valeur from public.reglages where cle = 'domaines_ecole' and jsonb_typeof(valeur) = 'array')) x where trim(x) <> ''), '{}');
 $$;
 
-create or replace function public.email_ecole(p_id uuid) returns boolean
+-- Domaines et email obligatoire d'une école : ENSAM Meknès garde ses réglages (Administration > Réglages), les autres
+-- écoles ont les leurs dans ecoles (seconde partie « Écoles », plus bas)
+create or replace function public.domaines_de(p_ecole text) returns text[]
+language plpgsql stable security definer set search_path = public as $$
+declare v text[];
+begin
+  if coalesce(p_ecole, 'ensam-meknes') = 'ensam-meknes' then return public.domaines_ecole(); end if;
+  execute 'select coalesce(domaines, ''{}'') from public.ecoles where slug = $1' into v using p_ecole;
+  return coalesce(v, '{}');
+exception when undefined_column or undefined_table then return '{}';
+end $$;
+revoke all on function public.domaines_de(text) from public, anon, authenticated;
+
+create or replace function public.email_obligatoire_de(p_ecole text) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare v boolean;
+begin
+  if coalesce(p_ecole, 'ensam-meknes') = 'ensam-meknes' then
+    return exists (select 1 from public.reglages where cle = 'email_ecole_obligatoire' and valeur = 'true'::jsonb);
+  end if;
+  execute 'select email_obligatoire from public.ecoles where slug = $1' into v using p_ecole;
+  return coalesce(v, false);
+exception when undefined_column or undefined_table then return false;
+end $$;
+revoke all on function public.email_obligatoire_de(text) from public, anon, authenticated;
+
+drop function if exists public.email_ecole(uuid);
+create or replace function public.email_ecole(p_id uuid, p_ecole text default null) returns boolean
 language sql stable security definer set search_path = public as $$
-  select exists (select 1 from auth.users u, unnest(public.domaines_ecole()) d
+  select exists (select 1 from auth.users u, unnest(public.domaines_de(p_ecole)) d
     where u.id = p_id and (lower(u.email) like '%@' || d or lower(u.email) like '%.' || d));
 $$;
-revoke all on function public.email_ecole(uuid) from public, anon, authenticated;
+revoke all on function public.email_ecole(uuid, text) from public, anon, authenticated;
 
 -- ---------------------------------------------------------------------
 -- Vérification d'un lauréat par deux lauréats déjà vérifiés de la même promo
@@ -5987,6 +6014,16 @@ begin
       with check (ecole = (select public.mon_ecole()) or (select public.is_admin()))$f$, t);
   end loop;
 end $$;
+
+-- La marque et l'inscription de chaque école : nom court et ville (affichés), couleur, logo, domaines de l'email
+alter table public.ecoles add column if not exists nom_court text check (char_length(nom_court) <= 40);
+alter table public.ecoles add column if not exists ville text check (char_length(ville) <= 60);
+alter table public.ecoles add column if not exists couleur text check (couleur ~ '^#[0-9a-fA-F]{6}$');
+alter table public.ecoles add column if not exists logo_url text check (char_length(logo_url) <= 300 and logo_url ~ '^https://');
+alter table public.ecoles add column if not exists domaines text[] not null default '{}';
+alter table public.ecoles add column if not exists email_obligatoire boolean not null default false;
+update public.ecoles set nom_court = coalesce(nom_court, 'ENSAM'), ville = coalesce(ville, 'Meknès'), couleur = coalesce(couleur, '#1670A8')
+  where slug = 'ensam-meknes';
 
 -- Arguments du déclencheur : « colonne:table » ; la table citée a un id et une école. Sans membre connecté
 -- (tâches de la base) ni pour l'administration, rien à vérifier.
