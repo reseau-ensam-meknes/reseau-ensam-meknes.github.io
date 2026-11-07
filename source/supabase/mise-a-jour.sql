@@ -2133,6 +2133,15 @@ $$;
 revoke all on function public.mon_ecole() from public, anon;
 grant execute on function public.mon_ecole() to authenticated, service_role;
 
+-- L'école que montre la page d'entrée : celle du membre connecté, sinon celle du lien de l'école (?ecole=…, p_ecole),
+-- sinon ENSAM Meknès. null tant que le réseau de cette école n'est pas ouvert (ou qu'elle n'existe pas) : rien ne s'affiche.
+-- Ici, dès la première partie : les chiffres et les fondateurs de la page d'entrée (plus bas) la demandent aussi.
+create or replace function public.ecole_entree(p_ecole text default null) returns text
+language sql stable security definer set search_path = public as $$
+  select e.slug from public.ecoles e where e.slug = coalesce(public.mon_ecole(), p_ecole, 'ensam-meknes') and e.ouverte;
+$$;
+revoke all on function public.ecole_entree(text) from public, anon, authenticated;
+
 -- Les écoles ouvertes, la sienne, et toutes pour l'administration du réseau
 drop policy if exists "lecture" on public.ecoles;
 create policy "lecture" on public.ecoles for select to anon, authenticated using (ouverte or public.super_admin() or slug = public.mon_ecole());
@@ -4395,10 +4404,14 @@ grant execute on function public.pouls_reseau() to authenticated;
 -- Page d'entrée (visiteur sans compte) : trois totaux, jamais un nom ni une ligne.
 -- Lauréats inscrits (l'administration n'est pas comptée), leurs promos, et les entreprises où ils travaillent.
 -- « Renault » et « Renault Tanger Med » comptent pour une seule entreprise (règle de meme_entreprise) : jamais gonflé.
-create or replace function public.chiffres_publics() returns jsonb
+-- L'école : celle du membre connecté ; sans compte, celle de la page d'entrée (ecole_entree : le lien ?ecole=…, p_ecole,
+-- sinon ENSAM Meknès). Une école inconnue ou pas encore ouverte : des zéros, comme une école où personne n'est inscrit.
+-- Une seule version (p_ecole facultatif) : avec deux, l'appel sans argument du site serait ambigu.
+drop function if exists public.chiffres_publics();
+create or replace function public.chiffres_publics(p_ecole text default null) returns jsonb
 language sql stable security definer set search_path = public as $$
   with l as (select promo, public.cle_entreprise(entreprise) as k from public.profiles
-    where role = 'laureat' and not admin_ok and ecole = coalesce(public.mon_ecole(), 'ensam-meknes')),
+    where role = 'laureat' and not admin_ok and ecole = (select coalesce(public.mon_ecole(), public.ecole_entree(p_ecole)))),
   ks as (select distinct k from l where k is not null and k <> '')
   select jsonb_build_object(
     'laureats', (select count(*) from l),
@@ -4409,8 +4422,8 @@ language sql stable security definer set search_path = public as $$
       cross join lateral generate_series(1, array_length(string_to_array(a.k, ' '), 1) - 1) i
       join ks b on b.k = array_to_string((string_to_array(a.k, ' '))[1:i], ' ')));
 $$;
-revoke all on function public.chiffres_publics() from public;
-grant execute on function public.chiffres_publics() to anon, authenticated;
+revoke all on function public.chiffres_publics(text) from public;
+grant execute on function public.chiffres_publics(text) to anon, authenticated;
 
 -- Lien d'une offre partagé : la page d'entrée dit de quoi il s'agit, sans compte.
 -- Le type, le public et l'état seulement ; jamais titre, entreprise, auteur, années ni texte. null si l'offre n'existe plus.
@@ -4433,7 +4446,10 @@ grant execute on function public.offre_partagee(uuid) to anon, authenticated;
 alter table public.profiles add column if not exists fondateur_public boolean;
 create index if not exists profiles_photo_fondateur on public.profiles (photo_path) where fondateur_public;
 
-create or replace function public.fondateurs_classement() returns table (id uuid, at timestamptz, type text, rang int)
+-- Le classement d'une école : chaque appel donne l'école (null ou une école inconnue : personne). Sans argument,
+-- l'ENSAM Meknès, comme avant que l'école ne soit demandée. Ouvert seulement aux fonctions de la base.
+drop function if exists public.fondateurs_classement();
+create or replace function public.fondateurs_classement(p_ecole text default 'ensam-meknes') returns table (id uuid, at timestamptz, type text, rang int)
 language sql stable security definer set search_path = public as $$
   with c as (
     select o.author_id as l, o.created_at as at, 'offre'::text as k from public.offers o
@@ -4447,24 +4463,30 @@ language sql stable security definer set search_path = public as $$
       where m.mentor_id is not null and m.status in ('acceptee', 'terminee')
   ), premiere as (
     select distinct on (c.l) c.l, c.at, c.k from c
-      join public.profiles p on p.id = c.l and p.role = 'laureat' and not p.admin_ok and p.ecole = coalesce(public.mon_ecole(), 'ensam-meknes')
+      join public.profiles p on p.id = c.l and p.role = 'laureat' and not p.admin_ok and p.ecole = p_ecole
       where c.at is not null
       order by c.l, c.at, c.k
   )
   select l, at, k, (row_number() over (order by at, l))::int from premiere order by at, l limit 25;
 $$;
-revoke all on function public.fondateurs_classement() from public, anon, authenticated;
+revoke all on function public.fondateurs_classement(text) from public, anon, authenticated;
 
 -- Le bandeau des fondateurs. Un membre connecté reçoit tout le classement (les profils lui sont déjà visibles) et
 -- son propre choix (mon_choix). Un visiteur sans compte reçoit les totaux, et seulement les fondateurs qui ont dit oui
 -- (prénom et nom, filière, promo, type et date de la première contribution, chemin de la photo) ; pas de champ id,
 -- mais le chemin de la photo commence par l'id du membre (photos/<id>/…) : il n'est donné que pour qui a dit oui.
-create or replace function public.fondateurs_publics() returns jsonb
+-- L'école : celle du membre connecté ; sans compte, celle de la page d'entrée (ecole_entree : le lien ?ecole=…, p_ecole,
+-- sinon ENSAM Meknès). Une école inconnue ou pas encore ouverte : aucun fondateur, comme une école où personne n'a encore
+-- aidé (total 0). Une seule version (p_ecole facultatif) : avec deux, l'appel sans argument du site serait ambigu.
+drop function if exists public.fondateurs_publics();
+create or replace function public.fondateurs_publics(p_ecole text default null) returns jsonb
 language sql stable security definer set search_path = public as $$
-  with f as (
+  with qui as (select exists (select 1 from public.profiles where id = auth.uid()) as membre,
+      coalesce(public.mon_ecole(), public.ecole_entree(p_ecole)) as ecole),
+  f as (
     select c.id, c.at, c.type, c.rang, p.full_name, p.filiere, p.promo, p.photo_path, p.verified, p.fondateur_public
-    from public.fondateurs_classement() c join public.profiles p on p.id = c.id
-  ), qui as (select exists (select 1 from public.profiles where id = auth.uid()) as membre)
+    from qui cross join lateral public.fondateurs_classement(qui.ecole) c join public.profiles p on p.id = c.id
+  )
   select jsonb_build_object(
     'max', 25,
     'total', (select count(*) from f),
@@ -4476,8 +4498,8 @@ language sql stable security definer set search_path = public as $$
         order by f.rang) from f where q.membre or f.fondateur_public is true), '[]'::jsonb))
   from qui q;
 $$;
-revoke all on function public.fondateurs_publics() from public;
-grant execute on function public.fondateurs_publics() to anon, authenticated;
+revoke all on function public.fondateurs_publics(text) from public;
+grant execute on function public.fondateurs_publics(text) to anon, authenticated;
 
 -- Seul le membre lui-même dit oui : l'administration peut le retirer de la page d'entrée, jamais l'y mettre
 create or replace function public.protect_fondateur_public() returns trigger
@@ -7371,13 +7393,8 @@ create trigger trg_admin_suivi_maj before update on public.admin_suivi for each 
 --  ?ecole=…, sinon ENSAM Meknès ; rien tant que le réseau de cette école n'est pas ouvert).
 -- =====================================================================
 
--- L'école que montre la page d'entrée : celle du membre connecté, sinon celle du lien de l'école (?ecole=…, p_ecole),
--- sinon ENSAM Meknès. null tant que le réseau de cette école n'est pas ouvert (ou qu'elle n'existe pas) : rien ne s'affiche.
-create or replace function public.ecole_entree(p_ecole text default null) returns text
-language sql stable security definer set search_path = public as $$
-  select e.slug from public.ecoles e where e.slug = coalesce(public.mon_ecole(), p_ecole, 'ensam-meknes') and e.ouverte;
-$$;
-revoke all on function public.ecole_entree(text) from public, anon, authenticated;
+-- L'école que montre la page d'entrée : ecole_entree(p_ecole), dans la première partie « Écoles » (les chiffres et les
+-- fondateurs de la page d'entrée s'en servent aussi, plus haut que cette section).
 
 -- Invitation nommée. code_invitation : 8 caractères (a-z, 0-9), créé à la demande par mon_code_invitation(), stable ensuite.
 -- invite_par : le membre dont le code était dans le lien d'inscription (métadonnée « invite_par » du compte), de la même
