@@ -4410,6 +4410,8 @@ test('administration : « Santé des notifications » — après « À traiter �
   // Le détail, replié : rôles, téléphones, services, par jour, par type, fonctionnement
   assert.equal(await panneau.locator('.sn-detail-corps').count(), 0);
   await panneau.locator('.sn-detail summary').click();
+  // L'événement « toggle » de <details> arrive après le clic : on attend le détail avant de lire
+  await panneau.locator('.sn-detail-corps').waitFor();
   assert.equal(await panneau.locator('.sn-detail summary').innerText(), 'Masquer le détail');
   assert.deepEqual(await panneau.locator('.sn-roles .sn-roles-l').allInnerTexts(), ['Étudiants', 'Lauréats', 'Administration']);
   assert.match(await panneau.locator('.sn-chiffres').innerText(), new RegExp(`Téléphones abonnés\\s+${t.total}\\s+Visés par un envoi en 7 jours\\s+${t.servis7j}\\s+`));
@@ -4445,6 +4447,7 @@ test('administration : « Santé des notifications » — « Actualiser » au cl
   await s.comme('Admin'); await s.aller('admin');
   await s.page.waitForSelector('#adm-notifs .sn-haut');
   await s.page.locator('#adm-notifs .sn-detail summary').click();
+  await s.page.locator('#adm-notifs .sn-detail-corps').waitFor();
   // Une relecture lente (600 ms), comptée
   await s.page.evaluate(() => {
     window.__lectures = 0; const d = window.__demo, v = d.santeNotifs.bind(d);
@@ -4496,6 +4499,7 @@ test('administration : « Santé des notifications » quand la plateforme est en
   assert.match(await panneau.locator('.sn-r[data-cle="aucune_recue"]').innerText(), /^Les services de notification ont accepté \d+ envois cette semaine, mais aucun téléphone ne confirme les avoir affichés/);
   assert.equal(await panneau.locator('.sn-affiche').innerText(), 'Aucun téléphone n’a confirmé afficher une notification cette semaine.');
   await panneau.locator('.sn-detail summary').click();
+  await panneau.locator('.sn-detail-corps').waitFor();
   assert.deepEqual(await panneau.locator('.sn-services tbody tr[data-cle="apple"] > *').allInnerTexts(), ['iPhone et Mac (Apple)', '13', '0', '13']);
   assert.match(await panneau.locator('.sn-fonct').innerText(), /Fonction notifier, dernier appel\s+Aucun appel ces 6 dernières heures \(pg_net n’en garde pas plus\)\s+Dernière notification traitée\s+il y a 4 min/);
   assert.doesNotMatch(await panneau.innerText(), /Pas encore appelée/);
@@ -4516,6 +4520,7 @@ test('administration : « Santé des notifications » de nuit, en arabe, à 360 
   assert.match(await s.page.evaluate(() => getComputedStyle(document.querySelector('.sn-seg.perdu')).backgroundImage), /^repeating-linear-gradient/, 'hachurées de nuit aussi');
   assert.match(await s.page.locator('#adm-notifs .sn-portee .sn-phrase').innerText(), /^⁦?\d+%⁩? من الأعضاء فعّلوا الإشعارات$/);
   await s.page.locator('#adm-notifs .sn-detail summary').click();
+  await s.page.locator('#adm-notifs .sn-detail-corps').waitFor();
   await s.page.locator('#adm-notifs .sn-col').first().hover();
   assert.equal(await s.debordement(), 0);
   const oublis = (await s.page.evaluate(() => [...(window.__ensamMissing || [])])).filter(x => !ecritParUnMembre(x));
