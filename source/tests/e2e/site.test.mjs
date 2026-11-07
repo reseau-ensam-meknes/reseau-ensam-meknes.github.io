@@ -7021,6 +7021,24 @@ test('page d’entrée dans le navigateur d’une application, appareil.js en re
   }
 });
 
+// appareil.js ne se charge pas (le réseau lâche juste après la page) : la place gardée pour la carte ne reste pas vide toute la
+// visite, le formulaire la reprend et « Recevoir mon code » revient au premier écran, comme dans Chrome sans carte
+test('page d’entrée dans le navigateur d’une application, appareil.js en échec : sa place est rendue au formulaire, « Recevoir mon code » au premier écran', async () => {
+  for (const [ua, largeur, hauteur, langue, tactile] of [[INSTAGRAM, 360, 640, 'fr'], [INSTAGRAM, 360, 640, 'ar'], [FACEBOOK_IOS, 375, 667, 'fr', 'iPhone'], [INSTAGRAM, 390, 844, 'ar']]) {
+    const cas = `${ua === INSTAGRAM ? 'Instagram' : 'Facebook iPhone'} ${largeur} × ${hauteur} ${langue}`;
+    const s = await porte({ ua, largeur, hauteur, langue, tactile, avant: ctx => ctx.route(/\/appareil\.js$/, r => r.abort('internetdisconnected')) });
+    await s.page.waitForSelector('.entree-appli-place', { state: 'detached', timeout: 5000 }).catch(() => {});
+    assert.equal(await s.page.locator('.entree-appli-place, #au-appli, #au-appli-mot').count(), 0, `${cas} : plus de place vide`);
+    await s.page.evaluate(() => document.fonts.ready);
+    const b = await s.page.locator('.entree-form button.btn.primary.wide').boundingBox();
+    assert.ok(b.y + b.height <= hauteur, `${cas} : « Recevoir mon code » de ${Math.round(b.y)} à ${Math.round(b.y + b.height)}, hors du premier écran`);
+    assert.equal(await s.page.locator('.auth-chiffres').count(), 1, `${cas} : les chiffres à leur place`);
+    assert.equal(await s.debordement(), 0, cas);
+    assert.deepEqual(s.erreurs, [], cas);
+    await s.ctx.close();
+  }
+});
+
 test('carte de la page d’entrée en arabe, de nuit, à 360 px : traduite, de droite à gauche, sans débordement ; cibles de 44 px, focus visible, contrastes', async () => {
   for (const [langue, theme] of [['ar', 'dark'], ['fr', 'light']]) {
     const s = await porte({ ua: INSTAGRAM, langue, theme });

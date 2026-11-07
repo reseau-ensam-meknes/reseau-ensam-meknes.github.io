@@ -382,7 +382,10 @@ const chargerAppareil = () => (appareilP ||= import('./appareil.js').then(m => {
 const sansTraduction = el => el?.setAttribute('translate', 'no');
 function CarteAppli({ mode, role, invite }) {
   const [a, setA] = useState(() => appareil);
-  useEffect(() => { if (!a) chargerAppareil().then(m => m && setA(m)); }, []);
+  // appareil.js n'a pas pu se charger (le réseau a lâché juste après la page) : sa place ne reste pas vide toute la visite,
+  // le formulaire la reprend (le navigateur ne redemande pas un module en échec : pas de carte dans cette page)
+  const [echec, setEchec] = useState(false);
+  useEffect(() => { if (!a) chargerAppareil().then(m => (m ? setA(m) : setEchec(true))); }, []);
   const [vue] = useState(vueCarte);
   const [range, setRange] = useState(false), [rien, setRien] = useState(false);
   const mot = useRef(null);
@@ -390,7 +393,7 @@ function CarteAppli({ mode, role, invite }) {
   const carte = !!sys && !vue && !range;
   useEffect(() => { if (carte && a) { ecrireVisite(CLE_CARTE, 'vue'); ecrireVisite(a.CLE_APPLI_VUE, '1'); } }, [carte, a]);
   useEffect(() => { if (range || rien) mot.current?.focus(); }, [range, rien]);
-  if (!sys) return null;
+  if (!sys || echec) return null;
   const largeur = document.documentElement.clientWidth || innerWidth, rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
   const place = carte ? placeCarte(sys, getLang(), largeur, rem) : '';
   // Avant appareil.js : sa place (la carte, ou la ligne discrète : trois lignes pour « Rien ne s'ouvre ? » sur un petit écran).
