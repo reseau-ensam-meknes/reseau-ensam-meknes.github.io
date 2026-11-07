@@ -294,7 +294,8 @@ function App({ store }) {
     }
     seen.current = { id: who.id, keys, cache: !!store.depuisCache };
     const n = todo + (cur.msgs || 0);
-    try { document.title = (n ? `(${n}) ` : '') + 'Réseau ENSAM Meknès'; } catch { /* */ }
+    const ec = (data.ecoles || []).find(e => e.slug === me.ecole && e.slug !== 'ensam-meknes');
+    try { document.title = (n ? `(${n}) ` : '') + (ec ? `Réseau ${ec.nom}` : 'Réseau ENSAM Meknès'); } catch { /* */ }
     poserBadge(store, n);
   });
 

@@ -1,6 +1,6 @@
 // Le site construit (dist/, ou SITE_DIR) ouvert dans Chromium, en démo : aucun appel à la vraie base.
 // Chaque profil de démo parcourt tous les écrans, puis les parcours importants sont rejoués.
-import { test, before, after } from 'node:test';
+import { before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -8,6 +8,8 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { createRequire } from 'node:module';
 import { fauxSite, UID } from './faux-supabase.mjs';
+// test : celui de node:test, sauf sur la CI où chaque machine n'en déclare qu'une part (PARTIE, partie.mjs)
+import { test } from './partie.mjs';
 
 const AXE = fs.readFileSync(createRequire(import.meta.url).resolve('axe-core/axe.min.js'), 'utf8');
 
@@ -5310,14 +5312,19 @@ test('socle : un titre à icône qui passe sur deux lignes garde son icône en f
   for (const langue of ['fr', 'ar']) {
     const s = await ouvrir({ largeur: 360, langue });
     await s.comme('Salma'); await s.aller('profil/notifications');
-    const titres = await s.page.evaluate(() => [...document.querySelectorAll('.h-ico')].filter(h => h.offsetParent).map(h => {
-      const ico = h.querySelector(':scope > .ico'), t = [...h.childNodes].find(n => n.nodeType === 3 && n.textContent.trim());
-      if (!ico || !t) return null;
-      const r = document.createRange(); r.selectNodeContents(t);
-      const lignes = r.getClientRects(), l = lignes[0], i = ico.getBoundingClientRect();
-      return { titre: h.textContent.trim(), lignes: lignes.length, ecart: Math.abs((i.top + i.height / 2) - (l.top + l.height / 2)) };
-    }).filter(Boolean));
-    if (langue === 'fr') assert.ok(titres.some(x => x.lignes > 1), 'au moins un titre sur deux lignes à 360 px');
+    const titres = await s.page.evaluate(() => {
+      // Un titre qui passe sur deux lignes, quel que soit le texte du jour : celui des notifications de cet appareil, dit deux fois
+      const h2 = document.getElementById('md-push-h'), long = h2 && [...h2.childNodes].find(n => n.nodeType === 3 && n.textContent.trim());
+      if (long) long.textContent = ` ${long.textContent.trim()} · ${long.textContent.trim()}`;
+      return [...document.querySelectorAll('.h-ico')].filter(h => h.offsetParent).map(h => {
+        const ico = h.querySelector(':scope > .ico'), t = [...h.childNodes].find(n => n.nodeType === 3 && n.textContent.trim());
+        if (!ico || !t) return null;
+        const r = document.createRange(); r.selectNodeContents(t);
+        const lignes = r.getClientRects(), l = lignes[0], i = ico.getBoundingClientRect();
+        return { titre: h.textContent.trim(), lignes: lignes.length, ecart: Math.abs((i.top + i.height / 2) - (l.top + l.height / 2)) };
+      }).filter(Boolean);
+    });
+    assert.ok(titres.some(x => x.lignes > 1), `${langue} : au moins un titre sur deux lignes à 360 px`);
     for (const x of titres) assert.ok(x.ecart <= 2.5, `${langue} · ${x.titre} : icône à ${x.ecart.toFixed(1)} px du milieu de la première ligne`);
     assert.deepEqual(s.erreurs, []);
     await s.ctx.close();

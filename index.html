@@ -964,6 +964,12 @@ button.impact-strip, button.panel { font: inherit; color: inherit; text-align: s
   .je-suis.compact legend { margin-block-end: .4rem; }
   .je-suis.compact .je-carte { padding: .6rem .7rem .65rem; }
   .je-suis.compact .je-carte strong { line-height: 1.2; text-wrap: balance; }
+  /* Petit écran, la ligne du navigateur d'une application sous le titre (serre, entree.js) : moins d'air entre les blocs, pour
+     garder une ligne d'accord de réserve au-dessus de « Recevoir mon code » (le texte se dessine plus large sur certains écrans) */
+  .entree-promesse.serre { padding-block: .3rem .4rem; }
+  .auth-card.entree-form.serre { margin-block-start: .3rem; gap: .4rem; }
+  .entree-form.serre .je-suis.compact legend { margin-block-end: .25rem; }
+  .entree-form.serre .je-suis.compact .je-carte { padding: .5rem .65rem .55rem; }
 }
 @media (min-width: 900px) {
   .auth.entree { max-width: 1180px; grid-template-columns: minmax(0, 1fr) minmax(400px, 480px); grid-template-rows: auto auto auto 1fr auto; grid-template-areas: "top top" "promesse form" "pour form" "scene form" "pied pied"; column-gap: 2.6rem; padding-block: 1.4rem 0; }
