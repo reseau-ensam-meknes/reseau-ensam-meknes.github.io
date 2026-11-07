@@ -1210,7 +1210,8 @@ addAR({
 
 // Le lien « Active tes notifications » (?notifs=1) quand tout est décoché dans Mon profil : activer cet appareil n'apporterait
 // rien. La feuille le dit calmement, ne recoche rien, et mène à Mon profil › Notifications : après l'activation (cet appareil
-// pas encore abonné) ou par son bouton.
+// pas encore abonné) ou par son bouton. « Plus tard » toujours dans le pied ; « Choisir d'abord » (sans activer), un lien
+// discret dans la feuille.
 const CHOISIR_TITRE = 'Choisis ce que tu reçois';
 const CHOISIR_TXT = 'Tout est décoché dans « Mon profil » : aucune notification ne t’arrive pour l’instant.';
 const CHOISIR_SUITE = { off: 'Active-les sur cet appareil, puis coche ce que tu veux recevoir.', on: 'Cet appareil est prêt : coche ce que tu veux recevoir.' };
@@ -1221,16 +1222,16 @@ function FeuilleChoisir({ ctx, etat, onClose }) {
   useEffect(() => { if (activable) cleAPrete(store); }, []);
   const choisir = () => { onClose(); go('profil/notifications'); };
   const activer = async () => { setBusy(true); const r = await accepterNotif(store, me); if (r === true) choisir(); else if (r) onClose(); else setBusy(false); };
-  const pied = activable
-    ? html`<button type="button" class="btn ghost" id="choisir-profil" onClick=${choisir}>Choisir d’abord</button>
-      <button type="button" class="btn primary" id="choisir-oui" disabled=${busy} onClick=${activer}><${Icon} name="bell" size=${16}/> Activer</button>`
-    : html`<button type="button" class="btn ghost" id="choisir-tard" onClick=${() => onClose()}>Plus tard</button>
-      <button type="button" class="btn primary" id="choisir-profil" onClick=${choisir}>Choisir</button>`;
+  const pied = html`<button type="button" class="btn ghost" id="choisir-tard" onClick=${() => onClose()}>Plus tard</button>
+    ${activable ? html`<button type="button" class="btn primary" id="choisir-oui" disabled=${busy} onClick=${activer}><${Icon} name="bell" size=${16}/> Activer</button>`
+      : html`<button type="button" class="btn primary" id="choisir-profil" onClick=${choisir}>Choisir</button>`}`;
   return html`<${Modal} title=${CHOISIR_TITRE} cls="appareil choisir" onClose=${onClose} footer=${pied}>
     <p>${fr(CHOISIR_TXT)}</p>
     <p class="small muted">${fr(CHOISIR_SUITE[activable ? 'off' : 'on'])}</p>
+    ${activable ? html`<p class="choisir-lien"><button type="button" class="linkish" id="choisir-profil" onClick=${choisir}>Choisir d’abord</button></p>` : null}
   <//>`;
 }
+injectCSS('choisir', `.choisir-lien { margin: 0; } .choisir-lien .linkish { display: inline-flex; align-items: center; min-height: 44px; }`);
 addAR({
   [CHOISIR_TITRE]: 'اختر ما يصلك',
   [CHOISIR_TXT]: 'كل شيء غير محدَّد في «ملفي الشخصي»: لا يصلك أي إشعار حاليًا.',

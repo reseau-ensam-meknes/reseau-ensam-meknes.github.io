@@ -7139,7 +7139,8 @@ test('lien « Active tes notifications » quand tout est décoché dans Mon prof
   assert.match(t, /Choisis ce que tu reçois/);
   assert.match(t, /Tout est décoché dans «\sMon profil\s»\s: aucune notification ne t’arrive pour l’instant\./);
   assert.match(t, /Active-les sur cet appareil, puis coche ce que tu veux recevoir\./);
-  for (const sel of ['#choisir-profil', '#choisir-oui']) assert.ok((await s.page.locator(sel).boundingBox()).height >= 44, sel);
+  assert.ok(await s.page.isVisible('.modal.choisir .modal-foot #choisir-tard'), '« Plus tard » toujours là');
+  for (const sel of ['#choisir-tard', '#choisir-profil', '#choisir-oui']) assert.ok((await s.page.locator(sel).boundingBox()).height >= 44, sel);
   assert.equal(await s.debordement(), 0);
   // « Activer » : cet appareil d'abord (en démo, un mot), puis les cases, toujours décochées
   await s.page.click('#choisir-oui');
@@ -7154,6 +7155,14 @@ test('lien « Active tes notifications » quand tout est décoché dans Mon prof
   await s.page.waitForSelector('.modal.choisir', { timeout: 8000 });
   await s.page.click('#choisir-profil');
   await s.page.waitForFunction(() => location.hash === '#profil/notifications');
+  assert.equal((await s.memo()).fait, undefined);
+  // « Plus tard » : la feuille se range, rien n'est demandé au navigateur, la page reste
+  await s.changerMemo('({})');
+  await s.page.goto(adresse + '?notifs=1#reseau');
+  await s.page.waitForSelector('.modal.choisir', { timeout: 8000 });
+  await s.page.click('#choisir-tard');
+  await s.page.waitForFunction(() => !document.querySelector('.modal.choisir'));
+  assert.equal(await s.page.evaluate(() => location.hash), '#reseau');
   assert.equal((await s.memo()).fait, undefined);
   assert.deepEqual(s.erreurs, []);
   await s.ctx.close();
