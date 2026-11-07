@@ -72,6 +72,28 @@ test('une école : les entretiens et les avis (des vues sans école) suivent leu
   assert.notEqual(donneesDeLEcole(data, 'ensam-casa'), apres, 'une table de plus : un nouveau calcul');
 });
 
+test('une école : d’une mise à jour du magasin à l’autre, la vue d’une table inchangée est gardée ; un nouveau profil refait les tables qui suivent leur membre', () => {
+  const data = {
+    profiles: [{ id: 'm1' }, { id: 'x1', ecole: 'ensam-rabat' }],
+    enquetes_insertion: [{ id: 'q1', ecole: 'ensam-rabat' }, { id: 'q2' }],
+    messages: [{ id: 'g1', author_id: 'x1' }, { id: 'g2', author_id: 'm1' }, { id: 'g5', author_id: 'x2' }],
+  };
+  const v1 = donneesDeLEcole(data, 'ensam-rabat');
+  // store.emit() : un nouvel objet, les mêmes tables
+  assert.equal(donneesDeLEcole({ ...data }, 'ensam-rabat'), v1, 'les mêmes tables : la même vue');
+  const autre = { ...data, offers: [{ id: 'o1', ecole: 'ensam-rabat' }, { id: 'o2' }] };
+  const v2 = donneesDeLEcole(autre, 'ensam-rabat');
+  assert.notEqual(v2, v1);
+  assert.equal(v2.enquetes_insertion, v1.enquetes_insertion, 'une autre table a changé : celle-ci garde sa vue');
+  assert.equal(v2.messages, v1.messages);
+  assert.deepEqual([ids(v2.offers), ids(v2.enquetes_insertion), ids(v2.messages)], [['o1'], ['q1'], ['g1']]);
+  const plus = { ...autre, profiles: [...autre.profiles, { id: 'x2', ecole: 'ensam-rabat' }] };
+  const v3 = donneesDeLEcole(plus, 'ensam-rabat');
+  assert.deepEqual(ids(v3.messages), ['g1', 'g5'], 'un nouveau membre de l’école : ses messages comptent');
+  assert.equal(v3.enquetes_insertion, v1.enquetes_insertion);
+  assert.equal(v3.offers, v2.offers);
+});
+
 const PROFILS = [
   { id: 'adm', role: 'admin', full_name: 'Administration Youssef' },
   { id: 'l1', role: 'laureat', full_name: 'Youssef El Amrani', promo: 2016, filiere: 'Génie Mécanique : Énergétique' },

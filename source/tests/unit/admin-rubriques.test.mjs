@@ -38,6 +38,18 @@ test('résumé de la semaine : aucun nom ni prénom d’étudiant, pour les laur
   }
 });
 
+test('résumé de la semaine : les événements à venir d’une autre école n’y sont pas, ceux de l’ENSAM Meknès oui', () => {
+  const debut = iso(NOW + 36e5);
+  const autre = { id: 'ev-autre', titre: 'Portes ouvertes de l’Institut B', type: 'conference', public: 'tous', debut, ecole: 'institut-b', created_at: iso(NOW - J) };
+  const ici = { id: 'ev-ici', titre: 'Conférence du réseau à Meknès', type: 'conference', public: 'tous', debut, created_at: iso(NOW - J) };
+  const d = { ...seed, evenements: [autre, ici, ...(seed.evenements || [])] };
+  for (const promo of [null, saison + 1]) {
+    const r = resumeSemaine(d, { now: NOW, saison, promo, lien: 'L' });
+    for (const txt of [r.fr, r.ar]) assert.ok(!txt.includes('Institut B'), `l’événement d’une autre école (${promo || 'lauréats'})`);
+    assert.ok(r.fr.includes('Conférence du réseau à Meknès') && r.ar.includes('Conférence du réseau à Meknès'), `l’événement de l’ENSAM Meknès (${promo || 'lauréats'})`);
+  }
+});
+
 test('merci de la semaine : seulement les prénoms cochés, jamais un nom de famille', () => {
   const aidants = aidantsSemaine(seed, NOW);
   assert.ok(aidants.length >= 2, 'des lauréats ont aidé cette semaine dans la démo');

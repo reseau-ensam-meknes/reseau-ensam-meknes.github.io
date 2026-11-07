@@ -21,30 +21,35 @@ export const PAR_MEMBRE = { signalements: 'auteur_id', retours_cv: 'profil_id', 
 
 // Les données d'une école : chaque table dont les lignes portent une école, celles qui suivent leur membre, et les cartes
 // sponsorisées de l'école ou de toutes les écoles (sans école) ; les autres (guide des pays…) restent entières.
-// Calculées une fois par état des données (chaque écriture remplace la liste de sa table) : d'un rendu à l'autre, la
-// console reçoit le même objet, et ce qu'elle mémorise sur ses données ne se recalcule pas à chaque frappe.
-const memoEcole = new WeakMap();
+// Chaque écriture remplace la liste de sa table, et chaque mise à jour du magasin le seul objet des données : la vue d'une
+// table qui n'a pas changé est gardée (celles qui suivent leur membre, tant que les profils non plus). Le même état des
+// données donne le même objet, et ce qui dépend d'une table filtrée (les statistiques d'insertion du Suivi…) ne se relance
+// qu'à son changement, pas à chaque mise à jour du magasin.
+const memoEcole = new Map(); // slug -> { src, out } : le dernier calcul pour cette école
 export function donneesDeLEcole(data, slug) {
   if (!slug || !data) return data;
-  let parSlug = memoEcole.get(data);
-  if (!parSlug) memoEcole.set(data, parSlug = new Map());
-  const vu = parSlug.get(slug); const cles = Object.keys(data);
-  if (vu && vu.cles.length === cles.length && cles.every(k => vu.src[k] === data[k])) return vu.out;
-  const out = filtrerEcole(data, slug);
-  parSlug.set(slug, { cles, src: { ...data }, out });
+  const vu = memoEcole.get(slug); const cles = Object.keys(data);
+  if (vu && Object.keys(vu.src).length === cles.length && cles.every(k => vu.src[k] === data[k])) return vu.out;
+  const out = filtrerEcole(data, slug, vu);
+  memoEcole.set(slug, { src: { ...data }, out });
   return out;
 }
-function filtrerEcole(data, slug) {
+function filtrerEcole(data, slug, vu) {
   const out = { ...data };
+  const garde = t => !!vu && t in vu.src && vu.src[t] === data[t];
   for (const [t, v] of Object.entries(data)) {
     if (!Array.isArray(v)) continue;
-    if (t === 'sponsorises') out[t] = v.filter(r => !r?.ecole || r.ecole === slug);
-    else if (TABLES_ECOLE.has(t) || v.some(r => r && typeof r === 'object' && 'ecole' in r)) out[t] = deLEcole(v, slug);
+    if (t === 'sponsorises') out[t] = garde(t) ? vu.out[t] : v.filter(r => !r?.ecole || r.ecole === slug);
+    else if (TABLES_ECOLE.has(t) || v.some(r => r && typeof r === 'object' && 'ecole' in r)) out[t] = garde(t) ? vu.out[t] : deLEcole(v, slug);
   }
-  const ids = new Set((out.profiles || []).map(p => p.id));
+  const memesProfils = garde('profiles');
+  let ids = null;
   for (const [t, col] of Object.entries(PAR_MEMBRE)) {
     const v = data[t];
-    if (Array.isArray(v) && !v.some(r => r && typeof r === 'object' && 'ecole' in r)) out[t] = v.filter(r => ids.has(r?.[col]));
+    if (!Array.isArray(v) || v.some(r => r && typeof r === 'object' && 'ecole' in r)) continue;
+    if (memesProfils && garde(t)) { out[t] = vu.out[t]; continue; }
+    ids ||= new Set((out.profiles || []).map(p => p.id));
+    out[t] = v.filter(r => ids.has(r?.[col]));
   }
   return out;
 }

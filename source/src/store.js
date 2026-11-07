@@ -1168,8 +1168,9 @@ function demoParrains(store, onlyId = null) {
   const waiting = store.data.profiles.filter(p => p.role === 'etudiant' && niveauOf(p, S) === 3 && (!onlyId || p.id === onlyId)
     && !store.data.parrainages.some(x => x.filleul_id === p.id && x.saison === S)).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   for (const st of waiting) {
-    // Un parrain de sa filière d'abord, sinon de son parcours (les lauréats gardent souvent l'ancienne appellation)
-    const l = store.data.profiles.filter(x => x.role === 'laureat' && x.parrain_dispo && proximiteFiliere(x.filiere, st.filiere) > 0 && count(x.id) < 3)
+    // Un parrain de sa filière d'abord, sinon de son parcours (les lauréats gardent souvent l'ancienne appellation),
+    // toujours de son école (comme donner_parrain dans la base)
+    const l = store.data.profiles.filter(x => x.role === 'laureat' && x.parrain_dispo && ecoleDe(x) === ecoleDe(st) && proximiteFiliere(x.filiere, st.filiere) > 0 && count(x.id) < 3)
       .sort((a, b) => proximiteFiliere(b.filiere, st.filiere) - proximiteFiliere(a.filiere, st.filiere) || (b.verified ? 1 : 0) - (a.verified ? 1 : 0) || count(a.id) - count(b.id))[0];
     if (!l) continue;
     store.data.parrainages = [{ id: uuid(), filleul_id: st.id, parrain_id: l.id, saison: S, created_at: new Date().toISOString() }, ...store.data.parrainages];

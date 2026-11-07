@@ -155,7 +155,8 @@ export function resumeSemaine(data0, { now = Date.now(), saison = seasonOf(new D
   const aides = aidesEntre(data, debut, now);
   const nAidants = new Set(aides.map(a => a.laureat)).size, nAides = new Set(aides.map(a => a.etudiant)).size;
   const pub = niveau === null ? ['tous', 'laureats'] : ['tous', 'etudiants'];
-  const evenements = (data0.evenements || []).filter(e => !e.annule && pub.includes(e.public || 'tous') && t(e.debut) >= now && t(e.debut) <= now + 14 * J)
+  const evenements = (data0.evenements || []).filter(e => !e.annule && pub.includes(e.public || 'tous') && t(e.debut) >= now && t(e.debut) <= now + 14 * J
+    && (!ecole || ecoleDe(e) === ecole))
     .sort((a, b) => t(a.debut) - t(b.debut)).slice(0, 3);
   const top = offres.slice(0, 5), reste = offres.length - top.length;
   const nomPromo = niveau !== null && NIVEAUX[niveau] ? `${promo} (${NIVEAUX[niveau].short})` : `${promo}`;
