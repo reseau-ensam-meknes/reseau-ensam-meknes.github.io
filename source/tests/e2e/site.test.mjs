@@ -8343,6 +8343,55 @@ test('page d’entrée dans le navigateur d’une application : « Recevoir mon 
   await s.ctx.close();
 });
 
+// Un lien d'invitation (promo et qui invite) dans le navigateur d'une application : la carte compte le bandeau, et ne vient que
+// si « Recevoir mon code » reste au premier écran avec lui ; « Ouvrir dans Chrome » emporte le code de qui invite et l'école
+test('lien d’invitation dans le navigateur d’une application : la carte compte le bandeau, « Recevoir mon code » au premier écran ; Chrome reçoit qui invite', async () => {
+  const NADIA = c => (c?.p_code === 'nadia219' ? { prenom: 'Nadia', promo: 2019, role: 'laureat' } : null);
+  const BOUTON = '.entree-form button.btn.primary.wide', ACCORD = '.entree-form label.check:has(#au-ok)';
+  const site = await enLigne();
+  site.rpc.invitation_de = NADIA;
+  try {
+    for (const [ua, largeur, hauteur, langue, place] of [
+      [INSTAGRAM, 360, 800, 'fr', 'ligne'], [INSTAGRAM, 412, 840, 'fr', 'carte'], [INSTAGRAM, 360, 800, 'ar', 'carte'], [INSTAGRAM, 360, 740, 'ar', 'ligne'],
+      [INSTAGRAM_IOS, 390, 750, 'fr', 'carte'], [INSTAGRAM_IOS, 393, 690, 'fr', 'ligne'], [INSTAGRAM, 360, 640, 'fr', 'haut'], [FACEBOOK_IOS, 390, 664, 'ar', 'haut']]) {
+      const ios = ua === FACEBOOK_IOS || ua === INSTAGRAM_IOS;
+      const cas = `${ios ? 'iPhone' : 'Android'} ${largeur} × ${hauteur} ${langue}`;
+      const s = await porte({ ua, largeur, hauteur, langue, tactile: ios ? 'iPhone' : null, chemin: '?promo=2019&de=nadia219' });
+      await s.page.waitForSelector('#au-appli, #au-appli-mot');
+      await s.page.waitForSelector('#au-invite-de', { timeout: 8000 });
+      await s.page.evaluate(() => document.fonts.ready);
+      await s.page.evaluate(() => document.getAnimations().forEach(a => { try { a.finish(); } catch { /* sans fin */ } }));
+      assert.equal((await s.page.locator('.invite-band').innerText()).trim(), langue === 'ar' ? 'دعوة من ⁨Nadia⁩ · دفعة 2019' : 'Invitation de Nadia · promo 2019', cas);
+      for (const sel of ['#au-appli, #au-appli-mot', '.invite-band', '#au-je-laureat', '#au-email', ACCORD, BOUTON]) {
+        const b = await s.page.locator(sel).boundingBox();
+        assert.ok(b.y >= 0 && b.y + b.height <= hauteur, `${cas} : ${sel} de ${Math.round(b.y)} à ${Math.round(b.y + b.height)}, hors du premier écran`);
+      }
+      const [carte, sousLeTitre] = await Promise.all(['#au-appli', '.entree-promesse #au-appli-mot'].map(x => s.page.locator(x).count()));
+      assert.deepEqual({ carte, sousLeTitre }, { carte: +(place === 'carte'), sousLeTitre: +(place === 'haut') }, cas);
+      if (langue === 'ar') assert.deepEqual(await s.page.evaluate(() => [...(window.__ensamMissing || [])]), [], cas);
+      assert.equal(await s.debordement(), 0, cas);
+      assert.deepEqual(s.erreurs, [], cas);
+      await s.ctx.close();
+    }
+    // « Ouvrir dans Chrome » : la promo, le code de qui invite et l'école du lien partent avec la page ; Chrome dit qui invite
+    const s = await porte({ ua: INSTAGRAM, largeur: 412, hauteur: 840, chemin: '?promo=2019&de=nadia219&ecole=ensam-meknes' });
+    await s.page.waitForSelector('#au-appli-chrome');
+    await s.page.waitForSelector('#au-invite-de', { timeout: 8000 });
+    const fb = await s.cible();
+    assert.deepEqual(Object.fromEntries(fb.searchParams), { promo: '2019', de: 'nadia219', ecole: 'ensam-meknes', role: 'laureat', mode: 'inscription', notifs: '1' });
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+    const c = await porte({ ua: TELEPHONE, langue: null, chemin: fb.search });
+    await c.page.waitForSelector('#au-invite-de', { timeout: 8000 });
+    assert.equal((await c.page.locator('.invite-band').innerText()).trim(), 'Invitation de Nadia · promo 2019');
+    assert.equal(await c.page.evaluate(() => localStorage.getItem('ensam-invite-de')), 'nadia219', 'le code arrive avec la page');
+    assert.equal(await c.page.evaluate(() => localStorage.getItem('ensam-invite-ecole')), 'ensam-meknes');
+    assert.deepEqual(await c.page.evaluate(() => [...new URLSearchParams(location.search).keys()].filter(k => ['promo', 'de', 'ecole', 'role', 'mode'].includes(k))), [], 'l’adresse nettoyée');
+    assert.deepEqual(c.erreurs, []);
+    await c.ctx.close();
+  } finally { delete site.rpc.invitation_de; }
+});
+
 test('administration · Membres (ordinateur) : filtrer les lauréats, trier par promo, cocher deux membres et exporter leur fichier CSV', async () => {
   const s = await ouvrir({ largeur: 1280 });
   await s.comme('Admin'); await s.aller('admin/membres');
