@@ -9609,12 +9609,12 @@ test('« Tester » sur iPhone et sur iPad, notification d’essai reçue : les r
   for (const [ua, tactile, nom] of [[SAFARI_IPHONE, 'iPhone', 'iPhone'], [SAFARI_IPADOS, 'MacIntel', 'iPad']]) {
     const m = await membreEnLigne({ ua, tactile, deja: true, chemin: '#profil/notifications' });
     const t = await diagnostic(m, 'Notification de test envoyée.');
-    assert.match(t, /^Reçue par cet appareil\. Rien ne s’affiche\s\? Dans Réglages › Notifications › Twiza (ou Réseau ENSAM), active «\sAutoriser les notifications\s»\.$/, nom);
+    assert.match(t, /^Reçue par cet appareil\. Rien ne s’affiche\s\? Dans Réglages › Notifications › Twiza \(ou Réseau ENSAM\), active «\sAutoriser les notifications\s»\.$/, nom);
     assert.doesNotMatch(t, /barre de notifications|économie de batterie|téléphone|navigateur/, nom);
     await m.page.evaluate(() => localStorage.setItem('ensam-lang', 'ar'));
     await m.page.reload();
     const ta = await diagnostic(m, 'تم إرسال إشعار تجريبي.');
-    assert.match(ta, /^وصل الإشعار إلى هذا الجهاز\. لا يظهر شيء؟ من الإعدادات › الإشعارات › تويزة (أو شبكة ENSAM)، فعّل «السماح بالإشعارات»\.$/, nom);
+    assert.match(ta, /^وصل الإشعار إلى هذا الجهاز\. لا يظهر شيء؟ من الإعدادات › الإشعارات › تويزة \(أو شبكة ENSAM\)، فعّل «السماح بالإشعارات»\.$/, nom);
     assert.deepEqual(latinRestant(ta, ['ENSAM']), [], nom);
     assert.deepEqual(m.erreurs, [], nom);
     await m.ctx.close();
