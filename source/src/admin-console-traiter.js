@@ -5,7 +5,7 @@
 import { html, useState } from './vendor/preact-htm.js';
 import { Icon, Person, Empty, toast, injectCSS } from './ui.js';
 import { addAR, arCount } from './i18n.js';
-import { laureatsPourDemande, timeAgo, NIVEAUX, niveauOf, filiereCourte } from './logic.js';
+import { laureatsPourDemande, timeAgo, NIVEAUX, niveauOf, filiereCourte, nomsDuMembre } from './logic.js';
 import { CATS, messagePourDemande } from './admin-console-regles.js';
 import { MessageBtn } from './messages.js';
 import { libellesCV } from './cv.js';
@@ -100,7 +100,7 @@ function vue(ctx, it, comptes) {
             <li class=${p.cv_path || p.cv_url ? 'good-t' : 'muted'}>${p.cv_path || p.cv_url ? 'CV déposé' : 'Pas de CV déposé'}</li>
             <li>${p.linkedin ? html`<a href=${p.linkedin.startsWith('http') ? p.linkedin : 'https://' + p.linkedin} target="_blank" rel="noopener">Son profil LinkedIn</a>` : html`<span class="muted">Pas de LinkedIn</span>`}</li></ul>
           <div class="row"><button type="button" class="btn small ghost" onClick=${() => openProfile(p)}>Voir le profil</button>
-            ${!p.cv_path && !p.cv_url ? html`<${MessageBtn} ctx=${ctx} p=${p} cls="btn small ghost" label="Demander son CV" texte=${demandeCV(p)}/>` : null}
+            ${!p.cv_path && !p.cv_url ? html`<${MessageBtn} ctx=${ctx} p=${p} cls="btn small ghost" label="Demander son CV" texte=${demandeCV(p, nomsDuMembre(ctx.data, ctx.me))}/>` : null}
             <button type="button" class="btn small ghost" onClick=${() => go('admin/membres')}>Voir dans Membres</button></div>`,
       };
     }

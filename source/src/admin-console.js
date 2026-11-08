@@ -7,6 +7,7 @@ import { PucesNav } from './lignes.js';
 import { addAR } from './i18n.js';
 import { ajouterIcones } from './entree.js';
 import { chercherConsole, texteCSV } from './admin-console-regles.js';
+import { adminDuReseau } from './logic.js';
 
 
 // Un porte-voix (Animer le réseau) et deux cercles qui se croisent (Partenaires)
@@ -32,6 +33,14 @@ export const GROUPES = [
   [null, [['reglages', 'Réglages', 'wrench']]],
 ];
 export const RUBRIQUES = GROUPES.flatMap(([, l]) => l);
+// Ce qui appartient au réseau (les écoles, les partenaires, les affiches et le rapport, les réglages de l'ENSAM Meknès) :
+// la base ne le laisse qu'à l'administration du réseau (super_admin()). Celle d'une école a les autres rubriques ; un
+// groupe qui n'en garde aucune disparaît. L'administration du réseau : les tableaux d'avant, tels quels.
+export const RUBRIQUES_DU_RESEAU = ['ecoles', 'partenaires', 'outils', 'reglages'];
+const GROUPES_ECOLE = GROUPES.map(([g, l]) => [g, l.filter(([k]) => !RUBRIQUES_DU_RESEAU.includes(k))]).filter(([, l]) => l.length);
+const RUBRIQUES_ECOLE = GROUPES_ECOLE.flatMap(([, l]) => l);
+export const groupesPour = me => (adminDuReseau(me) ? GROUPES : GROUPES_ECOLE);
+export const rubriquesPour = me => (adminDuReseau(me) ? RUBRIQUES : RUBRIQUES_ECOLE);
 export const routeRubrique = k => (k ? 'admin/' + k : 'admin');
 
 // Vrai tant que l'écran est assez large (le menu en colonne, les tableaux) ; suit le redimensionnement
@@ -59,8 +68,8 @@ export async function copier(texte, message) {
 }
 
 // Ordinateur : la colonne des rubriques, en groupes ; chaque rubrique avec son icône et, s'il y en a, ce qui attend
-export function MenuConsole({ actif, compte = {}, go }) {
-  return html`<nav class="cs-menu" aria-label="Rubriques de l’administration">${GROUPES.map(([titre, items], i) => html`
+export function MenuConsole({ actif, compte = {}, go, groupes = GROUPES }) {
+  return html`<nav class="cs-menu" aria-label="Rubriques de l’administration">${groupes.map(([titre, items], i) => html`
     <div class=${'cs-groupe' + (titre ? '' : ' cs-seul')} key=${i} role=${titre ? 'group' : null} aria-labelledby=${titre ? 'cs-g-' + i : null}>
       ${titre ? html`<p class="cs-g-titre" id=${'cs-g-' + i}>${titre}</p>` : null}
       <ul>${items.map(([k, l, ic]) => html`<li key=${k}><a href=${'#' + routeRubrique(k)} id=${'adm-tab-' + (k || 'vue')} aria-current=${actif === k ? 'page' : null}
@@ -68,8 +77,8 @@ export function MenuConsole({ actif, compte = {}, go }) {
     </div>`)}</nav>`;
 }
 // Téléphone et tablette : les mêmes rubriques, sur une rangée de puces
-export function PucesConsole({ actif, compte = {}, go }) {
-  return html`<${PucesNav} cls="adm-tabs" label="Rubriques de l’administration" idPrefix="adm-tab-" items=${RUBRIQUES.map(([k, l, i]) => ({ k, label: l, icon: i, n: compte[k] }))} actif=${actif} onChoisir=${k => go(routeRubrique(k))}/>`;
+export function PucesConsole({ actif, compte = {}, go, rubriques = RUBRIQUES }) {
+  return html`<${PucesNav} cls="adm-tabs" label="Rubriques de l’administration" idPrefix="adm-tab-" items=${rubriques.map(([k, l, i]) => ({ k, label: l, icon: i, n: compte[k] }))} actif=${actif} onChoisir=${k => go(routeRubrique(k))}/>`;
 }
 
 // Le choix de l'école, seulement quand le réseau en compte au moins deux

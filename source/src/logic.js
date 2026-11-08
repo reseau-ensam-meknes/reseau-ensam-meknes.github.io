@@ -923,6 +923,9 @@ export const GUIDE_SECTIONS = [
   ['campus_france', 'Campus France et admission', 'cap'], ['visa', 'Visa et titre de séjour', 'shield'], ['convention', 'Convention de stage', 'check'],
   ['logement', 'Logement', 'home'], ['budget', 'Budget et coût de la vie', 'briefcase'], ['stage', 'Trouver un stage ou un emploi', 'feed'], ['vie', 'Vie sur place', 'heart'],
 ];
+// Supprimer une rubrique du guide que la base ne supprime pas (déjà partie, ou un compte que la règle « suppression » ne
+// laisse pas passer : seule l'administration du réseau supprime) : aucune ligne touchée, sans erreur (store.remove … exiger)
+export const RIEN_GUIDE = 'Rien n’a été supprimé : cette rubrique n’existe plus, ou ton compte ne peut pas la supprimer.';
 
 // L'école d'un membre ou d'une ligne : tout ce qui date d'avant les écoles est à ENSAM Meknès (même défaut que la base)
 export const ECOLE_DEFAUT = 'ensam-meknes';

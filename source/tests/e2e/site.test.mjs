@@ -10615,3 +10615,327 @@ for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
     await s.ctx.close();
   });
 }
+
+// ---------------------------------------------------------------------------
+// Console de l'administration d'une école (pas celle du réseau). Depuis le 3e tour SQL, la base ne lui donne que son
+// école : la console est celle de son école, sans choix d'école ni « Toutes les écoles » ; ses textes la nomment, jamais
+// l'ENSAM Meknès ; ce qui est au réseau n'y paraît pas (Réglages, Écoles, Partenaires, Affiches et rapport, santé des
+// notifications, suppression d'une rubrique du guide de l'étranger, « Modifier » d'un guide qu'elle n'écrit pas, comme
+// protect_guide). Animer et Inviter écrivent pour son école (ses chiffres, ses liens &ecole=). Sa liste officielle d'une
+// école pas encore ouverte lit le dossier CNDP par dossier_cndp_de_mon_ecole(). L'administration du réseau : comme avant.
+// ---------------------------------------------------------------------------
+const SAISON_ADM = (d => (d.getMonth() >= 8 ? d.getFullYear() : d.getFullYear() - 1))(new Date());
+// L'Institut exemple, créé par l'administration du réseau (pas encore ouvert, ou ouvert), et des membres à lui : un lauréat
+// à vérifier sans CV, une lauréate volontaire pour parrainer et un étudiant de 3A de la même filière, qui a signalé la
+// rubrique Visa du guide de la France ; puis l'admin de la démo devient celui de l'Institut exemple (comme le test des
+// cartes sponsorisées)
+async function adminDeLInstitut(s, { ouverte = false } = {}) {
+  await s.comme('Admin');
+  const ie = ouverte ? await ouvrirInstitut(s) : await deuxiemeEcole(s);
+  await s.page.evaluate(([ie, saison]) => {
+    const d = window.__demo, t = new Date().toISOString(), fil = 'Génie Industriel';
+    const visa = d.data.guide_pays.find(g => g.pays === 'France' && g.section === 'visa');
+    d.data.profiles = [...d.data.profiles,
+      { id: 'ie-lau-1', role: 'laureat', ecole: ie, full_name: 'Amine Ferhat', verified: false, promo: 2019, filiere: fil, created_at: t },
+      { id: 'ie-lau-2', role: 'laureat', ecole: ie, full_name: 'Nadia Talbi', verified: true, parrain_dispo: true, promo: 2016, filiere: fil, created_at: t },
+      { id: 'ie-etu-1', role: 'etudiant', ecole: ie, full_name: 'Youssef Bennani', verified: true, promo: saison + 3, filiere: fil, created_at: t }];
+    d.data.signalements = [{ id: 'sg-ie-guide', auteur_id: 'ie-etu-1', cible_type: 'guide', cible_id: visa.id, motif: 'faux', details: null, status: 'ouvert', traite_par: null, traite_at: null, created_at: t }, ...d.data.signalements];
+    const moi = { ...d.me, ecole: ie };
+    d.data.profiles = d.data.profiles.map(p => (p.id === moi.id ? moi : p)); d.me = moi; d.persist(); d.emit();
+  }, [ie, SAISON_ADM]);
+  return ie;
+}
+const RUBRIQUES_ECOLE = ['vue', 'traiter', 'animer', 'agenda', 'inviter', 'membres', 'contenus', 'moderation', 'liste', 'sponsorises'];
+const rubriquesAffichees = s => s.page.locator('[id^="adm-tab-"]').evaluateAll(xs => xs.map(x => x.id.slice('adm-tab-'.length)));
+const rubriqueActive = s => s.page.locator('[id^="adm-tab-"][aria-current="page"], [id^="adm-tab-"][aria-selected="true"]').evaluateAll(xs => xs.map(x => x.id.slice('adm-tab-'.length)));
+const sansIsolants = x => x.replace(/[‎‏⁦-⁩]/g, '');
+const HORS_DOSSIER_ECOLE = { fr: 'Avant d’importer la liste de ton école, l’administration du réseau doit l’ajouter au dossier CNDP.', ar: 'قبل استيراد لائحة مدرستك، يجب أن تضيفها إدارة الشبكة إلى ملف CNDP.' };
+const NOTE_FERMEE = { fr: 'Ton école n’est pas encore ouverte : ces liens n’inscrivent personne avant son ouverture par l’administration du réseau.', ar: 'مدرستك لم تُفتح بعد: لا تسمح هذه الروابط بأي تسجيل قبل أن تفتحها إدارة الشبكة.' };
+
+for (const [largeur, langue] of [[1280, 'fr'], [390, 'ar']]) {
+  test(`console d’une école pas encore ouverte : la sienne seulement, sans choix d’école ni rubriques du réseau ; ses textes la nomment ; le guide comme un membre ; la liste attend le dossier CNDP (${largeur} px, ${langue})`, async () => {
+    const ar = langue === 'ar';
+    const s = await ouvrir({ largeur, langue });
+    const oublis = [];
+    const relever = async ou => {
+      for (const x of await s.page.evaluate(() => { const m = [...(window.__ensamMissing || [])]; window.__ensamMissing?.clear(); return m; })) if (ar && !ecritParUnMembre(x)) oublis.push(`${ou} : ${x}`);
+      assert.equal(await s.debordement(), 0, `${ou} : rien ne dépasse`);
+    };
+    const ie = await adminDeLInstitut(s);
+    // La santé des notifications (des totaux de tout le réseau) n'est jamais demandée pour elle
+    await s.page.evaluate(() => { const d = window.__demo, f = d.santeNotifs; window.__sante = 0; d.santeNotifs = (...a) => { window.__sante++; return f.apply(d, a); }; });
+    const bouton = s.page.locator('button', { hasText: ar ? 'تعيين العرّابين' : 'Attribuer les parrains' });
+    const parrainage = s.page.locator('.panel', { has: bouton });
+    await s.aller('admin/membres'); await s.aller('admin'); await parrainage.waitFor();
+    await s.page.evaluate(() => window.__ensamMissing?.clear());
+    assert.equal(await s.page.locator('#cs-ecole').count(), 0, 'pas de choix d’école');
+    assert.deepEqual(await rubriquesAffichees(s), RUBRIQUES_ECOLE, 'ni Réglages, ni Écoles, ni Partenaires, ni Affiches');
+    assert.equal(await s.page.locator('#adm-notifs').count(), 0, 'pas de santé des notifications');
+    assert.equal(await s.page.evaluate(() => window.__sante), 0, 'admin_sante_notifs jamais demandée');
+    // Parrainage : ses chiffres, et le bouton qui attribue les parrains de son école
+    const phrase = 'Le bouton attribue les parrains aux étudiants de l’Institut exemple ; la plateforme le fait aussi chaque matin.';
+    if (ar) assert.match(sansIsolants(await parrainage.locator('p').innerText()), /يعيّن الزر العرّابين لطلبة Institut exemple؛ وتفعل المنصة ذلك أيضًا كل صباح\.$/);
+    else assert.equal(await parrainage.locator('p').innerText(), `0 filleul cette année · 1 lauréat volontaire · 1 étudiant de 3A sans parrain. ${phrase}`);
+    await bouton.click(); await s.page.waitForSelector('.toast');
+    assert.equal(sansIsolants(await s.page.locator('.toast').last().innerText()), ar ? 'عدد العرّابين المعيَّنين لطلبة Institut exemple: 1.' : '1 parrain attribué aux étudiants de l’Institut exemple.');
+    assert.deepEqual(await s.page.evaluate(() => window.__demo.data.parrainages.filter(x => x.filleul_id.startsWith('ie-') || x.parrain_id.startsWith('ie-')).map(x => [x.filleul_id, x.parrain_id])), [['ie-etu-1', 'ie-lau-2']]);
+    await relever('Tableau de bord');
+    // Les adresses directes des rubriques du réseau mènent au tableau de bord
+    for (const r of ['admin/reglages', 'admin/ecoles', 'admin/partenaires', 'admin/outils']) {
+      await s.aller(r); await parrainage.waitFor();
+      assert.deepEqual(await rubriqueActive(s), ['vue'], r);
+      assert.equal(await s.page.locator('#rg-domaines, #ec-reseaux, #pa-suivi, .affiche').count(), 0, r);
+    }
+    // Membres : vérifier qu'il est diplômé de son école ; la demande de CV la nomme
+    await s.aller('admin/membres'); await s.page.waitForSelector('.verif-list');
+    const verif = sansIsolants(await s.page.locator('.accent-panel > p').first().innerText());
+    assert.equal(verif, ar ? 'تحقق من أن الشخص خريج Institut exemple (الدفعة، الشعبة)، ثم أكّد. الشارة تطمئن الطلبة. يمكن أيضًا لخريجَين متحقق منهما من دفعته تأكيد ذلك.'
+      : 'Vérifie que la personne est bien diplômée de l’Institut exemple (promo, filière), puis valide. Le badge rassure les étudiants. Deux lauréats vérifiés de sa promo peuvent aussi le confirmer.');
+    await relever('Membres');
+    await s.page.locator('.verif-list li', { hasText: 'Amine Ferhat' }).locator('.msg-btn').click(); await s.page.waitForSelector('#chat-txt');
+    assert.equal(await s.page.inputValue('#chat-txt'), 'Bonjour Amine, bienvenue sur le Réseau Institut exemple ! Pour vérifier ton profil, peux-tu déposer ton CV en PDF dans « Mon profil » (ou ajouter ton lien LinkedIn) ? Ça prend une minute. Merci !');
+    await s.page.fill('#chat-txt', '');
+    // Animer et Inviter : pour son école, sans la note des textes de l'ENSAM Meknès ; son école pas encore ouverte, c'est dit
+    for (const r of ['admin/animer', 'admin/inviter']) {
+      await s.aller(r); await s.page.waitForSelector('#cs-note-fermee');
+      assert.equal(await s.page.locator('.cs-note-ecole').count(), 0, r);
+      assert.equal(await s.page.locator('#cs-note-fermee').innerText(), NOTE_FERMEE[langue], r);
+      await relever(r);
+    }
+    await s.aller('admin/animer'); await s.page.waitForSelector('#adm-resume');
+    for (const id of ['adm-resume', 'adm-merci', 'adm-fondateurs']) assert.doesNotMatch(await message(s, id), /Meknès|مكناس/, id);
+    assert.match(await message(s, 'adm-resume'), /[?&]ecole=institut-exemple$/);
+    // Aucune rubrique ne la dit de l'ENSAM Meknès
+    for (const r of RUBRIQUES_ECOLE) {
+      await s.aller(r === 'vue' ? 'admin' : 'admin/' + r); await s.page.waitForSelector('.cs-main');
+      assert.doesNotMatch(await s.page.locator('.cs-main').innerText(), /ENSAM Meknès|ENSAM مكناس/, r);
+      await relever(r);
+    }
+    // Modération : le guide (commun à toutes les écoles) se lit, sa rubrique ne se supprime pas d'ici
+    await s.aller('admin/moderation');
+    const carte = s.page.locator('.mod-card', { hasText: 'Youssef Bennani' });
+    await carte.waitFor();
+    assert.match(await carte.locator('.mod-titre').innerText(), /^France · Visa et titre de séjour$/);
+    assert.equal(await carte.locator('.mod-decider').count(), 0, 'pas de « Supprimer la rubrique »');
+    assert.equal(await carte.locator('.mod-clore .btn').count(), 2, 'marquer traité, classer sans suite');
+    await relever('Modération');
+    // Liste officielle : son école n'est pas au dossier CNDP ; ce n'est pas à elle de cocher la case
+    await s.aller('admin/liste'); await s.page.waitForSelector('#lo-cndp');
+    assert.equal(await s.page.locator('#lo-cndp').innerText(), HORS_DOSSIER_ECOLE[langue]);
+    assert.equal(await s.page.locator('#lo-cndp-ecoles').count(), 0, 'pas de bouton vers Écoles');
+    assert.equal(await s.page.locator('#lo-file').isDisabled(), true);
+    await relever('Liste officielle');
+    // L'administration du réseau coche la case : la liste s'importe
+    await s.page.evaluate(ie => { const d = window.__demo; d.data.admin_suivi = d.data.admin_suivi.map(x => (x.type === 'ecole' && x.ecole_slug === ie ? { ...x, cndp_ok: true } : x)); d.persist(); d.emit(); }, ie);
+    await s.aller('admin'); await s.aller('admin/liste'); await s.page.waitForSelector('#lo-file:not([disabled])');
+    assert.equal(await s.page.locator('#lo-cndp').count(), 0);
+    // Le guide de l'étranger : comme un membre qui n'y vit pas (ni « Modifier », ni « Écrire », ni suppression)
+    await s.aller('reseau/etranger/france'); await s.page.waitForSelector('#gp-visa');
+    assert.equal(await s.page.locator('.gp-rub-head .btn, .gp-rub-head .icon-btn').count(), 0, 'ni « Modifier » ni « Supprimer la rubrique »');
+    assert.equal(await s.page.locator('.gp-rub .btn.small').count(), 0, 'pas de « Écrire cette rubrique »');
+    assert.equal(await s.page.locator('.gp-who').count(), 1);
+    await relever('Guide de la France');
+    assert.deepEqual(oublis, [], 'tout traduit');
+    assert.deepEqual(s.erreurs, []);
+    await s.ctx.close();
+  });
+}
+
+test('console d’une école ouverte : Animer et Inviter écrivent ses messages et ses liens (&ecole=), sans note ; sa liste s’importe sans demander le dossier CNDP', async () => {
+  const s = await ouvrir();
+  await adminDeLInstitut(s, { ouverte: true });
+  await s.page.evaluate(() => { const d = window.__demo, f = d.dossierCndpDeMonEcole; window.__cndp = 0; d.dossierCndpDeMonEcole = (...a) => { window.__cndp++; return f ? f.apply(d, a) : false; }; });
+  await s.aller('admin/animer'); await s.page.waitForSelector('#adm-resume');
+  assert.equal(await s.page.locator('#cs-ecole').count(), 0);
+  assert.equal(await s.page.locator('.cs-note-ecole, #cs-note-fermee').count(), 0, 'pas de note : ses textes sont ceux de son école');
+  const resume = await message(s, 'adm-resume');
+  assert.match(resume, /^✅ Cette semaine dans le Réseau Institut exemple\n/);
+  assert.match(resume, /\?ecole=institut-exemple$/);
+  assert.match(await message(s, 'adm-fondateurs'), /^⭐ Membres fondateurs du Réseau Institut exemple\n[\s\S]*\?ecole=institut-exemple$/);
+  for (const id of ['adm-resume', 'adm-merci', 'adm-fondateurs']) assert.doesNotMatch(await message(s, id), /Meknès|مكناس/, id);
+  await s.aller('admin/inviter'); await s.page.waitForSelector('.inv-link');
+  assert.equal(await s.page.locator('.cs-note-ecole, #cs-note-fermee').count(), 0);
+  const liens = await s.page.locator('.inv-link').allInnerTexts();
+  assert.ok(liens.length > 0 && liens.every(l => /[?&]ecole=institut-exemple$/.test(l)), liens.join(' | '));
+  assert.match(await s.page.locator('.inv-msg').innerText(), /Le Réseau Institut exemple est ouvert/);
+  assert.doesNotMatch(await s.page.locator('.inv-msg').innerText(), /Meknès|مكناس/);
+  await s.aller('admin/liste'); await s.page.waitForSelector('#lo-file:not([disabled])');
+  assert.equal(await s.page.locator('#lo-cndp').count(), 0);
+  assert.equal(await s.page.evaluate(() => window.__cndp), 0, 'école ouverte : le dossier CNDP n’est pas demandé');
+  assert.equal(await s.debordement(), 0);
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});
+
+// En ligne (faux Supabase) : le suivi des écoles (admin_suivi) n'est lisible que par l'administration du réseau ; celle
+// d'une école pas encore ouverte demande dossier_cndp_de_mon_ecole(). Une base pas encore à jour (fonction absente), une
+// réponse fausse ou une erreur : l'import reste fermé, avec le message pour elle
+test('console d’une école pas encore ouverte, en ligne : le dossier CNDP par dossier_cndp_de_mon_ecole() (base pas à jour, oui, non, erreur) ; ni admin_suivi ni admin_sante_notifs ; le réseau comme avant', async () => {
+  const ECOLE_IE = { slug: 'institut-exemple', nom: 'Institut exemple', ouverte: false, created_at: '2026-11-01T00:00:00Z' };
+  const ADMIN_IE = { ...MEMBRE, full_name: 'Nadia Ferhat', role: 'admin', ecole: 'institut-exemple', promo: 2012 };
+  let m = await membreEnLigne({ profil: ADMIN_IE, chemin: '#admin/liste', tables: { ecoles: [ECOLE_IE] } });
+  const appelsA = u => m.site.appels.filter(a => a.u === u).length;
+  const RPC = '/sb/rest/v1/rpc/dossier_cndp_de_mon_ecole';
+  const remonter = async () => {
+    await m.page.evaluate(() => { location.hash = 'admin'; }); await m.page.waitForSelector('#lo-file', { state: 'detached' });
+    await m.page.evaluate(() => { location.hash = 'admin/liste'; });
+  };
+  const ferme = async () => {
+    await m.page.waitForSelector('#lo-cndp', { timeout: 10000 });
+    assert.equal(await m.page.locator('#lo-cndp').innerText(), HORS_DOSSIER_ECOLE.fr);
+    assert.equal(await m.page.locator('#lo-cndp-ecoles').count(), 0);
+    assert.equal(await m.page.locator('#lo-file').isDisabled(), true);
+  };
+  // Base pas encore à jour : la fonction n'existe pas (404)
+  await ferme();
+  assert.equal(appelsA(RPC), 1);
+  // Son école est au dossier
+  m.site.rpc.dossier_cndp_de_mon_ecole = () => true;
+  await remonter(); await m.page.waitForSelector('#lo-file:not([disabled])', { timeout: 10000 });
+  assert.equal(await m.page.locator('#lo-cndp').count(), 0);
+  assert.equal(appelsA(RPC), 2);
+  // Pas (ou plus) au dossier
+  m.site.rpc.dossier_cndp_de_mon_ecole = () => false;
+  await remonter(); await ferme();
+  assert.equal(appelsA(RPC), 3);
+  // Une erreur de la base
+  await m.page.route('**/rest/v1/rpc/dossier_cndp_de_mon_ecole', r => r.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ code: 'XX000', message: 'boom' }) }));
+  m.site.rpc.dossier_cndp_de_mon_ecole = () => true;
+  await remonter(); await ferme();
+  // Ni le suivi des écoles, ni la santé des notifications (tout le réseau)
+  await m.page.evaluate(() => { location.hash = 'admin'; });
+  await m.page.locator('.panel', { has: m.page.locator('button', { hasText: 'Attribuer les parrains' }) }).waitFor();
+  assert.equal(await m.page.locator('#adm-notifs').count(), 0);
+  assert.equal(appelsA('/sb/rest/v1/admin_suivi'), 0, 'admin_suivi jamais lu');
+  assert.equal(appelsA('/sb/rest/v1/rpc/admin_sante_notifs'), 0, 'admin_sante_notifs jamais demandée');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+  // L'administration du réseau : le suivi lu comme avant, jamais la fonction ; la santé des notifications demandée
+  m = await membreEnLigne({ profil: { ...MEMBRE, full_name: 'Admin Réseau', role: 'admin', promo: 2010 }, chemin: '#admin/liste', tables: { ecoles: [ECOLE_IE] } });
+  await m.page.waitForSelector('#lo-file:not([disabled])', { timeout: 10000 });
+  await m.page.evaluate(() => { location.hash = 'admin'; }); await m.page.waitForSelector('#adm-notifs', { timeout: 10000 });
+  assert.ok(appelsA('/sb/rest/v1/admin_suivi') >= 1, 'admin_suivi lu');
+  assert.equal(appelsA(RPC), 0);
+  assert.ok(appelsA('/sb/rest/v1/rpc/admin_sante_notifs') >= 1);
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// Guide de l'étranger, administration du réseau : supprimer une rubrique que la base ne supprime pas (déjà partie, ou
+// une règle qui ne laisse passer aucune ligne) n'est pas dit fait ; « Rubrique supprimée. » seulement quand c'est vrai
+test('guide de l’étranger, administration du réseau : une rubrique que la base ne supprime pas n’est pas dite supprimée (sa page, la Modération), en démo et en ligne', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin');
+  const RIEN = 'Rien n’a été supprimé : cette rubrique n’existe plus, ou ton compte ne peut pas la supprimer.';
+  const toast = async () => { await s.page.waitForSelector('.toast'); return s.page.locator('.toast').last().innerText(); };
+  await s.aller('reseau/etranger/france'); await s.page.waitForSelector('#gp-visa .gp-rub-head .icon-btn');
+  // Supprimée ailleurs juste avant : l'écran l'a encore, la base ne touche aucune ligne
+  const ids = await s.page.evaluate(() => Object.fromEntries(window.__demo.data.guide_pays.filter(g => g.pays === 'France').map(g => [g.section, g.id])));
+  await s.page.evaluate(id => { const d = window.__demo; d.data.guide_pays = d.data.guide_pays.filter(g => g.id !== id); }, ids.visa);
+  await s.page.click('#gp-visa .gp-rub-head .icon-btn'); await s.page.locator('.modal .btn.danger').click();
+  assert.equal(await toast(), RIEN);
+  assert.equal(await s.page.locator('.toast', { hasText: 'Rubrique supprimée.' }).count(), 0);
+  await s.page.waitForSelector('.toast', { state: 'detached', timeout: 10000 });
+  // Une rubrique bien là : supprimée, comme avant
+  await s.page.click('#gp-logement .gp-rub-head .icon-btn'); await s.page.locator('.modal .btn.danger').click();
+  assert.equal(await toast(), 'Rubrique supprimée.');
+  assert.equal(await s.page.evaluate(id => window.__demo.data.guide_pays.some(g => g.id === id), ids.logement), false);
+  await s.page.waitForSelector('.toast', { state: 'detached', timeout: 10000 });
+  // Modération : un signalement de la rubrique Budget, qui part juste avant « Supprimer la rubrique » ; le signalement reste ouvert
+  await s.page.evaluate(id => { const d = window.__demo; d.data.signalements = [{ id: 'sg-guide-budget', auteur_id: d.data.profiles.find(p => p.role === 'etudiant').id, cible_type: 'guide', cible_id: id, motif: 'faux', details: null, status: 'ouvert', traite_par: null, traite_at: null, created_at: new Date().toISOString() }, ...d.data.signalements]; d.emit(); }, ids.budget);
+  await s.aller('admin/moderation');
+  const carte = s.page.locator('.mod-card', { hasText: 'France · Budget et coût de la vie' }); await carte.waitFor();
+  await s.page.evaluate(id => { const d = window.__demo; d.data.guide_pays = d.data.guide_pays.filter(g => g.id !== id); }, ids.budget);
+  await carte.locator('.mod-decider .btn').click(); await s.page.locator('.modal .btn.danger').click();
+  assert.equal(await toast(), RIEN);
+  assert.equal(await s.page.evaluate(() => window.__demo.data.signalements.find(x => x.id === 'sg-guide-budget').status), 'ouvert');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+  // En ligne : la base renvoie les lignes supprimées (select=id) ; aucune, c'est dit
+  const VISA = { id: 'c0000000-0000-4000-8000-0000000000f1', pays: 'France', section: 'visa', contenu: 'Le visa long séjour se demande sur France-Visas.', updated_by: null, created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-01T10:00:00Z' };
+  // Un téléphone déjà abonné (deja) : la feuille « Reçois l'essentiel sur ton téléphone », qui s'ouvre 3 s après le début de
+  // la visite, ne passe pas devant la rubrique
+  const m = await membreEnLigne({ profil: { ...MEMBRE, full_name: 'Admin Réseau', role: 'admin', promo: 2010 }, deja: true, chemin: '#reseau/etranger/france', tables: { guide_pays: [VISA] } });
+  const suppressions = [];
+  let rendre = [];
+  await m.page.route('**/rest/v1/guide_pays?*', r => {
+    if (r.request().method() !== 'DELETE') return r.fallback();
+    suppressions.push(r.request().url());
+    return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(rendre) });
+  });
+  const toastM = async () => { await m.page.waitForSelector('.toast'); return m.page.locator('.toast').last().innerText(); };
+  await m.page.waitForSelector('#gp-visa .gp-rub-head .icon-btn', { timeout: 10000 });
+  await m.page.click('#gp-visa .gp-rub-head .icon-btn'); await m.page.locator('.modal .btn.danger').click();
+  assert.equal(await toastM(), RIEN);
+  assert.equal(suppressions.length, 1);
+  assert.match(suppressions[0], /[?&]select=id(&|$)/, 'la base dit ce qu’elle a supprimé');
+  await m.page.waitForSelector('.toast', { state: 'detached', timeout: 10000 });
+  rendre = [{ id: VISA.id }];
+  await m.page.click('#gp-visa .gp-rub-head .icon-btn'); await m.page.locator('.modal .btn.danger').click();
+  assert.equal(await toastM(), 'Rubrique supprimée.');
+  assert.deepEqual(m.erreurs, []);
+  await m.ctx.close();
+});
+
+// Le formulaire d'une carte sponsorisée sur un téléphone : « Pour qui ? » et les puces passent à la ligne, rien ne dépasse
+// (ni la page, ni le formulaire), en français comme en arabe ; sur ordinateur, « Pour qui ? » reste sur une ligne
+for (const langue of ['fr', 'ar']) {
+  test(`Sponsorisés : le formulaire d’une carte tient sur un téléphone, rien ne dépasse (360 et 390 px, ${langue})`, async () => {
+    for (const largeur of [360, 390]) {
+      const s = await ouvrir({ largeur, langue });
+      await s.comme('Admin'); await s.aller('admin/sponsorises');
+      await s.page.click('#sp-nouvelle'); await s.page.waitForSelector('.sp-form');
+      const m = await s.page.evaluate(() => {
+        const f = document.querySelector('.sp-form'), g = f.querySelector('.seg'), q = f.getBoundingClientRect();
+        const dehors = [...f.querySelectorAll('.seg button, .chip')].filter(b => { const r = b.getBoundingClientRect(); return r.left < q.left - 1 || r.right > q.right + 1; }).map(b => b.textContent.trim());
+        return { page: document.documentElement.scrollWidth - innerWidth, form: f.scrollWidth - f.clientWidth, seg: g.scrollWidth - g.clientWidth, dehors };
+      });
+      assert.deepEqual(m, { page: 0, form: 0, seg: 0, dehors: [] }, `${largeur} px`);
+      assert.deepEqual(s.erreurs, []);
+      await s.ctx.close();
+    }
+  });
+}
+test('Sponsorisés sur ordinateur : « Pour qui ? » sur une seule ligne, comme avant', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin'); await s.aller('admin/sponsorises');
+  await s.page.click('#sp-nouvelle'); await s.page.waitForSelector('.sp-form');
+  const lignes = await s.page.locator('.sp-form .seg button').evaluateAll(bs => new Set(bs.map(b => Math.round(b.getBoundingClientRect().top))).size);
+  assert.equal(lignes, 1);
+  assert.equal(await s.debordement(), 0);
+  await s.ctx.close();
+});
+
+// L'administration du réseau, deux écoles : sa console comme avant (toutes les rubriques, le choix d'école, la santé des
+// notifications, les rubriques du réseau, ses textes, le guide qu'elle écrit et supprime, la liste d'une école pas encore
+// ouverte qui renvoie à la case de son suivi)
+test('console de l’administration du réseau, deux écoles : comme avant (rubriques, choix d’école, santé des notifications, guide, liste d’une école pas encore ouverte)', async () => {
+  const s = await ouvrir();
+  await s.comme('Admin');
+  const ie = await deuxiemeEcole(s);
+  await s.aller('admin'); await s.page.waitForSelector('#adm-notifs');
+  assert.deepEqual(await rubriquesAffichees(s), ['vue', 'traiter', 'animer', 'agenda', 'inviter', 'membres', 'contenus', 'moderation', 'liste', 'ecoles', 'partenaires', 'sponsorises', 'outils', 'reglages']);
+  assert.deepEqual(await s.page.locator('#cs-ecole option').evaluateAll(os => os.map(o => o.value)), ['', 'ensam-meknes', ie]);
+  assert.match(await s.page.locator('.panel', { has: s.page.locator('button', { hasText: 'Attribuer les parrains' }) }).locator('p').innerText(), /Le bouton, comme la plateforme chaque matin, attribue les parrains dans toutes les écoles, chacun dans la sienne\.$/);
+  for (const [r, sel] of [['admin/reglages', '#rg-domaines'], ['admin/ecoles', '#ec-reseaux'], ['admin/partenaires', '#pa-suivi'], ['admin/outils', '.affiche']]) {
+    await s.aller(r); await s.page.waitForSelector(sel);
+    assert.deepEqual(await rubriqueActive(s), [r.slice('admin/'.length)]);
+  }
+  await s.aller('admin/membres'); await s.page.waitForSelector('.verif-list');
+  assert.equal(await s.page.locator('.accent-panel > p').first().innerText(), 'Vérifie que la personne est bien diplômée de son école (promo, filière), puis valide. Le badge rassure les étudiants. Deux lauréats vérifiés de sa promo peuvent aussi le confirmer.');
+  // Le guide : elle écrit, corrige et supprime chaque rubrique
+  await s.aller('reseau/etranger/france'); await s.page.waitForSelector('#gp-visa');
+  const ecrites = await s.page.locator('.gp-rub:not(.vide)').count();
+  assert.ok(ecrites >= 3);
+  assert.equal(await s.page.locator('.gp-rub-head .btn', { hasText: 'Modifier' }).count(), ecrites);
+  assert.equal(await s.page.locator('.gp-rub-head .icon-btn[aria-label="Supprimer la rubrique"]').count(), ecrites);
+  assert.equal(await s.page.locator('.gp-rub.vide .btn.small', { hasText: 'Écrire cette rubrique' }).count(), 7 - ecrites);
+  assert.equal(await s.page.locator('.etranger > .hint-box').innerText(), 'En tant qu’administration, tu peux écrire, corriger ou supprimer chaque rubrique.');
+  // La liste d'une école pas encore ouverte : la case du dossier CNDP, dans la rubrique Écoles
+  await s.aller('admin/liste'); await s.page.selectOption('#cs-ecole', ie); await s.page.waitForSelector('#lo-cndp-ecoles');
+  assert.equal(await s.page.locator('#lo-cndp span').innerText(), 'Avant d’importer la liste de cette école, ajoute-la au dossier CNDP : coche la case dans son suivi (rubrique Écoles).');
+  assert.equal(await s.page.locator('#lo-file').isDisabled(), true);
+  await s.page.click('#lo-cndp-ecoles'); await s.page.waitForSelector('#ec-reseaux');
+  assert.deepEqual(s.erreurs, []);
+  await s.ctx.close();
+});

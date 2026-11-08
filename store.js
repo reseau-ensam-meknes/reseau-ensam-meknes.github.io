@@ -361,6 +361,9 @@ class DemoStore extends Base {
     // ne laisse passer aucune ligne, sans erreur de la base ; « exiger » le dit (une carte déjà retirée, sans « exiger » :
     // comme avant)
     if (SPONSO.includes(table) && !sponsoriseModifiable(row, this.me)) { if (exiger) throw new Error(exiger); if (row) return; }
+    // Le guide de l'étranger, commun à toutes les écoles : seule l'administration du réseau en supprime une rubrique ; pour
+    // celle d'une école, ou une rubrique déjà partie, la base ne supprime aucune ligne, sans erreur (« exiger » le dit)
+    if (table === 'guide_pays' && this.me?.role === 'admin' && (!row || !adminDuReseau(this.me))) { if (exiger) throw new Error(exiger); if (row) return; }
     if (saufStatut && row?.status === saufStatut) throw new Error(exiger || 'Action non autorisée pour ton compte.');
     // Comme la règle de la base : l'étudiant retire sa réussite, le lauréat seulement ce qui attend la confirmation
     if (table === 'placements' && row && this.me?.role !== 'admin' && !(row.student_id === this.me?.id || (row.laureat_id === this.me?.id && row.status === 'en_attente'))) throw new Error(exiger || 'Action non autorisée pour ton compte.');
@@ -400,7 +403,8 @@ class DemoStore extends Base {
   }
   // Parrain d'un 3A : le lauréat volontaire de sa filière qui a le moins de filleuls (même règle que la base)
   async monParrain() { demoParrains(this, this.me?.id); this.persist(); this.emit(); }
-  async attribuerParrains() { const n = demoParrains(this); this.persist(); this.emit(); return n; }
+  // L'administration d'une école : les étudiants de son école ; celle du réseau : toutes (comme attribuer_parrains())
+  async attribuerParrains() { const n = demoParrains(this, null, adminDuReseau(this.me) ? null : ecoleDe(this.me)); this.persist(); this.emit(); return n; }
   async supprimerCompte() { throw new Error('En démo, aucun compte n’est supprimé. Sur la vraie plateforme, ton compte et tes données partent tout de suite.'); }
   async seDesabonner() { return true; }
   async pushKey() { return null; }
@@ -408,9 +412,10 @@ class DemoStore extends Base {
   async abonnerPush() { return 'ok'; }
   async testPushDetails() { return bilanTestPush({ sent: 0, failed: 0, removed: 0, codes: [], abonnements: 0 }); }
   async testPush() { return (await this.testPushDetails()).sent; }
-  // Santé des notifications : une semaine plausible pour les membres de la démo (mêmes champs qu'admin_sante_notifs)
+  // Santé des notifications : une semaine plausible pour les membres de la démo (mêmes champs qu'admin_sante_notifs) ; les
+  // totaux de tout le réseau, pour son administration seulement (pas celle d'une école)
   async santeNotifs() {
-    if (this.me?.role !== 'admin') throw new Error('Réservé à l’administration.');
+    if (!adminDuReseau(this.me)) throw new Error('Réservé à l’administration.');
     return demoSanteNotifs(this.data.profiles);
   }
   async verifyAttestation(id) {
@@ -471,13 +476,24 @@ class DemoStore extends Base {
   }
   async liensPhotos(paths) { return Object.fromEntries(paths.filter(p => this.fichiers.has(p)).map(p => [p, URL.createObjectURL(this.fichiers.get(p))])); }
   async lireReglages() { return this.reglages; }
+  // Les réglages sont ceux de l'ENSAM Meknès : seule l'administration du réseau les écrit (ceux d'une autre école sont dans
+  // sa ligne des écoles)
   async enregistrerReglage(cle, valeur) {
     if (this.me?.role !== 'admin') throw new Error('Réservé à l’administration.');
+    if (!adminDuReseau(this.me)) throw new Error('Action non autorisée pour ton compte.');
     this.reglages = { ...this.reglages, [cle]: valeur }; this.persist(); this.emit();
   }
-  // L'école visée, comme ecole_visee() dans la base : l'administration peut en choisir une, un membre reste dans la sienne
+  // Son école est-elle au dossier CNDP ? Pour l'administration d'une école, qui ne lit pas le suivi : comme
+  // dossier_cndp_de_mon_ecole() dans la base (la ligne de suivi de son école, case cochée)
+  async dossierCndpDeMonEcole() {
+    if (this.me?.role !== 'admin') return false;
+    const ici = ecoleDe(this.me);
+    return (this.data.admin_suivi || []).some(x => x.type === 'ecole' && x.ecole_slug === ici && x.cndp_ok === true);
+  }
+  // L'école visée, comme ecole_visee() dans la base : l'administration du réseau peut en choisir une ; celle d'une école et
+  // un membre restent dans la leur
   ecoleVisee(ecole) {
-    if (!ecole || this.me?.role !== 'admin') return ecoleDe(this.me);
+    if (!ecole || !adminDuReseau(this.me)) return ecoleDe(this.me);
     if (ecole !== ecoleDe(null) && !(this.data.ecoles || []).some(e => e.slug === ecole)) throw new Error(`École inconnue : ${ecole}.`);
     return ecole;
   }
@@ -1029,7 +1045,8 @@ function applyPhase3Rules(store, table, r, old) {
       r.pays = old.pays; r.section = old.section; r.created_at = old.created_at;
       if (r.contenu !== old.contenu) store.data.guide_pays_historique = [{ id: uuid(), guide_id: old.id, contenu: old.contenu, updated_by: old.updated_by, updated_at: old.updated_at, created_at: now }, ...store.data.guide_pays_historique];
     } else if (store.data.guide_pays.some(g => norm(g.pays) === norm(r.pays) && g.section === r.section)) throw new Error('Cette rubrique existe déjà : recharge la page pour la modifier.');
-    if (!isAdmin && (norm(r.pays) === 'maroc' || me.role !== 'laureat' || norm(me.pays || '') !== norm(r.pays))) throw new Error('Seuls les lauréats qui vivent dans ce pays peuvent écrire son guide.');
+    // Commun à toutes les écoles : l'administration d'une école l'écrit comme un membre (celle du réseau, toujours)
+    if (!adminDuReseau(me) && (norm(r.pays) === 'maroc' || me.role !== 'laureat' || norm(me.pays || '') !== norm(r.pays))) throw new Error('Seuls les lauréats qui vivent dans ce pays peuvent écrire son guide.');
     r.updated_by = me.id; r.updated_at = now;
     return;
   }
@@ -1261,10 +1278,10 @@ function applyPhase2Rules(store, table, r, old) {
   }
 }
 
-function demoParrains(store, onlyId = null) {
+function demoParrains(store, onlyId = null, ecole = null) {
   const S = seasonOf(); let n = 0;
   const count = id => store.data.parrainages.filter(x => x.parrain_id === id && x.saison === S).length;
-  const waiting = store.data.profiles.filter(p => p.role === 'etudiant' && niveauOf(p, S) === 3 && (!onlyId || p.id === onlyId)
+  const waiting = store.data.profiles.filter(p => p.role === 'etudiant' && niveauOf(p, S) === 3 && (!onlyId || p.id === onlyId) && (!ecole || ecoleDe(p) === ecole)
     && !store.data.parrainages.some(x => x.filleul_id === p.id && x.saison === S)).sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
   for (const st of waiting) {
     // Un parrain de sa filière d'abord, sinon de son parcours (les lauréats gardent souvent l'ancienne appellation),
@@ -2125,6 +2142,11 @@ export class SupabaseStore extends Base {
     const { error } = await this.sb.from('reglages').upsert({ cle, valeur, updated_at: new Date().toISOString() });
     if (error) throw new Error(frError(error));
     this.reglages = { ...this.reglages, [cle]: valeur }; this.emit();
+  }
+  // Son école est-elle au dossier CNDP ? L'administration d'une école ne lit pas le suivi (admin_suivi) :
+  // dossier_cndp_de_mon_ecole() le lui dit. Une base qui n'a pas encore la fonction, ou toute erreur : non (l'import reste fermé)
+  async dossierCndpDeMonEcole() {
+    try { const { data, error } = await this.sb.rpc('dossier_cndp_de_mon_ecole'); return !error && data === true; } catch { return false; }
   }
   async rapportInsertion(ecole) {
     const { data, error } = await this.sb.rpc('rapport_insertion', ecole ? { p_ecole: ecole } : {});
