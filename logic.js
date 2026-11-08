@@ -343,7 +343,10 @@ export const BADGES = [
 // une offre publiée pour les étudiants (pas une offre « entre lauréats » ni un partage vu ailleurs ; pourvue ou fermée, elle compte toujours ;
 // supprimée, elle ne compte plus), une aide proposée sur la demande d'un étudiant (sauf retirée par le lauréat),
 // ou un mentorat accepté (ou terminé) avec un étudiant. Jamais l'administration ; rien fait, pas fondateur.
-// Même classement que fondateurs_classement() dans schema.sql. Égalité : le type (aide, mentorat, offre), puis l'id.
+// Même classement que fondateurs_classement(p_ecole) dans schema.sql : une école par appel, et seules les fonctions de la base
+// l'appellent. En ligne, membres et page d'entrée lisent fondateurs_publics(p_ecole) : pour un membre connecté, son école ;
+// sans compte, celle du lien ?ecole=… (sans lien, l'ENSAM Meknès ; une école inconnue ou pas encore ouverte : personne),
+// comme chiffres_publics(p_ecole) pour les trois totaux de la page d'entrée. Égalité : le type (aide, mentorat, offre), puis l'id.
 export const NB_FONDATEURS = 25;
 export const CONTRIBUTIONS = { offre: 'Offre publiée', aide: 'Aide proposée', mentorat: 'Mentorat accepté' };
 export function classementFondateurs(data, max = NB_FONDATEURS) {
