@@ -5,13 +5,13 @@
 import { html, render, useState, useLayoutEffect, useEffect, useRef } from './vendor/preact-htm.js';
 import { getLang, setLang, chargerAR, addAR, arCount, t } from './i18n.js';
 import { glyph, TUILE_DEFS, TUILE } from './logo.js';
-import { roleDePromo, promoValide, lignesChiffres, estEmailEcole, chiffresCode, adresseContact, VERSION_ACCORD, lienPartage, lienEncoreBon, estUuid, phraseLien, suiteLien, offreFermeePour, ecoleValide } from './regles-entree.js';
+import { roleDePromo, promoValide, lignesChiffres, estEmailEcole, chiffresCode, adresseContact, VERSION_ACCORD, lienPartage, lienEncoreBon, estUuid, phraseLien, suiteLien, offreFermeePour, ecoleValide, adresseAvecContexte } from './regles-entree.js';
 
 // La page d'entrée en arabe n'attend pas le grand dictionnaire (i18n-ar.js) : ses phrases sont ici
 // (mêmes traductions que dans i18n-ar.js, vérifié par un test).
 const LAU = ['خريج واحد', 'خريجان', 'خريجين', 'خريجًا'];
 addAR({
-  'Réseau ENSAM Meknès': 'شبكة ENSAM مكناس',
+  'Réseau ENSAM Meknès': 'شبكة ENSAM مكناس', 'Réseau ENSAM': 'شبكة ENSAM',
   'Les lauréats ouvrent la porte aux étudiants.': 'الخريجون يفتحون الباب أمام الطلبة.',
   'Stage, PFE, premier emploi : les étudiants demandent, les lauréats aident et recrutent.': 'تدريب، مشروع نهاية الدراسة، أول عمل: الطلبة يطلبون، والخريجون يساعدون ويوظّفون.',
   'Ta situation': 'وضعيتك', 'Je suis à l’école': 'أدرس في المدرسة', 'J’ai mon diplôme': 'حصلت على شهادتي',
@@ -144,10 +144,13 @@ export function BrandLogo({ size = 38, draw = false }) {
 // l'illustration s'y pose dès qu'elle est chargée. Ensuite (accueil, autres écrans), elle est là tout de suite.
 let gateOpened = false, scene = null, sceneP = null;
 export const chargerScene = () => sceneP ||= import('./scene.js').then(m => (scene = m), e => { sceneP = null; throw e; });
-export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0 }) {
+// bande : le nom écrit sur la porte (la page d'entrée du lien d'une autre école ouverte) ; sans, celui de l'ENSAM Meknès.
+// Posé sur le texte même : le dessin n'est pas refait (son animation continue)
+export function SchoolScene({ align = 'xMidYMax', fit = 'meet', pose = 0, bande }) {
   const ref = useRef();
   const [pret, setPret] = useState(!!scene);
   useEffect(() => { if (!scene) chargerScene().then(() => setPret(true), () => {}); }, []);
+  useEffect(() => { const t = bande && ref.current?.querySelector('.g-txt'); if (t) { t.textContent = bande; if (bande.length > 20) { t.setAttribute('textLength', 212); t.setAttribute('lengthAdjust', 'spacingAndGlyphs'); } } }, [pret, bande]);
   const [opening] = useState(() => { const o = !gateOpened; gateOpened = true; return o; });
   useEffect(() => {
     const el = ref.current;
@@ -248,8 +251,17 @@ export function ecoleInvitee() { const e = lire(CLE_ECOLE); return ecoleValide(e
 export const argsEcole = () => { const e = ecoleInvitee(); return e && e !== 'ensam-meknes' ? { p_ecole: e } : {}; };
 export const retenirRole = r => ecrire(CLE_ROLE, r === 'etudiant' || r === 'laureat' ? r : null);
 export const roleRetenu = () => { const r = lire(CLE_ROLE); return r === 'etudiant' || r === 'laureat' ? r : null; };
-export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); ecrire(CLE_ECOLE, null); ecrire(CLE_DE, null); }
+export function oublierInvitation() { ecrire(CLE, null); ecrire(CLE_ROLE, null); ecrire(CLE_ECOLE, null); ecrire(CLE_DE, null); adresseIci(null); }
 const codeInvite = () => { const c = lire(CLE_DE); return c && CODE_DE.test(c) ? c : null; };
+// iPhone, iPad, dans le navigateur d'une application : « Ouvrir dans Safari » (le geste de la carte) ouvre l'adresse affichée,
+// et Safari n'a rien de ce que la page garde ici. L'adresse garde donc ce que « Ouvrir dans Chrome » emporte sur Android
+// (lienChrome) : la promo, qui invite, l'école, le rôle choisi (jamais celui que la promo laisse deviner : rechargée, la page
+// le prendrait pour un choix), l'étape et l'arabe ; la page d'entrée de Safari les relit (lireInvitation, contexteArrivee).
+// mode null : l'adresse propre (inscription finie). Ailleurs (et pour un nouveau mot de passe), l'adresse ne bouge pas.
+function adresseIci(mode) {
+  if (APPLI_ICI !== 'ios' || mode === 'nouveau') return;
+  try { history.replaceState(history.state, '', adresseAvecContexte(location.href, mode && { promo: promoInvitee(), de: codeInvite(), ecole: ecoleInvitee(), role: roleRetenu(), mode: mode === 'inscription' ? mode : 'connexion' }, getLang())); } catch { /* historique indisponible */ }
+}
 
 // L'accord donné sur CET appareil (case cochée à l'inscription), pour cette adresse. Un compte créé par la demande de
 // code de quelqu'un d'autre (adresse mal tapée) ne reprend jamais l'accord ni le rôle de cette personne-là.
@@ -277,21 +289,23 @@ const ROLES = [
   ['etudiant', 'cap', 'Je suis à l’école', 'De la 1re à la 5e année à l’ENSAM Meknès', '1re à 5e année'],
   ['laureat', 'briefcase', 'J’ai mon diplôme', 'De l’ENSAM Meknès, en poste ou en recherche d’emploi', 'Diplôme ENSAM'],
 ];
-export function ChoixRole({ value, onChange, idPrefix = 'pf-je-', compact = false }) {
+// noms : l'école ouverte du lien (nomsDeLigne) ; sans, les phrases de l'ENSAM Meknès
+export function ChoixRole({ value, onChange, idPrefix = 'pf-je-', compact = false, noms }) {
   return html`<fieldset class=${'je-suis' + (compact ? ' compact' : '')}><legend>Ta situation</legend><div class="je-suis-choix">
     ${ROLES.map(([r, ico, t, long, court]) => html`<button type="button" id=${idPrefix + r} class=${'je-carte' + (value === r ? ' on' : '')} aria-pressed=${value === r ? 'true' : 'false'} onClick=${() => onChange(r)}>
-      <span class="je-ico"><${Icon} name=${ico} size=${compact ? 18 : 22}/></span><strong>${t}</strong><span class="small muted">${compact ? court : long}</span><span class="je-coche"><${Icon} name="check" size=${16}/></span></button>`)}</div></fieldset>`;
+      <span class="je-ico"><${Icon} name=${ico} size=${compact ? 18 : 22}/></span><strong>${t}</strong><span class="small muted">${compact ? (noms && r === 'laureat' ? noms.diplome : court) : noms ? noms[r] : long}</span><span class="je-coche"><${Icon} name="check" size=${16}/></span></button>`)}</div></fieldset>`;
 }
 
 // ---------------------------------------------------------------------------
 // Chiffres vrais pour un visiteur sans compte : trois totaux, jamais un nom (fonction chiffres_publics de la base).
 // Un simple appel web : il part dès l'ouverture de la page, sans attendre Supabase.
 // ---------------------------------------------------------------------------
-// Une fonction publique de la base : { ok, x } ; ok faux si la base n'est pas à jour, sans réseau, ou après 8 s
+// Une fonction publique de la base : { ok, x } ; ok faux si la base n'est pas à jour, sans réseau, ou après 8 s.
+// Sans corps : une lecture (nom : la table et ses filtres)
 async function appelPublic(nom, corps, cfg) {
   const c = new AbortController(); const t = setTimeout(() => c.abort(), 8000);
   try {
-    const r = await fetch(`${cfg.supabaseUrl}/rest/v1/rpc/${nom}`, { method: 'POST', headers: { apikey: cfg.supabaseAnonKey, Authorization: `Bearer ${cfg.supabaseAnonKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify(corps), signal: c.signal });
+    const r = await fetch(`${cfg.supabaseUrl}/rest/v1/${corps ? 'rpc/' : ''}${nom}`, { method: corps ? 'POST' : 'GET', headers: { apikey: cfg.supabaseAnonKey, Authorization: `Bearer ${cfg.supabaseAnonKey}`, 'Content-Type': 'application/json' }, body: corps ? JSON.stringify(corps) : null, signal: c.signal });
     return r.ok ? { ok: true, x: await r.json() } : { ok: false };
   } catch { return { ok: false }; } finally { clearTimeout(t); }
 }
@@ -305,6 +319,31 @@ export function chiffresPublics(cfg = window.ENSAM_CONFIG || {}) {
   const args = argsEcole(), cle = args.p_ecole || '';
   if (!chiffresP.has(cle)) chiffresP.set(cle, appelPublic('chiffres_publics', args, cfg).then(r => { if (!r.ok) chiffresP.delete(cle); return r.ok ? r.x : null; }));
   return chiffresP.get(cle);
+}
+// L'école ouverte d'un lien (?ecole=, une autre que l'ENSAM Meknès) : ses noms et ses règles d'email, tirés de sa ligne de la
+// table des écoles comme nomsEcole (logic.js), et leur arabe (une fois par ligne). null : l'ENSAM Meknès, ou une école pas
+// (encore) ouverte : rien de son nom, la page d'avant. domaines et obligatoire : ceux de sa ligne, comme la base (PR #54).
+const mots = (v, n) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim().slice(0, n) : '');
+const nomsVus = new WeakMap();
+export function nomsDeLigne(l) {
+  if (l?.ouverte !== true || !ecoleValide(l.slug) || l.slug === 'ensam-meknes') return null;
+  if (nomsVus.has(l)) return nomsVus.get(l);
+  const ville = mots(l.ville, 60), court = mots(l.nom_court, 40), nom = mots(l.nom, 120) || [court || 'ENSAM', ville].filter(Boolean).join(' ');
+  const ar = mots(l.nom_ar, 120) || nom, dip = court || nom, ec = /^[aeiouyàâäéèêëîïôöûüÿæœ]/i.test(nom) ? '' : 'école ';
+  const n = { nom, marque: `Réseau ${nom}`, etudiant: `De la 1re à la 5e année à l’${ec}${nom}`, laureat: `De l’${ec}${nom}, en poste ou en recherche d’emploi`, diplome: `Diplôme ${dip}`,
+    bande: (court && ville ? `${court} · ${ville}` : dip).toUpperCase(), domaines: Array.isArray(l.domaines) ? l.domaines.filter(d => typeof d === 'string' && d) : [], obligatoire: l.email_obligatoire === true };
+  addAR({ [n.marque]: `شبكة ${ar}`, [n.etudiant]: `من السنة الأولى إلى الخامسة في ${ar}`, [n.laureat]: `من ${ar}، في وظيفة أو في بحث عن عمل`, [n.diplome]: `شهادة ${dip}` });
+  nomsVus.set(l, n);
+  return n;
+}
+// Sa ligne, lue une fois dès l'ouverture de la page (un visiteur ne lit que les écoles ouvertes) ; sans réseau, relue au besoin.
+// lus : ses noms une fois arrivés, par école (la page d'entrée montée de nouveau les a tout de suite)
+const lignesP = new Map(), lus = new Map();
+export function ecoleDuLien(cfg = window.ENSAM_CONFIG || {}) {
+  const e = argsEcole().p_ecole;
+  if (!e || !enLigneCfg(cfg)) return Promise.resolve(null);
+  if (!lignesP.has(e)) lignesP.set(e, appelPublic(`ecoles?select=*&slug=eq.${e}&ouverte=is.true`, null, cfg).then(r => { if (!r.ok) lignesP.delete(e); const n = r.ok && Array.isArray(r.x) ? nomsDeLigne(r.x.find(x => x?.slug === e)) : null; lus.set(e, n); return n; }));
+  return lignesP.get(e);
 }
 // L'offre d'un lien partagé, sans compte : son type, son public et si elle est ouverte ; jamais son titre ni l'entreprise.
 // null : elle n'existe plus ; undefined : on ne sait pas (démo, base pas encore à jour, réseau)
@@ -573,15 +612,23 @@ export function AuthScreen({ store }) {
   const [busy, setBusy] = useState(false); const [entre, setEntre] = useState(false);
   const [lignes, setLignes] = useState(null);
   useEffect(() => { let vivant = true; chiffresPublics().then(c => { if (vivant) setLignes(lignesChiffres(c)); }); return () => { vivant = false; }; }, []);
+  // Le lien d'une autre école : ses noms et ses règles d'email (ecoleDuLien) ; undefined : sa ligne arrive (la marque attend sans
+  // nom de ville) ; null : l'ENSAM Meknès, ou une école pas encore ouverte (la page d'avant). Ouverte : son nom dans l'onglet aussi
+  const autre = argsEcole().p_ecole;
+  const [noms, setNoms] = useState(() => (!autre ? null : lus.has(autre) ? lus.get(autre) : undefined));
+  useEffect(() => { if (!autre) return; let vivant = true; ecoleDuLien().then(n => { if (vivant) setNoms(n); }); return () => { vivant = false; }; }, []);
+  useEffect(() => { if (noms) document.title = noms.marque; }, [noms]);
   // Le lien venait d'un membre : qui invite (un code inconnu de cette école est oublié)
   const [deQui, setDeQui] = useState(null);
   useEffect(() => {
     const c = codeInvite(); if (!c) return;
     let vivant = true;
-    invitationDe(c).then(x => { if (!vivant) return; if (x === null) ecrire(CLE_DE, null); else if (x) setDeQui(x); });
+    invitationDe(c).then(x => { if (!vivant) return; if (x === null) { ecrire(CLE_DE, null); setDeQui(false); } else if (x) setDeQui(x); });
     return () => { vivant = false; };
   }, []);
-  const setRole = r => { setRoleEtat(r); retenirRole(r); setRoleMsg(false); };
+  // L'adresse suit ce qui est gardé ici, dans le navigateur d'une application sur iPhone ou iPad (adresseIci)
+  useEffect(() => { adresseIci(mode); }, [mode, deQui, getLang()]);
+  const setRole = r => { setRoleEtat(r); retenirRole(r); setRoleMsg(false); adresseIci(mode); };
   // Un seul envoi à la fois, même pour deux touchers dans le même instant (l'écran n'a pas encore grisé le bouton)
   const occupe = useRef(false);
   const run = async fn => {
@@ -590,16 +637,19 @@ export function AuthScreen({ store }) {
     try { await fn(store || await attendreMagasin(true).catch(e => { throw Object.assign(e, { magasin: true }); })); } catch (e) { setMsg({ err: true, t: await texteErreurEntree(e) }); }
     occupe.current = false; setBusy(false);
   };
-  const ecole = store?.domainesEcole?.() || [];
+  // Les domaines de l'email de l'école : ceux de l'école ouverte du lien (aucun tant que sa ligne arrive), sinon ceux de l'ENSAM Meknès
+  const ecole = noms ? noms.domaines : noms === undefined ? [] : store?.domainesEcole?.() || [];
   const deLEcole = estEmailEcole(email, ecole);
-  // invite_par : le code de qui invite ; la base retrouve le membre (même école) en créant le profil
-  const meta = () => { const de = codeInvite(); return { consent_at: new Date().toISOString(), consent_version: VERSION_ACCORD, emails_hebdo: mails, langue: getLang(), ...(role ? { role_choisi: role } : {}), ...(de ? { invite_par: de } : {}) }; };
+  // invite_par : le code de qui invite ; la base retrouve le membre (même école) en créant le profil.
+  // ecole : celle du lien (une autre que l'ENSAM Meknès), gardée par le compte : le profil fini sur un autre appareil y va aussi
+  const meta = () => { const de = codeInvite(), e = argsEcole().p_ecole; return { consent_at: new Date().toISOString(), consent_version: VERSION_ACCORD, emails_hebdo: mails, langue: getLang(), ...(role ? { role_choisi: role } : {}), ...(de ? { invite_par: de } : {}), ...(e ? { ecole: e } : {}) }; };
   const vers = (m, cible = m === 'motdepasse' ? 'au-pw' : m === 'inscription' && !role ? 'au-je-etudiant' : 'au-email') => { setMode(m); setMsg(null); setRoleMsg(false); focus(cible); };
 
   // Demander un code : creer = la personne s'inscrit (un email déjà connu est simplement connecté)
   const envoyer = (creer, renvoi = false) => run(async s => {
-    const e = email.trim();
-    if (creer && role === 'etudiant' && s.reglages?.email_ecole_obligatoire === true && s.domainesEcole().length && !estEmailEcole(e, s.domainesEcole())) throw new Error('Inscris-toi avec ton email de l’école.');
+    // L'email de l'école : la règle de l'école ouverte du lien (sa ligne, attendue si elle arrive encore), sinon celle de l'ENSAM Meknès
+    const e = email.trim(), n = await ecoleDuLien(), doms = n ? n.domaines : s.domainesEcole();
+    if (creer && role === 'etudiant' && (n ? n.obligatoire : s.reglages?.email_ecole_obligatoire === true) && doms.length && !estEmailEcole(e, doms)) throw new Error('Inscris-toi avec ton email de l’école.');
     const attendu = t => { noterAttente({ email: e, t, creer, mails, langue: getLang() }); setEnvoyeA(t); setOrigine(creer ? 'inscription' : 'connexion'); setMode('code'); focus('au-code'); };
     if (creer) noterAccord(e, role);
     // Une offre entre lauréats ne s'ouvrira pas pour un étudiant : rien à promettre après l'inscription
@@ -642,7 +692,7 @@ export function AuthScreen({ store }) {
   // Qui invite (« Invitation de Nadia · promo 2019 ») prend la place de « Bienvenue, promo 2019 ! » quand c'est la même promo
   const deIci = deQui && inscription, memePromo = !!(deIci && bandeau && Number(deQui.promo) === invite);
   const ecoleOk = deLEcole && (inscription || mode === 'connexion') ? html`<span id="au-ecole" class="field-hint good-t" role="status"><${Icon} name="check" size=${14}/> ${role === 'laureat' || mode === 'connexion' ? 'Email de l’école reconnu.' : 'Email de l’école reconnu : ton profil étudiant sera vérifié tout de suite.'}</span>` : null;
-  const indice = inscription && role === 'etudiant' && ecole.length && !deLEcole ? `Côté étudiants : ${store?.reglages?.email_ecole_obligatoire ? 'inscris-toi' : 'de préférence'} avec ton email de l’école (${ecole.map(d => '@' + d).join(', ')}). Ton compte est alors vérifié tout de suite.` : '';
+  const indice = inscription && role === 'etudiant' && ecole.length && !deLEcole ? `Côté étudiants : ${(noms ? noms.obligatoire : store?.reglages?.email_ecole_obligatoire) ? 'inscris-toi' : 'de préférence'} avec ton email de l’école (${ecole.map(d => '@' + d).join(', ')}). Ton compte est alors vérifié tout de suite.` : '';
   const champEmail = html`<${Field} label="Email" hint=${indice}><input id="au-email" type="email" required autocomplete="email" inputmode="email" dir="ltr" value=${email} onInput=${e => setEmail(e.target.value)}/>${ecoleOk}<//>`;
   const pourquoiCode = html`<p class="small muted au-sans-mdp">Pas de mot de passe : on t’envoie un code à 6 chiffres par email.</p>`;
   const pour = (etuAvant ? ['etudiant', 'laureat'] : ['laureat', 'etudiant']).map(r => POUR[r]);
@@ -651,7 +701,7 @@ export function AuthScreen({ store }) {
 
   return html`<main class="auth entree">
     <div class="entree-ciel sky" aria-hidden="true"></div>
-    <header class="entree-top"><span class="entree-marque"><${BrandLogo} size=${34} draw/><span>Réseau ENSAM Meknès</span></span><${LangToggle} onChange=${relang} aussitot/></header>
+    <header class="entree-top"><span class="entree-marque"><${BrandLogo} size=${34} draw/><span>${noms ? noms.marque : noms === undefined ? 'Réseau ENSAM' : 'Réseau ENSAM Meknès'}</span></span><${LangToggle} onChange=${relang} aussitot/></header>
     <section class=${'entree-promesse' + (serre ? ' serre' : '')}>
       ${lien && mode !== 'nouveau' ? html`<p id="au-lien" class=${'lien-accueil' + (infos === null || infos?.ouverte === false || (inscrire && offreFermeePour(infos, role)) ? ' fini' : '')}><${Icon} name=${icoLien} size=${18}/><span>${phraseLien(lien, infos, inscrire, inscrire ? role : '')}</span></p>` : null}
       <${Fondateurs}/>
@@ -664,7 +714,7 @@ export function AuthScreen({ store }) {
       ${inscription ? null : html`<h2>${{ connexion: 'Se connecter', code: 'Ton code est parti', motdepasse: 'Se connecter', nouveau: 'Nouveau mot de passe' }[mode]}</h2>`}
       ${perdue && mode === 'connexion' ? html`<p class="auth-msg" id="au-session" role="status">${store.brouillonsGardes ? 'Ta session a expiré. Reconnecte-toi : ce que tu étais en train d’écrire est gardé.' : 'Ta session a expiré. Reconnecte-toi pour continuer.'}</p>` : null}
       ${bandeau || deIci ? html`<p class="invite-band"><${Icon} name="send" size=${18}/><span>${deIci ? html`<span id="au-invite-de" style="display:block;font-weight:650">${ligneInvitation(deQui)}</span>` : null}${bandeau && !memePromo ? html`<strong>Bienvenue, promo ${invite} !</strong>${bandeCourte ? null : ' Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.'}` : bandeau && !bandeCourte ? 'Ta promo est déjà indiquée : crée ton compte, puis vérifie tes informations.' : null}</span></p>` : null}
-      ${inscription ? html`<${ChoixRole} value=${role} onChange=${setRole} idPrefix="au-je-" compact/>
+      ${inscription ? html`<${ChoixRole} value=${role} onChange=${setRole} idPrefix="au-je-" compact noms=${noms}/>
         ${roleMsg ? html`<p id="au-role-msg" class="auth-msg err" role="alert">Choisis d’abord ta situation.</p>` : null}` : null}
       ${mode === 'code' ? html`
         <p id="au-code-envoye" class="muted">Entre le code à 6 chiffres envoyé à</p>
@@ -685,7 +735,7 @@ export function AuthScreen({ store }) {
       </div>
     </form>
     <div class="auth-pour">${pour.map(([t, items]) => html`<section><h2 class="eyebrow">${t}</h2><ul class="auth-points">${items.map(([i, x]) => html`<li><span class="sc-ico"><${Icon} name=${i}/></span> ${x}</li>`)}</ul></section>`)}<${Vitrine}/></div>
-    <div class="entree-scene sky"><${SchoolScene} fit="slice"/></div>
+    <div class="entree-scene sky"><${SchoolScene} fit="slice" bande=${noms?.bande}/></div>
     <footer class="auth-pied small"><span>Initiative de lauréats, indépendante de l’administration de l’école</span><span class="auth-pied-liens"><a href=${'mailto:' + adresseContact()}>Contact</a><a href="#confidentialite">Confidentialité</a></span></footer>
   </main>`;
 }
@@ -875,7 +925,7 @@ if (!window.ENSAM_ENTREE) {
     // d'appareil (?r=, ?notifs=, ?depuis= : l'application les lit)
     let presse = !!lireAttente() || /[?&](r|notifs|depuis)=/.test(location.search);
     try { presse ||= !!sessionStorage.getItem(SAISIE) || !!sessionStorage.getItem(RECHARGES); } catch { /* stockage indisponible */ }
-    chiffresPublics();
+    chiffresPublics(); ecoleDuLien();
     // Le navigateur d'une application, reconnu dès que possible : sa carte vient juste après le premier affichage
     chargerAppareil();
     monter(null);

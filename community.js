@@ -4,9 +4,9 @@ import { Icon, Modal, Field, Empty, Person, Avatar, LogoEntreprise, toast, Level
 import { useBrouillon, EnTetePage, vibrer } from './ui.js';
 import { PucesNav, useVoirPlus, VoirPlus } from './lignes.js';
 import { proposerPrevenir } from './pwa.js';
-import { ChoixRole, accordIci } from './entree.js';
+import { ChoixRole, accordIci, nomsDeLigne } from './entree.js';
 import { getLang, setLang } from './i18n.js';
-import { laureatCompte, FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole, chiffreReseau, ecoleDuContenu, pionniersOf, PIONNIER_MOI, deMonEcole } from './logic.js';
+import { laureatCompte, FILIERES, PREPA, filieresPour, filiereCourte, seasonOf, NIVEAUX, CATEGORIES_Q, SECTEURS, niveauOf, statutOf, timeAgo, computeScores, badgesOf, levelOf, seasonLabel, routedTo, norm, incoherenceProfil, manquesProfil, estEmailEcole, chiffreReseau, ecoleDuContenu, pionniersOf, PIONNIER_MOI, deMonEcole, ecoleValide } from './logic.js';
 import { villeAffichee } from './geo.js';
 import { TalentPool } from './growth.js';
 import { GroupesPage } from './groupes.js';
@@ -623,11 +623,21 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
   // Inscription courte : rôle, nom, promo, filière (et, pour un lauréat, s'il peut aider) ; le reste est replié sous « Facultatif »
   const [details, setDetails] = useState(!onboarding);
   const plus = !onboarding || details;
-  // Email de l'école obligatoire pour les étudiants (réglage de l'administration)
+  // L'école de l'inscription : celle du lien gardé sur cet appareil, sinon celle que le compte a reçue avec la demande de code
+  // (fini sur un autre appareil, ou le stockage effacé depuis). L'ENSAM Meknès n'est pas dite : la base la met par défaut.
+  const ecoleIns = onboarding ? [ecoleInvitee(), store.session?.user?.user_metadata?.ecole].find(ecoleValide) : null;
+  const autreEcole = ecoleIns && ecoleIns !== 'ensam-meknes' ? ecoleIns : null;
+  // Email de l'école obligatoire pour les étudiants : le réglage de l'administration (ENSAM Meknès) ; pour une autre école,
+  // ses domaines et sa règle (sa ligne de la table des écoles), comme la base. Sa ligne pas lisible ici (école pas encore
+  // ouverte) : rien à bloquer, la base répond « pas encore ouvert »
+  const ligneEcole = autreEcole && (store.data?.ecoles || []).find(e => e?.slug === autreEcole && e.ouverte === true);
   const email = (store.session?.user?.email || '').toLowerCase();
-  const domaines = store.domainesEcole?.() || [];
+  const domaines = autreEcole ? (Array.isArray(ligneEcole?.domaines) ? ligneEcole.domaines.filter(d => typeof d === 'string' && d) : []) : store.domainesEcole?.() || [];
+  const obligatoire = autreEcole ? ligneEcole?.email_obligatoire === true : store.reglages?.email_ecole_obligatoire === true;
   const versEtudiant = !!onboarding || (!!initial && initial.role !== 'etudiant');
-  const ecoleBloque = versEtudiant && f.role === 'etudiant' && store.reglages?.email_ecole_obligatoire === true && domaines.length > 0 && !!email && !estEmailEcole(email, domaines);
+  const ecoleBloque = versEtudiant && f.role === 'etudiant' && obligatoire && domaines.length > 0 && !!email && !estEmailEcole(email, domaines);
+  // La base a refusé le profil : l'école du lien n'est pas encore ouverte (sa phrase reste au-dessus du bouton)
+  const [fermee, setFermee] = useState(false);
   // Rôle et promo cohérents : un lauréat a déjà son diplôme, un étudiant l'aura entre la 5A et la 1re année de cette saison
   const promoN = +f.promo;
   const incoherent = incoherenceProfil(f.role, f.promo, S, an);
@@ -682,8 +692,10 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
     const coordChange = v3 && ['telephone', 'email', 'contact'].some(k => (champs[k] || '') !== (coord0[k] || ''));
     act(async () => {
       if (onboarding) {
-        // Venu par le lien d'une école : le compte est créé dans son réseau (la base refuse une école pas encore ouverte)
-        await store.insert('profiles', { id: store.userId, ...row, ...(ecoleInvitee() && ecoleInvitee() !== 'ensam-meknes' ? { ecole: ecoleInvitee() } : {}) }); oublierInvitation();
+        // Venu par le lien d'une école : le compte est créé dans son réseau. Une école pas encore ouverte, la base la refuse :
+        // sa phrase reste à l'écran (un message qui s'en va se manque), le compte et le lien sont gardés pour son ouverture
+        try { await store.insert('profiles', { id: store.userId, ...row, ...(autreEcole ? { ecole: autreEcole } : {}) }); } catch (e) { if (e?.message !== ECOLE_FERMEE) throw e; setFermee(true); return; }
+        oublierInvitation();
         // L'accueil s'annonce tout de suite : CV, photo et coordonnées suivent sans le retarder
         onInscrit?.();
         // La langue de l'inscription (celle d'un lien arabe, par exemple) devient celle du membre sur cet appareil
@@ -780,7 +792,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
   return html`<form class="form" id=${onboarding ? undefined : 'profil-infos'} hidden=${!voir('profil') && !voir('visibilite')} onSubmit=${submit}>
     <div class="pf-partie pf-infos" hidden=${!voir('profil')}>
     ${onboarding ? null : html`<h2 class="pf-titre titre-sec">Mes infos</h2>`}
-    ${onboarding ? (voirRole || !f.role ? html`<${ChoixRole} value=${f.role} onChange=${choisirRole}/>`
+    ${onboarding ? (voirRole || !f.role ? html`<${ChoixRole} value=${f.role} onChange=${choisirRole} noms=${nomsDeLigne(ligneEcole)}/>`
       : html`<div class="pf-role"><p class="small" id="pf-role-rappel">${f.role === 'laureat' ? 'Tu t’inscris côté lauréats.' : 'Tu t’inscris côté étudiants.'}</p><button type="button" class="linkish small" id="pf-role-changer" onClick=${changerRole}>Changer</button></div>`)
     : f.role !== 'admin' ? html`<div class="seg" role="group" aria-label="Ta situation"><button type="button" class=${isStudent ? 'on' : ''} onClick=${() => choisirRole('etudiant')}>Je suis à l’école</button><button type="button" class=${!isStudent ? 'on' : ''} onClick=${() => choisirRole('laureat')}>J’ai mon diplôme</button></div>` : null}
     ${ecoleBloque ? html`<div class="cf-warn" role="alert" id="pf-ecole"><p><strong>${onboarding ? 'Inscris-toi avec ton email de l’école.' : 'Un compte étudiant utilise l’email de l’école.'}</strong></p>
@@ -808,7 +820,7 @@ export function ProfileForm({ ctx, initial, preset, onDone, onInscrit, onboardin
       <div id="pf-facultatif">${plus ? html`${plusProfil}${partieVis}` : null}</div>` : plusProfil}`}
     </div>
     ${onboarding || !f.role ? null : html`<div class="pf-partie pf-vis" hidden=${!voir('visibilite')}>${partieVis}</div>`}
-    ${onboarding ? html`<div class="row-end pf-pied">${bouton}</div>`
+    ${onboarding ? html`<div class="row-end pf-pied">${fermee ? html`<div class="cf-warn" role="alert" id="pf-ferme" style="flex-basis:100%"><p><strong>${ECOLE_FERMEE}</strong></p><p class="small">Ton compte est gardé : reviens finir ton inscription dès son ouverture.</p></div>` : null}${bouton}</div>`
       : differe() ? html`<div class="row-end pf-collant" role="status"><span class="small">Modifications pas encore enregistrées</span>${bouton}</div>`
       : html`<div class="row-end">${bouton}</div>`}
   </form>`;
@@ -824,6 +836,8 @@ function VisibleLaureats({ on, onChange }) {
 }
 
 // « Dernière étape » courte : rôle rappelé, bouton qui dit ce qui manque, choix « aider », réglages « Qui voit quoi » ligne par ligne
+// Le refus de la base pour le profil d'une école pas encore ouverte (protect_ecole), mot pour mot
+const ECOLE_FERMEE = 'Le réseau de cette école n’est pas encore ouvert.';
 const NIV_AR = { '1re année (cycle prépa)': 'السنة الأولى (السلك التحضيري)', '2e année (cycle prépa)': 'السنة الثانية (السلك التحضيري)', '3e année': 'السنة الثالثة', '4e année': 'السنة الرابعة', '5e année': 'السنة الخامسة' };
 addAR({
   'Quelques secondes, et tu es dans le réseau.': 'بضع ثوانٍ، وتصبح في الشبكة.',
@@ -841,6 +855,7 @@ addAR({
   'Ta situation': 'وضعيتك', 'Je suis à l’école': 'أدرس في المدرسة', 'J’ai mon diplôme': 'حصلت على شهادتي', 'Profil étudiant': 'ملف طالب', 'Profil lauréat': 'ملف خريج',
   'Tu as déjà ton diplôme ? Choisis « J’ai mon diplôme » : l’email de l’école n’est demandé qu’aux étudiants.': 'حصلت على شهادتك؟ اختر «حصلت على شهادتي»: بريد المدرسة مطلوب من الطلبة فقط.',
   'Ex. 2019': 'مثال: 2019', 'Enregistrement…': 'جارٍ الحفظ…',
+  [ECOLE_FERMEE]: 'شبكة هذه المدرسة غير مفتوحة بعد.', 'Ton compte est gardé : reviens finir ton inscription dès son ouverture.': 'حسابك محفوظ: عد لإكمال تسجيلك بمجرد افتتاحها.',
 }, [
   [/^En (\d{4}-\d{4}), tu es en (.+)\.$/, (y, l) => `في ${y}، أنت في ${NIV_AR[l] || l}.`],
   [/^Ex\. en 5A cette année : (\d{4})\. Ton année d’études avance toute seule chaque septembre\.$/, y => `مثال: في 5A هذه السنة: ${y}. تتقدّم سنتك الدراسية تلقائيًا كل شتنبر.`],

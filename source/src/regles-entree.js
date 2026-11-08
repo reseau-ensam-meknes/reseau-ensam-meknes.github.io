@@ -101,3 +101,27 @@ export const ecoleValide = e => typeof e === 'string' && ECOLE_RE.test(e);
 // Adresse d'un lien à partager pour une autre école que l'ENSAM Meknès : elle dit l'école (&ecole=…), que la page d'entrée
 // garde jusqu'à l'inscription. Pour l'ENSAM Meknès (ou sans école), l'adresse ne change pas.
 export const avecEcole = (adresse, ecole) => (ecoleValide(ecole) && ecole !== 'ensam-meknes' ? adresse.replace(/^([^?#]*)(\?[^#]*)?/, (_, a, q) => `${a}${q ? q + '&' : '?'}ecole=${ecole}`) : adresse);
+
+// Ce que la page d'entrée emporte dans un autre navigateur (lienChrome, appareil.js, qui le réexporte ; l'adresse gardée dans
+// le navigateur d'une application sur iPhone ou iPad, adresseAvecContexte) : la promo d'un lien d'invitation, le code de qui
+// invite (de, 8 caractères : « Invitation de Nadia » et le compte de ses invités), l'école du lien (ecole), le rôle choisi
+// et l'étape (créer un compte, ou se connecter). La page d'entrée les relit en arrivant (lireInvitation, contexteArrivee).
+// Jamais l'email tapé ni l'accord : une adresse ne voyage pas dans un lien (historique, journaux du serveur), et l'accord
+// se donne là où le compte se crée.
+export function contexteEntree(x) {
+  const { promo, de, ecole, role, mode } = x || {}, out = {};
+  if (promoValide(Number(promo))) out.promo = String(Number(promo));
+  if (typeof de === 'string' && /^[a-z0-9]{8}$/.test(de)) out.de = de;
+  if (ecoleValide(ecole)) out.ecole = ecole;
+  if (role === 'etudiant' || role === 'laureat') out.role = role;
+  if (mode === 'inscription' || mode === 'connexion') out.mode = mode;
+  return out;
+}
+// L'adresse (chemin, paramètres, #) avec ce contexte et, en arabe, lang=ar, à la place des leurs ; sans contexte, sans
+// eux. Le reste (la route en #, un autre paramètre) ne change pas.
+export function adresseAvecContexte(adresse, contexte, lang) {
+  const u = new URL(adresse), p = u.searchParams;
+  for (const k of ['promo', 'de', 'ecole', 'role', 'mode', 'lang']) p.delete(k);
+  if (contexte) for (const [k, v] of Object.entries({ ...contexteEntree(contexte), ...(lang === 'ar' ? { lang } : {}) })) p.set(k, v);
+  return u.pathname + u.search + u.hash;
+}
